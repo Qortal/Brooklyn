@@ -1,1 +1,1 @@
-Place holder for DRM code
+Place holder for DRM code & GUI essentials
