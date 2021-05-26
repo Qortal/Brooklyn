@@ -3,7 +3,7 @@ VERSION = 5
 PATCHLEVEL = 12
 SUBLEVEL = 6
 EXTRAVERSION =
-NAME = Frozen Wasteland
+NAME = The Moose
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
