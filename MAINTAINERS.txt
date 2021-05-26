@@ -1,3 +1,7 @@
+Qortal Team
+===========
+ScareCrowe, Sean, Crowetic
+
 List of maintainers and how to submit kernel changes
 ====================================================
 
