@@ -1,0 +1,275 @@
+##KBDCONF-1.0
+kbd 150 60
+
+# keyboard type
+type TERMINAL
+# an icon for the keyboard so you know which one you have
+icon qwerty.png
+
+key   0   0  10  10
+  normal   esc Escape
+key  10   0  10  10
+  normal   f1 F1
+key  20   0  10  10
+  normal   f2 F2
+key  30   0  10  10
+  normal   f3 F3
+key  40   0  10  10
+  normal   f4 F4
+key  50   0  10  10
+  normal   f5 F5
+key  60   0  10  10
+  normal   f6 F6
+key  70   0  10  10
+  normal   f7 F7
+key  80   0  10  10
+  normal   f8 F8
+key  90   0  10  10
+  normal   f9 F9
+key 100   0  10  10
+  normal   f10 F10
+key 110   0  10  10
+  normal   f11 F11
+key 120   0  10  10
+  normal   f12 F12
+key 130   0  10  10
+  normal   print Print
+key 140   0  10  10
+  normal   pause Pause
+
+key   0  10  10  10
+  normal   ` grave
+  shift    ~ asciitilde
+  capslock ` grave
+key  10  10  10  10
+  normal   1 1
+  shift    ! exclam
+  capslock 1 1
+key  20  10  10  10
+  normal   2 2
+  shift    @ at
+  capslock 2 2
+key  30  10  10  10
+  normal   3 3
+  shift    # numbersign
+  capslock 3 3
+key  40  10  10  10
+  normal   4 4
+  shift    $ dollar
+  capslock 4 4
+key  50  10  10  10
+  normal   5 5
+  shift    % percent
+  capslock 5 5
+key  60  10  10  10
+  normal   6 6
+  shift    ^ asciicircum
+  capslock 6 6
+key  70  10  10  10
+  normal   7 7
+  shift    & ampersand
+  capslock 7 7
+key  80  10  10  10
+  normal   8 8
+  shift    * asterisk
+  capslock 8 8
+key  90  10  10  10
+  normal   9 9
+  shift    ( parenleft
+  capslock 9 9
+key 100  10  10  10
+  normal   0 0
+  shift    ) parenright
+  capslock 0 0
+key 110  10  10  10
+  normal   - minus
+  shift    _ underscore
+  capslock - minus
+key 120  10  10  10
+  normal   = equal
+  shift    + plus
+  capslock = equal
+key 130  10  20  10
+  normal   backspace.png BackSpace
+
+key   0  20  15  10
+  normal   tab.png Tab
+  shift    tab.png ISO_Left_Tab
+key  15  20  10  10
+  normal   q q
+  shift    Q Q
+  capslock Q Q
+key  25  20  10  10
+  normal   w w
+  shift    W W
+  capslock W W
+key  35  20  10  10
+  normal   e e
+  shift    E E
+  capslock E E
+key  45  20  10  10
+  normal   r r
+  shift    R R
+  capslock R R
+key  55  20  10  10
+  normal   t t
+  shift    T T
+  capslock T T
+key  65  20  10  10
+  normal   y y
+  shift    Y Y
+  capslock Y Y
+key  75  20  10  10
+  normal   u u
+  shift    U U
+  capslock U U
+key  85  20  10  10
+  normal   i i
+  shift    I I
+  capslock I I
+key  95  20  10  10
+  normal   o o
+  shift    O O
+  capslock O O
+key 105  20  10  10
+  normal   p p
+  shift    P P
+  capslock P P
+key 115  20  10  10
+  normal   [ bracketleft
+  shift    { braceleft
+  capslock [ bracketleft
+key 125  20  10  10
+  normal   ] bracketright
+  shift    } braceright
+  capslock ] bracketright
+key 135  20  15  10
+  normal   \ backslash
+  shift    | bar
+  capslock \ backslash
+
+key   0  30  20  10
+  normal   caps
+  capslock CAPS
+  is_capslock
+key  20  30  10  10
+  normal   a a
+  shift    A A
+  capslock A A
+key  30  30  10  10
+  normal   s s
+  shift    S S
+  capslock S S
+key  40  30  10  10
+  normal   d d
+  shift    D D
+  capslock D D
+key  50  30  10  10
+  normal   f f
+  shift    F F
+  capslock F F
+key  60  30  10  10
+  normal   g g
+  shift    G G
+  capslock G G
+key  70  30  10  10
+  normal   h h
+  shift    H H
+  capslock H H
+key  80  30  10  10
+  normal   j j
+  shift    J J
+  capslock J J
+key  90  30  10  10
+  normal   k k
+  shift    K K
+  capslock K K
+key 100  30  10  10
+  normal   l l
+  shift    L L
+  capslock L L
+key 110  30  10  10
+  normal   ; semicolon
+  shift    : colon
+  capslock ; semicolon
+key 120  30  10  10
+  normal   ' apostrophe
+  shift    " quotedbl
+  capslock ' apostrophe
+key 130  30  20  10
+  normal   enter.png Return
+
+key   0  40  25  10
+  normal   shift.png
+  is_shift
+key  25  40  10  10
+  normal   z z
+  shift    Z Z
+  capslock Z Z
+key  35  40  10  10
+  normal   x x
+  shift    X X
+  capslock X X
+key  45  40  10  10
+  normal   c c
+  shift    C C
+  capslock C C
+key  55  40  10  10
+  normal   v v
+  shift    V V
+  capslock V V
+key  65  40  10  10
+  normal   b b
+  shift    B B
+  capslock B B
+key  75  40  10  10
+  normal   n n
+  shift    N N
+  capslock N N
+key  85  40  10  10
+  normal   m m
+  shift    M M
+  capslock M M
+key  95  40  10  10
+  normal   , comma
+  shift    < less
+  capslock , comma
+key 105  40  10  10
+  normal   . period
+  shift    > greater
+  capslock . period
+key 115  40  10  10
+  normal   / slash
+  shift    ? question
+  capslock / slash
+key 125  40  10  10
+  normal   mult Multi_key
+key 135  40  15  10
+  normal   del Delete
+
+key   0  50  10  10
+  normal   ctrl
+  is_ctrl
+key  10  50  10  10
+  normal   alt
+  is_alt
+key  20  50  40  10
+  normal   space space
+key  60  50  10  10
+  normal   left.png Left
+key  70  50  10  10
+  normal   right.png Right
+key  80  50  10  10
+  normal   up.png Up
+key  90  50  10  10
+  normal   down.png Down
+key 100  50  10  10
+  normal   pgup Prior
+key 110  50  10  10
+  normal   pgdn Next
+key 120  50  10  10
+  normal   home Home
+key 130  50  10  10
+  normal   end End
+key 140  50  10  10
+  normal   menu Menu

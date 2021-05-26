@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Link
+Name=Tiling (Standard Enlightenment)
+Name[ca]=Mosaic (Standard Enlightenment)
+Name[de]=Kacheln (Vorgabe Enlightenment)
+Name[fi]=Limittävä (Tavallinen Enlightenment)
+Name[fr]=Pavage (Enlightenment standard)
+Name[it]=Tiling (a piastrelle)
+Name[ms]=Penjubinan (Enlightenment Piawai)
+Name[ru]=Мозаичный режим (Стандартный Enlightenment)
+Name[tr]=Döşeme (Standard Enlightenment)
+Comment=Tiling window management configuration for devices with keyboards and mice<br>like your average PC Desktop, Laptop or Netbook<br>with Enlightenment's traditional keyboard bindings<br>and mouse controls.<br>Default tiling bindings are: Win-key + Space, arrows, and left mouse button.<br>See the module settings for more information.
+Comment[ca]=Mosaic per la configuració de la gestió de finestres per dispositius amb teclats i ratolins <br>com ara PC d'escriptori, portàtil o netbook<br>amb associacions de tecles típiques d'Enlightenment<br>Tecles d'accés ràpid per defecte són: Tecla Win + Espai, fletxes i botó esquerre del ratolí <br>Veure la configuració del mòdul per obtenir més informació.
+Comment[fr]=Gestion de la juxtaposition des fenêtres pour les machines avec clavier<br>et souris comme les PC de bureau et les portables,<br>offrant raccourcis et contrôles traditionnels.<br>Les raccourcis de pavage par défaut sont :<br>Win+Barre d'espace ou flèches, et bouton gauche de la souris.<br>Voir la configuration du module pour plus d'informations.
+Comment[it]=Configurazione con finestre in griglia per dispositivi con tastiere e mouse<br>come i normali PC Desktop, Laptop o Netbook<br>con le tradizionali scorciatoie di tastiera e controlli<br>del mouse di Enlightenment.<br>Le associazioni di tasti predefinite proprie di questa modalità sono:<br>Tasto-windows + spazio, frecce, e tasto sinistro del mouse.<br>Vedere le impostazioni del modulo Tiling per maggiori informazioni.
+Comment[ms]=Konfigurasi pengurusan tetingkap berjubin untuk peranti dengan papan kekunci dan tetikus<br>seperti Komputer Desktop, Komputer Riba atau Netbook anda<br>dengan pengikatan papan kekunci tradisional Enlightenment<br>dan kawalan tetikus.<br>Pengikatan penjubinan lalai adalah: Win-key + Space, anak panah, dan butang tetikus kiri.<br>Sila rujuk tetapan modul untuk maklumat lanjut.
+Comment[ru]=Конфигурация с мозаичным режимом управления окнами<br>пригодная для устройств с клавиатурой и мышью,<br>таких как обычный компьютер или ноутбук,<br>с традиционными для Enlightenment'а сочетаниями<br>клавиш и управлением мышью.<br>Комбинации клавиш для мозаичного режима по умолчанию:<br>Кнопка Win + пробел, стрелки и левая кнопка мыши.
+Comment[tr]=Enlightenment'in klavye ve fare kontrol bağlayıcıları ile kullanılan, ortalama <br>PC masaüstü, dizüstü ve netbook gibi klavye ve fare aygıtları bulunan cihazlar <br>için pencere döşeme yönetimi yapılandırması. Öntanımlı döşeme bağlayıcıları:<br>Win Tuşu + Boşluk, ok tuşları ve sol fare tuşu.<br>Daha fazla bilgi için modül ayarlarına bakınız.
+Icon=enlightenment-tiling
