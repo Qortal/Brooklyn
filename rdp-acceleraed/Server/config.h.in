@@ -1,0 +1,4 @@
+#cmakedefine HAS_CUDA
+#cmakedefine HAS_WDDM
+#cmakedefine HAS_NVENC
+#cmakedefine HAS_FFMPEG
