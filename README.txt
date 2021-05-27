@@ -1,6 +1,6 @@
 - Brooklyn R , The Moose V1.0
 * V1.0 is based off a Plasma Dektop 
-* V1.1a should be based on e17
+* V1.1a should be based on e17 sicne GPU issue is fixed
 
 D: Raziel A. Crowe aka Scare Crowe
 M: Sean Torchy aka Moose on the loose
@@ -21,6 +21,8 @@ X: Netflix & Chill
                +---------------------+
 
 http://git.gniibe.org/gitweb/?p=gnuk/fst-01.git
+
+If you rely heavily on VPN to bypass your regional filters then it will be a good idea to have extra entropy in hand. Any OpenSource Entropy stick should work on Brooklyn from now.
 
 Want to send some tip for continued development?
 
