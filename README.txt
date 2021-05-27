@@ -1,3 +1,7 @@
+- Brooklyn R , The Moose V1.0
+* V1.0 is based off a Plasma Dektop 
+* V1.1a should be based on e17
+
 D: Raziel A. Crowe aka Scare Crowe
 M: Sean Torchy aka Moose on the loose
 A: Jason A. Crowe aka Crowetic
