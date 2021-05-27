@@ -26,7 +26,7 @@ If you rely heavily on VPN to bypass your regional filters then it will be a goo
 
 You can get a release and flash it directly on your USB 3 hard drive with Balena Etcher. The default image size is meant for a 32GB microSD card. If you have a bigger microSD card then after login do a "sudo raspi-config", head over to Advacned and resize the file system. Same can be done for a GPT partitioned USB 3 hard drive/SSD.  If you have purchased a Raspberry Pi 4 elsewher then you might have to flash the boot loader to do a mass storaeg boot. Ask The Moose on the loose for help.
 
-Want to send some tip for continued development?
+Want to send some tip for continued development or features / apps ported on Brooklyn?
 
 DOGE: DJTRkmhwhG7W8t7WvAddZBnNkKWML6nHqJ
 LTC: LQyhdH9LfL9m5vqMHfeTZdRoUU8qAouZmQ
