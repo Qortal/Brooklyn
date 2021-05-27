@@ -46,6 +46,7 @@ _fill_data(E_Config_Dialog_Data *cfdata)
    cfdata->poll_interval = cpufreq_config->poll_interval;
    cfdata->restore_governor = cpufreq_config->restore_governor;
    cfdata->auto_powersave = cpufreq_config->auto_powersave;
+      cfdata->auto_powersave = cpufreq_config->performance;
    cfdata->pstate_min = cpufreq_config->pstate_min - 1;
    cfdata->pstate_max = cpufreq_config->pstate_max - 1;
    if (cpufreq_config->powersave_governor)
@@ -94,6 +95,23 @@ _basic_create_widgets(E_Config_Dialog *cfd EINA_UNUSED, Evas *evas, E_Config_Dia
    ob = e_widget_radio_add(evas, _("Normal (32 ticks)"), 32, rg);
    e_widget_framelist_object_append(of, ob);
    ob = e_widget_radio_add(evas, _("Slow (64 ticks)"), 64, rg);
+   e_widget_framelist_object_append(of, ob);
+   ob = e_widget_radio_add(evas, _("Very Slow (256 ticks)"), 256, rg);
+   e_widget_framelist_object_append(of, ob);
+   e_widget_list_object_append(o, of, 1, 0, 0.5);
+   
+   ob = e_widget_check_add(evas, _("Automatic powersaving"), &cfdata->auto_powersave);
+   e_widget_list_object_append(o, ob, 1, 0, 0.5);
+
+   of = e_widget_framelist_add(evas, _("Update poll interval"), 0);
+   rg = e_widget_radio_group_new(&cfdata->poll_interval);
+   ob = e_widget_radio_add(evas, _("Fast (8 ticks)"), 8, rg);
+   e_widget_framelist_object_append(of, ob);
+   ob = e_widget_radio_add(evas, _("Medium (16 ticks)"), 16, rg);
+   e_widget_framelist_object_append(of, ob);
+   ob = e_widget_radio_add(evas, _("Normal (64 ticks)"), 64, rg);
+   e_widget_framelist_object_append(of, ob);
+   ob = e_widget_radio_add(evas, _("Slow (128 ticks)"), 128, rg);
    e_widget_framelist_object_append(of, ob);
    ob = e_widget_radio_add(evas, _("Very Slow (256 ticks)"), 256, rg);
    e_widget_framelist_object_append(of, ob);
