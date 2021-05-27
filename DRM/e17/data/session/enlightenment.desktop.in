@@ -35,4 +35,4 @@ Comment[tr]=Enlightenment kullanarak giriş yaın (Version @VERSION@)
 Icon=@prefix@/share/enlightenment/data/images/enlightenment.png
 TryExec=@prefix@/bin/enlightenment_start
 Exec=@prefix@/bin/enlightenment_start
-DesktopNames=Enlightenment
+DesktopNames=e17
