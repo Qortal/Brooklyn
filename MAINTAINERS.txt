@@ -1,6 +1,6 @@
 Qortal Team
 ===========
-ScareCrowe, Sean, Crowetic
+ScareCrowe, Moose on the loose, Crowetic
 
 List of maintainers and how to submit kernel changes
 ====================================================
