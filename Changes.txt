@@ -1,6 +1,6 @@
 Enhancements
 
-Parallell ctypto engine enhancements
+Parallell crypto engine enhancements
 Qortal Crypto Function Library enabled during boot
 Sequentual Number Generator
 Polyhash Crypto API added
