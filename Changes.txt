@@ -1,3 +1,20 @@
+Enhancements
+
+Parallell ctypto engine enhancements
+Qortal Crypto Function Library enabled during boot
+Sequentual Number Generator
+Polyhash Crypto API added
+RIPMD Now integrated
+
+Kernel Security Updates
+
+seucrityfs enabled
+Copies between kernel memory and userspace are not semi restricted
+Common str/mem against buffer overflows extended
+Second level integrity subsystem created again
+EVM activated
+Auto purge kernel heap mem and free by writing zeroes as default
+
 Security Iusses Resolved
 
 CVE-2021-33034
