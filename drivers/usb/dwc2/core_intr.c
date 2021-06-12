@@ -706,6 +706,8 @@ static inline void dwc_handle_gpwrdn_disc_det(struct dwc2_hsotg *hsotg,
 	gpwrdn_tmp &= ~GPWRDN_PMUACTV;
 	dwc2_writel(hsotg, gpwrdn_tmp, GPWRDN);
 
+	hsotg->hibernated = 0;
+
 #if IS_ENABLED(CONFIG_USB_DWC2_HOST) ||	\
 	IS_ENABLED(CONFIG_USB_DWC2_DUAL_ROLE)
 	hsotg->bus_suspended = 0;
