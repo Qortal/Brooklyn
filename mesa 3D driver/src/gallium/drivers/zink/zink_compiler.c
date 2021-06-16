@@ -379,6 +379,8 @@ zink_screen_init_compiler(struct zink_screen *screen)
       .lower_fsat = true,
       .lower_extract_byte = true,
       .lower_extract_word = true,
+      .lower_insert_byte = true,
+      .lower_insert_word = true,
       .lower_mul_high = true,
       .lower_rotate = true,
       .lower_uadd_carry = true,
@@ -474,7 +476,7 @@ static void
 update_so_info(struct zink_shader *zs, const struct pipe_stream_output_info *so_info,
                uint64_t outputs_written, bool have_psiz)
 {
-   uint8_t reverse_map[64] = {};
+   uint8_t reverse_map[64] = {0};
    unsigned slot = 0;
    /* semi-copied from iris */
    while (outputs_written) {
@@ -640,7 +642,7 @@ zink_shader_compile(struct zink_screen *screen, struct zink_shader *zs, struct z
 
    assign_io_locations(nir, shader_slot_map, shader_slots_reserved);
 
-   struct spirv_shader *spirv = nir_to_spirv(nir, streamout, screen->vk_version >= VK_MAKE_VERSION(1, 2, 0));
+   struct spirv_shader *spirv = nir_to_spirv(nir, streamout, screen->spirv_version);
    if (!spirv)
       goto done;
 
@@ -656,7 +658,7 @@ zink_shader_compile(struct zink_screen *screen, struct zink_shader *zs, struct z
       }
    }
 
-   VkShaderModuleCreateInfo smci = {};
+   VkShaderModuleCreateInfo smci = {0};
    smci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
    smci.codeSize = spirv->num_words * sizeof(uint32_t);
    smci.pCode = spirv->words;
@@ -892,10 +894,13 @@ zink_shader_create(struct zink_screen *screen, struct nir_shader *nir,
          const struct glsl_type *type = glsl_without_array(var->type);
          if (var->data.mode == nir_var_mem_ubo) {
             ztype = ZINK_DESCRIPTOR_TYPE_UBO;
-            var->data.descriptor_set = ztype;
-            var->data.binding = zink_binding(nir->info.stage,
-                                 VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                                 var->data.driver_location);
+            /* buffer 0 is a push descriptor */
+            var->data.descriptor_set = !!var->data.driver_location;
+            var->data.binding = !var->data.driver_location ? nir->info.stage :
+                                zink_binding(nir->info.stage,
+                                             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                             var->data.driver_location);
+            assert(var->data.driver_location || var->data.binding < 10);
             VkDescriptorType vktype = !var->data.driver_location ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             int binding = var->data.binding;
 
@@ -907,7 +912,7 @@ zink_shader_create(struct zink_screen *screen, struct nir_shader *nir,
             ret->num_bindings[ztype]++;
          } else if (var->data.mode == nir_var_mem_ssbo) {
             ztype = ZINK_DESCRIPTOR_TYPE_SSBO;
-            var->data.descriptor_set = ztype;
+            var->data.descriptor_set = ztype + 1;
             var->data.binding = zink_binding(nir->info.stage,
                                              VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                              var->data.driver_location);
@@ -921,12 +926,12 @@ zink_shader_create(struct zink_screen *screen, struct nir_shader *nir,
             assert(var->data.mode == nir_var_uniform);
             if (glsl_type_is_sampler(type) || glsl_type_is_image(type)) {
                VkDescriptorType vktype = glsl_type_is_image(type) ? zink_image_type(type) : zink_sampler_type(type);
+               if (vktype == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER)
+                  ret->num_texel_buffers++;
                ztype = zink_desc_type_from_vktype(vktype);
-               var->data.descriptor_set = ztype;
                var->data.driver_location = var->data.binding;
-               var->data.binding = zink_binding(nir->info.stage,
-                                                vktype,
-                                                var->data.driver_location);
+               var->data.descriptor_set = ztype + 1;
+               var->data.binding = zink_binding(nir->info.stage, vktype, var->data.driver_location);
                ret->bindings[ztype][ret->num_bindings[ztype]].index = var->data.driver_location;
                ret->bindings[ztype][ret->num_bindings[ztype]].binding = var->data.binding;
                ret->bindings[ztype][ret->num_bindings[ztype]].type = vktype;
@@ -954,7 +959,7 @@ zink_shader_finalize(struct pipe_screen *pscreen, void *nirptr, bool optimize)
    nir_shader *nir = nirptr;
 
    if (!screen->info.feats.features.shaderImageGatherExtended) {
-      nir_lower_tex_options tex_opts = {};
+      nir_lower_tex_options tex_opts = {0};
       tex_opts.lower_tg4_offsets = true;
       NIR_PASS_V(nir, nir_lower_tex, &tex_opts);
    }

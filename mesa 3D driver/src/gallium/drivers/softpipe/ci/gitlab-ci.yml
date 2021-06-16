@@ -6,6 +6,7 @@ softpipe-gles2:
     GPU_VERSION: softpipe
     GALLIUM_DRIVER: "softpipe"
     DEQP_EXPECTED_RENDERER: softpipe
+    FLAKES_CHANNEL: "#mesa-swrast-ci"
 
 softpipe-gles3:
   variables:
@@ -82,6 +83,7 @@ softpipe-piglit-quick:
       -x glsl-4.50
       -x gpu_shader4
       -x gpu_shader5
+      -x glsl-uniform-interstage-limits
     PIGLIT_PROFILES: quick_gl quick_shader
     PIGLIT_RESULTS: softpipe-quick
 

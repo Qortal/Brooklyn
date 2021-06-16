@@ -113,7 +113,7 @@ fs_visitor::nir_setup_uniforms()
       assert(uniforms == prog_data->nr_params);
 
       uint32_t *param;
-      if (nir->info.cs.local_size_variable &&
+      if (nir->info.workgroup_size_variable &&
           compiler->lower_variable_group_size) {
          param = brw_stage_prog_data_add_params(prog_data, 3);
          for (unsigned i = 0; i < 3; i++) {
@@ -191,10 +191,10 @@ emit_system_values_block(nir_block *block, fs_visitor *v)
             *reg = *v->emit_samplemaskin_setup();
          break;
 
-      case nir_intrinsic_load_work_group_id:
+      case nir_intrinsic_load_workgroup_id:
          assert(v->stage == MESA_SHADER_COMPUTE ||
                 v->stage == MESA_SHADER_KERNEL);
-         reg = &v->nir_system_values[SYSTEM_VALUE_WORK_GROUP_ID];
+         reg = &v->nir_system_values[SYSTEM_VALUE_WORKGROUP_ID];
          if (reg->file == BAD_FILE)
             *reg = *v->emit_cs_work_group_id_setup();
          break;
@@ -3671,7 +3671,7 @@ fs_visitor::nir_emit_cs_intrinsic(const fs_builder &bld,
        * invocations are already executed lock-step.  Instead of an actual
        * barrier just emit a scheduling fence, that will generate no code.
        */
-      if (!nir->info.cs.local_size_variable &&
+      if (!nir->info.workgroup_size_variable &&
           workgroup_size() <= dispatch_width) {
          bld.exec_all().group(1, 0).emit(FS_OPCODE_SCHEDULING_FENCE);
          break;
@@ -3691,7 +3691,7 @@ fs_visitor::nir_emit_cs_intrinsic(const fs_builder &bld,
       break;
 
    case nir_intrinsic_load_local_invocation_id:
-   case nir_intrinsic_load_work_group_id: {
+   case nir_intrinsic_load_workgroup_id: {
       gl_system_value sv = nir_system_value_from_intrinsic(instr->intrinsic);
       fs_reg val = nir_system_values[sv];
       assert(val.file != BAD_FILE);
@@ -3701,7 +3701,7 @@ fs_visitor::nir_emit_cs_intrinsic(const fs_builder &bld,
       break;
    }
 
-   case nir_intrinsic_load_num_work_groups: {
+   case nir_intrinsic_load_num_workgroups: {
       assert(nir_dest_bit_size(instr->dest) == 32);
       const unsigned surface =
          cs_prog_data->binding_table.work_groups_start;
@@ -3814,9 +3814,9 @@ fs_visitor::nir_emit_cs_intrinsic(const fs_builder &bld,
       break;
    }
 
-   case nir_intrinsic_load_local_group_size: {
+   case nir_intrinsic_load_workgroup_size: {
       assert(compiler->lower_variable_group_size);
-      assert(nir->info.cs.local_size_variable);
+      assert(nir->info.workgroup_size_variable);
       for (unsigned i = 0; i < 3; i++) {
          bld.MOV(retype(offset(dest, bld, i), BRW_REGISTER_TYPE_UD),
             group_size[i]);
@@ -4324,7 +4324,7 @@ fs_visitor::nir_emit_intrinsic(const fs_builder &bld, nir_intrinsic_instr *instr
        *
        * TODO: Check if applies for many HW threads sharing same Data Port.
        */
-      if (!nir->info.cs.local_size_variable &&
+      if (!nir->info.workgroup_size_variable &&
           slm_fence && workgroup_size() <= dispatch_width)
          slm_fence = false;
 
@@ -4338,7 +4338,7 @@ fs_visitor::nir_emit_intrinsic(const fs_builder &bld, nir_intrinsic_instr *instr
        * to flush it too.
        */
       const bool needs_render_fence =
-         devinfo->ver == 7 && !devinfo->is_haswell;
+         devinfo->verx10 == 70;
 
       /* Be conservative in Gfx11+ and always stall in a fence.  Since there
        * are two different fences, and shader might want to synchronize

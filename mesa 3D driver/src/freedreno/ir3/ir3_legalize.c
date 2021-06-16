@@ -127,7 +127,7 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
 	 * with the end of the program.
 	 */
 	assert(input_count == 0 || !ctx->early_input_release ||
-		   block == list_first_entry(&block->shader->block_list, struct ir3_block, node));
+		   block == ir3_start_block(block->shader));
 
 	/* remove all the instructions from the list, we'll be adding
 	 * them back in as we go
@@ -627,12 +627,16 @@ block_sched(struct ir3 *ir)
 			/* create "else" branch first (since "then" block should
 			 * frequently/always end up being a fall-thru):
 			 */
-			br = ir3_B(block, block->condition, 0);
+			br = ir3_instr_create(block, OPC_B, 2);
+			ir3_reg_create(br, INVALID_REG, IR3_REG_DEST);
+			ir3_reg_create(br, regid(REG_P0, 0), 0)->def = block->condition->regs[0];
 			br->cat0.inv1 = true;
 			br->cat0.target = block->successors[1];
 
 			/* "then" branch: */
-			br = ir3_B(block, block->condition, 0);
+			br = ir3_instr_create(block, OPC_B, 2);
+			ir3_reg_create(br, INVALID_REG, IR3_REG_DEST);
+			ir3_reg_create(br, regid(REG_P0, 0), 0)->def = block->condition->regs[0];
 			br->cat0.target = block->successors[0];
 
 		} else if (block->successors[0]) {
@@ -714,7 +718,7 @@ kill_sched(struct ir3 *ir, struct ir3_shader_variant *so)
 
 /* Insert nop's required to make this a legal/valid shader program: */
 static void
-nop_sched(struct ir3 *ir)
+nop_sched(struct ir3 *ir, struct ir3_shader_variant *so)
 {
 	foreach_block (block, &ir->block_list) {
 		struct ir3_instruction *last = NULL;
@@ -727,7 +731,8 @@ nop_sched(struct ir3 *ir)
 		list_inithead(&block->instr_list);
 
 		foreach_instr_safe (instr, &instr_list) {
-			unsigned delay = ir3_delay_calc(block, instr, false, true);
+			unsigned delay =
+				ir3_delay_calc_exact(block, instr, so->mergedregs);
 
 			/* NOTE: I think the nopN encoding works for a5xx and
 			 * probably a4xx, but not a3xx.  So far only tested on
@@ -793,11 +798,10 @@ ir3_legalize(struct ir3 *ir, struct ir3_shader_variant *so, int *max_bary)
 	 * a5xx and a6xx do automatically release varying storage at the end.
 	 */
 	ctx->early_input_release = true;
-	struct ir3_block *first_block =
-		list_first_entry(&ir->block_list, struct ir3_block, node);
+	struct ir3_block *start_block = ir3_start_block(ir);
 	foreach_block (block, &ir->block_list) {
 		foreach_instr (instr, &block->instr_list) {
-			if (is_input(instr) && block != first_block) {
+			if (is_input(instr) && block != start_block) {
 				ctx->early_input_release = false;
 				break;
 			}
@@ -824,7 +828,7 @@ ir3_legalize(struct ir3 *ir, struct ir3_shader_variant *so, int *max_bary)
 		progress |= apply_fine_deriv_macro(ctx, block);
 	}
 
-	nop_sched(ir);
+	nop_sched(ir, so);
 
 	do {
 		ir3_count_instructions(ir);

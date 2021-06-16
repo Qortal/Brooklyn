@@ -9,6 +9,7 @@ dEQP-EGL.functional.color_clears.multi_context.gles2.rgba8888_pbuffer
 dEQP-EGL.functional.color_clears.multi_context.gles2.rgba8888_window
 dEQP-EGL.functional.color_clears.multi_context.gles3.rgb888_pbuffer
 dEQP-EGL.functional.color_clears.multi_context.gles3.rgba8888_pbuffer
+dEQP-EGL.functional.color_clears.multi_thread.gles2.rgba8888_pbuffer
 dEQP-EGL.functional.color_clears.multi_thread.gles2.rgba8888_window
 dEQP-EGL.functional.color_clears.multi_thread.gles3.rgb888_pbuffer
 dEQP-EGL.functional.color_clears.multi_thread.gles3.rgba8888_pbuffer
@@ -41,9 +42,11 @@ dEQP-EGL.functional.render.multi_context.gles2.rgb888_pbuffer
 dEQP-EGL.functional.render.multi_context.gles2.rgb888_window
 dEQP-EGL.functional.render.multi_context.gles2.rgba8888_pbuffer
 dEQP-EGL.functional.render.multi_context.gles2.rgba8888_window
+dEQP-EGL.functional.render.multi_context.gles3.rgb888_pbuffer
 dEQP-EGL.functional.render.multi_context.gles3.rgb888_window
 dEQP-EGL.functional.render.multi_context.gles3.rgba8888_window
 dEQP-EGL.functional.render.multi_thread.gles2_gles3.rgb888_window
+dEQP-EGL.functional.render.multi_thread.gles2_gles3.rgba8888_pbuffer
 dEQP-EGL.functional.render.multi_thread.gles2_gles3.rgba8888_window
 dEQP-EGL.functional.render.multi_thread.gles2.rgb888_window
 dEQP-EGL.functional.render.multi_thread.gles2.rgba8888_pbuffer
@@ -67,43 +70,24 @@ dEQP-EGL.functional.wide_color.pbuffer_888_colorspace_srgb
 dEQP-EGL.functional.wide_color.window_8888_colorspace_default
 dEQP-EGL.functional.wide_color.window_8888_colorspace_srgb
 
-# Flakes reported more than once during Jan-Feb 2020
+# Started at least by Jan 2020, current as of May 2021
 dEQP-GLES31.functional.layout_binding.ssbo.fragment_binding_array
 
 # Started appearing with the new deqp runner.  possibly different test order?
 dEQP-GLES3.functional.fbo.blit.conversion.rg8i_to_r16i
-
-# We have longstanding intermittent failures with compswap.
-dEQP-GLES31.functional.compute.shared_var.atomic.compswap.highp_int
-dEQP-GLES31.functional.compute.shared_var.atomic.compswap.highp_uint
-dEQP-GLES31.functional.compute.shared_var.atomic.compswap.lowp_int
-dEQP-GLES31.functional.compute.shared_var.atomic.compswap.lowp_uint
-dEQP-GLES31.functional.compute.shared_var.atomic.compswap.mediump_int
-dEQP-GLES31.functional.compute.shared_var.atomic.compswap.mediump_uint
-dEQP-GLES31.functional.ssbo.atomic.compswap.highp_int
-dEQP-GLES31.functional.ssbo.atomic.compswap.highp_uint
-dEQP-GLES31.functional.ssbo.atomic.compswap.lowp_int
-dEQP-GLES31.functional.ssbo.atomic.compswap.lowp_uint
-dEQP-GLES31.functional.ssbo.atomic.compswap.mediump_int
-dEQP-GLES31.functional.ssbo.atomic.compswap.mediump_uint
-
-# No valgrind warning I've seen, not sure.
-dEQP-VK.wsi.display.get_display_plane_capabilities
-
-# Fails NIR_VALIDATE so probably flaky
-dEQP-VK.memory_model.write_after_read.core11.u32.coherent.fence_fence.atomicwrite.workgroup.payload_nonlocal.workgroup.guard_local.buffer.comp
+dEQP-GLES3.functional.fbo.blit.conversion.rg8_to_r16f
 
 # Undiagnosed flakes appearing more than once in the last 2 months as
 # of 2020-08-19, in descending order of frequency.
 dEQP-GLES3.functional.fragment_out.random.39
-dEQP-VK.subgroups.shuffle.framebuffer.subgroupshufflexor_bvec3_tess_eval
 dEQP-VK.image.texel_view_compatible.graphic.extended.2d_image.texture_read.astc_10x6_unorm_block.r32g32b32a32_uint
-dEQP-VK.api.copy_and_blit.dedicated_allocation.blit_image.all_formats.generate_mipmaps.from_base_level.layercount_6.r8g8b8a8_sint.general_optimal_nearest
-dEQP-VK.api.copy_and_blit.core.blit_image.all_formats.color.r16_unorm.b8g8r8a8_snorm.optimal_optimal_nearest
-dEQP-GLES31.functional.layout_binding.ssbo.fragment_binding_array
-dEQP-VK.subgroups.quad.framebuffer.subgroupquadswapvertical_ivec2_tess_eval
-dEQP-VK.api.copy_and_blit.core.blit_image.all_formats.color.r8g8b8a8_snorm.r32_sfloat.general_optimal_nearest
 dEQP-GLES31.functional.tessellation.invariance.primitive_set.quads_equal_spacing_cw
 
-# Still debugging flakes in this from fd/go-fast
-dEQP-GLES3.functional.fence_sync.client_wait_sync_finish
+# Started appearing after disabling cpufreq, devfreq and disabling runtime PM
+dEQP-GLES3.functional.fbo.blit.depth_stencil.depth32f_stencil8_basic
+dEQP-GLES3.functional.fbo.blit.depth_stencil.depth32f_stencil8_scale
+dEQP-GLES3.functional.fbo.blit.depth_stencil.depth32f_stencil8_stencil_only
+
+# Could trip hangcheck timeout
+dEQP-VK.api.command_buffers.record_many_draws_primary_2
+dEQP-VK.api.command_buffers.record_many_draws_secondary_2

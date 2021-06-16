@@ -29,6 +29,7 @@
 #include <memory.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include <errno.h>
 #include <ctype.h>
 #include "decode.h"
 
@@ -387,7 +388,7 @@ pandecode_attributes(const struct pandecode_mapped_memory *mem,
                                    ATTRIBUTE_BUFFER_CONTINUATION_NPOT, temp2);
                         pan_print(pandecode_dump_stream, ATTRIBUTE_BUFFER_CONTINUATION_NPOT,
                                   temp2, (pandecode_indent + 1) * 2);
-                        i++; count++;
+                        i++;
                         break;
                 }
                 case MALI_ATTRIBUTE_TYPE_3D_LINEAR:
@@ -396,7 +397,7 @@ pandecode_attributes(const struct pandecode_mapped_memory *mem,
                                    ATTRIBUTE_BUFFER_CONTINUATION_3D, temp2);
                         pan_print(pandecode_dump_stream, ATTRIBUTE_BUFFER_CONTINUATION_3D,
                                   temp2, (pandecode_indent + 1) * 2);
-                        i++; count++;
+                        i++;
                         break;
                 }
                 default:
@@ -427,19 +428,20 @@ pandecode_midgard_blend_mrt(void *descs, int job_no, int rt_no)
         return b.midgard.blend_shader ? (b.midgard.shader_pc & ~0xf) : 0;
 }
 
-/* Attributes and varyings have descriptor records, which contain information
- * about their format and ordering with the attribute/varying buffers. We'll
- * want to validate that the combinations specified are self-consistent.
- */
-
-static int
-pandecode_attribute_meta(int count, mali_ptr attribute, bool varying, char *suffix)
+static unsigned
+pandecode_attribute_meta(int count, mali_ptr attribute, bool varying)
 {
-        for (int i = 0; i < count; ++i, attribute += MALI_ATTRIBUTE_LENGTH)
-                DUMP_ADDR(ATTRIBUTE, attribute, "%s:\n", varying ? "Varying" : "Attribute");
+        unsigned max = 0;
+
+        for (int i = 0; i < count; ++i, attribute += MALI_ATTRIBUTE_LENGTH) {
+                MAP_ADDR(ATTRIBUTE, attribute, cl);
+                pan_unpack(cl, ATTRIBUTE, a);
+                DUMP_UNPACKED(ATTRIBUTE, a, "%s:\n", varying ? "Varying" : "Attribute");
+                max = MAX2(max, a.buffer_index);
+        }
 
         pandecode_log("\n");
-        return count;
+        return MIN2(max + 1, 256);
 }
 
 /* return bits [lo, hi) of word */
@@ -871,7 +873,7 @@ pandecode_dcd(const struct MALI_DRAW *p,
         unsigned max_attr_index = 0;
 
         if (p->attributes)
-                max_attr_index = pandecode_attribute_meta(attribute_count, p->attributes, false, suffix);
+                max_attr_index = pandecode_attribute_meta(attribute_count, p->attributes, false);
 
         if (p->attribute_buffers) {
                 attr_mem = pandecode_find_mapped_gpu_mem_containing(p->attribute_buffers);
@@ -879,7 +881,7 @@ pandecode_dcd(const struct MALI_DRAW *p,
         }
 
         if (p->varyings) {
-                varying_count = pandecode_attribute_meta(varying_count, p->varyings, true, suffix);
+                varying_count = pandecode_attribute_meta(varying_count, p->varyings, true);
         }
 
         if (p->varying_buffers) {
@@ -1075,17 +1077,24 @@ pandecode_write_value_job(const struct pandecode_mapped_memory *mem,
         pandecode_log("\n");
 }
 
+static void
+pandecode_cache_flush_job(const struct pandecode_mapped_memory *mem,
+                          mali_ptr job, int job_no)
+{
+        struct mali_cache_flush_job_packed *PANDECODE_PTR_VAR(p, mem, job);
+        pan_section_unpack(p, CACHE_FLUSH_JOB, PAYLOAD, u);
+        DUMP_SECTION(CACHE_FLUSH_JOB, PAYLOAD, p, "Cache Flush Payload:\n");
+        pandecode_log("\n");
+}
+
 /* Entrypoint to start tracing. jc_gpu_va is the GPU address for the first job
  * in the chain; later jobs are found by walking the chain. Bifrost is, well,
  * if it's bifrost or not. GPU ID is the more finegrained ID (at some point, we
  * might wish to combine this with the bifrost parameter) because some details
- * are model-specific even within a particular architecture. Minimal traces
- * *only* examine the job descriptors, skipping printing entirely if there is
- * no faults, and only descends into the payload if there are faults. This is
- * useful for looking for faults without the overhead of invasive traces. */
+ * are model-specific even within a particular architecture. */
 
 void
-pandecode_jc(mali_ptr jc_gpu_va, bool bifrost, unsigned gpu_id, bool minimal)
+pandecode_jc(mali_ptr jc_gpu_va, bool bifrost, unsigned gpu_id)
 {
         pandecode_dump_file_open();
 
@@ -1102,16 +1111,16 @@ pandecode_jc(mali_ptr jc_gpu_va, bool bifrost, unsigned gpu_id, bool minimal)
 
                 int job_no = job_descriptor_number++;
 
-                /* If the job is good to go, skip it in minimal mode */
-                if (minimal && (h.exception_status == 0x0 || h.exception_status == 0x1))
-                        continue;
-
                 DUMP_UNPACKED(JOB_HEADER, h, "Job Header:\n");
                 pandecode_log("\n");
 
                 switch (h.type) {
                 case MALI_JOB_TYPE_WRITE_VALUE:
                         pandecode_write_value_job(mem, jc_gpu_va, job_no);
+                        break;
+
+                case MALI_JOB_TYPE_CACHE_FLUSH:
+                        pandecode_cache_flush_job(mem, jc_gpu_va, job_no);
                         break;
 
                 case MALI_JOB_TYPE_TILER:
@@ -1133,6 +1142,30 @@ pandecode_jc(mali_ptr jc_gpu_va, bool bifrost, unsigned gpu_id, bool minimal)
 
                 default:
                         break;
+                }
+        } while ((jc_gpu_va = next_job));
+
+        fflush(pandecode_dump_stream);
+        pandecode_map_read_write();
+}
+
+void
+pandecode_abort_on_fault(mali_ptr jc_gpu_va)
+{
+        mali_ptr next_job = 0;
+
+        do {
+                struct pandecode_mapped_memory *mem =
+                        pandecode_find_mapped_gpu_mem_containing(jc_gpu_va);
+
+                pan_unpack(PANDECODE_PTR(mem, jc_gpu_va, struct mali_job_header_packed),
+                           JOB_HEADER, h);
+                next_job = h.next;
+
+                /* Ensure the job is marked COMPLETE */
+                if (h.exception_status != 0x1) {
+                        fprintf(stderr, "Incomplete job or timeout");
+                        abort();
                 }
         } while ((jc_gpu_va = next_job));
 

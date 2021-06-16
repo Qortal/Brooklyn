@@ -71,8 +71,9 @@ panfrost_create_compute_state(
                 so->cbase.ir_type = PIPE_SHADER_IR_NIR;
         }
 
-        panfrost_shader_compile(ctx, so->cbase.ir_type, so->cbase.prog,
-                                MESA_SHADER_COMPUTE, v);
+        panfrost_shader_compile(pctx->screen, &ctx->shaders, &ctx->descs,
+                        so->cbase.ir_type, so->cbase.prog, MESA_SHADER_COMPUTE,
+                        v);
 
         return so;
 }
@@ -100,12 +101,38 @@ panfrost_launch_grid(struct pipe_context *pipe,
 {
         struct panfrost_context *ctx = pan_context(pipe);
         struct panfrost_device *dev = pan_device(pipe->screen);
+
+        /* XXX - shouldn't be necessary with working memory barriers. Affected
+         * test: KHR-GLES31.core.compute_shader.pipeline-post-xfb */
+        panfrost_flush_all_batches(ctx);
+
         struct panfrost_batch *batch = panfrost_get_batch_for_fbo(ctx);
 
-        /* Reserve a thread storage descriptor now (will be emitted at submit
-         * time).
-         */
-        panfrost_batch_reserve_tls(batch, true);
+        struct panfrost_shader_state *cs =
+                &ctx->shader[PIPE_SHADER_COMPUTE]->variants[0];
+
+        /* Indirect dispatch can't handle workgroup local storage since that
+         * would require dynamic memory allocation. Bail in this case. */
+        if (info->indirect && !cs->info.wls_size) {
+                struct pipe_transfer *transfer;
+                uint32_t *params = pipe_buffer_map_range(pipe, info->indirect,
+                                info->indirect_offset,
+                                3 * sizeof(uint32_t),
+                                PIPE_MAP_READ,
+                                &transfer);
+
+                struct pipe_grid_info direct = *info;
+                direct.indirect = NULL;
+                direct.grid[0] = params[0];
+                direct.grid[1] = params[1];
+                direct.grid[2] = params[2];
+                pipe_buffer_unmap(pipe, transfer);
+
+                if (params[0] && params[1] && params[2])
+                        panfrost_launch_grid(pipe, &direct);
+
+                return;
+        }
 
         ctx->compute_grid = info;
 
@@ -138,7 +165,7 @@ panfrost_launch_grid(struct pipe_context *pipe,
                                           num_wg[0], num_wg[1], num_wg[2],
                                           info->block[0], info->block[1],
                                           info->block[2],
-                                          false);
+                                          false, info->indirect != NULL);
 
         pan_section_pack(t.cpu, COMPUTE_JOB, PARAMETERS, cfg) {
                 cfg.job_task_split =
@@ -214,6 +241,9 @@ panfrost_set_global_binding(struct pipe_context *pctx,
                 panfrost_batch_add_bo(batch, rsrc->image.data.bo,
                                       PAN_BO_ACCESS_SHARED | PAN_BO_ACCESS_RW);
 
+                util_range_add(&rsrc->base, &rsrc->valid_buffer_range,
+                                0, rsrc->base.width0);
+
                 /* The handle points to uint32_t, but space is allocated for 64 bits */
                 memcpy(handles[i], &rsrc->image.data.bo->ptr.gpu, sizeof(mali_ptr));
         }
@@ -222,7 +252,9 @@ panfrost_set_global_binding(struct pipe_context *pctx,
 static void
 panfrost_memory_barrier(struct pipe_context *pctx, unsigned flags)
 {
-        /* TODO */
+        /* TODO: Be smart and only flush the minimum needed, maybe emitting a
+         * cache flush job if that would help */
+        panfrost_flush_all_batches(pan_context(pctx));
 }
 
 void

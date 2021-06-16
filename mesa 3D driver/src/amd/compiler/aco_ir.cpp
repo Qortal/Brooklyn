@@ -196,7 +196,7 @@ memory_sync_info get_sync_info(const Instruction* instr)
    }
 }
 
-bool can_use_SDWA(chip_class chip, const aco_ptr<Instruction>& instr)
+bool can_use_SDWA(chip_class chip, const aco_ptr<Instruction>& instr, bool pre_ra)
 {
    if (!instr->isVALU())
       return false;
@@ -217,7 +217,7 @@ bool can_use_SDWA(chip_class chip, const aco_ptr<Instruction>& instr)
          return false;
 
       //TODO: return true if we know we will use vcc
-      if (instr->definitions.size() >= 2)
+      if (!pre_ra && instr->definitions.size() >= 2)
          return false;
 
       for (unsigned i = 1; i < instr->operands.size(); i++) {
@@ -228,10 +228,17 @@ bool can_use_SDWA(chip_class chip, const aco_ptr<Instruction>& instr)
       }
    }
 
+   if (!instr->definitions.empty() && instr->definitions[0].bytes() > 4)
+      return false;
+
    if (!instr->operands.empty()) {
       if (instr->operands[0].isLiteral())
          return false;
       if (chip < GFX9 && !instr->operands[0].isOfType(RegType::vgpr))
+         return false;
+      if (instr->operands[0].bytes() > 4)
+         return false;
+      if (instr->operands.size() > 1 && instr->operands[1].bytes() > 4)
          return false;
    }
 
@@ -244,9 +251,9 @@ bool can_use_SDWA(chip_class chip, const aco_ptr<Instruction>& instr)
       return false;
 
    //TODO: return true if we know we will use vcc
-   if (instr->isVOPC())
+   if (!pre_ra && instr->isVOPC())
       return false;
-   if (instr->operands.size() >= 3 && !is_mac)
+   if (!pre_ra && instr->operands.size() >= 3 && !is_mac)
       return false;
 
    return instr->opcode != aco_opcode::v_madmk_f32 &&
@@ -447,9 +454,9 @@ uint32_t get_reduction_identity(ReduceOp op, unsigned idx)
 }
 
 bool needs_exec_mask(const Instruction* instr) {
-   if (instr->isSALU())
+   if (instr->isSALU() || instr->isBranch())
       return instr->reads_exec();
-   if (instr->isSMEM() || instr->isSALU())
+   if (instr->isSMEM())
       return false;
    if (instr->isBarrier())
       return false;
@@ -459,6 +466,8 @@ bool needs_exec_mask(const Instruction* instr) {
       case aco_opcode::p_create_vector:
       case aco_opcode::p_extract_vector:
       case aco_opcode::p_split_vector:
+      case aco_opcode::p_phi:
+      case aco_opcode::p_parallelcopy:
          for (Definition def : instr->definitions) {
             if (def.getTemp().type() == RegType::vgpr)
                return true;
@@ -466,6 +475,9 @@ bool needs_exec_mask(const Instruction* instr) {
          return false;
       case aco_opcode::p_spill:
       case aco_opcode::p_reload:
+      case aco_opcode::p_logical_start:
+      case aco_opcode::p_logical_end:
+      case aco_opcode::p_startpgm:
          return false;
       default:
          break;
@@ -542,6 +554,32 @@ bool wait_imm::empty() const
 {
    return vm == unset_counter && exp == unset_counter &&
           lgkm == unset_counter && vs == unset_counter;
+}
+
+bool should_form_clause(const Instruction *a, const Instruction *b)
+{
+   /* Vertex attribute loads from the same binding likely load from similar addresses */
+   unsigned a_vtx_binding = a->isMUBUF() ? a->mubuf().vtx_binding : (a->isMTBUF() ? a->mtbuf().vtx_binding : 0);
+   unsigned b_vtx_binding = b->isMUBUF() ? b->mubuf().vtx_binding : (b->isMTBUF() ? b->mtbuf().vtx_binding : 0);
+   if (a_vtx_binding && a_vtx_binding == b_vtx_binding)
+      return true;
+
+   if (a->format != b->format)
+      return false;
+
+   /* Assume loads which don't use descriptors might load from similar addresses. */
+   if (a->isFlatLike())
+      return true;
+   if (a->isSMEM() && a->operands[0].bytes() == 8 && b->operands[0].bytes() == 8)
+      return true;
+
+   /* If they load from the same descriptor, assume they might load from similar
+    * addresses.
+    */
+   if (a->isVMEM() || a->isSMEM())
+      return a->operands[0].tempId() == b->operands[0].tempId();
+
+   return false;
 }
 
 }

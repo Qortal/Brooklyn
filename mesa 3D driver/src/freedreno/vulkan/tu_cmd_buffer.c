@@ -1395,15 +1395,17 @@ tu_reset_cmd_buffer(struct tu_cmd_buffer *cmd_buffer)
    tu_cs_reset(&cmd_buffer->draw_epilogue_cs);
    tu_cs_reset(&cmd_buffer->sub_cs);
 
-   for (unsigned i = 0; i < MAX_BIND_POINTS; i++)
+   for (unsigned i = 0; i < MAX_BIND_POINTS; i++) {
       memset(&cmd_buffer->descriptors[i].sets, 0, sizeof(cmd_buffer->descriptors[i].sets));
+      memset(&cmd_buffer->descriptors[i].push_set, 0, sizeof(cmd_buffer->descriptors[i].push_set));
+   }
 
    cmd_buffer->status = TU_CMD_BUFFER_STATUS_INITIAL;
 
    return cmd_buffer->record_result;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_AllocateCommandBuffers(VkDevice _device,
                           const VkCommandBufferAllocateInfo *pAllocateInfo,
                           VkCommandBuffer *pCommandBuffers)
@@ -1456,7 +1458,7 @@ tu_AllocateCommandBuffers(VkDevice _device,
    return result;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_FreeCommandBuffers(VkDevice device,
                       VkCommandPool commandPool,
                       uint32_t commandBufferCount,
@@ -1476,7 +1478,7 @@ tu_FreeCommandBuffers(VkDevice device,
    }
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_ResetCommandBuffer(VkCommandBuffer commandBuffer,
                       VkCommandBufferResetFlags flags)
 {
@@ -1494,7 +1496,7 @@ tu_cache_init(struct tu_cache_state *cache)
    cache->pending_flush_bits = TU_CMD_FLAG_ALL_INVALIDATE;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_BeginCommandBuffer(VkCommandBuffer commandBuffer,
                       const VkCommandBufferBeginInfo *pBeginInfo)
 {
@@ -1562,7 +1564,7 @@ tu_BeginCommandBuffer(VkCommandBuffer commandBuffer,
    return VK_SUCCESS;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdBindVertexBuffers(VkCommandBuffer commandBuffer,
                         uint32_t firstBinding,
                         uint32_t bindingCount,
@@ -1573,7 +1575,7 @@ tu_CmdBindVertexBuffers(VkCommandBuffer commandBuffer,
                                pBuffers, pOffsets, NULL, NULL);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdBindVertexBuffers2EXT(VkCommandBuffer commandBuffer,
                             uint32_t firstBinding,
                             uint32_t bindingCount,
@@ -1620,7 +1622,7 @@ tu_CmdBindVertexBuffers2EXT(VkCommandBuffer commandBuffer,
    }
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdBindIndexBuffer(VkCommandBuffer commandBuffer,
                       VkBuffer buffer,
                       VkDeviceSize offset,
@@ -1664,7 +1666,7 @@ tu_CmdBindIndexBuffer(VkCommandBuffer commandBuffer,
    cmd->state.index_size = index_size;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdBindDescriptorSets(VkCommandBuffer commandBuffer,
                          VkPipelineBindPoint pipelineBindPoint,
                          VkPipelineLayout _layout,
@@ -1782,12 +1784,13 @@ tu_CmdBindDescriptorSets(VkCommandBuffer commandBuffer,
    }
 }
 
-void tu_CmdPushDescriptorSetKHR(VkCommandBuffer commandBuffer,
-                                VkPipelineBindPoint pipelineBindPoint,
-                                VkPipelineLayout _layout,
-                                uint32_t _set,
-                                uint32_t descriptorWriteCount,
-                                const VkWriteDescriptorSet *pDescriptorWrites)
+VKAPI_ATTR void VKAPI_CALL
+tu_CmdPushDescriptorSetKHR(VkCommandBuffer commandBuffer,
+                           VkPipelineBindPoint pipelineBindPoint,
+                           VkPipelineLayout _layout,
+                           uint32_t _set,
+                           uint32_t descriptorWriteCount,
+                           const VkWriteDescriptorSet *pDescriptorWrites)
 {
    TU_FROM_HANDLE(tu_cmd_buffer, cmd, commandBuffer);
    TU_FROM_HANDLE(tu_pipeline_layout, pipe_layout, _layout);
@@ -1820,12 +1823,12 @@ void tu_CmdPushDescriptorSetKHR(VkCommandBuffer commandBuffer,
                             0, NULL);
 }
 
-void tu_CmdPushDescriptorSetWithTemplateKHR(
-   VkCommandBuffer commandBuffer,
-   VkDescriptorUpdateTemplate descriptorUpdateTemplate,
-   VkPipelineLayout _layout,
-   uint32_t _set,
-   const void* pData)
+VKAPI_ATTR void VKAPI_CALL
+tu_CmdPushDescriptorSetWithTemplateKHR(VkCommandBuffer commandBuffer,
+                                       VkDescriptorUpdateTemplate descriptorUpdateTemplate,
+                                       VkPipelineLayout _layout,
+                                       uint32_t _set,
+                                       const void* pData)
 {
    TU_FROM_HANDLE(tu_cmd_buffer, cmd, commandBuffer);
    TU_FROM_HANDLE(tu_pipeline_layout, pipe_layout, _layout);
@@ -1858,12 +1861,13 @@ void tu_CmdPushDescriptorSetWithTemplateKHR(
                             0, NULL);
 }
 
-void tu_CmdBindTransformFeedbackBuffersEXT(VkCommandBuffer commandBuffer,
-                                           uint32_t firstBinding,
-                                           uint32_t bindingCount,
-                                           const VkBuffer *pBuffers,
-                                           const VkDeviceSize *pOffsets,
-                                           const VkDeviceSize *pSizes)
+VKAPI_ATTR void VKAPI_CALL
+tu_CmdBindTransformFeedbackBuffersEXT(VkCommandBuffer commandBuffer,
+                                      uint32_t firstBinding,
+                                      uint32_t bindingCount,
+                                      const VkBuffer *pBuffers,
+                                      const VkDeviceSize *pOffsets,
+                                      const VkDeviceSize *pSizes)
 {
    TU_FROM_HANDLE(tu_cmd_buffer, cmd, commandBuffer);
    struct tu_cs *cs = &cmd->draw_cs;
@@ -1899,7 +1903,7 @@ void tu_CmdBindTransformFeedbackBuffersEXT(VkCommandBuffer commandBuffer,
    tu_cond_exec_end(cs);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdBeginTransformFeedbackEXT(VkCommandBuffer commandBuffer,
                                 uint32_t firstCounterBuffer,
                                 uint32_t counterBufferCount,
@@ -1945,11 +1949,12 @@ tu_CmdBeginTransformFeedbackEXT(VkCommandBuffer commandBuffer,
    tu_cond_exec_end(cs);
 }
 
-void tu_CmdEndTransformFeedbackEXT(VkCommandBuffer commandBuffer,
-                                       uint32_t firstCounterBuffer,
-                                       uint32_t counterBufferCount,
-                                       const VkBuffer *pCounterBuffers,
-                                       const VkDeviceSize *pCounterBufferOffsets)
+VKAPI_ATTR void VKAPI_CALL
+tu_CmdEndTransformFeedbackEXT(VkCommandBuffer commandBuffer,
+                              uint32_t firstCounterBuffer,
+                              uint32_t counterBufferCount,
+                              const VkBuffer *pCounterBuffers,
+                              const VkDeviceSize *pCounterBufferOffsets)
 {
    TU_FROM_HANDLE(tu_cmd_buffer, cmd, commandBuffer);
    struct tu_cs *cs = &cmd->draw_cs;
@@ -2004,7 +2009,7 @@ void tu_CmdEndTransformFeedbackEXT(VkCommandBuffer commandBuffer,
    cmd->state.xfb_used = true;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdPushConstants(VkCommandBuffer commandBuffer,
                     VkPipelineLayout layout,
                     VkShaderStageFlags stageFlags,
@@ -2027,7 +2032,7 @@ tu_flush_all_pending(struct tu_cache_state *cache)
    cache->pending_flush_bits &= ~TU_CMD_FLAG_ALL_FLUSH;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_EndCommandBuffer(VkCommandBuffer commandBuffer)
 {
    TU_FROM_HANDLE(tu_cmd_buffer, cmd_buffer, commandBuffer);
@@ -2084,7 +2089,7 @@ tu_cmd_dynamic_state(struct tu_cmd_buffer *cmd, uint32_t id, uint32_t size)
    return cs;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdBindPipeline(VkCommandBuffer commandBuffer,
                    VkPipelineBindPoint pipelineBindPoint,
                    VkPipeline _pipeline)
@@ -2166,7 +2171,7 @@ tu_CmdBindPipeline(VkCommandBuffer commandBuffer,
       cmd->state.dirty |= TU_CMD_DIRTY_RB_DEPTH_CNTL;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetViewport(VkCommandBuffer commandBuffer,
                   uint32_t firstViewport,
                   uint32_t viewportCount,
@@ -2182,7 +2187,7 @@ tu_CmdSetViewport(VkCommandBuffer commandBuffer,
    tu6_emit_viewport(&cs, cmd->state.viewport, cmd->state.max_viewport);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetScissor(VkCommandBuffer commandBuffer,
                  uint32_t firstScissor,
                  uint32_t scissorCount,
@@ -2198,7 +2203,7 @@ tu_CmdSetScissor(VkCommandBuffer commandBuffer,
    tu6_emit_scissor(&cs, cmd->state.scissor, cmd->state.max_scissor);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetLineWidth(VkCommandBuffer commandBuffer, float lineWidth)
 {
    TU_FROM_HANDLE(tu_cmd_buffer, cmd, commandBuffer);
@@ -2209,7 +2214,7 @@ tu_CmdSetLineWidth(VkCommandBuffer commandBuffer, float lineWidth)
    cmd->state.dirty |= TU_CMD_DIRTY_GRAS_SU_CNTL;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetDepthBias(VkCommandBuffer commandBuffer,
                    float depthBiasConstantFactor,
                    float depthBiasClamp,
@@ -2221,7 +2226,7 @@ tu_CmdSetDepthBias(VkCommandBuffer commandBuffer,
    tu6_emit_depth_bias(&cs, depthBiasConstantFactor, depthBiasClamp, depthBiasSlopeFactor);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetBlendConstants(VkCommandBuffer commandBuffer,
                         const float blendConstants[4])
 {
@@ -2232,7 +2237,7 @@ tu_CmdSetBlendConstants(VkCommandBuffer commandBuffer,
    tu_cs_emit_array(&cs, (const uint32_t *) blendConstants, 4);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetDepthBounds(VkCommandBuffer commandBuffer,
                      float minDepthBounds,
                      float maxDepthBounds)
@@ -2254,7 +2259,7 @@ update_stencil_mask(uint32_t *value, VkStencilFaceFlags face, uint32_t mask)
       *value = (*value & 0xff) | (mask & 0xff) << 8;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetStencilCompareMask(VkCommandBuffer commandBuffer,
                             VkStencilFaceFlags faceMask,
                             uint32_t compareMask)
@@ -2267,7 +2272,7 @@ tu_CmdSetStencilCompareMask(VkCommandBuffer commandBuffer,
    tu_cs_emit_regs(&cs, A6XX_RB_STENCILMASK(.dword = cmd->state.dynamic_stencil_mask));
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetStencilWriteMask(VkCommandBuffer commandBuffer,
                           VkStencilFaceFlags faceMask,
                           uint32_t writeMask)
@@ -2282,7 +2287,7 @@ tu_CmdSetStencilWriteMask(VkCommandBuffer commandBuffer,
    cmd->state.dirty |= TU_CMD_DIRTY_LRZ;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetStencilReference(VkCommandBuffer commandBuffer,
                           VkStencilFaceFlags faceMask,
                           uint32_t reference)
@@ -2295,7 +2300,7 @@ tu_CmdSetStencilReference(VkCommandBuffer commandBuffer,
    tu_cs_emit_regs(&cs, A6XX_RB_STENCILREF(.dword = cmd->state.dynamic_stencil_ref));
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetSampleLocationsEXT(VkCommandBuffer commandBuffer,
                             const VkSampleLocationsInfoEXT* pSampleLocationsInfo)
 {
@@ -2307,7 +2312,7 @@ tu_CmdSetSampleLocationsEXT(VkCommandBuffer commandBuffer,
    tu6_emit_sample_locations(&cs, pSampleLocationsInfo);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetCullModeEXT(VkCommandBuffer commandBuffer, VkCullModeFlags cullMode)
 {
    TU_FROM_HANDLE(tu_cmd_buffer, cmd, commandBuffer);
@@ -2323,7 +2328,7 @@ tu_CmdSetCullModeEXT(VkCommandBuffer commandBuffer, VkCullModeFlags cullMode)
    cmd->state.dirty |= TU_CMD_DIRTY_GRAS_SU_CNTL;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetFrontFaceEXT(VkCommandBuffer commandBuffer, VkFrontFace frontFace)
 {
    TU_FROM_HANDLE(tu_cmd_buffer, cmd, commandBuffer);
@@ -2336,7 +2341,7 @@ tu_CmdSetFrontFaceEXT(VkCommandBuffer commandBuffer, VkFrontFace frontFace)
    cmd->state.dirty |= TU_CMD_DIRTY_GRAS_SU_CNTL;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetPrimitiveTopologyEXT(VkCommandBuffer commandBuffer,
                               VkPrimitiveTopology primitiveTopology)
 {
@@ -2345,7 +2350,7 @@ tu_CmdSetPrimitiveTopologyEXT(VkCommandBuffer commandBuffer,
    cmd->state.primtype = tu6_primtype(primitiveTopology);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetViewportWithCountEXT(VkCommandBuffer commandBuffer,
                               uint32_t viewportCount,
                               const VkViewport* pViewports)
@@ -2353,7 +2358,7 @@ tu_CmdSetViewportWithCountEXT(VkCommandBuffer commandBuffer,
    tu_CmdSetViewport(commandBuffer, 0, viewportCount, pViewports);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetScissorWithCountEXT(VkCommandBuffer commandBuffer,
                              uint32_t scissorCount,
                              const VkRect2D* pScissors)
@@ -2361,7 +2366,7 @@ tu_CmdSetScissorWithCountEXT(VkCommandBuffer commandBuffer,
    tu_CmdSetScissor(commandBuffer, 0, scissorCount, pScissors);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetDepthTestEnableEXT(VkCommandBuffer commandBuffer,
                             VkBool32 depthTestEnable)
 {
@@ -2375,7 +2380,7 @@ tu_CmdSetDepthTestEnableEXT(VkCommandBuffer commandBuffer,
    cmd->state.dirty |= TU_CMD_DIRTY_RB_DEPTH_CNTL;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetDepthWriteEnableEXT(VkCommandBuffer commandBuffer,
                              VkBool32 depthWriteEnable)
 {
@@ -2389,7 +2394,7 @@ tu_CmdSetDepthWriteEnableEXT(VkCommandBuffer commandBuffer,
    cmd->state.dirty |= TU_CMD_DIRTY_RB_DEPTH_CNTL;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetDepthCompareOpEXT(VkCommandBuffer commandBuffer,
                            VkCompareOp depthCompareOp)
 {
@@ -2403,7 +2408,7 @@ tu_CmdSetDepthCompareOpEXT(VkCommandBuffer commandBuffer,
    cmd->state.dirty |= TU_CMD_DIRTY_RB_DEPTH_CNTL;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetDepthBoundsTestEnableEXT(VkCommandBuffer commandBuffer,
                                   VkBool32 depthBoundsTestEnable)
 {
@@ -2417,7 +2422,7 @@ tu_CmdSetDepthBoundsTestEnableEXT(VkCommandBuffer commandBuffer,
    cmd->state.dirty |= TU_CMD_DIRTY_RB_DEPTH_CNTL;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetStencilTestEnableEXT(VkCommandBuffer commandBuffer,
                               VkBool32 stencilTestEnable)
 {
@@ -2438,7 +2443,7 @@ tu_CmdSetStencilTestEnableEXT(VkCommandBuffer commandBuffer,
    cmd->state.dirty |= TU_CMD_DIRTY_RB_STENCIL_CNTL;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetStencilOpEXT(VkCommandBuffer commandBuffer,
                       VkStencilFaceFlags faceMask,
                       VkStencilOp failOp,
@@ -2731,7 +2736,7 @@ vk2tu_access(VkAccessFlags flags, bool gmem)
 }
 
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdExecuteCommands(VkCommandBuffer commandBuffer,
                       uint32_t commandBufferCount,
                       const VkCommandBuffer *pCmdBuffers)
@@ -2804,7 +2809,7 @@ tu_CmdExecuteCommands(VkCommandBuffer commandBuffer,
    }
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_CreateCommandPool(VkDevice _device,
                      const VkCommandPoolCreateInfo *pCreateInfo,
                      const VkAllocationCallbacks *pAllocator,
@@ -2833,7 +2838,7 @@ tu_CreateCommandPool(VkDevice _device,
    return VK_SUCCESS;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_DestroyCommandPool(VkDevice _device,
                       VkCommandPool commandPool,
                       const VkAllocationCallbacks *pAllocator)
@@ -2859,7 +2864,7 @@ tu_DestroyCommandPool(VkDevice _device,
    vk_object_free(&device->vk, pAllocator, pool);
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_ResetCommandPool(VkDevice device,
                     VkCommandPool commandPool,
                     VkCommandPoolResetFlags flags)
@@ -2878,7 +2883,7 @@ tu_ResetCommandPool(VkDevice device,
    return VK_SUCCESS;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_TrimCommandPool(VkDevice device,
                    VkCommandPool commandPool,
                    VkCommandPoolTrimFlags flags)
@@ -2918,7 +2923,7 @@ tu_subpass_barrier(struct tu_cmd_buffer *cmd_buffer,
    tu_flush_for_access(cache, src_flags, dst_flags);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdBeginRenderPass2(VkCommandBuffer commandBuffer,
                        const VkRenderPassBeginInfo *pRenderPassBegin,
                        const VkSubpassBeginInfo *pSubpassBeginInfo)
@@ -2974,7 +2979,7 @@ tu_CmdBeginRenderPass2(VkCommandBuffer commandBuffer,
    tu_set_input_attachments(cmd, cmd->state.subpass);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdNextSubpass2(VkCommandBuffer commandBuffer,
                    const VkSubpassBeginInfo *pSubpassBeginInfo,
                    const VkSubpassEndInfo *pSubpassEndInfo)
@@ -3594,6 +3599,10 @@ tu6_build_depth_plane_z_mode(struct tu_cmd_buffer *cmd)
    if (cmd->state.pipeline->lrz.force_late_z || !depth_test_enable)
       zmode = A6XX_LATE_Z;
 
+   /* User defined early tests take precedence above all else */
+   if (cmd->state.pipeline->lrz.early_fragment_tests)
+      zmode = A6XX_EARLY_Z;
+
    tu_cs_emit_pkt4(&cs, REG_A6XX_GRAS_SU_DEPTH_PLANE_CNTL, 1);
    tu_cs_emit(&cs, A6XX_GRAS_SU_DEPTH_PLANE_CNTL_Z_MODE(zmode));
 
@@ -3626,6 +3635,7 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
    tu_cs_emit_regs(cs, A6XX_PC_PRIMITIVE_CNTL_0(
          .primitive_restart =
                pipeline->ia.primitive_restart && indexed,
+         .provoking_vtx_last = pipeline->provoking_vertex_last,
          .tess_upper_left_domain_origin =
                pipeline->tess.upper_left_domain_origin));
 
@@ -3732,7 +3742,7 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
          1; /* vs_params */
 
       if ((cmd->state.dirty & TU_CMD_DIRTY_VB_STRIDE) &&
-          !(pipeline->dynamic_state_mask & BIT(TU_DYNAMIC_STATE_VB_STRIDE))) {
+          (pipeline->dynamic_state_mask & BIT(TU_DYNAMIC_STATE_VB_STRIDE))) {
          emit_binding_stride = true;
          draw_state_count += 1;
       }
@@ -3873,7 +3883,7 @@ tu6_emit_vs_params(struct tu_cmd_buffer *cmd,
    return (struct tu_draw_state) {entry.bo->iova + entry.offset, entry.size / 4};
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdDraw(VkCommandBuffer commandBuffer,
            uint32_t vertexCount,
            uint32_t instanceCount,
@@ -3893,7 +3903,7 @@ tu_CmdDraw(VkCommandBuffer commandBuffer,
    tu_cs_emit(cs, vertexCount);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdDrawIndexed(VkCommandBuffer commandBuffer,
                   uint32_t indexCount,
                   uint32_t instanceCount,
@@ -3931,7 +3941,7 @@ draw_wfm(struct tu_cmd_buffer *cmd)
    cmd->state.renderpass_cache.pending_flush_bits &= ~TU_CMD_FLAG_WAIT_FOR_ME;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdDrawIndirect(VkCommandBuffer commandBuffer,
                    VkBuffer _buffer,
                    VkDeviceSize offset,
@@ -3965,7 +3975,7 @@ tu_CmdDrawIndirect(VkCommandBuffer commandBuffer,
    tu_cs_emit(cs, stride);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdDrawIndexedIndirect(VkCommandBuffer commandBuffer,
                           VkBuffer _buffer,
                           VkDeviceSize offset,
@@ -3994,7 +4004,7 @@ tu_CmdDrawIndexedIndirect(VkCommandBuffer commandBuffer,
    tu_cs_emit(cs, stride);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdDrawIndirectCount(VkCommandBuffer commandBuffer,
                         VkBuffer _buffer,
                         VkDeviceSize offset,
@@ -4029,7 +4039,7 @@ tu_CmdDrawIndirectCount(VkCommandBuffer commandBuffer,
    tu_cs_emit(cs, stride);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdDrawIndexedIndirectCount(VkCommandBuffer commandBuffer,
                                VkBuffer _buffer,
                                VkDeviceSize offset,
@@ -4061,13 +4071,14 @@ tu_CmdDrawIndexedIndirectCount(VkCommandBuffer commandBuffer,
    tu_cs_emit(cs, stride);
 }
 
-void tu_CmdDrawIndirectByteCountEXT(VkCommandBuffer commandBuffer,
-                                    uint32_t instanceCount,
-                                    uint32_t firstInstance,
-                                    VkBuffer _counterBuffer,
-                                    VkDeviceSize counterBufferOffset,
-                                    uint32_t counterOffset,
-                                    uint32_t vertexStride)
+VKAPI_ATTR void VKAPI_CALL
+tu_CmdDrawIndirectByteCountEXT(VkCommandBuffer commandBuffer,
+                               uint32_t instanceCount,
+                               uint32_t firstInstance,
+                               VkBuffer _counterBuffer,
+                               VkDeviceSize counterBufferOffset,
+                               uint32_t counterOffset,
+                               uint32_t vertexStride)
 {
    TU_FROM_HANDLE(tu_cmd_buffer, cmd, commandBuffer);
    TU_FROM_HANDLE(tu_buffer, buf, _counterBuffer);
@@ -4275,7 +4286,7 @@ tu_dispatch(struct tu_cmd_buffer *cmd,
    tu_cs_emit_wfi(cs);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdDispatchBase(VkCommandBuffer commandBuffer,
                    uint32_t base_x,
                    uint32_t base_y,
@@ -4297,7 +4308,7 @@ tu_CmdDispatchBase(VkCommandBuffer commandBuffer,
    tu_dispatch(cmd_buffer, &info);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdDispatch(VkCommandBuffer commandBuffer,
                uint32_t x,
                uint32_t y,
@@ -4306,7 +4317,7 @@ tu_CmdDispatch(VkCommandBuffer commandBuffer,
    tu_CmdDispatchBase(commandBuffer, 0, 0, 0, x, y, z);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdDispatchIndirect(VkCommandBuffer commandBuffer,
                        VkBuffer _buffer,
                        VkDeviceSize offset)
@@ -4321,7 +4332,7 @@ tu_CmdDispatchIndirect(VkCommandBuffer commandBuffer,
    tu_dispatch(cmd_buffer, &info);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdEndRenderPass2(VkCommandBuffer commandBuffer,
                      const VkSubpassEndInfoKHR *pSubpassEndInfo)
 {
@@ -4439,7 +4450,7 @@ tu_barrier(struct tu_cmd_buffer *cmd,
    }
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdPipelineBarrier(VkCommandBuffer commandBuffer,
                       VkPipelineStageFlags srcStageMask,
                       VkPipelineStageFlags dstStageMask,
@@ -4494,7 +4505,7 @@ write_event(struct tu_cmd_buffer *cmd, struct tu_event *event,
    }
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetEvent(VkCommandBuffer commandBuffer,
                VkEvent _event,
                VkPipelineStageFlags stageMask)
@@ -4505,7 +4516,7 @@ tu_CmdSetEvent(VkCommandBuffer commandBuffer,
    write_event(cmd, event, stageMask, 1);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdResetEvent(VkCommandBuffer commandBuffer,
                  VkEvent _event,
                  VkPipelineStageFlags stageMask)
@@ -4516,7 +4527,7 @@ tu_CmdResetEvent(VkCommandBuffer commandBuffer,
    write_event(cmd, event, stageMask, 0);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdWaitEvents(VkCommandBuffer commandBuffer,
                  uint32_t eventCount,
                  const VkEvent *pEvents,
@@ -4541,14 +4552,14 @@ tu_CmdWaitEvents(VkCommandBuffer commandBuffer,
               imageMemoryBarrierCount, pImageMemoryBarriers, &info);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdSetDeviceMask(VkCommandBuffer commandBuffer, uint32_t deviceMask)
 {
    /* No-op */
 }
 
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdBeginConditionalRenderingEXT(VkCommandBuffer commandBuffer,
                                    const VkConditionalRenderingBeginInfoEXT *pConditionalRenderingBegin)
 {
@@ -4592,7 +4603,7 @@ tu_CmdBeginConditionalRenderingEXT(VkCommandBuffer commandBuffer,
    tu_cs_emit_qw(cs, global_iova(cmd, predicate));
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_CmdEndConditionalRenderingEXT(VkCommandBuffer commandBuffer)
 {
    TU_FROM_HANDLE(tu_cmd_buffer, cmd, commandBuffer);

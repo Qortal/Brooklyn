@@ -509,36 +509,8 @@ spec/arb_sample_shading/interpolate-at-sample-position 8: skip
 spec/arb_sample_shading/samplemask 0 all: skip
 spec/arb_sample_shading/samplemask 16: skip
 spec/arb_sample_shading/samplemask 16 all: skip
-spec/arb_sample_shading/samplemask 2 all/0.250000 mask_in_one: fail
-spec/arb_sample_shading/samplemask 2 all/0.500000 mask_in_one: fail
-spec/arb_sample_shading/samplemask 2 all/1.000000 mask_in_one: fail
-spec/arb_sample_shading/samplemask 2 all/noms fix: fail
-spec/arb_sample_shading/samplemask 2 all/noms mask_in_one: fail
-spec/arb_sample_shading/samplemask 2 all/noms partition: fail
-spec/arb_sample_shading/samplemask 2 all/sample mask_in_one: fail
-spec/arb_sample_shading/samplemask 2/0.250000 mask_in_one: fail
-spec/arb_sample_shading/samplemask 2/0.500000 mask_in_one: fail
-spec/arb_sample_shading/samplemask 2/1.000000 mask_in_one: fail
-spec/arb_sample_shading/samplemask 2/noms fix: fail
-spec/arb_sample_shading/samplemask 2/noms mask_in_one: fail
-spec/arb_sample_shading/samplemask 2/noms partition: fail
-spec/arb_sample_shading/samplemask 2/sample mask_in_one: fail
 spec/arb_sample_shading/samplemask 32: skip
 spec/arb_sample_shading/samplemask 32 all: skip
-spec/arb_sample_shading/samplemask 4 all/0.250000 mask_in_one: fail
-spec/arb_sample_shading/samplemask 4 all/0.500000 mask_in_one: fail
-spec/arb_sample_shading/samplemask 4 all/1.000000 mask_in_one: fail
-spec/arb_sample_shading/samplemask 4 all/noms fix: fail
-spec/arb_sample_shading/samplemask 4 all/noms mask_in_one: fail
-spec/arb_sample_shading/samplemask 4 all/noms partition: fail
-spec/arb_sample_shading/samplemask 4 all/sample mask_in_one: fail
-spec/arb_sample_shading/samplemask 4/0.250000 mask_in_one: fail
-spec/arb_sample_shading/samplemask 4/0.500000 mask_in_one: fail
-spec/arb_sample_shading/samplemask 4/1.000000 mask_in_one: fail
-spec/arb_sample_shading/samplemask 4/noms fix: fail
-spec/arb_sample_shading/samplemask 4/noms mask_in_one: fail
-spec/arb_sample_shading/samplemask 4/noms partition: fail
-spec/arb_sample_shading/samplemask 4/sample mask_in_one: fail
 spec/arb_sample_shading/samplemask 6: skip
 spec/arb_sample_shading/samplemask 6 all: skip
 spec/arb_sample_shading/samplemask 8: skip
@@ -547,31 +519,6 @@ spec/arb_separate_shader_objects/programuniform coverage/double matrices: skip
 spec/arb_separate_shader_objects/programuniform coverage/double scalar and vectors: skip
 spec/arb_shader_atomic_counters/max-counters/combined test above maximum number of atomic counter buffers: skip
 spec/arb_shader_image_load_store/early-z/occlusion query test/early-z pass: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/r11f_g11f_b10f: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/r16: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/r16_snorm: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/r16f: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/r16i: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/r16ui: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/r32f: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/r32i: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/r32ui: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/r8: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/r8_snorm: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/r8i: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/r8ui: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/rg16: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/rg16_snorm: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/rg16f: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/rg16i: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/rg16ui: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/rg32f: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/rg32i: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/rg32ui: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/rg8: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/rg8_snorm: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/rg8i: fail
-spec/arb_shader_image_load_store/invalid/imageload/address bounds test/image2d/rg8ui: fail
 spec/arb_shader_image_load_store/max-size/image2dmsarray max size test/4x16384x8x8: skip
 spec/arb_shader_image_load_store/max-size/image2dmsarray max size test/4x8x16384x8: skip
 spec/arb_shader_image_load_store/max-size/imagebuffer max size test/134217728x1x1x1: skip
@@ -715,9 +662,7 @@ spec/arb_sparse_buffer/minmax: skip
 spec/arb_tessellation_shader/arb_tessellation_shader-immediate-mode-draw-patches: skip
 spec/arb_texture_buffer_object/negative-unsupported: skip
 spec/arb_texture_cube_map/copyteximage cube samples=16: skip
-spec/arb_texture_cube_map/copyteximage cube samples=2: fail
 spec/arb_texture_cube_map/copyteximage cube samples=32: skip
-spec/arb_texture_cube_map/copyteximage cube samples=4: fail
 spec/arb_texture_cube_map/copyteximage cube samples=6: skip
 spec/arb_texture_cube_map/copyteximage cube samples=8: skip
 spec/arb_texture_float/multisample-formats 16 gl_arb_texture_float: skip
@@ -811,9 +756,7 @@ spec/arb_texture_multisample/texelfetch/8-vs-sampler2dmsarray: skip
 spec/arb_texture_multisample/texelfetch/8-vs-usampler2dms: skip
 spec/arb_texture_multisample/texelfetch/8-vs-usampler2dmsarray: skip
 spec/arb_texture_rectangle/copyteximage rect samples=16: skip
-spec/arb_texture_rectangle/copyteximage rect samples=2: fail
 spec/arb_texture_rectangle/copyteximage rect samples=32: skip
-spec/arb_texture_rectangle/copyteximage rect samples=4: fail
 spec/arb_texture_rectangle/copyteximage rect samples=6: skip
 spec/arb_texture_rectangle/copyteximage rect samples=8: skip
 spec/arb_texture_rg/multisample-formats 16 gl_arb_texture_rg: skip
@@ -829,22 +772,6 @@ spec/arb_texture_rg/multisample-formats 8 gl_arb_texture_rg: skip
 spec/arb_texture_rg/multisample-formats 8 gl_arb_texture_rg-float: skip
 spec/arb_texture_rg/multisample-formats 8 gl_arb_texture_rg-int: skip
 spec/arb_texture_stencil8/fbo-clear-formats/gl_stencil_index8 (fbo incomplete): skip
-spec/arb_texture_view/rendering-formats/clear gl_r8 as gl_r8_snorm: fail
-spec/arb_texture_view/rendering-formats/clear gl_r8 as gl_r8i: fail
-spec/arb_texture_view/rendering-formats/clear gl_rg8 as gl_r16_snorm: fail
-spec/arb_texture_view/rendering-formats/clear gl_rg8 as gl_r16f: fail
-spec/arb_texture_view/rendering-formats/clear gl_rg8 as gl_r16i: fail
-spec/arb_texture_view/rendering-formats/clear gl_rg8 as gl_rg8_snorm: fail
-spec/arb_texture_view/rendering-formats/clear gl_rg8 as gl_rg8i: fail
-spec/arb_texture_view/rendering-formats/clear gl_rgb8 as gl_rgb8_snorm: fail
-spec/arb_texture_view/rendering-formats/clear gl_rgb8 as gl_rgb8i: fail
-spec/arb_texture_view/rendering-formats/clear gl_rgba8 as gl_r32f: fail
-spec/arb_texture_view/rendering-formats/clear gl_rgba8 as gl_r32i: fail
-spec/arb_texture_view/rendering-formats/clear gl_rgba8 as gl_rg16_snorm: fail
-spec/arb_texture_view/rendering-formats/clear gl_rgba8 as gl_rg16f: fail
-spec/arb_texture_view/rendering-formats/clear gl_rgba8 as gl_rg16i: fail
-spec/arb_texture_view/rendering-formats/clear gl_rgba8 as gl_rgba8_snorm: fail
-spec/arb_texture_view/rendering-formats/clear gl_rgba8 as gl_rgba8i: fail
 spec/arb_timer_query/query gl_timestamp: fail
 spec/arb_vertex_attrib_64bit/get_double_attribs-display-lists: skip
 spec/arb_vertex_program/vp-address-02: skip
@@ -878,6 +805,14 @@ spec/egl_khr_fence_sync/conformance/eglcreatesynckhr_wrong_display_same_thread: 
 spec/egl_khr_gl_image/egl_khr_gl_renderbuffer_image-clear-shared-image gl_depth_component24: fail
 spec/egl_nok_swap_region/basic: skip
 spec/egl_nok_texture_from_pixmap/basic: skip
+spec/ext_clear_texture/ext_clear_texture-3d: skip
+spec/ext_clear_texture/ext_clear_texture-base-formats: skip
+spec/ext_clear_texture/ext_clear_texture-clear-max-level: skip
+spec/ext_clear_texture/ext_clear_texture-cube: skip
+spec/ext_clear_texture/ext_clear_texture-error: skip
+spec/ext_clear_texture/ext_clear_texture-multisample: skip
+spec/ext_clear_texture/ext_clear_texture-stencil: skip
+spec/ext_clear_texture/ext_clear_texture-texview: skip
 spec/ext_depth_bounds_test/depth_bounds: skip
 spec/ext_direct_state_access/indexed-state-queries 12/getdoublei_vext: skip
 spec/ext_direct_state_access/indexed-state-queries 12/getfloati_vext: skip
@@ -896,6 +831,7 @@ spec/ext_external_objects/vk-image-overwrite: skip
 spec/ext_external_objects/vk-pix-buf-update-errors: skip
 spec/ext_external_objects/vk-semaphores: skip
 spec/ext_external_objects/vk-semaphores-2: skip
+spec/ext_external_objects/vk-stencil-display: skip
 spec/ext_external_objects/vk-vert-buf-reuse: skip
 spec/ext_external_objects/vk-vert-buf-update-errors: skip
 spec/ext_external_objects_fd/memory-object-api-errors: skip
@@ -1098,15 +1034,11 @@ spec/ext_framebuffer_multisample/alpha-to-one-dual-src-blend 32: skip
 spec/ext_framebuffer_multisample/alpha-to-one-dual-src-blend 6: skip
 spec/ext_framebuffer_multisample/alpha-to-one-dual-src-blend 8: skip
 spec/ext_framebuffer_multisample/alpha-to-one-msaa-disabled 16: skip
-spec/ext_framebuffer_multisample/alpha-to-one-msaa-disabled 2: fail
 spec/ext_framebuffer_multisample/alpha-to-one-msaa-disabled 32: skip
-spec/ext_framebuffer_multisample/alpha-to-one-msaa-disabled 4: fail
 spec/ext_framebuffer_multisample/alpha-to-one-msaa-disabled 6: skip
 spec/ext_framebuffer_multisample/alpha-to-one-msaa-disabled 8: skip
 spec/ext_framebuffer_multisample/bitmap 16: skip
-spec/ext_framebuffer_multisample/bitmap 2: fail
 spec/ext_framebuffer_multisample/bitmap 32: skip
-spec/ext_framebuffer_multisample/bitmap 4: fail
 spec/ext_framebuffer_multisample/bitmap 6: skip
 spec/ext_framebuffer_multisample/bitmap 8: skip
 spec/ext_framebuffer_multisample/blit-flipped 16 x: skip
@@ -1162,7 +1094,6 @@ spec/ext_framebuffer_multisample/draw-buffers-alpha-to-one 16: skip
 spec/ext_framebuffer_multisample/draw-buffers-alpha-to-one 32: skip
 spec/ext_framebuffer_multisample/draw-buffers-alpha-to-one 6: skip
 spec/ext_framebuffer_multisample/draw-buffers-alpha-to-one 8: skip
-spec/ext_framebuffer_multisample/enable-flag: fail
 spec/ext_framebuffer_multisample/formats 16: skip
 spec/ext_framebuffer_multisample/formats 32: skip
 spec/ext_framebuffer_multisample/formats 6: skip
@@ -1182,11 +1113,7 @@ spec/ext_framebuffer_multisample/interpolation 16 centroid-edges: skip
 spec/ext_framebuffer_multisample/interpolation 16 non-centroid-deriv: skip
 spec/ext_framebuffer_multisample/interpolation 16 non-centroid-deriv-disabled: skip
 spec/ext_framebuffer_multisample/interpolation 16 non-centroid-disabled: skip
-spec/ext_framebuffer_multisample/interpolation 2 centroid-deriv-disabled: fail
-spec/ext_framebuffer_multisample/interpolation 2 centroid-disabled: fail
 spec/ext_framebuffer_multisample/interpolation 2 centroid-edges: fail
-spec/ext_framebuffer_multisample/interpolation 2 non-centroid-deriv-disabled: fail
-spec/ext_framebuffer_multisample/interpolation 2 non-centroid-disabled: fail
 spec/ext_framebuffer_multisample/interpolation 32 centroid-deriv: skip
 spec/ext_framebuffer_multisample/interpolation 32 centroid-deriv-disabled: skip
 spec/ext_framebuffer_multisample/interpolation 32 centroid-disabled: skip
@@ -1194,11 +1121,7 @@ spec/ext_framebuffer_multisample/interpolation 32 centroid-edges: skip
 spec/ext_framebuffer_multisample/interpolation 32 non-centroid-deriv: skip
 spec/ext_framebuffer_multisample/interpolation 32 non-centroid-deriv-disabled: skip
 spec/ext_framebuffer_multisample/interpolation 32 non-centroid-disabled: skip
-spec/ext_framebuffer_multisample/interpolation 4 centroid-deriv-disabled: fail
-spec/ext_framebuffer_multisample/interpolation 4 centroid-disabled: fail
 spec/ext_framebuffer_multisample/interpolation 4 centroid-edges: fail
-spec/ext_framebuffer_multisample/interpolation 4 non-centroid-deriv-disabled: fail
-spec/ext_framebuffer_multisample/interpolation 4 non-centroid-disabled: fail
 spec/ext_framebuffer_multisample/interpolation 6 centroid-deriv: skip
 spec/ext_framebuffer_multisample/interpolation 6 centroid-deriv-disabled: skip
 spec/ext_framebuffer_multisample/interpolation 6 centroid-disabled: skip
@@ -1438,15 +1361,11 @@ spec/ext_shader_samples_identical/ext_shader_samples_identical-simple-fs 4: skip
 spec/ext_shader_samples_identical/ext_shader_samples_identical-simple-fs 6: skip
 spec/ext_shader_samples_identical/ext_shader_samples_identical-simple-fs 8: skip
 spec/ext_texture_array/copyteximage 1d_array samples=16: skip
-spec/ext_texture_array/copyteximage 1d_array samples=2: fail
 spec/ext_texture_array/copyteximage 1d_array samples=32: skip
-spec/ext_texture_array/copyteximage 1d_array samples=4: fail
 spec/ext_texture_array/copyteximage 1d_array samples=6: skip
 spec/ext_texture_array/copyteximage 1d_array samples=8: skip
 spec/ext_texture_array/copyteximage 2d_array samples=16: skip
-spec/ext_texture_array/copyteximage 2d_array samples=2: fail
 spec/ext_texture_array/copyteximage 2d_array samples=32: skip
-spec/ext_texture_array/copyteximage 2d_array samples=4: fail
 spec/ext_texture_array/copyteximage 2d_array samples=6: skip
 spec/ext_texture_array/copyteximage 2d_array samples=8: skip
 spec/ext_texture_integer/fbo-integer: fail
@@ -1584,20 +1503,6 @@ spec/oes_texture_compression_astc/miptree-3d-gl srgb: skip
 spec/oes_texture_compression_astc/miptree-3d-gles hdr: skip
 spec/oes_texture_compression_astc/miptree-3d-gles ldr: skip
 spec/oes_texture_compression_astc/miptree-3d-gles srgb: skip
-spec/oes_texture_view/rendering-formats/clear gl_r8 as gl_r8_snorm: fail
-spec/oes_texture_view/rendering-formats/clear gl_r8 as gl_r8i: fail
-spec/oes_texture_view/rendering-formats/clear gl_rg8 as gl_r16_snorm: fail
-spec/oes_texture_view/rendering-formats/clear gl_rg8 as gl_r16f: fail
-spec/oes_texture_view/rendering-formats/clear gl_rg8 as gl_r16i: fail
-spec/oes_texture_view/rendering-formats/clear gl_rg8 as gl_rg8_snorm: fail
-spec/oes_texture_view/rendering-formats/clear gl_rg8 as gl_rg8i: fail
-spec/oes_texture_view/rendering-formats/clear gl_rgba8 as gl_r32f: fail
-spec/oes_texture_view/rendering-formats/clear gl_rgba8 as gl_r32i: fail
-spec/oes_texture_view/rendering-formats/clear gl_rgba8 as gl_rg16_snorm: fail
-spec/oes_texture_view/rendering-formats/clear gl_rgba8 as gl_rg16f: fail
-spec/oes_texture_view/rendering-formats/clear gl_rgba8 as gl_rg16i: fail
-spec/oes_texture_view/rendering-formats/clear gl_rgba8 as gl_rgba8_snorm: fail
-spec/oes_texture_view/rendering-formats/clear gl_rgba8 as gl_rgba8i: fail
 spec/oes_texture_view/rendering-formats/render to gl_rgb16 as gl_rgb16i: skip
 spec/oes_texture_view/rendering-formats/render to gl_rgb16 as gl_rgb16ui: skip
 spec/oes_texture_view/rendering-formats/render to gl_rgb16_snorm as gl_rgb16i: skip

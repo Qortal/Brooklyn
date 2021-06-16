@@ -1737,7 +1737,7 @@ st_TexSubImage(struct gl_context *ctx, GLuint dims,
       height = 1;
    }
 
-   map = pipe_transfer_map_3d(pipe, src, 0, PIPE_MAP_WRITE, 0, 0, 0,
+   map = pipe_texture_map_3d(pipe, src, 0, PIPE_MAP_WRITE, 0, 0, 0,
                               width, height, depth, &transfer);
    if (!map) {
       _mesa_unmap_teximage_pbo(ctx, unpack);
@@ -1775,7 +1775,7 @@ st_TexSubImage(struct gl_context *ctx, GLuint dims,
       }
    }
 
-   pipe_transfer_unmap(pipe, transfer);
+   pipe_texture_unmap(pipe, transfer);
    _mesa_unmap_teximage_pbo(ctx, unpack);
 
    /* Blit. */
@@ -2266,7 +2266,7 @@ st_GetTexSubImage(struct gl_context * ctx,
 
    pixels = _mesa_map_pbo_dest(ctx, &ctx->Pack, pixels);
 
-   map = pipe_transfer_map_3d(pipe, dst, 0, PIPE_MAP_READ,
+   map = pipe_texture_map_3d(pipe, dst, 0, PIPE_MAP_READ,
                               0, 0, 0, width, height, depth, &tex_xfer);
    if (!map) {
       goto end;
@@ -2346,7 +2346,7 @@ st_GetTexSubImage(struct gl_context * ctx,
 
 end:
    if (map)
-      pipe_transfer_unmap(pipe, tex_xfer);
+      pipe_texture_unmap(pipe, tex_xfer);
 
    _mesa_unmap_pbo_dest(ctx, &ctx->Pack);
    pipe_resource_reference(&dst, NULL);
@@ -2394,7 +2394,7 @@ fallback_copy_texsubimage(struct gl_context *ctx,
       srcY = strb->Base.Height - srcY - height;
    }
 
-   map = pipe_transfer_map(pipe,
+   map = pipe_texture_map(pipe,
                            strb->texture,
                            strb->surface->u.tex.level,
                            strb->surface->u.tex.first_layer,
@@ -2517,7 +2517,7 @@ fallback_copy_texsubimage(struct gl_context *ctx,
 
    st_texture_image_unmap(st, stImage, slice);
 err:
-   pipe->transfer_unmap(pipe, src_trans);
+   pipe->texture_unmap(pipe, src_trans);
 }
 
 
@@ -3054,6 +3054,8 @@ st_texture_storage(struct gl_context *ctx,
                                    width, height, depth,
                                    &ptWidth, &ptHeight, &ptDepth, &ptLayers);
 
+   pipe_resource_reference(&stObj->pt, NULL);
+
    if (smObj) {
       stObj->pt = st_texture_create_from_memory(st,
                                                 smObj,
@@ -3162,7 +3164,7 @@ st_TestProxyTexImage(struct gl_context *ctx, GLenum target,
       }
       else {
          /* assume a full set of mipmaps */
-         pt.last_level = util_logbase2(MAX3(width, height, depth));
+         pt.last_level = util_logbase2(MAX4(width, height, depth, 0));
       }
 
       return st->screen->can_create_resource(st->screen, &pt);
@@ -3288,6 +3290,14 @@ st_ClearTexSubImage(struct gl_context *ctx,
 
    u_box_3d(xoffset, yoffset, zoffset + texImage->Face,
             width, height, depth, &box);
+
+   if (pt->target == PIPE_TEXTURE_1D_ARRAY) {
+      box.z = box.y;
+      box.depth = box.height;
+      box.y = 0;
+      box.height = 1;
+   }
+
    if (texObj->Immutable) {
       /* The texture object has to be consistent (no "loose", per-image
        * gallium resources).  If this texture is a view into another

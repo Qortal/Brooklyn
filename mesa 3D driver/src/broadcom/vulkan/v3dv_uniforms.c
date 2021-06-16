@@ -125,7 +125,7 @@ check_push_constants_ubo(struct v3dv_cmd_buffer *cmd_buffer,
 static void
 write_tmu_p0(struct v3dv_cmd_buffer *cmd_buffer,
              struct v3dv_pipeline *pipeline,
-             broadcom_shader_stage stage,
+             enum broadcom_shader_stage stage,
              struct v3dv_cl_out **uniforms,
              uint32_t data,
              struct texture_bo_list *tex_bos,
@@ -169,7 +169,7 @@ write_tmu_p0(struct v3dv_cmd_buffer *cmd_buffer,
 static void
 write_tmu_p1(struct v3dv_cmd_buffer *cmd_buffer,
              struct v3dv_pipeline *pipeline,
-             broadcom_shader_stage stage,
+             enum broadcom_shader_stage stage,
              struct v3dv_cl_out **uniforms,
              uint32_t data,
              struct state_bo_list *state_bos)
@@ -219,7 +219,7 @@ write_tmu_p1(struct v3dv_cmd_buffer *cmd_buffer,
 static void
 write_ubo_ssbo_uniforms(struct v3dv_cmd_buffer *cmd_buffer,
                         struct v3dv_pipeline *pipeline,
-                        broadcom_shader_stage stage,
+                        enum broadcom_shader_stage stage,
                         struct v3dv_cl_out **uniforms,
                         enum quniform_contents content,
                         uint32_t data,
@@ -348,11 +348,12 @@ get_texture_size_from_buffer_view(struct v3dv_buffer_view *buffer_view,
 static uint32_t
 get_texture_size(struct v3dv_cmd_buffer *cmd_buffer,
                  struct v3dv_pipeline *pipeline,
-                 broadcom_shader_stage stage,
+                 enum broadcom_shader_stage stage,
                  enum quniform_contents contents,
                  uint32_t data)
 {
-   uint32_t texture_idx = v3d_unit_data_get_unit(data);
+   uint32_t texture_idx = data;
+
    struct v3dv_descriptor_state *descriptor_state =
       v3dv_cmd_buffer_get_descriptor_state(cmd_buffer, pipeline);
 
@@ -483,6 +484,11 @@ v3dv_write_uniforms_wg_offsets(struct v3dv_cmd_buffer *cmd_buffer,
          if (wg_count_offsets)
             wg_count_offsets[data] = (uint32_t *) uniforms;
          cl_aligned_u32(&uniforms, job->csd.wg_count[data]);
+         break;
+
+      case QUNIFORM_WORK_GROUP_BASE:
+         assert(job->type == V3DV_JOB_TYPE_GPU_CSD);
+         cl_aligned_u32(&uniforms, job->csd.wg_base[data]);
          break;
 
       case QUNIFORM_SHARED_OFFSET:

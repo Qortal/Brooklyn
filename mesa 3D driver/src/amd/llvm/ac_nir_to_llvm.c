@@ -538,7 +538,7 @@ static LLVMValueRef exit_waterfall(struct ac_nir_context *ctx, struct waterfall_
     * opteration into the break block.
     */
    LLVMValueRef cc = ac_build_phi(&ctx->ac, ctx->ac.i32, 2, cc_phi_src, wctx->phi_bb);
-   ac_build_optimization_barrier(&ctx->ac, &cc);
+   ac_build_optimization_barrier(&ctx->ac, &cc, false);
 
    LLVMValueRef active =
       LLVMBuildICmp(ctx->ac.builder, LLVMIntNE, cc, ctx->ac.i32_0, "uniform_active2");
@@ -1208,6 +1208,31 @@ static void visit_alu(struct ac_nir_context *ctx, const nir_alu_instr *instr)
          in[chan] = ac_llvm_extract_elem(&ctx->ac, src[0], chan);
       result = ac_build_intrinsic(&ctx->ac, "llvm.amdgcn.cubeid", ctx->ac.f32, in, 3,
                                   AC_FUNC_ATTR_READNONE);
+      break;
+   }
+
+   case nir_op_extract_u8:
+   case nir_op_extract_i8:
+   case nir_op_extract_u16:
+   case nir_op_extract_i16: {
+      bool is_signed = instr->op == nir_op_extract_i16 || instr->op == nir_op_extract_i8;
+      unsigned size = instr->op == nir_op_extract_u8 || instr->op == nir_op_extract_i8 ? 8 : 16;
+      LLVMValueRef offset = LLVMConstInt(LLVMTypeOf(src[0]), nir_src_as_uint(instr->src[1].src) * size, false);
+      result = LLVMBuildLShr(ctx->ac.builder, src[0], offset, "");
+      result = LLVMBuildTrunc(ctx->ac.builder, result, LLVMIntTypeInContext(ctx->ac.context, size), "");
+      if (is_signed)
+         result = LLVMBuildSExt(ctx->ac.builder, result, LLVMTypeOf(src[0]), "");
+      else
+         result = LLVMBuildZExt(ctx->ac.builder, result, LLVMTypeOf(src[0]), "");
+      break;
+   }
+
+   case nir_op_insert_u8:
+   case nir_op_insert_u16: {
+      unsigned size = instr->op == nir_op_insert_u8 ? 8 : 16;
+      LLVMValueRef offset = LLVMConstInt(LLVMTypeOf(src[0]), nir_src_as_uint(instr->src[1].src) * size, false);
+      LLVMValueRef mask = LLVMConstInt(LLVMTypeOf(src[0]), u_bit_consecutive(0, size), false);
+      result = LLVMBuildShl(ctx->ac.builder, LLVMBuildAnd(ctx->ac.builder, src[0], mask, ""), offset, "");
       break;
    }
 
@@ -3400,7 +3425,7 @@ static void visit_intrinsic(struct ac_nir_context *ctx, nir_intrinsic_instr *ins
    case nir_intrinsic_load_subgroup_invocation:
       result = ac_get_thread_id(&ctx->ac);
       break;
-   case nir_intrinsic_load_work_group_id: {
+   case nir_intrinsic_load_workgroup_id: {
       LLVMValueRef values[3];
 
       for (int i = 0; i < 3; i++) {
@@ -3417,7 +3442,7 @@ static void visit_intrinsic(struct ac_nir_context *ctx, nir_intrinsic_instr *ins
       result = ctx->abi->load_base_vertex(ctx->abi,
                                           instr->intrinsic == nir_intrinsic_load_base_vertex);
       break;
-   case nir_intrinsic_load_local_group_size:
+   case nir_intrinsic_load_workgroup_size:
       result = ctx->abi->load_local_group_size(ctx->abi);
       break;
    case nir_intrinsic_load_vertex_id:
@@ -3516,7 +3541,7 @@ static void visit_intrinsic(struct ac_nir_context *ctx, nir_intrinsic_instr *ins
    case nir_intrinsic_load_instance_id:
       result = ctx->abi->instance_id;
       break;
-   case nir_intrinsic_load_num_work_groups:
+   case nir_intrinsic_load_num_workgroups:
       result = ac_get_arg(&ctx->ac, ctx->args->num_work_groups);
       break;
    case nir_intrinsic_load_local_invocation_index:
@@ -3899,7 +3924,7 @@ static void visit_intrinsic(struct ac_nir_context *ctx, nir_intrinsic_instr *ins
                                   get_src(ctx, instr->src[1]), get_src(ctx, instr->src[2]));
       break;
    case nir_intrinsic_mbcnt_amd:
-      result = ac_build_mbcnt(&ctx->ac, get_src(ctx, instr->src[0]));
+      result = ac_build_mbcnt_add(&ctx->ac, get_src(ctx, instr->src[0]), get_src(ctx, instr->src[1]));
       break;
    case nir_intrinsic_load_scratch: {
       LLVMValueRef offset = get_src(ctx, instr->src[0]);

@@ -93,8 +93,10 @@ void si_flush_gfx_cs(struct si_context *ctx, unsigned flags, struct pipe_fence_h
    /* Drop this flush if it's a no-op. */
    if (!radeon_emitted(cs, ctx->initial_gfx_cs_size) &&
        (!wait_flags || !ctx->gfx_last_ib_is_busy) &&
-       !(flags & RADEON_FLUSH_TOGGLE_SECURE_SUBMISSION))
+       !(flags & RADEON_FLUSH_TOGGLE_SECURE_SUBMISSION)) {
+      tc_driver_internal_flush_notify(ctx->tc);
       return;
+   }
 
    /* Non-aux contexts must set up no-op API dispatch on GPU resets. This is
     * similar to si_get_reset_status but here we can ignore soft-recoveries,
@@ -198,6 +200,8 @@ void si_flush_gfx_cs(struct si_context *ctx, unsigned flags, struct pipe_fence_h
 
    /* Flush the CS. */
    ws->cs_flush(cs, flags, &ctx->last_gfx_fence);
+
+   tc_driver_internal_flush_notify(ctx->tc);
    if (fence)
       ws->fence_reference(fence, ctx->last_gfx_fence);
 
@@ -317,7 +321,6 @@ void si_set_tracked_regs_to_clear_state(struct si_context *ctx)
    ctx->tracked_regs.reg_value[SI_TRACKED_PA_CL_VS_OUT_CNTL__CL] = 0x00000000;
    ctx->tracked_regs.reg_value[SI_TRACKED_PA_CL_CLIP_CNTL] = 0x00090000;
    ctx->tracked_regs.reg_value[SI_TRACKED_PA_SC_BINNER_CNTL_0] = 0x00000003;
-   ctx->tracked_regs.reg_value[SI_TRACKED_DB_DFSM_CONTROL] = 0x00000000;
    ctx->tracked_regs.reg_value[SI_TRACKED_DB_VRS_OVERRIDE_CNTL] = 0x00000000;
    ctx->tracked_regs.reg_value[SI_TRACKED_PA_CL_GB_VERT_CLIP_ADJ] = 0x3f800000;
    ctx->tracked_regs.reg_value[SI_TRACKED_PA_CL_GB_VERT_DISC_ADJ] = 0x3f800000;
@@ -365,6 +368,23 @@ void si_set_tracked_regs_to_clear_state(struct si_context *ctx)
    ctx->last_gs_out_prim = 0; /* cleared by CLEAR_STATE */
 }
 
+static void si_draw_vbo_tmz_preamble(struct pipe_context *ctx,
+                                     const struct pipe_draw_info *info,
+                                     unsigned drawid_offset,
+                                     const struct pipe_draw_indirect_info *indirect,
+                                     const struct pipe_draw_start_count_bias *draws,
+                                     unsigned num_draws) {
+   struct si_context *sctx = (struct si_context *)ctx;
+
+   bool secure = si_gfx_resources_check_encrypted(sctx);
+   if (secure != sctx->ws->cs_is_secure(&sctx->gfx_cs)) {
+      si_flush_gfx_cs(sctx, RADEON_FLUSH_ASYNC_START_NEXT_GFX_IB_NOW |
+                            RADEON_FLUSH_TOGGLE_SECURE_SUBMISSION, NULL);
+   }
+
+   sctx->real_draw_vbo(ctx, info, drawid_offset, indirect, draws, num_draws);
+}
+
 void si_begin_new_gfx_cs(struct si_context *ctx, bool first_cs)
 {
    bool is_secure = false;
@@ -376,6 +396,8 @@ void si_begin_new_gfx_cs(struct si_context *ctx, bool first_cs)
       ctx->prim_discard_vertex_count_threshold = UINT_MAX;
 
       is_secure = ctx->ws->cs_is_secure(&ctx->gfx_cs);
+
+      si_install_draw_wrapper(ctx, si_draw_vbo_tmz_preamble);
    }
 
    if (ctx->is_debug)

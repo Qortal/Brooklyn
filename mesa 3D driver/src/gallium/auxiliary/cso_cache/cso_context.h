@@ -44,9 +44,11 @@ struct u_vbuf;
 
 #define CSO_NO_USER_VERTEX_BUFFERS (1 << 0)
 #define CSO_NO_64B_VERTEX_BUFFERS  (1 << 1)
+#define CSO_NO_VBUF  (1 << 2)
 
 struct cso_context *cso_create_context(struct pipe_context *pipe,
                                        unsigned flags);
+void cso_unbind_context(struct cso_context *ctx);
 void cso_destroy_context( struct cso_context *cso );
 struct pipe_context *cso_get_pipe_context(struct cso_context *cso);
 

@@ -36,7 +36,6 @@
 #include "v3d_screen.h"
 #include "v3d_context.h"
 #include "v3d_resource.h"
-#include "v3d_tiling.h"
 #include "broadcom/cle/v3d_packet_v33_pack.h"
 
 static void
@@ -808,7 +807,7 @@ v3d_resource_create_with_modifiers(struct pipe_screen *pscreen,
 
                 if (!rsc->scanout) {
                         fprintf(stderr, "Failed to create scanout resource\n");
-                        return NULL;
+                        goto fail;
                 }
                 assert(handle.type == WINSYS_HANDLE_TYPE_FD);
                 rsc->bo = v3d_bo_open_dmabuf(screen, handle.handle);
@@ -1161,9 +1160,11 @@ v3d_resource_screen_init(struct pipe_screen *pscreen)
 void
 v3d_resource_context_init(struct pipe_context *pctx)
 {
-        pctx->transfer_map = u_transfer_helper_transfer_map;
+        pctx->buffer_map = u_transfer_helper_transfer_map;
+        pctx->texture_map = u_transfer_helper_transfer_map;
         pctx->transfer_flush_region = u_transfer_helper_transfer_flush_region;
-        pctx->transfer_unmap = u_transfer_helper_transfer_unmap;
+        pctx->buffer_unmap = u_transfer_helper_transfer_unmap;
+        pctx->texture_unmap = u_transfer_helper_transfer_unmap;
         pctx->buffer_subdata = u_default_buffer_subdata;
         pctx->texture_subdata = v3d_texture_subdata;
         pctx->create_surface = v3d_create_surface;

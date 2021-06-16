@@ -603,7 +603,7 @@ static void brw_update_texture_surface(struct gl_context *ctx,
       /* On Ivy Bridge and earlier, we handle texture swizzle with shader
        * code.  The actual surface swizzle should be identity.
        */
-      if (devinfo->ver <= 7 && !devinfo->is_haswell)
+      if (devinfo->verx10 <= 70)
          view.swizzle = ISL_SWIZZLE_IDENTITY;
 
       if (obj->Target == GL_TEXTURE_CUBE_MAP ||
@@ -851,7 +851,7 @@ emit_null_surface_state(struct brw_context *brw,
 
    if (devinfo->ver != 6 || samples <= 1) {
       isl_null_fill_state(&brw->isl_dev, surf,
-                          isl_extent3d(width, height, 1));
+                          .size = isl_extent3d(width, height, 1));
       return;
    }
 

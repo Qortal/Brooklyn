@@ -72,8 +72,6 @@ static const struct nir_shader_compiler_options nir_options = {
    .lower_unpack_unorm_2x16 = true,
    .lower_unpack_unorm_4x8 = true,
    .lower_unpack_half_2x16 = true,
-   .lower_extract_byte = true,
-   .lower_extract_word = true,
    .lower_ffma16 = true,
    .lower_ffma32 = true,
    .lower_ffma64 = true,
@@ -97,14 +95,14 @@ static const struct nir_shader_compiler_options nir_options = {
 
 bool
 radv_can_dump_shader(struct radv_device *device, struct vk_shader_module *module,
-                     bool is_gs_copy_shader)
+                     bool meta_shader)
 {
    if (!(device->instance->debug_flags & RADV_DEBUG_DUMP_SHADERS))
       return false;
    if (module)
       return !module->nir || (device->instance->debug_flags & RADV_DEBUG_DUMP_META_SHADERS);
 
-   return is_gs_copy_shader;
+   return meta_shader;
 }
 
 bool
@@ -146,7 +144,7 @@ radv_optimize_nir(const struct radv_device *device, struct nir_shader *shader,
                nir_var_function_temp | nir_var_shader_in | nir_var_shader_out, NULL);
 
       NIR_PASS_V(shader, nir_lower_alu_to_scalar, NULL, NULL);
-      NIR_PASS_V(shader, nir_lower_phis_to_scalar);
+      NIR_PASS_V(shader, nir_lower_phis_to_scalar, true);
 
       NIR_PASS(progress, shader, nir_copy_prop);
       NIR_PASS(progress, shader, nir_opt_remove_phis);
@@ -650,7 +648,7 @@ radv_shader_compile_to_nir(struct radv_device *device, struct vk_shader_module *
       }
       NIR_PASS_V(nir, nir_lower_explicit_io, nir_var_mem_shared, nir_address_format_32bit_offset);
 
-      if (nir->info.cs.zero_initialize_shared_memory && nir->info.shared_size > 0) {
+      if (nir->info.zero_initialize_shared_memory && nir->info.shared_size > 0) {
          const unsigned chunk_size = 16; /* max single store size */
          const unsigned shared_size = ALIGN(nir->info.shared_size, chunk_size);
          NIR_PASS_V(nir, nir_zero_initialize_shared_memory, shared_size, chunk_size);
@@ -808,6 +806,75 @@ radv_lower_io_to_mem(struct radv_device *device, struct nir_shader *nir,
    }
 
    return false;
+}
+
+bool radv_lower_ngg(struct radv_device *device, struct nir_shader *nir, bool has_gs,
+                    struct radv_shader_info *info,
+                    const struct radv_pipeline_key *pl_key,
+                    struct radv_shader_variant_key *key)
+{
+   /* TODO: support the LLVM backend with the NIR lowering */
+   if (radv_use_llvm_for_stage(device, nir->info.stage))
+      return false;
+
+   ac_nir_ngg_config out_conf = {0};
+   const struct gfx10_ngg_info *ngg_info = &info->ngg_info;
+   unsigned num_gs_invocations = (nir->info.stage != MESA_SHADER_GEOMETRY || ngg_info->max_vert_out_per_gs_instance) ? 1 : info->gs.invocations;
+   unsigned max_workgroup_size = MAX4(ngg_info->hw_max_esverts, /* Invocations that process an input vertex */
+                                      ngg_info->max_out_verts, /* Invocations that export an output vertex */
+                                      ngg_info->max_gsprims * num_gs_invocations, /* Invocations that process an input primitive */
+                                      ngg_info->max_gsprims * num_gs_invocations * ngg_info->prim_amp_factor /* Invocations that produce an output primitive */);
+
+   /* Maximum HW limit for NGG workgroups */
+   assert(max_workgroup_size <= 256);
+
+   if (nir->info.stage == MESA_SHADER_VERTEX ||
+       nir->info.stage == MESA_SHADER_TESS_EVAL) {
+      if (has_gs || !key->vs_common_out.as_ngg)
+         return false;
+
+      unsigned num_vertices_per_prim = 3;
+
+      if (nir->info.stage == MESA_SHADER_TESS_EVAL) {
+         if (nir->info.tess.point_mode)
+            num_vertices_per_prim = 1;
+         else if (nir->info.tess.primitive_mode == GL_ISOLINES)
+            num_vertices_per_prim = 2;
+      } else if (nir->info.stage == MESA_SHADER_VERTEX) {
+         /* Need to add 1, because: V_028A6C_POINTLIST=0, V_028A6C_LINESTRIP=1, V_028A6C_TRISTRIP=2, etc. */
+         num_vertices_per_prim = key->vs.outprim + 1;
+      }
+
+      out_conf =
+         ac_nir_lower_ngg_nogs(
+            nir,
+            ngg_info->hw_max_esverts,
+            num_vertices_per_prim,
+            max_workgroup_size,
+            info->wave_size,
+            false,
+            key->vs_common_out.as_ngg_passthrough,
+            key->vs_common_out.export_prim_id,
+            key->vs.provoking_vtx_last);
+
+      info->is_ngg_passthrough = out_conf.passthrough;
+      key->vs_common_out.as_ngg_passthrough = out_conf.passthrough;
+   } else if (nir->info.stage == MESA_SHADER_GEOMETRY) {
+      if (!info->is_ngg)
+         return false;
+
+      ac_nir_lower_ngg_gs(
+         nir, info->wave_size, max_workgroup_size,
+         info->ngg_info.esgs_ring_size,
+         info->gs.gsvs_vertex_size,
+         info->ngg_info.ngg_emit_size * 4u,
+         key->vs.provoking_vtx_last);
+      return true;
+   } else {
+      return false;
+   }
+
+   return true;
 }
 
 static void *
@@ -1346,7 +1413,7 @@ shader_variant_compile(struct radv_device *device, struct vk_shader_module *modu
    options->family = chip_family;
    options->chip_class = device->physical_device->rad_info.chip_class;
    options->info = &device->physical_device->rad_info;
-   options->dump_shader = radv_can_dump_shader(device, module, gs_copy_shader);
+   options->dump_shader = radv_can_dump_shader(device, module, gs_copy_shader || trap_handler_shader);
    options->dump_preoptir =
       options->dump_shader && device->instance->debug_flags & RADV_DEBUG_PREOPTIR;
    options->record_ir = keep_shader_info;
@@ -1455,7 +1522,6 @@ radv_shader_variant_compile(struct radv_device *device, struct vk_shader_module 
 
    options.explicit_scratch_args = !radv_use_llvm_for_stage(device, stage);
    options.robust_buffer_access = device->robust_buffer_access;
-   options.robust_buffer_access2 = device->robust_buffer_access2;
    options.disable_optimizations = disable_optimizations;
    options.wgp_mode = radv_should_use_wgp_mode(device, stage, info);
 

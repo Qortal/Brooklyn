@@ -61,6 +61,59 @@ unsigned get_interp_input(nir_intrinsic_op intrin, enum glsl_interp_mode interp)
    return 0;
 }
 
+bool is_loop_header_block(nir_block *block)
+{
+   return block->cf_node.parent->type == nir_cf_node_loop &&
+          block == nir_loop_first_block(nir_cf_node_as_loop(block->cf_node.parent));
+}
+
+/* similar to nir_block_is_unreachable(), but does not require dominance information */
+bool
+is_block_reachable(nir_function_impl *impl, nir_block *known_reachable, nir_block *block)
+{
+   if (block == nir_start_block(impl) || block == known_reachable)
+      return true;
+
+   /* skip loop back-edges */
+   if (is_loop_header_block(block)) {
+      nir_loop *loop = nir_cf_node_as_loop(block->cf_node.parent);
+      nir_block *preheader = nir_block_cf_tree_prev(nir_loop_first_block(loop));
+      return is_block_reachable(impl, known_reachable, preheader);
+   }
+
+   set_foreach(block->predecessors, entry) {
+      if (is_block_reachable(impl, known_reachable, (nir_block *)entry->key))
+         return true;
+   }
+
+   return false;
+}
+
+bool
+only_used_by_readlane_or_phi(nir_dest *dest)
+{
+   nir_src *src = list_first_entry(&dest->ssa.uses, nir_src, use_link);
+
+   switch (src->parent_instr->type) {
+   case nir_instr_type_alu: {
+      nir_alu_instr *alu = nir_instr_as_alu(src->parent_instr);
+      if (alu->op == nir_op_unpack_64_2x32_split_x || alu->op == nir_op_unpack_64_2x32_split_y)
+         return only_used_by_readlane_or_phi(&alu->dest.dest);
+      return false;
+   }
+   case nir_instr_type_intrinsic: {
+      nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(src->parent_instr);
+      return intrin->intrinsic == nir_intrinsic_read_invocation ||
+             intrin->intrinsic == nir_intrinsic_read_first_invocation ||
+             intrin->intrinsic == nir_intrinsic_lane_permute_16_amd;
+   }
+   case nir_instr_type_phi:
+      return only_used_by_readlane_or_phi(&nir_instr_as_phi(src->parent_instr)->dest);
+   default:
+      return false;
+   }
+}
+
 /* If one side of a divergent IF ends in a branch and the other doesn't, we
  * might have to emit the contents of the side without the branch at the merge
  * block instead. This is so that we can use any SGPR live-out of the side
@@ -72,8 +125,10 @@ sanitize_if(nir_function_impl *impl, nir_if *nif)
 
    nir_block *then_block = nir_if_last_then_block(nif);
    nir_block *else_block = nir_if_last_else_block(nif);
-   bool then_jump = nir_block_ends_in_jump(then_block) || nir_block_is_unreachable(then_block);
-   bool else_jump = nir_block_ends_in_jump(else_block) || nir_block_is_unreachable(else_block);
+   bool then_jump = nir_block_ends_in_jump(then_block) ||
+                    !is_block_reachable(impl, nir_if_first_then_block(nif), then_block);
+   bool else_jump = nir_block_ends_in_jump(else_block) ||
+                    !is_block_reachable(impl, nir_if_first_else_block(nif), else_block);
    if (then_jump == else_jump)
       return false;
 
@@ -99,12 +154,6 @@ sanitize_if(nir_function_impl *impl, nir_if *nif)
    nir_cf_extract(&tmp, nir_before_block(first_continue_from_blk),
                         nir_after_block(last_continue_from_blk));
    nir_cf_reinsert(&tmp, nir_after_cf_node(&nif->cf_node));
-
-   /* nir_cf_extract() invalidates dominance metadata, but it should still be
-    * correct because of the specific type of transformation we did. Block
-    * indices are not valid except for block_0's, which is all we care about for
-    * nir_block_is_unreachable(). */
-   impl->valid_metadata = impl->valid_metadata | nir_metadata_dominance | nir_metadata_block_index;
 
    return true;
 }
@@ -279,8 +328,6 @@ void apply_nuw_to_ssa(isel_context *ctx, nir_ssa_def *ssa)
 
 void apply_nuw_to_offsets(isel_context *ctx, nir_function_impl *impl)
 {
-   nir_metadata_require(impl, nir_metadata_dominance);
-
    nir_foreach_block(block, impl) {
       nir_foreach_instr(instr, block) {
          if (instr->type != nir_instr_type_intrinsic)
@@ -390,15 +437,11 @@ setup_vs_variables(isel_context *ctx, nir_shader *nir)
       /* TODO: NGG streamout */
       if (ctx->stage.hw == HWStage::NGG)
          assert(!ctx->args->shader_info->so.num_outputs);
-
-      /* TODO: check if the shader writes edge flags (not in Vulkan) */
-      ctx->ngg_nogs_early_prim_export = exec_list_is_singular(&nir_shader_get_entrypoint(nir)->body);
    }
 
-   if (ctx->stage == vertex_ngg && ctx->args->options->key.vs_common_out.export_prim_id) {
-      /* We need to store the primitive IDs in LDS */
-      unsigned lds_size = ctx->program->info->ngg_info.esgs_ring_size;
-      ctx->program->config->lds_size = DIV_ROUND_UP(lds_size, ctx->program->dev.lds_encoding_granule);
+   if (ctx->stage == vertex_ngg) {
+      ctx->program->config->lds_size = DIV_ROUND_UP(nir->info.shared_size, ctx->program->dev.lds_encoding_granule);
+      assert((ctx->program->config->lds_size * ctx->program->dev.lds_encoding_granule) < (32 * 1024));
    }
 }
 
@@ -411,28 +454,7 @@ void setup_gs_variables(isel_context *ctx, nir_shader *nir)
       setup_vs_output_info(ctx, nir, false,
                            ctx->options->key.vs_common_out.export_clip_dists, outinfo);
 
-      unsigned ngg_gs_scratch_bytes = ctx->args->shader_info->so.num_outputs ? (44u * 4u) : (8u * 4u);
-      unsigned ngg_emit_bytes = ctx->args->shader_info->ngg_info.ngg_emit_size * 4u;
-      unsigned esgs_ring_bytes = ctx->args->shader_info->ngg_info.esgs_ring_size;
-
-      ctx->ngg_gs_primflags_offset = ctx->args->shader_info->gs.gsvs_vertex_size;
-      ctx->ngg_gs_emit_vtx_bytes = ctx->ngg_gs_primflags_offset + 4u;
-      ctx->ngg_gs_emit_addr = esgs_ring_bytes;
-      ctx->ngg_gs_scratch_addr = ctx->ngg_gs_emit_addr + ngg_emit_bytes;
-      ctx->ngg_gs_scratch_addr = ALIGN(ctx->ngg_gs_scratch_addr, 16u);
-
-      unsigned total_lds_bytes = ctx->ngg_gs_scratch_addr + ngg_gs_scratch_bytes;
-      assert(total_lds_bytes >= ctx->ngg_gs_emit_addr);
-      assert(total_lds_bytes >= ctx->ngg_gs_scratch_addr);
-      ctx->program->config->lds_size = DIV_ROUND_UP(total_lds_bytes, ctx->program->dev.lds_encoding_granule);
-
-      /* Make sure we have enough room for emitted GS vertices */
-      if (nir->info.gs.vertices_out)
-         assert((ngg_emit_bytes % (ctx->ngg_gs_emit_vtx_bytes * nir->info.gs.vertices_out)) == 0);
-
-      /* See if the number of vertices and primitives are compile-time known */
-      nir_gs_count_vertices_and_primitives(nir, ctx->ngg_gs_const_vtxcnt, ctx->ngg_gs_const_prmcnt, 4u);
-      ctx->ngg_gs_early_alloc = ctx->ngg_gs_const_vtxcnt[0] == nir->info.gs.vertices_out && ctx->ngg_gs_const_prmcnt[0] != -1;
+      ctx->program->config->lds_size = DIV_ROUND_UP(nir->info.shared_size, ctx->program->dev.lds_encoding_granule);
    }
 
    if (ctx->stage.has(SWStage::VS))
@@ -463,8 +485,11 @@ setup_tes_variables(isel_context *ctx, nir_shader *nir)
       /* TODO: NGG streamout */
       if (ctx->stage.hw == HWStage::NGG)
          assert(!ctx->args->shader_info->so.num_outputs);
+   }
 
-      ctx->ngg_nogs_early_prim_export = exec_list_is_singular(&nir_shader_get_entrypoint(nir)->body);
+   if (ctx->stage == tess_eval_ngg) {
+      ctx->program->config->lds_size = DIV_ROUND_UP(nir->info.shared_size, ctx->program->dev.lds_encoding_granule);
+      assert((ctx->program->config->lds_size * ctx->program->dev.lds_encoding_granule) < (32 * 1024));
    }
 }
 
@@ -509,7 +534,7 @@ setup_nir(isel_context *ctx, nir_shader *nir)
    setup_variables(ctx, nir);
 
    nir_convert_to_lcssa(nir, true, false);
-   nir_lower_phis_to_scalar(nir);
+   nir_lower_phis_to_scalar(nir, true);
 
    nir_function_impl *func = nir_shader_get_entrypoint(nir);
    nir_index_ssa_defs(func);
@@ -520,8 +545,6 @@ setup_nir(isel_context *ctx, nir_shader *nir)
 void init_context(isel_context *ctx, nir_shader *shader)
 {
    nir_function_impl *impl = nir_shader_get_entrypoint(shader);
-   unsigned lane_mask_size = ctx->program->lane_mask.size();
-
    ctx->shader = shader;
 
    /* Init NIR range analysis. */
@@ -532,13 +555,13 @@ void init_context(isel_context *ctx, nir_shader *shader)
       ctx->ub_config.min_subgroup_size = ctx->options->key.cs.subgroup_size;
       ctx->ub_config.max_subgroup_size = ctx->options->key.cs.subgroup_size;
    }
-   ctx->ub_config.max_work_group_invocations = 2048;
-   ctx->ub_config.max_work_group_count[0] = 65535;
-   ctx->ub_config.max_work_group_count[1] = 65535;
-   ctx->ub_config.max_work_group_count[2] = 65535;
-   ctx->ub_config.max_work_group_size[0] = 2048;
-   ctx->ub_config.max_work_group_size[1] = 2048;
-   ctx->ub_config.max_work_group_size[2] = 2048;
+   ctx->ub_config.max_workgroup_invocations = 2048;
+   ctx->ub_config.max_workgroup_count[0] = 65535;
+   ctx->ub_config.max_workgroup_count[1] = 65535;
+   ctx->ub_config.max_workgroup_count[2] = 65535;
+   ctx->ub_config.max_workgroup_size[0] = 2048;
+   ctx->ub_config.max_workgroup_size[1] = 2048;
+   ctx->ub_config.max_workgroup_size[2] = 2048;
    for (unsigned i = 0; i < MAX_VERTEX_ATTRIBS; i++) {
       unsigned attrib_format = ctx->options->key.vs.vertex_attribute_formats[i];
       unsigned dfmt = attrib_format & 0xf;
@@ -588,11 +611,10 @@ void init_context(isel_context *ctx, nir_shader *shader)
    apply_nuw_to_offsets(ctx, impl);
 
    /* sanitize control flow */
-   nir_metadata_require(impl, nir_metadata_dominance);
    sanitize_cf_list(impl, &impl->body);
-   nir_metadata_preserve(impl, ~nir_metadata_block_index);
+   nir_metadata_preserve(impl, nir_metadata_none);
 
-   /* we'll need this for isel */
+   /* we'll need these for isel */
    nir_metadata_require(impl, nir_metadata_block_index);
 
    if (!ctx->stage.has(SWStage::GSCopy) && ctx->options->dump_preoptir) {
@@ -666,6 +688,7 @@ void init_context(isel_context *ctx, nir_shader *shader)
                   case nir_op_frexp_exp:
                   case nir_op_cube_face_index:
                   case nir_op_cube_face_coord:
+                  case nir_op_sad_u8x4:
                      type = RegType::vgpr;
                      break;
                   case nir_op_f2i16:
@@ -722,8 +745,8 @@ void init_context(isel_context *ctx, nir_shader *shader)
                RegType type = RegType::sgpr;
                switch(intrinsic->intrinsic) {
                   case nir_intrinsic_load_push_constant:
-                  case nir_intrinsic_load_work_group_id:
-                  case nir_intrinsic_load_num_work_groups:
+                  case nir_intrinsic_load_workgroup_id:
+                  case nir_intrinsic_load_num_workgroups:
                   case nir_intrinsic_load_subgroup_id:
                   case nir_intrinsic_load_num_subgroups:
                   case nir_intrinsic_load_first_vertex:
@@ -741,6 +764,11 @@ void init_context(isel_context *ctx, nir_shader *shader)
                   case nir_intrinsic_load_ring_esgs_amd:
                   case nir_intrinsic_load_ring_es2gs_offset_amd:
                   case nir_intrinsic_image_deref_samples:
+                  case nir_intrinsic_has_input_vertex_amd:
+                  case nir_intrinsic_has_input_primitive_amd:
+                  case nir_intrinsic_load_workgroup_num_input_vertices_amd:
+                  case nir_intrinsic_load_workgroup_num_input_primitives_amd:
+                  case nir_intrinsic_load_shader_query_enabled_amd:
                      type = RegType::sgpr;
                      break;
                   case nir_intrinsic_load_sample_id:
@@ -769,6 +797,8 @@ void init_context(isel_context *ctx, nir_shader *shader)
                   case nir_intrinsic_load_tess_coord:
                   case nir_intrinsic_write_invocation_amd:
                   case nir_intrinsic_mbcnt_amd:
+                  case nir_intrinsic_byte_permute_amd:
+                  case nir_intrinsic_lane_permute_16_amd:
                   case nir_intrinsic_load_instance_id:
                   case nir_intrinsic_ssbo_atomic_add:
                   case nir_intrinsic_ssbo_atomic_imin:
@@ -818,8 +848,23 @@ void init_context(isel_context *ctx, nir_shader *shader)
                   case nir_intrinsic_load_buffer_amd:
                   case nir_intrinsic_load_tess_rel_patch_id_amd:
                   case nir_intrinsic_load_gs_vertex_offset_amd:
+                  case nir_intrinsic_load_initial_edgeflag_amd:
+                  case nir_intrinsic_load_packed_passthrough_primitive_amd:
+                  case nir_intrinsic_gds_atomic_add_amd:
+                  case nir_intrinsic_load_sbt_amd:
+                  case nir_intrinsic_bvh64_intersect_ray_amd:
                      type = RegType::vgpr;
                      break;
+                  case nir_intrinsic_load_shared:
+                     /* When the result of these loads is only used by cross-lane instructions,
+                     * it is beneficial to use a VGPR destination. This is because this allows
+                     * to put the s_waitcnt further down, which decreases latency.
+                     */
+                     if (only_used_by_readlane_or_phi(&intrinsic->dest)) {
+                        type = RegType::vgpr;
+                        break;
+                     }
+                     FALLTHROUGH;
                   case nir_intrinsic_shuffle:
                   case nir_intrinsic_quad_broadcast:
                   case nir_intrinsic_quad_swap_horizontal:
@@ -834,7 +879,6 @@ void init_context(isel_context *ctx, nir_shader *shader)
                   case nir_intrinsic_load_ssbo:
                   case nir_intrinsic_load_global:
                   case nir_intrinsic_vulkan_resource_index:
-                  case nir_intrinsic_load_shared:
                   case nir_intrinsic_get_ssbo_size:
                      type = nir_dest_is_divergent(intrinsic->dest) ? RegType::vgpr : RegType::sgpr;
                      break;
@@ -927,36 +971,23 @@ void init_context(isel_context *ctx, nir_shader *shader)
             }
             case nir_instr_type_phi: {
                nir_phi_instr* phi = nir_instr_as_phi(instr);
-               RegType type;
-               unsigned size = phi->dest.ssa.num_components;
-
-               if (phi->dest.ssa.bit_size == 1) {
-                  assert(size == 1 && "multiple components not yet supported on boolean phis.");
-                  type = RegType::sgpr;
-                  size *= lane_mask_size;
-                  regclasses[phi->dest.ssa.index] = RegClass(type, size);
-                  break;
-               }
+               RegType type = RegType::sgpr;
+               unsigned num_components = phi->dest.ssa.num_components;
+               assert((phi->dest.ssa.bit_size != 1 || num_components == 1) &&
+                      "Multiple components not supported on boolean phis.");
 
                if (nir_dest_is_divergent(phi->dest)) {
                   type = RegType::vgpr;
                } else {
-                  type = RegType::sgpr;
                   nir_foreach_phi_src (src, phi) {
                      if (regclasses[src->src.ssa->index].type() == RegType::vgpr)
                         type = RegType::vgpr;
-                     if (regclasses[src->src.ssa->index].type() == RegType::none)
-                        done = false;
                   }
                }
 
-               RegClass rc = get_reg_class(ctx, type, phi->dest.ssa.num_components, phi->dest.ssa.bit_size);
-               if (rc != regclasses[phi->dest.ssa.index]) {
+               RegClass rc = get_reg_class(ctx, type, num_components, phi->dest.ssa.bit_size);
+               if (rc != regclasses[phi->dest.ssa.index])
                   done = false;
-               } else {
-                  nir_foreach_phi_src(src, phi)
-                     assert(regclasses[src->src.ssa->index].size() == rc.size());
-               }
                regclasses[phi->dest.ssa.index] = rc;
                break;
             }
@@ -1084,9 +1115,9 @@ setup_isel_context(Program* program,
       program->workgroup_size = program->wave_size;
    } else if (program->stage == compute_cs) {
       /* CS sets the workgroup size explicitly */
-      program->workgroup_size = shaders[0]->info.cs.local_size[0] *
-                                shaders[0]->info.cs.local_size[1] *
-                                shaders[0]->info.cs.local_size[2];
+      program->workgroup_size = shaders[0]->info.workgroup_size[0] *
+                                shaders[0]->info.workgroup_size[1] *
+                                shaders[0]->info.workgroup_size[2];
    } else if (program->stage.hw == HWStage::ES || program->stage == geometry_gs) {
       /* Unmerged ESGS operate in workgroups if on-chip GS (LDS rings) are enabled on GFX7-8 (not implemented in Mesa)  */
       program->workgroup_size = program->wave_size;

@@ -160,6 +160,7 @@ remap_patch_urb_offsets(nir_block *block, nir_builder *b,
 
 void
 brw_nir_lower_vs_inputs(nir_shader *nir,
+                        bool edgeflag_is_last,
                         const uint8_t *vs_attrib_wa_flags)
 {
    /* Start with the location of the variable's base. */
@@ -270,8 +271,16 @@ brw_nir_lower_vs_inputs(nir_shader *nir,
                 * before it and counting the bits.
                 */
                int attr = nir_intrinsic_base(intrin);
-               int slot = util_bitcount64(nir->info.inputs_read &
-                                            BITFIELD64_MASK(attr));
+               uint64_t inputs_read = nir->info.inputs_read;
+               int slot = -1;
+               if (edgeflag_is_last) {
+                  inputs_read &= ~BITFIELD64_BIT(VERT_ATTRIB_EDGEFLAG);
+                  if (attr == VERT_ATTRIB_EDGEFLAG)
+                     slot = num_inputs - 1;
+               }
+               if (slot == -1)
+                  slot = util_bitcount64(inputs_read &
+                                         BITFIELD64_MASK(attr));
                nir_intrinsic_set_base(intrin, slot);
                break;
             }
@@ -548,7 +557,7 @@ brw_nir_no_indirect_mask(const struct brw_compiler *compiler,
     * indirects as scratch all the time, we may easily exceed this limit
     * without having any fallback.
     */
-   if (is_scalar && devinfo->ver <= 7 && !devinfo->is_haswell)
+   if (is_scalar && devinfo->verx10 <= 70)
       indirect_mask |= nir_var_function_temp;
 
    return indirect_mask;
@@ -600,7 +609,7 @@ brw_nir_optimize(nir_shader *nir, const struct brw_compiler *compiler,
       OPT(nir_copy_prop);
 
       if (is_scalar) {
-         OPT(nir_lower_phis_to_scalar);
+         OPT(nir_lower_phis_to_scalar, false);
       }
 
       OPT(nir_copy_prop);
@@ -1265,7 +1274,7 @@ brw_nir_apply_sampler_key(nir_shader *nir,
    }
 
    /* Prior to Haswell, we have to lower gradients on shadow samplers */
-   tex_options.lower_txd_shadow = devinfo->ver < 8 && !devinfo->is_haswell;
+   tex_options.lower_txd_shadow = devinfo->verx10 <= 70;
 
    tex_options.lower_y_uv_external = key_tex->y_uv_image_mask;
    tex_options.lower_y_u_v_external = key_tex->y_u_v_image_mask;

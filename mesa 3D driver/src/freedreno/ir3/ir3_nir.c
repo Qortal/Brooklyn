@@ -53,6 +53,8 @@ static const nir_shader_compiler_options options = {
 		.vertex_id_zero_based = true,
 		.lower_extract_byte = true,
 		.lower_extract_word = true,
+		.lower_insert_byte = true,
+		.lower_insert_word = true,
 		.lower_helper_invocation = true,
 		.lower_bitfield_insert_to_shifts = true,
 		.lower_bitfield_extract_to_shifts = true,
@@ -107,6 +109,8 @@ static const nir_shader_compiler_options options_a6xx = {
 		.vertex_id_zero_based = false,
 		.lower_extract_byte = true,
 		.lower_extract_word = true,
+		.lower_insert_byte = true,
+		.lower_insert_word = true,
 		.lower_helper_invocation = true,
 		.lower_bitfield_insert_to_shifts = true,
 		.lower_bitfield_extract_to_shifts = true,
@@ -205,7 +209,7 @@ ir3_optimize_loop(struct ir3_compiler *compiler, nir_shader *s)
 		progress |= OPT(s, nir_opt_copy_prop_vars);
 		progress |= OPT(s, nir_opt_dead_write_vars);
 		progress |= OPT(s, nir_lower_alu_to_scalar, NULL, NULL);
-		progress |= OPT(s, nir_lower_phis_to_scalar);
+		progress |= OPT(s, nir_lower_phis_to_scalar, false);
 
 		progress |= OPT(s, nir_copy_prop);
 		progress |= OPT(s, nir_opt_dce);
@@ -553,10 +557,13 @@ ir3_nir_lower_variant(struct ir3_shader_variant *so, nir_shader *s)
 	 * expensive.
 	 */
 	if (so->shader->compiler->has_pvtmem) {
-		NIR_PASS_V(s, nir_lower_vars_to_scratch, nir_var_function_temp,
-				   16 * 16 /* bytes */, glsl_get_natural_size_align_bytes);
+		progress |=
+			OPT(s, nir_lower_vars_to_scratch, nir_var_function_temp,
+				16 * 16 /* bytes */, glsl_get_natural_size_align_bytes);
 	}
 
+	/* Lower scratch writemasks */
+	progress |= OPT(s, nir_lower_wrmasks, should_split_wrmask, s);
 
 	OPT_V(s, nir_lower_amul, ir3_glsl_type_size);
 
@@ -673,15 +680,15 @@ ir3_nir_scan_driver_consts(nir_shader *shader,
 					layout->num_driver_params =
 						MAX2(layout->num_driver_params, IR3_DP_UCP0_X + (idx + 1) * 4);
 					break;
-				case nir_intrinsic_load_num_work_groups:
+				case nir_intrinsic_load_num_workgroups:
 					layout->num_driver_params =
 						MAX2(layout->num_driver_params, IR3_DP_NUM_WORK_GROUPS_Z + 1);
 					break;
-				case nir_intrinsic_load_local_group_size:
+				case nir_intrinsic_load_workgroup_size:
 					layout->num_driver_params =
 						MAX2(layout->num_driver_params, IR3_DP_LOCAL_GROUP_SIZE_Z + 1);
 					break;
-				case nir_intrinsic_load_base_work_group_id:
+				case nir_intrinsic_load_base_workgroup_id:
 					layout->num_driver_params =
 						MAX2(layout->num_driver_params, IR3_DP_BASE_GROUP_Z + 1);
 					break;

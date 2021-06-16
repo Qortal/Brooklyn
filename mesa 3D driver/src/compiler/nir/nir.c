@@ -958,6 +958,22 @@ nir_instr_insert(nir_cursor cursor, nir_instr *instr)
    impl->valid_metadata &= ~nir_metadata_instr_index;
 }
 
+bool
+nir_instr_move(nir_cursor cursor, nir_instr *instr)
+{
+   /* If the cursor happens to refer to this instruction (either before or
+    * after), don't do anything.
+    */
+   if ((cursor.option == nir_cursor_before_instr ||
+        cursor.option == nir_cursor_after_instr) &&
+       cursor.instr == instr)
+      return false;
+
+   nir_instr_remove(instr);
+   nir_instr_insert(cursor, instr);
+   return true;
+}
+
 static bool
 src_is_valid(const nir_src *src)
 {
@@ -1959,10 +1975,10 @@ nir_intrinsic_from_system_value(gl_system_value val)
       return nir_intrinsic_load_local_invocation_id;
    case SYSTEM_VALUE_LOCAL_INVOCATION_INDEX:
       return nir_intrinsic_load_local_invocation_index;
-   case SYSTEM_VALUE_WORK_GROUP_ID:
-      return nir_intrinsic_load_work_group_id;
-   case SYSTEM_VALUE_NUM_WORK_GROUPS:
-      return nir_intrinsic_load_num_work_groups;
+   case SYSTEM_VALUE_WORKGROUP_ID:
+      return nir_intrinsic_load_workgroup_id;
+   case SYSTEM_VALUE_NUM_WORKGROUPS:
+      return nir_intrinsic_load_num_workgroups;
    case SYSTEM_VALUE_PRIMITIVE_ID:
       return nir_intrinsic_load_primitive_id;
    case SYSTEM_VALUE_TESS_COORD:
@@ -2003,8 +2019,8 @@ nir_intrinsic_from_system_value(gl_system_value val)
       return nir_intrinsic_load_num_subgroups;
    case SYSTEM_VALUE_SUBGROUP_ID:
       return nir_intrinsic_load_subgroup_id;
-   case SYSTEM_VALUE_LOCAL_GROUP_SIZE:
-      return nir_intrinsic_load_local_group_size;
+   case SYSTEM_VALUE_WORKGROUP_SIZE:
+      return nir_intrinsic_load_workgroup_size;
    case SYSTEM_VALUE_GLOBAL_INVOCATION_ID:
       return nir_intrinsic_load_global_invocation_id;
    case SYSTEM_VALUE_BASE_GLOBAL_INVOCATION_ID:
@@ -2090,10 +2106,10 @@ nir_system_value_from_intrinsic(nir_intrinsic_op intrin)
       return SYSTEM_VALUE_LOCAL_INVOCATION_ID;
    case nir_intrinsic_load_local_invocation_index:
       return SYSTEM_VALUE_LOCAL_INVOCATION_INDEX;
-   case nir_intrinsic_load_num_work_groups:
-      return SYSTEM_VALUE_NUM_WORK_GROUPS;
-   case nir_intrinsic_load_work_group_id:
-      return SYSTEM_VALUE_WORK_GROUP_ID;
+   case nir_intrinsic_load_num_workgroups:
+      return SYSTEM_VALUE_NUM_WORKGROUPS;
+   case nir_intrinsic_load_workgroup_id:
+      return SYSTEM_VALUE_WORKGROUP_ID;
    case nir_intrinsic_load_primitive_id:
       return SYSTEM_VALUE_PRIMITIVE_ID;
    case nir_intrinsic_load_tess_coord:
@@ -2134,8 +2150,8 @@ nir_system_value_from_intrinsic(nir_intrinsic_op intrin)
       return SYSTEM_VALUE_NUM_SUBGROUPS;
    case nir_intrinsic_load_subgroup_id:
       return SYSTEM_VALUE_SUBGROUP_ID;
-   case nir_intrinsic_load_local_group_size:
-      return SYSTEM_VALUE_LOCAL_GROUP_SIZE;
+   case nir_intrinsic_load_workgroup_size:
+      return SYSTEM_VALUE_WORKGROUP_SIZE;
    case nir_intrinsic_load_global_invocation_id:
       return SYSTEM_VALUE_GLOBAL_INVOCATION_ID;
    case nir_intrinsic_load_base_global_invocation_id:
@@ -2411,6 +2427,9 @@ nir_binding nir_chase_binding(nir_src rsrc)
 
 nir_variable *nir_get_binding_variable(nir_shader *shader, nir_binding binding)
 {
+   nir_variable *binding_var = NULL;
+   unsigned count = 0;
+
    if (!binding.success)
       return NULL;
 
@@ -2418,9 +2437,17 @@ nir_variable *nir_get_binding_variable(nir_shader *shader, nir_binding binding)
       return binding.var;
 
    nir_foreach_variable_with_modes(var, shader, nir_var_mem_ubo | nir_var_mem_ssbo) {
-      if (var->data.descriptor_set == binding.desc_set && var->data.binding == binding.binding)
-         return var;
+      if (var->data.descriptor_set == binding.desc_set && var->data.binding == binding.binding) {
+         binding_var = var;
+         count++;
+      }
    }
 
-   return NULL;
+   /* Be conservative if another variable is using the same binding/desc_set
+    * because the access mask might be different and we can't get it reliably.
+    */
+   if (count > 1)
+      return NULL;
+
+   return binding_var;
 }

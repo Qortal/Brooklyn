@@ -178,6 +178,29 @@ vn_instance_init_ring(struct vn_instance *instance)
    return VK_SUCCESS;
 }
 
+static void
+vn_instance_init_experimental_features(struct vn_instance *instance)
+{
+   if (instance->renderer_info.vk_mesa_venus_protocol_spec_version !=
+       100000) {
+      if (VN_DEBUG(INIT))
+         vn_log(instance, "renderer supports no experimental features");
+      return;
+   }
+
+   size_t size = sizeof(instance->experimental);
+   vn_call_vkGetVenusExperimentalFeatureData100000MESA(
+      instance, &size, &instance->experimental);
+   if (VN_DEBUG(INIT)) {
+      vn_log(instance,
+             "VkVenusExperimentalFeatures100000MESA is as below:"
+             "\n\tmemoryResourceAllocationSize = %u"
+             "\n\tglobalFencing = %u",
+             instance->experimental.memoryResourceAllocationSize,
+             instance->experimental.globalFencing);
+   }
+}
+
 static VkResult
 vn_instance_init_renderer(struct vn_instance *instance)
 {
@@ -579,7 +602,7 @@ void
 vn_instance_submit_command(struct vn_instance *instance,
                            struct vn_instance_submit_command *submit)
 {
-   void *reply_ptr;
+   void *reply_ptr = NULL;
    submit->reply_shmem = NULL;
 
    mtx_lock(&instance->ring.mutex);
@@ -1268,11 +1291,15 @@ vn_physical_device_init_properties(struct vn_physical_device *physical_dev)
    }
 
    props->driverVersion = vk_get_driver_version();
-   props->vendorID = instance->renderer_info.pci.vendor_id;
-   props->deviceID = instance->renderer_info.pci.device_id;
-   /* some apps don't like VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU */
-   props->deviceType = VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
-   snprintf(props->deviceName, sizeof(props->deviceName), "Virtio GPU");
+
+   char device_name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
+   int device_name_len = snprintf(device_name, sizeof(device_name),
+                                  "Virtio-GPU Venus (%s)", props->deviceName);
+   if (device_name_len >= VK_MAX_PHYSICAL_DEVICE_NAME_SIZE) {
+      memcpy(device_name + VK_MAX_PHYSICAL_DEVICE_NAME_SIZE - 5, "...)", 4);
+      device_name_len = VK_MAX_PHYSICAL_DEVICE_NAME_SIZE - 1;
+   }
+   memcpy(props->deviceName, device_name, device_name_len + 1);
 
    vk12_props->driverID = 0;
    snprintf(vk12_props->driverName, sizeof(vk12_props->driverName), "venus");
@@ -1367,7 +1394,7 @@ vn_physical_device_init_external_memory(
     * the extension.
     */
 
-   if (!physical_dev->instance->renderer_info.has_dmabuf_import)
+   if (!physical_dev->instance->renderer_info.has_dma_buf_import)
       return;
 
    /* TODO We assume the renderer uses dma-bufs here.  This should be
@@ -1377,9 +1404,14 @@ vn_physical_device_init_external_memory(
       physical_dev->external_memory.renderer_handle_type =
          VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
 
+#ifdef ANDROID
+      physical_dev->external_memory.supported_handle_types =
+         VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
+#else
       physical_dev->external_memory.supported_handle_types =
          VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT |
          VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+#endif
    }
 }
 
@@ -1403,6 +1435,13 @@ vn_physical_device_init_external_fence_handles(
     * and idle waiting.
     */
    physical_dev->external_fence_handles = 0;
+
+#ifdef ANDROID
+   if (physical_dev->instance->experimental.globalFencing) {
+      physical_dev->external_fence_handles =
+         VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT;
+   }
+#endif
 }
 
 static void
@@ -1429,6 +1468,13 @@ vn_physical_device_init_external_semaphore_handles(
     */
    physical_dev->external_binary_semaphore_handles = 0;
    physical_dev->external_timeline_semaphore_handles = 0;
+
+#ifdef ANDROID
+   if (physical_dev->instance->experimental.globalFencing) {
+      physical_dev->external_binary_semaphore_handles =
+         VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
+   }
+#endif
 }
 
 static void
@@ -1444,26 +1490,35 @@ vn_physical_device_get_native_extensions(
    memset(exts, 0, sizeof(*exts));
 
    /* see vn_physical_device_init_external_memory */
-   if (renderer_exts->EXT_external_memory_dma_buf &&
-       renderer_info->has_dmabuf_import) {
+   const bool can_external_mem = renderer_exts->EXT_external_memory_dma_buf &&
+                                 renderer_info->has_dma_buf_import;
+
+#ifdef ANDROID
+   if (can_external_mem && renderer_exts->EXT_image_drm_format_modifier &&
+       renderer_exts->EXT_queue_family_foreign &&
+       instance->experimental.memoryResourceAllocationSize == VK_TRUE) {
+      exts->ANDROID_external_memory_android_hardware_buffer = true;
+      exts->ANDROID_native_buffer = true;
+   }
+
+   /* we have a very poor implementation */
+   if (instance->experimental.globalFencing) {
+      exts->KHR_external_fence_fd = true;
+      exts->KHR_external_semaphore_fd = true;
+   }
+#else /* ANDROID */
+   if (can_external_mem) {
       exts->KHR_external_memory_fd = true;
       exts->EXT_external_memory_dma_buf = true;
    }
 
-   /* TODO join Android to do proper checks */
 #ifdef VN_USE_WSI_PLATFORM
+   /* XXX we should check for EXT_queue_family_foreign */
    exts->KHR_incremental_present = true;
    exts->KHR_swapchain = true;
    exts->KHR_swapchain_mutable_format = true;
 #endif
-
-#ifdef ANDROID
-   if (renderer_exts->EXT_image_drm_format_modifier &&
-       renderer_exts->EXT_queue_family_foreign &&
-       exts->EXT_external_memory_dma_buf) {
-      exts->ANDROID_native_buffer = true;
-   }
-#endif
+#endif /* ANDROID */
 }
 
 static void
@@ -1498,7 +1553,10 @@ vn_physical_device_get_passthrough_extensions(
       .KHR_create_renderpass2 = true,
       .KHR_depth_stencil_resolve = true,
       .KHR_draw_indirect_count = true,
+#ifndef ANDROID
+      /* xxx remove the #ifndef after venus has a driver id */
       .KHR_driver_properties = true,
+#endif
       .KHR_image_format_list = true,
       .KHR_imageless_framebuffer = true,
       .KHR_sampler_mirror_clamp_to_edge = true,
@@ -1519,7 +1577,9 @@ vn_physical_device_get_passthrough_extensions(
       .EXT_shader_viewport_index_layer = true,
 
       /* EXT */
+#ifndef ANDROID
       .EXT_image_drm_format_modifier = true,
+#endif
       .EXT_queue_family_foreign = true,
       .EXT_transform_feedback = true,
    };
@@ -1643,8 +1703,8 @@ vn_physical_device_init_renderer_version(
       instance, vn_physical_device_to_handle(physical_dev), &props);
    if (props.apiVersion < VN_MIN_RENDERER_VERSION) {
       if (VN_DEBUG(INIT)) {
-         vn_log(instance, "unsupported renderer device version %d.%d",
-                VK_VERSION_MAJOR(props.apiVersion),
+         vn_log(instance, "%s has unsupported renderer device version %d.%d",
+                props.deviceName, VK_VERSION_MAJOR(props.apiVersion),
                 VK_VERSION_MINOR(props.apiVersion));
       }
       return VK_ERROR_INITIALIZATION_FAILED;
@@ -1716,6 +1776,7 @@ vn_physical_device_fini(struct vn_physical_device *physical_dev)
 static VkResult
 vn_instance_enumerate_physical_devices(struct vn_instance *instance)
 {
+   /* TODO cache device group info here as well */
    const VkAllocationCallbacks *alloc = &instance->base.base.alloc;
    struct vn_physical_device *physical_devs = NULL;
    VkResult result;
@@ -1842,7 +1903,7 @@ vn_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
                   VkInstance *pInstance)
 {
    const VkAllocationCallbacks *alloc =
-      pAllocator ? pAllocator : vn_default_allocator();
+      pAllocator ? pAllocator : vk_default_allocator();
    struct vn_instance *instance;
    VkResult result;
 
@@ -1884,6 +1945,8 @@ vn_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
    result = vn_instance_init_ring(instance);
    if (result != VK_SUCCESS)
       goto fail;
+
+   vn_instance_init_experimental_features(instance);
 
    result = vn_instance_init_renderer_versions(instance);
    if (result != VK_SUCCESS)
@@ -2051,6 +2114,9 @@ vn_EnumeratePhysicalDeviceGroups(
    if (result != VK_SUCCESS)
       return vn_error(instance, result);
 
+   if (pPhysicalDeviceGroupProperties && *pPhysicalDeviceGroupCount == 0)
+      return instance->physical_device_count ? VK_INCOMPLETE : VK_SUCCESS;
+
    /* make sure VkPhysicalDevice point to objects, as they are considered
     * inputs by the encoder
     */
@@ -2077,7 +2143,7 @@ vn_EnumeratePhysicalDeviceGroups(
    }
 
    result = vn_call_vkEnumeratePhysicalDeviceGroups(
-      instance, vn_instance_to_handle(instance), pPhysicalDeviceGroupCount,
+      instance, _instance, pPhysicalDeviceGroupCount,
       pPhysicalDeviceGroupProperties);
    if (result != VK_SUCCESS) {
       if (dummy)
@@ -2706,6 +2772,7 @@ struct vn_physical_device_image_format_info {
    VkPhysicalDeviceExternalImageFormatInfo external;
    VkImageFormatListCreateInfo list;
    VkImageStencilUsageCreateInfo stencil_usage;
+   VkPhysicalDeviceImageDrmFormatModifierInfoEXT modifier;
 };
 
 static const VkPhysicalDeviceImageFormatInfo2 *
@@ -2717,12 +2784,16 @@ vn_physical_device_fix_image_format_info(
    local_info->format = *info;
    VkBaseOutStructure *dst = (void *)&local_info->format;
 
+   bool use_modifier = false;
    /* we should generate deep copy functions... */
    vk_foreach_struct_const(src, info->pNext) {
       void *pnext = NULL;
       switch (src->sType) {
       case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO:
          memcpy(&local_info->external, src, sizeof(local_info->external));
+         use_modifier =
+            local_info->external.handleType ==
+            VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
          local_info->external.handleType =
             physical_dev->external_memory.renderer_handle_type;
          pnext = &local_info->external;
@@ -2746,7 +2817,15 @@ vn_physical_device_fix_image_format_info(
       }
    }
 
-   dst->pNext = NULL;
+   if (use_modifier) {
+      local_info->format.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+      if (!vn_android_get_drm_format_modifier_info(&local_info->format,
+                                                   &local_info->modifier))
+         return NULL;
+   }
+
+   dst->pNext = use_modifier ? (void *)&local_info->modifier : NULL;
+
    return &local_info->format;
 }
 
@@ -2779,6 +2858,10 @@ vn_GetPhysicalDeviceImageFormatProperties2(
       if (external_info->handleType != renderer_handle_type) {
          pImageFormatInfo = vn_physical_device_fix_image_format_info(
             physical_dev, pImageFormatInfo, &local_info);
+         if (!pImageFormatInfo) {
+            return vn_error(physical_dev->instance,
+                            VK_ERROR_FORMAT_NOT_SUPPORTED);
+         }
       }
    }
 
@@ -2787,13 +2870,39 @@ vn_GetPhysicalDeviceImageFormatProperties2(
    result = vn_call_vkGetPhysicalDeviceImageFormatProperties2(
       physical_dev->instance, physicalDevice, pImageFormatInfo,
       pImageFormatProperties);
+   if (result != VK_SUCCESS || !external_info)
+      return vn_result(physical_dev->instance, result);
 
-   if (result == VK_SUCCESS && external_info) {
-      VkExternalImageFormatProperties *img_props = vk_find_struct(
-         pImageFormatProperties->pNext, EXTERNAL_IMAGE_FORMAT_PROPERTIES);
-      VkExternalMemoryProperties *mem_props =
-         &img_props->externalMemoryProperties;
+   VkExternalImageFormatProperties *img_props = vk_find_struct(
+      pImageFormatProperties->pNext, EXTERNAL_IMAGE_FORMAT_PROPERTIES);
+   VkExternalMemoryProperties *mem_props =
+      &img_props->externalMemoryProperties;
 
+   if (external_info->handleType ==
+       VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID) {
+      /* AHB backed image requires renderer to support import bit */
+      if (!(mem_props->externalMemoryFeatures &
+            VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT))
+         return vn_error(physical_dev->instance,
+                         VK_ERROR_FORMAT_NOT_SUPPORTED);
+
+      mem_props->externalMemoryFeatures =
+         VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT |
+         VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT |
+         VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT;
+      mem_props->exportFromImportedHandleTypes =
+         VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
+      mem_props->compatibleHandleTypes =
+         VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
+
+      VkAndroidHardwareBufferUsageANDROID *ahb_usage =
+         vk_find_struct(pImageFormatProperties->pNext,
+                        ANDROID_HARDWARE_BUFFER_USAGE_ANDROID);
+      if (ahb_usage) {
+         ahb_usage->androidHardwareBufferUsage = vn_android_get_ahb_usage(
+            pImageFormatInfo->usage, pImageFormatInfo->flags);
+      }
+   } else {
       mem_props->compatibleHandleTypes = supported_handle_types;
       mem_props->exportFromImportedHandleTypes =
          (mem_props->exportFromImportedHandleTypes & renderer_handle_type)
@@ -2854,11 +2963,33 @@ vn_GetPhysicalDeviceExternalBufferProperties(
       physical_dev->instance, physicalDevice, pExternalBufferInfo,
       pExternalBufferProperties);
 
-   props->compatibleHandleTypes = supported_handle_types;
-   props->exportFromImportedHandleTypes =
-      (props->exportFromImportedHandleTypes & renderer_handle_type)
-         ? supported_handle_types
-         : 0;
+   if (pExternalBufferInfo->handleType ==
+       VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID) {
+      props->compatibleHandleTypes =
+         VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
+      /* AHB backed buffer requires renderer to support import bit while it
+       * also requires the renderer to must not advertise dedicated only bit
+       */
+      if (!(props->externalMemoryFeatures &
+            VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) ||
+          (props->externalMemoryFeatures &
+           VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT)) {
+         props->externalMemoryFeatures = 0;
+         props->exportFromImportedHandleTypes = 0;
+         return;
+      }
+      props->externalMemoryFeatures =
+         VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT |
+         VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT;
+      props->exportFromImportedHandleTypes =
+         VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
+   } else {
+      props->compatibleHandleTypes = supported_handle_types;
+      props->exportFromImportedHandleTypes =
+         (props->exportFromImportedHandleTypes & renderer_handle_type)
+            ? supported_handle_types
+            : 0;
+   }
 }
 
 void
@@ -2989,12 +3120,20 @@ vn_queue_init(struct vn_device *dev,
    queue->index = queue_index;
    queue->flags = queue_info->flags;
 
-   VkResult result =
-      vn_CreateFence(vn_device_to_handle(dev),
-                     &(const VkFenceCreateInfo){
-                        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-                     },
-                     NULL, &queue->wait_fence);
+   const VkExportFenceCreateInfo export_fence_info = {
+      .sType = VK_STRUCTURE_TYPE_EXPORT_FENCE_CREATE_INFO,
+      .pNext = NULL,
+      .handleTypes = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT,
+   };
+   const VkFenceCreateInfo fence_info = {
+      .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+      .pNext = dev->instance->experimental.globalFencing == VK_TRUE
+                  ? &export_fence_info
+                  : NULL,
+      .flags = 0,
+   };
+   VkResult result = vn_CreateFence(vn_device_to_handle(dev), &fence_info,
+                                    NULL, &queue->wait_fence);
    if (result != VK_SUCCESS)
       return result;
 
@@ -3104,11 +3243,16 @@ vn_device_fix_create_info(const struct vn_device *dev,
    uint32_t extra_count = 0;
    uint32_t block_count = 0;
 
-   /* fix for WSI */
+   /* fix for WSI (treat AHB as WSI extension for simplicity) */
    const bool has_wsi =
-      app_exts->KHR_swapchain || app_exts->ANDROID_native_buffer;
+      app_exts->KHR_swapchain || app_exts->ANDROID_native_buffer ||
+      app_exts->ANDROID_external_memory_android_hardware_buffer;
    if (has_wsi) {
-      if (!app_exts->EXT_image_drm_format_modifier) {
+      /* KHR_swapchain may be advertised without the renderer support for
+       * EXT_image_drm_format_modifier
+       */
+      if (!app_exts->EXT_image_drm_format_modifier &&
+          physical_dev->renderer_extensions.EXT_image_drm_format_modifier) {
          extra_exts[extra_count++] =
             VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME;
 
@@ -3119,7 +3263,11 @@ vn_device_fix_create_info(const struct vn_device *dev,
          }
       }
 
-      if (!app_exts->EXT_queue_family_foreign) {
+      /* XXX KHR_swapchain may be advertised without the renderer support for
+       * EXT_queue_family_foreign
+       */
+      if (!app_exts->EXT_queue_family_foreign &&
+          physical_dev->renderer_extensions.EXT_queue_family_foreign) {
          extra_exts[extra_count++] =
             VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME;
       }
@@ -3131,8 +3279,14 @@ vn_device_fix_create_info(const struct vn_device *dev,
             VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME;
          block_exts[block_count++] =
             VK_KHR_INCREMENTAL_PRESENT_EXTENSION_NAME;
-      } else {
+      }
+
+      if (app_exts->ANDROID_native_buffer)
          block_exts[block_count++] = VK_ANDROID_NATIVE_BUFFER_EXTENSION_NAME;
+
+      if (app_exts->ANDROID_external_memory_android_hardware_buffer) {
+         block_exts[block_count++] =
+            VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME;
       }
    }
 
@@ -3227,12 +3381,6 @@ vn_CreateDevice(VkPhysicalDevice physicalDevice,
       goto fail;
    }
 
-   if (dev->base.base.enabled_extensions.ANDROID_native_buffer) {
-      result = vn_android_wsi_init(dev, alloc);
-      if (result != VK_SUCCESS)
-         goto fail;
-   }
-
    for (uint32_t i = 0; i < ARRAY_SIZE(dev->memory_pools); i++) {
       struct vn_device_memory_pool *pool = &dev->memory_pools[i];
       mtx_init(&pool->mutex, mtx_plain);
@@ -3262,9 +3410,6 @@ vn_DestroyDevice(VkDevice device, const VkAllocationCallbacks *pAllocator)
 
    if (!dev)
       return;
-
-   if (dev->base.base.enabled_extensions.ANDROID_native_buffer)
-      vn_android_wsi_fini(dev, alloc);
 
    for (uint32_t i = 0; i < ARRAY_SIZE(dev->memory_pools); i++)
       vn_device_memory_pool_fini(dev, i);

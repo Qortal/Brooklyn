@@ -129,6 +129,19 @@ fd_blitter_blit(struct fd_context *ctx, const struct pipe_blit_info *info)
    struct pipe_sampler_view src_templ, *src_view;
    bool discard = false;
 
+   /* The blit format may not match the resource format in this path, so
+    * we need to validate that we can use the src/dst resource with the
+    * requested format (and uncompress if necessary).  Normally this would
+    * happen in ->set_sampler_view(), ->set_framebuffer_state(), etc.  But
+    * that would cause recursion back into u_blitter, which ends in tears.
+    *
+    * To avoid recursion, this needs to be done before util_blitter_save_*()
+    */
+   if (ctx->validate_format) {
+      ctx->validate_format(ctx, fd_resource(dst), info->dst.format);
+      ctx->validate_format(ctx, fd_resource(src), info->src.format);
+   }
+
    if (!info->scissor_enable && !info->alpha_blend) {
       discard = util_texrange_covers_whole_level(
          info->dst.resource, info->dst.level, info->dst.box.x, info->dst.box.y,
@@ -328,6 +341,17 @@ fd_resource_copy_region(struct pipe_context *pctx, struct pipe_resource *dst,
 {
    struct fd_context *ctx = fd_context(pctx);
 
+   /* The blitter path handles compressed formats only if src and dst format
+    * match, in other cases just fall back to sw:
+    */
+   if ((src->format != dst->format) &&
+       (util_format_is_compressed(src->format) ||
+        util_format_is_compressed(dst->format))) {
+      perf_debug_ctx(ctx, "copy_region falls back to sw for {%"PRSC_FMT"} to {%"PRSC_FMT"}",
+                     PRSC_ARGS(src), PRSC_ARGS(dst));
+      goto fallback;
+   }
+
    if (ctx->blit) {
       struct pipe_blit_info info;
 
@@ -355,17 +379,13 @@ fd_resource_copy_region(struct pipe_context *pctx, struct pipe_resource *dst,
          return;
    }
 
-   /* TODO if we have 2d core, or other DMA engine that could be used
-    * for simple copies and reasonably easily synchronized with the 3d
-    * core, this is where we'd plug it in..
-    */
-
    /* try blit on 3d pipe: */
    if (fd_blitter_pipe_copy_region(ctx, dst, dst_level, dstx, dsty, dstz, src,
                                    src_level, src_box))
       return;
 
    /* else fallback to pure sw: */
+fallback:
    util_resource_copy_region(pctx, dst, dst_level, dstx, dsty, dstz, src,
                              src_level, src_box);
 }

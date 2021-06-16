@@ -27,6 +27,7 @@
 #include "broadcom/cle/v3dx_pack.h"
 #include "vk_format_info.h"
 #include "util/u_pack_color.h"
+#include "vulkan/util/vk_common_entrypoints.h"
 
 static uint32_t
 meta_blit_key_hash(const void *key)
@@ -1118,9 +1119,10 @@ copy_image_to_buffer_blit(struct v3dv_cmd_buffer *cmd_buffer,
          cmd_buffer, (uintptr_t)uiview,
          (v3dv_cmd_buffer_private_obj_destroy_cb)v3dv_DestroyImage);
 
-      result = v3dv_BindImageMemory(_device, uiview,
-                                    v3dv_device_memory_to_handle(image->mem),
-                                    image->mem_offset);
+      result =
+         vk_common_BindImageMemory(_device, uiview,
+                                   v3dv_device_memory_to_handle(image->mem),
+                                   image->mem_offset);
       if (result != VK_SUCCESS)
          return handled;
 
@@ -1158,9 +1160,10 @@ copy_image_to_buffer_blit(struct v3dv_cmd_buffer *cmd_buffer,
       /* Bind the buffer memory to the image */
       VkDeviceSize buffer_offset = buffer->mem_offset + region->bufferOffset +
          i * buf_width * buf_height * buffer_bpp;
-      result = v3dv_BindImageMemory(_device, buffer_image,
-                                    v3dv_device_memory_to_handle(buffer->mem),
-                                    buffer_offset);
+      result =
+         vk_common_BindImageMemory(_device, buffer_image,
+                                   v3dv_device_memory_to_handle(buffer->mem),
+                                   buffer_offset);
       if (result != VK_SUCCESS)
          return handled;
 
@@ -1316,7 +1319,7 @@ can_use_tlb(struct v3dv_image *image,
    return false;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_CmdCopyImageToBuffer(VkCommandBuffer commandBuffer,
                           VkImage srcImage,
                           VkImageLayout srcImageLayout,
@@ -1912,7 +1915,7 @@ copy_image_blit(struct v3dv_cmd_buffer *cmd_buffer,
    return handled;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_CmdCopyImage(VkCommandBuffer commandBuffer,
                   VkImage srcImage,
                   VkImageLayout srcImageLayout,
@@ -2125,7 +2128,7 @@ clear_image_tlb(struct v3dv_cmd_buffer *cmd_buffer,
    return true;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_CmdClearColorImage(VkCommandBuffer commandBuffer,
                         VkImage _image,
                         VkImageLayout imageLayout,
@@ -2147,7 +2150,7 @@ v3dv_CmdClearColorImage(VkCommandBuffer commandBuffer,
    }
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_CmdClearDepthStencilImage(VkCommandBuffer commandBuffer,
                                VkImage _image,
                                VkImageLayout imageLayout,
@@ -2356,7 +2359,7 @@ copy_buffer(struct v3dv_cmd_buffer *cmd_buffer,
    return job;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_CmdCopyBuffer(VkCommandBuffer commandBuffer,
                    VkBuffer srcBuffer,
                    VkBuffer dstBuffer,
@@ -2385,7 +2388,7 @@ destroy_update_buffer_cb(VkDevice _device,
    v3dv_bo_free(device, bo);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_CmdUpdateBuffer(VkCommandBuffer commandBuffer,
                      VkBuffer dstBuffer,
                      VkDeviceSize dstOffset,
@@ -2540,7 +2543,7 @@ fill_buffer(struct v3dv_cmd_buffer *cmd_buffer,
    }
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_CmdFillBuffer(VkCommandBuffer commandBuffer,
                    VkBuffer dstBuffer,
                    VkDeviceSize dstOffset,
@@ -3653,7 +3656,7 @@ copy_buffer_to_image_blit(struct v3dv_cmd_buffer *cmd_buffer,
       return handled;
 
    VkMemoryRequirements reqs;
-   v3dv_GetImageMemoryRequirements(_device, dummy_image, &reqs);
+   vk_common_GetImageMemoryRequirements(_device, dummy_image, &reqs);
    v3dv_DestroyImage(_device, dummy_image, &device->vk.alloc);
 
    VkDeviceMemory mem;
@@ -3741,7 +3744,7 @@ copy_buffer_to_image_blit(struct v3dv_cmd_buffer *cmd_buffer,
             cmd_buffer, (uintptr_t)buffer_image,
             (v3dv_cmd_buffer_private_obj_destroy_cb)v3dv_DestroyImage);
 
-         result = v3dv_BindImageMemory(_device, buffer_image, mem, 0);
+         result = vk_common_BindImageMemory(_device, buffer_image, mem, 0);
          if (result != VK_SUCCESS)
             return handled;
 
@@ -4028,7 +4031,7 @@ copy_buffer_to_image_cpu(struct v3dv_cmd_buffer *cmd_buffer,
    return true;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_CmdCopyBufferToImage(VkCommandBuffer commandBuffer,
                           VkBuffer srcBuffer,
                           VkImage dstImage,
@@ -5506,7 +5509,7 @@ fail:
    return handled;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_CmdBlitImage(VkCommandBuffer commandBuffer,
                   VkImage srcImage,
                   VkImageLayout srcImageLayout,
@@ -5714,7 +5717,7 @@ resolve_image_blit(struct v3dv_cmd_buffer *cmd_buffer,
                       &blit_region, VK_FILTER_NEAREST, true);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_CmdResolveImage(VkCommandBuffer commandBuffer,
                      VkImage srcImage,
                      VkImageLayout srcImageLayout,

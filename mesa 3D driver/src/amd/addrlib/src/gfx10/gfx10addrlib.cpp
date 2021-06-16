@@ -254,7 +254,7 @@ ADDR_E_RETURNCODE Gfx10Lib::HwlComputeHtileInfo(
         }
 
         // Get the HTILE address equation (copied from HtileAddrFromCoord).
-        // Note that HTILE doesn't depend on the number of samples.
+        // HTILE addressing depends on the number of samples, but this code doesn't support it yet.
         const UINT_32 index = m_xmaskBaseIndex;
         const UINT_8* patIdxTable = m_settings.supportRbPlus ? GFX10_HTILE_RBPLUS_PATIDX : GFX10_HTILE_PATIDX;
 
@@ -1045,6 +1045,12 @@ ChipFamily Gfx10Lib::HwlConvertChipFamily(
                 m_settings.supportRbPlus   = 1;
                 m_settings.dccUnsup3DSwDis = 0;
             }
+
+            if (ASICREV_IS_BEIGE_GOBY(chipRevision))
+            {
+                m_settings.supportRbPlus   = 1;
+                m_settings.dccUnsup3DSwDis = 0;
+            }
             break;
 
         case FAMILY_VGH:
@@ -1057,6 +1063,20 @@ ChipFamily Gfx10Lib::HwlConvertChipFamily(
             {
                 ADDR_ASSERT(!"Unknown chip revision");
             }
+
+            break;
+
+        case FAMILY_YC:
+            if (ASICREV_IS_YELLOW_CARP(chipRevision))
+            {
+                m_settings.supportRbPlus   = 1;
+                m_settings.dccUnsup3DSwDis = 0;
+            }
+            else
+            {
+                ADDR_ASSERT(!"Unknown chip revision");
+            }
+
             break;
 
         default:

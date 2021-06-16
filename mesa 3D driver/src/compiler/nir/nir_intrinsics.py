@@ -184,7 +184,8 @@ index("bool", "image_array")
 # Image format for image intrinsics
 index("enum pipe_format", "format")
 
-# Access qualifiers for image and memory access intrinsics
+# Access qualifiers for image and memory access intrinsics. ACCESS_RESTRICT is
+# not set at the intrinsic if the NIR was created from SPIR-V.
 index("enum gl_access_qualifier", "access")
 
 # Alignment for offsets and addresses
@@ -428,7 +429,12 @@ intrinsic("masked_swizzle_amd", src_comp=[0], dest_comp=0, bit_sizes=src0,
           indices=[SWIZZLE_MASK], flags=[CAN_ELIMINATE])
 intrinsic("write_invocation_amd", src_comp=[0, 0, 1], dest_comp=0, bit_sizes=src0,
           flags=[CAN_ELIMINATE])
-intrinsic("mbcnt_amd", src_comp=[1], dest_comp=1, bit_sizes=[32], flags=[CAN_ELIMINATE])
+# src = [ mask, addition ]
+intrinsic("mbcnt_amd", src_comp=[1, 1], dest_comp=1, bit_sizes=[32], flags=[CAN_ELIMINATE])
+# Compiled to v_perm_b32. src = [ in_bytes_hi, in_bytes_lo, selector ]
+intrinsic("byte_permute_amd", src_comp=[1, 1, 1], dest_comp=1, bit_sizes=[32], flags=[CAN_ELIMINATE, CAN_REORDER])
+# Compiled to v_permlane16_b32. src = [ value, lanesel_lo, lanesel_hi ]
+intrinsic("lane_permute_16_amd", src_comp=[1, 1, 1], dest_comp=1, bit_sizes=[32], flags=[CAN_ELIMINATE])
 
 # Basic Geometry Shader intrinsics.
 #
@@ -685,11 +691,11 @@ system_value("local_invocation_id", 3)
 system_value("local_invocation_index", 1)
 # zero_base indicates it starts from 0 for the current dispatch
 # non-zero_base indicates the base is included
-system_value("work_group_id", 3, bit_sizes=[32, 64])
-system_value("work_group_id_zero_base", 3)
-system_value("base_work_group_id", 3, bit_sizes=[32, 64])
+system_value("workgroup_id", 3, bit_sizes=[32, 64])
+system_value("workgroup_id_zero_base", 3)
+system_value("base_workgroup_id", 3, bit_sizes=[32, 64])
 system_value("user_clip_plane", 4, indices=[UCP_ID])
-system_value("num_work_groups", 3, bit_sizes=[32, 64])
+system_value("num_workgroups", 3, bit_sizes=[32, 64])
 system_value("helper_invocation", 1, bit_sizes=[1, 32])
 system_value("layer_id", 1)
 system_value("view_index", 1)
@@ -702,10 +708,10 @@ system_value("subgroup_le_mask", 0, bit_sizes=[32, 64])
 system_value("subgroup_lt_mask", 0, bit_sizes=[32, 64])
 system_value("num_subgroups", 1)
 system_value("subgroup_id", 1)
-system_value("local_group_size", 3)
+system_value("workgroup_size", 3)
 # note: the definition of global_invocation_id_zero_base is based on
-# (work_group_id * local_group_size) + local_invocation_id.
-# it is *not* based on work_group_id_zero_base, meaning the work group
+# (workgroup_id * workgroup_size) + local_invocation_id.
+# it is *not* based on workgroup_id_zero_base, meaning the work group
 # base is already accounted for, and the global base is additive on top of that
 system_value("global_invocation_id", 3, bit_sizes=[32, 64])
 system_value("global_invocation_id_zero_base", 3, bit_sizes=[32, 64])
@@ -1102,6 +1108,9 @@ intrinsic("load_buffer_amd", src_comp=[4, 1, 1], dest_comp=0, indices=[BASE, IS_
 # src[] = { store value, descriptor, base address, scalar offset }
 intrinsic("store_buffer_amd", src_comp=[0, 4, 1, 1], indices=[BASE, WRITE_MASK, IS_SWIZZLED, SLC_AMD, MEMORY_MODES])
 
+# Same as shared_atomic_add, but with GDS. src[] = {store_val, gds_addr, m0}
+intrinsic("gds_atomic_add_amd",  src_comp=[1, 1, 1], dest_comp=1, indices=[BASE])
+
 # Descriptor where TCS outputs are stored for TES
 system_value("ring_tess_offchip_amd", 4)
 system_value("ring_tess_offchip_offset_amd", 1)
@@ -1118,6 +1127,45 @@ system_value("tcs_num_patches_amd", 1)
 system_value("tess_rel_patch_id_amd", 1)
 # Vertex offsets used for GS per-vertex inputs
 system_value("gs_vertex_offset_amd", 1, [BASE])
+
+# AMD merged shader intrinsics
+
+# Whether the current invocation has an input vertex / primitive to process (also known as "ES thread" or "GS thread").
+# Not safe to reorder because it changes after overwrite_subgroup_num_vertices_and_primitives_amd.
+# Also, the generated code is more optimal if they are not CSE'd.
+intrinsic("has_input_vertex_amd", src_comp=[], dest_comp=1, bit_sizes=[1], indices=[])
+intrinsic("has_input_primitive_amd", src_comp=[], dest_comp=1, bit_sizes=[1], indices=[])
+
+# AMD NGG intrinsics
+
+# Number of initial input vertices in the current workgroup.
+system_value("workgroup_num_input_vertices_amd", 1)
+# Number of initial input primitives in the current workgroup.
+system_value("workgroup_num_input_primitives_amd", 1)
+# For NGG passthrough mode only. Pre-packed argument for export_primitive_amd.
+system_value("packed_passthrough_primitive_amd", 1)
+# Whether NGG GS should execute shader query.
+system_value("shader_query_enabled_amd", 1, bit_sizes=[1])
+# Initial edge flag in a Vertex Shader. src = {vertex index}.
+intrinsic("load_initial_edgeflag_amd", src_comp=[1], dest_comp=1, indices=[])
+# Exports the current invocation's vertex. This is a placeholder where all vertex attribute export instructions should be emitted.
+intrinsic("export_vertex_amd", src_comp=[], indices=[])
+# Exports the current invocation's primitive. src[] = {packed_primitive_data}.
+intrinsic("export_primitive_amd", src_comp=[1], indices=[])
+# Allocates export space for vertices and primitives. src[] = {num_vertices, num_primitives}.
+intrinsic("alloc_vertices_and_primitives_amd", src_comp=[1, 1], indices=[])
+
+# src = [index] BINDING = which table BASE = offset within handle
+intrinsic("load_sbt_amd", src_comp=[-1], dest_comp=0, indices=[BINDING, BASE],
+          flags=[CAN_ELIMINATE, CAN_REORDER])
+
+# 1. HW descriptor
+# 2. BVH node(64-bit pointer as 2x32 ...)
+# 3. ray extent
+# 4. ray origin
+# 5. ray direction
+# 6. inverse ray direction (componentwise 1.0/ray direction)
+intrinsic("bvh64_intersect_ray_amd", [4, 2, 1, 3, 3, 3], 4, flags=[CAN_ELIMINATE, CAN_REORDER])
 
 # V3D-specific instrinc for tile buffer color reads.
 #
@@ -1140,6 +1188,9 @@ store("tlb_sample_color_v3d", [1], [BASE, COMPONENT, SRC_TYPE], [])
 # V3D-specific intrinsic to load the number of layers attached to
 # the target framebuffer
 intrinsic("load_fb_layers_v3d", dest_comp=1, flags=[CAN_ELIMINATE, CAN_REORDER])
+
+# Logical complement of load_front_face, mapping to an AGX system value
+system_value("back_face_agx", 1, bit_sizes=[1, 32])
 
 # Intel-specific query for loading from the brw_image_param struct passed
 # into the shader as a uniform.  The variable is a deref to the image

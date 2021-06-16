@@ -578,7 +578,7 @@ tu6_emit_cs_config(struct tu_cs *cs, const struct tu_shader *shader,
    uint32_t local_invocation_id =
       ir3_find_sysval_regid(v, SYSTEM_VALUE_LOCAL_INVOCATION_ID);
    uint32_t work_group_id =
-      ir3_find_sysval_regid(v, SYSTEM_VALUE_WORK_GROUP_ID);
+      ir3_find_sysval_regid(v, SYSTEM_VALUE_WORKGROUP_ID);
 
    enum a6xx_threadsize thrsz = v->info.double_threadsize ? THREAD128 : THREAD64;
    tu_cs_emit_pkt4(cs, REG_A6XX_HLSQ_CS_CNTL_0, 2);
@@ -1442,6 +1442,7 @@ tu6_emit_fs_outputs(struct tu_cs *cs,
 
    if (pipeline) {
       pipeline->lrz.fs_has_kill = fs->has_kill;
+      pipeline->lrz.early_fragment_tests = fs->shader->nir->info.fs.early_fragment_tests;
 
       if ((fs->shader && !fs->shader->nir->info.fs.early_fragment_tests) &&
           (fs->no_earlyz || fs->has_kill || fs->writes_pos || fs->writes_stencilref || no_earlyz || fs->writes_smask)) {
@@ -1998,7 +1999,7 @@ tu6_emit_blend_control(struct tu_cs *cs,
                              : ((1 << msaa_info->rasterizationSamples) - 1);
 
    tu_cs_emit_regs(cs,
-                   A6XX_SP_BLEND_CNTL(.enabled = blend_enable_mask,
+                   A6XX_SP_BLEND_CNTL(.enable_blend = blend_enable_mask,
                                       .dual_color_in_enable = dual_src_blend,
                                       .alpha_to_coverage = msaa_info->alphaToCoverageEnable,
                                       .unk8 = true));
@@ -2029,24 +2030,29 @@ calc_pvtmem_size(struct tu_device *dev, struct tu_pvtmem_config *config,
    return dev->physical_device->info.num_sp_cores * per_sp_size;
 }
 
-static void
+static VkResult
 tu_setup_pvtmem(struct tu_device *dev,
                 struct tu_pipeline *pipeline,
                 struct tu_pvtmem_config *config,
                 uint32_t pvtmem_bytes, bool per_wave)
 {
-   struct tu_cs_memory memory;
-
    if (!pvtmem_bytes) {
       memset(config, 0, sizeof(*config));
-      return;
+      return VK_SUCCESS;
    }
 
    uint32_t total_size = calc_pvtmem_size(dev, config, pvtmem_bytes);
    config->per_wave = per_wave;
 
-   tu_cs_alloc(&pipeline->cs, total_size / 32, 8, &memory);
-   config->iova = memory.iova;
+   VkResult result =
+      tu_bo_init_new(dev, &pipeline->pvtmem_bo, total_size,
+                     TU_BO_ALLOC_NO_FLAGS);
+   if (result != VK_SUCCESS)
+      return result;
+
+   config->iova = pipeline->pvtmem_bo.iova;
+
+   return result;
 }
 
 
@@ -2636,6 +2642,10 @@ tu_pipeline_builder_parse_rasterization(struct tu_pipeline_builder *builder,
                           rast_info->depthBiasSlopeFactor);
    }
 
+   const struct VkPipelineRasterizationProvokingVertexStateCreateInfoEXT *provoking_vtx_state =
+      vk_find_struct_const(rast_info->pNext, PIPELINE_RASTERIZATION_PROVOKING_VERTEX_STATE_CREATE_INFO_EXT);
+   pipeline->provoking_vertex_last = provoking_vtx_state &&
+      provoking_vtx_state->provokingVertexMode == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
 }
 
 static void
@@ -2845,6 +2855,9 @@ tu_pipeline_finish(struct tu_pipeline *pipeline,
 {
    tu_cs_finish(&pipeline->cs);
 
+   if (pipeline->pvtmem_bo.size)
+      tu_bo_finish(dev, &pipeline->pvtmem_bo);
+
    ralloc_free(pipeline->executables_mem_ctx);
 }
 
@@ -2903,8 +2916,12 @@ tu_pipeline_builder_build(struct tu_pipeline_builder *builder,
          per_wave = false;
    }
 
-   tu_setup_pvtmem(builder->device, *pipeline, &builder->pvtmem,
-                   pvtmem_size, per_wave);
+   result = tu_setup_pvtmem(builder->device, *pipeline, &builder->pvtmem,
+                            pvtmem_size, per_wave);
+   if (result != VK_SUCCESS) {
+      vk_object_free(&builder->device->vk, builder->alloc, *pipeline);
+      return result;
+   }
 
    tu_pipeline_builder_parse_dynamic(builder, *pipeline);
    tu_pipeline_builder_parse_shader_stages(builder, *pipeline);
@@ -3026,7 +3043,7 @@ tu_graphics_pipeline_create(VkDevice device,
    return result;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_CreateGraphicsPipelines(VkDevice device,
                            VkPipelineCache pipelineCache,
                            uint32_t count,
@@ -3140,7 +3157,7 @@ fail:
    return result;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_CreateComputePipelines(VkDevice device,
                           VkPipelineCache pipelineCache,
                           uint32_t count,
@@ -3161,7 +3178,7 @@ tu_CreateComputePipelines(VkDevice device,
    return final_result;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_DestroyPipeline(VkDevice _device,
                    VkPipeline _pipeline,
                    const VkAllocationCallbacks *pAllocator)
@@ -3191,7 +3208,7 @@ tu_pipeline_get_executable(struct tu_pipeline *pipeline, uint32_t index)
       &pipeline->executables, struct tu_pipeline_executable, index);
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_GetPipelineExecutablePropertiesKHR(
       VkDevice _device,
       const VkPipelineInfoKHR* pPipelineInfo,
@@ -3222,7 +3239,7 @@ tu_GetPipelineExecutablePropertiesKHR(
    return vk_outarray_status(&out);
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_GetPipelineExecutableStatisticsKHR(
       VkDevice _device,
       const VkPipelineExecutableInfoKHR* pExecutableInfo,
@@ -3357,7 +3374,7 @@ write_ir_text(VkPipelineExecutableInternalRepresentationKHR* ir,
    return true;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_GetPipelineExecutableInternalRepresentationsKHR(
     VkDevice _device,
     const VkPipelineExecutableInfoKHR* pExecutableInfo,

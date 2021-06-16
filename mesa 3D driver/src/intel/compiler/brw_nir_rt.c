@@ -426,7 +426,7 @@ brw_nir_create_raygen_trampoline(const struct brw_compiler *compiler,
                                                   "RT Ray-Gen Trampoline");
    ralloc_steal(mem_ctx, b.shader);
 
-   b.shader->info.cs.local_size_variable = true;
+   b.shader->info.workgroup_size_variable = true;
 
    /* The RT global data and raygen BINDLESS_SHADER_RECORD addresses are
     * passed in as push constants in the first register.  We deal with the
@@ -438,7 +438,7 @@ brw_nir_create_raygen_trampoline(const struct brw_compiler *compiler,
    nir_ssa_def *local_shift =
       nir_u2u32(&b, load_trampoline_param(&b, local_group_size_log2, 3, 8));
 
-   nir_ssa_def *global_id = nir_load_work_group_id(&b, 32);
+   nir_ssa_def *global_id = nir_load_workgroup_id(&b, 32);
    nir_ssa_def *simd_channel = nir_load_subgroup_invocation(&b);
    nir_ssa_def *local_x =
       nir_ubfe(&b, simd_channel, nir_imm_int(&b, 0),

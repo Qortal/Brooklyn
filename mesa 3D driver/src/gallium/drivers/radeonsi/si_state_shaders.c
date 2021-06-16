@@ -1305,30 +1305,32 @@ static void gfx10_shader_ngg(struct si_screen *sscreen, struct si_shader *shader
    shader->ctx_reg.ngg.ge_pc_alloc = S_030980_OVERSUB_EN(sscreen->info.use_late_alloc) |
                                      S_030980_NUM_PC_LINES(oversub_pc_lines - 1);
 
-   if (shader->key.opt.ngg_culling & SI_NGG_CULL_GS_FAST_LAUNCH_TRI_LIST) {
+   if (shader->key.opt.ngg_culling & SI_NGG_CULL_GS_FAST_LAUNCH_TRI_LIST ||
+       shader->key.opt.ngg_culling & SI_NGG_CULL_GS_FAST_LAUNCH_TRI_STRIP) {
       shader->ge_cntl = S_03096C_PRIM_GRP_SIZE(shader->ngg.max_gsprims) |
-                        S_03096C_VERT_GRP_SIZE(shader->ngg.max_gsprims * 3);
-   } else if (shader->key.opt.ngg_culling & SI_NGG_CULL_GS_FAST_LAUNCH_TRI_STRIP) {
-      shader->ge_cntl = S_03096C_PRIM_GRP_SIZE(shader->ngg.max_gsprims) |
-                        S_03096C_VERT_GRP_SIZE(shader->ngg.max_gsprims + 2);
+                        S_03096C_VERT_GRP_SIZE(shader->ngg.hw_max_esverts);
    } else {
       shader->ge_cntl = S_03096C_PRIM_GRP_SIZE(shader->ngg.max_gsprims) |
                         S_03096C_VERT_GRP_SIZE(shader->ngg.hw_max_esverts) |
                         S_03096C_BREAK_WAVE_AT_EOI(break_wave_at_eoi);
 
-      /* Bug workaround for a possible hang with non-tessellation cases.
-       * Tessellation always sets GE_CNTL.VERT_GRP_SIZE = 0
+      /* On gfx10, the GE only checks against the maximum number of ES verts after
+       * allocating a full GS primitive. So we need to ensure that whenever
+       * this check passes, there is enough space for a full primitive without
+       * vertex reuse. VERT_GRP_SIZE=256 doesn't need this. We should always get 256
+       * if we have enough LDS.
        *
-       * Requirement: GE_CNTL.VERT_GRP_SIZE = VGT_GS_ONCHIP_CNTL.ES_VERTS_PER_SUBGRP - 5
+       * Tessellation is unaffected because it always sets GE_CNTL.VERT_GRP_SIZE = 0.
        */
       if ((sscreen->info.chip_class == GFX10) &&
           (es_stage == MESA_SHADER_VERTEX || gs_stage == MESA_SHADER_VERTEX) && /* = no tess */
-          shader->ngg.hw_max_esverts != 256) {
+          shader->ngg.hw_max_esverts != 256 &&
+          shader->ngg.hw_max_esverts > 5) {
+         /* This could be based on the input primitive type. 5 is the worst case
+          * for primitive types with adjacency.
+          */
          shader->ge_cntl &= C_03096C_VERT_GRP_SIZE;
-
-         if (shader->ngg.hw_max_esverts > 5) {
-            shader->ge_cntl |= S_03096C_VERT_GRP_SIZE(shader->ngg.hw_max_esverts - 5);
-         }
+         shader->ge_cntl |= S_03096C_VERT_GRP_SIZE(shader->ngg.hw_max_esverts - 5);
       }
    }
 
@@ -2849,22 +2851,7 @@ static void *si_create_shader_selector(struct pipe_context *ctx,
                   sscreen->info.chip_class == GFX10_3 ||
                   (sscreen->info.chip_class == GFX10 &&
                    sscreen->info.is_pro_graphics)) {
-            /* Rough estimates. */
-            switch (sctx->family) {
-            case CHIP_NAVI10:
-            case CHIP_NAVI12:
-            case CHIP_SIENNA_CICHLID:
-               sel->ngg_cull_vert_threshold = 511;
-               break;
-            case CHIP_NAVI14:
-            case CHIP_NAVY_FLOUNDER:
-            case CHIP_DIMGREY_CAVEFISH:
-            case CHIP_VANGOGH:
-               sel->ngg_cull_vert_threshold = 255;
-               break;
-            default:
-               assert(!sscreen->use_ngg_culling);
-            }
+            sel->ngg_cull_vert_threshold = sscreen->info.num_se >= 3 ? 511 : 255;
          }
       } else if (sel->info.stage == MESA_SHADER_TESS_EVAL) {
          if (sel->rast_prim == PIPE_PRIM_TRIANGLES &&
@@ -3099,7 +3086,7 @@ bool si_update_ngg(struct si_context *sctx)
        * VGT_FLUSH is also emitted at the beginning of IBs when legacy GS ring
        * pointers are set.
        */
-      if ((sctx->chip_class == GFX10 || sctx->family == CHIP_SIENNA_CICHLID) && !new_ngg) {
+      if (sctx->screen->info.has_vgt_flush_ngg_legacy_bug && !new_ngg) {
          sctx->flags |= SI_CONTEXT_VGT_FLUSH;
          if (sctx->chip_class == GFX10) {
             /* Workaround for https://gitlab.freedesktop.org/mesa/mesa/-/issues/2941 */

@@ -217,6 +217,7 @@ panfrost_model_name(unsigned gpu_id)
         case 0x6221: return "Mali G72 (Panfrost)";
         case 0x7093: return "Mali G31 (Panfrost)";
         case 0x7212: return "Mali G52 (Panfrost)";
+        case 0x7402: return "Mali G52r1 (Panfrost)";
         default:
                     unreachable("Invalid GPU ID");
         }
@@ -257,8 +258,8 @@ panfrost_open_device(void *memctx, int fd, struct panfrost_device *dev)
          * active for a single job chain at once, so a single heap can be
          * shared across batches/contextes */
 
-        dev->tiler_heap = panfrost_bo_create(dev, 4096 * 4096,
-                        PAN_BO_INVISIBLE | PAN_BO_GROWABLE);
+        dev->tiler_heap = panfrost_bo_create(dev, 64 * 1024 * 1024,
+                        PAN_BO_INVISIBLE | PAN_BO_GROWABLE, "Tiler heap");
 
         pthread_mutex_init(&dev->submit_lock, NULL);
 

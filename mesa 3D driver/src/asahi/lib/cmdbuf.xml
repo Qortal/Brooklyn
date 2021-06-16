@@ -59,6 +59,76 @@
     <value name="Quad strip" value="15"/> <!-- guess, confirm with piglit later XXX -->
   </enum>
 
+  <enum name="Layout">
+    <value name="Linear" value="0"/>
+    <!-- Morton order with 64x64 tiles -->
+    <value name="Tiled 64x64" value="2"/>
+  </enum>
+
+  <enum name="Channels">
+    <value name="R8" value="0x00"/>
+    <value name="R16" value="0x09"/>
+    <value name="R8G8" value="0x0A"/>
+    <value name="R5G6B5" value="0x0B"/>
+    <value name="R4G4B4A4" value="0x0C"/>
+    <value name="A1R5G5B5" value="0x0D"/>
+    <value name="R5G5B5A1" value="0x0E"/>
+    <value name="R32" value="0x21"/>
+    <value name="R16G16" value="0x23"/>
+    <value name="R11G11B10" value="0x25"/>
+    <value name="R10G10B10A2" value="0x26"/>
+    <value name="R9G9B9E5" value="0x27"/>
+    <value name="R8G8B8A8" value="0x28"/>
+    <value name="R32G32" value="0x31"/>
+    <value name="R16G16B16A16" value="0x32"/>
+    <value name="R32G32B32A32" value="0x38"/>
+    <value name="GBGR 422" value="0x40"/> <!-- Subsampled, swizzle BRG1 -->
+    <value name="BGRG 422" value="0x41"/> <!-- Subsampled, swizzle BRG1 -->
+
+    <!-- Compressed -->
+    <value name="PVRTC 2bpp" value="0x50"/>
+    <value name="PVRTC 4bpp" value="0x51"/>
+
+    <value name="ETC2 RGB8" value="0x58"/>
+    <value name="ETC2 RGBA8" value="0x59"/>
+    <value name="ETC2 RGB8A1" value="0x5A"/>
+    <value name="EAC R11" value="0x5B"/>
+    <value name="EAC RG11" value="0x5C"/>
+
+    <value name="ASTC 4x4 LDR" value="0x60"/>
+    <value name="ASTC 5x4 LDR" value="0x61"/>
+    <value name="ASTC 5x5 LDR" value="0x62"/>
+    <value name="ASTC 6x5 LDR" value="0x63"/>
+    <value name="ASTC 6x6 LDR" value="0x64"/>
+    <value name="ASTC 8x5 LDR" value="0x65"/>
+    <value name="ASTC 8x6 LDR" value="0x66"/>
+    <value name="ASTC 8x8 LDR" value="0x67"/>
+    <value name="ASTC 10x5 LDR" value="0x68"/>
+    <value name="ASTC 10x6 LDR" value="0x69"/>
+    <value name="ASTC 10x8 LDR" value="0x6A"/>
+    <value name="ASTC 10x10 LDR" value="0x6B"/>
+    <value name="ASTC 12x10 LDR" value="0x6C"/>
+    <value name="ASTC 12x12 LDR" value="0x6D"/>
+
+    <value name="BC1" value="0x74"/>
+    <value name="BC2" value="0x75"/>
+    <value name="BC3" value="0x76"/>
+    <value name="BC4" value="0x77"/>
+    <value name="BC5" value="0x78"/>
+    <value name="BC6H" value="0x79"/>
+    <value name="BC6H Ufloat" value="0x7A"/>
+    <value name="BC7" value="0x7B"/>
+  </enum>
+
+  <enum name="Texture Type">
+    <value name="Unorm" value="0"/>
+    <value name="Snorm" value="1"/>
+    <value name="Uint" value="2"/>
+    <value name="Sint" value="3"/>
+    <value name="Float" value="4"/>
+    <value name="XR" value="5"/>
+  </enum>
+
   <struct name="Varying header" size="8">
     <field name="Slots 1" size="8" start="0:0" type="uint"/>
     <field name="Slots 2" size="8" start="0:8" type="uint"/>
@@ -71,8 +141,15 @@
     <field name="Slot 2" size="8" start="16" type="uint"/>
   </struct>
 
+  <struct name="Format" size="2">
+    <field name="Channels" size="7" start="0" type="Channels"/>
+    <field name="Type" size="3" start="7" type="Texture Type"/>
+  </struct>
+
   <struct name="Render Target" size="16">
-    <field name="Format" size="17" start="0" type="hex"/>
+    <field name="Unknown" size="4" start="0" type="hex" default="0x2"/>
+    <field name="Layout" size="2" start="4" type="Layout"/>
+    <field name="Format" size="10" start="6" type="Pixel Format"/>
     <field name="Swizzle R" size="2" start="16" type="Channel"/>
     <field name="Swizzle G" size="2" start="18" type="Channel"/>
     <field name="Swizzle B" size="2" start="20" type="Channel"/>
@@ -84,23 +161,34 @@
     <field name="Flip vertical" size="1" start="54" type="bool" default="false"/>
     <field name="Unk 55" size="9" start="55" type="hex"/>
     <field name="Buffer" size="36" start="64" type="address" modifier="shr(4)"/>
-    <field name="Unk 100" size="28" start="100" type="hex"/>
+    <!-- N.b. sRGB is not specified here -->
+    <!-- Off by 4? -->
+    <field name="Stride" size="24" start="104" type="hex" prefix="AGX_RT_STRIDE">
+      <value name="Tiled" value="0x100000"/>
+    </field>
   </struct>
 
   <!-- Payloads follow, right-shifted by 4 because of course -->
   <struct name="Texture" size="16">
-    <!-- See notes for a listing, TODO: enumify -->
-    <field name="Format" size="16" start="0" type="hex"/>
+    <field name="Unknown" size="4" start="0" type="hex" default="0x2"/>
+    <field name="Layout" size="2" start="4" type="Layout"/>
+    <field name="Format" size="10" start="6" type="Pixel Format"/>
     <field name="Swizzle R" size="3" start="16" type="Channel" default="R"/>
     <field name="Swizzle G" size="3" start="19" type="Channel" default="G"/>
     <field name="Swizzle B" size="3" start="22" type="Channel" default="B"/>
     <field name="Swizzle A" size="3" start="25" type="Channel" default="A"/>
     <field name="Width" size="14" start="28" type="uint" modifier="minus(1)"/>
     <field name="Height" size="14" start="42" type="uint" modifier="minus(1)"/>
+    <field name="Levels" size="6" start="60" type="uint" modifier="minus(1)"/>
     <field name="Unk 1" size="36" start="66" type="hex" modifier="shr(4)"/>
+    <!-- Unknown bit set by Metal when mipmapping. Might relate to a mechanism
+    to switch tile size (or disable tiling altogether?) at small mip levels to
+    reduce wasted memory due to padding. Causing test flakiness when set. -->
+    <field name="Unk mipmapped" size="1" start="102" type="bool"/>
     <field name="Compression" size="2" start="106" type="hex"/> <!-- 0 for 64x64 tiling -->
     <field name="sRGB" size="1" start="108" type="bool"/>
-    <field name="Unk 2" size="19" start="109" type="hex"/>
+    <field name="Unk 2" size="1" start="109" type="bool"/>
+    <field name="Stride" size="18" start="110" type="hex" modifier="shr(4)"/>
   </struct>
 
   <enum name="Wrap">
@@ -153,23 +241,31 @@
     <field name="Scale X" size="32" start="5:0" type="float"/>
     <field name="Translate Y" size="32" start="6:0" type="float"/>
     <field name="Scale Y" size="32" start="7:0" type="float"/>
-    <field name="Near Z" size="32" start="8:0" type="float"/>
-    <field name="Z Range" size="32" start="9:0" type="float"/>
+
+    <!-- Specifies an affine transformation from clip coordinates to viewport
+    depth coordinates. For APIs with clip coordinates [0, 1], this cooresponds
+    to near z and (far z - near z) respectively. In general, given clip
+    coordinate z_in, the viewport depth is given as (z_in * scale_z) +
+    translate_z.  For example, the default [0, 1] depth buffer in OpenGL with
+    [-1, +1] clip coordinates is specified as scale = 1/2, bias = 1/2 -->
+    <field name="Translate Z" size="32" start="8:0" type="float"/>
+    <field name="Scale Z" size="32" start="9:0" type="float"/>
   </struct>
 
   <!--- Pointed to from the command buffer -->
   <struct name="Scissor" size="16">
-    <field name="Min X" size="16" start="0:0" type="uint"/>
-    <field name="X Range" size="16" start="0:16" type="uint"/>
-    <field name="Min Y" size="16" start="1:0" type="uint"/>
-    <field name="Y Range" size="16" start="1:16" type="uint"/>
+    <field name="Max X" size="16" start="0:0" type="uint"/>
+    <field name="Min X" size="16" start="0:16" type="uint"/>
+    <field name="Max Y" size="16" start="1:0" type="uint"/>
+    <field name="Min Y" size="16" start="1:16" type="uint"/>
     <field name="Min Z" size="32" start="2:0" type="float"/>
     <field name="Max Z" size="32" start="3:0" type="float"/>
   </struct>
 
   <struct name="Rasterizer face" size="8">
     <field name="Stencil reference" size="8" start="0:0" type="hex" default="0x00"/>
-    <field name="Unk 1" size="8" start="0:8" type="hex" default="0xF"/>
+    <!-- line width is 4:4 fixed point with off-by-one applied -->
+    <field name="Line width" size="8" start="0:8" type="hex" default="0xF"/>
     <field name="Polygon mode" size="2" start="0:18" type="Polygon Mode" default="Fill"/>
     <field name="Disable depth write" size="1" start="0:21" type="bool"/>
     <field name="Depth function" size="3" start="0:24" type="ZS Func" default="Always"/>
@@ -184,6 +280,7 @@
   <struct name="Rasterizer" size="28">
     <field name="Tag" size="32" start="0:0" type="hex" default="0x10000b5"/>
     <field name="Unk 1" size="1" start="1:9" type="hex" default="0x1"/>
+    <field name="Scissor enable" size="1" start="1:16" type="bool"/>
     <field name="Unk ZS" size="1" start="1:18" type="hex" default="0x1"/>
     <field name="Unk 2" size="2" start="1:19" type="hex" default="0x0"/>
     <field name="Unk fill lines" size="1" start="1:26" type="hex" default="0x0"/> <!-- set when drawing LINES -->
@@ -195,6 +292,8 @@
     <field name="Tag" size="32" start="0:0" type="hex" default="0x200000"/>
     <field name="Cull front" size="1" start="1:0" type="bool"/>
     <field name="Cull back" size="1" start="1:1" type="bool"/>
+    <field name="Unk GL 1" size="1" start="1:7" type="bool"/>
+    <field name="Unk GL 2" size="1" start="1:8" type="bool"/>
     <field name="Depth clip" size="1" start="1:10" type="bool"/>
     <field name="Depth clamp" size="1" start="1:11" type="bool"/>
     <field name="Front face CCW" size="1" start="1:16" type="bool"/>
@@ -205,6 +304,12 @@
     <field name="Unk 1" size="32" start="1:0" type="hex" default="0x100"/>
     <field name="Unk 2" size="32" start="2:0" type="hex" default="0x0"/>
     <field name="Varying count" size="32" start="3:0" type="uint"/>
+  </struct>
+
+  <!-- Indexes into the array of scissor descriptors -->
+  <struct name="Set scissor" size="8">
+    <field name="Tag" size="32" start="0:0" type="hex" default="0x100"/>
+    <field name="Index" size="32" start="1:0" type="uint"/>
   </struct>
 
   <!--- Commands valid within a pipeline -->

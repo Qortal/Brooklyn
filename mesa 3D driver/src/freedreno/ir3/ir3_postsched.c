@@ -70,12 +70,28 @@ struct ir3_postsched_node {
 	struct ir3_instruction *instr;
 	bool partially_evaluated_path;
 
+	bool has_tex_src, has_sfu_src;
+
 	unsigned delay;
 	unsigned max_delay;
 };
 
 #define foreach_sched_node(__n, __list) \
 	list_for_each_entry(struct ir3_postsched_node, __n, __list, dag.link)
+
+static bool
+has_tex_src(struct ir3_instruction *instr)
+{
+	struct ir3_postsched_node *node = instr->data;
+	return node->has_tex_src;
+}
+
+static bool
+has_sfu_src(struct ir3_instruction *instr)
+{
+	struct ir3_postsched_node *node = instr->data;
+	return node->has_sfu_src;
+}
 
 static void
 schedule(struct ir3_postsched_ctx *ctx, struct ir3_instruction *instr)
@@ -98,7 +114,7 @@ schedule(struct ir3_postsched_ctx *ctx, struct ir3_instruction *instr)
 
 	if (is_sfu(instr)) {
 		ctx->sfu_delay = 8;
-	} else if (check_src_cond(instr, is_sfu)) {
+	} else if (has_sfu_src(instr)) {
 		ctx->sfu_delay = 0;
 	} else if (ctx->sfu_delay > 0) {
 		ctx->sfu_delay--;
@@ -106,7 +122,7 @@ schedule(struct ir3_postsched_ctx *ctx, struct ir3_instruction *instr)
 
 	if (is_tex_or_prefetch(instr)) {
 		ctx->tex_delay = 10;
-	} else if (check_src_cond(instr, is_tex_or_prefetch)) {
+	} else if (has_tex_src(instr)) {
 		ctx->tex_delay = 0;
 	} else if (ctx->tex_delay > 0) {
 		ctx->tex_delay--;
@@ -140,12 +156,12 @@ static bool
 would_sync(struct ir3_postsched_ctx *ctx, struct ir3_instruction *instr)
 {
 	if (ctx->sfu_delay) {
-		if (check_src_cond(instr, is_sfu))
+		if (has_sfu_src(instr))
 			return true;
 	}
 
 	if (ctx->tex_delay) {
-		if (check_src_cond(instr, is_tex_or_prefetch))
+		if (has_tex_src(instr))
 			return true;
 	}
 
@@ -192,7 +208,8 @@ choose_instr(struct ir3_postsched_ctx *ctx)
 
 	/* Next prioritize discards: */
 	foreach_sched_node (n, &ctx->dag->heads) {
-		unsigned d = ir3_delay_calc(ctx->block, n->instr, false, false);
+		unsigned d =
+			ir3_delay_calc_postra(ctx->block, n->instr, false, ctx->v->mergedregs);
 
 		if (d > 0)
 			continue;
@@ -211,7 +228,8 @@ choose_instr(struct ir3_postsched_ctx *ctx)
 
 	/* Next prioritize expensive instructions: */
 	foreach_sched_node (n, &ctx->dag->heads) {
-		unsigned d = ir3_delay_calc(ctx->block, n->instr, false, false);
+		unsigned d =
+			ir3_delay_calc_postra(ctx->block, n->instr, false, ctx->v->mergedregs);
 
 		if (d > 0)
 			continue;
@@ -241,7 +259,8 @@ choose_instr(struct ir3_postsched_ctx *ctx)
 			if (would_sync(ctx, n->instr))
 				continue;
 
-			unsigned d = ir3_delay_calc(ctx->block, n->instr, true, false);
+			unsigned d =
+				ir3_delay_calc_postra(ctx->block, n->instr, true, ctx->v->mergedregs);
 
 			if (d > delay)
 				continue;
@@ -262,7 +281,8 @@ choose_instr(struct ir3_postsched_ctx *ctx)
 	 * while we wait)
 	 */
 	foreach_sched_node (n, &ctx->dag->heads) {
-		unsigned d = ir3_delay_calc(ctx->block, n->instr, true, false);
+		unsigned d =
+			ir3_delay_calc_postra(ctx->block, n->instr, true, ctx->v->mergedregs);
 
 		if (d > 0)
 			continue;
@@ -281,7 +301,8 @@ choose_instr(struct ir3_postsched_ctx *ctx)
 	 * stalls.. but we've already decided there is not a better option.
 	 */
 	foreach_sched_node (n, &ctx->dag->heads) {
-		unsigned d = ir3_delay_calc(ctx->block, n->instr, false, false);
+		unsigned d =
+			ir3_delay_calc_postra(ctx->block, n->instr, false, ctx->v->mergedregs);
 
 		if (d > 0)
 			continue;
@@ -369,6 +390,10 @@ add_single_reg_dep(struct ir3_postsched_deps_state *state,
 	if (src_n >= 0 && dep && state->direction == F) {
 		unsigned d = ir3_delayslots(dep->instr, node->instr, src_n, true);
 		node->delay = MAX2(node->delay, d);
+		if (is_tex_or_prefetch(dep->instr))
+			node->has_tex_src = true;
+		if (is_tex_or_prefetch(dep->instr))
+			node->has_sfu_src = true;
 	}
 
 	add_dep(state, dep, node);
@@ -425,9 +450,8 @@ calculate_deps(struct ir3_postsched_deps_state *state,
 
 		if (reg->flags & IR3_REG_RELATIV) {
 			/* mark entire array as read: */
-			struct ir3_array *arr = ir3_lookup_array(state->ctx->ir, reg->array.id);
-			for (unsigned j = 0; j < arr->length; j++) {
-				add_reg_dep(state, node, reg, arr->reg + j, i + 1);
+			for (unsigned j = 0; j < reg->size; j++) {
+				add_reg_dep(state, node, reg, reg->array.base + j, i + 1);
 			}
 		} else {
 			assert(reg->wrmask >= 1);
@@ -451,9 +475,8 @@ calculate_deps(struct ir3_postsched_deps_state *state,
 	struct ir3_register *reg = node->instr->regs[0];
 	if (reg->flags & IR3_REG_RELATIV) {
 		/* mark the entire array as written: */
-		struct ir3_array *arr = ir3_lookup_array(state->ctx->ir, reg->array.id);
-		for (unsigned i = 0; i < arr->length; i++) {
-			add_reg_dep(state, node, reg, arr->reg + i, -1);
+		for (unsigned i = 0; i < reg->size; i++) {
+			add_reg_dep(state, node, reg, reg->array.base + i, -1);
 		}
 	} else {
 		assert(reg->wrmask >= 1);
@@ -651,7 +674,8 @@ sched_block(struct ir3_postsched_ctx *ctx, struct ir3_block *block)
 	while (!list_is_empty(&ctx->unscheduled_list)) {
 		struct ir3_instruction *instr = choose_instr(ctx);
 
-		unsigned delay = ir3_delay_calc(ctx->block, instr, false, false);
+		unsigned delay =
+			ir3_delay_calc_postra(ctx->block, instr, false, ctx->v->mergedregs);
 		d("delay=%u", delay);
 
 		/* and if we run out of instructions that can be scheduled,
@@ -704,23 +728,14 @@ cleanup_self_movs(struct ir3 *ir)
 {
 	foreach_block (block, &ir->block_list) {
 		foreach_instr_safe (instr, &block->instr_list) {
-
-			foreach_src (reg, instr) {
-				if (!reg->instr)
-					continue;
-
-				if (is_self_mov(reg->instr)) {
-					list_delinit(&reg->instr->node);
-					reg->instr = reg->instr->regs[1]->instr;
-				}
-			}
-
 			for (unsigned i = 0; i < instr->deps_count; i++) {
 				if (instr->deps[i] && is_self_mov(instr->deps[i])) {
-					list_delinit(&instr->deps[i]->node);
-					instr->deps[i] = instr->deps[i]->regs[1]->instr;
+					instr->deps[i] = NULL;
 				}
 			}
+
+			if (is_self_mov(instr))
+				list_delinit(&instr->node);
 		}
 	}
 }

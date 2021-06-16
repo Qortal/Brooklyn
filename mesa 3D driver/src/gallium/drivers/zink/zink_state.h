@@ -30,7 +30,10 @@
 
 struct zink_vertex_elements_hw_state {
    VkVertexInputAttributeDescription attribs[PIPE_MAX_ATTRIBS];
+   VkVertexInputBindingDivisorDescriptionEXT divisors[PIPE_MAX_ATTRIBS];
+   VkVertexInputBindingDescription bindings[PIPE_MAX_ATTRIBS]; // combination of element_state and stride
    uint32_t num_bindings, num_attribs;
+   uint8_t divisors_present;
 };
 
 struct zink_vertex_elements_state {
@@ -46,7 +49,6 @@ struct zink_vertex_elements_state {
 struct zink_rasterizer_hw_state {
    VkBool32 depth_clamp;
    VkBool32 rasterizer_discard;
-   VkFrontFace front_face;
    VkPolygonMode polygon_mode;
    VkCullModeFlags cull_mode;
    VkProvokingVertexModeEXT pv_mode;
@@ -58,6 +60,7 @@ struct zink_rasterizer_state {
    bool offset_point, offset_line, offset_tri;
    float offset_units, offset_clamp, offset_scale;
    float line_width;
+   VkFrontFace front_face;
    struct zink_rasterizer_hw_state hw_state;
 };
 

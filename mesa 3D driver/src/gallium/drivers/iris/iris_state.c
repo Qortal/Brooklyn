@@ -1281,10 +1281,12 @@ iris_create_blend_state(struct pipe_context *ctx,
 
          be.ColorBlendFunction          = rt->rgb_func;
          be.AlphaBlendFunction          = rt->alpha_func;
-         be.SourceBlendFactor           = src_rgb;
-         be.SourceAlphaBlendFactor      = src_alpha;
-         be.DestinationBlendFactor      = dst_rgb;
-         be.DestinationAlphaBlendFactor = dst_alpha;
+
+         /* The casts prevent warnings about implicit enum type conversions. */
+         be.SourceBlendFactor           = (int) src_rgb;
+         be.SourceAlphaBlendFactor      = (int) src_alpha;
+         be.DestinationBlendFactor      = (int) dst_rgb;
+         be.DestinationAlphaBlendFactor = (int) dst_alpha;
 
          be.WriteDisableRed   = !(rt->colormask & PIPE_MASK_R);
          be.WriteDisableGreen = !(rt->colormask & PIPE_MASK_G);
@@ -1305,14 +1307,15 @@ iris_create_blend_state(struct pipe_context *ctx,
       pb.AlphaToCoverageEnable = state->alpha_to_coverage;
       pb.IndependentAlphaBlendEnable = indep_alpha_blend;
 
+      /* The casts prevent warnings about implicit enum type conversions. */
       pb.SourceBlendFactor =
-         fix_blendfactor(state->rt[0].rgb_src_factor, state->alpha_to_one);
+         (int) fix_blendfactor(state->rt[0].rgb_src_factor, state->alpha_to_one);
       pb.SourceAlphaBlendFactor =
-         fix_blendfactor(state->rt[0].alpha_src_factor, state->alpha_to_one);
+         (int) fix_blendfactor(state->rt[0].alpha_src_factor, state->alpha_to_one);
       pb.DestinationBlendFactor =
-         fix_blendfactor(state->rt[0].rgb_dst_factor, state->alpha_to_one);
+         (int) fix_blendfactor(state->rt[0].rgb_dst_factor, state->alpha_to_one);
       pb.DestinationAlphaBlendFactor =
-         fix_blendfactor(state->rt[0].alpha_dst_factor, state->alpha_to_one);
+         (int) fix_blendfactor(state->rt[0].alpha_dst_factor, state->alpha_to_one);
    }
 
    iris_pack_state(GENX(BLEND_STATE), cso->blend_state, bs) {
@@ -2174,8 +2177,8 @@ fmt_swizzle(const struct iris_format_info *fmt, enum pipe_swizzle swz)
    case PIPE_SWIZZLE_Y: return fmt->swizzle.g;
    case PIPE_SWIZZLE_Z: return fmt->swizzle.b;
    case PIPE_SWIZZLE_W: return fmt->swizzle.a;
-   case PIPE_SWIZZLE_1: return SCS_ONE;
-   case PIPE_SWIZZLE_0: return SCS_ZERO;
+   case PIPE_SWIZZLE_1: return ISL_CHANNEL_SELECT_ONE;
+   case PIPE_SWIZZLE_0: return ISL_CHANNEL_SELECT_ZERO;
    default: unreachable("invalid swizzle");
    }
 }
@@ -2303,66 +2306,6 @@ update_surface_state_addrs(struct u_upload_mgr *mgr,
 
    return true;
 }
-
-#if GFX_VER == 8
-/**
- * Return an ISL surface for use with non-coherent render target reads.
- *
- * In a few complex cases, we can't use the SURFACE_STATE for normal render
- * target writes.  We need to make a separate one for sampling which refers
- * to the single slice of the texture being read.
- */
-static void
-get_rt_read_isl_surf(const struct intel_device_info *devinfo,
-                     struct iris_resource *res,
-                     enum pipe_texture_target target,
-                     struct isl_view *view,
-                     uint32_t *offset_to_tile,
-                     uint32_t *tile_x_sa,
-                     uint32_t *tile_y_sa,
-                     struct isl_surf *surf)
-{
-   *surf = res->surf;
-
-   const enum isl_dim_layout dim_layout =
-      iris_get_isl_dim_layout(devinfo, res->surf.tiling, target);
-
-   surf->dim = target_to_isl_surf_dim(target);
-
-   if (surf->dim_layout == dim_layout)
-      return;
-
-   /* The layout of the specified texture target is not compatible with the
-    * actual layout of the miptree structure in memory -- You're entering
-    * dangerous territory, this can only possibly work if you only intended
-    * to access a single level and slice of the texture, and the hardware
-    * supports the tile offset feature in order to allow non-tile-aligned
-    * base offsets, since we'll have to point the hardware to the first
-    * texel of the level instead of relying on the usual base level/layer
-    * controls.
-    */
-   assert(view->levels == 1 && view->array_len == 1);
-   assert(*tile_x_sa == 0 && *tile_y_sa == 0);
-
-   *offset_to_tile = iris_resource_get_tile_offsets(res, view->base_level,
-                                                    view->base_array_layer,
-                                                    tile_x_sa, tile_y_sa);
-   const unsigned l = view->base_level;
-
-   surf->logical_level0_px.width = minify(surf->logical_level0_px.width, l);
-   surf->logical_level0_px.height = surf->dim <= ISL_SURF_DIM_1D ? 1 :
-      minify(surf->logical_level0_px.height, l);
-   surf->logical_level0_px.depth = surf->dim <= ISL_SURF_DIM_2D ? 1 :
-      minify(surf->logical_level0_px.depth, l);
-
-   surf->logical_level0_px.array_len = 1;
-   surf->levels = 1;
-   surf->dim_layout = dim_layout;
-
-   view->base_level = 0;
-   view->base_array_layer = 0;
-}
-#endif
 
 static void
 fill_surface_state(struct isl_device *isl_dev,
@@ -2574,11 +2517,6 @@ iris_create_surface(struct pipe_context *ctx,
    };
 
 #if GFX_VER == 8
-   enum pipe_texture_target target = (tex->target == PIPE_TEXTURE_3D &&
-                                      array_len == 1) ? PIPE_TEXTURE_2D :
-                                     tex->target == PIPE_TEXTURE_1D_ARRAY ?
-                                     PIPE_TEXTURE_2D_ARRAY : tex->target;
-
    struct isl_view *read_view = &surf->read_view;
    *read_view = (struct isl_view) {
       .format = fmt.fmt,
@@ -2589,6 +2527,39 @@ iris_create_surface(struct pipe_context *ctx,
       .swizzle = ISL_SWIZZLE_IDENTITY,
       .usage = ISL_SURF_USAGE_TEXTURE_BIT,
    };
+
+   struct isl_surf read_surf = res->surf;
+   uint32_t read_surf_offset_B = 0;
+   uint32_t read_surf_tile_x_sa = 0, read_surf_tile_y_sa = 0;
+   if (tex->target == PIPE_TEXTURE_3D && array_len == 1) {
+      /* The minimum array element field of the surface state structure is
+       * ignored by the sampler unit for 3D textures on some hardware.  If the
+       * render buffer is a single slice of a 3D texture, create a 2D texture
+       * covering that slice.
+       *
+       * TODO: This only handles the case where we're rendering to a single
+       * slice of an array texture.  If we have layered rendering combined
+       * with non-coherent FB fetch and a non-zero base_array_layer, then
+       * we're going to run into problems.
+       *
+       * See https://gitlab.freedesktop.org/mesa/mesa/-/issues/4904
+       */
+      isl_surf_get_image_surf(&screen->isl_dev, &res->surf,
+                              read_view->base_level,
+                              0, read_view->base_array_layer,
+                              &read_surf, &read_surf_offset_B,
+                              &read_surf_tile_x_sa, &read_surf_tile_y_sa);
+      read_view->base_level = 0;
+      read_view->base_array_layer = 0;
+      assert(read_view->array_len == 1);
+   } else if (tex->target == PIPE_TEXTURE_1D_ARRAY) {
+      /* Convert 1D array textures to 2D arrays because shaders always provide
+       * the array index coordinate at the Z component to avoid recompiles
+       * when changing the texture target of the framebuffer.
+       */
+      assert(read_surf.dim_layout == ISL_DIM_LAYOUT_GFX4_2D);
+      read_surf.dim = ISL_SURF_DIM_2D;
+   }
 #endif
 
    surf->clear_color = res->aux.clear_color;
@@ -2625,12 +2596,10 @@ iris_create_surface(struct pipe_context *ctx,
          map += SURFACE_STATE_ALIGNMENT;
 
 #if GFX_VER == 8
-         struct isl_surf surf;
-         uint32_t offset_to_tile = 0, tile_x_sa = 0, tile_y_sa = 0;
-         get_rt_read_isl_surf(devinfo, res, target, read_view,
-                              &offset_to_tile, &tile_x_sa, &tile_y_sa, &surf);
-         fill_surface_state(&screen->isl_dev, map_read, res, &surf, read_view,
-                            aux_usage, offset_to_tile, tile_x_sa, tile_y_sa);
+         fill_surface_state(&screen->isl_dev, map_read, res,
+                            &read_surf, read_view, aux_usage,
+                            read_surf_offset_B,
+                            read_surf_tile_x_sa, read_surf_tile_y_sa);
          map_read += SURFACE_STATE_ALIGNMENT;
 #endif
       }
@@ -3209,9 +3178,9 @@ iris_set_framebuffer_state(struct pipe_context *ctx,
       upload_state(ice->state.surface_uploader, &ice->state.null_fb,
                    4 * GENX(RENDER_SURFACE_STATE_length), 64);
    isl_null_fill_state(&screen->isl_dev, null_surf_map,
-                       isl_extent3d(MAX2(cso->width, 1),
-                                    MAX2(cso->height, 1),
-                                    cso->layers ? cso->layers : 1));
+                       .size = isl_extent3d(MAX2(cso->width, 1),
+                                            MAX2(cso->height, 1),
+                                            cso->layers ? cso->layers : 1));
    ice->state.null_fb.offset +=
       iris_bo_offset_from_base_address(iris_resource_bo(ice->state.null_fb.res));
 
@@ -3791,7 +3760,7 @@ iris_set_stream_output_targets(struct pipe_context *ctx,
       }
 
       if (!tgt->offset.res)
-         upload_state(ctx->stream_uploader, &tgt->offset, sizeof(uint32_t), 4);
+         upload_state(ctx->const_uploader, &tgt->offset, sizeof(uint32_t), 4);
 
       struct iris_resource *res = (void *) tgt->base.buffer;
 
@@ -6228,7 +6197,7 @@ iris_upload_dirty_render_state(struct iris_context *ice,
       uint32_t clear_length = GENX(3DSTATE_CLEAR_PARAMS_length) * 4;
       uint32_t cso_z_size = batch->screen->isl_dev.ds.size - clear_length;;
 
-#if GFX_VER == 12
+#if GFX_VERx10 == 120
       /* Wa_14010455700
        *
        * ISL will change some CHICKEN registers depending on the depth surface
@@ -6614,7 +6583,7 @@ iris_upload_render_state(struct iris_context *ice,
       if (draw->has_user_indices) {
          unsigned start_offset = draw->index_size * sc->start;
 
-         u_upload_data(ice->ctx.stream_uploader, start_offset,
+         u_upload_data(ice->ctx.const_uploader, start_offset,
                        sc->count * draw->index_size, 4,
                        (char*)draw->index.user + start_offset,
                        &offset, &ice->state.last_res.index_buffer);
@@ -8097,7 +8066,8 @@ genX(init_state)(struct iris_context *ice)
    void *null_surf_map =
       upload_state(ice->state.surface_uploader, &ice->state.unbound_tex,
                    4 * GENX(RENDER_SURFACE_STATE_length), 64);
-   isl_null_fill_state(&screen->isl_dev, null_surf_map, isl_extent3d(1, 1, 1));
+   isl_null_fill_state(&screen->isl_dev, null_surf_map,
+                       .size = isl_extent3d(1, 1, 1));
    ice->state.unbound_tex.offset +=
       iris_bo_offset_from_base_address(iris_resource_bo(ice->state.unbound_tex.res));
 

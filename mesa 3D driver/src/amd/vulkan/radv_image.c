@@ -276,26 +276,17 @@ radv_use_dcc_for_image(struct radv_device *device, const struct radv_image *imag
 bool
 radv_image_use_dcc_image_stores(const struct radv_device *device, const struct radv_image *image)
 {
-   /*
-    * TODO: Enable on more HW. DIMGREY and VANGOGH need a workaround and
-    * we need more perf analysis.
-    * https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/6796#note_643853
-    */
-   return device->physical_device->rad_info.chip_class == GFX10 ||
-          (device->physical_device->rad_info.chip_class == GFX10_3 &&
-           (device->instance->perftest_flags & RADV_PERFTEST_DCC_STORES));
+   return device->physical_device->rad_info.chip_class >= GFX10;
 }
 
 /*
  * Whether to use a predicate to determine whether DCC is in a compressed
  * state. This can be used to avoid decompressing an image multiple times.
- *
- * This function assumes the image uses DCC compression.
  */
 bool
 radv_image_use_dcc_predication(const struct radv_device *device, const struct radv_image *image)
 {
-   return !radv_image_use_dcc_image_stores(device, image);
+   return radv_image_has_dcc(image) && !radv_image_use_dcc_image_stores(device, image);
 }
 
 static inline bool
@@ -818,29 +809,29 @@ radv_tex_dim(VkImageType image_type, VkImageViewType view_type, unsigned nr_laye
 }
 
 static unsigned
-gfx9_border_color_swizzle(const enum pipe_swizzle swizzle[4])
+gfx9_border_color_swizzle(const struct util_format_description *desc)
 {
    unsigned bc_swizzle = V_008F20_BC_SWIZZLE_XYZW;
 
-   if (swizzle[3] == PIPE_SWIZZLE_X) {
+   if (desc->swizzle[3] == PIPE_SWIZZLE_X) {
       /* For the pre-defined border color values (white, opaque
        * black, transparent black), the only thing that matters is
        * that the alpha channel winds up in the correct place
        * (because the RGB channels are all the same) so either of
        * these enumerations will work.
        */
-      if (swizzle[2] == PIPE_SWIZZLE_Y)
+      if (desc->swizzle[2] == PIPE_SWIZZLE_Y)
          bc_swizzle = V_008F20_BC_SWIZZLE_WZYX;
       else
          bc_swizzle = V_008F20_BC_SWIZZLE_WXYZ;
-   } else if (swizzle[0] == PIPE_SWIZZLE_X) {
-      if (swizzle[1] == PIPE_SWIZZLE_Y)
+   } else if (desc->swizzle[0] == PIPE_SWIZZLE_X) {
+      if (desc->swizzle[1] == PIPE_SWIZZLE_Y)
          bc_swizzle = V_008F20_BC_SWIZZLE_XYZW;
       else
          bc_swizzle = V_008F20_BC_SWIZZLE_XWYZ;
-   } else if (swizzle[1] == PIPE_SWIZZLE_X) {
+   } else if (desc->swizzle[1] == PIPE_SWIZZLE_X) {
       bc_swizzle = V_008F20_BC_SWIZZLE_YXWZ;
-   } else if (swizzle[2] == PIPE_SWIZZLE_X) {
+   } else if (desc->swizzle[2] == PIPE_SWIZZLE_X) {
       bc_swizzle = V_008F20_BC_SWIZZLE_ZYXW;
    }
 
@@ -900,7 +891,7 @@ gfx10_make_texture_descriptor(struct radv_device *device, struct radv_image *ima
               S_00A00C_BASE_LEVEL(image->info.samples > 1 ? 0 : first_level) |
               S_00A00C_LAST_LEVEL(image->info.samples > 1 ? util_logbase2(image->info.samples)
                                                           : last_level) |
-              S_00A00C_BC_SWIZZLE(gfx9_border_color_swizzle(swizzle)) | S_00A00C_TYPE(type);
+              S_00A00C_BC_SWIZZLE(gfx9_border_color_swizzle(desc)) | S_00A00C_TYPE(type);
    /* Depth is the the last accessible layer on gfx9+. The hw doesn't need
     * to know the total number of layers.
     */
@@ -918,6 +909,10 @@ gfx10_make_texture_descriptor(struct radv_device *device, struct radv_image *ima
                   S_00A018_MAX_COMPRESSED_BLOCK_SIZE(
                      image->planes[0].surface.u.gfx9.color.dcc.max_compressed_block_size) |
                   S_00A018_ALPHA_IS_ON_MSB(vi_alpha_is_on_msb(device, vk_format));
+   }
+
+   if (radv_image_get_iterate256(device, image)) {
+      state[6] |= S_00A018_ITERATE_256(1);
    }
 
    /* Initialize the sampler view for FMASK. */
@@ -1041,7 +1036,7 @@ si_make_texture_descriptor(struct radv_device *device, struct radv_image *image,
    state[7] = 0;
 
    if (device->physical_device->rad_info.chip_class == GFX9) {
-      unsigned bc_swizzle = gfx9_border_color_swizzle(swizzle);
+      unsigned bc_swizzle = gfx9_border_color_swizzle(desc);
 
       /* Depth is the last accessible layer on Gfx9.
        * The hw doesn't need to know the total number of layers.
@@ -1386,7 +1381,7 @@ radv_image_create_layout(struct radv_device *device, struct radv_image_create_in
          offset = mod_info->pPlaneLayouts[plane].offset;
          stride = mod_info->pPlaneLayouts[plane].rowPitch / image->planes[plane].surface.bpe;
       } else {
-         offset = align(image->size, 1 << image->planes[plane].surface.alignment_log2);
+         offset = align64(image->size, 1 << image->planes[plane].surface.alignment_log2);
          stride = 0; /* 0 means no override */
       }
 
@@ -1957,10 +1952,11 @@ radv_layout_is_htile_compressed(const struct radv_device *device, const struct r
 
 bool
 radv_layout_can_fast_clear(const struct radv_device *device, const struct radv_image *image,
-                           VkImageLayout layout, bool in_render_loop, unsigned queue_mask)
+                           unsigned level, VkImageLayout layout, bool in_render_loop,
+                           unsigned queue_mask)
 {
-   if (radv_image_has_dcc(image) &&
-       !radv_layout_dcc_compressed(device, image, layout, in_render_loop, queue_mask))
+   if (radv_dcc_enabled(image, level) &&
+       !radv_layout_dcc_compressed(device, image, level, layout, in_render_loop, queue_mask))
       return false;
 
    if (!(image->usage & RADV_IMAGE_USAGE_WRITE_BITS))
@@ -1972,19 +1968,25 @@ radv_layout_can_fast_clear(const struct radv_device *device, const struct radv_i
 
 bool
 radv_layout_dcc_compressed(const struct radv_device *device, const struct radv_image *image,
-                           VkImageLayout layout, bool in_render_loop, unsigned queue_mask)
+                           unsigned level, VkImageLayout layout, bool in_render_loop,
+                           unsigned queue_mask)
 {
-   /* If the image is read-only, we can always just keep it compressed */
-   if (!(image->usage & RADV_IMAGE_USAGE_WRITE_BITS) && radv_image_has_dcc(image))
+   if (!radv_dcc_enabled(image, level))
       return false;
+
+   if (image->tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT && queue_mask & (1u << RADV_QUEUE_FOREIGN))
+      return true;
+
+   /* If the image is read-only, we can always just keep it compressed */
+   if (!(image->usage & RADV_IMAGE_USAGE_WRITE_BITS))
+      return true;
 
    /* Don't compress compute transfer dst when image stores are not supported. */
    if ((layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL || layout == VK_IMAGE_LAYOUT_GENERAL) &&
        (queue_mask & (1u << RADV_QUEUE_COMPUTE)) && !radv_image_use_dcc_image_stores(device, image))
       return false;
 
-   return radv_image_has_dcc(image) && (device->physical_device->rad_info.chip_class >= GFX10 ||
-                                        layout != VK_IMAGE_LAYOUT_GENERAL);
+   return device->physical_device->rad_info.chip_class >= GFX10 || layout != VK_IMAGE_LAYOUT_GENERAL;
 }
 
 bool

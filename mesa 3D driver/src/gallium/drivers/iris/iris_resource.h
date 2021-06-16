@@ -168,6 +168,11 @@ struct iris_resource {
     * be DRM_FORMAT_MOD_INVALID.
     */
    const struct isl_drm_modifier_info *mod_info;
+
+   /**
+    * The screen the resource was originally created with, stored for refcounting.
+    */
+   struct pipe_screen *orig_screen;
 };
 
 /**
@@ -302,7 +307,7 @@ iris_mocs(const struct iris_bo *bo,
           const struct isl_device *dev,
           isl_surf_usage_flags_t usage)
 {
-   return isl_mocs(dev, usage, bo && bo->external);
+   return isl_mocs(dev, usage, bo && iris_bo_is_external(bo));
 }
 
 struct iris_format_info iris_format_for_usage(const struct intel_device_info *,
@@ -324,7 +329,10 @@ iris_resource_get_clear_color(const struct iris_resource *res,
 
 void iris_replace_buffer_storage(struct pipe_context *ctx,
                                  struct pipe_resource *dst,
-                                 struct pipe_resource *src);
+                                 struct pipe_resource *src,
+                                 unsigned num_rebinds,
+                                 uint32_t rebind_mask,
+                                 uint32_t delete_buffer_id);
 
 
 void iris_init_screen_resource_functions(struct pipe_screen *pscreen);
@@ -459,35 +467,6 @@ iris_resource_access_raw(struct iris_context *ice,
    }
 }
 
-enum isl_dim_layout
-iris_get_isl_dim_layout(const struct intel_device_info *devinfo,
-                        enum isl_tiling tiling,
-                        enum pipe_texture_target target);
-static inline enum isl_surf_dim
-target_to_isl_surf_dim(enum pipe_texture_target target)
-{
-   switch (target) {
-   case PIPE_BUFFER:
-   case PIPE_TEXTURE_1D:
-   case PIPE_TEXTURE_1D_ARRAY:
-      return ISL_SURF_DIM_1D;
-   case PIPE_TEXTURE_2D:
-   case PIPE_TEXTURE_CUBE:
-   case PIPE_TEXTURE_RECT:
-   case PIPE_TEXTURE_2D_ARRAY:
-   case PIPE_TEXTURE_CUBE_ARRAY:
-      return ISL_SURF_DIM_2D;
-   case PIPE_TEXTURE_3D:
-      return ISL_SURF_DIM_3D;
-   case PIPE_MAX_TEXTURE_TYPES:
-      break;
-   }
-   unreachable("invalid texture type");
-}
-
-uint32_t iris_resource_get_tile_offsets(const struct iris_resource *res,
-                                        uint32_t level, uint32_t z,
-                                        uint32_t *tile_x, uint32_t *tile_y);
 enum isl_aux_usage iris_resource_texture_aux_usage(struct iris_context *ice,
                                                    const struct iris_resource *res,
                                                    enum isl_format view_fmt);
@@ -525,6 +504,9 @@ bool iris_resource_level_has_hiz(const struct iris_resource *res,
 
 bool iris_sample_with_depth_aux(const struct intel_device_info *devinfo,
                                 const struct iris_resource *res);
+
+bool iris_can_sample_mcs_with_clear(const struct intel_device_info *devinfo,
+                                    const struct iris_resource *res);
 
 bool iris_has_color_unresolved(const struct iris_resource *res,
                                unsigned start_level, unsigned num_levels,

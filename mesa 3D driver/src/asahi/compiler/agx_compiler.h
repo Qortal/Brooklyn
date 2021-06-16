@@ -177,11 +177,6 @@ agx_is_equiv(agx_index left, agx_index right)
 #define AGX_MAX_DESTS 1
 #define AGX_MAX_SRCS 5
 
-enum agx_sr {
-   AGX_SR_INVOCATION,
-   /* stub */
-};
-
 enum agx_icond {
    AGX_ICOND_UEQ = 0,
    AGX_ICOND_ULT = 1,
@@ -240,6 +235,9 @@ enum agx_dim {
    AGX_DIM_TEX_CUBE_ARRAY = 7
 };
 
+/* Forward declare for branch target */
+struct agx_block;
+
 typedef struct {
    /* Must be first */
    struct list_head link;
@@ -263,7 +261,11 @@ typedef struct {
       enum agx_format format;
       enum agx_round round;
       enum agx_lod_mode lod_mode;
+      struct agx_block *target;
    };
+
+   /* Invert icond/fcond */
+   bool invert_cond : 1;
 
    /* TODO: Handle tex ops more efficient */
    enum agx_dim dim : 3;
@@ -277,6 +279,9 @@ typedef struct {
    /* Scoreboard index, 0 or 1. Leave as 0 for instructions that do not require
     * scoreboarding (everything but memory load/store and texturing). */
    unsigned scoreboard : 1;
+
+   /* Number of nested control flow layers to jump by */
+   unsigned nest : 2;
 
    /* Output modifiers */
    bool saturate : 1;
@@ -303,6 +308,9 @@ typedef struct agx_block {
    /* Liveness analysis results */
    BITSET_WORD *live_in;
    BITSET_WORD *live_out;
+
+   /* Offset of the block in the emitted binary */
+   off_t offset;
 } agx_block;
 
 typedef struct {
@@ -317,6 +325,20 @@ typedef struct {
 
    /* For creating temporaries */
    unsigned alloc;
+
+   /* I don't really understand how writeout ops work yet */
+   bool did_writeout;
+
+   /* Has r0l been zeroed yet due to control flow? */
+   bool any_cf;
+
+   /* Number of nested control flow structures within the innermost loop. Since
+    * NIR is just loop and if-else, this is the number of nested if-else
+    * statements in the loop */
+   unsigned loop_nesting;
+
+   /* During instruction selection, for inserting control flow */
+   agx_block *current_block;
 
    /* Stats for shader-db */
    unsigned loop_count;

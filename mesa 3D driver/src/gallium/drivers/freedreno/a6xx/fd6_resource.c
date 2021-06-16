@@ -104,6 +104,41 @@ can_do_ubwc(struct pipe_resource *prsc)
    return true;
 }
 
+static bool
+valid_format_cast(struct fd_resource *rsc, enum pipe_format format)
+{
+   /* Special case "casting" format in hw: */
+   if (format == PIPE_FORMAT_Z24_UNORM_S8_UINT_AS_R8G8B8A8)
+      return true;
+
+   /* The UBWC formats can be re-interpreted so long as the components
+    * have the same # of bits
+    */
+   for (unsigned i = 0; i < 4; i++) {
+      unsigned sb, db;
+
+      sb = util_format_get_component_bits(rsc->b.b.format, UTIL_FORMAT_COLORSPACE_RGB, i);
+      db = util_format_get_component_bits(format, UTIL_FORMAT_COLORSPACE_RGB, i);
+
+      if (sb != db)
+         return false;
+   }
+
+   return true;
+}
+
+/**
+ * R8G8 have a different block width/height and height alignment from other
+ * formats that would normally be compatible (like R16), and so if we are
+ * trying to, for example, sample R16 as R8G8 we need to demote to linear.
+ */
+static bool
+is_r8g8(enum pipe_format format)
+{
+   return (util_format_get_blocksize(format) == 2) &&
+         (util_format_get_nr_components(format) == 2);
+}
+
 /**
  * Ensure the rsc is in an ok state to be used with the specified format.
  * This handles the case of UBWC buffers used with non-UBWC compatible
@@ -113,19 +148,33 @@ void
 fd6_validate_format(struct fd_context *ctx, struct fd_resource *rsc,
                     enum pipe_format format)
 {
+   enum pipe_format orig_format = rsc->b.b.format;
+
    tc_assert_driver_thread(ctx->tc);
+
+   if (orig_format == format)
+      return;
+
+   if (rsc->layout.tile_mode && (is_r8g8(orig_format) != is_r8g8(format))) {
+      perf_debug_ctx(ctx,
+                     "%" PRSC_FMT ": demoted to linear+uncompressed due to use as %s",
+                     PRSC_ARGS(&rsc->b.b), util_format_short_name(format));
+
+      fd_resource_uncompress(ctx, rsc, true);
+      return;
+   }
 
    if (!rsc->layout.ubwc)
       return;
 
-   if (ok_ubwc_format(rsc->b.b.screen, format))
+   if (ok_ubwc_format(rsc->b.b.screen, format) && valid_format_cast(rsc, format))
       return;
 
    perf_debug_ctx(ctx,
                   "%" PRSC_FMT ": demoted to uncompressed due to use as %s",
                   PRSC_ARGS(&rsc->b.b), util_format_short_name(format));
 
-   fd_resource_uncompress(ctx, rsc);
+   fd_resource_uncompress(ctx, rsc, false);
 }
 
 static void

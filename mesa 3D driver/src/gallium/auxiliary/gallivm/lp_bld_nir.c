@@ -1004,7 +1004,7 @@ static void visit_alu(struct lp_build_nir_context *bld_base, const nir_alu_instr
    case nir_op_fsum2:
    case nir_op_fsum3:
    case nir_op_fsum4:
-      src_components = nir_src_num_components(instr->src[0].src);
+      src_components = nir_op_infos[instr->op].input_sizes[0];
       break;
    default:
       src_components = num_components;
@@ -1053,6 +1053,7 @@ static void visit_load_const(struct lp_build_nir_context *bld_base,
    struct lp_build_context *int_bld = get_int_bld(bld_base, true, instr->def.bit_size);
    for (unsigned i = 0; i < instr->def.num_components; i++)
       result[i] = lp_build_const_int_vec(bld_base->base.gallivm, int_bld->type, instr->def.bit_size == 32 ? instr->value[i].u32 : instr->value[i].u64);
+   memset(&result[instr->def.num_components], 0, NIR_MAX_VEC_COMPONENTS - instr->def.num_components);
    assign_ssa_dest(bld_base, &instr->def, result);
 }
 
@@ -1689,13 +1690,13 @@ static void visit_intrinsic(struct lp_build_nir_context *bld_base,
    case nir_intrinsic_load_base_instance:
    case nir_intrinsic_load_base_vertex:
    case nir_intrinsic_load_first_vertex:
-   case nir_intrinsic_load_work_group_id:
+   case nir_intrinsic_load_workgroup_id:
    case nir_intrinsic_load_local_invocation_id:
-   case nir_intrinsic_load_num_work_groups:
+   case nir_intrinsic_load_num_workgroups:
    case nir_intrinsic_load_invocation_id:
    case nir_intrinsic_load_front_face:
    case nir_intrinsic_load_draw_id:
-   case nir_intrinsic_load_local_group_size:
+   case nir_intrinsic_load_workgroup_size:
    case nir_intrinsic_load_work_dim:
    case nir_intrinsic_load_tess_coord:
    case nir_intrinsic_load_tess_level_outer:
@@ -2120,6 +2121,7 @@ static void visit_ssa_undef(struct lp_build_nir_context *bld_base,
    struct lp_build_context *undef_bld = get_int_bld(bld_base, true, instr->def.bit_size);
    for (unsigned i = 0; i < num_components; i++)
       undef[i] = LLVMGetUndef(undef_bld->vec_type);
+   memset(&undef[num_components], 0, NIR_MAX_VEC_COMPONENTS - num_components);
    assign_ssa_dest(bld_base, &instr->def, undef);
 }
 
@@ -2342,9 +2344,9 @@ void lp_build_opt_nir(struct nir_shader *nir)
    NIR_PASS_V(nir, nir_lower_fp16_casts);
    do {
       progress = false;
-      NIR_PASS_V(nir, nir_opt_constant_folding);
-      NIR_PASS_V(nir, nir_opt_algebraic);
-      NIR_PASS_V(nir, nir_lower_pack);
+      NIR_PASS(progress, nir, nir_opt_constant_folding);
+      NIR_PASS(progress, nir, nir_opt_algebraic);
+      NIR_PASS(progress, nir, nir_lower_pack);
 
       nir_lower_tex_options options = { .lower_tex_without_implicit_lod = true };
       NIR_PASS_V(nir, nir_lower_tex, &options);

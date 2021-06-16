@@ -99,18 +99,6 @@ struct pan_image_layout {
         unsigned crc_size;
 };
 
-struct pan_image_slice_state {
-        /* Is the checksum for this slice valid? */
-        bool crc_valid;
-
-        /* Has anything been written to this slice? */
-        bool data_valid;
-};
-
-struct pan_image_state {
-        struct pan_image_slice_state slices[MAX_MIP_LEVELS];
-};
-
 struct pan_image_mem {
         struct panfrost_bo *bo;
         unsigned offset;
@@ -132,6 +120,10 @@ struct pan_image_view {
         unsigned first_layer, last_layer;
         unsigned char swizzle[4];
         const struct pan_image *image;
+
+        /* If EXT_multisampled_render_to_texture is used, this may be
+         * greater than image->layout.nr_samples. */
+        unsigned nr_samples;
 
         /* Only valid if dim == 1D, needed to implement buffer views */
         struct {
@@ -160,26 +152,12 @@ panfrost_afbc_header_size(unsigned width, unsigned height);
 bool
 panfrost_afbc_can_ytr(enum pipe_format format);
 
-bool
-panfrost_afbc_format_needs_fixup(const struct panfrost_device *dev,
-                                 enum pipe_format format);
-
-enum pipe_format
-panfrost_afbc_format_fixup(const struct panfrost_device *dev,
-                           enum pipe_format format);
-
 unsigned
 panfrost_block_dim(uint64_t modifier, bool width, unsigned plane);
 
 unsigned
 panfrost_estimate_texture_payload_size(const struct panfrost_device *dev,
-                                       unsigned first_level,
-                                       unsigned last_level,
-                                       unsigned first_layer,
-                                       unsigned last_layer,
-                                       unsigned nr_samples,
-                                       enum mali_texture_dimension dim,
-                                       uint64_t modifier);
+                                       const struct pan_image_view *iview);
 
 void
 panfrost_new_texture(const struct panfrost_device *dev,

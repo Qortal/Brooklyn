@@ -268,10 +268,18 @@ si_emit_graphics(struct radv_device *device, struct radeon_cmdbuf *cs)
       radeon_set_uconfig_reg(cs, R_030928_GE_INDX_OFFSET, 0);
       radeon_set_uconfig_reg(cs, R_03097C_GE_STEREO_CNTL, 0);
       radeon_set_uconfig_reg(cs, R_030988_GE_USER_VGPR_EN, 0);
+
+      radeon_set_context_reg(cs, R_028038_DB_DFSM_CONTROL,
+                             S_028038_PUNCHOUT_MODE(V_028038_FORCE_OFF) |
+                             S_028038_POPS_DRAIN_PS_ON_OVERLAP(1));
    } else if (physical_device->rad_info.chip_class == GFX9) {
       radeon_set_uconfig_reg(cs, R_030920_VGT_MAX_VTX_INDX, ~0);
       radeon_set_uconfig_reg(cs, R_030924_VGT_MIN_VTX_INDX, 0);
       radeon_set_uconfig_reg(cs, R_030928_VGT_INDX_OFFSET, 0);
+
+      radeon_set_context_reg(cs, R_028060_DB_DFSM_CONTROL,
+                             S_028060_PUNCHOUT_MODE(V_028060_FORCE_OFF) |
+                             S_028060_POPS_DRAIN_PS_ON_OVERLAP(1));
    } else {
       /* These registers, when written, also overwrite the
        * CLEAR_STATE context, so we can't rely on CLEAR_STATE setting
@@ -792,7 +800,7 @@ static const struct radv_prim_vertex_count prim_size_table[] = {
 uint32_t
 si_get_ia_multi_vgt_param(struct radv_cmd_buffer *cmd_buffer, bool instanced_draw,
                           bool indirect_draw, bool count_from_stream_output,
-                          uint32_t draw_vertex_count, unsigned topology)
+                          uint32_t draw_vertex_count, unsigned topology, bool prim_restart_enable)
 {
    enum chip_class chip_class = cmd_buffer->device->physical_device->rad_info.chip_class;
    enum radeon_family family = cmd_buffer->device->physical_device->rad_info.family;
@@ -831,7 +839,7 @@ si_get_ia_multi_vgt_param(struct radv_cmd_buffer *cmd_buffer, bool instanced_dra
       if (cmd_buffer->device->physical_device->rad_info.max_se < 4 ||
           topology == V_008958_DI_PT_POLYGON || topology == V_008958_DI_PT_LINELOOP ||
           topology == V_008958_DI_PT_TRIFAN || topology == V_008958_DI_PT_TRISTRIP_ADJ ||
-          (cmd_buffer->state.pipeline->graphics.prim_restart_enable &&
+          (prim_restart_enable &&
            (cmd_buffer->device->physical_device->rad_info.family < CHIP_POLARIS10 ||
             (topology != V_008958_DI_PT_POINTLIST && topology != V_008958_DI_PT_LINESTRIP))))
          wd_switch_on_eop = true;
@@ -899,7 +907,7 @@ si_get_ia_multi_vgt_param(struct radv_cmd_buffer *cmd_buffer, bool instanced_dra
    /* Workaround for a VGT hang when strip primitive types are used with
     * primitive restart.
     */
-   if (cmd_buffer->state.pipeline->graphics.prim_restart_enable &&
+   if (prim_restart_enable &&
        (topology == V_008958_DI_PT_LINESTRIP || topology == V_008958_DI_PT_TRISTRIP ||
         topology == V_008958_DI_PT_LINESTRIP_ADJ || topology == V_008958_DI_PT_TRISTRIP_ADJ)) {
       partial_vs_wave = true;

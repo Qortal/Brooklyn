@@ -620,9 +620,13 @@ bool ac_query_gpu_info(int fd, void *dev_p, struct radeon_info *info,
       identify_chip(SIENNA_CICHLID);
       identify_chip(NAVY_FLOUNDER);
       identify_chip(DIMGREY_CAVEFISH);
+      identify_chip(BEIGE_GOBY);
       break;
    case FAMILY_VGH:
       identify_chip(VANGOGH);
+      break;
+   case FAMILY_YC:
+      identify_chip(YELLOW_CARP);
       break;
    }
 
@@ -683,11 +687,14 @@ bool ac_query_gpu_info(int fd, void *dev_p, struct radeon_info *info,
    info->max_tcc_blocks = device_info.num_tcc_blocks;
    info->max_se = amdinfo->num_shader_engines;
    info->max_sa_per_se = amdinfo->num_shader_arrays_per_engine;
-   info->has_hw_decode = (uvd.available_rings != 0) || (vcn_dec.available_rings != 0) ||
-                         (vcn_jpeg.available_rings != 0);
    info->uvd_fw_version = uvd.available_rings ? uvd_version : 0;
    info->vce_fw_version = vce.available_rings ? vce_version : 0;
-   info->uvd_enc_supported = uvd_enc.available_rings ? true : false;
+   info->has_video_hw.uvd_decode = uvd.available_rings != 0;
+   info->has_video_hw.vcn_decode = vcn_dec.available_rings != 0;
+   info->has_video_hw.jpeg_decode = vcn_jpeg.available_rings != 0;
+   info->has_video_hw.vce_encode = vce.available_rings != 0;
+   info->has_video_hw.uvd_encode = uvd_enc.available_rings != 0;
+   info->has_video_hw.vcn_encode = vcn_enc.available_rings != 0;
    info->has_userptr = true;
    info->has_syncobj = has_syncobj(fd);
    info->has_timeline_syncobj = has_timeline_syncobj(fd);
@@ -878,20 +885,34 @@ bool ac_query_gpu_info(int fd, void *dev_p, struct radeon_info *info,
 
    info->has_ls_vgpr_init_bug = info->family == CHIP_VEGA10 || info->family == CHIP_RAVEN;
 
-   /* Drawing from 0-sized index buffers causes hangs on Navi10/14. */
-   info->has_zero_index_buffer_bug = info->family == CHIP_NAVI10 || info->family == CHIP_NAVI14;
+   /* Drawing from 0-sized index buffers causes hangs on gfx10. */
+   info->has_zero_index_buffer_bug = info->chip_class == GFX10;
 
    /* Whether chips are affected by the image load/sample/gather hw bug when
     * DCC is enabled (ie. WRITE_COMPRESS_ENABLE should be 0).
     */
    info->has_image_load_dcc_bug = info->family == CHIP_DIMGREY_CAVEFISH ||
-                                  info->family == CHIP_VANGOGH;
+                                  info->family == CHIP_VANGOGH ||
+                                  info->family == CHIP_YELLOW_CARP;
+
+   /* DB has a bug when ITERATE_256 is set to 1 that can cause a hang. The
+    * workaround is to set DECOMPRESS_ON_Z_PLANES to 2 for 4X MSAA D/S images.
+    */
+   info->has_two_planes_iterate256_bug = info->chip_class == GFX10;
+
+   /* GE has a bug when a legacy GS draw follows an NGG draw and it requires
+    * a VGT_FLUSH to fix that.
+    */
+   info->has_vgt_flush_ngg_legacy_bug = info->chip_class == GFX10 ||
+                                        info->family == CHIP_SIENNA_CICHLID;
 
    /* Support for GFX10.3 was added with F32_ME_FEATURE_VERSION_31 but the
-    * firmware version wasn't bumped.
+    * feature version wasn't bumped.
     */
-   info->has_32bit_predication = info->chip_class >= GFX10_3 &&
-                                 info->me_fw_version >= 32;
+   info->has_32bit_predication = (info->chip_class >= GFX10 &&
+                                  info->me_fw_feature >= 32) ||
+                                 (info->chip_class == GFX9 &&
+                                  info->me_fw_feature >= 52);
 
    /* Get the number of good compute units. */
    info->num_good_compute_units = 0;
@@ -997,9 +1018,11 @@ bool ac_query_gpu_info(int fd, void *dev_p, struct radeon_info *info,
          pc_lines = 1024;
          break;
       case CHIP_NAVI14:
+      case CHIP_BEIGE_GOBY:
          pc_lines = 512;
          break;
       case CHIP_VANGOGH:
+      case CHIP_YELLOW_CARP:
          pc_lines = 256;
          break;
       default:
@@ -1176,8 +1199,12 @@ void ac_print_gpu_info(struct radeon_info *info, FILE *f)
    fprintf(f, "    ce_fw_feature = %i\n", info->ce_fw_feature);
 
    fprintf(f, "Multimedia info:\n");
-   fprintf(f, "    has_hw_decode = %u\n", info->has_hw_decode);
-   fprintf(f, "    uvd_enc_supported = %u\n", info->uvd_enc_supported);
+   fprintf(f, "    uvd_decode = %u\n", info->has_video_hw.uvd_decode);
+   fprintf(f, "    vcn_decode = %u\n", info->has_video_hw.vcn_decode);
+   fprintf(f, "    jpeg_decode = %u\n", info->has_video_hw.jpeg_decode);
+   fprintf(f, "    vce_encode = %u\n", info->has_video_hw.vce_encode);
+   fprintf(f, "    uvd_encode = %u\n", info->has_video_hw.uvd_encode);
+   fprintf(f, "    vcn_encode = %u\n", info->has_video_hw.vcn_encode);
    fprintf(f, "    uvd_fw_version = %u\n", info->uvd_fw_version);
    fprintf(f, "    vce_fw_version = %u\n", info->vce_fw_version);
    fprintf(f, "    vce_harvest_config = %i\n", info->vce_harvest_config);

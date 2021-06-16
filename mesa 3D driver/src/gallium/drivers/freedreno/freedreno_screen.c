@@ -45,6 +45,7 @@
 #include <sys/sysinfo.h>
 
 #include "freedreno_fence.h"
+#include "freedreno_perfetto.h"
 #include "freedreno_query.h"
 #include "freedreno_resource.h"
 #include "freedreno_screen.h"
@@ -162,12 +163,12 @@ fd_screen_destroy(struct pipe_screen *pscreen)
 
    simple_mtx_destroy(&screen->lock);
 
+   util_idalloc_mt_fini(&screen->buffer_ids);
+
    u_transfer_helper_destroy(pscreen->transfer_helper);
 
    if (screen->compiler)
       ir3_screen_fini(pscreen);
-
-   ralloc_free(screen->live_batches);
 
    free(screen->perfcntr_queries);
    free(screen);
@@ -315,7 +316,7 @@ fd_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return is_a4xx(screen);
 
    case PIPE_CAP_CONSTANT_BUFFER_OFFSET_ALIGNMENT:
-      return is_a2xx(screen) ? 64 : 32;
+      return 64;
 
    case PIPE_CAP_GLSL_FEATURE_LEVEL:
    case PIPE_CAP_GLSL_FEATURE_LEVEL_COMPATIBILITY:
@@ -931,6 +932,10 @@ fd_screen_create(struct fd_device *dev, struct renderonly *ro)
    if (!screen)
       return NULL;
 
+#ifdef HAVE_PERFETTO
+   fd_perfetto_init();
+#endif
+
    pscreen = &screen->base;
 
    screen->dev = dev;
@@ -1071,12 +1076,11 @@ fd_screen_create(struct fd_device *dev, struct renderonly *ro)
    if (fd_device_version(dev) >= FD_VERSION_UNLIMITED_CMDS)
       screen->reorder = !FD_DBG(INORDER);
 
-   if (BATCH_DEBUG)
-      screen->live_batches = _mesa_pointer_set_create(NULL);
-
    fd_bc_init(&screen->batch_cache);
 
    list_inithead(&screen->context_list);
+
+   util_idalloc_mt_init_tc(&screen->buffer_ids);
 
    (void)simple_mtx_init(&screen->lock, mtx_plain);
 

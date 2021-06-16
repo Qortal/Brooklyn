@@ -675,7 +675,7 @@ vlVaEndPicture(VADriverContextP ctx, VAContextID context_id)
    }
 
    format = screen->get_video_param(screen, context->decoder->profile,
-                                    PIPE_VIDEO_ENTRYPOINT_BITSTREAM,
+                                    context->decoder->entrypoint,
                                     PIPE_VIDEO_CAP_PREFERED_FORMAT);
 
    if (surf->buffer->buffer_format != format &&
@@ -698,7 +698,7 @@ vlVaEndPicture(VADriverContextP ctx, VAContextID context_id)
       }
    }
 
-   if ((surf->templat.bind & PIPE_BIND_PROTECTED) != context->desc.base.protected_playback) {
+   if ((bool)(surf->templat.bind & PIPE_BIND_PROTECTED) != context->desc.base.protected_playback) {
       if (context->desc.base.protected_playback) {
          surf->templat.bind |= PIPE_BIND_PROTECTED;
       }

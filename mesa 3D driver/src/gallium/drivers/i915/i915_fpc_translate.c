@@ -52,16 +52,7 @@
  */
 static unsigned passthrough_decl[] =
 {
-   _3DSTATE_PIXEL_SHADER_PROGRAM | ((2*3)-1),
-
-   /* declare input color:
-    */
-   (D0_DCL |
-    (REG_TYPE_T << D0_TYPE_SHIFT) |
-    (T_DIFFUSE << D0_NR_SHIFT) |
-    D0_CHANNEL_ALL),
-   0,
-   0,
+   _3DSTATE_PIXEL_SHADER_PROGRAM | ((1*3)-1),
 };
 
 static unsigned passthrough_program[] =
@@ -71,9 +62,12 @@ static unsigned passthrough_program[] =
    (A0_MOV |
     (REG_TYPE_OC << A0_DEST_TYPE_SHIFT) |
     A0_DEST_CHANNEL_ALL |
-    (REG_TYPE_T << A0_SRC0_TYPE_SHIFT) |
-    (T_DIFFUSE << A0_SRC0_NR_SHIFT)),
-   0x01230000,			/* .xyzw */
+    (REG_TYPE_R << A0_SRC0_TYPE_SHIFT) |
+    (0 << A0_SRC0_NR_SHIFT)),
+   ((SRC_ONE << A1_SRC0_CHANNEL_X_SHIFT) |
+    (SRC_ZERO << A1_SRC0_CHANNEL_Y_SHIFT) |
+    (SRC_ZERO << A1_SRC0_CHANNEL_Z_SHIFT) |
+    (SRC_ONE << A1_SRC0_CHANNEL_W_SHIFT)),
    0
 };
 
@@ -253,6 +247,18 @@ src_vector(struct i915_fp_compile *p,
 		 source->Register.SwizzleZ,
 		 source->Register.SwizzleW);
 
+   /* No HW abs flag, so we have to max with the negation. */
+   if (source->Register.Absolute) {
+      uint tmp = i915_get_utemp(p);
+      i915_emit_arith(p,
+                      A0_MAX,
+                      tmp, A0_DEST_CHANNEL_ALL, 0,
+                      src,
+                      negate(src, 1, 1, 1, 1),
+                      0);
+      src = tmp;
+   }
+
    /* There's both negate-all-components and per-component negation.
     * Try to handle both here.
     */
@@ -260,15 +266,6 @@ src_vector(struct i915_fp_compile *p,
       int n = source->Register.Negate;
       src = negate(src, n, n, n, n);
    }
-
-   /* no abs() */
-#if 0
-   /* XXX assertions disabled to allow arbfplight.c to run */
-   /* XXX enable these assertions, or fix things */
-   assert(!source->Register.Absolute);
-#endif
-   if (source->Register.Absolute)
-      debug_printf("Unhandled absolute value\n");
 
    return src;
 }
@@ -649,7 +646,7 @@ i915_translate_instruction(struct i915_fp_compile *p,
                       tmp,                                   /* dest reg: a dummy reg */
                       A0_DEST_CHANNEL_ALL,                   /* dest writemask */
                       0,                                     /* sampler */
-                      negate(swizzle(0, ONE, ONE, ONE, ONE), 1, 1, 1, 1), /* coord */
+                      negate(swizzle(UREG(REG_TYPE_R, 0), ONE, ONE, ONE, ONE), 1, 1, 1, 1), /* coord */
                       T0_TEXKILL,                            /* opcode */
                       1);                                    /* num_coord */
       break;
@@ -1190,7 +1187,7 @@ static void
 i915_fixup_depth_write(struct i915_fp_compile *p)
 {
    /* XXX assuming pos/depth is always in output[0] */
-   if (p->shader->info.output_semantic_name[0] == TGSI_SEMANTIC_POSITION) {
+   if (p->shader->info.num_outputs != 0 && p->shader->info.output_semantic_name[0] == TGSI_SEMANTIC_POSITION) {
       const uint depth = UREG(REG_TYPE_OD, 0);
 
       i915_emit_arith(p,
@@ -1234,6 +1231,7 @@ i915_translate_fragment_program( struct i915_context *i915,
    i915_optimize_free(i_tokens);
 
 #if 0
-   i915_disassemble_program(NULL, fs->program, fs->program_len);
+   /* XXX: The disasm wants the concatenation of the decl and program. */
+   i915_disassemble_program(fs->program, fs->program_len);
 #endif
 }

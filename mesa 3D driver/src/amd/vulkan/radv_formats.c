@@ -1134,9 +1134,6 @@ radv_get_modifier_flags(struct radv_physical_device *dev, VkFormat format, uint6
    else
       features = props->optimalTilingFeatures;
 
-   if (modifier != DRM_FORMAT_MOD_LINEAR && vk_format_get_plane_count(format) > 1)
-      return 0;
-
    if (ac_modifier_has_dcc(modifier)) {
       features &= ~VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
 
@@ -1529,7 +1526,7 @@ get_external_image_format_properties(struct radv_physical_device *physical_devic
          flags =
             VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT | VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT;
 
-         compat_flags = export_flags = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+         compat_flags = export_flags = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
          break;
       default:
          break;

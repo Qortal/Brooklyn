@@ -53,6 +53,7 @@
 #include "dev/intel_debug.h"
 #include "common/intel_gem.h"
 #include "dev/intel_device_info.h"
+#include "isl/isl.h"
 #include "main/macros.h"
 #include "os/os_mman.h"
 #include "util/debug.h"
@@ -199,9 +200,6 @@ static struct list_head global_bufmgr_list = {
    .prev = &global_bufmgr_list,
 };
 
-static int bo_set_tiling_internal(struct iris_bo *bo, uint32_t tiling_mode,
-                                  uint32_t stride);
-
 static void bo_free(struct iris_bo *bo);
 
 static struct iris_bo *
@@ -211,7 +209,7 @@ find_and_ref_external_bo(struct hash_table *ht, unsigned int key)
    struct iris_bo *bo = entry ? entry->data : NULL;
 
    if (bo) {
-      assert(bo->external);
+      assert(iris_bo_is_external(bo));
       assert(!bo->reusable);
 
       /* Being non-reusable, the BO cannot be in the cache lists, but it
@@ -393,6 +391,14 @@ bo_calloc(void)
    return bo;
 }
 
+static void
+bo_unmap(struct iris_bo *bo)
+{
+   VG_NOACCESS(bo->map, bo->size);
+   os_munmap(bo->map, bo->size);
+   bo->map = NULL;
+}
+
 static struct iris_bo *
 alloc_bo_from_cache(struct iris_bufmgr *bufmgr,
                     struct bo_cache_bucket *bucket,
@@ -493,8 +499,6 @@ alloc_fresh_bo(struct iris_bufmgr *bufmgr, uint64_t bo_size)
    bo->bufmgr = bufmgr;
    bo->size = bo_size;
    bo->idle = true;
-   bo->tiling_mode = I915_TILING_NONE;
-   bo->stride = 0;
 
    /* Calling set_domain() will allocate pages for the BO outside of the
     * struct mutex lock in the kernel, which is more efficient than waiting
@@ -514,15 +518,13 @@ alloc_fresh_bo(struct iris_bufmgr *bufmgr, uint64_t bo_size)
    return bo;
 }
 
-static struct iris_bo *
-bo_alloc_internal(struct iris_bufmgr *bufmgr,
-                  const char *name,
-                  uint64_t size,
-                  uint32_t alignment,
-                  enum iris_memory_zone memzone,
-                  unsigned flags,
-                  uint32_t tiling_mode,
-                  uint32_t stride)
+struct iris_bo *
+iris_bo_alloc(struct iris_bufmgr *bufmgr,
+              const char *name,
+              uint64_t size,
+              uint32_t alignment,
+              enum iris_memory_zone memzone,
+              unsigned flags)
 {
    struct iris_bo *bo;
    unsigned int page_size = getpagesize();
@@ -533,6 +535,10 @@ bo_alloc_internal(struct iris_bufmgr *bufmgr,
     */
    uint64_t bo_size =
       bucket ? bucket->size : MAX2(ALIGN(size, page_size), page_size);
+
+   enum iris_mmap_mode desired_mmap_mode =
+      (bufmgr->has_llc || (flags & BO_ALLOC_COHERENT)) ? IRIS_MMAP_WB
+                                                       : IRIS_MMAP_WC;
 
    mtx_lock(&bufmgr->lock);
 
@@ -564,9 +570,6 @@ bo_alloc_internal(struct iris_bufmgr *bufmgr,
          goto err_free;
    }
 
-   if (bo_set_tiling_internal(bo, tiling_mode, stride))
-      goto err_free;
-
    bo->name = name;
    p_atomic_set(&bo->refcount, 1);
    bo->reusable = bucket && bufmgr->bo_reuse;
@@ -579,6 +582,11 @@ bo_alloc_internal(struct iris_bufmgr *bufmgr,
     */
    if (memzone < IRIS_MEMZONE_OTHER)
       bo->kflags |= EXEC_OBJECT_CAPTURE;
+
+   if (bo->mmap_mode != desired_mmap_mode && bo->map)
+      bo_unmap(bo);
+
+   bo->mmap_mode = desired_mmap_mode;
 
    if ((flags & BO_ALLOC_COHERENT) && !bo->cache_coherent) {
       struct drm_i915_gem_caching arg = {
@@ -599,26 +607,6 @@ bo_alloc_internal(struct iris_bufmgr *bufmgr,
 err_free:
    bo_free(bo);
    return NULL;
-}
-
-struct iris_bo *
-iris_bo_alloc(struct iris_bufmgr *bufmgr,
-              const char *name,
-              uint64_t size,
-              enum iris_memory_zone memzone)
-{
-   return bo_alloc_internal(bufmgr, name, size, 1, memzone,
-                            0, I915_TILING_NONE, 0);
-}
-
-struct iris_bo *
-iris_bo_alloc_tiled(struct iris_bufmgr *bufmgr, const char *name,
-                    uint64_t size, uint32_t alignment,
-                    enum iris_memory_zone memzone,
-                    uint32_t tiling_mode, uint32_t pitch, unsigned flags)
-{
-   return bo_alloc_internal(bufmgr, name, size, alignment, memzone,
-                            flags, tiling_mode, pitch);
 }
 
 struct iris_bo *
@@ -651,7 +639,7 @@ iris_bo_create_userptr(struct iris_bufmgr *bufmgr, const char *name,
 
    bo->name = name;
    bo->size = size;
-   bo->map_cpu = ptr;
+   bo->map = ptr;
 
    bo->bufmgr = bufmgr;
    bo->kflags = EXEC_OBJECT_SUPPORTS_48B_ADDRESS | EXEC_OBJECT_PINNED;
@@ -668,6 +656,7 @@ iris_bo_create_userptr(struct iris_bufmgr *bufmgr, const char *name,
    bo->cache_coherent = true;
    bo->index = -1;
    bo->idle = true;
+   bo->mmap_mode = IRIS_MMAP_WB;
 
    return bo;
 
@@ -730,31 +719,19 @@ iris_bo_gem_create_from_name(struct iris_bufmgr *bufmgr,
    bo->name = name;
    bo->global_name = handle;
    bo->reusable = false;
-   bo->external = true;
+   bo->imported = true;
+   bo->mmap_mode = IRIS_MMAP_WC;
    bo->kflags = EXEC_OBJECT_SUPPORTS_48B_ADDRESS | EXEC_OBJECT_PINNED;
    bo->gtt_offset = vma_alloc(bufmgr, IRIS_MEMZONE_OTHER, bo->size, 1);
 
    _mesa_hash_table_insert(bufmgr->handle_table, &bo->gem_handle, bo);
    _mesa_hash_table_insert(bufmgr->name_table, &bo->global_name, bo);
 
-   struct drm_i915_gem_get_tiling get_tiling = { .handle = bo->gem_handle };
-   ret = intel_ioctl(bufmgr->fd, DRM_IOCTL_I915_GEM_GET_TILING, &get_tiling);
-   if (ret != 0)
-      goto err_unref;
-
-   bo->tiling_mode = get_tiling.tiling_mode;
-
-   /* XXX stride is unknown */
    DBG("bo_create_from_handle: %d (%s)\n", handle, bo->name);
 
 out:
    mtx_unlock(&bufmgr->lock);
    return bo;
-
-err_unref:
-   bo_free(bo);
-   mtx_unlock(&bufmgr->lock);
-   return NULL;
 }
 
 static void
@@ -762,7 +739,7 @@ bo_close(struct iris_bo *bo)
 {
    struct iris_bufmgr *bufmgr = bo->bufmgr;
 
-   if (bo->external) {
+   if (iris_bo_is_external(bo)) {
       struct hash_entry *entry;
 
       if (bo->global_name) {
@@ -808,21 +785,8 @@ bo_free(struct iris_bo *bo)
 {
    struct iris_bufmgr *bufmgr = bo->bufmgr;
 
-   if (bo->map_cpu && !bo->userptr) {
-      VG_NOACCESS(bo->map_cpu, bo->size);
-      os_munmap(bo->map_cpu, bo->size);
-      bo->map_cpu = NULL;
-   }
-   if (bo->map_wc) {
-      VG_NOACCESS(bo->map_wc, bo->size);
-      os_munmap(bo->map_wc, bo->size);
-      bo->map_wc = NULL;
-   }
-   if (bo->map_gtt) {
-      VG_NOACCESS(bo->map_gtt, bo->size);
-      os_munmap(bo->map_gtt, bo->size);
-      bo->map_gtt = NULL;
-   }
+   if (!bo->userptr && bo->map)
+      bo_unmap(bo);
 
    if (bo->idle) {
       bo_close(bo);
@@ -955,15 +919,14 @@ print_flags(unsigned flags)
 }
 
 static void *
-iris_bo_gem_mmap_legacy(struct pipe_debug_callback *dbg,
-                        struct iris_bo *bo, bool wc)
+iris_bo_gem_mmap_legacy(struct pipe_debug_callback *dbg, struct iris_bo *bo)
 {
    struct iris_bufmgr *bufmgr = bo->bufmgr;
 
    struct drm_i915_gem_mmap mmap_arg = {
       .handle = bo->gem_handle,
       .size = bo->size,
-      .flags = wc ? I915_MMAP_WC : 0,
+      .flags = bo->mmap_mode == IRIS_MMAP_WC ? I915_MMAP_WC : 0,
    };
 
    int ret = intel_ioctl(bufmgr->fd, DRM_IOCTL_I915_GEM_MMAP, &mmap_arg);
@@ -978,15 +941,20 @@ iris_bo_gem_mmap_legacy(struct pipe_debug_callback *dbg,
 }
 
 static void *
-iris_bo_gem_mmap_offset(struct pipe_debug_callback *dbg, struct iris_bo *bo,
-                        bool wc)
+iris_bo_gem_mmap_offset(struct pipe_debug_callback *dbg, struct iris_bo *bo)
 {
    struct iris_bufmgr *bufmgr = bo->bufmgr;
 
    struct drm_i915_gem_mmap_offset mmap_arg = {
       .handle = bo->gem_handle,
-      .flags = wc ? I915_MMAP_OFFSET_WC : I915_MMAP_OFFSET_WB,
    };
+
+   if (bo->mmap_mode == IRIS_MMAP_WB)
+      mmap_arg.flags = I915_MMAP_OFFSET_WB;
+   else if (bo->mmap_mode == IRIS_MMAP_WC)
+      mmap_arg.flags = I915_MMAP_OFFSET_WC;
+   else
+      mmap_arg.flags = I915_MMAP_OFFSET_UC;
 
    /* Get the fake offset back */
    int ret = intel_ioctl(bufmgr->fd, DRM_IOCTL_I915_GEM_MMAP_OFFSET, &mmap_arg);
@@ -1008,250 +976,37 @@ iris_bo_gem_mmap_offset(struct pipe_debug_callback *dbg, struct iris_bo *bo,
    return map;
 }
 
-static void *
-iris_bo_gem_mmap(struct pipe_debug_callback *dbg, struct iris_bo *bo, bool wc)
-{
-   struct iris_bufmgr *bufmgr = bo->bufmgr;
-
-   if (bufmgr->has_mmap_offset)
-      return iris_bo_gem_mmap_offset(dbg, bo, wc);
-   else
-      return iris_bo_gem_mmap_legacy(dbg, bo, wc);
-}
-
-static void *
-iris_bo_map_cpu(struct pipe_debug_callback *dbg,
-                struct iris_bo *bo, unsigned flags)
-{
-   /* We disallow CPU maps for writing to non-coherent buffers, as the
-    * CPU map can become invalidated when a batch is flushed out, which
-    * can happen at unpredictable times.  You should use WC maps instead.
-    */
-   assert(bo->cache_coherent || !(flags & MAP_WRITE));
-
-   if (!bo->map_cpu) {
-      DBG("iris_bo_map_cpu: %d (%s)\n", bo->gem_handle, bo->name);
-      void *map = iris_bo_gem_mmap(dbg, bo, false);
-      if (!map) {
-         return NULL;
-      }
-
-      VG_DEFINED(map, bo->size);
-
-      if (p_atomic_cmpxchg(&bo->map_cpu, NULL, map)) {
-         VG_NOACCESS(map, bo->size);
-         os_munmap(map, bo->size);
-      }
-   }
-   assert(bo->map_cpu);
-
-   DBG("iris_bo_map_cpu: %d (%s) -> %p, ", bo->gem_handle, bo->name,
-       bo->map_cpu);
-   print_flags(flags);
-
-   if (!(flags & MAP_ASYNC)) {
-      bo_wait_with_stall_warning(dbg, bo, "CPU mapping");
-   }
-
-   if (!bo->cache_coherent && !bo->bufmgr->has_llc) {
-      /* If we're reusing an existing CPU mapping, the CPU caches may
-       * contain stale data from the last time we read from that mapping.
-       * (With the BO cache, it might even be data from a previous buffer!)
-       * Even if it's a brand new mapping, the kernel may have zeroed the
-       * buffer via CPU writes.
-       *
-       * We need to invalidate those cachelines so that we see the latest
-       * contents, and so long as we only read from the CPU mmap we do not
-       * need to write those cachelines back afterwards.
-       *
-       * On LLC, the empirical evidence suggests that writes from the GPU
-       * that bypass the LLC (i.e. for scanout) do *invalidate* the CPU
-       * cachelines. (Other reads, such as the display engine, bypass the
-       * LLC entirely requiring us to keep dirty pixels for the scanout
-       * out of any cache.)
-       */
-      intel_invalidate_range(bo->map_cpu, bo->size);
-   }
-
-   return bo->map_cpu;
-}
-
-static void *
-iris_bo_map_wc(struct pipe_debug_callback *dbg,
-               struct iris_bo *bo, unsigned flags)
-{
-   if (!bo->map_wc) {
-      DBG("iris_bo_map_wc: %d (%s)\n", bo->gem_handle, bo->name);
-      void *map = iris_bo_gem_mmap(dbg, bo, true);
-      if (!map) {
-         return NULL;
-      }
-
-      VG_DEFINED(map, bo->size);
-
-      if (p_atomic_cmpxchg(&bo->map_wc, NULL, map)) {
-         VG_NOACCESS(map, bo->size);
-         os_munmap(map, bo->size);
-      }
-   }
-   assert(bo->map_wc);
-
-   DBG("iris_bo_map_wc: %d (%s) -> %p\n", bo->gem_handle, bo->name, bo->map_wc);
-   print_flags(flags);
-
-   if (!(flags & MAP_ASYNC)) {
-      bo_wait_with_stall_warning(dbg, bo, "WC mapping");
-   }
-
-   return bo->map_wc;
-}
-
-/**
- * Perform an uncached mapping via the GTT.
- *
- * Write access through the GTT is not quite fully coherent. On low power
- * systems especially, like modern Atoms, we can observe reads from RAM before
- * the write via GTT has landed. A write memory barrier that flushes the Write
- * Combining Buffer (i.e. sfence/mfence) is not sufficient to order the later
- * read after the write as the GTT write suffers a small delay through the GTT
- * indirection. The kernel uses an uncached mmio read to ensure the GTT write
- * is ordered with reads (either by the GPU, WB or WC) and unconditionally
- * flushes prior to execbuf submission. However, if we are not informing the
- * kernel about our GTT writes, it will not flush before earlier access, such
- * as when using the cmdparser. Similarly, we need to be careful if we should
- * ever issue a CPU read immediately following a GTT write.
- *
- * Telling the kernel about write access also has one more important
- * side-effect. Upon receiving notification about the write, it cancels any
- * scanout buffering for FBC/PSR and friends. Later FBC/PSR is then flushed by
- * either SW_FINISH or DIRTYFB. The presumption is that we never write to the
- * actual scanout via a mmaping, only to a backbuffer and so all the FBC/PSR
- * tracking is handled on the buffer exchange instead.
- */
-static void *
-iris_bo_map_gtt(struct pipe_debug_callback *dbg,
-                struct iris_bo *bo, unsigned flags)
-{
-   struct iris_bufmgr *bufmgr = bo->bufmgr;
-
-   /* If we don't support get/set_tiling, there's no support for GTT mapping
-    * either (it won't do any de-tiling for us).
-    */
-   assert(bufmgr->has_tiling_uapi);
-
-   /* Get a mapping of the buffer if we haven't before. */
-   if (bo->map_gtt == NULL) {
-      DBG("bo_map_gtt: mmap %d (%s)\n", bo->gem_handle, bo->name);
-
-      struct drm_i915_gem_mmap_gtt mmap_arg = { .handle = bo->gem_handle };
-
-      /* Get the fake offset back... */
-      int ret = intel_ioctl(bufmgr->fd, DRM_IOCTL_I915_GEM_MMAP_GTT, &mmap_arg);
-      if (ret != 0) {
-         DBG("%s:%d: Error preparing buffer map %d (%s): %s .\n",
-             __FILE__, __LINE__, bo->gem_handle, bo->name, strerror(errno));
-         return NULL;
-      }
-
-      /* and mmap it. */
-      void *map = os_mmap(0, bo->size, PROT_READ | PROT_WRITE,
-                          MAP_SHARED, bufmgr->fd, mmap_arg.offset);
-      if (map == MAP_FAILED) {
-         DBG("%s:%d: Error mapping buffer %d (%s): %s .\n",
-             __FILE__, __LINE__, bo->gem_handle, bo->name, strerror(errno));
-         return NULL;
-      }
-
-      /* We don't need to use VALGRIND_MALLOCLIKE_BLOCK because Valgrind will
-       * already intercept this mmap call. However, for consistency between
-       * all the mmap paths, we mark the pointer as defined now and mark it
-       * as inaccessible afterwards.
-       */
-      VG_DEFINED(map, bo->size);
-
-      if (p_atomic_cmpxchg(&bo->map_gtt, NULL, map)) {
-         VG_NOACCESS(map, bo->size);
-         os_munmap(map, bo->size);
-      }
-   }
-   assert(bo->map_gtt);
-
-   DBG("bo_map_gtt: %d (%s) -> %p, ", bo->gem_handle, bo->name, bo->map_gtt);
-   print_flags(flags);
-
-   if (!(flags & MAP_ASYNC)) {
-      bo_wait_with_stall_warning(dbg, bo, "GTT mapping");
-   }
-
-   return bo->map_gtt;
-}
-
-static bool
-can_map_cpu(struct iris_bo *bo, unsigned flags)
-{
-   if (bo->cache_coherent)
-      return true;
-
-   /* Even if the buffer itself is not cache-coherent (such as a scanout), on
-    * an LLC platform reads always are coherent (as they are performed via the
-    * central system agent). It is just the writes that we need to take special
-    * care to ensure that land in main memory and not stick in the CPU cache.
-    */
-   if (!(flags & MAP_WRITE) && bo->bufmgr->has_llc)
-      return true;
-
-   /* If PERSISTENT or COHERENT are set, the mmapping needs to remain valid
-    * across batch flushes where the kernel will change cache domains of the
-    * bo, invalidating continued access to the CPU mmap on non-LLC device.
-    *
-    * Similarly, ASYNC typically means that the buffer will be accessed via
-    * both the CPU and the GPU simultaneously.  Batches may be executed that
-    * use the BO even while it is mapped.  While OpenGL technically disallows
-    * most drawing while non-persistent mappings are active, we may still use
-    * the GPU for blits or other operations, causing batches to happen at
-    * inconvenient times.
-    *
-    * If RAW is set, we expect the caller to be able to handle a WC buffer
-    * more efficiently than the involuntary clflushes.
-    */
-   if (flags & (MAP_PERSISTENT | MAP_COHERENT | MAP_ASYNC | MAP_RAW))
-      return false;
-
-   return !(flags & MAP_WRITE);
-}
-
 void *
 iris_bo_map(struct pipe_debug_callback *dbg,
             struct iris_bo *bo, unsigned flags)
 {
-   if (bo->tiling_mode != I915_TILING_NONE && !(flags & MAP_RAW))
-      return iris_bo_map_gtt(dbg, bo, flags);
+   struct iris_bufmgr *bufmgr = bo->bufmgr;
 
-   void *map;
+   if (!bo->map) {
+      DBG("iris_bo_map: %d (%s)\n", bo->gem_handle, bo->name);
+      void *map = bufmgr->has_mmap_offset ? iris_bo_gem_mmap_offset(dbg, bo)
+                                          : iris_bo_gem_mmap_legacy(dbg, bo);
+      if (!map) {
+         return NULL;
+      }
 
-   if (can_map_cpu(bo, flags))
-      map = iris_bo_map_cpu(dbg, bo, flags);
-   else
-      map = iris_bo_map_wc(dbg, bo, flags);
+      VG_DEFINED(map, bo->size);
 
-   /* Allow the attempt to fail by falling back to the GTT where necessary.
-    *
-    * Not every buffer can be mmaped directly using the CPU (or WC), for
-    * example buffers that wrap stolen memory or are imported from other
-    * devices. For those, we have little choice but to use a GTT mmapping.
-    * However, if we use a slow GTT mmapping for reads where we expected fast
-    * access, that order of magnitude difference in throughput will be clearly
-    * expressed by angry users.
-    *
-    * We skip MAP_RAW because we want to avoid map_gtt's fence detiling.
-    */
-   if (!map && !(flags & MAP_RAW)) {
-      perf_debug(dbg, "Fallback GTT mapping for %s with access flags %x\n",
-                 bo->name, flags);
-      map = iris_bo_map_gtt(dbg, bo, flags);
+      if (p_atomic_cmpxchg(&bo->map, NULL, map)) {
+         VG_NOACCESS(map, bo->size);
+         os_munmap(map, bo->size);
+      }
+   }
+   assert(bo->map);
+
+   DBG("iris_bo_map: %d (%s) -> %p\n", bo->gem_handle, bo->name, bo->map);
+   print_flags(flags);
+
+   if (!(flags & MAP_ASYNC)) {
+      bo_wait_with_stall_warning(dbg, bo, "memory mapping");
    }
 
-   return map;
+   return bo->map;
 }
 
 /** Waits for all GPU rendering with the object to have completed. */
@@ -1297,7 +1052,7 @@ iris_bo_wait(struct iris_bo *bo, int64_t timeout_ns)
    struct iris_bufmgr *bufmgr = bo->bufmgr;
 
    /* If we know it's idle, don't bother with the kernel round trip */
-   if (bo->idle && !bo->external)
+   if (bo->idle && !iris_bo_is_external(bo))
       return 0;
 
    struct drm_i915_gem_wait wait = {
@@ -1354,50 +1109,64 @@ iris_bufmgr_destroy(struct iris_bufmgr *bufmgr)
    free(bufmgr);
 }
 
-static int
-bo_set_tiling_internal(struct iris_bo *bo, uint32_t tiling_mode,
-                       uint32_t stride)
+int
+iris_gem_get_tiling(struct iris_bo *bo, uint32_t *tiling)
 {
    struct iris_bufmgr *bufmgr = bo->bufmgr;
-   struct drm_i915_gem_set_tiling set_tiling;
-   int ret;
 
-   if (bo->global_name == 0 &&
-       tiling_mode == bo->tiling_mode && stride == bo->stride)
+   if (!bufmgr->has_tiling_uapi) {
+      *tiling = I915_TILING_NONE;
       return 0;
+   }
+
+   struct drm_i915_gem_get_tiling ti = { .handle = bo->gem_handle };
+   int ret = intel_ioctl(bufmgr->fd, DRM_IOCTL_I915_GEM_GET_TILING, &ti);
+
+   if (ret) {
+      DBG("gem_get_tiling failed for BO %u: %s\n",
+          bo->gem_handle, strerror(errno));
+   }
+
+   *tiling = ti.tiling_mode;
+
+   return ret;
+}
+
+int
+iris_gem_set_tiling(struct iris_bo *bo, const struct isl_surf *surf)
+{
+   struct iris_bufmgr *bufmgr = bo->bufmgr;
+   uint32_t tiling_mode = isl_tiling_to_i915_tiling(surf->tiling);
+   int ret;
 
    /* If we can't do map_gtt, the set/get_tiling API isn't useful. And it's
     * actually not supported by the kernel in those cases.
     */
-   if (!bufmgr->has_tiling_uapi) {
-      bo->tiling_mode = tiling_mode;
-      bo->stride = stride;
+   if (!bufmgr->has_tiling_uapi)
       return 0;
-   }
 
-   memset(&set_tiling, 0, sizeof(set_tiling));
+   /* GEM_SET_TILING is slightly broken and overwrites the input on the
+    * error path, so we have to open code intel_ioctl().
+    */
    do {
-      /* set_tiling is slightly broken and overwrites the
-       * input on the error path, so we have to open code
-       * drm_ioctl.
-       */
-      set_tiling.handle = bo->gem_handle;
-      set_tiling.tiling_mode = tiling_mode;
-      set_tiling.stride = stride;
-
+      struct drm_i915_gem_set_tiling set_tiling = {
+         .handle = bo->gem_handle,
+         .tiling_mode = tiling_mode,
+         .stride = surf->row_pitch_B,
+      };
       ret = ioctl(bufmgr->fd, DRM_IOCTL_I915_GEM_SET_TILING, &set_tiling);
    } while (ret == -1 && (errno == EINTR || errno == EAGAIN));
-   if (ret == -1)
-      return -errno;
 
-   bo->tiling_mode = set_tiling.tiling_mode;
-   bo->stride = set_tiling.stride;
-   return 0;
+   if (ret) {
+      DBG("gem_set_tiling failed for BO %u: %s\n",
+          bo->gem_handle, strerror(errno));
+   }
+
+   return ret;
 }
 
 struct iris_bo *
-iris_bo_import_dmabuf(struct iris_bufmgr *bufmgr, int prime_fd,
-                      uint64_t modifier)
+iris_bo_import_dmabuf(struct iris_bufmgr *bufmgr, int prime_fd)
 {
    uint32_t handle;
    struct iris_bo *bo;
@@ -1438,7 +1207,8 @@ iris_bo_import_dmabuf(struct iris_bufmgr *bufmgr, int prime_fd,
    bo->bufmgr = bufmgr;
    bo->name = "prime";
    bo->reusable = false;
-   bo->external = true;
+   bo->imported = true;
+   bo->mmap_mode = IRIS_MMAP_WC;
    bo->kflags = EXEC_OBJECT_SUPPORTS_48B_ADDRESS | EXEC_OBJECT_PINNED;
 
    /* From the Bspec, Memory Compression - Gfx12:
@@ -1457,110 +1227,40 @@ iris_bo_import_dmabuf(struct iris_bufmgr *bufmgr, int prime_fd,
    bo->gem_handle = handle;
    _mesa_hash_table_insert(bufmgr->handle_table, &bo->gem_handle, bo);
 
-   const struct isl_drm_modifier_info *mod_info =
-      isl_drm_modifier_get_info(modifier);
-   if (mod_info) {
-      bo->tiling_mode = isl_tiling_to_i915_tiling(mod_info->tiling);
-   } else if (bufmgr->has_tiling_uapi) {
-      struct drm_i915_gem_get_tiling get_tiling = { .handle = bo->gem_handle };
-      if (intel_ioctl(bufmgr->fd, DRM_IOCTL_I915_GEM_GET_TILING, &get_tiling))
-         goto err;
-      bo->tiling_mode = get_tiling.tiling_mode;
-   } else {
-      bo->tiling_mode = I915_TILING_NONE;
-   }
-
-out:
-   mtx_unlock(&bufmgr->lock);
-   return bo;
-
-err:
-   bo_free(bo);
-   mtx_unlock(&bufmgr->lock);
-   return NULL;
-}
-
-struct iris_bo *
-iris_bo_import_dmabuf_no_mods(struct iris_bufmgr *bufmgr,
-                              int prime_fd)
-{
-   uint32_t handle;
-   struct iris_bo *bo;
-
-   mtx_lock(&bufmgr->lock);
-   int ret = drmPrimeFDToHandle(bufmgr->fd, prime_fd, &handle);
-   if (ret) {
-      DBG("import_dmabuf: failed to obtain handle from fd: %s\n",
-          strerror(errno));
-      mtx_unlock(&bufmgr->lock);
-      return NULL;
-   }
-
-   /*
-    * See if the kernel has already returned this buffer to us. Just as
-    * for named buffers, we must not create two bo's pointing at the same
-    * kernel object
-    */
-   bo = find_and_ref_external_bo(bufmgr->handle_table, handle);
-   if (bo)
-      goto out;
-
-   bo = bo_calloc();
-   if (!bo)
-      goto out;
-
-   p_atomic_set(&bo->refcount, 1);
-
-   /* Determine size of bo.  The fd-to-handle ioctl really should
-    * return the size, but it doesn't.  If we have kernel 3.12 or
-    * later, we can lseek on the prime fd to get the size.  Older
-    * kernels will just fail, in which case we fall back to the
-    * provided (estimated or guess size). */
-   ret = lseek(prime_fd, 0, SEEK_END);
-   if (ret != -1)
-      bo->size = ret;
-
-   bo->bufmgr = bufmgr;
-   bo->name = "prime";
-   bo->reusable = false;
-   bo->external = true;
-   bo->kflags = EXEC_OBJECT_SUPPORTS_48B_ADDRESS | EXEC_OBJECT_PINNED;
-   bo->gtt_offset = vma_alloc(bufmgr, IRIS_MEMZONE_OTHER, bo->size, 1);
-   bo->gem_handle = handle;
-   _mesa_hash_table_insert(bufmgr->handle_table, &bo->gem_handle, bo);
-
 out:
    mtx_unlock(&bufmgr->lock);
    return bo;
 }
 
 static void
-iris_bo_make_external_locked(struct iris_bo *bo)
+iris_bo_mark_exported_locked(struct iris_bo *bo)
 {
-   if (!bo->external) {
+   if (!iris_bo_is_external(bo))
       _mesa_hash_table_insert(bo->bufmgr->handle_table, &bo->gem_handle, bo);
+
+   if (!bo->exported) {
       /* If a BO is going to be used externally, it could be sent to the
        * display HW. So make sure our CPU mappings don't assume cache
        * coherency since display is outside that cache.
        */
       bo->cache_coherent = false;
-      bo->external = true;
+      bo->exported = true;
       bo->reusable = false;
    }
 }
 
 void
-iris_bo_make_external(struct iris_bo *bo)
+iris_bo_mark_exported(struct iris_bo *bo)
 {
    struct iris_bufmgr *bufmgr = bo->bufmgr;
 
-   if (bo->external) {
+   if (bo->exported) {
       assert(!bo->reusable);
       return;
    }
 
    mtx_lock(&bufmgr->lock);
-   iris_bo_make_external_locked(bo);
+   iris_bo_mark_exported_locked(bo);
    mtx_unlock(&bufmgr->lock);
 }
 
@@ -1569,10 +1269,10 @@ iris_bo_export_dmabuf(struct iris_bo *bo, int *prime_fd)
 {
    struct iris_bufmgr *bufmgr = bo->bufmgr;
 
-   iris_bo_make_external(bo);
+   iris_bo_mark_exported(bo);
 
    if (drmPrimeHandleToFD(bufmgr->fd, bo->gem_handle,
-                          DRM_CLOEXEC, prime_fd) != 0)
+                          DRM_CLOEXEC | DRM_RDWR, prime_fd) != 0)
       return -errno;
 
    return 0;
@@ -1581,7 +1281,7 @@ iris_bo_export_dmabuf(struct iris_bo *bo, int *prime_fd)
 uint32_t
 iris_bo_export_gem_handle(struct iris_bo *bo)
 {
-   iris_bo_make_external(bo);
+   iris_bo_mark_exported(bo);
 
    return bo->gem_handle;
 }
@@ -1599,7 +1299,7 @@ iris_bo_flink(struct iris_bo *bo, uint32_t *name)
 
       mtx_lock(&bufmgr->lock);
       if (!bo->global_name) {
-         iris_bo_make_external_locked(bo);
+         iris_bo_mark_exported_locked(bo);
          bo->global_name = flink.name;
          _mesa_hash_table_insert(bufmgr->name_table, &bo->global_name, bo);
       }
@@ -1746,7 +1446,7 @@ iris_create_hw_context(struct iris_bufmgr *bufmgr)
       .param = I915_CONTEXT_PARAM_RECOVERABLE,
       .value = false,
    };
-   drmIoctl(bufmgr->fd, DRM_IOCTL_I915_GEM_CONTEXT_SETPARAM, &p);
+   intel_ioctl(bufmgr->fd, DRM_IOCTL_I915_GEM_CONTEXT_SETPARAM, &p);
 
    return create.ctx_id;
 }
@@ -1758,7 +1458,7 @@ iris_hw_context_get_priority(struct iris_bufmgr *bufmgr, uint32_t ctx_id)
       .ctx_id = ctx_id,
       .param = I915_CONTEXT_PARAM_PRIORITY,
    };
-   drmIoctl(bufmgr->fd, DRM_IOCTL_I915_GEM_CONTEXT_GETPARAM, &p);
+   intel_ioctl(bufmgr->fd, DRM_IOCTL_I915_GEM_CONTEXT_GETPARAM, &p);
    return p.value; /* on error, return 0 i.e. default priority */
 }
 
@@ -1841,8 +1541,8 @@ intel_aux_map_buffer_alloc(void *driver_ctx, uint32_t size)
    struct iris_bufmgr *bufmgr = (struct iris_bufmgr *)driver_ctx;
 
    struct iris_bo *bo =
-      iris_bo_alloc_tiled(bufmgr, "aux-map", size, 64 * 1024,
-                          IRIS_MEMZONE_OTHER, I915_TILING_NONE, 0, 0);
+      iris_bo_alloc(bufmgr, "aux-map", size, 64 * 1024,
+                    IRIS_MEMZONE_OTHER, 0);
 
    buf->driver_bo = bo;
    buf->gpu = bo->gtt_offset;

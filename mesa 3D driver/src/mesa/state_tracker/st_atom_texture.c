@@ -221,6 +221,10 @@ update_textures(struct st_context *st,
                pipe->create_sampler_view(pipe, stObj->pt->next->next, &tmpl);
          break;
       case PIPE_FORMAT_YUYV:
+         if (stObj->pt->format == PIPE_FORMAT_R8G8_R8B8_UNORM)
+            /* no additional views needed */
+            break;
+
          /* we need one additional BGRA8888 view: */
          tmpl.format = PIPE_FORMAT_BGRA8888_UNORM;
          tmpl.swizzle_b = PIPE_SWIZZLE_Z;
@@ -230,8 +234,23 @@ update_textures(struct st_context *st,
                pipe->create_sampler_view(pipe, stObj->pt->next, &tmpl);
          break;
       case PIPE_FORMAT_UYVY:
+         if (stObj->pt->format == PIPE_FORMAT_G8R8_B8R8_UNORM)
+            /* no additional views needed */
+            break;
+
          /* we need one additional RGBA8888 view: */
          tmpl.format = PIPE_FORMAT_RGBA8888_UNORM;
+         tmpl.swizzle_b = PIPE_SWIZZLE_Z;
+         tmpl.swizzle_a = PIPE_SWIZZLE_W;
+         extra = u_bit_scan(&free_slots);
+         sampler_views[extra] =
+               pipe->create_sampler_view(pipe, stObj->pt->next, &tmpl);
+         break;
+      case PIPE_FORMAT_Y210:
+      case PIPE_FORMAT_Y212:
+      case PIPE_FORMAT_Y216:
+         /* we need one additional R16G16B16A16 view: */
+         tmpl.format = PIPE_FORMAT_R16G16B16A16_UNORM;
          tmpl.swizzle_b = PIPE_SWIZZLE_Z;
          tmpl.swizzle_a = PIPE_SWIZZLE_W;
          extra = u_bit_scan(&free_slots);

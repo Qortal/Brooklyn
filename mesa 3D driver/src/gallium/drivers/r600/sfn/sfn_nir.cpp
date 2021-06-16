@@ -303,6 +303,7 @@ bool ShaderFromNir::emit_instruction(nir_instr *instr)
 
 bool ShaderFromNir::process_declaration()
 {
+   impl->set_shader_info(sh);
 
    if (!impl->scan_inputs_read(sh))
       return false;
@@ -810,6 +811,7 @@ bool has_saturate(const nir_function *func)
    return false;
 }
 
+extern "C"
 bool r600_lower_to_scalar_instr_filter(const nir_instr *instr, const void *)
 {
    if (instr->type != nir_instr_type_alu)
@@ -861,6 +863,12 @@ int r600_shader_from_nir(struct r600_context *rctx,
 
    r600::sort_uniforms(sel->nir);
 
+   /* Cayman seems very crashy about accessing images that don't exists or are
+    * accessed out of range, this lowering seems to help (but it can also be
+    * another problem */
+   if (sel->nir->info.num_images > 0 && rctx->b.chip_class == CAYMAN)
+       NIR_PASS_V(sel->nir, r600_legalize_image_load_store);
+
    NIR_PASS_V(sel->nir, nir_lower_vars_to_ssa);
    NIR_PASS_V(sel->nir, nir_lower_regs_to_ssa);
    nir_lower_idiv_options idiv_options = {
@@ -869,13 +877,11 @@ int r600_shader_from_nir(struct r600_context *rctx,
    };
    NIR_PASS_V(sel->nir, nir_lower_idiv, &idiv_options);
    NIR_PASS_V(sel->nir, r600_lower_alu);
-   NIR_PASS_V(sel->nir, nir_lower_phis_to_scalar);
+   NIR_PASS_V(sel->nir, nir_lower_phis_to_scalar, false);
 
    if (lower_64bit)
       NIR_PASS_V(sel->nir, nir_lower_int64);
    while(optimize_once(sel->nir, false));
-
-   NIR_PASS_V(sel->nir, nir_lower_alu_to_scalar, r600_lower_to_scalar_instr_filter, NULL);
 
    NIR_PASS_V(sel->nir, r600_lower_shared_io);
    NIR_PASS_V(sel->nir, r600_nir_lower_atomics);
@@ -893,6 +899,7 @@ int r600_shader_from_nir(struct r600_context *rctx,
       NIR_PASS_V(sel->nir, r600_vectorize_vs_inputs);
 
    if (sel->nir->info.stage == MESA_SHADER_FRAGMENT) {
+      NIR_PASS_V(sel->nir, nir_lower_fragcoord_wtrans);
       NIR_PASS_V(sel->nir, r600_lower_fs_out_to_vector);
    }
 
@@ -933,11 +940,11 @@ int r600_shader_from_nir(struct r600_context *rctx,
    NIR_PASS_V(sel->nir, nir_io_add_const_offset_to_base, io_modes);
 
    NIR_PASS_V(sel->nir, nir_lower_alu_to_scalar, r600_lower_to_scalar_instr_filter, NULL);
-   NIR_PASS_V(sel->nir, nir_lower_phis_to_scalar);
+   NIR_PASS_V(sel->nir, nir_lower_phis_to_scalar, false);
    if (lower_64bit)
       NIR_PASS_V(sel->nir, r600::r600_nir_split_64bit_io);
    NIR_PASS_V(sel->nir, nir_lower_alu_to_scalar, r600_lower_to_scalar_instr_filter, NULL);
-   NIR_PASS_V(sel->nir, nir_lower_phis_to_scalar);
+   NIR_PASS_V(sel->nir, nir_lower_phis_to_scalar, false);
    NIR_PASS_V(sel->nir, nir_lower_alu_to_scalar, r600_lower_to_scalar_instr_filter, NULL);
    NIR_PASS_V(sel->nir, nir_copy_prop);
    NIR_PASS_V(sel->nir, nir_opt_dce);

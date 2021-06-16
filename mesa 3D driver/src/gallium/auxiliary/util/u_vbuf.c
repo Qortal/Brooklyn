@@ -152,6 +152,8 @@ struct u_vbuf {
    struct translate_cache *translate_cache;
    struct cso_cache cso_cache;
 
+   bool flatshade_first;
+
    /* This is what was set in set_vertex_buffers.
     * May contain user buffers. */
    struct pipe_vertex_buffer vertex_buffer[PIPE_MAX_ATTRIBS];
@@ -379,6 +381,11 @@ void u_vbuf_set_vertex_elements(struct u_vbuf *mgr,
    mgr->ve = u_vbuf_set_vertex_elements_internal(mgr, velems);
 }
 
+void u_vbuf_set_flatshade_first(struct u_vbuf *mgr, bool flatshade_first)
+{
+   mgr->flatshade_first = flatshade_first;
+}
+
 void u_vbuf_unset_vertex_elements(struct u_vbuf *mgr)
 {
    mgr->ve = NULL;
@@ -441,7 +448,19 @@ u_vbuf_translate_buffers(struct u_vbuf *mgr, struct translate_key *key,
             static uint64_t dummy_buf[4] = { 0 };
             tr->set_buffer(tr, i, dummy_buf, 0, 0);
             continue;
-        }
+         }
+
+         if (vb->stride) {
+            /* the stride cannot be used to calculate the map size of the buffer,
+             * as it only determines the bytes between elements, not the size of elements
+             * themselves, meaning that if stride < element_size, the mapped size will
+             * be too small and conversion will overrun the map buffer
+             *
+             * instead, add the size of the largest possible attribute to ensure the map is large enough
+             */
+            unsigned last_offset = offset + size - vb->stride;
+            size = MAX2(size, last_offset + sizeof(double)*4);
+         }
 
          if (offset + size > vb->buffer.resource->width0) {
             /* Don't try to map past end of buffer.  This often happens when
@@ -1271,8 +1290,25 @@ static void u_vbuf_set_driver_vertex_buffers(struct u_vbuf *mgr)
    start_slot = ffs(mgr->dirty_real_vb_mask) - 1;
    count = util_last_bit(mgr->dirty_real_vb_mask >> start_slot);
 
-   pipe->set_vertex_buffers(pipe, start_slot, count, 0, false,
-                            mgr->real_vertex_buffer + start_slot);
+   if (mgr->dirty_real_vb_mask == mgr->enabled_vb_mask &&
+       mgr->dirty_real_vb_mask == mgr->user_vb_mask) {
+      /* Fast path that allows us to transfer the VBO references to the driver
+       * to skip atomic reference counting there. These are freshly uploaded
+       * user buffers that can be discarded after this call.
+       */
+      pipe->set_vertex_buffers(pipe, start_slot, count, 0, true,
+                               mgr->real_vertex_buffer + start_slot);
+
+      /* We don't own the VBO references now. Set them to NULL. */
+      for (unsigned i = 0; i < count; i++) {
+         assert(!mgr->real_vertex_buffer[start_slot + i].is_user_buffer);
+         mgr->real_vertex_buffer[start_slot + i].buffer.resource = NULL;
+      }
+   } else {
+      /* Slow path where we have to keep VBO references. */
+      pipe->set_vertex_buffers(pipe, start_slot, count, 0, false,
+                               mgr->real_vertex_buffer + start_slot);
+   }
    mgr->dirty_real_vb_mask = 0;
 }
 
@@ -1600,7 +1636,8 @@ void u_vbuf_draw_vbo(struct u_vbuf *mgr, const struct pipe_draw_info *info,
    */
 
    u_upload_unmap(pipe->stream_uploader);
-   u_vbuf_set_driver_vertex_buffers(mgr);
+   if (mgr->dirty_real_vb_mask)
+      u_vbuf_set_driver_vertex_buffers(mgr);
 
    pipe->draw_vbo(pipe, &new_info, drawid_offset, indirect, &new_draw, 1);
 

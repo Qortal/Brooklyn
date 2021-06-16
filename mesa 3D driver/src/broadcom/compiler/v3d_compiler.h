@@ -299,6 +299,11 @@ enum quniform_contents {
          */
         QUNIFORM_NUM_WORK_GROUPS,
 
+        /* Base workgroup offset passed to vkCmdDispatchBase in the dimension
+         * selected by the data value.
+         */
+        QUNIFORM_WORK_GROUP_BASE,
+
         /**
          * Returns the the offset of the scratch buffer for register spilling.
          */
@@ -544,10 +549,10 @@ enum v3d_compilation_result {
 struct v3d_compiler {
         const struct v3d_device_info *devinfo;
         struct ra_regs *regs;
-        unsigned int reg_class_any[3];
-        unsigned int reg_class_r5[3];
-        unsigned int reg_class_phys[3];
-        unsigned int reg_class_phys_or_acc[3];
+        struct ra_class *reg_class_any[3];
+        struct ra_class *reg_class_r5[3];
+        struct ra_class *reg_class_phys[3];
+        struct ra_class *reg_class_phys_or_acc[3];
 };
 
 /**
@@ -646,12 +651,14 @@ struct v3d_compile {
          * TMU spills.
          */
         bool disable_tmu_pipelining;
+        bool pipelined_any_tmu;
 
         /* Disable sorting of UBO loads with constant offset. This may
          * increase the chances of being able to compile shaders with high
          * register pressure.
          */
         bool disable_constant_ubo_load_sorting;
+        bool sorted_any_ubo_loads;
 
         /* Emits ldunif for each new uniform, even if the uniform was already
          * emitted in the same block. Useful to compile shaders with high
@@ -660,6 +667,10 @@ struct v3d_compile {
          */
         bool disable_ldunif_opt;
 
+        /* Disables loop unrolling to reduce register pressure. */
+        bool disable_loop_unrolling;
+        bool unrolled_any_loops;
+
         /* Minimum number of threads we are willing to use to register allocate
          * a shader with the current compilation strategy. This only prevents
          * us from lowering the thread count to register allocate successfully,
@@ -667,6 +678,13 @@ struct v3d_compile {
          * compilation strategy before dropping thread count.
          */
         uint32_t min_threads_for_reg_alloc;
+
+        /* Whether TMU spills are allowed. If this is disabled it may cause
+         * register allocation to fail. We set this to favor other compilation
+         * strategies that can reduce register pressure and hopefully reduce or
+         * eliminate TMU spills in the shader.
+         */
+        bool tmu_spilling_allowed;
 
         /* The UBO index and block used with the last unifa load, as well as the
          * current unifa offset *after* emitting that load. This is used to skip
@@ -937,11 +955,9 @@ vir_has_uniform(struct qinst *inst)
         return inst->uniform != ~0;
 }
 
-extern const nir_shader_compiler_options v3d_nir_options;
-
 const struct v3d_compiler *v3d_compiler_init(const struct v3d_device_info *devinfo);
 void v3d_compiler_free(const struct v3d_compiler *compiler);
-void v3d_optimize_nir(struct nir_shader *s);
+void v3d_optimize_nir(struct v3d_compile *c, struct nir_shader *s);
 
 uint64_t *v3d_compile(const struct v3d_compiler *compiler,
                       struct v3d_key *key,

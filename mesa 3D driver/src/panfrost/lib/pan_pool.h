@@ -31,10 +31,8 @@
 
 #include "util/u_dynarray.h"
 
-/* Represents a pool of memory that can only grow, used to allocate objects
- * with the same lifetime as the pool itself. In OpenGL, a pool is owned by the
- * batch for transient structures. In Vulkan, it may be owned by e.g. the
- * command pool */
+/* Represents grow-only memory. It may be owned by the batch (OpenGL) or
+ * command pool (Vulkan), or may be unowned for persistent uploads. */
 
 struct pan_pool {
         /* Parent device for allocation */
@@ -49,14 +47,50 @@ struct pan_pool {
         /* Within the topmost transient BO, how much has been used? */
         unsigned transient_offset;
 
+        /* Label for created BOs */
+        const char *label;
+
         /* BO flags to use in the pool */
         unsigned create_flags;
+
+        /* Minimum size for allocated BOs. */
+        size_t slab_size;
+
+        /* Mode of the pool. BO management is in the pool for owned mode, but
+         * the consumed for unowned mode. */
+        bool owned;
 };
+
+/* Reference to pool allocated memory for an unowned pool */
+
+struct pan_pool_ref {
+        /* Owning BO */
+        struct panfrost_bo *bo;
+
+        /* Mapped GPU VA */
+        mali_ptr gpu;
+};
+
+/* Take a reference to an allocation pool. Call directly after allocating from
+ * an unowned pool for correct operation. */
+
+static inline struct pan_pool_ref
+pan_take_ref(struct pan_pool *pool, mali_ptr ptr)
+{
+        if (!pool->owned)
+                panfrost_bo_reference(pool->transient_bo);
+
+        return (struct pan_pool_ref) {
+                .bo = pool->transient_bo,
+                .gpu = ptr
+        };
+}
 
 void
 panfrost_pool_init(struct pan_pool *pool, void *memctx,
                    struct panfrost_device *dev, unsigned create_flags,
-                   bool prealloc);
+                   size_t slab_size, const char *label, bool prealloc, bool
+                   owned);
 
 void
 panfrost_pool_cleanup(struct pan_pool *pool);
@@ -64,6 +98,7 @@ panfrost_pool_cleanup(struct pan_pool *pool);
 static inline unsigned
 panfrost_pool_num_bos(struct pan_pool *pool)
 {
+        assert(pool->owned && "pool does not track BOs in unowned mode");
         return util_dynarray_num_elements(&pool->bos, struct panfrost_bo *);
 }
 

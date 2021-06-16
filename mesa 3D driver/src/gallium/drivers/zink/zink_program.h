@@ -76,10 +76,11 @@ struct zink_program {
    struct zink_batch_usage batch_uses;
    bool is_compute;
 
-   struct zink_descriptor_pool *pool[ZINK_DESCRIPTOR_TYPES];
-   struct zink_descriptor_set *last_set[ZINK_DESCRIPTOR_TYPES];
+   struct zink_program_descriptor_data *dd;
 
    VkPipelineLayout layout;
+   VkDescriptorSetLayout dsl[ZINK_DESCRIPTOR_TYPES + 1]; // one for each type + push
+   unsigned num_dsl;
 };
 
 struct zink_gfx_program {
@@ -127,18 +128,10 @@ zink_desc_type_from_vktype(VkDescriptorType type)
    
 }
 
-static inline bool
-zink_program_has_descriptors(const struct zink_program *pg)
-{
-   for (unsigned i = 0; i < ARRAY_SIZE(pg->pool); i++) {
-      if (pg->pool[i])
-         return true;
-   }
-   return false;
-}
-
-unsigned
-zink_program_num_descriptors(const struct zink_program *pg);
+void
+zink_delete_shader_state(struct pipe_context *pctx, void *cso);
+void *
+zink_create_gfx_shader_state(struct pipe_context *pctx, const struct pipe_shader_state *shader);
 
 unsigned
 zink_program_num_bindings_typed(const struct zink_program *pg, enum zink_descriptor_type type, bool is_compute);
@@ -161,7 +154,7 @@ zink_destroy_gfx_program(struct zink_screen *screen,
                          struct zink_gfx_program *prog);
 
 VkPipeline
-zink_get_gfx_pipeline(struct zink_screen *screen,
+zink_get_gfx_pipeline(struct zink_context *ctx,
                       struct zink_gfx_program *prog,
                       struct zink_gfx_pipeline_state *state,
                       enum pipe_prim_type mode);
@@ -218,6 +211,9 @@ zink_compute_program_reference(struct zink_screen *screen,
    return ret;
 }
 
+VkPipelineLayout
+zink_pipeline_layout_create(struct zink_screen *screen, struct zink_program *pg);
+
 void
 zink_program_update_compute_pipeline_state(struct zink_context *ctx, struct zink_compute_program *comp, const uint block[3]);
 
@@ -225,5 +221,11 @@ VkPipeline
 zink_get_compute_pipeline(struct zink_screen *screen,
                       struct zink_compute_program *comp,
                       struct zink_compute_pipeline_state *state);
+
+static inline bool
+zink_program_has_descriptors(const struct zink_program *pg)
+{
+   return pg->num_dsl > 0;
+}
 
 #endif

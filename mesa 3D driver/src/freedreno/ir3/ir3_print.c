@@ -99,9 +99,11 @@ static void print_instr_name(struct ir3_instruction *instr, bool flags)
 	if (is_meta(instr)) {
 		switch (instr->opc) {
 		case OPC_META_INPUT:  printf("_meta:in");   break;
-		case OPC_META_SPLIT:        printf("_meta:split");        break;
-		case OPC_META_COLLECT:      printf("_meta:collect");      break;
-		case OPC_META_TEX_PREFETCH: printf("_meta:tex_prefetch"); break;
+		case OPC_META_SPLIT:			printf("_meta:split");        break;
+		case OPC_META_COLLECT:			printf("_meta:collect");      break;
+		case OPC_META_TEX_PREFETCH:		printf("_meta:tex_prefetch"); break;
+		case OPC_META_PARALLEL_COPY:	printf("_meta:parallel_copy"); break;
+		case OPC_META_PHI:				printf("_meta:phi");          break;
 
 		/* shouldn't hit here.. just for debugging: */
 		default: printf("_meta:%d", instr->opc);    break;
@@ -160,6 +162,28 @@ static void print_instr_name(struct ir3_instruction *instr, bool flags)
 	}
 }
 
+static void print_ssa_def_name(struct ir3_register *reg)
+{
+	printf(SYN_SSA("ssa_%u"), reg->instr->serialno);
+		if (reg->name != 0)
+			printf(":%u", reg->name);
+}
+
+static void print_ssa_name(struct ir3_register *reg, bool dst)
+{
+	if (!dst) {
+		if (!reg->def)
+			printf(SYN_SSA("undef"));
+		else
+			print_ssa_def_name(reg->def);
+	} else {
+		print_ssa_def_name(reg);
+	}
+
+	if (reg->num != INVALID_REG)
+			printf("("SYN_REG("r%u.%c")")", reg_num(reg), "xyzw"[reg_comp(reg)]);
+}
+
 static void print_reg_name(struct ir3_instruction *instr, struct ir3_register *reg)
 {
 	if ((reg->flags & (IR3_REG_FABS | IR3_REG_SABS)) &&
@@ -169,6 +193,11 @@ static void print_reg_name(struct ir3_instruction *instr, struct ir3_register *r
 		printf("(neg)");
 	else if (reg->flags & (IR3_REG_FABS | IR3_REG_SABS))
 		printf("(abs)");
+
+	if (reg->flags & IR3_REG_FIRST_KILL)
+		printf("(kill)");
+	if (reg->flags & IR3_REG_UNUSED)
+		printf("(unused)");
 
 	if (reg->flags & IR3_REG_R)
 		printf("(r)");
@@ -181,22 +210,19 @@ static void print_reg_name(struct ir3_instruction *instr, struct ir3_register *r
 	if (reg->flags & IR3_REG_IMMED) {
 		printf(SYN_IMMED("imm[%f,%d,0x%x]"), reg->fim_val, reg->iim_val, reg->iim_val);
 	} else if (reg->flags & IR3_REG_ARRAY) {
+		if (reg->flags & IR3_REG_SSA) {
+			print_ssa_name(reg, reg->flags & IR3_REG_DEST);
+			printf(":");
+		}
 		printf(SYN_ARRAY("arr[id=%u, offset=%d, size=%u"), reg->array.id,
 				reg->array.offset, reg->size);
-		/* for ARRAY we could have null src, for example first write
-		 * instruction..
-		 *
-		 * Note for array writes from another block, we aren't really
-		 * sure who wrote it so skip trying to show this
-		 */
-		if (reg->instr && (reg->instr->block == instr->block)) {
+		if (reg->flags & IR3_REG_DEST) {
 			printf(SYN_ARRAY(", "));
-			printf(SYN_SSA("ssa_%u"), reg->instr->serialno);
+			print_ssa_name(reg, false);
 		}
 		printf(SYN_ARRAY("]"));
 	} else if (reg->flags & IR3_REG_SSA) {
-		/* For dst regs, reg->instr will be NULL: */
-		printf(SYN_SSA("ssa_%u"), reg->instr ? reg->instr->serialno : instr->serialno);
+		print_ssa_name(reg, reg->flags & IR3_REG_DEST);
 	} else if (reg->flags & IR3_REG_RELATIV) {
 		if (reg->flags & IR3_REG_CONST)
 			printf(SYN_CONST("c<a0.x + %d>"), reg->array.offset);
@@ -272,20 +298,6 @@ print_instr(struct ir3_instruction *instr, int lvl)
 		printf("]");
 	}
 
-	if (instr->cp.left) {
-		printf(", left=_");
-		printf("[");
-		print_instr_name(instr->cp.left, false);
-		printf("]");
-	}
-
-	if (instr->cp.right) {
-		printf(", right=_");
-		printf("[");
-		print_instr_name(instr->cp.right, false);
-		printf("]");
-	}
-
 	if (instr->opc == OPC_META_SPLIT) {
 		printf(", off=%d", instr->split.off);
 	} else if (instr->opc == OPC_META_TEX_PREFETCH) {
@@ -315,16 +327,18 @@ print_instr(struct ir3_instruction *instr, int lvl)
 				printf(".%u", instr->cat0.idx);
 			}
 			if (brinfo[instr->cat0.brtype].nsrc >= 1) {
-				printf(" %sp0.%c ("SYN_SSA("ssa_%u")"),",
+				printf(" %sp0.%c (",
 						instr->cat0.inv1 ? "!" : "",
-						"xyzw"[instr->cat0.comp1 & 0x3],
-						instr->regs[1]->instr->serialno);
+						"xyzw"[instr->cat0.comp1 & 0x3]);
+				print_reg_name(instr, instr->regs[1]);
+				printf("), ");
 			}
 			if (brinfo[instr->cat0.brtype].nsrc >= 2) {
-				printf(" %sp0.%c ("SYN_SSA("ssa_%u")"),",
+				printf(" %sp0.%c (",
 						instr->cat0.inv2 ? "!" : "",
-						"xyzw"[instr->cat0.comp2 & 0x3],
-						instr->regs[2]->instr->serialno);
+						"xyzw"[instr->cat0.comp2 & 0x3]);
+				print_reg_name(instr, instr->regs[2]);
+				printf("), ");
 			}
 		}
 		printf(" target=block%u", block_id(instr->cat0.target));

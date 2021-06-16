@@ -198,7 +198,7 @@ VkResult genX(CreateQueryPool)(
    if (pdevice->supports_48bit_addresses)
       bo_flags |= EXEC_OBJECT_SUPPORTS_48B_ADDRESS;
 
-   if (pdevice->use_softpin)
+   if (anv_use_softpin(pdevice))
       bo_flags |= EXEC_OBJECT_PINNED;
 
    if (pdevice->has_exec_async)
@@ -1374,8 +1374,9 @@ void genX(CmdCopyQueryPoolResults)(
     * command streamer.
     */
    if (cmd_buffer->state.pending_pipe_bits & ANV_PIPE_RENDER_TARGET_BUFFER_WRITES) {
-      cmd_buffer->state.pending_pipe_bits |=
-         ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT;
+      anv_add_pending_pipe_bits(cmd_buffer,
+                                ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT,
+                                "CopyQueryPoolResults");
    }
 
    if ((flags & VK_QUERY_RESULT_WAIT_BIT) ||
@@ -1393,7 +1394,9 @@ void genX(CmdCopyQueryPoolResults)(
         */
        pool->type == VK_QUERY_TYPE_OCCLUSION ||
        pool->type == VK_QUERY_TYPE_TIMESTAMP) {
-      cmd_buffer->state.pending_pipe_bits |= ANV_PIPE_CS_STALL_BIT;
+      anv_add_pending_pipe_bits(cmd_buffer,
+                                ANV_PIPE_CS_STALL_BIT,
+                                "CopyQueryPoolResults");
       genX(cmd_buffer_apply_pipe_flushes)(cmd_buffer);
    }
 
@@ -1448,7 +1451,7 @@ void genX(CmdCopyQueryPoolResults)(
 
       case VK_QUERY_TYPE_TIMESTAMP:
          result = mi_mem64(anv_address_add(query_addr, 8));
-         gpu_write_query_result(&b, dest_addr, flags, 0, result);
+         gpu_write_query_result(&b, dest_addr, flags, idx++, result);
          break;
 
 #if GFX_VER >= 8

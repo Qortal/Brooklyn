@@ -177,7 +177,7 @@ blorp_alloc_vertex_buffer(struct blorp_batch *blorp_batch,
    struct iris_bo *bo;
    uint32_t offset;
 
-   void *map = stream_state(batch, ice->ctx.stream_uploader, size, 64,
+   void *map = stream_state(batch, ice->ctx.const_uploader, size, 64,
                             &offset, &bo);
 
    *addr = (struct blorp_address) {
@@ -272,6 +272,22 @@ iris_blorp_exec(struct blorp_batch *blorp_batch,
                                 "workaround: RT BTI change [blorp]",
                                 PIPE_CONTROL_RENDER_TARGET_FLUSH |
                                 PIPE_CONTROL_STALL_AT_SCOREBOARD);
+#endif
+
+#if GFX_VERx10 == 120
+   if (!(blorp_batch->flags & BLORP_BATCH_NO_EMIT_DEPTH_STENCIL)) {
+      /* Wa_14010455700
+       *
+       * ISL will change some CHICKEN registers depending on the depth surface
+       * format, along with emitting the depth and stencil packets. In that
+       * case, we want to do a depth flush and stall, so the pipeline is not
+       * using these settings while we change the registers.
+       */
+      iris_emit_end_of_pipe_sync(batch,
+                                 "Workaround: Stop pipeline for 14010455700",
+                                 PIPE_CONTROL_DEPTH_STALL |
+                                 PIPE_CONTROL_DEPTH_CACHE_FLUSH);
+   }
 #endif
 
    /* Flush the render cache in cases where the same surface is used with

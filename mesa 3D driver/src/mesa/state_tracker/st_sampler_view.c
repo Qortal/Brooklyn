@@ -511,8 +511,25 @@ get_sampler_view_format(struct st_context *st,
    case PIPE_FORMAT_P016:
       format = PIPE_FORMAT_R16_UNORM;
       break;
+   case PIPE_FORMAT_Y210:
+   case PIPE_FORMAT_Y212:
+   case PIPE_FORMAT_Y216:
+      format = PIPE_FORMAT_R16G16_UNORM;
+      break;
+   case PIPE_FORMAT_Y410:
+      format = PIPE_FORMAT_R10G10B10A2_UNORM;
+      break;
+   case PIPE_FORMAT_Y412:
+   case PIPE_FORMAT_Y416:
+      format = PIPE_FORMAT_R16G16B16A16_UNORM;
+      break;
    case PIPE_FORMAT_YUYV:
    case PIPE_FORMAT_UYVY:
+      if (stObj->pt->format == PIPE_FORMAT_R8G8_R8B8_UNORM ||
+          stObj->pt->format == PIPE_FORMAT_G8R8_B8R8_UNORM) {
+         format = stObj->pt->format;
+         break;
+      }
       format = PIPE_FORMAT_R8G8_UNORM;
       break;
    case PIPE_FORMAT_AYUV:

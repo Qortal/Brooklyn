@@ -1219,20 +1219,6 @@ vec4_visitor::emit_urb_slot(dst_reg reg, int varying)
       if (output_reg[VARYING_SLOT_POS][0].file != BAD_FILE)
          emit(MOV(reg, src_reg(output_reg[VARYING_SLOT_POS][0])));
       break;
-   case VARYING_SLOT_EDGE: {
-      /* This is present when doing unfilled polygons.  We're supposed to copy
-       * the edge flag from the user-provided vertex array
-       * (glEdgeFlagPointer), or otherwise we'll copy from the current value
-       * of that attribute (starts as 1.0f).  This is then used in clipping to
-       * determine which edges should be drawn as wireframe.
-       */
-      current_annotation = "edge flag";
-      int edge_attr = util_bitcount64(nir->info.inputs_read &
-                                        BITFIELD64_MASK(VERT_ATTRIB_EDGEFLAG));
-      emit(MOV(reg, src_reg(dst_reg(ATTR, edge_attr,
-                                    glsl_type::float_type, WRITEMASK_XYZW))));
-      break;
-   }
    case BRW_VARYING_SLOT_PAD:
       /* No need to write to this slot */
       break;
@@ -1401,7 +1387,7 @@ vec4_visitor::emit_scratch_read(bblock_t *block, vec4_instruction *inst,
       vec4_instruction *last_read =
          SCRATCH_READ(byte_offset(shuffled_float, REG_SIZE), index);
       emit_before(block, inst, last_read);
-      shuffle_64bit_data(temp, src_reg(shuffled), false, block, last_read);
+      shuffle_64bit_data(temp, src_reg(shuffled), false, true, block, last_read);
    }
 }
 
@@ -1446,7 +1432,7 @@ vec4_visitor::emit_scratch_write(bblock_t *block, vec4_instruction *inst,
    } else {
       dst_reg shuffled = dst_reg(this, alloc_type);
       vec4_instruction *last =
-         shuffle_64bit_data(shuffled, temp, true, block, inst);
+         shuffle_64bit_data(shuffled, temp, true, true, block, inst);
       src_reg shuffled_float = src_reg(retype(shuffled, BRW_REGISTER_TYPE_F));
 
       uint8_t mask = 0;
@@ -1653,7 +1639,7 @@ vec4_visitor::emit_pull_constant_load(bblock_t *block, vec4_instruction *inst,
 
    if (is_64bit) {
       temp = retype(temp, BRW_REGISTER_TYPE_DF);
-      shuffle_64bit_data(orig_temp, src_reg(temp), false, block, inst);
+      shuffle_64bit_data(orig_temp, src_reg(temp), false, false, block, inst);
    }
 }
 
@@ -1772,6 +1758,8 @@ vec4_visitor::vec4_visitor(const struct brw_compiler *compiler,
      prog_data(prog_data),
      fail_msg(NULL),
      first_non_payload_grf(0),
+     ubo_push_start(),
+     push_length(0),
      live_analysis(this), performance_analysis(this),
      need_all_constants_in_pull_buffer(false),
      no_spills(no_spills),

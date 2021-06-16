@@ -119,11 +119,14 @@ enum Label {
    label_usedef = 1 << 30, /* generic label */
    label_vop3p = 1ull << 31, /* 1ull to prevent sign extension */
    label_canonicalized = 1ull << 32,
+   label_extract = 1ull << 33,
+   label_insert = 1ull << 34,
 };
 
 static constexpr uint64_t instr_usedef_labels = label_vec | label_mul | label_mad | label_add_sub | label_vop3p |
-                                                label_bitwise | label_uniform_bitwise | label_minmax | label_vopc | label_usedef;
-static constexpr uint64_t instr_mod_labels = label_omod2 | label_omod4 | label_omod5 | label_clamp;
+                                                label_bitwise | label_uniform_bitwise | label_minmax | label_vopc |
+                                                label_usedef | label_extract;
+static constexpr uint64_t instr_mod_labels = label_omod2 | label_omod4 | label_omod5 | label_clamp | label_insert;
 
 static constexpr uint64_t instr_labels = instr_usedef_labels | instr_mod_labels;
 static constexpr uint64_t temp_labels = label_abs | label_neg | label_temp | label_vcc | label_b2f | label_uniform_bool |
@@ -535,6 +538,27 @@ struct ssa_info {
       return label & label_canonicalized;
    }
 
+   void set_extract(Instruction *extract)
+   {
+      add_label(label_extract);
+      instr = extract;
+   }
+
+   bool is_extract()
+   {
+      return label & label_extract;
+   }
+
+   void set_insert(Instruction *insert)
+   {
+      add_label(label_insert);
+      instr = insert;
+   }
+
+   bool is_insert()
+   {
+      return label & label_insert;
+   }
 };
 
 struct opt_ctx {
@@ -715,13 +739,15 @@ bool pseudo_propagate_temp(opt_ctx& ctx, aco_ptr<Instruction>& instr,
 
 bool can_apply_sgprs(opt_ctx& ctx, aco_ptr<Instruction>& instr)
 {
-   if (instr->isSDWA() && ctx.program->chip_class < GFX9)
+   if ((instr->isSDWA() && ctx.program->chip_class < GFX9) || instr->isDPP())
       return false;
    return instr->opcode != aco_opcode::v_readfirstlane_b32 &&
           instr->opcode != aco_opcode::v_readlane_b32 &&
           instr->opcode != aco_opcode::v_readlane_b32_e64 &&
           instr->opcode != aco_opcode::v_writelane_b32 &&
-          instr->opcode != aco_opcode::v_writelane_b32_e64;
+          instr->opcode != aco_opcode::v_writelane_b32_e64 &&
+          instr->opcode != aco_opcode::v_permlane16_b32 &&
+          instr->opcode != aco_opcode::v_permlanex16_b32;
 }
 
 void to_VOP3(opt_ctx& ctx, aco_ptr<Instruction>& instr)
@@ -745,6 +771,24 @@ void to_VOP3(opt_ctx& ctx, aco_ptr<Instruction>& instr)
     * been applied yet or this instruction isn't dead and so they've been ignored */
 }
 
+bool is_operand_vgpr(Operand op)
+{
+   return op.isTemp() && op.getTemp().type() == RegType::vgpr;
+}
+
+void to_SDWA(opt_ctx& ctx, aco_ptr<Instruction>& instr)
+{
+   aco_ptr<Instruction> tmp = convert_to_SDWA(ctx.program->chip_class, instr);
+   if (!tmp)
+      return;
+
+   for (unsigned i = 0; i < instr->definitions.size(); i++) {
+      ssa_info& info = ctx.info[instr->definitions[i].tempId()];
+      if (info.label & instr_labels && info.instr == tmp.get())
+         info.instr = instr.get();
+   }
+}
+
 /* only covers special cases */
 bool alu_can_accept_constant(aco_opcode opcode, unsigned operand)
 {
@@ -763,6 +807,8 @@ bool alu_can_accept_constant(aco_opcode opcode, unsigned operand)
    case aco_opcode::v_readlane_b32:
    case aco_opcode::v_readlane_b32_e64:
    case aco_opcode::v_readfirstlane_b32:
+   case aco_opcode::p_extract:
+   case aco_opcode::p_insert:
       return operand != 0;
    default:
       return true;
@@ -774,6 +820,8 @@ bool valu_can_accept_vgpr(aco_ptr<Instruction>& instr, unsigned operand)
    if (instr->opcode == aco_opcode::v_readlane_b32 || instr->opcode == aco_opcode::v_readlane_b32_e64 ||
        instr->opcode == aco_opcode::v_writelane_b32 || instr->opcode == aco_opcode::v_writelane_b32_e64)
       return operand != 1;
+   if (instr->opcode == aco_opcode::v_permlane16_b32 || instr->opcode == aco_opcode::v_permlanex16_b32)
+      return operand == 0;
    return true;
 }
 
@@ -899,6 +947,121 @@ Operand get_constant_op(opt_ctx &ctx, ssa_info info, uint32_t bits)
 bool fixed_to_exec(Operand op)
 {
    return op.isFixed() && op.physReg() == exec;
+}
+
+int parse_extract(Instruction *instr)
+{
+   if (instr->opcode == aco_opcode::p_extract) {
+      bool is_byte = instr->operands[2].constantEquals(8);
+      unsigned index = instr->operands[1].constantValue();
+      unsigned sel = (is_byte ? sdwa_ubyte0 : sdwa_uword0) + index;
+      if (!instr->operands[3].constantEquals(0))
+         sel |= sdwa_sext;
+      return sel;
+   } else if (instr->opcode == aco_opcode::p_insert && instr->operands[1].constantEquals(0)) {
+      return instr->operands[2].constantEquals(8) ? sdwa_ubyte0 : sdwa_uword0;
+   } else {
+      return -1;
+   }
+}
+
+int parse_insert(Instruction *instr)
+{
+   if (instr->opcode == aco_opcode::p_extract && instr->operands[3].constantEquals(0) &&
+       instr->operands[1].constantEquals(0)) {
+      return instr->operands[2].constantEquals(8) ? sdwa_ubyte0 : sdwa_uword0;
+   } else if (instr->opcode == aco_opcode::p_insert) {
+      bool is_byte = instr->operands[2].constantEquals(8);
+      unsigned index = instr->operands[1].constantValue();
+      unsigned sel = (is_byte ? sdwa_ubyte0 : sdwa_uword0) + index;
+      return sel;
+   } else {
+      return -1;
+   }
+}
+
+bool can_apply_extract(opt_ctx &ctx, aco_ptr<Instruction>& instr, unsigned idx, ssa_info& info)
+{
+   if (idx >= 2)
+      return false;
+
+   Temp tmp = info.instr->operands[0].getTemp();
+   unsigned sel = parse_extract(info.instr);
+
+   if (sel == sdwa_udword || sel == sdwa_sdword) {
+      return true;
+   } else if (instr->opcode == aco_opcode::v_cvt_f32_u32 && sel <= sdwa_ubyte3) {
+      return true;
+   } else if (can_use_SDWA(ctx.program->chip_class, instr, true) &&
+              (tmp.type() == RegType::vgpr || ctx.program->chip_class >= GFX9)) {
+      if (instr->isSDWA() && (static_cast<SDWA_instruction*>(instr.get())->sel[idx] & sdwa_asuint) != sdwa_udword)
+         return false;
+      return true;
+   } else if (instr->isVOP3() && (sel & sdwa_isword) &&
+              can_use_opsel(ctx.program->chip_class, instr->opcode, idx, (sel & sdwa_wordnum)) &&
+              !(instr->vop3().opsel & (1 << idx))) {
+      return true;
+   } else {
+      return false;
+   }
+}
+
+/* Combine an p_extract (or p_insert, in some cases) instruction with instr.
+ * instr(p_extract(...)) -> instr()
+ */
+void apply_extract(opt_ctx &ctx, aco_ptr<Instruction>& instr, unsigned idx, ssa_info& info)
+{
+   Temp tmp = info.instr->operands[0].getTemp();
+   unsigned sel = parse_extract(info.instr);
+
+   if (sel == sdwa_udword || sel == sdwa_sdword) {
+   } else if (instr->opcode == aco_opcode::v_cvt_f32_u32 && sel <= sdwa_ubyte3) {
+      switch (sel) {
+      case sdwa_ubyte0:
+         instr->opcode = aco_opcode::v_cvt_f32_ubyte0;
+         break;
+      case sdwa_ubyte1:
+         instr->opcode = aco_opcode::v_cvt_f32_ubyte1;
+         break;
+      case sdwa_ubyte2:
+         instr->opcode = aco_opcode::v_cvt_f32_ubyte2;
+         break;
+      case sdwa_ubyte3:
+         instr->opcode = aco_opcode::v_cvt_f32_ubyte3;
+         break;
+      }
+   } else if (can_use_SDWA(ctx.program->chip_class, instr, true) &&
+              (tmp.type() == RegType::vgpr || ctx.program->chip_class >= GFX9)) {
+      to_SDWA(ctx, instr);
+      static_cast<SDWA_instruction*>(instr.get())->sel[idx] = sel;
+   } else if (instr->isVOP3()) {
+      if (sel & sdwa_wordnum)
+         instr->vop3().opsel |= 1 << idx;
+   }
+
+   ctx.info[tmp.id()].label &= ~label_insert;
+   /* label_vopc seems to be the only one worth keeping at the moment */
+   for (Definition& def : instr->definitions)
+      ctx.info[def.tempId()].label &= label_vopc;
+}
+
+void check_sdwa_extract(opt_ctx &ctx, aco_ptr<Instruction>& instr)
+{
+   /* only VALU can use SDWA */
+   if (!instr->isVALU())
+      return;
+
+   for (unsigned i = 0; i < instr->operands.size(); i++) {
+      Operand op = instr->operands[i];
+      if (!op.isTemp())
+         continue;
+      ssa_info& info = ctx.info[op.tempId()];
+      if (info.is_extract() && (info.instr->operands[0].getTemp().type() == RegType::vgpr ||
+                                op.getTemp().type() == RegType::sgpr)) {
+         if (!can_apply_extract(ctx, instr, i, info))
+            info.label &= ~label_extract;
+      }
+   }
 }
 
 bool does_fp_op_flush_denorms(opt_ctx &ctx, aco_opcode op)
@@ -1198,8 +1361,10 @@ void label_instruction(opt_ctx &ctx, aco_ptr<Instruction>& instr)
    }
 
    /* if this instruction doesn't define anything, return */
-   if (instr->definitions.empty())
+   if (instr->definitions.empty()) {
+      check_sdwa_extract(ctx, instr);
       return;
+   }
 
    if (instr->isVALU() || instr->isVINTRP()) {
       if (instr_info.can_use_output_modifiers[(int)instr->opcode] || instr->isVINTRP() ||
@@ -1216,6 +1381,7 @@ void label_instruction(opt_ctx &ctx, aco_ptr<Instruction>& instr)
 
       if (instr->isVOPC()) {
          ctx.info[instr->definitions[0].tempId()].set_vopc(instr.get());
+         check_sdwa_extract(ctx, instr);
          return;
       }
       if (instr->isVOP3P()) {
@@ -1610,9 +1776,32 @@ void label_instruction(opt_ctx &ctx, aco_ptr<Instruction>& instr)
       if (instr->operands[0].constantEquals(0x3f800000u))
          ctx.info[instr->definitions[0].tempId()].set_canonicalized();
       break;
+   case aco_opcode::p_extract: {
+      if (instr->definitions[0].bytes() == 4) {
+         ctx.info[instr->definitions[0].tempId()].set_extract(instr.get());
+         if (instr->operands[0].regClass() == v1 && parse_insert(instr.get()) >= 0)
+            ctx.info[instr->operands[0].tempId()].set_insert(instr.get());
+      }
+      break;
+   }
+   case aco_opcode::p_insert: {
+      if (instr->operands[0].bytes() == 4) {
+         if (instr->operands[0].regClass() == v1)
+            ctx.info[instr->operands[0].tempId()].set_insert(instr.get());
+         if (parse_extract(instr.get()) >= 0)
+            ctx.info[instr->definitions[0].tempId()].set_extract(instr.get());
+         ctx.info[instr->definitions[0].tempId()].set_bitwise(instr.get());
+      }
+      break;
+   }
    default:
       break;
    }
+
+   /* Don't remove label_extract if we can't apply the extract to
+    * neg/abs instructions because we'll likely combine it into another valu. */
+   if (!(ctx.info[instr->definitions[0].tempId()].label & (label_neg | label_abs)))
+      check_sdwa_extract(ctx, instr);
 }
 
 ALWAYS_INLINE bool get_cmp_info(aco_opcode op, CmpInfo *info)
@@ -1950,7 +2139,7 @@ bool combine_constant_comparison_ordering(opt_ctx &ctx, aco_ptr<Instruction>& in
    Instruction *nan_test = follow_operand(ctx, instr->operands[0], true);
    Instruction *cmp = follow_operand(ctx, instr->operands[1], true);
 
-   if (!nan_test || !cmp)
+   if (!nan_test || !cmp || nan_test->isSDWA() || cmp->isSDWA())
       return false;
    if (nan_test->isSDWA() || cmp->isSDWA())
       return false;
@@ -2210,8 +2399,73 @@ bool combine_three_valu_op(opt_ctx& ctx, aco_ptr<Instruction>& instr, aco_opcode
    return false;
 }
 
+/* creates v_lshl_add_u32, v_lshl_or_b32 or v_and_or_b32 */
+bool combine_add_or_then_and_lshl(opt_ctx& ctx, aco_ptr<Instruction>& instr)
+{
+   bool is_or = instr->opcode == aco_opcode::v_or_b32;
+   aco_opcode new_op_lshl = is_or ? aco_opcode::v_lshl_or_b32 : aco_opcode::v_lshl_add_u32;
+
+   if (is_or && combine_three_valu_op(ctx, instr, aco_opcode::s_and_b32, aco_opcode::v_and_or_b32, "120", 1 | 2))
+      return true;
+   if (is_or && combine_three_valu_op(ctx, instr, aco_opcode::v_and_b32, aco_opcode::v_and_or_b32, "120", 1 | 2))
+      return true;
+   if (combine_three_valu_op(ctx, instr, aco_opcode::s_lshl_b32, new_op_lshl, "120", 1 | 2))
+      return true;
+   if (combine_three_valu_op(ctx, instr, aco_opcode::v_lshlrev_b32, new_op_lshl, "210", 1 | 2))
+      return true;
+
+   if (instr->isSDWA())
+      return false;
+
+   /* v_or_b32(p_extract(a, 0, 8/16, 0), b) -> v_and_or_b32(a, 0xff/0xffff, b)
+    * v_or_b32(p_insert(a, 0, 8/16), b) -> v_and_or_b32(a, 0xff/0xffff, b)
+    * v_or_b32(p_insert(a, 24/16, 8/16), b) -> v_lshl_or_b32(a, 24/16, b)
+    * v_add_u32(p_insert(a, 24/16, 8/16), b) -> v_lshl_add_b32(a, 24/16, b)
+    */
+   for (unsigned i = 0; i < 2; i++) {
+      Instruction *extins = follow_operand(ctx, instr->operands[i]);
+      if (!extins)
+         continue;
+
+      aco_opcode op;
+      Operand operands[3];
+
+      if (extins->opcode == aco_opcode::p_insert &&
+          (extins->operands[1].constantValue() + 1) * extins->operands[2].constantValue() == 32) {
+         op = new_op_lshl;
+         operands[1] = Operand(extins->operands[1].constantValue() * extins->operands[2].constantValue());
+      } else if (is_or && (extins->opcode == aco_opcode::p_insert ||
+                           (extins->opcode == aco_opcode::p_extract && extins->operands[3].constantEquals(0))) &&
+                 extins->operands[1].constantEquals(0)) {
+         op = aco_opcode::v_and_or_b32;
+         operands[1] = Operand(extins->operands[2].constantEquals(8) ? 0xffu : 0xffffu);
+      } else {
+        continue;
+      }
+
+      operands[0] = extins->operands[0];
+      operands[2] = instr->operands[!i];
+
+      if (!check_vop3_operands(ctx, 3, operands))
+         continue;
+
+      bool neg[3] = {}, abs[3] = {};
+      uint8_t opsel = 0, omod = 0;
+      bool clamp = false;
+      if (instr->isVOP3())
+         clamp = instr->vop3().clamp;
+
+      ctx.uses[instr->operands[i].tempId()]--;
+      create_vop3_for_op3(ctx, op, instr, operands, neg, abs, opsel, clamp, omod);
+      return true;
+   }
+
+   return false;
+}
+
 bool combine_minmax(opt_ctx& ctx, aco_ptr<Instruction>& instr, aco_opcode opposite, aco_opcode minmax3)
 {
+   /* TODO: this can handle SDWA min/max instructions by using opsel */
    if (combine_three_valu_op(ctx, instr, instr->opcode, minmax3, "012", 1 | 2))
       return true;
 
@@ -2622,6 +2876,8 @@ void apply_sgprs(opt_ctx &ctx, aco_ptr<Instruction>& instr)
       ssa_info& info = ctx.info[instr->operands[i].tempId()];
       if (is_copy_label(ctx, instr, info) && info.temp.type() == RegType::sgpr)
          operand_mask |= 1u << i;
+      if (info.is_extract() && info.instr->operands[0].getTemp().type() == RegType::sgpr)
+         operand_mask |= 1u << i;
    }
    unsigned max_sgprs = 1;
    if (ctx.program->chip_class >= GFX10 && !is_shift64)
@@ -2647,20 +2903,26 @@ void apply_sgprs(opt_ctx &ctx, aco_ptr<Instruction>& instr)
       }
       operand_mask &= ~(1u << sgpr_idx);
 
+      ssa_info& info = ctx.info[sgpr_info_id];
+
       /* Applying two sgprs require making it VOP3, so don't do it unless it's
        * definitively beneficial.
        * TODO: this is too conservative because later the use count could be reduced to 1 */
-      if (num_sgprs && ctx.uses[sgpr_info_id] > 1 &&
+      if (!info.is_extract() && num_sgprs && ctx.uses[sgpr_info_id] > 1 &&
           !instr->isVOP3() && !instr->isSDWA() && instr->format != Format::VOP3P)
          break;
 
-      Temp sgpr = ctx.info[sgpr_info_id].temp;
+      Temp sgpr = info.is_extract() ? info.instr->operands[0].getTemp() : info.temp;
       bool new_sgpr = sgpr.id() != sgpr_ids[0] && sgpr.id() != sgpr_ids[1];
       if (new_sgpr && num_sgprs >= max_sgprs)
          continue;
 
-      if (sgpr_idx == 0 || instr->isVOP3() ||
-          instr->isSDWA() || instr->isVOP3P()) {
+      if (sgpr_idx == 0 || instr->isVOP3() || instr->isSDWA() || instr->isVOP3P() || info.is_extract()) {
+         /* can_apply_extract() checks SGPR encoding restrictions */
+         if (info.is_extract() && can_apply_extract(ctx, instr, sgpr_idx, info))
+            apply_extract(ctx, instr, sgpr_idx, info);
+         else if (info.is_extract())
+            continue;
          instr->operands[sgpr_idx] = Operand(sgpr);
       } else if (can_swap_operands(instr)) {
          instr->operands[sgpr_idx] = instr->operands[0];
@@ -2668,7 +2930,7 @@ void apply_sgprs(opt_ctx &ctx, aco_ptr<Instruction>& instr)
          /* swap bits using a 4-entry LUT */
          uint32_t swapped = (0x3120 >> (operand_mask & 0x3)) & 0xf;
          operand_mask = (operand_mask & ~0x3) | swapped;
-      } else if (can_use_VOP3(ctx, instr)) {
+      } else if (can_use_VOP3(ctx, instr) && !info.is_extract()) {
          to_VOP3(ctx, instr);
          instr->operands[sgpr_idx] = Operand(sgpr);
       } else {
@@ -2679,6 +2941,11 @@ void apply_sgprs(opt_ctx &ctx, aco_ptr<Instruction>& instr)
          sgpr_ids[num_sgprs++] = sgpr.id();
       ctx.uses[sgpr_info_id]--;
       ctx.uses[sgpr.id()]++;
+
+      /* TODO: handle when it's a VGPR */
+      if ((ctx.info[sgpr.id()].label & (label_extract | label_temp)) &&
+          ctx.info[sgpr.id()].temp.type() == RegType::sgpr)
+         operand_mask |= 1u << sgpr_idx;
    }
 }
 
@@ -2743,7 +3010,51 @@ bool apply_omod_clamp(opt_ctx &ctx, aco_ptr<Instruction>& instr)
    }
 
    instr->definitions[0].swapTemp(def_info.instr->definitions[0]);
-   ctx.info[instr->definitions[0].tempId()].label &= label_clamp;
+   ctx.info[instr->definitions[0].tempId()].label &= label_clamp | label_insert;
+   ctx.uses[def_info.instr->definitions[0].tempId()]--;
+
+   return true;
+}
+
+/* Combine an p_insert (or p_extract, in some cases) instruction with instr.
+ * p_insert(instr(...)) -> instr_insert().
+ */
+bool apply_insert(opt_ctx &ctx, aco_ptr<Instruction>& instr)
+{
+   if (instr->definitions.empty() || ctx.uses[instr->definitions[0].tempId()] != 1)
+      return false;
+
+   ssa_info& def_info = ctx.info[instr->definitions[0].tempId()];
+   if (!def_info.is_insert())
+      return false;
+   /* if the insert instruction is dead, then the single user of this
+    * instruction is a different instruction */
+   if (!ctx.uses[def_info.instr->definitions[0].tempId()])
+      return false;
+
+   /* MADs/FMAs are created later, so we don't have to update the original add */
+   assert(!ctx.info[instr->definitions[0].tempId()].is_mad());
+
+   unsigned sel = parse_insert(def_info.instr);
+
+   if (instr->isVOP3() && (sel & sdwa_isword) && !(sel & sdwa_sext) &&
+       can_use_opsel(ctx.program->chip_class, instr->opcode, 3, (sel & sdwa_wordnum))) {
+      if (instr->vop3().opsel & (1 << 3))
+         return false;
+      if (sel & sdwa_wordnum)
+         instr->vop3().opsel |= 1 << 3;
+   } else {
+      if (!can_use_SDWA(ctx.program->chip_class, instr, true))
+         return false;
+
+      to_SDWA(ctx, instr);
+      if ((static_cast<SDWA_instruction*>(instr.get())->dst_sel & sdwa_asuint) != sdwa_udword)
+         return false;
+      static_cast<SDWA_instruction*>(instr.get())->dst_sel = sel;
+   }
+
+   instr->definitions[0].swapTemp(def_info.instr->definitions[0]);
+   ctx.info[instr->definitions[0].tempId()].label = 0;
    ctx.uses[def_info.instr->definitions[0].tempId()]--;
 
    return true;
@@ -3001,9 +3312,26 @@ void combine_instruction(opt_ctx &ctx, aco_ptr<Instruction>& instr)
       return;
 
    if (instr->isVALU()) {
+      /* Apply SDWA. Do this after label_instruction() so it can remove
+       * label_extract if not all instructions can take SDWA. */
+      for (unsigned i = 0; i < instr->operands.size(); i++) {
+         Operand& op = instr->operands[i];
+         if (!op.isTemp())
+            continue;
+         ssa_info& info = ctx.info[op.tempId()];
+         if (info.is_extract() && (info.instr->operands[0].getTemp().type() == RegType::vgpr ||
+                                   instr->operands[i].getTemp().type() == RegType::sgpr) &&
+             can_apply_extract(ctx, instr, i, info)) {
+            apply_extract(ctx, instr, i, info);
+            ctx.uses[instr->operands[i].tempId()]--;
+            instr->operands[i].setTemp(info.instr->operands[0].getTemp());
+         }
+      }
+
       if (can_apply_sgprs(ctx, instr))
          apply_sgprs(ctx, instr);
       while (apply_omod_clamp(ctx, instr)) ;
+      apply_insert(ctx, instr);
    }
 
    if (instr->isVOP3P())
@@ -3198,10 +3526,7 @@ void combine_instruction(opt_ctx &ctx, aco_ptr<Instruction>& instr)
    } else if (instr->opcode == aco_opcode::v_or_b32 && ctx.program->chip_class >= GFX9) {
       if (combine_three_valu_op(ctx, instr, aco_opcode::s_or_b32, aco_opcode::v_or3_b32, "012", 1 | 2)) ;
       else if (combine_three_valu_op(ctx, instr, aco_opcode::v_or_b32, aco_opcode::v_or3_b32, "012", 1 | 2)) ;
-      else if (combine_three_valu_op(ctx, instr, aco_opcode::s_and_b32, aco_opcode::v_and_or_b32, "120", 1 | 2)) ;
-      else if (combine_three_valu_op(ctx, instr, aco_opcode::v_and_b32, aco_opcode::v_and_or_b32, "120", 1 | 2)) ;
-      else if (combine_three_valu_op(ctx, instr, aco_opcode::s_lshl_b32, aco_opcode::v_lshl_or_b32, "120", 1 | 2)) ;
-      else combine_three_valu_op(ctx, instr, aco_opcode::v_lshlrev_b32, aco_opcode::v_lshl_or_b32, "210", 1 | 2);
+      else combine_add_or_then_and_lshl(ctx, instr) ;
    } else if (instr->opcode == aco_opcode::v_xor_b32 && ctx.program->chip_class >= GFX10) {
       if (combine_three_valu_op(ctx, instr, aco_opcode::v_xor_b32, aco_opcode::v_xor3_b32, "012", 1 | 2)) ;
       else combine_three_valu_op(ctx, instr, aco_opcode::s_xor_b32, aco_opcode::v_xor3_b32, "012", 1 | 2);
@@ -3215,9 +3540,8 @@ void combine_instruction(opt_ctx &ctx, aco_ptr<Instruction>& instr)
          else if (combine_three_valu_op(ctx, instr, aco_opcode::s_add_i32, aco_opcode::v_add3_u32, "012", 1 | 2)) ;
          else if (combine_three_valu_op(ctx, instr, aco_opcode::s_add_u32, aco_opcode::v_add3_u32, "012", 1 | 2)) ;
          else if (combine_three_valu_op(ctx, instr, aco_opcode::v_add_u32, aco_opcode::v_add3_u32, "012", 1 | 2)) ;
-         else if (combine_three_valu_op(ctx, instr, aco_opcode::s_lshl_b32, aco_opcode::v_lshl_add_u32, "120", 1 | 2)) ;
-         else if (combine_three_valu_op(ctx, instr, aco_opcode::v_lshlrev_b32, aco_opcode::v_lshl_add_u32, "210", 1 | 2)) ;
-         else combine_three_valu_op(ctx, instr, aco_opcode::v_mul_lo_u16, aco_opcode::v_mad_u32_u16, "120", 1 | 2) ;
+         else if (combine_three_valu_op(ctx, instr, aco_opcode::v_mul_lo_u16, aco_opcode::v_mad_u32_u16, "120", 1 | 2)) ;
+         else combine_add_or_then_and_lshl(ctx, instr) ;
       }
    } else if (instr->opcode == aco_opcode::v_add_co_u32 ||
               instr->opcode == aco_opcode::v_add_co_u32_e64) {
@@ -3423,7 +3747,7 @@ void select_instruction(opt_ctx &ctx, aco_ptr<Instruction>& instr)
    if (!instr->definitions.empty() && ctx.info[instr->definitions[0].tempId()].is_mad()) {
       mad_info = &ctx.mad_infos[ctx.info[instr->definitions[0].tempId()].instr->pass_flags];
       /* re-check mad instructions */
-      if (ctx.uses[mad_info->mul_temp_id]) {
+      if (ctx.uses[mad_info->mul_temp_id] && mad_info->add_instr) {
          ctx.uses[mad_info->mul_temp_id]++;
          if (instr->operands[0].isTemp())
             ctx.uses[instr->operands[0].tempId()]--;

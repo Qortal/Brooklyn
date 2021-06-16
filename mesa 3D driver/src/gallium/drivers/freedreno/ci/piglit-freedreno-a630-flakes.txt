@@ -1,20 +1,10 @@
-glx@glx_arb_sync_control@timing -divisor 1
-glx@glx_arb_sync_control@timing -divisor 2
-glx@glx_arb_sync_control@timing -msc-delta 1
-glx@glx_arb_sync_control@timing -msc-delta 2
-glx@glx_arb_sync_control@timing -fullscreen -divisor 1
-glx@glx_arb_sync_control@timing -fullscreen -divisor 2
-glx@glx_arb_sync_control@timing -fullscreen -msc-delta 1
-glx@glx_arb_sync_control@timing -fullscreen -msc-delta 2
-glx@glx_arb_sync_control@timing -waitformsc -divisor 1
-glx@glx_arb_sync_control@timing -waitformsc -divisor 2
-glx@glx_arb_sync_control@timing -waitformsc -msc-delta 1
-glx@glx_arb_sync_control@timing -waitformsc -msc-delta 2
-glx@glx-copy-sub-buffer samples=2
+glx@glx_arb_sync_control@swapbuffersmsc-divisor-zero
+glx@glx_arb_sync_control@waitformsc
+glx@glx-copy-sub-buffer.*
 glx@glx-swap-copy
-
-# async shader compile asserts in shader_io_get_unique_index (slot=VARYING_SLOT_FOGC)
-shaders@glsl-fs-fogscale
+glx@glx-swap-event_interval
+glx@glx-visuals-depth
+glx@glx-visuals-stencil
 
 # async shader compiler asserts in get_image_samp_tex_src()'s nir_src_comp_as_uint().
 # https://gitlab.freedesktop.org/mesa/mesa/-/issues/4474
@@ -29,3 +19,6 @@ spec@arb_depth_texture@fbo-clear-formats
 # Flaky since around 2021-04-21.  First appeared on
 # https://gitlab.freedesktop.org/robclark/mesa/-/jobs/9101752 (fd/go-fast)
 spec@ext_packed_depth_stencil@fbo-clear-formats stencil
+
+# Flaky since around 2021-05-21, the day after a piglit uprev reshuffled us.
+spec@arb_map_buffer_range@map_invalidate_buffer_bit offset=0

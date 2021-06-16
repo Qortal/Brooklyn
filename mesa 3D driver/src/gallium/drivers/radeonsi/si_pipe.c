@@ -35,6 +35,7 @@
 #include "sid.h"
 #include "ac_shadowed_regs.h"
 #include "util/disk_cache.h"
+#include "util/u_cpu_detect.h"
 #include "util/u_log.h"
 #include "util/u_memory.h"
 #include "util/u_suballoc.h"
@@ -100,9 +101,7 @@ static const struct debug_named_value radeonsi_debug_options[] = {
    {"switch_on_eop", DBG(SWITCH_ON_EOP), "Program WD/IA to switch on end-of-packet."},
    {"nooutoforder", DBG(NO_OUT_OF_ORDER), "Disable out-of-order rasterization"},
    {"nodpbb", DBG(NO_DPBB), "Disable DPBB."},
-   {"nodfsm", DBG(NO_DFSM), "Disable DFSM."},
    {"dpbb", DBG(DPBB), "Enable DPBB."},
-   {"dfsm", DBG(DFSM), "Enable DFSM."},
    {"nohyperz", DBG(NO_HYPERZ), "Disable Hyper-Z"},
    {"no2d", DBG(NO_2D_TILING), "Disable 2D tiling"},
    {"notiling", DBG(NO_TILING), "Disable tiling"},
@@ -142,7 +141,6 @@ void si_init_compiler(struct si_screen *sscreen, struct ac_llvm_compiler *compil
 
    enum ac_target_machine_options tm_options =
       (sscreen->debug_flags & DBG(GISEL) ? AC_TM_ENABLE_GLOBAL_ISEL : 0) |
-      (!sscreen->llvm_has_working_vgpr_indexing ? AC_TM_PROMOTE_ALLOCA_TO_SCRATCH : 0) |
       (sscreen->debug_flags & DBG(CHECK_IR) ? AC_TM_CHECK_IR : 0) |
       (create_low_opt_compiler ? AC_TM_CREATE_LOW_OPT : 0);
 
@@ -150,8 +148,6 @@ void si_init_compiler(struct si_screen *sscreen, struct ac_llvm_compiler *compil
    ac_init_llvm_compiler(compiler, sscreen->info.family, tm_options);
    compiler->passes = ac_create_llvm_passes(compiler->tm);
 
-   if (compiler->tm_wave32)
-      compiler->passes_wave32 = ac_create_llvm_passes(compiler->tm_wave32);
    if (compiler->low_opt_tm)
       compiler->low_opt_passes = ac_create_llvm_passes(compiler->low_opt_tm);
 }
@@ -608,7 +604,9 @@ static struct pipe_context *si_create_context(struct pipe_screen *screen, unsign
    sctx->sample_mask = 0xffff;
 
    /* Initialize multimedia functions. */
-   if (sscreen->info.has_hw_decode) {
+   if (sscreen->info.has_video_hw.uvd_decode || sscreen->info.has_video_hw.vcn_decode ||
+       sscreen->info.has_video_hw.jpeg_decode || sscreen->info.has_video_hw.vce_encode ||
+       sscreen->info.has_video_hw.uvd_encode || sscreen->info.has_video_hw.vcn_encode) {
       sctx->b.create_video_codec = si_uvd_create_decoder;
       sctx->b.create_video_buffer = si_video_buffer_create;
       if (screen->resource_create_with_modifiers)
@@ -764,6 +762,18 @@ fail:
    return NULL;
 }
 
+static bool si_is_resource_busy(struct pipe_screen *screen, struct pipe_resource *resource,
+                                unsigned usage)
+{
+   struct radeon_winsys *ws = ((struct si_screen *)screen)->ws;
+
+   return !ws->buffer_wait(ws, si_resource(resource)->buf, 0,
+                           /* If mapping for write, we need to wait for all reads and writes.
+                            * If mapping for read, we only need to wait for writes.
+                            */
+                           usage & PIPE_MAP_WRITE ? RADEON_USAGE_READWRITE : RADEON_USAGE_WRITE);
+}
+
 static struct pipe_context *si_pipe_create_context(struct pipe_screen *screen, void *priv,
                                                    unsigned flags)
 {
@@ -797,10 +807,13 @@ static struct pipe_context *si_pipe_create_context(struct pipe_screen *screen, v
 
    /* Use asynchronous flushes only on amdgpu, since the radeon
     * implementation for fence_server_sync is incomplete. */
-   struct pipe_context * tc = threaded_context_create(
-            ctx, &sscreen->pool_transfers, si_replace_buffer_storage,
-            sscreen->info.is_amdgpu ? si_create_fence : NULL,
-            &((struct si_context *)ctx)->tc);
+   struct pipe_context *tc =
+      threaded_context_create(ctx, &sscreen->pool_transfers,
+                              si_replace_buffer_storage,
+                              sscreen->info.is_amdgpu ? si_create_fence : NULL,
+                              si_is_resource_busy,
+                              true,
+                              &((struct si_context *)ctx)->tc);
 
    if (tc && tc != ctx && os_get_total_physical_memory(&total_ram)) {
       ((struct threaded_context *) tc)->bytes_mapped_limit = total_ram / 4;
@@ -876,6 +889,8 @@ static void si_destroy_screen(struct pipe_screen *pscreen)
 
    disk_cache_destroy(sscreen->disk_shader_cache);
    util_live_shader_cache_deinit(&sscreen->live_shader_cache);
+   util_idalloc_mt_fini(&sscreen->buffer_ids);
+
    sscreen->ws->destroy(sscreen->ws);
    FREE(sscreen);
 }
@@ -1027,6 +1042,7 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
       return NULL;
    }
 
+   util_idalloc_mt_init_tc(&sscreen->buffer_ids);
 
    /* Set functions first. */
    sscreen->b.context_create = si_pipe_create_context;
@@ -1045,8 +1061,12 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
 
    /* Set these flags in debug_flags early, so that the shader cache takes
     * them into account.
+    *
+    * Enable FS_CORRECT_DERIVS_AFTER_KILL by default if LLVM is >= 13. This makes
+    * nir_opt_move_discards_to_top more effective.
     */
-   if (driQueryOptionb(config->options, "glsl_correct_derivatives_after_discard"))
+   if (driQueryOptionb(config->options, "glsl_correct_derivatives_after_discard") ||
+       LLVM_VERSION_MAJOR >= 13)
       sscreen->debug_flags |= DBG(FS_CORRECT_DERIVS_AFTER_KILL);
 
    if (sscreen->debug_flags & DBG(INFO))
@@ -1080,7 +1100,8 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
    si_disk_cache_create(sscreen);
 
    /* Determine the number of shader compiler threads. */
-   hw_threads = sysconf(_SC_NPROCESSORS_ONLN);
+   const struct util_cpu_caps_t *caps = util_get_cpu_caps();
+   hw_threads = caps->nr_cpus;
 
    if (hw_threads >= 12) {
       num_comp_hi_threads = hw_threads * 3 / 4;
@@ -1210,29 +1231,11 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
          sscreen->allow_dcc_msaa_clear_to_reg_for_bpp[bpp_log2] = true;
    }
 
-   /* Only enable primitive binning on APUs by default. */
-   if (sscreen->info.chip_class >= GFX10) {
-      sscreen->dpbb_allowed = true;
-      /* DFSM is not supported on GFX 10.3 and not beneficial on Navi1x. */
-   } else if (sscreen->info.chip_class == GFX9) {
-      sscreen->dpbb_allowed = !sscreen->info.has_dedicated_vram;
-      sscreen->dfsm_allowed = !sscreen->info.has_dedicated_vram;
-   }
-
-   /* Process DPBB enable flags. */
-   if (sscreen->debug_flags & DBG(DPBB)) {
-      sscreen->dpbb_allowed = true;
-      if (sscreen->debug_flags & DBG(DFSM))
-         sscreen->dfsm_allowed = true;
-   }
-
-   /* Process DPBB disable flags. */
-   if (sscreen->debug_flags & DBG(NO_DPBB)) {
-      sscreen->dpbb_allowed = false;
-      sscreen->dfsm_allowed = false;
-   } else if (sscreen->debug_flags & DBG(NO_DFSM)) {
-      sscreen->dfsm_allowed = false;
-   }
+   sscreen->dpbb_allowed = !(sscreen->debug_flags & DBG(NO_DPBB)) &&
+                           (sscreen->info.chip_class >= GFX10 ||
+                            /* Only enable primitive binning on gfx9 APUs by default. */
+                            (sscreen->info.chip_class == GFX9 && !sscreen->info.has_dedicated_vram) ||
+                            sscreen->debug_flags & DBG(DPBB));
 
    if (sscreen->dpbb_allowed) {
       if (sscreen->info.has_dedicated_vram) {
@@ -1258,9 +1261,6 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
       assert(sscreen->pbb_persistent_states_per_bin >= 1 &&
              sscreen->pbb_persistent_states_per_bin <= 32);
    }
-
-   /* LLVM doesn't support VGPR indexing on GFX9. */
-   sscreen->llvm_has_working_vgpr_indexing = sscreen->info.chip_class != GFX9;
 
    (void)simple_mtx_init(&sscreen->shader_parts_mutex, mtx_plain);
    sscreen->use_monolithic_shaders = (sscreen->debug_flags & DBG(MONOLITHIC_SHADERS)) != 0;
@@ -1299,6 +1299,7 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
       }
    }
 
+   sscreen->ngg_subgroup_size = 128;
    sscreen->ge_wave_size = 64;
    sscreen->ps_wave_size = 64;
    sscreen->compute_wave_size = 64;

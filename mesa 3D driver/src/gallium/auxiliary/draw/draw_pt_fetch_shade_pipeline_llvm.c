@@ -595,7 +595,8 @@ llvm_pipeline_generic(struct draw_pt_middle_end *middle,
    llvm_vert_info.stride = fpme->vertex_size;
    llvm_vert_info.verts = (struct vertex_header *)
       MALLOC(fpme->vertex_size *
-             align(fetch_info->count, lp_native_vector_width / 32));
+             align(fetch_info->count, lp_native_vector_width / 32) +
+             DRAW_EXTRA_VERTICES_PADDING);
    if (!llvm_vert_info.verts) {
       assert(0);
       return;
@@ -724,6 +725,11 @@ llvm_pipeline_generic(struct draw_pt_middle_end *middle,
 
          if (ia_vert_info.count) {
             FREE(vert_info->verts);
+            if (free_prim_info) {
+               FREE(prim_info->primitive_lengths);
+               FREE(tes_elts_out);
+               tes_elts_out = NULL;
+            }
             vert_info = &ia_vert_info;
             prim_info = &ia_prim_info;
             free_prim_info = TRUE;

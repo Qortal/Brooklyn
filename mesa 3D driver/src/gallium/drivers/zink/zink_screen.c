@@ -26,12 +26,15 @@
 #include "zink_compiler.h"
 #include "zink_context.h"
 #include "zink_device_info.h"
+#include "zink_descriptors.h"
 #include "zink_fence.h"
 #include "zink_format.h"
 #include "zink_framebuffer.h"
 #include "zink_instance.h"
+#include "zink_program.h"
 #include "zink_public.h"
 #include "zink_resource.h"
+#include "nir_to_spirv/nir_to_spirv.h" // for SPIRV_VERSION
 
 #include "os/os_process.h"
 #include "util/u_debug.h"
@@ -61,6 +64,17 @@ DEBUG_GET_ONCE_FLAGS_OPTION(zink_debug, "ZINK_DEBUG", zink_debug_options, 0)
 
 uint32_t
 zink_debug;
+
+
+static const struct debug_named_value
+zink_descriptor_options[] = {
+   { "auto", ZINK_DESCRIPTOR_MODE_AUTO, "Automatically detect best mode" },
+   { "lazy", ZINK_DESCRIPTOR_MODE_LAZY, "Don't cache, do least amount of updates" },
+   { "notemplates", ZINK_DESCRIPTOR_MODE_NOTEMPLATES, "Cache, but disable templated updates" },
+   DEBUG_NAMED_VALUE_END
+};
+
+DEBUG_GET_ONCE_FLAGS_OPTION(zink_descriptor_mode, "ZINK_DESCRIPTORS", zink_descriptor_options, ZINK_DESCRIPTOR_MODE_AUTO)
 
 static const char *
 zink_get_vendor(struct pipe_screen *pscreen)
@@ -245,7 +259,6 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_CLIP_HALFZ:
    case PIPE_CAP_TGSI_TXQS:
    case PIPE_CAP_TEXTURE_BARRIER:
-   case PIPE_CAP_TGSI_VOTE:
    case PIPE_CAP_DRAW_PARAMETERS:
    case PIPE_CAP_QUERY_SO_OVERFLOW:
    case PIPE_CAP_GL_SPIRV:
@@ -253,7 +266,14 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_INVALIDATE_BUFFER:
    case PIPE_CAP_PREFER_REAL_BUFFER_IN_CONSTBUF0:
    case PIPE_CAP_PACKED_UNIFORMS:
+   case PIPE_CAP_TGSI_PACK_HALF_FLOAT:
       return 1;
+
+   case PIPE_CAP_TGSI_VOTE:
+      return screen->spirv_version >= SPIRV_VERSION(1, 3);
+
+   case PIPE_CAP_QUADS_FOLLOW_PROVOKING_VERTEX_CONVENTION:
+      return screen->info.have_EXT_provoking_vertex;
 
    case PIPE_CAP_TEXTURE_MIRROR_CLAMP_TO_EDGE:
       return screen->info.have_KHR_sampler_mirror_clamp_to_edge;
@@ -299,6 +319,9 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_OCCLUSION_QUERY:
       return 1;
 
+   case PIPE_CAP_PROGRAMMABLE_SAMPLE_LOCATIONS:
+      return screen->info.have_EXT_sample_locations && screen->info.have_EXT_extended_dynamic_state;
+
    case PIPE_CAP_QUERY_TIME_ELAPSED:
       return screen->timestamp_valid_bits > 0;
 
@@ -324,9 +347,13 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return 0;
 
    case PIPE_CAP_TEXTURE_BORDER_COLOR_QUIRK:
-      return screen->info.driver_props.driverID == VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA_KHR ||
-             screen->info.driver_props.driverID == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS_KHR ?
-             0 : PIPE_QUIRK_TEXTURE_BORDER_COLOR_SWIZZLE_NV50;
+      /* This is also broken on the other AMD drivers for old HW, but
+       * there's no obvious way to test for that.
+       */
+      if (screen->info.driver_props.driverID == VK_DRIVER_ID_MESA_RADV ||
+          screen->info.driver_props.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY)
+         return PIPE_QUIRK_TEXTURE_BORDER_COLOR_SWIZZLE_NV50;
+      return 0;
 
    case PIPE_CAP_MAX_TEXTURE_2D_SIZE:
       return screen->info.props.limits.maxImageDimension2D;
@@ -414,7 +441,7 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return PIPE_ENDIAN_NATIVE; /* unsure */
 
    case PIPE_CAP_MAX_VIEWPORTS:
-      return screen->info.props.limits.maxViewports;
+      return MIN2(screen->info.props.limits.maxViewports, PIPE_MAX_VIEWPORTS);
 
    case PIPE_CAP_IMAGE_LOAD_FORMATTED:
       return screen->info.feats.features.shaderStorageImageReadWithoutFormat;
@@ -462,7 +489,8 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_TGSI_VS_LAYER_VIEWPORT:
    case PIPE_CAP_TGSI_TES_LAYER_VIEWPORT:
       return screen->info.have_EXT_shader_viewport_index_layer ||
-             (screen->info.feats12.shaderOutputLayer &&
+             (screen->spirv_version >= SPIRV_VERSION(1, 5) &&
+              screen->info.feats12.shaderOutputLayer &&
               screen->info.feats12.shaderOutputViewportIndex);
 
    case PIPE_CAP_TEXTURE_FLOAT_LINEAR:
@@ -542,6 +570,9 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
 
    case PIPE_CAP_POST_DEPTH_COVERAGE:
       return screen->info.have_EXT_post_depth_coverage;
+
+   case PIPE_CAP_STRING_MARKER:
+      return screen->instance_info.have_EXT_debug_utils;
 
    default:
       return u_pipe_screen_get_param_defaults(pscreen, param);
@@ -736,7 +767,7 @@ zink_get_shader_param(struct pipe_screen *pscreen,
       return 0; /* no idea */
 
    case PIPE_SHADER_CAP_MAX_UNROLL_ITERATIONS_HINT:
-      return 32; /* arbitrary */
+      return 0;
 
    case PIPE_SHADER_CAP_MAX_SHADER_BUFFERS:
       switch (shader) {
@@ -814,6 +845,13 @@ zink_is_format_supported(struct pipe_screen *pscreen,
    if (format == PIPE_FORMAT_NONE)
       return screen->info.props.limits.framebufferNoAttachmentsSampleCounts &
              vk_sample_count_flags(sample_count);
+
+   if (bind & PIPE_BIND_INDEX_BUFFER) {
+      if (format != PIPE_FORMAT_R8_UINT &&
+          format != PIPE_FORMAT_R16_UINT &&
+          format != PIPE_FORMAT_R32_UINT)
+         return false;
+   }
 
    VkFormat vkformat = zink_get_format(screen, format);
    if (vkformat == VK_FORMAT_UNDEFINED)
@@ -937,7 +975,7 @@ zink_destroy_screen(struct pipe_screen *pscreen)
    struct zink_screen *screen = zink_screen(pscreen);
 
    if (VK_NULL_HANDLE != screen->debugUtilsCallbackHandle) {
-      screen->vk_DestroyDebugUtilsMessengerEXT(screen->instance, screen->debugUtilsCallbackHandle, NULL);
+      screen->vk.DestroyDebugUtilsMessengerEXT(screen->instance, screen->debugUtilsCallbackHandle, NULL);
    }
 
    hash_table_foreach(&screen->surface_cache, entry) {
@@ -975,6 +1013,8 @@ zink_destroy_screen(struct pipe_screen *pscreen)
    simple_mtx_destroy(&screen->mem_cache_mtx);
    vkDestroyPipelineCache(screen->dev, screen->pipeline_cache, NULL);
 
+   util_live_shader_cache_deinit(&screen->shaders);
+
    if (screen->sem)
       vkDestroySemaphore(screen->dev, screen->sem, NULL);
    if (screen->prev_sem)
@@ -983,6 +1023,7 @@ zink_destroy_screen(struct pipe_screen *pscreen)
 
    vkDestroyDevice(screen->dev, NULL);
    vkDestroyInstance(screen->instance, NULL);
+   util_idalloc_mt_fini(&screen->buffer_ids);
 
    slab_destroy_parent(&screen->transfer_pool);
    ralloc_free(screen);
@@ -1029,6 +1070,14 @@ choose_pdev(struct zink_screen *screen)
 
    /* runtime version is the lesser of the instance version and device version */
    screen->vk_version = MIN2(screen->info.device_version, screen->instance_info.loader_version);
+
+   /* calculate SPIR-V version based on VK version */
+   if (screen->vk_version >= VK_MAKE_VERSION(1, 2, 0))
+      screen->spirv_version = SPIRV_VERSION(1, 5);
+   else if (screen->vk_version >= VK_MAKE_VERSION(1, 1, 0))
+      screen->spirv_version = SPIRV_VERSION(1, 3);
+   else
+      screen->spirv_version = SPIRV_VERSION(1, 0);
 }
 
 static void
@@ -1070,7 +1119,7 @@ zink_flush_frontbuffer(struct pipe_screen *pscreen,
 
    if (map) {
       struct pipe_transfer *transfer = NULL;
-      void *res_map = pipe_transfer_map(pcontext, pres, level, layer, PIPE_MAP_READ, 0, 0,
+      void *res_map = pipe_texture_map(pcontext, pres, level, layer, PIPE_MAP_READ, 0, 0,
                                         u_minify(pres->width0, level),
                                         u_minify(pres->height0, level),
                                         &transfer);
@@ -1078,7 +1127,7 @@ zink_flush_frontbuffer(struct pipe_screen *pscreen,
          util_copy_rect((ubyte*)map, pres->format, res->dt_stride, 0, 0,
                         transfer->box.width, transfer->box.height,
                         (const ubyte*)res_map, transfer->stride, 0, 0);
-         pipe_transfer_unmap(pcontext, transfer);
+         pipe_texture_unmap(pcontext, transfer);
       }
       winsys->displaytarget_unmap(winsys, res->dt);
    }
@@ -1153,85 +1202,60 @@ zink_get_format(struct zink_screen *screen, enum pipe_format format)
    return ret;
 }
 
-static bool
-load_device_extensions(struct zink_screen *screen)
+void
+zink_screen_init_descriptor_funcs(struct zink_screen *screen, bool fallback)
 {
-   if (screen->info.have_EXT_transform_feedback) {
-      GET_PROC_ADDR(CmdBindTransformFeedbackBuffersEXT);
-      GET_PROC_ADDR(CmdBeginTransformFeedbackEXT);
-      GET_PROC_ADDR(CmdEndTransformFeedbackEXT);
-      GET_PROC_ADDR(CmdBeginQueryIndexedEXT);
-      GET_PROC_ADDR(CmdEndQueryIndexedEXT);
-      GET_PROC_ADDR(CmdDrawIndirectByteCountEXT);
+   if (screen->info.have_KHR_descriptor_update_template &&
+       !fallback &&
+       screen->descriptor_mode == ZINK_DESCRIPTOR_MODE_LAZY) {
+#define LAZY(FUNC) screen->FUNC = zink_##FUNC##_lazy
+      LAZY(descriptor_program_init);
+      LAZY(descriptor_program_deinit);
+      LAZY(context_invalidate_descriptor_state);
+      LAZY(batch_descriptor_init);
+      LAZY(batch_descriptor_reset);
+      LAZY(batch_descriptor_deinit);
+      LAZY(descriptors_init);
+      LAZY(descriptors_deinit);
+      LAZY(descriptors_update);
+#undef LAZY
+   } else {
+#define DEFAULT(FUNC) screen->FUNC = zink_##FUNC
+      DEFAULT(descriptor_program_init);
+      DEFAULT(descriptor_program_deinit);
+      DEFAULT(context_invalidate_descriptor_state);
+      DEFAULT(batch_descriptor_init);
+      DEFAULT(batch_descriptor_reset);
+      DEFAULT(batch_descriptor_deinit);
+      DEFAULT(descriptors_init);
+      DEFAULT(descriptors_deinit);
+      DEFAULT(descriptors_update);
+#undef DEFAULT
    }
-   if (screen->info.have_KHR_external_memory_fd)
-      GET_PROC_ADDR(GetMemoryFdKHR);
-
-   if (screen->info.have_EXT_conditional_rendering) {
-      GET_PROC_ADDR(CmdBeginConditionalRenderingEXT);
-      GET_PROC_ADDR(CmdEndConditionalRenderingEXT);
-   }
-
-   if (screen->info.have_KHR_draw_indirect_count) {
-      GET_PROC_ADDR_KHR(CmdDrawIndexedIndirectCount);
-      GET_PROC_ADDR_KHR(CmdDrawIndirectCount);
-   }
-
-   if (screen->info.have_EXT_calibrated_timestamps) {
-      GET_PROC_ADDR_INSTANCE(GetPhysicalDeviceCalibrateableTimeDomainsEXT);
-      GET_PROC_ADDR(GetCalibratedTimestampsEXT);
-
-      uint32_t num_domains = 0;
-      screen->vk_GetPhysicalDeviceCalibrateableTimeDomainsEXT(screen->pdev, &num_domains, NULL);
-      assert(num_domains > 0);
-
-      VkTimeDomainEXT *domains = malloc(sizeof(VkTimeDomainEXT) * num_domains);
-      screen->vk_GetPhysicalDeviceCalibrateableTimeDomainsEXT(screen->pdev, &num_domains, domains);
-
-      /* VK_TIME_DOMAIN_DEVICE_EXT is used for the ctx->get_timestamp hook and is the only one we really need */
-      ASSERTED bool have_device_time = false;
-      for (unsigned i = 0; i < num_domains; i++) {
-         if (domains[i] == VK_TIME_DOMAIN_DEVICE_EXT) {
-            have_device_time = true;
-            break;
-         }
-      }
-      assert(have_device_time);
-      free(domains);
-   }
-   if (screen->info.have_EXT_extended_dynamic_state) {
-      GET_PROC_ADDR(CmdSetViewportWithCountEXT);
-      GET_PROC_ADDR(CmdSetScissorWithCountEXT);
-      GET_PROC_ADDR(CmdBindVertexBuffers2EXT);
-   }
-
-   if (screen->info.have_EXT_image_drm_format_modifier)
-      GET_PROC_ADDR(GetImageDrmFormatModifierPropertiesEXT);
-
-   if (screen->info.have_KHR_timeline_semaphore)
-      GET_PROC_ADDR_KHR(WaitSemaphores);
-
-   screen->have_triangle_fans = true;
-#if defined(VK_EXTX_PORTABILITY_SUBSET_EXTENSION_NAME)
-   if (screen->info.have_EXTX_portability_subset) {
-      screen->have_triangle_fans = (VK_TRUE == screen->info.portability_subset_extx_feats.triangleFans);
-   }
-#endif // VK_EXTX_PORTABILITY_SUBSET_EXTENSION_NAME
-
-   if (screen->info.have_KHR_swapchain) {
-      GET_PROC_ADDR(CreateSwapchainKHR);
-      GET_PROC_ADDR(DestroySwapchainKHR);
-   }
-
-   if (screen->info.have_EXT_sample_locations) {
-      GET_PROC_ADDR(CmdSetSampleLocationsEXT);
-      GET_PROC_ADDR_INSTANCE(GetPhysicalDeviceMultisamplePropertiesEXT);
-   }
-
-   return true;
 }
 
-static VkBool32 VKAPI_CALL
+static bool
+check_have_device_time(struct zink_screen *screen)
+{
+   uint32_t num_domains = 0;
+   screen->vk.GetPhysicalDeviceCalibrateableTimeDomainsEXT(screen->pdev, &num_domains, NULL);
+   assert(num_domains > 0);
+
+   VkTimeDomainEXT *domains = malloc(sizeof(VkTimeDomainEXT) * num_domains);
+   screen->vk.GetPhysicalDeviceCalibrateableTimeDomainsEXT(screen->pdev, &num_domains, domains);
+
+   /* VK_TIME_DOMAIN_DEVICE_EXT is used for the ctx->get_timestamp hook and is the only one we really need */
+   for (unsigned i = 0; i < num_domains; i++) {
+      if (domains[i] == VK_TIME_DOMAIN_DEVICE_EXT) {
+         return true;
+      }
+   }
+
+   free(domains);
+   return false;
+}
+
+static VKAPI_ATTR VkBool32 VKAPI_CALL
 zink_debug_util_callback(
     VkDebugUtilsMessageSeverityFlagBitsEXT           messageSeverity,
     VkDebugUtilsMessageTypeFlagsEXT                  messageType,
@@ -1257,9 +1281,6 @@ zink_debug_util_callback(
 static bool
 create_debug(struct zink_screen *screen)
 {
-   GET_PROC_ADDR_INSTANCE(CreateDebugUtilsMessengerEXT);
-   GET_PROC_ADDR_INSTANCE(DestroyDebugUtilsMessengerEXT);
-
    VkDebugUtilsMessengerCreateInfoEXT vkDebugUtilsMessengerCreateInfoEXT = {
        VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
        NULL,
@@ -1277,7 +1298,7 @@ create_debug(struct zink_screen *screen)
 
    VkDebugUtilsMessengerEXT vkDebugUtilsCallbackEXT = VK_NULL_HANDLE;
 
-   screen->vk_CreateDebugUtilsMessengerEXT(
+   screen->vk.CreateDebugUtilsMessengerEXT(
        screen->instance,
        &vkDebugUtilsMessengerCreateInfoEXT,
        NULL,
@@ -1304,25 +1325,25 @@ zink_internal_setup_moltenvk(struct zink_screen *screen)
    GET_PROC_ADDR_INSTANCE(UseIOSurfaceMVK);
    GET_PROC_ADDR_INSTANCE(GetIOSurfaceMVK);
 
-   if (screen->vk_GetVersionStringsMVK) {
+   if (screen->vk.GetVersionStringsMVK) {
       char molten_version[64] = {0};
       char vulkan_version[64] = {0};
 
-      (*screen->vk_GetVersionStringsMVK)(molten_version, sizeof(molten_version) - 1, vulkan_version, sizeof(vulkan_version) - 1);
+      (*screen->vk.GetVersionStringsMVK)(molten_version, sizeof(molten_version) - 1, vulkan_version, sizeof(vulkan_version) - 1);
 
       printf("zink: MoltenVK %s Vulkan %s \n", molten_version, vulkan_version);
    }
 
-   if (screen->vk_GetMoltenVKConfigurationMVK && screen->vk_SetMoltenVKConfigurationMVK) {
+   if (screen->vk.GetMoltenVKConfigurationMVK && screen->vk.SetMoltenVKConfigurationMVK) {
       MVKConfiguration molten_config = {0};
       size_t molten_config_size = sizeof(molten_config);
 
-      VkResult res = (*screen->vk_GetMoltenVKConfigurationMVK)(screen->instance, &molten_config, &molten_config_size);
+      VkResult res = (*screen->vk.GetMoltenVKConfigurationMVK)(screen->instance, &molten_config, &molten_config_size);
       if (res == VK_SUCCESS || res == VK_INCOMPLETE) {
          // Needed to allow MoltenVK to accept VkImageView swizzles.
          // Encountered when using VK_FORMAT_R8G8_UNORM
          molten_config.fullImageViewSwizzle = VK_TRUE;
-         (*screen->vk_SetMoltenVKConfigurationMVK)(screen->instance, &molten_config, &molten_config_size);
+         (*screen->vk.SetMoltenVKConfigurationMVK)(screen->instance, &molten_config, &molten_config_size);
       }
    }
 #endif // MVK_VERSION
@@ -1353,10 +1374,10 @@ populate_format_props(struct zink_screen *screen)
       VkFormat format = zink_get_format(screen, i);
       if (!format)
          continue;
-      if (screen->vk_GetPhysicalDeviceFormatProperties2) {
-         VkFormatProperties2 props = {};
+      if (screen->vk.GetPhysicalDeviceFormatProperties2) {
+         VkFormatProperties2 props = {0};
          props.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
-         screen->vk_GetPhysicalDeviceFormatProperties2(screen->pdev, format, &props);
+         screen->vk.GetPhysicalDeviceFormatProperties2(screen->pdev, format, &props);
          screen->format_props[i] = props.formatProperties;
       } else
          vkGetPhysicalDeviceFormatProperties(screen->pdev, format, &screen->format_props[i]);
@@ -1366,8 +1387,8 @@ populate_format_props(struct zink_screen *screen)
 bool
 zink_screen_init_semaphore(struct zink_screen *screen)
 {
-   VkSemaphoreCreateInfo sci = {};
-   VkSemaphoreTypeCreateInfo tci = {};
+   VkSemaphoreCreateInfo sci = {0};
+   VkSemaphoreTypeCreateInfo tci = {0};
    VkSemaphore sem;
    sci.pNext = &tci;
    sci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -1386,6 +1407,28 @@ zink_screen_init_semaphore(struct zink_screen *screen)
    }
    screen->info.have_KHR_timeline_semaphore = false;
    return false;
+}
+
+bool
+zink_screen_timeline_wait(struct zink_screen *screen, uint32_t batch_id, uint64_t timeout)
+{
+   VkSemaphoreWaitInfo wi = {0};
+   wi.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
+   wi.semaphoreCount = 1;
+   /* handle batch_id overflow */
+   wi.pSemaphores = batch_id > screen->curr_batch ? &screen->prev_sem : &screen->sem;
+   uint64_t batch_id64 = batch_id;
+   wi.pValues = &batch_id64;
+   bool success = false;
+   if (screen->device_lost)
+      return true;
+   VkResult ret = screen->vk.WaitSemaphores(screen->dev, &wi, timeout);
+   success = zink_screen_handle_vkresult(screen, ret);
+
+   if (success)
+      zink_screen_update_last_finished(screen, batch_id);
+
+   return success;
 }
 
 static uint32_t
@@ -1411,14 +1454,14 @@ zink_query_memory_info(struct pipe_screen *pscreen, struct pipe_memory_info *inf
 {
    struct zink_screen *screen = zink_screen(pscreen);
    memset(info, 0, sizeof(struct pipe_memory_info));
-   if (screen->info.have_EXT_memory_budget && screen->vk_GetPhysicalDeviceMemoryProperties2) {
-      VkPhysicalDeviceMemoryProperties2 mem = {};
+   if (screen->info.have_EXT_memory_budget && screen->vk.GetPhysicalDeviceMemoryProperties2) {
+      VkPhysicalDeviceMemoryProperties2 mem = {0};
       mem.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
 
-      VkPhysicalDeviceMemoryBudgetPropertiesEXT budget = {};
+      VkPhysicalDeviceMemoryBudgetPropertiesEXT budget = {0};
       budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
       mem.pNext = &budget;
-      screen->vk_GetPhysicalDeviceMemoryProperties2(screen->pdev, &mem);
+      screen->vk.GetPhysicalDeviceMemoryProperties2(screen->pdev, &mem);
 
       for (unsigned i = 0; i < mem.memoryProperties.memoryHeapCount; i++) {
          if (mem.memoryProperties.memoryHeaps[i].flags == VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
@@ -1454,14 +1497,14 @@ zink_create_logical_device(struct zink_screen *screen)
 {
    VkDevice dev = VK_NULL_HANDLE;
 
-   VkDeviceQueueCreateInfo qci = {};
+   VkDeviceQueueCreateInfo qci = {0};
    float dummy = 0.0f;
    qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
    qci.queueFamilyIndex = screen->gfx_queue;
    qci.queueCount = screen->threaded && screen->max_queues > 1 ? 2 : 1;
    qci.pQueuePriorities = &dummy;
 
-   VkDeviceCreateInfo dci = {};
+   VkDeviceCreateInfo dci = {0};
    dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
    dci.queueCreateInfoCount = 1;
    dci.pQueueCreateInfos = &qci;
@@ -1503,10 +1546,35 @@ check_base_requirements(struct zink_screen *screen)
          screen->info.have_EXT_scalar_block_layout) ||
        !screen->info.have_KHR_maintenance1 ||
        !screen->info.have_EXT_custom_border_color) {
-      fprintf(stderr, "WARNING: The Vulkan device doesn't support "
-              "the base Zink requirements, some incorrect rendering "
-              "might occur\n");
+      fprintf(stderr, "WARNING: Some incorrect rendering "
+              "might occur because the selected Vulkan device (%s) doesn't support "
+              "base Zink requirements: ", screen->info.props.deviceName);
+#define CHECK_OR_PRINT(X) \
+      if (!screen->info.X) \
+         fprintf(stderr, "%s ", #X)
+      CHECK_OR_PRINT(feats.features.logicOp);
+      CHECK_OR_PRINT(feats.features.fillModeNonSolid);
+      CHECK_OR_PRINT(feats.features.wideLines);
+      CHECK_OR_PRINT(feats.features.largePoints);
+      CHECK_OR_PRINT(feats.features.alphaToOne);
+      CHECK_OR_PRINT(feats.features.shaderClipDistance);
+      if (!screen->info.feats12.scalarBlockLayout && !screen->info.have_EXT_scalar_block_layout)
+         printf("scalarBlockLayout OR EXT_scalar_block_layout ");
+      CHECK_OR_PRINT(have_KHR_maintenance1);
+      CHECK_OR_PRINT(have_EXT_custom_border_color);
+      fprintf(stderr, "\n");
    }
+}
+
+static void
+zink_get_sample_pixel_grid(struct pipe_screen *pscreen, unsigned sample_count,
+                           unsigned *width, unsigned *height)
+{
+   struct zink_screen *screen = zink_screen(pscreen);
+   unsigned idx = util_logbase2_ceil(MAX2(sample_count, 1));
+   assert(idx < ARRAY_SIZE(screen->maxSampleLocationGridSize));
+   *width = screen->maxSampleLocationGridSize[idx].width;
+   *height = screen->maxSampleLocationGridSize[idx].height;
 }
 
 static struct zink_screen *
@@ -1520,6 +1588,11 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
    screen->threaded = util_get_cpu_caps()->nr_cpus > 1 && debug_get_bool_option("GALLIUM_THREAD", util_get_cpu_caps()->nr_cpus > 1);
 
    zink_debug = debug_get_option_zink_debug();
+   screen->descriptor_mode = debug_get_option_zink_descriptor_mode();
+   if (util_bitcount(screen->descriptor_mode) > 1) {
+      printf("Specify exactly one descriptor mode.\n");
+      abort();
+   }
 
    screen->instance_info.loader_version = zink_get_loader_version();
    screen->instance = zink_create_instance(&screen->instance_info);
@@ -1527,7 +1600,13 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
    if (!screen->instance)
       goto fail;
 
-   if (screen->instance_info.have_EXT_debug_utils && !create_debug(screen))
+   vk_instance_dispatch_table_load(&screen->vk.instance, &vkGetInstanceProcAddr, screen->instance);
+   vk_physical_device_dispatch_table_load(&screen->vk.physical_device, &vkGetInstanceProcAddr, screen->instance);
+
+   zink_verify_instance_extensions(screen);
+
+   if (screen->instance_info.have_EXT_debug_utils &&
+      (zink_debug & ZINK_DEBUG_VALIDATION) && !create_debug(screen))
       debug_printf("ZINK: failed to setup debug utils\n");
 
    choose_pdev(screen);
@@ -1540,9 +1619,6 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
                                               VK_FORMAT_X8_D24_UNORM_PACK32);
    screen->have_D24_UNORM_S8_UINT = zink_is_depth_format_supported(screen,
                                               VK_FORMAT_D24_UNORM_S8_UINT);
-
-   if (!zink_load_instance_extensions(screen))
-      goto fail;
 
    if (!zink_get_physical_device_info(screen)) {
       debug_printf("ZINK: failed to detect features\n");
@@ -1560,10 +1636,28 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
    if (!screen->dev)
       goto fail;
 
-   if (!load_device_extensions(screen))
+   if (screen->info.driver_props.driverID == VK_DRIVER_ID_MESA_RADV ||
+       screen->info.driver_props.driverID == VK_DRIVER_ID_AMD_OPEN_SOURCE ||
+       screen->info.driver_props.driverID == VK_DRIVER_ID_AMD_PROPRIETARY)
+      /* this has bad perf on AMD */
+      screen->info.have_KHR_push_descriptor = false;
+
+   vk_device_dispatch_table_load(&screen->vk.device, &vkGetDeviceProcAddr, screen->dev);
+
+   zink_verify_device_extensions(screen);
+
+   if (screen->info.have_EXT_calibrated_timestamps && !check_have_device_time(screen))
       goto fail;
 
+   screen->have_triangle_fans = true;
+#if defined(VK_EXTX_PORTABILITY_SUBSET_EXTENSION_NAME)
+   if (screen->info.have_EXTX_portability_subset) {
+      screen->have_triangle_fans = (VK_TRUE == screen->info.portability_subset_extx_feats.triangleFans);
+   }
+#endif // VK_EXTX_PORTABILITY_SUBSET_EXTENSION_NAME
+
    check_base_requirements(screen);
+   util_live_shader_cache_init(&screen->shaders, zink_create_gfx_shader_state, zink_delete_shader_state);
 
    screen->base.get_name = zink_get_name;
    screen->base.get_vendor = zink_get_vendor;
@@ -1574,11 +1668,24 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
    screen->base.get_paramf = zink_get_paramf;
    screen->base.get_shader_param = zink_get_shader_param;
    screen->base.get_compiler_options = zink_get_compiler_options;
+   screen->base.get_sample_pixel_grid = zink_get_sample_pixel_grid;
    screen->base.is_format_supported = zink_is_format_supported;
    screen->base.context_create = zink_context_create;
    screen->base.flush_frontbuffer = zink_flush_frontbuffer;
    screen->base.destroy = zink_destroy_screen;
    screen->base.finalize_nir = zink_shader_finalize;
+
+   if (screen->info.have_EXT_sample_locations) {
+      VkMultisamplePropertiesEXT prop;
+      prop.sType = VK_STRUCTURE_TYPE_MULTISAMPLE_PROPERTIES_EXT;
+      prop.pNext = NULL;
+      for (unsigned i = 0; i < ARRAY_SIZE(screen->maxSampleLocationGridSize); i++) {
+         if (screen->info.sample_locations_props.sampleLocationSampleCounts & (1 << i)) {
+            screen->vk.GetPhysicalDeviceMultisamplePropertiesEXT(screen->pdev, 1 << i, &prop);
+            screen->maxSampleLocationGridSize[i] = prop.maxSampleLocationGridSize;
+         }
+      }
+   }
 
    if (!zink_screen_resource_init(&screen->base))
       goto fail;
@@ -1610,7 +1717,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
       screen->driconf.dual_color_blend_by_location = driQueryOptionb(config->options, "dual_color_blend_by_location");
       //screen->driconf.inline_uniforms = driQueryOptionb(config->options, "radeonsi_inline_uniforms");
 #endif
-   screen->driconf.inline_uniforms = !!getenv("ZINK_INLINE_UNIFORMS");
+   screen->driconf.inline_uniforms = debug_get_bool_option("ZINK_INLINE_UNIFORMS", false);
 
    screen->total_video_mem = get_video_mem(screen);
    if (!os_get_total_physical_memory(&screen->total_mem))
@@ -1625,6 +1732,9 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
    _mesa_hash_table_init(&screen->framebuffer_cache, screen, hash_framebuffer_state, equals_framebuffer_state);
    _mesa_hash_table_init(&screen->surface_cache, screen, NULL, equals_ivci);
    _mesa_hash_table_init(&screen->bufferview_cache, screen, NULL, equals_bvci);
+
+   zink_screen_init_descriptor_funcs(screen, false);
+   util_idalloc_mt_init_tc(&screen->buffer_ids);
 
    return screen;
 
@@ -1680,4 +1790,13 @@ zink_drm_create_screen(int fd, const struct pipe_screen_config *config)
    }
 
    return &ret->base;
+}
+
+void zink_stub_function_not_loaded()
+{
+   /* this will be used by the zink_verify_*_extensions() functions on a
+    * release build
+    */
+   mesa_loge("ZINK: a Vulkan function was called without being loaded");
+   abort();
 }

@@ -2074,7 +2074,7 @@ try_blorp_blit(struct blorp_batch *batch,
       params->dst.view.format = ISL_FORMAT_R32_UINT;
    }
 
-   if (devinfo->ver <= 7 && !devinfo->is_haswell &&
+   if (devinfo->verx10 <= 70 &&
        !isl_swizzle_is_identity(params->src.view.swizzle)) {
       wm_prog_key->src_swizzle = params->src.view.swizzle;
       params->src.view.swizzle = ISL_SWIZZLE_IDENTITY;
@@ -2194,11 +2194,15 @@ shrink_surface_params(const struct isl_device *dev,
     */
    x_offset_sa = (uint32_t)*x0 * px_size_sa.w + info->tile_x_sa;
    y_offset_sa = (uint32_t)*y0 * px_size_sa.h + info->tile_y_sa;
+   uint32_t tile_z_sa, tile_a;
    isl_tiling_get_intratile_offset_sa(info->surf.tiling,
                                       info->surf.format, info->surf.row_pitch_B,
-                                      x_offset_sa, y_offset_sa,
+                                      info->surf.array_pitch_el_rows,
+                                      x_offset_sa, y_offset_sa, 0, 0,
                                       &byte_offset,
-                                      &info->tile_x_sa, &info->tile_y_sa);
+                                      &info->tile_x_sa, &info->tile_y_sa,
+                                      &tile_z_sa, &tile_a);
+   assert(tile_z_sa == 0 && tile_a == 0);
 
    info->addr.offset += byte_offset;
 

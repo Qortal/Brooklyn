@@ -35,6 +35,7 @@
 #include "compiler/shader_enums.h"
 #include "pipe/p_screen.h"
 #include "pipe/p_state.h"
+#include "cso_cache/cso_context.h"
 #include "nir.h"
 
 /* Pre-declarations needed for WSI entrypoints */
@@ -162,6 +163,7 @@ struct lvp_queue {
    VkDeviceQueueCreateFlags flags;
    struct lvp_device *                         device;
    struct pipe_context *ctx;
+   struct cso_context *cso;
    bool shutdown;
    thrd_t exec_thread;
    mtx_t m;
@@ -303,6 +305,8 @@ struct lvp_render_pass {
    uint32_t                                     subpass_count;
    struct lvp_subpass_attachment *              subpass_attachments;
    struct lvp_render_pass_attachment *          attachments;
+   bool has_color_attachment;
+   bool has_zs_attachment;
    struct lvp_subpass                           subpasses[0];
 };
 
@@ -1104,7 +1108,6 @@ struct lvp_cmd_buffer_entry {
 
 VkResult lvp_execute_cmds(struct lvp_device *device,
                           struct lvp_queue *queue,
-                          struct lvp_fence *fence,
                           struct lvp_cmd_buffer *cmd_buffer);
 
 struct lvp_image *lvp_swapchain_get_image(VkSwapchainKHR swapchain,

@@ -83,6 +83,17 @@ struct ir3_info {
 	uint16_t instrs_per_cat[8];
 };
 
+struct ir3_merge_set {
+	uint16_t preferred_reg;
+	uint16_t size;
+	uint16_t alignment;
+
+	unsigned interval_start;
+
+	unsigned regs_count;
+	struct ir3_register **regs;
+};
+
 struct ir3_register {
 	enum {
 		IR3_REG_CONST  = 0x001,
@@ -118,6 +129,10 @@ struct ir3_register {
 		IR3_REG_SSA    = 0x4000,   /* 'instr' is ptr to assigning instr */
 		IR3_REG_ARRAY  = 0x8000,
 
+		IR3_REG_DEST   = 0x10000,
+		IR3_REG_KILL = 0x20000,
+		IR3_REG_FIRST_KILL = 0x40000,
+		IR3_REG_UNUSED = 0x80000,
 	} flags;
 
 	/* used for cat5 instructions, but also for internal/IR level
@@ -141,6 +156,7 @@ struct ir3_register {
 	 * rN.x becomes: (N << 2) | x
 	 */
 	uint16_t num;
+	uint16_t name;
 	union {
 		/* immediate: */
 		int32_t  iim_val;
@@ -150,8 +166,15 @@ struct ir3_register {
 		struct {
 			uint16_t id;
 			int16_t offset;
+			uint16_t base;
 		} array;
 	};
+
+
+	/* For IR3_REG_DEST, pointer back to the instruction containing this
+	 * register.
+	 */
+	struct ir3_instruction *instr;
 
 	/* For IR3_REG_SSA, src registers contain ptr back to assigning
 	 * instruction.
@@ -160,7 +183,11 @@ struct ir3_register {
 	 * array access (although the net effect is the same, it points
 	 * back to a previous instruction that we depend on).
 	 */
-	struct ir3_instruction *instr;
+	struct ir3_register *def;
+
+	unsigned merge_set_offset;
+	struct ir3_merge_set *merge_set;
+	unsigned interval_start, interval_end;
 };
 
 /*
@@ -170,12 +197,12 @@ struct ir3_register {
 	unsigned name ## _count, name ## _sz; \
 	type * name;
 
-#define array_insert(ctx, arr, val) do { \
+#define array_insert(ctx, arr, ...) do { \
 		if (arr ## _count == arr ## _sz) { \
 			arr ## _sz = MAX2(2 * arr ## _sz, 16); \
 			arr = reralloc_size(ctx, arr, arr ## _sz * sizeof(arr[0])); \
 		} \
-		arr[arr ##_count++] = val; \
+		arr[arr ##_count++] = __VA_ARGS__; \
 	} while (0)
 
 struct ir3_instruction {
@@ -310,6 +337,12 @@ struct ir3_instruction {
 			unsigned *outidxs;
 		} end;
 		struct {
+			/* used to temporarily hold reference to nir_phi_instr
+			 * until we resolve the phi srcs
+			 */
+			void *nphi;
+		} phi;
+		struct {
 			unsigned samp, tex;
 			unsigned input_offset;
 			unsigned samp_base : 3;
@@ -345,33 +378,6 @@ struct ir3_instruction {
 	struct set *uses;
 
 	int use_count;      /* currently just updated/used by cp */
-
-	/* Used during CP and RA stages.  For collect and shader inputs/
-	 * outputs where we need a sequence of consecutive registers,
-	 * keep track of each src instructions left (ie 'n-1') and right
-	 * (ie 'n+1') neighbor.  The front-end must insert enough mov's
-	 * to ensure that each instruction has at most one left and at
-	 * most one right neighbor.  During the copy-propagation pass,
-	 * we only remove mov's when we can preserve this constraint.
-	 * And during the RA stage, we use the neighbor information to
-	 * allocate a block of registers in one shot.
-	 *
-	 * TODO: maybe just add something like:
-	 *   struct ir3_instruction_ref {
-	 *       struct ir3_instruction *instr;
-	 *       unsigned cnt;
-	 *   }
-	 *
-	 * Or can we get away without the refcnt stuff?  It seems like
-	 * it should be overkill..  the problem is if, potentially after
-	 * already eliminating some mov's, if you have a single mov that
-	 * needs to be grouped with it's neighbors in two different
-	 * places (ex. shader output and a collect).
-	 */
-	struct {
-		struct ir3_instruction *left, *right;
-		uint16_t left_cnt, right_cnt;
-	} cp;
 
 	/* an instruction can reference at most one address register amongst
 	 * it's src/dst registers.  Beyond that, you need to insert mov's.
@@ -424,38 +430,6 @@ struct ir3_instruction {
 	// TODO only computerator/assembler:
 	int line;
 };
-
-static inline struct ir3_instruction *
-ir3_neighbor_first(struct ir3_instruction *instr)
-{
-	int cnt = 0;
-	while (instr->cp.left) {
-		instr = instr->cp.left;
-		if (++cnt > 0xffff) {
-			debug_assert(0);
-			break;
-		}
-	}
-	return instr;
-}
-
-static inline int ir3_neighbor_count(struct ir3_instruction *instr)
-{
-	int num = 1;
-
-	debug_assert(!instr->cp.left);
-
-	while (instr->cp.right) {
-		num++;
-		instr = instr->cp.right;
-		if (num > 0xffff) {
-			debug_assert(0);
-			break;
-		}
-	}
-
-	return num;
-}
 
 struct ir3 {
 	struct ir3_compiler *compiler;
@@ -519,7 +493,7 @@ struct ir3_array {
 	 * last read.  But all the writes that happen before that have
 	 * something depending on them
 	 */
-	struct ir3_instruction *last_write;
+	struct ir3_register *last_write;
 
 	/* extra stuff used in RA pass: */
 	unsigned base;      /* base vreg name */
@@ -563,6 +537,14 @@ struct ir3_block {
 	 */
 	void *data;
 
+	uint32_t index;
+
+	struct ir3_block *imm_dom;
+	DECLARE_ARRAY(struct ir3_block *, dom_children);
+
+	uint32_t dom_pre_index;
+	uint32_t dom_post_index;
+
 #ifdef DEBUG
 	uint32_t serialno;
 #endif
@@ -578,9 +560,18 @@ block_id(struct ir3_block *block)
 #endif
 }
 
+static inline struct ir3_block *
+ir3_start_block(struct ir3 *ir)
+{
+	return list_first_entry(&ir->block_list, struct ir3_block, node);
+}
+
 void ir3_block_add_predecessor(struct ir3_block *block, struct ir3_block *pred);
 void ir3_block_remove_predecessor(struct ir3_block *block, struct ir3_block *pred);
 unsigned ir3_block_get_pred_index(struct ir3_block *block, struct ir3_block *pred);
+
+void ir3_calc_dominance(struct ir3 *ir);
+bool ir3_block_dominates(struct ir3_block *a, struct ir3_block *b);
 
 struct ir3_shader_variant;
 
@@ -589,6 +580,15 @@ void ir3_destroy(struct ir3 *shader);
 
 void ir3_collect_info(struct ir3_shader_variant *v);
 void * ir3_alloc(struct ir3 *shader, int sz);
+
+unsigned ir3_get_reg_dependent_max_waves(const struct ir3_compiler *compiler,
+										 unsigned reg_count, bool double_threadsize);
+
+unsigned ir3_get_reg_independent_max_waves(struct ir3_shader_variant *v,
+										   bool double_threadsize);
+
+bool ir3_should_double_threadsize(struct ir3_shader_variant *v,
+								  unsigned regs_count);
 
 struct ir3_block * ir3_block_create(struct ir3 *shader);
 
@@ -656,12 +656,12 @@ bool ir3_valid_flags(struct ir3_instruction *instr, unsigned n, unsigned flags);
 		set_foreach ((__instr)->uses, __entry) \
 			if ((__use = (void *)__entry->key))
 
-static inline uint32_t reg_num(struct ir3_register *reg)
+static inline uint32_t reg_num(const struct ir3_register *reg)
 {
 	return reg->num >> 2;
 }
 
-static inline uint32_t reg_comp(struct ir3_register *reg)
+static inline uint32_t reg_comp(const struct ir3_register *reg)
 {
 	return reg->num & 0x3;
 }
@@ -920,6 +920,26 @@ static inline bool is_meta(struct ir3_instruction *instr)
 	return (opc_cat(instr->opc) == -1);
 }
 
+static inline unsigned reg_elems(const struct ir3_register *reg)
+{
+	if (reg->flags & IR3_REG_ARRAY)
+		return reg->size;
+	else
+		return util_last_bit(reg->wrmask);
+}
+
+static inline unsigned
+reg_elem_size(const struct ir3_register *reg)
+{
+	return (reg->flags & IR3_REG_HALF) ? 1 : 2;
+}
+
+static inline unsigned
+reg_size(const struct ir3_register *reg)
+{
+	return reg_elems(reg) * reg_elem_size(reg);
+}
+
 static inline unsigned dest_regs(struct ir3_instruction *instr)
 {
 	if ((instr->regs_count == 0) || is_store(instr) || is_flow(instr))
@@ -973,9 +993,8 @@ static inline bool writes_pred(struct ir3_instruction *instr)
 /* TODO better name */
 static inline struct ir3_instruction *ssa(struct ir3_register *reg)
 {
-	if (reg->flags & (IR3_REG_SSA | IR3_REG_ARRAY)) {
-		return reg->instr;
-	}
+	if ((reg->flags & (IR3_REG_SSA | IR3_REG_ARRAY)) && reg->def)
+		return reg->def->instr;
 	return NULL;
 }
 
@@ -1159,6 +1178,137 @@ static inline unsigned ir3_cat3_absneg(opc_t opc)
 	}
 }
 
+/* Return the type (float, int, or uint) the op uses when converting from the
+ * internal result of the op (which is assumed to be the same size as the
+ * sources) to the destination when they are not the same size. If F32 it does
+ * a floating-point conversion, if U32 it does a truncation/zero-extension, if
+ * S32 it does a truncation/sign-extension. "can_fold" will be false if it
+ * doesn't do anything sensible or is unknown.
+ */
+static inline type_t
+ir3_output_conv_type(struct ir3_instruction *instr, bool *can_fold)
+{
+	*can_fold = true;
+	switch (instr->opc) {
+	case OPC_ADD_F:
+	case OPC_MUL_F:
+	case OPC_BARY_F:
+	case OPC_MAD_F32:
+	case OPC_MAD_F16:
+		return TYPE_F32;
+
+	case OPC_ADD_U:
+	case OPC_SUB_U:
+	case OPC_MIN_U:
+	case OPC_MAX_U:
+	case OPC_AND_B:
+	case OPC_OR_B:
+	case OPC_NOT_B:
+	case OPC_XOR_B:
+	case OPC_MUL_U24:
+	case OPC_MULL_U:
+	case OPC_SHL_B:
+	case OPC_SHR_B:
+	case OPC_ASHR_B:
+	case OPC_MAD_U24:
+	/* Comparison ops zero-extend/truncate their results, so consider them as
+	 * unsigned here.
+	 */
+	case OPC_CMPS_F:
+	case OPC_CMPV_F:
+	case OPC_CMPS_U:
+	case OPC_CMPS_S:
+		return TYPE_U32;
+
+	case OPC_ADD_S:
+	case OPC_SUB_S:
+	case OPC_MIN_S:
+	case OPC_MAX_S:
+	case OPC_ABSNEG_S:
+	case OPC_MUL_S24:
+	case OPC_MAD_S24:
+		return TYPE_S32;
+
+	/* We assume that any move->move folding that could be done was done by
+	 * NIR.
+	 */
+	case OPC_MOV:
+	default:
+		*can_fold = false;
+		return TYPE_U32;
+	}
+}
+
+/* Return the src and dst types for the conversion which is already folded
+ * into the op. We can assume that instr has folded in a conversion from
+ * ir3_output_conv_src_type() to ir3_output_conv_dst_type(). Only makes sense
+ * to call if ir3_output_conv_type() returns can_fold = true.
+ */
+static inline type_t
+ir3_output_conv_src_type(struct ir3_instruction *instr, type_t base_type)
+{
+	switch (instr->opc) {
+	case OPC_CMPS_F:
+	case OPC_CMPV_F:
+	case OPC_CMPS_U:
+	case OPC_CMPS_S:
+		/* Comparisons only return 0/1 and the size of the comparison sources
+		 * is irrelevant, never consider them as having an output conversion
+		 * by returning a type with the dest size here:
+		 */
+		return (instr->regs[0]->flags & IR3_REG_HALF) ? half_type(base_type) :
+			full_type(base_type);
+
+	case OPC_BARY_F:
+		/* bary.f doesn't have an explicit source, but we can assume here that
+		 * the varying data it reads is in fp32.
+		 *
+		 * This may be fp16 on older gen's depending on some register
+		 * settings, but it's probably not worth plumbing that through for a
+		 * small improvement that NIR would hopefully handle for us anyway.
+		 */
+		return TYPE_F32;
+
+	default:
+		return (instr->regs[1]->flags & IR3_REG_HALF) ? half_type(base_type) :
+			full_type(base_type);
+	}
+}
+
+static inline type_t
+ir3_output_conv_dst_type(struct ir3_instruction *instr, type_t base_type)
+{
+	return (instr->regs[0]->flags & IR3_REG_HALF) ? half_type(base_type) :
+		full_type(base_type);
+}
+
+/* Some instructions have signed/unsigned variants which are identical except
+ * for whether the folded conversion sign-extends or zero-extends, and we can
+ * fold in a mismatching move by rewriting the opcode. Return the opcode to
+ * switch signedness, and whether one exists.
+ */
+static inline opc_t
+ir3_try_swap_signedness(opc_t opc, bool *can_swap)
+{
+	switch (opc) {
+#define PAIR(u, s)		\
+	case OPC_##u:		\
+		return OPC_##s;	\
+	case OPC_##s:		\
+		return OPC_##u;
+	PAIR(ADD_U, ADD_S)
+	PAIR(SUB_U, SUB_S)
+	/* Note: these are only identical when the sources are half, but that's
+	 * the only case we call this function for anyway.
+	 */
+	PAIR(MUL_U24, MUL_S24)
+
+	default:
+		*can_swap = false;
+		return opc;
+	}
+}
+
 #define MASK(n) ((1 << (n)) - 1)
 
 /* iterator for an instructions's sources (reg), also returns src #: */
@@ -1166,7 +1316,7 @@ static inline unsigned ir3_cat3_absneg(opc_t opc)
 	if ((__instr)->regs_count) \
 		for (struct ir3_register *__srcreg = (void *)~0; __srcreg; __srcreg = NULL) \
 			for (unsigned __cnt = (__instr)->regs_count - 1, __n = 0; __n < __cnt; __n++) \
-				if ((__srcreg = (__instr)->regs[__n + 1]))
+				if ((__srcreg = (__instr)->regs[__n + 1]) && !(__srcreg->flags & IR3_REG_DEST))
 
 /* iterator for an instructions's sources (reg): */
 #define foreach_src(__srcreg, __instr) \
@@ -1188,7 +1338,7 @@ __ssa_srcp_n(struct ir3_instruction *instr, unsigned n)
 	if (n >= instr->regs_count)
 		return &instr->deps[n - instr->regs_count];
 	if (ssa(instr->regs[n]))
-		return &instr->regs[n]->instr;
+		return &instr->regs[n]->def->instr;
 	return NULL;
 }
 
@@ -1249,33 +1399,6 @@ static inline bool __is_false_dep(struct ir3_instruction *instr, unsigned n)
 #define foreach_array_safe(__array, __list) \
 	list_for_each_entry_safe(struct ir3_array, __array, __list, node)
 
-/* Check if condition is true for any src instruction.
- */
-static inline bool
-check_src_cond(struct ir3_instruction *instr, bool (*cond)(struct ir3_instruction *))
-{
-	/* Note that this is also used post-RA so skip the ssa iterator: */
-	foreach_src (reg, instr) {
-		struct ir3_instruction *src = reg->instr;
-
-		if (!src)
-			continue;
-
-		/* meta:split/collect aren't real instructions, the thing that
-		 * we actually care about is *their* srcs
-		 */
-		if ((src->opc == OPC_META_SPLIT) || (src->opc == OPC_META_COLLECT)) {
-			if (check_src_cond(src, cond))
-				return true;
-		} else {
-			if (cond(src))
-				return true;
-		}
-	}
-
-	return false;
-}
-
 #define IR3_PASS(ir, pass, ...) ({ \
 		bool progress = pass(ir, ##__VA_ARGS__); \
 		if (progress) { \
@@ -1295,8 +1418,11 @@ void ir3_print_instr(struct ir3_instruction *instr);
 /* delay calculation: */
 int ir3_delayslots(struct ir3_instruction *assigner,
 		struct ir3_instruction *consumer, unsigned n, bool soft);
-unsigned ir3_delay_calc(struct ir3_block *block, struct ir3_instruction *instr,
-		bool soft, bool pred);
+unsigned ir3_delay_calc_prera(struct ir3_block *block, struct ir3_instruction *instr);
+unsigned ir3_delay_calc_postra(struct ir3_block *block, struct ir3_instruction *instr,
+		bool soft, bool mergedregs);
+unsigned ir3_delay_calc_exact(struct ir3_block *block, struct ir3_instruction *instr,
+		bool mergedregs);
 void ir3_remove_nops(struct ir3 *ir);
 
 /* dead code elimination: */
@@ -1310,8 +1436,11 @@ bool ir3_cf(struct ir3 *ir);
 bool ir3_cp(struct ir3 *ir, struct ir3_shader_variant *so);
 bool ir3_cp_postsched(struct ir3 *ir);
 
-/* group neighbors and insert mov's to resolve conflicts: */
-bool ir3_group(struct ir3 *ir);
+/* common subexpression elimination: */
+bool ir3_cse(struct ir3 *ir);
+
+/* Make arrays SSA */
+bool ir3_array_to_ssa(struct ir3 *ir);
 
 /* scheduling: */
 bool ir3_sched_add_deps(struct ir3 *ir);
@@ -1320,11 +1449,8 @@ int ir3_sched(struct ir3 *ir);
 struct ir3_context;
 bool ir3_postsched(struct ir3 *ir, struct ir3_shader_variant *v);
 
-bool ir3_a6xx_fixup_atomic_dests(struct ir3 *ir, struct ir3_shader_variant *so);
-
 /* register assignment: */
-struct ir3_ra_reg_set * ir3_ra_alloc_reg_set(struct ir3_compiler *compiler, bool mergedregs);
-int ir3_ra(struct ir3_shader_variant *v, struct ir3_instruction **precolor, unsigned nprecolor);
+int ir3_ra(struct ir3_shader_variant *v);
 
 /* legalize: */
 bool ir3_legalize(struct ir3 *ir, struct ir3_shader_variant *so, int *max_bary);
@@ -1370,16 +1496,17 @@ static inline struct ir3_register * __ssa_src(struct ir3_instruction *instr,
 	struct ir3_register *reg;
 	if (src->regs[0]->flags & IR3_REG_HALF)
 		flags |= IR3_REG_HALF;
-	reg = ir3_reg_create(instr, 0, IR3_REG_SSA | flags);
-	reg->instr = src;
+	reg = ir3_reg_create(instr, INVALID_REG, IR3_REG_SSA | flags);
+	reg->def = src->regs[0];
 	reg->wrmask = src->regs[0]->wrmask;
 	return reg;
 }
 
 static inline struct ir3_register * __ssa_dst(struct ir3_instruction *instr)
 {
-	struct ir3_register *reg = ir3_reg_create(instr, 0, 0);
-	reg->flags |= IR3_REG_SSA;
+	struct ir3_register *reg = ir3_reg_create(instr, INVALID_REG, 0);
+	reg->flags |= IR3_REG_SSA | IR3_REG_DEST;
+	reg->instr = instr;
 	return reg;
 }
 
@@ -1786,7 +1913,7 @@ static inline void regmask_set(regmask_t *regmask, struct ir3_register *reg)
 	bool half = reg->flags & IR3_REG_HALF;
 	if (reg->flags & IR3_REG_RELATIV) {
 		for (unsigned i = 0; i < reg->size; i++)
-			__regmask_set(regmask, half, reg->array.offset + i);
+			__regmask_set(regmask, half, reg->array.base + i);
 	} else {
 		for (unsigned mask = reg->wrmask, n = reg->num; mask; mask >>= 1, n++)
 			if (mask & 1)
@@ -1800,7 +1927,7 @@ static inline bool regmask_get(regmask_t *regmask,
 	bool half = reg->flags & IR3_REG_HALF;
 	if (reg->flags & IR3_REG_RELATIV) {
 		for (unsigned i = 0; i < reg->size; i++)
-			if (__regmask_get(regmask, half, reg->array.offset + i))
+			if (__regmask_get(regmask, half, reg->array.base + i))
 				return true;
 	} else {
 		for (unsigned mask = reg->wrmask, n = reg->num; mask; mask >>= 1, n++)

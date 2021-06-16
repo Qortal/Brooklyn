@@ -242,6 +242,7 @@ NIR_FILES = \
 	nir/nir_lower_array_deref_of_vec.c \
 	nir/nir_lower_atomics_to_ssbo.c \
 	nir/nir_lower_bitmap.c \
+	nir/nir_lower_blend.c \
 	nir/nir_lower_bit_size.c \
 	nir/nir_lower_bool_to_bitsize.c \
 	nir/nir_lower_bool_to_float.c \
@@ -259,6 +260,7 @@ NIR_FILES = \
 	nir/nir_lower_fb_read.c \
 	nir/nir_lower_flatshade.c \
 	nir/nir_lower_flrp.c \
+	nir/nir_lower_fragcolor.c \
 	nir/nir_lower_fragcoord_wtrans.c \
 	nir/nir_lower_frexp.c \
 	nir/nir_lower_global_vars_to_local.c \
@@ -339,6 +341,7 @@ NIR_FILES = \
 	nir/nir_opt_load_store_vectorize.c \
 	nir/nir_opt_memcpy.c \
 	nir/nir_opt_move.c \
+	nir/nir_opt_move_discards_to_top.c \
 	nir/nir_opt_offsets.c \
 	nir/nir_opt_peephole_select.c \
 	nir/nir_opt_rematerialize_compares.c \

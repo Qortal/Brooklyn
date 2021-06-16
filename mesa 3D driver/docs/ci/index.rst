@@ -37,7 +37,7 @@ empty (or set to the default ``.gitlab-ci.yml``), and that the
 "Public pipelines" box is checked.
 
 If you're having issues with the GitLab CI, your best bet is to ask
-about it on ``#freedesktop`` on Freenode and tag `Daniel Stone
+about it on ``#freedesktop`` on OFTC and tag `Daniel Stone
 <https://gitlab.freedesktop.org/daniels>`__ (``daniels`` on IRC) or
 `Eric Anholt <https://gitlab.freedesktop.org/anholt>`__ (``anholt`` on
 IRC).
@@ -79,10 +79,8 @@ and a few other tools.
 A typical run takes between 30 minutes and an hour.
 
 If you're having issues with the Intel CI, your best bet is to ask about
-it on ``#dri-devel`` on Freenode and tag `Clayton Craft
-<https://gitlab.freedesktop.org/craftyguy>`__ (``craftyguy`` on IRC) or
-`Nico Cortes <https://gitlab.freedesktop.org/ngcortes>`__ (``ngcortes``
-on IRC).
+it on ``#dri-devel`` on OFTC and tag `Nico Cortes
+<https://gitlab.freedesktop.org/ngcortes>`__ (``ngcortes`` on IRC).
 
 .. _CI-farm-expectations:
 

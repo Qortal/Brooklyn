@@ -29,6 +29,7 @@
 
 #include "compiler/nir/nir.h"
 #include "compiler/shader_info.h"
+#include "util/u_live_shader_cache.h"
 
 #include <vulkan/vulkan.h>
 #include "zink_descriptors.h"
@@ -66,6 +67,7 @@ struct nir_shader *
 zink_tgsi_to_nir(struct pipe_screen *screen, const struct tgsi_token *tokens);
 
 struct zink_shader {
+   struct util_live_shader base;
    unsigned shader_id;
    struct nir_shader *nir;
 
@@ -78,6 +80,7 @@ struct zink_shader {
       unsigned char size;
    } bindings[ZINK_DESCRIPTOR_TYPES][32];
    size_t num_bindings[ZINK_DESCRIPTOR_TYPES];
+   unsigned num_texel_buffers;
    uint32_t ubos_used; // bitfield of which ubo indices are used
    uint32_t ssbos_used; // bitfield of which ssbo indices are used
    struct set *programs;

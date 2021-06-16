@@ -71,7 +71,7 @@ panfrost_emit_vertex_data(struct panfrost_batch *batch,
                           mali_ptr *buffers);
 
 mali_ptr
-panfrost_get_index_buffer_bounded(struct panfrost_context *ctx,
+panfrost_get_index_buffer_bounded(struct panfrost_batch *batch,
                                   const struct pipe_draw_info *info,
                                   const struct pipe_draw_start_count_bias *draw,
                                   unsigned *min_index, unsigned *max_index);
@@ -106,22 +106,6 @@ panfrost_emit_fbd(struct panfrost_batch *batch,
 void
 panfrost_emit_tile_map(struct panfrost_batch *batch,
                        struct pan_fb_info *fb);
-
-static inline unsigned
-panfrost_translate_compare_func(enum pipe_compare_func in)
-{
-        switch (in) {
-        case PIPE_FUNC_NEVER: return MALI_FUNC_NEVER;
-        case PIPE_FUNC_LESS: return MALI_FUNC_LESS;
-        case PIPE_FUNC_EQUAL: return MALI_FUNC_EQUAL;
-        case PIPE_FUNC_LEQUAL: return MALI_FUNC_LEQUAL;
-        case PIPE_FUNC_GREATER: return MALI_FUNC_GREATER;
-        case PIPE_FUNC_NOTEQUAL: return MALI_FUNC_NOT_EQUAL;
-        case PIPE_FUNC_GEQUAL: return MALI_FUNC_GEQUAL;
-        case PIPE_FUNC_ALWAYS: return MALI_FUNC_ALWAYS;
-        default: unreachable("Invalid func");
-        }
-}
 
 static inline enum mali_sample_pattern
 panfrost_sample_pattern(unsigned samples)

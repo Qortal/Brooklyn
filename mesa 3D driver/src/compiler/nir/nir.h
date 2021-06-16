@@ -1338,6 +1338,11 @@ typedef enum {
    NIR_OP_IS_ASSOCIATIVE = (1 << 1),
 } nir_op_algebraic_property;
 
+/* vec16 is the widest ALU op in NIR, making the max number of input of ALU
+ * instructions to be the same as NIR_MAX_VEC_COMPONENTS.
+ */
+#define NIR_ALU_MAX_INPUTS NIR_MAX_VEC_COMPONENTS
+
 typedef struct {
    const char *name;
 
@@ -1372,14 +1377,14 @@ typedef struct {
    /**
     * The number of components in each input
     */
-   uint8_t input_sizes[NIR_MAX_VEC_COMPONENTS];
+   uint8_t input_sizes[NIR_ALU_MAX_INPUTS];
 
    /**
     * The type of vector that each input takes. Note that negate and
     * absolute value are only allowed on inputs with int or float type and
     * behave differently on the two.
     */
-   nir_alu_type input_types[NIR_MAX_VEC_COMPONENTS];
+   nir_alu_type input_types[NIR_ALU_MAX_INPUTS];
 
    nir_op_algebraic_property algebraic_properties;
 
@@ -1973,6 +1978,8 @@ nir_intrinsic_can_reorder(nir_intrinsic_instr *instr)
              (info->flags & NIR_INTRINSIC_CAN_REORDER);
    }
 }
+
+bool nir_intrinsic_writes_external_memory(const nir_intrinsic_instr *instr);
 
 /**
  * \group texture information
@@ -3129,6 +3136,12 @@ typedef enum {
    nir_divergence_multiple_workgroup_per_compute_subgroup = (1 << 5),
 } nir_divergence_options;
 
+/** An instruction filtering callback
+ *
+ * Returns true if the instruction should be processed and false otherwise.
+ */
+typedef bool (*nir_instr_filter_cb)(const nir_instr *, const void *);
+
 typedef struct nir_shader_compiler_options {
    bool lower_fdiv;
    bool lower_ffma16;
@@ -3246,6 +3259,8 @@ typedef struct nir_shader_compiler_options {
 
    bool lower_extract_byte;
    bool lower_extract_word;
+   bool lower_insert_byte;
+   bool lower_insert_word;
 
    bool lower_all_io_to_temps;
    bool lower_all_io_to_elements;
@@ -3284,7 +3299,7 @@ typedef struct nir_shader_compiler_options {
    bool lower_cs_local_index_from_id;
    bool lower_cs_local_id_from_index;
 
-   /* Prevents lowering global_invocation_id to be in terms of work_group_id */
+   /* Prevents lowering global_invocation_id to be in terms of workgroup_id */
    bool has_cs_global_id;
 
    bool lower_device_index_to_zero;
@@ -3342,6 +3357,7 @@ typedef struct nir_shader_compiler_options {
     */
    bool vectorize_io;
    bool lower_to_scalar;
+   nir_instr_filter_cb lower_to_scalar_filter;
 
    /**
     * Whether nir_opt_vectorize should only create 16-bit 2D vectors.
@@ -3437,6 +3453,11 @@ typedef struct nir_shader_compiler_options {
    unsigned max_unroll_iterations_aggressive;
 
    bool lower_uniforms_to_ubo;
+
+   /* If the precision is ignored, backends that don't handle
+    * different precisions when passing data between stages and use
+    * vectorized IO can pack more varyings when linking. */
+   bool linker_ignore_precision;
 
    nir_lower_int64_options lower_int64_options;
    nir_lower_doubles_options lower_doubles_options;
@@ -3814,6 +3835,8 @@ nir_after_cf_list(struct exec_list *cf_list)
  */
 void nir_instr_insert(nir_cursor cursor, nir_instr *instr);
 
+bool nir_instr_move(nir_cursor cursor, nir_instr *instr);
+
 static inline void
 nir_instr_insert_before(nir_instr *instr, nir_instr *before)
 {
@@ -4183,12 +4206,6 @@ static inline bool should_print_nir(nir_shader *shader) { return false; }
 )
 
 #define NIR_SKIP(name) should_skip_nir(#name)
-
-/** An instruction filtering callback
- *
- * Returns true if the instruction should be processed and false otherwise.
- */
-typedef bool (*nir_instr_filter_cb)(const nir_instr *, const void *);
 
 /** An instruction filtering callback with writemask
  *
@@ -4574,7 +4591,7 @@ nir_src *nir_get_io_offset_src(nir_intrinsic_instr *instr);
 nir_src *nir_get_io_vertex_index_src(nir_intrinsic_instr *instr);
 nir_src *nir_get_shader_call_payload_src(nir_intrinsic_instr *call);
 
-bool nir_is_per_vertex_io(const nir_variable *var, gl_shader_stage stage);
+bool nir_is_arrayed_io(const nir_variable *var, gl_shader_stage stage);
 
 bool nir_lower_regs_to_ssa_impl(nir_function_impl *impl);
 bool nir_lower_regs_to_ssa(nir_shader *shader);
@@ -4620,7 +4637,7 @@ bool nir_lower_alu_conversion_to_intrinsic(nir_shader *shader);
 bool nir_lower_int_to_float(nir_shader *shader);
 bool nir_lower_load_const_to_scalar(nir_shader *shader);
 bool nir_lower_read_invocation_to_scalar(nir_shader *shader);
-bool nir_lower_phis_to_scalar(nir_shader *shader);
+bool nir_lower_phis_to_scalar(nir_shader *shader, bool lower_all);
 void nir_lower_io_arrays_to_elements(nir_shader *producer, nir_shader *consumer);
 void nir_lower_io_arrays_to_elements_no_indirects(nir_shader *shader,
                                                   bool outputs_only);
@@ -4659,7 +4676,7 @@ bool nir_lower_system_values(nir_shader *shader);
 
 typedef struct nir_lower_compute_system_values_options {
    bool has_base_global_invocation_id:1;
-   bool has_base_work_group_id:1;
+   bool has_base_workgroup_id:1;
    bool shuffle_local_ids_for_quad_derivatives:1;
    bool lower_local_invocation_index:1;
 } nir_lower_compute_system_values_options;
@@ -4711,6 +4728,8 @@ typedef struct nir_lower_tex_options {
    unsigned lower_ayuv_external;
    unsigned lower_xyuv_external;
    unsigned lower_yuv_external;
+   unsigned lower_yu_yv_external;
+   unsigned lower_y41x_external;
    unsigned bt709_external;
    unsigned bt2020_external;
 
@@ -5189,6 +5208,7 @@ bool nir_opt_vectorize(nir_shader *shader, nir_opt_vectorize_cb filter,
                        void *data);
 
 bool nir_opt_conditional_discard(nir_shader *shader);
+bool nir_opt_move_discards_to_top(nir_shader *shader);
 
 typedef bool (*nir_should_vectorize_mem_func)(unsigned align_mul,
                                               unsigned align_offset,
@@ -5238,9 +5258,9 @@ nir_variable_is_in_block(const nir_variable *var)
 typedef struct nir_unsigned_upper_bound_config {
    unsigned min_subgroup_size;
    unsigned max_subgroup_size;
-   unsigned max_work_group_invocations;
-   unsigned max_work_group_count[3];
-   unsigned max_work_group_size[3];
+   unsigned max_workgroup_invocations;
+   unsigned max_workgroup_count[3];
+   unsigned max_workgroup_size[3];
 
    uint32_t vertex_attrib_max[32];
 } nir_unsigned_upper_bound_config;

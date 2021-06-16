@@ -694,7 +694,7 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetPhysicalDeviceProperties(VkPhysicalDevice phys
       .sparseAddressSpaceSize                   = 0,
       .maxBoundDescriptorSets                   = MAX_SETS,
       .maxPerStageDescriptorSamplers            = min_shader_param(pdevice->pscreen, PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS),
-      .maxPerStageDescriptorUniformBuffers      = min_shader_param(pdevice->pscreen, PIPE_SHADER_CAP_MAX_CONST_BUFFERS),
+      .maxPerStageDescriptorUniformBuffers      = min_shader_param(pdevice->pscreen, PIPE_SHADER_CAP_MAX_CONST_BUFFERS) - 1,
       .maxPerStageDescriptorStorageBuffers      = min_shader_param(pdevice->pscreen, PIPE_SHADER_CAP_MAX_SHADER_BUFFERS),
       .maxPerStageDescriptorSampledImages       = min_shader_param(pdevice->pscreen, PIPE_SHADER_CAP_MAX_SAMPLER_VIEWS),
       .maxPerStageDescriptorStorageImages       = min_shader_param(pdevice->pscreen, PIPE_SHADER_CAP_MAX_SHADER_IMAGES),
@@ -1108,9 +1108,18 @@ static int queue_thread(void *data)
       mtx_unlock(&queue->m);
       //execute
       for (unsigned i = 0; i < task->cmd_buffer_count; i++) {
-         lvp_execute_cmds(queue->device, queue, task->fence, task->cmd_buffers[i]);
+         lvp_execute_cmds(queue->device, queue, task->cmd_buffers[i]);
       }
-      if (!task->cmd_buffer_count && task->fence)
+
+      if (task->cmd_buffer_count) {
+         struct pipe_fence_handle *handle = NULL;
+         queue->ctx->flush(queue->ctx, task->fence ? &handle : NULL, 0);
+         if (task->fence) {
+            mtx_lock(&queue->device->fence_lock);
+            task->fence->handle = handle;
+            mtx_unlock(&queue->device->fence_lock);
+         }
+      } else if (task->fence)
          task->fence->signaled = true;
       p_atomic_dec(&queue->count);
       mtx_lock(&queue->m);
@@ -1128,6 +1137,7 @@ lvp_queue_init(struct lvp_device *device, struct lvp_queue *queue)
 
    queue->flags = 0;
    queue->ctx = device->pscreen->context_create(device->pscreen, NULL, PIPE_CONTEXT_ROBUST_BUFFER_ACCESS);
+   queue->cso = cso_create_context(queue->ctx, CSO_NO_VBUF);
    list_inithead(&queue->workqueue);
    p_atomic_set(&queue->count, 0);
    mtx_init(&queue->m, mtx_plain);
@@ -1149,6 +1159,7 @@ lvp_queue_finish(struct lvp_queue *queue)
 
    cnd_destroy(&queue->new_work);
    mtx_destroy(&queue->m);
+   cso_destroy_context(queue->cso);
    queue->ctx->destroy(queue->ctx);
 }
 
@@ -1629,12 +1640,18 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_BindImageMemory2(VkDevice _device,
       }
 
       if (!did_bind) {
+         if (!device->pscreen->resource_bind_backing(device->pscreen,
+                                                     image->bo,
+                                                     mem->pmem,
+                                                     bind_info->memoryOffset)) {
+            /* This is probably caused by the texture being too large, so let's
+             * report this as the *closest* allowed error-code. It's not ideal,
+             * but it's unlikely that anyone will care too much.
+             */
+            return vk_error(device->instance, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+         }
          image->pmem = mem->pmem;
          image->memory_offset = bind_info->memoryOffset;
-         device->pscreen->resource_bind_backing(device->pscreen,
-                                                image->bo,
-                                                mem->pmem,
-                                                bind_info->memoryOffset);
       }
    }
    return VK_SUCCESS;
@@ -1886,6 +1903,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateEvent(
 
    vk_object_base_init(&device->vk, &event->base, VK_OBJECT_TYPE_EVENT);
    *pEvent = lvp_event_to_handle(event);
+   event->event_storage = 0;
 
    return VK_SUCCESS;
 }

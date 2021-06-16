@@ -64,7 +64,8 @@ extern "C" {
 /* Tunables for compute-based clear_buffer and copy_buffer: */
 #define SI_COMPUTE_CLEAR_DW_PER_THREAD 4
 #define SI_COMPUTE_COPY_DW_PER_THREAD  4
-#define SI_COMPUTE_DST_CACHE_POLICY    L2_STREAM
+/* L2 LRU is recommended because the compute shader can finish sooner due to fewer L2 evictions. */
+#define SI_COMPUTE_DST_CACHE_POLICY    L2_LRU
 
 /* Pipeline & streamout query controls. */
 #define SI_CONTEXT_START_PIPELINE_STATS  (1 << 0)
@@ -137,6 +138,7 @@ extern "C" {
    (((x) >> SI_RESOURCE_FLAG_MICRO_TILE_MODE_SHIFT) & 0x3)
 #define SI_RESOURCE_FLAG_UNCACHED          (PIPE_RESOURCE_FLAG_DRV_PRIV << 12)
 #define SI_RESOURCE_FLAG_DRIVER_INTERNAL   (PIPE_RESOURCE_FLAG_DRV_PRIV << 13)
+#define SI_RESOURCE_AUX_PLANE              (PIPE_RESOURCE_FLAG_DRV_PRIV << 14)
 
 enum si_has_gs {
    GS_OFF,
@@ -168,7 +170,6 @@ enum si_clear_code
    DCC_UNCOMPRESSED = 0xFFFFFFFF,
 };
 
-#define SI_IMAGE_ACCESS_AS_BUFFER (1 << 7)
 #define SI_IMAGE_ACCESS_DCC_OFF   (1 << 8)
 #define SI_IMAGE_ACCESS_DCC_WRITE (1 << 9)
 
@@ -228,9 +229,7 @@ enum
    DBG_SWITCH_ON_EOP,
    DBG_NO_OUT_OF_ORDER,
    DBG_NO_DPBB,
-   DBG_NO_DFSM,
    DBG_DPBB,
-   DBG_DFSM,
    DBG_NO_HYPERZ,
    DBG_NO_2D_TILING,
    DBG_NO_TILING,
@@ -298,9 +297,9 @@ struct si_resource {
 
    /* Resource properties. */
    uint64_t bo_size;
-   unsigned bo_alignment;
-   enum radeon_bo_domain domains;
-   enum radeon_bo_flag flags;
+   uint8_t bo_alignment_log2;
+   enum radeon_bo_domain domains:8;
+   enum radeon_bo_flag flags:16;
    unsigned bind_history;
    int max_forced_staging_uploads;
 
@@ -331,7 +330,7 @@ struct si_resource {
    bool image_handle_allocated;
 
    /* Whether the resource has been exported via resource_get_handle. */
-   unsigned external_usage; /* PIPE_HANDLE_USAGE_* */
+   uint8_t external_usage; /* PIPE_HANDLE_USAGE_* */
 };
 
 struct si_transfer {
@@ -367,7 +366,8 @@ struct si_texture {
    /* Depth buffer compression and fast clear. */
    float depth_clear_value[RADEON_SURF_MAX_LEVELS];
    uint8_t stencil_clear_value[RADEON_SURF_MAX_LEVELS];
-   uint16_t depth_cleared_level_mask;   /* if it was cleared at least once */
+   uint16_t depth_cleared_level_mask_once; /* if it was cleared at least once */
+   uint16_t depth_cleared_level_mask;     /* track if it was cleared (not 100% accurate) */
    uint16_t stencil_cleared_level_mask; /* if it was cleared at least once */
    uint16_t dirty_level_mask;         /* each bit says if that mipmap is compressed */
    uint16_t stencil_dirty_level_mask; /* each bit says if that mipmap is compressed */
@@ -392,6 +392,24 @@ struct si_texture {
     * framebuffer.
     */
    unsigned framebuffers_bound;
+};
+
+/* State trackers create separate textures in a next-chain for extra planes
+ * even if those are planes created purely for modifiers. Because the linking
+ * of the chain happens outside of the driver, and NULL is interpreted as
+ * failure, let's create some dummy texture structs. We could use these
+ * later to use the offsets for linking if we really wanted to.
+ *
+ * For now just create a dummy struct and completely ignore it.
+ *
+ * Potentially in the future we could store stride/offset and use it during
+ * creation, though we might want to change how linking is done first.
+ */
+struct si_auxiliary_texture {
+   struct threaded_resource b;
+   struct pb_buffer *buffer;
+   uint32_t offset;
+   uint32_t stride;
 };
 
 struct si_surface {
@@ -528,8 +546,6 @@ struct si_screen {
    bool assume_no_z_fights;
    bool commutative_blend_add;
    bool dpbb_allowed;
-   bool dfsm_allowed;
-   bool llvm_has_working_vgpr_indexing;
    bool use_ngg;
    bool use_ngg_culling;
    bool use_ngg_streamout;
@@ -647,6 +663,9 @@ struct si_screen {
    unsigned compute_wave_size;
    unsigned ps_wave_size;
    unsigned ge_wave_size;
+   unsigned ngg_subgroup_size;
+
+   struct util_idalloc_mt buffer_ids;
 };
 
 struct si_sampler_view {
@@ -1267,6 +1286,8 @@ struct si_context {
    struct hash_table *dirty_implicit_resources;
 
    pipe_draw_vbo_func draw_vbo[NUM_GFX_VERSIONS - GFX6][2][2][2][2];
+   /* When b.draw_vbo is a wrapper, real_draw_vbo is the real draw_vbo function */
+   pipe_draw_vbo_func real_draw_vbo;
 
    /* SQTT */
    struct ac_thread_trace_data *thread_trace;
@@ -1304,6 +1325,9 @@ void si_resource_copy_region(struct pipe_context *ctx, struct pipe_resource *dst
 void si_decompress_dcc(struct si_context *sctx, struct si_texture *tex);
 void si_flush_implicit_resources(struct si_context *sctx);
 
+/* si_nir_optim.c */
+bool si_nir_is_output_const_if_tex_is_const(nir_shader *shader, float *in, float *out, int *texunit);
+
 /* si_buffer.c */
 bool si_cs_is_buffer_referenced(struct si_context *sctx, struct pb_buffer *buf,
                                 enum radeon_bo_usage usage);
@@ -1317,9 +1341,15 @@ struct pipe_resource *pipe_aligned_buffer_create(struct pipe_screen *screen, uns
 struct si_resource *si_aligned_buffer_create(struct pipe_screen *screen, unsigned flags,
                                              unsigned usage, unsigned size, unsigned alignment);
 void si_replace_buffer_storage(struct pipe_context *ctx, struct pipe_resource *dst,
-                               struct pipe_resource *src);
+                               struct pipe_resource *src, unsigned num_rebinds,
+                               uint32_t rebind_mask, uint32_t delete_buffer_id);
 void si_init_screen_buffer_functions(struct si_screen *sscreen);
 void si_init_buffer_functions(struct si_context *sctx);
+
+/* Replace the sctx->b.draw_vbo function with a wrapper. This can be use to implement
+ * optimizations without affecting the normal draw_vbo functions perf.
+ */
+void si_install_draw_wrapper(struct si_context *sctx, pipe_draw_vbo_func wrapper);
 
 /* si_clear.c */
 #define SI_CLEAR_TYPE_CMASK  (1 << 0)
@@ -1990,12 +2020,16 @@ static inline unsigned si_get_shader_wave_size(struct si_shader *shader)
 
 static inline void si_select_draw_vbo(struct si_context *sctx)
 {
-   sctx->b.draw_vbo = sctx->draw_vbo[sctx->chip_class - GFX6]
-                                    [!!sctx->shader.tes.cso]
-                                    [!!sctx->shader.gs.cso]
-                                    [sctx->ngg]
-                                    [si_compute_prim_discard_enabled(sctx)];
-   assert(sctx->b.draw_vbo);
+   pipe_draw_vbo_func draw_vbo = sctx->draw_vbo[sctx->chip_class - GFX6]
+                                               [!!sctx->shader.tes.cso]
+                                               [!!sctx->shader.gs.cso]
+                                               [sctx->ngg]
+                                               [si_compute_prim_discard_enabled(sctx)];
+   assert(draw_vbo);
+   if (unlikely(sctx->real_draw_vbo))
+      sctx->real_draw_vbo = draw_vbo;
+   else
+      sctx->b.draw_vbo = draw_vbo;
 }
 
 /* Return the number of samples that the rasterizer uses. */

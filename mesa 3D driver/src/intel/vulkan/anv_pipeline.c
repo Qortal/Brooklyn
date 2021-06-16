@@ -196,6 +196,11 @@ anv_shader_compile_to_nir(struct anv_device *device,
       spirv_to_nir(spirv, module->size / 4,
                    spec_entries, num_spec_entries,
                    stage, entrypoint_name, &spirv_options, nir_options);
+   if (!nir) {
+      free(spec_entries);
+      return NULL;
+   }
+
    assert(nir->info.stage == stage);
    nir_validate_shader(nir, "after spirv_to_nir");
    nir_validate_ssa_dominance(nir, "after spirv_to_nir");
@@ -730,6 +735,18 @@ anv_pipeline_stage_get_nir(struct anv_pipeline *pipeline,
 }
 
 static void
+shared_type_info(const struct glsl_type *type, unsigned *size, unsigned *align)
+{
+   assert(glsl_type_is_vector_or_scalar(type));
+
+   uint32_t comp_size = glsl_type_is_boolean(type)
+      ? 4 : glsl_get_bit_size(type) / 8;
+   unsigned length = glsl_get_vector_elements(type);
+   *size = comp_size * length,
+   *align = comp_size * (length == 3 ? 4 : length);
+}
+
+static void
 anv_pipeline_lower_nir(struct anv_pipeline *pipeline,
                        void *mem_ctx,
                        struct anv_pipeline_stage *stage,
@@ -807,6 +824,31 @@ anv_pipeline_lower_nir(struct anv_pipeline *pipeline,
 
    anv_nir_compute_push_layout(pdevice, pipeline->device->robust_buffer_access,
                                nir, prog_data, &stage->bind_map, mem_ctx);
+
+   if (gl_shader_stage_uses_workgroup(nir->info.stage)) {
+      if (!nir->info.shared_memory_explicit_layout) {
+         NIR_PASS_V(nir, nir_lower_vars_to_explicit_types,
+                    nir_var_mem_shared, shared_type_info);
+      }
+
+      NIR_PASS_V(nir, nir_lower_explicit_io,
+                 nir_var_mem_shared, nir_address_format_32bit_offset);
+
+      if (nir->info.zero_initialize_shared_memory &&
+          nir->info.shared_size > 0) {
+         /* The effective Shared Local Memory size is at least 1024 bytes and
+          * is always rounded to a power of two, so it is OK to align the size
+          * used by the shader to chunk_size -- which does simplify the logic.
+          */
+         const unsigned chunk_size = 16;
+         const unsigned shared_size = ALIGN(nir->info.shared_size, chunk_size);
+         assert(shared_size <=
+                intel_calculate_slm_size(compiler->devinfo->ver, nir->info.shared_size));
+
+         NIR_PASS_V(nir, nir_zero_initialize_shared_memory,
+                    shared_size, chunk_size);
+      }
+   }
 
    stage->nir = nir;
 }
@@ -993,7 +1035,7 @@ anv_pipeline_compile_gs(const struct brw_compiler *compiler,
    gs_stage->code = brw_compile_gs(compiler, device, mem_ctx,
                                    &gs_stage->key.gs,
                                    &gs_stage->prog_data.gs,
-                                   gs_stage->nir, NULL, -1,
+                                   gs_stage->nir, -1,
                                    gs_stage->stats, NULL);
 }
 
@@ -1294,6 +1336,16 @@ anv_pipeline_compile_graphics(struct anv_graphics_pipeline *pipeline,
 
    pipeline->active_stages = 0;
 
+   /* Information on which states are considered dynamic. */
+   const VkPipelineDynamicStateCreateInfo *dyn_info =
+      info->pDynamicState;
+   uint32_t dynamic_states = 0;
+   if (dyn_info) {
+      for (unsigned i = 0; i < dyn_info->dynamicStateCount; i++)
+         dynamic_states |=
+            anv_cmd_dirty_bit_for_vk_dynamic_state(dyn_info->pDynamicStates[i]);
+   }
+
    VkResult result;
    for (uint32_t i = 0; i < info->stageCount; i++) {
       const VkPipelineShaderStageCreateInfo *sinfo = &info->pStages[i];
@@ -1338,7 +1390,8 @@ anv_pipeline_compile_graphics(struct anv_graphics_pipeline *pipeline,
          break;
       case MESA_SHADER_FRAGMENT: {
          const bool raster_enabled =
-            !info->pRasterizationState->rasterizerDiscardEnable;
+            !info->pRasterizationState->rasterizerDiscardEnable ||
+            dynamic_states & ANV_CMD_DIRTY_DYNAMIC_RASTERIZER_DISCARD_ENABLE;
          populate_wm_prog_key(pipeline, sinfo->flags,
                               pipeline->base.device->robust_buffer_access,
                               pipeline->subpass,
@@ -1471,7 +1524,7 @@ anv_pipeline_compile_graphics(struct anv_graphics_pipeline *pipeline,
                                                  pipeline_ctx,
                                                  &stages[s]);
       if (stages[s].nir == NULL) {
-         result = vk_error(VK_ERROR_OUT_OF_HOST_MEMORY);
+         result = vk_error(VK_ERROR_UNKNOWN);
          goto fail;
       }
 
@@ -1685,18 +1738,6 @@ fail:
    return result;
 }
 
-static void
-shared_type_info(const struct glsl_type *type, unsigned *size, unsigned *align)
-{
-   assert(glsl_type_is_vector_or_scalar(type));
-
-   uint32_t comp_size = glsl_type_is_boolean(type)
-      ? 4 : glsl_get_bit_size(type) / 8;
-   unsigned length = glsl_get_vector_elements(type);
-   *size = comp_size * length,
-   *align = comp_size * (length == 3 ? 4 : length);
-}
-
 VkResult
 anv_pipeline_compile_cs(struct anv_compute_pipeline *pipeline,
                         struct anv_pipeline_cache *cache,
@@ -1777,35 +1818,12 @@ anv_pipeline_compile_cs(struct anv_compute_pipeline *pipeline,
       stage.nir = anv_pipeline_stage_get_nir(&pipeline->base, cache, mem_ctx, &stage);
       if (stage.nir == NULL) {
          ralloc_free(mem_ctx);
-         return vk_error(VK_ERROR_OUT_OF_HOST_MEMORY);
+         return vk_error(VK_ERROR_UNKNOWN);
       }
 
       NIR_PASS_V(stage.nir, anv_nir_add_base_work_group_id);
 
       anv_pipeline_lower_nir(&pipeline->base, mem_ctx, &stage, layout);
-
-      if (!stage.nir->info.shared_memory_explicit_layout) {
-         NIR_PASS_V(stage.nir, nir_lower_vars_to_explicit_types,
-                    nir_var_mem_shared, shared_type_info);
-      }
-
-      NIR_PASS_V(stage.nir, nir_lower_explicit_io,
-                 nir_var_mem_shared, nir_address_format_32bit_offset);
-
-      if (stage.nir->info.cs.zero_initialize_shared_memory &&
-          stage.nir->info.shared_size > 0) {
-         /* The effective Shared Local Memory size is at least 1024 bytes and
-          * is always rounded to a power of two, so it is OK to align the size
-          * used by the shader to chunk_size -- which does simplify the logic.
-          */
-         const unsigned chunk_size = 16;
-         const unsigned shared_size = ALIGN(stage.nir->info.shared_size, chunk_size);
-         assert(shared_size <=
-                intel_calculate_slm_size(compiler->devinfo->ver, stage.nir->info.shared_size));
-
-         NIR_PASS_V(stage.nir, nir_zero_initialize_shared_memory,
-                    shared_size, chunk_size);
-      }
 
       NIR_PASS_V(stage.nir, brw_nir_lower_cs_intrinsics);
 
@@ -1902,12 +1920,16 @@ copy_non_dynamic_state(struct anv_graphics_pipeline *pipeline,
 
    struct anv_dynamic_state *dynamic = &pipeline->dynamic_state;
 
+   bool raster_discard =
+      pCreateInfo->pRasterizationState->rasterizerDiscardEnable &&
+      !(pipeline->dynamic_states & ANV_CMD_DIRTY_DYNAMIC_RASTERIZER_DISCARD_ENABLE);
+
    /* Section 9.2 of the Vulkan 1.0.15 spec says:
     *
     *    pViewportState is [...] NULL if the pipeline
     *    has rasterization disabled.
     */
-   if (!pCreateInfo->pRasterizationState->rasterizerDiscardEnable) {
+   if (!raster_discard) {
       assert(pCreateInfo->pViewportState);
 
       dynamic->viewport.count = pCreateInfo->pViewportState->viewportCount;
@@ -1970,6 +1992,24 @@ copy_non_dynamic_state(struct anv_graphics_pipeline *pipeline,
        }
    }
 
+   if (states & ANV_CMD_DIRTY_DYNAMIC_RASTERIZER_DISCARD_ENABLE) {
+      assert(pCreateInfo->pRasterizationState);
+      dynamic->raster_discard =
+         pCreateInfo->pRasterizationState->rasterizerDiscardEnable;
+   }
+
+   if (states & ANV_CMD_DIRTY_DYNAMIC_DEPTH_BIAS_ENABLE) {
+      assert(pCreateInfo->pRasterizationState);
+      dynamic->depth_bias_enable =
+         pCreateInfo->pRasterizationState->depthBiasEnable;
+   }
+
+   if (states & ANV_CMD_DIRTY_DYNAMIC_PRIMITIVE_RESTART_ENABLE) {
+      assert(pCreateInfo->pInputAssemblyState);
+      dynamic->primitive_restart_enable =
+         pCreateInfo->pInputAssemblyState->primitiveRestartEnable;
+   }
+
    /* Section 9.2 of the Vulkan 1.0.15 spec says:
     *
     *    pColorBlendState is [...] NULL if the pipeline has rasterization
@@ -1984,8 +2024,7 @@ copy_non_dynamic_state(struct anv_graphics_pipeline *pipeline,
       }
    }
 
-   if (uses_color_att &&
-       !pCreateInfo->pRasterizationState->rasterizerDiscardEnable) {
+   if (uses_color_att && !raster_discard) {
       assert(pCreateInfo->pColorBlendState);
 
       if (states & ANV_CMD_DIRTY_DYNAMIC_BLEND_CONSTANTS)
@@ -2005,8 +2044,7 @@ copy_non_dynamic_state(struct anv_graphics_pipeline *pipeline,
     *    disabled or if the subpass of the render pass the pipeline is created
     *    against does not use a depth/stencil attachment.
     */
-   if (!pCreateInfo->pRasterizationState->rasterizerDiscardEnable &&
-       subpass->depth_stencil_attachment) {
+   if (!raster_discard && subpass->depth_stencil_attachment) {
       assert(pCreateInfo->pDepthStencilState);
 
       if (states & ANV_CMD_DIRTY_DYNAMIC_DEPTH_BOUNDS) {
@@ -2145,7 +2183,9 @@ copy_non_dynamic_state(struct anv_graphics_pipeline *pipeline,
    pipeline->static_state_mask = states &
       (ANV_CMD_DIRTY_DYNAMIC_SAMPLE_LOCATIONS |
        ANV_CMD_DIRTY_DYNAMIC_COLOR_BLEND_STATE |
-       ANV_CMD_DIRTY_DYNAMIC_SHADING_RATE);
+       ANV_CMD_DIRTY_DYNAMIC_SHADING_RATE |
+       ANV_CMD_DIRTY_DYNAMIC_RASTERIZER_DISCARD_ENABLE |
+       ANV_CMD_DIRTY_DYNAMIC_LOGIC_OP);
 }
 
 static void
@@ -2356,7 +2396,6 @@ anv_graphics_pipeline_init(struct anv_graphics_pipeline *pipeline,
       pCreateInfo->pInputAssemblyState;
    const VkPipelineTessellationStateCreateInfo *tess_info =
       pCreateInfo->pTessellationState;
-   pipeline->primitive_restart = ia_info->primitiveRestartEnable;
 
    if (anv_pipeline_has_stage(pipeline, MESA_SHADER_TESS_EVAL))
       pipeline->topology = _3DPRIM_PATCHLIST(tess_info->patchControlPoints);
@@ -2516,12 +2555,12 @@ VkResult anv_GetPipelineExecutableStatisticsKHR(
       stat->value.u64 = prog_data->total_scratch;
    }
 
-   if (exe->stage == MESA_SHADER_COMPUTE) {
+   if (gl_shader_stage_uses_workgroup(exe->stage)) {
       vk_outarray_append(&out, stat) {
          WRITE_STR(stat->name, "Workgroup Memory Size");
          WRITE_STR(stat->description,
                    "Number of bytes of workgroup shared memory used by this "
-                   "compute shader including any padding.");
+                   "shader including any padding.");
          stat->format = VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR;
          stat->value.u64 = prog_data->total_shared;
       }

@@ -245,13 +245,12 @@ v3dv_layer_offset(const struct v3dv_image *image, uint32_t level, uint32_t layer
       return image->mem_offset + slice->offset + layer * image->cube_map_stride;
 }
 
-VkResult
-v3dv_CreateImage(VkDevice _device,
-                 const VkImageCreateInfo *pCreateInfo,
-                 const VkAllocationCallbacks *pAllocator,
-                 VkImage *pImage)
+static VkResult
+create_image(struct v3dv_device *device,
+             const VkImageCreateInfo *pCreateInfo,
+             const VkAllocationCallbacks *pAllocator,
+             VkImage *pImage)
 {
-   V3DV_FROM_HANDLE(v3dv_device, device, _device);
    struct v3dv_image *image = NULL;
 
    assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO);
@@ -292,9 +291,12 @@ v3dv_CreateImage(VkDevice _device,
    } else {
       const struct wsi_image_create_info *wsi_info =
          vk_find_struct_const(pCreateInfo->pNext, WSI_IMAGE_CREATE_INFO_MESA);
-      if (wsi_info)
+      if (wsi_info && wsi_info->scanout)
          modifier = DRM_FORMAT_MOD_LINEAR;
    }
+
+   const VkExternalMemoryImageCreateInfo *external_info =
+      vk_find_struct_const(pCreateInfo->pNext, EXTERNAL_MEMORY_IMAGE_CREATE_INFO);
 
    /* 1D and 1D_ARRAY textures are always raster-order */
    VkImageTiling tiling;
@@ -332,6 +334,7 @@ v3dv_CreateImage(VkDevice _device,
    image->drm_format_mod = modifier;
    image->tiling = tiling;
    image->tiled = tiling == VK_IMAGE_TILING_OPTIMAL;
+   image->external = external_info != NULL;
 
    image->cpp = vk_format_get_blocksize(image->vk_format);
 
@@ -342,7 +345,71 @@ v3dv_CreateImage(VkDevice _device,
    return VK_SUCCESS;
 }
 
-void
+static VkResult
+create_image_from_swapchain(struct v3dv_device *device,
+                            const VkImageCreateInfo *pCreateInfo,
+                            const VkImageSwapchainCreateInfoKHR *swapchain_info,
+                            const VkAllocationCallbacks *pAllocator,
+                            VkImage *pImage)
+{
+   struct v3dv_image *swapchain_image =
+      v3dv_wsi_get_image_from_swapchain(swapchain_info->swapchain, 0);
+   assert(swapchain_image);
+
+   VkImageCreateInfo local_create_info = *pCreateInfo;
+   local_create_info.pNext = NULL;
+
+   /* Added by wsi code. */
+   local_create_info.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+   /* The spec requires TILING_OPTIMAL as input, but the swapchain image may
+    * privately use a different tiling.  See spec anchor
+    * #swapchain-wsi-image-create-info .
+    */
+   assert(local_create_info.tiling == VK_IMAGE_TILING_OPTIMAL);
+   local_create_info.tiling = swapchain_image->tiling;
+
+   VkImageDrmFormatModifierListCreateInfoEXT local_modifier_info = {
+      .sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT,
+      .drmFormatModifierCount = 1,
+      .pDrmFormatModifiers = &swapchain_image->drm_format_mod,
+   };
+
+   if (swapchain_image->drm_format_mod != DRM_FORMAT_MOD_INVALID)
+      __vk_append_struct(&local_create_info, &local_modifier_info);
+
+   assert(swapchain_image->type == local_create_info.imageType);
+   assert(swapchain_image->vk_format == local_create_info.format);
+   assert(swapchain_image->extent.width == local_create_info.extent.width);
+   assert(swapchain_image->extent.height == local_create_info.extent.height);
+   assert(swapchain_image->extent.depth == local_create_info.extent.depth);
+   assert(swapchain_image->array_size == local_create_info.arrayLayers);
+   assert(swapchain_image->samples == local_create_info.samples);
+   assert(swapchain_image->tiling == local_create_info.tiling);
+   assert((swapchain_image->usage & local_create_info.usage) ==
+          local_create_info.usage);
+
+   return create_image(device, &local_create_info, pAllocator, pImage);
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+v3dv_CreateImage(VkDevice _device,
+                 const VkImageCreateInfo *pCreateInfo,
+                 const VkAllocationCallbacks *pAllocator,
+                 VkImage *pImage)
+{
+   V3DV_FROM_HANDLE(v3dv_device, device, _device);
+
+   const VkImageSwapchainCreateInfoKHR *swapchain_info =
+      vk_find_struct_const(pCreateInfo->pNext, IMAGE_SWAPCHAIN_CREATE_INFO_KHR);
+   if (swapchain_info && swapchain_info->swapchain != VK_NULL_HANDLE)
+      return create_image_from_swapchain(device, pCreateInfo, swapchain_info,
+                                         pAllocator, pImage);
+
+   return create_image(device, pCreateInfo, pAllocator, pImage);
+}
+
+VKAPI_ATTR void VKAPI_CALL
 v3dv_GetImageSubresourceLayout(VkDevice device,
                                VkImage _image,
                                const VkImageSubresource *subresource,
@@ -377,7 +444,7 @@ v3dv_GetImageSubresourceLayout(VkDevice device,
    }
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 v3dv_GetImageDrmFormatModifierPropertiesEXT(
    VkDevice device,
    VkImage _image,
@@ -393,7 +460,7 @@ v3dv_GetImageDrmFormatModifierPropertiesEXT(
    return VK_SUCCESS;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_DestroyImage(VkDevice _device,
                   VkImage _image,
                   const VkAllocationCallbacks* pAllocator)
@@ -508,8 +575,52 @@ pack_texture_shader_state_helper(struct v3dv_device *device,
          tex.image_depth /= 6;
       }
 
-      tex.image_height = image->extent.height * msaa_scale;
-      tex.image_width = image->extent.width * msaa_scale;
+      uint32_t image_block_w = vk_format_get_blockwidth(image->vk_format);
+      uint32_t image_block_h = vk_format_get_blockheight(image->vk_format);
+      uint32_t view_block_w = vk_format_get_blockwidth(image_view->vk_format);
+      uint32_t view_block_h = vk_format_get_blockheight(image_view->vk_format);
+      if (image_block_w != view_block_w || image_block_h != view_block_h) {
+         /* If we are creating an uncompressed view from a compressed format or
+          * viceversa, we need to be careful when programming the image size
+          * so that the miplevel dimensions computed by the hardware match the
+          * miplevel dimensions of the underlying image.
+          *
+          * For example, if we have an etc2_rgb8 image with size 22x22, then its
+          * mip level dimensions are 22x22, 11x11 and 5x5. If we now interpret
+          * these in units of an uncompressed rgba16 format, we get 6x6, 3x3 and
+          * 2x2.
+          *
+          * However, here we are only programming the size of the level 0 and
+          * the hardware will automatically compute mip level dimensions when
+          * translating texture coordinates for the mip level. This is a problem
+          * because if we program here the size of mip 0 in the uncompressed
+          * rgba16 format, we would set 6x6 (22x22 divided by 4 and rounded up).
+          * And because we set an uncompressed view format, the hardware will
+          * compute mip level sizes 6x6, 3x3 and 1x1, so miplevel 2 won't match
+          * the size of miplevel 2 in the original compressed format and the
+          * texture sampling for that miplevel will differ. To fix this, we
+          * need to compute a level 0 size that makes the hardware compute the
+          * appropriate mip level dimensions. We do this by computing the
+          * mip level dimensions in blocks and then computing level 0
+          * dimensions from that.
+          */
+         uint32_t level = image_view->base_level;
+         uint32_t mip_w_in_blocks =
+            DIV_ROUND_UP(u_minify(image->extent.width, level) * view_block_w,
+                         image_block_w);
+         uint32_t mip_h_in_blocks =
+            DIV_ROUND_UP(u_minify(image->extent.height, level) * view_block_h,
+                         image_block_h);
+
+         tex.image_width = mip_w_in_blocks << level;
+         tex.image_height = mip_h_in_blocks << level;
+      } else {
+         tex.image_width = image->extent.width;
+         tex.image_height = image->extent.height;
+      }
+
+      tex.image_height *= msaa_scale;
+      tex.image_width *= msaa_scale;
 
       /* On 4.x, the height of a 1D texture is redefined to be the
        * upper 14 bits of the width (which is only usable with txf).
@@ -570,7 +681,7 @@ vk_component_mapping_to_pipe_swizzle(VkComponentSwizzle comp,
    };
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 v3dv_CreateImageView(VkDevice _device,
                      const VkImageViewCreateInfo *pCreateInfo,
                      const VkAllocationCallbacks *pAllocator,
@@ -619,11 +730,6 @@ v3dv_CreateImageView(VkDevice _device,
 
    iview->base_level = range->baseMipLevel;
    iview->max_level = iview->base_level + v3dv_level_count(image, range) - 1;
-   iview->extent = (VkExtent3D) {
-      .width  = u_minify(image->extent.width , iview->base_level),
-      .height = u_minify(image->extent.height, iview->base_level),
-      .depth  = u_minify(image->extent.depth , iview->base_level),
-   };
 
    iview->first_layer = range->baseArrayLayer;
    iview->last_layer = range->baseArrayLayer +
@@ -670,6 +776,20 @@ v3dv_CreateImageView(VkDevice _device,
    iview->format = v3dv_get_format(format);
    assert(iview->format && iview->format->supported);
 
+   uint32_t level = iview->base_level;
+   uint32_t width = image->extent.width;
+   uint32_t height = image->extent.height;
+   uint32_t depth = image->extent.depth;
+   uint32_t image_block_w = vk_format_get_blockwidth(image->vk_format);
+   uint32_t image_block_h = vk_format_get_blockheight(image->vk_format);
+   uint32_t view_block_w = vk_format_get_blockwidth(iview->vk_format);
+   uint32_t view_block_h = vk_format_get_blockheight(iview->vk_format);
+   iview->extent.width =
+      DIV_ROUND_UP(u_minify(width, level) * view_block_w, image_block_w);
+   iview->extent.height =
+      DIV_ROUND_UP(u_minify(height, level) * view_block_h, image_block_h);
+   iview->extent.depth = u_minify(depth, level);
+
    if (vk_format_is_depth_or_stencil(iview->vk_format)) {
       iview->internal_type = v3dv_get_internal_depth_type(iview->vk_format);
    } else {
@@ -690,7 +810,7 @@ v3dv_CreateImageView(VkDevice _device,
    return VK_SUCCESS;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_DestroyImageView(VkDevice _device,
                       VkImageView imageView,
                       const VkAllocationCallbacks* pAllocator)
@@ -746,7 +866,7 @@ pack_texture_shader_state_from_buffer_view(struct v3dv_device *device,
    }
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 v3dv_CreateBufferView(VkDevice _device,
                       const VkBufferViewCreateInfo *pCreateInfo,
                       const VkAllocationCallbacks *pAllocator,
@@ -792,7 +912,7 @@ v3dv_CreateBufferView(VkDevice _device,
    return VK_SUCCESS;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_DestroyBufferView(VkDevice _device,
                        VkBufferView bufferView,
                        const VkAllocationCallbacks *pAllocator)

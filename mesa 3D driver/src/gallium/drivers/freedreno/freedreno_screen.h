@@ -37,6 +37,7 @@
 #include "util/debug.h"
 #include "util/simple_mtx.h"
 #include "util/slab.h"
+#include "util/u_idalloc.h"
 #include "util/u_memory.h"
 #include "util/u_queue.h"
 
@@ -137,16 +138,12 @@ struct fd_screen {
 
    uint16_t rsc_seqno;
    uint16_t ctx_seqno;
+   struct util_idalloc_mt buffer_ids;
 
    unsigned num_supported_modifiers;
    const uint64_t *supported_modifiers;
 
    struct renderonly *ro;
-
-   /* when BATCH_DEBUG is enabled, tracking for fd_batch's which are not yet
-    * freed:
-    */
-   struct set *live_batches;
 };
 
 static inline struct fd_screen *

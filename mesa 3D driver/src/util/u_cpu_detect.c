@@ -86,6 +86,9 @@
 #endif
 #endif
 
+#if defined(HAS_SCHED_H)
+#include <sched.h>
+#endif
 
 DEBUG_GET_ONCE_BOOL_OPTION(dump_cpu, "GALLIUM_DUMP_CPU", false)
 
@@ -468,13 +471,18 @@ get_cpu_topology(void)
        *
        * Querying the APIC ID can only be done by pinning the current thread
        * to each core. The original affinity mask is saved.
+       *
+       * Loop over all possible CPUs even though some may be offline.
        */
-      for (unsigned i = 0; i < util_cpu_caps.nr_cpus && i < UTIL_MAX_CPUS;
+      for (unsigned i = 0; i < util_cpu_caps.max_cpus && i < UTIL_MAX_CPUS;
            i++) {
          uint32_t cpu_bit = 1u << (i % 32);
 
          mask[i / 32] = cpu_bit;
 
+         /* The assumption is that trying to bind the thread to a CPU that is
+          * offline will fail.
+          */
          if (util_set_current_thread_affinity(mask,
                                               !saved ? saved_mask : NULL,
                                               util_cpu_caps.num_cpu_mask_bits)) {
@@ -535,7 +543,7 @@ get_cpu_topology(void)
             fprintf(stderr, "CPU <-> L3 cache mapping:\n");
             for (unsigned i = 0; i < util_cpu_caps.num_L3_caches; i++) {
                fprintf(stderr, "  - L3 %u mask = ", i);
-               for (int j = util_cpu_caps.nr_cpus - 1; j >= 0; j -= 32)
+               for (int j = util_cpu_caps.max_cpus - 1; j >= 0; j -= 32)
                   fprintf(stderr, "%08x ", util_cpu_caps.L3_affinity_mask[i][j / 32]);
                fprintf(stderr, "\n");
             }
@@ -555,6 +563,9 @@ get_cpu_topology(void)
 static void
 util_cpu_detect_once(void)
 {
+   int available_cpus = 0;
+   int total_cpus = 0;
+
    memset(&util_cpu_caps, 0, sizeof util_cpu_caps);
 
    /* Count the number of CPUs in system */
@@ -562,29 +573,83 @@ util_cpu_detect_once(void)
    {
       SYSTEM_INFO system_info;
       GetSystemInfo(&system_info);
-      util_cpu_caps.nr_cpus = MAX2(1, system_info.dwNumberOfProcessors);
+      available_cpus = MAX2(1, system_info.dwNumberOfProcessors);
    }
-#elif defined(PIPE_OS_UNIX) && defined(_SC_NPROCESSORS_ONLN)
-   util_cpu_caps.nr_cpus = sysconf(_SC_NPROCESSORS_ONLN);
-   if (util_cpu_caps.nr_cpus == ~0)
-      util_cpu_caps.nr_cpus = 1;
-#elif defined(PIPE_OS_BSD)
+#elif defined(PIPE_OS_UNIX)
+#  if defined(HAS_SCHED_GETAFFINITY)
    {
-      int mib[2], ncpu;
-      int len;
-
-      mib[0] = CTL_HW;
-      mib[1] = HW_NCPU;
-
-      len = sizeof (ncpu);
-      sysctl(mib, 2, &ncpu, &len, NULL, 0);
-      util_cpu_caps.nr_cpus = ncpu;
+      /* sched_setaffinity() can be used to further restrict the number of
+       * CPUs on which the process can run.  Use sched_getaffinity() to
+       * determine the true number of available CPUs.
+       *
+       * FIXME: The Linux manual page for sched_getaffinity describes how this
+       * simple implementation will fail with > 1024 CPUs, and we'll fall back
+       * to the _SC_NPROCESSORS_ONLN path.  Support for > 1024 CPUs can be
+       * added to this path once someone has such a system for testing.
+       */
+      cpu_set_t affin;
+      if (sched_getaffinity(getpid(), sizeof(affin), &affin) == 0)
+         available_cpus = CPU_COUNT(&affin);
    }
-#else
-   util_cpu_caps.nr_cpus = 1;
-#endif
+#  endif
 
-   util_cpu_caps.num_cpu_mask_bits = align(util_cpu_caps.nr_cpus, 32);
+   /* Linux, FreeBSD, DragonFly, and Mac OS X should have
+    * _SC_NOPROCESSORS_ONLN.  NetBSD and OpenBSD should have HW_NCPUONLINE.
+    * This is what FFmpeg uses on those platforms.
+    */
+#  if defined(PIPE_OS_BSD) && defined(HW_NCPUONLINE)
+   if (available_cpus == 0) {
+      const int mib[] = { CTL_HW, HW_NCPUONLINE };
+      int ncpu;
+      int len = sizeof(ncpu);
+
+      sysctl(mib, 2, &ncpu, &len, NULL, 0);
+      available_cpus = ncpu;
+   }
+#  elif defined(_SC_NPROCESSORS_ONLN)
+   if (available_cpus == 0) {
+      available_cpus = sysconf(_SC_NPROCESSORS_ONLN);
+      if (available_cpus == ~0)
+         available_cpus = 1;
+   }
+#  elif defined(PIPE_OS_BSD)
+   if (available_cpus == 0) {
+      const int mib[] = { CTL_HW, HW_NCPU };
+      int ncpu;
+      int len = sizeof(ncpu);
+
+      sysctl(mib, 2, &ncpu, &len, NULL, 0);
+      available_cpus = ncpu;
+   }
+#  endif /* defined(PIPE_OS_BSD) */
+
+   /* Determine the maximum number of CPUs configured in the system.  This is
+    * used to properly set num_cpu_mask_bits below.  On BSDs that don't have
+    * HW_NCPUONLINE, it was not clear whether HW_NCPU is the number of
+    * configured or the number of online CPUs.  For that reason, prefer the
+    * _SC_NPROCESSORS_CONF path on all BSDs.
+    */
+#  if defined(_SC_NPROCESSORS_CONF)
+   total_cpus = sysconf(_SC_NPROCESSORS_CONF);
+   if (total_cpus == ~0)
+      total_cpus = 1;
+#  elif defined(PIPE_OS_BSD)
+   {
+      const int mib[] = { CTL_HW, HW_NCPU };
+      int ncpu;
+      int len = sizeof(ncpu);
+
+      sysctl(mib, 2, &ncpu, &len, NULL, 0);
+      total_cpus = ncpu;
+   }
+#  endif /* defined(PIPE_OS_BSD) */
+#endif /* defined(PIPE_OS_UNIX) */
+
+   util_cpu_caps.nr_cpus = MAX2(1, available_cpus);
+   total_cpus = MAX2(total_cpus, util_cpu_caps.nr_cpus);
+
+   util_cpu_caps.max_cpus = total_cpus;
+   util_cpu_caps.num_cpu_mask_bits = align(total_cpus, 32);
 
    /* Make the fallback cacheline size nonzero so that it can be
     * safely passed to align().

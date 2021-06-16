@@ -599,6 +599,10 @@ isl_format_for_pipe_format(enum pipe_format pf)
 
       [PIPE_FORMAT_ETC1_RGB8]               = ISL_FORMAT_ETC1_RGB8,
 
+      /* The formats say YCrCb, but there's no colorspace conversion. */
+      [PIPE_FORMAT_R8G8_R8B8_UNORM]         = ISL_FORMAT_YCRCB_NORMAL,
+      [PIPE_FORMAT_G8R8_B8R8_UNORM]         = ISL_FORMAT_YCRCB_SWAPY,
+
       [PIPE_FORMAT_R8G8B8X8_SRGB]           = ISL_FORMAT_R8G8B8X8_UNORM_SRGB,
       [PIPE_FORMAT_B10G10R10X2_UNORM]       = ISL_FORMAT_B10G10R10X2_UNORM,
       [PIPE_FORMAT_R16G16B16X16_UNORM]      = ISL_FORMAT_R16G16B16X16_UNORM,
@@ -674,12 +678,6 @@ isl_format_for_pipe_format(enum pipe_format pf)
    return table[pf];
 }
 
-static unsigned
-format_gen(const struct intel_device_info *devinfo)
-{
-   return devinfo->ver * 10 + (devinfo->is_g4x || devinfo->is_haswell) * 5;
-}
-
 static bool
 format_info_exists(enum isl_format format)
 {
@@ -695,7 +693,7 @@ isl_format_supports_rendering(const struct intel_device_info *devinfo,
    if (!format_info_exists(format))
       return false;
 
-   return format_gen(devinfo) >= format_info[format].render_target;
+   return devinfo->verx10 >= format_info[format].render_target;
 }
 
 bool
@@ -705,7 +703,7 @@ isl_format_supports_alpha_blending(const struct intel_device_info *devinfo,
    if (!format_info_exists(format))
       return false;
 
-   return format_gen(devinfo) >= format_info[format].alpha_blend;
+   return devinfo->verx10 >= format_info[format].alpha_blend;
 }
 
 bool
@@ -738,7 +736,7 @@ isl_format_supports_sampling(const struct intel_device_info *devinfo,
          return true;
    }
 
-   return format_gen(devinfo) >= format_info[format].sampling;
+   return devinfo->verx10 >= format_info[format].sampling;
 }
 
 bool
@@ -771,7 +769,7 @@ isl_format_supports_filtering(const struct intel_device_info *devinfo,
          return true;
    }
 
-   return format_gen(devinfo) >= format_info[format].filtering;
+   return devinfo->verx10 >= format_info[format].filtering;
 }
 
 bool
@@ -787,7 +785,7 @@ isl_format_supports_vertex_fetch(const struct intel_device_info *devinfo,
    if (devinfo->is_baytrail)
       return 75 >= format_info[format].input_vb;
 
-   return format_gen(devinfo) >= format_info[format].input_vb;
+   return devinfo->verx10 >= format_info[format].input_vb;
 }
 
 /**
@@ -800,7 +798,7 @@ isl_format_supports_typed_writes(const struct intel_device_info *devinfo,
    if (!format_info_exists(format))
       return false;
 
-   return format_gen(devinfo) >= format_info[format].typed_write;
+   return devinfo->verx10 >= format_info[format].typed_write;
 }
 
 
@@ -821,7 +819,7 @@ isl_format_supports_typed_reads(const struct intel_device_info *devinfo,
    if (!format_info_exists(format))
       return false;
 
-   return format_gen(devinfo) >= format_info[format].typed_read;
+   return devinfo->verx10 >= format_info[format].typed_read;
 }
 
 /**
@@ -858,6 +856,10 @@ bool
 isl_format_supports_ccs_e(const struct intel_device_info *devinfo,
                           enum isl_format format)
 {
+   /* Wa_22011186057: Disable compression on ADL-P A0 */
+   if (devinfo->is_alderlake && devinfo->gt == 2 && devinfo->revision == 0)
+      return false;
+
    if (!format_info_exists(format))
       return false;
 
@@ -870,7 +872,7 @@ isl_format_supports_ccs_e(const struct intel_device_info *devinfo,
    if (format == ISL_FORMAT_R11G11B10_FLOAT)
       return false;
 
-   return format_gen(devinfo) >= format_info[format].ccs_e;
+   return devinfo->verx10 >= format_info[format].ccs_e;
 }
 
 bool

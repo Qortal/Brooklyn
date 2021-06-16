@@ -43,9 +43,11 @@
 #include "asahi/compiler/agx_compile.h"
 #include "asahi/lib/decode.h"
 #include "asahi/lib/tiling.h"
+#include "asahi/lib/agx_formats.h"
 
 static const struct debug_named_value agx_debug_options[] = {
    {"trace",     AGX_DBG_TRACE,    "Trace the command stream"},
+   {"deqp",      AGX_DBG_DEQP,     "Hacks for dEQP"},
    DEBUG_NAMED_VALUE_END
 };
 
@@ -118,6 +120,39 @@ agx_resource_get_handle(struct pipe_screen *pscreen,
    unreachable("Handles todo");
 }
 
+static inline bool
+agx_is_2d(const struct agx_resource *pres)
+{
+   switch (pres->base.target) {
+   case PIPE_TEXTURE_2D:
+   case PIPE_TEXTURE_RECT:
+      return true;
+   default:
+      return false;
+   }
+}
+
+static bool
+agx_should_tile(struct agx_device *dev,
+                const struct agx_resource *pres)
+{
+   const unsigned valid_binding =
+      PIPE_BIND_DEPTH_STENCIL |
+      PIPE_BIND_RENDER_TARGET |
+      PIPE_BIND_BLENDABLE |
+      PIPE_BIND_SAMPLER_VIEW |
+      PIPE_BIND_DISPLAY_TARGET |
+      PIPE_BIND_SCANOUT |
+      PIPE_BIND_SHARED;
+
+   unsigned bpp = util_format_get_blocksizebits(pres->base.format);
+
+   bool can_tile = agx_is_2d(pres)
+      && (bpp == 32)
+      && ((pres->base.bind & ~valid_binding) == 0);
+
+   return can_tile && (pres->base.usage != PIPE_USAGE_STREAM);
+}
 
 static struct pipe_resource *
 agx_resource_create(struct pipe_screen *screen,
@@ -125,28 +160,35 @@ agx_resource_create(struct pipe_screen *screen,
 {
    struct agx_device *dev = agx_device(screen);
    struct agx_resource *nresource;
-   unsigned stride;
-   uint64_t modifier = DRM_FORMAT_MOD_LINEAR;
-
-   if (templ->bind & (PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW))
-      modifier = DRM_FORMAT_MOD_APPLE_64X64_MORTON_ORDER;
 
    nresource = CALLOC_STRUCT(agx_resource);
    if (!nresource)
       return NULL;
 
-   stride = util_format_get_stride(templ->format, templ->width0);
    nresource->base = *templ;
    nresource->base.screen = screen;
-   nresource->modifier = modifier;
-   nresource->slices[0].line_stride = stride;
 
-   unsigned size = 4 * ALIGN_POT(templ->width0, 64) * ALIGN_POT(templ->height0, 64) * templ->depth0;
-   nresource->bo = agx_bo_create(dev, size, AGX_MEMORY_TYPE_FRAMEBUFFER);
+   nresource->modifier =
+      agx_should_tile(dev, nresource) ?
+      DRM_FORMAT_MOD_APPLE_64X64_MORTON_ORDER :
+      DRM_FORMAT_MOD_LINEAR;
 
-   if (!nresource->bo) {
-      FREE(nresource);
-      return NULL;
+   unsigned offset = 0;
+
+   for (unsigned l = 0; l <= templ->last_level; ++l) {
+      unsigned width = u_minify(templ->width0, l);
+      unsigned height = u_minify(templ->height0, l);
+
+      if (nresource->modifier == DRM_FORMAT_MOD_APPLE_64X64_MORTON_ORDER) {
+         width = ALIGN_POT(width, 64);
+         height = ALIGN_POT(height, 64);
+      }
+
+      nresource->slices[l].line_stride =
+         util_format_get_stride(templ->format, width);
+
+      nresource->slices[l].offset = offset;
+      offset += ALIGN_POT(nresource->slices[l].line_stride * height, 0x80);
    }
 
    pipe_reference_init(&nresource->base.reference, 1);
@@ -156,20 +198,39 @@ agx_resource_create(struct pipe_screen *screen,
    if (templ->bind & (PIPE_BIND_DISPLAY_TARGET |
                       PIPE_BIND_SCANOUT |
                       PIPE_BIND_SHARED)) {
+      unsigned width0 = templ->width0, height0 = templ->height0;
+
+      if (nresource->modifier == DRM_FORMAT_MOD_APPLE_64X64_MORTON_ORDER) {
+         width0 = ALIGN_POT(width0, 64);
+         height0 = ALIGN_POT(height0, 64);
+      }
+
       nresource->dt = winsys->displaytarget_create(winsys,
                       templ->bind,
                       templ->format,
-                      templ->width0,
-                      templ->height0,
+                      width0,
+                      height0,
                       64,
                       NULL /*map_front_private*/,
                       &nresource->dt_stride);
 
+      nresource->slices[0].line_stride = nresource->dt_stride;
+      assert((nresource->dt_stride & 0xF) == 0);
+
+      offset = nresource->slices[0].line_stride * ALIGN_POT(templ->height0, 64);
+
       if (nresource->dt == NULL) {
-         agx_bo_unreference(nresource->bo);
          FREE(nresource);
          return NULL;
       }
+   }
+
+   unsigned size = ALIGN_POT(offset, 4096);
+   nresource->bo = agx_bo_create(dev, size, AGX_MEMORY_TYPE_FRAMEBUFFER);
+
+   if (!nresource->bo) {
+      FREE(nresource);
+      return NULL;
    }
 
    return &nresource->base;
@@ -238,7 +299,7 @@ agx_transfer_map(struct pipe_context *pctx,
       transfer->map = calloc(transfer->base.layer_stride, box->depth);
       assert(box->depth == 1);
 
-      if ((usage & PIPE_MAP_READ) && rsrc->slices[level].data_valid) {
+      if ((usage & PIPE_MAP_READ) && BITSET_TEST(rsrc->data_valid, level)) {
          agx_detile(
             ((uint8_t *) bo->ptr.cpu) + rsrc->slices[level].offset,
             transfer->map,
@@ -257,7 +318,7 @@ agx_transfer_map(struct pipe_context *pctx,
       /* Be conservative for direct writes */
 
       if ((usage & PIPE_MAP_WRITE) && (usage & PIPE_MAP_DIRECTLY))
-         rsrc->slices[level].data_valid = true;
+         BITSET_SET(rsrc->data_valid, level);
 
       return ((uint8_t *) bo->ptr.cpu)
              + rsrc->slices[level].offset
@@ -279,7 +340,7 @@ agx_transfer_unmap(struct pipe_context *pctx,
    unsigned bytes_per_pixel = util_format_get_blocksize(prsrc->format);
 
    if (transfer->usage & PIPE_MAP_WRITE)
-      rsrc->slices[transfer->level].data_valid = true;
+      BITSET_SET(rsrc->data_valid, transfer->level);
 
    /* Tiling will occur in software from a staging cpu buffer */
    if ((transfer->usage & PIPE_MAP_WRITE) &&
@@ -321,6 +382,7 @@ static void
 agx_blit(struct pipe_context *ctx,
          const struct pipe_blit_info *info)
 {
+   unreachable("todo: blits");
 }
 
 
@@ -384,7 +446,7 @@ agx_flush(struct pipe_context *pctx,
    memset(pipeline_null.cpu, 0, 64);
 
    struct agx_resource *rt0 = agx_resource(ctx->batch->cbufs[0]->texture);
-   rt0->slices[0].data_valid = true;
+   BITSET_SET(rt0->data_valid, 0);
 
    /* BO list for a given batch consists of:
     *  - BOs for the batch's framebuffer surfaces
@@ -396,6 +458,7 @@ agx_flush(struct pipe_context *pctx,
    struct agx_batch *batch = ctx->batch;
 
    agx_batch_add_bo(batch, batch->encoder);
+   agx_batch_add_bo(batch, batch->scissor.bo);
    agx_batch_add_bo(batch, dev->internal.bo);
 
    for (unsigned i = 0; i < batch->nr_cbufs; ++i) {
@@ -439,6 +502,7 @@ agx_flush(struct pipe_context *pctx,
                dev->cmdbuf.size,
                &ctx->batch->pool,
                ctx->batch->encoder->ptr.gpu,
+               ctx->batch->scissor.bo->ptr.gpu,
                ctx->batch->width,
                ctx->batch->height,
                pipeline_null.gpu,
@@ -463,6 +527,8 @@ agx_flush(struct pipe_context *pctx,
    ctx->batch->clear = 0;
    ctx->batch->draw = 0;
    ctx->batch->encoder_current = ctx->batch->encoder->ptr.cpu;
+   ctx->batch->scissor.count = 0;
+   ctx->dirty = ~0;
 }
 
 static void
@@ -500,6 +566,7 @@ agx_create_context(struct pipe_screen *screen,
                  agx_device(screen), AGX_MEMORY_TYPE_SHADER, true);
    ctx->batch->encoder = agx_bo_create(agx_device(screen), 0x80000, AGX_MEMORY_TYPE_FRAMEBUFFER);
    ctx->batch->encoder_current = ctx->batch->encoder->ptr.cpu;
+   ctx->batch->scissor.bo = agx_bo_create(agx_device(screen), 0x80000, AGX_MEMORY_TYPE_FRAMEBUFFER);
 
    /* Upload fixed shaders (TODO: compile them?) */
 
@@ -522,9 +589,11 @@ agx_create_context(struct pipe_screen *screen,
    pctx->end_query = agx_end_query;
    pctx->get_query_result = agx_get_query_result;
    pctx->set_active_query_state = agx_set_active_query_state;
-   pctx->transfer_map = agx_transfer_map;
+   pctx->buffer_map = agx_transfer_map;
+   pctx->texture_map = agx_transfer_map;
    pctx->transfer_flush_region = agx_transfer_flush_region;
-   pctx->transfer_unmap = agx_transfer_unmap;
+   pctx->buffer_unmap = agx_transfer_unmap;
+   pctx->texture_unmap = agx_transfer_unmap;
    pctx->buffer_subdata = u_default_buffer_subdata;
    pctx->texture_subdata = u_default_texture_subdata;
    pctx->invalidate_resource = agx_invalidate_resource;
@@ -549,9 +618,13 @@ agx_flush_frontbuffer(struct pipe_screen *_screen,
    void *map = winsys->displaytarget_map(winsys, rsrc->dt, PIPE_USAGE_DEFAULT);
    assert(map != NULL);
 
-   agx_detile(rsrc->bo->ptr.cpu, map,
-              rsrc->base.width0, 32, rsrc->dt_stride / 4,
-              0, 0, rsrc->base.width0, rsrc->base.height0);
+   if (rsrc->modifier == DRM_FORMAT_MOD_APPLE_64X64_MORTON_ORDER) {
+      agx_detile(rsrc->bo->ptr.cpu, map,
+                 rsrc->base.width0, 32, rsrc->dt_stride / 4,
+                 0, 0, rsrc->base.width0, rsrc->base.height0);
+   } else {
+      memcpy(map, rsrc->bo->ptr.cpu, rsrc->dt_stride * rsrc->base.height0);
+   }
 
    winsys->displaytarget_display(winsys, rsrc->dt, context_private, box);
 }
@@ -577,6 +650,8 @@ agx_get_name(struct pipe_screen* pscreen)
 static int
 agx_get_param(struct pipe_screen* pscreen, enum pipe_cap param)
 {
+   bool is_deqp = agx_device(pscreen)->debug & AGX_DBG_DEQP;
+
    switch (param) {
    case PIPE_CAP_NPOT_TEXTURES:
    case PIPE_CAP_MIXED_COLOR_DEPTH_BITS:
@@ -588,6 +663,7 @@ agx_get_param(struct pipe_screen* pscreen, enum pipe_cap param)
    case PIPE_CAP_MIXED_FRAMEBUFFER_SIZES:
    case PIPE_CAP_FRAGMENT_SHADER_DERIVATIVES:
    case PIPE_CAP_FRAMEBUFFER_NO_ATTACHMENT:
+   case PIPE_CAP_CLIP_HALFZ:
       return 1;
 
    case PIPE_CAP_MAX_RENDER_TARGETS:
@@ -615,8 +691,28 @@ agx_get_param(struct pipe_screen* pscreen, enum pipe_cap param)
    case PIPE_CAP_PACKED_UNIFORMS:
       return 1;
 
+   case PIPE_CAP_TGSI_INSTANCEID:
+   case PIPE_CAP_VERTEX_ELEMENT_INSTANCE_DIVISOR:
+   case PIPE_CAP_TEXTURE_MULTISAMPLE:
+   case PIPE_CAP_SURFACE_SAMPLE_COUNT:
+      return is_deqp;
+
    case PIPE_CAP_COPY_BETWEEN_COMPRESSED_AND_PLAIN_FORMATS:
       return 0;
+
+   case PIPE_CAP_MAX_STREAM_OUTPUT_BUFFERS:
+      return is_deqp ? PIPE_MAX_SO_BUFFERS : 0;
+
+   case PIPE_CAP_MAX_STREAM_OUTPUT_SEPARATE_COMPONENTS:
+   case PIPE_CAP_MAX_STREAM_OUTPUT_INTERLEAVED_COMPONENTS:
+      return is_deqp ? PIPE_MAX_SO_OUTPUTS : 0;
+
+   case PIPE_CAP_STREAM_OUTPUT_PAUSE_RESUME:
+   case PIPE_CAP_STREAM_OUTPUT_INTERLEAVE_BUFFERS:
+      return is_deqp ? 1 : 0;
+ 
+   case PIPE_CAP_MAX_TEXTURE_ARRAY_LAYERS:
+      return is_deqp ? 256 : 0;
 
    case PIPE_CAP_GLSL_FEATURE_LEVEL:
    case PIPE_CAP_GLSL_FEATURE_LEVEL_COMPATIBILITY:
@@ -649,8 +745,9 @@ agx_get_param(struct pipe_screen* pscreen, enum pipe_cap param)
    case PIPE_CAP_TGSI_FS_COORD_PIXEL_CENTER_HALF_INTEGER:
    case PIPE_CAP_TGSI_FS_COORD_PIXEL_CENTER_INTEGER:
    case PIPE_CAP_TGSI_TEXCOORD:
-      return 1;
-
+   case PIPE_CAP_TGSI_FS_FACE_IS_INTEGER_SYSVAL:
+   case PIPE_CAP_TGSI_FS_POSITION_IS_SYSVAL:
+   case PIPE_CAP_TGSI_FS_POINT_IS_SYSVAL:
    case PIPE_CAP_SEAMLESS_CUBE_MAP:
    case PIPE_CAP_SEAMLESS_CUBE_MAP_PER_TEXTURE:
       return true;
@@ -683,7 +780,6 @@ agx_get_param(struct pipe_screen* pscreen, enum pipe_cap param)
    case PIPE_CAP_TWO_SIDED_COLOR:
    case PIPE_CAP_ALPHA_TEST:
    case PIPE_CAP_CLIP_PLANES:
-   case PIPE_CAP_PACKED_STREAM_OUTPUT:
    case PIPE_CAP_NIR_IMAGES_AS_DEREF:
       return 0;
 
@@ -702,7 +798,7 @@ agx_get_paramf(struct pipe_screen* pscreen,
    switch (param) {
    case PIPE_CAPF_MAX_LINE_WIDTH:
    case PIPE_CAPF_MAX_LINE_WIDTH_AA:
-      return 255.0; /* arbitrary */
+      return 16.0; /* Off-by-one fixed point 4:4 encoding */
 
    case PIPE_CAPF_MAX_POINT_WIDTH:
    case PIPE_CAPF_MAX_POINT_WIDTH_AA:
@@ -730,6 +826,8 @@ agx_get_shader_param(struct pipe_screen* pscreen,
                      enum pipe_shader_type shader,
                      enum pipe_shader_cap param)
 {
+   bool is_deqp = agx_device(pscreen)->debug & AGX_DBG_DEQP;
+
    if (shader != PIPE_SHADER_VERTEX &&
        shader != PIPE_SHADER_FRAGMENT)
       return 0;
@@ -749,7 +847,7 @@ agx_get_shader_param(struct pipe_screen* pscreen,
       return 16;
 
    case PIPE_SHADER_CAP_MAX_OUTPUTS:
-      return shader == PIPE_SHADER_FRAGMENT ? 1 : 16;
+      return shader == PIPE_SHADER_FRAGMENT ? 4 : 16;
 
    case PIPE_SHADER_CAP_MAX_TEMPS:
       return 256; /* GL_MAX_PROGRAM_TEMPORARIES_ARB */
@@ -766,10 +864,12 @@ agx_get_shader_param(struct pipe_screen* pscreen,
    case PIPE_SHADER_CAP_INDIRECT_INPUT_ADDR:
    case PIPE_SHADER_CAP_INDIRECT_OUTPUT_ADDR:
    case PIPE_SHADER_CAP_INDIRECT_TEMP_ADDR:
-   case PIPE_SHADER_CAP_INDIRECT_CONST_ADDR:
    case PIPE_SHADER_CAP_SUBROUTINES:
    case PIPE_SHADER_CAP_TGSI_SQRT_SUPPORTED:
       return 0;
+
+   case PIPE_SHADER_CAP_INDIRECT_CONST_ADDR:
+      return is_deqp;
 
    case PIPE_SHADER_CAP_FP16:
    case PIPE_SHADER_CAP_INTEGERS:
@@ -856,13 +956,23 @@ agx_is_format_supported(struct pipe_screen* pscreen,
    if (MAX2(sample_count, 1) != MAX2(storage_sample_count, 1))
       return false;
 
-   /* TODO: formats */
-   if (usage & (PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW))
-      return (format == PIPE_FORMAT_B8G8R8A8_UNORM);
+   if (usage & (PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW)) {
+      struct agx_pixel_format_entry ent = agx_pixel_format[format];
+
+      if (!agx_is_valid_pixel_format(format))
+         return false;
+
+      if ((usage & PIPE_BIND_RENDER_TARGET) && !ent.renderable)
+         return false;
+   }
 
    /* TODO: formats */
    if (usage & PIPE_BIND_VERTEX_BUFFER) {
       switch (format) {
+      case PIPE_FORMAT_R16_FLOAT:
+      case PIPE_FORMAT_R16G16_FLOAT:
+      case PIPE_FORMAT_R16G16B16_FLOAT:
+      case PIPE_FORMAT_R16G16B16A16_FLOAT:
       case PIPE_FORMAT_R32_FLOAT:
       case PIPE_FORMAT_R32G32_FLOAT:
       case PIPE_FORMAT_R32G32B32_FLOAT:

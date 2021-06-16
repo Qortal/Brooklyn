@@ -37,10 +37,8 @@
 #include "freedreno_fence.h"
 #include "freedreno_util.h"
 
-#ifdef DEBUG
-#define BATCH_DEBUG FD_DBG(MSGS)
-#else
-#define BATCH_DEBUG 0
+#ifdef __cplusplus
+extern "C" {
 #endif
 
 struct fd_resource;
@@ -347,7 +345,7 @@ fd_batch_unlock_submit(struct fd_batch *batch)
 }
 
 /**
- * Returns true if emit-lock was aquired, false if failed to aquire lock,
+ * Returns true if emit-lock was acquired, false if failed to acquire lock,
  * ie. batch already flushed.
  */
 static inline bool MUST_CHECK
@@ -416,12 +414,18 @@ fd_event_write(struct fd_batch *batch, struct fd_ringbuffer *ring,
 static inline struct fd_ringbuffer *
 fd_batch_get_epilogue(struct fd_batch *batch)
 {
-   if (batch->epilogue == NULL)
-      batch->epilogue = fd_submit_new_ringbuffer(batch->submit, 0x1000, 0);
+   if (batch->epilogue == NULL) {
+      batch->epilogue = fd_submit_new_ringbuffer(batch->submit, 0x1000,
+                                                 (enum fd_ringbuffer_flags)0);
+   }
 
    return batch->epilogue;
 }
 
 struct fd_ringbuffer *fd_batch_get_prologue(struct fd_batch *batch);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* FREEDRENO_BATCH_H_ */

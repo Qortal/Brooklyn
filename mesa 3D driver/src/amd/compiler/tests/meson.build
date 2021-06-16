@@ -24,10 +24,13 @@ aco_tests_files = files(
   'main.cpp',
   'test_assembler.cpp',
   'test_builder.cpp',
+  'test_hard_clause.cpp',
   'test_insert_nops.cpp',
   'test_isel.cpp',
   'test_optimizer.cpp',
   'test_regalloc.cpp',
+  'test_optimizer_postRA.cpp',
+  'test_sdwa.cpp',
   'test_to_hw_instr.cpp',
   'test_tests.cpp',
 )

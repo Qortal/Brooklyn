@@ -56,6 +56,8 @@ static const nir_shader_compiler_options bifrost_nir_options = {
         .lower_bitfield_extract_to_shifts = true,
         .lower_extract_byte = true,
         .lower_extract_word = true,
+        .lower_insert_byte = true,
+        .lower_insert_word = true,
         .lower_rotate = true,
 
         .lower_pack_half_2x16 = true,
@@ -81,6 +83,7 @@ static const nir_shader_compiler_options bifrost_nir_options = {
         .has_fsub = true,
         .has_isub = true,
         .vectorize_io = true,
+        .vectorize_vec2_16bit = true,
         .fuse_ffma16 = true,
         .fuse_ffma32 = true,
         .fuse_ffma64 = true,
@@ -89,6 +92,7 @@ static const nir_shader_compiler_options bifrost_nir_options = {
         .lower_uniforms_to_ubo = true,
 
         .has_cs_global_id = true,
+        .vertex_id_zero_based = true,
         .lower_cs_local_index_from_id = true,
         .max_unroll_iterations = 32,
 };

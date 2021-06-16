@@ -13,6 +13,8 @@
 
 #include "vn_common.h"
 
+#include "venus-protocol/vn_protocol_driver_defines.h"
+
 #include "vn_cs.h"
 #include "vn_device_memory.h"
 #include "vn_renderer.h"
@@ -63,6 +65,9 @@ struct vn_instance {
    mtx_t physical_device_mutex;
    struct vn_physical_device *physical_devices;
    uint32_t physical_device_count;
+
+   /* XXX staged features to be merged to core venus protocol */
+   VkVenusExperimentalFeatures100000MESA experimental;
 };
 VK_DEFINE_HANDLE_CASTS(vn_instance,
                        base.base.base,
@@ -134,8 +139,6 @@ struct vn_device {
    uint32_t queue_count;
 
    struct vn_device_memory_pool memory_pools[VK_MAX_MEMORY_TYPES];
-
-   struct vn_android_wsi *android_wsi;
 };
 VK_DEFINE_HANDLE_CASTS(vn_device,
                        base.base.base,

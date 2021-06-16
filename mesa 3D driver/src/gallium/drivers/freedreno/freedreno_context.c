@@ -52,12 +52,12 @@ fd_context_flush(struct pipe_context *pctx, struct pipe_fence_handle **fencep,
     */
    fd_batch_reference(&batch, ctx->batch);
 
-   DBG("%p: flush: flags=%x", batch, flags);
+   DBG("%p: flush: flags=%x, fencep=%p", batch, flags, fencep);
 
    if (fencep && !batch) {
       batch = fd_context_batch(ctx);
    } else if (!batch) {
-      fd_bc_dump(ctx->screen, "%p: NULL batch, remaining:\n", ctx);
+      fd_bc_dump(ctx, "%p: NULL batch, remaining:\n", ctx);
       return;
    }
 
@@ -83,7 +83,7 @@ fd_context_flush(struct pipe_context *pctx, struct pipe_fence_handle **fencep,
       if (ctx->last_fence) {
          fd_fence_repopulate(*fencep, ctx->last_fence);
          fd_fence_ref(&fence, *fencep);
-         fd_bc_dump(ctx->screen, "%p: (deferred) reuse last_fence, remaining:\n", ctx);
+         fd_bc_dump(ctx, "%p: (deferred) reuse last_fence, remaining:\n", ctx);
          goto out;
       }
 
@@ -109,7 +109,7 @@ fd_context_flush(struct pipe_context *pctx, struct pipe_fence_handle **fencep,
     */
    if (ctx->last_fence) {
       fd_fence_ref(&fence, ctx->last_fence);
-      fd_bc_dump(ctx->screen, "%p: reuse last_fence, remaining:\n", ctx);
+      fd_bc_dump(ctx, "%p: reuse last_fence, remaining:\n", ctx);
       goto out;
    }
 
@@ -119,7 +119,7 @@ fd_context_flush(struct pipe_context *pctx, struct pipe_fence_handle **fencep,
    if (flags & PIPE_FLUSH_FENCE_FD)
       fence->submit_fence.use_fence_fd = true;
 
-   fd_bc_dump(ctx->screen, "%p: flushing %p<%u>, flags=0x%x, pending:\n", ctx,
+   fd_bc_dump(ctx, "%p: flushing %p<%u>, flags=0x%x, pending:\n", ctx,
               batch, batch->seqno, flags);
 
    /* If we get here, we need to flush for a fence, even if there is
@@ -129,13 +129,11 @@ fd_context_flush(struct pipe_context *pctx, struct pipe_fence_handle **fencep,
 
    if (!ctx->screen->reorder) {
       fd_batch_flush(batch);
-   } else if (flags & PIPE_FLUSH_DEFERRED) {
-      fd_bc_flush_deferred(&ctx->screen->batch_cache, ctx);
    } else {
-      fd_bc_flush(&ctx->screen->batch_cache, ctx);
+      fd_bc_flush(ctx, flags & PIPE_FLUSH_DEFERRED);
    }
 
-   fd_bc_dump(ctx->screen, "%p: remaining:\n", ctx);
+   fd_bc_dump(ctx, "%p: remaining:\n", ctx);
 
 out:
    if (fencep)
@@ -235,6 +233,8 @@ fd_emit_string_marker(struct pipe_context *pctx, const char *string,
 {
    struct fd_context *ctx = fd_context(pctx);
 
+   DBG("%.*s", len, string);
+
    if (!ctx->batch)
       return;
 
@@ -295,7 +295,7 @@ fd_context_batch(struct fd_context *ctx)
 
    if (unlikely(!batch)) {
       batch =
-         fd_batch_from_fb(&ctx->screen->batch_cache, ctx, &ctx->framebuffer);
+         fd_batch_from_fb(ctx, &ctx->framebuffer);
       util_copy_framebuffer_state(&batch->framebuffer, &ctx->framebuffer);
       fd_batch_reference(&ctx->batch, batch);
       fd_context_all_dirty(ctx);
@@ -695,8 +695,12 @@ fd_context_init_tc(struct pipe_context *pctx, unsigned flags)
       return pctx;
 
    struct pipe_context *tc = threaded_context_create(
-      pctx, &ctx->screen->transfer_pool, fd_replace_buffer_storage,
-      fd_fence_create_unflushed, &ctx->tc);
+      pctx, &ctx->screen->transfer_pool,
+      fd_replace_buffer_storage,
+      fd_fence_create_unflushed,
+      fd_resource_busy,
+      false,
+      &ctx->tc);
 
    uint64_t total_ram;
    if (tc && tc != pctx && os_get_total_physical_memory(&total_ram)) {

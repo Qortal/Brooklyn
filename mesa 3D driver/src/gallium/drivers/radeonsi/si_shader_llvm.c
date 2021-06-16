@@ -93,9 +93,7 @@ bool si_compile_llvm(struct si_screen *sscreen, struct si_shader_binary *binary,
    if (!si_replace_shader(count, binary)) {
       struct ac_compiler_passes *passes = compiler->passes;
 
-      if (ac->wave_size == 32)
-         passes = compiler->passes_wave32;
-      else if (less_optimized && compiler->low_opt_passes)
+      if (less_optimized && compiler->low_opt_passes)
          passes = compiler->low_opt_passes;
 
       struct si_llvm_diagnostics diag = {debug};
@@ -190,6 +188,7 @@ void si_llvm_create_func(struct si_shader_context *ctx, const char *name, LLVMTy
    }
 
    ac_llvm_set_workgroup_size(ctx->main_fn, max_workgroup_size);
+   ac_llvm_set_target_features(ctx->main_fn, &ctx->ac);
 }
 
 void si_llvm_create_main_func(struct si_shader_context *ctx, bool ngg_cull_shader)
@@ -412,7 +411,7 @@ static LLVMValueRef si_llvm_get_block_size(struct ac_shader_abi *abi)
 {
    struct si_shader_context *ctx = si_shader_context_from_abi(abi);
 
-   assert(ctx->shader->selector->info.base.cs.local_size_variable &&
+   assert(ctx->shader->selector->info.base.workgroup_size_variable &&
           ctx->shader->selector->info.uses_variable_block_size);
 
    LLVMValueRef chan[3] = {
@@ -945,6 +944,10 @@ bool si_llvm_translate_nir(struct si_shader_context *ctx, struct si_shader *shad
        */
       if ((ctx->stage == MESA_SHADER_VERTEX || ctx->stage == MESA_SHADER_TESS_EVAL) &&
           shader->key.as_ngg && !shader->key.as_es && !shader->key.opt.ngg_culling) {
+         /* GFX10 requires a barrier before gs_alloc_req due to a hw bug. */
+         if (ctx->screen->info.chip_class == GFX10)
+            ac_build_s_barrier(&ctx->ac);
+
          gfx10_ngg_build_sendmsg_gs_alloc_req(ctx);
 
          /* Build the primitive export at the beginning

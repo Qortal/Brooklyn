@@ -37,16 +37,19 @@ static void aco_log(Program *program, enum radv_compiler_debug_level level,
 {
    char *msg;
 
-   msg = ralloc_strdup(NULL, prefix);
-
-   ralloc_asprintf_append(&msg, "    In file %s:%u\n", file, line);
-   ralloc_asprintf_append(&msg, "    ");
-   ralloc_vasprintf_append(&msg, fmt, args);
+   if (program->debug.shorten_messages) {
+      msg = ralloc_vasprintf(NULL, fmt, args);
+   } else {
+      msg = ralloc_strdup(NULL, prefix);
+      ralloc_asprintf_append(&msg, "    In file %s:%u\n", file, line);
+      ralloc_asprintf_append(&msg, "    ");
+      ralloc_vasprintf_append(&msg, fmt, args);
+   }
 
    if (program->debug.func)
       program->debug.func(program->debug.private_data, level, msg);
 
-   fprintf(stderr, "%s\n", msg);
+   fprintf(program->debug.output, "%s\n", msg);
 
    ralloc_free(msg);
 }
@@ -230,10 +233,9 @@ bool validate_ir(Program* program)
                if (!op.isLiteral())
                   continue;
 
-               check(instr->isSOP1() || instr->isSOP2() || instr->isSOPC() ||
-                     instr->isVOP1() || instr->isVOP2() || instr->isVOPC() ||
-                     (instr->isVOP3() && program->chip_class >= GFX10) ||
-                     (instr->isVOP3P() && program->chip_class >= GFX10),
+               check(!instr->isDPP() && !instr->isSDWA() &&
+                     (!instr->isVOP3() || program->chip_class >= GFX10) &&
+                     (!instr->isVOP3P() || program->chip_class >= GFX10),
                      "Literal applied on wrong instruction format", instr.get());
 
                check(literal.isUndefined() || (literal.size() == op.size() && literal.constantValue() == op.constantValue()), "Only 1 Literal allowed", instr.get());
@@ -253,6 +255,8 @@ bool validate_ir(Program* program)
                uint32_t scalar_mask = instr->isVOP3() || instr->isVOP3P() ? 0x7 : 0x5;
                if (instr->isSDWA())
                   scalar_mask = program->chip_class >= GFX9 ? 0x7 : 0x4;
+               else if (instr->isDPP())
+                  scalar_mask = 0x0;
 
                if (instr->isVOPC() ||
                    instr->opcode == aco_opcode::v_readfirstlane_b32 ||
@@ -281,6 +285,16 @@ bool validate_ir(Program* program)
                            (op.isTemp() && op.regClass().type() == RegType::vgpr && op.bytes() <= 4),
                            "Wrong Operand type for VALU instruction", instr.get());
                      continue;
+                  }
+                  if (instr->opcode == aco_opcode::v_permlane16_b32 ||
+                      instr->opcode == aco_opcode::v_permlanex16_b32) {
+                     check(i != 0 ||
+                           (op.isTemp() && op.regClass().type() == RegType::vgpr),
+                           "Operand 0 of v_permlane must be VGPR", instr.get());
+                     check(i == 0 ||
+                           (op.isTemp() && op.regClass().type() == RegType::sgpr) ||
+                           op.isConstant(),
+                           "Lane select operands of v_permlane must be SGPR or constant", instr.get());
                   }
 
                   if (instr->opcode == aco_opcode::v_writelane_b32 ||
@@ -366,10 +380,37 @@ bool validate_ir(Program* program)
             } else if (instr->opcode == aco_opcode::p_phi) {
                check(instr->operands.size() == block.logical_preds.size(), "Number of Operands does not match number of predecessors", instr.get());
                check(instr->definitions[0].getTemp().type() == RegType::vgpr, "Logical Phi Definition must be vgpr", instr.get());
-            } else if (instr->opcode == aco_opcode::p_linear_phi) {
                for (const Operand& op : instr->operands)
+                  check(instr->definitions[0].size() == op.size(), "Operand sizes must match Definition size", instr.get());
+            } else if (instr->opcode == aco_opcode::p_linear_phi) {
+               for (const Operand& op : instr->operands) {
                   check(!op.isTemp() || op.getTemp().is_linear(), "Wrong Operand type", instr.get());
+                  check(instr->definitions[0].size() == op.size(), "Operand sizes must match Definition size", instr.get());
+               }
                check(instr->operands.size() == block.linear_preds.size(), "Number of Operands does not match number of predecessors", instr.get());
+            } else if (instr->opcode == aco_opcode::p_extract || instr->opcode == aco_opcode::p_insert) {
+               check(instr->operands[0].isTemp(),
+                     "Data operand must be temporary", instr.get());
+               check(instr->operands[1].isConstant(), "Index must be constant", instr.get());
+               if (instr->opcode == aco_opcode::p_extract)
+                  check(instr->operands[3].isConstant(), "Sign-extend flag must be constant", instr.get());
+
+               check(instr->definitions[0].getTemp().type() != RegType::sgpr ||
+                     instr->operands[0].getTemp().type() == RegType::sgpr,
+                     "Can't extract/insert VGPR to SGPR", instr.get());
+
+               if (instr->operands[0].getTemp().type() == RegType::vgpr)
+                  check(instr->operands[0].bytes() == instr->definitions[0].bytes(),
+                        "Sizes of operand and definition must match", instr.get());
+
+               if (instr->definitions[0].getTemp().type() == RegType::sgpr)
+                  check(instr->definitions.size() >= 2 && instr->definitions[1].isFixed() && instr->definitions[1].physReg() == scc, "SGPR extract/insert needs a SCC definition", instr.get());
+
+               check(instr->operands[2].constantEquals(8) || instr->operands[2].constantEquals(16), "Size must be 8 or 16", instr.get());
+               check(instr->operands[2].constantValue() < instr->operands[0].getTemp().bytes() * 8u, "Size must be smaller than source", instr.get());
+
+               unsigned comp = instr->operands[0].bytes() * 8u / MAX2(instr->operands[2].constantValue(), 1);
+               check(instr->operands[1].constantValue() < comp, "Index must be in-bounds", instr.get());
             }
             break;
          }
@@ -378,7 +419,7 @@ bool validate_ir(Program* program)
                check(op.regClass().type() == RegType::vgpr, "All operands of PSEUDO_REDUCTION instructions must be in VGPRs.", instr.get());
 
             if (instr->opcode == aco_opcode::p_reduce && instr->reduction().cluster_size == program->wave_size)
-               check(instr->definitions[0].regClass().type() == RegType::sgpr, "The result of unclustered reductions must go into an SGPR.", instr.get());
+               check(instr->definitions[0].regClass().type() == RegType::sgpr || program->wave_size == 32, "The result of unclustered reductions must go into an SGPR.", instr.get());
             else
                check(instr->definitions[0].regClass().type() == RegType::vgpr, "The result of scans and clustered reductions must go into a VGPR.", instr.get());
 

@@ -40,7 +40,7 @@ struct i915_screen;
 
 
 struct i915_buffer {
-   struct u_resource b;
+   struct pipe_resource b;
    uint8_t *data;
    boolean free_on_destroy;
 };
@@ -64,7 +64,7 @@ struct offset_pair {
 };
 
 struct i915_texture {
-   struct u_resource b;
+   struct pipe_resource b;
 
    /* tiling flags */
    enum i915_winsys_buffer_tile tiling;
@@ -91,20 +91,17 @@ unsigned i915_texture_offset(const struct i915_texture *tex,
 void i915_init_screen_resource_functions(struct i915_screen *is);
 void i915_init_resource_functions(struct i915_context *i915);
 
-extern struct u_resource_vtbl i915_buffer_vtbl;
-extern struct u_resource_vtbl i915_texture_vtbl;
-
 static inline struct i915_texture *i915_texture(struct pipe_resource *resource)
 {
    struct i915_texture *tex = (struct i915_texture *)resource;
-   assert(tex->b.vtbl == &i915_texture_vtbl);
+   assert(tex->b.target != PIPE_BUFFER);
    return tex;
 }
 
 static inline struct i915_buffer *i915_buffer(struct pipe_resource *resource)
 {
    struct i915_buffer *tex = (struct i915_buffer *)resource;
-   assert(tex->b.vtbl == &i915_buffer_vtbl);
+   assert(tex->b.target == PIPE_BUFFER);
    return tex;
 }
 
@@ -112,6 +109,13 @@ struct pipe_resource *
 i915_texture_create(struct pipe_screen *screen,
                     const struct pipe_resource *template,
                     boolean force_untiled);
+
+bool
+i915_resource_get_handle(struct pipe_screen *screen,
+                         struct pipe_context *context,
+                         struct pipe_resource *texture,
+                         struct winsys_handle *whandle,
+                         unsigned usage);
 
 struct pipe_resource *
 i915_texture_from_handle(struct pipe_screen * screen,
@@ -130,9 +134,37 @@ i915_buffer_create(struct pipe_screen *screen,
 		   const struct pipe_resource *template);
 
 void
+i915_resource_destroy(struct pipe_screen *screen,
+                      struct pipe_resource *resource);
+
+void
 i915_buffer_subdata(struct pipe_context *rm_ctx,
                     struct pipe_resource *resource,
                     unsigned usage, unsigned offset,
                     unsigned size, const void *data);
+
+void *
+i915_buffer_transfer_map(struct pipe_context *pipe,
+                         struct pipe_resource *resource,
+                         unsigned level,
+                         unsigned usage,
+                         const struct pipe_box *box,
+                         struct pipe_transfer **ptransfer);
+
+void
+i915_buffer_transfer_unmap(struct pipe_context *pipe,
+                           struct pipe_transfer *transfer);
+
+void *
+i915_texture_transfer_map(struct pipe_context *pipe,
+                          struct pipe_resource *resource,
+                          unsigned level,
+                          unsigned usage,
+                          const struct pipe_box *box,
+                          struct pipe_transfer **ptransfer);
+
+void
+i915_texture_transfer_unmap(struct pipe_context *pipe,
+			    struct pipe_transfer *transfer);
 
 #endif /* I915_RESOURCE_H */

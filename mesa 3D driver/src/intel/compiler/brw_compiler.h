@@ -50,13 +50,7 @@ struct brw_compiler {
        * Array of the ra classes for the unaligned contiguous register
        * block sizes used.
        */
-      int *classes;
-
-      /**
-       * Mapping for register-allocated objects in *regs to the first
-       * GRF for that object.
-       */
-      uint8_t *ra_reg_to_grf;
+      struct ra_class **classes;
    } vec4_reg_set;
 
    struct {
@@ -66,29 +60,13 @@ struct brw_compiler {
        * Array of the ra classes for the unaligned contiguous register
        * block sizes used, indexed by register size.
        */
-      int classes[16];
-
-      /**
-       * Mapping from classes to ra_reg ranges.  Each of the per-size
-       * classes corresponds to a range of ra_reg nodes.  This array stores
-       * those ranges in the form of first ra_reg in each class and the
-       * total number of ra_reg elements in the last array element.  This
-       * way the range of the i'th class is given by:
-       * [ class_to_ra_reg_range[i], class_to_ra_reg_range[i+1] )
-       */
-      int class_to_ra_reg_range[17];
-
-      /**
-       * Mapping for register-allocated objects in *regs to the first
-       * GRF for that object.
-       */
-      uint8_t *ra_reg_to_grf;
+      struct ra_class *classes[16];
 
       /**
        * ra class for the aligned barycentrics we use for PLN, which doesn't
        * appear in *classes.
        */
-      int aligned_bary_class;
+      struct ra_class *aligned_bary_class;
    } fs_reg_sets[3];
 
    void (*shader_debug_log)(void *, const char *str, ...) PRINTFLIKE(2, 3);
@@ -254,10 +232,8 @@ struct brw_base_prog_key {
    unsigned program_string_id;
 
    enum brw_subgroup_size_type subgroup_size_type;
-
-   struct brw_sampler_prog_key_data tex;
-
    bool robust_buffer_access;
+   struct brw_sampler_prog_key_data tex;
 };
 
 /**
@@ -1496,6 +1472,7 @@ struct brw_compile_vs_params {
    const struct brw_vs_prog_key *key;
    struct brw_vs_prog_data *prog_data;
 
+   bool edgeflag_is_last; /* true for gallium */
    bool shader_time;
    int shader_time_index;
 
@@ -1562,7 +1539,6 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
                const struct brw_gs_prog_key *key,
                struct brw_gs_prog_data *prog_data,
                nir_shader *nir,
-               struct gl_program *prog,
                int shader_time_index,
                struct brw_compile_stats *stats,
                char **error_str);

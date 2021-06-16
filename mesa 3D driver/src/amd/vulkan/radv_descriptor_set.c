@@ -477,16 +477,11 @@ radv_CreatePipelineLayout(VkDevice _device, const VkPipelineLayoutCreateInfo *pC
       layout->set[set].layout = set_layout;
 
       layout->set[set].dynamic_offset_start = dynamic_offset_count;
-      layout->set[set].dynamic_offset_count = 0;
-      layout->set[set].dynamic_offset_stages = 0;
 
       for (uint32_t b = 0; b < set_layout->binding_count; b++) {
-         layout->set[set].dynamic_offset_count +=
-            set_layout->binding[b].array_size * set_layout->binding[b].dynamic_offset_count;
-         layout->set[set].dynamic_offset_stages |= set_layout->dynamic_shader_stages;
+         dynamic_offset_count += set_layout->binding[b].array_size * set_layout->binding[b].dynamic_offset_count;
+         dynamic_shader_stages |= set_layout->dynamic_shader_stages;
       }
-      dynamic_offset_count += layout->set[set].dynamic_offset_count;
-      dynamic_shader_stages |= layout->set[set].dynamic_offset_stages;
 
       /* Hash the entire set layout except for the vk_object_base. The
        * rest of the set layout is carefully constructed to not have
@@ -544,8 +539,9 @@ radv_descriptor_set_create(struct radv_device *device, struct radv_descriptor_po
    }
    unsigned range_offset =
       sizeof(struct radv_descriptor_set_header) + sizeof(struct radeon_winsys_bo *) * buffer_count;
+   const unsigned dynamic_offset_count = layout->dynamic_offset_count;
    unsigned mem_size =
-      range_offset + sizeof(struct radv_descriptor_range) * layout->dynamic_offset_count;
+      range_offset + sizeof(struct radv_descriptor_range) * dynamic_offset_count;
 
    if (pool->host_memory_base) {
       if (pool->host_memory_end - pool->host_memory_ptr < mem_size)
@@ -565,7 +561,7 @@ radv_descriptor_set_create(struct radv_device *device, struct radv_descriptor_po
 
    vk_object_base_init(&device->vk, &set->header.base, VK_OBJECT_TYPE_DESCRIPTOR_SET);
 
-   if (layout->dynamic_offset_count) {
+   if (dynamic_offset_count) {
       set->header.dynamic_descriptors =
          (struct radv_descriptor_range *)((uint8_t *)set + range_offset);
    }

@@ -1270,6 +1270,16 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
                   sctx->last_base_vertex = draws[num_draws - 1].index_bias;
             } else {
                /* DrawID and BaseVertex are constant. */
+               if (GFX_VERSION == GFX10) {
+                  /* GFX10 has a bug that consecutive draw packets with NOT_EOP must not have
+                   * count == 0 in the last draw (which doesn't set NOT_EOP).
+                   *
+                   * So remove all trailing draws with count == 0.
+                   */
+                  while (num_draws > 1 && !draws[num_draws - 1].count)
+                     num_draws--;
+               }
+
                for (unsigned i = 0; i < num_draws; i++) {
                   uint64_t va = index_va + draws[i].start * index_size;
 
@@ -1767,15 +1777,6 @@ static void si_draw_vbo(struct pipe_context *ctx,
    si_decompress_textures(sctx, u_bit_consecutive(0, SI_NUM_GRAPHICS_SHADERS));
    si_need_gfx_cs_space(sctx, num_draws);
 
-   /* If we're using a secure context, determine if cs must be secure or not */
-   if (GFX_VERSION >= GFX9 && unlikely(radeon_uses_secure_bos(sctx->ws))) {
-      bool secure = si_gfx_resources_check_encrypted(sctx);
-      if (secure != sctx->ws->cs_is_secure(&sctx->gfx_cs)) {
-         si_flush_gfx_cs(sctx, RADEON_FLUSH_ASYNC_START_NEXT_GFX_IB_NOW |
-                               RADEON_FLUSH_TOGGLE_SECURE_SUBMISSION, NULL);
-      }
-   }
-
    if (HAS_TESS) {
       struct si_shader_selector *tcs = sctx->shader.tcs.cso;
 
@@ -2054,8 +2055,12 @@ static void si_draw_vbo(struct pipe_context *ctx,
          /* Use NGG fast launch for certain primitive types.
           * A draw must have at least 1 full primitive.
           * The fast launch doesn't work with tessellation.
+          *
+          * Small instances (including small draws) don't perform well with fast launch.
+          * It's better to use normal launch with NOT_EOP for small draws, and it's
+          * always better to use normal launch for small instances.
           */
-         if (!HAS_TESS && ngg_culling && min_direct_count >= 3 &&
+         if (!HAS_TESS && ngg_culling && min_direct_count >= 64 &&
              !(sctx->screen->debug_flags & DBG(NO_FAST_LAUNCH))) {
             if (prim == PIPE_PRIM_TRIANGLES && !index_size) {
                ngg_culling |= SI_NGG_CULL_GS_FAST_LAUNCH_TRI_LIST;
@@ -2063,12 +2068,10 @@ static void si_draw_vbo(struct pipe_context *ctx,
                if (!index_size) {
                   ngg_culling |= SI_NGG_CULL_GS_FAST_LAUNCH_TRI_STRIP;
                } else if (!primitive_restart) {
-#if 0 /* It's disabled because this hangs: AMD_DEBUG=nggc torcs */
                   ngg_culling |= SI_NGG_CULL_GS_FAST_LAUNCH_TRI_STRIP |
                                  SI_NGG_CULL_GS_FAST_LAUNCH_INDEX_SIZE_PACKED(MIN2(index_size, 3));
                   /* The index buffer will be emulated. */
                   index_size = 0;
-#endif
                }
             }
          }
@@ -2268,6 +2271,11 @@ static void si_draw_vbo(struct pipe_context *ctx,
          sctx->num_prim_restart_calls++;
    }
 
+   if (!sctx->blitter_running && sctx->framebuffer.state.zsbuf) {
+      struct si_texture *zstex = (struct si_texture *)sctx->framebuffer.state.zsbuf->texture;
+      zstex->depth_cleared_level_mask &= ~BITFIELD_BIT(sctx->framebuffer.state.zsbuf->u.tex.level);
+   }
+
    /* TODO: Set displayable_dcc_dirty if image stores are used. */
 
    DRAW_CLEANUP;
@@ -2398,4 +2406,19 @@ void si_init_draw_functions(struct si_context *sctx)
    sctx->blitter->draw_rectangle = si_draw_rectangle;
 
    si_init_ia_multi_vgt_param_table(sctx);
+}
+
+extern "C"
+void si_install_draw_wrapper(struct si_context *sctx, pipe_draw_vbo_func wrapper)
+{
+   if (wrapper) {
+      if (wrapper != sctx->b.draw_vbo) {
+         assert (!sctx->real_draw_vbo);
+         sctx->real_draw_vbo = sctx->b.draw_vbo;
+         sctx->b.draw_vbo = wrapper;
+      }
+   } else if (sctx->real_draw_vbo) {
+      sctx->real_draw_vbo = NULL;
+      si_select_draw_vbo(sctx);
+   }
 }

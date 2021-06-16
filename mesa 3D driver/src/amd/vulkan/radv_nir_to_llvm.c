@@ -107,6 +107,7 @@ create_llvm_function(struct ac_llvm_context *ctx, LLVMModuleRef module, LLVMBuil
    }
 
    ac_llvm_set_workgroup_size(main_function, max_workgroup_size);
+   ac_llvm_set_target_features(main_function, ctx);
 
    return main_function;
 }
@@ -756,7 +757,11 @@ handle_vs_input_decl(struct radv_shader_context *ctx, struct nir_variable *varia
          num_channels = MAX2(num_channels, 3);
       }
 
-      t_offset = LLVMConstInt(ctx->ac.i32, attrib_binding, false);
+      unsigned desc_index =
+         ctx->args->shader_info->vs.use_per_attribute_vb_descs ? attrib_index : attrib_binding;
+      desc_index = util_bitcount(ctx->args->shader_info->vs.vb_desc_usage_mask &
+                                 u_bit_consecutive(0, desc_index));
+      t_offset = LLVMConstInt(ctx->ac.i32, desc_index, false);
       t_list = ac_build_load_to_sgpr(&ctx->ac, t_list_ptr, t_offset);
 
       /* Always split typed vertex buffer loads on GFX6 and GFX10+
@@ -2930,7 +2935,7 @@ radv_nir_get_max_workgroup_size(enum chip_class chip_class, gl_shader_stage stag
    const unsigned backup_sizes[] = {chip_class >= GFX9 ? 128 : 64, 1, 1};
    unsigned sizes[3];
    for (unsigned i = 0; i < 3; i++)
-      sizes[i] = nir ? nir->info.cs.local_size[i] : backup_sizes[i];
+      sizes[i] = nir ? nir->info.workgroup_size[i] : backup_sizes[i];
    return radv_get_max_workgroup_size(chip_class, stage, sizes);
 }
 

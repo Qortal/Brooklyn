@@ -286,14 +286,6 @@ emit_blit_setup(struct fd_ringbuffer *ring, enum pipe_format pfmt,
       A6XX_SP_2D_DST_FORMAT_COLOR_FORMAT(fmt) |
          COND(util_format_is_pure_sint(pfmt), A6XX_SP_2D_DST_FORMAT_SINT) |
          COND(util_format_is_pure_uint(pfmt), A6XX_SP_2D_DST_FORMAT_UINT) |
-         COND(util_format_is_snorm(pfmt),
-              A6XX_SP_2D_DST_FORMAT_SINT | A6XX_SP_2D_DST_FORMAT_NORM) |
-         COND(
-            util_format_is_unorm(pfmt),
-            // TODO sometimes blob uses UINT+NORM but dEQP seems unhappy about
-            // that
-            //A6XX_SP_2D_DST_FORMAT_UINT |
-            A6XX_SP_2D_DST_FORMAT_NORM) |
          COND(is_srgb, A6XX_SP_2D_DST_FORMAT_SRGB) |
          A6XX_SP_2D_DST_FORMAT_MASK(0xf));
 
@@ -914,12 +906,18 @@ handle_rgba_blit(struct fd_context *ctx,
    if (!can_do_blit(info))
       return false;
 
-   batch = fd_bc_alloc_batch(&ctx->screen->batch_cache, ctx, true);
+   struct fd_resource *src = fd_resource(info->src.resource);
+   struct fd_resource *dst = fd_resource(info->dst.resource);
+
+   fd6_validate_format(ctx, src, info->src.format);
+   fd6_validate_format(ctx, dst, info->dst.format);
+
+   batch = fd_bc_alloc_batch(ctx, true);
 
    fd_screen_lock(ctx->screen);
 
-   fd_batch_resource_read(batch, fd_resource(info->src.resource));
-   fd_batch_resource_write(batch, fd_resource(info->dst.resource));
+   fd_batch_resource_read(batch, src);
+   fd_batch_resource_write(batch, dst);
 
    fd_screen_unlock(ctx->screen);
 
@@ -945,8 +943,8 @@ handle_rgba_blit(struct fd_context *ctx,
 
    if ((info->src.resource->target == PIPE_BUFFER) &&
        (info->dst.resource->target == PIPE_BUFFER)) {
-      assert(fd_resource(info->src.resource)->layout.tile_mode == TILE6_LINEAR);
-      assert(fd_resource(info->dst.resource)->layout.tile_mode == TILE6_LINEAR);
+      assert(src->layout.tile_mode == TILE6_LINEAR);
+      assert(dst->layout.tile_mode == TILE6_LINEAR);
       emit_blit_buffer(ctx, batch->draw, info);
    } else {
       /* I don't *think* we need to handle blits between buffer <-> !buffer */
@@ -964,7 +962,7 @@ handle_rgba_blit(struct fd_context *ctx,
 
    fd_batch_unlock_submit(batch);
 
-   fd_resource(info->dst.resource)->valid = true;
+   dst->valid = true;
 
    fd_batch_flush(batch);
    fd_batch_reference(&batch, NULL);
@@ -1144,12 +1142,15 @@ fd6_blit(struct fd_context *ctx, const struct pipe_blit_info *info) assert_dt
 void
 fd6_blitter_init(struct pipe_context *pctx) disable_thread_safety_analysis
 {
-   fd_context(pctx)->clear_ubwc = fd6_clear_ubwc;
+   struct fd_context *ctx = fd_context(pctx);
+
+   ctx->clear_ubwc = fd6_clear_ubwc;
+   ctx->validate_format = fd6_validate_format;
 
    if (FD_DBG(NOBLIT))
       return;
 
-   fd_context(pctx)->blit = fd6_blit;
+   ctx->blit = fd6_blit;
 }
 
 unsigned

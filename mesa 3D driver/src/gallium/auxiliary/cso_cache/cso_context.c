@@ -107,6 +107,7 @@ struct cso_context {
    struct pipe_query *render_condition, *render_condition_saved;
    uint render_condition_mode, render_condition_mode_saved;
    boolean render_condition_cond, render_condition_cond_saved;
+   bool flatshade_first, flatshade_first_saved;
 
    struct pipe_framebuffer_state fb, fb_saved;
    struct pipe_viewport_state vp, vp_saved;
@@ -252,7 +253,8 @@ cso_create_context(struct pipe_context *pipe, unsigned flags)
    ctx->pipe = pipe;
    ctx->sample_mask = ~0;
 
-   cso_init_vbuf(ctx, flags);
+   if (!(flags & CSO_NO_VBUF))
+      cso_init_vbuf(ctx, flags);
 
    /* Enable for testing: */
    if (0) cso_set_maximum_cache_size(&ctx->cache, 4);
@@ -284,10 +286,7 @@ cso_create_context(struct pipe_context *pipe, unsigned flags)
    return ctx;
 }
 
-/**
- * Free the CSO context.
- */
-void cso_destroy_context( struct cso_context *ctx )
+void cso_unbind_context(struct cso_context *ctx)
 {
    unsigned i;
 
@@ -354,6 +353,8 @@ void cso_destroy_context( struct cso_context *ctx )
       }
 
       ctx->pipe->bind_depth_stencil_alpha_state( ctx->pipe, NULL );
+      struct pipe_stencil_ref sr = {0};
+      ctx->pipe->set_stencil_ref(ctx->pipe, sr);
       ctx->pipe->bind_fs_state( ctx->pipe, NULL );
       ctx->pipe->set_constant_buffer(ctx->pipe, PIPE_SHADER_FRAGMENT, 0, false, NULL);
       ctx->pipe->bind_vs_state( ctx->pipe, NULL );
@@ -382,6 +383,16 @@ void cso_destroy_context( struct cso_context *ctx )
       pipe_so_target_reference(&ctx->so_targets_saved[i], NULL);
    }
 
+   memset(&ctx->samplers, 0, sizeof(ctx->samplers));
+   memset(&ctx->nr_so_targets, 0, offsetof(struct cso_context, cache) - offsetof(struct cso_context, nr_so_targets));
+}
+
+/**
+ * Free the CSO context.
+ */
+void cso_destroy_context( struct cso_context *ctx )
+{
+   cso_unbind_context(ctx);
    cso_cache_delete(&ctx->cache);
 
    if (ctx->vbuf)
@@ -562,6 +573,9 @@ enum pipe_error cso_set_rasterizer(struct cso_context *ctx,
 
    if (ctx->rasterizer != handle) {
       ctx->rasterizer = handle;
+      ctx->flatshade_first = templ->flatshade_first;
+      if (ctx->vbuf)
+         u_vbuf_set_flatshade_first(ctx->vbuf, ctx->flatshade_first);
       ctx->pipe->bind_rasterizer_state(ctx->pipe, handle);
    }
    return PIPE_OK;
@@ -572,6 +586,7 @@ cso_save_rasterizer(struct cso_context *ctx)
 {
    assert(!ctx->rasterizer_saved);
    ctx->rasterizer_saved = ctx->rasterizer;
+   ctx->flatshade_first_saved = ctx->flatshade_first;
 }
 
 static void
@@ -579,6 +594,9 @@ cso_restore_rasterizer(struct cso_context *ctx)
 {
    if (ctx->rasterizer != ctx->rasterizer_saved) {
       ctx->rasterizer = ctx->rasterizer_saved;
+      ctx->flatshade_first = ctx->flatshade_first_saved;
+      if (ctx->vbuf)
+         u_vbuf_set_flatshade_first(ctx->vbuf, ctx->flatshade_first);
       ctx->pipe->bind_rasterizer_state(ctx->pipe, ctx->rasterizer_saved);
    }
    ctx->rasterizer_saved = NULL;

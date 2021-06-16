@@ -29,8 +29,8 @@
   extends:
     - .piglit-traces-test
   variables:
-    BARE_METAL_TEST_SCRIPT: "/install/piglit/run.sh"
-    BM_START_XORG: 1
+    HWCI_TEST_SCRIPT: "/install/piglit/run.sh"
+    HWCI_START_XORG: 1
     PIGLIT_REPLAY_DESCRIPTION_FILE: "/install/traces-freedreno.yml"
   artifacts:
     reports:
@@ -119,24 +119,24 @@ a530_gles31:
     - .piglit-test
     - .a530-test
   variables:
-    BARE_METAL_TEST_SCRIPT: "/install/piglit/piglit-runner.sh"
-    BM_START_XORG: 1
+    HWCI_TEST_SCRIPT: "/install/piglit/piglit-runner.sh"
+    HWCI_START_XORG: 1
 
-# Run 1/2 of piglit_gl since it takes a bit under 20 minutes
+# piglit_gl since it takes a bit under 20 minutes and has a lot of flakes, so
+# leave it as manual.
 a530_piglit_gl:
   extends:
     - .a530_piglit
+    - .test-manual-mr
   variables:
     PIGLIT_PROFILES: quick_gl
-    PIGLIT_FRACTION: 2
 
-# Run 1/2 of piglit_shader since it takes a bit under 20 minutes
 a530_piglit_shader:
   extends:
     - .a530_piglit
+  parallel: 2
   variables:
     PIGLIT_PROFILES: quick_shader
-    PIGLIT_FRACTION: 2
 
 a530-traces:
   extends:
@@ -193,15 +193,15 @@ a630_egl:
     - .a630-test
   variables:
     DEQP_VER: egl
-    BM_START_XORG: 1
-    BARE_METAL_TEST_SCRIPT: "/install/bare-metal/arm64_a630_egl.sh"
+    HWCI_START_XORG: 1
+    HWCI_TEST_SCRIPT: "/install/bare-metal/arm64_a630_egl.sh"
 
 a630_gles_others:
   extends:
     - .baremetal-deqp-test
     - .a630-test
   variables:
-    BARE_METAL_TEST_SCRIPT: "/install/bare-metal/arm64_a630_gles_others.sh"
+    HWCI_TEST_SCRIPT: "/install/bare-metal/arm64_a630_gles_others.sh"
 
 a630_gles_asan:
   extends:
@@ -262,8 +262,8 @@ a630_piglit:
     - .piglit-test
     - .a630-test
   variables:
-    BARE_METAL_TEST_SCRIPT: "/install/piglit/piglit-runner.sh"
-    BM_START_XORG: 1
+    HWCI_TEST_SCRIPT: "/install/piglit/piglit-runner.sh"
+    HWCI_START_XORG: 1
     PIGLIT_PROFILES: gpu
 
 a630-traces:

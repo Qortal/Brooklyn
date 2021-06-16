@@ -111,7 +111,7 @@ ir3_context_init(struct ir3_compiler *compiler,
 	if ((so->type == MESA_SHADER_FRAGMENT) && (compiler->gpu_id >= 600))
 		NIR_PASS_V(ctx->s, ir3_nir_lower_tex_prefetch);
 
-	NIR_PASS_V(ctx->s, nir_convert_from_ssa, true);
+	NIR_PASS(progress, ctx->s, nir_lower_phis_to_scalar, true);
 
 	/* Super crude heuristic to limit # of tex prefetch in small
 	 * shaders.  This completely ignores loops.. but that's really
@@ -358,8 +358,6 @@ void
 ir3_split_dest(struct ir3_block *block, struct ir3_instruction **dst,
 		struct ir3_instruction *src, unsigned base, unsigned n)
 {
-	struct ir3_instruction *prev = NULL;
-
 	if ((n == 1) && (src->regs[0]->wrmask == 0x1) &&
 		/* setup_input needs ir3_split_dest to generate a SPLIT instruction */
 		src->opc != OPC_META_INPUT) {
@@ -386,14 +384,6 @@ ir3_split_dest(struct ir3_block *block, struct ir3_instruction **dst,
 		__ssa_dst(split)->flags |= flags;
 		__ssa_src(split, src, flags);
 		split->split.off = i + base;
-
-		if (prev) {
-			split->cp.left = prev;
-			split->cp.left_cnt++;
-			prev->cp.right = split;
-			prev->cp.right_cnt++;
-		}
-		prev = split;
 
 		if (src->regs[0]->wrmask & (1 << (i + base)))
 			dst[j++] = split;
@@ -598,7 +588,7 @@ ir3_create_array_load(struct ir3_context *ctx, struct ir3_array *arr, int n,
 	__ssa_dst(mov)->flags |= flags;
 	src = ir3_reg_create(mov, 0, IR3_REG_ARRAY |
 			COND(address, IR3_REG_RELATIV) | flags);
-	src->instr = arr->last_write;
+	src->def = arr->last_write;
 	src->size  = arr->length;
 	src->array.id = arr->id;
 	src->array.offset = n;
@@ -632,12 +622,12 @@ ir3_create_array_store(struct ir3_context *ctx, struct ir3_array *arr, int n,
 		src->barrier_conflict |= IR3_BARRIER_ARRAY_R | IR3_BARRIER_ARRAY_W;
 
 		dst->flags |= IR3_REG_ARRAY;
-		dst->instr = arr->last_write;
+		dst->def = arr->last_write;
 		dst->size = arr->length;
 		dst->array.id = arr->id;
 		dst->array.offset = n;
 
-		arr->last_write = src;
+		arr->last_write = dst;
 
 		array_insert(block, block->keeps, src);
 
@@ -655,19 +645,20 @@ ir3_create_array_store(struct ir3_context *ctx, struct ir3_array *arr, int n,
 	}
 	mov->barrier_class = IR3_BARRIER_ARRAY_W;
 	mov->barrier_conflict = IR3_BARRIER_ARRAY_R | IR3_BARRIER_ARRAY_W;
-	dst = ir3_reg_create(mov, 0, IR3_REG_ARRAY |
+	dst = ir3_reg_create(mov, 0, IR3_REG_DEST | IR3_REG_SSA | IR3_REG_ARRAY |
 			flags |
 			COND(address, IR3_REG_RELATIV));
-	dst->instr = arr->last_write;
+	dst->def = arr->last_write;
+	dst->instr = mov;
 	dst->size  = arr->length;
 	dst->array.id = arr->id;
 	dst->array.offset = n;
-	ir3_reg_create(mov, 0, IR3_REG_SSA | flags)->instr = src;
+	ir3_reg_create(mov, 0, IR3_REG_SSA | flags)->def = src->regs[0];
 
 	if (address)
 		ir3_instr_set_address(mov, address);
 
-	arr->last_write = mov;
+	arr->last_write = dst;
 
 	/* the array store may only matter to something in an earlier
 	 * block (ie. loops), but since arrays are not in SSA, depth

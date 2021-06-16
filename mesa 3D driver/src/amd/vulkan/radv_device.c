@@ -287,13 +287,13 @@ radv_get_compiler_string(struct radv_physical_device *pdevice)
        * missing. This gives 2-5% performance with SotTR and ACO.
        */
       if (driQueryOptionb(&pdevice->instance->dri_options, "radv_report_llvm9_version_string")) {
-         return "ACO/LLVM 9.0.1";
+         return " (LLVM 9.0.1)";
       }
 
-      return "ACO";
+      return "";
    }
 
-   return "LLVM " MESA_LLVM_VERSION_STRING;
+   return " (LLVM " MESA_LLVM_VERSION_STRING ")";
 }
 
 int
@@ -452,9 +452,11 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .EXT_display_control = true,
 #endif
       .EXT_extended_dynamic_state = true,
+      .EXT_extended_dynamic_state2 = true,
       .EXT_external_memory_dma_buf = true,
       .EXT_external_memory_host = device->rad_info.has_userptr,
       .EXT_global_priority = true,
+      .EXT_global_priority_query = true,
       .EXT_host_query_reset = true,
       .EXT_image_drm_format_modifier = device->rad_info.chip_class >= GFX9,
       .EXT_image_robustness = true,
@@ -588,7 +590,7 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
    device->ws = radv_null_winsys_create();
 #else
    if (drm_device) {
-      device->ws = radv_amdgpu_winsys_create(fd, instance->debug_flags, instance->perftest_flags);
+      device->ws = radv_amdgpu_winsys_create(fd, instance->debug_flags, instance->perftest_flags, false);
    } else {
       device->ws = radv_null_winsys_create();
    }
@@ -624,7 +626,7 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
 
    device->use_llvm = instance->debug_flags & RADV_DEBUG_LLVM;
 
-   snprintf(device->name, sizeof(device->name), "AMD RADV %s (%s)", device->rad_info.name,
+   snprintf(device->name, sizeof(device->name), "AMD RADV %s%s", device->rad_info.name,
             radv_get_compiler_string(device));
 
 #ifdef ENABLE_SHADER_CACHE
@@ -738,33 +740,6 @@ radv_physical_device_destroy(struct radv_physical_device *device)
    vk_free(&device->instance->vk.alloc, device);
 }
 
-static void *
-default_alloc_func(void *pUserData, size_t size, size_t align,
-                   VkSystemAllocationScope allocationScope)
-{
-   return malloc(size);
-}
-
-static void *
-default_realloc_func(void *pUserData, void *pOriginal, size_t size, size_t align,
-                     VkSystemAllocationScope allocationScope)
-{
-   return realloc(pOriginal, size);
-}
-
-static void
-default_free_func(void *pUserData, void *pMemory)
-{
-   free(pMemory);
-}
-
-static const VkAllocationCallbacks default_alloc = {
-   .pUserData = NULL,
-   .pfnAllocation = default_alloc_func,
-   .pfnReallocation = default_realloc_func,
-   .pfnFree = default_free_func,
-};
-
 static const struct debug_control radv_debug_options[] = {
    {"nofastclears", RADV_DEBUG_NO_FAST_CLEARS},
    {"nodcc", RADV_DEBUG_NO_DCC},
@@ -813,9 +788,9 @@ static const struct debug_control radv_perftest_options[] = {
    {"localbos", RADV_PERFTEST_LOCAL_BOS},   {"dccmsaa", RADV_PERFTEST_DCC_MSAA},
    {"bolist", RADV_PERFTEST_BO_LIST},
    {"cswave32", RADV_PERFTEST_CS_WAVE_32},  {"pswave32", RADV_PERFTEST_PS_WAVE_32},
-   {"gewave32", RADV_PERFTEST_GE_WAVE_32},  {"dfsm", RADV_PERFTEST_DFSM},
+   {"gewave32", RADV_PERFTEST_GE_WAVE_32},
    {"nosam", RADV_PERFTEST_NO_SAM},         {"sam", RADV_PERFTEST_SAM},
-   {"dccstores", RADV_PERFTEST_DCC_STORES}, {NULL, 0}};
+   {NULL, 0}};
 
 const char *
 radv_get_perftest_option_name(int id)
@@ -824,77 +799,31 @@ radv_get_perftest_option_name(int id)
    return radv_perftest_options[id].string;
 }
 
-static void
-radv_handle_per_app_options(struct radv_instance *instance, const VkApplicationInfo *info)
-{
-   const char *name = info ? info->pApplicationName : NULL;
-   const char *engine_name = info ? info->pEngineName : NULL;
-
-   if (name) {
-      if (!strcmp(name, "DOOM_VFR")) {
-         /* Work around a Doom VFR game bug */
-         instance->debug_flags |= RADV_DEBUG_NO_DYNAMIC_BOUNDS;
-      } else if (!strcmp(name, "Fledge")) {
-         /*
-          * Zero VRAM for "The Surge 2"
-          *
-          * This avoid a hang when when rendering any level. Likely
-          * uninitialized data in an indirect draw.
-          */
-         instance->debug_flags |= RADV_DEBUG_ZERO_VRAM;
-      } else if (!strcmp(name, "No Man's Sky")) {
-         /* Work around a NMS game bug */
-         instance->debug_flags |= RADV_DEBUG_DISCARD_TO_DEMOTE;
-      } else if (!strcmp(name, "DOOMEternal")) {
-         /* Zero VRAM for Doom Eternal to fix rendering issues. */
-         instance->debug_flags |= RADV_DEBUG_ZERO_VRAM;
-      } else if (!strcmp(name, "ShadowOfTheTomb")) {
-         /* Work around flickering foliage for native Shadow of the Tomb Raider
-          * on GFX10.3 */
-         instance->debug_flags |= RADV_DEBUG_INVARIANT_GEOM;
-      }
-   }
-
-   if (engine_name) {
-      if (!strcmp(engine_name, "vkd3d")) {
-         /* Zero VRAM for all VKD3D (DX12->VK) games to fix
-          * rendering issues.
-          */
-         instance->debug_flags |= RADV_DEBUG_ZERO_VRAM;
-      } else if (!strcmp(engine_name, "Quantic Dream Engine")) {
-         /* Fix various artifacts in Detroit: Become Human */
-         instance->debug_flags |= RADV_DEBUG_ZERO_VRAM | RADV_DEBUG_DISCARD_TO_DEMOTE;
-
-         /* Fix rendering issues in Detroit: Become Human
-          * because the game uses render loops (it
-          * samples/renders from/to the same depth/stencil
-          * texture inside the same draw) without input
-          * attachments and that is invalid Vulkan usage.
-          */
-         instance->disable_tc_compat_htile_in_general = true;
-      }
-   }
-
-   instance->enable_mrt_output_nan_fixup =
-      driQueryOptionb(&instance->dri_options, "radv_enable_mrt_output_nan_fixup");
-
-   instance->disable_shrink_image_store =
-      driQueryOptionb(&instance->dri_options, "radv_disable_shrink_image_store");
-
-   if (driQueryOptionb(&instance->dri_options, "radv_no_dynamic_bounds"))
-      instance->debug_flags |= RADV_DEBUG_NO_DYNAMIC_BOUNDS;
-}
-
+// clang-format off
 static const driOptionDescription radv_dri_options[] = {
-   DRI_CONF_SECTION_PERFORMANCE DRI_CONF_ADAPTIVE_SYNC(
-      true) DRI_CONF_VK_X11_OVERRIDE_MIN_IMAGE_COUNT(0) DRI_CONF_VK_X11_STRICT_IMAGE_COUNT(false)
-      DRI_CONF_VK_X11_ENSURE_MIN_IMAGE_COUNT(false) DRI_CONF_RADV_REPORT_LLVM9_VERSION_STRING(false)
-         DRI_CONF_RADV_ENABLE_MRT_OUTPUT_NAN_FIXUP(false)
-            DRI_CONF_RADV_DISABLE_SHRINK_IMAGE_STORE(false) DRI_CONF_RADV_NO_DYNAMIC_BOUNDS(false)
-               DRI_CONF_RADV_OVERRIDE_UNIFORM_OFFSET_ALIGNMENT(0) DRI_CONF_SECTION_END
+   DRI_CONF_SECTION_PERFORMANCE
+      DRI_CONF_ADAPTIVE_SYNC(true)
+      DRI_CONF_VK_X11_OVERRIDE_MIN_IMAGE_COUNT(0)
+      DRI_CONF_VK_X11_STRICT_IMAGE_COUNT(false)
+      DRI_CONF_VK_X11_ENSURE_MIN_IMAGE_COUNT(false)
+      DRI_CONF_RADV_REPORT_LLVM9_VERSION_STRING(false)
+      DRI_CONF_RADV_ENABLE_MRT_OUTPUT_NAN_FIXUP(false)
+      DRI_CONF_RADV_DISABLE_SHRINK_IMAGE_STORE(false)
+      DRI_CONF_RADV_NO_DYNAMIC_BOUNDS(false)
+      DRI_CONF_RADV_ABSOLUTE_DEPTH_BIAS(false)
+      DRI_CONF_RADV_OVERRIDE_UNIFORM_OFFSET_ALIGNMENT(0)
+   DRI_CONF_SECTION_END
 
-                  DRI_CONF_SECTION_DEBUG DRI_CONF_OVERRIDE_VRAM_SIZE()
-                     DRI_CONF_VK_WSI_FORCE_BGRA8_UNORM_FIRST(false) DRI_CONF_SECTION_END};
+   DRI_CONF_SECTION_DEBUG
+      DRI_CONF_OVERRIDE_VRAM_SIZE()
+      DRI_CONF_VK_WSI_FORCE_BGRA8_UNORM_FIRST(false)
+      DRI_CONF_RADV_ZERO_VRAM(false)
+      DRI_CONF_RADV_LOWER_DISCARD_TO_DEMOTE(false)
+      DRI_CONF_RADV_INVARIANT_GEOM(false)
+      DRI_CONF_RADV_DISABLE_TC_COMPAT_HTILE_GENERAL(false)
+   DRI_CONF_SECTION_END
+};
+// clang-format on
 
 static void
 radv_init_dri_options(struct radv_instance *instance)
@@ -904,6 +833,30 @@ radv_init_dri_options(struct radv_instance *instance)
    driParseConfigFiles(&instance->dri_options, &instance->available_dri_options, 0, "radv", NULL,
                        instance->vk.app_info.app_name, instance->vk.app_info.app_version,
                        instance->vk.app_info.engine_name, instance->vk.app_info.engine_version);
+
+   instance->enable_mrt_output_nan_fixup =
+      driQueryOptionb(&instance->dri_options, "radv_enable_mrt_output_nan_fixup");
+
+   instance->disable_shrink_image_store =
+      driQueryOptionb(&instance->dri_options, "radv_disable_shrink_image_store");
+
+   instance->absolute_depth_bias =
+      driQueryOptionb(&instance->dri_options, "radv_absolute_depth_bias");
+
+   instance->disable_tc_compat_htile_in_general =
+      driQueryOptionb(&instance->dri_options, "radv_disable_tc_compat_htile_general");
+
+   if (driQueryOptionb(&instance->dri_options, "radv_no_dynamic_bounds"))
+      instance->debug_flags |= RADV_DEBUG_NO_DYNAMIC_BOUNDS;
+
+   if (driQueryOptionb(&instance->dri_options, "radv_zero_vram"))
+      instance->debug_flags |= RADV_DEBUG_ZERO_VRAM;
+
+   if (driQueryOptionb(&instance->dri_options, "radv_lower_discard_to_demote"))
+      instance->debug_flags |= RADV_DEBUG_DISCARD_TO_DEMOTE;
+
+   if (driQueryOptionb(&instance->dri_options, "radv_invariant_geom"))
+      instance->debug_flags |= RADV_DEBUG_INVARIANT_GEOM;
 }
 
 VkResult
@@ -914,7 +867,7 @@ radv_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
    VkResult result;
 
    if (!pAllocator)
-      pAllocator = &default_alloc;
+      pAllocator = vk_default_allocator();
 
    instance = vk_zalloc(pAllocator, sizeof(*instance), 8, VK_SYSTEM_ALLOCATION_SCOPE_INSTANCE);
    if (!instance)
@@ -941,7 +894,6 @@ radv_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
    VG(VALGRIND_CREATE_MEMPOOL(instance, 0, false));
 
    radv_init_dri_options(instance);
-   radv_handle_per_app_options(instance, pCreateInfo->pApplicationInfo);
 
    *pInstance = radv_instance_to_handle(instance);
 
@@ -1629,6 +1581,20 @@ radv_GetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice,
          features->transformFeedbackPreservesProvokingVertex = true;
          break;
       }
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_2_FEATURES_EXT: {
+         VkPhysicalDeviceExtendedDynamicState2FeaturesEXT *features =
+            (VkPhysicalDeviceExtendedDynamicState2FeaturesEXT *)ext;
+         features->extendedDynamicState2 = true;
+         features->extendedDynamicState2LogicOp = false;
+         features->extendedDynamicState2PatchControlPoints = false;
+         break;
+      }
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GLOBAL_PRIORITY_QUERY_FEATURES_EXT: {
+         VkPhysicalDeviceGlobalPriorityQueryFeaturesEXT *features =
+            (VkPhysicalDeviceGlobalPriorityQueryFeaturesEXT *)ext;
+         features->globalPriorityQuery = true;
+         break;
+      }
       default:
          break;
       }
@@ -1711,7 +1677,7 @@ radv_GetPhysicalDeviceProperties(VkPhysicalDevice physicalDevice,
       .maxDescriptorSetInputAttachments = max_descriptor_set_size,
       .maxVertexInputAttributes = MAX_VERTEX_ATTRIBS,
       .maxVertexInputBindings = MAX_VBS,
-      .maxVertexInputAttributeOffset = 2047,
+      .maxVertexInputAttributeOffset = UINT32_MAX,
       .maxVertexInputBindingStride = 2048,
       .maxVertexOutputComponents = 128,
       .maxTessellationGenerationLevel = 64,
@@ -1731,7 +1697,7 @@ radv_GetPhysicalDeviceProperties(VkPhysicalDevice physicalDevice,
       .maxFragmentOutputAttachments = 8,
       .maxFragmentDualSrcAttachments = 1,
       .maxFragmentCombinedOutputResources = 8,
-      .maxComputeSharedMemorySize = 32768,
+      .maxComputeSharedMemorySize = pdevice->rad_info.chip_class >= GFX7 ? 65536 : 32768,
       .maxComputeWorkGroupCount = {65535, 65535, 65535},
       .maxComputeWorkGroupInvocations = 1024,
       .maxComputeWorkGroupSize = {1024, 1024, 1024},
@@ -1845,7 +1811,7 @@ radv_get_physical_device_properties_1_2(struct radv_physical_device *pdevice,
 
    p->driverID = VK_DRIVER_ID_MESA_RADV;
    snprintf(p->driverName, VK_MAX_DRIVER_NAME_SIZE, "radv");
-   snprintf(p->driverInfo, VK_MAX_DRIVER_INFO_SIZE, "Mesa " PACKAGE_VERSION MESA_GIT_SHA1 " (%s)",
+   snprintf(p->driverInfo, VK_MAX_DRIVER_INFO_SIZE, "Mesa " PACKAGE_VERSION MESA_GIT_SHA1 "%s",
             radv_get_compiler_string(pdevice));
    p->conformanceVersion = (VkConformanceVersion){
       .major = 1,
@@ -2372,6 +2338,13 @@ radv_GetPhysicalDeviceQueueFamilyProperties(VkPhysicalDevice physicalDevice, uin
    assert(*pCount <= 3);
 }
 
+static const VkQueueGlobalPriorityEXT radv_global_queue_priorities[] = {
+   VK_QUEUE_GLOBAL_PRIORITY_LOW_EXT,
+   VK_QUEUE_GLOBAL_PRIORITY_MEDIUM_EXT,
+   VK_QUEUE_GLOBAL_PRIORITY_HIGH_EXT,
+   VK_QUEUE_GLOBAL_PRIORITY_REALTIME_EXT,
+};
+
 void
 radv_GetPhysicalDeviceQueueFamilyProperties2(VkPhysicalDevice physicalDevice, uint32_t *pCount,
                                              VkQueueFamilyProperties2 *pQueueFamilyProperties)
@@ -2388,6 +2361,24 @@ radv_GetPhysicalDeviceQueueFamilyProperties2(VkPhysicalDevice physicalDevice, ui
    };
    radv_get_physical_device_queue_family_properties(pdevice, pCount, properties);
    assert(*pCount <= 3);
+
+   for (uint32_t i = 0; i < *pCount; i++) {
+      vk_foreach_struct(ext, pQueueFamilyProperties[i].pNext)
+      {
+         switch (ext->sType) {
+         case VK_STRUCTURE_TYPE_QUEUE_FAMILY_GLOBAL_PRIORITY_PROPERTIES_EXT: {
+            VkQueueFamilyGlobalPriorityPropertiesEXT *prop =
+               (VkQueueFamilyGlobalPriorityPropertiesEXT *)ext;
+            STATIC_ASSERT(ARRAY_SIZE(radv_global_queue_priorities) <= VK_MAX_GLOBAL_PRIORITY_SIZE_EXT);
+            prop->priorityCount = ARRAY_SIZE(radv_global_queue_priorities);
+            memcpy(&prop->priorities, radv_global_queue_priorities, sizeof(radv_global_queue_priorities));
+            break;
+         }
+         default:
+            break;
+         }
+      }
+   }
 }
 
 void
@@ -2420,9 +2411,15 @@ radv_get_memory_budget_properties(VkPhysicalDevice physicalDevice,
        * too small for games but the budgets need to be redistributed accordingly.
        */
 
+      assert(device->heaps == (RADV_HEAP_GTT | RADV_HEAP_VRAM_VIS));
+      assert(device->memory_properties.memoryHeaps[0].flags == 0); /* GTT */
+      assert(device->memory_properties.memoryHeaps[1].flags == VK_MEMORY_HEAP_DEVICE_LOCAL_BIT);
+      uint8_t gtt_heap_idx = 0, vram_vis_heap_idx = 1;
+
       /* Get the visible VRAM/GTT heap sizes and internal usages. */
-      uint64_t vram_vis_heap_size = device->memory_properties.memoryHeaps[RADV_HEAP_VRAM_VIS].size;
-      uint64_t gtt_heap_size = device->memory_properties.memoryHeaps[RADV_HEAP_GTT].size;
+      uint64_t gtt_heap_size = device->memory_properties.memoryHeaps[gtt_heap_idx].size;
+      uint64_t vram_vis_heap_size = device->memory_properties.memoryHeaps[vram_vis_heap_idx].size;
+
       uint64_t vram_vis_internal_usage = device->ws->query_value(device->ws, RADEON_ALLOCATED_VRAM_VIS) +
                                          device->ws->query_value(device->ws, RADEON_ALLOCATED_VRAM);
       uint64_t gtt_internal_usage = device->ws->query_value(device->ws, RADEON_ALLOCATED_GTT);
@@ -2448,10 +2445,10 @@ radv_get_memory_budget_properties(VkPhysicalDevice physicalDevice,
                                           device->rad_info.gart_page_size);
       uint64_t gtt_free_space = total_free_space - vram_vis_free_space;
 
-      memoryBudget->heapBudget[RADV_HEAP_VRAM_VIS] = vram_vis_free_space + vram_vis_internal_usage;
-      memoryBudget->heapUsage[RADV_HEAP_VRAM_VIS] = vram_vis_internal_usage;
-      memoryBudget->heapBudget[RADV_HEAP_GTT] = gtt_free_space + gtt_internal_usage;
-      memoryBudget->heapUsage[RADV_HEAP_GTT] = gtt_internal_usage;
+      memoryBudget->heapBudget[vram_vis_heap_idx] = vram_vis_free_space + vram_vis_internal_usage;
+      memoryBudget->heapUsage[vram_vis_heap_idx] = vram_vis_internal_usage;
+      memoryBudget->heapBudget[gtt_heap_idx] = gtt_free_space + gtt_internal_usage;
+      memoryBudget->heapUsage[gtt_heap_idx] = gtt_internal_usage;
    } else {
       unsigned mask = device->heaps;
       unsigned heap = 0;
@@ -2882,7 +2879,8 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
    device->use_global_bo_list = (device->instance->perftest_flags & RADV_PERFTEST_BO_LIST) ||
                                 device->vk.enabled_extensions.EXT_descriptor_indexing ||
                                 device->vk.enabled_extensions.EXT_buffer_device_address ||
-                                device->vk.enabled_extensions.KHR_buffer_device_address;
+                                device->vk.enabled_extensions.KHR_buffer_device_address ||
+                                device->vk.enabled_extensions.KHR_ray_tracing_pipeline;
 
    device->robust_buffer_access = robust_buffer_access || robust_buffer_access2;
    device->robust_buffer_access2 = robust_buffer_access2;
@@ -2944,10 +2942,6 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
 
    device->pbb_allowed = device->physical_device->rad_info.chip_class >= GFX9 &&
                          !(device->instance->debug_flags & RADV_DEBUG_NOBINNING);
-
-   /* Disable DFSM by default. As of 2019-09-15 Talos on Low is still 3% slower on Raven. */
-   device->dfsm_allowed =
-      device->pbb_allowed && (device->instance->perftest_flags & RADV_PERFTEST_DFSM);
 
    /* The maximum number of scratch waves. Scratch space isn't divided
     * evenly between CUs. The number is only a function of the number of CUs.
@@ -5164,8 +5158,20 @@ radv_alloc_memory(struct radv_device *device, const VkMemoryAllocateInfo *pAlloc
 
    vk_object_base_init(&device->vk, &mem->base, VK_OBJECT_TYPE_DEVICE_MEMORY);
 
-   if (wsi_info && wsi_info->implicit_sync)
-      flags |= RADEON_FLAG_IMPLICIT_SYNC;
+   if (wsi_info) {
+      if(wsi_info->implicit_sync)
+         flags |= RADEON_FLAG_IMPLICIT_SYNC;
+
+      /* In case of prime, linear buffer is allocated in default heap which is VRAM.
+       * Due to this when display is connected to iGPU and render on dGPU, ddx
+       * function amdgpu_present_check_flip() fails due to which there is blit
+       * instead of flip. Setting the flag RADEON_FLAG_GTT_WC allows kernel to
+       * allocate GTT memory in supported hardware where GTT can be directly scanout.
+       * Using wsi_info variable check to set the flag RADEON_FLAG_GTT_WC so that
+       * only for memory allocated by driver this flag is set.
+       */
+      flags |= RADEON_FLAG_GTT_WC;
+   }
 
    if (dedicate_info) {
       mem->image = radv_image_from_handle(dedicate_info->image);
@@ -6615,6 +6621,14 @@ radv_calc_decompress_on_z_planes(struct radv_device *device, struct radv_image_v
       if (iview->vk_format == VK_FORMAT_D16_UNORM && iview->image->info.samples > 1)
          max_zplanes = 2;
 
+      /* Workaround for a DB hang when ITERATE_256 is set to 1. Only affects 4X MSAA D/S images. */
+      if (device->physical_device->rad_info.has_two_planes_iterate256_bug &&
+          radv_image_get_iterate256(device, iview->image) &&
+          !radv_image_tile_stencil_disabled(device, iview->image) &&
+          iview->image->info.samples == 4) {
+         max_zplanes = 1;
+      }
+
       max_zplanes = max_zplanes + 1;
    } else {
       if (iview->vk_format == VK_FORMAT_D16_UNORM) {
@@ -6645,32 +6659,31 @@ radv_initialise_ds_surface(struct radv_device *device, struct radv_ds_buffer_inf
    unsigned level = iview->base_mip;
    unsigned format, stencil_format;
    uint64_t va, s_offs, z_offs;
-   bool stencil_only = false;
+   bool stencil_only = iview->image->vk_format == VK_FORMAT_S8_UINT;
    const struct radv_image_plane *plane = &iview->image->planes[0];
    const struct radeon_surf *surf = &plane->surface;
 
    assert(vk_format_get_plane_count(iview->image->vk_format) == 1);
 
    memset(ds, 0, sizeof(*ds));
-   switch (iview->image->vk_format) {
-   case VK_FORMAT_D24_UNORM_S8_UINT:
-   case VK_FORMAT_X8_D24_UNORM_PACK32:
-      ds->pa_su_poly_offset_db_fmt_cntl = S_028B78_POLY_OFFSET_NEG_NUM_DB_BITS(-24);
-      break;
-   case VK_FORMAT_D16_UNORM:
-   case VK_FORMAT_D16_UNORM_S8_UINT:
-      ds->pa_su_poly_offset_db_fmt_cntl = S_028B78_POLY_OFFSET_NEG_NUM_DB_BITS(-16);
-      break;
-   case VK_FORMAT_D32_SFLOAT:
-   case VK_FORMAT_D32_SFLOAT_S8_UINT:
-      ds->pa_su_poly_offset_db_fmt_cntl =
-         S_028B78_POLY_OFFSET_NEG_NUM_DB_BITS(-23) | S_028B78_POLY_OFFSET_DB_IS_FLOAT_FMT(1);
-      break;
-   case VK_FORMAT_S8_UINT:
-      stencil_only = true;
-      break;
-   default:
-      break;
+   if (!device->instance->absolute_depth_bias) {
+      switch (iview->image->vk_format) {
+      case VK_FORMAT_D24_UNORM_S8_UINT:
+      case VK_FORMAT_X8_D24_UNORM_PACK32:
+         ds->pa_su_poly_offset_db_fmt_cntl = S_028B78_POLY_OFFSET_NEG_NUM_DB_BITS(-24);
+         break;
+      case VK_FORMAT_D16_UNORM:
+      case VK_FORMAT_D16_UNORM_S8_UINT:
+         ds->pa_su_poly_offset_db_fmt_cntl = S_028B78_POLY_OFFSET_NEG_NUM_DB_BITS(-16);
+         break;
+      case VK_FORMAT_D32_SFLOAT:
+      case VK_FORMAT_D32_SFLOAT_S8_UINT:
+         ds->pa_su_poly_offset_db_fmt_cntl =
+            S_028B78_POLY_OFFSET_NEG_NUM_DB_BITS(-23) | S_028B78_POLY_OFFSET_DB_IS_FLOAT_FMT(1);
+         break;
+      default:
+         break;
+      }
    }
 
    format = radv_translate_dbformat(iview->image->vk_format);
@@ -6718,8 +6731,12 @@ radv_initialise_ds_surface(struct radv_device *device, struct radv_ds_buffer_inf
             ds->db_z_info |= S_028038_DECOMPRESS_ON_N_ZPLANES(max_zplanes);
 
             if (device->physical_device->rad_info.chip_class >= GFX10) {
+               bool iterate256 = radv_image_get_iterate256(device, iview->image);
+
                ds->db_z_info |= S_028040_ITERATE_FLUSH(1);
                ds->db_stencil_info |= S_028044_ITERATE_FLUSH(1);
+               ds->db_z_info |= S_028040_ITERATE_256(iterate256);
+               ds->db_stencil_info |= S_028044_ITERATE_256(iterate256);
             } else {
                ds->db_z_info |= S_028038_ITERATE_FLUSH(1);
                ds->db_stencil_info |= S_02803C_ITERATE_FLUSH(1);

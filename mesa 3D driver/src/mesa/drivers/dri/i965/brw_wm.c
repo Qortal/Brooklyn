@@ -94,8 +94,10 @@ brw_codegen_wm_prog(struct brw_context *brw,
    if (!fp->program.is_arb_asm) {
       brw_nir_setup_glsl_uniforms(mem_ctx, nir, &fp->program,
                                   &prog_data.base, true);
-      brw_nir_analyze_ubo_ranges(brw->screen->compiler, nir,
-                                 NULL, prog_data.base.ubo_ranges);
+      if (brw->can_push_ubos) {
+         brw_nir_analyze_ubo_ranges(brw->screen->compiler, nir,
+                                    NULL, prog_data.base.ubo_ranges);
+      }
    } else {
       brw_nir_setup_arb_uniforms(mem_ctx, nir, &fp->program, &prog_data.base);
 
@@ -225,7 +227,7 @@ brw_populate_sampler_prog_key_data(struct gl_context *ctx,
          /* Haswell handles texture swizzling as surface format overrides
           * (except for GL_ALPHA); all other platforms need MOVs in the shader.
           */
-         if (alpha_depth || (devinfo->ver < 8 && !devinfo->is_haswell))
+         if (alpha_depth || (devinfo->verx10 <= 70))
             key->swizzles[s] = brw_get_texture_swizzle(ctx, t);
 
          if (devinfo->ver < 8 &&

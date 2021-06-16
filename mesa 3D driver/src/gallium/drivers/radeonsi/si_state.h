@@ -65,6 +65,7 @@ struct si_state_blend {
    bool alpha_to_one : 1;
    bool dual_src_blend : 1;
    bool logicop_enable : 1;
+   bool allows_noop_optimization : 1;
 };
 
 struct si_state_rasterizer {
@@ -290,7 +291,7 @@ enum si_tracked_reg
    SI_TRACKED_PA_CL_CLIP_CNTL,
 
    SI_TRACKED_PA_SC_BINNER_CNTL_0,
-   SI_TRACKED_DB_DFSM_CONTROL,
+
    SI_TRACKED_DB_VRS_OVERRIDE_CNTL,
 
    SI_TRACKED_PA_CL_GB_VERT_CLIP_ADJ, /* 4 consecutive registers */

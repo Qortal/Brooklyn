@@ -64,19 +64,16 @@ class Extension:
     is_required    : bool      = False
     is_nonstandard : bool      = False
     enable_conds   : List[str] = None
+    core_since     : Version   = None
 
     # these are specific to zink_device_info.py:
     has_properties : bool      = False
     has_features   : bool      = False
     guard          : bool      = False
 
-    # these are specific to zink_instance.py:
-    core_since     : Version   = None
-    instance_funcs : List[str] = None
-
     def __init__(self, name, alias="", required=False, nonstandard=False,
                  properties=False, features=False, conditions=None, guard=False,
-                 core_since=None, functions=None):
+                 core_since=None):
         self.name = name
         self.alias = alias
         self.is_required = required
@@ -86,7 +83,6 @@ class Extension:
         self.enable_conds = conditions
         self.guard = guard
         self.core_since = core_since
-        self.instance_funcs = functions
 
         if alias == "" and (properties == True or features == True):
             raise RuntimeError("alias must be available when properties and/or features are used")
@@ -151,7 +147,9 @@ class ExtensionRegistryEntry:
     # the version in which the extension is promoted to core VK
     promoted_in       : Version   = None
     # functions added by the extension are referred to as "commands" in the registry
-    commands          : List[str] = None
+    device_commands   : List[str] = None
+    pdevice_commands  : List[str] = None
+    instance_commands : List[str] = None
     constants         : List[str] = None
     features_struct   : str       = None
     properties_struct : str       = None
@@ -162,6 +160,20 @@ class ExtensionRegistry:
 
     def __init__(self, vkxml_path: str):
         vkxml = ElementTree.parse(vkxml_path)
+
+        commands_type = dict()
+        aliases = dict()
+
+        for cmd in vkxml.findall("commands/command"):
+            name = cmd.find("./proto/name")
+
+            if name is not None and name.text:
+                commands_type[name.text] = cmd.find("./param/type").text
+            elif cmd.get("name") is not None:
+                aliases[cmd.get("name")] = cmd.get("alias")
+
+        for (cmd, alias) in aliases.items():
+            commands_type[cmd] = commands_type[alias]
 
         for ext in vkxml.findall("extensions/extension"):
             # Reserved extensions are marked with `supported="disabled"`
@@ -174,11 +186,19 @@ class ExtensionRegistry:
             entry.ext_type = ext.attrib["type"]
             entry.promoted_in = self.parse_promotedto(ext.get("promotedto"))
 
-            entry.commands = []
+            entry.device_commands = []
+            entry.pdevice_commands = []
+            entry.instance_commands = []
+
             for cmd in ext.findall("require/command"):
                 cmd_name = cmd.get("name")
                 if cmd_name:
-                    entry.commands.append(cmd_name)
+                    if commands_type[cmd_name] in ("VkDevice", "VkCommandBuffer", "VkQueue"):
+                        entry.device_commands.append(cmd_name)
+                    elif commands_type[cmd_name] in ("VkPhysicalDevice"):
+                        entry.pdevice_commands.append(cmd_name)
+                    else:
+                        entry.instance_commands.append(cmd_name)
 
             entry.constants = []
             for enum in ext.findall("require/enum"):

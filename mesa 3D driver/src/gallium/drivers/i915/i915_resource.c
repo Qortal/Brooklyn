@@ -36,9 +36,11 @@ i915_resource_from_handle(struct pipe_screen * screen,
 void
 i915_init_resource_functions(struct i915_context *i915 )
 {
-   i915->base.transfer_map = u_transfer_map_vtbl;
-   i915->base.transfer_flush_region = u_transfer_flush_region_vtbl;
-   i915->base.transfer_unmap = u_transfer_unmap_vtbl;
+   i915->base.buffer_map = i915_buffer_transfer_map;
+   i915->base.texture_map = i915_texture_transfer_map;
+   i915->base.transfer_flush_region = u_default_transfer_flush_region;
+   i915->base.buffer_unmap = i915_buffer_transfer_unmap;
+   i915->base.texture_unmap = i915_texture_transfer_unmap;
    i915->base.buffer_subdata = i915_buffer_subdata;
    i915->base.texture_subdata = u_default_texture_subdata;
 }
@@ -48,6 +50,6 @@ i915_init_screen_resource_functions(struct i915_screen *is)
 {
    is->base.resource_create = i915_resource_create;
    is->base.resource_from_handle = i915_resource_from_handle;
-   is->base.resource_get_handle = u_resource_get_handle_vtbl;
-   is->base.resource_destroy = u_resource_destroy_vtbl;
+   is->base.resource_get_handle = i915_resource_get_handle;
+   is->base.resource_destroy = i915_resource_destroy;
 }

@@ -507,7 +507,7 @@ anv_get_format_plane(const struct intel_device_info *devinfo,
     * can reliably do texture upload with BLORP so just don't claim support
     * for any of them.
     */
-   if (devinfo->ver == 7 && !devinfo->is_haswell &&
+   if (devinfo->verx10 == 70 &&
        (isl_layout->bpb == 24 || isl_layout->bpb == 48))
       return unsupported;
 
@@ -646,9 +646,12 @@ anv_get_image_format_features(const struct intel_device_info *devinfo,
 
    if (flags) {
       flags |= VK_FORMAT_FEATURE_BLIT_SRC_BIT |
-               VK_FORMAT_FEATURE_BLIT_DST_BIT |
                VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
                VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+
+      /* Blit destination requires rendering support. */
+      if (isl_format_supports_rendering(devinfo, plane_format.isl_format))
+         flags |= VK_FORMAT_FEATURE_BLIT_DST_BIT;
    }
 
    /* XXX: We handle 3-channel formats by switching them out for RGBX or

@@ -838,6 +838,13 @@ nir_ieq_imm(nir_builder *build, nir_ssa_def *x, uint64_t y)
    return nir_ieq(build, x, nir_imm_intN_t(build, y, x->bit_size));
 }
 
+/* Use nir_iadd(x, -y) for reversing parameter ordering */
+static inline nir_ssa_def *
+nir_isub_imm(nir_builder *build, uint64_t y, nir_ssa_def *x)
+{
+   return nir_isub(build, nir_imm_intN_t(build, y, x->bit_size), x);
+}
+
 static inline nir_ssa_def *
 _nir_mul_imm(nir_builder *build, nir_ssa_def *x, uint64_t y, bool amul)
 {
@@ -1109,6 +1116,38 @@ nir_bitcast_vector(nir_builder *b, nir_ssa_def *src, unsigned dest_bit_size)
    assert(dest_num_components <= NIR_MAX_VEC_COMPONENTS);
 
    return nir_extract_bits(b, &src, 1, 0, dest_num_components, dest_bit_size);
+}
+
+/**
+ * Pad a value to N components with undefs of matching bit size.
+ * If the value already contains >= num_components, it is returned without change.
+ */
+static inline nir_ssa_def *
+nir_pad_vector(nir_builder *b, nir_ssa_def *src, unsigned num_components)
+{
+   assert(src->num_components <= num_components);
+   if (src->num_components == num_components)
+      return src;
+
+   nir_ssa_def *components[NIR_MAX_VEC_COMPONENTS];
+   nir_ssa_def *undef = nir_ssa_undef(b, 1, src->bit_size);
+   unsigned i = 0;
+   for (; i < src->num_components; i++)
+      components[i] = nir_channel(b, src, i);
+   for (; i < num_components; i++)
+      components[i] = undef;
+
+   return nir_vec(b, components, num_components);
+}
+
+/**
+ * Pad a value to 4 components with undefs of matching bit size.
+ * If the value already contains >= 4 components, it is returned without change.
+ */
+static inline nir_ssa_def *
+nir_pad_vec4(nir_builder *b, nir_ssa_def *src)
+{
+   return nir_pad_vector(b, src, 4);
 }
 
 /**
@@ -1571,6 +1610,14 @@ nir_build_calc_io_offset(nir_builder *b,
    unsigned const_op = nir_intrinsic_component(intrin) * component_stride;
 
    return nir_iadd_imm_nuw(b, nir_iadd_nuw(b, base_op, offset_op), const_op);
+}
+
+/* calculate a `(1 << value) - 1` in ssa without overflows */
+static inline nir_ssa_def *
+nir_mask(nir_builder *b, nir_ssa_def *bits, unsigned dst_bit_size)
+{
+   return nir_ushr(b, nir_imm_intN_t(b, -1, dst_bit_size),
+                      nir_isub_imm(b, dst_bit_size, nir_u2u32(b, bits)));
 }
 
 static inline nir_ssa_def *

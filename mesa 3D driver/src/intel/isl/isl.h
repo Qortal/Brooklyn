@@ -414,7 +414,7 @@ enum isl_format {
 /**
  * Numerical base type for channels of isl_format.
  */
-enum isl_base_type {
+enum PACKED isl_base_type {
    ISL_VOID,
    ISL_RAW,
    ISL_UNORM,
@@ -636,8 +636,8 @@ enum isl_aux_usage {
     *  and CCS is also enabled
     *
     * In this mode, the HiZ and CCS surfaces act as a single fused compression
-    * surface where resolves and ambiguates operate on both surfaces at the
-    * same time.  In this mode, the HiZ surface operates in write-through
+    * surface where resolves (but not ambiguates) operate on both surfaces at
+    * the same time.  In this mode, the HiZ surface operates in write-through
     * mode where it is only used for accelerating depth testing and not for
     * actual compression.  The CCS-compressed surface contains valid data at
     * all times.
@@ -649,8 +649,8 @@ enum isl_aux_usage {
    /** The auxiliary surface is a HiZ surface with and CCS is also enabled
     *
     * In this mode, the HiZ and CCS surfaces act as a single fused compression
-    * surface where resolves and ambiguates operate on both surfaces at the
-    * same time.  In this mode, full HiZ compression is enabled and the
+    * surface where resolves (but not ambiguates) operate on both surfaces at
+    * the same time.  In this mode, full HiZ compression is enabled and the
     * CCS-compressed main surface may not contain valid data.  The only way to
     * read the surface outside of the depth hardware is to do a full resolve
     * which resolves both HiZ and CCS so the surface is in the pass-through
@@ -1116,7 +1116,6 @@ struct isl_channel_layout {
  */
 struct isl_format_layout {
    enum isl_format format;
-   const char *name;
 
    uint16_t bpb; /**< Bits per block */
    uint8_t bw; /**< Block width, in pixels */
@@ -1173,7 +1172,7 @@ struct isl_tile_info {
     * The exact value of this field depends heavily on the bits-per-block of
     * the format being used.
     */
-   struct isl_extent2d logical_extent_el;
+   struct isl_extent4d logical_extent_el;
 
    /** The physical size of the tile in bytes and rows of bytes
     *
@@ -1423,6 +1422,11 @@ struct isl_surf_fill_state_info {
     */
    isl_channel_mask_t write_disables;
 
+   /**
+    * blend enable for gfx4-5
+    */
+   bool blend_enable;
+
    /* Intra-tile offset */
    uint16_t x_offset_sa, y_offset_sa;
 };
@@ -1521,7 +1525,15 @@ struct isl_depth_stencil_hiz_emit_info {
    enum isl_aux_usage stencil_aux_usage;
 };
 
+struct isl_null_fill_state_info {
+   struct isl_extent3d size;
+   uint32_t levels;
+   uint32_t minimum_array_element;
+};
+
 extern const struct isl_format_layout isl_format_layouts[];
+extern const char isl_format_names[];
+extern const uint16_t isl_format_name_offsets[];
 
 void
 isl_device_init(struct isl_device *dev,
@@ -1544,7 +1556,9 @@ bool isl_format_is_valid(enum isl_format);
 static inline const char * ATTRIBUTE_CONST
 isl_format_get_name(enum isl_format fmt)
 {
-   return isl_format_get_layout(fmt)->name;
+   assert(fmt != ISL_FORMAT_UNSUPPORTED);
+   assert(fmt < ISL_NUM_FORMATS);
+   return isl_format_names + isl_format_name_offsets[fmt];
 }
 
 enum isl_format isl_format_for_pipe_format(enum pipe_format pf);
@@ -1808,6 +1822,9 @@ isl_aux_state_transition_write(enum isl_aux_state initial_state,
 
 bool
 isl_aux_usage_has_fast_clears(enum isl_aux_usage usage);
+
+bool
+isl_aux_usage_has_compression(enum isl_aux_usage usage);
 
 static inline bool
 isl_aux_usage_has_hiz(enum isl_aux_usage usage)
@@ -2080,8 +2097,12 @@ isl_buffer_fill_state_s(const struct isl_device *dev, void *state,
                         const struct isl_buffer_fill_state_info *restrict info);
 
 void
-isl_null_fill_state(const struct isl_device *dev, void *state,
-                    struct isl_extent3d size);
+isl_null_fill_state_s(const struct isl_device *dev, void *state,
+                      const struct isl_null_fill_state_info *restrict info);
+
+#define isl_null_fill_state(dev, state, ...) \
+   isl_null_fill_state_s((dev), (state), \
+                           &(struct isl_null_fill_state_info) {  __VA_ARGS__ });
 
 #define isl_emit_depth_stencil_hiz(dev, batch, ...) \
    isl_emit_depth_stencil_hiz_s((dev), (batch), \
@@ -2228,7 +2249,9 @@ isl_surf_get_image_offset_sa(const struct isl_surf *surf,
                              uint32_t logical_array_layer,
                              uint32_t logical_z_offset_px,
                              uint32_t *x_offset_sa,
-                             uint32_t *y_offset_sa);
+                             uint32_t *y_offset_sa,
+                             uint32_t *z_offset_sa,
+                             uint32_t *array_offset);
 
 /**
  * Calculate the offset, in units of surface elements, to a subimage in the
@@ -2244,7 +2267,9 @@ isl_surf_get_image_offset_el(const struct isl_surf *surf,
                              uint32_t logical_array_layer,
                              uint32_t logical_z_offset_px,
                              uint32_t *x_offset_el,
-                             uint32_t *y_offset_el);
+                             uint32_t *y_offset_el,
+                             uint32_t *z_offset_el,
+                             uint32_t *array_offset);
 
 /**
  * Calculate the offset, in bytes and intratile surface samples, to a
@@ -2266,6 +2291,26 @@ isl_surf_get_image_offset_B_tile_sa(const struct isl_surf *surf,
                                     uint32_t *offset_B,
                                     uint32_t *x_offset_sa,
                                     uint32_t *y_offset_sa);
+
+/**
+ * Calculate the offset, in bytes and intratile surface elements, to a
+ * subimage in the surface.
+ *
+ * This is equivalent to calling isl_surf_get_image_offset_el, passing the
+ * result to isl_tiling_get_intratile_offset_el.
+ *
+ * @invariant level < surface levels
+ * @invariant logical_array_layer < logical array length of surface
+ * @invariant logical_z_offset_px < logical depth of surface at level
+ */
+void
+isl_surf_get_image_offset_B_tile_el(const struct isl_surf *surf,
+                                    uint32_t level,
+                                    uint32_t logical_array_layer,
+                                    uint32_t logical_z_offset_px,
+                                    uint32_t *offset_B,
+                                    uint32_t *x_offset_el,
+                                    uint32_t *y_offset_el);
 
 /**
  * Calculate the range in bytes occupied by a subimage, to the nearest tile.
@@ -2325,21 +2370,31 @@ void
 isl_tiling_get_intratile_offset_el(enum isl_tiling tiling,
                                    uint32_t bpb,
                                    uint32_t row_pitch_B,
+                                   uint32_t array_pitch_el_rows,
                                    uint32_t total_x_offset_el,
                                    uint32_t total_y_offset_el,
+                                   uint32_t total_z_offset_el,
+                                   uint32_t total_array_offset,
                                    uint32_t *base_address_offset,
                                    uint32_t *x_offset_el,
-                                   uint32_t *y_offset_el);
+                                   uint32_t *y_offset_el,
+                                   uint32_t *z_offset_el,
+                                   uint32_t *array_offset);
 
 static inline void
 isl_tiling_get_intratile_offset_sa(enum isl_tiling tiling,
                                    enum isl_format format,
                                    uint32_t row_pitch_B,
+                                   uint32_t array_pitch_el_rows,
                                    uint32_t total_x_offset_sa,
                                    uint32_t total_y_offset_sa,
+                                   uint32_t total_z_offset_sa,
+                                   uint32_t total_array_offset,
                                    uint32_t *base_address_offset,
                                    uint32_t *x_offset_sa,
-                                   uint32_t *y_offset_sa)
+                                   uint32_t *y_offset_sa,
+                                   uint32_t *z_offset_sa,
+                                   uint32_t *array_offset)
 {
    const struct isl_format_layout *fmtl = isl_format_get_layout(format);
 
@@ -2349,15 +2404,22 @@ isl_tiling_get_intratile_offset_sa(enum isl_tiling tiling,
     */
    assert(total_x_offset_sa % fmtl->bw == 0);
    assert(total_y_offset_sa % fmtl->bh == 0);
-   const uint32_t total_x_offset = total_x_offset_sa / fmtl->bw;
-   const uint32_t total_y_offset = total_y_offset_sa / fmtl->bh;
+   const uint32_t total_x_offset_el = total_x_offset_sa / fmtl->bw;
+   const uint32_t total_y_offset_el = total_y_offset_sa / fmtl->bh;
+   const uint32_t total_z_offset_el = total_z_offset_sa / fmtl->bd;
 
    isl_tiling_get_intratile_offset_el(tiling, fmtl->bpb, row_pitch_B,
-                                      total_x_offset, total_y_offset,
+                                      array_pitch_el_rows,
+                                      total_x_offset_el,
+                                      total_y_offset_el,
+                                      total_z_offset_el,
+                                      total_array_offset,
                                       base_address_offset,
-                                      x_offset_sa, y_offset_sa);
+                                      x_offset_sa, y_offset_sa,
+                                      z_offset_sa, array_offset);
    *x_offset_sa *= fmtl->bw;
    *y_offset_sa *= fmtl->bh;
+   *z_offset_sa *= fmtl->bd;
 }
 
 /**

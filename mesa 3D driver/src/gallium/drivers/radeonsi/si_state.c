@@ -24,6 +24,7 @@
 
 #include "si_build_pm4.h"
 #include "si_query.h"
+#include "si_shader_internal.h"
 #include "sid.h"
 #include "util/fast_idiv_by_const.h"
 #include "util/format/u_format.h"
@@ -445,6 +446,14 @@ static void *si_create_blend_state_mode(struct pipe_context *ctx,
    blend->alpha_to_one = state->alpha_to_one;
    blend->dual_src_blend = util_blend_state_is_dual(state, 0);
    blend->logicop_enable = logicop_enable;
+   blend->allows_noop_optimization =
+      state->rt[0].rgb_func == PIPE_BLEND_ADD &&
+      state->rt[0].alpha_func == PIPE_BLEND_ADD &&
+      state->rt[0].rgb_src_factor == PIPE_BLENDFACTOR_DST_COLOR &&
+      state->rt[0].alpha_src_factor == PIPE_BLENDFACTOR_DST_COLOR &&
+      state->rt[0].rgb_dst_factor == PIPE_BLENDFACTOR_ZERO &&
+      state->rt[0].alpha_dst_factor == PIPE_BLENDFACTOR_ZERO &&
+      mode == V_028808_CB_NORMAL;
 
    unsigned num_shader_outputs = state->max_rt + 1; /* estimate */
    if (blend->dual_src_blend)
@@ -627,6 +636,57 @@ static void *si_create_blend_state(struct pipe_context *ctx, const struct pipe_b
    return si_create_blend_state_mode(ctx, state, V_028808_CB_NORMAL);
 }
 
+static void si_draw_blend_dst_sampler_noop(struct pipe_context *ctx,
+                                           const struct pipe_draw_info *info,
+                                           unsigned drawid_offset,
+                                           const struct pipe_draw_indirect_info *indirect,
+                                           const struct pipe_draw_start_count_bias *draws,
+                                           unsigned num_draws) {
+   struct si_context *sctx = (struct si_context *)ctx;
+
+   if (sctx->framebuffer.state.nr_cbufs == 1) {
+      struct si_shader_selector *sel = sctx->shader.ps.cso;
+      bool free_nir;
+      if (unlikely(sel->info.writes_1_if_tex_is_1 == 0xff)) {
+         struct nir_shader *nir = si_get_nir_shader(sel, NULL, &free_nir);
+
+         /* Determine if this fragment shader always writes vec4(1) if a specific texture
+          * is all 1s.
+          */
+         float in[4] = { 1.0, 1.0, 1.0, 1.0 };
+         float out[4];
+         int texunit;
+         if (si_nir_is_output_const_if_tex_is_const(nir, in, out, &texunit) &&
+             !memcmp(in, out, 4 * sizeof(float))) {
+            sel->info.writes_1_if_tex_is_1 = 1 + texunit;
+         } else {
+            sel->info.writes_1_if_tex_is_1 = 0;
+         }
+
+         if (free_nir)
+            ralloc_free(nir);
+      }
+
+      if (sel->info.writes_1_if_tex_is_1 &&
+          sel->info.writes_1_if_tex_is_1 != 0xff) {
+         /* Now check if the texture is cleared to 1 */
+         int unit = sctx->shader.ps.cso->info.writes_1_if_tex_is_1 - 1;
+         struct si_samplers *samp = &sctx->samplers[PIPE_SHADER_FRAGMENT];
+         if ((1u << unit) & samp->enabled_mask) {
+            struct si_texture* tex = (struct si_texture*) samp->views[unit]->texture;
+            if (tex->is_depth &&
+                tex->depth_cleared_level_mask & BITFIELD_BIT(samp->views[unit]->u.tex.first_level) &&
+                tex->depth_clear_value[0] == 1) {
+               return;
+            }
+            /* TODO: handle color textures */
+         }
+      }
+   }
+
+   sctx->real_draw_vbo(ctx, info, drawid_offset, indirect, draws, num_draws);
+}
+
 static void si_bind_blend_state(struct pipe_context *ctx, void *state)
 {
    struct si_context *sctx = (struct si_context *)ctx;
@@ -664,6 +724,14 @@ static void si_bind_blend_state(struct pipe_context *ctx, void *state)
          old_blend->commutative_4bit != blend->commutative_4bit ||
          old_blend->logicop_enable != blend->logicop_enable)))
       si_mark_atom_dirty(sctx, &sctx->atoms.s.msaa_config);
+
+   if (likely(!radeon_uses_secure_bos(sctx->ws))) {
+      if (unlikely(blend->allows_noop_optimization)) {
+         si_install_draw_wrapper(sctx, si_draw_blend_dst_sampler_noop);
+      } else {
+         si_install_draw_wrapper(sctx, NULL);
+      }
+   }
 }
 
 static void si_delete_blend_state(struct pipe_context *ctx, void *state)
@@ -1012,6 +1080,8 @@ static void si_bind_rs_state(struct pipe_context *ctx, void *state)
 
    if (old_rs->multisample_enable != rs->multisample_enable) {
       si_mark_atom_dirty(sctx, &sctx->atoms.s.db_render_state);
+
+      si_mark_atom_dirty(sctx, &sctx->atoms.s.msaa_config);
 
       /* Update the small primitive filter workaround if necessary. */
       if (sctx->screen->info.has_msaa_sample_loc_bug && sctx->framebuffer.nr_samples > 1)
@@ -2232,6 +2302,13 @@ static bool si_is_format_supported(struct pipe_screen *screen, enum pipe_format 
       retval |= si_is_vertex_format_supported(screen, format, PIPE_BIND_VERTEX_BUFFER);
    }
 
+   if (usage & PIPE_BIND_INDEX_BUFFER) {
+      if (format == PIPE_FORMAT_R8_UINT ||
+          format == PIPE_FORMAT_R16_UINT ||
+          format == PIPE_FORMAT_R32_UINT)
+         retval |= PIPE_BIND_INDEX_BUFFER;
+   }
+
    if ((usage & PIPE_BIND_LINEAR) && !util_format_is_compressed(format) &&
        !(usage & PIPE_BIND_DEPTH_STENCIL))
       retval |= PIPE_BIND_LINEAR;
@@ -3274,7 +3351,7 @@ static void si_emit_framebuffer_state(struct si_context *sctx)
    radeon_set_context_reg(cs, R_028208_PA_SC_WINDOW_SCISSOR_BR,
                           S_028208_BR_X(state->width) | S_028208_BR_Y(state->height));
 
-   if (sctx->screen->dfsm_allowed) {
+   if (sctx->screen->dpbb_allowed) {
       radeon_emit(cs, PKT3(PKT3_EVENT_WRITE, 0, 0));
       radeon_emit(cs, EVENT_TYPE(V_028A90_BREAK_BATCH) | EVENT_INDEX(0));
    }
@@ -3533,17 +3610,7 @@ static void si_emit_msaa_config(struct si_context *sctx)
    /* R_028A4C_PA_SC_MODE_CNTL_1 */
    radeon_opt_set_context_reg(sctx, R_028A4C_PA_SC_MODE_CNTL_1, SI_TRACKED_PA_SC_MODE_CNTL_1,
                               sc_mode_cntl_1);
-
-   if (radeon_packets_added()) {
-      sctx->context_roll = true;
-
-      /* GFX9: Flush DFSM when the AA mode changes. */
-      if (sctx->screen->dfsm_allowed) {
-         radeon_emit(cs, PKT3(PKT3_EVENT_WRITE, 0, 0));
-         radeon_emit(cs, EVENT_TYPE(V_028A90_FLUSH_DFSM) | EVENT_INDEX(0));
-      }
-   }
-   radeon_end();
+   radeon_end_update_context_roll(sctx);
 }
 
 void si_update_ps_iter_samples(struct si_context *sctx)
@@ -5200,6 +5267,12 @@ void si_init_cs_preamble_state(struct si_context *sctx, bool uses_reg_shadowing)
                      S_028034_BR_X(16384) | S_028034_BR_Y(16384));
    }
 
+   if (sctx->chip_class >= GFX10) {
+      si_pm4_set_reg(pm4, R_028038_DB_DFSM_CONTROL,
+                     S_028038_PUNCHOUT_MODE(V_028038_FORCE_OFF) |
+                     S_028038_POPS_DRAIN_PS_ON_OVERLAP(1));
+   }
+
    unsigned cu_mask_ps = 0xffffffff;
 
    /* It's wasteful to enable all CUs for PS if shader arrays have a different
@@ -5330,6 +5403,10 @@ void si_init_cs_preamble_state(struct si_context *sctx, bool uses_reg_shadowing)
       si_pm4_set_reg(pm4, R_030920_VGT_MAX_VTX_INDX, ~0);
       si_pm4_set_reg(pm4, R_030924_VGT_MIN_VTX_INDX, 0);
       si_pm4_set_reg(pm4, R_030928_VGT_INDX_OFFSET, 0);
+
+      si_pm4_set_reg(pm4, R_028060_DB_DFSM_CONTROL,
+                     S_028060_PUNCHOUT_MODE(V_028060_FORCE_OFF) |
+                     S_028060_POPS_DRAIN_PS_ON_OVERLAP(1));
    }
 
    if (sctx->chip_class >= GFX9) {

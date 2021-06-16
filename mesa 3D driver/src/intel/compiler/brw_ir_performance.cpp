@@ -344,6 +344,7 @@ namespace {
       case VEC4_OPCODE_PICK_HIGH_32BIT:
       case VEC4_OPCODE_SET_LOW_32BIT:
       case VEC4_OPCODE_SET_HIGH_32BIT:
+      case VEC4_OPCODE_ZERO_OOB_PUSH_REGS:
       case GS_OPCODE_SET_DWORD_2:
       case GS_OPCODE_SET_WRITE_OFFSET:
       case GS_OPCODE_SET_VERTEX_COUNT:
@@ -379,6 +380,7 @@ namespace {
       case BRW_OPCODE_ADD:
       case BRW_OPCODE_MUL:
       case SHADER_OPCODE_MOV_RELOC_IMM:
+      case VEC4_OPCODE_MOV_FOR_SCRATCH:
          if (devinfo->ver >= 11) {
             return calculate_desc(info, unit_fpu, 0, 2, 0, 0, 2,
                                   0, 10, 6, 14, 0, 0);
@@ -1054,7 +1056,7 @@ namespace {
          }
          case GFX7_SFID_DATAPORT_DATA_CACHE:
          case HSW_SFID_DATAPORT_DATA_CACHE_1:
-            if (devinfo->ver >= 8 || devinfo->is_haswell) {
+            if (devinfo->verx10 >= 75) {
                switch (brw_dp_desc_msg_type(devinfo, info.desc)) {
                case HSW_DATAPORT_DC_PORT1_UNTYPED_ATOMIC_OP:
                case HSW_DATAPORT_DC_PORT1_UNTYPED_ATOMIC_OP_SIMD4X2:

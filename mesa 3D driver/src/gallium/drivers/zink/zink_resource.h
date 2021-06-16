@@ -62,11 +62,15 @@ struct zink_resource_object {
 
    VkBuffer sbuffer;
    bool storage_init; //layout was set for image
+   bool transfer_dst;
 
    VkDeviceMemory mem;
    uint32_t mem_hash;
    struct mem_key mkey;
    VkDeviceSize offset, size;
+
+   VkSampleLocationsInfoEXT zs_evaluate;
+   bool needs_zs_evaluate;
 
    unsigned persistent_maps; //if nonzero, requires vkFlushMappedMemoryRanges during batch use
    struct zink_descriptor_refs desc_set_refs;
@@ -86,20 +90,30 @@ struct zink_resource {
 
    VkPipelineStageFlagBits access_stage;
    VkAccessFlags access;
+   bool unordered_barrier;
 
    struct zink_resource_object *obj;
    struct zink_resource_object *scanout_obj; //TODO: remove for wsi
    bool scanout_obj_init;
    bool scanout_dirty;
    union {
-      struct util_range valid_buffer_range;
+      struct {
+         struct util_range valid_buffer_range;
+         uint16_t vbo_bind_count;
+         uint16_t ubo_bind_count[2];
+      };
       struct {
          VkFormat format;
          VkImageLayout layout;
          VkImageAspectFlags aspect;
          bool optimal_tiling;
+         uint32_t sampler_binds[PIPE_SHADER_TYPES];
+         uint8_t fb_binds;
+         uint16_t image_bind_count[2]; //gfx, compute
       };
    };
+   uint16_t write_bind_count[2]; //gfx, compute
+   uint16_t bind_count[2]; //gfx, compute
 
    struct sw_displaytarget *dt;
    unsigned dt_stride;

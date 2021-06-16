@@ -259,8 +259,15 @@ create_cov(struct ir3_context *ctx, struct ir3_instruction *src,
 	struct ir3_instruction *cov =
 		ir3_COV(ctx->block, src, src_type, dst_type);
 
-	if (op == nir_op_f2f16 || op == nir_op_f2f16_rtne)
+	if (op == nir_op_f2f16_rtne) {
 		cov->cat1.round = ROUND_EVEN;
+	} else if (op == nir_op_f2f16) {
+		unsigned execution_mode = ctx->s->info.float_controls_execution_mode;
+		nir_rounding_mode rounding_mode =
+			nir_get_rounding_mode_from_float_controls(execution_mode, nir_type_float16);
+		if (rounding_mode == nir_rounding_mode_rtne)
+			cov->cat1.round = ROUND_EVEN;
+	}
 
 	return cov;
 }
@@ -385,7 +392,7 @@ emit_alu(struct ir3_context *ctx, nir_alu_instr *alu)
 
 	case nir_op_fquantize2f16:
 		dst[0] = create_cov(ctx,
-							create_cov(ctx, src[0], 32, nir_op_f2f16_rtz),
+							create_cov(ctx, src[0], 32, nir_op_f2f16_rtne),
 							16, nir_op_f2f32);
 		break;
 	case nir_op_f2b1:
@@ -641,7 +648,7 @@ emit_alu(struct ir3_context *ctx, nir_alu_instr *alu)
 		if (cond->opc == OPC_ABSNEG_S &&
 				cond->flags == 0 &&
 				(cond->regs[1]->flags & (IR3_REG_SNEG | IR3_REG_SABS)) == IR3_REG_SNEG) {
-			cond = cond->regs[1]->instr;
+			cond = cond->regs[1]->def->instr;
 		}
 
 		compile_assert(ctx, bs[1] == bs[2]);
@@ -2016,26 +2023,26 @@ emit_intrinsic(struct ir3_context *ctx, nir_intrinsic_instr *intr)
 		}
 		ir3_split_dest(b, dst, ctx->local_invocation_id, 0, 3);
 		break;
-	case nir_intrinsic_load_work_group_id:
-	case nir_intrinsic_load_work_group_id_zero_base:
+	case nir_intrinsic_load_workgroup_id:
+	case nir_intrinsic_load_workgroup_id_zero_base:
 		if (!ctx->work_group_id) {
 			ctx->work_group_id =
-				create_sysval_input(ctx, SYSTEM_VALUE_WORK_GROUP_ID, 0x7);
+				create_sysval_input(ctx, SYSTEM_VALUE_WORKGROUP_ID, 0x7);
 			ctx->work_group_id->regs[0]->flags |= IR3_REG_SHARED;
 		}
 		ir3_split_dest(b, dst, ctx->work_group_id, 0, 3);
 		break;
-	case nir_intrinsic_load_base_work_group_id:
+	case nir_intrinsic_load_base_workgroup_id:
 		for (int i = 0; i < dest_components; i++) {
 			dst[i] = create_driver_param(ctx, IR3_DP_BASE_GROUP_X + i);
 		}
 		break;
-	case nir_intrinsic_load_num_work_groups:
+	case nir_intrinsic_load_num_workgroups:
 		for (int i = 0; i < dest_components; i++) {
 			dst[i] = create_driver_param(ctx, IR3_DP_NUM_WORK_GROUPS_X + i);
 		}
 		break;
-	case nir_intrinsic_load_local_group_size:
+	case nir_intrinsic_load_workgroup_size:
 		for (int i = 0; i < dest_components; i++) {
 			dst[i] = create_driver_param(ctx, IR3_DP_LOCAL_GROUP_SIZE_X + i);
 		}
@@ -2742,6 +2749,60 @@ emit_tex_txs(struct ir3_context *ctx, nir_tex_instr *tex)
 	ir3_put_dst(ctx, &tex->dest);
 }
 
+/* phi instructions are left partially constructed.  We don't resolve
+ * their srcs until the end of the shader, since (eg. loops) one of
+ * the phi's srcs might be defined after the phi due to back edges in
+ * the CFG.
+ */
+static void
+emit_phi(struct ir3_context *ctx, nir_phi_instr *nphi)
+{
+	struct ir3_instruction *phi, **dst;
+
+	/* NOTE: phi's should be lowered to scalar at this point */
+	compile_assert(ctx, nphi->dest.ssa.num_components == 1);
+
+	dst = ir3_get_dst(ctx, &nphi->dest, 1);
+
+	phi = ir3_instr_create(ctx->block, OPC_META_PHI,
+			1 + exec_list_length(&nphi->srcs));
+	__ssa_dst(phi);
+	phi->phi.nphi = nphi;
+
+	dst[0] = phi;
+
+	ir3_put_dst(ctx, &nphi->dest);
+}
+
+static struct ir3_block *get_block(struct ir3_context *ctx, const nir_block *nblock);
+
+static void
+resolve_phis(struct ir3_context *ctx, struct ir3_block *block)
+{
+	foreach_instr (phi, &block->instr_list) {
+		if (phi->opc != OPC_META_PHI)
+			break;
+
+		nir_phi_instr *nphi = phi->phi.nphi;
+
+		for (unsigned i = 0; i < block->predecessors_count; i++) {
+			struct ir3_block *pred = block->predecessors[i];
+			nir_foreach_phi_src(nsrc, nphi) {
+				if (get_block(ctx, nsrc->pred) == pred) {
+					if (nsrc->src.ssa->parent_instr->type == nir_instr_type_ssa_undef) {
+						/* Create an ir3 undef */
+						ir3_reg_create(phi, INVALID_REG, phi->regs[0]->flags & ~IR3_REG_DEST);
+					} else {
+						struct ir3_instruction *src = ir3_get_src(ctx, &nsrc->src)[0];
+						__ssa_src(phi, src, 0);
+					}
+					break;
+				}
+			}
+		}
+	}
+}
+
 static void
 emit_jump(struct ir3_context *ctx, nir_jump_instr *jump)
 {
@@ -2803,8 +2864,7 @@ emit_instr(struct ir3_context *ctx, nir_instr *instr)
 		emit_jump(ctx, nir_instr_as_jump(instr));
 		break;
 	case nir_instr_type_phi:
-		/* we have converted phi webs to regs in NIR by now */
-		ir3_context_error(ctx, "Unexpected NIR instruction type: %d\n", instr->type);
+		emit_phi(ctx, nir_instr_as_phi(instr));
 		break;
 	case nir_instr_type_call:
 	case nir_instr_type_parallel_copy:
@@ -3085,6 +3145,9 @@ emit_function(struct ir3_context *ctx, nir_function_impl *impl)
 	}
 
 	setup_predecessors(ctx->ir);
+	foreach_block (block, &ctx->ir->block_list) {
+		resolve_phis(ctx, block);
+	}
 }
 
 static void
@@ -3748,13 +3811,17 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
 	/* Vertex shaders in a tessellation or geometry pipeline treat END as a
 	 * NOP and has an epilogue that writes the VS outputs to local storage, to
 	 * be read by the HS.  Then it resets execution mask (chmask) and chains
-	 * to the next shader (chsh).
+	 * to the next shader (chsh). There are also a few output values which we
+	 * must send to the next stage via registers, and in order for both stages
+	 * to agree on the register used we must force these to be in specific
+	 * registers.
 	 */
 	if ((so->type == MESA_SHADER_VERTEX &&
 				(so->key.has_gs || so->key.tessellation)) ||
 			(so->type == MESA_SHADER_TESS_EVAL && so->key.has_gs)) {
 		struct ir3_instruction *outputs[3];
 		unsigned outidxs[3];
+		unsigned regids[3];
 		unsigned outputs_count = 0;
 
 		if (ctx->primitive_id) {
@@ -3765,6 +3832,7 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
 				ir3_create_collect(ctx, &ctx->primitive_id, 1);
 			outputs[outputs_count] = out;
 			outidxs[outputs_count] = n;
+			regids[outputs_count] = regid(0, 1);
 			outputs_count++;
 		}
 
@@ -3775,6 +3843,7 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
 				ir3_create_collect(ctx, &ctx->gs_header, 1);
 			outputs[outputs_count] = out;
 			outidxs[outputs_count] = n;
+			regids[outputs_count] = regid(0, 0);
 			outputs_count++;
 		}
 
@@ -3785,6 +3854,7 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
 				ir3_create_collect(ctx, &ctx->tcs_header, 1);
 			outputs[outputs_count] = out;
 			outidxs[outputs_count] = n;
+			regids[outputs_count] = regid(0, 0);
 			outputs_count++;
 		}
 
@@ -3795,7 +3865,7 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
 
 		__ssa_dst(chmask);
 		for (unsigned i = 0; i < outputs_count; i++)
-			__ssa_src(chmask, outputs[i], 0);
+			__ssa_src(chmask, outputs[i], 0)->num = regids[i];
 
 		chmask->end.outidxs = ralloc_array(chmask, unsigned, outputs_count);
 		memcpy(chmask->end.outidxs, outidxs, sizeof(unsigned) * outputs_count);
@@ -3811,6 +3881,15 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
 		unsigned outidxs[ctx->noutputs / 4];
 		struct ir3_instruction *outputs[ctx->noutputs / 4];
 		unsigned outputs_count = 0;
+
+		struct ir3_block *old_block = ctx->block;
+		/* Insert these collect's in the block before the end-block if
+		 * possible, so that any moves they generate can be shuffled around to
+		 * reduce nop's:
+		 */
+		if (ctx->block->predecessors_count == 1)
+			ctx->block = ctx->block->predecessors[0];
+
 
 		/* Setup IR level outputs, which are "collects" that gather
 		 * the scalar components of outputs.
@@ -3873,6 +3952,8 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
 			}
 		}
 
+		ctx->block = old_block;
+
 		struct ir3_instruction *end = ir3_instr_create(ctx->block, OPC_END,
 				outputs_count + 1);
 
@@ -3896,11 +3977,14 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
 	ir3_debug_print(ir, "AFTER: nir->ir3");
 	ir3_validate(ir);
 
+	IR3_PASS(ir, ir3_array_to_ssa);
+
 	do {
 		progress = false;
 
 		progress |= IR3_PASS(ir, ir3_cf);
 		progress |= IR3_PASS(ir, ir3_cp, so);
+		progress |= IR3_PASS(ir, ir3_cse);
 		progress |= IR3_PASS(ir, ir3_dce, so);
 	} while (progress);
 
@@ -3916,11 +4000,6 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
 	}
 
 	IR3_PASS(ir, ir3_sched_add_deps);
-
-	/* Group left/right neighbors, inserting mov's where needed to
-	 * solve conflicts:
-	 */
-	IR3_PASS(ir, ir3_group);
 
 	/* At this point, all the dead code should be long gone: */
 	assert(!IR3_PASS(ir, ir3_dce, so));
@@ -3949,20 +4028,12 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
 			so->binning_pass;
 
 	if (pre_assign_inputs) {
-		for (unsigned i = 0; i < ctx->ninputs; i++) {
-			struct ir3_instruction *instr = ctx->inputs[i];
+		foreach_input (in, ir) {
+			assert(in->opc == OPC_META_INPUT);
+			unsigned inidx = in->input.inidx;
 
-			if (!instr)
-				continue;
-
-			unsigned n = i / 4;
-			unsigned c = i % 4;
-			unsigned regid = so->nonbinning->inputs[n].regid + c;
-
-			instr->regs[0]->num = regid;
+			in->regs[0]->num = so->nonbinning->inputs[inidx].regid;
 		}
-
-		ret = ir3_ra(so, ctx->inputs, ctx->ninputs);
 	} else if (ctx->tcs_header) {
 		/* We need to have these values in the same registers between VS and TCS
 		 * since the VS chains to TCS and doesn't get the sysvals redelivered.
@@ -3970,8 +4041,6 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
 
 		ctx->tcs_header->regs[0]->num = regid(0, 0);
 		ctx->primitive_id->regs[0]->num = regid(0, 1);
-		struct ir3_instruction *precolor[] = { ctx->tcs_header, ctx->primitive_id };
-		ret = ir3_ra(so, precolor, ARRAY_SIZE(precolor));
 	} else if (ctx->gs_header) {
 		/* We need to have these values in the same registers between producer
 		 * (VS or DS) and GS since the producer chains to GS and doesn't get
@@ -3980,28 +4049,21 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
 
 		ctx->gs_header->regs[0]->num = regid(0, 0);
 		ctx->primitive_id->regs[0]->num = regid(0, 1);
-		struct ir3_instruction *precolor[] = { ctx->gs_header, ctx->primitive_id };
-		ret = ir3_ra(so, precolor, ARRAY_SIZE(precolor));
 	} else if (so->num_sampler_prefetch) {
 		assert(so->type == MESA_SHADER_FRAGMENT);
-		struct ir3_instruction *precolor[2];
 		int idx = 0;
 
 		foreach_input (instr, ir) {
 			if (instr->input.sysval != SYSTEM_VALUE_BARYCENTRIC_PERSP_PIXEL)
 				continue;
 
-			assert(idx < ARRAY_SIZE(precolor));
-
-			precolor[idx] = instr;
+			assert(idx < 2);
 			instr->regs[0]->num = idx;
-
 			idx++;
 		}
-		ret = ir3_ra(so, precolor, idx);
-	} else {
-		ret = ir3_ra(so, NULL, 0);
 	}
+
+	ret = ir3_ra(so);
 
 	if (ret) {
 		DBG("RA failed!");
@@ -4009,10 +4071,6 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
 	}
 
 	IR3_PASS(ir, ir3_postsched, so);
-
-	if (compiler->gpu_id >= 600) {
-		IR3_PASS(ir, ir3_a6xx_fixup_atomic_dests, so);
-	}
 
 	if (so->type == MESA_SHADER_FRAGMENT)
 		pack_inlocs(ctx);
@@ -4095,10 +4153,10 @@ ir3_compile_shader_nir(struct ir3_compiler *compiler,
 		so->need_pixlod = true;
 
 	if (so->type == MESA_SHADER_COMPUTE) {
-		so->local_size[0] = ctx->s->info.cs.local_size[0];
-		so->local_size[1] = ctx->s->info.cs.local_size[1];
-		so->local_size[2] = ctx->s->info.cs.local_size[2];
-		so->local_size_variable = ctx->s->info.cs.local_size_variable;
+		so->local_size[0] = ctx->s->info.workgroup_size[0];
+		so->local_size[1] = ctx->s->info.workgroup_size[1];
+		so->local_size[2] = ctx->s->info.workgroup_size[2];
+		so->local_size_variable = ctx->s->info.workgroup_size_variable;
 	}
 
 out:

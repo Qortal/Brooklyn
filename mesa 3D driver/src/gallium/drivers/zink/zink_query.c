@@ -273,7 +273,7 @@ zink_create_query(struct pipe_context *pctx,
 {
    struct zink_screen *screen = zink_screen(pctx->screen);
    struct zink_query *query = CALLOC_STRUCT(zink_query);
-   VkQueryPoolCreateInfo pool_create = {};
+   VkQueryPoolCreateInfo pool_create = {0};
 
    if (!query)
       return NULL;
@@ -659,20 +659,20 @@ begin_query(struct zink_context *ctx, struct zink_batch *batch, struct zink_quer
    if (q->type == PIPE_QUERY_PRIMITIVES_EMITTED ||
        q->type == PIPE_QUERY_PRIMITIVES_GENERATED ||
        q->type == PIPE_QUERY_SO_OVERFLOW_PREDICATE) {
-      zink_screen(ctx->base.screen)->vk_CmdBeginQueryIndexedEXT(batch->state->cmdbuf,
+      zink_screen(ctx->base.screen)->vk.CmdBeginQueryIndexedEXT(batch->state->cmdbuf,
                                                                 q->xfb_query_pool[0] ? q->xfb_query_pool[0] : q->query_pool,
                                                                 q->curr_query,
                                                                 flags,
                                                                 q->index);
       q->xfb_running = true;
    } else if (q->type == PIPE_QUERY_SO_OVERFLOW_ANY_PREDICATE) {
-      zink_screen(ctx->base.screen)->vk_CmdBeginQueryIndexedEXT(batch->state->cmdbuf,
+      zink_screen(ctx->base.screen)->vk.CmdBeginQueryIndexedEXT(batch->state->cmdbuf,
                                                                 q->query_pool,
                                                                 q->curr_query,
                                                                 flags,
                                                                 0);
       for (unsigned i = 0; i < ARRAY_SIZE(q->xfb_query_pool); i++)
-         zink_screen(ctx->base.screen)->vk_CmdBeginQueryIndexedEXT(batch->state->cmdbuf,
+         zink_screen(ctx->base.screen)->vk.CmdBeginQueryIndexedEXT(batch->state->cmdbuf,
                                                                    q->xfb_query_pool[i],
                                                                    q->curr_query,
                                                                    flags,
@@ -684,7 +684,7 @@ begin_query(struct zink_context *ctx, struct zink_batch *batch, struct zink_quer
    if (needs_stats_list(q))
       list_addtail(&q->stats_list, &ctx->primitives_generated_queries);
    p_atomic_inc(&q->fences);
-   zink_batch_usage_set(&q->batch_id, batch->state->fence.batch_id);
+   zink_batch_usage_set(&q->batch_id, batch->state);
    _mesa_set_add(batch->state->active_queries, q);
 }
 
@@ -718,19 +718,19 @@ end_query(struct zink_context *ctx, struct zink_batch *batch, struct zink_query 
          reset_pool(ctx, batch, q);
       vkCmdWriteTimestamp(batch->state->cmdbuf, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
                           q->query_pool, q->curr_query);
-      zink_batch_usage_set(&q->batch_id, batch->state->fence.batch_id);
+      zink_batch_usage_set(&q->batch_id, batch->state);
    } else if (q->type == PIPE_QUERY_PRIMITIVES_EMITTED ||
             q->type == PIPE_QUERY_PRIMITIVES_GENERATED ||
             q->type == PIPE_QUERY_SO_OVERFLOW_PREDICATE) {
-      screen->vk_CmdEndQueryIndexedEXT(batch->state->cmdbuf, q->xfb_query_pool[0] ? q->xfb_query_pool[0] :
+      screen->vk.CmdEndQueryIndexedEXT(batch->state->cmdbuf, q->xfb_query_pool[0] ? q->xfb_query_pool[0] :
                                                                                     q->query_pool,
                                        q->curr_query, q->index);
    }
 
    else if (q->type == PIPE_QUERY_SO_OVERFLOW_ANY_PREDICATE) {
-      screen->vk_CmdEndQueryIndexedEXT(batch->state->cmdbuf, q->query_pool, q->curr_query, 0);
+      screen->vk.CmdEndQueryIndexedEXT(batch->state->cmdbuf, q->query_pool, q->curr_query, 0);
       for (unsigned i = 0; i < ARRAY_SIZE(q->xfb_query_pool); i++) {
-         screen->vk_CmdEndQueryIndexedEXT(batch->state->cmdbuf, q->xfb_query_pool[i], q->curr_query, i + 1);
+         screen->vk.CmdEndQueryIndexedEXT(batch->state->cmdbuf, q->xfb_query_pool[i], q->curr_query, i + 1);
       }
    }
    if (q->vkqtype != VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT && !is_time_query(q))
@@ -780,8 +780,12 @@ zink_get_query_result(struct pipe_context *pctx,
    if (query->needs_update)
       update_qbo(ctx, query);
 
-   if (!threaded_query(q)->flushed && query->batch_id.usage == ctx->curr_batch)
-      pctx->flush(pctx, NULL, 0);
+   if (query->batch_id.usage == ctx->curr_batch) {
+      if (!threaded_query(q)->flushed)
+         pctx->flush(pctx, NULL, 0);
+      if (!wait)
+         return false;
+   }
 
    return get_query_result(pctx, q, wait, result);
 }
@@ -849,11 +853,11 @@ zink_start_conditional_render(struct zink_context *ctx)
    VkConditionalRenderingFlagsEXT begin_flags = 0;
    if (ctx->render_condition.inverted)
       begin_flags = VK_CONDITIONAL_RENDERING_INVERTED_BIT_EXT;
-   VkConditionalRenderingBeginInfoEXT begin_info = {};
+   VkConditionalRenderingBeginInfoEXT begin_info = {0};
    begin_info.sType = VK_STRUCTURE_TYPE_CONDITIONAL_RENDERING_BEGIN_INFO_EXT;
    begin_info.buffer = ctx->render_condition.query->predicate->obj->buffer;
    begin_info.flags = begin_flags;
-   screen->vk_CmdBeginConditionalRenderingEXT(batch->state->cmdbuf, &begin_info);
+   screen->vk.CmdBeginConditionalRenderingEXT(batch->state->cmdbuf, &begin_info);
    zink_batch_reference_resource_rw(batch, ctx->render_condition.query->predicate, false);
 }
 
@@ -863,7 +867,7 @@ zink_stop_conditional_render(struct zink_context *ctx)
    struct zink_batch *batch = &ctx->batch;
    struct zink_screen *screen = zink_screen(ctx->base.screen);
    zink_clear_apply_conditionals(ctx);
-   screen->vk_CmdEndConditionalRenderingEXT(batch->state->cmdbuf);
+   screen->vk.CmdEndConditionalRenderingEXT(batch->state->cmdbuf);
 }
 
 static void
@@ -998,10 +1002,10 @@ zink_get_timestamp(struct pipe_context *pctx)
    struct zink_screen *screen = zink_screen(pctx->screen);
    uint64_t timestamp, deviation;
    assert(screen->info.have_EXT_calibrated_timestamps);
-   VkCalibratedTimestampInfoEXT cti = {};
+   VkCalibratedTimestampInfoEXT cti = {0};
    cti.sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT;
    cti.timeDomain = VK_TIME_DOMAIN_DEVICE_EXT;
-   screen->vk_GetCalibratedTimestampsEXT(screen->dev, 1, &cti, &timestamp, &deviation);
+   screen->vk.GetCalibratedTimestampsEXT(screen->dev, 1, &cti, &timestamp, &deviation);
    timestamp_to_nanoseconds(screen, &timestamp);
    return timestamp;
 }

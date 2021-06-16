@@ -209,7 +209,7 @@ pending(struct fd_resource *rsc, bool write)
 }
 
 static inline bool
-fd_resource_busy(struct fd_resource *rsc, unsigned op)
+resource_busy(struct fd_resource *rsc, unsigned op)
 {
    return fd_bo_cpu_prep(rsc->bo, NULL, op | FD_BO_PREP_NOSYNC) != 0;
 }
@@ -344,9 +344,16 @@ uint32_t fd_setup_slices(struct fd_resource *rsc);
 void fd_resource_resize(struct pipe_resource *prsc, uint32_t sz);
 void fd_replace_buffer_storage(struct pipe_context *ctx,
                                struct pipe_resource *dst,
-                               struct pipe_resource *src) in_dt;
+                               struct pipe_resource *src,
+                               unsigned num_rebinds,
+                               uint32_t rebind_mask,
+                               uint32_t delete_buffer_id) in_dt;
+bool fd_resource_busy(struct pipe_screen *pscreen, struct pipe_resource *prsc,
+                      unsigned usage);
+
 void fd_resource_uncompress(struct fd_context *ctx,
-                            struct fd_resource *rsc) assert_dt;
+                            struct fd_resource *rsc,
+                            bool linear) assert_dt;
 void fd_resource_dump(struct fd_resource *rsc, const char *name);
 
 bool fd_render_condition_check(struct pipe_context *pctx) assert_dt;

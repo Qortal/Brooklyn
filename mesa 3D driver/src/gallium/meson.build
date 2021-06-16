@@ -129,6 +129,12 @@ if with_gallium_tegra
 else
   driver_tegra = declare_dependency()
 endif
+if with_gallium_crocus
+  subdir('winsys/crocus/drm')
+  subdir('drivers/crocus')
+else
+  driver_crocus = declare_dependency()
+endif
 if with_gallium_iris
   subdir('winsys/iris/drm')
   subdir('drivers/iris')
@@ -221,6 +227,10 @@ endif
 if with_gallium_st_nine
   subdir('frontends/nine')
   subdir('targets/d3dadapter9')
+endif
+if with_gallium_st_d3d10umd
+  subdir('frontends/d3d10umd')
+  subdir('targets/d3d10sw')
 endif
 if with_platform_windows
   subdir('frontends/wgl')

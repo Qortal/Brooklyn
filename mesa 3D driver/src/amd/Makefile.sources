@@ -48,6 +48,9 @@ AMD_COMMON_FILES = \
 	common/ac_nir.h \
 	common/ac_nir_lower_esgs_io_to_mem.c \
 	common/ac_nir_lower_tess_io_to_mem.c \
+	common/ac_nir_lower_ngg.c \
+	common/ac_perfcounter.c \
+	common/ac_perfcounter.h \
 	common/ac_surface.c \
 	common/ac_surface.h \
 	common/ac_rgp.c \
@@ -108,6 +111,7 @@ ACO_FILES = \
 	compiler/aco_lower_to_cssa.cpp \
 	compiler/aco_lower_to_hw_instr.cpp \
 	compiler/aco_optimizer.cpp \
+	compiler/aco_optimizer_postRA.cpp \
 	compiler/aco_opt_value_numbering.cpp \
 	compiler/aco_print_asm.cpp \
 	compiler/aco_print_ir.cpp \

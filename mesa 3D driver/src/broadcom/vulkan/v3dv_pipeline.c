@@ -157,7 +157,7 @@ v3dv_destroy_pipeline(struct v3dv_pipeline *pipeline,
    vk_object_free(&device->vk, pAllocator, pipeline);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_DestroyPipeline(VkDevice _device,
                      VkPipeline _pipeline,
                      const VkAllocationCallbacks *pAllocator)
@@ -172,7 +172,10 @@ v3dv_DestroyPipeline(VkDevice _device,
 }
 
 static const struct spirv_to_nir_options default_spirv_options =  {
-   .caps = { false },
+   .caps = {
+      .device_group = true,
+      .variable_pointers = true,
+    },
    .ubo_addr_format = nir_address_format_32bit_index_offset,
    .ssbo_addr_format = nir_address_format_32bit_index_offset,
    .phys_ssbo_addr_format = nir_address_format_64bit_global,
@@ -186,6 +189,8 @@ const nir_shader_compiler_options v3dv_nir_options = {
    .lower_all_io_to_temps = true,
    .lower_extract_byte = true,
    .lower_extract_word = true,
+   .lower_insert_byte = true,
+   .lower_insert_word = true,
    .lower_bitfield_insert_to_shifts = true,
    .lower_bitfield_extract_to_shifts = true,
    .lower_bitfield_reverse = true,
@@ -228,11 +233,13 @@ const nir_shader_compiler_options v3dv_nir_options = {
    .lower_wpos_pntc = true,
    .lower_rotate = true,
    .lower_to_scalar = true,
+   .lower_device_index_to_zero = true,
    .has_fsub = true,
    .has_isub = true,
    .vertex_id_zero_based = false, /* FIXME: to set this to true, the intrinsic
                                    * needs to be supported */
    .lower_interpolate_at = true,
+   .max_unroll_iterations = 16,
    .divergence_analysis_options =
       nir_divergence_multiple_workgroup_per_compute_subgroup
 };
@@ -278,7 +285,7 @@ nir_optimize(nir_shader *nir,
       OPT(nir_lower_alu_to_scalar, NULL, NULL);
 
       OPT(nir_copy_prop);
-      OPT(nir_lower_phis_to_scalar);
+      OPT(nir_lower_phis_to_scalar, false);
 
       OPT(nir_copy_prop);
       OPT(nir_opt_dce);
@@ -378,8 +385,7 @@ preprocess_nir(nir_shader *nir,
    /* Lower a bunch of stuff */
    NIR_PASS_V(nir, nir_lower_var_copies);
 
-   NIR_PASS_V(nir, nir_lower_indirect_derefs, nir_var_shader_in |
-              nir_var_shader_out, UINT32_MAX);
+   NIR_PASS_V(nir, nir_lower_indirect_derefs, nir_var_shader_in, UINT32_MAX);
 
    NIR_PASS_V(nir, nir_lower_indirect_derefs,
               nir_var_function_temp, 2);
@@ -576,7 +582,7 @@ pipeline_get_descriptor_map(struct v3dv_pipeline *pipeline,
                             gl_shader_stage gl_stage,
                             bool is_sampler)
 {
-   broadcom_shader_stage broadcom_stage =
+   enum broadcom_shader_stage broadcom_stage =
       gl_shader_stage_to_broadcom(gl_stage);
 
    assert(pipeline->shared_data &&
@@ -652,13 +658,11 @@ lower_vulkan_resource_index(nir_builder *b,
    }
 
    /* Since we use the deref pass, both vulkan_resource_index and
-    * vulkan_load_descriptor returns a vec2. But for the index the backend
-    * expect just one scalar (like with get_ssbo_size), so lets return here
-    * just it. Then on load_descriptor we would recreate the vec2, keeping the
-    * second component (unused right now) to zero.
+    * vulkan_load_descriptor return a vec2 providing an index and
+    * offset. Our backend compiler only cares about the index part.
     */
    nir_ssa_def_rewrite_uses(&instr->dest.ssa,
-                            nir_imm_int(b, index));
+                            nir_imm_ivec2(b, index, 0));
    nir_instr_remove(&instr->instr);
 }
 
@@ -901,12 +905,10 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *instr,
       return true;
 
    case nir_intrinsic_load_vulkan_descriptor: {
-      /* We are not using it, as loading the descriptor happens as part of the
-       * load/store instruction, so the simpler is just doing a no-op. We just
-       * lower the desc back to a vec2, as it is what load_ssbo/ubo expects.
+      /* Loading the descriptor happens as part of load/store instructions,
+       * so for us this is a no-op.
        */
-      nir_ssa_def *desc = nir_vec2(b, instr->src[0].ssa, nir_imm_int(b, 0));
-      nir_ssa_def_rewrite_uses(&instr->dest.ssa, desc);
+      nir_ssa_def_rewrite_uses(&instr->dest.ssa, instr->src[0].ssa);
       nir_instr_remove(&instr->instr);
       return true;
    }
@@ -1449,7 +1451,7 @@ pipeline_check_spill_size(struct v3dv_pipeline *pipeline)
  */
 struct v3dv_shader_variant *
 v3dv_shader_variant_create(struct v3dv_device *device,
-                           broadcom_shader_stage stage,
+                           enum broadcom_shader_stage stage,
                            struct v3d_prog_data *prog_data,
                            uint32_t prog_data_size,
                            uint32_t assembly_offset,
@@ -1578,7 +1580,7 @@ st_nir_opts(nir_shader *nir)
 
       if (nir->options->lower_to_scalar) {
          NIR_PASS_V(nir, nir_lower_alu_to_scalar, NULL, NULL);
-         NIR_PASS_V(nir, nir_lower_phis_to_scalar);
+         NIR_PASS_V(nir, nir_lower_phis_to_scalar, false);
       }
 
       NIR_PASS_V(nir, nir_lower_alu);
@@ -3143,7 +3145,7 @@ graphics_pipeline_create(VkDevice _device,
    return VK_SUCCESS;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 v3dv_CreateGraphicsPipelines(VkDevice _device,
                              VkPipelineCache pipelineCache,
                              uint32_t count,
@@ -3341,7 +3343,7 @@ compute_pipeline_create(VkDevice _device,
    return VK_SUCCESS;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 v3dv_CreateComputePipelines(VkDevice _device,
                             VkPipelineCache pipelineCache,
                             uint32_t createInfoCount,

@@ -357,7 +357,7 @@ static const struct {
 static bool
 modifier_is_supported(const struct intel_device_info *devinfo,
                       const struct brw_image_format *fmt, int dri_format,
-                      uint64_t modifier)
+                      unsigned use, uint64_t modifier)
 {
    const struct isl_drm_modifier_info *modinfo =
       isl_drm_modifier_get_info(modifier);
@@ -365,6 +365,11 @@ modifier_is_supported(const struct intel_device_info *devinfo,
 
    /* ISL had better know about the modifier */
    if (!modinfo)
+      return false;
+
+   if (devinfo->ver < 9 && (use & __DRI_IMAGE_USE_SCANOUT) &&
+       !(modinfo->tiling == ISL_TILING_LINEAR ||
+         modinfo->tiling == ISL_TILING_X))
       return false;
 
    if (modinfo->aux_usage == ISL_AUX_USAGE_CCS_E) {
@@ -687,13 +692,14 @@ const uint64_t priority_to_modifier[] = {
 static uint64_t
 select_best_modifier(struct intel_device_info *devinfo,
                      int dri_format,
+                     unsigned use,
                      const uint64_t *modifiers,
                      const unsigned count)
 {
    enum modifier_priority prio = MODIFIER_PRIORITY_INVALID;
 
    for (int i = 0; i < count; i++) {
-      if (!modifier_is_supported(devinfo, NULL, dri_format, modifiers[i]))
+      if (!modifier_is_supported(devinfo, NULL, dri_format, use, modifiers[i]))
          continue;
 
       switch (modifiers[i]) {
@@ -731,11 +737,6 @@ brw_create_image_common(__DRIscreen *dri_screen,
    uint64_t modifier = DRM_FORMAT_MOD_INVALID;
    bool ok;
 
-   /* Callers of this may specify a modifier, or a dri usage, but not both. The
-    * newer modifier interface deprecates the older usage flags.
-    */
-   assert(!(use && count));
-
    if (use & __DRI_IMAGE_USE_CURSOR) {
       if (width != 64 || height != 64)
          return NULL;
@@ -748,7 +749,7 @@ brw_create_image_common(__DRIscreen *dri_screen,
    if (modifier == DRM_FORMAT_MOD_INVALID) {
       if (modifiers) {
          /* User requested specific modifiers */
-         modifier = select_best_modifier(&screen->devinfo, format,
+         modifier = select_best_modifier(&screen->devinfo, format, use,
                                          modifiers, count);
          if (modifier == DRM_FORMAT_MOD_INVALID)
             return NULL;
@@ -916,6 +917,17 @@ brw_create_image_with_modifiers(__DRIscreen *dri_screen,
                                   modifiers, count, loaderPrivate);
 }
 
+static __DRIimage *
+brw_create_image_with_modifiers2(__DRIscreen *dri_screen,
+                                 int width, int height, int format,
+                                 const uint64_t *modifiers,
+                                 const unsigned count, unsigned int use,
+                                 void *loaderPrivate)
+{
+   return brw_create_image_common(dri_screen, width, height, format, use,
+                                  modifiers, count, loaderPrivate);
+}
+
 static GLboolean
 brw_query_image(__DRIimage *image, int attrib, int *value)
 {
@@ -986,7 +998,7 @@ brw_query_format_modifier_attribs(__DRIscreen *dri_screen,
    struct brw_screen *screen = dri_screen->driverPrivate;
    const struct brw_image_format *f = brw_image_format_lookup(fourcc);
 
-   if (!modifier_is_supported(&screen->devinfo, f, 0, modifier))
+   if (!modifier_is_supported(&screen->devinfo, f, 0, 0, modifier))
       return false;
 
    switch (attrib) {
@@ -1102,7 +1114,7 @@ brw_create_image_from_fds_common(__DRIscreen *dri_screen,
       return NULL;
 
    if (modifier != DRM_FORMAT_MOD_INVALID &&
-       !modifier_is_supported(&screen->devinfo, f, 0, modifier))
+       !modifier_is_supported(&screen->devinfo, f, 0, 0, modifier))
       return NULL;
 
    if (f->nplanes == 1)
@@ -1414,7 +1426,7 @@ brw_query_dma_buf_modifiers(__DRIscreen *_screen, int fourcc, int max,
 
    for (i = 0; i < ARRAY_SIZE(supported_modifiers); i++) {
       uint64_t modifier = supported_modifiers[i].modifier;
-      if (!modifier_is_supported(&screen->devinfo, f, 0, modifier))
+      if (!modifier_is_supported(&screen->devinfo, f, 0, 0, modifier))
          continue;
 
       num_mods++;
@@ -1511,7 +1523,7 @@ brw_from_planar(__DRIimage *parent, int plane, void *loaderPrivate)
 }
 
 static const __DRIimageExtension brwImageExtension = {
-    .base = { __DRI_IMAGE, 16 },
+    .base = { __DRI_IMAGE, 19 },
 
     .createImageFromName                = brw_create_image_from_name,
     .createImageFromRenderbuffer        = brw_create_image_from_renderbuffer,
@@ -1534,6 +1546,7 @@ static const __DRIimageExtension brwImageExtension = {
     .queryDmaBufFormats                 = brw_query_dma_buf_formats,
     .queryDmaBufModifiers               = brw_query_dma_buf_modifiers,
     .queryDmaBufFormatModifierAttribs   = brw_query_format_modifier_attribs,
+    .createImageWithModifiers2          = brw_create_image_with_modifiers2,
 };
 
 static int

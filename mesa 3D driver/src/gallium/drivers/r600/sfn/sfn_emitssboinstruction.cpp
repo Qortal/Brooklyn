@@ -350,7 +350,7 @@ bool EmitSSBOInstruction::emit_store_ssbo(const nir_intrinsic_instr* instr)
    m_store_ops.push_back(store);
 
    for (unsigned i = 1; i < nir_src_num_components(instr->src[0]); ++i) {
-      emit_instruction(new AluInstruction(op1_mov, temp2.reg_i(0), from_nir(instr->src[0], i), write));
+      emit_instruction(new AluInstruction(op1_mov, temp2.reg_i(0), from_nir(instr->src[0], i), get_chip_class() == CAYMAN  ?  last_write : write));
       emit_instruction(new AluInstruction(op2_add_int, addr_vec.reg_i(0),
                                           {addr_vec.reg_i(0), Value::one_i}, last_write));
       store = new RatInstruction(cf_op, RatInstruction::STORE_TYPED,
@@ -419,8 +419,7 @@ EmitSSBOInstruction::emit_ssbo_atomic_op(const nir_intrinsic_instr *intrin)
    if (intrin->intrinsic == nir_intrinsic_ssbo_atomic_comp_swap) {
       emit_instruction(new AluInstruction(op1_mov, m_rat_return_address.reg_i(0),
                                           from_nir(intrin->src[3], 0), {alu_write}));
-      // TODO: cayman wants channel 2 here
-      emit_instruction(new AluInstruction(op1_mov, m_rat_return_address.reg_i(3),
+      emit_instruction(new AluInstruction(op1_mov, m_rat_return_address.reg_i(get_chip_class() == CAYMAN ? 2 : 3),
                                           from_nir(intrin->src[2], 0), {alu_last_instr, alu_write}));
    } else {
       emit_instruction(new AluInstruction(op1_mov, m_rat_return_address.reg_i(0),
@@ -459,6 +458,7 @@ EmitSSBOInstruction::emit_ssbo_atomic_op(const nir_intrinsic_instr *intrin)
                                      {0,7,7,7});
    fetch->set_flag(vtx_srf_mode);
    fetch->set_flag(vtx_use_tc);
+   fetch->set_flag(vtx_vpm);
    emit_instruction(fetch);
    return true;
 
@@ -490,7 +490,7 @@ EmitSSBOInstruction::emit_image_load(const nir_intrinsic_instr *intrin)
       if (intrin->intrinsic == nir_intrinsic_image_atomic_comp_swap) {
          emit_instruction(new AluInstruction(op1_mov, m_rat_return_address.reg_i(0),
                                              from_nir(intrin->src[4], 0), {alu_write}));
-         emit_instruction(new AluInstruction(op1_mov, m_rat_return_address.reg_i(3),
+         emit_instruction(new AluInstruction(op1_mov, m_rat_return_address.reg_i(get_chip_class() == CAYMAN ? 2 : 3),
                                              from_nir(intrin->src[3], 0), {alu_last_instr, alu_write}));
       } else {
          emit_instruction(new AluInstruction(op1_mov, m_rat_return_address.reg_i(0),
@@ -548,6 +548,7 @@ bool EmitSSBOInstruction::fetch_return_value(const nir_intrinsic_instr *intrin)
                                      image_offset, {0,1,2,3});
    fetch->set_flag(vtx_srf_mode);
    fetch->set_flag(vtx_use_tc);
+   fetch->set_flag(vtx_vpm);
    if (format_comp)
       fetch->set_flag(vtx_format_comp_signed);
 
@@ -583,11 +584,39 @@ bool EmitSSBOInstruction::emit_image_size(const nir_intrinsic_instr *intrin)
           nir_intrinsic_image_array(intrin) && nir_dest_num_components(intrin->dest) > 2) {
          /* Need to load the layers from a const buffer */
 
-         unsigned lookup_resid = const_offset[0].u32;
-         emit_instruction(new AluInstruction(op1_mov, dest.reg_i(2),
-                                             PValue(new UniformValue(lookup_resid/4 + R600_SHADER_BUFFER_INFO_SEL, lookup_resid % 4,
-                                                                     R600_BUFFER_INFO_CONST_BUFFER)),
-         EmitInstruction::last_write));
+         set_has_txs_cube_array_comp();
+
+         if (const_offset) {
+            unsigned lookup_resid = const_offset[0].u32;
+            emit_instruction(new AluInstruction(op1_mov, dest.reg_i(2),
+                                                PValue(new UniformValue(lookup_resid/4 + R600_SHADER_BUFFER_INFO_SEL, lookup_resid % 4,
+                                                                        R600_BUFFER_INFO_CONST_BUFFER)),
+                                                EmitInstruction::last_write));
+         } else {
+            /* If the adressing is indirect we have to get the z-value by using a binary search */
+            GPRVector trgt;
+            GPRVector help;
+
+            auto addr = help.reg_i(0);
+            auto comp = help.reg_i(1);
+            auto low_bit = help.reg_i(2);
+            auto high_bit = help.reg_i(3);
+
+            emit_instruction(new AluInstruction(op2_lshr_int, addr, from_nir(intrin->src[0], 0),
+                             literal(2), EmitInstruction::write));
+            emit_instruction(new AluInstruction(op2_and_int, comp, from_nir(intrin->src[0], 0),
+                             literal(3), EmitInstruction::last_write));
+
+            emit_instruction(new FetchInstruction(vc_fetch, no_index_offset, trgt, addr, R600_SHADER_BUFFER_INFO_SEL,
+                                                  R600_BUFFER_INFO_CONST_BUFFER, PValue(), bim_none));
+
+            emit_instruction(new AluInstruction(op3_cnde_int, comp, high_bit, trgt.reg_i(0), trgt.reg_i(2),
+                                                EmitInstruction::write));
+            emit_instruction(new AluInstruction(op3_cnde_int, high_bit, high_bit, trgt.reg_i(1), trgt.reg_i(3),
+                                                EmitInstruction::last_write));
+
+            emit_instruction(new AluInstruction(op3_cnde_int, dest.reg_i(2), low_bit, comp, high_bit, EmitInstruction::last_write));
+         }
       }
    }
    return true;

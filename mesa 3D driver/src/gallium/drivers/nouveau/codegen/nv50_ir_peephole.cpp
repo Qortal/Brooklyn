@@ -365,6 +365,7 @@ IndirectPropagation::visit(BasicBlock *bb)
 class ConstantFolding : public Pass
 {
 public:
+   ConstantFolding() : foldCount(0) {}
    bool foldAll(Program *);
 
 private:
@@ -1492,6 +1493,8 @@ ConstantFolding::opnd(Instruction *i, ImmediateValue &imm0, int s)
          int muls;
          if (isFloatType(si->dType))
             return false;
+         if (si->subOp)
+            return false;
          if (si->src(1).getImmediate(imm1))
             muls = 1;
          else if (si->src(0).getImmediate(imm1))
@@ -1501,6 +1504,9 @@ ConstantFolding::opnd(Instruction *i, ImmediateValue &imm0, int s)
 
          bld.setPosition(i, false);
          i->op = OP_MUL;
+         i->subOp = 0;
+         i->dType = si->dType;
+         i->sType = si->sType;
          i->setSrc(0, si->getSrc(!muls));
          i->setSrc(1, bld.loadImm(NULL, imm1.reg.data.u32 << imm0.reg.data.u32));
          break;

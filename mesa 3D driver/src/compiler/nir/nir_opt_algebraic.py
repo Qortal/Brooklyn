@@ -350,16 +350,16 @@ optimizations.extend([
     ('iadd', ('ishl', ('iadd', a, c), d), ('ishl', b, d))),
 
    # Comparison simplifications
-   (('~inot', ('flt', a, b)), ('fge', a, b)),
-   (('~inot', ('fge', a, b)), ('flt', a, b)),
-   (('inot', ('feq', a, b)), ('fneu', a, b)),
-   (('inot', ('fneu', a, b)), ('feq', a, b)),
-   (('inot', ('ilt', a, b)), ('ige', a, b)),
-   (('inot', ('ult', a, b)), ('uge', a, b)),
-   (('inot', ('ige', a, b)), ('ilt', a, b)),
-   (('inot', ('uge', a, b)), ('ult', a, b)),
-   (('inot', ('ieq', a, b)), ('ine', a, b)),
-   (('inot', ('ine', a, b)), ('ieq', a, b)),
+   (('inot', ('flt(is_used_once)', 'a(is_a_number)', 'b(is_a_number)')), ('fge', a, b)),
+   (('inot', ('fge(is_used_once)', 'a(is_a_number)', 'b(is_a_number)')), ('flt', a, b)),
+   (('inot', ('feq(is_used_once)', a, b)), ('fneu', a, b)),
+   (('inot', ('fneu(is_used_once)', a, b)), ('feq', a, b)),
+   (('inot', ('ilt(is_used_once)', a, b)), ('ige', a, b)),
+   (('inot', ('ult(is_used_once)', a, b)), ('uge', a, b)),
+   (('inot', ('ige(is_used_once)', a, b)), ('ilt', a, b)),
+   (('inot', ('uge(is_used_once)', a, b)), ('ult', a, b)),
+   (('inot', ('ieq(is_used_once)', a, b)), ('ine', a, b)),
+   (('inot', ('ine(is_used_once)', a, b)), ('ieq', a, b)),
 
    (('iand', ('feq', a, b), ('fneu', a, b)), False),
    (('iand', ('flt', a, b), ('flt', b, a)), False),
@@ -381,24 +381,22 @@ optimizations.extend([
    (('fneu', ('fneg', a), -1.0), ('fneu', 1.0, a)),
    (('feq', -1.0, ('fneg', a)), ('feq', a, 1.0)),
 
-   # flt(fsat(a), b > 0 && b < 1) is inexact if a is NaN (fsat(NaN) is 0)
-   # because it returns True while flt(a, b) always returns False.
-   (('~flt', ('fsat(is_used_once)', a), '#b(is_gt_0_and_lt_1)'), ('flt', a, b)),
+   # b < fsat(NaN) -> b < 0 -> false, and b < Nan -> false.
    (('flt', '#b(is_gt_0_and_lt_1)', ('fsat(is_used_once)', a)), ('flt', b, a)),
+
+   # fsat(NaN) >= b -> 0 >= b -> false, and NaN >= b -> false.
    (('fge', ('fsat(is_used_once)', a), '#b(is_gt_0_and_lt_1)'), ('fge', a, b)),
-   # fge(b > 0 && b < 1, fsat(a)) is inexact if a is NaN (fsat(NaN) is 0)
-   # because it returns True while fge(b, a) always returns False.
-   (('~fge', '#b(is_gt_0_and_lt_1)', ('fsat(is_used_once)', a)), ('fge', b, a)),
+
+   # b == fsat(NaN) -> b == 0 -> false, and b == NaN -> false.
    (('feq', ('fsat(is_used_once)', a), '#b(is_gt_0_and_lt_1)'), ('feq', a, b)),
+
+   # b != fsat(NaN) -> b != 0 -> true, and b != NaN -> true.
    (('fneu', ('fsat(is_used_once)', a), '#b(is_gt_0_and_lt_1)'), ('fneu', a, b)),
 
+   # fsat(NaN) >= 1 -> 0 >= 1 -> false, and NaN >= 1 -> false.
    (('fge', ('fsat(is_used_once)', a), 1.0), ('fge', a, 1.0)),
-   # flt(fsat(a), 1.0) is inexact because it returns True if a is NaN
-   # (fsat(NaN) is 0), while flt(a, 1.0) always returns FALSE.
-   (('~flt', ('fsat(is_used_once)', a), 1.0), ('flt', a, 1.0)),
-   # fge(0.0, fsat(a)) is inexact because it returns True if a is NaN
-   # (fsat(NaN) is 0), while fge(0.0, a) always returns FALSE.
-   (('~fge', 0.0, ('fsat(is_used_once)', a)), ('fge', 0.0, a)),
+
+   # 0 < fsat(NaN) -> 0 < 0 -> false, and 0 < NaN -> false.
    (('flt', 0.0, ('fsat(is_used_once)', a)), ('flt', 0.0, a)),
 
    # 0.0 >= b2f(a)
@@ -505,14 +503,15 @@ optimizations.extend([
    (('fge', ('fneg', ('fabs', a)), 0.0), ('feq', a, 0.0)),
 
    # (a >= 0.0) && (a <= 1.0) -> fsat(a) == a
+   #
+   # This should be NaN safe.
+   #
+   # NaN >= 0 && 1 >= NaN -> false && false -> false
+   #
+   # vs.
+   #
+   # NaN == fsat(NaN) -> NaN == 0 -> false
    (('iand', ('fge', a, 0.0), ('fge', 1.0, a)), ('feq', a, ('fsat', a)), '!options->lower_fsat'),
-
-   # (a < 0.0) || (a > 1.0)
-   # !(!(a < 0.0) && !(a > 1.0))
-   # !((a >= 0.0) && (a <= 1.0))
-   # !(a == fsat(a))
-   # a != fsat(a)
-   (('ior', ('flt', a, 0.0), ('flt', 1.0, a)), ('fneu', a, ('fsat', a)), '!options->lower_fsat'),
 
    # Note: fmin(-a, -b) == -fmax(a, b)
    (('fmax',                        ('b2f(is_used_once)', 'a@1'),           ('b2f', 'b@1')),           ('b2f', ('ior', a, b))),
@@ -664,10 +663,10 @@ optimizations.extend([
    (('~iand', ('flt(is_used_once)', a, c), ('flt', b, c)), ('flt', ('fmax', a, b), c)),
    (('~iand', ('fge(is_used_once)', a, b), ('fge', a, c)), ('fge', a, ('fmax', b, c))),
    (('~iand', ('fge(is_used_once)', a, c), ('fge', b, c)), ('fge', ('fmin', a, b), c)),
-   (('~iand', ('flt', a, '#b'), ('flt', a, '#c')), ('flt', a, ('fmin', b, c))),
-   (('~iand', ('flt', '#a', c), ('flt', '#b', c)), ('flt', ('fmax', a, b), c)),
-   (('~iand', ('fge', a, '#b'), ('fge', a, '#c')), ('fge', a, ('fmax', b, c))),
-   (('~iand', ('fge', '#a', c), ('fge', '#b', c)), ('fge', ('fmin', a, b), c)),
+   (('iand', ('flt', a, '#b(is_a_number)'), ('flt', a, '#c(is_a_number)')), ('flt', a, ('fmin', b, c))),
+   (('iand', ('flt', '#a(is_a_number)', c), ('flt', '#b(is_a_number)', c)), ('flt', ('fmax', a, b), c)),
+   (('iand', ('fge', a, '#b(is_a_number)'), ('fge', a, '#c(is_a_number)')), ('fge', a, ('fmax', b, c))),
+   (('iand', ('fge', '#a(is_a_number)', c), ('fge', '#b(is_a_number)', c)), ('fge', ('fmin', a, b), c)),
 
    (('ior', ('ilt(is_used_once)', a, b), ('ilt', a, c)), ('ilt', a, ('imax', b, c))),
    (('ior', ('ilt(is_used_once)', a, c), ('ilt', b, c)), ('ilt', ('imin', a, b), c)),
@@ -685,6 +684,16 @@ optimizations.extend([
    (('iand', ('ult(is_used_once)', a, c), ('ult', b, c)), ('ult', ('umax', a, b), c)),
    (('iand', ('uge(is_used_once)', a, b), ('uge', a, c)), ('uge', a, ('umax', b, c))),
    (('iand', ('uge(is_used_once)', a, c), ('uge', b, c)), ('uge', ('umin', a, b), c)),
+
+   # A number of shaders contain a pattern like a.x < 0.0 || a.x > 1.0 || a.y
+   # < 0.0, || a.y > 1.0 || ...  These patterns rearrange and replace in a
+   # single step.  Doing just the replacement can lead to an infinite loop as
+   # the pattern is repeatedly applied to the result of the previous
+   # application of the pattern.
+   (('ior', ('ior(is_used_once)', ('flt(is_used_once)', a, c), d), ('flt', b, c)), ('ior', ('flt', ('!fmin', a, b), c), d)),
+   (('ior', ('ior(is_used_once)', ('flt', a, c), d), ('flt(is_used_once)', b, c)), ('ior', ('flt', ('!fmin', a, b), c), d)),
+   (('ior', ('ior(is_used_once)', ('flt(is_used_once)', a, b), d), ('flt', a, c)), ('ior', ('flt', a, ('!fmax', b, c)), d)),
+   (('ior', ('ior(is_used_once)', ('flt', a, b), d), ('flt(is_used_once)', a, c)), ('ior', ('flt', a, ('!fmax', b, c)), d)),
 ])
 
 # Float sizes
@@ -847,12 +856,17 @@ optimizations.extend([
 
    # These patterns can result when (a < b || a < c) => (a < min(b, c))
    # transformations occur before constant propagation and loop-unrolling.
-   (('~flt', a, ('fmax', b, a)), ('flt', a, b)),
-   (('~flt', ('fmin', a, b), a), ('flt', b, a)),
+   #
+   # The flt versions are exact.  If isnan(a), the original pattern is
+   # trivially false, and the replacements are false too.  If isnan(b):
+   #
+   #    a < fmax(NaN, a) => a < a => false vs a < NaN => false
+   (('flt', a, ('fmax', b, a)), ('flt', a, b)),
+   (('flt', ('fmin', a, b), a), ('flt', b, a)),
    (('~fge', a, ('fmin', b, a)), True),
    (('~fge', ('fmax', a, b), a), True),
-   (('~flt', a, ('fmin', b, a)), False),
-   (('~flt', ('fmax', a, b), a), False),
+   (('flt', a, ('fmin', b, a)), False),
+   (('flt', ('fmax', a, b), a), False),
    (('~fge', a, ('fmax', b, a)), ('fge', a, b)),
    (('~fge', ('fmin', a, b), a), ('fge', b, a)),
 
@@ -958,15 +972,20 @@ optimizations.extend([
    (('iand', 'a@bool16', 1.0), ('b2f', a)),
    (('iand', 'a@bool32', 1.0), ('b2f', a)),
    (('flt', ('fneg', ('b2f', 'a@1')), 0), a), # Generated by TGSI KILL_IF.
-   # Comparison with the same args.  Note that these are not done for
-   # the float versions because NaN always returns false on float
-   # inequalities.
+   # Comparison with the same args.  Note that these are only done for the
+   # float versions when the source must be a number.  Generally, NaN cmp NaN
+   # produces the opposite result of X cmp X.  flt is the outlier.  NaN < NaN
+   # is false, and, for any number X, X < X is also false.
    (('ilt', a, a), False),
    (('ige', a, a), True),
    (('ieq', a, a), True),
    (('ine', a, a), False),
    (('ult', a, a), False),
    (('uge', a, a), True),
+   (('flt', a, a), False),
+   (('fge', 'a(is_a_number)', a), True),
+   (('feq', 'a(is_a_number)', a), True),
+   (('fneu', 'a(is_a_number)', a), False),
    # Logical and bit operations
    (('iand', a, a), a),
    (('iand', a, ~0), a),
@@ -1178,13 +1197,13 @@ optimizations.extend([
    # The results expecting true, must be marked imprecise.  The results
    # expecting false are fine because NaN compared >= or < anything is false.
 
-   (('~fge', 'a(is_not_negative)', 'b(is_not_positive)'), True),
-   (('fge',  'a(is_not_positive)', 'b(is_gt_zero)'),      False),
-   (('fge',  'a(is_lt_zero)',      'b(is_not_negative)'), False),
+   (('fge', 'a(is_a_number_not_negative)', 'b(is_a_number_not_positive)'), True),
+   (('fge', 'a(is_not_positive)',          'b(is_gt_zero)'),               False),
+   (('fge', 'a(is_lt_zero)',               'b(is_not_negative)'),          False),
 
-   (('flt',  'a(is_not_negative)', 'b(is_not_positive)'), False),
-   (('~flt', 'a(is_not_positive)', 'b(is_gt_zero)'),      True),
-   (('~flt', 'a(is_lt_zero)',      'b(is_not_negative)'), True),
+   (('flt', 'a(is_not_negative)',          'b(is_not_positive)'),          False),
+   (('flt', 'a(is_a_number_not_positive)', 'b(is_a_number_gt_zero)'),      True),
+   (('flt', 'a(is_a_number_lt_zero)',      'b(is_a_number_not_negative)'), True),
 
    (('ine', 'a(is_not_zero)', 0), True),
    (('ieq', 'a(is_not_zero)', 0), False),
@@ -1239,6 +1258,9 @@ optimizations.extend([
    (('ibfe', a, 16, 8), ('extract_i8', a, 2), '!options->lower_extract_byte'),
    (('ibfe', a, 24, 8), ('extract_i8', a, 3), '!options->lower_extract_byte'),
 
+   (('extract_u8', ('extract_i8', a, b), 0), ('extract_u8', a, b)),
+   (('extract_u8', ('extract_u8', a, b), 0), ('extract_u8', a, b)),
+
     # Word extraction
    (('ushr', ('ishl', 'a@32', 16), 16), ('extract_u16', a, 0), '!options->lower_extract_word'),
    (('ushr', 'a@32', 16), ('extract_u16', a, 1), '!options->lower_extract_word'),
@@ -1250,6 +1272,9 @@ optimizations.extend([
    (('ubfe', a, 16, 16), ('extract_u16', a, 1), '!options->lower_extract_word'),
    (('ibfe', a,  0, 16), ('extract_i16', a, 0), '!options->lower_extract_word'),
    (('ibfe', a, 16, 16), ('extract_i16', a, 1), '!options->lower_extract_word'),
+
+   (('extract_u16', ('extract_i16', a, b), 0), ('extract_u16', a, b)),
+   (('extract_u16', ('extract_u16', a, b), 0), ('extract_u16', a, b)),
 
    # Lower pack/unpack
    (('pack_64_2x32_split', a, b), ('ior', ('u2u64', a), ('ishl', ('u2u64', b), 32)), 'options->lower_pack_64_2x32_split'),
@@ -1652,6 +1677,14 @@ optimizations.extend([
    (('umad24', a, b, c),
     ('iadd', ('imul', ('iand', a, 0xffffff), ('iand', b, 0xffffff)), c),
     '!options->has_umad24'),
+
+   # Relaxed 24bit ops
+   (('imul24_relaxed', a, b), ('imul24', a, b), 'options->has_imul24'),
+   (('imul24_relaxed', a, b), ('imul', a, b), '!options->has_imul24'),
+   (('umad24_relaxed', a, b, c), ('umad24', a, b, c), 'options->has_umad24'),
+   (('umad24_relaxed', a, b, c), ('iadd', ('umul24_relaxed', a, b), c), '!options->has_umad24'),
+   (('umul24_relaxed', a, b), ('umul24', a, b), 'options->has_umul24'),
+   (('umul24_relaxed', a, b), ('imul', a, b), '!options->has_umul24'),
 
    (('imad24_ir3', a, b, 0), ('imul24', a, b)),
    (('imad24_ir3', a, 0, c), (c)),
@@ -2241,22 +2274,12 @@ late_optimizations = [
    # new patterns like these.  The patterns that compare with zero are removed
    # because they are unlikely to be created in by anything in
    # late_optimizations.
-
-   # flt(fsat(a), b > 0 && b < 1) is inexact if a is NaN (fsat(NaN) is 0)
-   # because it returns True while flt(a, b) always returns False.
-   (('~flt', ('fsat(is_used_once)', a), '#b(is_gt_0_and_lt_1)'), ('flt', a, b)),
    (('flt', '#b(is_gt_0_and_lt_1)', ('fsat(is_used_once)', a)), ('flt', b, a)),
    (('fge', ('fsat(is_used_once)', a), '#b(is_gt_0_and_lt_1)'), ('fge', a, b)),
-   # fge(b > 0 && b < 1, fsat(a)) is inexact if a is NaN (fsat(NaN) is 0)
-   # because it returns True while fge(b, a) always returns False.
-   (('~fge', '#b(is_gt_0_and_lt_1)', ('fsat(is_used_once)', a)), ('fge', b, a)),
    (('feq', ('fsat(is_used_once)', a), '#b(is_gt_0_and_lt_1)'), ('feq', a, b)),
    (('fneu', ('fsat(is_used_once)', a), '#b(is_gt_0_and_lt_1)'), ('fneu', a, b)),
 
    (('fge', ('fsat(is_used_once)', a), 1.0), ('fge', a, 1.0)),
-   # flt(fsat(a), 1.0) is inexact because it returns True if a is NaN
-   # (fsat(NaN) is 0), while flt(a, 1.0) always returns FALSE.
-   (('~flt', ('fsat(is_used_once)', a), 1.0), ('flt', a, 1.0)),
 
    (('~fge', ('fmin(is_used_once)', ('fadd(is_used_once)', a, b), ('fadd', c, d)), 0.0), ('iand', ('fge', a, ('fneg', b)), ('fge', c, ('fneg', d)))),
 
@@ -2406,6 +2429,19 @@ for N in [16, 32]:
                 ((x2xN, ('i2i16', aN)), (extract_x16, a, 0), '!options->lower_extract_word'),
             ])
 
+# Byte insertion
+late_optimizations.extend([(('ishl', ('extract_u8', 'a@32', 0), 8 * i), ('insert_u8', a, i), '!options->lower_insert_byte') for i in range(1, 4)])
+late_optimizations.extend([(('iand', ('ishl', 'a@32', 8 * i), 0xff << (8 * i)), ('insert_u8', a, i), '!options->lower_insert_byte') for i in range(1, 4)])
+late_optimizations.append((('ishl', 'a@32', 24), ('insert_u8', a, 3), '!options->lower_insert_byte'))
+
+late_optimizations += [
+   # Word insertion
+   (('ishl', 'a@32', 16), ('insert_u16', a, 1), '!options->lower_insert_word'),
+
+   # Extract and then insert
+   (('insert_u8', ('extract_u8', 'a', 0), b), ('insert_u8', a, b)),
+   (('insert_u16', ('extract_u16', 'a', 0), b), ('insert_u16', a, b)),
+]
 
 # Integer sizes
 for s in [8, 16, 32, 64]:

@@ -44,6 +44,7 @@
 
 #include "loader.h"
 #include "egl_dri2.h"
+#include "platform_android.h"
 
 #ifdef HAVE_DRM_GRALLOC
 #include <gralloc_drm_handle.h>
@@ -346,6 +347,8 @@ droid_create_image_from_prime_fds(_EGLDisplay *disp,
 static const char cros_gralloc_module_name[] = "CrOS Gralloc";
 
 #define CROS_GRALLOC_DRM_GET_BUFFER_INFO 4
+#define CROS_GRALLOC_DRM_GET_USAGE 5
+#define CROS_GRALLOC_DRM_GET_USAGE_FRONT_RENDERING_BIT 0x1
 
 struct cros_gralloc0_buffer_info {
    uint32_t drm_fourcc;
@@ -407,8 +410,8 @@ droid_window_dequeue_buffer(struct dri2_egl_surface *dri2_surf)
 {
    int fence_fd;
 
-   if (dri2_surf->window->dequeueBuffer(dri2_surf->window, &dri2_surf->buffer,
-                                        &fence_fd))
+   if (ANativeWindow_dequeueBuffer(dri2_surf->window, &dri2_surf->buffer,
+                                   &fence_fd))
       return EGL_FALSE;
 
    /* If access to the buffer is controlled by a sync fence, then block on the
@@ -418,7 +421,7 @@ droid_window_dequeue_buffer(struct dri2_egl_surface *dri2_surf)
     * immediate need to write to the buffer. But doing so would require adding
     * hooks to the DRI2 loader.
     *
-    * From the ANativeWindow::dequeueBuffer documentation:
+    * From the ANativeWindow_dequeueBuffer documentation:
     *
     *    The libsync fence file descriptor returned in the int pointed to by
     *    the fenceFd argument will refer to the fence that must signal
@@ -491,8 +494,7 @@ droid_window_enqueue_buffer(_EGLDisplay *disp, struct dri2_egl_surface *dri2_sur
     */
    int fence_fd = dri2_surf->out_fence_fd;
    dri2_surf->out_fence_fd = -1;
-   dri2_surf->window->queueBuffer(dri2_surf->window, dri2_surf->buffer,
-                                  fence_fd);
+   ANativeWindow_queueBuffer(dri2_surf->window, dri2_surf->buffer, fence_fd);
 
    dri2_surf->buffer = NULL;
    dri2_surf->back = NULL;
@@ -514,11 +516,11 @@ droid_window_cancel_buffer(struct dri2_egl_surface *dri2_surf)
    int fence_fd = dri2_surf->out_fence_fd;
 
    dri2_surf->out_fence_fd = -1;
-   ret = dri2_surf->window->cancelBuffer(dri2_surf->window,
-                                         dri2_surf->buffer, fence_fd);
+   ret = ANativeWindow_cancelBuffer(dri2_surf->window, dri2_surf->buffer,
+                                    fence_fd);
    dri2_surf->buffer = NULL;
    if (ret < 0) {
-      _eglLog(_EGL_WARNING, "ANativeWindow::cancelBuffer failed");
+      _eglLog(_EGL_WARNING, "ANativeWindow_cancelBuffer failed");
       dri2_surf->base.Lost = EGL_TRUE;
    }
 }
@@ -535,8 +537,8 @@ droid_set_shared_buffer_mode(_EGLDisplay *disp, _EGLSurface *surf, bool mode)
 
    _eglLog(_EGL_DEBUG, "%s: mode=%d", __func__, mode);
 
-   if (native_window_set_shared_buffer_mode(window, mode)) {
-      _eglLog(_EGL_WARNING, "failed native_window_set_shared_buffer_mode"
+   if (ANativeWindow_setSharedBufferMode(window, mode)) {
+      _eglLog(_EGL_WARNING, "failed ANativeWindow_setSharedBufferMode"
               "(window=%p, mode=%d)", window, mode);
       return false;
    }
@@ -571,16 +573,10 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
    if (type == EGL_WINDOW_BIT) {
       int format;
       int buffer_count;
-      int min_buffer_count, max_buffer_count;
+      int min_undequeued_buffers;
 
-      /* Prefer triple buffering for performance reasons. */
-      const int preferred_buffer_count = 3;
-
-      if (window->common.magic != ANDROID_NATIVE_WINDOW_MAGIC) {
-         _eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
-         goto cleanup_surface;
-      }
-      if (window->query(window, NATIVE_WINDOW_FORMAT, &format)) {
+      format = ANativeWindow_getFormat(window);
+      if (format < 0) {
          _eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
          goto cleanup_surface;
       }
@@ -588,31 +584,16 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
       /* Query ANativeWindow for MIN_UNDEQUEUED_BUFFER, minimum amount
        * of undequeued buffers.
        */
-      if (window->query(window, NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS,
-                        &min_buffer_count)) {
+      if (ANativeWindow_query(window,
+                              ANATIVEWINDOW_QUERY_MIN_UNDEQUEUED_BUFFERS,
+                              &min_undequeued_buffers)) {
          _eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
          goto cleanup_surface;
       }
 
-      /* Query for maximum buffer count, application can set this
-       * to limit the total amount of buffers.
-       */
-      if (window->query(window, NATIVE_WINDOW_MAX_BUFFER_COUNT,
-                        &max_buffer_count)) {
-         _eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
-         goto cleanup_surface;
-      }
+      /* Required buffer caching slots. */
+      buffer_count = min_undequeued_buffers + 2;
 
-      /* Clamp preferred between minimum (min undequeued + 1 dequeued)
-       * and maximum.
-       */
-      buffer_count = CLAMP(preferred_buffer_count, min_buffer_count + 1,
-                           max_buffer_count);
-
-      if (native_window_set_buffer_count(window, buffer_count)) {
-         _eglError(EGL_BAD_NATIVE_WINDOW, "droid_create_surface");
-         goto cleanup_surface;
-      }
       dri2_surf->color_buffers = calloc(buffer_count,
                                         sizeof(*dri2_surf->color_buffers));
       if (!dri2_surf->color_buffers) {
@@ -626,13 +607,19 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
                format, dri2_conf->base.NativeVisualID);
       }
 
-      window->query(window, NATIVE_WINDOW_WIDTH, &dri2_surf->base.Width);
-      window->query(window, NATIVE_WINDOW_HEIGHT, &dri2_surf->base.Height);
+      ANativeWindow_query(window, ANATIVEWINDOW_QUERY_DEFAULT_WIDTH,
+                          &dri2_surf->base.Width);
+      ANativeWindow_query(window, ANATIVEWINDOW_QUERY_DEFAULT_HEIGHT,
+                          &dri2_surf->base.Height);
 
       uint32_t usage = strcmp(dri2_dpy->driver_name, "kms_swrast") == 0
             ? GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN
             : GRALLOC_USAGE_HW_RENDER;
-      native_window_set_usage(window, usage);
+
+      if (conf->SurfaceType & EGL_MUTABLE_RENDER_BUFFER_BIT_KHR)
+         usage |= dri2_dpy->front_rendering_usage;
+
+      ANativeWindow_setUsage(window, usage);
    }
 
    config = dri2_get_dri_config(dri2_conf, type,
@@ -646,7 +633,7 @@ droid_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
       goto cleanup_surface;
 
    if (window) {
-      window->common.incRef(&window->common);
+      ANativeWindow_acquire(window);
       dri2_surf->window = window;
    }
 
@@ -688,7 +675,7 @@ droid_destroy_surface(_EGLDisplay *disp, _EGLSurface *surf)
       if (dri2_surf->buffer)
          droid_window_cancel_buffer(dri2_surf);
 
-      dri2_surf->window->common.decRef(&dri2_surf->window->common);
+      ANativeWindow_release(dri2_surf->window);
    }
 
    if (dri2_surf->dri_image_back) {
@@ -718,7 +705,7 @@ droid_swap_interval(_EGLDisplay *disp, _EGLSurface *surf, EGLint interval)
    struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
    struct ANativeWindow *window = dri2_surf->window;
 
-   if (window->setSwapInterval(window, interval))
+   if (ANativeWindow_setSwapInterval(window, interval))
       return EGL_FALSE;
 
    surf->SwapInterval = interval;
@@ -934,7 +921,7 @@ droid_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
    /* dri2_surf->buffer can be null even when no error has occured. For
     * example, if the user has called no GL rendering commands since the
     * previous eglSwapBuffers, then the driver may have not triggered
-    * a callback to ANativeWindow::dequeueBuffer, in which case
+    * a callback to ANativeWindow_dequeueBuffer, in which case
     * dri2_surf->buffer remains null.
     */
    if (dri2_surf->buffer)
@@ -1016,15 +1003,15 @@ droid_query_surface(_EGLDisplay *disp, _EGLSurface *surf,
    switch (attribute) {
       case EGL_WIDTH:
          if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window) {
-            dri2_surf->window->query(dri2_surf->window,
-                                     NATIVE_WINDOW_DEFAULT_WIDTH, value);
+            ANativeWindow_query(dri2_surf->window,
+                                ANATIVEWINDOW_QUERY_DEFAULT_WIDTH, value);
             return EGL_TRUE;
          }
          break;
       case EGL_HEIGHT:
          if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window) {
-            dri2_surf->window->query(dri2_surf->window,
-                                     NATIVE_WINDOW_DEFAULT_HEIGHT, value);
+            ANativeWindow_query(dri2_surf->window,
+                                ANATIVEWINDOW_QUERY_DEFAULT_HEIGHT, value);
             return EGL_TRUE;
          }
          break;
@@ -1347,22 +1334,22 @@ droid_display_shared_buffer(__DRIdrawable *driDrawable, int fence_fd,
       dri2_surf->out_fence_fd = -1;
    }
 
-   if (dri2_surf->window->queueBuffer(dri2_surf->window, dri2_surf->buffer,
-                                      fence_fd)) {
-      _eglLog(_EGL_WARNING, "%s: ANativeWindow::queueBuffer failed", __func__);
+   if (ANativeWindow_queueBuffer(dri2_surf->window, dri2_surf->buffer,
+                                 fence_fd)) {
+      _eglLog(_EGL_WARNING, "%s: ANativeWindow_queueBuffer failed", __func__);
       close(fence_fd);
       return;
    }
 
    fence_fd = -1;
 
-   if (dri2_surf->window->dequeueBuffer(dri2_surf->window, &dri2_surf->buffer,
-                                        &fence_fd)) {
+   if (ANativeWindow_dequeueBuffer(dri2_surf->window, &dri2_surf->buffer,
+                                   &fence_fd)) {
       /* Tear down the surface because it no longer has a back buffer. */
       struct dri2_egl_display *dri2_dpy =
          dri2_egl_display(dri2_surf->base.Resource.Display);
 
-      _eglLog(_EGL_WARNING, "%s: ANativeWindow::dequeueBuffer failed", __func__);
+      _eglLog(_EGL_WARNING, "%s: ANativeWindow_dequeueBuffer failed", __func__);
 
       dri2_surf->base.Lost = true;
       dri2_surf->buffer = NULL;
@@ -1671,10 +1658,47 @@ dri2_initialize_android(_EGLDisplay *disp)
    }
 
    disp->Extensions.KHR_image = EGL_TRUE;
+
+   dri2_dpy->front_rendering_usage = 0;
 #if ANDROID_API_LEVEL >= 24
    if (dri2_dpy->mutable_render_buffer &&
-       dri2_dpy->loader_extensions == droid_image_loader_extensions) {
-      disp->Extensions.KHR_mutable_render_buffer = EGL_TRUE;
+       dri2_dpy->loader_extensions == droid_image_loader_extensions &&
+       /* In big GL, front rendering is done at the core API level by directly
+        * rendering on the front buffer. However, in ES, the front buffer is
+        * completely inaccessible through the core ES API.
+        *
+        * EGL_KHR_mutable_render_buffer is Android's attempt to re-introduce
+        * front rendering into ES by squeezing into EGL. Unlike big GL, this
+        * extension redirects GL_BACK used by ES for front rendering. Thus we
+        * restrict the enabling of this extension to ES only.
+        */
+       (disp->ClientAPIs & ~(EGL_OPENGL_ES_BIT | EGL_OPENGL_ES2_BIT |
+                             EGL_OPENGL_ES3_BIT_KHR)) == 0) {
+      /* For cros gralloc, if the front rendering query is supported, then all
+       * available window surface configs support front rendering because:
+       *
+       * 1) EGL queries cros gralloc for the front rendering usage bit here
+       * 2) EGL combines the front rendering usage bit with the existing usage
+       *    if the window surface requests mutable render buffer
+       * 3) EGL sets the combined usage onto the ANativeWindow and the next
+       *    dequeueBuffer will ask gralloc for an allocation/re-allocation with
+       *    the new combined usage
+       * 4) cros gralloc(on top of minigbm) resolves the front rendering usage
+       *    bit into either BO_USE_FRONT_RENDERING or BO_USE_LINEAR based on
+       *    the format support checking.
+       *
+       * So at least we can force BO_USE_LINEAR as the fallback.
+       */
+      uint32_t front_rendering_usage = 0;
+      if (!strcmp(dri2_dpy->gralloc->common.name, cros_gralloc_module_name) &&
+          dri2_dpy->gralloc->perform &&
+          dri2_dpy->gralloc->perform(
+                dri2_dpy->gralloc, CROS_GRALLOC_DRM_GET_USAGE,
+                CROS_GRALLOC_DRM_GET_USAGE_FRONT_RENDERING_BIT,
+                &front_rendering_usage) == 0) {
+         dri2_dpy->front_rendering_usage = front_rendering_usage;
+         disp->Extensions.KHR_mutable_render_buffer = EGL_TRUE;
+      }
    }
 #endif
 

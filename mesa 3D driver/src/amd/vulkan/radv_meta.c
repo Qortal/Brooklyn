@@ -91,6 +91,12 @@ radv_meta_save(struct radv_meta_saved_state *state, struct radv_cmd_buffer *cmd_
          cmd_buffer->state.dynamic.fragment_shading_rate.combiner_ops[0];
       state->fragment_shading_rate.combiner_ops[1] =
          cmd_buffer->state.dynamic.fragment_shading_rate.combiner_ops[1];
+
+      state->depth_bias_enable = cmd_buffer->state.dynamic.depth_bias_enable;
+
+      state->primitive_restart_enable = cmd_buffer->state.dynamic.primitive_restart_enable;
+
+      state->rasterizer_discard_enable = cmd_buffer->state.dynamic.rasterizer_discard_enable;
    }
 
    if (state->flags & RADV_META_SAVE_SAMPLE_LOCATIONS) {
@@ -174,6 +180,12 @@ radv_meta_restore(const struct radv_meta_saved_state *state, struct radv_cmd_buf
       cmd_buffer->state.dynamic.fragment_shading_rate.combiner_ops[1] =
          state->fragment_shading_rate.combiner_ops[1];
 
+      cmd_buffer->state.dynamic.depth_bias_enable = state->depth_bias_enable;
+
+      cmd_buffer->state.dynamic.primitive_restart_enable = state->primitive_restart_enable;
+
+      cmd_buffer->state.dynamic.rasterizer_discard_enable = state->rasterizer_discard_enable;
+
       cmd_buffer->state.dirty |=
          RADV_CMD_DIRTY_DYNAMIC_VIEWPORT | RADV_CMD_DIRTY_DYNAMIC_SCISSOR |
          RADV_CMD_DIRTY_DYNAMIC_CULL_MODE | RADV_CMD_DIRTY_DYNAMIC_FRONT_FACE |
@@ -181,7 +193,9 @@ radv_meta_restore(const struct radv_meta_saved_state *state, struct radv_cmd_buf
          RADV_CMD_DIRTY_DYNAMIC_DEPTH_WRITE_ENABLE | RADV_CMD_DIRTY_DYNAMIC_DEPTH_COMPARE_OP |
          RADV_CMD_DIRTY_DYNAMIC_DEPTH_BOUNDS_TEST_ENABLE |
          RADV_CMD_DIRTY_DYNAMIC_STENCIL_TEST_ENABLE | RADV_CMD_DIRTY_DYNAMIC_STENCIL_OP |
-         RADV_CMD_DIRTY_DYNAMIC_FRAGMENT_SHADING_RATE;
+         RADV_CMD_DIRTY_DYNAMIC_FRAGMENT_SHADING_RATE | RADV_CMD_DIRTY_DYNAMIC_DEPTH_BIAS_ENABLE |
+         RADV_CMD_DIRTY_DYNAMIC_PRIMITIVE_RESTART_ENABLE |
+         RADV_CMD_DIRTY_DYNAMIC_RASTERIZER_DISCARD_ENABLE;
    }
 
    if (state->flags & RADV_META_SAVE_SAMPLE_LOCATIONS) {

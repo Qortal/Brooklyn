@@ -552,6 +552,7 @@ void trace_dump_sampler_view_template(const struct pipe_sampler_view *state,
    trace_dump_struct_begin("pipe_sampler_view");
 
    trace_dump_member(format, state, format);
+   trace_dump_member(ptr, state, texture);
 
    trace_dump_member_begin("u");
    trace_dump_struct_begin(""); /* anonymous */
@@ -604,6 +605,7 @@ void trace_dump_surface_template(const struct pipe_surface *state,
    trace_dump_struct_begin("pipe_surface");
 
    trace_dump_member(format, state, format);
+   trace_dump_member(ptr, state, texture);
    trace_dump_member(uint, state, width);
    trace_dump_member(uint, state, height);
 
@@ -779,6 +781,26 @@ void trace_dump_image_view(const struct pipe_image_view *state)
    trace_dump_struct_end();
 }
 
+
+void trace_dump_memory_info(const struct pipe_memory_info *state)
+{
+   if (!trace_dumping_enabled_locked())
+      return;
+
+   if (!state) {
+      trace_dump_null();
+      return;
+   }
+
+   trace_dump_struct_begin("pipe_memory_info");
+   trace_dump_member(uint, state, total_device_memory);
+   trace_dump_member(uint, state, avail_device_memory);
+   trace_dump_member(uint, state, total_staging_memory);
+   trace_dump_member(uint, state, avail_staging_memory);
+   trace_dump_member(uint, state, device_memory_evicted);
+   trace_dump_member(uint, state, nr_device_memory_evictions);
+   trace_dump_struct_end();
+}
 
 void trace_dump_draw_info(const struct pipe_draw_info *state)
 {

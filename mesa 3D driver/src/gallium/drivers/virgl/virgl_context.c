@@ -382,6 +382,7 @@ static struct pipe_surface *virgl_create_surface(struct pipe_context *ctx,
    surf->base.u.tex.level = templ->u.tex.level;
    surf->base.u.tex.first_layer = templ->u.tex.first_layer;
    surf->base.u.tex.last_layer = templ->u.tex.last_layer;
+   surf->base.nr_samples = templ->nr_samples;
 
    virgl_encoder_create_surface(vctx, handle, res, &surf->base);
    surf->handle = handle;
@@ -1168,8 +1169,8 @@ static void virgl_resource_copy_region(struct pipe_context *ctx,
    struct virgl_resource *dres = virgl_resource(dst);
    struct virgl_resource *sres = virgl_resource(src);
 
-   if (dres->u.b.target == PIPE_BUFFER)
-      util_range_add(&dres->u.b, &dres->valid_buffer_range, dstx, dstx + src_box->width);
+   if (dres->b.target == PIPE_BUFFER)
+      util_range_add(&dres->b, &dres->valid_buffer_range, dstx, dstx + src_box->width);
    virgl_resource_dirty(dres, dst_level);
 
    virgl_encode_resource_copy_region(vctx, dres,

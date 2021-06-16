@@ -914,16 +914,16 @@ vtn_get_builtin_location(struct vtn_builder *b,
       set_mode_system_value(b, mode);
       break;
    case SpvBuiltInNumWorkgroups:
-      *location = SYSTEM_VALUE_NUM_WORK_GROUPS;
+      *location = SYSTEM_VALUE_NUM_WORKGROUPS;
       set_mode_system_value(b, mode);
       break;
    case SpvBuiltInWorkgroupSize:
    case SpvBuiltInEnqueuedWorkgroupSize:
-      *location = SYSTEM_VALUE_LOCAL_GROUP_SIZE;
+      *location = SYSTEM_VALUE_WORKGROUP_SIZE;
       set_mode_system_value(b, mode);
       break;
    case SpvBuiltInWorkgroupId:
-      *location = SYSTEM_VALUE_WORK_GROUP_ID;
+      *location = SYSTEM_VALUE_WORKGROUP_ID;
       set_mode_system_value(b, mode);
       break;
    case SpvBuiltInLocalInvocationId:
@@ -1884,7 +1884,7 @@ vtn_create_variable(struct vtn_builder *b, struct vtn_value *val,
       }
 
       struct vtn_type *per_vertex_type = var->type;
-      if (nir_is_per_vertex_io(var->var, b->shader->info.stage))
+      if (nir_is_arrayed_io(var->var, b->shader->info.stage))
          per_vertex_type = var->type->array_element;
 
       /* Figure out the interface block type. */
@@ -1960,7 +1960,7 @@ vtn_create_variable(struct vtn_builder *b, struct vtn_value *val,
                      "as initializer, but have %u instead",
                      vtn_id_for_value(b, val),
                      vtn_id_for_value(b, initializer));
-         b->shader->info.cs.zero_initialize_shared_memory = true;
+         b->shader->info.zero_initialize_shared_memory = true;
          break;
 
       case SpvStorageClassUniformConstant:

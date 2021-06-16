@@ -48,7 +48,10 @@ pre_args = [
   '-DPACKAGE_VERSION="@0@"'.format(meson.project_version()),
   '-DPACKAGE_BUGREPORT="https://gitlab.freedesktop.org/mesa/mesa/-/issues"',
 ]
+c_args = []
+cpp_args = []
 
+with_moltenvk_dir = get_option('moltenvk-dir')
 with_vulkan_icd_dir = get_option('vulkan-icd-dir')
 with_tests = get_option('build-tests')
 with_aco_tests = get_option('build-aco-tests')
@@ -228,6 +231,7 @@ with_gallium_v3d = gallium_drivers.contains('v3d')
 with_gallium_panfrost = gallium_drivers.contains('panfrost')
 with_gallium_etnaviv = gallium_drivers.contains('etnaviv')
 with_gallium_tegra = gallium_drivers.contains('tegra')
+with_gallium_crocus = gallium_drivers.contains('crocus')
 with_gallium_iris = gallium_drivers.contains('iris')
 with_gallium_i915 = gallium_drivers.contains('i915')
 with_gallium_svga = gallium_drivers.contains('svga')
@@ -281,7 +285,7 @@ with_broadcom_vk = _vulkan_drivers.contains('broadcom')
 with_any_vk = _vulkan_drivers.length() != 0
 
 with_any_broadcom = with_gallium_vc4 or with_gallium_v3d or with_broadcom_vk
-with_any_intel = with_dri_i965 or with_intel_vk or with_gallium_iris
+with_any_intel = with_dri_i965 or with_intel_vk or with_gallium_iris or with_gallium_crocus
 
 if with_swrast_vk and not with_gallium_softpipe
   error('swrast vulkan requires gallium swrast')
@@ -454,6 +458,14 @@ if (not ['freebsd', 'openbsd', 'haiku'].contains(host_machine.system()) and
     (not with_platform_windows or not with_shared_glapi))
   pre_args += '-DUSE_ELF_TLS'
   use_elf_tls = true
+
+  if with_platform_android
+    # By default the NDK compiler, at least, emits emutls references instead of
+    # ELF TLS, even when building targeting newer API levels.  Make it actually do
+    # ELF TLS instead.
+    c_args += '-fno-emulated-tls'
+    cpp_args += '-fno-emulated-tls'
+  endif
 endif
 
 if with_glx != 'disabled'
@@ -521,6 +533,10 @@ if with_dri
   if with_glx == 'disabled' and not with_egl and not with_gbm
     error('building dri drivers require at least one windowing system')
   endif
+endif
+
+if with_gallium_kmsro and (with_platform_x11 and not with_dri3)
+  error('kmsro requires dri3 for X11 support')
 endif
 
 _vdpau = get_option('gallium-vdpau')
@@ -780,11 +796,17 @@ if with_gallium_st_nine
     error('The nine state tracker requires gallium softpipe/llvmpipe.')
   elif not (with_gallium_radeonsi or with_gallium_nouveau or with_gallium_r600
             or with_gallium_r300 or with_gallium_svga or with_gallium_i915
-            or with_gallium_iris)
+            or with_gallium_iris or with_gallium_crocus)
     error('The nine state tracker requires at least one non-swrast gallium driver.')
   endif
   if not with_dri3
     error('Using nine with wine requires dri3')
+  endif
+endif
+with_gallium_st_d3d10umd =  get_option('gallium-d3d10umd')
+if with_gallium_st_d3d10umd
+  if not with_gallium_softpipe
+    error('The d3d10umd state tracker requires gallium softpipe/llvmpipe.')
   endif
 endif
 _power8 = get_option('power8')
@@ -866,7 +888,7 @@ else
   pre_args += '-DEGL_NO_X11'
   gl_pkgconfig_c_flags += '-DEGL_NO_X11'
 endif
-if with_gbm
+if with_gbm and not with_platform_android
   pre_args += '-DHAVE_DRM_PLATFORM'
 endif
 
@@ -1007,10 +1029,8 @@ elif host_machine.system() == 'openbsd'
 endif
 
 # Check for generic C arguments
-c_args = []
 c_msvc_compat_args = []
 no_override_init_args = []
-cpp_args = []
 cpp_msvc_compat_args = []
 if cc.get_id() == 'msvc'
   foreach a : ['/wd4018',  # signed/unsigned mismatch
@@ -1141,30 +1161,30 @@ if host_machine.system() == 'windows'
   endif
 endif
 
-if get_option('sse2') and host_machine.system() == 'windows' and host_machine.cpu_family() == 'x86' and cc.get_id() == 'gcc'
-  # These settings make generated MinGW code match MSVC and follow
-  # GCC advice on https://gcc.gnu.org/wiki/FloatingPointMath#x86note
-  #
-  # NOTE: We need to ensure stack is realigned given that we
-  # produce shared objects, and have no control over the stack
-  # alignment policy of the application. Therefore we need
-  # -mstackrealign or -mincoming-stack-boundary=2.
-  #
-  # XXX: We could have SSE without -mstackrealign if we always used
-  # __attribute__((force_align_arg_pointer)), but that's not
-  # always the case.
-  c_args += ['-msse', '-msse2', '-mfpmath=sse', '-mstackrealign']
-endif
-
 if host_machine.cpu_family().startswith('x86') and cc.get_id() != 'msvc'
   pre_args += '-DUSE_SSE41'
   with_sse41 = true
   sse41_args = ['-msse4.1']
 
-  # GCC on x86 (not x86_64) with -msse* assumes a 16 byte aligned stack, but
-  # that's not guaranteed
   if host_machine.cpu_family() == 'x86'
-    sse41_args += '-mstackrealign'
+    if get_option('sse2')
+      # These settings make generated GCC code match MSVC and follow
+      # GCC advice on https://gcc.gnu.org/wiki/FloatingPointMath#x86note
+      #
+      # NOTE: We need to ensure stack is realigned given that we
+      # produce shared objects, and have no control over the stack
+      # alignment policy of the application. Therefore we need
+      # -mstackrealign or -mincoming-stack-boundary=2.
+      #
+      # XXX: We could have SSE without -mstackrealign if we always used
+      # __attribute__((force_align_arg_pointer)), but that's not
+      # always the case.
+      c_args += ['-msse2', '-mfpmath=sse', '-mstackrealign']
+    else
+      # GCC on x86 (not x86_64) with -msse* assumes a 16 byte aligned stack, but
+      # that's not guaranteed
+      sse41_args += '-mstackrealign'
+    endif
   endif
 else
   with_sse41 = false
@@ -1266,6 +1286,13 @@ if (cc.has_header_symbol('sys/mkdev.h', 'major') and
   cc.has_header_symbol('sys/mkdev.h', 'minor') and
   cc.has_header_symbol('sys/mkdev.h', 'makedev'))
   pre_args += '-DMAJOR_IN_MKDEV'
+endif
+
+if cc.check_header('sched.h')
+  pre_args += '-DHAS_SCHED_H'
+  if cc.has_function('sched_getaffinity')
+    pre_args += '-DHAS_SCHED_GETAFFINITY'
+  endif
 endif
 
 if not ['linux'].contains(host_machine.system())
@@ -1634,9 +1661,7 @@ if with_llvm
     _rtti = ['ON', 'YES'].contains(dep_llvm.get_variable(cmake : 'LLVM_ENABLE_RTTI', configtool: 'has-rtti'))
   endif
   if not _rtti
-    if with_gallium_nouveau
-      error('The Nouveau driver requires rtti. You either need to turn off nouveau or use an LLVM built with LLVM_ENABLE_RTTI.')
-    elif with_gallium_opencl
+    if with_gallium_opencl
       error('The Clover OpenCL state tracker requires rtti, you need to turn off clover or use an LLVM built with LLVM_ENABLE_RTTI.')
     endif
     if cc.get_id() == 'msvc'
@@ -1790,8 +1815,15 @@ endif
 
 dep_selinux = null_dep
 if get_option('selinux')
+  if get_option('execmem') != true
+    warning('execmem option is disabled, selinux will not be able to use execmem.')
+  endif
   dep_selinux = dependency('libselinux')
   pre_args += '-DMESA_SELINUX'
+endif
+
+if get_option('execmem')
+  pre_args += '-DMESA_EXECMEM'
 endif
 
 _libunwind = get_option('libunwind')
@@ -1972,6 +2004,14 @@ else
   dep_lmsensors = null_dep
 endif
 
+with_perfetto = get_option('perfetto')
+with_datasources = get_option('datasources')
+with_any_datasource = with_datasources.length() != 0
+if with_perfetto
+  dep_perfetto = dependency('perfetto', fallback: ['perfetto', 'dep_perfetto'])
+  pre_args += '-DHAVE_PERFETTO'
+endif
+
 # If the compiler supports it, put function and data symbols in their
 # own sections and GC the sections after linking.  This lets drivers
 # drop shared code unused by that specific driver (particularly
@@ -2112,7 +2152,7 @@ endif
 lines += 'GBM:             ' + (with_gbm ? 'yes' : 'no')
 if with_egl or with_any_vk
   _platforms += 'surfaceless'
-  if with_gbm
+  if with_gbm and not with_platform_android
     _platforms += 'drm'
   endif
   lines += 'EGL/Vulkan/VL platforms:   ' + ' '.join(_platforms)
@@ -2171,6 +2211,12 @@ lines += 'HUD lmsensors:   ' + (dep_lmsensors.found() ? 'yes' : 'no')
 
 lines += ''
 lines += 'Shared-glapi:    ' + (with_shared_glapi ? 'yes' : 'no')
+
+lines += ''
+lines += 'Perfetto:        ' + (with_perfetto ? 'yes' : 'no')
+if with_any_datasource
+  lines += 'Perfetto ds:     ' + ' '.join(with_datasources)
+endif
 
 
 indent = '        '
