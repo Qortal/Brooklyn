@@ -205,9 +205,6 @@ struct vc4_dev {
 
 	int power_refcount;
 
-	/* Set to true when the load tracker is supported. */
-	bool load_tracker_available;
-
 	/* Set to true when the load tracker is active. */
 	bool load_tracker_enabled;
 
@@ -327,6 +324,7 @@ struct vc4_hvs {
 	u32 __iomem *dlist;
 
 	struct clk *core_clk;
+	struct clk_request *core_req;
 
 	/* Memory manager for CRTCs to allocate space in the display
 	 * list.  Units are dwords.
@@ -520,6 +518,9 @@ vc4_crtc_to_vc4_pv_data(const struct vc4_crtc *crtc)
 	return container_of(data, struct vc4_pv_data, base);
 }
 
+struct drm_encoder *vc4_get_crtc_encoder(struct drm_crtc *crtc,
+					 struct drm_crtc_state *state);
+
 struct vc4_crtc_state {
 	struct drm_crtc_state base;
 	/* Dlist area for this CRTC configuration. */
@@ -534,6 +535,8 @@ struct vc4_crtc_state {
 		unsigned int top;
 		unsigned int bottom;
 	} margins;
+
+	unsigned long hvs_load;
 
 	/* Transitional state below, only valid during atomic commits */
 	bool update_muxing;
