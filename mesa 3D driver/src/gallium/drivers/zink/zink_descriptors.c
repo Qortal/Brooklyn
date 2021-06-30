@@ -60,7 +60,7 @@ struct zink_descriptor_set {
    bool punted;
    bool recycled;
    struct zink_descriptor_state_key key;
-   struct zink_batch_usage batch_uses;
+   struct zink_batch_usage *batch_uses;
 #ifndef NDEBUG
    /* for extra debug asserts */
    unsigned num_resources;
@@ -339,7 +339,7 @@ descriptor_layout_create(struct zink_screen *screen, enum zink_descriptor_type t
    dcslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
    dcslci.pNext = NULL;
    VkDescriptorSetLayoutBindingFlagsCreateInfo fci = {0};
-   VkDescriptorBindingFlags flags[num_bindings];
+   VkDescriptorBindingFlags flags[ZINK_MAX_DESCRIPTORS_PER_TYPE];
    if (screen->descriptor_mode == ZINK_DESCRIPTOR_MODE_LAZY) {
       dcslci.pNext = &fci;
       if (t == ZINK_DESCRIPTOR_TYPES)
@@ -488,6 +488,20 @@ zink_descriptor_util_init_null_set(struct zink_context *ctx, VkDescriptorSet des
    vkUpdateDescriptorSets(screen->dev, 1, &push_wd, 0, NULL);
 }
 
+VkImageLayout
+zink_descriptor_util_image_layout_eval(const struct zink_resource *res, bool is_compute)
+{
+   return res->image_bind_count[is_compute] ? VK_IMAGE_LAYOUT_GENERAL :
+                          res->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) ?
+                             //Vulkan-Docs#1490
+                             //(res->aspect == VK_IMAGE_ASPECT_DEPTH_BIT ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL :
+                              //res->aspect == VK_IMAGE_ASPECT_STENCIL_BIT ? VK_IMAGE_LAYOUT_STENCIL_READ_ONLY_OPTIMAL :
+                             (res->aspect == VK_IMAGE_ASPECT_DEPTH_BIT ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL :
+                              res->aspect == VK_IMAGE_ASPECT_STENCIL_BIT ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL :
+                              VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL) :
+                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+}
+
 static uint32_t
 hash_descriptor_pool(const void *key)
 {
@@ -545,7 +559,7 @@ bool
 zink_descriptor_util_alloc_sets(struct zink_screen *screen, VkDescriptorSetLayout dsl, VkDescriptorPool pool, VkDescriptorSet *sets, unsigned num_sets)
 {
    VkDescriptorSetAllocateInfo dsai;
-   VkDescriptorSetLayout layouts[num_sets];
+   VkDescriptorSetLayout *layouts = alloca(sizeof(*layouts) * num_sets);
    memset((void *)&dsai, 0, sizeof(dsai));
    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
    dsai.pNext = NULL;
@@ -593,7 +607,7 @@ allocate_desc_set(struct zink_context *ctx, struct zink_program *pg, enum zink_d
       for (unsigned desc_factor = DESC_BUCKET_FACTOR; desc_factor < descs_used; desc_factor *= DESC_BUCKET_FACTOR)
          bucket_size = desc_factor;
    }
-   VkDescriptorSet desc_set[bucket_size];
+   VkDescriptorSet *desc_set = alloca(sizeof(*desc_set) * bucket_size);
    if (!zink_descriptor_util_alloc_sets(screen, push_set ? ctx->dd->push_dsl[is_compute]->layout : pg->dsl[type + 1], pool->descpool, desc_set, bucket_size))
       return VK_NULL_HANDLE;
 
@@ -622,7 +636,7 @@ allocate_desc_set(struct zink_context *ctx, struct zink_program *pg, enum zink_d
       pipe_reference_init(&zds->reference, 1);
       zds->pool = pool;
       zds->hash = 0;
-      zds->batch_uses.usage = 0;
+      zds->batch_uses = NULL;
       zds->invalid = true;
       zds->punted = zds->recycled = false;
 #ifndef NDEBUG
@@ -731,7 +745,7 @@ zink_descriptor_set_get(struct zink_context *ctx,
          zds->recycled = false;
       }
       if (zds->invalid) {
-          if (zink_batch_usage_exists(&zds->batch_uses))
+          if (zink_batch_usage_exists(zds->batch_uses))
              punt_invalid_set(zds, NULL);
           else
              /* this set is guaranteed to be in pool->alloc_desc_sets */
@@ -746,7 +760,7 @@ zink_descriptor_set_get(struct zink_context *ctx,
    bool recycled = false, punted = false;
    if (he) {
        zds = (void*)he->data;
-       if (zds->invalid && zink_batch_usage_exists(&zds->batch_uses)) {
+       if (zds->invalid && zink_batch_usage_exists(zds->batch_uses)) {
           punt_invalid_set(zds, he);
           zds = NULL;
           punted = true;
@@ -1235,9 +1249,8 @@ update_descriptors_internal(struct zink_context *ctx, struct zink_descriptor_set
       }
 
       unsigned num_resources = 0;
-      unsigned num_descriptors = zds[h]->pool->key.layout->num_descriptors;
       ASSERTED unsigned num_bindings = zds[h]->pool->num_resources;
-      VkWriteDescriptorSet wds[num_descriptors];
+      VkWriteDescriptorSet wds[ZINK_MAX_DESCRIPTORS_PER_TYPE];
       unsigned num_wds = 0;
 
       for (int i = 0; i < num_stages; i++) {

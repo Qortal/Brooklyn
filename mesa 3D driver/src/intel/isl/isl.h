@@ -415,17 +415,113 @@ enum isl_format {
  * Numerical base type for channels of isl_format.
  */
 enum PACKED isl_base_type {
+   /** Data which takes up space but is ignored */
    ISL_VOID,
+
+   /** Data in a "raw" form and cannot be easily interpreted */
    ISL_RAW,
+
+   /**
+    * Unsigned normalized data
+    *
+    * Though stored as an integer, the data is interpreted as a floating-point
+    * number in the range [0, 1] where the conversion from the in-memory
+    * representation to float is given by \f$\frac{x}{2^{bits} - 1}\f$.
+    */
    ISL_UNORM,
+
+   /**
+    * Signed normalized data
+    *
+    * Though stored as an integer, the data is interpreted as a floating-point
+    * number in the range [-1, 1] where the conversion from the in-memory
+    * representation to float is given by
+    * \f$max\left(\frac{x}{2^{bits - 1} - 1}, -1\right)\f$.
+    */
    ISL_SNORM,
+
+   /**
+    * Unsigned floating-point data
+    *
+    * Unlike the standard IEEE floating-point representation, unsigned
+    * floating-point data has no sign bit. This saves a bit of space which is
+    * important if more than one float is required to represent a color value.
+    * As with IEEE floats, the high bits are the exponent and the low bits are
+    * the mantissa.  The available bit sizes for unsigned floats are as
+    * follows:
+    *
+    * \rst
+    * =====  =========  =========
+    * Bits   Mantissa   Exponent
+    * =====  =========  =========
+    *  11       6          5
+    *  10       5          5
+    * =====  =========  =========
+    * \endrst
+    *
+    * In particular, both unsigned floating-point formats are identical to
+    * IEEE float16 except that the sign bit and the bottom mantissa bits are
+    * removed.
+    */
    ISL_UFLOAT,
+
+   /** Signed floating-point data
+    *
+    * Signed floating-point data is represented as standard IEEE floats with
+    * the usual number of mantissa and exponent bits
+    *
+    * \rst
+    * =====  =========  =========
+    * Bits   Mantissa   Exponent
+    * =====  =========  =========
+    *  64      52         11
+    *  32      23          8
+    *  16      10          5
+    * =====  =========  =========
+    * \endrst
+    */
    ISL_SFLOAT,
+
+   /**
+    * Unsigned fixed-point data
+    *
+    * This is a 32-bit unsigned integer that is interpreted as a 16.16
+    * fixed-point value.
+    */
    ISL_UFIXED,
+
+   /**
+    * Signed fixed-point data
+    *
+    * This is a 32-bit signed integer that is interpreted as a 16.16
+    * fixed-point value.
+    */
    ISL_SFIXED,
+
+   /** Unsigned integer data */
    ISL_UINT,
+
+   /** Signed integer data */
    ISL_SINT,
+
+   /**
+    * Unsigned scaled data
+    *
+    * This is data which is stored as an unsigned integer but interpreted as a
+    * floating-point value by the hardware.  The re-interpretation is done via
+    * a simple unsigned integer to float cast.  This is typically used as a
+    * vertex format.
+    */
    ISL_USCALED,
+
+   /**
+    * Signed scaled data
+    *
+    * This is data which is stored as a signed integer but interpreted as a
+    * floating-point value by the hardware.  The re-interpretation is done via
+    * a simple signed integer to float cast.  This is typically used as a
+    * vertex format.
+    */
    ISL_SSCALED,
 };
 
@@ -462,18 +558,22 @@ enum isl_txc {
 };
 
 /**
- * @brief Hardware tile mode
+ * Describes the memory tiling of a surface
  *
- * WARNING: These values differ from the hardware enum values, which are
- * unstable across hardware generations.
+ * This differs from the HW enum values used to represent tiling.  The bits
+ * used by hardware have varried significantly over the years from the
+ * "Tile Walk" bit on old pre-Broadwell parts to the "Tile Mode" enum on
+ * Broadwell to the combination of "Tile Mode" and "Tiled Resource Mode" on
+ * Skylake. This enum represents them all in a consistent manner and in one
+ * place.
  *
  * Note that legacy Y tiling is ISL_TILING_Y0 instead of ISL_TILING_Y, to
  * clearly distinguish it from Yf and Ys.
  */
 enum isl_tiling {
-   ISL_TILING_LINEAR = 0,
-   ISL_TILING_W,
-   ISL_TILING_X,
+   ISL_TILING_LINEAR = 0, /**< Linear, or no tiling */
+   ISL_TILING_W, /**< W tiling */
+   ISL_TILING_X, /**< X tiling */
    ISL_TILING_Y0, /**< Legacy Y tiling */
    ISL_TILING_Yf, /**< Standard 4K tiling. The 'f' means "four". */
    ISL_TILING_Ys, /**< Standard 64K tiling. The 's' means "sixty-four". */
@@ -594,82 +694,155 @@ enum isl_dim_layout {
    ISL_DIM_LAYOUT_GFX9_1D,
 };
 
+/**
+ * Enumerates the different forms of auxiliary surface compression
+ */
 enum isl_aux_usage {
    /** No Auxiliary surface is used */
    ISL_AUX_USAGE_NONE,
 
-   /** The primary surface is a depth surface and the auxiliary surface is HiZ */
+   /** Hierarchical depth compression
+    *
+    * First introduced on Iron Lake, this compression scheme compresses depth
+    * surfaces by storing alternate forms of the depth value in a HiZ surface.
+    * Possible (not all) compressed forms include:
+    *
+    *  - An uncompressed "look at the main surface" value
+    *
+    *  - A special value indicating that the main surface data should be
+    *    ignored and considered to contain the clear value.
+    *
+    *  - The depth for the entire main-surface block as a plane equation
+    *
+    *  - The minimum/maximum depth for the main-surface block
+    *
+    * This second one isn't helpful for getting exact depth values but can
+    * still substantially accelerate depth testing if the specified range is
+    * sufficiently small.
+    */
    ISL_AUX_USAGE_HIZ,
 
-   /** The auxiliary surface is an MCS
+   /** Multisampled color compression
+    *
+    * Introduced on Ivy Bridge, this compression scheme compresses
+    * multisampled color surfaces by storing a mapping from samples to planes
+    * in the MCS surface, allowing for de-duplication of identical samples.
+    * The MCS value of all 1's is reserved to indicate that the pixel contains
+    * the clear color. Exact details about the data stored in the MCS and how
+    * it maps samples to slices is documented in the PRMs.
     *
     * @invariant isl_surf::samples > 1
     */
    ISL_AUX_USAGE_MCS,
 
-   /** The auxiliary surface is a fast-clear-only compression surface
+   /** Single-sampled fast-clear-only color compression
     *
+    * Introduced on Ivy Bridge, this compression scheme compresses
+    * single-sampled color surfaces by storing a bit for each cache line pair
+    * in the main surface in the CCS which indicates that the corresponding
+    * pair of cache lines in the main surface only contains the clear color.
+    * On Skylake, this is increased to two bits per cache line pair with 0x0
+    * meaning resolved and 0x3 meaning clear.
+    *
+    * @invariant The surface is a color surface
     * @invariant isl_surf::samples == 1
     */
    ISL_AUX_USAGE_CCS_D,
 
-   /** The auxiliary surface provides full lossless color compression
+   /** Single-sample lossless color compression
     *
+    * Introduced on Skylake, this compression scheme compresses single-sampled
+    * color surfaces by storing a 2-bit value for each cache line pair in the
+    * main surface which says how the corresponding pair of cache lines in the
+    * main surface are to be interpreted.  Valid CCS values include:
+    *
+    *  - `0x0`: Indicates that the corresponding pair of cache lines in the
+    *    main surface contain valid color data
+    *
+    *  - `0x1`: Indicates that the corresponding pair of cache lines in the
+    *    main surface contain compressed color data.  Typically, the
+    *    compressed data fits in one of the two cache lines.
+    *
+    *  - `0x3`: Indicates that the corresponding pair of cache lines in the
+    *    main surface should be ignored.  Those cache lines should be
+    *    considered to contain the clear color.
+    *
+    * Starting with Tigerlake, each CCS value is 4 bits per cache line pair in
+    * the main surface.
+    *
+    * @invariant The surface is a color surface
     * @invariant isl_surf::samples == 1
     */
    ISL_AUX_USAGE_CCS_E,
 
-   /** The auxiliary surface provides full lossless color compression on
-    *  Gfx12.
+   /** Single-sample lossless color compression on Tigerlake
     *
+    * This is identical to ISL_AUX_USAGE_CCS_E except it also encodes the
+    * Tigerlake quirk about regular render writes possibly fast-clearing
+    * blocks in the surface.
+    *
+    * @invariant The surface is a color surface
     * @invariant isl_surf::samples == 1
     */
    ISL_AUX_USAGE_GFX12_CCS_E,
 
-   /** The auxiliary surface provides full lossless media color compression
+   /** Media color compression
     *
+    * Used by the media engine on Tigerlake and above.  This compression form
+    * is typically not produced by 3D drivers but they need to be able to
+    * consume it in order to get end-to-end compression when the image comes
+    * from media decode.
+    *
+    * @invariant The surface is a color surface
     * @invariant isl_surf::samples == 1
     */
    ISL_AUX_USAGE_MC,
 
-   /** The auxiliary surface is a HiZ surface operating in write-through mode
-    *  and CCS is also enabled
+   /** Combined HiZ+CCS in write-through mode
     *
-    * In this mode, the HiZ and CCS surfaces act as a single fused compression
-    * surface where resolves (but not ambiguates) operate on both surfaces at
-    * the same time.  In this mode, the HiZ surface operates in write-through
-    * mode where it is only used for accelerating depth testing and not for
-    * actual compression.  The CCS-compressed surface contains valid data at
-    * all times.
+    * In this mode, introduced on Tigerlake, the HiZ and CCS surfaces act as a
+    * single fused compression surface where resolves (but not ambiguates)
+    * operate on both surfaces at the same time.  In this mode, the HiZ
+    * surface operates in write-through mode where it is only used for
+    * accelerating depth testing and not for actual compression.  The
+    * CCS-compressed surface contains valid data at all times.
     *
+    * @invariant The surface is a color surface
     * @invariant isl_surf::samples == 1
     */
    ISL_AUX_USAGE_HIZ_CCS_WT,
 
-   /** The auxiliary surface is a HiZ surface with and CCS is also enabled
+   /** Combined HiZ+CCS without write-through
     *
-    * In this mode, the HiZ and CCS surfaces act as a single fused compression
-    * surface where resolves (but not ambiguates) operate on both surfaces at
-    * the same time.  In this mode, full HiZ compression is enabled and the
-    * CCS-compressed main surface may not contain valid data.  The only way to
-    * read the surface outside of the depth hardware is to do a full resolve
-    * which resolves both HiZ and CCS so the surface is in the pass-through
-    * state.
+    * In this mode, introduced on Tigerlake, the HiZ and CCS surfaces act as a
+    * single fused compression surface where resolves (but not ambiguates)
+    * operate on both surfaces at the same time.  In this mode, full HiZ
+    * compression is enabled and the CCS-compressed main surface may not
+    * contain valid data.  The only way to read the surface outside of the
+    * depth hardware is to do a full resolve which resolves both HiZ and CCS
+    * so the surface is in the pass-through state.
+    *
+    * @invariant The surface is a depth surface
     */
    ISL_AUX_USAGE_HIZ_CCS,
 
-   /** The auxiliary surface is an MCS and CCS is also enabled
+   /** Combined MCS+CCS without write-through
     *
-    * In this mode, we have fused MCS+CCS compression where the MCS is used
-    * for fast-clears and "identical samples" compression just like on Gfx7-11
-    * but each plane is then CCS compressed.
+    * In this mode, introduced on Tigerlake, we have fused MCS+CCS compression
+    * where the MCS is used for fast-clears and "identical samples"
+    * compression just like on Gfx7-11 but each plane is then CCS compressed.
     *
+    * @invariant The surface is a depth surface
     * @invariant isl_surf::samples > 1
     */
    ISL_AUX_USAGE_MCS_CCS,
 
-   /** CCS auxiliary data is used to compress a stencil buffer
+   /** Stencil compression
     *
+    * Introduced on Tigerlake, this is similar to CCS_E only used to compress
+    * stencil surfaces.
+    *
+    * @invariant The surface is a stencil surface
     * @invariant isl_surf::samples == 1
     */
    ISL_AUX_USAGE_STC_CCS,
@@ -680,112 +853,58 @@ enum isl_aux_usage {
  *
  * For any given auxiliary surface compression format (HiZ, CCS, or MCS), any
  * given slice (lod + array layer) can be in one of the seven states described
- * by this enum.  Draw and resolve operations may cause the slice to change
- * from one state to another.  The six valid states are:
- *
- *    1) Clear:  In this state, each block in the auxiliary surface contains a
- *       magic value that indicates that the block is in the clear state.  If
- *       a block is in the clear state, it's values in the primary surface are
- *       ignored and the color of the samples in the block is taken either the
- *       RENDER_SURFACE_STATE packet for color or 3DSTATE_CLEAR_PARAMS for
- *       depth.  Since neither the primary surface nor the auxiliary surface
- *       contains the clear value, the surface can be cleared to a different
- *       color by simply changing the clear color without modifying either
- *       surface.
- *
- *    2) Partial Clear:  In this state, each block in the auxiliary surface
- *       contains either the magic clear or pass-through value.  See Clear and
- *       Pass-through for more details.
- *
- *    3) Compressed w/ Clear:  In this state, neither the auxiliary surface
- *       nor the primary surface has a complete representation of the data.
- *       Instead, both surfaces must be used together or else rendering
- *       corruption may occur.  Depending on the auxiliary compression format
- *       and the data, any given block in the primary surface may contain all,
- *       some, or none of the data required to reconstruct the actual sample
- *       values.  Blocks may also be in the clear state (see Clear) and have
- *       their value taken from outside the surface.
- *
- *    4) Compressed w/o Clear:  This state is identical to the state above
- *       except that no blocks are in the clear state.  In this state, all of
- *       the data required to reconstruct the final sample values is contained
- *       in the auxiliary and primary surface and the clear value is not
- *       considered.
- *
- *    5) Resolved:  In this state, the primary surface contains 100% of the
- *       data.  The auxiliary surface is also valid so the surface can be
- *       validly used with or without aux enabled.  The auxiliary surface may,
- *       however, contain non-trivial data and any update to the primary
- *       surface with aux disabled will cause the two to get out of sync.
- *
- *    6) Pass-through:  In this state, the primary surface contains 100% of the
- *       data and every block in the auxiliary surface contains a magic value
- *       which indicates that the auxiliary surface should be ignored and the
- *       only the primary surface should be considered.  Updating the primary
- *       surface without aux works fine and can be done repeatedly in this
- *       mode.  Writing to a surface in pass-through mode with aux enabled may
- *       cause the auxiliary buffer to contain non-trivial data and no longer
- *       be in the pass-through state.
- *
- *    7) Aux Invalid:  In this state, the primary surface contains 100% of the
- *       data and the auxiliary surface is completely bogus.  Any attempt to
- *       use the auxiliary surface is liable to result in rendering
- *       corruption.  The only thing that one can do to re-enable aux once
- *       this state is reached is to use an ambiguate pass to transition into
- *       the pass-through state.
- *
- * Drawing with or without aux enabled may implicitly cause the surface to
- * transition between these states.  There are also four types of auxiliary
- * compression operations which cause an explicit transition which are
- * described by the isl_aux_op enum below.
+ * by this enum. Drawing with or without aux enabled may implicitly cause the
+ * surface to transition between these states.  There are also four types of
+ * auxiliary compression operations which cause an explicit transition which
+ * are described by the isl_aux_op enum below.
  *
  * Not all operations are valid or useful in all states.  The diagram below
  * contains a complete description of the states and all valid and useful
  * transitions except clear.
  *
- *   Draw w/ Aux
- *   +----------+
- *   |          |
- *   |       +-------------+    Draw w/ Aux     +-------------+
- *   +------>| Compressed  |<-------------------|    Clear    |
- *           |  w/ Clear   |----->----+         |             |
- *           +-------------+          |         +-------------+
- *                  |  /|\            |            |   |
- *                  |   |             |            |   |
- *                  |   |             +------<-----+   |  Draw w/
- *                  |   |             |                | Clear Only
- *                  |   |      Full   |                |   +----------+
- *          Partial |   |     Resolve |               \|/  |          |
- *          Resolve |   |             |         +-------------+       |
- *                  |   |             |         |   Partial   |<------+
- *                  |   |             |         |    Clear    |<----------+
- *                  |   |             |         +-------------+           |
- *                  |   |             |                |                  |
- *                  |   |             +------>---------+  Full            |
- *                  |   |                              | Resolve          |
- *   Draw w/ aux    |   |   Partial Fast Clear         |                  |
- *   +----------+   |   +--------------------------+   |                  |
- *   |          |  \|/                             |  \|/                 |
- *   |       +-------------+    Full Resolve    +-------------+           |
- *   +------>| Compressed  |------------------->|  Resolved   |           |
- *           |  w/o Clear  |<-------------------|             |           |
- *           +-------------+    Draw w/ Aux     +-------------+           |
- *                 /|\                             |   |                  |
- *                  |  Draw                        |   |  Draw            |
- *                  | w/ Aux                       |   | w/o Aux          |
- *                  |            Ambiguate         |   |                  |
- *                  |   +--------------------------+   |                  |
- *   Draw w/o Aux   |   |                              |   Draw w/o Aux   |
- *   +----------+   |   |                              |   +----------+   |
- *   |          |   |  \|/                            \|/  |          |   |
- *   |       +-------------+     Ambiguate      +-------------+       |   |
- *   +------>|    Pass-    |<-------------------|     Aux     |<------+   |
- *   +------>|   through   |                    |   Invalid   |           |
- *   |       +-------------+                    +-------------+           |
- *   |          |   |                                                     |
- *   +----------+   +-----------------------------------------------------+
- *     Draw w/                       Partial Fast Clear
- *    Clear Only
+ *     Draw w/ Aux
+ *     +----------+
+ *     |          |
+ *     |       +-------------+    Draw w/ Aux     +-------------+
+ *     +------>| Compressed  |<-------------------|    Clear    |
+ *             |  w/ Clear   |----->----+         |             |
+ *             +-------------+          |         +-------------+
+ *                    |  /|\            |            |   |
+ *                    |   |             |            |   |
+ *                    |   |             +------<-----+   |  Draw w/
+ *                    |   |             |                | Clear Only
+ *                    |   |      Full   |                |   +----------+
+ *            Partial |   |     Resolve |               \|/  |          |
+ *            Resolve |   |             |         +-------------+       |
+ *                    |   |             |         |   Partial   |<------+
+ *                    |   |             |         |    Clear    |<----------+
+ *                    |   |             |         +-------------+           |
+ *                    |   |             |                |                  |
+ *                    |   |             +------>---------+  Full            |
+ *                    |   |                              | Resolve          |
+ *     Draw w/ aux    |   |   Partial Fast Clear         |                  |
+ *     +----------+   |   +--------------------------+   |                  |
+ *     |          |  \|/                             |  \|/                 |
+ *     |       +-------------+    Full Resolve    +-------------+           |
+ *     +------>| Compressed  |------------------->|  Resolved   |           |
+ *             |  w/o Clear  |<-------------------|             |           |
+ *             +-------------+    Draw w/ Aux     +-------------+           |
+ *                   /|\                             |   |                  |
+ *                    |  Draw                        |   |  Draw            |
+ *                    | w/ Aux                       |   | w/o Aux          |
+ *                    |            Ambiguate         |   |                  |
+ *                    |   +--------------------------+   |                  |
+ *     Draw w/o Aux   |   |                              |   Draw w/o Aux   |
+ *     +----------+   |   |                              |   +----------+   |
+ *     |          |   |  \|/                            \|/  |          |   |
+ *     |       +-------------+     Ambiguate      +-------------+       |   |
+ *     +------>|    Pass-    |<-------------------|     Aux     |<------+   |
+ *     +------>|   through   |                    |   Invalid   |           |
+ *     |       +-------------+                    +-------------+           |
+ *     |          |   |                                                     |
+ *     +----------+   +-----------------------------------------------------+
+ *       Draw w/                       Partial Fast Clear
+ *      Clear Only
  *
  *
  * While the above general theory applies to all forms of auxiliary
@@ -793,63 +912,135 @@ enum isl_aux_usage {
  * on all compression types.  However, each of the auxiliary states and
  * operations can be fairly easily mapped onto the above diagram:
  *
- * HiZ:     Hierarchical depth compression is capable of being in any of the
- *          states above.  Hardware provides three HiZ operations: "Depth
- *          Clear", "Depth Resolve", and "HiZ Resolve" which map to "Fast
- *          Clear", "Full Resolve", and "Ambiguate" respectively.  The
- *          hardware provides no HiZ partial resolve operation so the only way
- *          to get into the "Compressed w/o Clear" state is to render with HiZ
- *          when the surface is in the resolved or pass-through states.
+ * **HiZ:** Hierarchical depth compression is capable of being in any of
+ * the states above.  Hardware provides three HiZ operations: "Depth
+ * Clear", "Depth Resolve", and "HiZ Resolve" which map to "Fast Clear",
+ * "Full Resolve", and "Ambiguate" respectively.  The hardware provides no
+ * HiZ partial resolve operation so the only way to get into the
+ * "Compressed w/o Clear" state is to render with HiZ when the surface is
+ * in the resolved or pass-through states.
  *
- * MCS:     Multisample compression is technically capable of being in any of
- *          the states above except that most of them aren't useful.  Both the
- *          render engine and the sampler support MCS compression and, apart
- *          from clear color, MCS is format-unaware so we leave the surface
- *          compressed 100% of the time.  The hardware provides no MCS
- *          operations.
+ * **MCS:** Multisample compression is technically capable of being in any of
+ * the states above except that most of them aren't useful.  Both the render
+ * engine and the sampler support MCS compression and, apart from clear color,
+ * MCS is format-unaware so we leave the surface compressed 100% of the time.
+ * The hardware provides no MCS operations.
  *
- * CCS_D:   Single-sample fast-clears (also called CCS_D in ISL) are one of
- *          the simplest forms of compression since they don't do anything
- *          beyond clear color tracking.  They really only support three of
- *          the six states: Clear, Partial Clear, and Pass-through.  The
- *          only CCS_D operation is "Resolve" which maps to a full resolve
- *          followed by an ambiguate.
+ * **CCS_D:** Single-sample fast-clears (also called CCS_D in ISL) are one of
+ * the simplest forms of compression since they don't do anything beyond clear
+ * color tracking.  They really only support three of the six states: Clear,
+ * Partial Clear, and Pass-through.  The only CCS_D operation is "Resolve"
+ * which maps to a full resolve followed by an ambiguate.
  *
- * CCS_E:   Single-sample render target compression (also called CCS_E in ISL)
- *          is capable of being in almost all of the above states.  THe only
- *          exception is that it does not have separate resolved and pass-
- *          through states.  Instead, the CCS_E full resolve operation does
- *          both a resolve and an ambiguate so it goes directly into the
- *          pass-through state.  CCS_E also provides fast clear and partial
- *          resolve operations which work as described above.
+ * **CCS_E:** Single-sample render target compression (also called CCS_E in
+ * ISL) is capable of being in almost all of the above states.  THe only
+ * exception is that it does not have separate resolved and pass- through
+ * states.  Instead, the CCS_E full resolve operation does both a resolve and
+ * an ambiguate so it goes directly into the pass-through state.  CCS_E also
+ * provides fast clear and partial resolve operations which work as described
+ * above.
  *
- *          While it is technically possible to perform a CCS_E ambiguate, it
- *          is not provided by Sky Lake hardware so we choose to avoid the aux
- *          invalid state.  If the aux invalid state were determined to be
- *          useful, a CCS ambiguate could be done by carefully rendering to
- *          the CCS and filling it with zeros.
+ * @note
+ * The state machine above isn't quite correct for CCS on TGL.  There is a HW
+ * bug (or feature, depending on who you ask) which can cause blocks to enter
+ * the fast-clear state as a side-effect of a regular draw call.  This means
+ * that a draw in the resolved or compressed without clear states takes you to
+ * the compressed with clear state, not the compressed without clear state.
  */
 enum isl_aux_state {
 #ifdef IN_UNIT_TEST
    ISL_AUX_STATE_ASSERT,
 #endif
+   /** Clear
+    *
+    * In this state, each block in the auxiliary surface contains a magic
+    * value that indicates that the block is in the clear state.  If a block
+    * is in the clear state, its values in the primary surface are ignored
+    * and the color of the samples in the block is taken either the
+    * RENDER_SURFACE_STATE packet for color or 3DSTATE_CLEAR_PARAMS for depth.
+    * Since neither the primary surface nor the auxiliary surface contains the
+    * clear value, the surface can be cleared to a different color by simply
+    * changing the clear color without modifying either surface.
+    */
    ISL_AUX_STATE_CLEAR,
+
+   /** Partial Clear
+    *
+    * In this state, each block in the auxiliary surface contains either the
+    * magic clear or pass-through value.  See Clear and Pass-through for more
+    * details.
+    */
    ISL_AUX_STATE_PARTIAL_CLEAR,
+
+   /** Compressed with clear color
+    *
+    * In this state, neither the auxiliary surface nor the primary surface has
+    * a complete representation of the data. Instead, both surfaces must be
+    * used together or else rendering corruption may occur.  Depending on the
+    * auxiliary compression format and the data, any given block in the
+    * primary surface may contain all, some, or none of the data required to
+    * reconstruct the actual sample values.  Blocks may also be in the clear
+    * state (see Clear) and have their value taken from outside the surface.
+    */
    ISL_AUX_STATE_COMPRESSED_CLEAR,
+
+   /** Compressed without clear color
+    *
+    * This state is identical to the state above except that no blocks are in
+    * the clear state.  In this state, all of the data required to reconstruct
+    * the final sample values is contained in the auxiliary and primary
+    * surface and the clear value is not considered.
+    */
    ISL_AUX_STATE_COMPRESSED_NO_CLEAR,
+
+   /** Resolved
+    *
+    * In this state, the primary surface contains 100% of the data.  The
+    * auxiliary surface is also valid so the surface can be validly used with
+    * or without aux enabled.  The auxiliary surface may, however, contain
+    * non-trivial data and any update to the primary surface with aux disabled
+    * will cause the two to get out of sync.
+    */
    ISL_AUX_STATE_RESOLVED,
+
+   /** Pass-through
+    *
+    * In this state, the primary surface contains 100% of the data and every
+    * block in the auxiliary surface contains a magic value which indicates
+    * that the auxiliary surface should be ignored and only the primary
+    * surface should be considered.  In this mode, the primary surface can
+    * safely be written with ISL_AUX_USAGE_NONE or by something that ignores
+    * compression such as the blit/copy engine or a CPU map and it will stay
+    * in the pass-through state.  Writing to a surface in pass-through mode
+    * with aux enabled may cause the auxiliary to be updated to contain
+    * non-trivial data and it will no longer be in the pass-through state.
+    * Likely, it will end up compressed, with or without clear color.
+    */
    ISL_AUX_STATE_PASS_THROUGH,
+
+   /** Aux Invalid
+    *
+    * In this state, the primary surface contains 100% of the data and the
+    * auxiliary surface is completely bogus.  Any attempt to use the auxiliary
+    * surface is liable to result in rendering corruption.  The only thing
+    * that one can do to re-enable aux once this state is reached is to use an
+    * ambiguate pass to transition into the pass-through state.
+    */
    ISL_AUX_STATE_AUX_INVALID,
 };
 
-/**
- * Enum which describes explicit aux transition operations.
+/** Enum describing explicit aux transition operations
+ *
+ * These operations are used to transition from one isl_aux_state to another.
+ * Even though a draw does transition the state machine, it's not included in
+ * this enum as it's something of a special case.
  */
 enum isl_aux_op {
 #ifdef IN_UNIT_TEST
    ISL_AUX_OP_ASSERT,
 #endif
 
+   /** Do nothing */
    ISL_AUX_OP_NONE,
 
    /** Fast Clear
@@ -1101,21 +1292,26 @@ struct isl_extent4d {
    union { uint32_t a, array_len; };
 };
 
+/**
+ * Describes a single channel of an isl_format
+ */
 struct isl_channel_layout {
-   enum isl_base_type type;
+   enum isl_base_type type; /**< Channel data encoding */
    uint8_t start_bit; /**< Bit at which this channel starts */
    uint8_t bits; /**< Size in bits */
 };
 
 /**
+ * Describes the layout of an isl_format
+ *
  * Each format has 3D block extent (width, height, depth). The block extent of
  * compressed formats is that of the format's compression block. For example,
- * the block extent of ISL_FORMAT_ETC2_RGB8 is (w=4, h=4, d=1).  The block
- * extent of uncompressed pixel formats, such as ISL_FORMAT_R8G8B8A8_UNORM, is
- * is (w=1, h=1, d=1).
+ * the block extent of `ISL_FORMAT_ETC2_RGB8` is `(w=4, h=4, d=1)`. The block
+ * extent of uncompressed pixel formats, such as `ISL_FORMAT_R8G8B8A8_UNORM`,
+ * is `(w=1, h=1, d=1)`.
  */
 struct isl_format_layout {
-   enum isl_format format;
+   enum isl_format format; /**< Format */
 
    uint16_t bpb; /**< Bits per block */
    uint8_t bw; /**< Block width, in pixels */
@@ -1135,7 +1331,7 @@ struct isl_format_layout {
       struct isl_channel_layout channels_array[7];
    };
 
-   /** Set if all channels have the same isl_base_type. Otherwise, ISL_BASE_VOID. */
+   /** Set if all channels have the same isl_base_type. Otherwise, ISL_VOID. */
    enum isl_base_type uniform_channel_type;
 
    enum isl_colorspace colorspace;
@@ -1143,9 +1339,11 @@ struct isl_format_layout {
 };
 
 struct isl_tile_info {
+   /** Tiling represented by this isl_tile_info */
    enum isl_tiling tiling;
 
-   /* The size (in bits per block) of a single surface element
+   /**
+    * The size (in bits per block) of a single surface element
     *
     * For surfaces with power-of-two formats, this is the same as
     * isl_format_layout::bpb.  For non-power-of-two formats it may be smaller.
@@ -1164,7 +1362,8 @@ struct isl_tile_info {
     */
    uint32_t format_bpb;
 
-   /** The logical size of the tile in units of format_bpb size elements
+   /**
+    * The logical size of the tile in units of format_bpb size elements
     *
     * This field determines how a given surface is cut up into tiles.  It is
     * used to compute the size of a surface in tiles and can be used to
@@ -1174,7 +1373,8 @@ struct isl_tile_info {
     */
    struct isl_extent4d logical_extent_el;
 
-   /** The physical size of the tile in bytes and rows of bytes
+   /**
+    * The physical size of the tile in bytes and rows of bytes
     *
     * This field determines how the tiles of a surface are physically layed
     * out in memory.  The logical and physical tile extent are frequently the
@@ -1247,10 +1447,29 @@ struct isl_surf_init_info {
 };
 
 struct isl_surf {
+   /** Dimensionality of the surface */
    enum isl_surf_dim dim;
+
+   /**
+    * Spatial layout of the surface in memory
+    *
+    * This is dependent on isl_surf::dim and hardware generation.
+    */
    enum isl_dim_layout dim_layout;
+
+   /** Spatial layout of the samples if isl_surf::samples > 1 */
    enum isl_msaa_layout msaa_layout;
+
+   /** Memory tiling used by the surface */
    enum isl_tiling tiling;
+
+   /**
+    * Base image format of the surface
+    *
+    * This need not be the same as the format specified in isl_view::format
+    * when a surface state is constructed.  It must, however, have the same
+    * number of bits per pixel or else memory calculations will go wrong.
+    */
    enum isl_format format;
 
    /**
@@ -1277,7 +1496,14 @@ struct isl_surf {
     */
    struct isl_extent4d phys_level0_sa;
 
+   /** Number of miplevels in the surface */
    uint32_t levels;
+
+   /**
+    * Number of samples in the surface
+    *
+    * @invariant samples >= 1
+    */
    uint32_t samples;
 
    /** Total size of the surface, in bytes. */
@@ -1463,6 +1689,8 @@ struct isl_buffer_fill_state_info {
    struct isl_swizzle swizzle;
 
    uint32_t stride_B;
+
+   bool is_scratch;
 };
 
 struct isl_depth_stencil_hiz_emit_info {
@@ -1543,6 +1771,9 @@ isl_device_init(struct isl_device *dev,
 isl_sample_count_mask_t ATTRIBUTE_CONST
 isl_device_get_sample_counts(struct isl_device *dev);
 
+/**
+ * \return The isl_format_layout for the given isl_format
+ */
 static inline const struct isl_format_layout * ATTRIBUTE_CONST
 isl_format_get_layout(enum isl_format fmt)
 {
@@ -1661,6 +1892,14 @@ isl_format_has_bc_compression(enum isl_format fmt)
 }
 
 static inline bool
+isl_format_is_mcs(enum isl_format fmt)
+{
+   const struct isl_format_layout *fmtl = isl_format_get_layout(fmt);
+
+   return fmtl->txc == ISL_TXC_MCS;
+}
+
+static inline bool
 isl_format_is_planar(enum isl_format fmt)
 {
    return fmt == ISL_FORMAT_PLANAR_420_8 ||
@@ -1747,6 +1986,11 @@ bool
 isl_has_matching_typed_storage_image_format(const struct intel_device_info *devinfo,
                                             enum isl_format fmt);
 
+void
+isl_tiling_get_info(enum isl_tiling tiling,
+                    uint32_t format_bpb,
+                    struct isl_tile_info *tile_info);
+
 static inline enum isl_tiling
 isl_tiling_flag_to_enum(isl_tiling_flags_t flag)
 {
@@ -1776,9 +2020,10 @@ isl_tiling_from_i915_tiling(uint32_t tiling);
  * Return an isl_aux_op needed to enable an access to occur in an
  * isl_aux_state suitable for the isl_aux_usage.
  *
- * NOTE: If the access will invalidate the main surface, this function should
- *       not be called and the isl_aux_op of NONE should be used instead.
- *       Otherwise, an extra (but still lossless) ambiguate may occur.
+ * @note
+ * If the access will invalidate the main surface, this function should not be
+ * called and the isl_aux_op of NONE should be used instead. Otherwise, an
+ * extra (but still lossless) ambiguate may occur.
  *
  * @invariant initial_state is possible with an isl_aux_usage compatible with
  *            the given usage. Two usages are compatible if it's possible to
@@ -1805,9 +2050,10 @@ isl_aux_state_transition_aux_op(enum isl_aux_state initial_state,
 /**
  * Return the isl_aux_state entered after performing a write.
  *
- * NOTE: full_surface should be true if the write covers the entire
- *       slice. Setting it to false in this case will still result in a
- *       correct (but imprecise) aux state.
+ * @note
+ * full_surface should be true if the write covers the entire slice. Setting
+ * it to false in this case will still result in a correct (but imprecise) aux
+ * state.
  *
  * @invariant if usage is not ISL_AUX_USAGE_NONE, then initial_state is
  *            possible with the given usage.
@@ -2059,26 +2305,69 @@ void
 isl_surf_get_tile_info(const struct isl_surf *surf,
                        struct isl_tile_info *tile_info);
 
+/**
+ * @param[in]  surf              The main surface
+ * @param[in]  hiz_or_mcs_surf   HiZ or MCS surface associated with the main
+ *                               surface
+ * @returns true if the given surface supports CCS.
+ */
 bool
 isl_surf_supports_ccs(const struct isl_device *dev,
-                      const struct isl_surf *surf);
+                      const struct isl_surf *surf,
+                      const struct isl_surf *hiz_or_mcs_surf);
 
+/** Constructs a HiZ surface for the given main surface.
+ *
+ * @param[in]  surf     The main surface
+ * @param[out] hiz_surf The HiZ surface to populate on success
+ * @returns false if the main surface cannot support HiZ.
+ */
 bool
 isl_surf_get_hiz_surf(const struct isl_device *dev,
                       const struct isl_surf *surf,
                       struct isl_surf *hiz_surf);
 
+/** Constructs a MCS for the given main surface.
+ *
+ * @param[in]  surf     The main surface
+ * @param[out] mcs_surf The MCS to populate on success
+ * @returns false if the main surface cannot support MCS.
+ */
 bool
 isl_surf_get_mcs_surf(const struct isl_device *dev,
                       const struct isl_surf *surf,
                       struct isl_surf *mcs_surf);
 
+/** Constructs a CCS for the given main surface.
+ *
+ * @note
+ * Starting with Tigerlake, the CCS is no longer really a surface.  It's not
+ * laid out as an independent surface and isn't referenced by
+ * RENDER_SURFACE_STATE::"Auxiliary Surface Base Address" like other auxiliary
+ * compression surfaces.  It's a blob of memory that's a 1:256 scale-down from
+ * the main surfaced that's attached side-band via a second set of page
+ * tables.
+ *
+ * @par
+ * In spite of this, it's sometimes useful to think of it as being a linear
+ * buffer-like surface, at least for the purposes of allocation.  When invoked
+ * on Tigerlake or later, this function still works and produces such a linear
+ * surface.
+ *
+ * @param[in]  surf              The main surface
+ * @param[in]  hiz_or_mcs_surf   HiZ or MCS surface associated with the main
+ *                               surface
+ * @param[out] ccs_surf          The CCS to populate on success
+ * @param row_pitch_B:           The row pitch for the CCS in bytes or 0 if
+ *                               ISL should calculate the row pitch.
+ * @returns false if the main surface cannot support CCS.
+ */
 bool
 isl_surf_get_ccs_surf(const struct isl_device *dev,
                       const struct isl_surf *surf,
-                      struct isl_surf *aux_surf,
-                      struct isl_surf *extra_aux_surf,
-                      uint32_t row_pitch_B /**< Ignored if 0 */);
+                      const struct isl_surf *hiz_or_mcs_surf,
+                      struct isl_surf *ccs_surf,
+                      uint32_t row_pitch_B);
 
 #define isl_surf_fill_state(dev, state, ...) \
    isl_surf_fill_state_s((dev), (state), \

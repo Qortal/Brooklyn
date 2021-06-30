@@ -477,7 +477,13 @@ static void build_streamout(struct si_shader_context *ctx, struct ngg_streamout 
             &ctx->ac, ctx->gs_ngg_scratch, LLVMConstInt(ctx->ac.i32, 12 + 8 * stream, false));
          primemit_scan[stream].waveidx = get_wave_id_in_tg(ctx);
          primemit_scan[stream].numwaves = get_tgsize(ctx);
-         primemit_scan[stream].maxwaves = 8;
+         if (ctx->stage == MESA_SHADER_GEOMETRY) {
+            /* ngg_subgroup_size is only the input size. GS can always generate up to 256 vertices. */
+            primemit_scan[stream].maxwaves = DIV_ROUND_UP(256, ctx->ac.wave_size);
+         } else {
+            primemit_scan[stream].maxwaves = DIV_ROUND_UP(ctx->screen->ngg_subgroup_size,
+                                                          ctx->ac.wave_size);
+         }
          ac_build_wg_scan_top(&ctx->ac, &primemit_scan[stream]);
       }
    }
@@ -782,6 +788,23 @@ static void update_thread_counts(struct si_shader_context *ctx, LLVMValueRef *ne
       "");
 }
 
+static void gfx10_build_primitive_accepted(struct ac_llvm_context *ac, LLVMValueRef accepted,
+                                           void *userdata)
+{
+   struct si_shader_context *ctx = container_of(ac, struct si_shader_context, ac);
+   LLVMValueRef *params = (LLVMValueRef *)userdata;
+   LLVMValueRef gs_accepted = params[0];
+   LLVMValueRef *gs_vtxptr = (LLVMValueRef *)params[1];
+
+   ac_build_ifcc(&ctx->ac, accepted, 0);
+   LLVMBuildStore(ctx->ac.builder, ctx->ac.i32_1, gs_accepted);
+   for (unsigned vtx = 0; vtx < 3; vtx++) {
+      LLVMBuildStore(ctx->ac.builder, ctx->ac.i8_1,
+                     si_build_gep_i8(ctx, gs_vtxptr[vtx], lds_byte0_accept_flag));
+   }
+   ac_build_endif(&ctx->ac, 0);
+}
+
 /**
  * Cull primitives for NGG VS or TES, then compact vertices, which happens
  * before the VS or TES main function. Return values for the main function.
@@ -796,9 +819,7 @@ void gfx10_emit_ngg_culling_epilogue(struct ac_shader_abi *abi, unsigned max_out
    struct si_shader_selector *sel = shader->selector;
    struct si_shader_info *info = &sel->info;
    LLVMBuilderRef builder = ctx->ac.builder;
-   unsigned subgroup_size = ctx->screen->ngg_subgroup_size;
-   unsigned max_waves = ctx->ac.wave_size == 64 ? DIV_ROUND_UP(subgroup_size, 64) :
-                                                  DIV_ROUND_UP(subgroup_size, 32);
+   unsigned max_waves = DIV_ROUND_UP(ctx->screen->ngg_subgroup_size, ctx->ac.wave_size);
 
    assert(shader->key.opt.ngg_culling);
    assert(shader->key.as_ngg);
@@ -983,18 +1004,13 @@ void gfx10_emit_ngg_culling_epilogue(struct ac_shader_abi *abi, unsigned max_out
       options.cull_w = true;
 
       /* Tell ES threads whether their vertex survived. */
-      ac_build_ifcc(&ctx->ac,
-                    ac_cull_triangle(&ctx->ac, pos, ctx->ac.i1true, vp_scale, vp_translate,
-                                     small_prim_precision, &options),
-                    16003);
-      {
-         LLVMBuildStore(builder, ctx->ac.i32_1, gs_accepted);
-         for (unsigned vtx = 0; vtx < 3; vtx++) {
-            LLVMBuildStore(builder, ctx->ac.i8_1,
-                           si_build_gep_i8(ctx, gs_vtxptr[vtx], lds_byte0_accept_flag));
-         }
-      }
-      ac_build_endif(&ctx->ac, 16003);
+      LLVMValueRef params[] = {
+         gs_accepted,
+         (void*)gs_vtxptr,
+      };
+      ac_cull_triangle(&ctx->ac, pos, ctx->ac.i1true, vp_scale, vp_translate,
+                       small_prim_precision, &options,
+                       gfx10_build_primitive_accepted, params);
    }
    ac_build_endif(&ctx->ac, 16002);
    ac_build_s_barrier(&ctx->ac);
@@ -1097,9 +1113,15 @@ void gfx10_emit_ngg_culling_epilogue(struct ac_shader_abi *abi, unsigned max_out
    }
    ac_build_endif(&ctx->ac, 16009);
 
+   /* If all vertices are culled, set the primitive count to 0, so that all waves are culled here. */
+   LLVMValueRef num_primitives = ngg_get_prim_cnt(ctx);
+   num_primitives = LLVMBuildSelect(builder,
+                                    LLVMBuildICmp(builder, LLVMIntEQ, new_num_es_threads,
+                                                  ctx->ac.i32_0, ""),
+                                    ctx->ac.i32_0, num_primitives, "");
    /* Kill waves that have inactive threads. */
    kill_wave = LLVMBuildICmp(builder, LLVMIntULE,
-                             ac_build_imax(&ctx->ac, new_num_es_threads, ngg_get_prim_cnt(ctx)),
+                             ac_build_imax(&ctx->ac, new_num_es_threads, num_primitives),
                              LLVMBuildMul(builder, get_wave_id_in_tg(ctx),
                                           LLVMConstInt(ctx->ac.i32, ctx->ac.wave_size, 0), ""),
                              "");
@@ -1156,41 +1178,18 @@ void gfx10_emit_ngg_culling_epilogue(struct ac_shader_abi *abi, unsigned max_out
    if (gfx10_ngg_export_prim_early(shader))
       gfx10_ngg_build_export_prim(ctx, NULL, LLVMBuildLoad(builder, new_vgpr0, ""));
 
-   /* Set the new ES input VGPRs. */
-   LLVMValueRef es_data[4];
-
-   for (unsigned i = 0; i < 4; i++)
-      es_data[i] = ac_build_alloca_undef(&ctx->ac, ctx->ac.i32, "");
-
-   ac_build_ifcc(&ctx->ac, LLVMBuildICmp(ctx->ac.builder, LLVMIntULT, tid, new_num_es_threads, ""),
-                 16012);
-   {
-      LLVMValueRef tmp;
-
-      for (unsigned i = 0; i < 2; i++) {
-         tmp = LLVMBuildLoad(
-            builder,
-            ac_build_gep0(&ctx->ac, es_vtxptr, LLVMConstInt(ctx->ac.i32, lds_vertex_id + i, 0)),
-            "");
-         LLVMBuildStore(builder, tmp, es_data[i]);
-      }
-
-      if (ctx->stage == MESA_SHADER_TESS_EVAL) {
-         tmp = LLVMBuildLoad(builder,
-                             si_build_gep_i8(ctx, es_vtxptr, lds_byte2_tes_rel_patch_id), "");
-         tmp = LLVMBuildZExt(builder, tmp, ctx->ac.i32, "");
-         LLVMBuildStore(builder, tmp, es_data[2]);
-
-         if (uses_tes_prim_id) {
-            tmp = LLVMBuildLoad(builder,
-                                ac_build_gep0(&ctx->ac, es_vtxptr,
-                                              LLVMConstInt(ctx->ac.i32, lds_tes_patch_id, 0)),
-                                "");
-            LLVMBuildStore(builder, tmp, es_data[3]);
-         }
+   /* Prepare LDS addresses of the new ES input VGPRs. */
+   LLVMValueRef input_vgpr_addresses[4] = {
+      ac_build_gep0(&ctx->ac, es_vtxptr, LLVMConstInt(ctx->ac.i32, lds_vertex_id, 0)),
+      ac_build_gep0(&ctx->ac, es_vtxptr, LLVMConstInt(ctx->ac.i32, lds_instance_id, 0)),
+   };
+   if (ctx->stage == MESA_SHADER_TESS_EVAL) {
+      input_vgpr_addresses[2] = si_build_gep_i8(ctx, es_vtxptr, lds_byte2_tes_rel_patch_id);
+      if (uses_tes_prim_id) {
+         input_vgpr_addresses[3] = ac_build_gep0(&ctx->ac, es_vtxptr,
+                                                 LLVMConstInt(ctx->ac.i32, lds_tes_patch_id, 0));
       }
    }
-   ac_build_endif(&ctx->ac, 16012);
 
    /* Return values for the main function. */
    LLVMValueRef ret = ctx->return_value;
@@ -1244,13 +1243,16 @@ void gfx10_emit_ngg_culling_epilogue(struct ac_shader_abi *abi, unsigned max_out
    ret = si_insert_input_ret_float(ctx, ret, ctx->args.gs_invocation_id, vgpr++);
    vgpr++; /* gs_vtx45_offset */
 
+   /* Set the input VPGRs to the corresponding LDS addresses where the VGPR values are
+    * stored. The VS prolog will load them.
+    */
    if (ctx->stage == MESA_SHADER_VERTEX) {
-      val = LLVMBuildLoad(builder, es_data[0], "");
+      val = LLVMBuildPtrToInt(builder, input_vgpr_addresses[0], ctx->ac.i32, "");
       ret = LLVMBuildInsertValue(builder, ret, ac_to_float(&ctx->ac, val), vgpr++,
                                  ""); /* VGPR5 - VertexID */
       vgpr += 2;
       if (uses_instance_id) {
-         val = LLVMBuildLoad(builder, es_data[1], "");
+         val = LLVMBuildPtrToInt(builder, input_vgpr_addresses[1], ctx->ac.i32, "");
          ret = LLVMBuildInsertValue(builder, ret, ac_to_float(&ctx->ac, val), vgpr++,
                                     ""); /* VGPR8 - InstanceID */
       } else {
@@ -1260,7 +1262,7 @@ void gfx10_emit_ngg_culling_epilogue(struct ac_shader_abi *abi, unsigned max_out
       assert(ctx->stage == MESA_SHADER_TESS_EVAL);
       unsigned num_vgprs = uses_tes_prim_id ? 4 : 3;
       for (unsigned i = 0; i < num_vgprs; i++) {
-         val = LLVMBuildLoad(builder, es_data[i], "");
+         val = LLVMBuildPtrToInt(builder, input_vgpr_addresses[i], ctx->ac.i32, "");
          ret = LLVMBuildInsertValue(builder, ret, ac_to_float(&ctx->ac, val), vgpr++, "");
       }
       if (num_vgprs == 3)
@@ -1872,26 +1874,17 @@ void gfx10_ngg_gs_emit_epilogue(struct si_shader_context *ctx)
    vertlive_scan.scratch = ac_build_gep0(&ctx->ac, ctx->gs_ngg_scratch, ctx->ac.i32_0);
    vertlive_scan.waveidx = get_wave_id_in_tg(ctx);
    vertlive_scan.numwaves = get_tgsize(ctx);
-   vertlive_scan.maxwaves = 8;
+   vertlive_scan.maxwaves = DIV_ROUND_UP(256, ctx->ac.wave_size);
 
    ac_build_wg_scan(&ctx->ac, &vertlive_scan);
 
-   /* Skip all exports (including index exports) when possible. At least on
-    * early gfx10 revisions this is also to avoid hangs.
-    */
+   /* Skip all exports (including index exports) when possible. */
    LLVMValueRef have_exports =
       LLVMBuildICmp(builder, LLVMIntNE, vertlive_scan.result_reduce, ctx->ac.i32_0, "");
    num_emit_threads = LLVMBuildSelect(builder, have_exports, num_emit_threads, ctx->ac.i32_0, "");
 
    /* Allocate export space. Send this message as early as possible, to
     * hide the latency of the SQ <-> SPI roundtrip.
-    *
-    * Note: We could consider compacting primitives for export as well.
-    *       PA processes 1 non-null prim / clock, but it fetches 4 DW of
-    *       prim data per clock and skips null primitives at no additional
-    *       cost. So compacting primitives can only be beneficial when
-    *       there are 4 or more contiguous null primitives in the export
-    *       (in the common case of single-dword prim exports).
     */
    ac_build_sendmsg_gs_alloc_req(&ctx->ac, get_wave_id_in_tg(ctx), vertlive_scan.result_reduce,
                                  num_emit_threads);

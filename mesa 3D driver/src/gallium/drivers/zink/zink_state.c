@@ -251,7 +251,7 @@ zink_create_blend_state(struct pipe_context *pctx,
       if (blend_state->independent_blend_enable)
          rt = blend_state->rt + i;
 
-      VkPipelineColorBlendAttachmentState att = { };
+      VkPipelineColorBlendAttachmentState att = {0};
 
       if (rt->blend_enable) {
          att.blendEnable = VK_TRUE;
@@ -397,6 +397,7 @@ zink_bind_depth_stencil_alpha_state(struct pipe_context *pctx, void *cso)
       if (state->depth_stencil_alpha_state != &ctx->dsa_state->hw_state) {
          state->depth_stencil_alpha_state = &ctx->dsa_state->hw_state;
          state->dirty |= !zink_screen(pctx->screen)->info.have_EXT_extended_dynamic_state;
+         ctx->dsa_state_changed = true;
       }
    }
    if (prev_zwrite != (ctx->dsa_state ? ctx->dsa_state->hw_state.depth_write : false)) {
@@ -492,6 +493,7 @@ zink_bind_rasterizer_state(struct pipe_context *pctx, void *cso)
             zink_batch_no_rp(ctx);
          ctx->gfx_pipeline_state.rast_state = &ctx->rast_state->hw_state;
          ctx->gfx_pipeline_state.dirty = true;
+         ctx->rast_state_changed = true;
       }
 
       if (clip_halfz != ctx->rast_state->base.clip_halfz) {

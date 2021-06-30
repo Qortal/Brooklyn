@@ -22,6 +22,7 @@
  */
 
 #include "zink_context.h"
+#include "zink_query.h"
 #include "zink_resource.h"
 #include "zink_screen.h"
 
@@ -379,7 +380,6 @@ zink_clear_texture(struct pipe_context *pctx,
    struct pipe_screen *pscreen = pctx->screen;
    struct u_rect region = zink_rect_from_box(box);
    bool needs_rp = !zink_blit_region_fills(region, pres->width0, pres->height0) || ctx->render_condition_active;
-   struct zink_batch *batch = &ctx->batch;
    struct pipe_surface *surf = NULL;
 
    if (res->aspect & VK_IMAGE_ASPECT_COLOR_BIT) {
@@ -388,7 +388,8 @@ zink_clear_texture(struct pipe_context *pctx,
       util_format_unpack_rgba(pres->format, color.ui, data, 1);
 
       if (pscreen->is_format_supported(pscreen, pres->format, pres->target, 0, 0,
-                                      PIPE_BIND_RENDER_TARGET) && !needs_rp && !batch->in_rp) {
+                                      PIPE_BIND_RENDER_TARGET) && !needs_rp) {
+         zink_batch_no_rp(ctx);
          clear_color_no_rp(ctx, res, &color, level, box->z, box->depth);
       } else {
          surf = create_clear_surface(pctx, pres, level, box);
@@ -407,9 +408,10 @@ zink_clear_texture(struct pipe_context *pctx,
       if (res->aspect & VK_IMAGE_ASPECT_STENCIL_BIT)
          util_format_unpack_s_8uint(pres->format, &stencil, data, 1);
 
-      if (!needs_rp && !batch->in_rp)
+      if (!needs_rp) {
+         zink_batch_no_rp(ctx);
          clear_zs_no_rp(ctx, res, res->aspect, depth, stencil, level, box->z, box->depth);
-      else {
+      } else {
          unsigned flags = 0;
          if (res->aspect & VK_IMAGE_ASPECT_DEPTH_BIT)
             flags |= PIPE_CLEAR_DEPTH;
@@ -466,6 +468,32 @@ zink_clear_buffer(struct pipe_context *pctx,
    if (rem)
       memcpy(map + size - rem, clear_value, rem);
    pipe_buffer_unmap(pctx, xfer);
+}
+
+void
+zink_clear_render_target(struct pipe_context *pctx, struct pipe_surface *dst,
+                         const union pipe_color_union *color, unsigned dstx,
+                         unsigned dsty, unsigned width, unsigned height,
+                         bool render_condition_enabled)
+{
+   struct zink_context *ctx = zink_context(pctx);
+   zink_blit_begin(ctx, ZINK_BLIT_SAVE_FB | ZINK_BLIT_SAVE_FS | (render_condition_enabled ? 0 : ZINK_BLIT_NO_COND_RENDER));
+   util_blitter_clear_render_target(ctx->blitter, dst, color, dstx, dsty, width, height);
+   if (!render_condition_enabled && ctx->render_condition_active)
+      zink_start_conditional_render(ctx);
+}
+
+void
+zink_clear_depth_stencil(struct pipe_context *pctx, struct pipe_surface *dst,
+                         unsigned clear_flags, double depth, unsigned stencil,
+                         unsigned dstx, unsigned dsty, unsigned width, unsigned height,
+                         bool render_condition_enabled)
+{
+   struct zink_context *ctx = zink_context(pctx);
+   zink_blit_begin(ctx, ZINK_BLIT_SAVE_FB | ZINK_BLIT_SAVE_FS | (render_condition_enabled ? 0 : ZINK_BLIT_NO_COND_RENDER));
+   util_blitter_clear_depth_stencil(ctx->blitter, dst, clear_flags, depth, stencil, dstx, dsty, width, height);
+   if (!render_condition_enabled && ctx->render_condition_active)
+      zink_start_conditional_render(ctx);
 }
 
 bool
@@ -551,7 +579,7 @@ fb_clears_apply_internal(struct zink_context *ctx, struct pipe_resource *pres, i
 void
 zink_fb_clear_reset(struct zink_context *ctx, unsigned i)
 {
-   util_dynarray_fini(&ctx->fb_clears[i].clears);
+   util_dynarray_clear(&ctx->fb_clears[i].clears);
    if (i == PIPE_MAX_COLOR_BUFS) {
       ctx->clears_enabled &= ~PIPE_CLEAR_DEPTHSTENCIL;
       ctx->rp_clears_enabled &= ~PIPE_CLEAR_DEPTHSTENCIL;

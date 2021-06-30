@@ -249,19 +249,21 @@ ir3_collect_info(struct ir3_shader_variant *v)
 				collect_reg_info(instr, reg, info);
 			}
 
-			if (writes_gpr(instr)) {
-				collect_reg_info(instr, instr->regs[0], info);
+			foreach_dst (reg, instr) {
+				if (is_dest_gpr(reg)) {
+					collect_reg_info(instr, reg, info);
+				}
 			}
 
 			if ((instr->opc == OPC_STP || instr->opc == OPC_LDP)) {
 				struct ir3_register *base = (instr->opc == OPC_STP) ?
-						instr->regs[3] : instr->regs[2];
+						instr->srcs[2] : instr->srcs[1];
 				if (base->iim_val * type_size(instr->cat6.type) > 32) {
 					info->multi_dword_ldp_stp = true;
 				}
 			}
 
-			if ((instr->opc == OPC_BARY_F) && (instr->regs[0]->flags & IR3_REG_EI))
+			if ((instr->opc == OPC_BARY_F) && (instr->dsts[0]->flags & IR3_REG_EI))
 				info->last_baryf = info->instrs_count;
 
 			unsigned instrs_count = 1 + instr->repeat + instr->nop;
@@ -387,27 +389,34 @@ unsigned ir3_block_get_pred_index(struct ir3_block *block, struct ir3_block *pre
 	unreachable("ir3_block_get_pred_index() invalid predecessor");
 }
 
-static struct ir3_instruction *instr_create(struct ir3_block *block, int nreg)
+static struct ir3_instruction *instr_create(struct ir3_block *block,
+		opc_t opc, int ndst, int nsrc)
 {
+	/* Add extra sources for array destinations and the address reg */
+	if (1 <= opc_cat(opc))
+		nsrc += 2;
 	struct ir3_instruction *instr;
-	unsigned sz = sizeof(*instr) + (nreg * sizeof(instr->regs[0]));
+	unsigned sz = sizeof(*instr) + (ndst * sizeof(instr->dsts[0])) +
+		(nsrc * sizeof(instr->srcs[0]));
 	char *ptr = ir3_alloc(block->shader, sz);
 
 	instr = (struct ir3_instruction *)ptr;
 	ptr  += sizeof(*instr);
-	instr->regs = (struct ir3_register **)ptr;
+	instr->dsts = (struct ir3_register **)ptr;
+	instr->srcs = instr->dsts + ndst;
 
 #ifdef DEBUG
-	instr->regs_max = nreg;
+	instr->dsts_max = ndst;
+	instr->srcs_max = nsrc;
 #endif
 
 	return instr;
 }
 
 struct ir3_instruction * ir3_instr_create(struct ir3_block *block,
-		opc_t opc, int nreg)
+		opc_t opc, int ndst, int nsrc)
 {
-	struct ir3_instruction *instr = instr_create(block, nreg);
+	struct ir3_instruction *instr = instr_create(block, opc, ndst, nsrc);
 	instr->block = block;
 	instr->opc = opc;
 	insert_instr(block, instr);
@@ -416,23 +425,29 @@ struct ir3_instruction * ir3_instr_create(struct ir3_block *block,
 
 struct ir3_instruction * ir3_instr_clone(struct ir3_instruction *instr)
 {
-	struct ir3_instruction *new_instr = instr_create(instr->block,
-			instr->regs_count);
-	struct ir3_register **regs;
-	unsigned i;
+	struct ir3_instruction *new_instr = instr_create(instr->block, instr->opc,
+			instr->dsts_count, instr->srcs_count);
+	struct ir3_register **dsts, **srcs;
 
-	regs = new_instr->regs;
+	dsts = new_instr->dsts;
+	srcs = new_instr->srcs;
 	*new_instr = *instr;
-	new_instr->regs = regs;
+	new_instr->dsts = dsts;
+	new_instr->srcs = srcs;
 
 	insert_instr(instr->block, new_instr);
 
 	/* clone registers: */
-	new_instr->regs_count = 0;
-	for (i = 0; i < instr->regs_count; i++) {
-		struct ir3_register *reg = instr->regs[i];
-		struct ir3_register *new_reg =
-				ir3_reg_create(new_instr, reg->num, reg->flags);
+	new_instr->dsts_count = 0;
+	new_instr->srcs_count = 0;
+	foreach_dst (reg, instr) {
+		struct ir3_register *new_reg = ir3_dst_create(new_instr, reg->num, reg->flags);
+		*new_reg = *reg;
+		if (new_reg->instr)
+			new_reg->instr = new_instr;
+	}
+	foreach_src (reg, instr) {
+		struct ir3_register *new_reg = ir3_src_create(new_instr, reg->num, reg->flags);
 		*new_reg = *reg;
 	}
 
@@ -450,15 +465,27 @@ void ir3_instr_add_dep(struct ir3_instruction *instr, struct ir3_instruction *de
 	array_insert(instr, instr->deps, dep);
 }
 
-struct ir3_register * ir3_reg_create(struct ir3_instruction *instr,
+struct ir3_register * ir3_src_create(struct ir3_instruction *instr,
 		int num, int flags)
 {
 	struct ir3 *shader = instr->block->shader;
-	struct ir3_register *reg = reg_create(shader, num, flags);
 #ifdef DEBUG
-	debug_assert(instr->regs_count < instr->regs_max);
+	debug_assert(instr->srcs_count < instr->srcs_max);
 #endif
-	instr->regs[instr->regs_count++] = reg;
+	struct ir3_register *reg = reg_create(shader, num, flags);
+	instr->srcs[instr->srcs_count++] = reg;
+	return reg;
+}
+
+struct ir3_register * ir3_dst_create(struct ir3_instruction *instr,
+		int num, int flags)
+{
+	struct ir3 *shader = instr->block->shader;
+#ifdef DEBUG
+	debug_assert(instr->dsts_count < instr->dsts_max);
+#endif
+	struct ir3_register *reg = reg_create(shader, num, flags);
+	instr->dsts[instr->dsts_count++] = reg;
 	return reg;
 }
 
@@ -470,25 +497,40 @@ struct ir3_register * ir3_reg_clone(struct ir3 *shader,
 	return new_reg;
 }
 
+
+void ir3_reg_set_last_array(struct ir3_instruction *instr,
+							struct ir3_register *reg,
+							struct ir3_register *last_write)
+{
+	assert(reg->flags & IR3_REG_ARRAY);
+	struct ir3_register *new_reg = ir3_src_create(instr, 0, 0);
+	*new_reg = *reg;
+	new_reg->def = last_write;
+	ir3_reg_tie(reg, new_reg);
+}
+
 void
 ir3_instr_set_address(struct ir3_instruction *instr,
 		struct ir3_instruction *addr)
 {
-	if (instr->address != addr) {
+	if (!instr->address) {
 		struct ir3 *ir = instr->block->shader;
 
-		debug_assert(!instr->address);
 		debug_assert(instr->block == addr->block);
 
-		instr->address = addr;
-		debug_assert(reg_num(addr->regs[0]) == REG_A0);
-		unsigned comp = reg_comp(addr->regs[0]);
+		instr->address = ir3_src_create(instr, addr->dsts[0]->num,
+										addr->dsts[0]->flags);
+		instr->address->def = addr->dsts[0];
+		debug_assert(reg_num(addr->dsts[0]) == REG_A0);
+		unsigned comp = reg_comp(addr->dsts[0]);
 		if (comp == 0) {
 			array_insert(ir, ir->a0_users, instr);
 		} else {
 			debug_assert(comp == 1);
 			array_insert(ir, ir->a1_users, instr);
 		}
+	} else {
+		debug_assert(instr->address->def->instr == addr);
 	}
 }
 
@@ -586,9 +628,9 @@ void
 ir3_set_dst_type(struct ir3_instruction *instr, bool half)
 {
 	if (half) {
-		instr->regs[0]->flags |= IR3_REG_HALF;
+		instr->dsts[0]->flags |= IR3_REG_HALF;
 	} else {
-		instr->regs[0]->flags &= ~IR3_REG_HALF;
+		instr->dsts[0]->flags &= ~IR3_REG_HALF;
 	}
 
 	switch (opc_cat(instr->opc)) {
@@ -625,14 +667,14 @@ ir3_fixup_src_type(struct ir3_instruction *instr)
 {
 	switch (opc_cat(instr->opc)) {
 	case 1: /* move instructions */
-		if (instr->regs[1]->flags & IR3_REG_HALF) {
+		if (instr->srcs[0]->flags & IR3_REG_HALF) {
 			instr->cat1.src_type = half_type(instr->cat1.src_type);
 		} else {
 			instr->cat1.src_type = full_type(instr->cat1.src_type);
 		}
 		break;
 	case 3:
-		if (instr->regs[1]->flags & IR3_REG_HALF) {
+		if (instr->srcs[0]->flags & IR3_REG_HALF) {
 			instr->opc = cat3_half_opc(instr->opc);
 		} else {
 			instr->opc = cat3_full_opc(instr->opc);
@@ -668,7 +710,7 @@ ir3_valid_flags(struct ir3_instruction *instr, unsigned n,
 	/* If destination is indirect, then source cannot be.. at least
 	 * I don't think so..
 	 */
-	if ((instr->regs[0]->flags & IR3_REG_RELATIV) &&
+	if (instr->dsts_count > 0 && (instr->dsts[0]->flags & IR3_REG_RELATIV) &&
 			(flags & IR3_REG_RELATIV))
 		return false;
 
@@ -685,9 +727,9 @@ ir3_valid_flags(struct ir3_instruction *instr, unsigned n,
 		 * called on a src that has already had an indirect load folded
 		 * in, in which case ssa() returns NULL
 		 */
-		if (instr->regs[n+1]->flags & IR3_REG_SSA) {
-			struct ir3_instruction *src = ssa(instr->regs[n+1]);
-			if (src->address->block != instr->block)
+		if (instr->srcs[n]->flags & IR3_REG_SSA) {
+			struct ir3_instruction *src = ssa(instr->srcs[n]);
+			if (src->address->def->instr->block != instr->block)
 				return false;
 		}
 	}
@@ -706,7 +748,16 @@ ir3_valid_flags(struct ir3_instruction *instr, unsigned n,
 	case 0: /* end, chmask */
 		return flags == 0;
 	case 1:
-		valid_flags = IR3_REG_IMMED | IR3_REG_CONST | IR3_REG_RELATIV;
+		switch (instr->opc) {
+			case OPC_MOVMSK:
+			case OPC_SWZ:
+			case OPC_SCT:
+			case OPC_GAT:
+				valid_flags = 0;
+				break;
+			default:
+				valid_flags = IR3_REG_IMMED | IR3_REG_CONST | IR3_REG_RELATIV;
+		}
 		if (flags & ~valid_flags)
 			return false;
 		break;
@@ -721,12 +772,12 @@ ir3_valid_flags(struct ir3_instruction *instr, unsigned n,
 			return false;
 
 		if (flags & (IR3_REG_CONST | IR3_REG_IMMED)) {
-			unsigned m = (n ^ 1) + 1;
+			unsigned m = n ^ 1;
 			/* cannot deal w/ const in both srcs:
 			 * (note that some cat2 actually only have a single src)
 			 */
-			if (m < instr->regs_count) {
-				struct ir3_register *reg = instr->regs[m];
+			if (m < instr->srcs_count) {
+				struct ir3_register *reg = instr->srcs[m];
 				if ((flags & IR3_REG_CONST) && (reg->flags & IR3_REG_CONST))
 					return false;
 				if ((flags & IR3_REG_IMMED) && (reg->flags & IR3_REG_IMMED))
@@ -774,7 +825,7 @@ ir3_valid_flags(struct ir3_instruction *instr, unsigned n,
 			 * but for load instructions this arg is the address (and not
 			 * really sure any good way to test a hard-coded immed addr src)
 			 */
-			if (is_store(instr) && (n == 1))
+			if (is_store(instr) && (instr->opc != OPC_STG) && (n == 1))
 				return false;
 
 			if ((instr->opc == OPC_LDL) && (n == 0))
@@ -804,7 +855,10 @@ ir3_valid_flags(struct ir3_instruction *instr, unsigned n,
 			if (is_atomic(instr->opc) && !(instr->flags & IR3_INSTR_G))
 				return false;
 
-			if (instr->opc == OPC_STG && (instr->flags & IR3_INSTR_G) && (n != 2))
+			if (instr->opc == OPC_STG && (n == 2))
+				return false;
+
+			if (instr->opc == OPC_STG_A && (n == 4))
 				return false;
 
 			/* as with atomics, these cat6 instrs can only have an immediate

@@ -259,12 +259,20 @@ assemble_variant(struct ir3_shader_variant *v)
 		}
 
 		if (dbg_enabled || shader_overridden) {
-			fprintf(stdout, "Native code%s for unnamed %s shader %s with sha1 %s:\n",
+			char *stream_data = NULL;
+			size_t stream_size = 0;
+			FILE *stream = open_memstream(&stream_data, &stream_size);
+
+			fprintf(stream, "Native code%s for unnamed %s shader %s with sha1 %s:\n",
 				shader_overridden ? " (overridden)" : "",
 				ir3_shader_stage(v), v->shader->nir->info.name, sha1buf);
 			if (v->shader->type == MESA_SHADER_FRAGMENT)
-				fprintf(stdout, "SIMD0\n");
-			ir3_shader_disasm(v, v->bin, stdout);
+				fprintf(stream, "SIMD0\n");
+			ir3_shader_disasm(v, v->bin, stream);
+			fclose(stream);
+
+			mesa_log_multiline(MESA_LOG_INFO, stream_data);
+			free(stream_data);
 		}
 	}
 
@@ -360,8 +368,8 @@ create_variant(struct ir3_shader *shader, const struct ir3_shader_key *key,
 		ir3_nir_post_finalize(shader->compiler, shader->nir);
 
 		if (ir3_shader_debug & IR3_DBG_DISASM) {
-			printf("dump nir%d: type=%d", shader->id, shader->type);
-			nir_print_shader(shader->nir, stdout);
+			mesa_logi("dump nir%d: type=%d", shader->id, shader->type);
+			nir_log_shaderi(shader->nir);
 		}
 
 		if (v->disasm_info.write_disasm) {
@@ -643,7 +651,7 @@ ir3_shader_disasm(struct ir3_shader_variant *so, uint32_t *bin, FILE *out)
 	unsigned i;
 
 	foreach_input_n (instr, i, ir) {
-		reg = instr->regs[0];
+		reg = instr->dsts[0];
 		regid = reg->num;
 		fprintf(out, "@in(%sr%d.%c)\tin%d",
 				(reg->flags & IR3_REG_HALF) ? "h" : "",

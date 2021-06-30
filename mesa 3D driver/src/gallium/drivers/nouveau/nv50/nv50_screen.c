@@ -188,6 +188,10 @@ nv50_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_MAX_TEXTURE_MB:
       return 0; /* TODO: use 1/2 of VRAM for this? */
 
+   case PIPE_CAP_SUPPORTED_PRIM_MODES_WITH_RESTART:
+   case PIPE_CAP_SUPPORTED_PRIM_MODES:
+      return BITFIELD_MASK(PIPE_PRIM_MAX);
+
    /* supported caps */
    case PIPE_CAP_TEXTURE_MIRROR_CLAMP:
    case PIPE_CAP_TEXTURE_MIRROR_CLAMP_TO_EDGE:
@@ -275,6 +279,7 @@ nv50_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return class_3d >= NVA3_3D_CLASS;
 
    /* unsupported caps */
+   case PIPE_CAP_EMULATE_NONFIXED_PRIMITIVE_RESTART:
    case PIPE_CAP_DEPTH_CLIP_DISABLE_SEPARATE:
    case PIPE_CAP_SEAMLESS_CUBE_MAP_PER_TEXTURE:
    case PIPE_CAP_TGSI_FS_COORD_ORIGIN_LOWER_LEFT:
@@ -312,7 +317,6 @@ nv50_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_PCI_DEVICE:
    case PIPE_CAP_PCI_FUNCTION:
    case PIPE_CAP_ROBUST_BUFFER_ACCESS_BEHAVIOR:
-   case PIPE_CAP_PRIMITIVE_RESTART_FOR_PATCHES:
    case PIPE_CAP_TGSI_VOTE:
    case PIPE_CAP_POLYGON_OFFSET_UNITS_UNSCALED:
    case PIPE_CAP_STREAM_OUTPUT_INTERLEAVE_BUFFERS:

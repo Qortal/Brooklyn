@@ -300,7 +300,6 @@ bool ac_get_supported_modifiers(const struct radeon_info *info,
 
          if (info->max_render_backends == 1) {
             ADD_MOD(AMD_FMT_MOD | common_dcc |
-                    AMD_FMT_MOD_SET(DCC_PIPE_ALIGN, 1) |
                     AMD_FMT_MOD_SET(DCC_INDEPENDENT_64B, 1) |
                     AMD_FMT_MOD_SET(DCC_INDEPENDENT_128B, independent_128b) |
                     AMD_FMT_MOD_SET(DCC_MAX_COMPRESSED_BLOCK, AMD_FMT_MOD_DCC_BLOCK_64B))
@@ -2818,7 +2817,7 @@ void ac_surface_print_info(FILE *out, const struct radeon_info *info,
                  surf->meta_offset, surf->meta_size, 1 << surf->meta_alignment_log2,
                  surf->u.gfx9.color.display_dcc_pitch_max, surf->num_meta_levels);
 
-      if (surf->u.gfx9.zs.stencil_offset)
+      if (surf->has_stencil)
          fprintf(out,
                  "    Stencil: offset=%" PRIu64 ", swmode=%u, epitch=%u\n",
                  surf->u.gfx9.zs.stencil_offset,

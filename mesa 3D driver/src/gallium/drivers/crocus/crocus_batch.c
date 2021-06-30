@@ -110,9 +110,9 @@ dump_validation_list(struct crocus_batch *batch)
       assert(batch->validation_list[i].handle ==
              batch->exec_bos[i]->gem_handle);
       fprintf(stderr,
-              "[%2d]: %2d %-14s @ 0x%016llx (%" PRIu64 "B)\t %2d refs %s\n", i,
+              "[%2d]: %2d %-14s @ 0x%"PRIx64" (%" PRIu64 "B)\t %2d refs %s\n", i,
               batch->validation_list[i].handle, batch->exec_bos[i]->name,
-              batch->validation_list[i].offset, batch->exec_bos[i]->size,
+              (uint64_t)batch->validation_list[i].offset, batch->exec_bos[i]->size,
               batch->exec_bos[i]->refcount,
               (flags & EXEC_OBJECT_WRITE) ? " (write)" : "");
    }
@@ -299,9 +299,6 @@ crocus_use_bo(struct crocus_batch *batch, struct crocus_bo *bo, bool writable)
 {
    assert(bo->bufmgr == batch->command.bo->bufmgr);
 
-   if (bo == batch->ice->workaround_bo)
-      writable = false;
-
    struct drm_i915_gem_exec_object2 *existing_entry =
       find_validation_entry(batch, bo);
 
@@ -375,6 +372,9 @@ emit_reloc(struct crocus_batch *batch,
            unsigned int reloc_flags)
 {
    assert(target != NULL);
+
+   if (target == batch->ice->workaround_bo)
+      reloc_flags &= ~RELOC_WRITE;
 
    bool writable = reloc_flags & RELOC_WRITE;
 
@@ -473,6 +473,11 @@ create_batch(struct crocus_batch *batch)
 
    crocus_use_bo(batch, batch->command.bo, false);
 
+   /* Always add workaround_bo which contains a driver identifier to be
+    * recorded in error states.
+    */
+   crocus_use_bo(batch, batch->ice->workaround_bo, false);
+
    recreate_growing_buffer(batch, &batch->state,
                            "state buffer",
                            STATE_SZ);
@@ -557,6 +562,7 @@ crocus_batch_free(struct crocus_batch *batch)
       u_upload_destroy(batch->fine_fences.uploader);
 
    crocus_bo_unreference(batch->command.bo);
+   crocus_bo_unreference(batch->state.bo);
    batch->command.bo = NULL;
    batch->command.map = NULL;
    batch->command.map_next = NULL;
@@ -887,9 +893,9 @@ submit_batch(struct crocus_batch *batch)
 
       /* Update brw_bo::gtt_offset */
       if (batch->validation_list[i].offset != bo->gtt_offset) {
-         DBG("BO %d migrated: 0x%" PRIx64 " -> 0x%llx\n",
+         DBG("BO %d migrated: 0x%" PRIx64 " -> 0x%" PRIx64 "\n",
              bo->gem_handle, bo->gtt_offset,
-             batch->validation_list[i].offset);
+             (uint64_t)batch->validation_list[i].offset);
          assert(!(bo->kflags & EXEC_OBJECT_PINNED));
          bo->gtt_offset = batch->validation_list[i].offset;
       }

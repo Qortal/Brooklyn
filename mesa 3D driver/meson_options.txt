@@ -184,7 +184,7 @@ option(
   'vulkan-drivers',
   type : 'array',
   value : ['auto'],
-  choices : ['auto', 'amd', 'broadcom', 'freedreno', 'intel', 'swrast', 'virtio-experimental'],
+  choices : ['auto', 'amd', 'broadcom', 'freedreno', 'intel', 'panfrost', 'swrast', 'virtio-experimental'],
   description : 'List of vulkan drivers to build. If this is set to auto all drivers applicable to the target OS/architecture will be built'
 )
 option(
@@ -445,6 +445,12 @@ option(
   value : true,
   description : 'Prefer new Intel iris driver over older i965 driver'
 )
+option(
+  'prefer-crocus',
+  type : 'boolean',
+  value : false,
+  description : 'Prefer new crocus driver over older i965 driver for gen4-7'
+)
 option('egl-lib-suffix',
   type : 'string',
   value : '',
@@ -495,4 +501,10 @@ option(
   value : ['auto'],
   choices : ['auto', 'panfrost', 'intel', 'freedreno'],
   description: 'List of Perfetto datasources to build. If this is set to `auto`, datasources that can not be build are skipped. Default: [`auto`]'
+)
+option(
+  'custom-shader-replacement',
+  type : 'string',
+  value : '',
+  description : 'Enable a custom shader replacement mechanism. Note that enabling this option requires adding/generating a shader_replacement.h file that can be included (see shaderapi.c).'
 )

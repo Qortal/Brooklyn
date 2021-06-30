@@ -32,6 +32,7 @@
 #include "compiler/glsl/list.h"
 #include "GL/gl.h" /* GLenum */
 #include "util/list.h"
+#include "util/log.h"
 #include "util/ralloc.h"
 #include "util/set.h"
 #include "util/bitscan.h"
@@ -1025,6 +1026,7 @@ void nir_src_copy(nir_src *dest, const nir_src *src, void *instr_or_if);
 void nir_dest_copy(nir_dest *dest, const nir_dest *src, nir_instr *instr);
 
 typedef struct {
+   /** Base source */
    nir_src src;
 
    /**
@@ -1048,27 +1050,34 @@ typedef struct {
 
    /**
     * For each input component, says which component of the register it is
-    * chosen from. Note that which elements of the swizzle are used and which
-    * are ignored are based on the write mask for most opcodes - for example,
-    * a statement like "foo.xzw = bar.zyx" would have a writemask of 1101b and
-    * a swizzle of {2, x, 1, 0} where x means "don't care."
+    * chosen from.
+    *
+    * Note that which elements of the swizzle are used and which are ignored
+    * are based on the write mask for most opcodes - for example, a statement
+    * like "foo.xzw = bar.zyx" would have a writemask of 1101b and a swizzle
+    * of {2, 1, x, 0} where x means "don't care."
     */
    uint8_t swizzle[NIR_MAX_VEC_COMPONENTS];
 } nir_alu_src;
 
 typedef struct {
+   /** Base destination */
    nir_dest dest;
 
    /**
-    * \name saturate output modifier
+    * Saturate output modifier
     *
     * Only valid for opcodes that output floating-point numbers. Clamps the
     * output to between 0.0 and 1.0 inclusive.
     */
-
    bool saturate;
 
-   unsigned write_mask : NIR_MAX_VEC_COMPONENTS; /* ignored if dest.is_ssa is true */
+   /**
+    * Write-mask
+    *
+    * Ignored if dest.is_ssa is true
+    */
+   unsigned write_mask : NIR_MAX_VEC_COMPONENTS;
 } nir_alu_dest;
 
 /** NIR sized and unsized types
@@ -1335,6 +1344,10 @@ typedef enum {
     * sources.
     */
    NIR_OP_IS_2SRC_COMMUTATIVE = (1 << 0),
+
+   /**
+    * Operation is associative
+    */
    NIR_OP_IS_ASSOCIATIVE = (1 << 1),
 } nir_op_algebraic_property;
 
@@ -1343,9 +1356,11 @@ typedef enum {
  */
 #define NIR_ALU_MAX_INPUTS NIR_MAX_VEC_COMPONENTS
 
-typedef struct {
+typedef struct nir_op_info {
+   /** Name of the NIR ALU opcode */
    const char *name;
 
+   /** Number of inputs (sources) */
    uint8_t num_inputs;
 
    /**
@@ -1371,11 +1386,13 @@ typedef struct {
     * The type of vector that the instruction outputs. Note that the
     * staurate modifier is only allowed on outputs with the float type.
     */
-
    nir_alu_type output_type;
 
    /**
     * The number of components in each input
+    *
+    * See nir_op_infos::output_size for more detail about the relationship
+    * between input and output sizes.
     */
    uint8_t input_sizes[NIR_ALU_MAX_INPUTS];
 
@@ -1386,16 +1403,21 @@ typedef struct {
     */
    nir_alu_type input_types[NIR_ALU_MAX_INPUTS];
 
+   /** Algebraic properties of this opcode */
    nir_op_algebraic_property algebraic_properties;
 
-   /* Whether this represents a numeric conversion opcode */
+   /** Whether this represents a numeric conversion opcode */
    bool is_conversion;
 } nir_op_info;
 
+/** Metadata for each nir_op, indexed by opcode */
 extern const nir_op_info nir_op_infos[nir_num_opcodes];
 
 typedef struct nir_alu_instr {
+   /** Base instruction */
    nir_instr instr;
+
+   /** Opcode */
    nir_op op;
 
    /** Indicates that this ALU instruction generates an exact value
@@ -1409,13 +1431,24 @@ typedef struct nir_alu_instr {
    bool exact:1;
 
    /**
-    * Indicates that this instruction do not cause wrapping to occur, in the
-    * form of overflow or underflow.
+    * Indicates that this instruction doese not cause signed integer wrapping
+    * to occur, in the form of overflow or underflow.
     */
    bool no_signed_wrap:1;
+
+   /**
+    * Indicates that this instruction does not cause unsigned integer wrapping
+    * to occur, in the form of overflow or underflow.
+    */
    bool no_unsigned_wrap:1;
 
+   /** Destination */
    nir_alu_dest dest;
+
+   /** Sources
+    *
+    * The size of the array is given by nir_op_info::num_inputs.
+    */
    nir_alu_src src[];
 } nir_alu_instr;
 
@@ -1423,6 +1456,8 @@ void nir_alu_src_copy(nir_alu_src *dest, const nir_alu_src *src,
                       nir_alu_instr *instr);
 void nir_alu_dest_copy(nir_alu_dest *dest, const nir_alu_dest *src,
                        nir_alu_instr *instr);
+
+bool nir_alu_instr_is_copy(nir_alu_instr *instr);
 
 /* is this source channel used? */
 static inline bool
@@ -2581,6 +2616,16 @@ nir_ssa_scalar_chase_alu_src(nir_ssa_scalar s, unsigned alu_src_idx)
    return out;
 }
 
+nir_ssa_scalar nir_ssa_scalar_chase_movs(nir_ssa_scalar s);
+
+/** Returns a nir_ssa_scalar where we've followed the bit-exact mov/vec use chain to the original definition */
+static inline nir_ssa_scalar
+nir_ssa_scalar_resolved(nir_ssa_def *def, unsigned channel)
+{
+   nir_ssa_scalar s = { def, channel };
+   return nir_ssa_scalar_chase_movs(s);
+}
+
 
 typedef struct {
    bool success;
@@ -3589,6 +3634,11 @@ nir_variable *nir_find_variable_with_driver_location(nir_shader *shader,
                                                      nir_variable_mode mode,
                                                      unsigned location);
 
+void nir_sort_variables_with_modes(nir_shader *shader,
+                                   int (*compar)(const nir_variable *,
+                                                 const nir_variable *),
+                                   nir_variable_mode modes);
+
 /** creates a function and adds it to the shader's list of functions */
 nir_function *nir_function_create(nir_shader *shader, const char *name);
 
@@ -4083,8 +4133,14 @@ void nir_print_shader(nir_shader *shader, FILE *fp);
 void nir_print_shader_annotated(nir_shader *shader, FILE *fp, struct hash_table *errors);
 void nir_print_instr(const nir_instr *instr, FILE *fp);
 void nir_print_deref(const nir_deref_instr *deref, FILE *fp);
+void nir_log_shader_annotated_tagged(enum mesa_log_level level, const char *tag, nir_shader *shader, struct hash_table *annotations);
+#define nir_log_shadere(s) nir_log_shader_annotated_tagged(MESA_LOG_ERROR, (MESA_LOG_TAG), (s), NULL)
+#define nir_log_shaderw(s) nir_log_shader_annotated_tagged(MESA_LOG_WARN, (MESA_LOG_TAG), (s), NULL)
+#define nir_log_shaderi(s) nir_log_shader_annotated_tagged(MESA_LOG_INFO, (MESA_LOG_TAG), (s), NULL)
+#define nir_log_shader_annotated(s, annotations) nir_log_shader_annotated_tagged(MESA_LOG_ERROR, (MESA_LOG_TAG), (s), annotations)
 
 char *nir_shader_as_str(nir_shader *nir, void *mem_ctx);
+char *nir_shader_as_str_annotated(nir_shader *nir, struct hash_table *annotations, void *mem_ctx);
 
 /** Shallow clone of a single instruction. */
 nir_instr *nir_instr_clone(nir_shader *s, const nir_instr *orig);
@@ -4310,7 +4366,7 @@ void nir_inline_uniforms(nir_shader *shader, unsigned num_uniforms,
                          const uint32_t *uniform_values,
                          const uint16_t *uniform_dw_offsets);
 
-bool nir_propagate_invariant(nir_shader *shader);
+bool nir_propagate_invariant(nir_shader *shader, bool invariant_prim);
 
 void nir_lower_var_copy_instr(nir_intrinsic_instr *copy, nir_shader *shader);
 void nir_lower_deref_copy_instr(struct nir_builder *b,
@@ -4586,6 +4642,14 @@ void nir_lower_explicit_io_instr(struct nir_builder *b,
 bool nir_lower_explicit_io(nir_shader *shader,
                            nir_variable_mode modes,
                            nir_address_format);
+
+bool
+nir_lower_shader_calls(nir_shader *shader,
+                       nir_address_format address_format,
+                       unsigned stack_alignment,
+                       nir_shader ***resume_shaders_out,
+                       uint32_t *num_resume_shaders_out,
+                       void *mem_ctx);
 
 nir_src *nir_get_io_offset_src(nir_intrinsic_instr *instr);
 nir_src *nir_get_io_vertex_index_src(nir_intrinsic_instr *instr);
@@ -5191,6 +5255,8 @@ bool nir_opt_rematerialize_compares(nir_shader *shader);
 
 bool nir_opt_remove_phis(nir_shader *shader);
 bool nir_opt_remove_phis_block(nir_block *block);
+
+bool nir_opt_phi_precision(nir_shader *shader);
 
 bool nir_opt_shrink_vectors(nir_shader *shader, bool shrink_image_store);
 

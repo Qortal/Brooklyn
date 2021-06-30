@@ -112,6 +112,10 @@ enum {
 #define CROCUS_DIRTY_GEN4_FF_GS_PROG          (1ull << 34)
 #define CROCUS_DIRTY_GEN6_SAMPLER_STATE_POINTERS (1ull << 35)
 #define CROCUS_DIRTY_GEN6_SVBI                (1ull << 36)
+#define CROCUS_DIRTY_GEN8_VF_TOPOLOGY         (1ull << 37)
+#define CROCUS_DIRTY_GEN8_PMA_FIX             (1ull << 38)
+#define CROCUS_DIRTY_GEN8_VF_SGVS             (1ull << 39)
+#define CROCUS_DIRTY_GEN8_PS_BLEND            (1ull << 40)
 
 #define CROCUS_ALL_DIRTY_FOR_COMPUTE (CROCUS_DIRTY_COMPUTE_RESOLVES_AND_FLUSHES)
 
@@ -948,6 +952,9 @@ static inline bool crocus_check_conditional_render(struct crocus_context *ice)
 #  include "crocus_genx_protos.h"
 #  undef genX
 #  define genX(x) gfx75_##x
+#  include "crocus_genx_protos.h"
+#  undef genX
+#  define genX(x) gfx8_##x
 #  include "crocus_genx_protos.h"
 #  undef genX
 #endif

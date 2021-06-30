@@ -403,7 +403,7 @@ flush_submit_list(struct list_head *submit_list)
 }
 
 static void
-msm_submit_sp_flush_execute(void *job, int thread_index)
+msm_submit_sp_flush_execute(void *job, void *gdata, int thread_index)
 {
    struct fd_submit *submit = job;
    struct msm_submit_sp *msm_submit = to_msm_submit_sp(submit);
@@ -414,7 +414,7 @@ msm_submit_sp_flush_execute(void *job, int thread_index)
 }
 
 static void
-msm_submit_sp_flush_cleanup(void *job, int thread_index)
+msm_submit_sp_flush_cleanup(void *job, void *gdata, int thread_index)
 {
    struct fd_submit *submit = job;
    fd_submit_del(submit);
@@ -688,6 +688,20 @@ msm_ringbuffer_sp_cmd_count(struct fd_ringbuffer *ring)
    return 1;
 }
 
+static bool
+msm_ringbuffer_sp_check_size(struct fd_ringbuffer *ring)
+{
+   assert(!(ring->flags & _FD_RINGBUFFER_OBJECT));
+   struct msm_ringbuffer_sp *msm_ring = to_msm_ringbuffer_sp(ring);
+   struct fd_submit *submit = msm_ring->u.submit;
+
+   if (to_msm_submit_sp(submit)->nr_bos > MAX_ARRAY_SIZE/2) {
+      return false;
+   }
+
+   return true;
+}
+
 static void
 msm_ringbuffer_sp_destroy(struct fd_ringbuffer *ring)
 {
@@ -719,6 +733,7 @@ static const struct fd_ringbuffer_funcs ring_funcs_nonobj_32 = {
    .emit_reloc = msm_ringbuffer_sp_emit_reloc_nonobj_32,
    .emit_reloc_ring = msm_ringbuffer_sp_emit_reloc_ring_32,
    .cmd_count = msm_ringbuffer_sp_cmd_count,
+   .check_size = msm_ringbuffer_sp_check_size,
    .destroy = msm_ringbuffer_sp_destroy,
 };
 
@@ -735,6 +750,7 @@ static const struct fd_ringbuffer_funcs ring_funcs_nonobj_64 = {
    .emit_reloc = msm_ringbuffer_sp_emit_reloc_nonobj_64,
    .emit_reloc_ring = msm_ringbuffer_sp_emit_reloc_ring_64,
    .cmd_count = msm_ringbuffer_sp_cmd_count,
+   .check_size = msm_ringbuffer_sp_check_size,
    .destroy = msm_ringbuffer_sp_destroy,
 };
 

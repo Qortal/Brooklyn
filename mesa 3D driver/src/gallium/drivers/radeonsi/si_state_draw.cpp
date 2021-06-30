@@ -22,15 +22,27 @@
  * USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "ac_debug.h"
 #include "ac_sqtt.h"
 #include "si_build_pm4.h"
-#include "sid.h"
 #include "util/u_index_modify.h"
-#include "util/u_log.h"
 #include "util/u_prim.h"
-#include "util/u_suballoc.h"
 #include "util/u_upload_mgr.h"
+
+#if (GFX_VER == 6)
+#define GFX(name) name##GFX6
+#elif (GFX_VER == 7)
+#define GFX(name) name##GFX7
+#elif (GFX_VER == 8)
+#define GFX(name) name##GFX8
+#elif (GFX_VER == 9)
+#define GFX(name) name##GFX9
+#elif (GFX_VER == 10)
+#define GFX(name) name##GFX10
+#elif (GFX_VER == 103)
+#define GFX(name) name##GFX10_3
+#else
+#error "Unknown gfx version"
+#endif
 
 /* special primitive types */
 #define SI_PRIM_RECTANGLE_LIST PIPE_PRIM_MAX
@@ -966,7 +978,7 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
                                  unsigned drawid_base,
                                  const struct pipe_draw_indirect_info *indirect,
                                  const struct pipe_draw_start_count_bias *draws,
-                                 unsigned num_draws,
+                                 unsigned num_draws, unsigned total_count,
                                  struct pipe_resource *indexbuf, unsigned index_size,
                                  unsigned index_offset, unsigned instance_count,
                                  bool dispatch_prim_discard_cs, unsigned original_index_size)
@@ -1182,13 +1194,9 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
          if (ALLOW_PRIM_DISCARD_CS && dispatch_prim_discard_cs) {
             radeon_end();
 
-            for (unsigned i = 0; i < num_draws; i++) {
-               uint64_t va = index_va + draws[0].start * original_index_size;
-
-               si_dispatch_prim_discard_cs_and_draw(sctx, info, draws[i].count,
-                                                    original_index_size, base_vertex,
-                                                    va, MIN2(index_max_size, draws[i].count));
-            }
+            si_dispatch_prim_discard_cs_and_draw(sctx, info, draws, num_draws,
+                                                 original_index_size, total_count, index_va,
+                                                 index_max_size);
             EMIT_SQTT_END_DRAW;
             return;
          }
@@ -1355,32 +1363,6 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
    radeon_end();
 
    EMIT_SQTT_END_DRAW;
-}
-
-extern "C"
-void si_prim_discard_signal_next_compute_ib_start(struct si_context *sctx)
-{
-   if (!si_compute_prim_discard_enabled(sctx))
-      return;
-
-   if (!sctx->barrier_buf) {
-      u_suballocator_alloc(&sctx->allocator_zeroed_memory, 4, 4, &sctx->barrier_buf_offset,
-                           (struct pipe_resource **)&sctx->barrier_buf);
-   }
-
-   /* Emit a placeholder to signal the next compute IB to start.
-    * See si_compute_prim_discard.c for explanation.
-    */
-   uint32_t signal = 1;
-   si_cp_write_data(sctx, sctx->barrier_buf, sctx->barrier_buf_offset, 4, V_370_MEM, V_370_ME,
-                    &signal);
-
-   sctx->last_pkt3_write_data = &sctx->gfx_cs.current.buf[sctx->gfx_cs.current.cdw - 5];
-
-   /* Only the last occurrence of WRITE_DATA will be executed.
-    * The packet will be enabled in si_flush_gfx_cs.
-    */
-   *sctx->last_pkt3_write_data = PKT3(PKT3_NOP, 3, 0);
 }
 
 template <chip_class GFX_VERSION, si_has_tess HAS_TESS, si_has_gs HAS_GS, si_has_ngg NGG> ALWAYS_INLINE
@@ -1814,8 +1796,10 @@ static void si_draw_vbo(struct pipe_context *ctx,
    /* GFX6-GFX7 treat instance_count==0 as instance_count==1. There is
     * no workaround for indirect draws, but we can at least skip
     * direct draws.
+    * 'instance_count == 0' seems to be problematic on Renoir chips (#4866),
+    * so simplify the condition and drop these draws for all <= GFX9 chips.
     */
-   if (GFX_VERSION <= GFX7 && unlikely(!indirect && !instance_count))
+   if (GFX_VERSION <= GFX9 && unlikely(!indirect && !instance_count))
       return;
 
    struct si_shader_selector *vs = sctx->shader.vs.cso;
@@ -1932,27 +1916,21 @@ static void si_draw_vbo(struct pipe_context *ctx,
    unsigned original_index_size = index_size;
 
    /* Determine if we can use the primitive discard compute shader. */
-   if (ALLOW_PRIM_DISCARD_CS && !HAS_TESS && !HAS_GS &&
+   /* TODO: this requires that primitives can be drawn out of order, so check depth/stencil/blend states. */
+   if (ALLOW_PRIM_DISCARD_CS &&
        (total_direct_count > sctx->prim_discard_vertex_count_threshold
            ? (sctx->compute_num_verts_rejected += total_direct_count, true)
            : /* Add, then return true. */
            (sctx->compute_num_verts_ineligible += total_direct_count,
             false)) && /* Add, then return false. */
-       (primitive_restart ?
-                          /* Supported prim types with primitive restart: */
-           (prim == PIPE_PRIM_TRIANGLE_STRIP || pd_msg("bad prim type with primitive restart")) &&
-              /* Disallow instancing with primitive restart: */
-              (instance_count == 1 || pd_msg("instance_count > 1 with primitive restart"))
-                          :
-                          /* Supported prim types without primitive restart + allow instancing: */
-           (1 << prim) & ((1 << PIPE_PRIM_TRIANGLES) | (1 << PIPE_PRIM_TRIANGLE_STRIP) |
-                          (1 << PIPE_PRIM_TRIANGLE_FAN)) &&
-              /* Instancing is limited to 16-bit indices, because InstanceID is packed into
-                 VertexID. */
-              /* TODO: DrawArraysInstanced doesn't sometimes work, so it's disabled. */
-              (instance_count == 1 ||
-               (instance_count <= USHRT_MAX && index_size && index_size <= 2) ||
-               pd_msg("instance_count too large or index_size == 4 or DrawArraysInstanced"))) &&
+       (!primitive_restart || pd_msg("primitive restart")) &&
+       /* Supported prim types. */
+       (1 << prim) & ((1 << PIPE_PRIM_TRIANGLES) | (1 << PIPE_PRIM_TRIANGLE_STRIP)) &&
+       /* Instancing is limited to 16-bit indices, because InstanceID is packed into VertexID. */
+       /* Instanced index_size == 0 requires that start + count < USHRT_MAX, so just reject it. */
+       (instance_count == 1 ||
+        (instance_count <= USHRT_MAX && index_size && index_size <= 2) ||
+        pd_msg("instance_count too large or index_size == 4 or DrawArraysInstanced")) &&
        ((drawid_offset == 0 && (num_draws == 1 || !info->increment_draw_id)) ||
         !sctx->shader.vs.cso->info.uses_drawid || pd_msg("draw_id > 0")) &&
        (!sctx->render_cond || pd_msg("render condition")) &&
@@ -1961,17 +1939,15 @@ static void si_draw_vbo(struct pipe_context *ctx,
         (!sctx->num_pipeline_stat_queries && !sctx->streamout.prims_gen_query_enabled) ||
         pd_msg("pipestat or primgen query")) &&
        (!sctx->vertex_elements->instance_divisor_is_fetched || pd_msg("loads instance divisors")) &&
-       (!HAS_TESS || pd_msg("uses tess")) &&
-       (!HAS_GS || pd_msg("uses GS")) &&
        (!sctx->shader.ps.cso->info.uses_primid || pd_msg("PS uses PrimID")) &&
        !rs->polygon_mode_enabled &&
 #if SI_PRIM_DISCARD_DEBUG /* same as cso->prim_discard_cs_allowed */
-       (!sctx->vs_shader.cso->info.uses_bindless_images || pd_msg("uses bindless images")) &&
-       (!sctx->vs_shader.cso->info.uses_bindless_samplers || pd_msg("uses bindless samplers")) &&
-       (!sctx->vs_shader.cso->info.writes_memory || pd_msg("writes memory")) &&
-       (!sctx->vs_shader.cso->info.writes_viewport_index || pd_msg("writes viewport index")) &&
-       !sctx->vs_shader.cso->info.base.vs.window_space_position &&
-       !sctx->vs_shader.cso->so.num_outputs &&
+       (!sctx->shader.vs.cso->info.uses_bindless_images || pd_msg("uses bindless images")) &&
+       (!sctx->shader.vs.cso->info.uses_bindless_samplers || pd_msg("uses bindless samplers")) &&
+       (!sctx->shader.vs.cso->info.base.writes_memory || pd_msg("writes memory")) &&
+       (!sctx->shader.vs.cso->info.writes_viewport_index || pd_msg("writes viewport index")) &&
+       !sctx->shader.vs.cso->info.base.vs.window_space_position &&
+       !sctx->shader.vs.cso->so.num_outputs &&
 #else
        (sctx->shader.vs.cso->prim_discard_cs_allowed ||
         pd_msg("VS shader uses unsupported features")) &&
@@ -1981,7 +1957,7 @@ static void si_draw_vbo(struct pipe_context *ctx,
        (si_all_vs_resources_read_only(sctx, index_size ? indexbuf : NULL) ||
         pd_msg("write reference"))) {
       switch (si_prepare_prim_discard_or_split_draw(sctx, info, drawid_offset, draws, num_draws,
-                                                    primitive_restart, total_direct_count)) {
+                                                    total_direct_count)) {
       case SI_PRIM_DISCARD_ENABLED:
          original_index_size = index_size;
          prim_discard_cs_instancing = instance_count > 1;
@@ -1991,16 +1967,14 @@ static void si_draw_vbo(struct pipe_context *ctx,
          prim = PIPE_PRIM_TRIANGLES;
          index_size = 4;
          instance_count = 1;
-         primitive_restart = false;
          sctx->compute_num_verts_rejected -= total_direct_count;
          sctx->compute_num_verts_accepted += total_direct_count;
          break;
       case SI_PRIM_DISCARD_DISABLED:
          break;
       case SI_PRIM_DISCARD_DRAW_SPLIT:
-         sctx->compute_num_verts_rejected -= total_direct_count;
-         FALLTHROUGH;
       case SI_PRIM_DISCARD_MULTI_DRAW_SPLIT:
+         sctx->compute_num_verts_rejected -= total_direct_count;
          /* The multi draw was split into multiple ones and executed. Return. */
          DRAW_CLEANUP;
          return;
@@ -2193,10 +2167,9 @@ static void si_draw_vbo(struct pipe_context *ctx,
       }
       assert(sctx->dirty_atoms == 0);
 
-      si_emit_draw_packets<GFX_VERSION, NGG,
-                           !HAS_TESS && !HAS_GS ? PRIM_DISCARD_CS_OFF : ALLOW_PRIM_DISCARD_CS>
-            (sctx, info, drawid_offset, indirect, draws, num_draws, indexbuf, index_size,
-             index_offset, instance_count, dispatch_prim_discard_cs,
+      si_emit_draw_packets<GFX_VERSION, NGG, ALLOW_PRIM_DISCARD_CS>
+            (sctx, info, drawid_offset, indirect, draws, num_draws, total_direct_count, indexbuf,
+             index_size, index_offset, instance_count, dispatch_prim_discard_cs,
              original_index_size);
       /* <-- CUs are busy here. */
 
@@ -2233,11 +2206,10 @@ static void si_draw_vbo(struct pipe_context *ctx,
       }
       assert(sctx->dirty_atoms == 0);
 
-      si_emit_draw_packets<GFX_VERSION, NGG,
-                           !HAS_TESS && !HAS_GS ? PRIM_DISCARD_CS_OFF : ALLOW_PRIM_DISCARD_CS>
-            (sctx, info, drawid_offset, indirect, draws, num_draws, indexbuf, index_size,
-             index_offset, instance_count,
-             dispatch_prim_discard_cs, original_index_size);
+      si_emit_draw_packets<GFX_VERSION, NGG, ALLOW_PRIM_DISCARD_CS>
+            (sctx, info, drawid_offset, indirect, draws, num_draws, total_direct_count, indexbuf,
+             index_size, index_offset, instance_count, dispatch_prim_discard_cs,
+             original_index_size);
 
       /* Prefetch the remaining shaders after the draw has been
        * started. */
@@ -2324,35 +2296,21 @@ static void si_draw_rectangle(struct blitter_context *blitter, void *vertex_elem
    pipe->draw_vbo(pipe, &info, 0, NULL, &draw, 1);
 }
 
-extern "C"
-void si_trace_emit(struct si_context *sctx)
-{
-   struct radeon_cmdbuf *cs = &sctx->gfx_cs;
-   uint32_t trace_id = ++sctx->current_saved_cs->trace_id;
-
-   si_cp_write_data(sctx, sctx->current_saved_cs->trace_buf, 0, 4, V_370_MEM, V_370_ME, &trace_id);
-
-   radeon_begin(cs);
-   radeon_emit(cs, PKT3(PKT3_NOP, 0, 0));
-   radeon_emit(cs, AC_ENCODE_TRACE_POINT(trace_id));
-   radeon_end();
-
-   if (sctx->log)
-      u_log_flush(sctx->log);
-}
-
 template <chip_class GFX_VERSION, si_has_tess HAS_TESS, si_has_gs HAS_GS,
           si_has_ngg NGG, si_has_prim_discard_cs ALLOW_PRIM_DISCARD_CS>
 static void si_init_draw_vbo(struct si_context *sctx)
 {
    /* Prim discard CS is only useful on gfx7+ because gfx6 doesn't have async compute. */
-   if (ALLOW_PRIM_DISCARD_CS && GFX_VERSION < GFX7)
+   if (ALLOW_PRIM_DISCARD_CS && GFX_VERSION < GFX8)
+      return;
+
+   if (ALLOW_PRIM_DISCARD_CS && (HAS_TESS || HAS_GS))
       return;
 
    if (NGG && GFX_VERSION < GFX10)
       return;
 
-   sctx->draw_vbo[GFX_VERSION - GFX6][HAS_TESS][HAS_GS][NGG][ALLOW_PRIM_DISCARD_CS] =
+   sctx->draw_vbo[HAS_TESS][HAS_GS][NGG][ALLOW_PRIM_DISCARD_CS] =
       si_draw_vbo<GFX_VERSION, HAS_TESS, HAS_GS, NGG, ALLOW_PRIM_DISCARD_CS>;
 }
 
@@ -2374,16 +2332,6 @@ static void si_init_draw_vbo_all_pipeline_options(struct si_context *sctx)
    si_init_draw_vbo_all_internal_options<GFX_VERSION, TESS_ON, GS_ON>(sctx);
 }
 
-static void si_init_draw_vbo_all_families(struct si_context *sctx)
-{
-   si_init_draw_vbo_all_pipeline_options<GFX6>(sctx);
-   si_init_draw_vbo_all_pipeline_options<GFX7>(sctx);
-   si_init_draw_vbo_all_pipeline_options<GFX8>(sctx);
-   si_init_draw_vbo_all_pipeline_options<GFX9>(sctx);
-   si_init_draw_vbo_all_pipeline_options<GFX10>(sctx);
-   si_init_draw_vbo_all_pipeline_options<GFX10_3>(sctx);
-}
-
 static void si_invalid_draw_vbo(struct pipe_context *pipe,
                                 const struct pipe_draw_info *info,
                                 unsigned drawid_offset,
@@ -2395,9 +2343,11 @@ static void si_invalid_draw_vbo(struct pipe_context *pipe,
 }
 
 extern "C"
-void si_init_draw_functions(struct si_context *sctx)
+void GFX(si_init_draw_functions_)(struct si_context *sctx)
 {
-   si_init_draw_vbo_all_families(sctx);
+   assert(sctx->chip_class == GFX());
+
+   si_init_draw_vbo_all_pipeline_options<GFX()>(sctx);
 
    /* Bind a fake draw_vbo, so that draw_vbo isn't NULL, which would skip
     * initialization of callbacks in upper layers (such as u_threaded_context).
@@ -2406,19 +2356,4 @@ void si_init_draw_functions(struct si_context *sctx)
    sctx->blitter->draw_rectangle = si_draw_rectangle;
 
    si_init_ia_multi_vgt_param_table(sctx);
-}
-
-extern "C"
-void si_install_draw_wrapper(struct si_context *sctx, pipe_draw_vbo_func wrapper)
-{
-   if (wrapper) {
-      if (wrapper != sctx->b.draw_vbo) {
-         assert (!sctx->real_draw_vbo);
-         sctx->real_draw_vbo = sctx->b.draw_vbo;
-         sctx->b.draw_vbo = wrapper;
-      }
-   } else if (sctx->real_draw_vbo) {
-      sctx->real_draw_vbo = NULL;
-      si_select_draw_vbo(sctx);
-   }
 }

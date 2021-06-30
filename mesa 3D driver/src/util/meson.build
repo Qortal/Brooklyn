@@ -79,6 +79,8 @@ files_mesa_util = files(
   'os_socket.h',
   'u_process.c',
   'u_process.h',
+  'u_qsort.cpp',
+  'u_qsort.h',
   'rwlock.h',
   'sha1/sha1.c',
   'sha1/sha1.h',
@@ -342,7 +344,7 @@ if with_tests
     )
   endif
 
-  foreach t: ['bitset', 'register_allocate', 'u_debug_stack']
+  foreach t: ['bitset', 'register_allocate', 'u_debug_stack', 'u_qsort']
     test(
       t,
       executable(

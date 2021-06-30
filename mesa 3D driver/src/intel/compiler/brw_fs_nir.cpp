@@ -4270,7 +4270,7 @@ fs_visitor::nir_emit_intrinsic(const fs_builder &bld, nir_intrinsic_instr *instr
    case nir_intrinsic_memory_barrier:
    case nir_intrinsic_begin_invocation_interlock:
    case nir_intrinsic_end_invocation_interlock: {
-      bool l3_fence, slm_fence;
+      bool l3_fence, slm_fence, tgm_fence = false;
       const enum opcode opcode =
          instr->intrinsic == nir_intrinsic_begin_invocation_interlock ?
          SHADER_OPCODE_INTERLOCK : SHADER_OPCODE_MEMORY_FENCE;
@@ -4282,6 +4282,10 @@ fs_visitor::nir_emit_intrinsic(const fs_builder &bld, nir_intrinsic_instr *instr
                              nir_var_mem_ssbo |
                              nir_var_mem_global);
          slm_fence = modes & nir_var_mem_shared;
+
+         /* NIR currently doesn't have an image mode */
+         if (devinfo->has_lsc)
+            tgm_fence = modes & nir_var_mem_ssbo;
          break;
       }
 
@@ -4312,6 +4316,7 @@ fs_visitor::nir_emit_intrinsic(const fs_builder &bld, nir_intrinsic_instr *instr
          slm_fence = instr->intrinsic == nir_intrinsic_group_memory_barrier ||
                      instr->intrinsic == nir_intrinsic_memory_barrier ||
                      instr->intrinsic == nir_intrinsic_memory_barrier_shared;
+         tgm_fence = instr->intrinsic == nir_intrinsic_memory_barrier_image;
          break;
       }
 
@@ -4354,7 +4359,7 @@ fs_visitor::nir_emit_intrinsic(const fs_builder &bld, nir_intrinsic_instr *instr
          devinfo->ver >= 10; /* HSD ES # 1404612949 */
 
       unsigned fence_regs_count = 0;
-      fs_reg fence_regs[2] = {};
+      fs_reg fence_regs[3] = {};
 
       const fs_builder ubld = bld.group(8, 0);
 
@@ -4364,8 +4369,11 @@ fs_visitor::nir_emit_intrinsic(const fs_builder &bld, nir_intrinsic_instr *instr
                       ubld.vgrf(BRW_REGISTER_TYPE_UD),
                       brw_vec8_grf(0, 0),
                       brw_imm_ud(commit_enable),
-                      brw_imm_ud(/* bti */ 0));
-         fence->sfid = GFX7_SFID_DATAPORT_DATA_CACHE;
+                      brw_imm_ud(0 /* BTI; ignored for LSC */));
+
+         fence->sfid = devinfo->has_lsc ?
+                       GFX12_SFID_UGM :
+                       GFX7_SFID_DATAPORT_DATA_CACHE;
 
          fence_regs[fence_regs_count++] = fence->dst;
 
@@ -4380,6 +4388,19 @@ fs_visitor::nir_emit_intrinsic(const fs_builder &bld, nir_intrinsic_instr *instr
 
             fence_regs[fence_regs_count++] = render_fence->dst;
          }
+
+         /* Translate l3_fence into untyped and typed fence on XeHP */
+         if (devinfo->has_lsc && tgm_fence) {
+            fs_inst *fence =
+               ubld.emit(opcode,
+                         ubld.vgrf(BRW_REGISTER_TYPE_UD),
+                         brw_vec8_grf(0, 0),
+                         brw_imm_ud(commit_enable),
+                         brw_imm_ud(/* ignored */0));
+
+            fence->sfid = GFX12_SFID_TGM;
+            fence_regs[fence_regs_count++] = fence->dst;
+         }
       }
 
       if (slm_fence) {
@@ -4389,13 +4410,16 @@ fs_visitor::nir_emit_intrinsic(const fs_builder &bld, nir_intrinsic_instr *instr
                       ubld.vgrf(BRW_REGISTER_TYPE_UD),
                       brw_vec8_grf(0, 0),
                       brw_imm_ud(commit_enable),
-                      brw_imm_ud(GFX7_BTI_SLM));
-         fence->sfid = GFX7_SFID_DATAPORT_DATA_CACHE;
+                      brw_imm_ud(GFX7_BTI_SLM /* ignored for LSC */));
+         if (devinfo->has_lsc)
+            fence->sfid = GFX12_SFID_SLM;
+         else
+            fence->sfid = GFX7_SFID_DATAPORT_DATA_CACHE;
 
          fence_regs[fence_regs_count++] = fence->dst;
       }
 
-      assert(fence_regs_count <= 2);
+      assert(fence_regs_count <= 3);
 
       if (stall || fence_regs_count == 0) {
          ubld.exec_all().group(1, 0).emit(
@@ -4900,7 +4924,13 @@ fs_visitor::nir_emit_intrinsic(const fs_builder &bld, nir_intrinsic_instr *instr
       const unsigned bit_size = nir_dest_bit_size(instr->dest);
       fs_reg srcs[SURFACE_LOGICAL_NUM_SRCS];
 
-      if (devinfo->ver >= 8) {
+      if (devinfo->verx10 >= 125) {
+         const fs_builder ubld = bld.exec_all().group(1, 0);
+         fs_reg handle = component(ubld.vgrf(BRW_REGISTER_TYPE_UD), 0);
+         ubld.AND(handle, retype(brw_vec1_grf(0, 5), BRW_REGISTER_TYPE_UD),
+                          brw_imm_ud(~0x3ffu));
+         srcs[SURFACE_LOGICAL_SRC_SURFACE_HANDLE] = handle;
+      } else if (devinfo->ver >= 8) {
          srcs[SURFACE_LOGICAL_SRC_SURFACE] =
             brw_imm_ud(GFX8_BTI_STATELESS_NON_COHERENT);
       } else {
@@ -4919,8 +4949,18 @@ fs_visitor::nir_emit_intrinsic(const fs_builder &bld, nir_intrinsic_instr *instr
       assert(nir_dest_num_components(instr->dest) == 1);
       assert(nir_dest_bit_size(instr->dest) <= 32);
       assert(nir_intrinsic_align(instr) > 0);
-      if (nir_dest_bit_size(instr->dest) >= 4 &&
-          nir_intrinsic_align(instr) >= 4) {
+      if (devinfo->verx10 >= 125) {
+         assert(nir_dest_bit_size(instr->dest) == 32 &&
+                nir_intrinsic_align(instr) >= 4);
+
+         srcs[SURFACE_LOGICAL_SRC_ADDRESS] =
+            swizzle_nir_scratch_addr(bld, nir_addr, false);
+         srcs[SURFACE_LOGICAL_SRC_IMM_ARG] = brw_imm_ud(1);
+
+         bld.emit(SHADER_OPCODE_UNTYPED_SURFACE_READ_LOGICAL,
+                  dest, srcs, SURFACE_LOGICAL_NUM_SRCS);
+      } else if (nir_dest_bit_size(instr->dest) >= 4 &&
+                 nir_intrinsic_align(instr) >= 4) {
          /* The offset for a DWORD scattered message is in dwords. */
          srcs[SURFACE_LOGICAL_SRC_ADDRESS] =
             swizzle_nir_scratch_addr(bld, nir_addr, true);
@@ -4946,7 +4986,13 @@ fs_visitor::nir_emit_intrinsic(const fs_builder &bld, nir_intrinsic_instr *instr
       const unsigned bit_size = nir_src_bit_size(instr->src[0]);
       fs_reg srcs[SURFACE_LOGICAL_NUM_SRCS];
 
-      if (devinfo->ver >= 8) {
+      if (devinfo->verx10 >= 125) {
+         const fs_builder ubld = bld.exec_all().group(1, 0);
+         fs_reg handle = component(ubld.vgrf(BRW_REGISTER_TYPE_UD), 0);
+         ubld.AND(handle, retype(brw_vec1_grf(0, 5), BRW_REGISTER_TYPE_UD),
+                          brw_imm_ud(~0x3ffu));
+         srcs[SURFACE_LOGICAL_SRC_SURFACE_HANDLE] = handle;
+      } else if (devinfo->ver >= 8) {
          srcs[SURFACE_LOGICAL_SRC_SURFACE] =
             brw_imm_ud(GFX8_BTI_STATELESS_NON_COHERENT);
       } else {
@@ -4972,8 +5018,19 @@ fs_visitor::nir_emit_intrinsic(const fs_builder &bld, nir_intrinsic_instr *instr
       assert(nir_src_bit_size(instr->src[0]) <= 32);
       assert(nir_intrinsic_write_mask(instr) == 1);
       assert(nir_intrinsic_align(instr) > 0);
-      if (nir_src_bit_size(instr->src[0]) == 32 &&
-          nir_intrinsic_align(instr) >= 4) {
+      if (devinfo->verx10 >= 125) {
+         assert(nir_src_bit_size(instr->src[0]) == 32 &&
+                nir_intrinsic_align(instr) >= 4);
+         srcs[SURFACE_LOGICAL_SRC_DATA] = data;
+
+         srcs[SURFACE_LOGICAL_SRC_ADDRESS] =
+            swizzle_nir_scratch_addr(bld, nir_addr, false);
+         srcs[SURFACE_LOGICAL_SRC_IMM_ARG] = brw_imm_ud(1);
+
+         bld.emit(SHADER_OPCODE_UNTYPED_SURFACE_WRITE_LOGICAL,
+                  dest, srcs, SURFACE_LOGICAL_NUM_SRCS);
+      } else if (nir_src_bit_size(instr->src[0]) == 32 &&
+                 nir_intrinsic_align(instr) >= 4) {
          srcs[SURFACE_LOGICAL_SRC_DATA] = data;
 
          /* The offset for a DWORD scattered message is in dwords. */
@@ -5829,6 +5886,13 @@ fs_visitor::nir_emit_texture(const fs_builder &bld, nir_tex_instr *instr)
             srcs[TEX_LOGICAL_SRC_COORDINATE] = retype(src, BRW_REGISTER_TYPE_F);
             break;
          }
+
+         /* Wa_14013363432:
+          *
+          * Compiler should send U,V,R parameters even if V,R are 0.
+          */
+         if (instr->sampler_dim == GLSL_SAMPLER_DIM_CUBE && devinfo->verx10 == 125)
+            assert(instr->coord_components == 3u + instr->is_array);
          break;
       case nir_tex_src_ddx:
          srcs[TEX_LOGICAL_SRC_LOD] = retype(src, BRW_REGISTER_TYPE_F);

@@ -35,14 +35,10 @@
 #include "util/disk_cache.h"
 #include "util/log.h"
 #include "util/simple_mtx.h"
+#include "util/u_queue.h"
 #include "util/u_live_shader_cache.h"
 
 #include <vulkan/vulkan.h>
-
-#if defined(__APPLE__)
-// Source of MVK_VERSION
-#include "MoltenVK/vk_mvk_moltenvk.h"
-#endif
 
 extern uint32_t zink_debug;
 struct hash_table;
@@ -72,6 +68,7 @@ struct zink_screen {
    uint32_t last_finished; //this is racy but ultimately doesn't matter
    VkSemaphore sem;
    VkSemaphore prev_sem;
+   struct util_queue flush_queue;
 
    bool device_lost;
    struct sw_winsys *winsys;
@@ -93,6 +90,8 @@ struct zink_screen {
 
    simple_mtx_t mem_cache_mtx;
    struct hash_table *resource_mem_cache;
+   uint64_t mem_cache_size;
+   unsigned mem_cache_count;
 
    unsigned shader_id;
 
@@ -117,6 +116,8 @@ struct zink_screen {
    uint32_t max_queues;
    uint32_t timestamp_valid_bits;
    VkDevice dev;
+   VkQueue queue; //gfx+compute
+   VkQueue thread_queue; //gfx+compute
    VkDebugUtilsMessengerEXT debugUtilsCallbackHandle;
 
    uint32_t cur_custom_border_color_samplers;
@@ -140,16 +141,6 @@ struct zink_screen {
    void (*descriptors_deinit)(struct zink_context *ctx);
    enum zink_descriptor_mode descriptor_mode;
 
-#if defined(MVK_VERSION)
-   PFN_vkGetMoltenVKConfigurationMVK vk_GetMoltenVKConfigurationMVK;
-   PFN_vkSetMoltenVKConfigurationMVK vk_SetMoltenVKConfigurationMVK;
-
-   PFN_vkGetPhysicalDeviceMetalFeaturesMVK vk_GetPhysicalDeviceMetalFeaturesMVK;
-   PFN_vkGetVersionStringsMVK vk_GetVersionStringsMVK;
-   PFN_vkUseIOSurfaceMVK vk_UseIOSurfaceMVK;
-   PFN_vkGetIOSurfaceMVK vk_GetIOSurfaceMVK;
-#endif
-
    struct {
       bool dual_color_blend_by_location;
       bool inline_uniforms;
@@ -161,8 +152,6 @@ struct zink_screen {
       uint32_t buffer_view;
    } null_descriptor_hashes;
 
-   PFN_vkGetPhysicalDeviceMultisamplePropertiesEXT vk_GetPhysicalDeviceMultisamplePropertiesEXT;
-   PFN_vkCmdSetSampleLocationsEXT vk_CmdSetSampleLocationsEXT;
    VkExtent2D maxSampleLocationGridSize[5];
 };
 
@@ -242,30 +231,6 @@ zink_screen_timeline_wait(struct zink_screen *screen, uint32_t batch_id, uint64_
 
 bool
 zink_is_depth_format_supported(struct zink_screen *screen, VkFormat format);
-
-#define GET_PROC_ADDR(x) do {                                               \
-      screen->vk_##x = (PFN_vk##x)vkGetDeviceProcAddr(screen->dev, "vk"#x); \
-      if (!screen->vk_##x) {                                                \
-         mesa_loge("ZINK: vkGetDeviceProcAddr failed: vk"#x"\n");           \
-         return false;                                                      \
-      } \
-   } while (0)
-
-#define GET_PROC_ADDR_KHR(x) do {                                               \
-      screen->vk_##x = (PFN_vk##x)vkGetDeviceProcAddr(screen->dev, "vk"#x"KHR"); \
-      if (!screen->vk_##x) {                                                \
-         mesa_loge("ZINK: vkGetDeviceProcAddr failed: vk"#x"KHR\n");           \
-         return false;                                                      \
-      } \
-   } while (0)
-
-#define GET_PROC_ADDR_INSTANCE(x) do {                                          \
-      screen->vk_##x = (PFN_vk##x)vkGetInstanceProcAddr(screen->instance, "vk"#x); \
-      if (!screen->vk_##x) {                                                \
-         mesa_loge("ZINK: GetInstanceProcAddr failed: vk"#x"\n");           \
-         return false;                                                      \
-      } \
-   } while (0)
 
 #define GET_PROC_ADDR_INSTANCE_LOCAL(instance, x) PFN_vk##x vk_##x = (PFN_vk##x)vkGetInstanceProcAddr(instance, "vk"#x)
 

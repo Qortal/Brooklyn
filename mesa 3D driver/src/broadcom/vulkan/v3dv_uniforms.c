@@ -28,6 +28,15 @@
 #include "v3dv_private.h"
 #include "vk_format_info.h"
 
+/* The only version specific structure that we need is
+ * TMU_CONFIG_PARAMETER_1. This didn't seem to change significantly from
+ * previous V3D versions and we don't expect that to change, so for now let's
+ * just hardcode the V3D version here.
+ */
+#define V3D_VERSION 41
+#include "broadcom/common/v3d_macros.h"
+#include "broadcom/cle/v3dx_pack.h"
+
 /* Our Vulkan resource indices represent indices in descriptor maps which
  * include all shader stages, so we need to size the arrays below
  * accordingly. For now we only support a maximum of 2 stages for VS and
@@ -146,7 +155,7 @@ write_tmu_p0(struct v3dv_cmd_buffer *cmd_buffer,
    tex_bos->tex[texture_idx] = texture_bo;
 
    struct v3dv_cl_reloc state_reloc =
-      v3dv_descriptor_map_get_texture_shader_state(descriptor_state,
+      v3dv_descriptor_map_get_texture_shader_state(cmd_buffer->device, descriptor_state,
                                                    &pipeline->shared_data->maps[stage]->texture_map,
                                                    pipeline->layout,
                                                    texture_idx);
@@ -182,7 +191,7 @@ write_tmu_p1(struct v3dv_cmd_buffer *cmd_buffer,
           sampler_idx != V3DV_NO_SAMPLER_32BIT_IDX);
 
    struct v3dv_cl_reloc sampler_state_reloc =
-      v3dv_descriptor_map_get_sampler_state(descriptor_state,
+      v3dv_descriptor_map_get_sampler_state(cmd_buffer->device, descriptor_state,
                                             &pipeline->shared_data->maps[stage]->sampler_map,
                                             pipeline->layout, sampler_idx);
 

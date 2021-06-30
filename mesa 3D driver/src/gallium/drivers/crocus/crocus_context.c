@@ -210,6 +210,9 @@ crocus_destroy_context(struct pipe_context *ctx)
 
 #define genX_call(devinfo, func, ...)                   \
    switch ((devinfo)->verx10) {                         \
+   case 80:                                             \
+      gfx8_##func(__VA_ARGS__);                         \
+      break;                                            \
    case 75:                                             \
       gfx75_##func(__VA_ARGS__);                        \
       break;                                            \
@@ -290,9 +293,9 @@ crocus_create_context(struct pipe_screen *pscreen, void *priv, unsigned flags)
    if (!crocus_init_identifier_bo(ice))
       return NULL;
 
-   genX_call(devinfo, init_state, ice);
-   genX_call(devinfo, init_blorp, ice);
-   genX_call(devinfo, init_query, ice);
+   genX_call(devinfo, crocus_init_state, ice);
+   genX_call(devinfo, crocus_init_blorp, ice);
+   genX_call(devinfo, crocus_init_query, ice);
 
    ice->blitter = util_blitter_create(&ice->ctx);
    if (ice->blitter == NULL)

@@ -408,9 +408,8 @@ add_single_reg_dep(struct ir3_postsched_deps_state *state,
  * 
  * If non-negative, then this adds a dependency on a source register, and
  * src_n is the index passed into ir3_delayslots() for calculating the delay:
- * 0 means this is for an address source, non-0 corresponds to
- * node->instr->regs[src_n]. If negative, then this is for a destination
- * register.
+ * If positive, corresponds to node->instr->regs[src_n]. If negative, then
+ * this is for a destination register.
  */
 static void
 add_reg_dep(struct ir3_postsched_deps_state *state,
@@ -422,7 +421,7 @@ add_reg_dep(struct ir3_postsched_deps_state *state,
 		 * half-registers don't alias random full registers by pretending that
 		 * they're full registers:
 		 */
-		if ((reg->flags & IR3_REG_HALF) && num < regid(48, 0)) {
+		if ((reg->flags & IR3_REG_HALF) && !is_reg_special(reg)) {
 			/* single conflict in half-reg space: */
 			add_single_reg_dep(state, node, num, src_n);
 		} else {
@@ -451,37 +450,32 @@ calculate_deps(struct ir3_postsched_deps_state *state,
 		if (reg->flags & IR3_REG_RELATIV) {
 			/* mark entire array as read: */
 			for (unsigned j = 0; j < reg->size; j++) {
-				add_reg_dep(state, node, reg, reg->array.base + j, i + 1);
+				add_reg_dep(state, node, reg, reg->array.base + j, i);
 			}
 		} else {
 			assert(reg->wrmask >= 1);
 			u_foreach_bit (b, reg->wrmask) {
-				add_reg_dep(state, node, reg, reg->num + b, i + 1);
+				add_reg_dep(state, node, reg, reg->num + b, i);
 			}
 		}
 	}
 
-	if (node->instr->address) {
-		add_reg_dep(state, node, node->instr->address->regs[0],
-				node->instr->address->regs[0]->num, 0);
-	}
-
-	if (dest_regs(node->instr) == 0)
-		return;
-
 	/* And then after we update the state for what this instruction
 	 * wrote:
 	 */
-	struct ir3_register *reg = node->instr->regs[0];
-	if (reg->flags & IR3_REG_RELATIV) {
-		/* mark the entire array as written: */
-		for (unsigned i = 0; i < reg->size; i++) {
-			add_reg_dep(state, node, reg, reg->array.base + i, -1);
-		}
-	} else {
-		assert(reg->wrmask >= 1);
-		u_foreach_bit (b, reg->wrmask) {
-			add_reg_dep(state, node, reg, reg->num + b, -1);
+	foreach_dst (reg, node->instr) {
+		if (reg->wrmask == 0)
+			continue;
+		if (reg->flags & IR3_REG_RELATIV) {
+			/* mark the entire array as written: */
+			for (unsigned i = 0; i < reg->size; i++) {
+				add_reg_dep(state, node, reg, reg->array.base + i, -1);
+			}
+		} else {
+			assert(reg->wrmask >= 1);
+			u_foreach_bit (b, reg->wrmask) {
+				add_reg_dep(state, node, reg, reg->num + b, -1);
+			}
 		}
 	}
 }
@@ -700,16 +694,16 @@ is_self_mov(struct ir3_instruction *instr)
 	if (!is_same_type_mov(instr))
 		return false;
 
-	if (instr->regs[0]->num != instr->regs[1]->num)
+	if (instr->dsts[0]->num != instr->srcs[0]->num)
 		return false;
 
-	if (instr->regs[0]->flags & IR3_REG_RELATIV)
+	if (instr->dsts[0]->flags & IR3_REG_RELATIV)
 		return false;
 
 	if (instr->cat1.round != ROUND_ZERO)
 		return false;
 
-	if (instr->regs[1]->flags & (IR3_REG_CONST | IR3_REG_IMMED |
+	if (instr->srcs[0]->flags & (IR3_REG_CONST | IR3_REG_IMMED |
 			IR3_REG_RELATIV | IR3_REG_FNEG | IR3_REG_FABS |
 			IR3_REG_SNEG | IR3_REG_SABS | IR3_REG_BNOT))
 		return false;

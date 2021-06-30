@@ -24,7 +24,14 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <string.h>
+#ifdef MAJOR_IN_MKDEV
+#include <sys/mkdev.h>
+#endif
+#ifdef MAJOR_IN_SYSMACROS
+#include <sys/sysmacros.h>
+#endif
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include "drm-uapi/drm_fourcc.h"
@@ -241,6 +248,7 @@ get_device_extensions(const struct anv_physical_device *device,
       .KHR_shader_float_controls             = device->info.ver >= 8,
       .KHR_shader_non_semantic_info          = true,
       .KHR_shader_subgroup_extended_types    = device->info.ver >= 8,
+      .KHR_shader_subgroup_uniform_control_flow = true,
       .KHR_shader_terminate_invocation       = true,
       .KHR_spirv_1_4                         = true,
       .KHR_storage_buffer_storage_class      = true,
@@ -281,6 +289,7 @@ get_device_extensions(const struct anv_physical_device *device,
       .EXT_line_rasterization                = true,
       .EXT_memory_budget                     = device->has_mem_available,
       .EXT_pci_bus_info                      = true,
+      .EXT_physical_device_drm               = true,
       .EXT_pipeline_creation_cache_control   = true,
       .EXT_pipeline_creation_feedback        = true,
       .EXT_post_depth_coverage               = device->info.ver >= 9,
@@ -313,13 +322,66 @@ get_device_extensions(const struct anv_physical_device *device,
       .INTEL_performance_query               = device->perf &&
                                                device->perf->i915_perf_version >= 3,
       .INTEL_shader_integer_functions2       = device->info.ver >= 8,
+      .EXT_multi_draw                        = true,
       .NV_compute_shader_derivatives         = true,
    };
 }
 
 static void
+anv_track_meminfo(struct anv_physical_device *device,
+                  const struct drm_i915_query_memory_regions *mem_regions)
+{
+   for(int i = 0; i < mem_regions->num_regions; i++) {
+      switch(mem_regions->regions[i].region.memory_class) {
+         case I915_MEMORY_CLASS_SYSTEM:
+         device->sys.region = mem_regions->regions[i].region;
+         device->sys.size = mem_regions->regions[i].probed_size;
+         break;
+      case I915_MEMORY_CLASS_DEVICE:
+         device->vram.region = mem_regions->regions[i].region;
+         device->vram.size = mem_regions->regions[i].probed_size;
+         break;
+      default:
+         break;
+      }
+   }
+}
+
+static bool
+anv_get_query_meminfo(struct anv_physical_device *device, int fd)
+{
+   struct drm_i915_query_item item = {
+      .query_id = DRM_I915_QUERY_MEMORY_REGIONS
+   };
+
+   struct drm_i915_query query = {
+      .num_items = 1,
+      .items_ptr = (uintptr_t) &item,
+   };
+
+   if (drmIoctl(fd, DRM_IOCTL_I915_QUERY, &query))
+      return false;
+
+   struct drm_i915_query_memory_regions *mem_regions = calloc(1, item.length);
+   item.data_ptr = (uintptr_t) mem_regions;
+
+   if (drmIoctl(fd, DRM_IOCTL_I915_QUERY, &query) || item.length <= 0) {
+      free(mem_regions);
+      return false;
+   }
+
+   anv_track_meminfo(device, mem_regions);
+
+   free(mem_regions);
+   return true;
+}
+
+static void
 anv_init_meminfo(struct anv_physical_device *device, int fd)
 {
+   if (anv_get_query_meminfo(device, fd))
+      return;
+
    uint64_t heap_size = anv_compute_heap_size(fd, device->gtt_size);
 
    if (heap_size > (2ull << 30) && !device->supports_48bit_addresses) {
@@ -929,6 +991,28 @@ anv_physical_device_try_create(struct anv_instance *instance,
 
    *device_out = device;
 
+   struct stat st;
+
+   if (stat(primary_path, &st) == 0) {
+      device->has_master = true;
+      device->master_major = major(st.st_rdev);
+      device->master_minor = minor(st.st_rdev);
+   } else {
+      device->has_master = false;
+      device->master_major = 0;
+      device->master_minor = 0;
+   }
+
+   if (stat(path, &st) == 0) {
+      device->has_local = true;
+      device->local_major = major(st.st_rdev);
+      device->local_minor = minor(st.st_rdev);
+   } else {
+      device->has_local = false;
+      device->local_major = 0;
+      device->local_minor = 0;
+   }
+
    return VK_SUCCESS;
 
 fail_engine_info:
@@ -1349,6 +1433,16 @@ void anv_GetPhysicalDeviceFeatures2(
          break;
       }
 
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR: {
+         VkPhysicalDeviceAccelerationStructureFeaturesKHR *features = (void *)ext;
+         features->accelerationStructure = false;
+         features->accelerationStructureCaptureReplay = false;
+         features->accelerationStructureIndirectBuild = false;
+         features->accelerationStructureHostCommands = false;
+         features->descriptorBindingAccelerationStructureUpdateAfterBind = true;
+         break;
+      }
+
       case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_EXT: {
          VkPhysicalDeviceBufferDeviceAddressFeaturesEXT *features = (void *)ext;
          features->bufferDeviceAddress = pdevice->has_a64_buffer_access;
@@ -1647,6 +1741,13 @@ void anv_GetPhysicalDeviceFeatures2(
          break;
       }
 
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_SUBGROUP_UNIFORM_CONTROL_FLOW_FEATURES_KHR: {
+         VkPhysicalDeviceShaderSubgroupUniformControlFlowFeaturesKHR *features =
+            (VkPhysicalDeviceShaderSubgroupUniformControlFlowFeaturesKHR *)ext;
+         features->shaderSubgroupUniformControlFlow = true;
+         break;
+      }
+
       case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_TERMINATE_INVOCATION_FEATURES_KHR: {
          VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR *features =
             (VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR *)ext;
@@ -1759,6 +1860,12 @@ void anv_GetPhysicalDeviceFeatures2(
          VkPhysicalDeviceZeroInitializeWorkgroupMemoryFeaturesKHR *features =
             (VkPhysicalDeviceZeroInitializeWorkgroupMemoryFeaturesKHR *)ext;
          features->shaderZeroInitializeWorkgroupMemory = true;
+         break;
+      }
+
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTI_DRAW_FEATURES_EXT: {
+         VkPhysicalDeviceMultiDrawFeaturesEXT *features = (VkPhysicalDeviceMultiDrawFeaturesEXT *)ext;
+         features->multiDraw = true;
          break;
       }
 
@@ -1937,7 +2044,9 @@ void anv_GetPhysicalDeviceProperties(
       .driverVersion = vk_get_driver_version(),
       .vendorID = 0x8086,
       .deviceID = pdevice->info.chipset_id,
-      .deviceType = VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU,
+      .deviceType = pdevice->info.has_local_mem ?
+                    VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU :
+                    VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU,
       .limits = limits,
       .sparseProperties = {0}, /* Broadwell doesn't do sparse. */
    };
@@ -1962,7 +2071,7 @@ anv_get_physical_device_properties_1_1(struct anv_physical_device *pdevice,
 
    p->subgroupSize = BRW_SUBGROUP_SIZE;
    VkShaderStageFlags scalar_stages = 0;
-   for (unsigned stage = 0; stage < MESA_SHADER_STAGES; stage++) {
+   for (unsigned stage = 0; stage < MESA_VULKAN_SHADER_STAGES; stage++) {
       if (pdevice->compiler->scalar_stage[stage])
          scalar_stages |= mesa_to_vk_shader_stage(stage);
    }
@@ -2138,6 +2247,19 @@ void anv_GetPhysicalDeviceProperties2(
 
    vk_foreach_struct(ext, pProperties->pNext) {
       switch (ext->sType) {
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR: {
+         VkPhysicalDeviceAccelerationStructurePropertiesKHR *props = (void *)ext;
+         props->maxGeometryCount = (1u << 24) - 1;
+         props->maxInstanceCount = (1u << 24) - 1;
+         props->maxPrimitiveCount = (1u << 29) - 1;
+         props->maxPerStageDescriptorAccelerationStructures = UINT16_MAX;
+         props->maxPerStageDescriptorUpdateAfterBindAccelerationStructures = UINT16_MAX;
+         props->maxDescriptorSetAccelerationStructures = UINT16_MAX;
+         props->maxDescriptorSetUpdateAfterBindAccelerationStructures = UINT16_MAX;
+         props->minAccelerationStructureScratchOffsetAlignment = 64;
+         break;
+      }
+
       case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT: {
          /* TODO: Real limits */
          VkPhysicalDeviceConservativeRasterizationPropertiesEXT *properties =
@@ -2245,6 +2367,21 @@ void anv_GetPhysicalDeviceProperties2(
          CORE_PROPERTY(1, 2, driverName);
          CORE_PROPERTY(1, 2, driverInfo);
          CORE_PROPERTY(1, 2, conformanceVersion);
+         break;
+      }
+
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT: {
+         VkPhysicalDeviceDrmPropertiesEXT *props =
+            (VkPhysicalDeviceDrmPropertiesEXT *)ext;
+
+         props->hasPrimary = pdevice->has_master;
+         props->primaryMajor = pdevice->master_major;
+         props->primaryMinor = pdevice->master_minor;
+
+         props->hasRender = pdevice->has_local;
+         props->renderMajor = pdevice->local_major;
+         props->renderMinor = pdevice->local_minor;
+
          break;
       }
 
@@ -2519,6 +2656,12 @@ void anv_GetPhysicalDeviceProperties2(
             (VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT *)ext;
          /* We have to restrict this a bit for multiview */
          props->maxVertexAttribDivisor = UINT32_MAX / 16;
+         break;
+      }
+
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTI_DRAW_PROPERTIES_EXT: {
+         VkPhysicalDeviceMultiDrawPropertiesEXT *props = (VkPhysicalDeviceMultiDrawPropertiesEXT *)ext;
+         props->maxMultiDrawCount = 2048;
          break;
       }
 
@@ -3251,7 +3394,8 @@ VkResult anv_CreateDevice(
    }
 
    result = anv_device_alloc_bo(device, "workaround", 4096,
-                                ANV_BO_ALLOC_CAPTURE | ANV_BO_ALLOC_MAPPED /* flags */,
+                                ANV_BO_ALLOC_CAPTURE | ANV_BO_ALLOC_MAPPED |
+                                ANV_BO_ALLOC_LOCAL_MEM /* flags */,
                                 0 /* explicit_address */,
                                 &device->workaround_bo);
    if (result != VK_SUCCESS)
@@ -3288,12 +3432,19 @@ VkResult anv_CreateDevice(
 
    anv_scratch_pool_init(device, &device->scratch_pool);
 
+   /* TODO(RT): Do we want some sort of data structure for this? */
+   memset(device->rt_scratch_bos, 0, sizeof(device->rt_scratch_bos));
+
    result = anv_genX(&device->info, init_device_state)(device);
    if (result != VK_SUCCESS)
       goto fail_trivial_batch_bo_and_scratch_pool;
 
    anv_pipeline_cache_init(&device->default_pipeline_cache, device,
                            true /* cache_enabled */, false /* external_sync */);
+
+   result = anv_device_init_rt_shaders(device);
+   if (result != VK_SUCCESS)
+      goto fail_rt_trampoline;
 
    anv_device_init_blorp(device);
 
@@ -3305,6 +3456,8 @@ VkResult anv_CreateDevice(
 
    return VK_SUCCESS;
 
+ fail_rt_trampoline:
+   anv_pipeline_cache_finish(&device->default_pipeline_cache);
  fail_trivial_batch_bo_and_scratch_pool:
    anv_scratch_pool_finish(device, &device->scratch_pool);
    anv_device_release_bo(device, device->trivial_batch_bo);
@@ -3368,6 +3521,8 @@ void anv_DestroyDevice(
 
    anv_device_finish_blorp(device);
 
+   anv_device_finish_rt_shaders(device);
+
    anv_pipeline_cache_finish(&device->default_pipeline_cache);
 
 #ifdef HAVE_VALGRIND
@@ -3379,6 +3534,11 @@ void anv_DestroyDevice(
    anv_state_pool_free(&device->dynamic_state_pool, device->border_colors);
    anv_state_pool_free(&device->dynamic_state_pool, device->slice_hash);
 #endif
+
+   for (unsigned i = 0; i < ARRAY_SIZE(device->rt_scratch_bos); i++) {
+      if (device->rt_scratch_bos[i] != NULL)
+         anv_device_release_bo(device, device->rt_scratch_bos[i]);
+   }
 
    anv_scratch_pool_finish(device, &device->scratch_pool);
 
@@ -3897,6 +4057,12 @@ VkResult anv_AllocateMemory(
       goto success;
    }
 
+   /* Set ALLOC_LOCAL_MEM flag if heap has device local bit set and requested
+    * memory property flag has DEVICE_LOCAL_BIT set.
+    */
+   if (mem_type->propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+      alloc_flags |= ANV_BO_ALLOC_LOCAL_MEM;
+
    /* Regular allocate (not importing memory). */
 
    result = anv_device_alloc_bo(device, "user", pAllocateInfo->allocationSize,
@@ -4261,6 +4427,8 @@ anv_bind_buffer_memory(const VkBindBufferMemoryInfo *pBindInfo)
    assert(pBindInfo->sType == VK_STRUCTURE_TYPE_BIND_BUFFER_MEMORY_INFO);
 
    if (mem) {
+      assert(pBindInfo->memoryOffset < mem->bo->size);
+      assert(mem->bo->size - pBindInfo->memoryOffset >= buffer->size);
       buffer->address = (struct anv_address) {
          .bo = mem->bo,
          .offset = pBindInfo->memoryOffset,

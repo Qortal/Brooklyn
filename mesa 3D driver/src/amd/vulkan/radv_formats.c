@@ -180,11 +180,6 @@ radv_translate_tex_dataformat(VkFormat format, const struct util_format_descript
    case UTIL_FORMAT_COLORSPACE_YUV:
       goto out_unknown; /* TODO */
 
-   case UTIL_FORMAT_COLORSPACE_SRGB:
-      if (desc->nr_channels != 4 && desc->nr_channels != 1)
-         goto out_unknown;
-      break;
-
    default:
       break;
    }
@@ -781,6 +776,16 @@ radv_physical_device_get_format_properties(struct radv_physical_device *physical
       break;
    }
 
+   switch (format) {
+   case VK_FORMAT_R32G32B32_SFLOAT:
+   case VK_FORMAT_R32G32B32A32_SFLOAT:
+   case VK_FORMAT_R16G16B16_SFLOAT:
+   case VK_FORMAT_R16G16B16A16_SFLOAT:
+      buffer |= VK_FORMAT_FEATURE_ACCELERATION_STRUCTURE_VERTEX_BUFFER_BIT_KHR;
+      break;
+   default:
+      break;
+   }
    /* addrlib does not support linear compressed textures. */
    if (vk_format_is_compressed(format))
       linear = 0;

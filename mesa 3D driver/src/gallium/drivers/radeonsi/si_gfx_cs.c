@@ -27,7 +27,9 @@
 #include "si_pipe.h"
 #include "sid.h"
 #include "util/os_time.h"
+#include "util/u_log.h"
 #include "util/u_upload_mgr.h"
+#include "ac_debug.h"
 
 /* initialize */
 void si_need_gfx_cs_space(struct si_context *ctx, unsigned num_draws)
@@ -113,23 +115,8 @@ void si_flush_gfx_cs(struct si_context *ctx, unsigned flags, struct pipe_fence_h
 
    ctx->gfx_flush_in_progress = true;
 
-   if (radeon_emitted(&ctx->prim_discard_compute_cs, 0)) {
-      struct radeon_cmdbuf *compute_cs = &ctx->prim_discard_compute_cs;
+   if (radeon_emitted(&ctx->prim_discard_compute_cs, 0))
       si_compute_signal_gfx(ctx);
-
-      /* Make sure compute shaders are idle before leaving the IB, so that
-       * the next IB doesn't overwrite GDS that might be in use. */
-      radeon_begin(compute_cs);
-      radeon_emit(compute_cs, PKT3(PKT3_EVENT_WRITE, 0, 0));
-      radeon_emit(compute_cs, EVENT_TYPE(V_028A90_CS_PARTIAL_FLUSH) | EVENT_INDEX(4));
-      radeon_end();
-
-      /* Save the GDS prim restart counter if needed. */
-      if (ctx->preserve_prim_restart_gds_at_flush) {
-         si_cp_copy_data(ctx, compute_cs, COPY_DATA_DST_MEM, ctx->wait_mem_scratch, 4,
-                         COPY_DATA_GDS, NULL, 4);
-      }
-   }
 
    if (ctx->has_graphics) {
       if (!list_is_empty(&ctx->active_queries))
@@ -368,6 +355,20 @@ void si_set_tracked_regs_to_clear_state(struct si_context *ctx)
    ctx->last_gs_out_prim = 0; /* cleared by CLEAR_STATE */
 }
 
+void si_install_draw_wrapper(struct si_context *sctx, pipe_draw_vbo_func wrapper)
+{
+   if (wrapper) {
+      if (wrapper != sctx->b.draw_vbo) {
+         assert (!sctx->real_draw_vbo);
+         sctx->real_draw_vbo = sctx->b.draw_vbo;
+         sctx->b.draw_vbo = wrapper;
+      }
+   } else if (sctx->real_draw_vbo) {
+      sctx->real_draw_vbo = NULL;
+      si_select_draw_vbo(sctx);
+   }
+}
+
 static void si_draw_vbo_tmz_preamble(struct pipe_context *ctx,
                                      const struct pipe_draw_info *info,
                                      unsigned drawid_offset,
@@ -592,13 +593,56 @@ void si_begin_new_gfx_cs(struct si_context *ctx, bool first_cs)
    ctx->force_cb_shader_coherent = true;
 }
 
+void si_trace_emit(struct si_context *sctx)
+{
+   struct radeon_cmdbuf *cs = &sctx->gfx_cs;
+   uint32_t trace_id = ++sctx->current_saved_cs->trace_id;
+
+   si_cp_write_data(sctx, sctx->current_saved_cs->trace_buf, 0, 4, V_370_MEM, V_370_ME, &trace_id);
+
+   radeon_begin(cs);
+   radeon_emit(cs, PKT3(PKT3_NOP, 0, 0));
+   radeon_emit(cs, AC_ENCODE_TRACE_POINT(trace_id));
+   radeon_end();
+
+   if (sctx->log)
+      u_log_flush(sctx->log);
+}
+
+void si_prim_discard_signal_next_compute_ib_start(struct si_context *sctx)
+{
+   if (!si_compute_prim_discard_enabled(sctx))
+      return;
+
+   if (!sctx->barrier_buf) {
+      u_suballocator_alloc(&sctx->allocator_zeroed_memory, 4, 4, &sctx->barrier_buf_offset,
+                           (struct pipe_resource **)&sctx->barrier_buf);
+   }
+
+   /* Emit a placeholder to signal the next compute IB to start.
+    * See si_compute_prim_discard.c for explanation.
+    */
+   uint32_t signal = 1;
+   si_cp_write_data(sctx, sctx->barrier_buf, sctx->barrier_buf_offset, 4, V_370_MEM, V_370_ME,
+                    &signal);
+
+   sctx->last_pkt3_write_data = &sctx->gfx_cs.current.buf[sctx->gfx_cs.current.cdw - 5];
+
+   /* Only the last occurrence of WRITE_DATA will be executed.
+    * The packet will be enabled in si_flush_gfx_cs.
+    */
+   *sctx->last_pkt3_write_data = PKT3(PKT3_NOP, 3, 0);
+}
+
 void si_emit_surface_sync(struct si_context *sctx, struct radeon_cmdbuf *cs, unsigned cp_coher_cntl)
 {
    bool compute_ib = !sctx->has_graphics || cs == &sctx->prim_discard_compute_cs;
 
    assert(sctx->chip_class <= GFX9);
 
-   cp_coher_cntl |= 1u << 31; /* don't sync PFP, i.e. execute the sync in ME */
+   /* This seems problematic with GFX7 (see #4764) */
+   if (sctx->chip_class != GFX7)
+      cp_coher_cntl |= 1u << 31; /* don't sync PFP, i.e. execute the sync in ME */
 
    radeon_begin(cs);
 

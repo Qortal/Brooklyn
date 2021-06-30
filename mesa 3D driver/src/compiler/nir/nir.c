@@ -33,6 +33,7 @@
 #include <assert.h>
 #include <math.h>
 #include "util/u_math.h"
+#include "util/u_qsort.h"
 
 #include "main/menums.h" /* BITFIELD64_MASK */
 
@@ -257,6 +258,54 @@ nir_find_variable_with_driver_location(nir_shader *shader,
          return var;
    }
    return NULL;
+}
+
+/* Annoyingly, qsort_r is not in the C standard library and, in particular, we
+ * can't count on it on MSV and Android.  So we stuff the CMP function into
+ * each array element.  It's a bit messy and burns more memory but the list of
+ * variables should hever be all that long.
+ */
+struct var_cmp {
+   nir_variable *var;
+   int (*cmp)(const nir_variable *, const nir_variable *);
+};
+
+static int
+var_sort_cmp(const void *_a, const void *_b, void *_cmp)
+{
+   const struct var_cmp *a = _a;
+   const struct var_cmp *b = _b;
+   assert(a->cmp == b->cmp);
+   return a->cmp(a->var, b->var);
+}
+
+void
+nir_sort_variables_with_modes(nir_shader *shader,
+                              int (*cmp)(const nir_variable *,
+                                         const nir_variable *),
+                              nir_variable_mode modes)
+{
+   unsigned num_vars = 0;
+   nir_foreach_variable_with_modes(var, shader, modes) {
+      ++num_vars;
+   }
+   struct var_cmp *vars = ralloc_array(shader, struct var_cmp, num_vars);
+   unsigned i = 0;
+   nir_foreach_variable_with_modes_safe(var, shader, modes) {
+      exec_node_remove(&var->node);
+      vars[i++] = (struct var_cmp){
+         .var = var,
+         .cmp = cmp,
+      };
+   }
+   assert(i == num_vars);
+
+   util_qsort_r(vars, num_vars, sizeof(*vars), var_sort_cmp, cmp);
+
+   for (i = 0; i < num_vars; i++)
+      exec_list_push_tail(&shader->variables, &vars[i].var->node);
+
+   ralloc_free(vars);
 }
 
 nir_function *
@@ -2328,8 +2377,10 @@ nir_get_shader_call_payload_src(nir_intrinsic_instr *call)
 {
    switch (call->intrinsic) {
    case nir_intrinsic_trace_ray:
+   case nir_intrinsic_rt_trace_ray:
       return &call->src[10];
    case nir_intrinsic_execute_callable:
+   case nir_intrinsic_rt_execute_callable:
       return &call->src[1];
    default:
       unreachable("Not a call intrinsic");
@@ -2450,4 +2501,45 @@ nir_variable *nir_get_binding_variable(nir_shader *shader, nir_binding binding)
       return NULL;
 
    return binding_var;
+}
+
+bool
+nir_alu_instr_is_copy(nir_alu_instr *instr)
+{
+   assert(instr->src[0].src.is_ssa);
+
+   if (instr->op == nir_op_mov) {
+      return !instr->dest.saturate &&
+             !instr->src[0].abs &&
+             !instr->src[0].negate;
+   } else if (nir_op_is_vec(instr->op)) {
+      for (unsigned i = 0; i < instr->dest.dest.ssa.num_components; i++) {
+         if (instr->src[i].abs || instr->src[i].negate)
+            return false;
+      }
+      return !instr->dest.saturate;
+   } else {
+      return false;
+   }
+}
+
+nir_ssa_scalar
+nir_ssa_scalar_chase_movs(nir_ssa_scalar s)
+{
+   while (nir_ssa_scalar_is_alu(s)) {
+      nir_alu_instr *alu = nir_instr_as_alu(s.def->parent_instr);
+      if (!nir_alu_instr_is_copy(alu))
+         break;
+
+      if (alu->op == nir_op_mov) {
+         s.def = alu->src[0].src.ssa;
+         s.comp = alu->src[0].swizzle[s.comp];
+      } else {
+         assert(nir_op_is_vec(alu->op));
+         s.def = alu->src[s.comp].src.ssa;
+         s.comp = alu->src[s.comp].swizzle[0];
+      }
+   }
+
+   return s;
 }

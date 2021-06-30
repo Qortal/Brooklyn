@@ -26,6 +26,8 @@
 #include "compiler/brw_nir.h"
 #include "util/mesa-sha1.h"
 
+#define sizeof_field(type, field) sizeof(((type *)0)->field)
+
 void
 anv_nir_compute_push_layout(const struct anv_physical_device *pdevice,
                             bool robust_buffer_access,
@@ -65,6 +67,13 @@ anv_nir_compute_push_layout(const struct anv_physical_device *pdevice,
                break;
             }
 
+            case nir_intrinsic_load_desc_set_address_intel:
+               push_start = MIN2(push_start,
+                  offsetof(struct anv_push_constants, desc_sets));
+               push_end = MAX2(push_end, push_start +
+                  sizeof_field(struct anv_push_constants, desc_sets));
+               break;
+
             default:
                break;
             }
@@ -76,7 +85,8 @@ anv_nir_compute_push_layout(const struct anv_physical_device *pdevice,
 
    const bool push_ubo_ranges =
       pdevice->info.verx10 >= 75 &&
-      has_const_ubo && nir->info.stage != MESA_SHADER_COMPUTE;
+      has_const_ubo && nir->info.stage != MESA_SHADER_COMPUTE &&
+      !brw_shader_stage_is_bindless(nir->info.stage);
 
    if (push_ubo_ranges && robust_buffer_access) {
       /* We can't on-the-fly adjust our push ranges because doing so would
@@ -129,6 +139,9 @@ anv_nir_compute_push_layout(const struct anv_physical_device *pdevice,
          if (!function->impl)
             continue;
 
+         nir_builder build, *b = &build;
+         nir_builder_init(b, function->impl);
+
          nir_foreach_block(block, function->impl) {
             nir_foreach_instr_safe(instr, block) {
                if (instr->type != nir_instr_type_intrinsic)
@@ -142,6 +155,17 @@ anv_nir_compute_push_layout(const struct anv_physical_device *pdevice,
                                          nir_intrinsic_base(intrin) -
                                          push_start);
                   break;
+
+               case nir_intrinsic_load_desc_set_address_intel: {
+                  b->cursor = nir_before_instr(&intrin->instr);
+                  nir_ssa_def *pc_load = nir_load_uniform(b, 1, 64,
+                     nir_imul_imm(b, intrin->src[0].ssa, sizeof(uint64_t)),
+                     .base = offsetof(struct anv_push_constants, desc_sets),
+                     .range = sizeof_field(struct anv_push_constants, desc_sets),
+                     .dest_type = nir_type_uint64);
+                  nir_ssa_def_rewrite_uses(&intrin->dest.ssa, pc_load);
+                  break;
+               }
 
                default:
                   break;

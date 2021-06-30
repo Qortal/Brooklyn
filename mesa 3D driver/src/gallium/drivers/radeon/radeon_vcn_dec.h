@@ -1080,6 +1080,8 @@ struct radeon_decoder {
    unsigned stream_handle;
    unsigned stream_type;
    unsigned frame_number;
+   unsigned db_alignment;
+   unsigned dpb_size;
 
    struct pipe_screen *screen;
    struct radeon_winsys *ws;
@@ -1102,6 +1104,7 @@ struct radeon_decoder {
    void *render_pic_list[32];
    bool show_frame;
    unsigned ref_idx;
+   bool tmz_ctx;
    struct {
       unsigned data0;
       unsigned data1;

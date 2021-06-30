@@ -241,31 +241,16 @@ radv_compiler_debug(void *private_data, enum radv_compiler_debug_level level, co
                    &debug_data->module->base, 0, 0, "radv", message);
 }
 
-static void
-mark_geom_invariant(nir_shader *nir)
+static nir_ssa_def *
+convert_pointer_to_64(nir_builder *b, const struct radv_physical_device *pdev, nir_ssa_def *ptr)
 {
-   nir_foreach_shader_out_variable(var, nir)
-   {
-      switch (var->data.location) {
-      case VARYING_SLOT_POS:
-      case VARYING_SLOT_PSIZ:
-      case VARYING_SLOT_CLIP_DIST0:
-      case VARYING_SLOT_CLIP_DIST1:
-      case VARYING_SLOT_CULL_DIST0:
-      case VARYING_SLOT_CULL_DIST1:
-      case VARYING_SLOT_TESS_LEVEL_OUTER:
-      case VARYING_SLOT_TESS_LEVEL_INNER:
-         var->data.invariant = true;
-         break;
-      default:
-         break;
-      }
-   }
+   nir_ssa_def *comp[] = {ptr, nir_imm_int(b, pdev->rad_info.address32_hi)};
+   return nir_pack_64_2x32(b, nir_vec(b, comp, 2));
 }
 
 static bool
 lower_intrinsics(nir_shader *nir, const struct radv_pipeline_key *key,
-                 const struct radv_pipeline_layout *layout)
+                 const struct radv_pipeline_layout *layout, const struct radv_physical_device *pdev)
 {
    nir_function_impl *entry = nir_shader_get_entrypoint(nir);
    bool progress = false;
@@ -282,10 +267,22 @@ lower_intrinsics(nir_shader *nir, const struct radv_pipeline_key *key,
          b.cursor = nir_before_instr(&intrin->instr);
 
          nir_ssa_def *def = NULL;
-         if (intrin->intrinsic == nir_intrinsic_load_vulkan_descriptor) {
-            def = nir_vec3(&b, nir_channel(&b, intrin->src[0].ssa, 0),
-                           nir_channel(&b, intrin->src[0].ssa, 1), nir_imm_int(&b, 0));
-         } else if (intrin->intrinsic == nir_intrinsic_vulkan_resource_index) {
+         switch (intrin->intrinsic) {
+         case nir_intrinsic_load_vulkan_descriptor:
+            if (nir_intrinsic_desc_type(intrin) == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR) {
+               nir_ssa_def *addr =
+                  convert_pointer_to_64(&b, pdev,
+                                        nir_iadd(&b, nir_channels(&b, intrin->src[0].ssa, 1),
+                                                 nir_channels(&b, intrin->src[0].ssa, 2)));
+
+               def = nir_build_load_global(&b, 1, 64, addr, .access = ACCESS_NON_WRITEABLE,
+                                           .align_mul = 8, .align_offset = 0);
+            } else {
+               def = nir_vec3(&b, nir_channel(&b, intrin->src[0].ssa, 0),
+                              nir_channel(&b, intrin->src[0].ssa, 1), nir_imm_int(&b, 0));
+            }
+            break;
+         case nir_intrinsic_vulkan_resource_index: {
             unsigned desc_set = nir_intrinsic_desc_set(intrin);
             unsigned binding = nir_intrinsic_binding(intrin);
             struct radv_descriptor_set_layout *desc_layout = layout->set[desc_set].layout;
@@ -304,20 +301,28 @@ lower_intrinsics(nir_shader *nir, const struct radv_pipeline_key *key,
                stride = nir_imm_int(&b, desc_layout->binding[binding].size);
             }
             def = nir_vec3(&b, set_ptr, binding_ptr, stride);
-         } else if (intrin->intrinsic == nir_intrinsic_vulkan_resource_reindex) {
+            break;
+         }
+         case nir_intrinsic_vulkan_resource_reindex: {
             nir_ssa_def *set_ptr = nir_channel(&b, intrin->src[0].ssa, 0);
             nir_ssa_def *binding_ptr = nir_channel(&b, intrin->src[0].ssa, 1);
             nir_ssa_def *stride = nir_channel(&b, intrin->src[0].ssa, 2);
             binding_ptr = nir_iadd(&b, binding_ptr, nir_imul(&b, intrin->src[1].ssa, stride));
             def = nir_vec3(&b, set_ptr, binding_ptr, stride);
-         } else if (intrin->intrinsic == nir_intrinsic_is_sparse_texels_resident) {
+            break;
+         }
+         case nir_intrinsic_is_sparse_texels_resident:
             def = nir_ieq_imm(&b, intrin->src[0].ssa, 0);
-         } else if (intrin->intrinsic == nir_intrinsic_sparse_residency_code_and) {
+            break;
+         case nir_intrinsic_sparse_residency_code_and:
             def = nir_ior(&b, intrin->src[0].ssa, intrin->src[1].ssa);
-         } else if (intrin->intrinsic == nir_intrinsic_load_view_index &&
-                    !key->has_multiview_view_index) {
+            break;
+         case nir_intrinsic_load_view_index:
+            if (key->has_multiview_view_index)
+               continue;
             def = nir_imm_zero(&b, 1, 32);
-         } else {
+            break;
+         default:
             continue;
          }
 
@@ -533,12 +538,8 @@ radv_shader_compile_to_nir(struct radv_device *device, struct vk_shader_module *
       NIR_PASS_V(nir, nir_lower_global_vars_to_local);
       NIR_PASS_V(nir, nir_lower_vars_to_ssa);
 
-      if (device->instance->debug_flags & RADV_DEBUG_INVARIANT_GEOM &&
-          stage != MESA_SHADER_FRAGMENT) {
-         mark_geom_invariant(nir);
-      }
-
-      NIR_PASS_V(nir, nir_propagate_invariant);
+      NIR_PASS_V(nir, nir_propagate_invariant,
+                 device->instance->debug_flags & RADV_DEBUG_INVARIANT_GEOM);
 
       NIR_PASS_V(nir, nir_lower_system_values);
       NIR_PASS_V(nir, nir_lower_compute_system_values, NULL);
@@ -639,7 +640,7 @@ radv_shader_compile_to_nir(struct radv_device *device, struct vk_shader_module *
    NIR_PASS_V(nir, nir_lower_explicit_io, nir_var_mem_ubo | nir_var_mem_ssbo,
               nir_address_format_vec2_index_32bit_offset);
 
-   NIR_PASS_V(nir, lower_intrinsics, key, layout);
+   NIR_PASS_V(nir, lower_intrinsics, key, layout, device->physical_device);
 
    /* Lower deref operations for compute shared memory. */
    if (nir->info.stage == MESA_SHADER_COMPUTE) {
@@ -1435,10 +1436,10 @@ shader_variant_compile(struct radv_device *device, struct vk_shader_module *modu
       options->force_vrs_rates = (1u << 2) | (1u << 4);
       break;
    case RADV_FORCE_VRS_2x1:
-      options->force_vrs_rates = (0u << 2) | (1u << 4);
+      options->force_vrs_rates = (1u << 2) | (0u << 4);
       break;
    case RADV_FORCE_VRS_1x2:
-      options->force_vrs_rates = (1u << 2) | (0u << 4);
+      options->force_vrs_rates = (0u << 2) | (1u << 4);
       break;
    default:
       break;

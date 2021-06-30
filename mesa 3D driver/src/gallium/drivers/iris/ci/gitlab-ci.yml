@@ -51,13 +51,13 @@
   tags:
     - mesa-ci-x86-64-lava-hp-x360-14-G1-sona
 
-iris-apl-gles2:
+.iris-apl-gles2:
   extends:
     - .iris-apl-test
   variables:
     DEQP_VER: gles2
 
-iris-apl-gles3:
+.iris-apl-gles3:
   extends:
     - .iris-apl-test
   variables:
@@ -65,7 +65,7 @@ iris-apl-gles3:
     DEQP_EXPECTED_RENDERER: APL
     DEQP_FRACTION: 4
 
-iris-apl-gles31:
+.iris-apl-gles31:
   extends:
     - .iris-apl-test
   variables:
@@ -74,14 +74,14 @@ iris-apl-gles31:
     DEQP_FRACTION: 6
 
 # this appears to silently kill the board sometimes.  Leave it as a manual job for debugging.
-iris-apl-gl:
+.iris-apl-gl:
   extends:
     - .iris-apl-test
     - .test-manual-mr
   variables:
     DEQP_VER: gl46
 
-iris-apl-egl:
+.iris-apl-egl:
   extends:
     - .iris-apl-test
   variables:
@@ -89,13 +89,13 @@ iris-apl-egl:
     HWCI_START_XORG: 1
     DEQP_VER: egl
 
-iris-glk-gles2:
+.iris-glk-gles2:
   extends:
     - .iris-glk-test
   variables:
     DEQP_VER: gles2
 
-iris-glk-gles3:
+.iris-glk-gles3:
   extends:
     - .iris-glk-test
   variables:
@@ -103,7 +103,7 @@ iris-glk-gles3:
     DEQP_EXPECTED_RENDERER: GLK
     DEQP_FRACTION: 8
 
-iris-glk-gles31:
+.iris-glk-gles31:
   extends:
     - .iris-glk-test
   variables:
@@ -113,14 +113,14 @@ iris-glk-gles31:
 
 # this appears to be just unusably slow, timed out at an hour.  Needs debugging,
 # so leave it as a manual job.
-iris-glk-gl:
+.iris-glk-gl:
   extends:
     - .iris-glk-test
     - .test-manual-mr
   variables:
     DEQP_VER: gl46
 
-iris-glk-egl:
+.iris-glk-egl:
   extends:
     - .iris-glk-test
   variables:
@@ -128,13 +128,13 @@ iris-glk-egl:
     HWCI_START_XORG: 1
     DEQP_VER: egl
 
-iris-amly-gles2:
+.iris-amly-gles2:
   extends:
     - .iris-amly-test
   variables:
     DEQP_VER: gles2
 
-iris-amly-gles3:
+.iris-amly-gles3:
   extends:
     - .iris-amly-test
     - .test-manual-mr
@@ -143,7 +143,7 @@ iris-amly-gles3:
     DEQP_EXPECTED_RENDERER: AML
     DEQP_FRACTION: 2
 
-iris-amly-gles31:
+.iris-amly-gles31:
   extends:
     - .iris-amly-test
     - .test-manual-mr
@@ -152,13 +152,13 @@ iris-amly-gles31:
     DEQP_EXPECTED_RENDERER: AML
     DEQP_FRACTION: 2
 
-iris-amly-gl:
+.iris-amly-gl:
   extends:
     - .iris-amly-test
   variables:
     DEQP_VER: gl46
 
-iris-amly-egl:
+.iris-amly-egl:
   extends:
     - .iris-amly-test
   variables:
@@ -166,7 +166,7 @@ iris-amly-egl:
     HWCI_START_XORG: 1
     DEQP_VER: egl
 
-iris-amly-piglit:
+.iris-amly-piglit:
   extends:
     - .iris-amly-test
     - .lava-piglit
@@ -190,28 +190,28 @@ iris-amly-piglit:
     PIGLIT_REPLAY_DESCRIPTION_FILE: "/install/traces-iris.yml"
     PIGLIT_REPLAY_EXTRA_ARGS: --keep-image
 
-iris-apl-traces:
+.iris-apl-traces:
   variables:
     GPU_VERSION: intel-apl
   extends:
     - .iris-apl-test
     - .iris-traces
 
-iris-glk-traces:
+.iris-glk-traces:
   variables:
     GPU_VERSION: intel-glk
   extends:
     - .iris-glk-test
     - .iris-traces
 
-iris-amly-traces:
+.iris-amly-traces:
   variables:
     GPU_VERSION: intel-amly
   extends:
     - .iris-amly-test
     - .iris-traces
 
-iris-kbl-traces:
+.iris-kbl-traces:
   variables:
     GPU_VERSION: intel-kbl
   extends:

@@ -488,7 +488,7 @@ static struct pipe_context *si_create_context(struct pipe_screen *screen, unsign
    /* Initialize private allocators. */
    u_suballocator_init(&sctx->allocator_zeroed_memory, &sctx->b, 128 * 1024, 0,
                        PIPE_USAGE_DEFAULT,
-                       SI_RESOURCE_FLAG_UNMAPPABLE | SI_RESOURCE_FLAG_CLEAR, false);
+                       SI_RESOURCE_FLAG_CLEAR | SI_RESOURCE_FLAG_32BIT, false);
 
    sctx->cached_gtt_allocator = u_upload_create(&sctx->b, 16 * 1024, 0, PIPE_USAGE_STAGING, 0);
    if (!sctx->cached_gtt_allocator)
@@ -592,7 +592,28 @@ static struct pipe_context *si_create_context(struct pipe_screen *screen, unsign
       sctx->discard_rasterizer_state = util_blitter_get_discard_rasterizer_state(sctx->blitter);
       sctx->queued.named.rasterizer = sctx->discard_rasterizer_state;
 
-      si_init_draw_functions(sctx);
+      switch (sctx->chip_class) {
+      case GFX6:
+         si_init_draw_functions_GFX6(sctx);
+         break;
+      case GFX7:
+         si_init_draw_functions_GFX7(sctx);
+         break;
+      case GFX8:
+         si_init_draw_functions_GFX8(sctx);
+         break;
+      case GFX9:
+         si_init_draw_functions_GFX9(sctx);
+         break;
+      case GFX10:
+         si_init_draw_functions_GFX10(sctx);
+         break;
+      case GFX10_3:
+         si_init_draw_functions_GFX10_3(sctx);
+         break;
+      default:
+         unreachable("unhandled chip class");
+      }
 
       si_initialize_prim_discard_tunables(sscreen, flags & SI_CONTEXT_FLAG_AUX,
                                           &sctx->prim_discard_vertex_count_threshold,
@@ -695,11 +716,6 @@ static struct pipe_context *si_create_context(struct pipe_screen *screen, unsign
    sctx->dirty_implicit_resources = _mesa_pointer_hash_table_create(NULL);
    if (!sctx->dirty_implicit_resources)
       goto fail;
-
-   sctx->sample_pos_buffer =
-      pipe_buffer_create(sctx->b.screen, 0, PIPE_USAGE_DEFAULT, sizeof(sctx->sample_positions));
-   pipe_buffer_write(&sctx->b, sctx->sample_pos_buffer, 0, sizeof(sctx->sample_positions),
-                     &sctx->sample_positions);
 
    /* The remainder of this function initializes the gfx CS and must be last. */
    assert(sctx->gfx_cs.current.cdw == 0);
@@ -1125,7 +1141,7 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
 
    if (!util_queue_init(
           &sscreen->shader_compiler_queue, "sh", 64, num_comp_hi_threads,
-          UTIL_QUEUE_INIT_RESIZE_IF_FULL | UTIL_QUEUE_INIT_SET_FULL_THREAD_AFFINITY)) {
+          UTIL_QUEUE_INIT_RESIZE_IF_FULL | UTIL_QUEUE_INIT_SET_FULL_THREAD_AFFINITY, NULL)) {
       si_destroy_shader_cache(sscreen);
       FREE(sscreen);
       glsl_type_singleton_decref();
@@ -1135,7 +1151,7 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
    if (!util_queue_init(&sscreen->shader_compiler_queue_low_priority, "shlo", 64,
                         num_comp_lo_threads,
                         UTIL_QUEUE_INIT_RESIZE_IF_FULL | UTIL_QUEUE_INIT_SET_FULL_THREAD_AFFINITY |
-                           UTIL_QUEUE_INIT_USE_MINIMUM_PRIORITY)) {
+                           UTIL_QUEUE_INIT_USE_MINIMUM_PRIORITY, NULL)) {
       si_destroy_shader_cache(sscreen);
       FREE(sscreen);
       glsl_type_singleton_decref();
@@ -1148,8 +1164,12 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
    unsigned prim_discard_vertex_count_threshold, tmp;
    si_initialize_prim_discard_tunables(sscreen, false, &prim_discard_vertex_count_threshold, &tmp);
    /* Compute-shader-based culling doesn't support VBOs in user SGPRs. */
-   if (prim_discard_vertex_count_threshold == UINT_MAX)
+   if (prim_discard_vertex_count_threshold == UINT_MAX) {
+      /* This decreases CPU overhead if all descriptors are in user SGPRs because we don't
+       * have to allocate and count references for the upload buffer.
+       */
       sscreen->num_vbos_in_user_sgprs = sscreen->info.chip_class >= GFX9 ? 5 : 1;
+   }
 
    /* Determine tessellation ring info. */
    bool double_offchip_buffers = sscreen->info.chip_class >= GFX7 &&
@@ -1215,12 +1235,16 @@ static struct pipe_screen *radeonsi_screen_create_impl(struct radeon_winsys *ws,
    sscreen->commutative_blend_add =
       driQueryOptionb(config->options, "radeonsi_commutative_blend_add") ||
       driQueryOptionb(config->options, "allow_draw_out_of_order");
+   sscreen->allow_draw_out_of_order = driQueryOptionb(config->options, "allow_draw_out_of_order");
 
    sscreen->use_ngg = !(sscreen->debug_flags & DBG(NO_NGG)) &&
                       sscreen->info.chip_class >= GFX10 &&
                       (sscreen->info.family != CHIP_NAVI14 ||
                        sscreen->info.is_pro_graphics);
-   sscreen->use_ngg_culling = sscreen->use_ngg && !(sscreen->debug_flags & DBG(NO_NGG_CULLING));
+   sscreen->use_ngg_culling = sscreen->use_ngg &&
+                              sscreen->info.max_render_backends >= 2 &&
+                              !((sscreen->debug_flags & DBG(NO_NGG_CULLING)) ||
+                                LLVM_VERSION_MAJOR <= 11 /* hangs on 11, see #4874 */);
    sscreen->use_ngg_streamout = false;
 
    /* Only set this for the cases that are known to work, which are:

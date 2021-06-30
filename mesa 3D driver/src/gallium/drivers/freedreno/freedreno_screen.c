@@ -207,6 +207,9 @@ fd_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_NIR_COMPACT_ARRAYS:
       return 1;
 
+   case PIPE_CAP_COPY_BETWEEN_COMPRESSED_AND_PLAIN_FORMATS:
+      return is_a6xx(screen);
+
    case PIPE_CAP_VERTEX_BUFFER_OFFSET_4BYTE_ALIGNED_ONLY:
    case PIPE_CAP_VERTEX_BUFFER_STRIDE_4BYTE_ALIGNED_ONLY:
    case PIPE_CAP_VERTEX_ELEMENT_SRC_OFFSET_4BYTE_ALIGNED_ONLY:
@@ -638,9 +641,9 @@ fd_screen_get_shader_param(struct pipe_screen *pscreen,
    case PIPE_SHADER_CAP_INT64_ATOMICS:
    case PIPE_SHADER_CAP_FP16_DERIVATIVES:
    case PIPE_SHADER_CAP_FP16_CONST_BUFFERS:
-   case PIPE_SHADER_CAP_INT16:
    case PIPE_SHADER_CAP_GLSL_16BIT_CONSTS:
       return 0;
+   case PIPE_SHADER_CAP_INT16:
    case PIPE_SHADER_CAP_FP16:
       return (
          (is_a5xx(screen) || is_a6xx(screen)) &&

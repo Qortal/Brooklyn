@@ -349,7 +349,6 @@ crocus_resource_disable_aux(struct crocus_resource *res)
    res->aux.surf.size_B = 0;
    res->aux.surf.levels = 0;
    res->aux.bo = NULL;
-   res->aux.extra_aux.surf.size_B = 0;
    res->aux.state = NULL;
 }
 
@@ -466,20 +465,11 @@ crocus_resource_configure_aux(struct crocus_screen *screen,
    const bool has_ccs =
       ((devinfo->ver >= 7 && !res->mod_info && !(INTEL_DEBUG & DEBUG_NO_RBC)) ||
        (res->mod_info && res->mod_info->aux_usage != ISL_AUX_USAGE_NONE)) &&
-      isl_surf_get_ccs_surf(&screen->isl_dev, &res->surf, &res->aux.surf,
-                            &res->aux.extra_aux.surf, 0);
+      isl_surf_get_ccs_surf(&screen->isl_dev, &res->surf, NULL,
+                            &res->aux.surf, 0);
 
-   /* Having both HIZ and MCS is impossible. */
-   assert(!has_mcs || !has_hiz);
-
-   /* Ensure aux surface creation for MCS_CCS and HIZ_CCS is correct. */
-   if (has_ccs && (has_mcs || has_hiz)) {
-      assert(res->aux.extra_aux.surf.size_B > 0 &&
-             res->aux.extra_aux.surf.usage & ISL_SURF_USAGE_CCS_BIT);
-      assert(res->aux.surf.size_B > 0 &&
-             res->aux.surf.usage &
-             (ISL_SURF_USAGE_HIZ_BIT | ISL_SURF_USAGE_MCS_BIT));
-   }
+   /* Having more than one type of compression is impossible */
+   assert(has_ccs + has_mcs + has_hiz <= 1);
 
    if (res->mod_info && has_ccs) {
       res->aux.usage = res->mod_info->aux_usage;
@@ -553,14 +543,6 @@ crocus_resource_configure_aux(struct crocus_screen *screen,
       ALIGN(res->surf.size_B, res->aux.surf.alignment_B) : 0;
    uint64_t size = res->aux.surf.size_B;
 
-   /* Allocate space in the buffer for storing the CCS. */
-   if (res->aux.extra_aux.surf.size_B > 0) {
-      const uint64_t padded_aux_size =
-         ALIGN(size, res->aux.extra_aux.surf.alignment_B);
-      res->aux.extra_aux.offset = res->aux.offset + padded_aux_size;
-      size = padded_aux_size + res->aux.extra_aux.surf.size_B;
-   }
-
    /* Allocate space in the buffer for storing the clear color. On modern
     * platforms (gen > 9), we can read it directly from such buffer.
     *
@@ -582,7 +564,7 @@ crocus_resource_configure_aux(struct crocus_screen *screen,
          /* Disable HiZ for LOD > 0 unless the width/height are 8x4 aligned.
           * For LOD == 0, we can grow the dimensions to make it work.
           */
-         if (!devinfo->is_haswell ||
+         if (devinfo->verx10 < 75 ||
              (level == 0 || ((width & 7) == 0 && (height & 3) == 0)))
             res->aux.has_hiz |= 1 << level;
       }
@@ -610,21 +592,6 @@ crocus_resource_init_aux_buf(struct crocus_resource *res, uint32_t alloc_flags)
          memset((char*)map + res->aux.offset, memset_value,
                 res->aux.surf.size_B);
       }
-
-      /* Bspec section titled : MCS/CCS Buffers for Render Target(s) states:
-       *    - If Software wants to enable Color Compression without Fast clear,
-       *      Software needs to initialize MCS with zeros.
-       *    - Lossless compression and CCS initialized to all F (using HW Fast
-       *      Clear or SW direct Clear)
-       *
-       * We think, the first bullet point above is referring to CCS aux
-       * surface. Since we initialize the MCS in the clear state, we also
-       * initialize the CCS in the clear state (via SW direct clear) to keep
-       * the two in sync.
-       */
-      memset((char*)map + res->aux.extra_aux.offset,
-             isl_aux_usage_has_mcs(res->aux.usage) ? 0xFF : 0,
-             res->aux.extra_aux.surf.size_B);
 
       crocus_bo_unmap(res->aux.bo);
    }
@@ -1161,6 +1128,10 @@ crocus_invalidate_resource(struct pipe_context *ctx,
    struct crocus_resource *res = (void *) resource;
 
    if (resource->target != PIPE_BUFFER)
+      return;
+
+   /* If it's already invalidated, don't bother doing anything. */
+   if (res->valid_buffer_range.start > res->valid_buffer_range.end)
       return;
 
    if (!resource_is_busy(ice, res)) {

@@ -28,29 +28,21 @@
  */
 
 /* crocus_state.c */
-void genX(init_state)(struct crocus_context *ice);
-void genX(init_screen_state)(struct crocus_screen *screen);
-void genX(upload_urb)(struct crocus_batch *batch,
+void genX(crocus_init_state)(struct crocus_context *ice);
+void genX(crocus_init_screen_state)(struct crocus_screen *screen);
+void genX(crocus_upload_urb)(struct crocus_batch *batch,
                       unsigned vs_size,
                       bool gs_present,
                       unsigned gs_size);
-void genX(emit_hashing_mode)(struct crocus_context *ice,
-                             struct crocus_batch *batch,
-                             unsigned width, unsigned height,
-                             unsigned scale);
-
+void genX(crocus_update_pma_fix)(struct crocus_context *ice,
+                                 struct crocus_batch *batch,
+                                 bool enable);
 /* crocus_blorp.c */
-void genX(init_blorp)(struct crocus_context *ice);
+void genX(crocus_init_blorp)(struct crocus_context *ice);
 
 /* crocus_query.c */
-void genX(init_query)(struct crocus_context *ice);
-void genX(init_screen_query)(struct crocus_screen *screen);
-void genX(math_add32_gpr0)(struct crocus_context *ice,
-                           struct crocus_batch *batch,
-                           uint32_t x);
-void genX(math_div32_gpr0)(struct crocus_context *ice,
-                           struct crocus_batch *batch,
-                           uint32_t D);
+void genX(crocus_init_query)(struct crocus_context *ice);
+void genX(crocus_init_screen_query)(struct crocus_screen *screen);
 
 /* crocus_blt.c */
-void genX(init_blt)(struct crocus_screen *screen);
+void genX(crocus_init_blt)(struct crocus_screen *screen);

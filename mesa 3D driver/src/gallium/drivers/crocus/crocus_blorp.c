@@ -252,7 +252,7 @@ blorp_emit_urb_config(struct blorp_batch *blorp_batch,
 #if GFX_VER <= 5
    batch->screen->vtbl.calculate_urb_fence(batch, 0, vs_entry_size, sf_entry_size);
 #else
-   genX(upload_urb)(batch, vs_entry_size, false, vs_entry_size);
+   genX(crocus_upload_urb)(batch, vs_entry_size, false, vs_entry_size);
 #endif
 }
 #endif
@@ -286,6 +286,11 @@ crocus_blorp_exec(struct blorp_batch *blorp_batch,
    crocus_require_command_space(batch, 1400);
    crocus_require_statebuffer_space(batch, 600);
    batch->no_wrap = true;
+
+#if GFX_VER == 8
+   genX(crocus_update_pma_fix)(ice, batch, false);
+#endif
+
 #if GFX_VER == 6
    /* Emit workaround flushes when we switch from drawing to blorping. */
    crocus_emit_post_sync_nonzero_flush(batch);
@@ -387,7 +392,7 @@ blorp_measure_start(struct blorp_batch *blorp_batch,
 }
 
 void
-genX(init_blorp)(struct crocus_context *ice)
+genX(crocus_init_blorp)(struct crocus_context *ice)
 {
    struct crocus_screen *screen = (struct crocus_screen *)ice->ctx.screen;
 

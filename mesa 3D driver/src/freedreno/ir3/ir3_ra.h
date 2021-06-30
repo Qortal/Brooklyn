@@ -91,36 +91,12 @@ ra_reg_is_src(const struct ir3_register *reg)
 		def_is_gpr(reg->def);
 }
 
-/* Array destinations can act as a source, reading the previous array and then
- * modifying it. Return true when the register is an array destination that
- * acts like a source.
- */
-static inline bool
-ra_reg_is_array_rmw(const struct ir3_register *reg)
-{
-	return ((reg->flags & IR3_REG_ARRAY) && (reg->flags & IR3_REG_DEST) && reg->def);
-}
-
 static inline bool
 ra_reg_is_dst(const struct ir3_register *reg)
 {
-	return (reg->flags & IR3_REG_SSA) && (reg->flags & IR3_REG_DEST) &&
+	return (reg->flags & IR3_REG_SSA) &&
 		def_is_gpr(reg) &&
 		((reg->flags & IR3_REG_ARRAY) || reg->wrmask);
-}
-
-static inline struct ir3_register *
-ra_dst_get_tied_src(const struct ir3_compiler *compiler, struct ir3_register *dst)
-{
-	/* With the a6xx new cat6 encoding, the same register is used for the
-	 * value and destination of atomic operations.
-	 */
-	if (compiler->gpu_id >= 600 && is_atomic(dst->instr->opc) &&
-		(dst->instr->flags & IR3_INSTR_G)) {
-		return dst->instr->regs[3];
-	}
-
-	return NULL;
 }
 
 /* Iterators for sources and destinations which:
@@ -131,31 +107,18 @@ ra_dst_get_tied_src(const struct ir3_compiler *compiler, struct ir3_register *ds
 
 #define ra_foreach_src(__srcreg, __instr) \
 	for (struct ir3_register *__srcreg = (void *)~0; __srcreg; __srcreg = NULL) \
-		for (unsigned __cnt = (__instr)->regs_count, __i = 0; __i < __cnt; __i++) \
-			if (ra_reg_is_src((__srcreg = (__instr)->regs[__i])))
+		for (unsigned __cnt = (__instr)->srcs_count, __i = 0; __i < __cnt; __i++) \
+			if (ra_reg_is_src((__srcreg = (__instr)->srcs[__i])))
 
 #define ra_foreach_src_rev(__srcreg, __instr) \
 	for (struct ir3_register *__srcreg = (void *)~0; __srcreg; __srcreg = NULL) \
-		for (int __cnt = (__instr)->regs_count, __i = __cnt - 1; __i >= 0; __i--) \
-			if (ra_reg_is_src((__srcreg = (__instr)->regs[__i])))
+		for (int __cnt = (__instr)->srcs_count, __i = __cnt - 1; __i >= 0; __i--) \
+			if (ra_reg_is_src((__srcreg = (__instr)->srcs[__i])))
 
-#define ra_foreach_dst(__srcreg, __instr) \
-	for (struct ir3_register *__srcreg = (void *)~0; __srcreg; __srcreg = NULL) \
-		for (unsigned __cnt = (__instr)->regs_count, __i = 0; __i < __cnt; __i++) \
-			if (ra_reg_is_dst((__srcreg = (__instr)->regs[__i])))
-
-static inline struct ir3_register *
-ra_src_get_tied_dst(const struct ir3_compiler *compiler,
-					struct ir3_instruction *instr,
-				    struct ir3_register *src)
-{
-	if (compiler->gpu_id >= 600 && is_atomic(instr->opc) &&
-		(instr->flags & IR3_INSTR_G) && src == instr->regs[3]) {
-		return instr->regs[0];
-	}
-
-	return NULL;
-}
+#define ra_foreach_dst(__dstreg, __instr) \
+	for (struct ir3_register *__dstreg = (void *)~0; __dstreg; __dstreg = NULL) \
+		for (unsigned __cnt = (__instr)->dsts_count, __i = 0; __i < __cnt; __i++) \
+			if (ra_reg_is_dst((__dstreg = (__instr)->dsts[__i])))
 
 
 #define RA_HALF_SIZE (4 * 48)

@@ -41,10 +41,9 @@ struct tc_unflushed_batch_token;
 
 struct zink_tc_fence {
    struct pipe_reference reference;
-   uint32_t deferred_id;
-   struct tc_unflushed_batch_token *tc_token;
+   uint32_t submit_count;
    struct util_queue_fence ready;
-   uint32_t batch_id;
+   struct tc_unflushed_batch_token *tc_token;
    struct pipe_context *deferred_ctx;
    struct zink_fence *fence;
 };
@@ -52,8 +51,6 @@ struct zink_tc_fence {
 struct zink_fence {
    VkFence fence;
    uint32_t batch_id;
-   simple_mtx_t resource_mtx;
-   struct set *resources; /* resources need access removed asap, so they're on the fence */
    bool submitted;
    bool completed;
 };

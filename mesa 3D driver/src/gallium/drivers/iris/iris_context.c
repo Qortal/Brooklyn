@@ -223,12 +223,17 @@ iris_destroy_context(struct pipe_context *ctx)
    clear_dirty_dmabuf_set(ice);
 
    screen->vtbl.destroy_state(ice);
+
+   for (unsigned i = 0; i < ARRAY_SIZE(ice->shaders.scratch_surfs); i++)
+      pipe_resource_reference(&ice->shaders.scratch_surfs[i].res, NULL);
+
    iris_destroy_program_cache(ice);
    iris_destroy_border_color_pool(ice);
    if (screen->measure.config)
       iris_destroy_ctx_measure(ice);
 
    u_upload_destroy(ice->state.surface_uploader);
+   u_upload_destroy(ice->state.bindless_uploader);
    u_upload_destroy(ice->state.dynamic_uploader);
    u_upload_destroy(ice->query_buffer_uploader);
 
@@ -326,6 +331,9 @@ iris_create_context(struct pipe_screen *pscreen, void *priv, unsigned flags)
    ice->state.surface_uploader =
       u_upload_create(ctx, 64 * 1024, PIPE_BIND_CUSTOM, PIPE_USAGE_IMMUTABLE,
                       IRIS_RESOURCE_FLAG_SURFACE_MEMZONE);
+   ice->state.bindless_uploader =
+      u_upload_create(ctx, 64 * 1024, PIPE_BIND_CUSTOM, PIPE_USAGE_IMMUTABLE,
+                      IRIS_RESOURCE_FLAG_BINDLESS_MEMZONE);
    ice->state.dynamic_uploader =
       u_upload_create(ctx, 64 * 1024, PIPE_BIND_CUSTOM, PIPE_USAGE_IMMUTABLE,
                       IRIS_RESOURCE_FLAG_DYNAMIC_MEMZONE);

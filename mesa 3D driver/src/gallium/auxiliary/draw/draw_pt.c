@@ -62,41 +62,35 @@ draw_pt_arrays(struct draw_context *draw,
 {
    struct draw_pt_front_end *frontend = NULL;
    struct draw_pt_middle_end *middle = NULL;
-   unsigned opt = 0;
+   unsigned opt = PT_SHADE;
 
-   if (!draw->force_passthrough) {
-      unsigned out_prim = prim;
+   unsigned out_prim = prim;
 
-      if (draw->gs.geometry_shader)
-         out_prim = draw->gs.geometry_shader->output_primitive;
-      else if (draw->tes.tess_eval_shader)
-         out_prim = get_tes_output_prim(draw->tes.tess_eval_shader);
+   if (draw->gs.geometry_shader)
+      out_prim = draw->gs.geometry_shader->output_primitive;
+   else if (draw->tes.tess_eval_shader)
+      out_prim = get_tes_output_prim(draw->tes.tess_eval_shader);
 
-      if (!draw->render) {
-         opt |= PT_PIPELINE;
-      }
+   if (!draw->render) {
+      opt |= PT_PIPELINE;
+   }
 
-      if (draw_need_pipeline(draw,
-                             draw->rasterizer,
-                             out_prim)) {
-         opt |= PT_PIPELINE;
-      }
+   if (draw_need_pipeline(draw,
+                           draw->rasterizer,
+                           out_prim)) {
+      opt |= PT_PIPELINE;
+   }
 
-      if ((draw->clip_xy ||
-           draw->clip_z ||
-           draw->clip_user) && !draw->pt.test_fse) {
-         opt |= PT_CLIPTEST;
-      }
-
-      opt |= PT_SHADE;
+   if ((draw->clip_xy ||
+         draw->clip_z ||
+         draw->clip_user) && !draw->pt.test_fse) {
+      opt |= PT_CLIPTEST;
    }
 
    if (draw->pt.middle.llvm) {
       middle = draw->pt.middle.llvm;
    } else {
-      if (opt == 0)
-         middle = draw->pt.middle.fetch_emit;
-      else if (opt == PT_SHADE && !draw->pt.no_fse)
+      if (opt == PT_SHADE && !draw->pt.no_fse)
          middle = draw->pt.middle.fetch_shade_emit;
       else
          middle = draw->pt.middle.general;
@@ -195,10 +189,6 @@ boolean draw_pt_init( struct draw_context *draw )
    if (!draw->pt.front.vsplit)
       return FALSE;
 
-   draw->pt.middle.fetch_emit = draw_pt_fetch_emit( draw );
-   if (!draw->pt.middle.fetch_emit)
-      return FALSE;
-
    draw->pt.middle.fetch_shade_emit = draw_pt_middle_fse( draw );
    if (!draw->pt.middle.fetch_shade_emit)
       return FALSE;
@@ -226,11 +216,6 @@ void draw_pt_destroy( struct draw_context *draw )
    if (draw->pt.middle.general) {
       draw->pt.middle.general->destroy( draw->pt.middle.general );
       draw->pt.middle.general = NULL;
-   }
-
-   if (draw->pt.middle.fetch_emit) {
-      draw->pt.middle.fetch_emit->destroy( draw->pt.middle.fetch_emit );
-      draw->pt.middle.fetch_emit = NULL;
    }
 
    if (draw->pt.middle.fetch_shade_emit) {

@@ -25,6 +25,7 @@
 
 #include "nir_builder.h"
 #include "nir_deref.h"
+#include "nir_to_dxil.h"
 #include "util/u_math.h"
 
 static void
@@ -1464,4 +1465,89 @@ dxil_nir_create_bare_samplers(nir_shader *nir)
 
    _mesa_hash_table_u64_destroy(sampler_to_bare);
    return progress;
+}
+
+
+/* Comparison function to sort io values so that first come normal varyings,
+ * then system values, and then system generated values.
+ */
+static int
+variable_location_cmp(const nir_variable* a, const nir_variable* b)
+{
+   // Sort by driver_location, location, then index
+   return a->data.driver_location != b->data.driver_location ?
+            a->data.driver_location - b->data.driver_location : 
+            a->data.location !=  b->data.location ?
+               a->data.location - b->data.location :
+               a->data.index - b->data.index;
+}
+
+/* Order varyings according to driver location */
+uint64_t
+dxil_sort_by_driver_location(nir_shader* s, nir_variable_mode modes)
+{
+   nir_sort_variables_with_modes(s, variable_location_cmp, modes);
+
+   uint64_t result = 0;
+   nir_foreach_variable_with_modes(var, s, modes) {
+      result |= 1ull << var->data.location;
+   }
+   return result;
+}
+
+/* Sort PS outputs so that color outputs come first */
+void
+dxil_sort_ps_outputs(nir_shader* s)
+{
+   nir_foreach_variable_with_modes_safe(var, s, nir_var_shader_out) {
+      /* We use the driver_location here to avoid introducing a new
+       * struct or member variable here. The true, updated driver location
+       * will be written below, after sorting */
+      switch (var->data.location) {
+      case FRAG_RESULT_DEPTH:
+         var->data.driver_location = 1;
+         break;
+      case FRAG_RESULT_STENCIL:
+         var->data.driver_location = 2;
+         break;
+      case FRAG_RESULT_SAMPLE_MASK:
+         var->data.driver_location = 3;
+         break;
+      default:
+         var->data.driver_location = 0;
+      }
+   }
+
+   nir_sort_variables_with_modes(s, variable_location_cmp,
+                                 nir_var_shader_out);
+
+   unsigned driver_loc = 0;
+   nir_foreach_variable_with_modes(var, s, nir_var_shader_out) {
+      var->data.driver_location = driver_loc++;
+   }
+}
+
+/* Order between stage values so that normal varyings come first,
+ * then sysvalues and then system generated values.
+ */
+uint64_t
+dxil_reassign_driver_locations(nir_shader* s, nir_variable_mode modes,
+   uint64_t other_stage_mask)
+{
+   nir_foreach_variable_with_modes_safe(var, s, modes) {
+      /* We use the driver_location here to avoid introducing a new
+       * struct or member variable here. The true, updated driver location
+       * will be written below, after sorting */
+      var->data.driver_location = nir_var_to_dxil_sysvalue_type(var, other_stage_mask);
+   }
+
+   nir_sort_variables_with_modes(s, variable_location_cmp, modes);
+
+   uint64_t result = 0;
+   unsigned driver_loc = 0;
+   nir_foreach_variable_with_modes(var, s, modes) {
+      result |= 1ull << var->data.location;
+      var->data.driver_location = driver_loc++;
+   }
+   return result;
 }

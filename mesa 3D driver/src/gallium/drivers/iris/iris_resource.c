@@ -334,8 +334,6 @@ iris_memobj_create_from_handle(struct pipe_screen *pscreen,
    memobj->format = whandle->format;
    memobj->stride = whandle->stride;
 
-   iris_bo_reference(memobj->bo);
-
    return &memobj->b;
 }
 
@@ -673,6 +671,31 @@ iris_resource_configure_main(const struct iris_screen *screen,
    return true;
 }
 
+static bool
+iris_get_ccs_surf(const struct isl_device *dev,
+                  const struct isl_surf *surf,
+                  struct isl_surf *aux_surf,
+                  struct isl_surf *extra_aux_surf,
+                  uint32_t row_pitch_B)
+{
+   assert(extra_aux_surf->size_B == 0);
+
+   struct isl_surf *ccs_surf;
+   const struct isl_surf *hiz_or_mcs_surf;
+   if (aux_surf->size_B > 0) {
+      assert(aux_surf->usage & (ISL_SURF_USAGE_HIZ_BIT |
+                                ISL_SURF_USAGE_MCS_BIT));
+      hiz_or_mcs_surf = aux_surf;
+      ccs_surf = extra_aux_surf;
+   } else {
+      hiz_or_mcs_surf = NULL;
+      ccs_surf = aux_surf;
+   }
+
+   return isl_surf_get_ccs_surf(dev, surf, hiz_or_mcs_surf,
+                                ccs_surf, row_pitch_B);
+}
+
 /**
  * Configure aux for the resource, but don't allocate it. For images which
  * might be shared with modifiers, we must allocate the image and aux data in
@@ -705,20 +728,11 @@ iris_resource_configure_aux(struct iris_screen *screen,
    const bool has_ccs =
       ((!res->mod_info && !(INTEL_DEBUG & DEBUG_NO_RBC)) ||
        (res->mod_info && res->mod_info->aux_usage != ISL_AUX_USAGE_NONE)) &&
-      isl_surf_get_ccs_surf(&screen->isl_dev, &res->surf, &res->aux.surf,
-                            &res->aux.extra_aux.surf, 0);
+      iris_get_ccs_surf(&screen->isl_dev, &res->surf, &res->aux.surf,
+                        &res->aux.extra_aux.surf, 0);
 
    /* Having both HIZ and MCS is impossible. */
    assert(!has_mcs || !has_hiz);
-
-   /* Ensure aux surface creation for MCS_CCS and HIZ_CCS is correct. */
-   if (has_ccs && (has_mcs || has_hiz)) {
-      assert(res->aux.extra_aux.surf.size_B > 0 &&
-             res->aux.extra_aux.surf.usage & ISL_SURF_USAGE_CCS_BIT);
-      assert(res->aux.surf.size_B > 0 &&
-             res->aux.surf.usage &
-             (ISL_SURF_USAGE_HIZ_BIT | ISL_SURF_USAGE_MCS_BIT));
-   }
 
    if (res->mod_info && has_ccs) {
       /* Only allow a CCS modifier if the aux was created successfully. */
@@ -968,6 +982,9 @@ iris_resource_create_for_buffer(struct pipe_screen *pscreen,
    } else if (templ->flags & IRIS_RESOURCE_FLAG_DYNAMIC_MEMZONE) {
       memzone = IRIS_MEMZONE_DYNAMIC;
       name = "dynamic state";
+   } else if (templ->flags & IRIS_RESOURCE_FLAG_BINDLESS_MEMZONE) {
+      memzone = IRIS_MEMZONE_BINDLESS;
+      name = "bindless surface state";
    }
 
    unsigned flags = iris_resource_alloc_flags(screen, templ);
@@ -1021,7 +1038,8 @@ iris_resource_create_with_modifiers(struct pipe_screen *pscreen,
    /* These are for u_upload_mgr buffers only */
    assert(!(templ->flags & (IRIS_RESOURCE_FLAG_SHADER_MEMZONE |
                             IRIS_RESOURCE_FLAG_SURFACE_MEMZONE |
-                            IRIS_RESOURCE_FLAG_DYNAMIC_MEMZONE)));
+                            IRIS_RESOURCE_FLAG_DYNAMIC_MEMZONE |
+                            IRIS_RESOURCE_FLAG_BINDLESS_MEMZONE)));
 
    if (!iris_resource_configure_aux(screen, res, false))
       goto fail;
@@ -1252,6 +1270,8 @@ iris_resource_from_memobj(struct pipe_screen *pscreen,
    res->bo = memobj->bo;
    res->offset = offset;
    res->external_format = memobj->format;
+
+   iris_bo_reference(memobj->bo);
 
    return &res->base.b;
 }

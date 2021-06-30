@@ -69,7 +69,7 @@
 #define NUM_AV1_REFS   8
 #define NUM_AV1_REFS_PER_FRAME 7
 
-static unsigned calc_dpb_size(struct radeon_decoder *dec, unsigned db_alignment);
+static unsigned calc_dpb_size(struct radeon_decoder *dec);
 static unsigned calc_ctx_size_h264_perf(struct radeon_decoder *dec);
 static unsigned calc_ctx_size_h265_main(struct radeon_decoder *dec);
 static unsigned calc_ctx_size_h265_main10(struct radeon_decoder *dec,
@@ -198,8 +198,10 @@ static rvcn_dec_message_hevc_t get_h265_msg(struct radeon_decoder *dec,
       result.sps_info_flags |= 1 << 9;
    if (pic->UseRefPicList == true)
       result.sps_info_flags |= 1 << 10;
-   if (pic->UseStRpsBits == true)
+   if (pic->UseStRpsBits == true && pic->pps->st_rps_bits != 0) {
       result.sps_info_flags |= 1 << 11;
+      result.st_rps_bits = pic->pps->st_rps_bits;
+  }
 
    result.chroma_format = pic->pps->sps->chroma_format_idc;
    result.bit_depth_luma_minus8 = pic->pps->sps->bit_depth_luma_minus8;
@@ -259,7 +261,6 @@ static rvcn_dec_message_hevc_t get_h265_msg(struct radeon_decoder *dec,
    result.num_tile_rows_minus1 = pic->pps->num_tile_rows_minus1;
    result.log2_parallel_merge_level_minus2 = pic->pps->log2_parallel_merge_level_minus2;
    result.init_qp_minus26 = pic->pps->init_qp_minus26;
-   result.st_rps_bits = pic->pps->st_rps_bits;
 
    for (i = 0; i < 19; ++i)
       result.column_width_minus1[i] = pic->pps->column_width_minus1[i];
@@ -1329,15 +1330,15 @@ static void rvcn_dec_message_create(struct radeon_decoder *dec)
 }
 
 static unsigned rvcn_dec_dynamic_dpb_t2_message(struct radeon_decoder *dec, rvcn_dec_message_decode_t *decode,
-      rvcn_dec_message_dynamic_dpb_t2_t *dynamic_dpb_t2, unsigned db_alignment)
+      rvcn_dec_message_dynamic_dpb_t2_t *dynamic_dpb_t2)
 {
    struct rvcn_dec_dynamic_dpb_t2 *dpb = NULL;
    unsigned width, height, size;
    uint64_t addr;
    int i;
 
-   width = align(decode->width_in_samples, db_alignment);
-   height = align(decode->height_in_samples, db_alignment);
+   width = align(decode->width_in_samples, dec->db_alignment);
+   height = align(decode->height_in_samples, dec->db_alignment);
    size = align((width * height * 3) / 2, 256);
    if (dec->ref_codec.bts == CODEC_10_BITS)
       size = size * 3 / 2;
@@ -1404,8 +1405,8 @@ static unsigned rvcn_dec_dynamic_dpb_t2_message(struct radeon_decoder *dec, rvcn
 
    decode->decode_flags = 1;
    dynamic_dpb_t2->dpbConfigFlags = 0;
-   dynamic_dpb_t2->dpbLumaPitch = align(decode->width_in_samples, db_alignment);
-   dynamic_dpb_t2->dpbLumaAlignedHeight = align(decode->height_in_samples, db_alignment);
+   dynamic_dpb_t2->dpbLumaPitch = align(decode->width_in_samples, dec->db_alignment);
+   dynamic_dpb_t2->dpbLumaAlignedHeight = align(decode->height_in_samples, dec->db_alignment);
    dynamic_dpb_t2->dpbLumaAlignedSize = dynamic_dpb_t2->dpbLumaPitch *
       dynamic_dpb_t2->dpbLumaAlignedHeight;
    dynamic_dpb_t2->dpbChromaPitch = dynamic_dpb_t2->dpbLumaPitch >> 1;
@@ -1442,7 +1443,6 @@ static struct pb_buffer *rvcn_dec_message_decode(struct radeon_decoder *dec,
    rvcn_dec_message_drm_t *drm = NULL;
    rvcn_dec_message_dynamic_dpb_t *dynamic_dpb = NULL;
    rvcn_dec_message_dynamic_dpb_t2_t *dynamic_dpb_t2 = NULL;
-   unsigned db_alignment;
 
    header = dec->msg;
    sizes += sizeof(rvcn_dec_message_header_t);
@@ -1529,19 +1529,13 @@ static struct pb_buffer *rvcn_dec_message_decode(struct radeon_decoder *dec,
 
    decode->bsd_size = align(dec->bs_size, 128);
 
-   db_alignment = (((struct si_screen *)dec->screen)->info.family >= CHIP_RENOIR &&
-                   dec->base.width > 32 && (dec->stream_type == RDECODE_CODEC_VP9 ||
-                   dec->stream_type == RDECODE_CODEC_AV1 ||
-                   dec->base.profile == PIPE_VIDEO_PROFILE_HEVC_MAIN_10)) ? 64 : 32;
-
    if (!dec->dpb.res && dec->dpb_type != DPB_DYNAMIC_TIER_2) {
-      unsigned dpb_size = calc_dpb_size(dec, db_alignment);
       bool r;
-      if (dpb_size) {
+      if (dec->dpb_size) {
          if (encrypted) {
-            r = si_vid_create_tmz_buffer(dec->screen, &dec->dpb, dpb_size, PIPE_USAGE_DEFAULT);
+            r = si_vid_create_tmz_buffer(dec->screen, &dec->dpb, dec->dpb_size, PIPE_USAGE_DEFAULT);
          } else {
-            r = si_vid_create_buffer(dec->screen, &dec->dpb, dpb_size, PIPE_USAGE_DEFAULT);
+            r = si_vid_create_buffer(dec->screen, &dec->dpb, dec->dpb_size, PIPE_USAGE_DEFAULT);
          }
          assert(encrypted == (bool)(dec->dpb.res->flags & RADEON_FLAG_ENCRYPTED));
          if (!r) {
@@ -1557,12 +1551,12 @@ static struct pb_buffer *rvcn_dec_message_decode(struct radeon_decoder *dec,
       if (dec->stream_type == RDECODE_CODEC_H264_PERF) {
          unsigned ctx_size = calc_ctx_size_h264_perf(dec);
          bool r;
-         if (encrypted) {
+         if (encrypted && dec->tmz_ctx) {
             r = si_vid_create_tmz_buffer(dec->screen, &dec->ctx, ctx_size, PIPE_USAGE_DEFAULT);
          } else {
             r = si_vid_create_buffer(dec->screen, &dec->ctx, ctx_size, PIPE_USAGE_DEFAULT);
          }
-         assert(encrypted == (bool)(dec->ctx.res->flags & RADEON_FLAG_ENCRYPTED));
+         assert((encrypted && dec->tmz_ctx) == (bool)(dec->ctx.res->flags & RADEON_FLAG_ENCRYPTED));
 
          if (!r) {
             RVID_ERR("Can't allocated context buffer.\n");
@@ -1593,7 +1587,7 @@ static struct pb_buffer *rvcn_dec_message_decode(struct radeon_decoder *dec,
          if (dec->base.profile == PIPE_VIDEO_PROFILE_VP9_PROFILE2)
             ctx_size += 8 * 2 * 4096;
 
-         if (encrypted) {
+         if (encrypted && dec->tmz_ctx) {
             r = si_vid_create_tmz_buffer(dec->screen, &dec->ctx, ctx_size, PIPE_USAGE_DEFAULT);
          } else {
             r = si_vid_create_buffer(dec->screen, &dec->ctx, ctx_size, PIPE_USAGE_DEFAULT);
@@ -1618,7 +1612,7 @@ static struct pb_buffer *rvcn_dec_message_decode(struct radeon_decoder *dec,
          else
             ctx_size = calc_ctx_size_h265_main(dec);
 
-         if (encrypted) {
+         if (encrypted && dec->tmz_ctx) {
             r = si_vid_create_tmz_buffer(dec->screen, &dec->ctx, ctx_size, PIPE_USAGE_DEFAULT);
          } else {
             r = si_vid_create_buffer(dec->screen, &dec->ctx, ctx_size, PIPE_USAGE_DEFAULT);
@@ -1642,7 +1636,7 @@ static struct pb_buffer *rvcn_dec_message_decode(struct radeon_decoder *dec,
    decode->sc_coeff_size = 0;
 
    decode->sw_ctxt_size = RDECODE_SESSION_CONTEXT_SIZE;
-   decode->db_pitch = align(dec->base.width, db_alignment);
+   decode->db_pitch = align(dec->base.width, dec->db_alignment);
 
    if (((struct si_screen*)dec->screen)->info.family >= CHIP_SIENNA_CICHLID &&
        (dec->stream_type == RDECODE_CODEC_VP9 || dec->stream_type == RDECODE_CODEC_AV1 ||
@@ -1688,15 +1682,15 @@ static struct pb_buffer *rvcn_dec_message_decode(struct radeon_decoder *dec,
    if (dec->dpb_type == DPB_DYNAMIC_TIER_1) {
       decode->decode_flags = 1;
       dynamic_dpb->dpbArraySize = NUM_VP9_REFS + 1;
-      dynamic_dpb->dpbLumaPitch = align(decode->width_in_samples, db_alignment);
-      dynamic_dpb->dpbLumaAlignedHeight = align(decode->height_in_samples, db_alignment);
+      dynamic_dpb->dpbLumaPitch = align(decode->width_in_samples, dec->db_alignment);
+      dynamic_dpb->dpbLumaAlignedHeight = align(decode->height_in_samples, dec->db_alignment);
       dynamic_dpb->dpbLumaAlignedSize =
          dynamic_dpb->dpbLumaPitch * dynamic_dpb->dpbLumaAlignedHeight;
       dynamic_dpb->dpbChromaPitch = dynamic_dpb->dpbLumaPitch >> 1;
       dynamic_dpb->dpbChromaAlignedHeight = dynamic_dpb->dpbLumaAlignedHeight >> 1;
       dynamic_dpb->dpbChromaAlignedSize =
          dynamic_dpb->dpbChromaPitch * dynamic_dpb->dpbChromaAlignedHeight * 2;
-      dynamic_dpb->dpbReserved0[0] = db_alignment;
+      dynamic_dpb->dpbReserved0[0] = dec->db_alignment;
 
       if (dec->base.profile == PIPE_VIDEO_PROFILE_VP9_PROFILE2) {
          dynamic_dpb->dpbLumaAlignedSize = dynamic_dpb->dpbLumaAlignedSize * 3 / 2;
@@ -1810,7 +1804,7 @@ static struct pb_buffer *rvcn_dec_message_decode(struct radeon_decoder *dec,
       decode->hw_ctxt_size = dec->ctx.res->buf->size;
 
    if (dec->dpb_type == DPB_DYNAMIC_TIER_2)
-      if (rvcn_dec_dynamic_dpb_t2_message(dec, decode, dynamic_dpb_t2, db_alignment))
+      if (rvcn_dec_dynamic_dpb_t2_message(dec, decode, dynamic_dpb_t2))
          return NULL;
 
    return luma->buffer.buf;
@@ -1984,7 +1978,7 @@ static unsigned calc_ctx_size_h264_perf(struct radeon_decoder *dec)
 }
 
 /* calculate size of reference picture buffer */
-static unsigned calc_dpb_size(struct radeon_decoder *dec, unsigned db_alignment)
+static unsigned calc_dpb_size(struct radeon_decoder *dec)
 {
    unsigned width_in_mb, height_in_mb, image_size, dpb_size;
 
@@ -2101,8 +2095,8 @@ static unsigned calc_dpb_size(struct radeon_decoder *dec, unsigned db_alignment)
             ? (8192 * 4320 * 3 / 2) * max_references
             : (4096 * 3000 * 3 / 2) * max_references;
       else
-         dpb_size = (align(dec->base.width, db_alignment) *
-            align(dec->base.height, db_alignment) * 3 / 2) * max_references;
+         dpb_size = (align(dec->base.width, dec->db_alignment) *
+            align(dec->base.height, dec->db_alignment) * 3 / 2) * max_references;
 
       if (dec->base.profile == PIPE_VIDEO_PROFILE_VP9_PROFILE2)
          dpb_size = dpb_size * 3 / 2;
@@ -2427,6 +2421,21 @@ struct pipe_video_codec *radeon_create_decoder(struct pipe_context *context,
       }
    }
 
+   if (sctx->family >= CHIP_SIENNA_CICHLID &&
+       (stream_type == RDECODE_CODEC_VP9 || stream_type == RDECODE_CODEC_AV1))
+      dec->dpb_type = DPB_DYNAMIC_TIER_2;
+   else if (sctx->family <= CHIP_NAVI14 && stream_type == RDECODE_CODEC_VP9)
+      dec->dpb_type = DPB_DYNAMIC_TIER_1;
+   else
+      dec->dpb_type = DPB_MAX_RES;
+
+   dec->db_alignment = (((struct si_screen *)dec->screen)->info.family >= CHIP_RENOIR &&
+                   dec->base.width > 32 && (dec->stream_type == RDECODE_CODEC_VP9 ||
+                   dec->stream_type == RDECODE_CODEC_AV1 ||
+                   dec->base.profile == PIPE_VIDEO_PROFILE_HEVC_MAIN_10)) ? 64 : 32;
+
+   dec->dpb_size = calc_dpb_size(dec);
+
    if (!si_vid_create_buffer(dec->screen, &dec->sessionctx, RDECODE_SESSION_CONTEXT_SIZE,
                              PIPE_USAGE_DEFAULT)) {
       RVID_ERR("Can't allocated session ctx.\n");
@@ -2486,18 +2495,13 @@ struct pipe_video_codec *radeon_create_decoder(struct pipe_context *context,
    else
       dec->send_cmd = send_cmd_dec;
 
-   if (sctx->family >= CHIP_SIENNA_CICHLID &&
-       (stream_type == RDECODE_CODEC_VP9 || stream_type == RDECODE_CODEC_AV1))
-      dec->dpb_type = DPB_DYNAMIC_TIER_2;
-   else if (sctx->family <= CHIP_NAVI14 && stream_type == RDECODE_CODEC_VP9)
-      dec->dpb_type = DPB_DYNAMIC_TIER_1;
-   else
-      dec->dpb_type = DPB_MAX_RES;
 
    if (dec->dpb_type == DPB_DYNAMIC_TIER_2) {
       list_inithead(&dec->dpb_ref_list);
       list_inithead(&dec->dpb_unref_list);
    }
+
+   dec->tmz_ctx = sctx->family < CHIP_RENOIR;
 
    return &dec->base;
 

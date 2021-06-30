@@ -907,7 +907,6 @@ struct gl_sampler_attrib
    GLenum16 MinFilter;		/**< minification filter */
    GLenum16 MagFilter;		/**< magnification filter */
    GLenum16 sRGBDecode;         /**< GL_DECODE_EXT or GL_SKIP_DECODE_EXT */
-   union gl_color_union BorderColor;  /**< Interpreted according to texture format */
    GLfloat MinLod;		/**< min lambda, OpenGL 1.2 */
    GLfloat MaxLod;		/**< max lambda, OpenGL 1.2 */
    GLfloat LodBias;		/**< OpenGL 1.4 */
@@ -915,7 +914,10 @@ struct gl_sampler_attrib
    GLenum16 CompareMode;	/**< GL_ARB_shadow */
    GLenum16 CompareFunc;	/**< GL_ARB_shadow */
    GLboolean CubeMapSeamless;   /**< GL_AMD_seamless_cubemap_per_texture */
+   GLboolean IsBorderColorNonZero; /**< Does the border color have any effect? */
    GLenum16 ReductionMode;      /**< GL_EXT_texture_filter_minmax */
+
+   struct pipe_sampler_state state;  /**< Gallium representation */
 };
 
 /**
@@ -947,7 +949,6 @@ struct gl_texture_object_attrib
  */
 struct gl_sampler_object
 {
-   simple_mtx_t Mutex;
    GLuint Name;
    GLchar *Label;               /**< GL_KHR_debug */
    GLint RefCount;
@@ -966,7 +967,6 @@ struct gl_sampler_object
  */
 struct gl_texture_object
 {
-   simple_mtx_t Mutex;         /**< for thread safety */
    GLint RefCount;             /**< reference count */
    GLuint Name;                /**< the user-visible texture object ID */
    GLenum16 Target;            /**< GL_TEXTURE_1D, GL_TEXTURE_2D, etc. */
@@ -1181,6 +1181,7 @@ struct gl_texgen
 struct gl_texture_unit
 {
    GLfloat LodBias;		/**< for biasing mipmap levels */
+   float LodBiasQuantized;      /**< to reduce pipe_sampler_state variants */
 
    /** Texture targets that have a non-default texture bound */
    GLbitfield _BoundTextures;
@@ -3474,6 +3475,14 @@ struct gl_shared_state
     * frequency changes.
     */
    bool DisjointOperation;
+
+   /**
+    * Whether at least one image has been imported or exported, excluding
+    * the default framebuffer. If this is false, glFlush can be executed
+    * asynchronously because there is no invisible dependency on external
+    * users.
+    */
+   bool HasExternallySharedImages;
 };
 
 
@@ -3485,7 +3494,6 @@ struct gl_shared_state
  */
 struct gl_renderbuffer
 {
-   simple_mtx_t Mutex; /**< for thread safety */
    GLuint ClassID;        /**< Useful for drivers */
    GLuint Name;
    GLchar *Label;         /**< GL_KHR_debug */
@@ -3950,6 +3958,12 @@ struct gl_constants
     * D3D9 when apps rely on this behaviour.
     */
    GLboolean ForceGLSLAbsSqrt;
+
+   /**
+    * Forces the GLSL compiler to ignore writes to readonly vars rather than
+    * throwing an error.
+    */
+   GLboolean GLSLIgnoreWriteToReadonlyVar;
 
    /**
     * Types of variable to default initialized to zero. Supported values are:
@@ -5088,6 +5102,7 @@ struct gl_texture_attrib_node
    GLuint NumTexSaved;
    struct gl_fixedfunc_texture_unit FixedFuncUnit[MAX_TEXTURE_COORD_UNITS];
    GLfloat LodBias[MAX_TEXTURE_UNITS];
+   float LodBiasQuantized[MAX_TEXTURE_UNITS];
 
    /** Saved default texture object state. */
    struct gl_texture_object SavedDefaultObj[NUM_TEXTURE_TARGETS];

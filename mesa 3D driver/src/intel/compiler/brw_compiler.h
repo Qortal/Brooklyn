@@ -675,6 +675,21 @@ enum brw_param_builtin {
 #define BRW_PARAM_BUILTIN_CLIP_PLANE_COMP(param) \
    (((param) - BRW_PARAM_BUILTIN_CLIP_PLANE_0_X) & 0x3)
 
+enum brw_shader_reloc_id {
+   BRW_SHADER_RELOC_CONST_DATA_ADDR_LOW,
+   BRW_SHADER_RELOC_CONST_DATA_ADDR_HIGH,
+   BRW_SHADER_RELOC_SHADER_START_OFFSET,
+   BRW_SHADER_RELOC_RESUME_SBT_ADDR_LOW,
+   BRW_SHADER_RELOC_RESUME_SBT_ADDR_HIGH,
+};
+
+enum brw_shader_reloc_type {
+   /** An arbitrary 32-bit value */
+   BRW_SHADER_RELOC_TYPE_U32,
+   /** A MOV instruction with an immediate source */
+   BRW_SHADER_RELOC_TYPE_MOV_IMM,
+};
+
 /** Represents a code relocation
  *
  * Relocatable constants are immediates in the code which we want to be able
@@ -684,12 +699,18 @@ struct brw_shader_reloc {
    /** The 32-bit ID of the relocatable constant */
    uint32_t id;
 
-   /** The offset in the shader to the relocatable instruction
+   /** Type of this relocation */
+   enum brw_shader_reloc_type type;
+
+   /** The offset in the shader to the relocated value
     *
-    * This is the offset to the instruction rather than the immediate value
-    * itself.  This allows us to do some sanity checking while we relocate.
+    * For MOV_IMM relocs, this is an offset to the MOV instruction.  This
+    * allows us to do some sanity checking while we update the value.
     */
    uint32_t offset;
+
+   /** Value to be added to the relocated value before it is written */
+   uint32_t delta;
 };
 
 /** A value to write to a relocation */
@@ -1014,6 +1035,7 @@ struct brw_cs_prog_data {
 
    bool uses_barrier;
    bool uses_num_work_groups;
+   bool uses_inline_data;
    bool uses_btd_stack_ids;
 
    struct {
@@ -1044,8 +1066,15 @@ brw_cs_prog_data_prog_offset(const struct brw_cs_prog_data *prog_data,
 
 struct brw_bs_prog_data {
    struct brw_stage_prog_data base;
+
+   /** SIMD size of the root shader */
    uint8_t simd_size;
-   uint32_t stack_size;
+
+   /** Maximum stack size of all shaders */
+   uint32_t max_stack_size;
+
+   /** Offset into the shader where the resume SBT is located */
+   uint32_t resume_sbt_offset;
 };
 
 struct brw_ff_gs_prog_data {
@@ -1657,6 +1686,8 @@ brw_compile_bs(const struct brw_compiler *compiler, void *log_data,
                const struct brw_bs_prog_key *key,
                struct brw_bs_prog_data *prog_data,
                struct nir_shader *shader,
+               unsigned num_resume_shaders,
+               struct nir_shader **resume_shaders,
                struct brw_compile_stats *stats,
                char **error_str);
 

@@ -451,7 +451,7 @@ crocus_is_format_supported(struct pipe_screen *pscreen,
       return false;
 
    /* no stencil texturing prior to haswell */
-   if (!devinfo->is_haswell) {
+   if (devinfo->verx10 < 75) {
       if (pformat == PIPE_FORMAT_S8_UINT ||
           pformat == PIPE_FORMAT_X24S8_UINT ||
           pformat == PIPE_FORMAT_S8X24_UINT ||
@@ -467,11 +467,15 @@ crocus_is_format_supported(struct pipe_screen *pscreen,
       supported &= isl_format_supports_multisampling(devinfo, format);
 
    if (usage & PIPE_BIND_DEPTH_STENCIL) {
-      supported &= format == ISL_FORMAT_R32_FLOAT_X8X24_TYPELESS ||
-                   format == ISL_FORMAT_R32_FLOAT ||
-                   format == ISL_FORMAT_R24_UNORM_X8_TYPELESS ||
-                   format == ISL_FORMAT_R8_UINT;
+      bool depth_fmts = format == ISL_FORMAT_R32_FLOAT_X8X24_TYPELESS ||
+         format == ISL_FORMAT_R32_FLOAT ||
+         format == ISL_FORMAT_R24_UNORM_X8_TYPELESS ||
+         format == ISL_FORMAT_R8_UINT;
+
       /* Z16 is disabled here as on pre-GEN8 it's slower. */
+      if (devinfo->ver == 8)
+         depth_fmts |= format == ISL_FORMAT_R16_UNORM;
+      supported &= depth_fmts;
    }
 
    if (usage & PIPE_BIND_RENDER_TARGET) {
@@ -513,6 +517,11 @@ crocus_is_format_supported(struct pipe_screen *pscreen,
 
    if (usage & PIPE_BIND_SAMPLER_VIEW) {
       supported &= isl_format_supports_sampling(devinfo, format);
+
+      /* disable Z16 unorm depth textures pre gen8 */
+      if (devinfo->ver < 8 && pformat == PIPE_FORMAT_Z16_UNORM)
+         supported = false;
+
       bool ignore_filtering = false;
 
       if (is_integer)
@@ -543,7 +552,7 @@ crocus_is_format_supported(struct pipe_screen *pscreen,
    if (usage & PIPE_BIND_VERTEX_BUFFER) {
       supported &= isl_format_supports_vertex_fetch(devinfo, format);
 
-      if (!devinfo->is_haswell) {
+      if (devinfo->verx10 < 75) {
          /* W/A: Pre-Haswell, the hardware doesn't really support the formats
           * we'd like to use here, so upload everything as UINT and fix it in
           * the shader

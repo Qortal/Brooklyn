@@ -168,27 +168,6 @@ int MESA_DEBUG_FLAGS = 0;
 GLfloat _mesa_ubyte_to_float_color_tab[256];
 
 
-
-/**
- * Swap buffers notification callback.
- *
- * \param ctx GL context.
- *
- * Called by window system just before swapping buffers.
- * We have to finish any pending rendering.
- */
-void
-_mesa_notifySwapBuffers(struct gl_context *ctx)
-{
-   if (MESA_VERBOSE & VERBOSE_SWAPBUFFERS)
-      _mesa_debug(ctx, "SwapBuffers\n");
-   FLUSH_VERTICES(ctx, 0, 0);
-   if (ctx->Driver.Flush) {
-      ctx->Driver.Flush(ctx);
-   }
-}
-
-
 /**********************************************************************/
 /** \name GL Visual initialization                                    */
 /**********************************************************************/
@@ -1634,7 +1613,9 @@ _mesa_make_current( struct gl_context *newCtx,
        curCtx != newCtx &&
        curCtx->Const.ContextReleaseBehavior ==
        GL_CONTEXT_RELEASE_BEHAVIOR_FLUSH) {
-      _mesa_flush(curCtx);
+      FLUSH_VERTICES(curCtx, 0, 0);
+      if (curCtx->Driver.Flush)
+         curCtx->Driver.Flush(curCtx, 0);
    }
 
    /* Call this periodically to detect when the user has begun using
@@ -1791,7 +1772,9 @@ _mesa_flush(struct gl_context *ctx)
 {
    FLUSH_VERTICES(ctx, 0, 0);
    if (ctx->Driver.Flush) {
-      ctx->Driver.Flush(ctx);
+      bool async = !ctx->Shared->HasExternallySharedImages;
+
+      ctx->Driver.Flush(ctx, async ? PIPE_FLUSH_ASYNC : 0);
    }
 }
 

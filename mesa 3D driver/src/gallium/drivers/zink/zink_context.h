@@ -47,7 +47,6 @@
 #include <vulkan/vulkan.h>
 
 struct blitter_context;
-struct primconvert_context;
 struct list_head;
 
 struct zink_blend_state;
@@ -62,13 +61,14 @@ enum zink_blit_flags {
    ZINK_BLIT_SAVE_FS = 1 << 1,
    ZINK_BLIT_SAVE_FB = 1 << 2,
    ZINK_BLIT_SAVE_TEXTURES = 1 << 3,
+   ZINK_BLIT_NO_COND_RENDER = 1 << 4,
 };
 
 struct zink_sampler_state {
    VkSampler sampler;
    uint32_t hash;
    struct zink_descriptor_refs desc_set_refs;
-   struct zink_batch_usage batch_uses;
+   struct zink_batch_usage *batch_uses;
    bool custom_border_color;
 };
 
@@ -77,7 +77,7 @@ struct zink_buffer_view {
    VkBufferViewCreateInfo bvci;
    VkBufferView buffer_view;
    uint32_t hash;
-   struct zink_batch_usage batch_uses;
+   struct zink_batch_usage *batch_uses;
    struct zink_descriptor_refs desc_set_refs;
 };
 
@@ -141,18 +141,17 @@ struct zink_context {
 
    struct pipe_device_reset_callback reset;
 
-   bool is_device_lost;
-
    uint32_t curr_batch; //the current batch id
-   struct zink_batch batch;
+
    simple_mtx_t batch_mtx;
+   struct zink_fence *deferred_fence;
    struct zink_fence *last_fence; //the last command buffer submitted
    struct hash_table batch_states; //submitted batch states
    struct util_dynarray free_batch_states; //unused batch states
    VkDeviceSize resource_size; //the accumulated size of resources in submitted buffers
+   struct zink_batch batch;
 
    unsigned shader_has_inlinable_uniforms_mask;
-   unsigned inlinable_uniforms_dirty_mask;
    unsigned inlinable_uniforms_valid_mask;
    uint32_t inlinable_uniforms[PIPE_SHADER_TYPES][MAX_INLINABLE_UNIFORMS];
 
@@ -190,8 +189,6 @@ struct zink_context {
    bool new_swapchain;
    bool fb_changed;
    bool rp_changed;
-
-   struct primconvert_context *primconvert;
 
    struct zink_framebuffer *framebuffer;
    struct zink_framebuffer_clear fb_clears[PIPE_MAX_COLOR_BUFS + 1];
@@ -273,6 +270,11 @@ struct zink_context {
    bool xfb_barrier;
    bool first_frame_done;
    bool have_timelines;
+
+   bool is_device_lost;
+   bool rast_state_changed : 1;
+   bool dsa_state_changed : 1;
+   bool stencil_ref_changed : 1;
 };
 
 static inline struct zink_context *
@@ -315,7 +317,8 @@ zink_resource_access_is_write(VkAccessFlags flags);
 
 void
 zink_resource_buffer_barrier(struct zink_context *ctx, struct zink_batch *batch, struct zink_resource *res, VkAccessFlags flags, VkPipelineStageFlags pipeline);
-
+void
+zink_fake_buffer_barrier(struct zink_resource *res, VkAccessFlags flags, VkPipelineStageFlags pipeline);
 bool
 zink_resource_image_needs_barrier(struct zink_resource *res, VkImageLayout new_layout, VkAccessFlags flags, VkPipelineStageFlags pipeline);
 bool
@@ -414,4 +417,26 @@ zink_update_descriptor_refs(struct zink_context *ctx, bool compute);
 
 void
 zink_init_vk_sample_locations(struct zink_context *ctx, VkSampleLocationsInfoEXT *loc);
+
+
+static inline VkPipelineStageFlags
+zink_pipeline_flags_from_pipe_stage(enum pipe_shader_type pstage)
+{
+   switch (pstage) {
+   case PIPE_SHADER_VERTEX:
+      return VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+   case PIPE_SHADER_FRAGMENT:
+      return VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+   case PIPE_SHADER_GEOMETRY:
+      return VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
+   case PIPE_SHADER_TESS_CTRL:
+      return VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT;
+   case PIPE_SHADER_TESS_EVAL:
+      return VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT;
+   case PIPE_SHADER_COMPUTE:
+      return VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+   default:
+      unreachable("unknown shader stage");
+   }
+}
 #endif

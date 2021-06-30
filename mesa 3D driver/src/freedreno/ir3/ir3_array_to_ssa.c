@@ -24,8 +24,8 @@
 /* This pass lowers array accesses to SSA.
  *
  * After this pass, instructions writing arrays implicitly read the contents of
- * the array defined in instr->regs[0]->def (possibly a phi node), perform the
- * operation, and store to instr->regs[0].
+ * the array defined in instr->dsts[0]->def (possibly a phi node), perform the
+ * operation, and store to instr->dsts[0].
  *
  * This makes arrays appear like "normal" SSA values, even if the false
  * dependencies mean that they always stay in CSSA form (i.e. able to removed
@@ -100,7 +100,7 @@ read_value_beginning(struct array_ctx *ctx, struct ir3_block *block, struct ir3_
 
 	unsigned flags = IR3_REG_ARRAY | (arr->half ? IR3_REG_HALF : 0);
 	struct ir3_instruction *phi =
-		ir3_instr_create(block, OPC_META_PHI, block->predecessors_count + 1);
+		ir3_instr_create(block, OPC_META_PHI, 1, block->predecessors_count);
 	list_del(&phi->node);
 	list_add(&phi->node, &block->instr_list);
 
@@ -109,7 +109,7 @@ read_value_beginning(struct array_ctx *ctx, struct ir3_block *block, struct ir3_
 	dst->array.id = arr->id;
 	dst->size = arr->length;
 
-	state->live_in_definition = phi->regs[0];
+	state->live_in_definition = phi->dsts[0];
 	state->constructed = true;
 
 	for (unsigned i = 0; i < block->predecessors_count; i++) {
@@ -118,12 +118,12 @@ read_value_beginning(struct array_ctx *ctx, struct ir3_block *block, struct ir3_
 		if (src) {
 			src_reg = __ssa_src(phi, src->instr, flags);
 		} else {
-			src_reg = ir3_reg_create(phi, INVALID_REG, flags | IR3_REG_SSA);
+			src_reg = ir3_src_create(phi, INVALID_REG, flags | IR3_REG_SSA);
 		}
 		src_reg->array.id = arr->id;
 		src_reg->size = arr->length;
 	}
-	return phi->regs[0];
+	return phi->dsts[0];
 }
 
 static struct ir3_register *
@@ -133,12 +133,12 @@ remove_trivial_phi(struct ir3_instruction *phi)
 	if (phi->data)
 		return phi->data;
 	
-	phi->data = phi->regs[0];
+	phi->data = phi->dsts[0];
 
 	struct ir3_register *unique_def = NULL;
 	bool unique = true;
 	for (unsigned i = 0; i < phi->block->predecessors_count; i++) {
-		struct ir3_register *src = phi->regs[i + 1];
+		struct ir3_register *src = phi->srcs[i];
 
 		/* If there are any undef sources, then the remaining sources may not
 		 * dominate the phi node, even if they are all equal. So we need to
@@ -177,7 +177,7 @@ remove_trivial_phi(struct ir3_instruction *phi)
 		phi->data = unique_def;
 		return unique_def;
 	} else {
-		return phi->regs[0];
+		return phi->dsts[0];
 	}
 }
 
@@ -221,12 +221,11 @@ ir3_array_to_ssa(struct ir3 *ir)
 
 	foreach_block (block, &ir->block_list) {
 		foreach_instr (instr, &block->instr_list) {
-			for (unsigned i = 0; i < instr->regs_count; i++) {
-				if ((instr->regs[i]->flags & IR3_REG_ARRAY) &&
-					(instr->regs[i]->flags & IR3_REG_DEST)) {
+			foreach_dst (dst, instr) {
+				if (dst->flags & IR3_REG_ARRAY) {
 					struct array_state *state =
-						get_state(&ctx, block, instr->regs[i]->array.id);
-					state->live_out_definition = instr->regs[i];
+						get_state(&ctx, block, dst->array.id);
+					state->live_out_definition = dst;
 				}
 			}
 		}
@@ -237,11 +236,16 @@ ir3_array_to_ssa(struct ir3 *ir)
 			if (instr->opc == OPC_META_PHI)
 				continue;
 
-			for (unsigned i = 0; i < instr->regs_count; i++) {
-				struct ir3_register *reg = instr->regs[i];
-				if ((reg->flags & IR3_REG_ARRAY) &&
-					 (!reg->def || reg->def->instr->block != block)) {
-					reg->def = NULL;
+			foreach_dst (reg, instr) {
+				if ((reg->flags & IR3_REG_ARRAY) && !reg->tied) {
+					struct ir3_array *arr = ir3_lookup_array(ir, reg->array.id);
+
+					/* Construct any phi nodes necessary to read this value */
+					read_value_beginning(&ctx, block, arr);
+				}
+			}
+			foreach_src (reg, instr) {
+				if ((reg->flags & IR3_REG_ARRAY) && !reg->def) {
 					struct ir3_array *arr = ir3_lookup_array(ir, reg->array.id);
 
 					/* Construct any phi nodes necessary to read this value */
@@ -265,25 +269,33 @@ ir3_array_to_ssa(struct ir3 *ir)
 			if (instr->opc == OPC_META_PHI) {
 				if (!(instr->flags & IR3_REG_ARRAY))
 					continue;
-				if (instr->data != instr->regs[0]) {
+				if (instr->data != instr->dsts[0]) {
 					list_del(&instr->node);
 					continue;
 				}
-				for (unsigned i = 1; i < instr->regs_count; i++) {
-					instr->regs[i] = lookup_value(instr->regs[i]);
+				for (unsigned i = 0; i < instr->srcs_count; i++) {
+					instr->srcs[i] = lookup_value(instr->srcs[i]);
 				}
 			} else {
-				for (unsigned i = 0; i < instr->regs_count; i++) {
-					struct ir3_register *reg = instr->regs[i];
+				foreach_dst (reg, instr) {
 					if ((reg->flags & IR3_REG_ARRAY)) {
+						if (!reg->tied) {
+							struct ir3_register *def =
+								lookup_live_in(&ctx, block, reg->array.id);
+							if (def)
+								ir3_reg_set_last_array(instr, reg, def);
+						}
+						reg->flags |= IR3_REG_SSA;
+					}
+				}
+				foreach_src (reg, instr) {
+					if ((reg->flags & IR3_REG_ARRAY)) {
+						/* It is assumed that before calling
+						 * ir3_array_to_ssa(), reg->def was set to the
+						 * previous writer of the array within the current
+						 * block or NULL if none.
+						 */
 						if (!reg->def) {
-							/* It is assumed that before calling
-							 * ir3_array_to_ssa(), reg->def was set to the
-							 * previous writer of the array within the current
-							 * block (if any).  The reg->def of the first write
-							 * to an array within a block was cleared in the
-							 * loop calling read_value_beginning() above.
-							 */
 							reg->def = lookup_live_in(&ctx, block, reg->array.id);
 						}
 						reg->flags |= IR3_REG_SSA;

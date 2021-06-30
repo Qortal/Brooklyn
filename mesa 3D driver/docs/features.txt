@@ -475,7 +475,7 @@ Vulkan 1.2 -- all DONE: anv, vn
 Khronos extensions that are not part of any Vulkan version:
 
   VK_KHR_android_surface                                not started
-  VK_KHR_copy_commands2                                 DONE (anv, lvp, radv)
+  VK_KHR_copy_commands2                                 DONE (anv, lvp, radv, v3dv)
   VK_KHR_deferred_host_operations                       DONE (anv, radv)
   VK_KHR_display                                        DONE (anv, lvp, radv, tu, v3dv)
   VK_KHR_display_swapchain                              not started
@@ -527,12 +527,13 @@ Khronos extensions that are not part of any Vulkan version:
   VK_EXT_global_priority                                DONE (anv, radv)
   VK_EXT_image_drm_format_modifier                      DONE (anv, radv/gfx9+, tu)
   VK_EXT_image_robustness                               DONE (anv, radv)
-  VK_EXT_index_type_uint8                               DONE (anv, lvp, radv/gfx8+, tu)
+  VK_EXT_index_type_uint8                               DONE (anv, lvp, radv/gfx8+, v3dv, tu)
   VK_EXT_inline_uniform_block                           DONE (anv, radv)
   VK_EXT_line_rasterization                             DONE (anv, radv)
   VK_EXT_memory_budget                                  DONE (anv, radv, tu)
   VK_EXT_memory_priority                                DONE (radv)
   VK_EXT_pci_bus_info                                   DONE (anv, radv)
+  VK_EXT_physical_device_drm                            DONE (anv, radv)
   VK_EXT_pipeline_creation_cache_control                DONE (anv, radv)
   VK_EXT_pipeline_creation_feedback                     DONE (anv, radv)
   VK_EXT_post_depth_coverage                            DONE (anv/gfx10+, lvp, radv)
@@ -559,6 +560,7 @@ Khronos extensions that are not part of any Vulkan version:
   VK_GOOGLE_user_type                                   DONE (anv, radv)
   VK_IMG_filter_cubic                                   DONE (tu/a650)
   VK_NV_compute_shader_derivatives                      DONE (anv, radv)
+  VK_EXT_acquire_drm_display                            DONE (radv)
 
 
 OpenCL 1.0 -- all DONE:

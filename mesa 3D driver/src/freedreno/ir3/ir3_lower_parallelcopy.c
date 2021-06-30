@@ -71,19 +71,20 @@ get_copy_src(const struct ir3_register *reg, unsigned offset)
 static void
 do_xor(struct ir3_instruction *instr, unsigned dst_num, unsigned src1_num, unsigned src2_num, unsigned flags)
 {
-	struct ir3_instruction *xor = ir3_instr_create(instr->block, OPC_XOR_B, 3);
-	struct ir3_register *dst = ir3_reg_create(xor, dst_num, flags | IR3_REG_DEST);
+	struct ir3_instruction *xor = ir3_instr_create(instr->block, OPC_XOR_B, 1, 2);
+	struct ir3_register *dst = ir3_dst_create(xor, dst_num, flags);
 	dst->wrmask = 1;
-	struct ir3_register *src1 = ir3_reg_create(xor, src1_num, flags);
+	struct ir3_register *src1 = ir3_src_create(xor, src1_num, flags);
 	src1->wrmask = 1;
-	struct ir3_register *src2 = ir3_reg_create(xor, src2_num, flags);
+	struct ir3_register *src2 = ir3_src_create(xor, src2_num, flags);
 	src2->wrmask = 1;
 
 	ir3_instr_move_before(xor, instr);
 }
 
 static void
-do_swap(struct ir3_instruction *instr, const struct copy_entry *entry)
+do_swap(struct ir3_compiler *compiler, struct ir3_instruction *instr,
+		const struct copy_entry *entry)
 {
 	assert(!entry->src.flags);
 	/* TODO implement shared swaps */
@@ -104,21 +105,21 @@ do_swap(struct ir3_instruction *instr, const struct copy_entry *entry)
 			physreg_t tmp = entry->dst < 2 ? 2 : 0;
 
 			/* Swap src and the temporary */
-			do_swap(instr, &(struct copy_entry) {
+			do_swap(compiler, instr, &(struct copy_entry) {
 				.src = { .reg = entry->src.reg & ~1u },
 				.dst = tmp,
 				.flags = entry->flags & ~IR3_REG_HALF,
 			});
 
 			/* Do the original swap with src replaced with tmp */
-			do_swap(instr, &(struct copy_entry) {
+			do_swap(compiler, instr, &(struct copy_entry) {
 				.src = { .reg = tmp + (entry->src.reg & 1) },
 				.dst = entry->dst,
 				.flags = entry->flags,
 			});
 
 			/* Swap src and the temporary back */
-			do_swap(instr, &(struct copy_entry) {
+			do_swap(compiler, instr, &(struct copy_entry) {
 				.src = { .reg = entry->src.reg & ~1u },
 				.dst = tmp,
 				.flags = entry->flags & ~IR3_REG_HALF,
@@ -130,7 +131,7 @@ do_swap(struct ir3_instruction *instr, const struct copy_entry *entry)
 		 * let the case above handle it.
 		 */
 		if (entry->dst >= RA_HALF_SIZE) {
-			do_swap(instr, &(struct copy_entry) {
+			do_swap(compiler, instr, &(struct copy_entry) {
 				.src = { .reg = entry->dst },
 				.dst = entry->src.reg,
 				.flags = entry->flags,
@@ -142,13 +143,29 @@ do_swap(struct ir3_instruction *instr, const struct copy_entry *entry)
 	unsigned src_num = ra_physreg_to_num(entry->src.reg, entry->flags);
 	unsigned dst_num = ra_physreg_to_num(entry->dst, entry->flags);
 
-	do_xor(instr, dst_num, dst_num, src_num, entry->flags);
-	do_xor(instr, src_num, src_num, dst_num, entry->flags);
-	do_xor(instr, dst_num, dst_num, src_num, entry->flags);
+	/* a5xx+ is known to support swz, which enables us to swap two registers
+	 * in-place. If unsupported we emulate it using the xor trick.
+	 */
+	if (compiler->gpu_id < 500) {
+		do_xor(instr, dst_num, dst_num, src_num, entry->flags);
+		do_xor(instr, src_num, src_num, dst_num, entry->flags);
+		do_xor(instr, dst_num, dst_num, src_num, entry->flags);
+	} else {
+		struct ir3_instruction *swz = ir3_instr_create(instr->block, OPC_SWZ, 2, 2);
+		ir3_dst_create(swz, dst_num, entry->flags)->wrmask = 1;
+		ir3_dst_create(swz, src_num, entry->flags)->wrmask = 1;
+		ir3_src_create(swz, src_num, entry->flags)->wrmask = 1;
+		ir3_src_create(swz, dst_num, entry->flags)->wrmask = 1;
+		swz->cat1.dst_type = (entry->flags & IR3_REG_HALF) ? TYPE_U16 : TYPE_U32;
+		swz->cat1.src_type = (entry->flags & IR3_REG_HALF) ? TYPE_U16 : TYPE_U32;
+		swz->repeat = 1;
+		ir3_instr_move_before(swz, instr);
+	}
 }
 
 static void
-do_copy(struct ir3_instruction *instr, const struct copy_entry *entry)
+do_copy(struct ir3_compiler *compiler, struct ir3_instruction *instr,
+		const struct copy_entry *entry)
 {
 	/* TODO implement shared copies */
 	assert(!(entry->flags & IR3_REG_SHARED));
@@ -159,19 +176,19 @@ do_copy(struct ir3_instruction *instr, const struct copy_entry *entry)
 			/* TODO: is there a hw instruction we can use for this case? */
 			physreg_t tmp = !entry->src.flags && entry->src.reg < 2 ? 2 : 0;
 
-			do_swap(instr, &(struct copy_entry) {
+			do_swap(compiler, instr, &(struct copy_entry) {
 				.src = { .reg = entry->dst & ~1u },
 				.dst = tmp,
 				.flags = entry->flags & ~IR3_REG_HALF,
 			});
 
-			do_copy(instr, &(struct copy_entry) {
+			do_copy(compiler, instr, &(struct copy_entry) {
 				.src = entry->src,
 				.dst = tmp + (entry->dst & 1),
 				.flags = entry->flags,
 			});
 
-			do_swap(instr, &(struct copy_entry) {
+			do_swap(compiler, instr, &(struct copy_entry) {
 				.src = { .reg = entry->dst & ~1u },
 				.dst = tmp,
 				.flags = entry->flags & ~IR3_REG_HALF,
@@ -186,18 +203,18 @@ do_copy(struct ir3_instruction *instr, const struct copy_entry *entry)
 			
 			if (entry->src.reg % 2 == 0) {
 				/* cov.u32u16 dst, src */
-				struct ir3_instruction *cov = ir3_instr_create(instr->block, OPC_MOV, 2);
-				ir3_reg_create(cov, dst_num, entry->flags | IR3_REG_DEST)->wrmask = 1;
-				ir3_reg_create(cov, src_num, entry->flags & ~IR3_REG_HALF)->wrmask = 1;
+				struct ir3_instruction *cov = ir3_instr_create(instr->block, OPC_MOV, 1, 1);
+				ir3_dst_create(cov, dst_num, entry->flags)->wrmask = 1;
+				ir3_src_create(cov, src_num, entry->flags & ~IR3_REG_HALF)->wrmask = 1;
 				cov->cat1.dst_type = TYPE_U16;
 				cov->cat1.src_type = TYPE_U32;
 				ir3_instr_move_before(cov, instr);
 			} else {
 				/* shr.b dst, src, h(16) */
-				struct ir3_instruction *shr = ir3_instr_create(instr->block, OPC_SHR_B, 3);
-				ir3_reg_create(shr, dst_num, entry->flags | IR3_REG_DEST)->wrmask = 1;
-				ir3_reg_create(shr, src_num, entry->flags & ~IR3_REG_HALF)->wrmask = 1;
-				ir3_reg_create(shr, 0, entry->flags | IR3_REG_IMMED)->uim_val = 16;
+				struct ir3_instruction *shr = ir3_instr_create(instr->block, OPC_SHR_B, 1, 2);
+				ir3_dst_create(shr, dst_num, entry->flags)->wrmask = 1;
+				ir3_src_create(shr, src_num, entry->flags & ~IR3_REG_HALF)->wrmask = 1;
+				ir3_src_create(shr, 0, entry->flags | IR3_REG_IMMED)->uim_val = 16;
 				ir3_instr_move_before(shr, instr);
 			}
 			return;
@@ -207,15 +224,15 @@ do_copy(struct ir3_instruction *instr, const struct copy_entry *entry)
 	unsigned src_num = ra_physreg_to_num(entry->src.reg, entry->flags);
 	unsigned dst_num = ra_physreg_to_num(entry->dst, entry->flags);
 
-	struct ir3_instruction *mov = ir3_instr_create(instr->block, OPC_MOV, 2);
-	ir3_reg_create(mov, dst_num, entry->flags | IR3_REG_DEST)->wrmask = 1;
-	ir3_reg_create(mov, src_num, entry->flags | entry->src.flags)->wrmask = 1;
+	struct ir3_instruction *mov = ir3_instr_create(instr->block, OPC_MOV, 1, 1);
+	ir3_dst_create(mov, dst_num, entry->flags)->wrmask = 1;
+	ir3_src_create(mov, src_num, entry->flags | entry->src.flags)->wrmask = 1;
 	mov->cat1.dst_type = (entry->flags & IR3_REG_HALF) ? TYPE_U16 : TYPE_U32;
 	mov->cat1.src_type = (entry->flags & IR3_REG_HALF) ? TYPE_U16 : TYPE_U32;
 	if (entry->src.flags & IR3_REG_IMMED)
-		mov->regs[1]->uim_val = entry->src.imm;
+		mov->srcs[0]->uim_val = entry->src.imm;
 	else if (entry->src.flags & IR3_REG_CONST)
-		mov->regs[1]->num = entry->src.const_num;
+		mov->srcs[0]->num = entry->src.const_num;
 	ir3_instr_move_before(mov, instr);
 }
 
@@ -262,7 +279,8 @@ split_32bit_copy(struct copy_ctx *ctx, struct copy_entry *entry)
 }
 
 static void
-_handle_copies(struct ir3_instruction *instr, struct copy_ctx *ctx)
+_handle_copies(struct ir3_compiler *compiler, struct ir3_instruction *instr,
+			   struct copy_ctx *ctx)
 {
 	/* Set up the bookkeeping */
 	memset(ctx->physreg_dst, 0, sizeof(ctx->physreg_dst));
@@ -298,7 +316,7 @@ _handle_copies(struct ir3_instruction *instr, struct copy_ctx *ctx)
 			if (!entry->done && !entry_blocked(entry, ctx)) {
 				entry->done = true;
 				progress = true;
-				do_copy(instr, entry);
+				do_copy(compiler, instr, entry);
 				for (unsigned j = 0; j < copy_entry_size(entry); j++) {
 					if (!entry->src.flags)
 						ctx->physreg_use_count[entry->src.reg + j]--;
@@ -383,7 +401,7 @@ _handle_copies(struct ir3_instruction *instr, struct copy_ctx *ctx)
 			continue;
 		}
 
-		do_swap(instr, entry);
+		do_swap(compiler, instr, entry);
 
 		/* Split any blocking copies whose sources are only partially
 		 * contained within our destination.
@@ -419,18 +437,18 @@ _handle_copies(struct ir3_instruction *instr, struct copy_ctx *ctx)
 }
 
 static void
-handle_copies(struct ir3_instruction *instr, struct copy_entry *entries,
-			  unsigned entry_count, bool mergedregs)
+handle_copies(struct ir3_shader_variant *v, struct ir3_instruction *instr,
+			  struct copy_entry *entries, unsigned entry_count)
 {
 	struct copy_ctx ctx;	
 
-	if (mergedregs) {
+	if (v->mergedregs) {
 		/* Half regs and full regs are in the same file, so handle everything
 		 * at once.
 		 */
 		memcpy(ctx.entries, entries, sizeof(struct copy_entry) * entry_count);
 		ctx.entry_count = entry_count;
-		_handle_copies(instr, &ctx);
+		_handle_copies(v->shader->compiler, instr, &ctx);
 	} else {
 		/* There may be both half copies and full copies, so we have to split
 		 * them up since they don't interfere.
@@ -440,14 +458,14 @@ handle_copies(struct ir3_instruction *instr, struct copy_entry *entries,
 			if (entries[i].flags & IR3_REG_HALF)
 				ctx.entries[ctx.entry_count++] = entries[i];
 		}
-		_handle_copies(instr, &ctx);
+		_handle_copies(v->shader->compiler, instr, &ctx);
 
 		ctx.entry_count = 0;
 		for (unsigned i = 0; i < entry_count; i++) {
 			if (!(entries[i].flags & IR3_REG_HALF))
 				ctx.entries[ctx.entry_count++] = entries[i];
 		}
-		_handle_copies(instr, &ctx);
+		_handle_copies(v->shader->compiler, instr, &ctx);
 	}
 }
 
@@ -462,45 +480,46 @@ ir3_lower_copies(struct ir3_shader_variant *v)
 		foreach_instr_safe (instr, &block->instr_list) {
 			if (instr->opc == OPC_META_PARALLEL_COPY) {
 				copies_count = 0;
-				for (unsigned i = 0; i < instr->regs_count / 2; i++) {
-					struct ir3_register *dst = instr->regs[i];
-					struct ir3_register *src = instr->regs[i + instr->regs_count / 2];
+				for (unsigned i = 0; i < instr->dsts_count; i++) {
+					struct ir3_register *dst = instr->dsts[i];
+					struct ir3_register *src = instr->srcs[i];
 					unsigned flags = src->flags & (IR3_REG_HALF | IR3_REG_SHARED);
+					unsigned dst_physreg = ra_reg_get_physreg(dst);
 					for (unsigned j = 0; j < reg_elems(dst); j++) {
 						array_insert(NULL, copies, (struct copy_entry) {
-							.dst = ra_num_to_physreg(dst->num + j, flags),
+							.dst = dst_physreg + j * reg_elem_size(dst),
 							.src = get_copy_src(src, j * reg_elem_size(dst)),
 							.flags = flags,
 						});
 					}
 				}
-				handle_copies(instr, copies, copies_count, v->mergedregs);
+				handle_copies(v, instr, copies, copies_count);
 				list_del(&instr->node);
 			} else if (instr->opc == OPC_META_COLLECT) {
 				copies_count = 0;
-				struct ir3_register *dst = instr->regs[0];
+				struct ir3_register *dst = instr->dsts[0];
 				unsigned flags = dst->flags & (IR3_REG_HALF | IR3_REG_SHARED);
-				for (unsigned i = 1; i < instr->regs_count; i++) {
-					struct ir3_register *src = instr->regs[i];
+				for (unsigned i = 0; i < instr->srcs_count; i++) {
+					struct ir3_register *src = instr->srcs[i];
 					array_insert(NULL, copies, (struct copy_entry) {
-						.dst = ra_num_to_physreg(dst->num + i - 1, flags),
+						.dst = ra_num_to_physreg(dst->num + i, flags),
 						.src = get_copy_src(src, 0),
 						.flags = flags,
 					});
 				}
-				handle_copies(instr, copies, copies_count, v->mergedregs);
+				handle_copies(v, instr, copies, copies_count);
 				list_del(&instr->node);
 			} else if (instr->opc == OPC_META_SPLIT) {
 				copies_count = 0;
-				struct ir3_register *dst = instr->regs[0];
-				struct ir3_register *src = instr->regs[1];
+				struct ir3_register *dst = instr->dsts[0];
+				struct ir3_register *src = instr->srcs[0];
 				unsigned flags = src->flags & (IR3_REG_HALF | IR3_REG_SHARED);
 				array_insert(NULL, copies, (struct copy_entry) {
 					.dst = ra_reg_get_physreg(dst),
 					.src = get_copy_src(src, instr->split.off * reg_elem_size(dst)),
 					.flags = flags,
 				});
-				handle_copies(instr, copies, copies_count, v->mergedregs);
+				handle_copies(v, instr, copies, copies_count);
 				list_del(&instr->node);
 			} else if (instr->opc == OPC_META_PHI) {
 				list_del(&instr->node);

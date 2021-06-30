@@ -57,6 +57,8 @@ fd_context_flush(struct pipe_context *pctx, struct pipe_fence_handle **fencep,
    if (fencep && !batch) {
       batch = fd_context_batch(ctx);
    } else if (!batch) {
+      if (ctx->screen->reorder)
+         fd_bc_flush(ctx, flags & PIPE_FLUSH_DEFERRED);
       fd_bc_dump(ctx, "%p: NULL batch, remaining:\n", ctx);
       return;
    }
@@ -350,7 +352,9 @@ fd_context_destroy(struct pipe_context *pctx)
 
    util_copy_framebuffer_state(&ctx->framebuffer, NULL);
    fd_batch_reference(&ctx->batch, NULL); /* unref current batch */
-   fd_bc_invalidate_context(ctx);
+
+   /* Make sure nothing in the batch cache references our context any more. */
+   fd_bc_flush(ctx, false);
 
    fd_prog_fini(pctx);
 

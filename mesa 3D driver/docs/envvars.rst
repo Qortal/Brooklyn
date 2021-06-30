@@ -184,6 +184,10 @@ Core Mesa environment variables
       instance version as advertised by ``vkEnumerateInstanceVersion``
    -  This can be very useful for debugging but some features may not be
       implemented correctly. (For developers only)
+:envvar:`MESA_VK_WSI_PRESENT_MODE`
+   overrides the WSI present mode clients specify in
+   ``VkSwapchainCreateInfoKHR::presentMode``. Values can be ``fifo``,
+   ``relaxed``, ``mailbox`` or ``immediate``.
 :envvar:`MESA_LOADER_DRIVER_OVERRIDE`
    chooses a different driver binary such as ``etnaviv`` or ``zink``.
 
@@ -643,10 +647,12 @@ RADV driver environment variables
       disable optimizations that get enabled when all VRAM is CPU visible.
    ``pswave32``
       enable wave32 for pixel shaders (GFX10+)
+   ``rt``
+      enable rt extensions whose implementation is still experimental.
    ``sam``
       enable optimizations to move more driver internal objects to VRAM.
 
-:envvar`RADV_TEX_ANISO`
+:envvar:`RADV_TEX_ANISO`
    force anisotropy filter (up to 16)
 
 :envvar:`ACO_DEBUG`

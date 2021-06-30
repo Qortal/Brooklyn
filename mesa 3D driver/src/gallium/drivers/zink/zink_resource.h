@@ -42,6 +42,8 @@ struct zink_context;
 
 #include <vulkan/vulkan.h>
 
+#define ZINK_MAP_TEMPORARY (PIPE_MAP_DRV_PRV << 0)
+
 enum zink_resource_access {
    ZINK_RESOURCE_ACCESS_READ = 1,
    ZINK_RESOURCE_ACCESS_WRITE = 32,
@@ -49,8 +51,11 @@ enum zink_resource_access {
 };
 
 struct mem_key {
-   VkMemoryRequirements reqs;
-   VkMemoryPropertyFlags flags;
+   unsigned seen_count;
+   struct {
+      unsigned heap_index;
+      VkMemoryRequirements reqs;
+   } key;
 };
 
 struct zink_resource_object {
@@ -75,9 +80,10 @@ struct zink_resource_object {
    unsigned persistent_maps; //if nonzero, requires vkFlushMappedMemoryRanges during batch use
    struct zink_descriptor_refs desc_set_refs;
 
-   struct zink_batch_usage reads;
-   struct zink_batch_usage writes;
+   struct zink_batch_usage *reads;
+   struct zink_batch_usage *writes;
    void *map;
+   unsigned map_count;
    bool is_buffer;
    bool host_visible;
    bool coherent;
@@ -95,7 +101,6 @@ struct zink_resource {
    struct zink_resource_object *obj;
    struct zink_resource_object *scanout_obj; //TODO: remove for wsi
    bool scanout_obj_init;
-   bool scanout_dirty;
    union {
       struct {
          struct util_range valid_buffer_range;
@@ -145,15 +150,13 @@ void
 zink_get_depth_stencil_resources(struct pipe_resource *res,
                                  struct zink_resource **out_z,
                                  struct zink_resource **out_s);
-
+VkMappedMemoryRange
+zink_resource_init_mem_range(struct zink_screen *screen, struct zink_resource_object *obj, VkDeviceSize offset, VkDeviceSize size);
 void
 zink_resource_setup_transfer_layouts(struct zink_context *ctx, struct zink_resource *src, struct zink_resource *dst);
 
 bool
 zink_resource_has_usage(struct zink_resource *res, enum zink_resource_access usage);
-
-bool
-zink_resource_has_curr_read_usage(struct zink_context *ctx, struct zink_resource *res);
 
 void
 zink_destroy_resource_object(struct zink_screen *screen, struct zink_resource_object *resource_object);

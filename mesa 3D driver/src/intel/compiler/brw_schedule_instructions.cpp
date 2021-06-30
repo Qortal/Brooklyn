@@ -528,6 +528,42 @@ schedule_node::set_latency_gfx7(bool is_haswell)
          }
          break;
 
+      case GFX12_SFID_UGM:
+      case GFX12_SFID_TGM:
+      case GFX12_SFID_SLM:
+         switch (lsc_msg_desc_opcode(devinfo, inst->desc)) {
+         case LSC_OP_LOAD:
+         case LSC_OP_STORE:
+         case LSC_OP_LOAD_CMASK:
+         case LSC_OP_STORE_CMASK:
+            latency = 300;
+            break;
+         case LSC_OP_ATOMIC_INC:
+         case LSC_OP_ATOMIC_DEC:
+         case LSC_OP_ATOMIC_LOAD:
+         case LSC_OP_ATOMIC_STORE:
+         case LSC_OP_ATOMIC_ADD:
+         case LSC_OP_ATOMIC_SUB:
+         case LSC_OP_ATOMIC_MIN:
+         case LSC_OP_ATOMIC_MAX:
+         case LSC_OP_ATOMIC_UMIN:
+         case LSC_OP_ATOMIC_UMAX:
+         case LSC_OP_ATOMIC_CMPXCHG:
+         case LSC_OP_ATOMIC_FADD:
+         case LSC_OP_ATOMIC_FSUB:
+         case LSC_OP_ATOMIC_FMIN:
+         case LSC_OP_ATOMIC_FMAX:
+         case LSC_OP_ATOMIC_FCMPXCHG:
+         case LSC_OP_ATOMIC_AND:
+         case LSC_OP_ATOMIC_OR:
+         case LSC_OP_ATOMIC_XOR:
+            latency = 1400;
+            break;
+         default:
+            unreachable("unsupported new data port message instruction");
+         }
+         break;
+
       case GEN_RT_SFID_BINDLESS_THREAD_DISPATCH:
       case GEN_RT_SFID_RAY_TRACE_ACCELERATOR:
          /* TODO.

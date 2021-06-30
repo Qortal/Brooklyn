@@ -51,6 +51,11 @@
 
 #include "frontend/sw_winsys.h"
 
+#if defined(__APPLE__)
+// Source of MVK_VERSION
+#include "MoltenVK/vk_mvk_moltenvk.h"
+#endif
+
 static const struct debug_named_value
 zink_debug_options[] = {
    { "nir", ZINK_DEBUG_NIR, "Dump NIR during program compile" },
@@ -241,6 +246,28 @@ zink_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    switch (param) {
    case PIPE_CAP_ANISOTROPIC_FILTER:
       return screen->info.feats.features.samplerAnisotropy;
+   case PIPE_CAP_EMULATE_NONFIXED_PRIMITIVE_RESTART:
+      return 1;
+   case PIPE_CAP_SUPPORTED_PRIM_MODES_WITH_RESTART: {
+      uint32_t modes = BITFIELD_BIT(PIPE_PRIM_LINE_STRIP) |
+                       BITFIELD_BIT(PIPE_PRIM_TRIANGLE_STRIP) |
+                       BITFIELD_BIT(PIPE_PRIM_LINE_STRIP_ADJACENCY) |
+                       BITFIELD_BIT(PIPE_PRIM_TRIANGLE_STRIP_ADJACENCY) |
+                       BITFIELD_BIT(PIPE_PRIM_PATCHES);
+      if (screen->have_triangle_fans)
+         modes |= BITFIELD_BIT(PIPE_PRIM_TRIANGLE_FAN);
+      return modes;
+   }
+   case PIPE_CAP_SUPPORTED_PRIM_MODES: {
+      uint32_t modes = BITFIELD_MASK(PIPE_PRIM_MAX);
+      modes &= ~BITFIELD_BIT(PIPE_PRIM_QUADS);
+      modes &= ~BITFIELD_BIT(PIPE_PRIM_QUAD_STRIP);
+      modes &= ~BITFIELD_BIT(PIPE_PRIM_POLYGON);
+      modes &= ~BITFIELD_BIT(PIPE_PRIM_LINE_LOOP);
+      if (!screen->have_triangle_fans)
+         modes &= ~BITFIELD_BIT(PIPE_PRIM_TRIANGLE_FAN);
+      return modes;
+   }
 
    case PIPE_CAP_QUERY_MEMORY_INFO:
    case PIPE_CAP_NPOT_TEXTURES:
@@ -847,6 +874,9 @@ zink_is_format_supported(struct pipe_screen *pscreen,
              vk_sample_count_flags(sample_count);
 
    if (bind & PIPE_BIND_INDEX_BUFFER) {
+      if (format == PIPE_FORMAT_R8_UINT &&
+          !screen->info.have_EXT_index_type_uint8)
+         return false;
       if (format != PIPE_FORMAT_R8_UINT &&
           format != PIPE_FORMAT_R16_UINT &&
           format != PIPE_FORMAT_R32_UINT)
@@ -1020,6 +1050,8 @@ zink_destroy_screen(struct pipe_screen *pscreen)
    if (screen->prev_sem)
       vkDestroySemaphore(screen->dev, screen->prev_sem, NULL);
 
+   if (screen->threaded)
+      util_queue_destroy(&screen->flush_queue);
 
    vkDestroyDevice(screen->dev, NULL);
    vkDestroyInstance(screen->instance, NULL);
@@ -1102,6 +1134,16 @@ update_queue_props(struct zink_screen *screen)
 }
 
 static void
+init_queue(struct zink_screen *screen)
+{
+   vkGetDeviceQueue(screen->dev, screen->gfx_queue, 0, &screen->queue);
+   if (screen->threaded && screen->max_queues > 1)
+      vkGetDeviceQueue(screen->dev, screen->gfx_queue, 1, &screen->thread_queue);
+   else
+      screen->thread_queue = screen->queue;
+}
+
+static void
 zink_flush_frontbuffer(struct pipe_screen *pscreen,
                        struct pipe_context *pcontext,
                        struct pipe_resource *pres,
@@ -1132,11 +1174,7 @@ zink_flush_frontbuffer(struct pipe_screen *pscreen,
       winsys->displaytarget_unmap(winsys, res->dt);
    }
 
-   winsys->displaytarget_unmap(winsys, res->dt);
-
-   assert(res->dt);
-   if (res->dt)
-      winsys->displaytarget_display(winsys, res->dt, winsys_drawable_handle, sub_box);
+   winsys->displaytarget_display(winsys, res->dt, winsys_drawable_handle, sub_box);
 }
 
 bool
@@ -1159,6 +1197,10 @@ emulate_x8(enum pipe_format format)
    case PIPE_FORMAT_B8G8R8X8_SRGB:
       return PIPE_FORMAT_B8G8R8A8_SRGB;
 
+   case PIPE_FORMAT_R8G8B8X8_SINT:
+      return PIPE_FORMAT_R8G8B8A8_SINT;
+   case PIPE_FORMAT_R8G8B8X8_SNORM:
+      return PIPE_FORMAT_R8G8B8A8_SNORM;
    case PIPE_FORMAT_R8G8B8X8_UNORM:
       return PIPE_FORMAT_R8G8B8A8_UNORM;
 
@@ -1317,33 +1359,29 @@ zink_internal_setup_moltenvk(struct zink_screen *screen)
    if (!screen->instance_info.have_MVK_moltenvk)
       return true;
 
-   GET_PROC_ADDR_INSTANCE(GetMoltenVKConfigurationMVK);
-   GET_PROC_ADDR_INSTANCE(SetMoltenVKConfigurationMVK);
+   GET_PROC_ADDR_INSTANCE_LOCAL(screen->instance, GetMoltenVKConfigurationMVK);
+   GET_PROC_ADDR_INSTANCE_LOCAL(screen->instance, SetMoltenVKConfigurationMVK);
+   GET_PROC_ADDR_INSTANCE_LOCAL(screen->instance, GetVersionStringsMVK);
 
-   GET_PROC_ADDR_INSTANCE(GetPhysicalDeviceMetalFeaturesMVK);
-   GET_PROC_ADDR_INSTANCE(GetVersionStringsMVK);
-   GET_PROC_ADDR_INSTANCE(UseIOSurfaceMVK);
-   GET_PROC_ADDR_INSTANCE(GetIOSurfaceMVK);
-
-   if (screen->vk.GetVersionStringsMVK) {
+   if (vk_GetVersionStringsMVK) {
       char molten_version[64] = {0};
       char vulkan_version[64] = {0};
 
-      (*screen->vk.GetVersionStringsMVK)(molten_version, sizeof(molten_version) - 1, vulkan_version, sizeof(vulkan_version) - 1);
+      vk_GetVersionStringsMVK(molten_version, sizeof(molten_version) - 1, vulkan_version, sizeof(vulkan_version) - 1);
 
       printf("zink: MoltenVK %s Vulkan %s \n", molten_version, vulkan_version);
    }
 
-   if (screen->vk.GetMoltenVKConfigurationMVK && screen->vk.SetMoltenVKConfigurationMVK) {
+   if (vk_GetMoltenVKConfigurationMVK && vk_SetMoltenVKConfigurationMVK) {
       MVKConfiguration molten_config = {0};
       size_t molten_config_size = sizeof(molten_config);
 
-      VkResult res = (*screen->vk.GetMoltenVKConfigurationMVK)(screen->instance, &molten_config, &molten_config_size);
+      VkResult res = vk_GetMoltenVKConfigurationMVK(screen->instance, &molten_config, &molten_config_size);
       if (res == VK_SUCCESS || res == VK_INCOMPLETE) {
          // Needed to allow MoltenVK to accept VkImageView swizzles.
          // Encountered when using VK_FORMAT_R8G8_UNORM
          molten_config.fullImageViewSwizzle = VK_TRUE;
-         (*screen->vk.SetMoltenVKConfigurationMVK)(screen->instance, &molten_config, &molten_config_size);
+         vk_SetMoltenVKConfigurationMVK(screen->instance, &molten_config, &molten_config_size);
       }
    }
 #endif // MVK_VERSION
@@ -1586,6 +1624,8 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
 
    util_cpu_detect();
    screen->threaded = util_get_cpu_caps()->nr_cpus > 1 && debug_get_bool_option("GALLIUM_THREAD", util_get_cpu_caps()->nr_cpus > 1);
+   if (screen->threaded)
+      util_queue_init(&screen->flush_queue, "zfq", 8, 1, UTIL_QUEUE_INIT_RESIZE_IF_FULL, NULL);
 
    zink_debug = debug_get_option_zink_debug();
    screen->descriptor_mode = debug_get_option_zink_descriptor_mode();
@@ -1636,6 +1676,7 @@ zink_internal_create_screen(const struct pipe_screen_config *config)
    if (!screen->dev)
       goto fail;
 
+   init_queue(screen);
    if (screen->info.driver_props.driverID == VK_DRIVER_ID_MESA_RADV ||
        screen->info.driver_props.driverID == VK_DRIVER_ID_AMD_OPEN_SOURCE ||
        screen->info.driver_props.driverID == VK_DRIVER_ID_AMD_PROPRIETARY)

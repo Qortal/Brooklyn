@@ -11,12 +11,12 @@
 #include "vn_android.h"
 
 #include <dlfcn.h>
-#include <drm/drm_fourcc.h>
 #include <hardware/gralloc.h>
 #include <hardware/hwvulkan.h>
 #include <vndk/hardware_buffer.h>
 #include <vulkan/vk_icd.h>
 
+#include "drm-uapi/drm_fourcc.h"
 #include "util/libsync.h"
 #include "util/os_file.h"
 
@@ -118,18 +118,6 @@ vn_android_ahb_format_from_vk_format(VkFormat format)
       return AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT;
    case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
       return AHARDWAREBUFFER_FORMAT_R10G10B10A2_UNORM;
-   case VK_FORMAT_D16_UNORM:
-      return AHARDWAREBUFFER_FORMAT_D16_UNORM;
-   case VK_FORMAT_X8_D24_UNORM_PACK32:
-      return AHARDWAREBUFFER_FORMAT_D24_UNORM;
-   case VK_FORMAT_D24_UNORM_S8_UINT:
-      return AHARDWAREBUFFER_FORMAT_D24_UNORM_S8_UINT;
-   case VK_FORMAT_D32_SFLOAT:
-      return AHARDWAREBUFFER_FORMAT_D32_FLOAT;
-   case VK_FORMAT_D32_SFLOAT_S8_UINT:
-      return AHARDWAREBUFFER_FORMAT_D32_FLOAT_S8_UINT;
-   case VK_FORMAT_S8_UINT:
-      return AHARDWAREBUFFER_FORMAT_S8_UINT;
    case VK_FORMAT_G8_B8R8_2PLANE_420_UNORM:
       return AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420;
    default:
@@ -138,37 +126,22 @@ vn_android_ahb_format_from_vk_format(VkFormat format)
 }
 
 VkFormat
-vn_android_ahb_format_to_vk_format(uint32_t format)
+vn_android_drm_format_to_vk_format(uint32_t format)
 {
    switch (format) {
-   case AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM:
-   case AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM:
+   case DRM_FORMAT_ABGR8888:
+   case DRM_FORMAT_XBGR8888:
       return VK_FORMAT_R8G8B8A8_UNORM;
-   case AHARDWAREBUFFER_FORMAT_R8G8B8_UNORM:
+   case DRM_FORMAT_BGR888:
       return VK_FORMAT_R8G8B8_UNORM;
-   case AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM:
+   case DRM_FORMAT_RGB565:
       return VK_FORMAT_R5G6B5_UNORM_PACK16;
-   case AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT:
+   case DRM_FORMAT_ABGR16161616F:
       return VK_FORMAT_R16G16B16A16_SFLOAT;
-   case AHARDWAREBUFFER_FORMAT_R10G10B10A2_UNORM:
+   case DRM_FORMAT_ABGR2101010:
       return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
-   case AHARDWAREBUFFER_FORMAT_D16_UNORM:
-      return VK_FORMAT_D16_UNORM;
-   case AHARDWAREBUFFER_FORMAT_D24_UNORM:
-      return VK_FORMAT_X8_D24_UNORM_PACK32;
-   case AHARDWAREBUFFER_FORMAT_D24_UNORM_S8_UINT:
-      return VK_FORMAT_D24_UNORM_S8_UINT;
-   case AHARDWAREBUFFER_FORMAT_D32_FLOAT:
-      return VK_FORMAT_D32_SFLOAT;
-   case AHARDWAREBUFFER_FORMAT_D32_FLOAT_S8_UINT:
-      return VK_FORMAT_D32_SFLOAT_S8_UINT;
-   case AHARDWAREBUFFER_FORMAT_S8_UINT:
-      return VK_FORMAT_S8_UINT;
-   case AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420:
-   /* XXX Add a gralloc query for the resolved drm format and then map to a
-    * compatiable VkFormat.
-    */
-   case AHARDWAREBUFFER_FORMAT_IMPLEMENTATION_DEFINED:
+   case DRM_FORMAT_YVU420:
+   case DRM_FORMAT_NV12:
       return VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
    default:
       return VK_FORMAT_UNDEFINED;
@@ -233,7 +206,7 @@ vn_GetSwapchainGrallocUsage2ANDROID(
 }
 
 struct cros_gralloc0_buffer_info {
-   uint32_t drm_fourcc; /* ignored */
+   uint32_t drm_fourcc;
    int num_fds;         /* ignored */
    int fds[4];          /* ignored */
    uint64_t modifier;
@@ -242,6 +215,7 @@ struct cros_gralloc0_buffer_info {
 };
 
 struct vn_android_gralloc_buffer_properties {
+   uint32_t drm_fourcc;
    uint64_t modifier;
    uint32_t offset[4];
    uint32_t stride[4];
@@ -283,6 +257,7 @@ vn_android_get_gralloc_buffer_properties(
    if (info.modifier == DRM_FORMAT_MOD_INVALID)
       return false;
 
+   out_props->drm_fourcc = info.drm_fourcc;
    for (uint32_t i = 0; i < 4; i++) {
       out_props->stride[i] = info.stride[i];
       out_props->offset[i] = info.offset[i];
@@ -318,20 +293,9 @@ vn_android_get_modifier_properties(struct vn_device *dev,
                                          &format_prop);
 
    if (!mod_prop_list.drmFormatModifierCount) {
-      /* XXX Remove this fallback after host VK_EXT_image_drm_format_modifier
-       * can properly support VK_FORMAT_G8_B8R8_2PLANE_420_UNORM.
-       */
-      if (format != VK_FORMAT_G8_B8R8_2PLANE_420_UNORM) {
-         vn_log(dev->instance, "No compatible modifier for VkFormat(%u)",
-                format);
-         return VK_ERROR_INVALID_EXTERNAL_HANDLE;
-      }
-
-      out_props->drmFormatModifier = modifier;
-      out_props->drmFormatModifierPlaneCount = 2;
-      out_props->drmFormatModifierTilingFeatures =
-         VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-      return VK_SUCCESS;
+      vn_log(dev->instance, "No compatible modifier for VkFormat(%u)",
+             format);
+      return VK_ERROR_INVALID_EXTERNAL_HANDLE;
    }
 
    mod_props = vk_zalloc(
@@ -726,26 +690,27 @@ vn_android_get_ahb_format_properties(
       return VK_ERROR_INVALID_EXTERNAL_HANDLE;
    }
 
-   /* We implement AHB extension support with EXT_image_drm_format_modifier.
-    * It requires us to have a compatible VkFormat but not DRM formats. So if
-    * the ahb is not intended for backing a VkBuffer, error out early if the
-    * format is VK_FORMAT_UNDEFINED.
-    */
-   format = vn_android_ahb_format_to_vk_format(desc.format);
-   if (format == VK_FORMAT_UNDEFINED) {
-      if (desc.format != AHARDWAREBUFFER_FORMAT_BLOB) {
-         vn_log(dev->instance, "Unknown AHB format(0x%X)", desc.format);
-         return VK_ERROR_INVALID_EXTERNAL_HANDLE;
-      }
-
-      out_props->format = format;
-      out_props->externalFormat = desc.format;
+   /* Handle the special AHARDWAREBUFFER_FORMAT_BLOB for VkBuffer case. */
+   if (desc.format == AHARDWAREBUFFER_FORMAT_BLOB) {
+      out_props->format = VK_FORMAT_UNDEFINED;
       return VK_SUCCESS;
    }
 
    if (!vn_android_get_gralloc_buffer_properties(
           AHardwareBuffer_getNativeHandle(ahb), &buf_props))
       return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+
+   /* We implement AHB extension support with EXT_image_drm_format_modifier.
+    * It requires us to have a compatible VkFormat but not DRM formats. So if
+    * the ahb is not intended for backing a VkBuffer, error out early if the
+    * format is VK_FORMAT_UNDEFINED.
+    */
+   format = vn_android_drm_format_to_vk_format(buf_props.drm_fourcc);
+   if (format == VK_FORMAT_UNDEFINED) {
+      vn_log(dev->instance, "Unknown drm_fourcc(%u) from AHB format(0x%X)",
+             buf_props.drm_fourcc, desc.format);
+      return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+   }
 
    VkResult result = vn_android_get_modifier_properties(
       dev, format, buf_props.modifier, &dev->base.base.alloc, &mod_props);
@@ -763,7 +728,7 @@ vn_android_get_ahb_format_properties(
       .sType = out_props->sType,
       .pNext = out_props->pNext,
       .format = format,
-      .externalFormat = desc.format,
+      .externalFormat = buf_props.drm_fourcc,
       .formatFeatures = format_features,
       .samplerYcbcrConversionComponents = {
          .r = VK_COMPONENT_SWIZZLE_IDENTITY,
@@ -912,7 +877,7 @@ vn_android_image_from_ahb(struct vn_device *dev,
 
       local_info = *create_info;
       local_info.format =
-         vn_android_ahb_format_to_vk_format(ext_info->externalFormat);
+         vn_android_drm_format_to_vk_format(ext_info->externalFormat);
       create_info = &local_info;
    }
 
@@ -965,8 +930,12 @@ vn_android_device_import_ahb(struct vn_device *dev,
 
       VkMemoryRequirements mem_req;
       vn_GetImageMemoryRequirements(device, dedicated_info->image, &mem_req);
-      if (alloc_size < mem_req.size)
+      if (alloc_size < mem_req.size) {
+         vn_log(dev->instance,
+                "alloc_size(%" PRIu64 ") mem_req.size(%" PRIu64 ")",
+                alloc_size, mem_req.size);
          return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+      }
 
       alloc_size = mem_req.size;
    }
@@ -975,8 +944,12 @@ vn_android_device_import_ahb(struct vn_device *dev,
       VkMemoryRequirements mem_req;
       vn_GetBufferMemoryRequirements(device, dedicated_info->buffer,
                                      &mem_req);
-      if (alloc_size < mem_req.size)
+      if (alloc_size < mem_req.size) {
+         vn_log(dev->instance,
+                "alloc_size(%" PRIu64 ") mem_req.size(%" PRIu64 ")",
+                alloc_size, mem_req.size);
          return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+      }
 
       alloc_size = mem_req.size;
    }
@@ -1040,19 +1013,21 @@ vn_android_device_allocate_ahb(struct vn_device *dev,
       height = image_info->extent.height;
       layers = image_info->arrayLayers;
       format = vn_android_ahb_format_from_vk_format(image_info->format);
-      /* TODO Need to further resolve the gralloc usage bits for image format
-       * list info, which might involve disabling compression if there exists
-       * no universally applied compression strategy across the formats.
-       */
       usage = vn_android_get_ahb_usage(image_info->usage, image_info->flags);
    } else {
+      const VkPhysicalDeviceMemoryProperties *mem_props =
+         &dev->physical_device->memory_properties.memoryProperties;
+
+      assert(alloc_info->memoryTypeIndex < mem_props->memoryTypeCount);
+
       width = alloc_info->allocationSize;
       format = AHARDWAREBUFFER_FORMAT_BLOB;
-      /* TODO AHARDWAREBUFFER_USAGE_GPU_DATA_BUFFER is not supported by cros
-       * gralloc. So here we work around with CPU usage bits for VkBuffer.
-       */
-      usage = AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN |
-              AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN;
+      usage = AHARDWAREBUFFER_USAGE_GPU_DATA_BUFFER;
+      if (mem_props->memoryTypes[alloc_info->memoryTypeIndex].propertyFlags &
+          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
+         usage |= AHARDWAREBUFFER_USAGE_CPU_READ_RARELY |
+                  AHARDWAREBUFFER_USAGE_CPU_WRITE_RARELY;
+      }
    }
 
    ahb = vn_android_ahb_allocate(width, height, layers, format, usage);

@@ -509,22 +509,30 @@ static unsigned si_get_vs_vgpr_comp_cnt(struct si_screen *sscreen, struct si_sha
    assert(shader->selector->info.stage == MESA_SHADER_VERTEX ||
           (shader->previous_stage_sel && shader->previous_stage_sel->info.stage == MESA_SHADER_VERTEX));
 
-   /* GFX6-9 LS    (VertexID, RelAutoindex,                InstanceID / StepRate0(==1), ...).
-    * GFX6-9 ES,VS (VertexID, InstanceID / StepRate0(==1), VSPrimID,                    ...)
-    * GFX10  LS    (VertexID, RelAutoindex,                UserVGPR1,                   InstanceID).
-    * GFX10  ES,VS (VertexID, UserVGPR0,                   UserVGPR1 or VSPrimID,       UserVGPR2 or
-    * InstanceID)
+   /* GFX6-9   LS    (VertexID, RelAutoIndex,           InstanceID / StepRate0, InstanceID)
+    * GFX6-9   ES,VS (VertexID, InstanceID / StepRate0, VSPrimID,               InstanceID)
+    * GFX10    LS    (VertexID, RelAutoIndex,           UserVGPR1,              UserVGPR2 or InstanceID)
+    * GFX10    ES,VS (VertexID, UserVGPR1,              UserVGPR2 or VSPrimID,  UserVGPR3 or InstanceID)
     */
    bool is_ls = shader->selector->info.stage == MESA_SHADER_TESS_CTRL || shader->key.as_ls;
+   unsigned max = 0;
 
-   if (sscreen->info.chip_class >= GFX10 && shader->info.uses_instanceid)
-      return 3;
-   else if ((is_ls && shader->info.uses_instanceid) || legacy_vs_prim_id)
-      return 2;
-   else if (is_ls || shader->info.uses_instanceid)
-      return 1;
-   else
-      return 0;
+   if (shader->info.uses_instanceid) {
+      if (sscreen->info.chip_class >= GFX10)
+         max = MAX2(max, 3);
+      else if (is_ls)
+         max = MAX2(max, 2); /* use (InstanceID / StepRate0) because StepRate0 == 1 */
+      else
+         max = MAX2(max, 1); /* use (InstanceID / StepRate0) because StepRate0 == 1 */
+   }
+
+   if (legacy_vs_prim_id)
+      max = MAX2(max, 2); /* VSPrimID */
+
+   if (is_ls)
+      max = MAX2(max, 1); /* RelAutoIndex */
+
+   return max;
 }
 
 static void si_shader_ls(struct si_screen *sscreen, struct si_shader *shader)
@@ -2142,7 +2150,7 @@ static void si_build_shader_variant(struct si_shader *shader, int thread_index, 
    si_shader_init_pm4_state(sscreen, shader);
 }
 
-static void si_build_shader_variant_low_priority(void *job, int thread_index)
+static void si_build_shader_variant_low_priority(void *job, void *gdata, int thread_index)
 {
    struct si_shader *shader = (struct si_shader *)job;
 
@@ -2460,7 +2468,7 @@ static void si_parse_next_shader_property(const struct si_shader_info *info, boo
  * si_shader_selector initialization. Since it can be done asynchronously,
  * there is no way to report compile failures to applications.
  */
-static void si_init_shader_selector_async(void *job, int thread_index)
+static void si_init_shader_selector_async(void *job, void *gdata, int thread_index)
 {
    struct si_shader_selector *sel = (struct si_shader_selector *)job;
    struct si_screen *sscreen = sel->screen;

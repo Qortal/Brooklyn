@@ -29,6 +29,7 @@
 #include <assert.h>
 
 #include <util/u_debug.h>
+#include <util/log.h>
 
 #include "isa/isa.h"
 
@@ -187,6 +188,9 @@ static const struct opc_info {
 	/* category 1: */
 	OPC(1, OPC_MOV,          ),
 	OPC(1, OPC_MOVMSK,       movmsk),
+	OPC(1, OPC_SWZ,          swz),
+	OPC(1, OPC_SCT,          sct),
+	OPC(1, OPC_GAT,          gat),
 
 	/* category 2: */
 	OPC(2, OPC_ADD_F,        add.f),
@@ -302,9 +306,11 @@ static const struct opc_info {
 
 	/* category 6: */
 	OPC(6, OPC_LDG,          ldg),
+	OPC(6, OPC_LDG_A,        ldg.a),
 	OPC(6, OPC_LDL,          ldl),
 	OPC(6, OPC_LDP,          ldp),
 	OPC(6, OPC_STG,          stg),
+	OPC(6, OPC_STG_A,        stg.a),
 	OPC(6, OPC_STL,          stl),
 	OPC(6, OPC_STP,          stp),
 	OPC(6, OPC_LDIB,         ldib),
@@ -551,7 +557,7 @@ void
 ir3_assert_handler(const char *expr, const char *file, int line,
 		const char *func)
 {
-	fprintf(stdout, "\n%s:%u: %s: Assertion `%s' failed.\n", file, line, func, expr);
+	mesa_loge("%s:%u: %s: Assertion `%s' failed.", file, line, func, expr);
 	if (jmp_env_valid)
 		longjmp(jmp_env, 1);
 	abort();

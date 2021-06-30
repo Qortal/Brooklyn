@@ -2757,7 +2757,8 @@ st_finalize_texture(struct gl_context *ctx,
 
    firstImage = st_texture_image_const(stObj->base.Image[cubeMapFace]
                                        [stObj->base.Attrib.BaseLevel]);
-   assert(firstImage);
+   if (!firstImage)
+      return false;
 
    /* If both firstImage and stObj point to a texture which can contain
     * all active images, favour firstImage.  Note that because of the
@@ -3387,9 +3388,10 @@ st_NewTextureHandle(struct gl_context *ctx, struct gl_texture_object *texObj,
       st_convert_sampler(st, texObj, sampObj, 0, &sampler);
 
       /* TODO: Clarify the interaction of ARB_bindless_texture and EXT_texture_sRGB_decode */
-      view = st_get_texture_sampler_view_from_stobj(st, stObj, sampObj, 0, true);
+      view = st_get_texture_sampler_view_from_stobj(st, stObj, sampObj, 0,
+                                                    true, false);
    } else {
-      view = st_get_buffer_sampler_view_from_stobj(st, stObj);
+      view = st_get_buffer_sampler_view_from_stobj(st, stObj, false);
    }
 
    return pipe->create_texture_handle(pipe, view, &sampler);

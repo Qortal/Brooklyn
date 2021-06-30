@@ -27,6 +27,7 @@
 #include <vulkan/vulkan.h>
 
 #include "util/list.h"
+#include "util/set.h"
 #include "util/u_dynarray.h"
 
 #include "zink_fence.h"
@@ -45,19 +46,22 @@ struct zink_sampler_view;
 struct zink_surface;
 
 struct zink_batch_usage {
-   /* this has to be atomic for fence access, so we can't use a bitmask and make everything neat */
    uint32_t usage;
+   cnd_t flush;
+   mtx_t mtx;
+   bool unflushed;
 };
 
 /* not real api don't use */
 bool
-batch_ptr_add_usage(struct zink_batch *batch, struct set *s, void *ptr, struct zink_batch_usage *u);
+batch_ptr_add_usage(struct zink_batch *batch, struct set *s, void *ptr, struct zink_batch_usage **u);
 
 struct zink_batch_state {
    struct zink_fence fence;
    struct pipe_reference reference;
    unsigned draw_count;
 
+   struct zink_batch_usage usage;
    struct zink_context *ctx;
    VkCommandPool cmdpool;
    VkCommandBuffer cmdbuf;
@@ -74,6 +78,7 @@ struct zink_batch_state {
    struct set *fbs;
    struct set *programs;
 
+   struct set *resources;
    struct set *surfaces;
    struct set *bufferviews;
 
@@ -86,18 +91,19 @@ struct zink_batch_state {
 
    VkDeviceSize resource_size;
 
+    /* this is a monotonic int used to disambiguate internal fences from their tc fence references */
+   unsigned submit_count;
+
    bool is_device_lost;
    bool have_timelines;
    bool has_barriers;
+   bool scanout_flush;
 };
 
 struct zink_batch {
    struct zink_batch_state *state;
 
-   uint32_t last_batch_id;
-   VkQueue queue; //gfx+compute
-   VkQueue thread_queue; //gfx+compute
-   struct util_queue flush_queue; //TODO: move to wsi
+   struct zink_batch_usage *last_batch_usage;
 
    bool has_work;
    bool in_rp; //renderpass is currently active
@@ -174,29 +180,40 @@ zink_batch_state_reference(struct zink_screen *screen,
    if (dst) *dst = src;
 }
 
-static inline void
-zink_batch_usage_unset(struct zink_batch_usage *u, struct zink_batch_state *bs)
+static inline bool
+zink_batch_usage_is_unflushed(const struct zink_batch_usage *u)
 {
-   p_atomic_cmpxchg(&u->usage, bs->fence.batch_id, 0);
+   return u && u->unflushed;
 }
 
 static inline void
-zink_batch_usage_set(struct zink_batch_usage *u, struct zink_batch_state *bs)
+zink_batch_usage_unset(struct zink_batch_usage **u, struct zink_batch_state *bs)
 {
-   u->usage = bs->fence.batch_id;
+   (void)p_atomic_cmpxchg((uintptr_t *)u, (uintptr_t)&bs->usage, (uintptr_t)NULL);
+}
+
+static inline void
+zink_batch_usage_set(struct zink_batch_usage **u, struct zink_batch_state *bs)
+{
+   *u = &bs->usage;
 }
 
 static inline bool
 zink_batch_usage_matches(const struct zink_batch_usage *u, const struct zink_batch_state *bs)
 {
-   return u->usage == bs->fence.batch_id;
+   return u == &bs->usage;
 }
 
 static inline bool
-zink_batch_usage_exists(struct zink_batch_usage *u)
+zink_batch_usage_exists(const struct zink_batch_usage *u)
 {
-   uint32_t usage = p_atomic_read(&u->usage);
-   return !!usage;
+   return u && (u->usage || u->unflushed);
 }
+
+bool
+zink_batch_usage_check_completion(struct zink_context *ctx, const struct zink_batch_usage *u);
+
+void
+zink_batch_usage_wait(struct zink_context *ctx, struct zink_batch_usage *u);
 
 #endif

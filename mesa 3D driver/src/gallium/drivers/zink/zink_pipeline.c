@@ -35,6 +35,16 @@
 #include "util/u_debug.h"
 #include "util/u_prim.h"
 
+static VkBlendFactor
+clamp_void_blend_factor(VkBlendFactor f)
+{
+   if (f == VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA)
+      return VK_BLEND_FACTOR_ZERO;
+   if (f == VK_BLEND_FACTOR_DST_ALPHA)
+      return VK_BLEND_FACTOR_ONE;
+   return f;
+}
+
 VkPipeline
 zink_create_gfx_pipeline(struct zink_screen *screen,
                          struct zink_gfx_program *prog,
@@ -74,9 +84,21 @@ zink_create_gfx_pipeline(struct zink_screen *screen,
       primitive_state.primitiveRestartEnable = state->primitive_restart ? VK_TRUE : VK_FALSE;
    }
 
+   VkPipelineColorBlendAttachmentState blend_att[PIPE_MAX_COLOR_BUFS];
    VkPipelineColorBlendStateCreateInfo blend_state = {0};
    blend_state.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-   blend_state.pAttachments = state->blend_state->attachments;
+   if (state->void_alpha_attachments) {
+      for (unsigned i = 0; i < state->num_attachments; i++) {
+         blend_att[i] = state->blend_state->attachments[i];
+         if (state->void_alpha_attachments & BITFIELD_BIT(i)) {
+            blend_att[i].dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            blend_att[i].srcColorBlendFactor = clamp_void_blend_factor(blend_att[i].srcColorBlendFactor);
+            blend_att[i].dstColorBlendFactor = clamp_void_blend_factor(blend_att[i].dstColorBlendFactor);
+         }
+      }
+      blend_state.pAttachments = blend_att;
+   } else
+      blend_state.pAttachments = state->blend_state->attachments;
    blend_state.attachmentCount = state->num_attachments;
    blend_state.logicOpEnable = state->blend_state->logicop_enable;
    blend_state.logicOp = state->blend_state->logicop_func;

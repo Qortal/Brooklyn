@@ -615,6 +615,9 @@ The integer capabilities:
 * ``PIPE_CAP_TEXRECT``: Driver supports rectangle textures.  Required for OpenGL on `!prefers_nir` drivers.  If this cap is not present, st/mesa will lower the NIR to use normal 2D texture sampling by using either `txs` or `nir_intrinsic_load_texture_scaling` to normalize the texture coordinates.
 * ``PIPE_CAP_SAMPLER_REDUCTION_MINMAX``: Driver supports EXT min/max sampler reduction.
 * ``PIPE_CAP_SAMPLER_REDUCTION_MINMAX_ARB``: Driver supports ARB min/max sampler reduction with format queries.
+* ``PIPE_CAP_EMULATE_NONFIXED_PRIMITIVE_RESTART``: Driver requests all draws using a non-fixed restart index to be rewritten to use a fixed restart index.
+* ``PIPE_CAP_SUPPORTED_PRIM_MODES``: A bitmask of the ``pipe_prim_type`` enum values that the driver can natively support.
+* ``PIPE_CAP_SUPPORTED_PRIM_MODES_WITH_RESTART``: A bitmask of the ``pipe_prim_type`` enum values that the driver can natively support for primitive restart. Only useful if ``PIPE_CAP_PRIMITIVE_RESTART`` is also exported.
 
 .. _pipe_capf:
 

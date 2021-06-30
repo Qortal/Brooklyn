@@ -95,6 +95,18 @@ static void load_input_vs(struct si_shader_context *ctx, unsigned input_index, L
       return;
    }
 
+   /* Set can_speculate=false to help keep all loads grouped together
+    * for better latency hiding. If it was true, LLVM could move the loads forward
+    * and accidentally double memory latency by doing:
+    *
+    *    buffer_load_dword_xyzw
+    *    s_waitcnt vmcnt(0)
+    *    buffer_load_dword_xyzw
+    *    s_waitcnt vmcnt(0)
+    *
+    * ... which is what we must prevent at all cost.
+    */
+   const bool can_speculate = false;
    unsigned bit_size = info->input_fp16_lo_hi_valid[input_index] & 0x1 ? 16 : 32;
    LLVMTypeRef int_type = bit_size == 16 ? ctx->ac.i16 : ctx->ac.i32;
    LLVMTypeRef float_type = bit_size == 16 ? ctx->ac.f16 : ctx->ac.f32;
@@ -125,7 +137,7 @@ static void load_input_vs(struct si_shader_context *ctx, unsigned input_index, L
       tmp = ac_build_opencoded_load_format(&ctx->ac, fix_fetch.u.log_size,
                                            fix_fetch.u.num_channels_m1 + 1, fix_fetch.u.format,
                                            fix_fetch.u.reverse, !opencode, vb_desc, vertex_index,
-                                           ctx->ac.i32_0, ctx->ac.i32_0, 0, true);
+                                           ctx->ac.i32_0, ctx->ac.i32_0, 0, can_speculate);
       for (unsigned i = 0; i < 4; ++i)
          out[i] =
             LLVMBuildExtractElement(ctx->ac.builder, tmp, LLVMConstInt(ctx->ac.i32, i, false), "");
@@ -171,7 +183,7 @@ static void load_input_vs(struct si_shader_context *ctx, unsigned input_index, L
    for (unsigned i = 0; i < num_fetches; ++i) {
       LLVMValueRef voffset = LLVMConstInt(ctx->ac.i32, fetch_stride * i, 0);
       fetches[i] = ac_build_buffer_load_format(&ctx->ac, vb_desc, vertex_index, voffset,
-                                               channels_per_fetch, 0, true,
+                                               channels_per_fetch, 0, can_speculate,
                                                bit_size == 16, false);
    }
 
@@ -884,6 +896,19 @@ void si_llvm_build_vs_prolog(struct si_shader_context *ctx, union si_shader_part
             input_vgprs[i + 1] = LLVMBuildSelect(ctx->ac.builder, has_hs_threads,
                                                  input_vgprs[i + 1], input_vgprs[i - 1], "");
          }
+      }
+   }
+
+   /* The culling code stored the LDS addresses of the VGPRs into those VGPRs. Load them. */
+   if (key->vs_prolog.load_vgprs_after_culling) {
+      for (i = 5; i <= 8; i++) {
+         bool is_tes_rel_patch_id = i == 7;
+         input_vgprs[i] = LLVMBuildIntToPtr(ctx->ac.builder, input_vgprs[i],
+                                            LLVMPointerType(is_tes_rel_patch_id ? ctx->ac.i8 : ctx->ac.i32,
+                                                            AC_ADDR_SPACE_LDS), "");
+         input_vgprs[i] = LLVMBuildLoad(ctx->ac.builder, input_vgprs[i], "");
+         if (is_tes_rel_patch_id)
+            input_vgprs[i] = LLVMBuildZExt(ctx->ac.builder, input_vgprs[i], ctx->ac.i32, "");
       }
    }
 

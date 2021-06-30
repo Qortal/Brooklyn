@@ -26,7 +26,7 @@ project(
   ).stdout(),
   license : 'MIT',
   meson_version : '>= 0.52',
-  default_options : ['buildtype=debugoptimized', 'b_ndebug=if-release', 'c_std=c99', 'cpp_std=c++14']
+  default_options : ['buildtype=debugoptimized', 'b_ndebug=if-release', 'c_std=c11', 'cpp_std=c++14']
 )
 
 cc = meson.get_compiler('c')
@@ -168,7 +168,7 @@ if dri_drivers.contains('auto')
       dri_drivers = ['i915', 'i965', 'r100', 'r200', 'nouveau']
     elif ['arm', 'aarch64'].contains(host_machine.cpu_family())
       dri_drivers = []
-    elif ['mips', 'mips64'].contains(host_machine.cpu_family())
+    elif ['mips', 'mips64', 'riscv32', 'riscv64'].contains(host_machine.cpu_family())
       dri_drivers = ['r100', 'r200', 'nouveau']
     else
       error('Unknown architecture @0@. Please pass -Ddri-drivers to set driver options. Patches gladly accepted to fix this.'.format(
@@ -205,7 +205,7 @@ if gallium_drivers.contains('auto')
         'v3d', 'vc4', 'freedreno', 'etnaviv', 'nouveau',
         'tegra', 'virgl', 'lima', 'panfrost', 'swrast'
       ]
-    elif ['mips', 'mips64'].contains(host_machine.cpu_family())
+    elif ['mips', 'mips64', 'riscv32', 'riscv64'].contains(host_machine.cpu_family())
       gallium_drivers = [
         'r300', 'r600', 'radeonsi', 'nouveau', 'virgl', 'swrast'
       ]
@@ -260,7 +260,7 @@ if _vulkan_drivers.contains('auto')
       _vulkan_drivers = ['amd', 'intel', 'swrast']
     elif ['arm', 'aarch64'].contains(host_machine.cpu_family())
       _vulkan_drivers = ['swrast']
-    elif ['mips', 'mips64'].contains(host_machine.cpu_family())
+    elif ['mips', 'mips64', 'riscv32', 'riscv64'].contains(host_machine.cpu_family())
       _vulkan_drivers = ['amd', 'swrast']
     else
       error('Unknown architecture @0@. Please pass -Dvulkan-drivers to set driver options. Patches gladly accepted to fix this.'.format(
@@ -278,6 +278,7 @@ endif
 with_intel_vk = _vulkan_drivers.contains('intel')
 with_amd_vk = _vulkan_drivers.contains('amd')
 with_freedreno_vk = _vulkan_drivers.contains('freedreno')
+with_panfrost_vk = _vulkan_drivers.contains('panfrost')
 with_swrast_vk = _vulkan_drivers.contains('swrast')
 with_virtio_vk = _vulkan_drivers.contains('virtio-experimental')
 with_freedreno_kgsl = get_option('freedreno-kgsl')
@@ -745,7 +746,7 @@ endif
 with_gallium_va = false
 dep_va = null_dep
 if _va != 'disabled'
-  dep_va = dependency('libva', version : '>= 0.38.0', required : _va == 'enabled')
+  dep_va = dependency('libva', version : '>= 1.1.0', required : _va == 'enabled')
   if dep_va.found()
     dep_va_headers = dep_va.partial_dependency(compile_args : true)
     with_gallium_va = true
@@ -1308,7 +1309,8 @@ foreach h : ['xlocale.h', 'linux/futex.h', 'endian.h', 'dlfcn.h', 'execinfo.h', 
   endif
 endforeach
 
-foreach f : ['strtof', 'mkostemp', 'timespec_get', 'memfd_create', 'random_r', 'flock', 'strtok_r', 'getrandom']
+foreach f : ['strtof', 'mkostemp', 'timespec_get', 'memfd_create', 'random_r',
+             'flock', 'strtok_r', 'getrandom', 'qsort_r', 'qsort_s']
   if cc.has_function(f)
     pre_args += '-DHAVE_@0@'.format(f.to_upper())
   endif
@@ -2002,6 +2004,12 @@ if _sensors != 'disabled'
   endif
 else
   dep_lmsensors = null_dep
+endif
+
+_shader_replacement = get_option('custom-shader-replacement')
+if _shader_replacement == ''
+else
+  pre_args += '-DCUSTOM_SHADER_REPLACEMENT'
 endif
 
 with_perfetto = get_option('perfetto')

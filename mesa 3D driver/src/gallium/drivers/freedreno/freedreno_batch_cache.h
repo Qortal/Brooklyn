@@ -67,10 +67,11 @@ void fd_bc_init(struct fd_batch_cache *cache);
 void fd_bc_fini(struct fd_batch_cache *cache);
 
 void fd_bc_flush(struct fd_context *ctx, bool deferred) assert_dt;
+void fd_bc_flush_writer(struct fd_context *ctx, struct fd_resource *rsc) assert_dt;
+void fd_bc_flush_readers(struct fd_context *ctx, struct fd_resource *rsc) assert_dt;
 void fd_bc_dump(struct fd_context *ctx, const char *fmt, ...)
    _util_printf_format(2, 3);
 
-void fd_bc_invalidate_context(struct fd_context *ctx);
 void fd_bc_invalidate_batch(struct fd_batch *batch, bool destroy);
 void fd_bc_invalidate_resource(struct fd_resource *rsc, bool destroy);
 struct fd_batch *fd_bc_alloc_batch(struct fd_context *ctx,

@@ -161,6 +161,11 @@ EXTENSIONS = [
     Extension("VK_KHR_shader_float16_int8",
               alias="shader_float16_int8",
               features=True),
+    Extension("VK_EXT_multi_draw",
+              alias="multidraw",
+	      features=True,
+	      properties=True,
+	      conditions=["$feats.multiDraw"]),
     Extension("VK_KHR_push_descriptor",
         alias="push",
         properties=True),
@@ -217,12 +222,6 @@ header_code = """
 #include "util/u_memory.h"
 
 #include <vulkan/vulkan.h>
-
-#if defined(__APPLE__)
-// Source of MVK_VERSION
-// Source of VK_EXTX_PORTABILITY_SUBSET_EXTENSION_NAME
-#include "MoltenVK/vk_mvk_moltenvk.h"
-#endif
 
 struct zink_screen;
 

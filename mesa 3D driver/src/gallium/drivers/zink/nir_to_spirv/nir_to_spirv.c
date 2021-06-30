@@ -1671,7 +1671,7 @@ emit_alu(struct ntv_context *ctx, nir_alu_instr *alu)
    BUILTIN_UNOP(nir_op_ifind_msb, GLSLstd450FindSMsb)
    BUILTIN_UNOP(nir_op_pack_half_2x16, GLSLstd450PackHalf2x16)
    BUILTIN_UNOP(nir_op_unpack_half_2x16, GLSLstd450UnpackHalf2x16)
-
+   BUILTIN_UNOP(nir_op_pack_64_2x32, GLSLstd450PackDouble2x32)
 #undef BUILTIN_UNOP
 
    case nir_op_frcp:
@@ -3047,7 +3047,7 @@ emit_tex(struct ntv_context *ctx, nir_tex_instr *tex)
    }
 
    if (proj && coord_components > 0) {
-      SpvId constituents[coord_components + 1];
+      SpvId constituents[NIR_MAX_VEC_COMPONENTS + 1];
       if (coord_components == 1)
          constituents[0] = coord;
       else {

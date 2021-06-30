@@ -315,6 +315,7 @@ __fd_batch_destroy(struct fd_batch *batch)
 
    simple_mtx_destroy(&batch->submit_lock);
 
+   free(batch->key);
    free(batch);
    fd_screen_lock(ctx->screen);
 }
@@ -539,11 +540,7 @@ fd_batch_check_size(struct fd_batch *batch)
       return;
    }
 
-   if (fd_device_version(batch->ctx->screen->dev) >= FD_VERSION_UNLIMITED_CMDS)
-      return;
-
-   struct fd_ringbuffer *ring = batch->draw;
-   if ((ring->cur - ring->start) > (ring->size / 4 - 0x1000))
+   if (!fd_ringbuffer_check_size(batch->draw))
       fd_batch_flush(batch);
 }
 

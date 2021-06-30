@@ -755,6 +755,7 @@
       <value name="SURFTYPE_CUBE" value="3"/>
       <value name="SURFTYPE_BUFFER" value="4"/>
       <value name="SURFTYPE_STRBUF" value="5"/>
+      <value name="SURFTYPE_SCRATCH" value="6"/>
       <value name="SURFTYPE_NULL" value="7"/>
     </field>
     <field name="Surface QPitch" start="32" end="46" type="uint"/>
@@ -1746,8 +1747,7 @@
       <value name="13-16 Samplers" value="4"/>
     </field>
     <field name="Vector Mask Enable" start="126" end="126" type="bool"/>
-    <field name="Per-Thread Scratch Space" start="128" end="131" type="uint"/>
-    <field name="Scratch Space Base Pointer" start="138" end="191" type="address"/>
+    <field name="Scratch Space Buffer" start="138" end="159" type="uint"/>
     <field name="Patch URB Entry Read Offset" start="196" end="201" type="uint"/>
     <field name="Patch URB Entry Read Length" start="203" end="209" type="uint"/>
     <field name="Dispatch GRF Start Register For URB Data" start="212" end="216" type="uint"/>
@@ -1932,8 +1932,7 @@
     </field>
     <field name="Vector Mask Enable" start="126" end="126" type="bool"/>
     <field name="Single Program Flow" start="127" end="127" type="bool"/>
-    <field name="Per-Thread Scratch Space" start="128" end="131" type="uint"/>
-    <field name="Scratch Space Base Pointer" start="138" end="191" type="address"/>
+    <field name="Scratch Space Buffer" start="138" end="159" type="uint"/>
     <field name="Dispatch GRF Start Register For URB Data" start="192" end="195" type="uint"/>
     <field name="Vertex URB Entry Read Offset" start="196" end="201" type="uint"/>
     <field name="Include Vertex Handles" start="202" end="202" type="bool"/>
@@ -2017,8 +2016,7 @@
     <field name="Statistics Enable" start="93" end="93" type="bool"/>
     <field name="Enable" start="95" end="95" type="bool"/>
     <field name="Kernel Start Pointer" start="102" end="159" type="offset"/>
-    <field name="Per-Thread Scratch Space" start="160" end="163" type="uint"/>
-    <field name="Scratch Space Base Pointer" start="170" end="223" type="address"/>
+    <field name="Scratch Space Buffer" start="170" end="191" type="uint"/>
     <field name="Include Primitive ID" start="224" end="224" type="bool"/>
     <field name="Patch Count Threshold" start="225" end="227" type="uint"/>
     <field name="Vertex URB Entry Read Offset" start="228" end="233" type="uint"/>
@@ -2164,8 +2162,7 @@
     </field>
     <field name="Vector Mask Enable" start="126" end="126" type="bool"/>
     <field name="Single Program Flow" start="127" end="127" type="bool"/>
-    <field name="Per Thread Scratch Space" start="128" end="131" type="uint"/>
-    <field name="Scratch Space Base Pointer" start="138" end="191" type="address"/>
+    <field name="Scratch Space Buffer" start="138" end="159" type="uint"/>
     <field name="8 Pixel Dispatch Enable" start="192" end="192" type="bool"/>
     <field name="16 Pixel Dispatch Enable" start="193" end="193" type="bool"/>
     <field name="32 Pixel Dispatch Enable" start="194" end="194" type="bool"/>
@@ -3095,8 +3092,7 @@
       <value name="13-16 Samplers" value="4"/>
     </field>
     <field name="Vector Mask Enable" start="126" end="126" type="bool"/>
-    <field name="Per-Thread Scratch Space" start="128" end="131" type="uint"/>
-    <field name="Scratch Space Base Pointer" start="138" end="191" type="address"/>
+    <field name="Scratch Space Buffer" start="138" end="159" type="uint"/>
     <field name="Vertex URB Entry Read Offset" start="196" end="201" type="uint"/>
     <field name="Vertex URB Entry Read Length" start="203" end="208" type="uint"/>
     <field name="Dispatch GRF Start Register For URB Data" start="212" end="216" type="uint"/>
@@ -3325,35 +3321,6 @@
     <group count="8" start="992" size="32">
       <field name="Inline Data" start="0" end="31" type="uint"/>
     </group>
-  </instruction>
-
-  <instruction name="GPGPU_WALKER" bias="2" length="15" engine="render">
-    <field name="DWord Length" start="0" end="7" type="uint" default="13"/>
-    <field name="Predicate Enable" start="8" end="8" type="bool"/>
-    <field name="Indirect Parameter Enable" start="10" end="10" type="bool"/>
-    <field name="SubOpcode" start="16" end="23" type="uint" default="5"/>
-    <field name="Media Command Opcode" start="24" end="26" type="uint" default="1"/>
-    <field name="Pipeline" start="27" end="28" type="uint" default="2"/>
-    <field name="Command Type" start="29" end="31" type="uint" default="3"/>
-    <field name="Interface Descriptor Offset" start="32" end="37" type="uint"/>
-    <field name="Indirect Data Length" start="64" end="80" type="uint"/>
-    <field name="Indirect Data Start Address" start="102" end="127" type="offset"/>
-    <field name="Thread Width Counter Maximum" start="128" end="133" type="uint"/>
-    <field name="Thread Height Counter Maximum" start="136" end="141" type="uint"/>
-    <field name="Thread Depth Counter Maximum" start="144" end="149" type="uint"/>
-    <field name="SIMD Size" start="158" end="159" type="uint">
-      <value name="SIMD8" value="0"/>
-      <value name="SIMD16" value="1"/>
-      <value name="SIMD32" value="2"/>
-    </field>
-    <field name="Thread Group ID Starting X" start="160" end="191" type="uint"/>
-    <field name="Thread Group ID X Dimension" start="224" end="255" type="uint"/>
-    <field name="Thread Group ID Starting Y" start="256" end="287" type="uint"/>
-    <field name="Thread Group ID Y Dimension" start="320" end="351" type="uint"/>
-    <field name="Thread Group ID Starting/Resume Z" start="352" end="383" type="uint"/>
-    <field name="Thread Group ID Z Dimension" start="384" end="415" type="uint"/>
-    <field name="Right Execution Mask" start="416" end="447" type="uint"/>
-    <field name="Bottom Execution Mask" start="448" end="479" type="uint"/>
   </instruction>
 
   <instruction name="HCP_BSD_OBJECT" bias="2" length="3" engine="video">

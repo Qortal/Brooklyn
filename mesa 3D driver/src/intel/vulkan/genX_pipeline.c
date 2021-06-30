@@ -25,6 +25,7 @@
 
 #include "genxml/gen_macros.h"
 #include "genxml/genX_pack.h"
+#include "genxml/gen_rt_pack.h"
 
 #include "common/intel_l3_config.h"
 #include "common/intel_sample_positions.h"
@@ -444,34 +445,14 @@ emit_3dstate_sbe(struct anv_graphics_pipeline *pipeline)
 #endif
 }
 
-static VkLineRasterizationModeEXT
-vk_line_rasterization_mode(const VkPipelineRasterizationLineStateCreateInfoEXT *line_info,
-                           const VkPipelineMultisampleStateCreateInfo *ms_info)
-{
-   VkLineRasterizationModeEXT line_mode =
-      line_info ? line_info->lineRasterizationMode :
-                  VK_LINE_RASTERIZATION_MODE_DEFAULT_EXT;
-
-   if (line_mode == VK_LINE_RASTERIZATION_MODE_DEFAULT_EXT) {
-      if (ms_info && ms_info->rasterizationSamples > 1) {
-         return VK_LINE_RASTERIZATION_MODE_RECTANGULAR_EXT;
-      } else {
-         return VK_LINE_RASTERIZATION_MODE_BRESENHAM_EXT;
-      }
-   }
-
-   return line_mode;
-}
-
 /** Returns the final polygon mode for rasterization
  *
  * This function takes into account polygon mode, primitive topology and the
  * different shader stages which might generate their own type of primitives.
  */
-static VkPolygonMode
-anv_raster_polygon_mode(struct anv_graphics_pipeline *pipeline,
-                        const VkPipelineInputAssemblyStateCreateInfo *ia_info,
-                        const VkPipelineRasterizationStateCreateInfo *rs_info)
+VkPolygonMode
+genX(raster_polygon_mode)(struct anv_graphics_pipeline *pipeline,
+                          VkPrimitiveTopology primitive_topology)
 {
    if (anv_pipeline_has_stage(pipeline, MESA_SHADER_GEOMETRY)) {
       switch (get_gs_prog_data(pipeline)->output_topology) {
@@ -490,7 +471,7 @@ anv_raster_polygon_mode(struct anv_graphics_pipeline *pipeline,
       case _3DPRIM_QUADLIST:
       case _3DPRIM_QUADSTRIP:
       case _3DPRIM_POLYGON:
-         return rs_info->polygonMode;
+         return pipeline->polygon_mode;
       }
       unreachable("Unsupported GS output topology");
    } else if (anv_pipeline_has_stage(pipeline, MESA_SHADER_TESS_EVAL)) {
@@ -503,11 +484,11 @@ anv_raster_polygon_mode(struct anv_graphics_pipeline *pipeline,
 
       case BRW_TESS_OUTPUT_TOPOLOGY_TRI_CW:
       case BRW_TESS_OUTPUT_TOPOLOGY_TRI_CCW:
-         return rs_info->polygonMode;
+         return pipeline->polygon_mode;
       }
       unreachable("Unsupported TCS output topology");
    } else {
-      switch (ia_info->topology) {
+      switch (primitive_topology) {
       case VK_PRIMITIVE_TOPOLOGY_POINT_LIST:
          return VK_POLYGON_MODE_POINT;
 
@@ -522,7 +503,7 @@ anv_raster_polygon_mode(struct anv_graphics_pipeline *pipeline,
       case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN:
       case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST_WITH_ADJACENCY:
       case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY:
-         return rs_info->polygonMode;
+         return pipeline->polygon_mode;
 
       default:
          unreachable("Unsupported primitive topology");
@@ -530,21 +511,13 @@ anv_raster_polygon_mode(struct anv_graphics_pipeline *pipeline,
    }
 }
 
-#if GFX_VER <= 7
-static uint32_t
-gfx7_ms_rast_mode(struct anv_graphics_pipeline *pipeline,
-                  const VkPipelineInputAssemblyStateCreateInfo *ia_info,
-                  const VkPipelineRasterizationStateCreateInfo *rs_info,
-                  const VkPipelineMultisampleStateCreateInfo *ms_info)
+uint32_t
+genX(ms_rasterization_mode)(struct anv_graphics_pipeline *pipeline,
+                            VkPolygonMode raster_mode)
 {
-   const VkPipelineRasterizationLineStateCreateInfoEXT *line_info =
-      vk_find_struct_const(rs_info->pNext,
-                           PIPELINE_RASTERIZATION_LINE_STATE_CREATE_INFO_EXT);
-
-   VkPolygonMode raster_mode =
-      anv_raster_polygon_mode(pipeline, ia_info, rs_info);
+#if GFX_VER <= 7
    if (raster_mode == VK_POLYGON_MODE_LINE) {
-      switch (vk_line_rasterization_mode(line_info, ms_info)) {
+      switch (pipeline->line_mode) {
       case VK_LINE_RASTERIZATION_MODE_RECTANGULAR_EXT:
          return MSRASTMODE_ON_PATTERN;
 
@@ -556,11 +529,13 @@ gfx7_ms_rast_mode(struct anv_graphics_pipeline *pipeline,
          unreachable("Unsupported line rasterization mode");
       }
    } else {
-      return (ms_info && ms_info->rasterizationSamples > 1) ?
-             MSRASTMODE_ON_PATTERN : MSRASTMODE_OFF_PIXEL;
+      return pipeline->rasterization_samples > 1 ?
+         MSRASTMODE_ON_PATTERN : MSRASTMODE_OFF_PIXEL;
    }
-}
+#else
+   unreachable("Only on gen7");
 #endif
+}
 
 static VkProvokingVertexModeEXT
 vk_provoking_vertex_mode(const VkPipelineRasterizationStateCreateInfo *rs_info)
@@ -601,6 +576,49 @@ vk_conservative_rasterization_mode(const VkPipelineRasterizationStateCreateInfo 
                VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT;
 }
 #endif
+
+void
+genX(rasterization_mode)(VkPolygonMode raster_mode,
+                         VkLineRasterizationModeEXT line_mode,
+                         uint32_t *api_mode,
+                         bool *msaa_rasterization_enable)
+{
+#if GFX_VER >= 8
+   if (raster_mode == VK_POLYGON_MODE_LINE) {
+      /* Unfortunately, configuring our line rasterization hardware on gfx8
+       * and later is rather painful.  Instead of giving us bits to tell the
+       * hardware what line mode to use like we had on gfx7, we now have an
+       * arcane combination of API Mode and MSAA enable bits which do things
+       * in a table which are expected to magically put the hardware into the
+       * right mode for your API.  Sadly, Vulkan isn't any of the APIs the
+       * hardware people thought of so nothing works the way you want it to.
+       *
+       * Look at the table titled "Multisample Rasterization Modes" in Vol 7
+       * of the Skylake PRM for more details.
+       */
+      switch (line_mode) {
+      case VK_LINE_RASTERIZATION_MODE_RECTANGULAR_EXT:
+         *api_mode = DX100;
+         *msaa_rasterization_enable = true;
+         break;
+
+      case VK_LINE_RASTERIZATION_MODE_RECTANGULAR_SMOOTH_EXT:
+      case VK_LINE_RASTERIZATION_MODE_BRESENHAM_EXT:
+         *api_mode = DX9OGL;
+         *msaa_rasterization_enable = false;
+         break;
+
+      default:
+         unreachable("Unsupported line rasterization mode");
+      }
+   } else {
+      *api_mode = DX100;
+      *msaa_rasterization_enable = true;
+   }
+#else
+   unreachable("Invalid call");
+#endif
+}
 
 static void
 emit_rs_state(struct anv_graphics_pipeline *pipeline,
@@ -666,45 +684,18 @@ emit_rs_state(struct anv_graphics_pipeline *pipeline,
 #endif
 
    VkPolygonMode raster_mode =
-      anv_raster_polygon_mode(pipeline, ia_info, rs_info);
-   VkLineRasterizationModeEXT line_mode =
-      vk_line_rasterization_mode(line_info, ms_info);
+      genX(raster_polygon_mode)(pipeline, ia_info->topology);
+   bool dynamic_primitive_topology =
+      dynamic_states & ANV_CMD_DIRTY_DYNAMIC_PRIMITIVE_TOPOLOGY;
 
    /* For details on 3DSTATE_RASTER multisample state, see the BSpec table
     * "Multisample Modes State".
     */
 #if GFX_VER >= 8
-   if (raster_mode == VK_POLYGON_MODE_LINE) {
-      /* Unfortunately, configuring our line rasterization hardware on gfx8
-       * and later is rather painful.  Instead of giving us bits to tell the
-       * hardware what line mode to use like we had on gfx7, we now have an
-       * arcane combination of API Mode and MSAA enable bits which do things
-       * in a table which are expected to magically put the hardware into the
-       * right mode for your API.  Sadly, Vulkan isn't any of the APIs the
-       * hardware people thought of so nothing works the way you want it to.
-       *
-       * Look at the table titled "Multisample Rasterization Modes" in Vol 7
-       * of the Skylake PRM for more details.
-       */
-      switch (line_mode) {
-      case VK_LINE_RASTERIZATION_MODE_RECTANGULAR_EXT:
-         raster.APIMode = DX100;
-         raster.DXMultisampleRasterizationEnable = true;
-         break;
-
-      case VK_LINE_RASTERIZATION_MODE_BRESENHAM_EXT:
-      case VK_LINE_RASTERIZATION_MODE_RECTANGULAR_SMOOTH_EXT:
-         raster.APIMode = DX9OGL;
-         raster.DXMultisampleRasterizationEnable = false;
-         break;
-
-      default:
-         unreachable("Unsupported line rasterization mode");
-      }
-   } else {
-      raster.APIMode = DX100;
-      raster.DXMultisampleRasterizationEnable = true;
-   }
+   if (!dynamic_primitive_topology)
+      genX(rasterization_mode)(raster_mode, pipeline->line_mode,
+                               &raster.APIMode,
+                               &raster.DXMultisampleRasterizationEnable);
 
    /* NOTE: 3DSTATE_RASTER::ForcedSampleCount affects the BDW and SKL PMA fix
     * computations.  If we ever set this bit to a different value, they will
@@ -713,13 +704,17 @@ emit_rs_state(struct anv_graphics_pipeline *pipeline,
    raster.ForcedSampleCount = FSC_NUMRASTSAMPLES_0;
    raster.ForceMultisampling = false;
 #else
-   raster.MultisampleRasterizationMode =
-      gfx7_ms_rast_mode(pipeline, ia_info, rs_info, ms_info);
+   uint32_t ms_rast_mode = 0;
+
+   if (!dynamic_primitive_topology)
+      ms_rast_mode = genX(ms_rasterization_mode)(pipeline, raster_mode);
+
+   raster.MultisampleRasterizationMode = ms_rast_mode;
 #endif
 
-   if (raster_mode == VK_POLYGON_MODE_LINE &&
-       line_mode == VK_LINE_RASTERIZATION_MODE_RECTANGULAR_SMOOTH_EXT)
-      raster.AntialiasingEnable = true;
+   raster.AntialiasingEnable =
+      dynamic_primitive_topology ? 0 :
+      anv_rasterization_aa_mode(raster_mode, pipeline->line_mode);
 
    raster.FrontWinding =
       dynamic_states & ANV_CMD_DIRTY_DYNAMIC_FRONT_FACE ?
@@ -1422,8 +1417,10 @@ emit_3dstate_clip(struct anv_graphics_pipeline *pipeline,
     * points and lines so we get "pop-free" clipping.
     */
    VkPolygonMode raster_mode =
-      anv_raster_polygon_mode(pipeline, ia_info, rs_info);
-   clip.ViewportXYClipTestEnable = (raster_mode == VK_POLYGON_MODE_FILL);
+      genX(raster_polygon_mode)(pipeline, ia_info->topology);
+   clip.ViewportXYClipTestEnable =
+      dynamic_states & ANV_CMD_DIRTY_DYNAMIC_PRIMITIVE_TOPOLOGY ?
+         0 : (raster_mode == VK_POLYGON_MODE_FILL);
 
 #if GFX_VER >= 8
    clip.VertexSubPixelPrecisionSelect = _8Bit;
@@ -1706,7 +1703,7 @@ get_sampler_count(const struct anv_shader_bin *bin)
    return MIN2(count_by_4, 4);
 }
 
-static struct anv_address
+static UNUSED struct anv_address
 get_scratch_address(struct anv_pipeline *pipeline,
                     gl_shader_stage stage,
                     const struct anv_shader_bin *bin)
@@ -1719,10 +1716,19 @@ get_scratch_address(struct anv_pipeline *pipeline,
    };
 }
 
-static uint32_t
+static UNUSED uint32_t
 get_scratch_space(const struct anv_shader_bin *bin)
 {
    return ffs(bin->prog_data->total_scratch / 2048);
+}
+
+static UNUSED uint32_t
+get_scratch_surf(struct anv_pipeline *pipeline,
+                 const struct anv_shader_bin *bin)
+{
+   return anv_scratch_pool_get_surf(pipeline->device,
+                                    &pipeline->device->scratch_pool,
+                                    bin->prog_data->total_scratch) >> 4;
 }
 
 static void
@@ -1795,9 +1801,13 @@ emit_3dstate_vs(struct anv_graphics_pipeline *pipeline)
          vs_prog_data->base.cull_distance_mask;
 #endif
 
+#if GFX_VERx10 >= 125
+      vs.ScratchSpaceBuffer = get_scratch_surf(&pipeline->base, vs_bin);
+#else
       vs.PerThreadScratchSpace   = get_scratch_space(vs_bin);
       vs.ScratchSpaceBasePointer =
          get_scratch_address(&pipeline->base, MESA_SHADER_VERTEX, vs_bin);
+#endif
    }
 }
 
@@ -1852,10 +1862,13 @@ emit_3dstate_hs_te_ds(struct anv_graphics_pipeline *pipeline,
          tcs_prog_data->base.base.dispatch_grf_start_reg >> 5;
 #endif
 
-
+#if GFX_VERx10 >= 125
+      hs.ScratchSpaceBuffer = get_scratch_surf(&pipeline->base, tcs_bin);
+#else
       hs.PerThreadScratchSpace = get_scratch_space(tcs_bin);
       hs.ScratchSpaceBasePointer =
          get_scratch_address(&pipeline->base, MESA_SHADER_TESS_CTRL, tcs_bin);
+#endif
 
 #if GFX_VER == 12
       /*  Patch Count threshold specifies the maximum number of patches that
@@ -1933,9 +1946,13 @@ emit_3dstate_hs_te_ds(struct anv_graphics_pipeline *pipeline,
          tes_prog_data->base.cull_distance_mask;
 #endif
 
+#if GFX_VERx10 >= 125
+      ds.ScratchSpaceBuffer = get_scratch_surf(&pipeline->base, tes_bin);
+#else
       ds.PerThreadScratchSpace = get_scratch_space(tes_bin);
       ds.ScratchSpaceBasePointer =
          get_scratch_address(&pipeline->base, MESA_SHADER_TESS_EVAL, tes_bin);
+#endif
    }
 }
 
@@ -2001,9 +2018,13 @@ emit_3dstate_gs(struct anv_graphics_pipeline *pipeline)
          gs_prog_data->base.cull_distance_mask;
 #endif
 
+#if GFX_VERx10 >= 125
+      gs.ScratchSpaceBuffer = get_scratch_surf(&pipeline->base, gs_bin);
+#else
       gs.PerThreadScratchSpace   = get_scratch_space(gs_bin);
       gs.ScratchSpaceBasePointer =
          get_scratch_address(&pipeline->base, MESA_SHADER_GEOMETRY, gs_bin);
+#endif
    }
 }
 
@@ -2132,14 +2153,25 @@ emit_3dstate_wm(struct anv_graphics_pipeline *pipeline, struct anv_subpass *subp
       } else {
          wm.MultisampleDispatchMode = MSDISPMODE_PERSAMPLE;
       }
+
+      VkPolygonMode raster_mode =
+         genX(raster_polygon_mode)(pipeline, ia->topology);
+
       wm.MultisampleRasterizationMode =
-         gfx7_ms_rast_mode(pipeline, ia, raster, multisample);
+         dynamic_states & ANV_CMD_DIRTY_DYNAMIC_PRIMITIVE_TOPOLOGY ? 0 :
+         genX(ms_rasterization_mode)(pipeline, raster_mode);
 #endif
 
       wm.LineStippleEnable = line && line->stippledLineEnable;
    }
 
-   if (dynamic_states & ANV_CMD_DIRTY_DYNAMIC_COLOR_BLEND_STATE) {
+   uint32_t dynamic_wm_states = ANV_CMD_DIRTY_DYNAMIC_COLOR_BLEND_STATE;
+
+#if GFX_VER < 8
+   dynamic_wm_states |= ANV_CMD_DIRTY_DYNAMIC_PRIMITIVE_TOPOLOGY;
+#endif
+
+   if (dynamic_states & dynamic_wm_states) {
       const struct intel_device_info *devinfo = &pipeline->base.device->info;
       uint32_t *dws = devinfo->ver >= 8 ? pipeline->gfx8.wm : pipeline->gfx7.wm;
       GENX(3DSTATE_WM_pack)(NULL, dws, &wm);
@@ -2258,9 +2290,13 @@ emit_3dstate_ps(struct anv_graphics_pipeline *pipeline,
       ps.DispatchGRFStartRegisterForConstantSetupData2 =
          brw_wm_prog_data_dispatch_grf_start_reg(wm_prog_data, ps, 2);
 
+#if GFX_VERx10 >= 125
+      ps.ScratchSpaceBuffer = get_scratch_surf(&pipeline->base, fs_bin);
+#else
       ps.PerThreadScratchSpace   = get_scratch_space(fs_bin);
       ps.ScratchSpaceBasePointer =
          get_scratch_address(&pipeline->base, MESA_SHADER_FRAGMENT, fs_bin);
+#endif
    }
 }
 
@@ -2550,8 +2586,7 @@ emit_compute_state(struct anv_compute_pipeline *pipeline,
    anv_batch_emit(&pipeline->base.batch, GENX(CFE_STATE), cfe) {
       cfe.MaximumNumberofThreads =
          devinfo->max_cs_threads * subslices - 1;
-      /* TODO: Enable gfx12-hp scratch support*/
-      assert(get_scratch_space(cs_bin) == 0);
+      cfe.ScratchSpaceBuffer = get_scratch_surf(&pipeline->base, cs_bin);
    }
 }
 
@@ -2796,3 +2831,187 @@ VkResult genX(CreateComputePipelines)(
 
    return result;
 }
+
+#if GFX_VERx10 >= 125
+
+static void
+assert_rt_stage_index_valid(const VkRayTracingPipelineCreateInfoKHR* pCreateInfo,
+                            uint32_t stage_idx,
+                            VkShaderStageFlags valid_stages)
+{
+   if (stage_idx == VK_SHADER_UNUSED_KHR)
+      return;
+
+   assert(stage_idx <= pCreateInfo->stageCount);
+   assert(util_bitcount(pCreateInfo->pStages[stage_idx].stage) == 1);
+   assert(pCreateInfo->pStages[stage_idx].stage & valid_stages);
+}
+
+static VkResult
+ray_tracing_pipeline_create(
+    VkDevice                                    _device,
+    struct anv_pipeline_cache *                 cache,
+    const VkRayTracingPipelineCreateInfoKHR*    pCreateInfo,
+    const VkAllocationCallbacks*                pAllocator,
+    VkPipeline*                                 pPipeline)
+{
+   ANV_FROM_HANDLE(anv_device, device, _device);
+   VkResult result;
+
+   assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR);
+
+   /* Use the default pipeline cache if none is specified */
+   if (cache == NULL && device->physical->instance->pipeline_cache_enabled)
+      cache = &device->default_pipeline_cache;
+
+   VK_MULTIALLOC(ma);
+   VK_MULTIALLOC_DECL(&ma, struct anv_ray_tracing_pipeline, pipeline, 1);
+   VK_MULTIALLOC_DECL(&ma, struct anv_rt_shader_group, groups, pCreateInfo->groupCount);
+   if (!vk_multialloc_alloc2(&ma, &device->vk.alloc, pAllocator,
+                             VK_SYSTEM_ALLOCATION_SCOPE_DEVICE))
+      return vk_error(VK_ERROR_OUT_OF_HOST_MEMORY);
+
+   result = anv_pipeline_init(&pipeline->base, device,
+                              ANV_PIPELINE_RAY_TRACING, pCreateInfo->flags,
+                              pAllocator);
+   if (result != VK_SUCCESS) {
+      vk_free2(&device->vk.alloc, pAllocator, pipeline);
+      return result;
+   }
+
+   pipeline->group_count = pCreateInfo->groupCount;
+   pipeline->groups = groups;
+
+   const VkShaderStageFlags ray_tracing_stages =
+      VK_SHADER_STAGE_RAYGEN_BIT_KHR |
+      VK_SHADER_STAGE_ANY_HIT_BIT_KHR |
+      VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR |
+      VK_SHADER_STAGE_MISS_BIT_KHR |
+      VK_SHADER_STAGE_INTERSECTION_BIT_KHR |
+      VK_SHADER_STAGE_CALLABLE_BIT_KHR;
+
+   for (uint32_t i = 0; i < pCreateInfo->stageCount; i++)
+      assert((pCreateInfo->pStages[i].stage & ~ray_tracing_stages) == 0);
+
+   for (uint32_t i = 0; i < pCreateInfo->groupCount; i++) {
+      const VkRayTracingShaderGroupCreateInfoKHR *ginfo =
+         &pCreateInfo->pGroups[i];
+      assert_rt_stage_index_valid(pCreateInfo, ginfo->generalShader,
+                                  VK_SHADER_STAGE_RAYGEN_BIT_KHR |
+                                  VK_SHADER_STAGE_MISS_BIT_KHR |
+                                  VK_SHADER_STAGE_CALLABLE_BIT_KHR);
+      assert_rt_stage_index_valid(pCreateInfo, ginfo->closestHitShader,
+                                  VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR);
+      assert_rt_stage_index_valid(pCreateInfo, ginfo->anyHitShader,
+                                  VK_SHADER_STAGE_ANY_HIT_BIT_KHR);
+      assert_rt_stage_index_valid(pCreateInfo, ginfo->intersectionShader,
+                                  VK_SHADER_STAGE_INTERSECTION_BIT_KHR);
+      switch (ginfo->type) {
+      case VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR:
+         assert(ginfo->generalShader < pCreateInfo->stageCount);
+         assert(ginfo->anyHitShader == VK_SHADER_UNUSED_KHR);
+         assert(ginfo->closestHitShader == VK_SHADER_UNUSED_KHR);
+         assert(ginfo->intersectionShader == VK_SHADER_UNUSED_KHR);
+         break;
+
+      case VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR:
+         assert(ginfo->generalShader == VK_SHADER_UNUSED_KHR);
+         assert(ginfo->intersectionShader == VK_SHADER_UNUSED_KHR);
+         break;
+
+      case VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR:
+         assert(ginfo->generalShader == VK_SHADER_UNUSED_KHR);
+         break;
+
+      default:
+         unreachable("Invalid ray-tracing shader group type");
+      }
+   }
+
+   result = anv_ray_tracing_pipeline_init(pipeline, device, cache,
+                                          pCreateInfo, pAllocator);
+   if (result != VK_SUCCESS) {
+      anv_pipeline_finish(&pipeline->base, device, pAllocator);
+      vk_free2(&device->vk.alloc, pAllocator, pipeline);
+      return result;
+   }
+
+   for (uint32_t i = 0; i < pipeline->group_count; i++) {
+      struct anv_rt_shader_group *group = &pipeline->groups[i];
+
+      switch (group->type) {
+      case VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR: {
+         struct GFX_RT_GENERAL_SBT_HANDLE sh = {};
+         sh.General = anv_shader_bin_get_bsr(group->general, 32);
+         GFX_RT_GENERAL_SBT_HANDLE_pack(NULL, group->handle, &sh);
+         break;
+      }
+
+      case VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR: {
+         struct GFX_RT_TRIANGLES_SBT_HANDLE sh = {};
+         if (group->closest_hit)
+            sh.ClosestHit = anv_shader_bin_get_bsr(group->closest_hit, 32);
+         if (group->any_hit)
+            sh.AnyHit = anv_shader_bin_get_bsr(group->any_hit, 24);
+         GFX_RT_TRIANGLES_SBT_HANDLE_pack(NULL, group->handle, &sh);
+         break;
+      }
+
+      case VK_RAY_TRACING_SHADER_GROUP_TYPE_PROCEDURAL_HIT_GROUP_KHR: {
+         struct GFX_RT_PROCEDURAL_SBT_HANDLE sh = {};
+         if (group->closest_hit)
+            sh.ClosestHit = anv_shader_bin_get_bsr(group->closest_hit, 32);
+         sh.Intersection = anv_shader_bin_get_bsr(group->intersection, 24);
+         GFX_RT_PROCEDURAL_SBT_HANDLE_pack(NULL, group->handle, &sh);
+         break;
+      }
+
+      default:
+         unreachable("Invalid shader group type");
+      }
+   }
+
+   *pPipeline = anv_pipeline_to_handle(&pipeline->base);
+
+   return pipeline->base.batch.status;
+}
+
+VkResult
+genX(CreateRayTracingPipelinesKHR)(
+    VkDevice                                    _device,
+    VkDeferredOperationKHR                      deferredOperation,
+    VkPipelineCache                             pipelineCache,
+    uint32_t                                    createInfoCount,
+    const VkRayTracingPipelineCreateInfoKHR*    pCreateInfos,
+    const VkAllocationCallbacks*                pAllocator,
+    VkPipeline*                                 pPipelines)
+{
+   ANV_FROM_HANDLE(anv_pipeline_cache, pipeline_cache, pipelineCache);
+
+   VkResult result = VK_SUCCESS;
+
+   unsigned i;
+   for (i = 0; i < createInfoCount; i++) {
+      VkResult res = ray_tracing_pipeline_create(_device, pipeline_cache,
+                                                 &pCreateInfos[i],
+                                                 pAllocator, &pPipelines[i]);
+
+      if (res == VK_SUCCESS)
+         continue;
+
+      /* Bail out on the first error as it is not obvious what error should be
+       * report upon 2 different failures. */
+      result = res;
+      if (result != VK_PIPELINE_COMPILE_REQUIRED_EXT)
+         break;
+
+      if (pCreateInfos[i].flags & VK_PIPELINE_CREATE_EARLY_RETURN_ON_FAILURE_BIT_EXT)
+         break;
+   }
+
+   for (; i < createInfoCount; i++)
+      pPipelines[i] = VK_NULL_HANDLE;
+
+   return result;
+}
+#endif /* GFX_VERx10 >= 125 */

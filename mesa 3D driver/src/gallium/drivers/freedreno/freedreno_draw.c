@@ -325,11 +325,6 @@ fd_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
 
    struct fd_batch *batch = fd_context_batch(ctx);
 
-   if (ctx->in_discard_blit) {
-      fd_batch_reset(batch);
-      fd_context_all_dirty(ctx);
-   }
-
    batch_draw_tracking(batch, info, indirect);
 
    while (unlikely(!fd_batch_lock_submit(batch))) {
@@ -343,8 +338,6 @@ fd_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
       assert(ctx->batch == batch);
    }
 
-   batch->blit = ctx->in_discard_blit;
-   batch->back_blit = ctx->in_shadow;
    batch->num_draws++;
 
    /* Marking the batch as needing flush must come after the batch
@@ -449,11 +442,6 @@ fd_clear(struct pipe_context *pctx, unsigned buffers,
       return;
 
    struct fd_batch *batch = fd_context_batch(ctx);
-
-   if (ctx->in_discard_blit) {
-      fd_batch_reset(batch);
-      fd_context_all_dirty(ctx);
-   }
 
    batch_clear_tracking(batch, buffers);
 

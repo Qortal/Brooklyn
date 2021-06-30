@@ -110,6 +110,8 @@ void
 tu_emit_cache_flush_renderpass(struct tu_cmd_buffer *cmd_buffer,
                                struct tu_cs *cs)
 {
+   if (!cmd_buffer->state.renderpass_cache.flush_bits)
+      return;
    tu6_emit_flushes(cmd_buffer, cs, cmd_buffer->state.renderpass_cache.flush_bits);
    cmd_buffer->state.renderpass_cache.flush_bits = 0;
 }
@@ -1514,6 +1516,10 @@ tu_BeginCommandBuffer(VkCommandBuffer commandBuffer,
 
    memset(&cmd_buffer->state, 0, sizeof(cmd_buffer->state));
    cmd_buffer->state.index_size = 0xff; /* dirty restart index */
+
+   cmd_buffer->state.last_vs_params.first_instance = -1;
+   cmd_buffer->state.last_vs_params.params_offset = -1;
+   cmd_buffer->state.last_vs_params.vertex_offset = -1;
 
    tu_cache_init(&cmd_buffer->state.cache);
    tu_cache_init(&cmd_buffer->state.renderpass_cache);
@@ -3620,17 +3626,8 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
 {
    const struct tu_pipeline *pipeline = cmd->state.pipeline;
    VkResult result;
-   bool dirty_lrz = cmd->state.dirty & (TU_CMD_DIRTY_LRZ | TU_CMD_DIRTY_RB_DEPTH_CNTL | TU_CMD_DIRTY_RB_STENCIL_CNTL);
-
-   struct tu_descriptor_state *descriptors_state =
-      &cmd->descriptors[VK_PIPELINE_BIND_POINT_GRAPHICS];
 
    tu_emit_cache_flush_renderpass(cmd, cs);
-
-   if (dirty_lrz) {
-      cmd->state.lrz.state = tu6_build_lrz(cmd);
-      cmd->state.depth_plane_state = tu6_build_depth_plane_z_mode(cmd);
-   }
 
    tu_cs_emit_regs(cs, A6XX_PC_PRIMITIVE_CNTL_0(
          .primitive_restart =
@@ -3638,6 +3635,24 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
          .provoking_vtx_last = pipeline->provoking_vertex_last,
          .tess_upper_left_domain_origin =
                pipeline->tess.upper_left_domain_origin));
+
+   bool has_tess =
+         pipeline->active_stages & VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
+
+   /* Early exit if there is nothing to emit, saves CPU cycles */
+   if (!(cmd->state.dirty & ~TU_CMD_DIRTY_COMPUTE_DESC_SETS_LOAD) &&
+       !has_tess)
+      return VK_SUCCESS;
+
+   bool dirty_lrz = cmd->state.dirty & (TU_CMD_DIRTY_LRZ | TU_CMD_DIRTY_RB_DEPTH_CNTL | TU_CMD_DIRTY_RB_STENCIL_CNTL);
+
+   struct tu_descriptor_state *descriptors_state =
+      &cmd->descriptors[VK_PIPELINE_BIND_POINT_GRAPHICS];
+
+   if (dirty_lrz) {
+      cmd->state.lrz.state = tu6_build_lrz(cmd);
+      cmd->state.depth_plane_state = tu6_build_depth_plane_z_mode(cmd);
+   }
 
    if (cmd->state.dirty & TU_CMD_DIRTY_GRAS_SU_CNTL) {
       struct tu_cs cs = tu_cmd_dynamic_state(cmd, TU_DYNAMIC_STATE_GRAS_SU_CNTL, 2);
@@ -3670,8 +3685,6 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
          tu6_emit_consts(cmd, pipeline, descriptors_state, MESA_SHADER_FRAGMENT);
    }
 
-   bool has_tess =
-         pipeline->active_stages & VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
    struct tu_draw_state tess_consts = {};
    if (has_tess) {
       uint64_t tess_factor_iova = 0;
@@ -3738,8 +3751,8 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
          ((cmd->state.dirty & TU_CMD_DIRTY_SHADER_CONSTS) ? 2 : 0) +
          ((cmd->state.dirty & TU_CMD_DIRTY_DESC_SETS_LOAD) ? 1 : 0) +
          ((cmd->state.dirty & TU_CMD_DIRTY_VERTEX_BUFFERS) ? 1 : 0) +
-         (dirty_lrz ? 2 : 0) +
-         1; /* vs_params */
+         ((cmd->state.dirty & TU_CMD_DIRTY_VS_PARAMS) ? 1 : 0) +
+         (dirty_lrz ? 2 : 0);
 
       if ((cmd->state.dirty & TU_CMD_DIRTY_VB_STRIDE) &&
           (pipeline->dynamic_state_mask & BIT(TU_DYNAMIC_STATE_VB_STRIDE))) {
@@ -3747,7 +3760,8 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
          draw_state_count += 1;
       }
 
-      tu_cs_emit_pkt7(cs, CP_SET_DRAW_STATE, 3 * draw_state_count);
+      if (draw_state_count > 0)
+         tu_cs_emit_pkt7(cs, CP_SET_DRAW_STATE, 3 * draw_state_count);
 
       /* We may need to re-emit tess consts if the current draw call is
          * sufficiently larger than the last draw call. */
@@ -3765,7 +3779,8 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
          tu_cs_emit_draw_state(cs, TU_DRAW_STATE_DYNAMIC + TU_DYNAMIC_STATE_VB_STRIDE,
                                cmd->state.dynamic_state[TU_DYNAMIC_STATE_VB_STRIDE]);
       }
-      tu_cs_emit_draw_state(cs, TU_DRAW_STATE_VS_PARAMS, cmd->state.vs_params);
+      if (cmd->state.dirty & TU_CMD_DIRTY_VS_PARAMS)
+         tu_cs_emit_draw_state(cs, TU_DRAW_STATE_VS_PARAMS, cmd->state.vs_params);
 
       if (dirty_lrz) {
          tu_cs_emit_draw_state(cs, TU_DRAW_STATE_LRZ, cmd->state.lrz.state);
@@ -3843,21 +3858,34 @@ vs_params_offset(struct tu_cmd_buffer *cmd)
    return const_state->offsets.driver_param;
 }
 
-static struct tu_draw_state
+static void
+tu6_emit_empty_vs_params(struct tu_cmd_buffer *cmd)
+{
+   if (cmd->state.vs_params.iova) {
+      cmd->state.vs_params = (struct tu_draw_state) {};
+      cmd->state.dirty |= TU_CMD_DIRTY_VS_PARAMS;
+   }
+}
+
+static void
 tu6_emit_vs_params(struct tu_cmd_buffer *cmd,
                    uint32_t vertex_offset,
                    uint32_t first_instance)
 {
    uint32_t offset = vs_params_offset(cmd);
 
+   if (offset == cmd->state.last_vs_params.params_offset &&
+       vertex_offset == cmd->state.last_vs_params.vertex_offset &&
+       first_instance == cmd->state.last_vs_params.first_instance) {
+      return;
+   }
+
    struct tu_cs cs;
    VkResult result = tu_cs_begin_sub_stream(&cmd->sub_cs, 3 + (offset ? 8 : 0), &cs);
    if (result != VK_SUCCESS) {
       cmd->record_result = result;
-      return (struct tu_draw_state) {};
+      return;
    }
-
-   /* TODO: don't make a new draw state when it doesn't change */
 
    tu_cs_emit_regs(&cs,
                    A6XX_VFD_INDEX_OFFSET(vertex_offset),
@@ -3879,8 +3907,14 @@ tu6_emit_vs_params(struct tu_cmd_buffer *cmd,
       tu_cs_emit(&cs, 0);
    }
 
+   cmd->state.last_vs_params.params_offset = offset;
+   cmd->state.last_vs_params.vertex_offset = vertex_offset;
+   cmd->state.last_vs_params.first_instance = first_instance;
+
    struct tu_cs_entry entry = tu_cs_end_sub_stream(&cmd->sub_cs, &cs);
-   return (struct tu_draw_state) {entry.bo->iova + entry.offset, entry.size / 4};
+   cmd->state.vs_params = (struct tu_draw_state) {entry.bo->iova + entry.offset, entry.size / 4};
+
+   cmd->state.dirty |= TU_CMD_DIRTY_VS_PARAMS;
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -3893,7 +3927,7 @@ tu_CmdDraw(VkCommandBuffer commandBuffer,
    TU_FROM_HANDLE(tu_cmd_buffer, cmd, commandBuffer);
    struct tu_cs *cs = &cmd->draw_cs;
 
-   cmd->state.vs_params = tu6_emit_vs_params(cmd, firstVertex, firstInstance);
+   tu6_emit_vs_params(cmd, firstVertex, firstInstance);
 
    tu6_draw_common(cmd, cs, false, vertexCount);
 
@@ -3914,7 +3948,7 @@ tu_CmdDrawIndexed(VkCommandBuffer commandBuffer,
    TU_FROM_HANDLE(tu_cmd_buffer, cmd, commandBuffer);
    struct tu_cs *cs = &cmd->draw_cs;
 
-   cmd->state.vs_params = tu6_emit_vs_params(cmd, vertexOffset, firstInstance);
+   tu6_emit_vs_params(cmd, vertexOffset, firstInstance);
 
    tu6_draw_common(cmd, cs, true, indexCount);
 
@@ -3952,7 +3986,7 @@ tu_CmdDrawIndirect(VkCommandBuffer commandBuffer,
    TU_FROM_HANDLE(tu_buffer, buf, _buffer);
    struct tu_cs *cs = &cmd->draw_cs;
 
-   cmd->state.vs_params = (struct tu_draw_state) {};
+   tu6_emit_empty_vs_params(cmd);
 
    /* The latest known a630_sqe.fw fails to wait for WFI before reading the
     * indirect buffer when using CP_DRAW_INDIRECT_MULTI, so we have to fall
@@ -3986,7 +4020,7 @@ tu_CmdDrawIndexedIndirect(VkCommandBuffer commandBuffer,
    TU_FROM_HANDLE(tu_buffer, buf, _buffer);
    struct tu_cs *cs = &cmd->draw_cs;
 
-   cmd->state.vs_params = (struct tu_draw_state) {};
+   tu6_emit_empty_vs_params(cmd);
 
    if (cmd->device->physical_device->gpu_id != 650)
       draw_wfm(cmd);
@@ -4018,7 +4052,7 @@ tu_CmdDrawIndirectCount(VkCommandBuffer commandBuffer,
    TU_FROM_HANDLE(tu_buffer, count_buf, countBuffer);
    struct tu_cs *cs = &cmd->draw_cs;
 
-   cmd->state.vs_params = (struct tu_draw_state) {};
+   tu6_emit_empty_vs_params(cmd);
 
    /* It turns out that the firmware we have for a650 only partially fixed the
     * problem with CP_DRAW_INDIRECT_MULTI not waiting for WFI's to complete
@@ -4053,7 +4087,7 @@ tu_CmdDrawIndexedIndirectCount(VkCommandBuffer commandBuffer,
    TU_FROM_HANDLE(tu_buffer, count_buf, countBuffer);
    struct tu_cs *cs = &cmd->draw_cs;
 
-   cmd->state.vs_params = (struct tu_draw_state) {};
+   tu6_emit_empty_vs_params(cmd);
 
    draw_wfm(cmd);
 
@@ -4091,7 +4125,7 @@ tu_CmdDrawIndirectByteCountEXT(VkCommandBuffer commandBuffer,
     */
    draw_wfm(cmd);
 
-   cmd->state.vs_params = tu6_emit_vs_params(cmd, 0, firstInstance);
+   tu6_emit_vs_params(cmd, 0, firstInstance);
 
    tu6_draw_common(cmd, cs, false, 0);
 

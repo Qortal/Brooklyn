@@ -97,6 +97,7 @@ typedef uint32_t xcb_window_t;
  */
 #if defined(ANDROID) && ANDROID_API_LEVEL >= 26
 #define RADV_SUPPORT_ANDROID_HARDWARE_BUFFER 1
+#include <vndk/hardware_buffer.h>
 #else
 #define RADV_SUPPORT_ANDROID_HARDWARE_BUFFER 0
 #endif
@@ -303,7 +304,11 @@ struct radv_physical_device {
    unsigned heaps;
 
 #ifndef _WIN32
+   int available_nodes;
    drmPciBusInfo bus_info;
+
+   dev_t primary_devid;
+   dev_t render_devid;
 #endif
 };
 
@@ -614,7 +619,7 @@ struct radv_meta_state {
 
    struct {
       VkPipelineLayout p_layout;
-      VkPipeline decompress_pipeline[NUM_DEPTH_DECOMPRESS_PIPELINES];
+      VkPipeline decompress_pipeline;
       VkPipeline resummarize_pipeline;
       VkRenderPass pass;
    } depth_decomp[MAX_SAMPLES_LOG2];
@@ -660,6 +665,13 @@ struct radv_meta_state {
       VkPipelineLayout p_layout;
       VkPipeline pipeline;
    } dcc_retile;
+
+   struct {
+      VkPipelineLayout leaf_p_layout;
+      VkPipeline leaf_pipeline;
+      VkPipelineLayout internal_p_layout;
+      VkPipeline internal_pipeline;
+   } accel_struct_build;
 };
 
 /* queue types */
@@ -1217,6 +1229,8 @@ struct radv_dynamic_state {
    bool depth_bias_enable;
    bool primitive_restart_enable;
    bool rasterizer_discard_enable;
+
+   unsigned logic_op;
 };
 
 extern const struct radv_dynamic_state default_dynamic_state;
@@ -1328,7 +1342,6 @@ enum rgp_flush_bits {
 struct radv_cmd_state {
    /* Vertex descriptors */
    uint64_t vb_va;
-   unsigned vb_size;
 
    bool predicating;
    uint64_t dirty;
@@ -1716,6 +1729,7 @@ struct radv_pipeline {
 
    bool use_per_attribute_vb_descs;
    uint32_t vb_desc_usage_mask;
+   uint32_t vb_desc_alloc_size;
 
    uint32_t user_data_0[MESA_SHADER_STAGES];
    union {
@@ -1738,6 +1752,7 @@ struct radv_pipeline {
          unsigned pa_su_sc_mode_cntl;
          unsigned db_depth_control;
          unsigned pa_cl_clip_cntl;
+         unsigned cb_color_control;
          bool uses_dynamic_stride;
 
          /* Used for rbplus */
@@ -1855,6 +1870,7 @@ struct radv_image {
    unsigned queue_family_mask;
    bool exclusive;
    bool shareable;
+   bool l2_coherent;
 
    /* Set when bound */
    struct radeon_winsys_bo *bo;
@@ -2685,6 +2701,47 @@ si_translate_stencil_op(enum VkStencilOp op)
    }
 }
 
+static inline uint32_t
+si_translate_blend_logic_op(VkLogicOp op)
+{
+   switch (op) {
+   case VK_LOGIC_OP_CLEAR:
+      return V_028808_ROP3_CLEAR;
+   case VK_LOGIC_OP_AND:
+      return V_028808_ROP3_AND;
+   case VK_LOGIC_OP_AND_REVERSE:
+      return V_028808_ROP3_AND_REVERSE;
+   case VK_LOGIC_OP_COPY:
+      return V_028808_ROP3_COPY;
+   case VK_LOGIC_OP_AND_INVERTED:
+      return V_028808_ROP3_AND_INVERTED;
+   case VK_LOGIC_OP_NO_OP:
+      return V_028808_ROP3_NO_OP;
+   case VK_LOGIC_OP_XOR:
+      return V_028808_ROP3_XOR;
+   case VK_LOGIC_OP_OR:
+      return V_028808_ROP3_OR;
+   case VK_LOGIC_OP_NOR:
+      return V_028808_ROP3_NOR;
+   case VK_LOGIC_OP_EQUIVALENT:
+      return V_028808_ROP3_EQUIVALENT;
+   case VK_LOGIC_OP_INVERT:
+      return V_028808_ROP3_INVERT;
+   case VK_LOGIC_OP_OR_REVERSE:
+      return V_028808_ROP3_OR_REVERSE;
+   case VK_LOGIC_OP_COPY_INVERTED:
+      return V_028808_ROP3_COPY_INVERTED;
+   case VK_LOGIC_OP_OR_INVERTED:
+      return V_028808_ROP3_OR_INVERTED;
+   case VK_LOGIC_OP_NAND:
+      return V_028808_ROP3_NAND;
+   case VK_LOGIC_OP_SET:
+      return V_028808_ROP3_SET;
+   default:
+      unreachable("Unhandled logic op");
+   }
+}
+
 /**
  * Helper used for debugging compiler issues by enabling/disabling LLVM for a
  * specific shader stage (developers only).
@@ -2693,6 +2750,20 @@ static inline bool
 radv_use_llvm_for_stage(struct radv_device *device, UNUSED gl_shader_stage stage)
 {
    return device->physical_device->use_llvm;
+}
+
+struct radv_acceleration_structure {
+   struct vk_object_base base;
+
+   struct radeon_winsys_bo *bo;
+   uint64_t mem_offset;
+   uint64_t size;
+};
+
+static inline uint64_t
+radv_accel_struct_get_va(const struct radv_acceleration_structure *accel)
+{
+   return radv_buffer_get_va(accel->bo) + accel->mem_offset;
 }
 
 #define RADV_DEFINE_HANDLE_CASTS(__radv_type, __VkType)                                            \
@@ -2728,6 +2799,7 @@ RADV_DEFINE_HANDLE_CASTS(radv_instance, VkInstance)
 RADV_DEFINE_HANDLE_CASTS(radv_physical_device, VkPhysicalDevice)
 RADV_DEFINE_HANDLE_CASTS(radv_queue, VkQueue)
 
+RADV_DEFINE_NONDISP_HANDLE_CASTS(radv_acceleration_structure, VkAccelerationStructureKHR)
 RADV_DEFINE_NONDISP_HANDLE_CASTS(radv_cmd_pool, VkCommandPool)
 RADV_DEFINE_NONDISP_HANDLE_CASTS(radv_buffer, VkBuffer)
 RADV_DEFINE_NONDISP_HANDLE_CASTS(radv_buffer_view, VkBufferView)

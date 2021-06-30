@@ -23,7 +23,6 @@
 
 #include "v3dv_private.h"
 
-#include "broadcom/cle/v3dx_pack.h"
 #include "drm-uapi/drm_fourcc.h"
 #include "util/format/u_format.h"
 #include "util/u_math.h"
@@ -309,7 +308,7 @@ create_image(struct v3dv_device *device,
    else
       tiling = VK_IMAGE_TILING_LINEAR;
 
-   const struct v3dv_format *format = v3dv_get_format(pCreateInfo->format);
+   const struct v3dv_format *format = v3dv_X(device, get_format)(pCreateInfo->format);
    v3dv_assert(format != NULL && format->supported);
 
    image = vk_object_zalloc(&device->vk, pAllocator, sizeof(*image),
@@ -486,176 +485,6 @@ v3dv_image_type_to_view_type(VkImageType type)
    }
 }
 
-/*
- * This method translates pipe_swizzle to the swizzle values used at the
- * packet TEXTURE_SHADER_STATE
- *
- * FIXME: C&P from v3d, common place?
- */
-static uint32_t
-translate_swizzle(unsigned char pipe_swizzle)
-{
-   switch (pipe_swizzle) {
-   case PIPE_SWIZZLE_0:
-      return 0;
-   case PIPE_SWIZZLE_1:
-      return 1;
-   case PIPE_SWIZZLE_X:
-   case PIPE_SWIZZLE_Y:
-   case PIPE_SWIZZLE_Z:
-   case PIPE_SWIZZLE_W:
-      return 2 + pipe_swizzle;
-   default:
-      unreachable("unknown swizzle");
-   }
-}
-
-/*
- * Packs and ensure bo for the shader state (the latter can be temporal).
- */
-static void
-pack_texture_shader_state_helper(struct v3dv_device *device,
-                                 struct v3dv_image_view *image_view,
-                                 bool for_cube_map_array_storage)
-{
-   assert(!for_cube_map_array_storage ||
-          image_view->type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY);
-   const uint32_t index = for_cube_map_array_storage ? 1 : 0;
-
-   assert(image_view->image);
-   const struct v3dv_image *image = image_view->image;
-
-   assert(image->samples == VK_SAMPLE_COUNT_1_BIT ||
-          image->samples == VK_SAMPLE_COUNT_4_BIT);
-   const uint32_t msaa_scale = image->samples == VK_SAMPLE_COUNT_1_BIT ? 1 : 2;
-
-   v3dv_pack(image_view->texture_shader_state[index], TEXTURE_SHADER_STATE, tex) {
-
-      tex.level_0_is_strictly_uif =
-         (image->slices[0].tiling == V3D_TILING_UIF_XOR ||
-          image->slices[0].tiling == V3D_TILING_UIF_NO_XOR);
-
-      tex.level_0_xor_enable = (image->slices[0].tiling == V3D_TILING_UIF_XOR);
-
-      if (tex.level_0_is_strictly_uif)
-         tex.level_0_ub_pad = image->slices[0].ub_pad;
-
-      /* FIXME: v3d never sets uif_xor_disable, but uses it on the following
-       * check so let's set the default value
-       */
-      tex.uif_xor_disable = false;
-      if (tex.uif_xor_disable ||
-          tex.level_0_is_strictly_uif) {
-         tex.extended = true;
-      }
-
-      tex.base_level = image_view->base_level;
-      tex.max_level = image_view->max_level;
-
-      tex.swizzle_r = translate_swizzle(image_view->swizzle[0]);
-      tex.swizzle_g = translate_swizzle(image_view->swizzle[1]);
-      tex.swizzle_b = translate_swizzle(image_view->swizzle[2]);
-      tex.swizzle_a = translate_swizzle(image_view->swizzle[3]);
-
-      tex.texture_type = image_view->format->tex_type;
-
-      if (image->type == VK_IMAGE_TYPE_3D) {
-         tex.image_depth = image->extent.depth;
-      } else {
-         tex.image_depth = (image_view->last_layer - image_view->first_layer) + 1;
-      }
-
-      /* Empirical testing with CTS shows that when we are sampling from cube
-       * arrays we want to set image depth to layers / 6, but not when doing
-       * image load/store.
-       */
-      if (image_view->type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY &&
-          !for_cube_map_array_storage) {
-         assert(tex.image_depth % 6 == 0);
-         tex.image_depth /= 6;
-      }
-
-      uint32_t image_block_w = vk_format_get_blockwidth(image->vk_format);
-      uint32_t image_block_h = vk_format_get_blockheight(image->vk_format);
-      uint32_t view_block_w = vk_format_get_blockwidth(image_view->vk_format);
-      uint32_t view_block_h = vk_format_get_blockheight(image_view->vk_format);
-      if (image_block_w != view_block_w || image_block_h != view_block_h) {
-         /* If we are creating an uncompressed view from a compressed format or
-          * viceversa, we need to be careful when programming the image size
-          * so that the miplevel dimensions computed by the hardware match the
-          * miplevel dimensions of the underlying image.
-          *
-          * For example, if we have an etc2_rgb8 image with size 22x22, then its
-          * mip level dimensions are 22x22, 11x11 and 5x5. If we now interpret
-          * these in units of an uncompressed rgba16 format, we get 6x6, 3x3 and
-          * 2x2.
-          *
-          * However, here we are only programming the size of the level 0 and
-          * the hardware will automatically compute mip level dimensions when
-          * translating texture coordinates for the mip level. This is a problem
-          * because if we program here the size of mip 0 in the uncompressed
-          * rgba16 format, we would set 6x6 (22x22 divided by 4 and rounded up).
-          * And because we set an uncompressed view format, the hardware will
-          * compute mip level sizes 6x6, 3x3 and 1x1, so miplevel 2 won't match
-          * the size of miplevel 2 in the original compressed format and the
-          * texture sampling for that miplevel will differ. To fix this, we
-          * need to compute a level 0 size that makes the hardware compute the
-          * appropriate mip level dimensions. We do this by computing the
-          * mip level dimensions in blocks and then computing level 0
-          * dimensions from that.
-          */
-         uint32_t level = image_view->base_level;
-         uint32_t mip_w_in_blocks =
-            DIV_ROUND_UP(u_minify(image->extent.width, level) * view_block_w,
-                         image_block_w);
-         uint32_t mip_h_in_blocks =
-            DIV_ROUND_UP(u_minify(image->extent.height, level) * view_block_h,
-                         image_block_h);
-
-         tex.image_width = mip_w_in_blocks << level;
-         tex.image_height = mip_h_in_blocks << level;
-      } else {
-         tex.image_width = image->extent.width;
-         tex.image_height = image->extent.height;
-      }
-
-      tex.image_height *= msaa_scale;
-      tex.image_width *= msaa_scale;
-
-      /* On 4.x, the height of a 1D texture is redefined to be the
-       * upper 14 bits of the width (which is only usable with txf).
-       */
-      if (image->type == VK_IMAGE_TYPE_1D) {
-         tex.image_height = tex.image_width >> 14;
-      }
-      tex.image_width &= (1 << 14) - 1;
-      tex.image_height &= (1 << 14) - 1;
-
-      tex.array_stride_64_byte_aligned = image->cube_map_stride / 64;
-
-      tex.srgb = vk_format_is_srgb(image_view->vk_format);
-
-      /* At this point we don't have the job. That's the reason the first
-       * parameter is NULL, to avoid a crash when cl_pack_emit_reloc tries to
-       * add the bo to the job. This also means that we need to add manually
-       * the image bo to the job using the texture.
-       */
-      const uint32_t base_offset =
-         image->mem->bo->offset +
-         v3dv_layer_offset(image, 0, image_view->first_layer);
-      tex.texture_base_pointer = v3dv_cl_address(NULL, base_offset);
-   }
-}
-
-static void
-pack_texture_shader_state(struct v3dv_device *device,
-                          struct v3dv_image_view *iview)
-{
-   pack_texture_shader_state_helper(device, iview, false);
-   if (iview->type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY)
-      pack_texture_shader_state_helper(device, iview, true);
-}
-
 static enum pipe_swizzle
 vk_component_mapping_to_pipe_swizzle(VkComponentSwizzle comp,
                                      VkComponentSwizzle swz)
@@ -730,6 +559,11 @@ v3dv_CreateImageView(VkDevice _device,
 
    iview->base_level = range->baseMipLevel;
    iview->max_level = iview->base_level + v3dv_level_count(image, range) - 1;
+   iview->extent = (VkExtent3D) {
+      .width  = u_minify(image->extent.width , iview->base_level),
+      .height = u_minify(image->extent.height, iview->base_level),
+      .depth  = u_minify(image->extent.depth , iview->base_level),
+   };
 
    iview->first_layer = range->baseArrayLayer;
    iview->last_layer = range->baseArrayLayer +
@@ -773,37 +607,22 @@ v3dv_CreateImageView(VkDevice _device,
    }
 
    iview->vk_format = format;
-   iview->format = v3dv_get_format(format);
+   iview->format = v3dv_X(device, get_format)(format);
    assert(iview->format && iview->format->supported);
 
-   uint32_t level = iview->base_level;
-   uint32_t width = image->extent.width;
-   uint32_t height = image->extent.height;
-   uint32_t depth = image->extent.depth;
-   uint32_t image_block_w = vk_format_get_blockwidth(image->vk_format);
-   uint32_t image_block_h = vk_format_get_blockheight(image->vk_format);
-   uint32_t view_block_w = vk_format_get_blockwidth(iview->vk_format);
-   uint32_t view_block_h = vk_format_get_blockheight(iview->vk_format);
-   iview->extent.width =
-      DIV_ROUND_UP(u_minify(width, level) * view_block_w, image_block_w);
-   iview->extent.height =
-      DIV_ROUND_UP(u_minify(height, level) * view_block_h, image_block_h);
-   iview->extent.depth = u_minify(depth, level);
-
    if (vk_format_is_depth_or_stencil(iview->vk_format)) {
-      iview->internal_type = v3dv_get_internal_depth_type(iview->vk_format);
+      iview->internal_type = v3dv_X(device, get_internal_depth_type)(iview->vk_format);
    } else {
-      v3dv_get_internal_type_bpp_for_output_format(iview->format->rt_type,
-                                                   &iview->internal_type,
-                                                   &iview->internal_bpp);
+      v3dv_X(device, get_internal_type_bpp_for_output_format)
+         (iview->format->rt_type, &iview->internal_type, &iview->internal_bpp);
    }
 
-   const uint8_t *format_swizzle = v3dv_get_format_swizzle(format);
+   const uint8_t *format_swizzle = v3dv_get_format_swizzle(device, format);
    util_format_compose_swizzles(format_swizzle, image_view_swizzle,
                                 iview->swizzle);
    iview->swap_rb = iview->swizzle[0] == PIPE_SWIZZLE_Z;
 
-   pack_texture_shader_state(device, iview);
+   v3dv_X(device, pack_texture_shader_state)(device, iview);
 
    *pView = v3dv_image_view_to_handle(iview);
 
@@ -824,48 +643,6 @@ v3dv_DestroyImageView(VkDevice _device,
    vk_object_free(&device->vk, pAllocator, image_view);
 }
 
-static void
-pack_texture_shader_state_from_buffer_view(struct v3dv_device *device,
-                                           struct v3dv_buffer_view *buffer_view)
-{
-   assert(buffer_view->buffer);
-   const struct v3dv_buffer *buffer = buffer_view->buffer;
-
-   v3dv_pack(buffer_view->texture_shader_state, TEXTURE_SHADER_STATE, tex) {
-      tex.swizzle_r = translate_swizzle(PIPE_SWIZZLE_X);
-      tex.swizzle_g = translate_swizzle(PIPE_SWIZZLE_Y);
-      tex.swizzle_b = translate_swizzle(PIPE_SWIZZLE_Z);
-      tex.swizzle_a = translate_swizzle(PIPE_SWIZZLE_W);
-
-      tex.image_depth = 1;
-
-      /* On 4.x, the height of a 1D texture is redefined to be the upper 14
-       * bits of the width (which is only usable with txf) (or in other words,
-       * we are providing a 28 bit field for size, but split on the usual
-       * 14bit height/width).
-       */
-      tex.image_width = buffer_view->num_elements;
-      tex.image_height = tex.image_width >> 14;
-      tex.image_width &= (1 << 14) - 1;
-      tex.image_height &= (1 << 14) - 1;
-
-      tex.texture_type = buffer_view->format->tex_type;
-      tex.srgb = vk_format_is_srgb(buffer_view->vk_format);
-
-      /* At this point we don't have the job. That's the reason the first
-       * parameter is NULL, to avoid a crash when cl_pack_emit_reloc tries to
-       * add the bo to the job. This also means that we need to add manually
-       * the image bo to the job using the texture.
-       */
-      const uint32_t base_offset =
-         buffer->mem->bo->offset +
-         buffer->mem_offset +
-         buffer_view->offset;
-
-      tex.texture_base_pointer = v3dv_cl_address(NULL, base_offset);
-   }
-}
-
 VKAPI_ATTR VkResult VKAPI_CALL
 v3dv_CreateBufferView(VkDevice _device,
                       const VkBufferViewCreateInfo *pCreateInfo,
@@ -874,7 +651,7 @@ v3dv_CreateBufferView(VkDevice _device,
 {
    V3DV_FROM_HANDLE(v3dv_device, device, _device);
 
-   const struct v3dv_buffer *buffer =
+   struct v3dv_buffer *buffer =
       v3dv_buffer_from_handle(pCreateInfo->buffer);
 
    struct v3dv_buffer_view *view =
@@ -897,15 +674,14 @@ v3dv_CreateBufferView(VkDevice _device,
    view->size = view->offset + range;
    view->num_elements = num_elements;
    view->vk_format = pCreateInfo->format;
-   view->format = v3dv_get_format(view->vk_format);
+   view->format = v3dv_X(device, get_format)(view->vk_format);
 
-   v3dv_get_internal_type_bpp_for_output_format(view->format->rt_type,
-                                                &view->internal_type,
-                                                &view->internal_bpp);
+   v3dv_X(device, get_internal_type_bpp_for_output_format)
+      (view->format->rt_type, &view->internal_type, &view->internal_bpp);
 
    if (buffer->usage & VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT ||
        buffer->usage & VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT)
-      pack_texture_shader_state_from_buffer_view(device, view);
+      v3dv_X(device, pack_texture_shader_state_from_buffer_view)(device, view);
 
    *pView = v3dv_buffer_view_to_handle(view);
 

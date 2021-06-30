@@ -29,6 +29,13 @@
 #include <stdbool.h>
 #include <string.h>
 
+#ifdef __FreeBSD__
+#include <sys/types.h>
+#elif !defined(_WIN32)
+#include <sys/sysmacros.h>
+#endif
+
+#include "util/debug.h"
 #include "util/disk_cache.h"
 #include "radv_cs.h"
 #include "radv_debug.h"
@@ -373,6 +380,7 @@ static const struct vk_instance_extension_table radv_instance_extensions_support
    .KHR_get_display_properties2 = true,
    .EXT_direct_mode_display = true,
    .EXT_display_surface_counter = true,
+   .EXT_acquire_drm_display = true,
 #endif
 };
 
@@ -383,6 +391,8 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
    *ext = (struct vk_device_extension_table){
       .KHR_8bit_storage = true,
       .KHR_16bit_storage = true,
+      .KHR_acceleration_structure = (device->instance->perftest_flags & RADV_PERFTEST_RT) &&
+                                    device->rad_info.chip_class >= GFX10_3,
       .KHR_bind_memory2 = true,
       .KHR_buffer_device_address = true,
       .KHR_copy_commands2 = true,
@@ -466,6 +476,9 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .EXT_memory_budget = true,
       .EXT_memory_priority = true,
       .EXT_pci_bus_info = true,
+#ifndef _WIN32
+      .EXT_physical_device_drm = true,
+#endif
       .EXT_pipeline_creation_cache_control = true,
       .EXT_pipeline_creation_feedback = true,
       .EXT_post_depth_coverage = device->rad_info.chip_class >= GFX10,
@@ -647,8 +660,7 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
 #endif
 
    if (device->rad_info.chip_class < GFX8 || device->rad_info.chip_class > GFX10)
-      fprintf(stderr,
-              "WARNING: radv is not a conformant vulkan implementation, testing use only.\n");
+      vk_warn_non_conformant_implementation("radv");
 
    radv_get_driver_uuid(&device->driver_uuid);
    radv_get_device_uuid(&device->rad_info, &device->device_uuid);
@@ -687,8 +699,30 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
    radv_physical_device_get_supported_extensions(device, &device->vk.supported_extensions);
 
 #ifndef _WIN32
-   if (drm_device)
+   if (drm_device) {
+      struct stat primary_stat = {0}, render_stat = {0};
+
+      device->available_nodes = drm_device->available_nodes;
       device->bus_info = *drm_device->businfo.pci;
+
+      if ((drm_device->available_nodes & (1 << DRM_NODE_PRIMARY)) &&
+          stat(drm_device->nodes[DRM_NODE_PRIMARY], &primary_stat) != 0) {
+         result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
+                            "failed to stat DRM primary node %s",
+                            drm_device->nodes[DRM_NODE_PRIMARY]);
+         goto fail_disk_cache;
+      }
+      device->primary_devid = primary_stat.st_rdev;
+
+      if ((drm_device->available_nodes & (1 << DRM_NODE_RENDER)) &&
+          stat(drm_device->nodes[DRM_NODE_RENDER], &render_stat) != 0) {
+         result = vk_errorf(instance, VK_ERROR_INITIALIZATION_FAILED,
+                            "failed to stat DRM render node %s",
+                            drm_device->nodes[DRM_NODE_RENDER]);
+         goto fail_disk_cache;
+      }
+      device->render_devid = render_stat.st_rdev;
+   }
 #endif
 
    if ((device->instance->debug_flags & RADV_DEBUG_INFO))
@@ -784,13 +818,16 @@ radv_get_debug_option_name(int id)
    return radv_debug_options[id].string;
 }
 
-static const struct debug_control radv_perftest_options[] = {
-   {"localbos", RADV_PERFTEST_LOCAL_BOS},   {"dccmsaa", RADV_PERFTEST_DCC_MSAA},
-   {"bolist", RADV_PERFTEST_BO_LIST},
-   {"cswave32", RADV_PERFTEST_CS_WAVE_32},  {"pswave32", RADV_PERFTEST_PS_WAVE_32},
-   {"gewave32", RADV_PERFTEST_GE_WAVE_32},
-   {"nosam", RADV_PERFTEST_NO_SAM},         {"sam", RADV_PERFTEST_SAM},
-   {NULL, 0}};
+static const struct debug_control radv_perftest_options[] = {{"localbos", RADV_PERFTEST_LOCAL_BOS},
+                                                             {"dccmsaa", RADV_PERFTEST_DCC_MSAA},
+                                                             {"bolist", RADV_PERFTEST_BO_LIST},
+                                                             {"cswave32", RADV_PERFTEST_CS_WAVE_32},
+                                                             {"pswave32", RADV_PERFTEST_PS_WAVE_32},
+                                                             {"gewave32", RADV_PERFTEST_GE_WAVE_32},
+                                                             {"nosam", RADV_PERFTEST_NO_SAM},
+                                                             {"sam", RADV_PERFTEST_SAM},
+                                                             {"rt", RADV_PERFTEST_RT},
+                                                             {NULL, 0}};
 
 const char *
 radv_get_perftest_option_name(int id)
@@ -1585,7 +1622,7 @@ radv_GetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice,
          VkPhysicalDeviceExtendedDynamicState2FeaturesEXT *features =
             (VkPhysicalDeviceExtendedDynamicState2FeaturesEXT *)ext;
          features->extendedDynamicState2 = true;
-         features->extendedDynamicState2LogicOp = false;
+         features->extendedDynamicState2LogicOp = true;
          features->extendedDynamicState2PatchControlPoints = false;
          break;
       }
@@ -1593,6 +1630,16 @@ radv_GetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice,
          VkPhysicalDeviceGlobalPriorityQueryFeaturesEXT *features =
             (VkPhysicalDeviceGlobalPriorityQueryFeaturesEXT *)ext;
          features->globalPriorityQuery = true;
+         break;
+      }
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR: {
+         VkPhysicalDeviceAccelerationStructureFeaturesKHR *features =
+            (VkPhysicalDeviceAccelerationStructureFeaturesKHR *)ext;
+         features->accelerationStructure = true;
+         features->accelerationStructureCaptureReplay = false;
+         features->accelerationStructureIndirectBuild = false;
+         features->accelerationStructureHostCommands = true;
+         features->descriptorBindingAccelerationStructureUpdateAfterBind = true;
          break;
       }
       default:
@@ -2267,6 +2314,43 @@ radv_GetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice,
          props->transformFeedbackPreservesTriangleFanProvokingVertex = true;
          break;
       }
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR: {
+         VkPhysicalDeviceAccelerationStructurePropertiesKHR *props =
+            (VkPhysicalDeviceAccelerationStructurePropertiesKHR *)ext;
+         props->maxGeometryCount = (1 << 24) - 1;
+         props->maxInstanceCount = (1 << 24) - 1;
+         props->maxPrimitiveCount = (1 << 29) - 1;
+         props->maxPerStageDescriptorAccelerationStructures =
+            pProperties->properties.limits.maxPerStageDescriptorStorageBuffers;
+         props->maxPerStageDescriptorUpdateAfterBindAccelerationStructures =
+            pProperties->properties.limits.maxPerStageDescriptorStorageBuffers;
+         props->maxDescriptorSetAccelerationStructures =
+            pProperties->properties.limits.maxDescriptorSetStorageBuffers;
+         props->maxDescriptorSetUpdateAfterBindAccelerationStructures =
+            pProperties->properties.limits.maxDescriptorSetStorageBuffers;
+         props->minAccelerationStructureScratchOffsetAlignment = 128;
+         break;
+      }
+#ifndef _WIN32
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT: {
+         VkPhysicalDeviceDrmPropertiesEXT *props = (VkPhysicalDeviceDrmPropertiesEXT *)ext;
+         if (pdevice->available_nodes & (1 << DRM_NODE_PRIMARY)) {
+            props->hasPrimary = true;
+            props->primaryMajor = (int64_t)major(pdevice->primary_devid);
+            props->primaryMinor = (int64_t)minor(pdevice->primary_devid);
+         } else {
+            props->hasPrimary = false;
+         }
+         if (pdevice->available_nodes & (1 << DRM_NODE_RENDER)) {
+            props->hasRender = true;
+            props->renderMajor = (int64_t)major(pdevice->render_devid);
+            props->renderMinor = (int64_t)minor(pdevice->render_devid);
+         } else {
+            props->hasRender = false;
+         }
+         break;
+      }
+#endif
       default:
          break;
       }
@@ -2880,7 +2964,8 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
                                 device->vk.enabled_extensions.EXT_descriptor_indexing ||
                                 device->vk.enabled_extensions.EXT_buffer_device_address ||
                                 device->vk.enabled_extensions.KHR_buffer_device_address ||
-                                device->vk.enabled_extensions.KHR_ray_tracing_pipeline;
+                                device->vk.enabled_extensions.KHR_ray_tracing_pipeline ||
+                                device->vk.enabled_extensions.KHR_acceleration_structure;
 
    device->robust_buffer_access = robust_buffer_access || robust_buffer_access2;
    device->robust_buffer_access2 = robust_buffer_access2;
@@ -5466,14 +5551,27 @@ radv_GetDeviceMemoryCommitment(VkDevice device, VkDeviceMemory memory,
 }
 
 VkResult
-radv_BindBufferMemory2(VkDevice device, uint32_t bindInfoCount,
+radv_BindBufferMemory2(VkDevice _device, uint32_t bindInfoCount,
                        const VkBindBufferMemoryInfo *pBindInfos)
 {
+   RADV_FROM_HANDLE(radv_device, device, _device);
+
    for (uint32_t i = 0; i < bindInfoCount; ++i) {
       RADV_FROM_HANDLE(radv_device_memory, mem, pBindInfos[i].memory);
       RADV_FROM_HANDLE(radv_buffer, buffer, pBindInfos[i].buffer);
 
       if (mem) {
+         if (mem->alloc_size) {
+            VkMemoryRequirements req;
+
+            radv_GetBufferMemoryRequirements(_device, pBindInfos[i].buffer, &req);
+
+            if (pBindInfos[i].memoryOffset + req.size > mem->alloc_size) {
+               return vk_errorf(device->instance, VK_ERROR_UNKNOWN,
+                                "Device memory object too small for the buffer.\n");
+            }
+         }
+
          buffer->bo = mem->bo;
          buffer->offset = pBindInfos[i].memoryOffset;
       } else {
@@ -5496,14 +5594,27 @@ radv_BindBufferMemory(VkDevice device, VkBuffer buffer, VkDeviceMemory memory,
 }
 
 VkResult
-radv_BindImageMemory2(VkDevice device, uint32_t bindInfoCount,
+radv_BindImageMemory2(VkDevice _device, uint32_t bindInfoCount,
                       const VkBindImageMemoryInfo *pBindInfos)
 {
+   RADV_FROM_HANDLE(radv_device, device, _device);
+
    for (uint32_t i = 0; i < bindInfoCount; ++i) {
       RADV_FROM_HANDLE(radv_device_memory, mem, pBindInfos[i].memory);
       RADV_FROM_HANDLE(radv_image, image, pBindInfos[i].image);
 
       if (mem) {
+         if (mem->alloc_size) {
+            VkMemoryRequirements req;
+
+            radv_GetImageMemoryRequirements(_device, pBindInfos[i].image, &req);
+
+            if (pBindInfos[i].memoryOffset + req.size > mem->alloc_size) {
+               return vk_errorf(device->instance, VK_ERROR_UNKNOWN,
+                                "Device memory object too small for the image.\n");
+            }
+         }
+
          image->bo = mem->bo;
          image->offset = pBindInfos[i].memoryOffset;
       } else {

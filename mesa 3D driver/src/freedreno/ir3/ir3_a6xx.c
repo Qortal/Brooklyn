@@ -49,7 +49,7 @@ emit_intrinsic_load_ssbo(struct ir3_context *ctx, nir_intrinsic_instr *intr,
 	offset = ir3_get_src(ctx, &intr->src[2])[0];
 
 	ldib = ir3_LDIB(b, ir3_ssbo_to_ibo(ctx, intr->src[0]), 0, offset, 0);
-	ldib->regs[0]->wrmask = MASK(intr->num_components);
+	ldib->dsts[0]->wrmask = MASK(intr->num_components);
 	ldib->cat6.iim_val = intr->num_components;
 	ldib->cat6.d = 1;
 	ldib->cat6.type = intr->dest.ssa.bit_size == 16 ? TYPE_U16 : TYPE_U32;
@@ -193,7 +193,8 @@ emit_intrinsic_atomic_ssbo(struct ir3_context *ctx, nir_intrinsic_instr *intr)
 	/* even if nothing consume the result, we can't DCE the instruction: */
 	array_insert(b, b->keeps, atomic);
 
-	atomic->regs[0]->wrmask = src1->regs[0]->wrmask;
+	atomic->dsts[0]->wrmask = src1->dsts[0]->wrmask;
+	ir3_reg_tie(atomic->dsts[0], atomic->srcs[2]);
 	struct ir3_instruction *split;
 	ir3_split_dest(b, &split, atomic, 0, 1);
 	return split;
@@ -211,7 +212,7 @@ emit_intrinsic_load_image(struct ir3_context *ctx, nir_intrinsic_instr *intr,
 
 	ldib = ir3_LDIB(b, ir3_image_to_ibo(ctx, intr->src[0]), 0,
 					ir3_create_collect(ctx, coords, ncoords), 0);
-	ldib->regs[0]->wrmask = MASK(intr->num_components);
+	ldib->dsts[0]->wrmask = MASK(intr->num_components);
 	ldib->cat6.iim_val = intr->num_components;
 	ldib->cat6.d = ncoords;
 	ldib->cat6.type = ir3_get_type_for_image_intrinsic(intr);
@@ -344,7 +345,8 @@ emit_intrinsic_atomic_image(struct ir3_context *ctx, nir_intrinsic_instr *intr)
 	/* even if nothing consume the result, we can't DCE the instruction: */
 	array_insert(b, b->keeps, atomic);
 
-	atomic->regs[0]->wrmask = src1->regs[0]->wrmask;
+	atomic->dsts[0]->wrmask = src1->dsts[0]->wrmask;
+	ir3_reg_tie(atomic->dsts[0], atomic->srcs[2]);
 	struct ir3_instruction *split;
 	ir3_split_dest(b, &split, atomic, 0, 1);
 	return split;
@@ -363,10 +365,72 @@ emit_intrinsic_image_size(struct ir3_context *ctx, nir_intrinsic_instr *intr,
 	resinfo->cat6.typed = false;
 	/* resinfo has no writemask and always writes out 3 components: */
 	compile_assert(ctx, intr->num_components <= 3);
-	resinfo->regs[0]->wrmask = MASK(3);
+	resinfo->dsts[0]->wrmask = MASK(3);
 	ir3_handle_bindless_cat6(resinfo, intr->src[0]);
 
 	ir3_split_dest(b, dst, resinfo, 0, intr->num_components);
+}
+
+static void
+emit_intrinsic_load_global_ir3(struct ir3_context *ctx, nir_intrinsic_instr *intr,
+		struct ir3_instruction **dst)
+{
+	struct ir3_block *b = ctx->block;
+	unsigned dest_components = nir_intrinsic_dest_components(intr);
+	struct ir3_instruction *addr, *offset;
+
+	addr = ir3_create_collect(ctx, (struct ir3_instruction*[]){
+			ir3_get_src(ctx, &intr->src[0])[0],
+			ir3_get_src(ctx, &intr->src[0])[1]
+	}, 2);
+
+	offset = ir3_get_src(ctx, &intr->src[1])[0];
+
+	struct ir3_instruction *load =
+		ir3_LDG_A(b, addr, 0, offset, 0,
+				create_immed(b, 0), 0,
+				create_immed(b, 0), 0,
+				create_immed(b, dest_components), 0);
+	load->cat6.type = TYPE_U32;
+	load->dsts[0]->wrmask = MASK(dest_components);
+
+	load->barrier_class = IR3_BARRIER_BUFFER_R;
+	load->barrier_conflict = IR3_BARRIER_BUFFER_W;
+
+	ir3_split_dest(b, dst, load, 0, dest_components);
+}
+
+static void
+emit_intrinsic_store_global_ir3(struct ir3_context *ctx, nir_intrinsic_instr *intr)
+{
+	struct ir3_block *b = ctx->block;
+	struct ir3_instruction *value, *addr, *offset;
+	unsigned ncomp = nir_intrinsic_src_components(intr, 0);
+
+	addr = ir3_create_collect(ctx, (struct ir3_instruction*[]){
+			ir3_get_src(ctx, &intr->src[1])[0],
+			ir3_get_src(ctx, &intr->src[1])[1]
+	}, 2);
+
+	offset = ir3_get_src(ctx, &intr->src[2])[0];
+
+	value = ir3_create_collect(ctx, ir3_get_src(ctx, &intr->src[0]), ncomp);
+
+	struct ir3_instruction *stg =
+		ir3_STG_A(b,
+					addr, 0,
+					offset, 0,
+					create_immed(b, 0), 0,
+					create_immed(b, 0), 0,
+					value, 0,
+					create_immed(b, ncomp), 0);
+	stg->cat6.type = TYPE_U32;
+	stg->cat6.iim_val = 1;
+
+	array_insert(b, b->keeps, stg);
+
+	stg->barrier_class = IR3_BARRIER_BUFFER_W;
+	stg->barrier_conflict = IR3_BARRIER_BUFFER_R | IR3_BARRIER_BUFFER_W;
 }
 
 const struct ir3_context_funcs ir3_a6xx_funcs = {
@@ -377,5 +441,7 @@ const struct ir3_context_funcs ir3_a6xx_funcs = {
 		.emit_intrinsic_store_image = emit_intrinsic_store_image,
 		.emit_intrinsic_atomic_image = emit_intrinsic_atomic_image,
 		.emit_intrinsic_image_size = emit_intrinsic_image_size,
+		.emit_intrinsic_load_global_ir3 = emit_intrinsic_load_global_ir3,
+		.emit_intrinsic_store_global_ir3 = emit_intrinsic_store_global_ir3,
 };
 

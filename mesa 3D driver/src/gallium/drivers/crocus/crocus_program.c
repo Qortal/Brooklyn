@@ -163,7 +163,7 @@ crocus_populate_sampler_prog_key_data(struct crocus_context *ice,
          continue;
       if (texture->base.target == PIPE_BUFFER)
          continue;
-      if (!devinfo->is_haswell) {
+      if (devinfo->verx10 < 75) {
          key->swizzles[s] = crocus_get_texture_swizzle(ice, texture);
       }
 
@@ -196,7 +196,7 @@ crocus_populate_sampler_prog_key_data(struct crocus_context *ice,
              * request blue.  Haswell can use SCS for this, but Ivybridge
              * needs a shader workaround.
              */
-            if (!devinfo->is_haswell)
+            if (devinfo->verx10 < 75)
                key->gather_channel_quirk_mask |= 1 << s;
             break;
          default:
@@ -878,7 +878,7 @@ crocus_setup_binding_table(const struct intel_device_info *devinfo,
    bt->sizes[CROCUS_SURFACE_GROUP_TEXTURE] = BITSET_LAST_BIT(info->textures_used);
    bt->used_mask[CROCUS_SURFACE_GROUP_TEXTURE] = info->textures_used[0];
 
-   if (info->uses_texture_gather) {
+   if (info->uses_texture_gather && devinfo->ver < 8) {
       bt->sizes[CROCUS_SURFACE_GROUP_TEXTURE_GATHER] = BITSET_LAST_BIT(info->textures_used);
       bt->used_mask[CROCUS_SURFACE_GROUP_TEXTURE_GATHER] = info->textures_used[0];
    }
@@ -1005,11 +1005,11 @@ crocus_setup_binding_table(const struct intel_device_info *devinfo,
       nir_foreach_instr (instr, block) {
          if (instr->type == nir_instr_type_tex) {
             nir_tex_instr *tex = nir_instr_as_tex(instr);
-            bool is_gather = tex->op == nir_texop_tg4;
+            bool is_gather = devinfo->ver < 8 && tex->op == nir_texop_tg4;
 
             /* rewrite the tg4 component from green to blue before replacing the
                texture index */
-            if (devinfo->ver == 7 && !devinfo->is_haswell) {
+            if (devinfo->verx10 == 70) {
                if (tex->component == 1)
                   if (key->gather_channel_quirk_mask & (1 << tex->texture_index))
                      tex->component = 2;
@@ -1344,6 +1344,8 @@ crocus_update_compiled_vs(struct crocus_context *ice)
 
    if (old != shader) {
       ice->shaders.prog[CROCUS_CACHE_VS] = shader;
+      if (devinfo->ver == 8)
+         ice->state.dirty |= CROCUS_DIRTY_GEN8_VF_SGVS;
       ice->state.stage_dirty |= CROCUS_STAGE_DIRTY_VS |
                                 CROCUS_STAGE_DIRTY_BINDINGS_VS |
                                 CROCUS_STAGE_DIRTY_CONSTANTS_VS;
@@ -1975,7 +1977,7 @@ crocus_update_compiled_fs(struct crocus_context *ice)
       if (devinfo->ver < 6)
          ice->state.dirty |= CROCUS_DIRTY_GEN4_CLIP_PROG | CROCUS_DIRTY_GEN4_SF_PROG;
       else
-         ice->state.dirty |= CROCUS_DIRTY_CLIP;
+         ice->state.dirty |= CROCUS_DIRTY_CLIP | CROCUS_DIRTY_GEN6_BLEND_STATE;
       if (devinfo->ver == 6)
          ice->state.dirty |= CROCUS_DIRTY_RASTER;
       if (devinfo->ver >= 7)
@@ -2793,7 +2795,7 @@ crocus_create_vs_state(struct pipe_context *ctx,
        screen->devinfo.ver <= 5)
       ish->nos |= (1ull << CROCUS_NOS_RASTERIZER);
 
-   if (!screen->devinfo.is_haswell)
+   if (screen->devinfo.verx10 < 75)
       ish->nos |= (1ull << CROCUS_NOS_VERTEX_ELEMENTS);
 
    if (screen->precompile) {
@@ -3122,6 +3124,8 @@ static void
 crocus_bind_fs_state(struct pipe_context *ctx, void *state)
 {
    struct crocus_context *ice = (struct crocus_context *) ctx;
+   struct crocus_screen *screen = (struct crocus_screen *) ctx->screen;
+   const struct intel_device_info *devinfo = &screen->devinfo;
    struct crocus_uncompiled_shader *old_ish =
       ice->shaders.uncompiled[MESA_SHADER_FRAGMENT];
    struct crocus_uncompiled_shader *new_ish = state;
@@ -3133,9 +3137,15 @@ crocus_bind_fs_state(struct pipe_context *ctx, void *state)
    /* Fragment shader outputs influence HasWriteableRT */
    if (!old_ish || !new_ish ||
        (old_ish->nir->info.outputs_written & color_bits) !=
-       (new_ish->nir->info.outputs_written & color_bits))
-      ice->state.dirty |= CROCUS_DIRTY_WM;
+       (new_ish->nir->info.outputs_written & color_bits)) {
+      if (devinfo->ver == 8)
+         ice->state.dirty |= CROCUS_DIRTY_GEN8_PS_BLEND;
+      else
+         ice->state.dirty |= CROCUS_DIRTY_WM;
+   }
 
+   if (devinfo->ver == 8)
+      ice->state.dirty |= CROCUS_DIRTY_GEN8_PMA_FIX;
    bind_shader_state((void *) ctx, state, MESA_SHADER_FRAGMENT);
 }
 

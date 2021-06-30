@@ -298,7 +298,11 @@ translate_wrap(unsigned pipe_wrap, bool either_nearest)
 {
    static const unsigned map[] = {
       [PIPE_TEX_WRAP_REPEAT]                 = TCM_WRAP,
+#if GFX_VER == 8
+      [PIPE_TEX_WRAP_CLAMP]                  = TCM_HALF_BORDER,
+#else
       [PIPE_TEX_WRAP_CLAMP]                  = TCM_CLAMP_BORDER,
+#endif
       [PIPE_TEX_WRAP_CLAMP_TO_EDGE]          = TCM_CLAMP,
       [PIPE_TEX_WRAP_CLAMP_TO_BORDER]        = TCM_CLAMP_BORDER,
       [PIPE_TEX_WRAP_MIRROR_REPEAT]          = TCM_MIRROR,
@@ -308,8 +312,10 @@ translate_wrap(unsigned pipe_wrap, bool either_nearest)
       [PIPE_TEX_WRAP_MIRROR_CLAMP]           = -1,
       [PIPE_TEX_WRAP_MIRROR_CLAMP_TO_BORDER] = -1,
    };
+#if GFX_VER < 8
    if (pipe_wrap == PIPE_TEX_WRAP_CLAMP && either_nearest)
       return TCM_CLAMP;
+#endif
    return map[pipe_wrap];
 }
 
@@ -488,7 +494,7 @@ crocus_store_register_mem32(struct crocus_batch *batch, uint32_t reg,
    crocus_emit_cmd(batch, GENX(MI_STORE_REGISTER_MEM), srm) {
       srm.RegisterAddress = reg;
       srm.MemoryAddress = ggtt_bo(bo, offset);
-#if GFX_VERx10 == 75
+#if GFX_VERx10 >= 75
       srm.PredicateEnable = predicated;
 #else
       if (predicated)
@@ -518,7 +524,7 @@ _crocus_emit_lri(struct crocus_batch *batch, uint32_t reg, uint32_t val)
 }
 #define crocus_emit_lri(b, r, v) _crocus_emit_lri(b, GENX(r##_num), v)
 
-#if GFX_VERx10 == 75
+#if GFX_VERx10 >= 75
 static void
 _crocus_emit_lrr(struct crocus_batch *batch, uint32_t dst, uint32_t src)
 {
@@ -584,7 +590,7 @@ crocus_load_register_mem64(struct crocus_batch *batch, uint32_t reg,
    crocus_load_register_mem32(batch, reg + 4, bo, offset + 4);
 }
 
-#if GFX_VERx10 == 75
+#if GFX_VERx10 >= 75
 static void
 crocus_store_data_imm32(struct crocus_batch *batch,
                         struct crocus_bo *bo, uint32_t offset,
@@ -645,6 +651,9 @@ struct crocus_rasterizer_state {
 #if GFX_VER >= 6
    uint32_t sf[GENX(3DSTATE_SF_length)];
    uint32_t clip[GENX(3DSTATE_CLIP_length)];
+#endif
+#if GFX_VER >= 8
+   uint32_t raster[GENX(3DSTATE_RASTER_length)];
 #endif
    uint32_t line_stipple[GENX(3DSTATE_LINE_STIPPLE_length)];
 
@@ -1044,7 +1053,7 @@ emit:
 }
 #endif
 
-#if GFX_VER == 7
+#if GFX_VER >= 7
 
 #define IVB_L3SQCREG1_SQGHPCI_DEFAULT     0x00730000
 #define VLV_L3SQCREG1_SQGHPCI_DEFAULT     0x00d30000
@@ -1053,6 +1062,7 @@ emit:
 static void
 setup_l3_config(struct crocus_batch *batch, const struct intel_l3_config *cfg)
 {
+#if GFX_VER == 7
    const struct intel_device_info *devinfo = &batch->screen->devinfo;
    const bool has_dc = cfg->n[INTEL_L3P_DC] || cfg->n[INTEL_L3P_ALL];
    const bool has_is = cfg->n[INTEL_L3P_IS] || cfg->n[INTEL_L3P_RO] ||
@@ -1062,6 +1072,7 @@ setup_l3_config(struct crocus_batch *batch, const struct intel_l3_config *cfg)
    const bool has_t = cfg->n[INTEL_L3P_T] || cfg->n[INTEL_L3P_RO] ||
                       cfg->n[INTEL_L3P_ALL];
    const bool has_slm = cfg->n[INTEL_L3P_SLM];
+#endif
 
    /* According to the hardware docs, the L3 partitioning can only be changed
     * while the pipeline is completely drained and the caches are flushed,
@@ -1098,7 +1109,16 @@ setup_l3_config(struct crocus_batch *batch, const struct intel_l3_config *cfg)
                                   PIPE_CONTROL_DATA_CACHE_FLUSH |
                                   PIPE_CONTROL_CS_STALL);
 
-
+#if GFX_VER == 8
+   assert(!cfg->n[INTEL_L3P_IS] && !cfg->n[INTEL_L3P_C] && !cfg->n[INTEL_L3P_T]);
+   crocus_emit_reg(batch, GENX(L3CNTLREG), reg) {
+      reg.SLMEnable = cfg->n[INTEL_L3P_SLM] > 0;
+      reg.URBAllocation = cfg->n[INTEL_L3P_URB];
+      reg.ROAllocation = cfg->n[INTEL_L3P_RO];
+      reg.DCAllocation = cfg->n[INTEL_L3P_DC];
+      reg.AllAllocation = cfg->n[INTEL_L3P_ALL];
+   }
+#else
    assert(!cfg->n[INTEL_L3P_ALL]);
 
    /* When enabled SLM only uses a portion of the L3 on half of the banks,
@@ -1167,6 +1187,7 @@ setup_l3_config(struct crocus_batch *batch, const struct intel_l3_config *cfg)
    crocus_emit_lri(batch, SCRATCH1, scratch1);
    crocus_emit_lri(batch, CHICKEN3, chicken3);
 #endif
+#endif
 }
 
 static void
@@ -1199,6 +1220,20 @@ gen7_emit_cs_stall_flush(struct crocus_batch *batch)
 static void
 emit_pipeline_select(struct crocus_batch *batch, uint32_t pipeline)
 {
+#if GFX_VER == 8
+   /* From the Broadwell PRM, Volume 2a: Instructions, PIPELINE_SELECT:
+    *
+    *   Software must clear the COLOR_CALC_STATE Valid field in
+    *   3DSTATE_CC_STATE_POINTERS command prior to send a PIPELINE_SELECT
+    *   with Pipeline Select set to GPGPU.
+    *
+    * The internal hardware docs recommend the same workaround for Gfx9
+    * hardware too.
+    */
+   if (pipeline == GPGPU)
+      crocus_emit_cmd(batch, GENX(3DSTATE_CC_STATE_POINTERS), t);
+#endif
+
 #if GFX_VER >= 6
    /* From "BXML » GT » MI » vol1a GPU Overview » [Instruction]
     * PIPELINE_SELECT [DevBWR+]":
@@ -1282,12 +1317,14 @@ emit_pipeline_select(struct crocus_batch *batch, uint32_t pipeline)
  * See "Volume 2a: 3D Pipeline," section 1.8, "Volume 1b: Configurations",
  * and the documentation for 3DSTATE_PUSH_CONSTANT_ALLOC_xS.
  */
-#if GFX_VER == 7
+#if GFX_VER >= 7
 static void
 crocus_alloc_push_constants(struct crocus_batch *batch)
 {
 #if GFX_VERx10 == 75
    const unsigned push_constant_kb = batch->screen->devinfo.gt == 3 ? 32 : 16;
+#elif GFX_VER == 8
+   const unsigned push_constant_kb = 32;
 #else
    const unsigned push_constant_kb = 16;
 #endif
@@ -1337,10 +1374,10 @@ crocus_init_render_context(struct crocus_batch *batch)
 
    crocus_emit_cmd(batch, GENX(STATE_SIP), foo);
 
-#if GFX_VER == 7
+#if GFX_VER >= 7
    emit_l3_state(batch, false);
 #endif
-#if GFX_VER == 7 && GFX_VERx10 != 75
+#if (GFX_VERx10 == 70 || GFX_VERx10 == 80)
    crocus_emit_reg(batch, GENX(INSTPM), reg) {
       reg.CONSTANT_BUFFERAddressOffsetDisable = true;
       reg.CONSTANT_BUFFERAddressOffsetDisableMask = true;
@@ -1355,12 +1392,28 @@ crocus_init_render_context(struct crocus_batch *batch)
    /* TODO: may need to set an offset for origin-UL framebuffers */
    crocus_emit_cmd(batch, GENX(3DSTATE_POLY_STIPPLE_OFFSET), foo);
 
-#if GFX_VER == 7
+#if GFX_VER >= 7
    crocus_alloc_push_constants(batch);
+#endif
+
+#if GFX_VER == 8
+   /* Set the initial MSAA sample positions. */
+   crocus_emit_cmd(batch, GENX(3DSTATE_SAMPLE_PATTERN), pat) {
+      INTEL_SAMPLE_POS_1X(pat._1xSample);
+      INTEL_SAMPLE_POS_2X(pat._2xSample);
+      INTEL_SAMPLE_POS_4X(pat._4xSample);
+      INTEL_SAMPLE_POS_8X(pat._8xSample);
+   }
+
+   /* Disable chromakeying (it's for media) */
+   crocus_emit_cmd(batch, GENX(3DSTATE_WM_CHROMAKEY), foo);
+
+   /* We want regular rendering, not special HiZ operations. */
+   crocus_emit_cmd(batch, GENX(3DSTATE_WM_HZ_OP), foo);
 #endif
 }
 
-#if GFX_VER == 7
+#if GFX_VER >= 7
 static void
 crocus_init_compute_context(struct crocus_batch *batch)
 {
@@ -1368,7 +1421,7 @@ crocus_init_compute_context(struct crocus_batch *batch)
 
    emit_pipeline_select(batch, GPGPU);
 
-#if GFX_VER == 7
+#if GFX_VER >= 7
    emit_l3_state(batch, true);
 #endif
 }
@@ -1382,10 +1435,14 @@ crocus_init_compute_context(struct crocus_batch *batch)
  */
 struct crocus_genx_state {
    struct {
-#if GFX_VER == 7
+#if GFX_VER >= 7
       struct brw_image_param image_param[PIPE_MAX_SHADER_IMAGES];
 #endif
    } shaders[MESA_SHADER_STAGES];
+
+#if GFX_VER == 8
+   bool pma_fix_enabled;
+#endif
 };
 
 /**
@@ -1412,6 +1469,11 @@ crocus_set_blend_color(struct pipe_context *ctx,
  * Gallium CSO for blend state (see pipe_blend_state).
  */
 struct crocus_blend_state {
+#if GFX_VER == 8
+   /** Partial 3DSTATE_PS_BLEND */
+   uint32_t ps_blend[GENX(3DSTATE_PS_BLEND_length)];
+#endif
+
    /** copy of BLEND_STATE */
    struct pipe_blend_state cso;
 
@@ -1425,7 +1487,6 @@ struct crocus_blend_state {
    bool dual_color_blending;
 };
 
-#if GFX_VER >= 6
 static enum pipe_blendfactor
 fix_blendfactor(enum pipe_blendfactor f, bool alpha_to_one)
 {
@@ -1439,7 +1500,73 @@ fix_blendfactor(enum pipe_blendfactor f, bool alpha_to_one)
 
    return f;
 }
+
+#if GFX_VER >= 6
+typedef struct GENX(BLEND_STATE_ENTRY) BLEND_ENTRY_GENXML;
+#else
+typedef struct GENX(COLOR_CALC_STATE) BLEND_ENTRY_GENXML;
 #endif
+
+static bool
+can_emit_logic_op(struct crocus_context *ice)
+{
+   /* all pre gen8 have logicop restricted to unorm */
+   enum pipe_format pformat = PIPE_FORMAT_NONE;
+   for (unsigned i = 0; i < ice->state.framebuffer.nr_cbufs; i++) {
+      if (ice->state.framebuffer.cbufs[i]) {
+         pformat = ice->state.framebuffer.cbufs[i]->format;
+         break;
+      }
+   }
+   return (pformat == PIPE_FORMAT_NONE || util_format_is_unorm(pformat));
+}
+
+static bool
+set_blend_entry_bits(struct crocus_batch *batch, BLEND_ENTRY_GENXML *entry,
+                     struct crocus_blend_state *cso_blend,
+                     int idx)
+{
+   struct crocus_context *ice = batch->ice;
+   bool independent_alpha_blend = false;
+   const struct pipe_rt_blend_state *rt =
+      &cso_blend->cso.rt[cso_blend->cso.independent_blend_enable ? idx : 0];
+   const unsigned blend_enabled = rt->blend_enable;
+
+   enum pipe_blendfactor src_rgb =
+      fix_blendfactor(rt->rgb_src_factor, cso_blend->cso.alpha_to_one);
+   enum pipe_blendfactor src_alpha =
+      fix_blendfactor(rt->alpha_src_factor, cso_blend->cso.alpha_to_one);
+   enum pipe_blendfactor dst_rgb =
+      fix_blendfactor(rt->rgb_dst_factor, cso_blend->cso.alpha_to_one);
+   enum pipe_blendfactor dst_alpha =
+      fix_blendfactor(rt->alpha_dst_factor, cso_blend->cso.alpha_to_one);
+
+   if (rt->rgb_func != rt->alpha_func ||
+       src_rgb != src_alpha || dst_rgb != dst_alpha)
+      independent_alpha_blend = true;
+   if (cso_blend->cso.logicop_enable) {
+      if (GFX_VER >= 8 || can_emit_logic_op(ice)) {
+         entry->LogicOpEnable = cso_blend->cso.logicop_enable;
+         entry->LogicOpFunction = cso_blend->cso.logicop_func;
+      }
+   } else if (blend_enabled) {
+      if (idx == 0) {
+         struct crocus_compiled_shader *shader = ice->shaders.prog[MESA_SHADER_FRAGMENT];
+         struct brw_wm_prog_data *wm_prog_data = (void *) shader->prog_data;
+         entry->ColorBufferBlendEnable = rt->blend_enable &&
+            (!cso_blend->dual_color_blending || wm_prog_data->dual_src_blend);
+      } else
+         entry->ColorBufferBlendEnable = rt->blend_enable;
+
+      entry->ColorBlendFunction          = rt->rgb_func;
+      entry->AlphaBlendFunction          = rt->alpha_func;
+      entry->SourceBlendFactor           = (int) src_rgb;
+      entry->SourceAlphaBlendFactor      = (int) src_alpha;
+      entry->DestinationBlendFactor      = (int) dst_rgb;
+      entry->DestinationAlphaBlendFactor = (int) dst_alpha;
+   }
+   return independent_alpha_blend;
+}
 
 /**
  * The pipe->create_blend_state() driver hook.
@@ -1458,6 +1585,10 @@ crocus_create_blend_state(struct pipe_context *ctx,
 
    cso->cso = *state;
    cso->dual_color_blending = util_blend_state_is_dual(state, 0);
+
+#if GFX_VER == 8
+   bool indep_alpha_blend = false;
+#endif
    for (int i = 0; i < BRW_MAX_DRAW_BUFFERS; i++) {
       const struct pipe_rt_blend_state *rt =
          &state->rt[state->independent_blend_enable ? i : 0];
@@ -1465,7 +1596,45 @@ crocus_create_blend_state(struct pipe_context *ctx,
          cso->blend_enables |= 1u << i;
       if (rt->colormask)
          cso->color_write_enables |= 1u << i;
+#if GFX_VER == 8
+      enum pipe_blendfactor src_rgb =
+         fix_blendfactor(rt->rgb_src_factor, state->alpha_to_one);
+      enum pipe_blendfactor src_alpha =
+         fix_blendfactor(rt->alpha_src_factor, state->alpha_to_one);
+      enum pipe_blendfactor dst_rgb =
+         fix_blendfactor(rt->rgb_dst_factor, state->alpha_to_one);
+      enum pipe_blendfactor dst_alpha =
+         fix_blendfactor(rt->alpha_dst_factor, state->alpha_to_one);
+
+      if (rt->rgb_func != rt->alpha_func ||
+          src_rgb != src_alpha || dst_rgb != dst_alpha)
+         indep_alpha_blend = true;
+#endif
    }
+
+#if GFX_VER == 8
+   crocus_pack_command(GENX(3DSTATE_PS_BLEND), cso->ps_blend, pb) {
+      /* pb.HasWriteableRT is filled in at draw time.
+       * pb.AlphaTestEnable is filled in at draw time.
+       *
+       * pb.ColorBufferBlendEnable is filled in at draw time so we can avoid
+       * setting it when dual color blending without an appropriate shader.
+       */
+
+      pb.AlphaToCoverageEnable = state->alpha_to_coverage;
+      pb.IndependentAlphaBlendEnable = indep_alpha_blend;
+
+      /* The casts prevent warnings about implicit enum type conversions. */
+      pb.SourceBlendFactor =
+         (int) fix_blendfactor(state->rt[0].rgb_src_factor, state->alpha_to_one);
+      pb.SourceAlphaBlendFactor =
+         (int) fix_blendfactor(state->rt[0].alpha_src_factor, state->alpha_to_one);
+      pb.DestinationBlendFactor =
+         (int) fix_blendfactor(state->rt[0].rgb_dst_factor, state->alpha_to_one);
+      pb.DestinationAlphaBlendFactor =
+         (int) fix_blendfactor(state->rt[0].alpha_dst_factor, state->alpha_to_one);
+   }
+#endif
    return cso;
 }
 
@@ -1490,6 +1659,10 @@ crocus_bind_blend_state(struct pipe_context *ctx, void *state)
 #endif
 #if GFX_VER >= 7
    ice->state.stage_dirty |= CROCUS_STAGE_DIRTY_FS;
+#endif
+#if GFX_VER == 8
+   ice->state.dirty |= CROCUS_DIRTY_GEN8_PMA_FIX;
+   ice->state.dirty |= CROCUS_DIRTY_GEN8_PS_BLEND;
 #endif
    ice->state.dirty |= CROCUS_DIRTY_COLOR_CALC_STATE;
    ice->state.dirty |= CROCUS_DIRTY_RENDER_RESOLVES_AND_FLUSHES;
@@ -1569,13 +1742,17 @@ crocus_bind_zsa_state(struct pipe_context *ctx, void *state)
          ice->state.dirty |= CROCUS_DIRTY_COLOR_CALC_STATE;
 
       if (cso_changed(cso.alpha_enabled))
-	 ice->state.dirty |= CROCUS_DIRTY_WM;
+         ice->state.dirty |= CROCUS_DIRTY_WM;
 #if GFX_VER >= 6
       if (cso_changed(cso.alpha_enabled))
          ice->state.dirty |= CROCUS_DIRTY_GEN6_BLEND_STATE;
 
       if (cso_changed(cso.alpha_func))
          ice->state.dirty |= CROCUS_DIRTY_GEN6_BLEND_STATE;
+#endif
+#if GFX_VER == 8
+      if (cso_changed(cso.alpha_enabled))
+         ice->state.dirty |= CROCUS_DIRTY_GEN8_PS_BLEND;
 #endif
 
       if (cso_changed(depth_writes_enabled))
@@ -1594,7 +1771,180 @@ crocus_bind_zsa_state(struct pipe_context *ctx, void *state)
 #if GFX_VER >= 6
    ice->state.dirty |= CROCUS_DIRTY_GEN6_WM_DEPTH_STENCIL;
 #endif
+#if GFX_VER == 8
+   ice->state.dirty |= CROCUS_DIRTY_GEN8_PMA_FIX;
+#endif
    ice->state.stage_dirty |= ice->state.stage_dirty_for_nos[CROCUS_NOS_DEPTH_STENCIL_ALPHA];
+}
+
+#if GFX_VER == 8
+static bool
+want_pma_fix(struct crocus_context *ice)
+{
+   UNUSED struct crocus_screen *screen = (void *) ice->ctx.screen;
+   UNUSED const struct intel_device_info *devinfo = &screen->devinfo;
+   const struct brw_wm_prog_data *wm_prog_data = (void *)
+      ice->shaders.prog[MESA_SHADER_FRAGMENT]->prog_data;
+   const struct pipe_framebuffer_state *cso_fb = &ice->state.framebuffer;
+   const struct crocus_depth_stencil_alpha_state *cso_zsa = ice->state.cso_zsa;
+   const struct crocus_blend_state *cso_blend = ice->state.cso_blend;
+
+   /* In very specific combinations of state, we can instruct Gfx8-9 hardware
+    * to avoid stalling at the pixel mask array.  The state equations are
+    * documented in these places:
+    *
+    * - Gfx8 Depth PMA Fix:   CACHE_MODE_1::NP_PMA_FIX_ENABLE
+    * - Gfx9 Stencil PMA Fix: CACHE_MODE_0::STC PMA Optimization Enable
+    *
+    * Both equations share some common elements:
+    *
+    *    no_hiz_op =
+    *       !(3DSTATE_WM_HZ_OP::DepthBufferClear ||
+    *         3DSTATE_WM_HZ_OP::DepthBufferResolve ||
+    *         3DSTATE_WM_HZ_OP::Hierarchical Depth Buffer Resolve Enable ||
+    *         3DSTATE_WM_HZ_OP::StencilBufferClear) &&
+    *
+    *    killpixels =
+    *       3DSTATE_WM::ForceKillPix != ForceOff &&
+    *       (3DSTATE_PS_EXTRA::PixelShaderKillsPixels ||
+    *        3DSTATE_PS_EXTRA::oMask Present to RenderTarget ||
+    *        3DSTATE_PS_BLEND::AlphaToCoverageEnable ||
+    *        3DSTATE_PS_BLEND::AlphaTestEnable ||
+    *        3DSTATE_WM_CHROMAKEY::ChromaKeyKillEnable)
+    *
+    *    (Technically the stencil PMA treats ForceKillPix differently,
+    *     but I think this is a documentation oversight, and we don't
+    *     ever use it in this way, so it doesn't matter).
+    *
+    *    common_pma_fix =
+    *       3DSTATE_WM::ForceThreadDispatch != 1 &&
+    *       3DSTATE_RASTER::ForceSampleCount == NUMRASTSAMPLES_0 &&
+    *       3DSTATE_DEPTH_BUFFER::SURFACE_TYPE != NULL &&
+    *       3DSTATE_DEPTH_BUFFER::HIZ Enable &&
+    *       3DSTATE_WM::EDSC_Mode != EDSC_PREPS &&
+    *       3DSTATE_PS_EXTRA::PixelShaderValid &&
+    *       no_hiz_op
+    *
+    * These are always true:
+    *
+    *    3DSTATE_RASTER::ForceSampleCount == NUMRASTSAMPLES_0
+    *    3DSTATE_PS_EXTRA::PixelShaderValid
+    *
+    * Also, we never use the normal drawing path for HiZ ops; these are true:
+    *
+    *    !(3DSTATE_WM_HZ_OP::DepthBufferClear ||
+    *      3DSTATE_WM_HZ_OP::DepthBufferResolve ||
+    *      3DSTATE_WM_HZ_OP::Hierarchical Depth Buffer Resolve Enable ||
+    *      3DSTATE_WM_HZ_OP::StencilBufferClear)
+    *
+    * This happens sometimes:
+    *
+    *    3DSTATE_WM::ForceThreadDispatch != 1
+    *
+    * However, we choose to ignore it as it either agrees with the signal
+    * (dispatch was already enabled, so nothing out of the ordinary), or
+    * there are no framebuffer attachments (so no depth or HiZ anyway,
+    * meaning the PMA signal will already be disabled).
+    */
+
+   if (!cso_fb->zsbuf)
+      return false;
+
+   struct crocus_resource *zres, *sres;
+   crocus_get_depth_stencil_resources(devinfo,
+                                      cso_fb->zsbuf->texture, &zres, &sres);
+
+   /* 3DSTATE_DEPTH_BUFFER::SURFACE_TYPE != NULL &&
+    * 3DSTATE_DEPTH_BUFFER::HIZ Enable &&
+    */
+   if (!zres || !crocus_resource_level_has_hiz(zres, cso_fb->zsbuf->u.tex.level))
+      return false;
+
+   /* 3DSTATE_WM::EDSC_Mode != EDSC_PREPS */
+   if (wm_prog_data->early_fragment_tests)
+      return false;
+
+   /* 3DSTATE_WM::ForceKillPix != ForceOff &&
+    * (3DSTATE_PS_EXTRA::PixelShaderKillsPixels ||
+    *  3DSTATE_PS_EXTRA::oMask Present to RenderTarget ||
+    *  3DSTATE_PS_BLEND::AlphaToCoverageEnable ||
+    *  3DSTATE_PS_BLEND::AlphaTestEnable ||
+    *  3DSTATE_WM_CHROMAKEY::ChromaKeyKillEnable)
+    */
+   bool killpixels = wm_prog_data->uses_kill || wm_prog_data->uses_omask ||
+                     cso_blend->cso.alpha_to_coverage || cso_zsa->cso.alpha_enabled;
+
+   /* The Gfx8 depth PMA equation becomes:
+    *
+    *    depth_writes =
+    *       3DSTATE_WM_DEPTH_STENCIL::DepthWriteEnable &&
+    *       3DSTATE_DEPTH_BUFFER::DEPTH_WRITE_ENABLE
+    *
+    *    stencil_writes =
+    *       3DSTATE_WM_DEPTH_STENCIL::Stencil Buffer Write Enable &&
+    *       3DSTATE_DEPTH_BUFFER::STENCIL_WRITE_ENABLE &&
+    *       3DSTATE_STENCIL_BUFFER::STENCIL_BUFFER_ENABLE
+    *
+    *    Z_PMA_OPT =
+    *       common_pma_fix &&
+    *       3DSTATE_WM_DEPTH_STENCIL::DepthTestEnable &&
+    *       ((killpixels && (depth_writes || stencil_writes)) ||
+    *        3DSTATE_PS_EXTRA::PixelShaderComputedDepthMode != PSCDEPTH_OFF)
+    *
+    */
+   if (!cso_zsa->cso.depth_enabled)
+      return false;
+
+   return wm_prog_data->computed_depth_mode != PSCDEPTH_OFF ||
+          (killpixels && (cso_zsa->depth_writes_enabled ||
+                          (sres && cso_zsa->stencil_writes_enabled)));
+}
+#endif
+void
+genX(crocus_update_pma_fix)(struct crocus_context *ice,
+                            struct crocus_batch *batch,
+                            bool enable)
+{
+#if GFX_VER == 8
+   struct crocus_genx_state *genx = ice->state.genx;
+
+   if (genx->pma_fix_enabled == enable)
+      return;
+
+   genx->pma_fix_enabled = enable;
+
+   /* According to the Broadwell PIPE_CONTROL documentation, software should
+    * emit a PIPE_CONTROL with the CS Stall and Depth Cache Flush bits set
+    * prior to the LRI.  If stencil buffer writes are enabled, then a Render        * Cache Flush is also necessary.
+    *
+    * The Gfx9 docs say to use a depth stall rather than a command streamer
+    * stall.  However, the hardware seems to violently disagree.  A full
+    * command streamer stall seems to be needed in both cases.
+    */
+   crocus_emit_pipe_control_flush(batch, "PMA fix change (1/2)",
+                                  PIPE_CONTROL_CS_STALL |
+                                  PIPE_CONTROL_DEPTH_CACHE_FLUSH |
+                                  PIPE_CONTROL_RENDER_TARGET_FLUSH);
+
+   crocus_emit_reg(batch, GENX(CACHE_MODE_1), reg) {
+      reg.NPPMAFixEnable = enable;
+      reg.NPEarlyZFailsDisable = enable;
+      reg.NPPMAFixEnableMask = true;
+      reg.NPEarlyZFailsDisableMask = true;
+   }
+
+   /* After the LRI, a PIPE_CONTROL with both the Depth Stall and Depth Cache
+    * Flush bits is often necessary.  We do it regardless because it's easier.
+    * The render cache flush is also necessary if stencil writes are enabled.
+    *
+    * Again, the Gfx9 docs give a different set of flushes but the Broadwell
+    * flushes seem to work just as well.
+    */
+   crocus_emit_pipe_control_flush(batch, "PMA fix change (1/2)",
+                                  PIPE_CONTROL_DEPTH_STALL |
+                                  PIPE_CONTROL_DEPTH_CACHE_FLUSH |
+                                  PIPE_CONTROL_RENDER_TARGET_FLUSH);
+#endif
 }
 
 static float
@@ -1659,7 +2009,15 @@ crocus_create_rasterizer_state(struct pipe_context *ctx,
       sf.LineEndCapAntialiasingRegionWidth =
          state->line_smooth ? _10pixels : _05pixels;
       sf.LastPixelEnable = state->line_last_pixel;
+#if GFX_VER == 8
+      struct crocus_screen *screen = (struct crocus_screen *)ctx->screen;
+      if (screen->devinfo.is_cherryview)
+         sf.CHVLineWidth = line_width;
+      else
+         sf.LineWidth = line_width;
+#else
       sf.LineWidth = line_width;
+#endif
       sf.PointWidthSource = state->point_size_per_vertex ? Vertex : State;
       sf.PointWidth = state->point_size;
 
@@ -1671,11 +2029,6 @@ crocus_create_rasterizer_state(struct pipe_context *ctx,
          sf.LineStripListProvokingVertexSelect = 1;
       }
 
-      sf.FrontWinding = state->front_ccw ? 1 : 0; // Or the other way...
-      sf.CullMode = translate_cull_mode(state->cull_face);
-
-      sf.ScissorRectangleEnable = true;
-
 #if GFX_VER == 6
       sf.AttributeSwizzleEnable = true;
       if (state->sprite_coord_mode == PIPE_SPRITE_COORD_LOWER_LEFT)
@@ -1683,6 +2036,9 @@ crocus_create_rasterizer_state(struct pipe_context *ctx,
       else
          sf.PointSpriteTextureCoordinateOrigin = UPPERLEFT;
 #endif
+
+#if GFX_VER <= 7
+      sf.FrontWinding = state->front_ccw ? 1 : 0; // Or the other way...
 
 #if GFX_VER >= 6
       sf.GlobalDepthOffsetEnableSolid = state->offset_tri;
@@ -1696,9 +2052,33 @@ crocus_create_rasterizer_state(struct pipe_context *ctx,
       sf.BackFaceFillMode = translate_fill_mode(state->fill_back);
 #endif
 
+      sf.CullMode = translate_cull_mode(state->cull_face);
+      sf.ScissorRectangleEnable = true;
+
 #if GFX_VERx10 == 75
       sf.LineStippleEnable = state->line_stipple_enable;
 #endif
+#endif
+   }
+#endif
+
+#if GFX_VER == 8
+   crocus_pack_command(GENX(3DSTATE_RASTER), cso->raster, rr) {
+      rr.FrontWinding = state->front_ccw ? CounterClockwise : Clockwise;
+      rr.CullMode = translate_cull_mode(state->cull_face);
+      rr.FrontFaceFillMode = translate_fill_mode(state->fill_front);
+      rr.BackFaceFillMode = translate_fill_mode(state->fill_back);
+      rr.DXMultisampleRasterizationEnable = state->multisample;
+      rr.GlobalDepthOffsetEnableSolid = state->offset_tri;
+      rr.GlobalDepthOffsetEnableWireframe = state->offset_line;
+      rr.GlobalDepthOffsetEnablePoint = state->offset_point;
+      rr.GlobalDepthOffsetConstant = state->offset_units * 2;
+      rr.GlobalDepthOffsetScale = state->offset_scale;
+      rr.GlobalDepthOffsetClamp = state->offset_clamp;
+      rr.SmoothPointEnable = state->point_smooth;
+      rr.AntialiasingEnable = state->line_smooth;
+      rr.ScissorRectangleEnable = state->scissor;
+      rr.ViewportZClipTestEnable = (state->depth_clip_near || state->depth_clip_far);
    }
 #endif
 
@@ -1716,12 +2096,18 @@ crocus_create_rasterizer_state(struct pipe_context *ctx,
       cl.CullMode = translate_cull_mode(state->cull_face);
 #endif
       cl.UserClipDistanceClipTestEnableBitmask = state->clip_plane_enable;
+#if GFX_VER < 8
+      cl.ViewportZClipTestEnable = (state->depth_clip_near || state->depth_clip_far);
+#endif
       cl.APIMode = state->clip_halfz ? APIMODE_D3D : APIMODE_OGL;
       cl.GuardbandClipTestEnable = true;
       cl.ClipEnable = true;
       cl.MinimumPointWidth = 0.125;
       cl.MaximumPointWidth = 255.875;
-      cl.ViewportZClipTestEnable = (state->depth_clip_near || state->depth_clip_far);
+
+#if GFX_VER == 8
+      cl.ForceUserClipDistanceClipTestEnableBitmask = true;
+#endif
 
       if (state->flatshade_first) {
          cl.TriangleFanProvokingVertexSelect = 1;
@@ -2009,7 +2395,11 @@ crocus_upload_sampler_state(struct crocus_batch *batch,
 
       const float hw_max_lod = GFX_VER >= 7 ? 14 : 13;
 
+#if GFX_VER == 8
+      samp.LODPreClampMode = CLAMP_MODE_OGL;
+#else
       samp.LODPreClampEnable = true;
+#endif
       samp.MinLOD = CLAMP(cso->min_lod, 0, hw_max_lod);
       samp.MaxLOD = CLAMP(state->max_lod, 0, hw_max_lod);
       samp.TextureLODBias = CLAMP(state->lod_bias, -16, 15);
@@ -2065,7 +2455,7 @@ crocus_upload_border_color(struct crocus_batch *batch,
    }
    bool is_integer_format = util_format_is_pure_integer(internal_format);
    unsigned sbc_size = GENX(SAMPLER_BORDER_COLOR_STATE_length) * 4;
-   const int sbc_align = (GFX_VERx10 == 75 && is_integer_format) ? 512 : 32;
+   const int sbc_align = (GFX_VER == 8 ? 64 : ((GFX_VERx10 == 75 && is_integer_format) ? 512 : 32));
    uint32_t *sbc = stream_state(batch, sbc_size, sbc_align, bc_offset);
 
    struct GENX(SAMPLER_BORDER_COLOR_STATE) state = { 0 };
@@ -2091,7 +2481,14 @@ crocus_upload_border_color(struct crocus_batch *batch,
    macro(state.BorderColor ## _color_type ## Blue, src[2]);     \
    macro(state.BorderColor ## _color_type ## Alpha, src[3]);
 
-#if GFX_VERx10 == 75
+#if GFX_VER >= 8
+   /* On Broadwell, the border color is represented as four 32-bit floats,
+    * integers, or unsigned values, interpreted according to the surface
+    * format.  This matches the sampler->BorderColor union exactly; just
+    * memcpy the values.
+    */
+   BORDER_COLOR_ATTR(ASSIGN, 32bit, color->ui);
+#elif GFX_VERx10 == 75
    if (is_integer_format) {
       const struct util_format_description *format_desc =
          util_format_description(internal_format);
@@ -2297,8 +2694,9 @@ crocus_create_sampler_view(struct pipe_context *ctx,
    crocus_combine_swizzle(isv->swizzle, fmt.swizzles, vswz);
 
    /* hardcode stencil swizzles - hw returns 0G01, we want GGGG */
-   if (tmpl->format == PIPE_FORMAT_X32_S8X24_UINT ||
-       tmpl->format == PIPE_FORMAT_X24S8_UINT) {
+   if (devinfo->ver < 6 &&
+       (tmpl->format == PIPE_FORMAT_X32_S8X24_UINT ||
+        tmpl->format == PIPE_FORMAT_X24S8_UINT)) {
       isv->swizzle[0] = tmpl->swizzle_g;
       isv->swizzle[1] = tmpl->swizzle_g;
       isv->swizzle[2] = tmpl->swizzle_g;
@@ -2336,7 +2734,7 @@ crocus_create_sampler_view(struct pipe_context *ctx,
    /* just create a second view struct for texture gather just in case */
    isv->gather_view = isv->view;
 
-#if GFX_VER >= 7
+#if GFX_VER == 7
    if (fmt.fmt == ISL_FORMAT_R32G32_FLOAT ||
        fmt.fmt == ISL_FORMAT_R32G32_SINT ||
        fmt.fmt == ISL_FORMAT_R32G32_UINT) {
@@ -2591,7 +2989,7 @@ crocus_create_surface(struct pipe_context *ctx,
    return psurf;
 }
 
-#if GFX_VER == 7
+#if GFX_VER >= 7
 static void
 fill_default_image_param(struct brw_image_param *param)
 {
@@ -2628,7 +3026,7 @@ crocus_set_shader_images(struct pipe_context *ctx,
                          unsigned unbind_num_trailing_slots,
                          const struct pipe_image_view *p_images)
 {
-#if GFX_VER == 7
+#if GFX_VER >= 7
    struct crocus_context *ice = (struct crocus_context *) ctx;
    struct crocus_screen *screen = (struct crocus_screen *)ctx->screen;
    const struct intel_device_info *devinfo = &screen->devinfo;
@@ -2744,7 +3142,10 @@ crocus_set_sampler_views(struct pipe_context *ctx,
          shs->bound_sampler_views |= 1 << (start + i);
       }
    }
-
+#if GFX_VER == 6
+   /* first level parameters to crocus_upload_sampler_state is gfx6 only */
+   ice->state.stage_dirty |= CROCUS_STAGE_DIRTY_SAMPLER_STATES_VS << stage;
+#endif
    ice->state.stage_dirty |= (CROCUS_STAGE_DIRTY_BINDINGS_VS << stage);
    ice->state.dirty |=
       stage == MESA_SHADER_COMPUTE ? CROCUS_DIRTY_COMPUTE_RESOLVES_AND_FLUSHES
@@ -2908,6 +3309,14 @@ crocus_set_stencil_ref(struct pipe_context *ctx,
    ice->state.dirty |= CROCUS_DIRTY_COLOR_CALC_STATE;
 }
 
+#if GFX_VER == 8
+static float
+viewport_extent(const struct pipe_viewport_state *state, int axis, float sign)
+{
+   return copysignf(state->scale[axis], sign) + state->translate[axis];
+}
+#endif
+
 /**
  * The pipe->set_viewport_states() driver hook.
  *
@@ -2970,10 +3379,8 @@ crocus_set_framebuffer_state(struct pipe_context *ctx,
    }
 #endif
 
-#if GFX_VER >= 6
-   if (cso->nr_cbufs != state->nr_cbufs) {
-      ice->state.dirty |= CROCUS_DIRTY_GEN6_BLEND_STATE;
-   }
+#if GFX_VER >= 6 && GFX_VER < 8
+   ice->state.dirty |= CROCUS_DIRTY_GEN6_BLEND_STATE;
 #endif
 
    if ((cso->layers == 0) != (layers == 0)) {
@@ -3101,7 +3508,7 @@ upload_sysvals(struct crocus_context *ice,
       uint32_t value = 0;
 
       if (BRW_PARAM_DOMAIN(sysval) == BRW_PARAM_DOMAIN_IMAGE) {
-#if GFX_VER == 7
+#if GFX_VER >= 7
          unsigned img = BRW_PARAM_IMAGE_IDX(sysval);
          unsigned offset = BRW_PARAM_IMAGE_OFFSET(sysval);
          struct brw_image_param *param =
@@ -3219,7 +3626,7 @@ crocus_set_vertex_buffers(struct pipe_context *ctx,
    struct crocus_context *ice = (struct crocus_context *) ctx;
    struct crocus_screen *screen = (struct crocus_screen *) ctx->screen;
    const unsigned padding =
-      (!(GFX_VERx10 == 75) && !screen->devinfo.is_baytrail) * 2;
+      (GFX_VERx10 < 75 && !screen->devinfo.is_baytrail) * 2;
    ice->state.bound_vertex_buffers &=
       ~u_bit_consecutive64(start_slot, count + unbind_num_trailing_slots);
 
@@ -3244,7 +3651,7 @@ crocus_set_vertex_buffers(struct pipe_context *ctx,
    ice->state.dirty |= CROCUS_DIRTY_VERTEX_BUFFERS;
 }
 
-#if !(GFX_VERx10 == 75)
+#if GFX_VERx10 < 75
 static uint8_t get_wa_flags(enum isl_format format)
 {
    uint8_t wa_flags = 0;
@@ -3295,7 +3702,13 @@ static uint8_t get_wa_flags(enum isl_format format)
  */
 struct crocus_vertex_element_state {
    uint32_t vertex_elements[1 + 33 * GENX(VERTEX_ELEMENT_STATE_length)];
+#if GFX_VER == 8
+   uint32_t vf_instancing[33 * GENX(3DSTATE_VF_INSTANCING_length)];
+#endif
    uint32_t edgeflag_ve[GENX(VERTEX_ELEMENT_STATE_length)];
+#if GFX_VER == 8
+   uint32_t edgeflag_vfi[GENX(3DSTATE_VF_INSTANCING_length)];
+#endif
    uint32_t step_rate[16];
    uint8_t wa_flags[33];
    unsigned count;
@@ -3330,6 +3743,9 @@ crocus_create_vertex_elements(struct pipe_context *ctx,
    }
 
    uint32_t *ve_pack_dest = &cso->vertex_elements[1];
+#if GFX_VER == 8
+   uint32_t *vfi_pack_dest = cso->vf_instancing;
+#endif
 
    if (count == 0) {
       crocus_pack_state(GENX(VERTEX_ELEMENT_STATE), ve_pack_dest, ve) {
@@ -3340,6 +3756,10 @@ crocus_create_vertex_elements(struct pipe_context *ctx,
          ve.Component2Control = VFCOMP_STORE_0;
          ve.Component3Control = VFCOMP_STORE_1_FP;
       }
+#if GFX_VER == 8
+      crocus_pack_command(GENX(3DSTATE_VF_INSTANCING), vfi_pack_dest, vi) {
+      }
+#endif
    }
 
    for (int i = 0; i < count; i++) {
@@ -3349,7 +3769,7 @@ crocus_create_vertex_elements(struct pipe_context *ctx,
                            VFCOMP_STORE_SRC, VFCOMP_STORE_SRC };
       enum isl_format actual_fmt = fmt.fmt;
 
-#if !(GFX_VERx10 == 75)
+#if GFX_VERx10 < 75
       cso->wa_flags[i] = get_wa_flags(fmt.fmt);
 
       if (fmt.fmt == ISL_FORMAT_R10G10B10A2_USCALED ||
@@ -3402,7 +3822,17 @@ crocus_create_vertex_elements(struct pipe_context *ctx,
 #endif
       }
 
+#if GFX_VER == 8
+      crocus_pack_command(GENX(3DSTATE_VF_INSTANCING), vfi_pack_dest, vi) {
+         vi.VertexElementIndex = i;
+         vi.InstancingEnable = state[i].instance_divisor > 0;
+         vi.InstanceDataStepRate = state[i].instance_divisor;
+      }
+#endif
       ve_pack_dest += GENX(VERTEX_ELEMENT_STATE_length);
+#if GFX_VER == 8
+      vfi_pack_dest += GENX(3DSTATE_VF_INSTANCING_length);
+#endif
    }
 
    /* An alternative version of the last VE and VFI is stored so it
@@ -3425,6 +3855,15 @@ crocus_create_vertex_elements(struct pipe_context *ctx,
          ve.Component2Control = VFCOMP_STORE_0;
          ve.Component3Control = VFCOMP_STORE_0;
       }
+#if GFX_VER == 8
+      crocus_pack_command(GENX(3DSTATE_VF_INSTANCING), cso->edgeflag_vfi, vi) {
+         /* The vi.VertexElementIndex of the EdgeFlag Vertex Element is filled
+          * at draw time, as it should change if SGVs are emitted.
+          */
+         vi.InstancingEnable = state[edgeflag_index].instance_divisor > 0;
+         vi.InstanceDataStepRate = state[edgeflag_index].instance_divisor;
+      }
+#endif
    }
 
    return cso;
@@ -3437,7 +3876,13 @@ static void
 crocus_bind_vertex_elements_state(struct pipe_context *ctx, void *state)
 {
    struct crocus_context *ice = (struct crocus_context *) ctx;
+#if GFX_VER == 8
+   struct crocus_vertex_element_state *old_cso = ice->state.cso_vertex_elements;
+   struct crocus_vertex_element_state *new_cso = state;
 
+   if (new_cso && cso_changed(count))
+      ice->state.dirty |= CROCUS_DIRTY_GEN8_VF_SGVS;
+#endif
    ice->state.cso_vertex_elements = state;
    ice->state.dirty |= CROCUS_DIRTY_VERTEX_ELEMENTS | CROCUS_DIRTY_VERTEX_BUFFERS;
    ice->state.stage_dirty |= ice->state.stage_dirty_for_nos[CROCUS_NOS_VERTEX_ELEMENTS];
@@ -3470,6 +3915,10 @@ struct crocus_stream_output_target {
    void *prim_map;
    struct crocus_streamout_counter prev_count;
    struct crocus_streamout_counter count;
+#endif
+#if GFX_VER == 8
+   /** Does the next 3DSTATE_SO_BUFFER need to zero the offsets? */
+   bool zero_offset;
 #endif
 };
 
@@ -3725,15 +4174,20 @@ crocus_set_stream_output_targets(struct pipe_context *ctx,
       }
       pipe_so_target_reference(&old_tgt[i], NULL);
    }
-
+   ice->state.stage_dirty |= CROCUS_STAGE_DIRTY_BINDINGS_GS;
 #else
    for (int i = 0; i < PIPE_MAX_SO_BUFFERS; i++) {
       if (num_targets) {
          struct crocus_stream_output_target *tgt =
             (void *) ice->state.so_target[i];
 
-         if (offsets[i] == 0)
+         if (offsets[i] == 0) {
+#if GFX_VER == 8
+            if (tgt)
+               tgt->zero_offset = true;
+#endif
             crocus_load_register_imm32(batch, GEN7_SO_WRITE_OFFSET(i), 0);
+         }
          else if (tgt)
             crocus_load_register_mem32(batch, GEN7_SO_WRITE_OFFSET(i),
                                        tgt->offset_res->bo,
@@ -3756,7 +4210,6 @@ crocus_set_stream_output_targets(struct pipe_context *ctx,
    ice->state.dirty |= CROCUS_DIRTY_GEN7_SO_BUFFERS;
 #elif GFX_VER == 6
    ice->state.dirty |= CROCUS_DIRTY_GEN6_SVBI;
-   ice->state.stage_dirty |= CROCUS_STAGE_DIRTY_BINDINGS_GS;
 #endif
 }
 
@@ -3861,10 +4314,18 @@ crocus_create_so_decl_list(const struct pipe_stream_output_info *info,
       // TODO: Double-check that stride == 0 means no buffer. Probably this
       // needs to go elsewhere, where the buffer enable stuff is actually
       // known.
+#if GFX_VER < 8
       sol.SOBufferEnable0 = !!info->stride[0];
       sol.SOBufferEnable1 = !!info->stride[1];
       sol.SOBufferEnable2 = !!info->stride[2];
       sol.SOBufferEnable3 = !!info->stride[3];
+#else
+      /* Set buffer pitches; 0 means unbound. */
+      sol.Buffer0SurfacePitch = 4 * info->stride[0];
+      sol.Buffer1SurfacePitch = 4 * info->stride[1];
+      sol.Buffer2SurfacePitch = 4 * info->stride[2];
+      sol.Buffer3SurfacePitch = 4 * info->stride[3];
+#endif
    }
 
    crocus_pack_command(GENX(3DSTATE_SO_DECL_LIST), so_decl_map, list) {
@@ -4126,13 +4587,18 @@ calculate_attr_overrides(
 }
 #endif
 
-#if GFX_VER == 7
+#if GFX_VER >= 7
 static void
 crocus_emit_sbe(struct crocus_batch *batch, const struct crocus_context *ice)
 {
    const struct crocus_rasterizer_state *cso_rast = ice->state.cso_rast;
    const struct brw_wm_prog_data *wm_prog_data = (void *)
       ice->shaders.prog[MESA_SHADER_FRAGMENT]->prog_data;
+#if GFX_VER >= 8
+   struct GENX(SF_OUTPUT_ATTRIBUTE_DETAIL) attr_overrides[16] = { { 0 } };
+#else
+#define attr_overrides sbe.Attribute
+#endif
 
    uint32_t urb_entry_read_length;
    uint32_t urb_entry_read_offset;
@@ -4144,7 +4610,7 @@ crocus_emit_sbe(struct crocus_batch *batch, const struct crocus_context *ice)
       sbe.PointSpriteTextureCoordinateOrigin = cso_rast->cso.sprite_coord_mode;
 
       calculate_attr_overrides(ice,
-                               sbe.Attribute,
+                               attr_overrides,
                                &point_sprite_enables,
                                &urb_entry_read_length,
                                &urb_entry_read_offset);
@@ -4152,7 +4618,17 @@ crocus_emit_sbe(struct crocus_batch *batch, const struct crocus_context *ice)
       sbe.VertexURBEntryReadLength = urb_entry_read_length;
       sbe.ConstantInterpolationEnable = wm_prog_data->flat_inputs;
       sbe.PointSpriteTextureCoordinateEnable = point_sprite_enables;
+#if GFX_VER >= 8
+      sbe.ForceVertexURBEntryReadLength = true;
+      sbe.ForceVertexURBEntryReadOffset = true;
+#endif
    }
+#if GFX_VER >= 8
+   crocus_emit_cmd(batch, GENX(3DSTATE_SBE_SWIZ), sbes) {
+      for (int i = 0; i < 16; i++)
+         sbes.Attribute[i] = attr_overrides[i];
+   }
+#endif
 }
 #endif
 
@@ -4182,7 +4658,7 @@ crocus_populate_vs_key(const struct crocus_context *ice,
 
    key->clamp_vertex_color = cso_rast->cso.clamp_vertex_color;
 
-#if !(GFX_VERx10 == 75)
+#if GFX_VERx10 < 75
    uint64_t inputs_read = info->inputs_read;
    int ve_idx = 0;
    while (inputs_read) {
@@ -4522,11 +4998,19 @@ emit_surface_state(struct crocus_batch *batch,
        *
        * FIXME: move to the point of assignment.
        */
-      uint32_t *aux_addr = surf_state + (isl_dev->ss.aux_addr_offset / 4);
-      *aux_addr = crocus_state_reloc(batch,
-                                     addr_offset + isl_dev->ss.aux_addr_offset,
-                                     aux_bo, *aux_addr,
-                                     reloc);
+      if (devinfo->ver == 8) {
+         uint64_t *aux_addr = (uint64_t *)(surf_state + (isl_dev->ss.aux_addr_offset / 4));
+         *aux_addr = crocus_state_reloc(batch,
+                                        addr_offset + isl_dev->ss.aux_addr_offset,
+                                        aux_bo, *aux_addr,
+                                        reloc);
+      } else {
+         uint32_t *aux_addr = surf_state + (isl_dev->ss.aux_addr_offset / 4);
+         *aux_addr = crocus_state_reloc(batch,
+                                        addr_offset + isl_dev->ss.aux_addr_offset,
+                                        aux_bo, *aux_addr,
+                                        reloc);
+      }
    }
 
 }
@@ -4843,7 +5327,9 @@ crocus_populate_binding_table(struct crocus_context *ice,
    int s = 0;
    uint32_t *surf_offsets = shader->surf_offset;
 
+#if GFX_VER < 8
    const struct shader_info *info = crocus_get_shader_info(ice, stage);
+#endif
 
    if (stage == MESA_SHADER_FRAGMENT) {
       struct pipe_framebuffer_state *cso_fb = &ice->state.framebuffer;
@@ -4918,6 +5404,7 @@ crocus_populate_binding_table(struct crocus_context *ice,
       s++;
    }
 
+#if GFX_VER < 8
    if (info && info->uses_texture_gather) {
       foreach_surface_used(i, CROCUS_SURFACE_GROUP_TEXTURE_GATHER) {
          struct crocus_sampler_view *view = shs->textures[i];
@@ -4928,6 +5415,7 @@ crocus_populate_binding_table(struct crocus_context *ice,
          s++;
       }
    }
+#endif
 
    foreach_surface_used(i, CROCUS_SURFACE_GROUP_IMAGE) {
       struct crocus_image_view *view = &shs->image[i];
@@ -4996,8 +5484,10 @@ crocus_update_surface_base_address(struct crocus_batch *batch)
       sba.InstructionBaseAddressModifyEnable    = true;
 #endif
 
+#if GFX_VER < 8
       sba.GeneralStateAccessUpperBoundModifyEnable = true;
-#if GFX_VER >= 5
+#endif
+#if GFX_VER >= 5 && GFX_VER < 8
       sba.IndirectObjectAccessUpperBoundModifyEnable = true;
       sba.InstructionAccessUpperBoundModifyEnable = true;
 #endif
@@ -5010,6 +5500,21 @@ crocus_update_surface_base_address(struct crocus_batch *batch)
        */
       sba.GeneralStateMOCS            = mocs;
       sba.StatelessDataPortAccessMOCS = mocs;
+#if GFX_VER == 8
+      sba.DynamicStateMOCS            = mocs;
+      sba.IndirectObjectMOCS          = mocs;
+      sba.InstructionMOCS             = mocs;
+      sba.SurfaceStateMOCS            = mocs;
+      sba.GeneralStateBufferSize   = 0xfffff;
+      sba.IndirectObjectBufferSize = 0xfffff;
+      sba.InstructionBufferSize    = 0xfffff;
+      sba.DynamicStateBufferSize   = MAX_STATE_SIZE;
+
+      sba.GeneralStateBufferSizeModifyEnable    = true;
+      sba.DynamicStateBufferSizeModifyEnable    = true;
+      sba.IndirectObjectBufferSizeModifyEnable  = true;
+      sba.InstructionBuffersizeModifyEnable     = true;
+#endif
 
       sba.DynamicStateBaseAddressModifyEnable   = true;
 
@@ -5020,8 +5525,11 @@ crocus_update_surface_base_address(struct crocus_batch *batch)
        * If this isn't programmed to a real bound, the sampler border color
        * pointer is rejected, causing border color to mysteriously fail.
        */
+#if GFX_VER < 8
       sba.DynamicStateAccessUpperBoundModifyEnable = true;
       sba.DynamicStateAccessUpperBound = ro_bo(NULL, 0xfffff000);
+#endif
+
 #endif
    }
 
@@ -5163,7 +5671,7 @@ emit_push_constant_packets(struct crocus_context *ice,
 #endif
    crocus_emit_cmd(batch, GENX(3DSTATE_CONSTANT_VS), pkt) {
       pkt._3DCommandSubOpcode = push_constant_opcodes[stage];
-#if GFX_VER == 7
+#if GFX_VER >= 7
       if (prog_data) {
          /* The Skylake PRM contains the following restriction:
           *
@@ -5205,7 +5713,9 @@ emit_push_constant_packets(struct crocus_context *ice,
 
 #endif
 
-#if GFX_VER >= 6
+#if GFX_VER == 8
+typedef struct GENX(3DSTATE_WM_DEPTH_STENCIL) DEPTH_STENCIL_GENXML;
+#elif GFX_VER >= 6
 typedef struct GENX(DEPTH_STENCIL_STATE)      DEPTH_STENCIL_GENXML;
 #else
 typedef struct GENX(COLOR_CALC_STATE)         DEPTH_STENCIL_GENXML;
@@ -5254,35 +5764,26 @@ emit_vertex_buffer_state(struct crocus_batch *batch,
    const unsigned vb_dwords = GENX(VERTEX_BUFFER_STATE_length);
    _crocus_pack_state(batch, GENX(VERTEX_BUFFER_STATE), *map, vb) {
       vb.BufferStartingAddress = ro_bo(bo, start_offset);
+#if GFX_VER >= 8
+      vb.BufferSize = end_offset - start_offset;
+#endif
       vb.VertexBufferIndex = buffer_id;
       vb.BufferPitch = stride;
-#if GFX_VER == 7
+#if GFX_VER >= 7
       vb.AddressModifyEnable = true;
 #endif
 #if GFX_VER >= 6
       vb.MOCS = crocus_mocs(bo, &batch->screen->isl_dev);
 #endif
+#if GFX_VER < 8
       vb.BufferAccessType = step_rate ? INSTANCEDATA : VERTEXDATA;
       vb.InstanceDataStepRate = step_rate;
 #if GFX_VER >= 5
       vb.EndAddress = ro_bo(bo, end_offset - 1);
 #endif
+#endif
    }
    *map += vb_dwords;
-}
-
-static bool
-can_emit_logic_op(struct crocus_context *ice)
-{
-   /* all pre gen8 have logicop restricted to unorm */
-   enum pipe_format pformat = PIPE_FORMAT_NONE;
-   for (unsigned i = 0; i < ice->state.framebuffer.nr_cbufs; i++) {
-      if (ice->state.framebuffer.cbufs[i]) {
-         pformat = ice->state.framebuffer.cbufs[i]->format;
-         break;
-      }
-   }
-   return (pformat == PIPE_FORMAT_NONE || util_format_is_unorm(pformat));
 }
 
 #if GFX_VER >= 6
@@ -5380,7 +5881,7 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
 
    if (dirty & CROCUS_DIRTY_SF_CL_VIEWPORT) {
       struct pipe_framebuffer_state *cso_fb = &ice->state.framebuffer;
-#if GFX_VER == 7
+#if GFX_VER >= 7
       uint32_t sf_cl_vp_address;
       uint32_t *vp_map =
          stream_state(batch,
@@ -5401,11 +5902,17 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
          const struct pipe_viewport_state *state = &ice->state.viewports[i];
          float gb_xmin, gb_xmax, gb_ymin, gb_ymax;
 
+#if GFX_VER == 8
+         float vp_xmin = viewport_extent(state, 0, -1.0f);
+         float vp_xmax = viewport_extent(state, 0,  1.0f);
+         float vp_ymin = viewport_extent(state, 1, -1.0f);
+         float vp_ymax = viewport_extent(state, 1,  1.0f);
+#endif
          intel_calculate_guardband_size(cso_fb->width, cso_fb->height,
                                         state->scale[0], state->scale[1],
                                         state->translate[0], state->translate[1],
                                         &gb_xmin, &gb_xmax, &gb_ymin, &gb_ymax);
-#if GFX_VER == 7
+#if GFX_VER >= 7
          crocus_pack_state(GENX(SF_CLIP_VIEWPORT), vp_map, vp)
 #else
          crocus_pack_state(GENX(SF_VIEWPORT), vp_map, vp)
@@ -5426,11 +5933,17 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
             vp.ScissorRectangle.ScissorRectangleYMax = scissor.maxy;
 #endif
 
-#if GFX_VER == 7
+#if GFX_VER >= 7
             vp.XMinClipGuardband = gb_xmin;
             vp.XMaxClipGuardband = gb_xmax;
             vp.YMinClipGuardband = gb_ymin;
             vp.YMaxClipGuardband = gb_ymax;
+#endif
+#if GFX_VER == 8
+            vp.XMinViewPort = MAX2(vp_xmin, 0);
+            vp.XMaxViewPort = MIN2(vp_xmax, cso_fb->width) - 1;
+            vp.YMinViewPort = MAX2(vp_ymin, 0);
+            vp.YMaxViewPort = MIN2(vp_ymax, cso_fb->height) - 1;
 #endif
          }
 #if GFX_VER < 7
@@ -5441,14 +5954,14 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
             clip.YMaxClipGuardband = gb_ymax;
          }
 #endif
-#if GFX_VER == 7
+#if GFX_VER >= 7
          vp_map += GENX(SF_CLIP_VIEWPORT_length);
 #else
          vp_map += GENX(SF_VIEWPORT_length);
          clip_map += GENX(CLIP_VIEWPORT_length);
 #endif
       }
-#if GFX_VER == 7
+#if GFX_VER >= 7
       crocus_emit_cmd(batch, GENX(3DSTATE_VIEWPORT_STATE_POINTERS_SF_CLIP), ptr) {
          ptr.SFClipViewportPointer = sf_cl_vp_address;
       }
@@ -5478,9 +5991,9 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
          gs_size = gs_vue_prog_data->urb_entry_size;
       }
 
-      genX(upload_urb)(batch, vs_size, gs_present, gs_size);
+      genX(crocus_upload_urb)(batch, vs_size, gs_present, gs_size);
 #endif
-#if GFX_VER == 7
+#if GFX_VER >= 7
       const struct intel_device_info *devinfo = &batch->screen->devinfo;
       bool gs_present = ice->shaders.prog[MESA_SHADER_GEOMETRY] != NULL;
       bool tess_present = ice->shaders.prog[MESA_SHADER_TESS_EVAL] != NULL;
@@ -5528,8 +6041,10 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
                               entry_size,
                               entries, start, NULL, &constrained);
 
-         if (!(GFX_VERx10 == 75) && !devinfo->is_baytrail)
+#if GFX_VER == 7
+         if (GFX_VERx10 < 75 && !devinfo->is_baytrail)
             gen7_emit_vs_workaround_flush(batch);
+#endif
          for (int i = MESA_SHADER_VERTEX; i <= MESA_SHADER_GEOMETRY; i++) {
             crocus_emit_cmd(batch, GENX(3DSTATE_URB_VS), urb) {
                urb._3DCommandSubOpcode += i;
@@ -5548,78 +6063,68 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
       struct crocus_depth_stencil_alpha_state *cso_zsa = ice->state.cso_zsa;
 
       STATIC_ASSERT(GENX(BLEND_STATE_ENTRY_length) == 2);
-
-      const int rt_dwords =
+      int rt_dwords =
          MAX2(cso_fb->nr_cbufs, 1) * GENX(BLEND_STATE_ENTRY_length);
-
+#if GFX_VER >= 8
+      rt_dwords += GENX(BLEND_STATE_length);
+#endif
       uint32_t blend_offset;
       uint32_t *blend_map =
          stream_state(batch,
                       4 * rt_dwords, 64, &blend_offset);
 
-      bool indep_alpha_blend = false;
+#if GFX_VER >= 8
+   struct GENX(BLEND_STATE) be = { 0 };
+   {
+#else
+   for (int i = 0; i < BRW_MAX_DRAW_BUFFERS; i++) {
+      struct GENX(BLEND_STATE_ENTRY) entry = { 0 };
+#define be entry
+#endif
+
+      be.AlphaTestEnable = cso_zsa->cso.alpha_enabled;
+      be.AlphaTestFunction = translate_compare_func(cso_zsa->cso.alpha_func);
+      be.AlphaToCoverageEnable = cso_blend->cso.alpha_to_coverage;
+      be.AlphaToOneEnable = cso_blend->cso.alpha_to_one;
+      be.AlphaToCoverageDitherEnable = GFX_VER >= 7 && cso_blend->cso.alpha_to_coverage;
+      be.ColorDitherEnable = cso_blend->cso.dither;
+
+#if GFX_VER >= 8
       for (int i = 0; i < BRW_MAX_DRAW_BUFFERS; i++) {
+         struct GENX(BLEND_STATE_ENTRY) entry = { 0 };
+#else
+      {
+#endif
          const struct pipe_rt_blend_state *rt =
             &cso_blend->cso.rt[cso_blend->cso.independent_blend_enable ? i : 0];
 
-         enum pipe_blendfactor src_rgb =
-            fix_blendfactor(rt->rgb_src_factor, cso_blend->cso.alpha_to_one);
-         enum pipe_blendfactor src_alpha =
-            fix_blendfactor(rt->alpha_src_factor, cso_blend->cso.alpha_to_one);
-         enum pipe_blendfactor dst_rgb =
-            fix_blendfactor(rt->rgb_dst_factor, cso_blend->cso.alpha_to_one);
-         enum pipe_blendfactor dst_alpha =
-            fix_blendfactor(rt->alpha_dst_factor, cso_blend->cso.alpha_to_one);
+         be.IndependentAlphaBlendEnable = set_blend_entry_bits(batch, &entry, cso_blend, i) ||
+            be.IndependentAlphaBlendEnable;
 
-         if (rt->rgb_func != rt->alpha_func ||
-             src_rgb != src_alpha || dst_rgb != dst_alpha)
-            indep_alpha_blend = true;
-
-         crocus_pack_state(GENX(BLEND_STATE_ENTRY), blend_map, be) {
-            if (can_emit_logic_op(ice)) {
-               be.LogicOpEnable = cso_blend->cso.logicop_enable;
-               be.LogicOpFunction = cso_blend->cso.logicop_func;
-            }
-
-            be.ColorClampRange = COLORCLAMP_RTFORMAT;
-            be.PreBlendColorClampEnable = true;
-            be.PostBlendColorClampEnable = true;
-
-            if (i == 0) {
-               struct crocus_compiled_shader *shader = ice->shaders.prog[MESA_SHADER_FRAGMENT];
-               struct brw_wm_prog_data *wm_prog_data = (void *) shader->prog_data;
-               be.ColorBufferBlendEnable = rt->blend_enable &&
-                  (!cso_blend->dual_color_blending || wm_prog_data->dual_src_blend);
-            } else
-               be.ColorBufferBlendEnable = rt->blend_enable;
-
-            be.ColorBlendFunction          = rt->rgb_func;
-            be.AlphaBlendFunction          = rt->alpha_func;
-            be.SourceBlendFactor           = (int) src_rgb;
-            be.SourceAlphaBlendFactor      = (int) src_alpha;
-            be.DestinationBlendFactor      = (int) dst_rgb;
-            be.DestinationAlphaBlendFactor = (int) dst_alpha;
-
-            be.WriteDisableRed   = !(rt->colormask & PIPE_MASK_R);
-            be.WriteDisableGreen = !(rt->colormask & PIPE_MASK_G);
-            be.WriteDisableBlue  = !(rt->colormask & PIPE_MASK_B);
-            be.WriteDisableAlpha = !(rt->colormask & PIPE_MASK_A);
-
-            be.AlphaToCoverageEnable = cso_blend->cso.alpha_to_coverage;
-            be.IndependentAlphaBlendEnable = indep_alpha_blend;
-            be.AlphaToOneEnable = cso_blend->cso.alpha_to_one;
-            be.AlphaToCoverageDitherEnable = GFX_VER >= 7 && cso_blend->cso.alpha_to_coverage;
-            be.ColorDitherEnable = cso_blend->cso.dither;
-
-            /* bl.AlphaTestEnable and bs.AlphaTestFunction are filled in later. */
-            // Except they're not... fix that. Can't be done here since it needs
-            // to be conditional on non-integer RT's
-            be.AlphaTestEnable = cso_zsa->cso.alpha_enabled;
-            be.AlphaTestFunction = translate_compare_func(cso_zsa->cso.alpha_func);
+         if (GFX_VER >= 8 || can_emit_logic_op(ice)) {
+            entry.LogicOpEnable = cso_blend->cso.logicop_enable;
+            entry.LogicOpFunction = cso_blend->cso.logicop_func;
          }
-         blend_map += GENX(BLEND_STATE_ENTRY_length);
-      }
 
+         entry.ColorClampRange = COLORCLAMP_RTFORMAT;
+         entry.PreBlendColorClampEnable = true;
+         entry.PostBlendColorClampEnable = true;
+
+         entry.WriteDisableRed   = !(rt->colormask & PIPE_MASK_R);
+         entry.WriteDisableGreen = !(rt->colormask & PIPE_MASK_G);
+         entry.WriteDisableBlue  = !(rt->colormask & PIPE_MASK_B);
+         entry.WriteDisableAlpha = !(rt->colormask & PIPE_MASK_A);
+
+#if GFX_VER >= 8
+         GENX(BLEND_STATE_ENTRY_pack)(NULL, &blend_map[1 + i * 2], &entry);
+#else
+         GENX(BLEND_STATE_ENTRY_pack)(NULL, &blend_map[i * 2], &entry);
+#endif
+      }
+   }
+#if GFX_VER >= 8
+   GENX(BLEND_STATE_pack)(NULL, blend_map, &be);
+#endif
 #if GFX_VER < 7
       crocus_emit_cmd(batch, GENX(3DSTATE_CC_STATE_POINTERS), ptr) {
          ptr.PointertoBLEND_STATE = blend_offset;
@@ -5628,6 +6133,9 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
 #else
       crocus_emit_cmd(batch, GENX(3DSTATE_BLEND_STATE_POINTERS), ptr) {
          ptr.BlendStatePointer = blend_offset;
+#if GFX_VER >= 8
+         ptr.BlendStatePointerValid = true;
+#endif
       }
 #endif
    }
@@ -5673,17 +6181,8 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
             }
          }
          cc.ColorDitherEnable = cso_blend->cso.dither;
-         cc.ColorBlendFunction = rt->rgb_func;
-         cc.AlphaBlendFunction = rt->alpha_func;
-         cc.SourceBlendFactor = rt->rgb_src_factor;
-         cc.SourceAlphaBlendFactor = rt->alpha_src_factor;
-         cc.DestinationBlendFactor = rt->rgb_dst_factor;
-         cc.DestinationAlphaBlendFactor = rt->alpha_dst_factor;
 
-         if (rt->rgb_func != rt->alpha_func ||
-             rt->rgb_src_factor != rt->alpha_src_factor ||
-             rt->rgb_dst_factor != rt->alpha_dst_factor)
-            cc.IndependentAlphaBlendEnable = true;
+         cc.IndependentAlphaBlendEnable = set_blend_entry_bits(batch, &cc, cso_blend, 0);
 
          if (cso->cso.alpha_enabled && ice->state.framebuffer.nr_cbufs <= 1) {
             cc.AlphaTestEnable = cso->cso.alpha_enabled;
@@ -5759,7 +6258,7 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
                                            ice->shaders.prog[stage]->surf_offset,
                                            ice->shaders.prog[stage]->bt.size_bytes);
 
-#if GFX_VER == 7
+#if GFX_VER >= 7
             crocus_emit_cmd(batch, GENX(3DSTATE_BINDING_TABLE_POINTERS_VS), ptr) {
                ptr._3DCommandSubOpcode = 38 + stage;
                ptr.PointertoVSBindingTable = ice->shaders.prog[stage]->bind_bo_offset;
@@ -5887,6 +6386,13 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
       struct brw_wm_prog_data *wm_prog_data = (void *) shader->prog_data;
 
       crocus_emit_cmd(batch, GENX(3DSTATE_PS), ps) {
+
+         /* Initialize the execution mask with VMask.  Otherwise, derivatives are
+          * incorrect for subspans where some of the pixels are unlit.  We believe
+          * the bit just didn't take effect in previous generations.
+          */
+         ps.VectorMaskEnable = GFX_VER >= 8;
+
          ps._8PixelDispatchEnable = wm_prog_data->dispatch_8;
          ps._16PixelDispatchEnable = wm_prog_data->dispatch_16;
          ps._32PixelDispatchEnable = wm_prog_data->dispatch_32;
@@ -5911,13 +6417,19 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
          // XXX: WABTPPrefetchDisable, see above, drop at C0
          ps.BindingTableEntryCount = shader->bt.size_bytes / 4;
          ps.FloatingPointMode = prog_data->use_alt_mode;
+#if GFX_VER >= 8
+         ps.MaximumNumberofThreadsPerPSD = 64 - 2;
+#else
          ps.MaximumNumberofThreads = batch->screen->devinfo.max_wm_threads - 1;
+#endif
 
          ps.PushConstantEnable = prog_data->ubo_ranges[0].length > 0;
 
+#if GFX_VER < 8
          ps.oMaskPresenttoRenderTarget = wm_prog_data->uses_omask;
          ps.DualSourceBlendEnable = wm_prog_data->dual_src_blend && ice->state.cso_blend->dual_color_blending;
          ps.AttributeEnable = (wm_prog_data->num_varying_inputs != 0);
+#endif
          /* From the documentation for this packet:
           * "If the PS kernel does not need the Position XY Offsets to
           *  compute a Position Value, then this field should be programmed
@@ -5940,6 +6452,57 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
             ps.ScratchSpaceBasePointer = rw_bo(bo, 0);
          }
       }
+#if GFX_VER == 8
+      const struct shader_info *fs_info =
+         crocus_get_shader_info(ice, MESA_SHADER_FRAGMENT);
+      crocus_emit_cmd(batch, GENX(3DSTATE_PS_EXTRA), psx) {
+         psx.PixelShaderValid = true;
+         psx.PixelShaderComputedDepthMode = wm_prog_data->computed_depth_mode;
+         psx.PixelShaderKillsPixel = wm_prog_data->uses_kill;
+         psx.AttributeEnable = wm_prog_data->num_varying_inputs != 0;
+         psx.PixelShaderUsesSourceDepth = wm_prog_data->uses_src_depth;
+         psx.PixelShaderUsesSourceW = wm_prog_data->uses_src_w;
+         psx.PixelShaderIsPerSample = wm_prog_data->persample_dispatch;
+
+         /* _NEW_MULTISAMPLE | BRW_NEW_CONSERVATIVE_RASTERIZATION */
+         if (wm_prog_data->uses_sample_mask)
+            psx.PixelShaderUsesInputCoverageMask = true;
+
+         psx.oMaskPresenttoRenderTarget = wm_prog_data->uses_omask;
+
+         /* The stricter cross-primitive coherency guarantees that the hardware
+          * gives us with the "Accesses UAV" bit set for at least one shader stage
+          * and the "UAV coherency required" bit set on the 3DPRIMITIVE command
+          * are redundant within the current image, atomic counter and SSBO GL
+          * APIs, which all have very loose ordering and coherency requirements
+          * and generally rely on the application to insert explicit barriers when
+          * a shader invocation is expected to see the memory writes performed by
+          * the invocations of some previous primitive.  Regardless of the value
+          * of "UAV coherency required", the "Accesses UAV" bits will implicitly
+          * cause an in most cases useless DC flush when the lowermost stage with
+          * the bit set finishes execution.
+          *
+          * It would be nice to disable it, but in some cases we can't because on
+          * Gfx8+ it also has an influence on rasterization via the PS UAV-only
+          * signal (which could be set independently from the coherency mechanism
+          * in the 3DSTATE_WM command on Gfx7), and because in some cases it will
+          * determine whether the hardware skips execution of the fragment shader
+          * or not via the ThreadDispatchEnable signal.  However if we know that
+          * GFX8_PS_BLEND_HAS_WRITEABLE_RT is going to be set and
+          * GFX8_PSX_PIXEL_SHADER_NO_RT_WRITE is not set it shouldn't make any
+          * difference so we may just disable it here.
+          *
+          * Gfx8 hardware tries to compute ThreadDispatchEnable for us but doesn't
+          * take into account KillPixels when no depth or stencil writes are
+          * enabled.  In order for occlusion queries to work correctly with no
+          * attachments, we need to force-enable here.
+          *
+          */
+         if ((wm_prog_data->has_side_effects || wm_prog_data->uses_kill) &&
+             !(has_writeable_rt(ice->state.cso_blend, fs_info)))
+            psx.PixelShaderHasUAV = true;
+      }
+#endif
    }
 #endif
 
@@ -5958,13 +6521,31 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
             }
             struct crocus_resource *res = (void *) tgt->base.buffer;
             uint32_t start = tgt->base.buffer_offset;
+#if GFX_VER < 8
             uint32_t end = ALIGN(start + tgt->base.buffer_size, 4);
+#endif
             crocus_emit_cmd(batch, GENX(3DSTATE_SO_BUFFER), sob) {
                sob.SOBufferIndex = i;
 
                sob.SurfaceBaseAddress = rw_bo(res->bo, start);
+#if GFX_VER < 8
                sob.SurfacePitch = tgt->stride;
                sob.SurfaceEndAddress = rw_bo(res->bo, end);
+#else
+               sob.SOBufferEnable = true;
+               sob.StreamOffsetWriteEnable = true;
+               sob.StreamOutputBufferOffsetAddressEnable = true;
+               sob.MOCS = crocus_mocs(res->bo, &batch->screen->isl_dev);
+
+               sob.SurfaceSize = MAX2(tgt->base.buffer_size / 4, 1) - 1;
+               sob.StreamOutputBufferOffsetAddress =
+                  rw_bo(crocus_resource_bo(&tgt->offset_res->base), tgt->offset_offset);
+               if (tgt->zero_offset) {
+                  sob.StreamOffset = 0;
+                  tgt->zero_offset = false;
+               } else
+                  sob.StreamOffset = 0xFFFFFFFF; /* not offset, see above */
+#endif
             }
          }
       }
@@ -6165,6 +6746,13 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
          vs.SamplerCount = 0; /* hardware requirement */
 
 #endif
+#if GFX_VER >= 8
+         vs.SIMD8DispatchEnable =
+            vue_prog_data->dispatch_mode == DISPATCH_MODE_SIMD8;
+
+         vs.UserClipDistanceCullTestEnableBitmask =
+            vue_prog_data->cull_distance_mask;
+#endif
       }
 
 #if GFX_VER == 6
@@ -6243,8 +6831,9 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
              * Bridge this will get the order close to correct but not perfect.
              */
             gs.ReorderMode = TRAILING;
-            gs.MaximumNumberofThreads = (batch->screen->devinfo.max_gs_threads - 1);
-
+            gs.MaximumNumberofThreads =
+               GFX_VER == 8 ? (batch->screen->devinfo.max_gs_threads / 2 - 1) :
+               (batch->screen->devinfo.max_gs_threads - 1);
 #if GFX_VER < 7
             gs.SOStatisticsEnable = true;
             if (gs_prog_data->num_transform_feedback_bindings)
@@ -6258,6 +6847,26 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
              */
             gs.SingleProgramFlow = true;
             gs.VectorMaskEnable = true;
+#endif
+#if GFX_VER >= 8
+            gs.ExpectedVertexCount = gs_prog_data->vertices_in;
+
+            if (gs_prog_data->static_vertex_count != -1) {
+               gs.StaticOutput = true;
+               gs.StaticOutputVertexCount = gs_prog_data->static_vertex_count;
+            }
+            gs.IncludeVertexHandles = vue_prog_data->include_vue_handles;
+
+            gs.UserClipDistanceCullTestEnableBitmask =
+               vue_prog_data->cull_distance_mask;
+
+            const int urb_entry_write_offset = 1;
+            const uint32_t urb_entry_output_length =
+               DIV_ROUND_UP(vue_prog_data->vue_map.num_slots, 2) -
+               urb_entry_write_offset;
+
+            gs.VertexURBEntryOutputReadOffset = urb_entry_write_offset;
+            gs.VertexURBEntryOutputLength = MAX2(urb_entry_output_length, 1);
 #endif
          }
 #endif
@@ -6293,9 +6902,11 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
          }
 #endif
          if (!active && !ice->shaders.ff_gs_prog) {
+#if GFX_VER < 8
             gs.DispatchGRFStartRegisterForURBData = 1;
 #if GFX_VER >= 7
             gs.IncludeVertexHandles = true;
+#endif
 #endif
          }
 #if GFX_VER >= 6
@@ -6352,6 +6963,13 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
             ds.MaximumNumberofThreads = batch->screen->devinfo.max_tes_threads - 1;
             ds.ComputeWCoordinateEnable =
                tes_prog_data->domain == BRW_TESS_DOMAIN_TRI;
+
+#if GFX_VER >= 8
+            if (vue_prog_data->dispatch_mode == DISPATCH_MODE_SIMD8)
+               ds.DispatchMode = DISPATCH_MODE_SIMD8_SINGLE_PATCH;
+            ds.UserClipDistanceCullTestEnableBitmask =
+               vue_prog_data->cull_distance_mask;
+#endif
          };
       } else {
          crocus_emit_cmd(batch, GENX(3DSTATE_TE), te);
@@ -6428,7 +7046,7 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
          sf.NumberofSFOutputAttributes = wm_prog_data->num_varying_inputs;
 #endif
 
-#if GFX_VER >= 6
+#if GFX_VER >= 6 && GFX_VER < 8
          if (ice->state.framebuffer.samples > 1 && ice->state.cso_rast->cso.multisample)
             sf.MultisampleRasterizationMode = MSRASTMODE_ON_PATTERN;
 #endif
@@ -6447,6 +7065,9 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
       }
       crocus_emit_merge(batch, cso->sf, dynamic_sf,
                       ARRAY_SIZE(dynamic_sf));
+#if GFX_VER == 8
+      crocus_batch_emit(batch, cso->raster, sizeof(cso->raster));
+#endif
 #endif
    }
 
@@ -6584,6 +7205,7 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
          wm.MaximumNumberofThreads = batch->screen->devinfo.max_wm_threads - 1;
 #endif
 
+#if GFX_VER < 8
 #if GFX_VER >= 6
          wm.PixelShaderUsesSourceW = wm_prog_data->uses_src_w;
 
@@ -6645,13 +7267,18 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
              wm_prog_data->has_side_effects)
             wm.PSUAVonly = ON;
 #endif
-
+#endif
 #if GFX_VER >= 7
       /* BRW_NEW_FS_PROG_DATA */
          if (wm_prog_data->early_fragment_tests)
            wm.EarlyDepthStencilControl = EDSC_PREPS;
          else if (wm_prog_data->has_side_effects)
            wm.EarlyDepthStencilControl = EDSC_PSEXEC;
+#endif
+#if GFX_VER == 8
+         /* We could skip this bit if color writes are enabled. */
+         if (wm_prog_data->has_side_effects || wm_prog_data->uses_kill)
+            wm.ForceThreadDispatchEnable = ForceON;
 #endif
       };
 
@@ -6671,8 +7298,34 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
    }
 #endif
 
+#if GFX_VER >= 8
+   if (dirty & CROCUS_DIRTY_GEN8_PS_BLEND) {
+      struct crocus_compiled_shader *shader = ice->shaders.prog[MESA_SHADER_FRAGMENT];
+      struct crocus_blend_state *cso_blend = ice->state.cso_blend;
+      struct crocus_depth_stencil_alpha_state *cso_zsa = ice->state.cso_zsa;
+      struct brw_wm_prog_data *wm_prog_data = (void *) shader->prog_data;
+      const struct shader_info *fs_info =
+         crocus_get_shader_info(ice, MESA_SHADER_FRAGMENT);
+      uint32_t dynamic_pb[GENX(3DSTATE_PS_BLEND_length)];
+      crocus_pack_command(GENX(3DSTATE_PS_BLEND), &dynamic_pb, pb) {
+         pb.HasWriteableRT = has_writeable_rt(cso_blend, fs_info);
+         pb.AlphaTestEnable = cso_zsa->cso.alpha_enabled;
+         pb.ColorBufferBlendEnable = (cso_blend->blend_enables & 1) &&
+            (!cso_blend->dual_color_blending || wm_prog_data->dual_src_blend);
+      }
+      crocus_emit_merge(batch, cso_blend->ps_blend, dynamic_pb,
+                        ARRAY_SIZE(cso_blend->ps_blend));
+   }
+#endif
+
 #if GFX_VER >= 6
    if (dirty & CROCUS_DIRTY_GEN6_WM_DEPTH_STENCIL) {
+
+#if GFX_VER >= 8
+      crocus_emit_cmd(batch, GENX(3DSTATE_WM_DEPTH_STENCIL), wmds) {
+         set_depth_stencil_bits(ice, &wmds);
+      }
+#else
       uint32_t ds_offset;
       void *ds_map = stream_state(batch,
                                   sizeof(uint32_t) * GENX(DEPTH_STENCIL_STATE_length),
@@ -6690,6 +7343,7 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
       crocus_emit_cmd(batch, GENX(3DSTATE_DEPTH_STENCIL_STATE_POINTERS), ptr) {
          ptr.PointertoDEPTH_STENCIL_STATE = ds_offset;
       }
+#endif
 #endif
    }
 
@@ -6817,6 +7471,15 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
       crocus_batch_emit(batch, cso->line_stipple, sizeof(cso->line_stipple));
    }
 
+#if GFX_VER >= 8
+   if (dirty & CROCUS_DIRTY_GEN8_VF_TOPOLOGY) {
+      crocus_emit_cmd(batch, GENX(3DSTATE_VF_TOPOLOGY), topo) {
+         topo.PrimitiveTopologyType =
+            translate_prim_type(draw->mode, draw->vertices_per_patch);
+      }
+   }
+#endif
+
 #if GFX_VER <= 5
    if (dirty & CROCUS_DIRTY_GEN5_PIPELINED_POINTERS) {
       upload_pipelined_state_pointers(batch, ice->shaders.ff_gs_prog ? true : false, ice->shaders.gs_offset,
@@ -6928,8 +7591,13 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
                ve.SourceElementFormat = ISL_FORMAT_R32G32_UINT;
                ve.Component0Control = base_ctrl;
                ve.Component1Control = base_ctrl;
+#if GFX_VER < 8
                ve.Component2Control = ice->state.vs_uses_vertexid ? VFCOMP_STORE_VID : VFCOMP_STORE_0;
                ve.Component3Control = ice->state.vs_uses_instanceid ? VFCOMP_STORE_IID : VFCOMP_STORE_0;
+#else
+               ve.Component2Control = VFCOMP_STORE_0;
+               ve.Component3Control = VFCOMP_STORE_0;
+#endif
 #if GFX_VER < 5
                ve.DestinationElementOffset = cso->count * 4;
 #endif
@@ -6961,9 +7629,58 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
          crocus_batch_emit(batch, &dynamic_ves, sizeof(uint32_t) *
                          (1 + dyn_count * GENX(VERTEX_ELEMENT_STATE_length)));
       }
+
+#if GFX_VER == 8
+      if (!ice->state.vs_needs_edge_flag) {
+         crocus_batch_emit(batch, cso->vf_instancing, sizeof(uint32_t) *
+                         entries * GENX(3DSTATE_VF_INSTANCING_length));
+      } else {
+         assert(cso->count > 0);
+         const unsigned edgeflag_index = cso->count - 1;
+         uint32_t dynamic_vfi[33 * GENX(3DSTATE_VF_INSTANCING_length)];
+         memcpy(&dynamic_vfi[0], cso->vf_instancing, edgeflag_index *
+                GENX(3DSTATE_VF_INSTANCING_length) * sizeof(uint32_t));
+
+         uint32_t *vfi_pack_dest = &dynamic_vfi[0] +
+            edgeflag_index * GENX(3DSTATE_VF_INSTANCING_length);
+         crocus_pack_command(GENX(3DSTATE_VF_INSTANCING), vfi_pack_dest, vi) {
+            vi.VertexElementIndex = edgeflag_index +
+               ice->state.vs_needs_sgvs_element +
+               ice->state.vs_uses_derived_draw_params;
+         }
+         for (int i = 0; i < GENX(3DSTATE_VF_INSTANCING_length);  i++)
+            vfi_pack_dest[i] |= cso->edgeflag_vfi[i];
+
+         crocus_batch_emit(batch, &dynamic_vfi[0], sizeof(uint32_t) *
+                         entries * GENX(3DSTATE_VF_INSTANCING_length));
+      }
+#endif
    }
 
-#if GFX_VERx10 == 75
+#if GFX_VER == 8
+   if (dirty & CROCUS_DIRTY_GEN8_VF_SGVS) {
+      const struct brw_vs_prog_data *vs_prog_data = (void *)
+         ice->shaders.prog[MESA_SHADER_VERTEX]->prog_data;
+      struct crocus_vertex_element_state *cso = ice->state.cso_vertex_elements;
+
+      crocus_emit_cmd(batch, GENX(3DSTATE_VF_SGVS), sgv) {
+         if (vs_prog_data->uses_vertexid) {
+            sgv.VertexIDEnable = true;
+            sgv.VertexIDComponentNumber = 2;
+            sgv.VertexIDElementOffset =
+               cso->count - ice->state.vs_needs_edge_flag;
+         }
+
+         if (vs_prog_data->uses_instanceid) {
+            sgv.InstanceIDEnable = true;
+            sgv.InstanceIDComponentNumber = 3;
+            sgv.InstanceIDElementOffset =
+               cso->count - ice->state.vs_needs_edge_flag;
+         }
+      }
+   }
+#endif
+#if GFX_VERx10 >= 75
    if (dirty & CROCUS_DIRTY_GEN75_VF) {
       crocus_emit_cmd(batch, GENX(3DSTATE_VF), vf) {
          if (draw->primitive_restart) {
@@ -6971,6 +7688,13 @@ crocus_upload_dirty_render_state(struct crocus_context *ice,
             vf.CutIndex = draw->restart_index;
          }
       }
+   }
+#endif
+
+#if GFX_VER == 8
+   if (dirty & CROCUS_DIRTY_GEN8_PMA_FIX) {
+      bool enable = want_pma_fix(ice);
+      genX(crocus_update_pma_fix)(ice, batch, enable);
    }
 #endif
 
@@ -6989,7 +7713,7 @@ crocus_upload_render_state(struct crocus_context *ice,
                            const struct pipe_draw_indirect_info *indirect,
                            const struct pipe_draw_start_count_bias *sc)
 {
-#if GFX_VER == 7
+#if GFX_VER >= 7
    bool use_predicate = ice->state.predicate == CROCUS_PREDICATE_STATE_USE_BIT;
 #endif
    bool emit_index = false;
@@ -7040,12 +7764,17 @@ crocus_upload_render_state(struct crocus_context *ice,
          struct crocus_bo *bo = crocus_resource_bo(ice->state.index_buffer.res);
 
          crocus_emit_cmd(batch, GENX(3DSTATE_INDEX_BUFFER), ib) {
-#if !(GFX_VERx10 == 75)
+#if GFX_VERx10 < 75
             ib.CutIndexEnable = draw->primitive_restart;
 #endif
             ib.IndexFormat = draw->index_size >> 1;
             ib.BufferStartingAddress = ro_bo(bo, offset);
+#if GFX_VER >= 8
+            ib.MOCS = crocus_mocs(bo, &batch->screen->isl_dev);
+            ib.BufferSize = bo->size - offset;
+#else
             ib.BufferEndingAddress = ro_bo(bo, offset + size - 1);
+#endif
          }
          ice->state.index_buffer.size = size;
          ice->state.index_buffer.offset = offset;
@@ -7061,7 +7790,7 @@ crocus_upload_render_state(struct crocus_context *ice,
 #define _3DPRIM_START_INSTANCE      0x243C
 #define _3DPRIM_BASE_VERTEX         0x2440
 
-#if GFX_VER == 7
+#if GFX_VER >= 7
    if (indirect && !indirect->count_from_stream_output) {
       if (indirect->indirect_draw_count) {
          use_predicate = true;
@@ -7075,7 +7804,7 @@ crocus_upload_render_state(struct crocus_context *ice,
                                         "ensure indirect draw buffer is flushed",
                                         PIPE_CONTROL_FLUSH_ENABLE);
          if (ice->state.predicate == CROCUS_PREDICATE_STATE_USE_BIT) {
-#if GFX_VERx10 == 75
+#if GFX_VERx10 >= 75
             struct mi_builder b;
             mi_builder_init(&b, &batch->screen->devinfo, batch);
 
@@ -7084,7 +7813,11 @@ crocus_upload_render_state(struct crocus_context *ice,
                mi_ult(&b, mi_imm(drawid_offset),
                       mi_mem32(ro_bo(draw_count_bo,
                                      draw_count_offset)));
-
+#if GFX_VER == 8
+            /* predicate = comparison & conditional rendering predicate */
+            mi_store(&b, mi_reg32(MI_PREDICATE_RESULT),
+                         mi_iand(&b, comparison, mi_reg32(CS_GPR(15))));
+#else
             /* predicate = comparison & conditional rendering predicate */
             struct mi_value pred = mi_iand(&b, comparison,
                                            mi_reg32(CS_GPR(15)));
@@ -7097,6 +7830,7 @@ crocus_upload_render_state(struct crocus_context *ice,
                MI_PREDICATE_COMPAREOP_SRCS_EQUAL;
 
             crocus_batch_emit(batch, &mi_predicate, sizeof(uint32_t));
+#endif
 #endif
          } else {
             uint32_t mi_predicate;
@@ -7168,7 +7902,7 @@ crocus_upload_render_state(struct crocus_context *ice,
       }
 #endif
    } else if (indirect && indirect->count_from_stream_output) {
-#if GFX_VERx10 == 75
+#if GFX_VERx10 >= 75
       struct crocus_stream_output_target *so =
          (void *) indirect->count_from_stream_output;
 
@@ -7200,14 +7934,14 @@ crocus_upload_render_state(struct crocus_context *ice,
 
    crocus_emit_cmd(batch, GENX(3DPRIMITIVE), prim) {
       prim.VertexAccessType = draw->index_size > 0 ? RANDOM : SEQUENTIAL;
-#if GFX_VER == 7
+#if GFX_VER >= 7
       prim.PredicateEnable = use_predicate;
 #endif
 
       prim.PrimitiveTopologyType = translate_prim_type(ice->state.prim_mode, draw->vertices_per_patch);
       if (indirect) {
          // XXX Probably have to do something for gen6 here?
-#if GFX_VER == 7
+#if GFX_VER >= 7
          prim.IndirectParameterEnable = true;
 #endif
       } else {
@@ -7226,7 +7960,7 @@ crocus_upload_render_state(struct crocus_context *ice,
    }
 }
 
-#if GFX_VER == 7
+#if GFX_VER >= 7
 
 static void
 crocus_upload_compute_state(struct crocus_context *ice,
@@ -7278,7 +8012,12 @@ crocus_upload_compute_state(struct crocus_context *ice,
             struct crocus_bo *bo =
                crocus_get_scratch_space(ice, prog_data->total_scratch,
                                         MESA_SHADER_COMPUTE);
-#if GFX_VERx10 == 75
+#if GFX_VER == 8
+            /* Broadwell's Per Thread Scratch Space is in the range [0, 11]
+             * where 0 = 1k, 1 = 2k, 2 = 4k, ..., 11 = 2M.
+             */
+            vfe.PerThreadScratchSpace = ffs(prog_data->total_scratch) - 11;
+#elif GFX_VERx10 == 75
             /* Haswell's Per Thread Scratch Space is in the range [0, 10]
              * where 0 = 2k, 1 = 4k, 2 = 8k, ..., 10 = 2M.
              */
@@ -7297,9 +8036,14 @@ crocus_upload_compute_state(struct crocus_context *ice,
          vfe.ResetGatewayTimer =
             Resettingrelativetimerandlatchingtheglobaltimestamp;
          vfe.BypassGatewayControl = true;
+#if GFX_VER == 7
          vfe.GPGPUMode = 1;
-         vfe.NumberofURBEntries = 0;
-         vfe.URBEntryAllocationSize = 0;
+#endif
+#if GFX_VER == 8
+         vfe.BypassGatewayControl = true;
+#endif
+         vfe.NumberofURBEntries = GFX_VER == 8 ? 2 : 0;
+         vfe.URBEntryAllocationSize = GFX_VER == 8 ? 2 : 0;
 
          vfe.CURBEAllocationSize =
             ALIGN(cs_prog_data->push.per_thread.regs * dispatch.threads +
@@ -7380,6 +8124,7 @@ crocus_upload_compute_state(struct crocus_context *ice,
          lrm.MemoryAddress = ro_bo(bo, grid_size->offset + 8);
       }
 
+#if GFX_VER == 7
       /* Clear upper 32-bits of SRC0 and all 64-bits of SRC1 */
       _crocus_emit_lri(batch, MI_PREDICATE_SRC0 + 4, 0);
       crocus_load_register_imm64(batch, MI_PREDICATE_SRC1, 0);
@@ -7421,12 +8166,12 @@ crocus_upload_compute_state(struct crocus_context *ice,
          mip.CombineOperation = COMBINE_OR;
          mip.CompareOperation = COMPARE_FALSE;
       }
-
+#endif
    }
 
    crocus_emit_cmd(batch, GENX(GPGPU_WALKER), ggw) {
       ggw.IndirectParameterEnable    = grid->indirect != NULL;
-      ggw.PredicateEnable            = grid->indirect != NULL;
+      ggw.PredicateEnable            = GFX_VER <= 7 && grid->indirect != NULL;
       ggw.SIMDSize                   = dispatch.simd_size / 16;
       ggw.ThreadDepthCounterMaximum  = 0;
       ggw.ThreadHeightCounterMaximum = 0;
@@ -7443,7 +8188,7 @@ crocus_upload_compute_state(struct crocus_context *ice,
    batch->contains_draw = true;
 }
 
-#endif /* GFX_VER == 7 */
+#endif /* GFX_VER >= 7 */
 
 /**
  * State module teardown.
@@ -7451,9 +8196,10 @@ crocus_upload_compute_state(struct crocus_context *ice,
 static void
 crocus_destroy_state(struct crocus_context *ice)
 {
-
    pipe_resource_reference(&ice->draw.draw_params.res, NULL);
    pipe_resource_reference(&ice->draw.derived_draw_params.res, NULL);
+
+   free(ice->state.genx);
 
    for (int i = 0; i < 4; i++) {
       pipe_so_target_reference(&ice->state.so_target[i], NULL);
@@ -7481,6 +8227,8 @@ crocus_destroy_state(struct crocus_context *ice)
       }
    }
 
+   for (int i = 0; i < 16; i++)
+      pipe_resource_reference(&ice->state.vertex_buffers[i].buffer.resource, NULL);
    pipe_resource_reference(&ice->state.grid_size.res, NULL);
 
    pipe_resource_reference(&ice->state.index_buffer.res, NULL);
@@ -7681,7 +8429,25 @@ crocus_emit_raw_pipe_control(struct crocus_batch *batch,
       crocus_emit_post_sync_nonzero_flush(batch);
    }
 
-   if (!(GFX_VERx10 == 75) && (flags & PIPE_CONTROL_DEPTH_STALL)) {
+#if GFX_VER == 8
+   if (flags & PIPE_CONTROL_VF_CACHE_INVALIDATE) {
+      /* Project: BDW, SKL+ (stopping at CNL) / Argument: VF Invalidate
+       *
+       * "'Post Sync Operation' must be enabled to 'Write Immediate Data' or
+       *  'Write PS Depth Count' or 'Write Timestamp'."
+       */
+      if (!bo) {
+         flags |= PIPE_CONTROL_WRITE_IMMEDIATE;
+         post_sync_flags |= PIPE_CONTROL_WRITE_IMMEDIATE;
+         non_lri_post_sync_flags |= PIPE_CONTROL_WRITE_IMMEDIATE;
+         bo = batch->ice->workaround_bo;
+         offset = batch->ice->workaround_offset;
+      }
+   }
+#endif
+
+#if GFX_VERx10 < 75
+   if (flags & PIPE_CONTROL_DEPTH_STALL) {
       /* Project: PRE-HSW / Argument: Depth Stall
        *
        * "The following bits must be clear:
@@ -7691,7 +8457,7 @@ crocus_emit_raw_pipe_control(struct crocus_batch *batch,
       assert(!(flags & (PIPE_CONTROL_RENDER_TARGET_FLUSH |
                         PIPE_CONTROL_DEPTH_CACHE_FLUSH)));
    }
-
+#endif
    if (GFX_VER >= 6 && (flags & PIPE_CONTROL_DEPTH_STALL)) {
       /* From the PIPE_CONTROL instruction table, bit 13 (Depth Stall Enable):
        *
@@ -7708,7 +8474,7 @@ crocus_emit_raw_pipe_control(struct crocus_batch *batch,
        */
    }
 
-   if (!(GFX_VERx10 == 75) && (flags & PIPE_CONTROL_DEPTH_CACHE_FLUSH)) {
+   if (GFX_VERx10 < 75 && (flags & PIPE_CONTROL_DEPTH_CACHE_FLUSH)) {
       /* Project: PRE-HSW / Argument: Depth Cache Flush
        *
        * "Depth Stall must be clear ([13] of DW1)."
@@ -7749,7 +8515,7 @@ crocus_emit_raw_pipe_control(struct crocus_batch *batch,
 
    /* PIPE_CONTROL page workarounds ------------------------------------- */
 
-   if (GFX_VER == 7 && (flags & PIPE_CONTROL_STATE_CACHE_INVALIDATE)) {
+   if (GFX_VER >= 7 && (flags & PIPE_CONTROL_STATE_CACHE_INVALIDATE)) {
       /* From the PIPE_CONTROL page itself:
        *
        *    "IVB, HSW, BDW
@@ -7842,7 +8608,7 @@ crocus_emit_raw_pipe_control(struct crocus_batch *batch,
       assert(non_lri_post_sync_flags != 0);
    }
 
-   if (GFX_VER >= 6 && (flags & PIPE_CONTROL_TLB_INVALIDATE)) {
+   if (GFX_VER >= 6 && GFX_VER < 8 && (flags & PIPE_CONTROL_TLB_INVALIDATE)) {
       /* Project: SNB, IVB, HSW / Argument: TLB inv
        *
        * "{All SKUs}{All Steppings}: Post-Sync Operation ([15:14] of DW1)
@@ -7869,7 +8635,51 @@ crocus_emit_raw_pipe_control(struct crocus_batch *batch,
        */
       flags |= PIPE_CONTROL_CS_STALL;
    }
+#if GFX_VER == 8
+   if (IS_COMPUTE_PIPELINE(batch)) {
+      if (post_sync_flags ||
+          (flags & (PIPE_CONTROL_NOTIFY_ENABLE |
+                    PIPE_CONTROL_DEPTH_STALL |
+                    PIPE_CONTROL_RENDER_TARGET_FLUSH |
+                    PIPE_CONTROL_DEPTH_CACHE_FLUSH |
+                    PIPE_CONTROL_DATA_CACHE_FLUSH))) {
+         /* Project: BDW / Arguments:
+          *
+          * - LRI Post Sync Operation   [23]
+          * - Post Sync Op              [15:14]
+          * - Notify En                 [8]
+          * - Depth Stall               [13]
+          * - Render Target Cache Flush [12]
+          * - Depth Cache Flush         [0]
+          * - DC Flush Enable           [5]
+          *
+          *    "Requires stall bit ([20] of DW) set for all GPGPU and Media
+          *     Workloads."
+          *
+          * (The docs have separate table rows for each bit, with essentially
+          * the same workaround text.  We've combined them here.)
+          */
+         flags |= PIPE_CONTROL_CS_STALL;
 
+         /* Also, from the PIPE_CONTROL instruction table, bit 20:
+          *
+          *    "Project: BDW
+          *     This bit must be always set when PIPE_CONTROL command is
+          *     programmed by GPGPU and MEDIA workloads, except for the cases
+          *     when only Read Only Cache Invalidation bits are set (State
+          *     Cache Invalidation Enable, Instruction cache Invalidation
+          *     Enable, Texture Cache Invalidation Enable, Constant Cache
+          *     Invalidation Enable). This is to WA FFDOP CG issue, this WA
+          *     need not implemented when FF_DOP_CG is disable via "Fixed
+          *     Function DOP Clock Gate Disable" bit in RC_PSMI_CTRL register."
+          *
+          * It sounds like we could avoid CS stalls in some cases, but we
+          * don't currently bother.  This list isn't exactly the list above,
+          * either...
+          */
+      }
+   }
+#endif
    /* Implement the WaCsStallAtEveryFourthPipecontrol workaround on IVB, BYT:
     *
     * "Every 4th PIPE_CONTROL command, not counting the PIPE_CONTROL with
@@ -8010,10 +8820,10 @@ crocus_emit_raw_pipe_control(struct crocus_batch *batch,
 
 #if GFX_VER == 6
 void
-genX(upload_urb)(struct crocus_batch *batch,
-                 unsigned vs_size,
-                 bool gs_present,
-                 unsigned gs_size)
+genX(crocus_upload_urb)(struct crocus_batch *batch,
+                        unsigned vs_size,
+                        bool gs_present,
+                        unsigned gs_size)
 {
    struct crocus_context *ice = batch->ice;
    int nr_vs_entries, nr_gs_entries;
@@ -8261,20 +9071,20 @@ crocus_set_frontend_noop(struct pipe_context *ctx, bool enable)
 }
 
 void
-genX(init_screen_state)(struct crocus_screen *screen)
+genX(crocus_init_screen_state)(struct crocus_screen *screen)
 {
    assert(screen->devinfo.verx10 == GFX_VERx10);
    screen->vtbl.destroy_state = crocus_destroy_state;
    screen->vtbl.init_render_context = crocus_init_render_context;
    screen->vtbl.upload_render_state = crocus_upload_render_state;
-#if GFX_VER == 7
+#if GFX_VER >= 7
    screen->vtbl.init_compute_context = crocus_init_compute_context;
    screen->vtbl.upload_compute_state = crocus_upload_compute_state;
 #endif
    screen->vtbl.emit_raw_pipe_control = crocus_emit_raw_pipe_control;
    screen->vtbl.emit_mi_report_perf_count = crocus_emit_mi_report_perf_count;
    screen->vtbl.rebind_buffer = crocus_rebind_buffer;
-#if GFX_VERx10 == 75
+#if GFX_VERx10 >= 75
    screen->vtbl.load_register_reg32 = crocus_load_register_reg32;
    screen->vtbl.load_register_reg64 = crocus_load_register_reg64;
    screen->vtbl.load_register_imm32 = crocus_load_register_imm32;
@@ -8314,11 +9124,11 @@ genX(init_screen_state)(struct crocus_screen *screen)
    screen->vtbl.get_so_offset = crocus_get_so_offset;
 #endif
 
-   genX(init_blt)(screen);
+   genX(crocus_init_blt)(screen);
 }
 
 void
-genX(init_state)(struct crocus_context *ice)
+genX(crocus_init_state)(struct crocus_context *ice)
 {
    struct pipe_context *ctx = &ice->ctx;
 

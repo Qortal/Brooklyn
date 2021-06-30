@@ -610,6 +610,7 @@ static void
 fd_blit_from_staging(struct fd_context *ctx,
                      struct fd_transfer *trans) assert_dt
 {
+   DBG("");
    struct pipe_resource *dst = trans->b.b.resource;
    struct pipe_blit_info blit = {};
 
@@ -630,6 +631,7 @@ fd_blit_from_staging(struct fd_context *ctx,
 static void
 fd_blit_to_staging(struct fd_context *ctx, struct fd_transfer *trans) assert_dt
 {
+   DBG("");
    struct pipe_resource *src = trans->b.b.resource;
    struct pipe_blit_info blit = {};
 
@@ -664,39 +666,11 @@ static void
 flush_resource(struct fd_context *ctx, struct fd_resource *rsc,
                unsigned usage) assert_dt
 {
-   struct fd_batch *write_batch = NULL;
-
-   fd_screen_lock(ctx->screen);
-   fd_batch_reference_locked(&write_batch, rsc->track->write_batch);
-   fd_screen_unlock(ctx->screen);
-
    if (usage & PIPE_MAP_WRITE) {
-      struct fd_batch *batch, *batches[32] = {};
-      uint32_t batch_mask;
-
-      /* This is a bit awkward, probably a fd_batch_flush_locked()
-       * would make things simpler.. but we need to hold the lock
-       * to iterate the batches which reference this resource.  So
-       * we must first grab references under a lock, then flush.
-       */
-      fd_screen_lock(ctx->screen);
-      batch_mask = rsc->track->batch_mask;
-      foreach_batch (batch, &ctx->screen->batch_cache, batch_mask)
-         fd_batch_reference_locked(&batches[batch->idx], batch);
-      fd_screen_unlock(ctx->screen);
-
-      foreach_batch (batch, &ctx->screen->batch_cache, batch_mask)
-         fd_batch_flush(batch);
-
-      foreach_batch (batch, &ctx->screen->batch_cache, batch_mask) {
-         fd_batch_reference(&batches[batch->idx], NULL);
-      }
-      assert(rsc->track->batch_mask == 0);
-   } else if (write_batch) {
-      fd_batch_flush(write_batch);
+      fd_bc_flush_readers(ctx, rsc);
+   } else {
+      fd_bc_flush_writer(ctx, rsc);
    }
-
-   fd_batch_reference(&write_batch, NULL);
 }
 
 static void
@@ -800,6 +774,13 @@ resource_transfer_map(struct pipe_context *pctx, struct pipe_resource *prsc,
 
    tc_assert_driver_thread(ctx->tc);
 
+   /* Strip the read flag if the buffer has been invalidated (or is freshly
+    * created). Avoids extra staging blits of undefined data on glTexSubImage of
+    * a fresh DEPTH_COMPONENT or STENCIL_INDEX texture being stored as z24s8.
+    */
+   if (!rsc->valid)
+      usage &= ~PIPE_MAP_READ;
+
    /* we always need a staging texture for tiled buffers:
     *
     * TODO we might sometimes want to *also* shadow the resource to avoid
@@ -838,18 +819,6 @@ resource_transfer_map(struct pipe_context *pctx, struct pipe_resource *prsc,
    if (usage & PIPE_MAP_DISCARD_WHOLE_RESOURCE) {
       invalidate_resource(rsc, usage);
    } else {
-      struct fd_batch *write_batch = NULL;
-
-      /* hold a reference, so it doesn't disappear under us: */
-      fd_screen_lock(ctx->screen);
-      fd_batch_reference_locked(&write_batch, rsc->track->write_batch);
-      fd_screen_unlock(ctx->screen);
-
-      if ((usage & PIPE_MAP_WRITE) && write_batch && write_batch->back_blit) {
-         /* if only thing pending is a back-blit, we can discard it: */
-         fd_batch_reset(write_batch);
-      }
-
       unsigned op = translate_usage(usage);
       bool needs_flush = pending(rsc, !!(usage & PIPE_MAP_WRITE));
 
@@ -901,8 +870,6 @@ resource_transfer_map(struct pipe_context *pctx, struct pipe_resource *prsc,
                trans->staging_box.z = 0;
                buf = fd_bo_map(staging_rsc->bo);
 
-               fd_batch_reference(&write_batch, NULL);
-
                ctx->stats.staging_uploads++;
 
                return buf;
@@ -914,8 +881,6 @@ resource_transfer_map(struct pipe_context *pctx, struct pipe_resource *prsc,
          flush_resource(ctx, rsc, usage);
          needs_flush = false;
       }
-
-      fd_batch_reference(&write_batch, NULL);
 
       /* The GPU keeps track of how the various bo's are being used, and
        * will wait if necessary for the proper operation to have
@@ -1415,6 +1380,8 @@ fd_render_condition_check(struct pipe_context *pctx)
 
    if (!ctx->cond_query)
       return true;
+
+   perf_debug("Implementing conditional rendering using a CPU read instaed of HW conditional rendering.");
 
    union pipe_query_result res = {0};
    bool wait = ctx->cond_mode != PIPE_RENDER_COND_NO_WAIT &&

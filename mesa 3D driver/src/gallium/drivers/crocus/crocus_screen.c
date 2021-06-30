@@ -59,6 +59,9 @@
 
 #define genX_call(devinfo, func, ...)                   \
    switch ((devinfo)->verx10) {                         \
+   case 80:                                             \
+      gfx8_##func(__VA_ARGS__);                         \
+      break;                                            \
    case 75:                                             \
       gfx75_##func(__VA_ARGS__);                        \
       break;                                            \
@@ -212,6 +215,7 @@ crocus_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_INT64_DIVMOD:
    case PIPE_CAP_TGSI_BALLOT:
    case PIPE_CAP_PACKED_UNIFORMS:
+      return devinfo->ver == 8;
    case PIPE_CAP_GL_CLAMP:
       return false;
    case PIPE_CAP_QUADS_FOLLOW_PROVOKING_VERTEX_CONVENTION:
@@ -239,7 +243,7 @@ crocus_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return devinfo->ver >= 7;
    case PIPE_CAP_QUERY_BUFFER_OBJECT:
    case PIPE_CAP_ROBUST_BUFFER_ACCESS_BEHAVIOR:
-      return devinfo->is_haswell;
+      return devinfo->verx10 >= 75;
    case PIPE_CAP_CULL_DISTANCE:
    case PIPE_CAP_QUERY_PIPELINE_STATISTICS_SINGLE:
    case PIPE_CAP_STREAM_OUTPUT_PAUSE_RESUME:
@@ -283,7 +287,7 @@ crocus_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_MAX_STREAM_OUTPUT_INTERLEAVED_COMPONENTS:
       return BRW_MAX_SOL_BINDINGS;
    case PIPE_CAP_GLSL_FEATURE_LEVEL: {
-      if (devinfo->is_haswell)
+      if (devinfo->verx10 >= 75)
          return 460;
       else if (devinfo->ver >= 7)
          return 420;
@@ -507,7 +511,7 @@ crocus_get_shader_param(struct pipe_screen *pscreen,
       return 0;
    case PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS:
    case PIPE_SHADER_CAP_MAX_SAMPLER_VIEWS:
-      return devinfo->is_haswell ? CROCUS_MAX_TEXTURE_SAMPLERS : 16;
+      return (devinfo->verx10 >= 75) ? CROCUS_MAX_TEXTURE_SAMPLERS : 16;
    case PIPE_SHADER_CAP_MAX_SHADER_IMAGES:
       if (devinfo->ver >= 7 &&
           (p_stage == PIPE_SHADER_FRAGMENT ||
@@ -758,8 +762,15 @@ crocus_screen_create(int fd, const struct pipe_screen_config *config)
    screen->pci_id = screen->devinfo.chipset_id;
    screen->no_hw = screen->devinfo.no_hw;
 
-   if (screen->devinfo.ver >= 8)
+   if (screen->devinfo.ver > 8)
       return NULL;
+
+   if (screen->devinfo.ver == 8) {
+      /* bind to cherryview or bdw if forced */
+      if (!screen->devinfo.is_cherryview &&
+          !getenv("CROCUS_GEN8"))
+         return NULL;
+   }
 
    p_atomic_set(&screen->refcount, 1);
 
@@ -807,7 +818,7 @@ crocus_screen_create(int fd, const struct pipe_screen_config *config)
    screen->compiler->compact_params = false;
    screen->compiler->constant_buffer_0_is_relative = true;
 
-   if (screen->devinfo.ver == 7) {
+   if (screen->devinfo.ver >= 7) {
       screen->l3_config_3d = crocus_get_default_l3_config(&screen->devinfo, false);
       screen->l3_config_cs = crocus_get_default_l3_config(&screen->devinfo, true);
    }
@@ -845,7 +856,7 @@ crocus_screen_create(int fd, const struct pipe_screen_config *config)
    pscreen->get_driver_query_group_info = crocus_get_monitor_group_info;
    pscreen->get_driver_query_info = crocus_get_monitor_info;
 
-   genX_call(&screen->devinfo, init_screen_state, screen);
-   genX_call(&screen->devinfo, init_screen_query, screen);
+   genX_call(&screen->devinfo, crocus_init_screen_state, screen);
+   genX_call(&screen->devinfo, crocus_init_screen_query, screen);
    return pscreen;
 }

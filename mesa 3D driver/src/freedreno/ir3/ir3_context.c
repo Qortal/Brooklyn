@@ -151,9 +151,9 @@ ir3_context_init(struct ir3_compiler *compiler,
 	}
 
 	if (shader_debug_enabled(so->type)) {
-		fprintf(stdout, "NIR (final form) for %s shader %s:\n",
+		mesa_logi("NIR (final form) for %s shader %s:",
 			ir3_shader_stage(so), so->shader->nir->info.name);
-		nir_print_shader(ctx->s, stdout);
+		nir_log_shaderi(ctx->s);
 	}
 
 	ir3_ibo_mapping_init(&so->image_mapping, ctx->s->info.num_textures);
@@ -246,7 +246,7 @@ ir3_put_dst(struct ir3_context *ctx, nir_dest *dst)
 	for (unsigned i = 0; i < ctx->last_dst_n; i++) {
 		if (!ctx->last_dst[i])
 			continue;
-		if (ctx->last_dst[i]->regs[0]->flags & IR3_REG_SHARED) {
+		if (ctx->last_dst[i]->dsts[0]->flags & IR3_REG_SHARED) {
 			ctx->last_dst[i] = ir3_MOV(ctx->block, ctx->last_dst[i], TYPE_U32);
 		}
 	}
@@ -258,9 +258,9 @@ ir3_put_dst(struct ir3_context *ctx, nir_dest *dst)
 			ir3_set_dst_type(dst, true);
 			ir3_fixup_src_type(dst);
 			if (dst->opc == OPC_META_SPLIT) {
-				ir3_set_dst_type(ssa(dst->regs[1]), true);
-				ir3_fixup_src_type(ssa(dst->regs[1]));
-				dst->regs[1]->flags |= IR3_REG_HALF;
+				ir3_set_dst_type(ssa(dst->srcs[0]), true);
+				ir3_fixup_src_type(ssa(dst->srcs[0]));
+				dst->srcs[0]->flags |= IR3_REG_HALF;
 			}
 		}
 	}
@@ -293,7 +293,7 @@ ir3_put_dst(struct ir3_context *ctx, nir_dest *dst)
 static unsigned
 dest_flags(struct ir3_instruction *instr)
 {
-	return instr->regs[0]->flags & (IR3_REG_HALF | IR3_REG_SHARED);
+	return instr->dsts[0]->flags & (IR3_REG_HALF | IR3_REG_SHARED);
 }
 
 struct ir3_instruction *
@@ -308,7 +308,7 @@ ir3_create_collect(struct ir3_context *ctx, struct ir3_instruction *const *arr,
 
 	unsigned flags = dest_flags(arr[0]);
 
-	collect = ir3_instr_create(block, OPC_META_COLLECT, 1 + arrsz);
+	collect = ir3_instr_create(block, OPC_META_COLLECT, 1, arrsz);
 	__ssa_dst(collect)->flags |= flags;
 	for (unsigned i = 0; i < arrsz; i++) {
 		struct ir3_instruction *elem = arr[i];
@@ -337,7 +337,7 @@ ir3_create_collect(struct ir3_context *ctx, struct ir3_instruction *const *arr,
 		 * scalar registers.
 		 *
 		 */
-		if (elem->regs[0]->flags & IR3_REG_ARRAY) {
+		if (elem->dsts[0]->flags & IR3_REG_ARRAY) {
 			type_t type = (flags & IR3_REG_HALF) ? TYPE_U16 : TYPE_U32;
 			elem = ir3_MOV(block, elem, type);
 		}
@@ -346,7 +346,7 @@ ir3_create_collect(struct ir3_context *ctx, struct ir3_instruction *const *arr,
 		__ssa_src(collect, elem, flags);
 	}
 
-	collect->regs[0]->wrmask = MASK(arrsz);
+	collect->dsts[0]->wrmask = MASK(arrsz);
 
 	return collect;
 }
@@ -358,7 +358,7 @@ void
 ir3_split_dest(struct ir3_block *block, struct ir3_instruction **dst,
 		struct ir3_instruction *src, unsigned base, unsigned n)
 {
-	if ((n == 1) && (src->regs[0]->wrmask == 0x1) &&
+	if ((n == 1) && (src->dsts[0]->wrmask == 0x1) &&
 		/* setup_input needs ir3_split_dest to generate a SPLIT instruction */
 		src->opc != OPC_META_INPUT) {
 		dst[0] = src;
@@ -367,10 +367,10 @@ ir3_split_dest(struct ir3_block *block, struct ir3_instruction **dst,
 	}
 
 	if (src->opc == OPC_META_COLLECT) {
-		debug_assert((base + n) < src->regs_count);
+		debug_assert((base + n) <= src->srcs_count);
 
 		for (int i = 0; i < n; i++) {
-			dst[i] = ssa(src->regs[i + base + 1]);
+			dst[i] = ssa(src->srcs[i + base]);
 		}
 
 		return;
@@ -380,12 +380,12 @@ ir3_split_dest(struct ir3_block *block, struct ir3_instruction **dst,
 
 	for (int i = 0, j = 0; i < n; i++) {
 		struct ir3_instruction *split =
-				ir3_instr_create(block, OPC_META_SPLIT, 2);
+				ir3_instr_create(block, OPC_META_SPLIT, 1, 1);
 		__ssa_dst(split)->flags |= flags;
 		__ssa_src(split, src, flags);
 		split->split.off = i + base;
 
-		if (src->regs[0]->wrmask & (1 << (i + base)))
+		if (src->dsts[0]->wrmask & (1 << (i + base)))
 			dst[j++] = split;
 	}
 }
@@ -403,10 +403,10 @@ ir3_context_error(struct ir3_context *ctx, const char *format, ...)
 		char *msg = ralloc_vasprintf(errors, format, ap);
 		_mesa_hash_table_insert(errors, ctx->cur_instr, msg);
 	} else {
-		_debug_vprintf(format, ap);
+		mesa_loge_v(format, ap);
 	}
 	va_end(ap);
-	nir_print_shader_annotated(ctx->s, stdout, errors);
+	nir_log_shader_annotated(ctx->s, errors);
 	ralloc_free(errors);
 	ctx->error = true;
 	unreachable("");
@@ -443,11 +443,10 @@ create_addr0(struct ir3_block *block, struct ir3_instruction *src, int align)
 		return NULL;
 	}
 
-	instr->regs[0]->flags |= IR3_REG_HALF;
+	instr->dsts[0]->flags |= IR3_REG_HALF;
 
 	instr = ir3_MOV(block, instr, TYPE_S16);
-	instr->regs[0]->num = regid(REG_A0, 0);
-	instr->regs[0]->flags &= ~IR3_REG_SSA;
+	instr->dsts[0]->num = regid(REG_A0, 0);
 
 	return instr;
 }
@@ -457,8 +456,7 @@ create_addr1(struct ir3_block *block, unsigned const_val)
 {
 	struct ir3_instruction *immed = create_immed_typed(block, const_val, TYPE_U16);
 	struct ir3_instruction *instr = ir3_MOV(block, immed, TYPE_U16);
-	instr->regs[0]->num = regid(REG_A0, 1);
-	instr->regs[0]->flags &= ~IR3_REG_SSA;
+	instr->dsts[0]->num = regid(REG_A0, 1);
 	return instr;
 }
 
@@ -520,8 +518,8 @@ ir3_get_predicate(struct ir3_context *ctx, struct ir3_instruction *src)
 	cond->cat2.condition = IR3_COND_NE;
 
 	/* condition always goes in predicate register: */
-	cond->regs[0]->num = regid(REG_P0, 0);
-	cond->regs[0]->flags &= ~IR3_REG_SSA;
+	cond->dsts[0]->num = regid(REG_P0, 0);
+	cond->dsts[0]->flags &= ~IR3_REG_SSA;
 
 	return cond;
 }
@@ -573,7 +571,7 @@ ir3_create_array_load(struct ir3_context *ctx, struct ir3_array *arr, int n,
 	struct ir3_register *src;
 	unsigned flags = 0;
 
-	mov = ir3_instr_create(block, OPC_MOV, 2);
+	mov = ir3_instr_create(block, OPC_MOV, 1, 1);
 	if (arr->half) {
 		mov->cat1.src_type = TYPE_U16;
 		mov->cat1.dst_type = TYPE_U16;
@@ -586,12 +584,14 @@ ir3_create_array_load(struct ir3_context *ctx, struct ir3_array *arr, int n,
 	mov->barrier_class = IR3_BARRIER_ARRAY_R;
 	mov->barrier_conflict = IR3_BARRIER_ARRAY_W;
 	__ssa_dst(mov)->flags |= flags;
-	src = ir3_reg_create(mov, 0, IR3_REG_ARRAY |
+	src = ir3_src_create(mov, 0, IR3_REG_ARRAY |
 			COND(address, IR3_REG_RELATIV) | flags);
-	src->def = arr->last_write;
+	src->def = (arr->last_write && arr->last_write->instr->block == block) ?
+		arr->last_write : NULL;
 	src->size  = arr->length;
 	src->array.id = arr->id;
 	src->array.offset = n;
+	src->array.base = INVALID_REG;
 
 	if (address)
 		ir3_instr_set_address(mov, address);
@@ -616,16 +616,19 @@ ir3_create_array_store(struct ir3_context *ctx, struct ir3_array *arr, int n,
 	 * since that creates a situation that RA can't really handle properly.
 	 */
 	if (!address && !is_meta(src)) {
-		dst = src->regs[0];
+		dst = src->dsts[0];
 
 		src->barrier_class |= IR3_BARRIER_ARRAY_W;
 		src->barrier_conflict |= IR3_BARRIER_ARRAY_R | IR3_BARRIER_ARRAY_W;
 
 		dst->flags |= IR3_REG_ARRAY;
-		dst->def = arr->last_write;
 		dst->size = arr->length;
 		dst->array.id = arr->id;
 		dst->array.offset = n;
+		dst->array.base = INVALID_REG;
+
+		if (arr->last_write && arr->last_write->instr->block == src->block)
+			ir3_reg_set_last_array(src, dst, arr->last_write);
 
 		arr->last_write = dst;
 
@@ -634,7 +637,7 @@ ir3_create_array_store(struct ir3_context *ctx, struct ir3_array *arr, int n,
 		return;
 	}
 
-	mov = ir3_instr_create(block, OPC_MOV, 2);
+	mov = ir3_instr_create(block, OPC_MOV, 1, 1);
 	if (arr->half) {
 		mov->cat1.src_type = TYPE_U16;
 		mov->cat1.dst_type = TYPE_U16;
@@ -645,15 +648,18 @@ ir3_create_array_store(struct ir3_context *ctx, struct ir3_array *arr, int n,
 	}
 	mov->barrier_class = IR3_BARRIER_ARRAY_W;
 	mov->barrier_conflict = IR3_BARRIER_ARRAY_R | IR3_BARRIER_ARRAY_W;
-	dst = ir3_reg_create(mov, 0, IR3_REG_DEST | IR3_REG_SSA | IR3_REG_ARRAY |
+	dst = ir3_dst_create(mov, 0, IR3_REG_SSA | IR3_REG_ARRAY |
 			flags |
 			COND(address, IR3_REG_RELATIV));
-	dst->def = arr->last_write;
 	dst->instr = mov;
 	dst->size  = arr->length;
 	dst->array.id = arr->id;
 	dst->array.offset = n;
-	ir3_reg_create(mov, 0, IR3_REG_SSA | flags)->def = src->regs[0];
+	dst->array.base = INVALID_REG;
+	ir3_src_create(mov, 0, IR3_REG_SSA | flags)->def = src->dsts[0];
+
+	if (arr->last_write && arr->last_write->instr->block == block)
+		ir3_reg_set_last_array(mov, dst, arr->last_write);
 
 	if (address)
 		ir3_instr_set_address(mov, address);

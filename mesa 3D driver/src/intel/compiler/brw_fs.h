@@ -478,6 +478,7 @@ public:
                      const brw::performance &perf,
                      struct brw_compile_stats *stats);
    void add_const_data(void *data, unsigned size);
+   void add_resume_sbt(unsigned num_resume_shaders, uint64_t *sbt);
    const unsigned *get_assembly();
 
 private:
@@ -595,14 +596,14 @@ namespace brw {
          const fs_reg tmp = bld.vgrf(type);
          const brw::fs_builder hbld = bld.exec_all().group(16, 0);
          const unsigned m = bld.dispatch_width() / hbld.dispatch_width();
-         fs_reg *const components = new fs_reg[m];
+         fs_reg components[2];
+         assert(m <= 2);
 
          for (unsigned g = 0; g < m; g++)
                components[g] = retype(brw_vec8_grf(regs[g], 0), type);
 
          hbld.LOAD_PAYLOAD(tmp, components, m, 0);
 
-         delete[] components;
          return tmp;
 
       } else {

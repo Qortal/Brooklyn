@@ -1179,44 +1179,48 @@ cso_set_vertex_buffers_and_elements(struct cso_context *ctx,
    cso_set_vertex_elements_direct(ctx, velems);
 }
 
+static bool
+cso_set_sampler(struct cso_context *ctx, enum pipe_shader_type shader_stage,
+                unsigned idx, const struct pipe_sampler_state *templ)
+{
+   unsigned key_size = sizeof(struct pipe_sampler_state);
+   unsigned hash_key = cso_construct_key((void*)templ, key_size);
+   struct cso_sampler *cso;
+   struct cso_hash_iter iter =
+      cso_find_state_template(&ctx->cache,
+                              hash_key, CSO_SAMPLER,
+                              (void *) templ, key_size);
+
+   if (cso_hash_iter_is_null(iter)) {
+      cso = MALLOC(sizeof(struct cso_sampler));
+      if (!cso)
+         return false;
+
+      memcpy(&cso->state, templ, sizeof(*templ));
+      cso->data = ctx->pipe->create_sampler_state(ctx->pipe, &cso->state);
+      cso->hash_key = hash_key;
+
+      iter = cso_insert_state(&ctx->cache, hash_key, CSO_SAMPLER, cso);
+      if (cso_hash_iter_is_null(iter)) {
+         FREE(cso);
+         return false;
+      }
+   } else {
+      cso = cso_hash_iter_data(iter);
+   }
+
+   ctx->samplers[shader_stage].cso_samplers[idx] = cso;
+   ctx->samplers[shader_stage].samplers[idx] = cso->data;
+   return true;
+}
+
 void
 cso_single_sampler(struct cso_context *ctx, enum pipe_shader_type shader_stage,
                    unsigned idx, const struct pipe_sampler_state *templ)
 {
-   if (templ) {
-      unsigned key_size = sizeof(struct pipe_sampler_state);
-      unsigned hash_key = cso_construct_key((void*)templ, key_size);
-      struct cso_sampler *cso;
-      struct cso_hash_iter iter =
-         cso_find_state_template(&ctx->cache,
-                                 hash_key, CSO_SAMPLER,
-                                 (void *) templ, key_size);
-
-      if (cso_hash_iter_is_null(iter)) {
-         cso = MALLOC(sizeof(struct cso_sampler));
-         if (!cso)
-            return;
-
-         memcpy(&cso->state, templ, sizeof(*templ));
-         cso->data = ctx->pipe->create_sampler_state(ctx->pipe, &cso->state);
-         cso->hash_key = hash_key;
-
-         iter = cso_insert_state(&ctx->cache, hash_key, CSO_SAMPLER, cso);
-         if (cso_hash_iter_is_null(iter)) {
-            FREE(cso);
-            return;
-         }
-      }
-      else {
-         cso = cso_hash_iter_data(iter);
-      }
-
-      ctx->samplers[shader_stage].cso_samplers[idx] = cso;
-      ctx->samplers[shader_stage].samplers[idx] = cso->data;
+   if (cso_set_sampler(ctx, shader_stage, idx, templ))
       ctx->max_sampler_seen = MAX2(ctx->max_sampler_seen, (int)idx);
-   }
 }
-
 
 /**
  * Send staged sampler state to the driver.
@@ -1248,9 +1252,41 @@ cso_set_samplers(struct cso_context *ctx,
                  unsigned nr,
                  const struct pipe_sampler_state **templates)
 {
-   for (unsigned i = 0; i < nr; i++)
-      cso_single_sampler(ctx, shader_stage, i, templates[i]);
+   int last = -1;
 
+   for (unsigned i = 0; i < nr; i++) {
+      if (!templates[i])
+         continue;
+
+      /* Reuse the same sampler state CSO if 2 consecutive sampler states
+       * are identical.
+       *
+       * The trivial case where both pointers are equal doesn't occur in
+       * frequented codepaths.
+       *
+       * Reuse rate:
+       * - Borderlands 2: 55%
+       * - Hitman: 65%
+       * - Rocket League: 75%
+       * - Tomb Raider: 50-65%
+       * - XCOM 2: 55%
+       */
+      if (last >= 0 &&
+          !memcmp(templates[i], templates[last],
+                  sizeof(struct pipe_sampler_state))) {
+         ctx->samplers[shader_stage].cso_samplers[i] =
+            ctx->samplers[shader_stage].cso_samplers[last];
+         ctx->samplers[shader_stage].samplers[i] =
+            ctx->samplers[shader_stage].samplers[last];
+      } else {
+         /* Look up the sampler state CSO. */
+         cso_set_sampler(ctx, shader_stage, i, templates[i]);
+      }
+
+      last = i;
+   }
+
+   ctx->max_sampler_seen = MAX2(ctx->max_sampler_seen, last);
    cso_single_sampler_done(ctx, shader_stage);
 }
 

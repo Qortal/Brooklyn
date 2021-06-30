@@ -1923,6 +1923,7 @@ fs_generator::generate_code(const cfg_t *cfg, int dispatch_width,
       struct brw_reg src[4], dst;
       unsigned int last_insn_offset = p->next_insn_offset;
       bool multiple_instructions_emitted = false;
+      tgl_swsb swsb = inst->sched;
 
       /* From the Broadwell PRM, Volume 7, "3D-Media-GPGPU", in the
        * "Register Region Restrictions" section: for BDW, SKL:
@@ -1957,13 +1958,32 @@ fs_generator::generate_code(const cfg_t *cfg, int dispatch_width,
          brw_set_default_exec_size(p, BRW_EXECUTE_16);
          brw_set_default_mask_control(p, BRW_MASK_DISABLE);
          brw_set_default_predicate_control(p, BRW_PREDICATE_NONE);
+         brw_set_default_swsb(p, tgl_swsb_src_dep(swsb));
          brw_MOV(p, brw_acc_reg(8), brw_imm_f(0.0f));
          last_insn_offset = p->next_insn_offset;
+         swsb = tgl_swsb_dst_dep(swsb, 1);
       }
 
       if (!is_accum_used && !inst->eot) {
          is_accum_used = inst->writes_accumulator_implicitly(devinfo) ||
                          inst->dst.is_accumulator();
+      }
+
+      /* Wa_14013745556:
+       *
+       * Always use @1 SWSB for EOT.
+       */
+      if (inst->eot && devinfo->ver >= 12) {
+         if (tgl_swsb_src_dep(swsb).mode) {
+            brw_set_default_exec_size(p, BRW_EXECUTE_1);
+            brw_set_default_mask_control(p, BRW_MASK_DISABLE);
+            brw_set_default_predicate_control(p, BRW_PREDICATE_NONE);
+            brw_set_default_swsb(p, tgl_swsb_src_dep(swsb));
+            brw_SYNC(p, TGL_SYNC_NOP);
+            last_insn_offset = p->next_insn_offset;
+         }
+
+         swsb = tgl_swsb_dst_dep(swsb, 1);
       }
 
       if (unlikely(debug_flag))
@@ -2016,7 +2036,7 @@ fs_generator::generate_code(const cfg_t *cfg, int dispatch_width,
       brw_set_default_saturate(p, inst->saturate);
       brw_set_default_mask_control(p, inst->force_writemask_all);
       brw_set_default_acc_write_control(p, inst->writes_accumulator);
-      brw_set_default_swsb(p, inst->sched);
+      brw_set_default_swsb(p, swsb);
 
       unsigned exec_size = inst->exec_size;
       if (devinfo->verx10 == 70 &&
@@ -2447,8 +2467,8 @@ fs_generator::generate_code(const cfg_t *cfg, int dispatch_width,
       }
 
       case FS_OPCODE_SCHEDULING_FENCE:
-         if (inst->sources == 0 && inst->sched.regdist == 0 &&
-                                   inst->sched.mode == TGL_SBID_NULL) {
+         if (inst->sources == 0 && swsb.regdist == 0 &&
+                                   swsb.mode == TGL_SBID_NULL) {
             if (unlikely(debug_flag))
                disasm_info->use_tail = true;
             break;
@@ -2802,6 +2822,24 @@ fs_generator::add_const_data(void *data, unsigned size)
    if (size > 0) {
       prog_data->const_data_size = size;
       prog_data->const_data_offset = brw_append_data(p, data, size, 32);
+   }
+}
+
+void
+fs_generator::add_resume_sbt(unsigned num_resume_shaders, uint64_t *sbt)
+{
+   assert(brw_shader_stage_is_bindless(stage));
+   struct brw_bs_prog_data *bs_prog_data = brw_bs_prog_data(prog_data);
+   if (num_resume_shaders > 0) {
+      bs_prog_data->resume_sbt_offset =
+         brw_append_data(p, sbt, num_resume_shaders * sizeof(uint64_t), 32);
+      for (unsigned i = 0; i < num_resume_shaders; i++) {
+         size_t offset = bs_prog_data->resume_sbt_offset + i * sizeof(*sbt);
+         assert(offset <= UINT32_MAX);
+         brw_add_reloc(p, BRW_SHADER_RELOC_SHADER_START_OFFSET,
+                       BRW_SHADER_RELOC_TYPE_U32,
+                       (uint32_t)offset, (uint32_t)sbt[i]);
+      }
    }
 }
 
