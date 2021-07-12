@@ -13,9 +13,9 @@
 #include <linux/mutex.h>
 #include <linux/property.h>
 #include <linux/slab.h>
-#include <linux/usb/typec_mux.h>
 
-#include "bus.h"
+#include "class.h"
+#include "mux.h"
 
 static bool dev_name_ends_with(struct device *dev, const char *suffix)
 {
@@ -239,7 +239,7 @@ find_mux:
 	dev = class_find_device(&typec_mux_class, NULL, fwnode,
 				mux_fwnode_match);
 
-	return dev ? to_typec_switch(dev) : ERR_PTR(-EPROBE_DEFER);
+	return dev ? to_typec_mux(dev) : ERR_PTR(-EPROBE_DEFER);
 }
 
 /**

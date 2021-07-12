@@ -97,6 +97,9 @@ struct vc4_hdmi_variant {
 	/* Callback to disable the RNG in the PHY */
 	void (*phy_rng_disable)(struct vc4_hdmi *vc4_hdmi);
 
+	/* Callback to calculate hsm clock */
+	u32 (*calc_hsm_clock)(struct vc4_hdmi *vc4_hdmi, unsigned long pixel_rate);
+
 	/* Callback to get channel map */
 	u32 (*channel_map)(struct vc4_hdmi *vc4_hdmi, u32 channel_mask);
 
@@ -111,17 +114,9 @@ struct vc4_hdmi_audio {
 	struct snd_soc_dai_link_component cpu;
 	struct snd_soc_dai_link_component codec;
 	struct snd_soc_dai_link_component platform;
-	int samplerate;
-	int channels;
 	struct snd_dmaengine_dai_dma_data dma_data;
-	struct snd_pcm_substream *substream;
-
+	struct hdmi_audio_infoframe infoframe;
 	bool streaming;
-
-	unsigned char iec_status[4];
-	const struct snd_pcm_chmap_elem *chmap;
-	unsigned int chmap_idx;
-	unsigned int max_channels;
 };
 
 /* General HDMI hardware state. */

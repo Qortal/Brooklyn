@@ -20,7 +20,7 @@
 #include <drm/drm_drv.h>
 #include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_fourcc.h>
-#include <drm/drm_gem_framebuffer_helper.h>
+#include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_plane_helper.h>
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_vblank.h>
@@ -458,15 +458,15 @@ static int vc4_fkms_margins_adj(struct drm_plane_state *pstate,
 	plane->dst_x = DIV_ROUND_CLOSEST(plane->dst_x * adjhdisplay,
 					 (int)crtc_state->mode.hdisplay);
 	plane->dst_x += left;
-	if (plane->dst_x > (int)(crtc_state->mode.hdisplay - left))
-		plane->dst_x = crtc_state->mode.hdisplay - left;
+	if (plane->dst_x > (int)(crtc_state->mode.hdisplay - right))
+		plane->dst_x = crtc_state->mode.hdisplay - right;
 
 	adjvdisplay = crtc_state->mode.vdisplay - (top + bottom);
 	plane->dst_y = DIV_ROUND_CLOSEST(plane->dst_y * adjvdisplay,
 					 (int)crtc_state->mode.vdisplay);
 	plane->dst_y += top;
-	if (plane->dst_y > (int)(crtc_state->mode.vdisplay - top))
-		plane->dst_y = crtc_state->mode.vdisplay - top;
+	if (plane->dst_y > (int)(crtc_state->mode.vdisplay - bottom))
+		plane->dst_y = crtc_state->mode.vdisplay - bottom;
 
 	plane->dst_w = DIV_ROUND_CLOSEST(plane->dst_w * adjhdisplay,
 					 crtc_state->mode.hdisplay);
@@ -480,7 +480,7 @@ static int vc4_fkms_margins_adj(struct drm_plane_state *pstate,
 }
 
 static void vc4_plane_atomic_update(struct drm_plane *plane,
-				    struct drm_plane_state *old_state)
+				    struct drm_atomic_state *old_state)
 {
 	struct drm_plane_state *state = plane->state;
 
@@ -496,7 +496,7 @@ static void vc4_plane_atomic_update(struct drm_plane *plane,
 }
 
 static void vc4_plane_atomic_disable(struct drm_plane *plane,
-				     struct drm_plane_state *old_state)
+				     struct drm_atomic_state *old_state)
 {
 	struct drm_plane_state *state = plane->state;
 	struct vc4_fkms_plane *vc4_plane = to_vc4_fkms_plane(plane);
@@ -660,8 +660,9 @@ static int vc4_plane_to_mb(struct drm_plane *plane,
 }
 
 static int vc4_plane_atomic_check(struct drm_plane *plane,
-				  struct drm_plane_state *state)
+				  struct drm_atomic_state *old_state)
 {
+	struct drm_plane_state *state = plane->state;
 	struct vc4_fkms_plane *vc4_plane = to_vc4_fkms_plane(plane);
 
 	if (!plane_enabled(state))
@@ -759,7 +760,7 @@ static const struct drm_plane_funcs vc4_plane_funcs = {
 };
 
 static const struct drm_plane_helper_funcs vc4_plane_helper_funcs = {
-	.prepare_fb = drm_gem_fb_prepare_fb,
+	.prepare_fb = drm_gem_plane_helper_prepare_fb,
 	.cleanup_fb = NULL,
 	.atomic_check = vc4_plane_atomic_check,
 	.atomic_update = vc4_plane_atomic_update,
@@ -999,7 +1000,7 @@ static void vc4_crtc_disable(struct drm_crtc *crtc,
 	 */
 
 	drm_atomic_crtc_for_each_plane(plane, crtc)
-		vc4_plane_atomic_disable(plane, plane->state);
+		vc4_plane_atomic_disable(plane, state);
 
 	/*
 	 * Make sure we issue a vblank event after disabling the CRTC if
