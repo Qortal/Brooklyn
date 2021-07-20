@@ -30,6 +30,7 @@
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 
+#include <drm/drm_aperture.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_fb_cma_helper.h>
@@ -58,10 +59,8 @@ void __iomem *vc4_ioremap_regs(struct platform_device *dev, int index)
 
 	res = platform_get_resource(dev, IORESOURCE_MEM, index);
 	map = devm_ioremap_resource(&dev->dev, res);
-	if (IS_ERR(map)) {
-		DRM_ERROR("Failed to map registers: %ld\n", PTR_ERR(map));
+	if (IS_ERR(map))
 		return map;
-	}
 
 	return map;
 }
@@ -294,14 +293,16 @@ static int vc4_drm_bind(struct device *dev)
 
 	node = of_parse_phandle(dev->of_node, "raspberrypi,firmware", 0);
 	if (node) {
-		vc4->firmware = rpi_firmware_get(dev->of_node);
+		vc4->firmware = rpi_firmware_get(node);
 		of_node_put(node);
 
 		if (!vc4->firmware)
 			return -EPROBE_DEFER;
 	}
 
-	drm_fb_helper_remove_conflicting_framebuffers(NULL, "vc4drmfb", false);
+	ret = drm_aperture_remove_framebuffers(false, "vc4drmfb");
+	if (ret)
+		goto unbind_all;
 
 	if (vc4->firmware && !firmware_kms()) {
 		ret = rpi_firmware_property(vc4->firmware,
