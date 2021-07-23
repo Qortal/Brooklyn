@@ -1870,7 +1870,7 @@ static int vc4_fkms_bind(struct device *dev, struct device *master, void *data)
 		fkms->bcm2711 = true;
 
 	firmware_node = of_parse_phandle(dev->of_node, "brcm,firmware", 0);
-	vc4->firmware = rpi_firmware_get(firmware_node);
+	vc4->firmware = devm_rpi_firmware_get(&pdev->dev, firmware_node);
 	if (!vc4->firmware) {
 		DRM_DEBUG("Failed to get Raspberry Pi firmware reference.\n");
 		return -EPROBE_DEFER;
