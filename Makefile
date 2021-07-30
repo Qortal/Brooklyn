@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 5
-PATCHLEVEL = 14
+PATCHLEVEL = 16
 SUBLEVEL = 0
 EXTRAVERSION = -rc2
-NAME = Opossums on Parade
+NAME = BrooklynR dsat
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
