@@ -34,19 +34,6 @@ Note: Use raspi-config to setup your wifi or add plamsa desktop network manager 
 
 You can get a release and flash it directly on your USB 3 hard drive with Balena Etcher. The default image size is meant for a 32GB microSD card. If you have a bigger microSD card then after login do a "sudo raspi-config", head over to Advacned and resize the file system. Same can be done for a GPT partitioned USB 3 hard drive/SSD. Keep in mind that MBR drives have a size limit per block partition. For 4TB or bigger drive you might want to use GPT instead. If you have purchased a Raspberry Pi 4 elsewhere then you might have to flash the boot loader to do a mass storaeg boot. Ask The Moose on the loose for help.
 
-Want to send some tip for continued development or features / apps ported on Brooklyn?
-
-QORT: Qgwb5SLVGAperXAMoVNBDvGpVAxTVY7f6F
-DOGE: DJTRkmhwhG7W8t7WvAddZBnNkKWML6nHqJ
-LTC: LNAEh8neaULnXVZwaMGQLmKyaEDTuTDwkv
-TRON: TPApU3DDHGGpCXx2xyzKwzbeze9FQ2My9K
-Monero: 8AAwtBUuf9qbFttEZevtkpScq1K5XG5iEjTWE5VjAea6gSFvDAiZzNAT6GWSt8bNLSHxvi57j3b2bYzC2KGgfeD664EzRHk
-ETH: 0xa69b98d7241006c2f23e895d81fdc7f562a8e378
-USDT ERC20 : 0xa69b98d7241006c2f23e895d81fdc7f562a8e378
-BTC: 13zp3jdZ5utX5vmZaZiDyJtam8daS4uBpC
-
-
-
 Linux Kernel Qortal 5.12.6-accelerated+stable
 =============================================
 
