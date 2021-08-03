@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 5
 PATCHLEVEL = 16
-SUBLEVEL = 0
-EXTRAVERSION = -rc2
-NAME = BrooklynR dsat
+SUBLEVEL = 1
+EXTRAVERSION = -rc7
+NAME = BrooklynR NXT
 
 # *DOCUMENTATION*
+# Public Domain Satellite Project removal.
+# This Linux Kernel is now Qortal only without aerospace feature.
 # To see a list of typical targets execute "make help"
 # More info can be located in ./README
 # Comments in this file are targeted only to the developer, do not
