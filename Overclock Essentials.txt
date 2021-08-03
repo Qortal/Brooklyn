@@ -1,0 +1,28 @@
+Check what is your actual stable stock clock 
+vcgencmd measure_clock arm 
+Check temps on stock heatsink or with fan 
+vcgencmd measure_temp 
+
+If temps are under 50 degrees C then step up a notch 
+sudo nano /boot/config.txt 
+Paste after the first line 
+over_voltage=2
+arm_freq=1750
+
+Check temps again <br/>
+vcgencmd measure_temp or watch -n 2 vcgencmd measure_temp 
+
+If temps stay under 50 then you can step up to 2.0 Ghz 
+over_voltage=5
+arm_freq=2000
+
+Be sure to use a quality power cable and power delivery capable brick and not the shipped one as it will not be able to deliver correct amperes and volrages. 
+
+Never let your Raspberry Pi 4 run at high temps as it will reduce the life. 
+
+https://www.amazon.com/Charger-TECKNET-Foldable-Adapter-Compatible/dp/B08YJLMQGD/ref=sr_1_3?dchild=1&keywords=aukey+charger&qid=1622128103&sr=8-3
+https://www.amazon.com/Charger-RAVPower-Adapter-Compatible-MacBook/dp/B07PLR7T1M/ref=sr_1_4?dchild=1&keywords=aukey+charger&qid=1622128103&sr=8-4
+https://www.amazon.com/Charger-Anker-Adapter-PowerPort-iPhone/dp/B07WRKXQ8W/ref=sr_1_5?dchild=1&keywords=aukey+charger&qid=1622128103&sr=8-5
+
+
+
