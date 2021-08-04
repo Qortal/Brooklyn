@@ -1,6 +1,6 @@
 #!/bin/sh
 
 for x in "$@" ; do
-	chown root "$DESTDIR/$x"
+	chown nobody "$DESTDIR/$x"
 	chmod a=rx,u+xs "$DESTDIR/$x"
 done
