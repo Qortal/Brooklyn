@@ -1,11 +1,11 @@
-BrooklynR NXT, The Blockchain Linux 5.16.1 by Scare Crow
+BrooklynR NXT, The Blockchain Linux 5.16.2 by Scare Crow
 ========================================================
 
-* BrooklynR NXT Linux Community 5.16.1 LTS-LE
-* V1.2 BrooklynR NXT 5.16.0 will be based on LXQT community code
+* BrooklynR NXT Linux Community 5.16.2 LTS-LE
+* V1.2 BrooklynR NXT 5.16.x will be based on LXQT community code
 * V 1.0 is based off a variety of Desktops with Brooklyn The Moose 5.12.6
 * V 1.0 Jaymen is based on headless R Kernel 5.13.10 LTS
-* RussCade 1.0 is based on optimized BrooklynR for Qortal and game emulators
+* RussCade 1.0 is based on optimized BrooklynR for Qortal minting and game emulators
 * V1.1 XFCE is based on  Brooklyn Jackwagon 5.12.10 LTS
 * V1.1 MATE-LXDE is based on Brookltn Plumbus 5.12.10 LTS
 
@@ -30,7 +30,7 @@ Note: Use raspi-config to setup your wifi or add plamsa desktop network manager 
 
 You can get a release and flash it directly on your USB 3 hard drive with Balena Etcher. The default image size is meant for a 32GB microSD card. If you have a bigger microSD card then after login do a "sudo raspi-config", head over to Advacned and resize the file system. Same can be done for a GPT partitioned USB 3 hard drive/SSD. Keep in mind that MBR drives have a size limit per block partition. For 4TB or bigger drive you might want to use GPT instead. If you have purchased a Raspberry Pi 4 elsewhere then you might have to flash the boot loader to do a mass storaeg boot. Ask The Moose on the loose for help.
 
-Linux Kernel Qortal 5.16.0
+Linux Qortal Kernel 5.16.2
 ==========================
 
 There are several guides for kernel developers and users. These guides can
