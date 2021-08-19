@@ -47,13 +47,11 @@ panvk_varying_hw_format(const struct panvk_device *dev,
    case VARYING_SLOT_PSIZ:
       return (MALI_R16F << 12) |
              (pdev->quirks & HAS_SWIZZLES ?
-              panfrost_get_default_swizzle(1) :
-              panfrost_bifrost_swizzle(1));
+              panfrost_get_default_swizzle(1) : 0);
    case VARYING_SLOT_POS:
       return ((fs ? MALI_RGBA32F : MALI_SNAP_4) << 12) |
              (pdev->quirks & HAS_SWIZZLES ?
-              panfrost_get_default_swizzle(4) :
-              panfrost_bifrost_swizzle(4));
+              panfrost_get_default_swizzle(4) : 0);
    default:
       assert(!panvk_varying_is_builtin(stage, loc));
       return pdev->formats[varyings->varying[loc].format].hw;
@@ -515,6 +513,7 @@ panvk_emit_bifrost_blend(const struct panvk_device *dev,
    const struct pan_blend_state *blend = &pipeline->blend.state;
    const struct panfrost_device *pdev = &dev->physical_device->pdev;
    const struct pan_blend_rt_state *rts = &blend->rts[rt];
+   bool dithered = false;
 
    pan_pack(bd, BLEND, cfg) {
       if (!blend->rt_count || !rts->equation.color_mask) {
@@ -525,7 +524,7 @@ panvk_emit_bifrost_blend(const struct panvk_device *dev,
 
       cfg.srgb = util_format_is_srgb(rts->format);
       cfg.load_destination = pan_blend_reads_dest(blend->rts[rt].equation);
-      cfg.round_to_fb_precision = true;
+      cfg.round_to_fb_precision = !dithered;
 
       const struct util_format_description *format_desc =
          util_format_description(rts->format);
@@ -554,7 +553,7 @@ panvk_emit_bifrost_blend(const struct panvk_device *dev,
        */
       cfg.bifrost.internal.fixed_function.num_comps = 4;
       cfg.bifrost.internal.fixed_function.conversion.memory_format =
-         panfrost_format_to_bifrost_blend(pdev, rts->format);
+         panfrost_format_to_bifrost_blend(pdev, rts->format, dithered);
       cfg.bifrost.internal.fixed_function.conversion.register_format =
          bifrost_blend_type_from_nir(pipeline->fs.info.bifrost.blend[rt].type);
       cfg.bifrost.internal.fixed_function.rt = rt;
@@ -790,7 +789,6 @@ unsigned
 panvk_emit_fb(const struct panvk_device *dev,
               const struct panvk_batch *batch,
               const struct panvk_subpass *subpass,
-              const struct panvk_pipeline *pipeline,
               const struct panvk_framebuffer *fb,
               const struct panvk_clear_value *clears,
               const struct pan_tls_info *tlsinfo,

@@ -153,8 +153,7 @@ sim_syncobj_create(struct virtgpu *gpu, bool signaled)
          return 0;
       }
 
-      util_idalloc_init(&sim.ida);
-      util_idalloc_resize(&sim.ida, 32);
+      util_idalloc_init(&sim.ida, 32);
 
       struct drm_virtgpu_execbuffer args = {
          .flags = VIRTGPU_EXECBUF_FENCE_FD_OUT,
@@ -540,6 +539,17 @@ sim_submit(struct virtgpu *gpu, const struct vn_renderer_submit *submit)
          if (ret)
             break;
       }
+   }
+
+   if (!submit->batch_count && submit->bo_count) {
+      struct drm_virtgpu_execbuffer args = {
+         .bo_handles = (uintptr_t)gem_handles,
+         .num_bo_handles = submit->bo_count,
+      };
+
+      ret = drmIoctl(gpu->fd, DRM_IOCTL_VIRTGPU_EXECBUFFER, &args);
+      if (ret)
+         vn_log(gpu->instance, "failed to execbuffer: %s", strerror(errno));
    }
 
    free(gem_handles);

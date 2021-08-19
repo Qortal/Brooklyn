@@ -287,6 +287,9 @@ struct gfx9_surf_layout {
          /* For DCC retiling. */
          struct gfx9_meta_equation dcc_equation; /* 2D only */
          struct gfx9_meta_equation display_dcc_equation;
+
+         /* For FCE compute. */
+         struct gfx9_meta_equation cmask_equation; /* 2D only */
       } color;
 
       /* Z/S */
@@ -368,6 +371,8 @@ struct radeon_surf {
 
    uint32_t cmask_size;
    uint32_t cmask_slice_size;
+   uint16_t cmask_pitch; /* GFX9+ */
+   uint16_t cmask_height; /* GFX9+ */
 
    /* All buffers combined. */
    uint64_t meta_offset; /* DCC or HTILE */
@@ -471,6 +476,14 @@ nir_ssa_def *ac_nir_dcc_addr_from_coord(nir_builder *b, const struct radeon_info
                                         nir_ssa_def *dcc_slice_size,
                                         nir_ssa_def *x, nir_ssa_def *y, nir_ssa_def *z,
                                         nir_ssa_def *sample, nir_ssa_def *pipe_xor);
+
+nir_ssa_def *ac_nir_cmask_addr_from_coord(nir_builder *b, const struct radeon_info *info,
+                                        struct gfx9_meta_equation *equation,
+                                        nir_ssa_def *cmask_pitch, nir_ssa_def *cmask_height,
+                                        nir_ssa_def *cmask_slice_size,
+                                        nir_ssa_def *x, nir_ssa_def *y, nir_ssa_def *z,
+                                        nir_ssa_def *pipe_xor,
+                                        nir_ssa_def **bit_position);
 
 nir_ssa_def *ac_nir_htile_addr_from_coord(nir_builder *b, const struct radeon_info *info,
                                           struct gfx9_meta_equation *equation,

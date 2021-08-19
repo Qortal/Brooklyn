@@ -32,6 +32,10 @@
 
 #include "zink_fence.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct pipe_reference;
 
 struct zink_buffer_view;
@@ -54,12 +58,11 @@ struct zink_batch_usage {
 
 /* not real api don't use */
 bool
-batch_ptr_add_usage(struct zink_batch *batch, struct set *s, void *ptr, struct zink_batch_usage **u);
+batch_ptr_add_usage(struct zink_batch *batch, struct set *s, void *ptr);
 
 struct zink_batch_state {
    struct zink_fence fence;
    struct pipe_reference reference;
-   unsigned draw_count;
 
    struct zink_batch_usage usage;
    struct zink_context *ctx;
@@ -71,9 +74,8 @@ struct zink_batch_state {
    VkSemaphore sem;
 
    struct util_queue_fence flush_completed;
-   unsigned compute_count;
 
-   struct zink_resource *flush_res;
+   struct pipe_resource *flush_res;
 
    struct set *fbs;
    struct set *programs;
@@ -104,6 +106,8 @@ struct zink_batch {
    struct zink_batch_state *state;
 
    struct zink_batch_usage *last_batch_usage;
+
+   unsigned work_count;
 
    bool has_work;
    bool in_rp; //renderpass is currently active
@@ -143,9 +147,17 @@ void
 zink_end_batch(struct zink_context *ctx, struct zink_batch *batch);
 
 void
+zink_batch_resource_usage_set(struct zink_batch *batch, struct zink_resource *res, bool write);
+
+void
 zink_batch_reference_resource_rw(struct zink_batch *batch,
                                  struct zink_resource *res,
                                  bool write);
+void
+zink_batch_reference_resource(struct zink_batch *batch, struct zink_resource *res);
+
+void
+zink_batch_reference_resource_move(struct zink_batch *batch, struct zink_resource *res);
 
 void
 zink_batch_reference_sampler_view(struct zink_batch *batch,
@@ -211,9 +223,16 @@ zink_batch_usage_exists(const struct zink_batch_usage *u)
 }
 
 bool
+zink_screen_usage_check_completion(struct zink_screen *screen, const struct zink_batch_usage *u);
+
+bool
 zink_batch_usage_check_completion(struct zink_context *ctx, const struct zink_batch_usage *u);
 
 void
 zink_batch_usage_wait(struct zink_context *ctx, struct zink_batch_usage *u);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

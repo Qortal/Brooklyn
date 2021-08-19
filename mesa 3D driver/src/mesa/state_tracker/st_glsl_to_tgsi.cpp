@@ -2458,6 +2458,7 @@ glsl_to_tgsi_visitor::visit_expression(ir_expression* ir, st_src_reg *op)
    case ir_binop_carry:
    case ir_binop_borrow:
    case ir_unop_ssbo_unsized_array_length:
+   case ir_unop_implicitly_sized_array_length:
    case ir_unop_atan:
    case ir_binop_atan2:
    case ir_unop_clz:
@@ -5981,9 +5982,9 @@ dst_register(struct st_translate *t, gl_register_file file, unsigned index,
             find_inout_array(t->output_decls,
                              t->num_output_decls, array_id);
          unsigned mesa_index = decl->mesa_index;
-         int slot = t->outputMapping[mesa_index];
+         ubyte slot = t->outputMapping[mesa_index];
 
-         assert(slot != -1 && t->outputs[slot].File == TGSI_FILE_OUTPUT);
+         assert(slot != 0xff && t->outputs[slot].File == TGSI_FILE_OUTPUT);
 
          struct ureg_dst dst = t->outputs[slot];
          dst.ArrayID = array_id;
@@ -6116,9 +6117,9 @@ translate_src(struct st_translate *t, const st_src_reg *src_reg)
                                                     t->num_input_decls,
                                                     src_reg->array_id);
          unsigned mesa_index = decl->mesa_index;
-         int slot = t->inputMapping[mesa_index];
+         ubyte slot = t->inputMapping[mesa_index];
 
-         assert(slot != -1 && t->inputs[slot].File == TGSI_FILE_INPUT);
+         assert(slot != 0xff && t->inputs[slot].File == TGSI_FILE_INPUT);
 
          src = t->inputs[slot];
          src.ArrayID = src_reg->array_id;

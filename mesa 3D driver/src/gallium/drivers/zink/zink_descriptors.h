@@ -32,6 +32,9 @@
 #include "util/simple_mtx.h"
 
 #include "zink_batch.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #ifndef ZINK_SHADER_COUNT
 #define ZINK_SHADER_COUNT (PIPE_SHADER_TYPES - 1)
@@ -92,7 +95,7 @@ struct zink_descriptor_layout_key {
 
 struct zink_descriptor_layout {
    VkDescriptorSetLayout layout;
-   VkDescriptorUpdateTemplateKHR template;
+   VkDescriptorUpdateTemplateKHR desc_template;
 };
 
 struct zink_descriptor_pool_key {
@@ -280,4 +283,8 @@ zink_descriptors_deinit_lazy(struct zink_context *ctx);
 
 void
 zink_descriptor_set_update_lazy(struct zink_context *ctx, struct zink_program *pg, enum zink_descriptor_type type, VkDescriptorSet set);
+#ifdef __cplusplus
+}
+#endif
+
 #endif

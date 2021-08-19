@@ -409,6 +409,9 @@ static uint32_t
 iris_resource_alloc_flags(const struct iris_screen *screen,
                           const struct pipe_resource *templ)
 {
+   if (templ->flags & IRIS_RESOURCE_FLAG_DEVICE_MEM)
+      return 0;
+
    uint32_t flags = 0;
 
    switch (templ->usage) {
@@ -537,10 +540,10 @@ map_aux_addresses(struct iris_screen *screen, struct iris_resource *res,
          res->aux.extra_aux.offset : res->aux.offset;
       const uint64_t format_bits =
          intel_aux_map_format_bits(res->surf.tiling, format, plane);
-      intel_aux_map_add_mapping(aux_map_ctx, res->bo->gtt_offset + res->offset,
-                                res->aux.bo->gtt_offset + aux_offset,
+      intel_aux_map_add_mapping(aux_map_ctx, res->bo->address + res->offset,
+                                res->aux.bo->address + aux_offset,
                                 res->surf.size_B, format_bits);
-      res->bo->aux_map_address = res->aux.bo->gtt_offset;
+      res->bo->aux_map_address = res->aux.bo->address;
    }
 }
 
@@ -937,9 +940,7 @@ iris_resource_finish_aux_import(struct pipe_screen *pscreen,
       iris_bo_reference(r[2]->aux.clear_color_bo);
       r[0]->aux.clear_color_bo = r[2]->aux.clear_color_bo;
       r[0]->aux.clear_color_offset = r[2]->aux.clear_color_offset;
-      memcpy(res->aux.clear_color.f32,
-             iris_bo_map(NULL, res->aux.clear_color_bo, MAP_READ|MAP_RAW) +
-             res->aux.clear_color_offset, sizeof(res->aux.clear_color.f32));
+      r[0]->aux.clear_color_unknown = true;
    } else if (num_main_planes == 2 && num_planes == 4) {
       import_aux_info(r[0], r[2]);
       import_aux_info(r[1], r[3]);
@@ -1276,6 +1277,50 @@ iris_resource_from_memobj(struct pipe_screen *pscreen,
    return &res->base.b;
 }
 
+/* Handle combined depth/stencil with memory objects.
+ *
+ * This function is modeled after u_transfer_helper_resource_create.
+ */
+static struct pipe_resource *
+iris_resource_from_memobj_wrapper(struct pipe_screen *pscreen,
+                                  const struct pipe_resource *templ,
+                                  struct pipe_memory_object *pmemobj,
+                                  uint64_t offset)
+{
+   enum pipe_format format = templ->format;
+
+   /* Normal case, no special handling: */
+   if (!(util_format_is_depth_and_stencil(format)))
+      return iris_resource_from_memobj(pscreen, templ, pmemobj, offset);
+
+   struct pipe_resource t = *templ;
+   t.format = util_format_get_depth_only(format);
+
+   struct pipe_resource *prsc =
+      iris_resource_from_memobj(pscreen, &t, pmemobj, offset);
+   if (!prsc)
+      return NULL;
+
+   struct iris_resource *res = (struct iris_resource *) prsc;
+
+   /* Stencil offset in the buffer without aux. */
+   uint64_t s_offset = offset +
+      ALIGN(res->surf.size_B, res->surf.alignment_B);
+
+   prsc->format = format; /* frob the format back to the "external" format */
+
+   t.format = PIPE_FORMAT_S8_UINT;
+   struct pipe_resource *stencil =
+      iris_resource_from_memobj(pscreen, &t, pmemobj, s_offset);
+   if (!stencil) {
+      iris_resource_destroy(pscreen, prsc);
+      return NULL;
+   }
+
+   iris_resource_set_separate_stencil(prsc, stencil);
+   return prsc;
+}
+
 static void
 iris_flush_resource(struct pipe_context *ctx, struct pipe_resource *resource)
 {
@@ -1558,7 +1603,7 @@ iris_invalidate_resource(struct pipe_context *ctx,
    struct iris_bo *old_bo = res->bo;
    struct iris_bo *new_bo =
       iris_bo_alloc(screen->bufmgr, res->bo->name, resource->width0, 1,
-                    iris_memzone_for_address(old_bo->gtt_offset), 0);
+                    iris_memzone_for_address(old_bo->address), 0);
    if (!new_bo)
       return;
 
@@ -2042,7 +2087,7 @@ iris_transfer_map(struct pipe_context *ctx,
    if (usage & PIPE_MAP_WRITE)
       util_range_add(&res->base.b, &res->valid_buffer_range, box->x, box->x + box->width);
 
-   if (!res->bo->imported) {
+   if (res->bo->mmap_mode != IRIS_MMAP_NONE) {
       /* GPU copies are not useful for buffer reads.  Instead of stalling to
        * read from the original buffer, we'd simply copy it to a temporary...
        * then stall (a bit longer) to read from that buffer.
@@ -2212,7 +2257,8 @@ iris_texture_subdata(struct pipe_context *ctx,
     */
    if (surf->tiling == ISL_TILING_LINEAR ||
        isl_aux_usage_has_compression(res->aux.usage) ||
-       resource_is_busy(ice, res)) {
+       resource_is_busy(ice, res) ||
+       res->bo->mmap_mode == IRIS_MMAP_NONE) {
       return u_default_texture_subdata(ctx, resource, level, usage, box,
                                        data, stride, layer_stride);
    }
@@ -2326,8 +2372,10 @@ iris_resource_set_clear_color(struct iris_context *ice,
                               struct iris_resource *res,
                               union isl_color_value color)
 {
-   if (memcmp(&res->aux.clear_color, &color, sizeof(color)) != 0) {
+   if (res->aux.clear_color_unknown ||
+       memcmp(&res->aux.clear_color, &color, sizeof(color)) != 0) {
       res->aux.clear_color = color;
+      res->aux.clear_color_unknown = false;
       return true;
    }
 
@@ -2377,7 +2425,7 @@ iris_init_screen_resource_functions(struct pipe_screen *pscreen)
    pscreen->resource_create = u_transfer_helper_resource_create;
    pscreen->resource_from_user_memory = iris_resource_from_user_memory;
    pscreen->resource_from_handle = iris_resource_from_handle;
-   pscreen->resource_from_memobj = iris_resource_from_memobj;
+   pscreen->resource_from_memobj = iris_resource_from_memobj_wrapper;
    pscreen->resource_get_handle = iris_resource_get_handle;
    pscreen->resource_get_param = iris_resource_get_param;
    pscreen->resource_destroy = u_transfer_helper_resource_destroy;

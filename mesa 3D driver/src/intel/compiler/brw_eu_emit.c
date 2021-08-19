@@ -1117,6 +1117,7 @@ ALU1(FBL)
 ALU1(CBIT)
 ALU2(ADDC)
 ALU2(SUBB)
+ALU3(ADD3)
 
 brw_inst *
 brw_MOV(struct brw_codegen *p, struct brw_reg dest, struct brw_reg src0)
@@ -3250,7 +3251,7 @@ gfx12_set_memory_fence_message(struct brw_codegen *p,
    enum lsc_flush_type flush_type = LSC_FLUSH_TYPE_NONE;
 
    if (sfid == GFX12_SFID_TGM) {
-      scope = LSC_FENCE_GPU;
+      scope = LSC_FENCE_TILE;
       flush_type = LSC_FLUSH_TYPE_EVICT;
    }
 

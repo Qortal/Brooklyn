@@ -520,11 +520,8 @@ struct pipe_screen {
     *
     * gallium frontends should call this before passing shaders to drivers,
     * and ideally also before shader caching.
-    *
-    * \param optimize  Whether the input shader hasn't been optimized and
-    *                  should be.
     */
-   void (*finalize_nir)(struct pipe_screen *screen, void *nir, bool optimize);
+   void (*finalize_nir)(struct pipe_screen *screen, void *nir);
 
    /*Separated memory/resource allocations interfaces for Vulkan */
 
@@ -611,7 +608,8 @@ struct pipe_screen {
  * Global configuration options for screen creation.
  */
 struct pipe_screen_config {
-   const struct driOptionCache *options;
+   struct driOptionCache *options;
+   const struct driOptionCache *options_info;
 };
 
 

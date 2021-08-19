@@ -469,8 +469,8 @@ anv_format_has_npot_plane(const struct anv_format *anv_format) {
  */
 struct anv_format_plane
 anv_get_format_plane(const struct intel_device_info *devinfo,
-                     VkFormat vk_format,
-                     VkImageAspectFlagBits aspect, VkImageTiling tiling)
+                     VkFormat vk_format, uint32_t plane,
+                     VkImageTiling tiling)
 {
    const struct anv_format *format = anv_get_format(vk_format);
    const struct anv_format_plane unsupported = {
@@ -480,7 +480,7 @@ anv_get_format_plane(const struct intel_device_info *devinfo,
    if (format == NULL)
       return unsupported;
 
-   uint32_t plane = anv_image_aspect_to_plane(vk_format_aspects(vk_format), aspect);
+   assert(plane < format->n_planes);
    struct anv_format_plane plane_format = format->planes[plane];
    if (plane_format.isl_format == ISL_FORMAT_UNSUPPORTED)
       return unsupported;
@@ -488,17 +488,8 @@ anv_get_format_plane(const struct intel_device_info *devinfo,
    if (tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT)
       return plane_format;
 
-   if (aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) {
-      assert(vk_format_aspects(vk_format) &
-             (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT));
-
-      /* There's no reason why we strictly can't support depth or stencil with
-       * modifiers but there's also no reason why we should.
-       */
+   if (vk_format_is_depth_or_stencil(vk_format))
       return plane_format;
-   }
-
-   assert((aspect & ~VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV) == 0);
 
    const struct isl_format_layout *isl_layout =
       isl_format_get_layout(plane_format.isl_format);
@@ -538,6 +529,16 @@ anv_get_format_plane(const struct intel_device_info *devinfo,
    }
 
    return plane_format;
+}
+
+struct anv_format_plane
+anv_get_format_aspect(const struct intel_device_info *devinfo,
+                      VkFormat vk_format,
+                      VkImageAspectFlagBits aspect, VkImageTiling tiling)
+{
+   const uint32_t plane =
+      anv_aspect_to_plane(vk_format_aspects(vk_format), aspect);
+   return anv_get_format_plane(devinfo, vk_format, plane, tiling);
 }
 
 // Format capabilities
@@ -580,17 +581,16 @@ anv_get_image_format_features(const struct intel_device_info *devinfo,
       return flags;
    }
 
+   assert(aspects & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV);
    const struct anv_format_plane plane_format =
-      anv_get_format_plane(devinfo, vk_format, VK_IMAGE_ASPECT_COLOR_BIT,
-                           vk_tiling);
+      anv_get_format_plane(devinfo, vk_format, 0, vk_tiling);
 
    if (plane_format.isl_format == ISL_FORMAT_UNSUPPORTED)
       return 0;
 
    struct anv_format_plane base_plane_format = plane_format;
    if (vk_tiling != VK_IMAGE_TILING_LINEAR) {
-      base_plane_format = anv_get_format_plane(devinfo, vk_format,
-                                               VK_IMAGE_ASPECT_COLOR_BIT,
+      base_plane_format = anv_get_format_plane(devinfo, vk_format, 0,
                                                VK_IMAGE_TILING_LINEAR);
    }
 
@@ -1393,15 +1393,6 @@ VkResult anv_GetPhysicalDeviceImageFormatProperties2(
        */
       switch (external_info->handleType) {
       case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT:
-
-         /* Disable stencil export, there are issues. */
-         if (vk_format_aspects(base_info->format) & VK_IMAGE_ASPECT_STENCIL_BIT) {
-            result = vk_errorfi(instance, &physical_device->vk.base,
-                                VK_ERROR_FORMAT_NOT_SUPPORTED,
-                                "External stencil buffers are not supported yet");
-            goto fail;
-         }
-
          if (external_props) {
             if (tiling_has_explicit_layout) {
                /* With an explicit memory layout, we don't care which type of fd

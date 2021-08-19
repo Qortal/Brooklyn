@@ -35,7 +35,7 @@
 #include "i915_reg.h"
 #include "i915_state.h"
 
-static uint
+static uint32_t
 find_mapping(const struct i915_fragment_shader *fs, int unit)
 {
    int i;
@@ -109,8 +109,14 @@ calculate_vertex_layout(struct i915_context *i915)
       vinfo.attrib[0].emit = EMIT_3F;
    }
 
-   /* hardware point size */
-   /* XXX todo */
+   /* point size.  if not emitted here, then point size comes from LIS4. */
+   if (i915->rasterizer->templ.point_size_per_vertex) {
+      src = draw_find_shader_output(i915->draw, TGSI_SEMANTIC_PSIZE, 0);
+      if (src != -1) {
+         draw_emit_vertex_attr(&vinfo, EMIT_1F, src);
+         vinfo.hwfmt[0] |= S4_VFMT_POINT_WIDTH;
+      }
+   }
 
    /* primary color */
    if (colors[0]) {
@@ -186,11 +192,9 @@ struct i915_tracked_state i915_update_vertex_layout = {
 /***********************************************************************
  */
 static struct i915_tracked_state *atoms[] = {
-   &i915_update_vertex_layout, &i915_hw_samplers,
-   &i915_hw_sampler_views,     &i915_hw_immediate,
-   &i915_hw_dynamic,           &i915_hw_fs,
-   &i915_hw_framebuffer,       &i915_hw_dst_buf_vars,
-   &i915_hw_constants,         NULL,
+   &i915_update_vertex_layout, &i915_hw_samplers,  &i915_hw_immediate,
+   &i915_hw_dynamic,           &i915_hw_fs,        &i915_hw_framebuffer,
+   &i915_hw_dst_buf_vars,      &i915_hw_constants, NULL,
 };
 
 void

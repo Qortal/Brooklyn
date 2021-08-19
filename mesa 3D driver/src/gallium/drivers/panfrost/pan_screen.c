@@ -43,7 +43,6 @@
 #include "drm-uapi/drm_fourcc.h"
 #include "drm-uapi/panfrost_drm.h"
 
-#include "pan_blitter.h"
 #include "pan_bo.h"
 #include "pan_shader.h"
 #include "pan_screen.h"
@@ -58,6 +57,7 @@
 #include "panfrost-quirks.h"
 
 static const struct debug_named_value panfrost_debug_options[] = {
+        {"perf",      PAN_DBG_PERF,     "Enable performance warnings"},
         {"trace",     PAN_DBG_TRACE,    "Trace the command stream"},
         {"deqp",      PAN_DBG_DEQP,     "Hacks for dEQP"},
         {"dirty",     PAN_DBG_DIRTY,    "Always re-emit all state"},
@@ -68,8 +68,9 @@ static const struct debug_named_value panfrost_debug_options[] = {
         {"noafbc",    PAN_DBG_NO_AFBC,  "Disable AFBC support"},
         {"nocrc",     PAN_DBG_NO_CRC,   "Disable transaction elimination"},
         {"msaa16",    PAN_DBG_MSAA16,   "Enable MSAA 8x and 16x support"},
-        {"panblit",   PAN_DBG_PANBLIT,  "Use pan_blitter instead of u_blitter"},
         {"noindirect", PAN_DBG_NOINDIRECT, "Emulate indirect draws on the CPU"},
+        {"linear",    PAN_DBG_LINEAR,   "Force linear textures"},
+        {"nocache",   PAN_DBG_NO_CACHE, "Disable BO cache"},
         DEBUG_NAMED_VALUE_END
 };
 
@@ -534,19 +535,19 @@ panfrost_is_format_supported( struct pipe_screen *screen,
                 | PIPE_BIND_VERTEX_BUFFER | PIPE_BIND_SAMPLER_VIEW);
 
         struct panfrost_format fmt = dev->formats[format];
-        enum mali_format indexed = MALI_EXTRACT_INDEX(fmt.hw);
 
         /* Also check that compressed texture formats are supported on this
          * particular chip. They may not be depending on system integration
          * differences. RGTC can be emulated so is always supported. */
 
         bool is_rgtc = format_desc->layout == UTIL_FORMAT_LAYOUT_RGTC;
-        bool supported = panfrost_supports_compressed_format(dev, indexed);
+        bool supported = panfrost_supports_compressed_format(dev,
+                        MALI_EXTRACT_INDEX(fmt.hw));
 
         if (!is_rgtc && !supported)
                 return false;
 
-        return indexed && ((relevant_bind & ~fmt.bind) == 0);
+        return MALI_EXTRACT_INDEX(fmt.hw) && ((relevant_bind & ~fmt.bind) == 0);
 }
 
 /* We always support linear and tiled operations, both external and internal.
@@ -692,11 +693,17 @@ static void
 panfrost_destroy_screen(struct pipe_screen *pscreen)
 {
         struct panfrost_device *dev = pan_device(pscreen);
+        struct panfrost_screen *screen = pan_screen(pscreen);
 
+        panfrost_resource_screen_destroy(pscreen);
         pan_indirect_dispatch_cleanup(dev);
         panfrost_cleanup_indirect_draw_shaders(dev);
-        pan_blitter_cleanup(dev);
+        panfrost_pool_cleanup(&screen->indirect_draw.bin_pool);
+        panfrost_pool_cleanup(&screen->blitter.bin_pool);
+        panfrost_pool_cleanup(&screen->blitter.desc_pool);
         pan_blend_shaders_cleanup(dev);
+
+        screen->vtbl.screen_destroy(pscreen);
 
         if (dev->ro)
                 dev->ro->destroy(dev->ro);
@@ -880,9 +887,25 @@ panfrost_create_screen(int fd, struct renderonly *ro)
 
         panfrost_resource_screen_init(&screen->base);
         pan_blend_shaders_init(dev);
-        panfrost_init_indirect_draw_shaders(dev);
+        panfrost_pool_init(&screen->indirect_draw.bin_pool, NULL, dev,
+                           PAN_BO_EXECUTE, 65536, "Indirect draw shaders",
+                           false, true);
+        panfrost_init_indirect_draw_shaders(dev, &screen->indirect_draw.bin_pool.base);
         pan_indirect_dispatch_init(dev);
-        pan_blitter_init(dev);
+        panfrost_pool_init(&screen->blitter.bin_pool, NULL, dev, PAN_BO_EXECUTE,
+                           4096, "Blitter shaders", false, true);
+        panfrost_pool_init(&screen->blitter.desc_pool, NULL, dev, 0, 65536,
+                           "Blitter RSDs", false, true);
+        if (dev->arch == 4)
+                panfrost_cmdstream_screen_init_v4(screen);
+        else if (dev->arch == 5)
+                panfrost_cmdstream_screen_init_v5(screen);
+        else if (dev->arch == 6)
+                panfrost_cmdstream_screen_init_v6(screen);
+        else if (dev->arch == 7)
+                panfrost_cmdstream_screen_init_v7(screen);
+        else
+                unreachable("Unhandled architecture major");
 
         return &screen->base;
 }

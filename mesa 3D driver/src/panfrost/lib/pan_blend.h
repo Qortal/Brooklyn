@@ -99,7 +99,8 @@ bool
 pan_blend_reads_dest(const struct pan_blend_equation eq);
 
 bool
-pan_blend_can_fixed_function(const struct pan_blend_equation equation);
+pan_blend_can_fixed_function(const struct pan_blend_equation equation,
+                             bool supports_2src);
 
 bool
 pan_blend_is_opaque(const struct pan_blend_equation eq);
@@ -127,12 +128,23 @@ pan_blend_supports_constant(unsigned arch, unsigned rt)
         return !((arch == 6) || (arch == 7 && rt > 0));
 }
 
+/* The SOURCE_2 value is new in Bifrost */
+
+static inline bool
+pan_blend_supports_2src(unsigned arch)
+{
+        return (arch >= 6);
+}
+
 bool
 pan_blend_is_homogenous_constant(unsigned mask, const float *constants);
 
 void
 pan_blend_to_fixed_function_equation(const struct pan_blend_equation eq,
                                      struct MALI_BLEND_EQUATION *equation);
+
+uint32_t
+pan_pack_blend(const struct pan_blend_equation equation);
 
 nir_shader *
 pan_blend_create_shader(const struct panfrost_device *dev,
@@ -144,7 +156,7 @@ pan_blend_create_shader(const struct panfrost_device *dev,
 uint64_t
 pan_blend_get_bifrost_desc(const struct panfrost_device *dev,
                            enum pipe_format fmt, unsigned rt,
-                           unsigned force_size);
+                           unsigned force_size, bool dithered);
 
 /* Take blend_shaders.lock before calling this function and release it when
  * you're done with the shader variant object.

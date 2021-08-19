@@ -35,6 +35,7 @@
 #include "util/u_memory.h"
 #include "util/u_screen.h"
 #include "util/u_string.h"
+#include "util/xmlconfig.h"
 
 #include "util/os_time.h"
 
@@ -107,9 +108,7 @@ bool fd_binning_enabled = true;
 static const char *
 fd_screen_get_name(struct pipe_screen *pscreen)
 {
-   static char buffer[128];
-   snprintf(buffer, sizeof(buffer), "FD%03d", fd_screen(pscreen)->device_id);
-   return buffer;
+   return fd_dev_name(fd_screen(pscreen)->dev_id);
 }
 
 static const char *
@@ -805,15 +804,19 @@ fd_screen_bo_get_handle(struct pipe_screen *pscreen, struct fd_bo *bo,
                         struct renderonly_scanout *scanout, unsigned stride,
                         struct winsys_handle *whandle)
 {
+   struct fd_screen *screen = fd_screen(pscreen);
+
    whandle->stride = stride;
 
    if (whandle->type == WINSYS_HANDLE_TYPE_SHARED) {
       return fd_bo_get_name(bo, &whandle->handle) == 0;
    } else if (whandle->type == WINSYS_HANDLE_TYPE_KMS) {
-      if (renderonly_get_handle(scanout, whandle))
+      if (screen->ro) {
+         return renderonly_get_handle(scanout, whandle);
+      } else {
+         whandle->handle = fd_bo_handle(bo);
          return true;
-      whandle->handle = fd_bo_handle(bo);
-      return true;
+      }
    } else if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
       whandle->handle = fd_bo_dmabuf(bo);
       return true;
@@ -911,7 +914,7 @@ fd_screen_get_device_uuid(struct pipe_screen *pscreen, char *uuid)
 {
    struct fd_screen *screen = fd_screen(pscreen);
 
-   fd_get_device_uuid(uuid, screen->gpu_id);
+   fd_get_device_uuid(uuid, screen->dev_id);
 }
 
 static void
@@ -921,7 +924,8 @@ fd_screen_get_driver_uuid(struct pipe_screen *pscreen, char *uuid)
 }
 
 struct pipe_screen *
-fd_screen_create(struct fd_device *dev, struct renderonly *ro)
+fd_screen_create(struct fd_device *dev, struct renderonly *ro,
+                 const struct pipe_screen_config *config)
 {
    struct fd_screen *screen = CALLOC_STRUCT(fd_screen);
    struct pipe_screen *pscreen;
@@ -962,12 +966,6 @@ fd_screen_create(struct fd_device *dev, struct renderonly *ro)
       fd_pipe_get_param(screen->pipe, FD_GMEM_BASE, &screen->gmem_base);
    }
 
-   if (fd_pipe_get_param(screen->pipe, FD_DEVICE_ID, &val)) {
-      DBG("could not get device-id");
-      goto fail;
-   }
-   screen->device_id = val;
-
    if (fd_pipe_get_param(screen->pipe, FD_MAX_FREQ, &val)) {
       DBG("could not get gpu freq");
       /* this limits what performance related queries are
@@ -979,6 +977,8 @@ fd_screen_create(struct fd_device *dev, struct renderonly *ro)
       if (fd_pipe_get_param(screen->pipe, FD_TIMESTAMP, &val) == 0)
          screen->has_timestamp = true;
    }
+
+   screen->dev_id = fd_pipe_dev_id(screen->pipe);
 
    if (fd_pipe_get_param(screen->pipe, FD_GPU_ID, &val)) {
       DBG("could not get gpu-id");
@@ -997,6 +997,7 @@ fd_screen_create(struct fd_device *dev, struct renderonly *ro)
             ((core & 0xff) << 24);
    }
    screen->chip_id = val;
+   screen->gen = fd_dev_gen(screen->dev_id);
 
    if (fd_pipe_get_param(screen->pipe, FD_NR_RINGS, &val)) {
       DBG("could not get # of rings");
@@ -1011,14 +1012,24 @@ fd_screen_create(struct fd_device *dev, struct renderonly *ro)
 
    screen->has_syncobj = fd_has_syncobj(screen->dev);
 
+   /* parse driconf configuration now for device specific overrides: */
+   driParseConfigFiles(config->options, config->options_info, 0, "msm",
+                       NULL, fd_dev_name(screen->dev_id), NULL, 0, NULL, 0);
+
    struct sysinfo si;
    sysinfo(&si);
    screen->ram_size = si.totalram;
 
    DBG("Pipe Info:");
-   DBG(" GPU-id:          %d", screen->gpu_id);
-   DBG(" Chip-id:         0x%08x", screen->chip_id);
+   DBG(" GPU-id:          %s", fd_dev_name(screen->dev_id));
+   DBG(" Chip-id:         0x%016"PRIx64, screen->chip_id);
    DBG(" GMEM size:       0x%08x", screen->gmemsize_bytes);
+
+   const struct fd_dev_info *info = fd_dev_info(screen->dev_id);
+   if (!info) {
+      mesa_loge("unsupported GPU: a%03d", screen->gpu_id);
+      goto fail;
+   }
 
    /* explicitly checking for GPU revisions that are known to work.  This
     * may be overly conservative for a3xx, where spoofing the gpu_id with
@@ -1031,45 +1042,38 @@ fd_screen_create(struct fd_device *dev, struct renderonly *ro)
     * of the cases below and see what happens.  And if it works, please
     * send a patch ;-)
     */
-   switch (screen->gpu_id) {
-   case 200:
-   case 201:
-   case 205:
-   case 220:
+   switch (screen->gen) {
+   case 2:
       fd2_screen_init(pscreen);
       break;
-   case 305:
-   case 307:
-   case 320:
-   case 330:
+   case 3:
       fd3_screen_init(pscreen);
       break;
-   case 405:
-   case 420:
-   case 430:
+   case 4:
       fd4_screen_init(pscreen);
       break;
-   case 510:
-   case 530:
-   case 540:
+   case 5:
       fd5_screen_init(pscreen);
       break;
-   case 618:
-   case 630:
-   case 640:
-   case 650:
+   case 6:
       fd6_screen_init(pscreen);
       break;
    default:
-      mesa_loge("unsupported GPU: a%03d", screen->gpu_id);
+      mesa_loge("unsupported GPU generation: a%uxx", screen->gen);
       goto fail;
    }
 
-   freedreno_dev_info_init(&screen->info, screen->gpu_id);
+   screen->info = info;
+
+   if (is_a6xx(screen)) {
+      screen->ccu_offset_bypass = screen->info->num_ccu * A6XX_CCU_DEPTH_SIZE;
+      screen->ccu_offset_gmem = (screen->gmemsize_bytes -
+         screen->info->num_ccu * A6XX_CCU_GMEM_COLOR_SIZE);
+   }
 
    if (FD_DBG(PERFC)) {
       screen->perfcntr_groups =
-         fd_perfcntrs(screen->gpu_id, &screen->num_perfcntr_groups);
+         fd_perfcntrs(screen->dev_id, &screen->num_perfcntr_groups);
    }
 
    /* NOTE: don't enable if we have too old of a kernel to support

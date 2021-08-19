@@ -117,6 +117,7 @@ struct pipe_rasterizer_state
    unsigned line_smooth:1;
    unsigned line_stipple_enable:1;
    unsigned line_last_pixel:1;
+   unsigned line_rectangular:1; /** lines rasterized as rectangles or parallelograms */
    unsigned conservative_raster_mode:2; /**< PIPE_CONSERVATIVE_RASTER_x */
 
    /**
@@ -414,6 +415,7 @@ struct pipe_sampler_state
    unsigned seamless_cube_map:1;
    unsigned border_color_is_integer:1;
    unsigned reduction_mode:2;    /**< PIPE_TEX_REDUCTION_x */
+   unsigned pad:5;               /**< take bits from this for new members */
    float lod_bias;               /**< LOD/lambda bias */
    float min_lod, max_lod;       /**< LOD clamp range, after bias */
    union pipe_color_union border_color;
@@ -672,14 +674,26 @@ struct pipe_stream_output_target
 struct pipe_vertex_element
 {
    /** Offset of this attribute, in bytes, from the start of the vertex */
-   unsigned src_offset:16;
+   uint16_t src_offset;
 
    /** Which vertex_buffer (as given to pipe->set_vertex_buffer()) does
     * this attribute live in?
     */
-   unsigned vertex_buffer_index:5;
+   uint8_t vertex_buffer_index:7;
 
-   enum pipe_format src_format:11;
+   /**
+    * Whether this element refers to a dual-slot vertex shader input.
+    * The purpose of this field is to do dual-slot lowering when the CSO is
+    * created instead of during every state change.
+    *
+    * It's lowered by util_lower_uint64_vertex_elements.
+    */
+   bool dual_slot:1;
+
+   /**
+    * This has only 8 bits because all vertex formats should be <= 255.
+    */
+   uint8_t src_format; /* low 8 bits of enum pipe_format. */
 
    /** Instance data rate divisor. 0 means this is per-vertex data,
     *  n means per-instance data used for n consecutive instances (n > 0).

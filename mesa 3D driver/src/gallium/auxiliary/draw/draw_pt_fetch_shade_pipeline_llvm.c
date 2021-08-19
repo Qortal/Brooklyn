@@ -265,7 +265,7 @@ llvm_middle_end_prepare_tes(struct llvm_middle_end *fpme)
          }
       }
 
-      variant = draw_tes_llvm_create_variant(llvm, tes->info.num_outputs, key);
+      variant = draw_tes_llvm_create_variant(llvm, draw_total_tes_outputs(draw), key);
 
       if (variant) {
          insert_at_head(&shader->variants, &variant->list_item_local);
@@ -527,6 +527,11 @@ llvm_middle_end_bind_parameters(struct draw_pt_middle_end *middle)
 
    llvm->jit_context.viewports = draw->viewports;
    llvm->gs_jit_context.viewports = draw->viewports;
+
+   llvm->jit_context.aniso_filter_table = lp_build_sample_aniso_filter_table();
+   llvm->gs_jit_context.aniso_filter_table = lp_build_sample_aniso_filter_table();
+   llvm->tcs_jit_context.aniso_filter_table = lp_build_sample_aniso_filter_table();
+   llvm->tes_jit_context.aniso_filter_table = lp_build_sample_aniso_filter_table();
 }
 
 
@@ -719,7 +724,7 @@ llvm_pipeline_generic(struct draw_pt_middle_end *middle,
          opt |= PT_PIPELINE;
       }
    } else {
-      if (draw_prim_assembler_is_required(draw, prim_info, vert_info)) {
+      if (!tes_shader && draw_prim_assembler_is_required(draw, prim_info, vert_info)) {
          draw_prim_assembler_run(draw, prim_info, vert_info,
                                  &ia_prim_info, &ia_vert_info);
 

@@ -324,7 +324,7 @@ st_nir_opts(nir_shader *nir)
       NIR_PASS(progress, nir, nir_opt_undef);
       NIR_PASS(progress, nir, nir_opt_conditional_discard);
       if (nir->options->max_unroll_iterations) {
-         NIR_PASS(progress, nir, nir_opt_loop_unroll, (nir_variable_mode)0);
+         NIR_PASS(progress, nir, nir_opt_loop_unroll);
       }
    } while (progress);
 }
@@ -530,6 +530,7 @@ st_glsl_to_nir_post_opts(struct st_context *st, struct gl_program *prog,
       NIR_PASS_V(nir, gl_nir_lower_atomics, shader_program, true);
 
    NIR_PASS_V(nir, nir_opt_intrinsics);
+   NIR_PASS_V(nir, nir_opt_fragdepth);
 
    /* Lower 64-bit ops. */
    if (nir->options->lower_int64_options ||
@@ -921,7 +922,7 @@ st_link_nir(struct gl_context *ctx,
 
       /* Initialize st_vertex_program members. */
       if (shader->Stage == MESA_SHADER_VERTEX)
-         st_prepare_vertex_program(stp);
+         st_prepare_vertex_program(stp, NULL);
 
       /* Get pipe_stream_output_info. */
       if (shader->Stage == MESA_SHADER_VERTEX ||
@@ -1068,7 +1069,7 @@ st_finalize_nir(struct st_context *st, struct gl_program *prog,
       NIR_PASS_V(nir, gl_nir_lower_images, false);
 
    if (finalize_by_driver && screen->finalize_nir)
-      screen->finalize_nir(screen, nir, false);
+      screen->finalize_nir(screen, nir);
 }
 
 } /* extern "C" */

@@ -198,9 +198,11 @@ static VkResult
 handle_end_query_cpu_job(struct v3dv_job *job)
 {
    struct v3dv_end_query_cpu_job_info *info = &job->cpu.query_end;
-   assert(info->query < info->pool->query_count);
-   struct v3dv_query *query = &info->pool->queries[info->query];
-   query->maybe_available = true;
+   for (uint32_t i = 0; i < info->count; i++) {
+      assert(info->query + i < info->pool->query_count);
+      struct v3dv_query *query = &info->pool->queries[info->query + i];
+      query->maybe_available = true;
+   }
 
    return VK_SUCCESS;
 }
@@ -223,11 +225,13 @@ handle_copy_query_results_cpu_job(struct v3dv_job *job)
     * sync wait on the CPU for the corresponding GPU jobs to finish. We might
     * want to use a submission thread to avoid blocking on the main thread.
     */
+   uint8_t *offset = ((uint8_t *) bo->map) +
+                     info->offset + info->dst->mem_offset;
    v3dv_get_query_pool_results_cpu(job->device,
                                    info->pool,
                                    info->first,
                                    info->count,
-                                   bo->map + info->dst->mem_offset,
+                                   offset,
                                    info->stride,
                                    info->flags);
 
@@ -450,10 +454,14 @@ handle_timestamp_query_cpu_job(struct v3dv_job *job)
    /* Compute timestamp */
    struct timespec t;
    clock_gettime(CLOCK_MONOTONIC, &t);
-   assert(info->query < info->pool->query_count);
-   struct v3dv_query *query = &info->pool->queries[info->query];
-   query->maybe_available = true;
-   query->value = t.tv_sec * 1000000000ull + t.tv_nsec;
+
+   for (uint32_t i = 0; i < info->count; i++) {
+      assert(info->query + i < info->pool->query_count);
+      struct v3dv_query *query = &info->pool->queries[info->query + i];
+      query->maybe_available = true;
+      if (i == 0)
+         query->value = t.tv_sec * 1000000000ull + t.tv_nsec;
+   }
 
    return VK_SUCCESS;
 }
@@ -572,7 +580,7 @@ handle_cl_job(struct v3dv_queue *queue,
 {
    struct v3dv_device *device = queue->device;
 
-   struct drm_v3d_submit_cl submit;
+   struct drm_v3d_submit_cl submit = { 0 };
 
    /* Sanity check: we should only flag a bcl sync on a job that needs to be
     * serialized.

@@ -69,7 +69,6 @@ struct zink_gfx_pipeline_state {
    bool combined_dirty;
 
    struct zink_vertex_elements_hw_state *element_state;
-   bool vertex_state_dirty;
 
    uint32_t final_hash;
 
@@ -79,7 +78,7 @@ struct zink_gfx_pipeline_state {
    bool have_EXT_extended_dynamic_state;
 
    VkPipeline pipeline;
-   enum pipe_prim_type mode;
+   enum pipe_prim_type mode : 8;
 };
 
 struct zink_compute_pipeline_state {

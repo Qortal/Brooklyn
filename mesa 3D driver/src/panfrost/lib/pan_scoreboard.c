@@ -145,18 +145,18 @@ panfrost_add_job(
         }
 
         if (inject) {
-                if (type == MALI_JOB_TYPE_TILER) {
-                        if (scoreboard->first_tiler) {
-                                /* Manual update of the dep2 field. This is bad,
-                                 * don't copy this pattern.
-                                 */
-                                scoreboard->first_tiler->opaque[5] =
-                                        scoreboard->first_tiler_dep1 | (index << 16);
-                        }
+                assert(type == MALI_JOB_TYPE_TILER && "only for blit shaders");
 
-                        scoreboard->first_tiler = (void *)job->cpu;
-                        scoreboard->first_tiler_dep1 = local_dep;
+                if (scoreboard->first_tiler) {
+                        /* Manual update of the dep2 field. This is bad,
+                         * don't copy this pattern.
+                         */
+                        scoreboard->first_tiler->opaque[5] =
+                                scoreboard->first_tiler_dep1 | (index << 16);
                 }
+
+                scoreboard->first_tiler = (void *)job->cpu;
+                scoreboard->first_tiler_dep1 = local_dep;
                 scoreboard->first_job = job->gpu;
                 return index;
         }
@@ -203,9 +203,7 @@ panfrost_scoreboard_initialize_tiler(struct pan_pool *pool,
         /* Okay, we do. Let's generate it. We'll need the job's polygon list
          * regardless of size. */
 
-        transfer = panfrost_pool_alloc_aligned(pool,
-                                               MALI_WRITE_VALUE_JOB_LENGTH,
-                                               64);
+        transfer = pan_pool_alloc_desc(pool, WRITE_VALUE_JOB);
 
         pan_section_pack(transfer.cpu, WRITE_VALUE_JOB, HEADER, header) {
                 header.type = MALI_JOB_TYPE_WRITE_VALUE;

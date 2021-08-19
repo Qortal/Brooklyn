@@ -150,7 +150,8 @@ blorp_create_nir_tex_instr(nir_builder *b, struct brw_blorp_blit_vars *v,
     * more explicit in the future.
     */
    assert(pos->num_components >= 2);
-   if (op == nir_texop_txf || op == nir_texop_txf_ms || op == nir_texop_txf_ms_mcs) {
+   if (op == nir_texop_txf || op == nir_texop_txf_ms ||
+       op == nir_texop_txf_ms_mcs_intel) {
       pos = nir_vec3(b, nir_channel(b, pos, 0), nir_channel(b, pos, 1),
                         nir_f2i32(b, nir_load_var(b, v->v_src_z)));
    } else {
@@ -179,7 +180,7 @@ blorp_nir_tex(nir_builder *b, struct brw_blorp_blit_vars *v,
       pos = nir_fmul(b, pos, nir_load_var(b, v->v_src_inv_size));
 
    nir_tex_instr *tex =
-      blorp_create_nir_tex_instr(b, v, nir_texop_tex, pos, 2,
+      blorp_create_nir_tex_instr(b, v, nir_texop_txl, pos, 2,
                                  key->texture_data_type);
 
    assert(pos->num_components == 2);
@@ -227,7 +228,7 @@ blorp_nir_txf_ms(nir_builder *b, struct brw_blorp_blit_vars *v,
    }
 
    if (mcs) {
-      tex->src[2].src_type = nir_tex_src_ms_mcs;
+      tex->src[2].src_type = nir_tex_src_ms_mcs_intel;
       tex->src[2].src = nir_src_for_ssa(mcs);
    }
 
@@ -241,7 +242,7 @@ blorp_blit_txf_ms_mcs(nir_builder *b, struct brw_blorp_blit_vars *v,
                       nir_ssa_def *pos)
 {
    nir_tex_instr *tex =
-      blorp_create_nir_tex_instr(b, v, nir_texop_txf_ms_mcs,
+      blorp_create_nir_tex_instr(b, v, nir_texop_txf_ms_mcs_intel,
                                  pos, 1, nir_type_int);
 
    tex->sampler_dim = GLSL_SAMPLER_DIM_MS;
@@ -894,7 +895,7 @@ bit_cast_color(struct nir_builder *b, nir_ssa_def *color,
          if (src_fmtl->channels_array[c].type == ISL_UNORM)
             chan = nir_format_float_to_unorm(b, chan, &chan_bits);
 
-         packed = nir_ior(b, packed, nir_shift(b, chan, chan_start_bit));
+         packed = nir_ior(b, packed, nir_shift_imm(b, chan, chan_start_bit));
       }
 
       nir_ssa_def *chans[4] = { };
@@ -906,7 +907,7 @@ bit_cast_color(struct nir_builder *b, nir_ssa_def *color,
 
          const unsigned chan_start_bit = dst_fmtl->channels_array[c].start_bit;
          const unsigned chan_bits = dst_fmtl->channels_array[c].bits;
-         chans[c] = nir_iand(b, nir_shift(b, packed, -(int)chan_start_bit),
+         chans[c] = nir_iand(b, nir_shift_imm(b, packed, -(int)chan_start_bit),
                                 nir_imm_int(b, BITFIELD_MASK(chan_bits)));
 
          if (dst_fmtl->channels_array[c].type == ISL_UNORM)
@@ -1588,12 +1589,12 @@ blorp_surf_convert_to_single_slice(const struct isl_device *isl_dev,
    else
       layer = info->view.base_array_layer;
 
-   uint32_t byte_offset;
+   uint64_t offset_B;
    isl_surf_get_image_surf(isl_dev, &info->surf,
                            info->view.base_level, layer, z,
                            &info->surf,
-                           &byte_offset, &info->tile_x_sa, &info->tile_y_sa);
-   info->addr.offset += byte_offset;
+                           &offset_B, &info->tile_x_sa, &info->tile_y_sa);
+   info->addr.offset += offset_B;
 
    uint32_t tile_x_px, tile_y_px;
    surf_get_intratile_offset_px(info, &tile_x_px, &tile_y_px);
@@ -2181,7 +2182,8 @@ shrink_surface_params(const struct isl_device *dev,
                       struct brw_blorp_surface_info *info,
                       double *x0, double *x1, double *y0, double *y1)
 {
-   uint32_t byte_offset, x_offset_sa, y_offset_sa, size;
+   uint64_t offset_B;
+   uint32_t x_offset_sa, y_offset_sa, size;
    struct isl_extent2d px_size_sa;
    int adjust;
 
@@ -2200,12 +2202,12 @@ shrink_surface_params(const struct isl_device *dev,
                                       info->surf.format, info->surf.row_pitch_B,
                                       info->surf.array_pitch_el_rows,
                                       x_offset_sa, y_offset_sa, 0, 0,
-                                      &byte_offset,
+                                      &offset_B,
                                       &info->tile_x_sa, &info->tile_y_sa,
                                       &tile_z_sa, &tile_a);
    assert(tile_z_sa == 0 && tile_a == 0);
 
-   info->addr.offset += byte_offset;
+   info->addr.offset += offset_B;
 
    adjust = (int)info->tile_x_sa / px_size_sa.w - (int)*x0;
    *x0 += adjust;
@@ -2589,22 +2591,16 @@ blorp_surf_convert_to_uncompressed(const struct isl_device *isl_dev,
 
    assert(fmtl->bw > 1 || fmtl->bh > 1);
 
-   /* This is a compressed surface.  We need to convert it to a single
-    * slice (because compressed layouts don't perfectly match uncompressed
-    * ones with the same bpb) and divide x, y, width, and height by the
-    * block size.
-    */
-   blorp_surf_convert_to_single_slice(isl_dev, info);
+   /* This should be the first modification made to the surface */
+   assert(info->tile_x_sa == 0 && info->tile_y_sa == 0);
 
    if (width && height) {
-#ifndef NDEBUG
-      uint32_t right_edge_px = info->tile_x_sa + *x + *width;
-      uint32_t bottom_edge_px = info->tile_y_sa + *y + *height;
-      assert(*width % fmtl->bw == 0 ||
-             right_edge_px == info->surf.logical_level0_px.width);
-      assert(*height % fmtl->bh == 0 ||
-             bottom_edge_px == info->surf.logical_level0_px.height);
-#endif
+      ASSERTED const uint32_t level_width =
+         minify(info->surf.logical_level0_px.width, info->view.base_level);
+      ASSERTED const uint32_t level_height =
+         minify(info->surf.logical_level0_px.height, info->view.base_level);
+      assert(*width % fmtl->bw == 0 || *x + *width == level_width);
+      assert(*height % fmtl->bh == 0 || *y + *height == level_height);
       *width = DIV_ROUND_UP(*width, fmtl->bw);
       *height = DIV_ROUND_UP(*height, fmtl->bh);
    }
@@ -2616,16 +2612,33 @@ blorp_surf_convert_to_uncompressed(const struct isl_device *isl_dev,
       *y /= fmtl->bh;
    }
 
-   info->surf.logical_level0_px = isl_surf_get_logical_level0_el(&info->surf);
-   info->surf.phys_level0_sa = isl_surf_get_phys_level0_el(&info->surf);
+   /* We only want one level and slice */
+   info->view.levels = 1;
+   info->view.array_len = 1;
 
-   assert(info->tile_x_sa % fmtl->bw == 0);
-   assert(info->tile_y_sa % fmtl->bh == 0);
-   info->tile_x_sa /= fmtl->bw;
-   info->tile_y_sa /= fmtl->bh;
+   if (info->surf.dim == ISL_SURF_DIM_3D) {
+      /* Roll the Z offset into the image view */
+      info->view.base_array_layer += info->z_offset;
+      info->z_offset = 0;
+   }
 
-   /* It's now an uncompressed surface so we need an uncompressed format */
-   info->surf.format = get_copy_format_for_bpb(isl_dev, fmtl->bpb);
+   uint64_t offset_B;
+   ASSERTED bool ok =
+      isl_surf_get_uncompressed_surf(isl_dev, &info->surf, &info->view,
+                                     &info->surf, &info->view, &offset_B,
+                                     &info->tile_x_sa, &info->tile_y_sa);
+   assert(ok);
+   info->addr.offset += offset_B;
+
+   /* BLORP doesn't use the actual intratile offsets.  Instead, it needs the
+    * surface to be a bit bigger and we offset the vertices instead.
+    */
+   assert(info->surf.dim == ISL_SURF_DIM_2D);
+   assert(info->surf.logical_level0_px.array_len == 1);
+   info->surf.logical_level0_px.w += info->tile_x_sa;
+   info->surf.logical_level0_px.h += info->tile_y_sa;
+   info->surf.phys_level0_sa.w += info->tile_x_sa;
+   info->surf.phys_level0_sa.h += info->tile_y_sa;
 }
 
 void

@@ -119,10 +119,15 @@ pan_shader_prepare_bifrost_rsd(const struct panfrost_device *dev,
         unsigned fau_count = DIV_ROUND_UP(info->push.count, 2);
         rsd->preload.uniform_count = fau_count;
 
+        if (dev->arch == 7) {
+                rsd->properties.bifrost.shader_register_allocation =
+                        (info->work_reg_count <= 32) ?
+                        MALI_SHADER_REGISTER_ALLOCATION_32_PER_THREAD :
+                        MALI_SHADER_REGISTER_ALLOCATION_64_PER_THREAD;
+        }
+
         switch (info->stage) {
         case MESA_SHADER_VERTEX:
-                rsd->properties.bifrost.zs_update_operation = MALI_PIXEL_KILL_STRONG_EARLY;
-
                 rsd->preload.vertex.vertex_id = true;
                 rsd->preload.vertex.instance_id = true;
                 break;
@@ -204,9 +209,6 @@ pan_shader_prepare_rsd(const struct panfrost_device *dev,
                  * shading, but that'll just got ORed in */
                 rsd->multisample_misc.evaluate_per_sample =
                         shader_info->fs.sample_shading;
-        } else {
-                rsd->properties.depth_source =
-                        MALI_DEPTH_SOURCE_FIXED_FUNCTION;
         }
 
         if (pan_is_bifrost(dev))

@@ -580,6 +580,7 @@ vk_conservative_rasterization_mode(const VkPipelineRasterizationStateCreateInfo 
 void
 genX(rasterization_mode)(VkPolygonMode raster_mode,
                          VkLineRasterizationModeEXT line_mode,
+                         float line_width,
                          uint32_t *api_mode,
                          bool *msaa_rasterization_enable)
 {
@@ -599,7 +600,16 @@ genX(rasterization_mode)(VkPolygonMode raster_mode,
       switch (line_mode) {
       case VK_LINE_RASTERIZATION_MODE_RECTANGULAR_EXT:
          *api_mode = DX100;
+#if GFX_VER <= 9
+         /* Prior to ICL, the algorithm the HW uses to draw wide lines
+          * doesn't quite match what the CTS expects, at least for rectangular
+          * lines, so we set this to false here, making it draw parallelograms
+          * instead, which work well enough.
+          */
+         *msaa_rasterization_enable = line_width < 1.0078125;
+#else
          *msaa_rasterization_enable = true;
+#endif
          break;
 
       case VK_LINE_RASTERIZATION_MODE_RECTANGULAR_SMOOTH_EXT:
@@ -694,6 +704,7 @@ emit_rs_state(struct anv_graphics_pipeline *pipeline,
 #if GFX_VER >= 8
    if (!dynamic_primitive_topology)
       genX(rasterization_mode)(raster_mode, pipeline->line_mode,
+                               rs_info->lineWidth,
                                &raster.APIMode,
                                &raster.DXMultisampleRasterizationEnable);
 
@@ -2452,7 +2463,7 @@ genX(graphics_pipeline_create)(
    if (cache == NULL && device->physical->instance->pipeline_cache_enabled)
       cache = &device->default_pipeline_cache;
 
-   pipeline = vk_alloc2(&device->vk.alloc, pAllocator, sizeof(*pipeline), 8,
+   pipeline = vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*pipeline), 8,
                          VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (pipeline == NULL)
       return vk_error(VK_ERROR_OUT_OF_HOST_MEMORY);
@@ -2717,7 +2728,7 @@ compute_pipeline_create(
    if (cache == NULL && device->physical->instance->pipeline_cache_enabled)
       cache = &device->default_pipeline_cache;
 
-   pipeline = vk_alloc2(&device->vk.alloc, pAllocator, sizeof(*pipeline), 8,
+   pipeline = vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*pipeline), 8,
                          VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (pipeline == NULL)
       return vk_error(VK_ERROR_OUT_OF_HOST_MEMORY);
@@ -2732,8 +2743,6 @@ compute_pipeline_create(
 
    anv_batch_set_storage(&pipeline->base.batch, ANV_NULL_ADDRESS,
                          pipeline->batch_data, sizeof(pipeline->batch_data));
-
-   pipeline->cs = NULL;
 
    assert(pCreateInfo->stage.stage == VK_SHADER_STAGE_COMPUTE_BIT);
    VK_FROM_HANDLE(vk_shader_module, module,  pCreateInfo->stage.module);
@@ -2867,8 +2876,8 @@ ray_tracing_pipeline_create(
    VK_MULTIALLOC(ma);
    VK_MULTIALLOC_DECL(&ma, struct anv_ray_tracing_pipeline, pipeline, 1);
    VK_MULTIALLOC_DECL(&ma, struct anv_rt_shader_group, groups, pCreateInfo->groupCount);
-   if (!vk_multialloc_alloc2(&ma, &device->vk.alloc, pAllocator,
-                             VK_SYSTEM_ALLOCATION_SCOPE_DEVICE))
+   if (!vk_multialloc_zalloc2(&ma, &device->vk.alloc, pAllocator,
+                              VK_SYSTEM_ALLOCATION_SCOPE_DEVICE))
       return vk_error(VK_ERROR_OUT_OF_HOST_MEMORY);
 
    result = anv_pipeline_init(&pipeline->base, device,
@@ -2882,7 +2891,7 @@ ray_tracing_pipeline_create(
    pipeline->group_count = pCreateInfo->groupCount;
    pipeline->groups = groups;
 
-   const VkShaderStageFlags ray_tracing_stages =
+   ASSERTED const VkShaderStageFlags ray_tracing_stages =
       VK_SHADER_STAGE_RAYGEN_BIT_KHR |
       VK_SHADER_STAGE_ANY_HIT_BIT_KHR |
       VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR |

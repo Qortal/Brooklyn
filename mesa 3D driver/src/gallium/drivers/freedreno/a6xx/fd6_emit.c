@@ -1076,7 +1076,6 @@ fd6_emit_state(struct fd_ringbuffer *ring, struct fd6_emit *emit)
          break;
       case FD6_GROUP_IBO:
          state = build_ibo(emit);
-         fd6_emit_ibo_consts(emit, fs, PIPE_SHADER_FRAGMENT, ring);
          break;
       case FD6_GROUP_CONST:
          state = fd6_build_user_consts(emit);
@@ -1247,9 +1246,9 @@ fd6_emit_restore(struct fd_batch *batch, struct fd_ringbuffer *ring)
    WRITE(REG_A6XX_HLSQ_UNKNOWN_BE01, 0);
 
    WRITE(REG_A6XX_VPC_UNKNOWN_9600, 0);
-   WRITE(REG_A6XX_GRAS_UNKNOWN_8600, 0x880);
+   WRITE(REG_A6XX_GRAS_DBG_ECO_CNTL, 0x880);
    WRITE(REG_A6XX_HLSQ_UNKNOWN_BE04, 0x80000);
-   WRITE(REG_A6XX_SP_UNKNOWN_AE03, 0x1430);
+   WRITE(REG_A6XX_SP_CHICKEN_BITS, 0x1430);
    WRITE(REG_A6XX_SP_IBO_COUNT, 0);
    WRITE(REG_A6XX_SP_UNKNOWN_B182, 0);
    WRITE(REG_A6XX_HLSQ_SHARED_CONSTS, 0);
@@ -1262,7 +1261,7 @@ fd6_emit_restore(struct fd_batch *batch, struct fd_ringbuffer *ring)
    WRITE(REG_A6XX_RB_UNKNOWN_8811, 0x00000010);
    WRITE(REG_A6XX_PC_MODE_CNTL, 0x1f);
 
-   WRITE(REG_A6XX_GRAS_UNKNOWN_8101, 0);
+   WRITE(REG_A6XX_GRAS_LRZ_PS_INPUT_CNTL, 0);
    WRITE(REG_A6XX_GRAS_SAMPLE_CNTL, 0);
    WRITE(REG_A6XX_GRAS_UNKNOWN_8110, 0x2);
 
@@ -1286,19 +1285,20 @@ fd6_emit_restore(struct fd_batch *batch, struct fd_ringbuffer *ring)
 
    WRITE(REG_A6XX_SP_UNKNOWN_B183, 0);
 
-   WRITE(REG_A6XX_GRAS_UNKNOWN_8099, 0);
+   WRITE(REG_A6XX_GRAS_SU_CONSERVATIVE_RAS_CNTL, 0);
    WRITE(REG_A6XX_GRAS_VS_LAYER_CNTL, 0);
-   WRITE(REG_A6XX_GRAS_UNKNOWN_80A0, 2);
+   WRITE(REG_A6XX_GRAS_SC_CNTL, A6XX_GRAS_SC_CNTL_CCUSINGLECACHELINESIZE(2));
    WRITE(REG_A6XX_GRAS_UNKNOWN_80AF, 0);
    WRITE(REG_A6XX_VPC_UNKNOWN_9210, 0);
    WRITE(REG_A6XX_VPC_UNKNOWN_9211, 0);
    WRITE(REG_A6XX_VPC_UNKNOWN_9602, 0);
    WRITE(REG_A6XX_PC_UNKNOWN_9E72, 0);
    WRITE(REG_A6XX_SP_TP_SAMPLE_CONFIG, 0);
-   /* NOTE blob seems to (mostly?) use 0xb2 for SP_TP_UNKNOWN_B309
+   /* NOTE blob seems to (mostly?) use 0xb2 for SP_TP_MODE_CNTL
     * but this seems to kill texture gather offsets.
     */
-   WRITE(REG_A6XX_SP_TP_UNKNOWN_B309, 0xa2);
+   WRITE(REG_A6XX_SP_TP_MODE_CNTL, 0xa0 |
+         A6XX_SP_TP_MODE_CNTL_ISAMMODE(ISAMMODE_GL));
    WRITE(REG_A6XX_RB_SAMPLE_CONFIG, 0);
    WRITE(REG_A6XX_GRAS_SAMPLE_CONFIG, 0);
    WRITE(REG_A6XX_RB_Z_BOUNDS_MIN, 0);
@@ -1366,9 +1366,11 @@ static void
 fd6_framebuffer_barrier(struct fd_context *ctx) assert_dt
 {
    struct fd6_context *fd6_ctx = fd6_context(ctx);
-   struct fd_batch *batch = ctx->batch;
+   struct fd_batch *batch = fd_context_batch_locked(ctx);
    struct fd_ringbuffer *ring = batch->draw;
    unsigned seqno;
+
+   fd_batch_needs_flush(batch);
 
    seqno = fd6_event_write(batch, ring, RB_DONE_TS, true);
 
@@ -1391,6 +1393,9 @@ fd6_framebuffer_barrier(struct fd_context *ctx) assert_dt
    OUT_RING(ring, CP_WAIT_MEM_GTE_0_RESERVED(0));
    OUT_RELOC(ring, control_ptr(fd6_ctx, seqno));
    OUT_RING(ring, CP_WAIT_MEM_GTE_3_REF(seqno));
+
+   fd_batch_unlock_submit(batch);
+   fd_batch_reference(&batch, NULL);
 }
 
 void

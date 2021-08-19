@@ -8,10 +8,13 @@ dEQP-EGL.functional.color_clears.multi_context.gles2.rgb888_window
 dEQP-EGL.functional.color_clears.multi_context.gles2.rgba8888_pbuffer
 dEQP-EGL.functional.color_clears.multi_context.gles2.rgba8888_window
 dEQP-EGL.functional.color_clears.multi_context.gles3.rgb888_pbuffer
+dEQP-EGL.functional.color_clears.multi_context.gles3.rgb888_window
 dEQP-EGL.functional.color_clears.multi_context.gles3.rgba8888_pbuffer
+dEQP-EGL.functional.color_clears.multi_context.gles3.rgba8888_window
 dEQP-EGL.functional.color_clears.multi_thread.gles2.rgba8888_pbuffer
 dEQP-EGL.functional.color_clears.multi_thread.gles2.rgba8888_window
 dEQP-EGL.functional.color_clears.multi_thread.gles3.rgb888_pbuffer
+dEQP-EGL.functional.color_clears.multi_thread.gles3.rgb888_window
 dEQP-EGL.functional.color_clears.multi_thread.gles3.rgba8888_pbuffer
 dEQP-EGL.functional.color_clears.multi_thread.gles3.rgba8888_window
 dEQP-EGL.functional.color_clears.single_context.gles2.rgb888_pbuffer
@@ -38,26 +41,33 @@ dEQP-EGL.functional.create_context_ext.robust_gles_2_ext.rgb888_no_depth_no_sten
 dEQP-EGL.functional.render.multi_context.gles2_gles3.rgb888_pbuffer
 dEQP-EGL.functional.render.multi_context.gles2_gles3.rgb888_window
 dEQP-EGL.functional.render.multi_context.gles2_gles3.rgba8888_pbuffer
+dEQP-EGL.functional.render.multi_context.gles2_gles3.rgba8888_window
 dEQP-EGL.functional.render.multi_context.gles2.rgb888_pbuffer
 dEQP-EGL.functional.render.multi_context.gles2.rgb888_window
 dEQP-EGL.functional.render.multi_context.gles2.rgba8888_pbuffer
 dEQP-EGL.functional.render.multi_context.gles2.rgba8888_window
 dEQP-EGL.functional.render.multi_context.gles3.rgb888_pbuffer
 dEQP-EGL.functional.render.multi_context.gles3.rgb888_window
+dEQP-EGL.functional.render.multi_context.gles3.rgba8888_pbuffer
 dEQP-EGL.functional.render.multi_context.gles3.rgba8888_window
 dEQP-EGL.functional.render.multi_thread.gles2_gles3.rgb888_pbuffer
 dEQP-EGL.functional.render.multi_thread.gles2_gles3.rgb888_window
 dEQP-EGL.functional.render.multi_thread.gles2_gles3.rgba8888_pbuffer
 dEQP-EGL.functional.render.multi_thread.gles2_gles3.rgba8888_window
+dEQP-EGL.functional.render.multi_thread.gles2.rgb888_pbuffer
 dEQP-EGL.functional.render.multi_thread.gles2.rgb888_window
 dEQP-EGL.functional.render.multi_thread.gles2.rgba8888_pbuffer
 dEQP-EGL.functional.render.multi_thread.gles2.rgba8888_window
 dEQP-EGL.functional.render.multi_thread.gles3.rgb888_pbuffer
 dEQP-EGL.functional.render.multi_thread.gles3.rgb888_window
 dEQP-EGL.functional.render.multi_thread.gles3.rgba8888_pbuffer
+dEQP-EGL.functional.render.multi_thread.gles3.rgba8888_window
 dEQP-EGL.functional.render.single_context.gles2.rgb888_pbuffer
+dEQP-EGL.functional.render.single_context.gles2.rgb888_window
 dEQP-EGL.functional.render.single_context.gles2.rgba8888_pbuffer
+dEQP-EGL.functional.render.single_context.gles2.rgba8888_window
 dEQP-EGL.functional.render.single_context.gles3.rgb888_pbuffer
+dEQP-EGL.functional.render.single_context.gles3.rgb888_window
 dEQP-EGL.functional.render.single_context.gles3.rgba8888_pbuffer
 dEQP-EGL.functional.render.single_context.gles3.rgba8888_window
 dEQP-EGL.functional.robustness.reset_context.shaders.infinite_loop.sync_status.vertex
@@ -90,5 +100,29 @@ dEQP-GLES3.functional.fbo.blit.depth_stencil.depth32f_stencil8_stencil_only
 dEQP-VK.api.command_buffers.record_many_draws_primary_2
 dEQP-VK.api.command_buffers.record_many_draws_secondary_2
 
+# "dEQP-VK.wsi.display_control.register_display_event: vkRegisterDisplayEventEXT returned invalid result (Fail)"
+dEQP-VK.wsi.display_control.register_display_event
+
 # First noticed Jun 1 2020 on an innocent branch.
 KHR-GL33.packed_depth_stencil.verify_copy_tex_image.depth32f_stencil8
+
+# Flaky with introduction of testing
+KHR-GLES31.core.arrays_of_arrays.InteractionFunctionCalls2
+KHR-GLES31.core.geometry_shader.layered_framebuffer.depth_support
+KHR-GLES31.core.tessellation_shader.tessellation_shader_tc_barriers.barrier_guarded_read_calls
+
+# looks like a cache flushing issue, and it does sometimes pass.
+bypass-dEQP-GLES31.functional.blend_equation_advanced.msaa.*
+
+# Flakes, all seen since merge of:
+# https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/12258
+# Failures seen so far in different flakes:
+#
+#  "Array 1 length is 0 should be 4"
+#  "Array 2 length is 0 should be 2"
+#  "Array 4 length is 0 should be 22"
+#  "Array 5 length is 0 should be 122"
+#
+# test does a single point draw in a FS taking the length of the first 7 SSBOs and writing them to
+# ints in SSBO 7, then glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT), then mapping it.
+KHR-GLES31.core.shader_storage_buffer_object.advanced-unsizedArrayLength-fs-std430-matC-pad

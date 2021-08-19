@@ -36,16 +36,16 @@ traces:
         checksum: 2fb2c8e83719526cb6c02b6c2e069d61
       - device: gl-panfrost-t760
         checksum: 2fb2c8e83719526cb6c02b6c2e069d61
-  - path: pathfinder/canvas_text.trace
+  - path: pathfinder/canvas_text_v2.trace
     expectations:
       - device: gl-panfrost-t860
-        checksum: 939038749a5204ec2b1448d3b9208fb3
+        checksum: 35fbb0c520595e948d3a0f3aaa499d77
       - device: gl-panfrost-t760
-        checksum: 939038749a5204ec2b1448d3b9208fb3
+        checksum: 35fbb0c520595e948d3a0f3aaa499d77
   - path: gputest/furmark.trace
     expectations:
       - device: gl-panfrost-t860
-        checksum: 2bde9efdddd92c28d29f744e36a226e9
+        checksum: 6540f71b1c051ba82af2a25b93065f34
   - path: gputest/triangle.trace
     expectations:
       - device: gl-panfrost-t860
@@ -55,14 +55,14 @@ traces:
   - path: humus/Portals.trace
     expectations:
       - device: gl-panfrost-t860
-        checksum: f83da726bff354684a576effa74ef681
+        checksum: ad04db74ea70b7772719080f8a4c499b
       - device: gl-panfrost-t760
         # Wrong rendering, many elements are missing
         checksum: 67db7302b28cb8e3e217cc79b672af79
   - path: 0ad/0ad.trace
     expectations:
       - device: gl-panfrost-t860
-        checksum: 63fd6b8720a6dbc42f3c1281179d5e82
+        checksum: 5a4fba0ae20e3ab9dc6fc4089add9457
   - path: glmark2/buffer:update-fraction=0.5:update-dispersion=0.9:columns=200:update-method=map:interleave=false.trace
     expectations:
       - device: gl-panfrost-t860
@@ -109,7 +109,7 @@ traces:
   - path: glmark2/effect2d:kernel=0,1,0;1,-4,1;0,1,0;.trace
     expectations:
       - device: gl-panfrost-t860
-        checksum: 3ac755bfa14a89f13cb01e29198ba091
+        checksum: 4472d33cd46351290a602f98adb338b9
   - path: glmark2/effect2d:kernel=1,1,1,1,1;1,1,1,1,1;1,1,1,1,1;.trace
     expectations:
       - device: gl-panfrost-t860
@@ -209,11 +209,11 @@ traces:
   - path: gputest/plot3d.trace
     expectations:
       - device: gl-panfrost-t860
-        checksum: 991efbfd046f70e1fd965d3983bb2965
+        checksum: a34223830866a42747db199b04c5e1be
   - path: humus/AmbientAperture.trace
     expectations:
       - device: gl-panfrost-t860
-        checksum: 20492edd94ea94ba73013a4ee14285b7
+        checksum: e4c0b930ef99f14305e1ade7f1779c09
   - path: humus/CelShading.trace
     expectations:
       - device: gl-panfrost-t860

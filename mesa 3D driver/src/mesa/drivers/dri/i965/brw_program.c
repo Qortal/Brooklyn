@@ -186,7 +186,7 @@ brw_nir_lower_resources(nir_shader *nir, struct gl_shader_program *shader_prog,
    BITSET_COPY(prog->info.textures_used, prog->nir->info.textures_used);
    BITSET_COPY(prog->info.textures_used_by_txf, prog->nir->info.textures_used_by_txf);
 
-   NIR_PASS_V(prog->nir, brw_nir_lower_image_load_store, devinfo, NULL);
+   NIR_PASS_V(prog->nir, brw_nir_lower_storage_image, devinfo, NULL);
 
    if (prog->nir->info.stage == MESA_SHADER_COMPUTE &&
        shader_prog->data->spirv) {
@@ -964,8 +964,8 @@ brw_debug_recompile(struct brw_context *brw,
    const struct brw_compiler *compiler = brw->screen->compiler;
    enum brw_cache_id cache_id = brw_stage_cache_id(stage);
 
-   compiler->shader_perf_log(brw, "Recompiling %s shader for program %d\n",
-                             _mesa_shader_stage_to_string(stage), api_id);
+   brw_shader_perf_log(compiler, brw, "Recompiling %s shader for program %d\n",
+                       _mesa_shader_stage_to_string(stage), api_id);
 
    const void *old_key =
       brw_find_previous_compile(&brw->cache, cache_id, key->program_string_id);

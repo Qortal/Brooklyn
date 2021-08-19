@@ -132,7 +132,7 @@ vn_cmd_fix_image_memory_barrier(const struct vn_command_buffer *cmd,
       return;
 
    /* prime blit src or no layout transition */
-   if (img->prime_blit_buffer != VK_NULL_HANDLE ||
+   if (img->is_prime_blit_src ||
        out_barrier->oldLayout == out_barrier->newLayout) {
       if (out_barrier->oldLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
          out_barrier->oldLayout = VN_PRESENT_SRC_INTERNAL_LAYOUT;
@@ -474,6 +474,11 @@ vn_DestroyCommandPool(VkDevice device,
 
    alloc = pAllocator ? pAllocator : &pool->allocator;
 
+   /* We must emit vkDestroyCommandPool before freeing the command buffers in
+    * pool->command_buffers.  Otherwise, another thread might reuse their
+    * object ids while they still refer to the command buffers in the
+    * renderer.
+    */
    vn_async_vkDestroyCommandPool(dev->instance, device, commandPool, NULL);
 
    list_for_each_entry_safe(struct vn_command_buffer, cmd,
@@ -654,6 +659,33 @@ vn_BeginCommandBuffer(VkCommandBuffer commandBuffer,
    return VK_SUCCESS;
 }
 
+static VkResult
+vn_cmd_submit(struct vn_command_buffer *cmd)
+{
+   struct vn_instance *instance = cmd->device->instance;
+
+   if (cmd->state != VN_COMMAND_BUFFER_STATE_RECORDING)
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+   vn_cs_encoder_commit(&cmd->cs);
+   if (vn_cs_encoder_get_fatal(&cmd->cs)) {
+      cmd->state = VN_COMMAND_BUFFER_STATE_INVALID;
+      vn_cs_encoder_reset(&cmd->cs);
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+   }
+
+   vn_instance_wait_roundtrip(instance, cmd->cs.current_buffer_roundtrip);
+   VkResult result = vn_instance_ring_submit(instance, &cmd->cs);
+   if (result != VK_SUCCESS) {
+      cmd->state = VN_COMMAND_BUFFER_STATE_INVALID;
+      return result;
+   }
+
+   vn_cs_encoder_reset(&cmd->cs);
+
+   return VK_SUCCESS;
+}
+
 VkResult
 vn_EndCommandBuffer(VkCommandBuffer commandBuffer)
 {
@@ -662,9 +694,6 @@ vn_EndCommandBuffer(VkCommandBuffer commandBuffer)
    struct vn_instance *instance = cmd->device->instance;
    size_t cmd_size;
 
-   if (cmd->state != VN_COMMAND_BUFFER_STATE_RECORDING)
-      return vn_error(instance, VK_ERROR_OUT_OF_HOST_MEMORY);
-
    cmd_size = vn_sizeof_vkEndCommandBuffer(commandBuffer);
    if (!vn_cs_encoder_reserve(&cmd->cs, cmd_size)) {
       cmd->state = VN_COMMAND_BUFFER_STATE_INVALID;
@@ -672,21 +701,12 @@ vn_EndCommandBuffer(VkCommandBuffer commandBuffer)
    }
 
    vn_encode_vkEndCommandBuffer(&cmd->cs, 0, commandBuffer);
-   vn_cs_encoder_commit(&cmd->cs);
 
-   if (vn_cs_encoder_get_fatal(&cmd->cs)) {
-      cmd->state = VN_COMMAND_BUFFER_STATE_INVALID;
-      return vn_error(instance, VK_ERROR_OUT_OF_HOST_MEMORY);
-   }
-
-   vn_instance_wait_roundtrip(instance, cmd->cs.current_buffer_roundtrip);
-   VkResult result = vn_instance_ring_submit(instance, &cmd->cs);
+   VkResult result = vn_cmd_submit(cmd);
    if (result != VK_SUCCESS) {
       cmd->state = VN_COMMAND_BUFFER_STATE_INVALID;
       return vn_error(instance, result);
    }
-
-   vn_cs_encoder_reset(&cmd->cs);
 
    cmd->state = VN_COMMAND_BUFFER_STATE_EXECUTABLE;
 
@@ -1213,8 +1233,9 @@ vn_CmdCopyImageToBuffer(VkCommandBuffer commandBuffer,
        VN_PRESENT_SRC_INTERNAL_LAYOUT != VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
       srcImageLayout = VN_PRESENT_SRC_INTERNAL_LAYOUT;
 
+      /* sanity check */
       const struct vn_image *img = vn_image_from_handle(srcImage);
-      prime_blit = img->is_wsi && img->prime_blit_buffer == dstBuffer;
+      prime_blit = img->is_wsi && img->is_prime_blit_src;
       assert(prime_blit);
    }
 

@@ -79,6 +79,7 @@ struct radeon_info {
    bool has_image_load_dcc_bug;
    bool has_two_planes_iterate256_bug;
    bool has_vgt_flush_ngg_legacy_bug;
+   bool has_cs_regalloc_hang_bug;
    bool has_32bit_predication;
    bool has_3d_cube_border_color_mipmap;
 
@@ -206,7 +207,6 @@ struct radeon_info {
    uint32_t min_wave64_vgpr_alloc;
    uint32_t max_vgpr_alloc;
    uint32_t wave64_vgpr_alloc_granularity;
-   bool use_late_alloc; /* VS and GS: late pos/param allocation */
 
    /* Render backends (color + depth blocks). */
    uint32_t r300_num_gb_pipes;

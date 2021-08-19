@@ -33,6 +33,9 @@
 #include "zink_context.h"
 #include "zink_compiler.h"
 #include "zink_shader_keys.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 struct zink_screen;
 struct zink_shader;
@@ -61,18 +64,16 @@ struct zink_cs_push_constant {
  * allowing us to skip going through shader keys
  */
 struct zink_shader_module {
-   struct pipe_reference reference;
    VkShaderModule shader;
-};
-
-/* the shader cache stores a mapping of zink_shader_key::VkShaderModule */
-struct zink_shader_cache {
-   struct pipe_reference reference;
-   struct hash_table *shader_cache;
+   bool default_variant;
 };
 
 struct zink_program {
    struct pipe_reference reference;
+   unsigned char sha1[20];
+   struct util_queue_fence cache_fence;
+   VkPipelineCache pipeline_cache;
+   size_t pipeline_cache_size;
    struct zink_batch_usage *batch_uses;
    bool is_compute;
 
@@ -81,20 +82,27 @@ struct zink_program {
    VkPipelineLayout layout;
    VkDescriptorSetLayout dsl[ZINK_DESCRIPTOR_TYPES + 1]; // one for each type + push
    unsigned num_dsl;
+
+   /* the shader cache stores a mapping of zink_shader_key::VkShaderModule */
+   struct hash_table shader_cache[ZINK_SHADER_COUNT];
 };
 
 struct zink_gfx_program {
    struct zink_program base;
 
+   uint32_t stages_present; //mask of stages present in this program
+   struct nir_shader *nir[ZINK_SHADER_COUNT];
+
    struct zink_shader_module *modules[ZINK_SHADER_COUNT]; // compute stage doesn't belong here
 
    struct zink_shader_module *default_variants[ZINK_SHADER_COUNT][2]; //[default, no streamout]
    const void *default_variant_key[ZINK_SHADER_COUNT];
+   struct zink_shader *last_vertex_stage;
+
    struct zink_shader *shaders[ZINK_SHADER_COUNT];
-   struct zink_shader_cache *shader_cache;
-   unsigned char shader_slot_map[VARYING_SLOT_MAX];
-   unsigned char shader_slots_reserved;
    struct hash_table *pipelines[11]; // number of draw modes we support
+   uint32_t default_variant_hash;
+   uint32_t last_variant_hash;
 };
 
 struct zink_compute_program {
@@ -102,7 +110,6 @@ struct zink_compute_program {
 
    struct zink_shader_module *module;
    struct zink_shader *shader;
-   struct zink_shader_cache *shader_cache;
    struct hash_table *pipelines;
 };
 
@@ -124,8 +131,6 @@ zink_desc_type_from_vktype(VkDescriptorType type)
    default:
       unreachable("unhandled descriptor type");
    }
-   return 0;
-   
 }
 
 void
@@ -227,5 +232,8 @@ zink_program_has_descriptors(const struct zink_program *pg)
 {
    return pg->num_dsl > 0;
 }
+#ifdef __cplusplus
+}
+#endif
 
 #endif

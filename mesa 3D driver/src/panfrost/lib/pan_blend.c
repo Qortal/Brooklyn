@@ -32,6 +32,11 @@
 #include "compiler/nir/nir_conversion_builder.h"
 #include "compiler/nir/nir_lower_blend.h"
 
+/* Blending is shared across all supported Malis with only minor differences,
+ * so pin a particular version */
+#define ARCH 7
+#include <midgard_pack.h>
+
 /* Fixed function blending */
 
 static bool
@@ -42,11 +47,42 @@ factor_is_supported(enum blend_factor factor)
                factor != BLEND_FACTOR_SRC1_ALPHA;
 }
 
+/* OpenGL allows encoding (src*dest + dest*src) which is incompatiblle with
+ * Midgard style blending since there are two multiplies. However, it may be
+ * factored as 2*src*dest = dest*(2*src), which can be encoded on Bifrost as 0
+ * + dest * (2*src) wih the new source_2 value of C. Detect this case. */
+
+static bool
+is_2srcdest(enum blend_func blend_func,
+            enum blend_factor src_factor,
+            bool invert_src,
+            enum blend_factor dest_factor,
+            bool invert_dest,
+            bool is_alpha)
+{
+        return (blend_func == BLEND_FUNC_ADD) &&
+               ((src_factor == BLEND_FACTOR_DST_COLOR) ||
+                ((src_factor == BLEND_FACTOR_DST_ALPHA) && is_alpha)) &&
+               ((dest_factor == BLEND_FACTOR_SRC_COLOR) ||
+                ((dest_factor == BLEND_FACTOR_SRC_ALPHA) && is_alpha)) &&
+               !invert_src && !invert_dest;
+}
+
 static bool
 can_fixed_function_equation(enum blend_func blend_func,
                             enum blend_factor src_factor,
-                            enum blend_factor dest_factor)
+                            bool invert_src,
+                            enum blend_factor dest_factor,
+                            bool invert_dest,
+                            bool is_alpha,
+                            bool supports_2src)
 {
+        if (is_2srcdest(blend_func, src_factor, invert_src,
+                       dest_factor, invert_dest, is_alpha)) {
+
+                return supports_2src;
+        }
+
         if (blend_func != BLEND_FUNC_ADD &&
             blend_func != BLEND_FUNC_SUBTRACT &&
             blend_func != BLEND_FUNC_REVERSE_SUBTRACT)
@@ -67,14 +103,12 @@ can_fixed_function_equation(enum blend_func blend_func,
 static unsigned
 blend_factor_constant_mask(enum blend_factor factor)
 {
-        unsigned mask = 0;
-
         if (factor == BLEND_FACTOR_CONSTANT_COLOR)
-                mask |= 0b0111; /* RGB */
+                return 0b0111; /* RGB */
         else if (factor == BLEND_FACTOR_CONSTANT_ALPHA)
-                mask |= 0b1000; /* A */
-
-        return mask;
+                return 0b1000; /* A */
+        else
+                return 0b0000; /* - */
 }
 
 unsigned
@@ -105,15 +139,22 @@ pan_blend_is_homogenous_constant(unsigned mask, const float *constants)
 /* Determines if an equation can run in fixed function */
 
 bool
-pan_blend_can_fixed_function(const struct pan_blend_equation equation)
+pan_blend_can_fixed_function(const struct pan_blend_equation equation,
+                             bool supports_2src)
 {
         return !equation.blend_enable ||
                (can_fixed_function_equation(equation.rgb_func,
                                             equation.rgb_src_factor,
-                                            equation.rgb_dst_factor) &&
+                                            equation.rgb_invert_src_factor,
+                                            equation.rgb_dst_factor,
+                                            equation.rgb_invert_dst_factor,
+                                            false, supports_2src) &&
                 can_fixed_function_equation(equation.alpha_func,
                                             equation.alpha_src_factor,
-                                            equation.alpha_dst_factor));
+                                            equation.alpha_invert_src_factor,
+                                            equation.alpha_dst_factor,
+                                            equation.alpha_invert_dst_factor,
+                                            true, supports_2src));
 }
 
 static enum mali_blend_operand_c
@@ -150,9 +191,11 @@ to_panfrost_function(enum blend_func blend_func,
                      bool invert_src,
                      enum blend_factor dest_factor,
                      bool invert_dest,
+                     bool is_alpha,
                      struct MALI_BLEND_FUNCTION *function)
 {
-        assert(can_fixed_function_equation(blend_func, src_factor, dest_factor));
+        assert(can_fixed_function_equation(blend_func, src_factor, invert_src,
+                                           dest_factor, invert_dest, is_alpha, true));
 
         if (src_factor == BLEND_FACTOR_ZERO && !invert_src) {
                 function->a = MALI_BLEND_OPERAND_A_ZERO;
@@ -204,6 +247,12 @@ to_panfrost_function(enum blend_func blend_func,
                 default:
                         unreachable("Invalid blend function");
                 }
+        } else if (is_2srcdest(blend_func, src_factor, invert_src, dest_factor,
+                                invert_dest, is_alpha)) {
+                /* src*dest + dest*src = 2*src*dest = 0 + dest*(2*src) */
+                function->a = MALI_BLEND_OPERAND_A_ZERO;
+                function->b = MALI_BLEND_OPERAND_B_DEST;
+                function->c = MALI_BLEND_OPERAND_C_SRC_X_2;
         } else {
                 assert(src_factor == dest_factor && invert_src != invert_dest);
 
@@ -232,6 +281,16 @@ to_panfrost_function(enum blend_func blend_func,
 bool
 pan_blend_is_opaque(const struct pan_blend_equation equation)
 {
+        /* If a channel is masked out, we can't use opaque mode even if
+         * blending is disabled, since we need a tilebuffer read in there */
+        if (equation.color_mask != 0xF)
+                return false;
+
+        /* With nothing masked out, disabled bledning is opaque */
+        if (!equation.blend_enable)
+                return true;
+
+        /* Also detect open-coded opaque blending */
         return equation.rgb_src_factor == BLEND_FACTOR_ZERO &&
                equation.rgb_invert_src_factor &&
                equation.rgb_dst_factor == BLEND_FACTOR_ZERO &&
@@ -243,8 +302,7 @@ pan_blend_is_opaque(const struct pan_blend_equation equation)
                equation.alpha_dst_factor == BLEND_FACTOR_ZERO &&
                !equation.alpha_invert_dst_factor &&
                (equation.alpha_func == BLEND_FUNC_ADD ||
-                equation.alpha_func == BLEND_FUNC_SUBTRACT) &&
-               equation.color_mask == 0xf;
+                equation.alpha_func == BLEND_FUNC_SUBTRACT);
 }
 
 static bool
@@ -296,15 +354,29 @@ pan_blend_to_fixed_function_equation(const struct pan_blend_equation equation,
                              equation.rgb_invert_src_factor,
                              equation.rgb_dst_factor,
                              equation.rgb_invert_dst_factor,
-                             &out->rgb);
+                             false, &out->rgb);
 
         to_panfrost_function(equation.alpha_func,
                              equation.alpha_src_factor,
                              equation.alpha_invert_src_factor,
                              equation.alpha_dst_factor,
                              equation.alpha_invert_dst_factor,
-                             &out->alpha);
+                             true, &out->alpha);
         out->color_mask = equation.color_mask;
+}
+
+uint32_t
+pan_pack_blend(const struct pan_blend_equation equation)
+{
+        STATIC_ASSERT(sizeof(uint32_t) == MALI_BLEND_EQUATION_LENGTH);
+
+        uint32_t out = 0;
+
+        pan_pack(&out, BLEND_EQUATION, cfg) {
+                pan_blend_to_fixed_function_equation(equation, &cfg);
+        }
+
+        return out;
 }
 
 static const char *
@@ -521,7 +593,7 @@ pan_blend_create_shader(const struct panfrost_device *dev,
 uint64_t
 pan_blend_get_bifrost_desc(const struct panfrost_device *dev,
                            enum pipe_format fmt, unsigned rt,
-                           unsigned force_size)
+                           unsigned force_size, bool dithered)
 {
         const struct util_format_description *desc = util_format_description(fmt);
         uint64_t res;
@@ -568,7 +640,7 @@ pan_blend_get_bifrost_desc(const struct panfrost_device *dev,
                 }
 
                 cfg.fixed_function.conversion.memory_format =
-                         panfrost_format_to_bifrost_blend(dev, fmt);
+                         panfrost_format_to_bifrost_blend(dev, fmt, dithered);
         }
 
         return res;
@@ -639,7 +711,7 @@ pan_blend_get_shader_locked(const struct panfrost_device *dev,
 
         if (pan_is_bifrost(dev)) {
                 inputs.blend.bifrost_blend_desc =
-                        pan_blend_get_bifrost_desc(dev, key.format, key.rt, 0);
+                        pan_blend_get_bifrost_desc(dev, key.format, key.rt, 0, false);
         }
 
         struct pan_shader_info info;

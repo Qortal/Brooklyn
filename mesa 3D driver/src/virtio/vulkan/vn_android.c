@@ -20,9 +20,12 @@
 #include "util/libsync.h"
 #include "util/os_file.h"
 
+#include "vn_buffer.h"
 #include "vn_device.h"
 #include "vn_device_memory.h"
 #include "vn_image.h"
+#include "vn_instance.h"
+#include "vn_physical_device.h"
 #include "vn_queue.h"
 
 static int
@@ -207,8 +210,8 @@ vn_GetSwapchainGrallocUsage2ANDROID(
 
 struct cros_gralloc0_buffer_info {
    uint32_t drm_fourcc;
-   int num_fds;         /* ignored */
-   int fds[4];          /* ignored */
+   int num_fds; /* ignored */
+   int fds[4];  /* ignored */
    uint64_t modifier;
    uint32_t offset[4];
    uint32_t stride[4];
@@ -236,8 +239,10 @@ vn_android_get_dma_buf_from_native_handle(const native_handle_t *handle,
       return VK_ERROR_INVALID_EXTERNAL_HANDLE;
    }
 
-   if (handle->data[0] < 0)
+   if (handle->data[0] < 0) {
+      vn_log(NULL, "handle->data[0] < 0");
       return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+   }
 
    *out_dma_buf = handle->data[0];
    return VK_SUCCESS;
@@ -251,11 +256,15 @@ vn_android_get_gralloc_buffer_properties(
    static const int32_t CROS_GRALLOC_DRM_GET_BUFFER_INFO = 4;
    struct cros_gralloc0_buffer_info info;
    if (gralloc->perform(gralloc, CROS_GRALLOC_DRM_GET_BUFFER_INFO, handle,
-                        &info) != 0)
+                        &info) != 0) {
+      vn_log(NULL, "CROS_GRALLOC_DRM_GET_BUFFER_INFO failed");
       return false;
+   }
 
-   if (info.modifier == DRM_FORMAT_MOD_INVALID)
+   if (info.modifier == DRM_FORMAT_MOD_INVALID) {
+      vn_log(NULL, "Unexpected DRM_FORMAT_MOD_INVALID");
       return false;
+   }
 
    out_props->drm_fourcc = info.drm_fourcc;
    for (uint32_t i = 0; i < 4; i++) {
@@ -418,13 +427,18 @@ vn_android_image_from_anb(struct vn_device *dev,
 
    /* encoder will strip the Android specific pNext structs */
    result = vn_image_create(dev, &builder.create, alloc, &img);
-   if (result != VK_SUCCESS)
+   if (result != VK_SUCCESS) {
+      if (VN_DEBUG(WSI))
+         vn_log(dev->instance, "vn_image_create failed");
       goto fail;
+   }
 
    image = vn_image_to_handle(img);
    VkMemoryRequirements mem_req;
    vn_GetImageMemoryRequirements(device, image, &mem_req);
    if (!mem_req.memoryTypeBits) {
+      if (VN_DEBUG(WSI))
+         vn_log(dev->instance, "mem_req.memoryTypeBits cannot be zero");
       result = VK_ERROR_INVALID_EXTERNAL_HANDLE;
       goto fail;
    }
@@ -442,6 +456,11 @@ vn_android_image_from_anb(struct vn_device *dev,
    }
 
    if (alloc_size < mem_req.size) {
+      if (VN_DEBUG(WSI)) {
+         vn_log(dev->instance,
+                "alloc_size(%" PRIu64 ") mem_req.size(%" PRIu64 ")",
+                alloc_size, mem_req.size);
+      }
       result = VK_ERROR_INVALID_EXTERNAL_HANDLE;
       goto fail;
    }
@@ -911,8 +930,11 @@ vn_android_device_import_ahb(struct vn_device *dev,
    if (result != VK_SUCCESS)
       return result;
 
-   if (((1 << alloc_info->memoryTypeIndex) & mem_type_bits) == 0)
+   if (((1 << alloc_info->memoryTypeIndex) & mem_type_bits) == 0) {
+      vn_log(dev->instance, "memoryTypeIndex(%u) mem_type_bits(0x%X)",
+             alloc_info->memoryTypeIndex, mem_type_bits);
       return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+   }
 
    /* If ahb is for an image, finish the deferred image creation first */
    if (dedicated_info && dedicated_info->image != VK_NULL_HANDLE) {
@@ -1061,6 +1083,112 @@ vn_GetMemoryAndroidHardwareBufferANDROID(
 
    AHardwareBuffer_acquire(mem->ahb);
    *pBuffer = mem->ahb;
+
+   return VK_SUCCESS;
+}
+
+struct vn_android_buffer_create_info {
+   VkBufferCreateInfo create;
+   VkExternalMemoryBufferCreateInfo external;
+   VkBufferOpaqueCaptureAddressCreateInfo address;
+};
+
+static const VkBufferCreateInfo *
+vn_android_fix_buffer_create_info(
+   const VkBufferCreateInfo *create_info,
+   struct vn_android_buffer_create_info *local_info)
+{
+   local_info->create = *create_info;
+   VkBaseOutStructure *dst = (void *)&local_info->create;
+
+   vk_foreach_struct_const(src, create_info->pNext) {
+      void *pnext = NULL;
+      switch (src->sType) {
+      case VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO:
+         memcpy(&local_info->external, src, sizeof(local_info->external));
+         local_info->external.handleTypes =
+            VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+         pnext = &local_info->external;
+         break;
+      case VK_STRUCTURE_TYPE_BUFFER_OPAQUE_CAPTURE_ADDRESS_CREATE_INFO:
+         memcpy(&local_info->address, src, sizeof(local_info->address));
+         pnext = &local_info->address;
+         break;
+      default:
+         break;
+      }
+
+      if (pnext) {
+         dst->pNext = pnext;
+         dst = pnext;
+      }
+   }
+
+   dst->pNext = NULL;
+
+   return &local_info->create;
+}
+
+VkResult
+vn_android_init_ahb_buffer_memory_type_bits(struct vn_device *dev)
+{
+   const uint32_t format = AHARDWAREBUFFER_FORMAT_BLOB;
+   /* ensure dma_buf_memory_type_bits covers host visible usage */
+   const uint64_t usage = AHARDWAREBUFFER_USAGE_GPU_DATA_BUFFER |
+                          AHARDWAREBUFFER_USAGE_CPU_READ_RARELY |
+                          AHARDWAREBUFFER_USAGE_CPU_WRITE_RARELY;
+   AHardwareBuffer *ahb = NULL;
+   int dma_buf_fd = -1;
+   uint64_t alloc_size = 0;
+   uint32_t mem_type_bits = 0;
+   VkResult result;
+
+   ahb = vn_android_ahb_allocate(4096, 1, 1, format, usage);
+   if (!ahb)
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+   result = vn_android_get_dma_buf_from_native_handle(
+      AHardwareBuffer_getNativeHandle(ahb), &dma_buf_fd);
+   if (result != VK_SUCCESS) {
+      AHardwareBuffer_release(ahb);
+      return result;
+   }
+
+   result = vn_get_memory_dma_buf_properties(dev, dma_buf_fd, &alloc_size,
+                                             &mem_type_bits);
+
+   AHardwareBuffer_release(ahb);
+
+   if (result != VK_SUCCESS)
+      return result;
+
+   dev->ahb_buffer_memory_type_bits = mem_type_bits;
+
+   return VK_SUCCESS;
+}
+
+VkResult
+vn_android_buffer_from_ahb(struct vn_device *dev,
+                           const VkBufferCreateInfo *create_info,
+                           const VkAllocationCallbacks *alloc,
+                           struct vn_buffer **out_buf)
+{
+   struct vn_android_buffer_create_info local_info;
+   VkResult result;
+
+   create_info = vn_android_fix_buffer_create_info(create_info, &local_info);
+   result = vn_buffer_create(dev, create_info, alloc, out_buf);
+   if (result != VK_SUCCESS)
+      return result;
+
+   /* AHB backed buffer layers on top of dma_buf, so here we must comine the
+    * queried type bits from both buffer memory requirement and dma_buf fd
+    * properties.
+    */
+   (*out_buf)->memory_requirements.memoryRequirements.memoryTypeBits &=
+      dev->ahb_buffer_memory_type_bits;
+
+   assert((*out_buf)->memory_requirements.memoryRequirements.memoryTypeBits);
 
    return VK_SUCCESS;
 }

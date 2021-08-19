@@ -489,7 +489,7 @@ for (int bit = 31; bit >= 0; bit--) {
 
 unop_convert("ifind_msb_rev", tint32, tuint, """
 dst = -1;
-if (src0 != 0 || src0 != -1) {
+if (src0 != 0 && src0 != -1) {
    for (int bit = 0; bit < 31; bit++) {
       /* If src0 < 0, we're looking for the first 0 bit.
        * if src0 >= 0, we're looking for the first 1 bit.
@@ -537,6 +537,7 @@ dst.y = dst.y * (1.0f / ma) + 0.5f;
 """)
 
 unop_horiz("cube_face_index_amd", 1, tfloat32, 3, tfloat32, """
+dst.x = 0.0;
 float absX = fabsf(src0.x);
 float absY = fabsf(src0.y);
 float absZ = fabsf(src0.z);
@@ -626,18 +627,18 @@ if (nir_is_rounding_mode_rtz(execution_mode, bit_size)) {
    dst = src0 + src1;
 }
 """)
-binop("iadd", tint, _2src_commutative + associative, "src0 + src1")
+binop("iadd", tint, _2src_commutative + associative, "(uint64_t)src0 + (uint64_t)src1")
 binop("iadd_sat", tint, _2src_commutative, """
       src1 > 0 ?
-         (src0 + src1 < src0 ? (1ull << (bit_size - 1)) - 1 : src0 + src1) :
-         (src0 < src0 + src1 ? (1ull << (bit_size - 1))     : src0 + src1)
+         (src0 + src1 < src0 ? u_intN_max(bit_size) : src0 + src1) :
+         (src0 < src0 + src1 ? u_intN_min(bit_size) : src0 + src1)
 """)
 binop("uadd_sat", tuint, _2src_commutative,
-      "(src0 + src1) < src0 ? MAX_UINT_FOR_SIZE(sizeof(src0) * 8) : (src0 + src1)")
+      "(src0 + src1) < src0 ? u_uintN_max(sizeof(src0) * 8) : (src0 + src1)")
 binop("isub_sat", tint, "", """
       src1 < 0 ?
-         (src0 - src1 < src0 ? (1ull << (bit_size - 1)) - 1 : src0 - src1) :
-         (src0 < src0 - src1 ? (1ull << (bit_size - 1))     : src0 - src1)
+         (src0 - src1 < src0 ? u_intN_max(bit_size) : src0 - src1) :
+         (src0 < src0 - src1 ? u_intN_min(bit_size) : src0 - src1)
 """)
 binop("usub_sat", tuint, "", "src0 < src1 ? 0 : src0 - src1")
 
@@ -770,8 +771,8 @@ binop("uhadd", tuint, _2src_commutative, "(src0 & src1) + ((src0 ^ src1) >> 1)")
 #
 # (x + y + 1) >> 1 = (x | y) + (-(x ^ y) + 1) >> 1)
 #                  = (x | y) -  ((x ^ y)      >> 1)
-binop("irhadd", tint, _2src_commutative, "(src0 | src1) + ((src0 ^ src1) >> 1)")
-binop("urhadd", tuint, _2src_commutative, "(src0 | src1) + ((src0 ^ src1) >> 1)")
+binop("irhadd", tint, _2src_commutative, "(src0 | src1) - ((src0 ^ src1) >> 1)")
+binop("urhadd", tuint, _2src_commutative, "(src0 | src1) - ((src0 ^ src1) >> 1)")
 
 binop("umod", tuint, "", "src1 == 0 ? 0 : src0 % src1")
 
@@ -896,6 +897,10 @@ binop_convert("pack_64_2x32_split", tuint64, tuint32, "",
 binop_convert("pack_32_2x16_split", tuint32, tuint16, "",
               "src0 | ((uint32_t)src1 << 16)")
 
+opcode("pack_32_4x8_split", 0, tuint32, [0, 0, 0, 0], [tuint8, tuint8, tuint8, tuint8],
+       False, "",
+       "src0 | ((uint32_t)src1 << 8) | ((uint32_t)src2 << 16) | ((uint32_t)src3 << 24)")
+
 # bfm implements the behavior of the first operation of the SM5 "bfi" assembly
 # and that of the "bfi1" i965 instruction. That is, the bits and offset values
 # are from the low five bits of src0 and src1, respectively.
@@ -956,6 +961,9 @@ if (nir_is_rounding_mode_rtz(execution_mode, bit_size)) {
 """)
 
 triop("flrp", tfloat, "", "src0 * (1 - src2) + src1 * src2")
+
+# Ternary addition
+triop("iadd3", tint, _2src_commutative + associative, "src0 + src1 + src2")
 
 # Conditional Select
 #
@@ -1242,6 +1250,7 @@ binop("umul24_relaxed", tuint32, _2src_commutative + associative, "src0 * src1")
 
 unop_convert("fisnormal", tbool1, tfloat, "isnormal(src0)")
 unop_convert("fisfinite", tbool1, tfloat, "isfinite(src0)")
+unop_convert("fisfinite32", tint32, tfloat, "isfinite(src0)")
 
 # vc4-specific opcodes
 

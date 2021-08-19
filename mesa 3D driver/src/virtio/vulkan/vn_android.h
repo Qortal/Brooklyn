@@ -69,6 +69,15 @@ vn_android_release_ahb(struct AHardwareBuffer *ahb);
 VkFormat
 vn_android_drm_format_to_vk_format(uint32_t format);
 
+VkResult
+vn_android_buffer_from_ahb(struct vn_device *dev,
+                           const VkBufferCreateInfo *create_info,
+                           const VkAllocationCallbacks *alloc,
+                           struct vn_buffer **out_buf);
+
+VkResult
+vn_android_init_ahb_buffer_memory_type_bits(struct vn_device *dev);
+
 #else
 
 static inline const VkNativeBufferANDROID *
@@ -140,6 +149,21 @@ static inline VkFormat
 vn_android_drm_format_to_vk_format(UNUSED uint32_t format)
 {
    return VK_FORMAT_UNDEFINED;
+}
+
+static inline VkResult
+vn_android_buffer_from_ahb(UNUSED struct vn_device *dev,
+                           UNUSED const VkBufferCreateInfo *create_info,
+                           UNUSED const VkAllocationCallbacks *alloc,
+                           UNUSED struct vn_buffer **out_buf)
+{
+   return VK_ERROR_OUT_OF_HOST_MEMORY;
+}
+
+static inline VkResult
+vn_android_init_ahb_buffer_memory_type_bits(UNUSED struct vn_device *dev)
+{
+   return VK_ERROR_FEATURE_NOT_PRESENT;
 }
 
 #endif /* ANDROID */

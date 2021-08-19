@@ -94,35 +94,8 @@ anv_shader_compile_to_nir(struct anv_device *device,
    assert(module->size % 4 == 0);
 
    uint32_t num_spec_entries = 0;
-   struct nir_spirv_specialization *spec_entries = NULL;
-   if (spec_info && spec_info->mapEntryCount > 0) {
-      num_spec_entries = spec_info->mapEntryCount;
-      spec_entries = calloc(num_spec_entries, sizeof(*spec_entries));
-      for (uint32_t i = 0; i < num_spec_entries; i++) {
-         VkSpecializationMapEntry entry = spec_info->pMapEntries[i];
-         const void *data = spec_info->pData + entry.offset;
-         assert(data + entry.size <= spec_info->pData + spec_info->dataSize);
-
-         spec_entries[i].id = spec_info->pMapEntries[i].constantID;
-         switch (entry.size) {
-         case 8:
-            spec_entries[i].value.u64 = *(const uint64_t *)data;
-            break;
-         case 4:
-            spec_entries[i].value.u32 = *(const uint32_t *)data;
-            break;
-         case 2:
-            spec_entries[i].value.u16 = *(const uint16_t *)data;
-            break;
-         case 1:
-            spec_entries[i].value.u8 = *(const uint8_t *)data;
-            break;
-         default:
-            assert(!"Invalid spec constant size");
-            break;
-         }
-      }
-   }
+   struct nir_spirv_specialization *spec_entries =
+      vk_spec_info_to_nir_spirv(spec_info, &num_spec_entries);
 
    struct anv_spirv_debug_data spirv_debug_data = {
       .device = device,
@@ -139,6 +112,7 @@ anv_shader_compile_to_nir(struct anv_device *device,
          .device_group = true,
          .draw_parameters = true,
          .float16 = pdevice->info.ver >= 8,
+         .float32_atomic_min_max = pdevice->info.ver >= 9,
          .float64 = pdevice->info.ver >= 8,
          .fragment_shader_sample_interlock = pdevice->info.ver >= 9,
          .fragment_shader_pixel_interlock = pdevice->info.ver >= 9,
@@ -857,7 +831,7 @@ anv_pipeline_lower_nir(struct anv_pipeline *pipeline,
 
    nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
 
-   NIR_PASS_V(nir, brw_nir_lower_image_load_store, compiler->devinfo, NULL);
+   NIR_PASS_V(nir, brw_nir_lower_storage_image, compiler->devinfo, NULL);
 
    NIR_PASS_V(nir, nir_lower_explicit_io, nir_var_mem_global,
               nir_address_format_64bit_global);
@@ -2173,7 +2147,7 @@ copy_non_dynamic_state(struct anv_graphics_pipeline *pipeline,
    const VkPipelineRasterizationLineStateCreateInfoEXT *line_state =
       vk_find_struct_const(pCreateInfo->pRasterizationState->pNext,
                            PIPELINE_RASTERIZATION_LINE_STATE_CREATE_INFO_EXT);
-   if (line_state) {
+   if (!raster_discard && line_state && line_state->stippledLineEnable) {
       if (states & ANV_CMD_DIRTY_DYNAMIC_LINE_STIPPLE) {
          dynamic->line_stipple.factor = line_state->lineStippleFactor;
          dynamic->line_stipple.pattern = line_state->lineStipplePattern;
@@ -2369,7 +2343,6 @@ anv_graphics_pipeline_init(struct anv_graphics_pipeline *pipeline,
 
    assert(pCreateInfo->pRasterizationState);
 
-   pipeline->dynamic_states = 0;
    if (pCreateInfo->pDynamicState) {
       /* Remove all of the states that are marked as dynamic */
       uint32_t count = pCreateInfo->pDynamicState->dynamicStateCount;
@@ -2397,11 +2370,6 @@ anv_graphics_pipeline_init(struct anv_graphics_pipeline *pipeline,
       pCreateInfo->pMultisampleState &&
       pCreateInfo->pMultisampleState->sampleShadingEnable;
 
-   /* When we free the pipeline, we detect stages based on the NULL status
-    * of various prog_data pointers.  Make them NULL by default.
-    */
-   memset(pipeline->shaders, 0, sizeof(pipeline->shaders));
-
    result = anv_pipeline_compile_graphics(pipeline, cache, pCreateInfo);
    if (result != VK_SUCCESS) {
       anv_pipeline_finish(&pipeline->base, device, alloc);
@@ -2417,7 +2385,6 @@ anv_graphics_pipeline_init(struct anv_graphics_pipeline *pipeline,
 
    const uint64_t inputs_read = get_vs_prog_data(pipeline)->inputs_read;
 
-   pipeline->vb_used = 0;
    for (uint32_t i = 0; i < vi_info->vertexAttributeDescriptionCount; i++) {
       const VkVertexInputAttributeDescription *desc =
          &vi_info->pVertexAttributeDescriptions[i];
@@ -3081,10 +3048,6 @@ anv_ray_tracing_pipeline_init(struct anv_ray_tracing_pipeline *pipeline,
                               const VkAllocationCallbacks *alloc)
 {
    VkResult result;
-
-   /* Zero things out so our clean-up works */
-   memset(pipeline->groups, 0,
-          pipeline->group_count * sizeof(*pipeline->groups));
 
    util_dynarray_init(&pipeline->shaders, pipeline->base.mem_ctx);
 

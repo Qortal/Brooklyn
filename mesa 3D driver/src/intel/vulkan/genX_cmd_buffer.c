@@ -384,8 +384,8 @@ anv_can_fast_clear_color_view(struct anv_device * device,
     */
    if (render_area.offset.x != 0 ||
        render_area.offset.y != 0 ||
-       render_area.extent.width != iview->extent.width ||
-       render_area.extent.height != iview->extent.height)
+       render_area.extent.width != iview->vk.extent.width ||
+       render_area.extent.height != iview->vk.extent.height)
       return false;
 
    /* On Broadwell and earlier, we can only handle 0/1 clear colors */
@@ -401,7 +401,7 @@ anv_can_fast_clear_color_view(struct anv_device * device,
    if (isl_color_value_requires_conversion(clear_color,
                                            &iview->image->planes[0].primary_surface.isl,
                                            &iview->planes[0].isl)) {
-      anv_perf_warn(device, &iview->base,
+      anv_perf_warn(device, &iview->vk.base,
                     "Cannot fast-clear to colors which would require "
                     "format conversion on resolve");
       return false;
@@ -416,7 +416,7 @@ anv_can_fast_clear_color_view(struct anv_device * device,
     */
    if (iview->planes[0].isl.base_level > 0 ||
        iview->planes[0].isl.base_array_layer > 0) {
-      anv_perf_warn(device, &iview->image->base,
+      anv_perf_warn(device, &iview->image->vk.base,
                     "Rendering with multi-lod or multi-layer framebuffer "
                     "with LOAD_OP_LOAD and baseMipLevel > 0 or "
                     "baseArrayLayer > 0.  Not fast clearing.");
@@ -424,7 +424,7 @@ anv_can_fast_clear_color_view(struct anv_device * device,
    }
 
    if (num_layers > 1) {
-      anv_perf_warn(device, &iview->image->base,
+      anv_perf_warn(device, &iview->image->vk.base,
                     "Rendering to a multi-layer framebuffer with "
                     "LOAD_OP_CLEAR.  Only fast-clearing the first slice");
    }
@@ -449,7 +449,7 @@ anv_can_hiz_clear_ds_view(struct anv_device *device,
       return true;
 
    /* We must have depth in order to have HiZ */
-   if (!(iview->image->aspects & VK_IMAGE_ASPECT_DEPTH_BIT))
+   if (!(iview->image->vk.aspects & VK_IMAGE_ASPECT_DEPTH_BIT))
       return false;
 
    const enum isl_aux_usage clear_aux_usage =
@@ -494,7 +494,7 @@ anv_image_init_aux_tt(struct anv_cmd_buffer *cmd_buffer,
                       uint32_t base_level, uint32_t level_count,
                       uint32_t base_layer, uint32_t layer_count)
 {
-   uint32_t plane = anv_image_aspect_to_plane(image->aspects, aspect);
+   const uint32_t plane = anv_image_aspect_to_plane(image, aspect);
 
    const struct anv_surface *surface = &image->planes[plane].primary_surface;
    uint64_t base_address =
@@ -524,24 +524,24 @@ anv_image_init_aux_tt(struct anv_cmd_buffer *cmd_buffer,
          const uint32_t level = base_level + l;
 
          uint32_t logical_array_layer, logical_z_offset_px;
-         if (image->type == VK_IMAGE_TYPE_3D) {
+         if (image->vk.image_type == VK_IMAGE_TYPE_3D) {
             logical_array_layer = 0;
 
             /* If the given miplevel does not have this layer, then any higher
              * miplevels won't either because miplevels only get smaller the
              * higher the LOD.
              */
-            assert(layer < image->extent.depth);
-            if (layer >= anv_minify(image->extent.depth, level))
+            assert(layer < image->vk.extent.depth);
+            if (layer >= anv_minify(image->vk.extent.depth, level))
                break;
             logical_z_offset_px = layer;
          } else {
-            assert(layer < image->array_size);
+            assert(layer < image->vk.array_layers);
             logical_array_layer = layer;
             logical_z_offset_px = 0;
          }
 
-         uint32_t slice_start_offset_B, slice_end_offset_B;
+         uint64_t slice_start_offset_B, slice_end_offset_B;
          isl_surf_get_image_range_B_tile(isl_surf, level,
                                          logical_array_layer,
                                          logical_z_offset_px,
@@ -599,8 +599,8 @@ transition_depth_buffer(struct anv_cmd_buffer *cmd_buffer,
                         VkImageLayout final_layout,
                         bool will_full_fast_clear)
 {
-   uint32_t depth_plane =
-      anv_image_aspect_to_plane(image->aspects, VK_IMAGE_ASPECT_DEPTH_BIT);
+   const uint32_t depth_plane =
+      anv_image_aspect_to_plane(image, VK_IMAGE_ASPECT_DEPTH_BIT);
    if (image->planes[depth_plane].aux_usage == ISL_AUX_USAGE_NONE)
       return;
 
@@ -686,8 +686,8 @@ transition_stencil_buffer(struct anv_cmd_buffer *cmd_buffer,
                           bool will_full_fast_clear)
 {
 #if GFX_VER == 7
-   uint32_t plane = anv_image_aspect_to_plane(image->aspects,
-                                              VK_IMAGE_ASPECT_STENCIL_BIT);
+   const uint32_t plane =
+      anv_image_aspect_to_plane(image, VK_IMAGE_ASPECT_STENCIL_BIT);
 
    /* On gfx7, we have to store a texturable version of the stencil buffer in
     * a shadow whenever VK_IMAGE_USAGE_SAMPLED_BIT is set and copy back and
@@ -714,8 +714,8 @@ transition_stencil_buffer(struct anv_cmd_buffer *cmd_buffer,
                                base_layer, layer_count);
    }
 #elif GFX_VER == 12
-   uint32_t plane = anv_image_aspect_to_plane(image->aspects,
-                                              VK_IMAGE_ASPECT_STENCIL_BIT);
+   const uint32_t plane =
+      anv_image_aspect_to_plane(image, VK_IMAGE_ASPECT_STENCIL_BIT);
    if (image->planes[plane].aux_usage == ISL_AUX_USAGE_NONE)
       return;
 
@@ -737,8 +737,8 @@ transition_stencil_buffer(struct anv_cmd_buffer *cmd_buffer,
          const VkRect2D clear_rect = {
             .offset.x = 0,
             .offset.y = 0,
-            .extent.width = anv_minify(image->extent.width, level),
-            .extent.height = anv_minify(image->extent.height, level),
+            .extent.width = anv_minify(image->vk.extent.width, level),
+            .extent.height = anv_minify(image->vk.extent.height, level),
          };
 
          uint32_t aux_layers =
@@ -772,7 +772,7 @@ set_image_compressed_bit(struct anv_cmd_buffer *cmd_buffer,
                          uint32_t base_layer, uint32_t layer_count,
                          bool compressed)
 {
-   uint32_t plane = anv_image_aspect_to_plane(image->aspects, aspect);
+   const uint32_t plane = anv_image_aspect_to_plane(image, aspect);
 
    /* We only have compression tracking for CCS_E */
    if (image->planes[plane].aux_usage != ISL_AUX_USAGE_CCS_E)
@@ -947,7 +947,7 @@ anv_cmd_predicated_ccs_resolve(struct anv_cmd_buffer *cmd_buffer,
                                enum isl_aux_op resolve_op,
                                enum anv_fast_clear_type fast_clear_supported)
 {
-   const uint32_t plane = anv_image_aspect_to_plane(image->aspects, aspect);
+   const uint32_t plane = anv_image_aspect_to_plane(image, aspect);
 
 #if GFX_VER >= 9
    anv_cmd_compute_resolve_predicate(cmd_buffer, image,
@@ -1005,7 +1005,7 @@ genX(cmd_buffer_mark_image_written)(struct anv_cmd_buffer *cmd_buffer,
                                     uint32_t layer_count)
 {
    /* The aspect must be exactly one of the image aspects. */
-   assert(util_bitcount(aspect) == 1 && (aspect & image->aspects));
+   assert(util_bitcount(aspect) == 1 && (aspect & image->vk.aspects));
 
    /* The only compression types with more than just fast-clears are MCS,
     * CCS_E, and HiZ.  With HiZ we just trust the layout and don't actually
@@ -1026,7 +1026,7 @@ init_fast_clear_color(struct anv_cmd_buffer *cmd_buffer,
                       VkImageAspectFlagBits aspect)
 {
    assert(cmd_buffer && image);
-   assert(image->aspects & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV);
+   assert(image->vk.aspects & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV);
 
    set_image_fast_clear_state(cmd_buffer, image, aspect,
                               ANV_FAST_CLEAR_NONE);
@@ -1082,7 +1082,7 @@ genX(copy_fast_clear_dwords)(struct anv_cmd_buffer *cmd_buffer,
                              bool copy_from_surface_state)
 {
    assert(cmd_buffer && image);
-   assert(image->aspects & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV);
+   assert(image->vk.aspects & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV);
 
    struct anv_address ss_clear_addr = {
       .bo = cmd_buffer->device->surface_state_pool.block_pool.bo,
@@ -1169,22 +1169,22 @@ transition_color_buffer(struct anv_cmd_buffer *cmd_buffer,
    const struct intel_device_info *devinfo = &device->info;
    /* Validate the inputs. */
    assert(cmd_buffer);
-   assert(image && image->aspects & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV);
+   assert(image && image->vk.aspects & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV);
    /* These values aren't supported for simplicity's sake. */
    assert(level_count != VK_REMAINING_MIP_LEVELS &&
           layer_count != VK_REMAINING_ARRAY_LAYERS);
    /* Ensure the subresource range is valid. */
    UNUSED uint64_t last_level_num = base_level + level_count;
-   const uint32_t max_depth = anv_minify(image->extent.depth, base_level);
-   UNUSED const uint32_t image_layers = MAX2(image->array_size, max_depth);
+   const uint32_t max_depth = anv_minify(image->vk.extent.depth, base_level);
+   UNUSED const uint32_t image_layers = MAX2(image->vk.array_layers, max_depth);
    assert((uint64_t)base_layer + layer_count  <= image_layers);
-   assert(last_level_num <= image->levels);
+   assert(last_level_num <= image->vk.mip_levels);
    /* The spec disallows these final layouts. */
    assert(final_layout != VK_IMAGE_LAYOUT_UNDEFINED &&
           final_layout != VK_IMAGE_LAYOUT_PREINITIALIZED);
    const struct isl_drm_modifier_info *isl_mod_info =
-      image->tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT
-      ? isl_drm_modifier_get_info(image->drm_format_mod)
+      image->vk.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT
+      ? isl_drm_modifier_get_info(image->vk.drm_format_mod)
       : NULL;
 
    const bool src_queue_external =
@@ -1204,11 +1204,11 @@ transition_color_buffer(struct anv_cmd_buffer *cmd_buffer,
     */
    const bool mod_acquire =
       src_queue_external &&
-      image->tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+      image->vk.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
 
    const bool mod_release =
       dst_queue_external &&
-      image->tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+      image->vk.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
 
    if (initial_layout == final_layout &&
        !mod_acquire && !mod_release) {
@@ -1216,7 +1216,7 @@ transition_color_buffer(struct anv_cmd_buffer *cmd_buffer,
        return;
    }
 
-   uint32_t plane = anv_image_aspect_to_plane(image->aspects, aspect);
+   const uint32_t plane = anv_image_aspect_to_plane(image, aspect);
 
    if (anv_surface_is_valid(&image->planes[plane].shadow_surface) &&
        final_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
@@ -1224,8 +1224,8 @@ transition_color_buffer(struct anv_cmd_buffer *cmd_buffer,
        * for texturing.  The client is about to use it in READ_ONLY_OPTIMAL so
        * we need to ensure the shadow copy is up-to-date.
        */
-      assert(image->tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT);
-      assert(image->aspects == VK_IMAGE_ASPECT_COLOR_BIT);
+      assert(image->vk.tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT);
+      assert(image->vk.aspects == VK_IMAGE_ASPECT_COLOR_BIT);
       assert(image->planes[plane].primary_surface.isl.tiling == ISL_TILING_LINEAR);
       assert(image->planes[plane].shadow_surface.isl.tiling != ISL_TILING_LINEAR);
       assert(isl_format_is_compressed(image->planes[plane].primary_surface.isl.format));
@@ -1296,7 +1296,7 @@ transition_color_buffer(struct anv_cmd_buffer *cmd_buffer,
 
 #if GFX_VER == 12
    /* We do not yet support modifiers with aux on gen12. */
-   assert(image->tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT);
+   assert(image->vk.tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT);
 
    if (initial_layout_undefined) {
       if (device->physical->has_implicit_ccs && devinfo->has_aux_map) {
@@ -1350,7 +1350,7 @@ transition_color_buffer(struct anv_cmd_buffer *cmd_buffer,
        * can use a fast-clear for MCS because we only ever touch from render
        * and texture (no image load store).
        */
-      if (image->samples == 1) {
+      if (image->vk.samples == 1) {
          for (uint32_t l = 0; l < level_count; l++) {
             const uint32_t level = base_level + l;
 
@@ -1384,8 +1384,8 @@ transition_color_buffer(struct anv_cmd_buffer *cmd_buffer,
             }
          }
       } else {
-         if (image->samples == 4 || image->samples == 16) {
-            anv_perf_warn(cmd_buffer->device, &image->base,
+         if (image->vk.samples == 4 || image->vk.samples == 16) {
+            anv_perf_warn(cmd_buffer->device, &image->vk.base,
                           "Doing a potentially unnecessary fast-clear to "
                           "define an MCS buffer.");
          }
@@ -1495,7 +1495,7 @@ transition_color_buffer(struct anv_cmd_buffer *cmd_buffer,
          if (level == 0 && array_layer == 0 && will_full_fast_clear)
             continue;
 
-         if (image->samples == 1) {
+         if (image->vk.samples == 1) {
             anv_cmd_predicated_ccs_resolve(cmd_buffer, image,
                                            image->planes[plane].primary_surface.isl.format,
                                            ISL_SWIZZLE_IDENTITY,
@@ -1607,7 +1607,7 @@ genX(cmd_buffer_setup_attachments)(struct anv_cmd_buffer *cmd_buffer,
             att_state->clear_value = begin->pClearValues[i];
 
          struct anv_image_view *iview = state->attachments[i].image_view;
-         anv_assert(iview->vk_format == pass_att->format);
+         anv_assert(iview->vk.format == pass_att->format);
 
          const uint32_t num_layers = iview->planes[0].isl.array_len;
          att_state->pending_clear_views = (1 << num_layers) - 1;
@@ -2431,13 +2431,15 @@ void genX(CmdPipelineBarrier)(
          &pImageMemoryBarriers[i].subresourceRange;
 
       uint32_t base_layer, layer_count;
-      if (image->type == VK_IMAGE_TYPE_3D) {
+      if (image->vk.image_type == VK_IMAGE_TYPE_3D) {
          base_layer = 0;
-         layer_count = anv_minify(image->extent.depth, range->baseMipLevel);
+         layer_count = anv_minify(image->vk.extent.depth, range->baseMipLevel);
       } else {
          base_layer = range->baseArrayLayer;
-         layer_count = anv_get_layerCount(image, range);
+         layer_count = vk_image_subresource_layer_count(&image->vk, range);
       }
+      const uint32_t level_count =
+         vk_image_subresource_level_count(&image->vk, range);
 
       if (range->aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) {
          transition_depth_buffer(cmd_buffer, image,
@@ -2449,8 +2451,7 @@ void genX(CmdPipelineBarrier)(
 
       if (range->aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT) {
          transition_stencil_buffer(cmd_buffer, image,
-                                   range->baseMipLevel,
-                                   anv_get_levelCount(image, range),
+                                   range->baseMipLevel, level_count,
                                    base_layer, layer_count,
                                    pImageMemoryBarriers[i].oldLayout,
                                    pImageMemoryBarriers[i].newLayout,
@@ -2459,11 +2460,10 @@ void genX(CmdPipelineBarrier)(
 
       if (range->aspectMask & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV) {
          VkImageAspectFlags color_aspects =
-            anv_image_expand_aspects(image, range->aspectMask);
+            vk_image_expand_aspect_mask(&image->vk, range->aspectMask);
          anv_foreach_image_aspect_bit(aspect_bit, image, color_aspects) {
             transition_color_buffer(cmd_buffer, image, 1UL << aspect_bit,
-                                    range->baseMipLevel,
-                                    anv_get_levelCount(image, range),
+                                    range->baseMipLevel, level_count,
                                     base_layer, layer_count,
                                     pImageMemoryBarriers[i].oldLayout,
                                     pImageMemoryBarriers[i].newLayout,
@@ -2723,7 +2723,7 @@ emit_binding_table(struct anv_cmd_buffer *cmd_buffer,
          case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
             assert(shader->stage == MESA_SHADER_FRAGMENT);
             assert(desc->image_view != NULL);
-            if ((desc->image_view->aspect_mask & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV) == 0) {
+            if ((desc->image_view->vk.aspects & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV) == 0) {
                /* For depth and stencil input attachments, we treat it like any
                 * old texture that a user may have bound.
                 */
@@ -2762,7 +2762,7 @@ emit_binding_table(struct anv_cmd_buffer *cmd_buffer,
                             "corresponding SPIR-V format enum.");
                   vk_debug_report(&cmd_buffer->device->physical->instance->vk,
                                   VK_DEBUG_REPORT_ERROR_BIT_EXT,
-                                  &desc->image_view->base,
+                                  &desc->image_view->vk.base,
                                   __LINE__, 0, "anv",
                                   "Bound a image to a descriptor where the "
                                   "descriptor does not have NonReadable "
@@ -4371,12 +4371,15 @@ void genX(CmdDrawIndexedIndirect)(
 static struct mi_value
 prepare_for_draw_count_predicate(struct anv_cmd_buffer *cmd_buffer,
                                  struct mi_builder *b,
-                                 struct anv_address count_address,
-                                 const bool conditional_render_enabled)
+                                 struct anv_buffer *count_buffer,
+                                 uint64_t countBufferOffset)
 {
+   struct anv_address count_address =
+         anv_address_add(count_buffer->address, countBufferOffset);
+
    struct mi_value ret = mi_imm(0);
 
-   if (conditional_render_enabled) {
+   if (cmd_buffer->state.conditional_render_enabled) {
 #if GFX_VERx10 >= 75
       ret = mi_new_gpr(b);
       mi_store(b, mi_value_ref(b, ret), mi_mem32(count_address));
@@ -4452,6 +4455,24 @@ emit_draw_count_predicate_with_conditional_render(
 }
 #endif
 
+static void
+emit_draw_count_predicate_cond(struct anv_cmd_buffer *cmd_buffer,
+                               struct mi_builder *b,
+                               uint32_t draw_index,
+                               struct mi_value max)
+{
+#if GFX_VERx10 >= 75
+   if (cmd_buffer->state.conditional_render_enabled) {
+      emit_draw_count_predicate_with_conditional_render(
+            cmd_buffer, b, draw_index, mi_value_ref(b, max));
+   } else {
+      emit_draw_count_predicate(cmd_buffer, b, draw_index);
+   }
+#else
+   emit_draw_count_predicate(cmd_buffer, b, draw_index);
+#endif
+}
+
 void genX(CmdDrawIndirectCount)(
     VkCommandBuffer                             commandBuffer,
     VkBuffer                                    _buffer,
@@ -4475,25 +4496,14 @@ void genX(CmdDrawIndirectCount)(
 
    struct mi_builder b;
    mi_builder_init(&b, &cmd_buffer->device->info, &cmd_buffer->batch);
-   struct anv_address count_address =
-      anv_address_add(count_buffer->address, countBufferOffset);
    struct mi_value max =
-      prepare_for_draw_count_predicate(cmd_buffer, &b, count_address,
-                                       cmd_state->conditional_render_enabled);
+      prepare_for_draw_count_predicate(cmd_buffer, &b,
+                                       count_buffer, countBufferOffset);
 
    for (uint32_t i = 0; i < maxDrawCount; i++) {
       struct anv_address draw = anv_address_add(buffer->address, offset);
 
-#if GFX_VERx10 >= 75
-      if (cmd_state->conditional_render_enabled) {
-         emit_draw_count_predicate_with_conditional_render(
-            cmd_buffer, &b, i, mi_value_ref(&b, max));
-      } else {
-         emit_draw_count_predicate(cmd_buffer, &b, i);
-      }
-#else
-      emit_draw_count_predicate(cmd_buffer, &b, i);
-#endif
+      emit_draw_count_predicate_cond(cmd_buffer, &b, i, max);
 
       if (vs_prog_data->uses_firstvertex ||
           vs_prog_data->uses_baseinstance)
@@ -4546,25 +4556,14 @@ void genX(CmdDrawIndexedIndirectCount)(
 
    struct mi_builder b;
    mi_builder_init(&b, &cmd_buffer->device->info, &cmd_buffer->batch);
-   struct anv_address count_address =
-      anv_address_add(count_buffer->address, countBufferOffset);
    struct mi_value max =
-      prepare_for_draw_count_predicate(cmd_buffer, &b, count_address,
-                                       cmd_state->conditional_render_enabled);
+      prepare_for_draw_count_predicate(cmd_buffer, &b,
+                                       count_buffer, countBufferOffset);
 
    for (uint32_t i = 0; i < maxDrawCount; i++) {
       struct anv_address draw = anv_address_add(buffer->address, offset);
 
-#if GFX_VERx10 >= 75
-      if (cmd_state->conditional_render_enabled) {
-         emit_draw_count_predicate_with_conditional_render(
-            cmd_buffer, &b, i, mi_value_ref(&b, max));
-      } else {
-         emit_draw_count_predicate(cmd_buffer, &b, i);
-      }
-#else
-      emit_draw_count_predicate(cmd_buffer, &b, i);
-#endif
+      emit_draw_count_predicate_cond(cmd_buffer, &b, i, max);
 
       /* TODO: We need to stomp base vertex to 0 somehow */
       if (vs_prog_data->uses_firstvertex ||
@@ -5757,9 +5756,9 @@ cmd_buffer_emit_depth_stencil(struct anv_cmd_buffer *cmd_buffer)
    if (iview)
       info.view = &iview->planes[0].isl;
 
-   if (image && (image->aspects & VK_IMAGE_ASPECT_DEPTH_BIT)) {
-      uint32_t depth_plane =
-         anv_image_aspect_to_plane(image->aspects, VK_IMAGE_ASPECT_DEPTH_BIT);
+   if (image && (image->vk.aspects & VK_IMAGE_ASPECT_DEPTH_BIT)) {
+      const uint32_t depth_plane =
+         anv_image_aspect_to_plane(image, VK_IMAGE_ASPECT_DEPTH_BIT);
       const struct anv_surface *depth_surface =
          &image->planes[depth_plane].primary_surface;
       const struct anv_address depth_address =
@@ -5796,9 +5795,9 @@ cmd_buffer_emit_depth_stencil(struct anv_cmd_buffer *cmd_buffer)
       }
    }
 
-   if (image && (image->aspects & VK_IMAGE_ASPECT_STENCIL_BIT)) {
-      uint32_t stencil_plane =
-         anv_image_aspect_to_plane(image->aspects, VK_IMAGE_ASPECT_STENCIL_BIT);
+   if (image && (image->vk.aspects & VK_IMAGE_ASPECT_STENCIL_BIT)) {
+      const uint32_t stencil_plane =
+         anv_image_aspect_to_plane(image, VK_IMAGE_ASPECT_STENCIL_BIT);
       const struct anv_surface *stencil_surface =
          &image->planes[stencil_plane].primary_surface;
       const struct anv_address stencil_address =
@@ -5930,28 +5929,28 @@ cmd_buffer_begin_subpass(struct anv_cmd_buffer *cmd_buffer,
          subpass->attachments[i].stencil_layout;
 
       uint32_t level = iview->planes[0].isl.base_level;
-      uint32_t width = anv_minify(iview->image->extent.width, level);
-      uint32_t height = anv_minify(iview->image->extent.height, level);
+      uint32_t width = anv_minify(iview->image->vk.extent.width, level);
+      uint32_t height = anv_minify(iview->image->vk.extent.height, level);
       bool full_surface_draw =
          render_area.offset.x == 0 && render_area.offset.y == 0 &&
          render_area.extent.width == width &&
          render_area.extent.height == height;
 
       uint32_t base_layer, layer_count;
-      if (image->type == VK_IMAGE_TYPE_3D) {
+      if (image->vk.image_type == VK_IMAGE_TYPE_3D) {
          base_layer = 0;
-         layer_count = anv_minify(iview->image->extent.depth, level);
+         layer_count = anv_minify(iview->image->vk.extent.depth, level);
       } else {
          base_layer = iview->planes[0].isl.base_array_layer;
          layer_count = fb->layers;
       }
 
-      if (image->aspects & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV) {
+      if (image->vk.aspects & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV) {
          bool will_full_fast_clear =
             (att_state->pending_clear_aspects & VK_IMAGE_ASPECT_COLOR_BIT) &&
             att_state->fast_clear && full_surface_draw;
 
-         assert(image->aspects == VK_IMAGE_ASPECT_COLOR_BIT);
+         assert(image->vk.aspects == VK_IMAGE_ASPECT_COLOR_BIT);
          transition_color_buffer(cmd_buffer, image, VK_IMAGE_ASPECT_COLOR_BIT,
                                  level, 1, base_layer, layer_count,
                                  att_state->current_layout, target_layout,
@@ -5965,7 +5964,7 @@ cmd_buffer_begin_subpass(struct anv_cmd_buffer *cmd_buffer,
                                     target_layout);
       }
 
-      if (image->aspects & VK_IMAGE_ASPECT_DEPTH_BIT) {
+      if (image->vk.aspects & VK_IMAGE_ASPECT_DEPTH_BIT) {
          bool will_full_fast_clear =
             (att_state->pending_clear_aspects & VK_IMAGE_ASPECT_DEPTH_BIT) &&
             att_state->fast_clear && full_surface_draw;
@@ -5981,7 +5980,7 @@ cmd_buffer_begin_subpass(struct anv_cmd_buffer *cmd_buffer,
                                     target_layout);
       }
 
-      if (image->aspects & VK_IMAGE_ASPECT_STENCIL_BIT) {
+      if (image->vk.aspects & VK_IMAGE_ASPECT_STENCIL_BIT) {
          bool will_full_fast_clear =
             (att_state->pending_clear_aspects & VK_IMAGE_ASPECT_STENCIL_BIT) &&
             att_state->fast_clear && full_surface_draw;
@@ -5999,7 +5998,7 @@ cmd_buffer_begin_subpass(struct anv_cmd_buffer *cmd_buffer,
          assert(att_state->pending_clear_aspects == VK_IMAGE_ASPECT_COLOR_BIT);
 
          /* Multi-planar images are not supported as attachments */
-         assert(image->aspects == VK_IMAGE_ASPECT_COLOR_BIT);
+         assert(image->vk.aspects == VK_IMAGE_ASPECT_COLOR_BIT);
          assert(image->n_planes == 1);
 
          uint32_t base_clear_layer = iview->planes[0].isl.base_array_layer;
@@ -6012,7 +6011,7 @@ cmd_buffer_begin_subpass(struct anv_cmd_buffer *cmd_buffer,
 
             union isl_color_value clear_color = {};
             anv_clear_color_from_att_state(&clear_color, att_state, iview);
-            if (iview->image->samples == 1) {
+            if (iview->image->vk.samples == 1) {
                anv_image_ccs_op(cmd_buffer, image,
                                 iview->planes[0].isl.format,
                                 iview->planes[0].isl.swizzle,
@@ -6343,7 +6342,7 @@ cmd_buffer_end_subpass(struct anv_cmd_buffer *cmd_buffer)
           * with depth.
           */
          const struct isl_view *ds_view = &iview->planes[0].isl;
-         if (iview->aspect_mask & VK_IMAGE_ASPECT_DEPTH_BIT) {
+         if (iview->vk.aspects & VK_IMAGE_ASPECT_DEPTH_BIT) {
             genX(cmd_buffer_mark_image_written)(cmd_buffer, iview->image,
                                                 VK_IMAGE_ASPECT_DEPTH_BIT,
                                                 att_state->aux_usage,
@@ -6351,7 +6350,7 @@ cmd_buffer_end_subpass(struct anv_cmd_buffer *cmd_buffer)
                                                 ds_view->base_array_layer,
                                                 fb->layers);
          }
-         if (iview->aspect_mask & VK_IMAGE_ASPECT_STENCIL_BIT) {
+         if (iview->vk.aspects & VK_IMAGE_ASPECT_STENCIL_BIT) {
             /* Even though stencil may be plane 1, it always shares a
              * base_level with depth.
              */
@@ -6406,8 +6405,8 @@ cmd_buffer_end_subpass(struct anv_cmd_buffer *cmd_buffer)
          enum isl_aux_usage dst_aux_usage =
             cmd_buffer->state.attachments[dst_att].aux_usage;
 
-         assert(src_iview->aspect_mask == VK_IMAGE_ASPECT_COLOR_BIT &&
-                dst_iview->aspect_mask == VK_IMAGE_ASPECT_COLOR_BIT);
+         assert(src_iview->vk.aspects == VK_IMAGE_ASPECT_COLOR_BIT &&
+                dst_iview->vk.aspects == VK_IMAGE_ASPECT_COLOR_BIT);
 
          anv_image_msaa_resolve(cmd_buffer,
                                 src_iview->image, src_aux_usage,
@@ -6462,7 +6461,7 @@ cmd_buffer_end_subpass(struct anv_cmd_buffer *cmd_buffer)
       struct anv_attachment_state *dst_state =
          &cmd_state->attachments[dst_att];
 
-      if ((src_iview->image->aspects & VK_IMAGE_ASPECT_DEPTH_BIT) &&
+      if ((src_iview->image->vk.aspects & VK_IMAGE_ASPECT_DEPTH_BIT) &&
           subpass->depth_resolve_mode != VK_RESOLVE_MODE_NONE_KHR) {
 
          /* MSAA resolves sample from the source attachment.  Transition the
@@ -6491,10 +6490,10 @@ cmd_buffer_end_subpass(struct anv_cmd_buffer *cmd_buffer)
           * blow it all away so we can claim the initial layout is UNDEFINED
           * and we'll get a HiZ ambiguate instead of a resolve.
           */
-         if (dst_iview->image->type != VK_IMAGE_TYPE_3D &&
+         if (dst_iview->image->vk.image_type != VK_IMAGE_TYPE_3D &&
              render_area.offset.x == 0 && render_area.offset.y == 0 &&
-             render_area.extent.width == dst_iview->extent.width &&
-             render_area.extent.height == dst_iview->extent.height)
+             render_area.extent.width == dst_iview->vk.extent.width &&
+             render_area.extent.height == dst_iview->vk.extent.height)
             dst_initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
 
          transition_depth_buffer(cmd_buffer, dst_iview->image,
@@ -6528,15 +6527,15 @@ cmd_buffer_end_subpass(struct anv_cmd_buffer *cmd_buffer)
                                 fb->layers, filter);
       }
 
-      if ((src_iview->image->aspects & VK_IMAGE_ASPECT_STENCIL_BIT) &&
+      if ((src_iview->image->vk.aspects & VK_IMAGE_ASPECT_STENCIL_BIT) &&
           subpass->stencil_resolve_mode != VK_RESOLVE_MODE_NONE_KHR) {
 
          src_state->current_stencil_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
          dst_state->current_stencil_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 
          enum isl_aux_usage src_aux_usage = ISL_AUX_USAGE_NONE;
-         uint32_t plane = anv_image_aspect_to_plane(dst_iview->image->aspects,
-                                                    VK_IMAGE_ASPECT_STENCIL_BIT);
+         const uint32_t plane =
+            anv_image_aspect_to_plane(dst_iview->image, VK_IMAGE_ASPECT_STENCIL_BIT);
          enum isl_aux_usage dst_aux_usage =
             dst_iview->image->planes[plane].aux_usage;
 
@@ -6584,13 +6583,13 @@ cmd_buffer_end_subpass(struct anv_cmd_buffer *cmd_buffer)
       struct anv_image_view *iview = cmd_state->attachments[a].image_view;;
       const struct anv_image *image = iview->image;
 
-      if (image->aspects & VK_IMAGE_ASPECT_STENCIL_BIT) {
-         uint32_t plane = anv_image_aspect_to_plane(image->aspects,
-                                                    VK_IMAGE_ASPECT_STENCIL_BIT);
+      if (image->vk.aspects & VK_IMAGE_ASPECT_STENCIL_BIT) {
+         const uint32_t plane =
+            anv_image_aspect_to_plane(image, VK_IMAGE_ASPECT_STENCIL_BIT);
 
          if (anv_surface_is_valid(&image->planes[plane].shadow_surface) &&
              att_state->current_stencil_layout == VK_IMAGE_LAYOUT_GENERAL) {
-            assert(image->aspects & VK_IMAGE_ASPECT_STENCIL_BIT);
+            assert(image->vk.aspects & VK_IMAGE_ASPECT_STENCIL_BIT);
             anv_image_copy_to_shadow(cmd_buffer, image,
                                      VK_IMAGE_ASPECT_STENCIL_BIT,
                                      iview->planes[plane].isl.base_level, 1,
@@ -6621,17 +6620,17 @@ cmd_buffer_end_subpass(struct anv_cmd_buffer *cmd_buffer)
          cmd_state->pass->attachments[a].stencil_final_layout;
 
       uint32_t base_layer, layer_count;
-      if (image->type == VK_IMAGE_TYPE_3D) {
+      if (image->vk.image_type == VK_IMAGE_TYPE_3D) {
          base_layer = 0;
-         layer_count = anv_minify(iview->image->extent.depth,
+         layer_count = anv_minify(iview->image->vk.extent.depth,
                                   iview->planes[0].isl.base_level);
       } else {
          base_layer = iview->planes[0].isl.base_array_layer;
          layer_count = fb->layers;
       }
 
-      if (image->aspects & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV) {
-         assert(image->aspects == VK_IMAGE_ASPECT_COLOR_BIT);
+      if (image->vk.aspects & VK_IMAGE_ASPECT_ANY_COLOR_BIT_ANV) {
+         assert(image->vk.aspects == VK_IMAGE_ASPECT_COLOR_BIT);
          transition_color_buffer(cmd_buffer, image, VK_IMAGE_ASPECT_COLOR_BIT,
                                  iview->planes[0].isl.base_level, 1,
                                  base_layer, layer_count,
@@ -6641,14 +6640,14 @@ cmd_buffer_end_subpass(struct anv_cmd_buffer *cmd_buffer)
                                  false /* will_full_fast_clear */);
       }
 
-      if (image->aspects & VK_IMAGE_ASPECT_DEPTH_BIT) {
+      if (image->vk.aspects & VK_IMAGE_ASPECT_DEPTH_BIT) {
          transition_depth_buffer(cmd_buffer, image,
                                  base_layer, layer_count,
                                  att_state->current_layout, target_layout,
                                  false /* will_full_fast_clear */);
       }
 
-      if (image->aspects & VK_IMAGE_ASPECT_STENCIL_BIT) {
+      if (image->vk.aspects & VK_IMAGE_ASPECT_STENCIL_BIT) {
          transition_stencil_buffer(cmd_buffer, image,
                                    iview->planes[0].isl.base_level, 1,
                                    base_layer, layer_count,

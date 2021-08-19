@@ -31,6 +31,7 @@
 #include "util/u_dynarray.h"
 #include "agx_compile.h"
 #include "agx_opcodes.h"
+#include "agx_minifloat.h"
 
 enum agx_dbg {
    AGX_DBG_MSGS        = BITFIELD_BIT(0),
@@ -42,12 +43,16 @@ enum agx_dbg {
 
 extern int agx_debug;
 
+/* r0-r127 inclusive, as pairs of 16-bits, gives 256 registers */
+#define AGX_NUM_REGS (256)
+
 enum agx_index_type {
    AGX_INDEX_NULL = 0,
    AGX_INDEX_NORMAL = 1,
    AGX_INDEX_IMMEDIATE = 2,
    AGX_INDEX_UNIFORM = 3,
    AGX_INDEX_REGISTER = 4,
+   AGX_INDEX_NIR_REGISTER = 5,
 };
 
 enum agx_size {
@@ -58,7 +63,12 @@ enum agx_size {
 
 typedef struct {
    /* Sufficient for as many SSA values as we need. Immediates and uniforms fit in 16-bits */
-   unsigned value : 23;
+   unsigned value : 22;
+
+   /* Indicates that this source kills the referenced value (because it is the
+    * last use in a block and the source is not live after the block). Set by
+    * liveness analysis. */
+   bool kill : 1;
 
    /* Cache hints */
    bool cache : 1;
@@ -92,12 +102,29 @@ agx_immediate(uint16_t imm)
    };
 }
 
+static inline agx_index
+agx_immediate_f(float f)
+{
+   assert(agx_minifloat_exact(f));
+   return agx_immediate(agx_minifloat_encode(f));
+}
+
 /* in half-words, specify r0h as 1, r1 as 2... */
 static inline agx_index
 agx_register(uint8_t imm, enum agx_size size)
 {
    return (agx_index) {
       .type = AGX_INDEX_REGISTER,
+      .value = imm,
+      .size = size
+   };
+}
+
+static inline agx_index
+agx_nir_register(unsigned imm, enum agx_size size)
+{
+   return (agx_index) {
+      .type = AGX_INDEX_NIR_REGISTER,
       .value = imm,
       .size = size
    };
@@ -219,7 +246,7 @@ enum agx_convert {
 
 enum agx_lod_mode {
    AGX_LOD_MODE_AUTO_LOD = 0,
-   AGX_LOD_MODE_LOD_MIN = 3,
+   AGX_LOD_MODE_LOD_MIN = 6,
    AGX_LOD_GRAD = 8,
    AGX_LOD_GRAD_MIN = 12
 };
@@ -263,6 +290,9 @@ typedef struct {
       enum agx_lod_mode lod_mode;
       struct agx_block *target;
    };
+
+   /* For load varying */
+   bool perspective : 1;
 
    /* Invert icond/fcond */
    bool invert_cond : 1;
@@ -309,8 +339,14 @@ typedef struct agx_block {
    BITSET_WORD *live_in;
    BITSET_WORD *live_out;
 
+   /* Register allocation */
+   BITSET_DECLARE(regs_out, AGX_NUM_REGS);
+
    /* Offset of the block in the emitted binary */
    off_t offset;
+
+   /** Available for passes to use for metadata */
+   uint8_t pass_flags;
 } agx_block;
 
 typedef struct {
@@ -319,6 +355,16 @@ typedef struct {
    struct list_head blocks; /* list of agx_block */
    struct agx_shader_info *out;
    struct agx_shader_key *key;
+
+   /* Remapping table for varyings indexed by driver_location */
+   unsigned varyings[AGX_MAX_VARYINGS];
+
+   /* Handling phi nodes is still TODO while we bring up other parts of the
+    * driver. YOLO the mapping of nir_register to fixed hardware registers */
+   unsigned *nir_regalloc;
+
+   /* We reserve the top (XXX: that hurts thread count) */
+   unsigned max_register;
 
    /* Place to start pushing new values */
    unsigned push_base;
@@ -332,6 +378,9 @@ typedef struct {
    /* Has r0l been zeroed yet due to control flow? */
    bool any_cf;
 
+   /** Computed metadata */
+   bool has_liveness;
+
    /* Number of nested control flow structures within the innermost loop. Since
     * NIR is just loop and if-else, this is the number of nested if-else
     * statements in the loop */
@@ -339,6 +388,9 @@ typedef struct {
 
    /* During instruction selection, for inserting control flow */
    agx_block *current_block;
+   agx_block *continue_block;
+   agx_block *break_block;
+   agx_block *after_block;
 
    /* Stats for shader-db */
    unsigned loop_count;
@@ -373,7 +425,11 @@ agx_size_for_bits(unsigned bits)
 static inline agx_index
 agx_src_index(nir_src *src)
 {
-   assert(src->is_ssa);
+   if (!src->is_ssa) {
+      return agx_nir_register(src->reg.reg->index,
+            agx_size_for_bits(nir_src_bit_size(*src)));
+   }
+
    return agx_get_index(src->ssa->index,
          agx_size_for_bits(nir_src_bit_size(*src)));
 }
@@ -381,7 +437,11 @@ agx_src_index(nir_src *src)
 static inline agx_index
 agx_dest_index(nir_dest *dst)
 {
-   assert(dst->is_ssa);
+   if (!dst->is_ssa) {
+      return agx_nir_register(dst->reg.reg->index,
+            agx_size_for_bits(nir_dest_bit_size(*dst)));
+   }
+
    return agx_get_index(dst->ssa.index,
          agx_size_for_bits(nir_dest_bit_size(*dst)));
 }
@@ -475,6 +535,14 @@ static inline agx_block *
 agx_next_block(agx_block *block)
 {
    return list_first_entry(&(block->link), agx_block, link);
+}
+
+static inline agx_block *
+agx_exit_block(agx_context *ctx)
+{
+   agx_block *last = list_last_entry(&ctx->blocks, agx_block, link);
+   assert(!last->successors[0] && !last->successors[1]);
+   return last;
 }
 
 /* Like in NIR, for use with the builder */
@@ -578,6 +646,9 @@ void agx_print_shader(agx_context *ctx, FILE *fp);
 void agx_optimizer(agx_context *ctx);
 void agx_dce(agx_context *ctx);
 void agx_ra(agx_context *ctx);
-void agx_pack(agx_context *ctx, struct util_dynarray *emission);
+void agx_pack_binary(agx_context *ctx, struct util_dynarray *emission);
+
+void agx_compute_liveness(agx_context *ctx);
+void agx_liveness_ins_update(BITSET_WORD *live, agx_instr *I);
 
 #endif

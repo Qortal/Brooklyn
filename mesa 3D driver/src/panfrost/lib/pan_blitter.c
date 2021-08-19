@@ -168,10 +168,13 @@ pan_blitter_prepare_bifrost_rsd(const struct panfrost_device *dev,
         /* We can only allow blit shader fragments to kill if they write all
          * colour outputs. This is true for our colour (non-Z/S) blit shaders,
          * but obviously not true for Z/S shaders. However, blit shaders
-         * otherwise lack side effects, so other fragments may kill them. */
+         * otherwise lack side effects, so other fragments may kill them.
+         * However, while shaders writing Z/S can normally be killed, on v6
+         * for frame shaders it can cause GPU timeouts, so only allow colour
+         * blit shaders to be killed. */
 
         rsd->properties.bifrost.allow_forward_pixel_to_kill = !zs;
-        rsd->properties.bifrost.allow_forward_pixel_to_be_killed = true;
+        rsd->properties.bifrost.allow_forward_pixel_to_be_killed = (dev->arch >= 7) || !zs;
 
         rsd->preload.fragment.coverage = true;
         rsd->preload.fragment.sample_mask_id = ms;
@@ -228,7 +231,7 @@ pan_blitter_emit_bifrost_blend(const struct panfrost_device *dev,
                 if (!iview) {
                         cfg.enable = false;
                         cfg.bifrost.internal.mode = MALI_BIFROST_BLEND_MODE_OFF;
-                        return;
+                        continue;
                 }
 
                 nir_alu_type type = blit_shader->key.surfaces[rt].type;
@@ -255,7 +258,7 @@ pan_blitter_emit_bifrost_blend(const struct panfrost_device *dev,
                         cfg.bifrost.equation.color_mask = 0xf;
                         cfg.bifrost.internal.fixed_function.num_comps = 4;
                         cfg.bifrost.internal.fixed_function.conversion.memory_format =
-                                panfrost_format_to_bifrost_blend(dev, iview->format);
+                                panfrost_format_to_bifrost_blend(dev, iview->format, false);
                         cfg.bifrost.internal.fixed_function.conversion.register_format =
                                 blit_type_to_reg_fmt(type);
 
@@ -369,7 +372,7 @@ pan_blitter_get_blend_shaders(struct panfrost_device *dev,
         };
 
         for (unsigned i = 0; i < rt_count; i++) {
-                if (!rts[i] || panfrost_blendable_formats[rts[i]->format].internal)
+                if (!rts[i] || panfrost_blendable_formats_v7[rts[i]->format].internal)
                         continue;
 
                 struct pan_blit_blend_shader_key key = {
@@ -417,11 +420,13 @@ pan_blitter_get_blend_shaders(struct panfrost_device *dev,
                                         nir_type_float32, /* unused */
                                         i);
 
-                assert(b->work_reg_count <= 4);
+                ASSERTED unsigned full_threads =
+                        (dev->arch >= 7) ? 32 : ((dev->arch == 6) ? 64 : 4);
+                assert(b->work_reg_count <= full_threads);
                 struct panfrost_ptr bin =
-                        panfrost_pool_alloc_aligned(&dev->blitter.shaders.pool,
-                                                    b->binary.size,
-                                                    pan_is_bifrost(dev) ? 128 : 64);
+                        pan_pool_alloc_aligned(dev->blitter.shaders.pool,
+                                               b->binary.size,
+                                               pan_is_bifrost(dev) ? 128 : 64);
                 memcpy(bin.cpu, b->binary.data, b->binary.size);
 
                 blend_shader->address = bin.gpu | b->first_tag;
@@ -646,9 +651,9 @@ pan_blitter_get_blit_shader(struct panfrost_device *dev,
                          struct pan_blit_shader_data);
         shader->key = *key;
         shader->address =
-                panfrost_pool_upload_aligned(&dev->blitter.shaders.pool,
-                                             binary.data, binary.size,
-                                             pan_is_bifrost(dev) ? 128 : 64);
+                pan_pool_upload_aligned(dev->blitter.shaders.pool,
+                                        binary.data, binary.size,
+                                        pan_is_bifrost(dev) ? 128 : 64);
 
         util_dynarray_fini(&binary);
         ralloc_free(b.shader);
@@ -737,10 +742,10 @@ pan_blitter_get_rsd(struct panfrost_device *dev,
 
         struct panfrost_ptr rsd_ptr =
                 (dev->quirks & MIDGARD_SFBD) ?
-                panfrost_pool_alloc_desc(&dev->blitter.rsds.pool, RENDERER_STATE) :
-                panfrost_pool_alloc_desc_aggregate(&dev->blitter.rsds.pool,
-                                                   PAN_DESC(RENDERER_STATE),
-                                                   PAN_DESC_ARRAY(MAX2(rt_count, 1), BLEND));
+                pan_pool_alloc_desc(dev->blitter.rsds.pool, RENDERER_STATE) :
+                pan_pool_alloc_desc_aggregate(dev->blitter.rsds.pool,
+                                              PAN_DESC(RENDERER_STATE),
+                                              PAN_DESC_ARRAY(MAX2(rt_count, 1), BLEND));
 
         mali_ptr blend_shaders[8] = { 0 };
 
@@ -863,10 +868,10 @@ pan_blitter_emit_varying(struct pan_pool *pool,
         bool padding_buffer = pan_is_bifrost(pool->dev);
 
         struct panfrost_ptr varying =
-                panfrost_pool_alloc_desc(pool, ATTRIBUTE);
+                pan_pool_alloc_desc(pool, ATTRIBUTE);
         struct panfrost_ptr varying_buffer =
-                panfrost_pool_alloc_desc_array(pool, (padding_buffer ? 2 : 1),
-                                               ATTRIBUTE_BUFFER);
+                pan_pool_alloc_desc_array(pool, (padding_buffer ? 2 : 1),
+                                          ATTRIBUTE_BUFFER);
 
         pan_pack(varying_buffer.cpu, ATTRIBUTE_BUFFER, cfg) {
                 cfg.pointer = coordinates;
@@ -894,13 +899,13 @@ pan_blitter_emit_bifrost_sampler(struct pan_pool *pool,
                                  bool nearest_filter)
 {
         struct panfrost_ptr sampler =
-                 panfrost_pool_alloc_desc(pool, BIFROST_SAMPLER);
+                 pan_pool_alloc_desc(pool, BIFROST_SAMPLER);
 
         pan_pack(sampler.cpu, BIFROST_SAMPLER, cfg) {
                 cfg.seamless_cube_map = false;
                 cfg.normalized_coordinates = false;
-                cfg.point_sample_minify = nearest_filter;
-                cfg.point_sample_magnify = nearest_filter;
+                cfg.minify_nearest = nearest_filter;
+                cfg.magnify_nearest = nearest_filter;
         }
 
         return sampler.gpu;
@@ -911,7 +916,7 @@ pan_blitter_emit_midgard_sampler(struct pan_pool *pool,
                                  bool nearest_filter)
 {
         struct panfrost_ptr sampler =
-                 panfrost_pool_alloc_desc(pool, MIDGARD_SAMPLER);
+                 pan_pool_alloc_desc(pool, MIDGARD_SAMPLER);
 
         pan_pack(sampler.cpu, MIDGARD_SAMPLER, cfg) {
                 cfg.normalized_coordinates = false;
@@ -928,14 +933,14 @@ pan_blitter_emit_bifrost_textures(struct pan_pool *pool,
                                   const struct pan_image_view **views)
 {
         struct panfrost_ptr textures =
-                panfrost_pool_alloc_desc_array(pool, tex_count, BIFROST_TEXTURE);
+                pan_pool_alloc_desc_array(pool, tex_count, BIFROST_TEXTURE);
 
         for (unsigned i = 0; i < tex_count; i++) {
                 void *texture = textures.cpu + (MALI_BIFROST_TEXTURE_LENGTH * i);
                 size_t payload_size =
                         panfrost_estimate_texture_payload_size(pool->dev, views[i]);
                 struct panfrost_ptr surfaces =
-                        panfrost_pool_alloc_aligned(pool, payload_size,
+                        pan_pool_alloc_aligned(pool, payload_size,
                                                     MALI_SURFACE_WITH_STRIDE_ALIGN);
 
                 panfrost_new_texture(pool->dev, views[i], texture, &surfaces);
@@ -955,7 +960,7 @@ pan_blitter_emit_midgard_textures(struct pan_pool *pool,
                 size_t sz = MALI_MIDGARD_TEXTURE_LENGTH +
                             panfrost_estimate_texture_payload_size(pool->dev, views[i]);
                 struct panfrost_ptr texture =
-                        panfrost_pool_alloc_aligned(pool, sz, MALI_MIDGARD_TEXTURE_ALIGN);
+                        pan_pool_alloc_aligned(pool, sz, MALI_MIDGARD_TEXTURE_ALIGN);
                 struct panfrost_ptr surfaces = {
                         .cpu = texture.cpu + MALI_MIDGARD_TEXTURE_LENGTH,
                         .gpu = texture.gpu + MALI_MIDGARD_TEXTURE_LENGTH,
@@ -965,9 +970,9 @@ pan_blitter_emit_midgard_textures(struct pan_pool *pool,
                 textures[i] = texture.gpu;
         }
 
-        return panfrost_pool_upload_aligned(pool, textures,
-                                            tex_count * sizeof(mali_ptr),
-                                            sizeof(mali_ptr));
+        return pan_pool_upload_aligned(pool, textures,
+                                       tex_count * sizeof(mali_ptr),
+                                       sizeof(mali_ptr));
 }
 
 static void
@@ -1019,7 +1024,7 @@ pan_blitter_emit_viewport(struct pan_pool *pool,
                           uint16_t minx, uint16_t miny,
                           uint16_t maxx, uint16_t maxy)
 {
-        struct panfrost_ptr vp = panfrost_pool_alloc_desc(pool, VIEWPORT);
+        struct panfrost_ptr vp = pan_pool_alloc_desc(pool, VIEWPORT);
 
         pan_pack(vp.cpu, VIEWPORT, cfg) {
                 cfg.scissor_minimum_x = minx;
@@ -1109,13 +1114,13 @@ pan_preload_fb_bifrost_alloc_pre_post_dcds(struct pan_pool *desc_pool,
                 return;
 
         fb->bifrost.pre_post.dcds =
-                panfrost_pool_alloc_desc_aggregate(desc_pool,
-                                                   PAN_DESC(DRAW),
-                                                   PAN_DESC(DRAW_PADDING),
-                                                   PAN_DESC(DRAW),
-                                                   PAN_DESC(DRAW_PADDING),
-                                                   PAN_DESC(DRAW),
-                                                   PAN_DESC(DRAW_PADDING));
+                pan_pool_alloc_desc_aggregate(desc_pool,
+                                              PAN_DESC(DRAW),
+                                              PAN_DESC(DRAW_PADDING),
+                                              PAN_DESC(DRAW),
+                                              PAN_DESC(DRAW_PADDING),
+                                              PAN_DESC(DRAW),
+                                              PAN_DESC(DRAW_PADDING));
 }
 
 static void
@@ -1125,7 +1130,7 @@ pan_preload_emit_midgard_tiler_job(struct pan_pool *desc_pool,
                                    mali_ptr coords, mali_ptr rsd, mali_ptr tsd)
 {
         struct panfrost_ptr job =
-                panfrost_pool_alloc_desc(desc_pool, MIDGARD_TILER_JOB);
+                pan_pool_alloc_desc(desc_pool, MIDGARD_TILER_JOB);
 
         pan_preload_emit_dcd(desc_pool, fb, zs, coords, tsd, rsd,
                              pan_section_ptr(job.cpu, MIDGARD_TILER_JOB, DRAW),
@@ -1159,7 +1164,7 @@ pan_blit_emit_midgard_tiler_job(struct pan_pool *desc_pool,
                                 mali_ptr vpd, mali_ptr rsd, mali_ptr tsd)
 {
         struct panfrost_ptr job =
-                panfrost_pool_alloc_desc(desc_pool, MIDGARD_TILER_JOB);
+                pan_pool_alloc_desc(desc_pool, MIDGARD_TILER_JOB);
 
         pan_blit_emit_dcd(desc_pool,
                           src_coords, dst_coords, textures, samplers,
@@ -1195,7 +1200,7 @@ pan_blit_emit_bifrost_tiler_job(struct pan_pool *desc_pool,
                                 mali_ptr tsd, mali_ptr tiler)
 {
         struct panfrost_ptr job =
-                panfrost_pool_alloc_desc(desc_pool, BIFROST_TILER_JOB);
+                pan_pool_alloc_desc(desc_pool, BIFROST_TILER_JOB);
 
         pan_blit_emit_dcd(desc_pool,
                           src_coords, dst_coords, textures, samplers,
@@ -1329,8 +1334,8 @@ pan_preload_fb(struct pan_pool *pool,
                 fb->width, fb->height, 0.0, 1.0,
         };
 
-        coords = panfrost_pool_upload_aligned(pool, rect,
-                                              sizeof(rect), 64);
+        coords = pan_pool_upload_aligned(pool, rect,
+                                         sizeof(rect), 64);
 
         if (preload_zs)
                 pan_preload_fb_part(pool, scoreboard, fb, true, coords,
@@ -1344,10 +1349,10 @@ pan_preload_fb(struct pan_pool *pool,
 void
 pan_blit_ctx_init(struct panfrost_device *dev,
                   const struct pan_blit_info *info,
+                  struct pan_pool *blit_pool,
                   struct pan_blit_context *ctx)
 {
         memset(ctx, 0, sizeof(*ctx));
-        panfrost_pool_init(&ctx->pool, NULL, dev, 0, 65536, "Blitter pool", false, true);
 
         ctx->z_scale = (float)(info->dst.end.z - info->dst.start.z + 1) /
                        (info->src.end.z - info->src.start.z + 1);
@@ -1440,17 +1445,17 @@ pan_blit_ctx_init(struct panfrost_device *dev,
 
         if (pan_is_bifrost(dev)) {
                 ctx->textures =
-                        pan_blitter_emit_bifrost_textures(&ctx->pool, nviews, sview_ptrs);
+                        pan_blitter_emit_bifrost_textures(blit_pool, nviews, sview_ptrs);
                 ctx->samplers =
-                        pan_blitter_emit_bifrost_sampler(&ctx->pool, info->nearest);
+                        pan_blitter_emit_bifrost_sampler(blit_pool, info->nearest);
         } else {
                 ctx->textures =
-                        pan_blitter_emit_midgard_textures(&ctx->pool, nviews, sview_ptrs);
+                        pan_blitter_emit_midgard_textures(blit_pool, nviews, sview_ptrs);
                 ctx->samplers =
-                        pan_blitter_emit_midgard_sampler(&ctx->pool, info->nearest);
+                        pan_blitter_emit_midgard_sampler(blit_pool, info->nearest);
         }
 
-        ctx->vpd = pan_blitter_emit_viewport(&ctx->pool,
+        ctx->vpd = pan_blitter_emit_viewport(blit_pool,
                                              minx, miny, maxx, maxy);
 
         float dst_rect[] = {
@@ -1461,14 +1466,8 @@ pan_blit_ctx_init(struct panfrost_device *dev,
         };
 
         ctx->position =
-                panfrost_pool_upload_aligned(&ctx->pool, dst_rect,
-                                             sizeof(dst_rect), 64);
-}
-
-void
-pan_blit_ctx_cleanup(struct pan_blit_context *ctx)
-{
-        panfrost_pool_cleanup(&ctx->pool);
+                pan_pool_upload_aligned(blit_pool, dst_rect,
+                                        sizeof(dst_rect), 64);
 }
 
 bool
@@ -1505,8 +1504,8 @@ pan_blit(struct pan_blit_context *ctx,
         };
 
         mali_ptr src_coords =
-                panfrost_pool_upload_aligned(pool, src_rect,
-                                             sizeof(src_rect), 64);
+                pan_pool_upload_aligned(pool, src_rect,
+                                        sizeof(src_rect), 64);
 
         if (pan_is_bifrost(pool->dev)) {
                 pan_blit_emit_bifrost_tiler_job(pool, scoreboard,
@@ -1589,7 +1588,9 @@ pan_blitter_prefill_blit_shader_cache(struct panfrost_device *dev)
 }
 
 void
-pan_blitter_init(struct panfrost_device *dev)
+pan_blitter_init(struct panfrost_device *dev,
+                 struct pan_pool *bin_pool,
+                 struct pan_pool *desc_pool)
 {
         dev->blitter.shaders.blit =
                 _mesa_hash_table_create(NULL, pan_blit_shader_key_hash,
@@ -1597,12 +1598,11 @@ pan_blitter_init(struct panfrost_device *dev)
         dev->blitter.shaders.blend =
                 _mesa_hash_table_create(NULL, pan_blit_blend_shader_key_hash,
                                         pan_blit_blend_shader_key_equal);
-        panfrost_pool_init(&dev->blitter.shaders.pool, NULL, dev,
-                           PAN_BO_EXECUTE, 4096, "Blitter shaders", false, true);
+        dev->blitter.shaders.pool = bin_pool;
         pthread_mutex_init(&dev->blitter.shaders.lock, NULL);
         pan_blitter_prefill_blit_shader_cache(dev);
 
-        panfrost_pool_init(&dev->blitter.rsds.pool, NULL, dev, 0, 65536, "Blitter RSDs", false, true);
+        dev->blitter.rsds.pool = desc_pool;
         dev->blitter.rsds.rsds =
                 _mesa_hash_table_create(NULL, pan_blit_rsd_key_hash,
                                         pan_blit_rsd_key_equal);
@@ -1614,9 +1614,7 @@ pan_blitter_cleanup(struct panfrost_device *dev)
 {
         _mesa_hash_table_destroy(dev->blitter.shaders.blit, NULL);
         _mesa_hash_table_destroy(dev->blitter.shaders.blend, NULL);
-        panfrost_pool_cleanup(&dev->blitter.shaders.pool);
         pthread_mutex_destroy(&dev->blitter.shaders.lock);
         _mesa_hash_table_destroy(dev->blitter.rsds.rsds, NULL);
-        panfrost_pool_cleanup(&dev->blitter.rsds.pool);
         pthread_mutex_destroy(&dev->blitter.rsds.lock);
 }

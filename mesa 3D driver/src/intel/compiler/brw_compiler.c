@@ -38,7 +38,6 @@
    .lower_bitfield_insert = true,                                             \
    .lower_uadd_carry = true,                                                  \
    .lower_usub_borrow = true,                                                 \
-   .lower_fdiv = true,                                                        \
    .lower_flrp64 = true,                                                      \
    .lower_isign = true,                                                       \
    .lower_ldexp = true,                                                       \
@@ -68,8 +67,10 @@
    .lower_unpack_unorm_4x8 = true,                                            \
    .lower_usub_sat64 = true,                                                  \
    .lower_hadd64 = true,                                                      \
-   .lower_bfe_with_two_constants = true,                                      \
-   .max_unroll_iterations = 32
+   .avoid_ternary_with_two_constants = true,                                  \
+   .has_pack_32_4x8 = true,                                                   \
+   .max_unroll_iterations = 32,                                               \
+   .force_indirect_unrolling = nir_var_function_temp
 
 static const struct nir_shader_compiler_options scalar_nir_options = {
    COMMON_OPTIONS,
@@ -187,14 +188,15 @@ brw_compiler_create(void *mem_ctx, const struct intel_device_info *devinfo)
 
       nir_options->lower_rotate = devinfo->ver < 11;
       nir_options->lower_bitfield_reverse = devinfo->ver < 7;
+      nir_options->has_iadd3 = devinfo->verx10 >= 125;
 
       nir_options->lower_int64_options = int64_options;
       nir_options->lower_doubles_options = fp64_options;
 
-      /* Starting with Gfx11, we lower away 8-bit arithmetic */
-      nir_options->support_8bit_alu = devinfo->ver < 11;
-
       nir_options->unify_interfaces = i < MESA_SHADER_FRAGMENT;
+
+      nir_options->force_indirect_unrolling |=
+         brw_nir_no_indirect_mask(compiler, i);
 
       compiler->glsl_compiler_options[i].NirOptions = nir_options;
 

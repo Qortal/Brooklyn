@@ -30,7 +30,7 @@
 #include "i915_fpc.h"
 #include "i915_reg.h"
 
-uint
+uint32_t
 i915_get_temp(struct i915_fp_compile *p)
 {
    int bit = ffs(~p->temp_flag);
@@ -53,7 +53,7 @@ i915_release_temp(struct i915_fp_compile *p, int reg)
  * Get unpreserved temporary, a temp whose value is not preserved between
  * PS program phases.
  */
-uint
+uint32_t
 i915_get_utemp(struct i915_fp_compile *p)
 {
    int bit = ffs(~p->utemp_flag);
@@ -72,7 +72,7 @@ i915_release_utemps(struct i915_fp_compile *p)
    p->utemp_flag = ~0x7;
 }
 
-uint
+uint32_t
 i915_emit_decl(struct i915_fp_compile *p, uint32_t type, uint32_t nr,
                uint32_t d0_flags)
 {
@@ -102,7 +102,7 @@ i915_emit_decl(struct i915_fp_compile *p, uint32_t type, uint32_t nr,
    return reg;
 }
 
-uint
+uint32_t
 i915_emit_arith(struct i915_fp_compile *p, uint32_t op, uint32_t dest,
                 uint32_t mask, uint32_t saturate, uint32_t src0, uint32_t src1,
                 uint32_t src2)
@@ -173,7 +173,7 @@ i915_emit_arith(struct i915_fp_compile *p, uint32_t op, uint32_t dest,
  * \param coord  the i915 source texcoord operand
  * \param opcode  the instruction opcode
  */
-uint
+uint32_t
 i915_emit_texld(struct i915_fp_compile *p, uint32_t dest, uint32_t destmask,
                 uint32_t sampler, uint32_t coord, uint32_t opcode,
                 uint32_t num_coord)
@@ -186,11 +186,13 @@ i915_emit_texld(struct i915_fp_compile *p, uint32_t dest, uint32_t destmask,
    /* Eliminate the useless texture coordinates. Otherwise we end up generating
     * a swizzle for no reason below. */
    switch (num_coord) {
-   case 0:
-      ignore |= (0xf << UREG_CHANNEL_X_SHIFT);
-      FALLTHROUGH;
    case 1:
-      ignore |= (0xf << UREG_CHANNEL_Y_SHIFT);
+      /* For 1D textures, make sure that the Y coordinate is actually
+       * initialized. It seems that if the channel is never written during the
+       * program, texturing returns undefined results (even if the Y wrap is
+       * REPEAT).
+       */
+      coord = swizzle(coord, X, X, Z, W);
       FALLTHROUGH;
    case 2:
       ignore |= (0xf << UREG_CHANNEL_Z_SHIFT);
@@ -263,7 +265,7 @@ i915_emit_texld(struct i915_fp_compile *p, uint32_t dest, uint32_t destmask,
    return dest;
 }
 
-uint
+uint32_t
 i915_emit_const1f(struct i915_fp_compile *p, float c0)
 {
    struct i915_fragment_shader *ifs = p->shader;
@@ -293,7 +295,7 @@ i915_emit_const1f(struct i915_fp_compile *p, float c0)
    return 0;
 }
 
-uint
+uint32_t
 i915_emit_const2f(struct i915_fp_compile *p, float c0, float c1)
 {
    struct i915_fragment_shader *ifs = p->shader;
@@ -331,7 +333,7 @@ i915_emit_const2f(struct i915_fp_compile *p, float c0, float c1)
    return 0;
 }
 
-uint
+uint32_t
 i915_emit_const4f(struct i915_fp_compile *p, float c0, float c1, float c2,
                   float c3)
 {
@@ -362,7 +364,7 @@ i915_emit_const4f(struct i915_fp_compile *p, float c0, float c1, float c2,
    return 0;
 }
 
-uint
+uint32_t
 i915_emit_const4fv(struct i915_fp_compile *p, const float *c)
 {
    return i915_emit_const4f(p, c[0], c[1], c[2], c[3]);

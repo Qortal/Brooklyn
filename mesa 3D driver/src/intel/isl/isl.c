@@ -2655,7 +2655,7 @@ isl_surf_get_image_offset_B_tile_sa(const struct isl_surf *surf,
                                     uint32_t level,
                                     uint32_t logical_array_layer,
                                     uint32_t logical_z_offset_px,
-                                    uint32_t *offset_B,
+                                    uint64_t *offset_B,
                                     uint32_t *x_offset_sa,
                                     uint32_t *y_offset_sa)
 {
@@ -2687,7 +2687,7 @@ isl_surf_get_image_offset_B_tile_el(const struct isl_surf *surf,
                                     uint32_t level,
                                     uint32_t logical_array_layer,
                                     uint32_t logical_z_offset_px,
-                                    uint32_t *offset_B,
+                                    uint64_t *offset_B,
                                     uint32_t *x_offset_el,
                                     uint32_t *y_offset_el)
 {
@@ -2724,8 +2724,8 @@ isl_surf_get_image_range_B_tile(const struct isl_surf *surf,
                                 uint32_t level,
                                 uint32_t logical_array_layer,
                                 uint32_t logical_z_offset_px,
-                                uint32_t *start_tile_B,
-                                uint32_t *end_tile_B)
+                                uint64_t *start_tile_B,
+                                uint64_t *end_tile_B)
 {
    uint32_t start_x_offset_el, start_y_offset_el;
    uint32_t start_z_offset_el, start_array_slice;
@@ -2793,7 +2793,7 @@ isl_surf_get_image_surf(const struct isl_device *dev,
                         uint32_t logical_array_layer,
                         uint32_t logical_z_offset_px,
                         struct isl_surf *image_surf,
-                        uint32_t *offset_B,
+                        uint64_t *offset_B,
                         uint32_t *x_offset_sa,
                         uint32_t *y_offset_sa)
 {
@@ -2827,6 +2827,118 @@ isl_surf_get_image_surf(const struct isl_device *dev,
    assert(ok);
 }
 
+bool
+isl_surf_get_uncompressed_surf(const struct isl_device *dev,
+                               const struct isl_surf *surf,
+                               const struct isl_view *view,
+                               struct isl_surf *ucompr_surf,
+                               struct isl_view *ucompr_view,
+                               uint64_t *offset_B,
+                               uint32_t *x_offset_el,
+                               uint32_t *y_offset_el)
+{
+   const struct isl_format_layout *fmtl =
+      isl_format_get_layout(surf->format);
+   const enum isl_format view_format = view->format;
+
+   assert(fmtl->bw > 1 || fmtl->bh > 1 || fmtl->bd > 1);
+   assert(isl_format_is_compressed(surf->format));
+   assert(!isl_format_is_compressed(view->format));
+   assert(isl_format_get_layout(view->format)->bpb == fmtl->bpb);
+   assert(view->levels == 1);
+
+   const uint32_t view_width_px =
+      isl_minify(surf->logical_level0_px.width, view->base_level);
+   const uint32_t view_height_px =
+      isl_minify(surf->logical_level0_px.height, view->base_level);
+
+   assert(surf->samples == 1);
+   const uint32_t view_width_el = isl_align_div_npot(view_width_px, fmtl->bw);
+   const uint32_t view_height_el = isl_align_div_npot(view_height_px, fmtl->bh);
+
+   /* If we ever enable 3D block formats, we'll need to re-think this */
+   assert(fmtl->bd == 1);
+
+   uint32_t x_offset_sa = 0, y_offset_sa = 0;
+   if (view->array_len > 1) {
+      /* The Skylake PRM Vol. 2d, "RENDER_SURFACE_STATE::X Offset" says:
+       *
+       *    "If Surface Array is enabled, this field must be zero."
+       *
+       * The PRMs for other hardware have similar text.  This is also tricky
+       * to handle with things like BLORP's SW offsetting because the
+       * increased surface size required for the offset may result in an image
+       * height greater than qpitch.
+       */
+      if (view->base_level > 0)
+         return false;
+
+      /* On Haswell and earlier, RENDER_SURFACE_STATE doesn't have a QPitch
+       * field; it only has "array pitch span" which means the QPitch is
+       * automatically calculated.  Since we're smashing the surface format
+       * (block formats are subtly different) and the number of miplevels,
+       * that calculation will get thrown off.  This means we can't do arrays
+       * even at LOD0
+       *
+       * On Broadwell, we do have a QPitch field which we can control.
+       * However, HALIGN and VALIGN are specified in pixels and are
+       * hard-coded to align to exactly the block size of the compressed
+       * texture.  This means that, when reinterpreted as a non-compressed
+       * the QPitch may be anything but the HW requires it to be properly
+       * aligned.
+       */
+      if (ISL_GFX_VER(dev) < 9)
+         return false;
+
+      *ucompr_surf = *surf;
+      ucompr_surf->levels = 1;
+
+      /* The surface mostly stays as-is; there is no offset */
+      *offset_B = 0;
+
+      /* The view remains the same */
+      *ucompr_view = *view;
+   } else {
+      /* If only one array slice is requested, directly offset to that slice.
+       * We could, in theory, still use arrays in some cases but BLORP isn't
+       * prepared for this and everyone who calls this function should be
+       * prepared to handle an X/Y offset.
+       */
+      isl_surf_get_image_surf(dev, surf,
+                              view->base_level,
+                              surf->dim == ISL_SURF_DIM_3D ?
+                                 0 : view->base_array_layer,
+                              surf->dim == ISL_SURF_DIM_3D ?
+                                 view->base_array_layer : 0,
+                              ucompr_surf,
+                              offset_B, &x_offset_sa, &y_offset_sa);
+
+      /* The newly created image represents the one subimage we're
+       * referencing with this view so it only has one array slice and
+       * miplevel.
+       */
+      *ucompr_view = *view;
+      ucompr_view->base_array_layer = 0;
+      ucompr_view->base_level = 0;
+   }
+
+   ucompr_surf->format = view_format;
+
+   /* We're making an uncompressed view here.  The image dimensions
+    * need to be scaled down by the block size.
+    */
+   assert(ucompr_surf->logical_level0_px.width == view_width_px);
+   assert(ucompr_surf->logical_level0_px.height == view_height_px);
+   ucompr_surf->logical_level0_px.width = view_width_el;
+   ucompr_surf->logical_level0_px.height = view_height_el;
+   ucompr_surf->phys_level0_sa = isl_surf_get_phys_level0_el(surf);
+
+   *x_offset_el = isl_assert_div(x_offset_sa, fmtl->bw);
+   *y_offset_el = isl_assert_div(y_offset_sa, fmtl->bh);
+
+   return true;
+}
+
 void
 isl_tiling_get_intratile_offset_el(enum isl_tiling tiling,
                                    uint32_t bpb,
@@ -2836,7 +2948,7 @@ isl_tiling_get_intratile_offset_el(enum isl_tiling tiling,
                                    uint32_t total_y_offset_el,
                                    uint32_t total_z_offset_el,
                                    uint32_t total_array_offset,
-                                   uint32_t *base_address_offset,
+                                   uint64_t *tile_offset_B,
                                    uint32_t *x_offset_el,
                                    uint32_t *y_offset_el,
                                    uint32_t *z_offset_el,
@@ -2845,8 +2957,8 @@ isl_tiling_get_intratile_offset_el(enum isl_tiling tiling,
    if (tiling == ISL_TILING_LINEAR) {
       assert(bpb % 8 == 0);
       assert(total_z_offset_el == 0 && total_array_offset == 0);
-      *base_address_offset = total_y_offset_el * row_pitch_B +
-                             total_x_offset_el * (bpb / 8);
+      *tile_offset_B = (uint64_t)total_y_offset_el * row_pitch_B +
+                       (uint64_t)total_x_offset_el * (bpb / 8);
       *x_offset_el = 0;
       *y_offset_el = 0;
       *z_offset_el = 0;
@@ -2893,9 +3005,9 @@ isl_tiling_get_intratile_offset_el(enum isl_tiling tiling,
    /* Add the Z and array offset to the Y offset to get a 2D offset */
    y_offset_tl += (z_offset_tl + a_offset_tl) * array_pitch_tl_rows;
 
-   *base_address_offset =
-      y_offset_tl * tile_info.phys_extent_B.h * row_pitch_B +
-      x_offset_tl * tile_info.phys_extent_B.h * tile_info.phys_extent_B.w;
+   *tile_offset_B =
+      (uint64_t)y_offset_tl * tile_info.phys_extent_B.h * row_pitch_B +
+      (uint64_t)x_offset_tl * tile_info.phys_extent_B.h * tile_info.phys_extent_B.w;
 }
 
 uint32_t

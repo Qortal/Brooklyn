@@ -89,6 +89,7 @@
 
 #include "util/u_dump.h"
 #include "util/format/u_format.h"
+#include "util/u_helpers.h"
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
 #include "indices/u_primconvert.h"
@@ -235,6 +236,8 @@ static const struct {
    { PIPE_FORMAT_R16_SNORM,            PIPE_FORMAT_R32_FLOAT },
    { PIPE_FORMAT_R16G16_SNORM,         PIPE_FORMAT_R32G32_FLOAT },
    { PIPE_FORMAT_R16G16B16_SNORM,      PIPE_FORMAT_R32G32B32_FLOAT },
+   { PIPE_FORMAT_R16G16B16_SINT,       PIPE_FORMAT_R32G32B32_SINT },
+   { PIPE_FORMAT_R16G16B16_UINT,       PIPE_FORMAT_R32G32B32_UINT },
    { PIPE_FORMAT_R16G16B16A16_SNORM,   PIPE_FORMAT_R32G32B32A32_FLOAT },
    { PIPE_FORMAT_R16_USCALED,          PIPE_FORMAT_R32_FLOAT },
    { PIPE_FORMAT_R16G16_USCALED,       PIPE_FORMAT_R32G32_FLOAT },
@@ -839,6 +842,9 @@ static void *
 u_vbuf_create_vertex_elements(struct u_vbuf *mgr, unsigned count,
                               const struct pipe_vertex_element *attribs)
 {
+   struct pipe_vertex_element tmp[PIPE_MAX_ATTRIBS];
+   util_lower_uint64_vertex_elements(&attribs, &count, tmp);
+
    struct pipe_context *pipe = mgr->pipe;
    unsigned i;
    struct pipe_vertex_element driver_attribs[PIPE_MAX_ATTRIBS];

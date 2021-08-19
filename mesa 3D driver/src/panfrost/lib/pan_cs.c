@@ -257,7 +257,7 @@ pan_emit_zs_crc_ext(const struct panfrost_device *dev,
 static unsigned
 pan_bytes_per_pixel_tib(enum pipe_format format)
 {
-        if (panfrost_blendable_formats[format].internal) {
+        if (panfrost_blendable_formats_v7[format].internal) {
                 /* Blendable formats are always 32-bits in the tile buffer,
                  * extra bits are used as padding or to dither */
                 return 4;
@@ -406,7 +406,7 @@ pan_rt_init_format(const struct panfrost_device *dev,
         if (desc->colorspace == UTIL_FORMAT_COLORSPACE_SRGB)
                 cfg->srgb = true;
 
-        struct pan_blendable_format fmt = panfrost_blendable_formats[rt->format];
+        struct pan_blendable_format fmt = panfrost_blendable_formats_v7[rt->format];
 
         if (fmt.internal) {
                 cfg->internal_format = fmt.internal;
@@ -553,10 +553,6 @@ pan_emit_tls(const struct panfrost_device *dev,
                         unsigned shift =
                                 panfrost_get_stack_shift(info->tls.size);
 
-                        /* TODO: Why do we need to make the stack bigger than other platforms? */
-	                if (dev->quirks & MIDGARD_SFBD)
-                                shift = MAX2(shift, 512);
-
                         cfg.tls_size = shift;
                         cfg.tls_base_pointer = info->tls.ptr;
                 }
@@ -696,10 +692,9 @@ pan_emit_mfbd(const struct panfrost_device *dev,
         pan_section_pack(fbd, MULTI_TARGET_FRAMEBUFFER, PARAMETERS, cfg) {
                 cfg.width = fb->width;
                 cfg.height = fb->height;
-                cfg.bound_min_x = fb->extent.minx;
-                cfg.bound_min_y = fb->extent.miny;
-                cfg.bound_max_x = fb->extent.maxx;
-                cfg.bound_max_y = fb->extent.maxy;
+                cfg.bound_max_x = fb->width - 1;
+                cfg.bound_max_y = fb->height - 1;
+
                 cfg.effective_tile_size = tile_size;
                 cfg.tie_break_rule = MALI_TIE_BREAK_RULE_MINUS_180_IN_0_OUT;
                 cfg.render_target_count = MAX2(fb->rt_count, 1);
@@ -732,7 +727,7 @@ pan_emit_mfbd(const struct panfrost_device *dev,
                          * valid for next time. */
                         cfg.crc_write_enable = *valid || full;
 
-                        *valid = full;
+                        *valid |= full;
                 }
         }
 
@@ -807,7 +802,7 @@ pan_emit_sfbd(const struct panfrost_device *dev,
                         panfrost_invert_swizzle(desc->swizzle, swizzle);
                         cfg.swizzle = panfrost_translate_swizzle_4(swizzle);
 
-                        struct pan_blendable_format fmt = panfrost_blendable_formats[rt->format];
+                        struct pan_blendable_format fmt = panfrost_blendable_formats_v7[rt->format];
                         if (fmt.internal) {
                                 cfg.internal_format = fmt.internal;
                                 cfg.color_writeback_format = fmt.writeback;
@@ -908,8 +903,12 @@ pan_emit_bifrost_tiler(const struct panfrost_device *dev,
                        mali_ptr heap,
                        void *out)
 {
+        unsigned max_levels = dev->tiler_features.max_levels;
+        assert(max_levels >= 2);
+
         pan_pack(out, BIFROST_TILER, tiler) {
-                tiler.hierarchy_mask = 0x28;
+                /* TODO: Select hierarchy mask more effectively */
+                tiler.hierarchy_mask = (max_levels >= 8) ? 0xFF : 0x28;
                 tiler.fb_width = fb_width;
                 tiler.fb_height = fb_height;
                 tiler.heap = heap;

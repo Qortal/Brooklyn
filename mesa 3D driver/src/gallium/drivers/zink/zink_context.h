@@ -27,6 +27,7 @@
 #define ZINK_SHADER_COUNT (PIPE_SHADER_TYPES - 1)
 
 #define ZINK_DEFAULT_MAX_DESCS 5000
+#define ZINK_DEFAULT_DESC_CLAMP (ZINK_DEFAULT_MAX_DESCS * 0.9)
 
 #include "zink_clear.h"
 #include "zink_pipeline.h"
@@ -45,6 +46,10 @@
 #include "util/u_dynarray.h"
 
 #include <vulkan/vulkan.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 struct blitter_context;
 struct list_head;
@@ -132,12 +137,34 @@ struct zink_descriptor_surface {
    bool is_buffer;
 };
 
+typedef void (*pipe_draw_vbo_func)(struct pipe_context *pipe,
+                                   const struct pipe_draw_info *info,
+                                   unsigned drawid_offset,
+                                   const struct pipe_draw_indirect_info *indirect,
+                                   const struct pipe_draw_start_count_bias *draws,
+                                   unsigned num_draws);
+
+typedef void (*pipe_launch_grid_func)(struct pipe_context *pipe, const struct pipe_grid_info *info);
+
+typedef enum {
+   ZINK_NO_MULTIDRAW,
+   ZINK_MULTIDRAW,
+} zink_multidraw;
+
+typedef enum {
+   ZINK_NO_DYNAMIC_STATE,
+   ZINK_DYNAMIC_STATE,
+} zink_dynamic_state;
+
 struct zink_context {
    struct pipe_context base;
    struct threaded_context *tc;
    struct slab_child_pool transfer_pool;
    struct slab_child_pool transfer_pool_unsync;
    struct blitter_context *blitter;
+
+   pipe_draw_vbo_func draw_vbo[2]; //batch changed
+   pipe_launch_grid_func launch_grid[2]; //batch changed
 
    struct pipe_device_reset_callback reset;
 
@@ -148,7 +175,8 @@ struct zink_context {
    struct zink_fence *last_fence; //the last command buffer submitted
    struct hash_table batch_states; //submitted batch states
    struct util_dynarray free_batch_states; //unused batch states
-   VkDeviceSize resource_size; //the accumulated size of resources in submitted buffers
+   bool oom_flush;
+   bool oom_stall;
    struct zink_batch batch;
 
    unsigned shader_has_inlinable_uniforms_mask;
@@ -170,6 +198,9 @@ struct zink_context {
    bool pipeline_changed[2]; //gfx, compute
 
    struct zink_shader *gfx_stages[ZINK_SHADER_COUNT];
+   struct zink_shader *last_vertex_stage;
+   bool shader_reads_drawid;
+   bool shader_reads_basevertex;
    struct zink_gfx_pipeline_state gfx_pipeline_state;
    enum pipe_prim_type gfx_prim_mode;
    struct hash_table *program_cache;
@@ -195,6 +226,8 @@ struct zink_context {
    uint16_t clears_enabled;
    uint16_t rp_clears_enabled;
 
+   VkBuffer vbufs[PIPE_MAX_ATTRIBS];
+   unsigned vbuf_offsets[PIPE_MAX_ATTRIBS];
    struct pipe_vertex_buffer vertex_buffers[PIPE_MAX_ATTRIBS];
    bool vertex_buffers_dirty;
 
@@ -205,7 +238,6 @@ struct zink_context {
    bool vp_state_changed;
    bool scissor_changed;
 
-   float line_width;
    float blend_constants[4];
 
    bool sample_locations_changed;
@@ -259,7 +291,6 @@ struct zink_context {
       struct zink_descriptor_surface sampler_surfaces[PIPE_SHADER_TYPES][PIPE_MAX_SAMPLERS];
       struct zink_descriptor_surface image_surfaces[PIPE_SHADER_TYPES][PIPE_MAX_SHADER_IMAGES];
    } di;
-   bool descriptor_refs_dirty[2];
    struct set *need_barriers[2]; //gfx, compute
    struct set update_barriers[2][2]; //[gfx, compute][current, next]
    uint8_t barrier_set_idx[2];
@@ -272,6 +303,8 @@ struct zink_context {
    bool have_timelines;
 
    bool is_device_lost;
+   bool vertex_state_changed : 1;
+   bool blend_state_changed : 1;
    bool rast_state_changed : 1;
    bool dsa_state_changed : 1;
    bool stencil_ref_changed : 1;
@@ -291,12 +324,6 @@ zink_fb_clear_enabled(const struct zink_context *ctx, unsigned idx)
    return ctx->clears_enabled & (PIPE_CLEAR_COLOR0 << idx);
 }
 
-struct zink_batch *
-zink_batch_rp(struct zink_context *ctx);
-
-struct zink_batch *
-zink_batch_no_rp(struct zink_context *ctx);
-
 void
 zink_fence_wait(struct pipe_context *ctx);
 
@@ -304,13 +331,10 @@ void
 zink_wait_on_batch(struct zink_context *ctx, uint32_t batch_id);
 
 bool
-zink_check_batch_completion(struct zink_context *ctx, uint32_t batch_id);
+zink_check_batch_completion(struct zink_context *ctx, uint32_t batch_id, bool have_lock);
 
 void
 zink_flush_queue(struct zink_context *ctx);
-
-void
-zink_maybe_flush_or_stall(struct zink_context *ctx);
 
 bool
 zink_resource_access_is_write(VkAccessFlags flags);
@@ -331,11 +355,67 @@ bool
 zink_resource_needs_barrier(struct zink_resource *res, VkImageLayout layout, VkAccessFlags flags, VkPipelineStageFlags pipeline);
 void
 zink_resource_barrier(struct zink_context *ctx, struct zink_batch *batch, struct zink_resource *res, VkImageLayout layout, VkAccessFlags flags, VkPipelineStageFlags pipeline);
+void
+zink_update_descriptor_refs(struct zink_context *ctx, bool compute);
+void
+zink_init_vk_sample_locations(struct zink_context *ctx, VkSampleLocationsInfoEXT *loc);
 
- void
- zink_begin_render_pass(struct zink_context *ctx,
-                        struct zink_batch *batch);
+void
+zink_begin_render_pass(struct zink_context *ctx,
+                       struct zink_batch *batch);
+void
+zink_end_render_pass(struct zink_context *ctx, struct zink_batch *batch);
 
+static inline struct zink_batch *
+zink_batch_rp(struct zink_context *ctx)
+{
+   struct zink_batch *batch = &ctx->batch;
+   if (!batch->in_rp) {
+      zink_begin_render_pass(ctx, batch);
+   }
+   return batch;
+}
+
+static inline struct zink_batch *
+zink_batch_no_rp(struct zink_context *ctx)
+{
+   struct zink_batch *batch = &ctx->batch;
+   zink_end_render_pass(ctx, batch);
+   assert(!batch->in_rp);
+   return batch;
+}
+
+static inline VkPipelineStageFlags
+zink_pipeline_flags_from_pipe_stage(enum pipe_shader_type pstage)
+{
+   switch (pstage) {
+   case PIPE_SHADER_VERTEX:
+      return VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+   case PIPE_SHADER_FRAGMENT:
+      return VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+   case PIPE_SHADER_GEOMETRY:
+      return VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
+   case PIPE_SHADER_TESS_CTRL:
+      return VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT;
+   case PIPE_SHADER_TESS_EVAL:
+      return VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT;
+   case PIPE_SHADER_COMPUTE:
+      return VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+   default:
+      unreachable("unknown shader stage");
+   }
+}
+
+void
+zink_init_draw_functions(struct zink_context *ctx, struct zink_screen *screen);
+void
+zink_init_grid_functions(struct zink_context *ctx);
+
+#ifdef __cplusplus
+}
+#endif
+
+#ifndef __cplusplus
 VkPipelineStageFlags
 zink_pipeline_flags_from_stage(VkShaderStageFlagBits stage);
 
@@ -374,17 +454,6 @@ void
 zink_rebind_framebuffer(struct zink_context *ctx, struct zink_resource *res);
 
 void
-zink_draw_vbo(struct pipe_context *pctx,
-              const struct pipe_draw_info *dinfo,
-              unsigned drawid_offset,
-              const struct pipe_draw_indirect_info *indirect,
-              const struct pipe_draw_start_count_bias *draws,
-              unsigned num_draws);
-
-void
-zink_launch_grid(struct pipe_context *pctx, const struct pipe_grid_info *info);
-
-void
 zink_copy_buffer(struct zink_context *ctx, struct zink_batch *batch, struct zink_resource *dst, struct zink_resource *src,
                  unsigned dst_offset, unsigned src_offset, unsigned size);
 
@@ -411,32 +480,6 @@ zink_buffer_view_reference(struct zink_screen *screen,
       zink_destroy_buffer_view(screen, old_dst);
    if (dst) *dst = src;
 }
+#endif
 
-void
-zink_update_descriptor_refs(struct zink_context *ctx, bool compute);
-
-void
-zink_init_vk_sample_locations(struct zink_context *ctx, VkSampleLocationsInfoEXT *loc);
-
-
-static inline VkPipelineStageFlags
-zink_pipeline_flags_from_pipe_stage(enum pipe_shader_type pstage)
-{
-   switch (pstage) {
-   case PIPE_SHADER_VERTEX:
-      return VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
-   case PIPE_SHADER_FRAGMENT:
-      return VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-   case PIPE_SHADER_GEOMETRY:
-      return VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
-   case PIPE_SHADER_TESS_CTRL:
-      return VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT;
-   case PIPE_SHADER_TESS_EVAL:
-      return VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT;
-   case PIPE_SHADER_COMPUTE:
-      return VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-   default:
-      unreachable("unknown shader stage");
-   }
-}
 #endif

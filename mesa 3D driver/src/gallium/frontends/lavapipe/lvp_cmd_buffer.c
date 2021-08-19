@@ -522,7 +522,7 @@ VKAPI_ATTR void VKAPI_CALL lvp_CmdDrawMultiEXT(
    else {
       unsigned i = 0;
       vk_foreach_multi_draw(draw, i, pVertexInfo, drawCount, stride)
-         memcpy(cmd->u.draw.draws, draw, sizeof(struct pipe_draw_start_count_bias));
+         memcpy(&cmd->u.draw.draws[i], draw, sizeof(struct VkMultiDrawInfoEXT));
    }
 
    cmd_buf_queue(cmd_buffer, cmd);
@@ -808,7 +808,7 @@ VKAPI_ATTR void VKAPI_CALL lvp_CmdDrawMultiIndexedEXT(
    else {
       unsigned i = 0;
       vk_foreach_multi_draw_indexed(draw, i, pIndexInfo, drawCount, stride)
-         memcpy(cmd->u.draw_indexed.draws, draw, sizeof(struct pipe_draw_start_count_bias));
+         memcpy(&cmd->u.draw_indexed.draws[i], draw, sizeof(struct pipe_draw_start_count_bias));
    }
    /* only the first member is read if vertex_offset_changes is true */
    if (pVertexOffset)
@@ -1925,6 +1925,29 @@ VKAPI_ATTR void VKAPI_CALL lvp_CmdSetCullModeEXT(
    cmd_buf_queue(cmd_buffer, cmd);
 }
 
+VKAPI_ATTR void VKAPI_CALL lvp_CmdSetVertexInputEXT(
+    VkCommandBuffer                             commandBuffer,
+    uint32_t                                    vertexBindingDescriptionCount,
+    const VkVertexInputBindingDescription2EXT*  pVertexBindingDescriptions,
+    uint32_t                                    vertexAttributeDescriptionCount,
+    const VkVertexInputAttributeDescription2EXT* pVertexAttributeDescriptions)
+{
+   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
+   struct lvp_cmd_buffer_entry *cmd;
+
+   size_t binding_size = vertexBindingDescriptionCount * sizeof(VkVertexInputBindingDescription2EXT);
+   size_t attr_size = vertexAttributeDescriptionCount * sizeof(VkVertexInputAttributeDescription2EXT);
+   cmd = cmd_buf_entry_alloc_size(cmd_buffer, binding_size + attr_size, LVP_CMD_SET_VERTEX_INPUT);
+   if (!cmd)
+      return;
+
+   cmd->u.set_vertex_input.binding_count = vertexBindingDescriptionCount;
+   cmd->u.set_vertex_input.attr_count = vertexAttributeDescriptionCount;
+   memcpy(cmd->u.set_vertex_input.data, pVertexBindingDescriptions, binding_size);
+   memcpy(cmd->u.set_vertex_input.data + binding_size, pVertexAttributeDescriptions, attr_size);
+   cmd_buf_queue(cmd_buffer, cmd);
+}
+
 VKAPI_ATTR void VKAPI_CALL lvp_CmdSetFrontFaceEXT(
     VkCommandBuffer                             commandBuffer,
     VkFrontFace                                 frontFace)
@@ -1937,6 +1960,23 @@ VKAPI_ATTR void VKAPI_CALL lvp_CmdSetFrontFaceEXT(
       return;
 
    cmd->u.set_front_face.front_face = frontFace;
+   cmd_buf_queue(cmd_buffer, cmd);
+}
+
+VKAPI_ATTR void VKAPI_CALL lvp_CmdSetLineStippleEXT(
+    VkCommandBuffer                             commandBuffer,
+    uint32_t                                    lineStippleFactor,
+    uint16_t                                    lineStipplePattern)
+{
+   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
+   struct lvp_cmd_buffer_entry *cmd;
+
+   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_LINE_STIPPLE);
+   if (!cmd)
+      return;
+
+   cmd->u.set_line_stipple.line_stipple_factor = lineStippleFactor;
+   cmd->u.set_line_stipple.line_stipple_pattern = lineStipplePattern;
    cmd_buf_queue(cmd_buffer, cmd);
 }
 
@@ -2141,5 +2181,103 @@ VKAPI_ATTR void VKAPI_CALL lvp_CmdSetStencilOpEXT(
    cmd->u.set_stencil_op.pass_op = passOp;
    cmd->u.set_stencil_op.depth_fail_op = depthFailOp;
    cmd->u.set_stencil_op.compare_op = compareOp;
+   cmd_buf_queue(cmd_buffer, cmd);
+}
+
+VKAPI_ATTR void VKAPI_CALL lvp_CmdSetDepthBiasEnableEXT(
+    VkCommandBuffer                             commandBuffer,
+    VkBool32                                    depthBiasEnable)
+{
+   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
+   struct lvp_cmd_buffer_entry *cmd;
+
+   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_DEPTH_BIAS_ENABLE);
+   if (!cmd)
+      return;
+
+   cmd->u.set_depth_bias_enable.enable = depthBiasEnable == VK_TRUE;
+   cmd_buf_queue(cmd_buffer, cmd);
+}
+
+VKAPI_ATTR void VKAPI_CALL lvp_CmdSetLogicOpEXT(
+    VkCommandBuffer                             commandBuffer,
+    VkLogicOp                                   logicOp)
+{
+   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
+   struct lvp_cmd_buffer_entry *cmd;
+
+   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_LOGIC_OP);
+   if (!cmd)
+      return;
+
+   cmd->u.set_logic_op.op = logicOp;
+   cmd_buf_queue(cmd_buffer, cmd);
+}
+
+VKAPI_ATTR void VKAPI_CALL lvp_CmdSetPatchControlPointsEXT(
+    VkCommandBuffer                             commandBuffer,
+    uint32_t                                    patchControlPoints)
+{
+   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
+   struct lvp_cmd_buffer_entry *cmd;
+
+   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_PATCH_CONTROL_POINTS);
+   if (!cmd)
+      return;
+
+   cmd->u.set_patch_control_points.vertices_per_patch = patchControlPoints;
+   cmd_buf_queue(cmd_buffer, cmd);
+}
+
+VKAPI_ATTR void VKAPI_CALL lvp_CmdSetPrimitiveRestartEnableEXT(
+    VkCommandBuffer                             commandBuffer,
+    VkBool32                                    primitiveRestartEnable)
+{
+   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
+   struct lvp_cmd_buffer_entry *cmd;
+
+   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_PRIMITIVE_RESTART_ENABLE);
+   if (!cmd)
+      return;
+
+   cmd->u.set_primitive_restart_enable.enable = primitiveRestartEnable == VK_TRUE;
+   cmd_buf_queue(cmd_buffer, cmd);
+}
+
+VKAPI_ATTR void VKAPI_CALL lvp_CmdSetRasterizerDiscardEnableEXT(
+    VkCommandBuffer                             commandBuffer,
+    VkBool32                                    rasterizerDiscardEnable)
+{
+   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
+   struct lvp_cmd_buffer_entry *cmd;
+
+   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_RASTERIZER_DISCARD_ENABLE);
+   if (!cmd)
+      return;
+
+   cmd->u.set_rasterizer_discard_enable.enable = rasterizerDiscardEnable == VK_TRUE;
+   cmd_buf_queue(cmd_buffer, cmd);
+}
+
+VKAPI_ATTR void VKAPI_CALL lvp_CmdSetColorWriteEnableEXT(
+    VkCommandBuffer                             commandBuffer,
+    uint32_t                                    attachmentCount,
+    const VkBool32*                             pColorWriteEnables)
+{
+   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
+   struct lvp_cmd_buffer_entry *cmd;
+
+   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_COLOR_WRITE_ENABLE);
+   if (!cmd)
+      return;
+
+   cmd->u.set_color_write_enable.disable_mask = 0;
+   for (unsigned i = 0; i < attachmentCount; i++) {
+      /* this is inverted because cmdbufs are zero-initialized, meaning only 'true'
+       * can be detected with a bool, and the default is to enable color writes
+       */
+      if (pColorWriteEnables[i] != VK_TRUE)
+         cmd->u.set_color_write_enable.disable_mask |= BITFIELD_BIT(i);
+   }
    cmd_buf_queue(cmd_buffer, cmd);
 }

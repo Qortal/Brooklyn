@@ -105,9 +105,9 @@ ssa_def_dominates(nir_ssa_def *a, nir_ssa_def *b)
  * Each SSA definition is associated with a merge_node and the association
  * is represented by a combination of a hash table and the "def" parameter
  * in the merge_node structure.  The merge_set stores a linked list of
- * merge_nodes in dominance order of the ssa definitions.  (Since the
- * liveness analysis pass indexes the SSA values in dominance order for us,
- * this is an easy thing to keep up.)  It is assumed that no pair of the
+ * merge_nodes, ordered by a pre-order DFS walk of the dominance tree.  (Since
+ * the liveness analysis pass indexes the SSA values in dominance order for
+ * us, this is an easy thing to keep up.)  It is assumed that no pair of the
  * nodes in a given set interfere.  Merging two sets or checking for
  * interference can be done in a single linear-time merge-sort walk of the
  * two lists of nodes.
@@ -141,10 +141,7 @@ merge_set_dump(merge_set *set, FILE *fp)
       for (int i = 0; i <= dom_idx; i++)
          fprintf(fp, "  ");
 
-      if (node->def->name)
-         fprintf(fp, "ssa_%d /* %s */\n", node->def->index, node->def->name);
-      else
-         fprintf(fp, "ssa_%d\n", node->def->index);
+      fprintf(fp, "ssa_%d\n", node->def->index);
 
       dom[++dom_idx] = node->def;
    }
@@ -188,7 +185,11 @@ merge_nodes_interfere(merge_node *a, merge_node *b)
    return nir_ssa_defs_interfere(a->def, b->def);
 }
 
-/* Merges b into a */
+/* Merges b into a
+ *
+ * This algorithm uses def_after to ensure that the sets always stay in the
+ * same order as the pre-order DFS done by the liveness algorithm.
+ */
 static merge_set *
 merge_merge_sets(merge_set *a, merge_set *b)
 {
@@ -226,6 +227,9 @@ merge_merge_sets(merge_set *a, merge_set *b)
 static bool
 merge_sets_interfere(merge_set *a, merge_set *b)
 {
+   /* List of all the nodes which dominate the current node, in dominance
+    * order.
+    */
    NIR_VLA(merge_node *, dom, a->size + b->size);
    int dom_idx = -1;
 
@@ -234,6 +238,9 @@ merge_sets_interfere(merge_set *a, merge_set *b)
    while (!exec_node_is_tail_sentinel(an) ||
           !exec_node_is_tail_sentinel(bn)) {
 
+      /* We walk the union of the two sets in the same order as the pre-order
+       * DFS done by liveness analysis.
+       */
       merge_node *current;
       if (exec_node_is_tail_sentinel(an)) {
          current = exec_node_data(merge_node, bn, node);
@@ -254,10 +261,35 @@ merge_sets_interfere(merge_set *a, merge_set *b)
          }
       }
 
+      /* Because our walk is a pre-order DFS, we can maintain the list of
+       * dominating nodes as a simple stack, pushing every node onto the list
+       * after we visit it and popping any non-dominating nodes off before we
+       * visit the current node.
+       */
       while (dom_idx >= 0 &&
              !ssa_def_dominates(dom[dom_idx]->def, current->def))
          dom_idx--;
 
+      /* There are three invariants of this algorithm that are important here:
+       *
+       *  1. There is no interference within either set a or set b.
+       *  2. None of the nodes processed up until this point interfere.
+       *  3. All the dominators of `current` have been processed
+       *
+       * Because of these invariants, we only need to check the current node
+       * against its minimal dominator.  If any other node N in the union
+       * interferes with current, then N must dominate current because we are
+       * in SSA form.  If N dominates current then it must also dominate our
+       * minimal dominator dom[dom_idx].  Since N is live at current it must
+       * also be live at the minimal dominator which means N interferes with
+       * the minimal dominator dom[dom_idx] and, by invariants 2 and 3 above,
+       * the algorithm would have already terminated.  Therefore, if we got
+       * here, the only node that can possibly interfere with current is the
+       * minimal dominator dom[dom_idx].
+       *
+       * This is what allows us to do a interference check of the union of the
+       * two sets with a single linear-time walk.
+       */
       if (dom_idx >= 0 && merge_nodes_interfere(current, dom[dom_idx]))
          return true;
 
@@ -384,7 +416,7 @@ isolate_phi_nodes_block(nir_block *block, void *dead_ctx)
                                                   nir_parallel_copy_entry);
          nir_ssa_dest_init(&pcopy->instr, &entry->dest,
                            phi->dest.ssa.num_components,
-                           phi->dest.ssa.bit_size, src->src.ssa->name);
+                           phi->dest.ssa.bit_size, NULL);
          entry->dest.ssa.divergent = nir_src_is_divergent(src->src);
          exec_list_push_tail(&pcopy->entries, &entry->node);
 
@@ -399,7 +431,7 @@ isolate_phi_nodes_block(nir_block *block, void *dead_ctx)
                                                nir_parallel_copy_entry);
       nir_ssa_dest_init(&block_pcopy->instr, &entry->dest,
                         phi->dest.ssa.num_components, phi->dest.ssa.bit_size,
-                        phi->dest.ssa.name);
+                        NULL);
       entry->dest.ssa.divergent = phi->dest.ssa.divergent;
       exec_list_push_tail(&block_pcopy->entries, &entry->node);
 
@@ -504,7 +536,6 @@ create_reg_for_ssa_def(nir_ssa_def *def, nir_function_impl *impl)
 {
    nir_register *reg = nir_local_reg_create(impl);
 
-   reg->name = def->name;
    reg->num_components = def->num_components;
    reg->bit_size = def->bit_size;
    reg->num_array_elems = 0;
@@ -775,7 +806,6 @@ resolve_parallel_copy(nir_parallel_copy_instr *pcopy,
        */
       assert(num_vals < num_copies * 2);
       nir_register *reg = nir_local_reg_create(state->builder.impl);
-      reg->name = "copy_temp";
       reg->num_array_elems = 0;
       if (values[b].is_ssa) {
          reg->num_components = values[b].ssa->num_components;

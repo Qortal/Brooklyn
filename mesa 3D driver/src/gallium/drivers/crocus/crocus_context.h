@@ -26,6 +26,7 @@
 #include "pipe/p_context.h"
 #include "pipe/p_state.h"
 #include "util/u_debug.h"
+#include "util/u_threaded_context.h"
 #include "intel/blorp/blorp.h"
 #include "intel/dev/intel_debug.h"
 #include "intel/compiler/brw_compiler.h"
@@ -441,6 +442,7 @@ struct crocus_shader_state {
  */
 struct crocus_context {
    struct pipe_context ctx;
+   struct threaded_context *thrctx;
 
    /** A debug callback for KHR_debug output. */
    struct pipe_debug_callback dbg;
@@ -450,6 +452,9 @@ struct crocus_context {
 
    /** Slab allocator for crocus_transfer_map objects. */
    struct slab_child_pool transfer_pool;
+
+   /** Slab allocator for threaded_context's crocus_transfer_map objects */
+   struct slab_child_pool transfer_pool_unsync;
 
    struct blorp_context blorp;
 
@@ -832,12 +837,48 @@ const struct shader_info *crocus_get_shader_info(const struct crocus_context *ic
 struct crocus_bo *crocus_get_scratch_space(struct crocus_context *ice,
                                            unsigned per_thread_scratch,
                                            gl_shader_stage stage);
-uint32_t crocus_group_index_to_bti(const struct crocus_binding_table *bt,
-                                   enum crocus_surface_group group,
-                                   uint32_t index);
-uint32_t crocus_bti_to_group_index(const struct crocus_binding_table *bt,
-                                   enum crocus_surface_group group,
-                                   uint32_t bti);
+/**
+ * Map a <group, index> pair to a binding table index.
+ *
+ * For example: <UBO, 5> => binding table index 12
+ */
+static inline uint32_t crocus_group_index_to_bti(const struct crocus_binding_table *bt,
+                                                 enum crocus_surface_group group,
+                                                 uint32_t index)
+{
+   assert(index < bt->sizes[group]);
+   uint64_t mask = bt->used_mask[group];
+   uint64_t bit = 1ull << index;
+   if (bit & mask) {
+      return bt->offsets[group] + util_bitcount64((bit - 1) & mask);
+   } else {
+      return CROCUS_SURFACE_NOT_USED;
+   }
+}
+
+/**
+ * Map a binding table index back to a <group, index> pair.
+ *
+ * For example: binding table index 12 => <UBO, 5>
+ */
+static inline uint32_t
+crocus_bti_to_group_index(const struct crocus_binding_table *bt,
+                          enum crocus_surface_group group, uint32_t bti)
+{
+   uint64_t used_mask = bt->used_mask[group];
+   assert(bti >= bt->offsets[group]);
+
+   uint32_t c = bti - bt->offsets[group];
+   while (used_mask) {
+      int i = u_bit_scan64(&used_mask);
+      if (c == 0)
+         return i;
+      c--;
+   }
+
+   return CROCUS_SURFACE_NOT_USED;
+}
+
 
 /* crocus_disk_cache.c */
 

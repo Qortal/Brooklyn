@@ -244,7 +244,7 @@ fd_emit_string_marker(struct pipe_context *pctx, const char *string,
 
    fd_batch_needs_flush(batch);
 
-   if (ctx->screen->gpu_id >= 500) {
+   if (ctx->screen->gen >= 5) {
       fd_emit_string5(batch->draw, string, len);
    } else {
       fd_emit_string(batch->draw, string, len);
@@ -706,10 +706,8 @@ fd_context_init_tc(struct pipe_context *pctx, unsigned flags)
       false,
       &ctx->tc);
 
-   uint64_t total_ram;
-   if (tc && tc != pctx && os_get_total_physical_memory(&total_ram)) {
-      ((struct threaded_context *)tc)->bytes_mapped_limit = total_ram / 16;
-   }
+   if (tc && tc != pctx)
+      threaded_context_init_bytes_mapped_limit((struct threaded_context *)tc, 16);
 
    return tc;
 }

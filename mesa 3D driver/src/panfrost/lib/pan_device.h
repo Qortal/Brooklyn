@@ -39,6 +39,7 @@
 
 #include "panfrost/util/pan_ir.h"
 #include "pan_pool.h"
+#include "pan_util.h"
 
 #include <midgard_pack.h>
 
@@ -61,13 +62,13 @@ extern "C" {
 
 struct pan_blitter {
         struct {
-                struct pan_pool pool;
+                struct pan_pool *pool;
                 struct hash_table *blit;
                 struct hash_table *blend;
                 pthread_mutex_t lock;
         } shaders;
         struct {
-                struct pan_pool pool;
+                struct pan_pool *pool;
                 struct hash_table *rsds;
                 pthread_mutex_t lock;
         } rsds;
@@ -113,7 +114,7 @@ struct pan_indirect_draw_shaders {
          * is not trivial, and changes to the compiler might influence this
          * estimation.
          */
-        struct pan_pool bin_pool;
+        struct pan_pool *bin_pool;
 
         /* BO containing all renderer states attached to the compute shaders.
          * Those are built at shader compilation time and re-used every time
@@ -133,11 +134,14 @@ struct pan_indirect_dispatch {
         struct panfrost_bo *descs;
 };
 
-typedef uint32_t mali_pixel_format;
+/** Implementation-defined tiler features */
+struct panfrost_tiler_features {
+        /** Number of bytes per tiler bin */
+        unsigned bin_size;
 
-struct panfrost_format {
-        mali_pixel_format hw;
-        unsigned bind;
+        /** Maximum number of levels that may be simultaneously enabled.
+         * Invariant: bitcount(hierarchy_mask) <= max_levels */
+        unsigned max_levels;
 };
 
 struct panfrost_device {
@@ -151,6 +155,7 @@ struct panfrost_device {
         unsigned gpu_id;
         unsigned core_count;
         unsigned thread_tls_alloc;
+        struct panfrost_tiler_features tiler_features;
         unsigned quirks;
 
         /* Table of formats, indexed by a PIPE format */

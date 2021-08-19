@@ -331,7 +331,7 @@ anv_free_list_push(union anv_free_list *list,
    for (uint32_t i = 1; i < count; i++, last++)
       table->map[last].next = last + 1;
 
-   old = *list;
+   old.u64 = list->u64;
    do {
       current = old;
       table->map[last].next = current.offset;
@@ -507,6 +507,7 @@ anv_block_pool_expand_range(struct anv_block_pool *pool,
                                             pool->name,
                                             new_bo_size,
                                             bo_alloc_flags |
+                                            ANV_BO_ALLOC_LOCAL_MEM |
                                             ANV_BO_ALLOC_FIXED_ADDRESS |
                                             ANV_BO_ALLOC_MAPPED |
                                             ANV_BO_ALLOC_SNOOPED,
@@ -1376,6 +1377,7 @@ anv_bo_pool_alloc(struct anv_bo_pool *pool, uint32_t size,
    VkResult result = anv_device_alloc_bo(pool->device,
                                          pool->name,
                                          pow2_size,
+                                         ANV_BO_ALLOC_LOCAL_MEM |
                                          ANV_BO_ALLOC_MAPPED |
                                          ANV_BO_ALLOC_SNOOPED |
                                          ANV_BO_ALLOC_CAPTURE,
@@ -1695,6 +1697,9 @@ anv_device_alloc_bo(struct anv_device *device,
                     uint64_t explicit_address,
                     struct anv_bo **bo_out)
 {
+   if (!(alloc_flags & ANV_BO_ALLOC_LOCAL_MEM))
+      anv_perf_warn(device, NULL, "system memory used");
+
    if (!device->physical->has_implicit_ccs)
       assert(!(alloc_flags & ANV_BO_ALLOC_IMPLICIT_CCS));
 

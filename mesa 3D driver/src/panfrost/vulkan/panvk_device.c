@@ -29,7 +29,6 @@
 #include "panvk_private.h"
 
 #include "panfrost-quirks.h"
-#include "pan_blitter.h"
 #include "pan_bo.h"
 #include "pan_encoder.h"
 #include "pan_util.h"
@@ -201,9 +200,7 @@ panvk_physical_device_finish(struct panvk_physical_device *device)
    panvk_wsi_finish(device);
 
    panvk_meta_cleanup(device);
-   pan_blitter_cleanup(&device->pdev);
    panfrost_close_device(&device->pdev);
-   close(device->local_fd);
    if (device->master_fd != -1)
       close(device->master_fd);
 
@@ -299,7 +296,6 @@ panvk_physical_device_init(struct panvk_physical_device *device,
    }
 
    device->master_fd = master_fd;
-   device->local_fd = fd;
    device->pdev.debug = PAN_DBG_TRACE;
    panfrost_open_device(NULL, fd, &device->pdev);
 
@@ -310,7 +306,6 @@ panvk_physical_device_init(struct panvk_physical_device *device,
       goto fail;
    }
 
-   pan_blitter_init(&device->pdev);
    panvk_meta_init(device);
 
    memset(device->name, 0, sizeof(device->name));
@@ -1167,8 +1162,7 @@ panvk_queue_submit_batch(struct panvk_queue *queue,
 }
 
 static void
-panvk_queue_transfer_sync(struct panvk_queue *queue,
-                          struct panvk_syncobj *dst)
+panvk_queue_transfer_sync(struct panvk_queue *queue, uint32_t syncobj)
 {
    const struct panfrost_device *pdev = &queue->device->physical_device->pdev;
    int ret;
@@ -1183,11 +1177,63 @@ panvk_queue_transfer_sync(struct panvk_queue *queue,
    assert(!ret);
    assert(handle.fd >= 0);
 
-   handle.handle = dst->temporary ? : dst->permanent;
+   handle.handle = syncobj;
    ret = drmIoctl(pdev->fd, DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE, &handle);
    assert(!ret);
 
    close(handle.fd);
+}
+
+static void
+panvk_add_wait_event_syncobjs(struct panvk_batch *batch, uint32_t *in_fences, unsigned *nr_in_fences)
+{
+   util_dynarray_foreach(&batch->event_ops, struct panvk_event_op, op) {
+      switch (op->type) {
+      case PANVK_EVENT_OP_SET:
+         /* Nothing to do yet */
+         break;
+      case PANVK_EVENT_OP_RESET:
+         /* Nothing to do yet */
+         break;
+      case PANVK_EVENT_OP_WAIT:
+         in_fences[*nr_in_fences++] = op->event->syncobj;
+         break;
+      default:
+         unreachable("bad panvk_event_op type\n");
+      }
+   }
+}
+
+static void
+panvk_signal_event_syncobjs(struct panvk_queue *queue, struct panvk_batch *batch)
+{
+   const struct panfrost_device *pdev = &queue->device->physical_device->pdev;
+
+   util_dynarray_foreach(&batch->event_ops, struct panvk_event_op, op) {
+      switch (op->type) {
+      case PANVK_EVENT_OP_SET: {
+         panvk_queue_transfer_sync(queue, op->event->syncobj);
+         break;
+      }
+      case PANVK_EVENT_OP_RESET: {
+         struct panvk_event *event = op->event;
+
+         struct drm_syncobj_array objs = {
+            .handles = (uint64_t) (uintptr_t) &event->syncobj,
+            .count_handles = 1
+         };
+
+         int ret = drmIoctl(pdev->fd, DRM_IOCTL_SYNCOBJ_RESET, &objs);
+         assert(!ret);
+         break;
+      }
+      case PANVK_EVENT_OP_WAIT:
+         /* Nothing left to do */
+         break;
+      default:
+         unreachable("bad panvk_event_op type\n");
+      }
+   }
 }
 
 VkResult
@@ -1202,14 +1248,14 @@ panvk_QueueSubmit(VkQueue _queue,
 
    for (uint32_t i = 0; i < submitCount; ++i) {
       const VkSubmitInfo *submit = pSubmits + i;
-      unsigned nr_in_fences = submit->waitSemaphoreCount + 1;
-      uint32_t in_fences[nr_in_fences];
+      unsigned nr_semaphores = submit->waitSemaphoreCount + 1;
+      uint32_t semaphores[nr_semaphores];
       
-      in_fences[0] = queue->sync;
+      semaphores[0] = queue->sync;
       for (unsigned i = 0; i < submit->waitSemaphoreCount; i++) {
          VK_FROM_HANDLE(panvk_semaphore, sem, submit->pWaitSemaphores[i]);
 
-         in_fences[i + 1] = sem->syncobj.temporary ? : sem->syncobj.permanent;
+         semaphores[i + 1] = sem->syncobj.temporary ? : sem->syncobj.permanent;
       }
 
       for (uint32_t j = 0; j < submit->commandBufferCount; ++j) {
@@ -1218,9 +1264,9 @@ panvk_QueueSubmit(VkQueue _queue,
          list_for_each_entry(struct panvk_batch, batch, &cmdbuf->batches, node) {
             /* FIXME: should be done at the batch level */
             unsigned nr_bos =
-               util_dynarray_num_elements(&cmdbuf->desc_pool.bos, struct panfrost_bo *) +
-               util_dynarray_num_elements(&cmdbuf->varying_pool.bos, struct panfrost_bo *) +
-               util_dynarray_num_elements(&cmdbuf->tls_pool.bos, struct panfrost_bo *) +
+               panvk_pool_num_bos(&cmdbuf->desc_pool) +
+               panvk_pool_num_bos(&cmdbuf->varying_pool) +
+               panvk_pool_num_bos(&cmdbuf->tls_pool) +
                (batch->fb.info ? batch->fb.info->attachment_count : 0) +
                (batch->blit.src ? 1 : 0) +
                (batch->blit.dst ? 1 : 0) +
@@ -1228,17 +1274,14 @@ panvk_QueueSubmit(VkQueue _queue,
             unsigned bo_idx = 0;
             uint32_t bos[nr_bos];
 
-            util_dynarray_foreach(&cmdbuf->desc_pool.bos, struct panfrost_bo *, bo) {
-               bos[bo_idx++] = (*bo)->gem_handle;
-            }
+            panvk_pool_get_bo_handles(&cmdbuf->desc_pool, &bos[bo_idx]);
+            bo_idx += panvk_pool_num_bos(&cmdbuf->desc_pool);
 
-            util_dynarray_foreach(&cmdbuf->varying_pool.bos, struct panfrost_bo *, bo) {
-               bos[bo_idx++] = (*bo)->gem_handle;
-            }
+            panvk_pool_get_bo_handles(&cmdbuf->varying_pool, &bos[bo_idx]);
+            bo_idx += panvk_pool_num_bos(&cmdbuf->varying_pool);
 
-            util_dynarray_foreach(&cmdbuf->tls_pool.bos, struct panfrost_bo *, bo) {
-               bos[bo_idx++] = (*bo)->gem_handle;
-            }
+            panvk_pool_get_bo_handles(&cmdbuf->tls_pool, &bos[bo_idx]);
+            bo_idx += panvk_pool_num_bos(&cmdbuf->tls_pool);
 
             if (batch->fb.info) {
                for (unsigned i = 0; i < batch->fb.info->attachment_count; i++) {
@@ -1257,20 +1300,33 @@ panvk_QueueSubmit(VkQueue _queue,
 
             bos[bo_idx++] = pdev->sample_positions->gem_handle;
             assert(bo_idx == nr_bos);
+
+            unsigned nr_in_fences = 0;
+            unsigned max_wait_event_syncobjs =
+               util_dynarray_num_elements(&batch->event_ops,
+                                          struct panvk_event_op);
+            uint32_t in_fences[nr_semaphores + max_wait_event_syncobjs];
+            memcpy(in_fences, semaphores, nr_semaphores * sizeof(*in_fences));
+            nr_in_fences += nr_semaphores;
+
+            panvk_add_wait_event_syncobjs(batch, in_fences, &nr_in_fences);
+
             panvk_queue_submit_batch(queue, batch, bos, nr_bos, in_fences, nr_in_fences);
+
+            panvk_signal_event_syncobjs(queue, batch);
          }
       }
 
       /* Transfer the out fence to signal semaphores */
       for (unsigned i = 0; i < submit->signalSemaphoreCount; i++) {
          VK_FROM_HANDLE(panvk_semaphore, sem, submit->pSignalSemaphores[i]);
-         panvk_queue_transfer_sync(queue, &sem->syncobj);
+         panvk_queue_transfer_sync(queue, sem->syncobj.temporary ? : sem->syncobj.permanent);
       }
    }
 
    if (fence) {
       /* Transfer the last out fence to the fence object */
-      panvk_queue_transfer_sync(queue, &fence->syncobj);
+      panvk_queue_transfer_sync(queue, fence->syncobj.temporary ? : fence->syncobj.permanent);
    }
 
    return VK_SUCCESS;
@@ -1641,7 +1697,25 @@ panvk_CreateEvent(VkDevice _device,
                   const VkAllocationCallbacks *pAllocator,
                   VkEvent *pEvent)
 {
-   panvk_stub();
+   VK_FROM_HANDLE(panvk_device, device, _device);
+   const struct panfrost_device *pdev = &device->physical_device->pdev;
+   struct panvk_event *event =
+      vk_object_zalloc(&device->vk, pAllocator, sizeof(*event),
+                       VK_OBJECT_TYPE_EVENT);
+   if (!event)
+      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+
+   struct drm_syncobj_create create = {
+      .flags = 0,
+   };
+
+   int ret = drmIoctl(pdev->fd, DRM_IOCTL_SYNCOBJ_CREATE, &create);
+   if (ret)
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+   event->syncobj = create.handle;
+   *pEvent = panvk_event_to_handle(event);
+
    return VK_SUCCESS;
 }
 
@@ -1650,28 +1724,88 @@ panvk_DestroyEvent(VkDevice _device,
                    VkEvent _event,
                    const VkAllocationCallbacks *pAllocator)
 {
-   panvk_stub();
+   VK_FROM_HANDLE(panvk_device, device, _device);
+   VK_FROM_HANDLE(panvk_event, event, _event);
+   const struct panfrost_device *pdev = &device->physical_device->pdev;
+
+   if (!event)
+      return;
+
+   struct drm_syncobj_destroy destroy = { .handle = event->syncobj };
+   drmIoctl(pdev->fd, DRM_IOCTL_SYNCOBJ_DESTROY, &destroy);
+
+   vk_object_free(&device->vk, pAllocator, event);
 }
 
 VkResult
 panvk_GetEventStatus(VkDevice _device, VkEvent _event)
 {
-   panvk_stub();
-   return VK_EVENT_RESET;
+   VK_FROM_HANDLE(panvk_device, device, _device);
+   VK_FROM_HANDLE(panvk_event, event, _event);
+   const struct panfrost_device *pdev = &device->physical_device->pdev;
+   bool signaled;
+
+   struct drm_syncobj_wait wait = {
+      .handles = (uintptr_t) &event->syncobj,
+      .count_handles = 1,
+      .timeout_nsec = 0,
+      .flags = DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT,
+   };
+
+   int ret = drmIoctl(pdev->fd, DRM_IOCTL_SYNCOBJ_WAIT, &wait);
+   if (ret) {
+      if (errno == ETIME)
+         signaled = false;
+      else {
+         assert(0);
+         return VK_ERROR_DEVICE_LOST; /* TODO */
+      }
+   } else
+      signaled = true;
+
+   return signaled ? VK_EVENT_SET : VK_EVENT_RESET;
 }
 
 VkResult
 panvk_SetEvent(VkDevice _device, VkEvent _event)
 {
-   panvk_stub();
-   return VK_SUCCESS;
+   VK_FROM_HANDLE(panvk_device, device, _device);
+   VK_FROM_HANDLE(panvk_event, event, _event);
+   const struct panfrost_device *pdev = &device->physical_device->pdev;
+
+   struct drm_syncobj_array objs = {
+      .handles = (uint64_t) (uintptr_t) &event->syncobj,
+      .count_handles = 1
+   };
+
+   /* This is going to just replace the fence for this syncobj with one that
+    * is already in signaled state. This won't be a problem because the spec
+    * mandates that the event will have been set before the vkCmdWaitEvents
+    * command executes.
+    * https://www.khronos.org/registry/vulkan/specs/1.2/html/chap6.html#commandbuffers-submission-progress
+    */
+   if (drmIoctl(pdev->fd, DRM_IOCTL_SYNCOBJ_SIGNAL, &objs))
+      return VK_ERROR_DEVICE_LOST;
+
+  return VK_SUCCESS;
 }
 
 VkResult
 panvk_ResetEvent(VkDevice _device, VkEvent _event)
 {
-   panvk_stub();
-   return VK_SUCCESS;
+   VK_FROM_HANDLE(panvk_device, device, _device);
+   VK_FROM_HANDLE(panvk_event, event, _event);
+   const struct panfrost_device *pdev = &device->physical_device->pdev;
+
+   struct drm_syncobj_array objs = {
+      .handles = (uint64_t) (uintptr_t) &event->syncobj,
+      .count_handles = 1
+   };
+
+   if (drmIoctl(pdev->fd, DRM_IOCTL_SYNCOBJ_RESET, &objs))
+      return VK_ERROR_DEVICE_LOST;
+
+  return VK_SUCCESS;
 }
 
 VkResult
@@ -1863,8 +1997,8 @@ panvk_init_bifrost_sampler(struct panvk_sampler *sampler,
       vk_find_struct_const(pCreateInfo->pNext, SAMPLER_CUSTOM_BORDER_COLOR_CREATE_INFO_EXT);
 
    pan_pack(&sampler->desc, BIFROST_SAMPLER, cfg) {
-      cfg.point_sample_magnify = pCreateInfo->magFilter == VK_FILTER_LINEAR;
-      cfg.point_sample_minify = pCreateInfo->minFilter == VK_FILTER_LINEAR;
+      cfg.magnify_nearest = pCreateInfo->magFilter == VK_FILTER_NEAREST;
+      cfg.minify_nearest = pCreateInfo->minFilter == VK_FILTER_NEAREST;
       cfg.mipmap_mode = panvk_translate_sampler_mipmap_mode(pCreateInfo->mipmapMode);
       cfg.normalized_coordinates = !pCreateInfo->unnormalizedCoordinates;
 

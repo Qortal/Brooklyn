@@ -324,8 +324,8 @@ clover_lower_nir(nir_shader *nir, std::vector<module::argument> &args,
                                          "constant_buffer_addr");
       constant_var->data.location = args.size();
 
-      args.emplace_back(module::argument::global,
-                        pointer_bit_size / 8, pointer_bit_size / 8, pointer_bit_size / 8,
+      args.emplace_back(module::argument::global, sizeof(cl_mem),
+                        pointer_bit_size / 8, pointer_bit_size / 8,
                         module::argument::zero_ext,
                         module::argument::constant_buffer);
    }
@@ -581,7 +581,7 @@ module clover::nir::spirv_to_nir(const module &mod, const device &dev,
 
       ralloc_free(mem_ctx);
 
-      m.syms.emplace_back(sym.name, std::string(),
+      m.syms.emplace_back(sym.name, sym.attributes,
                           sym.reqd_work_group_size, section_id, 0, args);
       m.secs.push_back(text);
       section_id++;

@@ -65,6 +65,7 @@ static const struct {
    { "rkl", 0x4c8a },
    { "dg1", 0x4905 },
    { "adl", 0x4680 },
+   { "sg1", 0x4907 },
 };
 
 /**
@@ -994,7 +995,7 @@ static const struct intel_device_info intel_device_info_adl_gt2 = {
    .is_alderlake = true,
 };
 
-#define GFX12_DG1_FEATURES                      \
+#define GFX12_DG1_SG1_FEATURES                  \
    GFX12_GT_FEATURES(2),                        \
    .is_dg1 = true,                              \
    .has_llc = false,                            \
@@ -1002,8 +1003,12 @@ static const struct intel_device_info intel_device_info_adl_gt2 = {
    .urb.size = 768,                             \
    .simulator_id = 30
 
-UNUSED static const struct intel_device_info intel_device_info_dg1 = {
-   GFX12_DG1_FEATURES,
+static const struct intel_device_info intel_device_info_dg1 = {
+   GFX12_DG1_SG1_FEATURES,
+};
+
+static const struct intel_device_info intel_device_info_sg1 = {
+   GFX12_DG1_SG1_FEATURES,
 };
 
 static void
@@ -1228,6 +1233,21 @@ getparam(int fd, uint32_t param, int *value)
    return true;
 }
 
+static void
+update_cs_workgroup_threads(struct intel_device_info *devinfo)
+{
+   /* GPGPU_WALKER::ThreadWidthCounterMaximum is U6-1 so the most threads we
+    * can program is 64 without going up to a rectangular group. This only
+    * impacts Haswell and TGL which have higher thread counts.
+    *
+    * INTERFACE_DESCRIPTOR_DATA::NumberofThreadsinGPGPUThreadGroup on Xe-HP+
+    * is 10 bits so we have no such restrictions.
+    */
+   devinfo->max_cs_workgroup_threads =
+      devinfo->verx10 >= 125 ? devinfo->max_cs_threads :
+                               MIN2(devinfo->max_cs_threads, 64);
+}
+
 bool
 intel_get_device_info_from_pci_id(int pci_id,
                                   struct intel_device_info *devinfo)
@@ -1247,6 +1267,21 @@ intel_get_device_info_from_pci_id(int pci_id,
    default:
       mesa_logw("Driver does not support the 0x%x PCI ID.", pci_id);
       return false;
+   }
+
+   switch (pci_id) {
+#undef CHIPSET
+#define CHIPSET(_id, _family, _fam_str, _name) \
+   case _id: \
+      /* sizeof(str_literal) includes the null */ \
+      STATIC_ASSERT(sizeof(_name) + sizeof(_fam_str) + 2 <= \
+                    sizeof(devinfo->name)); \
+      strncpy(devinfo->name, _name " (" _fam_str ")", sizeof(devinfo->name)); \
+      break;
+#include "pci_ids/i965_pci_ids.h"
+#include "pci_ids/iris_pci_ids.h"
+   default:
+      strncpy(devinfo->name, "Intel Unknown", sizeof(devinfo->name));
    }
 
    fill_masks(devinfo);
@@ -1287,21 +1322,10 @@ intel_get_device_info_from_pci_id(int pci_id,
    if (devinfo->verx10 == 0)
       devinfo->verx10 = devinfo->ver * 10;
 
+   update_cs_workgroup_threads(devinfo);
+
    devinfo->chipset_id = pci_id;
    return true;
-}
-
-const char *
-intel_get_device_name(int devid)
-{
-   switch (devid) {
-#undef CHIPSET
-#define CHIPSET(id, family, fam_str, name) case id: return name " (" fam_str ")"; break;
-#include "pci_ids/i965_pci_ids.h"
-#include "pci_ids/iris_pci_ids.h"
-   default:
-      return NULL;
-   }
 }
 
 /**
@@ -1341,26 +1365,9 @@ getparam_topology(struct intel_device_info *devinfo, int fd)
 static bool
 query_topology(struct intel_device_info *devinfo, int fd)
 {
-   struct drm_i915_query_item item = {
-      .query_id = DRM_I915_QUERY_TOPOLOGY_INFO,
-   };
-   struct drm_i915_query query = {
-      .num_items = 1,
-      .items_ptr = (uintptr_t) &item,
-   };
-
-   if (intel_ioctl(fd, DRM_IOCTL_I915_QUERY, &query))
-      return false;
-
-   if (item.length < 0)
-      return false;
-
    struct drm_i915_query_topology_info *topo_info =
-      (struct drm_i915_query_topology_info *) calloc(1, item.length);
-   item.data_ptr = (uintptr_t) topo_info;
-
-   if (intel_ioctl(fd, DRM_IOCTL_I915_QUERY, &query) ||
-       item.length <= 0)
+      intel_i915_query_alloc(fd, DRM_I915_QUERY_TOPOLOGY_INFO);
+   if (topo_info == NULL)
       return false;
 
    update_from_topology(devinfo, topo_info);
@@ -1408,6 +1415,48 @@ has_get_tiling(int fd)
    intel_ioctl(fd, DRM_IOCTL_GEM_CLOSE, &close);
 
    return ret == 0;
+}
+
+static void
+fixup_chv_device_info(struct intel_device_info *devinfo)
+{
+   assert(devinfo->is_cherryview);
+
+   /* Cherryview is annoying.  The number of EUs is depending on fusing and
+    * isn't determinable from the PCI ID alone.  We default to the minimum
+    * available for that PCI ID and then compute the real value from the
+    * subslice information we get from the kernel.
+    */
+   const uint32_t subslice_total = intel_device_info_eu_total(devinfo);
+   const uint32_t eu_total = intel_device_info_eu_total(devinfo);
+
+   /* Logical CS threads = EUs per subslice * num threads per EU */
+   uint32_t max_cs_threads =
+      eu_total / subslice_total * devinfo->num_thread_per_eu;
+
+   /* Fuse configurations may give more threads than expected, never less. */
+   if (max_cs_threads > devinfo->max_cs_threads)
+      devinfo->max_cs_threads = max_cs_threads;
+
+   update_cs_workgroup_threads(devinfo);
+
+   /* Braswell is even more annoying.  Its marketing name isn't determinable
+    * from the PCI ID and is also dependent on fusing.
+    */
+   if (devinfo->chipset_id != 0x22B1)
+      return;
+
+   char *bsw_model;
+   switch (eu_total) {
+   case 16: bsw_model = "405"; break;
+   case 12: bsw_model = "400"; break;
+   default: bsw_model = "   "; break;
+   }
+
+   char *needle = strstr(devinfo->name, "XXX");
+   assert(needle);
+   if (needle)
+      memcpy(needle, bsw_model, 3);
 }
 
 bool
@@ -1481,6 +1530,9 @@ intel_get_device_info_from_fd(int fd, struct intel_device_info *devinfo)
        */
       getparam_topology(devinfo, fd);
    }
+
+   if (devinfo->is_cherryview)
+      fixup_chv_device_info(devinfo);
 
    intel_get_aperture_size(fd, &devinfo->aperture_bytes);
    devinfo->has_tiling_uapi = has_get_tiling(fd);

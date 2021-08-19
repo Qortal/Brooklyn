@@ -137,7 +137,7 @@ cmd_buffer_render_pass_emit_load(struct v3dv_cmd_buffer *cmd_buffer,
 static bool
 check_needs_load(const struct v3dv_cmd_buffer_state *state,
                  VkImageAspectFlags aspect,
-                 uint32_t att_first_subpass_idx,
+                 uint32_t first_subpass_idx,
                  VkAttachmentLoadOp load_op)
 {
    /* We call this with image->aspects & aspect, so 0 means the aspect we are
@@ -146,10 +146,10 @@ check_needs_load(const struct v3dv_cmd_buffer_state *state,
    if (!aspect)
       return false;
 
-   /* Attachment load operations apply on the first subpass that uses the
-    * attachment, otherwise we always need to load.
+   /* Attachment (or view) load operations apply on the first subpass that
+    * uses the attachment (or view), otherwise we always need to load.
     */
-   if (state->job->first_subpass > att_first_subpass_idx)
+   if (state->job->first_subpass > first_subpass_idx)
       return true;
 
    /* If the job is continuing a subpass started in another job, we always
@@ -188,6 +188,8 @@ cmd_buffer_render_pass_emit_loads(struct v3dv_cmd_buffer *cmd_buffer,
    const struct v3dv_render_pass *pass = state->pass;
    const struct v3dv_subpass *subpass = &pass->subpasses[state->subpass_idx];
 
+  assert(!pass->multiview_enabled || layer < MAX_MULTIVIEW_VIEW_COUNT);
+
    for (uint32_t i = 0; i < subpass->color_count; i++) {
       uint32_t attachment_idx = subpass->color_attachments[i].attachment;
 
@@ -215,9 +217,13 @@ cmd_buffer_render_pass_emit_loads(struct v3dv_cmd_buffer *cmd_buffer,
        * load the tiles so we can preserve the pixels that are outside the
        * render area for any such tiles.
        */
+      uint32_t first_subpass = !pass->multiview_enabled ?
+         attachment->first_subpass :
+         attachment->views[layer].first_subpass;
+
       bool needs_load = check_needs_load(state,
                                          VK_IMAGE_ASPECT_COLOR_BIT,
-                                         attachment->first_subpass,
+                                         first_subpass,
                                          attachment->desc.loadOp);
       if (needs_load) {
          struct v3dv_image_view *iview = framebuffer->attachments[attachment_idx];
@@ -234,16 +240,20 @@ cmd_buffer_render_pass_emit_loads(struct v3dv_cmd_buffer *cmd_buffer,
       const VkImageAspectFlags ds_aspects =
          vk_format_aspects(ds_attachment->desc.format);
 
+      uint32_t ds_first_subpass = !pass->multiview_enabled ?
+         ds_attachment->first_subpass :
+         ds_attachment->views[layer].first_subpass;
+
       const bool needs_depth_load =
          check_needs_load(state,
                           ds_aspects & VK_IMAGE_ASPECT_DEPTH_BIT,
-                          ds_attachment->first_subpass,
+                          ds_first_subpass,
                           ds_attachment->desc.loadOp);
 
       const bool needs_stencil_load =
          check_needs_load(state,
                           ds_aspects & VK_IMAGE_ASPECT_STENCIL_BIT,
-                          ds_attachment->first_subpass,
+                          ds_first_subpass,
                           ds_attachment->desc.stencilLoadOp);
 
       if (needs_depth_load || needs_stencil_load) {
@@ -315,7 +325,7 @@ cmd_buffer_render_pass_emit_store(struct v3dv_cmd_buffer *cmd_buffer,
 static bool
 check_needs_clear(const struct v3dv_cmd_buffer_state *state,
                   VkImageAspectFlags aspect,
-                  uint32_t att_first_subpass_idx,
+                  uint32_t first_subpass_idx,
                   VkAttachmentLoadOp load_op,
                   bool do_clear_with_draw)
 {
@@ -344,9 +354,10 @@ check_needs_clear(const struct v3dv_cmd_buffer_state *state,
       return false;
 
    /* If this job is running in a subpass other than the first subpass in
-    * which this attachment is used then attachment load operations don't apply.
+    * which this attachment (or view) is used then attachment load operations
+    * don't apply.
     */
-   if (state->job->first_subpass != att_first_subpass_idx)
+   if (state->job->first_subpass != first_subpass_idx)
       return false;
 
    /* The attachment load operation must be CLEAR */
@@ -356,7 +367,7 @@ check_needs_clear(const struct v3dv_cmd_buffer_state *state,
 static bool
 check_needs_store(const struct v3dv_cmd_buffer_state *state,
                   VkImageAspectFlags aspect,
-                  uint32_t att_last_subpass_idx,
+                  uint32_t last_subpass_idx,
                   VkAttachmentStoreOp store_op)
 {
    /* We call this with image->aspects & aspect, so 0 means the aspect we are
@@ -365,10 +376,11 @@ check_needs_store(const struct v3dv_cmd_buffer_state *state,
    if (!aspect)
       return false;
 
-   /* Attachment store operations only apply on the last subpass where the
-    * attachment is used, in other subpasses we always need to store.
+   /* Attachment (or view) store operations only apply on the last subpass
+    * where the attachment (or view)  is used, in other subpasses we always
+    * need to store.
     */
-   if (state->subpass_idx < att_last_subpass_idx)
+   if (state->subpass_idx < last_subpass_idx)
       return true;
 
    /* Attachment store operations only apply on the last job we emit on the the
@@ -388,12 +400,15 @@ cmd_buffer_render_pass_emit_stores(struct v3dv_cmd_buffer *cmd_buffer,
                                    uint32_t layer)
 {
    struct v3dv_cmd_buffer_state *state = &cmd_buffer->state;
+   struct v3dv_render_pass *pass = state->pass;
    const struct v3dv_subpass *subpass =
-      &state->pass->subpasses[state->subpass_idx];
+      &pass->subpasses[state->subpass_idx];
 
    bool has_stores = false;
    bool use_global_zs_clear = false;
    bool use_global_rt_clear = false;
+
+   assert(!pass->multiview_enabled || layer < MAX_MULTIVIEW_VIEW_COUNT);
 
    /* FIXME: separate stencil */
    uint32_t ds_attachment_idx = subpass->ds_attachment.attachment;
@@ -419,31 +434,39 @@ cmd_buffer_render_pass_emit_stores(struct v3dv_cmd_buffer *cmd_buffer,
          vk_format_aspects(ds_attachment->desc.format);
 
       /* Only clear once on the first subpass that uses the attachment */
+      uint32_t ds_first_subpass = !state->pass->multiview_enabled ?
+         ds_attachment->first_subpass :
+         ds_attachment->views[layer].first_subpass;
+
       bool needs_depth_clear =
          check_needs_clear(state,
                            aspects & VK_IMAGE_ASPECT_DEPTH_BIT,
-                           ds_attachment->first_subpass,
+                           ds_first_subpass,
                            ds_attachment->desc.loadOp,
                            subpass->do_depth_clear_with_draw);
 
       bool needs_stencil_clear =
          check_needs_clear(state,
                            aspects & VK_IMAGE_ASPECT_STENCIL_BIT,
-                           ds_attachment->first_subpass,
+                           ds_first_subpass,
                            ds_attachment->desc.stencilLoadOp,
                            subpass->do_stencil_clear_with_draw);
 
       /* Skip the last store if it is not required */
+      uint32_t ds_last_subpass = !pass->multiview_enabled ?
+         ds_attachment->last_subpass :
+         ds_attachment->views[layer].last_subpass;
+
       bool needs_depth_store =
          check_needs_store(state,
                            aspects & VK_IMAGE_ASPECT_DEPTH_BIT,
-                           ds_attachment->last_subpass,
+                           ds_last_subpass,
                            ds_attachment->desc.storeOp);
 
       bool needs_stencil_store =
          check_needs_store(state,
                            aspects & VK_IMAGE_ASPECT_STENCIL_BIT,
-                           ds_attachment->last_subpass,
+                           ds_last_subpass,
                            ds_attachment->desc.stencilStoreOp);
 
       /* GFXH-1689: The per-buffer store command's clear buffer bit is broken
@@ -494,18 +517,26 @@ cmd_buffer_render_pass_emit_stores(struct v3dv_cmd_buffer *cmd_buffer,
       assert(state->subpass_idx <= attachment->last_subpass);
 
       /* Only clear once on the first subpass that uses the attachment */
+      uint32_t first_subpass = !pass->multiview_enabled ?
+         attachment->first_subpass :
+         attachment->views[layer].first_subpass;
+
       bool needs_clear =
          check_needs_clear(state,
                            VK_IMAGE_ASPECT_COLOR_BIT,
-                           attachment->first_subpass,
+                           first_subpass,
                            attachment->desc.loadOp,
                            false);
 
       /* Skip the last store if it is not required  */
+      uint32_t last_subpass = !pass->multiview_enabled ?
+         attachment->last_subpass :
+         attachment->views[layer].last_subpass;
+
       bool needs_store =
          check_needs_store(state,
                            VK_IMAGE_ASPECT_COLOR_BIT,
-                           attachment->last_subpass,
+                           last_subpass,
                            attachment->desc.storeOp);
 
       /* If we need to resolve this attachment emit that store first. Notice
@@ -630,57 +661,6 @@ cmd_buffer_emit_render_pass_layer_rcl(struct v3dv_cmd_buffer *cmd_buffer,
       list.address = v3dv_cl_address(job->tile_alloc, tile_alloc_offset);
    }
 
-   cl_emit(rcl, MULTICORE_RENDERING_SUPERTILE_CFG, config) {
-      config.number_of_bin_tile_lists = 1;
-      config.total_frame_width_in_tiles = tiling->draw_tiles_x;
-      config.total_frame_height_in_tiles = tiling->draw_tiles_y;
-
-      config.supertile_width_in_tiles = tiling->supertile_width;
-      config.supertile_height_in_tiles = tiling->supertile_height;
-
-      config.total_frame_width_in_supertiles =
-         tiling->frame_width_in_supertiles;
-      config.total_frame_height_in_supertiles =
-         tiling->frame_height_in_supertiles;
-   }
-
-   /* Start by clearing the tile buffer. */
-   cl_emit(rcl, TILE_COORDINATES, coords) {
-      coords.tile_column_number = 0;
-      coords.tile_row_number = 0;
-   }
-
-   /* Emit an initial clear of the tile buffers. This is necessary
-    * for any buffers that should be cleared (since clearing
-    * normally happens at the *end* of the generic tile list), but
-    * it's also nice to clear everything so the first tile doesn't
-    * inherit any contents from some previous frame.
-    *
-    * Also, implement the GFXH-1742 workaround. There's a race in
-    * the HW between the RCL updating the TLB's internal type/size
-    * and the spawning of the QPU instances using the TLB's current
-    * internal type/size. To make sure the QPUs get the right
-    * state, we need 1 dummy store in between internal type/size
-    * changes on V3D 3.x, and 2 dummy stores on 4.x.
-    */
-   for (int i = 0; i < 2; i++) {
-      if (i > 0)
-         cl_emit(rcl, TILE_COORDINATES, coords);
-      cl_emit(rcl, END_OF_LOADS, end);
-      cl_emit(rcl, STORE_TILE_BUFFER_GENERAL, store) {
-         store.buffer_to_store = NONE;
-      }
-      if (i == 0 && cmd_buffer->state.tile_aligned_render_area) {
-         cl_emit(rcl, CLEAR_TILE_BUFFERS, clear) {
-            clear.clear_z_stencil_buffer = !job->early_zs_clear;
-            clear.clear_all_render_targets = true;
-         }
-      }
-      cl_emit(rcl, END_OF_TILE_MARKER, end);
-   }
-
-   cl_emit(rcl, FLUSH_VCD_CACHE, flush);
-
    cmd_buffer_render_pass_emit_per_tile_rcl(cmd_buffer, layer);
 
    uint32_t supertile_w_in_pixels =
@@ -762,7 +742,8 @@ v3dX(cmd_buffer_emit_render_pass_rcl)(struct v3dv_cmd_buffer *cmd_buffer)
 
    const struct v3dv_frame_tiling *tiling = &job->frame_tiling;
 
-   const uint32_t fb_layers = framebuffer->layers;
+   const uint32_t fb_layers = job->frame_tiling.layers;
+
    v3dv_cl_ensure_space_with_branch(&job->rcl, 200 +
                                     MAX2(fb_layers, 1) * 256 *
                                     cl_packet_length(SUPERTILE_COORDINATES));
@@ -946,8 +927,61 @@ v3dX(cmd_buffer_emit_render_pass_rcl)(struct v3dv_cmd_buffer *cmd_buffer)
          TILE_ALLOCATION_BLOCK_SIZE_64B;
    }
 
-   for (int layer = 0; layer < MAX2(1, fb_layers); layer++)
-      cmd_buffer_emit_render_pass_layer_rcl(cmd_buffer, layer);
+   cl_emit(rcl, MULTICORE_RENDERING_SUPERTILE_CFG, config) {
+      config.number_of_bin_tile_lists = 1;
+      config.total_frame_width_in_tiles = tiling->draw_tiles_x;
+      config.total_frame_height_in_tiles = tiling->draw_tiles_y;
+
+      config.supertile_width_in_tiles = tiling->supertile_width;
+      config.supertile_height_in_tiles = tiling->supertile_height;
+
+      config.total_frame_width_in_supertiles =
+         tiling->frame_width_in_supertiles;
+      config.total_frame_height_in_supertiles =
+         tiling->frame_height_in_supertiles;
+   }
+
+   /* Start by clearing the tile buffer. */
+   cl_emit(rcl, TILE_COORDINATES, coords) {
+      coords.tile_column_number = 0;
+      coords.tile_row_number = 0;
+   }
+
+   /* Emit an initial clear of the tile buffers. This is necessary
+    * for any buffers that should be cleared (since clearing
+    * normally happens at the *end* of the generic tile list), but
+    * it's also nice to clear everything so the first tile doesn't
+    * inherit any contents from some previous frame.
+    *
+    * Also, implement the GFXH-1742 workaround. There's a race in
+    * the HW between the RCL updating the TLB's internal type/size
+    * and the spawning of the QPU instances using the TLB's current
+    * internal type/size. To make sure the QPUs get the right
+    * state, we need 1 dummy store in between internal type/size
+    * changes on V3D 3.x, and 2 dummy stores on 4.x.
+    */
+   for (int i = 0; i < 2; i++) {
+      if (i > 0)
+         cl_emit(rcl, TILE_COORDINATES, coords);
+      cl_emit(rcl, END_OF_LOADS, end);
+      cl_emit(rcl, STORE_TILE_BUFFER_GENERAL, store) {
+         store.buffer_to_store = NONE;
+      }
+      if (i == 0 && cmd_buffer->state.tile_aligned_render_area) {
+         cl_emit(rcl, CLEAR_TILE_BUFFERS, clear) {
+            clear.clear_z_stencil_buffer = !job->early_zs_clear;
+            clear.clear_all_render_targets = true;
+         }
+      }
+      cl_emit(rcl, END_OF_TILE_MARKER, end);
+   }
+
+   cl_emit(rcl, FLUSH_VCD_CACHE, flush);
+
+   for (int layer = 0; layer < MAX2(1, fb_layers); layer++) {
+      if (subpass->view_mask == 0 || (subpass->view_mask & (1u << layer)))
+         cmd_buffer_emit_render_pass_layer_rcl(cmd_buffer, layer);
+   }
 
    cl_emit(rcl, END_OF_RENDERING, end);
 }
@@ -1127,8 +1161,7 @@ v3dX(cmd_buffer_emit_blend)(struct v3dv_cmd_buffer *cmd_buffer)
    const uint32_t blend_packets_size =
       cl_packet_length(BLEND_ENABLES) +
       cl_packet_length(BLEND_CONSTANT_COLOR) +
-      cl_packet_length(BLEND_CFG) * V3D_MAX_DRAW_BUFFERS +
-      cl_packet_length(COLOR_WRITE_MASKS);
+      cl_packet_length(BLEND_CFG) * V3D_MAX_DRAW_BUFFERS;
 
    v3dv_cl_ensure_space_with_branch(&job->bcl, blend_packets_size);
    v3dv_return_if_oom(cmd_buffer, NULL);
@@ -1144,10 +1177,6 @@ v3dX(cmd_buffer_emit_blend)(struct v3dv_cmd_buffer *cmd_buffer)
          if (pipeline->blend.enables & (1 << i))
             cl_emit_prepacked(&job->bcl, &pipeline->blend.cfg[i]);
       }
-
-      cl_emit(&job->bcl, COLOR_WRITE_MASKS, mask) {
-         mask.mask = pipeline->blend.color_write_masks;
-      }
    }
 
    if (pipeline->blend.needs_color_constants &&
@@ -1161,6 +1190,22 @@ v3dX(cmd_buffer_emit_blend)(struct v3dv_cmd_buffer *cmd_buffer)
       }
       cmd_buffer->state.dirty &= ~V3DV_CMD_DIRTY_BLEND_CONSTANTS;
    }
+}
+
+void
+v3dX(cmd_buffer_emit_color_write_mask)(struct v3dv_cmd_buffer *cmd_buffer)
+{
+   struct v3dv_job *job = cmd_buffer->state.job;
+   v3dv_cl_ensure_space_with_branch(&job->bcl, cl_packet_length(COLOR_WRITE_MASKS));
+
+   struct v3dv_pipeline *pipeline = cmd_buffer->state.gfx.pipeline;
+   struct v3dv_dynamic_state *dynamic = &cmd_buffer->state.dynamic;
+   cl_emit(&job->bcl, COLOR_WRITE_MASKS, mask) {
+      mask.mask = (~dynamic->color_write_enable |
+                   pipeline->blend.color_write_masks) & 0xffff;
+   }
+
+   cmd_buffer->state.dirty &= ~V3DV_CMD_DIRTY_COLOR_WRITE_ENABLE;
 }
 
 static void
@@ -1597,19 +1642,6 @@ v3dX(cmd_buffer_execute_inside_pass)(struct v3dv_cmd_buffer *primary,
             }
 
             primary_job->tmu_dirty_rcl |= secondary_job->tmu_dirty_rcl;
-         } else if (secondary_job->type == V3DV_JOB_TYPE_CPU_CLEAR_ATTACHMENTS) {
-            if (pending_barrier) {
-               cmd_buffer_subpass_split_for_barrier(primary, pending_bcl_barrier);
-               v3dv_return_if_oom(primary, NULL);
-            }
-
-            const struct v3dv_clear_attachments_cpu_job_info *info =
-               &secondary_job->cpu.clear_attachments;
-            v3dv_CmdClearAttachments(v3dv_cmd_buffer_to_handle(primary),
-                                     info->attachment_count,
-                                     info->attachments,
-                                     info->rect_count,
-                                     info->rects);
          } else {
             /* This is a regular job (CPU or GPU), so just finish the current
              * primary job (if any) and then add the secondary job to the
@@ -1648,6 +1680,117 @@ v3dX(cmd_buffer_execute_inside_pass)(struct v3dv_cmd_buffer *primary,
    }
 }
 
+static void
+emit_gs_shader_state_record(struct v3dv_job *job,
+                            struct v3dv_bo *assembly_bo,
+                            struct v3dv_shader_variant *gs_bin,
+                            struct v3dv_cl_reloc gs_bin_uniforms,
+                            struct v3dv_shader_variant *gs,
+                            struct v3dv_cl_reloc gs_render_uniforms)
+{
+   cl_emit(&job->indirect, GEOMETRY_SHADER_STATE_RECORD, shader) {
+      shader.geometry_bin_mode_shader_code_address =
+         v3dv_cl_address(assembly_bo, gs_bin->assembly_offset);
+      shader.geometry_bin_mode_shader_4_way_threadable =
+         gs_bin->prog_data.gs->base.threads == 4;
+      shader.geometry_bin_mode_shader_start_in_final_thread_section =
+         gs_bin->prog_data.gs->base.single_seg;
+      shader.geometry_bin_mode_shader_propagate_nans = true;
+      shader.geometry_bin_mode_shader_uniforms_address =
+         gs_bin_uniforms;
+
+      shader.geometry_render_mode_shader_code_address =
+         v3dv_cl_address(assembly_bo, gs->assembly_offset);
+      shader.geometry_render_mode_shader_4_way_threadable =
+         gs->prog_data.gs->base.threads == 4;
+      shader.geometry_render_mode_shader_start_in_final_thread_section =
+         gs->prog_data.gs->base.single_seg;
+      shader.geometry_render_mode_shader_propagate_nans = true;
+      shader.geometry_render_mode_shader_uniforms_address =
+         gs_render_uniforms;
+   }
+}
+
+static uint8_t
+v3d_gs_output_primitive(uint32_t prim_type)
+{
+    switch (prim_type) {
+    case GL_POINTS:
+        return GEOMETRY_SHADER_POINTS;
+    case GL_LINE_STRIP:
+        return GEOMETRY_SHADER_LINE_STRIP;
+    case GL_TRIANGLE_STRIP:
+        return GEOMETRY_SHADER_TRI_STRIP;
+    default:
+        unreachable("Unsupported primitive type");
+    }
+}
+
+static void
+emit_tes_gs_common_params(struct v3dv_job *job,
+                          uint8_t gs_out_prim_type,
+                          uint8_t gs_num_invocations)
+{
+   cl_emit(&job->indirect, TESSELLATION_GEOMETRY_COMMON_PARAMS, shader) {
+      shader.tessellation_type = TESSELLATION_TYPE_TRIANGLE;
+      shader.tessellation_point_mode = false;
+      shader.tessellation_edge_spacing = TESSELLATION_EDGE_SPACING_EVEN;
+      shader.tessellation_clockwise = true;
+      shader.tessellation_invocations = 1;
+
+      shader.geometry_shader_output_format =
+         v3d_gs_output_primitive(gs_out_prim_type);
+      shader.geometry_shader_instances = gs_num_invocations & 0x1F;
+   }
+}
+
+static uint8_t
+simd_width_to_gs_pack_mode(uint32_t width)
+{
+   switch (width) {
+   case 16:
+      return V3D_PACK_MODE_16_WAY;
+   case 8:
+      return V3D_PACK_MODE_8_WAY;
+   case 4:
+      return V3D_PACK_MODE_4_WAY;
+   case 1:
+      return V3D_PACK_MODE_1_WAY;
+   default:
+      unreachable("Invalid SIMD width");
+   };
+}
+
+static void
+emit_tes_gs_shader_params(struct v3dv_job *job,
+                          uint32_t gs_simd,
+                          uint32_t gs_vpm_output_size,
+                          uint32_t gs_max_vpm_input_size_per_batch)
+{
+   cl_emit(&job->indirect, TESSELLATION_GEOMETRY_SHADER_PARAMS, shader) {
+      shader.tcs_batch_flush_mode = V3D_TCS_FLUSH_MODE_FULLY_PACKED;
+      shader.per_patch_data_column_depth = 1;
+      shader.tcs_output_segment_size_in_sectors = 1;
+      shader.tcs_output_segment_pack_mode = V3D_PACK_MODE_16_WAY;
+      shader.tes_output_segment_size_in_sectors = 1;
+      shader.tes_output_segment_pack_mode = V3D_PACK_MODE_16_WAY;
+      shader.gs_output_segment_size_in_sectors = gs_vpm_output_size;
+      shader.gs_output_segment_pack_mode =
+         simd_width_to_gs_pack_mode(gs_simd);
+      shader.tbg_max_patches_per_tcs_batch = 1;
+      shader.tbg_max_extra_vertex_segs_for_patches_after_first = 0;
+      shader.tbg_min_tcs_output_segments_required_in_play = 1;
+      shader.tbg_min_per_patch_data_segments_required_in_play = 1;
+      shader.tpg_max_patches_per_tes_batch = 1;
+      shader.tpg_max_vertex_segments_per_tes_batch = 0;
+      shader.tpg_max_tcs_output_segments_per_tes_batch = 1;
+      shader.tpg_min_tes_output_segments_required_in_play = 1;
+      shader.gbg_max_tes_output_vertex_segments_per_gs_batch =
+         gs_max_vpm_input_size_per_batch;
+      shader.gbg_min_gs_output_segments_required_in_play = 1;
+   }
+}
+
 void
 v3dX(cmd_buffer_emit_gl_shader_state)(struct v3dv_cmd_buffer *cmd_buffer)
 {
@@ -1658,36 +1801,85 @@ v3dX(cmd_buffer_emit_gl_shader_state)(struct v3dv_cmd_buffer *cmd_buffer)
    struct v3dv_pipeline *pipeline = state->gfx.pipeline;
    assert(pipeline);
 
-   struct v3d_vs_prog_data *prog_data_vs =
-      pipeline->shared_data->variants[BROADCOM_SHADER_VERTEX]->prog_data.vs;
-   struct v3d_vs_prog_data *prog_data_vs_bin =
-      pipeline->shared_data->variants[BROADCOM_SHADER_VERTEX_BIN]->prog_data.vs;
-   struct v3d_fs_prog_data *prog_data_fs =
-      pipeline->shared_data->variants[BROADCOM_SHADER_FRAGMENT]->prog_data.fs;
+   struct v3dv_shader_variant *vs_variant =
+      pipeline->shared_data->variants[BROADCOM_SHADER_VERTEX];
+   struct v3d_vs_prog_data *prog_data_vs = vs_variant->prog_data.vs;
+
+   struct v3dv_shader_variant *vs_bin_variant =
+      pipeline->shared_data->variants[BROADCOM_SHADER_VERTEX_BIN];
+   struct v3d_vs_prog_data *prog_data_vs_bin = vs_bin_variant->prog_data.vs;
+
+   struct v3dv_shader_variant *fs_variant =
+      pipeline->shared_data->variants[BROADCOM_SHADER_FRAGMENT];
+   struct v3d_fs_prog_data *prog_data_fs = fs_variant->prog_data.fs;
+
+   struct v3dv_shader_variant *gs_variant = NULL;
+   struct v3dv_shader_variant *gs_bin_variant = NULL;
+   struct v3d_gs_prog_data *prog_data_gs = NULL;
+   struct v3d_gs_prog_data *prog_data_gs_bin = NULL;
+   if (pipeline->has_gs) {
+      gs_variant =
+         pipeline->shared_data->variants[BROADCOM_SHADER_GEOMETRY];
+      prog_data_gs = gs_variant->prog_data.gs;
+
+      gs_bin_variant =
+         pipeline->shared_data->variants[BROADCOM_SHADER_GEOMETRY_BIN];
+      prog_data_gs_bin = gs_bin_variant->prog_data.gs;
+   }
 
    /* Update the cache dirty flag based on the shader progs data */
    job->tmu_dirty_rcl |= prog_data_vs_bin->base.tmu_dirty_rcl;
    job->tmu_dirty_rcl |= prog_data_vs->base.tmu_dirty_rcl;
    job->tmu_dirty_rcl |= prog_data_fs->base.tmu_dirty_rcl;
+   if (pipeline->has_gs) {
+      job->tmu_dirty_rcl |= prog_data_gs_bin->base.tmu_dirty_rcl;
+      job->tmu_dirty_rcl |= prog_data_gs->base.tmu_dirty_rcl;
+   }
 
    /* See GFXH-930 workaround below */
    uint32_t num_elements_to_emit = MAX2(pipeline->va_count, 1);
 
+   uint32_t shader_state_record_length =
+      cl_packet_length(GL_SHADER_STATE_RECORD);
+   if (pipeline->has_gs) {
+      shader_state_record_length +=
+         cl_packet_length(GEOMETRY_SHADER_STATE_RECORD) +
+         cl_packet_length(TESSELLATION_GEOMETRY_COMMON_PARAMS) +
+         2 * cl_packet_length(TESSELLATION_GEOMETRY_SHADER_PARAMS);
+   }
+
    uint32_t shader_rec_offset =
       v3dv_cl_ensure_space(&job->indirect,
-                           cl_packet_length(GL_SHADER_STATE_RECORD) +
+                           shader_state_record_length +
                            num_elements_to_emit *
                            cl_packet_length(GL_SHADER_STATE_ATTRIBUTE_RECORD),
                            32);
    v3dv_return_if_oom(cmd_buffer, NULL);
 
-   struct v3dv_shader_variant *vs_variant =
-      pipeline->shared_data->variants[BROADCOM_SHADER_VERTEX];
-   struct v3dv_shader_variant *vs_bin_variant =
-      pipeline->shared_data->variants[BROADCOM_SHADER_VERTEX_BIN];
-   struct v3dv_shader_variant *fs_variant =
-      pipeline->shared_data->variants[BROADCOM_SHADER_FRAGMENT];
    struct v3dv_bo *assembly_bo = pipeline->shared_data->assembly_bo;
+
+   if (pipeline->has_gs) {
+      emit_gs_shader_state_record(job,
+                                  assembly_bo,
+                                  gs_bin_variant,
+                                  cmd_buffer->state.uniforms.gs_bin,
+                                  gs_variant,
+                                  cmd_buffer->state.uniforms.gs);
+
+      emit_tes_gs_common_params(job,
+                                prog_data_gs->out_prim_type,
+                                prog_data_gs->num_invocations);
+
+      emit_tes_gs_shader_params(job,
+                                pipeline->vpm_cfg_bin.gs_width,
+                                pipeline->vpm_cfg_bin.Gd,
+                                pipeline->vpm_cfg_bin.Gv);
+
+      emit_tes_gs_shader_params(job,
+                                pipeline->vpm_cfg.gs_width,
+                                pipeline->vpm_cfg.Gd,
+                                pipeline->vpm_cfg.Gv);
+   }
 
    struct v3dv_bo *default_attribute_values =
       pipeline->default_attribute_values != NULL ?
@@ -1720,6 +1912,11 @@ v3dX(cmd_buffer_emit_gl_shader_state)(struct v3dv_cmd_buffer *cmd_buffer)
 
       shader.address_of_default_attribute_values =
          v3dv_cl_address(default_attribute_values, 0);
+
+      shader.any_shader_reads_hardware_written_primitive_id =
+         (pipeline->has_gs && prog_data_gs->uses_pid) || prog_data_fs->uses_pid;
+      shader.insert_primitive_id_as_first_varying_to_fragment_shader =
+         !pipeline->has_gs && prog_data_fs->uses_pid;
    }
 
    /* Upload vertex element attributes (SHADER_STATE_ATTRIBUTE_RECORD) */
@@ -1815,10 +2012,16 @@ v3dX(cmd_buffer_emit_gl_shader_state)(struct v3dv_cmd_buffer *cmd_buffer)
                                     cl_packet_length(GL_SHADER_STATE));
    v3dv_return_if_oom(cmd_buffer, NULL);
 
-   cl_emit(&job->bcl, GL_SHADER_STATE, state) {
-      state.address = v3dv_cl_address(job->indirect.bo,
-                                      shader_rec_offset);
-      state.number_of_attribute_arrays = num_elements_to_emit;
+   if (pipeline->has_gs) {
+      cl_emit(&job->bcl, GL_SHADER_STATE_INCLUDING_GS, state) {
+         state.address = v3dv_cl_address(job->indirect.bo, shader_rec_offset);
+         state.number_of_attribute_arrays = num_elements_to_emit;
+      }
+   } else {
+      cl_emit(&job->bcl, GL_SHADER_STATE, state) {
+         state.address = v3dv_cl_address(job->indirect.bo, shader_rec_offset);
+         state.number_of_attribute_arrays = num_elements_to_emit;
+      }
    }
 
    cmd_buffer->state.dirty &= ~(V3DV_CMD_DIRTY_VERTEX_BUFFER |
@@ -1936,8 +2139,6 @@ v3dX(cmd_buffer_emit_draw_indexed)(struct v3dv_cmd_buffer *cmd_buffer,
                                    int32_t vertexOffset,
                                    uint32_t firstInstance)
 {
-   v3dv_cmd_buffer_emit_pre_draw(cmd_buffer);
-
    struct v3dv_job *job = cmd_buffer->state.job;
    assert(job);
 
@@ -1992,8 +2193,6 @@ v3dX(cmd_buffer_emit_draw_indirect)(struct v3dv_cmd_buffer *cmd_buffer,
                                     uint32_t drawCount,
                                     uint32_t stride)
 {
-   v3dv_cmd_buffer_emit_pre_draw(cmd_buffer);
-
    struct v3dv_job *job = cmd_buffer->state.job;
    assert(job);
 
@@ -2020,8 +2219,6 @@ v3dX(cmd_buffer_emit_indexed_indirect)(struct v3dv_cmd_buffer *cmd_buffer,
                                        uint32_t drawCount,
                                        uint32_t stride)
 {
-   v3dv_cmd_buffer_emit_pre_draw(cmd_buffer);
-
    struct v3dv_job *job = cmd_buffer->state.job;
    assert(job);
 

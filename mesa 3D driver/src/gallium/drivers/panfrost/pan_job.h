@@ -29,7 +29,7 @@
 #include "util/u_dynarray.h"
 #include "pipe/p_state.h"
 #include "pan_cs.h"
-#include "pan_pool.h"
+#include "pan_mempool.h"
 #include "pan_resource.h"
 #include "pan_scoreboard.h"
 
@@ -80,15 +80,17 @@ struct panfrost_batch {
         bool scissor_culls_everything;
 
         /* BOs referenced not in the pool */
-        struct hash_table *bos;
+        int first_bo, last_bo;
+        unsigned num_bos;
+        struct util_sparse_array bos;
 
         /* Pool owned by this batch (released when the batch is released) used for temporary descriptors */
-        struct pan_pool pool;
+        struct panfrost_pool pool;
 
         /* Pool also owned by this batch that is not CPU mapped (created as
          * INVISIBLE) used for private GPU-internal structures, particularly
          * varyings */
-        struct pan_pool invisible_pool;
+        struct panfrost_pool invisible_pool;
 
         /* Job scoreboarding state */
         struct pan_scoreboard scoreboard;
@@ -127,23 +129,38 @@ struct panfrost_batch {
         mali_ptr attrib_bufs[PIPE_SHADER_TYPES];
         mali_ptr uniform_buffers[PIPE_SHADER_TYPES];
         mali_ptr push_uniforms[PIPE_SHADER_TYPES];
+
+        /* Referenced resources for cleanup */
+        struct util_dynarray resources;
 };
 
 /* Functions for managing the above */
 
 struct panfrost_batch *
 panfrost_get_fresh_batch(struct panfrost_context *ctx,
-                         const struct pipe_framebuffer_state *key);
+                         const struct pipe_framebuffer_state *key,
+                         const char *reason);
 
 struct panfrost_batch *
 panfrost_get_batch_for_fbo(struct panfrost_context *ctx);
 
 struct panfrost_batch *
-panfrost_get_fresh_batch_for_fbo(struct panfrost_context *ctx);
+panfrost_get_fresh_batch_for_fbo(struct panfrost_context *ctx, const char *reason);
 
 void
-panfrost_batch_add_bo(struct panfrost_batch *batch, struct panfrost_bo *bo,
-                      uint32_t flags);
+panfrost_batch_add_bo(struct panfrost_batch *batch,
+                      struct panfrost_bo *bo,
+                      enum pipe_shader_type stage);
+
+void
+panfrost_batch_read_rsrc(struct panfrost_batch *batch,
+                         struct panfrost_resource *rsrc,
+                         enum pipe_shader_type stage);
+
+void
+panfrost_batch_write_rsrc(struct panfrost_batch *batch,
+                          struct panfrost_resource *rsrc,
+                          enum pipe_shader_type stage);
 
 void
 panfrost_batch_add_fbo_bos(struct panfrost_batch *batch);
@@ -154,15 +171,17 @@ panfrost_batch_create_bo(struct panfrost_batch *batch, size_t size,
                          const char *label);
 
 void
-panfrost_flush_all_batches(struct panfrost_context *ctx);
-
-bool
-panfrost_pending_batches_access_bo(struct panfrost_context *ctx,
-                                   const struct panfrost_bo *bo);
+panfrost_flush_all_batches(struct panfrost_context *ctx, const char *reason);
 
 void
-panfrost_flush_batches_accessing_bo(struct panfrost_context *ctx,
-                                    struct panfrost_bo *bo, bool flush_readers);
+panfrost_flush_batches_accessing_rsrc(struct panfrost_context *ctx,
+                                      struct panfrost_resource *rsrc,
+                                      const char *reason);
+
+void
+panfrost_flush_writer(struct panfrost_context *ctx,
+                      struct panfrost_resource *rsrc,
+                      const char *reason);
 
 void
 panfrost_batch_adjust_stack_size(struct panfrost_batch *batch);
@@ -188,8 +207,5 @@ void
 panfrost_batch_intersection_scissor(struct panfrost_batch *batch,
                                     unsigned minx, unsigned miny,
                                     unsigned maxx, unsigned maxy);
-
-mali_ptr
-panfrost_batch_get_bifrost_tiler(struct panfrost_batch *batch, unsigned vertex_count);
 
 #endif

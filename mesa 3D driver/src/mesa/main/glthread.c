@@ -49,6 +49,7 @@ glthread_unmarshal_batch(void *job, void *gdata, int thread_index)
    unsigned pos = 0;
    unsigned used = batch->used;
    uint64_t *buffer = batch->buffer;
+   const uint64_t *last = &buffer[used];
 
    _glapi_set_dispatch(ctx->CurrentServerDispatch);
 
@@ -61,8 +62,7 @@ glthread_unmarshal_batch(void *job, void *gdata, int thread_index)
       const struct marshal_cmd_base *cmd =
          (const struct marshal_cmd_base *)&buffer[pos];
 
-      _mesa_unmarshal_dispatch[cmd->cmd_id](ctx, cmd);
-      pos += cmd->cmd_size;
+      pos += _mesa_unmarshal_dispatch[cmd->cmd_id](ctx, cmd, last);
    }
 
    ctx->TexturesLocked = false;

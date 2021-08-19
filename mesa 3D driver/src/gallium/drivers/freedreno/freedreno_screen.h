@@ -80,9 +80,11 @@ struct fd_screen {
 
    uint64_t gmem_base;
    uint32_t gmemsize_bytes;
-   uint32_t device_id;
+
+   const struct fd_dev_id *dev_id;
+   uint8_t gen;      /* GPU (major) generation */
    uint32_t gpu_id;  /* 220, 305, etc */
-   uint32_t chip_id; /* coreid:8 majorrev:8 minorrev:8 patch:8 */
+   uint64_t chip_id; /* coreid:8 majorrev:8 minorrev:8 patch:8 */
    uint32_t max_freq;
    uint32_t ram_size;
    uint32_t max_rts; /* max # of render targets */
@@ -91,7 +93,9 @@ struct fd_screen {
    bool has_robustness;
    bool has_syncobj;
 
-   struct freedreno_dev_info info;
+   const struct fd_dev_info *info;
+   uint32_t ccu_offset_gmem;
+   uint32_t ccu_offset_bypass;
 
    /* Bitmask of gmem_reasons that do not force GMEM path over bypass
     * for current generation.
@@ -177,7 +181,8 @@ struct fd_bo *fd_screen_bo_from_handle(struct pipe_screen *pscreen,
                                        struct winsys_handle *whandle);
 
 struct pipe_screen *fd_screen_create(struct fd_device *dev,
-                                     struct renderonly *ro);
+                                     struct renderonly *ro,
+                                     const struct pipe_screen_config *config);
 
 static inline boolean
 is_a20x(struct fd_screen *screen)
@@ -188,7 +193,7 @@ is_a20x(struct fd_screen *screen)
 static inline boolean
 is_a2xx(struct fd_screen *screen)
 {
-   return (screen->gpu_id >= 200) && (screen->gpu_id < 300);
+   return screen->gen == 2;
 }
 
 /* is a3xx patch revision 0? */
@@ -202,31 +207,25 @@ is_a3xx_p0(struct fd_screen *screen)
 static inline boolean
 is_a3xx(struct fd_screen *screen)
 {
-   return (screen->gpu_id >= 300) && (screen->gpu_id < 400);
+   return screen->gen == 3;
 }
 
 static inline boolean
 is_a4xx(struct fd_screen *screen)
 {
-   return (screen->gpu_id >= 400) && (screen->gpu_id < 500);
+   return screen->gen == 4;
 }
 
 static inline boolean
 is_a5xx(struct fd_screen *screen)
 {
-   return (screen->gpu_id >= 500) && (screen->gpu_id < 600);
+   return screen->gen == 5;
 }
 
 static inline boolean
 is_a6xx(struct fd_screen *screen)
 {
-   return (screen->gpu_id >= 600) && (screen->gpu_id < 700);
-}
-
-static inline boolean
-is_a650(struct fd_screen *screen)
-{
-   return screen->gpu_id == 650;
+   return screen->gen == 6;
 }
 
 /* is it using the ir3 compiler (shader isa introduced with a3xx)? */

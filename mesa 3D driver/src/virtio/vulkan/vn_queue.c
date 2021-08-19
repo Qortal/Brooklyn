@@ -19,6 +19,7 @@
 #include "vn_device.h"
 #include "vn_device_memory.h"
 #include "vn_renderer.h"
+#include "vn_wsi.h"
 
 /* queue commands */
 
@@ -613,7 +614,7 @@ vn_update_sync_result(VkResult result, int64_t abs_timeout, uint32_t *iter)
           os_time_get_nano() >= abs_timeout)
          result = VK_TIMEOUT;
       else
-         vn_relax(iter);
+         vn_relax(iter, "client");
       break;
    default:
       assert(result == VK_SUCCESS || result < 0);

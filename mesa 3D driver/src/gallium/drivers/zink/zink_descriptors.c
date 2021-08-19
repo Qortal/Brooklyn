@@ -101,9 +101,11 @@ pdd_cached(struct zink_program *pg)
 static bool
 batch_add_desc_set(struct zink_batch *batch, struct zink_descriptor_set *zds)
 {
-   if (!batch_ptr_add_usage(batch, batch->state->dd->desc_sets, zds, &zds->batch_uses))
+   if (zink_batch_usage_matches(zds->batch_uses, batch->state) ||
+       !batch_ptr_add_usage(batch, batch->state->dd->desc_sets, zds))
       return false;
    pipe_reference(NULL, &zds->reference);
+   zink_batch_usage_set(&zds->batch_uses, batch->state);
    return true;
 }
 
@@ -607,6 +609,8 @@ allocate_desc_set(struct zink_context *ctx, struct zink_program *pg, enum zink_d
       for (unsigned desc_factor = DESC_BUCKET_FACTOR; desc_factor < descs_used; desc_factor *= DESC_BUCKET_FACTOR)
          bucket_size = desc_factor;
    }
+   /* never grow more than this many at a time */
+   bucket_size = MIN2(bucket_size, ZINK_DEFAULT_MAX_DESCS);
    VkDescriptorSet *desc_set = alloca(sizeof(*desc_set) * bucket_size);
    if (!zink_descriptor_util_alloc_sets(screen, push_set ? ctx->dd->push_dsl[is_compute]->layout : pg->dsl[type + 1], pool->descpool, desc_set, bucket_size))
       return VK_NULL_HANDLE;
@@ -802,15 +806,13 @@ skip_hash_tables:
       }
    }
 
-   if (pool->num_sets_allocated + pool->key.layout->num_descriptors > ZINK_DEFAULT_MAX_DESCS) {
-      simple_mtx_unlock(&pool->mtx);
-      zink_fence_wait(&ctx->base);
-      zink_batch_reference_program(batch, pg);
-      return zink_descriptor_set_get(ctx, type, is_compute, cache_hit);
-   }
+   assert(pool->num_sets_allocated < ZINK_DEFAULT_MAX_DESCS);
 
    zds = allocate_desc_set(ctx, pg, type, descs_used, is_compute);
 out:
+   if (unlikely(pool->num_sets_allocated >= ZINK_DEFAULT_DESC_CLAMP &&
+                _mesa_hash_table_num_entries(pool->free_desc_sets) < ZINK_DEFAULT_MAX_DESCS - ZINK_DEFAULT_DESC_CLAMP))
+      ctx->oom_flush = ctx->oom_stall = true;
    zds->hash = hash;
    populate_zds_key(ctx, type, is_compute, &zds->key, pg->dd->push_usage);
    zds->recycled = false;
@@ -1657,8 +1659,8 @@ zink_descriptor_layouts_deinit(struct zink_context *ctx)
       hash_table_foreach(&ctx->desc_set_layouts[i], he) {
          struct zink_descriptor_layout *layout = he->data;
          vkDestroyDescriptorSetLayout(screen->dev, layout->layout, NULL);
-         if (layout->template)
-            screen->vk.DestroyDescriptorUpdateTemplate(screen->dev, layout->template, NULL);
+         if (layout->desc_template)
+            screen->vk.DestroyDescriptorUpdateTemplate(screen->dev, layout->desc_template, NULL);
          ralloc_free(layout);
          _mesa_hash_table_remove(&ctx->desc_set_layouts[i], he);
       }

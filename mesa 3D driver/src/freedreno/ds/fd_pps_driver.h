@@ -32,7 +32,7 @@ public:
 private:
    struct fd_device *dev;
    struct fd_pipe *pipe;
-   uint32_t gpu_id;
+   const struct fd_dev_id *dev_id;
    uint32_t max_freq;
    uint32_t next_counter_id;
    uint32_t next_countable_id;
@@ -42,7 +42,7 @@ private:
    bool has_suspend_count;
    uint32_t suspend_count;
 
-   struct freedreno_dev_info info;
+   const struct fd_dev_info *info;
 
    /**
     * The memory mapped i/o space for counter readback:

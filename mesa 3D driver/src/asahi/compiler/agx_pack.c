@@ -71,6 +71,21 @@ agx_pack_sample_offset(agx_index index, bool *flag)
    return 0;
 }
 
+static unsigned
+agx_pack_lod(agx_index index)
+{
+   /* Immediate zero */
+   if (index.type == AGX_INDEX_IMMEDIATE && index.value == 0)
+      return 0;
+
+   /* Otherwise must be a 16-bit float immediate */
+   assert(index.type == AGX_INDEX_REGISTER);
+   assert(index.size == AGX_SIZE_16);
+   assert(index.value < 0x100);
+
+   return index.value;
+}
+
 /* Load/stores have their own operands */
 
 static unsigned
@@ -398,23 +413,26 @@ agx_pack_instr(struct util_dynarray *emission, struct util_dynarray *fixups, agx
    }
 
    case AGX_OPCODE_LD_VARY:
+   case AGX_OPCODE_LD_VARY_FLAT:
    {
+      bool flat = (I->op == AGX_OPCODE_LD_VARY_FLAT);
       unsigned D = agx_pack_alu_dst(I->dest[0]);
-      bool perspective = 1; // TODO
       unsigned channels = (I->channels & 0x3);
       assert(I->mask < 0xF); /* 0 indicates full mask */
       agx_index index_src = I->src[0];
       assert(index_src.type == AGX_INDEX_IMMEDIATE);
+      assert(!(flat && I->perspective));
       unsigned index = index_src.value;
 
       uint64_t raw =
-            0x21 | (perspective ? (1 << 6) : 0) |
+            0x21 | (flat ? (1 << 7) : 0) |
+            (I->perspective ? (1 << 6) : 0) |
             ((D & 0xFF) << 7) |
             (1ull << 15) | /* XXX */
             (((uint64_t) index) << 16) |
             (((uint64_t) channels) << 30) |
-            (1ull << 46) | /* XXX */
-            (1ull << 52) | /* XXX */
+            (!flat ? (1ull << 46) : 0) | /* XXX */
+            (!flat ? (1ull << 52) : 0) | /* XXX */
             (((uint64_t) (D >> 8)) << 56);
 
       unsigned size = 8;
@@ -502,23 +520,19 @@ agx_pack_instr(struct util_dynarray *emission, struct util_dynarray *fixups, agx
       unsigned T = agx_pack_texture(I->src[2], &Tt);
       unsigned S = agx_pack_sampler(I->src[3], &St);
       unsigned O = agx_pack_sample_offset(I->src[4], &Ot);
+      unsigned D = agx_pack_lod(I->src[1]);
 
       unsigned U = 0; // TODO: what is sampler ureg?
-
-      unsigned D = 0; // TODO: LOD
-      assert(I->src[1].type == AGX_INDEX_IMMEDIATE &&
-             I->src[1].value == 0);
-
       unsigned q1 = 0; // XXX
       unsigned q2 = 0; // XXX
       unsigned q3 = 12; // XXX
-      unsigned q4 = 1; // XXX
+      unsigned kill = 0; // helper invocation kill bit
       unsigned q5 = 0; // XXX
       unsigned q6 = 0; // XXX
 
       uint32_t extend =
             ((U & BITFIELD_MASK(5)) << 0) |
-            (q4 << 5) |
+            (kill << 5) |
             ((R >> 6) << 8) |
             ((C >> 6) << 10) |
             ((D >> 6) << 12) |
@@ -547,7 +561,7 @@ agx_pack_instr(struct util_dynarray *emission, struct util_dynarray *fixups, agx
             (((uint64_t) I->dim) << 40) |
             (((uint64_t) q3) << 43) |
             (((uint64_t) I->mask) << 48) |
-            (((uint64_t) I->lod_mode) << 48) |
+            (((uint64_t) I->lod_mode) << 52) |
             (((uint64_t) (S & BITFIELD_MASK(6))) << 32) |
             (((uint64_t) St) << 62) |
             (((uint64_t) q5) << 63);
@@ -603,7 +617,7 @@ agx_fixup_branch(struct util_dynarray *emission, struct agx_branch_fixup fix)
 }
 
 void
-agx_pack(agx_context *ctx, struct util_dynarray *emission)
+agx_pack_binary(agx_context *ctx, struct util_dynarray *emission)
 {
    struct util_dynarray fixups;
    util_dynarray_init(&fixups, ctx);

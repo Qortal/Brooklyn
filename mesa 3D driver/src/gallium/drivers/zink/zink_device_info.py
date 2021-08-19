@@ -71,6 +71,7 @@ EXTENSIONS = [
        properties=True,
        conditions=["$feats.provokingVertexLast"]),
     Extension("VK_EXT_shader_viewport_index_layer"),
+    Extension("VK_KHR_get_memory_requirements2"),
     Extension("VK_EXT_post_depth_coverage"),
     Extension("VK_KHR_driver_properties",
         alias="driver",
@@ -119,7 +120,6 @@ EXTENSIONS = [
        alias="shader_clock",
        features=True,
        conditions=["$feats.shaderSubgroupClock"]),
-    Extension("VK_EXT_shader_subgroup_ballot"),
     Extension("VK_EXT_sampler_filter_minmax",
         alias="reduction",
 	properties=True),
@@ -171,6 +171,16 @@ EXTENSIONS = [
         properties=True),
     Extension("VK_KHR_descriptor_update_template",
         alias="template"),
+    Extension("VK_EXT_line_rasterization",
+        alias="line_rast",
+        properties=True,
+        features=True),
+    Extension("VK_EXT_vertex_input_dynamic_state",
+        alias="vertex_input",
+	features=True,
+	conditions=["$feats.vertexInputDynamicState"]),
+    Extension("VK_KHR_dedicated_allocation",
+        alias="dedicated"),
 ]
 
 # constructor: Versions(device_version(major, minor, patch), struct_version(major, minor))

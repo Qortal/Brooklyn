@@ -147,6 +147,7 @@ static void
 pack_cfg_bits(struct v3dv_pipeline *pipeline,
               const VkPipelineDepthStencilStateCreateInfo *ds_info,
               const VkPipelineRasterizationStateCreateInfo *rs_info,
+              const VkPipelineRasterizationProvokingVertexStateCreateInfoEXT *pv_info,
               const VkPipelineMultisampleStateCreateInfo *ms_info)
 {
    assert(sizeof(pipeline->cfg_bits) == cl_packet_length(CFG_BITS));
@@ -192,7 +193,13 @@ pack_cfg_bits(struct v3dv_pipeline *pipeline,
        * First vertex is the Direct3D style for provoking vertex. OpenGL uses
        * the last vertex by default.
        */
-      config.direct3d_provoking_vertex = true;
+      if (pv_info) {
+         config.direct3d_provoking_vertex =
+            pv_info->provokingVertexMode ==
+               VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
+      } else {
+         config.direct3d_provoking_vertex = true;
+      }
 
       config.blend_enable = pipeline->blend.enables != 0;
 
@@ -336,10 +343,11 @@ v3dX(pipeline_pack_state)(struct v3dv_pipeline *pipeline,
                           const VkPipelineColorBlendStateCreateInfo *cb_info,
                           const VkPipelineDepthStencilStateCreateInfo *ds_info,
                           const VkPipelineRasterizationStateCreateInfo *rs_info,
+                          const VkPipelineRasterizationProvokingVertexStateCreateInfoEXT *pv_info,
                           const VkPipelineMultisampleStateCreateInfo *ms_info)
 {
    pack_blend(pipeline, cb_info);
-   pack_cfg_bits(pipeline, ds_info, rs_info, ms_info);
+   pack_cfg_bits(pipeline, ds_info, rs_info, pv_info, ms_info);
    pack_stencil_cfg(pipeline, ds_info);
 }
 
@@ -368,8 +376,14 @@ pack_shader_state_record(struct v3dv_pipeline *pipeline)
    v3dvx_pack(pipeline->shader_state_record, GL_SHADER_STATE_RECORD, shader) {
       shader.enable_clipping = true;
 
-      shader.point_size_in_shaded_vertex_data =
-         pipeline->topology == PIPE_PRIM_POINTS;
+      if (!pipeline->has_gs) {
+         shader.point_size_in_shaded_vertex_data =
+            pipeline->topology == PIPE_PRIM_POINTS;
+      } else {
+         struct v3d_gs_prog_data *prog_data_gs =
+            pipeline->shared_data->variants[BROADCOM_SHADER_GEOMETRY]->prog_data.gs;
+         shader.point_size_in_shaded_vertex_data = prog_data_gs->writes_psiz;
+      }
 
       /* Must be set if the shader modifies Z, discards, or modifies
        * the sample mask.  For any of these cases, the fragment

@@ -364,30 +364,24 @@ fd_try_shadow_resource(struct fd_context *ctx, struct fd_resource *rsc,
    if (prsc->next)
       return false;
 
+   /* Flush any pending batches writing the resource before we go mucking around
+    * in its insides.  The blit would immediately cause the batch to be flushed,
+    * anyway.
+    */
+   fd_bc_flush_writer(ctx, rsc);
+
    /* Because IB1 ("gmem") cmdstream is built only when we flush the
     * batch, we need to flush any batches that reference this rsc as
     * a render target.  Otherwise the framebuffer state emitted in
     * IB1 will reference the resources new state, and not the state
     * at the point in time that the earlier draws referenced it.
+    *
+    * Note that being in the gmem key doesn't necessarily mean the
+    * batch was considered a writer!
     */
    foreach_batch (batch, &screen->batch_cache, rsc->track->bc_batch_mask) {
       fd_batch_flush(batch);
    }
-
-   /* If you have a sequence where there is a single rsc associated
-    * with the current render target, and then you end up shadowing
-    * that same rsc on the 3d pipe (u_blitter), because of how we
-    * swap the new shadow and rsc before the back-blit, you could end
-    * up confusing things into thinking that u_blitter's framebuffer
-    * state is the same as the current framebuffer state, which has
-    * the result of blitting to rsc rather than shadow.
-    *
-    * Normally we wouldn't want to unconditionally trigger a flush,
-    * since that defeats the purpose of shadowing, but this is a
-    * case where we'd have to flush anyways.
-    */
-   if (rsc->track->write_batch == ctx->batch)
-      flush_resource(ctx, rsc, 0);
 
    /* TODO: somehow munge dimensions and format to copy unsupported
     * render target format to something that is supported?
@@ -395,7 +389,11 @@ fd_try_shadow_resource(struct fd_context *ctx, struct fd_resource *rsc,
    if (!is_renderable(prsc))
       fallback = true;
 
-   /* do shadowing back-blits on the cpu for buffers: */
+   /* do shadowing back-blits on the cpu for buffers -- requires about a page of
+    * DMA to make GPU copies worth it according to robclark.  Note, if you
+    * decide to do it on the GPU then you'll need to update valid_buffer_range
+    * in the swap()s below.
+    */
    if (prsc->target == PIPE_BUFFER)
       fallback = true;
 
@@ -437,8 +435,14 @@ fd_try_shadow_resource(struct fd_context *ctx, struct fd_resource *rsc,
    DBG("shadow: %p (%d, %p) -> %p (%d, %p)", rsc, rsc->b.b.reference.count,
        rsc->track, shadow, shadow->b.b.reference.count, shadow->track);
 
-   /* TODO valid_buffer_range?? */
    swap(rsc->bo, shadow->bo);
+   swap(rsc->valid, shadow->valid);
+
+   /* swap() doesn't work because you can't typeof() the bitfield. */
+   bool temp = shadow->needs_ubwc_clear;
+   shadow->needs_ubwc_clear = rsc->needs_ubwc_clear;
+   rsc->needs_ubwc_clear = temp;
+
    swap(rsc->layout, shadow->layout);
    rsc->seqno = p_atomic_inc_return(&ctx->screen->rsc_seqno);
 
@@ -576,7 +580,7 @@ fd_alloc_staging(struct fd_context *ctx, struct fd_resource *rsc,
    /* We cannot currently do stencil export on earlier gens, and
     * u_blitter cannot do blits involving stencil otherwise:
     */
-   if ((ctx->screen->gpu_id < 600) && !ctx->blit &&
+   if ((ctx->screen->gen < 6) && !ctx->blit &&
        (util_format_get_mask(tmpl.format) & PIPE_MASK_S))
       return NULL;
 
@@ -1254,7 +1258,7 @@ fd_resource_create_with_modifiers(struct pipe_screen *pscreen,
       struct winsys_handle handle;
 
       /* note: alignment is wrong for a6xx */
-      scanout_templat.width0 = align(tmpl->width0, screen->info.gmem_align_w);
+      scanout_templat.width0 = align(tmpl->width0, screen->info->gmem_align_w);
 
       scanout =
          renderonly_scanout_for_resource(&scanout_templat, screen->ro, &handle);
@@ -1340,7 +1344,7 @@ fd_resource_from_handle(struct pipe_screen *pscreen,
     * validate the pitch and set the right pitchalign
     */
    rsc->layout.pitchalign =
-      fdl_cpp_shift(&rsc->layout) + util_logbase2(screen->info.gmem_align_w);
+      fdl_cpp_shift(&rsc->layout) + util_logbase2(screen->info->gmem_align_w);
 
    /* apply the minimum pitchalign (note: actually 4 for a3xx but doesn't
     * matter) */
@@ -1561,7 +1565,7 @@ void
 fd_resource_screen_init(struct pipe_screen *pscreen)
 {
    struct fd_screen *screen = fd_screen(pscreen);
-   bool fake_rgtc = screen->gpu_id < 400;
+   bool fake_rgtc = screen->gen < 4;
 
    pscreen->resource_create = u_transfer_helper_resource_create;
    /* NOTE: u_transfer_helper does not yet support the _with_modifiers()

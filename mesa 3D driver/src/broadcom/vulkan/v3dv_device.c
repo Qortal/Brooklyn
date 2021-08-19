@@ -30,6 +30,13 @@
 #include <unistd.h>
 #include <xf86drm.h>
 
+#ifdef MAJOR_IN_MKDEV
+#include <sys/mkdev.h>
+#endif
+#ifdef MAJOR_IN_SYSMACROS
+#include <sys/sysmacros.h>
+#endif
+
 #include "v3dv_private.h"
 
 #include "common/v3d_debug.h"
@@ -122,6 +129,7 @@ get_device_extensions(const struct v3dv_physical_device *device,
       .KHR_maintenance1                    = true,
       .KHR_maintenance2                    = true,
       .KHR_maintenance3                    = true,
+      .KHR_multiview                       = true,
       .KHR_shader_non_semantic_info        = true,
       .KHR_sampler_mirror_clamp_to_edge    = true,
       .KHR_storage_buffer_storage_class    = true,
@@ -131,9 +139,14 @@ get_device_extensions(const struct v3dv_physical_device *device,
       .KHR_incremental_present             = true,
 #endif
       .KHR_variable_pointers               = true,
+      .EXT_color_write_enable              = true,
+      .EXT_custom_border_color             = true,
       .EXT_external_memory_dma_buf         = true,
       .EXT_index_type_uint8                = true,
+      .EXT_physical_device_drm             = true,
+      .EXT_pipeline_creation_cache_control = true,
       .EXT_private_data                    = true,
+      .EXT_provoking_vertex                = true,
    };
 }
 
@@ -697,17 +710,50 @@ physical_device_init(struct v3dv_physical_device *device,
     * we postpone that until a swapchain is created.
     */
 
+   const char *primary_path;
+#if !using_v3d_simulator
+   if (drm_primary_device)
+      primary_path = drm_primary_device->nodes[DRM_NODE_PRIMARY];
+   else
+      primary_path = NULL;
+#else
+   primary_path = drm_render_device->nodes[DRM_NODE_PRIMARY];
+#endif
+
+   struct stat primary_stat = {0}, render_stat = {0};
+
+   device->has_primary = primary_path;
+   if (device->has_primary) {
+      if (stat(primary_path, &primary_stat) != 0) {
+         result = vk_errorf(instance,
+                            VK_ERROR_INITIALIZATION_FAILED,
+                            "failed to stat DRM primary node %s",
+                            primary_path);
+         goto fail;
+      }
+
+      device->primary_devid = primary_stat.st_rdev;
+   }
+
+   if (fstat(render_fd, &render_stat) != 0) {
+      result = vk_errorf(instance,
+                         VK_ERROR_INITIALIZATION_FAILED,
+                         "failed to stat DRM render node %s",
+                         path);
+      goto fail;
+   }
+   device->has_render = true;
+   device->render_devid = render_stat.st_rdev;
+
    if (instance->vk.enabled_extensions.KHR_display) {
 #if !using_v3d_simulator
       /* Open the primary node on the vc4 display device */
       assert(drm_primary_device);
-      const char *primary_path = drm_primary_device->nodes[DRM_NODE_PRIMARY];
       master_fd = open(primary_path, O_RDWR | O_CLOEXEC);
 #else
       /* There is only one device with primary and render nodes.
        * Open its primary node.
        */
-      const char *primary_path = drm_render_device->nodes[DRM_NODE_PRIMARY];
       master_fd = open(primary_path, O_RDWR | O_CLOEXEC);
 #endif
    }
@@ -947,7 +993,7 @@ v3dv_GetPhysicalDeviceFeatures(VkPhysicalDevice physicalDevice,
       .fullDrawIndexUint32 = false, /* Only available since V3D 4.4.9.1 */
       .imageCubeArray = true,
       .independentBlend = true,
-      .geometryShader = false,
+      .geometryShader = true,
       .tessellationShader = false,
       .sampleRateShading = true,
       .dualSrcBlend = false,
@@ -974,7 +1020,7 @@ v3dv_GetPhysicalDeviceFeatures(VkPhysicalDevice physicalDevice,
       .pipelineStatisticsQuery = false,
       .vertexPipelineStoresAndAtomics = true,
       .fragmentStoresAndAtomics = true,
-      .shaderTessellationAndGeometryPointSize = false,
+      .shaderTessellationAndGeometryPointSize = true,
       .shaderImageGatherExtended = false,
       .shaderStorageImageExtendedFormats = true,
       .shaderStorageImageMultisample = false,
@@ -1016,7 +1062,7 @@ v3dv_GetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice,
       .uniformAndStorageBuffer16BitAccess = false,
       .storagePushConstant16 = false,
       .storageInputOutput16 = false,
-      .multiview = false,
+      .multiview = true,
       .multiviewGeometryShader = false,
       .multiviewTessellationShader = false,
       .variablePointersStorageBuffer = true,
@@ -1029,6 +1075,14 @@ v3dv_GetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice,
 
    vk_foreach_struct(ext, pFeatures->pNext) {
       switch (ext->sType) {
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT: {
+         VkPhysicalDeviceCustomBorderColorFeaturesEXT *features =
+            (VkPhysicalDeviceCustomBorderColorFeaturesEXT *)ext;
+         features->customBorderColors = true;
+         features->customBorderColorWithoutFormat = false;
+         break;
+      }
+
       case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFORM_BUFFER_STANDARD_LAYOUT_FEATURES_KHR: {
          VkPhysicalDeviceUniformBufferStandardLayoutFeaturesKHR *features =
             (VkPhysicalDeviceUniformBufferStandardLayoutFeaturesKHR *)ext;
@@ -1047,6 +1101,26 @@ v3dv_GetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice,
          VkPhysicalDeviceIndexTypeUint8FeaturesEXT *features =
             (VkPhysicalDeviceIndexTypeUint8FeaturesEXT *)ext;
          features->indexTypeUint8 = true;
+         break;
+      }
+
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COLOR_WRITE_ENABLE_FEATURES_EXT: {
+          VkPhysicalDeviceColorWriteEnableFeaturesEXT *features = (void *) ext;
+          features->colorWriteEnable = true;
+          break;
+      }
+
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_CREATION_CACHE_CONTROL_FEATURES_EXT: {
+         VkPhysicalDevicePipelineCreationCacheControlFeaturesEXT *features = (void *) ext;
+         features->pipelineCreationCacheControl = true;
+         break;
+      }         
+
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROVOKING_VERTEX_FEATURES_EXT: {
+         VkPhysicalDeviceProvokingVertexFeaturesEXT *features = (void *) ext;
+         features->provokingVertexLast = true;
+         /* FIXME: update when supporting EXT_transform_feedback */
+         features->transformFeedbackPreservesProvokingVertex = false;
          break;
       }
 
@@ -1243,11 +1317,11 @@ v3dv_GetPhysicalDeviceProperties(VkPhysicalDevice physicalDevice,
       .maxTessellationEvaluationOutputComponents = 0,
 
       /* Geometry limits */
-      .maxGeometryShaderInvocations             = 0,
-      .maxGeometryInputComponents               = 0,
-      .maxGeometryOutputComponents              = 0,
-      .maxGeometryOutputVertices                = 0,
-      .maxGeometryTotalOutputComponents         = 0,
+      .maxGeometryShaderInvocations             = 32,
+      .maxGeometryInputComponents               = 64,
+      .maxGeometryOutputComponents              = 64,
+      .maxGeometryOutputVertices                = 256,
+      .maxGeometryTotalOutputComponents         = 1024,
 
       /* Fragment limits */
       .maxFragmentInputComponents               = max_varying_components,
@@ -1344,6 +1418,20 @@ v3dv_GetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice,
 
    vk_foreach_struct(ext, pProperties->pNext) {
       switch (ext->sType) {
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_PROPERTIES_EXT: {
+         VkPhysicalDeviceCustomBorderColorPropertiesEXT *props =
+            (VkPhysicalDeviceCustomBorderColorPropertiesEXT *)ext;
+         props->maxCustomBorderColorSamplers = V3D_MAX_TEXTURE_SAMPLERS;
+         break;
+      }
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROVOKING_VERTEX_PROPERTIES_EXT: {
+         VkPhysicalDeviceProvokingVertexPropertiesEXT *props =
+            (VkPhysicalDeviceProvokingVertexPropertiesEXT *)ext;
+         props->provokingVertexModePerPipeline = true;
+         /* FIXME: update when supporting EXT_transform_feedback */
+         props->transformFeedbackPreservesTriangleFanProvokingVertex = false;
+         break;
+      }
       case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES: {
          VkPhysicalDeviceIDProperties *id_props =
             (VkPhysicalDeviceIDProperties *)ext;
@@ -1351,6 +1439,21 @@ v3dv_GetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice,
          memcpy(id_props->driverUUID, pdevice->driver_uuid, VK_UUID_SIZE);
          /* The LUID is for Windows. */
          id_props->deviceLUIDValid = false;
+         break;
+      }
+      case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT: {
+         VkPhysicalDeviceDrmPropertiesEXT *props =
+            (VkPhysicalDeviceDrmPropertiesEXT *)ext;
+         props->hasPrimary = pdevice->has_primary;
+         if (props->hasPrimary) {
+            props->primaryMajor = (int64_t) major(pdevice->primary_devid);
+            props->primaryMinor = (int64_t) minor(pdevice->primary_devid);
+         }
+         props->hasRender = pdevice->has_render;
+         if (props->hasRender) {
+            props->renderMajor = (int64_t) major(pdevice->render_devid);
+            props->renderMinor = (int64_t) minor(pdevice->render_devid);
+         }
          break;
       }
       case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES: {
@@ -1379,10 +1482,8 @@ v3dv_GetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice,
       case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_PROPERTIES: {
          VkPhysicalDeviceMultiviewProperties *props =
             (VkPhysicalDeviceMultiviewProperties *)ext;
-         props->maxMultiviewViewCount = 1;
-         /* This assumes that the multiview implementation uses instancing */
-         props->maxMultiviewInstanceIndex =
-            (UINT32_MAX / props->maxMultiviewViewCount) - 1;
+         props->maxMultiviewViewCount = MAX_MULTIVIEW_VIEW_COUNT;
+         props->maxMultiviewInstanceIndex = UINT32_MAX - 1;
          break;
       }
       case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PCI_BUS_INFO_PROPERTIES_EXT:
@@ -1681,7 +1782,7 @@ v3dv_CreateDevice(VkPhysicalDevice physicalDevice,
 #endif
    init_device_meta(device);
    v3dv_bo_cache_init(device);
-   v3dv_pipeline_cache_init(&device->default_pipeline_cache, device,
+   v3dv_pipeline_cache_init(&device->default_pipeline_cache, device, 0,
                             device->instance->default_pipeline_cache_enabled);
    device->default_attribute_float =
       v3dv_pipeline_create_default_attribute_values(device, NULL);
@@ -2473,7 +2574,12 @@ v3dv_CreateSampler(VkDevice _device,
 
    sampler->compare_enable = pCreateInfo->compareEnable;
    sampler->unnormalized_coordinates = pCreateInfo->unnormalizedCoordinates;
-   v3dv_X(device, pack_sampler_state)(sampler, pCreateInfo);
+
+   const VkSamplerCustomBorderColorCreateInfoEXT *bc_info =
+      vk_find_struct_const(pCreateInfo->pNext,
+                           SAMPLER_CUSTOM_BORDER_COLOR_CREATE_INFO_EXT);
+
+   v3dv_X(device, pack_sampler_state)(sampler, pCreateInfo, bc_info);
 
    *pSampler = v3dv_sampler_to_handle(sampler);
 

@@ -123,6 +123,7 @@ iris_domain_is_read_only(enum iris_domain access)
 }
 
 enum iris_mmap_mode {
+   IRIS_MMAP_NONE, /**< Cannot be mapped */
    IRIS_MMAP_UC, /**< Fully uncached memory map */
    IRIS_MMAP_WC, /**< Write-combining map with no caching of reads */
    IRIS_MMAP_WB, /**< Write-back mapping with CPU caches enabled */
@@ -153,7 +154,7 @@ struct iris_bo {
     * Although each hardware context has its own VMA, we assign BO's to the
     * same address in all contexts, for simplicity.
     */
-   uint64_t gtt_offset;
+   uint64_t address;
 
    /**
     * If non-zero, then this bo has an aux-map translation to this address.
@@ -185,6 +186,9 @@ struct iris_bo {
     * List contains both flink named and prime fd'd objects
     */
    unsigned global_name;
+
+   /** The mmap coherency mode selected at BO allocation time */
+   enum iris_mmap_mode mmap_mode;
 
    time_t free_time;
 
@@ -230,17 +234,9 @@ struct iris_bo {
    bool exported;
 
    /**
-    * Boolean of whether this buffer is cache coherent
-    */
-   bool cache_coherent;
-
-   /**
     * Boolean of whether this buffer points into user memory
     */
    bool userptr;
-
-   /** The mmap coherency mode selected at BO allocation time */
-   enum iris_mmap_mode mmap_mode;
 
    /**
     * Boolean of whether this was allocated from local memory
@@ -415,8 +411,6 @@ uint32_t iris_bo_export_gem_handle(struct iris_bo *bo);
 
 int iris_reg_read(struct iris_bufmgr *bufmgr, uint32_t offset, uint64_t *out);
 
-int drm_ioctl(int fd, unsigned long request, void *arg);
-
 /**
  * Returns the BO's address relative to the appropriate base address.
  *
@@ -430,8 +424,8 @@ iris_bo_offset_from_base_address(struct iris_bo *bo)
    /* This only works for buffers in the memory zones corresponding to a
     * base address - the top, unbounded memory zone doesn't have a base.
     */
-   assert(bo->gtt_offset < IRIS_MEMZONE_OTHER_START);
-   return bo->gtt_offset;
+   assert(bo->address < IRIS_MEMZONE_OTHER_START);
+   return bo->address;
 }
 
 /**

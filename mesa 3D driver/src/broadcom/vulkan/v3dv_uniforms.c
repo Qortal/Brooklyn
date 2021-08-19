@@ -39,17 +39,16 @@
 
 /* Our Vulkan resource indices represent indices in descriptor maps which
  * include all shader stages, so we need to size the arrays below
- * accordingly. For now we only support a maximum of 2 stages for VS and
- * FS.
+ * accordingly. For now we only support a maximum of 3 stages: VS, GS, FS.
  */
-#define MAX_STAGES 2
+#define MAX_STAGES 3
 
 #define MAX_TOTAL_TEXTURE_SAMPLERS (V3D_MAX_TEXTURE_SAMPLERS * MAX_STAGES)
 struct texture_bo_list {
    struct v3dv_bo *tex[MAX_TOTAL_TEXTURE_SAMPLERS];
 };
 
-/* This tracks state BOs forboth textures and samplers, so we
+/* This tracks state BOs for both textures and samplers, so we
  * multiply by 2.
  */
 #define MAX_TOTAL_STATES (2 * V3D_MAX_TEXTURE_SAMPLERS * MAX_STAGES)
@@ -402,6 +401,7 @@ v3dv_write_uniforms_wg_offsets(struct v3dv_cmd_buffer *cmd_buffer,
 
    struct v3dv_job *job = cmd_buffer->state.job;
    assert(job);
+   assert(job->cmd_buffer == cmd_buffer);
 
    struct texture_bo_list tex_bos = { 0 };
    struct state_bo_list state_bos = { 0 };
@@ -485,6 +485,61 @@ v3dv_write_uniforms_wg_offsets(struct v3dv_cmd_buffer *cmd_buffer,
                                          variant->stage,
                                          uinfo->contents[i],
                                          data));
+         break;
+
+      /* We generate this from geometry shaders to cap the generated gl_Layer
+       * to be within the number of layers of the framebuffer so we prevent the
+       * binner from trying to access tile state memory out of bounds (for
+       * layers that don't exist).
+       *
+       * Unfortunately, for secondary command buffers we may not know the
+       * number of layers in the framebuffer at this stage. Since we are
+       * only using this to sanitize the shader and it should not have any
+       * impact on correct shaders that emit valid values for gl_Layer,
+       * we just work around it by using the largest number of layers we
+       * support.
+       *
+       * FIXME: we could do better than this by recording in the job that
+       * the value at this uniform offset is not correct, and patch it when
+       * we execute the secondary command buffer into a primary, since we do
+       * have the correct number of layers at that point, but again, since this
+       * is only for sanityzing the shader and it only affects the specific case
+       * of secondary command buffers without framebuffer info available it
+       * might not be worth the trouble.
+       *
+       * With multiview the number of layers is dictated by the view mask
+       * and not by the framebuffer layers. We do set the job's frame tiling
+       * information correctly from the view mask in that case, however,
+       * secondary command buffers may not have valid frame tiling data,
+       * so when multiview is enabled, we always set the number of layers
+       * from the subpass view mask.
+       */
+      case QUNIFORM_FB_LAYERS: {
+         const struct v3dv_cmd_buffer_state *state = &job->cmd_buffer->state;
+         const uint32_t view_mask =
+            state->pass->subpasses[state->subpass_idx].view_mask;
+
+         uint32_t num_layers;
+         if (view_mask != 0) {
+            num_layers = util_last_bit(view_mask);
+         } else if (job->frame_tiling.layers != 0) {
+            num_layers = job->frame_tiling.layers;
+         } else if (cmd_buffer->state.framebuffer) {
+            num_layers = cmd_buffer->state.framebuffer->layers;
+         } else {
+            assert(cmd_buffer->level == VK_COMMAND_BUFFER_LEVEL_SECONDARY);
+            num_layers = 2048;
+#if DEBUG
+            fprintf(stderr, "Skipping gl_LayerID shader sanity check for "
+                            "secondary command buffer\n");
+#endif
+         }
+         cl_aligned_u32(&uniforms, num_layers);
+         break;
+      }
+
+      case QUNIFORM_VIEW_INDEX:
+         cl_aligned_u32(&uniforms, job->cmd_buffer->state.view_index);
          break;
 
       case QUNIFORM_NUM_WORK_GROUPS:

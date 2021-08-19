@@ -1,4 +1,5 @@
 glx@glx_arb_create_context_es2_profile@invalid opengl es version,Fail
+glx@glx_arb_create_context_no_error@no error,Fail
 glx@glx_arb_create_context_robustness@invalid reset notification strategy,Fail
 glx@glx_ext_import_context@free context,Fail
 glx@glx_ext_import_context@get context id,Fail
@@ -90,7 +91,6 @@ spec@arb_sample_shading@samplemask 4@sample mask_in_one,Fail
 spec@arb_shader_image_load_store@indexing,Crash
 spec@arb_shader_storage_buffer_object@array-ssbo-auto-binding,Fail
 spec@arb_shader_storage_buffer_object@linker@instance-matching-shader-storage-blocks-member-array-size-mismatch,Fail
-spec@arb_tessellation_shader@execution@fs-primitiveid-instanced,Fail
 spec@arb_tessellation_shader@execution@gs-primitiveid-instanced,Fail
 spec@arb_tessellation_shader@execution@invocation-counting-even,Fail
 spec@arb_tessellation_shader@execution@invocation-counting-odd,Fail
@@ -187,7 +187,6 @@ spec@arb_texture_view@bug-layers-image,Crash
 spec@arb_texture_view@mipgen,Fail
 spec@arb_texture_view@rendering-layers-image,Fail
 spec@arb_texture_view@rendering-layers-image@layers rendering of image1DArray,Fail
-spec@arb_texture_view@rendering-layers-image@layers rendering of imageCubeArray,Fail
 spec@arb_timer_query@timestamp-get,Fail
 spec@arb_transform_feedback3@arb_transform_feedback3-ext_interleaved_two_bufs_vs,Fail
 spec@arb_transform_feedback3@gl_skipcomponents1-1,Fail
@@ -206,8 +205,6 @@ spec@egl_chromium_sync_control@conformance,Fail
 spec@egl_ext_protected_content@conformance,Fail
 spec@egl_khr_surfaceless_context@viewport,Fail
 spec@egl_mesa_configless_context@basic,Fail
-spec@ext_direct_state_access@vao@VertexArrayVertexOffsetEXT,Fail
-spec@ext_external_objects@semaphore-api-errors@gen-semaphores-bad-value,Fail
 spec@ext_framebuffer_blit@fbo-blit-check-limits,Fail
 spec@ext_framebuffer_multisample@accuracy 2 depth_resolve depthstencil,Fail
 spec@ext_framebuffer_multisample@accuracy 2 depth_resolve small depthstencil,Fail

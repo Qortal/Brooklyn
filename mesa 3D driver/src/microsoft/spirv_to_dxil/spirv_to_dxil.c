@@ -28,6 +28,19 @@
 #include "spirv/nir_spirv.h"
 #include "util/blob.h"
 
+#include "git_sha1.h"
+
+static void
+shared_var_info(const struct glsl_type* type, unsigned* size, unsigned* align)
+{
+   assert(glsl_type_is_vector_or_scalar(type));
+
+   uint32_t comp_size = glsl_type_is_boolean(type) ? 4 : glsl_get_bit_size(type) / 8;
+   unsigned length = glsl_get_vector_elements(type);
+   *size = comp_size * length;
+   *align = comp_size;
+}
+
 bool
 spirv_to_dxil(const uint32_t *words, size_t word_count,
               struct dxil_spirv_specialization *specializations,
@@ -40,6 +53,8 @@ spirv_to_dxil(const uint32_t *words, size_t word_count,
    struct spirv_to_nir_options spirv_opts = {
       .ubo_addr_format = nir_address_format_32bit_index_offset,
       .ssbo_addr_format = nir_address_format_32bit_index_offset,
+      .shared_addr_format = nir_address_format_32bit_offset_as_64bit,
+
       // use_deref_buffer_array_length + nir_lower_explicit_io force
       //  get_ssbo_size to take in the return from load_vulkan_descriptor
       //  instead of vulkan_resource_index. This makes it much easier to
@@ -81,6 +96,13 @@ spirv_to_dxil(const uint32_t *words, size_t word_count,
 
    NIR_PASS_V(nir, nir_lower_explicit_io, nir_var_mem_ubo | nir_var_mem_ssbo,
               nir_address_format_32bit_index_offset);
+
+   if (!nir->info.shared_memory_explicit_layout) {
+      NIR_PASS_V(nir, nir_lower_vars_to_explicit_types, nir_var_mem_shared,
+                 shared_var_info);
+   }
+   NIR_PASS_V(nir, nir_lower_explicit_io, nir_var_mem_shared,
+      nir_address_format_32bit_offset_as_64bit);
 
    nir_variable_mode nir_var_function_temp =
       nir_var_shader_in | nir_var_shader_out;
@@ -125,6 +147,11 @@ spirv_to_dxil(const uint32_t *words, size_t word_count,
          NIR_PASS(progress, nir, nir_opt_undef);
          NIR_PASS(progress, nir, nir_opt_constant_folding);
          NIR_PASS(progress, nir, nir_opt_cse);
+         if (nir_opt_trivial_continues(nir)) {
+            progress = true;
+            NIR_PASS(progress, nir, nir_copy_prop);
+            NIR_PASS(progress, nir, nir_opt_dce);
+         }
          NIR_PASS(progress, nir, nir_lower_vars_to_ssa);
          NIR_PASS(progress, nir, nir_opt_algebraic);
       } while (progress);
@@ -167,4 +194,15 @@ void
 spirv_to_dxil_free(void* buffer)
 {
    free(buffer);
+}
+
+uint64_t
+spirv_to_dxil_get_version()
+{
+   const char sha1[] = MESA_GIT_SHA1;
+   const char* dash = strchr(sha1, '-');
+   if (dash) {
+      return strtoull(dash + 1, NULL, 16);
+   }
+   return 0;
 }

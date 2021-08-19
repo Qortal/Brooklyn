@@ -1,5 +1,4 @@
 shaders@glsl-bug-110796,Fail
-shaders@glsl-cos,Fail
 shaders@glsl-derivs,Fail
 shaders@glsl-fs-loop,Fail
 shaders@glsl-fs-loop-nested,Fail
@@ -7,11 +6,9 @@ shaders@glsl-fs-raytrace-bug27060,Fail
 shaders@glsl-fwidth,Fail
 shaders@glsl-max-varyings,Fail
 shaders@glsl-max-varyings >max_varying_components,Fail
-shaders@glsl-sin,Fail
 shaders@glsl-uniform-interstage-limits@520 vs- 1 fs,Fail
 shaders@glsl-uniform-interstage-limits@subdivide 5,Fail
 shaders@glsl-uniform-interstage-limits@subdivide 5- statechanges,Fail
-shaders@glsl-vs-point-size,Fail
 shaders@ssa@fs-if-def-else-break,Fail
 shaders@ssa@fs-lost-copy-problem,Fail
 shaders@ssa@fs-swap-problem,Fail
@@ -21,15 +18,8 @@ spec@!opengl 1.0@gl-1.0-drawbuffer-modes,Fail
 spec@!opengl 1.0@gl-1.0-long-line-loop,Crash
 spec@!opengl 1.0@gl-1.0-no-op-paths,Fail
 spec@!opengl 1.0@gl-1.0-ortho-pos,Crash
-spec@!opengl 1.0@gl-1.0-rendermode-feedback,Crash
 spec@!opengl 1.0@gl-1.0-scissor-offscreen,Fail
 spec@!opengl 1.0@gl-1.0-swapbuffers-behavior,Fail
-
-# mesa/st draw path doesn't do nir-to-tgsi, so gallivm NIR fails
-# to handle our vector-y, non-native-integers shaders.  We could extend
-# gallivm NIR to handle it, or disentangle per-stage native integers on the
-# frontend.
-spec@!opengl 1.0@rasterpos,Crash
 
 spec@!opengl 1.1@clipflat,Fail
 spec@!opengl 1.1@clipflat@glBegin/End(GL_TRIANGLE_FAN)- glFrontFace(GL_CCW)- glPolygonMode(GL_FILL)- quadrant: center middle PV: FIRST,Fail
@@ -51,15 +41,10 @@ spec@!opengl 1.1@clipflat@glDrawElements(GL_QUADS)- glFrontFace(GL_CW)- glPolygo
 spec@!opengl 1.1@clipflat@glDrawElements(GL_QUAD_STRIP)- glFrontFace(GL_CCW)- glPolygonMode(GL_FILL)- quadrant: center middle PV: FIRST,Fail
 spec@!opengl 1.1@clipflat@glDrawElements(GL_QUAD_STRIP)- glFrontFace(GL_CW)- glPolygonMode(GL_FILL)- quadrant: center middle PV: FIRST,Fail
 spec@!opengl 1.1@depthstencil-default_fb-clear,Fail
-spec@!opengl 1.1@getteximage-formats,Crash
+spec@!opengl 1.1@getteximage-formats,Fail
 spec@!opengl 1.1@gl-1.1-drawarrays-vertex-count 100000 varray gl_quad_strip,Crash
 spec@!opengl 1.1@gl-1.1-drawarrays-vertex-count 100000 vbo gl_quad_strip,Crash
 spec@!opengl 1.1@gl-1.2-texture-base-level,Fail
-spec@!opengl 1.1@gl_select - alpha-test enabled,Crash
-spec@!opengl 1.1@gl_select - depth-test enabled,Crash
-spec@!opengl 1.1@gl_select - no test function,Crash
-spec@!opengl 1.1@gl_select - scissor-test enabled,Crash
-spec@!opengl 1.1@gl_select - stencil-test enabled,Crash
 spec@!opengl 1.1@line-flat-clip-color,Fail
 spec@!opengl 1.1@linestipple,Fail
 spec@!opengl 1.1@linestipple@Factor 2x,Fail
@@ -85,7 +70,6 @@ spec@!opengl 1.1@polygon-offset,Fail
 spec@!opengl 1.1@read-front,Fail
 spec@!opengl 1.1@read-front clear-front-first,Fail
 spec@!opengl 1.1@tex-upside-down-miptree,Fail
-spec@!opengl 1.1@texsubimage,Fail
 spec@!opengl 1.1@texwrap 1d bordercolor,Fail
 spec@!opengl 1.1@texwrap 1d bordercolor@GL_RGBA8- border color only,Fail
 spec@!opengl 1.1@texwrap 1d proj bordercolor,Fail
@@ -128,9 +112,7 @@ spec@!opengl 1.1@texwrap formats bordercolor@GL_RGBA2- border color only,Fail
 spec@!opengl 1.1@texwrap formats bordercolor@GL_RGBA4- border color only,Fail
 spec@!opengl 1.1@texwrap formats bordercolor@GL_RGBA8- border color only,Fail
 spec@!opengl 1.1@windowoverlap,Fail
-spec@!opengl 1.2@getteximage-targets 3d,Fail
 spec@!opengl 1.2@levelclamp,Fail
-spec@!opengl 1.2@tex3d,Fail
 spec@!opengl 1.2@teximage-errors,Fail
 spec@!opengl 1.2@texwrap 3d,Fail
 spec@!opengl 1.2@texwrap 3d@GL_RGBA8- NPOT,Fail
@@ -141,17 +123,10 @@ spec@!opengl 1.2@texwrap 3d proj@GL_RGBA8- NPOT- projected,Fail
 spec@!opengl 1.2@texwrap 3d proj bordercolor,Fail
 spec@!opengl 1.2@texwrap 3d proj bordercolor@GL_RGBA8- projected- border color only,Fail
 spec@!opengl 1.4@gl-1.4-polygon-offset,Fail
-
-# 1D textures are treated as 2D, but we don't force
-# the Y clamp to repeat or edge, so you get interpolation, and we get
-# different undefined values in the y coordinate in the new shader.
-spec@!opengl 1.4@gl-1.4-tex1d-2dborder,Fail
-
 spec@!opengl 1.4@tex-miplevel-selection,Fail
 spec@!opengl 1.4@tex-miplevel-selection-lod,Fail
 spec@!opengl 1.4@tex-miplevel-selection-lod-bias,Fail
 spec@!opengl 1.5@depth-tex-compare,Fail
-spec@!opengl 2.0@gl-2.0-two-sided-stencil,Fail
 spec@!opengl 2.0@max-samplers,Fail
 spec@!opengl 2.0@max-samplers border,Fail
 spec@!opengl 2.0@occlusion-query-discard,Fail
@@ -271,17 +246,14 @@ spec@arb_occlusion_query@occlusion_query_order,Crash
 spec@arb_pixel_buffer_object@cubemap npot pbo,Fail
 spec@arb_pixel_buffer_object@fbo-pbo-readpixels-small,Fail
 spec@arb_pixel_buffer_object@pbo-getteximage,Fail
-spec@arb_pixel_buffer_object@texsubimage pbo,Fail
 
 # nir_lower_aapoint_impl() uses b32csel instead of fcsel.
 spec@arb_point_parameters@arb_point_parameters-point-attenuation,Crash
 
 spec@arb_point_parameters@arb_point_parameters-point-attenuation@Aliased combinations,Fail
-spec@arb_point_parameters@arb_point_parameters-point-attenuation@Antialiased combinations,Fail
 spec@arb_provoking_vertex@arb-provoking-vertex-render,Fail
 spec@arb_sampler_objects@gl_ext_texture_srgb_decode,Fail
 spec@arb_shader_texture_lod@execution@glsl-fs-texturelod-01,Fail
-spec@arb_texture_compression@fbo-generatemipmap-formats,Crash
 spec@arb_texture_compression@texwrap formats bordercolor,Fail
 spec@arb_texture_compression@texwrap formats bordercolor@GL_COMPRESSED_ALPHA- border color only,Fail
 spec@arb_texture_compression@texwrap formats bordercolor@GL_COMPRESSED_INTENSITY- border color only,Fail
@@ -300,7 +272,8 @@ spec@arb_texture_rectangle@glsl-fs-shadow2drectproj,Fail
 spec@arb_texture_rectangle@tex-miplevel-selection gl2:texture() 2drectshadow,Fail
 spec@arb_texture_rectangle@tex-miplevel-selection gl2:textureproj 2drectshadow,Fail
 
-# Too many texture phases, would be avoided if nir_to_tgsi did TXP or if we scheduled.
+# Too many texture phases and regs, because nir_to_tgsi emits MOV TEMP[n],
+# IN[x].xyxw setting up the TXP coords.
 spec@arb_texture_rectangle@texrect-many,Fail
 
 spec@arb_texture_rectangle@texwrap rect bordercolor,Fail
@@ -418,26 +391,15 @@ spec@ext_framebuffer_object@fbo-stencil-gl_stencil_index1-blit,Fail
 spec@ext_framebuffer_object@fbo-stencil-gl_stencil_index16-blit,Fail
 spec@ext_framebuffer_object@fbo-stencil-gl_stencil_index4-blit,Fail
 spec@ext_framebuffer_object@fbo-stencil-gl_stencil_index8-blit,Fail
-spec@ext_framebuffer_object@getteximage-formats init-by-clear-and-render,Crash
-spec@ext_framebuffer_object@getteximage-formats init-by-rendering,Crash
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-export,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-export-tex,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-intel_external_sampler_only,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-invalid_attributes,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-invalid_hints,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-missing_attributes,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-ownership_transfer,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-refcount,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-reimport-bug,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_argb8888,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_ayuv,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_nv12,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_p010,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_p012,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_p016,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_uyvy,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_xrgb8888,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_xyuv,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_y210,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_y212,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_y216,Fail
@@ -448,7 +410,6 @@ spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_yuv420,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_yuyv,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_yvu420,Fail
 spec@ext_image_dma_buf_import@ext_image_dma_buf_import-transcode-nv12-as-r8-gr88,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-unsupported_format,Fail
 spec@ext_occlusion_query_boolean@any-samples,Fail
 spec@ext_packed_depth_stencil@depth_stencil texture,Fail
 spec@ext_packed_depth_stencil@fbo-clear-formats,Fail
@@ -461,43 +422,29 @@ spec@ext_packed_depth_stencil@fbo-depthstencil-gl_depth24_stencil8-clear,Fail
 spec@ext_packed_depth_stencil@fbo-stencil-gl_depth24_stencil8-blit,Fail
 spec@ext_packed_depth_stencil@texwrap formats bordercolor,Fail
 spec@ext_packed_depth_stencil@texwrap formats bordercolor@GL_DEPTH24_STENCIL8- border color only,Fail
-spec@ext_texture_compression_s3tc@compressedteximage gl_compressed_rgb_s3tc_dxt1_ext,Crash
-spec@ext_texture_compression_s3tc@compressedteximage gl_compressed_rgba_s3tc_dxt1_ext,Crash
-spec@ext_texture_compression_s3tc@compressedteximage gl_compressed_rgba_s3tc_dxt3_ext,Crash
-spec@ext_texture_compression_s3tc@compressedteximage gl_compressed_rgba_s3tc_dxt5_ext,Crash
-spec@ext_texture_compression_s3tc@compressedteximage gl_compressed_srgb_alpha_s3tc_dxt1_ext,Crash
-spec@ext_texture_compression_s3tc@compressedteximage gl_compressed_srgb_alpha_s3tc_dxt3_ext,Fail
-spec@ext_texture_compression_s3tc@compressedteximage gl_compressed_srgb_alpha_s3tc_dxt5_ext,Crash
-spec@ext_texture_compression_s3tc@compressedteximage gl_compressed_srgb_s3tc_dxt1_ext,Fail
-spec@ext_texture_compression_s3tc@fbo-generatemipmap-formats,Crash
-spec@ext_texture_compression_s3tc@s3tc-targeted,Fail
 spec@ext_texture_compression_s3tc@texwrap formats bordercolor,Fail
 spec@ext_texture_compression_s3tc@texwrap formats bordercolor@GL_COMPRESSED_RGBA_S3TC_DXT1_EXT- border color only,Fail
 spec@ext_texture_compression_s3tc@texwrap formats bordercolor@GL_COMPRESSED_RGBA_S3TC_DXT3_EXT- border color only,Fail
 spec@ext_texture_compression_s3tc@texwrap formats bordercolor@GL_COMPRESSED_RGBA_S3TC_DXT5_EXT- border color only,Fail
 spec@ext_texture_compression_s3tc@texwrap formats bordercolor@GL_COMPRESSED_RGB_S3TC_DXT1_EXT- border color only,Fail
 spec@ext_texture_format_bgra8888@api-errors,Fail
-spec@ext_texture_srgb@fbo-generatemipmap-formats-s3tc,Crash
 spec@ext_texture_srgb@tex-srgb,Fail
 spec@ext_texture_srgb@texwrap formats bordercolor,Fail
 spec@ext_texture_srgb@texwrap formats bordercolor@GL_SLUMINANCE8- border color only,Fail
 spec@ext_texture_srgb@texwrap formats bordercolor@GL_SLUMINANCE8_ALPHA8- border color only,Fail
 spec@ext_texture_srgb@texwrap formats bordercolor@GL_SRGB8- border color only,Fail
 spec@ext_texture_srgb@texwrap formats bordercolor@GL_SRGB8_ALPHA8- border color only,Fail
-spec@ext_texture_srgb@texwrap formats-s3tc,Crash
-spec@ext_texture_srgb@texwrap formats-s3tc bordercolor,Crash
+spec@ext_texture_srgb@texwrap formats-s3tc bordercolor,Fail
 spec@ext_texture_srgb@texwrap formats-s3tc bordercolor@GL_COMPRESSED_SLUMINANCE- border color only,Fail
 spec@ext_texture_srgb@texwrap formats-s3tc bordercolor@GL_COMPRESSED_SLUMINANCE_ALPHA- border color only,Fail
 spec@ext_texture_srgb@texwrap formats-s3tc bordercolor@GL_COMPRESSED_SRGB- border color only,Fail
 spec@ext_texture_srgb@texwrap formats-s3tc bordercolor@GL_COMPRESSED_SRGB_ALPHA- border color only,Fail
+spec@ext_texture_srgb@texwrap formats-s3tc bordercolor@GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT- border color only,Fail
+spec@ext_texture_srgb@texwrap formats-s3tc bordercolor@GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT- border color only,Fail
+spec@ext_texture_srgb@texwrap formats-s3tc bordercolor@GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT- border color only,Fail
 spec@ext_texture_srgb@texwrap formats-s3tc bordercolor@GL_COMPRESSED_SRGB_S3TC_DXT1_EXT- border color only,Fail
-spec@glsl-1.10@execution@built-in-functions@fs-atan-vec2-vec2,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-atan-vec3-vec3,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-atan-vec4-vec4,Fail
-spec@glsl-1.10@execution@built-in-functions@fs-cos-float,Fail
-spec@glsl-1.10@execution@built-in-functions@fs-cos-vec2,Fail
-spec@glsl-1.10@execution@built-in-functions@fs-cos-vec3,Fail
-spec@glsl-1.10@execution@built-in-functions@fs-cos-vec4,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-degrees-float,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-degrees-vec2,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-degrees-vec3,Fail
@@ -659,10 +606,6 @@ spec@glsl-1.10@execution@built-in-functions@fs-reflect-vec4-vec4,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-refract-vec2-vec2-float,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-refract-vec3-vec3-float,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-refract-vec4-vec4-float,Fail
-spec@glsl-1.10@execution@built-in-functions@fs-sin-float,Fail
-spec@glsl-1.10@execution@built-in-functions@fs-sin-vec2,Fail
-spec@glsl-1.10@execution@built-in-functions@fs-sin-vec3,Fail
-spec@glsl-1.10@execution@built-in-functions@fs-sin-vec4,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-smoothstep-float-float-float,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-smoothstep-float-float-vec2,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-smoothstep-float-float-vec3,Fail
@@ -670,12 +613,7 @@ spec@glsl-1.10@execution@built-in-functions@fs-smoothstep-float-float-vec4,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-smoothstep-vec2-vec2-vec2,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-smoothstep-vec3-vec3-vec3,Fail
 spec@glsl-1.10@execution@built-in-functions@fs-smoothstep-vec4-vec4-vec4,Fail
-spec@glsl-1.10@execution@built-in-functions@fs-tan-float,Fail
-spec@glsl-1.10@execution@built-in-functions@fs-tan-vec2,Fail
-spec@glsl-1.10@execution@built-in-functions@fs-tan-vec3,Fail
-spec@glsl-1.10@execution@built-in-functions@fs-tan-vec4,Fail
 spec@glsl-1.10@execution@builtins@glsl-fs-atan-3,Fail
-spec@glsl-1.10@execution@builtins@glsl-fs-tan-1,Fail
 spec@glsl-1.10@execution@copy-propagation@glsl-copy-propagation-loop-1,Fail
 spec@glsl-1.10@execution@copy-propagation@glsl-copy-propagation-loop-2,Fail
 spec@glsl-1.10@execution@derivatives@glsl-derivs-abs,Fail

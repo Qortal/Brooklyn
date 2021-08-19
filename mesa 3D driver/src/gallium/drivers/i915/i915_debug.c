@@ -245,9 +245,9 @@ BITS(struct debug_stream *stream, unsigned dw, unsigned hi, unsigned lo,
 
 #define MBZ(dw, hi, lo)                                                        \
    do {                                                                        \
-      unsigned x = (dw) >> (lo);                                               \
-      unsigned lomask = (1 << (lo)) - 1;                                       \
-      unsigned himask;                                                         \
+      ASSERTED unsigned x = (dw) >> (lo);                                      \
+      ASSERTED unsigned lomask = (1 << (lo)) - 1;                              \
+      ASSERTED unsigned himask;                                                \
       himask = (1UL << (hi)) - 1;                                              \
       assert((x & himask & ~lomask) == 0);                                     \
    } while (0)
@@ -777,7 +777,7 @@ i915_debug_packet(struct debug_stream *stream)
       case 0x7:
          return debug(stream, "3DSTATE_RASTERIZATION_RULES", 1);
       case 0x8:
-         return debug(stream, "3DSTATE_BACKFACE_STENCIL_OPS", 2);
+         return debug(stream, "3DSTATE_BACKFACE_STENCIL_OPS", 1);
       case 0x9:
          return debug(stream, "3DSTATE_BACKFACE_STENCIL_MASKS", 1);
       case 0xb:

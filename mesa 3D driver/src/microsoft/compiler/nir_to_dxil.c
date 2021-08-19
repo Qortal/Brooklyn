@@ -249,6 +249,7 @@ enum dxil_intr {
    DXIL_INTR_THREAD_ID = 93,
    DXIL_INTR_GROUP_ID = 94,
    DXIL_INTR_THREAD_ID_IN_GROUP = 95,
+   DXIL_INTR_FLATTENED_THREAD_ID_IN_GROUP = 96,
 
    DXIL_INTR_EMIT_STREAM = 97,
    DXIL_INTR_CUT_STREAM = 98,
@@ -558,6 +559,26 @@ emit_threadidingroup_call(struct ntd_context *ctx,
 }
 
 static const struct dxil_value *
+emit_flattenedthreadidingroup_call(struct ntd_context *ctx)
+{
+   const struct dxil_func *func = dxil_get_function(&ctx->mod, "dx.op.flattenedThreadIdInGroup", DXIL_I32);
+
+   if (!func)
+      return NULL;
+
+   const struct dxil_value *opcode = dxil_module_get_int32_const(&ctx->mod,
+      DXIL_INTR_FLATTENED_THREAD_ID_IN_GROUP);
+   if (!opcode)
+      return NULL;
+
+   const struct dxil_value *args[] = {
+     opcode
+   };
+
+   return dxil_emit_call(&ctx->mod, func, args, ARRAY_SIZE(args));
+}
+
+static const struct dxil_value *
 emit_groupid_call(struct ntd_context *ctx, const struct dxil_value *comp)
 {
    const struct dxil_func *func = dxil_get_function(&ctx->mod, "dx.op.groupId", DXIL_I32);
@@ -581,9 +602,10 @@ emit_groupid_call(struct ntd_context *ctx, const struct dxil_value *comp)
 static const struct dxil_value *
 emit_bufferload_call(struct ntd_context *ctx,
                      const struct dxil_value *handle,
-                     const struct dxil_value *coord[2])
+                     const struct dxil_value *coord[2],
+                     enum overload_type overload)
 {
-   const struct dxil_func *func = dxil_get_function(&ctx->mod, "dx.op.bufferLoad", DXIL_I32);
+   const struct dxil_func *func = dxil_get_function(&ctx->mod, "dx.op.bufferLoad", overload);
    if (!func)
       return NULL;
 
@@ -617,6 +639,28 @@ emit_bufferstore_call(struct ntd_context *ctx,
 
    return dxil_emit_call_void(&ctx->mod, func,
                               args, ARRAY_SIZE(args));
+}
+
+static const struct dxil_value *
+emit_textureload_call(struct ntd_context *ctx,
+                      const struct dxil_value *handle,
+                      const struct dxil_value *coord[3],
+                      enum overload_type overload)
+{
+   const struct dxil_func *func = dxil_get_function(&ctx->mod, "dx.op.textureLoad", overload);
+   if (!func)
+      return NULL;
+   const struct dxil_type *int_type = dxil_module_get_int_type(&ctx->mod, 32);
+   const struct dxil_value *int_undef = dxil_module_get_undef(&ctx->mod, int_type);
+
+   const struct dxil_value *opcode = dxil_module_get_int32_const(&ctx->mod,
+      DXIL_INTR_TEXTURE_LOAD);
+   const struct dxil_value *args[] = { opcode, handle,
+      /*lod_or_sample*/ int_undef,
+      coord[0], coord[1], coord[2],
+      /* offsets */ int_undef, int_undef, int_undef};
+
+   return dxil_emit_call(&ctx->mod, func, args, ARRAY_SIZE(args));
 }
 
 static bool
@@ -2186,14 +2230,12 @@ emit_barrier(struct ntd_context *ctx, nir_intrinsic_instr *intr)
    nir_variable_mode modes = nir_intrinsic_memory_modes(intr);
    nir_scope mem_scope = nir_intrinsic_memory_scope(intr);
 
-   if (modes & ~(nir_var_mem_ssbo | nir_var_mem_global | nir_var_mem_shared))
-      return false;
-
-   if (mem_scope != NIR_SCOPE_DEVICE && mem_scope != NIR_SCOPE_WORKGROUP)
-      return false;
+   /* Currently vtn uses uniform to indicate image memory, which DXIL considers global */
+   if (modes & nir_var_uniform)
+      modes |= nir_var_mem_global;
 
    if (modes & (nir_var_mem_ssbo | nir_var_mem_global)) {
-      if (mem_scope == NIR_SCOPE_DEVICE)
+      if (mem_scope > NIR_SCOPE_WORKGROUP)
          flags |= DXIL_BARRIER_MODE_UAV_FENCE_GLOBAL;
       else
          flags |= DXIL_BARRIER_MODE_UAV_FENCE_THREAD_GROUP;
@@ -2263,6 +2305,21 @@ emit_load_local_invocation_id(struct ntd_context *ctx,
          store_dest_value(ctx, &intr->dest, i, threadidingroup);
       }
    }
+   return true;
+}
+
+static bool
+emit_load_local_invocation_index(struct ntd_context *ctx,
+                                 nir_intrinsic_instr *intr)
+{
+   assert(intr->dest.is_ssa);
+
+   const struct dxil_value
+      *flattenedthreadidingroup = emit_flattenedthreadidingroup_call(ctx);
+   if (!flattenedthreadidingroup)
+      return false;
+   store_dest_value(ctx, &intr->dest, 0, flattenedthreadidingroup);
+   
    return true;
 }
 
@@ -2408,7 +2465,7 @@ emit_load_ssbo(struct ntd_context *ctx, nir_intrinsic_instr *intr)
       int32_undef
    };
 
-   const struct dxil_value *load = emit_bufferload_call(ctx, handle, coord);
+   const struct dxil_value *load = emit_bufferload_call(ctx, handle, coord, DXIL_I32);
    if (!load)
       return false;
 
@@ -3031,12 +3088,15 @@ static bool
 emit_image_store(struct ntd_context *ctx, nir_intrinsic_instr *intr)
 {
    const struct dxil_value *handle;
+   bool is_array = false;
    if (ctx->opts->vulkan_environment) {
       assert(intr->intrinsic == nir_intrinsic_image_deref_store);
       handle = get_src_ssa(ctx, intr->src[0].ssa, 0);
+      is_array = glsl_sampler_type_is_array(nir_src_as_deref(intr->src[0])->type);
    } else {
       assert(intr->intrinsic == nir_intrinsic_image_store);
       int binding = nir_src_as_int(intr->src[0]);
+      is_array = nir_intrinsic_image_array(intr);
       handle = ctx->uav_handles[binding];
    }
    if (!handle)
@@ -3051,6 +3111,9 @@ emit_image_store(struct ntd_context *ctx, nir_intrinsic_instr *intr)
       nir_intrinsic_image_dim(intr) :
       glsl_get_sampler_dim(nir_src_as_deref(intr->src[0])->type);
    unsigned num_coords = glsl_get_sampler_dim_coordinate_components(image_dim);
+   if (is_array)
+      ++num_coords;
+
    assert(num_coords <= nir_src_num_components(intr->src[1]));
    for (unsigned i = 0; i < num_coords; ++i) {
       coord[i] = get_src(ctx, &intr->src[1], i, nir_type_uint);
@@ -3084,6 +3147,72 @@ emit_image_store(struct ntd_context *ctx, nir_intrinsic_instr *intr)
       return emit_bufferstore_call(ctx, handle, coord, value, write_mask, overload);
    } else
       return emit_texturestore_call(ctx, handle, coord, value, write_mask, overload);
+}
+
+static bool
+emit_image_load(struct ntd_context *ctx, nir_intrinsic_instr *intr)
+{
+   const struct dxil_value *handle;
+   bool is_array = false;
+   if (ctx->opts->vulkan_environment) {
+      assert(intr->intrinsic == nir_intrinsic_image_deref_load);
+      handle = get_src_ssa(ctx, intr->src[0].ssa, 0);
+      is_array = glsl_sampler_type_is_array(nir_src_as_deref(intr->src[0])->type);
+   } else {
+      assert(intr->intrinsic == nir_intrinsic_image_load);
+      int binding = nir_src_as_int(intr->src[0]);
+      is_array = nir_intrinsic_image_array(intr);
+      handle = ctx->uav_handles[binding];
+   }
+   if (!handle)
+      return false;
+
+   const struct dxil_value *int32_undef = get_int32_undef(&ctx->mod);
+   if (!int32_undef)
+      return false;
+
+   const struct dxil_value *coord[3] = { int32_undef, int32_undef, int32_undef };
+   enum glsl_sampler_dim image_dim = intr->intrinsic == nir_intrinsic_image_load ?
+      nir_intrinsic_image_dim(intr) :
+      glsl_get_sampler_dim(nir_src_as_deref(intr->src[0])->type);
+   unsigned num_coords = glsl_get_sampler_dim_coordinate_components(image_dim);
+   if (is_array)
+      ++num_coords;
+
+   assert(num_coords <= nir_src_num_components(intr->src[1]));
+   for (unsigned i = 0; i < num_coords; ++i) {
+      coord[i] = get_src(ctx, &intr->src[1], i, nir_type_uint);
+      if (!coord[i])
+         return false;
+   }
+
+   nir_alu_type out_type = nir_intrinsic_dest_type(intr);
+   enum overload_type overload = get_overload(out_type, 32);
+
+   const struct dxil_value *load_result;
+   if (image_dim == GLSL_SAMPLER_DIM_BUF) {
+      coord[1] = int32_undef;
+      load_result = emit_bufferload_call(ctx, handle, coord, overload);
+   } else
+      load_result = emit_textureload_call(ctx, handle, coord, overload);
+
+   if (!load_result)
+      return false;
+
+   assert(nir_dest_bit_size(intr->dest) == 32);
+   unsigned num_components = nir_dest_num_components(intr->dest);
+   assert(num_components <= 4);
+   for (unsigned i = 0; i < num_components; ++i) {
+      const struct dxil_value *component = dxil_emit_extractval(&ctx->mod, load_result, i);
+      if (!component)
+         return false;
+      store_dest(ctx, &intr->dest, i, component, out_type);
+   }
+
+   if (num_components > 1)
+      ctx->mod.feats.typed_uav_load_additional_formats = true;
+
+   return true;
 }
 
 struct texop_parameters {
@@ -3387,6 +3516,8 @@ emit_intrinsic(struct ntd_context *ctx, nir_intrinsic_instr *intr)
       return emit_load_global_invocation_id(ctx, intr);
    case nir_intrinsic_load_local_invocation_id:
       return emit_load_local_invocation_id(ctx, intr);
+   case nir_intrinsic_load_local_invocation_index:
+      return emit_load_local_invocation_index(ctx, intr);
    case nir_intrinsic_load_workgroup_id:
    case nir_intrinsic_load_workgroup_id_zero_base:
       return emit_load_local_workgroup_id(ctx, intr);
@@ -3479,8 +3610,11 @@ emit_intrinsic(struct ntd_context *ctx, nir_intrinsic_instr *intr)
    case nir_intrinsic_image_store:
    case nir_intrinsic_image_deref_store:
       return emit_image_store(ctx, intr);
-   case nir_intrinsic_image_deref_size:
+   case nir_intrinsic_image_load:
+   case nir_intrinsic_image_deref_load:
+      return emit_image_load(ctx, intr);
    case nir_intrinsic_image_size:
+   case nir_intrinsic_image_deref_size:
       return emit_image_size(ctx, intr);
    case nir_intrinsic_get_ssbo_size:
       return emit_get_ssbo_size(ctx, intr);
@@ -3984,9 +4118,8 @@ emit_tex(struct ntd_context *ctx, nir_tex_instr *instr)
    case nir_texop_txf_ms:
       if (instr->sampler_dim == GLSL_SAMPLER_DIM_BUF) {
          params.coord[1] = int_undef;
-         sample = emit_bufferload_call(ctx, params.tex, params.coord);
-      }
-      else {
+         sample = emit_bufferload_call(ctx, params.tex, params.coord, params.overload);
+      } else {
          PAD_SRC(ctx, params.coord, coord_components, int_undef);
          sample = emit_texel_fetch(ctx, &params);
       }
@@ -4392,6 +4525,7 @@ emit_module(struct ntd_context *ctx, const struct nir_to_dxil_options *opts)
          return false;
    } else {
       /* Handle read/write SSBOs as UAVs */
+      int uav_count = 0;
       nir_foreach_variable_with_modes(var, ctx->shader, nir_var_mem_ssbo) {
          if ((var->data.access & ACCESS_NON_WRITEABLE) == 0) {
             unsigned count = 1;
@@ -4401,8 +4535,12 @@ emit_module(struct ntd_context *ctx, const struct nir_to_dxil_options *opts)
                         count, DXIL_COMP_TYPE_INVALID,
                         DXIL_RESOURCE_KIND_RAW_BUFFER, var->name))
                return false;
+            
+            ++uav_count;
          }
       }
+      if (uav_count > 0)
+         ctx->mod.raw_and_structured_buffers = true;
    }
 
    nir_foreach_variable_with_modes(var, ctx->shader, nir_var_uniform) {

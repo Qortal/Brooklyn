@@ -38,6 +38,7 @@
 #include "pipe/p_state.h"
 #include "util/u_draw.h"
 #include "util/u_framebuffer.h"
+#include "util/u_helpers.h"
 #include "util/u_inlines.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
@@ -385,6 +386,14 @@ void cso_unbind_context(struct cso_context *ctx)
 
    memset(&ctx->samplers, 0, sizeof(ctx->samplers));
    memset(&ctx->nr_so_targets, 0, offsetof(struct cso_context, cache) - offsetof(struct cso_context, nr_so_targets));
+   ctx->sample_mask = ~0;
+   /*
+    * If the cso context is reused (with the same pipe context),
+    * need to really make sure the context state doesn't get out of sync.
+    */
+   ctx->pipe->set_sample_mask(ctx->pipe, ctx->sample_mask);
+   if (ctx->pipe->set_min_samples)
+      ctx->pipe->set_min_samples(ctx->pipe, ctx->min_samples);
 }
 
 /**
@@ -1026,9 +1035,15 @@ cso_set_vertex_elements_direct(struct cso_context *ctx,
          return;
 
       memcpy(&cso->state, velems, key_size);
-      cso->data = ctx->pipe->create_vertex_elements_state(ctx->pipe,
-                                                          velems->count,
-                                                      &cso->state.velems[0]);
+
+      /* Lower 64-bit vertex attributes. */
+      unsigned new_count = velems->count;
+      const struct pipe_vertex_element *new_elems = velems->velems;
+      struct pipe_vertex_element tmp[PIPE_MAX_ATTRIBS];
+      util_lower_uint64_vertex_elements(&new_elems, &new_count, tmp);
+
+      cso->data = ctx->pipe->create_vertex_elements_state(ctx->pipe, new_count,
+                                                          new_elems);
 
       iter = cso_insert_state(&ctx->cache, hash_key, CSO_VELEMENTS, cso);
       if (cso_hash_iter_is_null(iter)) {

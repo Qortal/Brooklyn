@@ -45,6 +45,7 @@ struct spirv_supported_capabilities {
    bool descriptor_indexing;
    bool device_group;
    bool draw_parameters;
+   bool float16_atomic_add;
    bool float16_atomic_min_max;
    bool float32_atomic_add;
    bool float32_atomic_min_max;
@@ -269,6 +270,11 @@ typedef struct shader_info {
     * Used for ARB_compute_variable_group_size.
     */
    bool workgroup_size_variable:1;
+
+   /**
+     * Is this an ARB assembly-style program.
+     */
+   bool is_arb_asm;
 
    union {
       struct {

@@ -715,9 +715,9 @@ fs_visitor::limit_dispatch_width(unsigned n, const char *msg)
       fail("%s", msg);
    } else {
       max_dispatch_width = MIN2(max_dispatch_width, n);
-      compiler->shader_perf_log(log_data,
-                                "Shader dispatch width limited to SIMD%d: %s",
-                                n, msg);
+      brw_shader_perf_log(compiler, log_data,
+                          "Shader dispatch width limited to SIMD%d: %s",
+                          n, msg);
    }
 }
 
@@ -1116,9 +1116,13 @@ fs_inst::flags_read(const intel_device_info *devinfo) const
 }
 
 unsigned
-fs_inst::flags_written() const
+fs_inst::flags_written(const intel_device_info *devinfo) const
 {
-   if ((conditional_mod && (opcode != BRW_OPCODE_SEL &&
+   /* On Gfx4 and Gfx5, sel.l (for min) and sel.ge (for max) are implemented
+    * using a separte cmpn and sel instruction.  This lowering occurs in
+    * fs_vistor::lower_minmax which is called very, very late.
+    */
+   if ((conditional_mod && ((opcode != BRW_OPCODE_SEL || devinfo->ver <= 5) &&
                             opcode != BRW_OPCODE_CSEL &&
                             opcode != BRW_OPCODE_IF &&
                             opcode != BRW_OPCODE_WHILE)) ||
@@ -2656,16 +2660,23 @@ fs_visitor::assign_constant_locations()
    /* Now that we know how many regular uniforms we'll push, reduce the
     * UBO push ranges so we don't exceed the 3DSTATE_CONSTANT limits.
     */
+   /* For gen4/5:
+    * Only allow 16 registers (128 uniform components) as push constants.
+    *
+    * If changing this value, note the limitation about total_regs in
+    * brw_curbe.c/crocus_state.c
+    */
+   const unsigned max_push_length = compiler->devinfo->ver < 6 ? 16 : 64;
    unsigned push_length = DIV_ROUND_UP(stage_prog_data->nr_params, 8);
    for (int i = 0; i < 4; i++) {
       struct brw_ubo_range *range = &prog_data->ubo_ranges[i];
 
-      if (push_length + range->length > 64)
-         range->length = 64 - push_length;
+      if (push_length + range->length > max_push_length)
+         range->length = max_push_length - push_length;
 
       push_length += range->length;
    }
-   assert(push_length <= 64);
+   assert(push_length <= max_push_length);
 }
 
 bool
@@ -7322,6 +7333,7 @@ get_lowered_simd_width(const struct intel_device_info *devinfo,
    case BRW_OPCODE_SAD2:
    case BRW_OPCODE_MAD:
    case BRW_OPCODE_LRP:
+   case BRW_OPCODE_ADD3:
    case FS_OPCODE_PACK:
    case SHADER_OPCODE_SEL_EXEC:
    case SHADER_OPCODE_CLUSTER_BROADCAST:
@@ -7602,7 +7614,7 @@ needs_src_copy(const fs_builder &lbld, const fs_inst *inst, unsigned i)
    return !(is_periodic(inst->src[i], lbld.dispatch_width()) ||
             (inst->components_read(i) == 1 &&
              lbld.dispatch_width() <= inst->exec_size)) ||
-          (inst->flags_written() &
+          (inst->flags_written(lbld.shader->devinfo) &
            flag_mask(inst->src[i], type_sz(inst->src[i].type)));
 }
 
@@ -8723,7 +8735,7 @@ fs_visitor::fixup_nomask_control_flow()
 
       foreach_inst_in_block_reverse_safe(fs_inst, inst, block) {
          if (!inst->predicate && inst->exec_size >= 8)
-            flag_liveout &= ~inst->flags_written();
+            flag_liveout &= ~inst->flags_written(devinfo);
 
          switch (inst->opcode) {
          case BRW_OPCODE_DO:
@@ -8876,11 +8888,11 @@ fs_visitor::allocate_registers(bool allow_spilling)
       fail("Failure to register allocate.  Reduce number of "
            "live scalar values to avoid this.");
    } else if (spilled_any_registers) {
-      compiler->shader_perf_log(log_data,
-                                "%s shader triggered register spilling.  "
-                                "Try reducing the number of live scalar "
-                                "values to improve performance.\n",
-                                stage_name);
+      brw_shader_perf_log(compiler, log_data,
+                          "%s shader triggered register spilling.  "
+                          "Try reducing the number of live scalar "
+                          "values to improve performance.\n",
+                          stage_name);
    }
 
    /* This must come after all optimization and register allocation, since
@@ -9775,9 +9787,9 @@ brw_compile_fs(const struct brw_compiler *compiler,
                            debug_enabled);
       v16->import_uniforms(v8);
       if (!v16->run_fs(allow_spilling, params->use_rep_send)) {
-         compiler->shader_perf_log(params->log_data,
-                                   "SIMD16 shader failed to compile: %s",
-                                   v16->fail_msg);
+         brw_shader_perf_log(compiler, params->log_data,
+                             "SIMD16 shader failed to compile: %s",
+                             v16->fail_msg);
       } else {
          simd16_cfg = v16->cfg;
          prog_data->dispatch_grf_start_reg_16 = v16->payload.num_regs;
@@ -9803,14 +9815,15 @@ brw_compile_fs(const struct brw_compiler *compiler,
                            debug_enabled);
       v32->import_uniforms(v8);
       if (!v32->run_fs(allow_spilling, false)) {
-         compiler->shader_perf_log(params->log_data,
-                                   "SIMD32 shader failed to compile: %s",
-                                   v32->fail_msg);
+         brw_shader_perf_log(compiler, params->log_data,
+                             "SIMD32 shader failed to compile: %s",
+                             v32->fail_msg);
       } else {
          const performance &perf = v32->performance_analysis.require();
 
          if (!(INTEL_DEBUG & DEBUG_DO32) && throughput >= perf.throughput) {
-            compiler->shader_perf_log(params->log_data, "SIMD32 shader inefficient\n");
+            brw_shader_perf_log(compiler, params->log_data,
+                                "SIMD32 shader inefficient\n");
          } else {
             simd32_cfg = v32->cfg;
             prog_data->dispatch_grf_start_reg_32 = v32->payload.num_regs;
@@ -10099,7 +10112,7 @@ brw_compile_cs(const struct brw_compiler *compiler,
                                       prog_data->local_size[2];
 
       /* Limit max_threads to 64 for the GPGPU_WALKER command */
-      const uint32_t max_threads = MIN2(64, compiler->devinfo->max_cs_threads);
+      const uint32_t max_threads = compiler->devinfo->max_cs_workgroup_threads;
       min_dispatch_width = util_next_power_of_two(
          MAX2(8, DIV_ROUND_UP(local_workgroup_size, max_threads)));
       assert(min_dispatch_width <= 32);
@@ -10166,9 +10179,9 @@ brw_compile_cs(const struct brw_compiler *compiler,
 
       const bool allow_spilling = generate_all || v == NULL;
       if (!v16->run_cs(allow_spilling)) {
-         compiler->shader_perf_log(params->log_data,
-                                   "SIMD16 shader failed to compile: %s",
-                                   v16->fail_msg);
+         brw_shader_perf_log(compiler, params->log_data,
+                             "SIMD16 shader failed to compile: %s",
+                             v16->fail_msg);
          if (!v) {
             assert(v8 == NULL);
             params->error_str = ralloc_asprintf(
@@ -10214,9 +10227,9 @@ brw_compile_cs(const struct brw_compiler *compiler,
 
       const bool allow_spilling = generate_all || v == NULL;
       if (!v32->run_cs(allow_spilling)) {
-         compiler->shader_perf_log(params->log_data,
-                                   "SIMD32 shader failed to compile: %s",
-                                   v32->fail_msg);
+         brw_shader_perf_log(compiler, params->log_data,
+                             "SIMD32 shader failed to compile: %s",
+                             v32->fail_msg);
          if (!v) {
             assert(v8 == NULL);
             assert(v16 == NULL);
@@ -10316,8 +10329,7 @@ brw_cs_simd_size_for_group_size(const struct intel_device_info *devinfo,
    if ((INTEL_DEBUG & DEBUG_DO32) && (mask & simd32))
       return 32;
 
-   /* Limit max_threads to 64 for the GPGPU_WALKER command */
-   const uint32_t max_threads = MIN2(64, devinfo->max_cs_threads);
+   const uint32_t max_threads = devinfo->max_cs_workgroup_threads;
 
    if ((mask & simd8) && group_size <= 8 * max_threads) {
       /* Prefer SIMD16 if can do without spilling.  Matches logic in
@@ -10411,9 +10423,9 @@ compile_single_bs(const struct brw_compiler *compiler, void *log_data,
                            16, -1 /* shader time */, debug_enabled);
       const bool allow_spilling = (v == NULL);
       if (!v16->run_bs(allow_spilling)) {
-         compiler->shader_perf_log(log_data,
-                                   "SIMD16 shader failed to compile: %s",
-                                   v16->fail_msg);
+         brw_shader_perf_log(compiler, log_data,
+                             "SIMD16 shader failed to compile: %s",
+                             v16->fail_msg);
          if (v == NULL) {
             assert(v8 == NULL);
             if (error_str) {

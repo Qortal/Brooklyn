@@ -20,9 +20,6 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
 #
-# Authors:
-#    Daniel Schuermann (daniel.schuermann@campus.tu-berlin.de)
-
 
 # Class that represents all the information we have about the opcode
 # NOTE: this must be kept in sync with aco_op_info
@@ -321,6 +318,9 @@ opcode("p_exit_early_if")
 
 # simulates proper bpermute behavior when it's unsupported, eg. GFX10 wave64
 opcode("p_bpermute")
+
+# creates a lane mask where only the first active lane is selected
+opcode("p_elect")
 
 opcode("p_constaddr")
 

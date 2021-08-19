@@ -795,7 +795,6 @@ static struct pipe_context *si_pipe_create_context(struct pipe_screen *screen, v
 {
    struct si_screen *sscreen = (struct si_screen *)screen;
    struct pipe_context *ctx;
-   uint64_t total_ram;
 
    if (sscreen->debug_flags & DBG(CHECK_VM))
       flags |= PIPE_CONTEXT_DEBUG;
@@ -831,9 +830,8 @@ static struct pipe_context *si_pipe_create_context(struct pipe_screen *screen, v
                               true,
                               &((struct si_context *)ctx)->tc);
 
-   if (tc && tc != ctx && os_get_total_physical_memory(&total_ram)) {
-      ((struct threaded_context *) tc)->bytes_mapped_limit = total_ram / 4;
-   }
+   if (tc && tc != ctx)
+      threaded_context_init_bytes_mapped_limit((struct threaded_context *)tc, 4);
 
    return tc;
 }
@@ -862,14 +860,16 @@ static void si_destroy_screen(struct pipe_screen *pscreen)
 
    simple_mtx_destroy(&sscreen->aux_context_lock);
 
-   struct u_log_context *aux_log = ((struct si_context *)sscreen->aux_context)->log;
-   if (aux_log) {
-      sscreen->aux_context->set_log_context(sscreen->aux_context, NULL);
-      u_log_context_destroy(aux_log);
-      FREE(aux_log);
-   }
+   if (sscreen->aux_context) {
+       struct u_log_context *aux_log = ((struct si_context *)sscreen->aux_context)->log;
+       if (aux_log) {
+          sscreen->aux_context->set_log_context(sscreen->aux_context, NULL);
+          u_log_context_destroy(aux_log);
+          FREE(aux_log);
+       }
 
-   sscreen->aux_context->destroy(sscreen->aux_context);
+       sscreen->aux_context->destroy(sscreen->aux_context);
+   }
 
    util_queue_destroy(&sscreen->shader_compiler_queue);
    util_queue_destroy(&sscreen->shader_compiler_queue_low_priority);
@@ -1398,6 +1398,9 @@ struct pipe_screen *radeonsi_screen_create(int fd, const struct pipe_screen_conf
 {
    drmVersionPtr version = drmGetVersion(fd);
    struct radeon_winsys *rw = NULL;
+
+   driParseConfigFiles(config->options, config->options_info, 0, "radeonsi",
+                       NULL, NULL, NULL, 0, NULL, 0);
 
    switch (version->version_major) {
    case 2:

@@ -82,8 +82,6 @@ static void
 print_register(nir_register *reg, print_state *state)
 {
    FILE *fp = state->fp;
-   if (reg->name != NULL)
-      fprintf(fp, "/* %s */ ", reg->name);
    fprintf(fp, "r%u", reg->index);
 }
 
@@ -107,8 +105,6 @@ static void
 print_ssa_def(nir_ssa_def *def, print_state *state)
 {
    FILE *fp = state->fp;
-   if (def->name != NULL)
-      fprintf(fp, "/* %s */ ", def->name);
    fprintf(fp, "%s %u ssa_%u", sizes[def->num_components], def->bit_size,
            def->index);
 }
@@ -117,8 +113,6 @@ static void
 print_ssa_use(nir_ssa_def *def, print_state *state)
 {
    FILE *fp = state->fp;
-   if (def->name != NULL)
-      fprintf(fp, "/* %s */ ", def->name);
    fprintf(fp, "ssa_%u", def->index);
 }
 
@@ -1084,8 +1078,8 @@ print_tex_instr(nir_tex_instr *instr, print_state *state)
    case nir_texop_txf_ms_fb:
       fprintf(fp, "txf_ms_fb ");
       break;
-   case nir_texop_txf_ms_mcs:
-      fprintf(fp, "txf_ms_mcs ");
+   case nir_texop_txf_ms_mcs_intel:
+      fprintf(fp, "txf_ms_mcs_intel ");
       break;
    case nir_texop_txs:
       fprintf(fp, "txs ");
@@ -1129,6 +1123,12 @@ print_tex_instr(nir_tex_instr *instr, print_state *state)
       fprintf(fp, " ");
 
       switch(instr->src[i].src_type) {
+      case nir_tex_src_backend1:
+         fprintf(fp, "(backend1)");
+         break;
+      case nir_tex_src_backend2:
+         fprintf(fp, "(backend2)");
+         break;
       case nir_tex_src_coord:
          fprintf(fp, "(coord)");
          break;
@@ -1153,8 +1153,8 @@ print_tex_instr(nir_tex_instr *instr, print_state *state)
       case nir_tex_src_ms_index:
          fprintf(fp, "(ms_index)");
          break;
-      case nir_tex_src_ms_mcs:
-         fprintf(fp, "(ms_mcs)");
+      case nir_tex_src_ms_mcs_intel:
+         fprintf(fp, "(ms_mcs_intel)");
          break;
       case nir_tex_src_ddx:
          fprintf(fp, "(ddx)");

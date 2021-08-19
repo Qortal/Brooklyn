@@ -23,6 +23,7 @@
 
 %code requires {
 #include "ir3/ir3_assembler.h"
+#include "ir3/ir3_shader.h"
 
 struct ir3 * ir3_parse(struct ir3_shader_variant *v,
 		struct ir3_kernel_info *k, FILE *f);
@@ -480,6 +481,7 @@ static void print_token(FILE *file, int type, YYSTYPE value)
 %token <tok> T_OP_SEL_F32
 %token <tok> T_OP_SAD_S16
 %token <tok> T_OP_SAD_S32
+%token <tok> T_OP_SHLG_B16
 
 /* category 4: */
 %token <tok> T_OP_RCP
@@ -800,6 +802,7 @@ cat1_movmsk:       T_OP_MOVMSK '.' T_W {
                        new_instr(OPC_MOVMSK);
                        instr->cat1.src_type = TYPE_U32;
                        instr->cat1.dst_type = TYPE_U32;
+                       instr->repeat = $3 - 1;
                    } dst_reg {
                        instr->dsts[0]->wrmask = (1 << $3) - 1;
                    }
@@ -912,6 +915,7 @@ cat3_opc:          T_OP_MAD_U16   { new_instr(OPC_MAD_U16); }
 |                  T_OP_SAD_S32   { new_instr(OPC_SAD_S32); }
 
 cat3_instr:        cat3_opc dst_reg ',' src_reg_or_const_or_rel ',' src_reg_or_const ',' src_reg_or_const_or_rel
+|                  T_OP_SHLG_B16 { new_instr(OPC_SHLG_B16); } dst_reg ',' src_reg_or_rel_or_imm ',' src_reg_or_const ',' src_reg_or_rel_or_imm
 
 cat4_opc:          T_OP_RCP       { new_instr(OPC_RCP); }
 |                  T_OP_RSQ       { new_instr(OPC_RSQ); }
@@ -1191,6 +1195,10 @@ src_reg_or_const_or_rel: src_reg_or_const
 
 src_reg_or_const_or_rel_or_imm: src_reg_or_const_or_rel
 |                  src_reg_flags immediate
+|                  immediate
+
+src_reg_or_rel_or_imm: src_reg
+|                  relative
 |                  immediate
 
 offset:            { $$ = 0; }

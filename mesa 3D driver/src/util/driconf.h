@@ -223,6 +223,9 @@
 #define DRI_CONF_FORCE_GL_VENDOR() \
    DRI_CONF_OPT_S_NODEF(force_gl_vendor, "Override GPU vendor string.")
 
+#define DRI_CONF_FORCE_GL_RENDERER() \
+   DRI_CONF_OPT_S_NODEF(force_gl_renderer, "Override GPU renderer string.")
+
 #define DRI_CONF_FORCE_COMPAT_PROFILE(def) \
    DRI_CONF_OPT_B(force_compat_profile, def, \
                   "Force an OpenGL compatibility context")
@@ -508,5 +511,13 @@
 #define DRI_CONF_RADV_DISABLE_TC_COMPAT_HTILE_GENERAL(def) \
    DRI_CONF_OPT_B(radv_disable_tc_compat_htile_general, def, \
                   "Disable TC-compat HTILE in GENERAL layout")
+
+#define DRI_CONF_RADV_DISABLE_DCC(def) \
+   DRI_CONF_OPT_B(radv_disable_dcc, def, \
+                  "Disable DCC for color images")
+
+#define DRI_CONF_RADV_REPORT_APU_AS_DGPU(def) \
+   DRI_CONF_OPT_B(radv_report_apu_as_dgpu, def, \
+                  "Report APUs as discrete GPUs instead of integrated GPUs")
 
 #endif

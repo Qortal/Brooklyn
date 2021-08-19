@@ -127,14 +127,10 @@ static const char *
 crocus_get_name(struct pipe_screen *pscreen)
 {
    struct crocus_screen *screen = (struct crocus_screen *)pscreen;
+   const struct intel_device_info *devinfo = &screen->devinfo;
    static char buf[128];
 
-   const char *name = intel_get_device_name(screen->pci_id);
-
-   if (!name)
-      name = "Intel Unknown";
-
-   snprintf(buf, sizeof(buf), "Mesa %s", name);
+   snprintf(buf, sizeof(buf), "Mesa %s", devinfo->name);
    return buf;
 }
 
@@ -210,14 +206,13 @@ crocus_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_CS_DERIVED_SYSTEM_VALUES_SUPPORTED:
    case PIPE_CAP_FENCE_SIGNAL:
    case PIPE_CAP_DEMOTE_TO_HELPER_INVOCATION:
+   case PIPE_CAP_GL_CLAMP:
       return true;
    case PIPE_CAP_INT64:
    case PIPE_CAP_INT64_DIVMOD:
    case PIPE_CAP_TGSI_BALLOT:
    case PIPE_CAP_PACKED_UNIFORMS:
       return devinfo->ver == 8;
-   case PIPE_CAP_GL_CLAMP:
-      return false;
    case PIPE_CAP_QUADS_FOLLOW_PROVOKING_VERTEX_CONVENTION:
       return devinfo->ver <= 5;
    case PIPE_CAP_TEXTURE_QUERY_LOD:
@@ -263,7 +258,8 @@ crocus_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_FBFETCH:
       return devinfo->verx10 >= 45 ? BRW_MAX_DRAW_BUFFERS : 0;
    case PIPE_CAP_MAX_DUAL_SOURCE_RENDER_TARGETS:
-      return devinfo->ver >= 6 ? 1 : 0;
+      /* in theory CL (965gm) can do this */
+      return devinfo->verx10 >= 45 ? 1 : 0;
    case PIPE_CAP_MAX_RENDER_TARGETS:
       return BRW_MAX_DRAW_BUFFERS;
    case PIPE_CAP_MAX_TEXTURE_2D_SIZE:
@@ -293,10 +289,10 @@ crocus_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
          return 420;
       else if (devinfo->ver >= 6)
          return 330;
-      return 120;
+      return 140;
    }
    case PIPE_CAP_GLSL_FEATURE_LEVEL_COMPATIBILITY:
-      return devinfo->ver < 6 ? 120 : 130;
+      return 140;
 
    case PIPE_CAP_CONSTANT_BUFFER_OFFSET_ALIGNMENT:
       /* 3DSTATE_CONSTANT_XS requires the start of UBOs to be 32B aligned */
@@ -304,14 +300,7 @@ crocus_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_MIN_MAP_BUFFER_ALIGNMENT:
       return CROCUS_MAP_BUFFER_ALIGNMENT;
    case PIPE_CAP_SHADER_BUFFER_OFFSET_ALIGNMENT:
-      /* Choose a cacheline (64 bytes) so that we can safely have the CPU and
-       * GPU writing the same SSBO on non-coherent systems (Atom CPUs).  With
-       * UBOs, the GPU never writes, so there's no problem.  For an SSBO, the
-       * GPU and the CPU can be updating disjoint regions of the buffer
-       * simultaneously and that will break if the regions overlap the same
-       * cacheline.
-       */
-      return devinfo->ver >= 7 ? 64 : 0;
+      return devinfo->ver >= 7 ? 4 : 0;
    case PIPE_CAP_MAX_SHADER_BUFFER_SIZE:
       return devinfo->ver >= 7 ? (1 << 27) : 0;
    case PIPE_CAP_TEXTURE_BUFFER_OFFSET_ALIGNMENT:
@@ -556,8 +545,7 @@ crocus_get_compute_param(struct pipe_screen *pscreen,
    struct crocus_screen *screen = (struct crocus_screen *)pscreen;
    const struct intel_device_info *devinfo = &screen->devinfo;
 
-   const unsigned max_threads = MIN2(64, devinfo->max_cs_threads);
-   const uint32_t max_invocations = 32 * max_threads;
+   const uint32_t max_invocations = 32 * devinfo->max_cs_workgroup_threads;
 
    if (devinfo->ver < 7)
       return 0;
@@ -686,25 +674,23 @@ crocus_get_default_l3_config(const struct intel_device_info *devinfo,
 }
 
 static void
-crocus_shader_debug_log(void *data, const char *fmt, ...)
+crocus_shader_debug_log(void *data, unsigned *id, const char *fmt, ...)
 {
    struct pipe_debug_callback *dbg = data;
-   unsigned id = 0;
    va_list args;
 
    if (!dbg->debug_message)
       return;
 
    va_start(args, fmt);
-   dbg->debug_message(dbg->data, &id, PIPE_DEBUG_TYPE_SHADER_INFO, fmt, args);
+   dbg->debug_message(dbg->data, id, PIPE_DEBUG_TYPE_SHADER_INFO, fmt, args);
    va_end(args);
 }
 
 static void
-crocus_shader_perf_log(void *data, const char *fmt, ...)
+crocus_shader_perf_log(void *data, unsigned *id, const char *fmt, ...)
 {
    struct pipe_debug_callback *dbg = data;
-   unsigned id = 0;
    va_list args;
    va_start(args, fmt);
 
@@ -716,7 +702,7 @@ crocus_shader_perf_log(void *data, const char *fmt, ...)
    }
 
    if (dbg->debug_message) {
-      dbg->debug_message(dbg->data, &id, PIPE_DEBUG_TYPE_PERF_INFO, fmt, args);
+      dbg->debug_message(dbg->data, id, PIPE_DEBUG_TYPE_PERF_INFO, fmt, args);
    }
 
    va_end(args);
@@ -778,6 +764,9 @@ crocus_screen_create(int fd, const struct pipe_screen_config *config)
 
    if (getenv("INTEL_NO_HW") != NULL)
       screen->no_hw = true;
+
+   driParseConfigFiles(config->options, config->options_info, 0, "crocus",
+                       NULL, NULL, NULL, 0, NULL, 0);
 
    bool bo_reuse = false;
    int bo_reuse_mode = driQueryOptioni(config->options, "bo_reuse");

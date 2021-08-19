@@ -89,36 +89,16 @@
 
 const char *const brw_vendor_string = "Intel Open Source Technology Center";
 
-static const char *
-get_bsw_model(const struct brw_screen *screen)
-{
-   switch (screen->eu_total) {
-   case 16:
-      return "405";
-   case 12:
-      return "400";
-   default:
-      return "   ";
-   }
-}
-
 const char *
 brw_get_renderer_string(const struct brw_screen *screen)
 {
    static char buf[128];
-   const char *name = intel_get_device_name(screen->deviceID);
+   const char *name = screen->devinfo.name;
 
    if (!name)
       name = "Intel Unknown";
 
    snprintf(buf, sizeof(buf), "Mesa DRI %s", name);
-
-   /* Braswell branding is funny, so we have to fix it up here */
-   if (screen->deviceID == 0x22B1) {
-      char *needle = strstr(buf, "XXX");
-      if (needle)
-         memcpy(needle, get_bsw_model(screen), 3);
-   }
 
    return buf;
 }
@@ -157,6 +137,17 @@ brw_set_background_context(struct gl_context *ctx,
     * backgroundCallable is not NULL.
     */
    backgroundCallable->setBackgroundContext(driContext->loaderPrivate);
+}
+
+static struct gl_memory_object *
+brw_new_memoryobj(struct gl_context *ctx, GLuint name)
+{
+   struct brw_memory_object *memory_object = CALLOC_STRUCT(brw_memory_object);
+   if (!memory_object)
+      return NULL;
+
+   _mesa_initialize_memory_object(ctx, &memory_object->Base, name);
+   return &memory_object->Base;
 }
 
 static void
@@ -461,6 +452,7 @@ brw_init_driver_functions(struct brw_context *brw,
 
    functions->SetBackgroundContext = brw_set_background_context;
 
+   functions->NewMemoryObject = brw_new_memoryobj;
    functions->DeleteMemoryObject = brw_delete_memoryobj;
    functions->ImportMemoryObjectFd = brw_import_memoryobj_fd;
    functions->GetDeviceUuid = brw_get_device_uuid;
@@ -856,30 +848,12 @@ static void
 brw_initialize_cs_context_constants(struct brw_context *brw)
 {
    struct gl_context *ctx = &brw->ctx;
-   const struct brw_screen *screen = brw->screen;
    struct intel_device_info *devinfo = &brw->screen->devinfo;
-
-   /* FINISHME: Do this for all platforms that the kernel supports */
-   if (devinfo->is_cherryview &&
-       screen->subslice_total > 0 && screen->eu_total > 0) {
-      /* Logical CS threads = EUs per subslice * 7 threads per EU */
-      uint32_t max_cs_threads = screen->eu_total / screen->subslice_total * 7;
-
-      /* Fuse configurations may give more threads than expected, never less. */
-      if (max_cs_threads > devinfo->max_cs_threads)
-         devinfo->max_cs_threads = max_cs_threads;
-   }
 
    /* Maximum number of scalar compute shader invocations that can be run in
     * parallel in the same subslice assuming SIMD32 dispatch.
-    *
-    * We don't advertise more than 64 threads, because we are limited to 64 by
-    * our usage of thread_width_max in the gpgpu walker command. This only
-    * currently impacts Haswell, which otherwise might be able to advertise 70
-    * threads. With SIMD32 and 64 threads, Haswell still provides twice the
-    * required the number of invocation needed for ARB_compute_shader.
     */
-   const unsigned max_threads = MIN2(64, devinfo->max_cs_threads);
+   const unsigned max_threads = devinfo->max_cs_workgroup_threads;
    const uint32_t max_invocations = 32 * max_threads;
    ctx->Const.MaxComputeWorkGroupSize[0] = max_invocations;
    ctx->Const.MaxComputeWorkGroupSize[1] = max_invocations;

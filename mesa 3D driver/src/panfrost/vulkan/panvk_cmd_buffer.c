@@ -34,13 +34,11 @@
 #include "pan_encoder.h"
 
 #include "util/rounding.h"
-#include "util/u_pack_color.h"
 #include "vk_format.h"
 
 static VkResult
 panvk_reset_cmdbuf(struct panvk_cmd_buffer *cmdbuf)
 {
-   struct panvk_device *device = cmdbuf->device;
    struct panfrost_device *pdev = &cmdbuf->device->physical_device->pdev;
 
    cmdbuf->record_result = VK_SUCCESS;
@@ -50,19 +48,15 @@ panvk_reset_cmdbuf(struct panvk_cmd_buffer *cmdbuf)
       util_dynarray_fini(&batch->jobs);
       if (!pan_is_bifrost(pdev))
          panfrost_bo_unreference(batch->tiler.ctx.midgard.polygon_list);
+
+      util_dynarray_fini(&batch->event_ops);
+
       vk_free(&cmdbuf->pool->alloc, batch);
    }
 
-   panfrost_pool_cleanup(&cmdbuf->desc_pool);
-   panfrost_pool_cleanup(&cmdbuf->tls_pool);
-   panfrost_pool_cleanup(&cmdbuf->varying_pool);
-   panfrost_pool_init(&cmdbuf->desc_pool, NULL, &device->physical_device->pdev,
-                      0, 64 * 1024, "Command buffer descriptor pool",
-                      true, true);
-   panfrost_pool_init(&cmdbuf->tls_pool, NULL, &device->physical_device->pdev,
-                      PAN_BO_INVISIBLE, 64 * 1024, "TLS pool", false, true);
-   panfrost_pool_init(&cmdbuf->varying_pool, NULL, &device->physical_device->pdev,
-                      PAN_BO_INVISIBLE, 64 * 1024, "Varyings pool", false, true);
+   panvk_pool_reset(&cmdbuf->desc_pool);
+   panvk_pool_reset(&cmdbuf->tls_pool);
+   panvk_pool_reset(&cmdbuf->varying_pool);
    cmdbuf->status = PANVK_CMD_BUFFER_STATUS_INITIAL;
 
    for (unsigned i = 0; i < MAX_BIND_POINTS; i++)
@@ -87,13 +81,27 @@ panvk_create_cmdbuf(struct panvk_device *device,
    cmdbuf->device = device;
    cmdbuf->level = level;
    cmdbuf->pool = pool;
-   panfrost_pool_init(&cmdbuf->desc_pool, NULL, &device->physical_device->pdev,
-                      0, 64 * 1024, "Command buffer descriptor pool",
-                      true, true);
-   panfrost_pool_init(&cmdbuf->tls_pool, NULL, &device->physical_device->pdev,
-                      PAN_BO_INVISIBLE, 64 * 1024, "TLS pool", false, true);
-   panfrost_pool_init(&cmdbuf->varying_pool, NULL, &device->physical_device->pdev,
-                      PAN_BO_INVISIBLE, 64 * 1024, "Varyings pool", false, true);
+
+   if (pool) {
+      list_addtail(&cmdbuf->pool_link, &pool->active_cmd_buffers);
+      cmdbuf->queue_family_index = pool->queue_family_index;
+   } else {
+      /* Init the pool_link so we can safely call list_del when we destroy
+       * the command buffer
+       */
+      list_inithead(&cmdbuf->pool_link);
+      cmdbuf->queue_family_index = PANVK_QUEUE_GENERAL;
+   }
+
+   panvk_pool_init(&cmdbuf->desc_pool, &device->physical_device->pdev,
+                   pool ? &pool->desc_bo_pool : NULL, 0, 64 * 1024,
+                   "Command buffer descriptor pool", true);
+   panvk_pool_init(&cmdbuf->tls_pool, &device->physical_device->pdev,
+                   pool ? &pool->tls_bo_pool : NULL,
+                   PAN_BO_INVISIBLE, 64 * 1024, "TLS pool", false);
+   panvk_pool_init(&cmdbuf->varying_pool, &device->physical_device->pdev,
+                   pool ? &pool->varying_bo_pool : NULL,
+                   PAN_BO_INVISIBLE, 64 * 1024, "Varyings pool", false);
    list_inithead(&cmdbuf->batches);
    cmdbuf->status = PANVK_CMD_BUFFER_STATUS_INITIAL;
    *cmdbuf_out = cmdbuf;
@@ -106,17 +114,22 @@ panvk_destroy_cmdbuf(struct panvk_cmd_buffer *cmdbuf)
    struct panfrost_device *pdev = &cmdbuf->device->physical_device->pdev;
    struct panvk_device *device = cmdbuf->device;
 
+   list_del(&cmdbuf->pool_link);
+
    list_for_each_entry_safe(struct panvk_batch, batch, &cmdbuf->batches, node) {
       list_del(&batch->node);
       util_dynarray_fini(&batch->jobs);
       if (!pan_is_bifrost(pdev))
          panfrost_bo_unreference(batch->tiler.ctx.midgard.polygon_list);
+
+      util_dynarray_fini(&batch->event_ops);
+
       vk_free(&cmdbuf->pool->alloc, batch);
    }
 
-   panfrost_pool_cleanup(&cmdbuf->desc_pool);
-   panfrost_pool_cleanup(&cmdbuf->tls_pool);
-   panfrost_pool_cleanup(&cmdbuf->varying_pool);
+   panvk_pool_cleanup(&cmdbuf->desc_pool);
+   panvk_pool_cleanup(&cmdbuf->tls_pool);
+   panvk_pool_cleanup(&cmdbuf->varying_pool);
    vk_object_free(&device->vk, NULL, cmdbuf);
 }
 
@@ -134,7 +147,19 @@ panvk_AllocateCommandBuffers(VkDevice _device,
    for (i = 0; i < pAllocateInfo->commandBufferCount; i++) {
       struct panvk_cmd_buffer *cmdbuf = NULL;
 
-      result = panvk_create_cmdbuf(device, pool, pAllocateInfo->level, &cmdbuf);
+      if (!list_is_empty(&pool->free_cmd_buffers)) {
+         cmdbuf = list_first_entry(
+            &pool->free_cmd_buffers, struct panvk_cmd_buffer, pool_link);
+
+         list_del(&cmdbuf->pool_link);
+         list_addtail(&cmdbuf->pool_link, &pool->active_cmd_buffers);
+
+         cmdbuf->level = pAllocateInfo->level;
+         vk_object_base_reset(&cmdbuf->base);
+      } else {
+         result = panvk_create_cmdbuf(device, pool, pAllocateInfo->level, &cmdbuf);
+      }
+
       if (result != VK_SUCCESS)
          goto err_free_cmd_bufs;
 
@@ -161,13 +186,21 @@ panvk_FreeCommandBuffers(VkDevice device,
    for (uint32_t i = 0; i < commandBufferCount; i++) {
       VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, pCommandBuffers[i]);
 
-      panvk_destroy_cmdbuf(cmdbuf);
+      if (cmdbuf) {
+         if (cmdbuf->pool) {
+            list_del(&cmdbuf->pool_link);
+            panvk_reset_cmdbuf(cmdbuf);
+            list_addtail(&cmdbuf->pool_link,
+                         &cmdbuf->pool->free_cmd_buffers);
+         } else
+            panvk_destroy_cmdbuf(cmdbuf);
+      }
    }
 }
 
 VkResult
 panvk_ResetCommandBuffer(VkCommandBuffer commandBuffer,
-                       VkCommandBufferResetFlags flags)
+                         VkCommandBufferResetFlags flags)
 {
    VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
 
@@ -253,10 +286,10 @@ panvk_CmdBindDescriptorSets(VkCommandBuffer commandBuffer,
          assert(dynamicOffsetCount >= set->layout->num_dynoffsets);
 
          descriptors_state->sets[idx].dynoffsets =
-            panfrost_pool_alloc_aligned(&cmdbuf->desc_pool,
-                                        ALIGN(layout->num_dynoffsets, 4) *
-                                        sizeof(*pDynamicOffsets),
-                                        16);
+            pan_pool_alloc_aligned(&cmdbuf->desc_pool.base,
+                                   ALIGN(layout->num_dynoffsets, 4) *
+                                   sizeof(*pDynamicOffsets),
+                                   16);
          memcpy(descriptors_state->sets[idx].dynoffsets.cpu,
                 pDynamicOffsets,
                 sizeof(*pDynamicOffsets) * set->layout->num_dynoffsets);
@@ -292,6 +325,9 @@ VkResult
 panvk_EndCommandBuffer(VkCommandBuffer commandBuffer)
 {
    VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
+
+   if (cmdbuf->state.batch)
+      panvk_cmd_close_batch(cmdbuf);
 
    cmdbuf->status = PANVK_CMD_BUFFER_STATUS_EXECUTABLE;
 
@@ -473,7 +509,13 @@ panvk_CreateCommandPool(VkDevice _device,
    else
       pool->alloc = device->vk.alloc;
 
+   list_inithead(&pool->active_cmd_buffers);
+   list_inithead(&pool->free_cmd_buffers);
+
    pool->queue_family_index = pCreateInfo->queueFamilyIndex;
+   panvk_bo_pool_init(&pool->desc_bo_pool);
+   panvk_bo_pool_init(&pool->varying_bo_pool);
+   panvk_bo_pool_init(&pool->tls_bo_pool);
    *pCmdPool = panvk_cmd_pool_to_handle(pool);
    return VK_SUCCESS;
 }
@@ -485,6 +527,18 @@ panvk_DestroyCommandPool(VkDevice _device,
 {
    VK_FROM_HANDLE(panvk_device, device, _device);
    VK_FROM_HANDLE(panvk_cmd_pool, pool, commandPool);
+
+   list_for_each_entry_safe(struct panvk_cmd_buffer, cmdbuf,
+                            &pool->active_cmd_buffers, pool_link)
+      panvk_destroy_cmdbuf(cmdbuf);
+
+   list_for_each_entry_safe(struct panvk_cmd_buffer, cmdbuf,
+                            &pool->free_cmd_buffers, pool_link)
+      panvk_destroy_cmdbuf(cmdbuf);
+
+   panvk_bo_pool_cleanup(&pool->desc_bo_pool);
+   panvk_bo_pool_cleanup(&pool->varying_bo_pool);
+   panvk_bo_pool_cleanup(&pool->tls_bo_pool);
    vk_object_free(&device->vk, pAllocator, pool);
 }
 
@@ -493,7 +547,17 @@ panvk_ResetCommandPool(VkDevice device,
                        VkCommandPool commandPool,
                        VkCommandPoolResetFlags flags)
 {
-   panvk_stub();
+   VK_FROM_HANDLE(panvk_cmd_pool, pool, commandPool);
+   VkResult result;
+
+   list_for_each_entry(struct panvk_cmd_buffer, cmdbuf, &pool->active_cmd_buffers,
+                       pool_link)
+   {
+      result = panvk_reset_cmdbuf(cmdbuf);
+      if (result != VK_SUCCESS)
+         return result;
+   }
+
    return VK_SUCCESS;
 }
 
@@ -502,91 +566,14 @@ panvk_TrimCommandPool(VkDevice device,
                       VkCommandPool commandPool,
                       VkCommandPoolTrimFlags flags)
 {
-   panvk_stub();
-}
+   VK_FROM_HANDLE(panvk_cmd_pool, pool, commandPool);
 
-static void
-panvk_pack_color_32(uint32_t *packed, uint32_t v)
-{
-   for (unsigned i = 0; i < 4; ++i)
-      packed[i] = v;
-}
+   if (!pool)
+      return;
 
-static void
-panvk_pack_color_64(uint32_t *packed, uint32_t lo, uint32_t hi)
-{
-   for (unsigned i = 0; i < 4; i += 2) {
-      packed[i + 0] = lo;
-      packed[i + 1] = hi;
-   }
-}
-
-void
-panvk_pack_color(struct panvk_clear_value *out,
-                 const VkClearColorValue *in,
-                 enum pipe_format format)
-{
-   const struct util_format_description *desc = util_format_description(format);
-
-   /* Alpha magicked to 1.0 if there is no alpha */
-   bool has_alpha = util_format_has_alpha(format);
-   float clear_alpha = has_alpha ? in->float32[3] : 1.0f;
-   uint32_t *packed = out->color;
-
-   if (util_format_is_rgba8_variant(desc) && desc->colorspace != UTIL_FORMAT_COLORSPACE_SRGB) {
-      panvk_pack_color_32(packed,
-                          ((uint32_t) float_to_ubyte(clear_alpha) << 24) |
-                          ((uint32_t) float_to_ubyte(in->float32[2]) << 16) |
-                          ((uint32_t) float_to_ubyte(in->float32[1]) <<  8) |
-                          ((uint32_t) float_to_ubyte(in->float32[0]) <<  0));
-   } else if (format == PIPE_FORMAT_B5G6R5_UNORM) {
-      /* First, we convert the components to R5, G6, B5 separately */
-      unsigned r5 = _mesa_roundevenf(SATURATE(in->float32[0]) * 31.0);
-      unsigned g6 = _mesa_roundevenf(SATURATE(in->float32[1]) * 63.0);
-      unsigned b5 = _mesa_roundevenf(SATURATE(in->float32[2]) * 31.0);
-
-      /* Then we pack into a sparse u32. TODO: Why these shifts? */
-      panvk_pack_color_32(packed, (b5 << 25) | (g6 << 14) | (r5 << 5));
-   } else if (format == PIPE_FORMAT_B4G4R4A4_UNORM) {
-      /* Convert to 4-bits */
-      unsigned r4 = _mesa_roundevenf(SATURATE(in->float32[0]) * 15.0);
-      unsigned g4 = _mesa_roundevenf(SATURATE(in->float32[1]) * 15.0);
-      unsigned b4 = _mesa_roundevenf(SATURATE(in->float32[2]) * 15.0);
-      unsigned a4 = _mesa_roundevenf(SATURATE(clear_alpha) * 15.0);
-
-      /* Pack on *byte* intervals */
-      panvk_pack_color_32(packed, (a4 << 28) | (b4 << 20) | (g4 << 12) | (r4 << 4));
-   } else if (format == PIPE_FORMAT_B5G5R5A1_UNORM) {
-      /* Scale as expected but shift oddly */
-      unsigned r5 = _mesa_roundevenf(SATURATE(in->float32[0]) * 31.0);
-      unsigned g5 = _mesa_roundevenf(SATURATE(in->float32[1]) * 31.0);
-      unsigned b5 = _mesa_roundevenf(SATURATE(in->float32[2]) * 31.0);
-      unsigned a1 = _mesa_roundevenf(SATURATE(clear_alpha) * 1.0);
-
-      panvk_pack_color_32(packed, (a1 << 31) | (b5 << 25) | (g5 << 15) | (r5 << 5));
-   } else {
-      /* Otherwise, it's generic subject to replication */
-
-      union util_color out = { 0 };
-      unsigned size = util_format_get_blocksize(format);
-
-      util_pack_color(in->float32, format, &out);
-
-      if (size == 1) {
-         unsigned b = out.ui[0];
-         unsigned s = b | (b << 8);
-         panvk_pack_color_32(packed, s | (s << 16));
-      } else if (size == 2)
-         panvk_pack_color_32(packed, out.ui[0] | (out.ui[0] << 16));
-      else if (size == 3 || size == 4)
-         panvk_pack_color_32(packed, out.ui[0]);
-      else if (size == 6 || size == 8)
-         panvk_pack_color_64(packed, out.ui[0], out.ui[1]);
-      else if (size == 12 || size == 16)
-         memcpy(packed, out.ui, 16);
-      else
-         unreachable("Unknown generic format size packing clear colour");
-   }
+   list_for_each_entry_safe(struct panvk_cmd_buffer, cmdbuf,
+                            &pool->free_cmd_buffers, pool_link)
+      panvk_destroy_cmdbuf(cmdbuf);
 }
 
 static void
@@ -605,7 +592,8 @@ panvk_cmd_prepare_clear_values(struct panvk_cmd_buffer *cmdbuf,
              cmdbuf->state.clear[i].stencil = in[i].depthStencil.stencil;
           }
        } else if (attachment->load_op == VK_ATTACHMENT_LOAD_OP_CLEAR) {
-          panvk_pack_color(&cmdbuf->state.clear[i], &in[i].color, fmt);
+          union pipe_color_union *col = (union pipe_color_union *) &in[i].color;
+          pan_pack_color(cmdbuf->state.clear[i].color, col, fmt, false);
        }
    }
 }
@@ -627,6 +615,7 @@ panvk_CmdBeginRenderPass2(VkCommandBuffer commandBuffer,
                                    sizeof(*cmdbuf->state.batch), 8,
                                    VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
    util_dynarray_init(&cmdbuf->state.batch->jobs, NULL);
+   util_dynarray_init(&cmdbuf->state.batch->event_ops, NULL);
    cmdbuf->state.clear = vk_zalloc(&cmdbuf->pool->alloc,
                                    sizeof(*cmdbuf->state.clear) *
                                    pRenderPassBegin->clearValueCount, 8,
@@ -656,8 +645,7 @@ panvk_cmd_prepare_fragment_job(struct panvk_cmd_buffer *cmdbuf)
 
    struct panvk_batch *batch = cmdbuf->state.batch;
    struct panfrost_ptr job_ptr =
-      panfrost_pool_alloc_aligned(&cmdbuf->desc_pool,
-                                  MALI_FRAGMENT_JOB_LENGTH, 64);
+      pan_pool_alloc_desc(&cmdbuf->desc_pool.base, FRAGMENT_JOB);
 
    panvk_emit_fragment_job(cmdbuf->device, cmdbuf->state.framebuffer,
                            cmdbuf->state.batch->fb.desc.gpu,
@@ -707,35 +695,50 @@ panvk_cmd_get_midgard_polygon_list(struct panvk_cmd_buffer *cmdbuf,
 void
 panvk_cmd_close_batch(struct panvk_cmd_buffer *cmdbuf)
 {
-   assert(cmdbuf->state.batch);
+   struct panvk_batch *batch = cmdbuf->state.batch;
 
-   if (!cmdbuf->state.batch->fragment_job &&
-       !cmdbuf->state.batch->scoreboard.first_job) {
-      vk_free(&cmdbuf->pool->alloc, cmdbuf->state.batch);
+   assert(batch);
+
+   if (!batch->fragment_job && !batch->scoreboard.first_job) {
+      if (util_dynarray_num_elements(&batch->event_ops, struct panvk_event_op) == 0) {
+         /* Content-less batch, let's drop it */
+         vk_free(&cmdbuf->pool->alloc, batch);
+      } else {
+         /* Batch has no jobs but is needed for synchronization, let's add a
+          * NULL job so the SUBMIT ioctl doesn't choke on it.
+          */
+         struct panfrost_ptr ptr = pan_pool_alloc_desc(&cmdbuf->desc_pool.base,
+                                                       JOB_HEADER);
+         util_dynarray_append(&batch->jobs, void *, ptr.cpu);
+         panfrost_add_job(&cmdbuf->desc_pool.base, &batch->scoreboard,
+                          MALI_JOB_TYPE_NULL, false, false, 0, 0,
+                          &ptr, false);
+         list_addtail(&batch->node, &cmdbuf->batches);
+      }
       cmdbuf->state.batch = NULL;
       return;
    }
 
-   const struct panfrost_device *pdev = cmdbuf->desc_pool.dev;
-   struct panvk_batch *batch = cmdbuf->state.batch;
+   struct panfrost_device *pdev = &cmdbuf->device->physical_device->pdev;
 
    list_addtail(&cmdbuf->state.batch->node, &cmdbuf->batches);
 
-   struct pan_tls_info tlsinfo = {
-      .tls.size = cmdbuf->state.pipeline->tls_size,
-      .wls.size = cmdbuf->state.pipeline->wls_size,
-   };
+   struct pan_tls_info tlsinfo = {};
+   if (cmdbuf->state.pipeline) {
+      tlsinfo.tls.size = cmdbuf->state.pipeline->tls_size;
+      tlsinfo.wls.size = cmdbuf->state.pipeline->wls_size;
+   }
 
    if (tlsinfo.tls.size) {
       tlsinfo.tls.ptr =
-         panfrost_pool_alloc_aligned(&cmdbuf->tls_pool, tlsinfo.tls.size, 4096).gpu;
+         pan_pool_alloc_aligned(&cmdbuf->tls_pool.base, tlsinfo.tls.size, 4096).gpu;
    }
 
    if (tlsinfo.wls.size) {
       unsigned wls_size =
          pan_wls_mem_size(pdev, &cmdbuf->state.compute.wg_count, tlsinfo.wls.size);
       tlsinfo.wls.ptr =
-         panfrost_pool_alloc_aligned(&cmdbuf->tls_pool, wls_size, 4096).gpu;
+         pan_pool_alloc_aligned(&cmdbuf->tls_pool.base, wls_size, 4096).gpu;
    }
 
    if ((pan_is_bifrost(pdev) || !cmdbuf->state.batch->fb.desc.cpu) &&
@@ -753,7 +756,7 @@ panvk_cmd_close_batch(struct panvk_cmd_buffer *cmdbuf)
          mali_ptr polygon_list =
             cmdbuf->state.batch->tiler.ctx.midgard.polygon_list->ptr.gpu;
          struct panfrost_ptr writeval_job =
-            panfrost_scoreboard_initialize_tiler(&cmdbuf->desc_pool,
+            panfrost_scoreboard_initialize_tiler(&cmdbuf->desc_pool.base,
                                                  &cmdbuf->state.batch->scoreboard,
                                                  polygon_list);
          if (writeval_job.cpu)
@@ -764,7 +767,6 @@ panvk_cmd_close_batch(struct panvk_cmd_buffer *cmdbuf)
          panvk_emit_fb(cmdbuf->device,
                        cmdbuf->state.batch,
                        cmdbuf->state.subpass,
-                       cmdbuf->state.pipeline,
                        cmdbuf->state.framebuffer,
                        cmdbuf->state.clear,
                        &tlsinfo, &cmdbuf->state.batch->tiler.ctx,
@@ -822,33 +824,30 @@ panvk_CmdNextSubpass(VkCommandBuffer cmd, VkSubpassContents contents)
 }
 
 
-static void
+void
 panvk_cmd_alloc_fb_desc(struct panvk_cmd_buffer *cmdbuf)
 {
-   if (!cmdbuf->state.pipeline->fs.required)
-      return;
-
    struct panvk_batch *batch = cmdbuf->state.batch;
 
    if (batch->fb.desc.gpu)
       return;
 
    const struct panvk_subpass *subpass = cmdbuf->state.subpass;
-   unsigned size = MALI_MULTI_TARGET_FRAMEBUFFER_LENGTH +
-                   (MALI_RENDER_TARGET_LENGTH * subpass->color_count) +
-                   (subpass->zs_attachment.idx != VK_ATTACHMENT_UNUSED ?
-                    MALI_ZS_CRC_EXTENSION_LENGTH : 0);
+   bool has_zs_ext = subpass->zs_attachment.idx != VK_ATTACHMENT_UNUSED;
    unsigned tags = MALI_FBD_TAG_IS_MFBD;
 
    batch->fb.info = cmdbuf->state.framebuffer;
    batch->fb.desc =
-      panfrost_pool_alloc_aligned(&cmdbuf->desc_pool, size, 64);
+      pan_pool_alloc_desc_aggregate(&cmdbuf->desc_pool.base,
+                                    PAN_DESC(MULTI_TARGET_FRAMEBUFFER),
+                                    PAN_DESC_ARRAY(has_zs_ext ? 1 : 0, ZS_CRC_EXTENSION),
+                                    PAN_DESC_ARRAY(MAX2(subpass->color_count, 1), RENDER_TARGET));
 
    /* Tag the pointer */
    batch->fb.desc.gpu |= tags;
 }
 
-static void
+void
 panvk_cmd_alloc_tls_desc(struct panvk_cmd_buffer *cmdbuf)
 {
    const struct panfrost_device *pdev =
@@ -866,8 +865,7 @@ panvk_cmd_alloc_tls_desc(struct panvk_cmd_buffer *cmdbuf)
       batch->tls.gpu &= ~63ULL;
    } else {
       batch->tls =
-         panfrost_pool_alloc_aligned(&cmdbuf->desc_pool,
-                                     MALI_LOCAL_STORAGE_LENGTH, 64);
+         pan_pool_alloc_desc(&cmdbuf->desc_pool.base, LOCAL_STORAGE);
    }
 }
 
@@ -909,7 +907,7 @@ panvk_cmd_prepare_sysvals(struct panvk_cmd_buffer *cmdbuf)
          continue;
 
       struct panfrost_ptr sysvals =
-         panfrost_pool_alloc_aligned(&cmdbuf->desc_pool, sysval_count * 16, 16);
+         pan_pool_alloc_aligned(&cmdbuf->desc_pool.base, sysval_count * 16, 16);
       union panvk_sysval_data *data = sysvals.cpu;
 
       for (unsigned s = 0; s < pipeline->sysvals[i].ids.sysval_count; s++) {
@@ -935,9 +933,9 @@ panvk_cmd_prepare_ubos(struct panvk_cmd_buffer *cmdbuf)
    panvk_cmd_prepare_sysvals(cmdbuf);
 
    struct panfrost_ptr ubos =
-      panfrost_pool_alloc_desc_array(&cmdbuf->desc_pool,
-                                     pipeline->num_ubos,
-                                     UNIFORM_BUFFER);
+      pan_pool_alloc_desc_array(&cmdbuf->desc_pool.base,
+                                pipeline->num_ubos,
+                                UNIFORM_BUFFER);
 
    panvk_emit_ubos(pipeline, desc_state, ubos.cpu);
 
@@ -960,9 +958,9 @@ panvk_cmd_prepare_textures(struct panvk_cmd_buffer *cmdbuf)
                              sizeof(struct mali_bifrost_texture_packed) :
                              sizeof(mali_ptr);
    struct panfrost_ptr textures =
-      panfrost_pool_alloc_aligned(&cmdbuf->desc_pool,
-                                  num_textures * tex_entry_size,
-                                  tex_entry_size);
+      pan_pool_alloc_aligned(&cmdbuf->desc_pool.base,
+                             num_textures * tex_entry_size,
+                             tex_entry_size);
 
    void *texture = textures.cpu;
 
@@ -993,9 +991,9 @@ panvk_cmd_prepare_samplers(struct panvk_cmd_buffer *cmdbuf)
       return;
 
    struct panfrost_ptr samplers =
-      panfrost_pool_alloc_desc_array(&cmdbuf->desc_pool,
-                                     num_samplers,
-                                     MIDGARD_SAMPLER);
+      pan_pool_alloc_desc_array(&cmdbuf->desc_pool.base,
+                                num_samplers,
+                                MIDGARD_SAMPLER);
 
    struct mali_midgard_sampler_packed *sampler = samplers.cpu;
 
@@ -1026,10 +1024,10 @@ panvk_draw_prepare_fs_rsd(struct panvk_cmd_buffer *cmdbuf,
 
    if (!cmdbuf->state.fs_rsd) {
       struct panfrost_ptr rsd =
-         panfrost_pool_alloc_desc_aggregate(&cmdbuf->desc_pool,
-                                            PAN_DESC(RENDERER_STATE),
-                                            PAN_DESC_ARRAY(pipeline->blend.state.rt_count,
-                                                           BLEND));
+         pan_pool_alloc_desc_aggregate(&cmdbuf->desc_pool.base,
+                                       PAN_DESC(RENDERER_STATE),
+                                       PAN_DESC_ARRAY(pipeline->blend.state.rt_count,
+                                                      BLEND));
 
       struct mali_renderer_state_packed rsd_dyn;
 
@@ -1067,10 +1065,9 @@ panvk_cmd_get_bifrost_tiler_context(struct panvk_cmd_buffer *cmdbuf,
       return;
 
    batch->tiler.bifrost_descs =
-      panfrost_pool_alloc_aligned(&cmdbuf->desc_pool,
-                                  MALI_BIFROST_TILER_LENGTH +
-                                  MALI_BIFROST_TILER_HEAP_LENGTH,
-                                  64);
+      pan_pool_alloc_desc_aggregate(&cmdbuf->desc_pool.base,
+                                    PAN_DESC(BIFROST_TILER),
+                                    PAN_DESC(BIFROST_TILER_HEAP));
 
    panvk_emit_bifrost_tiler_context(cmdbuf->device, width, height,
                                     &batch->tiler.bifrost_descs);
@@ -1107,13 +1104,13 @@ panvk_draw_prepare_varyings(struct panvk_cmd_buffer *cmdbuf,
    const struct panvk_pipeline *pipeline = cmdbuf->state.pipeline;
    struct panvk_varyings_info *varyings = &cmdbuf->state.varyings;
 
-   panvk_varyings_alloc(varyings, &cmdbuf->varying_pool,
+   panvk_varyings_alloc(varyings, &cmdbuf->varying_pool.base,
                         draw->vertex_count);
 
    unsigned buf_count = panvk_varyings_buf_count(cmdbuf->device, varyings);
    struct panfrost_ptr bufs =
-      panfrost_pool_alloc_desc_array(&cmdbuf->desc_pool,
-                                     buf_count, ATTRIBUTE_BUFFER);
+      pan_pool_alloc_desc_array(&cmdbuf->desc_pool.base,
+                                buf_count, ATTRIBUTE_BUFFER);
 
    panvk_emit_varying_bufs(cmdbuf->device, varyings, bufs.cpu);
    if (BITSET_TEST(varyings->active, VARYING_SLOT_POS)) {
@@ -1138,9 +1135,9 @@ panvk_draw_prepare_varyings(struct panvk_cmd_buffer *cmdbuf,
       if (!varyings->stage[s].count) continue;
 
       struct panfrost_ptr attribs =
-         panfrost_pool_alloc_desc_array(&cmdbuf->desc_pool,
-                                        varyings->stage[s].count,
-                                        ATTRIBUTE);
+         pan_pool_alloc_desc_array(&cmdbuf->desc_pool.base,
+                                   varyings->stage[s].count,
+                                   ATTRIBUTE);
 
       panvk_emit_varyings(cmdbuf->device, varyings, s, attribs.cpu);
       draw->stages[s].varyings = attribs.gpu;
@@ -1152,7 +1149,7 @@ panvk_draw_prepare_attributes(struct panvk_cmd_buffer *cmdbuf,
                               struct panvk_draw_info *draw)
 {
    /* TODO: images */
-   struct panfrost_device *pdev = cmdbuf->desc_pool.dev;
+   const struct panfrost_device *pdev = &cmdbuf->device->physical_device->pdev;
 
    if (!cmdbuf->state.pipeline->attribs.buf_count)
       return;
@@ -1166,10 +1163,8 @@ panvk_draw_prepare_attributes(struct panvk_cmd_buffer *cmdbuf,
    unsigned buf_count = cmdbuf->state.pipeline->attribs.buf_count +
                         (pan_is_bifrost(pdev) ? 1 : 0);
    struct panfrost_ptr bufs =
-      panfrost_pool_alloc_aligned(&cmdbuf->desc_pool,
-                                  buf_count * 2 *
-                                  MALI_ATTRIBUTE_BUFFER_LENGTH,
-                                  MALI_ATTRIBUTE_BUFFER_LENGTH * 2);
+      pan_pool_alloc_desc_array(&cmdbuf->desc_pool.base,
+                                buf_count * 2, ATTRIBUTE_BUFFER);
 
    panvk_emit_attrib_bufs(cmdbuf->device,
                           &cmdbuf->state.pipeline->attribs,
@@ -1178,10 +1173,9 @@ panvk_draw_prepare_attributes(struct panvk_cmd_buffer *cmdbuf,
    cmdbuf->state.vb.attrib_bufs = bufs.gpu;
 
    struct panfrost_ptr attribs =
-      panfrost_pool_alloc_aligned(&cmdbuf->desc_pool,
-                                  cmdbuf->state.pipeline->attribs.attrib_count *
-                                  MALI_ATTRIBUTE_LENGTH,
-                                  MALI_ATTRIBUTE_LENGTH);
+      pan_pool_alloc_desc_array(&cmdbuf->desc_pool.base,
+                                cmdbuf->state.pipeline->attribs.attrib_count,
+                                ATTRIBUTE);
 
    panvk_emit_attribs(cmdbuf->device, &cmdbuf->state.pipeline->attribs,
                       cmdbuf->state.vb.bufs, cmdbuf->state.vb.count,
@@ -1203,9 +1197,7 @@ panvk_draw_prepare_viewport(struct panvk_cmd_buffer *cmdbuf,
       draw->viewport = cmdbuf->state.vpd;
    } else {
       struct panfrost_ptr vp =
-         panfrost_pool_alloc_aligned(&cmdbuf->desc_pool,
-                                     MALI_VIEWPORT_LENGTH,
-                                     MALI_VIEWPORT_LENGTH);
+         pan_pool_alloc_desc(&cmdbuf->desc_pool.base, VIEWPORT);
 
       const VkViewport *viewport =
          pipeline->dynamic_state_mask & PANVK_DYNAMIC_VIEWPORT ?
@@ -1225,8 +1217,7 @@ panvk_draw_prepare_vertex_job(struct panvk_cmd_buffer *cmdbuf,
 {
    struct panvk_batch *batch = cmdbuf->state.batch;
    struct panfrost_ptr ptr =
-      panfrost_pool_alloc_aligned(&cmdbuf->desc_pool,
-                                  MALI_COMPUTE_JOB_LENGTH, 64);
+      pan_pool_alloc_desc(&cmdbuf->desc_pool.base, COMPUTE_JOB);
 
    util_dynarray_append(&batch->jobs, void *, ptr.cpu);
    draw->jobs.vertex = ptr;
@@ -1243,11 +1234,9 @@ panvk_draw_prepare_tiler_job(struct panvk_cmd_buffer *cmdbuf,
    const struct panfrost_device *pdev = &cmdbuf->device->physical_device->pdev;
    struct panvk_batch *batch = cmdbuf->state.batch;
    struct panfrost_ptr ptr =
-      panfrost_pool_alloc_aligned(&cmdbuf->desc_pool,
-                                  pan_is_bifrost(pdev) ?
-                                  MALI_BIFROST_TILER_JOB_LENGTH :
-                                  MALI_MIDGARD_TILER_JOB_LENGTH,
-                                  64);
+      pan_is_bifrost(pdev) ?
+      pan_pool_alloc_desc(&cmdbuf->desc_pool.base, BIFROST_TILER_JOB) :
+      pan_pool_alloc_desc(&cmdbuf->desc_pool.base, MIDGARD_TILER_JOB);
 
    util_dynarray_append(&batch->jobs, void *, ptr.cpu);
    draw->jobs.tiler = ptr;
@@ -1267,7 +1256,18 @@ panvk_CmdDraw(VkCommandBuffer commandBuffer,
 
    struct panvk_batch *batch = cmdbuf->state.batch;
 
-   panvk_cmd_alloc_fb_desc(cmdbuf);
+   /* There are only 16 bits in the descriptor for the job ID, make sure all
+    * the 3 (2 in Bifrost) jobs in this draw are in the same batch.
+    */
+   if (batch->scoreboard.job_index >= (UINT16_MAX - 3)) {
+      panvk_cmd_close_batch(cmdbuf);
+      panvk_cmd_open_batch(cmdbuf);
+      batch = cmdbuf->state.batch;
+   }
+
+   if (cmdbuf->state.pipeline->fs.required)
+      panvk_cmd_alloc_fb_desc(cmdbuf);
+
    panvk_cmd_alloc_tls_desc(cmdbuf);
    panvk_cmd_prepare_ubos(cmdbuf);
    panvk_cmd_prepare_textures(cmdbuf);
@@ -1301,12 +1301,12 @@ panvk_CmdDraw(VkCommandBuffer commandBuffer,
 
    const struct panvk_pipeline *pipeline = cmdbuf->state.pipeline;
    unsigned vjob_id =
-      panfrost_add_job(&cmdbuf->desc_pool, &batch->scoreboard,
+      panfrost_add_job(&cmdbuf->desc_pool.base, &batch->scoreboard,
                        MALI_JOB_TYPE_VERTEX, false, false, 0, 0,
                        &draw.jobs.vertex, false);
 
    if (pipeline->fs.required) {
-      panfrost_add_job(&cmdbuf->desc_pool, &batch->scoreboard,
+      panfrost_add_job(&cmdbuf->desc_pool.base, &batch->scoreboard,
                        MALI_JOB_TYPE_TILER, false, false, vjob_id, 0,
                        &draw.jobs.tiler, false);
    }
@@ -1428,12 +1428,79 @@ panvk_CmdPipelineBarrier(VkCommandBuffer commandBuffer,
    }
 }
 
+static void
+panvk_add_set_event_operation(struct panvk_cmd_buffer *cmdbuf,
+                              struct panvk_event *event,
+                              enum panvk_event_op_type type)
+{
+   struct panvk_event_op op = {
+      .type = type,
+      .event = event,
+   };
+
+   if (cmdbuf->state.batch == NULL) {
+      /* No open batch, let's create a new one so this operation happens in
+       * the right order.
+       */
+      panvk_cmd_open_batch(cmdbuf);
+      util_dynarray_append(&cmdbuf->state.batch->event_ops,
+                           struct panvk_event_op,
+                           op);
+      panvk_cmd_close_batch(cmdbuf);
+   } else {
+      /* Let's close the current batch so the operation executes before any
+       * future commands.
+       */
+      util_dynarray_append(&cmdbuf->state.batch->event_ops,
+                           struct panvk_event_op,
+                           op);
+      panvk_cmd_close_batch(cmdbuf);
+      panvk_cmd_open_batch(cmdbuf);
+   }
+}
+
+static void
+panvk_add_wait_event_operation(struct panvk_cmd_buffer *cmdbuf,
+                               struct panvk_event *event)
+{
+   struct panvk_event_op op = {
+      .type = PANVK_EVENT_OP_WAIT,
+      .event = event,
+   };
+
+   if (cmdbuf->state.batch == NULL) {
+      /* No open batch, let's create a new one and have it wait for this event. */
+      panvk_cmd_open_batch(cmdbuf);
+      util_dynarray_append(&cmdbuf->state.batch->event_ops,
+                           struct panvk_event_op,
+                           op);
+   } else {
+      /* Let's close the current batch so any future commands wait on the
+       * event signal operation.
+       */
+      if (cmdbuf->state.batch->fragment_job ||
+          cmdbuf->state.batch->scoreboard.first_job) {
+         panvk_cmd_close_batch(cmdbuf);
+         panvk_cmd_open_batch(cmdbuf);
+      }
+      util_dynarray_append(&cmdbuf->state.batch->event_ops,
+                           struct panvk_event_op,
+                           op);
+   }
+}
+
 void
 panvk_CmdSetEvent(VkCommandBuffer commandBuffer,
                   VkEvent _event,
                   VkPipelineStageFlags stageMask)
 {
-   panvk_stub();
+   VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
+   VK_FROM_HANDLE(panvk_event, event, _event);
+
+   /* vkCmdSetEvent cannot be called inside a render pass */
+   assert(cmdbuf->state.pass == NULL);
+
+   panvk_add_set_event_operation(cmdbuf, event, PANVK_EVENT_OP_SET);
 }
 
 void
@@ -1441,7 +1508,13 @@ panvk_CmdResetEvent(VkCommandBuffer commandBuffer,
                     VkEvent _event,
                     VkPipelineStageFlags stageMask)
 {
-   panvk_stub();
+   VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
+   VK_FROM_HANDLE(panvk_event, event, _event);
+
+   /* vkCmdResetEvent cannot be called inside a render pass */
+   assert(cmdbuf->state.pass == NULL);
+
+   panvk_add_set_event_operation(cmdbuf, event, PANVK_EVENT_OP_RESET);
 }
 
 void
@@ -1457,7 +1530,14 @@ panvk_CmdWaitEvents(VkCommandBuffer commandBuffer,
                     uint32_t imageMemoryBarrierCount,
                     const VkImageMemoryBarrier *pImageMemoryBarriers)
 {
-   panvk_stub();
+   VK_FROM_HANDLE(panvk_cmd_buffer, cmdbuf, commandBuffer);
+
+   assert(eventCount > 0);
+
+   for (uint32_t i = 0; i < eventCount; i++) {
+      VK_FROM_HANDLE(panvk_event, event, pEvents[i]);
+      panvk_add_wait_event_operation(cmdbuf, event);
+   }
 }
 
 void

@@ -241,7 +241,7 @@ static void dump_const_imm(FILE *fp, uint32_t imm)
 }
 
 static void
-dump_pc_imm(FILE *fp, uint64_t imm, enum bi_constmod mod, bool high32)
+dump_pc_imm(FILE *fp, uint64_t imm, unsigned branch_offset, enum bi_constmod mod, bool high32)
 {
         if (mod == BI_CONSTMOD_PC_HI && !high32) {
                 dump_const_imm(fp, imm);
@@ -276,7 +276,8 @@ dump_pc_imm(FILE *fp, uint64_t imm, enum bi_constmod mod, bool high32)
                 unreachable("Invalid PC modifier");
         }
 
-        fprintf(fp, "(pc + %" PRId64 ")", offs);
+        assert((offs & 15) == 0);
+        fprintf(fp, "clause_%" PRId64, branch_offset + (offs / 16));
 
         if (mod == BI_CONSTMOD_PC_LO && high32)
                 fprintf(fp, " >> 32");
@@ -301,7 +302,7 @@ const_fau_to_idx(unsigned fau_value)
         return map[fau_value];
 }
 
-static void dump_fau_src(FILE *fp, struct bifrost_regs srcs, struct bi_constants *consts, bool high32)
+static void dump_fau_src(FILE *fp, struct bifrost_regs srcs, unsigned branch_offset, struct bi_constants *consts, bool high32)
 {
         if (srcs.fau_idx & 0x80) {
                 unsigned uniform = (srcs.fau_idx & 0x7f);
@@ -311,7 +312,7 @@ static void dump_fau_src(FILE *fp, struct bifrost_regs srcs, struct bi_constants
                 uint64_t imm = consts->raw[idx];
                 imm |= (srcs.fau_idx & 0xf);
                 if (consts->mods[idx] != BI_CONSTMOD_NONE)
-                        dump_pc_imm(fp, imm, consts->mods[idx], high32);
+                        dump_pc_imm(fp, imm, branch_offset, consts->mods[idx], high32);
                 else if (high32)
                         dump_const_imm(fp, imm >> 32);
                 else
@@ -362,7 +363,7 @@ static void dump_fau_src(FILE *fp, struct bifrost_regs srcs, struct bi_constants
 }
 
 void
-dump_src(FILE *fp, unsigned src, struct bifrost_regs srcs, struct bi_constants *consts, bool isFMA)
+dump_src(FILE *fp, unsigned src, struct bifrost_regs srcs, unsigned branch_offset, struct bi_constants *consts, bool isFMA)
 {
         switch (src) {
         case 0:
@@ -381,10 +382,10 @@ dump_src(FILE *fp, unsigned src, struct bifrost_regs srcs, struct bi_constants *
                         fprintf(fp, "t"); // i.e. the output of FMA this cycle
                 break;
         case 4:
-                dump_fau_src(fp, srcs, consts, false);
+                dump_fau_src(fp, srcs, branch_offset, consts, false);
                 break;
         case 5:
-                dump_fau_src(fp, srcs, consts, true);
+                dump_fau_src(fp, srcs, branch_offset, consts, true);
                 break;
         case 6:
                 fprintf(fp, "t0");
@@ -438,7 +439,7 @@ decode_M(enum bi_constmod *mod, unsigned M1, unsigned M2, bool single)
         }
 }
 
-static bool dump_clause(FILE *fp, uint32_t *words, unsigned *size, unsigned offset, bool verbose)
+static void dump_clause(FILE *fp, uint32_t *words, unsigned *size, unsigned offset, bool verbose)
 {
         // State for a decoded clause
         struct bifrost_alu_inst instrs[8] = {};
@@ -446,7 +447,6 @@ static bool dump_clause(FILE *fp, uint32_t *words, unsigned *size, unsigned offs
         unsigned num_instrs = 0;
         unsigned num_consts = 0;
         uint64_t header_bits = 0;
-        bool stopbit = false;
 
         unsigned i;
         for (i = 0; ; i++, words += 4) {
@@ -647,8 +647,6 @@ static bool dump_clause(FILE *fp, uint32_t *words, unsigned *size, unsigned offs
         struct bifrost_header header;
         memcpy((char *) &header, (char *) &header_bits, sizeof(struct bifrost_header));
         dump_header(fp, header, verbose);
-        if (header.flow_control == BIFROST_FLOW_END)
-                stopbit = true;
 
         fprintf(fp, "{\n");
         for (i = 0; i < num_instrs; i++) {
@@ -686,7 +684,7 @@ static bool dump_clause(FILE *fp, uint32_t *words, unsigned *size, unsigned offs
         }
 
         fprintf(fp, "\n");
-        return stopbit;
+        return;
 }
 
 void disassemble_bifrost(FILE *fp, uint8_t *code, size_t size, bool verbose)
@@ -696,11 +694,15 @@ void disassemble_bifrost(FILE *fp, uint8_t *code, size_t size, bool verbose)
         // used for displaying branch targets
         unsigned offset = 0;
         while (words != words_end) {
-                fprintf(fp, "clause_%d:\n", offset);
-                unsigned size;
-
-                if (dump_clause(fp, words, &size, offset, verbose))
+                /* Shaders have zero bytes at the end for padding; stop
+                 * disassembling when we hit them. */
+                if (*words == 0)
                         break;
+
+                fprintf(fp, "clause_%d:\n", offset);
+
+                unsigned size;
+                dump_clause(fp, words, &size, offset, verbose);
 
                 words += size * 4;
                 offset += size;

@@ -6,10 +6,10 @@ traces:
     expectations:
       - device: gl-virgl
         checksum: 26080879ac8eb63c2c5da3de5fc732f4
-  - path: glmark2/jellyfish.rdc
+  - path: glmark2/jellyfish.trace
     expectations:
       - device: gl-virgl
-        checksum: ebaa1e2d04d7dfe5a91499510722c46e
+        checksum: 91dbe94735a132aeb192ae5c618ddc06
   - path: glxgears/glxgears-2.trace
     expectations:
       - device: gl-virgl
@@ -17,144 +17,143 @@ traces:
   - path: gputest/furmark.trace
     expectations:
       - device: gl-virgl
-        checksum: 248ee9534a1f333b479e599646f56f63
+        checksum: 87ffd45be95f2d55f82325c86ce32f20
   - path: gputest/pixmark-piano.trace
     expectations:
       - device: gl-virgl
-        checksum: 3bb42312c7d7d694f7e186b480e16314
+        checksum: 8293e59b818715ddf1c23e9f60b17851
   - path: gputest/triangle.trace
     expectations:
       - device: gl-virgl
-        checksum: c8848dec77ee0c55292417f54c0a1a49
+        checksum: 848436d1a2448bdc76fd6220382d8606
   - path: humus/Portals.trace
     expectations:
       - device: gl-virgl
-        checksum: 80e88e6be47138c18370d84c6426544f
+        checksum: 6d78eed6749f01cc5625dec0ad129c66
   - path: 0ad/0ad.trace
     expectations:
       - device: gl-virgl
-        checksum: b244fb65c77f5cca2c49bb256874e132
-  - path: glmark2/buffer-columns=200:interleave=false:update-dispersion=0.9:update-fraction=0.5:update-method=map.rdc
+        checksum: 03145ecd597dca6aaf5e113b99687278
+  - path: glmark2/buffer:update-fraction=0.5:update-dispersion=0.9:columns=200:update-method=map:interleave=false.trace
     expectations:
       - device: gl-virgl
-        checksum: 7194a135b454ab0a44da54b1b4318573
-  - path: glmark2/buffer-columns=200:interleave=false:update-dispersion=0.9:update-fraction=0.5:update-method=subdata.rdc
+        checksum: 0a44720bfe9cce13c52299a3125b2aae
+  - path: glmark2/buffer:update-fraction=0.5:update-dispersion=0.9:columns=200:update-method=subdata:interleave=false.trace
     expectations:
       - device: gl-virgl
-        checksum: b28fafe3844e83854ac66526ec3c6f7b
-  - path: glmark2/buffer-columns=200:interleave=true:update-dispersion=0.9:update-fraction=0.5:update-method=map.rdc
+        checksum: c109416afbc0db4ba466d5a453b8a6dc
+  - path: glmark2/buffer:update-fraction=0.5:update-dispersion=0.9:columns=200:update-method=map:interleave=true.trace
     expectations:
       - device: gl-virgl
-        checksum: be20e9586750d29d8e24f418a2ddd6b3
-  - path: glmark2/bump-bump-render=height.rdc
+        checksum: 1c0551f10a5dc9358f3fb9bb9f059883
+  - path: glmark2/bump:bump-render=height.trace
     expectations:
       - device: gl-virgl
-        checksum: 44b19dbaeb169b37957ad7e36655c82b
-  - path: glmark2/bump-bump-render=high-poly.rdc
+        checksum: 4d5211dfb0fd82a1a1dbb498dc2e5b8b
+  - path: glmark2/bump:bump-render=high-poly.trace
     expectations:
       - device: gl-virgl
-        checksum: b8fbdcf5b27b6f0a80a483f97aa8f95b
-  - path: glmark2/bump-bump-render=normals.rdc
+        checksum: 4b4d4a4b7bb1341bbd0299c7eb3a6ac9
+  - path: glmark2/bump:bump-render=normals.trace
     expectations:
       - device: gl-virgl
-        checksum: 3217bb7c1ab99631d6c8079c39900cd8
-  - path: glmark2/conditionals-fragment-steps=0:vertex-steps=0.rdc
+        checksum: 832e5baf289b27dd84a665f1c85f57c2
+  - path: glmark2/conditionals:vertex-steps=0:fragment-steps=0.trace
     expectations:
       - device: gl-virgl
-        checksum: 37076f5d551f1650457d6200c148a6d5
-  - path: glmark2/conditionals-fragment-steps=5:vertex-steps=0.rdc
+        checksum: b78f28d97b675fcc7649cced3930650a
+  - path: glmark2/conditionals:vertex-steps=0:fragment-steps=5.trace
     expectations:
       - device: gl-virgl
-        checksum: 74d437bbeaea401d9f3c91d03090150a
-  - path: glmark2/conditionals-fragment-steps=0:vertex-steps=5.rdc
+        checksum: d0782a516f06a6dddac4f1e1249f41e7
+  - path: glmark2/conditionals:vertex-steps=5:fragment-steps=0.trace
     expectations:
       - device: gl-virgl
-        checksum: a0054a7c565400d41a581e43ad2725fa
-  - path: glmark2/desktop-effect=shadow:windows=4.rdc
+        checksum: 1ae280a9c6cae495f2d272516a52167e
+  - path: glmark2/desktop:windows=4:effect=shadow.trace
     expectations:
       - device: gl-virgl
-        checksum: 4a954ef5ff1405a92ff73532de063667
-  - path: glmark2/effect2d-kernel=0,1,0;1,-4,1;0,1,0.rdc
+        checksum: f5312a6270ed394b5fcbe66d590f4e49
+  - path: glmark2/effect2d:kernel=0,1,0;1,-4,1;0,1,0;.trace
     expectations:
       - device: gl-virgl
-        checksum: 78c21e2eb2487ac1765b80134d0030d5
-  - path: glmark2/effect2d-kernel=1,1,1,1,1;1,1,1,1,1;1,1,1,1,1;.rdc
+        checksum: 25d3b5d18a64a86fc812872987f4f5e7
+  - path: glmark2/effect2d:kernel=1,1,1,1,1;1,1,1,1,1;1,1,1,1,1;.trace
     expectations:
       - device: gl-virgl
-        checksum: cf71e5d389dfdae7472382c53b49eaef
-  - path: glmark2/function-fragment-complexity=low:fragment-steps=5.rdc
+        checksum: b80963dae6ecf40c83bfb16943ef1011
+  - path: glmark2/function:fragment-steps=5:fragment-complexity=low.trace
     expectations:
       - device: gl-virgl
-        checksum: 60edf075423cda8bd5ccbec780a7f779
-  - path: glmark2/function-fragment-complexity=medium:fragment-steps=5.rdc
+        checksum: da10cb29cab30c5c068e722b5da7c2e5
+  - path: glmark2/function:fragment-steps=5:fragment-complexity=medium.trace
     expectations:
       - device: gl-virgl
-        checksum: 09589fc148b17961d52036aa6c958cfb
-  - path: glmark2/glmark2-build-use-vbo-false.rdc
+        checksum: 8e40504d9f2ead8c0d02604291bff1b6
+  - path: glmark2/build:use-vbo=false.trace
     expectations:
       - device: gl-virgl
-        checksum: c49a46075f148048f56c31189ee8ca96
-  - path: glmark2/glmark2-build-use-vbo-true.rdc
+        checksum: 024fc485e1f33461313c956ab1b73bdf
+  - path: glmark2/build:use-vbo=true.trace
     expectations:
       - device: gl-virgl
-        checksum: e6006b74fb1de84037a352546a9074d9
-  - path: glmark2/ideas-speed=duration.rdc
+        checksum: 48c45d16cd410a71aea1a12a73e257d3
+  - path: glmark2/ideas:speed=10000.trace
     expectations:
       - device: gl-virgl
-        checksum: 978804553ca90e629b4772e8c3ba6c15
-  - path: glmark2/loop-fragment-loop=false:fragment-steps=5:vertex-steps=5.rdc
+        checksum: db78cfb035213e31e1435b637b1a8f19
+  - path: glmark2/loop:vertex-steps=5:fragment-steps=5:fragment-loop=false.trace
     expectations:
       - device: gl-virgl
-        checksum: 69553b77c1bfd05b686fc6de4c9d73b9
-  - path: glmark2/loop-fragment-steps=5:fragment-uniform=false:vertex-steps=5.rdc
+        checksum: 7fee2e864e015353ace431d51d41bb22
+  - path: glmark2/loop:vertex-steps=5:fragment-steps=5:fragment-uniform=false.trace
     expectations:
       - device: gl-virgl
-        checksum: 6ccbe24948193e4a375ad97cad3a1b91
-  - path: glmark2/loop-fragment-steps=5:fragment-uniform=true:vertex-steps=5.rdc
+        checksum: c87127a5c3256c1fe7c79f7931b8f9df
+  - path: glmark2/loop:vertex-steps=5:fragment-steps=5:fragment-uniform=true.trace
     expectations:
       - device: gl-virgl
-        checksum: b01a0e5d01184b689738f50a89d932e6
-  - path: glmark2/pulsar-light=false:quads=5:texture=false.rdc
+        checksum: 5fec1f728bda86891db4243130546187
+  - path: glmark2/pulsar:quads=5:texture=false:light=false.trace
     expectations:
       - device: gl-virgl
-        checksum: 9b794af6415f6983b8748e63a1026d23
-  - path: glmark2/refract.rdc
+        checksum: 3e0e6675fb65e00f9128138ff08c2634
+  - path: glmark2/refract.trace
     expectations:
       - device: gl-virgl
-        checksum: 8ffd396d27f55fdfa7b730741f2f3013
-  - path: glmark2/shading-shading=blinn-phong-inf.rdc
+        checksum: b77f24a0651ef93e1c4253042ad9c9fa
+  - path: glmark2/shading:shading=blinn-phong-inf.trace
     expectations:
       - device: gl-virgl
-        checksum: a5b3b5224cb036266ebc2a94bb74d730
-  - path: glmark2/shading-shading=cel.rdc
+        checksum: 36b07dad759ca65e52f1abf1667e7ca8
+  - path: glmark2/shading:shading=cel.trace
     expectations:
       - device: gl-virgl
-        checksum: f9476eb0aa80026b7baa364b3ecc7c1c
-  - path: glmark2/shading-shading=gouraud.rdc
+        checksum: cb41cf2531a06d65f6e4f442ab62ae8d
+  - path: glmark2/shading:shading=gouraud.trace
     expectations:
       - device: gl-virgl
-        checksum: 9a17b566c63683eb20753752f1b8c226
-  - path: glmark2/shading-shading=phong.rdc
+        checksum: 3e5469d5038d7cc94ef3549ce9d8c385
+  - path: glmark2/shading:shading=phong.trace
     expectations:
       - device: gl-virgl
-        checksum: 7495d0ca6d9866e4a61ea1187e7db6cd
-  - path: glmark2/shadow.rdc
+        checksum: e40abcbb4cfbbbfb499d4b0e6d668f41
+  - path: glmark2/shadow.trace
     expectations:
       - device: gl-virgl
-        checksum: c3b1a34d324c2c1fb03dbfa78a447d9f
-# Crash
-#  - path: glmark2/texture-texture-filter=linear.rdc
-#    expectations:
-#      - device: gl-virgl
-#        checksum: 7705bcf747ce1431db32f299fb81df63
-  - path: glmark2/texture-texture-filter=mipmap.rdc
+        checksum: 2bb7290f8559ff93305c0e29f3d671e1
+  - path: glmark2/texture:texture-filter=linear.trace
     expectations:
       - device: gl-virgl
-        checksum: afedbd8f7ad8d379bcd392406d95ff30
-  - path: glmark2/texture-texture-filter=nearest.rdc
+        checksum: 8a91e4a0d3bb6c797b81ea36e7dac837
+  - path: glmark2/texture:texture-filter=mipmap.trace
     expectations:
       - device: gl-virgl
-        checksum: 769d6bdceb598e216ac39951f6881b67
+        checksum: b29190a2f339f0fafb3a20100f58e79e
+  - path: glmark2/texture:texture-filter=nearest.trace
+    expectations:
+      - device: gl-virgl
+        checksum: 1ae652bdebd1188ab912a800a4c37166
   - path: glxgears/glxgears.trace
     expectations:
       - device: gl-virgl
@@ -167,7 +166,7 @@ traces:
   - path: gputest/pixmark-julia-fp32.trace
     expectations:
       - device: gl-virgl
-        checksum: dcf806be38c0b4c42ff85c98564177f9
+        checksum: dd78a9f15834d0def6c07be648240d85
 # Crash
 # - path: gputest/pixmark-julia-fp64.trace
 #   expectations:
@@ -176,11 +175,11 @@ traces:
   - path: gputest/pixmark-volplosion.trace
     expectations:
       - device: gl-virgl
-        checksum: 922842c426150dc19a69c95181fda8b2
+        checksum: 592f35e418490990ea88e19c90cf1205
   - path: gputest/plot3d.trace
     expectations:
       - device: gl-virgl
-        checksum: 09e49ca9a988fe86c8b26f2a73d5bc08
+        checksum: 0ebf993380210d9e5138f1057ddaa7ab
 # Crash
 #  - path: gputest/tessmark.trace
 #    expectations:
@@ -189,27 +188,28 @@ traces:
   - path: humus/AmbientAperture.trace
     expectations:
       - device: gl-virgl
-        checksum: ff490e36a763608e1ed3fa041216a378
+        checksum: d5635a3660405651a572b5efc6107827
   - path: humus/CelShading.trace
     expectations:
       - device: gl-virgl
-        checksum: da817304110f4fb7fdbcdf3f83fe184d
+        checksum: 7d56b6ec4a1cf30406bceb9fe3e4d5c8
   - path: humus/DynamicBranching3.trace
     expectations:
+      # speckling present on the ground that isn't there on other drivers.
       - device: gl-virgl
-        checksum: 82c6b38f49b6a5d26d00ee64cf6e3fa6
+        checksum: 45f7f54972d196c173763f77082393bb
   - path: humus/HDR.trace
     expectations:
       - device: gl-virgl
-        checksum: 40cae3617b7fe872939125ee574b50f0
+        checksum: c04b8feeb0d41763db0c636373d3ba4e
   - path: humus/RaytracedShadows.trace
     expectations:
       - device: gl-virgl
-        checksum: 0e1096159db72b650d43f134c3ccaf79
+        checksum: a0d3b811a34033465441776d7115462c
   - path: humus/VolumetricFogging2.trace
     expectations:
       - device: gl-virgl
-        checksum: a596785521a96162204ac266d5496c23
+        checksum: 6260e5d1e7e6fc050d48e6a1790c6117
 # Crash
 #  - path: itoral-gl-terrain-demo/demo.trace
 #    expectations:
@@ -218,14 +218,14 @@ traces:
   - path: neverball/neverball.trace
     expectations:
       - device: gl-virgl
-        checksum: 6936cde5edab2b3fd02115ef36015cde
+        checksum: 4ad035fd572792648c82903e0c3b87ed
 # Crash
 #  - path: pathfinder/canvas_moire.trace
 #    expectations:
 #      - device: gl-virgl
 #        checksum: 0e32ca8fc815a7250f38a07faeafb21b
 # Crash
-#  - path: pathfinder/canvas_text.trace
+#  - path: pathfinder/canvas_text_v2.trace
 #    expectations:
 #      - device: gl-virgl
 #        checksum: 74129b650bd3ca806ff2dd46813ba6e6
@@ -237,7 +237,7 @@ traces:
   - path: supertuxkart/supertuxkart-mansion-egl-gles.trace
     expectations:
       - device: gl-virgl
-        checksum: 7e478a9cca2686531370e91ece6b3afc
+        checksum: 0e93531dfb9d18941904ff1f49581ea0
 # Sometimes crashes
 #  - path: xonotic/xonotic-keybench-high.trace
 #    expectations:
@@ -246,12 +246,12 @@ traces:
   - path: valve/counterstrike.trace
     expectations:
       - device: gl-virgl
-        checksum: c63da1fbaec101dba5224ca1f52ec429
-  - path: valve/counterstrike-source.trace
-    expectations:
-      - device: gl-virgl
-        checksum: 4c19f6060ff0fe0055678c48e1e77282
-# Piglit times-out when trying to run this one
+        checksum: 7f3ae17190d74da032d9a463c738404a
+# Piglit times-out when trying to run these two
+#  - path: valve/counterstrike-source.trace
+#    expectations:
+#      - device: gl-virgl
+#        checksum: 4c19f6060ff0fe0055678c48e1e77282
 #  - path: valve/half-life-2.trace
 #    expectations:
 #      - device: gl-virgl
@@ -259,7 +259,7 @@ traces:
   - path: valve/portal-2.trace
     expectations:
       - device: gl-virgl
-        checksum: 41ab89c4174004360d63c2fd7dd81ff4
+        checksum: adf249c3d2ee204ef6583641f70816db
 # Piglit crashes when trying to run this one
 #  - path: supertuxkart/supertuxkart-antediluvian-abyss.rdc
 #    expectations:

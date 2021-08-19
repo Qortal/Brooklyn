@@ -2472,14 +2472,13 @@ set_max_gl_versions(struct brw_screen *screen)
 }
 
 static void
-shader_debug_log_mesa(void *data, const char *fmt, ...)
+shader_debug_log_mesa(void *data, unsigned *msg_id, const char *fmt, ...)
 {
    struct brw_context *brw = (struct brw_context *)data;
    va_list args;
 
    va_start(args, fmt);
-   GLuint msg_id = 0;
-   _mesa_gl_vdebugf(&brw->ctx, &msg_id,
+   _mesa_gl_vdebugf(&brw->ctx, msg_id,
                     MESA_DEBUG_SOURCE_SHADER_COMPILER,
                     MESA_DEBUG_TYPE_OTHER,
                     MESA_DEBUG_SEVERITY_NOTIFICATION, fmt, args);
@@ -2487,7 +2486,7 @@ shader_debug_log_mesa(void *data, const char *fmt, ...)
 }
 
 static void
-shader_perf_log_mesa(void *data, const char *fmt, ...)
+shader_perf_log_mesa(void *data, unsigned *msg_id, const char *fmt, ...)
 {
    struct brw_context *brw = (struct brw_context *)data;
 
@@ -2502,8 +2501,7 @@ shader_perf_log_mesa(void *data, const char *fmt, ...)
    }
 
    if (brw->perf_debug) {
-      GLuint msg_id = 0;
-      _mesa_gl_vdebugf(&brw->ctx, &msg_id,
+      _mesa_gl_vdebugf(&brw->ctx, msg_id,
                        MESA_DEBUG_SOURCE_SHADER_COMPILER,
                        MESA_DEBUG_TYPE_PERFORMANCE,
                        MESA_DEBUG_SEVERITY_MEDIUM, fmt, args);
@@ -2545,7 +2543,7 @@ __DRIconfig **brw_init_screen(__DRIscreen *dri_screen)
 
    driParseOptionInfo(&options, brw_driconf, ARRAY_SIZE(brw_driconf));
    driParseConfigFiles(&screen->optionCache, &options, dri_screen->myNum,
-                       "i965", NULL, NULL, 0, NULL, 0);
+                       "i965", NULL, NULL, NULL, 0, NULL, 0);
    driDestroyOptionCache(&options);
 
    screen->driScrnPriv = dri_screen;
@@ -2618,7 +2616,6 @@ __DRIconfig **brw_init_screen(__DRIscreen *dri_screen)
 
    /* GENs prior to 8 do not support EU/Subslice info */
    screen->subslice_total = intel_device_info_subslice_total(devinfo);
-   screen->eu_total = intel_device_info_eu_total(devinfo);
 
    /* Gfx7-7.5 kernel requirements / command parser saga:
     *

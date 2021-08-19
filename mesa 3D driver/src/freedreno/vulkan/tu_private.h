@@ -194,7 +194,7 @@ struct tu_physical_device
 
    struct tu_instance *instance;
 
-   char name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
+   const char *name;
    uint8_t driver_uuid[VK_UUID_SIZE];
    uint8_t device_uuid[VK_UUID_SIZE];
    uint8_t cache_uuid[VK_UUID_SIZE];
@@ -204,11 +204,13 @@ struct tu_physical_device
    int local_fd;
    int master_fd;
 
-   unsigned gpu_id;
    uint32_t gmem_size;
    uint64_t gmem_base;
+   uint32_t ccu_offset_gmem;
+   uint32_t ccu_offset_bypass;
 
-   struct freedreno_dev_info info;
+   struct fd_dev_id dev_id;
+   const struct fd_dev_info *info;
 
    int msm_major_version;
    int msm_minor_version;
@@ -232,6 +234,8 @@ enum tu_debug_flags
    TU_DEBUG_NOMULTIPOS = 1 << 7,
    TU_DEBUG_NOLRZ = 1 << 8,
    TU_DEBUG_PERFC = 1 << 9,
+   TU_DEBUG_FLUSHALL = 1 << 10,
+   TU_DEBUG_SYNCDRAW = 1 << 11,
 };
 
 struct tu_instance
@@ -313,9 +317,11 @@ struct tu_bo
 };
 
 enum global_shader {
-   GLOBAL_SH_VS,
+   GLOBAL_SH_VS_BLIT,
+   GLOBAL_SH_VS_CLEAR,
    GLOBAL_SH_FS_BLIT,
    GLOBAL_SH_FS_BLIT_ZSCALE,
+   GLOBAL_SH_FS_COPY_MS,
    GLOBAL_SH_FS_CLEAR0,
    GLOBAL_SH_FS_CLEAR_MAX = GLOBAL_SH_FS_CLEAR0 + MAX_RTS,
    GLOBAL_SH_COUNT,
@@ -324,11 +330,13 @@ enum global_shader {
 #define TU_BORDER_COLOR_COUNT 4096
 #define TU_BORDER_COLOR_BUILTIN 6
 
+#define TU_BLIT_SHADER_SIZE 1024
+
 /* This struct defines the layout of the global_bo */
 struct tu6_global
 {
-   /* clear/blit shaders, all <= 16 instrs (16 instr = 1 instrlen unit) */
-   instr_t shaders[GLOBAL_SH_COUNT][16];
+   /* clear/blit shaders */
+   uint32_t shaders[TU_BLIT_SHADER_SIZE];
 
    uint32_t seqno_dummy;          /* dummy seqno for CP_EVENT_WRITE */
    uint32_t _pad0;
@@ -351,8 +359,6 @@ struct tu6_global
 };
 #define gb_offset(member) offsetof(struct tu6_global, member)
 #define global_iova(cmd, member) ((cmd)->device->global_bo.iova + gb_offset(member))
-
-void tu_init_clear_blit_shaders(struct tu6_global *global);
 
 /* extra space in vsc draw/prim streams */
 #define VSC_PAD 0x40
@@ -387,6 +393,9 @@ struct tu_device
 
    struct tu_bo global_bo;
 
+   struct ir3_shader_variant *global_shaders[GLOBAL_SH_COUNT];
+   uint64_t global_shader_va[GLOBAL_SH_COUNT];
+
    uint32_t vsc_draw_strm_pitch;
    uint32_t vsc_prim_strm_pitch;
    BITSET_DECLARE(custom_border_color, TU_BORDER_COLOR_COUNT);
@@ -417,6 +426,10 @@ struct tu_device
    } gralloc_type;
 #endif
 };
+
+void tu_init_clear_blit_shaders(struct tu_device *dev);
+
+void tu_destroy_clear_blit_shaders(struct tu_device *dev);
 
 VkResult _tu_device_set_lost(struct tu_device *device,
                              const char *msg, ...) PRINTFLIKE(2, 3);
@@ -489,15 +502,18 @@ enum tu_dynamic_state
    TU_DYNAMIC_STATE_RB_DEPTH_CNTL,
    TU_DYNAMIC_STATE_RB_STENCIL_CNTL,
    TU_DYNAMIC_STATE_VB_STRIDE,
+   TU_DYNAMIC_STATE_RASTERIZER_DISCARD,
    TU_DYNAMIC_STATE_COUNT,
    /* no associated draw state: */
    TU_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY = TU_DYNAMIC_STATE_COUNT,
+   TU_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE,
    /* re-use the line width enum as it uses GRAS_SU_CNTL: */
    TU_DYNAMIC_STATE_GRAS_SU_CNTL = VK_DYNAMIC_STATE_LINE_WIDTH,
 };
 
 enum tu_draw_state_group_id
 {
+   TU_DRAW_STATE_PROGRAM_CONFIG,
    TU_DRAW_STATE_PROGRAM,
    TU_DRAW_STATE_PROGRAM_BINNING,
    TU_DRAW_STATE_TESS,
@@ -623,6 +639,7 @@ struct tu_descriptor_pool
    uint8_t *host_memory_base;
    uint8_t *host_memory_ptr;
    uint8_t *host_memory_end;
+   uint8_t *host_bo;
 
    uint32_t entry_count;
    uint32_t max_entry_count;
@@ -709,8 +726,9 @@ enum tu_cmd_dirty_bits
    TU_CMD_DIRTY_SHADER_CONSTS = BIT(7),
    TU_CMD_DIRTY_LRZ = BIT(8),
    TU_CMD_DIRTY_VS_PARAMS = BIT(9),
+   TU_CMD_DIRTY_RASTERIZER_DISCARD = BIT(10),
    /* all draw states were disabled and need to be re-enabled: */
-   TU_CMD_DIRTY_DRAW_STATE = BIT(10)
+   TU_CMD_DIRTY_DRAW_STATE = BIT(11)
 };
 
 /* There are only three cache domains we have to care about: the CCU, or
@@ -924,7 +942,9 @@ struct tu_cmd_state
    uint32_t dynamic_stencil_ref;
 
    uint32_t gras_su_cntl, rb_depth_cntl, rb_stencil_cntl;
+   uint32_t pc_raster_cntl, vpc_unknown_9107;
    enum pc_di_primtype primtype;
+   bool primitive_restart_enable;
 
    /* saved states to re-emit in TU_CMD_DIRTY_DRAW_STATE case */
    struct tu_draw_state dynamic_state[TU_DYNAMIC_STATE_COUNT];
@@ -961,12 +981,11 @@ struct tu_cmd_state
    const struct tu_framebuffer *framebuffer;
    VkRect2D render_area;
 
-   struct tu_cs_entry tile_store_ib;
-
    bool xfb_used;
    bool has_tess;
    bool has_subpass_predication;
    bool predication_active;
+   bool disable_gmem;
 
    struct tu_lrz_state lrz;
 
@@ -1020,6 +1039,7 @@ struct tu_cmd_buffer
 
    struct tu_cs cs;
    struct tu_cs draw_cs;
+   struct tu_cs tile_store_cs;
    struct tu_cs draw_epilogue_cs;
    struct tu_cs sub_cs;
 
@@ -1147,6 +1167,8 @@ struct tu_pipeline
    uint32_t gras_su_cntl, gras_su_cntl_mask;
    uint32_t rb_depth_cntl, rb_depth_cntl_mask;
    uint32_t rb_stencil_cntl, rb_stencil_cntl_mask;
+   uint32_t pc_raster_cntl, pc_raster_cntl_mask;
+   uint32_t vpc_unknown_9107, vpc_unknown_9107_mask;
    uint32_t stencil_wrmask;
 
    bool rb_depth_cntl_disable;
@@ -1159,6 +1181,7 @@ struct tu_pipeline
 
    struct
    {
+      struct tu_draw_state config_state;
       struct tu_draw_state state;
       struct tu_draw_state binning_state;
 
@@ -1189,6 +1212,7 @@ struct tu_pipeline
    struct
    {
       uint32_t local_size[3];
+      uint32_t subgroup_size;
    } compute;
 
    bool provoking_vertex_last;
@@ -1224,6 +1248,11 @@ void tu6_emit_window_scissor(struct tu_cs *cs, uint32_t x1, uint32_t y1, uint32_
 
 void tu6_emit_window_offset(struct tu_cs *cs, uint32_t x1, uint32_t y1);
 
+void tu_disable_draw_states(struct tu_cmd_buffer *cmd, struct tu_cs *cs);
+
+void tu6_apply_depth_bounds_workaround(struct tu_device *device,
+                                       uint32_t *rb_depth_cntl);
+
 struct tu_pvtmem_config {
    uint64_t iova;
    uint32_t per_fiber_size;
@@ -1234,9 +1263,14 @@ struct tu_pvtmem_config {
 void
 tu6_emit_xs_config(struct tu_cs *cs,
                    gl_shader_stage stage,
-                   const struct ir3_shader_variant *xs,
-                   const struct tu_pvtmem_config *pvtmem,
-                   uint64_t binary_iova);
+                   const struct ir3_shader_variant *xs);
+
+void
+tu6_emit_xs(struct tu_cs *cs,
+            gl_shader_stage stage,
+            const struct ir3_shader_variant *xs,
+            const struct tu_pvtmem_config *pvtmem,
+            uint64_t binary_iova);
 
 void
 tu6_emit_vpc(struct tu_cs *cs,
@@ -1245,8 +1279,7 @@ tu6_emit_vpc(struct tu_cs *cs,
              const struct ir3_shader_variant *ds,
              const struct ir3_shader_variant *gs,
              const struct ir3_shader_variant *fs,
-             uint32_t patch_control_points,
-             bool vshs_workgroup);
+             uint32_t patch_control_points);
 
 void
 tu6_emit_fs_inputs(struct tu_cs *cs, const struct ir3_shader_variant *fs);
@@ -1459,8 +1492,8 @@ tu_image_view_init(struct tu_image_view *iview,
                    bool limited_z24s8);
 
 bool
-ubwc_possible(VkFormat format, VkImageType type, VkImageUsageFlags usage, VkImageUsageFlags stencil_usage, bool limited_z24s8,
-              VkSampleCountFlagBits samples);
+ubwc_possible(VkFormat format, VkImageType type, VkImageUsageFlags usage, VkImageUsageFlags stencil_usage,
+              const struct fd_dev_info *info, VkSampleCountFlagBits samples);
 
 struct tu_buffer_view
 {
@@ -1521,6 +1554,12 @@ struct tu_subpass_barrier {
 struct tu_subpass_attachment
 {
    uint32_t attachment;
+
+   /* For input attachments, true if it needs to be patched to refer to GMEM
+    * in GMEM mode. This is false if it hasn't already been written as an
+    * attachment.
+    */
+   bool patch_input_gmem;
 };
 
 struct tu_subpass
@@ -1529,6 +1568,13 @@ struct tu_subpass
    uint32_t color_count;
    uint32_t resolve_count;
    bool resolve_depth_stencil;
+
+   /* True if there is any feedback loop at all. */
+   bool feedback;
+
+   /* True if we must invalidate UCHE thanks to a feedback loop. */
+   bool feedback_invalidate;
+
    struct tu_subpass_attachment *input_attachments;
    struct tu_subpass_attachment *color_attachments;
    struct tu_subpass_attachment *resolve_attachments;

@@ -793,6 +793,9 @@ v3d_screen_create(int fd, const struct pipe_screen_config *config,
         if (!v3d_get_device_info(screen->fd, &screen->devinfo, &v3d_ioctl))
                 goto fail;
 
+        driParseConfigFiles(config->options, config->options_info, 0, "v3d",
+                            NULL, NULL, NULL, 0, NULL, 0);
+
         /* We have to driCheckOption for the simulator mode to not assertion
          * fail on not having our XML config.
          */
@@ -806,6 +809,7 @@ v3d_screen_create(int fd, const struct pipe_screen_config *config,
         screen->has_csd = v3d_has_feature(screen, DRM_V3D_PARAM_SUPPORTS_CSD);
         screen->has_cache_flush =
                 v3d_has_feature(screen, DRM_V3D_PARAM_SUPPORTS_CACHE_FLUSH);
+        screen->has_perfmon = v3d_has_feature(screen, DRM_V3D_PARAM_SUPPORTS_PERFMON);
 
         v3d_fence_init(screen);
 
@@ -822,6 +826,11 @@ v3d_screen_create(int fd, const struct pipe_screen_config *config,
         pscreen->query_dmabuf_modifiers = v3d_screen_query_dmabuf_modifiers;
         pscreen->is_dmabuf_modifier_supported =
                 v3d_screen_is_dmabuf_modifier_supported;
+
+        if (screen->has_perfmon) {
+                pscreen->get_driver_query_group_info = v3d_get_driver_query_group_info;
+                pscreen->get_driver_query_info = v3d_get_driver_query_info;
+        }
 
         return pscreen;
 

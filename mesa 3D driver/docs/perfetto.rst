@@ -40,6 +40,9 @@ The exact supported features vary per driver:
    * - Intel
      - ``gpu.counters.i915``
      -
+   * - Panfrost
+     - ``gpu.counters.panfrost``
+     -
 
 Run
 ---
@@ -80,8 +83,7 @@ To capture a trace with perfetto you need to take the following steps:
 Driver Specifics
 ~~~~~~~~~~~~~~~~
 
-Below is driver specific information/instructions for the PPS
-provider.
+Below is driver specific information/instructions for the PPS producer.
 
 Freedreno / Turnip
 ^^^^^^^^^^^^^^^^^^
@@ -111,6 +113,29 @@ Another option to enable access wide data without root permissions would be runn
    sudo sysctl dev.i915.perf_stream_paranoid=0
 
 Alternatively using the ``CAP_PERFMON`` permission on the binary should work too.
+
+Panfrost
+^^^^^^^^
+
+The Panfrost PPS driver uses unstable ioctls that behave correctly on
+kernel version `5.4.23+ <https://lwn.net/Articles/813601/>`__ and
+`5.5.7+ <https://lwn.net/Articles/813600/>`__.
+
+To run the producer, follow these two simple steps:
+
+1. Enable Panfrost unstable ioctls via kernel parameter:
+
+   .. code-block:: console
+
+      modprobe panfrost unstable_ioctls=1
+
+   Alternatively you could add ``panfrost.unstable_ioctls=1`` to your kernel command line, or ``echo 1 > /sys/module/panfrost/parameters/unstable_ioctls``.
+
+2. Run the producer:
+
+   .. code-block:: console
+
+      ./build/pps-producer
 
 Troubleshooting
 ---------------

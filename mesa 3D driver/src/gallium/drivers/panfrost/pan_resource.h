@@ -26,15 +26,14 @@
 #ifndef PAN_RESOURCE_H
 #define PAN_RESOURCE_H
 
-#include <midgard_pack.h>
 #include "pan_screen.h"
-#include "pan_pool.h"
 #include "pan_minmax_cache.h"
 #include "pan_texture.h"
 #include "drm-uapi/drm.h"
 #include "util/u_range.h"
 
 #define LAYOUT_CONVERT_THRESHOLD 8
+#define PAN_MAX_BATCHES 32
 
 struct panfrost_resource {
         struct pipe_resource base;
@@ -47,6 +46,11 @@ struct panfrost_resource {
                         BITSET_WORD *data;
                 } tile_map;
         } damage;
+
+        struct {
+                struct panfrost_batch *writer;
+                BITSET_DECLARE(users, PAN_MAX_BATCHES);
+        } track;
 
         struct renderonly_scanout *scanout;
 
@@ -109,6 +113,8 @@ panfrost_get_afbc_pointers(struct panfrost_resource *rsrc,
 
 void panfrost_resource_screen_init(struct pipe_screen *screen);
 
+void panfrost_resource_screen_destroy(struct pipe_screen *screen);
+
 void panfrost_resource_context_init(struct pipe_context *pctx);
 
 /* Blitting */
@@ -152,6 +158,6 @@ panfrost_translate_texture_dimension(enum pipe_texture_target t) {
 void
 pan_resource_modifier_convert(struct panfrost_context *ctx,
                               struct panfrost_resource *rsrc,
-                              uint64_t modifier);
+                              uint64_t modifier, const char *reason);
 
 #endif /* PAN_RESOURCE_H */

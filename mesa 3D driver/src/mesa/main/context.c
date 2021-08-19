@@ -1205,7 +1205,6 @@ _mesa_initialize_context(struct gl_context *ctx,
    }
 
    ctx->FirstTimeCurrent = GL_TRUE;
-   ctx->_PrimitiveIDIsUnused = true;
 
    return GL_TRUE;
 
@@ -1608,7 +1607,6 @@ _mesa_make_current( struct gl_context *newCtx,
    }
 
    if (curCtx &&
-       (curCtx->WinSysDrawBuffer || curCtx->WinSysReadBuffer) &&
        /* make sure this context is valid for flushing */
        curCtx != newCtx &&
        curCtx->Const.ContextReleaseBehavior ==

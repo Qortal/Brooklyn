@@ -165,11 +165,13 @@ enum {
 
 #define IRIS_ALL_STAGE_DIRTY_FOR_RENDER (~IRIS_ALL_STAGE_DIRTY_FOR_COMPUTE)
 
-#define IRIS_ALL_STAGE_DIRTY_BINDINGS (IRIS_STAGE_DIRTY_BINDINGS_VS  | \
-                                       IRIS_STAGE_DIRTY_BINDINGS_TCS | \
-                                       IRIS_STAGE_DIRTY_BINDINGS_TES | \
-                                       IRIS_STAGE_DIRTY_BINDINGS_GS  | \
-                                       IRIS_STAGE_DIRTY_BINDINGS_FS  | \
+#define IRIS_ALL_STAGE_DIRTY_BINDINGS_FOR_RENDER (IRIS_STAGE_DIRTY_BINDINGS_VS  | \
+                                                  IRIS_STAGE_DIRTY_BINDINGS_TCS | \
+                                                  IRIS_STAGE_DIRTY_BINDINGS_TES | \
+                                                  IRIS_STAGE_DIRTY_BINDINGS_GS  | \
+                                                  IRIS_STAGE_DIRTY_BINDINGS_FS)
+
+#define IRIS_ALL_STAGE_DIRTY_BINDINGS (IRIS_ALL_STAGE_DIRTY_BINDINGS_FOR_RENDER | \
                                        IRIS_STAGE_DIRTY_BINDINGS_CS)
 
 /**
@@ -200,10 +202,15 @@ struct iris_base_prog_key {
    unsigned program_string_id;
 };
 
+/**
+ * Note, we need to take care to have padding explicitly declared
+ * for key since we will directly memcmp the whole struct.
+ */
 struct iris_vue_prog_key {
    struct iris_base_prog_key base;
 
    unsigned nr_userclip_plane_consts:4;
+   unsigned padding:28;
 };
 
 struct iris_vs_prog_key {
@@ -369,6 +376,13 @@ enum iris_predicate_state {
  * See iris_compiled_shader, which represents a compiled shader variant.
  */
 struct iris_uncompiled_shader {
+   struct pipe_reference ref;
+
+   /**
+    * NIR for the shader.
+    *
+    * Even for shaders that originate as TGSI, this pointer will be non-NULL.
+    */
    struct nir_shader *nir;
 
    struct pipe_stream_output_info stream_output;
@@ -403,6 +417,9 @@ struct iris_uncompiled_shader {
 
    /** Lock for the variants list */
    simple_mtx_t lock;
+
+   /** For parallel shader compiles */
+   struct util_queue_fence ready;
 };
 
 enum iris_surface_group {
@@ -450,6 +467,18 @@ struct iris_compiled_shader {
 
    /** Key for this variant (but not for BLORP programs) */
    union iris_any_prog_key key;
+
+   /**
+    * Is the variant fully compiled and ready?
+    *
+    * Variants are added to \c iris_uncompiled_shader::variants before
+    * compilation actually occurs.  This signals that compilation has
+    * completed.
+    */
+   struct util_queue_fence ready;
+
+   /** Variant is ready, but compilation failed. */
+   bool compilation_failed;
 
    /** Reference to the uploaded assembly. */
    struct iris_state_ref assembly;
@@ -916,10 +945,11 @@ void iris_disk_cache_store(struct disk_cache *cache,
                            const struct iris_compiled_shader *shader,
                            const void *prog_key,
                            uint32_t prog_key_size);
-struct iris_compiled_shader *
+bool
 iris_disk_cache_retrieve(struct iris_screen *screen,
                          struct u_upload_mgr *uploader,
                          struct iris_uncompiled_shader *ish,
+                         struct iris_compiled_shader *shader,
                          const void *prog_key,
                          uint32_t prog_key_size);
 
@@ -931,22 +961,52 @@ struct iris_compiled_shader *iris_find_cached_shader(struct iris_context *ice,
                                                      enum iris_program_cache_id,
                                                      uint32_t key_size,
                                                      const void *key);
-struct iris_compiled_shader *iris_upload_shader(struct iris_screen *screen,
-                                                struct iris_uncompiled_shader *,
-                                                struct hash_table *driver_ht,
-                                                struct u_upload_mgr *uploader,
-                                                enum iris_program_cache_id,
-                                                uint32_t key_size,
-                                                const void *key,
-                                                const void *assembly,
-                                                struct brw_stage_prog_data *,
-                                                uint32_t *streamout,
-                                                enum brw_param_builtin *sysv,
-                                                unsigned num_system_values,
-                                                unsigned kernel_input_size,
-                                                unsigned num_cbufs,
-                                                const struct iris_binding_table *bt);
+
+struct iris_compiled_shader *iris_create_shader_variant(const struct iris_screen *,
+                                                        void *mem_ctx,
+                                                        enum iris_program_cache_id cache_id,
+                                                        uint32_t key_size,
+                                                        const void *key);
+
+void iris_finalize_program(struct iris_compiled_shader *shader,
+                           struct brw_stage_prog_data *prog_data,
+                           uint32_t *streamout,
+                           enum brw_param_builtin *system_values,
+                           unsigned num_system_values,
+                           unsigned kernel_input_size,
+                           unsigned num_cbufs,
+                           const struct iris_binding_table *bt);
+
+void iris_upload_shader(struct iris_screen *screen,
+                        struct iris_uncompiled_shader *,
+                        struct iris_compiled_shader *,
+                        struct hash_table *driver_ht,
+                        struct u_upload_mgr *uploader,
+                        enum iris_program_cache_id,
+                        uint32_t key_size,
+                        const void *key,
+                        const void *assembly);
 void iris_delete_shader_variant(struct iris_compiled_shader *shader);
+
+void iris_destroy_shader_state(struct pipe_context *ctx, void *state);
+
+static inline void
+iris_uncompiled_shader_reference(struct pipe_context *ctx,
+                                 struct iris_uncompiled_shader **dst,
+                                 struct iris_uncompiled_shader *src)
+{
+   if (*dst == src)
+      return;
+
+   struct iris_uncompiled_shader *old_dst = *dst;
+
+   if (pipe_reference(old_dst != NULL ? &old_dst->ref : NULL,
+                      src != NULL ? &src->ref : NULL)) {
+      iris_destroy_shader_state(ctx, *dst);
+   }
+
+   *dst = src;
+}
 
 static inline void
 iris_shader_variant_reference(struct iris_compiled_shader **dst,

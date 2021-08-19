@@ -2257,7 +2257,7 @@ static bool si_is_format_supported(struct pipe_screen *screen, enum pipe_format 
       /* Chips with 1 RB don't increment occlusion queries at 16x MSAA sample rate,
        * so don't expose 16 samples there.
        */
-      const unsigned max_eqaa_samples = sscreen->info.max_render_backends == 1 ? 8 : 16;
+      const unsigned max_eqaa_samples = util_bitcount(sscreen->info.enabled_rb_mask) <= 1 ? 8 : 16;
       const unsigned max_samples = 8;
 
       /* MSAA support without framebuffer attachments. */
@@ -5291,65 +5291,6 @@ void si_init_cs_preamble_state(struct si_context *sctx, bool uses_reg_shadowing)
       cu_mask_ps = u_bit_consecutive(0, sscreen->info.min_good_cu_per_sa);
 
    if (sctx->chip_class >= GFX7) {
-      /* Compute LATE_ALLOC_VS.LIMIT. */
-      unsigned num_cu_per_sh = sscreen->info.min_good_cu_per_sa;
-      unsigned late_alloc_wave64 = 0; /* The limit is per SA. */
-      unsigned cu_mask_vs = 0xffff;
-      unsigned cu_mask_gs = 0xffff;
-
-      if (sctx->chip_class >= GFX10) {
-         /* For Wave32, the hw will launch twice the number of late
-          * alloc waves, so 1 == 2x wave32.
-          */
-         if (!sscreen->info.use_late_alloc) {
-            late_alloc_wave64 = 0;
-         } else if (num_cu_per_sh <= 6) {
-            late_alloc_wave64 = num_cu_per_sh - 2;
-         } else {
-            late_alloc_wave64 = (num_cu_per_sh - 2) * 4;
-
-            /* Gfx10: CU2 & CU3 must be disabled to prevent a hw deadlock.
-             * Others: CU1 must be disabled to prevent a hw deadlock.
-             *
-             * The deadlock is caused by late alloc, which usually increases
-             * performance.
-             */
-            cu_mask_vs &= sctx->chip_class == GFX10 ? ~BITFIELD_RANGE(2, 2) :
-                                                      ~BITFIELD_RANGE(1, 1);
-
-            /* Late alloc is not used for NGG on Navi14 due to a hw bug. */
-            if (sscreen->use_ngg && sctx->family != CHIP_NAVI14)
-               cu_mask_gs = cu_mask_vs;
-         }
-      } else {
-         if (!sscreen->info.use_late_alloc) {
-            late_alloc_wave64 = 0;
-         } else if (num_cu_per_sh <= 4) {
-            /* Too few available compute units per SA. Disallowing
-             * VS to run on one CU could hurt us more than late VS
-             * allocation would help.
-             *
-             * 2 is the highest safe number that allows us to keep
-             * all CUs enabled.
-             */
-            late_alloc_wave64 = 2;
-         } else {
-            /* This is a good initial value, allowing 1 late_alloc
-             * wave per SIMD on num_cu - 2.
-             */
-            late_alloc_wave64 = (num_cu_per_sh - 2) * 4;
-         }
-
-         if (late_alloc_wave64 > 2)
-            cu_mask_vs = 0xfffe; /* 1 CU disabled */
-      }
-
-      /* VS can't execute on one CU if the limit is > 2. */
-      si_pm4_set_reg(pm4, R_00B118_SPI_SHADER_PGM_RSRC3_VS,
-                     S_00B118_CU_EN(cu_mask_vs) | S_00B118_WAVE_LIMIT(0x3F));
-      si_pm4_set_reg(pm4, R_00B11C_SPI_SHADER_LATE_ALLOC_VS, S_00B11C_LIMIT(late_alloc_wave64));
-      si_pm4_set_reg(pm4, R_00B21C_SPI_SHADER_PGM_RSRC3_GS,
-                     S_00B21C_CU_EN(cu_mask_gs) | S_00B21C_WAVE_LIMIT(0x3F));
       si_pm4_set_reg(pm4, R_00B01C_SPI_SHADER_PGM_RSRC3_PS,
                      S_00B01C_CU_EN(cu_mask_ps) | S_00B01C_WAVE_LIMIT(0x3F));
    }
@@ -5389,7 +5330,7 @@ void si_init_cs_preamble_state(struct si_context *sctx, bool uses_reg_shadowing)
       unsigned vgt_tess_distribution;
 
       vgt_tess_distribution = S_028B50_ACCUM_ISOLINE(32) | S_028B50_ACCUM_TRI(11) |
-                              S_028B50_ACCUM_QUAD(11) | S_028B50_DONUT_SPLIT(16);
+                              S_028B50_ACCUM_QUAD(11) | S_028B50_DONUT_SPLIT_GFX81(16);
 
       /* Testing with Unigine Heaven extreme tesselation yielded best results
        * with TRAP_SPLIT = 3.
@@ -5420,7 +5361,7 @@ void si_init_cs_preamble_state(struct si_context *sctx, bool uses_reg_shadowing)
 
       si_pm4_set_reg(pm4, R_028B50_VGT_TESS_DISTRIBUTION,
                      S_028B50_ACCUM_ISOLINE(40) | S_028B50_ACCUM_TRI(30) | S_028B50_ACCUM_QUAD(24) |
-                     S_028B50_DONUT_SPLIT(24) | S_028B50_TRAP_SPLIT(6));
+                     S_028B50_DONUT_SPLIT_GFX9(24) | S_028B50_TRAP_SPLIT(6));
       si_pm4_set_reg(pm4, R_028C48_PA_SC_BINNER_CNTL_1,
                      S_028C48_MAX_ALLOC_COUNT(sscreen->info.pbb_max_alloc_count - 1) |
                      S_028C48_MAX_PRIM_PER_BATCH(1023));

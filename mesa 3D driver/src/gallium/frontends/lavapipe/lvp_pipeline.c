@@ -272,12 +272,15 @@ deep_copy_graphics_create_info(void *mem_ctx,
    dst->pStages = stages;
 
    /* pVertexInputState */
-   vertex_input = ralloc(mem_ctx, VkPipelineVertexInputStateCreateInfo);
-   result = deep_copy_vertex_input_state(mem_ctx, vertex_input,
-                                         src->pVertexInputState);
-   if (result != VK_SUCCESS)
-      return result;
-   dst->pVertexInputState = vertex_input;
+   if (!dynamic_state_contains(src->pDynamicState, VK_DYNAMIC_STATE_VERTEX_INPUT_EXT)) {
+      vertex_input = ralloc(mem_ctx, VkPipelineVertexInputStateCreateInfo);
+      result = deep_copy_vertex_input_state(mem_ctx, vertex_input,
+                                            src->pVertexInputState);
+      if (result != VK_SUCCESS)
+         return result;
+      dst->pVertexInputState = vertex_input;
+   } else
+      dst->pVertexInputState = NULL;
 
    /* pInputAssemblyState */
    LVP_PIPELINE_DUP(dst->pInputAssemblyState,
@@ -296,7 +299,8 @@ deep_copy_graphics_create_info(void *mem_ctx,
    }
 
    /* pViewportState */
-   bool rasterization_disabled = src->pRasterizationState->rasterizerDiscardEnable;
+   bool rasterization_disabled = !dynamic_state_contains(src->pDynamicState, VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE_EXT) &&
+                                 src->pRasterizationState->rasterizerDiscardEnable;
    if (src->pViewportState && !rasterization_disabled) {
       VkPipelineViewportStateCreateInfo *viewport_state;
       viewport_state = ralloc(mem_ctx, VkPipelineViewportStateCreateInfo);
@@ -437,37 +441,9 @@ lvp_shader_compile_to_ir(struct lvp_pipeline *pipeline,
    assert(module->size % 4 == 0);
 
    uint32_t num_spec_entries = 0;
-   struct nir_spirv_specialization *spec_entries = NULL;
-   if (spec_info && spec_info->mapEntryCount > 0) {
-      num_spec_entries = spec_info->mapEntryCount;
-      spec_entries = calloc(num_spec_entries, sizeof(*spec_entries));
-      for (uint32_t i = 0; i < num_spec_entries; i++) {
-         VkSpecializationMapEntry entry = spec_info->pMapEntries[i];
-         const void *data =
-            (char *)spec_info->pData + entry.offset;
-         assert((const char *)((char *)data + entry.size) <=
-                (char *)spec_info->pData + spec_info->dataSize);
+   struct nir_spirv_specialization *spec_entries =
+      vk_spec_info_to_nir_spirv(spec_info, &num_spec_entries);
 
-         spec_entries[i].id = entry.constantID;
-         switch (entry.size) {
-         case 8:
-            spec_entries[i].value.u64 = *(const uint64_t *)data;
-            break;
-         case 4:
-            spec_entries[i].value.u32 = *(const uint32_t *)data;
-            break;
-         case 2:
-            spec_entries[i].value.u16 = *(const uint16_t *)data;
-            break;
-         case 1:
-            spec_entries[i].value.u8 = *(const uint8_t *)data;
-            break;
-         default:
-            assert(!"Invalid spec constant size");
-            break;
-         }
-      }
-   }
    struct lvp_device *pdevice = pipeline->device;
    const struct spirv_to_nir_options spirv_options = {
       .environment = NIR_SPIRV_VULKAN,
@@ -487,7 +463,6 @@ lvp_shader_compile_to_ir(struct lvp_pipeline *pipeline,
          .stencil_export = true,
          .post_depth_coverage = true,
          .transform_feedback = true,
-         .geometry_streams = true,
          .device_group = true,
          .draw_parameters = true,
          .shader_viewport_index_layer = true,
@@ -711,7 +686,7 @@ lvp_pipeline_compile(struct lvp_pipeline *pipeline,
                      gl_shader_stage stage)
 {
    struct lvp_device *device = pipeline->device;
-   device->physical_device->pscreen->finalize_nir(device->physical_device->pscreen, pipeline->pipeline_nir[stage], true);
+   device->physical_device->pscreen->finalize_nir(device->physical_device->pscreen, pipeline->pipeline_nir[stage]);
    if (stage == MESA_SHADER_COMPUTE) {
       struct pipe_compute_state shstate = {0};
       shstate.prog = (void *)pipeline->pipeline_nir[MESA_SHADER_COMPUTE];
@@ -803,6 +778,40 @@ lvp_graphics_pipeline_init(struct lvp_pipeline *pipeline,
                            PIPELINE_RASTERIZATION_PROVOKING_VERTEX_STATE_CREATE_INFO_EXT);
    pipeline->provoking_vertex_last = pv_state && pv_state->provokingVertexMode == VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
 
+   const VkPipelineRasterizationLineStateCreateInfoEXT *line_state =
+      vk_find_struct_const(pCreateInfo->pRasterizationState,
+                           PIPELINE_RASTERIZATION_LINE_STATE_CREATE_INFO_EXT);
+   if (line_state) {
+      /* always draw bresenham if !smooth */
+      pipeline->line_stipple_enable = line_state->stippledLineEnable;
+      pipeline->line_smooth = line_state->lineRasterizationMode == VK_LINE_RASTERIZATION_MODE_RECTANGULAR_SMOOTH_EXT;
+      pipeline->disable_multisample = line_state->lineRasterizationMode == VK_LINE_RASTERIZATION_MODE_BRESENHAM_EXT ||
+                                      line_state->lineRasterizationMode == VK_LINE_RASTERIZATION_MODE_RECTANGULAR_SMOOTH_EXT;
+      pipeline->line_rectangular = line_state->lineRasterizationMode != VK_LINE_RASTERIZATION_MODE_BRESENHAM_EXT;
+      if (pipeline->line_stipple_enable) {
+         if (!dynamic_state_contains(pipeline->graphics_create_info.pDynamicState, VK_DYNAMIC_STATE_LINE_STIPPLE_EXT)) {
+            pipeline->line_stipple_factor = line_state->lineStippleFactor - 1;
+            pipeline->line_stipple_pattern = line_state->lineStipplePattern;
+         } else {
+            pipeline->line_stipple_factor = 0;
+            pipeline->line_stipple_pattern = UINT16_MAX;
+         }
+      }
+   } else
+      pipeline->line_rectangular = true;
+
+   if (!dynamic_state_contains(pipeline->graphics_create_info.pDynamicState, VK_DYNAMIC_STATE_COLOR_WRITE_ENABLE_EXT)) {
+      const VkPipelineColorWriteCreateInfoEXT *cw_state =
+         vk_find_struct_const(pCreateInfo->pColorBlendState, PIPELINE_COLOR_WRITE_CREATE_INFO_EXT);
+      if (cw_state) {
+         for (unsigned i = 0; i < cw_state->attachmentCount; i++)
+            if (!cw_state->pColorWriteEnables[i]) {
+               VkPipelineColorBlendAttachmentState *att = (void*)&pipeline->graphics_create_info.pColorBlendState->pAttachments[i];
+               att->colorWriteMask = 0;
+            }
+      }
+   }
+
 
    for (uint32_t i = 0; i < pCreateInfo->stageCount; i++) {
       VK_FROM_HANDLE(vk_shader_module, module,
@@ -831,6 +840,9 @@ lvp_graphics_pipeline_init(struct lvp_pipeline *pipeline,
       if (!domain_origin_state || domain_origin_state->domainOrigin == VK_TESSELLATION_DOMAIN_ORIGIN_UPPER_LEFT)
          pipeline->pipeline_nir[MESA_SHADER_TESS_EVAL]->info.tess.ccw = !pipeline->pipeline_nir[MESA_SHADER_TESS_EVAL]->info.tess.ccw;
    }
+
+   pipeline->gs_output_lines = pipeline->pipeline_nir[MESA_SHADER_GEOMETRY] &&
+                               pipeline->pipeline_nir[MESA_SHADER_GEOMETRY]->info.gs.output_primitive == GL_LINES;
 
 
    bool has_fragment_shader = false;

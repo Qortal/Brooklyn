@@ -176,6 +176,12 @@ fd6_draw_vbo(struct fd_context *ctx, const struct pipe_draw_info *info,
       struct shader_info *ds_info = ir3_get_shader_info(emit.key.ds);
       emit.key.key.tessellation = ir3_tess_mode(ds_info->tess.primitive_mode);
       ctx->gen_dirty |= BIT(FD6_GROUP_PRIMITIVE_PARAMS);
+
+      struct shader_info *fs_info = ir3_get_shader_info(emit.key.fs);
+      emit.key.key.tcs_store_primid =
+         BITSET_TEST(ds_info->system_values_read, SYSTEM_VALUE_PRIMITIVE_ID) ||
+         (gs_info && BITSET_TEST(gs_info->system_values_read, SYSTEM_VALUE_PRIMITIVE_ID)) ||
+         (fs_info && (fs_info->inputs_read & (1ull << VARYING_SLOT_PRIMITIVE_ID)));
    }
 
    if (emit.key.gs) {
@@ -380,8 +386,7 @@ fd6_clear_lrz(struct fd_batch *batch, struct fd_resource *zsbuf, double depth)
 
    OUT_WFI5(ring);
 
-   OUT_REG(ring,
-           A6XX_RB_CCU_CNTL(.offset = screen->info.a6xx.ccu_offset_bypass));
+   OUT_REG(ring, A6XX_RB_CCU_CNTL(.color_offset = screen->ccu_offset_bypass));
 
    OUT_REG(ring,
            A6XX_HLSQ_INVALIDATE_CMD(.vs_state = true, .hs_state = true,
@@ -458,7 +463,7 @@ fd6_clear_lrz(struct fd_batch *batch, struct fd_resource *zsbuf, double depth)
    OUT_WFI5(ring);
 
    OUT_PKT4(ring, REG_A6XX_RB_UNKNOWN_8E04, 1);
-   OUT_RING(ring, screen->info.a6xx.magic.RB_UNKNOWN_8E04_blit);
+   OUT_RING(ring, screen->info->a6xx.magic.RB_UNKNOWN_8E04_blit);
 
    OUT_PKT7(ring, CP_BLIT, 1);
    OUT_RING(ring, CP_BLIT_0_OP(BLIT_OP_SCALE));

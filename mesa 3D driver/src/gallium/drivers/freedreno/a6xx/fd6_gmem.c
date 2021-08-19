@@ -335,6 +335,7 @@ update_render_cntl(struct fd_batch *batch, struct pipe_framebuffer_state *pfb,
                    bool binning)
 {
    struct fd_ringbuffer *ring = batch->gmem;
+   struct fd_screen *screen = batch->ctx->screen;
    uint32_t cntl = 0;
    bool depth_ubwc_enable = false;
    uint32_t mrts_ubwc_enable = 0;
@@ -359,13 +360,17 @@ update_render_cntl(struct fd_batch *batch, struct pipe_framebuffer_state *pfb,
          mrts_ubwc_enable |= 1 << i;
    }
 
-   cntl |= A6XX_RB_RENDER_CNTL_UNK4;
+   cntl |= A6XX_RB_RENDER_CNTL_CCUSINGLECACHELINESIZE(2);
    if (binning)
       cntl |= A6XX_RB_RENDER_CNTL_BINNING;
 
-   OUT_PKT7(ring, CP_REG_WRITE, 3);
-   OUT_RING(ring, CP_REG_WRITE_0_TRACKER(TRACK_RENDER_CNTL));
-   OUT_RING(ring, REG_A6XX_RB_RENDER_CNTL);
+   if (screen->info->a6xx.has_cp_reg_write) {
+      OUT_PKT7(ring, CP_REG_WRITE, 3);
+      OUT_RING(ring, CP_REG_WRITE_0_TRACKER(TRACK_RENDER_CNTL));
+      OUT_RING(ring, REG_A6XX_RB_RENDER_CNTL);
+   } else {
+      OUT_PKT4(ring, REG_A6XX_RB_RENDER_CNTL, 1);
+   }
    OUT_RING(ring, cntl |
                      COND(depth_ubwc_enable, A6XX_RB_RENDER_CNTL_FLAG_DEPTH) |
                      A6XX_RB_RENDER_CNTL_FLAG_MRTS(mrts_ubwc_enable));
@@ -684,15 +689,15 @@ emit_binning_pass(struct fd_batch *batch) assert_dt
 
    OUT_WFI5(ring);
 
-   OUT_REG(ring, A6XX_VFD_MODE_CNTL(.binning_pass = true));
+   OUT_REG(ring, A6XX_VFD_MODE_CNTL(.render_mode = BINNING_PASS));
 
    update_vsc_pipe(batch);
 
-   OUT_PKT4(ring, REG_A6XX_PC_UNKNOWN_9805, 1);
-   OUT_RING(ring, screen->info.a6xx.magic.PC_UNKNOWN_9805);
+   OUT_PKT4(ring, REG_A6XX_PC_POWER_CNTL, 1);
+   OUT_RING(ring, screen->info->a6xx.magic.PC_POWER_CNTL);
 
-   OUT_PKT4(ring, REG_A6XX_SP_UNKNOWN_A0F8, 1);
-   OUT_RING(ring, screen->info.a6xx.magic.SP_UNKNOWN_A0F8);
+   OUT_PKT4(ring, REG_A6XX_VFD_POWER_CNTL, 1);
+   OUT_RING(ring, screen->info->a6xx.magic.PC_POWER_CNTL);
 
    OUT_PKT7(ring, CP_EVENT_WRITE, 1);
    OUT_RING(ring, UNK_2C);
@@ -740,9 +745,9 @@ emit_binning_pass(struct fd_batch *batch) assert_dt
    OUT_WFI5(ring);
 
    OUT_REG(ring,
-           A6XX_RB_CCU_CNTL(.offset = screen->info.a6xx.ccu_offset_gmem,
+           A6XX_RB_CCU_CNTL(.color_offset = screen->ccu_offset_gmem,
                             .gmem = true,
-                            .unk2 = screen->info.a6xx.ccu_cntl_gmem_unk2));
+                            .unk2 = screen->info->a6xx.ccu_cntl_gmem_unk2));
 }
 
 static void
@@ -808,9 +813,9 @@ fd6_emit_tile_init(struct fd_batch *batch) assert_dt
 
    fd_wfi(batch, ring);
    OUT_REG(ring,
-           A6XX_RB_CCU_CNTL(.offset = screen->info.a6xx.ccu_offset_gmem,
+           A6XX_RB_CCU_CNTL(.color_offset = screen->ccu_offset_gmem,
                             .gmem = true,
-                            .unk2 = screen->info.a6xx.ccu_cntl_gmem_unk2));
+                            .unk2 = screen->info->a6xx.ccu_cntl_gmem_unk2));
 
    emit_zs(ring, pfb->zsbuf, batch->gmem_state);
    emit_mrt(ring, pfb, batch->gmem_state);
@@ -822,7 +827,8 @@ fd6_emit_tile_init(struct fd_batch *batch) assert_dt
       OUT_REG(ring, A6XX_VPC_SO_DISABLE(false));
 
       set_bin_size(ring, gmem->bin_w, gmem->bin_h,
-                   A6XX_RB_BIN_CONTROL_BINNING_PASS | 0x6000000);
+                   A6XX_RB_BIN_CONTROL_RENDER_MODE(BINNING_PASS) |
+                   A6XX_RB_BIN_CONTROL_LRZ_FEEDBACK_ZMODE_MASK(0x6));
       update_render_cntl(batch, pfb, true);
       emit_binning_pass(batch);
 
@@ -835,20 +841,19 @@ fd6_emit_tile_init(struct fd_batch *batch) assert_dt
        * the reset of these cmds:
        */
 
-      // NOTE a618 not setting .USE_VIZ .. from a quick check on a630, it
-      // does not appear that this bit changes much (ie. it isn't actually
-      // .USE_VIZ like previous gens)
+      // NOTE a618 not setting .FORCE_LRZ_WRITE_DIS .. 
       set_bin_size(ring, gmem->bin_w, gmem->bin_h,
-                   A6XX_RB_BIN_CONTROL_USE_VIZ | 0x6000000);
+                   A6XX_RB_BIN_CONTROL_FORCE_LRZ_WRITE_DIS |
+                   A6XX_RB_BIN_CONTROL_LRZ_FEEDBACK_ZMODE_MASK(0x6));
 
       OUT_PKT4(ring, REG_A6XX_VFD_MODE_CNTL, 1);
       OUT_RING(ring, 0x0);
 
-      OUT_PKT4(ring, REG_A6XX_PC_UNKNOWN_9805, 1);
-      OUT_RING(ring, screen->info.a6xx.magic.PC_UNKNOWN_9805);
+      OUT_PKT4(ring, REG_A6XX_PC_POWER_CNTL, 1);
+      OUT_RING(ring, screen->info->a6xx.magic.PC_POWER_CNTL);
 
-      OUT_PKT4(ring, REG_A6XX_SP_UNKNOWN_A0F8, 1);
-      OUT_RING(ring, screen->info.a6xx.magic.SP_UNKNOWN_A0F8);
+      OUT_PKT4(ring, REG_A6XX_VFD_POWER_CNTL, 1);
+      OUT_RING(ring, screen->info->a6xx.magic.PC_POWER_CNTL);
 
       OUT_PKT7(ring, CP_SKIP_IB2_ENABLE_GLOBAL, 1);
       OUT_RING(ring, 0x1);
@@ -1585,8 +1590,7 @@ fd6_emit_sysmem_prep(struct fd_batch *batch) assert_dt
    fd6_cache_inv(batch, ring);
 
    fd_wfi(batch, ring);
-   OUT_REG(ring,
-           A6XX_RB_CCU_CNTL(.offset = screen->info.a6xx.ccu_offset_bypass));
+   OUT_REG(ring, A6XX_RB_CCU_CNTL(.color_offset = screen->ccu_offset_bypass));
 
    /* enable stream-out, with sysmem there is only one pass: */
    OUT_REG(ring, A6XX_VPC_SO_DISABLE(false));

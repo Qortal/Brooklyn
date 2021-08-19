@@ -1,9 +1,8 @@
-zink supports GL_ARB_texture_filter_minmax, GL_ARB_shader_clock
-VK_EXT_provoking_vertex on RADV.
-VK_EXT_extended_dynamic_state2 on RADV.
-VK_EXT_global_priority_query on RADV.
-VK_EXT_physical_device_drm on RADV.
-VK_KHR_shader_subgroup_uniform_control_flow on Intel.
-32-bit x86 builds now default disable x87 math and use sse2.
-GL ES 3.1 on GT21x hardware.
-VK_EXT_acquire_drm_display on RADV.
+VK_EXT_color_write_enable on lavapipe
+GL_ARB_texture_filter_anisotropic in llvmpipe
+Anisotropic texture filtering in lavapipe
+VK_EXT_shader_atomic_float2 on Intel and RADV.
+VK_KHR_timeline_semaphore on lavapipe
+VK_EXT_external_memory_host on lavapipe
+GL_AMD_pinned_memory on llvmpipe
+GL 4.5 compatibility on llvmpipe

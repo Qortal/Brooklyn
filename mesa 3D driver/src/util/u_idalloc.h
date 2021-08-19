@@ -25,6 +25,12 @@
  *
  **************************************************************************/
 
+/* Allocator of IDs (e.g. OpenGL object IDs), or simply an allocator of
+ * numbers.
+ *
+ * The allocator uses a bit array to track allocated IDs.
+ */
+
 #ifndef U_IDALLOC_H
 #define U_IDALLOC_H
 
@@ -39,27 +45,41 @@ extern "C" {
 struct util_idalloc
 {
    uint32_t *data;
-   unsigned num_elements;
+   unsigned num_elements;    /* number of allocated elements of "data" */
    unsigned lowest_free_idx;
 };
 
 void
-util_idalloc_init(struct util_idalloc *buf);
+util_idalloc_init(struct util_idalloc *buf, unsigned initial_num_ids);
 
 void
 util_idalloc_fini(struct util_idalloc *buf);
 
-void
-util_idalloc_resize(struct util_idalloc *buf, unsigned new_num_elements);
-
 unsigned
 util_idalloc_alloc(struct util_idalloc *buf);
+
+unsigned
+util_idalloc_alloc_range(struct util_idalloc *buf, unsigned num);
 
 void
 util_idalloc_free(struct util_idalloc *buf, unsigned id);
 
 void
 util_idalloc_reserve(struct util_idalloc *buf, unsigned id);
+
+static inline bool
+util_idalloc_exists(struct util_idalloc *buf, unsigned id)
+{
+   return id / 32 < buf->num_elements &&
+          buf->data[id / 32] & BITFIELD_BIT(id % 32);
+}
+
+#define util_idalloc_foreach(buf, id) \
+   for (uint32_t i = 0, mask = (buf)->num_elements ? (buf)->data[0] : 0, id, \
+                 count = (buf)->num_elements; \
+        i < count; mask = ++i < count ? (buf)->data[i] : 0) \
+      while (mask) \
+         if ((id = i * 32 + u_bit_scan(&mask)), true)
 
 
 /* Thread-safe variant. */
@@ -71,7 +91,7 @@ struct util_idalloc_mt {
 
 void
 util_idalloc_mt_init(struct util_idalloc_mt *buf,
-                     unsigned initial_num_elements, bool skip_zero);
+                     unsigned initial_num_ids, bool skip_zero);
 
 void
 util_idalloc_mt_init_tc(struct util_idalloc_mt *buf);
@@ -79,17 +99,11 @@ util_idalloc_mt_init_tc(struct util_idalloc_mt *buf);
 void
 util_idalloc_mt_fini(struct util_idalloc_mt *buf);
 
-void
-util_idalloc_mt_resize(struct util_idalloc_mt *buf, unsigned new_num_elements);
-
 unsigned
 util_idalloc_mt_alloc(struct util_idalloc_mt *buf);
 
 void
 util_idalloc_mt_free(struct util_idalloc_mt *buf, unsigned id);
-
-void
-util_idalloc_mt_reserve(struct util_idalloc_mt *buf, unsigned id);
 
 
 #ifdef __cplusplus

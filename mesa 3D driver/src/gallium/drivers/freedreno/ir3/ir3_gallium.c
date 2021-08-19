@@ -461,7 +461,7 @@ ir3_fixup_shader_state(struct pipe_context *pctx, struct ir3_shader_key *key)
 }
 
 static void
-ir3_screen_finalize_nir(struct pipe_screen *pscreen, void *nir, bool optimize)
+ir3_screen_finalize_nir(struct pipe_screen *pscreen, void *nir)
 {
    struct fd_screen *screen = fd_screen(pscreen);
 
@@ -515,7 +515,7 @@ ir3_screen_init(struct pipe_screen *pscreen)
 {
    struct fd_screen *screen = fd_screen(pscreen);
 
-   screen->compiler = ir3_compiler_create(screen->dev, screen->gpu_id, false);
+   screen->compiler = ir3_compiler_create(screen->dev, screen->dev_id, false);
 
    /* TODO do we want to limit things to # of fast cores, or just limit
     * based on total # of both big and little cores.  The little cores

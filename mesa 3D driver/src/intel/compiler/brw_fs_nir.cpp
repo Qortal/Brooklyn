@@ -359,6 +359,7 @@ fs_visitor::nir_emit_if(nir_if *if_stmt)
    if (cond != NULL && cond->op == nir_op_inot) {
       invert = true;
       cond_reg = get_nir_src(cond->src[0].src);
+      cond_reg = offset(cond_reg, bld, cond->src[0].swizzle[0]);
    } else {
       invert = false;
       cond_reg = get_nir_src(if_stmt->condition);
@@ -964,6 +965,39 @@ fs_visitor::nir_emit_alu(const fs_builder &bld, nir_alu_instr *instr,
    fs_reg op[NIR_MAX_VEC_COMPONENTS];
    fs_reg result = prepare_alu_destination_and_sources(bld, instr, op, need_dest);
 
+#ifndef NDEBUG
+   /* Everything except raw moves, some type conversions, iabs, and ineg
+    * should have 8-bit sources lowered by nir_lower_bit_size in
+    * brw_preprocess_nir or by brw_nir_lower_conversions in
+    * brw_postprocess_nir.
+    */
+   switch (instr->op) {
+   case nir_op_mov:
+   case nir_op_vec2:
+   case nir_op_vec3:
+   case nir_op_vec4:
+   case nir_op_vec8:
+   case nir_op_vec16:
+   case nir_op_i2f16:
+   case nir_op_i2f32:
+   case nir_op_i2i16:
+   case nir_op_i2i32:
+   case nir_op_u2f16:
+   case nir_op_u2f32:
+   case nir_op_u2u16:
+   case nir_op_u2u32:
+   case nir_op_iabs:
+   case nir_op_ineg:
+   case nir_op_pack_32_4x8_split:
+      break;
+
+   default:
+      for (unsigned i = 0; i < nir_op_infos[instr->op].num_inputs; i++) {
+         assert(type_sz(op[i].type) > 1);
+      }
+   }
+#endif
+
    switch (instr->op) {
    case nir_op_mov:
    case nir_op_vec2:
@@ -1068,13 +1102,9 @@ fs_visitor::nir_emit_alu(const fs_builder &bld, nir_alu_instr *instr,
    case nir_op_f2i32:
    case nir_op_f2u32:
    case nir_op_i2f16:
-   case nir_op_i2i16:
    case nir_op_u2f16:
-   case nir_op_u2u16:
    case nir_op_f2i16:
    case nir_op_f2u16:
-   case nir_op_i2i8:
-   case nir_op_u2u8:
    case nir_op_f2i8:
    case nir_op_f2u8:
       if (result.type == BRW_REGISTER_TYPE_B ||
@@ -1089,6 +1119,44 @@ fs_visitor::nir_emit_alu(const fs_builder &bld, nir_alu_instr *instr,
 
       inst = bld.MOV(result, op[0]);
       break;
+
+   case nir_op_i2i8:
+   case nir_op_u2u8:
+      assert(type_sz(op[0].type) < 8); /* brw_nir_lower_conversions */
+      FALLTHROUGH;
+   case nir_op_i2i16:
+   case nir_op_u2u16: {
+      /* Emit better code for u2u8(extract_u8(a, b)) and similar patterns.
+       * Emitting the instructions one by one results in two MOV instructions
+       * that won't be propagated.  By handling both instructions here, a
+       * single MOV is emitted.
+       */
+      nir_alu_instr *extract_instr = nir_src_as_alu_instr(instr->src[0].src);
+      if (extract_instr != NULL) {
+         if (extract_instr->op == nir_op_extract_u8 ||
+             extract_instr->op == nir_op_extract_i8) {
+            prepare_alu_destination_and_sources(bld, extract_instr, op, false);
+
+            const unsigned byte = nir_src_as_uint(extract_instr->src[1].src);
+            const brw_reg_type type =
+               brw_int_type(1, extract_instr->op == nir_op_extract_i8);
+
+            op[0] = subscript(op[0], type, byte);
+         } else if (extract_instr->op == nir_op_extract_u16 ||
+                    extract_instr->op == nir_op_extract_i16) {
+            prepare_alu_destination_and_sources(bld, extract_instr, op, false);
+
+            const unsigned word = nir_src_as_uint(extract_instr->src[1].src);
+            const brw_reg_type type =
+               brw_int_type(2, extract_instr->op == nir_op_extract_i16);
+
+            op[0] = subscript(op[0], type, word);
+         }
+      }
+
+      inst = bld.MOV(result, op[0]);
+      break;
+   }
 
    case nir_op_fsat:
       inst = bld.MOV(result, op[0]);
@@ -1183,6 +1251,10 @@ fs_visitor::nir_emit_alu(const fs_builder &bld, nir_alu_instr *instr,
       FALLTHROUGH;
    case nir_op_iadd:
       inst = bld.ADD(result, op[0], op[1]);
+      break;
+
+   case nir_op_iadd3:
+      inst = bld.ADD3(result, op[0], op[1], op[2]);
       break;
 
    case nir_op_iadd_sat:
@@ -1649,6 +1721,10 @@ fs_visitor::nir_emit_alu(const fs_builder &bld, nir_alu_instr *instr,
       bld.emit(FS_OPCODE_PACK, result, op[0], op[1]);
       break;
 
+   case nir_op_pack_32_4x8_split:
+      bld.emit(FS_OPCODE_PACK, result, op, 4);
+      break;
+
    case nir_op_unpack_64_2x32_split_x:
    case nir_op_unpack_64_2x32_split_y: {
       if (instr->op == nir_op_unpack_64_2x32_split_x)
@@ -1759,6 +1835,35 @@ fs_visitor::nir_emit_alu(const fs_builder &bld, nir_alu_instr *instr,
    case nir_op_bitfield_insert:
       unreachable("not reached: should have been lowered");
 
+   /* For all shift operations:
+    *
+    * Gen4 - Gen7: After application of source modifiers, the low 5-bits of
+    * src1 are used an unsigned value for the shift count.
+    *
+    * Gen8: As with earlier platforms, but for Q and UQ types on src0, the low
+    * 6-bit of src1 are used.
+    *
+    * Gen9+: The low bits of src1 matching the size of src0 (e.g., 4-bits for
+    * W or UW src0).
+    *
+    * The implication is that the following instruction will produce a
+    * different result on Gen9+ than on previous platforms:
+    *
+    *    shr(8)    g4<1>UW    g12<8,8,1>UW    0x0010UW
+    *
+    * where Gen9+ will shift by zero, and earlier platforms will shift by 16.
+    *
+    * This does not seem to be the case.  Experimentally, it has been
+    * determined that shifts of 16-bit values on Gen8 behave properly.  Shifts
+    * of 8-bit values on both Gen8 and Gen9 do not.  Gen11+ lowers 8-bit
+    * values, so those platforms were not tested.  No features expose access
+    * to 8- or 16-bit types on Gen7 or earlier, so those platforms were not
+    * tested either.  See
+    * https://gitlab.freedesktop.org/mesa/crucible/-/merge_requests/76.
+    *
+    * This is part of the reason 8-bit values are lowered to 16-bit on all
+    * platforms.
+    */
    case nir_op_ishl:
       bld.SHL(result, op[0], op[1]);
       break;
@@ -4186,6 +4291,9 @@ fs_visitor::nir_emit_intrinsic(const fs_builder &bld, nir_intrinsic_instr *instr
 
    case nir_intrinsic_image_size:
    case nir_intrinsic_bindless_image_size: {
+      /* Cube image sizes should have previously been lowered to a 2D array */
+      assert(nir_intrinsic_image_dim(instr) != GLSL_SAMPLER_DIM_CUBE);
+
       /* Unlike the [un]typed load and store opcodes, the TXS that this turns
        * into will handle the binding table index for us in the geneerator.
        * Incidentally, this means that we can handle bindless with exactly the
@@ -4217,14 +4325,8 @@ fs_visitor::nir_emit_intrinsic(const fs_builder &bld, nir_intrinsic_instr *instr
       inst->size_written = 4 * REG_SIZE;
 
       for (unsigned c = 0; c < instr->dest.ssa.num_components; ++c) {
-         if (c == 2 && nir_intrinsic_image_dim(instr) == GLSL_SAMPLER_DIM_CUBE) {
-            bld.emit(SHADER_OPCODE_INT_QUOTIENT,
-                     offset(retype(dest, tmp.type), bld, c),
-                     component(offset(tmp, ubld, c), 0), brw_imm_ud(6));
-         } else {
-            bld.MOV(offset(retype(dest, tmp.type), bld, c),
-                    component(offset(tmp, ubld, c), 0));
-         }
+         bld.MOV(offset(retype(dest, tmp.type), bld, c),
+                 component(offset(tmp, ubld, c), 0));
       }
       break;
    }
@@ -5878,7 +5980,7 @@ fs_visitor::nir_emit_texture(const fs_builder &bld, nir_tex_instr *instr)
          switch (instr->op) {
          case nir_texop_txf:
          case nir_texop_txf_ms:
-         case nir_texop_txf_ms_mcs:
+         case nir_texop_txf_ms_mcs_intel:
          case nir_texop_samples_identical:
             srcs[TEX_LOGICAL_SRC_COORDINATE] = retype(src, BRW_REGISTER_TYPE_D);
             break;
@@ -5967,7 +6069,7 @@ fs_visitor::nir_emit_texture(const fs_builder &bld, nir_tex_instr *instr)
          srcs[TEX_LOGICAL_SRC_SAMPLER_HANDLE] = bld.emit_uniformize(src);
          break;
 
-      case nir_tex_src_ms_mcs:
+      case nir_tex_src_ms_mcs_intel:
          assert(instr->op == nir_texop_txf_ms);
          srcs[TEX_LOGICAL_SRC_MCS] = retype(src, BRW_REGISTER_TYPE_D);
          break;
@@ -6029,7 +6131,7 @@ fs_visitor::nir_emit_texture(const fs_builder &bld, nir_tex_instr *instr)
       else
          opcode = SHADER_OPCODE_TXF_CMS_LOGICAL;
       break;
-   case nir_texop_txf_ms_mcs:
+   case nir_texop_txf_ms_mcs_intel:
       opcode = SHADER_OPCODE_TXF_MCS_LOGICAL;
       break;
    case nir_texop_query_levels:

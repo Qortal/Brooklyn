@@ -333,12 +333,6 @@ struct threaded_resource {
     */
    uint32_t buffer_id_unique;
 
-   /* If positive, prefer DISCARD_RANGE with a staging buffer over any other
-    * method of CPU access when map flags allow it. Useful for buffers that
-    * are too large for the visible VRAM window.
-    */
-   int max_forced_staging_uploads;
-
    /* If positive, then a staging transfer is in progress.
     */
    int pending_staging_uploads;
@@ -503,6 +497,9 @@ threaded_context_create(struct pipe_context *pipe,
                         tc_is_resource_busy is_resource_busy,
                         bool driver_calls_flush_notify,
                         struct threaded_context **out);
+
+void
+threaded_context_init_bytes_mapped_limit(struct threaded_context *tc, unsigned divisor);
 
 void
 threaded_context_flush(struct pipe_context *_pipe,

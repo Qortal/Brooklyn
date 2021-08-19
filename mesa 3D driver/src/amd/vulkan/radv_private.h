@@ -333,6 +333,7 @@ struct radv_instance {
    bool disable_tc_compat_htile_in_general;
    bool disable_shrink_image_store;
    bool absolute_depth_bias;
+   bool report_apu_as_dgpu;
 };
 
 VkResult radv_init_wsi(struct radv_physical_device *physical_device);
@@ -483,6 +484,11 @@ struct radv_meta_state {
    VkPipeline copy_vrs_htile_pipeline;
    VkPipelineLayout copy_vrs_htile_p_layout;
    VkDescriptorSetLayout copy_vrs_htile_ds_layout;
+
+   /* Clear DCC with comp-to-single. */
+   VkPipeline clear_dcc_comp_to_single_pipeline;
+   VkPipelineLayout clear_dcc_comp_to_single_p_layout;
+   VkDescriptorSetLayout clear_dcc_comp_to_single_ds_layout;
 
    struct {
       VkRenderPass render_pass[NUM_META_FS_KEYS][RADV_META_DST_LAYOUT_COUNT];
@@ -1014,7 +1020,8 @@ enum radv_dynamic_state_bits {
    RADV_DYNAMIC_DEPTH_BIAS_ENABLE = 1ull << 25,
    RADV_DYNAMIC_LOGIC_OP = 1ull << 26,
    RADV_DYNAMIC_PRIMITIVE_RESTART_ENABLE = 1ull << 27,
-   RADV_DYNAMIC_ALL = (1ull << 28) - 1,
+   RADV_DYNAMIC_COLOR_WRITE_ENABLE = 1ull << 28,
+   RADV_DYNAMIC_ALL = (1ull << 29) - 1,
 };
 
 enum radv_cmd_dirty_bits {
@@ -1048,12 +1055,13 @@ enum radv_cmd_dirty_bits {
    RADV_CMD_DIRTY_DYNAMIC_DEPTH_BIAS_ENABLE = 1ull << 25,
    RADV_CMD_DIRTY_DYNAMIC_LOGIC_OP = 1ull << 26,
    RADV_CMD_DIRTY_DYNAMIC_PRIMITIVE_RESTART_ENABLE = 1ull << 27,
-   RADV_CMD_DIRTY_DYNAMIC_ALL = (1ull << 28) - 1,
-   RADV_CMD_DIRTY_PIPELINE = 1ull << 28,
-   RADV_CMD_DIRTY_INDEX_BUFFER = 1ull << 29,
-   RADV_CMD_DIRTY_FRAMEBUFFER = 1ull << 30,
-   RADV_CMD_DIRTY_VERTEX_BUFFER = 1ull << 31,
-   RADV_CMD_DIRTY_STREAMOUT_BUFFER = 1ull << 32,
+   RADV_CMD_DIRTY_DYNAMIC_COLOR_WRITE_ENABLE = 1ull << 28,
+   RADV_CMD_DIRTY_DYNAMIC_ALL = (1ull << 29) - 1,
+   RADV_CMD_DIRTY_PIPELINE = 1ull << 29,
+   RADV_CMD_DIRTY_INDEX_BUFFER = 1ull << 30,
+   RADV_CMD_DIRTY_FRAMEBUFFER = 1ull << 31,
+   RADV_CMD_DIRTY_VERTEX_BUFFER = 1ull << 32,
+   RADV_CMD_DIRTY_STREAMOUT_BUFFER = 1ull << 33
 };
 
 enum radv_cmd_flush_bits {
@@ -1126,6 +1134,10 @@ struct radv_streamout_state {
 struct radv_viewport_state {
    uint32_t count;
    VkViewport viewports[MAX_VIEWPORTS];
+   struct {
+      float scale[3];
+      float translate[3];
+   } xform[MAX_VIEWPORTS];
 };
 
 struct radv_scissor_state {
@@ -1231,6 +1243,8 @@ struct radv_dynamic_state {
    bool rasterizer_discard_enable;
 
    unsigned logic_op;
+
+   uint32_t color_write_enable;
 };
 
 extern const struct radv_dynamic_state default_dynamic_state;
@@ -1411,6 +1425,11 @@ struct radv_cmd_state {
    bool pending_sqtt_barrier_end;
    enum rgp_flush_bits sqtt_flush_bits;
 
+   /* NGG culling state. */
+   uint32_t last_nggc_settings;
+   int8_t last_nggc_settings_sgpr_idx;
+   bool last_nggc_skip;
+
    uint8_t cb_mip[MAX_RTS];
 
    /* Whether DRAW_{INDEX}_INDIRECT_MULTI is emitted. */
@@ -1504,8 +1523,6 @@ void si_emit_compute(struct radv_device *device, struct radeon_cmdbuf *cs);
 
 void cik_create_gfx_config(struct radv_device *device);
 
-void si_write_viewport(struct radeon_cmdbuf *cs, int first_vp, int count,
-                       const VkViewport *viewports);
 void si_write_scissors(struct radeon_cmdbuf *cs, int first, int count, const VkRect2D *scissors,
                        const VkViewport *viewports, bool can_use_guardband);
 uint32_t si_get_ia_multi_vgt_param(struct radv_cmd_buffer *cmd_buffer, bool instanced_draw,
@@ -1569,6 +1586,7 @@ bool radv_image_use_dcc_image_stores(const struct radv_device *device,
                                      const struct radv_image *image);
 bool radv_image_use_dcc_predication(const struct radv_device *device,
                                     const struct radv_image *image);
+
 void radv_update_fce_metadata(struct radv_cmd_buffer *cmd_buffer, struct radv_image *image,
                               const VkImageSubresourceRange *range, bool value);
 
@@ -1633,6 +1651,9 @@ radv_get_descriptors_state(struct radv_cmd_buffer *cmd_buffer, VkPipelineBindPoi
    }
 }
 
+void
+radv_get_viewport_xform(const VkViewport *viewport, float scale[3], float translate[3]);
+
 /*
  * Takes x,y,z as exact numbers of invocations, instead of blocks.
  *
@@ -1660,6 +1681,7 @@ struct radv_event {
 #define RADV_HASH_SHADER_FORCE_VRS_2x2     (1 << 9)
 #define RADV_HASH_SHADER_FORCE_VRS_2x1     (1 << 10)
 #define RADV_HASH_SHADER_FORCE_VRS_1x2     (1 << 11)
+#define RADV_HASH_SHADER_FORCE_NGG_CULLING (1 << 13)
 
 void radv_hash_shaders(unsigned char *hash, const VkPipelineShaderStageCreateInfo **stages,
                        const struct radv_pipeline_layout *layout,
@@ -1726,6 +1748,7 @@ struct radv_pipeline {
 
    uint8_t attrib_bindings[MAX_VERTEX_ATTRIBS];
    uint32_t attrib_ends[MAX_VERTEX_ATTRIBS];
+   uint32_t attrib_index_offset[MAX_VERTEX_ATTRIBS];
 
    bool use_per_attribute_vb_descs;
    uint32_t vb_desc_usage_mask;
@@ -1754,6 +1777,7 @@ struct radv_pipeline {
          unsigned pa_cl_clip_cntl;
          unsigned cb_color_control;
          bool uses_dynamic_stride;
+         bool uses_conservative_overestimate;
 
          /* Used for rbplus */
          uint32_t col_format;
@@ -1761,6 +1785,10 @@ struct radv_pipeline {
 
          /* Whether the pipeline uses NGG (GFX10+). */
          bool is_ngg;
+         bool has_ngg_culling;
+
+         /* Last pre-PS API stage */
+         gl_shader_stage last_vgt_api_stage;
       } graphics;
    };
 
@@ -1843,7 +1871,7 @@ bool radv_is_storage_image_format_supported(struct radv_physical_device *physica
                                             VkFormat format);
 bool radv_is_colorbuffer_format_supported(const struct radv_physical_device *pdevice,
                                           VkFormat format, bool *blendable);
-bool radv_dcc_formats_compatible(VkFormat format1, VkFormat format2);
+bool radv_dcc_formats_compatible(VkFormat format1, VkFormat format2, bool *sign_reinterpret);
 bool radv_is_atomic_format_supported(VkFormat format);
 bool radv_device_supports_etc(struct radv_physical_device *physical_device);
 
@@ -1871,6 +1899,8 @@ struct radv_image {
    bool exclusive;
    bool shareable;
    bool l2_coherent;
+   bool dcc_sign_reinterpret;
+   bool support_comp_to_single;
 
    /* Set when bound */
    struct radeon_winsys_bo *bo;
@@ -2213,7 +2243,8 @@ VkResult radv_image_create(VkDevice _device, const struct radv_image_create_info
                            const VkAllocationCallbacks *alloc, VkImage *pImage);
 
 bool radv_are_formats_dcc_compatible(const struct radv_physical_device *pdev, const void *pNext,
-                                     VkFormat format, VkImageCreateFlags flags);
+                                     VkFormat format, VkImageCreateFlags flags,
+                                     bool *sign_reinterpret);
 
 bool vi_alpha_is_on_msb(struct radv_device *device, VkFormat format);
 

@@ -28,6 +28,7 @@
 #include "gallium/include/pipe/p_context.h"
 #include "gallium/include/pipe/p_state.h"
 #include "gallium/include/pipe/p_screen.h"
+#include "gallium/auxiliary/util/u_blitter.h"
 #include "asahi/lib/agx_pack.h"
 #include "asahi/lib/agx_bo.h"
 #include "asahi/lib/agx_device.h"
@@ -60,14 +61,12 @@ struct agx_compiled_shader {
    /* Varying descriptor (TODO: is this the right place?) */
    uint64_t varyings;
 
-   /* # of varyings (currently vec4, should probably be changed) */
-   unsigned varying_count;
-
    /* Metadata returned from the compiler */
    struct agx_shader_info info;
 };
 
 struct agx_uncompiled_shader {
+   struct pipe_shader_state base;
    struct nir_shader *nir;
    struct hash_table *variants;
 
@@ -82,13 +81,11 @@ struct agx_stage {
    struct pipe_constant_buffer cb[PIPE_MAX_CONSTANT_BUFFERS];
    uint32_t cb_mask;
 
-   /* BOs for bound samplers. This is all the information we need at
-    * draw time to assemble the pipeline */
-   struct agx_bo *samplers[PIPE_MAX_SAMPLERS];
-
-   /* Sampler views need the full CSO due to Gallium state management */
+   /* Need full CSOs for u_blitter */
+   struct agx_sampler_state *samplers[PIPE_MAX_SAMPLERS];
    struct agx_sampler_view *textures[PIPE_MAX_SHADER_SAMPLER_VIEWS];
-   unsigned texture_count;
+
+   unsigned sampler_count, texture_count;
 };
 
 /* Uploaded scissor descriptors */
@@ -119,8 +116,8 @@ struct agx_batch {
 };
 
 struct agx_zsa {
-   enum agx_zs_func z_func;
-   bool disable_z_write;
+   struct pipe_depth_stencil_alpha_state base;
+   struct agx_rasterizer_face_packed front, back;
 };
 
 struct agx_blend {
@@ -163,9 +160,20 @@ struct agx_context {
    struct pipe_blend_color blend_color;
    struct pipe_viewport_state viewport;
    struct pipe_scissor_state scissor;
+   struct pipe_stencil_ref stencil_ref;
    struct agx_streamout streamout;
+   uint16_t sample_mask;
+   struct pipe_framebuffer_state framebuffer;
+
+   struct pipe_query *cond_query;
+   bool cond_cond;
+   enum pipe_render_cond_flag cond_mode;
+
+   bool is_noop;
 
    uint8_t render_target[8][AGX_RENDER_TARGET_LENGTH];
+
+   struct blitter_context *blitter;
 };
 
 static inline struct agx_context *
@@ -182,6 +190,13 @@ struct agx_rasterizer {
 
 struct agx_query {
    unsigned	query;
+};
+
+struct agx_sampler_state {
+   struct pipe_sampler_state base;
+
+   /* Prepared descriptor */
+   struct agx_bo *desc;
 };
 
 struct agx_sampler_view {
@@ -232,6 +247,9 @@ struct agx_resource {
       unsigned offset;
       unsigned line_stride;
    } slices[PIPE_MAX_TEXTURE_LEVELS];
+
+   /* Bytes from one miptree to the next */
+   unsigned array_stride;
 };
 
 static inline struct agx_resource *
@@ -266,6 +284,9 @@ uint64_t
 agx_build_store_pipeline(struct agx_context *ctx, uint32_t code,
                          uint64_t render_target);
 
+uint64_t
+agx_build_reload_pipeline(struct agx_context *ctx, uint32_t code, struct pipe_surface *surf);
+
 /* Add a BO to a batch. This needs to be amortized O(1) since it's called in
  * hot paths. To achieve this we model BO lists by bit sets */
 
@@ -277,5 +298,11 @@ agx_batch_add_bo(struct agx_batch *batch, struct agx_bo *bo)
 
    BITSET_SET(batch->bo_list, bo->handle);
 }
+
+/* Blit shaders */
+void agx_blit(struct pipe_context *pipe,
+              const struct pipe_blit_info *info);
+
+void agx_internal_shaders(struct agx_device *dev);
 
 #endif

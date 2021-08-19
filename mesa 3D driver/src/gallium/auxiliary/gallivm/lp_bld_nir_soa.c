@@ -1528,6 +1528,20 @@ static void emit_sysval_intrin(struct lp_build_nir_context *bld_base,
       for (unsigned i = 0; i < 3; i++)
          result[i] = LLVMBuildExtractValue(gallivm->builder, bld->system_values.thread_id, i, "");
       break;
+   case nir_intrinsic_load_local_invocation_index: {
+      LLVMValueRef tmp, tmp2;
+      tmp = lp_build_broadcast_scalar(&bld_base->uint_bld, LLVMBuildExtractElement(gallivm->builder, bld->system_values.block_size, lp_build_const_int32(gallivm, 1), ""));
+      tmp2 = lp_build_broadcast_scalar(&bld_base->uint_bld, LLVMBuildExtractElement(gallivm->builder, bld->system_values.block_size, lp_build_const_int32(gallivm, 0), ""));
+      tmp = lp_build_mul(&bld_base->uint_bld, tmp, tmp2);
+      tmp = lp_build_mul(&bld_base->uint_bld, tmp, LLVMBuildExtractValue(gallivm->builder, bld->system_values.thread_id, 2, ""));
+
+      tmp2 = lp_build_broadcast_scalar(&bld_base->uint_bld, LLVMBuildExtractElement(gallivm->builder, bld->system_values.block_size, lp_build_const_int32(gallivm, 0), ""));
+      tmp2 = lp_build_mul(&bld_base->uint_bld, tmp2, LLVMBuildExtractValue(gallivm->builder, bld->system_values.thread_id, 1, ""));
+      tmp = lp_build_add(&bld_base->uint_bld, tmp, tmp2);
+      tmp = lp_build_add(&bld_base->uint_bld, tmp, LLVMBuildExtractValue(gallivm->builder, bld->system_values.thread_id, 0, ""));
+      result[0] = tmp;
+      break;
+   }
    case nir_intrinsic_load_num_workgroups: {
       LLVMValueRef tmp[3];
       for (unsigned i = 0; i < 3; i++) {
@@ -2399,6 +2413,7 @@ void lp_build_nir_soa(struct gallivm_state *gallivm,
 
    bld.context_ptr = params->context_ptr;
    bld.thread_data_ptr = params->thread_data_ptr;
+   bld.bld_base.aniso_filter_table = params->aniso_filter_table;
    bld.image = params->image;
    bld.shared_ptr = params->shared_ptr;
    bld.coro = params->coro;

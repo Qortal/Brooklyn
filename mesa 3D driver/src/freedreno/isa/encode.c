@@ -113,10 +113,10 @@ __instruction_case(struct encode_state *s, struct ir3_instruction *instr)
 		}
 	} else if (instr->opc == OPC_DEMOTE) {
 		return OPC_KILL;
-	} else if ((instr->block->shader->compiler->gpu_id > 600) &&
+	} else if ((instr->block->shader->compiler->gen >= 6) &&
 			is_atomic(instr->opc) && (instr->flags & IR3_INSTR_G)) {
 		return instr->opc - OPC_ATOMIC_ADD + OPC_ATOMIC_B_ADD;
-	} else if (s->compiler->gpu_id >= 600) {
+	} else if (s->compiler->gen >= 6) {
 		if (instr->opc == OPC_RESINFO) {
 			return OPC_RESINFO_B;
 		} else if (instr->opc == OPC_LDIB) {
@@ -271,7 +271,7 @@ __multisrc_case(struct encode_state *s, struct ir3_register *reg)
 
 typedef enum {
 	REG_CAT3_SRC_GPR,
-	REG_CAT3_SRC_CONST,
+	REG_CAT3_SRC_CONST_OR_IMMED,
 	REG_CAT3_SRC_RELATIVE_GPR,
 	REG_CAT3_SRC_RELATIVE_CONST,
 } reg_cat3_src_t;
@@ -285,8 +285,8 @@ __cat3_src_case(struct encode_state *s, struct ir3_register *reg)
 		} else {
 			return REG_CAT3_SRC_RELATIVE_GPR;
 		}
-	} else if (reg->flags & IR3_REG_CONST) {
-		return REG_CAT3_SRC_CONST;
+	} else if (reg->flags & (IR3_REG_CONST | IR3_REG_IMMED)) {
+		return REG_CAT3_SRC_CONST_OR_IMMED;
 	} else {
 		return REG_CAT3_SRC_GPR;
 	}

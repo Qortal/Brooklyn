@@ -1283,6 +1283,7 @@ void st_init_extensions(struct pipe_screen *screen,
    consts->ForceIntegerTexNearest = options->force_integer_tex_nearest;
 
    consts->VendorOverride = options->force_gl_vendor;
+   consts->RendererOverride = options->force_gl_renderer;
 
    consts->UniformBooleanTrue = consts->NativeIntegers ? ~0U : fui(1.0f);
 
@@ -1832,7 +1833,6 @@ void st_init_extensions(struct pipe_screen *screen,
    }
 
    consts->AllowDrawOutOfOrder = options->allow_draw_out_of_order;
-   consts->AllowIncorrectPrimitiveId = options->allow_incorrect_primitive_id;
 
    bool prefer_nir = PIPE_SHADER_IR_NIR ==
          screen->get_shader_param(screen, PIPE_SHADER_FRAGMENT, PIPE_SHADER_CAP_PREFERRED_IR);
