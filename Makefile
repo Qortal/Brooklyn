@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
+# Older dsat code has been merged with NXT
 VERSION = 5
 PATCHLEVEL = 16
 SUBLEVEL = 21
