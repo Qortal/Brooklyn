@@ -2,7 +2,7 @@
 # Older dsat code has been merged with NXT
 VERSION = 5
 PATCHLEVEL = 16
-SUBLEVEL = 21
+SUBLEVEL = 40
 EXTRAVERSION = -LTS
 NAME = BrooklynR NXT
 
