@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0
 # Older dsat code has been merged with NXT
+# QortalOS NXT central by Scare Crowe
+
 VERSION = 5
-PATCHLEVEL = 16
-SUBLEVEL = 40
+PATCHLEVEL = 17
+SUBLEVEL = 10
 EXTRAVERSION = -LTS
 NAME = BrooklynR NXT
 
