@@ -6,7 +6,7 @@ VERSION = 5
 PATCHLEVEL = 17
 SUBLEVEL = 10
 EXTRAVERSION = -LTS
-NAME = BrooklynR NXT
+NAME = BrooklynR NXT Sinclair
 
 # *DOCUMENTATION*
 # Public Domain Satellite Project removal.
