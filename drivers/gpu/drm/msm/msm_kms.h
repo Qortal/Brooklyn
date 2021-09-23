@@ -122,10 +122,6 @@ struct msm_kms_funcs {
 				 bool cmd_mode);
 	/* cleanup: */
 	void (*destroy)(struct msm_kms *kms);
-
-	/* snapshot: */
-	void (*snapshot)(struct msm_disp_state *disp_state, struct msm_kms *kms);
-
 #ifdef CONFIG_DEBUG_FS
 	/* debugfs: */
 	int (*debugfs_init)(struct msm_kms *kms, struct drm_minor *minor);
@@ -140,8 +136,7 @@ struct msm_kms;
  */
 struct msm_pending_timer {
 	struct hrtimer timer;
-	struct kthread_work work;
-	struct kthread_worker *worker;
+	struct work_struct work;
 	struct msm_kms *kms;
 	unsigned crtc_idx;
 };
@@ -156,46 +151,25 @@ struct msm_kms {
 	/* mapper-id used to request GEM buffer mapped for scanout: */
 	struct msm_gem_address_space *aspace;
 
-	/* disp snapshot support */
-	struct kthread_worker *dump_worker;
-	struct kthread_work dump_work;
-	struct mutex dump_mutex;
-
 	/*
 	 * For async commit, where ->flush_commit() and later happens
 	 * from the crtc's pending_timer close to end of the frame:
 	 */
-	struct mutex commit_lock[MAX_CRTCS];
+	struct mutex commit_lock;
 	unsigned pending_crtc_mask;
 	struct msm_pending_timer pending_timers[MAX_CRTCS];
 };
 
-static inline int msm_kms_init(struct msm_kms *kms,
+static inline void msm_kms_init(struct msm_kms *kms,
 		const struct msm_kms_funcs *funcs)
-{
-	unsigned i, ret;
-
-	for (i = 0; i < ARRAY_SIZE(kms->commit_lock); i++)
-		mutex_init(&kms->commit_lock[i]);
-
-	kms->funcs = funcs;
-
-	for (i = 0; i < ARRAY_SIZE(kms->pending_timers); i++) {
-		ret = msm_atomic_init_pending_timer(&kms->pending_timers[i], kms, i);
-		if (ret) {
-			return ret;
-		}
-	}
-
-	return 0;
-}
-
-static inline void msm_kms_destroy(struct msm_kms *kms)
 {
 	unsigned i;
 
+	mutex_init(&kms->commit_lock);
+	kms->funcs = funcs;
+
 	for (i = 0; i < ARRAY_SIZE(kms->pending_timers); i++)
-		msm_atomic_destroy_pending_timer(&kms->pending_timers[i]);
+		msm_atomic_init_pending_timer(&kms->pending_timers[i], kms, i);
 }
 
 struct msm_kms *mdp4_kms_init(struct drm_device *dev);
@@ -218,10 +192,6 @@ int dpu_mdss_init(struct drm_device *dev);
 
 #define for_each_crtc_mask(dev, crtc, crtc_mask) \
 	drm_for_each_crtc(crtc, dev) \
-		for_each_if (drm_crtc_mask(crtc) & (crtc_mask))
-
-#define for_each_crtc_mask_reverse(dev, crtc, crtc_mask) \
-	drm_for_each_crtc_reverse(crtc, dev) \
 		for_each_if (drm_crtc_mask(crtc) & (crtc_mask))
 
 #endif /* __MSM_KMS_H__ */

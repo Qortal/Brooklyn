@@ -132,7 +132,7 @@ static int dm355evm_rtc_probe(struct platform_device *pdev)
 	rtc->ops = &dm355evm_rtc_ops;
 	rtc->range_max = U32_MAX;
 
-	return devm_rtc_register_device(rtc);
+	return rtc_register_device(rtc);
 }
 
 /*

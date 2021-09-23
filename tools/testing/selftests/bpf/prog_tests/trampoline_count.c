@@ -4,7 +4,7 @@
 #include <sys/prctl.h>
 #include <test_progs.h>
 
-#define MAX_TRAMP_PROGS 38
+#define MAX_TRAMP_PROGS 40
 
 struct inst {
 	struct bpf_object *obj;
@@ -52,10 +52,10 @@ void test_trampoline_count(void)
 	struct bpf_link *link;
 	char comm[16] = {};
 
-	/* attach 'allowed' trampoline programs */
+	/* attach 'allowed' 40 trampoline programs */
 	for (i = 0; i < MAX_TRAMP_PROGS; i++) {
 		obj = bpf_object__open_file(object, NULL);
-		if (!ASSERT_OK_PTR(obj, "obj_open_file")) {
+		if (CHECK(IS_ERR(obj), "obj_open_file", "err %ld\n", PTR_ERR(obj))) {
 			obj = NULL;
 			goto cleanup;
 		}
@@ -68,14 +68,14 @@ void test_trampoline_count(void)
 
 		if (rand() % 2) {
 			link = load(inst[i].obj, fentry_name);
-			if (!ASSERT_OK_PTR(link, "attach_prog")) {
+			if (CHECK(IS_ERR(link), "attach prog", "err %ld\n", PTR_ERR(link))) {
 				link = NULL;
 				goto cleanup;
 			}
 			inst[i].link_fentry = link;
 		} else {
 			link = load(inst[i].obj, fexit_name);
-			if (!ASSERT_OK_PTR(link, "attach_prog")) {
+			if (CHECK(IS_ERR(link), "attach prog", "err %ld\n", PTR_ERR(link))) {
 				link = NULL;
 				goto cleanup;
 			}
@@ -85,7 +85,7 @@ void test_trampoline_count(void)
 
 	/* and try 1 extra.. */
 	obj = bpf_object__open_file(object, NULL);
-	if (!ASSERT_OK_PTR(obj, "obj_open_file")) {
+	if (CHECK(IS_ERR(obj), "obj_open_file", "err %ld\n", PTR_ERR(obj))) {
 		obj = NULL;
 		goto cleanup;
 	}
@@ -96,15 +96,13 @@ void test_trampoline_count(void)
 
 	/* ..that needs to fail */
 	link = load(obj, fentry_name);
-	err = libbpf_get_error(link);
-	if (!ASSERT_ERR_PTR(link, "cannot attach over the limit")) {
+	if (CHECK(!IS_ERR(link), "cannot attach over the limit", "err %ld\n", PTR_ERR(link))) {
 		bpf_link__destroy(link);
 		goto cleanup_extra;
 	}
 
 	/* with E2BIG error */
-	ASSERT_EQ(err, -E2BIG, "proper error check");
-	ASSERT_EQ(link, NULL, "ptr_is_null");
+	CHECK(PTR_ERR(link) != -E2BIG, "proper error check", "err %ld\n", PTR_ERR(link));
 
 	/* and finaly execute the probe */
 	if (CHECK_FAIL(prctl(PR_GET_NAME, comm, 0L, 0L, 0L)))

@@ -165,10 +165,10 @@ static int cgroup_storage_update_elem(struct bpf_map *map, void *key,
 		return 0;
 	}
 
-	new = bpf_map_kmalloc_node(map, sizeof(struct bpf_storage_buffer) +
-				   map->value_size,
-				   __GFP_ZERO | GFP_ATOMIC | __GFP_NOWARN,
-				   map->numa_node);
+	new = kmalloc_node(sizeof(struct bpf_storage_buffer) +
+			   map->value_size,
+			   __GFP_ZERO | GFP_ATOMIC | __GFP_NOWARN,
+			   map->numa_node);
 	if (!new)
 		return -ENOMEM;
 
@@ -288,6 +288,8 @@ static struct bpf_map *cgroup_storage_map_alloc(union bpf_attr *attr)
 {
 	int numa_node = bpf_map_attr_numa_node(attr);
 	struct bpf_cgroup_storage_map *map;
+	struct bpf_map_memory mem;
+	int ret;
 
 	if (attr->key_size != sizeof(struct bpf_cgroup_storage_key) &&
 	    attr->key_size != sizeof(__u64))
@@ -307,10 +309,18 @@ static struct bpf_map *cgroup_storage_map_alloc(union bpf_attr *attr)
 		/* max_entries is not used and enforced to be 0 */
 		return ERR_PTR(-EINVAL);
 
+	ret = bpf_map_charge_init(&mem, sizeof(struct bpf_cgroup_storage_map));
+	if (ret < 0)
+		return ERR_PTR(ret);
+
 	map = kmalloc_node(sizeof(struct bpf_cgroup_storage_map),
-			   __GFP_ZERO | GFP_USER | __GFP_ACCOUNT, numa_node);
-	if (!map)
+			   __GFP_ZERO | GFP_USER, numa_node);
+	if (!map) {
+		bpf_map_charge_finish(&mem);
 		return ERR_PTR(-ENOMEM);
+	}
+
+	bpf_map_charge_move(&map->map.memory, &mem);
 
 	/* copy mandatory map attributes */
 	bpf_map_init_from_attr(&map->map, attr);
@@ -487,9 +497,9 @@ static size_t bpf_cgroup_storage_calculate_size(struct bpf_map *map, u32 *pages)
 struct bpf_cgroup_storage *bpf_cgroup_storage_alloc(struct bpf_prog *prog,
 					enum bpf_cgroup_storage_type stype)
 {
-	const gfp_t gfp = __GFP_ZERO | GFP_USER;
 	struct bpf_cgroup_storage *storage;
 	struct bpf_map *map;
+	gfp_t flags;
 	size_t size;
 	u32 pages;
 
@@ -499,19 +509,23 @@ struct bpf_cgroup_storage *bpf_cgroup_storage_alloc(struct bpf_prog *prog,
 
 	size = bpf_cgroup_storage_calculate_size(map, &pages);
 
-	storage = bpf_map_kmalloc_node(map, sizeof(struct bpf_cgroup_storage),
-				       gfp, map->numa_node);
+	if (bpf_map_charge_memlock(map, pages))
+		return ERR_PTR(-EPERM);
+
+	storage = kmalloc_node(sizeof(struct bpf_cgroup_storage),
+			       __GFP_ZERO | GFP_USER, map->numa_node);
 	if (!storage)
 		goto enomem;
 
+	flags = __GFP_ZERO | GFP_USER;
+
 	if (stype == BPF_CGROUP_STORAGE_SHARED) {
-		storage->buf = bpf_map_kmalloc_node(map, size, gfp,
-						    map->numa_node);
+		storage->buf = kmalloc_node(size, flags, map->numa_node);
 		if (!storage->buf)
 			goto enomem;
 		check_and_init_map_lock(map, storage->buf->data);
 	} else {
-		storage->percpu_buf = bpf_map_alloc_percpu(map, size, 8, gfp);
+		storage->percpu_buf = __alloc_percpu_gfp(size, 8, flags);
 		if (!storage->percpu_buf)
 			goto enomem;
 	}
@@ -521,6 +535,7 @@ struct bpf_cgroup_storage *bpf_cgroup_storage_alloc(struct bpf_prog *prog,
 	return storage;
 
 enomem:
+	bpf_map_uncharge_memlock(map, pages);
 	kfree(storage);
 	return ERR_PTR(-ENOMEM);
 }
@@ -547,11 +562,16 @@ void bpf_cgroup_storage_free(struct bpf_cgroup_storage *storage)
 {
 	enum bpf_cgroup_storage_type stype;
 	struct bpf_map *map;
+	u32 pages;
 
 	if (!storage)
 		return;
 
 	map = &storage->map->map;
+
+	bpf_cgroup_storage_calculate_size(map, &pages);
+	bpf_map_uncharge_memlock(map, pages);
+
 	stype = cgroup_storage_type(map);
 	if (stype == BPF_CGROUP_STORAGE_SHARED)
 		call_rcu(&storage->rcu, free_shared_cgroup_storage_rcu);

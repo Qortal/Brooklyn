@@ -694,7 +694,7 @@ static int pxa27x_keypad_resume(struct device *dev)
 	} else {
 		mutex_lock(&input_dev->mutex);
 
-		if (input_device_enabled(input_dev)) {
+		if (input_dev->users) {
 			/* Enable unit clock */
 			ret = clk_prepare_enable(keypad->clk);
 			if (!ret)

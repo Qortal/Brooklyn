@@ -992,16 +992,11 @@ static void mixer_atomic_flush(struct exynos_drm_crtc *crtc)
 static void mixer_atomic_enable(struct exynos_drm_crtc *crtc)
 {
 	struct mixer_context *ctx = crtc->ctx;
-	int ret;
 
 	if (test_bit(MXR_BIT_POWERED, &ctx->flags))
 		return;
 
-	ret = pm_runtime_resume_and_get(ctx->dev);
-	if (ret < 0) {
-		dev_err(ctx->dev, "failed to enable MIXER device.\n");
-		return;
-	}
+	pm_runtime_get_sync(ctx->dev);
 
 	exynos_drm_pipe_clk_enable(crtc, true);
 

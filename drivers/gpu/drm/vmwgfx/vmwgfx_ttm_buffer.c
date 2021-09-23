@@ -28,33 +28,62 @@
 #include "vmwgfx_drv.h"
 #include <drm/ttm/ttm_bo_driver.h>
 #include <drm/ttm/ttm_placement.h>
+#include <drm/ttm/ttm_page_alloc.h>
 
 static const struct ttm_place vram_placement_flags = {
 	.fpfn = 0,
 	.lpfn = 0,
 	.mem_type = TTM_PL_VRAM,
-	.flags = 0
+	.flags = TTM_PL_FLAG_CACHED
+};
+
+static const struct ttm_place vram_ne_placement_flags = {
+	.fpfn = 0,
+	.lpfn = 0,
+	.mem_type = TTM_PL_VRAM,
+	.flags = TTM_PL_FLAG_CACHED | TTM_PL_FLAG_NO_EVICT
 };
 
 static const struct ttm_place sys_placement_flags = {
 	.fpfn = 0,
 	.lpfn = 0,
 	.mem_type = TTM_PL_SYSTEM,
-	.flags = 0
+	.flags = TTM_PL_FLAG_CACHED
+};
+
+static const struct ttm_place sys_ne_placement_flags = {
+	.fpfn = 0,
+	.lpfn = 0,
+	.mem_type = TTM_PL_SYSTEM,
+	.flags = TTM_PL_FLAG_CACHED | TTM_PL_FLAG_NO_EVICT
 };
 
 static const struct ttm_place gmr_placement_flags = {
 	.fpfn = 0,
 	.lpfn = 0,
 	.mem_type = VMW_PL_GMR,
-	.flags = 0
+	.flags = TTM_PL_FLAG_CACHED
+};
+
+static const struct ttm_place gmr_ne_placement_flags = {
+	.fpfn = 0,
+	.lpfn = 0,
+	.mem_type = VMW_PL_GMR,
+	.flags = TTM_PL_FLAG_CACHED | TTM_PL_FLAG_NO_EVICT
 };
 
 static const struct ttm_place mob_placement_flags = {
 	.fpfn = 0,
 	.lpfn = 0,
 	.mem_type = VMW_PL_MOB,
-	.flags = 0
+	.flags = TTM_PL_FLAG_CACHED
+};
+
+static const struct ttm_place mob_ne_placement_flags = {
+	.fpfn = 0,
+	.lpfn = 0,
+	.mem_type = VMW_PL_MOB,
+	.flags = TTM_PL_FLAG_CACHED | TTM_PL_FLAG_NO_EVICT
 };
 
 struct ttm_placement vmw_vram_placement = {
@@ -69,12 +98,12 @@ static const struct ttm_place vram_gmr_placement_flags[] = {
 		.fpfn = 0,
 		.lpfn = 0,
 		.mem_type = TTM_PL_VRAM,
-		.flags = 0
+		.flags = TTM_PL_FLAG_CACHED
 	}, {
 		.fpfn = 0,
 		.lpfn = 0,
 		.mem_type = VMW_PL_GMR,
-		.flags = 0
+		.flags = TTM_PL_FLAG_CACHED
 	}
 };
 
@@ -83,12 +112,12 @@ static const struct ttm_place gmr_vram_placement_flags[] = {
 		.fpfn = 0,
 		.lpfn = 0,
 		.mem_type = VMW_PL_GMR,
-		.flags = 0
+		.flags = TTM_PL_FLAG_CACHED
 	}, {
 		.fpfn = 0,
 		.lpfn = 0,
 		.mem_type = TTM_PL_VRAM,
-		.flags = 0
+		.flags = TTM_PL_FLAG_CACHED
 	}
 };
 
@@ -99,11 +128,41 @@ struct ttm_placement vmw_vram_gmr_placement = {
 	.busy_placement = &gmr_placement_flags
 };
 
+static const struct ttm_place vram_gmr_ne_placement_flags[] = {
+	{
+		.fpfn = 0,
+		.lpfn = 0,
+		.mem_type = TTM_PL_VRAM,
+		.flags = TTM_PL_FLAG_CACHED |
+			 TTM_PL_FLAG_NO_EVICT
+	}, {
+		.fpfn = 0,
+		.lpfn = 0,
+		.mem_type = VMW_PL_GMR,
+		.flags = TTM_PL_FLAG_CACHED |
+			 TTM_PL_FLAG_NO_EVICT
+	}
+};
+
+struct ttm_placement vmw_vram_gmr_ne_placement = {
+	.num_placement = 2,
+	.placement = vram_gmr_ne_placement_flags,
+	.num_busy_placement = 1,
+	.busy_placement = &gmr_ne_placement_flags
+};
+
 struct ttm_placement vmw_vram_sys_placement = {
 	.num_placement = 1,
 	.placement = &vram_placement_flags,
 	.num_busy_placement = 1,
 	.busy_placement = &sys_placement_flags
+};
+
+struct ttm_placement vmw_vram_ne_placement = {
+	.num_placement = 1,
+	.placement = &vram_ne_placement_flags,
+	.num_busy_placement = 1,
+	.busy_placement = &vram_ne_placement_flags
 };
 
 struct ttm_placement vmw_sys_placement = {
@@ -113,27 +172,34 @@ struct ttm_placement vmw_sys_placement = {
 	.busy_placement = &sys_placement_flags
 };
 
+struct ttm_placement vmw_sys_ne_placement = {
+	.num_placement = 1,
+	.placement = &sys_ne_placement_flags,
+	.num_busy_placement = 1,
+	.busy_placement = &sys_ne_placement_flags
+};
+
 static const struct ttm_place evictable_placement_flags[] = {
 	{
 		.fpfn = 0,
 		.lpfn = 0,
 		.mem_type = TTM_PL_SYSTEM,
-		.flags = 0
+		.flags = TTM_PL_FLAG_CACHED
 	}, {
 		.fpfn = 0,
 		.lpfn = 0,
 		.mem_type = TTM_PL_VRAM,
-		.flags = 0
+		.flags = TTM_PL_FLAG_CACHED
 	}, {
 		.fpfn = 0,
 		.lpfn = 0,
 		.mem_type = VMW_PL_GMR,
-		.flags = 0
+		.flags = TTM_PL_FLAG_CACHED
 	}, {
 		.fpfn = 0,
 		.lpfn = 0,
 		.mem_type = VMW_PL_MOB,
-		.flags = 0
+		.flags = TTM_PL_FLAG_CACHED
 	}
 };
 
@@ -142,17 +208,17 @@ static const struct ttm_place nonfixed_placement_flags[] = {
 		.fpfn = 0,
 		.lpfn = 0,
 		.mem_type = TTM_PL_SYSTEM,
-		.flags = 0
+		.flags = TTM_PL_FLAG_CACHED
 	}, {
 		.fpfn = 0,
 		.lpfn = 0,
 		.mem_type = VMW_PL_GMR,
-		.flags = 0
+		.flags = TTM_PL_FLAG_CACHED
 	}, {
 		.fpfn = 0,
 		.lpfn = 0,
 		.mem_type = VMW_PL_MOB,
-		.flags = 0
+		.flags = TTM_PL_FLAG_CACHED
 	}
 };
 
@@ -177,6 +243,13 @@ struct ttm_placement vmw_mob_placement = {
 	.busy_placement = &mob_placement_flags
 };
 
+struct ttm_placement vmw_mob_ne_placement = {
+	.num_placement = 1,
+	.num_busy_placement = 1,
+	.placement = &mob_ne_placement_flags,
+	.busy_placement = &mob_ne_placement_flags
+};
+
 struct ttm_placement vmw_nonfixed_placement = {
 	.num_placement = 3,
 	.placement = nonfixed_placement_flags,
@@ -185,7 +258,7 @@ struct ttm_placement vmw_nonfixed_placement = {
 };
 
 struct vmw_ttm_tt {
-	struct ttm_tt dma_ttm;
+	struct ttm_dma_tt dma_ttm;
 	struct vmw_private *dev_priv;
 	int gmr_id;
 	struct vmw_mob *mob;
@@ -200,8 +273,7 @@ struct vmw_ttm_tt {
 const size_t vmw_tt_size = sizeof(struct vmw_ttm_tt);
 
 /**
- * __vmw_piter_non_sg_next: Helper functions to advance
- * a struct vmw_piter iterator.
+ * Helper functions to advance a struct vmw_piter iterator.
  *
  * @viter: Pointer to the iterator.
  *
@@ -223,8 +295,7 @@ static bool __vmw_piter_sg_next(struct vmw_piter *viter)
 
 
 /**
- * __vmw_piter_non_sg_page: Helper functions to return a pointer
- * to the current page.
+ * Helper functions to return a pointer to the current page.
  *
  * @viter: Pointer to the iterator
  *
@@ -238,8 +309,7 @@ static struct page *__vmw_piter_non_sg_page(struct vmw_piter *viter)
 }
 
 /**
- * __vmw_piter_phys_addr: Helper functions to return the DMA
- * address of the current page.
+ * Helper functions to return the DMA address of the current page.
  *
  * @viter: Pointer to the iterator
  *
@@ -268,7 +338,6 @@ static dma_addr_t __vmw_piter_sg_addr(struct vmw_piter *viter)
  *
  * @viter: Pointer to the iterator to initialize
  * @vsgt: Pointer to a struct vmw_sg_table to initialize from
- * @p_offset: Pointer offset used to update current array position
  *
  * Note that we're following the convention of __sg_page_iter_start, so that
  * the iterator doesn't point to a valid page after initialization; it has
@@ -313,7 +382,7 @@ void vmw_piter_start(struct vmw_piter *viter, const struct vmw_sg_table *vsgt,
  */
 static void vmw_ttm_unmap_from_dma(struct vmw_ttm_tt *vmw_tt)
 {
-	struct device *dev = vmw_tt->dev_priv->drm.dev;
+	struct device *dev = vmw_tt->dev_priv->dev->dev;
 
 	dma_unmap_sgtable(dev, &vmw_tt->sgt, DMA_BIDIRECTIONAL, 0);
 	vmw_tt->sgt.nents = vmw_tt->sgt.orig_nents;
@@ -334,7 +403,7 @@ static void vmw_ttm_unmap_from_dma(struct vmw_ttm_tt *vmw_tt)
  */
 static int vmw_ttm_map_for_dma(struct vmw_ttm_tt *vmw_tt)
 {
-	struct device *dev = vmw_tt->dev_priv->drm.dev;
+	struct device *dev = vmw_tt->dev_priv->dev->dev;
 
 	return dma_map_sgtable(dev, &vmw_tt->sgt, DMA_BIDIRECTIONAL, 0);
 }
@@ -369,8 +438,8 @@ static int vmw_ttm_map_dma(struct vmw_ttm_tt *vmw_tt)
 		return 0;
 
 	vsgt->mode = dev_priv->map_mode;
-	vsgt->pages = vmw_tt->dma_ttm.pages;
-	vsgt->num_pages = vmw_tt->dma_ttm.num_pages;
+	vsgt->pages = vmw_tt->dma_ttm.ttm.pages;
+	vsgt->num_pages = vmw_tt->dma_ttm.ttm.num_pages;
 	vsgt->addrs = vmw_tt->dma_ttm.dma_address;
 	vsgt->sgt = &vmw_tt->sgt;
 
@@ -389,7 +458,7 @@ static int vmw_ttm_map_dma(struct vmw_ttm_tt *vmw_tt)
 		sg = __sg_alloc_table_from_pages(&vmw_tt->sgt, vsgt->pages,
 				vsgt->num_pages, 0,
 				(unsigned long) vsgt->num_pages << PAGE_SHIFT,
-				dma_get_max_seg_size(dev_priv->drm.dev),
+				dma_get_max_seg_size(dev_priv->dev->dev),
 				NULL, 0, GFP_KERNEL);
 		if (IS_ERR(sg)) {
 			ret = PTR_ERR(sg);
@@ -480,17 +549,17 @@ static void vmw_ttm_unmap_dma(struct vmw_ttm_tt *vmw_tt)
 const struct vmw_sg_table *vmw_bo_sg_table(struct ttm_buffer_object *bo)
 {
 	struct vmw_ttm_tt *vmw_tt =
-		container_of(bo->ttm, struct vmw_ttm_tt, dma_ttm);
+		container_of(bo->ttm, struct vmw_ttm_tt, dma_ttm.ttm);
 
 	return &vmw_tt->vsgt;
 }
 
 
-static int vmw_ttm_bind(struct ttm_device *bdev,
+static int vmw_ttm_bind(struct ttm_bo_device *bdev,
 			struct ttm_tt *ttm, struct ttm_resource *bo_mem)
 {
 	struct vmw_ttm_tt *vmw_be =
-		container_of(ttm, struct vmw_ttm_tt, dma_ttm);
+		container_of(ttm, struct vmw_ttm_tt, dma_ttm.ttm);
 	int ret = 0;
 
 	if (!bo_mem)
@@ -530,11 +599,11 @@ static int vmw_ttm_bind(struct ttm_device *bdev,
 	return ret;
 }
 
-static void vmw_ttm_unbind(struct ttm_device *bdev,
+static void vmw_ttm_unbind(struct ttm_bo_device *bdev,
 			   struct ttm_tt *ttm)
 {
 	struct vmw_ttm_tt *vmw_be =
-		container_of(ttm, struct vmw_ttm_tt, dma_ttm);
+		container_of(ttm, struct vmw_ttm_tt, dma_ttm.ttm);
 
 	if (!vmw_be->bound)
 		return;
@@ -556,16 +625,16 @@ static void vmw_ttm_unbind(struct ttm_device *bdev,
 }
 
 
-static void vmw_ttm_destroy(struct ttm_device *bdev, struct ttm_tt *ttm)
+static void vmw_ttm_destroy(struct ttm_bo_device *bdev, struct ttm_tt *ttm)
 {
 	struct vmw_ttm_tt *vmw_be =
-		container_of(ttm, struct vmw_ttm_tt, dma_ttm);
+		container_of(ttm, struct vmw_ttm_tt, dma_ttm.ttm);
 
 	vmw_ttm_unbind(bdev, ttm);
 	ttm_tt_destroy_common(bdev, ttm);
 	vmw_ttm_unmap_dma(vmw_be);
 	if (vmw_be->dev_priv->map_mode == vmw_dma_alloc_coherent)
-		ttm_tt_fini(&vmw_be->dma_ttm);
+		ttm_dma_tt_fini(&vmw_be->dma_ttm);
 	else
 		ttm_tt_fini(ttm);
 
@@ -576,42 +645,43 @@ static void vmw_ttm_destroy(struct ttm_device *bdev, struct ttm_tt *ttm)
 }
 
 
-static int vmw_ttm_populate(struct ttm_device *bdev,
+static int vmw_ttm_populate(struct ttm_bo_device *bdev,
 			    struct ttm_tt *ttm, struct ttm_operation_ctx *ctx)
 {
-	unsigned int i;
+	struct vmw_ttm_tt *vmw_tt =
+		container_of(ttm, struct vmw_ttm_tt, dma_ttm.ttm);
+	struct vmw_private *dev_priv = vmw_tt->dev_priv;
+	struct ttm_mem_global *glob = vmw_mem_glob(dev_priv);
 	int ret;
 
-	/* TODO: maybe completely drop this ? */
 	if (ttm_tt_is_populated(ttm))
 		return 0;
 
-	ret = ttm_pool_alloc(&bdev->pool, ttm, ctx);
-	if (ret)
-		return ret;
+	if (dev_priv->map_mode == vmw_dma_alloc_coherent) {
+		size_t size =
+			ttm_round_pot(ttm->num_pages * sizeof(dma_addr_t));
+		ret = ttm_mem_global_alloc(glob, size, ctx);
+		if (unlikely(ret != 0))
+			return ret;
 
-	for (i = 0; i < ttm->num_pages; ++i) {
-		ret = ttm_mem_global_alloc_page(&ttm_mem_glob, ttm->pages[i],
-						PAGE_SIZE, ctx);
-		if (ret)
-			goto error;
-	}
-	return 0;
+		ret = ttm_dma_populate(&vmw_tt->dma_ttm, dev_priv->dev->dev,
+					ctx);
+		if (unlikely(ret != 0))
+			ttm_mem_global_free(glob, size);
+	} else
+		ret = ttm_pool_populate(ttm, ctx);
 
-error:
-	while (i--)
-		ttm_mem_global_free_page(&ttm_mem_glob, ttm->pages[i],
-					 PAGE_SIZE);
-	ttm_pool_free(&bdev->pool, ttm);
 	return ret;
 }
 
-static void vmw_ttm_unpopulate(struct ttm_device *bdev,
+static void vmw_ttm_unpopulate(struct ttm_bo_device *bdev,
 			       struct ttm_tt *ttm)
 {
 	struct vmw_ttm_tt *vmw_tt = container_of(ttm, struct vmw_ttm_tt,
-						 dma_ttm);
-	unsigned int i;
+						 dma_ttm.ttm);
+	struct vmw_private *dev_priv = vmw_tt->dev_priv;
+	struct ttm_mem_global *glob = vmw_mem_glob(dev_priv);
+
 
 	if (vmw_tt->mob) {
 		vmw_mob_destroy(vmw_tt->mob);
@@ -619,12 +689,14 @@ static void vmw_ttm_unpopulate(struct ttm_device *bdev,
 	}
 
 	vmw_ttm_unmap_dma(vmw_tt);
+	if (dev_priv->map_mode == vmw_dma_alloc_coherent) {
+		size_t size =
+			ttm_round_pot(ttm->num_pages * sizeof(dma_addr_t));
 
-	for (i = 0; i < ttm->num_pages; ++i)
-		ttm_mem_global_free_page(&ttm_mem_glob, ttm->pages[i],
-					 PAGE_SIZE);
-
-	ttm_pool_free(&bdev->pool, ttm);
+		ttm_dma_unpopulate(&vmw_tt->dma_ttm, dev_priv->dev->dev);
+		ttm_mem_global_free(glob, size);
+	} else
+		ttm_pool_unpopulate(ttm);
 }
 
 static struct ttm_tt *vmw_ttm_tt_create(struct ttm_buffer_object *bo,
@@ -641,15 +713,13 @@ static struct ttm_tt *vmw_ttm_tt_create(struct ttm_buffer_object *bo,
 	vmw_be->mob = NULL;
 
 	if (vmw_be->dev_priv->map_mode == vmw_dma_alloc_coherent)
-		ret = ttm_sg_tt_init(&vmw_be->dma_ttm, bo, page_flags,
-				     ttm_cached);
+		ret = ttm_dma_tt_init(&vmw_be->dma_ttm, bo, page_flags);
 	else
-		ret = ttm_tt_init(&vmw_be->dma_ttm, bo, page_flags,
-				  ttm_cached);
+		ret = ttm_tt_init(&vmw_be->dma_ttm.ttm, bo, page_flags);
 	if (unlikely(ret != 0))
 		goto out_no_init;
 
-	return &vmw_be->dma_ttm;
+	return &vmw_be->dma_ttm.ttm;
 out_no_init:
 	kfree(vmw_be);
 	return NULL;
@@ -661,7 +731,15 @@ static void vmw_evict_flags(struct ttm_buffer_object *bo,
 	*placement = vmw_sys_placement;
 }
 
-static int vmw_ttm_io_mem_reserve(struct ttm_device *bdev, struct ttm_resource *mem)
+static int vmw_verify_access(struct ttm_buffer_object *bo, struct file *filp)
+{
+	struct ttm_object_file *tfile =
+		vmw_fpriv((struct drm_file *)filp->private_data)->tfile;
+
+	return vmw_user_bo_verify_access(bo, tfile);
+}
+
+static int vmw_ttm_io_mem_reserve(struct ttm_bo_device *bdev, struct ttm_resource *mem)
 {
 	struct vmw_private *dev_priv = container_of(bdev, struct vmw_private, bdev);
 
@@ -674,7 +752,6 @@ static int vmw_ttm_io_mem_reserve(struct ttm_device *bdev, struct ttm_resource *
 		mem->bus.offset = (mem->start << PAGE_SHIFT) +
 			dev_priv->vram_start;
 		mem->bus.is_iomem = true;
-		mem->bus.caching = ttm_cached;
 		break;
 	default:
 		return -EINVAL;
@@ -686,19 +763,18 @@ static int vmw_ttm_io_mem_reserve(struct ttm_device *bdev, struct ttm_resource *
  * vmw_move_notify - TTM move_notify_callback
  *
  * @bo: The TTM buffer object about to move.
- * @old_mem: The old memory where we move from
- * @new_mem: The struct ttm_resource indicating to what memory
+ * @mem: The struct ttm_resource indicating to what memory
  *       region the move is taking place.
  *
  * Calls move_notify for all subsystems needing it.
  * (currently only resources).
  */
 static void vmw_move_notify(struct ttm_buffer_object *bo,
-			    struct ttm_resource *old_mem,
-			    struct ttm_resource *new_mem)
+			    bool evict,
+			    struct ttm_resource *mem)
 {
-	vmw_bo_move_notify(bo, new_mem);
-	vmw_query_move_notify(bo, old_mem, new_mem);
+	vmw_bo_move_notify(bo, mem);
+	vmw_query_move_notify(bo, mem);
 }
 
 
@@ -713,56 +789,19 @@ static void vmw_swap_notify(struct ttm_buffer_object *bo)
 	(void) ttm_bo_wait(bo, false, false);
 }
 
-static int vmw_move(struct ttm_buffer_object *bo,
-		    bool evict,
-		    struct ttm_operation_ctx *ctx,
-		    struct ttm_resource *new_mem,
-		    struct ttm_place *hop)
-{
-	struct ttm_resource_manager *old_man = ttm_manager_type(bo->bdev, bo->resource->mem_type);
-	struct ttm_resource_manager *new_man = ttm_manager_type(bo->bdev, new_mem->mem_type);
-	int ret;
 
-	if (new_man->use_tt && new_mem->mem_type != TTM_PL_SYSTEM) {
-		ret = vmw_ttm_bind(bo->bdev, bo->ttm, new_mem);
-		if (ret)
-			return ret;
-	}
-
-	vmw_move_notify(bo, bo->resource, new_mem);
-
-	if (old_man->use_tt && new_man->use_tt) {
-		if (bo->resource->mem_type == TTM_PL_SYSTEM) {
-			ttm_bo_move_null(bo, new_mem);
-			return 0;
-		}
-		ret = ttm_bo_wait_ctx(bo, ctx);
-		if (ret)
-			goto fail;
-
-		vmw_ttm_unbind(bo->bdev, bo->ttm);
-		ttm_resource_free(bo, &bo->resource);
-		ttm_bo_assign_mem(bo, new_mem);
-		return 0;
-	} else {
-		ret = ttm_bo_move_memcpy(bo, ctx, new_mem);
-		if (ret)
-			goto fail;
-	}
-	return 0;
-fail:
-	vmw_move_notify(bo, new_mem, bo->resource);
-	return ret;
-}
-
-struct ttm_device_funcs vmw_bo_driver = {
+struct ttm_bo_driver vmw_bo_driver = {
 	.ttm_tt_create = &vmw_ttm_tt_create,
 	.ttm_tt_populate = &vmw_ttm_populate,
 	.ttm_tt_unpopulate = &vmw_ttm_unpopulate,
+	.ttm_tt_bind = &vmw_ttm_bind,
+	.ttm_tt_unbind = &vmw_ttm_unbind,
 	.ttm_tt_destroy = &vmw_ttm_destroy,
 	.eviction_valuable = ttm_bo_eviction_valuable,
 	.evict_flags = vmw_evict_flags,
-	.move = vmw_move,
+	.move = NULL,
+	.verify_access = vmw_verify_access,
+	.move_notify = vmw_move_notify,
 	.swap_notify = vmw_swap_notify,
 	.io_mem_reserve = &vmw_ttm_io_mem_reserve,
 };
@@ -778,9 +817,11 @@ int vmw_bo_create_and_populate(struct vmw_private *dev_priv,
 	struct ttm_buffer_object *bo;
 	int ret;
 
-	ret = vmw_bo_create_kernel(dev_priv, bo_size,
-				   &vmw_sys_placement,
-				   &bo);
+	ret = ttm_bo_create(&dev_priv->bdev, bo_size,
+			    ttm_bo_type_device,
+			    &vmw_sys_ne_placement,
+			    0, false, &bo);
+
 	if (unlikely(ret != 0))
 		return ret;
 
@@ -789,7 +830,7 @@ int vmw_bo_create_and_populate(struct vmw_private *dev_priv,
 	ret = vmw_ttm_populate(bo->bdev, bo->ttm, &ctx);
 	if (likely(ret == 0)) {
 		struct vmw_ttm_tt *vmw_tt =
-			container_of(bo->ttm, struct vmw_ttm_tt, dma_ttm);
+			container_of(bo->ttm, struct vmw_ttm_tt, dma_ttm.ttm);
 		ret = vmw_ttm_map_dma(vmw_tt);
 	}
 

@@ -17,6 +17,7 @@
 #include <linux/kmemleak.h>
 #include <linux/list.h>
 #include <linux/of.h>
+#include <linux/of_iommu.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
@@ -406,7 +407,7 @@ static irqreturn_t exynos_sysmmu_irq(int irq, void *dev_id)
 	struct sysmmu_drvdata *data = dev_id;
 	const struct sysmmu_fault_info *finfo;
 	unsigned int i, n, itype;
-	sysmmu_iova_t fault_addr;
+	sysmmu_iova_t fault_addr = -1;
 	unsigned short reg_status, reg_clear;
 	int ret = -ENOSYS;
 
@@ -629,7 +630,10 @@ static int exynos_sysmmu_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	ret = iommu_device_register(&data->iommu, &exynos_iommu_ops, dev);
+	iommu_device_set_ops(&data->iommu, &exynos_iommu_ops);
+	iommu_device_set_fwnode(&data->iommu, &dev->of_node->fwnode);
+
+	ret = iommu_device_register(&data->iommu);
 	if (ret)
 		return ret;
 

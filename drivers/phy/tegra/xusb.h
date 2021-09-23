@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2014-2020, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2014-2015, NVIDIA CORPORATION.  All rights reserved.
  * Copyright (c) 2015, Google Inc.
  */
 
@@ -11,7 +11,6 @@
 #include <linux/mutex.h>
 #include <linux/workqueue.h>
 
-#include <linux/usb/ch9.h>
 #include <linux/usb/otg.h>
 #include <linux/usb/role.h>
 
@@ -36,10 +35,6 @@ struct tegra_xusb_lane_soc {
 
 	const char * const *funcs;
 	unsigned int num_funcs;
-
-	struct {
-		unsigned int misc_ctl2;
-	} regs;
 };
 
 struct tegra_xusb_lane {
@@ -131,16 +126,7 @@ struct tegra_xusb_lane_ops {
 					 struct device_node *np,
 					 unsigned int index);
 	void (*remove)(struct tegra_xusb_lane *lane);
-	void (*iddq_enable)(struct tegra_xusb_lane *lane);
-	void (*iddq_disable)(struct tegra_xusb_lane *lane);
-	int (*enable_phy_sleepwalk)(struct tegra_xusb_lane *lane, enum usb_device_speed speed);
-	int (*disable_phy_sleepwalk)(struct tegra_xusb_lane *lane);
-	int (*enable_phy_wake)(struct tegra_xusb_lane *lane);
-	int (*disable_phy_wake)(struct tegra_xusb_lane *lane);
-	bool (*remote_wake_detected)(struct tegra_xusb_lane *lane);
 };
-
-bool tegra_xusb_lane_check(struct tegra_xusb_lane *lane, const char *function);
 
 /*
  * pads
@@ -244,7 +230,7 @@ struct tegra_xusb_pcie_pad {
 	struct reset_control *rst;
 	struct clk *pll;
 
-	bool enable;
+	unsigned int enable;
 };
 
 static inline struct tegra_xusb_pcie_pad *
@@ -259,7 +245,7 @@ struct tegra_xusb_sata_pad {
 	struct reset_control *rst;
 	struct clk *pll;
 
-	bool enable;
+	unsigned int enable;
 };
 
 static inline struct tegra_xusb_sata_pad *
@@ -402,8 +388,6 @@ struct tegra_xusb_padctl_ops {
 			 const struct tegra_xusb_padctl_soc *soc);
 	void (*remove)(struct tegra_xusb_padctl *padctl);
 
-	int (*suspend_noirq)(struct tegra_xusb_padctl *padctl);
-	int (*resume_noirq)(struct tegra_xusb_padctl *padctl);
 	int (*usb3_save_context)(struct tegra_xusb_padctl *padctl,
 				 unsigned int index);
 	int (*hsic_set_idle)(struct tegra_xusb_padctl *padctl,

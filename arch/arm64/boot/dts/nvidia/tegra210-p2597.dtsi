@@ -1345,7 +1345,7 @@
 	};
 
 	hda@70030000 {
-		nvidia,model = "NVIDIA Jetson TX1 HDA";
+		nvidia,model = "jetson-tx1-hda";
 		status = "okay";
 	};
 

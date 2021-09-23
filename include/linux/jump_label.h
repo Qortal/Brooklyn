@@ -171,21 +171,9 @@ static inline bool jump_entry_is_init(const struct jump_entry *entry)
 	return (unsigned long)entry->key & 2UL;
 }
 
-static inline void jump_entry_set_init(struct jump_entry *entry, bool set)
+static inline void jump_entry_set_init(struct jump_entry *entry)
 {
-	if (set)
-		entry->key |= 2;
-	else
-		entry->key &= ~2;
-}
-
-static inline int jump_entry_size(struct jump_entry *entry)
-{
-#ifdef JUMP_LABEL_NOP_SIZE
-	return JUMP_LABEL_NOP_SIZE;
-#else
-	return arch_jump_entry_size(entry);
-#endif
+	entry->key |= 2;
 }
 
 #endif
@@ -273,14 +261,14 @@ static __always_inline void jump_label_init(void)
 
 static __always_inline bool static_key_false(struct static_key *key)
 {
-	if (unlikely_notrace(static_key_count(key) > 0))
+	if (unlikely(static_key_count(key) > 0))
 		return true;
 	return false;
 }
 
 static __always_inline bool static_key_true(struct static_key *key)
 {
-	if (likely_notrace(static_key_count(key) > 0))
+	if (likely(static_key_count(key) > 0))
 		return true;
 	return false;
 }
@@ -394,21 +382,6 @@ struct static_key_false {
 		[0 ... (count) - 1] = STATIC_KEY_FALSE_INIT,	\
 	}
 
-#define _DEFINE_STATIC_KEY_1(name)	DEFINE_STATIC_KEY_TRUE(name)
-#define _DEFINE_STATIC_KEY_0(name)	DEFINE_STATIC_KEY_FALSE(name)
-#define DEFINE_STATIC_KEY_MAYBE(cfg, name)			\
-	__PASTE(_DEFINE_STATIC_KEY_, IS_ENABLED(cfg))(name)
-
-#define _DEFINE_STATIC_KEY_RO_1(name)	DEFINE_STATIC_KEY_TRUE_RO(name)
-#define _DEFINE_STATIC_KEY_RO_0(name)	DEFINE_STATIC_KEY_FALSE_RO(name)
-#define DEFINE_STATIC_KEY_MAYBE_RO(cfg, name)			\
-	__PASTE(_DEFINE_STATIC_KEY_RO_, IS_ENABLED(cfg))(name)
-
-#define _DECLARE_STATIC_KEY_1(name)	DECLARE_STATIC_KEY_TRUE(name)
-#define _DECLARE_STATIC_KEY_0(name)	DECLARE_STATIC_KEY_FALSE(name)
-#define DECLARE_STATIC_KEY_MAYBE(cfg, name)			\
-	__PASTE(_DECLARE_STATIC_KEY_, IS_ENABLED(cfg))(name)
-
 extern bool ____wrong_branch_error(void);
 
 #define static_key_enabled(x)							\
@@ -487,7 +460,7 @@ extern bool ____wrong_branch_error(void);
 		branch = !arch_static_branch_jump(&(x)->key, true);		\
 	else									\
 		branch = ____wrong_branch_error();				\
-	likely_notrace(branch);								\
+	likely(branch);								\
 })
 
 #define static_branch_unlikely(x)						\
@@ -499,19 +472,15 @@ extern bool ____wrong_branch_error(void);
 		branch = arch_static_branch(&(x)->key, false);			\
 	else									\
 		branch = ____wrong_branch_error();				\
-	unlikely_notrace(branch);							\
+	unlikely(branch);							\
 })
 
 #else /* !CONFIG_JUMP_LABEL */
 
-#define static_branch_likely(x)		likely_notrace(static_key_enabled(&(x)->key))
-#define static_branch_unlikely(x)	unlikely_notrace(static_key_enabled(&(x)->key))
+#define static_branch_likely(x)		likely(static_key_enabled(&(x)->key))
+#define static_branch_unlikely(x)	unlikely(static_key_enabled(&(x)->key))
 
 #endif /* CONFIG_JUMP_LABEL */
-
-#define static_branch_maybe(config, x)					\
-	(IS_ENABLED(config) ? static_branch_likely(x)			\
-			    : static_branch_unlikely(x))
 
 /*
  * Advanced usage; refcount, branch is enabled when: count != 0

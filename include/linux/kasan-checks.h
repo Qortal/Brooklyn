@@ -5,17 +5,11 @@
 #include <linux/types.h>
 
 /*
- * The annotations present in this file are only relevant for the software
- * KASAN modes that rely on compiler instrumentation, and will be optimized
- * away for the hardware tag-based KASAN mode. Use kasan_check_byte() instead.
- */
-
-/*
  * __kasan_check_*: Always available when KASAN is enabled. This may be used
  * even in compilation units that selectively disable KASAN, but must use KASAN
  * to validate access to an address.   Never use these in header files!
  */
-#if defined(CONFIG_KASAN_GENERIC) || defined(CONFIG_KASAN_SW_TAGS)
+#ifdef CONFIG_KASAN
 bool __kasan_check_read(const volatile void *p, unsigned int size);
 bool __kasan_check_write(const volatile void *p, unsigned int size);
 #else

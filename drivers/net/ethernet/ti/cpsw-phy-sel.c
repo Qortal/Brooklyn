@@ -206,6 +206,7 @@ static const struct of_device_id cpsw_phy_sel_id_table[] = {
 
 static int cpsw_phy_sel_probe(struct platform_device *pdev)
 {
+	struct resource	*res;
 	const struct of_device_id *of_id;
 	struct cpsw_phy_sel_priv *priv;
 
@@ -222,7 +223,8 @@ static int cpsw_phy_sel_probe(struct platform_device *pdev)
 	priv->dev = &pdev->dev;
 	priv->cpsw_phy_sel = of_id->data;
 
-	priv->gmii_sel = devm_platform_ioremap_resource_byname(pdev, "gmii-sel");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "gmii-sel");
+	priv->gmii_sel = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(priv->gmii_sel))
 		return PTR_ERR(priv->gmii_sel);
 

@@ -46,7 +46,6 @@
  *					Copyright (C) 2011, <lokec@ccs.neu.edu>
  */
 
-#include <linux/ethtool.h>
 #include <linux/types.h>
 #include <linux/mm.h>
 #include <linux/capability.h>
@@ -135,11 +134,11 @@ Resume
 On transmit:
 ------------
 
-dev_has_header(dev) == true
+dev->header_ops != NULL
    mac_header -> ll header
    data       -> ll header
 
-dev_has_header(dev) == false (ll header is invisible to us)
+dev->header_ops == NULL (ll header is invisible to us)
    mac_header -> data
    data       -> data
 
@@ -1656,7 +1655,6 @@ static int fanout_add(struct sock *sk, struct fanout_args *args)
 	case PACKET_FANOUT_ROLLOVER:
 		if (type_flags & PACKET_FANOUT_FLAG_ROLLOVER)
 			return -EINVAL;
-		break;
 	case PACKET_FANOUT_HASH:
 	case PACKET_FANOUT_LB:
 	case PACKET_FANOUT_CPU:
@@ -2062,7 +2060,7 @@ static int packet_rcv_vnet(struct msghdr *msg, const struct sk_buff *skb,
  * and skb->cb are mangled. It works because (and until) packets
  * falling here are owned by current CPU. Output packets are cloned
  * by dev_queue_xmit_nit(), input packets are processed by net_bh
- * sequentially, so that if we return skb to original state on exit,
+ * sequencially, so that if we return skb to original state on exit,
  * we will not harm anyone.
  */
 
@@ -3207,7 +3205,7 @@ static int packet_do_bind(struct sock *sk, const char *name, int ifindex,
 	} else {
 		sk->sk_err = ENETDOWN;
 		if (!sock_flag(sk, SOCK_DEAD))
-			sk_error_report(sk);
+			sk->sk_error_report(sk);
 	}
 
 out_unlock:
@@ -3935,9 +3933,12 @@ packet_setsockopt(struct socket *sock, int level, int optname, sockptr_t optval,
 			return -EFAULT;
 
 		lock_sock(sk);
-		if (!po->rx_ring.pg_vec && !po->tx_ring.pg_vec)
+		if (po->rx_ring.pg_vec || po->tx_ring.pg_vec) {
+			ret = -EBUSY;
+		} else {
 			po->tp_tx_has_off = !!val;
-
+			ret = 0;
+		}
 		release_sock(sk);
 		return 0;
 	}
@@ -4104,7 +4105,7 @@ static int packet_notifier(struct notifier_block *this,
 					__unregister_prot_hook(sk, false);
 					sk->sk_err = ENETDOWN;
 					if (!sock_flag(sk, SOCK_DEAD))
-						sk_error_report(sk);
+						sk->sk_error_report(sk);
 				}
 				if (msg == NETDEV_UNREGISTER) {
 					packet_cached_dev_reset(po);
@@ -4607,9 +4608,7 @@ static void packet_seq_stop(struct seq_file *seq, void *v)
 static int packet_seq_show(struct seq_file *seq, void *v)
 {
 	if (v == SEQ_START_TOKEN)
-		seq_printf(seq,
-			   "%*sRefCnt Type Proto  Iface R Rmem   User   Inode\n",
-			   IS_ENABLED(CONFIG_64BIT) ? -17 : -9, "sk");
+		seq_puts(seq, "sk       RefCnt Type Proto  Iface R Rmem   User   Inode\n");
 	else {
 		struct sock *s = sk_entry(v);
 		const struct packet_sock *po = pkt_sk(s);

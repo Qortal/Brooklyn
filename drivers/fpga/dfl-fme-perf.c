@@ -192,7 +192,7 @@ static struct attribute *fme_perf_cpumask_attrs[] = {
 	NULL,
 };
 
-static const struct attribute_group fme_perf_cpumask_group = {
+static struct attribute_group fme_perf_cpumask_group = {
 	.attrs = fme_perf_cpumask_attrs,
 };
 
@@ -225,7 +225,7 @@ static struct attribute *fme_perf_format_attrs[] = {
 	NULL,
 };
 
-static const struct attribute_group fme_perf_format_group = {
+static struct attribute_group fme_perf_format_group = {
 	.name = "format",
 	.attrs = fme_perf_format_attrs,
 };
@@ -239,7 +239,7 @@ static struct attribute *fme_perf_events_attrs_empty[] = {
 	NULL,
 };
 
-static const struct attribute_group fme_perf_events_group = {
+static struct attribute_group fme_perf_events_group = {
 	.name = "events",
 	.attrs = fme_perf_events_attrs_empty,
 };

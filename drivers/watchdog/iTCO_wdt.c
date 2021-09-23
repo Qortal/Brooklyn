@@ -40,6 +40,8 @@
  *	Includes, defines, variables, module parameters, ...
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 /* Module and version information */
 #define DRV_NAME	"iTCO_wdt"
 #define DRV_VERSION	"1.11"
@@ -71,8 +73,6 @@
 #define TCOBASE(p)	((p)->tco_res->start)
 /* SMI Control and Enable Register */
 #define SMI_EN(p)	((p)->smi_res->start)
-#define TCO_EN		(1 << 13)
-#define GBL_SMI_EN	(1 << 0)
 
 #define TCO_RLD(p)	(TCOBASE(p) + 0x00) /* TCO Timer Reload/Curr. Value */
 #define TCOv1_TMR(p)	(TCOBASE(p) + 0x01) /* TCOv1 Timer Initial Value*/
@@ -279,7 +279,7 @@ static int iTCO_wdt_start(struct watchdog_device *wd_dev)
 	/* disable chipset's NO_REBOOT bit */
 	if (p->update_no_reboot_bit(p->no_reboot_priv, false)) {
 		spin_unlock(&p->io_lock);
-		dev_err(wd_dev->parent, "failed to reset NO_REBOOT flag, reboot disabled by hardware/BIOS\n");
+		pr_err("failed to reset NO_REBOOT flag, reboot disabled by hardware/BIOS\n");
 		return -EIO;
 	}
 
@@ -357,12 +357,8 @@ static int iTCO_wdt_set_timeout(struct watchdog_device *wd_dev, unsigned int t)
 
 	tmrval = seconds_to_ticks(p, t);
 
-	/*
-	 * If TCO SMIs are off, the timer counts down twice before rebooting.
-	 * Otherwise, the BIOS generally reboots when the SMI triggers.
-	 */
-	if (p->smi_res &&
-	    (SMI_EN(p) & (TCO_EN | GBL_SMI_EN)) != (TCO_EN | GBL_SMI_EN))
+	/* For TCO v1 the timer counts down twice before rebooting */
+	if (p->iTCO_version == 1)
 		tmrval /= 2;
 
 	/* from the specs: */
@@ -485,13 +481,13 @@ static int iTCO_wdt_probe(struct platform_device *pdev)
 		if (!devm_request_region(dev, p->smi_res->start,
 					 resource_size(p->smi_res),
 					 pdev->name)) {
-			dev_err(dev, "I/O address 0x%04llx already in use, device disabled\n",
+			pr_err("I/O address 0x%04llx already in use, device disabled\n",
 			       (u64)SMI_EN(p));
 			return -EBUSY;
 		}
 	} else if (iTCO_vendorsupport ||
 		   turn_SMI_watchdog_clear_off >= p->iTCO_version) {
-		dev_err(dev, "SMI I/O resource is missing\n");
+		pr_err("SMI I/O resource is missing\n");
 		return -ENODEV;
 	}
 
@@ -514,7 +510,7 @@ static int iTCO_wdt_probe(struct platform_device *pdev)
 	/* Check chipset's NO_REBOOT bit */
 	if (p->update_no_reboot_bit(p->no_reboot_priv, false) &&
 	    iTCO_vendor_check_noreboot_on()) {
-		dev_info(dev, "unable to reset NO_REBOOT flag, device disabled by hardware/BIOS\n");
+		pr_info("unable to reset NO_REBOOT flag, device disabled by hardware/BIOS\n");
 		return -ENODEV;	/* Cannot reset NO_REBOOT bit */
 	}
 
@@ -527,19 +523,19 @@ static int iTCO_wdt_probe(struct platform_device *pdev)
 		 * Disables TCO logic generating an SMI#
 		 */
 		val32 = inl(SMI_EN(p));
-		val32 &= ~TCO_EN;	/* Turn off SMI clearing watchdog */
+		val32 &= 0xffffdfff;	/* Turn off SMI clearing watchdog */
 		outl(val32, SMI_EN(p));
 	}
 
 	if (!devm_request_region(dev, p->tco_res->start,
 				 resource_size(p->tco_res),
 				 pdev->name)) {
-		dev_err(dev, "I/O address 0x%04llx already in use, device disabled\n",
+		pr_err("I/O address 0x%04llx already in use, device disabled\n",
 		       (u64)TCOBASE(p));
 		return -EBUSY;
 	}
 
-	dev_info(dev, "Found a %s TCO device (Version=%d, TCOBASE=0x%04llx)\n",
+	pr_info("Found a %s TCO device (Version=%d, TCOBASE=0x%04llx)\n",
 		pdata->name, pdata->version, (u64)TCOBASE(p));
 
 	/* Clear out the (probably old) status */
@@ -562,7 +558,7 @@ static int iTCO_wdt_probe(struct platform_device *pdev)
 		break;
 	}
 
-	p->wddev.info = &ident,
+	p->wddev.info =	&ident,
 	p->wddev.ops = &iTCO_wdt_ops,
 	p->wddev.bootstatus = 0;
 	p->wddev.timeout = WATCHDOG_TIMEOUT;
@@ -579,7 +575,7 @@ static int iTCO_wdt_probe(struct platform_device *pdev)
 	   if not reset to the default */
 	if (iTCO_wdt_set_timeout(&p->wddev, heartbeat)) {
 		iTCO_wdt_set_timeout(&p->wddev, WATCHDOG_TIMEOUT);
-		dev_info(dev, "timeout value out of range, using %d\n",
+		pr_info("timeout value out of range, using %d\n",
 			WATCHDOG_TIMEOUT);
 	}
 
@@ -587,11 +583,11 @@ static int iTCO_wdt_probe(struct platform_device *pdev)
 	watchdog_stop_on_unregister(&p->wddev);
 	ret = devm_watchdog_register_device(dev, &p->wddev);
 	if (ret != 0) {
-		dev_err(dev, "cannot register watchdog device (err=%d)\n", ret);
+		pr_err("cannot register watchdog device (err=%d)\n", ret);
 		return ret;
 	}
 
-	dev_info(dev, "initialized. heartbeat=%d sec (nowayout=%d)\n",
+	pr_info("initialized. heartbeat=%d sec (nowayout=%d)\n",
 		heartbeat, nowayout);
 
 	return 0;
@@ -655,7 +651,21 @@ static struct platform_driver iTCO_wdt_driver = {
 	},
 };
 
-module_platform_driver(iTCO_wdt_driver);
+static int __init iTCO_wdt_init_module(void)
+{
+	pr_info("Intel TCO WatchDog Timer Driver v%s\n", DRV_VERSION);
+
+	return platform_driver_register(&iTCO_wdt_driver);
+}
+
+static void __exit iTCO_wdt_cleanup_module(void)
+{
+	platform_driver_unregister(&iTCO_wdt_driver);
+	pr_info("Watchdog Module Unloaded\n");
+}
+
+module_init(iTCO_wdt_init_module);
+module_exit(iTCO_wdt_cleanup_module);
 
 MODULE_AUTHOR("Wim Van Sebroeck <wim@iguana.be>");
 MODULE_DESCRIPTION("Intel TCO WatchDog Timer Driver");

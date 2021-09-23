@@ -31,8 +31,7 @@
 #include <crypto/algapi.h>
 #include <crypto/aes.h>
 #include <crypto/internal/des.h>
-#include <crypto/sha1.h>
-#include <crypto/sha2.h>
+#include <crypto/sha.h>
 #include <crypto/md5.h>
 #include <crypto/internal/aead.h>
 #include <crypto/authenc.h>

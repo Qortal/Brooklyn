@@ -1,8 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0+
 /*
  * Realtek RTD129x RTC
  *
  * Copyright (c) 2017 Andreas Färber
+ *
+ * SPDX-License-Identifier: GPL-2.0+
  */
 
 #include <linux/clk.h>

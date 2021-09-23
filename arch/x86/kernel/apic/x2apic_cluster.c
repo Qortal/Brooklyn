@@ -63,7 +63,7 @@ __x2apic_send_IPI_mask(const struct cpumask *mask, int vector, int apic_dest)
 		if (!dest)
 			continue;
 
-		__x2apic_send_IPI_dest(dest, vector, APIC_DEST_LOGICAL);
+		__x2apic_send_IPI_dest(dest, vector, apic->dest_logical);
 		/* Remove cluster CPUs from tmpmask */
 		cpumask_andnot(tmpmsk, tmpmsk, &cmsk->mask);
 	}
@@ -186,13 +186,15 @@ static struct apic apic_x2apic_cluster __ro_after_init = {
 	.apic_id_valid			= x2apic_apic_id_valid,
 	.apic_id_registered		= x2apic_apic_id_registered,
 
-	.delivery_mode			= APIC_DELIVERY_MODE_FIXED,
-	.dest_mode_logical		= true,
+	.irq_delivery_mode		= dest_Fixed,
+	.irq_dest_mode			= 1, /* logical */
 
 	.disable_esr			= 0,
-
+	.dest_logical			= APIC_DEST_LOGICAL,
 	.check_apicid_used		= NULL,
+
 	.init_apic_ldr			= init_x2apic_ldr,
+
 	.ioapic_phys_id_map		= NULL,
 	.setup_apic_routing		= NULL,
 	.cpu_present_to_apicid		= default_cpu_present_to_apicid,

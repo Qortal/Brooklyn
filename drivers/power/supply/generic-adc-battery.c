@@ -12,7 +12,7 @@
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
 #include <linux/power_supply.h>
-#include <linux/gpio/consumer.h>
+#include <linux/gpio.h>
 #include <linux/err.h>
 #include <linux/timer.h>
 #include <linux/jiffies.h>
@@ -52,7 +52,6 @@ struct gab {
 	int	level;
 	int	status;
 	bool cable_plugged;
-	struct gpio_desc *charge_finished;
 };
 
 static struct gab *to_generic_bat(struct power_supply *psy)
@@ -92,9 +91,13 @@ static const enum power_supply_property gab_dyn_props[] = {
 
 static bool gab_charge_finished(struct gab *adc_bat)
 {
-	if (!adc_bat->charge_finished)
+	struct gab_platform_data *pdata = adc_bat->pdata;
+	bool ret = gpio_get_value(pdata->gpio_charge_finished);
+	bool inv = pdata->gpio_inverted;
+
+	if (!gpio_is_valid(pdata->gpio_charge_finished))
 		return false;
-	return gpiod_get_value(adc_bat->charge_finished);
+	return ret ^ inv;
 }
 
 static int gab_get_status(struct gab *adc_bat)
@@ -324,17 +327,18 @@ static int gab_probe(struct platform_device *pdev)
 
 	INIT_DELAYED_WORK(&adc_bat->bat_work, gab_work);
 
-	adc_bat->charge_finished = devm_gpiod_get_optional(&pdev->dev,
-							   "charged", GPIOD_IN);
-	if (adc_bat->charge_finished) {
+	if (gpio_is_valid(pdata->gpio_charge_finished)) {
 		int irq;
+		ret = gpio_request(pdata->gpio_charge_finished, "charged");
+		if (ret)
+			goto gpio_req_fail;
 
-		irq = gpiod_to_irq(adc_bat->charge_finished);
+		irq = gpio_to_irq(pdata->gpio_charge_finished);
 		ret = request_any_context_irq(irq, gab_charged,
 				IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
 				"battery charged", adc_bat);
 		if (ret < 0)
-			goto gpio_req_fail;
+			goto err_gpio;
 	}
 
 	platform_set_drvdata(pdev, adc_bat);
@@ -344,6 +348,8 @@ static int gab_probe(struct platform_device *pdev)
 			msecs_to_jiffies(0));
 	return 0;
 
+err_gpio:
+	gpio_free(pdata->gpio_charge_finished);
 gpio_req_fail:
 	power_supply_unregister(adc_bat->psy);
 err_reg_fail:
@@ -361,11 +367,14 @@ static int gab_remove(struct platform_device *pdev)
 {
 	int chan;
 	struct gab *adc_bat = platform_get_drvdata(pdev);
+	struct gab_platform_data *pdata = adc_bat->pdata;
 
 	power_supply_unregister(adc_bat->psy);
 
-	if (adc_bat->charge_finished)
-		free_irq(gpiod_to_irq(adc_bat->charge_finished), adc_bat);
+	if (gpio_is_valid(pdata->gpio_charge_finished)) {
+		free_irq(gpio_to_irq(pdata->gpio_charge_finished), adc_bat);
+		gpio_free(pdata->gpio_charge_finished);
+	}
 
 	for (chan = 0; chan < ARRAY_SIZE(gab_chan_name); chan++) {
 		if (adc_bat->channel[chan])

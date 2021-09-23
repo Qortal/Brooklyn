@@ -6,7 +6,7 @@
  * Copyright 2007	Johannes Berg <johannes@sipsolutions.net>
  * Copyright 2013-2014  Intel Mobile Communications GmbH
  * Copyright (C) 2015-2017	Intel Deutschland GmbH
- * Copyright (C) 2018-2021 Intel Corporation
+ * Copyright (C) 2018-2020 Intel Corporation
  *
  * utilities for mac80211
  */
@@ -386,10 +386,9 @@ _ieee80211_wake_txqs(struct ieee80211_local *local, unsigned long *flags)
 	rcu_read_unlock();
 }
 
-void ieee80211_wake_txqs(struct tasklet_struct *t)
+void ieee80211_wake_txqs(unsigned long data)
 {
-	struct ieee80211_local *local = from_tasklet(local, t,
-						     wake_txqs_tasklet);
+	struct ieee80211_local *local = (struct ieee80211_local *)data;
 	unsigned long flags;
 
 	spin_lock_irqsave(&local->queue_stop_reason_lock, flags);
@@ -832,7 +831,7 @@ void ieee80211_iterate_active_interfaces_atomic(
 }
 EXPORT_SYMBOL_GPL(ieee80211_iterate_active_interfaces_atomic);
 
-void ieee80211_iterate_active_interfaces_mtx(
+void ieee80211_iterate_active_interfaces_rtnl(
 	struct ieee80211_hw *hw, u32 iter_flags,
 	void (*iterator)(void *data, u8 *mac,
 			 struct ieee80211_vif *vif),
@@ -840,12 +839,12 @@ void ieee80211_iterate_active_interfaces_mtx(
 {
 	struct ieee80211_local *local = hw_to_local(hw);
 
-	lockdep_assert_wiphy(hw->wiphy);
+	ASSERT_RTNL();
 
 	__iterate_interfaces(local, iter_flags | IEEE80211_IFACE_ITER_ACTIVE,
 			     iterator, data);
 }
-EXPORT_SYMBOL_GPL(ieee80211_iterate_active_interfaces_mtx);
+EXPORT_SYMBOL_GPL(ieee80211_iterate_active_interfaces_rtnl);
 
 static void __iterate_stations(struct ieee80211_local *local,
 			       void (*iterator)(void *data,
@@ -888,10 +887,18 @@ EXPORT_SYMBOL_GPL(wdev_to_ieee80211_vif);
 
 struct wireless_dev *ieee80211_vif_to_wdev(struct ieee80211_vif *vif)
 {
+	struct ieee80211_sub_if_data *sdata;
+
 	if (!vif)
 		return NULL;
 
-	return &vif_to_sdata(vif)->wdev;
+	sdata = vif_to_sdata(vif);
+
+	if (!ieee80211_sdata_running(sdata) ||
+	    !(sdata->flags & IEEE80211_SDATA_IN_DRIVER))
+		return NULL;
+
+	return &sdata->wdev;
 }
 EXPORT_SYMBOL_GPL(ieee80211_vif_to_wdev);
 
@@ -1693,10 +1700,7 @@ void ieee80211_send_auth(struct ieee80211_sub_if_data *sdata,
 	if (auth_alg == WLAN_AUTH_SHARED_KEY && transaction == 3) {
 		mgmt->frame_control |= cpu_to_le16(IEEE80211_FCTL_PROTECTED);
 		err = ieee80211_wep_encrypt(local, skb, key, key_len, key_idx);
-		if (WARN_ON(err)) {
-			kfree_skb(skb);
-			return;
-		}
+		WARN_ON(err);
 	}
 
 	IEEE80211_SKB_CB(skb)->flags |= IEEE80211_TX_INTFL_DONT_ENCRYPT |
@@ -1937,26 +1941,13 @@ static int ieee80211_build_preq_ies_band(struct ieee80211_sub_if_data *sdata,
 		*offset = noffset;
 	}
 
-	he_cap = ieee80211_get_he_iftype_cap(sband,
-					     ieee80211_vif_type_p2p(&sdata->vif));
-	if (he_cap &&
-	    cfg80211_any_usable_channels(local->hw.wiphy, BIT(sband->band),
-					 IEEE80211_CHAN_NO_HE)) {
+	he_cap = ieee80211_get_he_sta_cap(sband);
+	if (he_cap) {
 		pos = ieee80211_ie_build_he_cap(pos, he_cap, end);
 		if (!pos)
 			goto out_err;
-	}
 
-	if (cfg80211_any_usable_channels(local->hw.wiphy,
-					 BIT(NL80211_BAND_6GHZ),
-					 IEEE80211_CHAN_NO_HE)) {
-		struct ieee80211_supported_band *sband6;
-
-		sband6 = local->hw.wiphy->bands[NL80211_BAND_6GHZ];
-		he_cap = ieee80211_get_he_iftype_cap(sband6,
-				ieee80211_vif_type_p2p(&sdata->vif));
-
-		if (he_cap) {
+		if (sband->band == NL80211_BAND_6GHZ) {
 			enum nl80211_iftype iftype =
 				ieee80211_vif_type_p2p(&sdata->vif);
 			__le16 cap = ieee80211_get_he_6ghz_capa(sband, iftype);
@@ -2194,6 +2185,8 @@ static void ieee80211_handle_reconfig_failure(struct ieee80211_local *local)
 	list_for_each_entry(ctx, &local->chanctx_list, list)
 		ctx->driver_present = false;
 	mutex_unlock(&local->chanctx_mtx);
+
+	cfg80211_shutdown_all_interfaces(local->hw.wiphy);
 }
 
 static void ieee80211_assign_chanctx(struct ieee80211_local *local,
@@ -2520,6 +2513,7 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 				return res;
 			}
 			break;
+		case NL80211_IFTYPE_WDS:
 		case NL80211_IFTYPE_AP_VLAN:
 		case NL80211_IFTYPE_MONITOR:
 		case NL80211_IFTYPE_P2P_DEVICE:
@@ -2529,7 +2523,6 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 		case NUM_NL80211_IFTYPES:
 		case NL80211_IFTYPE_P2P_CLIENT:
 		case NL80211_IFTYPE_P2P_GO:
-		case NL80211_IFTYPE_WDS:
 			WARN_ON(1);
 			break;
 		}
@@ -2601,7 +2594,7 @@ int ieee80211_reconfig(struct ieee80211_local *local)
 	mutex_unlock(&local->mtx);
 
 	if (sched_scan_stopped)
-		cfg80211_sched_scan_stopped_locked(local->hw.wiphy, 0);
+		cfg80211_sched_scan_stopped_rtnl(local->hw.wiphy, 0);
 
  wake_up:
 
@@ -2960,15 +2953,12 @@ void ieee80211_ie_build_he_6ghz_cap(struct ieee80211_sub_if_data *sdata,
 	u8 *pos;
 	u16 cap;
 
-	if (!cfg80211_any_usable_channels(sdata->local->hw.wiphy,
-					  BIT(NL80211_BAND_6GHZ),
-					  IEEE80211_CHAN_NO_HE))
+	sband = ieee80211_get_sband(sdata);
+	if (!sband)
 		return;
 
-	sband = sdata->local->hw.wiphy->bands[NL80211_BAND_6GHZ];
-
 	iftd = ieee80211_get_sband_iftype_data(sband, iftype);
-	if (!iftd)
+	if (WARN_ON(!iftd))
 		return;
 
 	/* Check for device HE 6 GHz capability before adding element */
@@ -3675,7 +3665,6 @@ u64 ieee80211_calculate_rx_timestamp(struct ieee80211_local *local,
 	u64 ts = status->mactime;
 	struct rate_info ri;
 	u16 rate;
-	u8 n_ltf;
 
 	if (WARN_ON(!ieee80211_have_rx_timestamp(status)))
 		return 0;
@@ -3686,58 +3675,11 @@ u64 ieee80211_calculate_rx_timestamp(struct ieee80211_local *local,
 
 	/* Fill cfg80211 rate info */
 	switch (status->encoding) {
-	case RX_ENC_HE:
-		ri.flags |= RATE_INFO_FLAGS_HE_MCS;
-		ri.mcs = status->rate_idx;
-		ri.nss = status->nss;
-		ri.he_ru_alloc = status->he_ru;
-		if (status->enc_flags & RX_ENC_FLAG_SHORT_GI)
-			ri.flags |= RATE_INFO_FLAGS_SHORT_GI;
-
-		/*
-		 * See P802.11ax_D6.0, section 27.3.4 for
-		 * VHT PPDU format.
-		 */
-		if (status->flag & RX_FLAG_MACTIME_PLCP_START) {
-			mpdu_offset += 2;
-			ts += 36;
-
-			/*
-			 * TODO:
-			 * For HE MU PPDU, add the HE-SIG-B.
-			 * For HE ER PPDU, add 8us for the HE-SIG-A.
-			 * For HE TB PPDU, add 4us for the HE-STF.
-			 * Add the HE-LTF durations - variable.
-			 */
-		}
-
-		break;
 	case RX_ENC_HT:
 		ri.mcs = status->rate_idx;
 		ri.flags |= RATE_INFO_FLAGS_MCS;
 		if (status->enc_flags & RX_ENC_FLAG_SHORT_GI)
 			ri.flags |= RATE_INFO_FLAGS_SHORT_GI;
-
-		/*
-		 * See P802.11REVmd_D3.0, section 19.3.2 for
-		 * HT PPDU format.
-		 */
-		if (status->flag & RX_FLAG_MACTIME_PLCP_START) {
-			mpdu_offset += 2;
-			if (status->enc_flags & RX_ENC_FLAG_HT_GF)
-				ts += 24;
-			else
-				ts += 32;
-
-			/*
-			 * Add Data HT-LTFs per streams
-			 * TODO: add Extension HT-LTFs, 4us per LTF
-			 */
-			n_ltf = ((ri.mcs >> 3) & 3) + 1;
-			n_ltf = n_ltf == 3 ? 4 : n_ltf;
-			ts += n_ltf * 4;
-		}
-
 		break;
 	case RX_ENC_VHT:
 		ri.flags |= RATE_INFO_FLAGS_VHT_MCS;
@@ -3745,23 +3687,6 @@ u64 ieee80211_calculate_rx_timestamp(struct ieee80211_local *local,
 		ri.nss = status->nss;
 		if (status->enc_flags & RX_ENC_FLAG_SHORT_GI)
 			ri.flags |= RATE_INFO_FLAGS_SHORT_GI;
-
-		/*
-		 * See P802.11REVmd_D3.0, section 21.3.2 for
-		 * VHT PPDU format.
-		 */
-		if (status->flag & RX_FLAG_MACTIME_PLCP_START) {
-			mpdu_offset += 2;
-			ts += 36;
-
-			/*
-			 * Add VHT-LTFs per streams
-			 */
-			n_ltf = (ri.nss != 1) && (ri.nss % 2) ?
-				ri.nss + 1 : ri.nss;
-			ts += 4 * n_ltf;
-		}
-
 		break;
 	default:
 		WARN_ON(1);
@@ -3785,6 +3710,7 @@ u64 ieee80211_calculate_rx_timestamp(struct ieee80211_local *local,
 		ri.legacy = DIV_ROUND_UP(bitrate, (1 << shift));
 
 		if (status->flag & RX_FLAG_MACTIME_PLCP_START) {
+			/* TODO: handle HT/VHT preambles */
 			if (status->band == NL80211_BAND_5GHZ) {
 				ts += 20 << shift;
 				mpdu_offset += 2;
@@ -3820,7 +3746,7 @@ void ieee80211_dfs_cac_cancel(struct ieee80211_local *local)
 	struct cfg80211_chan_def chandef;
 
 	/* for interface list, to avoid linking iflist_mtx and chanctx_mtx */
-	lockdep_assert_wiphy(local->hw.wiphy);
+	ASSERT_RTNL();
 
 	mutex_lock(&local->mtx);
 	list_for_each_entry(sdata, &local->interfaces, list) {
@@ -3860,9 +3786,9 @@ void ieee80211_dfs_radar_detected_work(struct work_struct *work)
 	}
 	mutex_unlock(&local->chanctx_mtx);
 
-	wiphy_lock(local->hw.wiphy);
+	rtnl_lock();
 	ieee80211_dfs_cac_cancel(local);
-	wiphy_unlock(local->hw.wiphy);
+	rtnl_unlock();
 
 	if (num_chanctx > 1)
 		/* XXX: multi-channel is not supported yet */

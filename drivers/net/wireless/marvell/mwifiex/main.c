@@ -598,14 +598,12 @@ static int _mwifiex_fw_dpc(const struct firmware *firmware, void *context)
 	}
 
 	rtnl_lock();
-	wiphy_lock(adapter->wiphy);
 	/* Create station interface by default */
 	wdev = mwifiex_add_virtual_intf(adapter->wiphy, "mlan%d", NET_NAME_ENUM,
 					NL80211_IFTYPE_STATION, NULL);
 	if (IS_ERR(wdev)) {
 		mwifiex_dbg(adapter, ERROR,
 			    "cannot create default STA interface\n");
-		wiphy_unlock(adapter->wiphy);
 		rtnl_unlock();
 		goto err_add_intf;
 	}
@@ -616,7 +614,6 @@ static int _mwifiex_fw_dpc(const struct firmware *firmware, void *context)
 		if (IS_ERR(wdev)) {
 			mwifiex_dbg(adapter, ERROR,
 				    "cannot create AP interface\n");
-			wiphy_unlock(adapter->wiphy);
 			rtnl_unlock();
 			goto err_add_intf;
 		}
@@ -628,12 +625,10 @@ static int _mwifiex_fw_dpc(const struct firmware *firmware, void *context)
 		if (IS_ERR(wdev)) {
 			mwifiex_dbg(adapter, ERROR,
 				    "cannot create p2p client interface\n");
-			wiphy_unlock(adapter->wiphy);
 			rtnl_unlock();
 			goto err_add_intf;
 		}
 	}
-	wiphy_unlock(adapter->wiphy);
 	rtnl_unlock();
 
 	mwifiex_drv_get_driver_version(adapter, fmt, sizeof(fmt) - 1);
@@ -1446,17 +1441,8 @@ static void mwifiex_uninit_sw(struct mwifiex_adapter *adapter)
 			continue;
 		rtnl_lock();
 		if (priv->netdev &&
-		    priv->wdev.iftype != NL80211_IFTYPE_UNSPECIFIED) {
-			/*
-			 * Close the netdev now, because if we do it later, the
-			 * netdev notifiers will need to acquire the wiphy lock
-			 * again --> deadlock.
-			 */
-			dev_close(priv->wdev.netdev);
-			wiphy_lock(adapter->wiphy);
+		    priv->wdev.iftype != NL80211_IFTYPE_UNSPECIFIED)
 			mwifiex_del_virtual_intf(adapter->wiphy, &priv->wdev);
-			wiphy_unlock(adapter->wiphy);
-		}
 		rtnl_unlock();
 	}
 
@@ -1469,7 +1455,7 @@ static void mwifiex_uninit_sw(struct mwifiex_adapter *adapter)
 }
 
 /*
- * This function can be used for shutting down the adapter SW.
+ * This function gets called during PCIe function level reset.
  */
 int mwifiex_shutdown_sw(struct mwifiex_adapter *adapter)
 {
@@ -1497,7 +1483,7 @@ int mwifiex_shutdown_sw(struct mwifiex_adapter *adapter)
 }
 EXPORT_SYMBOL_GPL(mwifiex_shutdown_sw);
 
-/* This function can be used for reinitting the adapter SW. Required
+/* This function gets called during PCIe function level reset. Required
  * code is extracted from mwifiex_add_card()
  */
 int

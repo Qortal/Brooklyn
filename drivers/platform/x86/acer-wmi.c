@@ -30,6 +30,7 @@
 #include <linux/input/sparse-keymap.h>
 #include <acpi/video.h>
 
+ACPI_MODULE_NAME(KBUILD_MODNAME);
 MODULE_AUTHOR("Carlos Corbacho");
 MODULE_DESCRIPTION("Acer Laptop WMI Extras Driver");
 MODULE_LICENSE("GPL");
@@ -307,6 +308,9 @@ static struct quirk_entry *quirks;
 
 static void __init set_quirks(void)
 {
+	if (!interface)
+		return;
+
 	if (quirks->mailled)
 		interface->capability |= ACER_CAP_MAILLED;
 
@@ -686,6 +690,8 @@ static void __init find_quirks(void)
 
 	if (quirks == NULL)
 		quirks = &quirk_unknown;
+
+	set_quirks();
 }
 
 /*
@@ -828,6 +834,7 @@ static acpi_status AMW0_set_u32(u32 value, u32 cap)
 		switch (quirks->brightness) {
 		default:
 			return ec_write(0x83, value);
+			break;
 		}
 	default:
 		return AE_ERROR;
@@ -1604,8 +1611,7 @@ static void acer_kbd_dock_get_initial_state(void)
 
 	status = wmi_evaluate_method(WMID_GUID3, 0, 0x2, &input_buf, &output_buf);
 	if (ACPI_FAILURE(status)) {
-		pr_err("Error getting keyboard-dock initial status: %s\n",
-		       acpi_format_exception(status));
+		ACPI_EXCEPTION((AE_INFO, status, "Error getting keyboard-dock initial status"));
 		return;
 	}
 

@@ -40,7 +40,7 @@
 #include "intel_global_state.h"
 #include "intel_hdcp.h"
 #include "intel_psr.h"
-#include "skl_universal_plane.h"
+#include "intel_sprite.h"
 
 /**
  * intel_digital_connector_atomic_get_property - hook for connector->atomic_get_property.
@@ -123,6 +123,7 @@ int intel_digital_connector_atomic_check(struct drm_connector *conn,
 	struct drm_crtc_state *crtc_state;
 
 	intel_hdcp_atomic_check(conn, old_state, new_state);
+	intel_psr_atomic_check(conn, old_state, new_state);
 
 	if (!new_state->crtc)
 		return 0;
@@ -185,26 +186,6 @@ intel_connector_needs_modeset(struct intel_atomic_state *state,
 	       (new_conn_state->crtc &&
 		drm_atomic_crtc_needs_modeset(drm_atomic_get_new_crtc_state(&state->base,
 									    new_conn_state->crtc)));
-}
-
-/**
- * intel_any_crtc_needs_modeset - check if any CRTC needs a modeset
- * @state: the atomic state corresponding to this modeset
- *
- * Returns true if any CRTC in @state needs a modeset.
- */
-bool intel_any_crtc_needs_modeset(struct intel_atomic_state *state)
-{
-	struct intel_crtc *crtc;
-	struct intel_crtc_state *crtc_state;
-	int i;
-
-	for_each_new_intel_crtc_in_state(state, crtc, crtc_state, i) {
-		if (intel_crtc_needs_modeset(crtc_state))
-			return true;
-	}
-
-	return false;
 }
 
 struct intel_digital_connector_state *
@@ -278,15 +259,14 @@ void intel_crtc_free_hw_state(struct intel_crtc_state *crtc_state)
 	intel_crtc_put_color_blobs(crtc_state);
 }
 
-void intel_crtc_copy_color_blobs(struct intel_crtc_state *crtc_state,
-				 const struct intel_crtc_state *from_crtc_state)
+void intel_crtc_copy_color_blobs(struct intel_crtc_state *crtc_state)
 {
 	drm_property_replace_blob(&crtc_state->hw.degamma_lut,
-				  from_crtc_state->uapi.degamma_lut);
+				  crtc_state->uapi.degamma_lut);
 	drm_property_replace_blob(&crtc_state->hw.gamma_lut,
-				  from_crtc_state->uapi.gamma_lut);
+				  crtc_state->uapi.gamma_lut);
 	drm_property_replace_blob(&crtc_state->hw.ctm,
-				  from_crtc_state->uapi.ctm);
+				  crtc_state->uapi.ctm);
 }
 
 /**
@@ -341,7 +321,8 @@ static void intel_atomic_setup_scaler(struct intel_crtc_scaler_state *scaler_sta
 	    plane_state->hw.fb->format->is_yuv &&
 	    plane_state->hw.fb->format->num_planes > 1) {
 		struct intel_plane *plane = to_intel_plane(plane_state->uapi.plane);
-		if (DISPLAY_VER(dev_priv) == 9) {
+		if (IS_GEN(dev_priv, 9) &&
+		    !IS_GEMINILAKE(dev_priv)) {
 			mode = SKL_PS_SCALER_MODE_NV12;
 		} else if (icl_is_hdr_plane(dev_priv, plane->id)) {
 			/*
@@ -359,7 +340,7 @@ static void intel_atomic_setup_scaler(struct intel_crtc_scaler_state *scaler_sta
 			if (linked)
 				mode |= PS_PLANE_Y_SEL(linked->id);
 		}
-	} else if (DISPLAY_VER(dev_priv) >= 10) {
+	} else if (INTEL_GEN(dev_priv) > 9 || IS_GEMINILAKE(dev_priv)) {
 		mode = PS_SCALER_MODE_NORMAL;
 	} else if (num_scalers_need == 1 && intel_crtc->num_scalers > 1) {
 		/*
@@ -468,7 +449,7 @@ int intel_atomic_setup_scalers(struct drm_i915_private *dev_priv,
 				 * isn't necessary to change between HQ and dyn mode
 				 * on those platforms.
 				 */
-				if (DISPLAY_VER(dev_priv) >= 10)
+				if (INTEL_GEN(dev_priv) >= 10 || IS_GEMINILAKE(dev_priv))
 					continue;
 
 				plane = drm_plane_from_index(&dev_priv->drm, i);

@@ -120,8 +120,23 @@
 			status = "okay";
 		};
 
+		/* ST6G3244ME level translator for 1.8/2.9 V */
+		vmmci: regulator-gpio {
+			compatible = "regulator-gpio";
+
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <2900000>;
+			regulator-name = "mmci-reg";
+			regulator-type = "voltage";
+
+			startup-delay-us = <100>;
+
+			states = <1800000 0x1
+				  2900000 0x0>;
+		};
+
 		// External Micro SD slot
-		mmc@80126000 {
+		sdi0_per1@80126000 {
 			arm,primecell-periphid = <0x10480180>;
 			max-frequency = <100000000>;
 			bus-width = <4>;
@@ -144,7 +159,7 @@
 		};
 
 		// WLAN SDIO channel
-		mmc@80118000 {
+		sdi1_per2@80118000 {
 			arm,primecell-periphid = <0x10480180>;
 			max-frequency = <100000000>;
 			bus-width = <4>;
@@ -157,7 +172,7 @@
 		};
 
 		// PoP:ed eMMC
-		mmc@80005000 {
+		sdi2_per3@80005000 {
 			arm,primecell-periphid = <0x10480180>;
 			max-frequency = <100000000>;
 			bus-width = <8>;
@@ -172,7 +187,7 @@
 		};
 
 		// On-board eMMC
-		mmc@80114000 {
+		sdi4_per2@80114000 {
 			arm,primecell-periphid = <0x10480180>;
 		        max-frequency = <100000000>;
 			bus-width = <8>;

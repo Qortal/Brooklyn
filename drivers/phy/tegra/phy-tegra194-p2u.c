@@ -72,12 +72,14 @@ static int tegra_p2u_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct phy *generic_phy;
 	struct tegra_p2u *phy;
+	struct resource *res;
 
 	phy = devm_kzalloc(dev, sizeof(*phy), GFP_KERNEL);
 	if (!phy)
 		return -ENOMEM;
 
-	phy->base = devm_platform_ioremap_resource_byname(pdev, "ctl");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "ctl");
+	phy->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(phy->base))
 		return PTR_ERR(phy->base);
 

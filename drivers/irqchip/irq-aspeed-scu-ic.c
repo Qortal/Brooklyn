@@ -44,6 +44,7 @@ struct aspeed_scu_ic {
 
 static void aspeed_scu_ic_irq_handler(struct irq_desc *desc)
 {
+	unsigned int irq;
 	unsigned int sts;
 	unsigned long bit;
 	unsigned long enabled;
@@ -73,8 +74,9 @@ static void aspeed_scu_ic_irq_handler(struct irq_desc *desc)
 	max = scu_ic->num_irqs + bit;
 
 	for_each_set_bit_from(bit, &status, max) {
-		generic_handle_domain_irq(scu_ic->irq_domain,
-					  bit - scu_ic->irq_shift);
+		irq = irq_find_mapping(scu_ic->irq_domain,
+				       bit - scu_ic->irq_shift);
+		generic_handle_irq(irq);
 
 		regmap_update_bits(scu_ic->scu, scu_ic->reg, mask,
 				   BIT(bit + ASPEED_SCU_IC_STATUS_SHIFT));

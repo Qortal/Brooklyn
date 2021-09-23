@@ -490,6 +490,7 @@ static long ipmi_ioctl(struct file   *file,
 		}
 
 		return ipmi_set_my_address(priv->user, val.channel, val.value);
+		break;
 	}
 
 	case IPMICTL_GET_MY_CHANNEL_ADDRESS_CMD:

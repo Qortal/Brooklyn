@@ -167,22 +167,10 @@ static ssize_t config_store(struct device *dev,
 
 	ac->config = cfg ? true : false;
 
-	ap_send_config_uevent(&ac->ap_dev, ac->config);
-
 	return count;
 }
 
 static DEVICE_ATTR_RW(config);
-
-static ssize_t max_msg_size_show(struct device *dev,
-				 struct device_attribute *attr, char *buf)
-{
-	struct ap_card *ac = to_ap_card(dev);
-
-	return scnprintf(buf, PAGE_SIZE, "%u\n", ac->maxmsgsize);
-}
-
-static DEVICE_ATTR_RO(max_msg_size);
 
 static struct attribute *ap_card_dev_attrs[] = {
 	&dev_attr_hwtype.attr,
@@ -194,7 +182,6 @@ static struct attribute *ap_card_dev_attrs[] = {
 	&dev_attr_pendingq_count.attr,
 	&dev_attr_modalias.attr,
 	&dev_attr_config.attr,
-	&dev_attr_max_msg_size.attr,
 	NULL
 };
 
@@ -220,7 +207,7 @@ static void ap_card_device_release(struct device *dev)
 }
 
 struct ap_card *ap_card_create(int id, int queue_depth, int raw_type,
-			       int comp_type, unsigned int functions, int ml)
+			       int comp_type, unsigned int functions)
 {
 	struct ap_card *ac;
 
@@ -234,8 +221,5 @@ struct ap_card *ap_card_create(int id, int queue_depth, int raw_type,
 	ac->queue_depth = queue_depth;
 	ac->functions = functions;
 	ac->id = id;
-	ac->maxmsgsize = ml > 0 ?
-		ml * AP_TAPQ_ML_FIELD_CHUNK_SIZE : AP_DEFAULT_MAX_MSG_SIZE;
-
 	return ac;
 }

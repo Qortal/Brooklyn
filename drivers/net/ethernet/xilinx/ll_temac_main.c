@@ -438,7 +438,7 @@ static void temac_do_set_mac_address(struct net_device *ndev)
 
 static int temac_init_mac_address(struct net_device *ndev, const void *address)
 {
-	memcpy(ndev->dev_addr, address, ETH_ALEN);
+	ether_addr_copy(ndev->dev_addr, address);
 	if (!is_valid_ether_addr(ndev->dev_addr))
 		eth_hw_addr_random(ndev);
 	temac_do_set_mac_address(ndev);
@@ -942,8 +942,10 @@ temac_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	wmb();
 	lp->dma_out(lp, TX_TAILDESC_PTR, tail_p); /* DMA start */
 
-	if (temac_check_tx_bd_space(lp, MAX_SKB_FRAGS + 1))
+	if (temac_check_tx_bd_space(lp, MAX_SKB_FRAGS + 1)) {
+		netdev_info(ndev, "%s -> netif_stop_queue\n", __func__);
 		netif_stop_queue(ndev);
+	}
 
 	return NETDEV_TX_OK;
 }
@@ -1370,7 +1372,7 @@ static int temac_probe(struct platform_device *pdev)
 	struct device_node *temac_np = dev_of_node(&pdev->dev), *dma_np;
 	struct temac_local *lp;
 	struct net_device *ndev;
-	u8 addr[ETH_ALEN];
+	const void *addr;
 	__be32 *p;
 	bool little_endian;
 	int rc = 0;
@@ -1561,8 +1563,8 @@ static int temac_probe(struct platform_device *pdev)
 
 	if (temac_np) {
 		/* Retrieve the MAC address */
-		rc = of_get_mac_address(temac_np, addr);
-		if (rc) {
+		addr = of_get_mac_address(temac_np);
+		if (IS_ERR(addr)) {
 			dev_err(&pdev->dev, "could not find MAC address\n");
 			return -ENODEV;
 		}

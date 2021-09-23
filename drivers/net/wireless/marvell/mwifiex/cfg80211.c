@@ -2097,7 +2097,7 @@ mwifiex_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev,
 	struct mwifiex_private *priv = mwifiex_netdev_get_priv(dev);
 
 	if (!mwifiex_stop_bg_scan(priv))
-		cfg80211_sched_scan_stopped_locked(priv->wdev.wiphy, 0);
+		cfg80211_sched_scan_stopped_rtnl(priv->wdev.wiphy, 0);
 
 	if (mwifiex_deauthenticate(priv, NULL))
 		return -EFAULT;
@@ -2173,8 +2173,7 @@ static int
 mwifiex_cfg80211_assoc(struct mwifiex_private *priv, size_t ssid_len,
 		       const u8 *ssid, const u8 *bssid, int mode,
 		       struct ieee80211_channel *channel,
-		       struct cfg80211_connect_params *sme, bool privacy,
-		       struct cfg80211_bss **sel_bss)
+		       struct cfg80211_connect_params *sme, bool privacy)
 {
 	struct cfg80211_ssid req_ssid;
 	int ret, auth_type = 0;
@@ -2300,38 +2299,25 @@ done:
 			is_scanning_required = 1;
 		} else {
 			mwifiex_dbg(priv->adapter, MSG,
-				    "info: trying to associate to bssid %pM\n",
+				    "info: trying to associate to '%.*s' bssid %pM\n",
+				    req_ssid.ssid_len, (char *)req_ssid.ssid,
 				    bss->bssid);
 			memcpy(&priv->cfg_bssid, bss->bssid, ETH_ALEN);
 			break;
 		}
 	}
 
-	if (bss)
-		cfg80211_ref_bss(priv->adapter->wiphy, bss);
-
 	ret = mwifiex_bss_start(priv, bss, &req_ssid);
 	if (ret)
-		goto cleanup;
+		return ret;
 
 	if (mode == NL80211_IFTYPE_ADHOC) {
 		/* Inform the BSS information to kernel, otherwise
 		 * kernel will give a panic after successful assoc */
-		if (mwifiex_cfg80211_inform_ibss_bss(priv)) {
-			ret = -EFAULT;
-			goto cleanup;
-		}
+		if (mwifiex_cfg80211_inform_ibss_bss(priv))
+			return -EFAULT;
 	}
 
-	/* Pass the selected BSS entry to caller. */
-	if (sel_bss) {
-		*sel_bss = bss;
-		bss = NULL;
-	}
-
-cleanup:
-	if (bss)
-		cfg80211_put_bss(priv->adapter->wiphy, bss);
 	return ret;
 }
 
@@ -2348,7 +2334,6 @@ mwifiex_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev,
 {
 	struct mwifiex_private *priv = mwifiex_netdev_get_priv(dev);
 	struct mwifiex_adapter *adapter = priv->adapter;
-	struct cfg80211_bss *bss = NULL;
 	int ret;
 
 	if (GET_BSS_ROLE(priv) != MWIFIEX_BSS_ROLE_STA) {
@@ -2377,18 +2362,18 @@ mwifiex_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev,
 	}
 
 	mwifiex_dbg(adapter, INFO,
-		    "info: Trying to associate to bssid %pM\n", sme->bssid);
+		    "info: Trying to associate to %.*s and bssid %pM\n",
+		    (int)sme->ssid_len, (char *)sme->ssid, sme->bssid);
 
 	if (!mwifiex_stop_bg_scan(priv))
-		cfg80211_sched_scan_stopped_locked(priv->wdev.wiphy, 0);
+		cfg80211_sched_scan_stopped_rtnl(priv->wdev.wiphy, 0);
 
 	ret = mwifiex_cfg80211_assoc(priv, sme->ssid_len, sme->ssid, sme->bssid,
-				     priv->bss_mode, sme->channel, sme, 0,
-				     &bss);
+				     priv->bss_mode, sme->channel, sme, 0);
 	if (!ret) {
-		cfg80211_connect_bss(priv->netdev, priv->cfg_bssid, bss, NULL,
-				     0, NULL, 0, WLAN_STATUS_SUCCESS,
-				     GFP_KERNEL, NL80211_TIMEOUT_UNSPECIFIED);
+		cfg80211_connect_result(priv->netdev, priv->cfg_bssid, NULL, 0,
+					NULL, 0, WLAN_STATUS_SUCCESS,
+					GFP_KERNEL);
 		mwifiex_dbg(priv->adapter, MSG,
 			    "info: associated to bssid %pM successfully\n",
 			    priv->cfg_bssid);
@@ -2510,15 +2495,16 @@ mwifiex_cfg80211_join_ibss(struct wiphy *wiphy, struct net_device *dev,
 		goto done;
 	}
 
-	mwifiex_dbg(priv->adapter, MSG, "info: trying to join to bssid %pM\n",
-		    params->bssid);
+	mwifiex_dbg(priv->adapter, MSG,
+		    "info: trying to join to %.*s and bssid %pM\n",
+		    params->ssid_len, (char *)params->ssid, params->bssid);
 
 	mwifiex_set_ibss_params(priv, params);
 
 	ret = mwifiex_cfg80211_assoc(priv, params->ssid_len, params->ssid,
 				     params->bssid, priv->bss_mode,
 				     params->chandef.chan, NULL,
-				     params->privacy, NULL);
+				     params->privacy);
 done:
 	if (!ret) {
 		cfg80211_ibss_joined(priv->netdev, priv->cfg_bssid,
@@ -2590,7 +2576,7 @@ mwifiex_cfg80211_scan(struct wiphy *wiphy,
 		priv->scan_block = false;
 
 	if (!mwifiex_stop_bg_scan(priv))
-		cfg80211_sched_scan_stopped_locked(priv->wdev.wiphy, 0);
+		cfg80211_sched_scan_stopped_rtnl(priv->wdev.wiphy, 0);
 
 	user_scan_cfg = kzalloc(sizeof(*user_scan_cfg), GFP_KERNEL);
 	if (!user_scan_cfg)
@@ -3095,7 +3081,7 @@ struct wireless_dev *mwifiex_add_virtual_intf(struct wiphy *wiphy,
 	mutex_init(&priv->async_mutex);
 
 	/* Register network device */
-	if (cfg80211_register_netdevice(dev)) {
+	if (register_netdevice(dev)) {
 		mwifiex_dbg(adapter, ERROR, "cannot register network device\n");
 		ret = -EFAULT;
 		goto err_reg_netdev;
@@ -3174,7 +3160,7 @@ int mwifiex_del_virtual_intf(struct wiphy *wiphy, struct wireless_dev *wdev)
 		netif_carrier_off(priv->netdev);
 
 	if (wdev->netdev->reg_state == NETREG_REGISTERED)
-		cfg80211_unregister_netdevice(wdev->netdev);
+		unregister_netdevice(wdev->netdev);
 
 	if (priv->dfs_cac_workqueue) {
 		flush_workqueue(priv->dfs_cac_workqueue);

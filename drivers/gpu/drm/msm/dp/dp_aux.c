@@ -9,15 +9,7 @@
 #include "dp_reg.h"
 #include "dp_aux.h"
 
-enum msm_dp_aux_err {
-	DP_AUX_ERR_NONE,
-	DP_AUX_ERR_ADDR,
-	DP_AUX_ERR_TOUT,
-	DP_AUX_ERR_NACK,
-	DP_AUX_ERR_DEFER,
-	DP_AUX_ERR_NACK_DEFER,
-	DP_AUX_ERR_PHY,
-};
+#define DP_AUX_ENUM_STR(x)		#x
 
 struct dp_aux_private {
 	struct device *dev;
@@ -26,7 +18,7 @@ struct dp_aux_private {
 	struct mutex mutex;
 	struct completion comp;
 
-	enum msm_dp_aux_err aux_error_num;
+	u32 aux_error_num;
 	u32 retry_cnt;
 	bool cmd_busy;
 	bool native;
@@ -35,51 +27,67 @@ struct dp_aux_private {
 	bool no_send_stop;
 	u32 offset;
 	u32 segment;
+	u32 isr;
 
 	struct drm_dp_aux dp_aux;
 };
 
-#define MAX_AUX_RETRIES			5
+static const char *dp_aux_get_error(u32 aux_error)
+{
+	switch (aux_error) {
+	case DP_AUX_ERR_NONE:
+		return DP_AUX_ENUM_STR(DP_AUX_ERR_NONE);
+	case DP_AUX_ERR_ADDR:
+		return DP_AUX_ENUM_STR(DP_AUX_ERR_ADDR);
+	case DP_AUX_ERR_TOUT:
+		return DP_AUX_ENUM_STR(DP_AUX_ERR_TOUT);
+	case DP_AUX_ERR_NACK:
+		return DP_AUX_ENUM_STR(DP_AUX_ERR_NACK);
+	case DP_AUX_ERR_DEFER:
+		return DP_AUX_ENUM_STR(DP_AUX_ERR_DEFER);
+	case DP_AUX_ERR_NACK_DEFER:
+		return DP_AUX_ENUM_STR(DP_AUX_ERR_NACK_DEFER);
+	default:
+		return "unknown";
+	}
+}
 
-static ssize_t dp_aux_write(struct dp_aux_private *aux,
+static u32 dp_aux_write(struct dp_aux_private *aux,
 			struct drm_dp_aux_msg *msg)
 {
-	u8 data[4];
-	u32 reg;
-	ssize_t len;
+	u32 data[4], reg, len;
 	u8 *msgdata = msg->buffer;
 	int const AUX_CMD_FIFO_LEN = 128;
 	int i = 0;
 
 	if (aux->read)
-		len = 0;
+		len = 4;
 	else
-		len = msg->size;
+		len = msg->size + 4;
 
 	/*
 	 * cmd fifo only has depth of 144 bytes
 	 * limit buf length to 128 bytes here
 	 */
-	if (len > AUX_CMD_FIFO_LEN - 4) {
+	if (len > AUX_CMD_FIFO_LEN) {
 		DRM_ERROR("buf size greater than allowed size of 128 bytes\n");
-		return -EINVAL;
+		return 0;
 	}
 
 	/* Pack cmd and write to HW */
-	data[0] = (msg->address >> 16) & 0xf;	/* addr[19:16] */
+	data[0] = (msg->address >> 16) & 0xf; /* addr[19:16] */
 	if (aux->read)
-		data[0] |=  BIT(4);		/* R/W */
+		data[0] |=  BIT(4); /* R/W */
 
-	data[1] = msg->address >> 8;		/* addr[15:8] */
-	data[2] = msg->address;			/* addr[7:0] */
-	data[3] = msg->size - 1;		/* len[7:0] */
+	data[1] = (msg->address >> 8) & 0xff;	/* addr[15:8] */
+	data[2] = msg->address & 0xff;		/* addr[7:0] */
+	data[3] = (msg->size - 1) & 0xff;	/* len[7:0] */
 
-	for (i = 0; i < len + 4; i++) {
+	for (i = 0; i < len; i++) {
 		reg = (i < 4) ? data[i] : msgdata[i - 4];
-		reg <<= DP_AUX_DATA_OFFSET;
-		reg &= DP_AUX_DATA_MASK;
-		reg |= DP_AUX_DATA_WRITE;
 		/* index = 0, write */
+		reg = (((reg) << DP_AUX_DATA_OFFSET)
+		       & DP_AUX_DATA_MASK) | DP_AUX_DATA_WRITE;
 		if (i == 0)
 			reg |= DP_AUX_DATA_INDEX_WRITE;
 		aux->catalog->aux_data = reg;
@@ -107,27 +115,39 @@ static ssize_t dp_aux_write(struct dp_aux_private *aux,
 	return len;
 }
 
-static ssize_t dp_aux_cmd_fifo_tx(struct dp_aux_private *aux,
+static int dp_aux_cmd_fifo_tx(struct dp_aux_private *aux,
 			      struct drm_dp_aux_msg *msg)
 {
-	ssize_t ret;
-	unsigned long time_left;
+	u32 ret, len, timeout;
+	int aux_timeout_ms = HZ/4;
 
 	reinit_completion(&aux->comp);
 
-	ret = dp_aux_write(aux, msg);
-	if (ret < 0)
-		return ret;
+	len = dp_aux_write(aux, msg);
+	if (len == 0) {
+		DRM_ERROR("DP AUX write failed\n");
+		return -EINVAL;
+	}
 
-	time_left = wait_for_completion_timeout(&aux->comp,
-						msecs_to_jiffies(250));
-	if (!time_left)
+	timeout = wait_for_completion_timeout(&aux->comp, aux_timeout_ms);
+	if (!timeout) {
+		DRM_ERROR("aux %s timeout\n", (aux->read ? "read" : "write"));
 		return -ETIMEDOUT;
+	}
+
+	if (aux->aux_error_num == DP_AUX_ERR_NONE) {
+		ret = len;
+	} else {
+		DRM_ERROR_RATELIMITED("aux err: %s\n",
+			dp_aux_get_error(aux->aux_error_num));
+
+		ret = -EINVAL;
+	}
 
 	return ret;
 }
 
-static ssize_t dp_aux_cmd_fifo_rx(struct dp_aux_private *aux,
+static void dp_aux_cmd_fifo_rx(struct dp_aux_private *aux,
 		struct drm_dp_aux_msg *msg)
 {
 	u32 data;
@@ -154,14 +174,15 @@ static ssize_t dp_aux_cmd_fifo_rx(struct dp_aux_private *aux,
 
 		actual_i = (data >> DP_AUX_DATA_INDEX_OFFSET) & 0xFF;
 		if (i != actual_i)
-			break;
+			DRM_ERROR("Index mismatch: expected %d, found %d\n",
+				i, actual_i);
 	}
-
-	return i;
 }
 
-static void dp_aux_native_handler(struct dp_aux_private *aux, u32 isr)
+static void dp_aux_native_handler(struct dp_aux_private *aux)
 {
+	u32 isr = aux->isr;
+
 	if (isr & DP_INTR_AUX_I2C_DONE)
 		aux->aux_error_num = DP_AUX_ERR_NONE;
 	else if (isr & DP_INTR_WRONG_ADDR)
@@ -174,10 +195,14 @@ static void dp_aux_native_handler(struct dp_aux_private *aux, u32 isr)
 		aux->aux_error_num = DP_AUX_ERR_PHY;
 		dp_catalog_aux_clear_hw_interrupts(aux->catalog);
 	}
+
+	complete(&aux->comp);
 }
 
-static void dp_aux_i2c_handler(struct dp_aux_private *aux, u32 isr)
+static void dp_aux_i2c_handler(struct dp_aux_private *aux)
 {
+	u32 isr = aux->isr;
+
 	if (isr & DP_INTR_AUX_I2C_DONE) {
 		if (isr & (DP_INTR_I2C_NACK | DP_INTR_I2C_DEFER))
 			aux->aux_error_num = DP_AUX_ERR_NACK;
@@ -199,6 +224,8 @@ static void dp_aux_i2c_handler(struct dp_aux_private *aux, u32 isr)
 			dp_catalog_aux_clear_hw_interrupts(aux->catalog);
 		}
 	}
+
+	complete(&aux->comp);
 }
 
 static void dp_aux_update_offset_and_segment(struct dp_aux_private *aux,
@@ -309,28 +336,30 @@ static ssize_t dp_aux_transfer(struct drm_dp_aux *dp_aux,
 	ssize_t ret;
 	int const aux_cmd_native_max = 16;
 	int const aux_cmd_i2c_max = 128;
-	struct dp_aux_private *aux;
+	int const retry_count = 5;
+	struct dp_aux_private *aux = container_of(dp_aux,
+		struct dp_aux_private, dp_aux);
 
-	aux = container_of(dp_aux, struct dp_aux_private, dp_aux);
+	mutex_lock(&aux->mutex);
 
 	aux->native = msg->request & (DP_AUX_NATIVE_WRITE & DP_AUX_NATIVE_READ);
 
 	/* Ignore address only message */
-	if (msg->size == 0 || !msg->buffer) {
+	if ((msg->size == 0) || (msg->buffer == NULL)) {
 		msg->reply = aux->native ?
 			DP_AUX_NATIVE_REPLY_ACK : DP_AUX_I2C_REPLY_ACK;
-		return msg->size;
+		ret = msg->size;
+		goto unlock_exit;
 	}
 
 	/* msg sanity check */
-	if ((aux->native && msg->size > aux_cmd_native_max) ||
-	    msg->size > aux_cmd_i2c_max) {
+	if ((aux->native && (msg->size > aux_cmd_native_max)) ||
+		(msg->size > aux_cmd_i2c_max)) {
 		DRM_ERROR("%s: invalid msg: size(%zu), request(%x)\n",
 			__func__, msg->size, msg->request);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto unlock_exit;
 	}
-
-	mutex_lock(&aux->mutex);
 
 	dp_aux_update_offset_and_segment(aux, msg);
 	dp_aux_transfer_helper(aux, msg, true);
@@ -347,44 +376,42 @@ static ssize_t dp_aux_transfer(struct drm_dp_aux *dp_aux,
 	}
 
 	ret = dp_aux_cmd_fifo_tx(aux, msg);
+
 	if (ret < 0) {
 		if (aux->native) {
 			aux->retry_cnt++;
-			if (!(aux->retry_cnt % MAX_AUX_RETRIES))
+			if (!(aux->retry_cnt % retry_count))
 				dp_catalog_aux_update_cfg(aux->catalog);
+			dp_catalog_aux_reset(aux->catalog);
 		}
-	} else {
-		aux->retry_cnt = 0;
-		switch (aux->aux_error_num) {
-		case DP_AUX_ERR_NONE:
-			if (aux->read)
-				ret = dp_aux_cmd_fifo_rx(aux, msg);
-			msg->reply = aux->native ? DP_AUX_NATIVE_REPLY_ACK : DP_AUX_I2C_REPLY_ACK;
-			break;
-		case DP_AUX_ERR_DEFER:
-			msg->reply = aux->native ? DP_AUX_NATIVE_REPLY_DEFER : DP_AUX_I2C_REPLY_DEFER;
-			break;
-		case DP_AUX_ERR_PHY:
-		case DP_AUX_ERR_ADDR:
-		case DP_AUX_ERR_NACK:
-		case DP_AUX_ERR_NACK_DEFER:
-			msg->reply = aux->native ? DP_AUX_NATIVE_REPLY_NACK : DP_AUX_I2C_REPLY_NACK;
-			break;
-		case DP_AUX_ERR_TOUT:
-			ret = -ETIMEDOUT;
-			break;
-		}
+		usleep_range(400, 500); /* at least 400us to next try */
+		goto unlock_exit;
 	}
 
+	if (aux->aux_error_num == DP_AUX_ERR_NONE) {
+		if (aux->read)
+			dp_aux_cmd_fifo_rx(aux, msg);
+
+		msg->reply = aux->native ?
+			DP_AUX_NATIVE_REPLY_ACK : DP_AUX_I2C_REPLY_ACK;
+	} else {
+		/* Reply defer to retry */
+		msg->reply = aux->native ?
+			DP_AUX_NATIVE_REPLY_DEFER : DP_AUX_I2C_REPLY_DEFER;
+	}
+
+	/* Return requested size for success or retry */
+	ret = msg->size;
+	aux->retry_cnt = 0;
+
+unlock_exit:
 	aux->cmd_busy = false;
 	mutex_unlock(&aux->mutex);
-
 	return ret;
 }
 
 void dp_aux_isr(struct drm_dp_aux *dp_aux)
 {
-	u32 isr;
 	struct dp_aux_private *aux;
 
 	if (!dp_aux) {
@@ -394,17 +421,15 @@ void dp_aux_isr(struct drm_dp_aux *dp_aux)
 
 	aux = container_of(dp_aux, struct dp_aux_private, dp_aux);
 
-	isr = dp_catalog_aux_get_irq(aux->catalog);
+	aux->isr = dp_catalog_aux_get_irq(aux->catalog);
 
 	if (!aux->cmd_busy)
 		return;
 
 	if (aux->native)
-		dp_aux_native_handler(aux, isr);
+		dp_aux_native_handler(aux);
 	else
-		dp_aux_i2c_handler(aux, isr);
-
-	complete(&aux->comp);
+		dp_aux_i2c_handler(aux);
 }
 
 void dp_aux_reconfig(struct drm_dp_aux *dp_aux)

@@ -7,7 +7,6 @@
  *  Copyright (C) 2013 Naveen Krishna Chatradhi <ch.naveen@samsung.com>
  */
 
-#include <linux/compiler.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/interrupt.h>
@@ -135,8 +134,6 @@ struct exynos_adc {
 
 	u32			value;
 	unsigned int            version;
-
-	bool			ts_enabled;
 
 	bool			read_ts;
 	u32			ts_x;
@@ -654,7 +651,7 @@ static irqreturn_t exynos_ts_isr(int irq, void *dev_id)
 	bool pressed;
 	int ret;
 
-	while (READ_ONCE(info->ts_enabled)) {
+	while (info->input->users) {
 		ret = exynos_read_s3c64xx_ts(dev, &x, &y);
 		if (ret == -ETIMEDOUT)
 			break;
@@ -734,7 +731,6 @@ static int exynos_adc_ts_open(struct input_dev *dev)
 {
 	struct exynos_adc *info = input_get_drvdata(dev);
 
-	WRITE_ONCE(info->ts_enabled, true);
 	enable_irq(info->tsirq);
 
 	return 0;
@@ -744,7 +740,6 @@ static void exynos_adc_ts_close(struct input_dev *dev)
 {
 	struct exynos_adc *info = input_get_drvdata(dev);
 
-	WRITE_ONCE(info->ts_enabled, false);
 	disable_irq(info->tsirq);
 }
 
@@ -778,9 +773,9 @@ static int exynos_adc_ts_init(struct exynos_adc *info)
 		return ret;
 	}
 
+	disable_irq(info->tsirq);
 	ret = request_threaded_irq(info->tsirq, NULL, exynos_ts_isr,
-				   IRQF_ONESHOT | IRQF_NO_AUTOEN,
-				   "touchscreen", info);
+				   IRQF_ONESHOT, "touchscreen", info);
 	if (ret)
 		input_unregister_device(info->input);
 
@@ -794,7 +789,7 @@ static int exynos_adc_probe(struct platform_device *pdev)
 	struct s3c2410_ts_mach_info *pdata = dev_get_platdata(&pdev->dev);
 	struct iio_dev *indio_dev = NULL;
 	bool has_ts = false;
-	int ret;
+	int ret = -ENODEV;
 	int irq;
 
 	indio_dev = devm_iio_device_alloc(&pdev->dev, sizeof(struct exynos_adc));

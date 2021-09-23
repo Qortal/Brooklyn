@@ -85,7 +85,6 @@
 #include <linux/crypto.h>
 #include <linux/scatterlist.h>
 #include <crypto/scatterwalk.h>
-#include <crypto/internal/cipher.h>
 #include <crypto/internal/skcipher.h>
 
 struct crypto_kw_block {
@@ -114,9 +113,9 @@ static void crypto_kw_scatterlist_ff(struct scatter_walk *walk,
 			scatterwalk_start(walk, sg);
 			scatterwalk_advance(walk, skip);
 			break;
-		}
+		} else
+			skip -= sg->length;
 
-		skip -= sg->length;
 		sg = sg_next(sg);
 	}
 }
@@ -317,4 +316,3 @@ MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Stephan Mueller <smueller@chronox.de>");
 MODULE_DESCRIPTION("Key Wrapping (RFC3394 / NIST SP800-38F)");
 MODULE_ALIAS_CRYPTO("kw");
-MODULE_IMPORT_NS(CRYPTO_INTERNAL);

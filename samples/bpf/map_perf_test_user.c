@@ -421,6 +421,7 @@ static void fixup_map(struct bpf_object *obj)
 
 int main(int argc, char **argv)
 {
+	struct rlimit r = {RLIM_INFINITY, RLIM_INFINITY};
 	int nr_cpus = sysconf(_SC_NPROCESSORS_ONLN);
 	struct bpf_link *links[8];
 	struct bpf_program *prog;
@@ -428,6 +429,11 @@ int main(int argc, char **argv)
 	struct bpf_map *map;
 	char filename[256];
 	int i = 0;
+
+	if (setrlimit(RLIMIT_MEMLOCK, &r)) {
+		perror("setrlimit(RLIMIT_MEMLOCK)");
+		return 1;
+	}
 
 	if (argc > 1)
 		test_flags = atoi(argv[1]) ? : test_flags;

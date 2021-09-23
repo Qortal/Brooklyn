@@ -293,10 +293,8 @@ static int __init vr41xx_pciu_init(void)
 		master = setup->master_io;
 		io_map_base = ioremap(master->bus_base_address,
 				      resource_size(res));
-		if (!io_map_base) {
-			iounmap(pciu_base);
+		if (!io_map_base)
 			return -EBUSY;
-		}
 
 		vr41xx_pci_controller.io_map_base = (unsigned long)io_map_base;
 	}

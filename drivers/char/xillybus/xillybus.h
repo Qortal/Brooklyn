@@ -30,8 +30,7 @@ struct xilly_buffer {
 
 struct xilly_idt_handle {
 	unsigned char *chandesc;
-	unsigned char *names;
-	int names_len;
+	unsigned char *idt;
 	int entries;
 };
 
@@ -95,12 +94,19 @@ struct xilly_endpoint {
 	struct device *dev;
 	struct xilly_endpoint_hardware *ephw;
 
+	struct list_head ep_list;
 	int dma_using_dac; /* =1 if 64-bit DMA is used, =0 otherwise. */
 	__iomem void *registers;
 	int fatal_error;
 
 	struct mutex register_mutex;
 	wait_queue_head_t ep_wait;
+
+	/* Channels and message handling */
+	struct cdev cdev;
+
+	int major;
+	int lowest_minor; /* Highest minor = lowest_minor + num_channels - 1 */
 
 	int num_channels; /* EXCLUDING message buffer */
 	struct xilly_channel **channels;

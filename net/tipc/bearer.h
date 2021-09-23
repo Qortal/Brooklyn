@@ -93,8 +93,7 @@ struct tipc_bearer;
  * @raw2addr: convert from raw addr format to media addr format
  * @priority: default link (and bearer) priority
  * @tolerance: default time (in ms) before declaring link failure
- * @min_win: minimum window (in packets) before declaring link congestion
- * @max_win: maximum window (in packets) before declaring link congestion
+ * @window: default window (in packets) before declaring link congestion
  * @mtu: max packet size bearer can support for media type not dependent on
  * underlying device MTU
  * @type_id: TIPC media identifier
@@ -139,24 +138,21 @@ struct tipc_media {
  * @pt: packet type for bearer
  * @rcu: rcu struct for tipc_bearer
  * @priority: default link priority for bearer
- * @min_win: minimum window (in packets) before declaring link congestion
- * @max_win: maximum window (in packets) before declaring link congestion
+ * @window: default window size for bearer
  * @tolerance: default link tolerance for bearer
  * @domain: network domain to which links can be established
  * @identity: array index of this bearer within TIPC bearer array
- * @disc: ptr to link setup request
+ * @link_req: ptr to (optional) structure making periodic link setup requests
  * @net_plane: network plane ('A' through 'H') currently associated with bearer
- * @up: bearer up flag (bit 0)
- * @refcnt: tipc_bearer reference counter
  *
  * Note: media-specific code is responsible for initialization of the fields
  * indicated below when a bearer is enabled; TIPC's generic bearer code takes
  * care of initializing all other fields.
  */
 struct tipc_bearer {
-	void __rcu *media_ptr;			/* initialized by media */
-	u32 mtu;				/* initialized by media */
-	struct tipc_media_addr addr;		/* initialized by media */
+	void __rcu *media_ptr;			/* initalized by media */
+	u32 mtu;				/* initalized by media */
+	struct tipc_media_addr addr;		/* initalized by media */
 	char name[TIPC_MAX_BEARER_NAME];
 	struct tipc_media *media;
 	struct tipc_media_addr bcast_addr;

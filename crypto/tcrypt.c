@@ -70,15 +70,15 @@ static const char *check[] = {
 	"des", "md5", "des3_ede", "rot13", "sha1", "sha224", "sha256", "sm3",
 	"blowfish", "twofish", "serpent", "sha384", "sha512", "md4", "aes",
 	"cast6", "arc4", "michael_mic", "deflate", "crc32c", "tea", "xtea",
-	"khazad", "wp512", "wp384", "wp256", "xeta",  "fcrypt",
-	"camellia", "seed", "rmd160",
+	"khazad", "wp512", "wp384", "wp256", "tnepres", "xeta",  "fcrypt",
+	"camellia", "seed", "salsa20", "rmd128", "rmd160", "rmd256", "rmd320",
 	"lzo", "lzo-rle", "cts", "sha3-224", "sha3-256", "sha3-384",
 	"sha3-512", "streebog256", "streebog512",
 	NULL
 };
 
-static const int block_sizes[] = { 16, 64, 256, 1024, 1420, 4096, 0 };
-static const int aead_sizes[] = { 16, 64, 256, 512, 1024, 1420, 4096, 8192, 0 };
+static u32 block_sizes[] = { 16, 64, 256, 1024, 1472, 8192, 0 };
+static u32 aead_sizes[] = { 16, 64, 256, 512, 1024, 2048, 4096, 8192, 0 };
 
 #define XBUFSIZE 8
 #define MAX_IVLEN 32
@@ -256,10 +256,10 @@ static void test_mb_aead_speed(const char *algo, int enc, int secs,
 	struct test_mb_aead_data *data;
 	struct crypto_aead *tfm;
 	unsigned int i, j, iv_len;
-	const int *b_size;
 	const char *key;
 	const char *e;
 	void *assoc;
+	u32 *b_size;
 	char *iv;
 	int ret;
 
@@ -337,17 +337,15 @@ static void test_mb_aead_speed(const char *algo, int enc, int secs,
 	do {
 		b_size = aead_sizes;
 		do {
-			int bs = round_up(*b_size, crypto_aead_blocksize(tfm));
-
-			if (bs + authsize > XBUFSIZE * PAGE_SIZE) {
+			if (*b_size + authsize > XBUFSIZE * PAGE_SIZE) {
 				pr_err("template (%u) too big for buffer (%lu)\n",
-				       authsize + bs,
+				       authsize + *b_size,
 				       XBUFSIZE * PAGE_SIZE);
 				goto out;
 			}
 
 			pr_info("test %u (%d bit key, %d byte blocks): ", i,
-				*keysize * 8, bs);
+				*keysize * 8, *b_size);
 
 			/* Set up tfm global state, i.e. the key */
 
@@ -382,11 +380,11 @@ static void test_mb_aead_speed(const char *algo, int enc, int secs,
 				memset(assoc, 0xff, aad_size);
 
 				sg_init_aead(cur->sg, cur->xbuf,
-					     bs + (enc ? 0 : authsize),
+					     *b_size + (enc ? 0 : authsize),
 					     assoc, aad_size);
 
 				sg_init_aead(cur->sgout, cur->xoutbuf,
-					     bs + (enc ? authsize : 0),
+					     *b_size + (enc ? authsize : 0),
 					     assoc, aad_size);
 
 				aead_request_set_ad(cur->req, aad_size);
@@ -396,7 +394,7 @@ static void test_mb_aead_speed(const char *algo, int enc, int secs,
 					aead_request_set_crypt(cur->req,
 							       cur->sgout,
 							       cur->sg,
-							       bs, iv);
+							       *b_size, iv);
 					ret = crypto_aead_encrypt(cur->req);
 					ret = do_one_aead_op(cur->req, ret);
 
@@ -408,18 +406,18 @@ static void test_mb_aead_speed(const char *algo, int enc, int secs,
 				}
 
 				aead_request_set_crypt(cur->req, cur->sg,
-						       cur->sgout, bs +
+						       cur->sgout, *b_size +
 						       (enc ? 0 : authsize),
 						       iv);
 
 			}
 
 			if (secs) {
-				ret = test_mb_aead_jiffies(data, enc, bs,
+				ret = test_mb_aead_jiffies(data, enc, *b_size,
 							   secs, num_mb);
 				cond_resched();
 			} else {
-				ret = test_mb_aead_cycles(data, enc, bs,
+				ret = test_mb_aead_cycles(data, enc, *b_size,
 							  num_mb);
 			}
 
@@ -536,7 +534,7 @@ static void test_aead_speed(const char *algo, int enc, unsigned int secs,
 	char *xbuf[XBUFSIZE];
 	char *xoutbuf[XBUFSIZE];
 	char *axbuf[XBUFSIZE];
-	const int *b_size;
+	unsigned int *b_size;
 	unsigned int iv_len;
 	struct crypto_wait wait;
 
@@ -592,14 +590,12 @@ static void test_aead_speed(const char *algo, int enc, unsigned int secs,
 	do {
 		b_size = aead_sizes;
 		do {
-			u32 bs = round_up(*b_size, crypto_aead_blocksize(tfm));
-
 			assoc = axbuf[0];
 			memset(assoc, 0xff, aad_size);
 
-			if ((*keysize + bs) > TVMEMSIZE * PAGE_SIZE) {
+			if ((*keysize + *b_size) > TVMEMSIZE * PAGE_SIZE) {
 				pr_err("template (%u) too big for tvmem (%lu)\n",
-				       *keysize + bs,
+				       *keysize + *b_size,
 					TVMEMSIZE * PAGE_SIZE);
 				goto out;
 			}
@@ -620,7 +616,7 @@ static void test_aead_speed(const char *algo, int enc, unsigned int secs,
 
 			crypto_aead_clear_flags(tfm, ~0);
 			printk(KERN_INFO "test %u (%d bit key, %d byte blocks): ",
-					i, *keysize * 8, bs);
+					i, *keysize * 8, *b_size);
 
 
 			memset(tvmem[0], 0xff, PAGE_SIZE);
@@ -631,11 +627,11 @@ static void test_aead_speed(const char *algo, int enc, unsigned int secs,
 				goto out;
 			}
 
-			sg_init_aead(sg, xbuf, bs + (enc ? 0 : authsize),
+			sg_init_aead(sg, xbuf, *b_size + (enc ? 0 : authsize),
 				     assoc, aad_size);
 
 			sg_init_aead(sgout, xoutbuf,
-				     bs + (enc ? authsize : 0), assoc,
+				     *b_size + (enc ? authsize : 0), assoc,
 				     aad_size);
 
 			aead_request_set_ad(req, aad_size);
@@ -648,7 +644,7 @@ static void test_aead_speed(const char *algo, int enc, unsigned int secs,
 				 * reversed (input <-> output) to calculate it
 				 */
 				aead_request_set_crypt(req, sgout, sg,
-						       bs, iv);
+						       *b_size, iv);
 				ret = do_one_aead_op(req,
 						     crypto_aead_encrypt(req));
 
@@ -660,15 +656,15 @@ static void test_aead_speed(const char *algo, int enc, unsigned int secs,
 			}
 
 			aead_request_set_crypt(req, sg, sgout,
-					       bs + (enc ? 0 : authsize),
+					       *b_size + (enc ? 0 : authsize),
 					       iv);
 
 			if (secs) {
-				ret = test_aead_jiffies(req, enc, bs,
+				ret = test_aead_jiffies(req, enc, *b_size,
 							secs);
 				cond_resched();
 			} else {
-				ret = test_aead_cycles(req, enc, bs);
+				ret = test_aead_cycles(req, enc, *b_size);
 			}
 
 			if (ret) {
@@ -1257,9 +1253,9 @@ static void test_mb_skcipher_speed(const char *algo, int enc, int secs,
 	struct test_mb_skcipher_data *data;
 	struct crypto_skcipher *tfm;
 	unsigned int i, j, iv_len;
-	const int *b_size;
 	const char *key;
 	const char *e;
+	u32 *b_size;
 	char iv[128];
 	int ret;
 
@@ -1320,16 +1316,14 @@ static void test_mb_skcipher_speed(const char *algo, int enc, int secs,
 	do {
 		b_size = block_sizes;
 		do {
-			u32 bs = round_up(*b_size, crypto_skcipher_blocksize(tfm));
-
-			if (bs > XBUFSIZE * PAGE_SIZE) {
+			if (*b_size > XBUFSIZE * PAGE_SIZE) {
 				pr_err("template (%u) too big for buffer (%lu)\n",
 				       *b_size, XBUFSIZE * PAGE_SIZE);
 				goto out;
 			}
 
 			pr_info("test %u (%d bit key, %d byte blocks): ", i,
-				*keysize * 8, bs);
+				*keysize * 8, *b_size);
 
 			/* Set up tfm global state, i.e. the key */
 
@@ -1359,7 +1353,7 @@ static void test_mb_skcipher_speed(const char *algo, int enc, int secs,
 
 			for (j = 0; j < num_mb; ++j) {
 				struct test_mb_skcipher_data *cur = &data[j];
-				unsigned int k = bs;
+				unsigned int k = *b_size;
 				unsigned int pages = DIV_ROUND_UP(k, PAGE_SIZE);
 				unsigned int p = 0;
 
@@ -1383,12 +1377,12 @@ static void test_mb_skcipher_speed(const char *algo, int enc, int secs,
 
 			if (secs) {
 				ret = test_mb_acipher_jiffies(data, enc,
-							      bs, secs,
+							      *b_size, secs,
 							      num_mb);
 				cond_resched();
 			} else {
 				ret = test_mb_acipher_cycles(data, enc,
-							     bs, num_mb);
+							     *b_size, num_mb);
 			}
 
 			if (ret) {
@@ -1503,8 +1497,8 @@ static void test_skcipher_speed(const char *algo, int enc, unsigned int secs,
 	char iv[128];
 	struct skcipher_request *req;
 	struct crypto_skcipher *tfm;
-	const int *b_size;
 	const char *e;
+	u32 *b_size;
 
 	if (enc == ENCRYPT)
 		e = "encryption";
@@ -1539,18 +1533,17 @@ static void test_skcipher_speed(const char *algo, int enc, unsigned int secs,
 		b_size = block_sizes;
 
 		do {
-			u32 bs = round_up(*b_size, crypto_skcipher_blocksize(tfm));
 			struct scatterlist sg[TVMEMSIZE];
 
-			if ((*keysize + bs) > TVMEMSIZE * PAGE_SIZE) {
+			if ((*keysize + *b_size) > TVMEMSIZE * PAGE_SIZE) {
 				pr_err("template (%u) too big for "
-				       "tvmem (%lu)\n", *keysize + bs,
+				       "tvmem (%lu)\n", *keysize + *b_size,
 				       TVMEMSIZE * PAGE_SIZE);
 				goto out_free_req;
 			}
 
 			pr_info("test %u (%d bit key, %d byte blocks): ", i,
-				*keysize * 8, bs);
+				*keysize * 8, *b_size);
 
 			memset(tvmem[0], 0xff, PAGE_SIZE);
 
@@ -1572,7 +1565,7 @@ static void test_skcipher_speed(const char *algo, int enc, unsigned int secs,
 				goto out_free_req;
 			}
 
-			k = *keysize + bs;
+			k = *keysize + *b_size;
 			sg_init_table(sg, DIV_ROUND_UP(k, PAGE_SIZE));
 
 			if (k > PAGE_SIZE) {
@@ -1589,22 +1582,22 @@ static void test_skcipher_speed(const char *algo, int enc, unsigned int secs,
 				sg_set_buf(sg + j, tvmem[j], k);
 				memset(tvmem[j], 0xff, k);
 			} else {
-				sg_set_buf(sg, tvmem[0] + *keysize, bs);
+				sg_set_buf(sg, tvmem[0] + *keysize, *b_size);
 			}
 
 			iv_len = crypto_skcipher_ivsize(tfm);
 			if (iv_len)
 				memset(&iv, 0xff, iv_len);
 
-			skcipher_request_set_crypt(req, sg, sg, bs, iv);
+			skcipher_request_set_crypt(req, sg, sg, *b_size, iv);
 
 			if (secs) {
 				ret = test_acipher_jiffies(req, enc,
-							   bs, secs);
+							   *b_size, secs);
 				cond_resched();
 			} else {
 				ret = test_acipher_cycles(req, enc,
-							  bs);
+							  *b_size);
 			}
 
 			if (ret) {
@@ -1806,9 +1799,25 @@ static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
 		ret += tcrypt_test("wp256");
 		break;
 
+	case 25:
+		ret += tcrypt_test("ecb(tnepres)");
+		break;
+
 	case 26:
 		ret += tcrypt_test("ecb(anubis)");
 		ret += tcrypt_test("cbc(anubis)");
+		break;
+
+	case 27:
+		ret += tcrypt_test("tgr192");
+		break;
+
+	case 28:
+		ret += tcrypt_test("tgr160");
+		break;
+
+	case 29:
+		ret += tcrypt_test("tgr128");
 		break;
 
 	case 30:
@@ -1831,6 +1840,10 @@ static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
 		ret += tcrypt_test("sha224");
 		break;
 
+	case 34:
+		ret += tcrypt_test("salsa20");
+		break;
+
 	case 35:
 		ret += tcrypt_test("gcm(aes)");
 		break;
@@ -1848,7 +1861,7 @@ static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
 		break;
 
         case 39:
-		ret += tcrypt_test("xxhash64");
+		ret += tcrypt_test("rmd128");
 		break;
 
         case 40:
@@ -1856,11 +1869,11 @@ static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
 		break;
 
 	case 41:
-		ret += tcrypt_test("blake2s-256");
+		ret += tcrypt_test("rmd256");
 		break;
 
 	case 42:
-		ret += tcrypt_test("blake2b-512");
+		ret += tcrypt_test("rmd320");
 		break;
 
 	case 43:
@@ -1933,6 +1946,10 @@ static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
 
 	case 106:
 		ret += tcrypt_test("xcbc(aes)");
+		break;
+
+	case 107:
+		ret += tcrypt_test("hmac(rmd128)");
 		break;
 
 	case 108:
@@ -2157,6 +2174,11 @@ static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
 				speed_template_32_48_64);
 		break;
 
+	case 206:
+		test_cipher_speed("salsa20", ENCRYPT, sec, NULL, 0,
+				  speed_template_16_32);
+		break;
+
 	case 207:
 		test_cipher_speed("ecb(serpent)", ENCRYPT, sec, NULL, 0,
 				  speed_template_16_32);
@@ -2364,12 +2386,24 @@ static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
 		test_hash_speed("wp512", sec, generic_hash_speed_template);
 		if (mode > 300 && mode < 400) break;
 		fallthrough;
+	case 310:
+		test_hash_speed("tgr128", sec, generic_hash_speed_template);
+		if (mode > 300 && mode < 400) break;
+		fallthrough;
+	case 311:
+		test_hash_speed("tgr160", sec, generic_hash_speed_template);
+		if (mode > 300 && mode < 400) break;
+		fallthrough;
+	case 312:
+		test_hash_speed("tgr192", sec, generic_hash_speed_template);
+		if (mode > 300 && mode < 400) break;
+		fallthrough;
 	case 313:
 		test_hash_speed("sha224", sec, generic_hash_speed_template);
 		if (mode > 300 && mode < 400) break;
 		fallthrough;
 	case 314:
-		test_hash_speed("xxhash64", sec, generic_hash_speed_template);
+		test_hash_speed("rmd128", sec, generic_hash_speed_template);
 		if (mode > 300 && mode < 400) break;
 		fallthrough;
 	case 315:
@@ -2377,11 +2411,11 @@ static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
 		if (mode > 300 && mode < 400) break;
 		fallthrough;
 	case 316:
-		test_hash_speed("blake2s-256", sec, generic_hash_speed_template);
+		test_hash_speed("rmd256", sec, generic_hash_speed_template);
 		if (mode > 300 && mode < 400) break;
 		fallthrough;
 	case 317:
-		test_hash_speed("blake2b-512", sec, generic_hash_speed_template);
+		test_hash_speed("rmd320", sec, generic_hash_speed_template);
 		if (mode > 300 && mode < 400) break;
 		fallthrough;
 	case 318:
@@ -2476,12 +2510,24 @@ static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
 		test_ahash_speed("wp512", sec, generic_hash_speed_template);
 		if (mode > 400 && mode < 500) break;
 		fallthrough;
+	case 410:
+		test_ahash_speed("tgr128", sec, generic_hash_speed_template);
+		if (mode > 400 && mode < 500) break;
+		fallthrough;
+	case 411:
+		test_ahash_speed("tgr160", sec, generic_hash_speed_template);
+		if (mode > 400 && mode < 500) break;
+		fallthrough;
+	case 412:
+		test_ahash_speed("tgr192", sec, generic_hash_speed_template);
+		if (mode > 400 && mode < 500) break;
+		fallthrough;
 	case 413:
 		test_ahash_speed("sha224", sec, generic_hash_speed_template);
 		if (mode > 400 && mode < 500) break;
 		fallthrough;
 	case 414:
-		test_ahash_speed("xxhash64", sec, generic_hash_speed_template);
+		test_ahash_speed("rmd128", sec, generic_hash_speed_template);
 		if (mode > 400 && mode < 500) break;
 		fallthrough;
 	case 415:
@@ -2489,11 +2535,11 @@ static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
 		if (mode > 400 && mode < 500) break;
 		fallthrough;
 	case 416:
-		test_ahash_speed("blake2s-256", sec, generic_hash_speed_template);
+		test_ahash_speed("rmd256", sec, generic_hash_speed_template);
 		if (mode > 400 && mode < 500) break;
 		fallthrough;
 	case 417:
-		test_ahash_speed("blake2b-512", sec, generic_hash_speed_template);
+		test_ahash_speed("rmd320", sec, generic_hash_speed_template);
 		if (mode > 400 && mode < 500) break;
 		fallthrough;
 	case 418:
@@ -3020,7 +3066,7 @@ err_free_tv:
  */
 static void __exit tcrypt_mod_fini(void) { }
 
-late_initcall(tcrypt_mod_init);
+subsys_initcall(tcrypt_mod_init);
 module_exit(tcrypt_mod_fini);
 
 module_param(alg, charp, 0);

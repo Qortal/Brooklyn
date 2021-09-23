@@ -611,7 +611,6 @@ found:
 			 * changed. Schedule recovery!
 			 */
 			nfs4_schedule_path_down_recovery(pos);
-			goto out;
 		default:
 			goto out;
 		}
@@ -1156,7 +1155,7 @@ struct nfs_server *nfs4_create_server(struct fs_context *fc)
 	if (!server)
 		return ERR_PTR(-ENOMEM);
 
-	server->cred = get_cred(fc->cred);
+	server->cred = get_cred(current_cred());
 
 	auth_probe = ctx->auth_info.flavor_len < 1;
 

@@ -89,8 +89,6 @@
 #define BOND_XFRM_FEATURES (NETIF_F_HW_ESP | NETIF_F_HW_ESP_TX_CSUM | \
 			    NETIF_F_GSO_ESP)
 
-#define BOND_TLS_FEATURES (NETIF_F_HW_TLS_TX | NETIF_F_HW_TLS_RX)
-
 #ifdef CONFIG_NET_POLL_CONTROLLER
 extern atomic_t netpoll_block_tx;
 
@@ -237,7 +235,7 @@ struct bonding {
 	char     proc_file_name[IFNAMSIZ];
 #endif /* CONFIG_PROC_FS */
 	struct   list_head bond_list;
-	u32 __percpu *rr_tx_counter;
+	u32      rr_tx_counter;
 	struct   ad_bond_info ad_info;
 	struct   alb_bond_info alb_info;
 	struct   bond_params params;
@@ -273,8 +271,6 @@ struct bond_vlan_tag {
 	__be16		vlan_proto;
 	unsigned short	vlan_id;
 };
-
-bool bond_sk_check(struct bonding *bond);
 
 /**
  * Returns NULL if the net_device does not belong to any of the bond's slaves

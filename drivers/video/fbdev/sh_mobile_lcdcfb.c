@@ -16,6 +16,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/delay.h>
 #include <linux/fbcon.h>
+#include <linux/gpio.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/ioctl.h>
@@ -340,7 +341,8 @@ static void lcdc_wait_bit(struct sh_mobile_lcdc_priv *priv,
 static void sh_mobile_lcdc_clk_on(struct sh_mobile_lcdc_priv *priv)
 {
 	if (atomic_inc_and_test(&priv->hw_usecnt)) {
-		clk_prepare_enable(priv->dot_clk);
+		if (priv->dot_clk)
+			clk_prepare_enable(priv->dot_clk);
 		pm_runtime_get_sync(priv->dev);
 	}
 }
@@ -349,7 +351,8 @@ static void sh_mobile_lcdc_clk_off(struct sh_mobile_lcdc_priv *priv)
 {
 	if (atomic_sub_return(1, &priv->hw_usecnt) == -1) {
 		pm_runtime_put(priv->dev);
-		clk_disable_unprepare(priv->dot_clk);
+		if (priv->dot_clk)
+			clk_disable_unprepare(priv->dot_clk);
 	}
 }
 

@@ -858,7 +858,11 @@ struct sctp_chunk *sctp_make_shutdown(const struct sctp_association *asoc,
 	struct sctp_chunk *retval;
 	__u32 ctsn;
 
-	ctsn = sctp_tsnmap_get_ctsn(&asoc->peer.tsn_map);
+	if (chunk && chunk->asoc)
+		ctsn = sctp_tsnmap_get_ctsn(&chunk->asoc->peer.tsn_map);
+	else
+		ctsn = sctp_tsnmap_get_ctsn(&asoc->peer.tsn_map);
+
 	shut.cum_tsn_ack = htonl(ctsn);
 
 	retval = sctp_make_control(asoc, SCTP_CID_SHUTDOWN, 0,
@@ -1138,32 +1142,11 @@ nodata:
 	return retval;
 }
 
-struct sctp_chunk *sctp_make_new_encap_port(const struct sctp_association *asoc,
-					    const struct sctp_chunk *chunk)
-{
-	struct sctp_new_encap_port_hdr nep;
-	struct sctp_chunk *retval;
-
-	retval = sctp_make_abort(asoc, chunk,
-				 sizeof(struct sctp_errhdr) + sizeof(nep));
-	if (!retval)
-		goto nodata;
-
-	sctp_init_cause(retval, SCTP_ERROR_NEW_ENCAP_PORT, sizeof(nep));
-	nep.cur_port = SCTP_INPUT_CB(chunk->skb)->encap_port;
-	nep.new_port = chunk->transport->encap_port;
-	sctp_addto_chunk(retval, sizeof(nep), &nep);
-
-nodata:
-	return retval;
-}
-
 /* Make a HEARTBEAT chunk.  */
 struct sctp_chunk *sctp_make_heartbeat(const struct sctp_association *asoc,
-				       const struct sctp_transport *transport,
-				       __u32 probe_size)
+				       const struct sctp_transport *transport)
 {
-	struct sctp_sender_hb_info hbinfo = {};
+	struct sctp_sender_hb_info hbinfo;
 	struct sctp_chunk *retval;
 
 	retval = sctp_make_control(asoc, SCTP_CID_HEARTBEAT, 0,
@@ -1177,7 +1160,6 @@ struct sctp_chunk *sctp_make_heartbeat(const struct sctp_association *asoc,
 	hbinfo.daddr = transport->ipaddr;
 	hbinfo.sent_at = jiffies;
 	hbinfo.hb_nonce = transport->hb_nonce;
-	hbinfo.probe_size = probe_size;
 
 	/* Cast away the 'const', as this is just telling the chunk
 	 * what transport it belongs to.
@@ -1185,7 +1167,6 @@ struct sctp_chunk *sctp_make_heartbeat(const struct sctp_association *asoc,
 	retval->transport = (struct sctp_transport *) transport;
 	retval->subh.hbs_hdr = sctp_addto_chunk(retval, sizeof(hbinfo),
 						&hbinfo);
-	retval->pmtu_probe = !!probe_size;
 
 nodata:
 	return retval;
@@ -1218,32 +1199,6 @@ struct sctp_chunk *sctp_make_heartbeat_ack(const struct sctp_association *asoc,
 		retval->transport = chunk->transport;
 
 nodata:
-	return retval;
-}
-
-/* RFC4820 3. Padding Chunk (PAD)
- *  0                   1                   2                   3
- *  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
- * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- * | Type = 0x84   |   Flags=0     |             Length            |
- * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- * |                                                               |
- * \                         Padding Data                          /
- * /                                                               \
- * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
- */
-struct sctp_chunk *sctp_make_pad(const struct sctp_association *asoc, int len)
-{
-	struct sctp_chunk *retval;
-
-	retval = sctp_make_control(asoc, SCTP_CID_PAD, 0, len, GFP_ATOMIC);
-	if (!retval)
-		return NULL;
-
-	skb_put_zero(retval->skb, len);
-	retval->chunk_hdr->length = htons(ntohs(retval->chunk_hdr->length) + len);
-	retval->chunk_end = skb_tail_pointer(retval->skb);
-
 	return retval;
 }
 
@@ -2195,16 +2150,9 @@ static enum sctp_ierror sctp_verify_param(struct net *net,
 		break;
 
 	case SCTP_PARAM_SET_PRIMARY:
-		if (!ep->asconf_enable)
-			goto unhandled;
-
-		if (ntohs(param.p->length) < sizeof(struct sctp_addip_param) +
-					     sizeof(struct sctp_paramhdr)) {
-			sctp_process_inv_paramlength(asoc, param.p,
-						     chunk, err_chunk);
-			retval = SCTP_IERROR_ABORT;
-		}
-		break;
+		if (ep->asconf_enable)
+			break;
+		goto unhandled;
 
 	case SCTP_PARAM_HOST_NAME_ADDRESS:
 		/* Tell the peer, we won't support this param.  */
@@ -2373,7 +2321,6 @@ int sctp_process_init(struct sctp_association *asoc, struct sctp_chunk *chunk,
 	 * added as the primary transport.  The source address seems to
 	 * be a better choice than any of the embedded addresses.
 	 */
-	asoc->encap_port = SCTP_INPUT_CB(chunk->skb)->encap_port;
 	if (!sctp_assoc_add_peer(asoc, peer_addr, gfp, SCTP_ACTIVE))
 		goto nomem;
 
@@ -3251,7 +3198,7 @@ bool sctp_verify_asconf(const struct sctp_association *asoc,
 				return false;
 			break;
 		default:
-			/* This is unknown to us, reject! */
+			/* This is unkown to us, reject! */
 			return false;
 		}
 	}

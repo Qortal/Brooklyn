@@ -24,15 +24,11 @@
  */
 V_FUNCTION_BEGIN(__kernel_sync_dicache)
   .cfi_startproc
-BEGIN_FTR_SECTION
-	b	3f
-END_FTR_SECTION_IFSET(CPU_FTR_COHERENT_ICACHE)
 #ifdef CONFIG_PPC64
 	mflr	r12
   .cfi_register lr,r12
-	get_datapage	r10
+	get_datapage	r10, r0
 	mtlr	r12
-  .cfi_restore	lr
 #endif
 
 #ifdef CONFIG_PPC64
@@ -88,11 +84,20 @@ END_FTR_SECTION_IFSET(CPU_FTR_COHERENT_ICACHE)
 	isync
 	li	r3,0
 	blr
-3:
+  .cfi_endproc
+V_FUNCTION_END(__kernel_sync_dicache)
+
+
+/*
+ * POWER5 version of __kernel_sync_dicache
+ */
+V_FUNCTION_BEGIN(__kernel_sync_dicache_p5)
+  .cfi_startproc
 	crclr	cr0*4+so
 	sync
 	isync
 	li	r3,0
 	blr
   .cfi_endproc
-V_FUNCTION_END(__kernel_sync_dicache)
+V_FUNCTION_END(__kernel_sync_dicache_p5)
+

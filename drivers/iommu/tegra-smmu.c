@@ -10,7 +10,6 @@
 #include <linux/kernel.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
-#include <linux/pci.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
@@ -257,19 +256,26 @@ static int tegra_smmu_alloc_asid(struct tegra_smmu *smmu, unsigned int *idp)
 {
 	unsigned long id;
 
+	mutex_lock(&smmu->lock);
+
 	id = find_first_zero_bit(smmu->asids, smmu->soc->num_asids);
-	if (id >= smmu->soc->num_asids)
+	if (id >= smmu->soc->num_asids) {
+		mutex_unlock(&smmu->lock);
 		return -ENOSPC;
+	}
 
 	set_bit(id, smmu->asids);
 	*idp = id;
 
+	mutex_unlock(&smmu->lock);
 	return 0;
 }
 
 static void tegra_smmu_free_asid(struct tegra_smmu *smmu, unsigned int id)
 {
+	mutex_lock(&smmu->lock);
 	clear_bit(id, smmu->asids);
+	mutex_unlock(&smmu->lock);
 }
 
 static bool tegra_smmu_capable(enum iommu_cap cap)
@@ -376,9 +382,9 @@ static void tegra_smmu_enable(struct tegra_smmu *smmu, unsigned int swgroup,
 		if (client->swgroup != swgroup)
 			continue;
 
-		value = smmu_readl(smmu, client->regs.smmu.reg);
-		value |= BIT(client->regs.smmu.bit);
-		smmu_writel(smmu, value, client->regs.smmu.reg);
+		value = smmu_readl(smmu, client->smmu.reg);
+		value |= BIT(client->smmu.bit);
+		smmu_writel(smmu, value, client->smmu.reg);
 	}
 }
 
@@ -404,9 +410,9 @@ static void tegra_smmu_disable(struct tegra_smmu *smmu, unsigned int swgroup,
 		if (client->swgroup != swgroup)
 			continue;
 
-		value = smmu_readl(smmu, client->regs.smmu.reg);
-		value &= ~BIT(client->regs.smmu.bit);
-		smmu_writel(smmu, value, client->regs.smmu.reg);
+		value = smmu_readl(smmu, client->smmu.reg);
+		value &= ~BIT(client->smmu.bit);
+		smmu_writel(smmu, value, client->smmu.reg);
 	}
 }
 
@@ -414,21 +420,17 @@ static int tegra_smmu_as_prepare(struct tegra_smmu *smmu,
 				 struct tegra_smmu_as *as)
 {
 	u32 value;
-	int err = 0;
-
-	mutex_lock(&smmu->lock);
+	int err;
 
 	if (as->use_count > 0) {
 		as->use_count++;
-		goto unlock;
+		return 0;
 	}
 
 	as->pd_dma = dma_map_page(smmu->dev, as->pd, 0, SMMU_SIZE_PD,
 				  DMA_TO_DEVICE);
-	if (dma_mapping_error(smmu->dev, as->pd_dma)) {
-		err = -ENOMEM;
-		goto unlock;
-	}
+	if (dma_mapping_error(smmu->dev, as->pd_dma))
+		return -ENOMEM;
 
 	/* We can't handle 64-bit DMA addresses */
 	if (!smmu_dma_addr_valid(smmu, as->pd_dma)) {
@@ -451,84 +453,83 @@ static int tegra_smmu_as_prepare(struct tegra_smmu *smmu,
 	as->smmu = smmu;
 	as->use_count++;
 
-	mutex_unlock(&smmu->lock);
-
 	return 0;
 
 err_unmap:
 	dma_unmap_page(smmu->dev, as->pd_dma, SMMU_SIZE_PD, DMA_TO_DEVICE);
-unlock:
-	mutex_unlock(&smmu->lock);
-
 	return err;
 }
 
 static void tegra_smmu_as_unprepare(struct tegra_smmu *smmu,
 				    struct tegra_smmu_as *as)
 {
-	mutex_lock(&smmu->lock);
-
-	if (--as->use_count > 0) {
-		mutex_unlock(&smmu->lock);
+	if (--as->use_count > 0)
 		return;
-	}
 
 	tegra_smmu_free_asid(smmu, as->id);
 
 	dma_unmap_page(smmu->dev, as->pd_dma, SMMU_SIZE_PD, DMA_TO_DEVICE);
 
 	as->smmu = NULL;
-
-	mutex_unlock(&smmu->lock);
 }
 
 static int tegra_smmu_attach_dev(struct iommu_domain *domain,
 				 struct device *dev)
 {
-	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
 	struct tegra_smmu *smmu = dev_iommu_priv_get(dev);
 	struct tegra_smmu_as *as = to_smmu_as(domain);
-	unsigned int index;
-	int err;
+	struct device_node *np = dev->of_node;
+	struct of_phandle_args args;
+	unsigned int index = 0;
+	int err = 0;
 
-	if (!fwspec)
-		return -ENOENT;
+	while (!of_parse_phandle_with_args(np, "iommus", "#iommu-cells", index,
+					   &args)) {
+		unsigned int swgroup = args.args[0];
 
-	for (index = 0; index < fwspec->num_ids; index++) {
+		if (args.np != smmu->dev->of_node) {
+			of_node_put(args.np);
+			continue;
+		}
+
+		of_node_put(args.np);
+
 		err = tegra_smmu_as_prepare(smmu, as);
-		if (err)
-			goto disable;
+		if (err < 0)
+			return err;
 
-		tegra_smmu_enable(smmu, fwspec->ids[index], as->id);
+		tegra_smmu_enable(smmu, swgroup, as->id);
+		index++;
 	}
 
 	if (index == 0)
 		return -ENODEV;
 
 	return 0;
-
-disable:
-	while (index--) {
-		tegra_smmu_disable(smmu, fwspec->ids[index], as->id);
-		tegra_smmu_as_unprepare(smmu, as);
-	}
-
-	return err;
 }
 
 static void tegra_smmu_detach_dev(struct iommu_domain *domain, struct device *dev)
 {
-	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
 	struct tegra_smmu_as *as = to_smmu_as(domain);
+	struct device_node *np = dev->of_node;
 	struct tegra_smmu *smmu = as->smmu;
-	unsigned int index;
+	struct of_phandle_args args;
+	unsigned int index = 0;
 
-	if (!fwspec)
-		return;
+	while (!of_parse_phandle_with_args(np, "iommus", "#iommu-cells", index,
+					   &args)) {
+		unsigned int swgroup = args.args[0];
 
-	for (index = 0; index < fwspec->num_ids; index++) {
-		tegra_smmu_disable(smmu, fwspec->ids[index], as->id);
+		if (args.np != smmu->dev->of_node) {
+			of_node_put(args.np);
+			continue;
+		}
+
+		of_node_put(args.np);
+
+		tegra_smmu_disable(smmu, swgroup, as->id);
 		tegra_smmu_as_unprepare(smmu, as);
+		index++;
 	}
 }
 
@@ -849,25 +850,35 @@ static struct iommu_device *tegra_smmu_probe_device(struct device *dev)
 		smmu = tegra_smmu_find(args.np);
 		if (smmu) {
 			err = tegra_smmu_configure(smmu, dev, &args);
+			of_node_put(args.np);
 
-			if (err < 0) {
-				of_node_put(args.np);
+			if (err < 0)
 				return ERR_PTR(err);
-			}
+
+			/*
+			 * Only a single IOMMU master interface is currently
+			 * supported by the Linux kernel, so abort after the
+			 * first match.
+			 */
+			dev_iommu_priv_set(dev, smmu);
+
+			break;
 		}
 
 		of_node_put(args.np);
 		index++;
 	}
 
-	smmu = dev_iommu_priv_get(dev);
 	if (!smmu)
 		return ERR_PTR(-ENODEV);
 
 	return &smmu->iommu;
 }
 
-static void tegra_smmu_release_device(struct device *dev) {}
+static void tegra_smmu_release_device(struct device *dev)
+{
+	dev_iommu_priv_set(dev, NULL);
+}
 
 static const struct tegra_smmu_group_soc *
 tegra_smmu_find_group(struct tegra_smmu *smmu, unsigned int swgroup)
@@ -892,12 +903,10 @@ static void tegra_smmu_group_release(void *iommu_data)
 	mutex_unlock(&smmu->lock);
 }
 
-static struct iommu_group *tegra_smmu_device_group(struct device *dev)
+static struct iommu_group *tegra_smmu_group_get(struct tegra_smmu *smmu,
+						unsigned int swgroup)
 {
-	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
-	struct tegra_smmu *smmu = dev_iommu_priv_get(dev);
 	const struct tegra_smmu_group_soc *soc;
-	unsigned int swgroup = fwspec->ids[0];
 	struct tegra_smmu_group *group;
 	struct iommu_group *grp;
 
@@ -925,11 +934,7 @@ static struct iommu_group *tegra_smmu_device_group(struct device *dev)
 	group->smmu = smmu;
 	group->soc = soc;
 
-	if (dev_is_pci(dev))
-		group->group = pci_device_group(dev);
-	else
-		group->group = generic_device_group(dev);
-
+	group->group = iommu_group_alloc();
 	if (IS_ERR(group->group)) {
 		devm_kfree(smmu->dev, group);
 		mutex_unlock(&smmu->lock);
@@ -945,23 +950,23 @@ static struct iommu_group *tegra_smmu_device_group(struct device *dev)
 	return group->group;
 }
 
+static struct iommu_group *tegra_smmu_device_group(struct device *dev)
+{
+	struct iommu_fwspec *fwspec = dev_iommu_fwspec_get(dev);
+	struct tegra_smmu *smmu = dev_iommu_priv_get(dev);
+	struct iommu_group *group;
+
+	group = tegra_smmu_group_get(smmu, fwspec->ids[0]);
+	if (!group)
+		group = generic_device_group(dev);
+
+	return group;
+}
+
 static int tegra_smmu_of_xlate(struct device *dev,
 			       struct of_phandle_args *args)
 {
-	struct platform_device *iommu_pdev = of_find_device_by_node(args->np);
-	struct tegra_mc *mc = platform_get_drvdata(iommu_pdev);
 	u32 id = args->args[0];
-
-	/*
-	 * Note: we are here releasing the reference of &iommu_pdev->dev, which
-	 * is mc->dev. Although some functions in tegra_smmu_ops may keep using
-	 * its private data beyond this point, it's still safe to do so because
-	 * the SMMU parent device is the same as the MC, so the reference count
-	 * isn't strictly necessary.
-	 */
-	put_device(&iommu_pdev->dev);
-
-	dev_iommu_priv_set(dev, mc->smmu);
 
 	return iommu_fwspec_add_ids(dev, &id, 1);
 }
@@ -1042,9 +1047,9 @@ static int tegra_smmu_clients_show(struct seq_file *s, void *data)
 		const struct tegra_mc_client *client = &smmu->soc->clients[i];
 		const char *status;
 
-		value = smmu_readl(smmu, client->regs.smmu.reg);
+		value = smmu_readl(smmu, client->smmu.reg);
 
-		if (value & BIT(client->regs.smmu.bit))
+		if (value & BIT(client->smmu.bit))
 			status = "yes";
 		else
 			status = "no";
@@ -1145,33 +1150,26 @@ struct tegra_smmu *tegra_smmu_probe(struct device *dev,
 	if (err)
 		return ERR_PTR(err);
 
-	err = iommu_device_register(&smmu->iommu, &tegra_smmu_ops, dev);
-	if (err)
-		goto remove_sysfs;
+	iommu_device_set_ops(&smmu->iommu, &tegra_smmu_ops);
+	iommu_device_set_fwnode(&smmu->iommu, dev->fwnode);
+
+	err = iommu_device_register(&smmu->iommu);
+	if (err) {
+		iommu_device_sysfs_remove(&smmu->iommu);
+		return ERR_PTR(err);
+	}
 
 	err = bus_set_iommu(&platform_bus_type, &tegra_smmu_ops);
-	if (err < 0)
-		goto unregister;
-
-#ifdef CONFIG_PCI
-	err = bus_set_iommu(&pci_bus_type, &tegra_smmu_ops);
-	if (err < 0)
-		goto unset_platform_bus;
-#endif
+	if (err < 0) {
+		iommu_device_unregister(&smmu->iommu);
+		iommu_device_sysfs_remove(&smmu->iommu);
+		return ERR_PTR(err);
+	}
 
 	if (IS_ENABLED(CONFIG_DEBUG_FS))
 		tegra_smmu_debugfs_init(smmu);
 
 	return smmu;
-
-unset_platform_bus: __maybe_unused;
-	bus_set_iommu(&platform_bus_type, NULL);
-unregister:
-	iommu_device_unregister(&smmu->iommu);
-remove_sysfs:
-	iommu_device_sysfs_remove(&smmu->iommu);
-
-	return ERR_PTR(err);
 }
 
 void tegra_smmu_remove(struct tegra_smmu *smmu)

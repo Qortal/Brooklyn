@@ -243,7 +243,7 @@ static int port_detect(struct device *dev, void *dev_drv)
 }
 
 /**
- *	__parport_register_driver - register a parallel port device driver
+ *	parport_register_driver - register a parallel port device driver
  *	@drv: structure describing the driver
  *	@owner: owner module of drv
  *	@mod_name: module name string

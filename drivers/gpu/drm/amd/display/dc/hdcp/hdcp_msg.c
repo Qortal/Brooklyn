@@ -33,7 +33,6 @@
 #include "core_types.h"
 #include "dc_link_ddc.h"
 #include "link_hwss.h"
-#include "inc/link_dpcd.h"
 
 #define DC_LOGGER \
 	link->ctx->logger

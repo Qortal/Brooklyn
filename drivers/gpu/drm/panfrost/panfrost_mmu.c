@@ -347,9 +347,16 @@ static void mmu_tlb_flush_walk(unsigned long iova, size_t size, size_t granule,
 	mmu_tlb_sync_context(cookie);
 }
 
+static void mmu_tlb_flush_leaf(unsigned long iova, size_t size, size_t granule,
+			       void *cookie)
+{
+	mmu_tlb_sync_context(cookie);
+}
+
 static const struct iommu_flush_ops mmu_tlb_ops = {
 	.tlb_flush_all	= mmu_tlb_inv_context_s1,
 	.tlb_flush_walk = mmu_tlb_flush_walk,
+	.tlb_flush_leaf = mmu_tlb_flush_leaf,
 };
 
 int panfrost_mmu_pgtable_alloc(struct panfrost_file_priv *priv)
@@ -578,20 +585,22 @@ static irqreturn_t panfrost_mmu_irq_handler_thread(int irq, void *data)
 {
 	struct panfrost_device *pfdev = data;
 	u32 status = mmu_read(pfdev, MMU_INT_RAWSTAT);
-	int ret;
+	int i, ret;
 
-	while (status) {
-		u32 as = ffs(status | (status >> 16)) - 1;
-		u32 mask = BIT(as) | BIT(as + 16);
+	for (i = 0; status; i++) {
+		u32 mask = BIT(i) | BIT(i + 16);
 		u64 addr;
 		u32 fault_status;
 		u32 exception_type;
 		u32 access_type;
 		u32 source_id;
 
-		fault_status = mmu_read(pfdev, AS_FAULTSTATUS(as));
-		addr = mmu_read(pfdev, AS_FAULTADDRESS_LO(as));
-		addr |= (u64)mmu_read(pfdev, AS_FAULTADDRESS_HI(as)) << 32;
+		if (!(status & mask))
+			continue;
+
+		fault_status = mmu_read(pfdev, AS_FAULTSTATUS(i));
+		addr = mmu_read(pfdev, AS_FAULTADDRESS_LO(i));
+		addr |= (u64)mmu_read(pfdev, AS_FAULTADDRESS_HI(i)) << 32;
 
 		/* decode the fault status */
 		exception_type = fault_status & 0xFF;
@@ -602,8 +611,8 @@ static irqreturn_t panfrost_mmu_irq_handler_thread(int irq, void *data)
 
 		/* Page fault only */
 		ret = -1;
-		if ((status & mask) == BIT(as) && (exception_type & 0xF8) == 0xC0)
-			ret = panfrost_mmu_map_fault_addr(pfdev, as, addr);
+		if ((status & mask) == BIT(i) && (exception_type & 0xF8) == 0xC0)
+			ret = panfrost_mmu_map_fault_addr(pfdev, i, addr);
 
 		if (ret)
 			/* terminal fault, print info about the fault */
@@ -615,7 +624,7 @@ static irqreturn_t panfrost_mmu_irq_handler_thread(int irq, void *data)
 				"exception type 0x%X: %s\n"
 				"access type 0x%X: %s\n"
 				"source id 0x%X\n",
-				as, addr,
+				i, addr,
 				"TODO",
 				fault_status,
 				(fault_status & (1 << 10) ? "DECODER FAULT" : "SLAVE FAULT"),
@@ -624,10 +633,6 @@ static irqreturn_t panfrost_mmu_irq_handler_thread(int irq, void *data)
 				source_id);
 
 		status &= ~mask;
-
-		/* If we received new MMU interrupts, process them before returning. */
-		if (!status)
-			status = mmu_read(pfdev, MMU_INT_RAWSTAT);
 	}
 
 	mmu_write(pfdev, MMU_INT_MASK, ~0);

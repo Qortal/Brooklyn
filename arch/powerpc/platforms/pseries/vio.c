@@ -22,7 +22,6 @@
 #include <linux/mm.h>
 #include <linux/dma-map-ops.h>
 #include <linux/kobject.h>
-#include <linux/kexec.h>
 
 #include <asm/iommu.h>
 #include <asm/dma.h>
@@ -1262,6 +1261,7 @@ static int vio_bus_remove(struct device *dev)
 	struct vio_dev *viodev = to_vio_dev(dev);
 	struct vio_driver *viodrv = to_vio_driver(dev->driver);
 	struct device *devptr;
+	int ret = 1;
 
 	/*
 	 * Hold a reference to the device after the remove function is called
@@ -1270,27 +1270,13 @@ static int vio_bus_remove(struct device *dev)
 	devptr = get_device(dev);
 
 	if (viodrv->remove)
-		viodrv->remove(viodev);
+		ret = viodrv->remove(viodev);
 
-	if (firmware_has_feature(FW_FEATURE_CMO))
+	if (!ret && firmware_has_feature(FW_FEATURE_CMO))
 		vio_cmo_bus_remove(viodev);
 
 	put_device(devptr);
-	return 0;
-}
-
-static void vio_bus_shutdown(struct device *dev)
-{
-	struct vio_dev *viodev = to_vio_dev(dev);
-	struct vio_driver *viodrv;
-
-	if (dev->driver) {
-		viodrv = to_vio_driver(dev->driver);
-		if (viodrv->shutdown)
-			viodrv->shutdown(viodev);
-		else if (kexec_in_progress)
-			vio_bus_remove(dev);
-	}
+	return ret;
 }
 
 /**
@@ -1632,7 +1618,6 @@ struct bus_type vio_bus_type = {
 	.match = vio_bus_match,
 	.probe = vio_bus_probe,
 	.remove = vio_bus_remove,
-	.shutdown = vio_bus_shutdown,
 };
 
 /**

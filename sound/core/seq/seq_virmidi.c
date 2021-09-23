@@ -482,11 +482,10 @@ int snd_virmidi_new(struct snd_card *card, int device, struct snd_rawmidi **rrmi
 	int err;
 	
 	*rrmidi = NULL;
-	err = snd_rawmidi_new(card, "VirMidi", device,
-			      16,	/* may be configurable */
-			      16,	/* may be configurable */
-			      &rmidi);
-	if (err < 0)
+	if ((err = snd_rawmidi_new(card, "VirMidi", device,
+				   16,	/* may be configurable */
+				   16,	/* may be configurable */
+				   &rmidi)) < 0)
 		return err;
 	strcpy(rmidi->name, rmidi->id);
 	rdev = kzalloc(sizeof(*rdev), GFP_KERNEL);

@@ -194,8 +194,7 @@ static int snd_p16v_pcm_open_playback_channel(struct snd_pcm_substream *substrea
 #endif /* debug */
 	/* channel->interrupt = snd_p16v_pcm_channel_interrupt; */
 	channel->epcm = epcm;
-	err = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS);
-	if (err < 0)
+	if ((err = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS)) < 0)
                 return err;
 
 	runtime->sync.id32[0] = substream->pcm->card->number;
@@ -243,8 +242,7 @@ static int snd_p16v_pcm_open_capture_channel(struct snd_pcm_substream *substream
 #endif /* debug */
 	/* channel->interrupt = snd_p16v_pcm_channel_interrupt; */
 	channel->epcm = epcm;
-	err = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS);
-	if (err < 0)
+	if ((err = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS)) < 0)
 		return err;
 
 	return 0;
@@ -591,8 +589,7 @@ int snd_p16v_pcm(struct snd_emu10k1 *emu, int device)
 	/* dev_dbg(emu->card->dev, "snd_p16v_pcm called. device=%d\n", device); */
 	emu->p16v_device_offset = device;
 
-	err = snd_pcm_new(emu->card, "p16v", device, 1, capture, &pcm);
-	if (err < 0)
+	if ((err = snd_pcm_new(emu->card, "p16v", device, 1, capture, &pcm)) < 0)
 		return err;
   
 	pcm->private_data = emu;
@@ -811,8 +808,8 @@ int snd_p16v_mixer(struct snd_emu10k1 *emu)
         struct snd_card *card = emu->card;
 
 	for (i = 0; i < ARRAY_SIZE(p16v_mixer_controls); i++) {
-		err = snd_ctl_add(card, snd_ctl_new1(&p16v_mixer_controls[i], emu));
-		if (err < 0)
+		if ((err = snd_ctl_add(card, snd_ctl_new1(&p16v_mixer_controls[i],
+							  emu))) < 0)
 			return err;
 	}
         return 0;

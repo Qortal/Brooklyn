@@ -538,11 +538,6 @@ static void omap_8250_pm(struct uart_port *port, unsigned int state,
 static void omap_serial_fill_features_erratas(struct uart_8250_port *up,
 					      struct omap8250_priv *priv)
 {
-	const struct soc_device_attribute k3_soc_devices[] = {
-		{ .family = "AM65X",  },
-		{ .family = "J721E", .revision = "SR1.0" },
-		{ /* sentinel */ }
-	};
 	u32 mvr, scheme;
 	u16 revision, major, minor;
 
@@ -590,14 +585,6 @@ static void omap_serial_fill_features_erratas(struct uart_8250_port *up,
 	default:
 		break;
 	}
-
-	/*
-	 * AM65x SR1.0, AM65x SR2.0 and J721e SR1.0 don't
-	 * don't have RHR_IT_DIS bit in IER2 register. So drop to flag
-	 * to enable errata workaround.
-	 */
-	if (soc_device_match(k3_soc_devices))
-		priv->habit &= ~UART_HAS_RHR_IT_DIS;
 }
 
 static void omap8250_uart_qos_work(struct work_struct *work)
@@ -1160,6 +1147,7 @@ static int omap_8250_dma_handle_irq(struct uart_port *port)
 	struct uart_8250_port *up = up_to_u8250p(port);
 	struct omap8250_priv *priv = up->port.private_data;
 	unsigned char status;
+	unsigned long flags;
 	u8 iir;
 
 	serial8250_rpm_get(up);
@@ -1170,7 +1158,7 @@ static int omap_8250_dma_handle_irq(struct uart_port *port)
 		return IRQ_HANDLED;
 	}
 
-	spin_lock(&port->lock);
+	spin_lock_irqsave(&port->lock, flags);
 
 	status = serial_port_in(port, UART_LSR);
 
@@ -1195,8 +1183,7 @@ static int omap_8250_dma_handle_irq(struct uart_port *port)
 		}
 	}
 
-	uart_unlock_and_check_sysrq(port);
-
+	uart_unlock_and_check_sysrq(port, flags);
 	serial8250_rpm_put(up);
 	return 1;
 }
@@ -1220,6 +1207,12 @@ static int omap8250_no_handle_irq(struct uart_port *port)
 	WARN_ONCE(1, "Unexpected irq handling before port startup\n");
 	return 0;
 }
+
+static const struct soc_device_attribute k3_soc_devices[] = {
+	{ .family = "AM65X",  },
+	{ .family = "J721E", .revision = "SR1.0" },
+	{ /* sentinel */ }
+};
 
 static struct omap8250_dma_params am654_dma = {
 	.rx_size = SZ_2K,
@@ -1426,6 +1419,13 @@ static int omap8250_probe(struct platform_device *pdev)
 			up.dma->rxconf.src_maxburst = RX_TRIGGER;
 			up.dma->txconf.dst_maxburst = TX_TRIGGER;
 		}
+
+		/*
+		 * AM65x SR1.0, AM65x SR2.0 and J721e SR1.0 don't
+		 * don't have RHR_IT_DIS bit in IER2 register
+		 */
+		if (soc_device_match(k3_soc_devices))
+			priv->habit &= ~UART_HAS_RHR_IT_DIS;
 	}
 #endif
 	ret = serial8250_register_8250_port(&up);

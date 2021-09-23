@@ -250,6 +250,7 @@ static int amd_spi_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct spi_master *master;
 	struct amd_spi *amd_spi;
+	struct resource *res;
 	int err = 0;
 
 	/* Allocate storage for spi_master and driver private data */
@@ -260,7 +261,9 @@ static int amd_spi_probe(struct platform_device *pdev)
 	}
 
 	amd_spi = spi_master_get_devdata(master);
-	amd_spi->io_remap_addr = devm_platform_ioremap_resource(pdev, 0);
+
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	amd_spi->io_remap_addr = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(amd_spi->io_remap_addr)) {
 		err = PTR_ERR(amd_spi->io_remap_addr);
 		dev_err(dev, "error %d ioremap of SPI registers failed\n", err);

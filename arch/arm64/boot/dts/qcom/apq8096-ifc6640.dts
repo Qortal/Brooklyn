@@ -17,7 +17,7 @@
 	qcom,board-id = <0x00010018 0>;
 
 	aliases {
-		serial0 = &blsp2_uart2;
+		serial0 = &blsp2_uart1;
 	};
 
 	chosen {
@@ -81,22 +81,14 @@
 	};
 };
 
-&blsp2_uart2 {
+&blsp2_uart1 {
 	status = "okay";
 	pinctrl-names = "default", "sleep";
-	pinctrl-0 = <&blsp2_uart2_2pins_default>;
-	pinctrl-1 = <&blsp2_uart2_2pins_sleep>;
+	pinctrl-0 = <&blsp2_uart1_2pins_default>;
+	pinctrl-1 = <&blsp2_uart1_2pins_sleep>;
 };
 
-&gpu {
-	status = "okay";
-};
-
-&mdss {
-	status = "okay";
-};
-
-&tlmm {
+&msmgpio {
 	sdc2_pins_default: sdc2-pins-default {
 		clk {
 			pins = "sdc2_clk";
@@ -360,7 +352,7 @@
 
 	bus-width = <4>;
 
-	cd-gpios = <&tlmm 38 0x1>;
+	cd-gpios = <&msmgpio 38 0x1>;
 
 	vmmc-supply = <&vreg_l21a_2p95>;
 	vqmmc-supply = <&vreg_l13a_2p95>;
@@ -390,8 +382,4 @@
 
 	vdda-phy-max-microamp = <18380>;
 	vdda-pll-max-microamp = <9440>;
-};
-
-&venus {
-	status = "okay";
 };

@@ -172,10 +172,12 @@ enum {
 /*
  * BG_GC means the background cleaning job.
  * FG_GC means the on-demand cleaning job.
+ * FORCE_FG_GC means on-demand cleaning job in background.
  */
 enum {
 	BG_GC = 0,
 	FG_GC,
+	FORCE_FG_GC,
 };
 
 /* for a function parameter to select a victim segment */
@@ -861,7 +863,7 @@ static inline int nr_pages_to_skip(struct f2fs_sb_info *sbi, int type)
 	else if (type == NODE)
 		return 8 * sbi->blocks_per_seg;
 	else if (type == META)
-		return 8 * BIO_MAX_VECS;
+		return 8 * BIO_MAX_PAGES;
 	else
 		return 0;
 }
@@ -878,7 +880,7 @@ static inline long nr_pages_to_write(struct f2fs_sb_info *sbi, int type,
 		return 0;
 
 	nr_to_write = wbc->nr_to_write;
-	desired = BIO_MAX_VECS;
+	desired = BIO_MAX_PAGES;
 	if (type == NODE)
 		desired <<= 1;
 

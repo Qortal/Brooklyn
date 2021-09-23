@@ -130,9 +130,8 @@ static int ns_open(struct atm_vcc *vcc);
 static void ns_close(struct atm_vcc *vcc);
 static void fill_tst(ns_dev * card, int n, vc_map * vc);
 static int ns_send(struct atm_vcc *vcc, struct sk_buff *skb);
-static int ns_send_bh(struct atm_vcc *vcc, struct sk_buff *skb);
 static int push_scqe(ns_dev * card, vc_map * vc, scq_info * scq, ns_scqe * tbd,
-		     struct sk_buff *skb, bool may_sleep);
+		     struct sk_buff *skb);
 static void process_tsq(ns_dev * card);
 static void drain_scq(ns_dev * card, scq_info * scq, int pos);
 static void process_rsq(ns_dev * card);
@@ -161,7 +160,6 @@ static const struct atmdev_ops atm_ops = {
 	.close = ns_close,
 	.ioctl = ns_ioctl,
 	.send = ns_send,
-	.send_bh = ns_send_bh,
 	.phy_put = ns_phy_put,
 	.phy_get = ns_phy_get,
 	.proc_read = ns_proc_read,
@@ -1624,7 +1622,7 @@ static void fill_tst(ns_dev * card, int n, vc_map * vc)
 	card->tst_addr = new_tst;
 }
 
-static int _ns_send(struct atm_vcc *vcc, struct sk_buff *skb, bool may_sleep)
+static int ns_send(struct atm_vcc *vcc, struct sk_buff *skb)
 {
 	ns_dev *card;
 	vc_map *vc;
@@ -1708,7 +1706,7 @@ static int _ns_send(struct atm_vcc *vcc, struct sk_buff *skb, bool may_sleep)
 		scq = card->scq0;
 	}
 
-	if (push_scqe(card, vc, scq, &scqe, skb, may_sleep) != 0) {
+	if (push_scqe(card, vc, scq, &scqe, skb) != 0) {
 		atomic_inc(&vcc->stats->tx_err);
 		dma_unmap_single(&card->pcidev->dev, NS_PRV_DMA(skb), skb->len,
 				 DMA_TO_DEVICE);
@@ -1720,18 +1718,8 @@ static int _ns_send(struct atm_vcc *vcc, struct sk_buff *skb, bool may_sleep)
 	return 0;
 }
 
-static int ns_send(struct atm_vcc *vcc, struct sk_buff *skb)
-{
-	return _ns_send(vcc, skb, true);
-}
-
-static int ns_send_bh(struct atm_vcc *vcc, struct sk_buff *skb)
-{
-	return _ns_send(vcc, skb, false);
-}
-
 static int push_scqe(ns_dev * card, vc_map * vc, scq_info * scq, ns_scqe * tbd,
-		     struct sk_buff *skb, bool may_sleep)
+		     struct sk_buff *skb)
 {
 	unsigned long flags;
 	ns_scqe tsr;
@@ -1742,7 +1730,7 @@ static int push_scqe(ns_dev * card, vc_map * vc, scq_info * scq, ns_scqe * tbd,
 
 	spin_lock_irqsave(&scq->lock, flags);
 	while (scq->tail == scq->next) {
-		if (!may_sleep) {
+		if (in_interrupt()) {
 			spin_unlock_irqrestore(&scq->lock, flags);
 			printk("nicstar%d: Error pushing TBD.\n", card->index);
 			return 1;
@@ -1787,7 +1775,7 @@ static int push_scqe(ns_dev * card, vc_map * vc, scq_info * scq, ns_scqe * tbd,
 		int has_run = 0;
 
 		while (scq->tail == scq->next) {
-			if (!may_sleep) {
+			if (in_interrupt()) {
 				data = scq_virt_to_bus(scq, scq->next);
 				ns_write_sram(card, scq->scd, &data, 1);
 				spin_unlock_irqrestore(&scq->lock, flags);

@@ -13,6 +13,7 @@
 #include <linux/of_fdt.h>
 
 #include <asm/cacheflush.h>
+#include <asm/dma-coherence.h>
 #include <asm/fw/fw.h>
 #include <asm/mips-boards/generic.h>
 #include <asm/mips-cps.h>
@@ -82,6 +83,7 @@ phys_addr_t mips_cdmm_phys_base(void)
 static void __init mips_nmi_setup(void)
 {
 	void *base;
+	extern char except_vec_nmi[];
 
 	base = cpu_has_veic ?
 		(void *)(CAC_BASE + 0xa80) :
@@ -114,6 +116,10 @@ void __init prom_init(void)
 	register_cps_smp_ops();
 
 	pr_info("SoC Type: %s\n", get_system_type());
+}
+
+void __init prom_free_prom_memory(void)
+{
 }
 
 void __init device_tree_init(void)

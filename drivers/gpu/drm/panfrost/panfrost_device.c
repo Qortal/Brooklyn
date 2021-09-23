@@ -18,13 +18,19 @@
 
 static int panfrost_reset_init(struct panfrost_device *pfdev)
 {
-	pfdev->rstc = devm_reset_control_array_get_optional_exclusive(pfdev->dev);
+	int err;
+
+	pfdev->rstc = devm_reset_control_array_get(pfdev->dev, false, true);
 	if (IS_ERR(pfdev->rstc)) {
 		dev_err(pfdev->dev, "get reset failed %ld\n", PTR_ERR(pfdev->rstc));
 		return PTR_ERR(pfdev->rstc);
 	}
 
-	return reset_control_deassert(pfdev->rstc);
+	err = reset_control_deassert(pfdev->rstc);
+	if (err)
+		return err;
+
+	return 0;
 }
 
 static void panfrost_reset_fini(struct panfrost_device *pfdev)
@@ -238,6 +244,7 @@ int panfrost_device_init(struct panfrost_device *pfdev)
 	res = platform_get_resource(pfdev->pdev, IORESOURCE_MEM, 0);
 	pfdev->iomem = devm_ioremap_resource(pfdev->dev, res);
 	if (IS_ERR(pfdev->iomem)) {
+		dev_err(pfdev->dev, "failed to ioremap iomem\n");
 		err = PTR_ERR(pfdev->iomem);
 		goto out_pm_domain;
 	}

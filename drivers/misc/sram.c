@@ -144,8 +144,8 @@ static void sram_free_partitions(struct sram_dev *sram)
 	}
 }
 
-static int sram_reserve_cmp(void *priv, const struct list_head *a,
-					const struct list_head *b)
+static int sram_reserve_cmp(void *priv, struct list_head *a,
+					struct list_head *b)
 {
 	struct sram_reserve *ra = list_entry(a, struct sram_reserve, list);
 	struct sram_reserve *rb = list_entry(b, struct sram_reserve, list);
@@ -341,7 +341,6 @@ static int sram_probe(struct platform_device *pdev)
 {
 	struct sram_dev *sram;
 	int ret;
-	struct resource *res;
 	int (*init_func)(void);
 
 	sram = devm_kzalloc(&pdev->dev, sizeof(*sram), GFP_KERNEL);
@@ -350,11 +349,10 @@ static int sram_probe(struct platform_device *pdev)
 
 	sram->dev = &pdev->dev;
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (of_property_read_bool(pdev->dev.of_node, "no-memory-wc"))
-		sram->virt_base = devm_ioremap_resource(&pdev->dev, res);
+		sram->virt_base = devm_platform_ioremap_resource(pdev, 0);
 	else
-		sram->virt_base = devm_ioremap_resource_wc(&pdev->dev, res);
+		sram->virt_base = devm_platform_ioremap_resource_wc(pdev, 0);
 	if (IS_ERR(sram->virt_base)) {
 		dev_err(&pdev->dev, "could not map SRAM registers\n");
 		return PTR_ERR(sram->virt_base);

@@ -52,7 +52,8 @@ echo Results directory: $resdir/$ds
 KVM="`pwd`/tools/testing/selftests/rcutorture"; export KVM
 PATH=${KVM}/bin:$PATH; export PATH
 . functions.sh
-echo Using all `identify_qemu_vcpus` CPUs.
+cpus="`identify_qemu_vcpus`"
+echo Using up to $cpus CPUs.
 
 # Each pass through this loop does one command-line argument.
 for gitbr in $@
@@ -73,7 +74,7 @@ do
 		# Test the specified commit.
 		git checkout $i > $resdir/$ds/$idir/git-checkout.out 2>&1
 		echo git checkout return code: $? "(Commit $ntry: $i)"
-		kvm.sh --allcpus --duration 3 --trust-make > $resdir/$ds/$idir/kvm.sh.out 2>&1
+		kvm.sh --cpus $cpus --duration 3 --trust-make > $resdir/$ds/$idir/kvm.sh.out 2>&1
 		ret=$?
 		echo kvm.sh return code $ret for commit $i from branch $gitbr
 

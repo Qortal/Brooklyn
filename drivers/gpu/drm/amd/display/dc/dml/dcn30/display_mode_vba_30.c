@@ -23,7 +23,7 @@
  *
  */
 
-#ifdef CONFIG_DRM_AMD_DC_DCN
+#ifdef CONFIG_DRM_AMD_DC_DCN3_0
 #include "dc.h"
 #include "dc_link.h"
 #include "../display_mode_lib.h"
@@ -300,7 +300,7 @@ static void CalculateWatermarksAndDRAMSpeedChangeSupport(
 		unsigned int MaxLineBufferLines,
 		unsigned int LineBufferSize,
 		unsigned int DPPOutputBufferPixels,
-		unsigned int DETBufferSizeInKByte,
+		double DETBufferSizeInKByte,
 		unsigned int WritebackInterfaceBufferSize,
 		double DCFCLK,
 		double ReturnBW,
@@ -319,8 +319,8 @@ static void CalculateWatermarksAndDRAMSpeedChangeSupport(
 		unsigned int DPPPerPlane[],
 		bool DCCEnable[],
 		double DPPCLK[],
-		unsigned int DETBufferSizeY[],
-		unsigned int DETBufferSizeC[],
+		double DETBufferSizeY[],
+		double DETBufferSizeC[],
 		unsigned int SwathHeightY[],
 		unsigned int SwathHeightC[],
 		unsigned int LBBitPerPixel[],
@@ -571,7 +571,7 @@ static void CalculateStutterEfficiency(
 		double SRExitTime,
 		bool SynchronizedVBlank,
 		int DPPPerPlane[],
-		unsigned int DETBufferSizeY[],
+		double DETBufferSizeY[],
 		int BytePerPixelY[],
 		double BytePerPixelDETY[],
 		double SwathWidthY[],
@@ -604,7 +604,7 @@ static void CalculateStutterEfficiency(
 static void CalculateSwathAndDETConfiguration(
 		bool ForceSingleDPP,
 		int NumberOfActivePlanes,
-		unsigned int DETBufferSizeInKByte,
+		long DETBufferSizeInKByte,
 		double MaximumSwathWidthLuma[],
 		double MaximumSwathWidthChroma[],
 		enum scan_direction_class SourceScan[],
@@ -636,8 +636,8 @@ static void CalculateSwathAndDETConfiguration(
 		double SwathWidthChroma[],
 		int SwathHeightY[],
 		int SwathHeightC[],
-		unsigned int DETBufferSizeY[],
-		unsigned int DETBufferSizeC[],
+		double DETBufferSizeY[],
+		double DETBufferSizeC[],
 		bool ViewportSizeSupportPerPlane[],
 		bool *ViewportSizeSupport);
 static void CalculateSwathWidth(
@@ -1220,13 +1220,13 @@ static bool CalculatePrefetchSchedule(
 			dml_print("DML: prefetch_bw_equ: %f\n", prefetch_bw_equ);
 
 			if (prefetch_bw_equ > 0) {
-				if (GPUVMEnable) {
+				if (GPUVMEnable == true) {
 					Tvm_equ = dml_max3(*Tno_bw + PDEAndMetaPTEBytesFrame * HostVMInefficiencyFactor / prefetch_bw_equ, Tvm_trips, LineTime / 4);
 				} else {
 					Tvm_equ = LineTime / 4;
 				}
 
-				if ((GPUVMEnable || myPipe->DCCEnable)) {
+				if ((GPUVMEnable == true || myPipe->DCCEnable == true)) {
 					Tr0_equ = dml_max4(
 							(MetaRowByte + PixelPTEBytesPerRow * HostVMInefficiencyFactor) / prefetch_bw_equ,
 							Tr0_trips,
@@ -2614,7 +2614,7 @@ static void DISPCLKDPPCLKDCFCLKDeepSleepPrefetchParametersWatermarksAndPerforman
 			CalculateUrgentBurstFactor(
 					v->swath_width_luma_ub[k],
 					v->swath_width_chroma_ub[k],
-					v->DETBufferSizeInKByte[0],
+					v->DETBufferSizeInKByte,
 					v->SwathHeightY[k],
 					v->SwathHeightC[k],
 					v->HTotal[k] / v->PixelClock[k],
@@ -2636,7 +2636,7 @@ static void DISPCLKDPPCLKDCFCLKDeepSleepPrefetchParametersWatermarksAndPerforman
 			CalculateUrgentBurstFactor(
 					v->swath_width_luma_ub[k],
 					v->swath_width_chroma_ub[k],
-					v->DETBufferSizeInKByte[0],
+					v->DETBufferSizeInKByte,
 					v->SwathHeightY[k],
 					v->SwathHeightC[k],
 					v->HTotal[k] / v->PixelClock[k],
@@ -2809,7 +2809,7 @@ static void DISPCLKDPPCLKDCFCLKDeepSleepPrefetchParametersWatermarksAndPerforman
 			v->MaxLineBufferLines,
 			v->LineBufferSize,
 			v->DPPOutputBufferPixels,
-			v->DETBufferSizeInKByte[0],
+			v->DETBufferSizeInKByte,
 			v->WritebackInterfaceBufferSize,
 			v->DCFCLK,
 			v->ReturnBW,
@@ -3028,7 +3028,7 @@ static void DISPCLKDPPCLKDCFCLKDeepSleepPrefetchParametersWatermarksAndPerforman
 				v->SurfaceWidthC[k],
 				v->SurfaceHeightY[k],
 				v->SurfaceHeightC[k],
-				v->DETBufferSizeInKByte[0] * 1024,
+				v->DETBufferSizeInKByte * 1024,
 				v->BlockHeight256BytesY[k],
 				v->BlockHeight256BytesC[k],
 				v->SurfaceTiling[k],
@@ -3178,7 +3178,7 @@ static void DisplayPipeConfiguration(struct display_mode_lib *mode_lib)
 	CalculateSwathAndDETConfiguration(
 			false,
 			mode_lib->vba.NumberOfActivePlanes,
-			mode_lib->vba.DETBufferSizeInKByte[0],
+			mode_lib->vba.DETBufferSizeInKByte,
 			dummy1,
 			dummy2,
 			mode_lib->vba.SourceScan,
@@ -3629,7 +3629,7 @@ static double TruncToValidBPP(
 			}
 		}
 	} else {
-		if (!((DSCEnable == false && (DesiredBPP == NonDSCBPP2 || DesiredBPP == NonDSCBPP1 || DesiredBPP == NonDSCBPP0 || DesiredBPP == 18)) ||
+		if (!((DSCEnable == false && (DesiredBPP == NonDSCBPP2 || DesiredBPP == NonDSCBPP1 || DesiredBPP == NonDSCBPP0)) ||
 				(DSCEnable && DesiredBPP >= MinDSCBPP && DesiredBPP <= MaxDSCBPP))) {
 			return BPP_INVALID;
 		} else {
@@ -3912,7 +3912,7 @@ void dml30_ModeSupportAndSystemConfigurationFull(struct display_mode_lib *mode_l
 	CalculateSwathAndDETConfiguration(
 			true,
 			v->NumberOfActivePlanes,
-			v->DETBufferSizeInKByte[0],
+			v->DETBufferSizeInKByte,
 			v->MaximumSwathWidthLuma,
 			v->MaximumSwathWidthChroma,
 			v->SourceScan,
@@ -4062,7 +4062,7 @@ void dml30_ModeSupportAndSystemConfigurationFull(struct display_mode_lib *mode_l
 					v->RequiredDPPCLK[i][j][NumberOfNonSplitPlaneOfMaximumBandwidth] = v->MinDPPCLKUsingSingleDPP[NumberOfNonSplitPlaneOfMaximumBandwidth]
 							* (1 + v->DISPCLKDPPCLKDSCCLKDownSpreading / 100) / 2;
 					v->TotalNumberOfActiveDPP[i][j] = v->TotalNumberOfActiveDPP[i][j] + 1;
-					v->TotalNumberOfSingleDPPPlanes[i][j] = v->TotalNumberOfSingleDPPPlanes[i][j] - 1;
+					v->TotalNumberOfSingleDPPPlanes[i][j] = v->TotalNumberOfSingleDPPPlanes[i][j] + 1;
 				}
 			}
 			if (v->TotalNumberOfActiveDPP[i][j] > v->MaxNumDPP) {
@@ -4275,7 +4275,7 @@ void dml30_ModeSupportAndSystemConfigurationFull(struct display_mode_lib *mode_l
 	for (i = 0; i < v->soc.num_states; i++) {
 		v->DIOSupport[i] = true;
 		for (k = 0; k <= v->NumberOfActivePlanes - 1; k++) {
-			if (!v->skip_dio_check[k] && v->BlendingAndTiming[k] == k && (v->Output[k] == dm_dp || v->Output[k] == dm_edp || v->Output[k] == dm_hdmi)
+			if (v->BlendingAndTiming[k] == k && (v->Output[k] == dm_dp || v->Output[k] == dm_edp || v->Output[k] == dm_hdmi)
 					&& (v->OutputBppPerState[i][k] == 0
 							|| (v->OutputFormat[k] == dm_420 && v->Interlace[k] == true && v->ProgressiveToInterlaceUnitInOPP == true))) {
 				v->DIOSupport[i] = false;
@@ -4377,7 +4377,7 @@ void dml30_ModeSupportAndSystemConfigurationFull(struct display_mode_lib *mode_l
 			CalculateSwathAndDETConfiguration(
 					false,
 					v->NumberOfActivePlanes,
-					v->DETBufferSizeInKByte[0],
+					v->DETBufferSizeInKByte,
 					v->MaximumSwathWidthLuma,
 					v->MaximumSwathWidthChroma,
 					v->SourceScan,
@@ -4600,7 +4600,7 @@ void dml30_ModeSupportAndSystemConfigurationFull(struct display_mode_lib *mode_l
 				CalculateUrgentBurstFactor(
 						v->swath_width_luma_ub_this_state[k],
 						v->swath_width_chroma_ub_this_state[k],
-						v->DETBufferSizeInKByte[0],
+						v->DETBufferSizeInKByte,
 						v->SwathHeightYThisState[k],
 						v->SwathHeightCThisState[k],
 						v->HTotal[k] / v->PixelClock[k],
@@ -5003,7 +5003,7 @@ void dml30_ModeSupportAndSystemConfigurationFull(struct display_mode_lib *mode_l
 					CalculateUrgentBurstFactor(
 							v->swath_width_luma_ub_this_state[k],
 							v->swath_width_chroma_ub_this_state[k],
-							v->DETBufferSizeInKByte[0],
+							v->DETBufferSizeInKByte,
 							v->SwathHeightYThisState[k],
 							v->SwathHeightCThisState[k],
 							v->HTotal[k] / v->PixelClock[k],
@@ -5175,7 +5175,7 @@ void dml30_ModeSupportAndSystemConfigurationFull(struct display_mode_lib *mode_l
 					v->MaxLineBufferLines,
 					v->LineBufferSize,
 					v->DPPOutputBufferPixels,
-					v->DETBufferSizeInKByte[0],
+					v->DETBufferSizeInKByte,
 					v->WritebackInterfaceBufferSize,
 					v->DCFCLKState[i][j],
 					v->ReturnBWPerState[i][j],
@@ -5347,7 +5347,7 @@ static void CalculateWatermarksAndDRAMSpeedChangeSupport(
 		unsigned int MaxLineBufferLines,
 		unsigned int LineBufferSize,
 		unsigned int DPPOutputBufferPixels,
-		unsigned int DETBufferSizeInKByte,
+		double DETBufferSizeInKByte,
 		unsigned int WritebackInterfaceBufferSize,
 		double DCFCLK,
 		double ReturnBW,
@@ -5366,8 +5366,8 @@ static void CalculateWatermarksAndDRAMSpeedChangeSupport(
 		unsigned int DPPPerPlane[],
 		bool DCCEnable[],
 		double DPPCLK[],
-		unsigned int DETBufferSizeY[],
-		unsigned int DETBufferSizeC[],
+		double DETBufferSizeY[],
+		double DETBufferSizeC[],
 		unsigned int SwathHeightY[],
 		unsigned int SwathHeightC[],
 		unsigned int LBBitPerPixel[],
@@ -5536,7 +5536,7 @@ static void CalculateWatermarksAndDRAMSpeedChangeSupport(
 		}
 	}
 
-	if (mode_lib->vba.MinActiveDRAMClockChangeMargin > 0) {
+	if (mode_lib->vba.MinActiveDRAMClockChangeMargin > 0 && PrefetchMode == 0) {
 		*DRAMClockChangeSupport = dm_dram_clock_change_vactive;
 	} else if (((mode_lib->vba.SynchronizedVBlank == true || mode_lib->vba.TotalNumberOfActiveOTG == 1 || SecondMinActiveDRAMClockChangeMarginOneDisplayInVBLank > 0) && PrefetchMode == 0)) {
 		*DRAMClockChangeSupport = dm_dram_clock_change_vblank;
@@ -6104,7 +6104,7 @@ static void CalculateStutterEfficiency(
 		double SRExitTime,
 		bool SynchronizedVBlank,
 		int DPPPerPlane[],
-		unsigned int DETBufferSizeY[],
+		double DETBufferSizeY[],
 		int BytePerPixelY[],
 		double BytePerPixelDETY[],
 		double SwathWidthY[],
@@ -6251,7 +6251,7 @@ static void CalculateStutterEfficiency(
 static void CalculateSwathAndDETConfiguration(
 		bool ForceSingleDPP,
 		int NumberOfActivePlanes,
-		unsigned int DETBufferSizeInKByte,
+		long DETBufferSizeInKByte,
 		double MaximumSwathWidthLuma[],
 		double MaximumSwathWidthChroma[],
 		enum scan_direction_class SourceScan[],
@@ -6283,8 +6283,8 @@ static void CalculateSwathAndDETConfiguration(
 		double SwathWidthChroma[],
 		int SwathHeightY[],
 		int SwathHeightC[],
-		unsigned int DETBufferSizeY[],
-		unsigned int DETBufferSizeC[],
+		double DETBufferSizeY[],
+		double DETBufferSizeC[],
 		bool ViewportSizeSupportPerPlane[],
 		bool *ViewportSizeSupport)
 {
@@ -6848,4 +6848,4 @@ static void UseMinimumDCFCLK(
 	}
 }
 
-#endif /* CONFIG_DRM_AMD_DC_DCN */
+#endif /* CONFIG_DRM_AMD_DC_DCN3_0 */

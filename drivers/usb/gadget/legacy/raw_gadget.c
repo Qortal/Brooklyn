@@ -3,8 +3,7 @@
  * USB Raw Gadget driver.
  * See Documentation/usb/raw-gadget.rst for more details.
  *
- * Copyright (c) 2020 Google, Inc.
- * Author: Andrey Konovalov <andreyknvl@gmail.com>
+ * Andrey Konovalov <andreyknvl@gmail.com>
  */
 
 #include <linux/compiler.h>

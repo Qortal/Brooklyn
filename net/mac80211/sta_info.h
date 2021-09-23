@@ -71,7 +71,6 @@
  *	until pending frames are delivered
  * @WLAN_STA_USES_ENCRYPTION: This station was configured for encryption,
  *	so drop all packets without a key later.
- * @WLAN_STA_DECAP_OFFLOAD: This station uses rx decap offload
  *
  * @NUM_WLAN_STA_FLAGS: number of defined flags
  */
@@ -103,7 +102,6 @@ enum ieee80211_sta_info_flags {
 	WLAN_STA_MPSP_RECIPIENT,
 	WLAN_STA_PS_DELIVER,
 	WLAN_STA_USES_ENCRYPTION,
-	WLAN_STA_DECAP_OFFLOAD,
 
 	NUM_WLAN_STA_FLAGS,
 };
@@ -135,25 +133,18 @@ enum ieee80211_agg_stop_reason {
 #define AIRTIME_USE_TX		BIT(0)
 #define AIRTIME_USE_RX		BIT(1)
 
-
 struct airtime_info {
 	u64 rx_airtime;
 	u64 tx_airtime;
-	u64 v_t;
-	u64 last_scheduled;
-	struct list_head list;
+	s64 deficit;
 	atomic_t aql_tx_pending; /* Estimated airtime for frames pending */
 	u32 aql_limit_low;
 	u32 aql_limit_high;
-	u32 weight_reciprocal;
-	u16 weight;
 };
 
 void ieee80211_sta_update_pending_airtime(struct ieee80211_local *local,
 					  struct sta_info *sta, u8 ac,
 					  u16 tx_airtime, bool tx_completed);
-void ieee80211_register_airtime(struct ieee80211_txq *txq,
-				u32 tx_airtime, u32 rx_airtime);
 
 struct sta_info;
 
@@ -522,6 +513,7 @@ struct ieee80211_fragment_cache {
  * @tid_seq: per-TID sequence numbers for sending to this STA
  * @airtime: per-AC struct airtime_info describing airtime statistics for this
  *	station
+ * @airtime_weight: station weight for airtime fairness calculation purposes
  * @ampdu_mlme: A-MPDU state machine state
  * @mesh: mesh STA information
  * @debugfs_dir: debug filesystem directory dentry
@@ -652,6 +644,7 @@ struct sta_info {
 	u16 tid_seq[IEEE80211_QOS_CTL_TID_MASK + 1];
 
 	struct airtime_info airtime[IEEE80211_NUM_ACS];
+	u16 airtime_weight;
 
 	/*
 	 * Aggregation information, locked with lock.

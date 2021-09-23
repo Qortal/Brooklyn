@@ -431,8 +431,9 @@ static irqreturn_t hisi_dma_irq(int irq, void *data)
 	struct hisi_dma_dev *hdma_dev = chan->hdma_dev;
 	struct hisi_dma_desc *desc;
 	struct hisi_dma_cqe *cqe;
+	unsigned long flags;
 
-	spin_lock(&chan->vc.lock);
+	spin_lock_irqsave(&chan->vc.lock, flags);
 
 	desc = chan->desc;
 	cqe = chan->cq + chan->cq_head;
@@ -451,7 +452,7 @@ static irqreturn_t hisi_dma_irq(int irq, void *data)
 		chan->desc = NULL;
 	}
 
-	spin_unlock(&chan->vc.lock);
+	spin_unlock_irqrestore(&chan->vc.lock, flags);
 
 	return IRQ_HANDLED;
 }

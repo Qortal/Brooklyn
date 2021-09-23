@@ -33,15 +33,15 @@ struct mlx5_ct_attr {
 #define zone_to_reg_ct {\
 	.mfield = MLX5_ACTION_IN_FIELD_METADATA_REG_C_2,\
 	.moffset = 0,\
-	.mlen = 16,\
+	.mlen = 2,\
 	.soffset = MLX5_BYTE_OFF(fte_match_param,\
-				 misc_parameters_2.metadata_reg_c_2),\
+				 misc_parameters_2.metadata_reg_c_2) + 2,\
 }
 
 #define ctstate_to_reg_ct {\
 	.mfield = MLX5_ACTION_IN_FIELD_METADATA_REG_C_2,\
-	.moffset = 16,\
-	.mlen = 16,\
+	.moffset = 2,\
+	.mlen = 2,\
 	.soffset = MLX5_BYTE_OFF(fte_match_param,\
 				 misc_parameters_2.metadata_reg_c_2),\
 }
@@ -49,7 +49,7 @@ struct mlx5_ct_attr {
 #define mark_to_reg_ct {\
 	.mfield = MLX5_ACTION_IN_FIELD_METADATA_REG_C_3,\
 	.moffset = 0,\
-	.mlen = 32,\
+	.mlen = 4,\
 	.soffset = MLX5_BYTE_OFF(fte_match_param,\
 				 misc_parameters_2.metadata_reg_c_3),\
 }
@@ -57,7 +57,7 @@ struct mlx5_ct_attr {
 #define labels_to_reg_ct {\
 	.mfield = MLX5_ACTION_IN_FIELD_METADATA_REG_C_4,\
 	.moffset = 0,\
-	.mlen = 32,\
+	.mlen = 4,\
 	.soffset = MLX5_BYTE_OFF(fte_match_param,\
 				 misc_parameters_2.metadata_reg_c_4),\
 }
@@ -65,7 +65,7 @@ struct mlx5_ct_attr {
 #define fteid_to_reg_ct {\
 	.mfield = MLX5_ACTION_IN_FIELD_METADATA_REG_C_5,\
 	.moffset = 0,\
-	.mlen = 32,\
+	.mlen = 4,\
 	.soffset = MLX5_BYTE_OFF(fte_match_param,\
 				 misc_parameters_2.metadata_reg_c_5),\
 }
@@ -73,19 +73,22 @@ struct mlx5_ct_attr {
 #define zone_restore_to_reg_ct {\
 	.mfield = MLX5_ACTION_IN_FIELD_METADATA_REG_C_1,\
 	.moffset = 0,\
-	.mlen = ESW_ZONE_ID_BITS,\
+	.mlen = 1,\
 	.soffset = MLX5_BYTE_OFF(fte_match_param,\
-				 misc_parameters_2.metadata_reg_c_1),\
+				 misc_parameters_2.metadata_reg_c_1) + 3,\
 }
 
 #define nic_zone_restore_to_reg_ct {\
 	.mfield = MLX5_ACTION_IN_FIELD_METADATA_REG_B,\
-	.moffset = 16,\
-	.mlen = ESW_ZONE_ID_BITS,\
+	.moffset = 2,\
+	.mlen = 1,\
 }
 
 #define REG_MAPPING_MLEN(reg) (mlx5e_tc_attr_to_reg_mappings[reg].mlen)
 #define REG_MAPPING_MOFFSET(reg) (mlx5e_tc_attr_to_reg_mappings[reg].moffset)
+#define REG_MAPPING_SHIFT(reg) (REG_MAPPING_MOFFSET(reg) * 8)
+#define ZONE_RESTORE_BITS (REG_MAPPING_MLEN(ZONE_RESTORE_TO_REG) * 8)
+#define ZONE_RESTORE_MAX GENMASK(ZONE_RESTORE_BITS - 1, 0)
 
 #if IS_ENABLED(CONFIG_MLX5_TC_CT)
 

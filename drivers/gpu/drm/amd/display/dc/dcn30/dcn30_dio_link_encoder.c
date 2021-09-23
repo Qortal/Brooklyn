@@ -51,7 +51,7 @@
 	(enc10->link_regs->index)
 
 
-bool dcn30_link_encoder_validate_output_with_stream(
+static bool dcn30_link_encoder_validate_output_with_stream(
 	struct link_encoder *enc,
 	const struct dc_stream_state *stream)
 {

@@ -57,17 +57,7 @@ static const struct rpivid_control rpivid_ctrls[] = {
 	},
 	{
 		.cfg = {
-			.id	= V4L2_CID_MPEG_VIDEO_HEVC_DECODE_PARAMS,
-		},
-		.required	= true,
-	},
-	{
-		.cfg = {
-			.name	= "Slice param array",
 			.id	= V4L2_CID_MPEG_VIDEO_HEVC_SLICE_PARAMS,
-			.type	= V4L2_CTRL_TYPE_HEVC_SLICE_PARAMS,
-			.flags	= V4L2_CTRL_FLAG_DYNAMIC_ARRAY,
-			.dims	= { 0x1000 },
 		},
 		.required	= true,
 	},
@@ -249,7 +239,6 @@ static int rpivid_open(struct file *file)
 	/* The only bit of format info that we can guess now is H265 src
 	 * Everything else we need more info for
 	 */
-	ctx->src_fmt.pixelformat = RPIVID_SRC_PIXELFORMAT_DEFAULT;
 	rpivid_prepare_src_format(&ctx->src_fmt);
 
 	v4l2_fh_add(&ctx->fh);

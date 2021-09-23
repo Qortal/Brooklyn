@@ -53,7 +53,7 @@
  *  Features supported by this driver:
  *  Hardware PEC                     yes
  *  Block buffer                     yes
- *  Block process call transaction   yes
+ *  Block process call transaction   no
  *  Slave mode                       no
  */
 
@@ -332,8 +332,7 @@ static int ismt_process_desc(const struct ismt_desc *desc,
 
 	if (desc->status & ISMT_DESC_SCS) {
 		if (read_write == I2C_SMBUS_WRITE &&
-		    size != I2C_SMBUS_PROC_CALL &&
-		    size != I2C_SMBUS_BLOCK_PROC_CALL)
+		    size != I2C_SMBUS_PROC_CALL)
 			return 0;
 
 		switch (size) {
@@ -346,7 +345,6 @@ static int ismt_process_desc(const struct ismt_desc *desc,
 			data->word = dma_buffer[0] | (dma_buffer[1] << 8);
 			break;
 		case I2C_SMBUS_BLOCK_DATA:
-		case I2C_SMBUS_BLOCK_PROC_CALL:
 			if (desc->rxbytes != dma_buffer[0] + 1)
 				return -EMSGSIZE;
 
@@ -520,18 +518,6 @@ static int ismt_access(struct i2c_adapter *adap, u16 addr,
 		}
 		break;
 
-	case I2C_SMBUS_BLOCK_PROC_CALL:
-		dev_dbg(dev, "I2C_SMBUS_BLOCK_PROC_CALL\n");
-		dma_size = I2C_SMBUS_BLOCK_MAX;
-		desc->tgtaddr_rw = ISMT_DESC_ADDR_RW(addr, 1);
-		desc->wr_len_cmd = data->block[0] + 1;
-		desc->rd_len = dma_size;
-		desc->control |= ISMT_DESC_BLK;
-		dma_direction = DMA_BIDIRECTIONAL;
-		dma_buffer[0] = command;
-		memcpy(&dma_buffer[1], &data->block[1], data->block[0]);
-		break;
-
 	case I2C_SMBUS_I2C_BLOCK_DATA:
 		/* Make sure the length is valid */
 		if (data->block[0] < 1)
@@ -638,7 +624,6 @@ static u32 ismt_func(struct i2c_adapter *adap)
 	       I2C_FUNC_SMBUS_BYTE_DATA		|
 	       I2C_FUNC_SMBUS_WORD_DATA		|
 	       I2C_FUNC_SMBUS_PROC_CALL		|
-	       I2C_FUNC_SMBUS_BLOCK_PROC_CALL	|
 	       I2C_FUNC_SMBUS_BLOCK_DATA	|
 	       I2C_FUNC_SMBUS_I2C_BLOCK		|
 	       I2C_FUNC_SMBUS_PEC;

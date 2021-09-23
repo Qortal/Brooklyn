@@ -92,25 +92,36 @@ _GLOBAL(__tlbil_va)
 	tlbsx.	r6,0,r3
 	bne	10f
 	sync
-#ifndef CONFIG_PPC_47x
+BEGIN_MMU_FTR_SECTION
+	b	2f
+END_MMU_FTR_SECTION_IFSET(MMU_FTR_TYPE_47x)
 	/* On 440 There are only 64 TLB entries, so r3 < 64, which means bit
 	 * 22, is clear.  Since 22 is the V bit in the TLB_PAGEID, loading this
 	 * value will invalidate the TLB entry.
 	 */
 	tlbwe	r6,r6,PPC44x_TLB_PAGEID
-#else
+	isync
+10:	wrtee	r10
+	blr
+2:
+#ifdef CONFIG_PPC_47x
 	oris	r7,r6,0x8000	/* specify way explicitly */
 	clrrwi	r4,r3,12	/* get an EPN for the hashing with V = 0 */
 	ori	r4,r4,PPC47x_TLBE_SIZE
 	tlbwe   r4,r7,0		/* write it */
-#endif /* !CONFIG_PPC_47x */
 	isync
-10:	wrtee	r10
+	wrtee	r10
 	blr
+#else /* CONFIG_PPC_47x */
+1:	trap
+	EMIT_BUG_ENTRY 1b,__FILE__,__LINE__,0;
+#endif /* !CONFIG_PPC_47x */
 
 _GLOBAL(_tlbil_all)
 _GLOBAL(_tlbil_pid)
-#ifndef CONFIG_PPC_47x
+BEGIN_MMU_FTR_SECTION
+	b	2f
+END_MMU_FTR_SECTION_IFSET(MMU_FTR_TYPE_47x)
 	li	r3,0
 	sync
 
@@ -125,7 +136,8 @@ _GLOBAL(_tlbil_pid)
 
 	isync
 	blr
-#else
+2:
+#ifdef CONFIG_PPC_47x
 	/* 476 variant. There's not simple way to do this, hopefully we'll
 	 * try to limit the amount of such full invalidates
 	 */
@@ -167,8 +179,11 @@ _GLOBAL(_tlbil_pid)
 	b	1b		/* Then loop */
 1:	isync			/* Sync shadows */
 	wrtee	r11
-	blr
+#else /* CONFIG_PPC_47x */
+1:	trap
+	EMIT_BUG_ENTRY 1b,__FILE__,__LINE__,0;
 #endif /* !CONFIG_PPC_47x */
+	blr
 
 #ifdef CONFIG_PPC_47x
 
@@ -359,6 +374,19 @@ _GLOBAL(_tlbivax_bcast)
 	tlbsync
 	sync
 	wrtee	r10
+	blr
+
+_GLOBAL(set_context)
+#ifdef CONFIG_BDI_SWITCH
+	/* Context switch the PTE pointer for the Abatron BDI2000.
+	 * The PGDIR is the second parameter.
+	 */
+	lis	r5, abatron_pteptrs@h
+	ori	r5, r5, abatron_pteptrs@l
+	stw	r4, 0x4(r5)
+#endif
+	mtspr	SPRN_PID,r3
+	isync			/* Force context change */
 	blr
 #else
 #error Unsupported processor type !

@@ -29,6 +29,9 @@
 MODULE_AUTHOR("Krzysztof Helt");
 MODULE_DESCRIPTION("Gallant SC-6000");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{Gallant, SC-6000},"
+			"{AudioExcel, Audio Excel DSP 16},"
+			"{Zoltrix, AV302}}");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
@@ -669,7 +672,7 @@ err_exit:
 	return err;
 }
 
-static void snd_sc6000_remove(struct device *devptr, unsigned int dev)
+static int snd_sc6000_remove(struct device *devptr, unsigned int dev)
 {
 	struct snd_card *card = dev_get_drvdata(devptr);
 	char __iomem **vport = card->private_data;
@@ -681,6 +684,7 @@ static void snd_sc6000_remove(struct device *devptr, unsigned int dev)
 	release_region(mss_port[dev], 4);
 
 	snd_card_free(card);
+	return 0;
 }
 
 static struct isa_driver snd_sc6000_driver = {

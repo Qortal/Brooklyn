@@ -778,6 +778,7 @@ void cache_clean_deferred(void *owner)
  */
 
 static DEFINE_SPINLOCK(queue_lock);
+static DEFINE_MUTEX(queue_io_mutex);
 
 struct cache_queue {
 	struct list_head	list;
@@ -905,26 +906,44 @@ static ssize_t cache_do_downcall(char *kaddr, const char __user *buf,
 	return ret;
 }
 
+static ssize_t cache_slow_downcall(const char __user *buf,
+				   size_t count, struct cache_detail *cd)
+{
+	static char write_buf[32768]; /* protected by queue_io_mutex */
+	ssize_t ret = -EINVAL;
+
+	if (count >= sizeof(write_buf))
+		goto out;
+	mutex_lock(&queue_io_mutex);
+	ret = cache_do_downcall(write_buf, buf, count, cd);
+	mutex_unlock(&queue_io_mutex);
+out:
+	return ret;
+}
+
 static ssize_t cache_downcall(struct address_space *mapping,
 			      const char __user *buf,
 			      size_t count, struct cache_detail *cd)
 {
-	char *write_buf;
+	struct page *page;
+	char *kaddr;
 	ssize_t ret = -ENOMEM;
 
-	if (count >= 32768) { /* 32k is max userland buffer, lets check anyway */
-		ret = -EINVAL;
-		goto out;
-	}
+	if (count >= PAGE_SIZE)
+		goto out_slow;
 
-	write_buf = kvmalloc(count + 1, GFP_KERNEL);
-	if (!write_buf)
-		goto out;
+	page = find_or_create_page(mapping, 0, GFP_KERNEL);
+	if (!page)
+		goto out_slow;
 
-	ret = cache_do_downcall(write_buf, buf, count, cd);
-	kvfree(write_buf);
-out:
+	kaddr = kmap(page);
+	ret = cache_do_downcall(kaddr, buf, count, cd);
+	kunmap(page);
+	unlock_page(page);
+	put_page(page);
 	return ret;
+out_slow:
+	return cache_slow_downcall(buf, count, cd);
 }
 
 static ssize_t cache_write(struct file *filp, const char __user *buf,

@@ -1196,8 +1196,10 @@ static int mcde_dsi_probe(struct platform_device *pdev)
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	d->regs = devm_ioremap_resource(dev, res);
-	if (IS_ERR(d->regs))
+	if (IS_ERR(d->regs)) {
+		dev_err(dev, "no DSI regs\n");
 		return PTR_ERR(d->regs);
+	}
 
 	dsi_id = readl(d->regs + DSI_ID_REG);
 	dev_info(dev, "HW revision 0x%08x\n", dsi_id);

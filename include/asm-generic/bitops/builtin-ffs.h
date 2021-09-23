@@ -10,6 +10,9 @@
  * the libc and compiler builtin ffs routines, therefore
  * differs in spirit from the above ffz (man ffs).
  */
-#define ffs(x) __builtin_ffs(x)
+static __always_inline int ffs(int x)
+{
+	return __builtin_ffs(x);
+}
 
 #endif

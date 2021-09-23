@@ -42,8 +42,7 @@ struct symbol_conf {
 			report_block,
 			report_individual_block,
 			inline_name,
-			disable_add2line_warn,
-			buildid_mmap2;
+			disable_add2line_warn;
 	const char	*vmlinux_name,
 			*kallsyms_name,
 			*source_prefix,
@@ -70,13 +69,11 @@ struct symbol_conf {
 			*sym_to_list,
 			*bt_stop_list;
 	struct intlist	*pid_list,
-			*tid_list,
-			*addr_list;
+			*tid_list;
 	const char	*symfs;
 	int		res_sample;
 	int		pad_output_len_dso;
 	int		group_sort_idx;
-	int		addr_range;
 };
 
 extern struct symbol_conf symbol_conf;

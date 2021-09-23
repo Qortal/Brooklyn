@@ -113,7 +113,6 @@ static int __init linkstation_poweroff_init(void)
 		return -EPROBE_DEFER;
 
 	phydev = phy_find_first(bus);
-	put_device(&bus->dev);
 	if (!phydev)
 		return -EPROBE_DEFER;
 

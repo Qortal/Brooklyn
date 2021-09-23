@@ -37,7 +37,7 @@
 };
 
 &gpio5 {
-	irda-en-hog {
+	irda_en {
 		gpio-hog;
 		gpios = <(175-160) GPIO_ACTIVE_HIGH>;
 		output-high;	/* activate gpio_175 to disable IrDA receiver */

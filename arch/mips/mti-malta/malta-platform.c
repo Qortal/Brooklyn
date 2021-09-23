@@ -33,8 +33,7 @@
 	.irq		= int,						\
 	.uartclk	= 1843200,					\
 	.iotype		= UPIO_PORT,					\
-	.flags		= UPF_BOOT_AUTOCONF | UPF_SKIP_TEST |		\
-			  UPF_MAGIC_MULTIPLIER,				\
+	.flags		= UPF_BOOT_AUTOCONF | UPF_SKIP_TEST,		\
 	.regshift	= 0,						\
 }
 

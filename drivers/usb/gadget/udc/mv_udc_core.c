@@ -888,7 +888,7 @@ static int ep_is_stall(struct mv_udc *udc, u8 ep_num, u8 direction)
 static int mv_ep_set_halt_wedge(struct usb_ep *_ep, int halt, int wedge)
 {
 	struct mv_ep *ep;
-	unsigned long flags;
+	unsigned long flags = 0;
 	int status = 0;
 	struct mv_udc *udc;
 

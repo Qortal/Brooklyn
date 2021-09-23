@@ -521,6 +521,8 @@ void WMMOnAssocRsp(struct adapter *padapter)
 			edca[XMIT_VO_QUEUE] = acParm;
 			break;
 		}
+
+		DBG_88E("WMM(%x): %x, %x\n", ACI, ACM, acParm);
 	}
 
 	if (padapter->registrypriv.acm_method == 1)
@@ -554,8 +556,10 @@ void WMMOnAssocRsp(struct adapter *padapter)
 		}
 	}
 
-	for (i = 0; i < 4; i++)
+	for (i = 0; i < 4; i++) {
 		pxmitpriv->wmm_para_seq[i] = inx[i];
+		DBG_88E("wmm_para_seq(%d): %d\n", i, pxmitpriv->wmm_para_seq[i]);
+	}
 }
 
 static void bwmode_update_check(struct adapter *padapter, struct ndis_802_11_var_ie *pIE)
@@ -704,6 +708,8 @@ void HTOnAssocRsp(struct adapter *padapter)
 	struct mlme_ext_priv *pmlmeext = &padapter->mlmeextpriv;
 	struct mlme_ext_info *pmlmeinfo = &pmlmeext->mlmext_info;
 
+	DBG_88E("%s\n", __func__);
+
 	if ((pmlmeinfo->HT_info_enable) && (pmlmeinfo->HT_caps_enable)) {
 		pmlmeinfo->HT_enable = 1;
 	} else {
@@ -797,11 +803,16 @@ int rtw_check_bcn_info(struct adapter  *Adapter, u8 *pframe, u32 packet_len)
 
 	len = packet_len - sizeof(struct ieee80211_hdr_3addr);
 
-	if (len > MAX_IE_SZ)
+	if (len > MAX_IE_SZ) {
+		DBG_88E("%s IE too long for survey event\n", __func__);
 		return _FAIL;
+	}
 
-	if (memcmp(cur_network->network.MacAddress, pbssid, 6))
+	if (memcmp(cur_network->network.MacAddress, pbssid, 6)) {
+		DBG_88E("Oops: rtw_check_network_encrypt linked but recv other bssid bcn\n%pM %pM\n",
+			(pbssid), (cur_network->network.MacAddress));
 		return true;
+	}
 
 	bssid = kzalloc(sizeof(struct wlan_bssid_ex), GFP_ATOMIC);
 	if (!bssid)
@@ -809,7 +820,7 @@ int rtw_check_bcn_info(struct adapter  *Adapter, u8 *pframe, u32 packet_len)
 
 	subtype = GetFrameSubType(pframe) >> 4;
 
-	if (subtype == IEEE80211_STYPE_BEACON)
+	if (subtype == WIFI_BEACON)
 		bssid->Reserved[0] = 1;
 
 	bssid->Length = sizeof(struct wlan_bssid_ex) - MAX_IE_SZ + len;
@@ -820,7 +831,7 @@ int rtw_check_bcn_info(struct adapter  *Adapter, u8 *pframe, u32 packet_len)
 
 	/* check bw and channel offset */
 	/* parsing HT_CAP_IE */
-	p = rtw_get_ie(bssid->ies + _FIXED_IE_LENGTH_, WLAN_EID_HT_CAPABILITY, &len, bssid->ie_length - _FIXED_IE_LENGTH_);
+	p = rtw_get_ie(bssid->ies + _FIXED_IE_LENGTH_, _HT_CAPABILITY_IE_, &len, bssid->ie_length - _FIXED_IE_LENGTH_);
 	if (p && len > 0) {
 		struct ieee80211_ht_cap *ht_cap =
 			(struct ieee80211_ht_cap *)(p + 2);
@@ -830,7 +841,7 @@ int rtw_check_bcn_info(struct adapter  *Adapter, u8 *pframe, u32 packet_len)
 		ht_cap_info = 0;
 	}
 	/* parsing HT_INFO_IE */
-	p = rtw_get_ie(bssid->ies + _FIXED_IE_LENGTH_, WLAN_EID_HT_OPERATION, &len, bssid->ie_length - _FIXED_IE_LENGTH_);
+	p = rtw_get_ie(bssid->ies + _FIXED_IE_LENGTH_, _HT_ADD_INFO_IE_, &len, bssid->ie_length - _FIXED_IE_LENGTH_);
 	if (p && len > 0) {
 		pht_info = (struct HT_info_element *)(p + 2);
 		ht_info_infos_0 = pht_info->infos[0];
@@ -839,6 +850,11 @@ int rtw_check_bcn_info(struct adapter  *Adapter, u8 *pframe, u32 packet_len)
 	}
 	if (ht_cap_info != cur_network->BcnInfo.ht_cap_info ||
 	    ((ht_info_infos_0 & 0x03) != (cur_network->BcnInfo.ht_info_infos_0 & 0x03))) {
+		DBG_88E("%s bcn now: ht_cap_info:%x ht_info_infos_0:%x\n", __func__,
+			ht_cap_info, ht_info_infos_0);
+		DBG_88E("%s bcn link: ht_cap_info:%x ht_info_infos_0:%x\n", __func__,
+			cur_network->BcnInfo.ht_cap_info, cur_network->BcnInfo.ht_info_infos_0);
+		DBG_88E("%s bw mode change, disconnect\n", __func__);
 		/* bcn_info_update */
 		cur_network->BcnInfo.ht_cap_info = ht_cap_info;
 		cur_network->BcnInfo.ht_info_infos_0 = ht_info_infos_0;
@@ -847,22 +863,27 @@ int rtw_check_bcn_info(struct adapter  *Adapter, u8 *pframe, u32 packet_len)
 	}
 
 	/* Checking for channel */
-	p = rtw_get_ie(bssid->ies + _FIXED_IE_LENGTH_, WLAN_EID_DS_PARAMS, &len, bssid->ie_length - _FIXED_IE_LENGTH_);
+	p = rtw_get_ie(bssid->ies + _FIXED_IE_LENGTH_, _DSSET_IE_, &len, bssid->ie_length - _FIXED_IE_LENGTH_);
 	if (p) {
 		bcn_channel = *(p + 2);
 	} else {/* In 5G, some ap do not have DSSET IE checking HT info for channel */
-		p = rtw_get_ie(bssid->ies + _FIXED_IE_LENGTH_, WLAN_EID_HT_OPERATION, &len, bssid->ie_length - _FIXED_IE_LENGTH_);
-		if (pht_info)
+		p = rtw_get_ie(bssid->ies + _FIXED_IE_LENGTH_, _HT_ADD_INFO_IE_, &len, bssid->ie_length - _FIXED_IE_LENGTH_);
+		if (pht_info) {
 			bcn_channel = pht_info->primary_channel;
-		else /* we don't find channel IE, so don't check it */
+		} else { /* we don't find channel IE, so don't check it */
+			DBG_88E("Oops: %s we don't find channel IE, so don't check it\n", __func__);
 			bcn_channel = Adapter->mlmeextpriv.cur_channel;
+		}
 	}
-	if (bcn_channel != Adapter->mlmeextpriv.cur_channel)
+	if (bcn_channel != Adapter->mlmeextpriv.cur_channel) {
+		DBG_88E("%s beacon channel:%d cur channel:%d disconnect\n", __func__,
+			bcn_channel, Adapter->mlmeextpriv.cur_channel);
 		goto _mismatch;
+	}
 
 	/* checking SSID */
 	ssid_len = 0;
-	p = rtw_get_ie(bssid->ies + _FIXED_IE_LENGTH_, WLAN_EID_SSID, &len, bssid->ie_length - _FIXED_IE_LENGTH_);
+	p = rtw_get_ie(bssid->ies + _FIXED_IE_LENGTH_, _SSID_IE_, &len, bssid->ie_length - _FIXED_IE_LENGTH_);
 	if (p) {
 		ssid_len = *(p + 1);
 		if (ssid_len > NDIS_802_11_LENGTH_SSID)
@@ -871,10 +892,17 @@ int rtw_check_bcn_info(struct adapter  *Adapter, u8 *pframe, u32 packet_len)
 	memcpy(bssid->ssid.ssid, (p + 2), ssid_len);
 	bssid->ssid.ssid_length = ssid_len;
 
+	RT_TRACE(_module_rtl871x_mlme_c_, _drv_info_, ("%s bssid.ssid.ssid:%s bssid.ssid.ssid_length:%d "
+				"cur_network->network.ssid.ssid:%s len:%d\n", __func__, bssid->ssid.ssid,
+				bssid->ssid.ssid_length, cur_network->network.ssid.ssid,
+				cur_network->network.ssid.ssid_length));
+
 	if (memcmp(bssid->ssid.ssid, cur_network->network.ssid.ssid, 32) ||
 	    bssid->ssid.ssid_length != cur_network->network.ssid.ssid_length) {
-		if (bssid->ssid.ssid[0] != '\0' && bssid->ssid.ssid_length != 0) /* not hidden ssid */
+		if (bssid->ssid.ssid[0] != '\0' && bssid->ssid.ssid_length != 0) { /* not hidden ssid */
+			DBG_88E("%s(), SSID is not match return FAIL\n", __func__);
 			goto _mismatch;
+		}
 	}
 
 	/* check encryption info */
@@ -885,8 +913,13 @@ int rtw_check_bcn_info(struct adapter  *Adapter, u8 *pframe, u32 packet_len)
 	else
 		bssid->Privacy = 0;
 
-	if (cur_network->network.Privacy != bssid->Privacy)
+	RT_TRACE(_module_rtl871x_mlme_c_, _drv_info_,
+		 ("%s(): cur_network->network.Privacy is %d, bssid.Privacy is %d\n",
+		 __func__, cur_network->network.Privacy, bssid->Privacy));
+	if (cur_network->network.Privacy != bssid->Privacy) {
+		DBG_88E("%s(), privacy is not match return FAIL\n", __func__);
 		goto _mismatch;
+	}
 
 	rtw_get_sec_ie(bssid->ies, bssid->ie_length, NULL, &rsn_len, NULL, &wpa_len);
 
@@ -899,29 +932,46 @@ int rtw_check_bcn_info(struct adapter  *Adapter, u8 *pframe, u32 packet_len)
 			encryp_protocol = ENCRYP_PROTOCOL_WEP;
 	}
 
-	if (cur_network->BcnInfo.encryp_protocol != encryp_protocol)
+	if (cur_network->BcnInfo.encryp_protocol != encryp_protocol) {
+		DBG_88E("%s(): encryption protocol is not match , return FAIL\n", __func__);
 		goto _mismatch;
+	}
 
 	if (encryp_protocol == ENCRYP_PROTOCOL_WPA || encryp_protocol == ENCRYP_PROTOCOL_WPA2) {
 		pbuf = rtw_get_wpa_ie(&bssid->ies[12], &wpa_ielen,
 				      bssid->ie_length - 12);
 		if (pbuf && (wpa_ielen > 0)) {
-			rtw_parse_wpa_ie(pbuf, wpa_ielen + 2, &group_cipher,
-					 &pairwise_cipher, &is_8021x);
+			if (rtw_parse_wpa_ie(pbuf, wpa_ielen + 2, &group_cipher, &pairwise_cipher, &is_8021x) == _SUCCESS) {
+				RT_TRACE(_module_rtl871x_mlme_c_, _drv_info_,
+					 ("%s pnetwork->pairwise_cipher: %d, group_cipher is %d, is_8021x is %d\n", __func__,
+					 pairwise_cipher, group_cipher, is_8021x));
+			}
 		} else {
 			pbuf = rtw_get_wpa2_ie(&bssid->ies[12], &wpa_ielen,
 					       bssid->ie_length - 12);
 
-			if (pbuf && (wpa_ielen > 0))
-				rtw_parse_wpa2_ie(pbuf, wpa_ielen + 2, &group_cipher,
-						  &pairwise_cipher, &is_8021x);
+			if (pbuf && (wpa_ielen > 0)) {
+				if (rtw_parse_wpa2_ie(pbuf, wpa_ielen + 2, &group_cipher, &pairwise_cipher, &is_8021x) == _SUCCESS) {
+					RT_TRACE(_module_rtl871x_mlme_c_, _drv_info_,
+						 ("%s pnetwork->pairwise_cipher: %d, pnetwork->group_cipher is %d, is_802x is %d\n",
+						  __func__, pairwise_cipher, group_cipher, is_8021x));
+				}
+			}
 		}
 
-		if (pairwise_cipher != cur_network->BcnInfo.pairwise_cipher || group_cipher != cur_network->BcnInfo.group_cipher)
+		RT_TRACE(_module_rtl871x_mlme_c_, _drv_err_,
+			 ("%s cur_network->group_cipher is %d: %d\n", __func__, cur_network->BcnInfo.group_cipher, group_cipher));
+		if (pairwise_cipher != cur_network->BcnInfo.pairwise_cipher || group_cipher != cur_network->BcnInfo.group_cipher) {
+			DBG_88E("%s pairwise_cipher(%x:%x) or group_cipher(%x:%x) is not match , return FAIL\n", __func__,
+				pairwise_cipher, cur_network->BcnInfo.pairwise_cipher,
+				group_cipher, cur_network->BcnInfo.group_cipher);
 			goto _mismatch;
+		}
 
-		if (is_8021x != cur_network->BcnInfo.is_8021x)
+		if (is_8021x != cur_network->BcnInfo.is_8021x) {
+			DBG_88E("%s authentication is not match , return FAIL\n", __func__);
 			goto _mismatch;
+		}
 	}
 
 	kfree(bssid);
@@ -944,10 +994,10 @@ void update_beacon_info(struct adapter *padapter, u8 *pframe, uint pkt_len, stru
 		pIE = (struct ndis_802_11_var_ie *)(pframe + (_BEACON_IE_OFFSET_ + WLAN_HDR_A3_LEN) + i);
 
 		switch (pIE->ElementID) {
-		case WLAN_EID_HT_OPERATION:	/* HT info */
+		case _HT_EXTRA_INFO_IE_:	/* HT info */
 			bwmode_update_check(padapter, pIE);
 			break;
-		case WLAN_EID_ERP_INFO:
+		case _ERPINFO_IE_:
 			ERP_IE_handler(padapter, pIE);
 			VCS_update(padapter, psta);
 			break;
@@ -972,14 +1022,13 @@ unsigned int is_ap_in_tkip(struct adapter *padapter)
 			pIE = (struct ndis_802_11_var_ie *)(pmlmeinfo->network.ies + i);
 
 			switch (pIE->ElementID) {
-			case WLAN_EID_VENDOR_SPECIFIC:
+			case _VENDOR_SPECIFIC_IE_:
 				if ((!memcmp(pIE->data, RTW_WPA_OUI, 4)) && (!memcmp((pIE->data + 12), WPA_TKIP_CIPHER, 4)))
 					return true;
 				break;
-			case WLAN_EID_RSN:
+			case _RSN_IE_2_:
 				if (!memcmp((pIE->data + 8), RSN_TKIP_CIPHER, 4))
 					return true;
-				break;
 			default:
 				break;
 			}
@@ -1139,34 +1188,44 @@ unsigned char check_assoc_AP(u8 *pframe, uint len)
 		pIE = (struct ndis_802_11_var_ie *)(pframe + i);
 
 		switch (pIE->ElementID) {
-		case WLAN_EID_VENDOR_SPECIFIC:
+		case _VENDOR_SPECIFIC_IE_:
 			if ((!memcmp(pIE->data, ARTHEROS_OUI1, 3)) ||
 			    (!memcmp(pIE->data, ARTHEROS_OUI2, 3))) {
+				DBG_88E("link to Artheros AP\n");
 				return HT_IOT_PEER_ATHEROS;
 			} else if ((!memcmp(pIE->data, BROADCOM_OUI1, 3)) ||
 				   (!memcmp(pIE->data, BROADCOM_OUI2, 3))) {
+				DBG_88E("link to Broadcom AP\n");
 				return HT_IOT_PEER_BROADCOM;
 			} else if (!memcmp(pIE->data, MARVELL_OUI, 3)) {
+				DBG_88E("link to Marvell AP\n");
 				return HT_IOT_PEER_MARVELL;
 			} else if (!memcmp(pIE->data, RALINK_OUI, 3)) {
-				if (!ralink_vendor_flag)
+				if (!ralink_vendor_flag) {
 					ralink_vendor_flag = 1;
-				else
+				} else {
+					DBG_88E("link to Ralink AP\n");
 					return HT_IOT_PEER_RALINK;
+				}
 			} else if (!memcmp(pIE->data, CISCO_OUI, 3)) {
+				DBG_88E("link to Cisco AP\n");
 				return HT_IOT_PEER_CISCO;
 			} else if (!memcmp(pIE->data, REALTEK_OUI, 3)) {
+				DBG_88E("link to Realtek 96B\n");
 				return HT_IOT_PEER_REALTEK;
 			} else if (!memcmp(pIE->data, AIRGOCAP_OUI, 3)) {
+				DBG_88E("link to Airgo Cap\n");
 				return HT_IOT_PEER_AIRGO;
 			} else if (!memcmp(pIE->data, EPIGRAM_OUI, 3)) {
 				epigram_vendor_flag = 1;
-				if (ralink_vendor_flag)
+				if (ralink_vendor_flag) {
+					DBG_88E("link to Tenda W311R AP\n");
 					return HT_IOT_PEER_TENDA;
+				}
+				DBG_88E("Capture EPIGRAM_OUI\n");
 			} else {
 				break;
 			}
-			break;
 
 		default:
 			break;
@@ -1174,10 +1233,14 @@ unsigned char check_assoc_AP(u8 *pframe, uint len)
 		i += (pIE->Length + 2);
 	}
 
-	if (ralink_vendor_flag && !epigram_vendor_flag)
+	if (ralink_vendor_flag && !epigram_vendor_flag) {
+		DBG_88E("link to Ralink AP\n");
 		return HT_IOT_PEER_RALINK;
-	else if (ralink_vendor_flag && epigram_vendor_flag)
+	} else if (ralink_vendor_flag && epigram_vendor_flag) {
+		DBG_88E("link to Tenda W311R AP\n");
 		return HT_IOT_PEER_TENDA;
+	}
+	DBG_88E("link to new AP\n");
 	return HT_IOT_PEER_UNKNOWN;
 }
 
@@ -1311,7 +1374,7 @@ int update_sta_support_rate(struct adapter *padapter, u8 *pvar_ie, uint var_ie_l
 	struct mlme_ext_priv *pmlmeext = &padapter->mlmeextpriv;
 	struct mlme_ext_info *pmlmeinfo = &pmlmeext->mlmext_info;
 
-	pIE = (struct ndis_802_11_var_ie *)rtw_get_ie(pvar_ie, WLAN_EID_SUPP_RATES, &ie_len, var_ie_len);
+	pIE = (struct ndis_802_11_var_ie *)rtw_get_ie(pvar_ie, _SUPPORTEDRATES_IE_, &ie_len, var_ie_len);
 	if (!pIE)
 		return _FAIL;
 	if (ie_len > NDIS_802_11_LENGTH_RATES_EX)
@@ -1320,7 +1383,7 @@ int update_sta_support_rate(struct adapter *padapter, u8 *pvar_ie, uint var_ie_l
 	memcpy(pmlmeinfo->FW_sta_info[cam_idx].SupportedRates, pIE->data, ie_len);
 	supportRateNum = ie_len;
 
-	pIE = (struct ndis_802_11_var_ie *)rtw_get_ie(pvar_ie, WLAN_EID_EXT_SUPP_RATES, &ie_len, var_ie_len);
+	pIE = (struct ndis_802_11_var_ie *)rtw_get_ie(pvar_ie, _EXT_SUPPORTEDRATES_IE_, &ie_len, var_ie_len);
 	if (pIE) {
 		if (supportRateNum + ie_len > NDIS_802_11_LENGTH_RATES_EX)
 			return _FAIL;

@@ -133,26 +133,20 @@ struct gntdev_grant_map *gntdev_alloc_map(struct gntdev_priv *priv, int count,
 	if (NULL == add)
 		return NULL;
 
-	add->grants    = kvmalloc_array(count, sizeof(add->grants[0]),
-					GFP_KERNEL);
-	add->map_ops   = kvmalloc_array(count, sizeof(add->map_ops[0]),
-					GFP_KERNEL);
-	add->unmap_ops = kvmalloc_array(count, sizeof(add->unmap_ops[0]),
-					GFP_KERNEL);
+	add->grants    = kvcalloc(count, sizeof(add->grants[0]), GFP_KERNEL);
+	add->map_ops   = kvcalloc(count, sizeof(add->map_ops[0]), GFP_KERNEL);
+	add->unmap_ops = kvcalloc(count, sizeof(add->unmap_ops[0]), GFP_KERNEL);
+	add->kmap_ops  = kvcalloc(count, sizeof(add->kmap_ops[0]), GFP_KERNEL);
+	add->kunmap_ops = kvcalloc(count,
+				   sizeof(add->kunmap_ops[0]), GFP_KERNEL);
 	add->pages     = kvcalloc(count, sizeof(add->pages[0]), GFP_KERNEL);
 	if (NULL == add->grants    ||
 	    NULL == add->map_ops   ||
 	    NULL == add->unmap_ops ||
+	    NULL == add->kmap_ops  ||
+	    NULL == add->kunmap_ops ||
 	    NULL == add->pages)
 		goto err;
-	if (use_ptemod) {
-		add->kmap_ops   = kvmalloc_array(count, sizeof(add->kmap_ops[0]),
-						 GFP_KERNEL);
-		add->kunmap_ops = kvmalloc_array(count, sizeof(add->kunmap_ops[0]),
-						 GFP_KERNEL);
-		if (NULL == add->kmap_ops || NULL == add->kunmap_ops)
-			goto err;
-	}
 
 #ifdef CONFIG_XEN_GRANT_DMA_ALLOC
 	add->dma_flags = dma_flags;
@@ -189,14 +183,10 @@ struct gntdev_grant_map *gntdev_alloc_map(struct gntdev_priv *priv, int count,
 		goto err;
 
 	for (i = 0; i < count; i++) {
-		add->grants[i].domid = DOMID_INVALID;
-		add->grants[i].ref = INVALID_GRANT_REF;
-		add->map_ops[i].handle = INVALID_GRANT_HANDLE;
-		add->unmap_ops[i].handle = INVALID_GRANT_HANDLE;
-		if (use_ptemod) {
-			add->kmap_ops[i].handle = INVALID_GRANT_HANDLE;
-			add->kunmap_ops[i].handle = INVALID_GRANT_HANDLE;
-		}
+		add->map_ops[i].handle = -1;
+		add->unmap_ops[i].handle = -1;
+		add->kmap_ops[i].handle = -1;
+		add->kunmap_ops[i].handle = -1;
 	}
 
 	add->index = 0;
@@ -284,7 +274,7 @@ static int find_grant_ptes(pte_t *pte, unsigned long addr, void *data)
 			  map->grants[pgnr].ref,
 			  map->grants[pgnr].domid);
 	gnttab_set_unmap_op(&map->unmap_ops[pgnr], pte_maddr, flags,
-			    INVALID_GRANT_HANDLE);
+			    -1 /* handle */);
 	return 0;
 }
 
@@ -302,7 +292,7 @@ int gntdev_map_grant_pages(struct gntdev_grant_map *map)
 
 	if (!use_ptemod) {
 		/* Note: it could already be mapped */
-		if (map->map_ops[0].handle != INVALID_GRANT_HANDLE)
+		if (map->map_ops[0].handle != -1)
 			return 0;
 		for (i = 0; i < map->count; i++) {
 			unsigned long addr = (unsigned long)
@@ -311,7 +301,7 @@ int gntdev_map_grant_pages(struct gntdev_grant_map *map)
 				map->grants[i].ref,
 				map->grants[i].domid);
 			gnttab_set_unmap_op(&map->unmap_ops[i], addr,
-				map->flags, INVALID_GRANT_HANDLE);
+				map->flags, -1 /* handle */);
 		}
 	} else {
 		/*
@@ -337,13 +327,13 @@ int gntdev_map_grant_pages(struct gntdev_grant_map *map)
 				map->grants[i].ref,
 				map->grants[i].domid);
 			gnttab_set_unmap_op(&map->kunmap_ops[i], address,
-				flags, INVALID_GRANT_HANDLE);
+				flags, -1);
 		}
 	}
 
 	pr_debug("map %d+%d\n", map->index, map->count);
-	err = gnttab_map_refs(map->map_ops, map->kmap_ops, map->pages,
-			map->count);
+	err = gnttab_map_refs(map->map_ops, use_ptemod ? map->kmap_ops : NULL,
+			map->pages, map->count);
 
 	for (i = 0; i < map->count; i++) {
 		if (map->map_ops[i].status == GNTST_okay)
@@ -395,7 +385,7 @@ static int __unmap_grant_pages(struct gntdev_grant_map *map, int offset,
 		pr_debug("unmap handle=%d st=%d\n",
 			map->unmap_ops[offset+i].handle,
 			map->unmap_ops[offset+i].status);
-		map->unmap_ops[offset+i].handle = INVALID_GRANT_HANDLE;
+		map->unmap_ops[offset+i].handle = -1;
 	}
 	return err;
 }
@@ -411,15 +401,13 @@ static int unmap_grant_pages(struct gntdev_grant_map *map, int offset,
 	 * already unmapped some of the grants. Only unmap valid ranges.
 	 */
 	while (pages && !err) {
-		while (pages &&
-		       map->unmap_ops[offset].handle == INVALID_GRANT_HANDLE) {
+		while (pages && map->unmap_ops[offset].handle == -1) {
 			offset++;
 			pages--;
 		}
 		range = 0;
 		while (range < pages) {
-			if (map->unmap_ops[offset + range].handle ==
-			    INVALID_GRANT_HANDLE)
+			if (map->unmap_ops[offset+range].handle == -1)
 				break;
 			range++;
 		}

@@ -45,11 +45,8 @@
 		reg = <0 0x40000000 0 0x40000000>;
 	};
 
-	keyboard {
+	gpio-keys {
 		compatible = "gpio-keys";
-
-		pinctrl-0 = <&keyboard_pins>;
-		pinctrl-names = "default";
 
 		key-3 {
 			gpios = <&gpio5 10 GPIO_ACTIVE_LOW>;
@@ -361,11 +358,6 @@
 		function = "du1";
 	};
 
-	keyboard_pins: keyboard {
-		pins = "GP_3_9", "GP_3_10", "GP_3_11", "GP_3_12";
-		bias-pull-up;
-	};
-
 	ssi_pins: sound {
 		groups = "ssi0129_ctrl", "ssi0_data", "ssi1_data";
 		function = "ssi";
@@ -389,7 +381,7 @@
 };
 
 &ether {
-	pinctrl-0 = <&ether_pins>, <&phy1_pins>;
+	pinctrl-0 = <&ether_pins &phy1_pins>;
 	pinctrl-names = "default";
 
 	phy-handle = <&phy1>;
@@ -528,7 +520,7 @@
 };
 
 &du {
-	pinctrl-0 = <&du0_pins>, <&du1_pins>;
+	pinctrl-0 = <&du0_pins &du1_pins>;
 	pinctrl-names = "default";
 	status = "okay";
 
@@ -551,7 +543,7 @@
 };
 
 &rcar_sound {
-	pinctrl-0 = <&ssi_pins>, <&audio_clk_pins>;
+	pinctrl-0 = <&ssi_pins &audio_clk_pins>;
 	pinctrl-names = "default";
 	status = "okay";
 

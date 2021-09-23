@@ -90,14 +90,12 @@
 
 /**
  * struct drv2667_data -
- * @input_dev: Pointer to the input device
- * @client: Pointer to the I2C client
- * @regmap: Register map of the device
- * @work: Work item used to off load the enable/disable of the vibration
- * @regulator: Pointer to the regulator for the IC
- * @page: Page number
- * @magnitude: Magnitude of the vibration event
- * @frequency: Frequency of the vibration event
+ * @input_dev - Pointer to the input device
+ * @client - Pointer to the I2C client
+ * @regmap - Register map of the device
+ * @work - Work item used to off load the enable/disable of the vibration
+ * @regulator - Pointer to the regulator for the IC
+ * @magnitude - Magnitude of the vibration event
 **/
 struct drv2667_data {
 	struct input_dev *input_dev;
@@ -407,7 +405,7 @@ static int __maybe_unused drv2667_suspend(struct device *dev)
 
 	mutex_lock(&haptics->input_dev->mutex);
 
-	if (input_device_enabled(haptics->input_dev)) {
+	if (haptics->input_dev->users) {
 		ret = regmap_update_bits(haptics->regmap, DRV2667_CTRL_2,
 					 DRV2667_STANDBY, DRV2667_STANDBY);
 		if (ret) {
@@ -436,7 +434,7 @@ static int __maybe_unused drv2667_resume(struct device *dev)
 
 	mutex_lock(&haptics->input_dev->mutex);
 
-	if (input_device_enabled(haptics->input_dev)) {
+	if (haptics->input_dev->users) {
 		ret = regulator_enable(haptics->regulator);
 		if (ret) {
 			dev_err(dev, "Failed to enable regulator\n");

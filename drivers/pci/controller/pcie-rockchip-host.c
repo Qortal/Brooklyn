@@ -157,11 +157,12 @@ static int rockchip_pcie_rd_other_conf(struct rockchip_pcie *rockchip,
 				       struct pci_bus *bus, u32 devfn,
 				       int where, int size, u32 *val)
 {
-	void __iomem *addr;
+	u32 busdev;
 
-	addr = rockchip->reg_base + PCIE_ECAM_OFFSET(bus->number, devfn, where);
+	busdev = PCIE_ECAM_ADDR(bus->number, PCI_SLOT(devfn),
+				PCI_FUNC(devfn), where);
 
-	if (!IS_ALIGNED((uintptr_t)addr, size)) {
+	if (!IS_ALIGNED(busdev, size)) {
 		*val = 0;
 		return PCIBIOS_BAD_REGISTER_NUMBER;
 	}
@@ -174,11 +175,11 @@ static int rockchip_pcie_rd_other_conf(struct rockchip_pcie *rockchip,
 						AXI_WRAPPER_TYPE1_CFG);
 
 	if (size == 4) {
-		*val = readl(addr);
+		*val = readl(rockchip->reg_base + busdev);
 	} else if (size == 2) {
-		*val = readw(addr);
+		*val = readw(rockchip->reg_base + busdev);
 	} else if (size == 1) {
-		*val = readb(addr);
+		*val = readb(rockchip->reg_base + busdev);
 	} else {
 		*val = 0;
 		return PCIBIOS_BAD_REGISTER_NUMBER;
@@ -190,11 +191,11 @@ static int rockchip_pcie_wr_other_conf(struct rockchip_pcie *rockchip,
 				       struct pci_bus *bus, u32 devfn,
 				       int where, int size, u32 val)
 {
-	void __iomem *addr;
+	u32 busdev;
 
-	addr = rockchip->reg_base + PCIE_ECAM_OFFSET(bus->number, devfn, where);
-
-	if (!IS_ALIGNED((uintptr_t)addr, size))
+	busdev = PCIE_ECAM_ADDR(bus->number, PCI_SLOT(devfn),
+				PCI_FUNC(devfn), where);
+	if (!IS_ALIGNED(busdev, size))
 		return PCIBIOS_BAD_REGISTER_NUMBER;
 
 	if (pci_is_root_bus(bus->parent))
@@ -205,11 +206,11 @@ static int rockchip_pcie_wr_other_conf(struct rockchip_pcie *rockchip,
 						AXI_WRAPPER_TYPE1_CFG);
 
 	if (size == 4)
-		writel(val, addr);
+		writel(val, rockchip->reg_base + busdev);
 	else if (size == 2)
-		writew(val, addr);
+		writew(val, rockchip->reg_base + busdev);
 	else if (size == 1)
-		writeb(val, addr);
+		writeb(val, rockchip->reg_base + busdev);
 	else
 		return PCIBIOS_BAD_REGISTER_NUMBER;
 

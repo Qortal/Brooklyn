@@ -67,7 +67,7 @@ void rvt_driver_srq_init(struct rvt_dev_info *rdi)
 
 /**
  * rvt_create_srq - create a shared receive queue
- * @ibsrq: the protection domain of the SRQ to create
+ * @ibpd: the protection domain of the SRQ to create
  * @srq_init_attr: the attributes of the SRQ
  * @udata: data from libibverbs when creating a user SRQ
  *
@@ -311,8 +311,7 @@ bail_free:
 	return ret;
 }
 
-/**
- * rvt_query_srq - query srq data
+/** rvt_query_srq - query srq data
  * @ibsrq: srq to query
  * @attr: return info in attr
  *
@@ -331,7 +330,7 @@ int rvt_query_srq(struct ib_srq *ibsrq, struct ib_srq_attr *attr)
 /**
  * rvt_destroy_srq - destory an srq
  * @ibsrq: srq object to destroy
- * @udata: user data for libibverbs.so
+ *
  */
 int rvt_destroy_srq(struct ib_srq *ibsrq, struct ib_udata *udata)
 {

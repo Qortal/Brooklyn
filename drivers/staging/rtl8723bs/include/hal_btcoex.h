@@ -9,16 +9,14 @@
 
 #include <drv_types.h>
 
-#define LPS_RPWM_WAIT_MS	300
-
 /*  Some variables can't get from outsrc BT-Coex, */
 /*  so we need to save here */
-struct bt_coexist {
+typedef struct _BT_COEXIST {
 	u8 bBtExist;
 	u8 btTotalAntNum;
 	u8 btChipType;
 	u8 bInitlized;
-};
+} BT_COEXIST, *PBT_COEXIST;
 
 void DBG_BT_INFO(u8 *dbgmsg);
 
@@ -55,5 +53,7 @@ u8 hal_btcoex_LpsVal(struct adapter *);
 u32 hal_btcoex_GetRaMask(struct adapter *);
 void hal_btcoex_RecordPwrMode(struct adapter *padapter, u8 *pCmdBuf, u8 cmdLen);
 void hal_btcoex_DisplayBtCoexInfo(struct adapter *, u8 *pbuf, u32 bufsize);
+void hal_btcoex_SetDBG(struct adapter *, u32 *pDbgModule);
+u32 hal_btcoex_GetDBG(struct adapter *, u8 *pStrBuf, u32 bufSize);
 
 #endif /*  !__HAL_BTCOEX_H__ */

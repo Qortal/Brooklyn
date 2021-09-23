@@ -3,6 +3,7 @@
  * Copyright(c) 2013-2015 Intel Corporation. All rights reserved.
  */
 #include <linux/libnvdimm.h>
+#include <linux/badblocks.h>
 #include <linux/suspend.h>
 #include <linux/export.h>
 #include <linux/module.h>

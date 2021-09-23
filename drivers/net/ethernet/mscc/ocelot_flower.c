@@ -220,11 +220,6 @@ static int ocelot_flower_parse_action(struct ocelot *ocelot, int port,
 						   "Last action must be GOTO");
 				return -EOPNOTSUPP;
 			}
-			if (a->police.rate_pkt_ps) {
-				NL_SET_ERR_MSG_MOD(extack,
-						   "QoS offload not support packets per second");
-				return -EOPNOTSUPP;
-			}
 			filter->action.police_ena = true;
 			rate = a->police.rate_bytes_ps;
 			filter->action.pol.rate = div_u64(rate, 1000) * 8;
@@ -628,8 +623,7 @@ static int ocelot_flower_parse(struct ocelot *ocelot, int port, bool ingress,
 	int ret;
 
 	filter->prio = f->common.prio;
-	filter->id.cookie = f->cookie;
-	filter->id.tc_offload = true;
+	filter->id = f->cookie;
 
 	ret = ocelot_flower_parse_action(ocelot, port, ingress, f, filter);
 	if (ret)
@@ -724,7 +718,7 @@ int ocelot_cls_flower_destroy(struct ocelot *ocelot, int port,
 
 	block = &ocelot->block[block_id];
 
-	filter = ocelot_vcap_block_find_filter_by_id(block, f->cookie, true);
+	filter = ocelot_vcap_block_find_filter_by_id(block, f->cookie);
 	if (!filter)
 		return 0;
 
@@ -748,7 +742,7 @@ int ocelot_cls_flower_stats(struct ocelot *ocelot, int port,
 
 	block = &ocelot->block[block_id];
 
-	filter = ocelot_vcap_block_find_filter_by_id(block, f->cookie, true);
+	filter = ocelot_vcap_block_find_filter_by_id(block, f->cookie);
 	if (!filter || filter->type == OCELOT_VCAP_FILTER_DUMMY)
 		return 0;
 

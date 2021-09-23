@@ -30,23 +30,6 @@ static int axienet_mdio_wait_until_ready(struct axienet_local *lp)
 				  1, 20000);
 }
 
-/* Enable the MDIO MDC. Called prior to a read/write operation */
-static void axienet_mdio_mdc_enable(struct axienet_local *lp)
-{
-	axienet_iow(lp, XAE_MDIO_MC_OFFSET,
-		    ((u32)lp->mii_clk_div | XAE_MDIO_MC_MDIOEN_MASK));
-}
-
-/* Disable the MDIO MDC. Called after a read/write operation*/
-static void axienet_mdio_mdc_disable(struct axienet_local *lp)
-{
-	u32 mc_reg;
-
-	mc_reg = axienet_ior(lp, XAE_MDIO_MC_OFFSET);
-	axienet_iow(lp, XAE_MDIO_MC_OFFSET,
-		    (mc_reg & ~XAE_MDIO_MC_MDIOEN_MASK));
-}
-
 /**
  * axienet_mdio_read - MDIO interface read function
  * @bus:	Pointer to mii bus structure
@@ -65,13 +48,9 @@ static int axienet_mdio_read(struct mii_bus *bus, int phy_id, int reg)
 	int ret;
 	struct axienet_local *lp = bus->priv;
 
-	axienet_mdio_mdc_enable(lp);
-
 	ret = axienet_mdio_wait_until_ready(lp);
-	if (ret < 0) {
-		axienet_mdio_mdc_disable(lp);
+	if (ret < 0)
 		return ret;
-	}
 
 	axienet_iow(lp, XAE_MDIO_MCR_OFFSET,
 		    (((phy_id << XAE_MDIO_MCR_PHYAD_SHIFT) &
@@ -82,17 +61,14 @@ static int axienet_mdio_read(struct mii_bus *bus, int phy_id, int reg)
 		     XAE_MDIO_MCR_OP_READ_MASK));
 
 	ret = axienet_mdio_wait_until_ready(lp);
-	if (ret < 0) {
-		axienet_mdio_mdc_disable(lp);
+	if (ret < 0)
 		return ret;
-	}
 
 	rc = axienet_ior(lp, XAE_MDIO_MRD_OFFSET) & 0x0000FFFF;
 
 	dev_dbg(lp->dev, "axienet_mdio_read(phy_id=%i, reg=%x) == %x\n",
 		phy_id, reg, rc);
 
-	axienet_mdio_mdc_disable(lp);
 	return rc;
 }
 
@@ -118,13 +94,9 @@ static int axienet_mdio_write(struct mii_bus *bus, int phy_id, int reg,
 	dev_dbg(lp->dev, "axienet_mdio_write(phy_id=%i, reg=%x, val=%x)\n",
 		phy_id, reg, val);
 
-	axienet_mdio_mdc_enable(lp);
-
 	ret = axienet_mdio_wait_until_ready(lp);
-	if (ret < 0) {
-		axienet_mdio_mdc_disable(lp);
+	if (ret < 0)
 		return ret;
-	}
 
 	axienet_iow(lp, XAE_MDIO_MWD_OFFSET, (u32) val);
 	axienet_iow(lp, XAE_MDIO_MCR_OFFSET,
@@ -136,11 +108,8 @@ static int axienet_mdio_write(struct mii_bus *bus, int phy_id, int reg,
 		     XAE_MDIO_MCR_OP_WRITE_MASK));
 
 	ret = axienet_mdio_wait_until_ready(lp);
-	if (ret < 0) {
-		axienet_mdio_mdc_disable(lp);
+	if (ret < 0)
 		return ret;
-	}
-	axienet_mdio_mdc_disable(lp);
 	return 0;
 }
 
@@ -155,12 +124,10 @@ static int axienet_mdio_write(struct mii_bus *bus, int phy_id, int reg,
  **/
 int axienet_mdio_enable(struct axienet_local *lp)
 {
-	u32 host_clock;
+	u32 clk_div, host_clock;
 
-	lp->mii_clk_div = 0;
-
-	if (lp->axi_clk) {
-		host_clock = clk_get_rate(lp->axi_clk);
+	if (lp->clk) {
+		host_clock = clk_get_rate(lp->clk);
 	} else {
 		struct device_node *np1;
 
@@ -209,19 +176,19 @@ int axienet_mdio_enable(struct axienet_local *lp)
 	 * "clock-frequency" from the CPU
 	 */
 
-	lp->mii_clk_div = (host_clock / (MAX_MDIO_FREQ * 2)) - 1;
+	clk_div = (host_clock / (MAX_MDIO_FREQ * 2)) - 1;
 	/* If there is any remainder from the division of
 	 * fHOST / (MAX_MDIO_FREQ * 2), then we need to add
 	 * 1 to the clock divisor or we will surely be above 2.5 MHz
 	 */
 	if (host_clock % (MAX_MDIO_FREQ * 2))
-		lp->mii_clk_div++;
+		clk_div++;
 
 	netdev_dbg(lp->ndev,
 		   "Setting MDIO clock divisor to %u/%u Hz host clock.\n",
-		   lp->mii_clk_div, host_clock);
+		   clk_div, host_clock);
 
-	axienet_iow(lp, XAE_MDIO_MC_OFFSET, lp->mii_clk_div | XAE_MDIO_MC_MDIOEN_MASK);
+	axienet_iow(lp, XAE_MDIO_MC_OFFSET, clk_div | XAE_MDIO_MC_MDIOEN_MASK);
 
 	return axienet_mdio_wait_until_ready(lp);
 }
@@ -244,8 +211,8 @@ void axienet_mdio_disable(struct axienet_local *lp)
  * Return:	0 on success, -ETIMEDOUT on a timeout, -ENOMEM when
  *		mdiobus_alloc (to allocate memory for mii bus structure) fails.
  *
- * Sets up the MDIO interface by initializing the MDIO clock.
- * Register the MDIO interface.
+ * Sets up the MDIO interface by initializing the MDIO clock and enabling the
+ * MDIO interface in hardware. Register the MDIO interface.
  **/
 int axienet_mdio_setup(struct axienet_local *lp)
 {
@@ -279,7 +246,6 @@ int axienet_mdio_setup(struct axienet_local *lp)
 		lp->mii_bus = NULL;
 		return ret;
 	}
-	axienet_mdio_mdc_disable(lp);
 	return 0;
 }
 

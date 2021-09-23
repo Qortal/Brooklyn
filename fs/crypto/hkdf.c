@@ -10,7 +10,7 @@
  */
 
 #include <crypto/hash.h>
-#include <crypto/sha2.h>
+#include <crypto/sha.h>
 
 #include "fscrypt_private.h"
 

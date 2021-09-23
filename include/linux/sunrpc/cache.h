@@ -14,7 +14,6 @@
 #include <linux/kref.h>
 #include <linux/slab.h>
 #include <linux/atomic.h>
-#include <linux/kstrtox.h>
 #include <linux/proc_fs.h>
 
 /*

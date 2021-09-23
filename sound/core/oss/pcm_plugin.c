@@ -59,8 +59,7 @@ static int snd_pcm_plugin_alloc(struct snd_pcm_plugin *plugin, snd_pcm_uframes_t
 	} else {
 		format = &plugin->dst_format;
 	}
-	width = snd_pcm_format_physical_width(format->format);
-	if (width < 0)
+	if ((width = snd_pcm_format_physical_width(format->format)) < 0)
 		return width;
 	size = frames * format->channels * width;
 	if (snd_BUG_ON(size % 8))
@@ -573,8 +572,7 @@ snd_pcm_sframes_t snd_pcm_plug_client_channels_buf(struct snd_pcm_substream *plu
 	}
 	v = plugin->buf_channels;
 	*channels = v;
-	width = snd_pcm_format_physical_width(format->format);
-	if (width < 0)
+	if ((width = snd_pcm_format_physical_width(format->format)) < 0)
 		return width;
 	nchannels = format->channels;
 	if (snd_BUG_ON(plugin->access != SNDRV_PCM_ACCESS_RW_INTERLEAVED &&
@@ -602,17 +600,16 @@ snd_pcm_sframes_t snd_pcm_plug_write_transfer(struct snd_pcm_substream *plug, st
 	while (plugin) {
 		if (frames <= 0)
 			return frames;
-		next = plugin->next;
-		if (next) {
+		if ((next = plugin->next) != NULL) {
 			snd_pcm_sframes_t frames1 = frames;
 			if (plugin->dst_frames) {
 				frames1 = plugin->dst_frames(plugin, frames);
 				if (frames1 <= 0)
 					return frames1;
 			}
-			err = next->client_channels(next, frames1, &dst_channels);
-			if (err < 0)
+			if ((err = next->client_channels(next, frames1, &dst_channels)) < 0) {
 				return err;
+			}
 			if (err != frames1) {
 				frames = err;
 				if (plugin->src_frames) {
@@ -624,8 +621,7 @@ snd_pcm_sframes_t snd_pcm_plug_write_transfer(struct snd_pcm_substream *plug, st
 		} else
 			dst_channels = NULL;
 		pdprintf("write plugin: %s, %li\n", plugin->name, frames);
-		frames = plugin->transfer(plugin, src_channels, dst_channels, frames);
-		if (frames < 0)
+		if ((frames = plugin->transfer(plugin, src_channels, dst_channels, frames)) < 0)
 			return frames;
 		src_channels = dst_channels;
 		plugin = next;
@@ -647,18 +643,16 @@ snd_pcm_sframes_t snd_pcm_plug_read_transfer(struct snd_pcm_substream *plug, str
 	src_channels = NULL;
 	plugin = snd_pcm_plug_first(plug);
 	while (plugin && frames > 0) {
-		next = plugin->next;
-		if (next) {
-			err = plugin->client_channels(plugin, frames, &dst_channels);
-			if (err < 0)
+		if ((next = plugin->next) != NULL) {
+			if ((err = plugin->client_channels(plugin, frames, &dst_channels)) < 0) {
 				return err;
+			}
 			frames = err;
 		} else {
 			dst_channels = dst_channels_final;
 		}
 		pdprintf("read plugin: %s, %li\n", plugin->name, frames);
-		frames = plugin->transfer(plugin, src_channels, dst_channels, frames);
-		if (frames < 0)
+		if ((frames = plugin->transfer(plugin, src_channels, dst_channels, frames)) < 0)
 			return frames;
 		plugin = next;
 		src_channels = dst_channels;

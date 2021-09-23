@@ -40,19 +40,20 @@ struct mlxsw_sp_ipip_ops {
 	enum mlxsw_sp_l3proto ul_proto; /* Underlay. */
 
 	int (*nexthop_update)(struct mlxsw_sp *mlxsw_sp, u32 adj_index,
-			      struct mlxsw_sp_ipip_entry *ipip_entry,
-			      bool force, char *ratr_pl);
+			      struct mlxsw_sp_ipip_entry *ipip_entry);
 
 	bool (*can_offload)(const struct mlxsw_sp *mlxsw_sp,
-			    const struct net_device *ol_dev);
+			    const struct net_device *ol_dev,
+			    enum mlxsw_sp_l3proto ol_proto);
 
 	/* Return a configuration for creating an overlay loopback RIF. */
 	struct mlxsw_sp_rif_ipip_lb_config
 	(*ol_loopback_config)(struct mlxsw_sp *mlxsw_sp,
 			      const struct net_device *ol_dev);
 
-	int (*decap_config)(struct mlxsw_sp *mlxsw_sp,
+	int (*fib_entry_op)(struct mlxsw_sp *mlxsw_sp,
 			    struct mlxsw_sp_ipip_entry *ipip_entry,
+			    enum mlxsw_reg_ralue_op op,
 			    u32 tunnel_index);
 
 	int (*ol_netdev_change)(struct mlxsw_sp *mlxsw_sp,

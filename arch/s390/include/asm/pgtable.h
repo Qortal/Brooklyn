@@ -17,14 +17,12 @@
 #include <linux/page-flags.h>
 #include <linux/radix-tree.h>
 #include <linux/atomic.h>
-#include <asm/sections.h>
 #include <asm/bug.h>
 #include <asm/page.h>
 #include <asm/uv.h>
 
 extern pgd_t swapper_pg_dir[];
 extern void paging_init(void);
-extern unsigned long s390_invalid_asce;
 
 enum {
 	PG_DIRECT_MAP_4K = 0,
@@ -66,6 +64,8 @@ extern unsigned long zero_page_mask;
 
 /* TODO: s390 cannot support io_remap_pfn_range... */
 
+#define FIRST_USER_ADDRESS  0UL
+
 #define pte_ERROR(e) \
 	printk("%s:%d: bad pte %p.\n", __FILE__, __LINE__, (void *) pte_val(e))
 #define pmd_ERROR(e) \
@@ -79,22 +79,22 @@ extern unsigned long zero_page_mask;
 
 /*
  * The vmalloc and module area will always be on the topmost area of the
- * kernel mapping. 512GB are reserved for vmalloc by default.
- * At the top of the vmalloc area a 2GB area is reserved where modules
- * will reside. That makes sure that inter module branches always
- * happen without trampolines and in addition the placement within a
- * 2GB frame is branch prediction unit friendly.
+ * kernel mapping. We reserve 128GB (64bit) for vmalloc and modules.
+ * On 64 bit kernels we have a 2GB area at the top of the vmalloc area where
+ * modules will reside. That makes sure that inter module branches always
+ * happen without trampolines and in addition the placement within a 2GB frame
+ * is branch prediction unit friendly.
  */
-extern unsigned long __bootdata_preserved(VMALLOC_START);
-extern unsigned long __bootdata_preserved(VMALLOC_END);
-#define VMALLOC_DEFAULT_SIZE	((512UL << 30) - MODULES_LEN)
-extern struct page *__bootdata_preserved(vmemmap);
-extern unsigned long __bootdata_preserved(vmemmap_size);
+extern unsigned long VMALLOC_START;
+extern unsigned long VMALLOC_END;
+#define VMALLOC_DEFAULT_SIZE	((128UL << 30) - MODULES_LEN)
+extern struct page *vmemmap;
+extern unsigned long vmemmap_size;
 
 #define VMEM_MAX_PHYS ((unsigned long) vmemmap)
 
-extern unsigned long __bootdata_preserved(MODULES_VADDR);
-extern unsigned long __bootdata_preserved(MODULES_END);
+extern unsigned long MODULES_VADDR;
+extern unsigned long MODULES_END;
 #define MODULES_VADDR	MODULES_VADDR
 #define MODULES_END	MODULES_END
 #define MODULES_LEN	(1UL << 31)
@@ -343,6 +343,8 @@ static inline int is_module_addr(void *addr)
 #define PTRS_PER_P4D	_CRST_ENTRIES
 #define PTRS_PER_PGD	_CRST_ENTRIES
 
+#define MAX_PTRS_PER_P4D	PTRS_PER_P4D
+
 /*
  * Segment table and region3 table entry encoding
  * (R = read-only, I = invalid, y = young bit):
@@ -554,25 +556,27 @@ static inline int mm_uses_skeys(struct mm_struct *mm)
 
 static inline void csp(unsigned int *ptr, unsigned int old, unsigned int new)
 {
-	union register_pair r1 = { .even = old, .odd = new, };
+	register unsigned long reg2 asm("2") = old;
+	register unsigned long reg3 asm("3") = new;
 	unsigned long address = (unsigned long)ptr | 1;
 
 	asm volatile(
-		"	csp	%[r1],%[address]"
-		: [r1] "+&d" (r1.pair), "+m" (*ptr)
-		: [address] "d" (address)
+		"	csp	%0,%3"
+		: "+d" (reg2), "+m" (*ptr)
+		: "d" (reg3), "d" (address)
 		: "cc");
 }
 
 static inline void cspg(unsigned long *ptr, unsigned long old, unsigned long new)
 {
-	union register_pair r1 = { .even = old, .odd = new, };
+	register unsigned long reg2 asm("2") = old;
+	register unsigned long reg3 asm("3") = new;
 	unsigned long address = (unsigned long)ptr | 1;
 
 	asm volatile(
-		"	.insn	rre,0xb98a0000,%[r1],%[address]"
-		: [r1] "+&d" (r1.pair), "+m" (*ptr)
-		: [address] "d" (address)
+		"	.insn	rre,0xb98a0000,%0,%3"
+		: "+d" (reg2), "+m" (*ptr)
+		: "d" (reg3), "d" (address)
 		: "cc");
 }
 
@@ -586,12 +590,14 @@ static inline void crdte(unsigned long old, unsigned long new,
 			 unsigned long table, unsigned long dtt,
 			 unsigned long address, unsigned long asce)
 {
-	union register_pair r1 = { .even = old, .odd = new, };
-	union register_pair r2 = { .even = table | dtt, .odd = address, };
+	register unsigned long reg2 asm("2") = old;
+	register unsigned long reg3 asm("3") = new;
+	register unsigned long reg4 asm("4") = table | dtt;
+	register unsigned long reg5 asm("5") = address;
 
-	asm volatile(".insn rrf,0xb98f0000,%[r1],%[r2],%[asce],0"
-		     : [r1] "+&d" (r1.pair)
-		     : [r2] "d" (r2.pair), [asce] "a" (asce)
+	asm volatile(".insn rrf,0xb98f0000,%0,%2,%4,0"
+		     : "+d" (reg2)
+		     : "d" (reg3), "d" (reg4), "d" (reg5), "a" (asce)
 		     : "memory", "cc");
 }
 
@@ -1231,8 +1237,8 @@ static inline pte_t mk_pte(struct page *page, pgprot_t pgprot)
 #define pud_index(address) (((address) >> PUD_SHIFT) & (PTRS_PER_PUD-1))
 #define pmd_index(address) (((address) >> PMD_SHIFT) & (PTRS_PER_PMD-1))
 
-#define p4d_deref(pud) ((unsigned long)__va(p4d_val(pud) & _REGION_ENTRY_ORIGIN))
-#define pgd_deref(pgd) ((unsigned long)__va(pgd_val(pgd) & _REGION_ENTRY_ORIGIN))
+#define p4d_deref(pud) (p4d_val(pud) & _REGION_ENTRY_ORIGIN)
+#define pgd_deref(pgd) (pgd_val(pgd) & _REGION_ENTRY_ORIGIN)
 
 static inline unsigned long pmd_deref(pmd_t pmd)
 {
@@ -1241,12 +1247,12 @@ static inline unsigned long pmd_deref(pmd_t pmd)
 	origin_mask = _SEGMENT_ENTRY_ORIGIN;
 	if (pmd_large(pmd))
 		origin_mask = _SEGMENT_ENTRY_ORIGIN_LARGE;
-	return (unsigned long)__va(pmd_val(pmd) & origin_mask);
+	return pmd_val(pmd) & origin_mask;
 }
 
 static inline unsigned long pmd_pfn(pmd_t pmd)
 {
-	return __pa(pmd_deref(pmd)) >> PAGE_SHIFT;
+	return pmd_deref(pmd) >> PAGE_SHIFT;
 }
 
 static inline unsigned long pud_deref(pud_t pud)
@@ -1256,12 +1262,12 @@ static inline unsigned long pud_deref(pud_t pud)
 	origin_mask = _REGION_ENTRY_ORIGIN;
 	if (pud_large(pud))
 		origin_mask = _REGION3_ENTRY_ORIGIN_LARGE;
-	return (unsigned long)__va(pud_val(pud) & origin_mask);
+	return pud_val(pud) & origin_mask;
 }
 
 static inline unsigned long pud_pfn(pud_t pud)
 {
-	return __pa(pud_deref(pud)) >> PAGE_SHIFT;
+	return pud_deref(pud) >> PAGE_SHIFT;
 }
 
 /*
@@ -1341,7 +1347,7 @@ static inline bool gup_fast_permitted(unsigned long start, unsigned long end)
 }
 #define gup_fast_permitted gup_fast_permitted
 
-#define pfn_pte(pfn, pgprot)	mk_pte_phys(((pfn) << PAGE_SHIFT), (pgprot))
+#define pfn_pte(pfn,pgprot) mk_pte_phys(__pa((pfn) << PAGE_SHIFT),(pgprot))
 #define pte_pfn(x) (pte_val(x) >> PAGE_SHIFT)
 #define pte_page(x) pfn_to_page(pte_pfn(x))
 
@@ -1648,7 +1654,7 @@ static inline pmd_t pmdp_collapse_flush(struct vm_area_struct *vma,
 }
 #define pmdp_collapse_flush pmdp_collapse_flush
 
-#define pfn_pmd(pfn, pgprot)	mk_pmd_phys(((pfn) << PAGE_SHIFT), (pgprot))
+#define pfn_pmd(pfn, pgprot)	mk_pmd_phys(__pa((pfn) << PAGE_SHIFT), (pgprot))
 #define mk_pmd(page, pgprot)	pfn_pmd(page_to_pfn(page), (pgprot))
 
 static inline int pmd_trans_huge(pmd_t pmd)
@@ -1724,8 +1730,5 @@ extern void s390_reset_cmma(struct mm_struct *mm);
 /* s390 has a private copy of get unmapped area to deal with cache synonyms */
 #define HAVE_ARCH_UNMAPPED_AREA
 #define HAVE_ARCH_UNMAPPED_AREA_TOPDOWN
-
-#define pmd_pgtable(pmd) \
-	((pgtable_t)__va(pmd_val(pmd) & -sizeof(pte_t)*PTRS_PER_PTE))
 
 #endif /* _S390_PAGE_H */

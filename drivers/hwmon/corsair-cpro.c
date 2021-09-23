@@ -310,7 +310,6 @@ static int ccp_write(struct device *dev, enum hwmon_sensor_types type,
 		default:
 			break;
 		}
-		break;
 	default:
 		break;
 	}

@@ -5,7 +5,8 @@
 #include "tests.h"
 #include "debug.h"
 
-static int evsel__test_field(struct evsel *evsel, const char *name, int size, bool should_be_signed)
+static int perf_evsel__test_field(struct evsel *evsel, const char *name,
+				  int size, bool should_be_signed)
 {
 	struct tep_format_field *field = evsel__field(evsel, name);
 	int is_signed;
@@ -42,25 +43,25 @@ int test__perf_evsel__tp_sched_test(struct test *test __maybe_unused, int subtes
 		return -1;
 	}
 
-	if (evsel__test_field(evsel, "prev_comm", 16, false))
+	if (perf_evsel__test_field(evsel, "prev_comm", 16, false))
 		ret = -1;
 
-	if (evsel__test_field(evsel, "prev_pid", 4, true))
+	if (perf_evsel__test_field(evsel, "prev_pid", 4, true))
 		ret = -1;
 
-	if (evsel__test_field(evsel, "prev_prio", 4, true))
+	if (perf_evsel__test_field(evsel, "prev_prio", 4, true))
 		ret = -1;
 
-	if (evsel__test_field(evsel, "prev_state", sizeof(long), true))
+	if (perf_evsel__test_field(evsel, "prev_state", sizeof(long), true))
 		ret = -1;
 
-	if (evsel__test_field(evsel, "next_comm", 16, false))
+	if (perf_evsel__test_field(evsel, "next_comm", 16, false))
 		ret = -1;
 
-	if (evsel__test_field(evsel, "next_pid", 4, true))
+	if (perf_evsel__test_field(evsel, "next_pid", 4, true))
 		ret = -1;
 
-	if (evsel__test_field(evsel, "next_prio", 4, true))
+	if (perf_evsel__test_field(evsel, "next_prio", 4, true))
 		ret = -1;
 
 	evsel__delete(evsel);
@@ -72,16 +73,16 @@ int test__perf_evsel__tp_sched_test(struct test *test __maybe_unused, int subtes
 		return -1;
 	}
 
-	if (evsel__test_field(evsel, "comm", 16, false))
+	if (perf_evsel__test_field(evsel, "comm", 16, false))
 		ret = -1;
 
-	if (evsel__test_field(evsel, "pid", 4, true))
+	if (perf_evsel__test_field(evsel, "pid", 4, true))
 		ret = -1;
 
-	if (evsel__test_field(evsel, "prio", 4, true))
+	if (perf_evsel__test_field(evsel, "prio", 4, true))
 		ret = -1;
 
-	if (evsel__test_field(evsel, "target_cpu", 4, true))
+	if (perf_evsel__test_field(evsel, "target_cpu", 4, true))
 		ret = -1;
 
 	evsel__delete(evsel);

@@ -268,9 +268,11 @@ static void mic_pre_enable(struct drm_bridge *bridge)
 	if (mic->enabled)
 		goto unlock;
 
-	ret = pm_runtime_resume_and_get(mic->dev);
-	if (ret < 0)
+	ret = pm_runtime_get_sync(mic->dev);
+	if (ret < 0) {
+		pm_runtime_put_noidle(mic->dev);
 		goto unlock;
+	}
 
 	mic_set_path(mic, 1);
 

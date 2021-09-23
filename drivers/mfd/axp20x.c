@@ -884,13 +884,8 @@ int axp20x_match_device(struct axp20x_dev *axp20x)
 		axp20x->regmap_irq_chip = &axp803_regmap_irq_chip;
 		break;
 	case AXP806_ID:
-		/*
-		 * Don't register the power key part if in slave mode or
-		 * if there is no interrupt line.
-		 */
 		if (of_property_read_bool(axp20x->dev->of_node,
-					  "x-powers,self-working-mode") &&
-		    axp20x->irq > 0) {
+					  "x-powers,self-working-mode")) {
 			axp20x->nr_cells = ARRAY_SIZE(axp806_self_working_cells);
 			axp20x->cells = axp806_self_working_cells;
 		} else {
@@ -964,17 +959,12 @@ int axp20x_device_probe(struct axp20x_dev *axp20x)
 				     AXP806_REG_ADDR_EXT_ADDR_SLAVE_MODE);
 	}
 
-	/* Only if there is an interrupt line connected towards the CPU. */
-	if (axp20x->irq > 0) {
-		ret = regmap_add_irq_chip(axp20x->regmap, axp20x->irq,
-				IRQF_ONESHOT | IRQF_SHARED | axp20x->irq_flags,
-				-1, axp20x->regmap_irq_chip,
-				&axp20x->regmap_irqc);
-		if (ret) {
-			dev_err(axp20x->dev, "failed to add irq chip: %d\n",
-				ret);
-			return ret;
-		}
+	ret = regmap_add_irq_chip(axp20x->regmap, axp20x->irq,
+			  IRQF_ONESHOT | IRQF_SHARED | axp20x->irq_flags,
+			   -1, axp20x->regmap_irq_chip, &axp20x->regmap_irqc);
+	if (ret) {
+		dev_err(axp20x->dev, "failed to add irq chip: %d\n", ret);
+		return ret;
 	}
 
 	ret = mfd_add_devices(axp20x->dev, -1, axp20x->cells,
@@ -997,7 +987,7 @@ int axp20x_device_probe(struct axp20x_dev *axp20x)
 }
 EXPORT_SYMBOL(axp20x_device_probe);
 
-void axp20x_device_remove(struct axp20x_dev *axp20x)
+int axp20x_device_remove(struct axp20x_dev *axp20x)
 {
 	if (axp20x == axp20x_pm_power_off) {
 		axp20x_pm_power_off = NULL;
@@ -1006,6 +996,8 @@ void axp20x_device_remove(struct axp20x_dev *axp20x)
 
 	mfd_remove_devices(axp20x->dev);
 	regmap_del_irq_chip(axp20x->irq, axp20x->regmap_irqc);
+
+	return 0;
 }
 EXPORT_SYMBOL(axp20x_device_remove);
 

@@ -34,3 +34,7 @@ KBUILD_CFLAGS += -ffixed-$(TIR_NAME) -DTHREADINFO_REG=$(TIR_NAME) -D__linux__
 KBUILD_AFLAGS += -DTHREADINFO_REG=$(TIR_NAME)
 
 head-y := arch/hexagon/kernel/head.o
+
+core-y += arch/hexagon/kernel/ \
+	arch/hexagon/mm/ \
+	arch/hexagon/lib/

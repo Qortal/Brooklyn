@@ -187,6 +187,7 @@ static int tps65218_gpio_probe(struct platform_device *pdev)
 {
 	struct tps65218 *tps65218 = dev_get_drvdata(pdev->dev.parent);
 	struct tps65218_gpio *tps65218_gpio;
+	int ret;
 
 	tps65218_gpio = devm_kzalloc(&pdev->dev, sizeof(*tps65218_gpio),
 				     GFP_KERNEL);
@@ -200,8 +201,16 @@ static int tps65218_gpio_probe(struct platform_device *pdev)
 	tps65218_gpio->gpio_chip.of_node = pdev->dev.of_node;
 #endif
 
-	return devm_gpiochip_add_data(&pdev->dev, &tps65218_gpio->gpio_chip,
-				      tps65218_gpio);
+	ret = devm_gpiochip_add_data(&pdev->dev, &tps65218_gpio->gpio_chip,
+				     tps65218_gpio);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Failed to register gpiochip, %d\n", ret);
+		return ret;
+	}
+
+	platform_set_drvdata(pdev, tps65218_gpio);
+
+	return ret;
 }
 
 static const struct of_device_id tps65218_dt_match[] = {

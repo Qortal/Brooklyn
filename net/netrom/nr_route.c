@@ -266,7 +266,6 @@ static int __must_check nr_add_node(ax25_address *nr, const char *mnemonic,
 		fallthrough;
 	case 2:
 		re_sort_routes(nr_node, 0, 1);
-		break;
 	case 1:
 		break;
 	}
@@ -360,7 +359,6 @@ static int nr_del_node(ax25_address *callsign, ax25_address *neighbour, struct n
 					fallthrough;
 				case 1:
 					nr_node->routes[1] = nr_node->routes[2];
-					fallthrough;
 				case 2:
 					break;
 				}
@@ -484,7 +482,6 @@ static int nr_dec_obs(void)
 					fallthrough;
 				case 1:
 					s->routes[1] = s->routes[2];
-					break;
 				case 2:
 					break;
 				}
@@ -532,7 +529,6 @@ void nr_rt_device_down(struct net_device *dev)
 							fallthrough;
 						case 1:
 							t->routes[1] = t->routes[2];
-							break;
 						case 2:
 							break;
 						}

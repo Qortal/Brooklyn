@@ -502,6 +502,7 @@ static struct i2c_driver adm1266_driver = {
 		   .of_match_table = adm1266_of_match,
 		  },
 	.probe_new = adm1266_probe,
+	.remove = pmbus_do_remove,
 	.id_table = adm1266_id,
 };
 
@@ -510,4 +511,3 @@ module_i2c_driver(adm1266_driver);
 MODULE_AUTHOR("Alexandru Tachici <alexandru.tachici@analog.com>");
 MODULE_DESCRIPTION("PMBus driver for Analog Devices ADM1266");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(PMBUS);

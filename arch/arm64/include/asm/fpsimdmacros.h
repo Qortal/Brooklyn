@@ -6,8 +6,6 @@
  * Author: Catalin Marinas <catalin.marinas@arm.com>
  */
 
-#include <asm/assembler.h>
-
 .macro fpsimd_save state, tmpnr
 	stp	q0, q1, [\state, #16 * 0]
 	stp	q2, q3, [\state, #16 * 2]
@@ -213,10 +211,8 @@
 	mov	v\nz\().16b, v\nz\().16b
 .endm
 
-.macro sve_flush_z
+.macro sve_flush
  _for n, 0, 31, _sve_flush_z	\n
-.endm
-.macro sve_flush_p_ffr
  _for n, 0, 15, _sve_pfalse	\n
 		_sve_wrffr	0
 .endm
@@ -234,7 +230,8 @@
 		str		w\nxtmp, [\xpfpsr, #4]
 .endm
 
-.macro __sve_load nxbase, xpfpsr, nxtmp
+.macro sve_load nxbase, xpfpsr, xvqminus1, nxtmp, xtmp2
+		sve_load_vq	\xvqminus1, x\nxtmp, \xtmp2
  _for n, 0, 31,	_sve_ldr_v	\n, \nxbase, \n - 34
 		_sve_ldr_p	0, \nxbase
 		_sve_wrffr	0
@@ -244,9 +241,4 @@
 		msr		fpsr, x\nxtmp
 		ldr		w\nxtmp, [\xpfpsr, #4]
 		msr		fpcr, x\nxtmp
-.endm
-
-.macro sve_load nxbase, xpfpsr, xvqminus1, nxtmp, xtmp2
-		sve_load_vq	\xvqminus1, x\nxtmp, \xtmp2
-		__sve_load	\nxbase, \xpfpsr, \nxtmp
 .endm

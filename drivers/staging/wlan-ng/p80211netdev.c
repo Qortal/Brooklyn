@@ -325,7 +325,7 @@ static netdev_tx_t p80211knetdev_hard_start_xmit(struct sk_buff *skb,
 						 struct net_device *netdev)
 {
 	int result = 0;
-	int txresult;
+	int txresult = -1;
 	struct wlandevice *wlandev = netdev->ml_priv;
 	union p80211_hdr p80211_hdr;
 	struct p80211_metawep p80211_wep;
@@ -569,22 +569,24 @@ static int p80211knetdev_do_ioctl(struct net_device *dev,
 		goto bail;
 	}
 
-	msgbuf = memdup_user(req->data, req->len);
-	if (IS_ERR(msgbuf)) {
-		result = PTR_ERR(msgbuf);
-		goto bail;
-	}
-
-	result = p80211req_dorequest(wlandev, msgbuf);
-
-	if (result == 0) {
-		if (copy_to_user
-		    (req->data, msgbuf, req->len)) {
+	/* Allocate a buf of size req->len */
+	msgbuf = kmalloc(req->len, GFP_KERNEL);
+	if (msgbuf) {
+		if (copy_from_user(msgbuf, (void __user *)req->data, req->len))
 			result = -EFAULT;
-		}
-	}
-	kfree(msgbuf);
+		else
+			result = p80211req_dorequest(wlandev, msgbuf);
 
+		if (result == 0) {
+			if (copy_to_user
+			    ((void __user *)req->data, msgbuf, req->len)) {
+				result = -EFAULT;
+			}
+		}
+		kfree(msgbuf);
+	} else {
+		result = -ENOMEM;
+	}
 bail:
 	/* If allocate,copyfrom or copyto fails, return errno */
 	return result;

@@ -90,8 +90,16 @@ static struct platform_driver fjes_driver = {
 };
 
 static struct resource fjes_resource[] = {
-	DEFINE_RES_MEM(0, 1),
-	DEFINE_RES_IRQ(0)
+	{
+		.flags = IORESOURCE_MEM,
+		.start = 0,
+		.end = 0,
+	},
+	{
+		.flags = IORESOURCE_IRQ,
+		.start = 0,
+		.end = 0,
+	},
 };
 
 static bool is_extended_socket_device(struct acpi_device *device)

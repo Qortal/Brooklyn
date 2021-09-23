@@ -63,7 +63,7 @@ enum tcp_lp_state {
  * @sowd: smoothed OWD << 3
  * @owd_min: min OWD
  * @owd_max: max OWD
- * @owd_max_rsv: reserved max owd
+ * @owd_max_rsv: resrved max owd
  * @remote_hz: estimated remote HZ
  * @remote_ref_time: remote reference time
  * @local_ref_time: local reference time
@@ -89,7 +89,6 @@ struct lp {
 
 /**
  * tcp_lp_init
- * @sk: socket to initialize congestion control algorithm for
  *
  * Init all required variables.
  * Clone the handling from Vegas module implementation.
@@ -112,7 +111,6 @@ static void tcp_lp_init(struct sock *sk)
 
 /**
  * tcp_lp_cong_avoid
- * @sk: socket to avoid congesting
  *
  * Implementation of cong_avoid.
  * Will only call newReno CA when away from inference.
@@ -128,7 +126,6 @@ static void tcp_lp_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 
 /**
  * tcp_lp_remote_hz_estimator
- * @sk: socket which needs an estimate for the remote HZs
  *
  * Estimate remote HZ.
  * We keep on updating the estimated value, where original TCP-LP
@@ -179,7 +176,6 @@ static u32 tcp_lp_remote_hz_estimator(struct sock *sk)
 
 /**
  * tcp_lp_owd_calculator
- * @sk: socket to calculate one way delay for
  *
  * Calculate one way delay (in relative format).
  * Original implement OWD as minus of remote time difference to local time
@@ -214,8 +210,6 @@ static u32 tcp_lp_owd_calculator(struct sock *sk)
 
 /**
  * tcp_lp_rtt_sample
- * @sk: socket to add a rtt sample to
- * @rtt: round trip time, which is ignored!
  *
  * Implementation or rtt_sample.
  * Will take the following action,
@@ -260,7 +254,6 @@ static void tcp_lp_rtt_sample(struct sock *sk, u32 rtt)
 
 /**
  * tcp_lp_pkts_acked
- * @sk: socket requiring congestion avoidance calculations
  *
  * Implementation of pkts_acked.
  * Deal with active drop under Early Congestion Indication.
@@ -305,7 +298,7 @@ static void tcp_lp_pkts_acked(struct sock *sk, const struct ack_sample *sample)
 
 	/* FIXME: try to reset owd_min and owd_max here
 	 * so decrease the chance the min/max is no longer suitable
-	 * and will usually within threshold when within inference */
+	 * and will usually within threshold when whithin inference */
 	lp->owd_min = lp->sowd >> 3;
 	lp->owd_max = lp->sowd >> 2;
 	lp->owd_max_rsv = lp->sowd >> 2;

@@ -410,7 +410,7 @@ static int __maybe_unused ucb1400_ts_suspend(struct device *dev)
 
 	mutex_lock(&idev->mutex);
 
-	if (input_device_enabled(idev))
+	if (idev->users)
 		ucb1400_ts_stop(ucb);
 
 	mutex_unlock(&idev->mutex);
@@ -424,7 +424,7 @@ static int __maybe_unused ucb1400_ts_resume(struct device *dev)
 
 	mutex_lock(&idev->mutex);
 
-	if (input_device_enabled(idev))
+	if (idev->users)
 		ucb1400_ts_start(ucb);
 
 	mutex_unlock(&idev->mutex);

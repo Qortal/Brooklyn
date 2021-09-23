@@ -127,7 +127,18 @@ static int ts73xx_fpga_probe(struct platform_device *pdev)
 	if (!mgr)
 		return -ENOMEM;
 
-	return devm_fpga_mgr_register(kdev, mgr);
+	platform_set_drvdata(pdev, mgr);
+
+	return fpga_mgr_register(mgr);
+}
+
+static int ts73xx_fpga_remove(struct platform_device *pdev)
+{
+	struct fpga_manager *mgr = platform_get_drvdata(pdev);
+
+	fpga_mgr_unregister(mgr);
+
+	return 0;
 }
 
 static struct platform_driver ts73xx_fpga_driver = {
@@ -135,6 +146,7 @@ static struct platform_driver ts73xx_fpga_driver = {
 		.name	= "ts73xx-fpga-mgr",
 	},
 	.probe	= ts73xx_fpga_probe,
+	.remove	= ts73xx_fpga_remove,
 };
 module_platform_driver(ts73xx_fpga_driver);
 

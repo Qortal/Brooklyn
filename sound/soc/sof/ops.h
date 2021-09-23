@@ -37,14 +37,6 @@ static inline int snd_sof_remove(struct snd_sof_dev *sdev)
 	return 0;
 }
 
-static inline int snd_sof_shutdown(struct snd_sof_dev *sdev)
-{
-	if (sof_ops(sdev)->shutdown)
-		return sof_ops(sdev)->shutdown(sdev);
-
-	return 0;
-}
-
 /* control */
 
 /*
@@ -56,10 +48,10 @@ static inline int snd_sof_dsp_run(struct snd_sof_dev *sdev)
 	return sof_ops(sdev)->run(sdev);
 }
 
-static inline int snd_sof_dsp_stall(struct snd_sof_dev *sdev, unsigned int core_mask)
+static inline int snd_sof_dsp_stall(struct snd_sof_dev *sdev)
 {
 	if (sof_ops(sdev)->stall)
-		return sof_ops(sdev)->stall(sdev, core_mask);
+		return sof_ops(sdev)->stall(sdev);
 
 	return 0;
 }
@@ -76,31 +68,19 @@ static inline int snd_sof_dsp_reset(struct snd_sof_dev *sdev)
 static inline int snd_sof_dsp_core_power_up(struct snd_sof_dev *sdev,
 					    unsigned int core_mask)
 {
-	int ret = 0;
+	if (sof_ops(sdev)->core_power_up)
+		return sof_ops(sdev)->core_power_up(sdev, core_mask);
 
-	core_mask &= ~sdev->enabled_cores_mask;
-	if (sof_ops(sdev)->core_power_up && core_mask) {
-		ret = sof_ops(sdev)->core_power_up(sdev, core_mask);
-		if (!ret)
-			sdev->enabled_cores_mask |= core_mask;
-	}
-
-	return ret;
+	return 0;
 }
 
 static inline int snd_sof_dsp_core_power_down(struct snd_sof_dev *sdev,
 					      unsigned int core_mask)
 {
-	int ret = 0;
+	if (sof_ops(sdev)->core_power_down)
+		return sof_ops(sdev)->core_power_down(sdev, core_mask);
 
-	core_mask &= sdev->enabled_cores_mask;
-	if (sof_ops(sdev)->core_power_down && core_mask) {
-		ret = sof_ops(sdev)->core_power_down(sdev, core_mask);
-		if (!ret)
-			sdev->enabled_cores_mask &= ~core_mask;
-	}
-
-	return ret;
+	return 0;
 }
 
 /* pre/post fw load */
@@ -116,16 +96,6 @@ static inline int snd_sof_dsp_post_fw_run(struct snd_sof_dev *sdev)
 {
 	if (sof_ops(sdev)->post_fw_run)
 		return sof_ops(sdev)->post_fw_run(sdev);
-
-	return 0;
-}
-
-/* parse platform specific extended manifest */
-static inline int snd_sof_dsp_parse_platform_ext_manifest(struct snd_sof_dev *sdev,
-							  const struct sof_ext_man_elem_header *hdr)
-{
-	if (sof_ops(sdev)->parse_platform_ext_manifest)
-		return sof_ops(sdev)->parse_platform_ext_manifest(sdev, hdr);
 
 	return 0;
 }
@@ -228,29 +198,24 @@ static inline int
 snd_sof_dsp_set_power_state(struct snd_sof_dev *sdev,
 			    const struct sof_dsp_power_state *target_state)
 {
-	int ret = 0;
-
-	mutex_lock(&sdev->power_state_access);
-
 	if (sof_ops(sdev)->set_power_state)
-		ret = sof_ops(sdev)->set_power_state(sdev, target_state);
+		return sof_ops(sdev)->set_power_state(sdev, target_state);
 
-	mutex_unlock(&sdev->power_state_access);
-
-	return ret;
+	/* D0 substate is not supported, do nothing here. */
+	return 0;
 }
 
 /* debug */
 static inline void snd_sof_dsp_dbg_dump(struct snd_sof_dev *sdev, u32 flags)
 {
 	if (sof_ops(sdev)->dbg_dump)
-		sof_ops(sdev)->dbg_dump(sdev, flags);
+		return sof_ops(sdev)->dbg_dump(sdev, flags);
 }
 
 static inline void snd_sof_ipc_dump(struct snd_sof_dev *sdev)
 {
 	if (sof_ops(sdev)->ipc_dump)
-		sof_ops(sdev)->ipc_dump(sdev);
+		return sof_ops(sdev)->ipc_dump(sdev);
 }
 
 /* register IO */
@@ -497,10 +462,12 @@ snd_sof_machine_select(struct snd_sof_dev *sdev)
 
 static inline void
 snd_sof_set_mach_params(const struct snd_soc_acpi_mach *mach,
-			struct snd_sof_dev *sdev)
+			struct device *dev)
 {
+	struct snd_sof_dev *sdev = dev_get_drvdata(dev);
+
 	if (sof_ops(sdev) && sof_ops(sdev)->set_mach_params)
-		sof_ops(sdev)->set_mach_params(mach, sdev);
+		sof_ops(sdev)->set_mach_params(mach, dev);
 }
 
 static inline const struct snd_sof_dsp_ops
@@ -546,16 +513,14 @@ static inline const struct snd_sof_dsp_ops
 		(val) = snd_sof_dsp_read(sdev, bar, offset);		\
 		if (cond) { \
 			dev_dbg(sdev->dev, \
-				"FW Poll Status: reg[%#x]=%#x successful\n", \
-				(offset), (val)); \
+				"FW Poll Status: reg=%#x successful\n", (val)); \
 			break; \
 		} \
 		if (__timeout_us && \
 		    ktime_compare(ktime_get(), __timeout) > 0) { \
 			(val) = snd_sof_dsp_read(sdev, bar, offset); \
 			dev_dbg(sdev->dev, \
-				"FW Poll Status: reg[%#x]=%#x timedout\n", \
-				(offset), (val)); \
+				"FW Poll Status: reg=%#x timedout\n", (val)); \
 			break; \
 		} \
 		if (__sleep_us) \

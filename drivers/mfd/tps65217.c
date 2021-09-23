@@ -33,12 +33,12 @@
 #include <linux/mfd/core.h>
 #include <linux/mfd/tps65217.h>
 
-static const struct resource charger_resources[] = {
+static struct resource charger_resources[] = {
 	DEFINE_RES_IRQ_NAMED(TPS65217_IRQ_AC, "AC"),
 	DEFINE_RES_IRQ_NAMED(TPS65217_IRQ_USB, "USB"),
 };
 
-static const struct resource pb_resources[] = {
+static struct resource pb_resources[] = {
 	DEFINE_RES_IRQ_NAMED(TPS65217_IRQ_PB, "PB"),
 };
 

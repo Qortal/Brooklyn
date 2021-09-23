@@ -770,8 +770,10 @@ static int vidioc_s_fmt_vid_overlay(struct file *file, void *__fh, struct v4l2_f
 	vv->ov.nclips = f->fmt.win.clipcount;
 	if (vv->ov.nclips > 16)
 		vv->ov.nclips = 16;
-	memcpy(vv->ov.clips, f->fmt.win.clips,
-	       sizeof(struct v4l2_clip) * vv->ov.nclips);
+	if (copy_from_user(vv->ov.clips, f->fmt.win.clips,
+				sizeof(struct v4l2_clip) * vv->ov.nclips)) {
+		return -EFAULT;
+	}
 
 	/* vv->ov.fh is used to indicate that we have valid overlay information, too */
 	vv->ov.fh = fh;

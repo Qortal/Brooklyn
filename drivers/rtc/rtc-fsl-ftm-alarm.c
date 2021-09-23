@@ -290,7 +290,7 @@ static int ftm_rtc_probe(struct platform_device *pdev)
 	if (ret)
 		dev_err(&pdev->dev, "failed to enable irq wake\n");
 
-	ret = devm_rtc_register_device(rtc->rtc_dev);
+	ret = rtc_register_device(rtc->rtc_dev);
 	if (ret) {
 		dev_err(&pdev->dev, "can't register rtc device\n");
 		return ret;

@@ -28,7 +28,7 @@ static int tps65910_gpio_get(struct gpio_chip *gc, unsigned offset)
 	struct tps65910 *tps65910 = tps65910_gpio->tps65910;
 	unsigned int val;
 
-	regmap_read(tps65910->regmap, TPS65910_GPIO0 + offset, &val);
+	tps65910_reg_read(tps65910, TPS65910_GPIO0 + offset, &val);
 
 	if (val & GPIO_STS_MASK)
 		return 1;
@@ -43,10 +43,10 @@ static void tps65910_gpio_set(struct gpio_chip *gc, unsigned offset,
 	struct tps65910 *tps65910 = tps65910_gpio->tps65910;
 
 	if (value)
-		regmap_set_bits(tps65910->regmap, TPS65910_GPIO0 + offset,
+		tps65910_reg_set_bits(tps65910, TPS65910_GPIO0 + offset,
 						GPIO_SET_MASK);
 	else
-		regmap_clear_bits(tps65910->regmap, TPS65910_GPIO0 + offset,
+		tps65910_reg_clear_bits(tps65910, TPS65910_GPIO0 + offset,
 						GPIO_SET_MASK);
 }
 
@@ -59,7 +59,7 @@ static int tps65910_gpio_output(struct gpio_chip *gc, unsigned offset,
 	/* Set the initial value */
 	tps65910_gpio_set(gc, offset, value);
 
-	return regmap_set_bits(tps65910->regmap, TPS65910_GPIO0 + offset,
+	return tps65910_reg_set_bits(tps65910, TPS65910_GPIO0 + offset,
 						GPIO_CFG_MASK);
 }
 
@@ -68,7 +68,7 @@ static int tps65910_gpio_input(struct gpio_chip *gc, unsigned offset)
 	struct tps65910_gpio *tps65910_gpio = gpiochip_get_data(gc);
 	struct tps65910 *tps65910 = tps65910_gpio->tps65910;
 
-	return regmap_clear_bits(tps65910->regmap, TPS65910_GPIO0 + offset,
+	return tps65910_reg_clear_bits(tps65910, TPS65910_GPIO0 + offset,
 						GPIO_CFG_MASK);
 }
 
@@ -157,7 +157,7 @@ static int tps65910_gpio_probe(struct platform_device *pdev)
 		if (!pdata->en_gpio_sleep[i])
 			continue;
 
-		ret = regmap_set_bits(tps65910->regmap,
+		ret = tps65910_reg_set_bits(tps65910,
 			TPS65910_GPIO0 + i, GPIO_SLEEP_MASK);
 		if (ret < 0)
 			dev_warn(tps65910->dev,
@@ -165,8 +165,16 @@ static int tps65910_gpio_probe(struct platform_device *pdev)
 	}
 
 skip_init:
-	return devm_gpiochip_add_data(&pdev->dev, &tps65910_gpio->gpio_chip,
-				      tps65910_gpio);
+	ret = devm_gpiochip_add_data(&pdev->dev, &tps65910_gpio->gpio_chip,
+				     tps65910_gpio);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Could not register gpiochip, %d\n", ret);
+		return ret;
+	}
+
+	platform_set_drvdata(pdev, tps65910_gpio);
+
+	return ret;
 }
 
 static struct platform_driver tps65910_gpio_driver = {

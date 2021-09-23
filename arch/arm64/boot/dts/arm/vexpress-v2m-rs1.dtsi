@@ -144,7 +144,7 @@
 				compatible = "nxp,usb-isp1761";
 				reg = <2 0x03000000 0x20000>;
 				interrupts = <16>;
-				dr_mode = "peripheral";
+				port1-otg;
 			};
 
 			iofpga-bus@300000000 {

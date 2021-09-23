@@ -171,6 +171,11 @@ static void sp_encaps(struct sixpack *sp, unsigned char *icp, int len)
 		goto out_drop;
 	}
 
+	if (len > sp->mtu) {	/* sp->mtu = AX25_MTU = max. PACLEN = 256 */
+		msg = "oversized transmit packet!";
+		goto out_drop;
+	}
+
 	if (p[0] > 5) {
 		msg = "invalid KISS command";
 		goto out_drop;
@@ -428,7 +433,7 @@ out:
  * and sent on to some IP layer for further processing.
  */
 static void sixpack_receive_buf(struct tty_struct *tty,
-	const unsigned char *cp, const char *fp, int count)
+	const unsigned char *cp, char *fp, int count)
 {
 	struct sixpack *sp;
 	int count1;
@@ -716,11 +721,11 @@ static int sixpack_ioctl(struct tty_struct *tty, struct file *file,
 		err = 0;
 		break;
 
-	case SIOCSIFHWADDR: {
-			char addr[AX25_ADDR_LEN];
+	 case SIOCSIFHWADDR: {
+		char addr[AX25_ADDR_LEN];
 
-			if (copy_from_user(&addr,
-					   (void __user *)arg, AX25_ADDR_LEN)) {
+		if (copy_from_user(&addr,
+		                   (void __user *) arg, AX25_ADDR_LEN)) {
 				err = -EFAULT;
 				break;
 			}
@@ -728,9 +733,11 @@ static int sixpack_ioctl(struct tty_struct *tty, struct file *file,
 			netif_tx_lock_bh(dev);
 			memcpy(dev->dev_addr, &addr, AX25_ADDR_LEN);
 			netif_tx_unlock_bh(dev);
+
 			err = 0;
 			break;
 		}
+
 	default:
 		err = tty_mode_ioctl(tty, file, cmd, arg);
 	}
@@ -742,7 +749,7 @@ static int sixpack_ioctl(struct tty_struct *tty, struct file *file,
 
 static struct tty_ldisc_ops sp_ldisc = {
 	.owner		= THIS_MODULE,
-	.num		= N_6PACK,
+	.magic		= TTY_LDISC_MAGIC,
 	.name		= "6pack",
 	.open		= sixpack_open,
 	.close		= sixpack_close,
@@ -765,16 +772,21 @@ static int __init sixpack_init_driver(void)
 	printk(msg_banner);
 
 	/* Register the provided line protocol discipline */
-	status = tty_register_ldisc(&sp_ldisc);
-	if (status)
+	if ((status = tty_register_ldisc(N_6PACK, &sp_ldisc)) != 0)
 		printk(msg_regfail, status);
 
 	return status;
 }
 
+static const char msg_unregfail[] = KERN_ERR \
+	"6pack: can't unregister line discipline (err = %d)\n";
+
 static void __exit sixpack_exit_driver(void)
 {
-	tty_unregister_ldisc(&sp_ldisc);
+	int ret;
+
+	if ((ret = tty_unregister_ldisc(N_6PACK)))
+		printk(msg_unregfail, ret);
 }
 
 /* encode an AX.25 packet into 6pack */
@@ -824,6 +836,12 @@ static void decode_data(struct sixpack *sp, unsigned char inbyte)
 	if (sp->rx_count != 3) {
 		sp->raw_buf[sp->rx_count++] = inbyte;
 
+		return;
+	}
+
+	if (sp->rx_count_cooked + 2 >= sizeof(sp->cooked_buf)) {
+		pr_err("6pack: cooked buffer overrun, data loss\n");
+		sp->rx_count = 0;
 		return;
 	}
 

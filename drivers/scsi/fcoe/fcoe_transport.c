@@ -10,7 +10,6 @@
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/netdevice.h>
-#include <linux/ethtool.h>
 #include <linux/errno.h>
 #include <linux/crc32.h>
 #include <scsi/libfcoe.h>
@@ -863,7 +862,7 @@ static int fcoe_transport_create(const char *buffer,
 	int rc = -ENODEV;
 	struct net_device *netdev = NULL;
 	struct fcoe_transport *ft = NULL;
-	enum fip_mode fip_mode = (enum fip_mode)(uintptr_t)kp->arg;
+	enum fip_mode fip_mode = (enum fip_mode)kp->arg;
 
 	mutex_lock(&ft_mutex);
 

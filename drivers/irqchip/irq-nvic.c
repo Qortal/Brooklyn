@@ -40,7 +40,9 @@ static struct irq_domain *nvic_irq_domain;
 asmlinkage void __exception_irq_entry
 nvic_handle_irq(irq_hw_number_t hwirq, struct pt_regs *regs)
 {
-	handle_domain_irq(nvic_irq_domain, hwirq, regs);
+	unsigned int irq = irq_linear_revmap(nvic_irq_domain, hwirq);
+
+	handle_IRQ(irq, regs);
 }
 
 static int nvic_irq_domain_alloc(struct irq_domain *domain, unsigned int virq,

@@ -10,7 +10,6 @@
  * Author: Linus Walleij <linus.walleij@linaro.org>
  */
 
-#include <linux/iio/adc/qcom-vadc-common.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
 #include <linux/module.h>
@@ -21,6 +20,8 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/regulator/consumer.h>
+
+#include "qcom-vadc-common.h"
 
 /*
  * Definitions for the "user processor" registers lifted from the v3.4

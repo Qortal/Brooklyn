@@ -288,33 +288,32 @@ int asix_set_hw_mii(struct usbnet *dev, int in_pm)
 	return ret;
 }
 
-int asix_read_phy_addr(struct usbnet *dev, bool internal)
+int asix_read_phy_addr(struct usbnet *dev, int internal)
 {
-	int ret, offset;
+	int offset = (internal ? 1 : 0);
 	u8 buf[2];
+	int ret = asix_read_cmd(dev, AX_CMD_READ_PHY_ID, 0, 0, 2, buf, 0);
 
-	ret = asix_read_cmd(dev, AX_CMD_READ_PHY_ID, 0, 0, 2, buf, 0);
-	if (ret < 0)
-		goto error;
+	netdev_dbg(dev->net, "asix_get_phy_addr()\n");
 
 	if (ret < 2) {
-		ret = -EIO;
-		goto error;
+		netdev_err(dev->net, "Error reading PHYID register: %02x\n", ret);
+		goto out;
 	}
-
-	offset = (internal ? 1 : 0);
+	netdev_dbg(dev->net, "asix_get_phy_addr() returning 0x%04x\n",
+		   *((__le16 *)buf));
 	ret = buf[offset];
 
-	netdev_dbg(dev->net, "%s PHY address 0x%x\n",
-		   internal ? "internal" : "external", ret);
-
-	return ret;
-
-error:
-	netdev_err(dev->net, "Error reading PHY_ID register: %02x\n", ret);
-
+out:
 	return ret;
 }
+
+int asix_get_phy_addr(struct usbnet *dev)
+{
+	/* return the address of the internal phy */
+	return asix_read_phy_addr(dev, 1);
+}
+
 
 int asix_sw_reset(struct usbnet *dev, u8 flags, int in_pm)
 {
@@ -382,27 +381,6 @@ int asix_write_medium_mode(struct usbnet *dev, u16 mode, int in_pm)
 			   mode, ret);
 
 	return ret;
-}
-
-/* set MAC link settings according to information from phylib */
-void asix_adjust_link(struct net_device *netdev)
-{
-	struct phy_device *phydev = netdev->phydev;
-	struct usbnet *dev = netdev_priv(netdev);
-	u16 mode = 0;
-
-	if (phydev->link) {
-		mode = AX88772_MEDIUM_DEFAULT;
-
-		if (phydev->duplex == DUPLEX_HALF)
-			mode &= ~AX_MEDIUM_FD;
-
-		if (phydev->speed != SPEED_100)
-			mode &= ~AX_MEDIUM_PS;
-	}
-
-	asix_write_medium_mode(dev, mode, 0);
-	phy_print_status(phydev);
 }
 
 int asix_write_gpio(struct usbnet *dev, u16 value, int sleep, int in_pm)
@@ -485,23 +463,18 @@ int asix_mdio_read(struct net_device *netdev, int phy_id, int loc)
 		return ret;
 	}
 
-	ret = asix_read_cmd(dev, AX_CMD_READ_MII_REG, phy_id, (__u16)loc, 2,
-			    &res, 0);
-	if (ret < 0)
-		goto out;
-
-	ret = asix_set_hw_mii(dev, 0);
-out:
+	asix_read_cmd(dev, AX_CMD_READ_MII_REG, phy_id,
+				(__u16)loc, 2, &res, 0);
+	asix_set_hw_mii(dev, 0);
 	mutex_unlock(&dev->phy_mutex);
 
 	netdev_dbg(dev->net, "asix_mdio_read() phy_id=0x%02x, loc=0x%02x, returns=0x%04x\n",
 			phy_id, loc, le16_to_cpu(res));
 
-	return ret < 0 ? ret : le16_to_cpu(res);
+	return le16_to_cpu(res);
 }
 
-static int __asix_mdio_write(struct net_device *netdev, int phy_id, int loc,
-			     int val)
+void asix_mdio_write(struct net_device *netdev, int phy_id, int loc, int val)
 {
 	struct usbnet *dev = netdev_priv(netdev);
 	__le16 res = cpu_to_le16(val);
@@ -521,40 +494,15 @@ static int __asix_mdio_write(struct net_device *netdev, int phy_id, int loc,
 		ret = asix_read_cmd(dev, AX_CMD_STATMNGSTS_REG,
 				    0, 0, 1, &smsr, 0);
 	} while (!(smsr & AX_HOST_EN) && (i++ < 30) && (ret != -ENODEV));
+	if (ret == -ENODEV) {
+		mutex_unlock(&dev->phy_mutex);
+		return;
+	}
 
-	if (ret == -ENODEV)
-		goto out;
-
-	ret = asix_write_cmd(dev, AX_CMD_WRITE_MII_REG, phy_id, (__u16)loc, 2,
-			     &res, 0);
-	if (ret < 0)
-		goto out;
-
-	ret = asix_set_hw_mii(dev, 0);
-out:
+	asix_write_cmd(dev, AX_CMD_WRITE_MII_REG, phy_id,
+		       (__u16)loc, 2, &res, 0);
+	asix_set_hw_mii(dev, 0);
 	mutex_unlock(&dev->phy_mutex);
-
-	return ret < 0 ? ret : 0;
-}
-
-void asix_mdio_write(struct net_device *netdev, int phy_id, int loc, int val)
-{
-	__asix_mdio_write(netdev, phy_id, loc, val);
-}
-
-/* MDIO read and write wrappers for phylib */
-int asix_mdio_bus_read(struct mii_bus *bus, int phy_id, int regnum)
-{
-	struct usbnet *priv = bus->priv;
-
-	return asix_mdio_read(priv->net, phy_id, regnum);
-}
-
-int asix_mdio_bus_write(struct mii_bus *bus, int phy_id, int regnum, u16 val)
-{
-	struct usbnet *priv = bus->priv;
-
-	return __asix_mdio_write(priv->net, phy_id, regnum, val);
 }
 
 int asix_mdio_read_nopm(struct net_device *netdev, int phy_id, int loc)

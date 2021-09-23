@@ -140,7 +140,7 @@ static int __maybe_unused micro_key_resume(struct device *dev)
 
 	mutex_lock(&input->mutex);
 
-	if (input_device_enabled(input))
+	if (input->users)
 		micro_key_start(keys);
 
 	mutex_unlock(&input->mutex);

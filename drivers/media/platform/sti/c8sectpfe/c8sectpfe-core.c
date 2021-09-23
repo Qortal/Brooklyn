@@ -765,7 +765,7 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 
 		if (!fei->channel_data[index]) {
 			ret = -ENOMEM;
-			goto err_node_put;
+			goto err_clk_disable;
 		}
 
 		tsin = fei->channel_data[index];
@@ -775,7 +775,7 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 		ret = of_property_read_u32(child, "tsin-num", &tsin->tsin_id);
 		if (ret) {
 			dev_err(&pdev->dev, "No tsin_num found\n");
-			goto err_node_put;
+			goto err_clk_disable;
 		}
 
 		/* sanity check value */
@@ -784,7 +784,7 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 				"tsin-num %d specified greater than number\n\tof input block hw in SoC! (%d)",
 				tsin->tsin_id, fei->hw_stats.num_ib);
 			ret = -EINVAL;
-			goto err_node_put;
+			goto err_clk_disable;
 		}
 
 		tsin->invert_ts_clk = of_property_read_bool(child,
@@ -800,14 +800,14 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 					&tsin->dvb_card);
 		if (ret) {
 			dev_err(&pdev->dev, "No dvb-card found\n");
-			goto err_node_put;
+			goto err_clk_disable;
 		}
 
 		i2c_bus = of_parse_phandle(child, "i2c-bus", 0);
 		if (!i2c_bus) {
 			dev_err(&pdev->dev, "No i2c-bus found\n");
 			ret = -ENODEV;
-			goto err_node_put;
+			goto err_clk_disable;
 		}
 		tsin->i2c_adapter =
 			of_find_i2c_adapter_by_node(i2c_bus);
@@ -815,7 +815,7 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 			dev_err(&pdev->dev, "No i2c adapter found\n");
 			of_node_put(i2c_bus);
 			ret = -ENODEV;
-			goto err_node_put;
+			goto err_clk_disable;
 		}
 		of_node_put(i2c_bus);
 
@@ -826,8 +826,7 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 			dev_err(dev,
 				"reset gpio for tsin%d not valid (gpio=%d)\n",
 				tsin->tsin_id, tsin->rst_gpio);
-			ret = -EINVAL;
-			goto err_node_put;
+			goto err_clk_disable;
 		}
 
 		ret = devm_gpio_request_one(dev, tsin->rst_gpio,
@@ -835,7 +834,7 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 		if (ret && ret != -EBUSY) {
 			dev_err(dev, "Can't request tsin%d reset gpio\n"
 				, fei->channel_data[index]->tsin_id);
-			goto err_node_put;
+			goto err_clk_disable;
 		}
 
 		if (!ret) {
@@ -878,8 +877,6 @@ static int c8sectpfe_probe(struct platform_device *pdev)
 
 	return 0;
 
-err_node_put:
-	of_node_put(child);
 err_clk_disable:
 	clk_disable_unprepare(fei->c8sectpfeclk);
 	return ret;
@@ -1035,8 +1032,9 @@ static void load_imem_segment(struct c8sectpfei *fei, Elf32_Phdr *phdr,
 
 	dev_dbg(fei->dev,
 		"Loading IMEM segment %d 0x%08x\n\t (0x%x bytes) -> 0x%p (0x%x bytes)\n",
-		seg_num, phdr->p_paddr, phdr->p_filesz, dest,
-		phdr->p_memsz + phdr->p_memsz / 3);
+seg_num,
+		phdr->p_paddr, phdr->p_filesz,
+		dest, phdr->p_memsz + phdr->p_memsz / 3);
 
 	for (i = 0; i < phdr->p_filesz; i++) {
 

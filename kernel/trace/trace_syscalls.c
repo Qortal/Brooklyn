@@ -298,8 +298,9 @@ static void ftrace_syscall_enter(void *data, struct pt_regs *regs, long id)
 	struct syscall_metadata *sys_data;
 	struct ring_buffer_event *event;
 	struct trace_buffer *buffer;
-	unsigned int trace_ctx;
+	unsigned long irq_flags;
 	unsigned long args[6];
+	int pc;
 	int syscall_nr;
 	int size;
 
@@ -321,11 +322,12 @@ static void ftrace_syscall_enter(void *data, struct pt_regs *regs, long id)
 
 	size = sizeof(*entry) + sizeof(unsigned long) * sys_data->nb_args;
 
-	trace_ctx = tracing_gen_ctx();
+	local_save_flags(irq_flags);
+	pc = preempt_count();
 
 	buffer = tr->array_buffer.buffer;
 	event = trace_buffer_lock_reserve(buffer,
-			sys_data->enter_event->event.type, size, trace_ctx);
+			sys_data->enter_event->event.type, size, irq_flags, pc);
 	if (!event)
 		return;
 
@@ -335,7 +337,7 @@ static void ftrace_syscall_enter(void *data, struct pt_regs *regs, long id)
 	memcpy(entry->args, args, sizeof(unsigned long) * sys_data->nb_args);
 
 	event_trigger_unlock_commit(trace_file, buffer, event, entry,
-				    trace_ctx);
+				    irq_flags, pc);
 }
 
 static void ftrace_syscall_exit(void *data, struct pt_regs *regs, long ret)
@@ -346,7 +348,8 @@ static void ftrace_syscall_exit(void *data, struct pt_regs *regs, long ret)
 	struct syscall_metadata *sys_data;
 	struct ring_buffer_event *event;
 	struct trace_buffer *buffer;
-	unsigned int trace_ctx;
+	unsigned long irq_flags;
+	int pc;
 	int syscall_nr;
 
 	syscall_nr = trace_get_syscall_nr(current, regs);
@@ -365,12 +368,13 @@ static void ftrace_syscall_exit(void *data, struct pt_regs *regs, long ret)
 	if (!sys_data)
 		return;
 
-	trace_ctx = tracing_gen_ctx();
+	local_save_flags(irq_flags);
+	pc = preempt_count();
 
 	buffer = tr->array_buffer.buffer;
 	event = trace_buffer_lock_reserve(buffer,
 			sys_data->exit_event->event.type, sizeof(*entry),
-			trace_ctx);
+			irq_flags, pc);
 	if (!event)
 		return;
 
@@ -379,7 +383,7 @@ static void ftrace_syscall_exit(void *data, struct pt_regs *regs, long ret)
 	entry->ret = syscall_get_return_value(current, regs);
 
 	event_trigger_unlock_commit(trace_file, buffer, event, entry,
-				    trace_ctx);
+				    irq_flags, pc);
 }
 
 static int reg_event_syscall_enter(struct trace_event_file *file,

@@ -1045,10 +1045,10 @@ static int ips_queue_lck(struct scsi_cmnd *SC, void (*done) (struct scsi_cmnd *)
 	ha = (ips_ha_t *) SC->device->host->hostdata;
 
 	if (!ha)
-		goto out_error;
+		return (1);
 
 	if (!ha->active)
-		goto out_error;
+		return (DID_ERROR);
 
 	if (ips_is_passthru(SC)) {
 		if (ha->copp_waitlist.count == IPS_MAX_IOCTL_QUEUE) {
@@ -1122,11 +1122,6 @@ static int ips_queue_lck(struct scsi_cmnd *SC, void (*done) (struct scsi_cmnd *)
 	}
 
 	ips_next(ha, IPS_INTR_IORL);
-
-	return (0);
-out_error:
-	SC->result = DID_ERROR << 16;
-	done(SC);
 
 	return (0);
 }
@@ -3344,15 +3339,13 @@ ips_map_status(ips_ha_t * ha, ips_scb_t * scb, ips_stat_t * sp)
 					IPS_CMD_EXTENDED_DCDB_SG)) {
 					tapeDCDB =
 					    (IPS_DCDB_TABLE_TAPE *) & scb->dcdb;
-					memcpy_and_pad(scb->scsi_cmd->sense_buffer,
-					       SCSI_SENSE_BUFFERSIZE,
+					memcpy(scb->scsi_cmd->sense_buffer,
 					       tapeDCDB->sense_info,
-					       sizeof(tapeDCDB->sense_info), 0);
+					       SCSI_SENSE_BUFFERSIZE);
 				} else {
-					memcpy_and_pad(scb->scsi_cmd->sense_buffer,
-					       SCSI_SENSE_BUFFERSIZE,
+					memcpy(scb->scsi_cmd->sense_buffer,
 					       scb->dcdb.sense_info,
-					       sizeof(scb->dcdb.sense_info), 0);
+					       SCSI_SENSE_BUFFERSIZE);
 				}
 				device_error = 2;	/* check condition */
 			}
@@ -7101,3 +7094,23 @@ ips_init_phase2(int index)
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("IBM ServeRAID Adapter Driver " IPS_VER_STRING);
 MODULE_VERSION(IPS_VER_STRING);
+
+
+/*
+ * Overrides for Emacs so that we almost follow Linus's tabbing style.
+ * Emacs will notice this stuff at the end of the file and automatically
+ * adjust the settings for this buffer only.  This must remain at the end
+ * of the file.
+ * ---------------------------------------------------------------------------
+ * Local variables:
+ * c-indent-level: 2
+ * c-brace-imaginary-offset: 0
+ * c-brace-offset: -2
+ * c-argdecl-indent: 2
+ * c-label-offset: -2
+ * c-continued-statement-offset: 2
+ * c-continued-brace-offset: 0
+ * indent-tabs-mode: nil
+ * tab-width: 8
+ * End:
+ */

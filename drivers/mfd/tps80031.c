@@ -34,8 +34,12 @@
 #include <linux/regmap.h>
 #include <linux/slab.h>
 
-static const struct resource tps80031_rtc_resources[] = {
-	DEFINE_RES_IRQ(TPS80031_INT_RTC_ALARM),
+static struct resource tps80031_rtc_resources[] = {
+	{
+		.start = TPS80031_INT_RTC_ALARM,
+		.end = TPS80031_INT_RTC_ALARM,
+		.flags = IORESOURCE_IRQ,
+	},
 };
 
 /* TPS80031 sub mfd devices */

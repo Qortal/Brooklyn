@@ -33,6 +33,9 @@
 MODULE_AUTHOR("Martin Langer <martin-langer@gmx.de>");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Miro miroSOUND PCM1 pro, PCM12, PCM20 Radio");
+MODULE_SUPPORTED_DEVICE("{{Miro,miroSOUND PCM1 pro}, "
+			"{Miro,miroSOUND PCM12}, "
+			"{Miro,miroSOUND PCM20 Radio}}");
 
 static int index = SNDRV_DEFAULT_IDX1;		/* Index 0-MAX */
 static char *id = SNDRV_DEFAULT_STR1;		/* ID for this card */
@@ -722,43 +725,35 @@ static int snd_miro_mixer(struct snd_card *card,
 	}
 
 	for (idx = 0; idx < ARRAY_SIZE(snd_miro_controls); idx++) {
-		err = snd_ctl_add(card, snd_ctl_new1(&snd_miro_controls[idx], miro));
-		if (err < 0)
+		if ((err = snd_ctl_add(card, snd_ctl_new1(&snd_miro_controls[idx], miro))) < 0)
 			return err;
 	}
 
 	if ((miro->aci->aci_product == 'A') ||
 	    (miro->aci->aci_product == 'B')) {
 		/* PCM1/PCM12 with power-amp and Line 2 */
-		err = snd_ctl_add(card, snd_ctl_new1(&snd_miro_line_control[0], miro));
-		if (err < 0)
+		if ((err = snd_ctl_add(card, snd_ctl_new1(&snd_miro_line_control[0], miro))) < 0)
 			return err;
-		err = snd_ctl_add(card, snd_ctl_new1(&snd_miro_amp_control[0], miro));
-		if (err < 0)
+		if ((err = snd_ctl_add(card, snd_ctl_new1(&snd_miro_amp_control[0], miro))) < 0)
 			return err;
 	}
 
 	if ((miro->aci->aci_product == 'B') ||
 	    (miro->aci->aci_product == 'C')) {
 		/* PCM12/PCM20 with mic-preamp */
-		err = snd_ctl_add(card, snd_ctl_new1(&snd_miro_preamp_control[0], miro));
-		if (err < 0)
+		if ((err = snd_ctl_add(card, snd_ctl_new1(&snd_miro_preamp_control[0], miro))) < 0)
 			return err;
-		if (miro->aci->aci_version >= 176) {
-			err = snd_ctl_add(card, snd_ctl_new1(&snd_miro_capture_control[0], miro));
-			if (err < 0)
+		if (miro->aci->aci_version >= 176)
+			if ((err = snd_ctl_add(card, snd_ctl_new1(&snd_miro_capture_control[0], miro))) < 0)
 				return err;
-		}
 	}
 
 	if (miro->aci->aci_product == 'C') {
 		/* PCM20 with radio and 7 band equalizer */
-		err = snd_ctl_add(card, snd_ctl_new1(&snd_miro_radio_control[0], miro));
-		if (err < 0)
+		if ((err = snd_ctl_add(card, snd_ctl_new1(&snd_miro_radio_control[0], miro))) < 0)
 			return err;
 		for (idx = 0; idx < ARRAY_SIZE(snd_miro_eq_controls); idx++) {
-			err = snd_ctl_add(card, snd_ctl_new1(&snd_miro_eq_controls[idx], miro));
-			if (err < 0)
+			if ((err = snd_ctl_add(card, snd_ctl_new1(&snd_miro_eq_controls[idx], miro))) < 0)
 				return err;
 		}
 	}
@@ -1186,8 +1181,7 @@ static int snd_card_miro_detect(struct snd_card *card,
 
 	for (i = OPTi9XX_HW_82C929; i <= OPTi9XX_HW_82C924; i++) {
 
-		err = snd_miro_init(chip, i);
-		if (err < 0)
+		if ((err = snd_miro_init(chip, i)) < 0)
 			return err;
 
 		err = snd_miro_opti_check(chip);
@@ -1486,10 +1480,11 @@ static int snd_miro_isa_probe(struct device *devptr, unsigned int n)
 	return 0;
 }
 
-static void snd_miro_isa_remove(struct device *devptr,
+static int snd_miro_isa_remove(struct device *devptr,
 			       unsigned int dev)
 {
 	snd_card_free(dev_get_drvdata(devptr));
+	return 0;
 }
 
 #define DEV_NAME "miro"

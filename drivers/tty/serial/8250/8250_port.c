@@ -1472,10 +1472,12 @@ EXPORT_SYMBOL_GPL(serial8250_em485_stop_tx);
 
 static enum hrtimer_restart serial8250_em485_handle_stop_tx(struct hrtimer *t)
 {
-	struct uart_8250_em485 *em485 = container_of(t, struct uart_8250_em485,
-			stop_tx_timer);
-	struct uart_8250_port *p = em485->port;
+	struct uart_8250_em485 *em485;
+	struct uart_8250_port *p;
 	unsigned long flags;
+
+	em485 = container_of(t, struct uart_8250_em485, stop_tx_timer);
+	p = em485->port;
 
 	serial8250_rpm_get(p);
 	spin_lock_irqsave(&p->port.lock, flags);
@@ -1486,13 +1488,16 @@ static enum hrtimer_restart serial8250_em485_handle_stop_tx(struct hrtimer *t)
 	}
 	spin_unlock_irqrestore(&p->port.lock, flags);
 	serial8250_rpm_put(p);
-
 	return HRTIMER_NORESTART;
 }
 
 static void start_hrtimer_ms(struct hrtimer *hrt, unsigned long msec)
 {
-	hrtimer_start(hrt, ms_to_ktime(msec), HRTIMER_MODE_REL);
+	long sec = msec / 1000;
+	long nsec = (msec % 1000) * 1000000;
+	ktime_t t = ktime_set(sec, nsec);
+
+	hrtimer_start(hrt, t, HRTIMER_MODE_REL);
 }
 
 static void __stop_tx_rs485(struct uart_8250_port *p)
@@ -1634,10 +1639,12 @@ static inline void start_tx_rs485(struct uart_port *port)
 
 static enum hrtimer_restart serial8250_em485_handle_start_tx(struct hrtimer *t)
 {
-	struct uart_8250_em485 *em485 = container_of(t, struct uart_8250_em485,
-			start_tx_timer);
-	struct uart_8250_port *p = em485->port;
+	struct uart_8250_em485 *em485;
+	struct uart_8250_port *p;
 	unsigned long flags;
+
+	em485 = container_of(t, struct uart_8250_em485, start_tx_timer);
+	p = em485->port;
 
 	spin_lock_irqsave(&p->port.lock, flags);
 	if (em485->active_timer == &em485->start_tx_timer) {
@@ -1645,7 +1652,6 @@ static enum hrtimer_restart serial8250_em485_handle_start_tx(struct hrtimer *t)
 		em485->active_timer = NULL;
 	}
 	spin_unlock_irqrestore(&p->port.lock, flags);
-
 	return HRTIMER_NORESTART;
 }
 
@@ -1897,9 +1903,9 @@ static bool handle_rx_dma(struct uart_8250_port *up, unsigned int iir)
 int serial8250_handle_irq(struct uart_port *port, unsigned int iir)
 {
 	unsigned char status;
+	unsigned long flags;
 	struct uart_8250_port *up = up_to_u8250p(port);
 	bool skip_rx = false;
-	unsigned long flags;
 
 	if (iir & UART_IIR_NO_INT)
 		return 0;
@@ -1930,8 +1936,7 @@ int serial8250_handle_irq(struct uart_port *port, unsigned int iir)
 		(up->ier & UART_IER_THRI))
 		serial8250_tx_chars(up);
 
-	uart_unlock_and_check_sysrq_irqrestore(port, flags);
-
+	uart_unlock_and_check_sysrq(port, flags);
 	return 1;
 }
 EXPORT_SYMBOL_GPL(serial8250_handle_irq);
@@ -2519,45 +2524,19 @@ static unsigned int serial8250_do_get_divisor(struct uart_port *port,
 					      unsigned int baud,
 					      unsigned int *frac)
 {
-	upf_t magic_multiplier = port->flags & UPF_MAGIC_MULTIPLIER;
 	struct uart_8250_port *up = up_to_u8250p(port);
 	unsigned int quot;
 
 	/*
-	 * Handle magic divisors for baud rates above baud_base on SMSC
-	 * Super I/O chips.  We clamp custom rates from clk/6 and clk/12
-	 * up to clk/4 (0x8001) and clk/8 (0x8002) respectively.  These
-	 * magic divisors actually reprogram the baud rate generator's
-	 * reference clock derived from chips's 14.318MHz clock input.
+	 * Handle magic divisors for baud rates above baud_base on
+	 * SMSC SuperIO chips.
 	 *
-	 * Documentation claims that with these magic divisors the base
-	 * frequencies of 7.3728MHz and 3.6864MHz are used respectively
-	 * for the extra baud rates of 460800bps and 230400bps rather
-	 * than the usual base frequency of 1.8462MHz.  However empirical
-	 * evidence contradicts that.
-	 *
-	 * Instead bit 7 of the DLM register (bit 15 of the divisor) is
-	 * effectively used as a clock prescaler selection bit for the
-	 * base frequency of 7.3728MHz, always used.  If set to 0, then
-	 * the base frequency is divided by 4 for use by the Baud Rate
-	 * Generator, for the usual arrangement where the value of 1 of
-	 * the divisor produces the baud rate of 115200bps.  Conversely,
-	 * if set to 1 and high-speed operation has been enabled with the
-	 * Serial Port Mode Register in the Device Configuration Space,
-	 * then the base frequency is supplied directly to the Baud Rate
-	 * Generator, so for the divisor values of 0x8001, 0x8002, 0x8003,
-	 * 0x8004, etc. the respective baud rates produced are 460800bps,
-	 * 230400bps, 153600bps, 115200bps, etc.
-	 *
-	 * In all cases only low 15 bits of the divisor are used to divide
-	 * the baud base and therefore 32767 is the maximum divisor value
-	 * possible, even though documentation says that the programmable
-	 * Baud Rate Generator is capable of dividing the internal PLL
-	 * clock by any divisor from 1 to 65535.
 	 */
-	if (magic_multiplier && baud >= port->uartclk / 6)
+	if ((port->flags & UPF_MAGIC_MULTIPLIER) &&
+	    baud == (port->uartclk/4))
 		quot = 0x8001;
-	else if (magic_multiplier && baud >= port->uartclk / 12)
+	else if ((port->flags & UPF_MAGIC_MULTIPLIER) &&
+		 baud == (port->uartclk/8))
 		quot = 0x8002;
 	else if (up->port.type == PORT_NPCM)
 		quot = npcm_get_divisor(up, baud);

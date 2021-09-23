@@ -63,8 +63,9 @@ struct master {
 	bool bound;
 
 	const struct component_master_ops *ops;
-	struct device *parent;
+	struct device *dev;
 	struct component_match *match;
+	struct dentry *dentry;
 };
 
 struct component {
@@ -95,7 +96,7 @@ static int component_devices_show(struct seq_file *s, void *data)
 	seq_printf(s, "%-40s %20s\n", "master name", "status");
 	seq_puts(s, "-------------------------------------------------------------\n");
 	seq_printf(s, "%-40s %20s\n\n",
-		   dev_name(m->parent), m->bound ? "bound" : "not bound");
+		   dev_name(m->dev), m->bound ? "bound" : "not bound");
 
 	seq_printf(s, "%-40s %20s\n", "device name", "status");
 	seq_puts(s, "-------------------------------------------------------------\n");
@@ -124,13 +125,15 @@ core_initcall(component_debug_init);
 
 static void component_master_debugfs_add(struct master *m)
 {
-	debugfs_create_file(dev_name(m->parent), 0444, component_debugfs_dir, m,
-			    &component_devices_fops);
+	m->dentry = debugfs_create_file(dev_name(m->dev), 0444,
+					component_debugfs_dir,
+					m, &component_devices_fops);
 }
 
 static void component_master_debugfs_del(struct master *m)
 {
-	debugfs_remove(debugfs_lookup(dev_name(m->parent), component_debugfs_dir));
+	debugfs_remove(m->dentry);
+	m->dentry = NULL;
 }
 
 #else
@@ -143,13 +146,13 @@ static void component_master_debugfs_del(struct master *m)
 
 #endif
 
-static struct master *__master_find(struct device *parent,
+static struct master *__master_find(struct device *dev,
 	const struct component_master_ops *ops)
 {
 	struct master *m;
 
 	list_for_each_entry(m, &masters, node)
-		if (m->parent == parent && (!ops || m->ops == ops))
+		if (m->dev == dev && (!ops || m->ops == ops))
 			return m;
 
 	return NULL;
@@ -189,7 +192,7 @@ static int find_components(struct master *master)
 		struct component_match_array *mc = &match->compare[i];
 		struct component *c;
 
-		dev_dbg(master->parent, "Looking for component %zu\n", i);
+		dev_dbg(master->dev, "Looking for component %zu\n", i);
 
 		if (match->compare[i].component)
 			continue;
@@ -200,7 +203,7 @@ static int find_components(struct master *master)
 			break;
 		}
 
-		dev_dbg(master->parent, "found component %s, duplicate %u\n", dev_name(c->dev), !!c->master);
+		dev_dbg(master->dev, "found component %s, duplicate %u\n", dev_name(c->dev), !!c->master);
 
 		/* Attach this component to the master */
 		match->compare[i].duplicate = !!c->master;
@@ -233,28 +236,28 @@ static int try_to_bring_up_master(struct master *master,
 {
 	int ret;
 
-	dev_dbg(master->parent, "trying to bring up master\n");
+	dev_dbg(master->dev, "trying to bring up master\n");
 
 	if (find_components(master)) {
-		dev_dbg(master->parent, "master has incomplete components\n");
+		dev_dbg(master->dev, "master has incomplete components\n");
 		return 0;
 	}
 
 	if (component && component->master != master) {
-		dev_dbg(master->parent, "master is not for this component (%s)\n",
+		dev_dbg(master->dev, "master is not for this component (%s)\n",
 			dev_name(component->dev));
 		return 0;
 	}
 
-	if (!devres_open_group(master->parent, NULL, GFP_KERNEL))
+	if (!devres_open_group(master->dev, NULL, GFP_KERNEL))
 		return -ENOMEM;
 
 	/* Found all components */
-	ret = master->ops->bind(master->parent);
+	ret = master->ops->bind(master->dev);
 	if (ret < 0) {
-		devres_release_group(master->parent, NULL);
+		devres_release_group(master->dev, NULL);
 		if (ret != -EPROBE_DEFER)
-			dev_info(master->parent, "master bind failed: %d\n", ret);
+			dev_info(master->dev, "master bind failed: %d\n", ret);
 		return ret;
 	}
 
@@ -281,28 +284,34 @@ static int try_to_bring_up_masters(struct component *component)
 static void take_down_master(struct master *master)
 {
 	if (master->bound) {
-		master->ops->unbind(master->parent);
-		devres_release_group(master->parent, NULL);
+		master->ops->unbind(master->dev);
+		devres_release_group(master->dev, NULL);
 		master->bound = false;
 	}
 }
 
-static void devm_component_match_release(struct device *parent, void *res)
+static void component_match_release(struct device *master,
+	struct component_match *match)
 {
-	struct component_match *match = res;
 	unsigned int i;
 
 	for (i = 0; i < match->num; i++) {
 		struct component_match_array *mc = &match->compare[i];
 
 		if (mc->release)
-			mc->release(parent, mc->data);
+			mc->release(master, mc->data);
 	}
 
 	kfree(match->compare);
 }
 
-static int component_match_realloc(struct component_match *match, size_t num)
+static void devm_component_match_release(struct device *dev, void *res)
+{
+	component_match_release(dev, res);
+}
+
+static int component_match_realloc(struct device *dev,
+	struct component_match *match, size_t num)
 {
 	struct component_match_array *new;
 
@@ -353,7 +362,7 @@ static void __component_match_add(struct device *master,
 		size_t new_size = match->alloc + 16;
 		int ret;
 
-		ret = component_match_realloc(match, new_size);
+		ret = component_match_realloc(master, match, new_size);
 		if (ret) {
 			*matchptr = ERR_PTR(ret);
 			return;
@@ -445,7 +454,7 @@ static void free_master(struct master *master)
 
 /**
  * component_master_add_with_match - register an aggregate driver
- * @parent: parent device of the aggregate driver
+ * @dev: device with the aggregate driver
  * @ops: callbacks for the aggregate driver
  * @match: component match list for the aggregate driver
  *
@@ -455,7 +464,7 @@ static void free_master(struct master *master)
  * &component_master_ops.bind from @ops. Must be unregistered by calling
  * component_master_del().
  */
-int component_master_add_with_match(struct device *parent,
+int component_master_add_with_match(struct device *dev,
 	const struct component_master_ops *ops,
 	struct component_match *match)
 {
@@ -463,7 +472,7 @@ int component_master_add_with_match(struct device *parent,
 	int ret;
 
 	/* Reallocate the match array for its true size */
-	ret = component_match_realloc(match, match->num);
+	ret = component_match_realloc(dev, match, match->num);
 	if (ret)
 		return ret;
 
@@ -471,7 +480,7 @@ int component_master_add_with_match(struct device *parent,
 	if (!master)
 		return -ENOMEM;
 
-	master->parent = parent;
+	master->dev = dev;
 	master->ops = ops;
 	master->match = match;
 
@@ -493,20 +502,20 @@ EXPORT_SYMBOL_GPL(component_master_add_with_match);
 
 /**
  * component_master_del - unregister an aggregate driver
- * @parent: parent device of the aggregate driver
+ * @dev: device with the aggregate driver
  * @ops: callbacks for the aggregate driver
  *
  * Unregisters an aggregate driver registered with
  * component_master_add_with_match(). If necessary the aggregate driver is first
  * disassembled by calling &component_master_ops.unbind from @ops.
  */
-void component_master_del(struct device *parent,
+void component_master_del(struct device *dev,
 	const struct component_master_ops *ops)
 {
 	struct master *master;
 
 	mutex_lock(&component_mutex);
-	master = __master_find(parent, ops);
+	master = __master_find(dev, ops);
 	if (master) {
 		take_down_master(master);
 		free_master(master);
@@ -521,7 +530,7 @@ static void component_unbind(struct component *component,
 	WARN_ON(!component->bound);
 
 	if (component->ops && component->ops->unbind)
-		component->ops->unbind(component->dev, master->parent, data);
+		component->ops->unbind(component->dev, master->dev, data);
 	component->bound = false;
 
 	/* Release all resources claimed in the binding of this component */
@@ -530,14 +539,14 @@ static void component_unbind(struct component *component,
 
 /**
  * component_unbind_all - unbind all components of an aggregate driver
- * @parent: parent device of the aggregate driver
+ * @master_dev: device with the aggregate driver
  * @data: opaque pointer, passed to all components
  *
- * Unbinds all components of the aggregate device by passing @data to their
+ * Unbinds all components of the aggregate @dev by passing @data to their
  * &component_ops.unbind functions. Should be called from
  * &component_master_ops.unbind.
  */
-void component_unbind_all(struct device *parent, void *data)
+void component_unbind_all(struct device *master_dev, void *data)
 {
 	struct master *master;
 	struct component *c;
@@ -545,7 +554,7 @@ void component_unbind_all(struct device *parent, void *data)
 
 	WARN_ON(!mutex_is_locked(&component_mutex));
 
-	master = __master_find(parent, NULL);
+	master = __master_find(master_dev, NULL);
 	if (!master)
 		return;
 
@@ -568,7 +577,7 @@ static int component_bind(struct component *component, struct master *master,
 	 * This allows us to roll-back a failed component without
 	 * affecting anything else.
 	 */
-	if (!devres_open_group(master->parent, NULL, GFP_KERNEL))
+	if (!devres_open_group(master->dev, NULL, GFP_KERNEL))
 		return -ENOMEM;
 
 	/*
@@ -577,14 +586,14 @@ static int component_bind(struct component *component, struct master *master,
 	 * at the appropriate moment.
 	 */
 	if (!devres_open_group(component->dev, component, GFP_KERNEL)) {
-		devres_release_group(master->parent, NULL);
+		devres_release_group(master->dev, NULL);
 		return -ENOMEM;
 	}
 
-	dev_dbg(master->parent, "binding %s (ops %ps)\n",
+	dev_dbg(master->dev, "binding %s (ops %ps)\n",
 		dev_name(component->dev), component->ops);
 
-	ret = component->ops->bind(component->dev, master->parent, data);
+	ret = component->ops->bind(component->dev, master->dev, data);
 	if (!ret) {
 		component->bound = true;
 
@@ -595,16 +604,16 @@ static int component_bind(struct component *component, struct master *master,
 		 * can clean those resources up independently.
 		 */
 		devres_close_group(component->dev, NULL);
-		devres_remove_group(master->parent, NULL);
+		devres_remove_group(master->dev, NULL);
 
-		dev_info(master->parent, "bound %s (ops %ps)\n",
+		dev_info(master->dev, "bound %s (ops %ps)\n",
 			 dev_name(component->dev), component->ops);
 	} else {
 		devres_release_group(component->dev, NULL);
-		devres_release_group(master->parent, NULL);
+		devres_release_group(master->dev, NULL);
 
 		if (ret != -EPROBE_DEFER)
-			dev_err(master->parent, "failed to bind %s (ops %ps): %d\n",
+			dev_err(master->dev, "failed to bind %s (ops %ps): %d\n",
 				dev_name(component->dev), component->ops, ret);
 	}
 
@@ -613,14 +622,14 @@ static int component_bind(struct component *component, struct master *master,
 
 /**
  * component_bind_all - bind all components of an aggregate driver
- * @parent: parent device of the aggregate driver
+ * @master_dev: device with the aggregate driver
  * @data: opaque pointer, passed to all components
  *
  * Binds all components of the aggregate @dev by passing @data to their
  * &component_ops.bind functions. Should be called from
  * &component_master_ops.bind.
  */
-int component_bind_all(struct device *parent, void *data)
+int component_bind_all(struct device *master_dev, void *data)
 {
 	struct master *master;
 	struct component *c;
@@ -629,7 +638,7 @@ int component_bind_all(struct device *parent, void *data)
 
 	WARN_ON(!mutex_is_locked(&component_mutex));
 
-	master = __master_find(parent, NULL);
+	master = __master_find(master_dev, NULL);
 	if (!master)
 		return -EINVAL;
 

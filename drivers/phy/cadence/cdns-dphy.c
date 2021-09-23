@@ -314,6 +314,7 @@ static int cdns_dphy_probe(struct platform_device *pdev)
 {
 	struct phy_provider *phy_provider;
 	struct cdns_dphy *dphy;
+	struct resource *res;
 	int ret;
 
 	dphy = devm_kzalloc(&pdev->dev, sizeof(*dphy), GFP_KERNEL);
@@ -325,7 +326,8 @@ static int cdns_dphy_probe(struct platform_device *pdev)
 	if (!dphy->ops)
 		return -EINVAL;
 
-	dphy->regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	dphy->regs = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(dphy->regs))
 		return PTR_ERR(dphy->regs);
 

@@ -73,11 +73,18 @@
 #define TODO_FLAGS_FINISH 0
 #endif
 
+#if BUILDING_GCC_VERSION >= 4009
 namespace {
 static const pass_data _PASS_NAME_PASS_DATA = {
+#else
+static struct simple_ipa_opt_pass _PASS_NAME_PASS = {
+	.pass = {
+#endif
 		.type			= SIMPLE_IPA_PASS,
 		.name			= _PASS_NAME_NAME,
+#if BUILDING_GCC_VERSION >= 4008
 		.optinfo_flags		= OPTGROUP_NONE,
+#endif
 #if BUILDING_GCC_VERSION >= 5000
 #elif BUILDING_GCC_VERSION == 4009
 		.has_gate		= _HAS_GATE,
@@ -95,8 +102,12 @@ static const pass_data _PASS_NAME_PASS_DATA = {
 		.properties_destroyed	= PROPERTIES_DESTROYED,
 		.todo_flags_start	= TODO_FLAGS_START,
 		.todo_flags_finish	= TODO_FLAGS_FINISH,
+#if BUILDING_GCC_VERSION < 4009
+	}
+#endif
 };
 
+#if BUILDING_GCC_VERSION >= 4009
 class _PASS_NAME_PASS : public simple_ipa_opt_pass {
 public:
 	_PASS_NAME_PASS() : simple_ipa_opt_pass(_PASS_NAME_PASS_DATA, g) {}
@@ -125,6 +136,12 @@ opt_pass *_MAKE_PASS_NAME_PASS(void)
 {
 	return new _PASS_NAME_PASS();
 }
+#else
+struct opt_pass *_MAKE_PASS_NAME_PASS(void)
+{
+	return &_PASS_NAME_PASS.pass;
+}
+#endif
 
 /* clean up user provided defines */
 #undef PASS_NAME

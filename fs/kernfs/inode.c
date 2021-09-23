@@ -17,6 +17,12 @@
 
 #include "kernfs-internal.h"
 
+static const struct address_space_operations kernfs_aops = {
+	.readpage	= simple_readpage,
+	.write_begin	= simple_write_begin,
+	.write_end	= simple_write_end,
+};
+
 static const struct inode_operations kernfs_iops = {
 	.permission	= kernfs_iop_permission,
 	.setattr	= kernfs_iop_setattr,
@@ -106,8 +112,7 @@ int kernfs_setattr(struct kernfs_node *kn, const struct iattr *iattr)
 	return ret;
 }
 
-int kernfs_iop_setattr(struct user_namespace *mnt_userns, struct dentry *dentry,
-		       struct iattr *iattr)
+int kernfs_iop_setattr(struct dentry *dentry, struct iattr *iattr)
 {
 	struct inode *inode = d_inode(dentry);
 	struct kernfs_node *kn = inode->i_private;
@@ -117,7 +122,7 @@ int kernfs_iop_setattr(struct user_namespace *mnt_userns, struct dentry *dentry,
 		return -EINVAL;
 
 	mutex_lock(&kernfs_mutex);
-	error = setattr_prepare(&init_user_ns, dentry, iattr);
+	error = setattr_prepare(dentry, iattr);
 	if (error)
 		goto out;
 
@@ -126,7 +131,7 @@ int kernfs_iop_setattr(struct user_namespace *mnt_userns, struct dentry *dentry,
 		goto out;
 
 	/* this ignores size changes */
-	setattr_copy(&init_user_ns, inode, iattr);
+	setattr_copy(inode, iattr);
 
 out:
 	mutex_unlock(&kernfs_mutex);
@@ -178,8 +183,7 @@ static void kernfs_refresh_inode(struct kernfs_node *kn, struct inode *inode)
 		set_nlink(inode, kn->dir.subdirs + 2);
 }
 
-int kernfs_iop_getattr(struct user_namespace *mnt_userns,
-		       const struct path *path, struct kstat *stat,
+int kernfs_iop_getattr(const struct path *path, struct kstat *stat,
 		       u32 request_mask, unsigned int query_flags)
 {
 	struct inode *inode = d_inode(path->dentry);
@@ -189,7 +193,7 @@ int kernfs_iop_getattr(struct user_namespace *mnt_userns,
 	kernfs_refresh_inode(kn, inode);
 	mutex_unlock(&kernfs_mutex);
 
-	generic_fillattr(&init_user_ns, inode, stat);
+	generic_fillattr(inode, stat);
 	return 0;
 }
 
@@ -197,7 +201,7 @@ static void kernfs_init_inode(struct kernfs_node *kn, struct inode *inode)
 {
 	kernfs_get(kn);
 	inode->i_private = kn;
-	inode->i_mapping->a_ops = &ram_aops;
+	inode->i_mapping->a_ops = &kernfs_aops;
 	inode->i_op = &kernfs_iops;
 	inode->i_generation = kernfs_gen(kn);
 
@@ -268,8 +272,7 @@ void kernfs_evict_inode(struct inode *inode)
 	kernfs_put(kn);
 }
 
-int kernfs_iop_permission(struct user_namespace *mnt_userns,
-			  struct inode *inode, int mask)
+int kernfs_iop_permission(struct inode *inode, int mask)
 {
 	struct kernfs_node *kn;
 
@@ -282,7 +285,7 @@ int kernfs_iop_permission(struct user_namespace *mnt_userns,
 	kernfs_refresh_inode(kn, inode);
 	mutex_unlock(&kernfs_mutex);
 
-	return generic_permission(&init_user_ns, inode, mask);
+	return generic_permission(inode, mask);
 }
 
 int kernfs_xattr_get(struct kernfs_node *kn, const char *name,
@@ -316,7 +319,6 @@ static int kernfs_vfs_xattr_get(const struct xattr_handler *handler,
 }
 
 static int kernfs_vfs_xattr_set(const struct xattr_handler *handler,
-				struct user_namespace *mnt_userns,
 				struct dentry *unused, struct inode *inode,
 				const char *suffix, const void *value,
 				size_t size, int flags)
@@ -383,7 +385,6 @@ static int kernfs_vfs_user_xattr_rm(struct kernfs_node *kn,
 }
 
 static int kernfs_vfs_user_xattr_set(const struct xattr_handler *handler,
-				     struct user_namespace *mnt_userns,
 				     struct dentry *unused, struct inode *inode,
 				     const char *suffix, const void *value,
 				     size_t size, int flags)

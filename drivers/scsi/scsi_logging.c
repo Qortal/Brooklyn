@@ -385,6 +385,7 @@ void scsi_print_result(const struct scsi_cmnd *cmd, const char *msg,
 	size_t off, logbuf_len;
 	const char *mlret_string = scsi_mlreturn_string(disposition);
 	const char *hb_string = scsi_hostbyte_string(cmd->result);
+	const char *db_string = scsi_driverbyte_string(cmd->result);
 	unsigned long cmd_age = (jiffies - cmd->jiffies_at_alloc) / HZ;
 
 	logbuf = scsi_log_reserve_buffer(&logbuf_len);
@@ -425,8 +426,13 @@ void scsi_print_result(const struct scsi_cmnd *cmd, const char *msg,
 	if (WARN_ON(off >= logbuf_len))
 		goto out_printk;
 
-	off += scnprintf(logbuf + off, logbuf_len - off,
-			 "driverbyte=DRIVER_OK ");
+	if (db_string)
+		off += scnprintf(logbuf + off, logbuf_len - off,
+				 "driverbyte=%s ", db_string);
+	else
+		off += scnprintf(logbuf + off, logbuf_len - off,
+				 "driverbyte=0x%02x ",
+				 driver_byte(cmd->result));
 
 	off += scnprintf(logbuf + off, logbuf_len - off,
 			 "cmd_age=%lus", cmd_age);

@@ -1090,8 +1090,7 @@ hfsc_destroy_class(struct Qdisc *sch, struct hfsc_class *cl)
 }
 
 static int
-hfsc_delete_class(struct Qdisc *sch, unsigned long arg,
-		  struct netlink_ext_ack *extack)
+hfsc_delete_class(struct Qdisc *sch, unsigned long arg)
 {
 	struct hfsc_sched *q = qdisc_priv(sch);
 	struct hfsc_class *cl = (struct hfsc_class *)arg;

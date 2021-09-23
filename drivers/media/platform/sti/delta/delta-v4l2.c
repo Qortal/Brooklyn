@@ -954,8 +954,10 @@ static void delta_run_work(struct work_struct *work)
 	/* enable the hardware */
 	if (!dec->pm) {
 		ret = delta_get_sync(ctx);
-		if (ret)
+		if (ret) {
+			delta_put_autosuspend(ctx);
 			goto err;
+		}
 	}
 
 	/* decode this access unit */
@@ -1007,6 +1009,7 @@ static void delta_run_work(struct work_struct *work)
 			dev_err(delta->dev,
 				"%s  NULL decoded frame\n",
 				ctx->name);
+			ret = -EIO;
 			goto out;
 		}
 
@@ -1274,9 +1277,9 @@ int delta_get_sync(struct delta_ctx *ctx)
 	int ret = 0;
 
 	/* enable the hardware */
-	ret = pm_runtime_resume_and_get(delta->dev);
+	ret = pm_runtime_get_sync(delta->dev);
 	if (ret < 0) {
-		dev_err(delta->dev, "%s pm_runtime_resume_and_get failed (%d)\n",
+		dev_err(delta->dev, "%s pm_runtime_get_sync failed (%d)\n",
 			__func__, ret);
 		return ret;
 	}

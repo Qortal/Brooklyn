@@ -17,7 +17,7 @@ struct vc4_debugfs_info_entry {
 	struct drm_info_list info;
 };
 
-/*
+/**
  * Called at drm_dev_register() time on each of the minors registered
  * by the DRM device, to attach the debugfs files.
  */
@@ -49,7 +49,7 @@ static int vc4_debugfs_regset32(struct seq_file *m, void *unused)
 	return 0;
 }
 
-/*
+/**
  * Registers a debugfs file with a callback function for a vc4 component.
  *
  * This is like drm_debugfs_create_files(), but that can only be

@@ -160,9 +160,11 @@ static void s390_cpumcfdg_dump(struct perf_sample *sample)
 	const char *color = PERF_COLOR_BLUE;
 	struct cf_ctrset_entry *cep, ce;
 	struct pmu_events_map *map;
+	struct perf_pmu pmu;
 	u64 *p;
 
-	map = pmu_events_map__find();
+	memset(&pmu, 0, sizeof(pmu));
+	map = perf_pmu__find_map(&pmu);
 	while (offset < len) {
 		cep = (struct cf_ctrset_entry *)(buf + offset);
 
@@ -195,14 +197,15 @@ static void s390_cpumcfdg_dump(struct perf_sample *sample)
  * its raw data.
  * The function is only invoked when the dump flag -D is set.
  */
-void evlist__s390_sample_raw(struct evlist *evlist, union perf_event *event, struct perf_sample *sample)
+void perf_evlist__s390_sample_raw(struct evlist *evlist, union perf_event *event,
+				  struct perf_sample *sample)
 {
 	struct evsel *ev_bc000;
 
 	if (event->header.type != PERF_RECORD_SAMPLE)
 		return;
 
-	ev_bc000 = evlist__event2evsel(evlist, event);
+	ev_bc000 = perf_evlist__event2evsel(evlist, event);
 	if (ev_bc000 == NULL ||
 	    ev_bc000->core.attr.config != PERF_EVENT_CPUM_CF_DIAG)
 		return;

@@ -81,7 +81,7 @@
 
 struct p80211ioctl_req {
 	char name[WLAN_DEVNAMELEN_MAX];
-	char __user *data;
+	caddr_t data;
 	u32 magic;
 	u16 len;
 	u32 result;

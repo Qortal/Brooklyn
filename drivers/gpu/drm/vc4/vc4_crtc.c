@@ -32,7 +32,6 @@
 #include <linux/clk.h>
 #include <linux/component.h>
 #include <linux/of_device.h>
-#include <linux/pm_runtime.h>
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
@@ -43,7 +42,6 @@
 #include <drm/drm_vblank.h>
 
 #include "vc4_drv.h"
-#include "vc4_hdmi.h"
 #include "vc4_regs.h"
 
 #define HVS_FIFO_LATENCY_PIX	6
@@ -503,10 +501,8 @@ int vc4_crtc_disable_at_boot(struct drm_crtc *crtc)
 	enum vc4_encoder_type encoder_type;
 	const struct vc4_pv_data *pv_data;
 	struct drm_encoder *encoder;
-	struct vc4_hdmi *vc4_hdmi;
 	unsigned encoder_sel;
 	int channel;
-	int ret;
 
 	if (!(of_device_is_compatible(vc4_crtc->pdev->dev.of_node,
 				      "brcm,bcm2711-pixelvalve2") ||
@@ -534,14 +530,7 @@ int vc4_crtc_disable_at_boot(struct drm_crtc *crtc)
 	if (WARN_ON(!encoder))
 		return 0;
 
-	vc4_hdmi = encoder_to_vc4_hdmi(encoder);
-	WARN_ON(pm_runtime_resume_and_get(&vc4_hdmi->pdev->dev));
-
-	ret = vc4_crtc_disable(crtc, encoder, NULL, channel);
-
-	pm_runtime_put(&vc4_hdmi->pdev->dev);
-
-	return ret;
+	return vc4_crtc_disable(crtc, encoder, NULL, channel);
 }
 
 static void vc4_crtc_atomic_disable(struct drm_crtc *crtc,
@@ -792,6 +781,7 @@ vc4_async_page_flip_complete(struct vc4_seqno_cb *cb)
 		container_of(cb, struct vc4_async_flip_state, cb);
 	struct drm_crtc *crtc = flip_state->crtc;
 	struct drm_device *dev = crtc->dev;
+	struct vc4_dev *vc4 = to_vc4_dev(dev);
 	struct drm_plane *plane = crtc->primary;
 
 	vc4_plane_async_set_fb(plane, flip_state->fb);
@@ -823,6 +813,8 @@ vc4_async_page_flip_complete(struct vc4_seqno_cb *cb)
 	}
 
 	kfree(flip_state);
+
+	up(&vc4->async_modeset);
 }
 
 /* Implements async (non-vblank-synced) page flips.
@@ -837,6 +829,7 @@ static int vc4_async_page_flip(struct drm_crtc *crtc,
 			       uint32_t flags)
 {
 	struct drm_device *dev = crtc->dev;
+	struct vc4_dev *vc4 = to_vc4_dev(dev);
 	struct drm_plane *plane = crtc->primary;
 	int ret = 0;
 	struct vc4_async_flip_state *flip_state;
@@ -864,6 +857,15 @@ static int vc4_async_page_flip(struct drm_crtc *crtc,
 	flip_state->fb = fb;
 	flip_state->crtc = crtc;
 	flip_state->event = event;
+
+	/* Make sure all other async modesetes have landed. */
+	ret = down_interruptible(&vc4->async_modeset);
+	if (ret) {
+		drm_framebuffer_put(fb);
+		vc4_bo_dec_usecnt(bo);
+		kfree(flip_state);
+		return ret;
+	}
 
 	/* Save the current FB before it's replaced by the new one in
 	 * drm_atomic_set_fb_for_plane(). We'll need the old FB in

@@ -185,12 +185,10 @@ static struct btrfs_block_group *find_next_block_group(
 }
 
 /**
- * Wrap find_next_block_group()
- *
- * @discard_ctl:   discard control
+ * peek_discard_list - wrap find_next_block_group()
+ * @discard_ctl: discard control
  * @discard_state: the discard_state of the block_group after state management
  * @discard_index: the discard_index of the block_group after state management
- * @now:           time when discard was invoked, in ns
  *
  * This wraps find_next_block_group() and sets the block_group to be in use.
  * discard_state's control flow is managed here.  Variables related to
@@ -342,7 +340,7 @@ static void __btrfs_discard_schedule_work(struct btrfs_discard_ctl *discard_ctl,
 
 	block_group = find_next_block_group(discard_ctl, now);
 	if (block_group) {
-		u64 delay = discard_ctl->delay_ms * NSEC_PER_MSEC;
+		unsigned long delay = discard_ctl->delay;
 		u32 kbps_limit = READ_ONCE(discard_ctl->kbps_limit);
 
 		/*
@@ -353,9 +351,9 @@ static void __btrfs_discard_schedule_work(struct btrfs_discard_ctl *discard_ctl,
 		if (kbps_limit && discard_ctl->prev_discard) {
 			u64 bps_limit = ((u64)kbps_limit) * SZ_1K;
 			u64 bps_delay = div64_u64(discard_ctl->prev_discard *
-						  NSEC_PER_SEC, bps_limit);
+						  MSEC_PER_SEC, bps_limit);
 
-			delay = max(delay, bps_delay);
+			delay = max(delay, msecs_to_jiffies(bps_delay));
 		}
 
 		/*
@@ -365,20 +363,11 @@ static void __btrfs_discard_schedule_work(struct btrfs_discard_ctl *discard_ctl,
 		if (now < block_group->discard_eligible_time) {
 			u64 bg_timeout = block_group->discard_eligible_time - now;
 
-			delay = max(delay, bg_timeout);
-		}
-
-		if (override && discard_ctl->prev_discard) {
-			u64 elapsed = now - discard_ctl->prev_discard_time;
-
-			if (delay > elapsed)
-				delay -= elapsed;
-			else
-				delay = 0;
+			delay = max(delay, nsecs_to_jiffies(bg_timeout));
 		}
 
 		mod_delayed_work(discard_ctl->discard_workers,
-				 &discard_ctl->work, nsecs_to_jiffies(delay));
+				 &discard_ctl->work, delay);
 	}
 }
 
@@ -483,6 +472,8 @@ static void btrfs_discard_workfn(struct work_struct *work)
 		discard_ctl->discard_extent_bytes += trimmed;
 	}
 
+	discard_ctl->prev_discard = trimmed;
+
 	/* Determine next steps for a block_group */
 	if (block_group->discard_cursor >= btrfs_block_group_end(block_group)) {
 		if (discard_state == BTRFS_DISCARD_BITMAPS) {
@@ -498,10 +489,7 @@ static void btrfs_discard_workfn(struct work_struct *work)
 		}
 	}
 
-	now = ktime_get_ns();
 	spin_lock(&discard_ctl->lock);
-	discard_ctl->prev_discard = trimmed;
-	discard_ctl->prev_discard_time = now;
 	discard_ctl->block_group = NULL;
 	__btrfs_discard_schedule_work(discard_ctl, now, false);
 	spin_unlock(&discard_ctl->lock);
@@ -537,6 +525,7 @@ void btrfs_discard_calc_delay(struct btrfs_discard_ctl *discard_ctl)
 	s64 discardable_bytes;
 	u32 iops_limit;
 	unsigned long delay;
+	unsigned long lower_limit = BTRFS_DISCARD_MIN_DELAY_MSEC;
 
 	discardable_extents = atomic_read(&discard_ctl->discardable_extents);
 	if (!discardable_extents)
@@ -567,13 +556,12 @@ void btrfs_discard_calc_delay(struct btrfs_discard_ctl *discard_ctl)
 
 	iops_limit = READ_ONCE(discard_ctl->iops_limit);
 	if (iops_limit)
-		delay = MSEC_PER_SEC / iops_limit;
-	else
-		delay = BTRFS_DISCARD_TARGET_MSEC / discardable_extents;
+		lower_limit = max_t(unsigned long, lower_limit,
+				    MSEC_PER_SEC / iops_limit);
 
-	delay = clamp(delay, BTRFS_DISCARD_MIN_DELAY_MSEC,
-		      BTRFS_DISCARD_MAX_DELAY_MSEC);
-	discard_ctl->delay_ms = delay;
+	delay = BTRFS_DISCARD_TARGET_MSEC / discardable_extents;
+	delay = clamp(delay, lower_limit, BTRFS_DISCARD_MAX_DELAY_MSEC);
+	discard_ctl->delay = msecs_to_jiffies(delay);
 
 	spin_unlock(&discard_ctl->lock);
 }
@@ -581,14 +569,15 @@ void btrfs_discard_calc_delay(struct btrfs_discard_ctl *discard_ctl)
 /**
  * btrfs_discard_update_discardable - propagate discard counters
  * @block_group: block_group of interest
+ * @ctl: free_space_ctl of @block_group
  *
  * This propagates deltas of counters up to the discard_ctl.  It maintains a
  * current counter and a previous counter passing the delta up to the global
  * stat.  Then the current counter value becomes the previous counter value.
  */
-void btrfs_discard_update_discardable(struct btrfs_block_group *block_group)
+void btrfs_discard_update_discardable(struct btrfs_block_group *block_group,
+				      struct btrfs_free_space_ctl *ctl)
 {
-	struct btrfs_free_space_ctl *ctl;
 	struct btrfs_discard_ctl *discard_ctl;
 	s32 extents_delta;
 	s64 bytes_delta;
@@ -598,10 +587,8 @@ void btrfs_discard_update_discardable(struct btrfs_block_group *block_group)
 	    !btrfs_is_block_group_data_only(block_group))
 		return;
 
-	ctl = block_group->free_space_ctl;
 	discard_ctl = &block_group->fs_info->discard_ctl;
 
-	lockdep_assert_held(&ctl->tree_lock);
 	extents_delta = ctl->discardable_extents[BTRFS_STAT_CURR] -
 			ctl->discardable_extents[BTRFS_STAT_PREV];
 	if (extents_delta) {
@@ -624,7 +611,7 @@ void btrfs_discard_update_discardable(struct btrfs_block_group *block_group)
  * @fs_info: fs_info of interest
  *
  * The unused_bgs list needs to be punted to the discard lists because the
- * order of operations is changed.  In the normal synchronous discard path, the
+ * order of operations is changed.  In the normal sychronous discard path, the
  * block groups are trimmed via a single large trim in transaction commit.  This
  * is ultimately what we are trying to avoid with asynchronous discard.  Thus,
  * it must be done before going down the unused_bgs path.
@@ -703,11 +690,10 @@ void btrfs_discard_init(struct btrfs_fs_info *fs_info)
 		INIT_LIST_HEAD(&discard_ctl->discard_list[i]);
 
 	discard_ctl->prev_discard = 0;
-	discard_ctl->prev_discard_time = 0;
 	atomic_set(&discard_ctl->discardable_extents, 0);
 	atomic64_set(&discard_ctl->discardable_bytes, 0);
 	discard_ctl->max_discard_size = BTRFS_ASYNC_DISCARD_DEFAULT_MAX_SIZE;
-	discard_ctl->delay_ms = BTRFS_DISCARD_MAX_DELAY_MSEC;
+	discard_ctl->delay = BTRFS_DISCARD_MAX_DELAY_MSEC;
 	discard_ctl->iops_limit = BTRFS_DISCARD_MAX_IOPS;
 	discard_ctl->kbps_limit = 0;
 	discard_ctl->discard_extent_bytes = 0;

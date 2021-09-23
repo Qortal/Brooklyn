@@ -552,8 +552,9 @@ static void pci_of_scan_bus(struct pci_pbm_info *pbm,
 		pci_info(bus, "scan_bus[%pOF] bus no %d\n",
 			 node, bus->number);
 
+	child = NULL;
 	prev_devfn = -1;
-	for_each_child_of_node(node, child) {
+	while ((child = of_get_next_child(node, child)) != NULL) {
 		if (ofpci_verbose)
 			pci_info(bus, "  * %pOF\n", child);
 		reg = of_get_property(child, "reg", &reglen);

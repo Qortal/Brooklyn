@@ -418,7 +418,7 @@ static void qtnf_topaz_data_tx_reclaim(struct qtnf_pcie_topaz_state *ts)
 					 PCI_DMA_TODEVICE);
 
 			if (skb->dev) {
-				dev_sw_netstats_tx_add(skb->dev, 1, skb->len);
+				qtnf_update_tx_stats(skb->dev, skb);
 				if (unlikely(priv->tx_stopped)) {
 					qtnf_wake_all_queues(skb->dev);
 					priv->tx_stopped = 0;
@@ -662,7 +662,7 @@ static int qtnf_topaz_rx_poll(struct napi_struct *napi, int budget)
 			skb_put(skb, psize);
 			ndev = qtnf_classify_skb(bus, skb);
 			if (likely(ndev)) {
-				dev_sw_netstats_rx_add(ndev, skb->len);
+				qtnf_update_rx_stats(ndev, skb);
 				skb->protocol = eth_type_trans(skb, ndev);
 				netif_receive_skb(skb);
 			} else {

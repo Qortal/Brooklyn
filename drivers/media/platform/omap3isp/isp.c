@@ -691,8 +691,6 @@ static int isp_pipeline_enable(struct isp_pipeline *pipe,
 
 	pipe->do_propagation = false;
 
-	mutex_lock(&isp->media_dev.graph_mutex);
-
 	entity = &pipe->output->video.entity;
 	while (1) {
 		pad = &entity->pads[0];
@@ -707,10 +705,8 @@ static int isp_pipeline_enable(struct isp_pipeline *pipe,
 		subdev = media_entity_to_v4l2_subdev(entity);
 
 		ret = v4l2_subdev_call(subdev, video, s_stream, mode);
-		if (ret < 0 && ret != -ENOIOCTLCMD) {
-			mutex_unlock(&isp->media_dev.graph_mutex);
+		if (ret < 0 && ret != -ENOIOCTLCMD)
 			return ret;
-		}
 
 		if (subdev == &isp->isp_ccdc.subdev) {
 			v4l2_subdev_call(&isp->isp_aewb.subdev, video,
@@ -726,8 +722,6 @@ static int isp_pipeline_enable(struct isp_pipeline *pipe,
 		if (subdev->dev != isp->dev)
 			break;
 	}
-
-	mutex_unlock(&isp->media_dev.graph_mutex);
 
 	return 0;
 }
@@ -2034,8 +2028,6 @@ static int isp_subdev_notifier_complete(struct v4l2_async_notifier *async)
 	struct v4l2_subdev *sd;
 	int ret;
 
-	mutex_lock(&isp->media_dev.graph_mutex);
-
 	ret = media_entity_enum_init(&isp->crashed, &isp->media_dev);
 	if (ret)
 		return ret;
@@ -2046,13 +2038,9 @@ static int isp_subdev_notifier_complete(struct v4l2_async_notifier *async)
 
 		ret = isp_link_entity(isp, &sd->entity,
 				      v4l2_subdev_to_bus_cfg(sd)->interface);
-		if (ret < 0) {
-			mutex_unlock(&isp->media_dev.graph_mutex);
+		if (ret < 0)
 			return ret;
-		}
 	}
-
-	mutex_unlock(&isp->media_dev.graph_mutex);
 
 	ret = v4l2_device_register_subdev_nodes(&isp->v4l2_dev);
 	if (ret < 0)
@@ -2153,6 +2141,7 @@ static int isp_parse_of_endpoints(struct isp_device *isp)
 {
 	struct fwnode_handle *ep;
 	struct isp_async_subdev *isd = NULL;
+	struct v4l2_async_subdev *asd;
 	unsigned int i;
 
 	ep = fwnode_graph_get_endpoint_by_id(
@@ -2170,10 +2159,12 @@ static int isp_parse_of_endpoints(struct isp_device *isp)
 		ret = v4l2_fwnode_endpoint_parse(ep, &vep);
 
 		if (!ret) {
-			isd = v4l2_async_notifier_add_fwnode_remote_subdev(
-				&isp->notifier, ep, struct isp_async_subdev);
-			if (!IS_ERR(isd))
+			asd = v4l2_async_notifier_add_fwnode_remote_subdev(
+				&isp->notifier, ep, sizeof(*isd));
+			if (!IS_ERR(asd)) {
+				isd = container_of(asd, struct isp_async_subdev, asd);
 				isp_parse_of_parallel_endpoint(isp->dev, &vep, &isd->bus);
+			}
 		}
 
 		fwnode_handle_put(ep);
@@ -2209,10 +2200,12 @@ static int isp_parse_of_endpoints(struct isp_device *isp)
 		}
 
 		if (!ret) {
-			isd = v4l2_async_notifier_add_fwnode_remote_subdev(
-				&isp->notifier, ep, struct isp_async_subdev);
+			asd = v4l2_async_notifier_add_fwnode_remote_subdev(
+				&isp->notifier, ep, sizeof(*isd));
 
-			if (!IS_ERR(isd)) {
+			if (!IS_ERR(asd)) {
+				isd = container_of(asd, struct isp_async_subdev, asd);
+
 				switch (vep.bus_type) {
 				case V4L2_MBUS_CSI2_DPHY:
 					isd->bus.interface =

@@ -553,7 +553,6 @@ static int dummy_enable(struct usb_ep *_ep,
 				/* we'll fake any legal size */
 				break;
 			/* save a return statement */
-			fallthrough;
 		default:
 			goto done;
 		}
@@ -596,7 +595,6 @@ static int dummy_enable(struct usb_ep *_ep,
 			if (max <= 1023)
 				break;
 			/* save a return statement */
-			fallthrough;
 		default:
 			goto done;
 		}
@@ -934,15 +932,6 @@ static void dummy_udc_set_speed(struct usb_gadget *_gadget,
 	dummy_udc_update_ep0(dum);
 }
 
-static void dummy_udc_async_callbacks(struct usb_gadget *_gadget, bool enable)
-{
-	struct dummy	*dum = gadget_dev_to_dummy(&_gadget->dev);
-
-	spin_lock_irq(&dum->lock);
-	dum->ints_enabled = enable;
-	spin_unlock_irq(&dum->lock);
-}
-
 static int dummy_udc_start(struct usb_gadget *g,
 		struct usb_gadget_driver *driver);
 static int dummy_udc_stop(struct usb_gadget *g);
@@ -955,7 +944,6 @@ static const struct usb_gadget_ops dummy_ops = {
 	.udc_start	= dummy_udc_start,
 	.udc_stop	= dummy_udc_stop,
 	.udc_set_speed	= dummy_udc_set_speed,
-	.udc_async_callbacks = dummy_udc_async_callbacks,
 };
 
 /*-------------------------------------------------------------------------*/
@@ -1015,6 +1003,7 @@ static int dummy_udc_start(struct usb_gadget *g,
 	spin_lock_irq(&dum->lock);
 	dum->devstatus = 0;
 	dum->driver = driver;
+	dum->ints_enabled = 1;
 	spin_unlock_irq(&dum->lock);
 
 	return 0;
@@ -1772,10 +1761,8 @@ static int handle_control_request(struct dummy_hcd *dum_hcd, struct urb *urb,
 	return ret_val;
 }
 
-/*
- * Drive both sides of the transfers; looks like irq handlers to both
- * drivers except that the callbacks are invoked from soft interrupt
- * context.
+/* drive both sides of the transfers; looks like irq handlers to
+ * both drivers except the callbacks aren't in_irq().
  */
 static void dummy_timer(struct timer_list *t)
 {
@@ -1882,7 +1869,7 @@ restart:
 		/* handle control requests */
 		if (ep == &dum->ep[0] && ep->setup_stage) {
 			struct usb_ctrlrequest		setup;
-			int				value;
+			int				value = 1;
 
 			setup = *(struct usb_ctrlrequest *) urb->setup_packet;
 			/* paranoia, in case of stale queued data */

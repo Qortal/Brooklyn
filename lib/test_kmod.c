@@ -286,7 +286,7 @@ static int tally_work_test(struct kmod_test_device_info *info)
  * If this ran it means *all* tasks were created fine and we
  * are now just collecting results.
  *
- * Only propagate errors, do not override with a subsequent success case.
+ * Only propagate errors, do not override with a subsequent sucess case.
  */
 static void tally_up_work(struct kmod_test_device *test_dev)
 {
@@ -543,7 +543,7 @@ static int trigger_config_run(struct kmod_test_device *test_dev)
 	 * wrong with the setup of the test. If the test setup went fine
 	 * then userspace must just check the result of config->test_result.
 	 * One issue with relying on the return from a call in the kernel
-	 * is if the kernel returns a positive value using this trigger
+	 * is if the kernel returns a possitive value using this trigger
 	 * will not return the value to userspace, it would be lost.
 	 *
 	 * By not relying on capturing the return value of tests we are using
@@ -585,7 +585,7 @@ trigger_config_store(struct device *dev,
 	 * Note: any return > 0 will be treated as success
 	 * and the error value will not be available to userspace.
 	 * Do not rely on trying to send to userspace a test value
-	 * return value as positive return errors will be lost.
+	 * return value as possitive return errors will be lost.
 	 */
 	if (WARN_ON(ret > 0))
 		return -EINVAL;
@@ -877,17 +877,20 @@ static int test_dev_config_update_uint_sync(struct kmod_test_device *test_dev,
 					    int (*test_sync)(struct kmod_test_device *test_dev))
 {
 	int ret;
-	unsigned int val;
+	unsigned long new;
 	unsigned int old_val;
 
-	ret = kstrtouint(buf, 10, &val);
+	ret = kstrtoul(buf, 10, &new);
 	if (ret)
 		return ret;
+
+	if (new > UINT_MAX)
+		return -EINVAL;
 
 	mutex_lock(&test_dev->config_mutex);
 
 	old_val = *config;
-	*(unsigned int *)config = val;
+	*(unsigned int *)config = new;
 
 	ret = test_sync(test_dev);
 	if (ret) {
@@ -911,18 +914,18 @@ static int test_dev_config_update_uint_range(struct kmod_test_device *test_dev,
 					     unsigned int min,
 					     unsigned int max)
 {
-	unsigned int val;
 	int ret;
+	unsigned long new;
 
-	ret = kstrtouint(buf, 10, &val);
+	ret = kstrtoul(buf, 10, &new);
 	if (ret)
 		return ret;
 
-	if (val < min || val > max)
+	if (new < min || new > max)
 		return -EINVAL;
 
 	mutex_lock(&test_dev->config_mutex);
-	*config = val;
+	*config = new;
 	mutex_unlock(&test_dev->config_mutex);
 
 	/* Always return full write size even if we didn't consume all */
@@ -933,15 +936,18 @@ static int test_dev_config_update_int(struct kmod_test_device *test_dev,
 				      const char *buf, size_t size,
 				      int *config)
 {
-	int val;
 	int ret;
+	long new;
 
-	ret = kstrtoint(buf, 10, &val);
+	ret = kstrtol(buf, 10, &new);
 	if (ret)
 		return ret;
 
+	if (new < INT_MIN || new > INT_MAX)
+		return -EINVAL;
+
 	mutex_lock(&test_dev->config_mutex);
-	*config = val;
+	*config = new;
 	mutex_unlock(&test_dev->config_mutex);
 	/* Always return full write size even if we didn't consume all */
 	return size;

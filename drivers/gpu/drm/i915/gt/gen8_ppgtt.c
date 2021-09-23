@@ -5,8 +5,6 @@
 
 #include <linux/log2.h>
 
-#include "gem/i915_gem_lmem.h"
-
 #include "gen8_ppgtt.h"
 #include "i915_scatterlist.h"
 #include "i915_trace.h"
@@ -36,9 +34,6 @@ static u64 gen8_pte_encode(dma_addr_t addr,
 
 	if (unlikely(flags & PTE_READ_ONLY))
 		pte &= ~_PAGE_RW;
-
-	if (flags & PTE_LM)
-		pte |= GEN12_PPGTT_PTE_LM;
 
 	switch (level) {
 	case I915_CACHE_NONE:
@@ -114,7 +109,7 @@ static void gen8_ppgtt_notify_vgt(struct i915_ppgtt *ppgtt, bool create)
 
 #define as_pd(x) container_of((x), typeof(struct i915_page_directory), pt)
 
-static unsigned int
+static inline unsigned int
 gen8_pd_range(u64 start, u64 end, int lvl, unsigned int *idx)
 {
 	const int shift = gen8_pd_shift(lvl);
@@ -130,7 +125,7 @@ gen8_pd_range(u64 start, u64 end, int lvl, unsigned int *idx)
 		return i915_pde_index(end, shift) - *idx;
 }
 
-static bool gen8_pd_contains(u64 start, u64 end, int lvl)
+static inline bool gen8_pd_contains(u64 start, u64 end, int lvl)
 {
 	const u64 mask = ~0ull << gen8_pd_shift(lvl + 1);
 
@@ -138,7 +133,7 @@ static bool gen8_pd_contains(u64 start, u64 end, int lvl)
 	return (start ^ end) & mask && (start & ~mask) == 0;
 }
 
-static unsigned int gen8_pt_count(u64 start, u64 end)
+static inline unsigned int gen8_pt_count(u64 start, u64 end)
 {
 	GEM_BUG_ON(start >= end);
 	if ((start ^ end) >> gen8_pd_shift(1))
@@ -147,14 +142,14 @@ static unsigned int gen8_pt_count(u64 start, u64 end)
 		return end - start;
 }
 
-static unsigned int gen8_pd_top_count(const struct i915_address_space *vm)
+static inline unsigned int
+gen8_pd_top_count(const struct i915_address_space *vm)
 {
 	unsigned int shift = __gen8_pte_shift(vm->top);
-
 	return (vm->total + (1ull << shift) - 1) >> shift;
 }
 
-static struct i915_page_directory *
+static inline struct i915_page_directory *
 gen8_pdp_for_page_index(struct i915_address_space * const vm, const u64 idx)
 {
 	struct i915_ppgtt * const ppgtt = i915_vm_to_ppgtt(vm);
@@ -165,7 +160,7 @@ gen8_pdp_for_page_index(struct i915_address_space * const vm, const u64 idx)
 		return i915_pd_entry(ppgtt->pd, gen8_pd_index(idx, vm->top));
 }
 
-static struct i915_page_directory *
+static inline struct i915_page_directory *
 gen8_pdp_for_page_address(struct i915_address_space * const vm, const u64 addr)
 {
 	return gen8_pdp_for_page_index(vm, addr >> GEN8_PTE_SHIFT);
@@ -242,10 +237,11 @@ static u64 __gen8_ppgtt_clear(struct i915_address_space * const vm,
 			    atomic_read(&pt->used));
 			GEM_BUG_ON(!count || count >= atomic_read(&pt->used));
 
-			vaddr = px_vaddr(pt);
+			vaddr = kmap_atomic_px(pt);
 			memset64(vaddr + gen8_pd_index(start, 0),
 				 vm->scratch[0]->encode,
 				 count);
+			kunmap_atomic(vaddr);
 
 			atomic_sub(count, &pt->used);
 			start += count;
@@ -371,21 +367,21 @@ gen8_ppgtt_insert_pte(struct i915_ppgtt *ppgtt,
 	gen8_pte_t *vaddr;
 
 	pd = i915_pd_entry(pdp, gen8_pd_index(idx, 2));
-	vaddr = px_vaddr(i915_pt_entry(pd, gen8_pd_index(idx, 1)));
+	vaddr = kmap_atomic_px(i915_pt_entry(pd, gen8_pd_index(idx, 1)));
 	do {
-		GEM_BUG_ON(sg_dma_len(iter->sg) < I915_GTT_PAGE_SIZE);
+		GEM_BUG_ON(iter->sg->length < I915_GTT_PAGE_SIZE);
 		vaddr[gen8_pd_index(idx, 0)] = pte_encode | iter->dma;
 
 		iter->dma += I915_GTT_PAGE_SIZE;
 		if (iter->dma >= iter->max) {
 			iter->sg = __sg_next(iter->sg);
-			if (!iter->sg || sg_dma_len(iter->sg) == 0) {
+			if (!iter->sg) {
 				idx = 0;
 				break;
 			}
 
 			iter->dma = sg_dma_address(iter->sg);
-			iter->max = iter->dma + sg_dma_len(iter->sg);
+			iter->max = iter->dma + iter->sg->length;
 		}
 
 		if (gen8_pd_index(++idx, 0) == 0) {
@@ -398,10 +394,12 @@ gen8_ppgtt_insert_pte(struct i915_ppgtt *ppgtt,
 			}
 
 			clflush_cache_range(vaddr, PAGE_SIZE);
-			vaddr = px_vaddr(i915_pt_entry(pd, gen8_pd_index(idx, 1)));
+			kunmap_atomic(vaddr);
+			vaddr = kmap_atomic_px(i915_pt_entry(pd, gen8_pd_index(idx, 1)));
 		}
 	} while (1);
 	clflush_cache_range(vaddr, PAGE_SIZE);
+	kunmap_atomic(vaddr);
 
 	return idx;
 }
@@ -412,8 +410,8 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 				   u32 flags)
 {
 	const gen8_pte_t pte_encode = gen8_pte_encode(0, cache_level, flags);
-	unsigned int rem = sg_dma_len(iter->sg);
 	u64 start = vma->node.start;
+	dma_addr_t rem = iter->sg->length;
 
 	GEM_BUG_ON(!i915_vm_is_4lvl(vma->vm));
 
@@ -436,7 +434,7 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 			encode |= GEN8_PDE_PS_2M;
 			page_size = I915_GTT_PAGE_SIZE_2M;
 
-			vaddr = px_vaddr(pd);
+			vaddr = kmap_atomic_px(pd);
 		} else {
 			struct i915_page_table *pt =
 				i915_pt_entry(pd, __gen8_pte_index(start, 1));
@@ -451,11 +449,11 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 			     rem >= (I915_PDES - index) * I915_GTT_PAGE_SIZE))
 				maybe_64K = __gen8_pte_index(start, 1);
 
-			vaddr = px_vaddr(pt);
+			vaddr = kmap_atomic_px(pt);
 		}
 
 		do {
-			GEM_BUG_ON(sg_dma_len(iter->sg) < page_size);
+			GEM_BUG_ON(iter->sg->length < page_size);
 			vaddr[index++] = encode | iter->dma;
 
 			start += page_size;
@@ -466,10 +464,7 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 				if (!iter->sg)
 					break;
 
-				rem = sg_dma_len(iter->sg);
-				if (!rem)
-					break;
-
+				rem = iter->sg->length;
 				iter->dma = sg_dma_address(iter->sg);
 				iter->max = iter->dma + rem;
 
@@ -485,6 +480,7 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 		} while (rem >= page_size && index < I915_PDES);
 
 		clflush_cache_range(vaddr, PAGE_SIZE);
+		kunmap_atomic(vaddr);
 
 		/*
 		 * Is it safe to mark the 2M block as 64K? -- Either we have
@@ -498,8 +494,9 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 		      !iter->sg && IS_ALIGNED(vma->node.start +
 					      vma->node.size,
 					      I915_GTT_PAGE_SIZE_2M)))) {
-			vaddr = px_vaddr(pd);
+			vaddr = kmap_atomic_px(pd);
 			vaddr[maybe_64K] |= GEN8_PDE_IPS_64K;
+			kunmap_atomic(vaddr);
 			page_size = I915_GTT_PAGE_SIZE_64K;
 
 			/*
@@ -515,16 +512,17 @@ static void gen8_ppgtt_insert_huge(struct i915_vma *vma,
 				u16 i;
 
 				encode = vma->vm->scratch[0]->encode;
-				vaddr = px_vaddr(i915_pt_entry(pd, maybe_64K));
+				vaddr = kmap_atomic_px(i915_pt_entry(pd, maybe_64K));
 
 				for (i = 1; i < index; i += 16)
 					memset64(vaddr + i, encode, 15);
 
+				kunmap_atomic(vaddr);
 			}
 		}
 
 		vma->page_sizes.gtt |= page_size;
-	} while (iter->sg && sg_dma_len(iter->sg));
+	} while (iter->sg);
 }
 
 static void gen8_ppgtt_insert(struct i915_address_space *vm,
@@ -554,7 +552,6 @@ static void gen8_ppgtt_insert(struct i915_address_space *vm,
 
 static int gen8_init_scratch(struct i915_address_space *vm)
 {
-	u32 pte_flags;
 	int ret;
 	int i;
 
@@ -578,13 +575,9 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 	if (ret)
 		return ret;
 
-	pte_flags = vm->has_read_only;
-	if (i915_gem_object_is_lmem(vm->scratch[0]))
-		pte_flags |= PTE_LM;
-
 	vm->scratch[0]->encode =
 		gen8_pte_encode(px_dma(vm->scratch[0]),
-				I915_CACHE_LLC, pte_flags);
+				I915_CACHE_LLC, vm->has_read_only);
 
 	for (i = 1; i <= vm->top; i++) {
 		struct drm_i915_gem_object *obj;
@@ -593,7 +586,7 @@ static int gen8_init_scratch(struct i915_address_space *vm)
 		if (IS_ERR(obj))
 			goto free_scratch;
 
-		ret = map_pt_dma(vm, obj);
+		ret = pin_pt_dma(vm, obj);
 		if (ret) {
 			i915_gem_object_put(obj);
 			goto free_scratch;
@@ -630,7 +623,7 @@ static int gen8_preallocate_top_level_pdp(struct i915_ppgtt *ppgtt)
 		if (IS_ERR(pde))
 			return PTR_ERR(pde);
 
-		err = map_pt_dma(vm, pde->pt.base);
+		err = pin_pt_dma(vm, pde->pt.base);
 		if (err) {
 			free_pd(vm, pde);
 			return err;
@@ -665,7 +658,7 @@ gen8_alloc_top_pd(struct i915_address_space *vm)
 		goto err_pd;
 	}
 
-	err = map_pt_dma(vm, pd->pt.base);
+	err = pin_pt_dma(vm, pd->pt.base);
 	if (err)
 		goto err_pd;
 
@@ -706,12 +699,9 @@ struct i915_ppgtt *gen8_ppgtt_create(struct intel_gt *gt)
 	 *
 	 * Gen12 has inherited the same read-only fault issue from gen11.
 	 */
-	ppgtt->vm.has_read_only = !IS_GRAPHICS_VER(gt->i915, 11, 12);
+	ppgtt->vm.has_read_only = !IS_GEN_RANGE(gt->i915, 11, 12);
 
-	if (HAS_LMEM(gt->i915))
-		ppgtt->vm.alloc_pt_dma = alloc_pt_lmem;
-	else
-		ppgtt->vm.alloc_pt_dma = alloc_pt_dma;
+	ppgtt->vm.alloc_pt_dma = alloc_pt_dma;
 
 	err = gen8_init_scratch(&ppgtt->vm);
 	if (err)

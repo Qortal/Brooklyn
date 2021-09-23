@@ -32,7 +32,7 @@ static irqreturn_t line_interrupt(int irq, void *data)
  *
  * Should be called while holding line->lock (this does not modify data).
  */
-static unsigned int write_room(struct line *line)
+static int write_room(struct line *line)
 {
 	int n;
 
@@ -47,11 +47,11 @@ static unsigned int write_room(struct line *line)
 	return n - 1;
 }
 
-unsigned int line_write_room(struct tty_struct *tty)
+int line_write_room(struct tty_struct *tty)
 {
 	struct line *line = tty->driver_data;
 	unsigned long flags;
-	unsigned int room;
+	int room;
 
 	spin_lock_irqsave(&line->lock, flags);
 	room = write_room(line);
@@ -60,11 +60,11 @@ unsigned int line_write_room(struct tty_struct *tty)
 	return room;
 }
 
-unsigned int line_chars_in_buffer(struct tty_struct *tty)
+int line_chars_in_buffer(struct tty_struct *tty)
 {
 	struct line *line = tty->driver_data;
 	unsigned long flags;
-	unsigned int ret;
+	int ret;
 
 	spin_lock_irqsave(&line->lock, flags);
 	/* write_room subtracts 1 for the needed NULL, so we readd it.*/
@@ -211,6 +211,11 @@ out_up:
 	return ret;
 }
 
+void line_set_termios(struct tty_struct *tty, struct ktermios * old)
+{
+	/* nothing */
+}
+
 void line_throttle(struct tty_struct *tty)
 {
 	struct line *line = tty->driver_data;
@@ -257,25 +262,19 @@ static irqreturn_t line_write_interrupt(int irq, void *data)
 int line_setup_irq(int fd, int input, int output, struct line *line, void *data)
 {
 	const struct line_driver *driver = line->driver;
-	int err;
+	int err = 0;
 
-	if (input) {
+	if (input)
 		err = um_request_irq(driver->read_irq, fd, IRQ_READ,
 				     line_interrupt, IRQF_SHARED,
 				     driver->read_irq_name, data);
-		if (err < 0)
-			return err;
-	}
-
-	if (output) {
+	if (err)
+		return err;
+	if (output)
 		err = um_request_irq(driver->write_irq, fd, IRQ_WRITE,
 				     line_write_interrupt, IRQF_SHARED,
 				     driver->write_irq_name, data);
-		if (err < 0)
-			return err;
-	}
-
-	return 0;
+	return err;
 }
 
 static int line_activate(struct tty_port *port, struct tty_struct *tty)
@@ -609,6 +608,7 @@ static void free_winch(struct winch *winch)
 	winch->fd = -1;
 	if (fd != -1)
 		os_close_file(fd);
+	list_del(&winch->list);
 	__free_winch(&winch->work);
 }
 
@@ -709,8 +709,6 @@ static void unregister_winch(struct tty_struct *tty)
 		winch = list_entry(ele, struct winch, list);
 		wtty = tty_port_tty_get(winch->port);
 		if (wtty == tty) {
-			list_del(&winch->list);
-			spin_unlock(&winch_handler_lock);
 			free_winch(winch);
 			break;
 		}
@@ -721,17 +719,14 @@ static void unregister_winch(struct tty_struct *tty)
 
 static void winch_cleanup(void)
 {
+	struct list_head *ele, *next;
 	struct winch *winch;
 
 	spin_lock(&winch_handler_lock);
-	while ((winch = list_first_entry_or_null(&winch_handlers,
-						 struct winch, list))) {
-		list_del(&winch->list);
-		spin_unlock(&winch_handler_lock);
 
+	list_for_each_safe(ele, next, &winch_handlers) {
+		winch = list_entry(ele, struct winch, list);
 		free_winch(winch);
-
-		spin_lock(&winch_handler_lock);
 	}
 
 	spin_unlock(&winch_handler_lock);

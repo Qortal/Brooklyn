@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: LGPL-2.1
 /*
  *   fs/cifs/cifsencrypt.c
  *
@@ -8,6 +7,19 @@
  *   Copyright (C) International Business Machines  Corp., 2005,2013
  *   Author(s): Steve French (sfrench@us.ibm.com)
  *
+ *   This library is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU Lesser General Public License as published
+ *   by the Free Software Foundation; either version 2.1 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This library is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
+ *   the GNU Lesser General Public License for more details.
+ *
+ *   You should have received a copy of the GNU Lesser General Public License
+ *   along with this library; if not, write to the Free Software
+ *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
 #include <linux/fs.h>
@@ -556,15 +568,15 @@ static int calc_ntlmv2_hash(struct cifs_ses *ses, char *ntlmv2_hash,
 			return rc;
 		}
 	} else {
-		/* We use ses->ip_addr if no domain name available */
-		len = strlen(ses->ip_addr);
+		/* We use ses->serverName if no domain name available */
+		len = strlen(ses->serverName);
 
 		server = kmalloc(2 + (len * 2), GFP_KERNEL);
 		if (server == NULL) {
 			rc = -ENOMEM;
 			return rc;
 		}
-		len = cifs_strtoUTF16((__le16 *)server, ses->ip_addr, len,
+		len = cifs_strtoUTF16((__le16 *)server, ses->serverName, len,
 					nls_cp);
 		rc =
 		crypto_shash_update(&ses->server->secmech.sdeschmacmd5->shash,
@@ -648,11 +660,6 @@ setup_ntlmv2_rsp(struct cifs_ses *ses, const struct nls_table *nls_cp)
 	char ntlmv2_hash[16];
 	unsigned char *tiblob = NULL; /* target info blob */
 	__le64 rsp_timestamp;
-
-	if (nls_cp == NULL) {
-		cifs_dbg(VFS, "%s called with nls_cp==NULL\n", __func__);
-		return -EINVAL;
-	}
 
 	if (ses->server->negflavor == CIFS_NEGFLAVOR_EXTENDED) {
 		if (!ses->domainName) {

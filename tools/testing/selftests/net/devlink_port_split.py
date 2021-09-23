@@ -18,8 +18,6 @@ import sys
 #
 
 
-# Kselftest framework requirement - SKIP code is 4
-KSFT_SKIP=4
 Port = collections.namedtuple('Port', 'bus_info name')
 
 
@@ -241,11 +239,7 @@ def main(cmdline=None):
         assert stderr == ""
 
         devs = json.loads(stdout)['dev']
-        if devs:
-            dev = list(devs.keys())[0]
-        else:
-            print("no devlink device was found, test skipped")
-            sys.exit(KSFT_SKIP)
+        dev = list(devs.keys())[0]
 
     cmd = "devlink dev show %s" % dev
     stdout, stderr = run_command(cmd)

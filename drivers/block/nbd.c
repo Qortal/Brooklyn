@@ -79,7 +79,6 @@ struct link_dead_args {
 #define NBD_RT_HAS_CONFIG_REF		4
 #define NBD_RT_BOUND			5
 #define NBD_RT_DISCONNECT_ON_CLOSE	6
-#define NBD_RT_HAS_BACKEND_FILE		7
 
 #define NBD_DESTROY_ON_DISCONNECT	0
 #define NBD_DISCONNECT_REQUESTED	1
@@ -120,8 +119,6 @@ struct nbd_device {
 
 	struct completion *destroy_complete;
 	unsigned long flags;
-
-	char *backend;
 };
 
 #define NBD_CMD_REQUEUED	1
@@ -219,28 +216,18 @@ static const struct device_attribute pid_attr = {
 	.show = pid_show,
 };
 
-static ssize_t backend_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	struct gendisk *disk = dev_to_disk(dev);
-	struct nbd_device *nbd = (struct nbd_device *)disk->private_data;
-
-	return sprintf(buf, "%s\n", nbd->backend ?: "");
-}
-
-static const struct device_attribute backend_attr = {
-	.attr = { .name = "backend", .mode = 0444},
-	.show = backend_show,
-};
-
 static void nbd_dev_remove(struct nbd_device *nbd)
 {
 	struct gendisk *disk = nbd->disk;
+	struct request_queue *q;
 
 	if (disk) {
+		q = disk->queue;
 		del_gendisk(disk);
-		blk_cleanup_disk(disk);
+		blk_cleanup_queue(q);
 		blk_mq_free_tag_set(&nbd->tag_set);
+		disk->private_data = NULL;
+		put_disk(disk);
 	}
 
 	/*
@@ -308,33 +295,40 @@ static void nbd_size_clear(struct nbd_device *nbd)
 	}
 }
 
-static int nbd_set_size(struct nbd_device *nbd, loff_t bytesize,
-		loff_t blksize)
+static void nbd_size_update(struct nbd_device *nbd, bool start)
 {
-	if (!blksize)
-		blksize = NBD_DEF_BLKSIZE;
-	if (blksize < 512 || blksize > PAGE_SIZE || !is_power_of_2(blksize))
-		return -EINVAL;
+	struct nbd_config *config = nbd->config;
+	struct block_device *bdev = bdget_disk(nbd->disk, 0);
+	sector_t nr_sectors = config->bytesize >> 9;
 
-	nbd->config->bytesize = bytesize;
-	nbd->config->blksize = blksize;
-
-	if (!nbd->task_recv)
-		return 0;
-
-	if (nbd->config->flags & NBD_FLAG_SEND_TRIM) {
-		nbd->disk->queue->limits.discard_granularity = blksize;
-		nbd->disk->queue->limits.discard_alignment = blksize;
+	if (config->flags & NBD_FLAG_SEND_TRIM) {
+		nbd->disk->queue->limits.discard_granularity = config->blksize;
+		nbd->disk->queue->limits.discard_alignment = config->blksize;
 		blk_queue_max_discard_sectors(nbd->disk->queue, UINT_MAX);
 	}
-	blk_queue_logical_block_size(nbd->disk->queue, blksize);
-	blk_queue_physical_block_size(nbd->disk->queue, blksize);
+	blk_queue_logical_block_size(nbd->disk->queue, config->blksize);
+	blk_queue_physical_block_size(nbd->disk->queue, config->blksize);
+	set_capacity(nbd->disk, nr_sectors);
+	if (bdev) {
+		if (bdev->bd_disk) {
+			bd_set_nr_sectors(bdev, nr_sectors);
+			if (start)
+				set_blocksize(bdev, config->blksize);
+		} else
+			set_bit(GD_NEED_PART_SCAN, &nbd->disk->state);
+		bdput(bdev);
+	}
+	kobject_uevent(&nbd_to_dev(nbd)->kobj, KOBJ_CHANGE);
+}
 
-	if (max_part)
-		set_bit(GD_NEED_PART_SCAN, &nbd->disk->state);
-	if (!set_capacity_and_notify(nbd->disk, bytesize >> 9))
-		kobject_uevent(&nbd_to_dev(nbd)->kobj, KOBJ_CHANGE);
-	return 0;
+static void nbd_size_set(struct nbd_device *nbd, loff_t blocksize,
+			 loff_t nr_blocks)
+{
+	struct nbd_config *config = nbd->config;
+	config->blksize = blocksize;
+	config->bytesize = blocksize * nr_blocks;
+	if (nbd->task_recv != NULL)
+		nbd_size_update(nbd, false);
 }
 
 static void nbd_complete_rq(struct request *req)
@@ -1157,7 +1151,7 @@ static void nbd_bdev_reset(struct block_device *bdev)
 {
 	if (bdev->bd_openers > 1)
 		return;
-	set_capacity(bdev->bd_disk, 0);
+	bd_set_nr_sectors(bdev, 0);
 }
 
 static void nbd_parse_flags(struct nbd_device *nbd)
@@ -1232,12 +1226,6 @@ static void nbd_config_put(struct nbd_device *nbd)
 				       &config->runtime_flags))
 			device_remove_file(disk_to_dev(nbd->disk), &pid_attr);
 		nbd->task_recv = NULL;
-		if (test_and_clear_bit(NBD_RT_HAS_BACKEND_FILE,
-				       &config->runtime_flags)) {
-			device_remove_file(disk_to_dev(nbd->disk), &backend_attr);
-			kfree(nbd->backend);
-			nbd->backend = NULL;
-		}
 		nbd_clear_sock(nbd);
 		if (config->num_connections) {
 			int i;
@@ -1297,7 +1285,7 @@ static int nbd_start_device(struct nbd_device *nbd)
 
 	error = device_create_file(disk_to_dev(nbd->disk), &pid_attr);
 	if (error) {
-		dev_err(disk_to_dev(nbd->disk), "device_create_file failed for pid!\n");
+		dev_err(disk_to_dev(nbd->disk), "device_create_file failed!\n");
 		return error;
 	}
 	set_bit(NBD_RT_HAS_PID_FILE, &config->runtime_flags);
@@ -1332,7 +1320,8 @@ static int nbd_start_device(struct nbd_device *nbd)
 		args->index = i;
 		queue_work(nbd->recv_workq, &args->work);
 	}
-	return nbd_set_size(nbd, config->bytesize, config->blksize);
+	nbd_size_update(nbd, true);
+	return error;
 }
 
 static int nbd_start_device_ioctl(struct nbd_device *nbd, struct block_device *bdev)
@@ -1374,6 +1363,14 @@ static void nbd_clear_sock_ioctl(struct nbd_device *nbd,
 		nbd_config_put(nbd);
 }
 
+static bool nbd_is_valid_blksize(unsigned long blksize)
+{
+	if (!blksize || !is_power_of_2(blksize) || blksize < 512 ||
+	    blksize > PAGE_SIZE)
+		return false;
+	return true;
+}
+
 static void nbd_set_cmd_timeout(struct nbd_device *nbd, u64 timeout)
 {
 	nbd->tag_set.timeout = timeout * HZ;
@@ -1398,12 +1395,20 @@ static int __nbd_ioctl(struct block_device *bdev, struct nbd_device *nbd,
 	case NBD_SET_SOCK:
 		return nbd_add_socket(nbd, arg, false);
 	case NBD_SET_BLKSIZE:
-		return nbd_set_size(nbd, config->bytesize, arg);
+		if (!arg)
+			arg = NBD_DEF_BLKSIZE;
+		if (!nbd_is_valid_blksize(arg))
+			return -EINVAL;
+		nbd_size_set(nbd, arg,
+			     div_s64(config->bytesize, arg));
+		return 0;
 	case NBD_SET_SIZE:
-		return nbd_set_size(nbd, arg, config->blksize);
+		nbd_size_set(nbd, config->blksize,
+			     div_s64(arg, config->blksize));
+		return 0;
 	case NBD_SET_SIZE_BLOCKS:
-		return nbd_set_size(nbd, arg * config->blksize,
-				    config->blksize);
+		nbd_size_set(nbd, config->blksize, arg);
+		return 0;
 	case NBD_SET_TIMEOUT:
 		nbd_set_cmd_timeout(nbd, arg);
 		return 0;
@@ -1507,11 +1512,9 @@ static int nbd_open(struct block_device *bdev, fmode_t mode)
 		refcount_set(&nbd->config_refs, 1);
 		refcount_inc(&nbd->refs);
 		mutex_unlock(&nbd->config_lock);
-		if (max_part)
-			set_bit(GD_NEED_PART_SCAN, &bdev->bd_disk->state);
+		set_bit(GD_NEED_PART_SCAN, &bdev->bd_disk->state);
 	} else if (nbd_disconnected(nbd->config)) {
-		if (max_part)
-			set_bit(GD_NEED_PART_SCAN, &bdev->bd_disk->state);
+		set_bit(GD_NEED_PART_SCAN, &bdev->bd_disk->state);
 	}
 out:
 	mutex_unlock(&nbd_index_mutex);
@@ -1521,10 +1524,12 @@ out:
 static void nbd_release(struct gendisk *disk, fmode_t mode)
 {
 	struct nbd_device *nbd = disk->private_data;
+	struct block_device *bdev = bdget_disk(disk, 0);
 
 	if (test_bit(NBD_RT_DISCONNECT_ON_CLOSE, &nbd->config->runtime_flags) &&
-			disk->part0->bd_openers == 0)
+			bdev->bd_openers == 0)
 		nbd_disconnect_and_put(nbd);
+	bdput(bdev);
 
 	nbd_config_put(nbd);
 	nbd_put(nbd);
@@ -1551,7 +1556,17 @@ static int nbd_dbg_tasks_show(struct seq_file *s, void *unused)
 	return 0;
 }
 
-DEFINE_SHOW_ATTRIBUTE(nbd_dbg_tasks);
+static int nbd_dbg_tasks_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, nbd_dbg_tasks_show, inode->i_private);
+}
+
+static const struct file_operations nbd_dbg_tasks_ops = {
+	.open = nbd_dbg_tasks_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
 
 static int nbd_dbg_flags_show(struct seq_file *s, void *unused)
 {
@@ -1576,7 +1591,17 @@ static int nbd_dbg_flags_show(struct seq_file *s, void *unused)
 	return 0;
 }
 
-DEFINE_SHOW_ATTRIBUTE(nbd_dbg_flags);
+static int nbd_dbg_flags_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, nbd_dbg_flags_show, inode->i_private);
+}
+
+static const struct file_operations nbd_dbg_flags_ops = {
+	.open = nbd_dbg_flags_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
 
 static int nbd_dev_dbg_init(struct nbd_device *nbd)
 {
@@ -1594,11 +1619,11 @@ static int nbd_dev_dbg_init(struct nbd_device *nbd)
 	}
 	config->dbg_dir = dir;
 
-	debugfs_create_file("tasks", 0444, dir, nbd, &nbd_dbg_tasks_fops);
+	debugfs_create_file("tasks", 0444, dir, nbd, &nbd_dbg_tasks_ops);
 	debugfs_create_u64("size_bytes", 0444, dir, &config->bytesize);
 	debugfs_create_u32("timeout", 0444, dir, &nbd->tag_set.timeout);
 	debugfs_create_u64("blocksize", 0444, dir, &config->blksize);
-	debugfs_create_file("flags", 0444, dir, nbd, &nbd_dbg_flags_fops);
+	debugfs_create_file("flags", 0444, dir, nbd, &nbd_dbg_flags_ops);
 
 	return 0;
 }
@@ -1669,25 +1694,15 @@ static int nbd_dev_add(int index)
 {
 	struct nbd_device *nbd;
 	struct gendisk *disk;
+	struct request_queue *q;
 	int err = -ENOMEM;
 
 	nbd = kzalloc(sizeof(struct nbd_device), GFP_KERNEL);
 	if (!nbd)
 		goto out;
 
-	nbd->tag_set.ops = &nbd_mq_ops;
-	nbd->tag_set.nr_hw_queues = 1;
-	nbd->tag_set.queue_depth = 128;
-	nbd->tag_set.numa_node = NUMA_NO_NODE;
-	nbd->tag_set.cmd_size = sizeof(struct nbd_cmd);
-	nbd->tag_set.flags = BLK_MQ_F_SHOULD_MERGE |
-		BLK_MQ_F_BLOCKING;
-	nbd->tag_set.driver_data = nbd;
-	nbd->destroy_complete = NULL;
-	nbd->backend = NULL;
-
-	err = blk_mq_alloc_tag_set(&nbd->tag_set);
-	if (err)
+	disk = alloc_disk(1 << part_shift);
+	if (!disk)
 		goto out_free_nbd;
 
 	if (index >= 0) {
@@ -1701,15 +1716,30 @@ static int nbd_dev_add(int index)
 			index = err;
 	}
 	if (err < 0)
-		goto out_free_tags;
-	nbd->index = index;
+		goto out_free_disk;
 
-	disk = blk_mq_alloc_disk(&nbd->tag_set, NULL);
-	if (IS_ERR(disk)) {
-		err = PTR_ERR(disk);
-		goto out_free_idr;
-	}
+	nbd->index = index;
 	nbd->disk = disk;
+	nbd->tag_set.ops = &nbd_mq_ops;
+	nbd->tag_set.nr_hw_queues = 1;
+	nbd->tag_set.queue_depth = 128;
+	nbd->tag_set.numa_node = NUMA_NO_NODE;
+	nbd->tag_set.cmd_size = sizeof(struct nbd_cmd);
+	nbd->tag_set.flags = BLK_MQ_F_SHOULD_MERGE |
+		BLK_MQ_F_BLOCKING;
+	nbd->tag_set.driver_data = nbd;
+	nbd->destroy_complete = NULL;
+
+	err = blk_mq_alloc_tag_set(&nbd->tag_set);
+	if (err)
+		goto out_free_idr;
+
+	q = blk_mq_init_queue(&nbd->tag_set);
+	if (IS_ERR(q)) {
+		err = PTR_ERR(q);
+		goto out_free_tags;
+	}
+	disk->queue = q;
 
 	/*
 	 * Tell the block layer that we are not a rotational device
@@ -1730,7 +1760,6 @@ static int nbd_dev_add(int index)
 	INIT_LIST_HEAD(&nbd->list);
 	disk->major = NBD_MAJOR;
 	disk->first_minor = index << part_shift;
-	disk->minors = 1 << part_shift;
 	disk->fops = &nbd_fops;
 	disk->private_data = nbd;
 	sprintf(disk->disk_name, "nbd%d", index);
@@ -1738,10 +1767,12 @@ static int nbd_dev_add(int index)
 	nbd_total_devices++;
 	return index;
 
-out_free_idr:
-	idr_remove(&nbd_index_idr, index);
 out_free_tags:
 	blk_mq_free_tag_set(&nbd->tag_set);
+out_free_idr:
+	idr_remove(&nbd_index_idr, index);
+out_free_disk:
+	put_disk(disk);
 out_free_nbd:
 	kfree(nbd);
 out:
@@ -1771,7 +1802,6 @@ static const struct nla_policy nbd_attr_policy[NBD_ATTR_MAX + 1] = {
 	[NBD_ATTR_SOCKETS]		=	{ .type = NLA_NESTED},
 	[NBD_ATTR_DEAD_CONN_TIMEOUT]	=	{ .type = NLA_U64 },
 	[NBD_ATTR_DEVICE_LIST]		=	{ .type = NLA_NESTED},
-	[NBD_ATTR_BACKEND_IDENTIFIER]	=	{ .type = NLA_STRING},
 };
 
 static const struct nla_policy nbd_sock_policy[NBD_SOCK_MAX + 1] = {
@@ -1796,11 +1826,18 @@ static int nbd_genl_size_set(struct genl_info *info, struct nbd_device *nbd)
 	if (info->attrs[NBD_ATTR_SIZE_BYTES])
 		bytes = nla_get_u64(info->attrs[NBD_ATTR_SIZE_BYTES]);
 
-	if (info->attrs[NBD_ATTR_BLOCK_SIZE_BYTES])
+	if (info->attrs[NBD_ATTR_BLOCK_SIZE_BYTES]) {
 		bsize = nla_get_u64(info->attrs[NBD_ATTR_BLOCK_SIZE_BYTES]);
+		if (!bsize)
+			bsize = NBD_DEF_BLKSIZE;
+		if (!nbd_is_valid_blksize(bsize)) {
+			printk(KERN_ERR "Invalid block size %llu\n", bsize);
+			return -EINVAL;
+		}
+	}
 
 	if (bytes != config->bytesize || bsize != config->blksize)
-		return nbd_set_size(nbd, bytes, bsize);
+		nbd_size_set(nbd, bsize, div64_u64(bytes, bsize));
 	return 0;
 }
 
@@ -1974,23 +2011,6 @@ again:
 		}
 	}
 	ret = nbd_start_device(nbd);
-	if (ret)
-		goto out;
-	if (info->attrs[NBD_ATTR_BACKEND_IDENTIFIER]) {
-		nbd->backend = nla_strdup(info->attrs[NBD_ATTR_BACKEND_IDENTIFIER],
-					  GFP_KERNEL);
-		if (!nbd->backend) {
-			ret = -ENOMEM;
-			goto out;
-		}
-	}
-	ret = device_create_file(disk_to_dev(nbd->disk), &backend_attr);
-	if (ret) {
-		dev_err(disk_to_dev(nbd->disk),
-			"device_create_file failed for backend!\n");
-		goto out;
-	}
-	set_bit(NBD_RT_HAS_BACKEND_FILE, &config->runtime_flags);
 out:
 	mutex_unlock(&nbd->config_lock);
 	if (!ret) {
@@ -2054,11 +2074,12 @@ static int nbd_genl_disconnect(struct sk_buff *skb, struct genl_info *info)
 		return -EINVAL;
 	}
 	mutex_unlock(&nbd_index_mutex);
-	if (!refcount_inc_not_zero(&nbd->config_refs))
-		goto put_nbd;
+	if (!refcount_inc_not_zero(&nbd->config_refs)) {
+		nbd_put(nbd);
+		return 0;
+	}
 	nbd_disconnect_and_put(nbd);
 	nbd_config_put(nbd);
-put_nbd:
 	nbd_put(nbd);
 	return 0;
 }
@@ -2086,22 +2107,6 @@ static int nbd_genl_reconfigure(struct sk_buff *skb, struct genl_info *info)
 		printk(KERN_ERR "nbd: couldn't find a device at index %d\n",
 		       index);
 		return -EINVAL;
-	}
-	if (nbd->backend) {
-		if (info->attrs[NBD_ATTR_BACKEND_IDENTIFIER]) {
-			if (nla_strcmp(info->attrs[NBD_ATTR_BACKEND_IDENTIFIER],
-				       nbd->backend)) {
-				mutex_unlock(&nbd_index_mutex);
-				dev_err(nbd_to_dev(nbd),
-					"backend image doesn't match with %s\n",
-					nbd->backend);
-				return -EINVAL;
-			}
-		} else {
-			mutex_unlock(&nbd_index_mutex);
-			dev_err(nbd_to_dev(nbd), "must specify backend\n");
-			return -EINVAL;
-		}
 	}
 	if (!refcount_inc_not_zero(&nbd->refs)) {
 		mutex_unlock(&nbd_index_mutex);

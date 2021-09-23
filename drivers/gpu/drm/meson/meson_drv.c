@@ -15,7 +15,6 @@
 #include <linux/platform_device.h>
 #include <linux/soc/amlogic/meson-canvas.h>
 
-#include <drm/drm_aperture.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_fb_helper.h>
@@ -91,7 +90,7 @@ static int meson_dumb_create(struct drm_file *file, struct drm_device *dev,
 
 DEFINE_DRM_GEM_CMA_FOPS(fops);
 
-static const struct drm_driver meson_driver = {
+static struct drm_driver meson_driver = {
 	.driver_features	= DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
 
 	/* IRQ */
@@ -155,6 +154,23 @@ static void meson_vpu_init(struct meson_drm *priv)
 	/* Slave dc1 connected to master port 1 */
 	value = VPU_RDARB_SLAVE_TO_MASTER_PORT(1, 1);
 	writel_relaxed(value, priv->io_base + _REG(VPU_WRARB_MODE_L2C1));
+}
+
+static void meson_remove_framebuffers(void)
+{
+	struct apertures_struct *ap;
+
+	ap = alloc_apertures(1);
+	if (!ap)
+		return;
+
+	/* The framebuffer can be located anywhere in RAM */
+	ap->ranges[0].base = 0;
+	ap->ranges[0].size = ~0;
+
+	drm_fb_helper_remove_conflicting_framebuffers(ap, "meson-drm-fb",
+						      false);
+	kfree(ap);
 }
 
 struct meson_drm_soc_attr {
@@ -281,13 +297,8 @@ static int meson_drv_bind_master(struct device *dev, bool has_components)
 		}
 	}
 
-	/*
-	 * Remove early framebuffers (ie. simplefb). The framebuffer can be
-	 * located anywhere in RAM
-	 */
-	ret = drm_aperture_remove_framebuffers(false, "meson-drm-fb");
-	if (ret)
-		goto free_drm;
+	/* Remove early framebuffers (ie. simplefb) */
+	meson_remove_framebuffers();
 
 	ret = drmm_mode_config_init(drm);
 	if (ret)

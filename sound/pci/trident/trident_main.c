@@ -678,7 +678,7 @@ static unsigned int snd_trident_convert_rate(unsigned int rate)
 	else if (rate == 48000)
 		delta = 0x1000;
 	else
-		delta = DIV_ROUND_CLOSEST(rate << 12, 48000) & 0x0000ffff;
+		delta = (((rate << 12) + 24000) / 48000) & 0x0000ffff;
 	return delta;
 }
 
@@ -1034,7 +1034,7 @@ static int snd_trident_capture_prepare(struct snd_pcm_substream *substream)
 	ESO_bytes++;
 
 	// Set channel sample rate, 4.12 format
-	val = DIV_ROUND_CLOSEST(48000U << 12, runtime->rate);
+	val = (((unsigned int) 48000L << 12) + (runtime->rate/2)) / runtime->rate;
 	outw(val, TRID_REG(trident, T4D_SBDELTA_DELTA_R));
 
 	// Set channel interrupt blk length
@@ -2119,8 +2119,7 @@ int snd_trident_pcm(struct snd_trident *trident, int device)
 	struct snd_pcm *pcm;
 	int err;
 
-	err = snd_pcm_new(trident->card, "trident_dx_nx", device, trident->ChanPCM, 1, &pcm);
-	if (err < 0)
+	if ((err = snd_pcm_new(trident->card, "trident_dx_nx", device, trident->ChanPCM, 1, &pcm)) < 0)
 		return err;
 
 	pcm->private_data = trident;
@@ -2179,8 +2178,7 @@ int snd_trident_foldback_pcm(struct snd_trident *trident, int device)
 
 	if (trident->device == TRIDENT_DEVICE_ID_NX)
 		num_chan = 4;
-	err = snd_pcm_new(trident->card, "trident_dx_nx", device, 0, num_chan, &foldback);
-	if (err < 0)
+	if ((err = snd_pcm_new(trident->card, "trident_dx_nx", device, 0, num_chan, &foldback)) < 0)
 		return err;
 
 	foldback->private_data = trident;
@@ -2230,8 +2228,7 @@ int snd_trident_spdif_pcm(struct snd_trident *trident, int device)
 	struct snd_pcm *spdif;
 	int err;
 
-	err = snd_pcm_new(trident->card, "trident_dx_nx IEC958", device, 1, 0, &spdif);
-	if (err < 0)
+	if ((err = snd_pcm_new(trident->card, "trident_dx_nx IEC958", device, 1, 0, &spdif)) < 0)
 		return err;
 
 	spdif->private_data = trident;
@@ -2924,8 +2921,7 @@ static int snd_trident_mixer(struct snd_trident *trident, int pcm_spdif_device)
 	if (!uctl)
 		return -ENOMEM;
 
-	err = snd_ac97_bus(trident->card, 0, &ops, NULL, &trident->ac97_bus);
-	if (err < 0)
+	if ((err = snd_ac97_bus(trident->card, 0, &ops, NULL, &trident->ac97_bus)) < 0)
 		goto __out;
 
 	memset(&_ac97, 0, sizeof(_ac97));
@@ -2933,11 +2929,9 @@ static int snd_trident_mixer(struct snd_trident *trident, int pcm_spdif_device)
 	trident->ac97_detect = 1;
 
       __again:
-	err = snd_ac97_mixer(trident->ac97_bus, &_ac97, &trident->ac97);
-	if (err < 0) {
+	if ((err = snd_ac97_mixer(trident->ac97_bus, &_ac97, &trident->ac97)) < 0) {
 		if (trident->device == TRIDENT_DEVICE_ID_SI7018) {
-			err = snd_trident_sis_reset(trident);
-			if (err < 0)
+			if ((err = snd_trident_sis_reset(trident)) < 0)
 				goto __out;
 			if (retries-- > 0)
 				goto __again;
@@ -2968,14 +2962,10 @@ static int snd_trident_mixer(struct snd_trident *trident, int pcm_spdif_device)
 	trident->ac97_detect = 0;
 
 	if (trident->device != TRIDENT_DEVICE_ID_SI7018) {
-		kctl = snd_ctl_new1(&snd_trident_vol_wave_control, trident);
-		err = snd_ctl_add(card, kctl);
-		if (err < 0)
+		if ((err = snd_ctl_add(card, kctl = snd_ctl_new1(&snd_trident_vol_wave_control, trident))) < 0)
 			goto __out;
 		kctl->put(kctl, uctl);
-		kctl = snd_ctl_new1(&snd_trident_vol_music_control, trident);
-		err = snd_ctl_add(card, kctl);
-		if (err < 0)
+		if ((err = snd_ctl_add(card, kctl = snd_ctl_new1(&snd_trident_vol_music_control, trident))) < 0)
 			goto __out;
 		kctl->put(kctl, uctl);
 		outl(trident->musicvol_wavevol = 0x00000000, TRID_REG(trident, T4D_MUSICVOL_WAVEVOL));
@@ -2989,38 +2979,28 @@ static int snd_trident_mixer(struct snd_trident *trident, int pcm_spdif_device)
 		tmix = &trident->pcm_mixer[idx];
 		tmix->voice = NULL;
 	}
-	trident->ctl_vol = snd_ctl_new1(&snd_trident_pcm_vol_control, trident);
-	if (!trident->ctl_vol)
+	if ((trident->ctl_vol = snd_ctl_new1(&snd_trident_pcm_vol_control, trident)) == NULL)
 		goto __nomem;
-	err = snd_ctl_add(card, trident->ctl_vol);
-	if (err)
+	if ((err = snd_ctl_add(card, trident->ctl_vol)))
 		goto __out;
 		
-	trident->ctl_pan = snd_ctl_new1(&snd_trident_pcm_pan_control, trident);
-	if (!trident->ctl_pan)
+	if ((trident->ctl_pan = snd_ctl_new1(&snd_trident_pcm_pan_control, trident)) == NULL)
 		goto __nomem;
-	err = snd_ctl_add(card, trident->ctl_pan);
-	if (err)
+	if ((err = snd_ctl_add(card, trident->ctl_pan)))
 		goto __out;
 
-	trident->ctl_rvol = snd_ctl_new1(&snd_trident_pcm_rvol_control, trident);
-	if (!trident->ctl_rvol)
+	if ((trident->ctl_rvol = snd_ctl_new1(&snd_trident_pcm_rvol_control, trident)) == NULL)
 		goto __nomem;
-	err = snd_ctl_add(card, trident->ctl_rvol);
-	if (err)
+	if ((err = snd_ctl_add(card, trident->ctl_rvol)))
 		goto __out;
 
-	trident->ctl_cvol = snd_ctl_new1(&snd_trident_pcm_cvol_control, trident);
-	if (!trident->ctl_cvol)
+	if ((trident->ctl_cvol = snd_ctl_new1(&snd_trident_pcm_cvol_control, trident)) == NULL)
 		goto __nomem;
-	err = snd_ctl_add(card, trident->ctl_cvol);
-	if (err)
+	if ((err = snd_ctl_add(card, trident->ctl_cvol)))
 		goto __out;
 
 	if (trident->device == TRIDENT_DEVICE_ID_NX) {
-		kctl = snd_ctl_new1(&snd_trident_ac97_rear_control, trident);
-		err = snd_ctl_add(card, kctl);
-		if (err < 0)
+		if ((err = snd_ctl_add(card, kctl = snd_ctl_new1(&snd_trident_ac97_rear_control, trident))) < 0)
 			goto __out;
 		kctl->put(kctl, uctl);
 	}
@@ -3036,8 +3016,7 @@ static int snd_trident_mixer(struct snd_trident *trident, int pcm_spdif_device)
 		if (trident->ac97_sec && (trident->ac97_sec->ext_id & AC97_EI_SPDIF))
 			kctl->id.index++;
 		idx = kctl->id.index;
-		err = snd_ctl_add(card, kctl);
-		if (err < 0)
+		if ((err = snd_ctl_add(card, kctl)) < 0)
 			goto __out;
 		kctl->put(kctl, uctl);
 
@@ -3048,8 +3027,7 @@ static int snd_trident_mixer(struct snd_trident *trident, int pcm_spdif_device)
 		}
 		kctl->id.index = idx;
 		kctl->id.device = pcm_spdif_device;
-		err = snd_ctl_add(card, kctl);
-		if (err < 0)
+		if ((err = snd_ctl_add(card, kctl)) < 0)
 			goto __out;
 
 		kctl = snd_ctl_new1(&snd_trident_spdif_mask, trident);
@@ -3059,8 +3037,7 @@ static int snd_trident_mixer(struct snd_trident *trident, int pcm_spdif_device)
 		}
 		kctl->id.index = idx;
 		kctl->id.device = pcm_spdif_device;
-		err = snd_ctl_add(card, kctl);
-		if (err < 0)
+		if ((err = snd_ctl_add(card, kctl)) < 0)
 			goto __out;
 
 		kctl = snd_ctl_new1(&snd_trident_spdif_stream, trident);
@@ -3070,8 +3047,7 @@ static int snd_trident_mixer(struct snd_trident *trident, int pcm_spdif_device)
 		}
 		kctl->id.index = idx;
 		kctl->id.device = pcm_spdif_device;
-		err = snd_ctl_add(card, kctl);
-		if (err < 0)
+		if ((err = snd_ctl_add(card, kctl)) < 0)
 			goto __out;
 		trident->spdif_pcm_ctl = kctl;
 	}
@@ -3331,6 +3307,12 @@ static int snd_trident_tlb_alloc(struct snd_trident *trident)
 	}
 	trident->tlb.entries = (__le32 *)ALIGN((unsigned long)trident->tlb.buffer.area, SNDRV_TRIDENT_MAX_PAGES * 4);
 	trident->tlb.entries_dmaaddr = ALIGN(trident->tlb.buffer.addr, SNDRV_TRIDENT_MAX_PAGES * 4);
+	/* allocate shadow TLB page table (virtual addresses) */
+	trident->tlb.shadow_entries =
+		vmalloc(array_size(SNDRV_TRIDENT_MAX_PAGES,
+				   sizeof(unsigned long)));
+	if (!trident->tlb.shadow_entries)
+		return -ENOMEM;
 
 	/* allocate and setup silent page and initialise TLB entries */
 	if (snd_dma_alloc_pages(SNDRV_DMA_TYPE_DEV, &trident->pci->dev,
@@ -3339,8 +3321,10 @@ static int snd_trident_tlb_alloc(struct snd_trident *trident)
 		return -ENOMEM;
 	}
 	memset(trident->tlb.silent_page.area, 0, SNDRV_TRIDENT_PAGE_SIZE);
-	for (i = 0; i < SNDRV_TRIDENT_MAX_PAGES; i++)
+	for (i = 0; i < SNDRV_TRIDENT_MAX_PAGES; i++) {
 		trident->tlb.entries[i] = cpu_to_le32(trident->tlb.silent_page.addr & ~(SNDRV_TRIDENT_PAGE_SIZE-1));
+		trident->tlb.shadow_entries[i] = (unsigned long)trident->tlb.silent_page.area;
+	}
 
 	/* use emu memory block manager code to manage tlb page allocation */
 	trident->tlb.memhdr = snd_util_memhdr_new(SNDRV_TRIDENT_PAGE_SIZE * SNDRV_TRIDENT_MAX_PAGES);
@@ -3465,8 +3449,7 @@ static int snd_trident_sis_init(struct snd_trident *trident)
 {
 	int err;
 
-	err = snd_trident_sis_reset(trident);
-	if (err < 0)
+	if ((err = snd_trident_sis_reset(trident)) < 0)
 		return err;
 
 	snd_trident_stop_all_voices(trident);
@@ -3511,11 +3494,11 @@ int snd_trident_create(struct snd_card *card,
 	*rtrident = NULL;
 
 	/* enable PCI device */
-	err = pci_enable_device(pci);
-	if (err < 0)
+	if ((err = pci_enable_device(pci)) < 0)
 		return err;
 	/* check, if we can restrict PCI DMA transfers to 30 bits */
-	if (dma_set_mask_and_coherent(&pci->dev, DMA_BIT_MASK(30))) {
+	if (dma_set_mask(&pci->dev, DMA_BIT_MASK(30)) < 0 ||
+	    dma_set_coherent_mask(&pci->dev, DMA_BIT_MASK(30)) < 0) {
 		dev_err(card->dev,
 			"architecture does not support 30bit PCI busmaster DMA\n");
 		pci_disable_device(pci);
@@ -3546,8 +3529,7 @@ int snd_trident_create(struct snd_card *card,
 	trident->midi_port = TRID_REG(trident, T4D_MPU401_BASE);
 	pci_set_master(pci);
 
-	err = pci_request_regions(pci, "Trident Audio");
-	if (err < 0) {
+	if ((err = pci_request_regions(pci, "Trident Audio")) < 0) {
 		kfree(trident);
 		pci_disable_device(pci);
 		return err;
@@ -3567,8 +3549,7 @@ int snd_trident_create(struct snd_card *card,
 	trident->tlb.entries = NULL;
 	trident->tlb.buffer.area = NULL;
 	if (trident->device == TRIDENT_DEVICE_ID_NX) {
-		err = snd_trident_tlb_alloc(trident);
-		if (err < 0) {
+		if ((err = snd_trident_tlb_alloc(trident)) < 0) {
 			snd_trident_free(trident);
 			return err;
 		}
@@ -3596,14 +3577,12 @@ int snd_trident_create(struct snd_card *card,
 		return err;
 	}
 
-	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, trident, &ops);
-	if (err < 0) {
+	if ((err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, trident, &ops)) < 0) {
 		snd_trident_free(trident);
 		return err;
 	}
 
-	err = snd_trident_mixer(trident, pcm_spdif_device);
-	if (err < 0)
+	if ((err = snd_trident_mixer(trident, pcm_spdif_device)) < 0)
 		return err;
 	
 	/* initialise synth voices */
@@ -3657,6 +3636,7 @@ static int snd_trident_free(struct snd_trident *trident)
 		snd_util_memhdr_free(trident->tlb.memhdr);
 		if (trident->tlb.silent_page.area)
 			snd_dma_free_pages(&trident->tlb.silent_page);
+		vfree(trident->tlb.shadow_entries);
 		snd_dma_free_pages(&trident->tlb.buffer);
 	}
 	pci_release_regions(trident->pci);

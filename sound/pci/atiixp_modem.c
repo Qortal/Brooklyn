@@ -23,6 +23,7 @@
 MODULE_AUTHOR("Takashi Iwai <tiwai@suse.de>");
 MODULE_DESCRIPTION("ATI IXP MC97 controller");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{ATI,IXP150/200/250}}");
 
 static int index = -2; /* Exclude the first card */
 static char *id = SNDRV_DEFAULT_STR1;	/* ID for this card */
@@ -856,12 +857,12 @@ static int snd_atiixp_pcm_open(struct snd_pcm_substream *substream,
 	dma->substream = substream;
 	runtime->hw = snd_atiixp_pcm_hw;
 	dma->ac97_pcm_type = pcm_type;
-	err = snd_pcm_hw_constraint_list(runtime, 0, SNDRV_PCM_HW_PARAM_RATE,
-					 &hw_constraints_rates);
-	if (err < 0)
+	if ((err = snd_pcm_hw_constraint_list(runtime, 0,
+					      SNDRV_PCM_HW_PARAM_RATE,
+					      &hw_constraints_rates)) < 0)
 		return err;
-	err = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS);
-	if (err < 0)
+	if ((err = snd_pcm_hw_constraint_integer(runtime,
+						 SNDRV_PCM_HW_PARAM_PERIODS)) < 0)
 		return err;
 	runtime->private_data = dma;
 
@@ -1058,8 +1059,7 @@ static int snd_atiixp_mixer_new(struct atiixp_modem *chip, int clock)
 	if (snd_atiixp_codec_detect(chip) < 0)
 		return -ENXIO;
 
-	err = snd_ac97_bus(chip->card, 0, &ops, chip, &pbus);
-	if (err < 0)
+	if ((err = snd_ac97_bus(chip->card, 0, &ops, chip, &pbus)) < 0)
 		return err;
 	pbus->clock = clock;
 	chip->ac97_bus = pbus;
@@ -1073,8 +1073,7 @@ static int snd_atiixp_mixer_new(struct atiixp_modem *chip, int clock)
 		ac97.pci = chip->pci;
 		ac97.num = i;
 		ac97.scaps = AC97_SCAP_SKIP_AUDIO | AC97_SCAP_POWER_SAVE;
-		err = snd_ac97_mixer(pbus, &ac97, &chip->ac97[i]);
-		if (err < 0) {
+		if ((err = snd_ac97_mixer(pbus, &ac97, &chip->ac97[i])) < 0) {
 			chip->ac97[i] = NULL; /* to be sure */
 			dev_dbg(chip->card->dev,
 				"codec %d not available for modem\n", i);
@@ -1194,8 +1193,7 @@ static int snd_atiixp_create(struct snd_card *card,
 	struct atiixp_modem *chip;
 	int err;
 
-	err = pci_enable_device(pci);
-	if (err < 0)
+	if ((err = pci_enable_device(pci)) < 0)
 		return err;
 
 	chip = kzalloc(sizeof(*chip), GFP_KERNEL);
@@ -1209,8 +1207,7 @@ static int snd_atiixp_create(struct snd_card *card,
 	chip->card = card;
 	chip->pci = pci;
 	chip->irq = -1;
-	err = pci_request_regions(pci, "ATI IXP MC97");
-	if (err < 0) {
+	if ((err = pci_request_regions(pci, "ATI IXP MC97")) < 0) {
 		kfree(chip);
 		pci_disable_device(pci);
 		return err;
@@ -1233,8 +1230,7 @@ static int snd_atiixp_create(struct snd_card *card,
 	card->sync_irq = chip->irq;
 	pci_set_master(pci);
 
-	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops);
-	if (err < 0) {
+	if ((err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops)) < 0) {
 		snd_atiixp_free(chip);
 		return err;
 	}
@@ -1257,21 +1253,17 @@ static int snd_atiixp_probe(struct pci_dev *pci,
 
 	strcpy(card->driver, "ATIIXP-MODEM");
 	strcpy(card->shortname, "ATI IXP Modem");
-	err = snd_atiixp_create(card, pci, &chip);
-	if (err < 0)
+	if ((err = snd_atiixp_create(card, pci, &chip)) < 0)
 		goto __error;
 	card->private_data = chip;
 
-	err = snd_atiixp_aclink_reset(chip);
-	if (err < 0)
+	if ((err = snd_atiixp_aclink_reset(chip)) < 0)
 		goto __error;
 
-	err = snd_atiixp_mixer_new(chip, ac97_clock);
-	if (err < 0)
+	if ((err = snd_atiixp_mixer_new(chip, ac97_clock)) < 0)
 		goto __error;
 
-	err = snd_atiixp_pcm_new(chip);
-	if (err < 0)
+	if ((err = snd_atiixp_pcm_new(chip)) < 0)
 		goto __error;
 	
 	snd_atiixp_proc_init(chip);
@@ -1281,8 +1273,7 @@ static int snd_atiixp_probe(struct pci_dev *pci,
 	sprintf(card->longname, "%s rev %x at 0x%lx, irq %i",
 		card->shortname, pci->revision, chip->addr, chip->irq);
 
-	err = snd_card_register(card);
-	if (err < 0)
+	if ((err = snd_card_register(card)) < 0)
 		goto __error;
 
 	pci_set_drvdata(pci, card);

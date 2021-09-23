@@ -27,7 +27,6 @@ VERSION {
 		__vdso_time;
 		clock_getres;
 		__vdso_clock_getres;
-		__vdso_sgx_enter_enclave;
 	local: *;
 	};
 }

@@ -74,12 +74,13 @@ static irqreturn_t mxc_rtc_interrupt(int irq, void *dev_id)
 	struct device *dev = dev_id;
 	struct mxc_rtc_data *pdata = dev_get_drvdata(dev);
 	void __iomem *ioaddr = pdata->ioaddr;
+	unsigned long flags;
 	u32 lp_status;
 	u32 lp_cr;
 
-	spin_lock(&pdata->lock);
+	spin_lock_irqsave(&pdata->lock, flags);
 	if (clk_enable(pdata->clk)) {
-		spin_unlock(&pdata->lock);
+		spin_unlock_irqrestore(&pdata->lock, flags);
 		return IRQ_NONE;
 	}
 
@@ -103,7 +104,7 @@ static irqreturn_t mxc_rtc_interrupt(int irq, void *dev_id)
 
 	mxc_rtc_sync_lp_locked(dev, ioaddr);
 	clk_disable(pdata->clk);
-	spin_unlock(&pdata->lock);
+	spin_unlock_irqrestore(&pdata->lock, flags);
 	return IRQ_HANDLED;
 }
 
@@ -353,7 +354,7 @@ static int mxc_rtc_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	ret = devm_rtc_register_device(pdata->rtc);
+	ret = rtc_register_device(pdata->rtc);
 	if (ret < 0)
 		clk_unprepare(pdata->clk);
 

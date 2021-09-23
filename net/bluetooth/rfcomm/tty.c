@@ -198,22 +198,20 @@ static void rfcomm_reparent_device(struct rfcomm_dev *dev)
 	hci_dev_put(hdev);
 }
 
-static ssize_t address_show(struct device *tty_dev,
-			    struct device_attribute *attr, char *buf)
+static ssize_t show_address(struct device *tty_dev, struct device_attribute *attr, char *buf)
 {
 	struct rfcomm_dev *dev = dev_get_drvdata(tty_dev);
 	return sprintf(buf, "%pMR\n", &dev->dst);
 }
 
-static ssize_t channel_show(struct device *tty_dev,
-			    struct device_attribute *attr, char *buf)
+static ssize_t show_channel(struct device *tty_dev, struct device_attribute *attr, char *buf)
 {
 	struct rfcomm_dev *dev = dev_get_drvdata(tty_dev);
 	return sprintf(buf, "%d\n", dev->channel);
 }
 
-static DEVICE_ATTR_RO(address);
-static DEVICE_ATTR_RO(channel);
+static DEVICE_ATTR(address, 0444, show_address, NULL);
+static DEVICE_ATTR(channel, 0444, show_channel, NULL);
 
 static struct rfcomm_dev *__rfcomm_dev_add(struct rfcomm_dev_req *req,
 					   struct rfcomm_dlc *dlc)
@@ -809,7 +807,7 @@ static int rfcomm_tty_write(struct tty_struct *tty, const unsigned char *buf, in
 	return sent;
 }
 
-static unsigned int rfcomm_tty_write_room(struct tty_struct *tty)
+static int rfcomm_tty_write_room(struct tty_struct *tty)
 {
 	struct rfcomm_dev *dev = (struct rfcomm_dev *) tty->driver_data;
 	int room = 0;
@@ -1012,7 +1010,7 @@ static void rfcomm_tty_unthrottle(struct tty_struct *tty)
 	rfcomm_dlc_unthrottle(dev->dlc);
 }
 
-static unsigned int rfcomm_tty_chars_in_buffer(struct tty_struct *tty)
+static int rfcomm_tty_chars_in_buffer(struct tty_struct *tty)
 {
 	struct rfcomm_dev *dev = (struct rfcomm_dev *) tty->driver_data;
 

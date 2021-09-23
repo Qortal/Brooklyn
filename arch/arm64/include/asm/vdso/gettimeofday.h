@@ -96,7 +96,7 @@ const struct vdso_data *__arch_get_vdso_data(void)
 
 #ifdef CONFIG_TIME_NS
 static __always_inline
-const struct vdso_data *__arch_get_timens_vdso_data(const struct vdso_data *vd)
+const struct vdso_data *__arch_get_timens_vdso_data(void)
 {
 	return _timens_data;
 }

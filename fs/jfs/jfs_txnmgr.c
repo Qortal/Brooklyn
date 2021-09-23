@@ -105,7 +105,7 @@ static DEFINE_SPINLOCK(jfsTxnLock);
 #define TXN_LOCK()		spin_lock(&jfsTxnLock)
 #define TXN_UNLOCK()		spin_unlock(&jfsTxnLock)
 
-#define LAZY_LOCK_INIT()	spin_lock_init(&TxAnchor.LazyLock)
+#define LAZY_LOCK_INIT()	spin_lock_init(&TxAnchor.LazyLock);
 #define LAZY_LOCK(flags)	spin_lock_irqsave(&TxAnchor.LazyLock, flags)
 #define LAZY_UNLOCK(flags) spin_unlock_irqrestore(&TxAnchor.LazyLock, flags)
 
@@ -148,10 +148,10 @@ static struct {
 /*
  * forward references
  */
-static void diLog(struct jfs_log *log, struct tblock *tblk, struct lrd *lrd,
-		struct tlock *tlck, struct commit *cd);
-static void dataLog(struct jfs_log *log, struct tblock *tblk, struct lrd *lrd,
-		struct tlock *tlck);
+static int diLog(struct jfs_log * log, struct tblock * tblk, struct lrd * lrd,
+		struct tlock * tlck, struct commit * cd);
+static int dataLog(struct jfs_log * log, struct tblock * tblk, struct lrd * lrd,
+		struct tlock * tlck);
 static void dtLog(struct jfs_log * log, struct tblock * tblk, struct lrd * lrd,
 		struct tlock * tlck);
 static void mapLog(struct jfs_log * log, struct tblock * tblk, struct lrd * lrd,
@@ -159,8 +159,8 @@ static void mapLog(struct jfs_log * log, struct tblock * tblk, struct lrd * lrd,
 static void txAllocPMap(struct inode *ip, struct maplock * maplock,
 		struct tblock * tblk);
 static void txForce(struct tblock * tblk);
-static void txLog(struct jfs_log *log, struct tblock *tblk,
-		struct commit *cd);
+static int txLog(struct jfs_log * log, struct tblock * tblk,
+		struct commit * cd);
 static void txUpdateMap(struct tblock * tblk);
 static void txRelease(struct tblock * tblk);
 static void xtLog(struct jfs_log * log, struct tblock * tblk, struct lrd * lrd,
@@ -1256,7 +1256,8 @@ int txCommit(tid_t tid,		/* transaction identifier */
 	 *
 	 * txUpdateMap() resets XAD_NEW in XAD.
 	 */
-	txLog(log, tblk, &cd);
+	if ((rc = txLog(log, tblk, &cd)))
+		goto TheEnd;
 
 	/*
 	 * Ensure that inode isn't reused before
@@ -1364,8 +1365,9 @@ int txCommit(tid_t tid,		/* transaction identifier */
  *
  * RETURN :
  */
-static void txLog(struct jfs_log *log, struct tblock *tblk, struct commit *cd)
+static int txLog(struct jfs_log * log, struct tblock * tblk, struct commit * cd)
 {
+	int rc = 0;
 	struct inode *ip;
 	lid_t lid;
 	struct tlock *tlck;
@@ -1412,7 +1414,7 @@ static void txLog(struct jfs_log *log, struct tblock *tblk, struct commit *cd)
 		}
 	}
 
-	return;
+	return rc;
 }
 
 /*
@@ -1420,9 +1422,10 @@ static void txLog(struct jfs_log *log, struct tblock *tblk, struct commit *cd)
  *
  * function:	log inode tlock and format maplock to update bmap;
  */
-static void diLog(struct jfs_log *log, struct tblock *tblk, struct lrd *lrd,
-		 struct tlock *tlck, struct commit *cd)
+static int diLog(struct jfs_log * log, struct tblock * tblk, struct lrd * lrd,
+		 struct tlock * tlck, struct commit * cd)
 {
+	int rc = 0;
 	struct metapage *mp;
 	pxd_t *pxd;
 	struct pxd_lock *pxdlock;
@@ -1471,7 +1474,7 @@ static void diLog(struct jfs_log *log, struct tblock *tblk, struct lrd *lrd,
 		 * For the LOG_NOREDOINOEXT record, we need
 		 * to pass the IAG number and inode extent
 		 * index (within that IAG) from which the
-		 * extent is being released.  These have been
+		 * the extent being released.  These have been
 		 * passed to us in the iplist[1] and iplist[2].
 		 */
 		lrd->log.noredoinoext.iagnum =
@@ -1524,7 +1527,7 @@ static void diLog(struct jfs_log *log, struct tblock *tblk, struct lrd *lrd,
 	}
 #endif				/* _JFS_WIP */
 
-	return;
+	return rc;
 }
 
 /*
@@ -1532,8 +1535,8 @@ static void diLog(struct jfs_log *log, struct tblock *tblk, struct lrd *lrd,
  *
  * function:	log data tlock
  */
-static void dataLog(struct jfs_log *log, struct tblock *tblk, struct lrd *lrd,
-	    struct tlock *tlck)
+static int dataLog(struct jfs_log * log, struct tblock * tblk, struct lrd * lrd,
+	    struct tlock * tlck)
 {
 	struct metapage *mp;
 	pxd_t *pxd;
@@ -1559,7 +1562,7 @@ static void dataLog(struct jfs_log *log, struct tblock *tblk, struct lrd *lrd,
 		metapage_homeok(mp);
 		discard_metapage(mp);
 		tlck->mp = NULL;
-		return;
+		return 0;
 	}
 
 	PXDaddress(pxd, mp->index);
@@ -1570,7 +1573,7 @@ static void dataLog(struct jfs_log *log, struct tblock *tblk, struct lrd *lrd,
 	/* mark page as homeward bound */
 	tlck->flag |= tlckWRITEPAGE;
 
-	return;
+	return 0;
 }
 
 /*

@@ -5,7 +5,7 @@
  * Copyright 2008-2011	Luis R. Rodriguez <mcgrof@qca.qualcomm.com>
  * Copyright 2013-2014  Intel Mobile Communications GmbH
  * Copyright      2017  Intel Deutschland GmbH
- * Copyright (C) 2018 - 2021 Intel Corporation
+ * Copyright (C) 2018 - 2019 Intel Corporation
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -126,7 +126,7 @@ static int reg_num_devs_support_basehint;
  * is relevant for all registered devices.
  */
 static bool reg_is_indoor;
-static DEFINE_SPINLOCK(reg_indoor_lock);
+static spinlock_t reg_indoor_lock;
 
 /* Used to track the userspace process controlling the indoor setting */
 static u32 reg_is_indoor_portid;
@@ -139,18 +139,10 @@ static const struct ieee80211_regdomain *get_cfg80211_regdom(void)
 	return rcu_dereference_rtnl(cfg80211_regdomain);
 }
 
-/*
- * Returns the regulatory domain associated with the wiphy.
- *
- * Requires any of RTNL, wiphy mutex or RCU protection.
- */
 const struct ieee80211_regdomain *get_wiphy_regdom(struct wiphy *wiphy)
 {
-	return rcu_dereference_check(wiphy->regd,
-				     lockdep_is_held(&wiphy->mtx) ||
-				     lockdep_rtnl_is_held());
+	return rcu_dereference_rtnl(wiphy->regd);
 }
-EXPORT_SYMBOL(get_wiphy_regdom);
 
 static const char *reg_dfs_region_str(enum nl80211_dfs_regions dfs_region)
 {
@@ -172,9 +164,7 @@ enum nl80211_dfs_regions reg_get_dfs_region(struct wiphy *wiphy)
 	const struct ieee80211_regdomain *regd = NULL;
 	const struct ieee80211_regdomain *wiphy_regd = NULL;
 
-	rcu_read_lock();
 	regd = get_cfg80211_regdom();
-
 	if (!wiphy)
 		goto out;
 
@@ -191,8 +181,6 @@ enum nl80211_dfs_regions reg_get_dfs_region(struct wiphy *wiphy)
 		 reg_dfs_region_str(regd->dfs_region));
 
 out:
-	rcu_read_unlock();
-
 	return regd->dfs_region;
 }
 
@@ -210,11 +198,11 @@ static struct regulatory_request *get_last_request(void)
 
 /* Used to queue up regulatory hints */
 static LIST_HEAD(reg_requests_list);
-static DEFINE_SPINLOCK(reg_requests_lock);
+static spinlock_t reg_requests_lock;
 
 /* Used to queue up beacon hints for review */
 static LIST_HEAD(reg_pending_beacons);
-static DEFINE_SPINLOCK(reg_pending_beacons_lock);
+static spinlock_t reg_pending_beacons_lock;
 
 /* Used to keep track of processed beacon hints */
 static LIST_HEAD(reg_beacon_list);
@@ -1628,8 +1616,8 @@ static const struct ieee80211_reg_rule *
 __freq_reg_info(struct wiphy *wiphy, u32 center_freq, u32 min_bw)
 {
 	const struct ieee80211_regdomain *regd = reg_get_regdomain(wiphy);
-	static const u32 bws[] = {0, 1, 2, 4, 5, 8, 10, 16, 20};
-	const struct ieee80211_reg_rule *reg_rule = ERR_PTR(-ERANGE);
+	const u32 bws[] = {0, 1, 2, 4, 5, 8, 10, 16, 20};
+	const struct ieee80211_reg_rule *reg_rule;
 	int i = ARRAY_SIZE(bws) - 1;
 	u32 bw;
 
@@ -2559,7 +2547,6 @@ static void handle_band_custom(struct wiphy *wiphy,
 void wiphy_apply_custom_regulatory(struct wiphy *wiphy,
 				   const struct ieee80211_regdomain *regd)
 {
-	const struct ieee80211_regdomain *new_regd, *tmp;
 	enum nl80211_band band;
 	unsigned int bands_set = 0;
 
@@ -2579,19 +2566,6 @@ void wiphy_apply_custom_regulatory(struct wiphy *wiphy,
 	 * on your device's supported bands.
 	 */
 	WARN_ON(!bands_set);
-	new_regd = reg_copy_regd(regd);
-	if (IS_ERR(new_regd))
-		return;
-
-	rtnl_lock();
-	wiphy_lock(wiphy);
-
-	tmp = get_wiphy_regdom(wiphy);
-	rcu_assign_pointer(wiphy->regd, new_regd);
-	rcu_free_regdom(tmp);
-
-	wiphy_unlock(wiphy);
-	rtnl_unlock();
 }
 EXPORT_SYMBOL(wiphy_apply_custom_regulatory);
 
@@ -2753,10 +2727,7 @@ reg_process_hint_driver(struct wiphy *wiphy,
 			return REG_REQ_IGNORE;
 
 		tmp = get_wiphy_regdom(wiphy);
-		ASSERT_RTNL();
-		wiphy_lock(wiphy);
 		rcu_assign_pointer(wiphy->regd, regd);
-		wiphy_unlock(wiphy);
 		rcu_free_regdom(tmp);
 	}
 
@@ -3088,52 +3059,41 @@ static void reg_process_pending_beacon_hints(void)
 	spin_unlock_bh(&reg_pending_beacons_lock);
 }
 
-static void reg_process_self_managed_hint(struct wiphy *wiphy)
+static void reg_process_self_managed_hints(void)
 {
-	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wiphy);
+	struct cfg80211_registered_device *rdev;
+	struct wiphy *wiphy;
 	const struct ieee80211_regdomain *tmp;
 	const struct ieee80211_regdomain *regd;
 	enum nl80211_band band;
 	struct regulatory_request request = {};
 
-	ASSERT_RTNL();
-	lockdep_assert_wiphy(wiphy);
-
-	spin_lock(&reg_requests_lock);
-	regd = rdev->requested_regd;
-	rdev->requested_regd = NULL;
-	spin_unlock(&reg_requests_lock);
-
-	if (!regd)
-		return;
-
-	tmp = get_wiphy_regdom(wiphy);
-	rcu_assign_pointer(wiphy->regd, regd);
-	rcu_free_regdom(tmp);
-
-	for (band = 0; band < NUM_NL80211_BANDS; band++)
-		handle_band_custom(wiphy, wiphy->bands[band], regd);
-
-	reg_process_ht_flags(wiphy);
-
-	request.wiphy_idx = get_wiphy_idx(wiphy);
-	request.alpha2[0] = regd->alpha2[0];
-	request.alpha2[1] = regd->alpha2[1];
-	request.initiator = NL80211_REGDOM_SET_BY_DRIVER;
-
-	nl80211_send_wiphy_reg_change_event(&request);
-}
-
-static void reg_process_self_managed_hints(void)
-{
-	struct cfg80211_registered_device *rdev;
-
-	ASSERT_RTNL();
-
 	list_for_each_entry(rdev, &cfg80211_rdev_list, list) {
-		wiphy_lock(&rdev->wiphy);
-		reg_process_self_managed_hint(&rdev->wiphy);
-		wiphy_unlock(&rdev->wiphy);
+		wiphy = &rdev->wiphy;
+
+		spin_lock(&reg_requests_lock);
+		regd = rdev->requested_regd;
+		rdev->requested_regd = NULL;
+		spin_unlock(&reg_requests_lock);
+
+		if (regd == NULL)
+			continue;
+
+		tmp = get_wiphy_regdom(wiphy);
+		rcu_assign_pointer(wiphy->regd, regd);
+		rcu_free_regdom(tmp);
+
+		for (band = 0; band < NUM_NL80211_BANDS; band++)
+			handle_band_custom(wiphy, wiphy->bands[band], regd);
+
+		reg_process_ht_flags(wiphy);
+
+		request.wiphy_idx = get_wiphy_idx(wiphy);
+		request.alpha2[0] = regd->alpha2[0];
+		request.alpha2[1] = regd->alpha2[1];
+		request.initiator = NL80211_REGDOM_SET_BY_DRIVER;
+
+		nl80211_send_wiphy_reg_change_event(&request);
 	}
 
 	reg_check_channels();
@@ -3404,7 +3364,7 @@ static void restore_custom_reg_settings(struct wiphy *wiphy)
 }
 
 /*
- * Restoring regulatory settings involves ignoring any
+ * Restoring regulatory settings involves ingoring any
  * possibly stale country IE information and user regulatory
  * settings if so desired, this includes any beacon hints
  * learned as we could have traveled outside to another country
@@ -3812,21 +3772,14 @@ static int reg_set_rd_driver(const struct ieee80211_regdomain *rd,
 		return -ENODEV;
 
 	if (!driver_request->intersect) {
-		ASSERT_RTNL();
-		wiphy_lock(request_wiphy);
-		if (request_wiphy->regd) {
-			wiphy_unlock(request_wiphy);
+		if (request_wiphy->regd)
 			return -EALREADY;
-		}
 
 		regd = reg_copy_regd(rd);
-		if (IS_ERR(regd)) {
-			wiphy_unlock(request_wiphy);
+		if (IS_ERR(regd))
 			return PTR_ERR(regd);
-		}
 
 		rcu_assign_pointer(request_wiphy->regd, regd);
-		wiphy_unlock(request_wiphy);
 		reset_regdomains(false, rd);
 		return 0;
 	}
@@ -3975,9 +3928,7 @@ static int __regulatory_set_wiphy_regd(struct wiphy *wiphy,
 		 "wiphy should have REGULATORY_WIPHY_SELF_MANAGED\n"))
 		return -EPERM;
 
-	if (WARN(!is_valid_rd(rd),
-		 "Invalid regulatory domain detected: %c%c\n",
-		 rd->alpha2[0], rd->alpha2[1])) {
+	if (WARN(!is_valid_rd(rd), "Invalid regulatory domain detected\n")) {
 		print_regdomain_info(rd);
 		return -EINVAL;
 	}
@@ -4010,8 +3961,8 @@ int regulatory_set_wiphy_regd(struct wiphy *wiphy,
 }
 EXPORT_SYMBOL(regulatory_set_wiphy_regd);
 
-int regulatory_set_wiphy_regd_sync(struct wiphy *wiphy,
-				   struct ieee80211_regdomain *rd)
+int regulatory_set_wiphy_regd_sync_rtnl(struct wiphy *wiphy,
+					struct ieee80211_regdomain *rd)
 {
 	int ret;
 
@@ -4022,11 +3973,10 @@ int regulatory_set_wiphy_regd_sync(struct wiphy *wiphy,
 		return ret;
 
 	/* process the request immediately */
-	reg_process_self_managed_hint(wiphy);
-	reg_check_channels();
+	reg_process_self_managed_hints();
 	return 0;
 }
-EXPORT_SYMBOL(regulatory_set_wiphy_regd_sync);
+EXPORT_SYMBOL(regulatory_set_wiphy_regd_sync_rtnl);
 
 void wiphy_regulatory_register(struct wiphy *wiphy)
 {
@@ -4051,7 +4001,6 @@ void wiphy_regulatory_register(struct wiphy *wiphy)
 
 	wiphy_update_regulatory(wiphy, lr->initiator);
 	wiphy_all_share_dfs_chan_state(wiphy);
-	reg_process_self_managed_hints();
 }
 
 void wiphy_regulatory_deregister(struct wiphy *wiphy)
@@ -4264,6 +4213,10 @@ int __init regulatory_init(void)
 	reg_pdev = platform_device_register_simple("regulatory", 0, NULL, 0);
 	if (IS_ERR(reg_pdev))
 		return PTR_ERR(reg_pdev);
+
+	spin_lock_init(&reg_requests_lock);
+	spin_lock_init(&reg_pending_beacons_lock);
+	spin_lock_init(&reg_indoor_lock);
 
 	rcu_assign_pointer(cfg80211_regdomain, cfg80211_world_regdom);
 

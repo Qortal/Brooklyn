@@ -107,7 +107,3 @@
 	ethernet = <&enetc_port2>;
 	status = "okay";
 };
-
-&sata {
-	status = "okay";
-};

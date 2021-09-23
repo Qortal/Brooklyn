@@ -131,14 +131,20 @@ struct snd_kcontrol *snd_hda_find_mixer_ctl(struct hda_codec *codec,
 int __snd_hda_add_vmaster(struct hda_codec *codec, char *name,
 			  unsigned int *tlv, const char * const *followers,
 			  const char *suffix, bool init_follower_vol,
-			  unsigned int access, struct snd_kcontrol **ctl_ret);
-#define snd_hda_add_vmaster(codec, name, tlv, followers, suffix, access) \
-	__snd_hda_add_vmaster(codec, name, tlv, followers, suffix, true, access, NULL)
+			  struct snd_kcontrol **ctl_ret);
+#define snd_hda_add_vmaster(codec, name, tlv, followers, suffix) \
+	__snd_hda_add_vmaster(codec, name, tlv, followers, suffix, true, NULL)
 int snd_hda_codec_reset(struct hda_codec *codec);
 void snd_hda_codec_register(struct hda_codec *codec);
 void snd_hda_codec_cleanup_for_unbind(struct hda_codec *codec);
 
 #define snd_hda_regmap_sync(codec)	snd_hdac_regmap_sync(&(codec)->core)
+
+enum {
+	HDA_VMUTE_OFF,
+	HDA_VMUTE_ON,
+	HDA_VMUTE_FOLLOW_MASTER,
+};
 
 struct hda_vmaster_mute_hook {
 	/* below two fields must be filled by the caller of
@@ -147,11 +153,13 @@ struct hda_vmaster_mute_hook {
 	struct snd_kcontrol *sw_kctl;
 	void (*hook)(void *, int);
 	/* below are initialized automatically */
+	unsigned int mute_mode; /* HDA_VMUTE_XXX */
 	struct hda_codec *codec;
 };
 
 int snd_hda_add_vmaster_hook(struct hda_codec *codec,
-			     struct hda_vmaster_mute_hook *hook);
+			     struct hda_vmaster_mute_hook *hook,
+			     bool expose_enum_ctl);
 void snd_hda_sync_vmaster_hook(struct hda_vmaster_mute_hook *hook);
 
 /* amp value bits */
@@ -172,7 +180,7 @@ int snd_hda_create_spdif_in_ctls(struct hda_codec *codec, hda_nid_t nid);
 /*
  * input MUX helper
  */
-#define HDA_MAX_NUM_INPUTS	36
+#define HDA_MAX_NUM_INPUTS	16
 struct hda_input_mux_item {
 	char label[32];
 	unsigned int index;
@@ -708,8 +716,6 @@ void snd_hdmi_write_eld_info(struct hdmi_eld *eld,
 
 #define SND_PRINT_CHANNEL_ALLOCATION_ADVISED_BUFSIZE 80
 void snd_print_channel_allocation(int spk_alloc, char *buf, int buflen);
-
-void snd_hda_codec_display_power(struct hda_codec *codec, bool enable);
 
 /*
  */

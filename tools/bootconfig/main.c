@@ -27,7 +27,7 @@ static int xbc_show_value(struct xbc_node *node, bool semicolon)
 			q = '\'';
 		else
 			q = '"';
-		printf("%c%s%c%s", q, val, q, xbc_node_is_array(node) ? ", " : eol);
+		printf("%c%s%c%s", q, val, q, node->next ? ", " : eol);
 		i++;
 	}
 	return i;
@@ -35,55 +35,30 @@ static int xbc_show_value(struct xbc_node *node, bool semicolon)
 
 static void xbc_show_compact_tree(void)
 {
-	struct xbc_node *node, *cnode = NULL, *vnode;
+	struct xbc_node *node, *cnode;
 	int depth = 0, i;
 
 	node = xbc_root_node();
 	while (node && xbc_node_is_key(node)) {
 		for (i = 0; i < depth; i++)
 			printf("\t");
-		if (!cnode)
-			cnode = xbc_node_get_child(node);
+		cnode = xbc_node_get_child(node);
 		while (cnode && xbc_node_is_key(cnode) && !cnode->next) {
-			vnode = xbc_node_get_child(cnode);
-			/*
-			 * If @cnode has value and subkeys, this
-			 * should show it as below.
-			 *
-			 * key(@node) {
-			 *      key(@cnode) = value;
-			 *      key(@cnode) {
-			 *          subkeys;
-			 *      }
-			 * }
-			 */
-			if (vnode && xbc_node_is_value(vnode) && vnode->next)
-				break;
 			printf("%s.", xbc_node_get_data(node));
 			node = cnode;
-			cnode = vnode;
+			cnode = xbc_node_get_child(node);
 		}
 		if (cnode && xbc_node_is_key(cnode)) {
 			printf("%s {\n", xbc_node_get_data(node));
 			depth++;
 			node = cnode;
-			cnode = NULL;
 			continue;
 		} else if (cnode && xbc_node_is_value(cnode)) {
 			printf("%s = ", xbc_node_get_data(node));
 			xbc_show_value(cnode, true);
-			/*
-			 * If @node has value and subkeys, continue
-			 * looping on subkeys with same node.
-			 */
-			if (cnode->next) {
-				cnode = xbc_node_get_next(cnode);
-				continue;
-			}
 		} else {
 			printf("%s;\n", xbc_node_get_data(node));
 		}
-		cnode = NULL;
 
 		if (node->next) {
 			node = xbc_node_get_next(node);
@@ -95,12 +70,10 @@ static void xbc_show_compact_tree(void)
 				return;
 			if (!xbc_node_get_child(node)->next)
 				continue;
-			if (depth) {
-				depth--;
-				for (i = 0; i < depth; i++)
-					printf("\t");
-				printf("}\n");
-			}
+			depth--;
+			for (i = 0; i < depth; i++)
+				printf("\t");
+			printf("}\n");
 		}
 		node = xbc_node_get_next(node);
 	}
@@ -111,14 +84,12 @@ static void xbc_show_list(void)
 	char key[XBC_KEYLEN_MAX];
 	struct xbc_node *leaf;
 	const char *val;
-	int ret;
+	int ret = 0;
 
 	xbc_for_each_key_value(leaf, val) {
 		ret = xbc_node_compose_key(leaf, key, XBC_KEYLEN_MAX);
-		if (ret < 0) {
-			fprintf(stderr, "Failed to compose key %d\n", ret);
+		if (ret < 0)
 			break;
-		}
 		printf("%s = ", key);
 		if (!val || val[0] == '\0') {
 			printf("\"\"\n");
@@ -126,6 +97,17 @@ static void xbc_show_list(void)
 		}
 		xbc_show_value(xbc_node_get_child(leaf), false);
 	}
+}
+
+/* Simple real checksum */
+static int checksum(unsigned char *buf, int len)
+{
+	int i, sum = 0;
+
+	for (i = 0; i < len; i++)
+		sum += buf[i];
+
+	return sum;
 }
 
 #define PAGE_SIZE	4096
@@ -223,7 +205,7 @@ static int load_xbc_from_initrd(int fd, char **buf)
 		return ret;
 
 	/* Wrong Checksum */
-	rcsum = xbc_calc_checksum(*buf, size);
+	rcsum = checksum((unsigned char *)*buf, size);
 	if (csum != rcsum) {
 		pr_err("checksum error: %d != %d\n", csum, rcsum);
 		return -EINVAL;
@@ -372,7 +354,7 @@ static int apply_xbc(const char *path, const char *xbc_path)
 		return ret;
 	}
 	size = strlen(buf) + 1;
-	csum = xbc_calc_checksum(buf, size);
+	csum = checksum((unsigned char *)buf, size);
 
 	/* Backup the bootconfig data */
 	data = calloc(size + BOOTCONFIG_ALIGN +

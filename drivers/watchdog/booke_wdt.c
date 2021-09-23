@@ -148,7 +148,7 @@ static void __booke_wdt_enable(void *data)
 }
 
 /**
- * __booke_wdt_disable - disable the watchdog on the given CPU
+ * booke_wdt_disable - disable the watchdog on the given CPU
  *
  * This function is called on each CPU.  It disables the watchdog on that CPU.
  *

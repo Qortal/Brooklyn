@@ -115,7 +115,7 @@ static void kgdb_tty_recv(int ch)
 static int kgdb_nmi_poll_one_knock(void)
 {
 	static int n;
-	int c;
+	int c = -1;
 	const char *magic = kgdb_nmi_magic;
 	size_t m = strlen(magic);
 	bool printch = false;
@@ -298,7 +298,7 @@ static void kgdb_nmi_tty_hangup(struct tty_struct *tty)
 	tty_port_hangup(&priv->port);
 }
 
-static unsigned int kgdb_nmi_tty_write_room(struct tty_struct *tty)
+static int kgdb_nmi_tty_write_room(struct tty_struct *tty)
 {
 	/* Actually, we can handle any amount as we use polled writes. */
 	return 2048;
@@ -373,7 +373,9 @@ int kgdb_unregister_nmi_console(void)
 	if (ret)
 		return ret;
 
-	tty_unregister_driver(kgdb_nmi_tty_driver);
+	ret = tty_unregister_driver(kgdb_nmi_tty_driver);
+	if (ret)
+		return ret;
 	put_tty_driver(kgdb_nmi_tty_driver);
 
 	return 0;

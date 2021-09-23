@@ -62,23 +62,22 @@ static struct mask_info drawer_info;
 struct cpu_topology_s390 cpu_topology[NR_CPUS];
 EXPORT_SYMBOL_GPL(cpu_topology);
 
-static void cpu_group_map(cpumask_t *dst, struct mask_info *info, unsigned int cpu)
+static cpumask_t cpu_group_map(struct mask_info *info, unsigned int cpu)
 {
-	static cpumask_t mask;
+	cpumask_t mask;
 
-	cpumask_clear(&mask);
-	if (!cpu_online(cpu))
-		goto out;
-	cpumask_set_cpu(cpu, &mask);
+	cpumask_copy(&mask, cpumask_of(cpu));
 	switch (topology_mode) {
 	case TOPOLOGY_MODE_HW:
 		while (info) {
 			if (cpumask_test_cpu(cpu, &info->mask)) {
-				cpumask_copy(&mask, &info->mask);
+				mask = info->mask;
 				break;
 			}
 			info = info->next;
 		}
+		if (cpumask_empty(&mask))
+			cpumask_copy(&mask, cpumask_of(cpu));
 		break;
 	case TOPOLOGY_MODE_PACKAGE:
 		cpumask_copy(&mask, cpu_present_mask);
@@ -86,31 +85,27 @@ static void cpu_group_map(cpumask_t *dst, struct mask_info *info, unsigned int c
 	default:
 		fallthrough;
 	case TOPOLOGY_MODE_SINGLE:
+		cpumask_copy(&mask, cpumask_of(cpu));
 		break;
 	}
 	cpumask_and(&mask, &mask, cpu_online_mask);
-out:
-	cpumask_copy(dst, &mask);
+	return mask;
 }
 
-static void cpu_thread_map(cpumask_t *dst, unsigned int cpu)
+static cpumask_t cpu_thread_map(unsigned int cpu)
 {
-	static cpumask_t mask;
+	cpumask_t mask;
 	int i;
 
-	cpumask_clear(&mask);
-	if (!cpu_online(cpu))
-		goto out;
-	cpumask_set_cpu(cpu, &mask);
+	cpumask_copy(&mask, cpumask_of(cpu));
 	if (topology_mode != TOPOLOGY_MODE_HW)
-		goto out;
+		return mask;
 	cpu -= cpu % (smp_cpu_mtid + 1);
 	for (i = 0; i <= smp_cpu_mtid; i++)
 		if (cpu_present(cpu + i))
 			cpumask_set_cpu(cpu + i, &mask);
 	cpumask_and(&mask, &mask, cpu_online_mask);
-out:
-	cpumask_copy(dst, &mask);
+	return mask;
 }
 
 #define TOPOLOGY_CORE_BITS	64
@@ -255,10 +250,10 @@ void update_cpu_masks(void)
 
 	for_each_possible_cpu(cpu) {
 		topo = &cpu_topology[cpu];
-		cpu_thread_map(&topo->thread_mask, cpu);
-		cpu_group_map(&topo->core_mask, &socket_info, cpu);
-		cpu_group_map(&topo->book_mask, &book_info, cpu);
-		cpu_group_map(&topo->drawer_mask, &drawer_info, cpu);
+		topo->thread_mask = cpu_thread_map(cpu);
+		topo->core_mask = cpu_group_map(&socket_info, cpu);
+		topo->book_mask = cpu_group_map(&book_info, cpu);
+		topo->drawer_mask = cpu_group_map(&drawer_info, cpu);
 		topo->booted_cores = 0;
 		if (topology_mode != TOPOLOGY_MODE_HW) {
 			id = topology_mode == TOPOLOGY_MODE_PACKAGE ? 0 : cpu;

@@ -20,7 +20,7 @@ int subprog_tail(struct __sk_buff *skb)
 	return 1;
 }
 
-int count = 0;
+static volatile int count;
 
 SEC("classifier/0")
 int bpf_func_0(struct __sk_buff *skb)

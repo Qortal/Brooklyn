@@ -3,7 +3,6 @@
  * Some IBSS support code for cfg80211.
  *
  * Copyright 2009	Johannes Berg <johannes@sipsolutions.net>
- * Copyright (C) 2020-2021 Intel Corporation
  */
 
 #include <linux/etherdevice.h>
@@ -93,7 +92,7 @@ int __cfg80211_join_ibss(struct cfg80211_registered_device *rdev,
 	struct wireless_dev *wdev = dev->ieee80211_ptr;
 	int err;
 
-	lockdep_assert_held(&rdev->wiphy.mtx);
+	ASSERT_RTNL();
 	ASSERT_WDEV_LOCK(wdev);
 
 	if (wdev->ssid_len)

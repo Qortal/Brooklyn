@@ -98,7 +98,8 @@ static int amdgpu_cs_bo_handles_chunk(struct amdgpu_cs_parser *p,
 	return 0;
 
 error_free:
-	kvfree(info);
+	if (info)
+		kvfree(info);
 
 	return r;
 }
@@ -117,7 +118,7 @@ static int amdgpu_cs_parser_init(struct amdgpu_cs_parser *p, union drm_amdgpu_cs
 	if (cs->in.num_chunks == 0)
 		return 0;
 
-	chunk_array = kvmalloc_array(cs->in.num_chunks, sizeof(uint64_t), GFP_KERNEL);
+	chunk_array = kmalloc_array(cs->in.num_chunks, sizeof(uint64_t), GFP_KERNEL);
 	if (!chunk_array)
 		return -ENOMEM;
 
@@ -144,7 +145,7 @@ static int amdgpu_cs_parser_init(struct amdgpu_cs_parser *p, union drm_amdgpu_cs
 	}
 
 	p->nchunks = cs->in.num_chunks;
-	p->chunks = kvmalloc_array(p->nchunks, sizeof(struct amdgpu_cs_chunk),
+	p->chunks = kmalloc_array(p->nchunks, sizeof(struct amdgpu_cs_chunk),
 			    GFP_KERNEL);
 	if (!p->chunks) {
 		ret = -ENOMEM;
@@ -238,7 +239,7 @@ static int amdgpu_cs_parser_init(struct amdgpu_cs_parser *p, union drm_amdgpu_cs
 
 	if (p->uf_entry.tv.bo)
 		p->job->uf_addr = uf_offset;
-	kvfree(chunk_array);
+	kfree(chunk_array);
 
 	/* Use this opportunity to fill in task info for the vm */
 	amdgpu_vm_set_task_info(vm);
@@ -250,11 +251,11 @@ free_all_kdata:
 free_partial_kdata:
 	for (; i >= 0; i--)
 		kvfree(p->chunks[i].kdata);
-	kvfree(p->chunks);
+	kfree(p->chunks);
 	p->chunks = NULL;
 	p->nchunks = 0;
 free_chunk:
-	kvfree(chunk_array);
+	kfree(chunk_array);
 
 	return ret;
 }
@@ -325,7 +326,7 @@ static void amdgpu_cs_get_threshold_for_moves(struct amdgpu_device *adev,
 	increment_us = time_us - adev->mm_stats.last_update_us;
 	adev->mm_stats.last_update_us = time_us;
 	adev->mm_stats.accum_us = min(adev->mm_stats.accum_us + increment_us,
-				      us_upper_bound);
+                                      us_upper_bound);
 
 	/* This prevents the short period of low performance when the VRAM
 	 * usage is low and the driver is in debt or doesn't have enough
@@ -396,19 +397,20 @@ void amdgpu_cs_report_moved_bytes(struct amdgpu_device *adev, u64 num_bytes,
 	spin_unlock(&adev->mm_stats.lock);
 }
 
-static int amdgpu_cs_bo_validate(void *param, struct amdgpu_bo *bo)
+static int amdgpu_cs_bo_validate(struct amdgpu_cs_parser *p,
+				 struct amdgpu_bo *bo)
 {
 	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->tbo.bdev);
-	struct amdgpu_cs_parser *p = param;
 	struct ttm_operation_ctx ctx = {
 		.interruptible = true,
 		.no_wait_gpu = false,
-		.resv = bo->tbo.base.resv
+		.resv = bo->tbo.base.resv,
+		.flags = 0
 	};
 	uint32_t domain;
 	int r;
 
-	if (bo->tbo.pin_count)
+	if (bo->pin_count)
 		return 0;
 
 	/* Don't move this buffer if we have depleted our allowance
@@ -451,6 +453,21 @@ retry:
 	return r;
 }
 
+static int amdgpu_cs_validate(void *param, struct amdgpu_bo *bo)
+{
+	struct amdgpu_cs_parser *p = param;
+	int r;
+
+	r = amdgpu_cs_bo_validate(p, bo);
+	if (r)
+		return r;
+
+	if (bo->shadow)
+		r = amdgpu_cs_bo_validate(p, bo->shadow);
+
+	return r;
+}
+
 static int amdgpu_cs_list_validate(struct amdgpu_cs_parser *p,
 			    struct list_head *validated)
 {
@@ -478,7 +495,7 @@ static int amdgpu_cs_list_validate(struct amdgpu_cs_parser *p,
 						     lobj->user_pages);
 		}
 
-		r = amdgpu_cs_bo_validate(p, bo);
+		r = amdgpu_cs_validate(p, bo);
 		if (r)
 			return r;
 
@@ -544,7 +561,7 @@ static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
 					sizeof(struct page *),
 					GFP_KERNEL | __GFP_ZERO);
 		if (!e->user_pages) {
-			DRM_ERROR("kvmalloc_array failure\n");
+			DRM_ERROR("calloc failure\n");
 			return -ENOMEM;
 		}
 
@@ -578,7 +595,7 @@ static int amdgpu_cs_parser_bos(struct amdgpu_cs_parser *p,
 	p->bytes_moved_vis = 0;
 
 	r = amdgpu_vm_validate_pt_bos(p->adev, &fpriv->vm,
-				      amdgpu_cs_bo_validate, p);
+				      amdgpu_cs_validate, p);
 	if (r) {
 		DRM_ERROR("amdgpu_vm_validate_pt_bos() failed.\n");
 		goto error_validate;
@@ -657,12 +674,11 @@ static int amdgpu_cs_sync_rings(struct amdgpu_cs_parser *p)
 }
 
 /**
- * amdgpu_cs_parser_fini() - clean parser states
+ * cs_parser_fini() - clean parser states
  * @parser:	parser structure holding parsing context.
  * @error:	error number
- * @backoff:	indicator to backoff the reservation
  *
- * If error is set then unvalidate buffer, otherwise just free memory
+ * If error is set than unvalidate buffer, otherwise just free memory
  * used by parsing context.
  **/
 static void amdgpu_cs_parser_fini(struct amdgpu_cs_parser *parser, int error,
@@ -691,7 +707,7 @@ static void amdgpu_cs_parser_fini(struct amdgpu_cs_parser *parser, int error,
 
 	for (i = 0; i < parser->nchunks; i++)
 		kvfree(parser->chunks[i].kdata);
-	kvfree(parser->chunks);
+	kfree(parser->chunks);
 	if (parser->job)
 		amdgpu_job_free(parser->job);
 	if (parser->uf_entry.tv.bo) {
@@ -832,7 +848,7 @@ static int amdgpu_cs_vm_handling(struct amdgpu_cs_parser *p)
 	if (r)
 		return r;
 
-	p->job->vm_pd_addr = amdgpu_gmc_pd_addr(vm->root.bo);
+	p->job->vm_pd_addr = amdgpu_gmc_pd_addr(vm->root.base.bo);
 
 	if (amdgpu_vm_debug) {
 		/* Invalidate all BOs to test for userspace bugs */
@@ -1445,7 +1461,7 @@ int amdgpu_cs_fence_to_handle_ioctl(struct drm_device *dev, void *data,
 		dma_fence_put(fence);
 		if (r)
 			return r;
-		r = drm_syncobj_get_fd(syncobj, (int *)&info->out.handle);
+		r = drm_syncobj_get_fd(syncobj, (int*)&info->out.handle);
 		drm_syncobj_put(syncobj);
 		return r;
 
@@ -1473,7 +1489,7 @@ int amdgpu_cs_fence_to_handle_ioctl(struct drm_device *dev, void *data,
 }
 
 /**
- * amdgpu_cs_wait_all_fences - wait on all fences to signal
+ * amdgpu_cs_wait_all_fence - wait on all fences to signal
  *
  * @adev: amdgpu device
  * @filp: file private
@@ -1624,12 +1640,11 @@ err_free_fences:
 }
 
 /**
- * amdgpu_cs_find_mapping - find bo_va for VM address
+ * amdgpu_cs_find_bo_va - find bo_va for VM address
  *
  * @parser: command submission parser context
  * @addr: VM address
  * @bo: resulting BO of the mapping found
- * @map: Placeholder to return found BO mapping
  *
  * Search the buffer objects in the command submission context for a certain
  * virtual memory address. Returns allocation structure when found, NULL

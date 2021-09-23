@@ -26,12 +26,11 @@
  * @cl: host client
  * @buf: buffer to send
  * @length: buffer length
- * @vtag: virtual tag
  * @mode: sending mode
  *
  * Return: written size bytes or < 0 on error
  */
-ssize_t __mei_cl_send(struct mei_cl *cl, u8 *buf, size_t length, u8 vtag,
+ssize_t __mei_cl_send(struct mei_cl *cl, u8 *buf, size_t length,
 		      unsigned int mode)
 {
 	struct mei_device *bus;
@@ -44,8 +43,7 @@ ssize_t __mei_cl_send(struct mei_cl *cl, u8 *buf, size_t length, u8 vtag,
 	bus = cl->dev;
 
 	mutex_lock(&bus->device_lock);
-	if (bus->dev_state != MEI_DEV_ENABLED &&
-	    bus->dev_state != MEI_DEV_POWERING_DOWN) {
+	if (bus->dev_state != MEI_DEV_ENABLED) {
 		rets = -ENODEV;
 		goto out;
 	}
@@ -59,13 +57,6 @@ ssize_t __mei_cl_send(struct mei_cl *cl, u8 *buf, size_t length, u8 vtag,
 	if (!mei_me_cl_is_active(cl->me_cl)) {
 		rets = -ENOTTY;
 		goto out;
-	}
-
-	if (vtag) {
-		/* Check if vtag is supported by client */
-		rets = mei_cl_vt_support_check(cl);
-		if (rets)
-			goto out;
 	}
 
 	if (length > mei_cl_mtu(cl)) {
@@ -95,7 +86,6 @@ ssize_t __mei_cl_send(struct mei_cl *cl, u8 *buf, size_t length, u8 vtag,
 		rets = -ENOMEM;
 		goto out;
 	}
-	cb->vtag = vtag;
 
 	cb->internal = !!(mode & MEI_CL_IO_TX_INTERNAL);
 	cb->blocking = !!(mode & MEI_CL_IO_TX_BLOCKING);
@@ -116,12 +106,11 @@ out:
  * @buf: buffer to receive
  * @length: buffer length
  * @mode: io mode
- * @vtag: virtual tag
  * @timeout: recv timeout, 0 for infinite timeout
  *
  * Return: read size in bytes of < 0 on error
  */
-ssize_t __mei_cl_recv(struct mei_cl *cl, u8 *buf, size_t length, u8 *vtag,
+ssize_t __mei_cl_recv(struct mei_cl *cl, u8 *buf, size_t length,
 		      unsigned int mode, unsigned long timeout)
 {
 	struct mei_device *bus;
@@ -136,8 +125,7 @@ ssize_t __mei_cl_recv(struct mei_cl *cl, u8 *buf, size_t length, u8 *vtag,
 	bus = cl->dev;
 
 	mutex_lock(&bus->device_lock);
-	if (bus->dev_state != MEI_DEV_ENABLED &&
-	    bus->dev_state != MEI_DEV_POWERING_DOWN) {
+	if (bus->dev_state != MEI_DEV_ENABLED) {
 		rets = -ENODEV;
 		goto out;
 	}
@@ -208,8 +196,6 @@ copy:
 	r_length = min_t(size_t, length, cb->buf_idx);
 	memcpy(buf, cb->buf.data, r_length);
 	rets = r_length;
-	if (vtag)
-		*vtag = cb->vtag;
 
 free:
 	mei_cl_del_rd_completed(cl, cb);
@@ -220,102 +206,21 @@ out:
 }
 
 /**
- * mei_cldev_send_vtag - me device send with vtag  (write)
- *
- * @cldev: me client device
- * @buf: buffer to send
- * @length: buffer length
- * @vtag: virtual tag
- *
- * Return:
- *  * written size in bytes
- *  * < 0 on error
- */
-
-ssize_t mei_cldev_send_vtag(struct mei_cl_device *cldev, u8 *buf, size_t length,
-			    u8 vtag)
-{
-	struct mei_cl *cl = cldev->cl;
-
-	return __mei_cl_send(cl, buf, length, vtag, MEI_CL_IO_TX_BLOCKING);
-}
-EXPORT_SYMBOL_GPL(mei_cldev_send_vtag);
-
-/**
- * mei_cldev_recv_vtag - client receive with vtag (read)
- *
- * @cldev: me client device
- * @buf: buffer to receive
- * @length: buffer length
- * @vtag: virtual tag
- *
- * Return:
- * * read size in bytes
- * *  < 0 on error
- */
-
-ssize_t mei_cldev_recv_vtag(struct mei_cl_device *cldev, u8 *buf, size_t length,
-			    u8 *vtag)
-{
-	struct mei_cl *cl = cldev->cl;
-
-	return __mei_cl_recv(cl, buf, length, vtag, 0, 0);
-}
-EXPORT_SYMBOL_GPL(mei_cldev_recv_vtag);
-
-/**
- * mei_cldev_recv_nonblock_vtag - non block client receive with vtag (read)
- *
- * @cldev: me client device
- * @buf: buffer to receive
- * @length: buffer length
- * @vtag: virtual tag
- *
- * Return:
- * * read size in bytes
- * * -EAGAIN if function will block.
- * * < 0 on other error
- */
-ssize_t mei_cldev_recv_nonblock_vtag(struct mei_cl_device *cldev, u8 *buf,
-				     size_t length, u8 *vtag)
-{
-	struct mei_cl *cl = cldev->cl;
-
-	return __mei_cl_recv(cl, buf, length, vtag, MEI_CL_IO_RX_NONBLOCK, 0);
-}
-EXPORT_SYMBOL_GPL(mei_cldev_recv_nonblock_vtag);
-
-/**
  * mei_cldev_send - me device send  (write)
  *
  * @cldev: me client device
  * @buf: buffer to send
  * @length: buffer length
  *
- * Return:
- *  * written size in bytes
- *  * < 0 on error
+ * Return: written size in bytes or < 0 on error
  */
 ssize_t mei_cldev_send(struct mei_cl_device *cldev, u8 *buf, size_t length)
 {
-	return mei_cldev_send_vtag(cldev, buf, length, 0);
+	struct mei_cl *cl = cldev->cl;
+
+	return __mei_cl_send(cl, buf, length, MEI_CL_IO_TX_BLOCKING);
 }
 EXPORT_SYMBOL_GPL(mei_cldev_send);
-
-/**
- * mei_cldev_recv - client receive (read)
- *
- * @cldev: me client device
- * @buf: buffer to receive
- * @length: buffer length
- *
- * Return: read size in bytes of < 0 on error
- */
-ssize_t mei_cldev_recv(struct mei_cl_device *cldev, u8 *buf, size_t length)
-{
-	return mei_cldev_recv_vtag(cldev, buf, length, NULL);
-}
-EXPORT_SYMBOL_GPL(mei_cldev_recv);
 
 /**
  * mei_cldev_recv_nonblock - non block client receive (read)
@@ -330,9 +235,28 @@ EXPORT_SYMBOL_GPL(mei_cldev_recv);
 ssize_t mei_cldev_recv_nonblock(struct mei_cl_device *cldev, u8 *buf,
 				size_t length)
 {
-	return mei_cldev_recv_nonblock_vtag(cldev, buf, length, NULL);
+	struct mei_cl *cl = cldev->cl;
+
+	return __mei_cl_recv(cl, buf, length, MEI_CL_IO_RX_NONBLOCK, 0);
 }
 EXPORT_SYMBOL_GPL(mei_cldev_recv_nonblock);
+
+/**
+ * mei_cldev_recv - client receive (read)
+ *
+ * @cldev: me client device
+ * @buf: buffer to receive
+ * @length: buffer length
+ *
+ * Return: read size in bytes of < 0 on error
+ */
+ssize_t mei_cldev_recv(struct mei_cl_device *cldev, u8 *buf, size_t length)
+{
+	struct mei_cl *cl = cldev->cl;
+
+	return __mei_cl_recv(cl, buf, length, 0, 0);
+}
+EXPORT_SYMBOL_GPL(mei_cldev_recv);
 
 /**
  * mei_cl_bus_rx_work - dispatch rx event for a bus device
@@ -352,8 +276,7 @@ static void mei_cl_bus_rx_work(struct work_struct *work)
 		cldev->rx_cb(cldev);
 
 	mutex_lock(&bus->device_lock);
-	if (mei_cl_is_connected(cldev->cl))
-		mei_cl_read_start(cldev->cl, mei_cl_mtu(cldev->cl), NULL);
+	mei_cl_read_start(cldev->cl, mei_cl_mtu(cldev->cl), NULL);
 	mutex_unlock(&bus->device_lock);
 }
 
@@ -441,16 +364,10 @@ int mei_cldev_register_rx_cb(struct mei_cl_device *cldev, mei_cldev_cb_t rx_cb)
 	INIT_WORK(&cldev->rx_work, mei_cl_bus_rx_work);
 
 	mutex_lock(&bus->device_lock);
-	if (mei_cl_is_connected(cldev->cl))
-		ret = mei_cl_read_start(cldev->cl, mei_cl_mtu(cldev->cl), NULL);
-	else
-		ret = -ENODEV;
+	ret = mei_cl_read_start(cldev->cl, mei_cl_mtu(cldev->cl), NULL);
 	mutex_unlock(&bus->device_lock);
-	if (ret && ret != -EBUSY) {
-		cancel_work_sync(&cldev->rx_work);
-		cldev->rx_cb = NULL;
+	if (ret && ret != -EBUSY)
 		return ret;
-	}
 
 	return 0;
 }
@@ -484,11 +401,8 @@ int mei_cldev_register_notif_cb(struct mei_cl_device *cldev,
 	mutex_lock(&bus->device_lock);
 	ret = mei_cl_notify_request(cldev->cl, NULL, 1);
 	mutex_unlock(&bus->device_lock);
-	if (ret) {
-		cancel_work_sync(&cldev->notif_work);
-		cldev->notif_cb = NULL;
+	if (ret)
 		return ret;
-	}
 
 	return 0;
 }
@@ -887,17 +801,22 @@ static int mei_cl_device_probe(struct device *dev)
 static int mei_cl_device_remove(struct device *dev)
 {
 	struct mei_cl_device *cldev = to_mei_cl_device(dev);
-	struct mei_cl_driver *cldrv = to_mei_cl_driver(dev->driver);
+	struct mei_cl_driver *cldrv;
+	int ret = 0;
 
+	if (!cldev || !dev->driver)
+		return 0;
+
+	cldrv = to_mei_cl_driver(dev->driver);
 	if (cldrv->remove)
-		cldrv->remove(cldev);
+		ret = cldrv->remove(cldev);
 
 	mei_cldev_unregister_callbacks(cldev);
 
 	mei_cl_bus_module_put(cldev);
 	module_put(THIS_MODULE);
 
-	return 0;
+	return ret;
 }
 
 static ssize_t name_show(struct device *dev, struct device_attribute *a,
@@ -1118,7 +1037,7 @@ static struct mei_cl_device *mei_cl_bus_dev_alloc(struct mei_device *bus,
 }
 
 /**
- * mei_cl_bus_dev_setup - setup me client device
+ * mei_cl_dev_setup - setup me client device
  *    run fix up routines and set the device name
  *
  * @bus: mei device

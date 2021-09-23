@@ -39,13 +39,14 @@ void __init *plat_get_fdt(void)
 		/* Already set up */
 		return (void *)fdt;
 
-	fdt = (void *)get_fdt();
-	if (fdt && !fdt_check_header(fdt)) {
+	if (fw_passed_dtb && !fdt_check_header((void *)fw_passed_dtb)) {
 		/*
 		 * We have been provided with the appropriate device tree for
 		 * the board. Make use of it & search for any machine struct
 		 * based upon the root compatible string.
 		 */
+		fdt = (void *)fw_passed_dtb;
+
 		for_each_mips_machine(check_mach) {
 			match = mips_machine_is_compatible(check_mach, fdt);
 			if (match) {
@@ -200,4 +201,8 @@ void __init arch_init_irq(void)
 	of_node_put(intc_node);
 
 	irqchip_init();
+}
+
+void __init prom_free_prom_memory(void)
+{
 }

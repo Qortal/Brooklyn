@@ -8,7 +8,6 @@
 
 #include "dp_panel.h"
 #include <sound/hdmi-codec.h>
-#include "disp/msm_disp_snapshot.h"
 
 struct msm_dp {
 	struct drm_device *drm_dev;

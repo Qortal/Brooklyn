@@ -242,8 +242,8 @@ static int meson_clk_get_pll_settings(unsigned long rate,
 	return best ? 0 : -EINVAL;
 }
 
-static int meson_clk_pll_determine_rate(struct clk_hw *hw,
-					struct clk_rate_request *req)
+static long meson_clk_pll_round_rate(struct clk_hw *hw, unsigned long rate,
+				     unsigned long *parent_rate)
 {
 	struct clk_regmap *clk = to_clk_regmap(hw);
 	struct meson_clk_pll_data *pll = meson_clk_pll_data(clk);
@@ -251,26 +251,22 @@ static int meson_clk_pll_determine_rate(struct clk_hw *hw,
 	unsigned long round;
 	int ret;
 
-	ret = meson_clk_get_pll_settings(req->rate, req->best_parent_rate,
-					 &m, &n, pll);
+	ret = meson_clk_get_pll_settings(rate, *parent_rate, &m, &n, pll);
 	if (ret)
-		return ret;
+		return meson_clk_pll_recalc_rate(hw, *parent_rate);
 
-	round = __pll_params_to_rate(req->best_parent_rate, m, n, 0, pll);
+	round = __pll_params_to_rate(*parent_rate, m, n, 0, pll);
 
-	if (!MESON_PARM_APPLICABLE(&pll->frac) || req->rate == round) {
-		req->rate = round;
-		return 0;
-	}
+	if (!MESON_PARM_APPLICABLE(&pll->frac) || rate == round)
+		return round;
 
 	/*
 	 * The rate provided by the setting is not an exact match, let's
 	 * try to improve the result using the fractional parameter
 	 */
-	frac = __pll_params_with_frac(req->rate, req->best_parent_rate, m, n, pll);
-	req->rate = __pll_params_to_rate(req->best_parent_rate, m, n, frac, pll);
+	frac = __pll_params_with_frac(rate, *parent_rate, m, n, pll);
 
-	return 0;
+	return __pll_params_to_rate(*parent_rate, m, n, frac, pll);
 }
 
 static int meson_clk_pll_wait_lock(struct clk_hw *hw)
@@ -423,7 +419,7 @@ static int meson_clk_pll_set_rate(struct clk_hw *hw, unsigned long rate,
  */
 const struct clk_ops meson_clk_pcie_pll_ops = {
 	.recalc_rate	= meson_clk_pll_recalc_rate,
-	.determine_rate	= meson_clk_pll_determine_rate,
+	.round_rate	= meson_clk_pll_round_rate,
 	.is_enabled	= meson_clk_pll_is_enabled,
 	.enable		= meson_clk_pcie_pll_enable,
 	.disable	= meson_clk_pll_disable
@@ -433,7 +429,7 @@ EXPORT_SYMBOL_GPL(meson_clk_pcie_pll_ops);
 const struct clk_ops meson_clk_pll_ops = {
 	.init		= meson_clk_pll_init,
 	.recalc_rate	= meson_clk_pll_recalc_rate,
-	.determine_rate	= meson_clk_pll_determine_rate,
+	.round_rate	= meson_clk_pll_round_rate,
 	.set_rate	= meson_clk_pll_set_rate,
 	.is_enabled	= meson_clk_pll_is_enabled,
 	.enable		= meson_clk_pll_enable,

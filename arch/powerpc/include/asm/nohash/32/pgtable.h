@@ -54,6 +54,7 @@ extern int icache_44x_need_flush;
 #define PGD_MASKED_BITS		0
 
 #define USER_PTRS_PER_PGD	(TASK_SIZE / PGDIR_SIZE)
+#define FIRST_USER_ADDRESS	0UL
 
 #define pte_ERROR(e) \
 	pr_err("%s:%d: bad pte %llx.\n", __FILE__, __LINE__, \

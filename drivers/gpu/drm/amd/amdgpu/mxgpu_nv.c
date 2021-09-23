@@ -200,16 +200,7 @@ static int xgpu_nv_send_access_requests(struct amdgpu_device *adev,
 
 static int xgpu_nv_request_reset(struct amdgpu_device *adev)
 {
-	int ret, i = 0;
-
-	while (i < NV_MAILBOX_POLL_MSG_REP_MAX) {
-		ret = xgpu_nv_send_access_requests(adev, IDH_REQ_GPU_RESET_ACCESS);
-		if (!ret)
-			break;
-		i++;
-	}
-
-	return ret;
+	return xgpu_nv_send_access_requests(adev, IDH_REQ_GPU_RESET_ACCESS);
 }
 
 static int xgpu_nv_request_full_gpu_access(struct amdgpu_device *adev,
@@ -273,10 +264,9 @@ static void xgpu_nv_mailbox_flr_work(struct work_struct *work)
 	 * otherwise the mailbox msg will be ruined/reseted by
 	 * the VF FLR.
 	 */
-	if (!down_write_trylock(&adev->reset_sem))
+	if (!down_read_trylock(&adev->reset_sem))
 		return;
 
-	amdgpu_virt_fini_data_exchange(adev);
 	atomic_set(&adev->in_gpu_reset, 1);
 
 	do {
@@ -289,7 +279,7 @@ static void xgpu_nv_mailbox_flr_work(struct work_struct *work)
 
 flr_done:
 	atomic_set(&adev->in_gpu_reset, 0);
-	up_write(&adev->reset_sem);
+	up_read(&adev->reset_sem);
 
 	/* Trigger recovery for world switch failure if no TDR */
 	if (amdgpu_device_should_recover_gpu(adev)

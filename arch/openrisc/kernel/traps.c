@@ -238,7 +238,9 @@ void __init trap_init(void)
 
 asmlinkage void do_trap(struct pt_regs *regs, unsigned long address)
 {
-	force_sig_fault(SIGTRAP, TRAP_BRKPT, (void __user *)regs->pc);
+	force_sig_fault(SIGTRAP, TRAP_TRACE, (void __user *)address);
+
+	regs->pc += 4;
 }
 
 asmlinkage void do_unaligned_access(struct pt_regs *regs, unsigned long address)

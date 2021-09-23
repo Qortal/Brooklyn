@@ -4,13 +4,11 @@
  * Author: Rob Clark <robdclark@gmail.com>
  */
 
-#include <drm/drm_aperture.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_fb_helper.h>
 #include <drm/drm_fourcc.h>
 
 #include "msm_drv.h"
-#include "msm_gem.h"
 #include "msm_kms.h"
 
 extern int msm_gem_mmap_obj(struct drm_gem_object *obj,
@@ -169,9 +167,7 @@ struct drm_fb_helper *msm_fbdev_init(struct drm_device *dev)
 	}
 
 	/* the fw fb could be anywhere in memory */
-	ret = drm_aperture_remove_framebuffers(false, "msm");
-	if (ret)
-		goto fini;
+	drm_fb_helper_remove_conflicting_framebuffers(NULL, "msm", false);
 
 	ret = drm_fb_helper_initial_config(helper, 32);
 	if (ret)

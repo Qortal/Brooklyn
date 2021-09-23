@@ -236,7 +236,7 @@ static int ohci_hcd_sa1111_probe(struct sa1111_dev *dev)
  * Reverses the effect of ohci_hcd_sa1111_probe(), first invoking
  * the HCD's stop() method.
  */
-static void ohci_hcd_sa1111_remove(struct sa1111_dev *dev)
+static int ohci_hcd_sa1111_remove(struct sa1111_dev *dev)
 {
 	struct usb_hcd *hcd = sa1111_get_drvdata(dev);
 
@@ -244,6 +244,8 @@ static void ohci_hcd_sa1111_remove(struct sa1111_dev *dev)
 	sa1111_stop_hc(dev);
 	release_mem_region(hcd->rsrc_start, hcd->rsrc_len);
 	usb_put_hcd(hcd);
+
+	return 0;
 }
 
 static void ohci_hcd_sa1111_shutdown(struct device *_dev)

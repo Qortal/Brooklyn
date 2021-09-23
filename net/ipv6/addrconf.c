@@ -205,7 +205,6 @@ static struct ipv6_devconf ipv6_devconf __read_mostly = {
 	.max_desync_factor	= MAX_DESYNC_FACTOR,
 	.max_addresses		= IPV6_MAX_ADDRESSES,
 	.accept_ra_defrtr	= 1,
-	.ra_defrtr_metric	= IP6_RT_PRIO_USER,
 	.accept_ra_from_local	= 0,
 	.accept_ra_min_hop_limit= 1,
 	.accept_ra_pinfo	= 1,
@@ -261,7 +260,6 @@ static struct ipv6_devconf ipv6_devconf_dflt __read_mostly = {
 	.max_desync_factor	= MAX_DESYNC_FACTOR,
 	.max_addresses		= IPV6_MAX_ADDRESSES,
 	.accept_ra_defrtr	= 1,
-	.ra_defrtr_metric	= IP6_RT_PRIO_USER,
 	.accept_ra_from_local	= 0,
 	.accept_ra_min_hop_limit= 1,
 	.accept_ra_pinfo	= 1,
@@ -1999,7 +1997,6 @@ EXPORT_SYMBOL(ipv6_chk_prefix);
  * ipv6_dev_find - find the first device with a given source address.
  * @net: the net namespace
  * @addr: the source address
- * @dev: used to find the L3 domain of interest
  *
  * The caller should be protected by RCU, or RTNL.
  */
@@ -2358,7 +2355,7 @@ regen:
 	/* <draft-ietf-6man-rfc4941bis-08.txt>, Section 3.3.1:
 	 * check if generated address is not inappropriate:
 	 *
-	 * - Reserved IPv6 Interface Identifiers
+	 * - Reserved IPv6 Interface Identifers
 	 * - XXX: already assigned to an address on the device
 	 */
 
@@ -4485,9 +4482,7 @@ restart:
 			    age >= ifp->valid_lft) {
 				spin_unlock(&ifp->lock);
 				in6_ifa_hold(ifp);
-				rcu_read_unlock_bh();
 				ipv6_del_addr(ifp);
-				rcu_read_lock_bh();
 				goto restart;
 			} else if (ifp->prefered_lft == INFINITY_LIFE_TIME) {
 				spin_unlock(&ifp->lock);
@@ -5109,20 +5104,17 @@ next:
 		break;
 	}
 	case MULTICAST_ADDR:
-		read_unlock_bh(&idev->lock);
 		fillargs->event = RTM_GETMULTICAST;
 
 		/* multicast address */
-		for (ifmca = rcu_dereference(idev->mc_list);
-		     ifmca;
-		     ifmca = rcu_dereference(ifmca->next), ip_idx++) {
+		for (ifmca = idev->mc_list; ifmca;
+		     ifmca = ifmca->next, ip_idx++) {
 			if (ip_idx < s_ip_idx)
 				continue;
 			err = inet6_fill_ifmcaddr(skb, ifmca, fillargs);
 			if (err < 0)
 				break;
 		}
-		read_lock_bh(&idev->lock);
 		break;
 	case ANYCAST_ADDR:
 		fillargs->event = RTM_GETANYCAST;
@@ -5483,7 +5475,6 @@ static inline void ipv6_store_devconf(struct ipv6_devconf *cnf,
 	array[DEVCONF_MAX_DESYNC_FACTOR] = cnf->max_desync_factor;
 	array[DEVCONF_MAX_ADDRESSES] = cnf->max_addresses;
 	array[DEVCONF_ACCEPT_RA_DEFRTR] = cnf->accept_ra_defrtr;
-	array[DEVCONF_RA_DEFRTR_METRIC] = cnf->ra_defrtr_metric;
 	array[DEVCONF_ACCEPT_RA_MIN_HOP_LIMIT] = cnf->accept_ra_min_hop_limit;
 	array[DEVCONF_ACCEPT_RA_PINFO] = cnf->accept_ra_pinfo;
 #ifdef CONFIG_IPV6_ROUTER_PREF
@@ -5674,8 +5665,7 @@ static int inet6_fill_link_af(struct sk_buff *skb, const struct net_device *dev,
 	return 0;
 }
 
-static int inet6_set_iftoken(struct inet6_dev *idev, struct in6_addr *token,
-			     struct netlink_ext_ack *extack)
+static int inet6_set_iftoken(struct inet6_dev *idev, struct in6_addr *token)
 {
 	struct inet6_ifaddr *ifp;
 	struct net_device *dev = idev->dev;
@@ -5686,29 +5676,12 @@ static int inet6_set_iftoken(struct inet6_dev *idev, struct in6_addr *token,
 
 	if (!token)
 		return -EINVAL;
-
-	if (dev->flags & IFF_LOOPBACK) {
-		NL_SET_ERR_MSG_MOD(extack, "Device is loopback");
+	if (dev->flags & (IFF_LOOPBACK | IFF_NOARP))
 		return -EINVAL;
-	}
-
-	if (dev->flags & IFF_NOARP) {
-		NL_SET_ERR_MSG_MOD(extack,
-				   "Device does not do neighbour discovery");
+	if (!ipv6_accept_ra(idev))
 		return -EINVAL;
-	}
-
-	if (!ipv6_accept_ra(idev)) {
-		NL_SET_ERR_MSG_MOD(extack,
-				   "Router advertisement is disabled on device");
+	if (idev->cnf.rtr_solicits == 0)
 		return -EINVAL;
-	}
-
-	if (idev->cnf.rtr_solicits == 0) {
-		NL_SET_ERR_MSG(extack,
-			       "Router solicitation is disabled on device");
-		return -EINVAL;
-	}
 
 	write_lock_bh(&idev->lock);
 
@@ -5816,8 +5789,7 @@ static int inet6_validate_link_af(const struct net_device *dev,
 	return 0;
 }
 
-static int inet6_set_link_af(struct net_device *dev, const struct nlattr *nla,
-			     struct netlink_ext_ack *extack)
+static int inet6_set_link_af(struct net_device *dev, const struct nlattr *nla)
 {
 	struct inet6_dev *idev = __in6_dev_get(dev);
 	struct nlattr *tb[IFLA_INET6_MAX + 1];
@@ -5830,8 +5802,7 @@ static int inet6_set_link_af(struct net_device *dev, const struct nlattr *nla,
 		return -EINVAL;
 
 	if (tb[IFLA_INET6_TOKEN]) {
-		err = inet6_set_iftoken(idev, nla_data(tb[IFLA_INET6_TOKEN]),
-					extack);
+		err = inet6_set_iftoken(idev, nla_data(tb[IFLA_INET6_TOKEN]));
 		if (err)
 			return err;
 	}
@@ -6118,8 +6089,10 @@ static void __ipv6_ifa_notify(int event, struct inet6_ifaddr *ifp)
 
 static void ipv6_ifa_notify(int event, struct inet6_ifaddr *ifp)
 {
+	rcu_read_lock_bh();
 	if (likely(ifp->idev->dead == 0))
 		__ipv6_ifa_notify(event, ifp);
+	rcu_read_unlock_bh();
 }
 
 #ifdef CONFIG_SYSCTL
@@ -6695,14 +6668,6 @@ static const struct ctl_table addrconf_sysctl[] = {
 		.proc_handler	= proc_dointvec,
 	},
 	{
-		.procname	= "ra_defrtr_metric",
-		.data		= &ipv6_devconf.ra_defrtr_metric,
-		.maxlen		= sizeof(u32),
-		.mode		= 0644,
-		.proc_handler	= proc_douintvec_minmax,
-		.extra1		= (void *)SYSCTL_ONE,
-	},
-	{
 		.procname	= "accept_ra_min_hop_limit",
 		.data		= &ipv6_devconf.accept_ra_min_hop_limit,
 		.maxlen		= sizeof(int),
@@ -6903,10 +6868,10 @@ static const struct ctl_table addrconf_sysctl[] = {
 		.proc_handler   = proc_dointvec,
 	},
 	{
-		.procname	= "addr_gen_mode",
-		.data		= &ipv6_devconf.addr_gen_mode,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
+		.procname		= "addr_gen_mode",
+		.data			= &ipv6_devconf.addr_gen_mode,
+		.maxlen			= sizeof(int),
+		.mode			= 0644,
 		.proc_handler	= addrconf_sysctl_addr_gen_mode,
 	},
 	{

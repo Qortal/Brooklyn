@@ -11,7 +11,6 @@
 #include <drm/drm_vblank.h>
 
 #include "mdp4_kms.h"
-#include "msm_gem.h"
 
 struct mdp4_crtc {
 	struct drm_crtc base;

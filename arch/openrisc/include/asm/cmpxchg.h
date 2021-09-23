@@ -132,7 +132,7 @@ static inline unsigned long __cmpxchg(volatile void *ptr, unsigned long old,
 	}
 }
 
-#define arch_cmpxchg(ptr, o, n)						\
+#define cmpxchg(ptr, o, n)						\
 	({								\
 		(__typeof__(*(ptr))) __cmpxchg((ptr),			\
 					       (unsigned long)(o),	\
@@ -161,7 +161,7 @@ static inline unsigned long __xchg(volatile void *ptr, unsigned long with,
 	}
 }
 
-#define arch_xchg(ptr, with) 						\
+#define xchg(ptr, with) 						\
 	({								\
 		(__typeof__(*(ptr))) __xchg((ptr),			\
 					    (unsigned long)(with),	\

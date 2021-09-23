@@ -303,9 +303,9 @@ static void nfs_set_pageerror(struct address_space *mapping)
 	nfs_zap_mapping(mapping->host, mapping);
 	/* Force file size revalidation */
 	spin_lock(&inode->i_lock);
-	nfs_set_cache_invalid(inode, NFS_INO_REVAL_FORCED |
-					     NFS_INO_REVAL_PAGECACHE |
-					     NFS_INO_INVALID_SIZE);
+	NFS_I(inode)->cache_validity |= NFS_INO_REVAL_FORCED |
+					NFS_INO_REVAL_PAGECACHE |
+					NFS_INO_INVALID_SIZE;
 	spin_unlock(&inode->i_lock);
 }
 
@@ -712,23 +712,16 @@ int nfs_writepages(struct address_space *mapping, struct writeback_control *wbc)
 {
 	struct inode *inode = mapping->host;
 	struct nfs_pageio_descriptor pgio;
-	struct nfs_io_completion *ioc = NULL;
-	unsigned int mntflags = NFS_SERVER(inode)->flags;
-	int priority = 0;
+	struct nfs_io_completion *ioc;
 	int err;
 
 	nfs_inc_stats(inode, NFSIOS_VFSWRITEPAGES);
 
-	if (!(mntflags & NFS_MOUNT_WRITE_EAGER) || wbc->for_kupdate ||
-	    wbc->for_background || wbc->for_sync || wbc->for_reclaim) {
-		ioc = nfs_io_completion_alloc(GFP_KERNEL);
-		if (ioc)
-			nfs_io_completion_init(ioc, nfs_io_completion_commit,
-					       inode);
-		priority = wb_priority(wbc);
-	}
+	ioc = nfs_io_completion_alloc(GFP_KERNEL);
+	if (ioc)
+		nfs_io_completion_init(ioc, nfs_io_completion_commit, inode);
 
-	nfs_pageio_init_write(&pgio, inode, priority, false,
+	nfs_pageio_init_write(&pgio, inode, wb_priority(wbc), false,
 				&nfs_async_write_completion_ops);
 	pgio.pg_io_completion = ioc;
 	err = write_cache_pages(mapping, wbc, nfs_writepages_callback, &pgio);
@@ -764,6 +757,9 @@ static void nfs_inode_add_request(struct inode *inode, struct nfs_page *req)
 	 * with invalidate/truncate.
 	 */
 	spin_lock(&mapping->private_lock);
+	if (!nfs_have_writebacks(inode) &&
+	    NFS_PROTO(inode)->have_delegation(inode, FMODE_WRITE))
+		inode_inc_iversion_raw(inode);
 	if (likely(!PageSwapCache(req->wb_page))) {
 		set_bit(PG_MAPPED, &req->wb_flags);
 		SetPagePrivate(req->wb_page);
@@ -1282,21 +1278,19 @@ bool nfs_ctx_key_to_expire(struct nfs_open_context *ctx, struct inode *inode)
  * the PageUptodate() flag. In this case, we will need to turn off
  * write optimisations that depend on the page contents being correct.
  */
-static bool nfs_write_pageuptodate(struct page *page, struct inode *inode,
-				   unsigned int pagelen)
+static bool nfs_write_pageuptodate(struct page *page, struct inode *inode)
 {
 	struct nfs_inode *nfsi = NFS_I(inode);
 
 	if (nfs_have_delegated_attributes(inode))
 		goto out;
-	if (nfsi->cache_validity &
-	    (NFS_INO_INVALID_CHANGE | NFS_INO_INVALID_SIZE))
+	if (nfsi->cache_validity & NFS_INO_REVAL_PAGECACHE)
 		return false;
 	smp_rmb();
-	if (test_bit(NFS_INO_INVALIDATING, &nfsi->flags) && pagelen != 0)
+	if (test_bit(NFS_INO_INVALIDATING, &nfsi->flags))
 		return false;
 out:
-	if (nfsi->cache_validity & NFS_INO_INVALID_DATA && pagelen != 0)
+	if (nfsi->cache_validity & NFS_INO_INVALID_DATA)
 		return false;
 	return PageUptodate(page) != 0;
 }
@@ -1316,8 +1310,7 @@ is_whole_file_wrlock(struct file_lock *fl)
  * If the file is opened for synchronous writes then we can just skip the rest
  * of the checks.
  */
-static int nfs_can_extend_write(struct file *file, struct page *page,
-				struct inode *inode, unsigned int pagelen)
+static int nfs_can_extend_write(struct file *file, struct page *page, struct inode *inode)
 {
 	int ret;
 	struct file_lock_context *flctx = inode->i_flctx;
@@ -1325,7 +1318,7 @@ static int nfs_can_extend_write(struct file *file, struct page *page,
 
 	if (file->f_flags & O_DSYNC)
 		return 0;
-	if (!nfs_write_pageuptodate(page, inode, pagelen))
+	if (!nfs_write_pageuptodate(page, inode))
 		return 0;
 	if (NFS_PROTO(inode)->have_delegation(inode, FMODE_WRITE))
 		return 1;
@@ -1363,7 +1356,6 @@ int nfs_updatepage(struct file *file, struct page *page,
 	struct nfs_open_context *ctx = nfs_file_open_context(file);
 	struct address_space *mapping = page_file_mapping(page);
 	struct inode	*inode = mapping->host;
-	unsigned int	pagelen = nfs_page_length(page);
 	int		status = 0;
 
 	nfs_inc_stats(inode, NFSIOS_VFSUPDATEPAGE);
@@ -1374,8 +1366,8 @@ int nfs_updatepage(struct file *file, struct page *page,
 	if (!count)
 		goto out;
 
-	if (nfs_can_extend_write(file, page, inode, pagelen)) {
-		count = max(count + offset, pagelen);
+	if (nfs_can_extend_write(file, page, inode)) {
+		count = max(count + offset, nfs_page_length(page));
 		offset = 0;
 	}
 
@@ -1601,7 +1593,7 @@ static int nfs_writeback_done(struct rpc_task *task,
 	/* Deal with the suid/sgid bit corner case */
 	if (nfs_should_remove_suid(inode)) {
 		spin_lock(&inode->i_lock);
-		nfs_set_cache_invalid(inode, NFS_INO_INVALID_MODE);
+		NFS_I(inode)->cache_validity |= NFS_INO_INVALID_OTHER;
 		spin_unlock(&inode->i_lock);
 	}
 	return 0;
@@ -1810,7 +1802,6 @@ nfs_commit_list(struct inode *inode, struct list_head *head, int how,
 		struct nfs_commit_info *cinfo)
 {
 	struct nfs_commit_data	*data;
-	unsigned short task_flags = 0;
 
 	/* another commit raced with us */
 	if (list_empty(head))
@@ -1821,11 +1812,8 @@ nfs_commit_list(struct inode *inode, struct list_head *head, int how,
 	/* Set up the argument struct */
 	nfs_init_commit(data, head, NULL, cinfo);
 	atomic_inc(&cinfo->mds->rpcs_out);
-	if (NFS_SERVER(inode)->nfs_client->cl_minorversion)
-		task_flags = RPC_TASK_MOVEABLE;
 	return nfs_initiate_commit(NFS_CLIENT(inode), data, NFS_PROTO(inode),
-				   data->mds_ops, how,
-				   RPC_TASK_CRED_NOREF | task_flags);
+				   data->mds_ops, how, RPC_TASK_CRED_NOREF);
 }
 
 /*

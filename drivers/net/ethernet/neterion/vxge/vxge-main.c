@@ -87,7 +87,7 @@ static unsigned int bw_percentage[VXGE_HW_MAX_VIRTUAL_PATHS] =
 module_param_array(bw_percentage, uint, NULL, 0);
 
 static struct vxge_drv_config *driver_config;
-static void vxge_reset_all_vpaths(struct vxgedev *vdev);
+static enum vxge_hw_status vxge_reset_all_vpaths(struct vxgedev *vdev);
 
 static inline int is_vxge_card_up(struct vxgedev *vdev)
 {
@@ -1606,6 +1606,7 @@ static void vxge_config_ci_for_tti_rti(struct vxgedev *vdev)
 
 static int do_vxge_reset(struct vxgedev *vdev, int event)
 {
+	enum vxge_hw_status status;
 	int ret = 0, vp_id, i;
 
 	vxge_debug_entryexit(VXGE_TRACE, "%s:%d", __func__, __LINE__);
@@ -1708,7 +1709,14 @@ static int do_vxge_reset(struct vxgedev *vdev, int event)
 		netif_tx_stop_all_queues(vdev->ndev);
 
 	if (event == VXGE_LL_FULL_RESET) {
-		vxge_reset_all_vpaths(vdev);
+		status = vxge_reset_all_vpaths(vdev);
+		if (status != VXGE_HW_OK) {
+			vxge_debug_init(VXGE_ERR,
+				"fatal: %s: can not reset vpaths",
+				vdev->ndev->name);
+			ret = -EPERM;
+			goto out;
+		}
 	}
 
 	if (event == VXGE_LL_COMPL_RESET) {
@@ -1791,7 +1799,7 @@ static void vxge_reset(struct work_struct *work)
 }
 
 /**
- * vxge_poll_msix - Receive handler when Receive Polling is used.
+ * vxge_poll - Receive handler when Receive Polling is used.
  * @napi: pointer to the napi structure.
  * @budget: Number of packets budgeted to be processed in this iteration.
  *
@@ -1961,8 +1969,9 @@ static enum vxge_hw_status vxge_rth_configure(struct vxgedev *vdev)
 }
 
 /* reset vpaths */
-static void vxge_reset_all_vpaths(struct vxgedev *vdev)
+static enum vxge_hw_status vxge_reset_all_vpaths(struct vxgedev *vdev)
 {
+	enum vxge_hw_status status = VXGE_HW_OK;
 	struct vxge_vpath *vpath;
 	int i;
 
@@ -1977,16 +1986,18 @@ static void vxge_reset_all_vpaths(struct vxgedev *vdev)
 						"vxge_hw_vpath_recover_"
 						"from_reset failed for vpath: "
 						"%d", i);
-					return;
+					return status;
 				}
 			} else {
 				vxge_debug_init(VXGE_ERR,
 					"vxge_hw_vpath_reset failed for "
 					"vpath:%d", i);
-				return;
+				return status;
 			}
 		}
 	}
+
+	return status;
 }
 
 /* close vpaths */
@@ -2665,7 +2676,11 @@ static int vxge_set_features(struct net_device *dev, netdev_features_t features)
 	/* !netif_running() ensured by vxge_fix_features() */
 
 	vdev->devh->config.rth_en = !!(features & NETIF_F_RXHASH);
-	vxge_reset_all_vpaths(vdev);
+	if (vxge_reset_all_vpaths(vdev) != VXGE_HW_OK) {
+		dev->features = features ^ NETIF_F_RXHASH;
+		vdev->devh->config.rth_en = !!(dev->features & NETIF_F_RXHASH);
+		return -EIO;
+	}
 
 	return 0;
 }
@@ -3512,13 +3527,13 @@ static void vxge_device_unregister(struct __vxge_hw_device *hldev)
 
 	kfree(vdev->vpaths);
 
-	/* we are safe to free it now */
-	free_netdev(dev);
-
 	vxge_debug_init(vdev->level_trace, "%s: ethernet device unregistered",
 			buf);
 	vxge_debug_entryexit(vdev->level_trace,	"%s: %s:%d  Exiting...", buf,
 			     __func__, __LINE__);
+
+	/* we are safe to free it now */
+	free_netdev(dev);
 }
 
 /*
@@ -3678,9 +3693,10 @@ static int vxge_config_vpaths(struct vxge_hw_device_config *device_config,
 			driver_config->vpath_per_dev = 1;
 
 		for (i = 0; i < VXGE_HW_MAX_VIRTUAL_PATHS; i++)
-			if (vxge_bVALn(vpath_mask, i, 1))
+			if (!vxge_bVALn(vpath_mask, i, 1))
+				continue;
+			else
 				default_no_vpath++;
-
 		if (default_no_vpath < driver_config->vpath_per_dev)
 			driver_config->vpath_per_dev = default_no_vpath;
 
@@ -4736,7 +4752,7 @@ _exit0:
 }
 
 /**
- * vxge_remove - Free the PCI device
+ * vxge_rem_nic - Free the PCI device
  * @pdev: structure containing the PCI related information of the device.
  * Description: This function is called by the Pci subsystem to release a
  * PCI device and free up all resource held up by the device.

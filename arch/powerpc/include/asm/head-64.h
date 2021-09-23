@@ -16,7 +16,7 @@
 	.section ".head.data.\name\()","a",@progbits
 .endm
 .macro use_ftsec name
-	.section ".head.text.\name\()","ax",@progbits
+	.section ".head.text.\name\()"
 .endm
 
 /*

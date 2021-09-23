@@ -15,16 +15,16 @@
 #include "scrub/scrub.h"
 #include "scrub/common.h"
 #include "scrub/btree.h"
-#include "xfs_ag.h"
 
 /*
  * Set us up to scrub reverse mapping btrees.
  */
 int
 xchk_setup_ag_rmapbt(
-	struct xfs_scrub	*sc)
+	struct xfs_scrub	*sc,
+	struct xfs_inode	*ip)
 {
-	return xchk_setup_ag_btree(sc, false);
+	return xchk_setup_ag_btree(sc, ip, false);
 }
 
 /* Reverse-mapping scrubber. */
@@ -92,7 +92,7 @@ xchk_rmapbt_rec(
 {
 	struct xfs_mount	*mp = bs->cur->bc_mp;
 	struct xfs_rmap_irec	irec;
-	xfs_agnumber_t		agno = bs->cur->bc_ag.pag->pag_agno;
+	xfs_agnumber_t		agno = bs->cur->bc_ag.agno;
 	bool			non_inode;
 	bool			is_unwritten;
 	bool			is_bmbt;

@@ -101,7 +101,7 @@
 };
 
 &gpio3 {
-	ls-buf-en-hog {
+	ls_buf_en {
 		gpio-hog;
 		gpios = <10 GPIO_ACTIVE_HIGH>;
 		output-high;

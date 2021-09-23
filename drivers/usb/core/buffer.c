@@ -51,8 +51,7 @@ void __init usb_init_pool_max(void)
 /**
  * hcd_buffer_create - initialize buffer pools
  * @hcd: the bus whose buffer pools are to be initialized
- *
- * Context: task context, might sleep
+ * Context: !in_interrupt()
  *
  * Call this as part of initializing a host controller that uses the dma
  * memory allocators.  It initializes some pools of dma-coherent memory that
@@ -89,8 +88,7 @@ int hcd_buffer_create(struct usb_hcd *hcd)
 /**
  * hcd_buffer_destroy - deallocate buffer pools
  * @hcd: the bus whose buffer pools are to be destroyed
- *
- * Context: task context, might sleep
+ * Context: !in_interrupt()
  *
  * This frees the buffer pools created by hcd_buffer_create().
  */

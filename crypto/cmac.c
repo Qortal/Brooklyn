@@ -11,7 +11,6 @@
  *   Author: Kazunori Miyazawa <miyazawa@linux-ipv6.org>
  */
 
-#include <crypto/internal/cipher.h>
 #include <crypto/internal/hash.h>
 #include <linux/err.h>
 #include <linux/kernel.h>
@@ -314,4 +313,3 @@ module_exit(crypto_cmac_module_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("CMAC keyed hash algorithm");
 MODULE_ALIAS_CRYPTO("cmac");
-MODULE_IMPORT_NS(CRYPTO_INTERNAL);

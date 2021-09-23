@@ -19,7 +19,6 @@ struct mmu_psize_def {
 	int		penc[MMU_PAGE_COUNT];	/* HPTE encoding */
 	unsigned int	tlbiel;	/* tlbiel supported for that page size */
 	unsigned long	avpnm;	/* bits to mask out in AVPN in the HPTE */
-	unsigned long   h_rpt_pgsize; /* H_RPT_INVALIDATE page size encoding */
 	union {
 		unsigned long	sllp;	/* SLB L||LP (exact mask to use in slbmte) */
 		unsigned long ap;	/* Ap encoding used by PowerISA 3.0 */
@@ -112,7 +111,7 @@ typedef struct {
 
 	struct hash_mm_context *hash_context;
 
-	void __user *vdso;
+	unsigned long vdso_base;
 	/*
 	 * pagetable fragment support
 	 */
@@ -200,7 +199,7 @@ extern int mmu_io_psize;
 void mmu_early_init_devtree(void);
 void hash__early_init_devtree(void);
 void radix__early_init_devtree(void);
-#ifdef CONFIG_PPC_PKEY
+#ifdef CONFIG_PPC_MEM_KEYS
 void pkey_early_init_devtree(void);
 #else
 static inline void pkey_early_init_devtree(void) {}
@@ -240,7 +239,7 @@ static inline void setup_initial_memory_limit(phys_addr_t first_memblock_base,
 #ifdef CONFIG_PPC_PSERIES
 extern void radix_init_pseries(void);
 #else
-static inline void radix_init_pseries(void) { }
+static inline void radix_init_pseries(void) { };
 #endif
 
 #ifdef CONFIG_HOTPLUG_CPU

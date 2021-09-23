@@ -123,6 +123,7 @@ static int bio_uncopy_user(struct bio *bio)
 			bio_free_pages(bio);
 	}
 	kfree(bmd);
+	bio_put(bio);
 	return ret;
 }
 
@@ -131,7 +132,7 @@ static int bio_copy_user_iov(struct request *rq, struct rq_map_data *map_data,
 {
 	struct bio_map_data *bmd;
 	struct page *page;
-	struct bio *bio;
+	struct bio *bio, *bounce_bio;
 	int i = 0, ret;
 	int nr_pages;
 	unsigned int len = iter->count;
@@ -149,7 +150,9 @@ static int bio_copy_user_iov(struct request *rq, struct rq_map_data *map_data,
 	bmd->is_our_pages = !map_data;
 	bmd->is_null_mapped = (map_data && map_data->null_mapped);
 
-	nr_pages = bio_max_segs(DIV_ROUND_UP(offset + len, PAGE_SIZE));
+	nr_pages = DIV_ROUND_UP(offset + len, PAGE_SIZE);
+	if (nr_pages > BIO_MAX_PAGES)
+		nr_pages = BIO_MAX_PAGES;
 
 	ret = -ENOMEM;
 	bio = bio_kmalloc(gfp_mask, nr_pages);
@@ -180,7 +183,7 @@ static int bio_copy_user_iov(struct request *rq, struct rq_map_data *map_data,
 
 			i++;
 		} else {
-			page = alloc_page(GFP_NOIO | gfp_mask);
+			page = alloc_page(rq->q->bounce_gfp | gfp_mask);
 			if (!page) {
 				ret = -ENOMEM;
 				goto cleanup;
@@ -217,9 +220,16 @@ static int bio_copy_user_iov(struct request *rq, struct rq_map_data *map_data,
 
 	bio->bi_private = bmd;
 
-	ret = blk_rq_append_bio(rq, bio);
+	bounce_bio = bio;
+	ret = blk_rq_append_bio(rq, &bounce_bio);
 	if (ret)
 		goto cleanup;
+
+	/*
+	 * We link the bounce buffer in and could have to traverse it later, so
+	 * we have to get a ref to prevent it from being freed
+	 */
+	bio_get(bounce_bio);
 	return 0;
 cleanup:
 	if (!map_data)
@@ -234,14 +244,14 @@ static int bio_map_user_iov(struct request *rq, struct iov_iter *iter,
 		gfp_t gfp_mask)
 {
 	unsigned int max_sectors = queue_max_hw_sectors(rq->q);
-	struct bio *bio;
+	struct bio *bio, *bounce_bio;
 	int ret;
 	int j;
 
 	if (!iov_iter_count(iter))
 		return -EINVAL;
 
-	bio = bio_kmalloc(gfp_mask, iov_iter_npages(iter, BIO_MAX_VECS));
+	bio = bio_kmalloc(gfp_mask, iov_iter_npages(iter, BIO_MAX_PAGES));
 	if (!bio)
 		return -ENOMEM;
 	bio->bi_opf |= req_op(rq);
@@ -296,15 +306,47 @@ static int bio_map_user_iov(struct request *rq, struct iov_iter *iter,
 			break;
 	}
 
-	ret = blk_rq_append_bio(rq, bio);
+	/*
+	 * Subtle: if we end up needing to bounce a bio, it would normally
+	 * disappear when its bi_end_io is run.  However, we need the original
+	 * bio for the unmap, so grab an extra reference to it
+	 */
+	bio_get(bio);
+
+	bounce_bio = bio;
+	ret = blk_rq_append_bio(rq, &bounce_bio);
 	if (ret)
-		goto out_unmap;
+		goto out_put_orig;
+
+	/*
+	 * We link the bounce buffer in and could have to traverse it
+	 * later, so we have to get a ref to prevent it from being freed
+	 */
+	bio_get(bounce_bio);
 	return 0;
 
+ out_put_orig:
+	bio_put(bio);
  out_unmap:
 	bio_release_pages(bio, false);
 	bio_put(bio);
 	return ret;
+}
+
+/**
+ *	bio_unmap_user	-	unmap a bio
+ *	@bio:		the bio being unmapped
+ *
+ *	Unmap a bio previously mapped by bio_map_user_iov(). Must be called from
+ *	process context.
+ *
+ *	bio_unmap_user() may sleep.
+ */
+static void bio_unmap_user(struct bio *bio)
+{
+	bio_release_pages(bio, bio_data_dir(bio) == READ);
+	bio_put(bio);
+	bio_put(bio);
 }
 
 static void bio_invalidate_vmalloc_pages(struct bio *bio)
@@ -446,7 +488,7 @@ static struct bio *bio_copy_kern(struct request_queue *q, void *data,
 		if (bytes > len)
 			bytes = len;
 
-		page = alloc_page(GFP_NOIO | gfp_mask);
+		page = alloc_page(q->bounce_gfp | gfp_mask);
 		if (!page)
 			goto cleanup;
 
@@ -479,24 +521,33 @@ cleanup:
  * Append a bio to a passthrough request.  Only works if the bio can be merged
  * into the request based on the driver constraints.
  */
-int blk_rq_append_bio(struct request *rq, struct bio *bio)
+int blk_rq_append_bio(struct request *rq, struct bio **bio)
 {
+	struct bio *orig_bio = *bio;
 	struct bvec_iter iter;
 	struct bio_vec bv;
 	unsigned int nr_segs = 0;
 
-	bio_for_each_bvec(bv, bio, iter)
+	blk_queue_bounce(rq->q, bio);
+
+	bio_for_each_bvec(bv, *bio, iter)
 		nr_segs++;
 
 	if (!rq->bio) {
-		blk_rq_bio_prep(rq, bio, nr_segs);
+		blk_rq_bio_prep(rq, *bio, nr_segs);
 	} else {
-		if (!ll_back_merge_fn(rq, bio, nr_segs))
+		if (!ll_back_merge_fn(rq, *bio, nr_segs)) {
+			if (orig_bio != *bio) {
+				bio_put(*bio);
+				*bio = orig_bio;
+			}
 			return -EINVAL;
-		rq->biotail->bi_next = bio;
-		rq->biotail = bio;
-		rq->__data_len += (bio)->bi_iter.bi_size;
-		bio_crypt_free_ctx(bio);
+		}
+
+		rq->biotail->bi_next = *bio;
+		rq->biotail = *bio;
+		rq->__data_len += (*bio)->bi_iter.bi_size;
+		bio_crypt_free_ctx(*bio);
 	}
 
 	return 0;
@@ -517,6 +568,12 @@ EXPORT_SYMBOL(blk_rq_append_bio);
  *
  *    A matching blk_rq_unmap_user() must be issued at the end of I/O, while
  *    still in process context.
+ *
+ *    Note: The mapped bio may need to be bounced through blk_queue_bounce()
+ *    before being submitted to the device, as pages mapped may be out of
+ *    reach. It's the callers responsibility to make sure this happens. The
+ *    original bio must be passed back in to blk_rq_unmap_user() for proper
+ *    unmapping.
  */
 int blk_rq_map_user_iov(struct request_queue *q, struct request *rq,
 			struct rq_map_data *map_data,
@@ -532,8 +589,6 @@ int blk_rq_map_user_iov(struct request_queue *q, struct request *rq,
 		goto fail;
 
 	if (map_data)
-		copy = true;
-	else if (blk_queue_may_bounce(q))
 		copy = true;
 	else if (iov_iter_alignment(iter) & align)
 		copy = true;
@@ -588,21 +643,25 @@ EXPORT_SYMBOL(blk_rq_map_user);
  */
 int blk_rq_unmap_user(struct bio *bio)
 {
-	struct bio *next_bio;
+	struct bio *mapped_bio;
 	int ret = 0, ret2;
 
 	while (bio) {
+		mapped_bio = bio;
+		if (unlikely(bio_flagged(bio, BIO_BOUNCED)))
+			mapped_bio = bio->bi_private;
+
 		if (bio->bi_private) {
-			ret2 = bio_uncopy_user(bio);
+			ret2 = bio_uncopy_user(mapped_bio);
 			if (ret2 && !ret)
 				ret = ret2;
 		} else {
-			bio_release_pages(bio, bio_data_dir(bio) == READ);
+			bio_unmap_user(mapped_bio);
 		}
 
-		next_bio = bio;
+		mapped_bio = bio;
 		bio = bio->bi_next;
-		bio_put(next_bio);
+		bio_put(mapped_bio);
 	}
 
 	return ret;
@@ -627,7 +686,7 @@ int blk_rq_map_kern(struct request_queue *q, struct request *rq, void *kbuf,
 {
 	int reading = rq_data_dir(rq) == READ;
 	unsigned long addr = (unsigned long) kbuf;
-	struct bio *bio;
+	struct bio *bio, *orig_bio;
 	int ret;
 
 	if (len > (queue_max_hw_sectors(q) << 9))
@@ -635,8 +694,7 @@ int blk_rq_map_kern(struct request_queue *q, struct request *rq, void *kbuf,
 	if (!len || !kbuf)
 		return -EINVAL;
 
-	if (!blk_rq_aligned(q, addr, len) || object_is_on_stack(kbuf) ||
-	    blk_queue_may_bounce(q))
+	if (!blk_rq_aligned(q, addr, len) || object_is_on_stack(kbuf))
 		bio = bio_copy_kern(q, kbuf, len, gfp_mask, reading);
 	else
 		bio = bio_map_kern(q, kbuf, len, gfp_mask);
@@ -647,9 +705,14 @@ int blk_rq_map_kern(struct request_queue *q, struct request *rq, void *kbuf,
 	bio->bi_opf &= ~REQ_OP_MASK;
 	bio->bi_opf |= req_op(rq);
 
-	ret = blk_rq_append_bio(rq, bio);
-	if (unlikely(ret))
-		bio_put(bio);
-	return ret;
+	orig_bio = bio;
+	ret = blk_rq_append_bio(rq, &bio);
+	if (unlikely(ret)) {
+		/* request is too big */
+		bio_put(orig_bio);
+		return ret;
+	}
+
+	return 0;
 }
 EXPORT_SYMBOL(blk_rq_map_kern);

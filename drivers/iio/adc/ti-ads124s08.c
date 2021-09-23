@@ -327,6 +327,8 @@ static int ads124s_probe(struct spi_device *spi)
 
 	ads124s_priv->chip_info = &ads124s_chip_info_tbl[spi_id->driver_data];
 
+	spi_set_drvdata(spi, indio_dev);
+
 	ads124s_priv->spi = spi;
 
 	indio_dev->name = spi_id->name;

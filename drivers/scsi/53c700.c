@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+/* -*- mode: c; c-basic-offset: 8 -*- */
 
 /* NCR (or Symbios) 53c700 and 53c700-66 Driver
  *
@@ -978,10 +979,10 @@ process_script_interrupt(__u32 dsps, __u32 dsp, struct scsi_cmnd *SCp,
 		if (NCR_700_get_tag_neg_state(SCp->device) == NCR_700_DURING_TAG_NEGOTIATION)
 			NCR_700_set_tag_neg_state(SCp->device,
 						  NCR_700_FINISHED_TAG_NEGOTIATION);
-
-		/* check for contingent allegiance conditions */
-		if (hostdata->status[0] == SAM_STAT_CHECK_CONDITION ||
-		    hostdata->status[0] == SAM_STAT_COMMAND_TERMINATED) {
+			
+		/* check for contingent allegiance contitions */
+		if(status_byte(hostdata->status[0]) == CHECK_CONDITION ||
+		   status_byte(hostdata->status[0]) == COMMAND_TERMINATED) {
 			struct NCR_700_command_slot *slot =
 				(struct NCR_700_command_slot *)SCp->host_scribble;
 			if(slot->flags == NCR_700_FLAG_AUTOSENSE) {

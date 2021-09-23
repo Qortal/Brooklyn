@@ -6,7 +6,6 @@ subdir-y += amazon
 subdir-y += amd
 subdir-y += amlogic
 subdir-y += apm
-subdir-y += apple
 subdir-y += arm
 subdir-y += bitmain
 subdir-y += broadcom
@@ -30,5 +29,6 @@ subdir-y += synaptics
 subdir-y += ti
 subdir-y += toshiba
 subdir-y += xilinx
+subdir-y += zte
 
 subdir-y += overlays

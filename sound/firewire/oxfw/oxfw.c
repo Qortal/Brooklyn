@@ -23,8 +23,6 @@
 #define OUI_APOGEE		0x0003db
 
 #define MODEL_SATELLITE		0x00200f
-#define MODEL_SCS1M		0x001000
-#define MODEL_DUET_FW		0x01dddd
 
 #define SPECIFIER_1394TA	0x00a02d
 #define VERSION_AVC		0x010001
@@ -48,6 +46,8 @@ static bool detect_loud_models(struct fw_unit *unit)
 		"Onyx-i",
 		"Onyx 1640i",
 		"d.Pro",
+		"Mackie Onyx Satellite",
+		"Tapco LINK.firewire 4x6",
 		"U.420"};
 	char model[32];
 	int err;
@@ -60,7 +60,7 @@ static bool detect_loud_models(struct fw_unit *unit)
 	return match_string(models, ARRAY_SIZE(models), model) >= 0;
 }
 
-static int name_card(struct snd_oxfw *oxfw, const struct ieee1394_device_id *entry)
+static int name_card(struct snd_oxfw *oxfw)
 {
 	struct fw_device *fw_dev = fw_parent_device(oxfw->unit);
 	const struct compat_info *info;
@@ -88,12 +88,10 @@ static int name_card(struct snd_oxfw *oxfw, const struct ieee1394_device_id *ent
 		goto end;
 	be32_to_cpus(&firmware);
 
-	if (firmware >> 20 == 0x970)
-		oxfw->quirks |= SND_OXFW_QUIRK_JUMBO_PAYLOAD;
-
 	/* to apply card definitions */
-	if (entry->vendor_id == VENDOR_GRIFFIN || entry->vendor_id == VENDOR_LACIE) {
-		info = (const struct compat_info *)entry->driver_data;
+	if (oxfw->entry->vendor_id == VENDOR_GRIFFIN ||
+	    oxfw->entry->vendor_id == VENDOR_LACIE) {
+		info = (const struct compat_info *)oxfw->entry->driver_data;
 		d = info->driver_name;
 		v = info->vendor_name;
 		m = info->model_name;
@@ -122,12 +120,9 @@ static void oxfw_card_free(struct snd_card *card)
 
 	if (oxfw->has_output || oxfw->has_input)
 		snd_oxfw_stream_destroy_duplex(oxfw);
-
-	mutex_destroy(&oxfw->mutex);
-	fw_unit_put(oxfw->unit);
 }
 
-static int detect_quirks(struct snd_oxfw *oxfw, const struct ieee1394_device_id *entry)
+static int detect_quirks(struct snd_oxfw *oxfw)
 {
 	struct fw_device *fw_dev = fw_parent_device(oxfw->unit);
 	struct fw_csr_iterator it;
@@ -138,37 +133,28 @@ static int detect_quirks(struct snd_oxfw *oxfw, const struct ieee1394_device_id 
 	 * Add ALSA control elements for two models to keep compatibility to
 	 * old firewire-speaker module.
 	 */
-	if (entry->vendor_id == VENDOR_GRIFFIN)
+	if (oxfw->entry->vendor_id == VENDOR_GRIFFIN)
 		return snd_oxfw_add_spkr(oxfw, false);
-	if (entry->vendor_id == VENDOR_LACIE)
+	if (oxfw->entry->vendor_id == VENDOR_LACIE)
 		return snd_oxfw_add_spkr(oxfw, true);
 
 	/*
 	 * Stanton models supports asynchronous transactions for unique MIDI
 	 * messages.
 	 */
-	if (entry->vendor_id == OUI_STANTON) {
-		oxfw->quirks |= SND_OXFW_QUIRK_SCS_TRANSACTION;
-		if (entry->model_id == MODEL_SCS1M)
-			oxfw->quirks |= SND_OXFW_QUIRK_BLOCKING_TRANSMISSION;
-
-		// No physical MIDI ports.
+	if (oxfw->entry->vendor_id == OUI_STANTON) {
+		/* No physical MIDI ports. */
 		oxfw->midi_input_ports = 0;
 		oxfw->midi_output_ports = 0;
 
 		return snd_oxfw_scs1x_add(oxfw);
 	}
 
-	if (entry->vendor_id == OUI_APOGEE && entry->model_id == MODEL_DUET_FW) {
-		oxfw->quirks |= SND_OXFW_QUIRK_BLOCKING_TRANSMISSION |
-				SND_OXFW_QUIRK_IGNORE_NO_INFO_PACKET;
-	}
-
 	/*
 	 * TASCAM FireOne has physical control and requires a pair of additional
 	 * MIDI ports.
 	 */
-	if (entry->vendor_id == VENDOR_TASCAM) {
+	if (oxfw->entry->vendor_id == VENDOR_TASCAM) {
 		oxfw->midi_input_ports++;
 		oxfw->midi_output_ports++;
 		return 0;
@@ -189,35 +175,27 @@ static int detect_quirks(struct snd_oxfw *oxfw, const struct ieee1394_device_id 
 	 * value in 'dbs' field of CIP header against its format information.
 	 */
 	if (vendor == VENDOR_LOUD && model == MODEL_SATELLITE)
-		oxfw->quirks |= SND_OXFW_QUIRK_WRONG_DBS;
+		oxfw->wrong_dbs = true;
 
 	return 0;
 }
 
-static int oxfw_probe(struct fw_unit *unit, const struct ieee1394_device_id *entry)
+static void do_registration(struct work_struct *work)
 {
-	struct snd_card *card;
-	struct snd_oxfw *oxfw;
+	struct snd_oxfw *oxfw = container_of(work, struct snd_oxfw, dwork.work);
 	int err;
 
-	if (entry->vendor_id == VENDOR_LOUD && entry->model_id == 0 && !detect_loud_models(unit))
-		return -ENODEV;
+	if (oxfw->registered)
+		return;
 
-	err = snd_card_new(&unit->device, -1, NULL, THIS_MODULE, sizeof(*oxfw), &card);
+	err = snd_card_new(&oxfw->unit->device, -1, NULL, THIS_MODULE, 0,
+			   &oxfw->card);
 	if (err < 0)
-		return err;
-	card->private_free = oxfw_card_free;
+		return;
+	oxfw->card->private_free = oxfw_card_free;
+	oxfw->card->private_data = oxfw;
 
-	oxfw = card->private_data;
-	oxfw->unit = fw_unit_get(unit);
-	dev_set_drvdata(&unit->device, oxfw);
-	oxfw->card = card;
-
-	mutex_init(&oxfw->mutex);
-	spin_lock_init(&oxfw->lock);
-	init_waitqueue_head(&oxfw->hwdep_wait);
-
-	err = name_card(oxfw, entry);
+	err = name_card(oxfw);
 	if (err < 0)
 		goto error;
 
@@ -225,7 +203,7 @@ static int oxfw_probe(struct fw_unit *unit, const struct ieee1394_device_id *ent
 	if (err < 0)
 		goto error;
 
-	err = detect_quirks(oxfw, entry);
+	err = detect_quirks(oxfw);
 	if (err < 0)
 		goto error;
 
@@ -249,38 +227,85 @@ static int oxfw_probe(struct fw_unit *unit, const struct ieee1394_device_id *ent
 			goto error;
 	}
 
-	err = snd_card_register(card);
+	err = snd_card_register(oxfw->card);
 	if (err < 0)
 		goto error;
 
-	return 0;
+	oxfw->registered = true;
+
+	return;
 error:
-	snd_card_free(card);
-	return err;
+	snd_card_free(oxfw->card);
+	dev_info(&oxfw->unit->device,
+		 "Sound card registration failed: %d\n", err);
+}
+
+static int oxfw_probe(struct fw_unit *unit,
+		      const struct ieee1394_device_id *entry)
+{
+	struct snd_oxfw *oxfw;
+
+	if (entry->vendor_id == VENDOR_LOUD && !detect_loud_models(unit))
+		return -ENODEV;
+
+	/* Allocate this independent of sound card instance. */
+	oxfw = devm_kzalloc(&unit->device, sizeof(struct snd_oxfw), GFP_KERNEL);
+	if (!oxfw)
+		return -ENOMEM;
+	oxfw->unit = fw_unit_get(unit);
+	dev_set_drvdata(&unit->device, oxfw);
+
+	oxfw->entry = entry;
+	mutex_init(&oxfw->mutex);
+	spin_lock_init(&oxfw->lock);
+	init_waitqueue_head(&oxfw->hwdep_wait);
+
+	/* Allocate and register this sound card later. */
+	INIT_DEFERRABLE_WORK(&oxfw->dwork, do_registration);
+	snd_fw_schedule_registration(unit, &oxfw->dwork);
+
+	return 0;
 }
 
 static void oxfw_bus_reset(struct fw_unit *unit)
 {
 	struct snd_oxfw *oxfw = dev_get_drvdata(&unit->device);
 
+	if (!oxfw->registered)
+		snd_fw_schedule_registration(unit, &oxfw->dwork);
+
 	fcp_bus_reset(oxfw->unit);
 
-	if (oxfw->has_output || oxfw->has_input) {
-		mutex_lock(&oxfw->mutex);
-		snd_oxfw_stream_update_duplex(oxfw);
-		mutex_unlock(&oxfw->mutex);
-	}
+	if (oxfw->registered) {
+		if (oxfw->has_output || oxfw->has_input) {
+			mutex_lock(&oxfw->mutex);
+			snd_oxfw_stream_update_duplex(oxfw);
+			mutex_unlock(&oxfw->mutex);
+		}
 
-	if (oxfw->quirks & SND_OXFW_QUIRK_SCS_TRANSACTION)
-		snd_oxfw_scs1x_update(oxfw);
+		if (oxfw->entry->vendor_id == OUI_STANTON)
+			snd_oxfw_scs1x_update(oxfw);
+	}
 }
 
 static void oxfw_remove(struct fw_unit *unit)
 {
 	struct snd_oxfw *oxfw = dev_get_drvdata(&unit->device);
 
-	// Block till all of ALSA character devices are released.
-	snd_card_free(oxfw->card);
+	/*
+	 * Confirm to stop the work for registration before the sound card is
+	 * going to be released. The work is not scheduled again because bus
+	 * reset handler is not called anymore.
+	 */
+	cancel_delayed_work_sync(&oxfw->dwork);
+
+	if (oxfw->registered) {
+		// Block till all of ALSA character devices are released.
+		snd_card_free(oxfw->card);
+	}
+
+	mutex_destroy(&oxfw->mutex);
+	fw_unit_put(oxfw->unit);
 }
 
 static const struct compat_info griffin_firewave = {
@@ -295,67 +320,81 @@ static const struct compat_info lacie_speakers = {
 	.model_name = "FireWire Speakers",
 };
 
-#define OXFW_DEV_ENTRY(vendor, model, data) \
-{ \
-	.match_flags  = IEEE1394_MATCH_VENDOR_ID | \
-			IEEE1394_MATCH_MODEL_ID | \
-			IEEE1394_MATCH_SPECIFIER_ID | \
-			IEEE1394_MATCH_VERSION, \
-	.vendor_id    = vendor, \
-	.model_id     = model, \
-	.specifier_id = SPECIFIER_1394TA, \
-	.version      = VERSION_AVC, \
-	.driver_data  = (kernel_ulong_t)data, \
-}
-
 static const struct ieee1394_device_id oxfw_id_table[] = {
-	//
-	// OXFW970 devices:
-	// Initial firmware has a quirk to postpone isoc packet transmission during finishing async
-	// transaction. As a result, several isochronous cycles are skipped to transfer the packets
-	// and the audio data frames which should have been transferred during the cycles are put
-	// into packet at the first isoc cycle after the postpone. Furthermore, the value of SYT
-	// field in CIP header is not reliable as synchronization timing,
-	//
-	OXFW_DEV_ENTRY(VENDOR_GRIFFIN, 0x00f970, &griffin_firewave),
-	OXFW_DEV_ENTRY(VENDOR_LACIE, 0x00f970, &lacie_speakers),
-	// Behringer,F-Control Audio 202. The value of SYT field is not reliable at all.
-	OXFW_DEV_ENTRY(VENDOR_BEHRINGER, 0x00fc22, NULL),
-	// Loud Technologies, Tapco Link.FireWire 4x6. The value of SYT field is always 0xffff.
-	OXFW_DEV_ENTRY(VENDOR_LOUD, 0x000460, NULL),
-	// Loud Technologies, Mackie Onyx Satellite. Although revised version of firmware is
-	// installed to avoid the postpone, the value of SYT field is always 0xffff.
-	OXFW_DEV_ENTRY(VENDOR_LOUD, MODEL_SATELLITE, NULL),
-	// Miglia HarmonyAudio. Not yet identified.
-
-	//
-	// OXFW971 devices:
-	// The value of SYT field in CIP header is enough reliable. Both of blocking and non-blocking
-	// transmission methods are available.
-	//
-	// Any Mackie(Loud) models (name string/model id):
-	//  Onyx-i series (former models):	0x081216
-	//  Onyx 1640i:				0x001640
-	//  d.2 pro/d.4 pro (built-in card):	Unknown
-	//  U.420:				Unknown
-	//  U.420d:				Unknown
+	{
+		.match_flags  = IEEE1394_MATCH_VENDOR_ID |
+				IEEE1394_MATCH_MODEL_ID |
+				IEEE1394_MATCH_SPECIFIER_ID |
+				IEEE1394_MATCH_VERSION,
+		.vendor_id    = VENDOR_GRIFFIN,
+		.model_id     = 0x00f970,
+		.specifier_id = SPECIFIER_1394TA,
+		.version      = VERSION_AVC,
+		.driver_data  = (kernel_ulong_t)&griffin_firewave,
+	},
+	{
+		.match_flags  = IEEE1394_MATCH_VENDOR_ID |
+				IEEE1394_MATCH_MODEL_ID |
+				IEEE1394_MATCH_SPECIFIER_ID |
+				IEEE1394_MATCH_VERSION,
+		.vendor_id    = VENDOR_LACIE,
+		.model_id     = 0x00f970,
+		.specifier_id = SPECIFIER_1394TA,
+		.version      = VERSION_AVC,
+		.driver_data  = (kernel_ulong_t)&lacie_speakers,
+	},
+	/* Behringer,F-Control Audio 202 */
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= VENDOR_BEHRINGER,
+		.model_id	= 0x00fc22,
+	},
+	/*
+	 * Any Mackie(Loud) models (name string/model id):
+	 *  Onyx-i series (former models):	0x081216
+	 *  Mackie Onyx Satellite:		0x00200f
+	 *  Tapco LINK.firewire 4x6:		0x000460
+	 *  d.2 pro/d.4 pro (built-in card):	Unknown
+	 *  U.420:				Unknown
+	 *  U.420d:				Unknown
+	 */
 	{
 		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
 				  IEEE1394_MATCH_SPECIFIER_ID |
 				  IEEE1394_MATCH_VERSION,
 		.vendor_id	= VENDOR_LOUD,
-		.model_id	= 0,
 		.specifier_id	= SPECIFIER_1394TA,
 		.version	= VERSION_AVC,
 	},
-	// TASCAM, FireOne.
-	OXFW_DEV_ENTRY(VENDOR_TASCAM, 0x800007, NULL),
-	// Stanton, Stanton Controllers & Systems 1 Mixer (SCS.1m).
-	OXFW_DEV_ENTRY(OUI_STANTON, MODEL_SCS1M, NULL),
-	// Stanton, Stanton Controllers & Systems 1 Deck (SCS.1d).
-	OXFW_DEV_ENTRY(OUI_STANTON, 0x002000, NULL),
-	// APOGEE, duet FireWire.
-	OXFW_DEV_ENTRY(OUI_APOGEE, MODEL_DUET_FW, NULL),
+	/* TASCAM, FireOne */
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= VENDOR_TASCAM,
+		.model_id	= 0x800007,
+	},
+	/* Stanton, Stanton Controllers & Systems 1 Mixer (SCS.1m) */
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= OUI_STANTON,
+		.model_id	= 0x001000,
+	},
+	/* Stanton, Stanton Controllers & Systems 1 Deck (SCS.1d) */
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= OUI_STANTON,
+		.model_id	= 0x002000,
+	},
+	// APOGEE, duet FireWire
+	{
+		.match_flags	= IEEE1394_MATCH_VENDOR_ID |
+				  IEEE1394_MATCH_MODEL_ID,
+		.vendor_id	= OUI_APOGEE,
+		.model_id	= 0x01dddd,
+	},
 	{ }
 };
 MODULE_DEVICE_TABLE(ieee1394, oxfw_id_table);

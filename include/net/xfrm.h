@@ -145,12 +145,6 @@ enum {
 	XFRM_MODE_FLAG_TUNNEL = 1,
 };
 
-enum xfrm_replay_mode {
-	XFRM_REPLAY_MODE_LEGACY,
-	XFRM_REPLAY_MODE_BMP,
-	XFRM_REPLAY_MODE_ESN,
-};
-
 /* Full description of state of transformer. */
 struct xfrm_state {
 	possible_net_t		xs_net;
@@ -160,7 +154,6 @@ struct xfrm_state {
 	};
 	struct hlist_node	bysrc;
 	struct hlist_node	byspi;
-	struct hlist_node	byseq;
 
 	refcount_t		refcnt;
 	spinlock_t		lock;
@@ -221,8 +214,9 @@ struct xfrm_state {
 	struct xfrm_replay_state preplay;
 	struct xfrm_replay_state_esn *preplay_esn;
 
-	/* replay detection mode */
-	enum xfrm_replay_mode    repl_mode;
+	/* The functions for replay detection. */
+	const struct xfrm_replay *repl;
+
 	/* internal flag that only holds state for delayed aevent at the
 	 * moment
 	*/
@@ -300,6 +294,18 @@ struct km_event {
 	u32	portid;
 	u32	event;
 	struct net *net;
+};
+
+struct xfrm_replay {
+	void	(*advance)(struct xfrm_state *x, __be32 net_seq);
+	int	(*check)(struct xfrm_state *x,
+			 struct sk_buff *skb,
+			 __be32 net_seq);
+	int	(*recheck)(struct xfrm_state *x,
+			   struct sk_buff *skb,
+			   __be32 net_seq);
+	void	(*notify)(struct xfrm_state *x, int event);
+	int	(*overflow)(struct xfrm_state *x, struct sk_buff *skb);
 };
 
 struct xfrm_if_cb {
@@ -381,6 +387,7 @@ void xfrm_flush_gc(void);
 void xfrm_state_delete_tunnel(struct xfrm_state *x);
 
 struct xfrm_type {
+	char			*description;
 	struct module		*owner;
 	u8			proto;
 	u8			flags;
@@ -395,12 +402,14 @@ struct xfrm_type {
 	int			(*output)(struct xfrm_state *, struct sk_buff *pskb);
 	int			(*reject)(struct xfrm_state *, struct sk_buff *,
 					  const struct flowi *);
+	int			(*hdr_offset)(struct xfrm_state *, struct sk_buff *, u8 **);
 };
 
 int xfrm_register_type(const struct xfrm_type *type, unsigned short family);
 void xfrm_unregister_type(const struct xfrm_type *type, unsigned short family);
 
 struct xfrm_type_offload {
+	char		*description;
 	struct module	*owner;
 	u8		proto;
 	void		(*encap)(struct xfrm_state *, struct sk_buff *pskb);
@@ -1015,7 +1024,6 @@ struct xfrm_offload {
 #define CRYPTO_INVALID_PROTOCOL			128
 
 	__u8			proto;
-	__u8			inner_ipproto;
 };
 
 struct sec_path {
@@ -1563,6 +1571,7 @@ int xfrm4_rcv_encap(struct sk_buff *skb, int nexthdr, __be32 spi,
 		    int encap_type);
 int xfrm4_transport_finish(struct sk_buff *skb, int async);
 int xfrm4_rcv(struct sk_buff *skb);
+int xfrm_parse_spi(struct sk_buff *skb, u8 nexthdr, __be32 *spi, __be32 *seq);
 
 static inline int xfrm4_rcv_spi(struct sk_buff *skb, int nexthdr, __be32 spi)
 {
@@ -1573,6 +1582,7 @@ static inline int xfrm4_rcv_spi(struct sk_buff *skb, int nexthdr, __be32 spi)
 }
 
 int xfrm4_output(struct net *net, struct sock *sk, struct sk_buff *skb);
+int xfrm4_output_finish(struct sock *sk, struct sk_buff *skb);
 int xfrm4_protocol_register(struct xfrm4_protocol *handler, unsigned char protocol);
 int xfrm4_protocol_deregister(struct xfrm4_protocol *handler, unsigned char protocol);
 int xfrm4_tunnel_register(struct xfrm_tunnel *handler, unsigned short family);
@@ -1596,6 +1606,9 @@ int xfrm6_tunnel_deregister(struct xfrm6_tunnel *handler, unsigned short family)
 __be32 xfrm6_tunnel_alloc_spi(struct net *net, xfrm_address_t *saddr);
 __be32 xfrm6_tunnel_spi_lookup(struct net *net, const xfrm_address_t *saddr);
 int xfrm6_output(struct net *net, struct sock *sk, struct sk_buff *skb);
+int xfrm6_output_finish(struct sock *sk, struct sk_buff *skb);
+int xfrm6_find_1stfragopt(struct xfrm_state *x, struct sk_buff *skb,
+			  u8 **prevhdr);
 
 #ifdef CONFIG_XFRM
 void xfrm6_local_rxpmtu(struct sk_buff *skb, u32 mtu);
@@ -1709,12 +1722,6 @@ static inline int xfrm_policy_id2dir(u32 index)
 }
 
 #ifdef CONFIG_XFRM
-void xfrm_replay_advance(struct xfrm_state *x, __be32 net_seq);
-int xfrm_replay_check(struct xfrm_state *x, struct sk_buff *skb, __be32 net_seq);
-void xfrm_replay_notify(struct xfrm_state *x, int event);
-int xfrm_replay_overflow(struct xfrm_state *x, struct sk_buff *skb);
-int xfrm_replay_recheck(struct xfrm_state *x, struct sk_buff *skb, __be32 net_seq);
-
 static inline int xfrm_aevent_is_on(struct net *net)
 {
 	struct sock *nlsk;

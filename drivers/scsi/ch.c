@@ -198,9 +198,8 @@ ch_do_scsi(scsi_changer *ch, unsigned char *cmd, int cmd_len,
 	result = scsi_execute_req(ch->device, cmd, direction, buffer,
 				  buflength, &sshdr, timeout * HZ,
 				  MAX_RETRIES, NULL);
-	if (result < 0)
-		return result;
-	if (scsi_sense_valid(&sshdr)) {
+
+	if (driver_byte(result) == DRIVER_SENSE) {
 		if (debug)
 			scsi_print_sense_hdr(ch->device, ch->name, &sshdr);
 		errno = ch_find_errno(&sshdr);
@@ -1059,3 +1058,9 @@ static void __exit exit_ch_module(void)
 
 module_init(init_ch_module);
 module_exit(exit_ch_module);
+
+/*
+ * Local variables:
+ * c-basic-offset: 8
+ * End:
+ */

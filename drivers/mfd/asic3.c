@@ -723,8 +723,16 @@ static struct tmio_mmc_data asic3_mmc_data = {
 };
 
 static struct resource asic3_mmc_resources[] = {
-	DEFINE_RES_MEM(ASIC3_SD_CTRL_BASE, 0x400),
-	DEFINE_RES_IRQ(0)
+	{
+		.start = ASIC3_SD_CTRL_BASE,
+		.end   = ASIC3_SD_CTRL_BASE + 0x3ff,
+		.flags = IORESOURCE_MEM,
+	},
+	{
+		.start = 0,
+		.end   = 0,
+		.flags = IORESOURCE_IRQ,
+	},
 };
 
 static int asic3_mmc_enable(struct platform_device *pdev)

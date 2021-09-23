@@ -223,7 +223,7 @@ static inline u32 tcf_auto_prio(struct tcf_proto *tp)
 static bool tcf_proto_check_kind(struct nlattr *kind, char *name)
 {
 	if (kind)
-		return nla_strscpy(name, kind, IFNAMSIZ) < 0;
+		return nla_strlcpy(name, kind, IFNAMSIZ) >= IFNAMSIZ;
 	memset(name, 0, IFNAMSIZ);
 	return false;
 }
@@ -991,12 +991,13 @@ __tcf_get_next_proto(struct tcf_chain *chain, struct tcf_proto *tp)
  */
 
 struct tcf_proto *
-tcf_get_next_proto(struct tcf_chain *chain, struct tcf_proto *tp)
+tcf_get_next_proto(struct tcf_chain *chain, struct tcf_proto *tp,
+		   bool rtnl_held)
 {
 	struct tcf_proto *tp_next = __tcf_get_next_proto(chain, tp);
 
 	if (tp)
-		tcf_proto_put(tp, true, NULL);
+		tcf_proto_put(tp, rtnl_held, NULL);
 
 	return tp_next;
 }
@@ -1629,7 +1630,6 @@ int tcf_classify_ingress(struct sk_buff *skb,
 			return TC_ACT_SHOT;
 		ext->chain = last_executed_chain;
 		ext->mru = qdisc_skb_cb(skb)->mru;
-		ext->post_ct = qdisc_skb_cb(skb)->post_ct;
 	}
 
 	return ret;
@@ -1924,14 +1924,15 @@ static int tfilter_del_notify(struct net *net, struct sk_buff *oskb,
 static void tfilter_notify_chain(struct net *net, struct sk_buff *oskb,
 				 struct tcf_block *block, struct Qdisc *q,
 				 u32 parent, struct nlmsghdr *n,
-				 struct tcf_chain *chain, int event)
+				 struct tcf_chain *chain, int event,
+				 bool rtnl_held)
 {
 	struct tcf_proto *tp;
 
-	for (tp = tcf_get_next_proto(chain, NULL);
-	     tp; tp = tcf_get_next_proto(chain, tp))
+	for (tp = tcf_get_next_proto(chain, NULL, rtnl_held);
+	     tp; tp = tcf_get_next_proto(chain, tp, rtnl_held))
 		tfilter_notify(net, oskb, n, tp, block,
-			       q, parent, NULL, event, false, true);
+			       q, parent, NULL, event, false, rtnl_held);
 }
 
 static void tfilter_put(struct tcf_proto *tp, void *fh)
@@ -2261,7 +2262,7 @@ static int tc_del_tfilter(struct sk_buff *skb, struct nlmsghdr *n,
 
 	if (prio == 0) {
 		tfilter_notify_chain(net, skb, block, q, parent, n,
-				     chain, RTM_DELTFILTER);
+				     chain, RTM_DELTFILTER, rtnl_held);
 		tcf_chain_flush(chain, rtnl_held);
 		err = 0;
 		goto errout;
@@ -2894,7 +2895,7 @@ replay:
 		break;
 	case RTM_DELCHAIN:
 		tfilter_notify_chain(net, skb, block, q, parent, n,
-				     chain, RTM_DELTFILTER);
+				     chain, RTM_DELTFILTER, true);
 		/* Flush the chain first as the user requested chain removal. */
 		tcf_chain_flush(chain, true);
 		/* In case the chain was successfully deleted, put a reference
@@ -2939,6 +2940,7 @@ static int tc_dump_chain(struct sk_buff *skb, struct netlink_callback *cb)
 	struct tcf_chain *chain;
 	long index_start;
 	long index;
+	u32 parent;
 	int err;
 
 	if (nlmsg_len(cb->nlh) < sizeof(*tcm))
@@ -2953,6 +2955,13 @@ static int tc_dump_chain(struct sk_buff *skb, struct netlink_callback *cb)
 		block = tcf_block_refcnt_get(net, tcm->tcm_block_index);
 		if (!block)
 			goto out;
+		/* If we work with block index, q is NULL and parent value
+		 * will never be used in the following code. The check
+		 * in tcf_fill_node prevents it. However, compiler does not
+		 * see that far, so set parent to zero to silence the warning
+		 * about parent being uninitialized.
+		 */
+		parent = 0;
 	} else {
 		const struct Qdisc_class_ops *cops;
 		struct net_device *dev;
@@ -2962,11 +2971,13 @@ static int tc_dump_chain(struct sk_buff *skb, struct netlink_callback *cb)
 		if (!dev)
 			return skb->len;
 
-		if (!tcm->tcm_parent)
+		parent = tcm->tcm_parent;
+		if (!parent) {
 			q = dev->qdisc;
-		else
+			parent = q->handle;
+		} else {
 			q = qdisc_lookup(dev, TC_H_MAJ(tcm->tcm_parent));
-
+		}
 		if (!q)
 			goto out;
 		cops = q->ops->cl_ops;
@@ -3662,9 +3673,6 @@ int tc_setup_flow_action(struct flow_action *flow_action,
 			entry->police.burst = tcf_police_burst(act);
 			entry->police.rate_bytes_ps =
 				tcf_police_rate_bytes_ps(act);
-			entry->police.burst_pkt = tcf_police_burst_pkt(act);
-			entry->police.rate_pkt_ps =
-				tcf_police_rate_pkt_ps(act);
 			entry->police.mtu = tcf_police_tcfp_mtu(act);
 			entry->police.index = act->tcfa_index;
 		} else if (is_tcf_ct(act)) {

@@ -29,7 +29,6 @@
 struct xattr_list {
 	struct list_head list;
 	char *name;
-	bool enabled;
 };
 
 extern int evm_initialized;

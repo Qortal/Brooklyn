@@ -15,8 +15,6 @@
 #include <linux/dax.h>
 #include <linux/pfn_t.h>
 #include <linux/libnvdimm.h>
-#include <linux/delay.h>
-#include "dm-io-tracker.h"
 
 #define DM_MSG_PREFIX "writecache"
 
@@ -30,7 +28,6 @@
 #define AUTOCOMMIT_MSEC			1000
 #define MAX_AGE_DIV			16
 #define MAX_AGE_UNSPECIFIED		-1UL
-#define PAUSE_WRITEBACK			(HZ * 3)
 
 #define BITMAP_GRANULARITY	65536
 #if BITMAP_GRANULARITY < PAGE_SIZE
@@ -76,7 +73,7 @@ struct wc_memory_superblock {
 		};
 		__le64 padding[8];
 	};
-	struct wc_memory_entry entries[];
+	struct wc_memory_entry entries[0];
 };
 
 struct wc_entry {
@@ -126,7 +123,6 @@ struct dm_writecache {
 	size_t freelist_high_watermark;
 	size_t freelist_low_watermark;
 	unsigned long max_age;
-	unsigned long pause;
 
 	unsigned uncommitted_blocks;
 	unsigned autocommit_blocks;
@@ -175,21 +171,16 @@ struct dm_writecache {
 	bool flush_on_suspend:1;
 	bool cleaner:1;
 	bool cleaner_set:1;
-	bool metadata_only:1;
-	bool pause_set:1;
 
 	unsigned high_wm_percent_value;
 	unsigned low_wm_percent_value;
 	unsigned autocommit_time_value;
 	unsigned max_age_value;
-	unsigned pause_value;
 
 	unsigned writeback_all;
 	struct workqueue_struct *writeback_wq;
 	struct work_struct writeback_work;
 	struct work_struct flush_work;
-
-	struct dm_io_tracker iot;
 
 	struct dm_io_client *dm_io;
 
@@ -987,7 +978,7 @@ static void writecache_resume(struct dm_target *ti)
 
 	wc_lock(wc);
 
-	wc->data_device_sectors = bdev_nr_sectors(wc->dev->bdev);
+	wc->data_device_sectors = i_size_read(wc->dev->bdev->bd_inode) >> SECTOR_SHIFT;
 
 	if (WC_MODE_PMEM(wc)) {
 		persistent_memory_invalidate_cache(wc->memory_map, wc->memory_map_size);
@@ -1310,7 +1301,7 @@ static int writecache_map(struct dm_target *ti, struct bio *bio)
 			writecache_flush(wc);
 			if (writecache_has_error(wc))
 				goto unlock_error;
-			if (unlikely(wc->cleaner) || unlikely(wc->metadata_only))
+			if (unlikely(wc->cleaner))
 				goto unlock_remap_origin;
 			goto unlock_submit;
 		} else {
@@ -1389,8 +1380,7 @@ read_next_block:
 				}
 				found_entry = true;
 			} else {
-				if (unlikely(wc->cleaner) ||
-				    (wc->metadata_only && !(bio->bi_opf & REQ_META)))
+				if (unlikely(wc->cleaner))
 					goto direct_write;
 			}
 			e = writecache_pop_from_freelist(wc, (sector_t)-1);
@@ -1474,12 +1464,6 @@ bio_copy:
 	}
 
 unlock_remap_origin:
-	if (likely(wc->pause != 0)) {
-		 if (bio_op(bio) == REQ_OP_WRITE) {
-			dm_iot_io_begin(&wc->iot, 1);
-			bio->bi_private = (void *)2;
-		}
-	}
 	bio_set_dev(bio, wc->dev->bdev);
 	wc_unlock(wc);
 	return DM_MAPIO_REMAPPED;
@@ -1510,13 +1494,11 @@ static int writecache_end_io(struct dm_target *ti, struct bio *bio, blk_status_t
 {
 	struct dm_writecache *wc = ti->private;
 
-	if (bio->bi_private == (void *)1) {
+	if (bio->bi_private != NULL) {
 		int dir = bio_data_dir(bio);
 		if (atomic_dec_and_test(&wc->bio_in_progress[dir]))
 			if (unlikely(waitqueue_active(&wc->bio_in_progress_wait[dir])))
 				wake_up(&wc->bio_in_progress_wait[dir]);
-	} else if (bio->bi_private == (void *)2) {
-		dm_iot_io_end(&wc->iot, 1);
 	}
 	return 0;
 }
@@ -1686,7 +1668,7 @@ pop_from_list:
 	return 0;
 }
 
-static bool wc_add_block(struct writeback_struct *wb, struct wc_entry *e)
+static bool wc_add_block(struct writeback_struct *wb, struct wc_entry *e, gfp_t gfp)
 {
 	struct dm_writecache *wc = wb->wc;
 	unsigned block_size = wc->block_size;
@@ -1747,7 +1729,7 @@ static void __writecache_writeback_pmem(struct dm_writecache *wc, struct writeba
 			max_pages = WB_LIST_INLINE;
 		}
 
-		BUG_ON(!wc_add_block(wb, e));
+		BUG_ON(!wc_add_block(wb, e, GFP_NOIO));
 
 		wb->wc_list[0] = e;
 		wb->wc_list_n = 1;
@@ -1757,7 +1739,7 @@ static void __writecache_writeback_pmem(struct dm_writecache *wc, struct writeba
 			if (read_original_sector(wc, f) !=
 			    read_original_sector(wc, e) + (wc->block_size >> SECTOR_SHIFT))
 				break;
-			if (!wc_add_block(wb, f))
+			if (!wc_add_block(wb, f, GFP_NOWAIT | __GFP_NOWARN))
 				break;
 			wbl->size--;
 			list_del(&f->lru);
@@ -1838,27 +1820,6 @@ static void writecache_writeback(struct work_struct *work)
 	struct writeback_list wbl;
 	unsigned long n_walked;
 
-	if (!WC_MODE_PMEM(wc)) {
-		/* Wait for any active kcopyd work on behalf of ssd writeback */
-		dm_kcopyd_client_flush(wc->dm_kcopyd);
-	}
-
-	if (likely(wc->pause != 0)) {
-		while (1) {
-			unsigned long idle;
-			if (unlikely(wc->cleaner) || unlikely(wc->writeback_all) ||
-			    unlikely(dm_suspended(wc->ti)))
-				break;
-			idle = dm_iot_idle_time(&wc->iot);
-			if (idle >= wc->pause)
-				break;
-			idle = wc->pause - idle;
-			if (idle > HZ)
-				idle = HZ;
-			schedule_timeout_idle(idle);
-		}
-	}
-
 	wc_lock(wc);
 restart:
 	if (writecache_has_error(wc)) {
@@ -1887,9 +1848,8 @@ restart:
 
 		n_walked++;
 		if (unlikely(n_walked > WRITEBACK_LATENCY) &&
-		    likely(!wc->writeback_all)) {
-			if (likely(!dm_suspended(wc->ti)))
-				queue_work(wc->writeback_wq, &wc->writeback_work);
+		    likely(!wc->writeback_all) && likely(!dm_suspended(wc->ti))) {
+			queue_work(wc->writeback_wq, &wc->writeback_work);
 			break;
 		}
 
@@ -1911,13 +1871,15 @@ restart:
 			if (unlikely(read_original_sector(wc, f) ==
 				     read_original_sector(wc, e))) {
 				BUG_ON(!f->write_in_progress);
-				list_move(&e->lru, &skipped);
+				list_del(&e->lru);
+				list_add(&e->lru, &skipped);
 				cond_resched();
 				continue;
 			}
 		}
 		wc->writeback_size++;
-		list_move(&e->lru, &wbl.list);
+		list_del(&e->lru);
+		list_add(&e->lru, &wbl.list);
 		wbl.size++;
 		e->write_in_progress = true;
 		e->wc_list_contiguous = 1;
@@ -1952,13 +1914,14 @@ restart:
 			//	break;
 
 			wc->writeback_size++;
-			list_move(&g->lru, &wbl.list);
+			list_del(&g->lru);
+			list_add(&g->lru, &wbl.list);
 			wbl.size++;
 			g->write_in_progress = true;
-			g->wc_list_contiguous = BIO_MAX_VECS;
+			g->wc_list_contiguous = BIO_MAX_PAGES;
 			f = g;
 			e->wc_list_contiguous++;
-			if (unlikely(e->wc_list_contiguous == BIO_MAX_VECS)) {
+			if (unlikely(e->wc_list_contiguous == BIO_MAX_PAGES)) {
 				if (unlikely(wc->writeback_all)) {
 					next_node = rb_next(&f->rb_node);
 					if (likely(next_node))
@@ -2093,7 +2056,8 @@ static void writecache_dtr(struct dm_target *ti)
 	if (wc->ssd_dev)
 		dm_put_device(ti, wc->ssd_dev);
 
-	vfree(wc->entries);
+	if (wc->entries)
+		vfree(wc->entries);
 
 	if (wc->memory_map) {
 		if (WC_MODE_PMEM(wc))
@@ -2108,7 +2072,8 @@ static void writecache_dtr(struct dm_target *ti)
 	if (wc->dm_io)
 		dm_io_client_destroy(wc->dm_io);
 
-	vfree(wc->dirty_bitmap);
+	if (wc->dirty_bitmap)
+		vfree(wc->dirty_bitmap);
 
 	kfree(wc);
 }
@@ -2128,7 +2093,7 @@ static int writecache_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	struct wc_memory_superblock s;
 
 	static struct dm_arg _args[] = {
-		{0, 18, "Invalid number of feature args"},
+		{0, 16, "Invalid number of feature args"},
 	};
 
 	as.argc = argc;
@@ -2171,8 +2136,6 @@ static int writecache_ctr(struct dm_target *ti, unsigned argc, char **argv)
 	}
 	INIT_WORK(&wc->writeback_work, writecache_writeback);
 	INIT_WORK(&wc->flush_work, writecache_flush_work);
-
-	dm_iot_init(&wc->iot);
 
 	raw_spin_lock_init(&wc->endio_list_lock);
 	INIT_LIST_HEAD(&wc->endio_list);
@@ -2221,7 +2184,6 @@ static int writecache_ctr(struct dm_target *ti, unsigned argc, char **argv)
 			goto bad;
 		}
 	} else {
-		wc->pause = PAUSE_WRITEBACK;
 		r = mempool_init_kmalloc_pool(&wc->copy_pool, 1, sizeof(struct copy_struct));
 		if (r) {
 			ti->error = "Could not allocate mempool";
@@ -2358,20 +2320,6 @@ static int writecache_ctr(struct dm_target *ti, unsigned argc, char **argv)
 				wc->writeback_fua = false;
 				wc->writeback_fua_set = true;
 			} else goto invalid_optional;
-		} else if (!strcasecmp(string, "metadata_only")) {
-			wc->metadata_only = true;
-		} else if (!strcasecmp(string, "pause_writeback") && opt_params >= 1) {
-			unsigned pause_msecs;
-			if (WC_MODE_PMEM(wc))
-				goto invalid_optional;
-			string = dm_shift_arg(&as), opt_params--;
-			if (sscanf(string, "%u%c", &pause_msecs, &dummy) != 1)
-				goto invalid_optional;
-			if (pause_msecs > 60000)
-				goto invalid_optional;
-			wc->pause = msecs_to_jiffies(pause_msecs);
-			wc->pause_set = true;
-			wc->pause_value = pause_msecs;
 		} else {
 invalid_optional:
 			r = -EINVAL;
@@ -2595,10 +2543,6 @@ static void writecache_status(struct dm_target *ti, status_type_t type,
 			extra_args++;
 		if (wc->writeback_fua_set)
 			extra_args++;
-		if (wc->metadata_only)
-			extra_args++;
-		if (wc->pause_set)
-			extra_args += 2;
 
 		DMEMIT("%u", extra_args);
 		if (wc->start_sector_set)
@@ -2619,17 +2563,13 @@ static void writecache_status(struct dm_target *ti, status_type_t type,
 			DMEMIT(" cleaner");
 		if (wc->writeback_fua_set)
 			DMEMIT(" %sfua", wc->writeback_fua ? "" : "no");
-		if (wc->metadata_only)
-			DMEMIT(" metadata_only");
-		if (wc->pause_set)
-			DMEMIT(" pause_writeback %u", wc->pause_value);
 		break;
 	}
 }
 
 static struct target_type writecache_target = {
 	.name			= "writecache",
-	.version		= {1, 5, 0},
+	.version		= {1, 4, 0},
 	.module			= THIS_MODULE,
 	.ctr			= writecache_ctr,
 	.dtr			= writecache_dtr,

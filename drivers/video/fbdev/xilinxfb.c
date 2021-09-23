@@ -241,8 +241,6 @@ xilinx_fb_blank(int blank_mode, struct fb_info *fbi)
 	case FB_BLANK_POWERDOWN:
 		/* turn off panel */
 		xilinx_fb_out32(drvdata, REG_CTRL, 0);
-		break;
-
 	default:
 		break;
 	}
@@ -474,7 +472,7 @@ static int xilinxfb_of_probe(struct platform_device *pdev)
 	if (of_find_property(pdev->dev.of_node, "rotate-display", NULL))
 		pdata.rotate_screen = 1;
 
-	platform_set_drvdata(pdev, drvdata);
+	dev_set_drvdata(&pdev->dev, drvdata);
 	return xilinxfb_assign(pdev, drvdata, &pdata);
 }
 

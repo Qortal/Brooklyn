@@ -110,7 +110,7 @@
 };
 
 &gpio5 {
-	emmc-usd-mux-hog {
+	emmc-usd-mux {
 		gpio-hog;
 		gpios = <1 GPIO_ACTIVE_LOW>;
 		output-high;

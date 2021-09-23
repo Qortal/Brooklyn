@@ -149,7 +149,7 @@ static void fdp_nci_send_patch_cb(struct nci_dev *ndev)
 	wake_up(&info->setup_wq);
 }
 
-/*
+/**
  * Register a packet sent counter and a callback
  *
  * We have no other way of knowing when all firmware packets were sent out
@@ -167,7 +167,7 @@ static void fdp_nci_set_data_pkt_counter(struct nci_dev *ndev,
 	info->data_pkt_counter_cb = cb;
 }
 
-/*
+/**
  * The device is expecting a stream of packets. All packets need to
  * have the PBF flag set to 0x0 (last packet) even if the firmware
  * file is segmented and there are multiple packets. If we give the
@@ -176,7 +176,7 @@ static void fdp_nci_set_data_pkt_counter(struct nci_dev *ndev,
  *
  * The firmware will be analyzed and applied when we send NCI_OP_PROP_PATCH_CMD
  * command with NCI_PATCH_TYPE_EOT parameter. The device will send a
- * NFCC_PATCH_NTF packet and a NCI_OP_CORE_RESET_NTF packet.
+ * NFCC_PATCH_NTF packaet and a NCI_OP_CORE_RESET_NTF packet.
  */
 static int fdp_nci_send_patch(struct nci_dev *ndev, u8 conn_id, u8 type)
 {
@@ -236,25 +236,48 @@ static int fdp_nci_send_patch(struct nci_dev *ndev, u8 conn_id, u8 type)
 
 static int fdp_nci_open(struct nci_dev *ndev)
 {
+	int r;
 	struct fdp_nci_info *info = nci_get_drvdata(ndev);
+	struct device *dev = &info->phy->i2c_dev->dev;
 
-	return info->phy_ops->enable(info->phy);
+	dev_dbg(dev, "%s\n", __func__);
+
+	r = info->phy_ops->enable(info->phy);
+
+	return r;
 }
 
 static int fdp_nci_close(struct nci_dev *ndev)
 {
+	struct fdp_nci_info *info = nci_get_drvdata(ndev);
+	struct device *dev = &info->phy->i2c_dev->dev;
+
+	dev_dbg(dev, "%s\n", __func__);
 	return 0;
 }
 
 static int fdp_nci_send(struct nci_dev *ndev, struct sk_buff *skb)
 {
 	struct fdp_nci_info *info = nci_get_drvdata(ndev);
+	struct device *dev = &info->phy->i2c_dev->dev;
+
+	dev_dbg(dev, "%s\n", __func__);
 
 	if (atomic_dec_and_test(&info->data_pkt_counter))
 		info->data_pkt_counter_cb(ndev);
 
 	return info->phy_ops->write(info->phy, skb);
 }
+
+int fdp_nci_recv_frame(struct nci_dev *ndev, struct sk_buff *skb)
+{
+	struct fdp_nci_info *info = nci_get_drvdata(ndev);
+	struct device *dev = &info->phy->i2c_dev->dev;
+
+	dev_dbg(dev, "%s\n", __func__);
+	return nci_recv_frame(ndev, skb);
+}
+EXPORT_SYMBOL(fdp_nci_recv_frame);
 
 static int fdp_nci_request_firmware(struct nci_dev *ndev)
 {
@@ -266,7 +289,7 @@ static int fdp_nci_request_firmware(struct nci_dev *ndev)
 	r = request_firmware(&info->ram_patch, FDP_RAM_PATCH_NAME, dev);
 	if (r < 0) {
 		nfc_err(dev, "RAM patch request error\n");
-		return r;
+		goto error;
 	}
 
 	data = (u8 *) info->ram_patch->data;
@@ -283,7 +306,7 @@ static int fdp_nci_request_firmware(struct nci_dev *ndev)
 	r = request_firmware(&info->otp_patch, FDP_OTP_PATCH_NAME, dev);
 	if (r < 0) {
 		nfc_err(dev, "OTP patch request error\n");
-		return 0;
+		goto out;
 	}
 
 	data = (u8 *) info->otp_patch->data;
@@ -295,7 +318,10 @@ static int fdp_nci_request_firmware(struct nci_dev *ndev)
 
 	dev_dbg(dev, "OTP patch version: %d, size: %d\n",
 		 info->otp_patch_version, (int) info->otp_patch->size);
+out:
 	return 0;
+error:
+	return r;
 }
 
 static void fdp_nci_release_firmware(struct nci_dev *ndev)
@@ -321,7 +347,7 @@ static int fdp_nci_patch_otp(struct nci_dev *ndev)
 	int r = 0;
 
 	if (info->otp_version >= info->otp_patch_version)
-		return r;
+		goto out;
 
 	info->setup_patch_sent = 0;
 	info->setup_reset_ntf = 0;
@@ -330,17 +356,19 @@ static int fdp_nci_patch_otp(struct nci_dev *ndev)
 	/* Patch init request */
 	r = fdp_nci_patch_cmd(ndev, NCI_PATCH_TYPE_OTP);
 	if (r)
-		return r;
+		goto out;
 
 	/* Patch data connection creation */
 	conn_id = fdp_nci_create_conn(ndev);
-	if (conn_id < 0)
-		return conn_id;
+	if (conn_id < 0) {
+		r = conn_id;
+		goto out;
+	}
 
 	/* Send the patch over the data connection */
 	r = fdp_nci_send_patch(ndev, conn_id, NCI_PATCH_TYPE_OTP);
 	if (r)
-		return r;
+		goto out;
 
 	/* Wait for all the packets to be send over i2c */
 	wait_event_interruptible(info->setup_wq,
@@ -352,12 +380,13 @@ static int fdp_nci_patch_otp(struct nci_dev *ndev)
 	/* Close the data connection */
 	r = nci_core_conn_close(info->ndev, conn_id);
 	if (r)
-		return r;
+		goto out;
 
 	/* Patch finish message */
 	if (fdp_nci_patch_cmd(ndev, NCI_PATCH_TYPE_EOT)) {
 		nfc_err(dev, "OTP patch error 0x%x\n", r);
-		return -EINVAL;
+		r = -EINVAL;
+		goto out;
 	}
 
 	/* If the patch notification didn't arrive yet, wait for it */
@@ -367,7 +396,8 @@ static int fdp_nci_patch_otp(struct nci_dev *ndev)
 	r = info->setup_patch_status;
 	if (r) {
 		nfc_err(dev, "OTP patch error 0x%x\n", r);
-		return -EINVAL;
+		r = -EINVAL;
+		goto out;
 	}
 
 	/*
@@ -376,6 +406,7 @@ static int fdp_nci_patch_otp(struct nci_dev *ndev)
 	 */
 	wait_event_interruptible(info->setup_wq, info->setup_reset_ntf);
 
+out:
 	return r;
 }
 
@@ -387,7 +418,7 @@ static int fdp_nci_patch_ram(struct nci_dev *ndev)
 	int r = 0;
 
 	if (info->ram_version >= info->ram_patch_version)
-		return r;
+		goto out;
 
 	info->setup_patch_sent = 0;
 	info->setup_reset_ntf = 0;
@@ -396,17 +427,19 @@ static int fdp_nci_patch_ram(struct nci_dev *ndev)
 	/* Patch init request */
 	r = fdp_nci_patch_cmd(ndev, NCI_PATCH_TYPE_RAM);
 	if (r)
-		return r;
+		goto out;
 
 	/* Patch data connection creation */
 	conn_id = fdp_nci_create_conn(ndev);
-	if (conn_id < 0)
-		return conn_id;
+	if (conn_id < 0) {
+		r = conn_id;
+		goto out;
+	}
 
 	/* Send the patch over the data connection */
 	r = fdp_nci_send_patch(ndev, conn_id, NCI_PATCH_TYPE_RAM);
 	if (r)
-		return r;
+		goto out;
 
 	/* Wait for all the packets to be send over i2c */
 	wait_event_interruptible(info->setup_wq,
@@ -418,12 +451,13 @@ static int fdp_nci_patch_ram(struct nci_dev *ndev)
 	/* Close the data connection */
 	r = nci_core_conn_close(info->ndev, conn_id);
 	if (r)
-		return r;
+		goto out;
 
 	/* Patch finish message */
 	if (fdp_nci_patch_cmd(ndev, NCI_PATCH_TYPE_EOT)) {
 		nfc_err(dev, "RAM patch error 0x%x\n", r);
-		return -EINVAL;
+		r = -EINVAL;
+		goto out;
 	}
 
 	/* If the patch notification didn't arrive yet, wait for it */
@@ -433,7 +467,8 @@ static int fdp_nci_patch_ram(struct nci_dev *ndev)
 	r = info->setup_patch_status;
 	if (r) {
 		nfc_err(dev, "RAM patch error 0x%x\n", r);
-		return -EINVAL;
+		r = -EINVAL;
+		goto out;
 	}
 
 	/*
@@ -442,6 +477,7 @@ static int fdp_nci_patch_ram(struct nci_dev *ndev)
 	 */
 	wait_event_interruptible(info->setup_wq, info->setup_reset_ntf);
 
+out:
 	return r;
 }
 
@@ -452,6 +488,8 @@ static int fdp_nci_setup(struct nci_dev *ndev)
 	struct device *dev = &info->phy->i2c_dev->dev;
 	int r;
 	u8 patched = 0;
+
+	dev_dbg(dev, "%s\n", __func__);
 
 	r = nci_core_init(ndev);
 	if (r)
@@ -560,7 +598,9 @@ static int fdp_nci_core_reset_ntf_packet(struct nci_dev *ndev,
 					  struct sk_buff *skb)
 {
 	struct fdp_nci_info *info = nci_get_drvdata(ndev);
+	struct device *dev = &info->phy->i2c_dev->dev;
 
+	dev_dbg(dev, "%s\n", __func__);
 	info->setup_reset_ntf = 1;
 	wake_up(&info->setup_wq);
 
@@ -571,7 +611,9 @@ static int fdp_nci_prop_patch_ntf_packet(struct nci_dev *ndev,
 					  struct sk_buff *skb)
 {
 	struct fdp_nci_info *info = nci_get_drvdata(ndev);
+	struct device *dev = &info->phy->i2c_dev->dev;
 
+	dev_dbg(dev, "%s\n", __func__);
 	info->setup_patch_ntf = 1;
 	info->setup_patch_status = skb->data[0];
 	wake_up(&info->setup_wq);
@@ -744,6 +786,11 @@ EXPORT_SYMBOL(fdp_nci_probe);
 
 void fdp_nci_remove(struct nci_dev *ndev)
 {
+	struct fdp_nci_info *info = nci_get_drvdata(ndev);
+	struct device *dev = &info->phy->i2c_dev->dev;
+
+	dev_dbg(dev, "%s\n", __func__);
+
 	nci_unregister_device(ndev);
 	nci_free_device(ndev);
 }

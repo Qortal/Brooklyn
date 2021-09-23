@@ -758,7 +758,7 @@ static const struct sx9500_reg_default sx9500_default_regs[] = {
 		.reg = SX9500_REG_PROX_CTRL5,
 		/*
 		 * Debouncer off, lowest average negative filter,
-		 * highest average positive filter.
+		 * highest average postive filter.
 		 */
 		.def = 0x0f,
 	},
@@ -946,10 +946,11 @@ static int sx9500_probe(struct i2c_client *client,
 			return ret;
 
 		data->trig = devm_iio_trigger_alloc(&client->dev,
-				"%s-dev%d", indio_dev->name, iio_device_id(indio_dev));
+				"%s-dev%d", indio_dev->name, indio_dev->id);
 		if (!data->trig)
 			return -ENOMEM;
 
+		data->trig->dev.parent = &client->dev;
 		data->trig->ops = &sx9500_trigger_ops;
 		iio_trigger_set_drvdata(data->trig, indio_dev);
 

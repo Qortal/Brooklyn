@@ -24,7 +24,8 @@
 /*
  * Add the Base PCI Function information to the device info region.
  */
-static int zpci_base_cap(struct zpci_dev *zdev, struct vfio_info_cap *caps)
+static int zpci_base_cap(struct zpci_dev *zdev, struct vfio_pci_device *vdev,
+			 struct vfio_info_cap *caps)
 {
 	struct vfio_device_info_cap_zpci_base cap = {
 		.header.id = VFIO_DEVICE_INFO_CAP_ZPCI_BASE,
@@ -44,7 +45,8 @@ static int zpci_base_cap(struct zpci_dev *zdev, struct vfio_info_cap *caps)
 /*
  * Add the Base PCI Function Group information to the device info region.
  */
-static int zpci_group_cap(struct zpci_dev *zdev, struct vfio_info_cap *caps)
+static int zpci_group_cap(struct zpci_dev *zdev, struct vfio_pci_device *vdev,
+			  struct vfio_info_cap *caps)
 {
 	struct vfio_device_info_cap_zpci_group cap = {
 		.header.id = VFIO_DEVICE_INFO_CAP_ZPCI_GROUP,
@@ -64,7 +66,8 @@ static int zpci_group_cap(struct zpci_dev *zdev, struct vfio_info_cap *caps)
 /*
  * Add the device utility string to the device info region.
  */
-static int zpci_util_cap(struct zpci_dev *zdev, struct vfio_info_cap *caps)
+static int zpci_util_cap(struct zpci_dev *zdev, struct vfio_pci_device *vdev,
+			 struct vfio_info_cap *caps)
 {
 	struct vfio_device_info_cap_zpci_util *cap;
 	int cap_size = sizeof(*cap) + CLP_UTIL_STR_LEN;
@@ -89,7 +92,8 @@ static int zpci_util_cap(struct zpci_dev *zdev, struct vfio_info_cap *caps)
 /*
  * Add the function path string to the device info region.
  */
-static int zpci_pfip_cap(struct zpci_dev *zdev, struct vfio_info_cap *caps)
+static int zpci_pfip_cap(struct zpci_dev *zdev, struct vfio_pci_device *vdev,
+			 struct vfio_info_cap *caps)
 {
 	struct vfio_device_info_cap_zpci_pfip *cap;
 	int cap_size = sizeof(*cap) + CLP_PFIP_NR_SEGMENTS;
@@ -123,21 +127,21 @@ int vfio_pci_info_zdev_add_caps(struct vfio_pci_device *vdev,
 	if (!zdev)
 		return -ENODEV;
 
-	ret = zpci_base_cap(zdev, caps);
+	ret = zpci_base_cap(zdev, vdev, caps);
 	if (ret)
 		return ret;
 
-	ret = zpci_group_cap(zdev, caps);
+	ret = zpci_group_cap(zdev, vdev, caps);
 	if (ret)
 		return ret;
 
 	if (zdev->util_str_avail) {
-		ret = zpci_util_cap(zdev, caps);
+		ret = zpci_util_cap(zdev, vdev, caps);
 		if (ret)
 			return ret;
 	}
 
-	ret = zpci_pfip_cap(zdev, caps);
+	ret = zpci_pfip_cap(zdev, vdev, caps);
 
 	return ret;
 }

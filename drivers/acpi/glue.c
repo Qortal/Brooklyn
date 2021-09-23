@@ -6,8 +6,6 @@
  * Copyright (c) 2005 Intel Corp.
  */
 
-#define pr_fmt(fmt) "ACPI: " fmt
-
 #include <linux/acpi_iort.h>
 #include <linux/export.h>
 #include <linux/init.h>
@@ -21,6 +19,17 @@
 
 #include "internal.h"
 
+#define ACPI_GLUE_DEBUG	0
+#if ACPI_GLUE_DEBUG
+#define DBG(fmt, ...)						\
+	printk(KERN_DEBUG PREFIX fmt, ##__VA_ARGS__)
+#else
+#define DBG(fmt, ...)						\
+do {								\
+	if (0)							\
+		printk(KERN_DEBUG PREFIX fmt, ##__VA_ARGS__);	\
+} while (0)
+#endif
 static LIST_HEAD(bus_type_list);
 static DECLARE_RWSEM(bus_type_sem);
 
@@ -35,7 +44,7 @@ int register_acpi_bus_type(struct acpi_bus_type *type)
 		down_write(&bus_type_sem);
 		list_add_tail(&type->list, &bus_type_list);
 		up_write(&bus_type_sem);
-		pr_info("bus type %s registered\n", type->name);
+		printk(KERN_INFO PREFIX "bus type %s registered\n", type->name);
 		return 0;
 	}
 	return -ENODEV;
@@ -50,7 +59,8 @@ int unregister_acpi_bus_type(struct acpi_bus_type *type)
 		down_write(&bus_type_sem);
 		list_del_init(&type->list);
 		up_write(&bus_type_sem);
-		pr_info("bus type %s unregistered\n", type->name);
+		printk(KERN_INFO PREFIX "bus type %s unregistered\n",
+		       type->name);
 		return 0;
 	}
 	return -ENODEV;
@@ -180,7 +190,7 @@ int acpi_bind_one(struct device *dev, struct acpi_device *acpi_dev)
 	if (!acpi_dev)
 		return -EINVAL;
 
-	acpi_dev_get(acpi_dev);
+	get_device(&acpi_dev->dev);
 	get_device(dev);
 	physical_node = kzalloc(sizeof(*physical_node), GFP_KERNEL);
 	if (!physical_node) {
@@ -207,7 +217,7 @@ int acpi_bind_one(struct device *dev, struct acpi_device *acpi_dev)
 				goto err;
 
 			put_device(dev);
-			acpi_dev_put(acpi_dev);
+			put_device(&acpi_dev->dev);
 			return 0;
 		}
 		if (pn->node_id == node_id) {
@@ -247,7 +257,7 @@ int acpi_bind_one(struct device *dev, struct acpi_device *acpi_dev)
  err:
 	ACPI_COMPANION_SET(dev, NULL);
 	put_device(dev);
-	acpi_dev_put(acpi_dev);
+	put_device(&acpi_dev->dev);
 	return retval;
 }
 EXPORT_SYMBOL_GPL(acpi_bind_one);
@@ -275,7 +285,7 @@ int acpi_unbind_one(struct device *dev)
 			ACPI_COMPANION_SET(dev, NULL);
 			/* Drop references taken by acpi_bind_one(). */
 			put_device(dev);
-			acpi_dev_put(acpi_dev);
+			put_device(&acpi_dev->dev);
 			kfree(entry);
 			break;
 		}
@@ -297,7 +307,7 @@ static int acpi_device_notify(struct device *dev)
 
 		adev = type->find_companion(dev);
 		if (!adev) {
-			pr_debug("Unable to get handle for %s\n", dev_name(dev));
+			DBG("Unable to get handle for %s\n", dev_name(dev));
 			ret = -ENODEV;
 			goto out;
 		}
@@ -318,15 +328,16 @@ static int acpi_device_notify(struct device *dev)
 		adev->handler->bind(dev);
 
  out:
+#if ACPI_GLUE_DEBUG
 	if (!ret) {
 		struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
 
 		acpi_get_name(ACPI_HANDLE(dev), ACPI_FULL_PATHNAME, &buffer);
-		pr_debug("Device %s -> %s\n", dev_name(dev), (char *)buffer.pointer);
+		DBG("Device %s -> %s\n", dev_name(dev), (char *)buffer.pointer);
 		kfree(buffer.pointer);
-	} else {
-		pr_debug("Device %s -> No ACPI support\n", dev_name(dev));
-	}
+	} else
+		DBG("Device %s -> No ACPI support\n", dev_name(dev));
+#endif
 
 	return ret;
 }

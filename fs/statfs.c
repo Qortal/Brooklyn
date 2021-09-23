@@ -235,7 +235,7 @@ SYSCALL_DEFINE3(fstatfs64, unsigned int, fd, size_t, sz, struct statfs64 __user 
 
 static int vfs_ustat(dev_t dev, struct kstatfs *sbuf)
 {
-	struct super_block *s = user_get_super(dev, false);
+	struct super_block *s = user_get_super(dev);
 	int err;
 	if (!s)
 		return -EINVAL;
@@ -255,10 +255,7 @@ SYSCALL_DEFINE2(ustat, unsigned, dev, struct ustat __user *, ubuf)
 
 	memset(&tmp,0,sizeof(struct ustat));
 	tmp.f_tfree = sbuf.f_bfree;
-	if (IS_ENABLED(CONFIG_ARCH_32BIT_USTAT_F_TINODE))
-		tmp.f_tinode = min_t(u64, sbuf.f_ffree, UINT_MAX);
-	else
-		tmp.f_tinode = sbuf.f_ffree;
+	tmp.f_tinode = sbuf.f_ffree;
 
 	return copy_to_user(ubuf, &tmp, sizeof(struct ustat)) ? -EFAULT : 0;
 }

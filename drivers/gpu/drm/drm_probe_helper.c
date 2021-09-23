@@ -515,8 +515,7 @@ retry:
 	if (count == 0 && connector->status == connector_status_connected)
 		count = drm_add_override_edid_modes(connector);
 
-	if (count == 0 && (connector->status == connector_status_connected ||
-			   connector->status == connector_status_unknown))
+	if (count == 0 && connector->status == connector_status_connected)
 		count = drm_add_modes_noedid(connector, 1024, 768);
 	count += drm_helper_probe_add_cmdline_mode(connector);
 	if (count == 0)
@@ -796,8 +795,7 @@ void drm_kms_helper_poll_fini(struct drm_device *dev)
 EXPORT_SYMBOL(drm_kms_helper_poll_fini);
 
 static bool
-_drm_connector_helper_hpd_irq_event(struct drm_connector *connector,
-				    bool notify)
+_drm_connector_helper_hpd_irq_event(struct drm_connector *connector)
 {
 	struct drm_device *dev = connector->dev;
 	enum drm_connector_status old_status;
@@ -837,11 +835,6 @@ _drm_connector_helper_hpd_irq_event(struct drm_connector *connector,
 	if (old_epoch_counter != connector->epoch_counter)
 		changed = true;
 
-	if (changed && notify) {
-		drm_kms_helper_hotplug_event(dev);
-		DRM_DEBUG_KMS("Sent hotplug event\n");
-	}
-
 	return changed;
 }
 
@@ -867,8 +860,13 @@ bool drm_connector_helper_hpd_irq_event(struct drm_connector *connector)
 	bool changed;
 
 	mutex_lock(&dev->mode_config.mutex);
-	changed = _drm_connector_helper_hpd_irq_event(connector, true);
+	changed = _drm_connector_helper_hpd_irq_event(connector);
 	mutex_unlock(&dev->mode_config.mutex);
+
+	if (changed) {
+		drm_kms_helper_hotplug_event(dev);
+		DRM_DEBUG_KMS("Sent hotplug event\n");
+	}
 
 	return changed;
 }
@@ -909,8 +907,7 @@ bool drm_helper_hpd_irq_event(struct drm_device *dev)
 	mutex_lock(&dev->mode_config.mutex);
 	drm_connector_list_iter_begin(dev, &conn_iter);
 	drm_for_each_connector_iter(connector, &conn_iter) {
-		if (_drm_connector_helper_hpd_irq_event(connector,
-							false))
+		if (_drm_connector_helper_hpd_irq_event(connector))
 			changed = true;
 	}
 	drm_connector_list_iter_end(&conn_iter);

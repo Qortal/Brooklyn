@@ -44,7 +44,6 @@ struct qcom_sysmon {
 	struct mutex lock;
 
 	bool ssr_ack;
-	bool shutdown_acked;
 
 	struct qmi_handle qmi;
 	struct sockaddr_qrtr ssctl;
@@ -116,13 +115,10 @@ out_unlock:
 /**
  * sysmon_request_shutdown() - request graceful shutdown of remote
  * @sysmon:	sysmon context
- *
- * Return: boolean indicator of the remote processor acking the request
  */
-static bool sysmon_request_shutdown(struct qcom_sysmon *sysmon)
+static void sysmon_request_shutdown(struct qcom_sysmon *sysmon)
 {
 	char *req = "ssr:shutdown";
-	bool acked = false;
 	int ret;
 
 	mutex_lock(&sysmon->lock);
@@ -145,13 +141,9 @@ static bool sysmon_request_shutdown(struct qcom_sysmon *sysmon)
 	if (!sysmon->ssr_ack)
 		dev_err(sysmon->dev,
 			"unexpected response to sysmon shutdown request\n");
-	else
-		acked = true;
 
 out_unlock:
 	mutex_unlock(&sysmon->lock);
-
-	return acked;
 }
 
 static int sysmon_callback(struct rpmsg_device *rpdev, void *data, int count,
@@ -294,7 +286,7 @@ static void sysmon_ind_cb(struct qmi_handle *qmi, struct sockaddr_qrtr *sq,
 	complete(&sysmon->ind_comp);
 }
 
-static const struct qmi_msg_handler qmi_indication_handler[] = {
+static struct qmi_msg_handler qmi_indication_handler[] = {
 	{
 		.type = QMI_INDICATION,
 		.msg_id = SSCTL_SHUTDOWN_READY_IND,
@@ -305,33 +297,14 @@ static const struct qmi_msg_handler qmi_indication_handler[] = {
 	{}
 };
 
-static bool ssctl_request_shutdown_wait(struct qcom_sysmon *sysmon)
-{
-	int ret;
-
-	ret = wait_for_completion_timeout(&sysmon->shutdown_comp, 10 * HZ);
-	if (ret)
-		return true;
-
-	ret = try_wait_for_completion(&sysmon->ind_comp);
-	if (ret)
-		return true;
-
-	dev_err(sysmon->dev, "timeout waiting for shutdown ack\n");
-	return false;
-}
-
 /**
  * ssctl_request_shutdown() - request shutdown via SSCTL QMI service
  * @sysmon:	sysmon context
- *
- * Return: boolean indicator of the remote processor acking the request
  */
-static bool ssctl_request_shutdown(struct qcom_sysmon *sysmon)
+static void ssctl_request_shutdown(struct qcom_sysmon *sysmon)
 {
 	struct ssctl_shutdown_resp resp;
 	struct qmi_txn txn;
-	bool acked = false;
 	int ret;
 
 	reinit_completion(&sysmon->ind_comp);
@@ -339,7 +312,7 @@ static bool ssctl_request_shutdown(struct qcom_sysmon *sysmon)
 	ret = qmi_txn_init(&sysmon->qmi, &txn, ssctl_shutdown_resp_ei, &resp);
 	if (ret < 0) {
 		dev_err(sysmon->dev, "failed to allocate QMI txn\n");
-		return false;
+		return;
 	}
 
 	ret = qmi_send_request(&sysmon->qmi, &sysmon->ssctl, &txn,
@@ -347,23 +320,27 @@ static bool ssctl_request_shutdown(struct qcom_sysmon *sysmon)
 	if (ret < 0) {
 		dev_err(sysmon->dev, "failed to send shutdown request\n");
 		qmi_txn_cancel(&txn);
-		return false;
+		return;
 	}
 
 	ret = qmi_txn_wait(&txn, 5 * HZ);
-	if (ret < 0) {
-		dev_err(sysmon->dev, "timeout waiting for shutdown response\n");
-	} else if (resp.resp.result) {
-		dev_err(sysmon->dev, "shutdown request rejected\n");
-	} else {
+	if (ret < 0)
+		dev_err(sysmon->dev, "failed receiving QMI response\n");
+	else if (resp.resp.result)
+		dev_err(sysmon->dev, "shutdown request failed\n");
+	else
 		dev_dbg(sysmon->dev, "shutdown request completed\n");
-		acked = true;
+
+	if (sysmon->shutdown_irq > 0) {
+		ret = wait_for_completion_timeout(&sysmon->shutdown_comp,
+						  10 * HZ);
+		if (!ret) {
+			ret = try_wait_for_completion(&sysmon->ind_comp);
+			if (!ret)
+				dev_err(sysmon->dev,
+					"timeout waiting for shutdown ack\n");
+		}
 	}
-
-	if (sysmon->shutdown_irq > 0)
-		return ssctl_request_shutdown_wait(sysmon);
-
-	return acked;
 }
 
 /**
@@ -397,18 +374,18 @@ static void ssctl_send_event(struct qcom_sysmon *sysmon,
 			       SSCTL_SUBSYS_EVENT_REQ, 40,
 			       ssctl_subsys_event_req_ei, &req);
 	if (ret < 0) {
-		dev_err(sysmon->dev, "failed to send subsystem event\n");
+		dev_err(sysmon->dev, "failed to send shutdown request\n");
 		qmi_txn_cancel(&txn);
 		return;
 	}
 
 	ret = qmi_txn_wait(&txn, 5 * HZ);
 	if (ret < 0)
-		dev_err(sysmon->dev, "timeout waiting for subsystem event response\n");
+		dev_err(sysmon->dev, "failed receiving QMI response\n");
 	else if (resp.resp.result)
-		dev_err(sysmon->dev, "subsystem event rejected\n");
+		dev_err(sysmon->dev, "ssr event send failed\n");
 	else
-		dev_dbg(sysmon->dev, "subsystem event accepted\n");
+		dev_dbg(sysmon->dev, "ssr event send completed\n");
 }
 
 /**
@@ -534,8 +511,6 @@ static void sysmon_stop(struct rproc_subdev *subdev, bool crashed)
 		.ssr_event = SSCTL_SSR_EVENT_BEFORE_SHUTDOWN
 	};
 
-	sysmon->shutdown_acked = false;
-
 	mutex_lock(&sysmon->state_lock);
 	sysmon->state = SSCTL_SSR_EVENT_BEFORE_SHUTDOWN;
 	blocking_notifier_call_chain(&sysmon_notifiers, 0, (void *)&event);
@@ -546,9 +521,9 @@ static void sysmon_stop(struct rproc_subdev *subdev, bool crashed)
 		return;
 
 	if (sysmon->ssctl_version)
-		sysmon->shutdown_acked = ssctl_request_shutdown(sysmon);
+		ssctl_request_shutdown(sysmon);
 	else if (sysmon->ept)
-		sysmon->shutdown_acked = sysmon_request_shutdown(sysmon);
+		sysmon_request_shutdown(sysmon);
 }
 
 static void sysmon_unprepare(struct rproc_subdev *subdev)
@@ -705,22 +680,6 @@ void qcom_remove_sysmon_subdev(struct qcom_sysmon *sysmon)
 	kfree(sysmon);
 }
 EXPORT_SYMBOL_GPL(qcom_remove_sysmon_subdev);
-
-/**
- * qcom_sysmon_shutdown_acked() - query the success of the last shutdown
- * @sysmon:	sysmon context
- *
- * When sysmon is used to request a graceful shutdown of the remote processor
- * this can be used by the remoteproc driver to query the success, in order to
- * know if it should fall back to other means of requesting a shutdown.
- *
- * Return: boolean indicator of the success of the last shutdown request
- */
-bool qcom_sysmon_shutdown_acked(struct qcom_sysmon *sysmon)
-{
-	return sysmon && sysmon->shutdown_acked;
-}
-EXPORT_SYMBOL_GPL(qcom_sysmon_shutdown_acked);
 
 /**
  * sysmon_probe() - probe sys_mon channel

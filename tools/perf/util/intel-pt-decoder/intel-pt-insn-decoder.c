@@ -43,17 +43,6 @@ static void intel_pt_insn_decoder(struct insn *insn,
 	switch (insn->opcode.bytes[0]) {
 	case 0xf:
 		switch (insn->opcode.bytes[1]) {
-		case 0x01:
-			switch (insn->modrm.bytes[0]) {
-			case 0xc2: /* vmlaunch */
-			case 0xc3: /* vmresume */
-				op = INTEL_PT_OP_VMENTRY;
-				branch = INTEL_PT_BR_INDIRECT;
-				break;
-			default:
-				break;
-			}
-			break;
 		case 0x05: /* syscall */
 		case 0x34: /* sysenter */
 			op = INTEL_PT_OP_SYSCALL;
@@ -169,13 +158,11 @@ int intel_pt_get_insn(const unsigned char *buf, size_t len, int x86_64,
 		      struct intel_pt_insn *intel_pt_insn)
 {
 	struct insn insn;
-	int ret;
 
-	ret = insn_decode(&insn, buf, len,
-			  x86_64 ? INSN_MODE_64 : INSN_MODE_32);
-	if (ret < 0 || insn.length > len)
+	insn_init(&insn, buf, len, x86_64);
+	insn_get_length(&insn);
+	if (!insn_complete(&insn) || insn.length > len)
 		return -1;
-
 	intel_pt_insn_decoder(&insn, intel_pt_insn);
 	if (insn.length < INTEL_PT_INSN_BUF_SZ)
 		memcpy(intel_pt_insn->buf, buf, insn.length);
@@ -196,13 +183,12 @@ const char *dump_insn(struct perf_insn *x, uint64_t ip __maybe_unused,
 		      u8 *inbuf, int inlen, int *lenp)
 {
 	struct insn insn;
-	int n, i, ret;
+	int n, i;
 	int left;
 
-	ret = insn_decode(&insn, inbuf, inlen,
-			  x->is64bit ? INSN_MODE_64 : INSN_MODE_32);
-
-	if (ret < 0 || insn.length > inlen)
+	insn_init(&insn, inbuf, inlen, x->is64bit);
+	insn_get_length(&insn);
+	if (!insn_complete(&insn) || insn.length > inlen)
 		return "<bad>";
 	if (lenp)
 		*lenp = insn.length;
@@ -227,7 +213,6 @@ const char *branch_name[] = {
 	[INTEL_PT_OP_INT]	= "Int",
 	[INTEL_PT_OP_SYSCALL]	= "Syscall",
 	[INTEL_PT_OP_SYSRET]	= "Sysret",
-	[INTEL_PT_OP_VMENTRY]	= "VMentry",
 };
 
 const char *intel_pt_insn_name(enum intel_pt_insn_op op)
@@ -282,9 +267,6 @@ int intel_pt_insn_type(enum intel_pt_insn_op op)
 	case INTEL_PT_OP_SYSRET:
 		return PERF_IP_FLAG_BRANCH | PERF_IP_FLAG_RETURN |
 		       PERF_IP_FLAG_SYSCALLRET;
-	case INTEL_PT_OP_VMENTRY:
-		return PERF_IP_FLAG_BRANCH | PERF_IP_FLAG_CALL |
-		       PERF_IP_FLAG_VMENTRY;
 	default:
 		return 0;
 	}

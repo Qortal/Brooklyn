@@ -8,7 +8,6 @@
 #include <linux/irq.h>
 #include <linux/smp.h>
 #include <linux/interrupt.h>
-#include <linux/irqdomain.h>
 
 #include <asm/io.h>
 #include <asm/irq.h>

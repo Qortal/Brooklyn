@@ -44,12 +44,11 @@ struct idio_16_gpio {
 	struct gpio_chip chip;
 	raw_spinlock_t lock;
 	unsigned long irq_mask;
-	unsigned int base;
-	unsigned int out_state;
+	unsigned base;
+	unsigned out_state;
 };
 
-static int idio_16_gpio_get_direction(struct gpio_chip *chip,
-				      unsigned int offset)
+static int idio_16_gpio_get_direction(struct gpio_chip *chip, unsigned offset)
 {
 	if (offset > 15)
 		return GPIO_LINE_DIRECTION_IN;
@@ -57,23 +56,22 @@ static int idio_16_gpio_get_direction(struct gpio_chip *chip,
 	return GPIO_LINE_DIRECTION_OUT;
 }
 
-static int idio_16_gpio_direction_input(struct gpio_chip *chip,
-					unsigned int offset)
+static int idio_16_gpio_direction_input(struct gpio_chip *chip, unsigned offset)
 {
 	return 0;
 }
 
 static int idio_16_gpio_direction_output(struct gpio_chip *chip,
-	unsigned int offset, int value)
+	unsigned offset, int value)
 {
 	chip->set(chip, offset, value);
 	return 0;
 }
 
-static int idio_16_gpio_get(struct gpio_chip *chip, unsigned int offset)
+static int idio_16_gpio_get(struct gpio_chip *chip, unsigned offset)
 {
 	struct idio_16_gpio *const idio16gpio = gpiochip_get_data(chip);
-	const unsigned int mask = BIT(offset-16);
+	const unsigned mask = BIT(offset-16);
 
 	if (offset < 16)
 		return -EINVAL;
@@ -98,11 +96,10 @@ static int idio_16_gpio_get_multiple(struct gpio_chip *chip,
 	return 0;
 }
 
-static void idio_16_gpio_set(struct gpio_chip *chip, unsigned int offset,
-			     int value)
+static void idio_16_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
 {
 	struct idio_16_gpio *const idio16gpio = gpiochip_get_data(chip);
-	const unsigned int mask = BIT(offset);
+	const unsigned mask = BIT(offset);
 	unsigned long flags;
 
 	if (offset > 15)
@@ -183,7 +180,7 @@ static void idio_16_irq_unmask(struct irq_data *data)
 	}
 }
 
-static int idio_16_irq_set_type(struct irq_data *data, unsigned int flow_type)
+static int idio_16_irq_set_type(struct irq_data *data, unsigned flow_type)
 {
 	/* The only valid irq types are none and both-edges */
 	if (flow_type != IRQ_TYPE_NONE &&

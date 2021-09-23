@@ -12,7 +12,6 @@
 #include <linux/kernel.h>
 #include <linux/sched/signal.h>
 #include <linux/notifier.h>
-#include <linux/panic_notifier.h>
 #include <linux/pm.h>
 #include <linux/timer.h>
 

@@ -38,32 +38,9 @@ LDFLAGS_vmlinux="$3"
 # Will be supressed by "make -s"
 info()
 {
-	printf "  %-7s %s\n" "${1}" "${2}"
-}
-
-# Generate a linker script to ensure correct ordering of initcalls.
-gen_initcalls()
-{
-	info GEN .tmp_initcalls.lds
-
-	${PYTHON} ${srctree}/scripts/jobserver-exec		\
-	${PERL} ${srctree}/scripts/generate_initcall_order.pl	\
-		${KBUILD_VMLINUX_OBJS} ${KBUILD_VMLINUX_LIBS}	\
-		> .tmp_initcalls.lds
-}
-
-# If CONFIG_LTO_CLANG is selected, collect generated symbol versions into
-# .tmp_symversions.lds
-gen_symversions()
-{
-	info GEN .tmp_symversions.lds
-	rm -f .tmp_symversions.lds
-
-	for o in ${KBUILD_VMLINUX_OBJS} ${KBUILD_VMLINUX_LIBS}; do
-		if [ -f ${o}.symversions ]; then
-			cat ${o}.symversions >> .tmp_symversions.lds
-		fi
-	done
+	if [ "${quiet}" != "silent_" ]; then
+		printf "  %-7s %s\n" "${1}" "${2}"
+	fi
 }
 
 # Link of vmlinux.o used for section mismatch analysis
@@ -71,7 +48,6 @@ gen_symversions()
 modpost_link()
 {
 	local objects
-	local lds=""
 
 	objects="--whole-archive				\
 		${KBUILD_VMLINUX_OBJS}				\
@@ -80,57 +56,19 @@ modpost_link()
 		${KBUILD_VMLINUX_LIBS}				\
 		--end-group"
 
-	if [ -n "${CONFIG_LTO_CLANG}" ]; then
-		gen_initcalls
-		lds="-T .tmp_initcalls.lds"
-
-		if [ -n "${CONFIG_MODVERSIONS}" ]; then
-			gen_symversions
-			lds="${lds} -T .tmp_symversions.lds"
-		fi
-
-		# This might take a while, so indicate that we're doing
-		# an LTO link
-		info LTO ${1}
-	else
-		info LD ${1}
-	fi
-
-	${LD} ${KBUILD_LDFLAGS} -r -o ${1} ${lds} ${objects}
+	${LD} ${KBUILD_LDFLAGS} -r -o ${1} ${objects}
 }
 
 objtool_link()
 {
-	local objtoolcmd;
 	local objtoolopt;
 
-	if [ "${CONFIG_LTO_CLANG} ${CONFIG_STACK_VALIDATION}" = "y y" ]; then
-		# Don't perform vmlinux validation unless explicitly requested,
-		# but run objtool on vmlinux.o now that we have an object file.
-		if [ -n "${CONFIG_UNWINDER_ORC}" ]; then
-			objtoolcmd="orc generate"
-		fi
-
-		objtoolopt="${objtoolopt} --duplicate"
-
-		if [ -n "${CONFIG_FTRACE_MCOUNT_USE_OBJTOOL}" ]; then
-			objtoolopt="${objtoolopt} --mcount"
-		fi
-	fi
-
 	if [ -n "${CONFIG_VMLINUX_VALIDATION}" ]; then
-		objtoolopt="${objtoolopt} --noinstr"
-	fi
-
-	if [ -n "${objtoolopt}" ]; then
-		if [ -z "${objtoolcmd}" ]; then
-			objtoolcmd="check"
-		fi
-		objtoolopt="${objtoolopt} --vmlinux"
+		objtoolopt="check"
 		if [ -z "${CONFIG_FRAME_POINTER}" ]; then
 			objtoolopt="${objtoolopt} --no-fp"
 		fi
-		if [ -n "${CONFIG_GCOV_KERNEL}" ] || [ -n "${CONFIG_LTO_CLANG}" ]; then
+		if [ -n "${CONFIG_GCOV_KERNEL}" ]; then
 			objtoolopt="${objtoolopt} --no-unreachable"
 		fi
 		if [ -n "${CONFIG_RETPOLINE}" ]; then
@@ -140,7 +78,7 @@ objtool_link()
 			objtoolopt="${objtoolopt} --uaccess"
 		fi
 		info OBJTOOL ${1}
-		tools/objtool/objtool ${objtoolcmd} ${objtoolopt} ${1}
+		tools/objtool/objtool ${objtoolopt} ${1}
 	fi
 }
 
@@ -153,7 +91,6 @@ vmlinux_link()
 	local output=${1}
 	local objects
 	local strip_debug
-	local map_option
 
 	info LD ${output}
 
@@ -165,32 +102,18 @@ vmlinux_link()
 		strip_debug=-Wl,--strip-debug
 	fi
 
-	if [ -n "${CONFIG_VMLINUX_MAP}" ]; then
-		map_option="-Map=${output}.map"
-	fi
-
 	if [ "${SRCARCH}" != "um" ]; then
-		if [ -n "${CONFIG_LTO_CLANG}" ]; then
-			# Use vmlinux.o instead of performing the slow LTO
-			# link again.
-			objects="--whole-archive		\
-				vmlinux.o 			\
-				--no-whole-archive		\
-				${@}"
-		else
-			objects="--whole-archive		\
-				${KBUILD_VMLINUX_OBJS}		\
-				--no-whole-archive		\
-				--start-group			\
-				${KBUILD_VMLINUX_LIBS}		\
-				--end-group			\
-				${@}"
-		fi
+		objects="--whole-archive			\
+			${KBUILD_VMLINUX_OBJS}			\
+			--no-whole-archive			\
+			--start-group				\
+			${KBUILD_VMLINUX_LIBS}			\
+			--end-group				\
+			${@}"
 
 		${LD} ${KBUILD_LDFLAGS} ${LDFLAGS_vmlinux}	\
 			${strip_debug#-Wl,}			\
 			-o ${output}				\
-			${map_option}				\
 			-T ${lds} ${objects}
 	else
 		objects="-Wl,--whole-archive			\
@@ -204,7 +127,6 @@ vmlinux_link()
 		${CC} ${CFLAGS_vmlinux}				\
 			${strip_debug}				\
 			-o ${output}				\
-			${map_option:+-Wl,${map_option}}	\
 			-Wl,-T,${lds}				\
 			${objects}				\
 			-lutil -lrt -lpthread
@@ -218,7 +140,6 @@ vmlinux_link()
 gen_btf()
 {
 	local pahole_ver
-	local extra_paholeopt=
 
 	if ! [ -x "$(command -v ${PAHOLE})" ]; then
 		echo >&2 "BTF: ${1}: pahole (${PAHOLE}) is not available"
@@ -233,16 +154,8 @@ gen_btf()
 
 	vmlinux_link ${1}
 
-	if [ "${pahole_ver}" -ge "118" ] && [ "${pahole_ver}" -le "121" ]; then
-		# pahole 1.18 through 1.21 can't handle zero-sized per-CPU vars
-		extra_paholeopt="${extra_paholeopt} --skip_encoding_btf_vars"
-	fi
-	if [ "${pahole_ver}" -ge "121" ]; then
-		extra_paholeopt="${extra_paholeopt} --btf_gen_floats"
-	fi
-
 	info "BTF" ${2}
-	LLVM_OBJCOPY="${OBJCOPY}" ${PAHOLE} -J ${extra_paholeopt} ${1}
+	LLVM_OBJCOPY=${OBJCOPY} ${PAHOLE} -J ${1}
 
 	# Create ${2} which contains just .BTF section but no symbols. Add
 	# SHF_ALLOC because .BTF will be part of the vmlinux image. --strip-all
@@ -312,15 +225,25 @@ cleanup()
 {
 	rm -f .btf.*
 	rm -f .tmp_System.map
-	rm -f .tmp_initcalls.lds
-	rm -f .tmp_symversions.lds
 	rm -f .tmp_vmlinux*
 	rm -f System.map
 	rm -f vmlinux
-	rm -f vmlinux.map
 	rm -f vmlinux.o
-	rm -f .vmlinux.d
 }
+
+on_exit()
+{
+	if [ $? -ne 0 ]; then
+		cleanup
+	fi
+}
+trap on_exit EXIT
+
+on_signals()
+{
+	exit 1
+}
+trap on_signals HUP INT QUIT TERM
 
 # Use "make V=1" to debug this script
 case "${KBUILD_VERBOSE}" in
@@ -351,6 +274,7 @@ fi;
 ${MAKE} -f "${srctree}/scripts/Makefile.build" obj=init need-builtin=1
 
 #link vmlinux.o
+info LD vmlinux.o
 modpost_link vmlinux.o
 objtool_link vmlinux.o
 
@@ -443,6 +367,3 @@ if [ -n "${CONFIG_KALLSYMS}" ]; then
 		exit 1
 	fi
 fi
-
-# For fixdep
-echo "vmlinux: $0" > .vmlinux.d

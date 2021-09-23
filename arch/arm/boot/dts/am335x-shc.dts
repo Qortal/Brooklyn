@@ -140,14 +140,14 @@
 };
 
 &gpio1 {
-	hmtc-rst-hog {
+	hmtc_rst {
 		gpio-hog;
 		gpios = <24 GPIO_ACTIVE_LOW>;
 		output-high;
 		line-name = "homematic_reset";
 	};
 
-	hmtc-prog-hog {
+	hmtc_prog {
 		gpio-hog;
 		gpios = <27 GPIO_ACTIVE_LOW>;
 		output-high;
@@ -156,14 +156,14 @@
 };
 
 &gpio3 {
-	zgb-rst-hog {
+	zgb_rst {
 		gpio-hog;
 		gpios = <18 GPIO_ACTIVE_LOW>;
 		output-low;
 		line-name = "zigbee_reset";
 	};
 
-	zgb-boot-hog {
+	zgb_boot {
 		gpio-hog;
 		gpios = <19 GPIO_ACTIVE_HIGH>;
 		output-high;

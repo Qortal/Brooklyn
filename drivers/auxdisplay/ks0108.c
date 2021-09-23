@@ -5,7 +5,7 @@
  * Description: ks0108 LCD Controller driver
  *     Depends: parport
  *
- *      Author: Copyright (C) Miguel Ojeda <ojeda@kernel.org>
+ *      Author: Copyright (C) Miguel Ojeda Sandonis
  *        Date: 2006-10-31
  */
 
@@ -182,6 +182,6 @@ module_init(ks0108_init);
 module_exit(ks0108_exit);
 
 MODULE_LICENSE("GPL v2");
-MODULE_AUTHOR("Miguel Ojeda <ojeda@kernel.org>");
+MODULE_AUTHOR("Miguel Ojeda Sandonis <miguel.ojeda.sandonis@gmail.com>");
 MODULE_DESCRIPTION("ks0108 LCD Controller driver");
 

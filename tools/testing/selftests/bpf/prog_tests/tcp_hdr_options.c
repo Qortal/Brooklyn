@@ -18,12 +18,12 @@
 #define LO_ADDR6 "::1"
 #define CG_NAME "/tcpbpf-hdr-opt-test"
 
-static struct bpf_test_option exp_passive_estab_in;
-static struct bpf_test_option exp_active_estab_in;
-static struct bpf_test_option exp_passive_fin_in;
-static struct bpf_test_option exp_active_fin_in;
-static struct hdr_stg exp_passive_hdr_stg;
-static struct hdr_stg exp_active_hdr_stg = { .active = true, };
+struct bpf_test_option exp_passive_estab_in;
+struct bpf_test_option exp_active_estab_in;
+struct bpf_test_option exp_passive_fin_in;
+struct bpf_test_option exp_active_fin_in;
+struct hdr_stg exp_passive_hdr_stg;
+struct hdr_stg exp_active_hdr_stg = { .active = true, };
 
 static struct test_misc_tcp_hdr_options *misc_skel;
 static struct test_tcp_hdr_options *skel;
@@ -353,7 +353,8 @@ static void fastopen_estab(void)
 		return;
 
 	link = bpf_program__attach_cgroup(skel->progs.estab, cg_fd);
-	if (!ASSERT_OK_PTR(link, "attach_cgroup(estab)"))
+	if (CHECK(IS_ERR(link), "attach_cgroup(estab)", "err: %ld\n",
+		  PTR_ERR(link)))
 		return;
 
 	if (sk_fds_connect(&sk_fds, true)) {
@@ -397,7 +398,8 @@ static void syncookie_estab(void)
 		return;
 
 	link = bpf_program__attach_cgroup(skel->progs.estab, cg_fd);
-	if (!ASSERT_OK_PTR(link, "attach_cgroup(estab)"))
+	if (CHECK(IS_ERR(link), "attach_cgroup(estab)", "err: %ld\n",
+		  PTR_ERR(link)))
 		return;
 
 	if (sk_fds_connect(&sk_fds, false)) {
@@ -429,7 +431,8 @@ static void fin(void)
 		return;
 
 	link = bpf_program__attach_cgroup(skel->progs.estab, cg_fd);
-	if (!ASSERT_OK_PTR(link, "attach_cgroup(estab)"))
+	if (CHECK(IS_ERR(link), "attach_cgroup(estab)", "err: %ld\n",
+		  PTR_ERR(link)))
 		return;
 
 	if (sk_fds_connect(&sk_fds, false)) {
@@ -468,7 +471,8 @@ static void __simple_estab(bool exprm)
 		return;
 
 	link = bpf_program__attach_cgroup(skel->progs.estab, cg_fd);
-	if (!ASSERT_OK_PTR(link, "attach_cgroup(estab)"))
+	if (CHECK(IS_ERR(link), "attach_cgroup(estab)", "err: %ld\n",
+		  PTR_ERR(link)))
 		return;
 
 	if (sk_fds_connect(&sk_fds, false)) {
@@ -505,7 +509,8 @@ static void misc(void)
 		return;
 
 	link = bpf_program__attach_cgroup(misc_skel->progs.misc_estab, cg_fd);
-	if (!ASSERT_OK_PTR(link, "attach_cgroup(misc_estab)"))
+	if (CHECK(IS_ERR(link), "attach_cgroup(misc_estab)", "err: %ld\n",
+		  PTR_ERR(link)))
 		return;
 
 	if (sk_fds_connect(&sk_fds, false)) {

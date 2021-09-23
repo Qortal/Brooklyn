@@ -12,7 +12,6 @@ _Static_assert(MAX_ENTRIES < LOOP_BOUND, "MAX_ENTRIES must be < LOOP_BOUND");
 
 enum bpf_map_type g_map_type = BPF_MAP_TYPE_UNSPEC;
 __u32 g_line = 0;
-int page_size = 0; /* userspace should set it */
 
 #define VERIFY_TYPE(type, func) ({	\
 	g_map_type = type;		\
@@ -27,12 +26,17 @@ int page_size = 0; /* userspace should set it */
 		return 0;	\
 })
 
+struct bpf_map_memory {
+	__u32 pages;
+} __attribute__((preserve_access_index));
+
 struct bpf_map {
 	enum bpf_map_type map_type;
 	__u32 key_size;
 	__u32 value_size;
 	__u32 max_entries;
 	__u32 id;
+	struct bpf_map_memory memory;
 } __attribute__((preserve_access_index));
 
 static inline int check_bpf_map_fields(struct bpf_map *map, __u32 key_size,
@@ -43,6 +47,7 @@ static inline int check_bpf_map_fields(struct bpf_map *map, __u32 key_size,
 	VERIFY(map->value_size == value_size);
 	VERIFY(map->max_entries == max_entries);
 	VERIFY(map->id > 0);
+	VERIFY(map->memory.pages > 0);
 
 	return 1;
 }
@@ -55,6 +60,7 @@ static inline int check_bpf_map_ptr(struct bpf_map *indirect,
 	VERIFY(indirect->value_size == direct->value_size);
 	VERIFY(indirect->max_entries == direct->max_entries);
 	VERIFY(indirect->id == direct->id);
+	VERIFY(indirect->memory.pages == direct->memory.pages);
 
 	return 1;
 }
@@ -636,6 +642,7 @@ struct bpf_ringbuf_map {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_RINGBUF);
+	__uint(max_entries, 1 << 12);
 } m_ringbuf SEC(".maps");
 
 static inline int check_ringbuf(void)
@@ -643,7 +650,7 @@ static inline int check_ringbuf(void)
 	struct bpf_ringbuf_map *ringbuf = (struct bpf_ringbuf_map *)&m_ringbuf;
 	struct bpf_map *map = (struct bpf_map *)&m_ringbuf;
 
-	VERIFY(check(&ringbuf->map, map, 0, 0, page_size));
+	VERIFY(check(&ringbuf->map, map, 0, 0, 1 << 12));
 
 	return 1;
 }

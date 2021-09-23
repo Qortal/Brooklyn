@@ -157,7 +157,6 @@ nouveau_conn_atomic_set_property(struct drm_connector *connector,
 			default:
 				break;
 			}
-			break;
 		case DRM_MODE_SCALE_FULLSCREEN:
 		case DRM_MODE_SCALE_CENTER:
 		case DRM_MODE_SCALE_ASPECT:
@@ -402,6 +401,7 @@ nouveau_connector_destroy(struct drm_connector *connector)
 	drm_connector_cleanup(connector);
 	if (nv_connector->aux.transfer) {
 		drm_dp_cec_unregister_connector(&nv_connector->aux);
+		drm_dp_aux_unregister(&nv_connector->aux);
 		kfree(nv_connector->aux.name);
 	}
 	kfree(connector);
@@ -411,7 +411,6 @@ static struct nouveau_encoder *
 nouveau_connector_ddc_detect(struct drm_connector *connector)
 {
 	struct drm_device *dev = connector->dev;
-	struct pci_dev *pdev = to_pci_dev(dev->dev);
 	struct nouveau_encoder *nv_encoder = NULL, *found = NULL;
 	struct drm_encoder *encoder;
 	int ret;
@@ -439,11 +438,11 @@ nouveau_connector_ddc_detect(struct drm_connector *connector)
 				break;
 
 			if (switcheroo_ddc)
-				vga_switcheroo_lock_ddc(pdev);
+				vga_switcheroo_lock_ddc(dev->pdev);
 			if (nvkm_probe_i2c(nv_encoder->i2c, 0x50))
 				found = nv_encoder;
 			if (switcheroo_ddc)
-				vga_switcheroo_unlock_ddc(pdev);
+				vga_switcheroo_unlock_ddc(dev->pdev);
 
 			break;
 		}
@@ -461,8 +460,7 @@ nouveau_connector_of_detect(struct drm_connector *connector)
 	struct drm_device *dev = connector->dev;
 	struct nouveau_connector *nv_connector = nouveau_connector(connector);
 	struct nouveau_encoder *nv_encoder;
-	struct pci_dev *pdev = to_pci_dev(dev->dev);
-	struct device_node *cn, *dn = pci_device_to_OF_node(pdev);
+	struct device_node *cn, *dn = pci_device_to_OF_node(dev->pdev);
 
 	if (!dn ||
 	    !((nv_encoder = find_encoder(connector, DCB_OUTPUT_TMDS)) ||
@@ -492,7 +490,6 @@ nouveau_connector_set_encoder(struct drm_connector *connector,
 	struct nouveau_connector *nv_connector = nouveau_connector(connector);
 	struct nouveau_drm *drm = nouveau_drm(connector->dev);
 	struct drm_device *dev = connector->dev;
-	struct pci_dev *pdev = to_pci_dev(dev->dev);
 
 	if (nv_connector->detected_encoder == nv_encoder)
 		return;
@@ -514,8 +511,8 @@ nouveau_connector_set_encoder(struct drm_connector *connector,
 		connector->doublescan_allowed = true;
 		if (drm->client.device.info.family == NV_DEVICE_INFO_V0_KELVIN ||
 		    (drm->client.device.info.family == NV_DEVICE_INFO_V0_CELSIUS &&
-		     (pdev->device & 0x0ff0) != 0x0100 &&
-		     (pdev->device & 0x0ff0) != 0x0150))
+		     (dev->pdev->device & 0x0ff0) != 0x0100 &&
+		     (dev->pdev->device & 0x0ff0) != 0x0150))
 			/* HW is broken */
 			connector->interlace_allowed = false;
 		else
@@ -906,29 +903,13 @@ nouveau_connector_late_register(struct drm_connector *connector)
 	int ret;
 
 	ret = nouveau_backlight_init(connector);
-	if (ret)
-		return ret;
 
-	if (connector->connector_type == DRM_MODE_CONNECTOR_eDP ||
-	    connector->connector_type == DRM_MODE_CONNECTOR_DisplayPort) {
-		ret = drm_dp_aux_register(&nouveau_connector(connector)->aux);
-		if (ret)
-			goto backlight_fini;
-	}
-
-	return 0;
-backlight_fini:
-	nouveau_backlight_fini(connector);
 	return ret;
 }
 
 static void
 nouveau_connector_early_unregister(struct drm_connector *connector)
 {
-	if (connector->connector_type == DRM_MODE_CONNECTOR_eDP ||
-	    connector->connector_type == DRM_MODE_CONNECTOR_DisplayPort)
-		drm_dp_aux_unregister(&nouveau_connector(connector)->aux);
-
 	nouveau_backlight_fini(connector);
 }
 
@@ -1356,19 +1337,18 @@ nouveau_connector_create(struct drm_device *dev,
 	case DRM_MODE_CONNECTOR_DisplayPort:
 	case DRM_MODE_CONNECTOR_eDP:
 		nv_connector->aux.dev = connector->kdev;
-		nv_connector->aux.drm_dev = dev;
 		nv_connector->aux.transfer = nouveau_connector_aux_xfer;
 		snprintf(aux_name, sizeof(aux_name), "sor-%04x-%04x",
 			 dcbe->hasht, dcbe->hashm);
 		nv_connector->aux.name = kstrdup(aux_name, GFP_KERNEL);
-		drm_dp_aux_init(&nv_connector->aux);
+		ret = drm_dp_aux_register(&nv_connector->aux);
 		if (ret) {
-			NV_ERROR(drm, "Failed to init AUX adapter for sor-%04x-%04x: %d\n",
-				 dcbe->hasht, dcbe->hashm, ret);
+			NV_ERROR(drm, "failed to register aux channel\n");
 			kfree(nv_connector);
 			return ERR_PTR(ret);
 		}
-		fallthrough;
+		funcs = &nouveau_connector_funcs;
+		break;
 	default:
 		funcs = &nouveau_connector_funcs;
 		break;

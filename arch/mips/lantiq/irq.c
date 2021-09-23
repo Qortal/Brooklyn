@@ -8,7 +8,6 @@
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
 #include <linux/sched.h>
-#include <linux/irqchip.h>
 #include <linux/irqdomain.h>
 #include <linux/of_platform.h>
 #include <linux/of_address.h>
@@ -423,9 +422,12 @@ unsigned int get_c0_compare_int(void)
 	return CP0_LEGACY_COMPARE_IRQ;
 }
 
-IRQCHIP_DECLARE(lantiq_icu, "lantiq,icu", icu_of_init);
+static const struct of_device_id of_irq_ids[] __initconst = {
+	{ .compatible = "lantiq,icu", .data = icu_of_init },
+	{},
+};
 
 void __init arch_init_irq(void)
 {
-	irqchip_init();
+	of_irq_init(of_irq_ids);
 }

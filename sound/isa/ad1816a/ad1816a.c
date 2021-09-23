@@ -22,6 +22,13 @@
 MODULE_AUTHOR("Massimo Piccioni <dafastidio@libero.it>");
 MODULE_DESCRIPTION("AD1816A, AD1815");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{Highscreen,Sound-Boostar 16 3D},"
+		"{Analog Devices,AD1815},"
+		"{Analog Devices,AD1816A},"
+		"{TerraTec,Base 64},"
+		"{TerraTec,AudioSystem EWS64S},"
+		"{Aztech/Newcom SC-16 3D},"
+		"{Shark Predator ISA}}");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 1-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
@@ -131,18 +138,16 @@ static int snd_card_ad1816a_probe(int dev, struct pnp_card_link *pcard,
 		return error;
 	chip = card->private_data;
 
-	error = snd_card_ad1816a_pnp(dev, pcard, pid);
-	if (error) {
+	if ((error = snd_card_ad1816a_pnp(dev, pcard, pid))) {
 		snd_card_free(card);
 		return error;
 	}
 
-	error = snd_ad1816a_create(card, port[dev],
-				   irq[dev],
-				   dma1[dev],
-				   dma2[dev],
-				   chip);
-	if (error) {
+	if ((error = snd_ad1816a_create(card, port[dev],
+					irq[dev],
+					dma1[dev],
+					dma2[dev],
+					chip)) < 0) {
 		snd_card_free(card);
 		return error;
 	}
@@ -154,14 +159,12 @@ static int snd_card_ad1816a_probe(int dev, struct pnp_card_link *pcard,
 	sprintf(card->longname, "%s, SS at 0x%lx, irq %d, dma %d&%d",
 		card->shortname, chip->port, irq[dev], dma1[dev], dma2[dev]);
 
-	error = snd_ad1816a_pcm(chip, 0);
-	if (error < 0) {
+	if ((error = snd_ad1816a_pcm(chip, 0)) < 0) {
 		snd_card_free(card);
 		return error;
 	}
 
-	error = snd_ad1816a_mixer(chip);
-	if (error < 0) {
+	if ((error = snd_ad1816a_mixer(chip)) < 0) {
 		snd_card_free(card);
 		return error;
 	}
@@ -193,8 +196,7 @@ static int snd_card_ad1816a_probe(int dev, struct pnp_card_link *pcard,
 		}
 	}
 
-	error = snd_card_register(card);
-	if (error < 0) {
+	if ((error = snd_card_register(card)) < 0) {
 		snd_card_free(card);
 		return error;
 	}

@@ -120,7 +120,7 @@ struct mt7603_dev {
 	unsigned long last_cca_adj;
 
 	u32 ampdu_ref;
-	u32 rx_ampdu_ts;
+	__le32 rx_ampdu_ts;
 	u8 rssi_offset[3];
 
 	u8 slottime;
@@ -131,6 +131,8 @@ struct mt7603_dev {
 	ktime_t ed_time;
 
 	spinlock_t ps_lock;
+
+	u8 mac_work_count;
 
 	u8 mcu_running;
 
@@ -254,7 +256,7 @@ void mt7603_sta_assoc(struct mt76_dev *mdev, struct ieee80211_vif *vif,
 void mt7603_sta_remove(struct mt76_dev *mdev, struct ieee80211_vif *vif,
 		       struct ieee80211_sta *sta);
 
-void mt7603_pre_tbtt_tasklet(struct tasklet_struct *t);
+void mt7603_pre_tbtt_tasklet(unsigned long arg);
 
 void mt7603_update_channel(struct mt76_dev *mdev);
 

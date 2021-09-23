@@ -48,13 +48,6 @@ struct smsc_phy_priv {
 	struct clk *refclk;
 };
 
-static int smsc_phy_ack_interrupt(struct phy_device *phydev)
-{
-	int rc = phy_read(phydev, MII_LAN83C185_ISF);
-
-	return rc < 0 ? rc : 0;
-}
-
 static int smsc_phy_config_intr(struct phy_device *phydev)
 {
 	struct smsc_phy_priv *priv = phydev->priv;
@@ -62,47 +55,21 @@ static int smsc_phy_config_intr(struct phy_device *phydev)
 	int rc;
 
 	if (phydev->interrupts == PHY_INTERRUPT_ENABLED) {
-		rc = smsc_phy_ack_interrupt(phydev);
-		if (rc)
-			return rc;
-
 		intmask = MII_LAN83C185_ISF_INT4 | MII_LAN83C185_ISF_INT6;
 		if (priv->energy_enable)
 			intmask |= MII_LAN83C185_ISF_INT7;
-		rc = phy_write(phydev, MII_LAN83C185_IM, intmask);
-	} else {
-		rc = phy_write(phydev, MII_LAN83C185_IM, intmask);
-		if (rc)
-			return rc;
-
-		rc = smsc_phy_ack_interrupt(phydev);
 	}
+
+	rc = phy_write(phydev, MII_LAN83C185_IM, intmask);
 
 	return rc < 0 ? rc : 0;
 }
 
-static irqreturn_t smsc_phy_handle_interrupt(struct phy_device *phydev)
+static int smsc_phy_ack_interrupt(struct phy_device *phydev)
 {
-	int irq_status, irq_enabled;
+	int rc = phy_read (phydev, MII_LAN83C185_ISF);
 
-	irq_enabled = phy_read(phydev, MII_LAN83C185_IM);
-	if (irq_enabled < 0) {
-		phy_error(phydev);
-		return IRQ_NONE;
-	}
-
-	irq_status = phy_read(phydev, MII_LAN83C185_ISF);
-	if (irq_status < 0) {
-		phy_error(phydev);
-		return IRQ_NONE;
-	}
-
-	if (!(irq_status & irq_enabled))
-		return IRQ_NONE;
-
-	phy_trigger_machine(phydev);
-
-	return IRQ_HANDLED;
+	return rc < 0 ? rc : 0;
 }
 
 static int smsc_phy_config_init(struct phy_device *phydev)
@@ -228,12 +195,12 @@ static int lan87xx_read_status(struct phy_device *phydev)
 		if (rc < 0)
 			return rc;
 
-		/* Wait max 640 ms to detect energy and the timeout is not
+		/* Wait max 1500 ms to detect energy and the timeout is not
 		 * an actual error.
 		 */
 		read_poll_timeout(phy_read, rc,
 				  rc & MII_LAN83C185_ENERGYON || rc < 0,
-				  10000, 640000, true, phydev,
+				  10000, 1500000, true, phydev,
 				  MII_LAN83C185_CTRL_STATUS);
 		if (rc < 0)
 			return rc;
@@ -351,8 +318,8 @@ static struct phy_driver smsc_phy_driver[] = {
 	.soft_reset	= smsc_phy_reset,
 
 	/* IRQ related */
+	.ack_interrupt	= smsc_phy_ack_interrupt,
 	.config_intr	= smsc_phy_config_intr,
-	.handle_interrupt = smsc_phy_handle_interrupt,
 
 	.suspend	= genphy_suspend,
 	.resume		= genphy_resume,
@@ -370,8 +337,8 @@ static struct phy_driver smsc_phy_driver[] = {
 	.soft_reset	= smsc_phy_reset,
 
 	/* IRQ related */
+	.ack_interrupt	= smsc_phy_ack_interrupt,
 	.config_intr	= smsc_phy_config_intr,
-	.handle_interrupt = smsc_phy_handle_interrupt,
 
 	/* Statistics */
 	.get_sset_count = smsc_get_sset_count,
@@ -399,8 +366,8 @@ static struct phy_driver smsc_phy_driver[] = {
 	.config_aneg	= lan87xx_config_aneg,
 
 	/* IRQ related */
+	.ack_interrupt	= smsc_phy_ack_interrupt,
 	.config_intr	= smsc_phy_config_intr,
-	.handle_interrupt = smsc_phy_handle_interrupt,
 
 	/* Statistics */
 	.get_sset_count = smsc_get_sset_count,
@@ -422,8 +389,8 @@ static struct phy_driver smsc_phy_driver[] = {
 	.config_init	= lan911x_config_init,
 
 	/* IRQ related */
+	.ack_interrupt	= smsc_phy_ack_interrupt,
 	.config_intr	= smsc_phy_config_intr,
-	.handle_interrupt = smsc_phy_handle_interrupt,
 
 	.suspend	= genphy_suspend,
 	.resume		= genphy_resume,
@@ -447,8 +414,8 @@ static struct phy_driver smsc_phy_driver[] = {
 	.config_aneg	= lan95xx_config_aneg_ext,
 
 	/* IRQ related */
+	.ack_interrupt	= smsc_phy_ack_interrupt,
 	.config_intr	= smsc_phy_config_intr,
-	.handle_interrupt = smsc_phy_handle_interrupt,
 
 	/* Statistics */
 	.get_sset_count = smsc_get_sset_count,
@@ -473,8 +440,8 @@ static struct phy_driver smsc_phy_driver[] = {
 	.soft_reset	= smsc_phy_reset,
 
 	/* IRQ related */
+	.ack_interrupt	= smsc_phy_ack_interrupt,
 	.config_intr	= smsc_phy_config_intr,
-	.handle_interrupt = smsc_phy_handle_interrupt,
 
 	/* Statistics */
 	.get_sset_count = smsc_get_sset_count,

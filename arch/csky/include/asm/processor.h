@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
+// Copyright (C) 2018 Hangzhou C-SKY Microsystems co.,ltd.
 
 #ifndef __ASM_CSKY_PROCESSOR_H
 #define __ASM_CSKY_PROCESSOR_H
@@ -27,7 +28,7 @@ extern struct cpuinfo_csky cpu_data[];
  * for a 64 bit kernel expandable to 8192EB, of which the current CSKY
  * implementations will "only" be able to use 1TB ...
  */
-#define TASK_SIZE	(PAGE_OFFSET - (PAGE_SIZE * 8))
+#define TASK_SIZE       0x7fff8000UL
 
 #ifdef __KERNEL__
 #define STACK_TOP       TASK_SIZE

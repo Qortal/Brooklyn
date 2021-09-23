@@ -39,48 +39,6 @@ void v9fs_fid_add(struct dentry *dentry, struct p9_fid *fid)
 }
 
 /**
- * v9fs_fid_find_inode - search for an open fid off of the inode list
- * @inode: return a fid pointing to a specific inode
- * @uid: return a fid belonging to the specified user
- *
- */
-
-static struct p9_fid *v9fs_fid_find_inode(struct inode *inode, kuid_t uid)
-{
-	struct hlist_head *h;
-	struct p9_fid *fid, *ret = NULL;
-
-	p9_debug(P9_DEBUG_VFS, " inode: %p\n", inode);
-
-	spin_lock(&inode->i_lock);
-	h = (struct hlist_head *)&inode->i_private;
-	hlist_for_each_entry(fid, h, ilist) {
-		if (uid_eq(fid->uid, uid)) {
-			refcount_inc(&fid->count);
-			ret = fid;
-			break;
-		}
-	}
-	spin_unlock(&inode->i_lock);
-	return ret;
-}
-
-/**
- * v9fs_open_fid_add - add an open fid to an inode
- * @dentry: inode that the fid is being added to
- * @fid: fid to add
- *
- */
-
-void v9fs_open_fid_add(struct inode *inode, struct p9_fid *fid)
-{
-	spin_lock(&inode->i_lock);
-	hlist_add_head(&fid->ilist, (struct hlist_head *)&inode->i_private);
-	spin_unlock(&inode->i_lock);
-}
-
-
-/**
  * v9fs_fid_find - retrieve a fid that belongs to the specified uid
  * @dentry: dentry to look for fid in
  * @uid: return fid that belongs to the specified user
@@ -96,18 +54,13 @@ static struct p9_fid *v9fs_fid_find(struct dentry *dentry, kuid_t uid, int any)
 		 dentry, dentry, from_kuid(&init_user_ns, uid),
 		 any);
 	ret = NULL;
-
-	if (d_inode(dentry))
-		ret = v9fs_fid_find_inode(d_inode(dentry), uid);
-
 	/* we'll recheck under lock if there's anything to look in */
-	if (!ret && dentry->d_fsdata) {
+	if (dentry->d_fsdata) {
 		struct hlist_head *h = (struct hlist_head *)&dentry->d_fsdata;
 		spin_lock(&dentry->d_lock);
 		hlist_for_each_entry(fid, h, dlist) {
 			if (any || uid_eq(fid->uid, uid)) {
 				ret = fid;
-				refcount_inc(&ret->count);
 				break;
 			}
 		}
@@ -169,10 +122,7 @@ static struct p9_fid *v9fs_fid_lookup_with_uid(struct dentry *dentry,
 	fid = v9fs_fid_find(ds, uid, any);
 	if (fid) {
 		/* Found the parent fid do a lookup with that */
-		struct p9_fid *ofid = fid;
-
-		fid = p9_client_walk(ofid, 1, &dentry->d_name.name, 1);
-		p9_client_clunk(ofid);
+		fid = p9_client_walk(fid, 1, &dentry->d_name.name, 1);
 		goto fid_out;
 	}
 	up_read(&v9ses->rename_sem);
@@ -197,10 +147,8 @@ static struct p9_fid *v9fs_fid_lookup_with_uid(struct dentry *dentry,
 		v9fs_fid_add(dentry->d_sb->s_root, fid);
 	}
 	/* If we are root ourself just return that */
-	if (dentry->d_sb->s_root == dentry) {
-		refcount_inc(&fid->count);
+	if (dentry->d_sb->s_root == dentry)
 		return fid;
-	}
 	/*
 	 * Do a multipath walk with attached root.
 	 * When walking parent we need to make sure we
@@ -247,7 +195,6 @@ fid_out:
 			fid = ERR_PTR(-ENOENT);
 		} else {
 			__add_fid(dentry, fid);
-			refcount_inc(&fid->count);
 			spin_unlock(&dentry->d_lock);
 		}
 	}
@@ -298,13 +245,11 @@ struct p9_fid *v9fs_fid_lookup(struct dentry *dentry)
 struct p9_fid *v9fs_writeback_fid(struct dentry *dentry)
 {
 	int err;
-	struct p9_fid *fid, *ofid;
+	struct p9_fid *fid;
 
-	ofid = v9fs_fid_lookup_with_uid(dentry, GLOBAL_ROOT_UID, 0);
-	fid = clone_fid(ofid);
+	fid = clone_fid(v9fs_fid_lookup_with_uid(dentry, GLOBAL_ROOT_UID, 0));
 	if (IS_ERR(fid))
 		goto error_out;
-	p9_client_clunk(ofid);
 	/*
 	 * writeback fid will only be used to write back the
 	 * dirty pages. We always request for the open fid in read-write

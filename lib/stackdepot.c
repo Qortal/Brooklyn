@@ -11,7 +11,7 @@
  * Instead, stack depot maintains a hashtable of unique stacktraces. Since alloc
  * and free stacks repeat a lot, we save about 100x space.
  * Stacks are never removed from depot, so we store them contiguously one after
- * another in a contiguous memory allocation.
+ * another in a contiguos memory allocation.
  *
  * Author: Alexander Potapenko <glider@google.com>
  * Copyright (C) 2016 Google, Inc.
@@ -31,7 +31,6 @@
 #include <linux/stackdepot.h>
 #include <linux/string.h>
 #include <linux/types.h>
-#include <linux/memblock.h>
 
 #define DEPOT_STACK_BITS (sizeof(depot_stack_handle_t) * 8)
 
@@ -63,7 +62,7 @@ struct stack_record {
 	u32 hash;			/* Hash in the hastable */
 	u32 size;			/* Number of frames in the stack */
 	union handle_parts handle;
-	unsigned long entries[];	/* Variable-sized array of entries. */
+	unsigned long entries[1];	/* Variable-sized array of entries. */
 };
 
 static void *stack_slabs[STACK_ALLOC_MAX_SLABS];
@@ -105,8 +104,9 @@ static bool init_stack_slab(void **prealloc)
 static struct stack_record *depot_alloc_stack(unsigned long *entries, int size,
 		u32 hash, void **prealloc, gfp_t alloc_flags)
 {
+	int required_size = offsetof(struct stack_record, entries) +
+		sizeof(unsigned long) * size;
 	struct stack_record *stack;
-	size_t required_size = struct_size(stack, entries, size);
 
 	required_size = ALIGN(required_size, 1 << STACK_ALLOC_ALIGN);
 
@@ -136,51 +136,27 @@ static struct stack_record *depot_alloc_stack(unsigned long *entries, int size,
 	stack->handle.slabindex = depot_index;
 	stack->handle.offset = depot_offset >> STACK_ALLOC_ALIGN;
 	stack->handle.valid = 1;
-	memcpy(stack->entries, entries, flex_array_size(stack, entries, size));
+	memcpy(stack->entries, entries, size * sizeof(unsigned long));
 	depot_offset += required_size;
 
 	return stack;
 }
 
-#define STACK_HASH_SIZE (1L << CONFIG_STACK_HASH_ORDER)
+#define STACK_HASH_ORDER 20
+#define STACK_HASH_SIZE (1L << STACK_HASH_ORDER)
 #define STACK_HASH_MASK (STACK_HASH_SIZE - 1)
 #define STACK_HASH_SEED 0x9747b28c
 
-static bool stack_depot_disable;
-static struct stack_record **stack_table;
-
-static int __init is_stack_depot_disabled(char *str)
-{
-	int ret;
-
-	ret = kstrtobool(str, &stack_depot_disable);
-	if (!ret && stack_depot_disable) {
-		pr_info("Stack Depot is disabled\n");
-		stack_table = NULL;
-	}
-	return 0;
-}
-early_param("stack_depot_disable", is_stack_depot_disabled);
-
-int __init stack_depot_init(void)
-{
-	if (!stack_depot_disable) {
-		size_t size = (STACK_HASH_SIZE * sizeof(struct stack_record *));
-		int i;
-
-		stack_table = memblock_alloc(size, size);
-		for (i = 0; i < STACK_HASH_SIZE;  i++)
-			stack_table[i] = NULL;
-	}
-	return 0;
-}
+static struct stack_record *stack_table[STACK_HASH_SIZE] = {
+	[0 ...	STACK_HASH_SIZE - 1] = NULL
+};
 
 /* Calculate hash for a stack */
 static inline u32 hash_stack(unsigned long *entries, unsigned int size)
 {
 	return jhash2((u32 *)entries,
-		      array_size(size,  sizeof(*entries)) / sizeof(u32),
-		      STACK_HASH_SEED);
+			       size * sizeof(unsigned long) / sizeof(u32),
+			       STACK_HASH_SEED);
 }
 
 /* Use our own, non-instrumented version of memcmp().
@@ -267,7 +243,7 @@ depot_stack_handle_t stack_depot_save(unsigned long *entries,
 	unsigned long flags;
 	u32 hash;
 
-	if (unlikely(nr_entries == 0) || stack_depot_disable)
+	if (unlikely(nr_entries == 0))
 		goto fast_exit;
 
 	hash = hash_stack(entries, nr_entries);

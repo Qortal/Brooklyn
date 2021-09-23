@@ -798,6 +798,8 @@ xirc2ps_config(struct pcmcia_device * link)
 	    goto config_error;
     }
   port_found:
+    if (err)
+	 goto config_error;
 
     /****************
      * Now allocate an interrupt line.	Note that this does not
@@ -1232,7 +1234,7 @@ do_start_xmit(struct sk_buff *skb, struct net_device *dev)
     if (pktlen < ETH_ZLEN)
     {
         if (skb_padto(skb, ETH_ZLEN))
-		return NETDEV_TX_OK;
+        	return NETDEV_TX_OK;
 	pktlen = ETH_ZLEN;
     }
 

@@ -100,18 +100,16 @@ static int intel_th_remove(struct device *dev)
 	struct intel_th_driver *thdrv = to_intel_th_driver(dev->driver);
 	struct intel_th_device *thdev = to_intel_th_device(dev);
 	struct intel_th_device *hub = to_intel_th_hub(thdev);
+	int err;
 
 	if (thdev->type == INTEL_TH_SWITCH) {
 		struct intel_th *th = to_intel_th(hub);
 		int i, lowest;
 
-		/*
-		 * disconnect outputs
-		 *
-		 * intel_th_child_remove returns 0 unconditionally, so there is
-		 * no need to check the return value of device_for_each_child.
-		 */
-		device_for_each_child(dev, thdev, intel_th_child_remove);
+		/* disconnect outputs */
+		err = device_for_each_child(dev, thdev, intel_th_child_remove);
+		if (err)
+			return err;
 
 		/*
 		 * Remove outputs, that is, hub's children: they are created
@@ -863,7 +861,7 @@ static irqreturn_t intel_th_irq(int irq, void *data)
  * @irq:	irq number
  */
 struct intel_th *
-intel_th_alloc(struct device *dev, const struct intel_th_drvdata *drvdata,
+intel_th_alloc(struct device *dev, struct intel_th_drvdata *drvdata,
 	       struct resource *devres, unsigned int ndevres)
 {
 	int err, r, nr_mmios = 0;

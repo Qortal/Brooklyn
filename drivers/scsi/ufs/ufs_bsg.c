@@ -97,7 +97,7 @@ static int ufs_bsg_request(struct bsg_job *job)
 
 	bsg_reply->reply_payload_rcv_len = 0;
 
-	ufshcd_rpm_get_sync(hba);
+	pm_runtime_get_sync(hba->dev);
 
 	msgcode = bsg_request->msgcode;
 	switch (msgcode) {
@@ -106,7 +106,7 @@ static int ufs_bsg_request(struct bsg_job *job)
 		ret = ufs_bsg_alloc_desc_buffer(hba, job, &desc_buff,
 						&desc_len, desc_op);
 		if (ret) {
-			ufshcd_rpm_put_sync(hba);
+			pm_runtime_put_sync(hba->dev);
 			goto out;
 		}
 
@@ -138,7 +138,7 @@ static int ufs_bsg_request(struct bsg_job *job)
 		break;
 	}
 
-	ufshcd_rpm_put_sync(hba);
+	pm_runtime_put_sync(hba->dev);
 
 	if (!desc_buff)
 		goto out;

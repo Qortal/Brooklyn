@@ -941,7 +941,7 @@ mv_u3d_ep_set_stall(struct mv_u3d *u3d, u8 ep_num, u8 direction, int stall)
 static int mv_u3d_ep_set_halt_wedge(struct usb_ep *_ep, int halt, int wedge)
 {
 	struct mv_u3d_ep *ep;
-	unsigned long flags;
+	unsigned long flags = 0;
 	int status = 0;
 	struct mv_u3d *u3d;
 

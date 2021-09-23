@@ -597,13 +597,11 @@ static int dwc3_ep0_set_address(struct dwc3 *dwc, struct usb_ctrlrequest *ctrl)
 
 static int dwc3_ep0_delegate_req(struct dwc3 *dwc, struct usb_ctrlrequest *ctrl)
 {
-	int ret = -EINVAL;
+	int ret;
 
-	if (dwc->async_callbacks) {
-		spin_unlock(&dwc->lock);
-		ret = dwc->gadget_driver->setup(dwc->gadget, ctrl);
-		spin_lock(&dwc->lock);
-	}
+	spin_unlock(&dwc->lock);
+	ret = dwc->gadget_driver->setup(dwc->gadget, ctrl);
+	spin_lock(&dwc->lock);
 	return ret;
 }
 

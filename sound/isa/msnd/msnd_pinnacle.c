@@ -1049,9 +1049,10 @@ cfg_error:
 #endif
 }
 
-static void snd_msnd_isa_remove(struct device *pdev, unsigned int dev)
+static int snd_msnd_isa_remove(struct device *pdev, unsigned int dev)
 {
 	snd_msnd_unload(dev_get_drvdata(pdev));
+	return 0;
 }
 
 static struct isa_driver snd_msnd_driver = {

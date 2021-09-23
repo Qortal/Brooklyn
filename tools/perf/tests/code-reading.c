@@ -26,7 +26,6 @@
 #include "event.h"
 #include "record.h"
 #include "util/mmap.h"
-#include "util/string2.h"
 #include "util/synthetic-events.h"
 #include "thread.h"
 
@@ -41,6 +40,15 @@ struct state {
 	u64 done[1024];
 	size_t done_cnt;
 };
+
+static unsigned int hex(char c)
+{
+	if (c >= '0' && c <= '9')
+		return c - '0';
+	if (c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	return c - 'A' + 10;
+}
 
 static size_t read_objdump_chunk(const char **line, unsigned char **buf,
 				 size_t *buf_len)
@@ -370,8 +378,8 @@ static int process_sample_event(struct machine *machine,
 	struct thread *thread;
 	int ret;
 
-	if (evlist__parse_sample(evlist, event, &sample)) {
-		pr_debug("evlist__parse_sample failed\n");
+	if (perf_evlist__parse_sample(evlist, event, &sample)) {
+		pr_debug("perf_evlist__parse_sample failed\n");
 		return -1;
 	}
 
@@ -629,7 +637,7 @@ static int do_test_code_reading(bool try_kcore)
 
 		evlist = evlist__new();
 		if (!evlist) {
-			pr_debug("evlist__new failed\n");
+			pr_debug("perf_evlist__new failed\n");
 			goto out_put;
 		}
 
@@ -643,7 +651,7 @@ static int do_test_code_reading(bool try_kcore)
 			goto out_put;
 		}
 
-		evlist__config(evlist, &opts, NULL);
+		perf_evlist__config(evlist, &opts, NULL);
 
 		evsel = evlist__first(evlist);
 
@@ -658,7 +666,7 @@ static int do_test_code_reading(bool try_kcore)
 				/*
 				 * Both cpus and threads are now owned by evlist
 				 * and will be freed by following perf_evlist__set_maps
-				 * call. Getting reference to keep them alive.
+				 * call. Getting refference to keep them alive.
 				 */
 				perf_cpu_map__get(cpus);
 				perf_thread_map__get(threads);
@@ -706,9 +714,13 @@ static int do_test_code_reading(bool try_kcore)
 out_put:
 	thread__put(thread);
 out_err:
-	evlist__delete(evlist);
-	perf_cpu_map__put(cpus);
-	perf_thread_map__put(threads);
+
+	if (evlist) {
+		evlist__delete(evlist);
+	} else {
+		perf_cpu_map__put(cpus);
+		perf_thread_map__put(threads);
+	}
 	machine__delete_threads(machine);
 	machine__delete(machine);
 

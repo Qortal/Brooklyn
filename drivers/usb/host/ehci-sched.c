@@ -244,12 +244,6 @@ static void reserve_release_intr_bandwidth(struct ehci_hcd *ehci,
 
 	/* FS/LS bus bandwidth */
 	if (tt_usecs) {
-		/*
-		 * find_tt() will not return any error here as we have
-		 * already called find_tt() before calling this function
-		 * and checked for any error return. The previous call
-		 * would have created the data structure.
-		 */
 		tt = find_tt(qh->ps.udev);
 		if (sign > 0)
 			list_add_tail(&qh->ps.ps_list, &tt->ps_list);
@@ -1343,12 +1337,6 @@ static void reserve_release_iso_bandwidth(struct ehci_hcd *ehci,
 			}
 		}
 
-		/*
-		 * find_tt() will not return any error here as we have
-		 * already called find_tt() before calling this function
-		 * and checked for any error return. The previous call
-		 * would have created the data structure.
-		 */
 		tt = find_tt(stream->ps.udev);
 		if (sign > 0)
 			list_add_tail(&stream->ps.ps_list, &tt->ps_list);

@@ -132,10 +132,6 @@ int main(int argc, char **argv)
 	qsort(list, list_size, sizeof(list[0]), compare_txt);
 
 	list2 = malloc(sizeof(*list) * list_size);
-	if (!list2) {
-		printf("Out of memory\n");
-		exit(1);
-	}
 
 	printf("culling\n");
 

@@ -669,7 +669,7 @@ static void native_machine_emergency_restart(void)
 			break;
 
 		case BOOT_TRIPLE:
-			idt_invalidate();
+			idt_invalidate(NULL);
 			__asm__ __volatile__("int3");
 
 			/* We're probably dead after this, but... */

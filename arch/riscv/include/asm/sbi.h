@@ -89,7 +89,7 @@ struct sbiret {
 	long value;
 };
 
-void sbi_init(void);
+int sbi_init(void);
 struct sbiret sbi_ecall(int ext, int fid, unsigned long arg0,
 			unsigned long arg1, unsigned long arg2,
 			unsigned long arg3, unsigned long arg4,
@@ -97,19 +97,16 @@ struct sbiret sbi_ecall(int ext, int fid, unsigned long arg0,
 
 void sbi_console_putchar(int ch);
 int sbi_console_getchar(void);
-long sbi_get_mvendorid(void);
-long sbi_get_marchid(void);
-long sbi_get_mimpid(void);
 void sbi_set_timer(uint64_t stime_value);
 void sbi_shutdown(void);
 void sbi_clear_ipi(void);
-int sbi_send_ipi(const unsigned long *hart_mask);
-int sbi_remote_fence_i(const unsigned long *hart_mask);
-int sbi_remote_sfence_vma(const unsigned long *hart_mask,
+void sbi_send_ipi(const unsigned long *hart_mask);
+void sbi_remote_fence_i(const unsigned long *hart_mask);
+void sbi_remote_sfence_vma(const unsigned long *hart_mask,
 			   unsigned long start,
 			   unsigned long size);
 
-int sbi_remote_sfence_vma_asid(const unsigned long *hart_mask,
+void sbi_remote_sfence_vma_asid(const unsigned long *hart_mask,
 				unsigned long start,
 				unsigned long size,
 				unsigned long asid);
@@ -150,7 +147,11 @@ static inline unsigned long sbi_minor_version(void)
 
 int sbi_err_map_linux_errno(int err);
 #else /* CONFIG_RISCV_SBI */
-static inline int sbi_remote_fence_i(const unsigned long *hart_mask) { return -1; }
-static inline void sbi_init(void) {}
+/* stubs for code that is only reachable under IS_ENABLED(CONFIG_RISCV_SBI): */
+void sbi_set_timer(uint64_t stime_value);
+void sbi_clear_ipi(void);
+void sbi_send_ipi(const unsigned long *hart_mask);
+void sbi_remote_fence_i(const unsigned long *hart_mask);
+void sbi_init(void);
 #endif /* CONFIG_RISCV_SBI */
 #endif /* _ASM_RISCV_SBI_H */

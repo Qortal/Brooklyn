@@ -455,8 +455,7 @@ static int as3722_sd_set_mode(struct regulator_dev *rdev,
 	switch (mode) {
 	case REGULATOR_MODE_FAST:
 		val = as3722_reg_lookup[id].mode_mask;
-		fallthrough;
-	case REGULATOR_MODE_NORMAL:
+	case REGULATOR_MODE_NORMAL: /* fall down */
 		break;
 	default:
 		return -EINVAL;

@@ -47,7 +47,7 @@ SECTIONS
 #endif
 	}
 
-	. = KERNEL_OFFSET + TEXT_OFFSET;
+	. = PAGE_OFFSET + TEXT_OFFSET;
 	.head.text : {
 		_text = .;
 		HEAD_TEXT

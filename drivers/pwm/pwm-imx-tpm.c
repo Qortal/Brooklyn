@@ -350,9 +350,13 @@ static int pwm_imx_tpm_probe(struct platform_device *pdev)
 		return PTR_ERR(tpm->base);
 
 	tpm->clk = devm_clk_get(&pdev->dev, NULL);
-	if (IS_ERR(tpm->clk))
-		return dev_err_probe(&pdev->dev, PTR_ERR(tpm->clk),
-				     "failed to get PWM clock\n");
+	if (IS_ERR(tpm->clk)) {
+		ret = PTR_ERR(tpm->clk);
+		if (ret != -EPROBE_DEFER)
+			dev_err(&pdev->dev,
+				"failed to get PWM clock: %d\n", ret);
+		return ret;
+	}
 
 	ret = clk_prepare_enable(tpm->clk);
 	if (ret) {
@@ -363,6 +367,9 @@ static int pwm_imx_tpm_probe(struct platform_device *pdev)
 
 	tpm->chip.dev = &pdev->dev;
 	tpm->chip.ops = &imx_tpm_pwm_ops;
+	tpm->chip.base = -1;
+	tpm->chip.of_xlate = of_pwm_xlate_with_flags;
+	tpm->chip.of_pwm_n_cells = 3;
 
 	/* get number of channels */
 	val = readl(tpm->base + PWM_IMX_TPM_PARAM);
@@ -408,7 +415,9 @@ static int __maybe_unused pwm_imx_tpm_resume(struct device *dev)
 
 	ret = clk_prepare_enable(tpm->clk);
 	if (ret)
-		dev_err(dev, "failed to prepare or enable clock: %d\n", ret);
+		dev_err(dev,
+			"failed to prepare or enable clock: %d\n",
+			ret);
 
 	return ret;
 }

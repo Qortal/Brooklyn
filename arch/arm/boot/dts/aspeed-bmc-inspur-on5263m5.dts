@@ -11,7 +11,7 @@
 
 	chosen {
 		stdout-path = &uart5;
-		bootargs = "earlycon";
+		bootargs = "earlyprintk";
 	};
 
 	memory {

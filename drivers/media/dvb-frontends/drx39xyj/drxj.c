@@ -2325,6 +2325,7 @@ hi_command(struct i2c_device_addr *dev_addr, const struct drxj_hi_cmd *cmd, u16 
 
 	default:
 		return -EINVAL;
+		break;
 	}
 
 	/* Write command */
@@ -3593,6 +3594,7 @@ static int ctrl_set_uio_cfg(struct drx_demod_instance *demod, struct drxuio_cfg 
 			break;
 		default:
 			return -EINVAL;
+			break;
 		}		/* switch ( uio_cfg->mode ) */
 		break;
       /*====================================================================*/
@@ -3616,6 +3618,7 @@ static int ctrl_set_uio_cfg(struct drx_demod_instance *demod, struct drxuio_cfg 
 			break;
 		default:
 			return -EINVAL;
+			break;
 		}		/* switch ( uio_cfg->mode ) */
 		break;
       /*====================================================================*/
@@ -3639,6 +3642,7 @@ static int ctrl_set_uio_cfg(struct drx_demod_instance *demod, struct drxuio_cfg 
 		case DRX_UIO_MODE_FIRMWARE0:
 		default:
 			return -EINVAL;
+			break;
 		}		/* switch ( uio_cfg->mode ) */
 		break;
       /*====================================================================*/
@@ -4775,7 +4779,7 @@ set_frequency(struct drx_demod_instance *demod,
 	bool select_pos_image = false;
 	bool rf_mirror;
 	bool tuner_mirror;
-	bool image_to_select;
+	bool image_to_select = true;
 	s32 fm_frequency_shift = 0;
 
 	rf_mirror = (ext_attr->mirror == DRX_MIRROR_YES) ? true : false;
@@ -10949,6 +10953,7 @@ ctrl_set_standard(struct drx_demod_instance *demod, enum drx_standard *standard)
 	default:
 		ext_attr->standard = DRX_STANDARD_UNKNOWN;
 		return -EINVAL;
+		break;
 	}
 
 	return 0;
@@ -11069,6 +11074,7 @@ ctrl_power_mode(struct drx_demod_instance *demod, enum drx_power_mode *mode)
 	default:
 		/* Unknow sleep mode */
 		return -EINVAL;
+		break;
 	}
 
 	/* Check if device needs to be powered up */
@@ -11890,6 +11896,7 @@ static int drx_ctrl_u_code(struct drx_demod_instance *demod,
 		}
 		default:
 			return -EINVAL;
+			break;
 
 		}
 		mc_data += mc_block_nr_bytes;

@@ -105,10 +105,7 @@ static int snd_pmac_beep_event(struct input_dev *dev, unsigned int type,
 	}
 
 	chip = input_get_drvdata(dev);
-	if (!chip)
-		return -1;
-	beep = chip->beep;
-	if (!beep)
+	if (! chip || (beep = chip->beep) == NULL)
 		return -1;
 
 	if (! hz) {

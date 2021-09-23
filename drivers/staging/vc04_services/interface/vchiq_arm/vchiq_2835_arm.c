@@ -30,8 +30,6 @@
 #define BELL0	0x00
 #define BELL2	0x08
 
-#define ARM_DS_ACTIVE	BIT(2)
-
 #define VCHIQ_DMA_POOL_SIZE PAGE_SIZE
 
 struct vchiq_2835_state {
@@ -161,9 +159,8 @@ int vchiq_platform_init(struct platform_device *pdev, struct vchiq_state *state)
 	*(char **)&g_fragments_base[i * g_fragments_size] = NULL;
 	sema_init(&g_free_fragments_sema, MAX_FRAGMENTS);
 
-	err = vchiq_init_state(state, vchiq_slot_zero);
-	if (err)
-		return err;
+	if (vchiq_init_state(state, vchiq_slot_zero) != VCHIQ_SUCCESS)
+		return -EINVAL;
 
 	g_regs = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(g_regs))
@@ -207,21 +204,25 @@ int vchiq_platform_init(struct platform_device *pdev, struct vchiq_state *state)
 	return 0;
 }
 
-int
+enum vchiq_status
 vchiq_platform_init_state(struct vchiq_state *state)
 {
+	enum vchiq_status status = VCHIQ_SUCCESS;
 	struct vchiq_2835_state *platform_state;
 
 	state->platform_state = kzalloc(sizeof(*platform_state), GFP_KERNEL);
 	if (!state->platform_state)
-		return -ENOMEM;
+		return VCHIQ_ERROR;
 
 	platform_state = (struct vchiq_2835_state *)state->platform_state;
 
 	platform_state->inited = 1;
-	vchiq_arm_init_state(state, &platform_state->arm_state);
+	status = vchiq_arm_init_state(state, &platform_state->arm_state);
 
-	return 0;
+	if (status != VCHIQ_SUCCESS)
+		platform_state->inited = 0;
+
+	return status;
 }
 
 struct vchiq_arm_state*
@@ -249,7 +250,7 @@ remote_event_signal(struct remote_event *event)
 		writel(0, g_regs + BELL2); /* trigger vc interrupt */
 }
 
-int
+enum vchiq_status
 vchiq_prepare_bulk_data(struct vchiq_bulk *bulk, void *offset,
 			void __user *uoffset, int size, int dir)
 {
@@ -261,7 +262,7 @@ vchiq_prepare_bulk_data(struct vchiq_bulk *bulk, void *offset,
 				       : PAGELIST_WRITE);
 
 	if (!pagelistinfo)
-		return -ENOMEM;
+		return VCHIQ_ERROR;
 
 	bulk->data = pagelistinfo->dma_addr;
 
@@ -271,7 +272,7 @@ vchiq_prepare_bulk_data(struct vchiq_bulk *bulk, void *offset,
 	 */
 	bulk->remote_data = pagelistinfo;
 
-	return 0;
+	return VCHIQ_SUCCESS;
 }
 
 void
@@ -306,7 +307,7 @@ vchiq_doorbell_irq(int irq, void *dev_id)
 	/* Read (and clear) the doorbell */
 	status = readl(g_regs + BELL0);
 
-	if (status & ARM_DS_ACTIVE) {  /* Was the doorbell rung? */
+	if (status & 0x4) {  /* Was the doorbell rung? */
 		remote_event_pollall(state);
 		ret = IRQ_HANDLED;
 	}

@@ -1543,7 +1543,7 @@ static void * __init pcpu_alloc_bootmem(unsigned int cpu, size_t size,
 					size_t align)
 {
 	const unsigned long goal = __pa(MAX_DMA_ADDRESS);
-#ifdef CONFIG_NUMA
+#ifdef CONFIG_NEED_MULTIPLE_NODES
 	int node = cpu_to_node(cpu);
 	void *ptr;
 

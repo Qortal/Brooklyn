@@ -6,7 +6,6 @@
 #include <linux/cpu.h>
 #include <linux/kexec.h>
 #include <linux/slab.h>
-#include <linux/panic_notifier.h>
 
 #include <xen/xen.h>
 #include <xen/features.h>

@@ -694,12 +694,13 @@ static int tegra_kbc_probe(struct platform_device *pdev)
 	input_set_drvdata(kbc->idev, kbc);
 
 	err = devm_request_irq(&pdev->dev, kbc->irq, tegra_kbc_isr,
-			       IRQF_TRIGGER_HIGH | IRQF_NO_AUTOEN,
-			       pdev->name, kbc);
+			       IRQF_TRIGGER_HIGH, pdev->name, kbc);
 	if (err) {
 		dev_err(&pdev->dev, "failed to request keyboard IRQ\n");
 		return err;
 	}
+
+	disable_irq(kbc->irq);
 
 	err = input_register_device(kbc->idev);
 	if (err) {
@@ -755,7 +756,7 @@ static int tegra_kbc_suspend(struct device *dev)
 		enable_irq(kbc->irq);
 		enable_irq_wake(kbc->irq);
 	} else {
-		if (input_device_enabled(kbc->idev))
+		if (kbc->idev->users)
 			tegra_kbc_stop(kbc);
 	}
 	mutex_unlock(&kbc->idev->mutex);
@@ -795,7 +796,7 @@ static int tegra_kbc_resume(struct device *dev)
 			input_sync(kbc->idev);
 		}
 	} else {
-		if (input_device_enabled(kbc->idev))
+		if (kbc->idev->users)
 			err = tegra_kbc_start(kbc);
 	}
 	mutex_unlock(&kbc->idev->mutex);

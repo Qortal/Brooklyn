@@ -250,6 +250,7 @@ static int qcom_pcie2_phy_probe(struct platform_device *pdev)
 {
 	struct phy_provider *phy_provider;
 	struct qcom_phy *qphy;
+	struct resource *res;
 	struct device *dev = &pdev->dev;
 	struct phy *phy;
 	int ret;
@@ -259,7 +260,9 @@ static int qcom_pcie2_phy_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	qphy->dev = dev;
-	qphy->base = devm_platform_ioremap_resource(pdev, 0);
+
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	qphy->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(qphy->base))
 		return PTR_ERR(qphy->base);
 

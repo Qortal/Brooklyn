@@ -361,11 +361,8 @@ static int venc_runtime_get(struct venc_device *venc)
 	DSSDBG("venc_runtime_get\n");
 
 	r = pm_runtime_get_sync(&venc->pdev->dev);
-	if (WARN_ON(r < 0)) {
-		pm_runtime_put_noidle(&venc->pdev->dev);
-		return r;
-	}
-	return 0;
+	WARN_ON(r < 0);
+	return r < 0 ? r : 0;
 }
 
 static void venc_runtime_put(struct venc_device *venc)
@@ -733,7 +730,9 @@ static int venc_init_output(struct venc_device *venc)
 	out->type = OMAP_DISPLAY_TYPE_VENC;
 	out->name = "venc.0";
 	out->dispc_channel = OMAP_DSS_CHANNEL_DIGIT;
+	out->owner = THIS_MODULE;
 	out->of_port = 0;
+	out->ops_flags = OMAP_DSS_DEVICE_OP_MODES;
 
 	r = omapdss_device_init_output(out, &venc->bridge);
 	if (r < 0) {

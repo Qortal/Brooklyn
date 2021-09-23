@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/*
+/**
+ * ipoctal.c
+ *
  * driver for the GE IP-OCTAL boards
  *
  * Copyright (C) 2009-2012 CERN (www.cern.ch)
@@ -458,14 +460,14 @@ static int ipoctal_write_tty(struct tty_struct *tty,
 	return char_copied;
 }
 
-static unsigned int ipoctal_write_room(struct tty_struct *tty)
+static int ipoctal_write_room(struct tty_struct *tty)
 {
 	struct ipoctal_channel *channel = tty->driver_data;
 
 	return PAGE_SIZE - channel->nb_bytes;
 }
 
-static unsigned int ipoctal_chars_in_buffer(struct tty_struct *tty)
+static int ipoctal_chars_in_buffer(struct tty_struct *tty)
 {
 	struct ipoctal_channel *channel = tty->driver_data;
 
@@ -542,6 +544,7 @@ static void ipoctal_set_termios(struct tty_struct *tty,
 		break;
 	default:
 		return;
+		break;
 	}
 
 	baud = tty_get_baud_rate(tty);

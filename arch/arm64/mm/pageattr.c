@@ -19,11 +19,6 @@ struct page_change_data {
 
 bool rodata_full __ro_after_init = IS_ENABLED(CONFIG_RODATA_FULL_DEFAULT_ENABLED);
 
-bool can_set_direct_map(void)
-{
-	return rodata_full || debug_pagealloc_enabled();
-}
-
 static int change_page_range(pte_t *ptep, unsigned long addr, void *data)
 {
 	struct page_change_data *cdata = data;
@@ -160,7 +155,7 @@ int set_direct_map_invalid_noflush(struct page *page)
 		.clear_mask = __pgprot(PTE_VALID),
 	};
 
-	if (!can_set_direct_map())
+	if (!rodata_full)
 		return 0;
 
 	return apply_to_page_range(&init_mm,
@@ -175,7 +170,7 @@ int set_direct_map_default_noflush(struct page *page)
 		.clear_mask = __pgprot(PTE_RDONLY),
 	};
 
-	if (!can_set_direct_map())
+	if (!rodata_full)
 		return 0;
 
 	return apply_to_page_range(&init_mm,
@@ -183,15 +178,13 @@ int set_direct_map_default_noflush(struct page *page)
 				   PAGE_SIZE, change_page_range, &data);
 }
 
-#ifdef CONFIG_DEBUG_PAGEALLOC
 void __kernel_map_pages(struct page *page, int numpages, int enable)
 {
-	if (!can_set_direct_map())
+	if (!debug_pagealloc_enabled() && !rodata_full)
 		return;
 
 	set_memory_valid((unsigned long)page_address(page), numpages, enable);
 }
-#endif /* CONFIG_DEBUG_PAGEALLOC */
 
 /*
  * This function is used to determine if a linear map page has been marked as
@@ -211,7 +204,7 @@ bool kernel_page_present(struct page *page)
 	pte_t *ptep;
 	unsigned long addr = (unsigned long)page_address(page);
 
-	if (!can_set_direct_map())
+	if (!debug_pagealloc_enabled() && !rodata_full)
 		return true;
 
 	pgdp = pgd_offset_k(addr);

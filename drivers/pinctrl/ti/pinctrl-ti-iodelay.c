@@ -511,10 +511,8 @@ static int ti_iodelay_dt_node_to_map(struct pinctrl_dev *pctldev,
 	}
 
 	pins = devm_kcalloc(iod->dev, rows, sizeof(*pins), GFP_KERNEL);
-	if (!pins) {
-		error = -ENOMEM;
+	if (!pins)
 		goto free_group;
-	}
 
 	cfg = devm_kcalloc(iod->dev, rows, sizeof(*cfg), GFP_KERNEL);
 	if (!cfg) {
@@ -706,9 +704,10 @@ static void ti_iodelay_pinconf_group_dbg_show(struct pinctrl_dev *pctldev,
 		u32 reg = 0;
 
 		cfg = &group->cfg[i];
-		regmap_read(iod->regmap, cfg->offset, &reg);
-		seq_printf(s, "\n\t0x%08x = 0x%08x (%3d, %3d)",
-			cfg->offset, reg, cfg->a_delay, cfg->g_delay);
+		regmap_read(iod->regmap, cfg->offset, &reg),
+			seq_printf(s, "\n\t0x%08x = 0x%08x (%3d, %3d)",
+				   cfg->offset, reg, cfg->a_delay,
+				   cfg->g_delay);
 	}
 }
 #endif
@@ -869,8 +868,7 @@ static int ti_iodelay_probe(struct platform_device *pdev)
 		goto exit_out;
 	}
 
-	ret = ti_iodelay_pinconf_init_dev(iod);
-	if (ret)
+	if (ti_iodelay_pinconf_init_dev(iod))
 		goto exit_out;
 
 	ret = ti_iodelay_alloc_pins(dev, iod, res->start);

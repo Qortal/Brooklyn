@@ -292,8 +292,7 @@ static void snd_ymfpci_pcm_interrupt(struct snd_ymfpci *chip, struct snd_ymfpci_
 	struct snd_ymfpci_pcm *ypcm;
 	u32 pos, delta;
 	
-	ypcm = voice->ypcm;
-	if (!ypcm)
+	if ((ypcm = voice->ypcm) == NULL)
 		return;
 	if (ypcm->substream == NULL)
 		return;
@@ -629,8 +628,7 @@ static int snd_ymfpci_playback_hw_params(struct snd_pcm_substream *substream,
 	struct snd_ymfpci_pcm *ypcm = runtime->private_data;
 	int err;
 
-	err = snd_ymfpci_pcm_voice_alloc(ypcm, params_channels(hw_params));
-	if (err < 0)
+	if ((err = snd_ymfpci_pcm_voice_alloc(ypcm, params_channels(hw_params))) < 0)
 		return err;
 	return 0;
 }
@@ -934,8 +932,7 @@ static int snd_ymfpci_playback_open(struct snd_pcm_substream *substream)
 	struct snd_ymfpci_pcm *ypcm;
 	int err;
 	
-	err = snd_ymfpci_playback_open_1(substream);
-	if (err < 0)
+	if ((err = snd_ymfpci_playback_open_1(substream)) < 0)
 		return err;
 	ypcm = runtime->private_data;
 	ypcm->output_front = 1;
@@ -957,8 +954,7 @@ static int snd_ymfpci_playback_spdif_open(struct snd_pcm_substream *substream)
 	struct snd_ymfpci_pcm *ypcm;
 	int err;
 	
-	err = snd_ymfpci_playback_open_1(substream);
-	if (err < 0)
+	if ((err = snd_ymfpci_playback_open_1(substream)) < 0)
 		return err;
 	ypcm = runtime->private_data;
 	ypcm->output_front = 0;
@@ -986,8 +982,7 @@ static int snd_ymfpci_playback_4ch_open(struct snd_pcm_substream *substream)
 	struct snd_ymfpci_pcm *ypcm;
 	int err;
 	
-	err = snd_ymfpci_playback_open_1(substream);
-	if (err < 0)
+	if ((err = snd_ymfpci_playback_open_1(substream)) < 0)
 		return err;
 	ypcm = runtime->private_data;
 	ypcm->output_front = 0;
@@ -1129,8 +1124,7 @@ int snd_ymfpci_pcm(struct snd_ymfpci *chip, int device)
 	struct snd_pcm *pcm;
 	int err;
 
-	err = snd_pcm_new(chip->card, "YMFPCI", device, 32, 1, &pcm);
-	if (err < 0)
+	if ((err = snd_pcm_new(chip->card, "YMFPCI", device, 32, 1, &pcm)) < 0)
 		return err;
 	pcm->private_data = chip;
 
@@ -1163,8 +1157,7 @@ int snd_ymfpci_pcm2(struct snd_ymfpci *chip, int device)
 	struct snd_pcm *pcm;
 	int err;
 
-	err = snd_pcm_new(chip->card, "YMFPCI - PCM2", device, 0, 1, &pcm);
-	if (err < 0)
+	if ((err = snd_pcm_new(chip->card, "YMFPCI - PCM2", device, 0, 1, &pcm)) < 0)
 		return err;
 	pcm->private_data = chip;
 
@@ -1197,8 +1190,7 @@ int snd_ymfpci_pcm_spdif(struct snd_ymfpci *chip, int device)
 	struct snd_pcm *pcm;
 	int err;
 
-	err = snd_pcm_new(chip->card, "YMFPCI - IEC958", device, 1, 0, &pcm);
-	if (err < 0)
+	if ((err = snd_pcm_new(chip->card, "YMFPCI - IEC958", device, 1, 0, &pcm)) < 0)
 		return err;
 	pcm->private_data = chip;
 
@@ -1238,8 +1230,7 @@ int snd_ymfpci_pcm_4ch(struct snd_ymfpci *chip, int device)
 	struct snd_pcm *pcm;
 	int err;
 
-	err = snd_pcm_new(chip->card, "YMFPCI - Rear", device, 1, 0, &pcm);
-	if (err < 0)
+	if ((err = snd_pcm_new(chip->card, "YMFPCI - Rear", device, 1, 0, &pcm)) < 0)
 		return err;
 	pcm->private_data = chip;
 
@@ -1794,8 +1785,7 @@ int snd_ymfpci_mixer(struct snd_ymfpci *chip, int rear_switch)
 		.read = snd_ymfpci_codec_read,
 	};
 
-	err = snd_ac97_bus(chip->card, 0, &ops, chip, &chip->ac97_bus);
-	if (err < 0)
+	if ((err = snd_ac97_bus(chip->card, 0, &ops, chip, &chip->ac97_bus)) < 0)
 		return err;
 	chip->ac97_bus->private_free = snd_ymfpci_mixer_free_ac97_bus;
 	chip->ac97_bus->no_vra = 1; /* YMFPCI doesn't need VRA */
@@ -1803,8 +1793,7 @@ int snd_ymfpci_mixer(struct snd_ymfpci *chip, int rear_switch)
 	memset(&ac97, 0, sizeof(ac97));
 	ac97.private_data = chip;
 	ac97.private_free = snd_ymfpci_mixer_free_ac97;
-	err = snd_ac97_mixer(chip->ac97_bus, &ac97, &chip->ac97);
-	if (err < 0)
+	if ((err = snd_ac97_mixer(chip->ac97_bus, &ac97, &chip->ac97)) < 0)
 		return err;
 
 	/* to be sure */
@@ -1812,8 +1801,7 @@ int snd_ymfpci_mixer(struct snd_ymfpci *chip, int rear_switch)
 			     AC97_EA_VRA|AC97_EA_VRM, 0);
 
 	for (idx = 0; idx < ARRAY_SIZE(snd_ymfpci_controls); idx++) {
-		err = snd_ctl_add(chip->card, snd_ctl_new1(&snd_ymfpci_controls[idx], chip));
-		if (err < 0)
+		if ((err = snd_ctl_add(chip->card, snd_ctl_new1(&snd_ymfpci_controls[idx], chip))) < 0)
 			return err;
 	}
 	if (chip->ac97->ext_id & AC97_EI_SDAC) {
@@ -1826,37 +1814,27 @@ int snd_ymfpci_mixer(struct snd_ymfpci *chip, int rear_switch)
 	/* add S/PDIF control */
 	if (snd_BUG_ON(!chip->pcm_spdif))
 		return -ENXIO;
-	kctl = snd_ctl_new1(&snd_ymfpci_spdif_default, chip);
-	err = snd_ctl_add(chip->card, kctl);
-	if (err < 0)
+	if ((err = snd_ctl_add(chip->card, kctl = snd_ctl_new1(&snd_ymfpci_spdif_default, chip))) < 0)
 		return err;
 	kctl->id.device = chip->pcm_spdif->device;
-	kctl = snd_ctl_new1(&snd_ymfpci_spdif_mask, chip);
-	err = snd_ctl_add(chip->card, kctl);
-	if (err < 0)
+	if ((err = snd_ctl_add(chip->card, kctl = snd_ctl_new1(&snd_ymfpci_spdif_mask, chip))) < 0)
 		return err;
 	kctl->id.device = chip->pcm_spdif->device;
-	kctl = snd_ctl_new1(&snd_ymfpci_spdif_stream, chip);
-	err = snd_ctl_add(chip->card, kctl);
-	if (err < 0)
+	if ((err = snd_ctl_add(chip->card, kctl = snd_ctl_new1(&snd_ymfpci_spdif_stream, chip))) < 0)
 		return err;
 	kctl->id.device = chip->pcm_spdif->device;
 	chip->spdif_pcm_ctl = kctl;
 
 	/* direct recording source */
-	if (chip->device_id == PCI_DEVICE_ID_YAMAHA_754) {
-		kctl = snd_ctl_new1(&snd_ymfpci_drec_source, chip);
-		err = snd_ctl_add(chip->card, kctl);
-		if (err < 0)
-			return err;
-	}
+	if (chip->device_id == PCI_DEVICE_ID_YAMAHA_754 &&
+	    (err = snd_ctl_add(chip->card, kctl = snd_ctl_new1(&snd_ymfpci_drec_source, chip))) < 0)
+		return err;
 
 	/*
 	 * shared rear/line-in
 	 */
 	if (rear_switch) {
-		err = snd_ctl_add(chip->card, snd_ctl_new1(&snd_ymfpci_rear_shared, chip));
-		if (err < 0)
+		if ((err = snd_ctl_add(chip->card, snd_ctl_new1(&snd_ymfpci_rear_shared, chip))) < 0)
 			return err;
 	}
 
@@ -1869,8 +1847,7 @@ int snd_ymfpci_mixer(struct snd_ymfpci *chip, int rear_switch)
 		kctl->id.device = chip->pcm->device;
 		kctl->id.subdevice = idx;
 		kctl->private_value = (unsigned long)substream;
-		err = snd_ctl_add(chip->card, kctl);
-		if (err < 0)
+		if ((err = snd_ctl_add(chip->card, kctl)) < 0)
 			return err;
 		chip->pcm_mixer[idx].left = 0x8000;
 		chip->pcm_mixer[idx].right = 0x8000;
@@ -1951,8 +1928,7 @@ int snd_ymfpci_timer(struct snd_ymfpci *chip, int device)
 	tid.card = chip->card->number;
 	tid.device = device;
 	tid.subdevice = 0;
-	err = snd_timer_new(chip->card, "YMFPCI", &tid, &timer);
-	if (err >= 0) {
+	if ((err = snd_timer_new(chip->card, "YMFPCI", &tid, &timer)) >= 0) {
 		strcpy(timer->name, "YMFPCI timer");
 		timer->private_data = chip;
 		timer->hw = snd_ymfpci_timer_hw;
@@ -2358,8 +2334,7 @@ int snd_ymfpci_create(struct snd_card *card,
 	*rchip = NULL;
 
 	/* enable PCI device */
-	err = pci_enable_device(pci);
-	if (err < 0)
+	if ((err = pci_enable_device(pci)) < 0)
 		return err;
 
 	chip = kzalloc(sizeof(*chip), GFP_KERNEL);
@@ -2382,8 +2357,7 @@ int snd_ymfpci_create(struct snd_card *card,
 	pci_set_master(pci);
 	chip->src441_used = -1;
 
-	chip->res_reg_area = request_mem_region(chip->reg_area_phys, 0x8000, "YMFPCI");
-	if (!chip->res_reg_area) {
+	if ((chip->res_reg_area = request_mem_region(chip->reg_area_phys, 0x8000, "YMFPCI")) == NULL) {
 		dev_err(chip->card->dev,
 			"unable to grab memory region 0x%lx-0x%lx\n",
 			chip->reg_area_phys, chip->reg_area_phys + 0x8000 - 1);

@@ -105,7 +105,7 @@ static void npcm_pspi_set_mode(struct spi_device *spi)
 	u16 regtemp;
 	u16 mode_val;
 
-	switch (spi->mode & SPI_MODE_X_MASK) {
+	switch (spi->mode & (SPI_CPOL | SPI_CPHA)) {
 	case SPI_MODE_0:
 		mode_val = 0;
 		break;

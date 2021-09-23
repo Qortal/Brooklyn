@@ -18,7 +18,6 @@
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/serdev.h>
-#include "tty.h"
 
 static int tty_port_default_receive_buf(struct tty_port *port,
 					const unsigned char *p,
@@ -468,8 +467,7 @@ int tty_port_block_til_ready(struct tty_port *port,
 	DEFINE_WAIT(wait);
 
 	/* if non-blocking mode is set we can pass directly to open unless
-	 * the port has just hung up or is in another error state.
-	 */
+	   the port has just hung up or is in another error state */
 	if (tty_io_error(tty)) {
 		tty_port_set_active(port, 1);
 		return 0;
@@ -486,9 +484,8 @@ int tty_port_block_til_ready(struct tty_port *port,
 		do_clocal = 1;
 
 	/* Block waiting until we can proceed. We may need to wait for the
-	 * carrier, but we must also wait for any close that is in progress
-	 * before the next open may complete.
-	 */
+	   carrier, but we must also wait for any close that is in progress
+	   before the next open may complete */
 
 	retval = 0;
 
@@ -505,8 +502,7 @@ int tty_port_block_til_ready(struct tty_port *port,
 
 		prepare_to_wait(&port->open_wait, &wait, TASK_INTERRUPTIBLE);
 		/* Check for a hangup or uninitialised port.
-		 * Return accordingly.
-		 */
+							Return accordingly */
 		if (tty_hung_up_p(filp) || !tty_port_initialized(port)) {
 			if (port->flags & ASYNC_HUP_NOTIFY)
 				retval = -EAGAIN;
@@ -533,8 +529,7 @@ int tty_port_block_til_ready(struct tty_port *port,
 	finish_wait(&port->open_wait, &wait);
 
 	/* Update counts. A parallel hangup will have set count to zero and
-	 * we must not mess that up further.
-	 */
+	   we must not mess that up further */
 	spin_lock_irqsave(&port->lock, flags);
 	if (!tty_hung_up_p(filp))
 		port->count++;
@@ -591,7 +586,7 @@ int tty_port_close_start(struct tty_port *port,
 
 	if (tty_port_initialized(port)) {
 		/* Don't block on a stalled port, just pull the chain */
-		if (tty->flow.tco_stopped)
+		if (tty->flow_stopped)
 			tty_driver_flush_buffer(tty);
 		if (port->closing_wait != ASYNC_CLOSING_WAIT_NONE)
 			tty_wait_until_sent(tty, port->closing_wait);
@@ -628,7 +623,7 @@ void tty_port_close_end(struct tty_port *port, struct tty_struct *tty)
 }
 EXPORT_SYMBOL(tty_port_close_end);
 
-/*
+/**
  * tty_port_close
  *
  * Caller holds tty lock
@@ -664,7 +659,7 @@ int tty_port_install(struct tty_port *port, struct tty_driver *driver,
 }
 EXPORT_SYMBOL_GPL(tty_port_install);
 
-/*
+/**
  * tty_port_open
  *
  * Caller holds tty lock.
@@ -692,7 +687,6 @@ int tty_port_open(struct tty_port *port, struct tty_struct *tty,
 		clear_bit(TTY_IO_ERROR, &tty->flags);
 		if (port->ops->activate) {
 			int retval = port->ops->activate(port, tty);
-
 			if (retval) {
 				mutex_unlock(&port->mutex);
 				return retval;
@@ -703,4 +697,5 @@ int tty_port_open(struct tty_port *port, struct tty_struct *tty,
 	mutex_unlock(&port->mutex);
 	return tty_port_block_til_ready(port, tty, filp);
 }
+
 EXPORT_SYMBOL(tty_port_open);

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/proc_fs.h>
-#include <linux/ethtool.h>
 #include <linux/export.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
@@ -112,7 +111,6 @@ static void bond_info_show_master(struct seq_file *seq)
 	/* ARP information */
 	if (bond->params.arp_interval > 0) {
 		int printed = 0;
-
 		seq_printf(seq, "ARP Polling Interval (ms): %d\n",
 				bond->params.arp_interval);
 

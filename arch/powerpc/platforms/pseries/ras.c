@@ -122,7 +122,7 @@ static inline u8 rtas_mc_error_sub_type(const struct pseries_mc_errorlog *mlog)
  * devices or systems (e.g. hugepages) that have not been initialized at the
  * subsys stage.
  */
-static int __init init_ras_hotplug_IRQ(void)
+int __init init_ras_hotplug_IRQ(void)
 {
 	struct device_node *np;
 
@@ -315,10 +315,12 @@ static irqreturn_t ras_hotplug_interrupt(int irq, void *dev_id)
 /* Handle environmental and power warning (EPOW) interrupts. */
 static irqreturn_t ras_epow_interrupt(int irq, void *dev_id)
 {
+	int status;
 	int state;
 	int critical;
 
-	rtas_get_sensor_fast(EPOW_SENSOR_TOKEN, EPOW_SENSOR_INDEX, &state);
+	status = rtas_get_sensor_fast(EPOW_SENSOR_TOKEN, EPOW_SENSOR_INDEX,
+				      &state);
 
 	if (state > 3)
 		critical = 1;		/* Time Critical */
@@ -327,9 +329,12 @@ static irqreturn_t ras_epow_interrupt(int irq, void *dev_id)
 
 	spin_lock(&ras_log_buf_lock);
 
-	rtas_call(ras_check_exception_token, 6, 1, NULL, RTAS_VECTOR_EXTERNAL_INTERRUPT,
-		  virq_to_hw(irq), RTAS_EPOW_WARNING, critical, __pa(&ras_log_buf),
-		  rtas_get_error_log_max());
+	status = rtas_call(ras_check_exception_token, 6, 1, NULL,
+			   RTAS_VECTOR_EXTERNAL_INTERRUPT,
+			   virq_to_hw(irq),
+			   RTAS_EPOW_WARNING,
+			   critical, __pa(&ras_log_buf),
+				rtas_get_error_log_max());
 
 	log_error(ras_log_buf, ERR_TYPE_RTAS_LOG, 0);
 
@@ -487,8 +492,8 @@ int pSeries_system_reset_exception(struct pt_regs *regs)
 	if ((be64_to_cpu(regs->msr) &
 			(MSR_LE|MSR_RI|MSR_DR|MSR_IR|MSR_ME|MSR_PR|
 			 MSR_ILE|MSR_HV|MSR_SF)) == (MSR_DR|MSR_SF)) {
-		regs_set_return_ip(regs, be64_to_cpu((__be64)regs->nip));
-		regs_set_return_msr(regs, 0);
+		regs->nip = be64_to_cpu((__be64)regs->nip);
+		regs->msr = 0;
 	}
 #endif
 
@@ -521,11 +526,8 @@ static int mce_handle_err_realmode(int disposition, u8 error_type)
 #ifdef CONFIG_PPC_BOOK3S_64
 	if (disposition == RTAS_DISP_NOT_RECOVERED) {
 		switch (error_type) {
-		case	MC_ERROR_TYPE_ERAT:
-			flush_erat();
-			disposition = RTAS_DISP_FULLY_RECOVERED;
-			break;
 		case	MC_ERROR_TYPE_SLB:
+		case	MC_ERROR_TYPE_ERAT:
 			/*
 			 * Store the old slb content in paca before flushing.
 			 * Print this when we go to virtual mode.
@@ -593,6 +595,8 @@ static int mce_handle_err_virtmode(struct pt_regs *regs,
 		mce_err.severity = MCE_SEV_SEVERE;
 	else if (severity == RTAS_SEVERITY_ERROR)
 		mce_err.severity = MCE_SEV_SEVERE;
+	else if (severity == RTAS_SEVERITY_FATAL)
+		mce_err.severity = MCE_SEV_FATAL;
 	else
 		mce_err.severity = MCE_SEV_FATAL;
 
@@ -697,7 +701,7 @@ static int mce_handle_err_virtmode(struct pt_regs *regs,
 		mce_err.error_type = MCE_ERROR_TYPE_DCACHE;
 		break;
 	case MC_ERROR_TYPE_I_CACHE:
-		mce_err.error_type = MCE_ERROR_TYPE_ICACHE;
+		mce_err.error_type = MCE_ERROR_TYPE_DCACHE;
 		break;
 	case MC_ERROR_TYPE_UNKNOWN:
 	default:
@@ -715,7 +719,6 @@ static int mce_handle_error(struct pt_regs *regs, struct rtas_error_log *errp)
 	struct pseries_errorlog *pseries_log;
 	struct pseries_mc_errorlog *mce_log = NULL;
 	int disposition = rtas_error_disposition(errp);
-	unsigned long msr;
 	u8 error_type;
 
 	if (!rtas_error_extended(errp))
@@ -741,21 +744,9 @@ static int mce_handle_error(struct pt_regs *regs, struct rtas_error_log *errp)
 	 *       SLB multihit is done by now.
 	 */
 out:
-	msr = mfmsr();
-	mtmsr(msr | MSR_IR | MSR_DR);
-
+	mtmsr(mfmsr() | MSR_IR | MSR_DR);
 	disposition = mce_handle_err_virtmode(regs, errp, mce_log,
 					      disposition);
-
-	/*
-	 * Queue irq work to log this rtas event later.
-	 * irq_work_queue uses per-cpu variables, so do this in virt
-	 * mode as well.
-	 */
-	irq_work_queue(&mce_errlog_process_work);
-
-	mtmsr(msr);
-
 	return disposition;
 }
 
@@ -819,7 +810,7 @@ static int recover_mce(struct pt_regs *regs, struct machine_check_event *evt)
 			 */
 			recovered = 0;
 		} else {
-			die_mce("Machine check", regs, SIGBUS);
+			die("Machine check", regs, SIGBUS);
 			recovered = 1;
 		}
 	}
@@ -871,8 +862,10 @@ long pseries_machine_check_realmode(struct pt_regs *regs)
 		 * virtual mode.
 		 */
 		disposition = mce_handle_error(regs, errp);
-
 		fwnmi_release_errinfo();
+
+		/* Queue irq work to log this rtas event later. */
+		irq_work_queue(&mce_errlog_process_work);
 
 		if (disposition == RTAS_DISP_FULLY_RECOVERED)
 			return 1;

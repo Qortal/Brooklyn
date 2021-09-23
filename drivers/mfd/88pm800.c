@@ -121,8 +121,13 @@ static const struct i2c_device_id pm80x_id_table[] = {
 };
 MODULE_DEVICE_TABLE(i2c, pm80x_id_table);
 
-static const struct resource rtc_resources[] = {
-	DEFINE_RES_IRQ_NAMED(PM800_IRQ_RTC, "88pm80x-rtc"),
+static struct resource rtc_resources[] = {
+	{
+	 .name = "88pm80x-rtc",
+	 .start = PM800_IRQ_RTC,
+	 .end = PM800_IRQ_RTC,
+	 .flags = IORESOURCE_IRQ,
+	 },
 };
 
 static struct mfd_cell rtc_devs[] = {
@@ -135,7 +140,12 @@ static struct mfd_cell rtc_devs[] = {
 };
 
 static struct resource onkey_resources[] = {
-	DEFINE_RES_IRQ_NAMED(PM800_IRQ_ONKEY, "88pm80x-onkey"),
+	{
+	 .name = "88pm80x-onkey",
+	 .start = PM800_IRQ_ONKEY,
+	 .end = PM800_IRQ_ONKEY,
+	 .flags = IORESOURCE_IRQ,
+	 },
 };
 
 static const struct mfd_cell onkey_devs[] = {

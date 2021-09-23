@@ -154,8 +154,6 @@ struct bdi_writeback {
 	struct cgroup_subsys_state *blkcg_css; /* and blkcg */
 	struct list_head memcg_node;	/* anchored at memcg->cgwb_list */
 	struct list_head blkcg_node;	/* anchored at blkcg->cgwb_list */
-	struct list_head b_attached;	/* attached inodes, protected by list_lock */
-	struct list_head offline_node;	/* anchored at offline_cgwbs */
 
 	union {
 		struct work_struct release_work;
@@ -241,9 +239,8 @@ static inline void wb_get(struct bdi_writeback *wb)
 /**
  * wb_put - decrement a wb's refcount
  * @wb: bdi_writeback to put
- * @nr: number of references to put
  */
-static inline void wb_put_many(struct bdi_writeback *wb, unsigned long nr)
+static inline void wb_put(struct bdi_writeback *wb)
 {
 	if (WARN_ON_ONCE(!wb->bdi)) {
 		/*
@@ -254,16 +251,7 @@ static inline void wb_put_many(struct bdi_writeback *wb, unsigned long nr)
 	}
 
 	if (wb != &wb->bdi->wb)
-		percpu_ref_put_many(&wb->refcnt, nr);
-}
-
-/**
- * wb_put - decrement a wb's refcount
- * @wb: bdi_writeback to put
- */
-static inline void wb_put(struct bdi_writeback *wb)
-{
-	wb_put_many(wb, 1);
+		percpu_ref_put(&wb->refcnt);
 }
 
 /**
@@ -289,10 +277,6 @@ static inline void wb_get(struct bdi_writeback *wb)
 }
 
 static inline void wb_put(struct bdi_writeback *wb)
-{
-}
-
-static inline void wb_put_many(struct bdi_writeback *wb, unsigned long nr)
 {
 }
 

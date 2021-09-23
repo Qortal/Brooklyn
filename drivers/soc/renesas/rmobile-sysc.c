@@ -14,6 +14,8 @@
 #include <linux/delay.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
+#include <linux/of_platform.h>
+#include <linux/platform_device.h>
 #include <linux/pm.h>
 #include <linux/pm_clock.h>
 #include <linux/pm_domain.h>
@@ -55,19 +57,19 @@ static int rmobile_pd_power_down(struct generic_pm_domain *genpd)
 			return ret;
 	}
 
-	if (readl(rmobile_pd->base + PSTR) & mask) {
+	if (__raw_readl(rmobile_pd->base + PSTR) & mask) {
 		unsigned int retry_count;
-		writel(mask, rmobile_pd->base + SPDCR);
+		__raw_writel(mask, rmobile_pd->base + SPDCR);
 
 		for (retry_count = PSTR_RETRIES; retry_count; retry_count--) {
-			if (!(readl(rmobile_pd->base + SPDCR) & mask))
+			if (!(__raw_readl(rmobile_pd->base + SPDCR) & mask))
 				break;
 			cpu_relax();
 		}
 	}
 
 	pr_debug("%s: Power off, 0x%08x -> PSTR = 0x%08x\n", genpd->name, mask,
-		 readl(rmobile_pd->base + PSTR));
+		 __raw_readl(rmobile_pd->base + PSTR));
 
 	return 0;
 }
@@ -78,13 +80,13 @@ static int __rmobile_pd_power_up(struct rmobile_pm_domain *rmobile_pd)
 	unsigned int retry_count;
 	int ret = 0;
 
-	if (readl(rmobile_pd->base + PSTR) & mask)
+	if (__raw_readl(rmobile_pd->base + PSTR) & mask)
 		return ret;
 
-	writel(mask, rmobile_pd->base + SWUCR);
+	__raw_writel(mask, rmobile_pd->base + SWUCR);
 
 	for (retry_count = 2 * PSTR_RETRIES; retry_count; retry_count--) {
-		if (!(readl(rmobile_pd->base + SWUCR) & mask))
+		if (!(__raw_readl(rmobile_pd->base + SWUCR) & mask))
 			break;
 		if (retry_count > PSTR_RETRIES)
 			udelay(PSTR_DELAY_US);
@@ -96,7 +98,7 @@ static int __rmobile_pd_power_up(struct rmobile_pm_domain *rmobile_pd)
 
 	pr_debug("%s: Power on, 0x%08x -> PSTR = 0x%08x\n",
 		 rmobile_pd->genpd.name, mask,
-		 readl(rmobile_pd->base + PSTR));
+		 __raw_readl(rmobile_pd->base + PSTR));
 
 	return ret;
 }
@@ -342,8 +344,6 @@ static int __init rmobile_init_pm_domains(void)
 			of_node_put(np);
 			break;
 		}
-
-		fwnode_dev_initialized(&np->fwnode, true);
 	}
 
 	put_special_pds();

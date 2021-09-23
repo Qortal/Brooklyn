@@ -2690,13 +2690,11 @@ int cxgbi_bind_conn(struct iscsi_cls_session *cls_session,
 	err = csk->cdev->csk_ddp_setup_pgidx(csk, csk->tid,
 					     ppm->tformat.pgsz_idx_dflt);
 	if (err < 0)
-		goto put_ep;
+		return err;
 
 	err = iscsi_conn_bind(cls_session, cls_conn, is_leading);
-	if (err) {
-		err = -EINVAL;
-		goto put_ep;
-	}
+	if (err)
+		return -EINVAL;
 
 	/*  calculate the tag idx bits needed for this conn based on cmds_max */
 	cconn->task_idx_bits = (__ilog2_u32(conn->session->cmds_max - 1)) + 1;
@@ -2717,9 +2715,7 @@ int cxgbi_bind_conn(struct iscsi_cls_session *cls_session,
 	/*  init recv engine */
 	iscsi_tcp_hdr_recv_prep(tcp_conn);
 
-put_ep:
-	iscsi_put_endpoint(ep);
-	return err;
+	return 0;
 }
 EXPORT_SYMBOL_GPL(cxgbi_bind_conn);
 
@@ -2972,6 +2968,7 @@ void cxgbi_ep_disconnect(struct iscsi_endpoint *ep)
 		ep, cep, cconn, csk, csk->state, csk->flags);
 
 	if (cconn && cconn->iconn) {
+		iscsi_suspend_tx(cconn->iconn);
 		write_lock_bh(&csk->callback_lock);
 		cep->csk->user_data = NULL;
 		cconn->cep = NULL;

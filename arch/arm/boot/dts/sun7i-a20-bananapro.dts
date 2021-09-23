@@ -63,12 +63,12 @@
 	leds {
 		compatible = "gpio-leds";
 
-		led-0 {
+		blue {
 			label = "bananapro:blue:usr";
 			gpios = <&pio 6 2 GPIO_ACTIVE_HIGH>;
 		};
 
-		led-1 {
+		green {
 			label = "bananapro:green:usr";
 			gpios = <&pio 7 24 GPIO_ACTIVE_HIGH>;
 		};

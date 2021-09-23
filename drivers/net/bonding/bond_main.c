@@ -83,9 +83,6 @@
 #include <net/bonding.h>
 #include <net/bond_3ad.h>
 #include <net/bond_alb.h>
-#if IS_ENABLED(CONFIG_TLS_DEVICE)
-#include <net/tls.h>
-#endif
 
 #include "bonding_priv.h"
 
@@ -167,7 +164,7 @@ module_param(xmit_hash_policy, charp, 0);
 MODULE_PARM_DESC(xmit_hash_policy, "balance-alb, balance-tlb, balance-xor, 802.3ad hashing method; "
 				   "0 for layer 2 (default), 1 for layer 3+4, "
 				   "2 for layer 2+3, 3 for encap layer 2+3, "
-				   "4 for encap layer 3+4, 5 for vlan+srcmac");
+				   "4 for encap layer 3+4");
 module_param(arp_interval, int, 0);
 MODULE_PARM_DESC(arp_interval, "arp interval in milliseconds");
 module_param_array(arp_ip_target, charp, NULL, 0);
@@ -302,19 +299,6 @@ netdev_tx_t bond_dev_queue_xmit(struct bonding *bond, struct sk_buff *skb,
 		return bond_netpoll_send_skb(bond_get_slave_by_dev(bond, slave_dev), skb);
 
 	return dev_queue_xmit(skb);
-}
-
-bool bond_sk_check(struct bonding *bond)
-{
-	switch (BOND_MODE(bond)) {
-	case BOND_MODE_8023AD:
-	case BOND_MODE_XOR:
-		if (bond->params.xmit_policy == BOND_XMIT_POLICY_LAYER34)
-			return true;
-		fallthrough;
-	default:
-		return false;
-	}
 }
 
 /*---------------------------------- VLAN -----------------------------------*/
@@ -747,7 +731,7 @@ static int bond_check_dev_link(struct bonding *bond,
 		 */
 
 		/* Yes, the mii is overlaid on the ifreq.ifr_ifru */
-		strscpy_pad(ifr.ifr_name, slave_dev->name, IFNAMSIZ);
+		strncpy(ifr.ifr_name, slave_dev->name, IFNAMSIZ);
 		mii = if_mii(&ifr);
 		if (ioctl(slave_dev, &ifr, SIOCGMIIPHY) == 0) {
 			mii->reg_num = MII_BMSR;
@@ -1091,7 +1075,7 @@ static bool bond_should_notify_peers(struct bonding *bond)
 }
 
 /**
- * bond_change_active_slave - change the active slave into the specified one
+ * change_active_interface - change the active slave into the specified one
  * @bond: our bonding struct
  * @new_active: the new slave to make the active one
  *
@@ -1139,8 +1123,9 @@ void bond_change_active_slave(struct bonding *bond, struct slave *new_active)
 			if (bond_is_lb(bond))
 				bond_alb_handle_link_change(bond, new_active, BOND_LINK_UP);
 		} else {
-			if (bond_uses_primary(bond))
+			if (bond_uses_primary(bond)) {
 				slave_info(bond->dev, new_active->dev, "making interface the new active one\n");
+			}
 		}
 	}
 
@@ -1350,13 +1335,6 @@ static netdev_features_t bond_fix_features(struct net_device *dev,
 	netdev_features_t mask;
 	struct slave *slave;
 
-#if IS_ENABLED(CONFIG_TLS_DEVICE)
-	if (bond_sk_check(bond))
-		features |= BOND_TLS_FEATURES;
-	else
-		features &= ~BOND_TLS_FEATURES;
-#endif
-
 	mask = features;
 
 	features &= ~NETIF_F_ONE_FOR_ALL;
@@ -1373,14 +1351,14 @@ static netdev_features_t bond_fix_features(struct net_device *dev,
 }
 
 #define BOND_VLAN_FEATURES	(NETIF_F_HW_CSUM | NETIF_F_SG | \
-				 NETIF_F_FRAGLIST | NETIF_F_GSO_SOFTWARE | \
+				 NETIF_F_FRAGLIST | NETIF_F_ALL_TSO | \
 				 NETIF_F_HIGHDMA | NETIF_F_LRO)
 
 #define BOND_ENC_FEATURES	(NETIF_F_HW_CSUM | NETIF_F_SG | \
-				 NETIF_F_RXCSUM | NETIF_F_GSO_SOFTWARE)
+				 NETIF_F_RXCSUM | NETIF_F_ALL_TSO)
 
 #define BOND_MPLS_FEATURES	(NETIF_F_HW_CSUM | NETIF_F_SG | \
-				 NETIF_F_GSO_SOFTWARE)
+				 NETIF_F_ALL_TSO)
 
 
 static void bond_compute_features(struct bonding *bond)
@@ -1436,7 +1414,8 @@ done:
 	bond_dev->vlan_features = vlan_features;
 	bond_dev->hw_enc_features = enc_features | NETIF_F_GSO_ENCAP_ALL |
 				    NETIF_F_HW_VLAN_CTAG_TX |
-				    NETIF_F_HW_VLAN_STAG_TX;
+				    NETIF_F_HW_VLAN_STAG_TX |
+				    NETIF_F_GSO_UDP_L4;
 #ifdef CONFIG_XFRM_OFFLOAD
 	bond_dev->hw_enc_features |= xfrm_features;
 #endif /* CONFIG_XFRM_OFFLOAD */
@@ -1579,8 +1558,6 @@ static enum netdev_lag_hash bond_lag_hash_type(struct bonding *bond,
 		return NETDEV_LAG_HASH_E23;
 	case BOND_XMIT_POLICY_ENCAP34:
 		return NETDEV_LAG_HASH_E34;
-	case BOND_XMIT_POLICY_VLAN_SRCMAC:
-		return NETDEV_LAG_HASH_VLAN_SRCMAC;
 	default:
 		return NETDEV_LAG_HASH_UNKNOWN;
 	}
@@ -1722,14 +1699,6 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev,
 	struct sockaddr_storage ss;
 	int link_reporting;
 	int res = 0, i;
-
-	if (slave_dev->flags & IFF_MASTER &&
-	    !netif_is_bond_master(slave_dev)) {
-		NL_SET_ERR_MSG(extack, "Device with IFF_MASTER cannot be enslaved");
-		netdev_err(bond_dev,
-			   "Error: Device with IFF_MASTER cannot be enslaved\n");
-		return -EPERM;
-	}
 
 	if (!bond->params.use_carrier &&
 	    slave_dev->ethtool_ops->get_link == NULL &&
@@ -2077,8 +2046,6 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev,
 		goto err_unregister;
 	}
 
-	bond_lower_state_changed(new_slave);
-
 	res = bond_sysfs_slave_add(new_slave);
 	if (res) {
 		slave_dbg(bond_dev, slave_dev, "Error %d calling bond_sysfs_slave_add\n", res);
@@ -2402,7 +2369,6 @@ static int bond_release_and_destroy(struct net_device *bond_dev,
 static void bond_info_query(struct net_device *bond_dev, struct ifbond *info)
 {
 	struct bonding *bond = netdev_priv(bond_dev);
-
 	bond_fill_ifbond(bond, info);
 }
 
@@ -3655,27 +3621,6 @@ static bool bond_flow_ip(struct sk_buff *skb, struct flow_keys *fk,
 	return true;
 }
 
-static u32 bond_vlan_srcmac_hash(struct sk_buff *skb)
-{
-	struct ethhdr *mac_hdr = (struct ethhdr *)skb_mac_header(skb);
-	u32 srcmac_vendor = 0, srcmac_dev = 0;
-	u16 vlan;
-	int i;
-
-	for (i = 0; i < 3; i++)
-		srcmac_vendor = (srcmac_vendor << 8) | mac_hdr->h_source[i];
-
-	for (i = 3; i < ETH_ALEN; i++)
-		srcmac_dev = (srcmac_dev << 8) | mac_hdr->h_source[i];
-
-	if (!skb_vlan_tag_present(skb))
-		return srcmac_vendor ^ srcmac_dev;
-
-	vlan = skb_vlan_tag_get(skb);
-
-	return vlan ^ srcmac_vendor ^ srcmac_dev;
-}
-
 /* Extract the appropriate headers based on bond's xmit policy */
 static bool bond_flow_dissect(struct bonding *bond, struct sk_buff *skb,
 			      struct flow_keys *fk)
@@ -3683,14 +3628,10 @@ static bool bond_flow_dissect(struct bonding *bond, struct sk_buff *skb,
 	bool l34 = bond->params.xmit_policy == BOND_XMIT_POLICY_LAYER34;
 	int noff, proto = -1;
 
-	switch (bond->params.xmit_policy) {
-	case BOND_XMIT_POLICY_ENCAP23:
-	case BOND_XMIT_POLICY_ENCAP34:
+	if (bond->params.xmit_policy > BOND_XMIT_POLICY_LAYER23) {
 		memset(fk, 0, sizeof(*fk));
 		return __skb_flow_dissect(NULL, skb, &flow_keys_bonding,
 					  fk, NULL, 0, 0, 0, 0);
-	default:
-		break;
 	}
 
 	fk->ports.ports = 0;
@@ -3725,16 +3666,6 @@ static bool bond_flow_dissect(struct bonding *bond, struct sk_buff *skb,
 	return true;
 }
 
-static u32 bond_ip_hash(u32 hash, struct flow_keys *flow)
-{
-	hash ^= (__force u32)flow_get_u32_dst(flow) ^
-		(__force u32)flow_get_u32_src(flow);
-	hash ^= (hash >> 16);
-	hash ^= (hash >> 8);
-	/* discard lowest hash bit to deal with the common even ports pattern */
-	return hash >> 1;
-}
-
 /**
  * bond_xmit_hash - generate a hash value based on the xmit policy
  * @bond: bonding device
@@ -3752,9 +3683,6 @@ u32 bond_xmit_hash(struct bonding *bond, struct sk_buff *skb)
 	    skb->l4_hash)
 		return skb->hash;
 
-	if (bond->params.xmit_policy == BOND_XMIT_POLICY_VLAN_SRCMAC)
-		return bond_vlan_srcmac_hash(skb);
-
 	if (bond->params.xmit_policy == BOND_XMIT_POLICY_LAYER2 ||
 	    !bond_flow_dissect(bond, skb, &flow))
 		return bond_eth_hash(skb);
@@ -3768,8 +3696,12 @@ u32 bond_xmit_hash(struct bonding *bond, struct sk_buff *skb)
 		else
 			memcpy(&hash, &flow.ports.ports, sizeof(hash));
 	}
+	hash ^= (__force u32)flow_get_u32_dst(&flow) ^
+		(__force u32)flow_get_u32_src(&flow);
+	hash ^= (hash >> 16);
+	hash ^= (hash >> 8);
 
-	return bond_ip_hash(hash, &flow);
+	return hash >> 1;
 }
 
 /*-------------------------- Device entry points ----------------------------*/
@@ -4336,16 +4268,16 @@ static u32 bond_rr_gen_slave_id(struct bonding *bond)
 		slave_id = prandom_u32();
 		break;
 	case 1:
-		slave_id = this_cpu_inc_return(*bond->rr_tx_counter);
+		slave_id = bond->rr_tx_counter;
 		break;
 	default:
 		reciprocal_packets_per_slave =
 			bond->params.reciprocal_packets_per_slave;
-		slave_id = this_cpu_inc_return(*bond->rr_tx_counter);
-		slave_id = reciprocal_divide(slave_id,
+		slave_id = reciprocal_divide(bond->rr_tx_counter,
 					     reciprocal_packets_per_slave);
 		break;
 	}
+	bond->rr_tx_counter++;
 
 	return slave_id;
 }
@@ -4525,7 +4457,9 @@ int bond_update_slave_arr(struct bonding *bond, struct slave *skipslave)
 	int agg_id = 0;
 	int ret = 0;
 
-	might_sleep();
+#ifdef CONFIG_LOCKDEP
+	WARN_ON(lockdep_is_held(&bond->mode_lock));
+#endif
 
 	usable_slaves = kzalloc(struct_size(usable_slaves, arr,
 					    bond->slave_cnt), GFP_KERNEL);
@@ -4538,9 +4472,7 @@ int bond_update_slave_arr(struct bonding *bond, struct slave *skipslave)
 	if (BOND_MODE(bond) == BOND_MODE_8023AD) {
 		struct ad_info ad_info;
 
-		spin_lock_bh(&bond->mode_lock);
 		if (bond_3ad_get_active_agg_info(bond, &ad_info)) {
-			spin_unlock_bh(&bond->mode_lock);
 			pr_debug("bond_3ad_get_active_agg_info failed\n");
 			/* No active aggragator means it's not safe to use
 			 * the previous array.
@@ -4548,7 +4480,6 @@ int bond_update_slave_arr(struct bonding *bond, struct slave *skipslave)
 			bond_reset_slave_arr(bond);
 			goto out;
 		}
-		spin_unlock_bh(&bond->mode_lock);
 		agg_id = ad_info.aggregator_id;
 	}
 	bond_for_each_slave(bond, slave, iter) {
@@ -4743,95 +4674,6 @@ static struct net_device *bond_xmit_get_slave(struct net_device *master_dev,
 	return NULL;
 }
 
-static void bond_sk_to_flow(struct sock *sk, struct flow_keys *flow)
-{
-	switch (sk->sk_family) {
-#if IS_ENABLED(CONFIG_IPV6)
-	case AF_INET6:
-		if (sk->sk_ipv6only ||
-		    ipv6_addr_type(&sk->sk_v6_daddr) != IPV6_ADDR_MAPPED) {
-			flow->control.addr_type = FLOW_DISSECTOR_KEY_IPV6_ADDRS;
-			flow->addrs.v6addrs.src = inet6_sk(sk)->saddr;
-			flow->addrs.v6addrs.dst = sk->sk_v6_daddr;
-			break;
-		}
-		fallthrough;
-#endif
-	default: /* AF_INET */
-		flow->control.addr_type = FLOW_DISSECTOR_KEY_IPV4_ADDRS;
-		flow->addrs.v4addrs.src = inet_sk(sk)->inet_rcv_saddr;
-		flow->addrs.v4addrs.dst = inet_sk(sk)->inet_daddr;
-		break;
-	}
-
-	flow->ports.src = inet_sk(sk)->inet_sport;
-	flow->ports.dst = inet_sk(sk)->inet_dport;
-}
-
-/**
- * bond_sk_hash_l34 - generate a hash value based on the socket's L3 and L4 fields
- * @sk: socket to use for headers
- *
- * This function will extract the necessary field from the socket and use
- * them to generate a hash based on the LAYER34 xmit_policy.
- * Assumes that sk is a TCP or UDP socket.
- */
-static u32 bond_sk_hash_l34(struct sock *sk)
-{
-	struct flow_keys flow;
-	u32 hash;
-
-	bond_sk_to_flow(sk, &flow);
-
-	/* L4 */
-	memcpy(&hash, &flow.ports.ports, sizeof(hash));
-	/* L3 */
-	return bond_ip_hash(hash, &flow);
-}
-
-static struct net_device *__bond_sk_get_lower_dev(struct bonding *bond,
-						  struct sock *sk)
-{
-	struct bond_up_slave *slaves;
-	struct slave *slave;
-	unsigned int count;
-	u32 hash;
-
-	slaves = rcu_dereference(bond->usable_slaves);
-	count = slaves ? READ_ONCE(slaves->count) : 0;
-	if (unlikely(!count))
-		return NULL;
-
-	hash = bond_sk_hash_l34(sk);
-	slave = slaves->arr[hash % count];
-
-	return slave->dev;
-}
-
-static struct net_device *bond_sk_get_lower_dev(struct net_device *dev,
-						struct sock *sk)
-{
-	struct bonding *bond = netdev_priv(dev);
-	struct net_device *lower = NULL;
-
-	rcu_read_lock();
-	if (bond_sk_check(bond))
-		lower = __bond_sk_get_lower_dev(bond, sk);
-	rcu_read_unlock();
-
-	return lower;
-}
-
-#if IS_ENABLED(CONFIG_TLS_DEVICE)
-static netdev_tx_t bond_tls_device_xmit(struct bonding *bond, struct sk_buff *skb,
-					struct net_device *dev)
-{
-	if (likely(bond_get_slave_by_dev(bond, tls_get_ctx(skb->sk)->netdev)))
-		return bond_dev_queue_xmit(bond, skb, tls_get_ctx(skb->sk)->netdev);
-	return bond_tx_drop(dev, skb);
-}
-#endif
-
 static netdev_tx_t __bond_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct bonding *bond = netdev_priv(dev);
@@ -4839,11 +4681,6 @@ static netdev_tx_t __bond_start_xmit(struct sk_buff *skb, struct net_device *dev
 	if (bond_should_override_tx_queue(bond) &&
 	    !bond_slave_override(bond, skb))
 		return NETDEV_TX_OK;
-
-#if IS_ENABLED(CONFIG_TLS_DEVICE)
-	if (skb->sk && tls_is_sk_tx_device_offloaded(skb->sk))
-		return bond_tls_device_xmit(bond, skb, dev);
-#endif
 
 	switch (BOND_MODE(bond)) {
 	case BOND_MODE_ROUNDROBIN:
@@ -4973,7 +4810,6 @@ static const struct net_device_ops bond_netdev_ops = {
 	.ndo_fix_features	= bond_fix_features,
 	.ndo_features_check	= passthru_features_check,
 	.ndo_get_xmit_slave	= bond_xmit_get_slave,
-	.ndo_sk_get_lower_dev	= bond_sk_get_lower_dev,
 };
 
 static const struct device_type bond_type = {
@@ -4983,12 +4819,8 @@ static const struct device_type bond_type = {
 static void bond_destructor(struct net_device *bond_dev)
 {
 	struct bonding *bond = netdev_priv(bond_dev);
-
 	if (bond->wq)
 		destroy_workqueue(bond->wq);
-
-	if (bond->rr_tx_counter)
-		free_percpu(bond->rr_tx_counter);
 }
 
 void bond_setup(struct net_device *bond_dev)
@@ -5041,19 +4873,17 @@ void bond_setup(struct net_device *bond_dev)
 				NETIF_F_HW_VLAN_CTAG_RX |
 				NETIF_F_HW_VLAN_CTAG_FILTER;
 
-	bond_dev->hw_features |= NETIF_F_GSO_ENCAP_ALL;
+	bond_dev->hw_features |= NETIF_F_GSO_ENCAP_ALL | NETIF_F_GSO_UDP_L4;
+#ifdef CONFIG_XFRM_OFFLOAD
+	bond_dev->hw_features |= BOND_XFRM_FEATURES;
+#endif /* CONFIG_XFRM_OFFLOAD */
 	bond_dev->features |= bond_dev->hw_features;
 	bond_dev->features |= NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_STAG_TX;
 #ifdef CONFIG_XFRM_OFFLOAD
-	bond_dev->hw_features |= BOND_XFRM_FEATURES;
-	/* Only enable XFRM features if this is an active-backup config */
-	if (BOND_MODE(bond) == BOND_MODE_ACTIVEBACKUP)
-		bond_dev->features |= BOND_XFRM_FEATURES;
+	/* Disable XFRM features if this isn't an active-backup config */
+	if (BOND_MODE(bond) != BOND_MODE_ACTIVEBACKUP)
+		bond_dev->features &= ~BOND_XFRM_FEATURES;
 #endif /* CONFIG_XFRM_OFFLOAD */
-#if IS_ENABLED(CONFIG_TLS_DEVICE)
-	if (bond_sk_check(bond))
-		bond_dev->features |= BOND_TLS_FEATURES;
-#endif
 }
 
 /* Destroy a bonding device.
@@ -5468,8 +5298,10 @@ static int bond_check_params(struct bond_params *params)
 			(struct reciprocal_value) { 0 };
 	}
 
-	if (primary)
-		strscpy_pad(params->primary, primary, sizeof(params->primary));
+	if (primary) {
+		strncpy(params->primary, primary, IFNAMSIZ);
+		params->primary[IFNAMSIZ - 1] = 0;
+	}
 
 	memcpy(params->arp_targets, arp_target, sizeof(arp_target));
 
@@ -5487,15 +5319,6 @@ static int bond_init(struct net_device *bond_dev)
 	bond->wq = alloc_ordered_workqueue(bond_dev->name, WQ_MEM_RECLAIM);
 	if (!bond->wq)
 		return -ENOMEM;
-
-	if (BOND_MODE(bond) == BOND_MODE_ROUNDROBIN) {
-		bond->rr_tx_counter = alloc_percpu(u32);
-		if (!bond->rr_tx_counter) {
-			destroy_workqueue(bond->wq);
-			bond->wq = NULL;
-			return -ENOMEM;
-		}
-	}
 
 	spin_lock_init(&bond->stats_lock);
 	netdev_lockdep_set_classes(bond_dev);

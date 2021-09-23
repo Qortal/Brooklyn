@@ -15,40 +15,40 @@
 	model = "Overkiz KIZBOX3-HS";
 	compatible = "overkiz,kizbox3-hs", "atmel,sama5d2", "atmel,sama5";
 
-	led-controller-1 {
+	pwm_leds {
 		status = "okay";
 
-		led-1 {
+		red {
 			status = "okay";
 		};
 
-		led-2 {
+		green {
 			status = "okay";
 		};
 
-		led-3 {
+		blue {
 			status = "okay";
 		};
 
-		led-4 {
+		white {
 			status = "okay";
 		};
 	};
 
-	led-controller-2  {
+	leds  {
 		compatible = "gpio-leds";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_led_red
 			     &pinctrl_led_white>;
 		status = "okay";
 
-		led-5 {
+		red {
 			label = "pio:red:user";
 			gpios = <&pioA PIN_PB1 GPIO_ACTIVE_HIGH>;
 			default-state = "off";
 		};
 
-		led-6 {
+		white {
 			label = "pio:white:user";
 			gpios = <&pioA PIN_PB8 GPIO_ACTIVE_HIGH>;
 			default-state = "off";

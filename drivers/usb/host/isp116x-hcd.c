@@ -1200,13 +1200,14 @@ DEFINE_SHOW_ATTRIBUTE(isp116x_debug);
 
 static void create_debug_file(struct isp116x *isp116x)
 {
-	debugfs_create_file(hcd_name, S_IRUGO, usb_debug_root, isp116x,
-			    &isp116x_debug_fops);
+	isp116x->dentry = debugfs_create_file(hcd_name,
+					      S_IRUGO, NULL, isp116x,
+					      &isp116x_debug_fops);
 }
 
 static void remove_debug_file(struct isp116x *isp116x)
 {
-	debugfs_remove(debugfs_lookup(hcd_name, usb_debug_root));
+	debugfs_remove(isp116x->dentry);
 }
 
 #else
@@ -1446,7 +1447,6 @@ static int isp116x_bus_resume(struct usb_hcd *hcd)
 		val &= ~HCCONTROL_HCFS;
 		val |= HCCONTROL_USB_RESUME;
 		isp116x_write_reg32(isp116x, HCCONTROL, val);
-		break;
 	case HCCONTROL_USB_RESUME:
 		break;
 	case HCCONTROL_USB_OPER:

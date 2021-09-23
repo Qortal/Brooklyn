@@ -4,7 +4,11 @@
 #include <linux/perf_event.h>
 #include <linux/uaccess.h>
 
-#include <asm/stacktrace.h>
+/* Kernel callchain */
+struct stackframe {
+	unsigned long fp;
+	unsigned long ra;
+};
 
 /*
  * Get the return address for a single stackframe and return a pointer to the
@@ -70,11 +74,13 @@ void perf_callchain_user(struct perf_callchain_entry_ctx *entry,
 		fp = user_backtrace(entry, fp, 0);
 }
 
-static bool fill_callchain(void *entry, unsigned long pc)
+bool fill_callchain(unsigned long pc, void *entry)
 {
 	return perf_callchain_store(entry, pc);
 }
 
+void notrace walk_stackframe(struct task_struct *task,
+	struct pt_regs *regs, bool (*fn)(unsigned long, void *), void *arg);
 void perf_callchain_kernel(struct perf_callchain_entry_ctx *entry,
 			   struct pt_regs *regs)
 {

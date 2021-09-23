@@ -125,6 +125,7 @@ static const char *tps68470_names[TPS68470_N_GPIO] = {
 static int tps68470_gpio_probe(struct platform_device *pdev)
 {
 	struct tps68470_gpio_data *tps68470_gpio;
+	int ret;
 
 	tps68470_gpio = devm_kzalloc(&pdev->dev, sizeof(*tps68470_gpio),
 				     GFP_KERNEL);
@@ -145,7 +146,16 @@ static int tps68470_gpio_probe(struct platform_device *pdev)
 	tps68470_gpio->gc.base = -1;
 	tps68470_gpio->gc.parent = &pdev->dev;
 
-	return devm_gpiochip_add_data(&pdev->dev, &tps68470_gpio->gc, tps68470_gpio);
+	ret = devm_gpiochip_add_data(&pdev->dev, &tps68470_gpio->gc,
+				     tps68470_gpio);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Failed to register gpio_chip: %d\n", ret);
+		return ret;
+	}
+
+	platform_set_drvdata(pdev, tps68470_gpio);
+
+	return ret;
 }
 
 static struct platform_driver tps68470_gpio_driver = {

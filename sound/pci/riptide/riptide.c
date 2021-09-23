@@ -103,6 +103,7 @@
 MODULE_AUTHOR("Peter Gruber <nokos@gmx.net>");
 MODULE_DESCRIPTION("riptide");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{Conexant,Riptide}}");
 MODULE_FIRMWARE("riptide.hex");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
@@ -1087,15 +1088,9 @@ static irqreturn_t riptide_handleirq(int irq, void *dev_id)
 		substream[i] = chip->playback_substream[i];
 	substream[i] = chip->capture_substream;
 	for (i = 0; i < PLAYBACK_SUBSTREAMS + 1; i++) {
-		if (!substream[i])
-			continue;
-		runtime = substream[i]->runtime;
-		if (!runtime)
-			continue;
-		data = runtime->private_data;
-		if (!data)
-			continue;
-		if (data->state != ST_STOP) {
+		if (substream[i] &&
+		    (runtime = substream[i]->runtime) &&
+		    (data = runtime->private_data) && data->state != ST_STOP) {
 			pos = 0;
 			for (j = 0; j < data->pages; j++) {
 				c = &data->sgdbuf[j];
@@ -1555,10 +1550,10 @@ snd_riptide_hw_params(struct snd_pcm_substream *substream,
 		    (int)sgdlist->bytes);
 	if (sgdlist->area)
 		snd_dma_free_pages(sgdlist);
-	err = snd_dma_alloc_pages(SNDRV_DMA_TYPE_DEV, &chip->pci->dev,
-				  sizeof(struct sgd) * (DESC_MAX_MASK + 1),
-				  sgdlist);
-	if (err < 0) {
+	if ((err = snd_dma_alloc_pages(SNDRV_DMA_TYPE_DEV,
+				       &chip->pci->dev,
+				       sizeof(struct sgd) * (DESC_MAX_MASK + 1),
+				       sgdlist)) < 0) {
 		snd_printk(KERN_ERR "Riptide: failed to alloc %d dma bytes\n",
 			   (int)sizeof(struct sgd) * (DESC_MAX_MASK + 1));
 		return err;
@@ -1683,9 +1678,9 @@ static int snd_riptide_pcm(struct snd_riptide *chip, int device)
 	struct snd_pcm *pcm;
 	int err;
 
-	err = snd_pcm_new(chip->card, "RIPTIDE", device, PLAYBACK_SUBSTREAMS, 1,
-			  &pcm);
-	if (err < 0)
+	if ((err =
+	     snd_pcm_new(chip->card, "RIPTIDE", device, PLAYBACK_SUBSTREAMS, 1,
+			 &pcm)) < 0)
 		return err;
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK,
 			&snd_riptide_playback_ops);
@@ -1772,16 +1767,14 @@ static int snd_riptide_initialize(struct snd_riptide *chip)
 
 	cif = chip->cif;
 	if (!cif) {
-		cif = kzalloc(sizeof(struct cmdif), GFP_KERNEL);
-		if (!cif)
+		if ((cif = kzalloc(sizeof(struct cmdif), GFP_KERNEL)) == NULL)
 			return -ENOMEM;
 		cif->hwport = (struct riptideport *)chip->port;
 		spin_lock_init(&cif->lock);
 		chip->cif = cif;
 	}
 	cif->is_reset = 0;
-	err = riptide_reset(cif, chip);
-	if (err)
+	if ((err = riptide_reset(cif, chip)) != 0)
 		return err;
 	device_id = chip->device_id;
 	switch (device_id) {
@@ -1805,8 +1798,7 @@ static int snd_riptide_free(struct snd_riptide *chip)
 	if (!chip)
 		return 0;
 
-	cif = chip->cif;
-	if (cif) {
+	if ((cif = chip->cif)) {
 		SET_GRESET(cif->hwport);
 		udelay(100);
 		UNSET_GRESET(cif->hwport);
@@ -1839,11 +1831,9 @@ snd_riptide_create(struct snd_card *card, struct pci_dev *pci,
 	};
 
 	*rchip = NULL;
-	err = pci_enable_device(pci);
-	if (err < 0)
+	if ((err = pci_enable_device(pci)) < 0)
 		return err;
-	chip = kzalloc(sizeof(struct snd_riptide), GFP_KERNEL);
-	if (!chip)
+	if (!(chip = kzalloc(sizeof(struct snd_riptide), GFP_KERNEL)))
 		return -ENOMEM;
 
 	spin_lock_init(&chip->lock);
@@ -1856,8 +1846,8 @@ snd_riptide_create(struct snd_card *card, struct pci_dev *pci,
 	chip->handled_irqs = 0;
 	chip->cif = NULL;
 
-	chip->res_port = request_region(chip->port, 64, "RIPTIDE");
-	if (!chip->res_port) {
+	if ((chip->res_port =
+	     request_region(chip->port, 64, "RIPTIDE")) == NULL) {
 		snd_printk(KERN_ERR
 			   "Riptide: unable to grab region 0x%lx-0x%lx\n",
 			   chip->port, chip->port + 64 - 1);
@@ -1879,14 +1869,12 @@ snd_riptide_create(struct snd_card *card, struct pci_dev *pci,
 	card->sync_irq = chip->irq;
 	chip->device_id = pci->device;
 	pci_set_master(pci);
-	err = snd_riptide_initialize(chip);
-	if (err < 0) {
+	if ((err = snd_riptide_initialize(chip)) < 0) {
 		snd_riptide_free(chip);
 		return err;
 	}
 
-	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops);
-	if (err < 0) {
+	if ((err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops)) < 0) {
 		snd_riptide_free(chip);
 		return err;
 	}
@@ -1916,8 +1904,7 @@ snd_riptide_proc_read(struct snd_info_entry *entry,
 	for (i = 0; i < 64; i += 4)
 		snd_iprintf(buffer, "%c%02x: %08x",
 			    (i % 16) ? ' ' : '\n', i, inl(chip->port + i));
-	cif = chip->cif;
-	if (cif) {
+	if ((cif = chip->cif)) {
 		snd_iprintf(buffer,
 			    "\nVersion: ASIC: %d CODEC: %d AUXDSP: %d PROG: %d",
 			    chip->firmware.firmware.ASIC,
@@ -1936,11 +1923,10 @@ snd_riptide_proc_read(struct snd_info_entry *entry,
 	}
 	snd_iprintf(buffer, "\nOpen streams %d:\n", chip->openstreams);
 	for (i = 0; i < PLAYBACK_SUBSTREAMS; i++) {
-		if (!chip->playback_substream[i] ||
-		    !chip->playback_substream[i]->runtime)
-			continue;
-		data = chip->playback_substream[i]->runtime->private_data;
-		if (data) {
+		if (chip->playback_substream[i]
+		    && chip->playback_substream[i]->runtime
+		    && (data =
+			chip->playback_substream[i]->runtime->private_data)) {
 			snd_iprintf(buffer,
 				    "stream: %d mixer: %d source: %d (%d,%d)\n",
 				    data->id, data->mixer, data->source,
@@ -1949,16 +1935,15 @@ snd_riptide_proc_read(struct snd_info_entry *entry,
 				snd_iprintf(buffer, "rate: %d\n", rate);
 		}
 	}
-	if (chip->capture_substream && chip->capture_substream->runtime) {
-		data = chip->capture_substream->runtime->private_data;
-		if (data) {
-			snd_iprintf(buffer,
-				    "stream: %d mixer: %d source: %d (%d,%d)\n",
-				    data->id, data->mixer,
-				    data->source, data->intdec[0], data->intdec[1]);
-			if (!(getsamplerate(cif, data->intdec, &rate)))
-				snd_iprintf(buffer, "rate: %d\n", rate);
-		}
+	if (chip->capture_substream
+	    && chip->capture_substream->runtime
+	    && (data = chip->capture_substream->runtime->private_data)) {
+		snd_iprintf(buffer,
+			    "stream: %d mixer: %d source: %d (%d,%d)\n",
+			    data->id, data->mixer,
+			    data->source, data->intdec[0], data->intdec[1]);
+		if (!(getsamplerate(cif, data->intdec, &rate)))
+			snd_iprintf(buffer, "rate: %d\n", rate);
 	}
 	snd_iprintf(buffer, "Paths:\n");
 	i = getpaths(cif, p);
@@ -1989,14 +1974,12 @@ static int snd_riptide_mixer(struct snd_riptide *chip)
 	ac97.private_data = chip;
 	ac97.scaps = AC97_SCAP_SKIP_MODEM;
 
-	err = snd_ac97_bus(chip->card, 0, &ops, chip, &pbus);
-	if (err < 0)
+	if ((err = snd_ac97_bus(chip->card, 0, &ops, chip, &pbus)) < 0)
 		return err;
 
 	chip->ac97_bus = pbus;
 	ac97.pci = chip->pci;
-	err = snd_ac97_mixer(pbus, &ac97, &chip->ac97);
-	if (err < 0)
+	if ((err = snd_ac97_mixer(pbus, &ac97, &chip->ac97)) < 0)
 		return err;
 	return err;
 }

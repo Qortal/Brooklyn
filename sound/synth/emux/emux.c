@@ -104,8 +104,7 @@ int snd_emux_register(struct snd_emux *emu, struct snd_card *card, int index, ch
 	if (emu->sflist == NULL)
 		return -ENOMEM;
 
-	err = snd_emux_init_hwdep(emu);
-	if (err < 0)
+	if ((err = snd_emux_init_hwdep(emu)) < 0)
 		return err;
 
 	snd_emux_init_voices(emu);

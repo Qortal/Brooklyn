@@ -193,7 +193,8 @@ get_queue_num:
 		if (recontend_queue)
 			goto get_queue_num;
 
-		return INVALID_QUEUE;
+		q_num = INVALID_QUEUE;
+		return q_num;
 	}
 
 	common->selected_qnum = q_num;

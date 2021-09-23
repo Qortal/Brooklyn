@@ -3,7 +3,6 @@
  * Copyright 2018 Noralf Trønnes
  */
 
-#include <linux/dma-buf-map.h>
 #include <linux/list.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -235,7 +234,7 @@ static void drm_client_buffer_delete(struct drm_client_buffer *buffer)
 {
 	struct drm_device *dev = buffer->client->dev;
 
-	drm_gem_vunmap(buffer->gem, &buffer->map);
+	drm_gem_vunmap(buffer->gem, buffer->vaddr);
 
 	if (buffer->gem)
 		drm_gem_object_put(buffer->gem);
@@ -291,28 +290,24 @@ err_delete:
 /**
  * drm_client_buffer_vmap - Map DRM client buffer into address space
  * @buffer: DRM client buffer
- * @map_copy: Returns the mapped memory's address
  *
  * This function maps a client buffer into kernel address space. If the
- * buffer is already mapped, it returns the existing mapping's address.
+ * buffer is already mapped, it returns the mapping's address.
  *
  * Client buffer mappings are not ref'counted. Each call to
  * drm_client_buffer_vmap() should be followed by a call to
  * drm_client_buffer_vunmap(); or the client buffer should be mapped
  * throughout its lifetime.
  *
- * The returned address is a copy of the internal value. In contrast to
- * other vmap interfaces, you don't need it for the client's vunmap
- * function. So you can modify it at will during blit and draw operations.
- *
  * Returns:
- *	0 on success, or a negative errno code otherwise.
+ *	The mapped memory's address
  */
-int
-drm_client_buffer_vmap(struct drm_client_buffer *buffer, struct dma_buf_map *map_copy)
+void *drm_client_buffer_vmap(struct drm_client_buffer *buffer)
 {
-	struct dma_buf_map *map = &buffer->map;
-	int ret;
+	void *vaddr;
+
+	if (buffer->vaddr)
+		return buffer->vaddr;
 
 	/*
 	 * FIXME: The dependency on GEM here isn't required, we could
@@ -322,13 +317,13 @@ drm_client_buffer_vmap(struct drm_client_buffer *buffer, struct dma_buf_map *map
 	 * fd_install step out of the driver backend hooks, to make that
 	 * final step optional for internal users.
 	 */
-	ret = drm_gem_vmap(buffer->gem, map);
-	if (ret)
-		return ret;
+	vaddr = drm_gem_vmap(buffer->gem);
+	if (IS_ERR(vaddr))
+		return vaddr;
 
-	*map_copy = *map;
+	buffer->vaddr = vaddr;
 
-	return 0;
+	return vaddr;
 }
 EXPORT_SYMBOL(drm_client_buffer_vmap);
 
@@ -342,9 +337,8 @@ EXPORT_SYMBOL(drm_client_buffer_vmap);
  */
 void drm_client_buffer_vunmap(struct drm_client_buffer *buffer)
 {
-	struct dma_buf_map *map = &buffer->map;
-
-	drm_gem_vunmap(buffer->gem, map);
+	drm_gem_vunmap(buffer->gem, buffer->vaddr);
+	buffer->vaddr = NULL;
 }
 EXPORT_SYMBOL(drm_client_buffer_vunmap);
 

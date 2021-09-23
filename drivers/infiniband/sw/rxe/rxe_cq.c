@@ -25,11 +25,7 @@ int rxe_cq_chk_attr(struct rxe_dev *rxe, struct rxe_cq *cq,
 	}
 
 	if (cq) {
-		if (cq->is_user)
-			count = queue_count(cq->queue, QUEUE_TYPE_TO_USER);
-		else
-			count = queue_count(cq->queue, QUEUE_TYPE_KERNEL);
-
+		count = queue_count(cq->queue);
 		if (cqe < count) {
 			pr_warn("cqe(%d) < current # elements in queue (%d)",
 				cqe, count);
@@ -63,11 +59,9 @@ int rxe_cq_from_init(struct rxe_dev *rxe, struct rxe_cq *cq, int cqe,
 		     struct rxe_create_cq_resp __user *uresp)
 {
 	int err;
-	enum queue_type type;
 
-	type = uresp ? QUEUE_TYPE_TO_USER : QUEUE_TYPE_KERNEL;
 	cq->queue = rxe_queue_init(rxe, &cqe,
-			sizeof(struct rxe_cqe), type);
+				   sizeof(struct rxe_cqe));
 	if (!cq->queue) {
 		pr_warn("unable to create cq\n");
 		return -ENOMEM;
@@ -112,17 +106,10 @@ int rxe_cq_post(struct rxe_cq *cq, struct rxe_cqe *cqe, int solicited)
 {
 	struct ib_event ev;
 	unsigned long flags;
-	int full;
-	void *addr;
 
 	spin_lock_irqsave(&cq->cq_lock, flags);
 
-	if (cq->is_user)
-		full = queue_full(cq->queue, QUEUE_TYPE_TO_USER);
-	else
-		full = queue_full(cq->queue, QUEUE_TYPE_KERNEL);
-
-	if (unlikely(full)) {
+	if (unlikely(queue_full(cq->queue))) {
 		spin_unlock_irqrestore(&cq->cq_lock, flags);
 		if (cq->ibcq.event_handler) {
 			ev.device = cq->ibcq.device;
@@ -134,18 +121,14 @@ int rxe_cq_post(struct rxe_cq *cq, struct rxe_cqe *cqe, int solicited)
 		return -EBUSY;
 	}
 
-	if (cq->is_user)
-		addr = producer_addr(cq->queue, QUEUE_TYPE_TO_USER);
-	else
-		addr = producer_addr(cq->queue, QUEUE_TYPE_KERNEL);
+	memcpy(producer_addr(cq->queue), cqe, sizeof(*cqe));
 
-	memcpy(addr, cqe, sizeof(*cqe));
+	/* make sure all changes to the CQ are written before we update the
+	 * producer pointer
+	 */
+	smp_wmb();
 
-	if (cq->is_user)
-		advance_producer(cq->queue, QUEUE_TYPE_TO_USER);
-	else
-		advance_producer(cq->queue, QUEUE_TYPE_KERNEL);
-
+	advance_producer(cq->queue);
 	spin_unlock_irqrestore(&cq->cq_lock, flags);
 
 	if ((cq->notify == IB_CQ_NEXT_COMP) ||

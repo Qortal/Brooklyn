@@ -34,6 +34,7 @@
 
 MODULE_DESCRIPTION("MIDI serial u16550");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{ALSA, MIDI serial u16550}}");
 
 #define SNDRV_SERIAL_SOUNDCANVAS 0 /* Roland Soundcanvas; F5 NN selects part */
 #define SNDRV_SERIAL_MS124T 1      /* Midiator MS-124T */
@@ -783,8 +784,7 @@ static int snd_uart16550_create(struct snd_card *card,
 	int err;
 
 
-	uart = kzalloc(sizeof(*uart), GFP_KERNEL);
-	if (!uart)
+	if ((uart = kzalloc(sizeof(*uart), GFP_KERNEL)) == NULL)
 		return -ENOMEM;
 	uart->adaptor = adaptor;
 	uart->card = card;
@@ -793,8 +793,7 @@ static int snd_uart16550_create(struct snd_card *card,
 	uart->base = iobase;
 	uart->drop_on_full = droponfull;
 
-	err = snd_uart16550_detect(uart);
-	if (err <= 0) {
+	if ((err = snd_uart16550_detect(uart)) <= 0) {
 		printk(KERN_ERR "no UART detected at 0x%lx\n", iobase);
 		snd_uart16550_free(uart);
 		return -ENODEV;
@@ -820,8 +819,7 @@ static int snd_uart16550_create(struct snd_card *card,
 	uart->timer_running = 0;
 
 	/* Register device */
-	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, uart, &ops);
-	if (err < 0) {
+	if ((err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, uart, &ops)) < 0) {
 		snd_uart16550_free(uart);
 		return err;
 	}
@@ -935,10 +933,14 @@ static int snd_serial_probe(struct platform_device *devptr)
 	strcpy(card->driver, "Serial");
 	strcpy(card->shortname, "Serial MIDI (UART16550A)");
 
-	err = snd_uart16550_create(card, port[dev], irq[dev], speed[dev],
-				   base[dev], adaptor[dev], droponfull[dev],
-				   &uart);
-	if (err < 0)
+	if ((err = snd_uart16550_create(card,
+					port[dev],
+					irq[dev],
+					speed[dev],
+					base[dev],
+					adaptor[dev],
+					droponfull[dev],
+					&uart)) < 0)
 		goto _err;
 
 	err = snd_uart16550_rmidi(uart, 0, outs[dev], ins[dev], &uart->rmidi);
@@ -951,8 +953,7 @@ static int snd_serial_probe(struct platform_device *devptr)
 		uart->base,
 		uart->irq);
 
-	err = snd_card_register(card);
-	if (err < 0)
+	if ((err = snd_card_register(card)) < 0)
 		goto _err;
 
 	platform_set_drvdata(devptr, card);
@@ -992,8 +993,7 @@ static int __init alsa_card_serial_init(void)
 {
 	int i, cards, err;
 
-	err = platform_driver_register(&snd_serial_driver);
-	if (err < 0)
+	if ((err = platform_driver_register(&snd_serial_driver)) < 0)
 		return err;
 
 	cards = 0;

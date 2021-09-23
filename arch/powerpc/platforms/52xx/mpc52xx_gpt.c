@@ -582,7 +582,6 @@ static long mpc52xx_wdt_ioctl(struct file *file, unsigned int cmd,
 		if (ret)
 			break;
 		/* fall through and return the timeout */
-		fallthrough;
 
 	case WDIOC_GETTIMEOUT:
 		/* we need to round here as to avoid e.g. the following

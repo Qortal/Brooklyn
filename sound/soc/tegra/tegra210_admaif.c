@@ -706,7 +706,9 @@ static int tegra_admaif_probe(struct platform_device *pdev)
 			return -ENOMEM;
 	}
 
-	regs = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+
+	regs = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(regs))
 		return PTR_ERR(regs);
 

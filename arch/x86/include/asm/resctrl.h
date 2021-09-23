@@ -56,22 +56,19 @@ static void __resctrl_sched_in(void)
 	struct resctrl_pqr_state *state = this_cpu_ptr(&pqr_state);
 	u32 closid = state->default_closid;
 	u32 rmid = state->default_rmid;
-	u32 tmp;
 
 	/*
 	 * If this task has a closid/rmid assigned, use it.
 	 * Else use the closid/rmid assigned to this cpu.
 	 */
 	if (static_branch_likely(&rdt_alloc_enable_key)) {
-		tmp = READ_ONCE(current->closid);
-		if (tmp)
-			closid = tmp;
+		if (current->closid)
+			closid = current->closid;
 	}
 
 	if (static_branch_likely(&rdt_mon_enable_key)) {
-		tmp = READ_ONCE(current->rmid);
-		if (tmp)
-			rmid = tmp;
+		if (current->rmid)
+			rmid = current->rmid;
 	}
 
 	if (closid != state->cur_closid || rmid != state->cur_rmid) {

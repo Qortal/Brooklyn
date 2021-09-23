@@ -1853,9 +1853,11 @@ error_iounmap:
 
 }
 
-static int __maybe_unused aac_suspend(struct device *dev)
+#if (defined(CONFIG_PM))
+static int aac_suspend(struct pci_dev *pdev, pm_message_t state)
 {
-	struct Scsi_Host *shost = dev_get_drvdata(dev);
+
+	struct Scsi_Host *shost = pci_get_drvdata(pdev);
 	struct aac_dev *aac = (struct aac_dev *)shost->hostdata;
 
 	scsi_host_block(shost);
@@ -1864,14 +1866,29 @@ static int __maybe_unused aac_suspend(struct device *dev)
 
 	aac_release_resources(aac);
 
+	pci_set_drvdata(pdev, shost);
+	pci_save_state(pdev);
+	pci_disable_device(pdev);
+	pci_set_power_state(pdev, pci_choose_state(pdev, state));
+
 	return 0;
 }
 
-static int __maybe_unused aac_resume(struct device *dev)
+static int aac_resume(struct pci_dev *pdev)
 {
-	struct Scsi_Host *shost = dev_get_drvdata(dev);
+	struct Scsi_Host *shost = pci_get_drvdata(pdev);
 	struct aac_dev *aac = (struct aac_dev *)shost->hostdata;
+	int r;
 
+	pci_set_power_state(pdev, PCI_D0);
+	pci_enable_wake(pdev, PCI_D0, 0);
+	pci_restore_state(pdev);
+	r = pci_enable_device(pdev);
+
+	if (r)
+		goto fail_device;
+
+	pci_set_master(pdev);
 	if (aac_acquire_resources(aac))
 		goto fail_device;
 	/*
@@ -1886,8 +1903,10 @@ static int __maybe_unused aac_resume(struct device *dev)
 fail_device:
 	printk(KERN_INFO "%s%d: resume failed.\n", aac->name, aac->id);
 	scsi_host_put(shost);
+	pci_disable_device(pdev);
 	return -ENODEV;
 }
+#endif
 
 static void aac_shutdown(struct pci_dev *dev)
 {
@@ -2032,14 +2051,15 @@ static struct pci_error_handlers aac_pci_err_handler = {
 	.resume			= aac_pci_resume,
 };
 
-static SIMPLE_DEV_PM_OPS(aac_pm_ops, aac_suspend, aac_resume);
-
 static struct pci_driver aac_pci_driver = {
 	.name		= AAC_DRIVERNAME,
 	.id_table	= aac_pci_tbl,
 	.probe		= aac_probe_one,
 	.remove		= aac_remove_one,
-	.driver.pm      = &aac_pm_ops,
+#if (defined(CONFIG_PM))
+	.suspend	= aac_suspend,
+	.resume		= aac_resume,
+#endif
 	.shutdown	= aac_shutdown,
 	.err_handler    = &aac_pci_err_handler,
 };

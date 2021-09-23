@@ -123,6 +123,7 @@
 				clocks = <&usbclk LPC32XX_USB_CLK_I2C>;
 				#address-cells = <1>;
 				#size-cells = <0>;
+				pnx,timeout = <0x64>;
 			};
 
 			usbclk: clock-controller@f00 {
@@ -285,6 +286,7 @@
 				interrupts = <19 IRQ_TYPE_LEVEL_LOW>;
 				#address-cells = <1>;
 				#size-cells = <0>;
+				pnx,timeout = <0x64>;
 				clocks = <&clk LPC32XX_CLK_I2C1>;
 			};
 
@@ -295,6 +297,7 @@
 				interrupts = <18 IRQ_TYPE_LEVEL_LOW>;
 				#address-cells = <1>;
 				#size-cells = <0>;
+				pnx,timeout = <0x64>;
 				clocks = <&clk LPC32XX_CLK_I2C2>;
 			};
 

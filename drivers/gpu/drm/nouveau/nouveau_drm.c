@@ -30,9 +30,7 @@
 #include <linux/vga_switcheroo.h>
 #include <linux/mmu_notifier.h>
 
-#include <drm/drm_aperture.h>
 #include <drm/drm_crtc_helper.h>
-#include <drm/drm_gem_ttm_helper.h>
 #include <drm/drm_ioctl.h>
 #include <drm/drm_vblank.h>
 
@@ -117,8 +115,8 @@ nouveau_platform_name(struct platform_device *platformdev)
 static u64
 nouveau_name(struct drm_device *dev)
 {
-	if (dev_is_pci(dev->dev))
-		return nouveau_pci_name(to_pci_dev(dev->dev));
+	if (dev->pdev)
+		return nouveau_pci_name(dev->pdev);
 	else
 		return nouveau_platform_name(to_platform_device(dev->dev));
 }
@@ -346,7 +344,7 @@ nouveau_accel_gr_init(struct nouveau_drm *drm)
 
 	/* Allocate channel that has access to the graphics engine. */
 	if (device->info.family >= NV_DEVICE_INFO_V0_KEPLER) {
-		arg0 = nvif_fifo_runlist(device, NV_DEVICE_HOST_RUNLIST_ENGINES_GR);
+		arg0 = nvif_fifo_runlist(device, NV_DEVICE_INFO_ENGINE_GR);
 		arg1 = 1;
 	} else {
 		arg0 = NvDmaFB;
@@ -738,7 +736,7 @@ static int nouveau_drm_probe(struct pci_dev *pdev,
 	nvkm_device_del(&device);
 
 	/* Remove conflicting drivers (vesafb, efifb etc). */
-	ret = drm_aperture_remove_conflicting_pci_framebuffers(pdev, "nouveaufb");
+	ret = drm_fb_helper_remove_conflicting_pci_framebuffers(pdev, "nouveaufb");
 	if (ret)
 		return ret;
 
@@ -762,6 +760,7 @@ static int nouveau_drm_probe(struct pci_dev *pdev,
 	if (ret)
 		goto fail_drm;
 
+	drm_dev->pdev = pdev;
 	pci_set_drvdata(pdev, drm_dev);
 
 	ret = nouveau_drm_device_init(drm_dev);
@@ -821,7 +820,6 @@ static int
 nouveau_do_suspend(struct drm_device *dev, bool runtime)
 {
 	struct nouveau_drm *drm = nouveau_drm(dev);
-	struct ttm_resource_manager *man;
 	int ret;
 
 	nouveau_svm_suspend(drm);
@@ -838,9 +836,7 @@ nouveau_do_suspend(struct drm_device *dev, bool runtime)
 	}
 
 	NV_DEBUG(drm, "evicting buffers...\n");
-
-	man = ttm_manager_type(&drm->ttm.bdev, TTM_PL_VRAM);
-	ttm_resource_manager_evict_all(&drm->ttm.bdev, man);
+	ttm_bo_evict_mm(&drm->ttm.bdev, TTM_PL_VRAM);
 
 	NV_DEBUG(drm, "waiting for kernel channels to go idle...\n");
 	if (drm->cechan) {
@@ -1179,7 +1175,7 @@ nouveau_driver_fops = {
 	.open = drm_open,
 	.release = drm_release,
 	.unlocked_ioctl = nouveau_drm_ioctl,
-	.mmap = drm_gem_mmap,
+	.mmap = nouveau_ttm_mmap,
 	.poll = drm_poll,
 	.read = drm_read,
 #if defined(CONFIG_COMPAT)
@@ -1211,11 +1207,19 @@ driver_stub = {
 
 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
+	.gem_prime_pin = nouveau_gem_prime_pin,
+	.gem_prime_unpin = nouveau_gem_prime_unpin,
+	.gem_prime_get_sg_table = nouveau_gem_prime_get_sg_table,
 	.gem_prime_import_sg_table = nouveau_gem_prime_import_sg_table,
-	.gem_prime_mmap = drm_gem_prime_mmap,
+	.gem_prime_vmap = nouveau_gem_prime_vmap,
+	.gem_prime_vunmap = nouveau_gem_prime_vunmap,
+
+	.gem_free_object_unlocked = nouveau_gem_object_del,
+	.gem_open_object = nouveau_gem_object_open,
+	.gem_close_object = nouveau_gem_object_close,
 
 	.dumb_create = nouveau_display_dumb_create,
-	.dumb_map_offset = drm_gem_ttm_dumb_map_offset,
+	.dumb_map_offset = nouveau_display_dumb_map_offset,
 
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,

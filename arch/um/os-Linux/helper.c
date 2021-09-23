@@ -64,7 +64,7 @@ int run_helper(void (*pre_exec)(void *), void *pre_data, char **argv)
 		goto out_close;
 	}
 
-	sp = stack + UM_KERN_PAGE_SIZE;
+	sp = stack + UM_KERN_PAGE_SIZE - sizeof(void *);
 	data.pre_exec = pre_exec;
 	data.pre_data = pre_data;
 	data.argv = argv;
@@ -120,7 +120,7 @@ int run_helper_thread(int (*proc)(void *), void *arg, unsigned int flags,
 	if (stack == 0)
 		return -ENOMEM;
 
-	sp = stack + UM_KERN_PAGE_SIZE;
+	sp = stack + UM_KERN_PAGE_SIZE - sizeof(void *);
 	pid = clone(proc, (void *) sp, flags, arg);
 	if (pid < 0) {
 		err = -errno;

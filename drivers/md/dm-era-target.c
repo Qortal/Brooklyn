@@ -363,32 +363,28 @@ static void ws_unpack(const struct writeset_disk *disk, struct writeset_metadata
 	core->root = le64_to_cpu(disk->root);
 }
 
-static void ws_inc(void *context, const void *value, unsigned count)
+static void ws_inc(void *context, const void *value)
 {
 	struct era_metadata *md = context;
 	struct writeset_disk ws_d;
 	dm_block_t b;
-	unsigned i;
 
-	for (i = 0; i < count; i++) {
-		memcpy(&ws_d, value + (i * sizeof(ws_d)), sizeof(ws_d));
-		b = le64_to_cpu(ws_d.root);
-		dm_tm_inc(md->tm, b);
-	}
+	memcpy(&ws_d, value, sizeof(ws_d));
+	b = le64_to_cpu(ws_d.root);
+
+	dm_tm_inc(md->tm, b);
 }
 
-static void ws_dec(void *context, const void *value, unsigned count)
+static void ws_dec(void *context, const void *value)
 {
 	struct era_metadata *md = context;
 	struct writeset_disk ws_d;
 	dm_block_t b;
-	unsigned i;
 
-	for (i = 0; i < count; i++) {
-		memcpy(&ws_d, value + (i * sizeof(ws_d)), sizeof(ws_d));
-		b = le64_to_cpu(ws_d.root);
-		dm_bitset_del(&md->bitset_info, b);
-	}
+	memcpy(&ws_d, value, sizeof(ws_d));
+	b = le64_to_cpu(ws_d.root);
+
+	dm_bitset_del(&md->bitset_info, b);
 }
 
 static int ws_eq(void *context, const void *value1, const void *value2)

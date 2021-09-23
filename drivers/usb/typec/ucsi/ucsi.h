@@ -9,7 +9,6 @@
 #include <linux/types.h>
 #include <linux/usb/typec.h>
 #include <linux/usb/pd.h>
-#include <linux/usb/role.h>
 
 /* -------------------------------------------------------------------------- */
 
@@ -334,8 +333,6 @@ struct ucsi_connector {
 	u32 rdo;
 	u32 src_pdos[PDO_MAX_OBJECTS];
 	int num_pdos;
-
-	struct usb_role_switch *usb_role_sw;
 };
 
 int ucsi_send_command(struct ucsi *ucsi, u64 command,

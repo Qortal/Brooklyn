@@ -19,7 +19,6 @@
 #include <linux/tty.h>
 #include <linux/serial_8250.h>
 #include <linux/gpio/machine.h>
-#include <linux/platform_data/pata_ixp4xx_cf.h>
 #include <asm/types.h>
 #include <asm/setup.h>
 #include <asm/memory.h>

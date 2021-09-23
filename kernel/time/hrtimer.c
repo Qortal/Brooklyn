@@ -683,7 +683,7 @@ hrtimer_force_reprogram(struct hrtimer_cpu_base *cpu_base, int skip_equal)
 	 * T1 is removed, so this code is called and would reprogram
 	 * the hardware to 5s from now. Any hrtimer_start after that
 	 * will not reprogram the hardware due to hang_detected being
-	 * set. So we'd effectively block all timers until the T2 event
+	 * set. So we'd effectivly block all timers until the T2 event
 	 * fires.
 	 */
 	if (!__hrtimer_hres_active(cpu_base) || cpu_base->hang_detected)
@@ -756,6 +756,22 @@ static void hrtimer_switch_to_hres(void)
 	tick_setup_sched_timer();
 	/* "Retrigger" the interrupt to get things going */
 	retrigger_next_event(NULL);
+}
+
+static void clock_was_set_work(struct work_struct *work)
+{
+	clock_was_set();
+}
+
+static DECLARE_WORK(hrtimer_work, clock_was_set_work);
+
+/*
+ * Called from timekeeping and resume code to reprogram the hrtimer
+ * interrupt device on all cpus.
+ */
+void clock_was_set_delayed(void)
+{
+	schedule_work(&hrtimer_work);
 }
 
 #else
@@ -873,22 +889,6 @@ void clock_was_set(void)
 	on_each_cpu(retrigger_next_event, NULL, 1);
 #endif
 	timerfd_clock_was_set();
-}
-
-static void clock_was_set_work(struct work_struct *work)
-{
-	clock_was_set();
-}
-
-static DECLARE_WORK(hrtimer_work, clock_was_set_work);
-
-/*
- * Called from timekeeping and resume code to reprogram the hrtimer
- * interrupt device on all cpus and to notify timerfd.
- */
-void clock_was_set_delayed(void)
-{
-	schedule_work(&hrtimer_work);
 }
 
 /*
@@ -1019,7 +1019,7 @@ static void __remove_hrtimer(struct hrtimer *timer,
 	 * cpu_base->next_timer. This happens when we remove the first
 	 * timer on a remote cpu. No harm as we never dereference
 	 * cpu_base->next_timer. So the worst thing what can happen is
-	 * an superfluous call to hrtimer_force_reprogram() on the
+	 * an superflous call to hrtimer_force_reprogram() on the
 	 * remote cpu later on if the same timer gets enqueued again.
 	 */
 	if (reprogram && timer == cpu_base->next_timer)
@@ -1030,13 +1030,12 @@ static void __remove_hrtimer(struct hrtimer *timer,
  * remove hrtimer, called with base lock held
  */
 static inline int
-remove_hrtimer(struct hrtimer *timer, struct hrtimer_clock_base *base,
-	       bool restart, bool keep_local)
+remove_hrtimer(struct hrtimer *timer, struct hrtimer_clock_base *base, bool restart)
 {
 	u8 state = timer->state;
 
 	if (state & HRTIMER_STATE_ENQUEUED) {
-		bool reprogram;
+		int reprogram;
 
 		/*
 		 * Remove the timer and force reprogramming when high
@@ -1049,16 +1048,8 @@ remove_hrtimer(struct hrtimer *timer, struct hrtimer_clock_base *base,
 		debug_deactivate(timer);
 		reprogram = base->cpu_base == this_cpu_ptr(&hrtimer_bases);
 
-		/*
-		 * If the timer is not restarted then reprogramming is
-		 * required if the timer is local. If it is local and about
-		 * to be restarted, avoid programming it twice (on removal
-		 * and a moment later when it's requeued).
-		 */
 		if (!restart)
 			state = HRTIMER_STATE_INACTIVE;
-		else
-			reprogram &= !keep_local;
 
 		__remove_hrtimer(timer, base, state, reprogram);
 		return 1;
@@ -1112,31 +1103,9 @@ static int __hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 				    struct hrtimer_clock_base *base)
 {
 	struct hrtimer_clock_base *new_base;
-	bool force_local, first;
 
-	/*
-	 * If the timer is on the local cpu base and is the first expiring
-	 * timer then this might end up reprogramming the hardware twice
-	 * (on removal and on enqueue). To avoid that by prevent the
-	 * reprogram on removal, keep the timer local to the current CPU
-	 * and enforce reprogramming after it is queued no matter whether
-	 * it is the new first expiring timer again or not.
-	 */
-	force_local = base->cpu_base == this_cpu_ptr(&hrtimer_bases);
-	force_local &= base->cpu_base->next_timer == timer;
-
-	/*
-	 * Remove an active timer from the queue. In case it is not queued
-	 * on the current CPU, make sure that remove_hrtimer() updates the
-	 * remote data correctly.
-	 *
-	 * If it's on the current CPU and the first expiring timer, then
-	 * skip reprogramming, keep the timer local and enforce
-	 * reprogramming later if it was the first expiring timer.  This
-	 * avoids programming the underlying clock event twice (once at
-	 * removal and once after enqueue).
-	 */
-	remove_hrtimer(timer, base, true, force_local);
+	/* Remove an active timer from the queue: */
+	remove_hrtimer(timer, base, true);
 
 	if (mode & HRTIMER_MODE_REL)
 		tim = ktime_add_safe(tim, base->get_time());
@@ -1146,24 +1115,9 @@ static int __hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 	hrtimer_set_expires_range_ns(timer, tim, delta_ns);
 
 	/* Switch the timer base, if necessary: */
-	if (!force_local) {
-		new_base = switch_hrtimer_base(timer, base,
-					       mode & HRTIMER_MODE_PINNED);
-	} else {
-		new_base = base;
-	}
+	new_base = switch_hrtimer_base(timer, base, mode & HRTIMER_MODE_PINNED);
 
-	first = enqueue_hrtimer(timer, new_base, mode);
-	if (!force_local)
-		return first;
-
-	/*
-	 * Timer was forced to stay on the current CPU to avoid
-	 * reprogramming on removal and enqueue. Force reprogram the
-	 * hardware by evaluating the new first expiring timer.
-	 */
-	hrtimer_force_reprogram(new_base->cpu_base, 1);
-	return 0;
+	return enqueue_hrtimer(timer, new_base, mode);
 }
 
 /**
@@ -1229,7 +1183,7 @@ int hrtimer_try_to_cancel(struct hrtimer *timer)
 	base = lock_hrtimer_base(timer, &flags);
 
 	if (!hrtimer_callback_running(timer))
-		ret = remove_hrtimer(timer, base, false, false);
+		ret = remove_hrtimer(timer, base, false);
 
 	unlock_hrtimer_base(timer, &flags);
 
@@ -1258,7 +1212,7 @@ static void hrtimer_cpu_base_unlock_expiry(struct hrtimer_cpu_base *base)
  * The counterpart to hrtimer_cancel_wait_running().
  *
  * If there is a waiter for cpu_base->expiry_lock, then it was waiting for
- * the timer callback to finish. Drop expiry_lock and reacquire it. That
+ * the timer callback to finish. Drop expiry_lock and reaquire it. That
  * allows the waiter to acquire the lock and make progress.
  */
 static void hrtimer_sync_wait_running(struct hrtimer_cpu_base *cpu_base,
@@ -1348,7 +1302,7 @@ int hrtimer_cancel(struct hrtimer *timer)
 EXPORT_SYMBOL_GPL(hrtimer_cancel);
 
 /**
- * __hrtimer_get_remaining - get remaining time for the timer
+ * hrtimer_get_remaining - get remaining time for the timer
  * @timer:	the timer to read
  * @adjust:	adjust relative timers when CONFIG_TIME_LOW_RES=y
  */
@@ -1444,7 +1398,7 @@ static void __hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
 	int base;
 
 	/*
-	 * On PREEMPT_RT enabled kernels hrtimers which are not explicitly
+	 * On PREEMPT_RT enabled kernels hrtimers which are not explicitely
 	 * marked for hard interrupt expiry mode are moved into soft
 	 * interrupt context for latency reasons and because the callbacks
 	 * can invoke functions which might sleep on RT, e.g. spin_lock().
@@ -1476,7 +1430,7 @@ static void __hrtimer_init(struct hrtimer *timer, clockid_t clock_id,
  * hrtimer_init - initialize a timer to the given clock
  * @timer:	the timer to be initialized
  * @clock_id:	the clock to be used
- * @mode:       The modes which are relevant for initialization:
+ * @mode:       The modes which are relevant for intitialization:
  *              HRTIMER_MODE_ABS, HRTIMER_MODE_REL, HRTIMER_MODE_ABS_SOFT,
  *              HRTIMER_MODE_REL_SOFT
  *
@@ -1533,7 +1487,7 @@ EXPORT_SYMBOL_GPL(hrtimer_active);
  * insufficient for that.
  *
  * The sequence numbers are required because otherwise we could still observe
- * a false negative if the read side got smeared over multiple consecutive
+ * a false negative if the read side got smeared over multiple consequtive
  * __run_hrtimer() invocations.
  */
 
@@ -1634,7 +1588,7 @@ static void __hrtimer_run_queues(struct hrtimer_cpu_base *cpu_base, ktime_t now,
 			 * minimizing wakeups, not running timers at the
 			 * earliest interrupt after their soft expiration.
 			 * This allows us to avoid using a Priority Search
-			 * Tree, which can answer a stabbing query for
+			 * Tree, which can answer a stabbing querry for
 			 * overlapping intervals and instead use the simple
 			 * BST we already have.
 			 * We don't add extra wakeups by delaying timers that
@@ -1868,7 +1822,7 @@ static void __hrtimer_init_sleeper(struct hrtimer_sleeper *sl,
 				   clockid_t clock_id, enum hrtimer_mode mode)
 {
 	/*
-	 * On PREEMPT_RT enabled kernels hrtimers which are not explicitly
+	 * On PREEMPT_RT enabled kernels hrtimers which are not explicitely
 	 * marked for hard interrupt expiry mode are moved into soft
 	 * interrupt context either for latency reasons or because the
 	 * hrtimer callback takes regular spinlocks or invokes other
@@ -1881,7 +1835,7 @@ static void __hrtimer_init_sleeper(struct hrtimer_sleeper *sl,
 	 * the same CPU. That causes a latency spike due to the wakeup of
 	 * a gazillion threads.
 	 *
-	 * OTOH, privileged real-time user space applications rely on the
+	 * OTOH, priviledged real-time user space applications rely on the
 	 * low latency of hard interrupt wakeups. If the current task is in
 	 * a real-time scheduling class, mark the mode for hard interrupt
 	 * expiry.

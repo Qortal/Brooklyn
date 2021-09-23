@@ -497,14 +497,18 @@ static int npa_aq_init(struct rvu *rvu, struct rvu_block *block)
 int rvu_npa_init(struct rvu *rvu)
 {
 	struct rvu_hwinfo *hw = rvu->hw;
-	int blkaddr;
+	int blkaddr, err;
 
 	blkaddr = rvu_get_blkaddr(rvu, BLKTYPE_NPA, 0);
 	if (blkaddr < 0)
 		return 0;
 
 	/* Initialize admin queue */
-	return npa_aq_init(rvu, &hw->block[blkaddr]);
+	err = npa_aq_init(rvu, &hw->block[blkaddr]);
+	if (err)
+		return err;
+
+	return 0;
 }
 
 void rvu_npa_freemem(struct rvu *rvu)

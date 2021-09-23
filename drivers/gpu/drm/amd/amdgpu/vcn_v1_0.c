@@ -32,6 +32,7 @@
 
 #include "vcn/vcn_1_0_offset.h"
 #include "vcn/vcn_1_0_sh_mask.h"
+#include "hdp/hdp_4_0_offset.h"
 #include "mmhub/mmhub_9_1_offset.h"
 #include "mmhub/mmhub_9_1_sh_mask.h"
 
@@ -129,7 +130,7 @@ static int vcn_v1_0_sw_init(void *handle)
 	ring = &adev->vcn.inst->ring_dec;
 	sprintf(ring->name, "vcn_dec");
 	r = amdgpu_ring_init(adev, ring, 512, &adev->vcn.inst->irq, 0,
-			     AMDGPU_RING_PRIO_DEFAULT, NULL);
+			     AMDGPU_RING_PRIO_DEFAULT);
 	if (r)
 		return r;
 
@@ -148,7 +149,7 @@ static int vcn_v1_0_sw_init(void *handle)
 		ring = &adev->vcn.inst->ring_enc[i];
 		sprintf(ring->name, "vcn_enc%d", i);
 		r = amdgpu_ring_init(adev, ring, 512, &adev->vcn.inst->irq, 0,
-				     AMDGPU_RING_PRIO_DEFAULT, NULL);
+				     AMDGPU_RING_PRIO_DEFAULT);
 		if (r)
 			return r;
 	}
@@ -434,6 +435,7 @@ static void vcn_v1_0_mc_resume_dpg_mode(struct amdgpu_device *adev)
  * vcn_v1_0_disable_clock_gating - disable VCN clock gating
  *
  * @adev: amdgpu_device pointer
+ * @sw: enable SW clock gating
  *
  * Disable clock gating for VCN block
  */
@@ -560,6 +562,7 @@ static void vcn_v1_0_disable_clock_gating(struct amdgpu_device *adev)
  * vcn_v1_0_enable_clock_gating - enable VCN clock gating
  *
  * @adev: amdgpu_device pointer
+ * @sw: enable SW clock gating
  *
  * Enable clock gating for VCN block
  */
@@ -769,7 +772,7 @@ static void vcn_1_0_enable_static_power_gating(struct amdgpu_device *adev)
 }
 
 /**
- * vcn_v1_0_start_spg_mode - start VCN block
+ * vcn_v1_0_start - start VCN block
  *
  * @adev: amdgpu_device pointer
  *
@@ -1105,7 +1108,7 @@ static int vcn_v1_0_start(struct amdgpu_device *adev)
 }
 
 /**
- * vcn_v1_0_stop_spg_mode - stop VCN block
+ * vcn_v1_0_stop - stop VCN block
  *
  * @adev: amdgpu_device pointer
  *
@@ -1123,10 +1126,10 @@ static int vcn_v1_0_stop_spg_mode(struct amdgpu_device *adev)
 		UVD_LMI_STATUS__WRITE_CLEAN_RAW_MASK;
 	SOC15_WAIT_ON_RREG(UVD, 0, mmUVD_LMI_STATUS, tmp, tmp);
 
-	/* stall UMC channel */
-	WREG32_P(SOC15_REG_OFFSET(UVD, 0, mmUVD_LMI_CTRL2),
-		UVD_LMI_CTRL2__STALL_ARB_UMC_MASK,
-		~UVD_LMI_CTRL2__STALL_ARB_UMC_MASK);
+	/* put VCPU into reset */
+	WREG32_P(SOC15_REG_OFFSET(UVD, 0, mmUVD_SOFT_RESET),
+		UVD_SOFT_RESET__VCPU_SOFT_RESET_MASK,
+		~UVD_SOFT_RESET__VCPU_SOFT_RESET_MASK);
 
 	tmp = UVD_LMI_STATUS__UMC_READ_CLEAN_RAW_MASK |
 		UVD_LMI_STATUS__UMC_WRITE_CLEAN_RAW_MASK;
@@ -1144,11 +1147,6 @@ static int vcn_v1_0_stop_spg_mode(struct amdgpu_device *adev)
 	WREG32_P(SOC15_REG_OFFSET(UVD, 0, mmUVD_SOFT_RESET),
 		UVD_SOFT_RESET__LMI_SOFT_RESET_MASK,
 		~UVD_SOFT_RESET__LMI_SOFT_RESET_MASK);
-
-	/* put VCPU into reset */
-	WREG32_P(SOC15_REG_OFFSET(UVD, 0, mmUVD_SOFT_RESET),
-		UVD_SOFT_RESET__VCPU_SOFT_RESET_MASK,
-		~UVD_SOFT_RESET__VCPU_SOFT_RESET_MASK);
 
 	WREG32_SOC15(UVD, 0, mmUVD_STATUS, 0);
 
@@ -1451,9 +1449,7 @@ static void vcn_v1_0_dec_ring_insert_end(struct amdgpu_ring *ring)
  * vcn_v1_0_dec_ring_emit_fence - emit an fence & trap command
  *
  * @ring: amdgpu_ring pointer
- * @addr: address
- * @seq: sequence number
- * @flags: fence related flags
+ * @fence: fence to emit
  *
  * Write a fence and a trap command to the ring.
  */
@@ -1492,9 +1488,7 @@ static void vcn_v1_0_dec_ring_emit_fence(struct amdgpu_ring *ring, u64 addr, u64
  * vcn_v1_0_dec_ring_emit_ib - execute indirect buffer
  *
  * @ring: amdgpu_ring pointer
- * @job: job to retrieve vmid from
  * @ib: indirect buffer to execute
- * @flags: unused
  *
  * Write ring commands to execute the indirect buffer
  */
@@ -1629,9 +1623,7 @@ static void vcn_v1_0_enc_ring_set_wptr(struct amdgpu_ring *ring)
  * vcn_v1_0_enc_ring_emit_fence - emit an enc fence & trap command
  *
  * @ring: amdgpu_ring pointer
- * @addr: address
- * @seq: sequence number
- * @flags: fence related flags
+ * @fence: fence to emit
  *
  * Write enc a fence and a trap command to the ring.
  */
@@ -1656,9 +1648,7 @@ static void vcn_v1_0_enc_ring_insert_end(struct amdgpu_ring *ring)
  * vcn_v1_0_enc_ring_emit_ib - enc execute indirect buffer
  *
  * @ring: amdgpu_ring pointer
- * @job: job to retrive vmid from
  * @ib: indirect buffer to execute
- * @flags: unused
  *
  * Write enc ring commands to execute the indirect buffer
  */

@@ -276,6 +276,7 @@ static int st_nci_hci_apdu_reader_event_received(struct nci_dev *ndev,
 						   u8 event,
 						   struct sk_buff *skb)
 {
+	int r = 0;
 	struct st_nci_info *info = nci_get_drvdata(ndev);
 
 	pr_debug("apdu reader gate event: %x\n", event);
@@ -297,7 +298,7 @@ static int st_nci_hci_apdu_reader_event_received(struct nci_dev *ndev,
 	}
 
 	kfree_skb(skb);
-	return 0;
+	return r;
 }
 
 /*
@@ -470,6 +471,8 @@ int st_nci_disable_se(struct nci_dev *ndev, u32 se_idx)
 {
 	int r;
 
+	pr_debug("st_nci_disable_se\n");
+
 	/*
 	 * According to upper layer, se_idx == NFC_SE_UICC when
 	 * info->se_info.se_status->is_uicc_enable is true should never happen
@@ -493,6 +496,8 @@ EXPORT_SYMBOL_GPL(st_nci_disable_se);
 int st_nci_enable_se(struct nci_dev *ndev, u32 se_idx)
 {
 	int r;
+
+	pr_debug("st_nci_enable_se\n");
 
 	/*
 	 * According to upper layer, se_idx == NFC_SE_UICC when
@@ -530,8 +535,10 @@ static int st_nci_hci_network_init(struct nci_dev *ndev)
 	dest_params =
 		kzalloc(sizeof(struct core_conn_create_dest_spec_params) +
 			sizeof(struct dest_spec_params), GFP_KERNEL);
-	if (dest_params == NULL)
-		return -ENOMEM;
+	if (dest_params == NULL) {
+		r = -ENOMEM;
+		goto exit;
+	}
 
 	dest_params->type = NCI_DESTINATION_SPECIFIC_PARAM_NFCEE_TYPE;
 	dest_params->length = sizeof(struct dest_spec_params);
@@ -588,6 +595,8 @@ static int st_nci_hci_network_init(struct nci_dev *ndev)
 
 free_dest_params:
 	kfree(dest_params);
+
+exit:
 	return r;
 }
 
@@ -597,6 +606,8 @@ int st_nci_discover_se(struct nci_dev *ndev)
 	int r, wl_size = 0;
 	int se_count = 0;
 	struct st_nci_info *info = nci_get_drvdata(ndev);
+
+	pr_debug("st_nci_discover_se\n");
 
 	r = st_nci_hci_network_init(ndev);
 	if (r != 0)

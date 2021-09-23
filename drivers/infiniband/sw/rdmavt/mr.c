@@ -101,8 +101,8 @@ int rvt_driver_mr_init(struct rvt_dev_info *rdi)
 }
 
 /**
- * rvt_mr_exit - clean up MR
- * @rdi: rvt dev structure
+ *rvt_mr_exit: clean up MR
+ *@rdi: rvt dev structure
  *
  * called when drivers have unregistered or perhaps failed to register with us
  */
@@ -369,7 +369,6 @@ bail:
  * @pd: protection domain for this memory region
  * @start: starting userspace address
  * @length: length of region to register
- * @virt_addr: associated virtual address
  * @mr_access_flags: access flags for this memory region
  * @udata: unused by the driver
  *
@@ -439,8 +438,8 @@ bail_umem:
 
 /**
  * rvt_dereg_clean_qp_cb - callback from iterator
- * @qp: the qp
- * @v: the mregion (as u64)
+ * @qp - the qp
+ * @v - the mregion (as u64)
  *
  * This routine fields the callback for all QPs and
  * for QPs in the same PD as the MR will call the
@@ -458,7 +457,7 @@ static void rvt_dereg_clean_qp_cb(struct rvt_qp *qp, u64 v)
 
 /**
  * rvt_dereg_clean_qps - find QPs for reference cleanup
- * @mr: the MR that is being deregistered
+ * @mr - the MR that is being deregistered
  *
  * This routine iterates RC QPs looking for references
  * to the lkey noted in mr.
@@ -472,8 +471,8 @@ static void rvt_dereg_clean_qps(struct rvt_mregion *mr)
 
 /**
  * rvt_check_refs - check references
- * @mr: the megion
- * @t: the caller identification
+ * @mr - the megion
+ * @t - the caller identification
  *
  * This routine checks MRs holding a reference during
  * when being de-registered.
@@ -507,8 +506,8 @@ static int rvt_check_refs(struct rvt_mregion *mr, const char *t)
 
 /**
  * rvt_mr_has_lkey - is MR
- * @mr: the mregion
- * @lkey: the lkey
+ * @mr - the mregion
+ * @lkey - the lkey
  */
 bool rvt_mr_has_lkey(struct rvt_mregion *mr, u32 lkey)
 {
@@ -517,8 +516,8 @@ bool rvt_mr_has_lkey(struct rvt_mregion *mr, u32 lkey)
 
 /**
  * rvt_ss_has_lkey - is mr in sge tests
- * @ss: the sge state
- * @lkey: the lkey
+ * @ss - the sge state
+ * @lkey
  *
  * This code tests for an MR in the indicated
  * sge state.
@@ -541,7 +540,7 @@ bool rvt_ss_has_lkey(struct rvt_sge_state *ss, u32 lkey)
 /**
  * rvt_dereg_mr - unregister and free a memory region
  * @ibmr: the memory region to free
- * @udata: unused by the driver
+ *
  *
  * Note that this is called to free MRs created by rvt_get_dma_mr()
  * or rvt_reg_user_mr().

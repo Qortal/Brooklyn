@@ -133,8 +133,6 @@ int ifcvf_init_hw(struct ifcvf_hw *hw, struct pci_dev *pdev)
 					      &hw->notify_off_multiplier);
 			hw->notify_bar = cap.bar;
 			hw->notify_base = get_cap_addr(hw, &cap);
-			hw->notify_base_pa = pci_resource_start(pdev, cap.bar) +
-					le32_to_cpu(cap.offset);
 			IFCVF_DBG(pdev, "hw->notify_base = %p\n",
 				  hw->notify_base);
 			break;
@@ -162,8 +160,6 @@ next:
 		ifc_iowrite16(i, &hw->common_cfg->queue_select);
 		notify_off = ifc_ioread16(&hw->common_cfg->queue_notify_off);
 		hw->vring[i].notify_addr = hw->notify_base +
-			notify_off * hw->notify_off_multiplier;
-		hw->vring[i].notify_pa = hw->notify_base_pa +
 			notify_off * hw->notify_off_multiplier;
 	}
 
@@ -206,11 +202,10 @@ static void ifcvf_add_status(struct ifcvf_hw *hw, u8 status)
 	ifcvf_get_status(hw);
 }
 
-u64 ifcvf_get_hw_features(struct ifcvf_hw *hw)
+u64 ifcvf_get_features(struct ifcvf_hw *hw)
 {
 	struct virtio_pci_common_cfg __iomem *cfg = hw->common_cfg;
 	u32 features_lo, features_hi;
-	u64 features;
 
 	ifc_iowrite32(0, &cfg->device_feature_select);
 	features_lo = ifc_ioread32(&cfg->device_feature);
@@ -218,26 +213,7 @@ u64 ifcvf_get_hw_features(struct ifcvf_hw *hw)
 	ifc_iowrite32(1, &cfg->device_feature_select);
 	features_hi = ifc_ioread32(&cfg->device_feature);
 
-	features = ((u64)features_hi << 32) | features_lo;
-
-	return features;
-}
-
-u64 ifcvf_get_features(struct ifcvf_hw *hw)
-{
-	return hw->hw_features;
-}
-
-int ifcvf_verify_min_features(struct ifcvf_hw *hw, u64 features)
-{
-	struct ifcvf_adapter *ifcvf = vf_to_adapter(hw);
-
-	if (!(features & BIT_ULL(VIRTIO_F_ACCESS_PLATFORM)) && features) {
-		IFCVF_ERR(ifcvf->pdev, "VIRTIO_F_ACCESS_PLATFORM is not negotiated\n");
-		return -EINVAL;
-	}
-
-	return 0;
+	return ((u64)features_hi << 32) | features_lo;
 }
 
 void ifcvf_read_net_config(struct ifcvf_hw *hw, u64 offset,

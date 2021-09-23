@@ -14,6 +14,7 @@
 #include <linux/blk-mq.h>
 #include <linux/spinlock.h>
 #include <linux/mutex.h>
+#include <linux/kthread.h>
 #include <uapi/linux/loop.h>
 
 /* Possible states of device */
@@ -21,7 +22,6 @@ enum {
 	Lo_unbound,
 	Lo_bound,
 	Lo_rundown,
-	Lo_deleting,
 };
 
 struct loop_func_table;
@@ -54,31 +54,24 @@ struct loop_device {
 
 	spinlock_t		lo_lock;
 	int			lo_state;
-	spinlock_t              lo_work_lock;
-	struct workqueue_struct *workqueue;
-	struct work_struct      rootcg_work;
-	struct list_head        rootcg_cmd_list;
-	struct list_head        idle_worker_list;
-	struct rb_root          worker_tree;
-	struct timer_list       timer;
+	struct kthread_worker	worker;
+	struct task_struct	*worker_task;
 	bool			use_dio;
 	bool			sysfs_inited;
 
 	struct request_queue	*lo_queue;
 	struct blk_mq_tag_set	tag_set;
 	struct gendisk		*lo_disk;
-	struct mutex		lo_mutex;
 };
 
 struct loop_cmd {
-	struct list_head list_entry;
+	struct kthread_work work;
 	bool use_aio; /* use AIO interface to handle I/O */
 	atomic_t ref; /* only for aio */
 	long ret;
 	struct kiocb iocb;
 	struct bio_vec *bvec;
-	struct cgroup_subsys_state *blkcg_css;
-	struct cgroup_subsys_state *memcg_css;
+	struct cgroup_subsys_state *css;
 };
 
 /* Support for loadable transfer modules */

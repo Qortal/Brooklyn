@@ -15,7 +15,6 @@
 #include <linux/irq.h>
 #include <linux/irq_sim.h>
 #include <linux/irqdomain.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
@@ -144,9 +143,12 @@ static void gpio_mockup_set_multiple(struct gpio_chip *gc,
 static int gpio_mockup_apply_pull(struct gpio_mockup_chip *chip,
 				  unsigned int offset, int value)
 {
-	struct gpio_chip *gc = &chip->gc;
-	struct gpio_desc *desc = gpiochip_get_desc(gc, offset);
 	int curr, irq, irq_type, ret = 0;
+	struct gpio_desc *desc;
+	struct gpio_chip *gc;
+
+	gc = &chip->gc;
+	desc = &gc->gpiodev->descs[offset];
 
 	mutex_lock(&chip->lock);
 
@@ -366,7 +368,7 @@ static void gpio_mockup_debugfs_setup(struct device *dev,
 
 		priv->chip = chip;
 		priv->offset = i;
-		priv->desc = gpiochip_get_desc(gc, i);
+		priv->desc = &gc->gpiodev->descs[i];
 
 		debugfs_create_file(name, 0200, chip->dbg_dir, priv,
 				    &gpio_mockup_debugfs_ops);
@@ -458,16 +460,9 @@ static int gpio_mockup_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct of_device_id gpio_mockup_of_match[] = {
-	{ .compatible = "gpio-mockup", },
-	{},
-};
-MODULE_DEVICE_TABLE(of, gpio_mockup_of_match);
-
 static struct platform_driver gpio_mockup_driver = {
 	.driver = {
 		.name = "gpio-mockup",
-		.of_match_table = gpio_mockup_of_match,
 	},
 	.probe = gpio_mockup_probe,
 };
@@ -476,10 +471,15 @@ static struct platform_device *gpio_mockup_pdevs[GPIO_MOCKUP_MAX_GC];
 
 static void gpio_mockup_unregister_pdevs(void)
 {
+	struct platform_device *pdev;
 	int i;
 
-	for (i = 0; i < GPIO_MOCKUP_MAX_GC; i++)
-		platform_device_unregister(gpio_mockup_pdevs[i]);
+	for (i = 0; i < GPIO_MOCKUP_MAX_GC; i++) {
+		pdev = gpio_mockup_pdevs[i];
+
+		if (pdev)
+			platform_device_unregister(pdev);
+	}
 }
 
 static __init char **gpio_mockup_make_line_names(const char *label,
@@ -556,7 +556,8 @@ static int __init gpio_mockup_init(void)
 {
 	int i, num_chips, err;
 
-	if ((gpio_mockup_num_ranges % 2) ||
+	if ((gpio_mockup_num_ranges < 2) ||
+	    (gpio_mockup_num_ranges % 2) ||
 	    (gpio_mockup_num_ranges > GPIO_MOCKUP_MAX_RANGES))
 		return -EINVAL;
 

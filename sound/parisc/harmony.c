@@ -915,9 +915,10 @@ snd_harmony_create(struct snd_card *card,
 	spin_lock_init(&h->mixer_lock);
 	spin_lock_init(&h->lock);
 
-	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, h, &ops);
-	if (err < 0)
-		goto free_and_ret;
+        if ((err = snd_device_new(card, SNDRV_DEV_LOWLEVEL,
+                                  h, &ops)) < 0) {
+                goto free_and_ret;
+        }
 
 	*rchip = h;
 

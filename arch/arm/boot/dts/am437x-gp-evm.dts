@@ -786,7 +786,7 @@
 	pinctrl-0 = <&gpio0_pins>;
 	status = "okay";
 
-	sel-emmc-nand-hog {
+	p23 {
 		gpio-hog;
 		gpios = <23 GPIO_ACTIVE_HIGH>;
 		/* SelEMMCorNAND selects between eMMC and NAND:
@@ -822,7 +822,7 @@
 	pinctrl-0 = <&display_mux_pins>;
 	status = "okay";
 
-	sel-lcd-hdmi-hog {
+	p8 {
 		/*
 		 * SelLCDorHDMI selects between display and audio paths:
 		 * Low: HDMI display with audio via HDMI

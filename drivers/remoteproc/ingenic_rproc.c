@@ -27,11 +27,6 @@
 #define AUX_CTRL_NMI		BIT(1)
 #define AUX_CTRL_SW_RESET	BIT(0)
 
-static bool auto_boot;
-module_param(auto_boot, bool, 0400);
-MODULE_PARM_DESC(auto_boot,
-		 "Auto-boot the remote processor [default=false]");
-
 struct vpu_mem_map {
 	const char *name;
 	unsigned int da;
@@ -121,7 +116,7 @@ static void ingenic_rproc_kick(struct rproc *rproc, int vqid)
 	writel(vqid, vpu->aux_base + REG_CORE_MSG);
 }
 
-static void *ingenic_rproc_da_to_va(struct rproc *rproc, u64 da, size_t len, bool *is_iomem)
+static void *ingenic_rproc_da_to_va(struct rproc *rproc, u64 da, size_t len)
 {
 	struct vpu *vpu = rproc->priv;
 	void __iomem *va = NULL;
@@ -140,7 +135,7 @@ static void *ingenic_rproc_da_to_va(struct rproc *rproc, u64 da, size_t len, boo
 	return (__force void *)va;
 }
 
-static const struct rproc_ops ingenic_rproc_ops = {
+static struct rproc_ops ingenic_rproc_ops = {
 	.prepare = ingenic_rproc_prepare,
 	.unprepare = ingenic_rproc_unprepare,
 	.start = ingenic_rproc_start,
@@ -176,8 +171,6 @@ static int ingenic_rproc_probe(struct platform_device *pdev)
 				 &ingenic_rproc_ops, NULL, sizeof(*vpu));
 	if (!rproc)
 		return -ENOMEM;
-
-	rproc->auto_boot = auto_boot;
 
 	vpu = rproc->priv;
 	vpu->dev = &pdev->dev;

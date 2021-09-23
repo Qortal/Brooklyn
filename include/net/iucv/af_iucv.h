@@ -128,12 +128,11 @@ struct iucv_sock {
 	u8			flags;
 	u16			msglimit;
 	u16			msglimit_peer;
-	atomic_t		skbs_in_xmit;
 	atomic_t		msg_sent;
 	atomic_t		msg_recv;
 	atomic_t		pendings;
 	int			transport;
-	void			(*sk_txnotify)(struct sock *sk,
+	void                    (*sk_txnotify)(struct sk_buff *skb,
 					       enum iucv_tx_notify n);
 };
 

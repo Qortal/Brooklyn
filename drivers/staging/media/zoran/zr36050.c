@@ -16,7 +16,7 @@
 #include <linux/wait.h>
 
 /* I/O commands, error codes */
-#include <linux/io.h>
+#include <asm/io.h>
 
 /* headerfile of this module */
 #include "zr36050.h"
@@ -754,8 +754,7 @@ static int zr36050_setup(struct videocodec *codec)
 		return -ENOSPC;
 	}
 	//mem structure init
-	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
-	codec->data = ptr;
+	codec->data = ptr = kzalloc(sizeof(struct zr36050), GFP_KERNEL);
 	if (!ptr)
 		return -ENOMEM;
 

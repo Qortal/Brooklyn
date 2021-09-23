@@ -314,8 +314,18 @@ static int fme_mgr_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	mgr->compat_id = compat_id;
+	platform_set_drvdata(pdev, mgr);
 
-	return devm_fpga_mgr_register(dev, mgr);
+	return fpga_mgr_register(mgr);
+}
+
+static int fme_mgr_remove(struct platform_device *pdev)
+{
+	struct fpga_manager *mgr = platform_get_drvdata(pdev);
+
+	fpga_mgr_unregister(mgr);
+
+	return 0;
 }
 
 static struct platform_driver fme_mgr_driver = {
@@ -323,6 +333,7 @@ static struct platform_driver fme_mgr_driver = {
 		.name    = DFL_FPGA_FME_MGR,
 	},
 	.probe   = fme_mgr_probe,
+	.remove  = fme_mgr_remove,
 };
 
 module_platform_driver(fme_mgr_driver);

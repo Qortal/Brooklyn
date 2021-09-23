@@ -12,11 +12,6 @@
 
 #include <linux/tracepoint.h>
 
-/*
- * Please use this 3-part article as a reference for writing new tracepoints:
- * https://lwn.net/Articles/379903/
- */
-
 /* For logging errors in read or write */
 DECLARE_EVENT_CLASS(smb3_rw_err_class,
 	TP_PROTO(unsigned int xid,
@@ -534,16 +529,16 @@ DECLARE_EVENT_CLASS(smb3_exit_err_class,
 	TP_ARGS(xid, func_name, rc),
 	TP_STRUCT__entry(
 		__field(unsigned int, xid)
-		__string(func_name, func_name)
+		__field(const char *, func_name)
 		__field(int, rc)
 	),
 	TP_fast_assign(
 		__entry->xid = xid;
-		__assign_str(func_name, func_name);
+		__entry->func_name = func_name;
 		__entry->rc = rc;
 	),
 	TP_printk("\t%s: xid=%u rc=%d",
-		__get_str(func_name), __entry->xid, __entry->rc)
+		__entry->func_name, __entry->xid, __entry->rc)
 )
 
 #define DEFINE_SMB3_EXIT_ERR_EVENT(name)          \
@@ -588,14 +583,14 @@ DECLARE_EVENT_CLASS(smb3_enter_exit_class,
 	TP_ARGS(xid, func_name),
 	TP_STRUCT__entry(
 		__field(unsigned int, xid)
-		__string(func_name, func_name)
+		__field(const char *, func_name)
 	),
 	TP_fast_assign(
 		__entry->xid = xid;
-		__assign_str(func_name, func_name);
+		__entry->func_name = func_name;
 	),
 	TP_printk("\t%s: xid=%u",
-		__get_str(func_name), __entry->xid)
+		__entry->func_name, __entry->xid)
 )
 
 #define DEFINE_SMB3_ENTER_EXIT_EVENT(name)        \
@@ -856,86 +851,66 @@ DEFINE_SMB3_LEASE_ERR_EVENT(lease_err);
 
 DECLARE_EVENT_CLASS(smb3_reconnect_class,
 	TP_PROTO(__u64	currmid,
-		__u64 conn_id,
 		char *hostname),
-	TP_ARGS(currmid, conn_id, hostname),
+	TP_ARGS(currmid, hostname),
 	TP_STRUCT__entry(
 		__field(__u64, currmid)
-		__field(__u64, conn_id)
-		__string(hostname, hostname)
+		__field(char *, hostname)
 	),
 	TP_fast_assign(
 		__entry->currmid = currmid;
-		__entry->conn_id = conn_id;
-		__assign_str(hostname, hostname);
+		__entry->hostname = hostname;
 	),
-	TP_printk("conn_id=0x%llx server=%s current_mid=%llu",
-		__entry->conn_id,
-		__get_str(hostname),
+	TP_printk("server=%s current_mid=0x%llx",
+		__entry->hostname,
 		__entry->currmid)
 )
 
 #define DEFINE_SMB3_RECONNECT_EVENT(name)        \
 DEFINE_EVENT(smb3_reconnect_class, smb3_##name,  \
 	TP_PROTO(__u64	currmid,		\
-		__u64 conn_id,			\
-		char *hostname),				\
-	TP_ARGS(currmid, conn_id, hostname))
+		char *hostname),		\
+	TP_ARGS(currmid, hostname))
 
 DEFINE_SMB3_RECONNECT_EVENT(reconnect);
 DEFINE_SMB3_RECONNECT_EVENT(partial_send_reconnect);
 
 DECLARE_EVENT_CLASS(smb3_credit_class,
 	TP_PROTO(__u64	currmid,
-		__u64 conn_id,
 		char *hostname,
 		int credits,
-		int credits_to_add,
-		int in_flight),
-	TP_ARGS(currmid, conn_id, hostname, credits, credits_to_add, in_flight),
+		int credits_to_add),
+	TP_ARGS(currmid, hostname, credits, credits_to_add),
 	TP_STRUCT__entry(
 		__field(__u64, currmid)
-		__field(__u64, conn_id)
-		__string(hostname, hostname)
+		__field(char *, hostname)
 		__field(int, credits)
 		__field(int, credits_to_add)
-		__field(int, in_flight)
 	),
 	TP_fast_assign(
 		__entry->currmid = currmid;
-		__entry->conn_id = conn_id;
-		__assign_str(hostname, hostname);
+		__entry->hostname = hostname;
 		__entry->credits = credits;
 		__entry->credits_to_add = credits_to_add;
-		__entry->in_flight = in_flight;
 	),
-	TP_printk("conn_id=0x%llx server=%s current_mid=%llu "
-			"credits=%d credit_change=%d in_flight=%d",
-		__entry->conn_id,
-		__get_str(hostname),
+	TP_printk("server=%s current_mid=0x%llx credits=%d credits_to_add=%d",
+		__entry->hostname,
 		__entry->currmid,
 		__entry->credits,
-		__entry->credits_to_add,
-		__entry->in_flight)
+		__entry->credits_to_add)
 )
 
 #define DEFINE_SMB3_CREDIT_EVENT(name)        \
 DEFINE_EVENT(smb3_credit_class, smb3_##name,  \
 	TP_PROTO(__u64	currmid,		\
-		__u64 conn_id,			\
 		char *hostname,			\
 		int  credits,			\
-		int  credits_to_add,	\
-		int in_flight),			\
-	TP_ARGS(currmid, conn_id, hostname, credits, credits_to_add, in_flight))
+		int  credits_to_add),		\
+	TP_ARGS(currmid, hostname, credits, credits_to_add))
 
 DEFINE_SMB3_CREDIT_EVENT(reconnect_with_invalid_credits);
-DEFINE_SMB3_CREDIT_EVENT(reconnect_detected);
 DEFINE_SMB3_CREDIT_EVENT(credit_timeout);
-DEFINE_SMB3_CREDIT_EVENT(insufficient_credits);
-DEFINE_SMB3_CREDIT_EVENT(too_many_credits);
 DEFINE_SMB3_CREDIT_EVENT(add_credits);
-DEFINE_SMB3_CREDIT_EVENT(set_credits);
 
 #endif /* _CIFS_TRACE_H */
 

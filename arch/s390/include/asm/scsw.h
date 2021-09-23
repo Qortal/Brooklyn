@@ -525,7 +525,8 @@ static inline int scsw_cmd_is_valid_pno(union scsw *scsw)
 	return (scsw->cmd.fctl != 0) &&
 	       (scsw->cmd.stctl & SCSW_STCTL_STATUS_PEND) &&
 	       (!(scsw->cmd.stctl & SCSW_STCTL_INTER_STATUS) ||
-		  (scsw->cmd.actl & SCSW_ACTL_SUSPENDED));
+		 ((scsw->cmd.stctl & SCSW_STCTL_INTER_STATUS) &&
+		  (scsw->cmd.actl & SCSW_ACTL_SUSPENDED)));
 }
 
 /**

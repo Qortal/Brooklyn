@@ -403,7 +403,7 @@ error:
 	return err;
 }
 
-static void snd_cmi8328_remove(struct device *pdev, unsigned int dev)
+static int snd_cmi8328_remove(struct device *pdev, unsigned int dev)
 {
 	struct snd_card *card = dev_get_drvdata(pdev);
 	struct snd_cmi8328 *cmi = card->private_data;
@@ -420,6 +420,7 @@ static void snd_cmi8328_remove(struct device *pdev, unsigned int dev)
 	snd_cmi8328_cfg_write(cmi->port, CFG2, 0);
 	snd_cmi8328_cfg_write(cmi->port, CFG3, 0);
 	snd_card_free(card);
+	return 0;
 }
 
 #ifdef CONFIG_PM

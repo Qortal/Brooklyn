@@ -86,6 +86,7 @@ enum {DEVICE_ALS300, DEVICE_ALS300_PLUS};
 MODULE_AUTHOR("Ash Willis <ashwillis@programmer.net>");
 MODULE_DESCRIPTION("Avance Logic ALS300");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{Avance Logic,ALS300},{Avance Logic,ALS300+}}");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;
@@ -298,8 +299,7 @@ static int snd_als300_ac97(struct snd_als300 *chip)
 		.read = snd_als300_ac97_read,
 	};
 
-	err = snd_ac97_bus(chip->card, 0, &ops, NULL, &bus);
-	if (err < 0)
+	if ((err = snd_ac97_bus(chip->card, 0, &ops, NULL, &bus)) < 0)
 		return err;
 
 	memset(&ac97, 0, sizeof(ac97));
@@ -622,11 +622,11 @@ static int snd_als300_create(struct snd_card *card,
 	};
 	*rchip = NULL;
 
-	err = pci_enable_device(pci);
-	if (err < 0)
+	if ((err = pci_enable_device(pci)) < 0)
 		return err;
 
-	if (dma_set_mask_and_coherent(&pci->dev, DMA_BIT_MASK(28))) {
+	if (dma_set_mask(&pci->dev, DMA_BIT_MASK(28)) < 0 ||
+		dma_set_coherent_mask(&pci->dev, DMA_BIT_MASK(28)) < 0) {
 		dev_err(card->dev, "error setting 28bit DMA mask\n");
 		pci_disable_device(pci);
 		return -ENXIO;
@@ -645,8 +645,7 @@ static int snd_als300_create(struct snd_card *card,
 	chip->chip_type = chip_type;
 	spin_lock_init(&chip->reg_lock);
 
-	err = pci_request_regions(pci, "ALS300");
-	if (err < 0) {
+	if ((err = pci_request_regions(pci, "ALS300")) < 0) {
 		kfree(chip);
 		pci_disable_device(pci);
 		return err;
@@ -676,15 +675,14 @@ static int snd_als300_create(struct snd_card *card,
 		return err;
 	}
 
-	err = snd_als300_new_pcm(chip);
-	if (err < 0) {
+	if ((err = snd_als300_new_pcm(chip)) < 0) {
 		dev_err(card->dev, "Could not create PCM\n");
 		snd_als300_free(chip);
 		return err;
 	}
 
-	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops);
-	if (err < 0) {
+	if ((err = snd_device_new(card, SNDRV_DEV_LOWLEVEL,
+						chip, &ops)) < 0) {
 		snd_als300_free(chip);
 		return err;
 	}
@@ -745,8 +743,7 @@ static int snd_als300_probe(struct pci_dev *pci,
 
 	chip_type = pci_id->driver_data;
 
-	err = snd_als300_create(card, pci, chip_type, &chip);
-	if (err < 0) {
+	if ((err = snd_als300_create(card, pci, chip_type, &chip)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
@@ -763,8 +760,7 @@ static int snd_als300_probe(struct pci_dev *pci,
 	sprintf(card->longname, "%s at 0x%lx irq %i",
 				card->shortname, chip->port, chip->irq);
 
-	err = snd_card_register(card);
-	if (err < 0) {
+	if ((err = snd_card_register(card)) < 0) {
 		snd_card_free(card);
 		return err;
 	}

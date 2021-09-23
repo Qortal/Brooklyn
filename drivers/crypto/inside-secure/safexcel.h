@@ -11,8 +11,7 @@
 #include <crypto/aead.h>
 #include <crypto/algapi.h>
 #include <crypto/internal/hash.h>
-#include <crypto/sha1.h>
-#include <crypto/sha2.h>
+#include <crypto/sha.h>
 #include <crypto/sha3.h>
 #include <crypto/skcipher.h>
 #include <linux/types.h>

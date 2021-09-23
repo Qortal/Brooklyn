@@ -63,9 +63,14 @@ __visible DEFINE_PER_CPU_PAGE_ALIGNED(struct tss_struct, cpu_tss_rw) = {
 		 */
 		.sp0 = (1UL << (BITS_PER_LONG-1)) + 1,
 
-#ifdef CONFIG_X86_32
+		/*
+		 * .sp1 is cpu_current_top_of_stack.  The init task never
+		 * runs user code, but cpu_current_top_of_stack should still
+		 * be well defined before the first context switch.
+		 */
 		.sp1 = TOP_OF_INIT_STACK,
 
+#ifdef CONFIG_X86_32
 		.ss0 = __KERNEL_DS,
 		.ss1 = __KERNEL_CS,
 #endif
@@ -87,7 +92,8 @@ int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
 #ifdef CONFIG_VM86
 	dst->thread.vm86 = NULL;
 #endif
-	return fpu_clone(dst);
+
+	return fpu__copy(dst, src);
 }
 
 /*
@@ -156,17 +162,10 @@ int copy_thread(unsigned long clone_flags, unsigned long sp, unsigned long arg,
 
 	/* Kernel thread ? */
 	if (unlikely(p->flags & PF_KTHREAD)) {
-		p->thread.pkru = pkru_get_init_value();
 		memset(childregs, 0, sizeof(struct pt_regs));
 		kthread_frame_init(frame, sp, arg);
 		return 0;
 	}
-
-	/*
-	 * Clone current's PKRU value from hardware. tsk->thread.pkru
-	 * is only valid when scheduled out.
-	 */
-	p->thread.pkru = read_pkru();
 
 	frame->bx = 0;
 	*childregs = *current_pt_regs();
@@ -178,23 +177,6 @@ int copy_thread(unsigned long clone_flags, unsigned long sp, unsigned long arg,
 	task_user_gs(p) = get_user_gs(current_pt_regs());
 #endif
 
-	if (unlikely(p->flags & PF_IO_WORKER)) {
-		/*
-		 * An IO thread is a user space thread, but it doesn't
-		 * return to ret_after_fork().
-		 *
-		 * In order to indicate that to tools like gdb,
-		 * we reset the stack and instruction pointers.
-		 *
-		 * It does the same kernel frame setup to return to a kernel
-		 * function that a kernel thread does.
-		 */
-		childregs->sp = 0;
-		childregs->ip = 0;
-		kthread_frame_init(frame, sp, arg);
-		return 0;
-	}
-
 	/* Set a new TLS for the child thread? */
 	if (clone_flags & CLONE_SETTLS)
 		ret = set_new_tls(p, tls);
@@ -205,15 +187,6 @@ int copy_thread(unsigned long clone_flags, unsigned long sp, unsigned long arg,
 	return ret;
 }
 
-static void pkru_flush_thread(void)
-{
-	/*
-	 * If PKRU is enabled the default PKRU value has to be loaded into
-	 * the hardware right here (similar to context switch).
-	 */
-	pkru_write_default();
-}
-
 void flush_thread(void)
 {
 	struct task_struct *tsk = current;
@@ -221,8 +194,7 @@ void flush_thread(void)
 	flush_ptrace_hw_breakpoint(tsk);
 	memset(tsk->thread.tls_array, 0, sizeof(tsk->thread.tls_array));
 
-	fpu_flush_thread();
-	pkru_flush_thread();
+	fpu__clear_all(&tsk->thread.fpu);
 }
 
 void disable_TSC(void)
@@ -479,7 +451,7 @@ void speculative_store_bypass_ht_init(void)
 	 * First HT sibling to come up on the core.  Link shared state of
 	 * the first HT sibling to itself. The siblings on the same core
 	 * which come up later will see the shared state pointer and link
-	 * themselves to the state of this CPU.
+	 * themself to the state of this CPU.
 	 */
 	st->shared_state = st;
 }
@@ -947,7 +919,7 @@ unsigned long get_wchan(struct task_struct *p)
 	unsigned long start, bottom, top, sp, fp, ip, ret = 0;
 	int count = 0;
 
-	if (p == current || task_is_running(p))
+	if (p == current || p->state == TASK_RUNNING)
 		return 0;
 
 	if (!try_get_task_stack(p))
@@ -991,7 +963,7 @@ unsigned long get_wchan(struct task_struct *p)
 			goto out;
 		}
 		fp = READ_ONCE_NOCHECK(*(unsigned long *)fp);
-	} while (count++ < 16 && !task_is_running(p));
+	} while (count++ < 16 && p->state != TASK_RUNNING);
 
 out:
 	put_task_stack(p);

@@ -308,7 +308,8 @@ static int itg3200_probe(struct i2c_client *client,
 
 	st = iio_priv(indio_dev);
 
-	ret = iio_read_mount_matrix(&client->dev, &st->orientation);
+	ret = iio_read_mount_matrix(&client->dev, "mount-matrix",
+				&st->orientation);
 	if (ret)
 		return ret;
 

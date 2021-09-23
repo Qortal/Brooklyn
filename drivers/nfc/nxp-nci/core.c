@@ -70,16 +70,21 @@ static int nxp_nci_send(struct nci_dev *ndev, struct sk_buff *skb)
 	struct nxp_nci_info *info = nci_get_drvdata(ndev);
 	int r;
 
-	if (!info->phy_ops->write)
-		return -EOPNOTSUPP;
+	if (!info->phy_ops->write) {
+		r = -ENOTSUPP;
+		goto send_exit;
+	}
 
-	if (info->mode != NXP_NCI_MODE_NCI)
-		return -EINVAL;
+	if (info->mode != NXP_NCI_MODE_NCI) {
+		r = -EINVAL;
+		goto send_exit;
+	}
 
 	r = info->phy_ops->write(info->phy_id, skb);
 	if (r < 0)
 		kfree_skb(skb);
 
+send_exit:
 	return r;
 }
 
@@ -99,8 +104,10 @@ int nxp_nci_probe(void *phy_id, struct device *pdev,
 	int r;
 
 	info = devm_kzalloc(pdev, sizeof(struct nxp_nci_info), GFP_KERNEL);
-	if (!info)
-		return -ENOMEM;
+	if (!info) {
+		r = -ENOMEM;
+		goto probe_exit;
+	}
 
 	info->phy_id = phy_id;
 	info->pdev = pdev;
@@ -113,25 +120,31 @@ int nxp_nci_probe(void *phy_id, struct device *pdev,
 	if (info->phy_ops->set_mode) {
 		r = info->phy_ops->set_mode(info->phy_id, NXP_NCI_MODE_COLD);
 		if (r < 0)
-			return r;
+			goto probe_exit;
 	}
 
 	info->mode = NXP_NCI_MODE_COLD;
 
 	info->ndev = nci_allocate_device(&nxp_nci_ops, NXP_NCI_NFC_PROTOCOLS,
 					 NXP_NCI_HDR_LEN, 0);
-	if (!info->ndev)
-		return -ENOMEM;
+	if (!info->ndev) {
+		r = -ENOMEM;
+		goto probe_exit;
+	}
 
 	nci_set_parent_dev(info->ndev, pdev);
 	nci_set_drvdata(info->ndev, info);
 	r = nci_register_device(info->ndev);
-	if (r < 0) {
-		nci_free_device(info->ndev);
-		return r;
-	}
+	if (r < 0)
+		goto probe_exit_free_nci;
 
 	*ndev = info->ndev;
+
+	goto probe_exit;
+
+probe_exit_free_nci:
+	nci_free_device(info->ndev);
+probe_exit:
 	return r;
 }
 EXPORT_SYMBOL(nxp_nci_probe);

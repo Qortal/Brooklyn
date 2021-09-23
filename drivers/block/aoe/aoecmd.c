@@ -890,13 +890,19 @@ void
 aoecmd_sleepwork(struct work_struct *work)
 {
 	struct aoedev *d = container_of(work, struct aoedev, work);
+	struct block_device *bd;
+	u64 ssize;
 
 	if (d->flags & DEVFL_GDALLOC)
 		aoeblk_gdalloc(d);
 
 	if (d->flags & DEVFL_NEWSIZE) {
-		set_capacity_and_notify(d->gd, d->ssize);
-
+		ssize = get_capacity(d->gd);
+		bd = bdget_disk(d->gd, 0);
+		if (bd) {
+			bd_set_nr_sectors(bd, ssize);
+			bdput(bd);
+		}
 		spin_lock_irq(&d->lock);
 		d->flags |= DEVFL_UP;
 		d->flags &= ~DEVFL_NEWSIZE;
@@ -965,9 +971,10 @@ ataid_complete(struct aoedev *d, struct aoetgt *t, unsigned char *id)
 	d->geo.start = 0;
 	if (d->flags & (DEVFL_GDALLOC|DEVFL_NEWSIZE))
 		return;
-	if (d->gd != NULL)
+	if (d->gd != NULL) {
+		set_capacity(d->gd, ssize);
 		d->flags |= DEVFL_NEWSIZE;
-	else
+	} else
 		d->flags |= DEVFL_GDALLOC;
 	schedule_work(&d->work);
 }
@@ -1046,7 +1053,7 @@ aoe_end_request(struct aoedev *d, struct request *rq, int fastfail)
 
 	__blk_mq_end_request(rq, err);
 
-	/* cf. https://lore.kernel.org/lkml/20061031071040.GS14055@kernel.dk/ */
+	/* cf. http://lkml.org/lkml/2006/10/31/28 */
 	if (!fastfail)
 		blk_mq_run_hw_queues(q, true);
 }
@@ -1700,6 +1707,8 @@ aoecmd_init(void)
 		ret = -ENOMEM;
 		goto ktiowq_fail;
 	}
+
+	mutex_init(&ktio_spawn_lock);
 
 	for (i = 0; i < ncpus; i++) {
 		INIT_LIST_HEAD(&iocq[i].head);

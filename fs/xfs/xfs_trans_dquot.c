@@ -16,7 +16,6 @@
 #include "xfs_quota.h"
 #include "xfs_qm.h"
 #include "xfs_trace.h"
-#include "xfs_error.h"
 
 STATIC void	xfs_trans_alloc_dqinfo(xfs_trans_t *);
 
@@ -85,6 +84,13 @@ xfs_trans_dup_dqinfo(
 
 	xfs_trans_alloc_dqinfo(ntp);
 
+	/*
+	 * Because the quota blk reservation is carried forward,
+	 * it is also necessary to carry forward the DQ_DIRTY flag.
+	 */
+	if (otp->t_flags & XFS_TRANS_DQ_DIRTY)
+		ntp->t_flags |= XFS_TRANS_DQ_DIRTY;
+
 	for (j = 0; j < XFS_QM_TRANS_DQTYPES; j++) {
 		oqa = otp->t_dqinfo->dqs[j];
 		nqa = ntp->t_dqinfo->dqs[j];
@@ -136,6 +142,9 @@ xfs_trans_mod_dquot_byino(
 	    !XFS_IS_QUOTA_ON(mp) ||
 	    xfs_is_quota_inode(&mp->m_sb, ip->i_ino))
 		return;
+
+	if (tp->t_dqinfo == NULL)
+		xfs_trans_alloc_dqinfo(tp);
 
 	if (XFS_IS_UQUOTA_ON(mp) && ip->i_udquot)
 		(void) xfs_trans_mod_dquot(tp, ip->i_udquot, field, delta);
@@ -195,9 +204,6 @@ xfs_trans_mod_dquot(
 	ASSERT(XFS_IS_QUOTA_RUNNING(tp->t_mountp));
 	qtrx = NULL;
 
-	if (!delta)
-		return;
-
 	if (tp->t_dqinfo == NULL)
 		xfs_trans_alloc_dqinfo(tp);
 	/*
@@ -209,8 +215,10 @@ xfs_trans_mod_dquot(
 	if (qtrx->qt_dquot == NULL)
 		qtrx->qt_dquot = dqp;
 
-	trace_xfs_trans_mod_dquot_before(qtrx);
-	trace_xfs_trans_mod_dquot(tp, dqp, field, delta);
+	if (delta) {
+		trace_xfs_trans_mod_dquot_before(qtrx);
+		trace_xfs_trans_mod_dquot(tp, dqp, field, delta);
+	}
 
 	switch (field) {
 	/* regular disk blk reservation */
@@ -263,7 +271,10 @@ xfs_trans_mod_dquot(
 		ASSERT(0);
 	}
 
-	trace_xfs_trans_mod_dquot_after(qtrx);
+	if (delta)
+		trace_xfs_trans_mod_dquot_after(qtrx);
+
+	tp->t_flags |= XFS_TRANS_DQ_DIRTY;
 }
 
 
@@ -340,7 +351,7 @@ xfs_trans_apply_dquot_deltas(
 	int64_t			totalbdelta;
 	int64_t			totalrtbdelta;
 
-	if (!tp->t_dqinfo)
+	if (!(tp->t_flags & XFS_TRANS_DQ_DIRTY))
 		return;
 
 	ASSERT(tp->t_dqinfo);
@@ -482,7 +493,7 @@ xfs_trans_unreserve_and_mod_dquots(
 	struct xfs_dqtrx	*qtrx, *qa;
 	bool			locked;
 
-	if (!tp->t_dqinfo)
+	if (!tp->t_dqinfo || !(tp->t_flags & XFS_TRANS_DQ_DIRTY))
 		return;
 
 	for (j = 0; j < XFS_QM_TRANS_DQTYPES; j++) {
@@ -687,16 +698,20 @@ xfs_trans_dqresv(
 	 * because we don't have the luxury of a transaction envelope then.
 	 */
 	if (tp) {
+		ASSERT(tp->t_dqinfo);
 		ASSERT(flags & XFS_QMOPT_RESBLK_MASK);
-		xfs_trans_mod_dquot(tp, dqp, flags & XFS_QMOPT_RESBLK_MASK,
-				    nblks);
-		xfs_trans_mod_dquot(tp, dqp, XFS_TRANS_DQ_RES_INOS, ninos);
+		if (nblks != 0)
+			xfs_trans_mod_dquot(tp, dqp,
+					    flags & XFS_QMOPT_RESBLK_MASK,
+					    nblks);
+		if (ninos != 0)
+			xfs_trans_mod_dquot(tp, dqp,
+					    XFS_TRANS_DQ_RES_INOS,
+					    ninos);
 	}
-
-	if (XFS_IS_CORRUPT(mp, dqp->q_blk.reserved < dqp->q_blk.count) ||
-	    XFS_IS_CORRUPT(mp, dqp->q_rtb.reserved < dqp->q_rtb.count) ||
-	    XFS_IS_CORRUPT(mp, dqp->q_ino.reserved < dqp->q_ino.count))
-		goto error_corrupt;
+	ASSERT(dqp->q_blk.reserved >= dqp->q_blk.count);
+	ASSERT(dqp->q_rtb.reserved >= dqp->q_rtb.count);
+	ASSERT(dqp->q_ino.reserved >= dqp->q_ino.count);
 
 	xfs_dqunlock(dqp);
 	return 0;
@@ -706,10 +721,6 @@ error_return:
 	if (xfs_dquot_type(dqp) == XFS_DQTYPE_PROJ)
 		return -ENOSPC;
 	return -EDQUOT;
-error_corrupt:
-	xfs_dqunlock(dqp);
-	xfs_force_shutdown(mp, SHUTDOWN_CORRUPT_INCORE);
-	return -EFSCORRUPTED;
 }
 
 
@@ -740,6 +751,9 @@ xfs_trans_reserve_quota_bydquots(
 
 	if (!XFS_IS_QUOTA_RUNNING(mp) || !XFS_IS_QUOTA_ON(mp))
 		return 0;
+
+	if (tp && tp->t_dqinfo == NULL)
+		xfs_trans_alloc_dqinfo(tp);
 
 	ASSERT(flags & XFS_QMOPT_RESBLK_MASK);
 
@@ -787,60 +801,28 @@ int
 xfs_trans_reserve_quota_nblks(
 	struct xfs_trans	*tp,
 	struct xfs_inode	*ip,
-	int64_t			dblocks,
-	int64_t			rblocks,
-	bool			force)
+	int64_t			nblks,
+	long			ninos,
+	uint			flags)
 {
 	struct xfs_mount	*mp = ip->i_mount;
-	unsigned int		qflags = 0;
-	int			error;
 
 	if (!XFS_IS_QUOTA_RUNNING(mp) || !XFS_IS_QUOTA_ON(mp))
 		return 0;
 
 	ASSERT(!xfs_is_quota_inode(&mp->m_sb, ip->i_ino));
+
 	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
+	ASSERT((flags & ~(XFS_QMOPT_FORCE_RES)) == XFS_TRANS_DQ_RES_RTBLKS ||
+	       (flags & ~(XFS_QMOPT_FORCE_RES)) == XFS_TRANS_DQ_RES_BLKS);
 
-	if (force)
-		qflags |= XFS_QMOPT_FORCE_RES;
-
-	/* Reserve data device quota against the inode's dquots. */
-	error = xfs_trans_reserve_quota_bydquots(tp, mp, ip->i_udquot,
-			ip->i_gdquot, ip->i_pdquot, dblocks, 0,
-			XFS_QMOPT_RES_REGBLKS | qflags);
-	if (error)
-		return error;
-
-	/* Do the same but for realtime blocks. */
-	error = xfs_trans_reserve_quota_bydquots(tp, mp, ip->i_udquot,
-			ip->i_gdquot, ip->i_pdquot, rblocks, 0,
-			XFS_QMOPT_RES_RTBLKS | qflags);
-	if (error) {
-		xfs_trans_reserve_quota_bydquots(tp, mp, ip->i_udquot,
-				ip->i_gdquot, ip->i_pdquot, -dblocks, 0,
-				XFS_QMOPT_RES_REGBLKS);
-		return error;
-	}
-
-	return 0;
-}
-
-/* Change the quota reservations for an inode creation activity. */
-int
-xfs_trans_reserve_quota_icreate(
-	struct xfs_trans	*tp,
-	struct xfs_dquot	*udqp,
-	struct xfs_dquot	*gdqp,
-	struct xfs_dquot	*pdqp,
-	int64_t			dblocks)
-{
-	struct xfs_mount	*mp = tp->t_mountp;
-
-	if (!XFS_IS_QUOTA_RUNNING(mp) || !XFS_IS_QUOTA_ON(mp))
-		return 0;
-
-	return xfs_trans_reserve_quota_bydquots(tp, mp, udqp, gdqp, pdqp,
-			dblocks, 1, XFS_QMOPT_RES_REGBLKS);
+	/*
+	 * Reserve nblks against these dquots, with trans as the mediator.
+	 */
+	return xfs_trans_reserve_quota_bydquots(tp, mp,
+						ip->i_udquot, ip->i_gdquot,
+						ip->i_pdquot,
+						nblks, ninos, flags);
 }
 
 /*

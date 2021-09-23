@@ -139,7 +139,8 @@ static int smu10_copy_table_from_smc(struct pp_hwmgr *hwmgr,
 			priv->smu_tables.entry[table_id].table_id,
 			NULL);
 
-	amdgpu_asic_invalidate_hdp(adev, NULL);
+	/* flush hdp cache */
+	amdgpu_asic_flush_hdp(adev, NULL);
 
 	memcpy(table, (uint8_t *)priv->smu_tables.entry[table_id].table,
 			priv->smu_tables.entry[table_id].size);

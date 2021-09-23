@@ -54,6 +54,7 @@ MODULE_PARM_DESC(sample_rate_min, "Minimal sample rate");
  */
 
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{Digigram, Lola}}");
 MODULE_DESCRIPTION("Digigram Lola driver");
 MODULE_AUTHOR("Takashi Iwai <tiwai@suse.de>");
 
@@ -668,7 +669,7 @@ static int lola_create(struct snd_card *card, struct pci_dev *pci,
 	}
 
 	strcpy(card->driver, "Lola");
-	strscpy(card->shortname, "Digigram Lola", sizeof(card->shortname));
+	strlcpy(card->shortname, "Digigram Lola", sizeof(card->shortname));
 	snprintf(card->longname, sizeof(card->longname),
 		 "%s at 0x%lx irq %i",
 		 card->shortname, chip->bar[0].addr, chip->irq);

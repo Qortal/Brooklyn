@@ -125,19 +125,17 @@ static int live_forcewake_ops(void *arg)
 {
 	static const struct reg {
 		const char *name;
-		u8 min_graphics_ver;
-		u8 max_graphics_ver;
 		unsigned long platforms;
 		unsigned int offset;
 	} registers[] = {
 		{
 			"RING_START",
-			6, 7,
+			INTEL_GEN_MASK(6, 7),
 			0x38,
 		},
 		{
 			"RING_MI_MODE",
-			8, U8_MAX,
+			INTEL_GEN_MASK(8, BITS_PER_LONG),
 			0x9c,
 		}
 	};
@@ -172,7 +170,7 @@ static int live_forcewake_ops(void *arg)
 
 	/* We have to pick carefully to get the exact behaviour we need */
 	for (r = registers; r->name; r++)
-		if (IS_GRAPHICS_VER(gt->i915, r->min_graphics_ver, r->max_graphics_ver))
+		if (r->platforms & INTEL_INFO(gt->i915)->gen_mask)
 			break;
 	if (!r->name) {
 		pr_debug("Forcewaked register not known for %s; skipping\n",
@@ -321,7 +319,7 @@ static int live_fw_table(void *arg)
 	/* Confirm the table we load is still valid */
 	return intel_fw_table_check(gt->uncore->fw_domains_table,
 				    gt->uncore->fw_domains_table_entries,
-				    GRAPHICS_VER(gt->i915) >= 9);
+				    INTEL_GEN(gt->i915) >= 9);
 }
 
 int intel_uncore_live_selftests(struct drm_i915_private *i915)

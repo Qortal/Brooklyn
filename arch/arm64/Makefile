@@ -21,8 +21,16 @@ LDFLAGS_vmlinux		+= -shared -Bsymbolic -z notext \
 endif
 
 ifeq ($(CONFIG_ARM64_ERRATUM_843419),y)
-  ifeq ($(CONFIG_ARM64_LD_HAS_FIX_ERRATUM_843419),y)
+  ifeq ($(call ld-option, --fix-cortex-a53-843419),)
+$(warning ld does not support --fix-cortex-a53-843419; kernel may be susceptible to erratum)
+  else
 LDFLAGS_vmlinux	+= --fix-cortex-a53-843419
+  endif
+endif
+
+ifeq ($(CONFIG_ARM64_USE_LSE_ATOMICS), y)
+  ifneq ($(CONFIG_ARM64_LSE_ATOMICS), y)
+$(warning LSE atomics not supported by binutils)
   endif
 endif
 
@@ -62,7 +70,7 @@ endif
 # off, this will be overridden if we are using branch protection.
 branch-prot-flags-y += $(call cc-option,-mbranch-protection=none)
 
-ifeq ($(CONFIG_ARM64_PTR_AUTH_KERNEL),y)
+ifeq ($(CONFIG_ARM64_PTR_AUTH),y)
 branch-prot-flags-$(CONFIG_CC_HAS_SIGN_RETURN_ADDRESS) := -msign-return-address=all
 # We enable additional protection for leaf functions as there is some
 # narrow potential for ROP protection benefits and no substantial
@@ -86,11 +94,6 @@ KBUILD_CFLAGS += $(branch-prot-flags-y)
 ifeq ($(CONFIG_AS_HAS_ARMV8_4), y)
 # make sure to pass the newest target architecture to -march.
 asm-arch := armv8.4-a
-endif
-
-ifeq ($(CONFIG_AS_HAS_ARMV8_5), y)
-# make sure to pass the newest target architecture to -march.
-asm-arch := armv8.5-a
 endif
 
 ifdef asm-arch
@@ -133,7 +136,7 @@ head-y		:= arch/arm64/kernel/head.o
 
 ifeq ($(CONFIG_KASAN_SW_TAGS), y)
 KASAN_SHADOW_SCALE_SHIFT := 4
-else ifeq ($(CONFIG_KASAN_GENERIC), y)
+else
 KASAN_SHADOW_SCALE_SHIFT := 3
 endif
 
@@ -141,6 +144,7 @@ KBUILD_CFLAGS += -DKASAN_SHADOW_SCALE_SHIFT=$(KASAN_SHADOW_SCALE_SHIFT)
 KBUILD_CPPFLAGS += -DKASAN_SHADOW_SCALE_SHIFT=$(KASAN_SHADOW_SCALE_SHIFT)
 KBUILD_AFLAGS += -DKASAN_SHADOW_SCALE_SHIFT=$(KASAN_SHADOW_SCALE_SHIFT)
 
+core-y		+= arch/arm64/
 libs-y		:= arch/arm64/lib/ $(libs-y)
 libs-$(CONFIG_EFI_STUB) += $(objtree)/drivers/firmware/efi/libstub/lib.a
 
@@ -166,20 +170,6 @@ vdso_install:
 	$(if $(CONFIG_COMPAT_VDSO), \
 		$(Q)$(MAKE) $(build)=arch/arm64/kernel/vdso32 $@)
 
-archprepare:
-	$(Q)$(MAKE) $(build)=arch/arm64/tools kapi
-ifeq ($(CONFIG_ARM64_ERRATUM_843419),y)
-  ifneq ($(CONFIG_ARM64_LD_HAS_FIX_ERRATUM_843419),y)
-	@echo "warning: ld does not support --fix-cortex-a53-843419; kernel may be susceptible to erratum" >&2
-  endif
-endif
-ifeq ($(CONFIG_ARM64_USE_LSE_ATOMICS),y)
-  ifneq ($(CONFIG_ARM64_LSE_ATOMICS),y)
-	@echo "warning: LSE atomics not supported by binutils" >&2
-  endif
-endif
-
-
 # We use MRPROPER_FILES and CLEAN_FILES now
 archclean:
 	$(Q)$(MAKE) $(clean)=$(boot)
@@ -193,12 +183,10 @@ ifeq ($(KBUILD_EXTMOD),)
 # this hack.
 prepare: vdso_prepare
 vdso_prepare: prepare0
-	$(Q)$(MAKE) $(build)=arch/arm64/kernel/vdso \
-	include/generated/vdso-offsets.h arch/arm64/kernel/vdso/vdso.so
-ifdef CONFIG_COMPAT_VDSO
-	$(Q)$(MAKE) $(build)=arch/arm64/kernel/vdso32 \
-	include/generated/vdso32-offsets.h arch/arm64/kernel/vdso32/vdso.so
-endif
+	$(Q)$(MAKE) $(build)=arch/arm64/kernel/vdso include/generated/vdso-offsets.h
+	$(if $(CONFIG_COMPAT_VDSO),$(Q)$(MAKE) \
+		$(build)=arch/arm64/kernel/vdso32  \
+		include/generated/vdso32-offsets.h)
 endif
 
 define archhelp

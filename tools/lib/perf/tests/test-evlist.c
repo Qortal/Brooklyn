@@ -18,8 +18,6 @@
 #include <perf/event.h>
 #include <internal/tests.h>
 #include <api/fs/fs.h>
-#include "tests.h"
-#include <internal/evsel.h>
 
 static int libperf_print(enum libperf_print_level level,
 			 const char *fmt, va_list ap)
@@ -31,7 +29,7 @@ static int test_stat_cpu(void)
 {
 	struct perf_cpu_map *cpus;
 	struct perf_evlist *evlist;
-	struct perf_evsel *evsel, *leader;
+	struct perf_evsel *evsel;
 	struct perf_event_attr attr1 = {
 		.type	= PERF_TYPE_SOFTWARE,
 		.config	= PERF_COUNT_SW_CPU_CLOCK,
@@ -48,7 +46,7 @@ static int test_stat_cpu(void)
 	evlist = perf_evlist__new();
 	__T("failed to create evlist", evlist);
 
-	evsel = leader = perf_evsel__new(&attr1);
+	evsel = perf_evsel__new(&attr1);
 	__T("failed to create evsel1", evsel);
 
 	perf_evlist__add(evlist, evsel);
@@ -57,10 +55,6 @@ static int test_stat_cpu(void)
 	__T("failed to create evsel2", evsel);
 
 	perf_evlist__add(evlist, evsel);
-
-	perf_evlist__set_leader(evlist);
-	__T("failed to set leader", leader->leader == leader);
-	__T("failed to set leader", evsel->leader  == leader);
 
 	perf_evlist__set_maps(evlist, cpus, NULL);
 
@@ -90,7 +84,7 @@ static int test_stat_thread(void)
 	struct perf_counts_values counts = { .val = 0 };
 	struct perf_thread_map *threads;
 	struct perf_evlist *evlist;
-	struct perf_evsel *evsel, *leader;
+	struct perf_evsel *evsel;
 	struct perf_event_attr attr1 = {
 		.type	= PERF_TYPE_SOFTWARE,
 		.config	= PERF_COUNT_SW_CPU_CLOCK,
@@ -109,7 +103,7 @@ static int test_stat_thread(void)
 	evlist = perf_evlist__new();
 	__T("failed to create evlist", evlist);
 
-	evsel = leader = perf_evsel__new(&attr1);
+	evsel = perf_evsel__new(&attr1);
 	__T("failed to create evsel1", evsel);
 
 	perf_evlist__add(evlist, evsel);
@@ -118,10 +112,6 @@ static int test_stat_thread(void)
 	__T("failed to create evsel2", evsel);
 
 	perf_evlist__add(evlist, evsel);
-
-	perf_evlist__set_leader(evlist);
-	__T("failed to set leader", leader->leader == leader);
-	__T("failed to set leader", evsel->leader  == leader);
 
 	perf_evlist__set_maps(evlist, NULL, threads);
 
@@ -145,7 +135,7 @@ static int test_stat_thread_enable(void)
 	struct perf_counts_values counts = { .val = 0 };
 	struct perf_thread_map *threads;
 	struct perf_evlist *evlist;
-	struct perf_evsel *evsel, *leader;
+	struct perf_evsel *evsel;
 	struct perf_event_attr attr1 = {
 		.type	  = PERF_TYPE_SOFTWARE,
 		.config	  = PERF_COUNT_SW_CPU_CLOCK,
@@ -166,7 +156,7 @@ static int test_stat_thread_enable(void)
 	evlist = perf_evlist__new();
 	__T("failed to create evlist", evlist);
 
-	evsel = leader = perf_evsel__new(&attr1);
+	evsel = perf_evsel__new(&attr1);
 	__T("failed to create evsel1", evsel);
 
 	perf_evlist__add(evlist, evsel);
@@ -175,10 +165,6 @@ static int test_stat_thread_enable(void)
 	__T("failed to create evsel2", evsel);
 
 	perf_evlist__add(evlist, evsel);
-
-	perf_evlist__set_leader(evlist);
-	__T("failed to set leader", leader->leader == leader);
-	__T("failed to set leader", evsel->leader  == leader);
 
 	perf_evlist__set_maps(evlist, NULL, threads);
 
@@ -222,6 +208,7 @@ static int test_mmap_thread(void)
 	char path[PATH_MAX];
 	int id, err, pid, go_pipe[2];
 	union perf_event *event;
+	char bf;
 	int count = 0;
 
 	snprintf(path, PATH_MAX, "%s/kernel/debug/tracing/events/syscalls/sys_enter_prctl/id",
@@ -243,7 +230,6 @@ static int test_mmap_thread(void)
 	pid = fork();
 	if (!pid) {
 		int i;
-		char bf;
 
 		read(go_pipe[0], &bf, 1);
 
@@ -267,7 +253,6 @@ static int test_mmap_thread(void)
 
 	evsel = perf_evsel__new(&attr);
 	__T("failed to create evsel1", evsel);
-	__T("failed to set leader", evsel->leader == evsel);
 
 	perf_evlist__add(evlist, evsel);
 
@@ -282,7 +267,7 @@ static int test_mmap_thread(void)
 	perf_evlist__enable(evlist);
 
 	/* kick the child and wait for it to finish */
-	write(go_pipe[1], "A", 1);
+	write(go_pipe[1], &bf, 1);
 	waitpid(pid, NULL, 0);
 
 	/*
@@ -353,7 +338,6 @@ static int test_mmap_cpus(void)
 
 	evsel = perf_evsel__new(&attr);
 	__T("failed to create evsel1", evsel);
-	__T("failed to set leader", evsel->leader == evsel);
 
 	perf_evlist__add(evlist, evsel);
 
@@ -413,7 +397,7 @@ static int test_mmap_cpus(void)
 	return 0;
 }
 
-int test_evlist(int argc, char **argv)
+int main(int argc, char **argv)
 {
 	__T_START;
 

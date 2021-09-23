@@ -28,6 +28,9 @@
 #define PFX "jazz16: "
 
 MODULE_DESCRIPTION("Media Vision Jazz16");
+MODULE_SUPPORTED_DEVICE("{{Media Vision ??? },"
+		"{RTL,RTL3000}}");
+
 MODULE_AUTHOR("Krzysztof Helt <krzysztof.h1@wp.pl>");
 MODULE_LICENSE("GPL");
 
@@ -336,11 +339,12 @@ err_free:
 	return err;
 }
 
-static void snd_jazz16_remove(struct device *devptr, unsigned int dev)
+static int snd_jazz16_remove(struct device *devptr, unsigned int dev)
 {
 	struct snd_card *card = dev_get_drvdata(devptr);
 
 	snd_card_free(card);
+	return 0;
 }
 
 #ifdef CONFIG_PM

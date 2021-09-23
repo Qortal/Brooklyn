@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 # Makefile for Linux MDIO bus drivers
 
-obj-$(CONFIG_ACPI_MDIO)		+= acpi_mdio.o
-obj-$(CONFIG_FWNODE_MDIO)	+= fwnode_mdio.o
-obj-$(CONFIG_OF_MDIO)		+= of_mdio.o
+obj-$(CONFIG_OF_MDIO)	+= of_mdio.o
 
 obj-$(CONFIG_MDIO_ASPEED)		+= mdio-aspeed.o
 obj-$(CONFIG_MDIO_BCM_IPROC)		+= mdio-bcm-iproc.o
@@ -24,7 +22,6 @@ obj-$(CONFIG_MDIO_THUNDER)		+= mdio-thunder.o
 obj-$(CONFIG_MDIO_XGENE)		+= mdio-xgene.o
 
 obj-$(CONFIG_MDIO_BUS_MUX)		+= mdio-mux.o
-obj-$(CONFIG_MDIO_BUS_MUX_BCM6368)	+= mdio-mux-bcm6368.o
 obj-$(CONFIG_MDIO_BUS_MUX_BCM_IPROC)	+= mdio-mux-bcm-iproc.o
 obj-$(CONFIG_MDIO_BUS_MUX_GPIO)		+= mdio-mux-gpio.o
 obj-$(CONFIG_MDIO_BUS_MUX_MESON_G12A)	+= mdio-mux-meson-g12a.o

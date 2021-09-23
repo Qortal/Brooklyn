@@ -2608,9 +2608,16 @@ void dispc_remove(struct tidss_device *tidss)
 static int dispc_iomap_resource(struct platform_device *pdev, const char *name,
 				void __iomem **base)
 {
+	struct resource *res;
 	void __iomem *b;
 
-	b = devm_platform_ioremap_resource_byname(pdev, name);
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, name);
+	if (!res) {
+		dev_err(&pdev->dev, "cannot get mem resource '%s'\n", name);
+		return -EINVAL;
+	}
+
+	b = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(b)) {
 		dev_err(&pdev->dev, "cannot ioremap resource '%s'\n", name);
 		return PTR_ERR(b);

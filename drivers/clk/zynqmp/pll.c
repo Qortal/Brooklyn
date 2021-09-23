@@ -31,9 +31,8 @@ struct zynqmp_pll {
 #define PS_PLL_VCO_MAX 3000000000UL
 
 enum pll_mode {
-	PLL_MODE_INT = 0,
-	PLL_MODE_FRAC = 1,
-	PLL_MODE_ERROR = 2,
+	PLL_MODE_INT,
+	PLL_MODE_FRAC,
 };
 
 #define FRAC_OFFSET 0x8
@@ -55,11 +54,9 @@ static inline enum pll_mode zynqmp_pll_get_mode(struct clk_hw *hw)
 	int ret;
 
 	ret = zynqmp_pm_get_pll_frac_mode(clk_id, ret_payload);
-	if (ret) {
+	if (ret)
 		pr_warn_once("%s() PLL get frac mode failed for %s, ret = %d\n",
 			     __func__, clk_name, ret);
-		return PLL_MODE_ERROR;
-	}
 
 	return ret_payload[1];
 }
@@ -129,7 +126,7 @@ static long zynqmp_pll_round_rate(struct clk_hw *hw, unsigned long rate,
  * @hw:			Handle between common and hardware-specific interfaces
  * @parent_rate:	Clock frequency of parent clock
  *
- * Return: Current clock frequency or 0 in case of error
+ * Return: Current clock frequency
  */
 static unsigned long zynqmp_pll_recalc_rate(struct clk_hw *hw,
 					    unsigned long parent_rate)
@@ -141,21 +138,14 @@ static unsigned long zynqmp_pll_recalc_rate(struct clk_hw *hw,
 	unsigned long rate, frac;
 	u32 ret_payload[PAYLOAD_ARG_CNT];
 	int ret;
-	enum pll_mode mode;
 
 	ret = zynqmp_pm_clock_getdivider(clk_id, &fbdiv);
-	if (ret) {
+	if (ret)
 		pr_warn_once("%s() get divider failed for %s, ret = %d\n",
 			     __func__, clk_name, ret);
-		return 0ul;
-	}
-
-	mode = zynqmp_pll_get_mode(hw);
-	if (mode == PLL_MODE_ERROR)
-		return 0ul;
 
 	rate =  parent_rate * fbdiv;
-	if (mode == PLL_MODE_FRAC) {
+	if (zynqmp_pll_get_mode(hw) == PLL_MODE_FRAC) {
 		zynqmp_pm_get_pll_frac_data(clk_id, ret_payload);
 		data = ret_payload[1];
 		frac = (parent_rate * data) / FRAC_DIV;
@@ -322,9 +312,7 @@ struct clk_hw *zynqmp_clk_register_pll(const char *name, u32 clk_id,
 
 	init.name = name;
 	init.ops = &zynqmp_pll_ops;
-
-	init.flags = zynqmp_clk_map_common_ccf_flags(nodes->flag);
-
+	init.flags = nodes->flag;
 	init.parent_names = parents;
 	init.num_parents = 1;
 
@@ -343,6 +331,8 @@ struct clk_hw *zynqmp_clk_register_pll(const char *name, u32 clk_id,
 	}
 
 	clk_hw_set_rate_range(hw, PS_PLL_VCO_MIN, PS_PLL_VCO_MAX);
+	if (ret < 0)
+		pr_err("%s:ERROR clk_set_rate_range failed %d\n", name, ret);
 
 	return hw;
 }

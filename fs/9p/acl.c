@@ -239,7 +239,6 @@ static int v9fs_xattr_get_acl(const struct xattr_handler *handler,
 }
 
 static int v9fs_xattr_set_acl(const struct xattr_handler *handler,
-			      struct user_namespace *mnt_userns,
 			      struct dentry *dentry, struct inode *inode,
 			      const char *name, const void *value,
 			      size_t size, int flags)
@@ -259,7 +258,7 @@ static int v9fs_xattr_set_acl(const struct xattr_handler *handler,
 
 	if (S_ISLNK(inode->i_mode))
 		return -EOPNOTSUPP;
-	if (!inode_owner_or_capable(&init_user_ns, inode))
+	if (!inode_owner_or_capable(inode))
 		return -EPERM;
 	if (value) {
 		/* update the cached acl value */
@@ -280,8 +279,7 @@ static int v9fs_xattr_set_acl(const struct xattr_handler *handler,
 			struct iattr iattr = { 0 };
 			struct posix_acl *old_acl = acl;
 
-			retval = posix_acl_update_mode(&init_user_ns, inode,
-						       &iattr.ia_mode, &acl);
+			retval = posix_acl_update_mode(inode, &iattr.ia_mode, &acl);
 			if (retval)
 				goto err_out;
 			if (!acl) {
@@ -299,7 +297,7 @@ static int v9fs_xattr_set_acl(const struct xattr_handler *handler,
 			 * What is the following setxattr update the
 			 * mode ?
 			 */
-			v9fs_vfs_setattr_dotl(&init_user_ns, dentry, &iattr);
+			v9fs_vfs_setattr_dotl(dentry, &iattr);
 		}
 		break;
 	case ACL_TYPE_DEFAULT:

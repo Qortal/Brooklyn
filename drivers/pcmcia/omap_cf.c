@@ -252,15 +252,11 @@ static int __init omap_cf_probe(struct platform_device *pdev)
 	/* pcmcia layer only remaps "real" memory */
 	cf->socket.io_offset = (unsigned long)
 			ioremap(cf->phys_cf + SZ_4K, SZ_2K);
-	if (!cf->socket.io_offset) {
-		status = -ENOMEM;
+	if (!cf->socket.io_offset)
 		goto fail1;
-	}
 
-	if (!request_mem_region(cf->phys_cf, SZ_8K, driver_name)) {
-		status = -ENXIO;
+	if (!request_mem_region(cf->phys_cf, SZ_8K, driver_name))
 		goto fail1;
-	}
 
 	/* NOTE:  CF conflicts with MMC1 */
 	omap_cfg_reg(W11_1610_CF_CD1);

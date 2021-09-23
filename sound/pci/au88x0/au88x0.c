@@ -41,14 +41,15 @@ MODULE_PARM_DESC(pcifix, "Enable VIA-workaround for " CARD_NAME " soundcard.");
 
 MODULE_DESCRIPTION("Aureal vortex");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{Aureal Semiconductor Inc., Aureal Vortex Sound Processor}}");
+
 MODULE_DEVICE_TABLE(pci, snd_vortex_ids);
 
 static void vortex_fix_latency(struct pci_dev *vortex)
 {
 	int rc;
-	rc = pci_write_config_byte(vortex, 0x40, 0xff);
-	if (!rc) {
-		dev_info(&vortex->dev, "vortex latency is 0xff\n");
+	if (!(rc = pci_write_config_byte(vortex, 0x40, 0xff))) {
+			dev_info(&vortex->dev, "vortex latency is 0xff\n");
 	} else {
 		dev_warn(&vortex->dev,
 			 "could not set vortex latency: pci error 0x%x\n", rc);
@@ -66,12 +67,9 @@ static void vortex_fix_agp_bridge(struct pci_dev *via)
 	 * read the config and it is not already set
 	 */
 
-	rc = pci_read_config_byte(via, 0x42, &value);
-	if (!rc) {
-		if (!(value & 0x10))
-			rc = pci_write_config_byte(via, 0x42, value | 0x10);
-	}
-	if (!rc) {
+	if (!(rc = pci_read_config_byte(via, 0x42, &value))
+			&& ((value & 0x10)
+				|| !(rc = pci_write_config_byte(via, 0x42, value | 0x10)))) {
 		dev_info(&via->dev, "bridge config is 0x%x\n", value | 0x10);
 	} else {
 		dev_warn(&via->dev,
@@ -106,16 +104,14 @@ static void snd_vortex_workaround(struct pci_dev *vortex, int fix)
 	} else {
 		if (fix & 0x1)
 			vortex_fix_latency(vortex);
-		if (fix & 0x2)
-			via = pci_get_device(PCI_VENDOR_ID_VIA,
-					     PCI_DEVICE_ID_VIA_8365_1, NULL);
-		else if (fix & 0x4)
-			via = pci_get_device(PCI_VENDOR_ID_VIA,
-					     PCI_DEVICE_ID_VIA_82C598_1, NULL);
-		else if (fix & 0x8)
-			via = pci_get_device(PCI_VENDOR_ID_AMD,
-					     PCI_DEVICE_ID_AMD_FE_GATE_7007, NULL);
-		if (via)
+		if ((fix & 0x2) && (via = pci_get_device(PCI_VENDOR_ID_VIA,
+				PCI_DEVICE_ID_VIA_8365_1, NULL)))
+			vortex_fix_agp_bridge(via);
+		if ((fix & 0x4) && (via = pci_get_device(PCI_VENDOR_ID_VIA,
+				PCI_DEVICE_ID_VIA_82C598_1, NULL)))
+			vortex_fix_agp_bridge(via);
+		if ((fix & 0x8) && (via = pci_get_device(PCI_VENDOR_ID_AMD,
+				PCI_DEVICE_ID_AMD_FE_GATE_7007, NULL)))
 			vortex_fix_agp_bridge(via);
 	}
 	pci_dev_put(via);
@@ -153,10 +149,10 @@ snd_vortex_create(struct snd_card *card, struct pci_dev *pci, vortex_t ** rchip)
 	*rchip = NULL;
 
 	// check PCI availability (DMA).
-	err = pci_enable_device(pci);
-	if (err < 0)
+	if ((err = pci_enable_device(pci)) < 0)
 		return err;
-	if (dma_set_mask_and_coherent(&pci->dev, DMA_BIT_MASK(32))) {
+	if (dma_set_mask(&pci->dev, DMA_BIT_MASK(32)) < 0 ||
+	    dma_set_coherent_mask(&pci->dev, DMA_BIT_MASK(32)) < 0) {
 		dev_err(card->dev, "error to set DMA mask\n");
 		pci_disable_device(pci);
 		return -ENXIO;
@@ -181,8 +177,7 @@ snd_vortex_create(struct snd_card *card, struct pci_dev *pci, vortex_t ** rchip)
 	// (1) PCI resource allocation
 	// Get MMIO area
 	//
-	err = pci_request_regions(pci, CARD_NAME_SHORT);
-	if (err)
+	if ((err = pci_request_regions(pci, CARD_NAME_SHORT)) != 0)
 		goto regions_out;
 
 	chip->mmio = pci_ioremap_bar(pci, 0);
@@ -195,15 +190,14 @@ snd_vortex_create(struct snd_card *card, struct pci_dev *pci, vortex_t ** rchip)
 	/* Init audio core.
 	 * This must be done before we do request_irq otherwise we can get spurious
 	 * interrupts that we do not handle properly and make a mess of things */
-	err = vortex_core_init(chip);
-	if (err) {
+	if ((err = vortex_core_init(chip)) != 0) {
 		dev_err(card->dev, "hw core init failed\n");
 		goto core_out;
 	}
 
-	err = request_irq(pci->irq, vortex_interrupt,
-			  IRQF_SHARED, KBUILD_MODNAME, chip);
-	if (err) {
+	if ((err = request_irq(pci->irq, vortex_interrupt,
+			       IRQF_SHARED, KBUILD_MODNAME,
+	                       chip)) != 0) {
 		dev_err(card->dev, "cannot grab irq\n");
 		goto irq_out;
 	}
@@ -214,9 +208,9 @@ snd_vortex_create(struct snd_card *card, struct pci_dev *pci, vortex_t ** rchip)
 	// End of PCI setup.
 
 	// Register alsa root device.
-	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops);
-	if (err < 0)
+	if ((err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops)) < 0) {
 		goto alloc_out;
+	}
 
 	*rchip = chip;
 
@@ -261,8 +255,7 @@ snd_vortex_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 		return err;
 
 	// (3)
-	err = snd_vortex_create(card, pci, &chip);
-	if (err < 0) {
+	if ((err = snd_vortex_create(card, pci, &chip)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
@@ -288,14 +281,12 @@ snd_vortex_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 	}
 #ifndef CHIP_AU8820
 	// ADB SPDIF
-	err = snd_vortex_new_pcm(chip, VORTEX_PCM_SPDIF, 1);
-	if (err < 0) {
+	if ((err = snd_vortex_new_pcm(chip, VORTEX_PCM_SPDIF, 1)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
 	// A3D
-	err = snd_vortex_new_pcm(chip, VORTEX_PCM_A3D, NR_A3D);
-	if (err < 0) {
+	if ((err = snd_vortex_new_pcm(chip, VORTEX_PCM_A3D, NR_A3D)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
@@ -309,14 +300,12 @@ snd_vortex_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 	 */
 #ifndef CHIP_AU8810
 	// WT pcm.
-	err = snd_vortex_new_pcm(chip, VORTEX_PCM_WT, NR_WT);
-	if (err < 0) {
+	if ((err = snd_vortex_new_pcm(chip, VORTEX_PCM_WT, NR_WT)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
 #endif
-	err = snd_vortex_midi(chip);
-	if (err < 0) {
+	if ((err = snd_vortex_midi(chip)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
@@ -341,13 +330,13 @@ snd_vortex_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 #endif
 
 	// (5)
-	err = pci_read_config_word(pci, PCI_DEVICE_ID, &chip->device);
-	if (err < 0) {
+	if ((err = pci_read_config_word(pci, PCI_DEVICE_ID,
+				  &(chip->device))) < 0) {
 		snd_card_free(card);
 		return err;
 	}	
-	err = pci_read_config_word(pci, PCI_VENDOR_ID, &chip->vendor);
-	if (err < 0) {
+	if ((err = pci_read_config_word(pci, PCI_VENDOR_ID,
+				  &(chip->vendor))) < 0) {
 		snd_card_free(card);
 		return err;
 	}
@@ -366,8 +355,7 @@ snd_vortex_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 #endif
 
 	// (6)
-	err = snd_card_register(card);
-	if (err < 0) {
+	if ((err = snd_card_register(card)) < 0) {
 		snd_card_free(card);
 		return err;
 	}

@@ -252,8 +252,10 @@ static int imx_rngc_probe(struct platform_device *pdev)
 	}
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
+	if (irq <= 0) {
+		dev_err(&pdev->dev, "Couldn't get irq %d\n", irq);
 		return irq;
+	}
 
 	ret = clk_prepare_enable(rngc->clk);
 	if (ret)

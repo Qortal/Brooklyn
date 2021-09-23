@@ -91,13 +91,11 @@
 #include <linux/gfp.h>
 
 #include <asm/delay.h>
-#include <asm/efi.h>
 #include <asm/meminit.h>
 #include <asm/page.h>
 #include <asm/ptrace.h>
 #include <asm/sal.h>
 #include <asm/mca.h>
-#include <asm/mca_asm.h>
 #include <asm/kexec.h>
 
 #include <asm/irq.h>
@@ -109,9 +107,9 @@
 #include "irq.h"
 
 #if defined(IA64_MCA_DEBUG_INFO)
-# define IA64_MCA_DEBUG(fmt...) printk(fmt)
+# define IA64_MCA_DEBUG(fmt...)	printk(fmt)
 #else
-# define IA64_MCA_DEBUG(fmt...) do {} while (0)
+# define IA64_MCA_DEBUG(fmt...)
 #endif
 
 #define NOTIFY_INIT(event, regs, arg, spin)				\
@@ -896,7 +894,7 @@ static void
 finish_pt_regs(struct pt_regs *regs, struct ia64_sal_os_state *sos,
 		unsigned long *nat)
 {
-	const struct pal_min_state_area *ms = sos->pal_min_state;
+	const pal_min_state_area_t *ms = sos->pal_min_state;
 	const u64 *bank;
 
 	/* If ipsr.ic then use pmsa_{iip,ipsr,ifs}, else use
@@ -972,7 +970,7 @@ ia64_mca_modify_original_stack(struct pt_regs *regs,
 	char *p;
 	ia64_va va;
 	extern char ia64_leave_kernel[];	/* Need asm address, not function descriptor */
-	const struct pal_min_state_area *ms = sos->pal_min_state;
+	const pal_min_state_area_t *ms = sos->pal_min_state;
 	struct task_struct *previous_current;
 	struct pt_regs *old_regs;
 	struct switch_stack *old_sw;
@@ -1788,7 +1786,7 @@ format_mca_init_stack(void *mca_data, unsigned long offset,
 	ti->task = p;
 	ti->cpu = cpu;
 	p->stack = ti;
-	p->__state = TASK_UNINTERRUPTIBLE;
+	p->state = TASK_UNINTERRUPTIBLE;
 	cpumask_set_cpu(cpu, &p->cpus_mask);
 	INIT_LIST_HEAD(&p->tasks);
 	p->parent = p->real_parent = p->group_leader = p;

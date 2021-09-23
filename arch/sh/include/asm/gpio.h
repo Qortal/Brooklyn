@@ -16,6 +16,7 @@
 #include <cpu/gpio.h>
 #endif
 
+#define ARCH_NR_GPIOS 512
 #include <asm-generic/gpio.h>
 
 #ifdef CONFIG_GPIOLIB

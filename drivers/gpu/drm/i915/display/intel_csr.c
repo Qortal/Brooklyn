@@ -40,20 +40,13 @@
 
 #define GEN12_CSR_MAX_FW_SIZE		ICL_CSR_MAX_FW_SIZE
 
-#define ADLS_CSR_PATH			"i915/adls_dmc_ver2_01.bin"
-#define ADLS_CSR_VERSION_REQUIRED	CSR_VERSION(2, 1)
-MODULE_FIRMWARE(ADLS_CSR_PATH);
-
-#define DG1_CSR_PATH			"i915/dg1_dmc_ver2_02.bin"
-#define DG1_CSR_VERSION_REQUIRED	CSR_VERSION(2, 2)
-MODULE_FIRMWARE(DG1_CSR_PATH);
-
 #define RKL_CSR_PATH			"i915/rkl_dmc_ver2_02.bin"
 #define RKL_CSR_VERSION_REQUIRED	CSR_VERSION(2, 2)
 MODULE_FIRMWARE(RKL_CSR_PATH);
 
 #define TGL_CSR_PATH			"i915/tgl_dmc_ver2_08.bin"
 #define TGL_CSR_VERSION_REQUIRED	CSR_VERSION(2, 8)
+#define TGL_CSR_MAX_FW_SIZE		0x6000
 MODULE_FIRMWARE(TGL_CSR_PATH);
 
 #define ICL_CSR_PATH			"i915/icl_dmc_ver1_09.bin"
@@ -644,7 +637,7 @@ static void csr_load_work_fn(struct work_struct *work)
 	dev_priv = container_of(work, typeof(*dev_priv), csr.work);
 	csr = &dev_priv->csr;
 
-	request_firmware(&fw, dev_priv->csr.fw_path, dev_priv->drm.dev);
+	request_firmware(&fw, dev_priv->csr.fw_path, &dev_priv->drm.pdev->dev);
 	parse_csr_fw(dev_priv, fw);
 
 	if (dev_priv->csr.dmc_payload) {
@@ -693,23 +686,16 @@ void intel_csr_ucode_init(struct drm_i915_private *dev_priv)
 	 */
 	intel_csr_runtime_pm_get(dev_priv);
 
-	if (IS_ALDERLAKE_S(dev_priv)) {
-		csr->fw_path = ADLS_CSR_PATH;
-		csr->required_version = ADLS_CSR_VERSION_REQUIRED;
-		csr->max_fw_size = GEN12_CSR_MAX_FW_SIZE;
-	} else if (IS_DG1(dev_priv)) {
-		csr->fw_path = DG1_CSR_PATH;
-		csr->required_version = DG1_CSR_VERSION_REQUIRED;
-		csr->max_fw_size = GEN12_CSR_MAX_FW_SIZE;
-	} else if (IS_ROCKETLAKE(dev_priv)) {
+	if (IS_ROCKETLAKE(dev_priv)) {
 		csr->fw_path = RKL_CSR_PATH;
 		csr->required_version = RKL_CSR_VERSION_REQUIRED;
 		csr->max_fw_size = GEN12_CSR_MAX_FW_SIZE;
-	} else if (DISPLAY_VER(dev_priv) >= 12) {
+	} else if (INTEL_GEN(dev_priv) >= 12) {
 		csr->fw_path = TGL_CSR_PATH;
 		csr->required_version = TGL_CSR_VERSION_REQUIRED;
+		/* Allow to load fw via parameter using the last known size */
 		csr->max_fw_size = GEN12_CSR_MAX_FW_SIZE;
-	} else if (IS_DISPLAY_VER(dev_priv, 11)) {
+	} else if (IS_GEN(dev_priv, 11)) {
 		csr->fw_path = ICL_CSR_PATH;
 		csr->required_version = ICL_CSR_VERSION_REQUIRED;
 		csr->max_fw_size = ICL_CSR_MAX_FW_SIZE;

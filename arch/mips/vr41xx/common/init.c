@@ -58,3 +58,7 @@ void __init prom_init(void)
 			strlcat(arcs_cmdline, " ", COMMAND_LINE_SIZE);
 	}
 }
+
+void __init prom_free_prom_memory(void)
+{
+}

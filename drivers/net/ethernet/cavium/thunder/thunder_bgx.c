@@ -594,6 +594,9 @@ static void bgx_lmac_handler(struct net_device *netdev)
 	struct phy_device *phydev;
 	int link_changed = 0;
 
+	if (!lmac)
+		return;
+
 	phydev = lmac->phydev;
 
 	if (!phydev->link && lmac->last_link)
@@ -1471,6 +1474,7 @@ static int bgx_init_of_phy(struct bgx *bgx)
 	device_for_each_child_node(&bgx->pdev->dev, fwn) {
 		struct phy_device *pd;
 		struct device_node *phy_np;
+		const char *mac;
 
 		/* Should always be an OF node.  But if it is not, we
 		 * cannot handle it, so exit the loop.
@@ -1479,7 +1483,9 @@ static int bgx_init_of_phy(struct bgx *bgx)
 		if (!node)
 			break;
 
-		of_get_mac_address(node, bgx->lmac[lmac].mac);
+		mac = of_get_mac_address(node);
+		if (!IS_ERR(mac))
+			ether_addr_copy(bgx->lmac[lmac].mac, mac);
 
 		SET_NETDEV_DEV(&bgx->lmac[lmac].netdev, &bgx->pdev->dev);
 		bgx->lmac[lmac].lmacid = lmac;

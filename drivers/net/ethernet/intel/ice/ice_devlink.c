@@ -6,226 +6,134 @@
 #include "ice_devlink.h"
 #include "ice_fw_update.h"
 
-/* context for devlink info version reporting */
-struct ice_info_ctx {
-	char buf[128];
-	struct ice_orom_info pending_orom;
-	struct ice_nvm_info pending_nvm;
-	struct ice_netlist_info pending_netlist;
-	struct ice_hw_dev_caps dev_caps;
-};
-
-/* The following functions are used to format specific strings for various
- * devlink info versions. The ctx parameter is used to provide the storage
- * buffer, as well as any ancillary information calculated when the info
- * request was made.
- *
- * If a version does not exist, for example when attempting to get the
- * inactive version of flash when there is no pending update, the function
- * should leave the buffer in the ctx structure empty and return 0.
- */
-
-static void ice_info_get_dsn(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static void ice_info_get_dsn(struct ice_pf *pf, char *buf, size_t len)
 {
 	u8 dsn[8];
 
 	/* Copy the DSN into an array in Big Endian format */
 	put_unaligned_be64(pci_get_dsn(pf->pdev), dsn);
 
-	snprintf(ctx->buf, sizeof(ctx->buf), "%8phD", dsn);
+	snprintf(buf, len, "%8phD", dsn);
 }
 
-static int ice_info_pba(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static int ice_info_pba(struct ice_pf *pf, char *buf, size_t len)
 {
 	struct ice_hw *hw = &pf->hw;
 	enum ice_status status;
 
-	status = ice_read_pba_string(hw, (u8 *)ctx->buf, sizeof(ctx->buf));
+	status = ice_read_pba_string(hw, (u8 *)buf, len);
 	if (status)
-		return -EIO;
+		/* We failed to locate the PBA, so just skip this entry */
+		dev_dbg(ice_pf_to_dev(pf), "Failed to read Product Board Assembly string, status %s\n",
+			ice_stat_str(status));
 
 	return 0;
 }
 
-static int ice_info_fw_mgmt(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static int ice_info_fw_mgmt(struct ice_pf *pf, char *buf, size_t len)
 {
 	struct ice_hw *hw = &pf->hw;
 
-	snprintf(ctx->buf, sizeof(ctx->buf), "%u.%u.%u", hw->fw_maj_ver, hw->fw_min_ver,
+	snprintf(buf, len, "%u.%u.%u", hw->fw_maj_ver, hw->fw_min_ver,
 		 hw->fw_patch);
 
 	return 0;
 }
 
-static int ice_info_fw_api(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static int ice_info_fw_api(struct ice_pf *pf, char *buf, size_t len)
 {
 	struct ice_hw *hw = &pf->hw;
 
-	snprintf(ctx->buf, sizeof(ctx->buf), "%u.%u", hw->api_maj_ver, hw->api_min_ver);
+	snprintf(buf, len, "%u.%u", hw->api_maj_ver, hw->api_min_ver);
 
 	return 0;
 }
 
-static int ice_info_fw_build(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static int ice_info_fw_build(struct ice_pf *pf, char *buf, size_t len)
 {
 	struct ice_hw *hw = &pf->hw;
 
-	snprintf(ctx->buf, sizeof(ctx->buf), "0x%08x", hw->fw_build);
+	snprintf(buf, len, "0x%08x", hw->fw_build);
 
 	return 0;
 }
 
-static int ice_info_orom_ver(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static int ice_info_orom_ver(struct ice_pf *pf, char *buf, size_t len)
 {
-	struct ice_orom_info *orom = &pf->hw.flash.orom;
+	struct ice_orom_info *orom = &pf->hw.nvm.orom;
 
-	snprintf(ctx->buf, sizeof(ctx->buf), "%u.%u.%u", orom->major, orom->build, orom->patch);
+	snprintf(buf, len, "%u.%u.%u", orom->major, orom->build, orom->patch);
 
 	return 0;
 }
 
-static int
-ice_info_pending_orom_ver(struct ice_pf __always_unused *pf, struct ice_info_ctx *ctx)
+static int ice_info_nvm_ver(struct ice_pf *pf, char *buf, size_t len)
 {
-	struct ice_orom_info *orom = &ctx->pending_orom;
+	struct ice_nvm_info *nvm = &pf->hw.nvm;
 
-	if (ctx->dev_caps.common_cap.nvm_update_pending_orom)
-		snprintf(ctx->buf, sizeof(ctx->buf), "%u.%u.%u",
-			 orom->major, orom->build, orom->patch);
+	snprintf(buf, len, "%x.%02x", nvm->major_ver, nvm->minor_ver);
 
 	return 0;
 }
 
-static int ice_info_nvm_ver(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static int ice_info_eetrack(struct ice_pf *pf, char *buf, size_t len)
 {
-	struct ice_nvm_info *nvm = &pf->hw.flash.nvm;
+	struct ice_nvm_info *nvm = &pf->hw.nvm;
 
-	snprintf(ctx->buf, sizeof(ctx->buf), "%x.%02x", nvm->major, nvm->minor);
-
-	return 0;
-}
-
-static int
-ice_info_pending_nvm_ver(struct ice_pf __always_unused *pf, struct ice_info_ctx *ctx)
-{
-	struct ice_nvm_info *nvm = &ctx->pending_nvm;
-
-	if (ctx->dev_caps.common_cap.nvm_update_pending_nvm)
-		snprintf(ctx->buf, sizeof(ctx->buf), "%x.%02x", nvm->major, nvm->minor);
+	snprintf(buf, len, "0x%08x", nvm->eetrack);
 
 	return 0;
 }
 
-static int ice_info_eetrack(struct ice_pf *pf, struct ice_info_ctx *ctx)
-{
-	struct ice_nvm_info *nvm = &pf->hw.flash.nvm;
-
-	snprintf(ctx->buf, sizeof(ctx->buf), "0x%08x", nvm->eetrack);
-
-	return 0;
-}
-
-static int
-ice_info_pending_eetrack(struct ice_pf __always_unused *pf, struct ice_info_ctx *ctx)
-{
-	struct ice_nvm_info *nvm = &ctx->pending_nvm;
-
-	if (ctx->dev_caps.common_cap.nvm_update_pending_nvm)
-		snprintf(ctx->buf, sizeof(ctx->buf), "0x%08x", nvm->eetrack);
-
-	return 0;
-}
-
-static int ice_info_ddp_pkg_name(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static int ice_info_ddp_pkg_name(struct ice_pf *pf, char *buf, size_t len)
 {
 	struct ice_hw *hw = &pf->hw;
 
-	snprintf(ctx->buf, sizeof(ctx->buf), "%s", hw->active_pkg_name);
+	snprintf(buf, len, "%s", hw->active_pkg_name);
 
 	return 0;
 }
 
-static int ice_info_ddp_pkg_version(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static int ice_info_ddp_pkg_version(struct ice_pf *pf, char *buf, size_t len)
 {
 	struct ice_pkg_ver *pkg = &pf->hw.active_pkg_ver;
 
-	snprintf(ctx->buf, sizeof(ctx->buf), "%u.%u.%u.%u", pkg->major, pkg->minor, pkg->update,
+	snprintf(buf, len, "%u.%u.%u.%u", pkg->major, pkg->minor, pkg->update,
 		 pkg->draft);
 
 	return 0;
 }
 
-static int ice_info_ddp_pkg_bundle_id(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static int ice_info_ddp_pkg_bundle_id(struct ice_pf *pf, char *buf, size_t len)
 {
-	snprintf(ctx->buf, sizeof(ctx->buf), "0x%08x", pf->hw.active_track_id);
+	snprintf(buf, len, "0x%08x", pf->hw.active_track_id);
 
 	return 0;
 }
 
-static int ice_info_netlist_ver(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static int ice_info_netlist_ver(struct ice_pf *pf, char *buf, size_t len)
 {
-	struct ice_netlist_info *netlist = &pf->hw.flash.netlist;
+	struct ice_netlist_ver_info *netlist = &pf->hw.netlist_ver;
 
 	/* The netlist version fields are BCD formatted */
-	snprintf(ctx->buf, sizeof(ctx->buf), "%x.%x.%x-%x.%x.%x", netlist->major, netlist->minor,
+	snprintf(buf, len, "%x.%x.%x-%x.%x.%x", netlist->major, netlist->minor,
 		 netlist->type >> 16, netlist->type & 0xFFFF, netlist->rev,
 		 netlist->cust_ver);
 
 	return 0;
 }
 
-static int ice_info_netlist_build(struct ice_pf *pf, struct ice_info_ctx *ctx)
+static int ice_info_netlist_build(struct ice_pf *pf, char *buf, size_t len)
 {
-	struct ice_netlist_info *netlist = &pf->hw.flash.netlist;
+	struct ice_netlist_ver_info *netlist = &pf->hw.netlist_ver;
 
-	snprintf(ctx->buf, sizeof(ctx->buf), "0x%08x", netlist->hash);
+	snprintf(buf, len, "0x%08x", netlist->hash);
 
 	return 0;
 }
 
-static int
-ice_info_pending_netlist_ver(struct ice_pf __always_unused *pf, struct ice_info_ctx *ctx)
-{
-	struct ice_netlist_info *netlist = &ctx->pending_netlist;
-
-	/* The netlist version fields are BCD formatted */
-	if (ctx->dev_caps.common_cap.nvm_update_pending_netlist)
-		snprintf(ctx->buf, sizeof(ctx->buf), "%x.%x.%x-%x.%x.%x",
-			 netlist->major, netlist->minor,
-			 netlist->type >> 16, netlist->type & 0xFFFF, netlist->rev,
-			 netlist->cust_ver);
-
-	return 0;
-}
-
-static int
-ice_info_pending_netlist_build(struct ice_pf __always_unused *pf, struct ice_info_ctx *ctx)
-{
-	struct ice_netlist_info *netlist = &ctx->pending_netlist;
-
-	if (ctx->dev_caps.common_cap.nvm_update_pending_netlist)
-		snprintf(ctx->buf, sizeof(ctx->buf), "0x%08x", netlist->hash);
-
-	return 0;
-}
-
-#define fixed(key, getter) { ICE_VERSION_FIXED, key, getter, NULL }
-#define running(key, getter) { ICE_VERSION_RUNNING, key, getter, NULL }
-#define stored(key, getter, fallback) { ICE_VERSION_STORED, key, getter, fallback }
-
-/* The combined() macro inserts both the running entry as well as a stored
- * entry. The running entry will always report the version from the active
- * handler. The stored entry will first try the pending handler, and fallback
- * to the active handler if the pending function does not report a version.
- * The pending handler should check the status of a pending update for the
- * relevant flash component. It should only fill in the buffer in the case
- * where a valid pending version is available. This ensures that the related
- * stored and running versions remain in sync, and that stored versions are
- * correctly reported as expected.
- */
-#define combined(key, active, pending) \
-	running(key, active), \
-	stored(key, pending, active)
+#define fixed(key, getter) { ICE_VERSION_FIXED, key, getter }
+#define running(key, getter) { ICE_VERSION_RUNNING, key, getter }
 
 enum ice_version_type {
 	ICE_VERSION_FIXED,
@@ -236,21 +144,20 @@ enum ice_version_type {
 static const struct ice_devlink_version {
 	enum ice_version_type type;
 	const char *key;
-	int (*getter)(struct ice_pf *pf, struct ice_info_ctx *ctx);
-	int (*fallback)(struct ice_pf *pf, struct ice_info_ctx *ctx);
+	int (*getter)(struct ice_pf *pf, char *buf, size_t len);
 } ice_devlink_versions[] = {
 	fixed(DEVLINK_INFO_VERSION_GENERIC_BOARD_ID, ice_info_pba),
 	running(DEVLINK_INFO_VERSION_GENERIC_FW_MGMT, ice_info_fw_mgmt),
 	running("fw.mgmt.api", ice_info_fw_api),
 	running("fw.mgmt.build", ice_info_fw_build),
-	combined(DEVLINK_INFO_VERSION_GENERIC_FW_UNDI, ice_info_orom_ver, ice_info_pending_orom_ver),
-	combined("fw.psid.api", ice_info_nvm_ver, ice_info_pending_nvm_ver),
-	combined(DEVLINK_INFO_VERSION_GENERIC_FW_BUNDLE_ID, ice_info_eetrack, ice_info_pending_eetrack),
+	running(DEVLINK_INFO_VERSION_GENERIC_FW_UNDI, ice_info_orom_ver),
+	running("fw.psid.api", ice_info_nvm_ver),
+	running(DEVLINK_INFO_VERSION_GENERIC_FW_BUNDLE_ID, ice_info_eetrack),
 	running("fw.app.name", ice_info_ddp_pkg_name),
 	running(DEVLINK_INFO_VERSION_GENERIC_FW_APP, ice_info_ddp_pkg_version),
 	running("fw.app.bundle_id", ice_info_ddp_pkg_bundle_id),
-	combined("fw.netlist", ice_info_netlist_ver, ice_info_pending_netlist_ver),
-	combined("fw.netlist.build", ice_info_netlist_build, ice_info_pending_netlist_build),
+	running("fw.netlist", ice_info_netlist_ver),
+	running("fw.netlist.build", ice_info_netlist_build),
 };
 
 /**
@@ -269,137 +176,60 @@ static int ice_devlink_info_get(struct devlink *devlink,
 				struct netlink_ext_ack *extack)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
-	struct device *dev = ice_pf_to_dev(pf);
-	struct ice_hw *hw = &pf->hw;
-	struct ice_info_ctx *ctx;
-	enum ice_status status;
+	char buf[100];
 	size_t i;
 	int err;
-
-	err = ice_wait_for_reset(pf, 10 * HZ);
-	if (err) {
-		NL_SET_ERR_MSG_MOD(extack, "Device is busy resetting");
-		return err;
-	}
-
-	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
-	if (!ctx)
-		return -ENOMEM;
-
-	/* discover capabilities first */
-	status = ice_discover_dev_caps(hw, &ctx->dev_caps);
-	if (status) {
-		dev_dbg(dev, "Failed to discover device capabilities, status %s aq_err %s\n",
-			ice_stat_str(status), ice_aq_str(hw->adminq.sq_last_status));
-		NL_SET_ERR_MSG_MOD(extack, "Unable to discover device capabilities");
-		err = -EIO;
-		goto out_free_ctx;
-	}
-
-	if (ctx->dev_caps.common_cap.nvm_update_pending_orom) {
-		status = ice_get_inactive_orom_ver(hw, &ctx->pending_orom);
-		if (status) {
-			dev_dbg(dev, "Unable to read inactive Option ROM version data, status %s aq_err %s\n",
-				ice_stat_str(status), ice_aq_str(hw->adminq.sq_last_status));
-
-			/* disable display of pending Option ROM */
-			ctx->dev_caps.common_cap.nvm_update_pending_orom = false;
-		}
-	}
-
-	if (ctx->dev_caps.common_cap.nvm_update_pending_nvm) {
-		status = ice_get_inactive_nvm_ver(hw, &ctx->pending_nvm);
-		if (status) {
-			dev_dbg(dev, "Unable to read inactive NVM version data, status %s aq_err %s\n",
-				ice_stat_str(status), ice_aq_str(hw->adminq.sq_last_status));
-
-			/* disable display of pending Option ROM */
-			ctx->dev_caps.common_cap.nvm_update_pending_nvm = false;
-		}
-	}
-
-	if (ctx->dev_caps.common_cap.nvm_update_pending_netlist) {
-		status = ice_get_inactive_netlist_ver(hw, &ctx->pending_netlist);
-		if (status) {
-			dev_dbg(dev, "Unable to read inactive Netlist version data, status %s aq_err %s\n",
-				ice_stat_str(status), ice_aq_str(hw->adminq.sq_last_status));
-
-			/* disable display of pending Option ROM */
-			ctx->dev_caps.common_cap.nvm_update_pending_netlist = false;
-		}
-	}
 
 	err = devlink_info_driver_name_put(req, KBUILD_MODNAME);
 	if (err) {
 		NL_SET_ERR_MSG_MOD(extack, "Unable to set driver name");
-		goto out_free_ctx;
+		return err;
 	}
 
-	ice_info_get_dsn(pf, ctx);
+	ice_info_get_dsn(pf, buf, sizeof(buf));
 
-	err = devlink_info_serial_number_put(req, ctx->buf);
+	err = devlink_info_serial_number_put(req, buf);
 	if (err) {
 		NL_SET_ERR_MSG_MOD(extack, "Unable to set serial number");
-		goto out_free_ctx;
+		return err;
 	}
 
 	for (i = 0; i < ARRAY_SIZE(ice_devlink_versions); i++) {
 		enum ice_version_type type = ice_devlink_versions[i].type;
 		const char *key = ice_devlink_versions[i].key;
 
-		memset(ctx->buf, 0, sizeof(ctx->buf));
-
-		err = ice_devlink_versions[i].getter(pf, ctx);
+		err = ice_devlink_versions[i].getter(pf, buf, sizeof(buf));
 		if (err) {
 			NL_SET_ERR_MSG_MOD(extack, "Unable to obtain version info");
-			goto out_free_ctx;
+			return err;
 		}
-
-		/* If the default getter doesn't report a version, use the
-		 * fallback function. This is primarily useful in the case of
-		 * "stored" versions that want to report the same value as the
-		 * running version in the normal case of no pending update.
-		 */
-		if (ctx->buf[0] == '\0' && ice_devlink_versions[i].fallback) {
-			err = ice_devlink_versions[i].fallback(pf, ctx);
-			if (err) {
-				NL_SET_ERR_MSG_MOD(extack, "Unable to obtain version info");
-				goto out_free_ctx;
-			}
-		}
-
-		/* Do not report missing versions */
-		if (ctx->buf[0] == '\0')
-			continue;
 
 		switch (type) {
 		case ICE_VERSION_FIXED:
-			err = devlink_info_version_fixed_put(req, key, ctx->buf);
+			err = devlink_info_version_fixed_put(req, key, buf);
 			if (err) {
 				NL_SET_ERR_MSG_MOD(extack, "Unable to set fixed version");
-				goto out_free_ctx;
+				return err;
 			}
 			break;
 		case ICE_VERSION_RUNNING:
-			err = devlink_info_version_running_put(req, key, ctx->buf);
+			err = devlink_info_version_running_put(req, key, buf);
 			if (err) {
 				NL_SET_ERR_MSG_MOD(extack, "Unable to set running version");
-				goto out_free_ctx;
+				return err;
 			}
 			break;
 		case ICE_VERSION_STORED:
-			err = devlink_info_version_stored_put(req, key, ctx->buf);
+			err = devlink_info_version_stored_put(req, key, buf);
 			if (err) {
 				NL_SET_ERR_MSG_MOD(extack, "Unable to set stored version");
-				goto out_free_ctx;
+				return err;
 			}
 			break;
 		}
 	}
 
-out_free_ctx:
-	kfree(ctx);
-	return err;
+	return 0;
 }
 
 /**
@@ -419,7 +249,9 @@ ice_devlink_flash_update(struct devlink *devlink,
 			 struct netlink_ext_ack *extack)
 {
 	struct ice_pf *pf = devlink_priv(devlink);
+	struct device *dev = &pf->pdev->dev;
 	struct ice_hw *hw = &pf->hw;
+	const struct firmware *fw;
 	u8 preservation;
 	int err;
 
@@ -447,9 +279,22 @@ ice_devlink_flash_update(struct devlink *devlink,
 	if (err)
 		return err;
 
-	devlink_flash_update_status_notify(devlink, "Preparing to flash", NULL, 0, 0);
+	err = request_firmware(&fw, params->file_name, dev);
+	if (err) {
+		NL_SET_ERR_MSG_MOD(extack, "Unable to read file from disk");
+		return err;
+	}
 
-	return ice_flash_pldm_image(pf, params->fw, preservation, extack);
+	dev_dbg(dev, "Beginning flash update with file '%s'\n", params->file_name);
+
+	devlink_flash_update_begin_notify(devlink);
+	devlink_flash_update_status_notify(devlink, "Preparing to flash", NULL, 0, 0);
+	err = ice_flash_pldm_image(pf, fw, preservation, extack);
+	devlink_flash_update_end_notify(devlink);
+
+	release_firmware(fw);
+
+	return err;
 }
 
 static const struct devlink_ops ice_devlink_ops = {
@@ -605,7 +450,7 @@ static int ice_devlink_nvm_snapshot(struct devlink *devlink,
 	void *nvm_data;
 	u32 nvm_size;
 
-	nvm_size = hw->flash.flash_size;
+	nvm_size = hw->nvm.flash_size;
 	nvm_data = vzalloc(nvm_size);
 	if (!nvm_data)
 		return -ENOMEM;
@@ -705,7 +550,7 @@ void ice_devlink_init_regions(struct ice_pf *pf)
 	struct device *dev = ice_pf_to_dev(pf);
 	u64 nvm_size;
 
-	nvm_size = pf->hw.flash.flash_size;
+	nvm_size = pf->hw.nvm.flash_size;
 	pf->nvm_region = devlink_region_create(devlink, &ice_nvm_region_ops, 1,
 					       nvm_size);
 	if (IS_ERR(pf->nvm_region)) {

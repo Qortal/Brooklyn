@@ -179,7 +179,6 @@ static inline void lru_del(struct ashmem_range *range)
  * @purged:	   Initial purge status (ASMEM_NOT_PURGED or ASHMEM_WAS_PURGED)
  * @start:	   The starting page (inclusive)
  * @end:	   The ending page (inclusive)
- * @new_range:	   The placeholder for the new range
  *
  * This function is protected by ashmem_mutex.
  */
@@ -451,9 +450,9 @@ static int ashmem_mmap(struct file *file, struct vm_area_struct *vma)
 		vma_set_anonymous(vma);
 	}
 
-	vma_set_file(vma, asma->file);
-	/* XXX: merge this with the get_file() above if possible */
-	fput(asma->file);
+	if (vma->vm_file)
+		fput(vma->vm_file);
+	vma->vm_file = asma->file;
 
 out:
 	mutex_unlock(&ashmem_mutex);
@@ -895,8 +894,6 @@ static void ashmem_show_fdinfo(struct seq_file *m, struct file *file)
 		seq_printf(m, "name:\t%s\n",
 			   asma->name + ASHMEM_NAME_PREFIX_LEN);
 
-	seq_printf(m, "size:\t%zu\n", asma->size);
-
 	mutex_unlock(&ashmem_mutex);
 }
 #endif
@@ -936,7 +933,7 @@ static int __init ashmem_init(void)
 
 	ashmem_range_cachep = kmem_cache_create("ashmem_range_cache",
 						sizeof(struct ashmem_range),
-						0, SLAB_RECLAIM_ACCOUNT, NULL);
+						0, 0, NULL);
 	if (!ashmem_range_cachep) {
 		pr_err("failed to create slab cache\n");
 		goto out_free1;

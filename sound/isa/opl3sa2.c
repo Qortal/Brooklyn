@@ -22,6 +22,11 @@
 MODULE_AUTHOR("Jaroslav Kysela <perex@perex.cz>");
 MODULE_DESCRIPTION("Yamaha OPL3SA2+");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{Yamaha,YMF719E-S},"
+		"{Genius,Sound Maker 3DX},"
+		"{Yamaha,OPL3SA3},"
+		"{Intel,AL440LX sound},"
+	        "{NeoMagic,MagicWave 3DX}}");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
@@ -208,8 +213,7 @@ static int snd_opl3sa2_detect(struct snd_card *card)
 	char str[2];
 
 	port = chip->port;
-	chip->res_port = request_region(port, 2, "OPL3-SA control");
-	if (!chip->res_port) {
+	if ((chip->res_port = request_region(port, 2, "OPL3-SA control")) == NULL) {
 		snd_printk(KERN_ERR PFX "can't grab port 0x%lx\n", port);
 		return -EBUSY;
 	}
@@ -240,16 +244,14 @@ static int snd_opl3sa2_detect(struct snd_card *card)
 	str[1] = 0;
 	strcat(card->shortname, str);
 	snd_opl3sa2_write(chip, OPL3SA2_MISC, tmp ^ 7);
-	tmp1 = snd_opl3sa2_read(chip, OPL3SA2_MISC);
-	if (tmp1 != tmp) {
+	if ((tmp1 = snd_opl3sa2_read(chip, OPL3SA2_MISC)) != tmp) {
 		snd_printd("OPL3-SA [0x%lx] detect (1) = 0x%x (0x%x)\n", port, tmp, tmp1);
 		return -ENODEV;
 	}
 	/* try if the MIC register is accessible */
 	tmp = snd_opl3sa2_read(chip, OPL3SA2_MIC);
 	snd_opl3sa2_write(chip, OPL3SA2_MIC, 0x8a);
-	tmp1 = snd_opl3sa2_read(chip, OPL3SA2_MIC);
-	if ((tmp1 & 0x9f) != 0x8a) {
+	if (((tmp1 = snd_opl3sa2_read(chip, OPL3SA2_MIC)) & 0x9f) != 0x8a) {
 		snd_printd("OPL3-SA [0x%lx] detect (2) = 0x%x (0x%x)\n", port, tmp, tmp1);
 		return -ENODEV;
 	}
@@ -492,38 +494,32 @@ static int snd_opl3sa2_mixer(struct snd_card *card)
 	/* reassign AUX0 to CD */
         strcpy(id1.name, "Aux Playback Switch");
         strcpy(id2.name, "CD Playback Switch");
-	err = snd_ctl_rename_id(card, &id1, &id2);
-	if (err < 0) {
+        if ((err = snd_ctl_rename_id(card, &id1, &id2)) < 0) {
 		snd_printk(KERN_ERR "Cannot rename opl3sa2 control\n");
                 return err;
 	}
         strcpy(id1.name, "Aux Playback Volume");
         strcpy(id2.name, "CD Playback Volume");
-	err = snd_ctl_rename_id(card, &id1, &id2);
-	if (err < 0) {
+        if ((err = snd_ctl_rename_id(card, &id1, &id2)) < 0) {
 		snd_printk(KERN_ERR "Cannot rename opl3sa2 control\n");
                 return err;
 	}
 	/* reassign AUX1 to FM */
         strcpy(id1.name, "Aux Playback Switch"); id1.index = 1;
         strcpy(id2.name, "FM Playback Switch");
-	err = snd_ctl_rename_id(card, &id1, &id2);
-	if (err < 0) {
+        if ((err = snd_ctl_rename_id(card, &id1, &id2)) < 0) {
 		snd_printk(KERN_ERR "Cannot rename opl3sa2 control\n");
                 return err;
 	}
         strcpy(id1.name, "Aux Playback Volume");
         strcpy(id2.name, "FM Playback Volume");
-	err = snd_ctl_rename_id(card, &id1, &id2);
-	if (err < 0) {
+        if ((err = snd_ctl_rename_id(card, &id1, &id2)) < 0) {
 		snd_printk(KERN_ERR "Cannot rename opl3sa2 control\n");
                 return err;
 	}
 	/* add OPL3SA2 controls */
 	for (idx = 0; idx < ARRAY_SIZE(snd_opl3sa2_controls); idx++) {
-		kctl = snd_ctl_new1(&snd_opl3sa2_controls[idx], chip);
-		err = snd_ctl_add(card, kctl);
-		if (err < 0)
+		if ((err = snd_ctl_add(card, kctl = snd_ctl_new1(&snd_opl3sa2_controls[idx], chip))) < 0)
 			return err;
 		switch (idx) {
 		case 0: chip->master_switch = kctl; kctl->private_free = snd_opl3sa2_master_free; break;
@@ -531,11 +527,9 @@ static int snd_opl3sa2_mixer(struct snd_card *card)
 		}
 	}
 	if (chip->version > 2) {
-		for (idx = 0; idx < ARRAY_SIZE(snd_opl3sa2_tone_controls); idx++) {
-			err = snd_ctl_add(card, snd_ctl_new1(&snd_opl3sa2_tone_controls[idx], chip));
-			if (err < 0)
+		for (idx = 0; idx < ARRAY_SIZE(snd_opl3sa2_tone_controls); idx++)
+			if ((err = snd_ctl_add(card, snd_ctl_new1(&snd_opl3sa2_tone_controls[idx], chip))) < 0)
 				return err;
-		}
 	}
 	return 0;
 }
@@ -688,24 +682,20 @@ static int snd_opl3sa2_probe(struct snd_card *card, int dev)
 	if (err < 0)
 		return err;
 	if (fm_port[dev] >= 0x340 && fm_port[dev] < 0x400) {
-		err = snd_opl3_create(card, fm_port[dev],
-				      fm_port[dev] + 2,
-				      OPL3_HW_OPL3, 0, &opl3);
-		if (err < 0)
+		if ((err = snd_opl3_create(card, fm_port[dev],
+					   fm_port[dev] + 2,
+					   OPL3_HW_OPL3, 0, &opl3)) < 0)
 			return err;
-		err = snd_opl3_timer_new(opl3, 1, 2);
-		if (err < 0)
+		if ((err = snd_opl3_timer_new(opl3, 1, 2)) < 0)
 			return err;
-		err = snd_opl3_hwdep_new(opl3, 0, 1, &chip->synth);
-		if (err < 0)
+		if ((err = snd_opl3_hwdep_new(opl3, 0, 1, &chip->synth)) < 0)
 			return err;
 	}
 	if (midi_port[dev] >= 0x300 && midi_port[dev] < 0x340) {
-		err = snd_mpu401_uart_new(card, 0, MPU401_HW_OPL3SA2,
-					  midi_port[dev],
-					  MPU401_INFO_IRQ_HOOK, -1,
-					  &chip->rmidi);
-		if (err < 0)
+		if ((err = snd_mpu401_uart_new(card, 0, MPU401_HW_OPL3SA2,
+					       midi_port[dev],
+					       MPU401_INFO_IRQ_HOOK, -1,
+					       &chip->rmidi)) < 0)
 			return err;
 	}
 	sprintf(card->longname, "%s at 0x%lx, irq %d, dma %d",
@@ -736,13 +726,11 @@ static int snd_opl3sa2_pnp_detect(struct pnp_dev *pdev,
 	err = snd_opl3sa2_card_new(&pdev->dev, dev, &card);
 	if (err < 0)
 		return err;
-	err = snd_opl3sa2_pnp(dev, card->private_data, pdev);
-	if (err < 0) {
+	if ((err = snd_opl3sa2_pnp(dev, card->private_data, pdev)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
-	err = snd_opl3sa2_probe(card, dev);
-	if (err < 0) {
+	if ((err = snd_opl3sa2_probe(card, dev)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
@@ -802,13 +790,11 @@ static int snd_opl3sa2_pnp_cdetect(struct pnp_card_link *pcard,
 	err = snd_opl3sa2_card_new(&pdev->dev, dev, &card);
 	if (err < 0)
 		return err;
-	err = snd_opl3sa2_pnp(dev, card->private_data, pdev);
-	if (err < 0) {
+	if ((err = snd_opl3sa2_pnp(dev, card->private_data, pdev)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
-	err = snd_opl3sa2_probe(card, dev);
-	if (err < 0) {
+	if ((err = snd_opl3sa2_probe(card, dev)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
@@ -884,8 +870,7 @@ static int snd_opl3sa2_isa_probe(struct device *pdev,
 	err = snd_opl3sa2_card_new(pdev, dev, &card);
 	if (err < 0)
 		return err;
-	err = snd_opl3sa2_probe(card, dev);
-	if (err < 0) {
+	if ((err = snd_opl3sa2_probe(card, dev)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
@@ -893,10 +878,11 @@ static int snd_opl3sa2_isa_probe(struct device *pdev,
 	return 0;
 }
 
-static void snd_opl3sa2_isa_remove(struct device *devptr,
+static int snd_opl3sa2_isa_remove(struct device *devptr,
 				  unsigned int dev)
 {
 	snd_card_free(dev_get_drvdata(devptr));
+	return 0;
 }
 
 #ifdef CONFIG_PM

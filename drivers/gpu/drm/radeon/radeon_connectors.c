@@ -2571,11 +2571,13 @@ void radeon_setup_mst_connector(struct drm_device *dev)
 		return;
 
 	list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
+		int ret;
+
 		radeon_connector = to_radeon_connector(connector);
 
 		if (connector->connector_type != DRM_MODE_CONNECTOR_DisplayPort)
 			continue;
 
-		radeon_dp_mst_init(radeon_connector);
+		ret = radeon_dp_mst_init(radeon_connector);
 	}
 }

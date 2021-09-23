@@ -88,12 +88,6 @@
 #define HBM_MINOR_VERSION_CAP              2
 #define HBM_MAJOR_VERSION_CAP              2
 
-/*
- * MEI version with client DMA support
- */
-#define HBM_MINOR_VERSION_CD               2
-#define HBM_MAJOR_VERSION_CD               2
-
 /* Host bus message command opcode */
 #define MEI_HBM_CMD_OP_MSK                  0x7f
 /* Host bus message command RESPONSE */
@@ -141,12 +135,6 @@
 
 #define MEI_HBM_CAPABILITIES_REQ_CMD        0x13
 #define MEI_HBM_CAPABILITIES_RES_CMD        0x93
-
-#define MEI_HBM_CLIENT_DMA_MAP_REQ_CMD      0x14
-#define MEI_HBM_CLIENT_DMA_MAP_RES_CMD      0x94
-
-#define MEI_HBM_CLIENT_DMA_UNMAP_REQ_CMD    0x15
-#define MEI_HBM_CLIENT_DMA_UNMAP_RES_CMD    0x95
 
 /*
  * MEI Stop Reason
@@ -235,8 +223,9 @@ enum mei_ext_hdr_type {
 struct mei_ext_hdr {
 	u8 type;
 	u8 length;
-	u8 data[];
-} __packed;
+	u8 ext_payload[2];
+	u8 hdr[];
+};
 
 /**
  * struct mei_ext_meta_hdr - extend header meta data
@@ -249,21 +238,8 @@ struct mei_ext_meta_hdr {
 	u8 count;
 	u8 size;
 	u8 reserved[2];
-	u8 hdrs[];
-} __packed;
-
-/**
- * struct mei_ext_hdr_vtag - extend header for vtag
- *
- * @hdr: standard extend header
- * @vtag: virtual tag
- * @reserved: reserved
- */
-struct mei_ext_hdr_vtag {
-	struct mei_ext_hdr hdr;
-	u8 vtag;
-	u8 reserved;
-} __packed;
+	struct mei_ext_hdr hdrs[];
+};
 
 /*
  * Extended header iterator functions
@@ -278,7 +254,7 @@ struct mei_ext_hdr_vtag {
  */
 static inline struct mei_ext_hdr *mei_ext_begin(struct mei_ext_meta_hdr *meta)
 {
-	return (struct mei_ext_hdr *)meta->hdrs;
+	return meta->hdrs;
 }
 
 /**
@@ -296,7 +272,7 @@ static inline bool mei_ext_last(struct mei_ext_meta_hdr *meta,
 }
 
 /**
- * mei_ext_next - following extended header on the TLV list
+ *mei_ext_next - following extended header on the TLV list
  *
  * @ext: current extend header
  *
@@ -307,7 +283,7 @@ static inline bool mei_ext_last(struct mei_ext_meta_hdr *meta,
  */
 static inline struct mei_ext_hdr *mei_ext_next(struct mei_ext_hdr *ext)
 {
-	return (struct mei_ext_hdr *)((u8 *)ext + (ext->length * 4));
+	return (struct mei_ext_hdr *)(ext->hdr + (ext->length * 4));
 }
 
 /**
@@ -672,8 +648,6 @@ struct hbm_dma_ring_ctrl {
 
 /* virtual tag supported */
 #define HBM_CAP_VT BIT(0)
-/* client dma supported */
-#define HBM_CAP_CD BIT(2)
 
 /**
  * struct hbm_capability_request - capability request from host to fw
@@ -695,53 +669,6 @@ struct hbm_capability_request {
 struct hbm_capability_response {
 	u8 hbm_cmd;
 	u8 capability_granted[3];
-} __packed;
-
-/**
- * struct hbm_client_dma_map_request - client dma map request from host to fw
- *
- * @hbm_cmd: bus message command header
- * @client_buffer_id: client buffer id
- * @reserved: reserved
- * @address_lsb: DMA address LSB
- * @address_msb: DMA address MSB
- * @size: DMA size
- */
-struct hbm_client_dma_map_request {
-	u8 hbm_cmd;
-	u8 client_buffer_id;
-	u8 reserved[2];
-	u32 address_lsb;
-	u32 address_msb;
-	u32 size;
-} __packed;
-
-/**
- * struct hbm_client_dma_unmap_request
- *    client dma unmap request from the host to the firmware
- *
- * @hbm_cmd: bus message command header
- * @status: unmap status
- * @client_buffer_id: client buffer id
- * @reserved: reserved
- */
-struct hbm_client_dma_unmap_request {
-	u8 hbm_cmd;
-	u8 status;
-	u8 client_buffer_id;
-	u8 reserved;
-} __packed;
-
-/**
- * struct hbm_client_dma_response
- *   client dma unmap response from the firmware to the host
- *
- * @hbm_cmd: bus message command header
- * @status: command status
- */
-struct hbm_client_dma_response {
-	u8 hbm_cmd;
-	u8 status;
 } __packed;
 
 #endif

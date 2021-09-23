@@ -1385,6 +1385,7 @@ static int octeon_mgmt_probe(struct platform_device *pdev)
 	struct net_device *netdev;
 	struct octeon_mgmt *p;
 	const __be32 *data;
+	const u8 *mac;
 	struct resource *res_mix;
 	struct resource *res_agl;
 	struct resource *res_agl_prt_ctl;
@@ -1501,8 +1502,11 @@ static int octeon_mgmt_probe(struct platform_device *pdev)
 	netdev->min_mtu = 64 - OCTEON_MGMT_RX_HEADROOM;
 	netdev->max_mtu = 16383 - OCTEON_MGMT_RX_HEADROOM - VLAN_HLEN;
 
-	result = of_get_mac_address(pdev->dev.of_node, netdev->dev_addr);
-	if (result)
+	mac = of_get_mac_address(pdev->dev.of_node);
+
+	if (!IS_ERR(mac))
+		ether_addr_copy(netdev->dev_addr, mac);
+	else
 		eth_hw_addr_random(netdev);
 
 	p->phy_np = of_parse_phandle(pdev->dev.of_node, "phy-handle", 0);
@@ -1552,7 +1556,18 @@ static struct platform_driver octeon_mgmt_driver = {
 	.remove		= octeon_mgmt_remove,
 };
 
-module_platform_driver(octeon_mgmt_driver);
+static int __init octeon_mgmt_mod_init(void)
+{
+	return platform_driver_register(&octeon_mgmt_driver);
+}
+
+static void __exit octeon_mgmt_mod_exit(void)
+{
+	platform_driver_unregister(&octeon_mgmt_driver);
+}
+
+module_init(octeon_mgmt_mod_init);
+module_exit(octeon_mgmt_mod_exit);
 
 MODULE_SOFTDEP("pre: mdio-cavium");
 MODULE_DESCRIPTION(DRV_DESCRIPTION);

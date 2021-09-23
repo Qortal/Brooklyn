@@ -35,6 +35,11 @@
 MODULE_AUTHOR("Massimo Piccioni <dafastidio@libero.it>");
 MODULE_DESCRIPTION("Aztech Systems AZT2320");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{Aztech Systems,PRO16V},"
+		"{Aztech Systems,AZT2320},"
+		"{Aztech Systems,AZT3300},"
+		"{Aztech Systems,AZT2320},"
+		"{Aztech Systems,AZT3000}}");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
@@ -148,11 +153,9 @@ static int snd_card_azt2320_enable_wss(unsigned long port)
 {
 	int error;
 
-	error = snd_card_azt2320_command(port, 0x09);
-	if (error)
+	if ((error = snd_card_azt2320_command(port, 0x09)))
 		return error;
-	error = snd_card_azt2320_command(port, 0x00);
-	if (error)
+	if ((error = snd_card_azt2320_command(port, 0x00)))
 		return error;
 
 	mdelay(5);
@@ -176,14 +179,12 @@ static int snd_card_azt2320_probe(int dev,
 		return error;
 	acard = card->private_data;
 
-	error = snd_card_azt2320_pnp(dev, acard, pcard, pid);
-	if (error) {
+	if ((error = snd_card_azt2320_pnp(dev, acard, pcard, pid))) {
 		snd_card_free(card);
 		return error;
 	}
 
-	error = snd_card_azt2320_enable_wss(port[dev]);
-	if (error) {
+	if ((error = snd_card_azt2320_enable_wss(port[dev]))) {
 		snd_card_free(card);
 		return error;
 	}
@@ -232,21 +233,18 @@ static int snd_card_azt2320_probe(int dev,
 			snd_printk(KERN_ERR PFX "no OPL device at 0x%lx-0x%lx\n",
 				   fm_port[dev], fm_port[dev] + 2);
 		} else {
-			error = snd_opl3_timer_new(opl3, 1, 2);
-			if (error < 0) {
+			if ((error = snd_opl3_timer_new(opl3, 1, 2)) < 0) {
 				snd_card_free(card);
 				return error;
 			}
-			error = snd_opl3_hwdep_new(opl3, 0, 1, NULL);
-			if (error < 0) {
+			if ((error = snd_opl3_hwdep_new(opl3, 0, 1, NULL)) < 0) {
 				snd_card_free(card);
 				return error;
 			}
 		}
 	}
 
-	error = snd_card_register(card);
-	if (error < 0) {
+	if ((error = snd_card_register(card)) < 0) {
 		snd_card_free(card);
 		return error;
 	}

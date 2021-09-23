@@ -742,10 +742,6 @@
 	};
 };
 
-&emc_icc_dvfs_opp_table {
-	/delete-node/ opp@760000000;
-};
-
 &gpio {
 	lan-reset-n {
 		gpio-hog;

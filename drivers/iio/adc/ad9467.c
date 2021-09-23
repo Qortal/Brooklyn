@@ -434,6 +434,8 @@ static int ad9467_probe(struct spi_device *spi)
 		mdelay(10);
 	}
 
+	spi_set_drvdata(spi, st);
+
 	conv->chip_info = &info->axi_adc_info;
 
 	id = ad9467_spi_read(spi, AN877_ADC_REG_CHIP_ID);

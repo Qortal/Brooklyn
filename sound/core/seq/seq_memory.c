@@ -69,8 +69,7 @@ int snd_seq_dump_var_event(const struct snd_seq_event *event,
 	int len, err;
 	struct snd_seq_event_cell *cell;
 
-	len = get_var_len(event);
-	if (len <= 0)
+	if ((len = get_var_len(event)) <= 0)
 		return len;
 
 	if (event->data.ext.len & SNDRV_SEQ_EXT_USRPTR) {
@@ -134,8 +133,7 @@ int snd_seq_expand_var_event(const struct snd_seq_event *event, int count, char 
 	int len, newlen;
 	int err;
 
-	len = get_var_len(event);
-	if (len < 0)
+	if ((len = get_var_len(event)) < 0)
 		return len;
 	newlen = len;
 	if (size_aligned > 0)
@@ -292,7 +290,7 @@ int snd_seq_event_dup(struct snd_seq_pool *pool, struct snd_seq_event *event,
 	extlen = 0;
 	if (snd_seq_ev_is_variable(event)) {
 		extlen = event->data.ext.len & ~SNDRV_SEQ_EXT_MASK;
-		ncells = DIV_ROUND_UP(extlen, sizeof(struct snd_seq_event));
+		ncells = (extlen + sizeof(struct snd_seq_event) - 1) / sizeof(struct snd_seq_event);
 	}
 	if (ncells >= pool->total_elements)
 		return -ENOMEM;

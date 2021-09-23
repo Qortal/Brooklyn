@@ -84,8 +84,10 @@
 	status = "okay";
 };
 
-&led_blue {
-	status = "okay";
+&leds {
+	blue {
+		status = "okay";
+	};
 };
 
 &adc0 {

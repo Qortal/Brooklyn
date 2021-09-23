@@ -215,7 +215,8 @@ void afs_edit_dir_add(struct afs_vnode *vnode,
 	}
 
 	/* Work out how many slots we're going to need. */
-	need_slots = afs_dir_calc_slots(name->len);
+	need_slots = round_up(12 + name->len + 1 + 4, AFS_DIR_DIRENT_SIZE);
+	need_slots /= AFS_DIR_DIRENT_SIZE;
 
 	meta_page = kmap(page0);
 	meta = &meta_page->blocks[0];
@@ -392,7 +393,8 @@ void afs_edit_dir_remove(struct afs_vnode *vnode,
 	}
 
 	/* Work out how many slots we're going to discard. */
-	need_slots = afs_dir_calc_slots(name->len);
+	need_slots = round_up(12 + name->len + 1 + 4, AFS_DIR_DIRENT_SIZE);
+	need_slots /= AFS_DIR_DIRENT_SIZE;
 
 	meta_page = kmap(page0);
 	meta = &meta_page->blocks[0];

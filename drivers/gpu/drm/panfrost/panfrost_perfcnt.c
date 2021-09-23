@@ -5,7 +5,6 @@
 #include <drm/drm_gem_shmem_helper.h>
 #include <drm/panfrost_drm.h>
 #include <linux/completion.h>
-#include <linux/dma-buf-map.h>
 #include <linux/iopoll.h>
 #include <linux/pm_runtime.h>
 #include <linux/slab.h>
@@ -73,7 +72,6 @@ static int panfrost_perfcnt_enable_locked(struct panfrost_device *pfdev,
 {
 	struct panfrost_file_priv *user = file_priv->driver_priv;
 	struct panfrost_perfcnt *perfcnt = pfdev->perfcnt;
-	struct dma_buf_map map;
 	struct drm_gem_shmem_object *bo;
 	u32 cfg, as;
 	int ret;
@@ -105,10 +103,11 @@ static int panfrost_perfcnt_enable_locked(struct panfrost_device *pfdev,
 		goto err_close_bo;
 	}
 
-	ret = drm_gem_shmem_vmap(&bo->base, &map);
-	if (ret)
+	perfcnt->buf = drm_gem_shmem_vmap(&bo->base);
+	if (IS_ERR(perfcnt->buf)) {
+		ret = PTR_ERR(perfcnt->buf);
 		goto err_put_mapping;
-	perfcnt->buf = map.vaddr;
+	}
 
 	/*
 	 * Invalidate the cache and clear the counters to start from a fresh
@@ -164,7 +163,7 @@ static int panfrost_perfcnt_enable_locked(struct panfrost_device *pfdev,
 	return 0;
 
 err_vunmap:
-	drm_gem_shmem_vunmap(&bo->base, &map);
+	drm_gem_shmem_vunmap(&bo->base, perfcnt->buf);
 err_put_mapping:
 	panfrost_gem_mapping_put(perfcnt->mapping);
 err_close_bo:
@@ -181,7 +180,6 @@ static int panfrost_perfcnt_disable_locked(struct panfrost_device *pfdev,
 {
 	struct panfrost_file_priv *user = file_priv->driver_priv;
 	struct panfrost_perfcnt *perfcnt = pfdev->perfcnt;
-	struct dma_buf_map map = DMA_BUF_MAP_INIT_VADDR(perfcnt->buf);
 
 	if (user != perfcnt->user)
 		return -EINVAL;
@@ -194,7 +192,7 @@ static int panfrost_perfcnt_disable_locked(struct panfrost_device *pfdev,
 		  GPU_PERFCNT_CFG_MODE(GPU_PERFCNT_CFG_MODE_OFF));
 
 	perfcnt->user = NULL;
-	drm_gem_shmem_vunmap(&perfcnt->mapping->obj->base.base, &map);
+	drm_gem_shmem_vunmap(&perfcnt->mapping->obj->base.base, perfcnt->buf);
 	perfcnt->buf = NULL;
 	panfrost_gem_close(&perfcnt->mapping->obj->base.base, file_priv);
 	panfrost_mmu_as_put(pfdev, perfcnt->mapping->mmu);

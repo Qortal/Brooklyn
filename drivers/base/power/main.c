@@ -16,7 +16,6 @@
  */
 
 #define pr_fmt(fmt) "PM: " fmt
-#define dev_fmt pr_fmt
 
 #include <linux/device.h>
 #include <linux/export.h>
@@ -220,13 +219,16 @@ static void initcall_debug_report(struct device *dev, ktime_t calltime,
 				  void *cb, int error)
 {
 	ktime_t rettime;
+	s64 nsecs;
 
 	if (!pm_print_times_enabled)
 		return;
 
 	rettime = ktime_get();
+	nsecs = (s64) ktime_to_ns(ktime_sub(rettime, calltime));
+
 	dev_info(dev, "%pS returned %d after %Ld usecs\n", cb, error,
-		 (unsigned long long)ktime_us_delta(rettime, calltime));
+		 (unsigned long long)nsecs >> 10);
 }
 
 /**
@@ -439,16 +441,16 @@ static pm_callback_t pm_noirq_op(const struct dev_pm_ops *ops, pm_message_t stat
 
 static void pm_dev_dbg(struct device *dev, pm_message_t state, const char *info)
 {
-	dev_dbg(dev, "%s%s%s driver flags: %x\n", info, pm_verb(state.event),
+	dev_dbg(dev, "%s%s%s\n", info, pm_verb(state.event),
 		((state.event & PM_EVENT_SLEEP) && device_may_wakeup(dev)) ?
-		", may wakeup" : "", dev->power.driver_flags);
+		", may wakeup" : "");
 }
 
 static void pm_dev_err(struct device *dev, pm_message_t state, const char *info,
 			int error)
 {
-	dev_err(dev, "failed to %s%s: error %d\n", pm_verb(state.event), info,
-		error);
+	pr_err("Device %s failed to %s%s: error %d\n",
+	       dev_name(dev), pm_verb(state.event), info, error);
 }
 
 static void dpm_show_time(ktime_t starttime, pm_message_t state, int error,
@@ -1357,7 +1359,7 @@ static void dpm_propagate_wakeup_to_parent(struct device *dev)
 
 	spin_lock_irq(&parent->power.lock);
 
-	if (device_wakeup_path(dev) && !parent->power.ignore_children)
+	if (dev->power.wakeup_path && !parent->power.ignore_children)
 		parent->power.wakeup_path = true;
 
 	spin_unlock_irq(&parent->power.lock);
@@ -1625,7 +1627,7 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
 		goto Complete;
 
 	/* Avoid direct_complete to let wakeup_path propagate. */
-	if (device_may_wakeup(dev) || device_wakeup_path(dev))
+	if (device_may_wakeup(dev) || dev->power.wakeup_path)
 		dev->power.direct_complete = false;
 
 	if (dev->power.direct_complete) {
@@ -1895,8 +1897,8 @@ int dpm_prepare(pm_message_t state)
 				error = 0;
 				continue;
 			}
-			dev_info(dev, "not prepared for power transition: code %d\n",
-				 error);
+			pr_info("Device %s not prepared for power transition: code %d\n",
+				dev_name(dev), error);
 			put_device(dev);
 			break;
 		}

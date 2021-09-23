@@ -309,19 +309,21 @@ static void pcd_init_units(void)
 
 	pcd_drive_count = 0;
 	for (unit = 0, cd = pcd; unit < PCD_UNITS; unit++, cd++) {
-		struct gendisk *disk;
+		struct gendisk *disk = alloc_disk(1);
 
-		if (blk_mq_alloc_sq_tag_set(&cd->tag_set, &pcd_mq_ops, 1,
-				BLK_MQ_F_SHOULD_MERGE))
+		if (!disk)
 			continue;
 
-		disk = blk_mq_alloc_disk(&cd->tag_set, cd);
-		if (IS_ERR(disk)) {
-			blk_mq_free_tag_set(&cd->tag_set);
+		disk->queue = blk_mq_init_sq_queue(&cd->tag_set, &pcd_mq_ops,
+						   1, BLK_MQ_F_SHOULD_MERGE);
+		if (IS_ERR(disk->queue)) {
+			disk->queue = NULL;
+			put_disk(disk);
 			continue;
 		}
 
 		INIT_LIST_HEAD(&cd->rq_list);
+		disk->queue->queuedata = cd;
 		blk_queue_bounce_limit(disk->queue, BLK_BOUNCE_HIGH);
 		cd->disk = disk;
 		cd->pi = &cd->pia;
@@ -341,7 +343,6 @@ static void pcd_init_units(void)
 		cd->info.mask = 0;
 		disk->major = major;
 		disk->first_minor = unit;
-		disk->minors = 1;
 		strcpy(disk->disk_name, cd->name);	/* umm... */
 		disk->fops = &pcd_bdops;
 		disk->flags = GENHD_FL_BLOCK_EVENTS_ON_EXCL_WRITE;
@@ -758,8 +759,10 @@ static int pcd_detect(void)
 	for (unit = 0, cd = pcd; unit < PCD_UNITS; unit++, cd++) {
 		if (!cd->disk)
 			continue;
-		blk_cleanup_disk(cd->disk);
+		blk_cleanup_queue(cd->disk->queue);
+		cd->disk->queue = NULL;
 		blk_mq_free_tag_set(&cd->tag_set);
+		put_disk(cd->disk);
 	}
 	pi_unregister_driver(par_drv);
 	return -1;

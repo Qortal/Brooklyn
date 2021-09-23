@@ -17,14 +17,12 @@
  */
 
 #include <linux/console.h>
-#include <linux/dma-buf-map.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 
 #include <video/cirrus.h>
 #include <video/vga.h>
 
-#include <drm/drm_aperture.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_state_helper.h>
 #include <drm/drm_connector.h>
@@ -34,9 +32,8 @@
 #include <drm/drm_file.h>
 #include <drm/drm_format_helper.h>
 #include <drm/drm_fourcc.h>
-#include <drm/drm_gem_atomic_helper.h>
-#include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_gem_shmem_helper.h>
+#include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_ioctl.h>
 #include <drm/drm_managed.h>
 #include <drm/drm_modeset_helper_vtables.h>
@@ -313,18 +310,24 @@ static int cirrus_mode_set(struct cirrus_device *cirrus,
 	return 0;
 }
 
-static int cirrus_fb_blit_rect(struct drm_framebuffer *fb, const struct dma_buf_map *map,
+static int cirrus_fb_blit_rect(struct drm_framebuffer *fb,
 			       struct drm_rect *rect)
 {
 	struct cirrus_device *cirrus = to_cirrus(fb->dev);
-	void *vmap = map->vaddr; /* TODO: Use mapping abstraction properly */
-	int idx;
+	void *vmap;
+	int idx, ret;
 
+	ret = -ENODEV;
 	if (!drm_dev_enter(&cirrus->dev, &idx))
-		return -ENODEV;
+		goto out;
+
+	ret = -ENOMEM;
+	vmap = drm_gem_shmem_vmap(fb->obj[0]);
+	if (!vmap)
+		goto out_dev_exit;
 
 	if (cirrus->cpp == fb->format->cpp[0])
-		drm_fb_memcpy_dstclip(cirrus->vram, fb->pitches[0],
+		drm_fb_memcpy_dstclip(cirrus->vram,
 				      vmap, fb, rect);
 
 	else if (fb->format->cpp[0] == 4 && cirrus->cpp == 2)
@@ -340,12 +343,16 @@ static int cirrus_fb_blit_rect(struct drm_framebuffer *fb, const struct dma_buf_
 	else
 		WARN_ON_ONCE("cpp mismatch");
 
-	drm_dev_exit(idx);
+	drm_gem_shmem_vunmap(fb->obj[0], vmap);
+	ret = 0;
 
-	return 0;
+out_dev_exit:
+	drm_dev_exit(idx);
+out:
+	return ret;
 }
 
-static int cirrus_fb_blit_fullscreen(struct drm_framebuffer *fb, const struct dma_buf_map *map)
+static int cirrus_fb_blit_fullscreen(struct drm_framebuffer *fb)
 {
 	struct drm_rect fullscreen = {
 		.x1 = 0,
@@ -353,7 +360,7 @@ static int cirrus_fb_blit_fullscreen(struct drm_framebuffer *fb, const struct dm
 		.y1 = 0,
 		.y2 = fb->height,
 	};
-	return cirrus_fb_blit_rect(fb, map, &fullscreen);
+	return cirrus_fb_blit_rect(fb, &fullscreen);
 }
 
 static int cirrus_check_size(int width, int height,
@@ -432,10 +439,9 @@ static void cirrus_pipe_enable(struct drm_simple_display_pipe *pipe,
 			       struct drm_plane_state *plane_state)
 {
 	struct cirrus_device *cirrus = to_cirrus(pipe->crtc.dev);
-	struct drm_shadow_plane_state *shadow_plane_state = to_drm_shadow_plane_state(plane_state);
 
 	cirrus_mode_set(cirrus, &crtc_state->mode, plane_state->fb);
-	cirrus_fb_blit_fullscreen(plane_state->fb, &shadow_plane_state->map[0]);
+	cirrus_fb_blit_fullscreen(plane_state->fb);
 }
 
 static void cirrus_pipe_update(struct drm_simple_display_pipe *pipe,
@@ -443,15 +449,16 @@ static void cirrus_pipe_update(struct drm_simple_display_pipe *pipe,
 {
 	struct cirrus_device *cirrus = to_cirrus(pipe->crtc.dev);
 	struct drm_plane_state *state = pipe->plane.state;
-	struct drm_shadow_plane_state *shadow_plane_state = to_drm_shadow_plane_state(state);
 	struct drm_crtc *crtc = &pipe->crtc;
 	struct drm_rect rect;
 
-	if (state->fb && cirrus->cpp != cirrus_cpp(state->fb))
-		cirrus_mode_set(cirrus, &crtc->mode, state->fb);
+	if (pipe->plane.state->fb &&
+	    cirrus->cpp != cirrus_cpp(pipe->plane.state->fb))
+		cirrus_mode_set(cirrus, &crtc->mode,
+				pipe->plane.state->fb);
 
 	if (drm_atomic_helper_damage_merged(old_state, state, &rect))
-		cirrus_fb_blit_rect(state->fb, &shadow_plane_state->map[0], &rect);
+		cirrus_fb_blit_rect(pipe->plane.state->fb, &rect);
 }
 
 static const struct drm_simple_display_pipe_funcs cirrus_pipe_funcs = {
@@ -459,7 +466,6 @@ static const struct drm_simple_display_pipe_funcs cirrus_pipe_funcs = {
 	.check	    = cirrus_pipe_check,
 	.enable	    = cirrus_pipe_enable,
 	.update	    = cirrus_pipe_update,
-	DRM_GEM_SIMPLE_DISPLAY_PIPE_SHADOW_PLANE_FUNCS,
 };
 
 static const uint32_t cirrus_formats[] = {
@@ -530,7 +536,7 @@ static int cirrus_mode_config_init(struct cirrus_device *cirrus)
 
 DEFINE_DRM_GEM_FOPS(cirrus_fops);
 
-static const struct drm_driver cirrus_driver = {
+static struct drm_driver cirrus_driver = {
 	.driver_features = DRIVER_MODESET | DRIVER_GEM | DRIVER_ATOMIC,
 
 	.name		 = DRIVER_NAME,
@@ -550,7 +556,7 @@ static int cirrus_pci_probe(struct pci_dev *pdev,
 	struct cirrus_device *cirrus;
 	int ret;
 
-	ret = drm_aperture_remove_conflicting_pci_framebuffers(pdev, "cirrusdrmfb");
+	ret = drm_fb_helper_remove_conflicting_pci_framebuffers(pdev, "cirrusdrmfb");
 	if (ret)
 		return ret;
 
@@ -594,6 +600,7 @@ static int cirrus_pci_probe(struct pci_dev *pdev,
 
 	drm_mode_config_reset(dev);
 
+	dev->pdev = pdev;
 	pci_set_drvdata(pdev, dev);
 	ret = drm_dev_register(dev, 0);
 	if (ret)

@@ -114,11 +114,17 @@ inline int rtw_stainfo_offset(struct sta_priv *stapriv, struct sta_info *sta)
 {
 	int offset = (((u8 *)sta) - stapriv->pstainfo_buf) / sizeof(struct sta_info);
 
+	if (!stainfo_offset_valid(offset))
+		DBG_88E("%s invalid offset(%d), out of range!!!", __func__, offset);
+
 	return offset;
 }
 
 inline struct sta_info *rtw_get_stainfo_by_offset(struct sta_priv *stapriv, int offset)
 {
+	if (!stainfo_offset_valid(offset))
+		DBG_88E("%s invalid offset(%d), out of range!!!", __func__, offset);
+
 	return (struct sta_info *)(stapriv->pstainfo_buf + offset * sizeof(struct sta_info));
 }
 
@@ -136,10 +142,13 @@ u32 _rtw_free_sta_priv(struct sta_priv *pstapriv)
 	spin_lock_bh(&pstapriv->sta_hash_lock);
 	for (index = 0; index < NUM_STA; index++) {
 		phead = &pstapriv->sta_hash[index];
-		list_for_each(plist, phead) {
+		plist = phead->next;
+
+		while (phead != plist) {
 			int i;
 
-			psta = list_entry(plist, struct sta_info, hash_list);
+			psta = container_of(plist, struct sta_info, hash_list);
+			plist = plist->next;
 
 			for (i = 0; i < 16; i++) {
 				preorder_ctrl = &psta->recvreorder_ctrl[i];
@@ -179,8 +188,13 @@ struct sta_info *rtw_alloc_stainfo(struct sta_priv *pstapriv, u8 *hwaddr)
 	_rtw_init_stainfo(psta);
 	memcpy(psta->hwaddr, hwaddr, ETH_ALEN);
 	index = wifi_mac_hash(hwaddr);
-	if (index >= NUM_STA)
+	RT_TRACE(_module_rtl871x_sta_mgt_c_, _drv_info_,
+		 ("%s: index=%x", __func__, index));
+	if (index >= NUM_STA) {
+		RT_TRACE(_module_rtl871x_sta_mgt_c_, _drv_err_,
+			 ("ERROR => %s: index >= NUM_STA", __func__));
 		return NULL;
+	}
 	phash_list = &pstapriv->sta_hash[index];
 
 	spin_lock_bh(&pstapriv->sta_hash_lock);
@@ -199,6 +213,10 @@ struct sta_info *rtw_alloc_stainfo(struct sta_priv *pstapriv, u8 *hwaddr)
 	for (i = 0; i < 16; i++)
 		memcpy(&psta->sta_recvpriv.rxcache.tid_rxseq[i],
 		       &wRxSeqInitialValue, 2);
+
+	RT_TRACE(_module_rtl871x_sta_mgt_c_, _drv_info_,
+		 ("alloc number_%d stainfo  with hwaddr = %pM\n",
+		  pstapriv->asoc_sta_count, hwaddr));
 
 	init_addba_retry_timer(pstapriv->padapter, psta);
 
@@ -270,6 +288,11 @@ u32 rtw_free_stainfo(struct adapter *padapter, struct sta_info *psta)
 	spin_unlock_bh(&pxmitpriv->lock);
 
 	list_del_init(&psta->hash_list);
+	RT_TRACE(_module_rtl871x_sta_mgt_c_, _drv_err_,
+		 ("\n free number_%d stainfo with hwaddr=0x%.2x 0x%.2x 0x%.2x 0x%.2x 0x%.2x 0x%.2x\n",
+		 pstapriv->asoc_sta_count, psta->hwaddr[0], psta->hwaddr[1],
+		 psta->hwaddr[2], psta->hwaddr[3], psta->hwaddr[4],
+		 psta->hwaddr[5]));
 	pstapriv->asoc_sta_count--;
 
 	/*  re-init sta_info; 20061114 */
@@ -359,9 +382,9 @@ exit:
 /*  free all stainfo which in sta_hash[all] */
 void rtw_free_all_stainfo(struct adapter *padapter)
 {
-	struct list_head *phead;
+	struct list_head *plist, *phead;
 	s32 index;
-	struct sta_info *psta, *temp;
+	struct sta_info *psta = NULL;
 	struct sta_priv *pstapriv = &padapter->stapriv;
 	struct sta_info *pbcmc_stainfo = rtw_get_bcmc_stainfo(padapter);
 
@@ -372,7 +395,13 @@ void rtw_free_all_stainfo(struct adapter *padapter)
 
 	for (index = 0; index < NUM_STA; index++) {
 		phead = &pstapriv->sta_hash[index];
-		list_for_each_entry_safe(psta, temp, phead, hash_list) {
+		plist = phead->next;
+
+		while (phead != plist) {
+			psta = container_of(plist, struct sta_info, hash_list);
+
+			plist = plist->next;
+
 			if (pbcmc_stainfo != psta)
 				rtw_free_stainfo(padapter, psta);
 		}
@@ -402,14 +431,17 @@ struct sta_info *rtw_get_stainfo(struct sta_priv *pstapriv, u8 *hwaddr)
 	spin_lock_bh(&pstapriv->sta_hash_lock);
 
 	phead = &pstapriv->sta_hash[index];
-	list_for_each(plist, phead) {
-		psta = list_entry(plist, struct sta_info, hash_list);
+	plist = phead->next;
+
+	while (phead != plist) {
+		psta = container_of(plist, struct sta_info, hash_list);
 
 		if (!memcmp(psta->hwaddr, addr, ETH_ALEN)) {
 			/*  if found the matched address */
 			break;
 		}
 		psta = NULL;
+		plist = plist->next;
 	}
 
 	spin_unlock_bh(&pstapriv->sta_hash_lock);
@@ -424,8 +456,11 @@ u32 rtw_init_bcmc_stainfo(struct adapter *padapter)
 
 	psta = rtw_alloc_stainfo(pstapriv, bc_addr);
 
-	if (!psta)
+	if (!psta) {
+		RT_TRACE(_module_rtl871x_sta_mgt_c_, _drv_err_,
+			 ("rtw_alloc_stainfo fail"));
 		return _FAIL;
+	}
 
 	/*  default broadcast & multicast use macid 1 */
 	psta->mac_id = 1;
@@ -454,8 +489,10 @@ bool rtw_access_ctrl(struct adapter *padapter, u8 *mac_addr)
 
 	spin_lock_bh(&pacl_node_q->lock);
 	phead = get_list_head(pacl_node_q);
-	list_for_each(plist, phead) {
-		paclnode = list_entry(plist, struct rtw_wlan_acl_node, list);
+	plist = phead->next;
+	while (phead != plist) {
+		paclnode = container_of(plist, struct rtw_wlan_acl_node, list);
+		plist = plist->next;
 
 		if (!memcmp(paclnode->addr, mac_addr, ETH_ALEN)) {
 			if (paclnode->valid) {

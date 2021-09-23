@@ -20,6 +20,8 @@ if VIRTUALIZATION
 menuconfig KVM
 	bool "Kernel-based Virtual Machine (KVM) support"
 	depends on OF
+	# for TASKSTATS/TASK_DELAY_ACCT:
+	depends on NET && MULTIUSER
 	select MMU_NOTIFIER
 	select PREEMPT_NOTIFIERS
 	select HAVE_KVM_CPU_RELAX_INTERCEPT
@@ -36,7 +38,8 @@ menuconfig KVM
 	select IRQ_BYPASS_MANAGER
 	select HAVE_KVM_IRQ_BYPASS
 	select HAVE_KVM_VCPU_RUN_PID_CHANGE
-	select SCHED_INFO
+	select TASKSTATS
+	select TASK_DELAY_ACCT
 	help
 	  Support hosting virtualized guest machines.
 
@@ -45,6 +48,14 @@ menuconfig KVM
 if KVM
 
 source "virt/kvm/Kconfig"
+
+config KVM_ARM_PMU
+	bool "Virtual Performance Monitoring Unit (PMU) support"
+	depends on HW_PERF_EVENTS
+	default y
+	help
+	  Adds support for a virtual Performance Monitoring Unit (PMU) in
+	  virtual machines.
 
 endif # KVM
 

@@ -13,6 +13,8 @@
 
 #include <linux/uaccess.h>
 
+static void *kdump_buf_page;
+
 static inline bool is_crashed_pfn_valid(unsigned long pfn)
 {
 #ifndef CONFIG_X86_PAE
@@ -39,11 +41,15 @@ static inline bool is_crashed_pfn_valid(unsigned long pfn)
  * @userbuf: if set, @buf is in user address space, use copy_to_user(),
  *	otherwise @buf is in kernel address space, use memcpy().
  *
- * Copy a page from "oldmem". For this page, there might be no pte mapped
- * in the current kernel.
+ * Copy a page from "oldmem". For this page, there is no pte mapped
+ * in the current kernel. We stitch up a pte, similar to kmap_atomic.
+ *
+ * Calling copy_to_user() in atomic context is not desirable. Hence first
+ * copying the data to a pre-allocated kernel page and then copying to user
+ * space in non-atomic context.
  */
-ssize_t copy_oldmem_page(unsigned long pfn, char *buf, size_t csize,
-			 unsigned long offset, int userbuf)
+ssize_t copy_oldmem_page(unsigned long pfn, char *buf,
+                               size_t csize, unsigned long offset, int userbuf)
 {
 	void  *vaddr;
 
@@ -53,16 +59,38 @@ ssize_t copy_oldmem_page(unsigned long pfn, char *buf, size_t csize,
 	if (!is_crashed_pfn_valid(pfn))
 		return -EFAULT;
 
-	vaddr = kmap_local_pfn(pfn);
+	vaddr = kmap_atomic_pfn(pfn);
 
 	if (!userbuf) {
-		memcpy(buf, vaddr + offset, csize);
+		memcpy(buf, (vaddr + offset), csize);
+		kunmap_atomic(vaddr);
 	} else {
-		if (copy_to_user(buf, vaddr + offset, csize))
-			csize = -EFAULT;
+		if (!kdump_buf_page) {
+			printk(KERN_WARNING "Kdump: Kdump buffer page not"
+				" allocated\n");
+			kunmap_atomic(vaddr);
+			return -EFAULT;
+		}
+		copy_page(kdump_buf_page, vaddr);
+		kunmap_atomic(vaddr);
+		if (copy_to_user(buf, (kdump_buf_page + offset), csize))
+			return -EFAULT;
 	}
-
-	kunmap_local(vaddr);
 
 	return csize;
 }
+
+static int __init kdump_buf_page_init(void)
+{
+	int ret = 0;
+
+	kdump_buf_page = kmalloc(PAGE_SIZE, GFP_KERNEL);
+	if (!kdump_buf_page) {
+		printk(KERN_WARNING "Kdump: Failed to allocate kdump buffer"
+			 " page\n");
+		ret = -ENOMEM;
+	}
+
+	return ret;
+}
+arch_initcall(kdump_buf_page_init);

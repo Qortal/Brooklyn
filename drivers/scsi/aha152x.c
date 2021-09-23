@@ -619,8 +619,7 @@ static struct {
 static irqreturn_t intr(int irq, void *dev_id);
 static void reset_ports(struct Scsi_Host *shpnt);
 static void aha152x_error(struct Scsi_Host *shpnt, char *msg);
-static void done(struct Scsi_Host *shpnt, unsigned char status_byte,
-		 unsigned char host_byte);
+static void done(struct Scsi_Host *shpnt, int error);
 
 /* diagnostics */
 static void show_command(struct scsi_cmnd * ptr);
@@ -1272,8 +1271,7 @@ static int aha152x_biosparam(struct scsi_device *sdev, struct block_device *bdev
  *  Internal done function
  *
  */
-static void done(struct Scsi_Host *shpnt, unsigned char status_byte,
-		 unsigned char host_byte)
+static void done(struct Scsi_Host *shpnt, int error)
 {
 	if (CURRENT_SC) {
 		if(DONE_SC)
@@ -1283,8 +1281,7 @@ static void done(struct Scsi_Host *shpnt, unsigned char status_byte,
 
 		DONE_SC = CURRENT_SC;
 		CURRENT_SC = NULL;
-		set_status_byte(DONE_SC, status_byte);
-		set_host_byte(DONE_SC, host_byte);
+		DONE_SC->result = error;
 	} else
 		printk(KERN_ERR "aha152x: done() called outside of command\n");
 }
@@ -1379,13 +1376,13 @@ static void busfree_run(struct Scsi_Host *shpnt)
 
 		if(CURRENT_SC->SCp.phase & completed) {
 			/* target sent COMMAND COMPLETE */
-			done(shpnt, CURRENT_SC->SCp.Status, DID_OK);
+			done(shpnt, (CURRENT_SC->SCp.Status & 0xff) | ((CURRENT_SC->SCp.Message & 0xff) << 8) | (DID_OK << 16));
 
 		} else if(CURRENT_SC->SCp.phase & aborted) {
-			done(shpnt, CURRENT_SC->SCp.Status, DID_ABORT);
+			done(shpnt, (CURRENT_SC->SCp.Status & 0xff) | ((CURRENT_SC->SCp.Message & 0xff) << 8) | (DID_ABORT << 16));
 
 		} else if(CURRENT_SC->SCp.phase & resetted) {
-			done(shpnt, CURRENT_SC->SCp.Status, DID_RESET);
+			done(shpnt, (CURRENT_SC->SCp.Status & 0xff) | ((CURRENT_SC->SCp.Message & 0xff) << 8) | (DID_RESET << 16));
 
 		} else if(CURRENT_SC->SCp.phase & disconnected) {
 			/* target sent DISCONNECT */
@@ -1397,7 +1394,7 @@ static void busfree_run(struct Scsi_Host *shpnt)
 			CURRENT_SC = NULL;
 
 		} else {
-			done(shpnt, SAM_STAT_GOOD, DID_ERROR);
+			done(shpnt, DID_ERROR << 16);
 		}
 #if defined(AHA152X_STAT)
 	} else {
@@ -1518,7 +1515,7 @@ static void seldo_run(struct Scsi_Host *shpnt)
 	if (TESTLO(SSTAT0, SELDO)) {
 		scmd_printk(KERN_ERR, CURRENT_SC,
 			    "aha152x: passing bus free condition\n");
-		done(shpnt, SAM_STAT_GOOD, DID_NO_CONNECT);
+		done(shpnt, DID_NO_CONNECT << 16);
 		return;
 	}
 
@@ -1555,12 +1552,12 @@ static void selto_run(struct Scsi_Host *shpnt)
 	CURRENT_SC->SCp.phase &= ~selecting;
 
 	if (CURRENT_SC->SCp.phase & aborted)
-		done(shpnt, SAM_STAT_GOOD, DID_ABORT);
+		done(shpnt, DID_ABORT << 16);
 	else if (TESTLO(SSTAT0, SELINGO))
-		done(shpnt, SAM_STAT_GOOD, DID_BUS_BUSY);
+		done(shpnt, DID_BUS_BUSY << 16);
 	else
 		/* ARBITRATION won, but SELECTION failed */
-		done(shpnt, SAM_STAT_GOOD, DID_NO_CONNECT);
+		done(shpnt, DID_NO_CONNECT << 16);
 }
 
 /*
@@ -1894,7 +1891,7 @@ static void cmd_init(struct Scsi_Host *shpnt)
 	if (CURRENT_SC->SCp.sent_command) {
 		scmd_printk(KERN_ERR, CURRENT_SC,
 			    "command already sent\n");
-		done(shpnt, SAM_STAT_GOOD, DID_ERROR);
+		done(shpnt, DID_ERROR << 16);
 		return;
 	}
 
@@ -2234,7 +2231,7 @@ static int update_state(struct Scsi_Host *shpnt)
 static void parerr_run(struct Scsi_Host *shpnt)
 {
 	scmd_printk(KERN_ERR, CURRENT_SC, "parity error\n");
-	done(shpnt, SAM_STAT_GOOD, DID_PARITY);
+	done(shpnt, DID_PARITY << 16);
 }
 
 /*
@@ -2257,7 +2254,7 @@ static void rsti_run(struct Scsi_Host *shpnt)
 			kfree(ptr->host_scribble);
 			ptr->host_scribble=NULL;
 
-			set_host_byte(ptr, DID_RESET);
+			ptr->result =  DID_RESET << 16;
 			ptr->scsi_done(ptr);
 		}
 
@@ -2265,7 +2262,7 @@ static void rsti_run(struct Scsi_Host *shpnt)
 	}
 
 	if(CURRENT_SC && !CURRENT_SC->device->soft_reset)
-		done(shpnt, SAM_STAT_GOOD, DID_RESET);
+		done(shpnt, DID_RESET << 16 );
 }
 
 

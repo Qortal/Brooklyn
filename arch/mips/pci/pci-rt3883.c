@@ -13,7 +13,6 @@
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
-#include <linux/irqdomain.h>
 #include <linux/of.h>
 #include <linux/of_irq.h>
 #include <linux/of_pci.h>
@@ -101,6 +100,7 @@ static u32 rt3883_pci_read_cfg32(struct rt3883_pci_controller *rpc,
 			       unsigned bus, unsigned slot,
 			       unsigned func, unsigned reg)
 {
+	unsigned long flags;
 	u32 address;
 	u32 ret;
 
@@ -116,6 +116,7 @@ static void rt3883_pci_write_cfg32(struct rt3883_pci_controller *rpc,
 				 unsigned bus, unsigned slot,
 				 unsigned func, unsigned reg, u32 val)
 {
+	unsigned long flags;
 	u32 address;
 
 	address = rt3883_pci_get_cfgaddr(bus, slot, func, reg);
@@ -228,6 +229,7 @@ static int rt3883_pci_config_read(struct pci_bus *bus, unsigned int devfn,
 				  int where, int size, u32 *val)
 {
 	struct rt3883_pci_controller *rpc;
+	unsigned long flags;
 	u32 address;
 	u32 data;
 
@@ -261,6 +263,7 @@ static int rt3883_pci_config_write(struct pci_bus *bus, unsigned int devfn,
 				   int where, int size, u32 val)
 {
 	struct rt3883_pci_controller *rpc;
+	unsigned long flags;
 	u32 address;
 	u32 data;
 
@@ -432,7 +435,8 @@ static int rt3883_pci_probe(struct platform_device *pdev)
 
 	if (!rpc->intc_of_node) {
 		dev_err(dev, "%pOF has no %s child node",
-			np, "interrupt controller");
+			rpc->intc_of_node,
+			"interrupt controller");
 		return -EINVAL;
 	}
 
@@ -446,7 +450,8 @@ static int rt3883_pci_probe(struct platform_device *pdev)
 
 	if (!rpc->pci_controller.of_node) {
 		dev_err(dev, "%pOF has no %s child node",
-			np, "PCI host bridge");
+			rpc->intc_of_node,
+			"PCI host bridge");
 		err = -EINVAL;
 		goto err_put_intc_node;
 	}

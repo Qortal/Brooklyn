@@ -21,7 +21,6 @@
 	.fixup_map_hash_48b = { 4 },
 	.result = ACCEPT,
 	.prog_type = BPF_PROG_TYPE_TRACEPOINT,
-	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"regalloc negative",
@@ -72,7 +71,6 @@
 	.fixup_map_hash_48b = { 4 },
 	.result = ACCEPT,
 	.prog_type = BPF_PROG_TYPE_TRACEPOINT,
-	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"regalloc src_reg negative",
@@ -99,7 +97,6 @@
 	.result = REJECT,
 	.errstr = "invalid access to map value, value_size=48 off=44 size=8",
 	.prog_type = BPF_PROG_TYPE_TRACEPOINT,
-	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"regalloc and spill",
@@ -129,7 +126,6 @@
 	.fixup_map_hash_48b = { 4 },
 	.result = ACCEPT,
 	.prog_type = BPF_PROG_TYPE_TRACEPOINT,
-	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"regalloc and spill negative",
@@ -160,7 +156,6 @@
 	.result = REJECT,
 	.errstr = "invalid access to map value, value_size=48 off=48 size=8",
 	.prog_type = BPF_PROG_TYPE_TRACEPOINT,
-	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"regalloc three regs",
@@ -187,7 +182,6 @@
 	.fixup_map_hash_48b = { 4 },
 	.result = ACCEPT,
 	.prog_type = BPF_PROG_TYPE_TRACEPOINT,
-	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"regalloc after call",
@@ -216,7 +210,6 @@
 	.fixup_map_hash_48b = { 4 },
 	.result = ACCEPT,
 	.prog_type = BPF_PROG_TYPE_TRACEPOINT,
-	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"regalloc in callee",
@@ -247,7 +240,6 @@
 	.fixup_map_hash_48b = { 4 },
 	.result = ACCEPT,
 	.prog_type = BPF_PROG_TYPE_TRACEPOINT,
-	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"regalloc, spill, JEQ",

@@ -9,7 +9,6 @@
 
 #include <linux/interrupt.h>
 #include <linux/irq.h>
-#include <linux/irqdomain.h>
 #include <linux/ioport.h>
 #include <linux/kernel.h>
 #include <linux/bitops.h>

@@ -5,17 +5,15 @@
 #include "util/header.h"
 #include <linux/ctype.h>
 #include <linux/zalloc.h>
+#include "bpf-event.h"
 #include "cgroup.h"
 #include <errno.h>
 #include <sys/utsname.h>
+#include <bpf/libbpf.h>
 #include <stdlib.h>
 #include <string.h>
 
 struct perf_env perf_env;
-
-#ifdef HAVE_LIBBPF_SUPPORT
-#include "bpf-event.h"
-#include <bpf/libbpf.h>
 
 void perf_env__insert_bpf_prog_info(struct perf_env *env,
 				    struct bpf_prog_info_node *info_node)
@@ -166,11 +164,6 @@ static void perf_env__purge_bpf(struct perf_env *env)
 
 	up_write(&env->bpf_progs.lock);
 }
-#else // HAVE_LIBBPF_SUPPORT
-static void perf_env__purge_bpf(struct perf_env *env __maybe_unused)
-{
-}
-#endif // HAVE_LIBBPF_SUPPORT
 
 void perf_env__exit(struct perf_env *env)
 {
@@ -205,27 +198,13 @@ void perf_env__exit(struct perf_env *env)
 	for (i = 0; i < env->nr_memory_nodes; i++)
 		zfree(&env->memory_nodes[i].set);
 	zfree(&env->memory_nodes);
-
-	for (i = 0; i < env->nr_hybrid_nodes; i++) {
-		zfree(&env->hybrid_nodes[i].pmu_name);
-		zfree(&env->hybrid_nodes[i].cpus);
-	}
-	zfree(&env->hybrid_nodes);
-
-	for (i = 0; i < env->nr_hybrid_cpc_nodes; i++) {
-		zfree(&env->hybrid_cpc_nodes[i].cpu_pmu_caps);
-		zfree(&env->hybrid_cpc_nodes[i].pmu_name);
-	}
-	zfree(&env->hybrid_cpc_nodes);
 }
 
-void perf_env__init(struct perf_env *env __maybe_unused)
+void perf_env__init(struct perf_env *env)
 {
-#ifdef HAVE_LIBBPF_SUPPORT
 	env->bpf_progs.infos = RB_ROOT;
 	env->bpf_progs.btfs = RB_ROOT;
 	init_rwsem(&env->bpf_progs.lock);
-#endif
 }
 
 int perf_env__set_cmdline(struct perf_env *env, int argc, const char *argv[])

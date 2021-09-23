@@ -15,7 +15,7 @@
 
 struct nft_tunnel {
 	enum nft_tunnel_keys	key:8;
-	u8			dreg;
+	enum nft_registers	dreg:8;
 	enum nft_tunnel_mode	mode:8;
 };
 
@@ -93,6 +93,8 @@ static int nft_tunnel_get_init(const struct nft_ctx *ctx,
 		return -EOPNOTSUPP;
 	}
 
+	priv->dreg = nft_parse_register(tb[NFTA_TUNNEL_DREG]);
+
 	if (tb[NFTA_TUNNEL_MODE]) {
 		priv->mode = ntohl(nla_get_be32(tb[NFTA_TUNNEL_MODE]));
 		if (priv->mode > NFT_TUNNEL_MODE_MAX)
@@ -101,8 +103,8 @@ static int nft_tunnel_get_init(const struct nft_ctx *ctx,
 		priv->mode = NFT_TUNNEL_MODE_NONE;
 	}
 
-	return nft_parse_register_store(ctx, tb[NFTA_TUNNEL_DREG], &priv->dreg,
-					NULL, NFT_DATA_VALUE, len);
+	return nft_validate_register_store(ctx, priv->dreg, NULL,
+					   NFT_DATA_VALUE, len);
 }
 
 static int nft_tunnel_get_dump(struct sk_buff *skb,

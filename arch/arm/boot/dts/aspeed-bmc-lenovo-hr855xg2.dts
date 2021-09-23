@@ -27,7 +27,7 @@
 
 	chosen {
 		stdout-path = &uart5;
-		bootargs = "console=tty0 console=ttyS4,115200 earlycon";
+		bootargs = "console=tty0 console=ttyS4,115200 earlyprintk";
 	};
 
 	memory@80000000 {

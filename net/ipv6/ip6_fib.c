@@ -32,7 +32,6 @@
 #include <net/lwtunnel.h>
 #include <net/fib_notifier.h>
 
-#include <net/ip_fib.h>
 #include <net/ip6_fib.h>
 #include <net/ip6_route.h>
 
@@ -500,7 +499,7 @@ int fib6_tables_dump(struct net *net, struct notifier_block *nb,
 
 		hlist_for_each_entry_rcu(tb, head, tb6_hlist) {
 			err = fib6_table_dump(net, tb, w);
-			if (err)
+			if (err < 0)
 				goto out;
 		}
 	}
@@ -508,8 +507,7 @@ int fib6_tables_dump(struct net *net, struct notifier_block *nb,
 out:
 	kfree(w);
 
-	/* The tree traversal function should never return a positive value. */
-	return err > 0 ? -EINVAL : err;
+	return err;
 }
 
 static int fib6_dump_node(struct fib6_walker *w)
@@ -1341,7 +1339,7 @@ static void __fib6_update_sernum_upto_root(struct fib6_info *rt,
 	struct fib6_node *fn = rcu_dereference_protected(rt->fib6_node,
 				lockdep_is_held(&rt->fib6_table->tb6_lock));
 
-	/* paired with smp_rmb() in fib6_get_cookie_safe() */
+	/* paired with smp_rmb() in rt6_get_cookie_safe() */
 	smp_wmb();
 	while (fn) {
 		fn->fn_sernum = sernum;
@@ -2356,10 +2354,6 @@ static int __net_init fib6_net_init(struct net *net)
 	if (err)
 		return err;
 
-	/* Default to 3-tuple */
-	net->ipv6.sysctl.multipath_hash_fields =
-		FIB_MULTIPATH_HASH_FIELD_DEFAULT_MASK;
-
 	spin_lock_init(&net->ipv6.fib6_gc_lock);
 	rwlock_init(&net->ipv6.fib6_walker_lock);
 	INIT_LIST_HEAD(&net->ipv6.fib6_walkers);
@@ -2367,7 +2361,7 @@ static int __net_init fib6_net_init(struct net *net)
 
 	net->ipv6.rt6_stats = kzalloc(sizeof(*net->ipv6.rt6_stats), GFP_KERNEL);
 	if (!net->ipv6.rt6_stats)
-		goto out_notifier;
+		goto out_timer;
 
 	/* Avoid false sharing : Use at least a full cache line */
 	size = max_t(size_t, size, L1_CACHE_BYTES);
@@ -2412,7 +2406,7 @@ out_fib_table_hash:
 	kfree(net->ipv6.fib_table_hash);
 out_rt6_stats:
 	kfree(net->ipv6.rt6_stats);
-out_notifier:
+out_timer:
 	fib6_notifier_exit(net);
 	return -ENOMEM;
 }

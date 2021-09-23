@@ -146,8 +146,7 @@ static int get_tpkt_data(struct sk_buff *skb, unsigned int protoff,
 		/* Get first TPKT pointer */
 		tpkt = skb_header_pointer(skb, tcpdataoff, tcpdatalen,
 					  h323_buffer);
-		if (!tpkt)
-			goto clear_out;
+		BUG_ON(tpkt == NULL);
 
 		/* Validate TPKT identifier */
 		if (tcpdatalen < 4 || tpkt[0] != 0x03 || tpkt[1] != 0) {
@@ -194,7 +193,7 @@ static int get_tpkt_data(struct sk_buff *skb, unsigned int protoff,
 		if (tcpdatalen == 4) {	/* Separate TPKT header */
 			/* Netmeeting sends TPKT header and data separately */
 			pr_debug("nf_ct_h323: separate TPKT header indicates "
-				 "there will be TPKT data of %d bytes\n",
+				 "there will be TPKT data of %hu bytes\n",
 				 tpktlen - 4);
 			info->tpkt_len[dir] = tpktlen - 4;
 			return 0;

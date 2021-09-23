@@ -142,9 +142,10 @@ static irqreturn_t rx8025_handle_irq(int irq, void *dev_id)
 {
 	struct i2c_client *client = dev_id;
 	struct rx8025_data *rx8025 = i2c_get_clientdata(client);
+	struct mutex *lock = &rx8025->rtc->ops_lock;
 	int status;
 
-	rtc_lock(rx8025->rtc);
+	mutex_lock(lock);
 	status = rx8025_read_reg(client, RX8025_REG_CTRL2);
 	if (status < 0)
 		goto out;
@@ -169,7 +170,7 @@ static irqreturn_t rx8025_handle_irq(int irq, void *dev_id)
 	}
 
 out:
-	rtc_unlock(rx8025->rtc);
+	mutex_unlock(lock);
 
 	return IRQ_HANDLED;
 }

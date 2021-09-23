@@ -33,7 +33,9 @@ EXPORT_SYMBOL(memcpy);
 EXPORT_SYMBOL(memmove);
 #endif
 
+#ifdef CONFIG_MMU
 EXPORT_SYMBOL(empty_zero_page);
+#endif
 
 EXPORT_SYMBOL(mbc);
 

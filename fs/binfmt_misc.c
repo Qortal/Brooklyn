@@ -153,9 +153,7 @@ static int load_misc_binary(struct linux_binprm *bprm)
 	if (bprm->interp_flags & BINPRM_FLAGS_PATH_INACCESSIBLE)
 		goto ret;
 
-	if (fmt->flags & MISC_FMT_PRESERVE_ARGV0) {
-		bprm->interp_flags |= BINPRM_FLAGS_PRESERVE_ARGV0;
-	} else {
+	if (!(fmt->flags & MISC_FMT_PRESERVE_ARGV0)) {
 		retval = remove_arg_zero(bprm);
 		if (retval)
 			goto ret;

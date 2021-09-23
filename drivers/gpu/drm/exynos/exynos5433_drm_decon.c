@@ -13,6 +13,7 @@
 #include <linux/irq.h>
 #include <linux/mfd/syscon.h>
 #include <linux/of_device.h>
+#include <linux/of_gpio.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
@@ -513,13 +514,8 @@ static void decon_swreset(struct decon_context *ctx)
 static void decon_atomic_enable(struct exynos_drm_crtc *crtc)
 {
 	struct decon_context *ctx = crtc->ctx;
-	int ret;
 
-	ret = pm_runtime_resume_and_get(ctx->dev);
-	if (ret < 0) {
-		DRM_DEV_ERROR(ctx->dev, "failed to enable DECON device.\n");
-		return;
-	}
+	pm_runtime_get_sync(ctx->dev);
 
 	exynos_drm_pipe_clk_enable(crtc, true);
 
@@ -779,8 +775,8 @@ static int decon_conf_irq(struct decon_context *ctx, const char *name,
 			return irq;
 		}
 	}
-	ret = devm_request_irq(ctx->dev, irq, handler,
-			       flags | IRQF_NO_AUTOEN, "drm_decon", ctx);
+	irq_set_status_flags(irq, IRQ_NOAUTOEN);
+	ret = devm_request_irq(ctx->dev, irq, handler, flags, "drm_decon", ctx);
 	if (ret < 0) {
 		dev_err(ctx->dev, "IRQ %s request failed\n", name);
 		return ret;
@@ -820,8 +816,10 @@ static int exynos5433_decon_probe(struct platform_device *pdev)
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	ctx->addr = devm_ioremap_resource(dev, res);
-	if (IS_ERR(ctx->addr))
+	if (IS_ERR(ctx->addr)) {
+		dev_err(dev, "ioremap failed\n");
 		return PTR_ERR(ctx->addr);
+	}
 
 	ret = decon_conf_irq(ctx, "vsync", decon_irq_handler, 0);
 	if (ret < 0)

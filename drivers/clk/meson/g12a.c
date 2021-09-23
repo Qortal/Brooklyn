@@ -15,7 +15,6 @@
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
-#include <linux/module.h>
 
 #include "clk-mpll.h"
 #include "clk-pll.h"
@@ -3658,68 +3657,6 @@ static struct clk_regmap g12a_hdmi_tx = {
 	},
 };
 
-/* MIPI DSI Host Clocks */
-
-static const struct clk_hw *g12a_mipi_dsi_pxclk_parent_hws[] = {
-	&g12a_vid_pll.hw,
-	&g12a_gp0_pll.hw,
-	&g12a_hifi_pll.hw,
-	&g12a_mpll1.hw,
-	&g12a_fclk_div2.hw,
-	&g12a_fclk_div2p5.hw,
-	&g12a_fclk_div3.hw,
-	&g12a_fclk_div7.hw,
-};
-
-static struct clk_regmap g12a_mipi_dsi_pxclk_sel = {
-	.data = &(struct clk_regmap_mux_data){
-		.offset = HHI_MIPIDSI_PHY_CLK_CNTL,
-		.mask = 0x7,
-		.shift = 12,
-		.flags = CLK_MUX_ROUND_CLOSEST,
-	},
-	.hw.init = &(struct clk_init_data){
-		.name = "mipi_dsi_pxclk_sel",
-		.ops = &clk_regmap_mux_ops,
-		.parent_hws = g12a_mipi_dsi_pxclk_parent_hws,
-		.num_parents = ARRAY_SIZE(g12a_mipi_dsi_pxclk_parent_hws),
-		.flags = CLK_SET_RATE_NO_REPARENT,
-	},
-};
-
-static struct clk_regmap g12a_mipi_dsi_pxclk_div = {
-	.data = &(struct clk_regmap_div_data){
-		.offset = HHI_MIPIDSI_PHY_CLK_CNTL,
-		.shift = 0,
-		.width = 7,
-	},
-	.hw.init = &(struct clk_init_data){
-		.name = "mipi_dsi_pxclk_div",
-		.ops = &clk_regmap_divider_ops,
-		.parent_hws = (const struct clk_hw *[]) {
-			&g12a_mipi_dsi_pxclk_sel.hw
-		},
-		.num_parents = 1,
-		.flags = CLK_SET_RATE_PARENT,
-	},
-};
-
-static struct clk_regmap g12a_mipi_dsi_pxclk = {
-	.data = &(struct clk_regmap_gate_data){
-		.offset = HHI_MIPIDSI_PHY_CLK_CNTL,
-		.bit_idx = 8,
-	},
-	.hw.init = &(struct clk_init_data) {
-		.name = "mipi_dsi_pxclk",
-		.ops = &clk_regmap_gate_ops,
-		.parent_hws = (const struct clk_hw *[]) {
-			&g12a_mipi_dsi_pxclk_div.hw
-		},
-		.num_parents = 1,
-		.flags = CLK_SET_RATE_PARENT,
-	},
-};
-
 /* HDMI Clocks */
 
 static const struct clk_parent_data g12a_hdmi_parent_data[] = {
@@ -4465,9 +4402,6 @@ static struct clk_hw_onecell_data g12a_hw_onecell_data = {
 		[CLKID_SPICC1_SCLK_SEL]		= &g12a_spicc1_sclk_sel.hw,
 		[CLKID_SPICC1_SCLK_DIV]		= &g12a_spicc1_sclk_div.hw,
 		[CLKID_SPICC1_SCLK]		= &g12a_spicc1_sclk.hw,
-		[CLKID_MIPI_DSI_PXCLK_SEL]	= &g12a_mipi_dsi_pxclk_sel.hw,
-		[CLKID_MIPI_DSI_PXCLK_DIV]	= &g12a_mipi_dsi_pxclk_div.hw,
-		[CLKID_MIPI_DSI_PXCLK]		= &g12a_mipi_dsi_pxclk.hw,
 		[NR_CLKS]			= NULL,
 	},
 	.num = NR_CLKS,
@@ -4723,15 +4657,6 @@ static struct clk_hw_onecell_data g12b_hw_onecell_data = {
 		[CLKID_SPICC1_SCLK_SEL]		= &g12a_spicc1_sclk_sel.hw,
 		[CLKID_SPICC1_SCLK_DIV]		= &g12a_spicc1_sclk_div.hw,
 		[CLKID_SPICC1_SCLK]		= &g12a_spicc1_sclk.hw,
-		[CLKID_NNA_AXI_CLK_SEL]		= &sm1_nna_axi_clk_sel.hw,
-		[CLKID_NNA_AXI_CLK_DIV]		= &sm1_nna_axi_clk_div.hw,
-		[CLKID_NNA_AXI_CLK]		= &sm1_nna_axi_clk.hw,
-		[CLKID_NNA_CORE_CLK_SEL]	= &sm1_nna_core_clk_sel.hw,
-		[CLKID_NNA_CORE_CLK_DIV]	= &sm1_nna_core_clk_div.hw,
-		[CLKID_NNA_CORE_CLK]		= &sm1_nna_core_clk.hw,
-		[CLKID_MIPI_DSI_PXCLK_SEL]	= &g12a_mipi_dsi_pxclk_sel.hw,
-		[CLKID_MIPI_DSI_PXCLK_DIV]	= &g12a_mipi_dsi_pxclk_div.hw,
-		[CLKID_MIPI_DSI_PXCLK]		= &g12a_mipi_dsi_pxclk.hw,
 		[NR_CLKS]			= NULL,
 	},
 	.num = NR_CLKS,
@@ -4978,9 +4903,6 @@ static struct clk_hw_onecell_data sm1_hw_onecell_data = {
 		[CLKID_NNA_CORE_CLK_SEL]	= &sm1_nna_core_clk_sel.hw,
 		[CLKID_NNA_CORE_CLK_DIV]	= &sm1_nna_core_clk_div.hw,
 		[CLKID_NNA_CORE_CLK]		= &sm1_nna_core_clk.hw,
-		[CLKID_MIPI_DSI_PXCLK_SEL]	= &g12a_mipi_dsi_pxclk_sel.hw,
-		[CLKID_MIPI_DSI_PXCLK_DIV]	= &g12a_mipi_dsi_pxclk_div.hw,
-		[CLKID_MIPI_DSI_PXCLK]		= &g12a_mipi_dsi_pxclk.hw,
 		[NR_CLKS]			= NULL,
 	},
 	.num = NR_CLKS,
@@ -5228,20 +5150,16 @@ static struct clk_regmap *const g12a_clk_regmaps[] = {
 	&sm1_nna_core_clk_sel,
 	&sm1_nna_core_clk_div,
 	&sm1_nna_core_clk,
-	&g12a_mipi_dsi_pxclk_sel,
-	&g12a_mipi_dsi_pxclk_div,
-	&g12a_mipi_dsi_pxclk,
 };
 
 static const struct reg_sequence g12a_init_regs[] = {
 	{ .reg = HHI_MPLL_CNTL0,	.def = 0x00000543 },
 };
 
-#define DVFS_CON_ID "dvfs"
-
-static int meson_g12a_dvfs_setup_common(struct device *dev,
+static int meson_g12a_dvfs_setup_common(struct platform_device *pdev,
 					struct clk_hw **hws)
 {
+	const char *notifier_clk_name;
 	struct clk *notifier_clk;
 	struct clk_hw *xtal;
 	int ret;
@@ -5250,22 +5168,21 @@ static int meson_g12a_dvfs_setup_common(struct device *dev,
 
 	/* Setup clock notifier for cpu_clk_postmux0 */
 	g12a_cpu_clk_postmux0_nb_data.xtal = xtal;
-	notifier_clk = devm_clk_hw_get_clk(dev, &g12a_cpu_clk_postmux0.hw,
-					   DVFS_CON_ID);
-	ret = devm_clk_notifier_register(dev, notifier_clk,
-					 &g12a_cpu_clk_postmux0_nb_data.nb);
+	notifier_clk_name = clk_hw_get_name(&g12a_cpu_clk_postmux0.hw);
+	notifier_clk = __clk_lookup(notifier_clk_name);
+	ret = clk_notifier_register(notifier_clk,
+				    &g12a_cpu_clk_postmux0_nb_data.nb);
 	if (ret) {
-		dev_err(dev, "failed to register the cpu_clk_postmux0 notifier\n");
+		dev_err(&pdev->dev, "failed to register the cpu_clk_postmux0 notifier\n");
 		return ret;
 	}
 
 	/* Setup clock notifier for cpu_clk_dyn mux */
-	notifier_clk = devm_clk_hw_get_clk(dev, &g12a_cpu_clk_dyn.hw,
-					   DVFS_CON_ID);
-	ret = devm_clk_notifier_register(dev, notifier_clk,
-					 &g12a_cpu_clk_mux_nb);
+	notifier_clk_name = clk_hw_get_name(&g12a_cpu_clk_dyn.hw);
+	notifier_clk = __clk_lookup(notifier_clk_name);
+	ret = clk_notifier_register(notifier_clk, &g12a_cpu_clk_mux_nb);
 	if (ret) {
-		dev_err(dev, "failed to register the cpu_clk_dyn notifier\n");
+		dev_err(&pdev->dev, "failed to register the cpu_clk_dyn notifier\n");
 		return ret;
 	}
 
@@ -5275,34 +5192,33 @@ static int meson_g12a_dvfs_setup_common(struct device *dev,
 static int meson_g12b_dvfs_setup(struct platform_device *pdev)
 {
 	struct clk_hw **hws = g12b_hw_onecell_data.hws;
-	struct device *dev = &pdev->dev;
+	const char *notifier_clk_name;
 	struct clk *notifier_clk;
 	struct clk_hw *xtal;
 	int ret;
 
-	ret = meson_g12a_dvfs_setup_common(dev, hws);
+	ret = meson_g12a_dvfs_setup_common(pdev, hws);
 	if (ret)
 		return ret;
 
 	xtal = clk_hw_get_parent_by_index(hws[CLKID_CPU_CLK_DYN1_SEL], 0);
 
 	/* Setup clock notifier for cpu_clk mux */
-	notifier_clk = devm_clk_hw_get_clk(dev, &g12b_cpu_clk.hw,
-					   DVFS_CON_ID);
-	ret = devm_clk_notifier_register(dev, notifier_clk,
-					 &g12a_cpu_clk_mux_nb);
+	notifier_clk_name = clk_hw_get_name(&g12b_cpu_clk.hw);
+	notifier_clk = __clk_lookup(notifier_clk_name);
+	ret = clk_notifier_register(notifier_clk, &g12a_cpu_clk_mux_nb);
 	if (ret) {
-		dev_err(dev, "failed to register the cpu_clk notifier\n");
+		dev_err(&pdev->dev, "failed to register the cpu_clk notifier\n");
 		return ret;
 	}
 
 	/* Setup clock notifier for sys1_pll */
-	notifier_clk = devm_clk_hw_get_clk(dev, &g12b_sys1_pll.hw,
-					   DVFS_CON_ID);
-	ret = devm_clk_notifier_register(dev, notifier_clk,
-					 &g12b_cpu_clk_sys1_pll_nb_data.nb);
+	notifier_clk_name = clk_hw_get_name(&g12b_sys1_pll.hw);
+	notifier_clk = __clk_lookup(notifier_clk_name);
+	ret = clk_notifier_register(notifier_clk,
+				    &g12b_cpu_clk_sys1_pll_nb_data.nb);
 	if (ret) {
-		dev_err(dev, "failed to register the sys1_pll notifier\n");
+		dev_err(&pdev->dev, "failed to register the sys1_pll notifier\n");
 		return ret;
 	}
 
@@ -5310,39 +5226,40 @@ static int meson_g12b_dvfs_setup(struct platform_device *pdev)
 
 	/* Setup clock notifier for cpub_clk_postmux0 */
 	g12b_cpub_clk_postmux0_nb_data.xtal = xtal;
-	notifier_clk = devm_clk_hw_get_clk(dev, &g12b_cpub_clk_postmux0.hw,
-					   DVFS_CON_ID);
-	ret = devm_clk_notifier_register(dev, notifier_clk,
-					 &g12b_cpub_clk_postmux0_nb_data.nb);
+	notifier_clk_name = clk_hw_get_name(&g12b_cpub_clk_postmux0.hw);
+	notifier_clk = __clk_lookup(notifier_clk_name);
+	ret = clk_notifier_register(notifier_clk,
+				    &g12b_cpub_clk_postmux0_nb_data.nb);
 	if (ret) {
-		dev_err(dev, "failed to register the cpub_clk_postmux0 notifier\n");
+		dev_err(&pdev->dev, "failed to register the cpub_clk_postmux0 notifier\n");
 		return ret;
 	}
 
 	/* Setup clock notifier for cpub_clk_dyn mux */
-	notifier_clk = devm_clk_hw_get_clk(dev, &g12b_cpub_clk_dyn.hw, "dvfs");
-	ret = devm_clk_notifier_register(dev, notifier_clk,
-					 &g12a_cpu_clk_mux_nb);
+	notifier_clk_name = clk_hw_get_name(&g12b_cpub_clk_dyn.hw);
+	notifier_clk = __clk_lookup(notifier_clk_name);
+	ret = clk_notifier_register(notifier_clk, &g12a_cpu_clk_mux_nb);
 	if (ret) {
-		dev_err(dev, "failed to register the cpub_clk_dyn notifier\n");
+		dev_err(&pdev->dev, "failed to register the cpub_clk_dyn notifier\n");
 		return ret;
 	}
 
 	/* Setup clock notifier for cpub_clk mux */
-	notifier_clk = devm_clk_hw_get_clk(dev, &g12b_cpub_clk.hw, DVFS_CON_ID);
-	ret = devm_clk_notifier_register(dev, notifier_clk,
-					 &g12a_cpu_clk_mux_nb);
+	notifier_clk_name = clk_hw_get_name(&g12b_cpub_clk.hw);
+	notifier_clk = __clk_lookup(notifier_clk_name);
+	ret = clk_notifier_register(notifier_clk, &g12a_cpu_clk_mux_nb);
 	if (ret) {
-		dev_err(dev, "failed to register the cpub_clk notifier\n");
+		dev_err(&pdev->dev, "failed to register the cpub_clk notifier\n");
 		return ret;
 	}
 
 	/* Setup clock notifier for sys_pll */
-	notifier_clk = devm_clk_hw_get_clk(dev, &g12a_sys_pll.hw, DVFS_CON_ID);
-	ret = devm_clk_notifier_register(dev, notifier_clk,
-					 &g12b_cpub_clk_sys_pll_nb_data.nb);
+	notifier_clk_name = clk_hw_get_name(&g12a_sys_pll.hw);
+	notifier_clk = __clk_lookup(notifier_clk_name);
+	ret = clk_notifier_register(notifier_clk,
+				    &g12b_cpub_clk_sys_pll_nb_data.nb);
 	if (ret) {
-		dev_err(dev, "failed to register the sys_pll notifier\n");
+		dev_err(&pdev->dev, "failed to register the sys_pll notifier\n");
 		return ret;
 	}
 
@@ -5352,29 +5269,29 @@ static int meson_g12b_dvfs_setup(struct platform_device *pdev)
 static int meson_g12a_dvfs_setup(struct platform_device *pdev)
 {
 	struct clk_hw **hws = g12a_hw_onecell_data.hws;
-	struct device *dev = &pdev->dev;
+	const char *notifier_clk_name;
 	struct clk *notifier_clk;
 	int ret;
 
-	ret = meson_g12a_dvfs_setup_common(dev, hws);
+	ret = meson_g12a_dvfs_setup_common(pdev, hws);
 	if (ret)
 		return ret;
 
 	/* Setup clock notifier for cpu_clk mux */
-	notifier_clk = devm_clk_hw_get_clk(dev, &g12a_cpu_clk.hw, DVFS_CON_ID);
-	ret = devm_clk_notifier_register(dev, notifier_clk,
-				    &g12a_cpu_clk_mux_nb);
+	notifier_clk_name = clk_hw_get_name(&g12a_cpu_clk.hw);
+	notifier_clk = __clk_lookup(notifier_clk_name);
+	ret = clk_notifier_register(notifier_clk, &g12a_cpu_clk_mux_nb);
 	if (ret) {
-		dev_err(dev, "failed to register the cpu_clk notifier\n");
+		dev_err(&pdev->dev, "failed to register the cpu_clk notifier\n");
 		return ret;
 	}
 
 	/* Setup clock notifier for sys_pll */
-	notifier_clk = devm_clk_hw_get_clk(dev, &g12a_sys_pll.hw, DVFS_CON_ID);
-	ret = devm_clk_notifier_register(dev, notifier_clk,
-					 &g12a_sys_pll_nb_data.nb);
+	notifier_clk_name = clk_hw_get_name(&g12a_sys_pll.hw);
+	notifier_clk = __clk_lookup(notifier_clk_name);
+	ret = clk_notifier_register(notifier_clk, &g12a_sys_pll_nb_data.nb);
 	if (ret) {
-		dev_err(dev, "failed to register the sys_pll notifier\n");
+		dev_err(&pdev->dev, "failed to register the sys_pll notifier\n");
 		return ret;
 	}
 
@@ -5453,7 +5370,6 @@ static const struct of_device_id clkc_match_table[] = {
 	},
 	{}
 };
-MODULE_DEVICE_TABLE(of, clkc_match_table);
 
 static struct platform_driver g12a_driver = {
 	.probe		= meson_g12a_probe,
@@ -5463,5 +5379,4 @@ static struct platform_driver g12a_driver = {
 	},
 };
 
-module_platform_driver(g12a_driver);
-MODULE_LICENSE("GPL v2");
+builtin_platform_driver(g12a_driver);

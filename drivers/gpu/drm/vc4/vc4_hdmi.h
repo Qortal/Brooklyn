@@ -116,7 +116,6 @@ struct vc4_hdmi_audio {
 	struct snd_soc_dai_link_component platform;
 	struct snd_dmaengine_dai_dma_data dma_data;
 	struct hdmi_audio_infoframe infoframe;
-	struct platform_device *codec_pdev;
 	bool streaming;
 };
 
@@ -149,7 +148,8 @@ struct vc4_hdmi {
 	/* VC5 Only */
 	void __iomem *rm_regs;
 
-	struct gpio_desc *hpd_gpio;
+	int hpd_gpio;
+	bool hpd_active_low;
 
 	/*
 	 * On some systems (like the RPi4), some modes are in the same

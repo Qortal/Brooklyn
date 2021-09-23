@@ -203,8 +203,7 @@ nv44_mpeg = {
 };
 
 int
-nv44_mpeg_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
-	      struct nvkm_engine **pmpeg)
+nv44_mpeg_new(struct nvkm_device *device, int index, struct nvkm_engine **pmpeg)
 {
 	struct nv44_mpeg *mpeg;
 
@@ -213,5 +212,5 @@ nv44_mpeg_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
 	INIT_LIST_HEAD(&mpeg->chan);
 	*pmpeg = &mpeg->engine;
 
-	return nvkm_engine_ctor(&nv44_mpeg, device, type, inst, true, &mpeg->engine);
+	return nvkm_engine_ctor(&nv44_mpeg, device, index, true, &mpeg->engine);
 }

@@ -106,8 +106,7 @@ static int __hugepte_alloc(struct mm_struct *mm, hugepd_t *hpdp,
  * At this point we do the placement change only for BOOK3S 64. This would
  * possibly work on other subarchs.
  */
-pte_t *huge_pte_alloc(struct mm_struct *mm, struct vm_area_struct *vma,
-		      unsigned long addr, unsigned long sz)
+pte_t *huge_pte_alloc(struct mm_struct *mm, unsigned long addr, unsigned long sz)
 {
 	pgd_t *pg;
 	p4d_t *p4;
@@ -218,7 +217,7 @@ void __init pseries_add_gpage(u64 addr, u64 page_size, unsigned long number_of_p
 	}
 }
 
-static int __init pseries_alloc_bootmem_huge_page(struct hstate *hstate)
+int __init pseries_alloc_bootmem_huge_page(struct hstate *hstate)
 {
 	struct huge_bootmem_page *m;
 	if (nr_gpages == 0)
@@ -295,21 +294,6 @@ static void hugepd_free(struct mmu_gather *tlb, void *hugepte)
 static inline void hugepd_free(struct mmu_gather *tlb, void *hugepte) {}
 #endif
 
-/* Return true when the entry to be freed maps more than the area being freed */
-static bool range_is_outside_limits(unsigned long start, unsigned long end,
-				    unsigned long floor, unsigned long ceiling,
-				    unsigned long mask)
-{
-	if ((start & mask) < floor)
-		return true;
-	if (ceiling) {
-		ceiling &= mask;
-		if (!ceiling)
-			return true;
-	}
-	return end - 1 > ceiling - 1;
-}
-
 static void free_hugepd_range(struct mmu_gather *tlb, hugepd_t *hpdp, int pdshift,
 			      unsigned long start, unsigned long end,
 			      unsigned long floor, unsigned long ceiling)
@@ -325,7 +309,15 @@ static void free_hugepd_range(struct mmu_gather *tlb, hugepd_t *hpdp, int pdshif
 	if (shift > pdshift)
 		num_hugepd = 1 << (shift - pdshift);
 
-	if (range_is_outside_limits(start, end, floor, ceiling, pdmask))
+	start &= pdmask;
+	if (start < floor)
+		return;
+	if (ceiling) {
+		ceiling &= pdmask;
+		if (! ceiling)
+			return;
+	}
+	if (end - 1 > ceiling - 1)
 		return;
 
 	for (i = 0; i < num_hugepd; i++, hpdp++)
@@ -342,9 +334,18 @@ static void hugetlb_free_pte_range(struct mmu_gather *tlb, pmd_t *pmd,
 				   unsigned long addr, unsigned long end,
 				   unsigned long floor, unsigned long ceiling)
 {
+	unsigned long start = addr;
 	pgtable_t token = pmd_pgtable(*pmd);
 
-	if (range_is_outside_limits(addr, end, floor, ceiling, PMD_MASK))
+	start &= PMD_MASK;
+	if (start < floor)
+		return;
+	if (ceiling) {
+		ceiling &= PMD_MASK;
+		if (!ceiling)
+			return;
+	}
+	if (end - 1 > ceiling - 1)
 		return;
 
 	pmd_clear(pmd);
@@ -394,12 +395,20 @@ static void hugetlb_free_pmd_range(struct mmu_gather *tlb, pud_t *pud,
 				  addr, next, floor, ceiling);
 	} while (addr = next, addr != end);
 
-	if (range_is_outside_limits(start, end, floor, ceiling, PUD_MASK))
+	start &= PUD_MASK;
+	if (start < floor)
+		return;
+	if (ceiling) {
+		ceiling &= PUD_MASK;
+		if (!ceiling)
+			return;
+	}
+	if (end - 1 > ceiling - 1)
 		return;
 
-	pmd = pmd_offset(pud, start & PUD_MASK);
+	pmd = pmd_offset(pud, start);
 	pud_clear(pud);
-	pmd_free_tlb(tlb, pmd, start & PUD_MASK);
+	pmd_free_tlb(tlb, pmd, start);
 	mm_dec_nr_pmds(tlb->mm);
 }
 
@@ -437,12 +446,20 @@ static void hugetlb_free_pud_range(struct mmu_gather *tlb, p4d_t *p4d,
 		}
 	} while (addr = next, addr != end);
 
-	if (range_is_outside_limits(start, end, floor, ceiling, PGDIR_MASK))
+	start &= PGDIR_MASK;
+	if (start < floor)
+		return;
+	if (ceiling) {
+		ceiling &= PGDIR_MASK;
+		if (!ceiling)
+			return;
+	}
+	if (end - 1 > ceiling - 1)
 		return;
 
-	pud = pud_offset(p4d, start & PGDIR_MASK);
+	pud = pud_offset(p4d, start);
 	p4d_clear(p4d);
-	pud_free_tlb(tlb, pud, start & PGDIR_MASK);
+	pud_free_tlb(tlb, pud, start);
 	mm_dec_nr_puds(tlb->mm);
 }
 
@@ -663,6 +680,24 @@ static int __init hugetlbpage_init(void)
 }
 
 arch_initcall(hugetlbpage_init);
+
+void flush_dcache_icache_hugepage(struct page *page)
+{
+	int i;
+	void *start;
+
+	BUG_ON(!PageCompound(page));
+
+	for (i = 0; i < compound_nr(page); i++) {
+		if (!PageHighMem(page)) {
+			__flush_dcache_icache(page_address(page+i));
+		} else {
+			start = kmap_atomic(page+i);
+			__flush_dcache_icache(start);
+			kunmap_atomic(start);
+		}
+	}
+}
 
 void __init gigantic_hugetlb_cma_reserve(void)
 {

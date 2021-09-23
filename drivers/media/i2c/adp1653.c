@@ -379,7 +379,8 @@ static const struct v4l2_subdev_internal_ops adp1653_internal_ops = {
 
 static int adp1653_suspend(struct device *dev)
 {
-	struct v4l2_subdev *subdev = dev_get_drvdata(dev);
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
 	struct adp1653_flash *flash = to_adp1653_flash(subdev);
 
 	if (!flash->power_count)
@@ -390,7 +391,8 @@ static int adp1653_suspend(struct device *dev)
 
 static int adp1653_resume(struct device *dev)
 {
-	struct v4l2_subdev *subdev = dev_get_drvdata(dev);
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
 	struct adp1653_flash *flash = to_adp1653_flash(subdev);
 
 	if (!flash->power_count)

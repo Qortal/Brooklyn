@@ -13,32 +13,44 @@
 
 #include "dsa_priv.h"
 
-/**
- * dsa_port_notify - Notify the switching fabric of changes to a port
- * @dp: port on which change occurred
- * @e: event, must be of type DSA_NOTIFIER_*
- * @v: event-specific value.
- *
- * Notify all switches in the DSA tree that this port's switch belongs to,
- * including this switch itself, of an event. Allows the other switches to
- * reconfigure themselves for cross-chip operations. Can also be used to
- * reconfigure ports without net_devices (CPU ports, DSA links) whenever
- * a user port's state changes.
- */
-static int dsa_port_notify(const struct dsa_port *dp, unsigned long e, void *v)
+static int dsa_broadcast(unsigned long e, void *v)
 {
-	return dsa_tree_notify(dp->ds->dst, e, v);
+	struct dsa_switch_tree *dst;
+	int err = 0;
+
+	list_for_each_entry(dst, &dsa_tree_list, list) {
+		struct raw_notifier_head *nh = &dst->nh;
+
+		err = raw_notifier_call_chain(nh, e, v);
+		err = notifier_to_errno(err);
+		if (err)
+			break;
+	}
+
+	return err;
 }
 
-int dsa_port_set_state(struct dsa_port *dp, u8 state)
+static int dsa_port_notify(const struct dsa_port *dp, unsigned long e, void *v)
+{
+	struct raw_notifier_head *nh = &dp->ds->dst->nh;
+	int err;
+
+	err = raw_notifier_call_chain(nh, e, v);
+
+	return notifier_to_errno(err);
+}
+
+int dsa_port_set_state(struct dsa_port *dp, u8 state,
+		       struct switchdev_trans *trans)
 {
 	struct dsa_switch *ds = dp->ds;
 	int port = dp->index;
 
-	if (!ds->ops->port_stp_state_set)
-		return -EOPNOTSUPP;
+	if (switchdev_trans_ph_prepare(trans))
+		return ds->ops->port_stp_state_set ? 0 : -EOPNOTSUPP;
 
-	ds->ops->port_stp_state_set(ds, port, state);
+	if (ds->ops->port_stp_state_set)
+		ds->ops->port_stp_state_set(ds, port, state);
 
 	if (ds->ops->port_fast_age) {
 		/* Fast age FDB entries or flush appropriate forwarding database
@@ -63,7 +75,7 @@ static void dsa_port_set_state_now(struct dsa_port *dp, u8 state)
 {
 	int err;
 
-	err = dsa_port_set_state(dp, state);
+	err = dsa_port_set_state(dp, state, NULL);
 	if (err)
 		pr_err("DSA: failed to set STP state %u (%d)\n", state, err);
 }
@@ -122,159 +134,7 @@ void dsa_port_disable(struct dsa_port *dp)
 	rtnl_unlock();
 }
 
-static int dsa_port_inherit_brport_flags(struct dsa_port *dp,
-					 struct netlink_ext_ack *extack)
-{
-	const unsigned long mask = BR_LEARNING | BR_FLOOD | BR_MCAST_FLOOD |
-				   BR_BCAST_FLOOD;
-	struct net_device *brport_dev = dsa_port_to_bridge_port(dp);
-	int flag, err;
-
-	for_each_set_bit(flag, &mask, 32) {
-		struct switchdev_brport_flags flags = {0};
-
-		flags.mask = BIT(flag);
-
-		if (br_port_flag_is_set(brport_dev, BIT(flag)))
-			flags.val = BIT(flag);
-
-		err = dsa_port_bridge_flags(dp, flags, extack);
-		if (err && err != -EOPNOTSUPP)
-			return err;
-	}
-
-	return 0;
-}
-
-static void dsa_port_clear_brport_flags(struct dsa_port *dp)
-{
-	const unsigned long val = BR_FLOOD | BR_MCAST_FLOOD | BR_BCAST_FLOOD;
-	const unsigned long mask = BR_LEARNING | BR_FLOOD | BR_MCAST_FLOOD |
-				   BR_BCAST_FLOOD;
-	int flag, err;
-
-	for_each_set_bit(flag, &mask, 32) {
-		struct switchdev_brport_flags flags = {0};
-
-		flags.mask = BIT(flag);
-		flags.val = val & BIT(flag);
-
-		err = dsa_port_bridge_flags(dp, flags, NULL);
-		if (err && err != -EOPNOTSUPP)
-			dev_err(dp->ds->dev,
-				"failed to clear bridge port flag %lu: %pe\n",
-				flags.val, ERR_PTR(err));
-	}
-}
-
-static int dsa_port_switchdev_sync(struct dsa_port *dp,
-				   struct netlink_ext_ack *extack)
-{
-	struct net_device *brport_dev = dsa_port_to_bridge_port(dp);
-	struct net_device *br = dp->bridge_dev;
-	int err;
-
-	err = dsa_port_inherit_brport_flags(dp, extack);
-	if (err)
-		return err;
-
-	err = dsa_port_set_state(dp, br_port_get_stp_state(brport_dev));
-	if (err && err != -EOPNOTSUPP)
-		return err;
-
-	err = dsa_port_vlan_filtering(dp, br_vlan_enabled(br), extack);
-	if (err && err != -EOPNOTSUPP)
-		return err;
-
-	err = dsa_port_ageing_time(dp, br_get_ageing_time(br));
-	if (err && err != -EOPNOTSUPP)
-		return err;
-
-	err = br_mdb_replay(br, brport_dev, dp, true,
-			    &dsa_slave_switchdev_blocking_notifier, extack);
-	if (err && err != -EOPNOTSUPP)
-		return err;
-
-	/* Forwarding and termination FDB entries on the port */
-	err = br_fdb_replay(br, brport_dev, dp, true,
-			    &dsa_slave_switchdev_notifier);
-	if (err && err != -EOPNOTSUPP)
-		return err;
-
-	/* Termination FDB entries on the bridge itself */
-	err = br_fdb_replay(br, br, dp, true, &dsa_slave_switchdev_notifier);
-	if (err && err != -EOPNOTSUPP)
-		return err;
-
-	err = br_vlan_replay(br, brport_dev, dp, true,
-			     &dsa_slave_switchdev_blocking_notifier, extack);
-	if (err && err != -EOPNOTSUPP)
-		return err;
-
-	return 0;
-}
-
-static int dsa_port_switchdev_unsync_objs(struct dsa_port *dp,
-					  struct net_device *br,
-					  struct netlink_ext_ack *extack)
-{
-	struct net_device *brport_dev = dsa_port_to_bridge_port(dp);
-	int err;
-
-	/* Delete the switchdev objects left on this port */
-	err = br_mdb_replay(br, brport_dev, dp, false,
-			    &dsa_slave_switchdev_blocking_notifier, extack);
-	if (err && err != -EOPNOTSUPP)
-		return err;
-
-	/* Forwarding and termination FDB entries on the port */
-	err = br_fdb_replay(br, brport_dev, dp, false,
-			    &dsa_slave_switchdev_notifier);
-	if (err && err != -EOPNOTSUPP)
-		return err;
-
-	/* Termination FDB entries on the bridge itself */
-	err = br_fdb_replay(br, br, dp, false, &dsa_slave_switchdev_notifier);
-	if (err && err != -EOPNOTSUPP)
-		return err;
-
-	err = br_vlan_replay(br, brport_dev, dp, false,
-			     &dsa_slave_switchdev_blocking_notifier, extack);
-	if (err && err != -EOPNOTSUPP)
-		return err;
-
-	return 0;
-}
-
-static void dsa_port_switchdev_unsync_attrs(struct dsa_port *dp)
-{
-	/* Configure the port for standalone mode (no address learning,
-	 * flood everything).
-	 * The bridge only emits SWITCHDEV_ATTR_ID_PORT_BRIDGE_FLAGS events
-	 * when the user requests it through netlink or sysfs, but not
-	 * automatically at port join or leave, so we need to handle resetting
-	 * the brport flags ourselves. But we even prefer it that way, because
-	 * otherwise, some setups might never get the notification they need,
-	 * for example, when a port leaves a LAG that offloads the bridge,
-	 * it becomes standalone, but as far as the bridge is concerned, no
-	 * port ever left.
-	 */
-	dsa_port_clear_brport_flags(dp);
-
-	/* Port left the bridge, put in BR_STATE_DISABLED by the bridge layer,
-	 * so allow it to be in BR_STATE_FORWARDING to be kept functional
-	 */
-	dsa_port_set_state_now(dp, BR_STATE_FORWARDING);
-
-	/* VLAN filtering is handled by dsa_switch_bridge_leave */
-
-	/* Ageing time may be global to the switch chip, so don't change it
-	 * here because we have no good reason (or value) to change it to.
-	 */
-}
-
-int dsa_port_bridge_join(struct dsa_port *dp, struct net_device *br,
-			 struct netlink_ext_ack *extack)
+int dsa_port_bridge_join(struct dsa_port *dp, struct net_device *br)
 {
 	struct dsa_notifier_bridge_info info = {
 		.tree_index = dp->ds->dst->index,
@@ -284,32 +144,25 @@ int dsa_port_bridge_join(struct dsa_port *dp, struct net_device *br,
 	};
 	int err;
 
+	/* Set the flooding mode before joining the port in the switch */
+	err = dsa_port_bridge_flags(dp, BR_FLOOD | BR_MCAST_FLOOD, NULL);
+	if (err)
+		return err;
+
 	/* Here the interface is already bridged. Reflect the current
 	 * configuration so that drivers can program their chips accordingly.
 	 */
 	dp->bridge_dev = br;
 
 	err = dsa_broadcast(DSA_NOTIFIER_BRIDGE_JOIN, &info);
-	if (err)
-		goto out_rollback;
 
-	err = dsa_port_switchdev_sync(dp, extack);
-	if (err)
-		goto out_rollback_unbridge;
+	/* The bridging is rolled back on error */
+	if (err) {
+		dsa_port_bridge_flags(dp, 0, NULL);
+		dp->bridge_dev = NULL;
+	}
 
-	return 0;
-
-out_rollback_unbridge:
-	dsa_broadcast(DSA_NOTIFIER_BRIDGE_LEAVE, &info);
-out_rollback:
-	dp->bridge_dev = NULL;
 	return err;
-}
-
-int dsa_port_pre_bridge_leave(struct dsa_port *dp, struct net_device *br,
-			      struct netlink_ext_ack *extack)
-{
-	return dsa_port_switchdev_unsync_objs(dp, br, extack);
 }
 
 void dsa_port_bridge_leave(struct dsa_port *dp, struct net_device *br)
@@ -331,116 +184,18 @@ void dsa_port_bridge_leave(struct dsa_port *dp, struct net_device *br)
 	if (err)
 		pr_err("DSA: failed to notify DSA_NOTIFIER_BRIDGE_LEAVE\n");
 
-	dsa_port_switchdev_unsync_attrs(dp);
-}
+	/* Port is leaving the bridge, disable flooding */
+	dsa_port_bridge_flags(dp, 0, NULL);
 
-int dsa_port_lag_change(struct dsa_port *dp,
-			struct netdev_lag_lower_state_info *linfo)
-{
-	struct dsa_notifier_lag_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
-	};
-	bool tx_enabled;
-
-	if (!dp->lag_dev)
-		return 0;
-
-	/* On statically configured aggregates (e.g. loadbalance
-	 * without LACP) ports will always be tx_enabled, even if the
-	 * link is down. Thus we require both link_up and tx_enabled
-	 * in order to include it in the tx set.
+	/* Port left the bridge, put in BR_STATE_DISABLED by the bridge layer,
+	 * so allow it to be in BR_STATE_FORWARDING to be kept functional
 	 */
-	tx_enabled = linfo->link_up && linfo->tx_enabled;
-
-	if (tx_enabled == dp->lag_tx_enabled)
-		return 0;
-
-	dp->lag_tx_enabled = tx_enabled;
-
-	return dsa_port_notify(dp, DSA_NOTIFIER_LAG_CHANGE, &info);
-}
-
-int dsa_port_lag_join(struct dsa_port *dp, struct net_device *lag,
-		      struct netdev_lag_upper_info *uinfo,
-		      struct netlink_ext_ack *extack)
-{
-	struct dsa_notifier_lag_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
-		.lag = lag,
-		.info = uinfo,
-	};
-	struct net_device *bridge_dev;
-	int err;
-
-	dsa_lag_map(dp->ds->dst, lag);
-	dp->lag_dev = lag;
-
-	err = dsa_port_notify(dp, DSA_NOTIFIER_LAG_JOIN, &info);
-	if (err)
-		goto err_lag_join;
-
-	bridge_dev = netdev_master_upper_dev_get(lag);
-	if (!bridge_dev || !netif_is_bridge_master(bridge_dev))
-		return 0;
-
-	err = dsa_port_bridge_join(dp, bridge_dev, extack);
-	if (err)
-		goto err_bridge_join;
-
-	return 0;
-
-err_bridge_join:
-	dsa_port_notify(dp, DSA_NOTIFIER_LAG_LEAVE, &info);
-err_lag_join:
-	dp->lag_dev = NULL;
-	dsa_lag_unmap(dp->ds->dst, lag);
-	return err;
-}
-
-int dsa_port_pre_lag_leave(struct dsa_port *dp, struct net_device *lag,
-			   struct netlink_ext_ack *extack)
-{
-	if (dp->bridge_dev)
-		return dsa_port_pre_bridge_leave(dp, dp->bridge_dev, extack);
-
-	return 0;
-}
-
-void dsa_port_lag_leave(struct dsa_port *dp, struct net_device *lag)
-{
-	struct dsa_notifier_lag_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
-		.lag = lag,
-	};
-	int err;
-
-	if (!dp->lag_dev)
-		return;
-
-	/* Port might have been part of a LAG that in turn was
-	 * attached to a bridge.
-	 */
-	if (dp->bridge_dev)
-		dsa_port_bridge_leave(dp, dp->bridge_dev);
-
-	dp->lag_tx_enabled = false;
-	dp->lag_dev = NULL;
-
-	err = dsa_port_notify(dp, DSA_NOTIFIER_LAG_LEAVE, &info);
-	if (err)
-		pr_err("DSA: failed to notify DSA_NOTIFIER_LAG_LEAVE: %d\n",
-		       err);
-
-	dsa_lag_unmap(dp->ds->dst, lag);
+	dsa_port_set_state_now(dp, BR_STATE_FORWARDING);
 }
 
 /* Must be called under rcu_read_lock() */
 static bool dsa_port_can_apply_vlan_filtering(struct dsa_port *dp,
-					      bool vlan_filtering,
-					      struct netlink_ext_ack *extack)
+					      bool vlan_filtering)
 {
 	struct dsa_switch *ds = dp->ds;
 	int err, i;
@@ -470,8 +225,8 @@ static bool dsa_port_can_apply_vlan_filtering(struct dsa_port *dp,
 			 */
 			err = br_vlan_get_info(br, vid, &br_info);
 			if (err == 0) {
-				NL_SET_ERR_MSG_MOD(extack,
-						   "Must first remove VLAN uppers having VIDs also present in bridge");
+				dev_err(ds->dev, "Must remove upper %s first\n",
+					upper_dev->name);
 				return false;
 			}
 		}
@@ -497,8 +252,7 @@ static bool dsa_port_can_apply_vlan_filtering(struct dsa_port *dp,
 		if (other_bridge == dp->bridge_dev)
 			continue;
 		if (br_vlan_enabled(other_bridge) != vlan_filtering) {
-			NL_SET_ERR_MSG_MOD(extack,
-					   "VLAN filtering is a global setting");
+			dev_err(ds->dev, "VLAN filtering is a global setting\n");
 			return false;
 		}
 	}
@@ -506,37 +260,42 @@ static bool dsa_port_can_apply_vlan_filtering(struct dsa_port *dp,
 }
 
 int dsa_port_vlan_filtering(struct dsa_port *dp, bool vlan_filtering,
-			    struct netlink_ext_ack *extack)
+			    struct switchdev_trans *trans)
 {
 	struct dsa_switch *ds = dp->ds;
-	bool apply;
 	int err;
 
-	if (!ds->ops->port_vlan_filtering)
-		return -EOPNOTSUPP;
+	if (switchdev_trans_ph_prepare(trans)) {
+		bool apply;
 
-	/* We are called from dsa_slave_switchdev_blocking_event(),
-	 * which is not under rcu_read_lock(), unlike
-	 * dsa_slave_switchdev_event().
-	 */
-	rcu_read_lock();
-	apply = dsa_port_can_apply_vlan_filtering(dp, vlan_filtering, extack);
-	rcu_read_unlock();
-	if (!apply)
-		return -EINVAL;
+		if (!ds->ops->port_vlan_filtering)
+			return -EOPNOTSUPP;
+
+		/* We are called from dsa_slave_switchdev_blocking_event(),
+		 * which is not under rcu_read_lock(), unlike
+		 * dsa_slave_switchdev_event().
+		 */
+		rcu_read_lock();
+		apply = dsa_port_can_apply_vlan_filtering(dp, vlan_filtering);
+		rcu_read_unlock();
+		if (!apply)
+			return -EINVAL;
+	}
 
 	if (dsa_port_is_vlan_filtering(dp) == vlan_filtering)
 		return 0;
 
 	err = ds->ops->port_vlan_filtering(ds, dp->index, vlan_filtering,
-					   extack);
+					   trans);
 	if (err)
 		return err;
 
-	if (ds->vlan_filtering_is_global)
-		ds->vlan_filtering = vlan_filtering;
-	else
-		dp->vlan_filtering = vlan_filtering;
+	if (switchdev_trans_ph_commit(trans)) {
+		if (ds->vlan_filtering_is_global)
+			ds->vlan_filtering = vlan_filtering;
+		else
+			dp->vlan_filtering = vlan_filtering;
+	}
 
 	return 0;
 }
@@ -555,54 +314,71 @@ bool dsa_port_skip_vlan_configuration(struct dsa_port *dp)
 		!br_vlan_enabled(dp->bridge_dev));
 }
 
-int dsa_port_ageing_time(struct dsa_port *dp, clock_t ageing_clock)
+int dsa_port_ageing_time(struct dsa_port *dp, clock_t ageing_clock,
+			 struct switchdev_trans *trans)
 {
 	unsigned long ageing_jiffies = clock_t_to_jiffies(ageing_clock);
 	unsigned int ageing_time = jiffies_to_msecs(ageing_jiffies);
-	struct dsa_notifier_ageing_time_info info;
-	int err;
+	struct dsa_notifier_ageing_time_info info = {
+		.ageing_time = ageing_time,
+		.trans = trans,
+	};
 
-	info.ageing_time = ageing_time;
-
-	err = dsa_port_notify(dp, DSA_NOTIFIER_AGEING_TIME, &info);
-	if (err)
-		return err;
+	if (switchdev_trans_ph_prepare(trans))
+		return dsa_port_notify(dp, DSA_NOTIFIER_AGEING_TIME, &info);
 
 	dp->ageing_time = ageing_time;
+
+	return dsa_port_notify(dp, DSA_NOTIFIER_AGEING_TIME, &info);
+}
+
+int dsa_port_pre_bridge_flags(const struct dsa_port *dp, unsigned long flags,
+			      struct switchdev_trans *trans)
+{
+	struct dsa_switch *ds = dp->ds;
+
+	if (!ds->ops->port_egress_floods ||
+	    (flags & ~(BR_FLOOD | BR_MCAST_FLOOD)))
+		return -EINVAL;
 
 	return 0;
 }
 
-int dsa_port_pre_bridge_flags(const struct dsa_port *dp,
-			      struct switchdev_brport_flags flags,
-			      struct netlink_ext_ack *extack)
+int dsa_port_bridge_flags(const struct dsa_port *dp, unsigned long flags,
+			  struct switchdev_trans *trans)
 {
 	struct dsa_switch *ds = dp->ds;
+	int port = dp->index;
+	int err = 0;
 
-	if (!ds->ops->port_pre_bridge_flags)
-		return -EINVAL;
+	if (switchdev_trans_ph_prepare(trans))
+		return 0;
 
-	return ds->ops->port_pre_bridge_flags(ds, dp->index, flags, extack);
+	if (ds->ops->port_egress_floods)
+		err = ds->ops->port_egress_floods(ds, port, flags & BR_FLOOD,
+						  flags & BR_MCAST_FLOOD);
+
+	return err;
 }
 
-int dsa_port_bridge_flags(const struct dsa_port *dp,
-			  struct switchdev_brport_flags flags,
-			  struct netlink_ext_ack *extack)
+int dsa_port_mrouter(struct dsa_port *dp, bool mrouter,
+		     struct switchdev_trans *trans)
 {
 	struct dsa_switch *ds = dp->ds;
+	int port = dp->index;
 
-	if (!ds->ops->port_bridge_flags)
-		return -EOPNOTSUPP;
+	if (switchdev_trans_ph_prepare(trans))
+		return ds->ops->port_egress_floods ? 0 : -EOPNOTSUPP;
 
-	return ds->ops->port_bridge_flags(ds, dp->index, flags, extack);
+	return ds->ops->port_egress_floods(ds, port, true, mrouter);
 }
 
 int dsa_port_mtu_change(struct dsa_port *dp, int new_mtu,
-			bool targeted_match)
+			bool propagate_upstream)
 {
 	struct dsa_notifier_mtu_info info = {
 		.sw_index = dp->ds->index,
-		.targeted_match = targeted_match,
+		.propagate_upstream = propagate_upstream,
 		.port = dp->index,
 		.mtu = new_mtu,
 	};
@@ -637,44 +413,6 @@ int dsa_port_fdb_del(struct dsa_port *dp, const unsigned char *addr,
 	return dsa_port_notify(dp, DSA_NOTIFIER_FDB_DEL, &info);
 }
 
-int dsa_port_host_fdb_add(struct dsa_port *dp, const unsigned char *addr,
-			  u16 vid)
-{
-	struct dsa_notifier_fdb_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
-		.addr = addr,
-		.vid = vid,
-	};
-	struct dsa_port *cpu_dp = dp->cpu_dp;
-	int err;
-
-	err = dev_uc_add(cpu_dp->master, addr);
-	if (err)
-		return err;
-
-	return dsa_port_notify(dp, DSA_NOTIFIER_HOST_FDB_ADD, &info);
-}
-
-int dsa_port_host_fdb_del(struct dsa_port *dp, const unsigned char *addr,
-			  u16 vid)
-{
-	struct dsa_notifier_fdb_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
-		.addr = addr,
-		.vid = vid,
-	};
-	struct dsa_port *cpu_dp = dp->cpu_dp;
-	int err;
-
-	err = dev_uc_del(cpu_dp->master, addr);
-	if (err)
-		return err;
-
-	return dsa_port_notify(dp, DSA_NOTIFIER_HOST_FDB_DEL, &info);
-}
-
 int dsa_port_fdb_dump(struct dsa_port *dp, dsa_fdb_dump_cb_t *cb, void *data)
 {
 	struct dsa_switch *ds = dp->ds;
@@ -687,11 +425,13 @@ int dsa_port_fdb_dump(struct dsa_port *dp, dsa_fdb_dump_cb_t *cb, void *data)
 }
 
 int dsa_port_mdb_add(const struct dsa_port *dp,
-		     const struct switchdev_obj_port_mdb *mdb)
+		     const struct switchdev_obj_port_mdb *mdb,
+		     struct switchdev_trans *trans)
 {
 	struct dsa_notifier_mdb_info info = {
 		.sw_index = dp->ds->index,
 		.port = dp->index,
+		.trans = trans,
 		.mdb = mdb,
 	};
 
@@ -710,51 +450,15 @@ int dsa_port_mdb_del(const struct dsa_port *dp,
 	return dsa_port_notify(dp, DSA_NOTIFIER_MDB_DEL, &info);
 }
 
-int dsa_port_host_mdb_add(const struct dsa_port *dp,
-			  const struct switchdev_obj_port_mdb *mdb)
-{
-	struct dsa_notifier_mdb_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
-		.mdb = mdb,
-	};
-	struct dsa_port *cpu_dp = dp->cpu_dp;
-	int err;
-
-	err = dev_mc_add(cpu_dp->master, mdb->addr);
-	if (err)
-		return err;
-
-	return dsa_port_notify(dp, DSA_NOTIFIER_HOST_MDB_ADD, &info);
-}
-
-int dsa_port_host_mdb_del(const struct dsa_port *dp,
-			  const struct switchdev_obj_port_mdb *mdb)
-{
-	struct dsa_notifier_mdb_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
-		.mdb = mdb,
-	};
-	struct dsa_port *cpu_dp = dp->cpu_dp;
-	int err;
-
-	err = dev_mc_del(cpu_dp->master, mdb->addr);
-	if (err)
-		return err;
-
-	return dsa_port_notify(dp, DSA_NOTIFIER_HOST_MDB_DEL, &info);
-}
-
 int dsa_port_vlan_add(struct dsa_port *dp,
 		      const struct switchdev_obj_port_vlan *vlan,
-		      struct netlink_ext_ack *extack)
+		      struct switchdev_trans *trans)
 {
 	struct dsa_notifier_vlan_info info = {
 		.sw_index = dp->ds->index,
 		.port = dp->index,
+		.trans = trans,
 		.vlan = vlan,
-		.extack = extack,
 	};
 
 	return dsa_port_notify(dp, DSA_NOTIFIER_VLAN_ADD, &info);
@@ -770,62 +474,6 @@ int dsa_port_vlan_del(struct dsa_port *dp,
 	};
 
 	return dsa_port_notify(dp, DSA_NOTIFIER_VLAN_DEL, &info);
-}
-
-int dsa_port_mrp_add(const struct dsa_port *dp,
-		     const struct switchdev_obj_mrp *mrp)
-{
-	struct dsa_notifier_mrp_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
-		.mrp = mrp,
-	};
-
-	return dsa_port_notify(dp, DSA_NOTIFIER_MRP_ADD, &info);
-}
-
-int dsa_port_mrp_del(const struct dsa_port *dp,
-		     const struct switchdev_obj_mrp *mrp)
-{
-	struct dsa_notifier_mrp_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
-		.mrp = mrp,
-	};
-
-	return dsa_port_notify(dp, DSA_NOTIFIER_MRP_DEL, &info);
-}
-
-int dsa_port_mrp_add_ring_role(const struct dsa_port *dp,
-			       const struct switchdev_obj_ring_role_mrp *mrp)
-{
-	struct dsa_notifier_mrp_ring_role_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
-		.mrp = mrp,
-	};
-
-	return dsa_port_notify(dp, DSA_NOTIFIER_MRP_ADD_RING_ROLE, &info);
-}
-
-int dsa_port_mrp_del_ring_role(const struct dsa_port *dp,
-			       const struct switchdev_obj_ring_role_mrp *mrp)
-{
-	struct dsa_notifier_mrp_ring_role_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
-		.mrp = mrp,
-	};
-
-	return dsa_port_notify(dp, DSA_NOTIFIER_MRP_DEL_RING_ROLE, &info);
-}
-
-void dsa_port_set_tag_protocol(struct dsa_port *cpu_dp,
-			       const struct dsa_device_ops *tag_ops)
-{
-	cpu_dp->filter = tag_ops->filter;
-	cpu_dp->rcv = tag_ops->rcv;
-	cpu_dp->tag_ops = tag_ops;
 }
 
 static struct phy_device *dsa_port_get_phy_device(struct dsa_port *dp)
@@ -1162,37 +810,3 @@ int dsa_port_get_phy_sset_count(struct dsa_port *dp)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(dsa_port_get_phy_sset_count);
-
-int dsa_port_hsr_join(struct dsa_port *dp, struct net_device *hsr)
-{
-	struct dsa_notifier_hsr_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
-		.hsr = hsr,
-	};
-	int err;
-
-	dp->hsr_dev = hsr;
-
-	err = dsa_port_notify(dp, DSA_NOTIFIER_HSR_JOIN, &info);
-	if (err)
-		dp->hsr_dev = NULL;
-
-	return err;
-}
-
-void dsa_port_hsr_leave(struct dsa_port *dp, struct net_device *hsr)
-{
-	struct dsa_notifier_hsr_info info = {
-		.sw_index = dp->ds->index,
-		.port = dp->index,
-		.hsr = hsr,
-	};
-	int err;
-
-	dp->hsr_dev = NULL;
-
-	err = dsa_port_notify(dp, DSA_NOTIFIER_HSR_LEAVE, &info);
-	if (err)
-		pr_err("DSA: failed to notify DSA_NOTIFIER_HSR_LEAVE\n");
-}

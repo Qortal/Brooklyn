@@ -69,24 +69,25 @@ static const u8 DASD_DIAG_CMS1[] = { 0xc3, 0xd4, 0xe2, 0xf1 };/* EBCDIC CMS1 */
  * resulting condition code and DIAG return code. */
 static inline int __dia250(void *iob, int cmd)
 {
-	union register_pair rx = { .even = (unsigned long)iob, };
+	register unsigned long reg2 asm ("2") = (unsigned long) iob;
 	typedef union {
 		struct dasd_diag_init_io init_io;
 		struct dasd_diag_rw_io rw_io;
 	} addr_type;
-	int cc;
+	int rc;
 
-	cc = 3;
+	rc = 3;
 	asm volatile(
-		"	diag	%[rx],%[cmd],0x250\n"
-		"0:	ipm	%[cc]\n"
-		"	srl	%[cc],28\n"
+		"	diag	2,%2,0x250\n"
+		"0:	ipm	%0\n"
+		"	srl	%0,28\n"
+		"	or	%0,3\n"
 		"1:\n"
 		EX_TABLE(0b,1b)
-		: [cc] "+&d" (cc), [rx] "+&d" (rx.pair), "+m" (*(addr_type *)iob)
-		: [cmd] "d" (cmd)
-		: "cc");
-	return cc | rx.odd;
+		: "+d" (rc), "=m" (*(addr_type *) iob)
+		: "d" (cmd), "d" (reg2), "m" (*(addr_type *) iob)
+		: "3", "cc");
+	return rc;
 }
 
 static inline int dia250(void *iob, int cmd)
@@ -641,18 +642,12 @@ static void dasd_diag_setup_blk_queue(struct dasd_block *block)
 	blk_queue_segment_boundary(q, PAGE_SIZE - 1);
 }
 
-static int dasd_diag_pe_handler(struct dasd_device *device,
-				__u8 tbvpm, __u8 fcsecpm)
-{
-	return dasd_generic_verify_path(device, tbvpm);
-}
-
 static struct dasd_discipline dasd_diag_discipline = {
 	.owner = THIS_MODULE,
 	.name = "DIAG",
 	.ebcname = "DIAG",
 	.check_device = dasd_diag_check_device,
-	.pe_handler = dasd_diag_pe_handler,
+	.verify_path = dasd_generic_verify_path,
 	.fill_geometry = dasd_diag_fill_geometry,
 	.setup_blk_queue = dasd_diag_setup_blk_queue,
 	.start_IO = dasd_start_diag,

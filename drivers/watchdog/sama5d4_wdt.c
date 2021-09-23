@@ -268,10 +268,8 @@ static int sama5d4_wdt_probe(struct platform_device *pdev)
 	wdd->min_timeout = MIN_WDT_TIMEOUT;
 	wdd->max_timeout = MAX_WDT_TIMEOUT;
 	wdt->last_ping = jiffies;
-
-	if (of_device_is_compatible(dev->of_node, "microchip,sam9x60-wdt") ||
-	    of_device_is_compatible(dev->of_node, "microchip,sama7g5-wdt"))
-		wdt->sam9x60_support = true;
+	wdt->sam9x60_support = of_device_is_compatible(dev->of_node,
+						       "microchip,sam9x60-wdt");
 
 	watchdog_set_drvdata(wdd, wdt);
 
@@ -331,10 +329,6 @@ static const struct of_device_id sama5d4_wdt_of_match[] = {
 	{
 		.compatible = "microchip,sam9x60-wdt",
 	},
-	{
-		.compatible = "microchip,sama7g5-wdt",
-	},
-
 	{ }
 };
 MODULE_DEVICE_TABLE(of, sama5d4_wdt_of_match);

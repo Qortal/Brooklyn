@@ -387,12 +387,10 @@ static void
 komeda_crtc_atomic_flush(struct drm_crtc *crtc,
 			 struct drm_atomic_state *state)
 {
-	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state,
-									  crtc);
 	struct drm_crtc_state *old = drm_atomic_get_old_crtc_state(state,
 								   crtc);
 	/* commit with modeset will be handled in enable/disable */
-	if (drm_atomic_crtc_needs_modeset(crtc_state))
+	if (drm_atomic_crtc_needs_modeset(crtc->state))
 		return;
 
 	komeda_crtc_do_flush(crtc, old);

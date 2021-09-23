@@ -1425,6 +1425,7 @@ static int fsl_diu_open(struct fb_info *info, int user)
 static int fsl_diu_release(struct fb_info *info, int user)
 {
 	struct mfb_info *mfbi = info->par;
+	int res = 0;
 
 	spin_lock(&diu_lock);
 	mfbi->count--;
@@ -1446,7 +1447,7 @@ static int fsl_diu_release(struct fb_info *info, int user)
 	}
 
 	spin_unlock(&diu_lock);
-	return 0;
+	return res;
 }
 
 static const struct fb_ops fsl_diu_ops = {

@@ -47,13 +47,18 @@ static int tvc_connect(struct omap_dss_device *dssdev)
 {
 	struct panel_drv_data *ddata = to_panel_data(dssdev);
 	struct omap_dss_device *in = ddata->in;
+	int r;
 
 	dev_dbg(ddata->dev, "connect\n");
 
 	if (omapdss_device_is_connected(dssdev))
 		return 0;
 
-	return in->ops.atv->connect(in, dssdev);
+	r = in->ops.atv->connect(in, dssdev);
+	if (r)
+		return r;
+
+	return 0;
 }
 
 static void tvc_disconnect(struct omap_dss_device *dssdev)

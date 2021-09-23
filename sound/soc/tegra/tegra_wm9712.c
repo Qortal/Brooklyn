@@ -54,6 +54,7 @@ static struct snd_soc_dai_link tegra_wm9712_dai = {
 
 static struct snd_soc_card snd_soc_tegra_wm9712 = {
 	.name = "tegra-wm9712",
+	.driver_name = "tegra",
 	.owner = THIS_MODULE,
 	.dai_link = &tegra_wm9712_dai,
 	.num_links = 1,
@@ -117,8 +118,8 @@ static int tegra_wm9712_driver_probe(struct platform_device *pdev)
 
 	ret = snd_soc_register_card(card);
 	if (ret) {
-		dev_err_probe(&pdev->dev, ret,
-			      "snd_soc_register_card failed\n");
+		dev_err(&pdev->dev, "snd_soc_register_card failed (%d)\n",
+			ret);
 		goto codec_unregister;
 	}
 

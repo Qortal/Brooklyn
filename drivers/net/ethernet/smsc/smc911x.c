@@ -102,10 +102,7 @@ MODULE_ALIAS("platform:smc911x");
 
 #define PRINTK(dev, args...)   netdev_info(dev, args)
 #else
-#define DBG(n, dev, args...)			 \
-	while (0) {				 \
-		netdev_dbg(dev, args);		 \
-	}
+#define DBG(n, dev, args...)   do { } while (0)
 #define PRINTK(dev, args...)   netdev_dbg(dev, args)
 #endif
 
@@ -465,9 +462,9 @@ static void smc911x_hardware_send_pkt(struct net_device *dev)
 			TX_CMD_A_INT_FIRST_SEG_ | TX_CMD_A_INT_LAST_SEG_ |
 			skb->len;
 #else
-	buf = (char *)((uintptr_t)skb->data & ~0x3);
-	len = (skb->len + 3 + ((uintptr_t)skb->data & 3)) & ~0x3;
-	cmdA = (((uintptr_t)skb->data & 0x3) << 16) |
+	buf = (char*)((u32)skb->data & ~0x3);
+	len = (skb->len + 3 + ((u32)skb->data & 3)) & ~0x3;
+	cmdA = (((u32)skb->data & 0x3) << 16) |
 			TX_CMD_A_INT_FIRST_SEG_ | TX_CMD_A_INT_LAST_SEG_ |
 			skb->len;
 #endif
@@ -882,7 +879,7 @@ static void smc911x_phy_configure(struct work_struct *work)
 	int phyaddr = lp->mii.phy_id;
 	int my_phy_caps; /* My PHY capabilities */
 	int my_ad_caps; /* My Advertised capabilities */
-	int status __always_unused;
+	int status;
 	unsigned long flags;
 
 	DBG(SMC_DEBUG_FUNC, dev, "--> %s()\n", __func__);
@@ -976,7 +973,7 @@ static void smc911x_phy_interrupt(struct net_device *dev)
 {
 	struct smc911x_local *lp = netdev_priv(dev);
 	int phyaddr = lp->mii.phy_id;
-	int status __always_unused;
+	int status;
 
 	DBG(SMC_DEBUG_FUNC, dev, "--> %s\n", __func__);
 
@@ -2047,6 +2044,8 @@ static int smc911x_drv_probe(struct platform_device *pdev)
 	void __iomem *addr;
 	int ret;
 
+	/* ndev is not valid yet, so avoid passing it in. */
+	DBG(SMC_DEBUG_FUNC, "--> %s\n",  __func__);
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res) {
 		ret = -ENODEV;

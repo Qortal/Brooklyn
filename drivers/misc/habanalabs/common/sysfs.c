@@ -9,17 +9,11 @@
 
 #include <linux/pci.h>
 
-long hl_get_frequency(struct hl_device *hdev, u32 pll_index,
-								bool curr)
+long hl_get_frequency(struct hl_device *hdev, u32 pll_index, bool curr)
 {
 	struct cpucp_packet pkt;
-	u32 used_pll_idx;
-	u64 result;
+	long result;
 	int rc;
-
-	rc = get_used_pll_index(hdev, pll_index, &used_pll_idx);
-	if (rc)
-		return rc;
 
 	memset(&pkt, 0, sizeof(pkt));
 
@@ -29,7 +23,7 @@ long hl_get_frequency(struct hl_device *hdev, u32 pll_index,
 	else
 		pkt.ctl = cpu_to_le32(CPUCP_PACKET_FREQUENCY_GET <<
 						CPUCP_PKT_CTL_OPCODE_SHIFT);
-	pkt.pll_index = cpu_to_le32((u32)used_pll_idx);
+	pkt.pll_index = cpu_to_le32(pll_index);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
 						0, &result);
@@ -37,29 +31,23 @@ long hl_get_frequency(struct hl_device *hdev, u32 pll_index,
 	if (rc) {
 		dev_err(hdev->dev,
 			"Failed to get frequency of PLL %d, error %d\n",
-			used_pll_idx, rc);
-		return rc;
+			pll_index, rc);
+		result = rc;
 	}
 
-	return (long) result;
+	return result;
 }
 
-void hl_set_frequency(struct hl_device *hdev, u32 pll_index,
-								u64 freq)
+void hl_set_frequency(struct hl_device *hdev, u32 pll_index, u64 freq)
 {
 	struct cpucp_packet pkt;
-	u32 used_pll_idx;
 	int rc;
-
-	rc = get_used_pll_index(hdev, pll_index, &used_pll_idx);
-	if (rc)
-		return;
 
 	memset(&pkt, 0, sizeof(pkt));
 
 	pkt.ctl = cpu_to_le32(CPUCP_PACKET_FREQUENCY_SET <<
 					CPUCP_PKT_CTL_OPCODE_SHIFT);
-	pkt.pll_index = cpu_to_le32((u32)used_pll_idx);
+	pkt.pll_index = cpu_to_le32(pll_index);
 	pkt.value = cpu_to_le64(freq);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
@@ -68,13 +56,13 @@ void hl_set_frequency(struct hl_device *hdev, u32 pll_index,
 	if (rc)
 		dev_err(hdev->dev,
 			"Failed to set frequency to PLL %d, error %d\n",
-			used_pll_idx, rc);
+			pll_index, rc);
 }
 
 u64 hl_get_max_power(struct hl_device *hdev)
 {
 	struct cpucp_packet pkt;
-	u64 result;
+	long result;
 	int rc;
 
 	memset(&pkt, 0, sizeof(pkt));
@@ -87,7 +75,7 @@ u64 hl_get_max_power(struct hl_device *hdev)
 
 	if (rc) {
 		dev_err(hdev->dev, "Failed to get max power, error %d\n", rc);
-		return (u64) rc;
+		result = rc;
 	}
 
 	return result;
@@ -208,14 +196,14 @@ static ssize_t soft_reset_store(struct device *dev,
 		goto out;
 	}
 
-	if (!hdev->allow_external_soft_reset) {
+	if (!hdev->supports_soft_reset) {
 		dev_err(hdev->dev, "Device does not support soft-reset\n");
 		goto out;
 	}
 
 	dev_warn(hdev->dev, "Soft-Reset requested through sysfs\n");
 
-	hl_device_reset(hdev, 0);
+	hl_device_reset(hdev, false, false);
 
 out:
 	return count;
@@ -238,7 +226,7 @@ static ssize_t hard_reset_store(struct device *dev,
 
 	dev_warn(hdev->dev, "Hard-Reset requested through sysfs\n");
 
-	hl_device_reset(hdev, HL_RESET_HARD);
+	hl_device_reset(hdev, true, false);
 
 out:
 	return count;
@@ -256,9 +244,6 @@ static ssize_t device_type_show(struct device *dev,
 		break;
 	case ASIC_GAUDI:
 		str = "GAUDI";
-		break;
-	case ASIC_GAUDI_SEC:
-		str = "GAUDI SEC";
 		break;
 	default:
 		dev_err(hdev->dev, "Unrecognized ASIC type %d\n",
@@ -291,8 +276,6 @@ static ssize_t status_show(struct device *dev, struct device_attribute *attr,
 		str = "In reset";
 	else if (hdev->disabled)
 		str = "Malfunction";
-	else if (hdev->needs_reset)
-		str = "Needs Reset";
 	else
 		str = "Operational";
 
@@ -321,7 +304,7 @@ static ssize_t max_power_show(struct device *dev, struct device_attribute *attr,
 	struct hl_device *hdev = dev_get_drvdata(dev);
 	long val;
 
-	if (!hl_device_operational(hdev, NULL))
+	if (hl_device_disabled_or_in_reset(hdev))
 		return -ENODEV;
 
 	val = hl_get_max_power(hdev);
@@ -336,7 +319,7 @@ static ssize_t max_power_store(struct device *dev,
 	unsigned long value;
 	int rc;
 
-	if (!hl_device_operational(hdev, NULL)) {
+	if (hl_device_disabled_or_in_reset(hdev)) {
 		count = -ENODEV;
 		goto out;
 	}
@@ -359,12 +342,12 @@ static ssize_t eeprom_read_handler(struct file *filp, struct kobject *kobj,
 			struct bin_attribute *attr, char *buf, loff_t offset,
 			size_t max_size)
 {
-	struct device *dev = kobj_to_dev(kobj);
+	struct device *dev = container_of(kobj, struct device, kobj);
 	struct hl_device *hdev = dev_get_drvdata(dev);
 	char *data;
 	int rc;
 
-	if (!hl_device_operational(hdev, NULL))
+	if (hl_device_disabled_or_in_reset(hdev))
 		return -ENODEV;
 
 	if (!max_size)

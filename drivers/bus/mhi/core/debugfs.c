@@ -159,9 +159,7 @@ static int mhi_debugfs_devices_show(struct seq_file *m, void *d)
 		return -ENODEV;
 	}
 
-	/* Show controller and client(s) info */
-	mhi_device_info_show(&mhi_cntrl->mhi_dev->dev, m);
-	device_for_each_child(&mhi_cntrl->mhi_dev->dev, m, mhi_device_info_show);
+	device_for_each_child(mhi_cntrl->cntrl_dev, m, mhi_device_info_show);
 
 	return 0;
 }
@@ -377,7 +375,7 @@ static struct dentry *mhi_debugfs_root;
 void mhi_create_debugfs(struct mhi_controller *mhi_cntrl)
 {
 	mhi_cntrl->debugfs_dentry =
-			debugfs_create_dir(dev_name(&mhi_cntrl->mhi_dev->dev),
+			debugfs_create_dir(dev_name(mhi_cntrl->cntrl_dev),
 					   mhi_debugfs_root);
 
 	debugfs_create_file("states", 0444, mhi_cntrl->debugfs_dentry,

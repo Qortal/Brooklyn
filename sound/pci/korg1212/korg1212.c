@@ -388,6 +388,7 @@ struct snd_korg1212 {
 
 MODULE_DESCRIPTION("korg1212");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{KORG,korg1212}}");
 MODULE_FIRMWARE("korg/k1212.dsp");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;     /* Index 0-MAX */
@@ -1527,8 +1528,7 @@ static int snd_korg1212_hw_params(struct snd_pcm_substream *substream,
 	        return 0;
 	}
 
-	err = snd_korg1212_SetRate(korg1212, params_rate(params));
-	if (err < 0) {
+        if ((err = snd_korg1212_SetRate(korg1212, params_rate(params))) < 0) {
                 spin_unlock_irqrestore(&korg1212->lock, flags);
                 return err;
         }
@@ -2160,8 +2160,7 @@ static int snd_korg1212_create(struct snd_card *card, struct pci_dev *pci,
         };
 
         * rchip = NULL;
-	err = pci_enable_device(pci);
-	if (err < 0)
+        if ((err = pci_enable_device(pci)) < 0)
                 return err;
 
         korg1212 = kzalloc(sizeof(*korg1212), GFP_KERNEL);
@@ -2198,8 +2197,7 @@ static int snd_korg1212_create(struct snd_card *card, struct pci_dev *pci,
         for (i=0; i<kAudioChannels; i++)
                 korg1212->volumePhase[i] = 0;
 
-	err = pci_request_regions(pci, "korg1212");
-	if (err < 0) {
+	if ((err = pci_request_regions(pci, "korg1212")) < 0) {
 		kfree(korg1212);
 		pci_disable_device(pci);
 		return err;
@@ -2223,8 +2221,7 @@ static int snd_korg1212_create(struct snd_card *card, struct pci_dev *pci,
 		   korg1212->iomem2, iomem2_size,
 		   stateName[korg1212->cardState]);
 
-	korg1212->iobase = ioremap(korg1212->iomem, iomem_size);
-	if (!korg1212->iobase) {
+        if ((korg1212->iobase = ioremap(korg1212->iomem, iomem_size)) == NULL) {
 		snd_printk(KERN_ERR "korg1212: unable to remap memory region 0x%lx-0x%lx\n", korg1212->iomem,
                            korg1212->iomem + iomem_size - 1);
                 snd_korg1212_free(korg1212);
@@ -2364,8 +2361,7 @@ static int snd_korg1212_create(struct snd_card *card, struct pci_dev *pci,
 	if (rc)
 		K1212_DEBUG_PRINTK("K1212_DEBUG: Reboot Card - RC = %d [%s]\n", rc, stateName[korg1212->cardState]);
 
-	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, korg1212, &ops);
-	if (err < 0) {
+        if ((err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, korg1212, &ops)) < 0) {
                 snd_korg1212_free(korg1212);
                 return err;
         }
@@ -2390,8 +2386,7 @@ static int snd_korg1212_create(struct snd_card *card, struct pci_dev *pci,
                korg1212->RoutingTablePhy, LowerWordSwap(korg1212->RoutingTablePhy),
                korg1212->AdatTimeCodePhy, LowerWordSwap(korg1212->AdatTimeCodePhy));
 
-	err = snd_pcm_new(korg1212->card, "korg1212", 0, 1, 1, &korg1212->pcm);
-	if (err < 0)
+        if ((err = snd_pcm_new(korg1212->card, "korg1212", 0, 1, 1, &korg1212->pcm)) < 0)
                 return err;
 
 	korg1212->pcm->private_data = korg1212;
@@ -2442,8 +2437,7 @@ snd_korg1212_probe(struct pci_dev *pci,
 	if (err < 0)
 		return err;
 
-	err = snd_korg1212_create(card, pci, &korg1212);
-	if (err < 0) {
+        if ((err = snd_korg1212_create(card, pci, &korg1212)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
@@ -2455,8 +2449,7 @@ snd_korg1212_probe(struct pci_dev *pci,
 
         K1212_DEBUG_PRINTK("K1212_DEBUG: %s\n", card->longname);
 
-	err = snd_card_register(card);
-	if (err < 0) {
+	if ((err = snd_card_register(card)) < 0) {
 		snd_card_free(card);
 		return err;
 	}

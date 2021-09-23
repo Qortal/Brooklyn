@@ -1036,9 +1036,9 @@ static ssize_t show_tabletSize(struct device *dev, struct device_attribute *attr
 {
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%dx%d\n",
-			  input_abs_get_max(aiptek->inputdev, ABS_X) + 1,
-			  input_abs_get_max(aiptek->inputdev, ABS_Y) + 1);
+	return snprintf(buf, PAGE_SIZE, "%dx%d\n",
+			input_abs_get_max(aiptek->inputdev, ABS_X) + 1,
+			input_abs_get_max(aiptek->inputdev, ABS_Y) + 1);
 }
 
 /* These structs define the sysfs files, param #1 is the name of the
@@ -1064,8 +1064,9 @@ static ssize_t show_tabletPointerMode(struct device *dev, struct device_attribut
 {
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%s\n", map_val_to_str(pointer_mode_map,
-						      aiptek->curSetting.pointerMode));
+	return snprintf(buf, PAGE_SIZE, "%s\n",
+			map_val_to_str(pointer_mode_map,
+					aiptek->curSetting.pointerMode));
 }
 
 static ssize_t
@@ -1100,8 +1101,9 @@ static ssize_t show_tabletCoordinateMode(struct device *dev, struct device_attri
 {
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%s\n", map_val_to_str(coordinate_mode_map,
-						      aiptek->curSetting.coordinateMode));
+	return snprintf(buf, PAGE_SIZE, "%s\n",
+			map_val_to_str(coordinate_mode_map,
+					aiptek->curSetting.coordinateMode));
 }
 
 static ssize_t
@@ -1141,8 +1143,9 @@ static ssize_t show_tabletToolMode(struct device *dev, struct device_attribute *
 {
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%s\n", map_val_to_str(tool_mode_map,
-						      aiptek->curSetting.toolMode));
+	return snprintf(buf, PAGE_SIZE, "%s\n",
+			map_val_to_str(tool_mode_map,
+					aiptek->curSetting.toolMode));
 }
 
 static ssize_t
@@ -1171,9 +1174,10 @@ static ssize_t show_tabletXtilt(struct device *dev, struct device_attribute *att
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
 	if (aiptek->curSetting.xTilt == AIPTEK_TILT_DISABLE) {
-		return sysfs_emit(buf, "disable\n");
+		return snprintf(buf, PAGE_SIZE, "disable\n");
 	} else {
-		return sysfs_emit(buf, "%d\n", aiptek->curSetting.xTilt);
+		return snprintf(buf, PAGE_SIZE, "%d\n",
+				aiptek->curSetting.xTilt);
 	}
 }
 
@@ -1212,9 +1216,10 @@ static ssize_t show_tabletYtilt(struct device *dev, struct device_attribute *att
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
 	if (aiptek->curSetting.yTilt == AIPTEK_TILT_DISABLE) {
-		return sysfs_emit(buf, "disable\n");
+		return snprintf(buf, PAGE_SIZE, "disable\n");
 	} else {
-		return sysfs_emit(buf, "%d\n", aiptek->curSetting.yTilt);
+		return snprintf(buf, PAGE_SIZE, "%d\n",
+				aiptek->curSetting.yTilt);
 	}
 }
 
@@ -1252,7 +1257,7 @@ static ssize_t show_tabletJitterDelay(struct device *dev, struct device_attribut
 {
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%d\n", aiptek->curSetting.jitterDelay);
+	return snprintf(buf, PAGE_SIZE, "%d\n", aiptek->curSetting.jitterDelay);
 }
 
 static ssize_t
@@ -1281,7 +1286,8 @@ static ssize_t show_tabletProgrammableDelay(struct device *dev, struct device_at
 {
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%d\n", aiptek->curSetting.programmableDelay);
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+			aiptek->curSetting.programmableDelay);
 }
 
 static ssize_t
@@ -1310,7 +1316,7 @@ static ssize_t show_tabletEventsReceived(struct device *dev, struct device_attri
 {
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%ld\n", aiptek->eventCount);
+	return snprintf(buf, PAGE_SIZE, "%ld\n", aiptek->eventCount);
 }
 
 static DEVICE_ATTR(event_count, S_IRUGO, show_tabletEventsReceived, NULL);
@@ -1349,7 +1355,7 @@ static ssize_t show_tabletDiagnosticMessage(struct device *dev, struct device_at
 	default:
 		return 0;
 	}
-	return sysfs_emit(buf, retMsg);
+	return snprintf(buf, PAGE_SIZE, retMsg);
 }
 
 static DEVICE_ATTR(diagnostic, S_IRUGO, show_tabletDiagnosticMessage, NULL);
@@ -1369,8 +1375,9 @@ static ssize_t show_tabletStylusUpper(struct device *dev, struct device_attribut
 {
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%s\n", map_val_to_str(stylus_button_map,
-						      aiptek->curSetting.stylusButtonUpper));
+	return snprintf(buf, PAGE_SIZE, "%s\n",
+			map_val_to_str(stylus_button_map,
+					aiptek->curSetting.stylusButtonUpper));
 }
 
 static ssize_t
@@ -1399,8 +1406,9 @@ static ssize_t show_tabletStylusLower(struct device *dev, struct device_attribut
 {
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%s\n", map_val_to_str(stylus_button_map,
-						      aiptek->curSetting.stylusButtonLower));
+	return snprintf(buf, PAGE_SIZE, "%s\n",
+			map_val_to_str(stylus_button_map,
+					aiptek->curSetting.stylusButtonLower));
 }
 
 static ssize_t
@@ -1436,8 +1444,9 @@ static ssize_t show_tabletMouseLeft(struct device *dev, struct device_attribute 
 {
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%s\n", map_val_to_str(mouse_button_map,
-						      aiptek->curSetting.mouseButtonLeft));
+	return snprintf(buf, PAGE_SIZE, "%s\n",
+			map_val_to_str(mouse_button_map,
+					aiptek->curSetting.mouseButtonLeft));
 }
 
 static ssize_t
@@ -1465,8 +1474,9 @@ static ssize_t show_tabletMouseMiddle(struct device *dev, struct device_attribut
 {
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%s\n", map_val_to_str(mouse_button_map,
-						      aiptek->curSetting.mouseButtonMiddle));
+	return snprintf(buf, PAGE_SIZE, "%s\n",
+			map_val_to_str(mouse_button_map,
+					aiptek->curSetting.mouseButtonMiddle));
 }
 
 static ssize_t
@@ -1494,8 +1504,9 @@ static ssize_t show_tabletMouseRight(struct device *dev, struct device_attribute
 {
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%s\n", map_val_to_str(mouse_button_map,
-						      aiptek->curSetting.mouseButtonRight));
+	return snprintf(buf, PAGE_SIZE, "%s\n",
+			map_val_to_str(mouse_button_map,
+					aiptek->curSetting.mouseButtonRight));
 }
 
 static ssize_t
@@ -1524,9 +1535,10 @@ static ssize_t show_tabletWheel(struct device *dev, struct device_attribute *att
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
 	if (aiptek->curSetting.wheel == AIPTEK_WHEEL_DISABLE) {
-		return sysfs_emit(buf, "disable\n");
+		return snprintf(buf, PAGE_SIZE, "disable\n");
 	} else {
-		return sysfs_emit(buf, "%d\n", aiptek->curSetting.wheel);
+		return snprintf(buf, PAGE_SIZE, "%d\n",
+				aiptek->curSetting.wheel);
 	}
 }
 
@@ -1556,7 +1568,8 @@ static ssize_t show_tabletExecute(struct device *dev, struct device_attribute *a
 	/* There is nothing useful to display, so a one-line manual
 	 * is in order...
 	 */
-	return sysfs_emit(buf, "Write anything to this file to program your tablet.\n");
+	return snprintf(buf, PAGE_SIZE,
+			"Write anything to this file to program your tablet.\n");
 }
 
 static ssize_t
@@ -1587,7 +1600,7 @@ static ssize_t show_tabletODMCode(struct device *dev, struct device_attribute *a
 {
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "0x%04x\n", aiptek->features.odmCode);
+	return snprintf(buf, PAGE_SIZE, "0x%04x\n", aiptek->features.odmCode);
 }
 
 static DEVICE_ATTR(odm_code, S_IRUGO, show_tabletODMCode, NULL);
@@ -1600,7 +1613,7 @@ static ssize_t show_tabletModelCode(struct device *dev, struct device_attribute 
 {
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "0x%04x\n", aiptek->features.modelCode);
+	return snprintf(buf, PAGE_SIZE, "0x%04x\n", aiptek->features.modelCode);
 }
 
 static DEVICE_ATTR(model_code, S_IRUGO, show_tabletModelCode, NULL);
@@ -1613,7 +1626,8 @@ static ssize_t show_firmwareCode(struct device *dev, struct device_attribute *at
 {
 	struct aiptek *aiptek = dev_get_drvdata(dev);
 
-	return sysfs_emit(buf, "%04x\n", aiptek->features.firmwareCode);
+	return snprintf(buf, PAGE_SIZE, "%04x\n",
+			aiptek->features.firmwareCode);
 }
 
 static DEVICE_ATTR(firmware_code, S_IRUGO, show_firmwareCode, NULL);

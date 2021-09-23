@@ -36,11 +36,17 @@ MODULE_AUTHOR("Massimo Piccioni <dafastidio@libero.it>");
 MODULE_LICENSE("GPL");
 #ifdef OPTi93X
 MODULE_DESCRIPTION("OPTi93X");
+MODULE_SUPPORTED_DEVICE("{{OPTi,82C931/3}}");
 #else	/* OPTi93X */
 #ifdef CS4231
 MODULE_DESCRIPTION("OPTi92X - CS4231");
+MODULE_SUPPORTED_DEVICE("{{OPTi,82C924 (CS4231)},"
+		"{OPTi,82C925 (CS4231)}}");
 #else	/* CS4231 */
 MODULE_DESCRIPTION("OPTi92X - AD1848");
+MODULE_SUPPORTED_DEVICE("{{OPTi,82C924 (AD1848)},"
+		"{OPTi,82C925 (AD1848)},"
+	        "{OAK,Mozart}}");
 #endif	/* CS4231 */
 #endif	/* OPTi93X */
 
@@ -970,37 +976,32 @@ static int snd_opti9xx_isa_probe(struct device *devptr,
 #endif	/* CS4231 || OPTi93X */
 
 	if (mpu_port == SNDRV_AUTO_PORT) {
-		mpu_port = snd_legacy_find_free_ioport(possible_mpu_ports, 2);
-		if (mpu_port < 0) {
+		if ((mpu_port = snd_legacy_find_free_ioport(possible_mpu_ports, 2)) < 0) {
 			snd_printk(KERN_ERR "unable to find a free MPU401 port\n");
 			return -EBUSY;
 		}
 	}
 	if (irq == SNDRV_AUTO_IRQ) {
-		irq = snd_legacy_find_free_irq(possible_irqs);
-		if (irq < 0) {
+		if ((irq = snd_legacy_find_free_irq(possible_irqs)) < 0) {
 			snd_printk(KERN_ERR "unable to find a free IRQ\n");
 			return -EBUSY;
 		}
 	}
 	if (mpu_irq == SNDRV_AUTO_IRQ) {
-		mpu_irq = snd_legacy_find_free_irq(possible_mpu_irqs);
-		if (mpu_irq < 0) {
+		if ((mpu_irq = snd_legacy_find_free_irq(possible_mpu_irqs)) < 0) {
 			snd_printk(KERN_ERR "unable to find a free MPU401 IRQ\n");
 			return -EBUSY;
 		}
 	}
 	if (dma1 == SNDRV_AUTO_DMA) {
-		dma1 = snd_legacy_find_free_dma(possible_dma1s);
-		if (dma1 < 0) {
+		if ((dma1 = snd_legacy_find_free_dma(possible_dma1s)) < 0) {
 			snd_printk(KERN_ERR "unable to find a free DMA1\n");
 			return -EBUSY;
 		}
 	}
 #if defined(CS4231) || defined(OPTi93X)
 	if (dma2 == SNDRV_AUTO_DMA) {
-		dma2 = snd_legacy_find_free_dma(possible_dma2s[dma1 % 4]);
-		if (dma2 < 0) {
+		if ((dma2 = snd_legacy_find_free_dma(possible_dma2s[dma1 % 4])) < 0) {
 			snd_printk(KERN_ERR "unable to find a free DMA2\n");
 			return -EBUSY;
 		}
@@ -1011,13 +1012,11 @@ static int snd_opti9xx_isa_probe(struct device *devptr,
 	if (error < 0)
 		return error;
 
-	error = snd_card_opti9xx_detect(card, card->private_data);
-	if (error < 0) {
+	if ((error = snd_card_opti9xx_detect(card, card->private_data)) < 0) {
 		snd_card_free(card);
 		return error;
 	}
-	error = snd_opti9xx_probe(card);
-	if (error < 0) {
+	if ((error = snd_opti9xx_probe(card)) < 0) {
 		snd_card_free(card);
 		return error;
 	}
@@ -1025,10 +1024,11 @@ static int snd_opti9xx_isa_probe(struct device *devptr,
 	return 0;
 }
 
-static void snd_opti9xx_isa_remove(struct device *devptr,
-				   unsigned int dev)
+static int snd_opti9xx_isa_remove(struct device *devptr,
+				  unsigned int dev)
 {
 	snd_card_free(dev_get_drvdata(devptr));
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -1118,8 +1118,7 @@ static int snd_opti9xx_pnp_probe(struct pnp_card_link *pcard,
 		return -ENODEV;
 	}
 
-	error = snd_opti9xx_init(chip, hw);
-	if (error) {
+	if ((error = snd_opti9xx_init(chip, hw))) {
 		snd_card_free(card);
 		return error;
 	}
@@ -1129,8 +1128,7 @@ static int snd_opti9xx_pnp_probe(struct pnp_card_link *pcard,
 		snd_card_free(card);
 		return error;
 	}
-	error = snd_opti9xx_probe(card);
-	if (error < 0) {
+	if ((error = snd_opti9xx_probe(card)) < 0) {
 		snd_card_free(card);
 		return error;
 	}

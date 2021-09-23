@@ -15,8 +15,6 @@
 
 #include <asm-generic/qrwlock_types.h>
 
-/* Must be included from asm/spinlock.h after defining arch_spin_is_locked.  */
-
 /*
  * Writer states & reader shift and bias.
  */
@@ -39,7 +37,7 @@ extern void queued_write_lock_slowpath(struct qrwlock *lock);
  */
 static inline int queued_read_trylock(struct qrwlock *lock)
 {
-	int cnts;
+	u32 cnts;
 
 	cnts = atomic_read(&lock->cnts);
 	if (likely(!(cnts & _QW_WMASK))) {
@@ -58,7 +56,7 @@ static inline int queued_read_trylock(struct qrwlock *lock)
  */
 static inline int queued_write_trylock(struct qrwlock *lock)
 {
-	int cnts;
+	u32 cnts;
 
 	cnts = atomic_read(&lock->cnts);
 	if (unlikely(cnts))
@@ -73,7 +71,7 @@ static inline int queued_write_trylock(struct qrwlock *lock)
  */
 static inline void queued_read_lock(struct qrwlock *lock)
 {
-	int cnts;
+	u32 cnts;
 
 	cnts = atomic_add_return_acquire(_QR_BIAS, &lock->cnts);
 	if (likely(!(cnts & _QW_WMASK)))
@@ -89,7 +87,7 @@ static inline void queued_read_lock(struct qrwlock *lock)
  */
 static inline void queued_write_lock(struct qrwlock *lock)
 {
-	int cnts = 0;
+	u32 cnts = 0;
 	/* Optimize for the unfair lock case where the fair flag is 0. */
 	if (likely(atomic_try_cmpxchg_acquire(&lock->cnts, &cnts, _QW_LOCKED)))
 		return;
@@ -118,26 +116,15 @@ static inline void queued_write_unlock(struct qrwlock *lock)
 	smp_store_release(&lock->wlocked, 0);
 }
 
-/**
- * queued_rwlock_is_contended - check if the lock is contended
- * @lock : Pointer to queue rwlock structure
- * Return: 1 if lock contended, 0 otherwise
- */
-static inline int queued_rwlock_is_contended(struct qrwlock *lock)
-{
-	return arch_spin_is_locked(&lock->wait_lock);
-}
-
 /*
  * Remapping rwlock architecture specific functions to the corresponding
  * queue rwlock functions.
  */
-#define arch_read_lock(l)		queued_read_lock(l)
-#define arch_write_lock(l)		queued_write_lock(l)
-#define arch_read_trylock(l)		queued_read_trylock(l)
-#define arch_write_trylock(l)		queued_write_trylock(l)
-#define arch_read_unlock(l)		queued_read_unlock(l)
-#define arch_write_unlock(l)		queued_write_unlock(l)
-#define arch_rwlock_is_contended(l)	queued_rwlock_is_contended(l)
+#define arch_read_lock(l)	queued_read_lock(l)
+#define arch_write_lock(l)	queued_write_lock(l)
+#define arch_read_trylock(l)	queued_read_trylock(l)
+#define arch_write_trylock(l)	queued_write_trylock(l)
+#define arch_read_unlock(l)	queued_read_unlock(l)
+#define arch_write_unlock(l)	queued_write_unlock(l)
 
 #endif /* __ASM_GENERIC_QRWLOCK_H */

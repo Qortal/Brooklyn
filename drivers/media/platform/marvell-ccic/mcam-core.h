@@ -151,6 +151,7 @@ struct mcam_camera {
 	 */
 	struct video_device vdev;
 	struct v4l2_async_notifier notifier;
+	struct v4l2_async_subdev asd;
 	struct v4l2_subdev *sensor;
 
 	/* Videobuf2 stuff */

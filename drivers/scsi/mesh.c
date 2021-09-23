@@ -595,10 +595,9 @@ static void mesh_done(struct mesh_state *ms, int start_next)
 	ms->current_req = NULL;
 	tp->current_req = NULL;
 	if (cmd) {
-		set_host_byte(cmd, ms->stat);
-		set_status_byte(cmd, cmd->SCp.Status);
+		cmd->result = (ms->stat << 16) | cmd->SCp.Status;
 		if (ms->stat == DID_OK)
-			scsi_msg_to_host_byte(cmd, cmd->SCp.Message);
+			cmd->result |= cmd->SCp.Message << 8;
 		if (DEBUG_TARGET(cmd)) {
 			printk(KERN_DEBUG "mesh_done: result = %x, data_ptr=%d, buflen=%d\n",
 			       cmd->result, ms->data_ptr, scsi_bufflen(cmd));
@@ -994,7 +993,7 @@ static void handle_reset(struct mesh_state *ms)
 	for (tgt = 0; tgt < 8; ++tgt) {
 		tp = &ms->tgts[tgt];
 		if ((cmd = tp->current_req) != NULL) {
-			set_host_byte(cmd, DID_RESET);
+			cmd->result = DID_RESET << 16;
 			tp->current_req = NULL;
 			mesh_completed(ms, cmd);
 		}
@@ -1004,7 +1003,7 @@ static void handle_reset(struct mesh_state *ms)
 	ms->current_req = NULL;
 	while ((cmd = ms->request_q) != NULL) {
 		ms->request_q = (struct scsi_cmnd *) cmd->host_scribble;
-		set_host_byte(cmd, DID_RESET);
+		cmd->result = DID_RESET << 16;
 		mesh_completed(ms, cmd);
 	}
 	ms->phase = idle;

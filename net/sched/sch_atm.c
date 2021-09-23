@@ -320,8 +320,7 @@ err_out:
 	return error;
 }
 
-static int atm_tc_delete(struct Qdisc *sch, unsigned long arg,
-			 struct netlink_ext_ack *extack)
+static int atm_tc_delete(struct Qdisc *sch, unsigned long arg)
 {
 	struct atm_qdisc_data *p = qdisc_priv(sch);
 	struct atm_flow_data *flow = (struct atm_flow_data *)arg;
@@ -467,10 +466,10 @@ drop: __maybe_unused
  * non-ATM interfaces.
  */
 
-static void sch_atm_dequeue(struct tasklet_struct *t)
+static void sch_atm_dequeue(unsigned long data)
 {
-	struct atm_qdisc_data *p = from_tasklet(p, t, task);
-	struct Qdisc *sch = qdisc_from_priv(p);
+	struct Qdisc *sch = (struct Qdisc *)data;
+	struct atm_qdisc_data *p = qdisc_priv(sch);
 	struct atm_flow_data *flow;
 	struct sk_buff *skb;
 
@@ -564,7 +563,7 @@ static int atm_tc_init(struct Qdisc *sch, struct nlattr *opt,
 	if (err)
 		return err;
 
-	tasklet_setup(&p->task, sch_atm_dequeue);
+	tasklet_init(&p->task, sch_atm_dequeue, (unsigned long)sch);
 	return 0;
 }
 

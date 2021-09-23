@@ -238,7 +238,7 @@ extern unsigned int tlbcam_index;
 typedef struct {
 	unsigned int	id;
 	unsigned int	active;
-	void __user	*vdso;
+	unsigned long	vdso_base;
 } mm_context_t;
 
 /* Page size definitions, common between 32 and 64-bit

@@ -392,9 +392,10 @@ int imgu_s_stream(struct imgu_device *imgu, int enable)
 	}
 
 	/* Set Power */
-	r = pm_runtime_resume_and_get(dev);
+	r = pm_runtime_get_sync(dev);
 	if (r < 0) {
 		dev_err(dev, "failed to set imgu power\n");
+		pm_runtime_put(dev);
 		return r;
 	}
 

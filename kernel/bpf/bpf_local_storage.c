@@ -67,8 +67,7 @@ bpf_selem_alloc(struct bpf_local_storage_map *smap, void *owner,
 	if (charge_mem && mem_charge(smap, owner, smap->elem_size))
 		return NULL;
 
-	selem = bpf_map_kzalloc(&smap->map, smap->elem_size,
-				GFP_ATOMIC | __GFP_NOWARN);
+	selem = kzalloc(smap->elem_size, GFP_ATOMIC | __GFP_NOWARN);
 	if (selem) {
 		if (value)
 			memcpy(SDATA(selem)->data, value, smap->map.value_size);
@@ -140,18 +139,17 @@ static void __bpf_selem_unlink_storage(struct bpf_local_storage_elem *selem)
 {
 	struct bpf_local_storage *local_storage;
 	bool free_local_storage = false;
-	unsigned long flags;
 
 	if (unlikely(!selem_linked_to_storage(selem)))
 		/* selem has already been unlinked from sk */
 		return;
 
 	local_storage = rcu_dereference(selem->local_storage);
-	raw_spin_lock_irqsave(&local_storage->lock, flags);
+	raw_spin_lock_bh(&local_storage->lock);
 	if (likely(selem_linked_to_storage(selem)))
 		free_local_storage = bpf_selem_unlink_storage_nolock(
 			local_storage, selem, true);
-	raw_spin_unlock_irqrestore(&local_storage->lock, flags);
+	raw_spin_unlock_bh(&local_storage->lock);
 
 	if (free_local_storage)
 		kfree_rcu(local_storage, rcu);
@@ -168,7 +166,6 @@ void bpf_selem_unlink_map(struct bpf_local_storage_elem *selem)
 {
 	struct bpf_local_storage_map *smap;
 	struct bpf_local_storage_map_bucket *b;
-	unsigned long flags;
 
 	if (unlikely(!selem_linked_to_map(selem)))
 		/* selem has already be unlinked from smap */
@@ -176,22 +173,21 @@ void bpf_selem_unlink_map(struct bpf_local_storage_elem *selem)
 
 	smap = rcu_dereference(SDATA(selem)->smap);
 	b = select_bucket(smap, selem);
-	raw_spin_lock_irqsave(&b->lock, flags);
+	raw_spin_lock_bh(&b->lock);
 	if (likely(selem_linked_to_map(selem)))
 		hlist_del_init_rcu(&selem->map_node);
-	raw_spin_unlock_irqrestore(&b->lock, flags);
+	raw_spin_unlock_bh(&b->lock);
 }
 
 void bpf_selem_link_map(struct bpf_local_storage_map *smap,
 			struct bpf_local_storage_elem *selem)
 {
 	struct bpf_local_storage_map_bucket *b = select_bucket(smap, selem);
-	unsigned long flags;
 
-	raw_spin_lock_irqsave(&b->lock, flags);
+	raw_spin_lock_bh(&b->lock);
 	RCU_INIT_POINTER(SDATA(selem)->smap, smap);
 	hlist_add_head_rcu(&selem->map_node, &b->list);
-	raw_spin_unlock_irqrestore(&b->lock, flags);
+	raw_spin_unlock_bh(&b->lock);
 }
 
 void bpf_selem_unlink(struct bpf_local_storage_elem *selem)
@@ -227,18 +223,16 @@ bpf_local_storage_lookup(struct bpf_local_storage *local_storage,
 
 	sdata = SDATA(selem);
 	if (cacheit_lockit) {
-		unsigned long flags;
-
 		/* spinlock is needed to avoid racing with the
 		 * parallel delete.  Otherwise, publishing an already
 		 * deleted sdata to the cache will become a use-after-free
 		 * problem in the next bpf_local_storage_lookup().
 		 */
-		raw_spin_lock_irqsave(&local_storage->lock, flags);
+		raw_spin_lock_bh(&local_storage->lock);
 		if (selem_linked_to_storage(selem))
 			rcu_assign_pointer(local_storage->cache[smap->cache_idx],
 					   sdata);
-		raw_spin_unlock_irqrestore(&local_storage->lock, flags);
+		raw_spin_unlock_bh(&local_storage->lock);
 	}
 
 	return sdata;
@@ -270,8 +264,7 @@ int bpf_local_storage_alloc(void *owner,
 	if (err)
 		return err;
 
-	storage = bpf_map_kzalloc(&smap->map, sizeof(*storage),
-				  GFP_ATOMIC | __GFP_NOWARN);
+	storage = kzalloc(sizeof(*storage), GFP_ATOMIC | __GFP_NOWARN);
 	if (!storage) {
 		err = -ENOMEM;
 		goto uncharge;
@@ -332,7 +325,6 @@ bpf_local_storage_update(void *owner, struct bpf_local_storage_map *smap,
 	struct bpf_local_storage_data *old_sdata = NULL;
 	struct bpf_local_storage_elem *selem;
 	struct bpf_local_storage *local_storage;
-	unsigned long flags;
 	int err;
 
 	/* BPF_EXIST and BPF_NOEXIST cannot be both set */
@@ -380,7 +372,7 @@ bpf_local_storage_update(void *owner, struct bpf_local_storage_map *smap,
 		}
 	}
 
-	raw_spin_lock_irqsave(&local_storage->lock, flags);
+	raw_spin_lock_bh(&local_storage->lock);
 
 	/* Recheck local_storage->list under local_storage->lock */
 	if (unlikely(hlist_empty(&local_storage->list))) {
@@ -434,11 +426,11 @@ bpf_local_storage_update(void *owner, struct bpf_local_storage_map *smap,
 	}
 
 unlock:
-	raw_spin_unlock_irqrestore(&local_storage->lock, flags);
+	raw_spin_unlock_bh(&local_storage->lock);
 	return SDATA(selem);
 
 unlock_err:
-	raw_spin_unlock_irqrestore(&local_storage->lock, flags);
+	raw_spin_unlock_bh(&local_storage->lock);
 	return ERR_PTR(err);
 }
 
@@ -474,8 +466,7 @@ void bpf_local_storage_cache_idx_free(struct bpf_local_storage_cache *cache,
 	spin_unlock(&cache->idx_lock);
 }
 
-void bpf_local_storage_map_free(struct bpf_local_storage_map *smap,
-				int __percpu *busy_counter)
+void bpf_local_storage_map_free(struct bpf_local_storage_map *smap)
 {
 	struct bpf_local_storage_elem *selem;
 	struct bpf_local_storage_map_bucket *b;
@@ -504,15 +495,7 @@ void bpf_local_storage_map_free(struct bpf_local_storage_map *smap,
 		while ((selem = hlist_entry_safe(
 				rcu_dereference_raw(hlist_first_rcu(&b->list)),
 				struct bpf_local_storage_elem, map_node))) {
-			if (busy_counter) {
-				migrate_disable();
-				__this_cpu_inc(*busy_counter);
-			}
 			bpf_selem_unlink(selem);
-			if (busy_counter) {
-				__this_cpu_dec(*busy_counter);
-				migrate_enable();
-			}
 			cond_resched_rcu();
 		}
 		rcu_read_unlock();
@@ -560,8 +543,10 @@ struct bpf_local_storage_map *bpf_local_storage_map_alloc(union bpf_attr *attr)
 	struct bpf_local_storage_map *smap;
 	unsigned int i;
 	u32 nbuckets;
+	u64 cost;
+	int ret;
 
-	smap = kzalloc(sizeof(*smap), GFP_USER | __GFP_NOWARN | __GFP_ACCOUNT);
+	smap = kzalloc(sizeof(*smap), GFP_USER | __GFP_NOWARN);
 	if (!smap)
 		return ERR_PTR(-ENOMEM);
 	bpf_map_init_from_attr(&smap->map, attr);
@@ -570,10 +555,18 @@ struct bpf_local_storage_map *bpf_local_storage_map_alloc(union bpf_attr *attr)
 	/* Use at least 2 buckets, select_bucket() is undefined behavior with 1 bucket */
 	nbuckets = max_t(u32, 2, nbuckets);
 	smap->bucket_log = ilog2(nbuckets);
+	cost = sizeof(*smap->buckets) * nbuckets + sizeof(*smap);
+
+	ret = bpf_map_charge_init(&smap->map.memory, cost);
+	if (ret < 0) {
+		kfree(smap);
+		return ERR_PTR(ret);
+	}
 
 	smap->buckets = kvcalloc(sizeof(*smap->buckets), nbuckets,
-				 GFP_USER | __GFP_NOWARN | __GFP_ACCOUNT);
+				 GFP_USER | __GFP_NOWARN);
 	if (!smap->buckets) {
+		bpf_map_charge_finish(&smap->map.memory);
 		kfree(smap);
 		return ERR_PTR(-ENOMEM);
 	}

@@ -38,23 +38,10 @@ void ice_release_rx_desc(struct ice_ring *rx_ring, u16 val)
  * ice_ptype_to_htype - get a hash type
  * @ptype: the ptype value from the descriptor
  *
- * Returns appropriate hash type (such as PKT_HASH_TYPE_L2/L3/L4) to be used by
- * skb_set_hash based on PTYPE as parsed by HW Rx pipeline and is part of
- * Rx desc.
+ * Returns a hash type to be used by skb_set_hash
  */
-static enum pkt_hash_types ice_ptype_to_htype(u16 ptype)
+static enum pkt_hash_types ice_ptype_to_htype(u8 __always_unused ptype)
 {
-	struct ice_rx_ptype_decoded decoded = ice_decode_rx_desc_ptype(ptype);
-
-	if (!decoded.known)
-		return PKT_HASH_TYPE_NONE;
-	if (decoded.payload_layer == ICE_RX_PTYPE_PAYLOAD_LAYER_PAY4)
-		return PKT_HASH_TYPE_L4;
-	if (decoded.payload_layer == ICE_RX_PTYPE_PAYLOAD_LAYER_PAY3)
-		return PKT_HASH_TYPE_L3;
-	if (decoded.outer_ip == ICE_RX_PTYPE_OUTER_L2)
-		return PKT_HASH_TYPE_L2;
-
 	return PKT_HASH_TYPE_NONE;
 }
 
@@ -67,7 +54,7 @@ static enum pkt_hash_types ice_ptype_to_htype(u16 ptype)
  */
 static void
 ice_rx_hash(struct ice_ring *rx_ring, union ice_32b_rx_flex_desc *rx_desc,
-	    struct sk_buff *skb, u16 rx_ptype)
+	    struct sk_buff *skb, u8 rx_ptype)
 {
 	struct ice_32b_rx_flex_desc_nic *nic_mdid;
 	u32 hash;
@@ -94,7 +81,7 @@ ice_rx_hash(struct ice_ring *rx_ring, union ice_32b_rx_flex_desc *rx_desc,
  */
 static void
 ice_rx_csum(struct ice_ring *ring, struct sk_buff *skb,
-	    union ice_32b_rx_flex_desc *rx_desc, u16 ptype)
+	    union ice_32b_rx_flex_desc *rx_desc, u8 ptype)
 {
 	struct ice_rx_ptype_decoded decoded;
 	u16 rx_status0, rx_status1;
@@ -156,7 +143,6 @@ ice_rx_csum(struct ice_ring *ring, struct sk_buff *skb,
 	case ICE_RX_PTYPE_INNER_PROT_UDP:
 	case ICE_RX_PTYPE_INNER_PROT_SCTP:
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
-		break;
 	default:
 		break;
 	}
@@ -180,7 +166,7 @@ checksum_fail:
 void
 ice_process_skb_fields(struct ice_ring *rx_ring,
 		       union ice_32b_rx_flex_desc *rx_desc,
-		       struct sk_buff *skb, u16 ptype)
+		       struct sk_buff *skb, u8 ptype)
 {
 	ice_rx_hash(rx_ring, rx_desc, skb, ptype);
 
@@ -188,9 +174,6 @@ ice_process_skb_fields(struct ice_ring *rx_ring,
 	skb->protocol = eth_type_trans(skb, rx_ring->netdev);
 
 	ice_rx_csum(rx_ring, skb, rx_desc, ptype);
-
-	if (rx_ring->ptp_rx)
-		ice_ptp_rx_hwtstamp(rx_ring, rx_desc, skb);
 }
 
 /**
@@ -208,7 +191,12 @@ ice_receive_skb(struct ice_ring *rx_ring, struct sk_buff *skb, u16 vlan_tag)
 	if ((rx_ring->netdev->features & NETIF_F_HW_VLAN_CTAG_RX) &&
 	    (vlan_tag & VLAN_VID_MASK))
 		__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), vlan_tag);
-	napi_gro_receive(&rx_ring->q_vector->napi, skb);
+	if (napi_gro_receive(&rx_ring->q_vector->napi, skb) == GRO_DROP) {
+		/* this is tracked separately to help us debug stack drops */
+		rx_ring->rx_stats.gro_dropped++;
+		netdev_dbg(rx_ring->netdev, "Receive Queue %d: Dropped packet from GRO\n",
+			   rx_ring->q_index);
+	}
 }
 
 /**

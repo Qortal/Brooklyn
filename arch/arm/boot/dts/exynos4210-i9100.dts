@@ -147,36 +147,6 @@
 		};
 	};
 
-	i2c_s5k5baf: i2c-gpio-1 {
-		compatible = "i2c-gpio";
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		sda-gpios = <&gpc1 0 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
-		scl-gpios = <&gpc1 2 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
-		i2c-gpio,delay-us = <2>;
-
-		image-sensor@2d {
-			compatible = "samsung,s5k5baf";
-			reg = <0x2d>;
-			vdda-supply = <&cam_io_en_reg>;
-			vddreg-supply = <&vt_core_15v_reg>;
-			vddio-supply = <&vtcam_reg>;
-			clocks = <&camera 0>;
-			clock-names = "mclk";
-			stbyn-gpios = <&gpl2 0 GPIO_ACTIVE_LOW>;
-			rstn-gpios = <&gpl2 1 GPIO_ACTIVE_LOW>;
-			clock-frequency = <24000000>;
-
-			port {
-				s5k5bafx_ep: endpoint {
-					remote-endpoint = <&csis1_ep>;
-					data-lanes = <1>;
-				};
-			};
-		};
-	};
-
 	spi-3 {
 		compatible = "spi-gpio";
 		#address-cells = <1>;
@@ -250,29 +220,7 @@
 };
 
 &camera {
-	pinctrl-0 = <&cam_port_a_clk_active>;
-	pinctrl-names = "default";
 	status = "okay";
-	assigned-clocks = <&clock CLK_MOUT_CAM0>, <&clock CLK_MOUT_CAM1>;
-	assigned-clock-parents = <&clock CLK_XUSBXTI>, <&clock CLK_XUSBXTI>;
-};
-
-&csis_1 {
-	status = "okay";
-	vddcore-supply = <&vusb_reg>;
-	vddio-supply = <&vmipi_reg>;
-	clock-frequency = <160000000>;
-	#address-cells = <1>;
-	#size-cells = <0>;
-
-	port@4 {
-		reg = <4>;
-		csis1_ep: endpoint {
-			remote-endpoint = <&s5k5bafx_ep>;
-			data-lanes = <1>;
-			samsung,csis-hs-settle = <6>;
-		};
-	};
 };
 
 &cpu0 {
@@ -314,8 +262,7 @@
 };
 
 &fimc_1 {
-	/* Back camera not implemented */
-	status = "disabled";
+	status = "okay";
 
 	assigned-clocks = <&clock CLK_MOUT_FIMC1>, <&clock CLK_SCLK_FIMC1>;
 	assigned-clock-parents = <&clock CLK_SCLK_MPLL>;
@@ -331,8 +278,7 @@
 };
 
 &fimc_3 {
-	/* Back camera not implemented */
-	status = "disabled";
+	status = "okay";
 
 	assigned-clocks = <&clock CLK_MOUT_FIMC3>, <&clock CLK_SCLK_FIMC3>;
 	assigned-clock-parents = <&clock CLK_SCLK_MPLL>;
@@ -383,7 +329,7 @@
 	pinctrl-0 = <&i2c3_bus>;
 	pinctrl-names = "default";
 
-	touchscreen@4a {
+	mxt224-touchscreen@4a {
 		compatible = "atmel,maxtouch";
 		reg = <0x4a>;
 
@@ -402,7 +348,7 @@
 	pinctrl-0 = <&i2c5_bus>;
 	pinctrl-names = "default";
 
-	pmic@66 {
+	max8997_pmic@66 {
 		compatible = "maxim,max8997-pmic";
 		reg = <0x66>;
 
@@ -437,8 +383,6 @@
 
 		pinctrl-0 = <&max8997_irq>, <&otg_gp>, <&usb_sel>;
 		pinctrl-names = "default";
-
-		charger-supply = <&charger_reg>;
 
 		regulators {
 			vadc_reg: LDO1 {
@@ -616,6 +560,20 @@
 				regulator-boot-on;
 			};
 
+			charger_reg: CHARGER {
+				regulator-name = "CHARGER";
+				regulator-min-microamp = <60000>;
+				regulator-max-microamp = <2580000>;
+				regulator-always-on;
+			};
+
+			chargercv_reg: CHARGER_CV {
+				regulator-name = "CHARGER_CV";
+				regulator-min-microvolt = <3800000>;
+				regulator-max-microvolt = <4100000>;
+				regulator-always-on;
+			};
+
 			EN32KHZ_AP {
 				regulator-name = "EN32KHZ_AP";
 				regulator-always-on;
@@ -623,26 +581,6 @@
 
 			EN32KHZ_CP {
 				regulator-name = "EN32KHZ_CP";
-				regulator-always-on;
-			};
-
-			charger_reg: CHARGER {
-				regulator-name = "CHARGER";
-				regulator-min-microamp = <200000>;
-				regulator-max-microamp = <950000>;
-			};
-
-			chargercv_reg: CHARGER_CV {
-				regulator-name = "CHARGER_CV";
-				regulator-min-microvolt = <4200000>;
-				regulator-max-microvolt = <4200000>;
-				regulator-always-on;
-			};
-
-			CHARGER_TOPOFF {
-				regulator-name = "CHARGER_TOPOFF";
-				regulator-min-microamp = <200000>;
-				regulator-max-microamp = <200000>;
 				regulator-always-on;
 			};
 		};
@@ -659,7 +597,7 @@
 	pinctrl-0 = <&i2c7_bus>;
 	pinctrl-names = "default";
 
-	magnetometer@c {
+	ak8975@c {
 		compatible = "asahi-kasei,ak8975";
 		reg = <0x0c>;
 
@@ -808,7 +746,7 @@
 	pinctrl-0 = <&sd3_clk>, <&sd3_cmd>, <&sd3_bus4>;
 
 	brcmf: wifi@1 {
-		compatible = "brcm,bcm4330-fmac", "brcm,bcm4329-fmac";
+		compatible = "brcm,bcm4330-fmac";
 		reg = <1>;
 
 		interrupt-parent = <&gpx2>;

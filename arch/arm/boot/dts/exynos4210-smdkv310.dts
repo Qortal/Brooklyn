@@ -90,61 +90,61 @@
 	pinctrl-0 = <&keypad_rows &keypad_cols>;
 	status = "okay";
 
-	key-1 {
+	key_1 {
 		keypad,row = <0>;
 		keypad,column = <3>;
 		linux,code = <2>;
 	};
 
-	key-2 {
+	key_2 {
 		keypad,row = <0>;
 		keypad,column = <4>;
 		linux,code = <3>;
 	};
 
-	key-3 {
+	key_3 {
 		keypad,row = <0>;
 		keypad,column = <5>;
 		linux,code = <4>;
 	};
 
-	key-4 {
+	key_4 {
 		keypad,row = <0>;
 		keypad,column = <6>;
 		linux,code = <5>;
 	};
 
-	key-5 {
+	key_5 {
 		keypad,row = <0>;
 		keypad,column = <7>;
 		linux,code = <6>;
 	};
 
-	key-a {
+	key_a {
 		keypad,row = <1>;
 		keypad,column = <3>;
 		linux,code = <30>;
 	};
 
-	key-b {
+	key_b {
 		keypad,row = <1>;
 		keypad,column = <4>;
 		linux,code = <48>;
 	};
 
-	key-c {
+	key_c {
 		keypad,row = <1>;
 		keypad,column = <5>;
 		linux,code = <46>;
 	};
 
-	key-d {
+	key_d {
 		keypad,row = <1>;
 		keypad,column = <6>;
 		linux,code = <32>;
 	};
 
-	key-e {
+	key_e {
 		keypad,row = <1>;
 		keypad,column = <7>;
 		linux,code = <18>;
@@ -200,7 +200,7 @@
 	cs-gpios = <&gpc1 2 GPIO_ACTIVE_HIGH>;
 	status = "okay";
 
-	flash@0 {
+	w25x80@0 {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		compatible = "w25x80";

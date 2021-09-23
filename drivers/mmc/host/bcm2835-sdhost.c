@@ -147,8 +147,6 @@
 struct bcm2835_host {
 	spinlock_t		lock;
 
-	struct rpi_firmware	*fw;
-
 	void __iomem		*ioaddr;
 	phys_addr_t		bus_addr;
 
@@ -1560,7 +1558,7 @@ void bcm2835_sdhost_set_clock(struct bcm2835_host *host, unsigned int clock)
 	if (host->firmware_sets_cdiv) {
 		u32 msg[3] = { clock, 0, 0 };
 
-		rpi_firmware_property(host->fw,
+		rpi_firmware_property(rpi_firmware_get(NULL),
 				      RPI_FIRMWARE_SET_SDHOST_CLOCK,
 				      &msg, sizeof(msg));
 
@@ -2102,13 +2100,6 @@ static int bcm2835_sdhost_probe(struct platform_device *pdev)
 		goto err;
 	}
 
-	host->fw = rpi_firmware_get(
-		of_parse_phandle(dev->of_node, "firmware", 0));
-	if (!host->fw) {
-		ret = -EPROBE_DEFER;
-		goto err;
-	}
-
 	host->max_clk = clk_get_rate(clk);
 
 	host->irq = platform_get_irq(pdev, 0);
@@ -2133,7 +2124,7 @@ static int bcm2835_sdhost_probe(struct platform_device *pdev)
 	msg[1] = ~0;
 	msg[2] = ~0;
 
-	rpi_firmware_property(host->fw,
+	rpi_firmware_property(rpi_firmware_get(NULL),
 			      RPI_FIRMWARE_SET_SDHOST_CLOCK,
 			      &msg, sizeof(msg));
 
@@ -2151,8 +2142,6 @@ static int bcm2835_sdhost_probe(struct platform_device *pdev)
 
 err:
 	pr_debug("bcm2835_sdhost_probe -> err %d\n", ret);
-	if (host->fw)
-		rpi_firmware_put(host->fw);
 	if (host->dma_chan_rxtx)
 		dma_release_channel(host->dma_chan_rxtx);
 	mmc_free_host(mmc);
@@ -2175,7 +2164,6 @@ static int bcm2835_sdhost_remove(struct platform_device *pdev)
 	del_timer_sync(&host->timer);
 
 	tasklet_kill(&host->finish_tasklet);
-	rpi_firmware_put(host->fw);
 	if (host->dma_chan_rxtx)
 		dma_release_channel(host->dma_chan_rxtx);
 	mmc_free_host(host->mmc);

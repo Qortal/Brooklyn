@@ -137,9 +137,9 @@ void iio_hw_consumer_free(struct iio_hw_consumer *hwc)
 }
 EXPORT_SYMBOL_GPL(iio_hw_consumer_free);
 
-static void devm_iio_hw_consumer_release(void *iio_hwc)
+static void devm_iio_hw_consumer_release(struct device *dev, void *res)
 {
-	iio_hw_consumer_free(iio_hwc);
+	iio_hw_consumer_free(*(struct iio_hw_consumer **)res);
 }
 
 /**
@@ -153,17 +153,20 @@ static void devm_iio_hw_consumer_release(void *iio_hwc)
  */
 struct iio_hw_consumer *devm_iio_hw_consumer_alloc(struct device *dev)
 {
-	struct iio_hw_consumer *iio_hwc;
-	int ret;
+	struct iio_hw_consumer **ptr, *iio_hwc;
+
+	ptr = devres_alloc(devm_iio_hw_consumer_release, sizeof(*ptr),
+			   GFP_KERNEL);
+	if (!ptr)
+		return NULL;
 
 	iio_hwc = iio_hw_consumer_alloc(dev);
-	if (IS_ERR(iio_hwc))
-		return iio_hwc;
-
-	ret = devm_add_action_or_reset(dev, devm_iio_hw_consumer_release,
-				       iio_hwc);
-	if (ret)
-		return ERR_PTR(ret);
+	if (IS_ERR(iio_hwc)) {
+		devres_free(ptr);
+	} else {
+		*ptr = iio_hwc;
+		devres_add(dev, ptr);
+	}
 
 	return iio_hwc;
 }

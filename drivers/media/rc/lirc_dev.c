@@ -263,8 +263,7 @@ static ssize_t lirc_transmit(struct file *file, const char __user *buf,
 			goto out_unlock;
 		}
 
-		if (scan.flags || scan.keycode || scan.timestamp ||
-		    scan.rc_proto > RC_PROTO_MAX) {
+		if (scan.flags || scan.keycode || scan.timestamp) {
 			ret = -EINVAL;
 			goto out_unlock;
 		}

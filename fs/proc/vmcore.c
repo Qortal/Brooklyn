@@ -1503,8 +1503,11 @@ int vmcore_add_device_dump(struct vmcoredd_data *data)
 	return 0;
 
 out_err:
-	vfree(buf);
-	vfree(dump);
+	if (buf)
+		vfree(buf);
+
+	if (dump)
+		vfree(dump);
 
 	return ret;
 }

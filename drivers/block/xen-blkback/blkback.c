@@ -1326,7 +1326,9 @@ static int dispatch_rw_block_io(struct xen_blkif_ring *ring,
 				     pages[i]->page,
 				     seg[i].nsec << 9,
 				     seg[i].offset) == 0)) {
-			bio = bio_alloc(GFP_KERNEL, bio_max_segs(nseg - i));
+
+			int nr_iovecs = min_t(int, (nseg-i), BIO_MAX_PAGES);
+			bio = bio_alloc(GFP_KERNEL, nr_iovecs);
 			if (unlikely(bio == NULL))
 				goto fail_put_bio;
 

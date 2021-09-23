@@ -114,7 +114,7 @@ bad:
  * Ignore any fields we don't care about (there are quite a few of
  * them).
  */
-struct ceph_mdsmap *ceph_mdsmap_decode(void **p, void *end, bool msgr2)
+struct ceph_mdsmap *ceph_mdsmap_decode(void **p, void *end)
 {
 	struct ceph_mdsmap *m;
 	const void *start = *p;
@@ -201,19 +201,18 @@ struct ceph_mdsmap *ceph_mdsmap_decode(void **p, void *end, bool msgr2)
 		namelen = ceph_decode_32(p);  /* skip mds name */
 		*p += namelen;
 
-		ceph_decode_32_safe(p, end, mds, bad);
-		ceph_decode_32_safe(p, end, inc, bad);
-		ceph_decode_32_safe(p, end, state, bad);
+		ceph_decode_need(p, end,
+				 4*sizeof(u32) + sizeof(u64) +
+				 sizeof(addr) + sizeof(struct ceph_timespec),
+				 bad);
+		mds = ceph_decode_32(p);
+		inc = ceph_decode_32(p);
+		state = ceph_decode_32(p);
 		*p += sizeof(u64);		/* state_seq */
-		if (info_v >= 8)
-			err = ceph_decode_entity_addrvec(p, end, msgr2, &addr);
-		else
-			err = ceph_decode_entity_addr(p, end, &addr);
+		err = ceph_decode_entity_addr(p, end, &addr);
 		if (err)
 			goto corrupt;
-
-		ceph_decode_copy_safe(p, end, &laggy_since, sizeof(laggy_since),
-				      bad);
+		ceph_decode_copy(p, &laggy_since, sizeof(laggy_since));
 		laggy = laggy_since.tv_sec != 0 || laggy_since.tv_nsec != 0;
 		*p += sizeof(u32);
 		ceph_decode_32_safe(p, end, namelen, bad);
@@ -394,9 +393,11 @@ void ceph_mdsmap_destroy(struct ceph_mdsmap *m)
 {
 	int i;
 
-	for (i = 0; i < m->possible_max_rank; i++)
-		kfree(m->m_info[i].export_targets);
-	kfree(m->m_info);
+	if (m->m_info) {
+		for (i = 0; i < m->possible_max_rank; i++)
+			kfree(m->m_info[i].export_targets);
+		kfree(m->m_info);
+	}
 	kfree(m->m_data_pg_pools);
 	kfree(m);
 }

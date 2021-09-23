@@ -27,8 +27,6 @@
 #include <linux/rcupdate.h>
 #include <linux/mutex.h>
 #include <linux/ftrace.h>
-#include <linux/refcount.h>
-#include <linux/freelist.h>
 #include <asm/kprobes.h>
 
 #ifdef CONFIG_KPROBES
@@ -54,6 +52,8 @@ struct kretprobe_instance;
 typedef int (*kprobe_pre_handler_t) (struct kprobe *, struct pt_regs *);
 typedef void (*kprobe_post_handler_t) (struct kprobe *, struct pt_regs *,
 				       unsigned long flags);
+typedef int (*kprobe_fault_handler_t) (struct kprobe *, struct pt_regs *,
+				       int trapnr);
 typedef int (*kretprobe_handler_t) (struct kretprobe_instance *,
 				    struct pt_regs *);
 
@@ -80,6 +80,12 @@ struct kprobe {
 
 	/* Called after addr is executed, unless... */
 	kprobe_post_handler_t post_handler;
+
+	/*
+	 * ... called if executing addr causes a fault (eg. page fault).
+	 * Return 1 if it handled fault, otherwise kernel will see it.
+	 */
+	kprobe_fault_handler_t fault_handler;
 
 	/* Saved opcode (which has been replaced with breakpoint) */
 	kprobe_opcode_t opcode;
@@ -138,11 +144,6 @@ static inline int kprobe_ftrace(struct kprobe *p)
  * ignored, due to maxactive being too low.
  *
  */
-struct kretprobe_holder {
-	struct kretprobe	*rp;
-	refcount_t		ref;
-};
-
 struct kretprobe {
 	struct kprobe kp;
 	kretprobe_handler_t handler;
@@ -150,18 +151,18 @@ struct kretprobe {
 	int maxactive;
 	int nmissed;
 	size_t data_size;
-	struct freelist_head freelist;
-	struct kretprobe_holder *rph;
+	struct hlist_head free_instances;
+	raw_spinlock_t lock;
 };
 
 struct kretprobe_instance {
 	union {
-		struct freelist_node freelist;
+		struct hlist_node hlist;
 		struct rcu_head rcu;
 	};
-	struct llist_node llist;
-	struct kretprobe_holder *rph;
+	struct kretprobe *rp;
 	kprobe_opcode_t *ret_addr;
+	struct task_struct *task;
 	void *fp;
 	char data[];
 };
@@ -218,14 +219,6 @@ unsigned long kretprobe_trampoline_handler(struct pt_regs *regs,
 	kprobe_busy_end();
 
 	return ret;
-}
-
-static nokprobe_inline struct kretprobe *get_kretprobe(struct kretprobe_instance *ri)
-{
-	RCU_LOCKDEP_WARN(!rcu_read_lock_any_held(),
-		"Kretprobe is accessed from instance under preemptive context");
-
-	return READ_ONCE(ri->rph->rp);
 }
 
 #else /* CONFIG_KRETPROBES */
@@ -352,7 +345,7 @@ static inline void wait_for_kprobe_optimizer(void) { }
 #endif /* CONFIG_OPTPROBES */
 #ifdef CONFIG_KPROBES_ON_FTRACE
 extern void kprobe_ftrace_handler(unsigned long ip, unsigned long parent_ip,
-				  struct ftrace_ops *ops, struct ftrace_regs *fregs);
+				  struct ftrace_ops *ops, struct pt_regs *regs);
 extern int arch_prepare_kprobe_ftrace(struct kprobe *p);
 #endif
 
@@ -399,9 +392,7 @@ int enable_kprobe(struct kprobe *kp);
 void dump_kprobe(struct kprobe *kp);
 
 void *alloc_insn_page(void);
-
-void *alloc_optinsn_page(void);
-void free_optinsn_page(void *page);
+void free_insn_page(void *page);
 
 int kprobe_get_kallsym(unsigned int symnum, unsigned long *value, char *type,
 		       char *sym);

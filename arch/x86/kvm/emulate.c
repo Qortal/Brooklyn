@@ -22,6 +22,7 @@
 #include "kvm_cache_regs.h"
 #include "kvm_emulate.h"
 #include <linux/stringify.h>
+#include <asm/fpu/api.h>
 #include <asm/debugreg.h>
 #include <asm/nospec-branch.h>
 
@@ -1080,14 +1081,116 @@ static void fetch_register_operand(struct operand *op)
 	}
 }
 
+static void emulator_get_fpu(void)
+{
+	fpregs_lock();
+
+	fpregs_assert_state_consistent();
+	if (test_thread_flag(TIF_NEED_FPU_LOAD))
+		switch_fpu_return();
+}
+
+static void emulator_put_fpu(void)
+{
+	fpregs_unlock();
+}
+
+static void read_sse_reg(sse128_t *data, int reg)
+{
+	emulator_get_fpu();
+	switch (reg) {
+	case 0: asm("movdqa %%xmm0, %0" : "=m"(*data)); break;
+	case 1: asm("movdqa %%xmm1, %0" : "=m"(*data)); break;
+	case 2: asm("movdqa %%xmm2, %0" : "=m"(*data)); break;
+	case 3: asm("movdqa %%xmm3, %0" : "=m"(*data)); break;
+	case 4: asm("movdqa %%xmm4, %0" : "=m"(*data)); break;
+	case 5: asm("movdqa %%xmm5, %0" : "=m"(*data)); break;
+	case 6: asm("movdqa %%xmm6, %0" : "=m"(*data)); break;
+	case 7: asm("movdqa %%xmm7, %0" : "=m"(*data)); break;
+#ifdef CONFIG_X86_64
+	case 8: asm("movdqa %%xmm8, %0" : "=m"(*data)); break;
+	case 9: asm("movdqa %%xmm9, %0" : "=m"(*data)); break;
+	case 10: asm("movdqa %%xmm10, %0" : "=m"(*data)); break;
+	case 11: asm("movdqa %%xmm11, %0" : "=m"(*data)); break;
+	case 12: asm("movdqa %%xmm12, %0" : "=m"(*data)); break;
+	case 13: asm("movdqa %%xmm13, %0" : "=m"(*data)); break;
+	case 14: asm("movdqa %%xmm14, %0" : "=m"(*data)); break;
+	case 15: asm("movdqa %%xmm15, %0" : "=m"(*data)); break;
+#endif
+	default: BUG();
+	}
+	emulator_put_fpu();
+}
+
+static void write_sse_reg(sse128_t *data, int reg)
+{
+	emulator_get_fpu();
+	switch (reg) {
+	case 0: asm("movdqa %0, %%xmm0" : : "m"(*data)); break;
+	case 1: asm("movdqa %0, %%xmm1" : : "m"(*data)); break;
+	case 2: asm("movdqa %0, %%xmm2" : : "m"(*data)); break;
+	case 3: asm("movdqa %0, %%xmm3" : : "m"(*data)); break;
+	case 4: asm("movdqa %0, %%xmm4" : : "m"(*data)); break;
+	case 5: asm("movdqa %0, %%xmm5" : : "m"(*data)); break;
+	case 6: asm("movdqa %0, %%xmm6" : : "m"(*data)); break;
+	case 7: asm("movdqa %0, %%xmm7" : : "m"(*data)); break;
+#ifdef CONFIG_X86_64
+	case 8: asm("movdqa %0, %%xmm8" : : "m"(*data)); break;
+	case 9: asm("movdqa %0, %%xmm9" : : "m"(*data)); break;
+	case 10: asm("movdqa %0, %%xmm10" : : "m"(*data)); break;
+	case 11: asm("movdqa %0, %%xmm11" : : "m"(*data)); break;
+	case 12: asm("movdqa %0, %%xmm12" : : "m"(*data)); break;
+	case 13: asm("movdqa %0, %%xmm13" : : "m"(*data)); break;
+	case 14: asm("movdqa %0, %%xmm14" : : "m"(*data)); break;
+	case 15: asm("movdqa %0, %%xmm15" : : "m"(*data)); break;
+#endif
+	default: BUG();
+	}
+	emulator_put_fpu();
+}
+
+static void read_mmx_reg(u64 *data, int reg)
+{
+	emulator_get_fpu();
+	switch (reg) {
+	case 0: asm("movq %%mm0, %0" : "=m"(*data)); break;
+	case 1: asm("movq %%mm1, %0" : "=m"(*data)); break;
+	case 2: asm("movq %%mm2, %0" : "=m"(*data)); break;
+	case 3: asm("movq %%mm3, %0" : "=m"(*data)); break;
+	case 4: asm("movq %%mm4, %0" : "=m"(*data)); break;
+	case 5: asm("movq %%mm5, %0" : "=m"(*data)); break;
+	case 6: asm("movq %%mm6, %0" : "=m"(*data)); break;
+	case 7: asm("movq %%mm7, %0" : "=m"(*data)); break;
+	default: BUG();
+	}
+	emulator_put_fpu();
+}
+
+static void write_mmx_reg(u64 *data, int reg)
+{
+	emulator_get_fpu();
+	switch (reg) {
+	case 0: asm("movq %0, %%mm0" : : "m"(*data)); break;
+	case 1: asm("movq %0, %%mm1" : : "m"(*data)); break;
+	case 2: asm("movq %0, %%mm2" : : "m"(*data)); break;
+	case 3: asm("movq %0, %%mm3" : : "m"(*data)); break;
+	case 4: asm("movq %0, %%mm4" : : "m"(*data)); break;
+	case 5: asm("movq %0, %%mm5" : : "m"(*data)); break;
+	case 6: asm("movq %0, %%mm6" : : "m"(*data)); break;
+	case 7: asm("movq %0, %%mm7" : : "m"(*data)); break;
+	default: BUG();
+	}
+	emulator_put_fpu();
+}
+
 static int em_fninit(struct x86_emulate_ctxt *ctxt)
 {
 	if (ctxt->ops->get_cr(ctxt, 0) & (X86_CR0_TS | X86_CR0_EM))
 		return emulate_nm(ctxt);
 
-	kvm_fpu_get();
+	emulator_get_fpu();
 	asm volatile("fninit");
-	kvm_fpu_put();
+	emulator_put_fpu();
 	return X86EMUL_CONTINUE;
 }
 
@@ -1098,9 +1201,9 @@ static int em_fnstcw(struct x86_emulate_ctxt *ctxt)
 	if (ctxt->ops->get_cr(ctxt, 0) & (X86_CR0_TS | X86_CR0_EM))
 		return emulate_nm(ctxt);
 
-	kvm_fpu_get();
+	emulator_get_fpu();
 	asm volatile("fnstcw %0": "+m"(fcw));
-	kvm_fpu_put();
+	emulator_put_fpu();
 
 	ctxt->dst.val = fcw;
 
@@ -1114,9 +1217,9 @@ static int em_fnstsw(struct x86_emulate_ctxt *ctxt)
 	if (ctxt->ops->get_cr(ctxt, 0) & (X86_CR0_TS | X86_CR0_EM))
 		return emulate_nm(ctxt);
 
-	kvm_fpu_get();
+	emulator_get_fpu();
 	asm volatile("fnstsw %0": "+m"(fsw));
-	kvm_fpu_put();
+	emulator_put_fpu();
 
 	ctxt->dst.val = fsw;
 
@@ -1135,7 +1238,7 @@ static void decode_register_operand(struct x86_emulate_ctxt *ctxt,
 		op->type = OP_XMM;
 		op->bytes = 16;
 		op->addr.xmm = reg;
-		kvm_read_sse_reg(reg, &op->vec_val);
+		read_sse_reg(&op->vec_val, reg);
 		return;
 	}
 	if (ctxt->d & Mmx) {
@@ -1186,7 +1289,7 @@ static int decode_modrm(struct x86_emulate_ctxt *ctxt,
 			op->type = OP_XMM;
 			op->bytes = 16;
 			op->addr.xmm = ctxt->modrm_rm;
-			kvm_read_sse_reg(ctxt->modrm_rm, &op->vec_val);
+			read_sse_reg(&op->vec_val, ctxt->modrm_rm);
 			return rc;
 		}
 		if (ctxt->d & Mmx) {
@@ -1763,10 +1866,10 @@ static int writeback(struct x86_emulate_ctxt *ctxt, struct operand *op)
 				       op->bytes * op->count);
 		break;
 	case OP_XMM:
-		kvm_write_sse_reg(op->addr.xmm, &op->vec_val);
+		write_sse_reg(&op->vec_val, op->addr.xmm);
 		break;
 	case OP_MM:
-		kvm_write_mmx_reg(op->addr.mm, &op->mm_val);
+		write_mmx_reg(&op->mm_val, op->addr.mm);
 		break;
 	case OP_NONE:
 		/* no writeback */
@@ -2403,12 +2506,12 @@ static int rsm_load_state_32(struct x86_emulate_ctxt *ctxt,
 
 	val = GET_SMSTATE(u32, smstate, 0x7fcc);
 
-	if (ctxt->ops->set_dr(ctxt, 6, val))
+	if (ctxt->ops->set_dr(ctxt, 6, (val & DR6_VOLATILE) | DR6_FIXED_1))
 		return X86EMUL_UNHANDLEABLE;
 
 	val = GET_SMSTATE(u32, smstate, 0x7fc8);
 
-	if (ctxt->ops->set_dr(ctxt, 7, val))
+	if (ctxt->ops->set_dr(ctxt, 7, (val & DR7_VOLATILE) | DR7_FIXED_1))
 		return X86EMUL_UNHANDLEABLE;
 
 	selector =                 GET_SMSTATE(u32, smstate, 0x7fc4);
@@ -2463,12 +2566,12 @@ static int rsm_load_state_64(struct x86_emulate_ctxt *ctxt,
 
 	val = GET_SMSTATE(u64, smstate, 0x7f68);
 
-	if (ctxt->ops->set_dr(ctxt, 6, val))
+	if (ctxt->ops->set_dr(ctxt, 6, (val & DR6_VOLATILE) | DR6_FIXED_1))
 		return X86EMUL_UNHANDLEABLE;
 
 	val = GET_SMSTATE(u64, smstate, 0x7f60);
 
-	if (ctxt->ops->set_dr(ctxt, 7, val))
+	if (ctxt->ops->set_dr(ctxt, 7, (val & DR7_VOLATILE) | DR7_FIXED_1))
 		return X86EMUL_UNHANDLEABLE;
 
 	cr0 =                       GET_SMSTATE(u64, smstate, 0x7f58);
@@ -2535,7 +2638,8 @@ static int em_rsm(struct x86_emulate_ctxt *ctxt)
 	if ((ctxt->ops->get_hflags(ctxt) & X86EMUL_SMM_INSIDE_NMI_MASK) == 0)
 		ctxt->ops->set_nmi_mask(ctxt, false);
 
-	ctxt->ops->exiting_smm(ctxt);
+	ctxt->ops->set_hflags(ctxt, ctxt->ops->get_hflags(ctxt) &
+		~(X86EMUL_SMM_INSIDE_NMI_MASK | X86EMUL_SMM_MASK));
 
 	/*
 	 * Get back to real mode, to prepare a safe state in which to load
@@ -2574,12 +2678,12 @@ static int em_rsm(struct x86_emulate_ctxt *ctxt)
 	}
 
 	/*
-	 * Give leave_smm() a chance to make ISA-specific changes to the vCPU
-	 * state (e.g. enter guest mode) before loading state from the SMM
+	 * Give pre_leave_smm() a chance to make ISA-specific changes to the
+	 * vCPU state (e.g. enter guest mode) before loading state from the SMM
 	 * state-save area.
 	 */
-	if (ctxt->ops->leave_smm(ctxt, buf))
-		goto emulate_shutdown;
+	if (ctxt->ops->pre_leave_smm(ctxt, buf))
+		return X86EMUL_UNHANDLEABLE;
 
 #ifdef CONFIG_X86_64
 	if (emulator_has_longmode(ctxt))
@@ -2588,21 +2692,13 @@ static int em_rsm(struct x86_emulate_ctxt *ctxt)
 #endif
 		ret = rsm_load_state_32(ctxt, buf);
 
-	if (ret != X86EMUL_CONTINUE)
-		goto emulate_shutdown;
+	if (ret != X86EMUL_CONTINUE) {
+		/* FIXME: should triple fault */
+		return X86EMUL_UNHANDLEABLE;
+	}
 
-	/*
-	 * Note, the ctxt->ops callbacks are responsible for handling side
-	 * effects when writing MSRs and CRs, e.g. MMU context resets, CPUID
-	 * runtime updates, etc...  If that changes, e.g. this flow is moved
-	 * out of the emulator to make it look more like enter_smm(), then
-	 * those side effects need to be explicitly handled for both success
-	 * and shutdown.
-	 */
-	return X86EMUL_CONTINUE;
+	ctxt->ops->post_leave_smm(ctxt);
 
-emulate_shutdown:
-	ctxt->ops->triple_fault(ctxt);
 	return X86EMUL_CONTINUE;
 }
 
@@ -3126,7 +3222,7 @@ static int load_state_from_tss32(struct x86_emulate_ctxt *ctxt,
 	}
 
 	/*
-	 * Now load segment descriptors. If fault happens at this stage
+	 * Now load segment descriptors. If fault happenes at this stage
 	 * it is handled in a context of new task
 	 */
 	ret = __load_segment_descriptor(ctxt, tss->ldt_selector, VCPU_SREG_LDTR,
@@ -4028,11 +4124,11 @@ static int em_fxsave(struct x86_emulate_ctxt *ctxt)
 	if (rc != X86EMUL_CONTINUE)
 		return rc;
 
-	kvm_fpu_get();
+	emulator_get_fpu();
 
 	rc = asm_safe("fxsave %[fx]", , [fx] "+m"(fx_state));
 
-	kvm_fpu_put();
+	emulator_put_fpu();
 
 	if (rc != X86EMUL_CONTINUE)
 		return rc;
@@ -4076,7 +4172,7 @@ static int em_fxrstor(struct x86_emulate_ctxt *ctxt)
 	if (rc != X86EMUL_CONTINUE)
 		return rc;
 
-	kvm_fpu_get();
+	emulator_get_fpu();
 
 	if (size < __fxstate_size(16)) {
 		rc = fxregs_fixup(&fx_state, size);
@@ -4093,7 +4189,7 @@ static int em_fxrstor(struct x86_emulate_ctxt *ctxt)
 		rc = asm_safe("fxrstor %[fx]", : [fx] "m"(fx_state));
 
 out:
-	kvm_fpu_put();
+	emulator_put_fpu();
 
 	return rc;
 }
@@ -4159,7 +4255,7 @@ static int check_dr_read(struct x86_emulate_ctxt *ctxt)
 
 		ctxt->ops->get_dr(ctxt, 6, &dr6);
 		dr6 &= ~DR_TRAP_BITS;
-		dr6 |= DR6_BD | DR6_ACTIVE_LOW;
+		dr6 |= DR6_BD | DR6_RTM;
 		ctxt->ops->set_dr(ctxt, 6, dr6);
 		return emulate_db(ctxt);
 	}
@@ -5015,7 +5111,7 @@ done:
 	return rc;
 }
 
-int x86_decode_insn(struct x86_emulate_ctxt *ctxt, void *insn, int insn_len, int emulation_type)
+int x86_decode_insn(struct x86_emulate_ctxt *ctxt, void *insn, int insn_len)
 {
 	int rc = X86EMUL_CONTINUE;
 	int mode = ctxt->mode;
@@ -5226,8 +5322,7 @@ done_prefixes:
 
 	ctxt->execute = opcode.u.execute;
 
-	if (unlikely(emulation_type & EMULTYPE_TRAP_UD) &&
-	    likely(!(ctxt->d & EmulateOnUD)))
+	if (unlikely(ctxt->ud) && likely(!(ctxt->d & EmulateOnUD)))
 		return EMULATION_FAILED;
 
 	if (unlikely(ctxt->d &
@@ -5341,9 +5436,9 @@ static int flush_pending_x87_faults(struct x86_emulate_ctxt *ctxt)
 {
 	int rc;
 
-	kvm_fpu_get();
+	emulator_get_fpu();
 	rc = asm_safe("fwait");
-	kvm_fpu_put();
+	emulator_put_fpu();
 
 	if (unlikely(rc != X86EMUL_CONTINUE))
 		return emulate_exception(ctxt, MF_VECTOR, 0, false);
@@ -5354,7 +5449,7 @@ static int flush_pending_x87_faults(struct x86_emulate_ctxt *ctxt)
 static void fetch_possible_mmx_operand(struct operand *op)
 {
 	if (op->type == OP_MM)
-		kvm_read_mmx_reg(op->addr.mm, &op->mm_val);
+		read_mmx_reg(&op->mm_val, op->addr.mm);
 }
 
 static int fastop(struct x86_emulate_ctxt *ctxt, fastop_t fop)

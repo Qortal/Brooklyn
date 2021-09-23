@@ -489,6 +489,7 @@ static void test_parallel_lru_loss(int map_type, int map_flags, int nr_tasks)
 
 int main(int argc, char **argv)
 {
+	struct rlimit r = {RLIM_INFINITY, RLIM_INFINITY};
 	int map_flags[] = {0, BPF_F_NO_COMMON_LRU};
 	const char *dist_file;
 	int nr_tasks = 1;
@@ -506,6 +507,8 @@ int main(int argc, char **argv)
 	nr_tasks = atoi(argv[3]);
 
 	setbuf(stdout, NULL);
+
+	assert(!setrlimit(RLIMIT_MEMLOCK, &r));
 
 	srand(time(NULL));
 

@@ -540,7 +540,10 @@ int gfs2_internal_read(struct gfs2_inode *ip, char *buf, loff_t *pos,
 
 /**
  * gfs2_readahead - Read a bunch of pages at once
- * @rac: Read-ahead control structure
+ * @file: The file to read from
+ * @mapping: Address space info
+ * @pages: List of pages to read
+ * @nr_pages: Number of pages to read
  *
  * Some notes:
  * 1. This is only for readahead, so we can simply ignore any things
@@ -784,7 +787,7 @@ static const struct address_space_operations gfs2_aops = {
 	.writepages = gfs2_writepages,
 	.readpage = gfs2_readpage,
 	.readahead = gfs2_readahead,
-	.set_page_dirty = __set_page_dirty_nobuffers,
+	.set_page_dirty = iomap_set_page_dirty,
 	.releasepage = iomap_releasepage,
 	.invalidatepage = iomap_invalidatepage,
 	.bmap = gfs2_bmap,

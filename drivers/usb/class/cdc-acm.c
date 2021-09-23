@@ -838,7 +838,7 @@ static int acm_tty_write(struct tty_struct *tty,
 	return count;
 }
 
-static unsigned int acm_tty_write_room(struct tty_struct *tty)
+static int acm_tty_write_room(struct tty_struct *tty)
 {
 	struct acm *acm = tty->driver_data;
 	/*
@@ -848,7 +848,7 @@ static unsigned int acm_tty_write_room(struct tty_struct *tty)
 	return acm_wb_is_avail(acm) ? acm->writesize : 0;
 }
 
-static unsigned int acm_tty_chars_in_buffer(struct tty_struct *tty)
+static int acm_tty_chars_in_buffer(struct tty_struct *tty)
 {
 	struct acm *acm = tty->driver_data;
 	/*
@@ -1056,8 +1056,21 @@ static void acm_tty_set_termios(struct tty_struct *tty,
 	newline.bParityType = termios->c_cflag & PARENB ?
 				(termios->c_cflag & PARODD ? 1 : 2) +
 				(termios->c_cflag & CMSPAR ? 2 : 0) : 0;
-	newline.bDataBits = tty_get_char_size(termios->c_cflag);
-
+	switch (termios->c_cflag & CSIZE) {
+	case CS5:
+		newline.bDataBits = 5;
+		break;
+	case CS6:
+		newline.bDataBits = 6;
+		break;
+	case CS7:
+		newline.bDataBits = 7;
+		break;
+	case CS8:
+	default:
+		newline.bDataBits = 8;
+		break;
+	}
 	/* FIXME: Needs to clear unsupported bits in the termios */
 	acm->clocal = ((termios->c_cflag & CLOCAL) != 0);
 
@@ -1286,6 +1299,13 @@ skip_normal_probe:
 	if (!combined_interfaces && intf != control_interface)
 		return -ENODEV;
 
+	if (!combined_interfaces && usb_interface_claimed(data_interface)) {
+		/* valid in this context */
+		dev_dbg(&intf->dev, "The data interface isn't available\n");
+		return -EBUSY;
+	}
+
+
 	if (data_interface->cur_altsetting->desc.bNumEndpoints < 2 ||
 	    control_interface->cur_altsetting->desc.bNumEndpoints == 0)
 		return -EINVAL;
@@ -1306,8 +1326,8 @@ made_compressed_probe:
 	dev_dbg(&intf->dev, "interfaces are valid\n");
 
 	acm = kzalloc(sizeof(struct acm), GFP_KERNEL);
-	if (!acm)
-		return -ENOMEM;
+	if (acm == NULL)
+		goto alloc_fail;
 
 	tty_port_init(&acm->port);
 	acm->port.ops = &acm_port_ops;
@@ -1324,7 +1344,7 @@ made_compressed_probe:
 
 	minor = acm_alloc_minor(acm);
 	if (minor < 0)
-		goto err_put_port;
+		goto alloc_fail1;
 
 	acm->minor = minor;
 	acm->dev = usb_dev;
@@ -1355,15 +1375,15 @@ made_compressed_probe:
 
 	buf = usb_alloc_coherent(usb_dev, ctrlsize, GFP_KERNEL, &acm->ctrl_dma);
 	if (!buf)
-		goto err_put_port;
+		goto alloc_fail1;
 	acm->ctrl_buffer = buf;
 
 	if (acm_write_buffers_alloc(acm) < 0)
-		goto err_free_ctrl_buffer;
+		goto alloc_fail2;
 
 	acm->ctrlurb = usb_alloc_urb(0, GFP_KERNEL);
 	if (!acm->ctrlurb)
-		goto err_free_write_buffers;
+		goto alloc_fail3;
 
 	for (i = 0; i < num_rx_buf; i++) {
 		struct acm_rb *rb = &(acm->read_buffers[i]);
@@ -1372,13 +1392,13 @@ made_compressed_probe:
 		rb->base = usb_alloc_coherent(acm->dev, readsize, GFP_KERNEL,
 								&rb->dma);
 		if (!rb->base)
-			goto err_free_read_urbs;
+			goto alloc_fail4;
 		rb->index = i;
 		rb->instance = acm;
 
 		urb = usb_alloc_urb(0, GFP_KERNEL);
 		if (!urb)
-			goto err_free_read_urbs;
+			goto alloc_fail4;
 
 		urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 		urb->transfer_dma = rb->dma;
@@ -1399,8 +1419,8 @@ made_compressed_probe:
 		struct acm_wb *snd = &(acm->wb[i]);
 
 		snd->urb = usb_alloc_urb(0, GFP_KERNEL);
-		if (!snd->urb)
-			goto err_free_write_urbs;
+		if (snd->urb == NULL)
+			goto alloc_fail5;
 
 		if (usb_endpoint_xfer_int(epwrite))
 			usb_fill_int_urb(snd->urb, usb_dev, acm->out,
@@ -1418,7 +1438,7 @@ made_compressed_probe:
 
 	i = device_create_file(&intf->dev, &dev_attr_bmCapabilities);
 	if (i < 0)
-		goto err_free_write_urbs;
+		goto alloc_fail5;
 
 	if (h.usb_cdc_country_functional_desc) { /* export the country data */
 		struct usb_cdc_country_functional_desc * cfd =
@@ -1463,21 +1483,20 @@ skip_countries:
 	acm->nb_index = 0;
 	acm->nb_size = 0;
 
+	dev_info(&intf->dev, "ttyACM%d: USB ACM device\n", minor);
+
 	acm->line.dwDTERate = cpu_to_le32(9600);
 	acm->line.bDataBits = 8;
 	acm_set_line(acm, &acm->line);
 
-	if (!acm->combined_interfaces) {
-		rv = usb_driver_claim_interface(&acm_driver, data_interface, acm);
-		if (rv)
-			goto err_remove_files;
-	}
+	usb_driver_claim_interface(&acm_driver, data_interface, acm);
+	usb_set_intfdata(data_interface, acm);
 
 	tty_dev = tty_port_register_device(&acm->port, acm_tty_driver, minor,
 			&control_interface->dev);
 	if (IS_ERR(tty_dev)) {
 		rv = PTR_ERR(tty_dev);
-		goto err_release_data_interface;
+		goto alloc_fail6;
 	}
 
 	if (quirks & CLEAR_HALT_CONDITIONS) {
@@ -1485,17 +1504,13 @@ skip_countries:
 		usb_clear_halt(usb_dev, acm->out);
 	}
 
-	dev_info(&intf->dev, "ttyACM%d: USB ACM device\n", minor);
-
 	return 0;
-
-err_release_data_interface:
+alloc_fail6:
 	if (!acm->combined_interfaces) {
 		/* Clear driver data so that disconnect() returns early. */
 		usb_set_intfdata(data_interface, NULL);
 		usb_driver_release_interface(&acm_driver, data_interface);
 	}
-err_remove_files:
 	if (acm->country_codes) {
 		device_remove_file(&acm->control->dev,
 				&dev_attr_wCountryCodes);
@@ -1503,21 +1518,22 @@ err_remove_files:
 				&dev_attr_iCountryCodeRelDate);
 	}
 	device_remove_file(&acm->control->dev, &dev_attr_bmCapabilities);
-err_free_write_urbs:
+alloc_fail5:
+	usb_set_intfdata(intf, NULL);
 	for (i = 0; i < ACM_NW; i++)
 		usb_free_urb(acm->wb[i].urb);
-err_free_read_urbs:
+alloc_fail4:
 	for (i = 0; i < num_rx_buf; i++)
 		usb_free_urb(acm->read_urbs[i]);
 	acm_read_buffers_free(acm);
 	usb_free_urb(acm->ctrlurb);
-err_free_write_buffers:
+alloc_fail3:
 	acm_write_buffers_free(acm);
-err_free_ctrl_buffer:
+alloc_fail2:
 	usb_free_coherent(usb_dev, ctrlsize, acm->ctrl_buffer, acm->ctrl_dma);
-err_put_port:
+alloc_fail1:
 	tty_port_put(&acm->port);
-
+alloc_fail:
 	return rv;
 }
 
@@ -1897,20 +1913,6 @@ static const struct usb_device_id acm_ids[] = {
 	{ USB_DEVICE(0x04d8, 0xf58b),
 	.driver_info = IGNORE_DEVICE,
 	},
-#endif
-
-#if IS_ENABLED(CONFIG_USB_SERIAL_XR)
-	{ USB_DEVICE(0x04e2, 0x1400), .driver_info = IGNORE_DEVICE },
-	{ USB_DEVICE(0x04e2, 0x1401), .driver_info = IGNORE_DEVICE },
-	{ USB_DEVICE(0x04e2, 0x1402), .driver_info = IGNORE_DEVICE },
-	{ USB_DEVICE(0x04e2, 0x1403), .driver_info = IGNORE_DEVICE },
-	{ USB_DEVICE(0x04e2, 0x1410), .driver_info = IGNORE_DEVICE },
-	{ USB_DEVICE(0x04e2, 0x1411), .driver_info = IGNORE_DEVICE },
-	{ USB_DEVICE(0x04e2, 0x1412), .driver_info = IGNORE_DEVICE },
-	{ USB_DEVICE(0x04e2, 0x1414), .driver_info = IGNORE_DEVICE },
-	{ USB_DEVICE(0x04e2, 0x1420), .driver_info = IGNORE_DEVICE },
-	{ USB_DEVICE(0x04e2, 0x1422), .driver_info = IGNORE_DEVICE },
-	{ USB_DEVICE(0x04e2, 0x1424), .driver_info = IGNORE_DEVICE },
 #endif
 
 	/*Samsung phone in firmware update mode */

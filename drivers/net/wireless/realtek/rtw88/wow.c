@@ -332,8 +332,7 @@ static void rtw_wow_fw_security_type_iter(struct ieee80211_hw *hw,
 		key->flags |= IEEE80211_KEY_FLAG_SW_MGMT_TX;
 		break;
 	default:
-		rtw_err(rtwdev, "Unsupported key type for wowlan mode: %#x\n",
-			key->cipher);
+		rtw_err(rtwdev, "Unsupported key type for wowlan mode\n");
 		hw_key_type = 0;
 		break;
 	}
@@ -556,7 +555,7 @@ static int rtw_wow_leave_no_link_ps(struct rtw_dev *rtwdev)
 	int ret = 0;
 
 	if (test_bit(RTW_FLAG_WOWLAN, rtwdev->flags)) {
-		if (rtw_get_lps_deep_mode(rtwdev) != LPS_DEEP_MODE_NONE)
+		if (rtw_fw_lps_deep_mode)
 			rtw_leave_lps_deep(rtwdev);
 	} else {
 		if (test_bit(RTW_FLAG_INACTIVE_PS, rtwdev->flags)) {
@@ -617,8 +616,7 @@ static int rtw_wow_enter_ps(struct rtw_dev *rtwdev)
 
 	if (rtw_wow_mgd_linked(rtwdev))
 		ret = rtw_wow_enter_linked_ps(rtwdev);
-	else if (rtw_wow_no_link(rtwdev) &&
-		 rtw_get_lps_deep_mode(rtwdev) != LPS_DEEP_MODE_NONE)
+	else if (rtw_wow_no_link(rtwdev) && rtw_fw_lps_deep_mode)
 		ret = rtw_wow_enter_no_link_ps(rtwdev);
 
 	return ret;

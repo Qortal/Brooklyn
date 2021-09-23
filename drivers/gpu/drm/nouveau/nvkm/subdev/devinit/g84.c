@@ -35,18 +35,18 @@ g84_devinit_disable(struct nvkm_devinit *init)
 	u64 disable = 0ULL;
 
 	if (!(r001540 & 0x40000000)) {
-		nvkm_subdev_disable(device, NVKM_ENGINE_MPEG, 0);
-		nvkm_subdev_disable(device, NVKM_ENGINE_VP, 0);
-		nvkm_subdev_disable(device, NVKM_ENGINE_BSP, 0);
-		nvkm_subdev_disable(device, NVKM_ENGINE_CIPHER, 0);
+		disable |= (1ULL << NVKM_ENGINE_MPEG);
+		disable |= (1ULL << NVKM_ENGINE_VP);
+		disable |= (1ULL << NVKM_ENGINE_BSP);
+		disable |= (1ULL << NVKM_ENGINE_CIPHER);
 	}
 
 	if (!(r00154c & 0x00000004))
-		nvkm_subdev_disable(device, NVKM_ENGINE_DISP, 0);
+		disable |= (1ULL << NVKM_ENGINE_DISP);
 	if (!(r00154c & 0x00000020))
-		nvkm_subdev_disable(device, NVKM_ENGINE_BSP, 0);
+		disable |= (1ULL << NVKM_ENGINE_BSP);
 	if (!(r00154c & 0x00000040))
-		nvkm_subdev_disable(device, NVKM_ENGINE_CIPHER, 0);
+		disable |= (1ULL << NVKM_ENGINE_CIPHER);
 
 	return disable;
 }
@@ -61,8 +61,8 @@ g84_devinit = {
 };
 
 int
-g84_devinit_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
+g84_devinit_new(struct nvkm_device *device, int index,
 		struct nvkm_devinit **pinit)
 {
-	return nv50_devinit_new_(&g84_devinit, device, type, inst, pinit);
+	return nv50_devinit_new_(&g84_devinit, device, index, pinit);
 }

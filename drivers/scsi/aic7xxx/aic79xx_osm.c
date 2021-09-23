@@ -1602,10 +1602,10 @@ ahd_linux_run_command(struct ahd_softc *ahd, struct ahd_linux_device *dev,
 	if ((dev->flags & (AHD_DEV_Q_TAGGED|AHD_DEV_Q_BASIC)) != 0) {
 		if (dev->commands_since_idle_or_otag == AHD_OTAG_THRESH
 		 && (dev->flags & AHD_DEV_Q_TAGGED) != 0) {
-			hscb->control |= ORDERED_QUEUE_TAG;
+			hscb->control |= MSG_ORDERED_TASK;
 			dev->commands_since_idle_or_otag = 0;
 		} else {
-			hscb->control |= SIMPLE_QUEUE_TAG;
+			hscb->control |= MSG_SIMPLE_TASK;
 		}
 	}
 
@@ -1834,7 +1834,7 @@ ahd_done(struct ahd_softc *ahd, struct scb *scb)
 
 	if (dev->openings == 1
 	 && ahd_get_transaction_status(scb) == CAM_REQ_CMP
-	 && ahd_get_scsi_status(scb) != SAM_STAT_TASK_SET_FULL)
+	 && ahd_get_scsi_status(scb) != SCSI_STATUS_QUEUE_FULL)
 		dev->tag_success_count++;
 	/*
 	 * Some devices deal with temporary internal resource
@@ -1891,8 +1891,8 @@ ahd_linux_handle_scsi_status(struct ahd_softc *ahd,
 	switch (ahd_get_scsi_status(scb)) {
 	default:
 		break;
-	case SAM_STAT_CHECK_CONDITION:
-	case SAM_STAT_COMMAND_TERMINATED:
+	case SCSI_STATUS_CHECK_COND:
+	case SCSI_STATUS_CMD_TERMINATED:
 	{
 		struct scsi_cmnd *cmd;
 
@@ -1928,7 +1928,7 @@ ahd_linux_handle_scsi_status(struct ahd_softc *ahd,
 			memcpy(cmd->sense_buffer,
 			       ahd_get_sense_buf(ahd, scb)
 			       + sense_offset, sense_size);
-			set_status_byte(cmd, SAM_STAT_CHECK_CONDITION);
+			cmd->result |= (DRIVER_SENSE << 24);
 
 #ifdef AHD_DEBUG
 			if (ahd_debug & AHD_SHOW_SENSE) {
@@ -1947,7 +1947,7 @@ ahd_linux_handle_scsi_status(struct ahd_softc *ahd,
 		}
 		break;
 	}
-	case SAM_STAT_TASK_SET_FULL:
+	case SCSI_STATUS_QUEUE_FULL:
 		/*
 		 * By the time the core driver has returned this
 		 * command, all other commands that were queued
@@ -1993,7 +1993,7 @@ ahd_linux_handle_scsi_status(struct ahd_softc *ahd,
 				dev->last_queuefull_same_count = 0;
 			}
 			ahd_set_transaction_status(scb, CAM_REQUEUE_REQ);
-			ahd_set_scsi_status(scb, SAM_STAT_GOOD);
+			ahd_set_scsi_status(scb, SCSI_STATUS_OK);
 			ahd_platform_set_tags(ahd, sdev, &devinfo,
 				     (dev->flags & AHD_DEV_Q_BASIC)
 				   ? AHD_QUEUE_BASIC : AHD_QUEUE_TAGGED);
@@ -2007,7 +2007,7 @@ ahd_linux_handle_scsi_status(struct ahd_softc *ahd,
 		ahd_platform_set_tags(ahd, sdev, &devinfo,
 			     (dev->flags & AHD_DEV_Q_BASIC)
 			   ? AHD_QUEUE_BASIC : AHD_QUEUE_TAGGED);
-		ahd_set_scsi_status(scb, SAM_STAT_BUSY);
+		ahd_set_scsi_status(scb, SCSI_STATUS_BUSY);
 	}
 }
 
@@ -2018,7 +2018,6 @@ ahd_linux_queue_cmd_complete(struct ahd_softc *ahd, struct scsi_cmnd *cmd)
 	int new_status = DID_OK;
 	int do_fallback = 0;
 	int scsi_status;
-	struct scsi_sense_data *sense;
 
 	/*
 	 * Map CAM error codes into Linux Error codes.  We
@@ -2040,14 +2039,20 @@ ahd_linux_queue_cmd_complete(struct ahd_softc *ahd, struct scsi_cmnd *cmd)
 		scsi_status = ahd_cmd_get_scsi_status(cmd);
 
 		switch(scsi_status) {
-		case SAM_STAT_COMMAND_TERMINATED:
-		case SAM_STAT_CHECK_CONDITION:
-			sense = (struct scsi_sense_data *)
-				cmd->sense_buffer;
-			if (sense->extra_len >= 5 &&
-			    (sense->add_sense_code == 0x47
-			     || sense->add_sense_code == 0x48))
+		case SCSI_STATUS_CMD_TERMINATED:
+		case SCSI_STATUS_CHECK_COND:
+			if ((cmd->result >> 24) != DRIVER_SENSE) {
 				do_fallback = 1;
+			} else {
+				struct scsi_sense_data *sense;
+				
+				sense = (struct scsi_sense_data *)
+					cmd->sense_buffer;
+				if (sense->extra_len >= 5 &&
+				    (sense->add_sense_code == 0x47
+				     || sense->add_sense_code == 0x48))
+					do_fallback = 1;
+			}
 			break;
 		default:
 			break;
@@ -2135,6 +2140,7 @@ ahd_linux_queue_abort_cmd(struct scsi_cmnd *cmd)
 	u_int  saved_scbptr;
 	u_int  active_scbptr;
 	u_int  last_phase;
+	u_int  saved_scsiid;
 	u_int  cdb_byte;
 	int    retval = SUCCESS;
 	int    was_paused;
@@ -2248,7 +2254,7 @@ ahd_linux_queue_abort_cmd(struct scsi_cmnd *cmd)
 	 * passed in command.  That command is currently active on the
 	 * bus or is in the disconnected state.
 	 */
-	ahd_inb(ahd, SAVED_SCSIID);
+	saved_scsiid = ahd_inb(ahd, SAVED_SCSIID);
 	if (last_phase != P_BUSFREE
 	    && SCB_GET_TAG(pending_scb) == active_scbptr) {
 

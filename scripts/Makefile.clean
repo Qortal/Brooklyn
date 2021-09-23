@@ -8,7 +8,7 @@ src := $(obj)
 PHONY := __clean
 __clean:
 
-include $(srctree)/scripts/Kbuild.include
+include scripts/Kbuild.include
 
 # The filename Kbuild has precedence over Makefile
 kbuild-dir := $(if $(filter /%,$(src)),$(src),$(srctree)/$(src))
@@ -33,6 +33,9 @@ __clean-files	:= \
 	$(always-y) $(always-m) $(always-) \
 	$(hostprogs-always-y) $(hostprogs-always-m) $(hostprogs-always-) \
 	$(userprogs-always-y) $(userprogs-always-m) $(userprogs-always-)
+
+# deprecated
+__clean-files	+= $(always) $(hostprogs-y) $(hostprogs-m) $(hostprogs-)
 
 __clean-files   := $(filter-out $(no-clean-files), $(__clean-files))
 

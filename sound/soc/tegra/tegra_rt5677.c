@@ -175,6 +175,7 @@ static struct snd_soc_dai_link tegra_rt5677_dai = {
 
 static struct snd_soc_card snd_soc_tegra_rt5677 = {
 	.name = "tegra-rt5677",
+	.driver_name = "tegra",
 	.owner = THIS_MODULE,
 	.dai_link = &tegra_rt5677_dai,
 	.num_links = 1,
@@ -268,8 +269,8 @@ static int tegra_rt5677_probe(struct platform_device *pdev)
 
 	ret = snd_soc_register_card(card);
 	if (ret) {
-		dev_err_probe(&pdev->dev, ret,
-			      "snd_soc_register_card failed\n");
+		dev_err(&pdev->dev, "snd_soc_register_card failed (%d)\n",
+			ret);
 		goto err_put_cpu_of_node;
 	}
 

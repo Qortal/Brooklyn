@@ -49,19 +49,16 @@ enum rvin_csi_id {
 };
 
 /**
- * enum rvin_dma_state - DMA states
- * @STOPPED:   No operation in progress
- * @STARTING:  Capture starting up
- * @RUNNING:   Operation in progress have buffers
- * @STOPPING:  Stopping operation
- * @SUSPENDED: Capture is suspended
+ * STOPPED  - No operation in progress
+ * STARTING - Capture starting up
+ * RUNNING  - Operation in progress have buffers
+ * STOPPING - Stopping operation
  */
 enum rvin_dma_state {
 	STOPPED = 0,
 	STARTING,
 	RUNNING,
 	STOPPING,
-	SUSPENDED,
 };
 
 /**
@@ -71,9 +68,9 @@ enum rvin_dma_state {
  * to capture SEQ_TB/BT it's needed to capture to the same vb2
  * buffer twice so the type of buffer needs to be kept.
  *
- * @FULL: One capture fills the whole vb2 buffer
- * @HALF_TOP: One capture fills the top half of the vb2 buffer
- * @HALF_BOTTOM: One capture fills the bottom half of the vb2 buffer
+ * FULL - One capture fills the whole vb2 buffer
+ * HALF_TOP - One capture fills the top half of the vb2 buffer
+ * HALF_BOTTOM - One capture fills the bottom half of the vb2 buffer
  */
 enum rvin_buffer_type {
 	FULL,
@@ -102,7 +99,7 @@ struct rvin_video_format {
  *
  */
 struct rvin_parallel_entity {
-	struct v4l2_async_subdev *asd;
+	struct v4l2_async_subdev asd;
 	struct v4l2_subdev *subdev;
 
 	enum v4l2_mbus_type mbus_type;
@@ -192,7 +189,6 @@ struct rvin_info {
  * @state:		keeps track of operation state
  *
  * @is_csi:		flag to mark the VIN as using a CSI-2 subdevice
- * @chsel:		Cached value of the current CSI-2 channel selection
  *
  * @mbus_code:		media bus format code
  * @format:		active V4L2 pixel format
@@ -214,7 +210,7 @@ struct rvin_dev {
 	struct v4l2_ctrl_handler ctrl_handler;
 	struct v4l2_async_notifier notifier;
 
-	struct rvin_parallel_entity parallel;
+	struct rvin_parallel_entity *parallel;
 
 	struct rvin_group *group;
 	unsigned int id;
@@ -236,7 +232,6 @@ struct rvin_dev {
 	enum rvin_dma_state state;
 
 	bool is_csi;
-	unsigned int chsel;
 
 	u32 mbus_code;
 	struct v4l2_pix_format format;
@@ -249,7 +244,7 @@ struct rvin_dev {
 	unsigned int alpha;
 };
 
-#define vin_to_source(vin)		((vin)->parallel.subdev)
+#define vin_to_source(vin)		((vin)->parallel->subdev)
 
 /* Debug */
 #define vin_dbg(d, fmt, arg...)		dev_dbg(d->dev, fmt, ##arg)
@@ -281,7 +276,7 @@ struct rvin_group {
 	struct rvin_dev *vin[RCAR_VIN_NUM];
 
 	struct {
-		struct v4l2_async_subdev *asd;
+		struct fwnode_handle *fwnode;
 		struct v4l2_subdev *subdev;
 	} csi[RVIN_CSI_MAX];
 };
@@ -301,8 +296,5 @@ void rvin_crop_scale_comp(struct rvin_dev *vin);
 
 int rvin_set_channel_routing(struct rvin_dev *vin, u8 chsel);
 void rvin_set_alpha(struct rvin_dev *vin, unsigned int alpha);
-
-int rvin_start_streaming(struct rvin_dev *vin);
-void rvin_stop_streaming(struct rvin_dev *vin);
 
 #endif

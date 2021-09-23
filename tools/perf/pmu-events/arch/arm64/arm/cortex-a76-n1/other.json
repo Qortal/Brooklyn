@@ -1,5 +1,7 @@
 [
     {
-        "ArchStdEvent": "REMOTE_ACCESS",
+        "EventCode": "0x31",
+        "EventName": "REMOTE_ACCESS",
+        "BriefDescription": "Access to another socket in a multi-socket system"
     }
 ]

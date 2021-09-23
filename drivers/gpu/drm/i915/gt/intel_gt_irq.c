@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: MIT
 /*
+ * SPDX-License-Identifier: MIT
+ *
  * Copyright © 2019 Intel Corporation
  */
 
@@ -10,7 +11,6 @@
 #include "intel_breadcrumbs.h"
 #include "intel_gt.h"
 #include "intel_gt_irq.h"
-#include "intel_lrc_reg.h"
 #include "intel_uncore.h"
 #include "intel_rps.h"
 
@@ -18,6 +18,48 @@ static void guc_irq_handler(struct intel_guc *guc, u16 iir)
 {
 	if (iir & GUC_INTR_GUC2HOST)
 		intel_guc_to_host_event_handler(guc);
+}
+
+static void
+cs_irq_handler(struct intel_engine_cs *engine, u32 iir)
+{
+	bool tasklet = false;
+
+	if (unlikely(iir & GT_CS_MASTER_ERROR_INTERRUPT)) {
+		u32 eir;
+
+		/* Upper 16b are the enabling mask, rsvd for internal errors */
+		eir = ENGINE_READ(engine, RING_EIR) & GENMASK(15, 0);
+		ENGINE_TRACE(engine, "CS error: %x\n", eir);
+
+		/* Disable the error interrupt until after the reset */
+		if (likely(eir)) {
+			ENGINE_WRITE(engine, RING_EMR, ~0u);
+			ENGINE_WRITE(engine, RING_EIR, eir);
+			WRITE_ONCE(engine->execlists.error_interrupt, eir);
+			tasklet = true;
+		}
+	}
+
+	if (iir & GT_WAIT_SEMAPHORE_INTERRUPT) {
+		WRITE_ONCE(engine->execlists.yield,
+			   ENGINE_READ_FW(engine, RING_EXECLIST_STATUS_HI));
+		ENGINE_TRACE(engine, "semaphore yield: %08x\n",
+			     engine->execlists.yield);
+		if (del_timer(&engine->execlists.timer))
+			tasklet = true;
+	}
+
+	if (iir & GT_CONTEXT_SWITCH_INTERRUPT)
+		tasklet = true;
+
+	if (iir & GT_RENDER_USER_INTERRUPT) {
+		intel_engine_signal_breadcrumbs(engine);
+		tasklet |= intel_engine_needs_breadcrumb_tasklet(engine);
+	}
+
+	if (tasklet)
+		tasklet_hi_schedule(&engine->execlists.tasklet);
 }
 
 static u32
@@ -80,7 +122,7 @@ gen11_engine_irq_handler(struct intel_gt *gt, const u8 class,
 		engine = NULL;
 
 	if (likely(engine))
-		return intel_engine_cs_irq(engine, iir);
+		return cs_irq_handler(engine, iir);
 
 	WARN_ONCE(1, "unhandled engine interrupt class=0x%x, instance=0x%x\n",
 		  class, instance);
@@ -194,18 +236,14 @@ void gen11_gt_irq_reset(struct intel_gt *gt)
 
 void gen11_gt_irq_postinstall(struct intel_gt *gt)
 {
+	const u32 irqs =
+		GT_CS_MASTER_ERROR_INTERRUPT |
+		GT_RENDER_USER_INTERRUPT |
+		GT_CONTEXT_SWITCH_INTERRUPT |
+		GT_WAIT_SEMAPHORE_INTERRUPT;
 	struct intel_uncore *uncore = gt->uncore;
-	u32 irqs = GT_RENDER_USER_INTERRUPT;
-	u32 dmask;
-	u32 smask;
-
-	if (!intel_uc_wants_guc_submission(&gt->uc))
-		irqs |= GT_CS_MASTER_ERROR_INTERRUPT |
-			GT_CONTEXT_SWITCH_INTERRUPT |
-			GT_WAIT_SEMAPHORE_INTERRUPT;
-
-	dmask = irqs << 16 | irqs;
-	smask = irqs << 16;
+	const u32 dmask = irqs << 16 | irqs;
+	const u32 smask = irqs << 16;
 
 	BUILD_BUG_ON(irqs & 0xffff0000);
 
@@ -237,12 +275,9 @@ void gen11_gt_irq_postinstall(struct intel_gt *gt)
 void gen5_gt_irq_handler(struct intel_gt *gt, u32 gt_iir)
 {
 	if (gt_iir & GT_RENDER_USER_INTERRUPT)
-		intel_engine_cs_irq(gt->engine_class[RENDER_CLASS][0],
-				    gt_iir);
-
+		intel_engine_signal_breadcrumbs(gt->engine_class[RENDER_CLASS][0]);
 	if (gt_iir & ILK_BSD_USER_INTERRUPT)
-		intel_engine_cs_irq(gt->engine_class[VIDEO_DECODE_CLASS][0],
-				    gt_iir);
+		intel_engine_signal_breadcrumbs(gt->engine_class[VIDEO_DECODE_CLASS][0]);
 }
 
 static void gen7_parity_error_irq_handler(struct intel_gt *gt, u32 iir)
@@ -266,16 +301,11 @@ static void gen7_parity_error_irq_handler(struct intel_gt *gt, u32 iir)
 void gen6_gt_irq_handler(struct intel_gt *gt, u32 gt_iir)
 {
 	if (gt_iir & GT_RENDER_USER_INTERRUPT)
-		intel_engine_cs_irq(gt->engine_class[RENDER_CLASS][0],
-				    gt_iir);
-
+		intel_engine_signal_breadcrumbs(gt->engine_class[RENDER_CLASS][0]);
 	if (gt_iir & GT_BSD_USER_INTERRUPT)
-		intel_engine_cs_irq(gt->engine_class[VIDEO_DECODE_CLASS][0],
-				    gt_iir >> 12);
-
+		intel_engine_signal_breadcrumbs(gt->engine_class[VIDEO_DECODE_CLASS][0]);
 	if (gt_iir & GT_BLT_USER_INTERRUPT)
-		intel_engine_cs_irq(gt->engine_class[COPY_ENGINE_CLASS][0],
-				    gt_iir >> 22);
+		intel_engine_signal_breadcrumbs(gt->engine_class[COPY_ENGINE_CLASS][0]);
 
 	if (gt_iir & (GT_BLT_CS_ERROR_INTERRUPT |
 		      GT_BSD_CS_ERROR_INTERRUPT |
@@ -294,10 +324,10 @@ void gen8_gt_irq_handler(struct intel_gt *gt, u32 master_ctl)
 	if (master_ctl & (GEN8_GT_RCS_IRQ | GEN8_GT_BCS_IRQ)) {
 		iir = raw_reg_read(regs, GEN8_GT_IIR(0));
 		if (likely(iir)) {
-			intel_engine_cs_irq(gt->engine_class[RENDER_CLASS][0],
-					    iir >> GEN8_RCS_IRQ_SHIFT);
-			intel_engine_cs_irq(gt->engine_class[COPY_ENGINE_CLASS][0],
-					    iir >> GEN8_BCS_IRQ_SHIFT);
+			cs_irq_handler(gt->engine_class[RENDER_CLASS][0],
+				       iir >> GEN8_RCS_IRQ_SHIFT);
+			cs_irq_handler(gt->engine_class[COPY_ENGINE_CLASS][0],
+				       iir >> GEN8_BCS_IRQ_SHIFT);
 			raw_reg_write(regs, GEN8_GT_IIR(0), iir);
 		}
 	}
@@ -305,10 +335,10 @@ void gen8_gt_irq_handler(struct intel_gt *gt, u32 master_ctl)
 	if (master_ctl & (GEN8_GT_VCS0_IRQ | GEN8_GT_VCS1_IRQ)) {
 		iir = raw_reg_read(regs, GEN8_GT_IIR(1));
 		if (likely(iir)) {
-			intel_engine_cs_irq(gt->engine_class[VIDEO_DECODE_CLASS][0],
-					    iir >> GEN8_VCS0_IRQ_SHIFT);
-			intel_engine_cs_irq(gt->engine_class[VIDEO_DECODE_CLASS][1],
-					    iir >> GEN8_VCS1_IRQ_SHIFT);
+			cs_irq_handler(gt->engine_class[VIDEO_DECODE_CLASS][0],
+				       iir >> GEN8_VCS0_IRQ_SHIFT);
+			cs_irq_handler(gt->engine_class[VIDEO_DECODE_CLASS][1],
+				       iir >> GEN8_VCS1_IRQ_SHIFT);
 			raw_reg_write(regs, GEN8_GT_IIR(1), iir);
 		}
 	}
@@ -316,8 +346,8 @@ void gen8_gt_irq_handler(struct intel_gt *gt, u32 master_ctl)
 	if (master_ctl & GEN8_GT_VECS_IRQ) {
 		iir = raw_reg_read(regs, GEN8_GT_IIR(3));
 		if (likely(iir)) {
-			intel_engine_cs_irq(gt->engine_class[VIDEO_ENHANCEMENT_CLASS][0],
-					    iir >> GEN8_VECS_IRQ_SHIFT);
+			cs_irq_handler(gt->engine_class[VIDEO_ENHANCEMENT_CLASS][0],
+				       iir >> GEN8_VECS_IRQ_SHIFT);
 			raw_reg_write(regs, GEN8_GT_IIR(3), iir);
 		}
 	}
@@ -399,7 +429,7 @@ void gen5_gt_irq_reset(struct intel_gt *gt)
 	struct intel_uncore *uncore = gt->uncore;
 
 	GEN3_IRQ_RESET(uncore, GT);
-	if (GRAPHICS_VER(gt->i915) >= 6)
+	if (INTEL_GEN(gt->i915) >= 6)
 		GEN3_IRQ_RESET(uncore, GEN6_PM);
 }
 
@@ -417,14 +447,14 @@ void gen5_gt_irq_postinstall(struct intel_gt *gt)
 	}
 
 	gt_irqs |= GT_RENDER_USER_INTERRUPT;
-	if (GRAPHICS_VER(gt->i915) == 5)
+	if (IS_GEN(gt->i915, 5))
 		gt_irqs |= ILK_BSD_USER_INTERRUPT;
 	else
 		gt_irqs |= GT_BLT_USER_INTERRUPT | GT_BSD_USER_INTERRUPT;
 
 	GEN3_IRQ_INIT(uncore, GT, gt->gt_imr, gt_irqs);
 
-	if (GRAPHICS_VER(gt->i915) >= 6) {
+	if (INTEL_GEN(gt->i915) >= 6) {
 		/*
 		 * RPS interrupts will get enabled/disabled on demand when RPS
 		 * itself is enabled/disabled.

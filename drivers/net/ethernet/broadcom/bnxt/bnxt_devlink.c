@@ -30,12 +30,14 @@ bnxt_dl_flash_update(struct devlink *dl,
 		return -EPERM;
 	}
 
+	devlink_flash_update_begin_notify(dl);
 	devlink_flash_update_status_notify(dl, "Preparing to flash", NULL, 0, 0);
-	rc = bnxt_flash_package_from_fw_obj(bp->dev, params->fw, 0);
+	rc = bnxt_flash_package_from_file(bp->dev, params->file_name, 0);
 	if (!rc)
 		devlink_flash_update_status_notify(dl, "Flashing done", NULL, 0, 0);
 	else
 		devlink_flash_update_status_notify(dl, "Flashing failed", NULL, 0, 0);
+	devlink_flash_update_end_notify(dl);
 	return rc;
 }
 
@@ -44,20 +46,21 @@ static int bnxt_fw_reporter_diagnose(struct devlink_health_reporter *reporter,
 				     struct netlink_ext_ack *extack)
 {
 	struct bnxt *bp = devlink_health_reporter_priv(reporter);
-	u32 val;
+	u32 val, health_status;
 	int rc;
 
 	if (test_bit(BNXT_STATE_IN_FW_RESET, &bp->state))
 		return 0;
 
 	val = bnxt_fw_health_readl(bp, BNXT_FW_HEALTH_REG);
+	health_status = val & 0xffff;
 
-	if (BNXT_FW_IS_BOOTING(val)) {
+	if (health_status < BNXT_FW_STATUS_HEALTHY) {
 		rc = devlink_fmsg_string_pair_put(fmsg, "Description",
 						  "Not yet completed initialization");
 		if (rc)
 			return rc;
-	} else if (BNXT_FW_IS_ERR(val)) {
+	} else if (health_status > BNXT_FW_STATUS_HEALTHY) {
 		rc = devlink_fmsg_string_pair_put(fmsg, "Description",
 						  "Encountered fatal error and cannot recover");
 		if (rc)

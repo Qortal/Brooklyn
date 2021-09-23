@@ -8,7 +8,6 @@
 
 import collections
 import re
-from typing import List, Set
 
 CONFIG_IS_NOT_SET_PATTERN = r'^# CONFIG_(\w+) is not set$'
 CONFIG_PATTERN = r'^CONFIG_(\w+)=(\S+|".*")$'
@@ -31,34 +30,30 @@ class KconfigParseError(Exception):
 class Kconfig(object):
 	"""Represents defconfig or .config specified using the Kconfig language."""
 
-	def __init__(self) -> None:
-		self._entries = []  # type: List[KconfigEntry]
+	def __init__(self):
+		self._entries = []
 
-	def entries(self) -> Set[KconfigEntry]:
+	def entries(self):
 		return set(self._entries)
 
 	def add_entry(self, entry: KconfigEntry) -> None:
 		self._entries.append(entry)
 
 	def is_subset_of(self, other: 'Kconfig') -> bool:
-		other_dict = {e.name: e.value for e in other.entries()}
 		for a in self.entries():
-			b = other_dict.get(a.name)
-			if b is None:
-				if a.value == 'n':
+			found = False
+			for b in other.entries():
+				if a.name != b.name:
 					continue
-				return False
-			elif a.value != b:
+				if a.value != b.value:
+					return False
+				found = True
+			if a.value != 'n' and found == False:
 				return False
 		return True
 
-	def merge_in_entries(self, other: 'Kconfig') -> None:
-		if other.is_subset_of(self):
-			return
-		self._entries = list(self.entries().union(other.entries()))
-
 	def write_to_file(self, path: str) -> None:
-		with open(path, 'a+') as f:
+		with open(path, 'w') as f:
 			for entry in self.entries():
 				f.write(str(entry) + '\n')
 

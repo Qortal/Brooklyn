@@ -1,11 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
+ * SPDX-License-Identifier: GPL-2.0
+ *
  * Copyright © 2018 Intel Corporation
  */
 
 #include <linux/sort.h>
 
-#include "intel_gpu_commands.h"
 #include "intel_gt_pm.h"
 #include "intel_rps.h"
 
@@ -41,9 +41,6 @@ static int perf_end(struct intel_gt *gt)
 
 static int write_timestamp(struct i915_request *rq, int slot)
 {
-	struct intel_timeline *tl =
-		rcu_dereference_protected(rq->timeline,
-					  !i915_request_signaled(rq));
 	u32 cmd;
 	u32 *cs;
 
@@ -52,11 +49,11 @@ static int write_timestamp(struct i915_request *rq, int slot)
 		return PTR_ERR(cs);
 
 	cmd = MI_STORE_REGISTER_MEM | MI_USE_GGTT;
-	if (GRAPHICS_VER(rq->engine->i915) >= 8)
+	if (INTEL_GEN(rq->engine->i915) >= 8)
 		cmd++;
 	*cs++ = cmd;
 	*cs++ = i915_mmio_reg_offset(RING_TIMESTAMP(rq->engine->mmio_base));
-	*cs++ = tl->hwsp_offset + slot * sizeof(u32);
+	*cs++ = i915_request_timeline(rq)->hwsp_offset + slot * sizeof(u32);
 	*cs++ = 0;
 
 	intel_ring_advance(rq, cs);
@@ -75,7 +72,7 @@ static struct i915_vma *create_empty_batch(struct intel_context *ce)
 	if (IS_ERR(obj))
 		return ERR_CAST(obj);
 
-	cs = i915_gem_object_pin_map_unlocked(obj, I915_MAP_WB);
+	cs = i915_gem_object_pin_map(obj, I915_MAP_WB);
 	if (IS_ERR(cs)) {
 		err = PTR_ERR(cs);
 		goto err_put;
@@ -125,7 +122,7 @@ static int perf_mi_bb_start(void *arg)
 	enum intel_engine_id id;
 	int err = 0;
 
-	if (GRAPHICS_VER(gt->i915) < 7) /* for per-engine CS_TIMESTAMP */
+	if (INTEL_GEN(gt->i915) < 7) /* for per-engine CS_TIMESTAMP */
 		return 0;
 
 	perf_begin(gt);
@@ -211,7 +208,7 @@ static struct i915_vma *create_nop_batch(struct intel_context *ce)
 	if (IS_ERR(obj))
 		return ERR_CAST(obj);
 
-	cs = i915_gem_object_pin_map_unlocked(obj, I915_MAP_WB);
+	cs = i915_gem_object_pin_map(obj, I915_MAP_WB);
 	if (IS_ERR(cs)) {
 		err = PTR_ERR(cs);
 		goto err_put;
@@ -249,7 +246,7 @@ static int perf_mi_noop(void *arg)
 	enum intel_engine_id id;
 	int err = 0;
 
-	if (GRAPHICS_VER(gt->i915) < 7) /* for per-engine CS_TIMESTAMP */
+	if (INTEL_GEN(gt->i915) < 7) /* for per-engine CS_TIMESTAMP */
 		return 0;
 
 	perf_begin(gt);
@@ -376,34 +373,34 @@ static int intel_mmio_bases_check(void *arg)
 		u8 prev = U8_MAX;
 
 		for (j = 0; j < MAX_MMIO_BASES; j++) {
-			u8 ver = info->mmio_bases[j].graphics_ver;
+			u8 gen = info->mmio_bases[j].gen;
 			u32 base = info->mmio_bases[j].base;
 
-			if (ver >= prev) {
-				pr_err("%s(%s, class:%d, instance:%d): mmio base for graphics ver %u is before the one for ver %u\n",
+			if (gen >= prev) {
+				pr_err("%s(%s, class:%d, instance:%d): mmio base for gen %x is before the one for gen %x\n",
 				       __func__,
 				       intel_engine_class_repr(info->class),
 				       info->class, info->instance,
-				       prev, ver);
+				       prev, gen);
 				return -EINVAL;
 			}
 
-			if (ver == 0)
+			if (gen == 0)
 				break;
 
 			if (!base) {
-				pr_err("%s(%s, class:%d, instance:%d): invalid mmio base (%x) for graphics ver %u at entry %u\n",
+				pr_err("%s(%s, class:%d, instance:%d): invalid mmio base (%x) for gen %x at entry %u\n",
 				       __func__,
 				       intel_engine_class_repr(info->class),
 				       info->class, info->instance,
-				       base, ver, j);
+				       base, gen, j);
 				return -EINVAL;
 			}
 
-			prev = ver;
+			prev = gen;
 		}
 
-		pr_debug("%s: min graphics version supported for %s%d is %u\n",
+		pr_debug("%s: min gen supported for %s%d is %d\n",
 			 __func__,
 			 intel_engine_class_repr(info->class),
 			 info->instance,

@@ -51,8 +51,7 @@ nfp-objs += \
 	    flower/metadata.o \
 	    flower/offload.o \
 	    flower/tunnel_conf.o \
-	    flower/qos_conf.o \
-	    flower/conntrack.o
+	    flower/qos_conf.o
 endif
 
 ifeq ($(CONFIG_BPF_SYSCALL),y)

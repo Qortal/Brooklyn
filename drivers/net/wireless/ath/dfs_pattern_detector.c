@@ -23,7 +23,7 @@
 
 /**
  * struct radar_types - contains array of patterns defined for one DFS domain
- * @region: regulatory DFS region
+ * @domain: DFS regulatory domain
  * @num_radar_types: number of radar types to follow
  * @radar_types: radar types array
  */
@@ -133,9 +133,8 @@ static const struct radar_types *dfs_domains[] = {
 
 /**
  * get_dfs_domain_radar_types() - get radar types for a given DFS domain
- * @region: regulatory DFS region
- *
- * Return value: radar_types ptr on success, NULL if DFS domain is not supported
+ * @param domain DFS domain
+ * @return radar_types ptr on success, NULL if DFS domain is not supported
  */
 static const struct radar_types *
 get_dfs_domain_radar_types(enum nl80211_dfs_regions region)
@@ -228,10 +227,9 @@ fail:
 
 /**
  * channel_detector_get() - get channel detector for given frequency
- * @dpd: DPD instance pointer
- * @freq: freq frequency in MHz
- *
- * Return value: pointer to channel detector on success, NULL otherwise
+ * @param dpd instance pointer
+ * @param freq frequency in MHz
+ * @return pointer to channel detector on success, NULL otherwise
  *
  * Return existing channel detector for the given frequency or return a
  * newly create one.

@@ -207,11 +207,19 @@ static const struct hdmi_phy_features *hdmi_phy_get_features(void)
 
 int hdmi_phy_init(struct platform_device *pdev, struct hdmi_phy_data *phy)
 {
+	struct resource *res;
+
 	phy_feat = hdmi_phy_get_features();
 	if (!phy_feat)
 		return -ENODEV;
 
-	phy->base = devm_platform_ioremap_resource_byname(pdev, "phy");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "phy");
+	if (!res) {
+		DSSERR("can't get PHY mem resource\n");
+		return -EINVAL;
+	}
+
+	phy->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(phy->base)) {
 		DSSERR("can't ioremap TX PHY\n");
 		return PTR_ERR(phy->base);

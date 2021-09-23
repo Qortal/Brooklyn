@@ -25,7 +25,6 @@
 #include <linux/user_namespace.h>
 #include <linux/memfd.h>
 #include <linux/compat.h>
-#include <linux/mount.h>
 
 #include <linux/poll.h>
 #include <asm/siginfo.h>
@@ -47,7 +46,7 @@ static int setfl(int fd, struct file * filp, unsigned long arg)
 
 	/* O_NOATIME can only be set by the owner or superuser */
 	if ((arg & O_NOATIME) && !(filp->f_flags & O_NOATIME))
-		if (!inode_owner_or_capable(file_mnt_user_ns(filp), inode))
+		if (!inode_owner_or_capable(inode))
 			return -EPERM;
 
 	/* required for strict SunOS emulation */
@@ -149,15 +148,11 @@ void f_delown(struct file *filp)
 
 pid_t f_getown(struct file *filp)
 {
-	pid_t pid = 0;
+	pid_t pid;
 	read_lock(&filp->f_owner.lock);
-	rcu_read_lock();
-	if (pid_task(filp->f_owner.pid, filp->f_owner.pid_type)) {
-		pid = pid_vnr(filp->f_owner.pid);
-		if (filp->f_owner.pid_type == PIDTYPE_PGID)
-			pid = -pid;
-	}
-	rcu_read_unlock();
+	pid = pid_vnr(filp->f_owner.pid);
+	if (filp->f_owner.pid_type == PIDTYPE_PGID)
+		pid = -pid;
 	read_unlock(&filp->f_owner.lock);
 	return pid;
 }
@@ -205,14 +200,11 @@ static int f_setown_ex(struct file *filp, unsigned long arg)
 static int f_getown_ex(struct file *filp, unsigned long arg)
 {
 	struct f_owner_ex __user *owner_p = (void __user *)arg;
-	struct f_owner_ex owner = {};
+	struct f_owner_ex owner;
 	int ret = 0;
 
 	read_lock(&filp->f_owner.lock);
-	rcu_read_lock();
-	if (pid_task(filp->f_owner.pid, filp->f_owner.pid_type))
-		owner.pid = pid_vnr(filp->f_owner.pid);
-	rcu_read_unlock();
+	owner.pid = pid_vnr(filp->f_owner.pid);
 	switch (filp->f_owner.pid_type) {
 	case PIDTYPE_PID:
 		owner.type = F_OWNER_TID;

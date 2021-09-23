@@ -2356,6 +2356,8 @@ static int gemini_ethernet_port_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct gemini_ethernet *geth;
 	struct net_device *netdev;
+	struct resource *gmacres;
+	struct resource *dmares;
 	struct device *parent;
 	unsigned int id;
 	int irq;
@@ -2388,18 +2390,24 @@ static int gemini_ethernet_port_probe(struct platform_device *pdev)
 	port->msg_enable = netif_msg_init(debug, DEFAULT_MSG_ENABLE);
 
 	/* DMA memory */
-	port->dma_base = devm_platform_get_and_ioremap_resource(pdev, 0, NULL);
-	if (IS_ERR(port->dma_base)) {
-		dev_err(dev, "get DMA address failed\n");
-		return PTR_ERR(port->dma_base);
+	dmares = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!dmares) {
+		dev_err(dev, "no DMA resource\n");
+		return -ENODEV;
 	}
+	port->dma_base = devm_ioremap_resource(dev, dmares);
+	if (IS_ERR(port->dma_base))
+		return PTR_ERR(port->dma_base);
 
 	/* GMAC config memory */
-	port->gmac_base = devm_platform_get_and_ioremap_resource(pdev, 1, NULL);
-	if (IS_ERR(port->gmac_base)) {
-		dev_err(dev, "get GMAC address failed\n");
-		return PTR_ERR(port->gmac_base);
+	gmacres = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	if (!gmacres) {
+		dev_err(dev, "no GMAC resource\n");
+		return -ENODEV;
 	}
+	port->gmac_base = devm_ioremap_resource(dev, gmacres);
+	if (IS_ERR(port->gmac_base))
+		return PTR_ERR(port->gmac_base);
 
 	/* Interrupt */
 	irq = platform_get_irq(pdev, 0);
@@ -2494,6 +2502,10 @@ static int gemini_ethernet_port_probe(struct platform_device *pdev)
 	if (ret)
 		goto unprepare;
 
+	netdev_info(netdev,
+		    "irq %d, DMA @ 0x%pap, GMAC @ 0x%pap\n",
+		    port->irq, &dmares->start,
+		    &gmacres->start);
 	return 0;
 
 unprepare:
@@ -2532,13 +2544,17 @@ static int gemini_ethernet_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct gemini_ethernet *geth;
 	unsigned int retry = 5;
+	struct resource *res;
 	u32 val;
 
 	/* Global registers */
 	geth = devm_kzalloc(dev, sizeof(*geth), GFP_KERNEL);
 	if (!geth)
 		return -ENOMEM;
-	geth->base = devm_platform_get_and_ioremap_resource(pdev, 0, NULL);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!res)
+		return -ENODEV;
+	geth->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(geth->base))
 		return PTR_ERR(geth->base);
 	geth->dev = dev;

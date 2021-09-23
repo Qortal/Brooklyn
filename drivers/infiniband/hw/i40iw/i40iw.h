@@ -274,6 +274,7 @@ struct i40iw_device {
 	u8 max_sge;
 	u8 iw_status;
 	u8 send_term_ok;
+	bool push_mode;		/* Initialized from parameter passed to driver */
 
 	/* x710 specific */
 	struct mutex pbl_mutex;
@@ -502,6 +503,15 @@ static inline void i40iw_free_resource(struct i40iw_device *iwdev,
 	spin_lock_irqsave(&iwdev->resource_lock, flags);
 	clear_bit(resource_num, resource_array);
 	spin_unlock_irqrestore(&iwdev->resource_lock, flags);
+}
+
+/**
+ * to_iwhdl - Get the handler from the device pointer
+ * @iwdev: device pointer
+ **/
+static inline struct i40iw_handler *to_iwhdl(struct i40iw_device *iw_dev)
+{
+	return container_of(iw_dev, struct i40iw_handler, device);
 }
 
 struct i40iw_handler *i40iw_find_netdev(struct net_device *netdev);

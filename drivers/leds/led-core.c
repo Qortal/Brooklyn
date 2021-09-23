@@ -39,7 +39,8 @@ const char * const led_colors[LED_COLOR_ID_MAX] = {
 };
 EXPORT_SYMBOL_GPL(led_colors);
 
-static int __led_set_brightness(struct led_classdev *led_cdev, unsigned int value)
+static int __led_set_brightness(struct led_classdev *led_cdev,
+				enum led_brightness value)
 {
 	if (!led_cdev->brightness_set)
 		return -ENOTSUPP;
@@ -49,7 +50,8 @@ static int __led_set_brightness(struct led_classdev *led_cdev, unsigned int valu
 	return 0;
 }
 
-static int __led_set_brightness_blocking(struct led_classdev *led_cdev, unsigned int value)
+static int __led_set_brightness_blocking(struct led_classdev *led_cdev,
+					 enum led_brightness value)
 {
 	if (!led_cdev->brightness_set_blocking)
 		return -ENOTSUPP;
@@ -238,7 +240,8 @@ void led_stop_software_blink(struct led_classdev *led_cdev)
 }
 EXPORT_SYMBOL_GPL(led_stop_software_blink);
 
-void led_set_brightness(struct led_classdev *led_cdev, unsigned int brightness)
+void led_set_brightness(struct led_classdev *led_cdev,
+			enum led_brightness brightness)
 {
 	/*
 	 * If software blink is active, delay brightness setting
@@ -250,7 +253,7 @@ void led_set_brightness(struct led_classdev *led_cdev, unsigned int brightness)
 		 * work queue task to avoid problems in case we are called
 		 * from hard irq context.
 		 */
-		if (!brightness) {
+		if (brightness == LED_OFF) {
 			set_bit(LED_BLINK_DISABLE, &led_cdev->work_flags);
 			schedule_work(&led_cdev->set_brightness_work);
 		} else {
@@ -265,7 +268,8 @@ void led_set_brightness(struct led_classdev *led_cdev, unsigned int brightness)
 }
 EXPORT_SYMBOL_GPL(led_set_brightness);
 
-void led_set_brightness_nopm(struct led_classdev *led_cdev, unsigned int value)
+void led_set_brightness_nopm(struct led_classdev *led_cdev,
+			      enum led_brightness value)
 {
 	/* Use brightness_set op if available, it is guaranteed not to sleep */
 	if (!__led_set_brightness(led_cdev, value))
@@ -277,7 +281,8 @@ void led_set_brightness_nopm(struct led_classdev *led_cdev, unsigned int value)
 }
 EXPORT_SYMBOL_GPL(led_set_brightness_nopm);
 
-void led_set_brightness_nosleep(struct led_classdev *led_cdev, unsigned int value)
+void led_set_brightness_nosleep(struct led_classdev *led_cdev,
+				enum led_brightness value)
 {
 	led_cdev->brightness = min(value, led_cdev->max_brightness);
 
@@ -288,7 +293,8 @@ void led_set_brightness_nosleep(struct led_classdev *led_cdev, unsigned int valu
 }
 EXPORT_SYMBOL_GPL(led_set_brightness_nosleep);
 
-int led_set_brightness_sync(struct led_classdev *led_cdev, unsigned int value)
+int led_set_brightness_sync(struct led_classdev *led_cdev,
+			    enum led_brightness value)
 {
 	if (led_cdev->blink_delay_on || led_cdev->blink_delay_off)
 		return -EBUSY;

@@ -45,60 +45,58 @@
 		regulator-boot-on;
 	};
 
-	led-controller-1 {
+	leds {
 		compatible = "gpio-leds";
-
-		led-1 {
+		debug0 {
 			label = "omap4:green:debug0";
 			gpios = <&gpio2 29 GPIO_ACTIVE_HIGH>; /* 61 */
 		};
 
-		led-2 {
+		debug1 {
 			label = "omap4:green:debug1";
 			gpios = <&gpio1 30 GPIO_ACTIVE_HIGH>; /* 30 */
 		};
 
-		led-3 {
+		debug2 {
 			label = "omap4:green:debug2";
 			gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>; /* 7 */
 		};
 
-		led-4 {
+		debug3 {
 			label = "omap4:green:debug3";
 			gpios = <&gpio1 8 GPIO_ACTIVE_HIGH>; /* 8 */
 		};
 
-		led-5 {
+		debug4 {
 			label = "omap4:green:debug4";
 			gpios = <&gpio2 18 GPIO_ACTIVE_HIGH>; /* 50 */
 		};
 
-		led-6 {
+		user1 {
 			label = "omap4:blue:user";
 			gpios = <&gpio6 9 GPIO_ACTIVE_HIGH>; /* 169 */
 		};
 
-		led-7 {
+		user2 {
 			label = "omap4:red:user";
 			gpios = <&gpio6 10 GPIO_ACTIVE_HIGH>; /* 170 */
 		};
 
-		led-8 {
+		user3 {
 			label = "omap4:green:user";
 			gpios = <&gpio5 11 GPIO_ACTIVE_HIGH>; /* 139 */
 		};
 	};
 
-	led-controller-2 {
+	pwmleds {
 		compatible = "pwm-leds";
-
-		led-9 {
+		kpad {
 			label = "omap4::keypad";
 			pwms = <&twl_pwm 0 7812500>;
 			max-brightness = <127>;
 		};
 
-		led-10 {
+		charging {
 			label = "omap4:green:chrg";
 			pwms = <&twl_pwmled 0 7812500>;
 			max-brightness = <255>;

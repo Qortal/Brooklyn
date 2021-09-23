@@ -101,7 +101,7 @@ int ap_recv(ap_qid_t qid, unsigned long long *psmid, void *msg, size_t length)
 
 	if (msg == NULL)
 		return -EINVAL;
-	status = ap_dqap(qid, psmid, msg, length, NULL, NULL);
+	status = ap_dqap(qid, psmid, msg, length);
 	switch (status.response_code) {
 	case AP_RESPONSE_NORMAL:
 		return 0;
@@ -136,24 +136,9 @@ static struct ap_queue_status ap_sm_recv(struct ap_queue *aq)
 	struct ap_queue_status status;
 	struct ap_message *ap_msg;
 	bool found = false;
-	size_t reslen;
-	unsigned long resgr0 = 0;
-	int parts = 0;
 
-	/*
-	 * DQAP loop until response code and resgr0 indicate that
-	 * the msg is totally received. As we use the very same buffer
-	 * the msg is overwritten with each invocation. That's intended
-	 * and the receiver of the msg is informed with a msg rc code
-	 * of EMSGSIZE in such a case.
-	 */
-	do {
-		status = ap_dqap(aq->qid, &aq->reply->psmid,
-				 aq->reply->msg, aq->reply->bufsize,
-				 &reslen, &resgr0);
-		parts++;
-	} while (status.response_code == 0xFF && resgr0 != 0);
-
+	status = ap_dqap(aq->qid, &aq->reply->psmid,
+			 aq->reply->msg, aq->reply->len);
 	switch (status.response_code) {
 	case AP_RESPONSE_NORMAL:
 		aq->queue_count = max_t(int, 0, aq->queue_count - 1);
@@ -165,12 +150,7 @@ static struct ap_queue_status ap_sm_recv(struct ap_queue *aq)
 				continue;
 			list_del_init(&ap_msg->list);
 			aq->pendingq_count--;
-			if (parts > 1) {
-				ap_msg->rc = -EMSGSIZE;
-				ap_msg->receive(aq, ap_msg, NULL);
-			} else {
-				ap_msg->receive(aq, ap_msg, aq->reply);
-			}
+			ap_msg->receive(aq, ap_msg, aq->reply);
 			found = true;
 			break;
 		}

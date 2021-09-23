@@ -73,7 +73,6 @@ static sector_t _adfs_bmap(struct address_space *mapping, sector_t block)
 }
 
 static const struct address_space_operations adfs_aops = {
-	.set_page_dirty	= __set_page_dirty_buffers,
 	.readpage	= adfs_readpage,
 	.writepage	= adfs_writepage,
 	.write_begin	= adfs_write_begin,
@@ -293,15 +292,14 @@ out:
  * later.
  */
 int
-adfs_notify_change(struct user_namespace *mnt_userns, struct dentry *dentry,
-		   struct iattr *attr)
+adfs_notify_change(struct dentry *dentry, struct iattr *attr)
 {
 	struct inode *inode = d_inode(dentry);
 	struct super_block *sb = inode->i_sb;
 	unsigned int ia_valid = attr->ia_valid;
 	int error;
 	
-	error = setattr_prepare(&init_user_ns, dentry, attr);
+	error = setattr_prepare(dentry, attr);
 
 	/*
 	 * we can't change the UID or GID of any file -

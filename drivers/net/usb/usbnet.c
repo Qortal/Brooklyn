@@ -74,23 +74,6 @@ MODULE_PARM_DESC (msg_level, "Override default message level");
 
 /*-------------------------------------------------------------------------*/
 
-static const char * const usbnet_event_names[] = {
-	[EVENT_TX_HALT]		   = "EVENT_TX_HALT",
-	[EVENT_RX_HALT]		   = "EVENT_RX_HALT",
-	[EVENT_RX_MEMORY]	   = "EVENT_RX_MEMORY",
-	[EVENT_STS_SPLIT]	   = "EVENT_STS_SPLIT",
-	[EVENT_LINK_RESET]	   = "EVENT_LINK_RESET",
-	[EVENT_RX_PAUSED]	   = "EVENT_RX_PAUSED",
-	[EVENT_DEV_ASLEEP]	   = "EVENT_DEV_ASLEEP",
-	[EVENT_DEV_OPEN]	   = "EVENT_DEV_OPEN",
-	[EVENT_DEVICE_REPORT_IDLE] = "EVENT_DEVICE_REPORT_IDLE",
-	[EVENT_NO_RUNTIME_PM]	   = "EVENT_NO_RUNTIME_PM",
-	[EVENT_RX_KILL]		   = "EVENT_RX_KILL",
-	[EVENT_LINK_CHANGE]	   = "EVENT_LINK_CHANGE",
-	[EVENT_SET_RX_MODE]	   = "EVENT_SET_RX_MODE",
-	[EVENT_NO_IP_ALIGN]	   = "EVENT_NO_IP_ALIGN",
-};
-
 /* handles CDC Ethernet and many other network "bulk data" interfaces */
 int usbnet_get_endpoints(struct usbnet *dev, struct usb_interface *intf)
 {
@@ -321,7 +304,7 @@ static void __usbnet_status_stop_force(struct usbnet *dev)
  */
 void usbnet_skb_return (struct usbnet *dev, struct sk_buff *skb)
 {
-	struct pcpu_sw_netstats *stats64 = this_cpu_ptr(dev->net->tstats);
+	struct pcpu_sw_netstats *stats64 = this_cpu_ptr(dev->stats64);
 	unsigned long flags;
 	int	status;
 
@@ -469,9 +452,9 @@ void usbnet_defer_kevent (struct usbnet *dev, int work)
 {
 	set_bit (work, &dev->flags);
 	if (!schedule_work (&dev->kevent))
-		netdev_dbg(dev->net, "kevent %s may have been dropped\n", usbnet_event_names[work]);
+		netdev_dbg(dev->net, "kevent %d may have been dropped\n", work);
 	else
-		netdev_dbg(dev->net, "kevent %s scheduled\n", usbnet_event_names[work]);
+		netdev_dbg(dev->net, "kevent %d scheduled\n", work);
 }
 EXPORT_SYMBOL_GPL(usbnet_defer_kevent);
 
@@ -904,7 +887,7 @@ int usbnet_open (struct net_device *net)
 
 	// insist peer be connected
 	if (info->check_connect && (retval = info->check_connect (dev)) < 0) {
-		netif_err(dev, ifup, dev->net, "can't open; %d\n", retval);
+		netif_dbg(dev, ifup, dev->net, "can't open; %d\n", retval);
 		goto done;
 	}
 
@@ -961,10 +944,7 @@ EXPORT_SYMBOL_GPL(usbnet_open);
  * they'll probably want to use this base set.
  */
 
-/* These methods are written on the assumption that the device
- * uses MII
- */
-int usbnet_get_link_ksettings_mii(struct net_device *net,
+int usbnet_get_link_ksettings(struct net_device *net,
 			      struct ethtool_link_ksettings *cmd)
 {
 	struct usbnet *dev = netdev_priv(net);
@@ -976,30 +956,9 @@ int usbnet_get_link_ksettings_mii(struct net_device *net,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(usbnet_get_link_ksettings_mii);
+EXPORT_SYMBOL_GPL(usbnet_get_link_ksettings);
 
-int usbnet_get_link_ksettings_internal(struct net_device *net,
-					struct ethtool_link_ksettings *cmd)
-{
-	struct usbnet *dev = netdev_priv(net);
-
-	/* the assumption that speed is equal on tx and rx
-	 * is deeply engrained into the networking layer.
-	 * For wireless stuff it is not true.
-	 * We assume that rx_speed matters more.
-	 */
-	if (dev->rx_speed != SPEED_UNSET)
-		cmd->base.speed = dev->rx_speed / 1000000;
-	else if (dev->tx_speed != SPEED_UNSET)
-		cmd->base.speed = dev->tx_speed / 1000000;
-	else
-		cmd->base.speed = SPEED_UNKNOWN;
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(usbnet_get_link_ksettings_internal);
-
-int usbnet_set_link_ksettings_mii(struct net_device *net,
+int usbnet_set_link_ksettings(struct net_device *net,
 			      const struct ethtool_link_ksettings *cmd)
 {
 	struct usbnet *dev = netdev_priv(net);
@@ -1019,7 +978,16 @@ int usbnet_set_link_ksettings_mii(struct net_device *net,
 
 	return retval;
 }
-EXPORT_SYMBOL_GPL(usbnet_set_link_ksettings_mii);
+EXPORT_SYMBOL_GPL(usbnet_set_link_ksettings);
+
+void usbnet_get_stats64(struct net_device *net, struct rtnl_link_stats64 *stats)
+{
+	struct usbnet *dev = netdev_priv(net);
+
+	netdev_stats_to_stats64(stats, &net->stats);
+	dev_fetch_sw_netstats(stats, dev->stats64);
+}
+EXPORT_SYMBOL_GPL(usbnet_get_stats64);
 
 u32 usbnet_get_link (struct net_device *net)
 {
@@ -1084,8 +1052,8 @@ static const struct ethtool_ops usbnet_ethtool_ops = {
 	.get_msglevel		= usbnet_get_msglevel,
 	.set_msglevel		= usbnet_set_msglevel,
 	.get_ts_info		= ethtool_op_get_ts_info,
-	.get_link_ksettings	= usbnet_get_link_ksettings_mii,
-	.set_link_ksettings	= usbnet_set_link_ksettings_mii,
+	.get_link_ksettings	= usbnet_get_link_ksettings,
+	.set_link_ksettings	= usbnet_set_link_ksettings,
 };
 
 /*-------------------------------------------------------------------------*/
@@ -1252,7 +1220,7 @@ static void tx_complete (struct urb *urb)
 	struct usbnet		*dev = entry->dev;
 
 	if (urb->status == 0) {
-		struct pcpu_sw_netstats *stats64 = this_cpu_ptr(dev->net->tstats);
+		struct pcpu_sw_netstats *stats64 = this_cpu_ptr(dev->stats64);
 		unsigned long flags;
 
 		flags = u64_stats_update_begin_irqsave(&stats64->syncp);
@@ -1580,11 +1548,11 @@ static void usbnet_bh (struct timer_list *t)
 	}
 }
 
-static void usbnet_bh_tasklet(struct tasklet_struct *t)
+static void usbnet_bh_tasklet(unsigned long data)
 {
-	struct usbnet *dev = from_tasklet(dev, t, bh);
+	struct timer_list *t = (struct timer_list *)data;
 
-	usbnet_bh(&dev->delay);
+	usbnet_bh(t);
 }
 
 
@@ -1614,9 +1582,6 @@ void usbnet_disconnect (struct usb_interface *intf)
 		   xdev->bus->bus_name, xdev->devpath,
 		   dev->driver_info->description);
 
-	if (dev->driver_info->unbind)
-		dev->driver_info->unbind(dev, intf);
-
 	net = dev->net;
 	unregister_netdev (net);
 
@@ -1624,11 +1589,14 @@ void usbnet_disconnect (struct usb_interface *intf)
 
 	usb_scuttle_anchored_urbs(&dev->deferred);
 
+	if (dev->driver_info->unbind)
+		dev->driver_info->unbind (dev, intf);
+
 	usb_kill_urb(dev->interrupt);
 	usb_free_urb(dev->interrupt);
 	kfree(dev->padding_pkt);
 
-	free_percpu(net->tstats);
+	free_percpu(dev->stats64);
 	free_netdev(net);
 }
 EXPORT_SYMBOL_GPL(usbnet_disconnect);
@@ -1640,7 +1608,7 @@ static const struct net_device_ops usbnet_netdev_ops = {
 	.ndo_tx_timeout		= usbnet_tx_timeout,
 	.ndo_set_rx_mode	= usbnet_set_rx_mode,
 	.ndo_change_mtu		= usbnet_change_mtu,
-	.ndo_get_stats64	= dev_get_tstats64,
+	.ndo_get_stats64	= usbnet_get_stats64,
 	.ndo_set_mac_address 	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
 };
@@ -1702,11 +1670,9 @@ usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 	dev->intf = udev;
 	dev->driver_info = info;
 	dev->driver_name = name;
-	dev->rx_speed = SPEED_UNSET;
-	dev->tx_speed = SPEED_UNSET;
 
-	net->tstats = netdev_alloc_pcpu_stats(struct pcpu_sw_netstats);
-	if (!net->tstats)
+	dev->stats64 = netdev_alloc_pcpu_stats(struct pcpu_sw_netstats);
+	if (!dev->stats64)
 		goto out0;
 
 	dev->msg_enable = netif_msg_init (msg_level, NETIF_MSG_DRV
@@ -1716,7 +1682,8 @@ usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 	skb_queue_head_init (&dev->txq);
 	skb_queue_head_init (&dev->done);
 	skb_queue_head_init(&dev->rxq_pause);
-	tasklet_setup(&dev->bh, usbnet_bh_tasklet);
+	dev->bh.func = usbnet_bh_tasklet;
+	dev->bh.data = (unsigned long)&dev->delay;
 	INIT_WORK (&dev->kevent, usbnet_deferred_kevent);
 	init_usb_anchor(&dev->deferred);
 	timer_setup(&dev->delay, usbnet_bh, 0);
@@ -1845,7 +1812,7 @@ out1:
 	 */
 	cancel_work_sync(&dev->kevent);
 	del_timer_sync(&dev->delay);
-	free_percpu(net->tstats);
+	free_percpu(dev->stats64);
 out0:
 	free_netdev(net);
 out:
@@ -2006,12 +1973,12 @@ static int __usbnet_read_cmd(struct usbnet *dev, u8 cmd, u8 reqtype,
 			      cmd, reqtype, value, index, buf, size,
 			      USB_CTRL_GET_TIMEOUT);
 	if (err > 0 && err <= size) {
-		if (data)
-			memcpy(data, buf, err);
-		else
-			netdev_dbg(dev->net,
-				   "Huh? Data requested but thrown away.\n");
-	}
+        if (data)
+            memcpy(data, buf, err);
+        else
+            netdev_dbg(dev->net,
+                "Huh? Data requested but thrown away.\n");
+    }
 	kfree(buf);
 out:
 	return err;

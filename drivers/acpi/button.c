@@ -21,6 +21,8 @@
 #include <linux/dmi.h>
 #include <acpi/button.h>
 
+#define PREFIX "ACPI: "
+
 #define ACPI_BUTTON_CLASS		"button"
 #define ACPI_BUTTON_FILE_STATE		"state"
 #define ACPI_BUTTON_TYPE_UNKNOWN	0x00
@@ -51,6 +53,9 @@ static const char * const lid_init_state_str[] = {
 	[ACPI_BUTTON_LID_INIT_METHOD]		= "method",
 	[ACPI_BUTTON_LID_INIT_DISABLED]		= "disabled",
 };
+
+#define _COMPONENT		ACPI_BUTTON_COMPONENT
+ACPI_MODULE_NAME("button");
 
 MODULE_AUTHOR("Paul Diefenbaugh");
 MODULE_DESCRIPTION("ACPI Button Driver");
@@ -156,7 +161,10 @@ static unsigned long lid_report_interval __read_mostly = 500;
 module_param(lid_report_interval, ulong, 0644);
 MODULE_PARM_DESC(lid_report_interval, "Interval (ms) between lid key events");
 
-/* FS Interface (/proc) */
+/* --------------------------------------------------------------------------
+                              FS Interface (/proc)
+   -------------------------------------------------------------------------- */
+
 static struct proc_dir_entry *acpi_button_dir;
 static struct proc_dir_entry *acpi_lid_dir;
 
@@ -277,7 +285,7 @@ static int acpi_button_add_fs(struct acpi_device *device)
 		return 0;
 
 	if (acpi_button_dir || acpi_lid_dir) {
-		pr_info("More than one Lid device found!\n");
+		printk(KERN_ERR PREFIX "More than one Lid device found!\n");
 		return -EEXIST;
 	}
 
@@ -345,7 +353,9 @@ static int acpi_button_remove_fs(struct acpi_device *device)
 	return 0;
 }
 
-/* Driver Interface */
+/* --------------------------------------------------------------------------
+                                Driver Interface
+   -------------------------------------------------------------------------- */
 int acpi_lid_open(void)
 {
 	if (!lid_device)
@@ -424,8 +434,8 @@ static void acpi_button_notify(struct acpi_device *device, u32 event)
 		}
 		break;
 	default:
-		acpi_handle_debug(device->handle, "Unsupported event [0x%x]\n",
-				  event);
+		ACPI_DEBUG_PRINT((ACPI_DB_INFO,
+				  "Unsupported event [0x%x]\n", event));
 		break;
 	}
 }
@@ -513,7 +523,7 @@ static int acpi_button_add(struct acpi_device *device)
 			ACPI_BUTTON_CLASS, ACPI_BUTTON_SUBCLASS_LID);
 		input->open = acpi_lid_input_open;
 	} else {
-		pr_info("Unsupported hid [%s]\n", hid);
+		printk(KERN_ERR PREFIX "Unsupported hid [%s]\n", hid);
 		error = -ENODEV;
 		goto err_free_input;
 	}
@@ -557,7 +567,7 @@ static int acpi_button_add(struct acpi_device *device)
 	}
 
 	device_init_wakeup(&device->dev, true);
-	pr_info("%s [%s]\n", name, acpi_device_bid(device));
+	printk(KERN_INFO PREFIX "%s [%s]\n", name, acpi_device_bid(device));
 	return 0;
 
  err_remove_fs:

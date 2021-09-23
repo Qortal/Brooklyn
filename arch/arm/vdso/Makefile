@@ -23,6 +23,7 @@ ldflags-y := -Bsymbolic --no-undefined -soname=linux-vdso.so.1 \
 	    -T
 
 obj-$(CONFIG_VDSO) += vdso.o
+extra-$(CONFIG_VDSO) += vdso.lds
 CPPFLAGS_vdso.lds += -P -C -U$(ARCH)
 
 CFLAGS_REMOVE_vdso.o = -pg
@@ -40,8 +41,6 @@ GCOV_PROFILE := n
 
 # Prevents link failures: __sanitizer_cov_trace_pc() is not linked in.
 KCOV_INSTRUMENT := n
-
-KASAN_SANITIZE := n
 
 # Force dependency
 $(obj)/vdso.o : $(obj)/vdso.so

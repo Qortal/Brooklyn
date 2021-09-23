@@ -77,48 +77,50 @@ int vcpu_enable_evmcs(struct kvm_vm *vm, int vcpu_id)
 struct vmx_pages *
 vcpu_alloc_vmx(struct kvm_vm *vm, vm_vaddr_t *p_vmx_gva)
 {
-	vm_vaddr_t vmx_gva = vm_vaddr_alloc_page(vm);
+	vm_vaddr_t vmx_gva = vm_vaddr_alloc(vm, getpagesize(), 0x10000, 0, 0);
 	struct vmx_pages *vmx = addr_gva2hva(vm, vmx_gva);
 
 	/* Setup of a region of guest memory for the vmxon region. */
-	vmx->vmxon = (void *)vm_vaddr_alloc_page(vm);
+	vmx->vmxon = (void *)vm_vaddr_alloc(vm, getpagesize(), 0x10000, 0, 0);
 	vmx->vmxon_hva = addr_gva2hva(vm, (uintptr_t)vmx->vmxon);
 	vmx->vmxon_gpa = addr_gva2gpa(vm, (uintptr_t)vmx->vmxon);
 
 	/* Setup of a region of guest memory for a vmcs. */
-	vmx->vmcs = (void *)vm_vaddr_alloc_page(vm);
+	vmx->vmcs = (void *)vm_vaddr_alloc(vm, getpagesize(), 0x10000, 0, 0);
 	vmx->vmcs_hva = addr_gva2hva(vm, (uintptr_t)vmx->vmcs);
 	vmx->vmcs_gpa = addr_gva2gpa(vm, (uintptr_t)vmx->vmcs);
 
 	/* Setup of a region of guest memory for the MSR bitmap. */
-	vmx->msr = (void *)vm_vaddr_alloc_page(vm);
+	vmx->msr = (void *)vm_vaddr_alloc(vm, getpagesize(), 0x10000, 0, 0);
 	vmx->msr_hva = addr_gva2hva(vm, (uintptr_t)vmx->msr);
 	vmx->msr_gpa = addr_gva2gpa(vm, (uintptr_t)vmx->msr);
 	memset(vmx->msr_hva, 0, getpagesize());
 
 	/* Setup of a region of guest memory for the shadow VMCS. */
-	vmx->shadow_vmcs = (void *)vm_vaddr_alloc_page(vm);
+	vmx->shadow_vmcs = (void *)vm_vaddr_alloc(vm, getpagesize(), 0x10000, 0, 0);
 	vmx->shadow_vmcs_hva = addr_gva2hva(vm, (uintptr_t)vmx->shadow_vmcs);
 	vmx->shadow_vmcs_gpa = addr_gva2gpa(vm, (uintptr_t)vmx->shadow_vmcs);
 
 	/* Setup of a region of guest memory for the VMREAD and VMWRITE bitmaps. */
-	vmx->vmread = (void *)vm_vaddr_alloc_page(vm);
+	vmx->vmread = (void *)vm_vaddr_alloc(vm, getpagesize(), 0x10000, 0, 0);
 	vmx->vmread_hva = addr_gva2hva(vm, (uintptr_t)vmx->vmread);
 	vmx->vmread_gpa = addr_gva2gpa(vm, (uintptr_t)vmx->vmread);
 	memset(vmx->vmread_hva, 0, getpagesize());
 
-	vmx->vmwrite = (void *)vm_vaddr_alloc_page(vm);
+	vmx->vmwrite = (void *)vm_vaddr_alloc(vm, getpagesize(), 0x10000, 0, 0);
 	vmx->vmwrite_hva = addr_gva2hva(vm, (uintptr_t)vmx->vmwrite);
 	vmx->vmwrite_gpa = addr_gva2gpa(vm, (uintptr_t)vmx->vmwrite);
 	memset(vmx->vmwrite_hva, 0, getpagesize());
 
 	/* Setup of a region of guest memory for the VP Assist page. */
-	vmx->vp_assist = (void *)vm_vaddr_alloc_page(vm);
+	vmx->vp_assist = (void *)vm_vaddr_alloc(vm, getpagesize(),
+						0x10000, 0, 0);
 	vmx->vp_assist_hva = addr_gva2hva(vm, (uintptr_t)vmx->vp_assist);
 	vmx->vp_assist_gpa = addr_gva2gpa(vm, (uintptr_t)vmx->vp_assist);
 
 	/* Setup of a region of guest memory for the enlightened VMCS. */
-	vmx->enlightened_vmcs = (void *)vm_vaddr_alloc_page(vm);
+	vmx->enlightened_vmcs = (void *)vm_vaddr_alloc(vm, getpagesize(),
+						       0x10000, 0, 0);
 	vmx->enlightened_vmcs_hva =
 		addr_gva2hva(vm, (uintptr_t)vmx->enlightened_vmcs);
 	vmx->enlightened_vmcs_gpa =
@@ -393,7 +395,7 @@ void nested_vmx_check_supported(void)
 }
 
 void nested_pg_map(struct vmx_pages *vmx, struct kvm_vm *vm,
-		   uint64_t nested_paddr, uint64_t paddr)
+	 	   uint64_t nested_paddr, uint64_t paddr, uint32_t eptp_memslot)
 {
 	uint16_t index[4];
 	struct eptPageTableEntry *pml4e;
@@ -426,7 +428,9 @@ void nested_pg_map(struct vmx_pages *vmx, struct kvm_vm *vm,
 	/* Allocate page directory pointer table if not present. */
 	pml4e = vmx->eptp_hva;
 	if (!pml4e[index[3]].readable) {
-		pml4e[index[3]].address = vm_alloc_page_table(vm) >> vm->page_shift;
+		pml4e[index[3]].address = vm_phy_page_alloc(vm,
+			  KVM_EPT_PAGE_TABLE_MIN_PADDR, eptp_memslot)
+			>> vm->page_shift;
 		pml4e[index[3]].writable = true;
 		pml4e[index[3]].readable = true;
 		pml4e[index[3]].executable = true;
@@ -436,7 +440,9 @@ void nested_pg_map(struct vmx_pages *vmx, struct kvm_vm *vm,
 	struct eptPageTableEntry *pdpe;
 	pdpe = addr_gpa2hva(vm, pml4e[index[3]].address * vm->page_size);
 	if (!pdpe[index[2]].readable) {
-		pdpe[index[2]].address = vm_alloc_page_table(vm) >> vm->page_shift;
+		pdpe[index[2]].address = vm_phy_page_alloc(vm,
+			  KVM_EPT_PAGE_TABLE_MIN_PADDR, eptp_memslot)
+			>> vm->page_shift;
 		pdpe[index[2]].writable = true;
 		pdpe[index[2]].readable = true;
 		pdpe[index[2]].executable = true;
@@ -446,7 +452,9 @@ void nested_pg_map(struct vmx_pages *vmx, struct kvm_vm *vm,
 	struct eptPageTableEntry *pde;
 	pde = addr_gpa2hva(vm, pdpe[index[2]].address * vm->page_size);
 	if (!pde[index[1]].readable) {
-		pde[index[1]].address = vm_alloc_page_table(vm) >> vm->page_shift;
+		pde[index[1]].address = vm_phy_page_alloc(vm,
+			  KVM_EPT_PAGE_TABLE_MIN_PADDR, eptp_memslot)
+			>> vm->page_shift;
 		pde[index[1]].writable = true;
 		pde[index[1]].readable = true;
 		pde[index[1]].executable = true;
@@ -486,7 +494,8 @@ void nested_pg_map(struct vmx_pages *vmx, struct kvm_vm *vm,
  * page range starting at nested_paddr to the page range starting at paddr.
  */
 void nested_map(struct vmx_pages *vmx, struct kvm_vm *vm,
-		uint64_t nested_paddr, uint64_t paddr, uint64_t size)
+		uint64_t nested_paddr, uint64_t paddr, uint64_t size,
+		uint32_t eptp_memslot)
 {
 	size_t page_size = vm->page_size;
 	size_t npages = size / page_size;
@@ -495,7 +504,7 @@ void nested_map(struct vmx_pages *vmx, struct kvm_vm *vm,
 	TEST_ASSERT(paddr + size > paddr, "Paddr overflow");
 
 	while (npages--) {
-		nested_pg_map(vmx, vm, nested_paddr, paddr);
+		nested_pg_map(vmx, vm, nested_paddr, paddr, eptp_memslot);
 		nested_paddr += page_size;
 		paddr += page_size;
 	}
@@ -505,7 +514,7 @@ void nested_map(struct vmx_pages *vmx, struct kvm_vm *vm,
  * physical pages in VM.
  */
 void nested_map_memslot(struct vmx_pages *vmx, struct kvm_vm *vm,
-			uint32_t memslot)
+			uint32_t memslot, uint32_t eptp_memslot)
 {
 	sparsebit_idx_t i, last;
 	struct userspace_mem_region *region =
@@ -521,21 +530,24 @@ void nested_map_memslot(struct vmx_pages *vmx, struct kvm_vm *vm,
 		nested_map(vmx, vm,
 			   (uint64_t)i << vm->page_shift,
 			   (uint64_t)i << vm->page_shift,
-			   1 << vm->page_shift);
+			   1 << vm->page_shift,
+			   eptp_memslot);
 	}
 }
 
 void prepare_eptp(struct vmx_pages *vmx, struct kvm_vm *vm,
 		  uint32_t eptp_memslot)
 {
-	vmx->eptp = (void *)vm_vaddr_alloc_page(vm);
+	vmx->eptp = (void *)vm_vaddr_alloc(vm, getpagesize(), 0x10000, 0, 0);
 	vmx->eptp_hva = addr_gva2hva(vm, (uintptr_t)vmx->eptp);
 	vmx->eptp_gpa = addr_gva2gpa(vm, (uintptr_t)vmx->eptp);
 }
 
-void prepare_virtualize_apic_accesses(struct vmx_pages *vmx, struct kvm_vm *vm)
+void prepare_virtualize_apic_accesses(struct vmx_pages *vmx, struct kvm_vm *vm,
+				      uint32_t eptp_memslot)
 {
-	vmx->apic_access = (void *)vm_vaddr_alloc_page(vm);
+	vmx->apic_access = (void *)vm_vaddr_alloc(vm, getpagesize(),
+						  0x10000, 0, 0);
 	vmx->apic_access_hva = addr_gva2hva(vm, (uintptr_t)vmx->apic_access);
 	vmx->apic_access_gpa = addr_gva2gpa(vm, (uintptr_t)vmx->apic_access);
 }

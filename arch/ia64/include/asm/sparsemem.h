@@ -3,7 +3,6 @@
 #define _ASM_IA64_SPARSEMEM_H
 
 #ifdef CONFIG_SPARSEMEM
-#include <asm/page.h>
 /*
  * SECTION_SIZE_BITS            2^N: how big each section will be
  * MAX_PHYSMEM_BITS             2^N: how much memory we can have in that space

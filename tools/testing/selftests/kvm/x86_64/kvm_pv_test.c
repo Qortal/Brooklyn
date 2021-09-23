@@ -211,8 +211,8 @@ int main(void)
 	struct kvm_vm *vm;
 
 	if (!kvm_check_cap(KVM_CAP_ENFORCE_PV_FEATURE_CPUID)) {
-		print_skip("KVM_CAP_ENFORCE_PV_FEATURE_CPUID not supported");
-		exit(KSFT_SKIP);
+		pr_info("will skip kvm paravirt restriction tests.\n");
+		return 0;
 	}
 
 	vm = vm_create_default(VCPU_ID, 0, guest_main);
@@ -227,7 +227,7 @@ int main(void)
 
 	vm_init_descriptor_tables(vm);
 	vcpu_init_descriptor_tables(vm, VCPU_ID);
-	vm_install_exception_handler(vm, GP_VECTOR, guest_gp_handler);
+	vm_handle_exception(vm, GP_VECTOR, guest_gp_handler);
 
 	enter_guest(vm);
 	kvm_vm_free(vm);

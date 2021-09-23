@@ -22,7 +22,6 @@
 
 #include <asm/apic.h>
 #include <asm/nospec-branch.h>
-#include <asm/softirq_stack.h>
 
 #ifdef CONFIG_DEBUG_STACKOVERFLOW
 

@@ -21,7 +21,7 @@
 #include "remoteproc_internal.h"
 
 #define MAX_CODE_SIZE 0x500000
-#define SECTION_NAME_IPI_BUFFER ".ipi_buffer"
+#define SCP_FW_END 0x7C000
 
 /**
  * scp_get() - get a reference to SCP.
@@ -119,29 +119,16 @@ static void scp_ipi_handler(struct mtk_scp *scp)
 	wake_up(&scp->ack_wq);
 }
 
-static int scp_elf_read_ipi_buf_addr(struct mtk_scp *scp,
-				     const struct firmware *fw,
-				     size_t *offset);
-
-static int scp_ipi_init(struct mtk_scp *scp, const struct firmware *fw)
+static int scp_ipi_init(struct mtk_scp *scp)
 {
-	int ret;
-	size_t offset;
+	size_t send_offset = SCP_FW_END - sizeof(struct mtk_share_obj);
+	size_t recv_offset = send_offset - sizeof(struct mtk_share_obj);
 
-	/* read the ipi buf addr from FW itself first */
-	ret = scp_elf_read_ipi_buf_addr(scp, fw, &offset);
-	if (ret) {
-		/* use default ipi buf addr if the FW doesn't have it */
-		offset = scp->data->ipi_buf_offset;
-		if (!offset)
-			return ret;
-	}
-	dev_info(scp->dev, "IPI buf addr %#010zx\n", offset);
-
-	scp->recv_buf = (struct mtk_share_obj __iomem *)
-			(scp->sram_base + offset);
-	scp->send_buf = (struct mtk_share_obj __iomem *)
-			(scp->sram_base + offset + sizeof(*scp->recv_buf));
+	/* shared buffer initialization */
+	scp->recv_buf =
+		(struct mtk_share_obj __iomem *)(scp->sram_base + recv_offset);
+	scp->send_buf =
+		(struct mtk_share_obj __iomem *)(scp->sram_base + send_offset);
 	memset_io(scp->recv_buf, 0, sizeof(*scp->recv_buf));
 	memset_io(scp->send_buf, 0, sizeof(*scp->send_buf));
 
@@ -249,13 +236,11 @@ static int scp_elf_load_segments(struct rproc *rproc, const struct firmware *fw)
 		u32 offset = phdr->p_offset;
 		void __iomem *ptr;
 
-		dev_dbg(dev, "phdr: type %d da 0x%x memsz 0x%x filesz 0x%x\n",
-			phdr->p_type, da, memsz, filesz);
-
 		if (phdr->p_type != PT_LOAD)
 			continue;
-		if (!filesz)
-			continue;
+
+		dev_dbg(dev, "phdr: type %d da 0x%x memsz 0x%x filesz 0x%x\n",
+			phdr->p_type, da, memsz, filesz);
 
 		if (filesz > memsz) {
 			dev_err(dev, "bad phdr filesz 0x%x memsz 0x%x\n",
@@ -272,7 +257,7 @@ static int scp_elf_load_segments(struct rproc *rproc, const struct firmware *fw)
 		}
 
 		/* grab the kernel address for this device address */
-		ptr = (void __iomem *)rproc_da_to_va(rproc, da, memsz, NULL);
+		ptr = (void __iomem *)rproc_da_to_va(rproc, da, memsz);
 		if (!ptr) {
 			dev_err(dev, "bad phdr da 0x%x mem 0x%x\n", da, memsz);
 			ret = -EINVAL;
@@ -280,36 +265,12 @@ static int scp_elf_load_segments(struct rproc *rproc, const struct firmware *fw)
 		}
 
 		/* put the segment where the remote processor expects it */
-		scp_memcpy_aligned(ptr, elf_data + phdr->p_offset, filesz);
+		if (phdr->p_filesz)
+			scp_memcpy_aligned(ptr, elf_data + phdr->p_offset,
+					   filesz);
 	}
 
 	return ret;
-}
-
-static int scp_elf_read_ipi_buf_addr(struct mtk_scp *scp,
-				     const struct firmware *fw,
-				     size_t *offset)
-{
-	struct elf32_hdr *ehdr;
-	struct elf32_shdr *shdr, *shdr_strtab;
-	int i;
-	const u8 *elf_data = fw->data;
-	const char *strtab;
-
-	ehdr = (struct elf32_hdr *)elf_data;
-	shdr = (struct elf32_shdr *)(elf_data + ehdr->e_shoff);
-	shdr_strtab = shdr + ehdr->e_shstrndx;
-	strtab = (const char *)(elf_data + shdr_strtab->sh_offset);
-
-	for (i = 0; i < ehdr->e_shnum; i++, shdr++) {
-		if (strcmp(strtab + shdr->sh_name,
-			   SECTION_NAME_IPI_BUFFER) == 0) {
-			*offset = shdr->sh_addr;
-			return 0;
-		}
-	}
-
-	return -ENOENT;
 }
 
 static int mt8183_scp_before_load(struct mtk_scp *scp)
@@ -339,7 +300,7 @@ static int mt8183_scp_before_load(struct mtk_scp *scp)
 	return 0;
 }
 
-static void mt8192_power_on_sram(void __iomem *addr)
+static void mt8192_power_on_sram(void *addr)
 {
 	int i;
 
@@ -348,7 +309,7 @@ static void mt8192_power_on_sram(void __iomem *addr)
 	writel(0, addr);
 }
 
-static void mt8192_power_off_sram(void __iomem *addr)
+static void mt8192_power_off_sram(void *addr)
 {
 	int i;
 
@@ -370,9 +331,6 @@ static int mt8192_scp_before_load(struct mtk_scp *scp)
 	mt8192_power_on_sram(scp->reg_base + MT8192_L2TCM_SRAM_PD_2);
 	mt8192_power_on_sram(scp->reg_base + MT8192_L1TCM_SRAM_PDN);
 	mt8192_power_on_sram(scp->reg_base + MT8192_CPU0_SRAM_PD);
-
-	/* enable MPU for all memory regions */
-	writel(0xff, scp->reg_base + MT8192_CORE0_MEM_ATT_PREDEF);
 
 	return 0;
 }
@@ -400,23 +358,6 @@ static int scp_load(struct rproc *rproc, const struct firmware *fw)
 leave:
 	clk_disable_unprepare(scp->clk);
 
-	return ret;
-}
-
-static int scp_parse_fw(struct rproc *rproc, const struct firmware *fw)
-{
-	struct mtk_scp *scp = rproc->priv;
-	struct device *dev = scp->dev;
-	int ret;
-
-	ret = clk_prepare_enable(scp->clk);
-	if (ret) {
-		dev_err(dev, "failed to enable clocks\n");
-		return ret;
-	}
-
-	ret = scp_ipi_init(scp, fw);
-	clk_disable_unprepare(scp->clk);
 	return ret;
 }
 
@@ -463,57 +404,22 @@ stop:
 	return ret;
 }
 
-static void *mt8183_scp_da_to_va(struct mtk_scp *scp, u64 da, size_t len)
+static void *scp_da_to_va(struct rproc *rproc, u64 da, size_t len)
 {
+	struct mtk_scp *scp = (struct mtk_scp *)rproc->priv;
 	int offset;
 
 	if (da < scp->sram_size) {
 		offset = da;
-		if (offset >= 0 && (offset + len) <= scp->sram_size)
+		if (offset >= 0 && (offset + len) < scp->sram_size)
 			return (void __force *)scp->sram_base + offset;
 	} else if (scp->dram_size) {
 		offset = da - scp->dma_addr;
-		if (offset >= 0 && (offset + len) <= scp->dram_size)
-			return scp->cpu_addr + offset;
+		if (offset >= 0 && (offset + len) < scp->dram_size)
+			return (void __force *)scp->cpu_addr + offset;
 	}
 
 	return NULL;
-}
-
-static void *mt8192_scp_da_to_va(struct mtk_scp *scp, u64 da, size_t len)
-{
-	int offset;
-
-	if (da >= scp->sram_phys &&
-	    (da + len) <= scp->sram_phys + scp->sram_size) {
-		offset = da - scp->sram_phys;
-		return (void __force *)scp->sram_base + offset;
-	}
-
-	/* optional memory region */
-	if (scp->l1tcm_size &&
-	    da >= scp->l1tcm_phys &&
-	    (da + len) <= scp->l1tcm_phys + scp->l1tcm_size) {
-		offset = da - scp->l1tcm_phys;
-		return (void __force *)scp->l1tcm_base + offset;
-	}
-
-	/* optional memory region */
-	if (scp->dram_size &&
-	    da >= scp->dma_addr &&
-	    (da + len) <= scp->dma_addr + scp->dram_size) {
-		offset = da - scp->dma_addr;
-		return scp->cpu_addr + offset;
-	}
-
-	return NULL;
-}
-
-static void *scp_da_to_va(struct rproc *rproc, u64 da, size_t len, bool *is_iomem)
-{
-	struct mtk_scp *scp = (struct mtk_scp *)rproc->priv;
-
-	return scp->data->scp_da_to_va(scp, da, len);
 }
 
 static void mt8183_scp_stop(struct mtk_scp *scp)
@@ -558,7 +464,6 @@ static const struct rproc_ops scp_ops = {
 	.stop		= scp_stop,
 	.load		= scp_load,
 	.da_to_va	= scp_da_to_va,
-	.parse_fw	= scp_parse_fw,
 };
 
 /**
@@ -627,7 +532,7 @@ void *scp_mapping_dm_addr(struct mtk_scp *scp, u32 mem_addr)
 {
 	void *ptr;
 
-	ptr = scp_da_to_va(scp->rproc, mem_addr, 0, NULL);
+	ptr = scp_da_to_va(scp->rproc, mem_addr, 0);
 	if (!ptr)
 		return ERR_PTR(-EINVAL);
 
@@ -754,27 +659,13 @@ static int scp_probe(struct platform_device *pdev)
 		goto free_rproc;
 	}
 	scp->sram_size = resource_size(res);
-	scp->sram_phys = res->start;
-
-	/* l1tcm is an optional memory region */
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "l1tcm");
-	scp->l1tcm_base = devm_ioremap_resource(dev, res);
-	if (IS_ERR((__force void *)scp->l1tcm_base)) {
-		ret = PTR_ERR((__force void *)scp->l1tcm_base);
-		if (ret != -EINVAL) {
-			dev_err(dev, "Failed to map l1tcm memory\n");
-			goto free_rproc;
-		}
-	} else {
-		scp->l1tcm_size = resource_size(res);
-		scp->l1tcm_phys = res->start;
-	}
 
 	mutex_init(&scp->send_lock);
 	for (i = 0; i < SCP_IPI_MAX; i++)
 		mutex_init(&scp->ipi_desc[i].lock);
 
-	scp->reg_base = devm_platform_ioremap_resource_byname(pdev, "cfg");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "cfg");
+	scp->reg_base = devm_ioremap_resource(dev, res);
 	if (IS_ERR((__force void *)scp->reg_base)) {
 		dev_err(dev, "Failed to parse and map cfg memory\n");
 		ret = PTR_ERR((__force void *)scp->reg_base);
@@ -789,6 +680,19 @@ static int scp_probe(struct platform_device *pdev)
 	if (IS_ERR(scp->clk)) {
 		dev_err(dev, "Failed to get clock\n");
 		ret = PTR_ERR(scp->clk);
+		goto release_dev_mem;
+	}
+
+	ret = clk_prepare_enable(scp->clk);
+	if (ret) {
+		dev_err(dev, "failed to enable clocks\n");
+		goto release_dev_mem;
+	}
+
+	ret = scp_ipi_init(scp);
+	clk_disable_unprepare(scp->clk);
+	if (ret) {
+		dev_err(dev, "Failed to init ipi\n");
 		goto release_dev_mem;
 	}
 
@@ -857,10 +761,8 @@ static const struct mtk_scp_of_data mt8183_of_data = {
 	.scp_reset_assert = mt8183_scp_reset_assert,
 	.scp_reset_deassert = mt8183_scp_reset_deassert,
 	.scp_stop = mt8183_scp_stop,
-	.scp_da_to_va = mt8183_scp_da_to_va,
 	.host_to_scp_reg = MT8183_HOST_TO_SCP,
 	.host_to_scp_int_bit = MT8183_HOST_IPC_INT_BIT,
-	.ipi_buf_offset = 0x7bdb0,
 };
 
 static const struct mtk_scp_of_data mt8192_of_data = {
@@ -869,7 +771,6 @@ static const struct mtk_scp_of_data mt8192_of_data = {
 	.scp_reset_assert = mt8192_scp_reset_assert,
 	.scp_reset_deassert = mt8192_scp_reset_deassert,
 	.scp_stop = mt8192_scp_stop,
-	.scp_da_to_va = mt8192_scp_da_to_va,
 	.host_to_scp_reg = MT8192_GIPC_IN_SET,
 	.host_to_scp_int_bit = MT8192_HOST_IPC_INT_BIT,
 };

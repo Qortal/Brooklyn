@@ -22,7 +22,7 @@ static int vbi_workaround(struct saa7146_dev *dev)
 	   as specified. there is this workaround, but please
 	   don't let me explain it. ;-) */
 
-	cpu = dma_alloc_coherent(&dev->pci->dev, 4096, &dma_addr, GFP_KERNEL);
+	cpu = pci_alloc_consistent(dev->pci, 4096, &dma_addr);
 	if (NULL == cpu)
 		return -ENOMEM;
 
@@ -123,12 +123,12 @@ static int vbi_workaround(struct saa7146_dev *dev)
 			/* stop rps1 for sure */
 			saa7146_write(dev, MC1, MASK_29);
 
-			dma_free_coherent(&dev->pci->dev, 4096, cpu, dma_addr);
+			pci_free_consistent(dev->pci, 4096, cpu, dma_addr);
 			return -EINTR;
 		}
 	}
 
-	dma_free_coherent(&dev->pci->dev, 4096, cpu, dma_addr);
+	pci_free_consistent(dev->pci, 4096, cpu, dma_addr);
 	return 0;
 }
 

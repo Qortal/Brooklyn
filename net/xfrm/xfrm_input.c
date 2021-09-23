@@ -612,7 +612,7 @@ lock:
 			goto drop_unlock;
 		}
 
-		if (xfrm_replay_check(x, skb, seq)) {
+		if (x->repl->check(x, skb, seq)) {
 			XFRM_INC_STATS(net, LINUX_MIB_XFRMINSTATESEQERROR);
 			goto drop_unlock;
 		}
@@ -660,12 +660,12 @@ resume:
 		/* only the first xfrm gets the encap type */
 		encap_type = 0;
 
-		if (xfrm_replay_recheck(x, skb, seq)) {
+		if (x->repl->recheck(x, skb, seq)) {
 			XFRM_INC_STATS(net, LINUX_MIB_XFRMINSTATESEQERROR);
 			goto drop_unlock;
 		}
 
-		xfrm_replay_advance(x, seq);
+		x->repl->advance(x, seq);
 
 		x->curlft.bytes += skb->len;
 		x->curlft.packets++;
@@ -760,9 +760,9 @@ int xfrm_input_resume(struct sk_buff *skb, int nexthdr)
 }
 EXPORT_SYMBOL(xfrm_input_resume);
 
-static void xfrm_trans_reinject(struct tasklet_struct *t)
+static void xfrm_trans_reinject(unsigned long data)
 {
-	struct xfrm_trans_tasklet *trans = from_tasklet(trans, t, tasklet);
+	struct xfrm_trans_tasklet *trans = (void *)data;
 	struct sk_buff_head queue;
 	struct sk_buff *skb;
 
@@ -818,6 +818,7 @@ void __init xfrm_input_init(void)
 
 		trans = &per_cpu(xfrm_trans_tasklet, i);
 		__skb_queue_head_init(&trans->queue);
-		tasklet_setup(&trans->tasklet, xfrm_trans_reinject);
+		tasklet_init(&trans->tasklet, xfrm_trans_reinject,
+			     (unsigned long)trans);
 	}
 }

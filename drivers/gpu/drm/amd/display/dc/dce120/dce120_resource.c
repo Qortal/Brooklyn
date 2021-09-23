@@ -383,18 +383,25 @@ static int map_transmitter_id_to_phy_instance(
 	switch (transmitter) {
 	case TRANSMITTER_UNIPHY_A:
 		return 0;
+	break;
 	case TRANSMITTER_UNIPHY_B:
 		return 1;
+	break;
 	case TRANSMITTER_UNIPHY_C:
 		return 2;
+	break;
 	case TRANSMITTER_UNIPHY_D:
 		return 3;
+	break;
 	case TRANSMITTER_UNIPHY_E:
 		return 4;
+	break;
 	case TRANSMITTER_UNIPHY_F:
 		return 5;
+	break;
 	case TRANSMITTER_UNIPHY_G:
 		return 6;
+	break;
 	default:
 		ASSERT(0);
 		return 0;
@@ -423,7 +430,7 @@ static const struct dce110_clk_src_mask cs_mask = {
 		CS_COMMON_MASK_SH_LIST_DCE_112(_MASK)
 };
 
-static struct output_pixel_processor *dce120_opp_create(
+struct output_pixel_processor *dce120_opp_create(
 	struct dc_context *ctx,
 	uint32_t inst)
 {
@@ -437,7 +444,7 @@ static struct output_pixel_processor *dce120_opp_create(
 			     ctx, inst, &opp_regs[inst], &opp_shift, &opp_mask);
 	return &opp->base;
 }
-static struct dce_aux *dce120_aux_engine_create(
+struct dce_aux *dce120_aux_engine_create(
 	struct dc_context *ctx,
 	uint32_t inst)
 {
@@ -475,7 +482,7 @@ static const struct dce_i2c_mask i2c_masks = {
 		I2C_COMMON_MASK_SH_LIST_DCE110(_MASK)
 };
 
-static struct dce_i2c_hw *dce120_i2c_hw_create(
+struct dce_i2c_hw *dce120_i2c_hw_create(
 	struct dc_context *ctx,
 	uint32_t inst)
 {
@@ -1073,9 +1080,7 @@ static bool dce120_resource_construct(
 
 	dc->caps.max_downscale_ratio = 200;
 	dc->caps.i2c_speed_in_khz = 100;
-	dc->caps.i2c_speed_in_khz_hdcp = 100; /*1.4 w/a not applied by default*/
 	dc->caps.max_cursor_size = 128;
-	dc->caps.min_horizontal_blanking_period = 80;
 	dc->caps.dual_link_dvi = true;
 	dc->caps.psp_setup_panel_mode = true;
 	dc->caps.extended_aux_timeout_support = false;

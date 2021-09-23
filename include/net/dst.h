@@ -18,7 +18,6 @@
 #include <linux/refcount.h>
 #include <net/neighbour.h>
 #include <asm/processor.h>
-#include <linux/indirect_call_wrapper.h>
 
 struct sk_buff;
 
@@ -194,11 +193,9 @@ dst_feature(const struct dst_entry *dst, u32 feature)
 	return dst_metric(dst, RTAX_FEATURES) & feature;
 }
 
-INDIRECT_CALLABLE_DECLARE(unsigned int ip6_mtu(const struct dst_entry *));
-INDIRECT_CALLABLE_DECLARE(unsigned int ipv4_mtu(const struct dst_entry *));
 static inline u32 dst_mtu(const struct dst_entry *dst)
 {
-	return INDIRECT_CALL_INET(dst->ops->mtu, ip6_mtu, ipv4_mtu, dst);
+	return dst->ops->mtu(dst);
 }
 
 /* RTT metrics are stored in milliseconds for user ABI, but used as jiffies */
@@ -403,12 +400,14 @@ static inline struct neighbour *dst_neigh_lookup(const struct dst_entry *dst, co
 static inline struct neighbour *dst_neigh_lookup_skb(const struct dst_entry *dst,
 						     struct sk_buff *skb)
 {
-	struct neighbour *n;
+	struct neighbour *n = NULL;
 
-	if (WARN_ON_ONCE(!dst->ops->neigh_lookup))
-		return NULL;
-
-	n = dst->ops->neigh_lookup(dst, skb, NULL);
+	/* The packets from tunnel devices (eg bareudp) may have only
+	 * metadata in the dst pointer of skb. Hence a pointer check of
+	 * neigh_lookup is needed.
+	 */
+	if (dst->ops->neigh_lookup)
+		n = dst->ops->neigh_lookup(dst, skb, NULL);
 
 	return IS_ERR(n) ? NULL : n;
 }
@@ -438,36 +437,22 @@ static inline void dst_set_expires(struct dst_entry *dst, int timeout)
 		dst->expires = expires;
 }
 
-INDIRECT_CALLABLE_DECLARE(int ip6_output(struct net *, struct sock *,
-					 struct sk_buff *));
-INDIRECT_CALLABLE_DECLARE(int ip_output(struct net *, struct sock *,
-					 struct sk_buff *));
 /* Output packet to network from transport.  */
 static inline int dst_output(struct net *net, struct sock *sk, struct sk_buff *skb)
 {
-	return INDIRECT_CALL_INET(skb_dst(skb)->output,
-				  ip6_output, ip_output,
-				  net, sk, skb);
+	return skb_dst(skb)->output(net, sk, skb);
 }
 
-INDIRECT_CALLABLE_DECLARE(int ip6_input(struct sk_buff *));
-INDIRECT_CALLABLE_DECLARE(int ip_local_deliver(struct sk_buff *));
 /* Input packet from network to transport.  */
 static inline int dst_input(struct sk_buff *skb)
 {
-	return INDIRECT_CALL_INET(skb_dst(skb)->input,
-				  ip6_input, ip_local_deliver, skb);
+	return skb_dst(skb)->input(skb);
 }
 
-INDIRECT_CALLABLE_DECLARE(struct dst_entry *ip6_dst_check(struct dst_entry *,
-							  u32));
-INDIRECT_CALLABLE_DECLARE(struct dst_entry *ipv4_dst_check(struct dst_entry *,
-							   u32));
 static inline struct dst_entry *dst_check(struct dst_entry *dst, u32 cookie)
 {
 	if (dst->obsolete)
-		dst = INDIRECT_CALL_INET(dst->ops->check, ip6_dst_check,
-					 ipv4_dst_check, dst, cookie);
+		dst = dst->ops->check(dst, cookie);
 	return dst;
 }
 

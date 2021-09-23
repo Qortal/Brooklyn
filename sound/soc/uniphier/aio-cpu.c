@@ -256,12 +256,17 @@ static int uniphier_aio_startup(struct snd_pcm_substream *substream,
 {
 	struct uniphier_aio *aio = uniphier_priv(dai);
 	struct uniphier_aio_sub *sub = &aio->sub[substream->stream];
+	int ret;
 
 	sub->substream = substream;
 	sub->pass_through = 0;
 	sub->use_mmap = true;
 
-	return aio_init(sub);
+	ret = aio_init(sub);
+	if (ret)
+		return ret;
+
+	return 0;
 }
 
 static void uniphier_aio_shutdown(struct snd_pcm_substream *substream,

@@ -429,6 +429,7 @@ static void mwifiex_pcie_remove(struct pci_dev *pdev)
 	struct mwifiex_private *priv;
 	const struct mwifiex_pcie_card_reg *reg;
 	u32 fw_status;
+	int ret;
 
 	card = pci_get_drvdata(pdev);
 
@@ -440,7 +441,7 @@ static void mwifiex_pcie_remove(struct pci_dev *pdev)
 
 	reg = card->pcie.reg;
 	if (reg)
-		mwifiex_read_reg(adapter, reg->fw_status, &fw_status);
+		ret = mwifiex_read_reg(adapter, reg->fw_status, &fw_status);
 	else
 		fw_status = -1;
 
@@ -571,7 +572,7 @@ static SIMPLE_DEV_PM_OPS(mwifiex_pcie_pm_ops, mwifiex_pcie_suspend,
 #endif
 
 /* PCI Device Driver */
-static struct pci_driver mwifiex_pcie = {
+static struct pci_driver __refdata mwifiex_pcie = {
 	.name     = "mwifiex_pcie",
 	.id_table = mwifiex_ids,
 	.probe    = mwifiex_pcie_probe,
@@ -3140,6 +3141,7 @@ static void mwifiex_cleanup_pcie(struct mwifiex_adapter *adapter)
 	struct pcie_service_card *card = adapter->card;
 	struct pci_dev *pdev = card->dev;
 	const struct mwifiex_pcie_card_reg *reg = card->pcie.reg;
+	int ret;
 	u32 fw_status;
 
 	/* Perform the cancel_work_sync() only when we're not resetting
@@ -3156,7 +3158,7 @@ static void mwifiex_cleanup_pcie(struct mwifiex_adapter *adapter)
 			    "skipped cancel_work_sync() because we're in card reset failure path\n");
 	}
 
-	mwifiex_read_reg(adapter, reg->fw_status, &fw_status);
+	ret = mwifiex_read_reg(adapter, reg->fw_status, &fw_status);
 	if (fw_status == FIRMWARE_READY_PCIE) {
 		mwifiex_dbg(adapter, INFO,
 			    "Clearing driver ready signature\n");

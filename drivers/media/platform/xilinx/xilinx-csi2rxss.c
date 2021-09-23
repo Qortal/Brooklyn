@@ -681,13 +681,12 @@ stream_done:
 
 static struct v4l2_mbus_framefmt *
 __xcsi2rxss_get_pad_format(struct xcsi2rxss_state *xcsi2rxss,
-			   struct v4l2_subdev_state *sd_state,
+			   struct v4l2_subdev_pad_config *cfg,
 			   unsigned int pad, u32 which)
 {
 	switch (which) {
 	case V4L2_SUBDEV_FORMAT_TRY:
-		return v4l2_subdev_get_try_format(&xcsi2rxss->subdev,
-						  sd_state, pad);
+		return v4l2_subdev_get_try_format(&xcsi2rxss->subdev, cfg, pad);
 	case V4L2_SUBDEV_FORMAT_ACTIVE:
 		return &xcsi2rxss->format;
 	default:
@@ -698,7 +697,7 @@ __xcsi2rxss_get_pad_format(struct xcsi2rxss_state *xcsi2rxss,
 /**
  * xcsi2rxss_init_cfg - Initialise the pad format config to default
  * @sd: Pointer to V4L2 Sub device structure
- * @sd_state: Pointer to sub device state structure
+ * @cfg: Pointer to sub device pad information structure
  *
  * This function is used to initialize the pad format with the default
  * values.
@@ -706,7 +705,7 @@ __xcsi2rxss_get_pad_format(struct xcsi2rxss_state *xcsi2rxss,
  * Return: 0 on success
  */
 static int xcsi2rxss_init_cfg(struct v4l2_subdev *sd,
-			      struct v4l2_subdev_state *sd_state)
+			      struct v4l2_subdev_pad_config *cfg)
 {
 	struct xcsi2rxss_state *xcsi2rxss = to_xcsi2rxssstate(sd);
 	struct v4l2_mbus_framefmt *format;
@@ -714,7 +713,7 @@ static int xcsi2rxss_init_cfg(struct v4l2_subdev *sd,
 
 	mutex_lock(&xcsi2rxss->lock);
 	for (i = 0; i < XCSI_MEDIA_PADS; i++) {
-		format = v4l2_subdev_get_try_format(sd, sd_state, i);
+		format = v4l2_subdev_get_try_format(sd, cfg, i);
 		*format = xcsi2rxss->default_format;
 	}
 	mutex_unlock(&xcsi2rxss->lock);
@@ -725,7 +724,7 @@ static int xcsi2rxss_init_cfg(struct v4l2_subdev *sd,
 /**
  * xcsi2rxss_get_format - Get the pad format
  * @sd: Pointer to V4L2 Sub device structure
- * @sd_state: Pointer to sub device state structure
+ * @cfg: Pointer to sub device pad information structure
  * @fmt: Pointer to pad level media bus format
  *
  * This function is used to get the pad format information.
@@ -733,14 +732,13 @@ static int xcsi2rxss_init_cfg(struct v4l2_subdev *sd,
  * Return: 0 on success
  */
 static int xcsi2rxss_get_format(struct v4l2_subdev *sd,
-				struct v4l2_subdev_state *sd_state,
+				struct v4l2_subdev_pad_config *cfg,
 				struct v4l2_subdev_format *fmt)
 {
 	struct xcsi2rxss_state *xcsi2rxss = to_xcsi2rxssstate(sd);
 
 	mutex_lock(&xcsi2rxss->lock);
-	fmt->format = *__xcsi2rxss_get_pad_format(xcsi2rxss, sd_state,
-						  fmt->pad,
+	fmt->format = *__xcsi2rxss_get_pad_format(xcsi2rxss, cfg, fmt->pad,
 						  fmt->which);
 	mutex_unlock(&xcsi2rxss->lock);
 
@@ -750,7 +748,7 @@ static int xcsi2rxss_get_format(struct v4l2_subdev *sd,
 /**
  * xcsi2rxss_set_format - This is used to set the pad format
  * @sd: Pointer to V4L2 Sub device structure
- * @sd_state: Pointer to sub device state structure
+ * @cfg: Pointer to sub device pad information structure
  * @fmt: Pointer to pad level media bus format
  *
  * This function is used to set the pad format. Since the pad format is fixed
@@ -761,7 +759,7 @@ static int xcsi2rxss_get_format(struct v4l2_subdev *sd,
  * Return: 0 on success
  */
 static int xcsi2rxss_set_format(struct v4l2_subdev *sd,
-				struct v4l2_subdev_state *sd_state,
+				struct v4l2_subdev_pad_config *cfg,
 				struct v4l2_subdev_format *fmt)
 {
 	struct xcsi2rxss_state *xcsi2rxss = to_xcsi2rxssstate(sd);
@@ -775,7 +773,7 @@ static int xcsi2rxss_set_format(struct v4l2_subdev *sd,
 	 * CSI format cannot be changed at runtime.
 	 * Ensure that format to set is copied to over to CSI pad format
 	 */
-	__format = __xcsi2rxss_get_pad_format(xcsi2rxss, sd_state,
+	__format = __xcsi2rxss_get_pad_format(xcsi2rxss, cfg,
 					      fmt->pad, fmt->which);
 
 	/* only sink pad format can be updated */
@@ -813,7 +811,7 @@ static int xcsi2rxss_set_format(struct v4l2_subdev *sd,
  * Return: -EINVAL or zero on success
  */
 static int xcsi2rxss_enum_mbus_code(struct v4l2_subdev *sd,
-				    struct v4l2_subdev_state *sd_state,
+				    struct v4l2_subdev_pad_config *cfg,
 				    struct v4l2_subdev_mbus_code_enum *code)
 {
 	struct xcsi2rxss_state *state = to_xcsi2rxssstate(sd);

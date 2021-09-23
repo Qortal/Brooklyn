@@ -1294,7 +1294,6 @@ static int bf_show(struct seq_file *s, void *data)
 
 	for (i = 0; i < wil->max_assoc_sta; i++) {
 		u32 status;
-		u8 bf_mcs;
 
 		cmd.cid = i;
 		rc = wmi_call(wil, WMI_NOTIFY_REQ_CMDID, vif->mid,
@@ -1306,10 +1305,9 @@ static int bf_show(struct seq_file *s, void *data)
 			continue;
 
 		status = le32_to_cpu(reply.evt.status);
-		bf_mcs = le16_to_cpu(reply.evt.bf_mcs);
 		seq_printf(s, "CID %d {\n"
 			   "  TSF = 0x%016llx\n"
-			   "  TxMCS = %s TxTpt = %4d\n"
+			   "  TxMCS = %2d TxTpt = %4d\n"
 			   "  SQI = %4d\n"
 			   "  RSSI = %4d\n"
 			   "  Status = 0x%08x %s\n"
@@ -1318,7 +1316,7 @@ static int bf_show(struct seq_file *s, void *data)
 			   "}\n",
 			   i,
 			   le64_to_cpu(reply.evt.tsf),
-			   WIL_EXTENDED_MCS_CHECK(bf_mcs),
+			   le16_to_cpu(reply.evt.bf_mcs),
 			   le32_to_cpu(reply.evt.tx_tpt),
 			   reply.evt.sqi,
 			   reply.evt.rssi,
@@ -1445,10 +1443,8 @@ static int link_show(struct seq_file *s, void *data)
 			if (rc)
 				goto out;
 
-			seq_printf(s, "  Tx_mcs = %s\n",
-				   WIL_EXTENDED_MCS_CHECK(sinfo->txrate.mcs));
-			seq_printf(s, "  Rx_mcs = %s\n",
-				   WIL_EXTENDED_MCS_CHECK(sinfo->rxrate.mcs));
+			seq_printf(s, "  Tx_mcs = %d\n", sinfo->txrate.mcs);
+			seq_printf(s, "  Rx_mcs = %d\n", sinfo->rxrate.mcs);
 			seq_printf(s, "  SQ     = %d\n", sinfo->signal);
 		} else {
 			seq_puts(s, "  INVALID MID\n");
@@ -1852,7 +1848,7 @@ static void wil_link_stats_print_basic(struct wil6210_vif *vif,
 		snprintf(per, sizeof(per), "%d%%", basic->per_average);
 
 	seq_printf(s, "CID %d {\n"
-		   "\tTxMCS %s TxTpt %d\n"
+		   "\tTxMCS %d TxTpt %d\n"
 		   "\tGoodput(rx:tx) %d:%d\n"
 		   "\tRxBcastFrames %d\n"
 		   "\tRSSI %d SQI %d SNR %d PER %s\n"
@@ -1860,8 +1856,7 @@ static void wil_link_stats_print_basic(struct wil6210_vif *vif,
 		   "\tSectors(rx:tx) my %d:%d peer %d:%d\n"
 		   "}\n",
 		   basic->cid,
-		   WIL_EXTENDED_MCS_CHECK(basic->bf_mcs),
-		   le32_to_cpu(basic->tx_tpt),
+		   basic->bf_mcs, le32_to_cpu(basic->tx_tpt),
 		   le32_to_cpu(basic->rx_goodput),
 		   le32_to_cpu(basic->tx_goodput),
 		   le32_to_cpu(basic->rx_bcast_frames),

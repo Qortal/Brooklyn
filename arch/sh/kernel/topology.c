@@ -46,7 +46,7 @@ static int __init topology_init(void)
 {
 	int i, ret;
 
-#ifdef CONFIG_NUMA
+#ifdef CONFIG_NEED_MULTIPLE_NODES
 	for_each_online_node(i)
 		register_one_node(i);
 #endif

@@ -183,7 +183,8 @@ static void omap_crypto_copy_data(struct scatterlist *src,
 
 		memcpy(dstb, srcb, amt);
 
-		flush_dcache_page(sg_page(dst));
+		if (!PageSlab(sg_page(dst)))
+			flush_kernel_dcache_page(sg_page(dst));
 
 		kunmap_atomic(srcb);
 		kunmap_atomic(dstb);

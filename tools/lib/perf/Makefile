@@ -52,8 +52,6 @@ else
   Q = @
 endif
 
-TEST_ARGS := $(if $(V),-v)
-
 # Set compile option CFLAGS
 ifdef EXTRA_CFLAGS
   CFLAGS := $(EXTRA_CFLAGS)
@@ -138,30 +136,12 @@ all: fixdep
 
 clean: $(LIBAPI)-clean
 	$(call QUIET_CLEAN, libperf) $(RM) $(LIBPERF_A) \
-                *.o *~ *.a *.so *.so.$(VERSION) *.so.$(LIBPERF_VERSION) .*.d .*.cmd tests/*.o LIBPERF-CFLAGS $(LIBPERF_PC) \
-                $(TESTS_STATIC) $(TESTS_SHARED)
+                *.o *~ *.a *.so *.so.$(VERSION) *.so.$(LIBPERF_VERSION) .*.d .*.cmd LIBPERF-CFLAGS $(LIBPERF_PC)
+	$(Q)$(MAKE) -C tests clean
 
-TESTS_IN = tests-in.o
-
-TESTS_STATIC = $(OUTPUT)tests-static
-TESTS_SHARED = $(OUTPUT)tests-shared
-
-$(TESTS_IN): FORCE
-	$(Q)$(MAKE) $(build)=tests
-
-$(TESTS_STATIC): $(TESTS_IN) $(LIBPERF_A) $(LIBAPI)
-	$(QUIET_LINK)$(CC) -o $@ $^
-
-$(TESTS_SHARED): $(TESTS_IN) $(LIBAPI)
-	$(QUIET_LINK)$(CC) -o $@ -L$(if $(OUTPUT),$(OUTPUT),.) $^ -lperf
-
-make-tests: libs $(TESTS_SHARED) $(TESTS_STATIC)
-
-tests: make-tests
-	@echo "running static:"
-	@./$(TESTS_STATIC) $(TEST_ARGS)
-	@echo "running dynamic:"
-	@LD_LIBRARY_PATH=. ./$(TESTS_SHARED) $(TEST_ARGS)
+tests: libs
+	$(Q)$(MAKE) -C tests
+	$(Q)$(MAKE) -C tests run
 
 $(LIBPERF_PC):
 	$(QUIET_GEN)sed -e "s|@PREFIX@|$(prefix)|" \

@@ -12,7 +12,6 @@
  */
 
 #include <linux/clkdev.h>
-#include <linux/clk/spear.h>
 #include <linux/err.h>
 #include <linux/io.h>
 #include <linux/of_platform.h>

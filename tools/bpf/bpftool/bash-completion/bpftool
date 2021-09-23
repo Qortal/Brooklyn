@@ -705,7 +705,7 @@ _bpftool()
                                 hash_of_maps devmap devmap_hash sockmap cpumap \
                                 xskmap sockhash cgroup_storage reuseport_sockarray \
                                 percpu_cgroup_storage queue stack sk_storage \
-                                struct_ops inode_storage task_storage' -- \
+                                struct_ops inode_storage' -- \
                                                    "$cur" ) )
                             return 0
                             ;;
@@ -981,25 +981,12 @@ _bpftool()
             ;;
         gen)
             case $command in
-                object)
-                    _filedir
-                    return 0
-                    ;;
                 skeleton)
-                    case $prev in
-                        $command)
-                            _filedir
-                            return 0
-                            ;;
-                        *)
-                            _bpftool_once_attr 'name'
-                            return 0
-                            ;;
-                    esac
+                    _filedir
                     ;;
                 *)
                     [[ $prev == $object ]] && \
-                        COMPREPLY=( $( compgen -W 'object skeleton help' -- "$cur" ) )
+                        COMPREPLY=( $( compgen -W 'skeleton help' -- "$cur" ) )
                     ;;
             esac
             ;;

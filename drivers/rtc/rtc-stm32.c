@@ -209,7 +209,7 @@ static irqreturn_t stm32_rtc_alarm_irq(int irq, void *dev_id)
 	const struct stm32_rtc_events *evts = &rtc->data->events;
 	unsigned int status, cr;
 
-	rtc_lock(rtc->rtc_dev);
+	mutex_lock(&rtc->rtc_dev->ops_lock);
 
 	status = readl_relaxed(rtc->base + regs->sr);
 	cr = readl_relaxed(rtc->base + regs->cr);
@@ -226,7 +226,7 @@ static irqreturn_t stm32_rtc_alarm_irq(int irq, void *dev_id)
 		stm32_rtc_clear_event_flags(rtc, evts->alra);
 	}
 
-	rtc_unlock(rtc->rtc_dev);
+	mutex_unlock(&rtc->rtc_dev->ops_lock);
 
 	return IRQ_HANDLED;
 }

@@ -463,6 +463,8 @@ struct driver_data {
 
 	int isr_binding;
 
+	struct block_device *bdev;
+
 	struct list_head online_list; /* linkage for online list */
 
 	struct list_head remove_list; /* linkage for removing list */

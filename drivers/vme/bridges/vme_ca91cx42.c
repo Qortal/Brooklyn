@@ -1510,7 +1510,7 @@ static void *ca91cx42_alloc_consistent(struct device *parent, size_t size,
 	/* Find pci_dev container of dev */
 	pdev = to_pci_dev(parent);
 
-	return dma_alloc_coherent(&pdev->dev, size, dma, GFP_KERNEL);
+	return pci_alloc_consistent(pdev, size, dma);
 }
 
 static void ca91cx42_free_consistent(struct device *parent, size_t size,
@@ -1521,7 +1521,7 @@ static void ca91cx42_free_consistent(struct device *parent, size_t size,
 	/* Find pci_dev container of dev */
 	pdev = to_pci_dev(parent);
 
-	dma_free_coherent(&pdev->dev, size, vaddr, dma);
+	pci_free_consistent(pdev, size, vaddr, dma);
 }
 
 /*
@@ -1555,9 +1555,8 @@ static int ca91cx42_crcsr_init(struct vme_bridge *ca91cx42_bridge,
 	}
 
 	/* Allocate mem for CR/CSR image */
-	bridge->crcsr_kernel = dma_alloc_coherent(&pdev->dev,
-						  VME_CRCSR_BUF_SIZE,
-						  &bridge->crcsr_bus, GFP_KERNEL);
+	bridge->crcsr_kernel = pci_zalloc_consistent(pdev, VME_CRCSR_BUF_SIZE,
+						     &bridge->crcsr_bus);
 	if (!bridge->crcsr_kernel) {
 		dev_err(&pdev->dev, "Failed to allocate memory for CR/CSR "
 			"image\n");
@@ -1590,8 +1589,8 @@ static void ca91cx42_crcsr_exit(struct vme_bridge *ca91cx42_bridge,
 	/* Free image */
 	iowrite32(0, bridge->base + VCSR_TO);
 
-	dma_free_coherent(&pdev->dev, VME_CRCSR_BUF_SIZE,
-			  bridge->crcsr_kernel, bridge->crcsr_bus);
+	pci_free_consistent(pdev, VME_CRCSR_BUF_SIZE, bridge->crcsr_kernel,
+		bridge->crcsr_bus);
 }
 
 static int ca91cx42_probe(struct pci_dev *pdev, const struct pci_device_id *id)

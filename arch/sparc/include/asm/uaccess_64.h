@@ -10,6 +10,7 @@
 #include <linux/string.h>
 #include <asm/asi.h>
 #include <asm/spitfire.h>
+#include <asm/extable_64.h>
 
 #include <asm/processor.h>
 

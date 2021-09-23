@@ -26,7 +26,7 @@ static u16 nvmet_passthru_override_id_ctrl(struct nvmet_req *req)
 	struct nvme_ctrl *pctrl = ctrl->subsys->passthru_ctrl;
 	u16 status = NVME_SC_SUCCESS;
 	struct nvme_id_ctrl *id;
-	unsigned int max_hw_sectors;
+	int max_hw_sectors;
 	int page_shift;
 
 	id = kzalloc(sizeof(*id), GFP_KERNEL);
@@ -50,9 +50,9 @@ static u16 nvmet_passthru_override_id_ctrl(struct nvmet_req *req)
 
 	/*
 	 * nvmet_passthru_map_sg is limitted to using a single bio so limit
-	 * the mdts based on BIO_MAX_VECS as well
+	 * the mdts based on BIO_MAX_PAGES as well
 	 */
-	max_hw_sectors = min_not_zero(BIO_MAX_VECS << (PAGE_SHIFT - 9),
+	max_hw_sectors = min_not_zero(BIO_MAX_PAGES << (PAGE_SHIFT - 9),
 				      max_hw_sectors);
 
 	page_shift = NVME_CAP_MPSMIN(ctrl->cap) + 12;
@@ -153,10 +153,11 @@ static void nvmet_passthru_execute_cmd_work(struct work_struct *w)
 {
 	struct nvmet_req *req = container_of(w, struct nvmet_req, p.work);
 	struct request *rq = req->p.rq;
-	int status;
+	u16 status;
 
-	status = nvme_execute_passthru_rq(rq);
+	nvme_execute_passthru_rq(rq);
 
+	status = nvme_req(rq)->status;
 	if (status == NVME_SC_SUCCESS &&
 	    req->cmd->common.opcode == nvme_admin_identify) {
 		switch (req->cmd->identify.cns) {
@@ -167,8 +168,7 @@ static void nvmet_passthru_execute_cmd_work(struct work_struct *w)
 			nvmet_passthru_override_id_ns(req);
 			break;
 		}
-	} else if (status < 0)
-		status = NVME_SC_INTERNAL;
+	}
 
 	req->cqe->result = nvme_req(rq)->result;
 	nvmet_req_complete(req, status);
@@ -188,30 +188,35 @@ static void nvmet_passthru_req_done(struct request *rq,
 static int nvmet_passthru_map_sg(struct nvmet_req *req, struct request *rq)
 {
 	struct scatterlist *sg;
+	int op_flags = 0;
 	struct bio *bio;
-	int i;
+	int i, ret;
 
-	if (req->sg_cnt > BIO_MAX_VECS)
+	if (req->sg_cnt > BIO_MAX_PAGES)
 		return -EINVAL;
 
-	if (nvmet_use_inline_bvec(req)) {
-		bio = &req->p.inline_bio;
-		bio_init(bio, req->inline_bvec, ARRAY_SIZE(req->inline_bvec));
-	} else {
-		bio = bio_alloc(GFP_KERNEL, bio_max_segs(req->sg_cnt));
-		bio->bi_end_io = bio_put;
-	}
-	bio->bi_opf = req_op(rq);
+	if (req->cmd->common.opcode == nvme_cmd_flush)
+		op_flags = REQ_FUA;
+	else if (nvme_is_write(req->cmd))
+		op_flags = REQ_SYNC | REQ_IDLE;
+
+	bio = bio_alloc(GFP_KERNEL, req->sg_cnt);
+	bio->bi_end_io = bio_put;
+	bio->bi_opf = req_op(rq) | op_flags;
 
 	for_each_sg(req->sg, sg, req->sg_cnt, i) {
 		if (bio_add_pc_page(rq->q, bio, sg_page(sg), sg->length,
 				    sg->offset) < sg->length) {
-			nvmet_req_bio_put(req, bio);
+			bio_put(bio);
 			return -EINVAL;
 		}
 	}
 
-	blk_rq_bio_prep(rq, bio, req->sg_cnt);
+	ret = blk_rq_append_bio(rq, &bio);
+	if (unlikely(ret)) {
+		bio_put(bio);
+		return ret;
+	}
 
 	return 0;
 }
@@ -222,7 +227,6 @@ static void nvmet_passthru_execute_cmd(struct nvmet_req *req)
 	struct request_queue *q = ctrl->admin_q;
 	struct nvme_ns *ns = NULL;
 	struct request *rq = NULL;
-	unsigned int timeout;
 	u32 effects;
 	u16 status;
 	int ret;
@@ -238,19 +242,13 @@ static void nvmet_passthru_execute_cmd(struct nvmet_req *req)
 		}
 
 		q = ns->queue;
-		timeout = nvmet_req_subsys(req)->io_timeout;
-	} else {
-		timeout = nvmet_req_subsys(req)->admin_timeout;
 	}
 
-	rq = nvme_alloc_request(q, req->cmd, 0);
+	rq = nvme_alloc_request(q, req->cmd, 0, NVME_QID_ANY);
 	if (IS_ERR(rq)) {
 		status = NVME_SC_INTERNAL;
 		goto out_put_ns;
 	}
-
-	if (timeout)
-		rq->timeout = timeout;
 
 	if (req->sg_cnt) {
 		ret = nvmet_passthru_map_sg(req, rq);
@@ -274,7 +272,7 @@ static void nvmet_passthru_execute_cmd(struct nvmet_req *req)
 		schedule_work(&req->p.work);
 	} else {
 		rq->end_io_data = req;
-		blk_execute_rq_nowait(ns ? ns->disk : NULL, rq, 0,
+		blk_execute_rq_nowait(rq->q, ns ? ns->disk : NULL, rq, 0,
 				      nvmet_passthru_req_done);
 	}
 
@@ -493,7 +491,7 @@ u16 nvmet_parse_passthru_admin_cmd(struct nvmet_req *req)
 		return nvmet_setup_passthru_command(req);
 	default:
 		/* Reject commands not in the allowlist above */
-		return nvmet_report_invalid_opcode(req);
+		return NVME_SC_INVALID_OPCODE | NVME_SC_DNR;
 	}
 }
 

@@ -21,7 +21,7 @@ void test_stacktrace_map_raw_tp(void)
 		goto close_prog;
 
 	link = bpf_program__attach_raw_tracepoint(prog, "sched_switch");
-	if (!ASSERT_OK_PTR(link, "attach_raw_tp"))
+	if (CHECK(IS_ERR(link), "attach_raw_tp", "err %ld\n", PTR_ERR(link)))
 		goto close_prog;
 
 	/* find map fds */
@@ -59,6 +59,7 @@ void test_stacktrace_map_raw_tp(void)
 		goto close_prog;
 
 close_prog:
-	bpf_link__destroy(link);
+	if (!IS_ERR_OR_NULL(link))
+		bpf_link__destroy(link);
 	bpf_object__close(obj);
 }

@@ -110,6 +110,20 @@ static struct irq_chip intc_dev = {
 	.irq_mask_ack = intc_mask_ack,
 };
 
+static unsigned int xintc_get_irq_local(struct xintc_irq_chip *irqc)
+{
+	unsigned int irq = 0;
+	u32 hwirq;
+
+	hwirq = xintc_read(irqc, IVR);
+	if (hwirq != -1U)
+		irq = irq_find_mapping(irqc->root_domain, hwirq);
+
+	pr_debug("irq-xilinx: hwirq=%d, irq=%d\n", hwirq, irq);
+
+	return irq;
+}
+
 unsigned int xintc_get_irq(void)
 {
 	unsigned int irq = -1;
@@ -150,16 +164,15 @@ static void xil_intc_irq_handler(struct irq_desc *desc)
 {
 	struct irq_chip *chip = irq_desc_get_chip(desc);
 	struct xintc_irq_chip *irqc;
+	u32 pending;
 
 	irqc = irq_data_get_irq_handler_data(&desc->irq_data);
 	chained_irq_enter(chip, desc);
 	do {
-		u32 hwirq = xintc_read(irqc, IVR);
-
-		if (hwirq == -1U)
+		pending = xintc_get_irq_local(irqc);
+		if (pending == 0)
 			break;
-
-		generic_handle_domain_irq(irqc->root_domain, hwirq);
+		generic_handle_irq(pending);
 	} while (true);
 	chained_irq_exit(chip, desc);
 }
@@ -197,7 +210,7 @@ static int __init xilinx_intc_of_init(struct device_node *intc,
 
 	/*
 	 * Disable all external interrupts until they are
-	 * explicitly requested.
+	 * explicity requested.
 	 */
 	xintc_write(irqc, IER, 0);
 

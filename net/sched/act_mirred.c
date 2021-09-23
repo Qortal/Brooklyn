@@ -205,18 +205,6 @@ release_idr:
 	return err;
 }
 
-static int tcf_mirred_forward(bool want_ingress, struct sk_buff *skb)
-{
-	int err;
-
-	if (!want_ingress)
-		err = tcf_dev_queue_xmit(skb, dev_queue_xmit);
-	else
-		err = netif_receive_skb(skb);
-
-	return err;
-}
-
 static int tcf_mirred_act(struct sk_buff *skb, const struct tc_action *a,
 			  struct tcf_result *res)
 {
@@ -302,15 +290,18 @@ static int tcf_mirred_act(struct sk_buff *skb, const struct tc_action *a,
 		/* let's the caller reinsert the packet, if possible */
 		if (use_reinsert) {
 			res->ingress = want_ingress;
-			err = tcf_mirred_forward(res->ingress, skb);
-			if (err)
+			if (skb_tc_reinsert(skb, res))
 				tcf_action_inc_overlimit_qstats(&m->common);
 			__this_cpu_dec(mirred_rec_level);
 			return TC_ACT_CONSUMED;
 		}
 	}
 
-	err = tcf_mirred_forward(want_ingress, skb2);
+	if (!want_ingress)
+		err = dev_queue_xmit(skb2);
+	else
+		err = netif_receive_skb(skb2);
+
 	if (err) {
 out:
 		tcf_action_inc_overlimit_qstats(&m->common);

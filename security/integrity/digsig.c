@@ -111,8 +111,6 @@ static int __init __integrity_init_keyring(const unsigned int id,
 	} else {
 		if (id == INTEGRITY_KEYRING_PLATFORM)
 			set_platform_trusted_keys(keyring[id]);
-		if (id == INTEGRITY_KEYRING_IMA)
-			load_module_cert(keyring[id]);
 	}
 
 	return err;
@@ -145,8 +143,8 @@ out:
 	return __integrity_init_keyring(id, perm, restriction);
 }
 
-static int __init integrity_add_key(const unsigned int id, const void *data,
-				    off_t size, key_perm_t perm)
+int __init integrity_add_key(const unsigned int id, const void *data,
+			     off_t size, key_perm_t perm)
 {
 	key_ref_t key;
 	int rc = 0;

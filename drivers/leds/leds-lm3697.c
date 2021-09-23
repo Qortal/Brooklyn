@@ -47,8 +47,6 @@
  * @lmu_data: Register and setting values for common code
  * @control_bank: Control bank the LED is associated to. 0 is control bank A
  *		   1 is control bank B
- * @enabled: LED brightness level (or LED_OFF)
- * @num_leds: Number of LEDs available
  */
 struct lm3697_led {
 	u32 hvled_strings[LM3697_MAX_LED_STRINGS];
@@ -70,8 +68,6 @@ struct lm3697_led {
  * @dev: Pointer to the devices device struct
  * @lock: Lock for reading/writing the device
  * @leds: Array of LED strings
- * @bank_cfg: OUTPUT_CONFIG register values
- * @num_banks: Number of control banks
  */
 struct lm3697 {
 	struct gpio_desc *enable_gpio;

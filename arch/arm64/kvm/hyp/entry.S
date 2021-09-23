@@ -13,7 +13,6 @@
 #include <asm/kvm_arm.h>
 #include <asm/kvm_asm.h>
 #include <asm/kvm_mmu.h>
-#include <asm/kvm_mte.h>
 #include <asm/kvm_ptrauth.h>
 
 	.text
@@ -52,9 +51,6 @@ alternative_else_nop_endif
 
 	add	x29, x0, #VCPU_CONTEXT
 
-	// mte_switch_to_guest(g_ctxt, h_ctxt, tmp1)
-	mte_switch_to_guest x29, x1, x2
-
 	// Macro ptrauth_switch_to_guest format:
 	// 	ptrauth_switch_to_guest(guest cxt, tmp1, tmp2, tmp3)
 	// The below macro to restore guest keys is not implemented in C code
@@ -89,10 +85,8 @@ SYM_INNER_LABEL(__guest_exit_panic, SYM_L_GLOBAL)
 
 	// If the hyp context is loaded, go straight to hyp_panic
 	get_loaded_vcpu x0, x1
-	cbnz	x0, 1f
-	b	hyp_panic
+	cbz	x0, hyp_panic
 
-1:
 	// The hyp context is saved so make sure it is restored to allow
 	// hyp_panic to run at hyp and, subsequently, panic to run in the host.
 	// This makes use of __guest_exit to avoid duplication but sets the
@@ -100,7 +94,7 @@ SYM_INNER_LABEL(__guest_exit_panic, SYM_L_GLOBAL)
 	// current state is saved to the guest context but it will only be
 	// accurate if the guest had been completely restored.
 	adr_this_cpu x0, kvm_hyp_ctxt, x1
-	adr_l	x1, hyp_panic
+	adr	x1, hyp_panic
 	str	x1, [x0, #CPU_XREG_OFFSET(30)]
 
 	get_vcpu_ptr	x1, x0
@@ -145,9 +139,6 @@ SYM_INNER_LABEL(__guest_exit, SYM_L_GLOBAL)
 	// as it may cause Pointer Authentication key signing mismatch errors
 	// when this feature is enabled for kernel code.
 	ptrauth_switch_to_hyp x1, x2, x3, x4, x5
-
-	// mte_switch_to_hyp(g_ctxt, h_ctxt, reg1)
-	mte_switch_to_hyp x1, x2, x3
 
 	// Restore hyp's sp_el0
 	restore_sp_el0 x2, x3

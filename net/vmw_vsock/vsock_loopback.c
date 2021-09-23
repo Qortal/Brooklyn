@@ -63,8 +63,6 @@ static int vsock_loopback_cancel_pkt(struct vsock_sock *vsk)
 	return 0;
 }
 
-static bool vsock_loopback_seqpacket_allow(u32 remote_cid);
-
 static struct virtio_transport loopback_transport = {
 	.transport = {
 		.module                   = THIS_MODULE,
@@ -91,11 +89,6 @@ static struct virtio_transport loopback_transport = {
 		.stream_is_active         = virtio_transport_stream_is_active,
 		.stream_allow             = virtio_transport_stream_allow,
 
-		.seqpacket_dequeue        = virtio_transport_seqpacket_dequeue,
-		.seqpacket_enqueue        = virtio_transport_seqpacket_enqueue,
-		.seqpacket_allow          = vsock_loopback_seqpacket_allow,
-		.seqpacket_has_data       = virtio_transport_seqpacket_has_data,
-
 		.notify_poll_in           = virtio_transport_notify_poll_in,
 		.notify_poll_out          = virtio_transport_notify_poll_out,
 		.notify_recv_init         = virtio_transport_notify_recv_init,
@@ -111,11 +104,6 @@ static struct virtio_transport loopback_transport = {
 
 	.send_pkt = vsock_loopback_send_pkt,
 };
-
-static bool vsock_loopback_seqpacket_allow(u32 remote_cid)
-{
-	return true;
-}
 
 static void vsock_loopback_work(struct work_struct *work)
 {

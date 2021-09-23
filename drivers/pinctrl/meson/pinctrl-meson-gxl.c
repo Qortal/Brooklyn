@@ -861,7 +861,6 @@ static const struct of_device_id meson_gxl_pinctrl_dt_match[] = {
 	},
 	{ },
 };
-MODULE_DEVICE_TABLE(of, meson_gxl_pinctrl_dt_match);
 
 static struct platform_driver meson_gxl_pinctrl_driver = {
 	.probe		= meson_pinctrl_probe,
@@ -870,5 +869,4 @@ static struct platform_driver meson_gxl_pinctrl_driver = {
 		.of_match_table = meson_gxl_pinctrl_dt_match,
 	},
 };
-module_platform_driver(meson_gxl_pinctrl_driver);
-MODULE_LICENSE("GPL v2");
+builtin_platform_driver(meson_gxl_pinctrl_driver);

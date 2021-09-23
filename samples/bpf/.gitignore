@@ -52,6 +52,3 @@ xdp_tx_iptunnel
 xdpsock
 xsk_fwd
 testfile.img
-hbm_out.log
-iperf.*
-*.out

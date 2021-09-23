@@ -202,10 +202,11 @@ static int fdomain_select(struct Scsi_Host *sh, int target)
 	return 1;
 }
 
-static void fdomain_finish_cmd(struct fdomain *fd)
+static void fdomain_finish_cmd(struct fdomain *fd, int result)
 {
 	outb(0, fd->base + REG_ICTL);
 	fdomain_make_bus_idle(fd);
+	fd->cur_cmd->result = result;
 	fd->cur_cmd->scsi_done(fd->cur_cmd);
 	fd->cur_cmd = NULL;
 }
@@ -272,8 +273,7 @@ static void fdomain_work(struct work_struct *work)
 	if (cmd->SCp.phase & in_arbitration) {
 		status = inb(fd->base + REG_ASTAT);
 		if (!(status & ASTAT_ARB)) {
-			set_host_byte(cmd, DID_BUS_BUSY);
-			fdomain_finish_cmd(fd);
+			fdomain_finish_cmd(fd, DID_BUS_BUSY << 16);
 			goto out;
 		}
 		cmd->SCp.phase = in_selection;
@@ -290,8 +290,7 @@ static void fdomain_work(struct work_struct *work)
 		if (!(status & BSTAT_BSY)) {
 			/* Try again, for slow devices */
 			if (fdomain_select(cmd->device->host, scmd_id(cmd))) {
-				set_host_byte(cmd, DID_NO_CONNECT);
-				fdomain_finish_cmd(fd);
+				fdomain_finish_cmd(fd, DID_NO_CONNECT << 16);
 				goto out;
 			}
 			/* Stop arbitration and enable parity */
@@ -334,7 +333,7 @@ static void fdomain_work(struct work_struct *work)
 			break;
 		case BSTAT_MSG | BSTAT_CMD | BSTAT_IO:	/* MESSAGE IN */
 			cmd->SCp.Message = inb(fd->base + REG_SCSI_DATA);
-			if (cmd->SCp.Message == COMMAND_COMPLETE)
+			if (!cmd->SCp.Message)
 				++done;
 			break;
 		}
@@ -360,10 +359,9 @@ static void fdomain_work(struct work_struct *work)
 		fdomain_read_data(cmd);
 
 	if (done) {
-		set_status_byte(cmd, cmd->SCp.Status);
-		set_host_byte(cmd, DID_OK);
-		scsi_msg_to_host_byte(cmd, cmd->SCp.Message);
-		fdomain_finish_cmd(fd);
+		fdomain_finish_cmd(fd, (cmd->SCp.Status & 0xff) |
+				   ((cmd->SCp.Message & 0xff) << 8) |
+				   (DID_OK << 16));
 	} else {
 		if (cmd->SCp.phase & disconnect) {
 			outb(ICTL_FIFO | ICTL_SEL | ICTL_REQ | FIFO_COUNT,
@@ -441,10 +439,10 @@ static int fdomain_abort(struct scsi_cmnd *cmd)
 
 	fdomain_make_bus_idle(fd);
 	fd->cur_cmd->SCp.phase |= aborted;
+	fd->cur_cmd->result = DID_ABORT << 16;
 
 	/* Aborts are not done well. . . */
-	set_host_byte(fd->cur_cmd, DID_ABORT);
-	fdomain_finish_cmd(fd);
+	fdomain_finish_cmd(fd, DID_ABORT << 16);
 	spin_unlock_irqrestore(sh->host_lock, flags);
 	return SUCCESS;
 }

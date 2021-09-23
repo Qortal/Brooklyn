@@ -573,7 +573,7 @@ void icmp6_send(struct sk_buff *skb, u8 type, u8 code, __u32 info,
 	fl6.fl6_icmp_code = code;
 	fl6.flowi6_uid = sock_net_uid(net, NULL);
 	fl6.mp_hash = rt6_multipath_hash(net, &fl6, skb, NULL);
-	security_skb_classify_flow(skb, flowi6_to_flowi_common(&fl6));
+	security_skb_classify_flow(skb, flowi6_to_flowi(&fl6));
 
 	np = inet6_sk(sk);
 
@@ -725,7 +725,6 @@ static void icmpv6_echo_reply(struct sk_buff *skb)
 	struct ipcm6_cookie ipc6;
 	u32 mark = IP6_REPLY_MARK(net, skb->mark);
 	bool acast;
-	u8 type;
 
 	if (ipv6_addr_is_multicast(&ipv6_hdr(skb)->daddr) &&
 	    net->ipv6.sysctl.icmpv6_echo_ignore_multicast)
@@ -741,13 +740,8 @@ static void icmpv6_echo_reply(struct sk_buff *skb)
 	    !(net->ipv6.sysctl.anycast_src_echo_reply && acast))
 		saddr = NULL;
 
-	if (icmph->icmp6_type == ICMPV6_EXT_ECHO_REQUEST)
-		type = ICMPV6_EXT_ECHO_REPLY;
-	else
-		type = ICMPV6_ECHO_REPLY;
-
 	memcpy(&tmp_hdr, icmph, sizeof(tmp_hdr));
-	tmp_hdr.icmp6_type = type;
+	tmp_hdr.icmp6_type = ICMPV6_ECHO_REPLY;
 
 	memset(&fl6, 0, sizeof(fl6));
 	if (net->ipv6.sysctl.flowlabel_reflect & FLOWLABEL_REFLECT_ICMPV6_ECHO_REPLIES)
@@ -758,10 +752,10 @@ static void icmpv6_echo_reply(struct sk_buff *skb)
 	if (saddr)
 		fl6.saddr = *saddr;
 	fl6.flowi6_oif = icmp6_iif(skb);
-	fl6.fl6_icmp_type = type;
+	fl6.fl6_icmp_type = ICMPV6_ECHO_REPLY;
 	fl6.flowi6_mark = mark;
 	fl6.flowi6_uid = sock_net_uid(net, NULL);
-	security_skb_classify_flow(skb, flowi6_to_flowi_common(&fl6));
+	security_skb_classify_flow(skb, flowi6_to_flowi(&fl6));
 
 	local_bh_disable();
 	sk = icmpv6_xmit_lock(net);
@@ -789,16 +783,12 @@ static void icmpv6_echo_reply(struct sk_buff *skb)
 
 	msg.skb = skb;
 	msg.offset = 0;
-	msg.type = type;
+	msg.type = ICMPV6_ECHO_REPLY;
 
 	ipcm6_init_sk(&ipc6, np);
 	ipc6.hlimit = ip6_sk_dst_hoplimit(np, &fl6, dst);
 	ipc6.tclass = ipv6_get_dsfield(ipv6_hdr(skb));
 	ipc6.sockc.mark = mark;
-
-	if (icmph->icmp6_type == ICMPV6_EXT_ECHO_REQUEST)
-		if (!icmp_build_probe(skb, (struct icmphdr *)&tmp_hdr))
-			goto out_dst_release;
 
 	if (ip6_append_data(sk, icmpv6_getfrag, &msg,
 			    skb->len + sizeof(struct icmp6hdr),
@@ -921,17 +911,8 @@ static int icmpv6_rcv(struct sk_buff *skb)
 		if (!net->ipv6.sysctl.icmpv6_echo_ignore_all)
 			icmpv6_echo_reply(skb);
 		break;
-	case ICMPV6_EXT_ECHO_REQUEST:
-		if (!net->ipv6.sysctl.icmpv6_echo_ignore_all &&
-		    net->ipv4.sysctl_icmp_echo_enable_probe)
-			icmpv6_echo_reply(skb);
-		break;
 
 	case ICMPV6_ECHO_REPLY:
-		success = ping_rcv(skb);
-		break;
-
-	case ICMPV6_EXT_ECHO_REPLY:
 		success = ping_rcv(skb);
 		break;
 
@@ -963,11 +944,11 @@ static int icmpv6_rcv(struct sk_buff *skb)
 
 	case ICMPV6_MGM_QUERY:
 		igmp6_event_query(skb);
-		return 0;
+		break;
 
 	case ICMPV6_MGM_REPORT:
 		igmp6_event_report(skb);
-		return 0;
+		break;
 
 	case ICMPV6_MGM_REDUCTION:
 	case ICMPV6_NI_QUERY:
@@ -1027,7 +1008,7 @@ void icmpv6_flow_init(struct sock *sk, struct flowi6 *fl6,
 	fl6->fl6_icmp_type	= type;
 	fl6->fl6_icmp_code	= 0;
 	fl6->flowi6_oif		= oif;
-	security_sk_classify_flow(sk, flowi6_to_flowi_common(fl6));
+	security_sk_classify_flow(sk, flowi6_to_flowi(fl6));
 }
 
 static void __net_exit icmpv6_sk_exit(struct net *net)
@@ -1188,23 +1169,23 @@ static struct ctl_table ipv6_icmp_table_template[] = {
 	{
 		.procname	= "echo_ignore_all",
 		.data		= &init_net.ipv6.sysctl.icmpv6_echo_ignore_all,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler = proc_dou8vec_minmax,
+		.proc_handler = proc_dointvec,
 	},
 	{
 		.procname	= "echo_ignore_multicast",
 		.data		= &init_net.ipv6.sysctl.icmpv6_echo_ignore_multicast,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler = proc_dou8vec_minmax,
+		.proc_handler = proc_dointvec,
 	},
 	{
 		.procname	= "echo_ignore_anycast",
 		.data		= &init_net.ipv6.sysctl.icmpv6_echo_ignore_anycast,
-		.maxlen		= sizeof(u8),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler = proc_dou8vec_minmax,
+		.proc_handler = proc_dointvec,
 	},
 	{
 		.procname	= "ratemask",

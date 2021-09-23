@@ -12,7 +12,6 @@
 #include <linux/spinlock.h>
 #include <linux/clk.h>
 #include <linux/err.h>
-#include <linux/of.h>
 
 #include <lantiq_soc.h>
 #include <xway_dma.h>

@@ -140,8 +140,12 @@ static void ish_evt_handler(struct work_struct *work)
 {
 	struct ishtp_cl_data *client_data =
 		container_of(work, struct ishtp_cl_data, work_ec_evt);
+	struct cros_ec_device *ec_dev = client_data->ec_dev;
+	bool ec_has_more_events;
 
-	cros_ec_irq_thread(0, client_data->ec_dev);
+	do {
+		ec_has_more_events = cros_ec_handle_event(ec_dev);
+	} while (ec_has_more_events);
 }
 
 /**
@@ -703,7 +707,7 @@ end_ishtp_cl_alloc_error:
  *
  * Return: 0
  */
-static void cros_ec_ishtp_remove(struct ishtp_cl_device *cl_device)
+static int cros_ec_ishtp_remove(struct ishtp_cl_device *cl_device)
 {
 	struct ishtp_cl	*cros_ish_cl = ishtp_get_drvdata(cl_device);
 	struct ishtp_cl_data *client_data = ishtp_get_client_data(cros_ish_cl);
@@ -712,6 +716,8 @@ static void cros_ec_ishtp_remove(struct ishtp_cl_device *cl_device)
 	cancel_work_sync(&client_data->work_ec_evt);
 	cros_ish_deinit(cros_ish_cl);
 	ishtp_put_device(cl_device);
+
+	return 0;
 }
 
 /**

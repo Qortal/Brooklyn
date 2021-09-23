@@ -29,8 +29,7 @@
 #define CCDC_MIN_HEIGHT		32
 
 static struct v4l2_mbus_framefmt *
-__ccdc_get_format(struct isp_ccdc_device *ccdc,
-		  struct v4l2_subdev_state *sd_state,
+__ccdc_get_format(struct isp_ccdc_device *ccdc, struct v4l2_subdev_pad_config *cfg,
 		  unsigned int pad, enum v4l2_subdev_format_whence which);
 
 static const unsigned int ccdc_fmts[] = {
@@ -300,10 +299,11 @@ static int ccdc_lsc_busy(struct isp_ccdc_device *ccdc)
 			     ISPCCDC_LSC_BUSY;
 }
 
-/*
- * __ccdc_lsc_configure - Apply a new configuration to the LSC engine
+/* __ccdc_lsc_configure - Apply a new configuration to the LSC engine
  * @ccdc: Pointer to ISP CCDC device
  * @req: New configuration request
+ *
+ * context: in_interrupt()
  */
 static int __ccdc_lsc_configure(struct isp_ccdc_device *ccdc,
 				struct ispccdc_lsc_config_req *req)
@@ -1937,25 +1937,21 @@ static int ccdc_set_stream(struct v4l2_subdev *sd, int enable)
 }
 
 static struct v4l2_mbus_framefmt *
-__ccdc_get_format(struct isp_ccdc_device *ccdc,
-		  struct v4l2_subdev_state *sd_state,
+__ccdc_get_format(struct isp_ccdc_device *ccdc, struct v4l2_subdev_pad_config *cfg,
 		  unsigned int pad, enum v4l2_subdev_format_whence which)
 {
 	if (which == V4L2_SUBDEV_FORMAT_TRY)
-		return v4l2_subdev_get_try_format(&ccdc->subdev, sd_state,
-						  pad);
+		return v4l2_subdev_get_try_format(&ccdc->subdev, cfg, pad);
 	else
 		return &ccdc->formats[pad];
 }
 
 static struct v4l2_rect *
-__ccdc_get_crop(struct isp_ccdc_device *ccdc,
-		struct v4l2_subdev_state *sd_state,
+__ccdc_get_crop(struct isp_ccdc_device *ccdc, struct v4l2_subdev_pad_config *cfg,
 		enum v4l2_subdev_format_whence which)
 {
 	if (which == V4L2_SUBDEV_FORMAT_TRY)
-		return v4l2_subdev_get_try_crop(&ccdc->subdev, sd_state,
-						CCDC_PAD_SOURCE_OF);
+		return v4l2_subdev_get_try_crop(&ccdc->subdev, cfg, CCDC_PAD_SOURCE_OF);
 	else
 		return &ccdc->crop;
 }
@@ -1968,8 +1964,7 @@ __ccdc_get_crop(struct isp_ccdc_device *ccdc,
  * @fmt: Format
  */
 static void
-ccdc_try_format(struct isp_ccdc_device *ccdc,
-		struct v4l2_subdev_state *sd_state,
+ccdc_try_format(struct isp_ccdc_device *ccdc, struct v4l2_subdev_pad_config *cfg,
 		unsigned int pad, struct v4l2_mbus_framefmt *fmt,
 		enum v4l2_subdev_format_whence which)
 {
@@ -2005,8 +2000,7 @@ ccdc_try_format(struct isp_ccdc_device *ccdc,
 	case CCDC_PAD_SOURCE_OF:
 		pixelcode = fmt->code;
 		field = fmt->field;
-		*fmt = *__ccdc_get_format(ccdc, sd_state, CCDC_PAD_SINK,
-					  which);
+		*fmt = *__ccdc_get_format(ccdc, cfg, CCDC_PAD_SINK, which);
 
 		/* In SYNC mode the bridge converts YUV formats from 2X8 to
 		 * 1X16. In BT.656 no such conversion occurs. As we don't know
@@ -2031,7 +2025,7 @@ ccdc_try_format(struct isp_ccdc_device *ccdc,
 		}
 
 		/* Hardcode the output size to the crop rectangle size. */
-		crop = __ccdc_get_crop(ccdc, sd_state, which);
+		crop = __ccdc_get_crop(ccdc, cfg, which);
 		fmt->width = crop->width;
 		fmt->height = crop->height;
 
@@ -2048,8 +2042,7 @@ ccdc_try_format(struct isp_ccdc_device *ccdc,
 		break;
 
 	case CCDC_PAD_SOURCE_VP:
-		*fmt = *__ccdc_get_format(ccdc, sd_state, CCDC_PAD_SINK,
-					  which);
+		*fmt = *__ccdc_get_format(ccdc, cfg, CCDC_PAD_SINK, which);
 
 		/* The video port interface truncates the data to 10 bits. */
 		info = omap3isp_video_format_info(fmt->code);
@@ -2126,7 +2119,7 @@ static void ccdc_try_crop(struct isp_ccdc_device *ccdc,
  * return -EINVAL or zero on success
  */
 static int ccdc_enum_mbus_code(struct v4l2_subdev *sd,
-			       struct v4l2_subdev_state *sd_state,
+			       struct v4l2_subdev_pad_config *cfg,
 			       struct v4l2_subdev_mbus_code_enum *code)
 {
 	struct isp_ccdc_device *ccdc = v4l2_get_subdevdata(sd);
@@ -2141,7 +2134,7 @@ static int ccdc_enum_mbus_code(struct v4l2_subdev *sd,
 		break;
 
 	case CCDC_PAD_SOURCE_OF:
-		format = __ccdc_get_format(ccdc, sd_state, code->pad,
+		format = __ccdc_get_format(ccdc, cfg, code->pad,
 					   code->which);
 
 		if (format->code == MEDIA_BUS_FMT_YUYV8_2X8 ||
@@ -2172,7 +2165,7 @@ static int ccdc_enum_mbus_code(struct v4l2_subdev *sd,
 		if (code->index != 0)
 			return -EINVAL;
 
-		format = __ccdc_get_format(ccdc, sd_state, code->pad,
+		format = __ccdc_get_format(ccdc, cfg, code->pad,
 					   code->which);
 
 		/* A pixel code equal to 0 means that the video port doesn't
@@ -2192,7 +2185,7 @@ static int ccdc_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int ccdc_enum_frame_size(struct v4l2_subdev *sd,
-				struct v4l2_subdev_state *sd_state,
+				struct v4l2_subdev_pad_config *cfg,
 				struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct isp_ccdc_device *ccdc = v4l2_get_subdevdata(sd);
@@ -2204,7 +2197,7 @@ static int ccdc_enum_frame_size(struct v4l2_subdev *sd,
 	format.code = fse->code;
 	format.width = 1;
 	format.height = 1;
-	ccdc_try_format(ccdc, sd_state, fse->pad, &format, fse->which);
+	ccdc_try_format(ccdc, cfg, fse->pad, &format, fse->which);
 	fse->min_width = format.width;
 	fse->min_height = format.height;
 
@@ -2214,7 +2207,7 @@ static int ccdc_enum_frame_size(struct v4l2_subdev *sd,
 	format.code = fse->code;
 	format.width = -1;
 	format.height = -1;
-	ccdc_try_format(ccdc, sd_state, fse->pad, &format, fse->which);
+	ccdc_try_format(ccdc, cfg, fse->pad, &format, fse->which);
 	fse->max_width = format.width;
 	fse->max_height = format.height;
 
@@ -2232,8 +2225,7 @@ static int ccdc_enum_frame_size(struct v4l2_subdev *sd,
  *
  * Return 0 on success or a negative error code otherwise.
  */
-static int ccdc_get_selection(struct v4l2_subdev *sd,
-			      struct v4l2_subdev_state *sd_state,
+static int ccdc_get_selection(struct v4l2_subdev *sd, struct v4l2_subdev_pad_config *cfg,
 			      struct v4l2_subdev_selection *sel)
 {
 	struct isp_ccdc_device *ccdc = v4l2_get_subdevdata(sd);
@@ -2249,13 +2241,12 @@ static int ccdc_get_selection(struct v4l2_subdev *sd,
 		sel->r.width = INT_MAX;
 		sel->r.height = INT_MAX;
 
-		format = __ccdc_get_format(ccdc, sd_state, CCDC_PAD_SINK,
-					   sel->which);
+		format = __ccdc_get_format(ccdc, cfg, CCDC_PAD_SINK, sel->which);
 		ccdc_try_crop(ccdc, format, &sel->r);
 		break;
 
 	case V4L2_SEL_TGT_CROP:
-		sel->r = *__ccdc_get_crop(ccdc, sd_state, sel->which);
+		sel->r = *__ccdc_get_crop(ccdc, cfg, sel->which);
 		break;
 
 	default:
@@ -2276,8 +2267,7 @@ static int ccdc_get_selection(struct v4l2_subdev *sd,
  *
  * Return 0 on success or a negative error code otherwise.
  */
-static int ccdc_set_selection(struct v4l2_subdev *sd,
-			      struct v4l2_subdev_state *sd_state,
+static int ccdc_set_selection(struct v4l2_subdev *sd, struct v4l2_subdev_pad_config *cfg,
 			      struct v4l2_subdev_selection *sel)
 {
 	struct isp_ccdc_device *ccdc = v4l2_get_subdevdata(sd);
@@ -2296,19 +2286,17 @@ static int ccdc_set_selection(struct v4l2_subdev *sd,
 	 * rectangle.
 	 */
 	if (sel->flags & V4L2_SEL_FLAG_KEEP_CONFIG) {
-		sel->r = *__ccdc_get_crop(ccdc, sd_state, sel->which);
+		sel->r = *__ccdc_get_crop(ccdc, cfg, sel->which);
 		return 0;
 	}
 
-	format = __ccdc_get_format(ccdc, sd_state, CCDC_PAD_SINK, sel->which);
+	format = __ccdc_get_format(ccdc, cfg, CCDC_PAD_SINK, sel->which);
 	ccdc_try_crop(ccdc, format, &sel->r);
-	*__ccdc_get_crop(ccdc, sd_state, sel->which) = sel->r;
+	*__ccdc_get_crop(ccdc, cfg, sel->which) = sel->r;
 
 	/* Update the source format. */
-	format = __ccdc_get_format(ccdc, sd_state, CCDC_PAD_SOURCE_OF,
-				   sel->which);
-	ccdc_try_format(ccdc, sd_state, CCDC_PAD_SOURCE_OF, format,
-			sel->which);
+	format = __ccdc_get_format(ccdc, cfg, CCDC_PAD_SOURCE_OF, sel->which);
+	ccdc_try_format(ccdc, cfg, CCDC_PAD_SOURCE_OF, format, sel->which);
 
 	return 0;
 }
@@ -2322,14 +2310,13 @@ static int ccdc_set_selection(struct v4l2_subdev *sd,
  * Return 0 on success or -EINVAL if the pad is invalid or doesn't correspond
  * to the format type.
  */
-static int ccdc_get_format(struct v4l2_subdev *sd,
-			   struct v4l2_subdev_state *sd_state,
+static int ccdc_get_format(struct v4l2_subdev *sd, struct v4l2_subdev_pad_config *cfg,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct isp_ccdc_device *ccdc = v4l2_get_subdevdata(sd);
 	struct v4l2_mbus_framefmt *format;
 
-	format = __ccdc_get_format(ccdc, sd_state, fmt->pad, fmt->which);
+	format = __ccdc_get_format(ccdc, cfg, fmt->pad, fmt->which);
 	if (format == NULL)
 		return -EINVAL;
 
@@ -2346,25 +2333,24 @@ static int ccdc_get_format(struct v4l2_subdev *sd,
  * Return 0 on success or -EINVAL if the pad is invalid or doesn't correspond
  * to the format type.
  */
-static int ccdc_set_format(struct v4l2_subdev *sd,
-			   struct v4l2_subdev_state *sd_state,
+static int ccdc_set_format(struct v4l2_subdev *sd, struct v4l2_subdev_pad_config *cfg,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct isp_ccdc_device *ccdc = v4l2_get_subdevdata(sd);
 	struct v4l2_mbus_framefmt *format;
 	struct v4l2_rect *crop;
 
-	format = __ccdc_get_format(ccdc, sd_state, fmt->pad, fmt->which);
+	format = __ccdc_get_format(ccdc, cfg, fmt->pad, fmt->which);
 	if (format == NULL)
 		return -EINVAL;
 
-	ccdc_try_format(ccdc, sd_state, fmt->pad, &fmt->format, fmt->which);
+	ccdc_try_format(ccdc, cfg, fmt->pad, &fmt->format, fmt->which);
 	*format = fmt->format;
 
 	/* Propagate the format from sink to source */
 	if (fmt->pad == CCDC_PAD_SINK) {
 		/* Reset the crop rectangle. */
-		crop = __ccdc_get_crop(ccdc, sd_state, fmt->which);
+		crop = __ccdc_get_crop(ccdc, cfg, fmt->which);
 		crop->left = 0;
 		crop->top = 0;
 		crop->width = fmt->format.width;
@@ -2373,16 +2359,16 @@ static int ccdc_set_format(struct v4l2_subdev *sd,
 		ccdc_try_crop(ccdc, &fmt->format, crop);
 
 		/* Update the source formats. */
-		format = __ccdc_get_format(ccdc, sd_state, CCDC_PAD_SOURCE_OF,
+		format = __ccdc_get_format(ccdc, cfg, CCDC_PAD_SOURCE_OF,
 					   fmt->which);
 		*format = fmt->format;
-		ccdc_try_format(ccdc, sd_state, CCDC_PAD_SOURCE_OF, format,
+		ccdc_try_format(ccdc, cfg, CCDC_PAD_SOURCE_OF, format,
 				fmt->which);
 
-		format = __ccdc_get_format(ccdc, sd_state, CCDC_PAD_SOURCE_VP,
+		format = __ccdc_get_format(ccdc, cfg, CCDC_PAD_SOURCE_VP,
 					   fmt->which);
 		*format = fmt->format;
-		ccdc_try_format(ccdc, sd_state, CCDC_PAD_SOURCE_VP, format,
+		ccdc_try_format(ccdc, cfg, CCDC_PAD_SOURCE_VP, format,
 				fmt->which);
 	}
 
@@ -2469,7 +2455,7 @@ static int ccdc_init_formats(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 	format.format.code = MEDIA_BUS_FMT_SGRBG10_1X10;
 	format.format.width = 4096;
 	format.format.height = 4096;
-	ccdc_set_format(sd, fh ? fh->state : NULL, &format);
+	ccdc_set_format(sd, fh ? fh->pad : NULL, &format);
 
 	return 0;
 }

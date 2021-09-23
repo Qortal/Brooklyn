@@ -593,7 +593,7 @@ static int mx51_ecspi_prepare_message(struct spi_imx_data *spi_imx,
 	}
 
 	delay = (2 * 1000000) / min_speed_hz;
-	if (likely(delay < 10))	/* SCLK is faster than 200 kHz */
+	if (likely(delay < 10))	/* SCLK is faster than 100 kHz */
 		udelay(delay);
 	else			/* SCLK is _very_ slow */
 		usleep_range(delay, delay + 10);
@@ -1026,6 +1026,33 @@ static struct spi_imx_devtype_data imx53_ecspi_devtype_data = {
 	.has_slavemode = true,
 	.disable = mx51_ecspi_disable,
 	.devtype = IMX53_ECSPI,
+};
+
+static const struct platform_device_id spi_imx_devtype[] = {
+	{
+		.name = "imx1-cspi",
+		.driver_data = (kernel_ulong_t) &imx1_cspi_devtype_data,
+	}, {
+		.name = "imx21-cspi",
+		.driver_data = (kernel_ulong_t) &imx21_cspi_devtype_data,
+	}, {
+		.name = "imx27-cspi",
+		.driver_data = (kernel_ulong_t) &imx27_cspi_devtype_data,
+	}, {
+		.name = "imx31-cspi",
+		.driver_data = (kernel_ulong_t) &imx31_cspi_devtype_data,
+	}, {
+		.name = "imx35-cspi",
+		.driver_data = (kernel_ulong_t) &imx35_cspi_devtype_data,
+	}, {
+		.name = "imx51-ecspi",
+		.driver_data = (kernel_ulong_t) &imx51_ecspi_devtype_data,
+	}, {
+		.name = "imx53-ecspi",
+		.driver_data = (kernel_ulong_t) &imx53_ecspi_devtype_data,
+	}, {
+		/* sentinel */
+	}
 };
 
 static const struct of_device_id spi_imx_dt_ids[] = {
@@ -1567,12 +1594,14 @@ static int spi_imx_slave_abort(struct spi_master *master)
 static int spi_imx_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
+	const struct of_device_id *of_id =
+			of_match_device(spi_imx_dt_ids, &pdev->dev);
 	struct spi_master *master;
 	struct spi_imx_data *spi_imx;
 	struct resource *res;
 	int ret, irq, spi_drctl;
-	const struct spi_imx_devtype_data *devtype_data =
-			of_device_get_match_data(&pdev->dev);
+	const struct spi_imx_devtype_data *devtype_data = of_id ? of_id->data :
+		(struct spi_imx_devtype_data *)pdev->id_entry->driver_data;
 	bool slave_mode;
 	u32 val;
 
@@ -1814,12 +1843,13 @@ static struct platform_driver spi_imx_driver = {
 		   .of_match_table = spi_imx_dt_ids,
 		   .pm = &imx_spi_pm,
 	},
+	.id_table = spi_imx_devtype,
 	.probe = spi_imx_probe,
 	.remove = spi_imx_remove,
 };
 module_platform_driver(spi_imx_driver);
 
-MODULE_DESCRIPTION("i.MX SPI Controller driver");
+MODULE_DESCRIPTION("SPI Controller driver");
 MODULE_AUTHOR("Sascha Hauer, Pengutronix");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("platform:" DRIVER_NAME);

@@ -1154,10 +1154,10 @@ int iscsit_setup_scsi_cmd(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	/*
 	 * Initialize struct se_cmd descriptor from target_core_mod infrastructure
 	 */
-	__target_init_cmd(&cmd->se_cmd, &iscsi_ops,
-			 conn->sess->se_sess, be32_to_cpu(hdr->data_length),
-			 cmd->data_direction, sam_task_attr,
-			 cmd->sense_buffer + 2, scsilun_to_int(&hdr->lun));
+	transport_init_se_cmd(&cmd->se_cmd, &iscsi_ops,
+			conn->sess->se_sess, be32_to_cpu(hdr->data_length),
+			cmd->data_direction, sam_task_attr,
+			cmd->sense_buffer + 2, scsilun_to_int(&hdr->lun));
 
 	pr_debug("Got SCSI Command, ITT: 0x%08x, CmdSN: 0x%08x,"
 		" ExpXferLen: %u, Length: %u, CID: %hu\n", hdr->itt,
@@ -1167,9 +1167,7 @@ int iscsit_setup_scsi_cmd(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	target_get_sess_cmd(&cmd->se_cmd, true);
 
 	cmd->se_cmd.tag = (__force u32)cmd->init_task_tag;
-	cmd->sense_reason = target_cmd_init_cdb(&cmd->se_cmd, hdr->cdb,
-						GFP_KERNEL);
-
+	cmd->sense_reason = target_cmd_init_cdb(&cmd->se_cmd, hdr->cdb);
 	if (cmd->sense_reason) {
 		if (cmd->sense_reason == TCM_OUT_OF_RESOURCES) {
 			return iscsit_add_reject_cmd(cmd,
@@ -2014,10 +2012,10 @@ iscsit_handle_task_mgt_cmd(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 					     buf);
 	}
 
-	__target_init_cmd(&cmd->se_cmd, &iscsi_ops,
-			  conn->sess->se_sess, 0, DMA_NONE,
-			  TCM_SIMPLE_TAG, cmd->sense_buffer + 2,
-			  scsilun_to_int(&hdr->lun));
+	transport_init_se_cmd(&cmd->se_cmd, &iscsi_ops,
+			      conn->sess->se_sess, 0, DMA_NONE,
+			      TCM_SIMPLE_TAG, cmd->sense_buffer + 2,
+			      scsilun_to_int(&hdr->lun));
 
 	target_get_sess_cmd(&cmd->se_cmd, true);
 
@@ -4328,7 +4326,7 @@ int iscsit_close_connection(
 	     atomic_read(&sess->session_fall_back_to_erl0)) {
 		spin_unlock_bh(&sess->conn_lock);
 		complete_all(&sess->session_wait_comp);
-		iscsit_close_session(sess, true);
+		iscsit_close_session(sess);
 
 		return 0;
 	} else if (atomic_read(&sess->session_logout)) {
@@ -4338,7 +4336,7 @@ int iscsit_close_connection(
 		if (atomic_read(&sess->session_close)) {
 			spin_unlock_bh(&sess->conn_lock);
 			complete_all(&sess->session_wait_comp);
-			iscsit_close_session(sess, true);
+			iscsit_close_session(sess);
 		} else {
 			spin_unlock_bh(&sess->conn_lock);
 		}
@@ -4354,7 +4352,7 @@ int iscsit_close_connection(
 		if (atomic_read(&sess->session_close)) {
 			spin_unlock_bh(&sess->conn_lock);
 			complete_all(&sess->session_wait_comp);
-			iscsit_close_session(sess, true);
+			iscsit_close_session(sess);
 		} else {
 			spin_unlock_bh(&sess->conn_lock);
 		}
@@ -4367,7 +4365,7 @@ int iscsit_close_connection(
  * If the iSCSI Session for the iSCSI Initiator Node exists,
  * forcefully shutdown the iSCSI NEXUS.
  */
-int iscsit_close_session(struct iscsi_session *sess, bool can_sleep)
+int iscsit_close_session(struct iscsi_session *sess)
 {
 	struct iscsi_portal_group *tpg = sess->tpg;
 	struct se_portal_group *se_tpg = &tpg->tpg_se_tpg;
@@ -4400,10 +4398,14 @@ int iscsit_close_session(struct iscsi_session *sess, bool can_sleep)
 	 * time2retain handler) and contain and active session usage count we
 	 * restart the timer and exit.
 	 */
-	if (iscsit_check_session_usage_count(sess, can_sleep)) {
-		atomic_set(&sess->session_logout, 0);
-		iscsit_start_time2retain_handler(sess);
-		return 0;
+	if (!in_interrupt()) {
+		iscsit_check_session_usage_count(sess);
+	} else {
+		if (iscsit_check_session_usage_count(sess) == 2) {
+			atomic_set(&sess->session_logout, 0);
+			iscsit_start_time2retain_handler(sess);
+			return 0;
+		}
 	}
 
 	transport_deregister_session(sess->se_sess);

@@ -948,16 +948,6 @@
 					fsl,pull-up = <MXS_PULL_DISABLE>;
 				};
 
-				usb1_pins_b: usb1@1 {
-					reg = <1>;
-					fsl,pinmux-ids = <
-						MX28_PAD_PWM2__USB1_OVERCURRENT
-					>;
-					fsl,drive-strength = <MXS_DRIVE_12mA>;
-					fsl,voltage = <MXS_VOLTAGE_HIGH>;
-					fsl,pull-up = <MXS_PULL_DISABLE>;
-				};
-
 				usb0_id_pins_a: usb0id@0 {
 					reg = <0>;
 					fsl,pinmux-ids = <
@@ -1327,7 +1317,7 @@
 			status = "disabled";
 		};
 
-		eth_switch: switch@800f8000 {
+		etn_switch: switch@800f8000 {
 			reg = <0x800f8000 0x8000>;
 			status = "disabled";
 		};

@@ -78,6 +78,7 @@ static const struct gpio_chip altr_a10sr_gc = {
 static int altr_a10sr_gpio_probe(struct platform_device *pdev)
 {
 	struct altr_a10sr_gpio *gpio;
+	int ret;
 	struct altr_a10sr *a10sr = dev_get_drvdata(pdev->dev.parent);
 
 	gpio = devm_kzalloc(&pdev->dev, sizeof(*gpio), GFP_KERNEL);
@@ -90,7 +91,15 @@ static int altr_a10sr_gpio_probe(struct platform_device *pdev)
 	gpio->gp.parent = pdev->dev.parent;
 	gpio->gp.of_node = pdev->dev.of_node;
 
-	return devm_gpiochip_add_data(&pdev->dev, &gpio->gp, gpio);
+	ret = devm_gpiochip_add_data(&pdev->dev, &gpio->gp, gpio);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Could not register gpiochip, %d\n", ret);
+		return ret;
+	}
+
+	platform_set_drvdata(pdev, gpio);
+
+	return 0;
 }
 
 static const struct of_device_id altr_a10sr_gpio_of_match[] = {

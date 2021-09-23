@@ -8,19 +8,10 @@
 #include <drm/drm.h>
 #include <drm/drm_device.h>
 #include <drm/drm_gem.h>
-#include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_prime.h>
 
 #include "mtk_drm_drv.h"
 #include "mtk_drm_gem.h"
-
-static const struct drm_gem_object_funcs mtk_drm_gem_object_funcs = {
-	.free = mtk_drm_gem_free_object,
-	.get_sg_table = mtk_gem_prime_get_sg_table,
-	.vmap = mtk_drm_gem_prime_vmap,
-	.vunmap = mtk_drm_gem_prime_vunmap,
-	.vm_ops = &drm_gem_cma_vm_ops,
-};
 
 static struct mtk_drm_gem_obj *mtk_drm_gem_init(struct drm_device *dev,
 						unsigned long size)
@@ -33,8 +24,6 @@ static struct mtk_drm_gem_obj *mtk_drm_gem_init(struct drm_device *dev,
 	mtk_gem_obj = kzalloc(sizeof(*mtk_gem_obj), GFP_KERNEL);
 	if (!mtk_gem_obj)
 		return ERR_PTR(-ENOMEM);
-
-	mtk_gem_obj->base.funcs = &mtk_drm_gem_object_funcs;
 
 	ret = drm_gem_object_init(dev, &mtk_gem_obj->base, size);
 	if (ret < 0) {
@@ -240,42 +229,38 @@ struct drm_gem_object *mtk_gem_prime_import_sg_table(struct drm_device *dev,
 	return &mtk_gem->base;
 }
 
-int mtk_drm_gem_prime_vmap(struct drm_gem_object *obj, struct dma_buf_map *map)
+void *mtk_drm_gem_prime_vmap(struct drm_gem_object *obj)
 {
 	struct mtk_drm_gem_obj *mtk_gem = to_mtk_gem_obj(obj);
-	struct sg_table *sgt = NULL;
+	struct sg_table *sgt;
 	unsigned int npages;
 
 	if (mtk_gem->kvaddr)
-		goto out;
+		return mtk_gem->kvaddr;
 
 	sgt = mtk_gem_prime_get_sg_table(obj);
 	if (IS_ERR(sgt))
-		return PTR_ERR(sgt);
+		return NULL;
 
 	npages = obj->size >> PAGE_SHIFT;
 	mtk_gem->pages = kcalloc(npages, sizeof(*mtk_gem->pages), GFP_KERNEL);
-	if (!mtk_gem->pages) {
-		kfree(sgt);
-		return -ENOMEM;
-	}
+	if (!mtk_gem->pages)
+		goto out;
 
-	drm_prime_sg_to_page_array(sgt, mtk_gem->pages, npages);
+	drm_prime_sg_to_page_addr_arrays(sgt, mtk_gem->pages, NULL, npages);
 
 	mtk_gem->kvaddr = vmap(mtk_gem->pages, npages, VM_MAP,
 			       pgprot_writecombine(PAGE_KERNEL));
 
 out:
 	kfree(sgt);
-	dma_buf_map_set_vaddr(map, mtk_gem->kvaddr);
 
-	return 0;
+	return mtk_gem->kvaddr;
 }
 
-void mtk_drm_gem_prime_vunmap(struct drm_gem_object *obj, struct dma_buf_map *map)
+void mtk_drm_gem_prime_vunmap(struct drm_gem_object *obj, void *vaddr)
 {
 	struct mtk_drm_gem_obj *mtk_gem = to_mtk_gem_obj(obj);
-	void *vaddr = map->vaddr;
 
 	if (!mtk_gem->pages)
 		return;

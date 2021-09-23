@@ -20,9 +20,7 @@ _DEFAULT_LOG_LEVEL = 'WARNING'
 _FILENAME_PATTERN = r'^\..*\.cmd$'
 _LINE_PATTERN = r'^cmd_[^ ]*\.o := (.* )([^ ]*\.c)$'
 _VALID_LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
-# The tools/ directory adopts a different build system, and produces .cmd
-# files in a different format. Do not support it.
-_EXCLUDE_DIRS = ['.git', 'Documentation', 'include', 'tools']
+
 
 def parse_arguments():
     """Sets up and parses command-line arguments.
@@ -82,14 +80,8 @@ def cmdfiles_in_dir(directory):
     """
 
     filename_matcher = re.compile(_FILENAME_PATTERN)
-    exclude_dirs = [ os.path.join(directory, d) for d in _EXCLUDE_DIRS ]
 
-    for dirpath, dirnames, filenames in os.walk(directory, topdown=True):
-        # Prune unwanted directories.
-        if dirpath in exclude_dirs:
-            dirnames[:] = []
-            continue
-
+    for dirpath, _, filenames in os.walk(directory):
         for filename in filenames:
             if filename_matcher.match(filename):
                 yield os.path.join(dirpath, filename)

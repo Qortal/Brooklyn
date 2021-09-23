@@ -123,17 +123,20 @@ int __init pq2ads_pci_init_irq(void)
 	np = of_find_compatible_node(NULL, NULL, "fsl,pq2ads-pci-pic");
 	if (!np) {
 		printk(KERN_ERR "No pci pic node in device tree.\n");
+		of_node_put(np);
 		goto out;
 	}
 
 	irq = irq_of_parse_and_map(np, 0);
 	if (!irq) {
 		printk(KERN_ERR "No interrupt in pci pic node.\n");
-		goto out_put_node;
+		of_node_put(np);
+		goto out;
 	}
 
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv) {
+		of_node_put(np);
 		ret = -ENOMEM;
 		goto out_unmap_irq;
 	}
@@ -158,17 +161,17 @@ int __init pq2ads_pci_init_irq(void)
 	priv->host = host;
 	irq_set_handler_data(irq, priv);
 	irq_set_chained_handler(irq, pq2ads_pci_irq_demux);
-	ret = 0;
-	goto out_put_node;
+
+	of_node_put(np);
+	return 0;
 
 out_unmap_regs:
 	iounmap(priv->regs);
 out_free_kmalloc:
 	kfree(priv);
+	of_node_put(np);
 out_unmap_irq:
 	irq_dispose_mapping(irq);
-out_put_node:
-	of_node_put(np);
 out:
 	return ret;
 }

@@ -42,7 +42,6 @@ struct intel_uncore_pmu;
 struct intel_uncore_box;
 struct uncore_event_desc;
 struct freerunning_counters;
-struct intel_uncore_topology;
 
 struct intel_uncore_type {
 	const char *name;
@@ -51,7 +50,6 @@ struct intel_uncore_type {
 	int perf_ctr_bits;
 	int fixed_ctr_bits;
 	int num_freerunning_types;
-	int type_id;
 	unsigned perf_ctr;
 	unsigned event_ctl;
 	unsigned event_mask;
@@ -59,7 +57,6 @@ struct intel_uncore_type {
 	unsigned fixed_ctr;
 	unsigned fixed_ctl;
 	unsigned box_ctl;
-	u64 *box_ctls;	/* Unit ctrl addr of the first box of each die */
 	union {
 		unsigned msr_offset;
 		unsigned mmio_offset;
@@ -68,12 +65,7 @@ struct intel_uncore_type {
 	unsigned num_shared_regs:8;
 	unsigned single_fixed:1;
 	unsigned pair_ctr_ctl:1;
-	union {
-		unsigned *msr_offsets;
-		unsigned *pci_offsets;
-		unsigned *mmio_offsets;
-	};
-	unsigned *box_ids;
+	unsigned *msr_offsets;
 	struct event_constraint unconstrainted;
 	struct event_constraint *constraints;
 	struct intel_uncore_pmu *pmus;
@@ -88,11 +80,10 @@ struct intel_uncore_type {
 	 * to identify which platform component each PMON block of that type is
 	 * supposed to monitor.
 	 */
-	struct intel_uncore_topology *topology;
+	u64 *topology;
 	/*
 	 * Optional callbacks for managing mapping of Uncore units to PMONs
 	 */
-	int (*get_topology)(struct intel_uncore_type *type);
 	int (*set_mapping)(struct intel_uncore_type *type);
 	void (*cleanup_mapping)(struct intel_uncore_type *type);
 };
@@ -133,6 +124,7 @@ struct intel_uncore_extra_reg {
 };
 
 struct intel_uncore_box {
+	int pci_phys_id;
 	int dieid;	/* Logical die ID */
 	int n_active;	/* number of active events */
 	int n_events;
@@ -178,20 +170,14 @@ struct freerunning_counters {
 	unsigned *box_offsets;
 };
 
-struct intel_uncore_topology {
-	u64 configuration;
-	int segment;
-};
-
 struct pci2phy_map {
 	struct list_head list;
 	int segment;
-	int pbus_to_dieid[256];
+	int pbus_to_physid[256];
 };
 
 struct pci2phy_map *__find_pci2phy_map(int segment);
-int uncore_pcibus_to_dieid(struct pci_bus *bus);
-int uncore_die_to_segment(int die);
+int uncore_pcibus_to_physid(struct pci_bus *bus);
 
 ssize_t uncore_event_show(struct device *dev,
 			  struct device_attribute *attr, char *buf);
@@ -562,7 +548,6 @@ uncore_get_constraint(struct intel_uncore_box *box, struct perf_event *event);
 void uncore_put_constraint(struct intel_uncore_box *box, struct perf_event *event);
 u64 uncore_shared_reg_config(struct intel_uncore_box *box, int idx);
 
-extern struct intel_uncore_type *empty_uncore[];
 extern struct intel_uncore_type **uncore_msr_uncores;
 extern struct intel_uncore_type **uncore_pci_uncores;
 extern struct intel_uncore_type **uncore_mmio_uncores;
@@ -583,7 +568,6 @@ void snb_uncore_cpu_init(void);
 void nhm_uncore_cpu_init(void);
 void skl_uncore_cpu_init(void);
 void icl_uncore_cpu_init(void);
-void adl_uncore_cpu_init(void);
 void tgl_uncore_cpu_init(void);
 void tgl_uncore_mmio_init(void);
 void tgl_l_uncore_mmio_init(void);

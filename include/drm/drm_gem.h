@@ -39,7 +39,6 @@
 
 #include <drm/drm_vma_manager.h>
 
-struct dma_buf_map;
 struct drm_gem_object;
 
 /**
@@ -139,7 +138,7 @@ struct drm_gem_object_funcs {
 	 *
 	 * This callback is optional.
 	 */
-	int (*vmap)(struct drm_gem_object *obj, struct dma_buf_map *map);
+	void *(*vmap)(struct drm_gem_object *obj);
 
 	/**
 	 * @vunmap:
@@ -149,7 +148,7 @@ struct drm_gem_object_funcs {
 	 *
 	 * This callback is optional.
 	 */
-	void (*vunmap)(struct drm_gem_object *obj, struct dma_buf_map *map);
+	void (*vunmap)(struct drm_gem_object *obj, void *vaddr);
 
 	/**
 	 * @mmap:
@@ -273,7 +272,7 @@ struct drm_gem_object {
 	 * attachment point for the device. This is invariant over the lifetime
 	 * of a gem object.
 	 *
-	 * The &drm_gem_object_funcs.free callback is responsible for
+	 * The &drm_driver.gem_free_object_unlocked callback is responsible for
 	 * cleaning up the dma_buf attachment and references acquired at import
 	 * time.
 	 *
@@ -416,5 +415,8 @@ int drm_gem_fence_array_add_implicit(struct xarray *fence_array,
 				     bool write);
 int drm_gem_dumb_map_offset(struct drm_file *file, struct drm_device *dev,
 			    u32 handle, u64 *offset);
+int drm_gem_dumb_destroy(struct drm_file *file,
+			 struct drm_device *dev,
+			 uint32_t handle);
 
 #endif /* __DRM_GEM_H__ */

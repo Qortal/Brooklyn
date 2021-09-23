@@ -2288,13 +2288,15 @@ crq_failed:
 	return -EPERM;
 }
 
-static void ibmvmc_remove(struct vio_dev *vdev)
+static int ibmvmc_remove(struct vio_dev *vdev)
 {
 	struct crq_server_adapter *adapter = dev_get_drvdata(&vdev->dev);
 
 	dev_info(adapter->dev, "Entering remove for UA 0x%x\n",
 		 vdev->unit_address);
 	ibmvmc_release_crq_queue(adapter);
+
+	return 0;
 }
 
 static struct vio_device_id ibmvmc_device_table[] = {

@@ -112,9 +112,7 @@ static inline int vga_get_uninterruptible(struct pci_dev *pdev,
 #if defined(CONFIG_VGA_ARB)
 extern void vga_put(struct pci_dev *pdev, unsigned int rsrc);
 #else
-static inline void vga_put(struct pci_dev *pdev, unsigned int rsrc)
-{
-}
+#define vga_put(pdev, rsrc)
 #endif
 
 
@@ -123,9 +121,9 @@ extern struct pci_dev *vga_default_device(void);
 extern void vga_set_default_device(struct pci_dev *pdev);
 extern int vga_remove_vgacon(struct pci_dev *pdev);
 #else
-static inline struct pci_dev *vga_default_device(void) { return NULL; }
-static inline void vga_set_default_device(struct pci_dev *pdev) { }
-static inline int vga_remove_vgacon(struct pci_dev *pdev) { return 0; }
+static inline struct pci_dev *vga_default_device(void) { return NULL; };
+static inline void vga_set_default_device(struct pci_dev *pdev) { };
+static inline int vga_remove_vgacon(struct pci_dev *pdev) { return 0; };
 #endif
 
 /*

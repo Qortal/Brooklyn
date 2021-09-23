@@ -1183,9 +1183,10 @@ _release_card:
 	return ret;
 }
 
-static void snd_sscape_remove(struct device *devptr, unsigned int dev)
+static int snd_sscape_remove(struct device *devptr, unsigned int dev)
 {
 	snd_card_free(dev_get_drvdata(devptr));
+	return 0;
 }
 
 #define DEV_NAME "sscape"

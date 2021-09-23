@@ -361,8 +361,7 @@ static int zr36016_setup(struct videocodec *codec)
 		return -ENOSPC;
 	}
 	//mem structure init
-	ptr = kzalloc(sizeof(*ptr), GFP_KERNEL);
-	codec->data = ptr;
+	codec->data = ptr = kzalloc(sizeof(struct zr36016), GFP_KERNEL);
 	if (!ptr)
 		return -ENOMEM;
 

@@ -210,8 +210,7 @@ int snd_gf1_mem_free(struct snd_gf1_mem * alloc, unsigned int address)
 	struct snd_gf1_mem_block *block;
 
 	snd_gf1_mem_lock(alloc, 0);
-	block = snd_gf1_mem_look(alloc, address);
-	if (block) {
+	if ((block = snd_gf1_mem_look(alloc, address)) != NULL) {
 		result = snd_gf1_mem_xfree(alloc, block);
 		snd_gf1_mem_lock(alloc, 1);
 		return result;

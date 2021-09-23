@@ -6,7 +6,6 @@
  * 	Kazunori Miyazawa <miyazawa@linux-ipv6.org>
  */
 
-#include <crypto/internal/cipher.h>
 #include <crypto/internal/hash.h>
 #include <linux/err.h>
 #include <linux/kernel.h>
@@ -273,4 +272,3 @@ module_exit(crypto_xcbc_module_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("XCBC keyed hash algorithm");
 MODULE_ALIAS_CRYPTO("xcbc");
-MODULE_IMPORT_NS(CRYPTO_INTERNAL);

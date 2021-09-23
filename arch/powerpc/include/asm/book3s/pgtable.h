@@ -8,6 +8,7 @@
 #include <asm/book3s/32/pgtable.h>
 #endif
 
+#define FIRST_USER_ADDRESS	0UL
 #ifndef __ASSEMBLY__
 /* Insert a PTE, top-level function is out of line. It uses an inline
  * low level function in the respective pgtable-* files

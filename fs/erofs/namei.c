@@ -2,6 +2,7 @@
 /*
  * Copyright (C) 2017-2018 HUAWEI, Inc.
  *             https://www.huawei.com/
+ * Created by Gao Xiang <gaoxiang25@huawei.com>
  */
 #include "xattr.h"
 
@@ -233,8 +234,8 @@ static struct dentry *erofs_lookup(struct inode *dir,
 	} else if (err) {
 		inode = ERR_PTR(err);
 	} else {
-		erofs_dbg("%s, %pd (nid %llu) found, d_type %u", __func__,
-			  dentry, nid, d_type);
+		erofs_dbg("%s, %s (nid %llu) found, d_type %u", __func__,
+			  dentry->d_name.name, nid, d_type);
 		inode = erofs_iget(dir->i_sb, nid, d_type == FT_DIR);
 	}
 	return d_splice_alias(inode, dentry);
@@ -246,3 +247,4 @@ const struct inode_operations erofs_dir_iops = {
 	.listxattr = erofs_listxattr,
 	.get_acl = erofs_get_acl,
 };
+

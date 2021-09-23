@@ -1185,32 +1185,14 @@ static u8 rtl8192_phy_SwChnlStepByStep(struct net_device *dev, u8 channel,
 				       u8 *stage, u8 *step, u32 *delay)
 {
 	struct r8192_priv *priv = ieee80211_priv(dev);
-	struct sw_chnl_cmd   *PreCommonCmd;
+	struct sw_chnl_cmd   PreCommonCmd[MAX_PRECMD_CNT];
 	u32		   PreCommonCmdCnt;
-	struct sw_chnl_cmd   *PostCommonCmd;
+	struct sw_chnl_cmd   PostCommonCmd[MAX_POSTCMD_CNT];
 	u32		   PostCommonCmdCnt;
-	struct sw_chnl_cmd   *RfDependCmd;
+	struct sw_chnl_cmd   RfDependCmd[MAX_RFDEPENDCMD_CNT];
 	u32		   RfDependCmdCnt;
 	struct sw_chnl_cmd  *CurrentCmd = NULL;
 	u8		   e_rfpath;
-	bool		   ret;
-
-	PreCommonCmd = kzalloc(sizeof(*PreCommonCmd) * MAX_PRECMD_CNT, GFP_KERNEL);
-	if (!PreCommonCmd)
-		return false;
-
-	PostCommonCmd = kzalloc(sizeof(*PostCommonCmd) * MAX_POSTCMD_CNT, GFP_KERNEL);
-	if (!PostCommonCmd) {
-		kfree(PreCommonCmd);
-		return false;
-	}
-
-	RfDependCmd = kzalloc(sizeof(*RfDependCmd) * MAX_RFDEPENDCMD_CNT, GFP_KERNEL);
-	if (!RfDependCmd) {
-		kfree(PreCommonCmd);
-		kfree(PostCommonCmd);
-		return false;
-	}
 
 	RT_TRACE(COMP_CH, "%s() stage: %d, step: %d, channel: %d\n",
 		 __func__, *stage, *step, channel);
@@ -1219,8 +1201,7 @@ static u8 rtl8192_phy_SwChnlStepByStep(struct net_device *dev, u8 channel,
 		/* return true to tell upper caller function this channel
 		 * setting is finished! Or it will in while loop.
 		 */
-		ret = true;
-		goto out;
+		return true;
 	}
 	/* FIXME: need to check whether channel is legal or not here */
 
@@ -1246,8 +1227,7 @@ static u8 rtl8192_phy_SwChnlStepByStep(struct net_device *dev, u8 channel,
 			RT_TRACE(COMP_ERR,
 				 "illegal channel for Zebra 8225: %d\n",
 				 channel);
-			ret = true;
-			goto out;
+			return true;
 		}
 		rtl8192_phy_SetSwChnlCmdArray(RfDependCmd, RfDependCmdCnt++,
 					      MAX_RFDEPENDCMD_CNT,
@@ -1266,8 +1246,7 @@ static u8 rtl8192_phy_SwChnlStepByStep(struct net_device *dev, u8 channel,
 			RT_TRACE(COMP_ERR,
 				 "illegal channel for Zebra 8256: %d\n",
 				 channel);
-			ret = true;
-			goto out;
+			return true;
 		}
 		rtl8192_phy_SetSwChnlCmdArray(RfDependCmd, RfDependCmdCnt++,
 					      MAX_RFDEPENDCMD_CNT,
@@ -1283,8 +1262,7 @@ static u8 rtl8192_phy_SwChnlStepByStep(struct net_device *dev, u8 channel,
 
 	default:
 		RT_TRACE(COMP_ERR, "Unknown RFChipID: %d\n", priv->rf_chip);
-		ret = true;
-		goto out;
+		return true;
 	}
 
 	do {
@@ -1303,8 +1281,7 @@ static u8 rtl8192_phy_SwChnlStepByStep(struct net_device *dev, u8 channel,
 		if (CurrentCmd->cmd_id == CMD_ID_END) {
 			if ((*stage) == 2) {
 				(*delay) = CurrentCmd->ms_delay;
-				ret = true;
-				goto out;
+				return true;
 			}
 			(*stage)++;
 			(*step) = 0;
@@ -1347,14 +1324,7 @@ static u8 rtl8192_phy_SwChnlStepByStep(struct net_device *dev, u8 channel,
 
 	(*delay) = CurrentCmd->ms_delay;
 	(*step)++;
-	ret = false;
-
-out:
-	kfree(PreCommonCmd);
-	kfree(PostCommonCmd);
-	kfree(RfDependCmd);
-
-	return ret;
+	return false;
 }
 
 /******************************************************************************

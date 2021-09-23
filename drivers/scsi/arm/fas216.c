@@ -1375,7 +1375,6 @@ static void fas216_busservice_intr(FAS216_Info *info, unsigned int stat, unsigne
 		case IS_COMPLETE:
 			break;
 		}
-		break;
 
 	default:
 		break;
@@ -1480,7 +1479,7 @@ static void fas216_busservice_intr(FAS216_Info *info, unsigned int stat, unsigne
 
 		if (msgqueue_msglength(&info->scsi.msgs) > 1)
 			fas216_cmd(info, CMD_SETATN);
-		fallthrough;
+		/*FALLTHROUGH*/
 
 	/*
 	 * Any          -> Message Out
@@ -2011,7 +2010,7 @@ static void fas216_rq_sns_done(FAS216_Info *info, struct scsi_cmnd *SCpnt,
 		   "request sense complete, result=0x%04x%02x%02x",
 		   result, SCpnt->SCp.Message, SCpnt->SCp.Status);
 
-	if (result != DID_OK || SCpnt->SCp.Status != SAM_STAT_GOOD)
+	if (result != DID_OK || SCpnt->SCp.Status != GOOD)
 		/*
 		 * Something went wrong.  Make sure that we don't
 		 * have valid data in the sense buffer that could
@@ -2043,10 +2042,8 @@ fas216_std_done(FAS216_Info *info, struct scsi_cmnd *SCpnt, unsigned int result)
 {
 	info->stats.fins += 1;
 
-	set_host_byte(SCpnt, result);
-	if (result == DID_OK)
-		scsi_msg_to_host_byte(SCpnt, info->scsi.SCp.Message);
-	set_status_byte(SCpnt, info->scsi.SCp.Status);
+	SCpnt->result = result << 16 | info->scsi.SCp.Message << 8 |
+			info->scsi.SCp.Status;
 
 	fas216_log_command(info, LOG_CONNECT, SCpnt,
 		"command complete, result=0x%08x", SCpnt->result);
@@ -2054,22 +2051,23 @@ fas216_std_done(FAS216_Info *info, struct scsi_cmnd *SCpnt, unsigned int result)
 	/*
 	 * If the driver detected an error, we're all done.
 	 */
-	if (get_host_byte(SCpnt) != DID_OK)
+	if (host_byte(SCpnt->result) != DID_OK ||
+	    msg_byte(SCpnt->result) != COMMAND_COMPLETE)
 		goto done;
 
 	/*
 	 * If the command returned CHECK_CONDITION or COMMAND_TERMINATED
 	 * status, request the sense information.
 	 */
-	if (get_status_byte(SCpnt) == SAM_STAT_CHECK_CONDITION ||
-	    get_status_byte(SCpnt) == SAM_STAT_COMMAND_TERMINATED)
+	if (status_byte(SCpnt->result) == CHECK_CONDITION ||
+	    status_byte(SCpnt->result) == COMMAND_TERMINATED)
 		goto request_sense;
 
 	/*
 	 * If the command did not complete with GOOD status,
 	 * we are all done here.
 	 */
-	if (get_status_byte(SCpnt) != SAM_STAT_GOOD)
+	if (status_byte(SCpnt->result) != GOOD)
 		goto done;
 
 	/*

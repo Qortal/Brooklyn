@@ -118,7 +118,7 @@ static struct attribute *ulpi_dev_attrs[] = {
 	NULL
 };
 
-static const struct attribute_group ulpi_dev_attr_group = {
+static struct attribute_group ulpi_dev_attr_group = {
 	.attrs = ulpi_dev_attrs,
 };
 
@@ -141,7 +141,7 @@ static const struct device_type ulpi_dev_type = {
 /* -------------------------------------------------------------------------- */
 
 /**
- * __ulpi_register_driver - register a driver with the ULPI bus
+ * ulpi_register_driver - register a driver with the ULPI bus
  * @drv: driver being registered
  * @module: ends up being THIS_MODULE
  *

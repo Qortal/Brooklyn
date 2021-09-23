@@ -104,8 +104,7 @@ static int snd_mpu401_probe(struct platform_device *devptr)
 	err = snd_mpu401_create(&devptr->dev, dev, &card);
 	if (err < 0)
 		return err;
-	err = snd_card_register(card);
-	if (err < 0) {
+	if ((err = snd_card_register(card)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
@@ -183,8 +182,7 @@ static int snd_mpu401_pnp_probe(struct pnp_dev *pnp_dev,
 		err = snd_mpu401_create(&pnp_dev->dev, dev, &card);
 		if (err < 0)
 			return err;
-		err = snd_card_register(card);
-		if (err < 0) {
+		if ((err = snd_card_register(card)) < 0) {
 			snd_card_free(card);
 			return err;
 		}
@@ -229,8 +227,7 @@ static int __init alsa_card_mpu401_init(void)
 {
 	int i, err;
 
-	err = platform_driver_register(&snd_mpu401_driver);
-	if (err < 0)
+	if ((err = platform_driver_register(&snd_mpu401_driver)) < 0)
 		return err;
 
 	for (i = 0; i < SNDRV_CARDS; i++) {

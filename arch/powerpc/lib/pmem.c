@@ -6,7 +6,6 @@
 #include <linux/string.h>
 #include <linux/export.h>
 #include <linux/uaccess.h>
-#include <linux/libnvdimm.h>
 
 #include <asm/cacheflush.h>
 

@@ -92,7 +92,7 @@
  * system initialization completes.
  */
 
-#ifndef CONFIG_NUMA
+#ifndef CONFIG_NEED_MULTIPLE_NODES
 struct pglist_data __refdata contig_page_data;
 EXPORT_SYMBOL(contig_page_data);
 #endif
@@ -181,8 +181,6 @@ bool __init_memblock memblock_overlaps_region(struct memblock_type *type,
 					phys_addr_t base, phys_addr_t size)
 {
 	unsigned long i;
-
-	memblock_cap_size(base, &size);
 
 	for (i = 0; i < type->cnt; i++)
 		if (memblock_addrs_overlap(base, size, type->regions[i].base,
@@ -609,7 +607,7 @@ repeat:
 		 * area, insert that portion.
 		 */
 		if (rbase > base) {
-#ifdef CONFIG_NUMA
+#ifdef CONFIG_NEED_MULTIPLE_NODES
 			WARN_ON(nid != memblock_get_region_node(rgn));
 #endif
 			WARN_ON(flags != rgn->flags);
@@ -836,7 +834,7 @@ int __init_memblock memblock_physmem_add(phys_addr_t base, phys_addr_t size)
  * @base: base address of the region
  * @size: size of the region
  * @set: set or clear the flag
- * @flag: the flag to update
+ * @flag: the flag to udpate
  *
  * This function isolates region [@base, @base + @size), and sets/clears flag
  *
@@ -907,11 +905,6 @@ int __init_memblock memblock_mark_mirror(phys_addr_t base, phys_addr_t size)
  * memblock_mark_nomap - Mark a memory region with flag MEMBLOCK_NOMAP.
  * @base: the base phys addr of the region
  * @size: the size of the region
- *
- * The memory regions marked with %MEMBLOCK_NOMAP will not be added to the
- * direct mapping of the physical memory. These regions will still be
- * covered by the memory map. The struct page representing NOMAP memory
- * frames in the memory map will be PageReserved()
  *
  * Return: 0 on success, -errno on failure.
  */
@@ -1213,7 +1206,7 @@ void __init_memblock __next_mem_pfn_range(int *idx, int nid,
 int __init_memblock memblock_set_node(phys_addr_t base, phys_addr_t size,
 				      struct memblock_type *type, int nid)
 {
-#ifdef CONFIG_NUMA
+#ifdef CONFIG_NEED_MULTIPLE_NODES
 	int start_rgn, end_rgn;
 	int i, ret;
 
@@ -1390,15 +1383,12 @@ phys_addr_t __init memblock_phys_alloc_range(phys_addr_t size,
 					     phys_addr_t start,
 					     phys_addr_t end)
 {
-	memblock_dbg("%s: %llu bytes align=0x%llx from=%pa max_addr=%pa %pS\n",
-		     __func__, (u64)size, (u64)align, &start, &end,
-		     (void *)_RET_IP_);
 	return memblock_alloc_range_nid(size, align, start, end, NUMA_NO_NODE,
 					false);
 }
 
 /**
- * memblock_phys_alloc_try_nid - allocate a memory block from specified NUMA node
+ * memblock_phys_alloc_try_nid - allocate a memory block from specified MUMA node
  * @size: size of memory block to be allocated in bytes
  * @align: alignment of the region and block's size
  * @nid: nid of the free area to find, %NUMA_NO_NODE for any node
@@ -1802,6 +1792,7 @@ bool __init_memblock memblock_is_region_memory(phys_addr_t base, phys_addr_t siz
  */
 bool __init_memblock memblock_is_region_reserved(phys_addr_t base, phys_addr_t size)
 {
+	memblock_cap_size(base, &size);
 	return memblock_overlaps_region(&memblock.reserved, base, size);
 }
 
@@ -1856,7 +1847,7 @@ static void __init_memblock memblock_dump(struct memblock_type *type)
 		size = rgn->size;
 		end = base + size - 1;
 		flags = rgn->flags;
-#ifdef CONFIG_NUMA
+#ifdef CONFIG_NEED_MULTIPLE_NODES
 		if (memblock_get_region_node(rgn) != MAX_NUMNODES)
 			snprintf(nid_buf, sizeof(nid_buf), " on node %d",
 				 memblock_get_region_node(rgn));
@@ -1899,86 +1890,6 @@ static int __init early_memblock(char *p)
 }
 early_param("memblock", early_memblock);
 
-static void __init free_memmap(unsigned long start_pfn, unsigned long end_pfn)
-{
-	struct page *start_pg, *end_pg;
-	phys_addr_t pg, pgend;
-
-	/*
-	 * Convert start_pfn/end_pfn to a struct page pointer.
-	 */
-	start_pg = pfn_to_page(start_pfn - 1) + 1;
-	end_pg = pfn_to_page(end_pfn - 1) + 1;
-
-	/*
-	 * Convert to physical addresses, and round start upwards and end
-	 * downwards.
-	 */
-	pg = PAGE_ALIGN(__pa(start_pg));
-	pgend = __pa(end_pg) & PAGE_MASK;
-
-	/*
-	 * If there are free pages between these, free the section of the
-	 * memmap array.
-	 */
-	if (pg < pgend)
-		memblock_free(pg, pgend - pg);
-}
-
-/*
- * The mem_map array can get very big.  Free the unused area of the memory map.
- */
-static void __init free_unused_memmap(void)
-{
-	unsigned long start, end, prev_end = 0;
-	int i;
-
-	if (!IS_ENABLED(CONFIG_HAVE_ARCH_PFN_VALID) ||
-	    IS_ENABLED(CONFIG_SPARSEMEM_VMEMMAP))
-		return;
-
-	/*
-	 * This relies on each bank being in address order.
-	 * The banks are sorted previously in bootmem_init().
-	 */
-	for_each_mem_pfn_range(i, MAX_NUMNODES, &start, &end, NULL) {
-#ifdef CONFIG_SPARSEMEM
-		/*
-		 * Take care not to free memmap entries that don't exist
-		 * due to SPARSEMEM sections which aren't present.
-		 */
-		start = min(start, ALIGN(prev_end, PAGES_PER_SECTION));
-#endif
-		/*
-		 * Align down here since many operations in VM subsystem
-		 * presume that there are no holes in the memory map inside
-		 * a pageblock
-		 */
-		start = round_down(start, pageblock_nr_pages);
-
-		/*
-		 * If we had a previous bank, and there is a space
-		 * between the current bank and the previous, free it.
-		 */
-		if (prev_end && prev_end < start)
-			free_memmap(prev_end, start);
-
-		/*
-		 * Align up here since many operations in VM subsystem
-		 * presume that there are no holes in the memory map inside
-		 * a pageblock
-		 */
-		prev_end = ALIGN(end, pageblock_nr_pages);
-	}
-
-#ifdef CONFIG_SPARSEMEM
-	if (!IS_ALIGNED(prev_end, PAGES_PER_SECTION)) {
-		prev_end = ALIGN(end, pageblock_nr_pages);
-		free_memmap(prev_end, ALIGN(prev_end, PAGES_PER_SECTION));
-	}
-#endif
-}
-
 static void __init __free_pages_memory(unsigned long start, unsigned long end)
 {
 	int order;
@@ -2010,26 +1921,6 @@ static unsigned long __init __free_memory_core(phys_addr_t start,
 	return end_pfn - start_pfn;
 }
 
-static void __init memmap_init_reserved_pages(void)
-{
-	struct memblock_region *region;
-	phys_addr_t start, end;
-	u64 i;
-
-	/* initialize struct pages for the reserved regions */
-	for_each_reserved_mem_range(i, &start, &end)
-		reserve_bootmem_region(start, end);
-
-	/* and also treat struct pages for the NOMAP regions as PageReserved */
-	for_each_mem_region(region) {
-		if (memblock_is_nomap(region)) {
-			start = region->base;
-			end = start + region->size;
-			reserve_bootmem_region(start, end);
-		}
-	}
-}
-
 static unsigned long __init free_low_memory_core_early(void)
 {
 	unsigned long count = 0;
@@ -2038,7 +1929,8 @@ static unsigned long __init free_low_memory_core_early(void)
 
 	memblock_clear_hotplug(0, -1);
 
-	memmap_init_reserved_pages();
+	for_each_reserved_mem_range(i, &start, &end)
+		reserve_bootmem_region(start, end);
 
 	/*
 	 * We need to use NUMA_NO_NODE instead of NODE_DATA(0)->node_id
@@ -2077,16 +1969,19 @@ void __init reset_all_zones_managed_pages(void)
 
 /**
  * memblock_free_all - release free pages to the buddy allocator
+ *
+ * Return: the number of pages actually released.
  */
-void __init memblock_free_all(void)
+unsigned long __init memblock_free_all(void)
 {
 	unsigned long pages;
 
-	free_unused_memmap();
 	reset_all_zones_managed_pages();
 
 	pages = free_low_memory_core_early();
 	totalram_pages_add(pages);
+
+	return pages;
 }
 
 #if defined(CONFIG_DEBUG_FS) && defined(CONFIG_ARCH_KEEP_MEMBLOCK)

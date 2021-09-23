@@ -63,7 +63,7 @@ static void tomoyo_bprm_committed_creds(struct linux_binprm *bprm)
 
 #ifndef CONFIG_SECURITY_TOMOYO_OMIT_USERSPACE_LOADER
 /**
- * tomoyo_bprm_creds_for_exec - Target for security_bprm_creds_for_exec().
+ * tomoyo_bprm_for_exec - Target for security_bprm_creds_for_exec().
  *
  * @bprm: Pointer to "struct linux_binprm".
  *
@@ -113,7 +113,8 @@ static int tomoyo_bprm_check_security(struct linux_binprm *bprm)
 /**
  * tomoyo_inode_getattr - Target for security_inode_getattr().
  *
- * @path: Pointer to "struct path".
+ * @mnt:    Pointer to "struct vfsmount".
+ * @dentry: Pointer to "struct dentry".
  *
  * Returns 0 on success, negative value otherwise.
  */
@@ -299,7 +300,8 @@ static int tomoyo_file_fcntl(struct file *file, unsigned int cmd,
 /**
  * tomoyo_file_open - Target for security_file_open().
  *
- * @f: Pointer to "struct file".
+ * @f:    Pointer to "struct file".
+ * @cred: Pointer to "struct cred".
  *
  * Returns 0 on success, negative value otherwise.
  */
@@ -485,8 +487,8 @@ struct lsm_blob_sizes tomoyo_blob_sizes __lsm_ro_after_init = {
 /**
  * tomoyo_task_alloc - Target for security_task_alloc().
  *
- * @task:        Pointer to "struct task_struct".
- * @clone_flags: clone() flags.
+ * @task:  Pointer to "struct task_struct".
+ * @flags: clone() flags.
  *
  * Returns 0.
  */

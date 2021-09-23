@@ -79,11 +79,13 @@ static ssize_t repr_trim(char *buf, ssize_t len)
 
 static ssize_t
 __caps_show(struct intel_engine_cs *engine,
-	    unsigned long caps, char *buf, bool show_unknown)
+	    u32 caps, char *buf, bool show_unknown)
 {
 	const char * const *repr;
 	int count, n;
 	ssize_t len;
+
+	BUILD_BUG_ON(!typecheck(typeof(caps), engine->uabi_capabilities));
 
 	switch (engine->class) {
 	case VIDEO_DECODE_CLASS:
@@ -101,10 +103,12 @@ __caps_show(struct intel_engine_cs *engine,
 		count = 0;
 		break;
 	}
-	GEM_BUG_ON(count > BITS_PER_LONG);
+	GEM_BUG_ON(count > BITS_PER_TYPE(typeof(caps)));
 
 	len = 0;
-	for_each_set_bit(n, &caps, show_unknown ? BITS_PER_LONG : count) {
+	for_each_set_bit(n,
+			 (unsigned long *)&caps,
+			 show_unknown ? BITS_PER_TYPE(typeof(caps)) : count) {
 		if (n >= count || !repr[n]) {
 			if (GEM_WARN_ON(show_unknown))
 				len += snprintf(buf + len, PAGE_SIZE - len,

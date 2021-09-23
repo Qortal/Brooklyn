@@ -116,7 +116,7 @@
 	pinctrl-names = "default";
 	status = "okay";
 
-	pmic@66 {
+	s5m8767_pmic@66 {
 		compatible = "samsung,s5m8767-pmic";
 		reg = <0x66>;
 
@@ -144,7 +144,6 @@
 						 <1200000>, <1200000>,
 						 <1200000>, <1200000>,
 						 <1200000>, <1200000>;
-		wakeup-source;
 
 		s5m8767_osc: clocks {
 			compatible = "samsung,s5m8767-clk";
@@ -454,37 +453,37 @@
 	pinctrl-names = "default";
 	status = "okay";
 
-	key-home {
+	key_home {
 		keypad,row = <0>;
 		keypad,column = <0>;
 		linux,code = <KEY_HOME>;
 	};
 
-	key-down {
+	key_down {
 		keypad,row = <0>;
 		keypad,column = <1>;
 		linux,code = <KEY_DOWN>;
 	};
 
-	key-up {
+	key_up {
 		keypad,row = <1>;
 		keypad,column = <0>;
 		linux,code = <KEY_UP>;
 	};
 
-	key-menu {
+	key_menu {
 		keypad,row = <1>;
 		keypad,column = <1>;
 		linux,code = <KEY_MENU>;
 	};
 
-	key-back {
+	key_back {
 		keypad,row = <2>;
 		keypad,column = <0>;
 		linux,code = <KEY_BACK>;
 	};
 
-	key-enter {
+	key_enter {
 		keypad,row = <2>;
 		keypad,column = <1>;
 		linux,code = <KEY_ENTER>;

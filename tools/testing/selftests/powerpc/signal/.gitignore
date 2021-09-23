@@ -3,4 +3,3 @@ signal
 signal_tm
 sigfuz
 sigreturn_vdso
-sig_sc_double_restart

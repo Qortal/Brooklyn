@@ -343,13 +343,12 @@ const struct file_operations omfs_file_operations = {
 	.splice_read = generic_file_splice_read,
 };
 
-static int omfs_setattr(struct user_namespace *mnt_userns,
-			struct dentry *dentry, struct iattr *attr)
+static int omfs_setattr(struct dentry *dentry, struct iattr *attr)
 {
 	struct inode *inode = d_inode(dentry);
 	int error;
 
-	error = setattr_prepare(&init_user_ns, dentry, attr);
+	error = setattr_prepare(dentry, attr);
 	if (error)
 		return error;
 
@@ -362,7 +361,7 @@ static int omfs_setattr(struct user_namespace *mnt_userns,
 		omfs_truncate(inode);
 	}
 
-	setattr_copy(&init_user_ns, inode, attr);
+	setattr_copy(inode, attr);
 	mark_inode_dirty(inode);
 	return 0;
 }
@@ -372,7 +371,6 @@ const struct inode_operations omfs_file_inops = {
 };
 
 const struct address_space_operations omfs_aops = {
-	.set_page_dirty = __set_page_dirty_buffers,
 	.readpage = omfs_readpage,
 	.readahead = omfs_readahead,
 	.writepage = omfs_writepage,

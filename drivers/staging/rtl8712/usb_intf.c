@@ -36,6 +36,7 @@ static int r871xu_drv_init(struct usb_interface *pusb_intf,
 static void r871xu_dev_remove(struct usb_interface *pusb_intf);
 
 static const struct usb_device_id rtl871x_usb_id_tbl[] = {
+
 /* RTL8188SU */
 	/* Realtek */
 	{USB_DEVICE(0x0BDA, 0x8171)},
@@ -379,11 +380,13 @@ static int r871xu_drv_init(struct usb_interface *pusb_intf,
 	/* step 3.
 	 * initialize the dvobj_priv
 	 */
-
-	status = padapter->dvobj_init(padapter);
-	if (status != _SUCCESS)
-		goto free_netdev;
-
+	if (!padapter->dvobj_init) {
+		goto put_dev;
+	} else {
+		status = padapter->dvobj_init(padapter);
+		if (status != _SUCCESS)
+			goto free_netdev;
+	}
 	/* step 4. */
 	status = r8712_init_drv_sw(padapter);
 	if (status)

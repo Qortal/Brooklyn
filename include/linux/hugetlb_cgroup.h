@@ -21,16 +21,15 @@ struct hugetlb_cgroup;
 struct resv_map;
 struct file_region;
 
-#ifdef CONFIG_CGROUP_HUGETLB
 /*
  * Minimum page order trackable by hugetlb cgroup.
  * At least 4 pages are necessary for all the tracking information.
- * The second tail page (hpage[SUBPAGE_INDEX_CGROUP]) is the fault
- * usage cgroup. The third tail page (hpage[SUBPAGE_INDEX_CGROUP_RSVD])
- * is the reservation usage cgroup.
+ * The second tail page (hpage[2]) is the fault usage cgroup.
+ * The third tail page (hpage[3]) is the reservation usage cgroup.
  */
-#define HUGETLB_CGROUP_MIN_ORDER order_base_2(__MAX_CGROUP_SUBPAGE_INDEX + 1)
+#define HUGETLB_CGROUP_MIN_ORDER	2
 
+#ifdef CONFIG_CGROUP_HUGETLB
 enum hugetlb_memory_event {
 	HUGETLB_MAX,
 	HUGETLB_NR_MEMORY_EVENTS,
@@ -67,9 +66,9 @@ __hugetlb_cgroup_from_page(struct page *page, bool rsvd)
 	if (compound_order(page) < HUGETLB_CGROUP_MIN_ORDER)
 		return NULL;
 	if (rsvd)
-		return (void *)page_private(page + SUBPAGE_INDEX_CGROUP_RSVD);
+		return (struct hugetlb_cgroup *)page[3].private;
 	else
-		return (void *)page_private(page + SUBPAGE_INDEX_CGROUP);
+		return (struct hugetlb_cgroup *)page[2].private;
 }
 
 static inline struct hugetlb_cgroup *hugetlb_cgroup_from_page(struct page *page)
@@ -91,11 +90,9 @@ static inline int __set_hugetlb_cgroup(struct page *page,
 	if (compound_order(page) < HUGETLB_CGROUP_MIN_ORDER)
 		return -1;
 	if (rsvd)
-		set_page_private(page + SUBPAGE_INDEX_CGROUP_RSVD,
-				 (unsigned long)h_cg);
+		page[3].private = (unsigned long)h_cg;
 	else
-		set_page_private(page + SUBPAGE_INDEX_CGROUP,
-				 (unsigned long)h_cg);
+		page[2].private = (unsigned long)h_cg;
 	return 0;
 }
 

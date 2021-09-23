@@ -23,6 +23,7 @@
 #include <linux/string.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/rawnand.h>
+#include <linux/mtd/nand_bch.h>
 #include <linux/mtd/partitions.h>
 #include <linux/delay.h>
 #include <linux/list.h>
@@ -2216,7 +2217,7 @@ static int ns_attach_chip(struct nand_chip *chip)
 	if (!bch)
 		return 0;
 
-	if (!IS_ENABLED(CONFIG_MTD_NAND_ECC_SW_BCH)) {
+	if (!mtd_nand_has_bch()) {
 		NS_ERR("BCH ECC support is disabled\n");
 		return -EINVAL;
 	}

@@ -54,6 +54,8 @@ dasd_ioctl_enable(struct block_device *bdev)
 		return -ENODEV;
 
 	dasd_enable_device(base);
+	/* Formatting the dasd device can change the capacity. */
+	bd_set_nr_sectors(bdev, get_capacity(base->block->gdp));
 	dasd_put_device(base);
 	return 0;
 }
@@ -86,7 +88,7 @@ dasd_ioctl_disable(struct block_device *bdev)
 	 * Set i_size to zero, since read, write, etc. check against this
 	 * value.
 	 */
-	set_capacity(bdev->bd_disk, 0);
+	bd_set_nr_sectors(bdev, 0);
 	dasd_put_device(base);
 	return 0;
 }
@@ -220,8 +222,9 @@ dasd_format(struct dasd_block *block, struct format_data_t *fdata)
 	 * enabling the device later.
 	 */
 	if (fdata->start_unit == 0) {
-		block->gdp->part0->bd_inode->i_blkbits =
-			blksize_bits(fdata->blksize);
+		struct block_device *bdev = bdget_disk(block->gdp, 0);
+		bdev->bd_inode->i_blkbits = blksize_bits(fdata->blksize);
+		bdput(bdev);
 	}
 
 	rc = base->discipline->format_device(base, fdata, 1);
@@ -529,22 +532,28 @@ static int dasd_ioctl_information(struct dasd_block *block, void __user *argp,
 /*
  * Set read only
  */
-int dasd_set_read_only(struct block_device *bdev, bool ro)
+static int
+dasd_ioctl_set_ro(struct block_device *bdev, void __user *argp)
 {
 	struct dasd_device *base;
-	int rc;
+	int intval, rc;
 
-	/* do not manipulate hardware state for partitions */
+	if (!capable(CAP_SYS_ADMIN))
+		return -EACCES;
 	if (bdev_is_partition(bdev))
-		return 0;
-
+		// ro setting is not allowed for partitions
+		return -EINVAL;
+	if (get_user(intval, (int __user *)argp))
+		return -EFAULT;
 	base = dasd_device_from_gendisk(bdev->bd_disk);
 	if (!base)
 		return -ENODEV;
-	if (!ro && test_bit(DASD_FLAG_DEVICE_RO, &base->flags))
-		rc = -EROFS;
-	else
-		rc = dasd_set_feature(base->cdev, DASD_FEATURE_READONLY, ro);
+	if (!intval && test_bit(DASD_FLAG_DEVICE_RO, &base->flags)) {
+		dasd_put_device(base);
+		return -EROFS;
+	}
+	set_disk_ro(bdev->bd_disk, intval);
+	rc = dasd_set_feature(base->cdev, DASD_FEATURE_READONLY, intval);
 	dasd_put_device(base);
 	return rc;
 }
@@ -623,6 +632,9 @@ int dasd_ioctl(struct block_device *bdev, fmode_t mode,
 		break;
 	case BIODASDPRRST:
 		rc = dasd_ioctl_reset_profile(block);
+		break;
+	case BLKROSET:
+		rc = dasd_ioctl_set_ro(bdev, argp);
 		break;
 	case DASDAPIVER:
 		rc = dasd_ioctl_api_version(argp);

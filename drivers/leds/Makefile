@@ -103,11 +103,5 @@ obj-$(CONFIG_LEDS_SPI_BYTE)		+= leds-spi-byte.o
 # LED Userspace Drivers
 obj-$(CONFIG_LEDS_USER)			+= uleds.o
 
-# Flash and Torch LED Drivers
-obj-$(CONFIG_LEDS_CLASS_FLASH)		+= flash/
-
 # LED Triggers
 obj-$(CONFIG_LEDS_TRIGGERS)		+= trigger/
-
-# LED Blink
-obj-y					+= blink/

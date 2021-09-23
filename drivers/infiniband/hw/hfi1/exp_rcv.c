@@ -49,8 +49,8 @@
 #include "trace.h"
 
 /**
- * hfi1_exp_tid_set_init - initialize exp_tid_set
- * @set: the set
+ * exp_tid_group_init - initialize exp_tid_set
+ * @set - the set
  */
 static void hfi1_exp_tid_set_init(struct exp_tid_set *set)
 {
@@ -60,7 +60,7 @@ static void hfi1_exp_tid_set_init(struct exp_tid_set *set)
 
 /**
  * hfi1_exp_tid_group_init - initialize rcd expected receive
- * @rcd: the rcd
+ * @rcd - the rcd
  */
 void hfi1_exp_tid_group_init(struct hfi1_ctxtdata *rcd)
 {
@@ -70,8 +70,8 @@ void hfi1_exp_tid_group_init(struct hfi1_ctxtdata *rcd)
 }
 
 /**
- * hfi1_alloc_ctxt_rcv_groups - initialize expected receive groups
- * @rcd: the context to add the groupings to
+ * alloc_ctxt_rcv_groups - initialize expected receive groups
+ * @rcd - the context to add the groupings to
  */
 int hfi1_alloc_ctxt_rcv_groups(struct hfi1_ctxtdata *rcd)
 {
@@ -100,8 +100,8 @@ int hfi1_alloc_ctxt_rcv_groups(struct hfi1_ctxtdata *rcd)
 }
 
 /**
- * hfi1_free_ctxt_rcv_groups - free  expected receive groups
- * @rcd: the context to free
+ * free_ctxt_rcv_groups - free  expected receive groups
+ * @rcd - the context to free
  *
  * The routine dismantles the expect receive linked
  * list and clears any tids associated with the receive

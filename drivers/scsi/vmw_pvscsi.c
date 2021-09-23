@@ -17,6 +17,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
  *
+ * Maintained by: Jim Gill <jgill@vmware.com>
+ *
  */
 
 #include <linux/kernel.h>
@@ -576,6 +578,9 @@ static void pvscsi_complete_request(struct pvscsi_adapter *adapter,
 			cmd->result = (DID_RESET << 16);
 		} else {
 			cmd->result = (DID_OK << 16) | sdstat;
+			if (sdstat == SAM_STAT_CHECK_CONDITION &&
+			    cmd->sense_buffer)
+				cmd->result |= (DRIVER_SENSE << 24);
 		}
 	} else
 		switch (btstat) {
@@ -607,6 +612,9 @@ static void pvscsi_complete_request(struct pvscsi_adapter *adapter,
 		case BTSTAT_LUNMISMATCH:
 		case BTSTAT_TAGREJECT:
 		case BTSTAT_BADMSG:
+			cmd->result = (DRIVER_INVALID << 24);
+			fallthrough;
+
 		case BTSTAT_HAHARDWARE:
 		case BTSTAT_INVPHASE:
 		case BTSTAT_HATIMEOUT:

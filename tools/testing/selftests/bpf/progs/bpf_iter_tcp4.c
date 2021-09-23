@@ -3,6 +3,7 @@
 #include "bpf_iter.h"
 #include "bpf_tracing_net.h"
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_tracing.h>
 #include <bpf/bpf_endian.h>
 
 char _license[] SEC("license") = "GPL";
@@ -121,7 +122,7 @@ static int dump_tcp_sock(struct seq_file *seq, struct tcp_sock *tp,
 	}
 
 	BPF_SEQ_PRINTF(seq, "%4d: %08X:%04X %08X:%04X ",
-		       seq_num, src, srcp, dest, destp);
+		       seq_num, src, srcp, destp, destp);
 	BPF_SEQ_PRINTF(seq, "%02X %08X:%08X %02X:%08lX %08X %5u %8d %lu %d ",
 		       state,
 		       tp->write_seq - tp->snd_una, rx_queue,

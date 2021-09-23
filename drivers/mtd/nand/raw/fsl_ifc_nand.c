@@ -15,6 +15,7 @@
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/rawnand.h>
 #include <linux/mtd/partitions.h>
+#include <linux/mtd/nand_ecc.h>
 #include <linux/fsl_ifc.h>
 #include <linux/iopoll.h>
 

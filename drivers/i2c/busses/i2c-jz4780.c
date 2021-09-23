@@ -437,8 +437,9 @@ static irqreturn_t jz4780_i2c_irq(int irqno, void *dev_id)
 	unsigned short intst;
 	unsigned short intmsk;
 	struct jz4780_i2c *i2c = dev_id;
+	unsigned long flags;
 
-	spin_lock(&i2c->lock);
+	spin_lock_irqsave(&i2c->lock, flags);
 	intmsk = jz4780_i2c_readw(i2c, JZ4780_I2C_INTM);
 	intst = jz4780_i2c_readw(i2c, JZ4780_I2C_INTST);
 
@@ -550,7 +551,7 @@ static irqreturn_t jz4780_i2c_irq(int irqno, void *dev_id)
 	}
 
 done:
-	spin_unlock(&i2c->lock);
+	spin_unlock_irqrestore(&i2c->lock, flags);
 	return IRQ_HANDLED;
 }
 

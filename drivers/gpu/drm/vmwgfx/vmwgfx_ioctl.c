@@ -51,7 +51,7 @@ int vmw_getparam_ioctl(struct drm_device *dev, void *data,
 		param->value = vmw_overlay_num_free_overlays(dev_priv);
 		break;
 	case DRM_VMW_PARAM_3D:
-		param->value = vmw_supports_3d(dev_priv) ? 1 : 0;
+		param->value = vmw_fifo_have_3d(dev_priv) ? 1 : 0;
 		break;
 	case DRM_VMW_PARAM_HW_CAPS:
 		param->value = dev_priv->capabilities;
@@ -60,24 +60,27 @@ int vmw_getparam_ioctl(struct drm_device *dev, void *data,
 		param->value = dev_priv->capabilities2;
 		break;
 	case DRM_VMW_PARAM_FIFO_CAPS:
-		param->value = vmw_fifo_caps(dev_priv);
+		param->value = dev_priv->fifo.capabilities;
 		break;
 	case DRM_VMW_PARAM_MAX_FB_SIZE:
 		param->value = dev_priv->prim_bb_mem;
 		break;
 	case DRM_VMW_PARAM_FIFO_HW_VERSION:
 	{
+		u32 *fifo_mem = dev_priv->mmio_virt;
+		const struct vmw_fifo_state *fifo = &dev_priv->fifo;
+
 		if ((dev_priv->capabilities & SVGA_CAP_GBOBJECTS)) {
 			param->value = SVGA3D_HWVERSION_WS8_B1;
 			break;
 		}
 
 		param->value =
-			vmw_fifo_mem_read(dev_priv,
-					  ((vmw_fifo_caps(dev_priv) &
-					    SVGA_FIFO_CAP_3D_HWVERSION_REVISED) ?
-						   SVGA_FIFO_3D_HWVERSION_REVISED :
-						   SVGA_FIFO_3D_HWVERSION));
+			vmw_mmio_read(fifo_mem +
+				      ((fifo->capabilities &
+					SVGA_FIFO_CAP_3D_HWVERSION_REVISED) ?
+				       SVGA_FIFO_3D_HWVERSION_REVISED :
+				       SVGA_FIFO_3D_HWVERSION));
 		break;
 	}
 	case DRM_VMW_PARAM_MAX_SURF_MEMORY:
@@ -232,7 +235,7 @@ int vmw_get_cap_3d_ioctl(struct drm_device *dev, void *data,
 		if (unlikely(ret != 0))
 			goto out_err;
 	} else {
-		fifo_mem = dev_priv->fifo_mem;
+		fifo_mem = dev_priv->mmio_virt;
 		memcpy(bounce, &fifo_mem[SVGA_FIFO_3D_CAPS], size);
 	}
 
@@ -300,6 +303,10 @@ int vmw_present_ioctl(struct drm_device *dev, void *data,
 	}
 	vfb = vmw_framebuffer_to_vfb(fb);
 
+	ret = ttm_read_lock(&dev_priv->reservation_sem, true);
+	if (unlikely(ret != 0))
+		goto out_no_ttm_lock;
+
 	ret = vmw_user_resource_lookup_handle(dev_priv, tfile, arg->sid,
 					      user_surface_converter,
 					      &res);
@@ -316,6 +323,8 @@ int vmw_present_ioctl(struct drm_device *dev, void *data,
 	vmw_surface_unreference(&surface);
 
 out_no_surface:
+	ttm_read_unlock(&dev_priv->reservation_sem);
+out_no_ttm_lock:
 	drm_framebuffer_put(fb);
 out_no_fb:
 	drm_modeset_unlock_all(dev);
@@ -383,10 +392,15 @@ int vmw_present_readback_ioctl(struct drm_device *dev, void *data,
 		goto out_no_ttm_lock;
 	}
 
+	ret = ttm_read_lock(&dev_priv->reservation_sem, true);
+	if (unlikely(ret != 0))
+		goto out_no_ttm_lock;
+
 	ret = vmw_kms_readback(dev_priv, file_priv,
 			       vfb, user_fence_rep,
 			       clips, num_clips);
 
+	ttm_read_unlock(&dev_priv->reservation_sem);
 out_no_ttm_lock:
 	drm_framebuffer_put(fb);
 out_no_fb:
@@ -395,4 +409,47 @@ out_no_copy:
 	kfree(clips);
 out_clips:
 	return ret;
+}
+
+
+/**
+ * vmw_fops_poll - wrapper around the drm_poll function
+ *
+ * @filp: See the linux fops poll documentation.
+ * @wait: See the linux fops poll documentation.
+ *
+ * Wrapper around the drm_poll function that makes sure the device is
+ * processing the fifo if drm_poll decides to wait.
+ */
+__poll_t vmw_fops_poll(struct file *filp, struct poll_table_struct *wait)
+{
+	struct drm_file *file_priv = filp->private_data;
+	struct vmw_private *dev_priv =
+		vmw_priv(file_priv->minor->dev);
+
+	vmw_fifo_ping_host(dev_priv, SVGA_SYNC_GENERIC);
+	return drm_poll(filp, wait);
+}
+
+
+/**
+ * vmw_fops_read - wrapper around the drm_read function
+ *
+ * @filp: See the linux fops read documentation.
+ * @buffer: See the linux fops read documentation.
+ * @count: See the linux fops read documentation.
+ * offset: See the linux fops read documentation.
+ *
+ * Wrapper around the drm_read function that makes sure the device is
+ * processing the fifo if drm_read decides to wait.
+ */
+ssize_t vmw_fops_read(struct file *filp, char __user *buffer,
+		      size_t count, loff_t *offset)
+{
+	struct drm_file *file_priv = filp->private_data;
+	struct vmw_private *dev_priv =
+		vmw_priv(file_priv->minor->dev);
+
+	vmw_fifo_ping_host(dev_priv, SVGA_SYNC_GENERIC);
+	return drm_read(filp, buffer, count, offset);
 }

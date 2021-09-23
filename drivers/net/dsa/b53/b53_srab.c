@@ -632,7 +632,8 @@ static int b53_srab_remove(struct platform_device *pdev)
 	struct b53_srab_priv *priv = dev->priv;
 
 	b53_srab_intr_set(priv, false);
-	b53_switch_remove(dev);
+	if (dev)
+		b53_switch_remove(dev);
 
 	return 0;
 }

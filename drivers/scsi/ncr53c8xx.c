@@ -148,11 +148,6 @@ static int ncr_debug = SCSI_NCR_DEBUG_FLAGS;
 	#define DEBUG_FLAGS	SCSI_NCR_DEBUG_FLAGS
 #endif
 
-/*
- * Locally used status flag
- */
-#define SAM_STAT_ILLEGAL	0xff
-
 static inline struct list_head *ncr_list_pop(struct list_head *head)
 {
 	if (!list_empty(head)) {
@@ -1002,6 +997,8 @@ typedef u32 tagmap_t;
 /*
 **	Other definitions
 */
+
+#define ScsiResult(host_code, scsi_code) (((host_code) << 16) + ((scsi_code) & 0x7f))
 
 #define initverbose (driver_setup.verbose)
 #define bootverbose (np->verbose)
@@ -2433,7 +2430,7 @@ static	struct script script0 __initdata = {
 	*/
 	SCR_FROM_REG (SS_REG),
 		0,
-	SCR_CALL ^ IFFALSE (DATA (SAM_STAT_GOOD)),
+	SCR_CALL ^ IFFALSE (DATA (S_GOOD)),
 		PADDRH (bad_status),
 
 #ifndef	SCSI_NCR_CCB_DONE_SUPPORT
@@ -2882,7 +2879,7 @@ static	struct scripth scripth0 __initdata = {
 		8,
 	SCR_TO_REG (HS_REG),
 		0,
-	SCR_LOAD_REG (SS_REG, SAM_STAT_GOOD),
+	SCR_LOAD_REG (SS_REG, S_GOOD),
 		0,
 	SCR_JUMP,
 		PADDR (cleanup_ok),
@@ -3344,15 +3341,15 @@ static	struct scripth scripth0 __initdata = {
 		PADDRH (reset),
 }/*-------------------------< BAD_STATUS >-----------------*/,{
 	/*
-	**	If command resulted in either TASK_SET FULL,
+	**	If command resulted in either QUEUE FULL,
 	**	CHECK CONDITION or COMMAND TERMINATED,
 	**	call the C code.
 	*/
-	SCR_INT ^ IFTRUE (DATA (SAM_STAT_TASK_SET_FULL)),
+	SCR_INT ^ IFTRUE (DATA (S_QUEUE_FULL)),
 		SIR_BAD_STATUS,
-	SCR_INT ^ IFTRUE (DATA (SAM_STAT_CHECK_CONDITION)),
+	SCR_INT ^ IFTRUE (DATA (S_CHECK_COND)),
 		SIR_BAD_STATUS,
-	SCR_INT ^ IFTRUE (DATA (SAM_STAT_COMMAND_TERMINATED)),
+	SCR_INT ^ IFTRUE (DATA (S_TERMINATED)),
 		SIR_BAD_STATUS,
 	SCR_RETURN,
 		0,
@@ -4374,7 +4371,7 @@ static int ncr_queue_command (struct ncb *np, struct scsi_cmnd *cmd)
 	*/
 	cp->actualquirks		= 0;
 	cp->host_status			= cp->nego_status ? HS_NEGOTIATE : HS_BUSY;
-	cp->scsi_status			= SAM_STAT_ILLEGAL;
+	cp->scsi_status			= S_ILLEGAL;
 	cp->parity_status		= 0;
 
 	cp->xerr_status			= XE_OK;
@@ -4605,7 +4602,7 @@ static int ncr_reset_bus (struct ncb *np, struct scsi_cmnd *cmd, int sync_reset)
  * in order to keep it alive.
  */
 	if (!found && sync_reset && !retrieve_from_waiting_list(0, np, cmd)) {
-		set_host_byte(cmd, DID_RESET);
+		cmd->result = DID_RESET << 16;
 		ncr_queue_done_cmd(np, cmd);
 	}
 
@@ -4633,7 +4630,7 @@ static int ncr_abort_command (struct ncb *np, struct scsi_cmnd *cmd)
  * First, look for the scsi command in the waiting list
  */
 	if (remove_from_waiting_list(np, cmd)) {
-		set_host_byte(cmd, DID_ABORT);
+		cmd->result = ScsiResult(DID_ABORT, 0);
 		ncr_queue_done_cmd(np, cmd);
 		return SCSI_ABORT_SUCCESS;
 	}
@@ -4898,8 +4895,7 @@ void ncr_complete (struct ncb *np, struct ccb *cp)
 	**	Print out any error for debugging purpose.
 	*/
 	if (DEBUG_FLAGS & (DEBUG_RESULT|DEBUG_TINY)) {
-		if (cp->host_status != HS_COMPLETE ||
-		    cp->scsi_status != SAM_STAT_GOOD) {
+		if (cp->host_status!=HS_COMPLETE || cp->scsi_status!=S_GOOD) {
 			PRINT_ADDR(cmd, "ERROR: cmd=%x host_status=%x "
 					"scsi_status=%x\n", cmd->cmnd[0],
 					cp->host_status, cp->scsi_status);
@@ -4909,16 +4905,15 @@ void ncr_complete (struct ncb *np, struct ccb *cp)
 	/*
 	**	Check the status.
 	*/
-	cmd->result = 0;
 	if (   (cp->host_status == HS_COMPLETE)
-		&& (cp->scsi_status == SAM_STAT_GOOD ||
-		    cp->scsi_status == SAM_STAT_CONDITION_MET)) {
+		&& (cp->scsi_status == S_GOOD ||
+		    cp->scsi_status == S_COND_MET)) {
 		/*
 		 *	All went well (GOOD status).
-		 *	CONDITION MET status is returned on
+		 *	CONDITION MET status is returned on 
 		 *	`Pre-Fetch' or `Search data' success.
 		 */
-		set_status_byte(cmd, cp->scsi_status);
+		cmd->result = ScsiResult(DID_OK, cp->scsi_status);
 
 		/*
 		**	@RESID@
@@ -4949,11 +4944,11 @@ void ncr_complete (struct ncb *np, struct ccb *cp)
 			}
 		}
 	} else if ((cp->host_status == HS_COMPLETE)
-		&& (cp->scsi_status == SAM_STAT_CHECK_CONDITION)) {
+		&& (cp->scsi_status == S_CHECK_COND)) {
 		/*
 		**   Check condition code
 		*/
-		set_status_byte(cmd, SAM_STAT_CHECK_CONDITION);
+		cmd->result = DID_OK << 16 | S_CHECK_COND;
 
 		/*
 		**	Copy back sense data to caller's buffer.
@@ -4970,20 +4965,20 @@ void ncr_complete (struct ncb *np, struct ccb *cp)
 			printk (".\n");
 		}
 	} else if ((cp->host_status == HS_COMPLETE)
-		&& (cp->scsi_status == SAM_STAT_RESERVATION_CONFLICT)) {
+		&& (cp->scsi_status == S_CONFLICT)) {
 		/*
 		**   Reservation Conflict condition code
 		*/
-		set_status_byte(cmd, SAM_STAT_RESERVATION_CONFLICT);
-
+		cmd->result = DID_OK << 16 | S_CONFLICT;
+	
 	} else if ((cp->host_status == HS_COMPLETE)
-		&& (cp->scsi_status == SAM_STAT_BUSY ||
-		    cp->scsi_status == SAM_STAT_TASK_SET_FULL)) {
+		&& (cp->scsi_status == S_BUSY ||
+		    cp->scsi_status == S_QUEUE_FULL)) {
 
 		/*
 		**   Target is busy.
 		*/
-		set_status_byte(cmd, cp->scsi_status);
+		cmd->result = ScsiResult(DID_OK, cp->scsi_status);
 
 	} else if ((cp->host_status == HS_SEL_TIMEOUT)
 		|| (cp->host_status == HS_TIMEOUT)) {
@@ -4991,24 +4986,21 @@ void ncr_complete (struct ncb *np, struct ccb *cp)
 		/*
 		**   No response
 		*/
-		set_status_byte(cmd, cp->scsi_status);
-		set_host_byte(cmd, DID_TIME_OUT);
+		cmd->result = ScsiResult(DID_TIME_OUT, cp->scsi_status);
 
 	} else if (cp->host_status == HS_RESET) {
 
 		/*
 		**   SCSI bus reset
 		*/
-		set_status_byte(cmd, cp->scsi_status);
-		set_host_byte(cmd, DID_RESET);
+		cmd->result = ScsiResult(DID_RESET, cp->scsi_status);
 
 	} else if (cp->host_status == HS_ABORTED) {
 
 		/*
 		**   Transfer aborted
 		*/
-		set_status_byte(cmd, cp->scsi_status);
-		set_host_byte(cmd, DID_ABORT);
+		cmd->result = ScsiResult(DID_ABORT, cp->scsi_status);
 
 	} else {
 
@@ -5018,8 +5010,7 @@ void ncr_complete (struct ncb *np, struct ccb *cp)
 		PRINT_ADDR(cmd, "COMMAND FAILED (%x %x) @%p.\n",
 			cp->host_status, cp->scsi_status, cp);
 
-		set_status_byte(cmd, cp->scsi_status);
-		set_host_byte(cmd, DID_ERROR);
+		cmd->result = ScsiResult(DID_ERROR, cp->scsi_status);
 	}
 
 	/*
@@ -5035,10 +5026,10 @@ void ncr_complete (struct ncb *np, struct ccb *cp)
 
 		if (cp->host_status==HS_COMPLETE) {
 			switch (cp->scsi_status) {
-			case SAM_STAT_GOOD:
+			case S_GOOD:
 				printk ("  GOOD");
 				break;
-			case SAM_STAT_CHECK_CONDITION:
+			case S_CHECK_COND:
 				printk ("  SENSE:");
 				p = (u_char*) &cmd->sense_buffer;
 				for (i=0; i<14; i++)
@@ -6573,7 +6564,7 @@ static void ncr_sir_to_redo(struct ncb *np, int num, struct ccb *cp)
 
 	switch(s_status) {
 	default:	/* Just for safety, should never happen */
-	case SAM_STAT_TASK_SET_FULL:
+	case S_QUEUE_FULL:
 		/*
 		**	Decrease number of tags to the number of 
 		**	disconnected commands.
@@ -6597,15 +6588,15 @@ static void ncr_sir_to_redo(struct ncb *np, int num, struct ccb *cp)
 		*/
 		cp->phys.header.savep = cp->startp;
 		cp->host_status = HS_BUSY;
-		cp->scsi_status = SAM_STAT_ILLEGAL;
+		cp->scsi_status = S_ILLEGAL;
 
 		ncr_put_start_queue(np, cp);
 		if (disc_cnt)
 			INB (nc_ctest2);		/* Clear SIGP */
 		OUTL_DSP (NCB_SCRIPT_PHYS (np, reselect));
 		return;
-	case SAM_STAT_COMMAND_TERMINATED:
-	case SAM_STAT_CHECK_CONDITION:
+	case S_TERMINATED:
+	case S_CHECK_COND:
 		/*
 		**	If we were requesting sense, give up.
 		*/
@@ -6655,7 +6646,7 @@ static void ncr_sir_to_redo(struct ncb *np, int num, struct ccb *cp)
 		cp->phys.header.wlastp	= startp;
 
 		cp->host_status = HS_BUSY;
-		cp->scsi_status = SAM_STAT_ILLEGAL;
+		cp->scsi_status = S_ILLEGAL;
 		cp->auto_sense	= s_status;
 
 		cp->start.schedule.l_paddr =
@@ -8044,7 +8035,7 @@ printk("ncr53c8xx_queue_command\n");
      spin_lock_irqsave(&np->smp_lock, flags);
 
      if ((sts = ncr_queue_command(np, cmd)) != DID_OK) {
-	     set_host_byte(cmd, sts);
+	  cmd->result = sts << 16;
 #ifdef DEBUG_NCR53C8XX
 printk("ncr53c8xx : command not queued - result=%d\n", sts);
 #endif
@@ -8235,7 +8226,7 @@ static void process_waiting_list(struct ncb *np, int sts)
 #ifdef DEBUG_WAITING_LIST
 	printk("%s: cmd %lx done forced sts=%d\n", ncr_name(np), (u_long) wcmd, sts);
 #endif
-			set_host_byte(wcmd, sts);
+			wcmd->result = sts << 16;
 			ncr_queue_done_cmd(np, wcmd);
 		}
 	}

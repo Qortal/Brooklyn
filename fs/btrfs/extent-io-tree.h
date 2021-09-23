@@ -21,24 +21,10 @@ struct io_failure_record;
 #define EXTENT_NORESERVE	(1U << 11)
 #define EXTENT_QGROUP_RESERVED	(1U << 12)
 #define EXTENT_CLEAR_DATA_RESV	(1U << 13)
-/*
- * Must be cleared only during ordered extent completion or on error paths if we
- * did not manage to submit bios and create the ordered extents for the range.
- * Should not be cleared during page release and page invalidation (if there is
- * an ordered extent in flight), that is left for the ordered extent completion.
- */
 #define EXTENT_DELALLOC_NEW	(1U << 14)
-/*
- * When an ordered extent successfully completes for a region marked as a new
- * delalloc range, use this flag when clearing a new delalloc range to indicate
- * that the VFS' inode number of bytes should be incremented and the inode's new
- * delalloc bytes decremented, in an atomic way to prevent races with stat(2).
- */
-#define EXTENT_ADD_INODE_BYTES  (1U << 15)
 #define EXTENT_DO_ACCOUNTING    (EXTENT_CLEAR_META_RESV | \
 				 EXTENT_CLEAR_DATA_RESV)
-#define EXTENT_CTLBITS		(EXTENT_DO_ACCOUNTING | \
-				 EXTENT_ADD_INODE_BYTES)
+#define EXTENT_CTLBITS		(EXTENT_DO_ACCOUNTING)
 
 /*
  * Redefined bits above which are used only in the device allocation tree,
@@ -87,7 +73,7 @@ struct extent_state {
 	/* ADD NEW ELEMENTS AFTER THIS */
 	wait_queue_head_t wq;
 	refcount_t refs;
-	u32 state;
+	unsigned state;
 
 	struct io_failure_record *failrec;
 
@@ -119,18 +105,19 @@ void __cold extent_io_exit(void);
 
 u64 count_range_bits(struct extent_io_tree *tree,
 		     u64 *start, u64 search_end,
-		     u64 max_bytes, u32 bits, int contig);
+		     u64 max_bytes, unsigned bits, int contig);
 
 void free_extent_state(struct extent_state *state);
 int test_range_bit(struct extent_io_tree *tree, u64 start, u64 end,
-		   u32 bits, int filled, struct extent_state *cached_state);
+		   unsigned bits, int filled,
+		   struct extent_state *cached_state);
 int clear_record_extent_bits(struct extent_io_tree *tree, u64 start, u64 end,
-			     u32 bits, struct extent_changeset *changeset);
+		unsigned bits, struct extent_changeset *changeset);
 int clear_extent_bit(struct extent_io_tree *tree, u64 start, u64 end,
-		     u32 bits, int wake, int delete,
+		     unsigned bits, int wake, int delete,
 		     struct extent_state **cached);
 int __clear_extent_bit(struct extent_io_tree *tree, u64 start, u64 end,
-		     u32 bits, int wake, int delete,
+		     unsigned bits, int wake, int delete,
 		     struct extent_state **cached, gfp_t mask,
 		     struct extent_changeset *changeset);
 
@@ -154,7 +141,7 @@ static inline int unlock_extent_cached_atomic(struct extent_io_tree *tree,
 }
 
 static inline int clear_extent_bits(struct extent_io_tree *tree, u64 start,
-				    u64 end, u32 bits)
+		u64 end, unsigned bits)
 {
 	int wake = 0;
 
@@ -165,19 +152,17 @@ static inline int clear_extent_bits(struct extent_io_tree *tree, u64 start,
 }
 
 int set_record_extent_bits(struct extent_io_tree *tree, u64 start, u64 end,
-			   u32 bits, struct extent_changeset *changeset);
+			   unsigned bits, struct extent_changeset *changeset);
 int set_extent_bit(struct extent_io_tree *tree, u64 start, u64 end,
-		   u32 bits, unsigned exclusive_bits, u64 *failed_start,
-		   struct extent_state **cached_state, gfp_t mask,
-		   struct extent_changeset *changeset);
+		   unsigned bits, u64 *failed_start,
+		   struct extent_state **cached_state, gfp_t mask);
 int set_extent_bits_nowait(struct extent_io_tree *tree, u64 start, u64 end,
-			   u32 bits);
+			   unsigned bits);
 
 static inline int set_extent_bits(struct extent_io_tree *tree, u64 start,
-		u64 end, u32 bits)
+		u64 end, unsigned bits)
 {
-	return set_extent_bit(tree, start, end, bits, 0, NULL, NULL, GFP_NOFS,
-			      NULL);
+	return set_extent_bit(tree, start, end, bits, NULL, NULL, GFP_NOFS);
 }
 
 static inline int clear_extent_uptodate(struct extent_io_tree *tree, u64 start,
@@ -190,8 +175,8 @@ static inline int clear_extent_uptodate(struct extent_io_tree *tree, u64 start,
 static inline int set_extent_dirty(struct extent_io_tree *tree, u64 start,
 		u64 end, gfp_t mask)
 {
-	return set_extent_bit(tree, start, end, EXTENT_DIRTY, 0, NULL, NULL,
-			      mask, NULL);
+	return set_extent_bit(tree, start, end, EXTENT_DIRTY, NULL,
+			      NULL, mask);
 }
 
 static inline int clear_extent_dirty(struct extent_io_tree *tree, u64 start,
@@ -203,16 +188,16 @@ static inline int clear_extent_dirty(struct extent_io_tree *tree, u64 start,
 }
 
 int convert_extent_bit(struct extent_io_tree *tree, u64 start, u64 end,
-		       u32 bits, u32 clear_bits,
+		       unsigned bits, unsigned clear_bits,
 		       struct extent_state **cached_state);
 
 static inline int set_extent_delalloc(struct extent_io_tree *tree, u64 start,
-				      u64 end, u32 extra_bits,
+				      u64 end, unsigned int extra_bits,
 				      struct extent_state **cached_state)
 {
 	return set_extent_bit(tree, start, end,
 			      EXTENT_DELALLOC | EXTENT_UPTODATE | extra_bits,
-			      0, NULL, cached_state, GFP_NOFS, NULL);
+			      NULL, cached_state, GFP_NOFS);
 }
 
 static inline int set_extent_defrag(struct extent_io_tree *tree, u64 start,
@@ -220,30 +205,30 @@ static inline int set_extent_defrag(struct extent_io_tree *tree, u64 start,
 {
 	return set_extent_bit(tree, start, end,
 			      EXTENT_DELALLOC | EXTENT_UPTODATE | EXTENT_DEFRAG,
-			      0, NULL, cached_state, GFP_NOFS, NULL);
+			      NULL, cached_state, GFP_NOFS);
 }
 
 static inline int set_extent_new(struct extent_io_tree *tree, u64 start,
 		u64 end)
 {
-	return set_extent_bit(tree, start, end, EXTENT_NEW, 0, NULL, NULL,
-			      GFP_NOFS, NULL);
+	return set_extent_bit(tree, start, end, EXTENT_NEW, NULL, NULL,
+			GFP_NOFS);
 }
 
 static inline int set_extent_uptodate(struct extent_io_tree *tree, u64 start,
 		u64 end, struct extent_state **cached_state, gfp_t mask)
 {
-	return set_extent_bit(tree, start, end, EXTENT_UPTODATE, 0, NULL,
-			      cached_state, mask, NULL);
+	return set_extent_bit(tree, start, end, EXTENT_UPTODATE, NULL,
+			      cached_state, mask);
 }
 
 int find_first_extent_bit(struct extent_io_tree *tree, u64 start,
-			  u64 *start_ret, u64 *end_ret, u32 bits,
+			  u64 *start_ret, u64 *end_ret, unsigned bits,
 			  struct extent_state **cached_state);
 void find_first_clear_extent_bit(struct extent_io_tree *tree, u64 start,
-				 u64 *start_ret, u64 *end_ret, u32 bits);
+				 u64 *start_ret, u64 *end_ret, unsigned bits);
 int find_contiguous_extent_bit(struct extent_io_tree *tree, u64 start,
-			       u64 *start_ret, u64 *end_ret, u32 bits);
+			       u64 *start_ret, u64 *end_ret, unsigned bits);
 int extent_invalidatepage(struct extent_io_tree *tree,
 			  struct page *page, unsigned long offset);
 bool btrfs_find_delalloc_range(struct extent_io_tree *tree, u64 *start,

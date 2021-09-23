@@ -19,7 +19,7 @@ unsigned long elf_hwcap __read_mostly;
 static DECLARE_BITMAP(riscv_isa, RISCV_ISA_EXT_MAX) __read_mostly;
 
 #ifdef CONFIG_FPU
-__ro_after_init DEFINE_STATIC_KEY_FALSE(cpu_hwcap_fpu);
+bool has_fpu __read_mostly;
 #endif
 
 /**
@@ -59,7 +59,7 @@ bool __riscv_isa_extension_available(const unsigned long *isa_bitmap, int bit)
 }
 EXPORT_SYMBOL_GPL(__riscv_isa_extension_available);
 
-void __init riscv_fill_hwcap(void)
+void riscv_fill_hwcap(void)
 {
 	struct device_node *node;
 	const char *isa;
@@ -146,6 +146,6 @@ void __init riscv_fill_hwcap(void)
 
 #ifdef CONFIG_FPU
 	if (elf_hwcap & (COMPAT_HWCAP_ISA_F | COMPAT_HWCAP_ISA_D))
-		static_branch_enable(&cpu_hwcap_fpu);
+		has_fpu = true;
 #endif
 }

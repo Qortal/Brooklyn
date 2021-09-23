@@ -1173,9 +1173,10 @@ static int sdhci_omap_probe(struct platform_device *pdev)
 	 * as part of pm_runtime_get_sync.
 	 */
 	pm_runtime_enable(dev);
-	ret = pm_runtime_resume_and_get(dev);
-	if (ret) {
+	ret = pm_runtime_get_sync(dev);
+	if (ret < 0) {
 		dev_err(dev, "pm_runtime_get_sync failed\n");
+		pm_runtime_put_noidle(dev);
 		goto err_rpm_disable;
 	}
 

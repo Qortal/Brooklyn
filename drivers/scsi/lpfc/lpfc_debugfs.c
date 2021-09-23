@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2021 Broadcom. All Rights Reserved. The term *
+ * Copyright (C) 2017-2019 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.  *
  * Copyright (C) 2007-2015 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -381,7 +381,7 @@ skipit:
 static int lpfc_debugfs_last_xripool;
 
 /**
- * lpfc_debugfs_commonxripools_data - Dump Hardware Queue info to a buffer
+ * lpfc_debugfs_common_xri_data - Dump Hardware Queue info to a buffer
  * @phba: The HBA to gather host buffer info from.
  * @buf: The buffer to dump log into.
  * @size: The maximum amount of data to process.
@@ -863,13 +863,16 @@ lpfc_debugfs_nodelist_data(struct lpfc_vport *vport, char *buf, int size)
 		len += scnprintf(buf+len, size-len, "%s DID:x%06x ",
 				statep, ndlp->nlp_DID);
 		len += scnprintf(buf+len, size-len,
-				"WWPN x%016llx ",
+				"WWPN x%llx ",
 				wwn_to_u64(ndlp->nlp_portname.u.wwn));
 		len += scnprintf(buf+len, size-len,
-				"WWNN x%016llx ",
+				"WWNN x%llx ",
 				wwn_to_u64(ndlp->nlp_nodename.u.wwn));
-		len += scnprintf(buf+len, size-len, "RPI:x%04x ",
-				 ndlp->nlp_rpi);
+		if (ndlp->nlp_flag & NLP_RPI_REGISTERED)
+			len += scnprintf(buf+len, size-len, "RPI:%03d ",
+					ndlp->nlp_rpi);
+		else
+			len += scnprintf(buf+len, size-len, "RPI:none ");
 		len +=  scnprintf(buf+len, size-len, "flag:x%08x ",
 			ndlp->nlp_flag);
 		if (!ndlp->nlp_type)
@@ -892,7 +895,9 @@ lpfc_debugfs_nodelist_data(struct lpfc_vport *vport, char *buf, int size)
 		if (ndlp->nlp_type & NLP_NVME_INITIATOR)
 			len += scnprintf(buf + len,
 					size - len, "NVME_INITIATOR ");
-		len += scnprintf(buf+len, size-len, "refcnt:%d",
+		len += scnprintf(buf+len, size-len, "usgmap:%x ",
+			ndlp->nlp_usg_map);
+		len += scnprintf(buf+len, size-len, "refcnt:%x",
 			kref_read(&ndlp->kref));
 		if (iocnt) {
 			i = atomic_read(&ndlp->cmd_pending);
@@ -901,11 +906,8 @@ lpfc_debugfs_nodelist_data(struct lpfc_vport *vport, char *buf, int size)
 					i, ndlp->cmd_qdepth);
 			outio += i;
 		}
-		len += scnprintf(buf+len, size-len, " xpt:x%x",
-				 ndlp->fc4_xpt_flags);
-		if (ndlp->nlp_defer_did != NLP_EVT_NOTHING_PENDING)
-			len += scnprintf(buf+len, size-len, " defer:%x",
-					 ndlp->nlp_defer_did);
+		len += scnprintf(buf + len, size - len, "defer:%x ",
+			ndlp->nlp_defer_did);
 		len +=  scnprintf(buf+len, size-len, "\n");
 	}
 	spin_unlock_irq(shost->host_lock);
@@ -955,13 +957,13 @@ lpfc_debugfs_nodelist_data(struct lpfc_vport *vport, char *buf, int size)
 	len += scnprintf(buf + len, size - len, "\tRport List:\n");
 	list_for_each_entry(ndlp, &vport->fc_nodes, nlp_listp) {
 		/* local short-hand pointer. */
-		spin_lock(&ndlp->lock);
+		spin_lock(&phba->hbalock);
 		rport = lpfc_ndlp_get_nrport(ndlp);
 		if (rport)
 			nrport = rport->remoteport;
 		else
 			nrport = NULL;
-		spin_unlock(&ndlp->lock);
+		spin_unlock(&phba->hbalock);
 		if (!nrport)
 			continue;
 
@@ -3339,6 +3341,7 @@ lpfc_idiag_pcicfg_read(struct file *file, char __user *buf, size_t nbytes,
 		break;
 	case LPFC_PCI_CFG_BROWSE: /* browse all */
 		goto pcicfg_browse;
+		break;
 	default:
 		/* illegal count */
 		len = 0;
@@ -4184,7 +4187,6 @@ lpfc_idiag_que_param_check(struct lpfc_queue *q, int index, int count)
 /**
  * lpfc_idiag_queacc_read_qe - read a single entry from the given queue index
  * @pbuffer: The pointer to buffer to copy the read data into.
- * @len: Length of the buffer.
  * @pque: The pointer to the queue to be read.
  * @index: The index into the queue entry.
  *
@@ -4379,7 +4381,7 @@ lpfc_idiag_queacc_write(struct file *file, const char __user *buf,
 			}
 		}
 		goto error_out;
-
+		break;
 	case LPFC_IDIAG_CQ:
 		/* MBX complete queue */
 		if (phba->sli4_hba.mbx_cq &&
@@ -4431,7 +4433,7 @@ lpfc_idiag_queacc_write(struct file *file, const char __user *buf,
 			}
 		}
 		goto error_out;
-
+		break;
 	case LPFC_IDIAG_MQ:
 		/* MBX work queue */
 		if (phba->sli4_hba.mbx_wq &&
@@ -4445,7 +4447,7 @@ lpfc_idiag_queacc_write(struct file *file, const char __user *buf,
 			goto pass_check;
 		}
 		goto error_out;
-
+		break;
 	case LPFC_IDIAG_WQ:
 		/* ELS work queue */
 		if (phba->sli4_hba.els_wq &&
@@ -4485,8 +4487,9 @@ lpfc_idiag_queacc_write(struct file *file, const char __user *buf,
 				}
 			}
 		}
-		goto error_out;
 
+		goto error_out;
+		break;
 	case LPFC_IDIAG_RQ:
 		/* HDR queue */
 		if (phba->sli4_hba.hdr_rq &&
@@ -4511,8 +4514,10 @@ lpfc_idiag_queacc_write(struct file *file, const char __user *buf,
 			goto pass_check;
 		}
 		goto error_out;
+		break;
 	default:
 		goto error_out;
+		break;
 	}
 
 pass_check:
@@ -4761,7 +4766,7 @@ error_out:
  * @phba: The pointer to hba structure.
  * @pbuffer: The pointer to the buffer to copy the data to.
  * @len: The length of bytes to copied.
- * @ctlregid: The id to doorbell registers.
+ * @drbregid: The id to doorbell registers.
  *
  * Description:
  * This routine reads a control register and copies its content to the
@@ -5151,7 +5156,7 @@ error_out:
  * This routine is to get the available extent information.
  *
  * Returns:
- * overall length of the data read into the internal buffer.
+ * overall lenth of the data read into the internal buffer.
  **/
 static int
 lpfc_idiag_extacc_avail_get(struct lpfc_hba *phba, char *pbuffer, int len)
@@ -5202,7 +5207,7 @@ lpfc_idiag_extacc_avail_get(struct lpfc_hba *phba, char *pbuffer, int len)
  * This routine is to get the allocated extent information.
  *
  * Returns:
- * overall length of the data read into the internal buffer.
+ * overall lenth of the data read into the internal buffer.
  **/
 static int
 lpfc_idiag_extacc_alloc_get(struct lpfc_hba *phba, char *pbuffer, int len)
@@ -5274,7 +5279,7 @@ lpfc_idiag_extacc_alloc_get(struct lpfc_hba *phba, char *pbuffer, int len)
  * This routine is to get the driver extent information.
  *
  * Returns:
- * overall length of the data read into the internal buffer.
+ * overall lenth of the data read into the internal buffer.
  **/
 static int
 lpfc_idiag_extacc_drivr_get(struct lpfc_hba *phba, char *pbuffer, int len)

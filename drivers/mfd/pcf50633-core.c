@@ -77,8 +77,8 @@ int pcf50633_reg_clear_bits(struct pcf50633 *pcf, u8 reg, u8 val)
 EXPORT_SYMBOL_GPL(pcf50633_reg_clear_bits);
 
 /* sysfs attributes */
-static ssize_t dump_regs_show(struct device *dev,
-			      struct device_attribute *attr, char *buf)
+static ssize_t show_dump_regs(struct device *dev, struct device_attribute *attr,
+			    char *buf)
 {
 	struct pcf50633 *pcf = dev_get_drvdata(dev);
 	u8 dump[16];
@@ -106,10 +106,10 @@ static ssize_t dump_regs_show(struct device *dev,
 
 	return buf1 - buf;
 }
-static DEVICE_ATTR_ADMIN_RO(dump_regs);
+static DEVICE_ATTR(dump_regs, 0400, show_dump_regs, NULL);
 
-static ssize_t resume_reason_show(struct device *dev,
-				  struct device_attribute *attr, char *buf)
+static ssize_t show_resume_reason(struct device *dev,
+				struct device_attribute *attr, char *buf)
 {
 	struct pcf50633 *pcf = dev_get_drvdata(dev);
 	int n;
@@ -123,7 +123,7 @@ static ssize_t resume_reason_show(struct device *dev,
 
 	return n;
 }
-static DEVICE_ATTR_ADMIN_RO(resume_reason);
+static DEVICE_ATTR(resume_reason, 0400, show_resume_reason, NULL);
 
 static struct attribute *pcf_sysfs_entries[] = {
 	&dev_attr_dump_regs.attr,

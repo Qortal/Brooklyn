@@ -556,6 +556,7 @@ static void handle_locking_key(struct input_dev *visorinput_dev, int keycode,
 		led = LED_NUML;
 		break;
 	default:
+		led = -1;
 		return;
 	}
 	if (test_bit(led, visorinput_dev->led) != desired_state) {

@@ -235,7 +235,7 @@ Params:
         sd_debug                Enable debug output from SD driver (default off)
 
         sdio_overclock          Clock (in MHz) to use when the MMC framework
-                                requests 50MHz for the SDIO/WiFi interface.
+                                requests 50MHz for the SDIO/WLAN interface.
 
         tx_lpi_timer            Set the delay in microseconds between going idle
                                 and entering the low power state (default 600).
@@ -611,7 +611,7 @@ Params: swap_lr                 Reverse the channel allocation, which will also
 
 
 Name:   balena-fin
-Info:   Overlay that enables WiFi, Bluetooth and the GPIO expander on the
+Info:   Overlay that enables WLAN, Bluetooth and the GPIO expander on the
         balenaFin carrier board for the Raspberry Pi Compute Module 3/3+ Lite.
 Load:   dtoverlay=balena-fin
 Params: <None>
@@ -694,7 +694,7 @@ Params: <None>
 
 
 Name:   disable-wifi
-Info:   Disable onboard WiFi on Pi 3B, 3B+, 3A+, 4B and Zero W.
+Info:   Disable onboard WLAN on Pi 3B, 3B+, 3A+, 4B and Zero W.
 Load:   dtoverlay=disable-wifi
 Params: <None>
 
@@ -2723,7 +2723,7 @@ Name:   sdhost
 Info:   Selects the bcm2835-sdhost SD/MMC driver, optionally with overclock.
         N.B. This overlay is designed for situations where the mmc driver is
         the default, so it disables the other (mmc) interface - this will kill
-        WiFi on a Pi3. If this isn't what you want, either use the sdtweak
+        WLAN on a Pi3. If this isn't what you want, either use the sdtweak
         overlay or the new sd_* dtparams of the base DTBs.
 Load:   dtoverlay=sdhost,<param>=<val>
 Params: overclock_50            Clock (in MHz) to use when the MMC framework
@@ -3365,10 +3365,15 @@ Params: <None>
 
 Name:   vc4-kms-dsi-7inch
 Info:   Enable the Raspberry Pi DSI 7" screen.
-        Use edt-ft5406 for the touchscreen element.
+        Includes the edt-ft5406 for the touchscreen element.
         Requires vc4-kms-v3d to be loaded.
-Load:   dtoverlay=vc4-kms-dsi-7inch
-Params: <None>
+Load:   dtoverlay=vc4-kms-dsi-7inch,<param>=<val>
+Params: sizex                   Touchscreen size x (default 800)
+        sizey                   Touchscreen size y (default 480)
+        invx                    Touchscreen inverted x axis
+        invy                    Touchscreen inverted y axis
+        swapxy                  Touchscreen swapped x y axis
+        disable_touch           Disables the touch screen overlay driver
 
 
 Name:   vc4-kms-dsi-lt070me05000

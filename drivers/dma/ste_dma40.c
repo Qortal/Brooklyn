@@ -78,7 +78,7 @@ static int dma40_memcpy_channels[] = {
 	DB8500_DMA_MEMCPY_EV_5,
 };
 
-/* Default configuration for physical memcpy */
+/* Default configuration for physcial memcpy */
 static const struct stedma40_chan_cfg dma40_memcpy_conf_phy = {
 	.mode = STEDMA40_MODE_PHYSICAL,
 	.dir = DMA_MEM_TO_MEM,
@@ -1643,12 +1643,13 @@ static irqreturn_t d40_handle_interrupt(int irq, void *data)
 	u32 row;
 	long chan = -1;
 	struct d40_chan *d40c;
+	unsigned long flags;
 	struct d40_base *base = data;
 	u32 *regs = base->regs_interrupt;
 	struct d40_interrupt_lookup *il = base->gen_dmac.il;
 	u32 il_size = base->gen_dmac.il_size;
 
-	spin_lock(&base->interrupt_lock);
+	spin_lock_irqsave(&base->interrupt_lock, flags);
 
 	/* Read interrupt status of both logical and physical channels */
 	for (i = 0; i < il_size; i++)
@@ -1693,7 +1694,7 @@ static irqreturn_t d40_handle_interrupt(int irq, void *data)
 		spin_unlock(&d40c->lock);
 	}
 
-	spin_unlock(&base->interrupt_lock);
+	spin_unlock_irqrestore(&base->interrupt_lock, flags);
 
 	return IRQ_HANDLED;
 }

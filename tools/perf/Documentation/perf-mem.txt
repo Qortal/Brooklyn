@@ -63,9 +63,6 @@ OPTIONS
 --phys-data::
 	Record/Report sample physical addresses
 
---data-page-size::
-	Record/Report sample data address page size
-
 RECORD OPTIONS
 --------------
 -e::

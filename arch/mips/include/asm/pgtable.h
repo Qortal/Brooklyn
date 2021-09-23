@@ -25,8 +25,14 @@
 struct mm_struct;
 struct vm_area_struct;
 
-#define PAGE_SHARED	vm_get_page_prot(VM_READ|VM_WRITE|VM_SHARED)
-
+#define PAGE_NONE	__pgprot(_PAGE_PRESENT | _PAGE_NO_READ | \
+				 _page_cachable_default)
+#define PAGE_SHARED	__pgprot(_PAGE_PRESENT | _PAGE_WRITE | \
+				 _page_cachable_default)
+#define PAGE_COPY	__pgprot(_PAGE_PRESENT | _PAGE_NO_EXEC | \
+				 _page_cachable_default)
+#define PAGE_READONLY	__pgprot(_PAGE_PRESENT | \
+				 _page_cachable_default)
 #define PAGE_KERNEL	__pgprot(_PAGE_PRESENT | __READABLE | __WRITEABLE | \
 				 _PAGE_GLOBAL | _page_cachable_default)
 #define PAGE_KERNEL_NC	__pgprot(_PAGE_PRESENT | __READABLE | __WRITEABLE | \
@@ -64,7 +70,6 @@ struct vm_area_struct;
 #define __S111 __pgprot(0)
 
 extern unsigned long _page_cachable_default;
-extern void __update_cache(unsigned long address, pte_t pte);
 
 /*
  * ZERO_PAGE is a global shared page that is always zero; used
@@ -95,31 +100,31 @@ extern void paging_init(void);
 
 #define htw_stop()							\
 do {									\
-	unsigned long __flags;						\
+	unsigned long flags;						\
 									\
 	if (cpu_has_htw) {						\
-		local_irq_save(__flags);				\
+		local_irq_save(flags);					\
 		if(!raw_current_cpu_data.htw_seq++) {			\
 			write_c0_pwctl(read_c0_pwctl() &		\
 				       ~(1 << MIPS_PWCTL_PWEN_SHIFT));	\
 			back_to_back_c0_hazard();			\
 		}							\
-		local_irq_restore(__flags);				\
+		local_irq_restore(flags);				\
 	}								\
 } while(0)
 
 #define htw_start()							\
 do {									\
-	unsigned long __flags;						\
+	unsigned long flags;						\
 									\
 	if (cpu_has_htw) {						\
-		local_irq_save(__flags);				\
+		local_irq_save(flags);					\
 		if (!--raw_current_cpu_data.htw_seq) {			\
 			write_c0_pwctl(read_c0_pwctl() |		\
 				       (1 << MIPS_PWCTL_PWEN_SHIFT));	\
 			back_to_back_c0_hazard();			\
 		}							\
-		local_irq_restore(__flags);				\
+		local_irq_restore(flags);				\
 	}								\
 } while(0)
 
@@ -225,6 +230,7 @@ static inline void pte_clear(struct mm_struct *mm, unsigned long addr, pte_t *pt
 static inline void set_pte_at(struct mm_struct *mm, unsigned long addr,
 			      pte_t *ptep, pte_t pteval)
 {
+	extern void __update_cache(unsigned long address, pte_t pte);
 
 	if (!pte_present(pteval))
 		goto cache_sync_done;

@@ -141,15 +141,16 @@ EXPORT_SYMBOL(diag14);
 
 static inline int __diag204(unsigned long *subcode, unsigned long size, void *addr)
 {
-	union register_pair rp = { .even = *subcode, .odd = size };
+	register unsigned long _subcode asm("0") = *subcode;
+	register unsigned long _size asm("1") = size;
 
 	asm volatile(
-		"	diag	%[addr],%[rp],0x204\n"
+		"	diag	%2,%0,0x204\n"
 		"0:	nopr	%%r7\n"
 		EX_TABLE(0b,0b)
-		: [rp] "+&d" (rp.pair) : [addr] "d" (addr) : "memory");
-	*subcode = rp.even;
-	return rp.odd;
+		: "+d" (_subcode), "+d" (_size) : "d" (addr) : "memory");
+	*subcode = _subcode;
+	return _size;
 }
 
 int diag204(unsigned long subcode, unsigned long size, void *addr)

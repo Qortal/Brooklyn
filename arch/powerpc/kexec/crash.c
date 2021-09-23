@@ -24,7 +24,6 @@
 #include <asm/smp.h>
 #include <asm/setjmp.h>
 #include <asm/debug.h>
-#include <asm/interrupt.h>
 
 /*
  * The primary CPU waits a while for all secondary CPUs to enter. This is to
@@ -105,8 +104,8 @@ void crash_ipi_callback(struct pt_regs *regs)
 static void crash_kexec_prepare_cpus(int cpu)
 {
 	unsigned int msecs;
-	volatile unsigned int ncpus = num_online_cpus() - 1;/* Excluding the panic cpu */
-	volatile int tries = 0;
+	unsigned int ncpus = num_online_cpus() - 1;/* Excluding the panic cpu */
+	int tries = 0;
 	int (*old_handler)(struct pt_regs *regs);
 
 	printk(KERN_EMERG "Sending IPI to other CPUs\n");
@@ -337,7 +336,7 @@ void default_machine_crash_shutdown(struct pt_regs *regs)
 	 * If we came in via system reset, wait a while for the secondary
 	 * CPUs to enter.
 	 */
-	if (TRAP(regs) == INTERRUPT_SYSTEM_RESET)
+	if (TRAP(regs) == 0x100)
 		mdelay(PRIMARY_TIMEOUT);
 
 	crash_kexec_prepare_cpus(crashing_cpu);

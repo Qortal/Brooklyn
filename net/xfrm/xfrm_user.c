@@ -848,83 +848,20 @@ static int copy_user_offload(struct xfrm_state_offload *xso, struct sk_buff *skb
 	return 0;
 }
 
-static bool xfrm_redact(void)
-{
-	return IS_ENABLED(CONFIG_SECURITY) &&
-		security_locked_down(LOCKDOWN_XFRM_SECRET);
-}
-
 static int copy_to_user_auth(struct xfrm_algo_auth *auth, struct sk_buff *skb)
 {
 	struct xfrm_algo *algo;
-	struct xfrm_algo_auth *ap;
 	struct nlattr *nla;
-	bool redact_secret = xfrm_redact();
 
 	nla = nla_reserve(skb, XFRMA_ALG_AUTH,
 			  sizeof(*algo) + (auth->alg_key_len + 7) / 8);
 	if (!nla)
 		return -EMSGSIZE;
+
 	algo = nla_data(nla);
 	strncpy(algo->alg_name, auth->alg_name, sizeof(algo->alg_name));
-
-	if (redact_secret && auth->alg_key_len)
-		memset(algo->alg_key, 0, (auth->alg_key_len + 7) / 8);
-	else
-		memcpy(algo->alg_key, auth->alg_key,
-		       (auth->alg_key_len + 7) / 8);
+	memcpy(algo->alg_key, auth->alg_key, (auth->alg_key_len + 7) / 8);
 	algo->alg_key_len = auth->alg_key_len;
-
-	nla = nla_reserve(skb, XFRMA_ALG_AUTH_TRUNC, xfrm_alg_auth_len(auth));
-	if (!nla)
-		return -EMSGSIZE;
-	ap = nla_data(nla);
-	memcpy(ap, auth, sizeof(struct xfrm_algo_auth));
-	if (redact_secret && auth->alg_key_len)
-		memset(ap->alg_key, 0, (auth->alg_key_len + 7) / 8);
-	else
-		memcpy(ap->alg_key, auth->alg_key,
-		       (auth->alg_key_len + 7) / 8);
-	return 0;
-}
-
-static int copy_to_user_aead(struct xfrm_algo_aead *aead, struct sk_buff *skb)
-{
-	struct nlattr *nla = nla_reserve(skb, XFRMA_ALG_AEAD, aead_len(aead));
-	struct xfrm_algo_aead *ap;
-	bool redact_secret = xfrm_redact();
-
-	if (!nla)
-		return -EMSGSIZE;
-
-	ap = nla_data(nla);
-	memcpy(ap, aead, sizeof(*aead));
-
-	if (redact_secret && aead->alg_key_len)
-		memset(ap->alg_key, 0, (aead->alg_key_len + 7) / 8);
-	else
-		memcpy(ap->alg_key, aead->alg_key,
-		       (aead->alg_key_len + 7) / 8);
-	return 0;
-}
-
-static int copy_to_user_ealg(struct xfrm_algo *ealg, struct sk_buff *skb)
-{
-	struct xfrm_algo *ap;
-	bool redact_secret = xfrm_redact();
-	struct nlattr *nla = nla_reserve(skb, XFRMA_ALG_CRYPT,
-					 xfrm_alg_len(ealg));
-	if (!nla)
-		return -EMSGSIZE;
-
-	ap = nla_data(nla);
-	memcpy(ap, ealg, sizeof(*ealg));
-
-	if (redact_secret && ealg->alg_key_len)
-		memset(ap->alg_key, 0, (ealg->alg_key_len + 7) / 8);
-	else
-		memcpy(ap->alg_key, ealg->alg_key,
-		       (ealg->alg_key_len + 7) / 8);
 
 	return 0;
 }
@@ -969,17 +906,20 @@ static int copy_to_user_state_extra(struct xfrm_state *x,
 			goto out;
 	}
 	if (x->aead) {
-		ret = copy_to_user_aead(x->aead, skb);
+		ret = nla_put(skb, XFRMA_ALG_AEAD, aead_len(x->aead), x->aead);
 		if (ret)
 			goto out;
 	}
 	if (x->aalg) {
 		ret = copy_to_user_auth(x->aalg, skb);
+		if (!ret)
+			ret = nla_put(skb, XFRMA_ALG_AUTH_TRUNC,
+				      xfrm_alg_auth_len(x->aalg), x->aalg);
 		if (ret)
 			goto out;
 	}
 	if (x->ealg) {
-		ret = copy_to_user_ealg(x->ealg, skb);
+		ret = nla_put(skb, XFRMA_ALG_CRYPT, xfrm_alg_len(x->ealg), x->ealg);
 		if (ret)
 			goto out;
 	}
@@ -1761,7 +1701,7 @@ static int xfrm_add_policy(struct sk_buff *skb, struct nlmsghdr *nlh,
 
 	/* shouldn't excl be based on nlh flags??
 	 * Aha! this is anti-netlink really i.e  more pfkey derived
-	 * in netlink excl is a flag and you wouldn't need
+	 * in netlink excl is a flag and you wouldnt need
 	 * a type XFRM_MSG_UPDPOLICY - JHS */
 	excl = nlh->nlmsg_type == XFRM_MSG_NEWPOLICY;
 	err = xfrm_policy_insert(p->dir, xp, excl);
@@ -2504,7 +2444,7 @@ static int xfrm_do_migrate(struct sk_buff *skb, struct nlmsghdr *nlh,
 		encap = kmemdup(nla_data(attrs[XFRMA_ENCAP]),
 				sizeof(*encap), GFP_KERNEL);
 		if (!encap)
-			return -ENOMEM;
+			return 0;
 	}
 
 	err = xfrm_migrate(&pi->sel, pi->dir, type, m, n, kmp, net, encap);
@@ -3490,22 +3430,18 @@ static int __net_init xfrm_user_net_init(struct net *net)
 	return 0;
 }
 
-static void __net_exit xfrm_user_net_pre_exit(struct net *net)
-{
-	RCU_INIT_POINTER(net->xfrm.nlsk, NULL);
-}
-
 static void __net_exit xfrm_user_net_exit(struct list_head *net_exit_list)
 {
 	struct net *net;
-
+	list_for_each_entry(net, net_exit_list, exit_list)
+		RCU_INIT_POINTER(net->xfrm.nlsk, NULL);
+	synchronize_net();
 	list_for_each_entry(net, net_exit_list, exit_list)
 		netlink_kernel_release(net->xfrm.nlsk_stash);
 }
 
 static struct pernet_operations xfrm_user_net_ops = {
 	.init	    = xfrm_user_net_init,
-	.pre_exit   = xfrm_user_net_pre_exit,
 	.exit_batch = xfrm_user_net_exit,
 };
 

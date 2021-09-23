@@ -953,8 +953,7 @@ static void dispatch_bio_list(struct bio_list *tmp)
 		submit_bio_noacct(bio);
 }
 
-static int cmp_stripe(void *priv, const struct list_head *a,
-		      const struct list_head *b)
+static int cmp_stripe(void *priv, struct list_head *a, struct list_head *b)
 {
 	const struct r5pending_data *da = list_entry(a,
 				struct r5pending_data, sibling);
@@ -1223,9 +1222,9 @@ again:
 				set_bit(R5_DOUBLE_LOCKED, &sh->dev[i].flags);
 
 			if (conf->mddev->gendisk)
-				trace_block_bio_remap(bi,
-						disk_devt(conf->mddev->gendisk),
-						sh->dev[i].sector);
+				trace_block_bio_remap(bi->bi_disk->queue,
+						      bi, disk_devt(conf->mddev->gendisk),
+						      sh->dev[i].sector);
 			if (should_defer && op_is_write(op))
 				bio_list_add(&pending_bios, bi);
 			else
@@ -1273,9 +1272,9 @@ again:
 			if (op == REQ_OP_DISCARD)
 				rbi->bi_vcnt = 0;
 			if (conf->mddev->gendisk)
-				trace_block_bio_remap(rbi,
-						disk_devt(conf->mddev->gendisk),
-						sh->dev[i].sector);
+				trace_block_bio_remap(rbi->bi_disk->queue,
+						      rbi, disk_devt(conf->mddev->gendisk),
+						      sh->dev[i].sector);
 			if (should_defer && op_is_write(op))
 				bio_list_add(&pending_bios, rbi);
 			else
@@ -5311,6 +5310,8 @@ static int in_chunk_boundary(struct mddev *mddev, struct bio *bio)
 	unsigned int chunk_sectors;
 	unsigned int bio_sectors = bio_sectors(bio);
 
+	WARN_ON_ONCE(bio->bi_partno);
+
 	chunk_sectors = min(conf->chunk_sectors, conf->prev_chunk_sectors);
 	return  chunk_sectors >=
 		((sector & (chunk_sectors - 1)) + bio_sectors);
@@ -5362,13 +5363,11 @@ static struct bio *remove_bio_from_retry(struct r5conf *conf,
  */
 static void raid5_align_endio(struct bio *bi)
 {
-	struct md_io_acct *md_io_acct = bi->bi_private;
-	struct bio *raid_bi = md_io_acct->orig_bio;
+	struct bio* raid_bi  = bi->bi_private;
 	struct mddev *mddev;
 	struct r5conf *conf;
 	struct md_rdev *rdev;
 	blk_status_t error = bi->bi_status;
-	unsigned long start_time = md_io_acct->start_time;
 
 	bio_put(bi);
 
@@ -5380,8 +5379,6 @@ static void raid5_align_endio(struct bio *bi)
 	rdev_dec_pending(rdev, conf->mddev);
 
 	if (!error) {
-		if (blk_queue_io_stat(raid_bi->bi_bdev->bd_disk->queue))
-			bio_end_io_acct(raid_bi, start_time);
 		bio_endio(raid_bi);
 		if (atomic_dec_and_test(&conf->active_aligned_reads))
 			wake_up(&conf->wait_for_quiescent);
@@ -5396,91 +5393,91 @@ static void raid5_align_endio(struct bio *bi)
 static int raid5_read_one_chunk(struct mddev *mddev, struct bio *raid_bio)
 {
 	struct r5conf *conf = mddev->private;
-	struct bio *align_bio;
+	int dd_idx;
+	struct bio* align_bi;
 	struct md_rdev *rdev;
-	sector_t sector, end_sector, first_bad;
-	int bad_sectors, dd_idx;
-	struct md_io_acct *md_io_acct;
-	bool did_inc;
+	sector_t end_sector;
 
 	if (!in_chunk_boundary(mddev, raid_bio)) {
 		pr_debug("%s: non aligned\n", __func__);
 		return 0;
 	}
+	/*
+	 * use bio_clone_fast to make a copy of the bio
+	 */
+	align_bi = bio_clone_fast(raid_bio, GFP_NOIO, &mddev->bio_set);
+	if (!align_bi)
+		return 0;
+	/*
+	 *   set bi_end_io to a new function, and set bi_private to the
+	 *     original bio.
+	 */
+	align_bi->bi_end_io  = raid5_align_endio;
+	align_bi->bi_private = raid_bio;
+	/*
+	 *	compute position
+	 */
+	align_bi->bi_iter.bi_sector =
+		raid5_compute_sector(conf, raid_bio->bi_iter.bi_sector,
+				     0, &dd_idx, NULL);
 
-	sector = raid5_compute_sector(conf, raid_bio->bi_iter.bi_sector, 0,
-				      &dd_idx, NULL);
-	end_sector = bio_end_sector(raid_bio);
-
+	end_sector = bio_end_sector(align_bi);
 	rcu_read_lock();
-	if (r5c_big_stripe_cached(conf, sector))
-		goto out_rcu_unlock;
-
 	rdev = rcu_dereference(conf->disks[dd_idx].replacement);
 	if (!rdev || test_bit(Faulty, &rdev->flags) ||
 	    rdev->recovery_offset < end_sector) {
 		rdev = rcu_dereference(conf->disks[dd_idx].rdev);
-		if (!rdev)
-			goto out_rcu_unlock;
-		if (test_bit(Faulty, &rdev->flags) ||
+		if (rdev &&
+		    (test_bit(Faulty, &rdev->flags) ||
 		    !(test_bit(In_sync, &rdev->flags) ||
-		      rdev->recovery_offset >= end_sector))
-			goto out_rcu_unlock;
+		      rdev->recovery_offset >= end_sector)))
+			rdev = NULL;
 	}
 
-	atomic_inc(&rdev->nr_pending);
-	rcu_read_unlock();
-
-	if (is_badblock(rdev, sector, bio_sectors(raid_bio), &first_bad,
-			&bad_sectors)) {
-		bio_put(raid_bio);
-		rdev_dec_pending(rdev, mddev);
+	if (r5c_big_stripe_cached(conf, align_bi->bi_iter.bi_sector)) {
+		rcu_read_unlock();
+		bio_put(align_bi);
 		return 0;
 	}
 
-	align_bio = bio_clone_fast(raid_bio, GFP_NOIO, &mddev->io_acct_set);
-	md_io_acct = container_of(align_bio, struct md_io_acct, bio_clone);
-	raid_bio->bi_next = (void *)rdev;
-	if (blk_queue_io_stat(raid_bio->bi_bdev->bd_disk->queue))
-		md_io_acct->start_time = bio_start_io_acct(raid_bio);
-	md_io_acct->orig_bio = raid_bio;
+	if (rdev) {
+		sector_t first_bad;
+		int bad_sectors;
 
-	bio_set_dev(align_bio, rdev->bdev);
-	align_bio->bi_end_io = raid5_align_endio;
-	align_bio->bi_private = md_io_acct;
-	align_bio->bi_iter.bi_sector = sector;
+		atomic_inc(&rdev->nr_pending);
+		rcu_read_unlock();
+		raid_bio->bi_next = (void*)rdev;
+		bio_set_dev(align_bi, rdev->bdev);
 
-	/* No reshape active, so we can trust rdev->data_offset */
-	align_bio->bi_iter.bi_sector += rdev->data_offset;
+		if (is_badblock(rdev, align_bi->bi_iter.bi_sector,
+				bio_sectors(align_bi),
+				&first_bad, &bad_sectors)) {
+			bio_put(align_bi);
+			rdev_dec_pending(rdev, mddev);
+			return 0;
+		}
 
-	did_inc = false;
-	if (conf->quiesce == 0) {
-		atomic_inc(&conf->active_aligned_reads);
-		did_inc = true;
-	}
-	/* need a memory barrier to detect the race with raid5_quiesce() */
-	if (!did_inc || smp_load_acquire(&conf->quiesce) != 0) {
-		/* quiesce is in progress, so we need to undo io activation and wait
-		 * for it to finish
-		 */
-		if (did_inc && atomic_dec_and_test(&conf->active_aligned_reads))
-			wake_up(&conf->wait_for_quiescent);
+		/* No reshape active, so we can trust rdev->data_offset */
+		align_bi->bi_iter.bi_sector += rdev->data_offset;
+
 		spin_lock_irq(&conf->device_lock);
-		wait_event_lock_irq(conf->wait_for_quiescent, conf->quiesce == 0,
+		wait_event_lock_irq(conf->wait_for_quiescent,
+				    conf->quiesce == 0,
 				    conf->device_lock);
 		atomic_inc(&conf->active_aligned_reads);
 		spin_unlock_irq(&conf->device_lock);
+
+		if (mddev->gendisk)
+			trace_block_bio_remap(align_bi->bi_disk->queue,
+					      align_bi, disk_devt(mddev->gendisk),
+					      raid_bio->bi_iter.bi_sector);
+		submit_bio_noacct(align_bi);
+		return 1;
+	} else {
+		rcu_read_unlock();
+		bio_put(align_bi);
+		return 0;
 	}
-
-	if (mddev->gendisk)
-		trace_block_bio_remap(align_bio, disk_devt(mddev->gendisk),
-				      raid_bio->bi_iter.bi_sector);
-	submit_bio_noacct(align_bio);
-	return 1;
-
-out_rcu_unlock:
-	rcu_read_unlock();
-	return 0;
 }
 
 static struct bio *chunk_aligned_read(struct mddev *mddev, struct bio *raid_bio)
@@ -5819,7 +5816,6 @@ static bool raid5_make_request(struct mddev *mddev, struct bio * bi)
 	last_sector = bio_end_sector(bi);
 	bi->bi_next = NULL;
 
-	md_account_bio(mddev, &bi);
 	prepare_to_wait(&conf->wait_for_overlap, &w, TASK_UNINTERRUPTIBLE);
 	for (; logical_sector < last_sector; logical_sector += RAID5_STRIPE_SECTORS(conf)) {
 		int previous;
@@ -6952,7 +6948,7 @@ static struct attribute *raid5_attrs[] =  {
 	&ppl_write_hint.attr,
 	NULL,
 };
-static const struct attribute_group raid5_attrs_group = {
+static struct attribute_group raid5_attrs_group = {
 	.name = NULL,
 	.attrs = raid5_attrs,
 };
@@ -7666,7 +7662,7 @@ static int raid5_run(struct mddev *mddev)
 	}
 
 	/* device size must be a multiple of chunk size */
-	mddev->dev_sectors &= ~((sector_t)mddev->chunk_sectors - 1);
+	mddev->dev_sectors &= ~(mddev->chunk_sectors - 1);
 	mddev->resync_max_sectors = mddev->dev_sectors;
 
 	if (mddev->degraded > dirty_parity_disks &&
@@ -8358,10 +8354,7 @@ static void raid5_quiesce(struct mddev *mddev, int quiesce)
 		 * active stripes can drain
 		 */
 		r5c_flush_cache(conf, INT_MAX);
-		/* need a memory barrier to make sure read_one_chunk() sees
-		 * quiesce started and reverts to slow (locked) path.
-		 */
-		smp_store_release(&conf->quiesce, 2);
+		conf->quiesce = 2;
 		wait_event_cmd(conf->wait_for_quiescent,
 				    atomic_read(&conf->active_stripes) == 0 &&
 				    atomic_read(&conf->active_aligned_reads) == 0,

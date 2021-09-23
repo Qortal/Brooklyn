@@ -53,12 +53,7 @@ struct nouveau_encoder {
 	 * actually programmed on the hw, not the proposed crtc */
 	struct drm_crtc *crtc;
 	u32 ctrl;
-
-	/* Protected by nouveau_drm.audio.lock */
-	struct {
-		bool enabled;
-		struct drm_connector *connector;
-	} audio;
+	bool audio;
 
 	struct drm_display_mode mode;
 	int last_dpms;
@@ -146,9 +141,11 @@ enum drm_mode_status nv50_dp_mode_valid(struct drm_connector *,
 					unsigned *clock);
 
 struct nouveau_connector *
-nv50_outp_get_new_connector(struct drm_atomic_state *state, struct nouveau_encoder *outp);
+nv50_outp_get_new_connector(struct nouveau_encoder *outp,
+			    struct drm_atomic_state *state);
 struct nouveau_connector *
-nv50_outp_get_old_connector(struct drm_atomic_state *state, struct nouveau_encoder *outp);
+nv50_outp_get_old_connector(struct nouveau_encoder *outp,
+			    struct drm_atomic_state *state);
 
 int nv50_mstm_detect(struct nouveau_encoder *encoder);
 void nv50_mstm_remove(struct nv50_mstm *mstm);

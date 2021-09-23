@@ -13,15 +13,17 @@
 #include <linux/io.h>
 #include <linux/ioport.h>
 #include <linux/irq.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/of.h>
-#include <linux/platform_data/gpio-dwapb.h>
+#include <linux/of_address.h>
+#include <linux/of_device.h>
+#include <linux/of_irq.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
 #include <linux/reset.h>
-#include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/platform_data/gpio-dwapb.h>
+#include <linux/slab.h>
 
 #include "gpiolib.h"
 #include "gpiolib-acpi.h"
@@ -295,6 +297,9 @@ static int dwapb_irq_set_type(struct irq_data *d, u32 type)
 	irq_hw_number_t bit = irqd_to_hwirq(d);
 	unsigned long level, polarity, flags;
 
+	if (type & ~IRQ_TYPE_SENSE_MASK)
+		return -EINVAL;
+
 	spin_lock_irqsave(&gc->bgpio_lock, flags);
 	level = dwapb_read(gpio, GPIO_INTTYPE_LEVEL);
 	polarity = dwapb_read(gpio, GPIO_INT_POLARITY);
@@ -526,13 +531,17 @@ static int dwapb_gpio_add_port(struct dwapb_gpio *gpio,
 static void dwapb_get_irq(struct device *dev, struct fwnode_handle *fwnode,
 			  struct dwapb_port_property *pp)
 {
-	int irq, j;
+	struct device_node *np = NULL;
+	int irq = -ENXIO, j;
+
+	if (fwnode_property_read_bool(fwnode, "interrupt-controller"))
+		np = to_of_node(fwnode);
 
 	for (j = 0; j < pp->ngpio; j++) {
-		if (has_acpi_companion(dev))
+		if (np)
+			irq = of_irq_get(np, j);
+		else if (has_acpi_companion(dev))
 			irq = platform_get_irq_optional(to_platform_device(dev), j);
-		else
-			irq = fwnode_irq_get(fwnode, j);
 		if (irq > 0)
 			pp->irq[j] = irq;
 	}
@@ -607,9 +616,10 @@ static int dwapb_get_reset(struct dwapb_gpio *gpio)
 	int err;
 
 	gpio->rst = devm_reset_control_get_optional_shared(gpio->dev, NULL);
-	if (IS_ERR(gpio->rst))
-		return dev_err_probe(gpio->dev, PTR_ERR(gpio->rst),
-				     "Cannot get reset descriptor\n");
+	if (IS_ERR(gpio->rst)) {
+		dev_err(gpio->dev, "Cannot get reset descriptor\n");
+		return PTR_ERR(gpio->rst);
+	}
 
 	err = reset_control_deassert(gpio->rst);
 	if (err) {

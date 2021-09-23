@@ -461,14 +461,6 @@ out:
 	spin_unlock_irqrestore(&slob_lock, flags);
 }
 
-#ifdef CONFIG_PRINTK
-void kmem_obj_info(struct kmem_obj_info *kpp, void *object, struct page *page)
-{
-	kpp->kp_ptr = object;
-	kpp->kp_page = page;
-}
-#endif
-
 /*
  * End of slob allocator proper. Begin kmem_cache_alloc and kmalloc frontend.
  */
@@ -482,7 +474,8 @@ __do_kmalloc_node(size_t size, gfp_t gfp, int node, unsigned long caller)
 
 	gfp &= gfp_allowed_mask;
 
-	might_alloc(gfp);
+	fs_reclaim_acquire(gfp);
+	fs_reclaim_release(gfp);
 
 	if (size < PAGE_SIZE - minalign) {
 		int align = minalign;
@@ -604,7 +597,8 @@ static void *slob_alloc_node(struct kmem_cache *c, gfp_t flags, int node)
 
 	flags &= gfp_allowed_mask;
 
-	might_alloc(flags);
+	fs_reclaim_acquire(flags);
+	fs_reclaim_release(flags);
 
 	if (c->size < PAGE_SIZE) {
 		b = slob_alloc(c->size, flags, c->align, node, 0);
@@ -675,7 +669,7 @@ void kmem_cache_free(struct kmem_cache *c, void *b)
 		__kmem_cache_free(b, c->size);
 	}
 
-	trace_kmem_cache_free(_RET_IP_, b, c->name);
+	trace_kmem_cache_free(_RET_IP_, b);
 }
 EXPORT_SYMBOL(kmem_cache_free);
 

@@ -102,7 +102,6 @@ set_hw:
  * Initialize the context related info for a new mm_struct
  * instance.
  */
-#define init_new_context init_new_context
 static inline int
 init_new_context(struct task_struct *tsk, struct mm_struct *mm)
 {
@@ -114,7 +113,6 @@ init_new_context(struct task_struct *tsk, struct mm_struct *mm)
 	return 0;
 }
 
-#define destroy_context destroy_context
 static inline void destroy_context(struct mm_struct *mm)
 {
 	unsigned long flags;
@@ -155,13 +153,13 @@ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
 }
 
 /*
- * activate_mm defaults (in asm-generic) to switch_mm and is called at the
- * time of execve() to get a new ASID Note the subtlety here:
- * get_new_mmu_context() behaves differently here vs. in switch_mm(). Here
- * it always returns a new ASID, because mm has an unallocated "initial"
- * value, while in latter, it moves to a new ASID, only if it was
- * unallocated
+ * Called at the time of execve() to get a new ASID
+ * Note the subtlety here: get_new_mmu_context() behaves differently here
+ * vs. in switch_mm(). Here it always returns a new ASID, because mm has
+ * an unallocated "initial" value, while in latter, it moves to a new ASID,
+ * only if it was unallocated
  */
+#define activate_mm(prev, next)		switch_mm(prev, next, NULL)
 
 /* it seemed that deactivate_mm( ) is a reasonable place to do book-keeping
  * for retiring-mm. However destroy_context( ) still needs to do that because
@@ -170,7 +168,8 @@ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
  * there is a good chance that task gets sched-out/in, making it's ASID valid
  * again (this teased me for a whole day).
  */
+#define deactivate_mm(tsk, mm)   do { } while (0)
 
-#include <asm-generic/mmu_context.h>
+#define enter_lazy_tlb(mm, tsk)
 
 #endif /* __ASM_ARC_MMU_CONTEXT_H */

@@ -5,8 +5,6 @@
  *  Copyright (C) 2001 Deep Blue Solutions Ltd.
  *
  *  This is the "shell" of the ARMv7 processor support.
- *  
- *  QortalOS Sinclair
  */
 #include <linux/arm-smccc.h>
 #include <linux/init.h>

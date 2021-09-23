@@ -271,11 +271,9 @@ static void ovs_ct_update_key(const struct sk_buff *skb,
 /* This is called to initialize CT key fields possibly coming in from the local
  * stack.
  */
-void ovs_ct_fill_key(const struct sk_buff *skb,
-		     struct sw_flow_key *key,
-		     bool post_ct)
+void ovs_ct_fill_key(const struct sk_buff *skb, struct sw_flow_key *key)
 {
-	ovs_ct_update_key(skb, NULL, key, post_ct, false);
+	ovs_ct_update_key(skb, NULL, key, false, false);
 }
 
 int ovs_ct_put_key(const struct sw_flow_key *swkey,
@@ -809,7 +807,8 @@ static int ovs_ct_nat_execute(struct sk_buff *skb, struct nf_conn *ct,
 
 	err = nf_nat_packet(ct, ctinfo, hooknum, skb);
 push:
-	skb_push_rcsum(skb, nh_off);
+	skb_push(skb, nh_off);
+	skb_postpush_rcsum(skb, skb->data, nh_off);
 
 	return err;
 }
@@ -967,7 +966,8 @@ static int __ovs_ct_lookup(struct net *net, struct sw_flow_key *key,
 
 		/* Associate skb with specified zone. */
 		if (tmpl) {
-			nf_conntrack_put(skb_nfct(skb));
+			if (skb_nfct(skb))
+				nf_conntrack_put(skb_nfct(skb));
 			nf_conntrack_get(&tmpl->ct_general);
 			nf_ct_set(skb, tmpl, IP_CT_NEW);
 		}
@@ -1036,14 +1036,6 @@ static int __ovs_ct_lookup(struct net *net, struct sw_flow_key *key,
 					      info->commit) &&
 		    ovs_ct_helper(skb, info->family) != NF_ACCEPT) {
 			return -EINVAL;
-		}
-
-		if (nf_ct_protonum(ct) == IPPROTO_TCP &&
-		    nf_ct_is_confirmed(ct) && nf_conntrack_tcp_established(ct)) {
-			/* Be liberal for tcp packets so that out-of-window
-			 * packets are not marked invalid.
-			 */
-			nf_ct_set_tcp_be_liberal(ct);
 		}
 	}
 
@@ -1320,7 +1312,8 @@ int ovs_ct_execute(struct net *net, struct sk_buff *skb,
 	else
 		err = ovs_ct_lookup(net, key, info, skb);
 
-	skb_push_rcsum(skb, nh_ofs);
+	skb_push(skb, nh_ofs);
+	skb_postpush_rcsum(skb, skb->data, nh_ofs);
 	if (err)
 		kfree_skb(skb);
 	return err;
@@ -1328,9 +1321,11 @@ int ovs_ct_execute(struct net *net, struct sk_buff *skb,
 
 int ovs_ct_clear(struct sk_buff *skb, struct sw_flow_key *key)
 {
-	nf_conntrack_put(skb_nfct(skb));
-	nf_ct_set(skb, NULL, IP_CT_UNTRACKED);
-	ovs_ct_fill_key(skb, key, false);
+	if (skb_nfct(skb)) {
+		nf_conntrack_put(skb_nfct(skb));
+		nf_ct_set(skb, NULL, IP_CT_UNTRACKED);
+		ovs_ct_fill_key(skb, key);
+	}
 
 	return 0;
 }

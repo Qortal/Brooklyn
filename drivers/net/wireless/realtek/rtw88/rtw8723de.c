@@ -4,7 +4,6 @@
 
 #include <linux/module.h>
 #include <linux/pci.h>
-#include "pci.h"
 #include "rtw8723de.h"
 
 static const struct pci_device_id rtw_8723de_id_table[] = {

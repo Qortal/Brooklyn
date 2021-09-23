@@ -1573,8 +1573,7 @@ static int snd_es18xx_identify(struct snd_es18xx *chip)
 		udelay(10);
 		chip->ctrl_port += inb(chip->port + 0x05);
 
-		chip->res_ctrl_port = request_region(chip->ctrl_port, 8, "ES18xx - CTRL");
-		if (!chip->res_ctrl_port) {
+		if ((chip->res_ctrl_port = request_region(chip->ctrl_port, 8, "ES18xx - CTRL")) == NULL) {
 			snd_printk(KERN_ERR PFX "unable go grab port 0x%lx\n", chip->ctrl_port);
 			return -EBUSY;
 		}
@@ -1833,48 +1832,41 @@ static int snd_es18xx_mixer(struct snd_card *card)
 				break;
 			}
 		}
-		err = snd_ctl_add(card, kctl);
-		if (err < 0)
+		if ((err = snd_ctl_add(card, kctl)) < 0)
 			return err;
 	}
 	if (chip->caps & ES18XX_PCM2) {
 		for (idx = 0; idx < ARRAY_SIZE(snd_es18xx_pcm2_controls); idx++) {
-			err = snd_ctl_add(card, snd_ctl_new1(&snd_es18xx_pcm2_controls[idx], chip));
-			if (err < 0)
+			if ((err = snd_ctl_add(card, snd_ctl_new1(&snd_es18xx_pcm2_controls[idx], chip))) < 0)
 				return err;
 		} 
 	} else {
 		for (idx = 0; idx < ARRAY_SIZE(snd_es18xx_pcm1_controls); idx++) {
-			err = snd_ctl_add(card, snd_ctl_new1(&snd_es18xx_pcm1_controls[idx], chip));
-			if (err < 0)
+			if ((err = snd_ctl_add(card, snd_ctl_new1(&snd_es18xx_pcm1_controls[idx], chip))) < 0)
 				return err;
 		}
 	}
 
 	if (chip->caps & ES18XX_RECMIX) {
 		for (idx = 0; idx < ARRAY_SIZE(snd_es18xx_recmix_controls); idx++) {
-			err = snd_ctl_add(card, snd_ctl_new1(&snd_es18xx_recmix_controls[idx], chip));
-			if (err < 0)
+			if ((err = snd_ctl_add(card, snd_ctl_new1(&snd_es18xx_recmix_controls[idx], chip))) < 0)
 				return err;
 		}
 	}
 	switch (chip->version) {
 	default:
-		err = snd_ctl_add(card, snd_ctl_new1(&snd_es18xx_micpre1_control, chip));
-		if (err < 0)
+		if ((err = snd_ctl_add(card, snd_ctl_new1(&snd_es18xx_micpre1_control, chip))) < 0)
 			return err;
 		break;
 	case 0x1869:
 	case 0x1879:
-		err = snd_ctl_add(card, snd_ctl_new1(&snd_es18xx_micpre2_control, chip));
-		if (err < 0)
+		if ((err = snd_ctl_add(card, snd_ctl_new1(&snd_es18xx_micpre2_control, chip))) < 0)
 			return err;
 		break;
 	}
 	if (chip->caps & ES18XX_SPATIALIZER) {
 		for (idx = 0; idx < ARRAY_SIZE(snd_es18xx_spatializer_controls); idx++) {
-			err = snd_ctl_add(card, snd_ctl_new1(&snd_es18xx_spatializer_controls[idx], chip));
-			if (err < 0)
+			if ((err = snd_ctl_add(card, snd_ctl_new1(&snd_es18xx_spatializer_controls[idx], chip))) < 0)
 				return err;
 		}
 	}
@@ -1887,8 +1879,7 @@ static int snd_es18xx_mixer(struct snd_card *card)
 			else
 				chip->hw_switch = kctl;
 			kctl->private_free = snd_es18xx_hwv_free;
-			err = snd_ctl_add(card, kctl);
-			if (err < 0)
+			if ((err = snd_ctl_add(card, kctl)) < 0)
 				return err;
 			
 		}
@@ -1938,9 +1929,17 @@ static int snd_es18xx_mixer(struct snd_card *card)
 
 /* Card level */
 
-MODULE_AUTHOR("Christian Fischbach <fishbach@pool.informatik.rwth-aachen.de>, Abramo Bagnara <abramo@alsa-project.org>");
+MODULE_AUTHOR("Christian Fischbach <fishbach@pool.informatik.rwth-aachen.de>, Abramo Bagnara <abramo@alsa-project.org>");  
 MODULE_DESCRIPTION("ESS ES18xx AudioDrive");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{ESS,ES1868 PnP AudioDrive},"
+		"{ESS,ES1869 PnP AudioDrive},"
+		"{ESS,ES1878 PnP AudioDrive},"
+		"{ESS,ES1879 PnP AudioDrive},"
+		"{ESS,ES1887 PnP AudioDrive},"
+		"{ESS,ES1888 PnP AudioDrive},"
+		"{ESS,ES1887 AudioDrive},"
+		"{ESS,ES1888 AudioDrive}}");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
@@ -2163,8 +2162,7 @@ static int snd_es18xx_isa_probe1(int dev, struct device *devptr)
 	err = snd_es18xx_card_new(devptr, dev, &card);
 	if (err < 0)
 		return err;
-	err = snd_audiodrive_probe(card, dev);
-	if (err < 0) {
+	if ((err = snd_audiodrive_probe(card, dev)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
@@ -2179,22 +2177,19 @@ static int snd_es18xx_isa_probe(struct device *pdev, unsigned int dev)
 	static const int possible_dmas[] = {1, 0, 3, 5, -1};
 
 	if (irq[dev] == SNDRV_AUTO_IRQ) {
-		irq[dev] = snd_legacy_find_free_irq(possible_irqs);
-		if (irq[dev] < 0) {
+		if ((irq[dev] = snd_legacy_find_free_irq(possible_irqs)) < 0) {
 			snd_printk(KERN_ERR PFX "unable to find a free IRQ\n");
 			return -EBUSY;
 		}
 	}
 	if (dma1[dev] == SNDRV_AUTO_DMA) {
-		dma1[dev] = snd_legacy_find_free_dma(possible_dmas);
-		if (dma1[dev] < 0) {
+		if ((dma1[dev] = snd_legacy_find_free_dma(possible_dmas)) < 0) {
 			snd_printk(KERN_ERR PFX "unable to find a free DMA1\n");
 			return -EBUSY;
 		}
 	}
 	if (dma2[dev] == SNDRV_AUTO_DMA) {
-		dma2[dev] = snd_legacy_find_free_dma(possible_dmas);
-		if (dma2[dev] < 0) {
+		if ((dma2[dev] = snd_legacy_find_free_dma(possible_dmas)) < 0) {
 			snd_printk(KERN_ERR PFX "unable to find a free DMA2\n");
 			return -EBUSY;
 		}
@@ -2215,10 +2210,11 @@ static int snd_es18xx_isa_probe(struct device *pdev, unsigned int dev)
 	}
 }
 
-static void snd_es18xx_isa_remove(struct device *devptr,
-				  unsigned int dev)
+static int snd_es18xx_isa_remove(struct device *devptr,
+				 unsigned int dev)
 {
 	snd_card_free(dev_get_drvdata(devptr));
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -2270,13 +2266,11 @@ static int snd_audiodrive_pnp_detect(struct pnp_dev *pdev,
 	err = snd_es18xx_card_new(&pdev->dev, dev, &card);
 	if (err < 0)
 		return err;
-	err = snd_audiodrive_pnp(dev, card->private_data, pdev);
-	if (err < 0) {
+	if ((err = snd_audiodrive_pnp(dev, card->private_data, pdev)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
-	err = snd_audiodrive_probe(card, dev);
-	if (err < 0) {
+	if ((err = snd_audiodrive_probe(card, dev)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
@@ -2330,13 +2324,11 @@ static int snd_audiodrive_pnpc_detect(struct pnp_card_link *pcard,
 	if (res < 0)
 		return res;
 
-	res = snd_audiodrive_pnpc(dev, card->private_data, pcard, pid);
-	if (res < 0) {
+	if ((res = snd_audiodrive_pnpc(dev, card->private_data, pcard, pid)) < 0) {
 		snd_card_free(card);
 		return res;
 	}
-	res = snd_audiodrive_probe(card, dev);
-	if (res < 0) {
+	if ((res = snd_audiodrive_probe(card, dev)) < 0) {
 		snd_card_free(card);
 		return res;
 	}

@@ -114,7 +114,7 @@ static int hl_read(struct device *dev, enum hwmon_sensor_types type,
 	struct hl_device *hdev = dev_get_drvdata(dev);
 	int rc;
 
-	if (!hl_device_operational(hdev, NULL))
+	if (hl_device_disabled_or_in_reset(hdev))
 		return -ENODEV;
 
 	switch (type) {
@@ -192,7 +192,7 @@ static int hl_write(struct device *dev, enum hwmon_sensor_types type,
 {
 	struct hl_device *hdev = dev_get_drvdata(dev);
 
-	if (!hl_device_operational(hdev, NULL))
+	if (hl_device_disabled_or_in_reset(hdev))
 		return -ENODEV;
 
 	switch (type) {
@@ -312,7 +312,6 @@ int hl_get_temperature(struct hl_device *hdev,
 			int sensor_index, u32 attr, long *value)
 {
 	struct cpucp_packet pkt;
-	u64 result;
 	int rc;
 
 	memset(&pkt, 0, sizeof(pkt));
@@ -323,9 +322,7 @@ int hl_get_temperature(struct hl_device *hdev,
 	pkt.type = __cpu_to_le16(attr);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-						0, &result);
-
-	*value = (long) result;
+						0, value);
 
 	if (rc) {
 		dev_err(hdev->dev,
@@ -366,7 +363,6 @@ int hl_get_voltage(struct hl_device *hdev,
 			int sensor_index, u32 attr, long *value)
 {
 	struct cpucp_packet pkt;
-	u64 result;
 	int rc;
 
 	memset(&pkt, 0, sizeof(pkt));
@@ -377,9 +373,7 @@ int hl_get_voltage(struct hl_device *hdev,
 	pkt.type = __cpu_to_le16(attr);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-						0, &result);
-
-	*value = (long) result;
+						0, value);
 
 	if (rc) {
 		dev_err(hdev->dev,
@@ -395,7 +389,6 @@ int hl_get_current(struct hl_device *hdev,
 			int sensor_index, u32 attr, long *value)
 {
 	struct cpucp_packet pkt;
-	u64 result;
 	int rc;
 
 	memset(&pkt, 0, sizeof(pkt));
@@ -406,9 +399,7 @@ int hl_get_current(struct hl_device *hdev,
 	pkt.type = __cpu_to_le16(attr);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-						0, &result);
-
-	*value = (long) result;
+						0, value);
 
 	if (rc) {
 		dev_err(hdev->dev,
@@ -424,7 +415,6 @@ int hl_get_fan_speed(struct hl_device *hdev,
 			int sensor_index, u32 attr, long *value)
 {
 	struct cpucp_packet pkt;
-	u64 result;
 	int rc;
 
 	memset(&pkt, 0, sizeof(pkt));
@@ -435,9 +425,7 @@ int hl_get_fan_speed(struct hl_device *hdev,
 	pkt.type = __cpu_to_le16(attr);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-						0, &result);
-
-	*value = (long) result;
+						0, value);
 
 	if (rc) {
 		dev_err(hdev->dev,
@@ -453,7 +441,6 @@ int hl_get_pwm_info(struct hl_device *hdev,
 			int sensor_index, u32 attr, long *value)
 {
 	struct cpucp_packet pkt;
-	u64 result;
 	int rc;
 
 	memset(&pkt, 0, sizeof(pkt));
@@ -464,9 +451,7 @@ int hl_get_pwm_info(struct hl_device *hdev,
 	pkt.type = __cpu_to_le16(attr);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-						0, &result);
-
-	*value = (long) result;
+						0, value);
 
 	if (rc) {
 		dev_err(hdev->dev,
@@ -557,7 +542,7 @@ int hl_hwmon_init(struct hl_device *hdev)
 	struct asic_fixed_properties *prop = &hdev->asic_prop;
 	int rc;
 
-	if ((hdev->hwmon_initialized) || !(hdev->cpu_queues_enable))
+	if ((hdev->hwmon_initialized) || !(hdev->fw_loading))
 		return 0;
 
 	if (hdev->hl_chip_info->info) {

@@ -201,7 +201,7 @@ void xics_migrate_irqs_away(void)
 		struct ics *ics;
 
 		/* We can't set affinity on ISA interrupts */
-		if (virq < NR_IRQS_LEGACY)
+		if (virq < NUM_ISA_INTERRUPTS)
 			continue;
 		/* We only need to migrate enabled IRQS */
 		if (!desc->action)
@@ -476,8 +476,6 @@ void __init xics_init(void)
 	rc = ics_rtas_init();
 	if (rc < 0)
 		rc = ics_opal_init();
-	if (rc < 0)
-		rc = ics_native_init();
 	if (rc < 0)
 		pr_warn("XICS: Cannot find a Source Controller !\n");
 

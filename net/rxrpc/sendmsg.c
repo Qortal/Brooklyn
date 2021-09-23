@@ -327,7 +327,7 @@ static int rxrpc_send_data(struct rxrpc_sock *rx,
 			rxrpc_send_ack_packet(call, false, NULL);
 
 		if (!skb) {
-			size_t remain, bufsize, chunk, offset;
+			size_t size, chunk, max, space;
 
 			_debug("alloc");
 
@@ -342,21 +342,24 @@ static int rxrpc_send_data(struct rxrpc_sock *rx,
 					goto maybe_error;
 			}
 
-			/* Work out the maximum size of a packet.  Assume that
-			 * the security header is going to be in the padded
-			 * region (enc blocksize), but the trailer is not.
-			 */
-			remain = more ? INT_MAX : msg_data_left(msg);
-			ret = call->conn->security->how_much_data(call, remain,
-								  &bufsize, &chunk, &offset);
-			if (ret < 0)
-				goto maybe_error;
+			max = RXRPC_JUMBO_DATALEN;
+			max -= call->conn->security_size;
+			max &= ~(call->conn->size_align - 1UL);
 
-			_debug("SIZE: %zu/%zu @%zu", chunk, bufsize, offset);
+			chunk = max;
+			if (chunk > msg_data_left(msg) && !more)
+				chunk = msg_data_left(msg);
+
+			space = chunk + call->conn->size_align;
+			space &= ~(call->conn->size_align - 1UL);
+
+			size = space + call->conn->security_size;
+
+			_debug("SIZE: %zu/%zu/%zu", chunk, space, size);
 
 			/* create a buffer that we can retain until it's ACK'd */
 			skb = sock_alloc_send_skb(
-				sk, bufsize, msg->msg_flags & MSG_DONTWAIT, &ret);
+				sk, size, msg->msg_flags & MSG_DONTWAIT, &ret);
 			if (!skb)
 				goto maybe_error;
 
@@ -368,7 +371,9 @@ static int rxrpc_send_data(struct rxrpc_sock *rx,
 
 			ASSERTCMP(skb->mark, ==, 0);
 
-			__skb_put(skb, offset);
+			_debug("HS: %u", call->conn->security_size);
+			skb_reserve(skb, call->conn->security_size);
+			skb->len += call->conn->security_size;
 
 			sp->remain = chunk;
 			if (sp->remain > skb_tailroom(skb))
@@ -417,6 +422,17 @@ static int rxrpc_send_data(struct rxrpc_sock *rx,
 		    (msg_data_left(msg) == 0 && !more)) {
 			struct rxrpc_connection *conn = call->conn;
 			uint32_t seq;
+			size_t pad;
+
+			/* pad out if we're using security */
+			if (conn->security_ix) {
+				pad = conn->security_size + skb->mark;
+				pad = conn->size_align - pad;
+				pad &= conn->size_align - 1;
+				_debug("pad %zu", pad);
+				if (pad)
+					skb_put_zero(skb, pad);
+			}
 
 			seq = call->tx_top + 1;
 
@@ -430,7 +446,8 @@ static int rxrpc_send_data(struct rxrpc_sock *rx,
 				 call->tx_winsize)
 				sp->hdr.flags |= RXRPC_MORE_PACKETS;
 
-			ret = call->security->secure_packet(call, skb, skb->mark);
+			ret = call->security->secure_packet(
+				call, skb, skb->mark, skb->head);
 			if (ret < 0)
 				goto out;
 

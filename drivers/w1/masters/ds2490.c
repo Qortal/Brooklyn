@@ -688,21 +688,11 @@ static void ds9490r_search(void *data, struct w1_master *master,
 	 * packet size.
 	 */
 	const size_t bufsize = 2 * 64;
-	u64 *buf, *found_ids;
+	u64 *buf;
 
 	buf = kmalloc(bufsize, GFP_KERNEL);
 	if (!buf)
 		return;
-
-	/*
-	 * We are holding the bus mutex during the scan, but adding devices via the
-	 * callback needs the bus to be unlocked. So we queue up found ids here.
-	 */
-	found_ids = kmalloc_array(master->max_slave_count, sizeof(u64), GFP_KERNEL);
-	if (!found_ids) {
-		kfree(buf);
-		return;
-	}
 
 	mutex_lock(&master->bus_mutex);
 
@@ -739,13 +729,13 @@ static void ds9490r_search(void *data, struct w1_master *master,
 			if (err < 0)
 				break;
 			for (i = 0; i < err/8; ++i) {
-				found_ids[found++] = buf[i];
+				++found;
+				if (found <= search_limit)
+					callback(master, buf[i]);
 				/* can't know if there will be a discrepancy
 				 * value after until the next id */
-				if (found == search_limit) {
+				if (found == search_limit)
 					master->search_id = buf[i];
-					break;
-				}
 			}
 		}
 
@@ -769,14 +759,9 @@ static void ds9490r_search(void *data, struct w1_master *master,
 			master->max_slave_count);
 		set_bit(W1_WARN_MAX_COUNT, &master->flags);
 	}
-
 search_out:
 	mutex_unlock(&master->bus_mutex);
 	kfree(buf);
-
-	for (i = 0; i < found; i++) /* run callback for all queued up IDs */
-		callback(master, found_ids[i]);
-	kfree(found_ids);
 }
 
 #if 0

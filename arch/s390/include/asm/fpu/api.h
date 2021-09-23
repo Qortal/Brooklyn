@@ -47,8 +47,6 @@
 #include <linux/preempt.h>
 
 void save_fpu_regs(void);
-void load_fpu_regs(void);
-void __load_fpu_regs(void);
 
 static inline int test_fp_ctl(u32 fpc)
 {

@@ -420,12 +420,14 @@ error:	kfree(priv);
 	return r;
 }
 
-static void ch341_port_remove(struct usb_serial_port *port)
+static int ch341_port_remove(struct usb_serial_port *port)
 {
 	struct ch341_private *priv;
 
 	priv = usb_get_serial_port_data(port);
 	kfree(priv);
+
+	return 0;
 }
 
 static int ch341_carrier_raised(struct usb_serial_port *port)
@@ -851,7 +853,6 @@ static struct usb_serial_driver ch341_device = {
 		.owner	= THIS_MODULE,
 		.name	= "ch341-uart",
 	},
-	.bulk_in_size      = 512,
 	.id_table          = id_table,
 	.num_ports         = 1,
 	.open              = ch341_open,

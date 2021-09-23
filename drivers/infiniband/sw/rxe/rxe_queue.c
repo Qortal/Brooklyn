@@ -52,8 +52,9 @@ inline void rxe_queue_reset(struct rxe_queue *q)
 	memset(q->buf->data, 0, q->buf_size - sizeof(struct rxe_queue_buf));
 }
 
-struct rxe_queue *rxe_queue_init(struct rxe_dev *rxe, int *num_elem,
-			unsigned int elem_size, enum queue_type type)
+struct rxe_queue *rxe_queue_init(struct rxe_dev *rxe,
+				 int *num_elem,
+				 unsigned int elem_size)
 {
 	struct rxe_queue *q;
 	size_t buf_size;
@@ -68,7 +69,6 @@ struct rxe_queue *rxe_queue_init(struct rxe_dev *rxe, int *num_elem,
 		goto err1;
 
 	q->rxe = rxe;
-	q->type = type;
 
 	/* used in resize, only need to copy used part of queue */
 	q->elem_size = elem_size;
@@ -111,15 +111,14 @@ err1:
 static int resize_finish(struct rxe_queue *q, struct rxe_queue *new_q,
 			 unsigned int num_elem)
 {
-	if (!queue_empty(q, q->type) && (num_elem < queue_count(q, q->type)))
+	if (!queue_empty(q) && (num_elem < queue_count(q)))
 		return -EINVAL;
 
-	while (!queue_empty(q, q->type)) {
-		memcpy(producer_addr(new_q, new_q->type),
-					consumer_addr(q, q->type),
-					new_q->elem_size);
-		advance_producer(new_q, new_q->type);
-		advance_consumer(q, q->type);
+	while (!queue_empty(q)) {
+		memcpy(producer_addr(new_q), consumer_addr(q),
+		       new_q->elem_size);
+		advance_producer(new_q);
+		advance_consumer(q);
 	}
 
 	swap(*q, *new_q);
@@ -137,7 +136,7 @@ int rxe_queue_resize(struct rxe_queue *q, unsigned int *num_elem_p,
 	int err;
 	unsigned long flags = 0, flags1;
 
-	new_q = rxe_queue_init(q->rxe, &num_elem, elem_size, q->type);
+	new_q = rxe_queue_init(q->rxe, &num_elem, elem_size);
 	if (!new_q)
 		return -ENOMEM;
 

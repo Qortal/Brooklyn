@@ -505,6 +505,7 @@ static int sti_pwm_probe_dt(struct sti_pwm_chip *pc)
 	if (IS_ERR(pc->prescale_high))
 		return PTR_ERR(pc->prescale_high);
 
+
 	pc->pwm_out_en = devm_regmap_field_alloc(dev, pc->regmap,
 						 reg_fields[PWM_OUT_EN]);
 	if (IS_ERR(pc->pwm_out_en))
@@ -539,6 +540,7 @@ static int sti_pwm_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct sti_pwm_compat_data *cdata;
 	struct sti_pwm_chip *pc;
+	struct resource *res;
 	unsigned int i;
 	int irq, ret;
 
@@ -550,7 +552,9 @@ static int sti_pwm_probe(struct platform_device *pdev)
 	if (!cdata)
 		return -ENOMEM;
 
-	pc->mmio = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+
+	pc->mmio = devm_ioremap_resource(dev, res);
 	if (IS_ERR(pc->mmio))
 		return PTR_ERR(pc->mmio);
 
@@ -589,36 +593,41 @@ static int sti_pwm_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	if (cdata->pwm_num_devs) {
-		pc->pwm_clk = of_clk_get_by_name(dev->of_node, "pwm");
-		if (IS_ERR(pc->pwm_clk)) {
-			dev_err(dev, "failed to get PWM clock\n");
-			return PTR_ERR(pc->pwm_clk);
-		}
+	if (!cdata->pwm_num_devs)
+		goto skip_pwm;
 
-		ret = clk_prepare(pc->pwm_clk);
-		if (ret) {
-			dev_err(dev, "failed to prepare clock\n");
-			return ret;
-		}
+	pc->pwm_clk = of_clk_get_by_name(dev->of_node, "pwm");
+	if (IS_ERR(pc->pwm_clk)) {
+		dev_err(dev, "failed to get PWM clock\n");
+		return PTR_ERR(pc->pwm_clk);
 	}
 
-	if (cdata->cpt_num_devs) {
-		pc->cpt_clk = of_clk_get_by_name(dev->of_node, "capture");
-		if (IS_ERR(pc->cpt_clk)) {
-			dev_err(dev, "failed to get PWM capture clock\n");
-			return PTR_ERR(pc->cpt_clk);
-		}
-
-		ret = clk_prepare(pc->cpt_clk);
-		if (ret) {
-			dev_err(dev, "failed to prepare clock\n");
-			return ret;
-		}
+	ret = clk_prepare(pc->pwm_clk);
+	if (ret) {
+		dev_err(dev, "failed to prepare clock\n");
+		return ret;
 	}
 
+skip_pwm:
+	if (!cdata->cpt_num_devs)
+		goto skip_cpt;
+
+	pc->cpt_clk = of_clk_get_by_name(dev->of_node, "capture");
+	if (IS_ERR(pc->cpt_clk)) {
+		dev_err(dev, "failed to get PWM capture clock\n");
+		return PTR_ERR(pc->cpt_clk);
+	}
+
+	ret = clk_prepare(pc->cpt_clk);
+	if (ret) {
+		dev_err(dev, "failed to prepare clock\n");
+		return ret;
+	}
+
+skip_cpt:
 	pc->chip.dev = dev;
 	pc->chip.ops = &sti_pwm_ops;
+	pc->chip.base = -1;
 	pc->chip.npwm = pc->cdata->pwm_num_devs;
 
 	ret = pwmchip_add(&pc->chip);
@@ -649,13 +658,15 @@ static int sti_pwm_probe(struct platform_device *pdev)
 static int sti_pwm_remove(struct platform_device *pdev)
 {
 	struct sti_pwm_chip *pc = platform_get_drvdata(pdev);
+	unsigned int i;
 
-	pwmchip_remove(&pc->chip);
+	for (i = 0; i < pc->cdata->pwm_num_devs; i++)
+		pwm_disable(&pc->chip.pwms[i]);
 
 	clk_unprepare(pc->pwm_clk);
 	clk_unprepare(pc->cpt_clk);
 
-	return 0;
+	return pwmchip_remove(&pc->chip);
 }
 
 static const struct of_device_id sti_pwm_of_match[] = {

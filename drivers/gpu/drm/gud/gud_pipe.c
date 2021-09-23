@@ -152,8 +152,7 @@ static int gud_prep_flush(struct gud_device *gdrm, struct drm_framebuffer *fb,
 {
 	struct dma_buf_attachment *import_attach = fb->obj[0]->import_attach;
 	u8 compression = gdrm->compression;
-	struct dma_buf_map map;
-	void *vaddr, *buf;
+	void *vmap, *vaddr, *buf;
 	size_t pitch, len;
 	int ret = 0;
 
@@ -162,11 +161,11 @@ static int gud_prep_flush(struct gud_device *gdrm, struct drm_framebuffer *fb,
 	if (len > gdrm->bulk_len)
 		return -E2BIG;
 
-	ret = drm_gem_shmem_vmap(fb->obj[0], &map);
-	if (ret)
-		return ret;
+	vmap = drm_gem_shmem_vmap(fb->obj[0]);
+	if (!vmap)
+		return -ENOMEM;
 
-	vaddr = map.vaddr + fb->offsets[0];
+	vaddr = vmap + fb->offsets[0];
 
 	if (import_attach) {
 		ret = dma_buf_begin_cpu_access(import_attach->dmabuf, DMA_FROM_DEVICE);
@@ -228,7 +227,7 @@ end_cpu_access:
 	if (import_attach)
 		dma_buf_end_cpu_access(import_attach->dmabuf, DMA_FROM_DEVICE);
 vunmap:
-	drm_gem_shmem_vunmap(fb->obj[0], &map);
+	drm_gem_shmem_vunmap(fb->obj[0], vmap);
 
 	return ret;
 }

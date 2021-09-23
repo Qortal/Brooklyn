@@ -4,8 +4,4 @@
 
 #include "../../../../include/linux/bootconfig.h"
 
-#ifndef fallthrough
-# define fallthrough
-#endif
-
 #endif

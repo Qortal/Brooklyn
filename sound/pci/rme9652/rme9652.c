@@ -39,6 +39,8 @@ MODULE_PARM_DESC(precise_ptr, "Enable precise pointer (doesn't work reliably).")
 MODULE_AUTHOR("Paul Davis <pbd@op.net>, Winfried Ritsch");
 MODULE_DESCRIPTION("RME Digi9652/Digi9636");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{RME,Hammerfall},"
+		"{RME,Hammerfall-Light}}");
 
 /* The Hammerfall has two sets of 24 ADAT + 2 S/PDIF channels, one for
    capture, one for playback. Both the ADAT and S/PDIF channels appear
@@ -433,9 +435,9 @@ static int rme9652_set_interrupt_interval(struct snd_rme9652 *s,
 
 	spin_lock_irq(&s->lock);
 
-	restart = s->running;
-	if (restart)
+	if ((restart = s->running)) {
 		rme9652_stop(s);
+	}
 
 	frames >>= 7;
 	n = 0;
@@ -518,15 +520,16 @@ static int rme9652_set_rate(struct snd_rme9652 *rme9652, int rate)
 		return -EBUSY;
 	}
 
-	restart = rme9652->running;
-	if (restart)
+	if ((restart = rme9652->running)) {
 		rme9652_stop(rme9652);
+	}
 	rme9652->control_register &= ~(RME9652_freq | RME9652_DS);
 	rme9652->control_register |= rate;
 	rme9652_write(rme9652, RME9652_control_register, rme9652->control_register);
 
-	if (restart)
+	if (restart) {
 		rme9652_start(rme9652);
+	}
 
 	if (rate & RME9652_DS) {
 		if (rme9652->ss_channels == RME9652_NCHANNELS) {
@@ -729,27 +732,34 @@ static inline int rme9652_spdif_sample_rate(struct snd_rme9652 *s)
 	switch (rme9652_decode_spdif_rate(rate_bits)) {
 	case 0x7:
 		return 32000;
+		break;
 
 	case 0x6:
 		return 44100;
+		break;
 
 	case 0x5:
 		return 48000;
+		break;
 
 	case 0x4:
 		return 88200;
+		break;
 
 	case 0x3:
 		return 96000;
+		break;
 
 	case 0x0:
 		return 64000;
+		break;
 
 	default:
 		dev_err(s->card->dev,
 			"%s: unknown S/PDIF input rate (bits = 0x%x)\n",
 			   s->card_name, rate_bits);
 		return 0;
+		break;
 	}
 }
 
@@ -877,14 +887,15 @@ static int rme9652_set_adat1_input(struct snd_rme9652 *rme9652, int internal)
 
 	/* XXX do we actually need to stop the card when we do this ? */
 
-	restart = rme9652->running;
-	if (restart)
+	if ((restart = rme9652->running)) {
 		rme9652_stop(rme9652);
+	}
 
 	rme9652_write(rme9652, RME9652_control_register, rme9652->control_register);
 
-	if (restart)
+	if (restart) {
 		rme9652_start(rme9652);
+	}
 
 	return 0;
 }
@@ -941,14 +952,15 @@ static int rme9652_set_spdif_input(struct snd_rme9652 *rme9652, int in)
 	rme9652->control_register &= ~RME9652_inp;
 	rme9652->control_register |= rme9652_encode_spdif_in(in);
 
-	restart = rme9652->running;
-	if (restart)
+	if ((restart = rme9652->running)) {
 		rme9652_stop(rme9652);
+	}
 
 	rme9652_write(rme9652, RME9652_control_register, rme9652->control_register);
 
-	if (restart)
+	if (restart) {
 		rme9652_start(rme9652);
+	}
 
 	return 0;
 }
@@ -1007,14 +1019,15 @@ static int rme9652_set_spdif_output(struct snd_rme9652 *rme9652, int out)
 		rme9652->control_register &= ~RME9652_opt_out;
 	}
 
-	restart = rme9652->running;
-	if (restart)
+	if ((restart = rme9652->running)) {
 		rme9652_stop(rme9652);
+	}
 
 	rme9652_write(rme9652, RME9652_control_register, rme9652->control_register);
 
-	if (restart)
+	if (restart) {
 		rme9652_start(rme9652);
+	}
 
 	return 0;
 }
@@ -1082,14 +1095,15 @@ static int rme9652_set_sync_mode(struct snd_rme9652 *rme9652, int mode)
 		break;
 	}
 
-	restart = rme9652->running;
-	if (restart)
+	if ((restart = rme9652->running)) {
 		rme9652_stop(rme9652);
+	}
 
 	rme9652_write(rme9652, RME9652_control_register, rme9652->control_register);
 
-	if (restart)
+	if (restart) {
 		rme9652_start(rme9652);
+	}
 
 	return 0;
 }
@@ -1168,14 +1182,15 @@ static int rme9652_set_sync_pref(struct snd_rme9652 *rme9652, int pref)
 		break;
 	}
 
-	restart = rme9652->running;
-	if (restart)
+	if ((restart = rme9652->running)) {
 		rme9652_stop(rme9652);
+	}
 
 	rme9652_write(rme9652, RME9652_control_register, rme9652->control_register);
 
-	if (restart)
+	if (restart) {
 		rme9652_start(rme9652);
+	}
 
 	return 0;
 }
@@ -1507,27 +1522,19 @@ static int snd_rme9652_create_controls(struct snd_card *card, struct snd_rme9652
 	struct snd_kcontrol *kctl;
 
 	for (idx = 0; idx < ARRAY_SIZE(snd_rme9652_controls); idx++) {
-		kctl = snd_ctl_new1(&snd_rme9652_controls[idx], rme9652);
-		err = snd_ctl_add(card, kctl);
-		if (err < 0)
+		if ((err = snd_ctl_add(card, kctl = snd_ctl_new1(&snd_rme9652_controls[idx], rme9652))) < 0)
 			return err;
 		if (idx == 1)	/* IEC958 (S/PDIF) Stream */
 			rme9652->spdif_ctl = kctl;
 	}
 
-	if (rme9652->ss_channels == RME9652_NCHANNELS) {
-		kctl = snd_ctl_new1(&snd_rme9652_adat3_check, rme9652);
-		err = snd_ctl_add(card, kctl);
-		if (err < 0)
+	if (rme9652->ss_channels == RME9652_NCHANNELS)
+		if ((err = snd_ctl_add(card, kctl = snd_ctl_new1(&snd_rme9652_adat3_check, rme9652))) < 0)
 			return err;
-	}
 
-	if (rme9652->hw_rev >= 15) {
-		kctl = snd_ctl_new1(&snd_rme9652_adat1_input, rme9652);
-		err = snd_ctl_add(card, kctl);
-		if (err < 0)
+	if (rme9652->hw_rev >= 15)
+		if ((err = snd_ctl_add(card, kctl = snd_ctl_new1(&snd_rme9652_adat1_input, rme9652))) < 0)
 			return err;
-	}
 
 	return 0;
 }
@@ -1844,9 +1851,9 @@ static char *rme9652_channel_buffer_location(struct snd_rme9652 *rme9652,
 	if (snd_BUG_ON(channel < 0 || channel >= RME9652_NCHANNELS))
 		return NULL;
         
-	mapped_channel = rme9652->channel_map[channel];
-	if (mapped_channel < 0)
+	if ((mapped_channel = rme9652->channel_map[channel]) < 0) {
 		return NULL;
+	}
 	
 	if (stream == SNDRV_PCM_STREAM_CAPTURE) {
 		return rme9652->capture_buffer +
@@ -2023,14 +2030,12 @@ static int snd_rme9652_hw_params(struct snd_pcm_substream *substream,
 	/* how to make sure that the rate matches an externally-set one ?
 	 */
 
-	err = rme9652_set_rate(rme9652, params_rate(params));
-	if (err < 0) {
+	if ((err = rme9652_set_rate(rme9652, params_rate(params))) < 0) {
 		_snd_pcm_hw_param_setempty(params, SNDRV_PCM_HW_PARAM_RATE);
 		return err;
 	}
 
-	err = rme9652_set_interrupt_interval(rme9652, params_period_size(params));
-	if (err < 0) {
+	if ((err = rme9652_set_interrupt_interval(rme9652, params_period_size(params))) < 0) {
 		_snd_pcm_hw_param_setempty(params, SNDRV_PCM_HW_PARAM_PERIOD_SIZE);
 		return err;
 	}
@@ -2410,9 +2415,11 @@ static int snd_rme9652_create_pcm(struct snd_card *card,
 	struct snd_pcm *pcm;
 	int err;
 
-	err = snd_pcm_new(card, rme9652->card_name, 0, 1, 1, &pcm);
-	if (err < 0)
+	if ((err = snd_pcm_new(card,
+			       rme9652->card_name,
+			       0, 1, 1, &pcm)) < 0) {
 		return err;
+	}
 
 	rme9652->pcm = pcm;
 	pcm->private_data = rme9652;
@@ -2452,14 +2459,12 @@ static int snd_rme9652_create(struct snd_card *card,
 		return -ENODEV;
 	}
 
-	err = pci_enable_device(pci);
-	if (err < 0)
+	if ((err = pci_enable_device(pci)) < 0)
 		return err;
 
 	spin_lock_init(&rme9652->lock);
 
-	err = pci_request_regions(pci, "rme9652");
-	if (err < 0)
+	if ((err = pci_request_regions(pci, "rme9652")) < 0)
 		return err;
 	rme9652->port = pci_resource_start(pci, 0);
 	rme9652->iobase = ioremap(rme9652->port, RME9652_IO_EXTENT);
@@ -2532,17 +2537,17 @@ static int snd_rme9652_create(struct snd_card *card,
 
 	pci_set_master(rme9652->pci);
 
-	err = snd_rme9652_initialize_memory(rme9652);
-	if (err < 0)
+	if ((err = snd_rme9652_initialize_memory(rme9652)) < 0) {
 		return err;
+	}
 
-	err = snd_rme9652_create_pcm(card, rme9652);
-	if (err < 0)
+	if ((err = snd_rme9652_create_pcm(card, rme9652)) < 0) {
 		return err;
+	}
 
-	err = snd_rme9652_create_controls(card, rme9652);
-	if (err < 0)
+	if ((err = snd_rme9652_create_controls(card, rme9652)) < 0) {
 		return err;
+	}
 
 	snd_rme9652_proc_init(rme9652);
 

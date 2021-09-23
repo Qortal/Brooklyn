@@ -135,11 +135,6 @@ struct btrfs_delayed_data_ref {
 	u64 offset;
 };
 
-enum btrfs_delayed_ref_flags {
-	/* Indicate that we are flushing delayed refs for the commit */
-	BTRFS_DELAYED_REFS_FLUSHING,
-};
-
 struct btrfs_delayed_ref_root {
 	/* head ref rbtree */
 	struct rb_root_cached href_root;
@@ -163,7 +158,12 @@ struct btrfs_delayed_ref_root {
 
 	u64 pending_csums;
 
-	unsigned long flags;
+	/*
+	 * set when the tree is flushing before a transaction commit,
+	 * used by the throttling code to decide if new updates need
+	 * to be run right away
+	 */
+	int flushing;
 
 	u64 run_delayed_start;
 

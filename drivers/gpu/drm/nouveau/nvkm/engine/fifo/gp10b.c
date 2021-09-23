@@ -39,8 +39,7 @@ gp10b_fifo = {
 };
 
 int
-gp10b_fifo_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
-	       struct nvkm_fifo **pfifo)
+gp10b_fifo_new(struct nvkm_device *device, int index, struct nvkm_fifo **pfifo)
 {
-	return gk104_fifo_new_(&gp10b_fifo, device, type, inst, 512, pfifo);
+	return gk104_fifo_new_(&gp10b_fifo, device, index, 512, pfifo);
 }

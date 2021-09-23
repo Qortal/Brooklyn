@@ -385,7 +385,7 @@ typedef struct sal_processor_static_info {
 		    fr              : 1,
 		    reserved        : 58;
 	} valid;
-	struct pal_min_state_area min_state_area;
+	pal_min_state_area_t min_state_area;
 	u64 br[8];
 	u64 cr[128];
 	u64 ar[128];

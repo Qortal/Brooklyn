@@ -37,8 +37,16 @@ enum {
 };
 
 static const struct resource t7l66xb_mmc_resources[] = {
-	DEFINE_RES_MEM(0x800, 0x200),
-	DEFINE_RES_IRQ(IRQ_T7L66XB_MMC)
+	{
+		.start = 0x800,
+		.end	= 0x9ff,
+		.flags = IORESOURCE_MEM,
+	},
+	{
+		.start = IRQ_T7L66XB_MMC,
+		.end	= IRQ_T7L66XB_MMC,
+		.flags = IORESOURCE_IRQ,
+	},
 };
 
 #define SCR_REVID	0x08		/* b Revision ID	*/

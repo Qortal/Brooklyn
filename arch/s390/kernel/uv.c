@@ -52,7 +52,7 @@ void __init setup_uv(void)
 	unsigned long uv_stor_base;
 
 	/*
-	 * keep these conditions in line with has_uv_sec_stor_limit()
+	 * keep these conditions in line with kasan init code has_uv_sec_stor_limit()
 	 */
 	if (!is_prot_virt_host())
 		return;
@@ -89,6 +89,12 @@ void __init setup_uv(void)
 fail:
 	pr_info("Disabling support for protected virtualization");
 	prot_virt_host = 0;
+}
+
+void adjust_to_uv_max(unsigned long *vmax)
+{
+	if (uv_info.max_sec_stor_addr)
+		*vmax = min_t(unsigned long, *vmax, uv_info.max_sec_stor_addr);
 }
 
 /*
@@ -410,41 +416,6 @@ static struct attribute_group uv_query_attr_group = {
 	.attrs = uv_query_attrs,
 };
 
-static ssize_t uv_is_prot_virt_guest(struct kobject *kobj,
-				     struct kobj_attribute *attr, char *page)
-{
-	int val = 0;
-
-#ifdef CONFIG_PROTECTED_VIRTUALIZATION_GUEST
-	val = prot_virt_guest;
-#endif
-	return scnprintf(page, PAGE_SIZE, "%d\n", val);
-}
-
-static ssize_t uv_is_prot_virt_host(struct kobject *kobj,
-				    struct kobj_attribute *attr, char *page)
-{
-	int val = 0;
-
-#if IS_ENABLED(CONFIG_KVM)
-	val = prot_virt_host;
-#endif
-
-	return scnprintf(page, PAGE_SIZE, "%d\n", val);
-}
-
-static struct kobj_attribute uv_prot_virt_guest =
-	__ATTR(prot_virt_guest, 0444, uv_is_prot_virt_guest, NULL);
-
-static struct kobj_attribute uv_prot_virt_host =
-	__ATTR(prot_virt_host, 0444, uv_is_prot_virt_host, NULL);
-
-static const struct attribute *uv_prot_virt_attrs[] = {
-	&uv_prot_virt_guest.attr,
-	&uv_prot_virt_host.attr,
-	NULL,
-};
-
 static struct kset *uv_query_kset;
 static struct kobject *uv_kobj;
 
@@ -459,23 +430,15 @@ static int __init uv_info_init(void)
 	if (!uv_kobj)
 		return -ENOMEM;
 
-	rc = sysfs_create_files(uv_kobj, uv_prot_virt_attrs);
-	if (rc)
-		goto out_kobj;
-
 	uv_query_kset = kset_create_and_add("query", NULL, uv_kobj);
-	if (!uv_query_kset) {
-		rc = -ENOMEM;
-		goto out_ind_files;
-	}
+	if (!uv_query_kset)
+		goto out_kobj;
 
 	rc = sysfs_create_group(&uv_query_kset->kobj, &uv_query_attr_group);
 	if (!rc)
 		return 0;
 
 	kset_unregister(uv_query_kset);
-out_ind_files:
-	sysfs_remove_files(uv_kobj, uv_prot_virt_attrs);
 out_kobj:
 	kobject_del(uv_kobj);
 	kobject_put(uv_kobj);

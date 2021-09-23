@@ -846,8 +846,10 @@ static int omap_sr_probe(struct platform_device *pdev)
 
 	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	sr_info->base = devm_ioremap_resource(&pdev->dev, mem);
-	if (IS_ERR(sr_info->base))
+	if (IS_ERR(sr_info->base)) {
+		dev_err(&pdev->dev, "%s: ioremap fail\n", __func__);
 		return PTR_ERR(sr_info->base);
+	}
 
 	irq = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 

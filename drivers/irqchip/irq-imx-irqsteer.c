@@ -122,7 +122,7 @@ static void imx_irqsteer_irq_handler(struct irq_desc *desc)
 	for (i = 0; i < 2; i++, hwirq += 32) {
 		int idx = imx_irqsteer_get_reg_index(data, hwirq);
 		unsigned long irqmap;
-		int pos;
+		int pos, virq;
 
 		if (hwirq >= data->reg_num * 32)
 			break;
@@ -130,8 +130,11 @@ static void imx_irqsteer_irq_handler(struct irq_desc *desc)
 		irqmap = readl_relaxed(data->regs +
 				       CHANSTATUS(idx, data->reg_num));
 
-		for_each_set_bit(pos, &irqmap, 32)
-			generic_handle_domain_irq(data->domain, pos + hwirq);
+		for_each_set_bit(pos, &irqmap, 32) {
+			virq = irq_find_mapping(data->domain, pos + hwirq);
+			if (virq)
+				generic_handle_irq(virq);
+		}
 	}
 
 	chained_irq_exit(irq_desc_get_chip(desc), desc);

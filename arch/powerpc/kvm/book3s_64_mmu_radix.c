@@ -21,7 +21,6 @@
 #include <asm/pte-walk.h>
 #include <asm/ultravisor.h>
 #include <asm/kvm_book3s_uvmem.h>
-#include <asm/plpar_wrappers.h>
 
 /*
  * Supported radix tree geometry.
@@ -319,19 +318,9 @@ void kvmppc_radix_tlbie_page(struct kvm *kvm, unsigned long addr,
 	}
 
 	psi = shift_to_mmu_psize(pshift);
-
-	if (!firmware_has_feature(FW_FEATURE_RPT_INVALIDATE)) {
-		rb = addr | (mmu_get_ap(psi) << PPC_BITLSHIFT(58));
-		rc = plpar_hcall_norets(H_TLB_INVALIDATE, H_TLBIE_P1_ENC(0, 0, 1),
-					lpid, rb);
-	} else {
-		rc = pseries_rpt_invalidate(lpid, H_RPTI_TARGET_CMMU,
-					    H_RPTI_TYPE_NESTED |
-					    H_RPTI_TYPE_TLB,
-					    psize_to_rpti_pgsize(psi),
-					    addr, addr + psize);
-	}
-
+	rb = addr | (mmu_get_ap(psi) << PPC_BITLSHIFT(58));
+	rc = plpar_hcall_norets(H_TLB_INVALIDATE, H_TLBIE_P1_ENC(0, 0, 1),
+				lpid, rb);
 	if (rc)
 		pr_err("KVM: TLB page invalidation hcall failed, rc=%ld\n", rc);
 }
@@ -345,14 +334,8 @@ static void kvmppc_radix_flush_pwc(struct kvm *kvm, unsigned int lpid)
 		return;
 	}
 
-	if (!firmware_has_feature(FW_FEATURE_RPT_INVALIDATE))
-		rc = plpar_hcall_norets(H_TLB_INVALIDATE, H_TLBIE_P1_ENC(1, 0, 1),
-					lpid, TLBIEL_INVAL_SET_LPID);
-	else
-		rc = pseries_rpt_invalidate(lpid, H_RPTI_TARGET_CMMU,
-					    H_RPTI_TYPE_NESTED |
-					    H_RPTI_TYPE_PWC, H_RPTI_PAGE_ALL,
-					    0, -1UL);
+	rc = plpar_hcall_norets(H_TLB_INVALIDATE, H_TLBIE_P1_ENC(1, 0, 1),
+				lpid, TLBIEL_INVAL_SET_LPID);
 	if (rc)
 		pr_err("KVM: TLB PWC invalidation hcall failed, rc=%ld\n", rc);
 }
@@ -839,7 +822,7 @@ int kvmppc_book3s_instantiate_page(struct kvm_vcpu *vcpu,
 
 		/* Call KVM generic code to do the slow-path check */
 		pfn = __gfn_to_pfn_memslot(memslot, gfn, false, NULL,
-					   writing, upgrade_p, NULL);
+					   writing, upgrade_p);
 		if (is_error_noslot_pfn(pfn))
 			return -EFAULT;
 		page = NULL;
@@ -1010,8 +993,8 @@ int kvmppc_book3s_radix_page_fault(struct kvm_vcpu *vcpu,
 }
 
 /* Called with kvm->mmu_lock held */
-void kvm_unmap_radix(struct kvm *kvm, struct kvm_memory_slot *memslot,
-		     unsigned long gfn)
+int kvm_unmap_radix(struct kvm *kvm, struct kvm_memory_slot *memslot,
+		    unsigned long gfn)
 {
 	pte_t *ptep;
 	unsigned long gpa = gfn << PAGE_SHIFT;
@@ -1019,23 +1002,24 @@ void kvm_unmap_radix(struct kvm *kvm, struct kvm_memory_slot *memslot,
 
 	if (kvm->arch.secure_guest & KVMPPC_SECURE_INIT_DONE) {
 		uv_page_inval(kvm->arch.lpid, gpa, PAGE_SHIFT);
-		return;
+		return 0;
 	}
 
 	ptep = find_kvm_secondary_pte(kvm, gpa, &shift);
 	if (ptep && pte_present(*ptep))
 		kvmppc_unmap_pte(kvm, ptep, gpa, shift, memslot,
 				 kvm->arch.lpid);
+	return 0;
 }
 
 /* Called with kvm->mmu_lock held */
-bool kvm_age_radix(struct kvm *kvm, struct kvm_memory_slot *memslot,
-		   unsigned long gfn)
+int kvm_age_radix(struct kvm *kvm, struct kvm_memory_slot *memslot,
+		  unsigned long gfn)
 {
 	pte_t *ptep;
 	unsigned long gpa = gfn << PAGE_SHIFT;
 	unsigned int shift;
-	bool ref = false;
+	int ref = 0;
 	unsigned long old, *rmapp;
 
 	if (kvm->arch.secure_guest & KVMPPC_SECURE_INIT_DONE)
@@ -1051,27 +1035,26 @@ bool kvm_age_radix(struct kvm *kvm, struct kvm_memory_slot *memslot,
 		kvmhv_update_nest_rmap_rc_list(kvm, rmapp, _PAGE_ACCESSED, 0,
 					       old & PTE_RPN_MASK,
 					       1UL << shift);
-		ref = true;
+		ref = 1;
 	}
 	return ref;
 }
 
 /* Called with kvm->mmu_lock held */
-bool kvm_test_age_radix(struct kvm *kvm, struct kvm_memory_slot *memslot,
-			unsigned long gfn)
-
+int kvm_test_age_radix(struct kvm *kvm, struct kvm_memory_slot *memslot,
+		       unsigned long gfn)
 {
 	pte_t *ptep;
 	unsigned long gpa = gfn << PAGE_SHIFT;
 	unsigned int shift;
-	bool ref = false;
+	int ref = 0;
 
 	if (kvm->arch.secure_guest & KVMPPC_SECURE_INIT_DONE)
 		return ref;
 
 	ptep = find_kvm_secondary_pte(kvm, gpa, &shift);
 	if (ptep && pte_present(*ptep) && pte_young(*ptep))
-		ref = true;
+		ref = 1;
 	return ref;
 }
 

@@ -31,7 +31,6 @@
 #include <asm/mach/arch.h>
 #include <asm/mach/flash.h>
 #include <asm/mach/time.h>
-#include <mach/hardware.h>
 
 #include "irqs.h"
 

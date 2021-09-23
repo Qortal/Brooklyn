@@ -62,7 +62,7 @@
 		regulator-always-on;
 	};
 
-	led-controller-1 {
+	pwm_leds {
 		compatible = "pwm-leds";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_pwm0_pwm_h0
@@ -71,7 +71,7 @@
 			     &pinctrl_pwm0_pwm_h3>;
 		status = "disabled";
 
-		led-1 {
+		red {
 			label = "pwm:red:user";
 			pwms = <&pwm0 0 10000000 0>;
 			max-brightness = <255>;
@@ -79,7 +79,7 @@
 			status = "disabled";
 		};
 
-		led-2 {
+		green {
 			label = "pwm:green:user";
 			pwms = <&pwm0 1 10000000 0>;
 			max-brightness = <255>;
@@ -87,14 +87,14 @@
 			status = "disabled";
 		};
 
-		led-3 {
+		blue {
 			label = "pwm:blue:user";
 			pwms = <&pwm0 2 10000000 0>;
 			max-brightness = <255>;
 			status = "disabled";
 		};
 
-		led-4 {
+		white {
 			label = "pwm:white:user";
 			pwms = <&pwm0 3 10000000 0>;
 			max-brightness = <255>;
@@ -341,6 +341,7 @@
 
 	input@0 {
 		reg = <0>;
+		atmel,wakeup-type = "low";
 	};
 };
 

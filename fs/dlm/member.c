@@ -15,7 +15,6 @@
 #include "recover.h"
 #include "rcom.h"
 #include "config.h"
-#include "midcomms.h"
 #include "lowcomms.h"
 
 int dlm_slots_version(struct dlm_header *h)
@@ -271,7 +270,7 @@ int dlm_slots_assign(struct dlm_ls *ls, int *num_slots, int *slots_size,
 
 	log_slots(ls, gen, num, NULL, array, array_size);
 
-	max_slots = (DLM_MAX_APP_BUFSIZE - sizeof(struct dlm_rcom) -
+	max_slots = (dlm_config.ci_buffer_size - sizeof(struct dlm_rcom) -
 		     sizeof(struct rcom_config)) / sizeof(struct rcom_slot);
 
 	if (num > max_slots) {
@@ -330,7 +329,6 @@ static int dlm_add_member(struct dlm_ls *ls, struct dlm_config_node *node)
 	memb->nodeid = node->nodeid;
 	memb->weight = node->weight;
 	memb->comm_seq = node->comm_seq;
-	dlm_midcomms_add_member(node->nodeid);
 	add_ordered_member(ls, memb);
 	ls->ls_num_nodes++;
 	return 0;
@@ -361,34 +359,26 @@ int dlm_is_removed(struct dlm_ls *ls, int nodeid)
 	return 0;
 }
 
-static void clear_memb_list(struct list_head *head,
-			    void (*after_del)(int nodeid))
+static void clear_memb_list(struct list_head *head)
 {
 	struct dlm_member *memb;
 
 	while (!list_empty(head)) {
 		memb = list_entry(head->next, struct dlm_member, list);
 		list_del(&memb->list);
-		if (after_del)
-			after_del(memb->nodeid);
 		kfree(memb);
 	}
 }
 
-static void clear_members_cb(int nodeid)
-{
-	dlm_midcomms_remove_member(nodeid);
-}
-
 void dlm_clear_members(struct dlm_ls *ls)
 {
-	clear_memb_list(&ls->ls_nodes, clear_members_cb);
+	clear_memb_list(&ls->ls_nodes);
 	ls->ls_num_nodes = 0;
 }
 
 void dlm_clear_members_gone(struct dlm_ls *ls)
 {
-	clear_memb_list(&ls->ls_nodes_gone, NULL);
+	clear_memb_list(&ls->ls_nodes_gone);
 }
 
 static void make_member_array(struct dlm_ls *ls)
@@ -562,7 +552,6 @@ int dlm_recover_members(struct dlm_ls *ls, struct dlm_recover *rv, int *neg_out)
 
 		neg++;
 		list_move(&memb->list, &ls->ls_nodes_gone);
-		dlm_midcomms_remove_member(memb->nodeid);
 		ls->ls_num_nodes--;
 		dlm_lsop_recover_slot(ls, memb);
 	}
@@ -587,18 +576,12 @@ int dlm_recover_members(struct dlm_ls *ls, struct dlm_recover *rv, int *neg_out)
 	*neg_out = neg;
 
 	error = ping_members(ls);
-	/* error -EINTR means that a new recovery action is triggered.
-	 * We ignore this recovery action and let run the new one which might
-	 * have new member configuration.
-	 */
-	if (error == -EINTR)
-		error = 0;
-
-	/* new_lockspace() may be waiting to know if the config
-	 * is good or bad
-	 */
-	ls->ls_members_result = error;
-	complete(&ls->ls_members_done);
+	if (!error || error == -EPROTO) {
+		/* new_lockspace() may be waiting to know if the config
+		   is good or bad */
+		ls->ls_members_result = error;
+		complete(&ls->ls_members_done);
+	}
 
 	log_rinfo(ls, "dlm_recover_members %d nodes", ls->ls_num_nodes);
 	return error;

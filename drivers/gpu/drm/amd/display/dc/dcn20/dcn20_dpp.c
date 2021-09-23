@@ -166,8 +166,7 @@ static void dpp2_cnv_setup (
 		select = DCN2_ICSC_SELECT_ICSC_A;
 		break;
 	case SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616:
-	case SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616:
-		pixel_format = 26; /* ARGB16161616_UNORM */
+		pixel_format = 22;
 		break;
 	case SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616F:
 		pixel_format = 24;
@@ -432,8 +431,7 @@ bool dpp2_construct(
 	dpp->lb_pixel_depth_supported =
 		LB_PIXEL_DEPTH_18BPP |
 		LB_PIXEL_DEPTH_24BPP |
-		LB_PIXEL_DEPTH_30BPP |
-		LB_PIXEL_DEPTH_36BPP;
+		LB_PIXEL_DEPTH_30BPP;
 
 	dpp->lb_bits_per_entry = LB_BITS_PER_ENTRY;
 	dpp->lb_memory_size = LB_TOTAL_NUMBER_OF_ENTRIES; /*0x1404*/

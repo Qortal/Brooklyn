@@ -22,16 +22,14 @@ struct sg_table *etnaviv_gem_prime_get_sg_table(struct drm_gem_object *obj)
 	return drm_prime_pages_to_sg(obj->dev, etnaviv_obj->pages, npages);
 }
 
-int etnaviv_gem_prime_vmap(struct drm_gem_object *obj, struct dma_buf_map *map)
+void *etnaviv_gem_prime_vmap(struct drm_gem_object *obj)
 {
-	void *vaddr;
+	return etnaviv_gem_vmap(obj);
+}
 
-	vaddr = etnaviv_gem_vmap(obj);
-	if (!vaddr)
-		return -ENOMEM;
-	dma_buf_map_set_vaddr(map, vaddr);
-
-	return 0;
+void etnaviv_gem_prime_vunmap(struct drm_gem_object *obj, void *vaddr)
+{
+	/* TODO msm_gem_vunmap() */
 }
 
 int etnaviv_gem_prime_mmap(struct drm_gem_object *obj,
@@ -72,30 +70,24 @@ void etnaviv_gem_prime_unpin(struct drm_gem_object *obj)
 
 static void etnaviv_gem_prime_release(struct etnaviv_gem_object *etnaviv_obj)
 {
-	struct dma_buf_map map = DMA_BUF_MAP_INIT_VADDR(etnaviv_obj->vaddr);
-
 	if (etnaviv_obj->vaddr)
-		dma_buf_vunmap(etnaviv_obj->base.import_attach->dmabuf, &map);
+		dma_buf_vunmap(etnaviv_obj->base.import_attach->dmabuf,
+			       etnaviv_obj->vaddr);
 
 	/* Don't drop the pages for imported dmabuf, as they are not
 	 * ours, just free the array we allocated:
 	 */
-	kvfree(etnaviv_obj->pages);
+	if (etnaviv_obj->pages)
+		kvfree(etnaviv_obj->pages);
 
 	drm_prime_gem_destroy(&etnaviv_obj->base, etnaviv_obj->sgt);
 }
 
 static void *etnaviv_gem_prime_vmap_impl(struct etnaviv_gem_object *etnaviv_obj)
 {
-	struct dma_buf_map map;
-	int ret;
-
 	lockdep_assert_held(&etnaviv_obj->lock);
 
-	ret = dma_buf_vmap(etnaviv_obj->base.import_attach->dmabuf, &map);
-	if (ret)
-		return NULL;
-	return map.vaddr;
+	return dma_buf_vmap(etnaviv_obj->base.import_attach->dmabuf);
 }
 
 static int etnaviv_gem_prime_mmap_obj(struct etnaviv_gem_object *etnaviv_obj,
@@ -134,7 +126,8 @@ struct drm_gem_object *etnaviv_gem_prime_import_sg_table(struct drm_device *dev,
 		goto fail;
 	}
 
-	ret = drm_prime_sg_to_page_array(sgt, etnaviv_obj->pages, npages);
+	ret = drm_prime_sg_to_page_addr_arrays(sgt, etnaviv_obj->pages,
+					       NULL, npages);
 	if (ret)
 		goto fail;
 

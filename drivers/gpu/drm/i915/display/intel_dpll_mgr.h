@@ -154,23 +154,6 @@ enum intel_dpll_id {
 	 * @DPLL_ID_TGL_MGPLL6: TGL TC PLL port 6 (TC6)
 	 */
 	DPLL_ID_TGL_MGPLL6 = 8,
-
-	/**
-	 * @DPLL_ID_DG1_DPLL0: DG1 combo PHY DPLL0
-	 */
-	DPLL_ID_DG1_DPLL0 = 0,
-	/**
-	 * @DPLL_ID_DG1_DPLL1: DG1 combo PHY DPLL1
-	 */
-	DPLL_ID_DG1_DPLL1 = 1,
-	/**
-	 * @DPLL_ID_DG1_DPLL2: DG1 combo PHY DPLL2
-	 */
-	DPLL_ID_DG1_DPLL2 = 2,
-	/**
-	 * @DPLL_ID_DG1_DPLL3: DG1 combo PHY DPLL3
-	 */
-	DPLL_ID_DG1_DPLL3 = 3,
 };
 
 #define I915_NUM_PLLS 9
@@ -241,9 +224,9 @@ struct intel_dpll_hw_state {
  */
 struct intel_shared_dpll_state {
 	/**
-	 * @pipe_mask: mask of pipes using this DPLL, active or not
+	 * @crtc_mask: mask of CRTC using this DPLL, active or not
 	 */
-	u8 pipe_mask;
+	unsigned crtc_mask;
 
 	/**
 	 * @hw_state: hardware configuration for the DPLL stored in
@@ -300,11 +283,10 @@ struct intel_shared_dpll_funcs {
 	 * @get_freq:
 	 *
 	 * Hook for calculating the pll's output frequency based on its
-	 * passed in state.
+	 * current state.
 	 */
 	int (*get_freq)(struct drm_i915_private *i915,
-			const struct intel_shared_dpll *pll,
-			const struct intel_dpll_hw_state *pll_state);
+			const struct intel_shared_dpll *pll);
 };
 
 /**
@@ -351,9 +333,9 @@ struct intel_shared_dpll {
 	struct intel_shared_dpll_state state;
 
 	/**
-	 * @active_mask: mask of active pipes (i.e. DPMS on) using this DPLL
+	 * @active_mask: mask of active CRTCs (i.e. DPMS on) using this DPLL
 	 */
-	u8 active_mask;
+	unsigned active_mask;
 
 	/**
 	 * @on: is the PLL actually active? Disabled during modeset
@@ -400,17 +382,12 @@ void intel_update_active_dpll(struct intel_atomic_state *state,
 			      struct intel_crtc *crtc,
 			      struct intel_encoder *encoder);
 int intel_dpll_get_freq(struct drm_i915_private *i915,
-			const struct intel_shared_dpll *pll,
-			const struct intel_dpll_hw_state *pll_state);
-bool intel_dpll_get_hw_state(struct drm_i915_private *i915,
-			     struct intel_shared_dpll *pll,
-			     struct intel_dpll_hw_state *hw_state);
+			const struct intel_shared_dpll *pll);
 void intel_prepare_shared_dpll(const struct intel_crtc_state *crtc_state);
 void intel_enable_shared_dpll(const struct intel_crtc_state *crtc_state);
 void intel_disable_shared_dpll(const struct intel_crtc_state *crtc_state);
 void intel_shared_dpll_swap_state(struct intel_atomic_state *state);
 void intel_shared_dpll_init(struct drm_device *dev);
-void intel_dpll_update_ref_clks(struct drm_i915_private *dev_priv);
 void intel_dpll_readout_hw_state(struct drm_i915_private *dev_priv);
 void intel_dpll_sanitize_state(struct drm_i915_private *dev_priv);
 

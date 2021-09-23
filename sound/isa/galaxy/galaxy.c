@@ -608,9 +608,10 @@ error:
 	return err;
 }
 
-static void snd_galaxy_remove(struct device *dev, unsigned int n)
+static int snd_galaxy_remove(struct device *dev, unsigned int n)
 {
 	snd_card_free(dev_get_drvdata(dev));
+	return 0;
 }
 
 static struct isa_driver snd_galaxy_driver = {

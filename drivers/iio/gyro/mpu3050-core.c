@@ -13,7 +13,6 @@
  * TODO: add support for setting up the low pass 3dB frequency.
  */
 
-#include <linux/bitfield.h>
 #include <linux/bitops.h>
 #include <linux/delay.h>
 #include <linux/err.h>
@@ -796,8 +795,7 @@ static int mpu3050_read_mem(struct mpu3050 *mpu3050,
 static int mpu3050_hw_init(struct mpu3050 *mpu3050)
 {
 	int ret;
-	__le64 otp_le;
-	u64 otp;
+	u8 otp[8];
 
 	/* Reset */
 	ret = regmap_update_bits(mpu3050->map,
@@ -828,31 +826,29 @@ static int mpu3050_hw_init(struct mpu3050 *mpu3050)
 				MPU3050_MEM_USER_BANK |
 				MPU3050_MEM_OTP_BANK_0),
 			       0,
-			       sizeof(otp_le),
-			       (u8 *)&otp_le);
+			       sizeof(otp),
+			       otp);
 	if (ret)
 		return ret;
 
 	/* This is device-unique data so it goes into the entropy pool */
-	add_device_randomness(&otp_le, sizeof(otp_le));
-
-	otp = le64_to_cpu(otp_le);
+	add_device_randomness(otp, sizeof(otp));
 
 	dev_info(mpu3050->dev,
-		 "die ID: %04llX, wafer ID: %02llX, A lot ID: %04llX, "
-		 "W lot ID: %03llX, WP ID: %01llX, rev ID: %02llX\n",
+		 "die ID: %04X, wafer ID: %02X, A lot ID: %04X, "
+		 "W lot ID: %03X, WP ID: %01X, rev ID: %02X\n",
 		 /* Die ID, bits 0-12 */
-		 FIELD_GET(GENMASK_ULL(12, 0), otp),
+		 (otp[1] << 8 | otp[0]) & 0x1fff,
 		 /* Wafer ID, bits 13-17 */
-		 FIELD_GET(GENMASK_ULL(17, 13), otp),
+		 ((otp[2] << 8 | otp[1]) & 0x03e0) >> 5,
 		 /* A lot ID, bits 18-33 */
-		 FIELD_GET(GENMASK_ULL(33, 18), otp),
+		 ((otp[4] << 16 | otp[3] << 8 | otp[2]) & 0x3fffc) >> 2,
 		 /* W lot ID, bits 34-45 */
-		 FIELD_GET(GENMASK_ULL(45, 34), otp),
+		 ((otp[5] << 8 | otp[4]) & 0x3ffc) >> 2,
 		 /* WP ID, bits 47-49 */
-		 FIELD_GET(GENMASK_ULL(49, 47), otp),
+		 ((otp[6] << 8 | otp[5]) & 0x0380) >> 7,
 		 /* rev ID, bits 50-55 */
-		 FIELD_GET(GENMASK_ULL(55, 50), otp));
+		 otp[6] >> 2);
 
 	return 0;
 }
@@ -1058,7 +1054,7 @@ static int mpu3050_trigger_probe(struct iio_dev *indio_dev, int irq)
 	mpu3050->trig = devm_iio_trigger_alloc(&indio_dev->dev,
 					       "%s-dev%d",
 					       indio_dev->name,
-					       iio_device_id(indio_dev));
+					       indio_dev->id);
 	if (!mpu3050->trig)
 		return -ENOMEM;
 
@@ -1164,7 +1160,7 @@ int mpu3050_common_probe(struct device *dev,
 	mpu3050->divisor = 99;
 
 	/* Read the mounting matrix, if present */
-	ret = iio_read_mount_matrix(dev, &mpu3050->orientation);
+	ret = iio_read_mount_matrix(dev, "mount-matrix", &mpu3050->orientation);
 	if (ret)
 		return ret;
 

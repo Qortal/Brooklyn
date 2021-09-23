@@ -50,7 +50,6 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/gsmmux.h>
-#include "tty.h"
 
 static int debug;
 module_param(debug, int, 0600);
@@ -75,7 +74,7 @@ module_param(debug, int, 0600);
 #define MAX_MTU 1500
 #define	GSM_NET_TX_TIMEOUT (HZ*10)
 
-/*
+/**
  *	struct gsm_mux_net	-	network interface
  *
  *	Created when net interface is initialized.
@@ -267,7 +266,7 @@ struct gsm_mux {
 
 #define MAX_MUX		4			/* 256 minors */
 static struct gsm_mux *gsm_mux[MAX_MUX];	/* GSM muxes */
-static DEFINE_SPINLOCK(gsm_mux_lock);
+static spinlock_t gsm_mux_lock;
 
 static struct tty_driver *gsm_tty_driver;
 
@@ -512,7 +511,7 @@ static void gsm_print_packet(const char *hdr, int addr, int cr,
  */
 
 /**
- *	gsm_stuff_frame	-	bytestuff a packet
+ *	gsm_stuff_packet	-	bytestuff a packet
  *	@input: input buffer
  *	@output: output buffer
  *	@len: length of input
@@ -652,7 +651,6 @@ static struct gsm_msg *gsm_data_alloc(struct gsm_mux *gsm, u8 addr, int len,
 /**
  *	gsm_data_kick		-	poke the queue
  *	@gsm: GSM Mux
- *	@dlci: DLCI sending the data
  *
  *	The tty device has called us to indicate that room has appeared in
  *	the transmit queue. Ram more data into the pipe if we have any
@@ -1007,7 +1005,6 @@ static void gsm_control_reply(struct gsm_mux *gsm, int cmd, const u8 *data,
  *	@tty: virtual tty bound to the DLCI
  *	@dlci: DLCI to affect
  *	@modem: modem bits (full EA)
- *	@clen: command length
  *
  *	Used when a modem control message or line state inline in adaption
  *	layer 2 is processed. Sort out the local modem state and throttles
@@ -1594,7 +1591,7 @@ static void gsm_dlci_data(struct gsm_dlci *dlci, const u8 *data, int clen)
 }
 
 /**
- *	gsm_dlci_command	-	data arrived on control channel
+ *	gsm_dlci_control	-	data arrived on control channel
  *	@dlci: channel
  *	@data: block of bytes received
  *	@len: length of received block
@@ -2424,27 +2421,30 @@ static void gsmld_detach_gsm(struct tty_struct *tty, struct gsm_mux *gsm)
 }
 
 static void gsmld_receive_buf(struct tty_struct *tty, const unsigned char *cp,
-			      const char *fp, int count)
+			      char *fp, int count)
 {
 	struct gsm_mux *gsm = tty->disc_data;
+	const unsigned char *dp;
+	char *f;
+	int i;
 	char flags = TTY_NORMAL;
 
 	if (debug & 4)
 		print_hex_dump_bytes("gsmld_receive: ", DUMP_PREFIX_OFFSET,
 				     cp, count);
 
-	for (; count; count--, cp++) {
-		if (fp)
-			flags = *fp++;
+	for (i = count, dp = cp, f = fp; i; i--, dp++) {
+		if (f)
+			flags = *f++;
 		switch (flags) {
 		case TTY_NORMAL:
-			gsm->receive(gsm, *cp);
+			gsm->receive(gsm, *dp);
 			break;
 		case TTY_OVERRUN:
 		case TTY_BREAK:
 		case TTY_PARITY:
 		case TTY_FRAME:
-			gsm_error(gsm, *cp, flags);
+			gsm_error(gsm, *dp, flags);
 			break;
 		default:
 			WARN_ONCE(1, "%s: unknown flag %d\n",
@@ -2557,8 +2557,6 @@ static void gsmld_write_wakeup(struct tty_struct *tty)
  *	@file: file object
  *	@buf: userspace buffer pointer
  *	@nr: size of I/O
- *	@cookie: unused
- *	@offset: unused
  *
  *	Perform reads for the line discipline. We are guaranteed that the
  *	line discipline will not be closed under us but we may get multiple
@@ -2859,7 +2857,7 @@ static int gsm_create_network(struct gsm_dlci *dlci, struct gsm_netconfig *nc)
 /* Line discipline for real tty */
 static struct tty_ldisc_ops tty_ldisc_packet = {
 	.owner		 = THIS_MODULE,
-	.num		 = N_GSM0710,
+	.magic           = TTY_LDISC_MAGIC,
 	.name            = "n_gsm",
 	.open            = gsmld_open,
 	.close           = gsmld_close,
@@ -3058,19 +3056,19 @@ static int gsmtty_write(struct tty_struct *tty, const unsigned char *buf,
 	return sent;
 }
 
-static unsigned int gsmtty_write_room(struct tty_struct *tty)
+static int gsmtty_write_room(struct tty_struct *tty)
 {
 	struct gsm_dlci *dlci = tty->driver_data;
 	if (dlci->state == DLCI_CLOSED)
-		return 0;
+		return -EINVAL;
 	return TX_SIZE - kfifo_len(&dlci->fifo);
 }
 
-static unsigned int gsmtty_chars_in_buffer(struct tty_struct *tty)
+static int gsmtty_chars_in_buffer(struct tty_struct *tty)
 {
 	struct gsm_dlci *dlci = tty->driver_data;
 	if (dlci->state == DLCI_CLOSED)
-		return 0;
+		return -EINVAL;
 	return kfifo_len(&dlci->fifo);
 }
 
@@ -3245,7 +3243,7 @@ static const struct tty_operations gsmtty_ops = {
 static int __init gsm_init(void)
 {
 	/* Fill in our line protocol discipline, and register it */
-	int status = tty_register_ldisc(&tty_ldisc_packet);
+	int status = tty_register_ldisc(N_GSM0710, &tty_ldisc_packet);
 	if (status != 0) {
 		pr_err("n_gsm: can't register line discipline (err = %d)\n",
 								status);
@@ -3254,9 +3252,9 @@ static int __init gsm_init(void)
 
 	gsm_tty_driver = alloc_tty_driver(256);
 	if (!gsm_tty_driver) {
+		tty_unregister_ldisc(N_GSM0710);
 		pr_err("gsm_init: tty allocation failed.\n");
-		status = -ENOMEM;
-		goto err_unreg_ldisc;
+		return -EINVAL;
 	}
 	gsm_tty_driver->driver_name	= "gsmtty";
 	gsm_tty_driver->name		= "gsmtty";
@@ -3271,24 +3269,25 @@ static int __init gsm_init(void)
 	gsm_tty_driver->init_termios.c_lflag &= ~ECHO;
 	tty_set_operations(gsm_tty_driver, &gsmtty_ops);
 
+	spin_lock_init(&gsm_mux_lock);
+
 	if (tty_register_driver(gsm_tty_driver)) {
+		put_tty_driver(gsm_tty_driver);
+		tty_unregister_ldisc(N_GSM0710);
 		pr_err("gsm_init: tty registration failed.\n");
-		status = -EBUSY;
-		goto err_put_driver;
+		return -EBUSY;
 	}
 	pr_debug("gsm_init: loaded as %d,%d.\n",
 			gsm_tty_driver->major, gsm_tty_driver->minor_start);
 	return 0;
-err_put_driver:
-	put_tty_driver(gsm_tty_driver);
-err_unreg_ldisc:
-	tty_unregister_ldisc(&tty_ldisc_packet);
-	return status;
 }
 
 static void __exit gsm_exit(void)
 {
-	tty_unregister_ldisc(&tty_ldisc_packet);
+	int status = tty_unregister_ldisc(N_GSM0710);
+	if (status != 0)
+		pr_err("n_gsm: can't unregister line discipline (err = %d)\n",
+								status);
 	tty_unregister_driver(gsm_tty_driver);
 	put_tty_driver(gsm_tty_driver);
 }

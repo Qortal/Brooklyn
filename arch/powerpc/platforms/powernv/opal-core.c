@@ -71,7 +71,7 @@ static LIST_HEAD(opalcore_list);
 static struct opalcore_config *oc_conf;
 static const struct opal_mpipl_fadump *opalc_metadata;
 static const struct opal_mpipl_fadump *opalc_cpu_metadata;
-static struct kobject *mpipl_kobj;
+struct kobject *mpipl_kobj;
 
 /*
  * Set crashing CPU's signal to SIGUSR1. if the kernel is triggered
@@ -119,8 +119,8 @@ static void fill_prstatus(struct elf_prstatus *prstatus, int pir,
 	 * As a PIR value could also be '0', add an offset of '100'
 	 * to every PIR to avoid misinterpretations in GDB.
 	 */
-	prstatus->common.pr_pid  = cpu_to_be32(100 + pir);
-	prstatus->common.pr_ppid = cpu_to_be32(1);
+	prstatus->pr_pid  = cpu_to_be32(100 + pir);
+	prstatus->pr_ppid = cpu_to_be32(1);
 
 	/*
 	 * Indicate SIGUSR1 for crash initiated from kernel.
@@ -130,7 +130,7 @@ static void fill_prstatus(struct elf_prstatus *prstatus, int pir,
 		short sig;
 
 		sig = kernel_initiated ? SIGUSR1 : SIGTERM;
-		prstatus->common.pr_cursig = cpu_to_be16(sig);
+		prstatus->pr_cursig = cpu_to_be16(sig);
 	}
 }
 

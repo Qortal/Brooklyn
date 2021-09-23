@@ -52,8 +52,7 @@ struct abm_funcs {
 	unsigned int (*get_target_backlight)(struct abm *abm);
 	bool (*init_abm_config)(struct abm *abm,
 			const char *src,
-			unsigned int bytes,
-			unsigned int inst);
+			unsigned int bytes);
 };
 
 #endif

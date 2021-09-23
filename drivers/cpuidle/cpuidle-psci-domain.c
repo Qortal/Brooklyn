@@ -327,8 +327,6 @@ struct device *psci_dt_attach_cpu(int cpu)
 	if (cpu_online(cpu))
 		pm_runtime_get_sync(dev);
 
-	dev_pm_syscore_device(dev, true);
-
 	return dev;
 }
 

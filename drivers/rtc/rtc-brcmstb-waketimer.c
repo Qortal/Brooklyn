@@ -252,7 +252,7 @@ static int brcmstb_waketmr_probe(struct platform_device *pdev)
 	timer->rtc->ops = &brcmstb_waketmr_ops;
 	timer->rtc->range_max = U32_MAX;
 
-	ret = devm_rtc_register_device(timer->rtc);
+	ret = rtc_register_device(timer->rtc);
 	if (ret)
 		goto err_notifier;
 
@@ -264,7 +264,8 @@ err_notifier:
 	unregister_reboot_notifier(&timer->reboot_notifier);
 
 err_clk:
-	clk_disable_unprepare(timer->clk);
+	if (timer->clk)
+		clk_disable_unprepare(timer->clk);
 
 	return ret;
 }
@@ -306,7 +307,7 @@ static int brcmstb_waketmr_resume(struct device *dev)
 static SIMPLE_DEV_PM_OPS(brcmstb_waketmr_pm_ops,
 			 brcmstb_waketmr_suspend, brcmstb_waketmr_resume);
 
-static const __maybe_unused struct of_device_id brcmstb_waketmr_of_match[] = {
+static const struct of_device_id brcmstb_waketmr_of_match[] = {
 	{ .compatible = "brcm,brcmstb-waketimer" },
 	{ /* sentinel */ },
 };

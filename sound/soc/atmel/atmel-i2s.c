@@ -559,8 +559,7 @@ static struct snd_soc_dai_driver atmel_i2s_dai = {
 		.formats = ATMEL_I2S_FORMATS,
 	},
 	.ops = &atmel_i2s_dai_ops,
-	.symmetric_rate = 1,
-	.symmetric_sample_bits = 1,
+	.symmetric_rates = 1,
 };
 
 static const struct snd_soc_component_driver atmel_i2s_component = {
@@ -582,8 +581,8 @@ static int atmel_i2s_sama5d2_mck_init(struct atmel_i2s_dev *dev,
 		err = PTR_ERR(muxclk);
 		if (err == -EPROBE_DEFER)
 			return -EPROBE_DEFER;
-		dev_dbg(dev->dev,
-			"failed to get the I2S clock control: %d\n", err);
+		dev_warn(dev->dev,
+			 "failed to get the I2S clock control: %d\n", err);
 		return 0;
 	}
 
@@ -614,7 +613,7 @@ static int atmel_i2s_probe(struct platform_device *pdev)
 	struct regmap *regmap;
 	void __iomem *base;
 	int irq;
-	int err;
+	int err = -ENXIO;
 	unsigned int pcm_flags = 0;
 	unsigned int version;
 
@@ -629,7 +628,8 @@ static int atmel_i2s_probe(struct platform_device *pdev)
 		dev->caps = match->data;
 
 	/* Map I/O registers. */
-	base = devm_platform_get_and_ioremap_resource(pdev, 0, &mem);
+	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	base = devm_ioremap_resource(&pdev->dev, mem);
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 

@@ -158,9 +158,7 @@ static int lidar_get_measurement(struct lidar_data *data, u16 *reg)
 	int tries = 10;
 	int ret;
 
-	ret = pm_runtime_resume_and_get(&client->dev);
-	if (ret < 0)
-		return ret;
+	pm_runtime_get_sync(&client->dev);
 
 	/* start sample */
 	ret = lidar_write_control(data, LIDAR_REG_CONTROL_ACQUIRE);

@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0
 config CAN_RCAR
-	tristate "Renesas R-Car and RZ/G CAN controller"
+	tristate "Renesas R-Car CAN controller"
 	depends on ARCH_RENESAS || ARM
 	help
 	  Say Y here if you want to use CAN controller found on Renesas R-Car
-	  or RZ/G SoCs.
+	  SoCs.
 
 	  To compile this driver as a module, choose M here: the module will
 	  be called rcar_can.

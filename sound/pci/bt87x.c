@@ -23,6 +23,8 @@
 MODULE_AUTHOR("Clemens Ladisch <clemens@ladisch.de>");
 MODULE_DESCRIPTION("Brooktree Bt87x audio driver");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{Brooktree,Bt878},"
+		"{Brooktree,Bt879}}");
 
 static int index[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS - 1)] = -2}; /* Exclude the first card */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
@@ -325,8 +327,7 @@ static irqreturn_t snd_bt87x_interrupt(int irq, void *dev_id)
 		current_block = chip->current_line * 16 / chip->lines;
 		irq_block = status >> INT_RISCS_SHIFT;
 		if (current_block != irq_block)
-			chip->current_line = DIV_ROUND_UP(irq_block * chip->lines,
-							  16);
+			chip->current_line = (irq_block * chip->lines + 15) / 16;
 
 		snd_pcm_period_elapsed(chip->substream);
 	}
@@ -719,8 +720,7 @@ static int snd_bt87x_create(struct snd_card *card,
 	chip->irq = -1;
 	spin_lock_init(&chip->reg_lock);
 
-	err = pci_request_regions(pci, "Bt87x audio");
-	if (err < 0) {
+	if ((err = pci_request_regions(pci, "Bt87x audio")) < 0) {
 		kfree(chip);
 		pci_disable_device(pci);
 		return err;

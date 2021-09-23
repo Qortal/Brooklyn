@@ -324,13 +324,14 @@ static void s3c2410_hcd_oc(struct s3c2410_hcd_info *info, int port_oc)
 /*
  * ohci_hcd_s3c2410_remove - shutdown processing for HCD
  * @dev: USB Host Controller being removed
- *
- * Context: task context, might sleep
+ * Context: !in_interrupt()
  *
  * Reverses the effect of ohci_hcd_3c2410_probe(), first invoking
  * the HCD's stop() method.  It is always called from a thread
  * context, normally "rmmod", "apmd", or something similar.
- */
+ *
+*/
+
 static int
 ohci_hcd_s3c2410_remove(struct platform_device *dev)
 {
@@ -344,13 +345,12 @@ ohci_hcd_s3c2410_remove(struct platform_device *dev)
 
 /*
  * ohci_hcd_s3c2410_probe - initialize S3C2410-based HCDs
- * @dev: USB Host Controller to be probed
- *
- * Context: task context, might sleep
+ * Context: !in_interrupt()
  *
  * Allocates basic resources for this USB host controller, and
  * then invokes the start() method for the HCD associated with it
  * through the hotplug entry's driver_data.
+ *
  */
 static int ohci_hcd_s3c2410_probe(struct platform_device *dev)
 {

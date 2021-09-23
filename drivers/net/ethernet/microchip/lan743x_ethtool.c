@@ -730,8 +730,8 @@ static int lan743x_ethtool_get_eee(struct net_device *netdev,
 static int lan743x_ethtool_set_eee(struct net_device *netdev,
 				   struct ethtool_eee *eee)
 {
-	struct lan743x_adapter *adapter;
-	struct phy_device *phydev;
+	struct lan743x_adapter *adapter = netdev_priv(netdev);
+	struct phy_device *phydev = NULL;
 	u32 buf = 0;
 	int ret = 0;
 
@@ -780,9 +780,7 @@ static void lan743x_ethtool_get_wol(struct net_device *netdev,
 
 	wol->supported = 0;
 	wol->wolopts = 0;
-
-	if (netdev->phydev)
-		phy_ethtool_get_wol(netdev->phydev, wol);
+	phy_ethtool_get_wol(netdev->phydev, wol);
 
 	wol->supported |= WAKE_BCAST | WAKE_UCAST | WAKE_MCAST |
 		WAKE_MAGIC | WAKE_PHY | WAKE_ARP;
@@ -811,8 +809,9 @@ static int lan743x_ethtool_set_wol(struct net_device *netdev,
 
 	device_set_wakeup_enable(&adapter->pdev->dev, (bool)wol->wolopts);
 
-	return netdev->phydev ? phy_ethtool_set_wol(netdev->phydev, wol)
-			: -ENETDOWN;
+	phy_ethtool_set_wol(netdev->phydev, wol);
+
+	return 0;
 }
 #endif /* CONFIG_PM */
 

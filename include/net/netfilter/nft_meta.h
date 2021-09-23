@@ -7,8 +7,8 @@
 struct nft_meta {
 	enum nft_meta_keys	key:8;
 	union {
-		u8		dreg;
-		u8		sreg;
+		enum nft_registers	dreg:8;
+		enum nft_registers	sreg:8;
 	};
 };
 

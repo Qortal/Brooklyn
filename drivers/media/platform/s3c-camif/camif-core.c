@@ -131,13 +131,11 @@ static int camif_get_scaler_factor(u32 src, u32 tar, u32 *ratio, u32 *shift)
 	while (sh--) {
 		unsigned int tmp = 1 << sh;
 		if (src >= tar * tmp) {
-			*shift = sh;
-			*ratio = tmp;
+			*shift = sh, *ratio = tmp;
 			return 0;
 		}
 	}
-	*shift = 0;
-	*ratio = 1;
+	*shift = 0, *ratio = 1;
 	return 0;
 }
 
@@ -460,9 +458,9 @@ static int s3c_camif_probe(struct platform_device *pdev)
 
 	pm_runtime_enable(dev);
 
-	ret = pm_runtime_resume_and_get(dev);
+	ret = pm_runtime_get_sync(dev);
 	if (ret < 0)
-		goto err_disable;
+		goto err_pm;
 
 	ret = camif_media_dev_init(camif);
 	if (ret < 0)
@@ -502,7 +500,6 @@ err_sens:
 	camif_unregister_media_entities(camif);
 err_pm:
 	pm_runtime_put(dev);
-err_disable:
 	pm_runtime_disable(dev);
 	camif_clk_put(camif);
 err_clk:

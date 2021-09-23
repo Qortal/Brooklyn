@@ -40,7 +40,7 @@ static __poll_t cec_poll(struct file *filp,
 
 	poll_wait(filp, &fh->wait, poll);
 	if (!cec_is_registered(adap))
-		return EPOLLERR | EPOLLHUP | EPOLLPRI;
+		return EPOLLERR | EPOLLHUP;
 	mutex_lock(&adap->lock);
 	if (adap->is_configured &&
 	    adap->transmit_queue_sz < CEC_MAX_MSG_TX_QUEUE_SZ)

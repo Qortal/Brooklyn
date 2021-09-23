@@ -95,7 +95,7 @@ struct tegra20_das {
  * dap_id: DAP to connect: TEGRA20_DAS_DAP_ID_*
  * dac_sel: DAC to connect to: TEGRA20_DAS_DAP_SEL_DAC*
  */
-extern int tegra20_das_connect_dap_to_dac(int dap, int dac);
+extern int tegra20_das_connect_dap_to_dac(int dap_id, int dac_sel);
 
 /*
  * Connect a DAP to another DAP
@@ -105,7 +105,7 @@ extern int tegra20_das_connect_dap_to_dac(int dap, int dac);
  * sdata1rx: Is this DAP's SDATA1 pin RX (1) or TX (0)
  * sdata2rx: Is this DAP's SDATA2 pin RX (1) or TX (0)
  */
-extern int tegra20_das_connect_dap_to_dap(int dap, int otherdap,
+extern int tegra20_das_connect_dap_to_dap(int dap_id, int other_dap_sel,
 					  int master, int sdata1rx,
 					  int sdata2rx);
 
@@ -115,6 +115,6 @@ extern int tegra20_das_connect_dap_to_dap(int dap, int otherdap,
  * dac_id: DAC ID to connect: TEGRA20_DAS_DAC_ID_*
  * dap_sel: DAP to receive input from: TEGRA20_DAS_DAC_SEL_DAP*
  */
-extern int tegra20_das_connect_dac_to_dap(int dac, int dap);
+extern int tegra20_das_connect_dac_to_dap(int dac_id, int dap_sel);
 
 #endif

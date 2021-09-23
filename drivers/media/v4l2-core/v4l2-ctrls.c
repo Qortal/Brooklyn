@@ -422,11 +422,6 @@ const char * const *v4l2_ctrl_get_menu(u32 id)
 		"Annex B Start Code",
 		NULL,
 	};
-	static const char * const h264_hierarchical_coding_type[] = {
-		"Hier Coding B",
-		"Hier Coding P",
-		NULL,
-	};
 	static const char * const mpeg_mpeg2_level[] = {
 		"Low",
 		"Main",
@@ -699,12 +694,10 @@ const char * const *v4l2_ctrl_get_menu(u32 id)
 		return h264_fp_arrangement_type;
 	case V4L2_CID_MPEG_VIDEO_H264_FMO_MAP_TYPE:
 		return h264_fmo_map_type;
-	case V4L2_CID_STATELESS_H264_DECODE_MODE:
+	case V4L2_CID_MPEG_VIDEO_H264_DECODE_MODE:
 		return h264_decode_mode;
-	case V4L2_CID_STATELESS_H264_START_CODE:
+	case V4L2_CID_MPEG_VIDEO_H264_START_CODE:
 		return h264_start_code;
-	case V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING_TYPE:
-		return h264_hierarchical_coding_type;
 	case V4L2_CID_MPEG_VIDEO_MPEG2_LEVEL:
 		return mpeg_mpeg2_level;
 	case V4L2_CID_MPEG_VIDEO_MPEG2_PROFILE:
@@ -838,7 +831,7 @@ const char *v4l2_ctrl_get_name(u32 id)
 	/* The MPEG controls are applicable to all codec controls
 	 * and the 'MPEG' part of the define is historical */
 	/* Keep the order of the 'case's the same as in videodev2.h! */
-	case V4L2_CID_CODEC_CLASS:		return "Codec Controls";
+	case V4L2_CID_MPEG_CLASS:		return "Codec Controls";
 	case V4L2_CID_MPEG_STREAM_TYPE:		return "Stream Type";
 	case V4L2_CID_MPEG_STREAM_PID_PMT:	return "Stream PMT Program ID";
 	case V4L2_CID_MPEG_STREAM_PID_AUDIO:	return "Stream Audio Program ID";
@@ -882,9 +875,6 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_MPEG_VIDEO_HEADER_MODE:			return "Sequence Header Mode";
 	case V4L2_CID_MPEG_VIDEO_MAX_REF_PIC:			return "Max Number of Reference Pics";
 	case V4L2_CID_MPEG_VIDEO_FRAME_SKIP_MODE:		return "Frame Skip Mode";
-	case V4L2_CID_MPEG_VIDEO_DEC_DISPLAY_DELAY:		return "Display Delay";
-	case V4L2_CID_MPEG_VIDEO_DEC_DISPLAY_DELAY_ENABLE:	return "Display Delay Enable";
-	case V4L2_CID_MPEG_VIDEO_AU_DELIMITER:			return "Generate Access Unit Delimiters";
 	case V4L2_CID_MPEG_VIDEO_H263_I_FRAME_QP:		return "H263 I-Frame QP Value";
 	case V4L2_CID_MPEG_VIDEO_H263_P_FRAME_QP:		return "H263 P-Frame QP Value";
 	case V4L2_CID_MPEG_VIDEO_H263_B_FRAME_QP:		return "H263 B-Frame QP Value";
@@ -931,15 +921,14 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_MPEG_VIDEO_H264_I_FRAME_MAX_QP:		return "H264 I-Frame Maximum QP Value";
 	case V4L2_CID_MPEG_VIDEO_H264_P_FRAME_MIN_QP:		return "H264 P-Frame Minimum QP Value";
 	case V4L2_CID_MPEG_VIDEO_H264_P_FRAME_MAX_QP:		return "H264 P-Frame Maximum QP Value";
-	case V4L2_CID_MPEG_VIDEO_H264_B_FRAME_MIN_QP:		return "H264 B-Frame Minimum QP Value";
-	case V4L2_CID_MPEG_VIDEO_H264_B_FRAME_MAX_QP:		return "H264 B-Frame Maximum QP Value";
-	case V4L2_CID_MPEG_VIDEO_H264_HIER_CODING_L0_BR:	return "H264 Hierarchical Lay 0 Bitrate";
-	case V4L2_CID_MPEG_VIDEO_H264_HIER_CODING_L1_BR:	return "H264 Hierarchical Lay 1 Bitrate";
-	case V4L2_CID_MPEG_VIDEO_H264_HIER_CODING_L2_BR:	return "H264 Hierarchical Lay 2 Bitrate";
-	case V4L2_CID_MPEG_VIDEO_H264_HIER_CODING_L3_BR:	return "H264 Hierarchical Lay 3 Bitrate";
-	case V4L2_CID_MPEG_VIDEO_H264_HIER_CODING_L4_BR:	return "H264 Hierarchical Lay 4 Bitrate";
-	case V4L2_CID_MPEG_VIDEO_H264_HIER_CODING_L5_BR:	return "H264 Hierarchical Lay 5 Bitrate";
-	case V4L2_CID_MPEG_VIDEO_H264_HIER_CODING_L6_BR:	return "H264 Hierarchical Lay 6 Bitrate";
+	case V4L2_CID_MPEG_VIDEO_H264_SPS:			return "H264 Sequence Parameter Set";
+	case V4L2_CID_MPEG_VIDEO_H264_PPS:			return "H264 Picture Parameter Set";
+	case V4L2_CID_MPEG_VIDEO_H264_SCALING_MATRIX:		return "H264 Scaling Matrix";
+	case V4L2_CID_MPEG_VIDEO_H264_SLICE_PARAMS:		return "H264 Slice Parameters";
+	case V4L2_CID_MPEG_VIDEO_H264_DECODE_PARAMS:		return "H264 Decode Parameters";
+	case V4L2_CID_MPEG_VIDEO_H264_DECODE_MODE:		return "H264 Decode Mode";
+	case V4L2_CID_MPEG_VIDEO_H264_START_CODE:		return "H264 Start Code";
+	case V4L2_CID_MPEG_VIDEO_H264_PRED_WEIGHTS:		return "H264 Prediction Weight Table";
 	case V4L2_CID_MPEG_VIDEO_MPEG2_LEVEL:			return "MPEG2 Level";
 	case V4L2_CID_MPEG_VIDEO_MPEG2_PROFILE:			return "MPEG2 Profile";
 	case V4L2_CID_MPEG_VIDEO_MPEG4_I_FRAME_QP:		return "MPEG4 I-Frame QP Value";
@@ -956,18 +945,14 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_MPEG_VIDEO_VBV_SIZE:			return "VBV Buffer Size";
 	case V4L2_CID_MPEG_VIDEO_DEC_PTS:			return "Video Decoder PTS";
 	case V4L2_CID_MPEG_VIDEO_DEC_FRAME:			return "Video Decoder Frame Count";
-	case V4L2_CID_MPEG_VIDEO_DEC_CONCEAL_COLOR:		return "Video Decoder Conceal Color";
 	case V4L2_CID_MPEG_VIDEO_VBV_DELAY:			return "Initial Delay for VBV Control";
 	case V4L2_CID_MPEG_VIDEO_MV_H_SEARCH_RANGE:		return "Horizontal MV Search Range";
 	case V4L2_CID_MPEG_VIDEO_MV_V_SEARCH_RANGE:		return "Vertical MV Search Range";
 	case V4L2_CID_MPEG_VIDEO_REPEAT_SEQ_HEADER:		return "Repeat Sequence Header";
 	case V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME:		return "Force Key Frame";
-	case V4L2_CID_MPEG_VIDEO_BASELAYER_PRIORITY_ID:		return "Base Layer Priority ID";
-	case V4L2_CID_MPEG_VIDEO_LTR_COUNT:			return "LTR Count";
-	case V4L2_CID_MPEG_VIDEO_FRAME_LTR_INDEX:		return "Frame LTR Index";
-	case V4L2_CID_MPEG_VIDEO_USE_LTR_FRAMES:		return "Use LTR Frames";
 	case V4L2_CID_MPEG_VIDEO_MPEG2_SLICE_PARAMS:		return "MPEG-2 Slice Parameters";
 	case V4L2_CID_MPEG_VIDEO_MPEG2_QUANTIZATION:		return "MPEG-2 Quantization Matrices";
+	case V4L2_CID_MPEG_VIDEO_FWHT_PARAMS:			return "FWHT Stateless Parameters";
 	case V4L2_CID_FWHT_I_FRAME_QP:				return "FWHT I-Frame QP Value";
 	case V4L2_CID_FWHT_P_FRAME_QP:				return "FWHT P-Frame QP Value";
 
@@ -986,6 +971,7 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_MPEG_VIDEO_VP8_PROFILE:			return "VP8 Profile";
 	case V4L2_CID_MPEG_VIDEO_VP9_PROFILE:			return "VP9 Profile";
 	case V4L2_CID_MPEG_VIDEO_VP9_LEVEL:			return "VP9 Level";
+	case V4L2_CID_MPEG_VIDEO_VP8_FRAME_HEADER:		return "VP8 Frame Header";
 
 	/* HEVC controls */
 	case V4L2_CID_MPEG_VIDEO_HEVC_I_FRAME_QP:		return "HEVC I-Frame QP Value";
@@ -993,12 +979,6 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_MPEG_VIDEO_HEVC_B_FRAME_QP:		return "HEVC B-Frame QP Value";
 	case V4L2_CID_MPEG_VIDEO_HEVC_MIN_QP:			return "HEVC Minimum QP Value";
 	case V4L2_CID_MPEG_VIDEO_HEVC_MAX_QP:			return "HEVC Maximum QP Value";
-	case V4L2_CID_MPEG_VIDEO_HEVC_I_FRAME_MIN_QP:		return "HEVC I-Frame Minimum QP Value";
-	case V4L2_CID_MPEG_VIDEO_HEVC_I_FRAME_MAX_QP:		return "HEVC I-Frame Maximum QP Value";
-	case V4L2_CID_MPEG_VIDEO_HEVC_P_FRAME_MIN_QP:		return "HEVC P-Frame Minimum QP Value";
-	case V4L2_CID_MPEG_VIDEO_HEVC_P_FRAME_MAX_QP:		return "HEVC P-Frame Maximum QP Value";
-	case V4L2_CID_MPEG_VIDEO_HEVC_B_FRAME_MIN_QP:		return "HEVC B-Frame Minimum QP Value";
-	case V4L2_CID_MPEG_VIDEO_HEVC_B_FRAME_MAX_QP:		return "HEVC B-Frame Maximum QP Value";
 	case V4L2_CID_MPEG_VIDEO_HEVC_PROFILE:			return "HEVC Profile";
 	case V4L2_CID_MPEG_VIDEO_HEVC_LEVEL:			return "HEVC Level";
 	case V4L2_CID_MPEG_VIDEO_HEVC_TIER:			return "HEVC Tier";
@@ -1203,26 +1183,6 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_DETECT_MD_GLOBAL_THRESHOLD: return "MD Global Threshold";
 	case V4L2_CID_DETECT_MD_THRESHOLD_GRID:	return "MD Threshold Grid";
 	case V4L2_CID_DETECT_MD_REGION_GRID:	return "MD Region Grid";
-
-	/* Stateless Codec controls */
-	/* Keep the order of the 'case's the same as in v4l2-controls.h! */
-	case V4L2_CID_CODEC_STATELESS_CLASS:	return "Stateless Codec Controls";
-	case V4L2_CID_STATELESS_H264_DECODE_MODE:		return "H264 Decode Mode";
-	case V4L2_CID_STATELESS_H264_START_CODE:		return "H264 Start Code";
-	case V4L2_CID_STATELESS_H264_SPS:			return "H264 Sequence Parameter Set";
-	case V4L2_CID_STATELESS_H264_PPS:			return "H264 Picture Parameter Set";
-	case V4L2_CID_STATELESS_H264_SCALING_MATRIX:		return "H264 Scaling Matrix";
-	case V4L2_CID_STATELESS_H264_PRED_WEIGHTS:		return "H264 Prediction Weight Table";
-	case V4L2_CID_STATELESS_H264_SLICE_PARAMS:		return "H264 Slice Parameters";
-	case V4L2_CID_STATELESS_H264_DECODE_PARAMS:		return "H264 Decode Parameters";
-	case V4L2_CID_STATELESS_FWHT_PARAMS:			return "FWHT Stateless Parameters";
-	case V4L2_CID_STATELESS_VP8_FRAME:			return "VP8 Frame Parameters";
-
-	/* Colorimetry controls */
-	/* Keep the order of the 'case's the same as in v4l2-controls.h! */
-	case V4L2_CID_COLORIMETRY_CLASS:	return "Colorimetry Controls";
-	case V4L2_CID_COLORIMETRY_HDR10_CLL_INFO:		return "HDR10 Content Light Info";
-	case V4L2_CID_COLORIMETRY_HDR10_MASTERING_DISPLAY:	return "HDR10 Mastering Display";
 	default:
 		return NULL;
 	}
@@ -1263,14 +1223,12 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 	case V4L2_CID_FLASH_READY:
 	case V4L2_CID_MPEG_VIDEO_DECODER_MPEG4_DEBLOCK_FILTER:
 	case V4L2_CID_MPEG_VIDEO_DECODER_SLICE_INTERFACE:
-	case V4L2_CID_MPEG_VIDEO_DEC_DISPLAY_DELAY_ENABLE:
 	case V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE:
 	case V4L2_CID_MPEG_VIDEO_MB_RC_ENABLE:
 	case V4L2_CID_MPEG_VIDEO_H264_8X8_TRANSFORM:
 	case V4L2_CID_MPEG_VIDEO_H264_VUI_SAR_ENABLE:
 	case V4L2_CID_MPEG_VIDEO_MPEG4_QPEL:
 	case V4L2_CID_MPEG_VIDEO_REPEAT_SEQ_HEADER:
-	case V4L2_CID_MPEG_VIDEO_AU_DELIMITER:
 	case V4L2_CID_WIDE_DYNAMIC_RANGE:
 	case V4L2_CID_IMAGE_STABILIZATION:
 	case V4L2_CID_RDS_RECEPTION:
@@ -1300,19 +1258,7 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 		break;
 	case V4L2_CID_MPEG_VIDEO_MV_H_SEARCH_RANGE:
 	case V4L2_CID_MPEG_VIDEO_MV_V_SEARCH_RANGE:
-	case V4L2_CID_MPEG_VIDEO_DEC_DISPLAY_DELAY:
 		*type = V4L2_CTRL_TYPE_INTEGER;
-		break;
-	case V4L2_CID_MPEG_VIDEO_LTR_COUNT:
-		*type = V4L2_CTRL_TYPE_INTEGER;
-		break;
-	case V4L2_CID_MPEG_VIDEO_FRAME_LTR_INDEX:
-		*type = V4L2_CTRL_TYPE_INTEGER;
-		*flags |= V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
-		break;
-	case V4L2_CID_MPEG_VIDEO_USE_LTR_FRAMES:
-		*type = V4L2_CTRL_TYPE_BITMASK;
-		*flags |= V4L2_CTRL_FLAG_EXECUTE_ON_WRITE;
 		break;
 	case V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME:
 	case V4L2_CID_PAN_RESET:
@@ -1362,7 +1308,8 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 	case V4L2_CID_MPEG_VIDEO_H264_VUI_SAR_IDC:
 	case V4L2_CID_MPEG_VIDEO_H264_SEI_FP_ARRANGEMENT_TYPE:
 	case V4L2_CID_MPEG_VIDEO_H264_FMO_MAP_TYPE:
-	case V4L2_CID_MPEG_VIDEO_H264_HIERARCHICAL_CODING_TYPE:
+	case V4L2_CID_MPEG_VIDEO_H264_DECODE_MODE:
+	case V4L2_CID_MPEG_VIDEO_H264_START_CODE:
 	case V4L2_CID_MPEG_VIDEO_MPEG2_LEVEL:
 	case V4L2_CID_MPEG_VIDEO_MPEG2_PROFILE:
 	case V4L2_CID_MPEG_VIDEO_MPEG4_LEVEL:
@@ -1393,8 +1340,6 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 	case V4L2_CID_MPEG_VIDEO_HEVC_LOOP_FILTER_MODE:
 	case V4L2_CID_MPEG_VIDEO_HEVC_DECODE_MODE:
 	case V4L2_CID_MPEG_VIDEO_HEVC_START_CODE:
-	case V4L2_CID_STATELESS_H264_DECODE_MODE:
-	case V4L2_CID_STATELESS_H264_START_CODE:
 	case V4L2_CID_CAMERA_ORIENTATION:
 		*type = V4L2_CTRL_TYPE_MENU;
 		break;
@@ -1415,7 +1360,7 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 		break;
 	case V4L2_CID_USER_CLASS:
 	case V4L2_CID_CAMERA_CLASS:
-	case V4L2_CID_CODEC_CLASS:
+	case V4L2_CID_MPEG_CLASS:
 	case V4L2_CID_FM_TX_CLASS:
 	case V4L2_CID_FLASH_CLASS:
 	case V4L2_CID_JPEG_CLASS:
@@ -1425,10 +1370,8 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 	case V4L2_CID_FM_RX_CLASS:
 	case V4L2_CID_RF_TUNER_CLASS:
 	case V4L2_CID_DETECT_CLASS:
-	case V4L2_CID_CODEC_STATELESS_CLASS:
-	case V4L2_CID_COLORIMETRY_CLASS:
 		*type = V4L2_CTRL_TYPE_CTRL_CLASS;
-		/* You can neither read nor write these */
+		/* You can neither read not write these */
 		*flags |= V4L2_CTRL_FLAG_READ_ONLY | V4L2_CTRL_FLAG_WRITE_ONLY;
 		*min = *max = *step = *def = 0;
 		break;
@@ -1468,14 +1411,6 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 		*max = 0x7fffffffffffffffLL;
 		*step = 1;
 		break;
-	case V4L2_CID_MPEG_VIDEO_DEC_CONCEAL_COLOR:
-		*type = V4L2_CTRL_TYPE_INTEGER64;
-		*min = 0;
-		/* default for 8 bit black, luma is 16, chroma is 128 */
-		*def = 0x8000800010LL;
-		*max = 0xffffffffffffLL;
-		*step = 1;
-		break;
 	case V4L2_CID_PIXEL_RATE:
 		*type = V4L2_CTRL_TYPE_INTEGER64;
 		*flags |= V4L2_CTRL_FLAG_READ_ONLY;
@@ -1495,29 +1430,29 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 	case V4L2_CID_MPEG_VIDEO_MPEG2_QUANTIZATION:
 		*type = V4L2_CTRL_TYPE_MPEG2_QUANTIZATION;
 		break;
-	case V4L2_CID_STATELESS_FWHT_PARAMS:
+	case V4L2_CID_MPEG_VIDEO_FWHT_PARAMS:
 		*type = V4L2_CTRL_TYPE_FWHT_PARAMS;
 		break;
-	case V4L2_CID_STATELESS_H264_SPS:
+	case V4L2_CID_MPEG_VIDEO_H264_SPS:
 		*type = V4L2_CTRL_TYPE_H264_SPS;
 		break;
-	case V4L2_CID_STATELESS_H264_PPS:
+	case V4L2_CID_MPEG_VIDEO_H264_PPS:
 		*type = V4L2_CTRL_TYPE_H264_PPS;
 		break;
-	case V4L2_CID_STATELESS_H264_SCALING_MATRIX:
+	case V4L2_CID_MPEG_VIDEO_H264_SCALING_MATRIX:
 		*type = V4L2_CTRL_TYPE_H264_SCALING_MATRIX;
 		break;
-	case V4L2_CID_STATELESS_H264_SLICE_PARAMS:
+	case V4L2_CID_MPEG_VIDEO_H264_SLICE_PARAMS:
 		*type = V4L2_CTRL_TYPE_H264_SLICE_PARAMS;
 		break;
-	case V4L2_CID_STATELESS_H264_DECODE_PARAMS:
+	case V4L2_CID_MPEG_VIDEO_H264_DECODE_PARAMS:
 		*type = V4L2_CTRL_TYPE_H264_DECODE_PARAMS;
 		break;
-	case V4L2_CID_STATELESS_H264_PRED_WEIGHTS:
+	case V4L2_CID_MPEG_VIDEO_H264_PRED_WEIGHTS:
 		*type = V4L2_CTRL_TYPE_H264_PRED_WEIGHTS;
 		break;
-	case V4L2_CID_STATELESS_VP8_FRAME:
-		*type = V4L2_CTRL_TYPE_VP8_FRAME;
+	case V4L2_CID_MPEG_VIDEO_VP8_FRAME_HEADER:
+		*type = V4L2_CTRL_TYPE_VP8_FRAME_HEADER;
 		break;
 	case V4L2_CID_MPEG_VIDEO_HEVC_SPS:
 		*type = V4L2_CTRL_TYPE_HEVC_SPS;
@@ -1534,12 +1469,6 @@ void v4l2_ctrl_fill(u32 id, const char **name, enum v4l2_ctrl_type *type,
 	case V4L2_CID_UNIT_CELL_SIZE:
 		*type = V4L2_CTRL_TYPE_AREA;
 		*flags |= V4L2_CTRL_FLAG_READ_ONLY;
-		break;
-	case V4L2_CID_COLORIMETRY_HDR10_CLL_INFO:
-		*type = V4L2_CTRL_TYPE_HDR10_CLL_INFO;
-		break;
-	case V4L2_CID_COLORIMETRY_HDR10_MASTERING_DISPLAY:
-		*type = V4L2_CTRL_TYPE_HDR10_MASTERING_DISPLAY;
 		break;
 	default:
 		*type = V4L2_CTRL_TYPE_INTEGER;
@@ -1697,8 +1626,6 @@ static void std_init_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 			      union v4l2_ctrl_ptr ptr)
 {
 	struct v4l2_ctrl_mpeg2_slice_params *p_mpeg2_slice_params;
-	struct v4l2_ctrl_vp8_frame *p_vp8_frame;
-	struct v4l2_ctrl_fwht_params *p_fwht_params;
 	void *p = ptr.p + idx * ctrl->elem_size;
 
 	if (ctrl->p_def.p_const)
@@ -1720,18 +1647,6 @@ static void std_init_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 		p_mpeg2_slice_params->picture.picture_structure = 1;
 		p_mpeg2_slice_params->picture.picture_coding_type =
 					V4L2_MPEG2_PICTURE_CODING_TYPE_I;
-		break;
-	case V4L2_CTRL_TYPE_VP8_FRAME:
-		p_vp8_frame = p;
-		p_vp8_frame->num_dct_parts = 1;
-		break;
-	case V4L2_CTRL_TYPE_FWHT_PARAMS:
-		p_fwht_params = p;
-		p_fwht_params->version = V4L2_FWHT_VERSION;
-		p_fwht_params->width = 1280;
-		p_fwht_params->height = 720;
-		p_fwht_params->flags = V4L2_FWHT_FL_PIXENC_YUV |
-			(2 << V4L2_FWHT_FL_COMPONENTS_NUM_OFFSET);
 		break;
 	}
 }
@@ -1817,36 +1732,6 @@ static void std_log(const struct v4l2_ctrl *ctrl)
 	case V4L2_CTRL_TYPE_U32:
 		pr_cont("%u", (unsigned)*ptr.p_u32);
 		break;
-	case V4L2_CTRL_TYPE_H264_SPS:
-		pr_cont("H264_SPS");
-		break;
-	case V4L2_CTRL_TYPE_H264_PPS:
-		pr_cont("H264_PPS");
-		break;
-	case V4L2_CTRL_TYPE_H264_SCALING_MATRIX:
-		pr_cont("H264_SCALING_MATRIX");
-		break;
-	case V4L2_CTRL_TYPE_H264_SLICE_PARAMS:
-		pr_cont("H264_SLICE_PARAMS");
-		break;
-	case V4L2_CTRL_TYPE_H264_DECODE_PARAMS:
-		pr_cont("H264_DECODE_PARAMS");
-		break;
-	case V4L2_CTRL_TYPE_H264_PRED_WEIGHTS:
-		pr_cont("H264_PRED_WEIGHTS");
-		break;
-	case V4L2_CTRL_TYPE_FWHT_PARAMS:
-		pr_cont("FWHT_PARAMS");
-		break;
-	case V4L2_CTRL_TYPE_VP8_FRAME:
-		pr_cont("VP8_FRAME");
-		break;
-	case V4L2_CTRL_TYPE_HDR10_CLL_INFO:
-		pr_cont("HDR10_CLL_INFO");
-		break;
-	case V4L2_CTRL_TYPE_HDR10_MASTERING_DISPLAY:
-		pr_cont("HDR10_MASTERING_DISPLAY");
-		break;
 	default:
 		pr_cont("unknown type %d", ctrl->type);
 		break;
@@ -1889,17 +1774,12 @@ static int std_validate_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 				 union v4l2_ctrl_ptr ptr)
 {
 	struct v4l2_ctrl_mpeg2_slice_params *p_mpeg2_slice_params;
-	struct v4l2_ctrl_vp8_frame *p_vp8_frame;
-	struct v4l2_ctrl_fwht_params *p_fwht_params;
-	struct v4l2_ctrl_h264_sps *p_h264_sps;
-	struct v4l2_ctrl_h264_pps *p_h264_pps;
-	struct v4l2_ctrl_h264_pred_weights *p_h264_pred_weights;
+	struct v4l2_ctrl_vp8_frame_header *p_vp8_frame_header;
 	struct v4l2_ctrl_h264_slice_params *p_h264_slice_params;
 	struct v4l2_ctrl_h264_decode_params *p_h264_dec_params;
 	struct v4l2_ctrl_hevc_sps *p_hevc_sps;
 	struct v4l2_ctrl_hevc_pps *p_hevc_pps;
 	struct v4l2_ctrl_hevc_slice_params *p_hevc_slice_params;
-	struct v4l2_ctrl_hdr10_mastering_display *p_hdr10_mastering;
 	struct v4l2_area *area;
 	void *p = ptr.p + idx * ctrl->elem_size;
 	unsigned int i;
@@ -1951,159 +1831,23 @@ static int std_validate_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 		break;
 
 	case V4L2_CTRL_TYPE_FWHT_PARAMS:
-		p_fwht_params = p;
-		if (p_fwht_params->version < V4L2_FWHT_VERSION)
-			return -EINVAL;
-		if (!p_fwht_params->width || !p_fwht_params->height)
-			return -EINVAL;
 		break;
 
 	case V4L2_CTRL_TYPE_H264_SPS:
-		p_h264_sps = p;
-
-		/* Some syntax elements are only conditionally valid */
-		if (p_h264_sps->pic_order_cnt_type != 0) {
-			p_h264_sps->log2_max_pic_order_cnt_lsb_minus4 = 0;
-		} else if (p_h264_sps->pic_order_cnt_type != 1) {
-			p_h264_sps->num_ref_frames_in_pic_order_cnt_cycle = 0;
-			p_h264_sps->offset_for_non_ref_pic = 0;
-			p_h264_sps->offset_for_top_to_bottom_field = 0;
-			memset(&p_h264_sps->offset_for_ref_frame, 0,
-			       sizeof(p_h264_sps->offset_for_ref_frame));
-		}
-
-		if (!V4L2_H264_SPS_HAS_CHROMA_FORMAT(p_h264_sps)) {
-			p_h264_sps->chroma_format_idc = 1;
-			p_h264_sps->bit_depth_luma_minus8 = 0;
-			p_h264_sps->bit_depth_chroma_minus8 = 0;
-
-			p_h264_sps->flags &=
-				~V4L2_H264_SPS_FLAG_QPPRIME_Y_ZERO_TRANSFORM_BYPASS;
-
-			if (p_h264_sps->chroma_format_idc < 3)
-				p_h264_sps->flags &=
-					~V4L2_H264_SPS_FLAG_SEPARATE_COLOUR_PLANE;
-		}
-
-		if (p_h264_sps->flags & V4L2_H264_SPS_FLAG_FRAME_MBS_ONLY)
-			p_h264_sps->flags &=
-				~V4L2_H264_SPS_FLAG_MB_ADAPTIVE_FRAME_FIELD;
-
-		/*
-		 * Chroma 4:2:2 format require at least High 4:2:2 profile.
-		 *
-		 * The H264 specification and well-known parser implementations
-		 * use profile-idc values directly, as that is clearer and
-		 * less ambiguous. We do the same here.
-		 */
-		if (p_h264_sps->profile_idc < 122 &&
-		    p_h264_sps->chroma_format_idc > 1)
-			return -EINVAL;
-		/* Chroma 4:4:4 format require at least High 4:2:2 profile */
-		if (p_h264_sps->profile_idc < 244 &&
-		    p_h264_sps->chroma_format_idc > 2)
-			return -EINVAL;
-		if (p_h264_sps->chroma_format_idc > 3)
-			return -EINVAL;
-
-		if (p_h264_sps->bit_depth_luma_minus8 > 6)
-			return -EINVAL;
-		if (p_h264_sps->bit_depth_chroma_minus8 > 6)
-			return -EINVAL;
-		if (p_h264_sps->log2_max_frame_num_minus4 > 12)
-			return -EINVAL;
-		if (p_h264_sps->pic_order_cnt_type > 2)
-			return -EINVAL;
-		if (p_h264_sps->log2_max_pic_order_cnt_lsb_minus4 > 12)
-			return -EINVAL;
-		if (p_h264_sps->max_num_ref_frames > V4L2_H264_REF_LIST_LEN)
-			return -EINVAL;
-		break;
-
 	case V4L2_CTRL_TYPE_H264_PPS:
-		p_h264_pps = p;
-
-		if (p_h264_pps->num_slice_groups_minus1 > 7)
-			return -EINVAL;
-		if (p_h264_pps->num_ref_idx_l0_default_active_minus1 >
-		    (V4L2_H264_REF_LIST_LEN - 1))
-			return -EINVAL;
-		if (p_h264_pps->num_ref_idx_l1_default_active_minus1 >
-		    (V4L2_H264_REF_LIST_LEN - 1))
-			return -EINVAL;
-		if (p_h264_pps->weighted_bipred_idc > 2)
-			return -EINVAL;
-		/*
-		 * pic_init_qp_minus26 shall be in the range of
-		 * -(26 + QpBdOffset_y) to +25, inclusive,
-		 *  where QpBdOffset_y is 6 * bit_depth_luma_minus8
-		 */
-		if (p_h264_pps->pic_init_qp_minus26 < -62 ||
-		    p_h264_pps->pic_init_qp_minus26 > 25)
-			return -EINVAL;
-		if (p_h264_pps->pic_init_qs_minus26 < -26 ||
-		    p_h264_pps->pic_init_qs_minus26 > 25)
-			return -EINVAL;
-		if (p_h264_pps->chroma_qp_index_offset < -12 ||
-		    p_h264_pps->chroma_qp_index_offset > 12)
-			return -EINVAL;
-		if (p_h264_pps->second_chroma_qp_index_offset < -12 ||
-		    p_h264_pps->second_chroma_qp_index_offset > 12)
-			return -EINVAL;
-		break;
-
 	case V4L2_CTRL_TYPE_H264_SCALING_MATRIX:
-		break;
-
 	case V4L2_CTRL_TYPE_H264_PRED_WEIGHTS:
-		p_h264_pred_weights = p;
-
-		if (p_h264_pred_weights->luma_log2_weight_denom > 7)
-			return -EINVAL;
-		if (p_h264_pred_weights->chroma_log2_weight_denom > 7)
-			return -EINVAL;
 		break;
 
 	case V4L2_CTRL_TYPE_H264_SLICE_PARAMS:
 		p_h264_slice_params = p;
 
-		if (p_h264_slice_params->slice_type != V4L2_H264_SLICE_TYPE_B)
-			p_h264_slice_params->flags &=
-				~V4L2_H264_SLICE_FLAG_DIRECT_SPATIAL_MV_PRED;
-
-		if (p_h264_slice_params->colour_plane_id > 2)
-			return -EINVAL;
-		if (p_h264_slice_params->cabac_init_idc > 2)
-			return -EINVAL;
-		if (p_h264_slice_params->disable_deblocking_filter_idc > 2)
-			return -EINVAL;
-		if (p_h264_slice_params->slice_alpha_c0_offset_div2 < -6 ||
-		    p_h264_slice_params->slice_alpha_c0_offset_div2 > 6)
-			return -EINVAL;
-		if (p_h264_slice_params->slice_beta_offset_div2 < -6 ||
-		    p_h264_slice_params->slice_beta_offset_div2 > 6)
-			return -EINVAL;
-
-		if (p_h264_slice_params->slice_type == V4L2_H264_SLICE_TYPE_I ||
-		    p_h264_slice_params->slice_type == V4L2_H264_SLICE_TYPE_SI)
-			p_h264_slice_params->num_ref_idx_l0_active_minus1 = 0;
-		if (p_h264_slice_params->slice_type != V4L2_H264_SLICE_TYPE_B)
-			p_h264_slice_params->num_ref_idx_l1_active_minus1 = 0;
-
-		if (p_h264_slice_params->num_ref_idx_l0_active_minus1 >
-		    (V4L2_H264_REF_LIST_LEN - 1))
-			return -EINVAL;
-		if (p_h264_slice_params->num_ref_idx_l1_active_minus1 >
-		    (V4L2_H264_REF_LIST_LEN - 1))
-			return -EINVAL;
 		zero_reserved(*p_h264_slice_params);
 		break;
 
 	case V4L2_CTRL_TYPE_H264_DECODE_PARAMS:
 		p_h264_dec_params = p;
 
-		if (p_h264_dec_params->nal_ref_idc > 3)
-			return -EINVAL;
 		for (i = 0; i < V4L2_H264_NUM_DPB_ENTRIES; i++) {
 			struct v4l2_h264_dpb_entry *dpb_entry =
 				&p_h264_dec_params->dpb[i];
@@ -2113,10 +1857,10 @@ static int std_validate_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 		zero_reserved(*p_h264_dec_params);
 		break;
 
-	case V4L2_CTRL_TYPE_VP8_FRAME:
-		p_vp8_frame = p;
+	case V4L2_CTRL_TYPE_VP8_FRAME_HEADER:
+		p_vp8_frame_header = p;
 
-		switch (p_vp8_frame->num_dct_parts) {
+		switch (p_vp8_frame_header->num_dct_parts) {
 		case 1:
 		case 2:
 		case 4:
@@ -2125,11 +1869,11 @@ static int std_validate_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 		default:
 			return -EINVAL;
 		}
-		zero_padding(p_vp8_frame->segment);
-		zero_padding(p_vp8_frame->lf);
-		zero_padding(p_vp8_frame->quant);
-		zero_padding(p_vp8_frame->entropy);
-		zero_padding(p_vp8_frame->coder_state);
+		zero_padding(p_vp8_frame_header->segment_header);
+		zero_padding(p_vp8_frame_header->lf_header);
+		zero_padding(p_vp8_frame_header->quant_header);
+		zero_padding(p_vp8_frame_header->entropy_header);
+		zero_padding(p_vp8_frame_header->coder_state);
 		break;
 
 	case V4L2_CTRL_TYPE_HEVC_SPS:
@@ -2193,53 +1937,6 @@ static int std_validate_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 		}
 
 		zero_padding(*p_hevc_slice_params);
-		break;
-
-	case V4L2_CTRL_TYPE_HDR10_CLL_INFO:
-		break;
-
-	case V4L2_CTRL_TYPE_HDR10_MASTERING_DISPLAY:
-		p_hdr10_mastering = p;
-
-		for (i = 0; i < 3; ++i) {
-			if (p_hdr10_mastering->display_primaries_x[i] <
-				V4L2_HDR10_MASTERING_PRIMARIES_X_LOW ||
-			    p_hdr10_mastering->display_primaries_x[i] >
-				V4L2_HDR10_MASTERING_PRIMARIES_X_HIGH ||
-			    p_hdr10_mastering->display_primaries_y[i] <
-				V4L2_HDR10_MASTERING_PRIMARIES_Y_LOW ||
-			    p_hdr10_mastering->display_primaries_y[i] >
-				V4L2_HDR10_MASTERING_PRIMARIES_Y_HIGH)
-				return -EINVAL;
-		}
-
-		if (p_hdr10_mastering->white_point_x <
-			V4L2_HDR10_MASTERING_WHITE_POINT_X_LOW ||
-		    p_hdr10_mastering->white_point_x >
-			V4L2_HDR10_MASTERING_WHITE_POINT_X_HIGH ||
-		    p_hdr10_mastering->white_point_y <
-			V4L2_HDR10_MASTERING_WHITE_POINT_Y_LOW ||
-		    p_hdr10_mastering->white_point_y >
-			V4L2_HDR10_MASTERING_WHITE_POINT_Y_HIGH)
-			return -EINVAL;
-
-		if (p_hdr10_mastering->max_display_mastering_luminance <
-			V4L2_HDR10_MASTERING_MAX_LUMA_LOW ||
-		    p_hdr10_mastering->max_display_mastering_luminance >
-			V4L2_HDR10_MASTERING_MAX_LUMA_HIGH ||
-		    p_hdr10_mastering->min_display_mastering_luminance <
-			V4L2_HDR10_MASTERING_MIN_LUMA_LOW ||
-		    p_hdr10_mastering->min_display_mastering_luminance >
-			V4L2_HDR10_MASTERING_MIN_LUMA_HIGH)
-			return -EINVAL;
-
-		/* The following restriction comes from ITU-T Rec. H.265 spec */
-		if (p_hdr10_mastering->max_display_mastering_luminance ==
-			V4L2_HDR10_MASTERING_MAX_LUMA_LOW &&
-		    p_hdr10_mastering->min_display_mastering_luminance ==
-			V4L2_HDR10_MASTERING_MIN_LUMA_HIGH)
-			return -EINVAL;
-
 		break;
 
 	case V4L2_CTRL_TYPE_HEVC_SCALING_MATRIX:
@@ -2943,8 +2640,8 @@ static struct v4l2_ctrl *v4l2_ctrl_new(struct v4l2_ctrl_handler *hdl,
 	case V4L2_CTRL_TYPE_H264_PRED_WEIGHTS:
 		elem_size = sizeof(struct v4l2_ctrl_h264_pred_weights);
 		break;
-	case V4L2_CTRL_TYPE_VP8_FRAME:
-		elem_size = sizeof(struct v4l2_ctrl_vp8_frame);
+	case V4L2_CTRL_TYPE_VP8_FRAME_HEADER:
+		elem_size = sizeof(struct v4l2_ctrl_vp8_frame_header);
 		break;
 	case V4L2_CTRL_TYPE_HEVC_SPS:
 		elem_size = sizeof(struct v4l2_ctrl_hevc_sps);
@@ -2954,12 +2651,6 @@ static struct v4l2_ctrl *v4l2_ctrl_new(struct v4l2_ctrl_handler *hdl,
 		break;
 	case V4L2_CTRL_TYPE_HEVC_SLICE_PARAMS:
 		elem_size = sizeof(struct v4l2_ctrl_hevc_slice_params);
-		break;
-	case V4L2_CTRL_TYPE_HDR10_CLL_INFO:
-		elem_size = sizeof(struct v4l2_ctrl_hdr10_cll_info);
-		break;
-	case V4L2_CTRL_TYPE_HDR10_MASTERING_DISPLAY:
-		elem_size = sizeof(struct v4l2_ctrl_hdr10_mastering_display);
 		break;
 	case V4L2_CTRL_TYPE_HEVC_SCALING_MATRIX:
 		elem_size = sizeof(struct v4l2_ctrl_hevc_scaling_matrix);
@@ -3701,6 +3392,9 @@ static int v4l2_ctrl_request_clone(struct v4l2_ctrl_handler *hdl,
 		/* Skip refs inherited from other devices */
 		if (ref->from_other_dev)
 			continue;
+		/* And buttons */
+		if (ctrl->type == V4L2_CTRL_TYPE_BUTTON)
+			continue;
 		err = handler_new_ref(hdl, ctrl, &new_ref, false, true);
 		if (err)
 			break;
@@ -4439,13 +4133,8 @@ static int try_set_ext_ctrls_common(struct v4l2_fh *fh,
 			struct v4l2_ctrl *ctrl = helpers[idx].ref->ctrl;
 
 			ret = user_to_new(cs->controls + idx, ctrl);
-			if (!ret && ctrl->is_ptr) {
+			if (!ret && ctrl->is_ptr)
 				ret = validate_new(ctrl, ctrl->p_new);
-				if (ret)
-					dprintk(vdev,
-						"failed to validate control %s (%d)\n",
-						v4l2_ctrl_get_name(ctrl->id), ret);
-			}
 			idx = helpers[idx].next;
 		} while (!ret && idx);
 
@@ -4770,7 +4459,8 @@ int v4l2_ctrl_request_setup(struct media_request *req,
 		 * Skip if this control was already handled by a cluster.
 		 * Skip button controls and read-only controls.
 		 */
-		if (ref->req_done || (ctrl->flags & V4L2_CTRL_FLAG_READ_ONLY))
+		if (ref->req_done || ctrl->type == V4L2_CTRL_TYPE_BUTTON ||
+		    (ctrl->flags & V4L2_CTRL_FLAG_READ_ONLY))
 			continue;
 
 		v4l2_ctrl_lock(master);

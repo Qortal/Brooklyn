@@ -13,28 +13,17 @@
 #include <linux/swap.h>
 #include <linux/swapops.h>
 #include <linux/thread_info.h>
-#include <linux/types.h>
 #include <linux/uio.h>
 
-#include <asm/barrier.h>
 #include <asm/cpufeature.h>
 #include <asm/mte.h>
 #include <asm/ptrace.h>
 #include <asm/sysreg.h>
 
-u64 gcr_kernel_excl __ro_after_init;
-
-static bool report_fault_once = true;
-
-#ifdef CONFIG_KASAN_HW_TAGS
-/* Whether the MTE asynchronous mode is enabled. */
-DEFINE_STATIC_KEY_FALSE(mte_async_mode);
-EXPORT_SYMBOL_GPL(mte_async_mode);
-#endif
-
-static void mte_sync_page_tags(struct page *page, pte_t old_pte,
-			       bool check_swap, bool pte_is_tagged)
+static void mte_sync_page_tags(struct page *page, pte_t *ptep, bool check_swap)
 {
+	pte_t old_pte = READ_ONCE(*ptep);
+
 	if (check_swap && is_swap_pte(old_pte)) {
 		swp_entry_t entry = pte_to_swp_entry(old_pte);
 
@@ -42,37 +31,19 @@ static void mte_sync_page_tags(struct page *page, pte_t old_pte,
 			return;
 	}
 
-	if (!pte_is_tagged)
-		return;
-
-	page_kasan_tag_reset(page);
-	/*
-	 * We need smp_wmb() in between setting the flags and clearing the
-	 * tags because if another thread reads page->flags and builds a
-	 * tagged address out of it, there is an actual dependency to the
-	 * memory access, but on the current thread we do not guarantee that
-	 * the new page->flags are visible before the tags were updated.
-	 */
-	smp_wmb();
 	mte_clear_page_tags(page_address(page));
 }
 
-void mte_sync_tags(pte_t old_pte, pte_t pte)
+void mte_sync_tags(pte_t *ptep, pte_t pte)
 {
 	struct page *page = pte_page(pte);
 	long i, nr_pages = compound_nr(page);
 	bool check_swap = nr_pages == 1;
-	bool pte_is_tagged = pte_tagged(pte);
-
-	/* Early out if there's nothing to do */
-	if (!check_swap && !pte_is_tagged)
-		return;
 
 	/* if PG_mte_tagged is set, tags have already been initialised */
 	for (i = 0; i < nr_pages; i++, page++) {
 		if (!test_and_set_bit(PG_mte_tagged, &page->flags))
-			mte_sync_page_tags(page, old_pte, check_swap,
-					   pte_is_tagged);
+			mte_sync_page_tags(page, ptep, check_swap);
 	}
 }
 
@@ -101,109 +72,46 @@ int memcmp_pages(struct page *page1, struct page *page2)
 	return ret;
 }
 
-void mte_init_tags(u64 max_tag)
+static void update_sctlr_el1_tcf0(u64 tcf0)
 {
-	static bool gcr_kernel_excl_initialized;
-
-	if (!gcr_kernel_excl_initialized) {
-		/*
-		 * The format of the tags in KASAN is 0xFF and in MTE is 0xF.
-		 * This conversion extracts an MTE tag from a KASAN tag.
-		 */
-		u64 incl = GENMASK(FIELD_GET(MTE_TAG_MASK >> MTE_TAG_SHIFT,
-					     max_tag), 0);
-
-		gcr_kernel_excl = ~incl & SYS_GCR_EL1_EXCL_MASK;
-		gcr_kernel_excl_initialized = true;
-	}
-
-	/* Enable the kernel exclude mask for random tags generation. */
-	write_sysreg_s(SYS_GCR_EL1_RRND | gcr_kernel_excl, SYS_GCR_EL1);
-}
-
-static inline void __mte_enable_kernel(const char *mode, unsigned long tcf)
-{
-	/* Enable MTE Sync Mode for EL1. */
-	sysreg_clear_set(sctlr_el1, SCTLR_ELx_TCF_MASK, tcf);
+	/* ISB required for the kernel uaccess routines */
+	sysreg_clear_set(sctlr_el1, SCTLR_EL1_TCF0_MASK, tcf0);
 	isb();
-
-	pr_info_once("MTE: enabled in %s mode at EL1\n", mode);
 }
 
-#ifdef CONFIG_KASAN_HW_TAGS
-void mte_enable_kernel_sync(void)
+static void set_sctlr_el1_tcf0(u64 tcf0)
 {
 	/*
-	 * Make sure we enter this function when no PE has set
-	 * async mode previously.
+	 * mte_thread_switch() checks current->thread.sctlr_tcf0 as an
+	 * optimisation. Disable preemption so that it does not see
+	 * the variable update before the SCTLR_EL1.TCF0 one.
 	 */
-	WARN_ONCE(system_uses_mte_async_mode(),
-			"MTE async mode enabled system wide!");
-
-	__mte_enable_kernel("synchronous", SCTLR_ELx_TCF_SYNC);
+	preempt_disable();
+	current->thread.sctlr_tcf0 = tcf0;
+	update_sctlr_el1_tcf0(tcf0);
+	preempt_enable();
 }
 
-void mte_enable_kernel_async(void)
+static void update_gcr_el1_excl(u64 incl)
 {
-	__mte_enable_kernel("asynchronous", SCTLR_ELx_TCF_ASYNC);
+	u64 excl = ~incl & SYS_GCR_EL1_EXCL_MASK;
 
 	/*
-	 * MTE async mode is set system wide by the first PE that
-	 * executes this function.
-	 *
-	 * Note: If in future KASAN acquires a runtime switching
-	 * mode in between sync and async, this strategy needs
-	 * to be reviewed.
+	 * Note that 'incl' is an include mask (controlled by the user via
+	 * prctl()) while GCR_EL1 accepts an exclude mask.
+	 * No need for ISB since this only affects EL0 currently, implicit
+	 * with ERET.
 	 */
-	if (!system_uses_mte_async_mode())
-		static_branch_enable(&mte_async_mode);
+	sysreg_clear_set_s(SYS_GCR_EL1, SYS_GCR_EL1_EXCL_MASK, excl);
 }
-#endif
 
-void mte_set_report_once(bool state)
+static void set_gcr_el1_excl(u64 incl)
 {
-	WRITE_ONCE(report_fault_once, state);
+	current->thread.gcr_user_incl = incl;
+	update_gcr_el1_excl(incl);
 }
 
-bool mte_report_once(void)
-{
-	return READ_ONCE(report_fault_once);
-}
-
-#ifdef CONFIG_KASAN_HW_TAGS
-void mte_check_tfsr_el1(void)
-{
-	u64 tfsr_el1;
-
-	if (!system_supports_mte())
-		return;
-
-	tfsr_el1 = read_sysreg_s(SYS_TFSR_EL1);
-
-	if (unlikely(tfsr_el1 & SYS_TFSR_EL1_TF1)) {
-		/*
-		 * Note: isb() is not required after this direct write
-		 * because there is no indirect read subsequent to it
-		 * (per ARM DDI 0487F.c table D13-1).
-		 */
-		write_sysreg_s(0, SYS_TFSR_EL1);
-
-		kasan_report_async();
-	}
-}
-#endif
-
-static void set_gcr_el1_excl(u64 excl)
-{
-	current->thread.gcr_user_excl = excl;
-
-	/*
-	 * SYS_GCR_EL1 will be set to current->thread.gcr_user_excl value
-	 * by mte_set_user_gcr() in kernel_exit,
-	 */
-}
-
-void mte_thread_init_user(void)
+void flush_mte_state(void)
 {
 	if (!system_supports_mte())
 		return;
@@ -213,39 +121,20 @@ void mte_thread_init_user(void)
 	write_sysreg_s(0, SYS_TFSRE0_EL1);
 	clear_thread_flag(TIF_MTE_ASYNC_FAULT);
 	/* disable tag checking */
-	set_task_sctlr_el1((current->thread.sctlr_user & ~SCTLR_EL1_TCF0_MASK) |
-			   SCTLR_EL1_TCF0_NONE);
+	set_sctlr_el1_tcf0(SCTLR_EL1_TCF0_NONE);
 	/* reset tag generation mask */
-	set_gcr_el1_excl(SYS_GCR_EL1_EXCL_MASK);
+	set_gcr_el1_excl(0);
 }
 
 void mte_thread_switch(struct task_struct *next)
 {
-	/*
-	 * Check if an async tag exception occurred at EL1.
-	 *
-	 * Note: On the context switch path we rely on the dsb() present
-	 * in __switch_to() to guarantee that the indirect writes to TFSR_EL1
-	 * are synchronized before this point.
-	 */
-	isb();
-	mte_check_tfsr_el1();
-}
-
-void mte_suspend_enter(void)
-{
 	if (!system_supports_mte())
 		return;
 
-	/*
-	 * The barriers are required to guarantee that the indirect writes
-	 * to TFSR_EL1 are synchronized before we report the state.
-	 */
-	dsb(nsh);
-	isb();
-
-	/* Report SYS_TFSR_EL1 before suspend entry */
-	mte_check_tfsr_el1();
+	/* avoid expensive SCTLR_EL1 accesses if no change */
+	if (current->thread.sctlr_tcf0 != next->thread.sctlr_tcf0)
+		update_sctlr_el1_tcf0(next->thread.sctlr_tcf0);
+	update_gcr_el1_excl(next->thread.gcr_user_incl);
 }
 
 void mte_suspend_exit(void)
@@ -253,39 +142,37 @@ void mte_suspend_exit(void)
 	if (!system_supports_mte())
 		return;
 
-	sysreg_clear_set_s(SYS_GCR_EL1, SYS_GCR_EL1_EXCL_MASK, gcr_kernel_excl);
-	isb();
+	update_gcr_el1_excl(current->thread.gcr_user_incl);
 }
 
 long set_mte_ctrl(struct task_struct *task, unsigned long arg)
 {
-	u64 sctlr = task->thread.sctlr_user & ~SCTLR_EL1_TCF0_MASK;
-	u64 gcr_excl = ~((arg & PR_MTE_TAG_MASK) >> PR_MTE_TAG_SHIFT) &
-		       SYS_GCR_EL1_EXCL_MASK;
+	u64 tcf0;
+	u64 gcr_incl = (arg & PR_MTE_TAG_MASK) >> PR_MTE_TAG_SHIFT;
 
 	if (!system_supports_mte())
 		return 0;
 
 	switch (arg & PR_MTE_TCF_MASK) {
 	case PR_MTE_TCF_NONE:
-		sctlr |= SCTLR_EL1_TCF0_NONE;
+		tcf0 = SCTLR_EL1_TCF0_NONE;
 		break;
 	case PR_MTE_TCF_SYNC:
-		sctlr |= SCTLR_EL1_TCF0_SYNC;
+		tcf0 = SCTLR_EL1_TCF0_SYNC;
 		break;
 	case PR_MTE_TCF_ASYNC:
-		sctlr |= SCTLR_EL1_TCF0_ASYNC;
+		tcf0 = SCTLR_EL1_TCF0_ASYNC;
 		break;
 	default:
 		return -EINVAL;
 	}
 
 	if (task != current) {
-		task->thread.sctlr_user = sctlr;
-		task->thread.gcr_user_excl = gcr_excl;
+		task->thread.sctlr_tcf0 = tcf0;
+		task->thread.gcr_user_incl = gcr_incl;
 	} else {
-		set_task_sctlr_el1(sctlr);
-		set_gcr_el1_excl(gcr_excl);
+		set_sctlr_el1_tcf0(tcf0);
+		set_gcr_el1_excl(gcr_incl);
 	}
 
 	return 0;
@@ -294,14 +181,13 @@ long set_mte_ctrl(struct task_struct *task, unsigned long arg)
 long get_mte_ctrl(struct task_struct *task)
 {
 	unsigned long ret;
-	u64 incl = ~task->thread.gcr_user_excl & SYS_GCR_EL1_EXCL_MASK;
 
 	if (!system_supports_mte())
 		return 0;
 
-	ret = incl << PR_MTE_TAG_SHIFT;
+	ret = task->thread.gcr_user_incl << PR_MTE_TAG_SHIFT;
 
-	switch (task->thread.sctlr_user & SCTLR_EL1_TCF0_MASK) {
+	switch (task->thread.sctlr_tcf0) {
 	case SCTLR_EL1_TCF0_NONE:
 		ret |= PR_MTE_TCF_NONE;
 		break;

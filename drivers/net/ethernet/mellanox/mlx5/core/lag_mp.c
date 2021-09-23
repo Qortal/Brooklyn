@@ -28,14 +28,14 @@ bool mlx5_lag_is_multipath(struct mlx5_core_dev *dev)
 	struct mlx5_lag *ldev;
 	bool res;
 
-	ldev = mlx5_lag_dev(dev);
+	ldev = mlx5_lag_dev_get(dev);
 	res  = ldev && __mlx5_lag_is_multipath(ldev);
 
 	return res;
 }
 
 /**
- * mlx5_lag_set_port_affinity
+ * Set lag port affinity
  *
  * @ldev: lag device
  * @port:

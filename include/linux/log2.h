@@ -156,8 +156,7 @@ unsigned long __rounddown_pow_of_two(unsigned long n)
 #define ilog2(n) \
 ( \
 	__builtin_constant_p(n) ?	\
-	((n) < 2 ? 0 :			\
-	 63 - __builtin_clzll(n)) :	\
+	const_ilog2(n) :		\
 	(sizeof(n) <= 4) ?		\
 	__ilog2_u32(n) :		\
 	__ilog2_u64(n)			\

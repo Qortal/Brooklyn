@@ -24,7 +24,6 @@
 #include "smb2glob.h"
 #include "cifs_ioctl.h"
 #include "smbdirect.h"
-#include "fs_context.h"
 
 /* Change credits for different ops and return the total number of credits */
 static int
@@ -63,19 +62,17 @@ smb2_add_credits(struct TCP_Server_Info *server,
 		 const struct cifs_credits *credits, const int optype)
 {
 	int *val, rc = -1;
-	int scredits, in_flight;
 	unsigned int add = credits->value;
 	unsigned int instance = credits->instance;
 	bool reconnect_detected = false;
-	bool reconnect_with_invalid_credits = false;
 
 	spin_lock(&server->req_lock);
 	val = server->ops->get_credits_field(server, optype);
 
 	/* eg found case where write overlapping reconnect messed up credits */
 	if (((optype & CIFS_OP_MASK) == CIFS_NEG_OP) && (*val != 0))
-		reconnect_with_invalid_credits = true;
-
+		trace_smb3_reconnect_with_invalid_credits(server->CurrentMid,
+			server->hostname, *val, add);
 	if ((instance == 0) || (instance == server->reconnect_instance))
 		*val += add;
 	else
@@ -86,9 +83,7 @@ smb2_add_credits(struct TCP_Server_Info *server,
 		pr_warn_once("server overflowed SMB3 credits\n");
 	}
 	server->in_flight--;
-	if (server->in_flight == 0 &&
-	   ((optype & CIFS_OP_MASK) != CIFS_NEG_OP) &&
-	   ((optype & CIFS_OP_MASK) != CIFS_SESS_OP))
+	if (server->in_flight == 0 && (optype & CIFS_OP_MASK) != CIFS_NEG_OP)
 		rc = change_conf(server);
 	/*
 	 * Sometimes server returns 0 credits on oplock break ack - we need to
@@ -101,25 +96,12 @@ smb2_add_credits(struct TCP_Server_Info *server,
 			server->oplock_credits++;
 		}
 	}
-	scredits = *val;
-	in_flight = server->in_flight;
 	spin_unlock(&server->req_lock);
 	wake_up(&server->request_q);
 
-	if (reconnect_detected) {
-		trace_smb3_reconnect_detected(server->CurrentMid,
-			server->conn_id, server->hostname, scredits, add, in_flight);
-
+	if (reconnect_detected)
 		cifs_dbg(FYI, "trying to put %d credits from the old server instance %d\n",
 			 add, instance);
-	}
-
-	if (reconnect_with_invalid_credits) {
-		trace_smb3_reconnect_with_invalid_credits(server->CurrentMid,
-			server->conn_id, server->hostname, scredits, add, in_flight);
-		cifs_dbg(FYI, "Negotiate operation when server credits is non-zero. Optype: %d, server credits: %d, credits added: %d\n",
-			 optype, scredits, add);
-	}
 
 	if (server->tcpStatus == CifsNeedReconnect
 	    || server->tcpStatus == CifsExiting)
@@ -139,32 +121,20 @@ smb2_add_credits(struct TCP_Server_Info *server,
 		cifs_dbg(FYI, "disabling oplocks\n");
 		break;
 	default:
-		/* change_conf rebalanced credits for different types */
-		break;
+		trace_smb3_add_credits(server->CurrentMid,
+			server->hostname, rc, add);
+		cifs_dbg(FYI, "add %u credits total=%d\n", add, rc);
 	}
-
-	trace_smb3_add_credits(server->CurrentMid,
-			server->conn_id, server->hostname, scredits, add, in_flight);
-	cifs_dbg(FYI, "%s: added %u credits total=%d\n", __func__, add, scredits);
 }
 
 static void
 smb2_set_credits(struct TCP_Server_Info *server, const int val)
 {
-	int scredits, in_flight;
-
 	spin_lock(&server->req_lock);
 	server->credits = val;
 	if (val == 1)
 		server->reconnect_instance++;
-	scredits = server->credits;
-	in_flight = server->in_flight;
 	spin_unlock(&server->req_lock);
-
-	trace_smb3_set_credits(server->CurrentMid,
-			server->conn_id, server->hostname, scredits, val, in_flight);
-	cifs_dbg(FYI, "%s: set %u credits\n", __func__, val);
-
 	/* don't log while holding the lock */
 	if (val == 1)
 		cifs_dbg(FYI, "set credits to 1 due to smb2 reconnect\n");
@@ -194,7 +164,7 @@ smb2_wait_mtu_credits(struct TCP_Server_Info *server, unsigned int size,
 		      unsigned int *num, struct cifs_credits *credits)
 {
 	int rc = 0;
-	unsigned int scredits, in_flight;
+	unsigned int scredits;
 
 	spin_lock(&server->req_lock);
 	while (1) {
@@ -237,15 +207,7 @@ smb2_wait_mtu_credits(struct TCP_Server_Info *server, unsigned int size,
 			break;
 		}
 	}
-	scredits = server->credits;
-	in_flight = server->in_flight;
 	spin_unlock(&server->req_lock);
-
-	trace_smb3_add_credits(server->CurrentMid,
-			server->conn_id, server->hostname, scredits, -(credits->value), in_flight);
-	cifs_dbg(FYI, "%s: removed %u credits total=%d\n",
-			__func__, credits->value, scredits);
-
 	return rc;
 }
 
@@ -255,49 +217,29 @@ smb2_adjust_credits(struct TCP_Server_Info *server,
 		    const unsigned int payload_size)
 {
 	int new_val = DIV_ROUND_UP(payload_size, SMB2_MAX_BUFFER_SIZE);
-	int scredits, in_flight;
 
 	if (!credits->value || credits->value == new_val)
 		return 0;
 
 	if (credits->value < new_val) {
-		trace_smb3_too_many_credits(server->CurrentMid,
-				server->conn_id, server->hostname, 0, credits->value - new_val, 0);
-		cifs_server_dbg(VFS, "request has less credits (%d) than required (%d)",
-				credits->value, new_val);
-
+		WARN_ONCE(1, "request has less credits (%d) than required (%d)",
+			  credits->value, new_val);
 		return -ENOTSUPP;
 	}
 
 	spin_lock(&server->req_lock);
 
 	if (server->reconnect_instance != credits->instance) {
-		scredits = server->credits;
-		in_flight = server->in_flight;
 		spin_unlock(&server->req_lock);
-
-		trace_smb3_reconnect_detected(server->CurrentMid,
-			server->conn_id, server->hostname, scredits,
-			credits->value - new_val, in_flight);
 		cifs_server_dbg(VFS, "trying to return %d credits to old session\n",
 			 credits->value - new_val);
 		return -EAGAIN;
 	}
 
 	server->credits += credits->value - new_val;
-	scredits = server->credits;
-	in_flight = server->in_flight;
 	spin_unlock(&server->req_lock);
 	wake_up(&server->request_q);
-
-	trace_smb3_add_credits(server->CurrentMid,
-			server->conn_id, server->hostname, scredits,
-			credits->value - new_val, in_flight);
-	cifs_dbg(FYI, "%s: adjust added %u credits total=%d\n",
-			__func__, credits->value - new_val, scredits);
-
 	credits->value = new_val;
-
 	return 0;
 }
 
@@ -388,9 +330,7 @@ smb2_negotiate(const unsigned int xid, struct cifs_ses *ses)
 {
 	int rc;
 
-	spin_lock(&GlobalMid_Lock);
 	cifs_ses_server(ses)->CurrentMid = 0;
-	spin_unlock(&GlobalMid_Lock);
 	rc = SMB2_negotiate(xid, ses);
 	/* BB we probably don't need to retry with modern servers */
 	if (rc == -EAGAIN)
@@ -399,13 +339,13 @@ smb2_negotiate(const unsigned int xid, struct cifs_ses *ses)
 }
 
 static unsigned int
-smb2_negotiate_wsize(struct cifs_tcon *tcon, struct smb3_fs_context *ctx)
+smb2_negotiate_wsize(struct cifs_tcon *tcon, struct smb_vol *volume_info)
 {
 	struct TCP_Server_Info *server = tcon->ses->server;
 	unsigned int wsize;
 
 	/* start with specified wsize, or default */
-	wsize = ctx->wsize ? ctx->wsize : CIFS_DEFAULT_IOSIZE;
+	wsize = volume_info->wsize ? volume_info->wsize : CIFS_DEFAULT_IOSIZE;
 	wsize = min_t(unsigned int, wsize, server->max_write);
 	if (!(server->capabilities & SMB2_GLOBAL_CAP_LARGE_MTU))
 		wsize = min_t(unsigned int, wsize, SMB2_MAX_BUFFER_SIZE);
@@ -414,13 +354,13 @@ smb2_negotiate_wsize(struct cifs_tcon *tcon, struct smb3_fs_context *ctx)
 }
 
 static unsigned int
-smb3_negotiate_wsize(struct cifs_tcon *tcon, struct smb3_fs_context *ctx)
+smb3_negotiate_wsize(struct cifs_tcon *tcon, struct smb_vol *volume_info)
 {
 	struct TCP_Server_Info *server = tcon->ses->server;
 	unsigned int wsize;
 
 	/* start with specified wsize, or default */
-	wsize = ctx->wsize ? ctx->wsize : SMB3_DEFAULT_IOSIZE;
+	wsize = volume_info->wsize ? volume_info->wsize : SMB3_DEFAULT_IOSIZE;
 	wsize = min_t(unsigned int, wsize, server->max_write);
 #ifdef CONFIG_CIFS_SMB_DIRECT
 	if (server->rdma) {
@@ -446,13 +386,13 @@ smb3_negotiate_wsize(struct cifs_tcon *tcon, struct smb3_fs_context *ctx)
 }
 
 static unsigned int
-smb2_negotiate_rsize(struct cifs_tcon *tcon, struct smb3_fs_context *ctx)
+smb2_negotiate_rsize(struct cifs_tcon *tcon, struct smb_vol *volume_info)
 {
 	struct TCP_Server_Info *server = tcon->ses->server;
 	unsigned int rsize;
 
 	/* start with specified rsize, or default */
-	rsize = ctx->rsize ? ctx->rsize : CIFS_DEFAULT_IOSIZE;
+	rsize = volume_info->rsize ? volume_info->rsize : CIFS_DEFAULT_IOSIZE;
 	rsize = min_t(unsigned int, rsize, server->max_read);
 
 	if (!(server->capabilities & SMB2_GLOBAL_CAP_LARGE_MTU))
@@ -462,13 +402,13 @@ smb2_negotiate_rsize(struct cifs_tcon *tcon, struct smb3_fs_context *ctx)
 }
 
 static unsigned int
-smb3_negotiate_rsize(struct cifs_tcon *tcon, struct smb3_fs_context *ctx)
+smb3_negotiate_rsize(struct cifs_tcon *tcon, struct smb_vol *volume_info)
 {
 	struct TCP_Server_Info *server = tcon->ses->server;
 	unsigned int rsize;
 
 	/* start with specified rsize, or default */
-	rsize = ctx->rsize ? ctx->rsize : SMB3_DEFAULT_IOSIZE;
+	rsize = volume_info->rsize ? volume_info->rsize : SMB3_DEFAULT_IOSIZE;
 	rsize = min_t(unsigned int, rsize, server->max_read);
 #ifdef CONFIG_CIFS_SMB_DIRECT
 	if (server->rdma) {
@@ -692,21 +632,17 @@ smb2_close_cached_fid(struct kref *ref)
 		cfid->is_valid = false;
 		cfid->file_all_info_is_valid = false;
 		cfid->has_lease = false;
-		if (cfid->dentry) {
-			dput(cfid->dentry);
-			cfid->dentry = NULL;
-		}
 	}
 }
 
-void close_cached_dir(struct cached_fid *cfid)
+void close_shroot(struct cached_fid *cfid)
 {
 	mutex_lock(&cfid->fid_mutex);
 	kref_put(&cfid->refcount, smb2_close_cached_fid);
 	mutex_unlock(&cfid->fid_mutex);
 }
 
-void close_cached_dir_lease_locked(struct cached_fid *cfid)
+void close_shroot_lease_locked(struct cached_fid *cfid)
 {
 	if (cfid->has_lease) {
 		cfid->has_lease = false;
@@ -714,10 +650,10 @@ void close_cached_dir_lease_locked(struct cached_fid *cfid)
 	}
 }
 
-void close_cached_dir_lease(struct cached_fid *cfid)
+void close_shroot_lease(struct cached_fid *cfid)
 {
 	mutex_lock(&cfid->fid_mutex);
-	close_cached_dir_lease_locked(cfid);
+	close_shroot_lease_locked(cfid);
 	mutex_unlock(&cfid->fid_mutex);
 }
 
@@ -727,15 +663,13 @@ smb2_cached_lease_break(struct work_struct *work)
 	struct cached_fid *cfid = container_of(work,
 				struct cached_fid, lease_break);
 
-	close_cached_dir_lease(cfid);
+	close_shroot_lease(cfid);
 }
 
 /*
- * Open the and cache a directory handle.
- * Only supported for the root handle.
+ * Open the directory at the root of a share
  */
-int open_cached_dir(unsigned int xid, struct cifs_tcon *tcon,
-		const char *path,
+int open_shroot(unsigned int xid, struct cifs_tcon *tcon,
 		struct cifs_sb_info *cifs_sb,
 		struct cached_fid **cfid)
 {
@@ -753,18 +687,6 @@ int open_cached_dir(unsigned int xid, struct cifs_tcon *tcon,
 	__le16 utf16_path = 0; /* Null - since an open of top of share */
 	u8 oplock = SMB2_OPLOCK_LEVEL_II;
 	struct cifs_fid *pfid;
-	struct dentry *dentry;
-
-	if (tcon->nohandlecache)
-		return -ENOTSUPP;
-
-	if (cifs_sb->root == NULL)
-		return -ENOENT;
-
-	if (strlen(path))
-		return -ENOENT;
-
-	dentry = cifs_sb->root;
 
 	mutex_lock(&tcon->crfid.fid_mutex);
 	if (tcon->crfid.is_valid) {
@@ -850,9 +772,11 @@ int open_cached_dir(unsigned int xid, struct cifs_tcon *tcon,
 		};
 
 		/*
-		 * caller expects this func to set the fid in crfid to valid
-		 * cached root, so increment the refcount.
+		 * caller expects this func to set pfid to a valid
+		 * cached root, so we copy the existing one and get a
+		 * reference.
 		 */
+		memcpy(pfid, tcon->crfid.fid, sizeof(*pfid));
 		kref_get(&tcon->crfid.refcount);
 
 		mutex_unlock(&tcon->crfid.fid_mutex);
@@ -885,18 +809,13 @@ int open_cached_dir(unsigned int xid, struct cifs_tcon *tcon,
 	oparms.fid->mid = le64_to_cpu(o_rsp->sync_hdr.MessageId);
 #endif /* CIFS_DEBUG2 */
 
+	memcpy(tcon->crfid.fid, pfid, sizeof(struct cifs_fid));
 	tcon->crfid.tcon = tcon;
 	tcon->crfid.is_valid = true;
-	tcon->crfid.dentry = dentry;
-	dget(dentry);
 	kref_init(&tcon->crfid.refcount);
 
 	/* BB TBD check to see if oplock level check can be removed below */
 	if (o_rsp->OplockLevel == SMB2_OPLOCK_LEVEL_LEASE) {
-		/*
-		 * See commit 2f94a3125b87. Increment the refcount when we
-		 * get a lease for root, release it if lease break occurs
-		 */
 		kref_get(&tcon->crfid.refcount);
 		tcon->crfid.has_lease = true;
 		smb2_parse_contexts(server, o_rsp,
@@ -915,8 +834,6 @@ int open_cached_dir(unsigned int xid, struct cifs_tcon *tcon,
 				&rsp_iov[1], sizeof(struct smb2_file_all_info),
 				(char *)&tcon->crfid.file_all_info))
 		tcon->crfid.file_all_info_is_valid = true;
-	tcon->crfid.time = jiffies;
-
 
 oshr_exit:
 	mutex_unlock(&tcon->crfid.fid_mutex);
@@ -930,22 +847,6 @@ oshr_free:
 	return rc;
 }
 
-int open_cached_dir_by_dentry(struct cifs_tcon *tcon,
-			      struct dentry *dentry,
-			      struct cached_fid **cfid)
-{
-	mutex_lock(&tcon->crfid.fid_mutex);
-	if (tcon->crfid.dentry == dentry) {
-		cifs_dbg(FYI, "found a cached root file handle by dentry\n");
-		*cfid = &tcon->crfid;
-		kref_get(&tcon->crfid.refcount);
-		mutex_unlock(&tcon->crfid.fid_mutex);
-		return 0;
-	}
-	mutex_unlock(&tcon->crfid.fid_mutex);
-	return -ENOENT;
-}
-
 static void
 smb3_qfs_tcon(const unsigned int xid, struct cifs_tcon *tcon,
 	      struct cifs_sb_info *cifs_sb)
@@ -955,6 +856,7 @@ smb3_qfs_tcon(const unsigned int xid, struct cifs_tcon *tcon,
 	u8 oplock = SMB2_OPLOCK_LEVEL_NONE;
 	struct cifs_open_parms oparms;
 	struct cifs_fid fid;
+	bool no_cached_open = tcon->nohandlecache;
 	struct cached_fid *cfid = NULL;
 
 	oparms.tcon = tcon;
@@ -964,12 +866,14 @@ smb3_qfs_tcon(const unsigned int xid, struct cifs_tcon *tcon,
 	oparms.fid = &fid;
 	oparms.reconnect = false;
 
-	rc = open_cached_dir(xid, tcon, "", cifs_sb, &cfid);
-	if (rc == 0)
-		memcpy(&fid, cfid->fid, sizeof(struct cifs_fid));
-	else
+	if (no_cached_open) {
 		rc = SMB2_open(xid, &oparms, &srch_path, &oplock, NULL, NULL,
 			       NULL, NULL);
+	} else {
+		rc = open_shroot(xid, tcon, cifs_sb, &cfid);
+		if (rc == 0)
+			memcpy(&fid, cfid->fid, sizeof(struct cifs_fid));
+	}
 	if (rc)
 		return;
 
@@ -983,10 +887,10 @@ smb3_qfs_tcon(const unsigned int xid, struct cifs_tcon *tcon,
 			FS_VOLUME_INFORMATION);
 	SMB2_QFS_attr(xid, tcon, fid.persistent_fid, fid.volatile_fid,
 			FS_SECTOR_SIZE_INFORMATION); /* SMB3 specific */
-	if (cfid == NULL)
+	if (no_cached_open)
 		SMB2_close(xid, tcon, fid.persistent_fid, fid.volatile_fid);
 	else
-		close_cached_dir(cfid);
+		close_shroot(cfid);
 }
 
 static void
@@ -1569,10 +1473,7 @@ SMB2_request_res_key(const unsigned int xid, struct cifs_tcon *tcon,
 			NULL, 0 /* no input */, CIFSMaxBufSize,
 			(char **)&res_key, &ret_data_len);
 
-	if (rc == -EOPNOTSUPP) {
-		pr_warn_once("Server share %s does not support copy range\n", tcon->treeName);
-		goto req_res_key_exit;
-	} else if (rc) {
+	if (rc) {
 		cifs_tcon_dbg(VFS, "refcpy ioctl error %d getting resume key\n", rc);
 		goto req_res_key_exit;
 	}
@@ -2256,21 +2157,20 @@ smb3_notify(const unsigned int xid, struct file *pfile,
 	struct smb3_notify notify;
 	struct dentry *dentry = pfile->f_path.dentry;
 	struct inode *inode = file_inode(pfile);
-	struct cifs_sb_info *cifs_sb = CIFS_SB(inode->i_sb);
+	struct cifs_sb_info *cifs_sb;
 	struct cifs_open_parms oparms;
 	struct cifs_fid fid;
 	struct cifs_tcon *tcon;
-	const unsigned char *path;
-	void *page = alloc_dentry_path();
+	unsigned char *path = NULL;
 	__le16 *utf16_path = NULL;
 	u8 oplock = SMB2_OPLOCK_LEVEL_NONE;
 	int rc = 0;
 
-	path = build_path_from_dentry(dentry, page);
-	if (IS_ERR(path)) {
-		rc = PTR_ERR(path);
-		goto notify_exit;
-	}
+	path = build_path_from_dentry(dentry);
+	if (path == NULL)
+		return -ENOMEM;
+
+	cifs_sb = CIFS_SB(inode->i_sb);
 
 	utf16_path = cifs_convert_path_to_utf16(path, cifs_sb);
 	if (utf16_path == NULL) {
@@ -2304,7 +2204,7 @@ smb3_notify(const unsigned int xid, struct file *pfile,
 	cifs_dbg(FYI, "change notify for path %s rc %d\n", path, rc);
 
 notify_exit:
-	free_dentry_path(page);
+	kfree(path);
 	kfree(utf16_path);
 	return rc;
 }
@@ -2327,7 +2227,6 @@ smb2_query_dir_first(const unsigned int xid, struct cifs_tcon *tcon,
 	struct smb2_query_directory_rsp *qd_rsp = NULL;
 	struct smb2_create_rsp *op_rsp = NULL;
 	struct TCP_Server_Info *server = cifs_pick_channel(tcon->ses);
-	int retry_count = 0;
 
 	utf16_path = cifs_convert_path_to_utf16(path, cifs_sb);
 	if (!utf16_path)
@@ -2375,13 +2274,9 @@ smb2_query_dir_first(const unsigned int xid, struct cifs_tcon *tcon,
 
 	smb2_set_related(&rqst[1]);
 
-again:
 	rc = compound_send_recv(xid, tcon->ses, server,
 				flags, 2, rqst,
 				resp_buftype, rsp_iov);
-
-	if (rc == -EAGAIN && retry_count++ < 10)
-		goto again;
 
 	/* If the open failed there is nothing to do */
 	op_rsp = (struct smb2_create_rsp *)rsp_iov[0].iov_base;
@@ -2457,7 +2352,6 @@ static bool
 smb2_is_status_pending(char *buf, struct TCP_Server_Info *server)
 {
 	struct smb2_sync_hdr *shdr = (struct smb2_sync_hdr *)buf;
-	int scredits, in_flight;
 
 	if (shdr->Status != STATUS_PENDING)
 		return false;
@@ -2465,16 +2359,8 @@ smb2_is_status_pending(char *buf, struct TCP_Server_Info *server)
 	if (shdr->CreditRequest) {
 		spin_lock(&server->req_lock);
 		server->credits += le16_to_cpu(shdr->CreditRequest);
-		scredits = server->credits;
-		in_flight = server->in_flight;
 		spin_unlock(&server->req_lock);
 		wake_up(&server->request_q);
-
-		trace_smb3_add_credits(server->CurrentMid,
-				server->conn_id, server->hostname, scredits,
-				le16_to_cpu(shdr->CreditRequest), in_flight);
-		cifs_dbg(FYI, "%s: status pending add %u credits total=%d\n",
-				__func__, le16_to_cpu(shdr->CreditRequest), scredits);
 	}
 
 	return true;
@@ -2506,34 +2392,6 @@ smb2_is_status_io_timeout(char *buf)
 		return true;
 	else
 		return false;
-}
-
-static void
-smb2_is_network_name_deleted(char *buf, struct TCP_Server_Info *server)
-{
-	struct smb2_sync_hdr *shdr = (struct smb2_sync_hdr *)buf;
-	struct list_head *tmp, *tmp1;
-	struct cifs_ses *ses;
-	struct cifs_tcon *tcon;
-
-	if (shdr->Status != STATUS_NETWORK_NAME_DELETED)
-		return;
-
-	spin_lock(&cifs_tcp_ses_lock);
-	list_for_each(tmp, &server->smb_ses_list) {
-		ses = list_entry(tmp, struct cifs_ses, smb_ses_list);
-		list_for_each(tmp1, &ses->tcon_list) {
-			tcon = list_entry(tmp1, struct cifs_tcon, tcon_list);
-			if (tcon->tid == shdr->TreeId) {
-				tcon->need_reconnect = true;
-				spin_unlock(&cifs_tcp_ses_lock);
-				pr_warn_once("Server share %s deleted.\n",
-					     tcon->treeName);
-				return;
-			}
-		}
-	}
-	spin_unlock(&cifs_tcp_ses_lock);
 }
 
 static int
@@ -2910,8 +2768,6 @@ smb2_get_dfs_refer(const unsigned int xid, struct cifs_ses *ses,
 		/* ipc tcons are not refcounted */
 		spin_lock(&cifs_tcp_ses_lock);
 		tcon->tc_count--;
-		/* tc_count can never go negative */
-		WARN_ON(tcon->tc_count < 0);
 		spin_unlock(&cifs_tcp_ses_lock);
 	}
 	kfree(utf16_path);
@@ -3334,7 +3190,7 @@ smb2_query_reparse_tag(const unsigned int xid, struct cifs_tcon *tcon,
 
 static struct cifs_ntsd *
 get_smb2_acl_by_fid(struct cifs_sb_info *cifs_sb,
-		    const struct cifs_fid *cifsfid, u32 *pacllen, u32 info)
+		const struct cifs_fid *cifsfid, u32 *pacllen)
 {
 	struct cifs_ntsd *pntsd = NULL;
 	unsigned int xid;
@@ -3348,8 +3204,7 @@ get_smb2_acl_by_fid(struct cifs_sb_info *cifs_sb,
 	cifs_dbg(FYI, "trying to get acl\n");
 
 	rc = SMB2_query_acl(xid, tlink_tcon(tlink), cifsfid->persistent_fid,
-			    cifsfid->volatile_fid, (void **)&pntsd, pacllen,
-			    info);
+			    cifsfid->volatile_fid, (void **)&pntsd, pacllen);
 	free_xid(xid);
 
 	cifs_put_tlink(tlink);
@@ -3363,7 +3218,7 @@ get_smb2_acl_by_fid(struct cifs_sb_info *cifs_sb,
 
 static struct cifs_ntsd *
 get_smb2_acl_by_path(struct cifs_sb_info *cifs_sb,
-		     const char *path, u32 *pacllen, u32 info)
+		const char *path, u32 *pacllen)
 {
 	struct cifs_ntsd *pntsd = NULL;
 	u8 oplock = SMB2_OPLOCK_LEVEL_NONE;
@@ -3401,16 +3256,12 @@ get_smb2_acl_by_path(struct cifs_sb_info *cifs_sb,
 	oparms.fid = &fid;
 	oparms.reconnect = false;
 
-	if (info & SACL_SECINFO)
-		oparms.desired_access |= SYSTEM_SECURITY;
-
 	rc = SMB2_open(xid, &oparms, utf16_path, &oplock, NULL, NULL, NULL,
 		       NULL);
 	kfree(utf16_path);
 	if (!rc) {
 		rc = SMB2_query_acl(xid, tlink_tcon(tlink), fid.persistent_fid,
-				    fid.volatile_fid, (void **)&pntsd, pacllen,
-				    info);
+			    fid.volatile_fid, (void **)&pntsd, pacllen);
 		SMB2_close(xid, tcon, fid.persistent_fid, fid.volatile_fid);
 	}
 
@@ -3444,12 +3295,10 @@ set_smb2_acl(struct cifs_ntsd *pnntsd, __u32 acllen,
 	tcon = tlink_tcon(tlink);
 	xid = get_xid();
 
-	if (aclflag & CIFS_ACL_OWNER || aclflag & CIFS_ACL_GROUP)
-		access_flags |= WRITE_OWNER;
-	if (aclflag & CIFS_ACL_SACL)
-		access_flags |= SYSTEM_SECURITY;
-	if (aclflag & CIFS_ACL_DACL)
-		access_flags |= WRITE_DAC;
+	if (aclflag == CIFS_ACL_OWNER || aclflag == CIFS_ACL_GROUP)
+		access_flags = WRITE_OWNER;
+	else
+		access_flags = WRITE_DAC;
 
 	utf16_path = cifs_convert_path_to_utf16(path, cifs_sb);
 	if (!utf16_path) {
@@ -3483,18 +3332,18 @@ set_smb2_acl(struct cifs_ntsd *pnntsd, __u32 acllen,
 /* Retrieve an ACL from the server */
 static struct cifs_ntsd *
 get_smb2_acl(struct cifs_sb_info *cifs_sb,
-	     struct inode *inode, const char *path,
-	     u32 *pacllen, u32 info)
+				      struct inode *inode, const char *path,
+				      u32 *pacllen)
 {
 	struct cifs_ntsd *pntsd = NULL;
 	struct cifsFileInfo *open_file = NULL;
 
-	if (inode && !(info & SACL_SECINFO))
+	if (inode)
 		open_file = find_readable_file(CIFS_I(inode), true);
-	if (!open_file || (info & SACL_SECINFO))
-		return get_smb2_acl_by_path(cifs_sb, path, pacllen, info);
+	if (!open_file)
+		return get_smb2_acl_by_path(cifs_sb, path, pacllen);
 
-	pntsd = get_smb2_acl_by_fid(cifs_sb, &open_file->fid, pacllen, info);
+	pntsd = get_smb2_acl_by_fid(cifs_sb, &open_file->fid, pacllen);
 	cifsFileInfo_put(open_file);
 	return pntsd;
 }
@@ -3858,77 +3707,6 @@ out:
 	return rc;
 }
 
-static long smb3_collapse_range(struct file *file, struct cifs_tcon *tcon,
-			    loff_t off, loff_t len)
-{
-	int rc;
-	unsigned int xid;
-	struct cifsFileInfo *cfile = file->private_data;
-	__le64 eof;
-
-	xid = get_xid();
-
-	if (off >= i_size_read(file->f_inode) ||
-	    off + len >= i_size_read(file->f_inode)) {
-		rc = -EINVAL;
-		goto out;
-	}
-
-	rc = smb2_copychunk_range(xid, cfile, cfile, off + len,
-				  i_size_read(file->f_inode) - off - len, off);
-	if (rc < 0)
-		goto out;
-
-	eof = cpu_to_le64(i_size_read(file->f_inode) - len);
-	rc = SMB2_set_eof(xid, tcon, cfile->fid.persistent_fid,
-			  cfile->fid.volatile_fid, cfile->pid, &eof);
-	if (rc < 0)
-		goto out;
-
-	rc = 0;
- out:
-	free_xid(xid);
-	return rc;
-}
-
-static long smb3_insert_range(struct file *file, struct cifs_tcon *tcon,
-			      loff_t off, loff_t len)
-{
-	int rc;
-	unsigned int xid;
-	struct cifsFileInfo *cfile = file->private_data;
-	__le64 eof;
-	__u64  count;
-
-	xid = get_xid();
-
-	if (off >= i_size_read(file->f_inode)) {
-		rc = -EINVAL;
-		goto out;
-	}
-
-	count = i_size_read(file->f_inode) - off;
-	eof = cpu_to_le64(i_size_read(file->f_inode) + len);
-
-	rc = SMB2_set_eof(xid, tcon, cfile->fid.persistent_fid,
-			  cfile->fid.volatile_fid, cfile->pid, &eof);
-	if (rc < 0)
-		goto out;
-
-	rc = smb2_copychunk_range(xid, cfile, cfile, off, count, off + len);
-	if (rc < 0)
-		goto out;
-
-	rc = smb3_zero_range(file, tcon, off, len, 1);
-	if (rc < 0)
-		goto out;
-
-	rc = 0;
- out:
-	free_xid(xid);
-	return rc;
-}
-
 static loff_t smb3_llseek(struct file *file, struct cifs_tcon *tcon, loff_t offset, int whence)
 {
 	struct cifsFileInfo *wrcfile, *cfile = file->private_data;
@@ -4100,10 +3878,6 @@ static long smb3_fallocate(struct file *file, struct cifs_tcon *tcon, int mode,
 		return smb3_zero_range(file, tcon, off, len, false);
 	} else if (mode == FALLOC_FL_KEEP_SIZE)
 		return smb3_simple_falloc(file, tcon, off, len, true);
-	else if (mode == FALLOC_FL_COLLAPSE_RANGE)
-		return smb3_collapse_range(file, tcon, off, len);
-	else if (mode == FALLOC_FL_INSERT_RANGE)
-		return smb3_insert_range(file, tcon, off, len);
 	else if (mode == 0)
 		return smb3_simple_falloc(file, tcon, off, len, false);
 
@@ -4151,7 +3925,6 @@ smb2_set_oplock_level(struct cifsInodeInfo *cinode, __u32 oplock,
 		      unsigned int epoch, bool *purge_cache)
 {
 	oplock &= 0xFF;
-	cinode->lease_granted = false;
 	if (oplock == SMB2_OPLOCK_LEVEL_NOCHANGE)
 		return;
 	if (oplock == SMB2_OPLOCK_LEVEL_BATCH) {
@@ -4178,7 +3951,6 @@ smb21_set_oplock_level(struct cifsInodeInfo *cinode, __u32 oplock,
 	unsigned int new_oplock = 0;
 
 	oplock &= 0xFF;
-	cinode->lease_granted = true;
 	if (oplock == SMB2_OPLOCK_LEVEL_NOCHANGE)
 		return;
 
@@ -4347,7 +4119,7 @@ smb3_parse_lease_buf(void *buf, unsigned int *epoch, char *lease_key)
 static unsigned int
 smb2_wp_retry_size(struct inode *inode)
 {
-	return min_t(unsigned int, CIFS_SB(inode->i_sb)->ctx->wsize,
+	return min_t(unsigned int, CIFS_SB(inode->i_sb)->wsize,
 		     SMB2_MAX_BUFFER_SIZE);
 }
 
@@ -4962,10 +4734,6 @@ static void smb2_decrypt_offload(struct work_struct *work)
 #ifdef CONFIG_CIFS_STATS2
 			mid->when_received = jiffies;
 #endif
-			if (dw->server->ops->is_network_name_deleted)
-				dw->server->ops->is_network_name_deleted(dw->buf,
-									 dw->server);
-
 			mid->callback(mid);
 		} else {
 			spin_lock(&GlobalMid_Lock);
@@ -5084,12 +4852,6 @@ non_offloaded_decrypt:
 		rc = handle_read_data(server, *mid, buf,
 				      server->vals->read_rsp_size,
 				      pages, npages, len, false);
-		if (rc >= 0) {
-			if (server->ops->is_network_name_deleted) {
-				server->ops->is_network_name_deleted(buf,
-								server);
-			}
-		}
 	}
 
 free_pages:
@@ -5251,7 +5013,7 @@ smb2_next_header(char *buf)
 static int
 smb2_make_node(unsigned int xid, struct inode *inode,
 	       struct dentry *dentry, struct cifs_tcon *tcon,
-	       const char *full_path, umode_t mode, dev_t dev)
+	       char *full_path, umode_t mode, dev_t dev)
 {
 	struct cifs_sb_info *cifs_sb = CIFS_SB(inode->i_sb);
 	int rc = -EPERM;
@@ -5439,7 +5201,6 @@ struct smb_version_operations smb20_operations = {
 	.fiemap = smb3_fiemap,
 	.llseek = smb3_llseek,
 	.is_status_io_timeout = smb2_is_status_io_timeout,
-	.is_network_name_deleted = smb2_is_network_name_deleted,
 };
 
 struct smb_version_operations smb21_operations = {
@@ -5541,7 +5302,6 @@ struct smb_version_operations smb21_operations = {
 	.fiemap = smb3_fiemap,
 	.llseek = smb3_llseek,
 	.is_status_io_timeout = smb2_is_status_io_timeout,
-	.is_network_name_deleted = smb2_is_network_name_deleted,
 };
 
 struct smb_version_operations smb30_operations = {
@@ -5655,7 +5415,6 @@ struct smb_version_operations smb30_operations = {
 	.fiemap = smb3_fiemap,
 	.llseek = smb3_llseek,
 	.is_status_io_timeout = smb2_is_status_io_timeout,
-	.is_network_name_deleted = smb2_is_network_name_deleted,
 };
 
 struct smb_version_operations smb311_operations = {
@@ -5769,7 +5528,6 @@ struct smb_version_operations smb311_operations = {
 	.fiemap = smb3_fiemap,
 	.llseek = smb3_llseek,
 	.is_status_io_timeout = smb2_is_status_io_timeout,
-	.is_network_name_deleted = smb2_is_network_name_deleted,
 };
 
 struct smb_version_values smb20_values = {

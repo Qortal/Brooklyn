@@ -82,7 +82,6 @@ static int igt_dmabuf_import(void *arg)
 	struct drm_i915_gem_object *obj;
 	struct dma_buf *dmabuf;
 	void *obj_map, *dma_map;
-	struct dma_buf_map map;
 	u32 pattern[] = { 0, 0xaa, 0xcc, 0x55, 0xff };
 	int err, i;
 
@@ -111,8 +110,7 @@ static int igt_dmabuf_import(void *arg)
 		goto out_obj;
 	}
 
-	err = dma_buf_vmap(dmabuf, &map);
-	dma_map = err ? NULL : map.vaddr;
+	dma_map = dma_buf_vmap(dmabuf);
 	if (!dma_map) {
 		pr_err("dma_buf_vmap failed\n");
 		err = -ENOMEM;
@@ -152,7 +150,7 @@ static int igt_dmabuf_import(void *arg)
 
 	err = 0;
 out_dma_map:
-	dma_buf_vunmap(dmabuf, &map);
+	dma_buf_vunmap(dmabuf, dma_map);
 out_obj:
 	i915_gem_object_put(obj);
 out_dmabuf:
@@ -165,7 +163,6 @@ static int igt_dmabuf_import_ownership(void *arg)
 	struct drm_i915_private *i915 = arg;
 	struct drm_i915_gem_object *obj;
 	struct dma_buf *dmabuf;
-	struct dma_buf_map map;
 	void *ptr;
 	int err;
 
@@ -173,8 +170,7 @@ static int igt_dmabuf_import_ownership(void *arg)
 	if (IS_ERR(dmabuf))
 		return PTR_ERR(dmabuf);
 
-	err = dma_buf_vmap(dmabuf, &map);
-	ptr = err ? NULL : map.vaddr;
+	ptr = dma_buf_vmap(dmabuf);
 	if (!ptr) {
 		pr_err("dma_buf_vmap failed\n");
 		err = -ENOMEM;
@@ -182,7 +178,7 @@ static int igt_dmabuf_import_ownership(void *arg)
 	}
 
 	memset(ptr, 0xc5, PAGE_SIZE);
-	dma_buf_vunmap(dmabuf, &map);
+	dma_buf_vunmap(dmabuf, ptr);
 
 	obj = to_intel_bo(i915_gem_prime_import(&i915->drm, dmabuf));
 	if (IS_ERR(obj)) {
@@ -194,7 +190,7 @@ static int igt_dmabuf_import_ownership(void *arg)
 
 	dma_buf_put(dmabuf);
 
-	err = i915_gem_object_pin_pages_unlocked(obj);
+	err = i915_gem_object_pin_pages(obj);
 	if (err) {
 		pr_err("i915_gem_object_pin_pages failed with err=%d\n", err);
 		goto out_obj;
@@ -216,7 +212,6 @@ static int igt_dmabuf_export_vmap(void *arg)
 	struct drm_i915_private *i915 = arg;
 	struct drm_i915_gem_object *obj;
 	struct dma_buf *dmabuf;
-	struct dma_buf_map map;
 	void *ptr;
 	int err;
 
@@ -233,8 +228,7 @@ static int igt_dmabuf_export_vmap(void *arg)
 	}
 	i915_gem_object_put(obj);
 
-	err = dma_buf_vmap(dmabuf, &map);
-	ptr = err ? NULL : map.vaddr;
+	ptr = dma_buf_vmap(dmabuf);
 	if (!ptr) {
 		pr_err("dma_buf_vmap failed\n");
 		err = -ENOMEM;
@@ -250,7 +244,7 @@ static int igt_dmabuf_export_vmap(void *arg)
 	memset(ptr, 0xc5, dmabuf->size);
 
 	err = 0;
-	dma_buf_vunmap(dmabuf, &map);
+	dma_buf_vunmap(dmabuf, ptr);
 out:
 	dma_buf_put(dmabuf);
 	return err;

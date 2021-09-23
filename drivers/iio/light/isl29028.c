@@ -339,7 +339,9 @@ static int isl29028_set_pm_runtime_busy(struct isl29028_chip *chip, bool on)
 	int ret;
 
 	if (on) {
-		ret = pm_runtime_resume_and_get(dev);
+		ret = pm_runtime_get_sync(dev);
+		if (ret < 0)
+			pm_runtime_put_noidle(dev);
 	} else {
 		pm_runtime_mark_last_busy(dev);
 		ret = pm_runtime_put_autosuspend(dev);
@@ -645,6 +647,7 @@ static int isl29028_remove(struct i2c_client *client)
 
 	pm_runtime_disable(&client->dev);
 	pm_runtime_set_suspended(&client->dev);
+	pm_runtime_put_noidle(&client->dev);
 
 	return isl29028_clear_configure_reg(chip);
 }

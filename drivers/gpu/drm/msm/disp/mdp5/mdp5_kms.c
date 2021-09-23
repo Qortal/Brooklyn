@@ -232,8 +232,6 @@ static void mdp5_kms_destroy(struct msm_kms *kms)
 		aspace->mmu->funcs->detach(aspace->mmu);
 		msm_gem_address_space_put(aspace);
 	}
-
-	mdp_kms_destroy(&mdp5_kms->base);
 }
 
 #ifdef CONFIG_DEBUG_FS
@@ -296,7 +294,7 @@ static const struct mdp_kms_funcs kms_funcs = {
 	.set_irqmask         = mdp5_set_irqmask,
 };
 
-static int mdp5_disable(struct mdp5_kms *mdp5_kms)
+int mdp5_disable(struct mdp5_kms *mdp5_kms)
 {
 	DBG("");
 
@@ -316,7 +314,7 @@ static int mdp5_disable(struct mdp5_kms *mdp5_kms)
 	return 0;
 }
 
-static int mdp5_enable(struct mdp5_kms *mdp5_kms)
+int mdp5_enable(struct mdp5_kms *mdp5_kms)
 {
 	DBG("");
 
@@ -594,13 +592,10 @@ struct msm_kms *mdp5_kms_init(struct drm_device *dev)
 		return NULL;
 
 	mdp5_kms = to_mdp5_kms(to_mdp_kms(kms));
-	pdev = mdp5_kms->pdev;
 
-	ret = mdp_kms_init(&mdp5_kms->base, &kms_funcs);
-	if (ret) {
-		DRM_DEV_ERROR(&pdev->dev, "failed to init kms\n");
-		goto fail;
-	}
+	mdp_kms_init(&mdp5_kms->base, &kms_funcs);
+
+	pdev = mdp5_kms->pdev;
 
 	irq = irq_of_parse_and_map(pdev->dev.of_node, 0);
 	if (irq < 0) {

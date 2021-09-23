@@ -85,6 +85,7 @@ static void set_data(void *data, int state_high)
 /**
  * psb_intel_i2c_create - instantiate an Intel i2c bus using the specified GPIO reg
  * @dev: DRM device
+ * @output: driver specific output device
  * @reg: GPIO reg to use
  * @name: name for this bus
  *
@@ -116,7 +117,7 @@ struct psb_intel_i2c_chan *psb_intel_i2c_create(struct drm_device *dev,
 	snprintf(chan->adapter.name, I2C_NAME_SIZE, "intel drm %s", name);
 	chan->adapter.owner = THIS_MODULE;
 	chan->adapter.algo_data = &chan->algo;
-	chan->adapter.dev.parent = dev->dev;
+	chan->adapter.dev.parent = &dev->pdev->dev;
 	chan->algo.setsda = set_data;
 	chan->algo.setscl = set_clock;
 	chan->algo.getsda = get_data;
@@ -144,7 +145,7 @@ out_free:
 
 /**
  * psb_intel_i2c_destroy - unregister and free i2c bus resources
- * @chan: channel to free
+ * @output: channel to free
  *
  * Unregister the adapter from the i2c layer, then free the structure.
  */

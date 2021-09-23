@@ -146,8 +146,7 @@ static void drr_destroy_class(struct Qdisc *sch, struct drr_class *cl)
 	kfree(cl);
 }
 
-static int drr_delete_class(struct Qdisc *sch, unsigned long arg,
-			    struct netlink_ext_ack *extack)
+static int drr_delete_class(struct Qdisc *sch, unsigned long arg)
 {
 	struct drr_sched *q = qdisc_priv(sch);
 	struct drr_class *cl = (struct drr_class *)arg;

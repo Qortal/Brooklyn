@@ -87,7 +87,8 @@ void test_ksyms_btf(void)
 	struct btf *btf;
 
 	btf = libbpf_find_kernel_btf();
-	if (!ASSERT_OK_PTR(btf, "btf_exists"))
+	if (CHECK(IS_ERR(btf), "btf_exists", "failed to load kernel BTF: %ld\n",
+		  PTR_ERR(btf)))
 		return;
 
 	percpu_datasec = btf__find_by_name_kind(btf, ".data..percpu",

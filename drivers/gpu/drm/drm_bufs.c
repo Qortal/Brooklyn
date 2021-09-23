@@ -40,6 +40,7 @@
 
 #include <asm/shmparam.h>
 
+#include <drm/drm_agpsupport.h>
 #include <drm/drm_device.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_file.h>
@@ -76,9 +77,8 @@ static struct drm_map_list *drm_find_matching_map(struct drm_device *dev,
 			if ((entry->map->offset & 0xffffffff) ==
 			    (map->offset & 0xffffffff))
 				return entry;
-			break;
 		default: /* Make gcc happy */
-			break;
+			;
 		}
 		if (entry->map->offset == map->offset)
 			return entry;
@@ -324,9 +324,8 @@ static int drm_addmap_core(struct drm_device *dev, resource_size_t offset,
 		/* dma_addr_t is 64bit on i386 with CONFIG_HIGHMEM64G,
 		 * As we're limiting the address to 2^32-1 (or less),
 		 * casting it down to 32 bits is no problem, but we
-		 * need to point to a 64bit variable first.
-		 */
-		map->handle = dma_alloc_coherent(dev->dev,
+		 * need to point to a 64bit variable first. */
+		map->handle = dma_alloc_coherent(&dev->pdev->dev,
 						 map->size,
 						 &map->offset,
 						 GFP_KERNEL);
@@ -556,7 +555,7 @@ int drm_legacy_rmmap_locked(struct drm_device *dev, struct drm_local_map *map)
 	case _DRM_SCATTER_GATHER:
 		break;
 	case _DRM_CONSISTENT:
-		dma_free_coherent(dev->dev,
+		dma_free_coherent(&dev->pdev->dev,
 				  map->size,
 				  map->handle,
 				  map->offset);
@@ -674,18 +673,12 @@ int drm_legacy_rmmap_ioctl(struct drm_device *dev, void *data,
 static void drm_cleanup_buf_error(struct drm_device *dev,
 				  struct drm_buf_entry *entry)
 {
-	drm_dma_handle_t *dmah;
 	int i;
 
 	if (entry->seg_count) {
 		for (i = 0; i < entry->seg_count; i++) {
 			if (entry->seglist[i]) {
-				dmah = entry->seglist[i];
-				dma_free_coherent(dev->dev,
-						  dmah->size,
-						  dmah->vaddr,
-						  dmah->busaddr);
-				kfree(dmah);
+				drm_pci_free(dev, entry->seglist[i]);
 			}
 		}
 		kfree(entry->seglist);
@@ -984,26 +977,10 @@ int drm_legacy_addbufs_pci(struct drm_device *dev,
 	page_count = 0;
 
 	while (entry->buf_count < count) {
-		dmah = kmalloc(sizeof(drm_dma_handle_t), GFP_KERNEL);
+
+		dmah = drm_pci_alloc(dev, PAGE_SIZE << page_order, 0x1000);
+
 		if (!dmah) {
-			/* Set count correctly so we free the proper amount. */
-			entry->buf_count = count;
-			entry->seg_count = count;
-			drm_cleanup_buf_error(dev, entry);
-			kfree(temp_pagelist);
-			mutex_unlock(&dev->struct_mutex);
-			atomic_dec(&dev->buf_alloc);
-			return -ENOMEM;
-		}
-
-		dmah->size = total;
-		dmah->vaddr = dma_alloc_coherent(dev->dev,
-						 dmah->size,
-						 &dmah->busaddr,
-						 GFP_KERNEL);
-		if (!dmah->vaddr) {
-			kfree(dmah);
-
 			/* Set count correctly so we free the proper amount. */
 			entry->buf_count = count;
 			entry->seg_count = count;

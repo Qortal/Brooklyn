@@ -112,8 +112,6 @@
 				regulator-name = "lp8733-ldo0";
 				regulator-min-microvolt = <3300000>;
 				regulator-max-microvolt = <3300000>;
-				regulator-boot-on;
-				regulator-always-on;
 			};
 
 			lp8733_ldo1_reg: ldo1 {
@@ -187,7 +185,7 @@
 };
 
 &pcf_hdmi {
-	hdmi-i2c-disable-hog {
+	p0 {
 		/*
 		 * PM_OEn to High: Disable routing I2C3 to PM_I2C
 		 * With this PM_SEL(p3) should not matter

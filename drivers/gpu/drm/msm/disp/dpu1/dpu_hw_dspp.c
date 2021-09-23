@@ -57,7 +57,8 @@ static void dpu_setup_dspp_pcc(struct dpu_hw_dspp *ctx,
 static void _setup_dspp_ops(struct dpu_hw_dspp *c,
 		unsigned long features)
 {
-	if (test_bit(DPU_DSPP_PCC, &features))
+	if (test_bit(DPU_DSPP_PCC, &features) &&
+		IS_SC7180_TARGET(c->hw.hwversion))
 		c->ops.setup_pcc = dpu_setup_dspp_pcc;
 }
 
@@ -85,6 +86,8 @@ static const struct dpu_dspp_cfg *_dspp_offset(enum dpu_dspp dspp,
 	return ERR_PTR(-EINVAL);
 }
 
+static struct dpu_hw_blk_ops dpu_hw_ops;
+
 struct dpu_hw_dspp *dpu_hw_dspp_init(enum dpu_dspp idx,
 			void __iomem *addr,
 			const struct dpu_mdss_cfg *m)
@@ -110,11 +113,16 @@ struct dpu_hw_dspp *dpu_hw_dspp_init(enum dpu_dspp idx,
 	c->cap = cfg;
 	_setup_dspp_ops(c, c->cap->features);
 
+	dpu_hw_blk_init(&c->base, DPU_HW_BLK_DSPP, idx, &dpu_hw_ops);
+
 	return c;
 }
 
 void dpu_hw_dspp_destroy(struct dpu_hw_dspp *dspp)
 {
+	if (dspp)
+		dpu_hw_blk_destroy(&dspp->base);
+
 	kfree(dspp);
 }
 

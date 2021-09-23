@@ -245,7 +245,6 @@ int ip6_output(struct net *net, struct sock *sk, struct sk_buff *skb)
 			    ip6_finish_output,
 			    !(IP6CB(skb)->flags & IP6SKB_REROUTED));
 }
-EXPORT_SYMBOL(ip6_output);
 
 bool ip6_autoflowlabel(struct net *net, const struct ipv6_pinfo *np)
 {
@@ -549,10 +548,9 @@ int ip6_forward(struct sk_buff *skb)
 	if (net->ipv6.devconf_all->proxy_ndp &&
 	    pneigh_lookup(&nd_tbl, net, &hdr->daddr, skb->dev, 0)) {
 		int proxied = ip6_forward_proxy_check(skb);
-		if (proxied > 0) {
-			hdr->hop_limit--;
+		if (proxied > 0)
 			return ip6_input(skb);
-		} else if (proxied < 0) {
+		else if (proxied < 0) {
 			__IP6_INC_STATS(net, idev, IPSTATS_MIB_INDISCARDS);
 			goto drop;
 		}
@@ -1086,11 +1084,13 @@ static int ip6_dst_lookup_tail(struct net *net, const struct sock *sk,
 	 * ip6_route_output will fail given src=any saddr, though, so
 	 * that's why we try it again later.
 	 */
-	if (ipv6_addr_any(&fl6->saddr)) {
+	if (ipv6_addr_any(&fl6->saddr) && (!*dst || !(*dst)->error)) {
 		struct fib6_info *from;
 		struct rt6_info *rt;
+		bool had_dst = *dst != NULL;
 
-		*dst = ip6_route_output(net, sk, fl6);
+		if (!had_dst)
+			*dst = ip6_route_output(net, sk, fl6);
 		rt = (*dst)->error ? NULL : (struct rt6_info *)*dst;
 
 		rcu_read_lock();
@@ -1107,7 +1107,7 @@ static int ip6_dst_lookup_tail(struct net *net, const struct sock *sk,
 		 * never existed and let the SA-enabled version take
 		 * over.
 		 */
-		if ((*dst)->error) {
+		if (!had_dst && (*dst)->error) {
 			dst_release(*dst);
 			*dst = NULL;
 		}
@@ -1540,7 +1540,7 @@ emsgsize:
 		csummode = CHECKSUM_PARTIAL;
 
 	if (flags & MSG_ZEROCOPY && length && sock_flag(sk, SOCK_ZEROCOPY)) {
-		uarg = msg_zerocopy_realloc(sk, length, skb_zcopy(skb));
+		uarg = sock_zerocopy_realloc(sk, length, skb_zcopy(skb));
 		if (!uarg)
 			return -ENOBUFS;
 		extra_uref = !skb_zcopy(skb);	/* only ref on new uarg */
@@ -1786,7 +1786,8 @@ alloc_new_skb:
 error_efault:
 	err = -EFAULT;
 error:
-	net_zcopy_put_abort(uarg, extra_uref);
+	if (uarg)
+		sock_zerocopy_put_abort(uarg, extra_uref);
 	cork->length -= length;
 	IP6_INC_STATS(sock_net(sk), rt->rt6i_idev, IPSTATS_MIB_OUTDISCARDS);
 	refcount_add(wmem_alloc_delta, &sk->sk_wmem_alloc);

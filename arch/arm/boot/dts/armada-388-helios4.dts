@@ -176,19 +176,19 @@
 					interrupt-controller;
 					#interrupt-cells = <2>;
 
-					board-rev-bit-0-hog {
+					board_rev_bit_0 {
 						gpio-hog;
 						gpios = <0 GPIO_ACTIVE_LOW>;
 						input;
 						line-name = "board-rev-0";
 					};
-					board-rev-bit-1-hog {
+					board_rev_bit_1 {
 						gpio-hog;
 						gpios = <1 GPIO_ACTIVE_LOW>;
 						input;
 						line-name = "board-rev-1";
 					};
-					usb3-ilimit-hog {
+					usb3_ilimit {
 						gpio-hog;
 						gpios = <5 GPIO_ACTIVE_HIGH>;
 						input;

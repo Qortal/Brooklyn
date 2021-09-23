@@ -276,8 +276,7 @@ gp102_acr_fwif[] = {
 };
 
 int
-gp102_acr_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
-	      struct nvkm_acr **pacr)
+gp102_acr_new(struct nvkm_device *device, int index, struct nvkm_acr **pacr)
 {
-	return nvkm_acr_new_(gp102_acr_fwif, device, type, inst, pacr);
+	return nvkm_acr_new_(gp102_acr_fwif, device, index, pacr);
 }

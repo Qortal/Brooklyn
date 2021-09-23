@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/*
+/**
  * Copyright (c) ????		Jochen Schäuble <psionic@psionic.de>
  * Copyright (c) 2003-2004	Joern Engel <joern@wh.fh-wedel.de>
  *
  * Usage:
  *
  * one commend line parameter per device, each in the form:
- *   phram=<name>,<start>,<len>[,<erasesize>]
+ *   phram=<name>,<start>,<len>
  * <name> may be up to 63 characters.
- * <start>, <len>, and <erasesize> can be octal, decimal or hexadecimal.  If followed
+ * <start> and <len> can be octal, decimal or hexadecimal.  If followed
  * by "ki", "Mi" or "Gi", the numbers will be interpreted as kilo, mega or
- * gigabytes. <erasesize> is optional and defaults to PAGE_SIZE.
+ * gigabytes.
  *
  * Example:
- *	phram=swap,64Mi,128Mi phram=test,900Mi,1Mi,64Ki
+ *	phram=swap,64Mi,128Mi phram=test,900Mi,1Mi
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
@@ -26,7 +26,6 @@
 #include <linux/moduleparam.h>
 #include <linux/slab.h>
 #include <linux/mtd/mtd.h>
-#include <asm/div64.h>
 
 struct phram_mtd_list {
 	struct mtd_info mtd;
@@ -89,7 +88,7 @@ static void unregister_devices(void)
 	}
 }
 
-static int register_device(char *name, phys_addr_t start, size_t len, uint32_t erasesize)
+static int register_device(char *name, phys_addr_t start, size_t len)
 {
 	struct phram_mtd_list *new;
 	int ret = -ENOMEM;
@@ -116,7 +115,7 @@ static int register_device(char *name, phys_addr_t start, size_t len, uint32_t e
 	new->mtd._write = phram_write;
 	new->mtd.owner = THIS_MODULE;
 	new->mtd.type = MTD_RAM;
-	new->mtd.erasesize = erasesize;
+	new->mtd.erasesize = PAGE_SIZE;
 	new->mtd.writesize = 1;
 
 	ret = -EAGAIN;
@@ -205,24 +204,22 @@ static inline void kill_final_newline(char *str)
 static int phram_init_called;
 /*
  * This shall contain the module parameter if any. It is of the form:
- * - phram=<device>,<address>,<size>[,<erasesize>] for module case
- * - phram.phram=<device>,<address>,<size>[,<erasesize>] for built-in case
- * We leave 64 bytes for the device name, 20 for the address , 20 for the
- * size and 20 for the erasesize.
- * Example: phram.phram=rootfs,0xa0000000,512Mi,65536
+ * - phram=<device>,<address>,<size> for module case
+ * - phram.phram=<device>,<address>,<size> for built-in case
+ * We leave 64 bytes for the device name, 20 for the address and 20 for the
+ * size.
+ * Example: phram.phram=rootfs,0xa0000000,512Mi
  */
-static char phram_paramline[64 + 20 + 20 + 20];
+static char phram_paramline[64 + 20 + 20];
 #endif
 
 static int phram_setup(const char *val)
 {
-	char buf[64 + 20 + 20 + 20], *str = buf;
-	char *token[4];
+	char buf[64 + 20 + 20], *str = buf;
+	char *token[3];
 	char *name;
 	uint64_t start;
 	uint64_t len;
-	uint64_t erasesize = PAGE_SIZE;
-	uint32_t rem;
 	int i, ret;
 
 	if (strnlen(val, sizeof(buf)) >= sizeof(buf))
@@ -231,7 +228,7 @@ static int phram_setup(const char *val)
 	strcpy(str, val);
 	kill_final_newline(str);
 
-	for (i = 0; i < 4; i++)
+	for (i = 0; i < 3; i++)
 		token[i] = strsep(&str, ",");
 
 	if (str)
@@ -256,29 +253,11 @@ static int phram_setup(const char *val)
 		goto error;
 	}
 
-	if (token[3]) {
-		ret = parse_num64(&erasesize, token[3]);
-		if (ret) {
-			parse_err("illegal erasesize\n");
-			goto error;
-		}
-	}
-
-	if (erasesize)
-		div_u64_rem(len, (uint32_t)erasesize, &rem);
-
-	if (len == 0 || erasesize == 0 || erasesize > len
-	    || erasesize > UINT_MAX || rem) {
-		parse_err("illegal erasesize or len\n");
-		ret = -EINVAL;
-		goto error;
-	}
-
-	ret = register_device(name, start, len, (uint32_t)erasesize);
+	ret = register_device(name, start, len);
 	if (ret)
 		goto error;
 
-	pr_info("%s device: %#llx at %#llx for erasesize %#llx\n", name, len, start, erasesize);
+	pr_info("%s device: %#llx at %#llx\n", name, len, start);
 	return 0;
 
 error:
@@ -319,7 +298,7 @@ static int phram_param_call(const char *val, const struct kernel_param *kp)
 }
 
 module_param_call(phram, phram_param_call, NULL, NULL, 0200);
-MODULE_PARM_DESC(phram, "Memory region to map. \"phram=<name>,<start>,<length>[,<erasesize>]\"");
+MODULE_PARM_DESC(phram, "Memory region to map. \"phram=<name>,<start>,<length>\"");
 
 
 static int __init init_phram(void)

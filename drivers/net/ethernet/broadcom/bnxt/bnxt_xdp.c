@@ -133,12 +133,17 @@ bool bnxt_rx_xdp(struct bnxt *bp, struct bnxt_rx_ring_info *rxr, u16 cons,
 	dma_sync_single_for_cpu(&pdev->dev, mapping + offset, *len, bp->rx_dir);
 
 	txr = rxr->bnapi->tx_ring;
-	/* BNXT_RX_PAGE_MODE(bp) when XDP enabled */
-	xdp_init_buff(&xdp, PAGE_SIZE, &rxr->xdp_rxq);
-	xdp_prepare_buff(&xdp, *data_ptr - offset, offset, *len, false);
+	xdp.data_hard_start = *data_ptr - offset;
+	xdp.data = *data_ptr;
+	xdp_set_data_meta_invalid(&xdp);
+	xdp.data_end = *data_ptr + *len;
+	xdp.rxq = &rxr->xdp_rxq;
+	xdp.frame_sz = PAGE_SIZE; /* BNXT_RX_PAGE_MODE(bp) when XDP enabled */
 	orig_data = xdp.data;
 
+	rcu_read_lock();
 	act = bpf_prog_run_xdp(xdp_prog, &xdp);
+	rcu_read_unlock();
 
 	tx_avail = bnxt_tx_avail(bp, txr);
 	/* If the tx ring is not full, we must not update the rx producer yet
@@ -215,7 +220,7 @@ int bnxt_xdp_xmit(struct net_device *dev, int num_frames,
 	struct pci_dev *pdev = bp->pdev;
 	struct bnxt_tx_ring_info *txr;
 	dma_addr_t mapping;
-	int nxmit = 0;
+	int drops = 0;
 	int ring;
 	int i;
 
@@ -231,17 +236,21 @@ int bnxt_xdp_xmit(struct net_device *dev, int num_frames,
 		struct xdp_frame *xdp = frames[i];
 
 		if (!txr || !bnxt_tx_avail(bp, txr) ||
-		    !(bp->bnapi[ring]->flags & BNXT_NAPI_FLAG_XDP))
-			break;
+		    !(bp->bnapi[ring]->flags & BNXT_NAPI_FLAG_XDP)) {
+			xdp_return_frame_rx_napi(xdp);
+			drops++;
+			continue;
+		}
 
 		mapping = dma_map_single(&pdev->dev, xdp->data, xdp->len,
 					 DMA_TO_DEVICE);
 
-		if (dma_mapping_error(&pdev->dev, mapping))
-			break;
-
+		if (dma_mapping_error(&pdev->dev, mapping)) {
+			xdp_return_frame_rx_napi(xdp);
+			drops++;
+			continue;
+		}
 		__bnxt_xmit_xdp_redirect(bp, txr, mapping, xdp->len, xdp);
-		nxmit++;
 	}
 
 	if (flags & XDP_XMIT_FLUSH) {
@@ -250,7 +259,7 @@ int bnxt_xdp_xmit(struct net_device *dev, int num_frames,
 		bnxt_db_write(bp, &txr->tx_db, txr->tx_prod);
 	}
 
-	return nxmit;
+	return num_frames - drops;
 }
 
 /* Under rtnl_lock */

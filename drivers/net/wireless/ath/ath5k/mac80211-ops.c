@@ -433,7 +433,6 @@ ath5k_configure_filter(struct ieee80211_hw *hw, unsigned int changed_flags,
 	case NL80211_IFTYPE_STATION:
 		if (ah->assoc)
 			rfilt |= AR5K_RX_FILTER_BEACON;
-		break;
 	default:
 		break;
 	}

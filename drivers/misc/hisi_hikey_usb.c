@@ -168,7 +168,10 @@ static int hisi_hikey_usb_parse_kirin970(struct platform_device *pdev,
 
 	hisi_hikey_usb->reset = devm_gpiod_get(&pdev->dev, "hub_reset_en_gpio",
 					       GPIOD_OUT_HIGH);
-	return PTR_ERR_OR_ZERO(hisi_hikey_usb->reset);
+	if (IS_ERR(hisi_hikey_usb->reset))
+		return PTR_ERR(hisi_hikey_usb->reset);
+
+	return 0;
 }
 
 static int hisi_hikey_usb_probe(struct platform_device *pdev)

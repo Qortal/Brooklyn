@@ -2,7 +2,6 @@
 //
 // Copyright(c) 2019 Intel Corporation. All rights reserved.
 
-#include <linux/module.h>
 #include <sound/pcm.h>
 #include <sound/soc.h>
 #include <sound/hda_codec.h>
@@ -83,9 +82,5 @@ int hda_dsp_hdmi_build_controls(struct snd_soc_card *card,
 
 	return err;
 }
-EXPORT_SYMBOL_NS(hda_dsp_hdmi_build_controls, SND_SOC_INTEL_HDA_DSP_COMMON);
 
 #endif
-
-MODULE_DESCRIPTION("ASoC Intel HDMI helpers");
-MODULE_LICENSE("GPL");

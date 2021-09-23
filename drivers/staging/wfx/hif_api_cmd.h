@@ -100,7 +100,7 @@ struct hif_req_update_ie {
 	u8     reserved1:5;
 	u8     reserved2;
 	__le16 num_ies;
-	u8     ie[];
+	struct element ie[];
 } __packed;
 
 struct hif_cnf_update_ie {

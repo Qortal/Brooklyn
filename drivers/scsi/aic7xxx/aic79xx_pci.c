@@ -377,7 +377,8 @@ ahd_pci_config(struct ahd_softc *ahd, const struct ahd_pci_identity *entry)
 	return ahd_pci_map_int(ahd);
 }
 
-void __maybe_unused
+#ifdef CONFIG_PM
+void
 ahd_pci_suspend(struct ahd_softc *ahd)
 {
 	/*
@@ -393,7 +394,7 @@ ahd_pci_suspend(struct ahd_softc *ahd)
 
 }
 
-void __maybe_unused
+void
 ahd_pci_resume(struct ahd_softc *ahd)
 {
 	ahd_pci_write_config(ahd->dev_softc, DEVCONFIG,
@@ -403,6 +404,7 @@ ahd_pci_resume(struct ahd_softc *ahd)
 	ahd_pci_write_config(ahd->dev_softc, CSIZE_LATTIME,
 			     ahd->suspend_state.pci_state.csize_lattime, /*bytes*/1);
 }
+#endif
 
 /*
  * Perform some simple tests that should catch situations where

@@ -13,7 +13,6 @@
 #include <linux/init.h>
 #include <linux/device.h>
 #include <linux/delay.h>
-#include <linux/panic_notifier.h>
 #include <linux/reboot.h>
 #include <linux/ctype.h>
 #include <linux/fs.h>
@@ -163,18 +162,16 @@ static bool reipl_ccw_clear;
 
 static inline int __diag308(unsigned long subcode, void *addr)
 {
-	union register_pair r1;
+	register unsigned long _addr asm("0") = (unsigned long) addr;
+	register unsigned long _rc asm("1") = 0;
 
-	r1.even = (unsigned long) addr;
-	r1.odd	= 0;
 	asm volatile(
-		"	diag	%[r1],%[subcode],0x308\n"
+		"	diag	%0,%2,0x308\n"
 		"0:	nopr	%%r7\n"
 		EX_TABLE(0b,0b)
-		: [r1] "+&d" (r1.pair)
-		: [subcode] "d" (subcode)
-		: "cc", "memory");
-	return r1.odd;
+		: "+d" (_addr), "+d" (_rc)
+		: "d" (subcode) : "cc", "memory");
+	return _rc;
 }
 
 int diag308(unsigned long subcode, void *addr)
@@ -1515,7 +1512,7 @@ static void diag308_dump(void *dump_block)
 	while (1) {
 		if (diag308(DIAG308_LOAD_NORMAL_DUMP, NULL) != 0x302)
 			break;
-		udelay(USEC_PER_SEC);
+		udelay_simple(USEC_PER_SEC);
 	}
 }
 
@@ -1852,12 +1849,12 @@ static void __do_restart(void *ignore)
 	stop_run(&on_restart_trigger);
 }
 
-void do_restart(void *arg)
+void do_restart(void)
 {
 	tracing_off();
 	debug_locks_off();
 	lgr_info_log();
-	smp_call_online_cpu(__do_restart, arg);
+	smp_call_online_cpu(__do_restart, NULL);
 }
 
 /* on halt */

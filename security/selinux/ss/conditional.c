@@ -254,8 +254,7 @@ struct cond_insertf_data {
 	struct cond_av_list *other;
 };
 
-static int cond_insertf(struct avtab *a, const struct avtab_key *k,
-			const struct avtab_datum *d, void *ptr)
+static int cond_insertf(struct avtab *a, struct avtab_key *k, struct avtab_datum *d, void *ptr)
 {
 	struct cond_insertf_data *data = ptr;
 	struct policydb *p = data->p;
@@ -629,8 +628,7 @@ static int cond_dup_av_list(struct cond_av_list *new,
 static int duplicate_policydb_cond_list(struct policydb *newp,
 					struct policydb *origp)
 {
-	int rc;
-	u32 i;
+	int rc, i, j;
 
 	rc = avtab_alloc_dup(&newp->te_cond_avtab, &origp->te_cond_avtab);
 	if (rc)
@@ -650,12 +648,12 @@ static int duplicate_policydb_cond_list(struct policydb *newp,
 		newp->cond_list_len++;
 
 		newn->cur_state = orign->cur_state;
-		newn->expr.nodes = kmemdup(orign->expr.nodes,
-				orign->expr.len * sizeof(*orign->expr.nodes),
-				GFP_KERNEL);
+		newn->expr.nodes = kcalloc(orign->expr.len,
+					sizeof(*newn->expr.nodes), GFP_KERNEL);
 		if (!newn->expr.nodes)
 			goto error;
-
+		for (j = 0; j < orign->expr.len; j++)
+			newn->expr.nodes[j] = orign->expr.nodes[j];
 		newn->expr.len = orign->expr.len;
 
 		rc = cond_dup_av_list(&newn->true_list, &orign->true_list,

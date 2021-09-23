@@ -387,7 +387,7 @@ static struct attribute *suspend_attrs[] = {
 	NULL,
 };
 
-static const struct attribute_group suspend_attr_group = {
+static struct attribute_group suspend_attr_group = {
 	.name = "suspend_stats",
 	.attrs = suspend_attrs,
 };

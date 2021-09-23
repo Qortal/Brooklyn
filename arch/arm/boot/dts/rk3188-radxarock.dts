@@ -11,10 +11,6 @@
 	model = "Radxa Rock";
 	compatible = "radxa,rock", "rockchip,rk3188";
 
-	aliases {
-		mmc0 = &mmc0;
-	};
-
 	memory@60000000 {
 		device_type = "memory";
 		reg = <0x60000000 0x80000000>;

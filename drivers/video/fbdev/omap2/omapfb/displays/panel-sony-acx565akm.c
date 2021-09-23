@@ -506,11 +506,16 @@ static int acx565akm_connect(struct omap_dss_device *dssdev)
 {
 	struct panel_drv_data *ddata = to_panel_data(dssdev);
 	struct omap_dss_device *in = ddata->in;
+	int r;
 
 	if (omapdss_device_is_connected(dssdev))
 		return 0;
 
-	return in->ops.sdi->connect(in, dssdev);
+	r = in->ops.sdi->connect(in, dssdev);
+	if (r)
+		return r;
+
+	return 0;
 }
 
 static void acx565akm_disconnect(struct omap_dss_device *dssdev)

@@ -42,7 +42,7 @@
 
 #define PCAvDelayByIO(uDelayUnit)				\
 do {								\
-	unsigned char __maybe_unused byData;			\
+	unsigned char byData;					\
 	unsigned long ii;					\
 								\
 	if (uDelayUnit <= 50) {					\

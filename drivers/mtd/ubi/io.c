@@ -535,14 +535,7 @@ int ubi_io_sync_erase(struct ubi_device *ubi, int pnum, int torture)
 		return -EROFS;
 	}
 
-	/*
-	 * If the flash is ECC-ed then we have to erase the ECC block before we
-	 * can write to it. But the write is in preparation to an erase in the
-	 * first place. This means we cannot zero out EC and VID before the
-	 * erase and we just have to hope the flash starts erasing from the
-	 * start of the page.
-	 */
-	if (ubi->nor_flash && ubi->mtd->writesize == 1) {
+	if (ubi->nor_flash) {
 		err = nor_erase_prepare(ubi, pnum);
 		if (err)
 			return err;
@@ -913,7 +906,12 @@ static int validate_vid_hdr(const struct ubi_device *ubi,
 				ubi_err(ubi, "bad data_size");
 				goto bad;
 			}
-		} else if (lnum > used_ebs - 1) {
+		} else if (lnum == used_ebs - 1) {
+			if (data_size == 0) {
+				ubi_err(ubi, "bad data_size at last LEB");
+				goto bad;
+			}
+		} else {
 			ubi_err(ubi, "too high lnum");
 			goto bad;
 		}

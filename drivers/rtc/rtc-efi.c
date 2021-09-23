@@ -280,6 +280,7 @@ static struct platform_driver efi_rtc_driver = {
 
 module_platform_driver_probe(efi_rtc_driver, efi_rtc_probe);
 
+MODULE_ALIAS("platform:rtc-efi");
 MODULE_AUTHOR("dann frazier <dannf@dannf.org>");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("EFI RTC driver");

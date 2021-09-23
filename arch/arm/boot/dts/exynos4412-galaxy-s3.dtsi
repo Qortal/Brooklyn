@@ -15,7 +15,7 @@
 		i2c10 = &i2c_cm36651;
 	};
 
-	led-controller {
+	aat1290 {
 		compatible = "skyworks,aat1290";
 		flen-gpios = <&gpj1 1 GPIO_ACTIVE_HIGH>;
 		enset-gpios = <&gpj1 2 GPIO_ACTIVE_HIGH>;
@@ -58,8 +58,9 @@
 		i2c-gpio,delay-us = <2>;
 		#address-cells = <1>;
 		#size-cells = <0>;
+		status = "okay";
 
-		magnetometer@c {
+		ak8975@c {
 			compatible = "asahi-kasei,ak8975";
 			reg = <0x0c>;
 			gpios = <&gpj0 7 GPIO_ACTIVE_HIGH>;
@@ -74,7 +75,7 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		light-sensor@18 {
+		cm36651@18 {
 			compatible = "capella,cm36651";
 			reg = <0x18>;
 			interrupt-parent = <&gpx0>;
@@ -132,7 +133,7 @@
 };
 
 &i2c_3 {
-	touchscreen@48 {
+	mms114-touchscreen@48 {
 		compatible = "melfas,mms114";
 		reg = <0x48>;
 		interrupt-parent = <&gpm2>;

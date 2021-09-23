@@ -413,7 +413,9 @@ static int vcnl4000_set_pm_runtime_state(struct vcnl4000_data *data, bool on)
 	int ret;
 
 	if (on) {
-		ret = pm_runtime_resume_and_get(dev);
+		ret = pm_runtime_get_sync(dev);
+		if (ret < 0)
+			pm_runtime_put_noidle(dev);
 	} else {
 		pm_runtime_mark_last_busy(dev);
 		ret = pm_runtime_put_autosuspend(dev);
@@ -996,11 +998,11 @@ static int vcnl4010_probe_trigger(struct iio_dev *indio_dev)
 	struct iio_trigger *trigger;
 
 	trigger = devm_iio_trigger_alloc(&client->dev, "%s-dev%d",
-					 indio_dev->name,
-					 iio_device_id(indio_dev));
+					 indio_dev->name, indio_dev->id);
 	if (!trigger)
 		return -ENOMEM;
 
+	trigger->dev.parent = &client->dev;
 	trigger->ops = &vcnl4010_trigger_ops;
 	iio_trigger_set_drvdata(trigger, indio_dev);
 

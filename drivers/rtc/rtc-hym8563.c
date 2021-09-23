@@ -428,9 +428,10 @@ static irqreturn_t hym8563_irq(int irq, void *dev_id)
 {
 	struct hym8563 *hym8563 = (struct hym8563 *)dev_id;
 	struct i2c_client *client = hym8563->client;
+	struct mutex *lock = &hym8563->rtc->ops_lock;
 	int data, ret;
 
-	rtc_lock(hym8563->rtc);
+	mutex_lock(lock);
 
 	/* Clear the alarm flag */
 
@@ -450,7 +451,7 @@ static irqreturn_t hym8563_irq(int irq, void *dev_id)
 	}
 
 out:
-	rtc_unlock(hym8563->rtc);
+	mutex_unlock(lock);
 	return IRQ_HANDLED;
 }
 
@@ -526,6 +527,8 @@ static int hym8563_probe(struct i2c_client *client,
 	hym8563->client = client;
 	i2c_set_clientdata(client, hym8563);
 
+	device_set_wakeup_capable(&client->dev, true);
+
 	ret = hym8563_init_device(client);
 	if (ret) {
 		dev_err(&client->dev, "could not init device, %d\n", ret);
@@ -542,11 +545,6 @@ static int hym8563_probe(struct i2c_client *client,
 				client->irq, ret);
 			return ret;
 		}
-	}
-
-	if (client->irq > 0 ||
-	    device_property_read_bool(&client->dev, "wakeup-source")) {
-		device_init_wakeup(&client->dev, true);
 	}
 
 	/* check state of calendar information */

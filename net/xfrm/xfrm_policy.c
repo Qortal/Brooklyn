@@ -687,7 +687,7 @@ static void xfrm_hash_resize(struct work_struct *work)
 }
 
 /* Make sure *pol can be inserted into fastbin.
- * Useful to check that later insert requests will be successful
+ * Useful to check that later insert requests will be sucessful
  * (provided xfrm_policy_lock is held throughout).
  */
 static struct xfrm_pol_inexact_bin *
@@ -1901,7 +1901,8 @@ static int xfrm_policy_match(const struct xfrm_policy *pol,
 
 	match = xfrm_selector_match(sel, fl, family);
 	if (match)
-		ret = security_xfrm_policy_lookup(pol->security, fl->flowi_secid);
+		ret = security_xfrm_policy_lookup(pol->security, fl->flowi_secid,
+						  dir);
 	return ret;
 }
 
@@ -2179,7 +2180,8 @@ static struct xfrm_policy *xfrm_sk_policy_lookup(const struct sock *sk, int dir,
 				goto out;
 			}
 			err = security_xfrm_policy_lookup(pol->security,
-						      fl->flowi_secid);
+						      fl->flowi_secid,
+						      dir);
 			if (!err) {
 				if (!xfrm_pol_hold_rcu(pol))
 					goto again;
@@ -3244,7 +3246,7 @@ xfrm_state_ok(const struct xfrm_tmpl *tmpl, const struct xfrm_state *x,
 
 /*
  * 0 or more than 0 is returned when validation is succeeded (either bypass
- * because of optional transport mode, or next index of the matched secpath
+ * because of optional transport mode, or next index of the mathced secpath
  * state with the template.
  * -1 is returned when no matching template is found.
  * Otherwise "-2 - errored_index" is returned.
@@ -3323,6 +3325,39 @@ decode_session4(struct sk_buff *skb, struct flowi *fl, bool reverse)
 				fl4->fl4_icmp_code = icmp[1];
 			}
 			break;
+		case IPPROTO_ESP:
+			if (xprth + 4 < skb->data ||
+			    pskb_may_pull(skb, xprth + 4 - skb->data)) {
+				__be32 *ehdr;
+
+				xprth = skb_network_header(skb) + ihl * 4;
+				ehdr = (__be32 *)xprth;
+
+				fl4->fl4_ipsec_spi = ehdr[0];
+			}
+			break;
+		case IPPROTO_AH:
+			if (xprth + 8 < skb->data ||
+			    pskb_may_pull(skb, xprth + 8 - skb->data)) {
+				__be32 *ah_hdr;
+
+				xprth = skb_network_header(skb) + ihl * 4;
+				ah_hdr = (__be32 *)xprth;
+
+				fl4->fl4_ipsec_spi = ah_hdr[1];
+			}
+			break;
+		case IPPROTO_COMP:
+			if (xprth + 4 < skb->data ||
+			    pskb_may_pull(skb, xprth + 4 - skb->data)) {
+				__be16 *ipcomp_hdr;
+
+				xprth = skb_network_header(skb) + ihl * 4;
+				ipcomp_hdr = (__be16 *)xprth;
+
+				fl4->fl4_ipsec_spi = htonl(ntohs(ipcomp_hdr[1]));
+			}
+			break;
 		case IPPROTO_GRE:
 			if (xprth + 12 < skb->data ||
 			    pskb_may_pull(skb, xprth + 12 - skb->data)) {
@@ -3341,6 +3376,7 @@ decode_session4(struct sk_buff *skb, struct flowi *fl, bool reverse)
 			}
 			break;
 		default:
+			fl4->fl4_ipsec_spi = 0;
 			break;
 		}
 	}
@@ -3433,7 +3469,12 @@ decode_session6(struct sk_buff *skb, struct flowi *fl, bool reverse)
 			fl6->flowi6_proto = nexthdr;
 			return;
 #endif
+		/* XXX Why are there these headers? */
+		case IPPROTO_AH:
+		case IPPROTO_ESP:
+		case IPPROTO_COMP:
 		default:
+			fl6->fl6_ipsec_spi = 0;
 			fl6->flowi6_proto = nexthdr;
 			return;
 		}
@@ -4131,6 +4172,9 @@ void __init xfrm_init(void)
 #ifdef CONFIG_XFRM_ESPINTCP
 	espintcp_init();
 #endif
+
+	RCU_INIT_POINTER(xfrm_if_cb, NULL);
+	synchronize_rcu();
 }
 
 #ifdef CONFIG_AUDITSYSCALL

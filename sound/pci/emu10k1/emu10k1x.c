@@ -31,6 +31,7 @@
 MODULE_AUTHOR("Francisco Moraes <fmoraes@nc.rr.com>");
 MODULE_DESCRIPTION("EMU10K1X");
 MODULE_LICENSE("GPL");
+MODULE_SUPPORTED_DEVICE("{{Dell Creative Labs,SB Live!}");
 
 // module parameters (see "Module Parameters")
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
@@ -349,8 +350,7 @@ static void snd_emu10k1x_pcm_interrupt(struct emu10k1x *emu, struct emu10k1x_voi
 {
 	struct emu10k1x_pcm *epcm;
 
-	epcm = voice->epcm;
-	if (!epcm)
+	if ((epcm = voice->epcm) == NULL)
 		return;
 	if (epcm->substream == NULL)
 		return;
@@ -372,11 +372,10 @@ static int snd_emu10k1x_playback_open(struct snd_pcm_substream *substream)
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	int err;
 
-	err = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS);
-	if (err < 0)
+	if ((err = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS)) < 0) {
 		return err;
-	err = snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_PERIOD_BYTES, 64);
-	if (err < 0)
+	}
+	if ((err = snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_PERIOD_BYTES, 64)) < 0)
                 return err;
 
 	epcm = kzalloc(sizeof(*epcm), GFP_KERNEL);
@@ -552,12 +551,10 @@ static int snd_emu10k1x_pcm_open_capture(struct snd_pcm_substream *substream)
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	int err;
 
-	err = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS);
-	if (err < 0)
-		return err;
-	err = snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_PERIOD_BYTES, 64);
-	if (err < 0)
-		return err;
+	if ((err = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS)) < 0)
+                return err;
+	if ((err = snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_PERIOD_BYTES, 64)) < 0)
+                return err;
 
 	epcm = kzalloc(sizeof(*epcm), GFP_KERNEL);
 	if (epcm == NULL)
@@ -726,8 +723,7 @@ static int snd_emu10k1x_ac97(struct emu10k1x *chip)
 		.read = snd_emu10k1x_ac97_read,
 	};
   
-	err = snd_ac97_bus(chip->card, 0, &ops, NULL, &pbus);
-	if (err < 0)
+	if ((err = snd_ac97_bus(chip->card, 0, &ops, NULL, &pbus)) < 0)
 		return err;
 	pbus->no_vra = 1; /* we don't need VRA */
 
@@ -843,8 +839,7 @@ static int snd_emu10k1x_pcm(struct emu10k1x *emu, int device)
 	if (device == 0)
 		capture = 1;
 	
-	err = snd_pcm_new(emu->card, "emu10k1x", device, 1, capture, &pcm);
-	if (err < 0)
+	if ((err = snd_pcm_new(emu->card, "emu10k1x", device, 1, capture, &pcm)) < 0)
 		return err;
   
 	pcm->private_data = emu;
@@ -897,11 +892,10 @@ static int snd_emu10k1x_create(struct snd_card *card,
 
 	*rchip = NULL;
 
-	err = pci_enable_device(pci);
-	if (err < 0)
+	if ((err = pci_enable_device(pci)) < 0)
 		return err;
-
-	if (dma_set_mask_and_coherent(&pci->dev, DMA_BIT_MASK(28)) < 0) {
+	if (pci_set_dma_mask(pci, DMA_BIT_MASK(28)) < 0 ||
+	    pci_set_consistent_dma_mask(pci, DMA_BIT_MASK(28)) < 0) {
 		dev_err(card->dev, "error to set 28bit mask DMA\n");
 		pci_disable_device(pci);
 		return -ENXIO;
@@ -921,8 +915,8 @@ static int snd_emu10k1x_create(struct snd_card *card,
 	spin_lock_init(&chip->voice_lock);
   
 	chip->port = pci_resource_start(pci, 0);
-	chip->res_port = request_region(chip->port, 8, "EMU10K1X");
-	if (!chip->res_port) {
+	if ((chip->res_port = request_region(chip->port, 8,
+					     "EMU10K1X")) == NULL) { 
 		dev_err(card->dev, "cannot allocate the port 0x%lx\n",
 			chip->port);
 		snd_emu10k1x_free(chip);
@@ -998,8 +992,8 @@ static int snd_emu10k1x_create(struct snd_card *card,
 
 	outl(HCFG_LOCKSOUNDCACHE|HCFG_AUDIOENABLE, chip->port+HCFG);
 
-	err = snd_device_new(card, SNDRV_DEV_LOWLEVEL, chip, &ops);
-	if (err < 0) {
+	if ((err = snd_device_new(card, SNDRV_DEV_LOWLEVEL,
+				  chip, &ops)) < 0) {
 		snd_emu10k1x_free(chip);
 		return err;
 	}
@@ -1178,23 +1172,17 @@ static int snd_emu10k1x_mixer(struct emu10k1x *emu)
 	struct snd_kcontrol *kctl;
 	struct snd_card *card = emu->card;
 
-	kctl = snd_ctl_new1(&snd_emu10k1x_spdif_mask_control, emu);
-	if (!kctl)
+	if ((kctl = snd_ctl_new1(&snd_emu10k1x_spdif_mask_control, emu)) == NULL)
 		return -ENOMEM;
-	err = snd_ctl_add(card, kctl);
-	if (err)
+	if ((err = snd_ctl_add(card, kctl)))
 		return err;
-	kctl = snd_ctl_new1(&snd_emu10k1x_shared_spdif, emu);
-	if (!kctl)
+	if ((kctl = snd_ctl_new1(&snd_emu10k1x_shared_spdif, emu)) == NULL)
 		return -ENOMEM;
-	err = snd_ctl_add(card, kctl);
-	if (err)
+	if ((err = snd_ctl_add(card, kctl)))
 		return err;
-	kctl = snd_ctl_new1(&snd_emu10k1x_spdif_control, emu);
-	if (!kctl)
+	if ((kctl = snd_ctl_new1(&snd_emu10k1x_spdif_control, emu)) == NULL)
 		return -ENOMEM;
-	err = snd_ctl_add(card, kctl);
-	if (err)
+	if ((err = snd_ctl_add(card, kctl)))
 		return err;
 
 	return 0;
@@ -1501,8 +1489,7 @@ static int emu10k1x_midi_init(struct emu10k1x *emu,
 	struct snd_rawmidi *rmidi;
 	int err;
 
-	err = snd_rawmidi_new(emu->card, name, device, 1, 1, &rmidi);
-	if (err < 0)
+	if ((err = snd_rawmidi_new(emu->card, name, device, 1, 1, &rmidi)) < 0)
 		return err;
 	midi->emu = emu;
 	spin_lock_init(&midi->open_lock);
@@ -1525,8 +1512,7 @@ static int snd_emu10k1x_midi(struct emu10k1x *emu)
 	struct emu10k1x_midi *midi = &emu->midi;
 	int err;
 
-	err = emu10k1x_midi_init(emu, midi, 0, "EMU10K1X MPU-401 (UART)");
-	if (err < 0)
+	if ((err = emu10k1x_midi_init(emu, midi, 0, "EMU10K1X MPU-401 (UART)")) < 0)
 		return err;
 
 	midi->tx_enable = INTE_MIDITXENABLE;
@@ -1558,42 +1544,35 @@ static int snd_emu10k1x_probe(struct pci_dev *pci,
 	if (err < 0)
 		return err;
 
-	err = snd_emu10k1x_create(card, pci, &chip);
-	if (err < 0) {
+	if ((err = snd_emu10k1x_create(card, pci, &chip)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
 
-	err = snd_emu10k1x_pcm(chip, 0);
-	if (err < 0) {
+	if ((err = snd_emu10k1x_pcm(chip, 0)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
-	err = snd_emu10k1x_pcm(chip, 1);
-	if (err < 0) {
+	if ((err = snd_emu10k1x_pcm(chip, 1)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
-	err = snd_emu10k1x_pcm(chip, 2);
-	if (err < 0) {
-		snd_card_free(card);
-		return err;
-	}
-
-	err = snd_emu10k1x_ac97(chip);
-	if (err < 0) {
+	if ((err = snd_emu10k1x_pcm(chip, 2)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
 
-	err = snd_emu10k1x_mixer(chip);
-	if (err < 0) {
+	if ((err = snd_emu10k1x_ac97(chip)) < 0) {
+		snd_card_free(card);
+		return err;
+	}
+
+	if ((err = snd_emu10k1x_mixer(chip)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
 	
-	err = snd_emu10k1x_midi(chip);
-	if (err < 0) {
+	if ((err = snd_emu10k1x_midi(chip)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
@@ -1605,8 +1584,7 @@ static int snd_emu10k1x_probe(struct pci_dev *pci,
 	sprintf(card->longname, "%s at 0x%lx irq %i",
 		card->shortname, chip->port, chip->irq);
 
-	err = snd_card_register(card);
-	if (err < 0) {
+	if ((err = snd_card_register(card)) < 0) {
 		snd_card_free(card);
 		return err;
 	}

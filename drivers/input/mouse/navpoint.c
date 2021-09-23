@@ -322,7 +322,7 @@ static int __maybe_unused navpoint_suspend(struct device *dev)
 	struct input_dev *input = navpoint->input;
 
 	mutex_lock(&input->mutex);
-	if (input_device_enabled(input))
+	if (input->users)
 		navpoint_down(navpoint);
 	mutex_unlock(&input->mutex);
 
@@ -336,7 +336,7 @@ static int __maybe_unused navpoint_resume(struct device *dev)
 	struct input_dev *input = navpoint->input;
 
 	mutex_lock(&input->mutex);
-	if (input_device_enabled(input))
+	if (input->users)
 		navpoint_up(navpoint);
 	mutex_unlock(&input->mutex);
 

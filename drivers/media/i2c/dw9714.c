@@ -85,7 +85,15 @@ static const struct v4l2_ctrl_ops dw9714_vcm_ctrl_ops = {
 
 static int dw9714_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
-	return pm_runtime_resume_and_get(sd->dev);
+	int rval;
+
+	rval = pm_runtime_get_sync(sd->dev);
+	if (rval < 0) {
+		pm_runtime_put_noidle(sd->dev);
+		return rval;
+	}
+
+	return 0;
 }
 
 static int dw9714_close(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)

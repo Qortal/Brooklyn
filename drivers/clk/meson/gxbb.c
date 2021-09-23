@@ -8,7 +8,6 @@
 #include <linux/init.h>
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
-#include <linux/module.h>
 
 #include "gxbb.h"
 #include "clk-regmap.h"
@@ -3520,7 +3519,6 @@ static const struct of_device_id clkc_match_table[] = {
 	{ .compatible = "amlogic,gxl-clkc", .data = &gxl_clkc_data },
 	{},
 };
-MODULE_DEVICE_TABLE(of, clkc_match_table);
 
 static struct platform_driver gxbb_driver = {
 	.probe		= meson_eeclkc_probe,
@@ -3530,5 +3528,4 @@ static struct platform_driver gxbb_driver = {
 	},
 };
 
-module_platform_driver(gxbb_driver);
-MODULE_LICENSE("GPL v2");
+builtin_platform_driver(gxbb_driver);

@@ -8,7 +8,7 @@
 
 / {
 	thermal-zones {
-		pms405-thermal {
+		pms405 {
 			polling-delay-passive = <250>;
 			polling-delay = <1000>;
 

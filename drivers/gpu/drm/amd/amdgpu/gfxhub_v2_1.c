@@ -31,9 +31,6 @@
 
 #include "soc15_common.h"
 
-#define mmGCUTCL2_HARVEST_BYPASS_GROUPS_YELLOW_CARP				0x16f8
-#define mmGCUTCL2_HARVEST_BYPASS_GROUPS_YELLOW_CARP_BASE_IDX	0
-
 static const char *gfxhub_client_ids[] = {
 	"CB/DB",
 	"Reserved",
@@ -155,19 +152,20 @@ static void gfxhub_v2_1_init_system_aperture_regs(struct amdgpu_device *adev)
 {
 	uint64_t value;
 
-	/* Program the AGP BAR */
+	/* Disable AGP. */
 	WREG32_SOC15(GC, 0, mmGCMC_VM_AGP_BASE, 0);
-	WREG32_SOC15(GC, 0, mmGCMC_VM_AGP_BOT, adev->gmc.agp_start >> 24);
-	WREG32_SOC15(GC, 0, mmGCMC_VM_AGP_TOP, adev->gmc.agp_end >> 24);
+	WREG32_SOC15(GC, 0, mmGCMC_VM_AGP_TOP, 0);
+	WREG32_SOC15(GC, 0, mmGCMC_VM_AGP_BOT, 0x00FFFFFF);
 
 	/* Program the system aperture low logical page number. */
 	WREG32_SOC15(GC, 0, mmGCMC_VM_SYSTEM_APERTURE_LOW_ADDR,
-		     min(adev->gmc.fb_start, adev->gmc.agp_start) >> 18);
+		     adev->gmc.vram_start >> 18);
 	WREG32_SOC15(GC, 0, mmGCMC_VM_SYSTEM_APERTURE_HIGH_ADDR,
-		     max(adev->gmc.fb_end, adev->gmc.agp_end) >> 18);
+		     adev->gmc.vram_end >> 18);
 
 	/* Set default page address. */
-	value = amdgpu_gmc_vram_mc2pa(adev, adev->vram_scratch.gpu_addr);
+	value = adev->vram_scratch.gpu_addr - adev->gmc.vram_start
+		+ adev->vm_manager.vram_base_offset;
 	WREG32_SOC15(GC, 0, mmGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_LSB,
 		     (u32)(value >> 12));
 	WREG32_SOC15(GC, 0, mmGCMC_VM_SYSTEM_APERTURE_DEFAULT_ADDR_MSB,
@@ -534,42 +532,6 @@ static int gfxhub_v2_1_get_xgmi_info(struct amdgpu_device *adev)
 	return 0;
 }
 
-static void gfxhub_v2_1_utcl2_harvest(struct amdgpu_device *adev)
-{
-	int i;
-	u32 tmp = 0, disabled_sa = 0;
-	u32 efuse_setting, vbios_setting;
-
-	u32 max_sa_mask = amdgpu_gfx_create_bitmask(
-		adev->gfx.config.max_sh_per_se *
-		adev->gfx.config.max_shader_engines);
-
-	if (adev->asic_type == CHIP_YELLOW_CARP) {
-		/* Get SA disabled bitmap from eFuse setting */
-		efuse_setting = RREG32_SOC15(GC, 0, mmCC_GC_SA_UNIT_DISABLE);
-		efuse_setting &= CC_GC_SA_UNIT_DISABLE__SA_DISABLE_MASK;
-		efuse_setting >>= CC_GC_SA_UNIT_DISABLE__SA_DISABLE__SHIFT;
-
-		/* Get SA disabled bitmap from VBIOS setting */
-		vbios_setting = RREG32_SOC15(GC, 0, mmGC_USER_SA_UNIT_DISABLE);
-		vbios_setting &= GC_USER_SA_UNIT_DISABLE__SA_DISABLE_MASK;
-		vbios_setting >>= GC_USER_SA_UNIT_DISABLE__SA_DISABLE__SHIFT;
-
-		disabled_sa |= efuse_setting | vbios_setting;
-		/* Make sure not to report harvested SAs beyond the max SA count */
-		disabled_sa &= max_sa_mask;
-
-		for (i = 0; disabled_sa > 0; i++) {
-			if (disabled_sa & 1)
-				tmp |= 0x3 << (i * 2);
-			disabled_sa >>= 1;
-		}
-		disabled_sa = tmp;
-
-		WREG32_SOC15(GC, 0, mmGCUTCL2_HARVEST_BYPASS_GROUPS_YELLOW_CARP, disabled_sa);
-	}
-}
-
 const struct amdgpu_gfxhub_funcs gfxhub_v2_1_funcs = {
 	.get_fb_location = gfxhub_v2_1_get_fb_location,
 	.get_mc_fb_offset = gfxhub_v2_1_get_mc_fb_offset,
@@ -579,5 +541,4 @@ const struct amdgpu_gfxhub_funcs gfxhub_v2_1_funcs = {
 	.set_fault_enable_default = gfxhub_v2_1_set_fault_enable_default,
 	.init = gfxhub_v2_1_init,
 	.get_xgmi_info = gfxhub_v2_1_get_xgmi_info,
-	.utcl2_harvest = gfxhub_v2_1_utcl2_harvest,
 };

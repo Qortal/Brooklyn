@@ -95,11 +95,6 @@ static const struct mdp5_cfg_hw msm8x74v1_config = {
 			[3] = INTF_HDMI,
 		},
 	},
-	.perf = {
-		.ab_inefficiency = 200,
-		.ib_inefficiency = 120,
-		.clk_inefficiency = 125
-	},
 	.max_clk = 200000000,
 };
 
@@ -182,12 +177,7 @@ static const struct mdp5_cfg_hw msm8x74v2_config = {
 			[3] = INTF_HDMI,
 		},
 	},
-	.perf = {
-		.ab_inefficiency = 200,
-		.ib_inefficiency = 120,
-		.clk_inefficiency = 125
-	},
-	.max_clk = 320000000,
+	.max_clk = 200000000,
 };
 
 static const struct mdp5_cfg_hw apq8084_config = {
@@ -282,11 +272,6 @@ static const struct mdp5_cfg_hw apq8084_config = {
 			[3] = INTF_HDMI,
 		},
 	},
-	.perf = {
-		.ab_inefficiency = 200,
-		.ib_inefficiency = 120,
-		.clk_inefficiency = 105
-	},
 	.max_clk = 320000000,
 };
 
@@ -353,11 +338,6 @@ static const struct mdp5_cfg_hw msm8x16_config = {
 			[0] = INTF_DISABLED,
 			[1] = INTF_DSI,
 		},
-	},
-	.perf = {
-		.ab_inefficiency = 100,
-		.ib_inefficiency = 200,
-		.clk_inefficiency = 105
 	},
 	.max_clk = 320000000,
 };
@@ -433,11 +413,6 @@ static const struct mdp5_cfg_hw msm8x36_config = {
 			[1] = INTF_DSI,
 			[2] = INTF_DSI,
 		},
-	},
-	.perf = {
-		.ab_inefficiency = 100,
-		.ib_inefficiency = 200,
-		.clk_inefficiency = 105
 	},
 	.max_clk = 366670000,
 };
@@ -533,11 +508,6 @@ static const struct mdp5_cfg_hw msm8x94_config = {
 			[2] = INTF_DSI,
 			[3] = INTF_HDMI,
 		},
-	},
-	.perf = {
-		.ab_inefficiency = 100,
-		.ib_inefficiency = 100,
-		.clk_inefficiency = 105
 	},
 	.max_clk = 400000000,
 };
@@ -646,11 +616,6 @@ static const struct mdp5_cfg_hw msm8x96_config = {
 			[2] = INTF_DSI,
 			[3] = INTF_HDMI,
 		},
-	},
-	.perf = {
-		.ab_inefficiency = 100,
-		.ib_inefficiency = 200,
-		.clk_inefficiency = 105
 	},
 	.max_clk = 412500000,
 };

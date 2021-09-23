@@ -180,6 +180,10 @@ rxrpc_alloc_client_connection(struct rxrpc_bundle *bundle, gfp_t gfp)
 	if (ret < 0)
 		goto error_1;
 
+	ret = conn->security->prime_packet_security(conn);
+	if (ret < 0)
+		goto error_2;
+
 	atomic_inc(&rxnet->nr_conns);
 	write_lock(&rxnet->conn_lock);
 	list_add_tail(&conn->proc_link, &rxnet->conn_proc_list);
@@ -199,6 +203,8 @@ rxrpc_alloc_client_connection(struct rxrpc_bundle *bundle, gfp_t gfp)
 	_leave(" = %p", conn);
 	return conn;
 
+error_2:
+	conn->security->clear(conn);
 error_1:
 	rxrpc_put_client_connection_id(conn);
 error_0:

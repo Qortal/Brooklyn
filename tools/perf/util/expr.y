@@ -93,7 +93,7 @@ expr:	  NUMBER
 						YYABORT;
 					}
 
-					$$ = expr_id_data__value(data);
+					$$ = data->val;
 					free($1);
 				}
 	| expr '|' expr		{ $$ = (long)$1 | (long)$3; }

@@ -50,6 +50,7 @@ static void _rtl8723be_query_rxphystatus(struct ieee80211_hw *hw,
 	pstatus->rx_mimo_signalquality[1] = -1;
 
 	if (is_cck) {
+		u8 cck_highpwr;
 		u8 cck_agc_rpt;
 
 		cck_agc_rpt = p_phystrpt->cck_agc_rpt_ofdm_cfosho_a;
@@ -58,7 +59,8 @@ static void _rtl8723be_query_rxphystatus(struct ieee80211_hw *hw,
 		/* (2)PWDB, Average PWDB cacluated by
 		 * hardware (for rate adaptive)
 		 */
-		rtl_get_bbreg(hw, RFPGA0_XA_HSSIPARAMETER2, BIT(9));
+		cck_highpwr = (u8)rtl_get_bbreg(hw, RFPGA0_XA_HSSIPARAMETER2,
+						 BIT(9));
 
 		lan_idx = ((cck_agc_rpt & 0xE0) >> 5);
 		vga_idx = (cck_agc_rpt & 0x1f);

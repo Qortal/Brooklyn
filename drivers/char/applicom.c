@@ -81,6 +81,9 @@ MODULE_DESCRIPTION("Driver for Applicom Profibus card");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_MISCDEV(AC_MINOR);
 
+MODULE_SUPPORTED_DEVICE("ac");
+
+
 static struct applicom_board {
 	unsigned long PhysIO;
 	void __iomem *RamIO;
@@ -836,7 +839,7 @@ static long ac_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	Dummy = readb(apbs[IndexCard].RamIO + VERS);
 	kfree(adgl);
 	mutex_unlock(&ac_mutex);
-	return ret;
+	return 0;
 
 err:
 	if (warncount) {

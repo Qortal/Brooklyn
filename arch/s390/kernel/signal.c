@@ -16,7 +16,6 @@
 #include <linux/smp.h>
 #include <linux/kernel.h>
 #include <linux/signal.h>
-#include <linux/entry-common.h>
 #include <linux/errno.h>
 #include <linux/wait.h>
 #include <linux/ptrace.h>
@@ -32,7 +31,6 @@
 #include <linux/uaccess.h>
 #include <asm/lowcore.h>
 #include <asm/switch_to.h>
-#include <asm/vdso.h>
 #include "entry.h"
 
 /*
@@ -334,10 +332,15 @@ static int setup_frame(int sig, struct k_sigaction *ka,
 
 	/* Set up to return from userspace.  If provided, use a stub
 	   already in userspace.  */
-	if (ka->sa.sa_flags & SA_RESTORER)
+	if (ka->sa.sa_flags & SA_RESTORER) {
 		restorer = (unsigned long) ka->sa.sa_restorer;
-	else
-		restorer = VDSO64_SYMBOL(current, sigreturn);
+	} else {
+		/* Signal frame without vector registers are short ! */
+		__u16 __user *svc = (void __user *) frame + frame_size - 2;
+		if (__put_user(S390_SYSCALL_OPCODE | __NR_sigreturn, svc))
+			return -EFAULT;
+		restorer = (unsigned long) svc;
+	}
 
 	/* Set up registers for signal handler */
 	regs->gprs[14] = restorer;
@@ -392,10 +395,14 @@ static int setup_rt_frame(struct ksignal *ksig, sigset_t *set,
 
 	/* Set up to return from userspace.  If provided, use a stub
 	   already in userspace.  */
-	if (ksig->ka.sa.sa_flags & SA_RESTORER)
+	if (ksig->ka.sa.sa_flags & SA_RESTORER) {
 		restorer = (unsigned long) ksig->ka.sa.sa_restorer;
-	else
-		restorer = VDSO64_SYMBOL(current, rt_sigreturn);
+	} else {
+		__u16 __user *svc = &frame->svc_insn;
+		if (__put_user(S390_SYSCALL_OPCODE | __NR_rt_sigreturn, svc))
+			return -EFAULT;
+		restorer = (unsigned long) svc;
+	}
 
 	/* Create siginfo on the signal stack */
 	if (copy_siginfo_to_user(&frame->info, &ksig->info))
@@ -452,8 +459,7 @@ static void handle_signal(struct ksignal *ksig, sigset_t *oldset,
  * the kernel can handle, and then we build all the user-level signal handling
  * stack-frames in one go after that.
  */
-
-void arch_do_signal_or_restart(struct pt_regs *regs, bool has_signal)
+void do_signal(struct pt_regs *regs)
 {
 	struct ksignal ksig;
 	sigset_t *oldset = sigmask_to_save();
@@ -466,7 +472,7 @@ void arch_do_signal_or_restart(struct pt_regs *regs, bool has_signal)
 	current->thread.system_call =
 		test_pt_regs_flag(regs, PIF_SYSCALL) ? regs->int_code : 0;
 
-	if (has_signal && get_signal(&ksig)) {
+	if (get_signal(&ksig)) {
 		/* Whee!  Actually deliver the signal.  */
 		if (current->thread.system_call) {
 			regs->int_code = current->thread.system_call;
@@ -492,7 +498,6 @@ void arch_do_signal_or_restart(struct pt_regs *regs, bool has_signal)
 		}
 		/* No longer in a system call */
 		clear_pt_regs_flag(regs, PIF_SYSCALL);
-
 		rseq_signal_deliver(&ksig, regs);
 		if (is_compat_task())
 			handle_signal32(&ksig, oldset, regs);
@@ -508,22 +513,16 @@ void arch_do_signal_or_restart(struct pt_regs *regs, bool has_signal)
 		switch (regs->gprs[2]) {
 		case -ERESTART_RESTARTBLOCK:
 			/* Restart with sys_restart_syscall */
-			regs->gprs[2] = regs->orig_gpr2;
-			current->restart_block.arch_data = regs->psw.addr;
-			if (is_compat_task())
-				regs->psw.addr = VDSO32_SYMBOL(current, restart_syscall);
-			else
-				regs->psw.addr = VDSO64_SYMBOL(current, restart_syscall);
-			if (test_thread_flag(TIF_SINGLE_STEP))
-				clear_thread_flag(TIF_PER_TRAP);
-			break;
+			regs->int_code = __NR_restart_syscall;
+			fallthrough;
 		case -ERESTARTNOHAND:
 		case -ERESTARTSYS:
 		case -ERESTARTNOINTR:
+			/* Restart system call with magic TIF bit. */
 			regs->gprs[2] = regs->orig_gpr2;
-			regs->psw.addr = __rewind_psw(regs->psw, regs->int_code >> 16);
+			set_pt_regs_flag(regs, PIF_SYSCALL);
 			if (test_thread_flag(TIF_SINGLE_STEP))
-				clear_thread_flag(TIF_PER_TRAP);
+				clear_pt_regs_flag(regs, PIF_PER_TRAP);
 			break;
 		}
 	}

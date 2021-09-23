@@ -91,6 +91,9 @@ static void xor_xc_4(unsigned long bytes, unsigned long *p1, unsigned long *p2,
 static void xor_xc_5(unsigned long bytes, unsigned long *p1, unsigned long *p2,
 		     unsigned long *p3, unsigned long *p4, unsigned long *p5)
 {
+	/* Get around a gcc oddity */
+	register unsigned long *reg7 asm ("7") = p5;
+
 	asm volatile(
 		"	larl	1,2f\n"
 		"	aghi	%0,-1\n"
@@ -119,7 +122,7 @@ static void xor_xc_5(unsigned long bytes, unsigned long *p1, unsigned long *p2,
 		"	xc	0(1,%1),0(%5)\n"
 		"3:\n"
 		: "+d" (bytes), "+a" (p1), "+a" (p2), "+a" (p3), "+a" (p4),
-		  "+a" (p5)
+		  "+a" (reg7)
 		: : "0", "1", "cc", "memory");
 }
 

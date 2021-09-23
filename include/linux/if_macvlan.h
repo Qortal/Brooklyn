@@ -30,7 +30,6 @@ struct macvlan_dev {
 	enum macvlan_mode	mode;
 	u16			flags;
 	unsigned int		macaddr_count;
-	u32			bc_queue_len_req;
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	struct netpoll		*netpoll;
 #endif

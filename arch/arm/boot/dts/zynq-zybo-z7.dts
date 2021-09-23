@@ -25,7 +25,7 @@
 	gpio-leds {
 		compatible = "gpio-leds";
 
-		led-ld4 {
+		ld4 {
 			label = "zynq-zybo-z7:green:ld4";
 			gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
 		};

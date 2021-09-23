@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * User interface for Resource Allocation in Resource Director Technology(RDT)
+ * User interface for Resource Alloction in Resource Director Technology(RDT)
  *
  * Copyright (C) 2016 Intel Corporation
  *
@@ -240,13 +240,13 @@ static ssize_t rdtgroup_file_write(struct kernfs_open_file *of, char *buf,
 	return -EINVAL;
 }
 
-static const struct kernfs_ops rdtgroup_kf_single_ops = {
+static struct kernfs_ops rdtgroup_kf_single_ops = {
 	.atomic_write_len	= PAGE_SIZE,
 	.write			= rdtgroup_file_write,
 	.seq_show		= rdtgroup_seqfile_show,
 };
 
-static const struct kernfs_ops kf_mondata_ops = {
+static struct kernfs_ops kf_mondata_ops = {
 	.atomic_write_len	= PAGE_SIZE,
 	.seq_show		= rdtgroup_mondata_show,
 };
@@ -294,7 +294,7 @@ static int rdtgroup_cpus_show(struct kernfs_open_file *of,
 /*
  * This is safe against resctrl_sched_in() called from __switch_to()
  * because __switch_to() is executed with interrupts disabled. A local call
- * from update_closid_rmid() is protected against __switch_to() because
+ * from update_closid_rmid() is proteced against __switch_to() because
  * preemption is disabled.
  */
 static void update_cpu_closid_rmid(void *info)
@@ -563,11 +563,11 @@ static int __rdtgroup_move_task(struct task_struct *tsk,
 	 */
 
 	if (rdtgrp->type == RDTCTRL_GROUP) {
-		WRITE_ONCE(tsk->closid, rdtgrp->closid);
-		WRITE_ONCE(tsk->rmid, rdtgrp->mon.rmid);
+		tsk->closid = rdtgrp->closid;
+		tsk->rmid = rdtgrp->mon.rmid;
 	} else if (rdtgrp->type == RDTMON_GROUP) {
 		if (rdtgrp->mon.parent->closid == tsk->closid) {
-			WRITE_ONCE(tsk->rmid, rdtgrp->mon.rmid);
+			tsk->rmid = rdtgrp->mon.rmid;
 		} else {
 			rdt_last_cmd_puts("Can't move task to different control group\n");
 			return -EINVAL;
@@ -2310,18 +2310,22 @@ static void rdt_move_group_tasks(struct rdtgroup *from, struct rdtgroup *to,
 	for_each_process_thread(p, t) {
 		if (!from || is_closid_match(t, from) ||
 		    is_rmid_match(t, from)) {
-			WRITE_ONCE(t->closid, to->closid);
-			WRITE_ONCE(t->rmid, to->mon.rmid);
+			t->closid = to->closid;
+			t->rmid = to->mon.rmid;
 
+#ifdef CONFIG_SMP
 			/*
-			 * If the task is on a CPU, set the CPU in the mask.
-			 * The detection is inaccurate as tasks might move or
-			 * schedule before the smp function call takes place.
-			 * In such a case the function call is pointless, but
+			 * This is safe on x86 w/o barriers as the ordering
+			 * of writing to task_cpu() and t->on_cpu is
+			 * reverse to the reading here. The detection is
+			 * inaccurate as tasks might move or schedule
+			 * before the smp function call takes place. In
+			 * such a case the function call is pointless, but
 			 * there is no other side effect.
 			 */
-			if (IS_ENABLED(CONFIG_SMP) && mask && task_curr(t))
+			if (mask && t->on_cpu)
 				cpumask_set_cpu(task_cpu(t), mask);
+#endif
 		}
 	}
 	read_unlock(&tasklist_lock);
@@ -2555,7 +2559,7 @@ static int mkdir_mondata_subdir_alldom(struct kernfs_node *parent_kn,
 /*
  * This creates a directory mon_data which contains the monitored data.
  *
- * mon_data has one directory for each domain which are named
+ * mon_data has one directory for each domain whic are named
  * in the format mon_<domain_name>_<domain_id>. For ex: A mon_data
  * with L3 domain looks as below:
  * ./mon_data:
@@ -3000,7 +3004,8 @@ static int rdtgroup_mkdir(struct kernfs_node *parent_kn, const char *name,
 	return -EPERM;
 }
 
-static int rdtgroup_rmdir_mon(struct rdtgroup *rdtgrp, cpumask_var_t tmpmask)
+static int rdtgroup_rmdir_mon(struct kernfs_node *kn, struct rdtgroup *rdtgrp,
+			      cpumask_var_t tmpmask)
 {
 	struct rdtgroup *prdtgrp = rdtgrp->mon.parent;
 	int cpu;
@@ -3032,7 +3037,8 @@ static int rdtgroup_rmdir_mon(struct rdtgroup *rdtgrp, cpumask_var_t tmpmask)
 	return 0;
 }
 
-static int rdtgroup_ctrl_remove(struct rdtgroup *rdtgrp)
+static int rdtgroup_ctrl_remove(struct kernfs_node *kn,
+				struct rdtgroup *rdtgrp)
 {
 	rdtgrp->flags = RDT_DELETED;
 	list_del(&rdtgrp->rdtgroup_list);
@@ -3041,7 +3047,8 @@ static int rdtgroup_ctrl_remove(struct rdtgroup *rdtgrp)
 	return 0;
 }
 
-static int rdtgroup_rmdir_ctrl(struct rdtgroup *rdtgrp, cpumask_var_t tmpmask)
+static int rdtgroup_rmdir_ctrl(struct kernfs_node *kn, struct rdtgroup *rdtgrp,
+			       cpumask_var_t tmpmask)
 {
 	int cpu;
 
@@ -3068,7 +3075,7 @@ static int rdtgroup_rmdir_ctrl(struct rdtgroup *rdtgrp, cpumask_var_t tmpmask)
 	closid_free(rdtgrp->closid);
 	free_rmid(rdtgrp->mon.rmid);
 
-	rdtgroup_ctrl_remove(rdtgrp);
+	rdtgroup_ctrl_remove(kn, rdtgrp);
 
 	/*
 	 * Free all the child monitor group rmids.
@@ -3105,13 +3112,13 @@ static int rdtgroup_rmdir(struct kernfs_node *kn)
 	    rdtgrp != &rdtgroup_default) {
 		if (rdtgrp->mode == RDT_MODE_PSEUDO_LOCKSETUP ||
 		    rdtgrp->mode == RDT_MODE_PSEUDO_LOCKED) {
-			ret = rdtgroup_ctrl_remove(rdtgrp);
+			ret = rdtgroup_ctrl_remove(kn, rdtgrp);
 		} else {
-			ret = rdtgroup_rmdir_ctrl(rdtgrp, tmpmask);
+			ret = rdtgroup_rmdir_ctrl(kn, rdtgrp, tmpmask);
 		}
 	} else if (rdtgrp->type == RDTMON_GROUP &&
 		 is_mon_groups(parent_kn, kn->name)) {
-		ret = rdtgroup_rmdir_mon(rdtgrp, tmpmask);
+		ret = rdtgroup_rmdir_mon(kn, rdtgrp, tmpmask);
 	} else {
 		ret = -EPERM;
 	}

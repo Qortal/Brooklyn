@@ -30,7 +30,7 @@ struct cxlflash_global global;
 
 /**
  * marshal_rele_to_resize() - translate release to resize structure
- * @release:	Source structure from which to translate/copy.
+ * @rele:	Source structure from which to translate/copy.
  * @resize:	Destination structure for the translate/copy.
  */
 static void marshal_rele_to_resize(struct dk_cxlflash_release *release,
@@ -44,7 +44,7 @@ static void marshal_rele_to_resize(struct dk_cxlflash_release *release,
 /**
  * marshal_det_to_rele() - translate detach to release structure
  * @detach:	Destination structure for the translate/copy.
- * @release:	Source structure from which to translate/copy.
+ * @rele:	Source structure from which to translate/copy.
  */
 static void marshal_det_to_rele(struct dk_cxlflash_detach *detach,
 				struct dk_cxlflash_release *release)
@@ -369,7 +369,8 @@ retry:
 		goto out;
 	}
 
-	if (result > 0 && scsi_sense_valid(&sshdr)) {
+	if (driver_byte(result) == DRIVER_SENSE) {
+		result &= ~(0xFF<<24); /* DRIVER_SENSE is not an error */
 		if (result & SAM_STAT_CHECK_CONDITION) {
 			switch (sshdr.sense_key) {
 			case NO_SENSE:
@@ -516,7 +517,7 @@ void rhte_checkin(struct ctx_info *ctxi,
 }
 
 /**
- * rht_format1() - populates a RHTE for format 1
+ * rhte_format1() - populates a RHTE for format 1
  * @rhte:	RHTE to populate.
  * @lun_id:	LUN ID of LUN associated with RHTE.
  * @perm:	Desired permissions for RHTE.

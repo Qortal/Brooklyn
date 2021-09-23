@@ -570,7 +570,7 @@ static int cm_get_target_status(struct charger_manager *cm)
 		return POWER_SUPPLY_STATUS_DISCHARGING;
 
 	if (cm_check_thermal_status(cm)) {
-		/* Check if discharging duration exceeds limit. */
+		/* Check if discharging duration exeeds limit. */
 		if (check_charging_duration(cm))
 			goto charging_ok;
 		return POWER_SUPPLY_STATUS_NOT_CHARGING;
@@ -578,7 +578,7 @@ static int cm_get_target_status(struct charger_manager *cm)
 
 	switch (cm->battery_status) {
 	case POWER_SUPPLY_STATUS_CHARGING:
-		/* Check if charging duration exceeds limit. */
+		/* Check if charging duration exeeds limit. */
 		if (check_charging_duration(cm))
 			return POWER_SUPPLY_STATUS_FULL;
 		fallthrough;
@@ -723,9 +723,9 @@ static int charger_get_property(struct power_supply *psy,
 		val->intval = cm->battery_status;
 		break;
 	case POWER_SUPPLY_PROP_HEALTH:
-		if (cm->emergency_stop == CM_BATT_OVERHEAT)
+		if (cm->emergency_stop > 0)
 			val->intval = POWER_SUPPLY_HEALTH_OVERHEAT;
-		else if (cm->emergency_stop == CM_BATT_COLD)
+		else if (cm->emergency_stop < 0)
 			val->intval = POWER_SUPPLY_HEALTH_COLD;
 		else
 			val->intval = POWER_SUPPLY_HEALTH_GOOD;
@@ -1605,7 +1605,7 @@ static int charger_manager_probe(struct platform_device *pdev)
 	mutex_unlock(&cm_list_mtx);
 
 	/*
-	 * Charger-manager is capable of waking up the system from sleep
+	 * Charger-manager is capable of waking up the systme from sleep
 	 * when event is happened through cm_notify_event()
 	 */
 	device_init_wakeup(&pdev->dev, true);

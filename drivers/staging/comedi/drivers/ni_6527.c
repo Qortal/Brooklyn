@@ -195,9 +195,7 @@ static irqreturn_t ni6527_interrupt(int irq, void *d)
 		return IRQ_NONE;
 
 	if (status & NI6527_STATUS_EDGE) {
-		unsigned short val = 0;
-
-		comedi_buf_write_samples(s, &val, 1);
+		comedi_buf_write_samples(s, &s->state, 1);
 		comedi_handle_events(dev, s);
 	}
 

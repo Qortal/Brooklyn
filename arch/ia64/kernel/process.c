@@ -171,8 +171,7 @@ do_notify_resume_user(sigset_t *unused, struct sigscratch *scr, long in_syscall)
 	}
 
 	/* deal with pending signal delivery */
-	if (test_thread_flag(TIF_SIGPENDING) ||
-	    test_thread_flag(TIF_NOTIFY_SIGNAL)) {
+	if (test_thread_flag(TIF_SIGPENDING)) {
 		local_irq_enable();	/* force interrupt enable */
 		ia64_do_signal(scr, in_syscall);
 	}
@@ -338,7 +337,7 @@ copy_thread(unsigned long clone_flags, unsigned long user_stack_base,
 
 	ia64_drop_fpu(p);	/* don't pick up stale state from a CPU's fph */
 
-	if (unlikely(p->flags & (PF_KTHREAD | PF_IO_WORKER))) {
+	if (unlikely(p->flags & PF_KTHREAD)) {
 		if (unlikely(!user_stack_base)) {
 			/* fork_idle() called us */
 			return 0;
@@ -488,7 +487,7 @@ do_copy_task_regs (struct task_struct *task, struct unw_frame_info *info, void *
 	unw_get_ar(info, UNW_AR_SSD, &dst[56]);
 }
 
-static void
+void
 do_copy_regs (struct unw_frame_info *info, void *arg)
 {
 	do_copy_task_regs(current, info, arg);
@@ -529,7 +528,7 @@ get_wchan (struct task_struct *p)
 	unsigned long ip;
 	int count = 0;
 
-	if (!p || p == current || task_is_running(p))
+	if (!p || p == current || p->state == TASK_RUNNING)
 		return 0;
 
 	/*
@@ -542,7 +541,7 @@ get_wchan (struct task_struct *p)
 	 */
 	unw_init_from_blocked_task(&info, p);
 	do {
-		if (task_is_running(p))
+		if (p->state == TASK_RUNNING)
 			return 0;
 		if (unw_unwind(&info) < 0)
 			return 0;

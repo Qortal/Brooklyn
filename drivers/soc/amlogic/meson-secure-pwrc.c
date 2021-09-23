@@ -13,7 +13,6 @@
 #include <dt-bindings/power/meson-a1-power.h>
 #include <linux/arm-smccc.h>
 #include <linux/firmware/meson/meson_sm.h>
-#include <linux/module.h>
 
 #define PWRC_ON		1
 #define PWRC_OFF	0
@@ -194,7 +193,6 @@ static const struct of_device_id meson_secure_pwrc_match_table[] = {
 	},
 	{ /* sentinel */ }
 };
-MODULE_DEVICE_TABLE(of, meson_secure_pwrc_match_table);
 
 static struct platform_driver meson_secure_pwrc_driver = {
 	.probe = meson_secure_pwrc_probe,
@@ -203,5 +201,4 @@ static struct platform_driver meson_secure_pwrc_driver = {
 		.of_match_table	= meson_secure_pwrc_match_table,
 	},
 };
-module_platform_driver(meson_secure_pwrc_driver);
-MODULE_LICENSE("Dual MIT/GPL");
+builtin_platform_driver(meson_secure_pwrc_driver);

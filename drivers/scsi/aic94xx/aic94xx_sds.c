@@ -718,12 +718,10 @@ static void *asd_find_ll_by_id(void * const start, const u8 id0, const u8 id1)
 	do {
 		switch (id1) {
 		default:
-			if (el->id1 == id1) {
-			fallthrough;
+			if (el->id1 == id1)
 		case 0xFF:
 				if (el->id0 == id0)
 					return el;
-			}
 		}
 		el = start + le16_to_cpu(el->next);
 	} while (el != start);
@@ -1246,7 +1244,7 @@ int asd_chk_write_status(struct asd_ha_struct *asd_ha,
 }
 
 /**
- * asd_erase_nv_sector - Erase the flash memory sectors.
+ * asd_hwi_erase_nv_sector - Erase the flash memory sectors.
  * @asd_ha: pointer to the host adapter structure
  * @flash_addr: pointer to offset from flash memory
  * @size: total bytes to erase.

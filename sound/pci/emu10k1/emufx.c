@@ -436,8 +436,7 @@ int snd_emu10k1_fx8010_unregister_irq_handler(struct snd_emu10k1 *emu,
 	unsigned long flags;
 	
 	spin_lock_irqsave(&emu->fx8010.irq_lock, flags);
-	tmp = emu->fx8010.irq_handlers;
-	if (tmp == irq) {
+	if ((tmp = emu->fx8010.irq_handlers) == irq) {
 		emu->fx8010.irq_handlers = tmp->next;
 		if (emu->fx8010.irq_handlers == NULL) {
 			snd_emu10k1_intr_disable(emu, INTE_FXDSPENABLE);
@@ -872,9 +871,7 @@ static int snd_emu10k1_add_controls(struct snd_emu10k1 *emu,
 			}
 			knew.private_value = (unsigned long)ctl;
 			*ctl = *nctl;
-			kctl = snd_ctl_new1(&knew, emu);
-			err = snd_ctl_add(emu->card, kctl);
-			if (err < 0) {
+			if ((err = snd_ctl_add(emu->card, kctl = snd_ctl_new1(&knew, emu))) < 0) {
 				kfree(ctl);
 				kfree(knew.tlv.p);
 				goto __error;
@@ -943,7 +940,7 @@ static int snd_emu10k1_list_controls(struct snd_emu10k1 *emu,
 			memset(gctl, 0, sizeof(*gctl));
 			id = &ctl->kcontrol->id;
 			gctl->id.iface = (__force int)id->iface;
-			strscpy(gctl->id.name, id->name, sizeof(gctl->id.name));
+			strlcpy(gctl->id.name, id->name, sizeof(gctl->id.name));
 			gctl->id.index = id->index;
 			gctl->id.device = id->device;
 			gctl->id.subdevice = id->subdevice;
@@ -979,7 +976,7 @@ static int snd_emu10k1_icode_poke(struct snd_emu10k1 *emu,
 	err = snd_emu10k1_verify_controls(emu, icode, in_kernel);
 	if (err < 0)
 		goto __error;
-	strscpy(emu->fx8010.name, icode->name, sizeof(emu->fx8010.name));
+	strlcpy(emu->fx8010.name, icode->name, sizeof(emu->fx8010.name));
 	/* stop FX processor - this may be dangerous, but it's better to miss
 	   some samples than generate wrong ones - [jk] */
 	if (emu->audigy)
@@ -1018,7 +1015,7 @@ static int snd_emu10k1_icode_peek(struct snd_emu10k1 *emu,
 	int err;
 
 	mutex_lock(&emu->fx8010.lock);
-	strscpy(icode->name, emu->fx8010.name, sizeof(icode->name));
+	strlcpy(icode->name, emu->fx8010.name, sizeof(icode->name));
 	/* ok, do the main job */
 	err = snd_emu10k1_gpr_peek(emu, icode);
 	if (err >= 0)
@@ -2406,8 +2403,7 @@ static int _snd_emu10k1_init_efx(struct snd_emu10k1 *emu)
 	while (ptr < 0x200)
 		OP(icode, &ptr, iACC3, C_00000000, C_00000000, C_00000000, C_00000000);
 
-	err = snd_emu10k1_fx8010_tram_setup(emu, ipcm->buffer_size);
-	if (err < 0)
+	if ((err = snd_emu10k1_fx8010_tram_setup(emu, ipcm->buffer_size)) < 0)
 		goto __err;
 	icode->gpr_add_control_count = i;
 	icode->gpr_add_controls = controls;
@@ -2685,8 +2681,7 @@ int snd_emu10k1_fx8010_new(struct snd_emu10k1 *emu, int device)
 	struct snd_hwdep *hw;
 	int err;
 	
-	err = snd_hwdep_new(emu->card, "FX8010", device, &hw);
-	if (err < 0)
+	if ((err = snd_hwdep_new(emu->card, "FX8010", device, &hw)) < 0)
 		return err;
 	strcpy(hw->name, "EMU10K1 (FX8010)");
 	hw->iface = SNDRV_HWDEP_IFACE_EMU10K1;

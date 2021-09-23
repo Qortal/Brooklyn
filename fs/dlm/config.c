@@ -20,7 +20,6 @@
 #include <net/sock.h>
 
 #include "config.h"
-#include "midcomms.h"
 #include "lowcomms.h"
 
 /*
@@ -168,36 +167,6 @@ static ssize_t cluster_##name##_show(struct config_item *item, char *buf)     \
 }                                                                             \
 CONFIGFS_ATTR(cluster_, name);
 
-static int dlm_check_protocol_and_dlm_running(unsigned int x)
-{
-	switch (x) {
-	case 0:
-		/* TCP */
-		break;
-	case 1:
-		/* SCTP */
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	if (dlm_allow_conn)
-		return -EBUSY;
-
-	return 0;
-}
-
-static int dlm_check_zero_and_dlm_running(unsigned int x)
-{
-	if (!x)
-		return -EINVAL;
-
-	if (dlm_allow_conn)
-		return -EBUSY;
-
-	return 0;
-}
-
 static int dlm_check_zero(unsigned int x)
 {
 	if (!x)
@@ -208,13 +177,13 @@ static int dlm_check_zero(unsigned int x)
 
 static int dlm_check_buffer_size(unsigned int x)
 {
-	if (x < DLM_MAX_SOCKET_BUFSIZE)
+	if (x < DEFAULT_BUFFER_SIZE)
 		return -EINVAL;
 
 	return 0;
 }
 
-CLUSTER_ATTR(tcp_port, dlm_check_zero_and_dlm_running);
+CLUSTER_ATTR(tcp_port, dlm_check_zero);
 CLUSTER_ATTR(buffer_size, dlm_check_buffer_size);
 CLUSTER_ATTR(rsbtbl_size, dlm_check_zero);
 CLUSTER_ATTR(recover_timer, dlm_check_zero);
@@ -222,7 +191,7 @@ CLUSTER_ATTR(toss_secs, dlm_check_zero);
 CLUSTER_ATTR(scan_secs, dlm_check_zero);
 CLUSTER_ATTR(log_debug, NULL);
 CLUSTER_ATTR(log_info, NULL);
-CLUSTER_ATTR(protocol, dlm_check_protocol_and_dlm_running);
+CLUSTER_ATTR(protocol, NULL);
 CLUSTER_ATTR(mark, NULL);
 CLUSTER_ATTR(timewarn_cs, dlm_check_zero);
 CLUSTER_ATTR(waitwarn_us, NULL);
@@ -542,7 +511,7 @@ static void drop_comm(struct config_group *g, struct config_item *i)
 	struct dlm_comm *cm = config_item_to_comm(i);
 	if (local_comm == cm)
 		local_comm = NULL;
-	dlm_midcomms_close(cm->nodeid);
+	dlm_lowcomms_close(cm->nodeid);
 	while (cm->addr_count--)
 		kfree(cm->addr[cm->addr_count]);
 	config_item_put(i);
@@ -737,7 +706,6 @@ static ssize_t comm_mark_show(struct config_item *item, char *buf)
 static ssize_t comm_mark_store(struct config_item *item, const char *buf,
 			       size_t len)
 {
-	struct dlm_comm *comm;
 	unsigned int mark;
 	int rc;
 
@@ -745,15 +713,7 @@ static ssize_t comm_mark_store(struct config_item *item, const char *buf,
 	if (rc)
 		return rc;
 
-	if (mark == 0)
-		mark = dlm_config.ci_mark;
-
-	comm = config_item_to_comm(item);
-	rc = dlm_lowcomms_nodes_set_mark(comm->nodeid, mark);
-	if (rc)
-		return rc;
-
-	comm->mark = mark;
+	config_item_to_comm(item)->mark = mark;
 	return len;
 }
 
@@ -928,6 +888,24 @@ int dlm_comm_seq(int nodeid, uint32_t *seq)
 	return 0;
 }
 
+void dlm_comm_mark(int nodeid, unsigned int *mark)
+{
+	struct dlm_comm *cm;
+
+	cm = get_comm(nodeid);
+	if (!cm) {
+		*mark = dlm_config.ci_mark;
+		return;
+	}
+
+	if (cm->mark)
+		*mark = cm->mark;
+	else
+		*mark = dlm_config.ci_mark;
+
+	put_comm(cm);
+}
+
 int dlm_our_nodeid(void)
 {
 	return local_comm ? local_comm->nodeid : 0;
@@ -952,7 +930,7 @@ int dlm_our_addr(struct sockaddr_storage *addr, int num)
 #define DEFAULT_SCAN_SECS          5
 #define DEFAULT_LOG_DEBUG          0
 #define DEFAULT_LOG_INFO           1
-#define DEFAULT_PROTOCOL           DLM_PROTO_TCP
+#define DEFAULT_PROTOCOL           0
 #define DEFAULT_MARK               0
 #define DEFAULT_TIMEWARN_CS      500 /* 5 sec = 500 centiseconds */
 #define DEFAULT_WAITWARN_US	   0
@@ -962,7 +940,7 @@ int dlm_our_addr(struct sockaddr_storage *addr, int num)
 
 struct dlm_config_info dlm_config = {
 	.ci_tcp_port = DEFAULT_TCP_PORT,
-	.ci_buffer_size = DLM_MAX_SOCKET_BUFSIZE,
+	.ci_buffer_size = DEFAULT_BUFFER_SIZE,
 	.ci_rsbtbl_size = DEFAULT_RSBTBL_SIZE,
 	.ci_recover_timer = DEFAULT_RECOVER_TIMER,
 	.ci_toss_secs = DEFAULT_TOSS_SECS,

@@ -333,8 +333,11 @@ static int rxrpc_process_event(struct rxrpc_connection *conn,
 		if (ret < 0)
 			return ret;
 
-		ret = conn->security->init_connection_security(
-			conn, conn->params.key->payload.data[0]);
+		ret = conn->security->init_connection_security(conn);
+		if (ret < 0)
+			return ret;
+
+		ret = conn->security->prime_packet_security(conn);
 		if (ret < 0)
 			return ret;
 
@@ -374,6 +377,7 @@ static void rxrpc_secure_connection(struct rxrpc_connection *conn)
 	_enter("{%d}", conn->debug_id);
 
 	ASSERT(conn->security_ix != 0);
+	ASSERT(conn->server_key);
 
 	if (conn->security->issue_challenge(conn) < 0) {
 		abort_code = RX_CALL_DEAD;

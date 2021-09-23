@@ -100,10 +100,15 @@ static int hdmi_pll_enable(struct dss_pll *dsspll)
 {
 	struct hdmi_pll_data *pll = container_of(dsspll, struct hdmi_pll_data, pll);
 	struct hdmi_wp_data *wp = pll->wp;
+	u16 r = 0;
 
 	dss_ctrl_pll_enable(DSS_PLL_HDMI, true);
 
-	return hdmi_wp_set_pll_pwr(wp, HDMI_PLLPWRCMD_BOTHON_ALLCLKS);
+	r = hdmi_wp_set_pll_pwr(wp, HDMI_PLLPWRCMD_BOTHON_ALLCLKS);
+	if (r)
+		return r;
+
+	return 0;
 }
 
 static void hdmi_pll_disable(struct dss_pll *dsspll)
@@ -215,10 +220,17 @@ int hdmi_pll_init(struct platform_device *pdev, struct hdmi_pll_data *pll,
 	struct hdmi_wp_data *wp)
 {
 	int r;
+	struct resource *res;
 
 	pll->wp = wp;
 
-	pll->base = devm_platform_ioremap_resource_byname(pdev, "pll");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "pll");
+	if (!res) {
+		DSSERR("can't get PLL mem resource\n");
+		return -EINVAL;
+	}
+
+	pll->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(pll->base)) {
 		DSSERR("can't ioremap PLLCTRL\n");
 		return PTR_ERR(pll->base);

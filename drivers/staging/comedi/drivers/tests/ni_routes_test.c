@@ -501,13 +501,13 @@ void test_route_register_is_valid(void)
 	const struct ni_route_tables *T = &private.routing_tables;
 
 	init_pci_fake();
-	unittest(!route_register_is_valid(4, O(4), T),
+	unittest(route_register_is_valid(4, O(4), T) == false,
 		 "check for bad source 4-->4\n");
-	unittest(route_register_is_valid(0, O(1), T),
+	unittest(route_register_is_valid(0, O(1), T) == true,
 		 "find first source\n");
-	unittest(route_register_is_valid(4, O(6), T),
+	unittest(route_register_is_valid(4, O(6), T) == true,
 		 "find middle source\n");
-	unittest(route_register_is_valid(9, O(8), T),
+	unittest(route_register_is_valid(9, O(8), T) == true,
 		 "find last source");
 }
 

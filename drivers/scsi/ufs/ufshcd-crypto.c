@@ -179,10 +179,10 @@ int ufshcd_hba_init_crypto_capabilities(struct ufs_hba *hba)
 	}
 
 	/* The actual number of configurations supported is (CFGC+1) */
-	err = devm_blk_ksm_init(hba->dev, &hba->ksm,
-				hba->crypto_capabilities.config_count + 1);
+	err = blk_ksm_init(&hba->ksm,
+			   hba->crypto_capabilities.config_count + 1);
 	if (err)
-		goto out;
+		goto out_free_caps;
 
 	hba->ksm.ksm_ll_ops = ufshcd_ksm_ops;
 	/* UFS only supports 8 bytes for any DUN */
@@ -208,6 +208,8 @@ int ufshcd_hba_init_crypto_capabilities(struct ufs_hba *hba)
 
 	return 0;
 
+out_free_caps:
+	devm_kfree(hba->dev, hba->crypto_cap_array);
 out:
 	/* Indicate that init failed by clearing UFSHCD_CAP_CRYPTO */
 	hba->caps &= ~UFSHCD_CAP_CRYPTO;
@@ -235,4 +237,9 @@ void ufshcd_crypto_setup_rq_keyslot_manager(struct ufs_hba *hba,
 {
 	if (hba->caps & UFSHCD_CAP_CRYPTO)
 		blk_ksm_register(&hba->ksm, q);
+}
+
+void ufshcd_crypto_destroy_keyslot_manager(struct ufs_hba *hba)
+{
+	blk_ksm_destroy(&hba->ksm);
 }

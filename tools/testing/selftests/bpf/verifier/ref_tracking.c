@@ -675,7 +675,6 @@
 	.prog_type = BPF_PROG_TYPE_SCHED_CLS,
 	.result = REJECT,
 	.errstr = "invalid mem access",
-	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"reference tracking: use ptr from bpf_sk_fullsock() after release",
@@ -699,7 +698,6 @@
 	.prog_type = BPF_PROG_TYPE_SCHED_CLS,
 	.result = REJECT,
 	.errstr = "invalid mem access",
-	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"reference tracking: use ptr from bpf_sk_fullsock(tp) after release",
@@ -727,7 +725,6 @@
 	.prog_type = BPF_PROG_TYPE_SCHED_CLS,
 	.result = REJECT,
 	.errstr = "invalid mem access",
-	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"reference tracking: use sk after bpf_sk_release(tp)",
@@ -750,7 +747,6 @@
 	.prog_type = BPF_PROG_TYPE_SCHED_CLS,
 	.result = REJECT,
 	.errstr = "invalid mem access",
-	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
 {
 	"reference tracking: use ptr from bpf_get_listener_sock() after bpf_sk_release(sk)",

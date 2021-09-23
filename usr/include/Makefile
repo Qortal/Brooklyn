@@ -67,6 +67,8 @@ endif
 ifeq ($(SRCARCH),ia64)
 no-header-test += asm/setup.h
 no-header-test += asm/sigcontext.h
+no-header-test += asm/perfmon.h
+no-header-test += asm/perfmon_default_smpl.h
 no-header-test += linux/if_bonding.h
 endif
 

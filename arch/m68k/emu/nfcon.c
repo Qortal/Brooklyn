@@ -85,7 +85,7 @@ static int nfcon_tty_put_char(struct tty_struct *tty, unsigned char ch)
 	return 1;
 }
 
-static unsigned int nfcon_tty_write_room(struct tty_struct *tty)
+static int nfcon_tty_write_room(struct tty_struct *tty)
 {
 	return 64;
 }

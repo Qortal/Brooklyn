@@ -48,7 +48,7 @@ enum var_id_t {
 	ATTRIB_BLEEP, BLEEPS,
 	RATE, PITCH, VOL, TONE, PUNCT, VOICE, FREQUENCY, LANG,
 	DIRECT, PAUSE,
-	CAPS_START, CAPS_STOP, CHARTAB, INFLECTION, FLUSH,
+	CAPS_START, CAPS_STOP, CHARTAB, INFLECTION,
 	MAXVARS
 };
 
@@ -157,11 +157,11 @@ struct spk_synth;
 struct spk_io_ops {
 	int (*synth_out)(struct spk_synth *synth, const char ch);
 	int (*synth_out_unicode)(struct spk_synth *synth, u16 ch);
-	void (*send_xchar)(struct spk_synth *synth, char ch);
-	void (*tiocmset)(struct spk_synth *synth, unsigned int set, unsigned int clear);
-	unsigned char (*synth_in)(struct spk_synth *synth);
-	unsigned char (*synth_in_nowait)(struct spk_synth *synth);
-	void (*flush_buffer)(struct spk_synth *synth);
+	void (*send_xchar)(char ch);
+	void (*tiocmset)(unsigned int set, unsigned int clear);
+	unsigned char (*synth_in)(void);
+	unsigned char (*synth_in_nowait)(void);
+	void (*flush_buffer)(void);
 	int (*wait_for_xmitr)(struct spk_synth *synth);
 };
 
@@ -178,7 +178,6 @@ struct spk_synth {
 	int trigger;
 	int jiffies;
 	int full;
-	int flush_time;
 	int ser;
 	char *dev_name;
 	short flags;
@@ -189,7 +188,7 @@ struct spk_synth {
 	int *default_vol;
 	struct spk_io_ops *io_ops;
 	int (*probe)(struct spk_synth *synth);
-	void (*release)(struct spk_synth *synth);
+	void (*release)(void);
 	const char *(*synth_immediate)(struct spk_synth *synth,
 				       const char *buff);
 	void (*catch_up)(struct spk_synth *synth);
@@ -201,8 +200,6 @@ struct spk_synth {
 	struct synth_indexing indexing;
 	int alive;
 	struct attribute_group attributes;
-
-	void *dev;
 };
 
 /*

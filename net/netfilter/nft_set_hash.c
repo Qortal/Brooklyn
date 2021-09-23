@@ -74,9 +74,8 @@ static const struct rhashtable_params nft_rhash_params = {
 	.automatic_shrinking	= true,
 };
 
-INDIRECT_CALLABLE_SCOPE
-bool nft_rhash_lookup(const struct net *net, const struct nft_set *set,
-		      const u32 *key, const struct nft_set_ext **ext)
+static bool nft_rhash_lookup(const struct net *net, const struct nft_set *set,
+			     const u32 *key, const struct nft_set_ext **ext)
 {
 	struct nft_rhash *priv = nft_set_priv(set);
 	const struct nft_rhash_elem *he;
@@ -294,22 +293,6 @@ cont:
 	rhashtable_walk_exit(&hti);
 }
 
-static bool nft_rhash_expr_needs_gc_run(const struct nft_set *set,
-					struct nft_set_ext *ext)
-{
-	struct nft_set_elem_expr *elem_expr = nft_set_ext_expr(ext);
-	struct nft_expr *expr;
-	u32 size;
-
-	nft_setelem_expr_foreach(expr, elem_expr, size) {
-		if (expr->ops->gc &&
-		    expr->ops->gc(read_pnet(&set->net), expr))
-			return true;
-	}
-
-	return false;
-}
-
 static void nft_rhash_gc(struct work_struct *work)
 {
 	struct nft_set *set;
@@ -331,13 +314,16 @@ static void nft_rhash_gc(struct work_struct *work)
 			continue;
 		}
 
-		if (nft_set_ext_exists(&he->ext, NFT_SET_EXT_EXPRESSIONS) &&
-		    nft_rhash_expr_needs_gc_run(set, &he->ext))
-			goto needs_gc_run;
+		if (nft_set_ext_exists(&he->ext, NFT_SET_EXT_EXPR)) {
+			struct nft_expr *expr = nft_set_ext_expr(&he->ext);
 
+			if (expr->ops->gc &&
+			    expr->ops->gc(read_pnet(&set->net), expr))
+				goto gc;
+		}
 		if (!nft_set_elem_expired(&he->ext))
 			continue;
-needs_gc_run:
+gc:
 		if (nft_set_elem_mark_busy(&he->ext))
 			continue;
 
@@ -351,12 +337,6 @@ needs_gc_run:
 	rhashtable_walk_stop(&hti);
 	rhashtable_walk_exit(&hti);
 
-	he = nft_set_catchall_gc(set);
-	if (he) {
-		gcb = nft_set_gc_batch_check(set, gcb, GFP_ATOMIC);
-		if (gcb)
-			nft_set_gc_batch_add(gcb, he);
-	}
 	nft_set_gc_batch_complete(gcb);
 	queue_delayed_work(system_power_efficient_wq, &priv->gc_work,
 			   nft_set_gc_interval(set));
@@ -447,9 +427,8 @@ struct nft_hash_elem {
 	struct nft_set_ext		ext;
 };
 
-INDIRECT_CALLABLE_SCOPE
-bool nft_hash_lookup(const struct net *net, const struct nft_set *set,
-		     const u32 *key, const struct nft_set_ext **ext)
+static bool nft_hash_lookup(const struct net *net, const struct nft_set *set,
+			    const u32 *key, const struct nft_set_ext **ext)
 {
 	struct nft_hash *priv = nft_set_priv(set);
 	u8 genmask = nft_genmask_cur(net);
@@ -486,10 +465,9 @@ static void *nft_hash_get(const struct net *net, const struct nft_set *set,
 	return ERR_PTR(-ENOENT);
 }
 
-INDIRECT_CALLABLE_SCOPE
-bool nft_hash_lookup_fast(const struct net *net,
-			  const struct nft_set *set,
-			  const u32 *key, const struct nft_set_ext **ext)
+static bool nft_hash_lookup_fast(const struct net *net,
+				 const struct nft_set *set,
+				 const u32 *key, const struct nft_set_ext **ext)
 {
 	struct nft_hash *priv = nft_set_priv(set);
 	u8 genmask = nft_genmask_cur(net);
@@ -626,7 +604,7 @@ static u64 nft_hash_privsize(const struct nlattr * const nla[],
 			     const struct nft_set_desc *desc)
 {
 	return sizeof(struct nft_hash) +
-	       (u64)nft_hash_buckets(desc->size) * sizeof(struct hlist_head);
+	       nft_hash_buckets(desc->size) * sizeof(struct hlist_head);
 }
 
 static int nft_hash_init(const struct nft_set *set,
@@ -666,8 +644,8 @@ static bool nft_hash_estimate(const struct nft_set_desc *desc, u32 features,
 		return false;
 
 	est->size   = sizeof(struct nft_hash) +
-		      (u64)nft_hash_buckets(desc->size) * sizeof(struct hlist_head) +
-		      (u64)desc->size * sizeof(struct nft_hash_elem);
+		      nft_hash_buckets(desc->size) * sizeof(struct hlist_head) +
+		      desc->size * sizeof(struct nft_hash_elem);
 	est->lookup = NFT_SET_CLASS_O_1;
 	est->space  = NFT_SET_CLASS_O_N;
 
@@ -684,8 +662,8 @@ static bool nft_hash_fast_estimate(const struct nft_set_desc *desc, u32 features
 		return false;
 
 	est->size   = sizeof(struct nft_hash) +
-		      (u64)nft_hash_buckets(desc->size) * sizeof(struct hlist_head) +
-		      (u64)desc->size * sizeof(struct nft_hash_elem);
+		      nft_hash_buckets(desc->size) * sizeof(struct hlist_head) +
+		      desc->size * sizeof(struct nft_hash_elem);
 	est->lookup = NFT_SET_CLASS_O_1;
 	est->space  = NFT_SET_CLASS_O_N;
 

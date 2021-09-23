@@ -343,18 +343,13 @@ static void fimd_enable_shadow_channel_path(struct fimd_context *ctx,
 	writel(val, ctx->regs + SHADOWCON);
 }
 
-static int fimd_clear_channels(struct exynos_drm_crtc *crtc)
+static void fimd_clear_channels(struct exynos_drm_crtc *crtc)
 {
 	struct fimd_context *ctx = crtc->ctx;
 	unsigned int win, ch_enabled = 0;
-	int ret;
 
 	/* Hardware is in unknown state, so ensure it gets enabled properly */
-	ret = pm_runtime_resume_and_get(ctx->dev);
-	if (ret < 0) {
-		dev_err(ctx->dev, "failed to enable FIMD device.\n");
-		return ret;
-	}
+	pm_runtime_get_sync(ctx->dev);
 
 	clk_prepare_enable(ctx->bus_clk);
 	clk_prepare_enable(ctx->lcd_clk);
@@ -389,8 +384,6 @@ static int fimd_clear_channels(struct exynos_drm_crtc *crtc)
 	clk_disable_unprepare(ctx->bus_clk);
 
 	pm_runtime_put(ctx->dev);
-
-	return 0;
 }
 
 
@@ -730,9 +723,8 @@ static void fimd_win_set_colkey(struct fimd_context *ctx, unsigned int win)
 }
 
 /**
- * fimd_shadow_protect_win() - disable updating values from shadow registers at vsync
+ * shadow_protect_win() - disable updating values from shadow registers at vsync
  *
- * @ctx: local driver data
  * @win: window to protect registers for
  * @protect: 1 to protect (disable updates)
  */
@@ -912,10 +904,7 @@ static void fimd_atomic_enable(struct exynos_drm_crtc *crtc)
 
 	ctx->suspended = false;
 
-	if (pm_runtime_resume_and_get(ctx->dev) < 0) {
-		dev_warn(ctx->dev, "failed to enable FIMD device.\n");
-		return;
-	}
+	pm_runtime_get_sync(ctx->dev);
 
 	/* if vblank was enabled status, enable it again. */
 	if (test_and_clear_bit(0, &ctx->irq_flags))
@@ -1099,13 +1088,8 @@ static int fimd_bind(struct device *dev, struct device *master, void *data)
 	if (ctx->encoder)
 		exynos_dpi_bind(drm_dev, ctx->encoder);
 
-	if (is_drm_iommu_supported(drm_dev)) {
-		int ret;
-
-		ret = fimd_clear_channels(ctx->crtc);
-		if (ret < 0)
-			return ret;
-	}
+	if (is_drm_iommu_supported(drm_dev))
+		fimd_clear_channels(ctx->crtc);
 
 	return exynos_drm_register_dma(drm_dev, dev, &ctx->dma_priv);
 }

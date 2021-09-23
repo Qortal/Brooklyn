@@ -61,13 +61,13 @@ mt7663_usb_sdio_write_txwi(struct mt7615_dev *dev, struct mt76_wcid *wcid,
 	skb_push(skb, MT_USB_TXD_SIZE);
 }
 
-static int mt7663_usb_sdio_set_rates(struct mt7615_dev *dev,
-				     struct mt7615_wtbl_rate_desc *wrd)
+static int
+mt7663_usb_sdio_set_rates(struct mt7615_dev *dev,
+			  struct mt7615_wtbl_desc *wd)
 {
-	struct mt7615_rate_desc *rate = &wrd->rate;
-	struct mt7615_sta *sta = wrd->sta;
+	struct mt7615_rate_desc *rate = &wd->rate;
+	struct mt7615_sta *sta = wd->sta;
 	u32 w5, w27, addr, val;
-	u16 idx;
 
 	lockdep_assert_held(&dev->mt76.mutex);
 
@@ -119,11 +119,7 @@ static int mt7663_usb_sdio_set_rates(struct mt7615_dev *dev,
 
 	sta->rate_probe = sta->rateset[rate->rateset].probe_rate.idx != -1;
 
-	idx = sta->vif->mt76.omac_idx;
-	idx = idx > HW_BSSID_MAX ? HW_BSSID_0 : idx;
-	addr = idx > 1 ? MT_LPON_TCR2(idx): MT_LPON_TCR0(idx);
-
-	mt76_rmw(dev, addr, MT_LPON_TCR_MODE, MT_LPON_TCR_READ); /* TSF read */
+	mt76_set(dev, MT_LPON_T0CR, MT_LPON_T0CR_MODE); /* TSF read */
 	val = mt76_rr(dev, MT_LPON_UTTR0);
 	sta->rate_set_tsf = (val & ~BIT(0)) | rate->rateset;
 
@@ -136,30 +132,86 @@ static int mt7663_usb_sdio_set_rates(struct mt7615_dev *dev,
 	return 0;
 }
 
-static void mt7663_usb_sdio_rate_work(struct work_struct *work)
+static int
+mt7663_usb_sdio_set_key(struct mt7615_dev *dev,
+			struct mt7615_wtbl_desc *wd)
 {
-	struct mt7615_wtbl_rate_desc *wrd, *wrd_next;
-	struct list_head wrd_list;
+	struct mt7615_key_desc *key = &wd->key;
+	struct mt7615_sta *sta = wd->sta;
+	enum mt7615_cipher_type cipher;
+	struct mt76_wcid *wcid;
+	int err;
+
+	lockdep_assert_held(&dev->mt76.mutex);
+
+	if (!sta) {
+		err = -EINVAL;
+		goto out;
+	}
+
+	cipher = mt7615_mac_get_cipher(key->cipher);
+	if (cipher == MT_CIPHER_NONE) {
+		err = -EOPNOTSUPP;
+		goto out;
+	}
+
+	wcid = &wd->sta->wcid;
+
+	mt7615_mac_wtbl_update_cipher(dev, wcid, cipher, key->cmd);
+	err = mt7615_mac_wtbl_update_key(dev, wcid, key->key, key->keylen,
+					 cipher, key->cmd);
+	if (err < 0)
+		goto out;
+
+	err = mt7615_mac_wtbl_update_pk(dev, wcid, cipher, key->keyidx,
+					key->cmd);
+	if (err < 0)
+		goto out;
+
+	if (key->cmd == SET_KEY)
+		wcid->cipher |= BIT(cipher);
+	else
+		wcid->cipher &= ~BIT(cipher);
+out:
+	kfree(key->key);
+
+	return err;
+}
+
+void mt7663_usb_sdio_wtbl_work(struct work_struct *work)
+{
+	struct mt7615_wtbl_desc *wd, *wd_next;
+	struct list_head wd_list;
 	struct mt7615_dev *dev;
 
 	dev = (struct mt7615_dev *)container_of(work, struct mt7615_dev,
-						rate_work);
+						wtbl_work);
 
-	INIT_LIST_HEAD(&wrd_list);
+	INIT_LIST_HEAD(&wd_list);
 	spin_lock_bh(&dev->mt76.lock);
-	list_splice_init(&dev->wrd_head, &wrd_list);
+	list_splice_init(&dev->wd_head, &wd_list);
 	spin_unlock_bh(&dev->mt76.lock);
 
-	list_for_each_entry_safe(wrd, wrd_next, &wrd_list, node) {
-		list_del(&wrd->node);
+	list_for_each_entry_safe(wd, wd_next, &wd_list, node) {
+		list_del(&wd->node);
 
 		mt7615_mutex_acquire(dev);
-		mt7663_usb_sdio_set_rates(dev, wrd);
+
+		switch (wd->type) {
+		case MT7615_WTBL_RATE_DESC:
+			mt7663_usb_sdio_set_rates(dev, wd);
+			break;
+		case MT7615_WTBL_KEY_DESC:
+			mt7663_usb_sdio_set_key(dev, wd);
+			break;
+		}
+
 		mt7615_mutex_release(dev);
 
-		kfree(wrd);
+		kfree(wd);
 	}
 }
+EXPORT_SYMBOL_GPL(mt7663_usb_sdio_wtbl_work);
 
 bool mt7663_usb_sdio_tx_status_data(struct mt76_dev *mdev, u8 *update)
 {
@@ -306,8 +358,8 @@ int mt7663_usb_sdio_register_device(struct mt7615_dev *dev)
 	struct ieee80211_hw *hw = mt76_hw(dev);
 	int err;
 
-	INIT_WORK(&dev->rate_work, mt7663_usb_sdio_rate_work);
-	INIT_LIST_HEAD(&dev->wrd_head);
+	INIT_WORK(&dev->wtbl_work, mt7663_usb_sdio_wtbl_work);
+	INIT_LIST_HEAD(&dev->wd_head);
 	mt7615_init_device(dev);
 
 	err = mt7663_usb_sdio_init_hardware(dev);
@@ -324,8 +376,8 @@ int mt7663_usb_sdio_register_device(struct mt7615_dev *dev)
 			hw->max_tx_fragments = 1;
 	}
 
-	err = mt76_register_device(&dev->mt76, true, mt76_rates,
-				   ARRAY_SIZE(mt76_rates));
+	err = mt76_register_device(&dev->mt76, true, mt7615_rates,
+				   ARRAY_SIZE(mt7615_rates));
 	if (err < 0)
 		return err;
 

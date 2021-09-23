@@ -89,7 +89,7 @@
  *    ->outstanding_extents += 1 (current value is 1)
  *
  *  -> set_delalloc
- *    ->outstanding_extents += 1 (current value is 2)
+ *    ->outstanding_extents += 1 (currrent value is 2)
  *
  *  -> btrfs_delalloc_release_extents()
  *    ->outstanding_extents -= 1 (current value is 1)
@@ -191,14 +191,12 @@ void btrfs_free_reserved_data_space(struct btrfs_inode *inode,
 }
 
 /**
- * Release any excessive reservation
- *
- * @inode:       the inode we need to release from
- * @qgroup_free: free or convert qgroup meta. Unlike normal operation, qgroup
- *               meta reservation needs to know if we are freeing qgroup
- *               reservation or just converting it into per-trans.  Normally
- *               @qgroup_free is true for error handling, and false for normal
- *               release.
+ * btrfs_inode_rsv_release - release any excessive reservation.
+ * @inode - the inode we need to release from.
+ * @qgroup_free - free or convert qgroup meta.
+ *   Unlike normal operation, qgroup meta reservation needs to know if we are
+ *   freeing qgroup reservation or just converting it into per-trans.  Normally
+ *   @qgroup_free is true for error handling, and false for normal release.
  *
  * This is the same as btrfs_block_rsv_release, except that it handles the
  * tracepoint for the reservation.
@@ -363,8 +361,7 @@ int btrfs_delalloc_reserve_metadata(struct btrfs_inode *inode, u64 num_bytes)
 }
 
 /**
- * Release a metadata reservation for an inode
- *
+ * btrfs_delalloc_release_metadata - release a metadata reservation for an inode
  * @inode: the inode to release the reservation for.
  * @num_bytes: the number of bytes we are releasing.
  * @qgroup_free: free qgroup reservation or convert it to per-trans reservation
@@ -458,13 +455,11 @@ int btrfs_delalloc_reserve_space(struct btrfs_inode *inode,
 }
 
 /**
- * Release data and metadata space for delalloc
- *
- * @inode:       inode we're releasing space for
- * @reserved:    list of changed/reserved ranges
- * @start:       start position of the space already reserved
- * @len:         length of the space already reserved
- * @qgroup_free: should qgroup reserved-space also be freed
+ * btrfs_delalloc_release_space - release data and metadata space for delalloc
+ * @inode: inode we're releasing space for
+ * @start: start position of the space already reserved
+ * @len: the len of the space already reserved
+ * @release_bytes: the len of the space we consumed or didn't use
  *
  * This function will release the metadata space that was not used and will
  * decrement ->delalloc_bytes and remove it from the fs_info delalloc_inodes

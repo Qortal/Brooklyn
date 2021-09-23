@@ -25,7 +25,6 @@
  */
 
 #include <linux/firmware.h>
-#include <drm/drm_drv.h>
 
 #include "amdgpu.h"
 #include "amdgpu_vce.h"
@@ -478,7 +477,7 @@ static int vce_v4_0_sw_init(void *handle)
 				ring->doorbell_index = adev->doorbell_index.uvd_vce.vce_ring2_3 * 2 + 1;
 		}
 		r = amdgpu_ring_init(adev, ring, 512, &adev->vce.irq, 0,
-				     AMDGPU_RING_PRIO_DEFAULT, NULL);
+				     AMDGPU_RING_PRIO_DEFAULT);
 		if (r)
 			return r;
 	}
@@ -556,19 +555,16 @@ static int vce_v4_0_hw_fini(void *handle)
 static int vce_v4_0_suspend(void *handle)
 {
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
-	int r, idx;
+	int r;
 
 	if (adev->vce.vcpu_bo == NULL)
 		return 0;
 
-	if (drm_dev_enter(&adev->ddev, &idx)) {
-		if (adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) {
-			unsigned size = amdgpu_bo_size(adev->vce.vcpu_bo);
-			void *ptr = adev->vce.cpu_addr;
+	if (adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) {
+		unsigned size = amdgpu_bo_size(adev->vce.vcpu_bo);
+		void *ptr = adev->vce.cpu_addr;
 
-			memcpy_fromio(adev->vce.saved_bo, ptr, size);
-		}
-		drm_dev_exit(idx);
+		memcpy_fromio(adev->vce.saved_bo, ptr, size);
 	}
 
 	r = vce_v4_0_hw_fini(adev);
@@ -581,20 +577,16 @@ static int vce_v4_0_suspend(void *handle)
 static int vce_v4_0_resume(void *handle)
 {
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
-	int r, idx;
+	int r;
 
 	if (adev->vce.vcpu_bo == NULL)
 		return -EINVAL;
 
 	if (adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) {
+		unsigned size = amdgpu_bo_size(adev->vce.vcpu_bo);
+		void *ptr = adev->vce.cpu_addr;
 
-		if (drm_dev_enter(&adev->ddev, &idx)) {
-			unsigned size = amdgpu_bo_size(adev->vce.vcpu_bo);
-			void *ptr = adev->vce.cpu_addr;
-
-			memcpy_toio(ptr, adev->vce.saved_bo, size);
-			drm_dev_exit(idx);
-		}
+		memcpy_toio(ptr, adev->vce.saved_bo, size);
 	} else {
 		r = amdgpu_vce_resume(adev);
 		if (r)

@@ -58,7 +58,6 @@
 #include "display/intel_dp.h"
 
 #include "i915_drv.h"
-#include "i915_trace.h"
 #include "intel_display_types.h"
 #include "intel_fbc.h"
 #include "intel_frontbuffer.h"
@@ -87,8 +86,6 @@ static void frontbuffer_flush(struct drm_i915_private *i915,
 
 	if (!frontbuffer_bits)
 		return;
-
-	trace_intel_frontbuffer_flush(frontbuffer_bits, origin);
 
 	might_sleep();
 	intel_edp_drrs_flush(i915, frontbuffer_bits);
@@ -176,8 +173,6 @@ void __intel_fb_invalidate(struct intel_frontbuffer *front,
 		spin_unlock(&i915->fb_tracking.lock);
 	}
 
-	trace_intel_frontbuffer_invalidate(frontbuffer_bits, origin);
-
 	might_sleep();
 	intel_psr_invalidate(i915, frontbuffer_bits, origin);
 	intel_edp_drrs_invalidate(i915, frontbuffer_bits);
@@ -211,6 +206,7 @@ static int frontbuffer_active(struct i915_active *ref)
 	return 0;
 }
 
+__i915_active_call
 static void frontbuffer_retire(struct i915_active *ref)
 {
 	struct intel_frontbuffer *front =
@@ -228,13 +224,9 @@ static void frontbuffer_release(struct kref *ref)
 	struct drm_i915_gem_object *obj = front->obj;
 	struct i915_vma *vma;
 
-	drm_WARN_ON(obj->base.dev, atomic_read(&front->bits));
-
 	spin_lock(&obj->vma.lock);
-	for_each_ggtt_vma(vma, obj) {
-		i915_vma_clear_scanout(vma);
+	for_each_ggtt_vma(vma, obj)
 		vma->display_alignment = I915_GTT_MIN_ALIGNMENT;
-	}
 	spin_unlock(&obj->vma.lock);
 
 	RCU_INIT_POINTER(obj->frontbuffer, NULL);
@@ -265,8 +257,7 @@ intel_frontbuffer_get(struct drm_i915_gem_object *obj)
 	atomic_set(&front->bits, 0);
 	i915_active_init(&front->write,
 			 frontbuffer_active,
-			 frontbuffer_retire,
-			 I915_ACTIVE_RETIRE_SLEEPS);
+			 i915_active_may_sleep(frontbuffer_retire));
 
 	spin_lock(&i915->fb_tracking.lock);
 	if (rcu_access_pointer(obj->frontbuffer)) {

@@ -205,8 +205,7 @@ struct g2d_cmdlist_userptr {
 	dma_addr_t		dma_addr;
 	unsigned long		userptr;
 	unsigned long		size;
-	struct page		**pages;
-	unsigned int		npages;
+	struct frame_vector	*vec;
 	struct sg_table		*sgt;
 	atomic_t		refcount;
 	bool			in_pool;
@@ -379,6 +378,7 @@ static void g2d_userptr_put_dma_addr(struct g2d_data *g2d,
 					bool force)
 {
 	struct g2d_cmdlist_userptr *g2d_userptr = obj;
+	struct page **pages;
 
 	if (!obj)
 		return;
@@ -398,9 +398,15 @@ out:
 	dma_unmap_sgtable(to_dma_dev(g2d->drm_dev), g2d_userptr->sgt,
 			  DMA_BIDIRECTIONAL, 0);
 
-	unpin_user_pages_dirty_lock(g2d_userptr->pages, g2d_userptr->npages,
-				    true);
-	kvfree(g2d_userptr->pages);
+	pages = frame_vector_pages(g2d_userptr->vec);
+	if (!IS_ERR(pages)) {
+		int i;
+
+		for (i = 0; i < frame_vector_count(g2d_userptr->vec); i++)
+			set_page_dirty_lock(pages[i]);
+	}
+	put_vaddr_frames(g2d_userptr->vec);
+	frame_vector_destroy(g2d_userptr->vec);
 
 	if (!g2d_userptr->out_of_list)
 		list_del_init(&g2d_userptr->list);
@@ -468,35 +474,35 @@ static dma_addr_t *g2d_userptr_get_dma_addr(struct g2d_data *g2d,
 	offset = userptr & ~PAGE_MASK;
 	end = PAGE_ALIGN(userptr + size);
 	npages = (end - start) >> PAGE_SHIFT;
-	g2d_userptr->pages = kvmalloc_array(npages, sizeof(*g2d_userptr->pages),
-					    GFP_KERNEL);
-	if (!g2d_userptr->pages) {
+	g2d_userptr->vec = frame_vector_create(npages);
+	if (!g2d_userptr->vec) {
 		ret = -ENOMEM;
 		goto err_free;
 	}
 
-	ret = pin_user_pages_fast(start, npages,
-				  FOLL_FORCE | FOLL_WRITE | FOLL_LONGTERM,
-				  g2d_userptr->pages);
+	ret = get_vaddr_frames(start, npages, FOLL_FORCE | FOLL_WRITE,
+		g2d_userptr->vec);
 	if (ret != npages) {
 		DRM_DEV_ERROR(g2d->dev,
 			      "failed to get user pages from userptr.\n");
 		if (ret < 0)
-			goto err_destroy_pages;
-		npages = ret;
+			goto err_destroy_framevec;
 		ret = -EFAULT;
-		goto err_unpin_pages;
+		goto err_put_framevec;
 	}
-	g2d_userptr->npages = npages;
+	if (frame_vector_to_pages(g2d_userptr->vec) < 0) {
+		ret = -EFAULT;
+		goto err_put_framevec;
+	}
 
 	sgt = kzalloc(sizeof(*sgt), GFP_KERNEL);
 	if (!sgt) {
 		ret = -ENOMEM;
-		goto err_unpin_pages;
+		goto err_put_framevec;
 	}
 
 	ret = sg_alloc_table_from_pages(sgt,
-					g2d_userptr->pages,
+					frame_vector_pages(g2d_userptr->vec),
 					npages, offset, size, GFP_KERNEL);
 	if (ret < 0) {
 		DRM_DEV_ERROR(g2d->dev, "failed to get sgt from pages.\n");
@@ -532,11 +538,11 @@ err_sg_free_table:
 err_free_sgt:
 	kfree(sgt);
 
-err_unpin_pages:
-	unpin_user_pages(g2d_userptr->pages, npages);
+err_put_framevec:
+	put_vaddr_frames(g2d_userptr->vec);
 
-err_destroy_pages:
-	kvfree(g2d_userptr->pages);
+err_destroy_framevec:
+	frame_vector_destroy(g2d_userptr->vec);
 
 err_free:
 	kfree(g2d_userptr);
@@ -892,14 +898,7 @@ static void g2d_runqueue_worker(struct work_struct *work)
 		g2d->runqueue_node = g2d_get_runqueue_node(g2d);
 
 		if (g2d->runqueue_node) {
-			int ret;
-
-			ret = pm_runtime_resume_and_get(g2d->dev);
-			if (ret < 0) {
-				dev_err(g2d->dev, "failed to enable G2D device.\n");
-				return;
-			}
-
+			pm_runtime_get_sync(g2d->dev);
 			g2d_dma_start(g2d, g2d->runqueue_node);
 		}
 	}

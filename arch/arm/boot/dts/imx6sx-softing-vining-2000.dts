@@ -40,22 +40,22 @@
 		regulator-max-microvolt = <3300000>;
 	};
 
-	led-controller {
+	pwmleds {
 		compatible = "pwm-leds";
 
-		led-1 {
+		red {
 			label = "red";
 			max-brightness = <255>;
 			pwms = <&pwm6 0 50000>;
 		};
 
-		led-2 {
+		green {
 			label = "green";
 			max-brightness = <255>;
 			pwms = <&pwm2 0 50000>;
 		};
 
-		led-3 {
+		blue {
 			label = "blue";
 			max-brightness = <255>;
 			pwms = <&pwm1 0 50000>;

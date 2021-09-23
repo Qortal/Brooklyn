@@ -13,7 +13,6 @@
 struct xfs_buf;
 struct xfs_btree_cur;
 struct xfs_mount;
-struct xfs_perag;
 
 /*
  * Btree block header size depends on a superblock flag.
@@ -46,11 +45,11 @@ struct xfs_perag;
 		 (maxrecs) * sizeof(xfs_inobt_key_t) + \
 		 ((index) - 1) * sizeof(xfs_inobt_ptr_t)))
 
-extern struct xfs_btree_cur *xfs_inobt_init_cursor(struct xfs_mount *mp,
-		struct xfs_trans *tp, struct xfs_buf *agbp,
-		struct xfs_perag *pag, xfs_btnum_t btnum);
+extern struct xfs_btree_cur *xfs_inobt_init_cursor(struct xfs_mount *,
+		struct xfs_trans *, struct xfs_buf *, xfs_agnumber_t,
+		xfs_btnum_t);
 struct xfs_btree_cur *xfs_inobt_stage_cursor(struct xfs_mount *mp,
-		struct xbtree_afakeroot *afake, struct xfs_perag *pag,
+		struct xbtree_afakeroot *afake, xfs_agnumber_t agno,
 		xfs_btnum_t btnum);
 extern int xfs_inobt_maxrecs(struct xfs_mount *, int, int);
 
@@ -65,11 +64,11 @@ int xfs_inobt_rec_check_count(struct xfs_mount *,
 #endif	/* DEBUG */
 
 int xfs_finobt_calc_reserves(struct xfs_mount *mp, struct xfs_trans *tp,
-		struct xfs_perag *pag, xfs_extlen_t *ask, xfs_extlen_t *used);
+		xfs_agnumber_t agno, xfs_extlen_t *ask, xfs_extlen_t *used);
 extern xfs_extlen_t xfs_iallocbt_calc_size(struct xfs_mount *mp,
 		unsigned long long len);
 int xfs_inobt_cur(struct xfs_mount *mp, struct xfs_trans *tp,
-		struct xfs_perag *pag, xfs_btnum_t btnum,
+		xfs_agnumber_t agno, xfs_btnum_t btnum,
 		struct xfs_btree_cur **curpp, struct xfs_buf **agi_bpp);
 
 void xfs_inobt_commit_staged_btree(struct xfs_btree_cur *cur,

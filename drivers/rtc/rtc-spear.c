@@ -1,9 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * drivers/rtc/rtc-spear.c
  *
  * Copyright (C) 2010 ST Microelectronics
  * Rajeev Kumar<rajeev-dlh.kumar@st.com>
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2. This program is licensed "as is" without any
+ * warranty of any kind, whether express or implied.
  */
 
 #include <linux/bcd.h>
@@ -150,12 +153,12 @@ static void rtc_wait_not_busy(struct spear_rtc_config *config)
 static irqreturn_t spear_rtc_irq(int irq, void *dev_id)
 {
 	struct spear_rtc_config *config = dev_id;
-	unsigned long events = 0;
+	unsigned long flags, events = 0;
 	unsigned int irq_data;
 
-	spin_lock(&config->lock);
+	spin_lock_irqsave(&config->lock, flags);
 	irq_data = readl(config->ioaddr + STATUS_REG);
-	spin_unlock(&config->lock);
+	spin_unlock_irqrestore(&config->lock, flags);
 
 	if ((irq_data & RTC_INT_MASK)) {
 		spear_rtc_clear_interrupt(config);

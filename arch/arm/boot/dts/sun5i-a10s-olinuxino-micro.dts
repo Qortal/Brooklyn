@@ -79,7 +79,7 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&led_pins_olinuxino>;
 
-		led {
+		green {
 			label = "a10s-olinuxino-micro:green:usr";
 			gpios = <&pio 4 3 GPIO_ACTIVE_HIGH>;
 			default-state = "on";

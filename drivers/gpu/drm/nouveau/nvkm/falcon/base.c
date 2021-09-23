@@ -88,12 +88,13 @@ int
 nvkm_falcon_enable(struct nvkm_falcon *falcon)
 {
 	struct nvkm_device *device = falcon->owner->device;
+	enum nvkm_devidx id = falcon->owner->index;
 	int ret;
 
-	nvkm_mc_enable(device, falcon->owner->type, falcon->owner->inst);
+	nvkm_mc_enable(device, id);
 	ret = falcon->func->enable(falcon);
 	if (ret) {
-		nvkm_mc_disable(device, falcon->owner->type, falcon->owner->inst);
+		nvkm_mc_disable(device, id);
 		return ret;
 	}
 
@@ -104,14 +105,15 @@ void
 nvkm_falcon_disable(struct nvkm_falcon *falcon)
 {
 	struct nvkm_device *device = falcon->owner->device;
+	enum nvkm_devidx id = falcon->owner->index;
 
 	/* already disabled, return or wait_idle will timeout */
-	if (!nvkm_mc_enabled(device, falcon->owner->type, falcon->owner->inst))
+	if (!nvkm_mc_enabled(device, id))
 		return;
 
 	falcon->func->disable(falcon);
 
-	nvkm_mc_disable(device, falcon->owner->type, falcon->owner->inst);
+	nvkm_mc_disable(device, id);
 }
 
 int
@@ -141,7 +143,7 @@ nvkm_falcon_oneinit(struct nvkm_falcon *falcon)
 	u32 reg;
 
 	if (!falcon->addr) {
-		falcon->addr = nvkm_top_addr(subdev->device, subdev->type, subdev->inst);
+		falcon->addr = nvkm_top_addr(subdev->device, subdev->index);
 		if (WARN_ON(!falcon->addr))
 			return -ENODEV;
 	}
@@ -186,7 +188,7 @@ nvkm_falcon_get(struct nvkm_falcon *falcon, const struct nvkm_subdev *user)
 	mutex_lock(&falcon->mutex);
 	if (falcon->user) {
 		nvkm_error(user, "%s falcon already acquired by %s!\n",
-			   falcon->name, falcon->user->name);
+			   falcon->name, nvkm_subdev_name[falcon->user->index]);
 		mutex_unlock(&falcon->mutex);
 		return -EBUSY;
 	}

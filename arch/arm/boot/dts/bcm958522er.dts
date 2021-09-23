@@ -178,7 +178,3 @@
 &xhci {
 	status = "okay";
 };
-
-&srab {
-	compatible = "brcm,bcm58522-srab", "brcm,nsp-srab";
-};

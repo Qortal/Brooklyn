@@ -17,10 +17,10 @@
 
 	soc {
 		gsbi@16400000 {
-			status = "okay";
+			status = "ok";
 			qcom,mode = <GSBI_PROT_I2C_UART>;
 			serial@16440000 {
-				status = "okay";
+				status = "ok";
 			};
 		};
 
@@ -273,12 +273,12 @@
 		};
 
 		gsbi@16000000 {
-			status = "okay";
+			status = "ok";
 			qcom,mode = <GSBI_PROT_SPI>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&spi1_default>;
 			spi@16080000 {
-				status = "okay";
+				status = "ok";
 				eth@0 {
 					compatible = "micrel,ks8851";
 					reg = <0>;

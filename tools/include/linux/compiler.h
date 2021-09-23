@@ -2,7 +2,9 @@
 #ifndef _TOOLS_LINUX_COMPILER_H_
 #define _TOOLS_LINUX_COMPILER_H_
 
-#include <linux/compiler_types.h>
+#ifdef __GNUC__
+#include <linux/compiler-gcc.h>
+#endif
 
 #ifndef __compiletime_error
 # define __compiletime_error(message)

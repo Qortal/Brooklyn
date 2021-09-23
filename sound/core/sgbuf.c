@@ -10,34 +10,20 @@
 #include <linux/vmalloc.h>
 #include <linux/export.h>
 #include <sound/memalloc.h>
-#include "memalloc_local.h"
 
-struct snd_sg_page {
-	void *buf;
-	dma_addr_t addr;
-};
-
-struct snd_sg_buf {
-	int size;	/* allocated byte size */
-	int pages;	/* allocated pages */
-	int tblsize;	/* allocated table size */
-	struct snd_sg_page *table;	/* address table */
-	struct page **page_table;	/* page table (for vmap/vunmap) */
-	struct device *dev;
-};
 
 /* table entries are align to 32 */
 #define SGBUF_TBL_ALIGN		32
 #define sgbuf_align_table(tbl)	ALIGN((tbl), SGBUF_TBL_ALIGN)
 
-static void snd_dma_sg_free(struct snd_dma_buffer *dmab)
+int snd_free_sgbuf_pages(struct snd_dma_buffer *dmab)
 {
 	struct snd_sg_buf *sgbuf = dmab->private_data;
 	struct snd_dma_buffer tmpb;
 	int i;
 
-	if (!sgbuf)
-		return;
+	if (! sgbuf)
+		return -EINVAL;
 
 	vunmap(dmab->area);
 	dmab->area = NULL;
@@ -59,11 +45,15 @@ static void snd_dma_sg_free(struct snd_dma_buffer *dmab)
 	kfree(sgbuf->page_table);
 	kfree(sgbuf);
 	dmab->private_data = NULL;
+	
+	return 0;
 }
 
 #define MAX_ALLOC_PAGES		32
 
-static int snd_dma_sg_alloc(struct snd_dma_buffer *dmab, size_t size)
+void *snd_malloc_sgbuf_pages(struct device *device,
+			     size_t size, struct snd_dma_buffer *dmab,
+			     size_t *res_size)
 {
 	struct snd_sg_buf *sgbuf;
 	unsigned int i, pages, chunk, maxpages;
@@ -73,16 +63,18 @@ static int snd_dma_sg_alloc(struct snd_dma_buffer *dmab, size_t size)
 	int type = SNDRV_DMA_TYPE_DEV;
 	pgprot_t prot = PAGE_KERNEL;
 
+	dmab->area = NULL;
+	dmab->addr = 0;
 	dmab->private_data = sgbuf = kzalloc(sizeof(*sgbuf), GFP_KERNEL);
-	if (!sgbuf)
-		return -ENOMEM;
+	if (! sgbuf)
+		return NULL;
 	if (dmab->dev.type == SNDRV_DMA_TYPE_DEV_UC_SG) {
 		type = SNDRV_DMA_TYPE_DEV_UC;
 #ifdef pgprot_noncached
 		prot = pgprot_noncached(PAGE_KERNEL);
 #endif
 	}
-	sgbuf->dev = dmab->dev.dev;
+	sgbuf->dev = device;
 	pages = snd_sgbuf_aligned_pages(size);
 	sgbuf->tblsize = sgbuf_align_table(pages);
 	table = kcalloc(sgbuf->tblsize, sizeof(*table), GFP_KERNEL);
@@ -102,9 +94,11 @@ static int snd_dma_sg_alloc(struct snd_dma_buffer *dmab, size_t size)
 		if (chunk > maxpages)
 			chunk = maxpages;
 		chunk <<= PAGE_SHIFT;
-		if (snd_dma_alloc_pages_fallback(type, dmab->dev.dev,
+		if (snd_dma_alloc_pages_fallback(type, device,
 						 chunk, &tmpb) < 0) {
 			if (!sgbuf->pages)
+				goto _failed;
+			if (!res_size)
 				goto _failed;
 			size = sgbuf->pages * PAGE_SIZE;
 			break;
@@ -130,41 +124,26 @@ static int snd_dma_sg_alloc(struct snd_dma_buffer *dmab, size_t size)
 	dmab->area = vmap(sgbuf->page_table, sgbuf->pages, VM_MAP, prot);
 	if (! dmab->area)
 		goto _failed;
-	return 0;
+	if (res_size)
+		*res_size = sgbuf->size;
+	return dmab->area;
 
  _failed:
-	snd_dma_sg_free(dmab); /* free the table */
-	return -ENOMEM;
+	snd_free_sgbuf_pages(dmab); /* free the table */
+	return NULL;
 }
 
-static dma_addr_t snd_dma_sg_get_addr(struct snd_dma_buffer *dmab,
-				      size_t offset)
-{
-	struct snd_sg_buf *sgbuf = dmab->private_data;
-	dma_addr_t addr;
-
-	addr = sgbuf->table[offset >> PAGE_SHIFT].addr;
-	addr &= ~((dma_addr_t)PAGE_SIZE - 1);
-	return addr + offset % PAGE_SIZE;
-}
-
-static struct page *snd_dma_sg_get_page(struct snd_dma_buffer *dmab,
-					size_t offset)
-{
-	struct snd_sg_buf *sgbuf = dmab->private_data;
-	unsigned int idx = offset >> PAGE_SHIFT;
-
-	if (idx >= (unsigned int)sgbuf->pages)
-		return NULL;
-	return sgbuf->page_table[idx];
-}
-
-static unsigned int snd_dma_sg_get_chunk_size(struct snd_dma_buffer *dmab,
-					      unsigned int ofs,
-					      unsigned int size)
+/*
+ * compute the max chunk size with continuous pages on sg-buffer
+ */
+unsigned int snd_sgbuf_get_chunk_size(struct snd_dma_buffer *dmab,
+				      unsigned int ofs, unsigned int size)
 {
 	struct snd_sg_buf *sg = dmab->private_data;
 	unsigned int start, end, pg;
+
+	if (!sg)
+		return size;
 
 	start = ofs >> PAGE_SHIFT;
 	end = (ofs + size - 1) >> PAGE_SHIFT;
@@ -181,11 +160,4 @@ static unsigned int snd_dma_sg_get_chunk_size(struct snd_dma_buffer *dmab,
 	/* ok, all on continuous pages */
 	return size;
 }
-
-const struct snd_malloc_ops snd_dma_sg_ops = {
-	.alloc = snd_dma_sg_alloc,
-	.free = snd_dma_sg_free,
-	.get_addr = snd_dma_sg_get_addr,
-	.get_page = snd_dma_sg_get_page,
-	.get_chunk_size = snd_dma_sg_get_chunk_size,
-};
+EXPORT_SYMBOL(snd_sgbuf_get_chunk_size);

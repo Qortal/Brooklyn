@@ -9,7 +9,6 @@
 #include <linux/btf.h>
 #include <linux/rcupdate_trace.h>
 #include <linux/rcupdate_wait.h>
-#include <linux/module.h>
 
 /* dummy _ops. The verifier will operate on target program's ops. */
 const struct bpf_verifier_ops bpf_extension_verifier_ops = {
@@ -88,26 +87,6 @@ out:
 	return tr;
 }
 
-static int bpf_trampoline_module_get(struct bpf_trampoline *tr)
-{
-	struct module *mod;
-	int err = 0;
-
-	preempt_disable();
-	mod = __module_text_address((unsigned long) tr->func.addr);
-	if (mod && !try_module_get(mod))
-		err = -ENOENT;
-	preempt_enable();
-	tr->mod = mod;
-	return err;
-}
-
-static void bpf_trampoline_module_put(struct bpf_trampoline *tr)
-{
-	module_put(tr->mod);
-	tr->mod = NULL;
-}
-
 static int is_ftrace_location(void *ip)
 {
 	long addr;
@@ -129,9 +108,6 @@ static int unregister_fentry(struct bpf_trampoline *tr, void *old_addr)
 		ret = unregister_ftrace_direct((long)ip, (long)old_addr);
 	else
 		ret = bpf_arch_text_poke(ip, BPF_MOD_CALL, old_addr, NULL);
-
-	if (!ret)
-		bpf_trampoline_module_put(tr);
 	return ret;
 }
 
@@ -158,16 +134,10 @@ static int register_fentry(struct bpf_trampoline *tr, void *new_addr)
 		return ret;
 	tr->func.ftrace_managed = ret;
 
-	if (bpf_trampoline_module_get(tr))
-		return -ENOENT;
-
 	if (tr->func.ftrace_managed)
 		ret = register_ftrace_direct((long)ip, (long)new_addr);
 	else
 		ret = bpf_arch_text_poke(ip, BPF_MOD_CALL, NULL, new_addr);
-
-	if (ret)
-		bpf_trampoline_module_put(tr);
 	return ret;
 }
 
@@ -444,7 +414,7 @@ int bpf_trampoline_link_prog(struct bpf_prog *prog, struct bpf_trampoline *tr)
 	tr->progs_cnt[kind]++;
 	err = bpf_trampoline_update(tr);
 	if (err) {
-		hlist_del_init(&prog->aux->tramp_hlist);
+		hlist_del(&prog->aux->tramp_hlist);
 		tr->progs_cnt[kind]--;
 	}
 out:
@@ -467,7 +437,7 @@ int bpf_trampoline_unlink_prog(struct bpf_prog *prog, struct bpf_trampoline *tr)
 		tr->extension_prog = NULL;
 		goto out;
 	}
-	hlist_del_init(&prog->aux->tramp_hlist);
+	hlist_del(&prog->aux->tramp_hlist);
 	tr->progs_cnt[kind]--;
 	err = bpf_trampoline_update(tr);
 out:
@@ -519,100 +489,55 @@ out:
 	mutex_unlock(&trampoline_mutex);
 }
 
-#define NO_START_TIME 1
-static u64 notrace bpf_prog_start_time(void)
-{
-	u64 start = NO_START_TIME;
-
-	if (static_branch_unlikely(&bpf_stats_enabled_key)) {
-		start = sched_clock();
-		if (unlikely(!start))
-			start = NO_START_TIME;
-	}
-	return start;
-}
-
-static void notrace inc_misses_counter(struct bpf_prog *prog)
-{
-	struct bpf_prog_stats *stats;
-
-	stats = this_cpu_ptr(prog->stats);
-	u64_stats_update_begin(&stats->syncp);
-	stats->misses++;
-	u64_stats_update_end(&stats->syncp);
-}
-
 /* The logic is similar to BPF_PROG_RUN, but with an explicit
  * rcu_read_lock() and migrate_disable() which are required
  * for the trampoline. The macro is split into
- * call __bpf_prog_enter
+ * call _bpf_prog_enter
  * call prog->bpf_func
  * call __bpf_prog_exit
- *
- * __bpf_prog_enter returns:
- * 0 - skip execution of the bpf prog
- * 1 - execute bpf prog
- * [2..MAX_U64] - execute bpf prog and record execution time.
- *     This is start time.
  */
-u64 notrace __bpf_prog_enter(struct bpf_prog *prog)
+u64 notrace __bpf_prog_enter(void)
 	__acquires(RCU)
 {
+	u64 start = 0;
+
 	rcu_read_lock();
 	migrate_disable();
-	if (unlikely(__this_cpu_inc_return(*(prog->active)) != 1)) {
-		inc_misses_counter(prog);
-		return 0;
-	}
-	return bpf_prog_start_time();
-}
-
-static void notrace update_prog_stats(struct bpf_prog *prog,
-				      u64 start)
-{
-	struct bpf_prog_stats *stats;
-
-	if (static_branch_unlikely(&bpf_stats_enabled_key) &&
-	    /* static_key could be enabled in __bpf_prog_enter*
-	     * and disabled in __bpf_prog_exit*.
-	     * And vice versa.
-	     * Hence check that 'start' is valid.
-	     */
-	    start > NO_START_TIME) {
-		stats = this_cpu_ptr(prog->stats);
-		u64_stats_update_begin(&stats->syncp);
-		stats->cnt++;
-		stats->nsecs += sched_clock() - start;
-		u64_stats_update_end(&stats->syncp);
-	}
+	if (static_branch_unlikely(&bpf_stats_enabled_key))
+		start = sched_clock();
+	return start;
 }
 
 void notrace __bpf_prog_exit(struct bpf_prog *prog, u64 start)
 	__releases(RCU)
 {
-	update_prog_stats(prog, start);
-	__this_cpu_dec(*(prog->active));
+	struct bpf_prog_stats *stats;
+
+	if (static_branch_unlikely(&bpf_stats_enabled_key) &&
+	    /* static_key could be enabled in __bpf_prog_enter
+	     * and disabled in __bpf_prog_exit.
+	     * And vice versa.
+	     * Hence check that 'start' is not zero.
+	     */
+	    start) {
+		stats = this_cpu_ptr(prog->aux->stats);
+		u64_stats_update_begin(&stats->syncp);
+		stats->cnt++;
+		stats->nsecs += sched_clock() - start;
+		u64_stats_update_end(&stats->syncp);
+	}
 	migrate_enable();
 	rcu_read_unlock();
 }
 
-u64 notrace __bpf_prog_enter_sleepable(struct bpf_prog *prog)
+void notrace __bpf_prog_enter_sleepable(void)
 {
 	rcu_read_lock_trace();
-	migrate_disable();
 	might_fault();
-	if (unlikely(__this_cpu_inc_return(*(prog->active)) != 1)) {
-		inc_misses_counter(prog);
-		return 0;
-	}
-	return bpf_prog_start_time();
 }
 
-void notrace __bpf_prog_exit_sleepable(struct bpf_prog *prog, u64 start)
+void notrace __bpf_prog_exit_sleepable(void)
 {
-	update_prog_stats(prog, start);
-	__this_cpu_dec(*(prog->active));
-	migrate_enable();
 	rcu_read_unlock_trace();
 }
 
