@@ -7,6 +7,7 @@
  * Copyright (C) 2018 Stefan Wahren <stefan.wahren@i2se.com>
  */
 #include <linux/device.h>
+#include <linux/devm-helpers.h>
 #include <linux/err.h>
 #include <linux/hwmon.h>
 #include <linux/module.h>
@@ -14,36 +15,6 @@
 #include <linux/slab.h>
 #include <linux/workqueue.h>
 #include <soc/bcm2835/raspberrypi-firmware.h>
-
-/*
- * This section defines some rate limited logging that prevent
- * repeated messages at much lower Hz than the default kernel settings.
- * It's usually 5s, this is 5 minutes.
- * Burst 3 means you may get three messages 'quickly', before
- * the ratelimiting kicks in.
- */
-#define LOCAL_RATELIMIT_INTERVAL (5 * 60 * HZ)
-#define LOCAL_RATELIMIT_BURST 3
-
-#ifdef CONFIG_PRINTK
-#define printk_ratelimited_local(fmt, ...)	\
-({						\
-	static DEFINE_RATELIMIT_STATE(_rs,	\
-		LOCAL_RATELIMIT_INTERVAL,	\
-		LOCAL_RATELIMIT_BURST);		\
-						\
-	if (__ratelimit(&_rs))			\
-		printk(fmt, ##__VA_ARGS__);	\
-})
-#else
-#define printk_ratelimited_local(fmt, ...)	\
-	no_printk(fmt, ##__VA_ARGS__)
-#endif
-
-#define pr_crit_ratelimited_local(fmt, ...)              \
-	printk_ratelimited_local(KERN_CRIT pr_fmt(fmt), ##__VA_ARGS__)
-#define pr_info_ratelimited_local(fmt, ...)              \
-printk_ratelimited_local(KERN_INFO pr_fmt(fmt), ##__VA_ARGS__)
 
 #define UNDERVOLTAGE_STICKY_BIT	BIT(16)
 
@@ -77,13 +48,10 @@ static void rpi_firmware_get_throttled(struct rpi_hwmon_data *data)
 	if (new_uv == old_uv)
 		return;
 
-	if (new_uv) {
-		pr_crit_ratelimited_local("Under-voltage detected! (0x%08x)\n",
-					  value);
-	} else {
-		pr_info_ratelimited_local("Voltage normalised (0x%08x)\n",
-					  value);
-	}
+	if (new_uv)
+		dev_crit(data->hwmon_dev, "Undervoltage detected!\n");
+	else
+		dev_info(data->hwmon_dev, "Voltage normalised\n");
 
 	sysfs_notify(&data->hwmon_dev->kobj, NULL, "in0_lcrit_alarm");
 }
@@ -139,6 +107,7 @@ static int rpi_hwmon_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct rpi_hwmon_data *data;
+	int ret;
 
 	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
 	if (!data)
@@ -152,7 +121,10 @@ static int rpi_hwmon_probe(struct platform_device *pdev)
 							       &rpi_chip_info,
 							       NULL);
 
-	INIT_DELAYED_WORK(&data->get_values_poll_work, get_values_poll);
+	ret = devm_delayed_work_autocancel(dev, &data->get_values_poll_work,
+					   get_values_poll);
+	if (ret)
+		return ret;
 	platform_set_drvdata(pdev, data);
 
 	if (!PTR_ERR_OR_ZERO(data->hwmon_dev))
@@ -161,18 +133,8 @@ static int rpi_hwmon_probe(struct platform_device *pdev)
 	return PTR_ERR_OR_ZERO(data->hwmon_dev);
 }
 
-static int rpi_hwmon_remove(struct platform_device *pdev)
-{
-	struct rpi_hwmon_data *data = platform_get_drvdata(pdev);
-
-	cancel_delayed_work_sync(&data->get_values_poll_work);
-
-	return 0;
-}
-
 static struct platform_driver rpi_hwmon_driver = {
 	.probe = rpi_hwmon_probe,
-	.remove = rpi_hwmon_remove,
 	.driver = {
 		.name = "raspberrypi-hwmon",
 	},

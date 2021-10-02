@@ -151,7 +151,7 @@ static struct snd_soc_dai_driver voicehat_dai = {
 		.formats = SNDRV_PCM_FMTBIT_S32_LE
 	},
 	.ops = &voicehat_dai_ops,
-	.symmetric_rates = 1
+	.symmetric_rate = 1
 };
 
 #ifdef CONFIG_OF

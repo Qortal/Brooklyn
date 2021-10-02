@@ -492,7 +492,7 @@ ov9281_find_best_fit(struct v4l2_subdev_format *fmt)
 }
 
 static int ov9281_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_pad_config *cfg,
+			  struct v4l2_subdev_state *sd_state,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ov9281 *ov9281 = to_ov9281(sd);
@@ -517,7 +517,7 @@ static int ov9281_set_fmt(struct v4l2_subdev *sd,
 		V4L2_MAP_XFER_FUNC_DEFAULT(fmt->format.colorspace);
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
-		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
 	} else {
 		ov9281->cur_mode = mode;
 		ov9281->code = fmt->format.code;
@@ -543,7 +543,7 @@ static int ov9281_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int ov9281_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_pad_config *cfg,
+			  struct v4l2_subdev_state *sd_state,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ov9281 *ov9281 = to_ov9281(sd);
@@ -551,7 +551,8 @@ static int ov9281_get_fmt(struct v4l2_subdev *sd,
 
 	mutex_lock(&ov9281->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
-		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state,
+							  fmt->pad);
 	} else {
 		fmt->format.width = mode->width;
 		fmt->format.height = mode->height;
@@ -573,7 +574,7 @@ static int ov9281_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int ov9281_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_pad_config *cfg,
+				 struct v4l2_subdev_state *sd_state,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
 	switch (code->index) {
@@ -591,7 +592,7 @@ static int ov9281_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int ov9281_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_pad_config *cfg,
+				   struct v4l2_subdev_state *sd_state,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index >= ARRAY_SIZE(supported_modes))
@@ -659,12 +660,14 @@ static int ov9281_set_ctrl_vflip(struct ov9281 *ov9281, int value)
 }
 
 static const struct v4l2_rect *
-__ov9281_get_pad_crop(struct ov9281 *ov9281, struct v4l2_subdev_pad_config *cfg,
+__ov9281_get_pad_crop(struct ov9281 *ov9281,
+		      struct v4l2_subdev_state *sd_state,
 		      unsigned int pad, enum v4l2_subdev_format_whence which)
 {
 	switch (which) {
 	case V4L2_SUBDEV_FORMAT_TRY:
-		return v4l2_subdev_get_try_crop(&ov9281->subdev, cfg, pad);
+		return v4l2_subdev_get_try_crop(&ov9281->subdev, sd_state,
+						pad);
 	case V4L2_SUBDEV_FORMAT_ACTIVE:
 		return &ov9281->cur_mode->crop;
 	}
@@ -673,7 +676,7 @@ __ov9281_get_pad_crop(struct ov9281 *ov9281, struct v4l2_subdev_pad_config *cfg,
 }
 
 static int ov9281_get_selection(struct v4l2_subdev *sd,
-				struct v4l2_subdev_pad_config *cfg,
+				struct v4l2_subdev_state *sd_state,
 				struct v4l2_subdev_selection *sel)
 {
 	switch (sel->target) {
@@ -681,7 +684,7 @@ static int ov9281_get_selection(struct v4l2_subdev *sd,
 		struct ov9281 *ov9281 = to_ov9281(sd);
 
 		mutex_lock(&ov9281->mutex);
-		sel->r = *__ov9281_get_pad_crop(ov9281, cfg, sel->pad,
+		sel->r = *__ov9281_get_pad_crop(ov9281, sd_state, sel->pad,
 						sel->which);
 		mutex_unlock(&ov9281->mutex);
 
@@ -899,7 +902,7 @@ static int ov9281_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct ov9281 *ov9281 = to_ov9281(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->pad, 0);
+				v4l2_subdev_get_try_format(sd, fh->state, 0);
 	const struct ov9281_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&ov9281->mutex);
@@ -1208,7 +1211,7 @@ static int ov9281_probe(struct i2c_client *client,
 	if (ret < 0)
 		goto err_power_off;
 
-	ret = v4l2_async_register_subdev_sensor_common(sd);
+	ret = v4l2_async_register_subdev_sensor(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;

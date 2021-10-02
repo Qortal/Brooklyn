@@ -72,11 +72,6 @@ struct chp_link;
  * @probe: function called on probe
  * @remove: function called on remove
  * @shutdown: called at device shutdown
- * @prepare: prepare for pm state transition
- * @complete: undo work done in @prepare
- * @freeze: callback for freezing during hibernation snapshotting
- * @thaw: undo work done in @freeze
- * @restore: callback for restoring after hibernation
  * @settle: wait for asynchronous work to finish
  */
 struct css_driver {
@@ -86,13 +81,8 @@ struct css_driver {
 	int (*chp_event)(struct subchannel *, struct chp_link *, int);
 	int (*sch_event)(struct subchannel *, int);
 	int (*probe)(struct subchannel *);
-	int (*remove)(struct subchannel *);
+	void (*remove)(struct subchannel *);
 	void (*shutdown)(struct subchannel *);
-	int (*prepare) (struct subchannel *);
-	void (*complete) (struct subchannel *);
-	int (*freeze)(struct subchannel *);
-	int (*thaw) (struct subchannel *);
-	int (*restore)(struct subchannel *);
 	int (*settle)(void);
 };
 

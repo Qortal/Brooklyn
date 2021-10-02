@@ -1345,6 +1345,7 @@ static int hellcreek_setup(struct dsa_switch *ds)
 	 * filtering setups are not supported.
 	 */
 	ds->vlan_filtering_is_global = true;
+	ds->needs_standalone_vlan_filtering = true;
 
 	/* Intercept _all_ PTP multicast traffic */
 	ret = hellcreek_setup_fdb(hellcreek);
@@ -1472,9 +1473,6 @@ static void hellcreek_setup_gcl(struct hellcreek *hellcreek, int port,
 		u16 data;
 		u8 gates;
 
-		cur++;
-		next++;
-
 		if (i == schedule->num_entries)
 			gates = initial->gate_mask ^
 				cur->gate_mask;
@@ -1503,6 +1501,9 @@ static void hellcreek_setup_gcl(struct hellcreek *hellcreek, int port,
 			(initial->gate_mask <<
 			 TR_GCLCMD_INIT_GATE_STATES_SHIFT);
 		hellcreek_write(hellcreek, data, TR_GCLCMD);
+
+		cur++;
+		next++;
 	}
 }
 
@@ -1550,7 +1551,7 @@ static bool hellcreek_schedule_startable(struct hellcreek *hellcreek, int port)
 	/* Calculate difference to admin base time */
 	base_time_ns = ktime_to_ns(hellcreek_port->current_schedule->base_time);
 
-	return base_time_ns - current_ns < (s64)8 * NSEC_PER_SEC;
+	return base_time_ns - current_ns < (s64)4 * NSEC_PER_SEC;
 }
 
 static void hellcreek_start_schedule(struct hellcreek *hellcreek, int port)
@@ -1915,12 +1916,27 @@ static int hellcreek_remove(struct platform_device *pdev)
 {
 	struct hellcreek *hellcreek = platform_get_drvdata(pdev);
 
+	if (!hellcreek)
+		return 0;
+
 	hellcreek_hwtstamp_free(hellcreek);
 	hellcreek_ptp_free(hellcreek);
 	dsa_unregister_switch(hellcreek->ds);
 	platform_set_drvdata(pdev, NULL);
 
 	return 0;
+}
+
+static void hellcreek_shutdown(struct platform_device *pdev)
+{
+	struct hellcreek *hellcreek = platform_get_drvdata(pdev);
+
+	if (!hellcreek)
+		return;
+
+	dsa_switch_shutdown(hellcreek->ds);
+
+	platform_set_drvdata(pdev, NULL);
 }
 
 static const struct hellcreek_platform_data de1soc_r1_pdata = {
@@ -1945,6 +1961,7 @@ MODULE_DEVICE_TABLE(of, hellcreek_of_match);
 static struct platform_driver hellcreek_driver = {
 	.probe	= hellcreek_probe,
 	.remove = hellcreek_remove,
+	.shutdown = hellcreek_shutdown,
 	.driver = {
 		.name = "hellcreek",
 		.of_match_table = hellcreek_of_match,

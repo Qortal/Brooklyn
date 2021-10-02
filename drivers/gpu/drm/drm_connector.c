@@ -20,6 +20,7 @@
  * OF THIS SOFTWARE.
  */
 
+#include <drm/drm_auth.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_encoder.h>
@@ -279,7 +280,8 @@ int drm_connector_init(struct drm_device *dev,
 	drm_connector_get_cmdline_mode(connector);
 
 	/* We should add connectors at the end to avoid upsetting the connector
-	 * index too much. */
+	 * index too much.
+	 */
 	spin_lock_irq(&config->connector_list_lock);
 	list_add_tail(&connector->head, &config->connector_list);
 	config->num_connector++;
@@ -961,6 +963,11 @@ static const struct drm_prop_enum_list dp_colorspaces[] = {
  * 	drm_connector_update_edid_property(), usually after having parsed
  * 	the EDID using drm_add_edid_modes(). Userspace cannot change this
  * 	property.
+ *
+ * 	User-space should not parse the EDID to obtain information exposed via
+ * 	other KMS properties (because the kernel might apply limits, quirks or
+ * 	fixups to the EDID). For instance, user-space should not try to parse
+ * 	mode lists from the EDID.
  * DPMS:
  * 	Legacy property for setting the power state of the connector. For atomic
  * 	drivers this is only provided for backwards compatibility with existing
@@ -1428,7 +1435,8 @@ void drm_hdmi_avi_infoframe_content_type(struct hdmi_avi_infoframe *frame,
 EXPORT_SYMBOL(drm_hdmi_avi_infoframe_content_type);
 
 /**
- * drm_mode_attach_tv_margin_properties - attach TV connector margin properties
+ * drm_connector_attach_tv_margin_properties - attach TV connector margin
+ * 	properties
  * @connector: DRM connector
  *
  * Called by a driver when it needs to attach TV margin props to a connector.
@@ -1952,11 +1960,11 @@ int drm_connector_set_path_property(struct drm_connector *connector,
 	int ret;
 
 	ret = drm_property_replace_global_blob(dev,
-	                                       &connector->path_blob_ptr,
-	                                       strlen(path) + 1,
-	                                       path,
-	                                       &connector->base,
-	                                       dev->mode_config.path_property);
+					       &connector->path_blob_ptr,
+					       strlen(path) + 1,
+					       path,
+					       &connector->base,
+					       dev->mode_config.path_property);
 	return ret;
 }
 EXPORT_SYMBOL(drm_connector_set_path_property);
@@ -1982,11 +1990,11 @@ int drm_connector_set_tile_property(struct drm_connector *connector)
 
 	if (!connector->has_tile) {
 		ret  = drm_property_replace_global_blob(dev,
-		                                        &connector->tile_blob_ptr,
-		                                        0,
-		                                        NULL,
-		                                        &connector->base,
-		                                        dev->mode_config.tile_property);
+							&connector->tile_blob_ptr,
+							0,
+							NULL,
+							&connector->base,
+							dev->mode_config.tile_property);
 		return ret;
 	}
 
@@ -1997,11 +2005,11 @@ int drm_connector_set_tile_property(struct drm_connector *connector)
 		 connector->tile_h_size, connector->tile_v_size);
 
 	ret = drm_property_replace_global_blob(dev,
-	                                       &connector->tile_blob_ptr,
-	                                       strlen(tile) + 1,
-	                                       tile,
-	                                       &connector->base,
-	                                       dev->mode_config.tile_property);
+					       &connector->tile_blob_ptr,
+					       strlen(tile) + 1,
+					       tile,
+					       &connector->base,
+					       dev->mode_config.tile_property);
 	return ret;
 }
 EXPORT_SYMBOL(drm_connector_set_tile_property);
@@ -2070,10 +2078,10 @@ int drm_connector_update_edid_property(struct drm_connector *connector,
 
 	ret = drm_property_replace_global_blob(dev,
 					       &connector->edid_blob_ptr,
-	                                       size,
-	                                       edid,
-	                                       &connector->base,
-	                                       dev->mode_config.edid_property);
+					       size,
+					       edid,
+					       &connector->base,
+					       dev->mode_config.edid_property);
 	if (ret)
 		return ret;
 	return drm_connector_set_tile_property(connector);
@@ -2351,7 +2359,8 @@ int drm_connector_property_set_ioctl(struct drm_device *dev,
 static struct drm_encoder *drm_connector_get_encoder(struct drm_connector *connector)
 {
 	/* For atomic drivers only state objects are synchronously updated and
-	 * protected by modeset locks, so check those first. */
+	 * protected by modeset locks, so check those first.
+	 */
 	if (connector->state)
 		return connector->state->best_encoder;
 	return connector->encoder;
@@ -2405,6 +2414,7 @@ int drm_mode_getconnector(struct drm_device *dev, void *data,
 	struct drm_mode_modeinfo u_mode;
 	struct drm_mode_modeinfo __user *mode_ptr;
 	uint32_t __user *encoder_ptr;
+	bool is_current_master;
 
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
 		return -EOPNOTSUPP;
@@ -2435,11 +2445,17 @@ int drm_mode_getconnector(struct drm_device *dev, void *data,
 	out_resp->connector_type = connector->connector_type;
 	out_resp->connector_type_id = connector->connector_type_id;
 
+	is_current_master = drm_is_current_master(file_priv);
+
 	mutex_lock(&dev->mode_config.mutex);
 	if (out_resp->count_modes == 0) {
-		connector->funcs->fill_modes(connector,
-					     dev->mode_config.max_width,
-					     dev->mode_config.max_height);
+		if (is_current_master)
+			connector->funcs->fill_modes(connector,
+						     dev->mode_config.max_width,
+						     dev->mode_config.max_height);
+		else
+			drm_dbg_kms(dev, "User-space requested a forced probe on [CONNECTOR:%d:%s] but is not the DRM master, demoting to read-only probe",
+				    connector->base.id, connector->name);
 	}
 
 	out_resp->mm_width = connector->display_info.width_mm;
@@ -2513,7 +2529,8 @@ int drm_mode_getconnector(struct drm_device *dev, void *data,
 		out_resp->encoder_id = 0;
 
 	/* Only grab properties after probing, to make sure EDID and other
-	 * properties reflect the latest status. */
+	 * properties reflect the latest status.
+	 */
 	ret = drm_mode_object_get_properties(&connector->base, file_priv->atomic,
 			(uint32_t __user *)(unsigned long)(out_resp->props_ptr),
 			(uint64_t __user *)(unsigned long)(out_resp->prop_values_ptr),

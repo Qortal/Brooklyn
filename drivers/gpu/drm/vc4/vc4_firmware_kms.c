@@ -20,7 +20,7 @@
 #include <drm/drm_drv.h>
 #include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_fourcc.h>
-#include <drm/drm_gem_framebuffer_helper.h>
+#include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_plane_helper.h>
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_vblank.h>
@@ -480,7 +480,7 @@ static int vc4_fkms_margins_adj(struct drm_plane_state *pstate,
 }
 
 static void vc4_plane_atomic_update(struct drm_plane *plane,
-				    struct drm_plane_state *old_state)
+				    struct drm_atomic_state *old_state)
 {
 	struct drm_plane_state *state = plane->state;
 
@@ -496,7 +496,7 @@ static void vc4_plane_atomic_update(struct drm_plane *plane,
 }
 
 static void vc4_plane_atomic_disable(struct drm_plane *plane,
-				     struct drm_plane_state *old_state)
+				     struct drm_atomic_state *old_state)
 {
 	struct drm_plane_state *state = plane->state;
 	struct vc4_fkms_plane *vc4_plane = to_vc4_fkms_plane(plane);
@@ -660,14 +660,16 @@ static int vc4_plane_to_mb(struct drm_plane *plane,
 }
 
 static int vc4_plane_atomic_check(struct drm_plane *plane,
-				  struct drm_plane_state *state)
+				  struct drm_atomic_state *state)
 {
+	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state,
+										 plane);
 	struct vc4_fkms_plane *vc4_plane = to_vc4_fkms_plane(plane);
 
-	if (!plane_enabled(state))
+	if (!plane_enabled(new_plane_state))
 		return 0;
 
-	return vc4_plane_to_mb(plane, &vc4_plane->mb, state);
+	return vc4_plane_to_mb(plane, &vc4_plane->mb, new_plane_state);
 }
 
 /* Called during init to allocate the plane's atomic state. */
@@ -759,7 +761,7 @@ static const struct drm_plane_funcs vc4_plane_funcs = {
 };
 
 static const struct drm_plane_helper_funcs vc4_plane_helper_funcs = {
-	.prepare_fb = drm_gem_fb_prepare_fb,
+	.prepare_fb = drm_gem_plane_helper_prepare_fb,
 	.cleanup_fb = NULL,
 	.atomic_check = vc4_plane_atomic_check,
 	.atomic_update = vc4_plane_atomic_update,
@@ -999,7 +1001,7 @@ static void vc4_crtc_disable(struct drm_crtc *crtc,
 	 */
 
 	drm_atomic_crtc_for_each_plane(plane, crtc)
-		vc4_plane_atomic_disable(plane, plane->state);
+		vc4_plane_atomic_disable(plane, state);
 
 	/*
 	 * Make sure we issue a vblank event after disabling the CRTC if
@@ -1869,7 +1871,7 @@ static int vc4_fkms_bind(struct device *dev, struct device *master, void *data)
 		fkms->bcm2711 = true;
 
 	firmware_node = of_parse_phandle(dev->of_node, "brcm,firmware", 0);
-	vc4->firmware = rpi_firmware_get(firmware_node);
+	vc4->firmware = devm_rpi_firmware_get(&pdev->dev, firmware_node);
 	if (!vc4->firmware) {
 		DRM_DEBUG("Failed to get Raspberry Pi firmware reference.\n");
 		return -EPROBE_DEFER;

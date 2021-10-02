@@ -43,7 +43,7 @@ static struct snd_soc_dai_driver dacplusdsp_dai = {
 			   SNDRV_PCM_FMTBIT_S24_LE |
 			   SNDRV_PCM_FMTBIT_S32_LE,
 	},
-	.symmetric_rates = 1};
+	.symmetric_rate = 1};
 
 #ifdef CONFIG_OF
 static const struct of_device_id dacplusdsp_ids[] = {

@@ -330,7 +330,9 @@ static void spi_transfer(const uint8_t *txbuf, uint8_t *rxbuf, int len)
 	transfer.rx_buf = rxbuf;
 	transfer.len = len;
 	transfer.speed_hz = 150000;
-	transfer.delay_usecs = 10;
+	transfer.delay.value = 10;
+	transfer.delay.unit = SPI_DELAY_UNIT_USECS;
+
 	spi_message_add_tail(&transfer, &msg);
 
 	err = spi_sync(pisnd_spi_device, &msg);

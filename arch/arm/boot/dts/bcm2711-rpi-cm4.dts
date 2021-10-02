@@ -286,15 +286,16 @@
 };
 
 &pcie0 {
-	pci@1,0 {
+	pci@0,0 {
+		device-type = "pci";
 		#address-cells = <3>;
 		#size-cells = <2>;
 		ranges;
 
 		reg = <0 0 0 0 0>;
 
-		usb@1,0 {
-			reg = <0x10000 0 0 0 0>;
+		usb@0,0 {
+			reg = <0 0 0 0 0>;
 			resets = <&reset RASPBERRYPI_FIRMWARE_RESET_ID_USB>;
 		};
 	};
@@ -348,7 +349,7 @@
 	};
 };
 
-#include "bcm2711-rpi.dtsi"
+#include "bcm2711-rpi-ds.dtsi"
 #include "bcm283x-rpi-csi0-2lane.dtsi"
 #include "bcm283x-rpi-csi1-4lane.dtsi"
 #include "bcm283x-rpi-i2c0mux_0_44.dtsi"

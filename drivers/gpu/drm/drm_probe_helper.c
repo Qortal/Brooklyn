@@ -515,7 +515,8 @@ retry:
 	if (count == 0 && connector->status == connector_status_connected)
 		count = drm_add_override_edid_modes(connector);
 
-	if (count == 0 && connector->status == connector_status_connected)
+	if (count == 0 && (connector->status == connector_status_connected ||
+			   connector->status == connector_status_unknown))
 		count = drm_add_modes_noedid(connector, 1024, 768);
 	count += drm_helper_probe_add_cmdline_mode(connector);
 	if (count == 0)
@@ -756,7 +757,7 @@ EXPORT_SYMBOL(drm_kms_helper_poll_disable);
  * drm_kms_helper_poll_init - initialize and enable output polling
  * @dev: drm_device
  *
- * This function intializes and then also enables output polling support for
+ * This function initializes and then also enables output polling support for
  * @dev. Drivers which do not have reliable hotplug support in hardware can use
  * this helper infrastructure to regularly poll such connectors for changes in
  * their connection state.
@@ -794,8 +795,7 @@ void drm_kms_helper_poll_fini(struct drm_device *dev)
 }
 EXPORT_SYMBOL(drm_kms_helper_poll_fini);
 
-static bool
-_drm_connector_helper_hpd_irq_event(struct drm_connector *connector)
+static bool check_connector_changed(struct drm_connector *connector)
 {
 	struct drm_device *dev = connector->dev;
 	enum drm_connector_status old_status;
@@ -810,23 +810,22 @@ _drm_connector_helper_hpd_irq_event(struct drm_connector *connector)
 	old_status = connector->status;
 	old_epoch_counter = connector->epoch_counter;
 
-	DRM_DEBUG_KMS("[CONNECTOR:%d:%s] Old epoch counter %llu\n",
-		      connector->base.id,
-		      connector->name,
-		      old_epoch_counter);
+	drm_dbg_kms(dev, "[CONNECTOR:%d:%s] Old epoch counter %llu\n",
+		    connector->base.id,
+		    connector->name,
+		    old_epoch_counter);
 
-	connector->status = drm_helper_probe_detect(connector, NULL,
-						    false);
-	DRM_DEBUG_KMS("[CONNECTOR:%d:%s] status updated from %s to %s\n",
-		      connector->base.id,
-		      connector->name,
-		      drm_get_connector_status_name(old_status),
-		      drm_get_connector_status_name(connector->status));
+	connector->status = drm_helper_probe_detect(connector, NULL, false);
+	drm_dbg_kms(dev, "[CONNECTOR:%d:%s] status updated from %s to %s\n",
+		    connector->base.id,
+		    connector->name,
+		    drm_get_connector_status_name(old_status),
+		    drm_get_connector_status_name(connector->status));
 
-	DRM_DEBUG_KMS("[CONNECTOR:%d:%s] New epoch counter %llu\n",
-		      connector->base.id,
-		      connector->name,
-		      connector->epoch_counter);
+	drm_dbg_kms(dev, "[CONNECTOR:%d:%s] New epoch counter %llu\n",
+		    connector->base.id,
+		    connector->name,
+		    connector->epoch_counter);
 
 	/*
 	 * Check if epoch counter had changed, meaning that we need
@@ -846,7 +845,9 @@ _drm_connector_helper_hpd_irq_event(struct drm_connector *connector)
  * which has the DRM_CONNECTOR_POLL_HPD flag set in its &polled member.
  *
  * This helper function is useful for drivers which can track hotplug
- * interrupts for a single connector.
+ * interrupts for a single connector. Drivers that want to send a
+ * hotplug event for all connectors or can't track hotplug interrupts
+ * per connector need to use drm_helper_hpd_irq_event().
  *
  * This function must be called from process context with no mode
  * setting locks held.
@@ -860,12 +861,14 @@ bool drm_connector_helper_hpd_irq_event(struct drm_connector *connector)
 	bool changed;
 
 	mutex_lock(&dev->mode_config.mutex);
-	changed = _drm_connector_helper_hpd_irq_event(connector);
+	changed = check_connector_changed(connector);
 	mutex_unlock(&dev->mode_config.mutex);
 
 	if (changed) {
 		drm_kms_helper_hotplug_event(dev);
-		DRM_DEBUG_KMS("Sent hotplug event\n");
+		drm_dbg_kms(dev, "[CONNECTOR:%d:%s] Sent hotplug event\n",
+			    connector->base.id,
+			    connector->name);
 	}
 
 	return changed;
@@ -885,9 +888,10 @@ EXPORT_SYMBOL(drm_connector_helper_hpd_irq_event);
  * interrupts for each connector.
  *
  * Drivers which support hotplug interrupts for each connector individually and
- * which have a more fine-grained detect logic should bypass this code and
- * directly call drm_kms_helper_hotplug_event() in case the connector state
- * changed.
+ * which have a more fine-grained detect logic can use
+ * drm_connector_helper_hpd_irq_event(). Alternatively, they should bypass this
+ * code and directly call drm_kms_helper_hotplug_event() in case the connector
+ * state changed.
  *
  * This function must be called from process context with no mode
  * setting locks held.
@@ -907,7 +911,7 @@ bool drm_helper_hpd_irq_event(struct drm_device *dev)
 	mutex_lock(&dev->mode_config.mutex);
 	drm_connector_list_iter_begin(dev, &conn_iter);
 	drm_for_each_connector_iter(connector, &conn_iter) {
-		if (_drm_connector_helper_hpd_irq_event(connector))
+		if (check_connector_changed(connector))
 			changed = true;
 	}
 	drm_connector_list_iter_end(&conn_iter);

@@ -25,7 +25,7 @@
 #include "atmel_hlcdc_dc.h"
 
 /**
- * Atmel HLCDC CRTC state structure
+ * struct atmel_hlcdc_crtc_state - Atmel HLCDC CRTC state structure
  *
  * @base: base CRTC state
  * @output_mode: RGBXXX output mode
@@ -42,10 +42,10 @@ drm_crtc_state_to_atmel_hlcdc_crtc_state(struct drm_crtc_state *state)
 }
 
 /**
- * Atmel HLCDC CRTC structure
+ * struct atmel_hlcdc_crtc - Atmel HLCDC CRTC structure
  *
  * @base: base DRM CRTC structure
- * @hlcdc: pointer to the atmel_hlcdc structure provided by the MFD device
+ * @dc: pointer to the atmel_hlcdc structure provided by the MFD device
  * @event: pointer to the current page flip event
  * @id: CRTC id (returned by drm_crtc_index)
  */
@@ -232,7 +232,6 @@ static void atmel_hlcdc_crtc_atomic_enable(struct drm_crtc *c,
 
 	pm_runtime_put_sync(dev->dev);
 
-	drm_crtc_vblank_on(c);
 }
 
 #define ATMEL_HLCDC_RGB444_OUTPUT	BIT(0)
@@ -344,7 +343,16 @@ static int atmel_hlcdc_crtc_atomic_check(struct drm_crtc *c,
 static void atmel_hlcdc_crtc_atomic_begin(struct drm_crtc *c,
 					  struct drm_atomic_state *state)
 {
+	drm_crtc_vblank_on(c);
+}
+
+static void atmel_hlcdc_crtc_atomic_flush(struct drm_crtc *c,
+					  struct drm_atomic_state *state)
+{
 	struct atmel_hlcdc_crtc *crtc = drm_crtc_to_atmel_hlcdc_crtc(c);
+	unsigned long flags;
+
+	spin_lock_irqsave(&c->dev->event_lock, flags);
 
 	if (c->state->event) {
 		c->state->event->pipe = drm_crtc_index(c);
@@ -354,12 +362,7 @@ static void atmel_hlcdc_crtc_atomic_begin(struct drm_crtc *c,
 		crtc->event = c->state->event;
 		c->state->event = NULL;
 	}
-}
-
-static void atmel_hlcdc_crtc_atomic_flush(struct drm_crtc *crtc,
-					  struct drm_atomic_state *state)
-{
-	/* TODO: write common plane control register if available */
+	spin_unlock_irqrestore(&c->dev->event_lock, flags);
 }
 
 static const struct drm_crtc_helper_funcs lcdc_crtc_helper_funcs = {

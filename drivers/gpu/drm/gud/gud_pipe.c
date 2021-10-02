@@ -3,7 +3,6 @@
  * Copyright 2020 Noralf Trønnes
  */
 
-#include <linux/dma-buf.h>
 #include <linux/lz4.h>
 #include <linux/usb.h>
 #include <linux/workqueue.h>
@@ -15,7 +14,8 @@
 #include <drm/drm_format_helper.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
-#include <drm/drm_gem_shmem_helper.h>
+#include <drm/drm_gem.h>
+#include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_print.h>
 #include <drm/drm_rect.h>
 #include <drm/drm_simple_kms_helper.h>
@@ -152,7 +152,9 @@ static int gud_prep_flush(struct gud_device *gdrm, struct drm_framebuffer *fb,
 {
 	struct dma_buf_attachment *import_attach = fb->obj[0]->import_attach;
 	u8 compression = gdrm->compression;
-	void *vmap, *vaddr, *buf;
+	struct dma_buf_map map[DRM_FORMAT_MAX_PLANES];
+	struct dma_buf_map map_data[DRM_FORMAT_MAX_PLANES];
+	void *vaddr, *buf;
 	size_t pitch, len;
 	int ret = 0;
 
@@ -161,17 +163,15 @@ static int gud_prep_flush(struct gud_device *gdrm, struct drm_framebuffer *fb,
 	if (len > gdrm->bulk_len)
 		return -E2BIG;
 
-	vmap = drm_gem_shmem_vmap(fb->obj[0]);
-	if (!vmap)
-		return -ENOMEM;
+	ret = drm_gem_fb_vmap(fb, map, map_data);
+	if (ret)
+		return ret;
 
-	vaddr = vmap + fb->offsets[0];
+	vaddr = map_data[0].vaddr;
 
-	if (import_attach) {
-		ret = dma_buf_begin_cpu_access(import_attach->dmabuf, DMA_FROM_DEVICE);
-		if (ret)
-			goto vunmap;
-	}
+	ret = drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE);
+	if (ret)
+		goto vunmap;
 retry:
 	if (compression)
 		buf = gdrm->compress_buf;
@@ -224,10 +224,9 @@ retry:
 	}
 
 end_cpu_access:
-	if (import_attach)
-		dma_buf_end_cpu_access(import_attach->dmabuf, DMA_FROM_DEVICE);
+	drm_gem_fb_end_cpu_access(fb, DMA_FROM_DEVICE);
 vunmap:
-	drm_gem_shmem_vunmap(fb->obj[0], vmap);
+	drm_gem_fb_vunmap(fb, map);
 
 	return ret;
 }
