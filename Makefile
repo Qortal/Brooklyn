@@ -3,8 +3,8 @@
 # QortalOS NXT central by Scare Crowe
 
 VERSION = 5
-PATCHLEVEL = 18
-SUBLEVEL = 12
+PATCHLEVEL = 20
+SUBLEVEL = 14
 EXTRAVERSION = -LTS
 NAME = BrooklynR NXT Sinclair
 
