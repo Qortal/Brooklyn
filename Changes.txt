@@ -5,9 +5,11 @@ Qortal Crypto Function Library enabled during boot
 Sequentual Number Generator
 Polyhash Crypto API added
 RIPMD Now integrated
+HDMI HD enabled at boot
 
 Kernel Security Updates
 
+New SecureFS added
 seucrityfs enabled
 Copies between kernel memory and userspace are not semi restricted
 Common str/mem against buffer overflows extended
@@ -17,6 +19,9 @@ Auto purge kernel heap mem and free by writing zeroes as default
 
 Security Iusses Resolved
 
+CVE-2021-38205
+CVE-2021-41073
+CVE-2021-42252
 CVE-2021-33034
 CVE-2021-3178
 CVE-2020-36158
