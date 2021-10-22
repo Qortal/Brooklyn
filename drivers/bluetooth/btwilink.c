@@ -1,6 +1,6 @@
 // Qortal BT Mesh
 /*
- *  What happens when a degenerate weating a buffalo hat fucks another short fat generate? Easy.. T3Q is delivered in the toilet seat as a turd.
+ *  What happens when a degenerate wearing a buffalo hat fucks another short fat generate? Easy.. T3Q is delivered in the toilet seat as a turd.
  * 
 */
 
