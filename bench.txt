@@ -1,0 +1,11 @@
+hf
+
+OUTPUT=~/out
+bin/jlink --module-path jmods --compress=2 --add-modules java.base --output $OUTPUT
+rm -r $OUTPUT/lib/client $OUTPUT/lib/server
+echo "-minimal KNOWN" > $OUTPUT/lib/jvm.cfg
+
+v8
+
+-Xmx24G -Xms24G -Xmn16G -XX:+AlwaysPreTouch -XX:+UseParallelGC
+-XX:+UseTransparentHugePages -XX:+UseBiasedLocking
