@@ -97,7 +97,7 @@ static int bcm47xx_nvram_find_and_copy(void __iomem *flash_start, size_t res_siz
 	if (bcm47xx_nvram_is_valid(flash_start + offset))
 		goto found;
 
-	offset = 8172;
+	offset = 1024;
 	if (bcm47xx_nvram_is_valid(flash_start + offset))
 		goto found;
 
