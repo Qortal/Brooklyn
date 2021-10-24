@@ -1,0 +1,84 @@
+#!/bin/bash
+{
+	. /boot/brooklyn/func/brooklyn-globals
+	readonly G_PROGRAM_NAME='Brooklyn-TimeSync'
+	G_CHECK_ROOT_USER
+	G_INIT
+
+	[[ $1 == 1 ]] && INPUT=1 || INPUT=0
+
+	EXIT_CODE=1
+	MAX_LOOPS_CHECK=${MAX_LOOPS_CHECK:-60} 
+
+	Update_NTPD(){
+
+		NTP_UPDATE_MODE=$(sed -n '/^[[:blank:]]*CONFIG_NTP_MODE=/{s/^[^=]*=//p;q}' /boot/nxt.txt)
+		if [[ $NTP_UPDATE_MODE != [1-4] ]]
+		then
+			G_NXT-NOTIFY 2 'Manual mode detected, skipping time sync'
+			EXIT_CODE=0
+			return
+		fi
+		while (( $EXIT_CODE ))
+		do
+			G_EXEC systemctl start systemd-timesyncd
+
+			for ((i=1; i<=$MAX_LOOPS_CHECK; i++))
+			do
+				if systemctl -n 0 status systemd-timesyncd | grep -qE '^[[:blank:]]*Status: "(Synchronized|Initial)'
+				then
+					G_NXT-NOTIFY 2 'Time sync completed'
+					EXIT_CODE=0
+					(( $NTP_UPDATE_MODE < 4 )) && systemctl stop systemd-timesyncd
+					break 2
+
+				elif [[ $i == "$MAX_LOOPS_CHECK" ]]
+				then
+					G_NXT-NOTIFY 2 'Time sync timed out'
+
+					# Exit if non-interactive 
+					[[ $G_INTERACTIVE == 1 ]] || break 2
+
+					G_WHIP_MENU_ARRAY=(
+
+						'Retry' ': (Recommended) Rerun network time sync'
+						'NTP mirror' ': Change the NTP mirror used'
+						'Override' ': (NOT RECOMMENDED) Ignore failure and override time sync status'
+
+					)
+
+					G_WHIP_BUTTON_CANCEL_TEXT='Retry'
+					G_WHIP_MENU 'Network time sync has not yet completed or failed to update.\nTo prevent issues with outdated system time during installations, please select an option below.\n
+NB: We highly recommend choosing "Retry" first. Failing that, try to change the "NTP mirror".\n"Override" is a last resort and may cause follow-up issues due to incorrect system clock time.'
+
+					if [[ $G_WHIP_RETURNED_VALUE == 'NTP mirror' ]]
+					then
+						G_WHIP_MSG 'NXT-Config will now be launched, on the next screen:\n - Select "NTP Mirror"\n - Select a different NTP mirror\n\nOnce completed, exit brooklyn-config to resume.'
+						/boot/brooklyn/brooklyn-config 16 1
+
+					elif [[ $G_WHIP_RETURNED_VALUE == 'Override' ]]
+					then
+						EXIT_CODE=0
+					fi
+				else
+					G_NXT-NOTIFY 2 "Waiting for time sync ($i/$MAX_LOOPS_CHECK)"
+					sleep 1
+				fi
+			done
+		done
+
+		# Create flag file on success
+		if [[ $EXIT_CODE == 0 && ! -f '/run/systemd/timesync/synchronized' ]]
+		then
+			[[ -d '/run/systemd/timesync' ]] || G_EXEC mkdir -p /run/systemd/timesync
+			> /run/systemd/timesync/synchronized
+		fi
+
+	}
+
+	[[ $INPUT != 1 && -f '/run/systemd/timesync/synchronized' ]] && EXIT_CODE=0 || Update_NTPD
+
+	G_NXT-NOTIFY -1 $EXIT_CODE 'Network time sync'
+	(( $EXIT_CODE )) && G_NXT-NOTIFY 2 'Please check the service status for more information:\n         - systemctl status systemd-timesyncd'
+	exit $EXIT_CODE
+}
