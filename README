@@ -42,8 +42,8 @@ Note: Use raspi-config to setup your wifi or add plamsa desktop network manager 
 
 You can get a release and flash it directly on your USB 3 hard drive with Balena Etcher. The default image size is meant for a 32GB microSD card. If you have a bigger microSD card then after login do a "sudo raspi-config", head over to Advacned and resize the file system. Same can be done for a GPT partitioned USB 3 hard drive/SSD. Keep in mind that MBR drives have a size limit per block partition. For 4TB or bigger drive you might want to use GPT instead. If you have purchased a Raspberry Pi 4 elsewhere then you might have to flash the boot loader to do a mass storaeg boot. Ask The Moose on the loose for help.
 
-Linux Qortal Kernel 5.16.2
-==========================
+Linux Qortal Kernel 5.20.14
+===========================
 
 There are several guides for kernel developers and users. These guides can
 be rendered in a number of formats, like HTML and PDF. Please read
