@@ -26,7 +26,6 @@
 #define __BUILDER_H__
 
 #define _LARGEFILE64_SOURCE 1
-#define CACHE_LINE_SIZE 1024 /* TODO */
 #include <sys/mman.h>
 #include <assert.h>
 #include "pan_resource.h"
@@ -44,6 +43,7 @@
 #include "pipe/p_state.h"
 #include "util/u_blitter.h"
 #include "util/hash_table.h"
+#include "util/simple_mtx.h"
 
 #include "midgard/midgard_compile.h"
 #include "compiler/shader_enums.h"
@@ -140,16 +140,19 @@ struct panfrost_context {
         struct {
                 uint64_t seqnum;
                 struct panfrost_batch slots[PAN_MAX_BATCHES];
+
+                /** Set of active batches for faster traversal */
+                BITSET_DECLARE(active, PAN_MAX_BATCHES);
         } batches;
+
+        /* Map from resources to panfrost_batches */
+        struct hash_table *writers;
 
         /* Bound job batch */
         struct panfrost_batch *batch;
 
         /* Within a launch_grid call.. */
         const struct pipe_grid_info *compute_grid;
-
-        /* Bit mask for supported PIPE_DRAW for this hardware */
-        unsigned draw_modes;
 
         struct pipe_framebuffer_state pipe_framebuffer;
         struct panfrost_streamout streamout;
@@ -175,10 +178,7 @@ struct panfrost_context {
          * it is disabled, just equal to plain vertex count */
         unsigned padded_count;
 
-        /* TODO: Multiple uniform buffers (index =/= 0), finer updates? */
-
         struct panfrost_constant_buffer constant_buffer[PIPE_SHADER_TYPES];
-
         struct panfrost_rasterizer *rasterizer;
         struct panfrost_shader_variants *shader[PIPE_SHADER_TYPES];
         struct panfrost_vertex_state *vertex;
@@ -198,7 +198,6 @@ struct panfrost_context {
         struct panfrost_sampler_view *sampler_views[PIPE_SHADER_TYPES][PIPE_MAX_SHADER_SAMPLER_VIEWS];
         unsigned sampler_view_count[PIPE_SHADER_TYPES];
 
-        struct primconvert_context *primconvert;
         struct blitter_context *blitter;
 
         struct panfrost_blend_state *blend;
@@ -223,13 +222,7 @@ struct panfrost_context {
 
 /* Corresponds to the CSO */
 
-struct panfrost_rasterizer {
-        struct pipe_rasterizer_state base;
-
-        /* Partially packed RSD words */
-        struct mali_multisample_misc_packed multisample;
-        struct mali_stencil_mask_misc_packed stencil_misc;
-};
+struct panfrost_rasterizer;
 
 /* Linked varyings */
 struct pan_linkage {
@@ -248,6 +241,8 @@ struct pan_linkage {
         uint32_t stride;
 };
 
+#define RSD_WORDS 16
+
 /* Variants bundle together to form the backing CSO, bundling multiple
  * shaders with varying emulated features baked in */
 
@@ -260,7 +255,7 @@ struct panfrost_shader_state {
         struct panfrost_pool_ref bin, state;
 
         /* For fragment shaders, a prepared (but not uploaded RSD) */
-        struct mali_renderer_state_packed partial_rsd;
+        uint32_t partial_rsd[RSD_WORDS];
 
         struct pan_shader_info info;
 
@@ -290,6 +285,9 @@ struct panfrost_shader_variants {
                 struct pipe_compute_state cbase;
         };
 
+        /** Lock for the variants array */
+        simple_mtx_t lock;
+
         struct panfrost_shader_state *variants;
         unsigned variant_space;
 
@@ -317,35 +315,9 @@ struct panfrost_vertex_state {
         unsigned formats[PIPE_MAX_ATTRIBS];
 };
 
-struct panfrost_zsa_state {
-        struct pipe_depth_stencil_alpha_state base;
-
-        /* Is any depth, stencil, or alpha testing enabled? */
-        bool enabled;
-
-        /* Mask of PIPE_CLEAR_{DEPTH,STENCIL} written */
-        unsigned draws;
-
-        /* Prepacked words from the RSD */
-        struct mali_multisample_misc_packed rsd_depth;
-        struct mali_stencil_mask_misc_packed rsd_stencil;
-        struct mali_stencil_packed stencil_front, stencil_back;
-};
-
-struct panfrost_sampler_state {
-        struct pipe_sampler_state base;
-        struct mali_midgard_sampler_packed hw;
-};
-
-/* Misnomer: Sampler view corresponds to textures, not samplers */
-
-struct panfrost_sampler_view {
-        struct pipe_sampler_view base;
-        struct panfrost_pool_ref state;
-        struct mali_bifrost_texture_packed bifrost_descriptor;
-        mali_ptr texture_bo;
-        uint64_t modifier;
-};
+struct panfrost_zsa_state;
+struct panfrost_sampler_state;
+struct panfrost_sampler_view;
 
 static inline struct panfrost_context *
 pan_context(struct pipe_context *pcontext)

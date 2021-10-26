@@ -104,6 +104,7 @@ block_check_for_allowed_instrs(nir_block *block, unsigned *count,
             switch (deref->modes) {
             case nir_var_shader_in:
             case nir_var_uniform:
+            case nir_var_image:
                /* Don't try to remove flow control around an indirect load
                 * because that flow control may be trying to avoid invalid
                 * loads.
@@ -381,6 +382,17 @@ nir_opt_peephole_select_block(nir_block *block, nir_shader *shader,
    if (prev_node->type != nir_cf_node_if)
       return false;
 
+   nir_block *prev_block = nir_cf_node_as_block(nir_cf_node_prev(prev_node));
+
+   /* If the last instruction before this if/else block is a jump, we can't
+    * append stuff after it because it would break a bunch of assumption about
+    * control flow (nir_validate expects the successor of a return/halt jump
+    * to be the end of the function, which might not match the successor of
+    * the if/else blocks).
+    */
+   if (nir_block_ends_in_return_or_halt(prev_block))
+      return false;
+
    nir_if *if_stmt = nir_cf_node_as_if(prev_node);
 
    /* first, try to collapse the if */
@@ -422,8 +434,6 @@ nir_opt_peephole_select_block(nir_block *block, nir_shader *shader,
     * selects.
     */
 
-   nir_block *prev_block = nir_cf_node_as_block(nir_cf_node_prev(prev_node));
-
    /* First, we move the remaining instructions from the blocks to the
     * block before.  We have already guaranteed that this is safe by
     * calling block_check_for_allowed_instrs()
@@ -446,7 +456,7 @@ nir_opt_peephole_select_block(nir_block *block, nir_shader *shader,
 
       nir_phi_instr *phi = nir_instr_as_phi(instr);
       nir_alu_instr *sel = nir_alu_instr_create(shader, nir_op_bcsel);
-      nir_src_copy(&sel->src[0].src, &if_stmt->condition, sel);
+      nir_src_copy(&sel->src[0].src, &if_stmt->condition);
       /* Splat the condition to all channels */
       memset(sel->src[0].swizzle, 0, sizeof sel->src[0].swizzle);
 
@@ -456,7 +466,7 @@ nir_opt_peephole_select_block(nir_block *block, nir_shader *shader,
          assert(src->src.is_ssa);
 
          unsigned idx = src->pred == then_block ? 1 : 2;
-         nir_src_copy(&sel->src[idx].src, &src->src, sel);
+         nir_src_copy(&sel->src[idx].src, &src->src);
       }
 
       nir_ssa_dest_init(&sel->instr, &sel->dest.dest,

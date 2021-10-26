@@ -54,11 +54,17 @@ struct clif_dump {
          * output.
          */
         bool pretty;
+
+        /**
+         * Flag to no dump the binary resources.
+         */
+        bool nobin;
 };
 
 enum reloc_worklist_type {
         reloc_cl,
         reloc_gl_shader_state,
+        reloc_gl_including_gs_shader_state,
         reloc_generic_tile_list,
 };
 

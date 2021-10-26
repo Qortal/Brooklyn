@@ -227,12 +227,16 @@ v3dX(meta_emit_copy_image_rcl)(struct v3dv_job *job,
 
 void
 v3dX(meta_emit_tfu_job)(struct v3dv_cmd_buffer *cmd_buffer,
-                        struct v3dv_image *dst,
-                        uint32_t dst_mip_level,
-                        uint32_t dst_layer,
-                        struct v3dv_image *src,
-                        uint32_t src_mip_level,
-                        uint32_t src_layer,
+                        uint32_t dst_bo_handle,
+                        uint32_t dst_offset,
+                        enum v3d_tiling_mode dst_tiling,
+                        uint32_t dst_padded_height_or_stride,
+                        uint32_t dst_cpp,
+                        uint32_t src_bo_handle,
+                        uint32_t src_offset,
+                        enum v3d_tiling_mode src_tiling,
+                        uint32_t src_padded_height_or_stride,
+                        uint32_t src_cpp,
                         uint32_t width,
                         uint32_t height,
                         const struct v3dv_format *format);
@@ -298,8 +302,8 @@ v3dX(pipeline_pack_state)(struct v3dv_pipeline *pipeline,
                           const VkPipelineMultisampleStateCreateInfo *ms_info);
 void
 v3dX(pipeline_pack_compile_state)(struct v3dv_pipeline *pipeline,
-                                  const VkPipelineVertexInputStateCreateInfo *vi_info);
-
+                                  const VkPipelineVertexInputStateCreateInfo *vi_info,
+                                  const VkPipelineVertexInputDivisorStateCreateInfoEXT *vd_info);
 /* Used at v3dv_queue */
 void
 v3dX(job_emit_noop)(struct v3dv_job *job);

@@ -48,8 +48,14 @@ struct panfrost_resource {
         } damage;
 
         struct {
-                struct panfrost_batch *writer;
-                BITSET_DECLARE(users, PAN_MAX_BATCHES);
+                /** Number of batches accessing this resource. Used to check if
+                 * a resource is in use. */
+                _Atomic unsigned nr_users;
+
+                /** Number of batches writing this resource. Note that only one
+                 * batch per context may write a resource, so this is the
+                 * number of contexts that have an active writer. */
+                _Atomic unsigned nr_writers;
         } track;
 
         struct renderonly_scanout *scanout;
@@ -101,16 +107,6 @@ pan_transfer(struct pipe_transfer *p)
         return (struct panfrost_transfer *)p;
 }
 
-mali_ptr
-panfrost_get_texture_address(struct panfrost_resource *rsrc,
-                             unsigned level, unsigned layer,
-                             unsigned sample);
-
-void
-panfrost_get_afbc_pointers(struct panfrost_resource *rsrc,
-                           unsigned level, unsigned layer,
-                           mali_ptr *header, mali_ptr *body);
-
 void panfrost_resource_screen_init(struct pipe_screen *screen);
 
 void panfrost_resource_screen_destroy(struct pipe_screen *screen);
@@ -159,5 +155,10 @@ void
 pan_resource_modifier_convert(struct panfrost_context *ctx,
                               struct panfrost_resource *rsrc,
                               uint64_t modifier, const char *reason);
+
+void
+pan_legalize_afbc_format(struct panfrost_context *ctx,
+                         struct panfrost_resource *rsrc,
+                         enum pipe_format format);
 
 #endif /* PAN_RESOURCE_H */

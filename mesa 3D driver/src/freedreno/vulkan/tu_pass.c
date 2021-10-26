@@ -99,15 +99,6 @@ tu_render_pass_add_subpass_dep(struct tu_render_pass *pass,
    if (dep_invalid_for_gmem(dep))
       pass->gmem_pixels = 0;
 
-   struct tu_subpass_barrier *src_barrier;
-   if (src == VK_SUBPASS_EXTERNAL) {
-      src_barrier = &pass->subpasses[0].start_barrier;
-   } else if (src == pass->subpass_count - 1) {
-      src_barrier = &pass->end_barrier;
-   } else {
-      src_barrier = &pass->subpasses[src + 1].start_barrier;
-   }
-
    struct tu_subpass_barrier *dst_barrier;
    if (dst == VK_SUBPASS_EXTERNAL) {
       dst_barrier = &pass->end_barrier;
@@ -115,9 +106,9 @@ tu_render_pass_add_subpass_dep(struct tu_render_pass *pass,
       dst_barrier = &pass->subpasses[dst].start_barrier;
    }
 
-   if (dep->dstStageMask != VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT)
-      src_barrier->src_stage_mask |= dep->srcStageMask;
-   src_barrier->src_access_mask |= dep->srcAccessMask;
+   dst_barrier->src_stage_mask |= dep->srcStageMask;
+   dst_barrier->dst_stage_mask |= dep->dstStageMask;
+   dst_barrier->src_access_mask |= dep->srcAccessMask;
    dst_barrier->dst_access_mask |= dep->dstAccessMask;
 }
 
@@ -651,7 +642,7 @@ tu_CreateRenderPass2(VkDevice _device,
    pass = vk_object_zalloc(&device->vk, pAllocator, size,
                            VK_OBJECT_TYPE_RENDER_PASS);
    if (pass == NULL)
-      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    pass->attachment_count = pCreateInfo->attachmentCount;
    pass->subpass_count = pCreateInfo->subpassCount;
@@ -671,9 +662,19 @@ tu_CreateRenderPass2(VkDevice _device,
          att->cpp = vk_format_get_blocksize(att->format) * att->samples;
       att->gmem_offset = -1;
 
+      VkAttachmentLoadOp loadOp = pCreateInfo->pAttachments[i].loadOp;
+      VkAttachmentLoadOp stencilLoadOp = pCreateInfo->pAttachments[i].stencilLoadOp;
+
+      if (device->instance->debug_flags & TU_DEBUG_DONT_CARE_AS_LOAD) {
+         if (loadOp == VK_ATTACHMENT_LOAD_OP_DONT_CARE)
+            loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+         if (stencilLoadOp == VK_ATTACHMENT_LOAD_OP_DONT_CARE)
+            stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+      }
+
       attachment_set_ops(att,
-                         pCreateInfo->pAttachments[i].loadOp,
-                         pCreateInfo->pAttachments[i].stencilLoadOp,
+                         loadOp,
+                         stencilLoadOp,
                          pCreateInfo->pAttachments[i].storeOp,
                          pCreateInfo->pAttachments[i].stencilStoreOp);
    }
@@ -697,7 +698,7 @@ tu_CreateRenderPass2(VkDevice _device,
          VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
       if (pass->subpass_attachments == NULL) {
          vk_object_free(&device->vk, pAllocator, pass);
-         return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+         return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
       }
    } else
       pass->subpass_attachments = NULL;
@@ -775,6 +776,8 @@ tu_CreateRenderPass2(VkDevice _device,
       if (a != VK_ATTACHMENT_UNUSED) {
             pass->attachments[a].gmem_offset = 0;
             update_samples(subpass, pCreateInfo->pAttachments[a].samples);
+
+            pass->attachments[a].clear_views |= subpass->multiview_mask;
       }
    }
 

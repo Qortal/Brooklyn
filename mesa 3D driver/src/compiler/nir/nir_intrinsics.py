@@ -921,6 +921,8 @@ load("ssbo_address", [1], [], [CAN_ELIMINATE, CAN_REORDER])
 load("output", [1], [BASE, COMPONENT, DEST_TYPE, IO_SEMANTICS], flags=[CAN_ELIMINATE])
 # src[] = { vertex, offset }.
 load("per_vertex_output", [1, 1], [BASE, COMPONENT, DEST_TYPE, IO_SEMANTICS], [CAN_ELIMINATE])
+# src[] = { primitive, offset }.
+load("per_primitive_output", [1, 1], [BASE, COMPONENT, DEST_TYPE, IO_SEMANTICS], [CAN_ELIMINATE])
 # src[] = { offset }.
 load("shared", [1], [BASE, ALIGN_MUL, ALIGN_OFFSET], [CAN_ELIMINATE])
 # src[] = { offset }.
@@ -956,6 +958,8 @@ def store(name, srcs, indices=[], flags=[]):
 store("output", [1], [BASE, WRITE_MASK, COMPONENT, SRC_TYPE, IO_SEMANTICS])
 # src[] = { value, vertex, offset }.
 store("per_vertex_output", [1, 1], [BASE, WRITE_MASK, COMPONENT, SRC_TYPE, IO_SEMANTICS])
+# src[] = { value, primitive, offset }.
+store("per_primitive_output", [1, 1], [BASE, WRITE_MASK, COMPONENT, SRC_TYPE, IO_SEMANTICS])
 # src[] = { value, block_index, offset }
 store("ssbo", [-1, 1], [WRITE_MASK, ACCESS, ALIGN_MUL, ALIGN_OFFSET])
 # src[] = { value, offset }.
@@ -1075,7 +1079,7 @@ load("scratch_dxil", [1], [], [CAN_ELIMINATE])
 # src[] = { deref_var, offset }
 load("ptr_dxil", [1, 1], [], [])
 # src[] = { index, 16-byte-based-offset }
-load("ubo_dxil", [1, 1], [], [CAN_ELIMINATE])
+load("ubo_dxil", [1, 1], [], [CAN_ELIMINATE, CAN_REORDER])
 
 # DXIL Shared atomic intrinsics
 #
@@ -1210,8 +1214,9 @@ intrinsic("overwrite_vs_arguments_amd", src_comp=[1, 1], indices=[])
 # Overwrites TES input registers, for use with vertex compaction after culling. src = {tes_u, tes_v, rel_patch_id, patch_id}.
 intrinsic("overwrite_tes_arguments_amd", src_comp=[1, 1, 1, 1], indices=[])
 
-# src = [index] BINDING = which table BASE = offset within handle
-intrinsic("load_sbt_amd", src_comp=[-1], dest_comp=0, indices=[BINDING, BASE],
+# loads a descriptor for an sbt.
+# src = [index] BINDING = which table
+intrinsic("load_sbt_amd", dest_comp=4, bit_sizes=[32], indices=[BINDING],
           flags=[CAN_ELIMINATE, CAN_REORDER])
 
 # 1. HW descriptor
@@ -1221,6 +1226,15 @@ intrinsic("load_sbt_amd", src_comp=[-1], dest_comp=0, indices=[BINDING, BASE],
 # 5. ray direction
 # 6. inverse ray direction (componentwise 1.0/ray direction)
 intrinsic("bvh64_intersect_ray_amd", [4, 2, 1, 3, 3, 3], 4, flags=[CAN_ELIMINATE, CAN_REORDER])
+
+# Return of a callable in raytracing pipelines
+intrinsic("rt_return_amd")
+
+# offset into scratch for the input callable data in a raytracing pipeline.
+system_value("rt_arg_scratch_offset_amd", 1)
+
+# Whether to call the anyhit shader for an intersection in an intersection shader.
+system_value("intersection_opaque_amd", 1, bit_sizes=[1])
 
 # V3D-specific instrinc for tile buffer color reads.
 #

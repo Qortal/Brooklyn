@@ -170,6 +170,8 @@ llvmpipe_get_param(struct pipe_screen *screen, enum pipe_cap param)
       return 1;
    case PIPE_CAP_DEPTH_CLIP_DISABLE:
       return 1;
+   case PIPE_CAP_DEPTH_CLAMP_ENABLE:
+      return 1;
    case PIPE_CAP_SHADER_STENCIL_EXPORT:
       return 1;
    case PIPE_CAP_TGSI_INSTANCEID:
@@ -347,6 +349,10 @@ llvmpipe_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_TGSI_FS_FACE_IS_INTEGER_SYSVAL:
    case PIPE_CAP_RESOURCE_FROM_USER_MEMORY:
       return 1;
+#ifdef PIPE_MEMORY_FD
+   case PIPE_CAP_MEMOBJ:
+      return 1;
+#endif
    case PIPE_CAP_SAMPLER_REDUCTION_MINMAX:
    case PIPE_CAP_TGSI_TXQS:
    case PIPE_CAP_TGSI_VOTE:
@@ -566,9 +572,11 @@ static const struct nir_shader_compiler_options gallivm_nir_options = {
    .lower_ffma16 = true,
    .lower_ffma32 = true,
    .lower_ffma64 = true,
+   .lower_flrp16 = true,
    .lower_fmod = true,
    .lower_hadd = true,
-   .lower_add_sat = true,
+   .lower_uadd_sat = true,
+   .lower_iadd_sat = true,
    .lower_ldexp = true,
    .lower_pack_snorm_2x16 = true,
    .lower_pack_snorm_4x8 = true,
@@ -600,12 +608,13 @@ static const struct nir_shader_compiler_options gallivm_nir_options = {
    .lower_fisnormal = true,
 };
 
-static void
+static char *
 llvmpipe_finalize_nir(struct pipe_screen *screen,
                       void *nirptr)
 {
    struct nir_shader *nir = (struct nir_shader *)nirptr;
    lp_build_opt_nir(nir);
+   return NULL;
 }
 
 static inline const void *
@@ -719,6 +728,7 @@ llvmpipe_is_format_supported( struct pipe_screen *_screen,
          case PIPE_FORMAT_R8G8_SNORM:
          case PIPE_FORMAT_R16_SNORM:
          case PIPE_FORMAT_R8_SNORM:
+         case PIPE_FORMAT_B8G8R8A8_UNORM:
             break;
 
          default:

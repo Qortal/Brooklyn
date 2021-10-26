@@ -125,6 +125,7 @@ ir3_should_double_threadsize(struct ir3_shader_variant *v, unsigned regs_count)
    }
 
    switch (v->type) {
+   case MESA_SHADER_KERNEL:
    case MESA_SHADER_COMPUTE: {
       unsigned threads_per_wg =
          v->local_size[0] * v->local_size[1] * v->local_size[2];
@@ -177,7 +178,8 @@ ir3_get_reg_independent_max_waves(struct ir3_shader_variant *v,
    unsigned max_waves = compiler->max_waves;
 
    /* If this is a compute shader, compute the limit based on shared size */
-   if (v->type == MESA_SHADER_COMPUTE) {
+   if ((v->type == MESA_SHADER_COMPUTE) ||
+       (v->type == MESA_SHADER_KERNEL)) {
       /* Shared is allocated in chunks of 1k */
       unsigned shared_per_wg = ALIGN_POT(v->shared_size, 1024);
       if (shared_per_wg > 0 && !v->local_size_variable) {
@@ -262,11 +264,15 @@ ir3_collect_info(struct ir3_shader_variant *v)
          }
 
          if ((instr->opc == OPC_STP || instr->opc == OPC_LDP)) {
-            struct ir3_register *base =
-               (instr->opc == OPC_STP) ? instr->srcs[2] : instr->srcs[1];
-            if (base->iim_val * type_size(instr->cat6.type) > 32) {
+            unsigned components = instr->srcs[2]->uim_val;
+            if (components * type_size(instr->cat6.type) > 32) {
                info->multi_dword_ldp_stp = true;
             }
+
+            if (instr->opc == OPC_STP)
+               info->stp_count += components;
+            else
+               info->ldp_count += components;
          }
 
          if ((instr->opc == OPC_BARY_F) && (instr->dsts[0]->flags & IR3_REG_EI))
@@ -388,6 +394,22 @@ ir3_block_remove_predecessor(struct ir3_block *block, struct ir3_block *pred)
          }
 
          block->predecessors_count--;
+         return;
+      }
+   }
+}
+
+void
+ir3_block_remove_physical_predecessor(struct ir3_block *block, struct ir3_block *pred)
+{
+   for (unsigned i = 0; i < block->physical_predecessors_count; i++) {
+      if (block->physical_predecessors[i] == pred) {
+         if (i < block->predecessors_count - 1) {
+            block->physical_predecessors[i] =
+               block->physical_predecessors[block->predecessors_count - 1];
+         }
+
+         block->physical_predecessors_count--;
          return;
       }
    }
@@ -684,6 +706,9 @@ ir3_set_dst_type(struct ir3_instruction *instr, bool half)
 void
 ir3_fixup_src_type(struct ir3_instruction *instr)
 {
+   if (instr->srcs_count == 0)
+      return;
+
    switch (opc_cat(instr->opc)) {
    case 1: /* move instructions */
       if (instr->srcs[0]->flags & IR3_REG_HALF) {
@@ -933,13 +958,18 @@ ir3_valid_flags(struct ir3_instruction *instr, unsigned n, unsigned flags)
          if (instr->opc == OPC_STG_A && (n == 4))
             return false;
 
+         if (instr->opc == OPC_LDG && (n == 0))
+            return false;
+
+         if (instr->opc == OPC_LDG_A && (n < 2))
+            return false;
+
          /* as with atomics, these cat6 instrs can only have an immediate
           * for SSBO/IBO slot argument
           */
          switch (instr->opc) {
          case OPC_LDIB:
          case OPC_STIB:
-         case OPC_LDC:
          case OPC_RESINFO:
             if (n != 0)
                return false;
@@ -953,4 +983,40 @@ ir3_valid_flags(struct ir3_instruction *instr, unsigned n, unsigned flags)
    }
 
    return true;
+}
+
+bool
+ir3_valid_immediate(struct ir3_instruction *instr, int32_t immed)
+{
+   if (instr->opc == OPC_MOV || is_meta(instr))
+      return true;
+
+   if (is_mem(instr)) {
+      switch (instr->opc) {
+      /* Some load/store instructions have a 13-bit offset and size which must
+       * always be an immediate and the rest of the sources cannot be
+       * immediates, so the frontend is responsible for checking the size:
+       */
+      case OPC_LDL:
+      case OPC_STL:
+      case OPC_LDP:
+      case OPC_STP:
+      case OPC_LDG:
+      case OPC_STG:
+      case OPC_SPILL_MACRO:
+      case OPC_RELOAD_MACRO:
+      case OPC_LDG_A:
+      case OPC_STG_A:
+      case OPC_LDLW:
+      case OPC_STLW:
+      case OPC_LDLV:
+         return true;
+      default:
+         /* most cat6 src immediates can only encode 8 bits: */
+         return !(immed & ~0xff);
+      }
+   }
+
+   /* Other than cat1 (mov) we can only encode up to 10 bits, sign-extended: */
+   return !(immed & ~0x1ff) || !(-immed & ~0x1ff);
 }

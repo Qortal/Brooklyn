@@ -59,11 +59,58 @@ unsigned si_get_flush_flags(struct si_context *sctx, enum si_coherency coher,
    }
 }
 
+static bool si_is_buffer_idle(struct si_context *sctx, struct si_resource *buf,
+                              enum radeon_bo_usage usage)
+{
+   return !si_cs_is_buffer_referenced(sctx, buf->buf, usage) &&
+          sctx->ws->buffer_wait(sctx->ws, buf->buf, 0, usage);
+}
+
+static void si_improve_sync_flags(struct si_context *sctx, struct pipe_resource *dst,
+                                  struct pipe_resource *src, unsigned *flags)
+{
+   if (dst->target != PIPE_BUFFER || (src && src->target != PIPE_BUFFER))
+      return;
+
+   if (si_is_buffer_idle(sctx, si_resource(dst), RADEON_USAGE_READWRITE) &&
+       (!src || si_is_buffer_idle(sctx, si_resource(src), RADEON_USAGE_WRITE))) {
+      /* Idle buffers don't have to sync. */
+      *flags &= ~(SI_OP_SYNC_GE_BEFORE | SI_OP_SYNC_PS_BEFORE | SI_OP_SYNC_CS_BEFORE |
+                  SI_OP_SYNC_CPDMA_BEFORE);
+      return;
+   }
+
+   const unsigned cs_mask = SI_BIND_CONSTANT_BUFFER(PIPE_SHADER_COMPUTE) |
+                            SI_BIND_SHADER_BUFFER(PIPE_SHADER_COMPUTE) |
+                            SI_BIND_IMAGE_BUFFER(PIPE_SHADER_COMPUTE) |
+                            SI_BIND_SAMPLER_BUFFER(PIPE_SHADER_COMPUTE);
+
+   const unsigned ps_mask = SI_BIND_CONSTANT_BUFFER(PIPE_SHADER_FRAGMENT) |
+                            SI_BIND_SHADER_BUFFER(PIPE_SHADER_FRAGMENT) |
+                            SI_BIND_IMAGE_BUFFER(PIPE_SHADER_FRAGMENT) |
+                            SI_BIND_SAMPLER_BUFFER(PIPE_SHADER_FRAGMENT);
+
+   unsigned bind_history = si_resource(dst)->bind_history |
+                           (src ? si_resource(src)->bind_history : 0);
+
+   /* Clear SI_OP_SYNC_CS_BEFORE if the buffer has never been used with a CS. */
+   if (*flags & SI_OP_SYNC_CS_BEFORE && !(bind_history & cs_mask))
+      *flags &= ~SI_OP_SYNC_CS_BEFORE;
+
+   /* Clear SI_OP_SYNC_PS_BEFORE if the buffer has never been used with a PS. */
+   if (*flags & SI_OP_SYNC_PS_BEFORE && !(bind_history & ps_mask)) {
+      *flags &= ~SI_OP_SYNC_PS_BEFORE;
+      *flags |= SI_OP_SYNC_GE_BEFORE;
+   }
+}
+
 void si_launch_grid_internal(struct si_context *sctx, struct pipe_grid_info *info,
                              void *shader, unsigned flags)
 {
-
    /* Wait for previous shaders to finish. */
+   if (flags & SI_OP_SYNC_GE_BEFORE)
+      sctx->flags |= SI_CONTEXT_VS_PARTIAL_FLUSH;
+
    if (flags & SI_OP_SYNC_PS_BEFORE)
       sctx->flags |= SI_CONTEXT_PS_PARTIAL_FLUSH;
 
@@ -136,8 +183,9 @@ void si_launch_grid_internal_ssbos(struct si_context *sctx, struct pipe_grid_inf
    }
 
    /* Bind buffers and launch compute. */
-   sctx->b.set_shader_buffers(&sctx->b, PIPE_SHADER_COMPUTE, 0, num_buffers, buffers,
-                              writeable_bitmask);
+   si_set_shader_buffers(&sctx->b, PIPE_SHADER_COMPUTE, 0, num_buffers, buffers,
+                         writeable_bitmask,
+                         true /* don't update bind_history to prevent unnecessary syncs later */);
    si_launch_grid_internal(sctx, info, shader, flags);
 
    /* Do cache flushing at the end. */
@@ -315,6 +363,8 @@ void si_clear_buffer(struct si_context *sctx, struct pipe_resource *dst,
    if (!size)
       return;
 
+   si_improve_sync_flags(sctx, dst, NULL, &flags);
+
    ASSERTED unsigned clear_alignment = MIN2(clear_value_size, 4);
 
    assert(clear_value_size != 3 && clear_value_size != 6); /* 12 is allowed. */
@@ -404,6 +454,8 @@ void si_copy_buffer(struct si_context *sctx, struct pipe_resource *dst, struct p
    enum si_cache_policy cache_policy = get_cache_policy(sctx, coher, size);
    uint64_t compute_min_size = 8 * 1024;
 
+   si_improve_sync_flags(sctx, dst, src, &flags);
+
    /* Only use compute for VRAM copies on dGPUs. */
    if (sctx->screen->info.has_dedicated_vram && si_resource(dst)->domains & RADEON_DOMAIN_VRAM &&
        si_resource(src)->domains & RADEON_DOMAIN_VRAM && size > compute_min_size &&
@@ -422,18 +474,19 @@ void si_compute_copy_image(struct si_context *sctx, struct pipe_resource *dst, u
                            bool is_dcc_decompress, unsigned flags)
 {
    struct pipe_context *ctx = &sctx->b;
+   struct si_texture *ssrc = (struct si_texture*)src;
+   struct si_texture *sdst = (struct si_texture*)dst;
    unsigned width = src_box->width;
    unsigned height = src_box->height;
    unsigned depth = src_box->depth;
    enum pipe_format src_format = util_format_linear(src->format);
    enum pipe_format dst_format = util_format_linear(dst->format);
-   bool is_linear = ((struct si_texture*)src)->surface.is_linear ||
-                    ((struct si_texture*)dst)->surface.is_linear;
+   bool is_linear = ssrc->surface.is_linear || sdst->surface.is_linear;
 
    assert(util_format_is_subsampled_422(src_format) == util_format_is_subsampled_422(dst_format));
 
-   if (!vi_dcc_enabled((struct si_texture*)src, src_level) &&
-       !vi_dcc_enabled((struct si_texture*)dst, dst_level) &&
+   if (!vi_dcc_enabled(ssrc, src_level) &&
+       !vi_dcc_enabled(sdst, dst_level) &&
        src_format == dst_format &&
        util_format_is_float(src_format) &&
        !util_format_is_compressed(src_format)) {
@@ -477,8 +530,12 @@ void si_compute_copy_image(struct si_context *sctx, struct pipe_resource *dst, u
 
    /* src and dst have the same number of samples. */
    si_make_CB_shader_coherent(sctx, src->nr_samples, true,
-                              /* Only src can have DCC.*/
-                              ((struct si_texture *)src)->surface.u.gfx9.color.dcc.pipe_aligned);
+                              ssrc->surface.u.gfx9.color.dcc.pipe_aligned);
+   if (sctx->chip_class >= GFX10) {
+      /* GFX10+ uses DCC stores so si_make_CB_shader_coherent is required for dst too */
+      si_make_CB_shader_coherent(sctx, dst->nr_samples, true,
+                                 sdst->surface.u.gfx9.color.dcc.pipe_aligned);
+   }
 
    struct si_images *images = &sctx->images[PIPE_SHADER_COMPUTE];
    struct pipe_image_view saved_image[2] = {0};
@@ -511,7 +568,7 @@ void si_compute_copy_image(struct si_context *sctx, struct pipe_resource *dst, u
    if (is_dcc_decompress)
       image[1].access |= SI_IMAGE_ACCESS_DCC_OFF;
    else if (sctx->chip_class >= GFX10)
-      image[1].access |= SI_IMAGE_ACCESS_DCC_WRITE;
+      image[1].access |= SI_IMAGE_ACCESS_ALLOW_DCC_STORE;
 
    ctx->set_shader_images(ctx, PIPE_SHADER_COMPUTE, 0, 2, 0, image);
 
@@ -529,7 +586,6 @@ void si_compute_copy_image(struct si_context *sctx, struct pipe_resource *dst, u
        * the DCC block size or a multiple thereof. The shader uses a barrier
        * between loads and stores to safely overwrite each DCC block of pixels.
        */
-      struct si_texture *tex = (struct si_texture*)src;
       unsigned dim[3] = {src_box->width, src_box->height, src_box->depth};
 
       assert(src == dst);
@@ -538,9 +594,9 @@ void si_compute_copy_image(struct si_context *sctx, struct pipe_resource *dst, u
       if (!sctx->cs_dcc_decompress)
          sctx->cs_dcc_decompress = si_create_dcc_decompress_cs(ctx);
 
-      info.block[0] = tex->surface.u.gfx9.color.dcc_block_width;
-      info.block[1] = tex->surface.u.gfx9.color.dcc_block_height;
-      info.block[2] = tex->surface.u.gfx9.color.dcc_block_depth;
+      info.block[0] = ssrc->surface.u.gfx9.color.dcc_block_width;
+      info.block[1] = ssrc->surface.u.gfx9.color.dcc_block_height;
+      info.block[2] = ssrc->surface.u.gfx9.color.dcc_block_depth;
 
       /* Make sure the block size is at least the same as wave size. */
       while (info.block[0] * info.block[1] * info.block[2] <
@@ -613,16 +669,12 @@ void si_retile_dcc(struct si_context *sctx, struct si_texture *tex)
    sctx->cs_user_data[2] = (tex->surface.u.gfx9.color.display_dcc_pitch_max + 1) |
                            (tex->surface.u.gfx9.color.display_dcc_height << 16);
 
-   /* There is only 1 shader variant because ac_surface only supports displayable DCC
-    * with one swizzle mode and 32bpp.
-    */
+   /* We have only 1 variant per bpp for now, so expect 32 bpp. */
    assert(tex->surface.bpe == 4);
-   assert(sctx->chip_class != GFX9 || tex->surface.u.gfx9.swizzle_mode == 25);  /* 64KB_S_X */
-   assert(sctx->chip_class != GFX10 || tex->surface.u.gfx9.swizzle_mode == 27); /* 64KB_R_X */
-   assert(sctx->chip_class != GFX10_3 || tex->surface.u.gfx9.swizzle_mode == 27); /* 64KB_R_X */
 
-   if (!sctx->cs_dcc_retile)
-      sctx->cs_dcc_retile = si_create_dcc_retile_cs(sctx, &tex->surface);
+   void **shader = &sctx->cs_dcc_retile[tex->surface.u.gfx9.swizzle_mode];
+   if (!*shader)
+      *shader = si_create_dcc_retile_cs(sctx, &tex->surface);
 
    /* Dispatch compute. */
    unsigned width = DIV_ROUND_UP(tex->buffer.b.b.width0, tex->surface.u.gfx9.color.dcc_block_width);
@@ -638,7 +690,7 @@ void si_retile_dcc(struct si_context *sctx, struct si_texture *tex)
    info.grid[1] = DIV_ROUND_UP(height, info.block[1]);
    info.grid[2] = 1;
 
-   si_launch_grid_internal_ssbos(sctx, &info, sctx->cs_dcc_retile, SI_OP_SYNC_BEFORE,
+   si_launch_grid_internal_ssbos(sctx, &info, *shader, SI_OP_SYNC_BEFORE,
                                  SI_COHERENCY_CB_META, 1, &sb, 0x1);
 
    /* Don't flush caches. L2 will be flushed by the kernel fence. */
@@ -706,7 +758,7 @@ void si_compute_expand_fmask(struct pipe_context *ctx, struct pipe_resource *tex
       return;
 
    si_make_CB_shader_coherent(sctx, tex->nr_samples, true,
-                              true /* DCC is not possible with image stores */);
+                              ((struct si_texture*)tex)->surface.u.gfx9.color.dcc.pipe_aligned);
 
    /* Save states. */
    struct pipe_image_view saved_image = {0};
@@ -777,6 +829,7 @@ void si_compute_clear_render_target(struct pipe_context *ctx, struct pipe_surfac
                                     bool render_condition_enabled)
 {
    struct si_context *sctx = (struct si_context *)ctx;
+   struct si_texture *tex = (struct si_texture*)dstsurf->texture;
    unsigned num_layers = dstsurf->u.tex.last_layer - dstsurf->u.tex.first_layer + 1;
    unsigned data[4 + sizeof(color->ui)] = {dstx, dsty, dstsurf->u.tex.first_layer, 0};
 
@@ -798,7 +851,7 @@ void si_compute_clear_render_target(struct pipe_context *ctx, struct pipe_surfac
    }
 
    si_make_CB_shader_coherent(sctx, dstsurf->texture->nr_samples, true,
-                              true /* DCC is not possible with image stores */);
+                              tex->surface.u.gfx9.color.dcc.pipe_aligned);
 
    struct pipe_constant_buffer saved_cb = {};
    si_get_pipe_constant_buffer(sctx, PIPE_SHADER_COMPUTE, 0, &saved_cb);
@@ -814,7 +867,7 @@ void si_compute_clear_render_target(struct pipe_context *ctx, struct pipe_surfac
 
    struct pipe_image_view image = {0};
    image.resource = dstsurf->texture;
-   image.shader_access = image.access = PIPE_IMAGE_ACCESS_WRITE;
+   image.shader_access = image.access = PIPE_IMAGE_ACCESS_WRITE | SI_IMAGE_ACCESS_ALLOW_DCC_STORE;
    image.format = util_format_linear(dstsurf->format);
    image.u.tex.level = dstsurf->u.tex.level;
    image.u.tex.first_layer = 0; /* 3D images ignore first_layer (BASE_ARRAY) */

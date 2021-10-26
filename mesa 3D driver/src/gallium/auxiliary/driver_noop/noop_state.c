@@ -38,6 +38,15 @@ static void noop_draw_vbo(struct pipe_context *ctx, const struct pipe_draw_info 
 {
 }
 
+static void noop_draw_vertex_state(struct pipe_context *ctx,
+                                   struct pipe_vertex_state *state,
+                                   uint32_t partial_velem_mask,
+                                   struct pipe_draw_vertex_state_info info,
+                                   const struct pipe_draw_start_count_bias *draws,
+                                   unsigned num_draws)
+{
+}
+
 static void noop_launch_grid(struct pipe_context *ctx,
                              const struct pipe_grid_info *info)
 {
@@ -116,6 +125,7 @@ static void noop_set_sampler_views(struct pipe_context *ctx,
                                    enum pipe_shader_type shader,
                                    unsigned start, unsigned count,
                                    unsigned unbind_num_trailing_slots,
+                                   bool take_ownership,
                                    struct pipe_sampler_view **views)
 {
 }
@@ -396,6 +406,11 @@ static void noop_make_image_handle_resident(struct pipe_context *ctx, uint64_t h
 {
 }
 
+static void noop_set_patch_vertices(struct pipe_context *ctx,
+                                    uint8_t patch_vertices)
+{
+}
+
 void noop_init_state_functions(struct pipe_context *ctx);
 
 void noop_init_state_functions(struct pipe_context *ctx)
@@ -453,6 +468,7 @@ void noop_init_state_functions(struct pipe_context *ctx)
    ctx->sampler_view_destroy = noop_sampler_view_destroy;
    ctx->surface_destroy = noop_surface_destroy;
    ctx->draw_vbo = noop_draw_vbo;
+   ctx->draw_vertex_state = noop_draw_vertex_state;
    ctx->launch_grid = noop_launch_grid;
    ctx->create_stream_output_target = noop_create_stream_output_target;
    ctx->stream_output_target_destroy = noop_stream_output_target_destroy;
@@ -476,4 +492,5 @@ void noop_init_state_functions(struct pipe_context *ctx)
    ctx->create_image_handle = noop_create_image_handle;
    ctx->delete_image_handle = noop_delete_image_handle;
    ctx->make_image_handle_resident = noop_make_image_handle_resident;
+   ctx->set_patch_vertices = noop_set_patch_vertices;
 }

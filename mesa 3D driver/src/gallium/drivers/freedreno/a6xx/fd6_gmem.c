@@ -81,7 +81,6 @@ emit_mrt(struct fd_ringbuffer *ring, struct pipe_framebuffer_state *pfb,
    unsigned max_layer_index = 0;
 
    for (i = 0; i < pfb->nr_cbufs; i++) {
-      enum a6xx_format format = 0;
       enum a3xx_color_swap swap = WZYX;
       bool sint = false, uint = false;
       struct fd_resource *rsc = NULL;
@@ -89,7 +88,6 @@ emit_mrt(struct fd_ringbuffer *ring, struct pipe_framebuffer_state *pfb,
       uint32_t stride = 0;
       uint32_t array_stride = 0;
       uint32_t offset;
-      uint32_t tile_mode;
 
       if (!pfb->cbufs[i])
          continue;
@@ -102,7 +100,8 @@ emit_mrt(struct fd_ringbuffer *ring, struct pipe_framebuffer_state *pfb,
 
       uint32_t base = gmem ? gmem->cbuf_base[i] : 0;
       slice = fd_resource_slice(rsc, psurf->u.tex.level);
-      format = fd6_pipe2color(pformat);
+      uint32_t tile_mode = fd_resource_tile_mode(psurf->texture, psurf->u.tex.level);
+      enum a6xx_format format = fd6_color_format(pformat, tile_mode);
       sint = util_format_is_pure_sint(pformat);
       uint = util_format_is_pure_uint(pformat);
 
@@ -114,9 +113,8 @@ emit_mrt(struct fd_ringbuffer *ring, struct pipe_framebuffer_state *pfb,
 
       stride = fd_resource_pitch(rsc, psurf->u.tex.level);
       array_stride = fd_resource_layer_stride(rsc, psurf->u.tex.level);
-      swap = fd6_resource_swap(rsc, pformat);
+      swap = fd6_color_swap(pformat, rsc->layout.tile_mode);
 
-      tile_mode = fd_resource_tile_mode(psurf->texture, psurf->u.tex.level);
       max_layer_index = psurf->u.tex.last_layer - psurf->u.tex.first_layer;
 
       debug_assert((offset + slice->size0) <= fd_bo_size(rsc->bo));
@@ -710,9 +708,9 @@ emit_binning_pass(struct fd_batch *batch) assert_dt
             A6XX_SP_TP_WINDOW_OFFSET_X(0) | A6XX_SP_TP_WINDOW_OFFSET_Y(0));
 
    /* emit IB to binning drawcmds: */
-   trace_start_binning_ib(&batch->trace);
+   trace_start_binning_ib(&batch->trace, ring);
    fd6_emit_ib(ring, batch->draw);
-   trace_end_binning_ib(&batch->trace);
+   trace_end_binning_ib(&batch->trace, ring);
 
    fd_reset_wfi(batch);
 
@@ -732,9 +730,9 @@ emit_binning_pass(struct fd_batch *batch) assert_dt
 
    OUT_PKT7(ring, CP_WAIT_FOR_ME, 0);
 
-   trace_start_vsc_overflow_test(&batch->trace);
+   trace_start_vsc_overflow_test(&batch->trace, batch->gmem);
    emit_vsc_overflow_test(batch);
-   trace_end_vsc_overflow_test(&batch->trace);
+   trace_end_vsc_overflow_test(&batch->trace, batch->gmem);
 
    OUT_PKT7(ring, CP_SET_VISIBILITY_OVERRIDE, 1);
    OUT_RING(ring, 0x0);
@@ -794,9 +792,9 @@ fd6_emit_tile_init(struct fd_batch *batch) assert_dt
    fd6_emit_lrz_flush(ring);
 
    if (batch->prologue) {
-      trace_start_prologue(&batch->trace);
+      trace_start_prologue(&batch->trace, ring);
       fd6_emit_ib(ring, batch->prologue);
-      trace_end_prologue(&batch->trace);
+      trace_end_prologue(&batch->trace, ring);
    }
 
    fd6_cache_inv(batch, ring);
@@ -987,12 +985,12 @@ emit_blit(struct fd_batch *batch, struct fd_ringbuffer *ring, uint32_t base,
 
    debug_assert(psurf->u.tex.first_layer == psurf->u.tex.last_layer);
 
-   enum a6xx_format format = fd6_pipe2color(pfmt);
+   uint32_t tile_mode = fd_resource_tile_mode(&rsc->b.b, psurf->u.tex.level);
+   enum a6xx_format format = fd6_color_format(pfmt, tile_mode);
    uint32_t stride = fd_resource_pitch(rsc, psurf->u.tex.level);
    uint32_t size = fd_resource_slice(rsc, psurf->u.tex.level)->size0;
-   enum a3xx_color_swap swap = fd6_resource_swap(rsc, pfmt);
+   enum a3xx_color_swap swap = fd6_color_swap(pfmt, rsc->layout.tile_mode);
    enum a3xx_msaa_samples samples = fd_msaa_samples(rsc->b.b.nr_samples);
-   uint32_t tile_mode = fd_resource_tile_mode(&rsc->b.b, psurf->u.tex.level);
 
    OUT_REG(ring,
            A6XX_RB_BLIT_DST_INFO(.tile_mode = tile_mode, .samples = samples,
@@ -1052,7 +1050,7 @@ emit_clears(struct fd_batch *batch, struct fd_ringbuffer *ring)
 
          // XXX I think RB_CLEAR_COLOR_DWn wants to take into account SWAP??
          union pipe_color_union swapped;
-         switch (fd6_pipe2swap(pfmt)) {
+         switch (fd6_color_swap(pfmt, TILE6_LINEAR)) {
          case WZYX:
             swapped.ui[0] = color->ui[0];
             swapped.ui[1] = color->ui[1];
@@ -1085,7 +1083,7 @@ emit_clears(struct fd_batch *batch, struct fd_ringbuffer *ring)
          OUT_RING(ring,
                   A6XX_RB_BLIT_DST_INFO_TILE_MODE(TILE6_LINEAR) |
                      A6XX_RB_BLIT_DST_INFO_SAMPLES(samples) |
-                     A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT(fd6_pipe2color(pfmt)));
+                     A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT(fd6_color_format(pfmt, TILE6_LINEAR)));
 
          OUT_PKT4(ring, REG_A6XX_RB_BLIT_INFO, 1);
          OUT_RING(ring,
@@ -1137,7 +1135,7 @@ emit_clears(struct fd_batch *batch, struct fd_ringbuffer *ring)
       OUT_RING(ring,
                A6XX_RB_BLIT_DST_INFO_TILE_MODE(TILE6_LINEAR) |
                   A6XX_RB_BLIT_DST_INFO_SAMPLES(samples) |
-                  A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT(fd6_pipe2color(pfmt)));
+                  A6XX_RB_BLIT_DST_INFO_COLOR_FORMAT(fd6_color_format(pfmt, TILE6_LINEAR)));
 
       OUT_PKT4(ring, REG_A6XX_RB_BLIT_INFO, 1);
       OUT_RING(ring, A6XX_RB_BLIT_INFO_GMEM |
@@ -1249,13 +1247,13 @@ fd6_emit_tile_renderprep(struct fd_batch *batch, const struct fd_tile *tile)
    if (!batch->tile_setup)
       return;
 
-   trace_start_clear_restore(&batch->trace, batch->fast_cleared);
+   trace_start_clear_restore(&batch->trace, batch->gmem, batch->fast_cleared);
    if (batch->fast_cleared || !use_hw_binning(batch)) {
       fd6_emit_ib(batch->gmem, batch->tile_setup);
    } else {
       emit_conditional_ib(batch, tile, batch->tile_setup);
    }
-   trace_end_clear_restore(&batch->trace);
+   trace_end_clear_restore(&batch->trace, batch->gmem);
 }
 
 static bool
@@ -1427,13 +1425,13 @@ fd6_emit_tile_gmem2mem(struct fd_batch *batch, const struct fd_tile *tile)
    OUT_RING(ring, A6XX_CP_SET_MARKER_0_MODE(RM6_RESOLVE));
    emit_marker6(ring, 7);
 
-   trace_start_resolve(&batch->trace);
+   trace_start_resolve(&batch->trace, batch->gmem);
    if (batch->fast_cleared || !use_hw_binning(batch)) {
       fd6_emit_ib(batch->gmem, batch->tile_fini);
    } else {
       emit_conditional_ib(batch, tile, batch->tile_fini);
    }
-   trace_end_resolve(&batch->trace);
+   trace_end_resolve(&batch->trace, batch->gmem);
 }
 
 static void
@@ -1466,7 +1464,7 @@ emit_sysmem_clears(struct fd_batch *batch, struct fd_ringbuffer *ring) assert_dt
    if (!buffers)
       return;
 
-   trace_start_clear_restore(&batch->trace, buffers);
+   trace_start_clear_restore(&batch->trace, ring, buffers);
 
    if (buffers & PIPE_CLEAR_COLOR) {
       for (int i = 0; i < pfb->nr_cbufs; i++) {
@@ -1512,8 +1510,9 @@ emit_sysmem_clears(struct fd_batch *batch, struct fd_ringbuffer *ring) assert_dt
    }
 
    fd6_event_write(batch, ring, PC_CCU_FLUSH_COLOR_TS, true);
+   fd_wfi(batch, ring);
 
-   trace_end_clear_restore(&batch->trace);
+   trace_end_clear_restore(&batch->trace, ring);
 }
 
 static void
@@ -1546,11 +1545,11 @@ fd6_emit_sysmem_prep(struct fd_batch *batch) assert_dt
 
    if (batch->prologue) {
       if (!batch->nondraw) {
-         trace_start_prologue(&batch->trace);
+         trace_start_prologue(&batch->trace, ring);
       }
       fd6_emit_ib(ring, batch->prologue);
       if (!batch->nondraw) {
-         trace_end_prologue(&batch->trace);
+         trace_end_prologue(&batch->trace, ring);
       }
    }
 
@@ -1609,7 +1608,7 @@ fd6_emit_sysmem_prep(struct fd_batch *batch) assert_dt
 }
 
 static void
-fd6_emit_sysmem_fini(struct fd_batch *batch)
+fd6_emit_sysmem_fini(struct fd_batch *batch) assert_dt
 {
    struct fd_ringbuffer *ring = batch->gmem;
 
@@ -1625,6 +1624,7 @@ fd6_emit_sysmem_fini(struct fd_batch *batch)
 
    fd6_event_write(batch, ring, PC_CCU_FLUSH_COLOR_TS, true);
    fd6_event_write(batch, ring, PC_CCU_FLUSH_DEPTH_TS, true);
+   fd_wfi(batch, ring);
 }
 
 void

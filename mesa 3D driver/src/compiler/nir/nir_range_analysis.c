@@ -1292,7 +1292,15 @@ nir_unsigned_upper_bound(nir_shader *shader, struct hash_table *range_ht,
       nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(scalar.def->parent_instr);
       switch (intrin->intrinsic) {
       case nir_intrinsic_load_local_invocation_index:
-         if (shader->info.workgroup_size_variable) {
+         /* The local invocation index is used under the hood by RADV for
+          * some non-compute-like shaders (eg. LS and NGG). These technically
+          * run in workgroups on the HW, even though this fact is not exposed
+          * by the API.
+          * They can safely use the same code path here as variable sized
+          * compute-like shader stages.
+          */
+         if (!gl_shader_stage_uses_workgroup(shader->info.stage) ||
+             shader->info.workgroup_size_variable) {
             res = config->max_workgroup_invocations - 1;
          } else {
             res = (shader->info.workgroup_size[0] *
@@ -1459,6 +1467,10 @@ nir_unsigned_upper_bound(nir_shader *shader, struct hash_table *range_ht,
       case nir_op_bfm:
       case nir_op_f2u32:
       case nir_op_fmul:
+      case nir_op_extract_u8:
+      case nir_op_extract_i8:
+      case nir_op_extract_u16:
+      case nir_op_extract_i16:
          break;
       case nir_op_u2u1:
       case nir_op_u2u8:
@@ -1590,6 +1602,18 @@ nir_unsigned_upper_bound(nir_shader *shader, struct hash_table *range_ht,
          break;
       case nir_op_sad_u8x4:
          res = src2 + 4 * 255;
+         break;
+      case nir_op_extract_u8:
+         res = MIN2(src0, UINT8_MAX);
+         break;
+      case nir_op_extract_i8:
+         res = (src0 >= 0x80) ? max : MIN2(src0, INT8_MAX);
+         break;
+      case nir_op_extract_u16:
+         res = MIN2(src0, UINT16_MAX);
+         break;
+      case nir_op_extract_i16:
+         res = (src0 >= 0x8000) ? max : MIN2(src0, INT16_MAX);
          break;
       default:
          res = max;

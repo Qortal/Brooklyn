@@ -79,7 +79,7 @@ clear_image_tlb(struct v3dv_cmd_buffer *cmd_buffer,
    union v3dv_clear_value hw_clear_value = { 0 };
    if (range->aspectMask & VK_IMAGE_ASPECT_COLOR_BIT) {
       get_hw_clear_color(cmd_buffer->device, &clear_value->color, fb_format,
-                         image->vk_format, internal_type, internal_bpp,
+                         image->vk.format, internal_type, internal_bpp,
                          &hw_clear_value.color[0]);
    } else {
       assert((range->aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) ||
@@ -88,9 +88,7 @@ clear_image_tlb(struct v3dv_cmd_buffer *cmd_buffer,
       hw_clear_value.s = clear_value->depthStencil.stencil;
    }
 
-   uint32_t level_count = range->levelCount == VK_REMAINING_MIP_LEVELS ?
-                          image->levels - range->baseMipLevel :
-                          range->levelCount;
+   uint32_t level_count = vk_image_subresource_level_count(&image->vk, range);
    uint32_t min_level = range->baseMipLevel;
    uint32_t max_level = range->baseMipLevel + level_count;
 
@@ -100,23 +98,21 @@ clear_image_tlb(struct v3dv_cmd_buffer *cmd_buffer,
     */
    uint32_t min_layer;
    uint32_t max_layer;
-   if (image->type != VK_IMAGE_TYPE_3D) {
-      uint32_t layer_count = range->layerCount == VK_REMAINING_ARRAY_LAYERS ?
-                             image->array_size - range->baseArrayLayer :
-                             range->layerCount;
+   if (image->vk.image_type != VK_IMAGE_TYPE_3D) {
       min_layer = range->baseArrayLayer;
-      max_layer = range->baseArrayLayer + layer_count;
+      max_layer = range->baseArrayLayer +
+                  vk_image_subresource_layer_count(&image->vk, range);
    } else {
       min_layer = 0;
       max_layer = 0;
    }
 
    for (uint32_t level = min_level; level < max_level; level++) {
-      if (image->type == VK_IMAGE_TYPE_3D)
-         max_layer = u_minify(image->extent.depth, level);
+      if (image->vk.image_type == VK_IMAGE_TYPE_3D)
+         max_layer = u_minify(image->vk.extent.depth, level);
 
-      uint32_t width = u_minify(image->extent.width, level);
-      uint32_t height = u_minify(image->extent.height, level);
+      uint32_t width = u_minify(image->vk.extent.width, level);
+      uint32_t height = u_minify(image->vk.extent.height, level);
 
       struct v3dv_job *job =
          v3dv_cmd_buffer_start_job(cmd_buffer, -1, V3DV_JOB_TYPE_GPU_CL);
@@ -126,7 +122,7 @@ clear_image_tlb(struct v3dv_cmd_buffer *cmd_buffer,
 
       v3dv_job_start_frame(job, width, height, max_layer, false,
                            1, internal_bpp,
-                           image->samples > VK_SAMPLE_COUNT_1_BIT);
+                           image->vk.samples > VK_SAMPLE_COUNT_1_BIT);
 
       struct v3dv_meta_framebuffer framebuffer;
       v3dv_X(job->device, meta_framebuffer_init)(&framebuffer, fb_format,
@@ -138,7 +134,7 @@ clear_image_tlb(struct v3dv_cmd_buffer *cmd_buffer,
       /* If this triggers it is an application bug: the spec requires
        * that any aspects to clear are present in the image.
        */
-      assert(range->aspectMask & image->aspects);
+      assert(range->aspectMask & image->vk.aspects);
 
       v3dv_X(job->device, meta_emit_clear_image_rcl)
          (job, image, &framebuffer, &hw_clear_value,

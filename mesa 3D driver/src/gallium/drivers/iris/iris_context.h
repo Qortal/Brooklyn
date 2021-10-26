@@ -112,8 +112,13 @@ enum {
 #define IRIS_DIRTY_DEPTH_BOUNDS                   (1ull << 29)
 #define IRIS_DIRTY_RENDER_BUFFER                  (1ull << 30)
 #define IRIS_DIRTY_STENCIL_REF                    (1ull << 31)
+#define IRIS_DIRTY_VERTEX_BUFFER_FLUSHES          (1ull << 32)
+#define IRIS_DIRTY_RENDER_MISC_BUFFER_FLUSHES     (1ull << 33)
+#define IRIS_DIRTY_COMPUTE_MISC_BUFFER_FLUSHES    (1ull << 34)
+#define IRIS_DIRTY_VFG                            (1ull << 35)
 
-#define IRIS_ALL_DIRTY_FOR_COMPUTE (IRIS_DIRTY_COMPUTE_RESOLVES_AND_FLUSHES)
+#define IRIS_ALL_DIRTY_FOR_COMPUTE (IRIS_DIRTY_COMPUTE_RESOLVES_AND_FLUSHES | \
+                                    IRIS_DIRTY_COMPUTE_MISC_BUFFER_FLUSHES)
 
 #define IRIS_ALL_DIRTY_FOR_RENDER (~IRIS_ALL_DIRTY_FOR_COMPUTE)
 
@@ -150,6 +155,7 @@ enum {
 #define IRIS_STAGE_DIRTY_CONSTANTS_GS             (1ull << 21)
 #define IRIS_STAGE_DIRTY_CONSTANTS_FS             (1ull << 22)
 #define IRIS_STAGE_DIRTY_CONSTANTS_CS             (1ull << 23)
+#define IRIS_SHIFT_FOR_STAGE_DIRTY_BINDINGS       24
 #define IRIS_STAGE_DIRTY_BINDINGS_VS              (1ull << 24)
 #define IRIS_STAGE_DIRTY_BINDINGS_TCS             (1ull << 25)
 #define IRIS_STAGE_DIRTY_BINDINGS_TES             (1ull << 26)
@@ -398,11 +404,6 @@ struct iris_uncompiled_shader {
    /** Have any shader variants been compiled yet? */
    bool compiled_once;
 
-   /** Should we use ALT mode for math?  Useful for ARB programs. */
-   bool use_alt_mode;
-
-   bool needs_edge_flag;
-
    /* Whether shader uses atomic operations. */
    bool uses_atomic_load_store;
 
@@ -537,6 +538,7 @@ struct iris_shader_state {
 
    /** Bitfield of which constant buffers are bound (non-null). */
    uint32_t bound_cbufs;
+   uint32_t dirty_cbufs;
 
    /** Bitfield of which image views are bound (non-null). */
    uint32_t bound_image_views;
@@ -721,6 +723,7 @@ struct iris_context {
       /** Bitfield of which vertex buffers are bound (non-null). */
       uint64_t bound_vertex_buffers;
 
+      uint8_t patch_vertices;
       bool primitive_restart;
       unsigned cut_index;
       enum pipe_prim_type prim_mode:8;
@@ -838,7 +841,7 @@ struct iris_context {
 };
 
 #define perf_debug(dbg, ...) do {                      \
-   if (INTEL_DEBUG & DEBUG_PERF)                       \
+   if (INTEL_DEBUG(DEBUG_PERF))                        \
       dbg_printf(__VA_ARGS__);                         \
    if (unlikely(dbg))                                  \
       pipe_debug_message(dbg, PERF_INFO, __VA_ARGS__); \
@@ -846,6 +849,7 @@ struct iris_context {
 
 struct pipe_context *
 iris_create_context(struct pipe_screen *screen, void *priv, unsigned flags);
+void iris_destroy_context(struct pipe_context *ctx);
 
 void iris_lost_context_state(struct iris_batch *batch);
 
@@ -856,6 +860,7 @@ void iris_flush_dirty_dmabufs(struct iris_context *ice);
 void iris_init_blit_functions(struct pipe_context *ctx);
 void iris_init_clear_functions(struct pipe_context *ctx);
 void iris_init_program_functions(struct pipe_context *ctx);
+void iris_init_screen_program_functions(struct pipe_screen *pscreen);
 void iris_init_resource_functions(struct pipe_context *ctx);
 void iris_init_perfquery_functions(struct pipe_context *ctx);
 void iris_update_compiled_shaders(struct iris_context *ice);
@@ -1043,6 +1048,9 @@ void iris_predraw_resolve_inputs(struct iris_context *ice,
 void iris_predraw_resolve_framebuffer(struct iris_context *ice,
                                       struct iris_batch *batch,
                                       bool *draw_aux_buffer_disabled);
+void iris_predraw_flush_buffers(struct iris_context *ice,
+                                struct iris_batch *batch,
+                                gl_shader_stage stage);
 void iris_postdraw_update_resolve_tracking(struct iris_context *ice,
                                            struct iris_batch *batch);
 void iris_cache_flush_for_render(struct iris_batch *batch,

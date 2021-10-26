@@ -257,6 +257,8 @@ struct tu_pipeline_builder
    uint64_t shader_iova[MESA_SHADER_FRAGMENT + 1];
    uint64_t binning_vs_iova;
 
+   uint32_t additional_cs_reserve_size;
+
    struct tu_pvtmem_config pvtmem;
 
    bool rasterizer_discard;
@@ -389,6 +391,32 @@ static const struct xs_config {
       REG_A6XX_SP_CS_PVT_MEM_HW_STACK_OFFSET,
    },
 };
+
+static uint32_t
+tu_xs_get_immediates_packet_size_dwords(const struct ir3_shader_variant *xs)
+{
+   const struct ir3_const_state *const_state = ir3_const_state(xs);
+   uint32_t base = const_state->offsets.immediate;
+   int32_t size = DIV_ROUND_UP(const_state->immediates_count, 4);
+
+   /* truncate size to avoid writing constants that shader
+    * does not use:
+    */
+   size = MIN2(size + base, xs->constlen) - base;
+
+   return MAX2(size, 0) * 4;
+}
+
+/* We allocate fixed-length substreams for shader state, however some
+ * parts of the state may have unbound length. Their additional space
+ * requirements should be calculated here.
+ */
+static uint32_t
+tu_xs_get_additional_cs_size_dwords(const struct ir3_shader_variant *xs)
+{
+   uint32_t size = tu_xs_get_immediates_packet_size_dwords(xs);
+   return size;
+}
 
 void
 tu6_emit_xs_config(struct tu_cs *cs,
@@ -529,24 +557,19 @@ tu6_emit_xs(struct tu_cs *cs,
 
    const struct ir3_const_state *const_state = ir3_const_state(xs);
    uint32_t base = const_state->offsets.immediate;
-   int size = DIV_ROUND_UP(const_state->immediates_count, 4);
+   unsigned immediate_size = tu_xs_get_immediates_packet_size_dwords(xs);
 
-   /* truncate size to avoid writing constants that shader
-    * does not use:
-    */
-   size = MIN2(size + base, xs->constlen) - base;
-
-   if (size > 0) {
-      tu_cs_emit_pkt7(cs, tu6_stage2opcode(stage), 3 + size * 4);
+   if (immediate_size > 0) {
+      tu_cs_emit_pkt7(cs, tu6_stage2opcode(stage), 3 + immediate_size);
       tu_cs_emit(cs, CP_LOAD_STATE6_0_DST_OFF(base) |
                  CP_LOAD_STATE6_0_STATE_TYPE(ST6_CONSTANTS) |
                  CP_LOAD_STATE6_0_STATE_SRC(SS6_DIRECT) |
                  CP_LOAD_STATE6_0_STATE_BLOCK(tu6_stage2shadersb(stage)) |
-                 CP_LOAD_STATE6_0_NUM_UNIT(size));
+                 CP_LOAD_STATE6_0_NUM_UNIT(immediate_size / 4));
       tu_cs_emit(cs, CP_LOAD_STATE6_1_EXT_SRC_ADDR(0));
       tu_cs_emit(cs, CP_LOAD_STATE6_2_EXT_SRC_ADDR_HI(0));
 
-      tu_cs_emit_array(cs, const_state->immediates, size * 4);
+      tu_cs_emit_array(cs, const_state->immediates, immediate_size);
    }
 
    if (const_state->constant_data_ubo != -1) {
@@ -611,6 +634,12 @@ tu6_emit_cs_config(struct tu_cs *cs, const struct tu_shader *shader,
    tu_cs_emit(cs, A6XX_SP_CS_UNKNOWN_A9B1_SHARED_SIZE(shared_size) |
                   A6XX_SP_CS_UNKNOWN_A9B1_UNK6);
 
+   if (cs->device->physical_device->info->a6xx.has_lpac) {
+      tu_cs_emit_pkt4(cs, REG_A6XX_HLSQ_CS_UNKNOWN_B9D0, 1);
+      tu_cs_emit(cs, A6XX_HLSQ_CS_UNKNOWN_B9D0_SHARED_SIZE(shared_size) |
+                     A6XX_HLSQ_CS_UNKNOWN_B9D0_UNK6);
+   }
+
    uint32_t local_invocation_id =
       ir3_find_sysval_regid(v, SYSTEM_VALUE_LOCAL_INVOCATION_ID);
    uint32_t work_group_id =
@@ -625,6 +654,17 @@ tu6_emit_cs_config(struct tu_cs *cs, const struct tu_shader *shader,
               A6XX_HLSQ_CS_CNTL_0_LOCALIDREGID(local_invocation_id));
    tu_cs_emit(cs, A6XX_HLSQ_CS_CNTL_1_LINEARLOCALIDREGID(regid(63, 0)) |
                   A6XX_HLSQ_CS_CNTL_1_THREADSIZE(thrsz));
+
+   if (cs->device->physical_device->info->a6xx.has_lpac) {
+      tu_cs_emit_pkt4(cs, REG_A6XX_SP_CS_CNTL_0, 2);
+      tu_cs_emit(cs,
+                 A6XX_SP_CS_CNTL_0_WGIDCONSTID(work_group_id) |
+                 A6XX_SP_CS_CNTL_0_WGSIZECONSTID(regid(63, 0)) |
+                 A6XX_SP_CS_CNTL_0_WGOFFSETCONSTID(regid(63, 0)) |
+                 A6XX_SP_CS_CNTL_0_LOCALIDREGID(local_invocation_id));
+      tu_cs_emit(cs, A6XX_SP_CS_CNTL_1_LINEARLOCALIDREGID(regid(63, 0)) |
+                     A6XX_SP_CS_CNTL_1_THREADSIZE(thrsz));
+   }
 }
 
 static void
@@ -657,11 +697,9 @@ tu6_emit_vs_system_values(struct tu_cs *cs,
    const uint32_t gs_primitiveid_regid = gs ?
          ir3_find_sysval_regid(gs, SYSTEM_VALUE_PRIMITIVE_ID) :
          regid(63, 0);
-   const uint32_t hs_primitiveid_regid = hs ?
+   const uint32_t vs_primitiveid_regid = hs ?
          ir3_find_sysval_regid(hs, SYSTEM_VALUE_PRIMITIVE_ID) :
-         regid(63, 0);
-   const uint32_t vs_primitiveid_regid = gs ? gs_primitiveid_regid :
-      hs_primitiveid_regid;
+         gs_primitiveid_regid;
    const uint32_t ds_primitiveid_regid = ds ?
          ir3_find_sysval_regid(ds, SYSTEM_VALUE_PRIMITIVE_ID) :
          regid(63, 0);
@@ -1326,12 +1364,6 @@ tu6_emit_fs_inputs(struct tu_cs *cs, const struct ir3_shader_variant *fs)
    for (unsigned i = 0; i < ARRAY_SIZE(ij_regid); i++)
       ij_regid[i] = ir3_find_sysval_regid(fs, SYSTEM_VALUE_BARYCENTRIC_PERSP_PIXEL + i);
 
-   if (VALIDREG(ij_regid[IJ_LINEAR_SAMPLE]))
-      tu_finishme("linear sample varying");
-
-   if (VALIDREG(ij_regid[IJ_LINEAR_CENTROID]))
-      tu_finishme("linear centroid varying");
-
    if (fs->num_sampler_prefetch > 0) {
       assert(VALIDREG(ij_regid[IJ_PERSP_PIXEL]));
       /* also, it seems like ij_pix is *required* to be r0.x */
@@ -1392,16 +1424,17 @@ tu6_emit_fs_inputs(struct tu_cs *cs, const struct ir3_shader_variant *fs)
       else
          need_size = true;
    }
-   if (VALIDREG(ij_regid[IJ_LINEAR_PIXEL]))
-      need_size = true;
 
    tu_cs_emit_pkt4(cs, REG_A6XX_GRAS_CNTL, 1);
    tu_cs_emit(cs,
          CONDREG(ij_regid[IJ_PERSP_PIXEL], A6XX_GRAS_CNTL_IJ_PERSP_PIXEL) |
          CONDREG(ij_regid[IJ_PERSP_CENTROID], A6XX_GRAS_CNTL_IJ_PERSP_CENTROID) |
          CONDREG(ij_regid[IJ_PERSP_SAMPLE], A6XX_GRAS_CNTL_IJ_PERSP_SAMPLE) |
-         COND(need_size, A6XX_GRAS_CNTL_SIZE) |
-         COND(need_size_persamp, A6XX_GRAS_CNTL_SIZE_PERSAMP) |
+         CONDREG(ij_regid[IJ_LINEAR_PIXEL], A6XX_GRAS_CNTL_IJ_LINEAR_PIXEL) |
+         CONDREG(ij_regid[IJ_LINEAR_CENTROID], A6XX_GRAS_CNTL_IJ_LINEAR_CENTROID) |
+         CONDREG(ij_regid[IJ_LINEAR_SAMPLE], A6XX_GRAS_CNTL_IJ_LINEAR_SAMPLE) |
+         COND(need_size, A6XX_GRAS_CNTL_IJ_LINEAR_PIXEL) |
+         COND(need_size_persamp, A6XX_GRAS_CNTL_IJ_LINEAR_SAMPLE) |
          COND(fs->fragcoord_compmask != 0, A6XX_GRAS_CNTL_COORD_MASK(fs->fragcoord_compmask)));
 
    tu_cs_emit_pkt4(cs, REG_A6XX_RB_RENDER_CONTROL0, 2);
@@ -1409,9 +1442,12 @@ tu6_emit_fs_inputs(struct tu_cs *cs, const struct ir3_shader_variant *fs)
          CONDREG(ij_regid[IJ_PERSP_PIXEL], A6XX_RB_RENDER_CONTROL0_IJ_PERSP_PIXEL) |
          CONDREG(ij_regid[IJ_PERSP_CENTROID], A6XX_RB_RENDER_CONTROL0_IJ_PERSP_CENTROID) |
          CONDREG(ij_regid[IJ_PERSP_SAMPLE], A6XX_RB_RENDER_CONTROL0_IJ_PERSP_SAMPLE) |
-         COND(need_size, A6XX_RB_RENDER_CONTROL0_SIZE) |
+         CONDREG(ij_regid[IJ_LINEAR_PIXEL], A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_PIXEL) |
+         CONDREG(ij_regid[IJ_LINEAR_CENTROID], A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_CENTROID) |
+         CONDREG(ij_regid[IJ_LINEAR_SAMPLE], A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_SAMPLE) |
+         COND(need_size, A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_PIXEL) |
          COND(enable_varyings, A6XX_RB_RENDER_CONTROL0_UNK10) |
-         COND(need_size_persamp, A6XX_RB_RENDER_CONTROL0_SIZE_PERSAMP) |
+         COND(need_size_persamp, A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_SAMPLE) |
          COND(fs->fragcoord_compmask != 0,
                            A6XX_RB_RENDER_CONTROL0_COORD_MASK(fs->fragcoord_compmask)));
    tu_cs_emit(cs,
@@ -1934,7 +1970,7 @@ tu6_emit_sample_locations(struct tu_cs *cs, const VkSampleLocationsInfoEXT *samp
 
 static uint32_t
 tu6_gras_su_cntl(const VkPipelineRasterizationStateCreateInfo *rast_info,
-                 VkSampleCountFlagBits samples,
+                 enum a5xx_line_mode line_mode,
                  bool multiview)
 {
    uint32_t gras_su_cntl = 0;
@@ -1953,8 +1989,7 @@ tu6_gras_su_cntl(const VkPipelineRasterizationStateCreateInfo *rast_info,
    if (rast_info->depthBiasEnable)
       gras_su_cntl |= A6XX_GRAS_SU_CNTL_POLY_OFFSET;
 
-   if (samples > VK_SAMPLE_COUNT_1_BIT)
-      gras_su_cntl |= A6XX_GRAS_SU_CNTL_MSAA_ENABLE;
+   gras_su_cntl |= A6XX_GRAS_SU_CNTL_LINE_MODE(line_mode);
 
    if (multiview) {
       gras_su_cntl |=
@@ -2153,9 +2188,27 @@ tu_pipeline_allocate_cs(struct tu_device *dev,
       pvtmem_bytes = MAX2(pvtmem_bytes, builder->binning_variant->pvtmem_size);
 
       size += calc_pvtmem_size(dev, NULL, pvtmem_bytes) / 4;
+
+      builder->additional_cs_reserve_size = 0;
+      for (unsigned i = 0; i < ARRAY_SIZE(builder->variants); i++) {
+         struct ir3_shader_variant *variant = builder->variants[i];
+         if (variant) {
+            builder->additional_cs_reserve_size +=
+               tu_xs_get_additional_cs_size_dwords(variant);
+
+            if (variant->binning) {
+               builder->additional_cs_reserve_size +=
+                  tu_xs_get_additional_cs_size_dwords(variant->binning);
+            }
+         }
+      }
+
+      size += builder->additional_cs_reserve_size;
    } else {
       size += compute->info.size / 4;
       size += calc_pvtmem_size(dev, NULL, compute->pvtmem_size) / 4;
+
+      size += tu_xs_get_additional_cs_size_dwords(compute);
    }
 
    tu_cs_init(&pipeline->cs, dev, TU_CS_MODE_SUB_STREAM, size);
@@ -2563,11 +2616,11 @@ tu_pipeline_builder_parse_shader_stages(struct tu_pipeline_builder *builder,
    tu6_emit_program_config(&prog_cs, builder);
    pipeline->program.config_state = tu_cs_end_draw_state(&pipeline->cs, &prog_cs);
 
-   tu_cs_begin_sub_stream(&pipeline->cs, 512, &prog_cs);
+   tu_cs_begin_sub_stream(&pipeline->cs, 512 + builder->additional_cs_reserve_size, &prog_cs);
    tu6_emit_program(&prog_cs, builder, false, pipeline);
    pipeline->program.state = tu_cs_end_draw_state(&pipeline->cs, &prog_cs);
 
-   tu_cs_begin_sub_stream(&pipeline->cs, 512, &prog_cs);
+   tu_cs_begin_sub_stream(&pipeline->cs, 512 + builder->additional_cs_reserve_size, &prog_cs);
    tu6_emit_program(&prog_cs, builder, true, pipeline);
    pipeline->program.binning_state = tu_cs_end_draw_state(&pipeline->cs, &prog_cs);
 
@@ -2596,7 +2649,11 @@ tu_pipeline_builder_parse_vertex_input(struct tu_pipeline_builder *builder,
    const struct ir3_shader_variant *vs = builder->variants[MESA_SHADER_VERTEX];
    const struct ir3_shader_variant *bs = builder->binning_variant;
 
-   pipeline->num_vbs = vi_info->vertexBindingDescriptionCount;
+   /* Bindings may contain holes */
+   for (unsigned i = 0; i < vi_info->vertexBindingDescriptionCount; i++) {
+      pipeline->num_vbs =
+         MAX2(pipeline->num_vbs, vi_info->pVertexBindingDescriptions[i].binding + 1);
+   }
 
    struct tu_cs vi_cs;
    tu_cs_begin_sub_stream(&pipeline->cs,
@@ -2705,6 +2762,19 @@ tu_pipeline_builder_parse_rasterization(struct tu_pipeline_builder *builder,
    if (depth_clip_state)
       depth_clip_disable = !depth_clip_state->depthClipEnable;
 
+   pipeline->line_mode = RECTANGULAR;
+
+   if (tu6_primtype_line(pipeline->ia.primtype)) {
+      const VkPipelineRasterizationLineStateCreateInfoEXT *rast_line_state =
+         vk_find_struct_const(rast_info->pNext,
+                              PIPELINE_RASTERIZATION_LINE_STATE_CREATE_INFO_EXT);
+
+      if (rast_line_state && rast_line_state->lineRasterizationMode ==
+               VK_LINE_RASTERIZATION_MODE_BRESENHAM_EXT) {
+         pipeline->line_mode = BRESENHAM;
+      }
+   }
+
    struct tu_cs cs;
    uint32_t cs_size = 9 + (builder->emit_msaa_state ? 11 : 0);
    pipeline->rast_state = tu_cs_draw_state(&pipeline->cs, &cs, cs_size);
@@ -2729,11 +2799,18 @@ tu_pipeline_builder_parse_rasterization(struct tu_pipeline_builder *builder,
                    A6XX_GRAS_SU_POINT_MINMAX(.min = 1.0f / 16.0f, .max = 4092.0f),
                    A6XX_GRAS_SU_POINT_SIZE(1.0f));
 
+   if (builder->device->physical_device->info->a6xx.has_shading_rate) {
+      tu_cs_emit_regs(&cs, A6XX_RB_UNKNOWN_8A00());
+      tu_cs_emit_regs(&cs, A6XX_RB_UNKNOWN_8A10());
+      tu_cs_emit_regs(&cs, A6XX_RB_UNKNOWN_8A20());
+      tu_cs_emit_regs(&cs, A6XX_RB_UNKNOWN_8A30());
+   }
+
    /* If samples count couldn't be devised from the subpass, we should emit it here.
     * It happens when subpass doesn't use any color/depth attachment.
     */
    if (builder->emit_msaa_state)
-      tu6_emit_msaa(&cs, builder->samples);
+      tu6_emit_msaa(&cs, builder->samples, pipeline->line_mode);
 
    const VkPipelineRasterizationStateStreamCreateInfoEXT *stream_info =
       vk_find_struct_const(rast_info->pNext,
@@ -2753,7 +2830,7 @@ tu_pipeline_builder_parse_rasterization(struct tu_pipeline_builder *builder,
    }
 
    pipeline->gras_su_cntl =
-      tu6_gras_su_cntl(rast_info, builder->samples, builder->multiview_mask != 0);
+      tu6_gras_su_cntl(rast_info, pipeline->line_mode, builder->multiview_mask != 0);
 
    if (tu_pipeline_static_state(pipeline, &cs, TU_DYNAMIC_STATE_GRAS_SU_CNTL, 2))
       tu_cs_emit_regs(&cs, A6XX_GRAS_SU_CNTL(.dword = pipeline->gras_su_cntl));
@@ -3273,7 +3350,8 @@ tu_compute_pipeline_create(VkDevice device,
    pipeline->compute.subgroup_size = v->info.double_threadsize ? 128 : 64;
 
    struct tu_cs prog_cs;
-   tu_cs_begin_sub_stream(&pipeline->cs, 512, &prog_cs);
+   uint32_t additional_reserve_size = tu_xs_get_additional_cs_size_dwords(v);
+   tu_cs_begin_sub_stream(&pipeline->cs, 64 + additional_reserve_size, &prog_cs);
    tu6_emit_cs_config(&prog_cs, shader, v, &pvtmem, shader_iova);
    pipeline->program.state = tu_cs_end_draw_state(&pipeline->cs, &prog_cs);
 
@@ -3487,6 +3565,24 @@ tu_GetPipelineExecutableStatisticsKHR(
          stat->format = VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR;
          stat->value.u64 = exe->stats.instrs_per_cat[i];
       }
+   }
+
+   vk_outarray_append(&out, stat) {
+      WRITE_STR(stat->name, "STP Count");
+      WRITE_STR(stat->description,
+                "Number of STore Private instructions in the final generated "
+                "shader executable.");
+      stat->format = VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR;
+      stat->value.u64 = exe->stats.stp_count;
+   }
+
+   vk_outarray_append(&out, stat) {
+      WRITE_STR(stat->name, "LDP Count");
+      WRITE_STR(stat->description,
+                "Number of LoaD Private instructions in the final generated "
+                "shader executable.");
+      stat->format = VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR;
+      stat->value.u64 = exe->stats.ldp_count;
    }
 
    return vk_outarray_status(&out);

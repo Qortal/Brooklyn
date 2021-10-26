@@ -42,7 +42,7 @@
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
 #include "util/u_upload_mgr.h"
-
+#include "util/os_file.h"
 #include "frontend/sw_winsys.h"
 
 #ifndef _WIN32
@@ -50,12 +50,26 @@
 #endif
 
 #ifdef ZINK_USE_DMABUF
+#include <xf86drm.h>
 #include "drm-uapi/drm_fourcc.h"
 #else
 /* these won't actually be used */
 #define DRM_FORMAT_MOD_INVALID 0
 #define DRM_FORMAT_MOD_LINEAR 0
 #endif
+
+
+static bool
+equals_ivci(const void *a, const void *b)
+{
+   return memcmp(a, b, sizeof(VkImageViewCreateInfo)) == 0;
+}
+
+static bool
+equals_bvci(const void *a, const void *b)
+{
+   return memcmp(a, b, sizeof(VkBufferViewCreateInfo)) == 0;
+}
 
 static void
 zink_transfer_flush_region(struct pipe_context *pctx,
@@ -73,10 +87,10 @@ zink_destroy_resource_object(struct zink_screen *screen, struct zink_resource_ob
 {
    if (obj->is_buffer) {
       util_dynarray_foreach(&obj->tmp, VkBuffer, buffer)
-         vkDestroyBuffer(screen->dev, *buffer, NULL);
-      vkDestroyBuffer(screen->dev, obj->buffer, NULL);
+         VKSCR(DestroyBuffer)(screen->dev, *buffer, NULL);
+      VKSCR(DestroyBuffer)(screen->dev, obj->buffer, NULL);
    } else {
-      vkDestroyImage(screen->dev, obj->image, NULL);
+      VKSCR(DestroyImage)(screen->dev, obj->image, NULL);
    }
 
    util_dynarray_fini(&obj->tmp);
@@ -94,12 +108,20 @@ zink_resource_destroy(struct pipe_screen *pscreen,
    if (pres->target == PIPE_BUFFER) {
       util_range_destroy(&res->valid_buffer_range);
       util_idalloc_mt_free(&screen->buffer_ids, res->base.buffer_id_unique);
+      assert(!_mesa_hash_table_num_entries(&res->bufferview_cache));
+      simple_mtx_destroy(&res->bufferview_mtx);
+      ralloc_free(res->bufferview_cache.table);
+   } else {
+      assert(!_mesa_hash_table_num_entries(&res->surface_cache));
+      simple_mtx_destroy(&res->surface_mtx);
+      ralloc_free(res->surface_cache.table);
    }
+   /* no need to do anything for the caches, these objects own the resource lifetimes */
 
    zink_resource_object_reference(screen, &res->obj, NULL);
    zink_resource_object_reference(screen, &res->scanout_obj, NULL);
    threaded_resource_deinit(pres);
-   FREE(res);
+   FREE_CL(res);
 }
 
 static VkImageAspectFlags
@@ -125,6 +147,7 @@ create_bci(struct zink_screen *screen, const struct pipe_resource *templ, unsign
    bci.pNext = NULL;
    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
    bci.queueFamilyIndexCount = 0;
+   bci.pQueueFamilyIndices = NULL;
    bci.size = templ->width0;
    bci.flags = 0;
    assert(bci.size > 0);
@@ -155,8 +178,8 @@ check_ici(struct zink_screen *screen, VkImageCreateInfo *ici, uint64_t modifier)
    VkImageFormatProperties image_props;
    VkResult ret;
    assert(modifier == DRM_FORMAT_MOD_INVALID ||
-          (screen->vk.GetPhysicalDeviceImageFormatProperties2 && screen->info.have_EXT_image_drm_format_modifier));
-   if (screen->vk.GetPhysicalDeviceImageFormatProperties2) {
+          (VKSCR(GetPhysicalDeviceImageFormatProperties2) && screen->info.have_EXT_image_drm_format_modifier));
+   if (VKSCR(GetPhysicalDeviceImageFormatProperties2)) {
       VkImageFormatProperties2 props2;
       props2.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
       props2.pNext = NULL;
@@ -179,10 +202,10 @@ check_ici(struct zink_screen *screen, VkImageCreateInfo *ici, uint64_t modifier)
       } else
          info.pNext = NULL;
 
-      ret = screen->vk.GetPhysicalDeviceImageFormatProperties2(screen->pdev, &info, &props2);
+      ret = VKSCR(GetPhysicalDeviceImageFormatProperties2)(screen->pdev, &info, &props2);
       image_props = props2.imageFormatProperties;
    } else
-      ret = vkGetPhysicalDeviceImageFormatProperties(screen->pdev, ici->format, ici->imageType,
+      ret = VKSCR(GetPhysicalDeviceImageFormatProperties)(screen->pdev, ici->format, ici->imageType,
                                                    ici->tiling, ici->usage, ici->flags, &image_props);
    return ret == VK_SUCCESS;
 }
@@ -191,24 +214,30 @@ static VkImageUsageFlags
 get_image_usage_for_feats(struct zink_screen *screen, VkFormatFeatureFlags feats, const struct pipe_resource *templ, unsigned bind)
 {
    VkImageUsageFlags usage = 0;
-   /* sadly, gallium doesn't let us know if it'll ever need this, so we have to assume */
-   if (feats & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT)
-      usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-   if (feats & VK_FORMAT_FEATURE_TRANSFER_DST_BIT)
-      usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-   if (feats & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT && (bind & (PIPE_BIND_LINEAR | PIPE_BIND_SHARED)) != (PIPE_BIND_LINEAR | PIPE_BIND_SHARED))
-      usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+   if (bind & ZINK_BIND_TRANSIENT)
+      usage |= VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+   else {
+      /* sadly, gallium doesn't let us know if it'll ever need this, so we have to assume */
+      if (feats & VK_FORMAT_FEATURE_TRANSFER_SRC_BIT)
+         usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+      if (feats & VK_FORMAT_FEATURE_TRANSFER_DST_BIT)
+         usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+      if (feats & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT && (bind & (PIPE_BIND_LINEAR | PIPE_BIND_SHARED)) != (PIPE_BIND_LINEAR | PIPE_BIND_SHARED))
+         usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
 
-   if ((templ->nr_samples <= 1 || screen->info.feats.features.shaderStorageImageMultisample) &&
-       (bind & PIPE_BIND_SHADER_IMAGE)) {
-      if (feats & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)
-         usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+      if ((templ->nr_samples <= 1 || screen->info.feats.features.shaderStorageImageMultisample) &&
+          (bind & PIPE_BIND_SHADER_IMAGE)) {
+         if (feats & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)
+            usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+      }
    }
 
    if (bind & PIPE_BIND_RENDER_TARGET) {
-      if (feats & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)
+      if (feats & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) {
          usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-      else
+         if ((bind & (PIPE_BIND_LINEAR | PIPE_BIND_SHARED)) != (PIPE_BIND_LINEAR | PIPE_BIND_SHARED))
+            usage |= VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+      } else
          return 0;
    }
 
@@ -230,6 +259,7 @@ get_image_usage_for_feats(struct zink_screen *screen, VkFormatFeatureFlags feats
 
    if (bind & PIPE_BIND_STREAM_OUTPUT)
       usage |= VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+
    return usage;
 }
 
@@ -297,12 +327,13 @@ get_image_usage(struct zink_screen *screen, VkImageCreateInfo *ici, const struct
 }
 
 static uint64_t
-create_ici(struct zink_screen *screen, VkImageCreateInfo *ici, const struct pipe_resource *templ, unsigned bind, unsigned modifiers_count, const uint64_t *modifiers, bool *success)
+create_ici(struct zink_screen *screen, VkImageCreateInfo *ici, const struct pipe_resource *templ, bool dmabuf, unsigned bind, unsigned modifiers_count, const uint64_t *modifiers, bool *success)
 {
    ici->sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
    ici->pNext = NULL;
-   ici->flags = bind & (PIPE_BIND_SCANOUT | PIPE_BIND_DEPTH_STENCIL) ? 0 : VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+   ici->flags = modifiers_count || dmabuf || bind & (PIPE_BIND_SCANOUT | PIPE_BIND_DEPTH_STENCIL) ? 0 : VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
    ici->usage = 0;
+   ici->queueFamilyIndexCount = 0;
 
    switch (templ->target) {
    case PIPE_TEXTURE_1D:
@@ -347,7 +378,7 @@ create_ici(struct zink_screen *screen, VkImageCreateInfo *ici, const struct pipe
    ici->samples = templ->nr_samples ? templ->nr_samples : VK_SAMPLE_COUNT_1_BIT;
    ici->tiling = modifiers_count ? VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT : bind & PIPE_BIND_LINEAR ? VK_IMAGE_TILING_LINEAR : VK_IMAGE_TILING_OPTIMAL;
    ici->sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-   ici->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+   ici->initialLayout = dmabuf ? VK_IMAGE_LAYOUT_PREINITIALIZED : VK_IMAGE_LAYOUT_UNDEFINED;
 
    if (templ->target == PIPE_TEXTURE_CUBE ||
        templ->target == PIPE_TEXTURE_CUBE_ARRAY ||
@@ -422,9 +453,21 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
    VkMemoryRequirements reqs;
    VkMemoryPropertyFlags flags;
    bool need_dedicated = false;
+   VkExternalMemoryHandleTypeFlags export_types = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+
+   VkExternalMemoryHandleTypeFlags external = 0;
+   if (whandle) {
+      if (whandle->type == WINSYS_HANDLE_TYPE_FD)
+         external = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+      else
+         unreachable("unknown handle type");
+   }
+
    /* TODO: remove linear for wsi */
-   bool scanout = (templ->bind & (PIPE_BIND_SCANOUT | PIPE_BIND_LINEAR)) == (PIPE_BIND_SCANOUT | PIPE_BIND_LINEAR);
-   bool shared = (templ->bind & (PIPE_BIND_SHARED | PIPE_BIND_LINEAR)) == (PIPE_BIND_SHARED | PIPE_BIND_LINEAR);
+   bool scanout = templ->bind & PIPE_BIND_SCANOUT;
+   bool shared = templ->bind & PIPE_BIND_SHARED;
+   if (shared && screen->info.have_EXT_external_memory_dma_buf)
+      export_types |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
 
    pipe_reference_init(&obj->reference, 1);
    util_dynarray_init(&obj->tmp, NULL);
@@ -432,12 +475,12 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
    if (templ->target == PIPE_BUFFER) {
       VkBufferCreateInfo bci = create_bci(screen, templ, templ->bind);
 
-      if (vkCreateBuffer(screen->dev, &bci, NULL, &obj->buffer) != VK_SUCCESS) {
+      if (VKSCR(CreateBuffer)(screen->dev, &bci, NULL, &obj->buffer) != VK_SUCCESS) {
          debug_printf("vkCreateBuffer failed\n");
          goto fail1;
       }
 
-      vkGetBufferMemoryRequirements(screen->dev, obj->buffer, &reqs);
+      VKSCR(GetBufferMemoryRequirements)(screen->dev, obj->buffer, &reqs);
       if (templ->usage == PIPE_USAGE_STAGING)
          flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
       else if (templ->usage == PIPE_USAGE_STREAM)
@@ -454,17 +497,17 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       unsigned ici_modifier_count = winsys_modifier ? 1 : modifiers_count;
       bool success = false;
       VkImageCreateInfo ici;
-      uint64_t mod = create_ici(screen, &ici, templ, templ->bind, ici_modifier_count, ici_modifiers, &success);
+      uint64_t mod = create_ici(screen, &ici, templ, !!external, templ->bind, ici_modifier_count, ici_modifiers, &success);
       VkExternalMemoryImageCreateInfo emici;
       VkImageDrmFormatModifierExplicitCreateInfoEXT idfmeci;
       VkImageDrmFormatModifierListCreateInfoEXT idfmlci;
       if (!success)
          goto fail1;
 
-      if (shared) {
+      if (shared || external) {
          emici.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
          emici.pNext = NULL;
-         emici.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+         emici.handleTypes = export_types;
          ici.pNext = &emici;
 
          assert(ici.tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT || mod != DRM_FORMAT_MOD_INVALID);
@@ -493,12 +536,13 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
          } else if (ici.tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
             idfmlci.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT;
             idfmlci.pNext = ici.pNext;
-            idfmlci.drmFormatModifierCount = 1;
-            idfmlci.pDrmFormatModifiers = &mod;
+            idfmlci.drmFormatModifierCount = modifiers_count;
+            idfmlci.pDrmFormatModifiers = modifiers;
             ici.pNext = &idfmlci;
          } else if (ici.tiling == VK_IMAGE_TILING_OPTIMAL) {
             // TODO: remove for wsi
-            ici.pNext = NULL;
+            if (!external)
+               ici.pNext = NULL;
             scanout = false;
             shared = false;
          }
@@ -519,18 +563,19 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
          .scanout = true,
       };
 
-      if ((screen->needs_mesa_wsi || screen->needs_mesa_flush_wsi) && scanout) {
+      if ((screen->needs_mesa_wsi || screen->needs_mesa_flush_wsi) && scanout &&
+          ici.tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
          image_wsi_info.pNext = ici.pNext;
          ici.pNext = &image_wsi_info;
       }
 
-      VkResult result = vkCreateImage(screen->dev, &ici, NULL, &obj->image);
+      VkResult result = VKSCR(CreateImage)(screen->dev, &ici, NULL, &obj->image);
       if (result != VK_SUCCESS) {
          debug_printf("vkCreateImage failed\n");
          goto fail1;
       }
 
-      if (screen->vk.GetImageMemoryRequirements2) {
+      if (VKSCR(GetImageMemoryRequirements2)) {
          VkMemoryRequirements2 req2;
          req2.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
          VkImageMemoryRequirementsInfo2 info2;
@@ -541,16 +586,19 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
          ded.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS;
          ded.pNext = NULL;
          req2.pNext = &ded;
-         screen->vk.GetImageMemoryRequirements2(screen->dev, &info2, &req2);
+         VKSCR(GetImageMemoryRequirements2)(screen->dev, &info2, &req2);
          memcpy(&reqs, &req2.memoryRequirements, sizeof(VkMemoryRequirements));
          need_dedicated = ded.prefersDedicatedAllocation || ded.requiresDedicatedAllocation;
       } else {
-         vkGetImageMemoryRequirements(screen->dev, obj->image, &reqs);
+         VKSCR(GetImageMemoryRequirements)(screen->dev, obj->image, &reqs);
       }
       if (templ->usage == PIPE_USAGE_STAGING && ici.tiling == VK_IMAGE_TILING_LINEAR)
         flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
       else
         flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+      obj->vkflags = ici.flags;
+      obj->vkusage = ici.usage;
    }
    obj->alignment = reqs.alignment;
 
@@ -559,6 +607,9 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
    else if (!(flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
             templ->usage == PIPE_USAGE_STAGING)
       flags |= VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+
+   if (templ->bind & ZINK_BIND_TRANSIENT)
+      flags |= VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT;
 
    VkMemoryAllocateInfo mai;
    enum zink_alloc_flag aflags = templ->flags & PIPE_RESOURCE_FLAG_SPARSE ? ZINK_ALLOC_SPARSE : 0;
@@ -574,7 +625,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
          heap = ZINK_HEAP_DEVICE_LOCAL;
          break;
       case ZINK_HEAP_HOST_VISIBLE_CACHED:
-         heap = ZINK_HEAP_HOST_VISIBLE_ANY;
+         heap = ZINK_HEAP_HOST_VISIBLE_COHERENT;
          break;
       default:
          break;
@@ -603,7 +654,7 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
    VkExportMemoryAllocateInfo emai;
    if (templ->bind & PIPE_BIND_SHARED && shared) {
       emai.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO;
-      emai.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+      emai.handleTypes = export_types;
 
       emai.pNext = mai.pNext;
       mai.pNext = &emai;
@@ -614,13 +665,17 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
       NULL,
    };
 
-   if (whandle && whandle->type == WINSYS_HANDLE_TYPE_FD) {
+   if (whandle) {
       imfi.pNext = NULL;
-      imfi.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
-      imfi.fd = whandle->handle;
+      imfi.handleType = external;
+      imfi.fd = os_dupfd_cloexec(whandle->handle);
+      if (imfi.fd < 0) {
+         mesa_loge("ZINK: failed to dup dmabuf fd: %s\n", strerror(errno));
+         goto fail1;
+      }
 
       imfi.pNext = mai.pNext;
-      emai.pNext = &imfi;
+      mai.pNext = &imfi;
    }
 
    struct wsi_memory_allocate_info memory_wsi_info = {
@@ -651,10 +706,10 @@ resource_object_create(struct zink_screen *screen, const struct pipe_resource *t
 
    if (templ->target == PIPE_BUFFER) {
       if (!(templ->flags & PIPE_RESOURCE_FLAG_SPARSE))
-         if (vkBindBufferMemory(screen->dev, obj->buffer, zink_bo_get_mem(obj->bo), obj->offset) != VK_SUCCESS)
+         if (VKSCR(BindBufferMemory)(screen->dev, obj->buffer, zink_bo_get_mem(obj->bo), obj->offset) != VK_SUCCESS)
             goto fail3;
    } else {
-      if (vkBindImageMemory(screen->dev, obj->image, zink_bo_get_mem(obj->bo), obj->offset) != VK_SUCCESS)
+      if (VKSCR(BindImageMemory)(screen->dev, obj->image, zink_bo_get_mem(obj->bo), obj->offset) != VK_SUCCESS)
          goto fail3;
    }
    return obj;
@@ -664,9 +719,9 @@ fail3:
 
 fail2:
    if (templ->target == PIPE_BUFFER)
-      vkDestroyBuffer(screen->dev, obj->buffer, NULL);
+      VKSCR(DestroyBuffer)(screen->dev, obj->buffer, NULL);
    else
-      vkDestroyImage(screen->dev, obj->image, NULL);
+      VKSCR(DestroyImage)(screen->dev, obj->image, NULL);
 fail1:
    FREE(obj);
    return NULL;
@@ -680,45 +735,71 @@ resource_create(struct pipe_screen *pscreen,
                 const uint64_t *modifiers, int modifiers_count)
 {
    struct zink_screen *screen = zink_screen(pscreen);
-   struct zink_resource *res = CALLOC_STRUCT(zink_resource);
+   struct zink_resource *res = CALLOC_STRUCT_CL(zink_resource);
 
    if (modifiers_count > 0) {
       /* for rebinds */
       res->modifiers_count = modifiers_count;
       res->modifiers = mem_dup(modifiers, modifiers_count * sizeof(uint64_t));
       if (!res->modifiers) {
-         FREE(res);
+         FREE_CL(res);
          return NULL;
+      }
+      /* TODO: remove this when multi-plane modifiers are supported */
+      const struct zink_modifier_prop *prop = &screen->modifier_props[templ->format];
+      for (unsigned i = 0; i < modifiers_count; i++) {
+         for (unsigned j = 0; j < prop->drmFormatModifierCount; j++) {
+            if (prop->pDrmFormatModifierProperties[j].drmFormatModifier == modifiers[i]) {
+               if (prop->pDrmFormatModifierProperties[j].drmFormatModifierPlaneCount != 1)
+                  res->modifiers[i] = DRM_FORMAT_MOD_INVALID;
+               break;
+            }
+         }
       }
    }
 
    res->base.b = *templ;
 
-   threaded_resource_init(&res->base.b);
+   threaded_resource_init(&res->base.b, false, 0);
    pipe_reference_init(&res->base.b.reference, 1);
    res->base.b.screen = pscreen;
 
    bool optimal_tiling = false;
-   res->obj = resource_object_create(screen, templ, whandle, &optimal_tiling, modifiers, 0);
+   struct pipe_resource templ2 = *templ;
+   unsigned scanout_flags = templ->bind & (PIPE_BIND_SCANOUT | PIPE_BIND_SHARED);
+   if (!(templ->bind & PIPE_BIND_LINEAR))
+      templ2.bind &= ~scanout_flags;
+   res->obj = resource_object_create(screen, &templ2, whandle, &optimal_tiling, NULL, 0);
    if (!res->obj) {
       free(res->modifiers);
-      FREE(res);
+      FREE_CL(res);
       return NULL;
    }
 
    res->internal_format = templ->format;
    if (templ->target == PIPE_BUFFER) {
       util_range_init(&res->valid_buffer_range);
+      if (!screen->resizable_bar && templ->width0 >= 8196) {
+         /* We don't want to evict buffers from VRAM by mapping them for CPU access,
+          * because they might never be moved back again. If a buffer is large enough,
+          * upload data by copying from a temporary GTT buffer. 8K might not seem much,
+          * but there can be 100000 buffers.
+          *
+          * This tweak improves performance for viewperf.
+          */
+         res->base.b.flags |= PIPE_RESOURCE_FLAG_DONT_MAP_DIRECTLY;
+      }
    } else {
       res->format = zink_get_format(screen, templ->format);
-      res->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+      res->dmabuf_acquire = whandle && whandle->type == WINSYS_HANDLE_TYPE_FD;
+      res->layout = res->dmabuf_acquire ? VK_IMAGE_LAYOUT_PREINITIALIZED : VK_IMAGE_LAYOUT_UNDEFINED;
       res->optimal_tiling = optimal_tiling;
       res->aspect = aspect_from_format(templ->format);
-      if (res->base.b.bind & (PIPE_BIND_SCANOUT | PIPE_BIND_SHARED) && optimal_tiling) {
+      if (scanout_flags && optimal_tiling) {
          // TODO: remove for wsi
-         struct pipe_resource templ2 = res->base.b;
-         templ2.bind = (res->base.b.bind & (PIPE_BIND_SCANOUT | PIPE_BIND_SHARED)) | PIPE_BIND_LINEAR;
-         res->scanout_obj = resource_object_create(screen, &templ2, whandle, &optimal_tiling, modifiers, modifiers_count);
+         templ2 = res->base.b;
+         templ2.bind = scanout_flags | PIPE_BIND_LINEAR;
+         res->scanout_obj = resource_object_create(screen, &templ2, whandle, &optimal_tiling, res->modifiers, res->modifiers_count);
          assert(!optimal_tiling);
       }
    }
@@ -733,9 +814,14 @@ resource_create(struct pipe_screen *pscreen,
                                              64, NULL,
                                              &res->dt_stride);
    }
-   if (res->obj->is_buffer)
+   if (res->obj->is_buffer) {
       res->base.buffer_id_unique = util_idalloc_mt_alloc(&screen->buffer_ids);
-
+      _mesa_hash_table_init(&res->bufferview_cache, NULL, NULL, equals_bvci);
+      simple_mtx_init(&res->bufferview_mtx, mtx_plain);
+   } else {
+      _mesa_hash_table_init(&res->surface_cache, NULL, NULL, equals_ivci);
+      simple_mtx_init(&res->surface_mtx, mtx_plain);
+   }
    return &res->base.b;
 }
 
@@ -781,7 +867,7 @@ zink_resource_get_param(struct pipe_screen *pscreen, struct pipe_context *pctx,
 
       sub_res.aspectMask = aspect;
 
-      vkGetImageSubresourceLayout(screen->dev, obj->image, &sub_res, &sub_res_layout);
+      VKSCR(GetImageSubresourceLayout)(screen->dev, obj->image, &sub_res, &sub_res_layout);
 
       *value = sub_res_layout.rowPitch;
       break;
@@ -794,7 +880,7 @@ zink_resource_get_param(struct pipe_screen *pscreen, struct pipe_context *pctx,
             layer
          };
          VkSubresourceLayout srl;
-         vkGetImageSubresourceLayout(screen->dev, obj->image, &isr, &srl);
+         VKSCR(GetImageSubresourceLayout)(screen->dev, obj->image, &isr, &srl);
          *value = srl.offset;
          break;
    }
@@ -803,10 +889,12 @@ zink_resource_get_param(struct pipe_screen *pscreen, struct pipe_context *pctx,
       *value = DRM_FORMAT_MOD_INVALID;
       if (!screen->info.have_EXT_image_drm_format_modifier)
          return false;
+      if (!res->modifiers)
+         return false;
       VkImageDrmFormatModifierPropertiesEXT prop;
       prop.sType = VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT;
       prop.pNext = NULL;
-      if (screen->vk.GetImageDrmFormatModifierPropertiesEXT(screen->dev, obj->image, &prop) == VK_SUCCESS)
+      if (VKSCR(GetImageDrmFormatModifierPropertiesEXT)(screen->dev, obj->image, &prop) == VK_SUCCESS)
          *value = prop.drmFormatModifier;
       break;
    }
@@ -818,7 +906,7 @@ zink_resource_get_param(struct pipe_screen *pscreen, struct pipe_context *pctx,
             layer
          };
          VkSubresourceLayout srl;
-         vkGetImageSubresourceLayout(screen->dev, obj->image, &isr, &srl);
+         VKSCR(GetImageSubresourceLayout)(screen->dev, obj->image, &isr, &srl);
          if (res->base.b.target == PIPE_TEXTURE_3D)
             *value = srl.depthPitch;
          else
@@ -854,7 +942,7 @@ zink_resource_get_handle(struct pipe_screen *pscreen,
                          struct winsys_handle *whandle,
                          unsigned usage)
 {
-   if (whandle->type == WINSYS_HANDLE_TYPE_FD) {
+   if (whandle->type == WINSYS_HANDLE_TYPE_FD || whandle->type == WINSYS_HANDLE_TYPE_KMS) {
 #ifdef ZINK_USE_DMABUF
       struct zink_resource *res = zink_resource(tex);
       struct zink_screen *screen = zink_screen(pscreen);
@@ -866,10 +954,21 @@ zink_resource_get_handle(struct pipe_screen *pscreen,
       fd_info.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
       //TODO: remove for wsi
       fd_info.memory = zink_bo_get_mem(obj->bo);
-      fd_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
-      VkResult result = (*screen->vk.GetMemoryFdKHR)(screen->dev, &fd_info, &fd);
+      if (whandle->type == WINSYS_HANDLE_TYPE_FD)
+         fd_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+      else
+         fd_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+      VkResult result = VKSCR(GetMemoryFdKHR)(screen->dev, &fd_info, &fd);
       if (result != VK_SUCCESS)
          return false;
+      if (whandle->type == WINSYS_HANDLE_TYPE_KMS) {
+         uint32_t h;
+         bool success = drmPrimeFDToHandle(screen->drm_fd, fd, &h) == 0;
+         close(fd);
+         if (!success)
+            return false;
+         fd = h;
+      }
       whandle->handle = fd;
       uint64_t value;
       zink_resource_get_param(pscreen, context, tex, 0, 0, 0, PIPE_RESOURCE_PARAM_MODIFIER, 0, &value);
@@ -926,10 +1025,10 @@ invalidate_buffer(struct zink_context *ctx, struct zink_resource *res)
    if (res->valid_buffer_range.start > res->valid_buffer_range.end)
       return false;
 
-   if (res->bind_history & ZINK_RESOURCE_USAGE_STREAMOUT)
+   if (res->so_valid)
       ctx->dirty_so_targets = true;
    /* force counter buffer reset */
-   res->bind_history &= ~ZINK_RESOURCE_USAGE_STREAMOUT;
+   res->so_valid = false;
 
    util_range_set_empty(&res->valid_buffer_range);
    if (!zink_resource_has_usage(res))
@@ -944,9 +1043,6 @@ invalidate_buffer(struct zink_context *ctx, struct zink_resource *res)
    /* this ref must be transferred before rebind or else BOOM */
    zink_batch_reference_resource_move(&ctx->batch, res);
    res->obj = new_obj;
-   res->access_stage = 0;
-   res->access = 0;
-   res->unordered_barrier = false;
    zink_resource_rebind(ctx, res);
    zink_descriptor_set_refs_clear(&old_obj->desc_set_refs, old_obj);
    return true;
@@ -977,7 +1073,7 @@ zink_transfer_copy_bufimage(struct zink_context *ctx,
       box.x = trans->offset;
 
    if (dst->obj->transfer_dst)
-      zink_copy_image_buffer(ctx, NULL, dst, src, trans->base.b.level, buf2img ? x : 0,
+      zink_copy_image_buffer(ctx, dst, src, trans->base.b.level, buf2img ? x : 0,
                               box.y, box.z, trans->base.b.level, &box, trans->base.b.usage);
    else
       util_blitter_copy_texture(ctx->blitter, &dst->base.b, trans->base.b.level,
@@ -1097,6 +1193,18 @@ zink_buffer_map(struct pipe_context *pctx,
       usage |= PIPE_MAP_DISCARD_WHOLE_RESOURCE;
    }
 
+   /* If a buffer in VRAM is too large and the range is discarded, don't
+    * map it directly. This makes sure that the buffer stays in VRAM.
+    */
+   bool force_discard_range = false;
+   if (usage & (PIPE_MAP_DISCARD_WHOLE_RESOURCE | PIPE_MAP_DISCARD_RANGE) &&
+       !(usage & PIPE_MAP_PERSISTENT) &&
+       res->base.b.flags & PIPE_RESOURCE_FLAG_DONT_MAP_DIRECTLY) {
+      usage &= ~(PIPE_MAP_DISCARD_WHOLE_RESOURCE | PIPE_MAP_UNSYNCHRONIZED);
+      usage |= PIPE_MAP_DISCARD_RANGE;
+      force_discard_range = true;
+   }
+
    if (usage & PIPE_MAP_DISCARD_WHOLE_RESOURCE &&
        !(usage & (PIPE_MAP_UNSYNCHRONIZED | TC_TRANSFER_MAP_NO_INVALIDATE))) {
       assert(usage & PIPE_MAP_WRITE);
@@ -1117,7 +1225,7 @@ zink_buffer_map(struct pipe_context *pctx,
       /* Check if mapping this buffer would cause waiting for the GPU.
        */
 
-      if (!res->obj->host_visible ||
+      if (!res->obj->host_visible || force_discard_range ||
           !zink_resource_usage_check_completion(screen, res, ZINK_RESOURCE_ACCESS_RW)) {
          /* Do a wait-free write-only transfer using a temporary buffer. */
          unsigned offset;
@@ -1158,7 +1266,7 @@ zink_buffer_map(struct pipe_context *pctx,
          if (!trans->staging_res)
             goto fail;
          struct zink_resource *staging_res = zink_resource(trans->staging_res);
-         zink_copy_buffer(ctx, NULL, staging_res, res, trans->offset, box->x, box->width);
+         zink_copy_buffer(ctx, staging_res, res, trans->offset, box->x, box->width);
          res = staging_res;
          usage &= ~PIPE_MAP_UNSYNCHRONIZED;
          ptr = map_resource(screen, res);
@@ -1171,16 +1279,16 @@ zink_buffer_map(struct pipe_context *pctx,
          zink_resource_usage_wait(ctx, res, ZINK_RESOURCE_ACCESS_RW);
       else
          zink_resource_usage_wait(ctx, res, ZINK_RESOURCE_ACCESS_WRITE);
-      res->access = 0;
-      res->access_stage = 0;
+      res->obj->access = 0;
+      res->obj->access_stage = 0;
    }
 
    if (!ptr) {
       /* if writing to a streamout buffer, ensure synchronization next time it's used */
-      if (usage & PIPE_MAP_WRITE && res->bind_history & ZINK_RESOURCE_USAGE_STREAMOUT) {
+      if (usage & PIPE_MAP_WRITE && res->so_valid) {
          ctx->dirty_so_targets = true;
          /* force counter buffer reset */
-         res->bind_history &= ~ZINK_RESOURCE_USAGE_STREAMOUT;
+         res->so_valid = false;
       }
       ptr = map_resource(screen, res);
       if (!ptr)
@@ -1201,7 +1309,7 @@ zink_buffer_map(struct pipe_context *pctx,
       VkDeviceSize size = box->width;
       VkDeviceSize offset = res->obj->offset + trans->offset;
       VkMappedMemoryRange range = zink_resource_init_mem_range(screen, res->obj, offset, size);
-      if (vkInvalidateMappedMemoryRanges(screen->dev, 1, &range) != VK_SUCCESS) {
+      if (VKSCR(InvalidateMappedMemoryRanges)(screen->dev, 1, &range) != VK_SUCCESS) {
          zink_bo_unmap(screen, res->obj->bo);
          goto fail;
       }
@@ -1300,7 +1408,7 @@ zink_image_map(struct pipe_context *pctx,
          0
       };
       VkSubresourceLayout srl;
-      vkGetImageSubresourceLayout(screen->dev, res->obj->image, &isr, &srl);
+      VKSCR(GetImageSubresourceLayout)(screen->dev, res->obj->image, &isr, &srl);
       trans->base.b.stride = srl.rowPitch;
       if (res->base.b.target == PIPE_TEXTURE_3D)
          trans->base.b.layer_stride = srl.depthPitch;
@@ -1314,9 +1422,9 @@ zink_image_map(struct pipe_context *pctx,
                         (box->y / desc->block.height) * srl.rowPitch +
                         (box->x / desc->block.width) * (desc->block.bits / 8);
       if (!res->obj->coherent) {
-         VkDeviceSize size = box->width * box->height * desc->block.bits / 8;
+         VkDeviceSize size = (VkDeviceSize)box->width * box->height * desc->block.bits / 8;
          VkMappedMemoryRange range = zink_resource_init_mem_range(screen, res->obj, res->obj->offset + offset, size);
-         vkFlushMappedMemoryRanges(screen->dev, 1, &range);
+         VKSCR(FlushMappedMemoryRanges)(screen->dev, 1, &range);
       }
       ptr = ((uint8_t *)ptr) + offset;
    }
@@ -1354,7 +1462,7 @@ zink_transfer_flush_region(struct pipe_context *pctx,
          size = box->width;
          offset = trans->offset;
       } else {
-         size = box->width * box->height * util_format_get_blocksize(m->base.b.format);
+         size = (VkDeviceSize)box->width * box->height * util_format_get_blocksize(m->base.b.format);
          offset = trans->offset +
                   box->z * trans->depthPitch +
                   util_format_get_2d_size(m->base.b.format, trans->base.b.stride, box->y) +
@@ -1363,13 +1471,13 @@ zink_transfer_flush_region(struct pipe_context *pctx,
       }
       if (!m->obj->coherent) {
          VkMappedMemoryRange range = zink_resource_init_mem_range(screen, m->obj, m->obj->offset, m->obj->size);
-         vkFlushMappedMemoryRanges(screen->dev, 1, &range);
+         VKSCR(FlushMappedMemoryRanges)(screen->dev, 1, &range);
       }
       if (trans->staging_res) {
          struct zink_resource *staging_res = zink_resource(trans->staging_res);
 
          if (ptrans->resource->target == PIPE_BUFFER)
-            zink_copy_buffer(ctx, NULL, res, staging_res, box->x, offset, box->width);
+            zink_copy_buffer(ctx, res, staging_res, box->x, offset, box->width);
          else
             zink_transfer_copy_bufimage(ctx, res, staging_res, trans);
       }
@@ -1475,9 +1583,9 @@ zink_resource_tmp_buffer(struct zink_screen *screen, struct zink_resource *res, 
    bci.size = size;
 
    VkBuffer buffer;
-   if (vkCreateBuffer(screen->dev, &bci, NULL, &buffer) != VK_SUCCESS)
+   if (VKSCR(CreateBuffer)(screen->dev, &bci, NULL, &buffer) != VK_SUCCESS)
       return VK_NULL_HANDLE;
-   vkBindBufferMemory(screen->dev, buffer, zink_bo_get_mem(res->obj->bo), res->obj->offset + offset);
+   VKSCR(BindBufferMemory)(screen->dev, buffer, zink_bo_get_mem(res->obj->bo), res->obj->offset + offset);
    if (offset_out)
       *offset_out = offset_add - offset;
    return buffer;
@@ -1502,7 +1610,7 @@ zink_resource_object_init_storage(struct zink_context *ctx, struct zink_resource
       res->base.b.bind |= PIPE_BIND_SHADER_IMAGE;
    } else {
       zink_fb_clears_apply_region(ctx, &res->base.b, (struct u_rect){0, res->base.b.width0, 0, res->base.b.height0});
-      zink_resource_image_barrier(ctx, NULL, res, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0, 0);
+      zink_resource_image_barrier(ctx, res, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0, 0);
       res->base.b.bind |= PIPE_BIND_SHADER_IMAGE;
       struct zink_resource_object *old_obj = res->obj;
       struct zink_resource_object *new_obj = resource_object_create(screen, &res->base.b, NULL, &res->optimal_tiling, res->modifiers, res->modifiers_count);
@@ -1556,17 +1664,17 @@ zink_resource_setup_transfer_layouts(struct zink_context *ctx, struct zink_resou
        * VK_IMAGE_LAYOUT_GENERAL. And since this isn't a present-related
        * operation, VK_IMAGE_LAYOUT_GENERAL seems most appropriate.
        */
-      zink_resource_image_barrier(ctx, NULL, src,
+      zink_resource_image_barrier(ctx, src,
                                   VK_IMAGE_LAYOUT_GENERAL,
                                   VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
                                   VK_PIPELINE_STAGE_TRANSFER_BIT);
    } else {
-      zink_resource_image_barrier(ctx, NULL, src,
+      zink_resource_image_barrier(ctx, src,
                                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                   VK_ACCESS_TRANSFER_READ_BIT,
                                   VK_PIPELINE_STAGE_TRANSFER_BIT);
 
-      zink_resource_image_barrier(ctx, NULL, dst,
+      zink_resource_image_barrier(ctx, dst,
                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                   VK_ACCESS_TRANSFER_WRITE_BIT,
                                   VK_PIPELINE_STAGE_TRANSFER_BIT);

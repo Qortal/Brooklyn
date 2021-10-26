@@ -192,7 +192,93 @@ optimizations = [
 
    # flrp(a, a + b, c) => a + flrp(0, b, c) => a + (b * c)
    (('~flrp', a, ('fadd(is_used_once)', a, b), c), ('fadd', ('fmul', b, c), a)),
+
+   (('sdot_4x8_iadd', a, 0, b), b),
+   (('udot_4x8_uadd', a, 0, b), b),
+   (('sdot_4x8_iadd_sat', a, 0, b), b),
+   (('udot_4x8_uadd_sat', a, 0, b), b),
+   (('sdot_2x16_iadd', a, 0, b), b),
+   (('udot_2x16_uadd', a, 0, b), b),
+   (('sdot_2x16_iadd_sat', a, 0, b), b),
+   (('udot_2x16_uadd_sat', a, 0, b), b),
+
+   # sudot_4x8_iadd is not commutative at all, so the patterns must be
+   # duplicated with zeros on each of the first positions.
+   (('sudot_4x8_iadd', a, 0, b), b),
+   (('sudot_4x8_iadd', 0, a, b), b),
+   (('sudot_4x8_iadd_sat', a, 0, b), b),
+   (('sudot_4x8_iadd_sat', 0, a, b), b),
+
+   (('iadd', ('sdot_4x8_iadd(is_used_once)', a, b, '#c'), '#d'), ('sdot_4x8_iadd', a, b, ('iadd', c, d))),
+   (('iadd', ('udot_4x8_uadd(is_used_once)', a, b, '#c'), '#d'), ('udot_4x8_uadd', a, b, ('iadd', c, d))),
+   (('iadd', ('sudot_4x8_iadd(is_used_once)', a, b, '#c'), '#d'), ('sudot_4x8_iadd', a, b, ('iadd', c, d))),
+   (('iadd', ('sdot_2x16_iadd(is_used_once)', a, b, '#c'), '#d'), ('sdot_2x16_iadd', a, b, ('iadd', c, d))),
+   (('iadd', ('udot_2x16_uadd(is_used_once)', a, b, '#c'), '#d'), ('udot_2x16_uadd', a, b, ('iadd', c, d))),
+
+   # Try to let constant folding eliminate the dot-product part.  These are
+   # safe because the dot product cannot overflow 32 bits.
+   (('iadd', ('sdot_4x8_iadd', 'a(is_not_const)', b, 0), c), ('sdot_4x8_iadd', a, b, c)),
+   (('iadd', ('udot_4x8_uadd', 'a(is_not_const)', b, 0), c), ('udot_4x8_uadd', a, b, c)),
+   (('iadd', ('sudot_4x8_iadd', 'a(is_not_const)', b, 0), c), ('sudot_4x8_iadd', a, b, c)),
+   (('iadd', ('sudot_4x8_iadd', a, 'b(is_not_const)', 0), c), ('sudot_4x8_iadd', a, b, c)),
+   (('iadd', ('sdot_2x16_iadd', 'a(is_not_const)', b, 0), c), ('sdot_2x16_iadd', a, b, c)),
+   (('iadd', ('udot_2x16_uadd', 'a(is_not_const)', b, 0), c), ('udot_2x16_uadd', a, b, c)),
+   (('sdot_4x8_iadd', '#a', '#b', 'c(is_not_const)'), ('iadd', ('sdot_4x8_iadd', a, b, 0), c)),
+   (('udot_4x8_uadd', '#a', '#b', 'c(is_not_const)'), ('iadd', ('udot_4x8_uadd', a, b, 0), c)),
+   (('sudot_4x8_iadd', '#a', '#b', 'c(is_not_const)'), ('iadd', ('sudot_4x8_iadd', a, b, 0), c)),
+   (('sdot_2x16_iadd', '#a', '#b', 'c(is_not_const)'), ('iadd', ('sdot_2x16_iadd', a, b, 0), c)),
+   (('udot_2x16_uadd', '#a', '#b', 'c(is_not_const)'), ('iadd', ('udot_2x16_uadd', a, b, 0), c)),
+   (('sdot_4x8_iadd_sat', '#a', '#b', 'c(is_not_const)'), ('iadd_sat', ('sdot_4x8_iadd', a, b, 0), c), '!options->lower_iadd_sat'),
+   (('udot_4x8_uadd_sat', '#a', '#b', 'c(is_not_const)'), ('uadd_sat', ('udot_4x8_uadd', a, b, 0), c), '!options->lower_uadd_sat'),
+   (('sudot_4x8_iadd_sat', '#a', '#b', 'c(is_not_const)'), ('iadd_sat', ('sudot_4x8_iadd', a, b, 0), c), '!options->lower_iadd_sat'),
+   (('sdot_2x16_iadd_sat', '#a', '#b', 'c(is_not_const)'), ('iadd_sat', ('sdot_2x16_iadd', a, b, 0), c), '!options->lower_iadd_sat'),
+   (('udot_2x16_uadd_sat', '#a', '#b', 'c(is_not_const)'), ('uadd_sat', ('udot_2x16_uadd', a, b, 0), c), '!options->lower_uadd_sat'),
 ]
+
+# Shorthand for the expansion of just the dot product part of the [iu]dp4a
+# instructions.
+sdot_4x8_a_b = ('iadd', ('iadd', ('imul', ('extract_i8', a, 0), ('extract_i8', b, 0)),
+                                 ('imul', ('extract_i8', a, 1), ('extract_i8', b, 1))),
+                        ('iadd', ('imul', ('extract_i8', a, 2), ('extract_i8', b, 2)),
+                                 ('imul', ('extract_i8', a, 3), ('extract_i8', b, 3))))
+udot_4x8_a_b = ('iadd', ('iadd', ('imul', ('extract_u8', a, 0), ('extract_u8', b, 0)),
+                                 ('imul', ('extract_u8', a, 1), ('extract_u8', b, 1))),
+                        ('iadd', ('imul', ('extract_u8', a, 2), ('extract_u8', b, 2)),
+                                 ('imul', ('extract_u8', a, 3), ('extract_u8', b, 3))))
+sudot_4x8_a_b = ('iadd', ('iadd', ('imul', ('extract_i8', a, 0), ('extract_u8', b, 0)),
+                                  ('imul', ('extract_i8', a, 1), ('extract_u8', b, 1))),
+                         ('iadd', ('imul', ('extract_i8', a, 2), ('extract_u8', b, 2)),
+                                  ('imul', ('extract_i8', a, 3), ('extract_u8', b, 3))))
+sdot_2x16_a_b = ('iadd', ('imul', ('extract_i16', a, 0), ('extract_i16', b, 0)),
+                         ('imul', ('extract_i16', a, 1), ('extract_i16', b, 1)))
+udot_2x16_a_b = ('iadd', ('imul', ('extract_u16', a, 0), ('extract_u16', b, 0)),
+                         ('imul', ('extract_u16', a, 1), ('extract_u16', b, 1)))
+
+optimizations.extend([
+   (('sdot_4x8_iadd', a, b, c), ('iadd', sdot_4x8_a_b, c), '!options->has_dot_4x8'),
+   (('udot_4x8_uadd', a, b, c), ('iadd', udot_4x8_a_b, c), '!options->has_dot_4x8'),
+   (('sudot_4x8_iadd', a, b, c), ('iadd', sudot_4x8_a_b, c), '!options->has_sudot_4x8'),
+   (('sdot_2x16_iadd', a, b, c), ('iadd', sdot_2x16_a_b, c), '!options->has_dot_2x16'),
+   (('udot_2x16_uadd', a, b, c), ('iadd', udot_2x16_a_b, c), '!options->has_dot_2x16'),
+
+   # For the unsigned dot-product, the largest possible value 4*(255*255) =
+   # 0x3f804, so we don't have to worry about that intermediate result
+   # overflowing.  0x100000000 - 0x3f804 = 0xfffc07fc.  If c is a constant
+   # that is less than 0xfffc07fc, then the result cannot overflow ever.
+   (('udot_4x8_uadd_sat', a, b, '#c(is_ult_0xfffc07fc)'), ('udot_4x8_uadd', a, b, c)),
+   (('udot_4x8_uadd_sat', a, b, c), ('uadd_sat', udot_4x8_a_b, c), '!options->has_dot_4x8'),
+
+   # For the signed dot-product, the largest positive value is 4*(-128*-128) =
+   # 0x10000, and the largest negative value is 4*(-128*127) = -0xfe00.  We
+   # don't have to worry about that intermediate result overflowing or
+   # underflowing.
+   (('sdot_4x8_iadd_sat', a, b, c), ('iadd_sat', sdot_4x8_a_b, c), '!options->has_dot_4x8'),
+
+   (('sudot_4x8_iadd_sat', a, b, c), ('iadd_sat', sudot_4x8_a_b, c), '!options->has_sudot_4x8'),
+
+   (('udot_2x16_uadd_sat', a, b, c), ('uadd_sat', udot_2x16_a_b, c), '!options->has_dot_2x16'),
+   (('sdot_2x16_iadd_sat', a, b, c), ('iadd_sat', sdot_2x16_a_b, c), '!options->has_dot_2x16'),
+])
 
 # Float sizes
 for s in [16, 32, 64]:
@@ -200,7 +286,7 @@ for s in [16, 32, 64]:
        (('~flrp@{}'.format(s), a, b, ('b2f', 'c@1')), ('bcsel', c, b, a), 'options->lower_flrp{}'.format(s)),
 
        (('~flrp@{}'.format(s), a, ('fadd', a, b), c), ('fadd', ('fmul', b, c), a), 'options->lower_flrp{}'.format(s)),
-       (('~flrp@{}'.format(s), ('fadd', a, b), ('fadd', a, c), d), ('fadd', ('flrp', b, c, d), a), 'options->lower_flrp{}'.format(s)),
+       (('~flrp@{}'.format(s), ('fadd(is_used_once)', a, b), ('fadd(is_used_once)', a, c), d), ('fadd', ('flrp', b, c, d), a), 'options->lower_flrp{}'.format(s)),
        (('~flrp@{}'.format(s), a, ('fmul(is_used_once)', a, b), c), ('fmul', ('flrp', 1.0, b, c), a), 'options->lower_flrp{}'.format(s)),
 
        (('~fadd@{}'.format(s), ('fmul', a, ('fadd', 1.0, ('fneg', c))), ('fmul', b, c)), ('flrp', a, b, c), '!options->lower_flrp{}'.format(s)),
@@ -359,6 +445,8 @@ optimizations.extend([
 
    # (a + #b) * #c => (a * #c) + (#b * #c)
    (('imul', ('iadd(is_used_once)', a, '#b'), '#c'), ('iadd', ('imul', a, c), ('imul', b, c))),
+   (('~fmul', ('fadd(is_used_once)', a, '#b'), '#c'), ('fadd', ('fmul', a, c), ('fmul', b, c)),
+    '!options->avoid_ternary_with_two_constants'),
 
    # ((a + #b) + c) * #d => ((a + c) * #d) + (#b * #d)
    (('imul', ('iadd(is_used_once)', ('iadd(is_used_once)', a, '#b'), c), '#d'),
@@ -588,6 +676,20 @@ optimizations.extend([
    (('imin', ('imin', ('imin', a, b), c), a), ('imin', ('imin', a, b), c)),
 ])
 
+for N in [8, 16, 32, 64]:
+    b2iN = 'b2i{0}'.format(N)
+    optimizations.extend([
+        (('ieq', (b2iN, 'a@1'), (b2iN, 'b@1')), ('ieq', a, b)),
+        (('ine', (b2iN, 'a@1'), (b2iN, 'b@1')), ('ine', a, b)),
+    ])
+
+for N in [16, 32, 64]:
+    b2fN = 'b2f{0}'.format(N)
+    optimizations.extend([
+        (('feq', (b2fN, 'a@1'), (b2fN, 'b@1')), ('ieq', a, b)),
+        (('fneu', (b2fN, 'a@1'), (b2fN, 'b@1')), ('ine', a, b)),
+    ])
+
 # Integer sizes
 for s in [8, 16, 32, 64]:
     optimizations.extend([
@@ -652,6 +754,11 @@ optimizations.extend([
    # fmin(0.0, b)) while the right one is "b", so this optimization is inexact.
    (('~fmin', ('fsat', a), '#b(is_zero_to_one)'), ('fsat', ('fmin', a, b))),
 
+   # max(-min(b, a), b) -> max(abs(b), -a)
+   # min(-max(b, a), b) -> min(-abs(b), -a)
+   (('fmax', ('fneg', ('fmin', b, a)), b), ('fmax', ('fabs', b), ('fneg', a))),
+   (('fmin', ('fneg', ('fmax', b, a)), b), ('fmin', ('fneg', ('fabs', b)), ('fneg', a))),
+
    # If a in [0,b] then b-a is also in [0,b].  Since b in [0,1], max(b-a, 0) =
    # fsat(b-a).
    #
@@ -711,6 +818,10 @@ optimizations.extend([
    (('ior', ('ior(is_used_once)', ('flt', a, c), d), ('flt(is_used_once)', b, c)), ('ior', ('flt', ('!fmin', a, b), c), d)),
    (('ior', ('ior(is_used_once)', ('flt(is_used_once)', a, b), d), ('flt', a, c)), ('ior', ('flt', a, ('!fmax', b, c)), d)),
    (('ior', ('ior(is_used_once)', ('flt', a, b), d), ('flt(is_used_once)', a, c)), ('ior', ('flt', a, ('!fmax', b, c)), d)),
+
+   # This is how SpvOpFOrdNotEqual might be implemented.  If both values are
+   # numbers, then it can be replaced with fneu.
+   (('ior', ('flt', 'a(is_a_number)', 'b(is_a_number)'), ('flt', b, a)), ('fneu', a, b)),
 ])
 
 # Float sizes
@@ -1144,8 +1255,21 @@ optimizations.extend([
    (('ieq', ('ineg', ('b2i', 'a@1')), -1), a),
    (('ine', ('ineg', ('b2i', 'a@1')), 0), a),
    (('ine', ('ineg', ('b2i', 'a@1')), -1), ('inot', a)),
+   (('ige', ('ineg', ('b2i', 'a@1')), 0), ('inot', a)),
+   (('ilt', ('ineg', ('b2i', 'a@1')), 0), a),
+   (('ult', 0, ('ineg', ('b2i', 'a@1'))), a),
    (('iand', ('ineg', ('b2i', a)), 1.0), ('b2f', a)),
    (('iand', ('ineg', ('b2i', a)), 1),   ('b2i', a)),
+
+   # With D3D booleans, imax is AND and umax is OR
+   (('imax', ('ineg', ('b2i', 'a@1')), ('ineg', ('b2i', 'b@1'))),
+    ('ineg', ('b2i', ('iand', a, b)))),
+   (('imin', ('ineg', ('b2i', 'a@1')), ('ineg', ('b2i', 'b@1'))),
+    ('ineg', ('b2i', ('ior', a, b)))),
+   (('umax', ('ineg', ('b2i', 'a@1')), ('ineg', ('b2i', 'b@1'))),
+    ('ineg', ('b2i', ('ior', a, b)))),
+   (('umin', ('ineg', ('b2i', 'a@1')), ('ineg', ('b2i', 'b@1'))),
+    ('ineg', ('b2i', ('iand', a, b)))),
 
    # Conversions
    (('i2b16', ('b2i', 'a@16')), a),
@@ -1357,6 +1481,15 @@ optimizations.extend([
 
    (('iadd', ('pack_half_2x16_split', a, 0), ('pack_half_2x16_split', 0, b)), ('pack_half_2x16_split', a, b)),
    (('ior',  ('pack_half_2x16_split', a, 0), ('pack_half_2x16_split', 0, b)), ('pack_half_2x16_split', a, b)),
+
+   (('extract_i8', ('pack_32_4x8_split', a, b, c, d), 0), ('i2i', a)),
+   (('extract_i8', ('pack_32_4x8_split', a, b, c, d), 1), ('i2i', b)),
+   (('extract_i8', ('pack_32_4x8_split', a, b, c, d), 2), ('i2i', c)),
+   (('extract_i8', ('pack_32_4x8_split', a, b, c, d), 3), ('i2i', d)),
+   (('extract_u8', ('pack_32_4x8_split', a, b, c, d), 0), ('u2u', a)),
+   (('extract_u8', ('pack_32_4x8_split', a, b, c, d), 1), ('u2u', b)),
+   (('extract_u8', ('pack_32_4x8_split', a, b, c, d), 2), ('u2u', c)),
+   (('extract_u8', ('pack_32_4x8_split', a, b, c, d), 3), ('u2u', d)),
 ])
 
 # After the ('extract_u8', a, 0) pattern, above, triggers, there will be
@@ -1459,9 +1592,9 @@ optimizations.extend([
    (('irhadd@64', a, b), ('isub', ('ior', a, b), ('ishr', ('ixor', a, b), 1)), 'options->lower_hadd64 || (options->lower_int64_options & nir_lower_iadd64) != 0'),
    (('urhadd@64', a, b), ('isub', ('ior', a, b), ('ushr', ('ixor', a, b), 1)), 'options->lower_hadd64 || (options->lower_int64_options & nir_lower_iadd64) != 0'),
 
-   (('uadd_sat@64', a, b), ('bcsel', ('ult', ('iadd', a, b), a), -1, ('iadd', a, b)), 'options->lower_add_sat || (options->lower_int64_options & nir_lower_iadd64) != 0'),
-   (('uadd_sat', a, b), ('bcsel', ('ult', ('iadd', a, b), a), -1, ('iadd', a, b)), 'options->lower_add_sat'),
-   (('usub_sat', a, b), ('bcsel', ('ult', a, b), 0, ('isub', a, b)), 'options->lower_add_sat'),
+   (('uadd_sat@64', a, b), ('bcsel', ('ult', ('iadd', a, b), a), -1, ('iadd', a, b)), 'options->lower_uadd_sat || (options->lower_int64_options & nir_lower_iadd64) != 0'),
+   (('uadd_sat', a, b), ('bcsel', ('ult', ('iadd', a, b), a), -1, ('iadd', a, b)), 'options->lower_uadd_sat'),
+   (('usub_sat', a, b), ('bcsel', ('ult', a, b), 0, ('isub', a, b)), 'options->lower_uadd_sat'),
    (('usub_sat@64', a, b), ('bcsel', ('ult', a, b), 0, ('isub', a, b)), 'options->lower_usub_sat64 || (options->lower_int64_options & nir_lower_iadd64) != 0'),
 
    # int64_t sum = a + b;
@@ -1781,10 +1914,10 @@ for bit_size in [8, 16, 32, 64]:
    optimizations += [
       (('iadd_sat@' + str(bit_size), a, b),
        ('bcsel', ('ige', b, 1), ('bcsel', ('ilt', ('iadd', a, b), a), intmax, ('iadd', a, b)),
-                                ('bcsel', ('ilt', a, ('iadd', a, b)), intmin, ('iadd', a, b))), 'options->lower_add_sat'),
+                                ('bcsel', ('ilt', a, ('iadd', a, b)), intmin, ('iadd', a, b))), 'options->lower_iadd_sat'),
       (('isub_sat@' + str(bit_size), a, b),
        ('bcsel', ('ilt', b, 0), ('bcsel', ('ilt', ('isub', a, b), a), intmax, ('isub', a, b)),
-                                ('bcsel', ('ilt', a, ('isub', a, b)), intmin, ('isub', a, b))), 'options->lower_add_sat'),
+                                ('bcsel', ('ilt', a, ('isub', a, b)), intmin, ('isub', a, b))), 'options->lower_iadd_sat'),
    ]
 
 invert = OrderedDict([('feq', 'fneu'), ('fneu', 'feq')])
@@ -2312,6 +2445,16 @@ late_optimizations = [
    (('feq',  ('fadd(is_used_once)', 'a(is_finite)', b), 0.0), ('feq',  a, ('fneg', b))),
    (('fneu', ('fadd(is_used_once)', 'a(is_finite)', b), 0.0), ('fneu', a, ('fneg', b))),
 
+   # This is how SpvOpFOrdNotEqual might be implemented.  Replace it with
+   # SpvOpLessOrGreater.
+   (('iand', ('fneu', a, b),   ('iand', ('feq', a, a), ('feq', b, b))), ('ior', ('!flt', a, b), ('!flt', b, a))),
+   (('iand', ('fneu', a, 0.0),          ('feq', a, a)                ), ('!flt', 0.0, ('fabs', a))),
+
+   # This is how SpvOpFUnordEqual might be implemented.  Replace it with
+   # !SpvOpLessOrGreater.
+   (('ior', ('feq', a, b),   ('ior', ('fneu', a, a), ('fneu', b, b))), ('inot', ('ior', ('!flt', a, b), ('!flt', b, a)))),
+   (('ior', ('feq', a, 0.0),         ('fneu', a, a),                ), ('inot', ('!flt', 0.0, ('fabs', a)))),
+
    # nir_lower_to_source_mods will collapse this, but its existence during the
    # optimization loop can prevent other optimizations.
    (('fneg', ('fneg', a)), a),
@@ -2466,6 +2609,11 @@ late_optimizations = [
    (('ishr', a, 0), a),
    (('ishr', a, -32), a),
    (('ushr', a, 0), a),
+
+   (('extract_i8', ('extract_i8', a, b), 0), ('extract_i8', a, b)),
+   (('extract_i8', ('extract_u8', a, b), 0), ('extract_i8', a, b)),
+   (('extract_u8', ('extract_i8', a, b), 0), ('extract_u8', a, b)),
+   (('extract_u8', ('extract_u8', a, b), 0), ('extract_u8', a, b)),
 ]
 
 # A few more extract cases we'd rather leave late
@@ -2570,6 +2718,7 @@ late_optimizations += [
   (('i2fmp', a), ('i2f16', a)),
   (('i2imp', a), ('u2u16', a)),
   (('u2fmp', a), ('u2f16', a)),
+  (('fisfinite', a), ('flt', ('fabs', a), float("inf"))),
 ]
 
 distribute_src_mods = [

@@ -46,9 +46,12 @@ enum zink_descriptor_type {
    ZINK_DESCRIPTOR_TYPE_SSBO,
    ZINK_DESCRIPTOR_TYPE_IMAGE,
    ZINK_DESCRIPTOR_TYPES,
+   ZINK_DESCRIPTOR_BINDLESS,
 };
 
-#define ZINK_MAX_DESCRIPTORS_PER_TYPE 32
+#define ZINK_MAX_DESCRIPTORS_PER_TYPE (32 * ZINK_SHADER_COUNT)
+
+#define ZINK_BINDLESS_IS_BUFFER(HANDLE) (HANDLE >= ZINK_MAX_BINDLESS_HANDLES)
 
 struct zink_descriptor_refs {
    struct util_dynarray refs;
@@ -88,9 +91,8 @@ struct zink_descriptor_state_key {
 };
 
 struct zink_descriptor_layout_key {
-   unsigned num_descriptors;
+   unsigned num_bindings;
    VkDescriptorSetLayoutBinding *bindings;
-   unsigned use_count;
 };
 
 struct zink_descriptor_layout {
@@ -99,16 +101,15 @@ struct zink_descriptor_layout {
 };
 
 struct zink_descriptor_pool_key {
+   unsigned use_count;
    struct zink_descriptor_layout_key *layout;
-   unsigned num_type_sizes;
-   VkDescriptorPoolSize *sizes;
+   VkDescriptorPoolSize sizes[2];
 };
 
 struct zink_descriptor_reference {
    void **ref;
    bool *invalid;
 };
-
 
 struct zink_descriptor_data {
    struct zink_descriptor_state gfx_descriptor_states[ZINK_SHADER_COUNT]; // keep incremental hashes here
@@ -129,15 +130,21 @@ struct zink_descriptor_data {
    struct zink_descriptor_layout *dummy_dsl;
    VkDescriptorSet dummy_set;
 
+   VkDescriptorSetLayout bindless_layout;
+   VkDescriptorPool bindless_pool;
+   VkDescriptorSet bindless_set;
+   bool bindless_bound;
+
    bool changed[2][ZINK_DESCRIPTOR_TYPES + 1];
+   bool has_fbfetch;
    struct zink_program *pg[2]; //gfx, compute
 };
 
 struct zink_program_descriptor_data {
    uint8_t push_usage;
-   VkDescriptorPoolSize sizes[6]; //zink_descriptor_size_index
-   struct zink_descriptor_layout_key *layout_key[ZINK_DESCRIPTOR_TYPES]; //push set doesn't need one
+   bool bindless;
    uint8_t binding_usage;
+   struct zink_descriptor_pool_key *pool_key[ZINK_DESCRIPTOR_TYPES]; //push set doesn't need one
    struct zink_descriptor_layout *layouts[ZINK_DESCRIPTOR_TYPES + 1];
    VkDescriptorUpdateTemplateKHR push_template;
 };
@@ -184,8 +191,6 @@ zink_descriptor_type_to_size_idx(enum zink_descriptor_type type)
    }
    unreachable("unknown type");
 }
-unsigned
-zink_descriptor_program_num_sizes(struct zink_program *pg, enum zink_descriptor_type type);
 bool
 zink_descriptor_layouts_init(struct zink_context *ctx);
 
@@ -202,15 +207,24 @@ struct zink_descriptor_layout *
 zink_descriptor_util_layout_get(struct zink_context *ctx, enum zink_descriptor_type type,
                       VkDescriptorSetLayoutBinding *bindings, unsigned num_bindings,
                       struct zink_descriptor_layout_key **layout_key);
+struct zink_descriptor_pool_key *
+zink_descriptor_util_pool_key_get(struct zink_context *ctx, enum zink_descriptor_type type,
+                                  struct zink_descriptor_layout_key *layout_key,
+                                  VkDescriptorPoolSize *sizes, unsigned num_type_sizes);
+void
+zink_descriptor_util_init_fbfetch(struct zink_context *ctx);
 bool
 zink_descriptor_util_push_layouts_get(struct zink_context *ctx, struct zink_descriptor_layout **dsls, struct zink_descriptor_layout_key **layout_keys);
 void
 zink_descriptor_util_init_null_set(struct zink_context *ctx, VkDescriptorSet desc_set);
-struct zink_resource *
-zink_get_resource_for_descriptor(struct zink_context *ctx, enum zink_descriptor_type type, enum pipe_shader_type shader, int idx);
 VkImageLayout
 zink_descriptor_util_image_layout_eval(const struct zink_resource *res, bool is_compute);
-
+void
+zink_descriptors_init_bindless(struct zink_context *ctx);
+void
+zink_descriptors_deinit_bindless(struct zink_context *ctx);
+void
+zink_descriptors_update_bindless(struct zink_context *ctx);
 /* these two can't be called in lazy mode */
 void
 zink_descriptor_set_refs_clear(struct zink_descriptor_refs *refs, void *ptr);
@@ -225,7 +239,7 @@ bool
 zink_descriptor_program_init(struct zink_context *ctx, struct zink_program *pg);
 
 void
-zink_descriptor_program_deinit(struct zink_screen *screen, struct zink_program *pg);
+zink_descriptor_program_deinit(struct zink_context *ctx, struct zink_program *pg);
 
 void
 zink_descriptors_update(struct zink_context *ctx, bool is_compute);
@@ -259,7 +273,7 @@ bool
 zink_descriptor_program_init_lazy(struct zink_context *ctx, struct zink_program *pg);
 
 void
-zink_descriptor_program_deinit_lazy(struct zink_screen *screen, struct zink_program *pg);
+zink_descriptor_program_deinit_lazy(struct zink_context *ctx, struct zink_program *pg);
 
 void
 zink_descriptors_update_lazy(struct zink_context *ctx, bool is_compute);
@@ -283,6 +297,8 @@ zink_descriptors_deinit_lazy(struct zink_context *ctx);
 
 void
 zink_descriptor_set_update_lazy(struct zink_context *ctx, struct zink_program *pg, enum zink_descriptor_type type, VkDescriptorSet set);
+void
+zink_descriptors_update_lazy_masked(struct zink_context *ctx, bool is_compute, uint8_t changed_sets, uint8_t bind_sets);
 #ifdef __cplusplus
 }
 #endif

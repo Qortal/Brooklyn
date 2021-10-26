@@ -30,8 +30,6 @@
 
 struct radv_shader_args {
    struct ac_shader_args ac;
-   struct radv_shader_info *shader_info;
-   const struct radv_nir_compiler_options *options;
 
    struct ac_arg descriptor_sets[MAX_SETS];
    struct ac_arg ring_offsets;
@@ -45,6 +43,9 @@ struct radv_shader_args {
    struct ac_arg ngg_viewport_scale[2];
    struct ac_arg ngg_viewport_translate[2];
 
+   struct ac_arg prolog_inputs;
+   struct ac_arg vs_inputs[MAX_VERTEX_ATTRIBS];
+
    bool is_gs_copy_shader;
    bool is_trap_handler_shader;
 };
@@ -55,5 +56,10 @@ radv_shader_args_from_ac(struct ac_shader_args *args)
    return container_of(args, struct radv_shader_args, ac);
 }
 
-void radv_declare_shader_args(struct radv_shader_args *args, gl_shader_stage stage,
-                              bool has_previous_stage, gl_shader_stage previous_stage);
+struct radv_nir_compiler_options;
+struct radv_shader_info;
+
+void radv_declare_shader_args(const struct radv_nir_compiler_options *options,
+                              struct radv_shader_info *info, gl_shader_stage stage,
+                              bool has_previous_stage, gl_shader_stage previous_stage,
+                              struct radv_shader_args *args);

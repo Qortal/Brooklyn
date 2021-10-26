@@ -47,17 +47,11 @@ build_nir_itob_compute_shader(struct radv_device *dev, bool is_3d)
    input_img->data.descriptor_set = 0;
    input_img->data.binding = 0;
 
-   nir_variable *output_img = nir_variable_create(b.shader, nir_var_uniform, img_type, "out_img");
+   nir_variable *output_img = nir_variable_create(b.shader, nir_var_image, img_type, "out_img");
    output_img->data.descriptor_set = 0;
    output_img->data.binding = 1;
 
-   nir_ssa_def *invoc_id = nir_load_local_invocation_id(&b);
-   nir_ssa_def *wg_id = nir_load_workgroup_id(&b, 32);
-   nir_ssa_def *block_size =
-      nir_imm_ivec4(&b, b.shader->info.workgroup_size[0], b.shader->info.workgroup_size[1],
-                    b.shader->info.workgroup_size[2], 0);
-
-   nir_ssa_def *global_id = nir_iadd(&b, nir_imul(&b, wg_id, block_size), invoc_id);
+   nir_ssa_def *global_id = get_global_ids(&b, is_3d ? 3 : 2);
 
    nir_ssa_def *offset =
       nir_load_push_constant(&b, is_3d ? 3 : 2, 32, nir_imm_int(&b, 0), .range = 16);
@@ -235,17 +229,11 @@ build_nir_btoi_compute_shader(struct radv_device *dev, bool is_3d)
    input_img->data.descriptor_set = 0;
    input_img->data.binding = 0;
 
-   nir_variable *output_img = nir_variable_create(b.shader, nir_var_uniform, img_type, "out_img");
+   nir_variable *output_img = nir_variable_create(b.shader, nir_var_image, img_type, "out_img");
    output_img->data.descriptor_set = 0;
    output_img->data.binding = 1;
 
-   nir_ssa_def *invoc_id = nir_load_local_invocation_id(&b);
-   nir_ssa_def *wg_id = nir_load_workgroup_id(&b, 32);
-   nir_ssa_def *block_size =
-      nir_imm_ivec4(&b, b.shader->info.workgroup_size[0], b.shader->info.workgroup_size[1],
-                    b.shader->info.workgroup_size[2], 0);
-
-   nir_ssa_def *global_id = nir_iadd(&b, nir_imul(&b, wg_id, block_size), invoc_id);
+   nir_ssa_def *global_id = get_global_ids(&b, is_3d ? 3 : 2);
 
    nir_ssa_def *offset =
       nir_load_push_constant(&b, is_3d ? 3 : 2, 32, nir_imm_int(&b, 0), .range = 16);
@@ -254,19 +242,17 @@ build_nir_btoi_compute_shader(struct radv_device *dev, bool is_3d)
    nir_ssa_def *pos_x = nir_channel(&b, global_id, 0);
    nir_ssa_def *pos_y = nir_channel(&b, global_id, 1);
 
-   nir_ssa_def *tmp = nir_imul(&b, pos_y, stride);
-   tmp = nir_iadd(&b, tmp, pos_x);
+   nir_ssa_def *buf_coord = nir_imul(&b, pos_y, stride);
+   buf_coord = nir_iadd(&b, buf_coord, pos_x);
 
-   nir_ssa_def *buf_coord = nir_vec4(&b, tmp, tmp, tmp, tmp);
-
-   nir_ssa_def *img_coord = nir_iadd(&b, global_id, offset);
+   nir_ssa_def *coord = nir_iadd(&b, global_id, offset);
    nir_ssa_def *input_img_deref = &nir_build_deref_var(&b, input_img)->dest.ssa;
 
    nir_tex_instr *tex = nir_tex_instr_create(b.shader, 3);
    tex->sampler_dim = GLSL_SAMPLER_DIM_BUF;
    tex->op = nir_texop_txf;
    tex->src[0].src_type = nir_tex_src_coord;
-   tex->src[0].src = nir_src_for_ssa(nir_channels(&b, buf_coord, 1));
+   tex->src[0].src = nir_src_for_ssa(buf_coord);
    tex->src[1].src_type = nir_tex_src_lod;
    tex->src[1].src = nir_src_for_ssa(nir_imm_int(&b, 0));
    tex->src[2].src_type = nir_tex_src_texture_deref;
@@ -279,6 +265,12 @@ build_nir_btoi_compute_shader(struct radv_device *dev, bool is_3d)
    nir_builder_instr_insert(&b, &tex->instr);
 
    nir_ssa_def *outval = &tex->dest.ssa;
+
+   nir_ssa_def *img_coord = nir_vec4(&b, nir_channel(&b, coord, 0),
+                                         nir_channel(&b, coord, 1),
+                                         is_3d ? nir_channel(&b, coord, 2) : nir_ssa_undef(&b, 1, 32),
+                                         nir_ssa_undef(&b, 1, 32));
+
    nir_image_deref_store(&b, &nir_build_deref_var(&b, output_img)->dest.ssa, img_coord,
                          nir_ssa_undef(&b, 1, 32), outval, nir_imm_int(&b, 0), .image_dim = dim);
 
@@ -417,17 +409,11 @@ build_nir_btoi_r32g32b32_compute_shader(struct radv_device *dev)
    input_img->data.descriptor_set = 0;
    input_img->data.binding = 0;
 
-   nir_variable *output_img = nir_variable_create(b.shader, nir_var_uniform, img_type, "out_img");
+   nir_variable *output_img = nir_variable_create(b.shader, nir_var_image, img_type, "out_img");
    output_img->data.descriptor_set = 0;
    output_img->data.binding = 1;
 
-   nir_ssa_def *invoc_id = nir_load_local_invocation_id(&b);
-   nir_ssa_def *wg_id = nir_load_workgroup_id(&b, 32);
-   nir_ssa_def *block_size =
-      nir_imm_ivec4(&b, b.shader->info.workgroup_size[0], b.shader->info.workgroup_size[1],
-                    b.shader->info.workgroup_size[2], 0);
-
-   nir_ssa_def *global_id = nir_iadd(&b, nir_imul(&b, wg_id, block_size), invoc_id);
+   nir_ssa_def *global_id = get_global_ids(&b, 2);
 
    nir_ssa_def *offset = nir_load_push_constant(&b, 2, 32, nir_imm_int(&b, 0), .range = 16);
    nir_ssa_def *pitch = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 8), .range = 16);
@@ -436,10 +422,8 @@ build_nir_btoi_r32g32b32_compute_shader(struct radv_device *dev)
    nir_ssa_def *pos_x = nir_channel(&b, global_id, 0);
    nir_ssa_def *pos_y = nir_channel(&b, global_id, 1);
 
-   nir_ssa_def *tmp = nir_imul(&b, pos_y, stride);
-   tmp = nir_iadd(&b, tmp, pos_x);
-
-   nir_ssa_def *buf_coord = nir_vec4(&b, tmp, tmp, tmp, tmp);
+   nir_ssa_def *buf_coord = nir_imul(&b, pos_y, stride);
+   buf_coord = nir_iadd(&b, buf_coord, pos_x);
 
    nir_ssa_def *img_coord = nir_iadd(&b, global_id, offset);
 
@@ -453,7 +437,7 @@ build_nir_btoi_r32g32b32_compute_shader(struct radv_device *dev)
    tex->sampler_dim = GLSL_SAMPLER_DIM_BUF;
    tex->op = nir_texop_txf;
    tex->src[0].src_type = nir_tex_src_coord;
-   tex->src[0].src = nir_src_for_ssa(nir_channels(&b, buf_coord, 1));
+   tex->src[0].src = nir_src_for_ssa(buf_coord);
    tex->src[1].src_type = nir_tex_src_lod;
    tex->src[1].src = nir_src_for_ssa(nir_imm_int(&b, 0));
    tex->src[2].src_type = nir_tex_src_texture_deref;
@@ -579,17 +563,11 @@ build_nir_itoi_compute_shader(struct radv_device *dev, bool is_3d, int samples)
    input_img->data.descriptor_set = 0;
    input_img->data.binding = 0;
 
-   nir_variable *output_img = nir_variable_create(b.shader, nir_var_uniform, img_type, "out_img");
+   nir_variable *output_img = nir_variable_create(b.shader, nir_var_image, img_type, "out_img");
    output_img->data.descriptor_set = 0;
    output_img->data.binding = 1;
 
-   nir_ssa_def *invoc_id = nir_load_local_invocation_id(&b);
-   nir_ssa_def *wg_id = nir_load_workgroup_id(&b, 32);
-   nir_ssa_def *block_size =
-      nir_imm_ivec4(&b, b.shader->info.workgroup_size[0], b.shader->info.workgroup_size[1],
-                    b.shader->info.workgroup_size[2], 0);
-
-   nir_ssa_def *global_id = nir_iadd(&b, nir_imul(&b, wg_id, block_size), invoc_id);
+   nir_ssa_def *global_id = get_global_ids(&b, is_3d ? 3 : 2);
 
    nir_ssa_def *src_offset =
       nir_load_push_constant(&b, is_3d ? 3 : 2, 32, nir_imm_int(&b, 0), .range = 24);
@@ -626,9 +604,14 @@ build_nir_itoi_compute_shader(struct radv_device *dev, bool is_3d, int samples)
       nir_builder_instr_insert(&b, &tex->instr);
    }
 
+   nir_ssa_def *img_coord = nir_vec4(&b, nir_channel(&b, dst_coord, 0),
+                                         nir_channel(&b, dst_coord, 1),
+                                         is_3d ? nir_channel(&b, dst_coord, 2) : nir_ssa_undef(&b, 1, 32),
+                                         nir_ssa_undef(&b, 1, 32));
+
    for (uint32_t i = 0; i < samples; i++) {
       nir_ssa_def *outval = &tex_instr[i]->dest.ssa;
-      nir_image_deref_store(&b, &nir_build_deref_var(&b, output_img)->dest.ssa, dst_coord,
+      nir_image_deref_store(&b, &nir_build_deref_var(&b, output_img)->dest.ssa, img_coord,
                             nir_imm_int(&b, i), outval, nir_imm_int(&b, 0), .image_dim = dim);
    }
 
@@ -781,17 +764,11 @@ build_nir_itoi_r32g32b32_compute_shader(struct radv_device *dev)
    input_img->data.binding = 0;
 
    nir_variable *output_img =
-      nir_variable_create(b.shader, nir_var_uniform, img_type, "output_img");
+      nir_variable_create(b.shader, nir_var_image, img_type, "output_img");
    output_img->data.descriptor_set = 0;
    output_img->data.binding = 1;
 
-   nir_ssa_def *invoc_id = nir_load_local_invocation_id(&b);
-   nir_ssa_def *wg_id = nir_load_workgroup_id(&b, 32);
-   nir_ssa_def *block_size =
-      nir_imm_ivec4(&b, b.shader->info.workgroup_size[0], b.shader->info.workgroup_size[1],
-                    b.shader->info.workgroup_size[2], 0);
-
-   nir_ssa_def *global_id = nir_iadd(&b, nir_imul(&b, wg_id, block_size), invoc_id);
+   nir_ssa_def *global_id = get_global_ids(&b, 2);
 
    nir_ssa_def *src_offset = nir_load_push_constant(&b, 3, 32, nir_imm_int(&b, 0), .range = 24);
    nir_ssa_def *dst_offset = nir_load_push_constant(&b, 3, 32, nir_imm_int(&b, 12), .range = 24);
@@ -813,17 +790,13 @@ build_nir_itoi_r32g32b32_compute_shader(struct radv_device *dev)
    for (int chan = 0; chan < 3; chan++) {
       /* src */
       nir_ssa_def *src_local_pos = nir_iadd(&b, src_global_pos, nir_imm_int(&b, chan));
-
-      nir_ssa_def *src_coord =
-         nir_vec4(&b, src_local_pos, src_local_pos, src_local_pos, src_local_pos);
-
       nir_ssa_def *input_img_deref = &nir_build_deref_var(&b, input_img)->dest.ssa;
 
       nir_tex_instr *tex = nir_tex_instr_create(b.shader, 3);
       tex->sampler_dim = GLSL_SAMPLER_DIM_BUF;
       tex->op = nir_texop_txf;
       tex->src[0].src_type = nir_tex_src_coord;
-      tex->src[0].src = nir_src_for_ssa(nir_channels(&b, src_coord, 1));
+      tex->src[0].src = nir_src_for_ssa(src_local_pos);
       tex->src[1].src_type = nir_tex_src_lod;
       tex->src[1].src = nir_src_for_ssa(nir_imm_int(&b, 0));
       tex->src[2].src_type = nir_tex_src_texture_deref;
@@ -947,28 +920,20 @@ build_nir_cleari_compute_shader(struct radv_device *dev, bool is_3d, int samples
    b.shader->info.workgroup_size[1] = 8;
    b.shader->info.workgroup_size[2] = 1;
 
-   nir_variable *output_img = nir_variable_create(b.shader, nir_var_uniform, img_type, "out_img");
+   nir_variable *output_img = nir_variable_create(b.shader, nir_var_image, img_type, "out_img");
    output_img->data.descriptor_set = 0;
    output_img->data.binding = 0;
 
-   nir_ssa_def *invoc_id = nir_load_local_invocation_id(&b);
-   nir_ssa_def *wg_id = nir_load_workgroup_id(&b, 32);
-   nir_ssa_def *block_size =
-      nir_imm_ivec4(&b, b.shader->info.workgroup_size[0], b.shader->info.workgroup_size[1],
-                    b.shader->info.workgroup_size[2], 0);
-
-   nir_ssa_def *global_id = nir_iadd(&b, nir_imul(&b, wg_id, block_size), invoc_id);
+   nir_ssa_def *global_id = get_global_ids(&b, 2);
 
    nir_ssa_def *clear_val = nir_load_push_constant(&b, 4, 32, nir_imm_int(&b, 0), .range = 20);
    nir_ssa_def *layer = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 16), .range = 20);
 
-   nir_ssa_def *global_z = nir_iadd(&b, nir_channel(&b, global_id, 2), layer);
-
    nir_ssa_def *comps[4];
    comps[0] = nir_channel(&b, global_id, 0);
    comps[1] = nir_channel(&b, global_id, 1);
-   comps[2] = global_z;
-   comps[3] = nir_imm_int(&b, 0);
+   comps[2] = layer;
+   comps[3] = nir_ssa_undef(&b, 1, 32);
    global_id = nir_vec(&b, comps, 4);
 
    for (uint32_t i = 0; i < samples; i++) {
@@ -1113,17 +1078,11 @@ build_nir_cleari_r32g32b32_compute_shader(struct radv_device *dev)
    b.shader->info.workgroup_size[1] = 8;
    b.shader->info.workgroup_size[2] = 1;
 
-   nir_variable *output_img = nir_variable_create(b.shader, nir_var_uniform, img_type, "out_img");
+   nir_variable *output_img = nir_variable_create(b.shader, nir_var_image, img_type, "out_img");
    output_img->data.descriptor_set = 0;
    output_img->data.binding = 0;
 
-   nir_ssa_def *invoc_id = nir_load_local_invocation_id(&b);
-   nir_ssa_def *wg_id = nir_load_workgroup_id(&b, 32);
-   nir_ssa_def *block_size =
-      nir_imm_ivec4(&b, b.shader->info.workgroup_size[0], b.shader->info.workgroup_size[1],
-                    b.shader->info.workgroup_size[2], 0);
-
-   nir_ssa_def *global_id = nir_iadd(&b, nir_imul(&b, wg_id, block_size), invoc_id);
+   nir_ssa_def *global_id = get_global_ids(&b, 2);
 
    nir_ssa_def *clear_val = nir_load_push_constant(&b, 3, 32, nir_imm_int(&b, 0), .range = 16);
    nir_ssa_def *stride = nir_load_push_constant(&b, 1, 32, nir_imm_int(&b, 12), .range = 16);
@@ -1288,18 +1247,22 @@ fail_itob:
 
 static void
 create_iview(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_blit2d_surf *surf,
-             struct radv_image_view *iview)
+             struct radv_image_view *iview, VkFormat format, VkImageAspectFlagBits aspects)
 {
    VkImageViewType view_type = cmd_buffer->device->physical_device->rad_info.chip_class < GFX9
                                   ? VK_IMAGE_VIEW_TYPE_2D
                                   : radv_meta_get_view_type(surf->image);
+
+   if (format == VK_FORMAT_UNDEFINED)
+      format = surf->format;
+
    radv_image_view_init(iview, cmd_buffer->device,
                         &(VkImageViewCreateInfo){
                            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
                            .image = radv_image_to_handle(surf->image),
                            .viewType = view_type,
-                           .format = surf->format,
-                           .subresourceRange = {.aspectMask = surf->aspect_mask,
+                           .format = format,
+                           .subresourceRange = {.aspectMask = aspects,
                                                 .baseMipLevel = surf->level,
                                                 .levelCount = 1,
                                                 .baseArrayLayer = surf->layer,
@@ -1330,7 +1293,9 @@ create_buffer_from_image(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_bl
                          VkBufferUsageFlagBits usage, VkBuffer *buffer)
 {
    struct radv_device *device = cmd_buffer->device;
-   struct radv_device_memory mem = {.bo = surf->image->bo};
+   struct radv_device_memory mem;
+
+   radv_device_memory_init(&mem, device, surf->image->bo);
 
    radv_CreateBuffer(radv_device_to_handle(device),
                      &(VkBufferCreateInfo){
@@ -1349,6 +1314,8 @@ create_buffer_from_image(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_bl
                              .memory = radv_device_memory_to_handle(&mem),
                              .memoryOffset = surf->image->offset,
                           }});
+
+   radv_device_memory_finish(&mem);
 }
 
 static void
@@ -1440,7 +1407,7 @@ radv_meta_image_to_buffer(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_b
    struct radv_image_view src_view;
    struct radv_buffer_view dst_view;
 
-   create_iview(cmd_buffer, src, &src_view);
+   create_iview(cmd_buffer, src, &src_view, VK_FORMAT_UNDEFINED, src->aspect_mask);
    create_bview(cmd_buffer, dst->buffer, dst->offset, dst->format, &dst_view);
    itob_bind_descriptors(cmd_buffer, &src_view, &dst_view);
 
@@ -1458,6 +1425,9 @@ radv_meta_image_to_buffer(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_b
 
       radv_unaligned_dispatch(cmd_buffer, rects[r].width, rects[r].height, 1);
    }
+
+   radv_image_view_finish(&src_view);
+   radv_buffer_view_finish(&dst_view);
 }
 
 static void
@@ -1533,6 +1503,8 @@ radv_meta_buffer_to_image_cs_r32g32b32(struct radv_cmd_buffer *cmd_buffer,
       radv_unaligned_dispatch(cmd_buffer, rects[r].width, rects[r].height, 1);
    }
 
+   radv_buffer_view_finish(&src_view);
+   radv_buffer_view_finish(&dst_view);
    radv_DestroyBuffer(radv_device_to_handle(device), buffer, NULL);
 }
 
@@ -1586,7 +1558,7 @@ radv_meta_buffer_to_image_cs(struct radv_cmd_buffer *cmd_buffer,
    }
 
    create_bview(cmd_buffer, src->buffer, src->offset, src->format, &src_view);
-   create_iview(cmd_buffer, dst, &dst_view);
+   create_iview(cmd_buffer, dst, &dst_view, VK_FORMAT_UNDEFINED, dst->aspect_mask);
    btoi_bind_descriptors(cmd_buffer, &src_view, &dst_view);
 
    if (device->physical_device->rad_info.chip_class >= GFX9 && dst->image->type == VK_IMAGE_TYPE_3D)
@@ -1607,6 +1579,9 @@ radv_meta_buffer_to_image_cs(struct radv_cmd_buffer *cmd_buffer,
 
       radv_unaligned_dispatch(cmd_buffer, rects[r].width, rects[r].height, 1);
    }
+
+   radv_image_view_finish(&dst_view);
+   radv_buffer_view_finish(&src_view);
 }
 
 static void
@@ -1685,6 +1660,8 @@ radv_meta_image_to_image_cs_r32g32b32(struct radv_cmd_buffer *cmd_buffer,
       radv_unaligned_dispatch(cmd_buffer, rects[r].width, rects[r].height, 1);
    }
 
+   radv_buffer_view_finish(&src_view);
+   radv_buffer_view_finish(&dst_view);
    radv_DestroyBuffer(radv_device_to_handle(device), src_buffer, NULL);
    radv_DestroyBuffer(radv_device_to_handle(device), dst_buffer, NULL);
 }
@@ -1741,27 +1718,39 @@ radv_meta_image_to_image_cs(struct radv_cmd_buffer *cmd_buffer, struct radv_meta
       return;
    }
 
-   create_iview(cmd_buffer, src, &src_view);
-   create_iview(cmd_buffer, dst, &dst_view);
+   u_foreach_bit(i, dst->aspect_mask) {
+      unsigned aspect_mask = 1u << i;
+      VkFormat depth_format = 0;
+      if (aspect_mask == VK_IMAGE_ASPECT_STENCIL_BIT)
+         depth_format = vk_format_stencil_only(dst->image->vk_format);
+      else if (aspect_mask == VK_IMAGE_ASPECT_DEPTH_BIT)
+         depth_format = vk_format_depth_only(dst->image->vk_format);
 
-   itoi_bind_descriptors(cmd_buffer, &src_view, &dst_view);
+      create_iview(cmd_buffer, src, &src_view, depth_format, aspect_mask);
+      create_iview(cmd_buffer, dst, &dst_view, depth_format, aspect_mask);
 
-   VkPipeline pipeline = cmd_buffer->device->meta_state.itoi.pipeline[samples_log2];
-   if (device->physical_device->rad_info.chip_class >= GFX9 &&
-       (src->image->type == VK_IMAGE_TYPE_3D || dst->image->type == VK_IMAGE_TYPE_3D))
-      pipeline = cmd_buffer->device->meta_state.itoi.pipeline_3d;
-   radv_CmdBindPipeline(radv_cmd_buffer_to_handle(cmd_buffer), VK_PIPELINE_BIND_POINT_COMPUTE,
-                        pipeline);
+      itoi_bind_descriptors(cmd_buffer, &src_view, &dst_view);
 
-   for (unsigned r = 0; r < num_rects; ++r) {
-      unsigned push_constants[6] = {
-         rects[r].src_x, rects[r].src_y, src->layer, rects[r].dst_x, rects[r].dst_y, dst->layer,
-      };
-      radv_CmdPushConstants(radv_cmd_buffer_to_handle(cmd_buffer),
-                            device->meta_state.itoi.img_p_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
-                            24, push_constants);
+      VkPipeline pipeline = cmd_buffer->device->meta_state.itoi.pipeline[samples_log2];
+      if (device->physical_device->rad_info.chip_class >= GFX9 &&
+          (src->image->type == VK_IMAGE_TYPE_3D || dst->image->type == VK_IMAGE_TYPE_3D))
+         pipeline = cmd_buffer->device->meta_state.itoi.pipeline_3d;
+      radv_CmdBindPipeline(radv_cmd_buffer_to_handle(cmd_buffer), VK_PIPELINE_BIND_POINT_COMPUTE,
+                           pipeline);
 
-      radv_unaligned_dispatch(cmd_buffer, rects[r].width, rects[r].height, 1);
+      for (unsigned r = 0; r < num_rects; ++r) {
+         unsigned push_constants[6] = {
+            rects[r].src_x, rects[r].src_y, src->layer, rects[r].dst_x, rects[r].dst_y, dst->layer,
+         };
+         radv_CmdPushConstants(radv_cmd_buffer_to_handle(cmd_buffer),
+                               device->meta_state.itoi.img_p_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                               24, push_constants);
+
+         radv_unaligned_dispatch(cmd_buffer, rects[r].width, rects[r].height, 1);
+      }
+
+      radv_image_view_finish(&src_view);
+      radv_image_view_finish(&dst_view);
    }
 }
 
@@ -1823,6 +1812,7 @@ radv_meta_clear_image_cs_r32g32b32(struct radv_cmd_buffer *cmd_buffer,
 
    radv_unaligned_dispatch(cmd_buffer, dst->image->info.width, dst->image->info.height, 1);
 
+   radv_buffer_view_finish(&dst_view);
    radv_DestroyBuffer(radv_device_to_handle(device), buffer, NULL);
 }
 
@@ -1866,7 +1856,7 @@ radv_meta_clear_image_cs(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_bl
       return;
    }
 
-   create_iview(cmd_buffer, dst, &dst_iview);
+   create_iview(cmd_buffer, dst, &dst_iview, VK_FORMAT_UNDEFINED, dst->aspect_mask);
    cleari_bind_descriptors(cmd_buffer, &dst_iview);
 
    VkPipeline pipeline = cmd_buffer->device->meta_state.cleari.pipeline[samples_log2];
@@ -1889,4 +1879,6 @@ radv_meta_clear_image_cs(struct radv_cmd_buffer *cmd_buffer, struct radv_meta_bl
                          push_constants);
 
    radv_unaligned_dispatch(cmd_buffer, dst->image->info.width, dst->image->info.height, 1);
+
+   radv_image_view_finish(&dst_iview);
 }

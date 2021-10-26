@@ -234,8 +234,9 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
       if (list_is_empty(&block->instr_list) && (opc_cat(n->opc) >= 5))
          ir3_NOP(block);
 
-      if (ctx->compiler->samgq_workaround && ctx->type == MESA_SHADER_VERTEX &&
-          n->opc == OPC_SAMGQ) {
+      if (ctx->compiler->samgq_workaround &&
+          ctx->type != MESA_SHADER_FRAGMENT &&
+          ctx->type != MESA_SHADER_COMPUTE && n->opc == OPC_SAMGQ) {
          struct ir3_instruction *samgp;
 
          list_delinit(&n->node);
@@ -292,8 +293,7 @@ legalize_block(struct ir3_legalize_ctx *ctx, struct ir3_block *block)
        */
       if (is_tex(n) || is_sfu(n) || is_mem(n)) {
          foreach_src (reg, n) {
-            if (reg_gpr(reg))
-               regmask_set(&state->needs_ss_war, reg);
+            regmask_set(&state->needs_ss_war, reg);
          }
       }
 
@@ -508,6 +508,16 @@ retarget_jump(struct ir3_instruction *instr, struct ir3_block *new_target)
    } else {
       debug_assert(cur_block->successors[1] == old_target);
       cur_block->successors[1] = new_target;
+   }
+
+   /* also update physical_successors.. we don't really need them at
+    * this stage, but it keeps ir3_validate happy:
+    */
+   if (cur_block->physical_successors[0] == old_target) {
+      cur_block->physical_successors[0] = new_target;
+   } else {
+      debug_assert(cur_block->physical_successors[1] == old_target);
+      cur_block->physical_successors[1] = new_target;
    }
 
    /* update new target's predecessors: */

@@ -216,7 +216,7 @@ static boolean r300_reserve_cs_dwords(struct r300_context *r300,
     cs_dwords += r300_get_num_cs_end_dwords(r300);
 
     /* Reserve requested CS space. */
-    if (!r300->rws->cs_check_space(&r300->cs, cs_dwords, false)) {
+    if (!r300->rws->cs_check_space(&r300->cs, cs_dwords)) {
         r300_flush(&r300->context, PIPE_FLUSH_ASYNC, NULL);
         flushed = TRUE;
     }
@@ -886,7 +886,7 @@ static void r300_swtcl_draw_vbo(struct pipe_context* pipe,
 
     r300_update_derived_state(r300);
 
-    draw_vbo(r300->draw, info, drawid_offset, NULL, &draw, 1);
+    draw_vbo(r300->draw, info, drawid_offset, NULL, &draw, 1, 0);
     draw_flush(r300->draw);
 }
 

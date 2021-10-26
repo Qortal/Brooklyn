@@ -431,6 +431,8 @@ ttn_emit_declaration(struct ttn_compile *c)
                if (var->data.location == VARYING_SLOT_FOGC ||
                    var->data.location == VARYING_SLOT_PSIZ) {
                   var->type = glsl_float_type();
+               } else if (var->data.location == VARYING_SLOT_LAYER) {
+                  var->type = glsl_int_type();
                }
             }
 
@@ -821,7 +823,7 @@ ttn_get_dest(struct ttn_compile *c, struct tgsi_full_dst_register *tgsi_fdst)
    dest.saturate = false;
 
    if (tgsi_dst->Indirect && (tgsi_dst->File != TGSI_FILE_TEMPORARY)) {
-      nir_src *indirect = ralloc(c->build.shader, nir_src);
+      nir_src *indirect = malloc(sizeof(nir_src));
       *indirect = nir_src_for_ssa(ttn_src_for_indirect(c, &tgsi_fdst->Indirect));
       dest.dest.reg.indirect = indirect;
    }
@@ -1278,7 +1280,7 @@ get_image_var(struct ttn_compile *c, int binding,
    if (!var) {
       const struct glsl_type *type = glsl_image_type(dim, is_array, base_type);
 
-      var = nir_variable_create(c->build.shader, nir_var_uniform, type, "image");
+      var = nir_variable_create(c->build.shader, nir_var_image, type, "image");
       var->data.binding = binding;
       var->data.explicit_binding = true;
       var->data.access = access;
@@ -2219,8 +2221,9 @@ ttn_add_output_stores(struct ttn_compile *c)
          else if (var->data.location == FRAG_RESULT_SAMPLE_MASK)
             store_value = nir_channel(b, store_value, 0);
       } else {
-         /* FOGC and PSIZ are scalar values */
+         /* FOGC, LAYER, and PSIZ are scalar values */
          if (var->data.location == VARYING_SLOT_FOGC ||
+             var->data.location == VARYING_SLOT_LAYER ||
              var->data.location == VARYING_SLOT_PSIZ) {
             store_value = nir_channel(b, store_value, 0);
          }
@@ -2483,7 +2486,8 @@ ttn_finalize_nir(struct ttn_compile *c, struct pipe_screen *screen)
       NIR_PASS_V(nir, nir_lower_samplers);
 
    if (screen->finalize_nir) {
-      screen->finalize_nir(screen, nir);
+      char *msg = screen->finalize_nir(screen, nir);
+      free(msg);
    } else {
       ttn_optimize_nir(nir);
       nir_shader_gather_info(nir, c->build.impl);

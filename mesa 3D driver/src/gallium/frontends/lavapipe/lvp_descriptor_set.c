@@ -65,7 +65,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDescriptorSetLayout(
    set_layout = vk_zalloc2(&device->vk.alloc, pAllocator, size, 8,
                            VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (!set_layout)
-      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    vk_object_base_init(&device->vk, &set_layout->base,
                        VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT);
@@ -86,7 +86,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDescriptorSetLayout(
    if (result != VK_SUCCESS) {
       vk_object_base_finish(&set_layout->base);
       vk_free2(&device->vk.alloc, pAllocator, set_layout);
-      return vk_error(device->instance, result);
+      return vk_error(device, result);
    }
 
    uint32_t dynamic_offset_count = 0;
@@ -218,7 +218,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreatePipelineLayout(
    layout = vk_alloc2(&device->vk.alloc, pAllocator, sizeof(*layout), 8,
                        VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (layout == NULL)
-      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    vk_object_base_init(&device->vk, &layout->base,
                        VK_OBJECT_TYPE_PIPELINE_LAYOUT);
@@ -271,7 +271,7 @@ lvp_descriptor_set_create(struct lvp_device *device,
    set = vk_alloc(&device->vk.alloc /* XXX: Use the pool */, size, 8,
                    VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (!set)
-      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    /* A descriptor set may not be 100% filled. Clear the set so we can can
     * later detect holes in it.
@@ -489,7 +489,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDescriptorPool(
    pool = vk_zalloc2(&device->vk.alloc, pAllocator, size, 8,
                      VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (!pool)
-      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    vk_object_base_init(&device->vk, &pool->base,
                        VK_OBJECT_TYPE_DESCRIPTOR_POOL);
@@ -559,120 +559,9 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDescriptorUpdateTemplate(VkDevice _devi
 
    templ = vk_alloc2(&device->vk.alloc, pAllocator, size, 8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (!templ)
-      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    vk_object_base_init(&device->vk, &templ->base,
                        VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE);
 
-   templ->type = pCreateInfo->templateType;
-   templ->bind_point = pCreateInfo->pipelineBindPoint;
-   templ->set = pCreateInfo->set;
-   /* This parameter is ignored if templateType is not VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR */
-   if (pCreateInfo->templateType == VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS_KHR)
-      templ->pipeline_layout = lvp_pipeline_layout_from_handle(pCreateInfo->pipelineLayout);
-   else
-      templ->pipeline_layout = NULL;
-   templ->entry_count = entry_count;
-
-   VkDescriptorUpdateTemplateEntry *entries = (VkDescriptorUpdateTemplateEntry *)(templ + 1);
-   for (unsigned i = 0; i < entry_count; i++) {
-      entries[i] = pCreateInfo->pDescriptorUpdateEntries[i];
-   }
-
-   *pDescriptorUpdateTemplate = lvp_descriptor_update_template_to_handle(templ);
-   return VK_SUCCESS;
-}
-
-VKAPI_ATTR void VKAPI_CALL lvp_DestroyDescriptorUpdateTemplate(VkDevice _device,
-                                         VkDescriptorUpdateTemplate descriptorUpdateTemplate,
-                                         const VkAllocationCallbacks *pAllocator)
-{
-   LVP_FROM_HANDLE(lvp_device, device, _device);
-   LVP_FROM_HANDLE(lvp_descriptor_update_template, templ, descriptorUpdateTemplate);
-
-   if (!templ)
-      return;
-
-   vk_object_base_finish(&templ->base);
-   vk_free2(&device->vk.alloc, pAllocator, templ);
-}
-
-VKAPI_ATTR void VKAPI_CALL lvp_UpdateDescriptorSetWithTemplate(VkDevice _device,
-                                         VkDescriptorSet descriptorSet,
-                                         VkDescriptorUpdateTemplate descriptorUpdateTemplate,
-                                         const void *pData)
-{
-   LVP_FROM_HANDLE(lvp_descriptor_set, set, descriptorSet);
-   LVP_FROM_HANDLE(lvp_descriptor_update_template, templ, descriptorUpdateTemplate);
-   uint32_t i, j;
-
-   for (i = 0; i < templ->entry_count; ++i) {
-      VkDescriptorUpdateTemplateEntry *entry = &templ->entry[i];
-      const uint8_t *pSrc = ((const uint8_t *) pData) + entry->offset;
-      const struct lvp_descriptor_set_binding_layout *bind_layout =
-         &set->layout->binding[entry->dstBinding];
-      struct lvp_descriptor *desc =
-         &set->descriptors[bind_layout->descriptor_index];
-      for (j = 0; j < entry->descriptorCount; ++j) {
-         unsigned idx = j + entry->dstArrayElement;
-         switch (entry->descriptorType) {
-         case VK_DESCRIPTOR_TYPE_SAMPLER: {
-            LVP_FROM_HANDLE(lvp_sampler, sampler,
-                            *(VkSampler *)pSrc);
-            desc[idx] = (struct lvp_descriptor) {
-               .type = VK_DESCRIPTOR_TYPE_SAMPLER,
-               .info.sampler = sampler,
-            };
-            break;
-         }
-         case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: {
-            VkDescriptorImageInfo *info = (VkDescriptorImageInfo *)pSrc;
-            desc[idx] = (struct lvp_descriptor) {
-               .type = entry->descriptorType,
-               .info.iview = lvp_image_view_from_handle(info->imageView),
-               .info.sampler = lvp_sampler_from_handle(info->sampler),
-            };
-            break;
-         }
-         case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
-         case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-         case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT: {
-            LVP_FROM_HANDLE(lvp_image_view, iview,
-                            ((VkDescriptorImageInfo *)pSrc)->imageView);
-            desc[idx] = (struct lvp_descriptor) {
-               .type = entry->descriptorType,
-               .info.iview = iview,
-            };
-            break;
-         }
-         case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
-         case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER: {
-            LVP_FROM_HANDLE(lvp_buffer_view, bview,
-                            *(VkBufferView *)pSrc);
-            desc[idx] = (struct lvp_descriptor) {
-               .type = entry->descriptorType,
-               .info.buffer_view = bview,
-            };
-            break;
-         }
-
-         case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
-         case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-         case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
-         case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC: {
-            VkDescriptorBufferInfo *info = (VkDescriptorBufferInfo *)pSrc;
-            desc[idx] = (struct lvp_descriptor) {
-               .type = entry->descriptorType,
-               .info.offset = info->offset,
-               .info.buffer = lvp_buffer_from_handle(info->buffer),
-               .info.range =  info->range,
-            };
-            break;
-         }
-         default:
-            break;
-         }
-         pSrc += entry->stride;
-      }
-   }
-}
+   templ->type = pCreateInfo->

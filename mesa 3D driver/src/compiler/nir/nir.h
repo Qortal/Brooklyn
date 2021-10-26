@@ -120,26 +120,35 @@ typedef struct {
 } nir_state_slot;
 
 typedef enum {
-   nir_var_shader_in       = (1 << 0),
-   nir_var_shader_out      = (1 << 1),
-   nir_var_shader_temp     = (1 << 2),
-   nir_var_function_temp   = (1 << 3),
-   nir_var_uniform         = (1 << 4),
-   nir_var_mem_ubo         = (1 << 5),
-   nir_var_system_value    = (1 << 6),
-   nir_var_mem_ssbo        = (1 << 7),
-   nir_var_mem_shared      = (1 << 8),
-   nir_var_mem_global      = (1 << 9),
+   nir_var_system_value    = (1 << 0),
+   nir_var_uniform         = (1 << 1),
+   nir_var_shader_in       = (1 << 2),
+   nir_var_shader_out      = (1 << 3),
+   nir_var_image           = (1 << 4),
+   /** Incoming call or ray payload data for ray-tracing shaders */
+   nir_var_shader_call_data = (1 << 5),
+   /** Ray hit attributes */
+   nir_var_ray_hit_attrib  = (1 << 6),
+
+   /* Modes named nir_var_mem_* have explicit data layout */
+   nir_var_mem_ubo         = (1 << 7),
+   nir_var_mem_push_const  = (1 << 8),
+   nir_var_mem_ssbo        = (1 << 9),
+   nir_var_mem_constant    = (1 << 10),
+
+   /* Generic modes intentionally come last. See encode_dref_modes() in
+    * nir_serialize.c for more details.
+    */
+   nir_var_shader_temp     = (1 << 11),
+   nir_var_function_temp   = (1 << 12),
+   nir_var_mem_shared      = (1 << 13),
+   nir_var_mem_global      = (1 << 14),
+
    nir_var_mem_generic     = (nir_var_shader_temp |
                               nir_var_function_temp |
                               nir_var_mem_shared |
                               nir_var_mem_global),
-   nir_var_mem_push_const  = (1 << 10), /* not actually used for variables */
-   nir_var_mem_constant    = (1 << 11),
-   /** Incoming call or ray payload data for ray-tracing shaders */
-   nir_var_shader_call_data = (1 << 12),
-   /** Ray hit attributes */
-   nir_var_ray_hit_attrib  = (1 << 13),
+
    nir_var_read_only_modes = nir_var_shader_in | nir_var_uniform |
                              nir_var_system_value | nir_var_mem_constant |
                              nir_var_mem_ubo,
@@ -147,7 +156,7 @@ typedef enum {
    nir_var_vec_indexable_modes = nir_var_mem_ubo | nir_var_mem_ssbo |
                                  nir_var_mem_shared | nir_var_mem_global |
                                  nir_var_mem_push_const,
-   nir_num_variable_modes  = 14,
+   nir_num_variable_modes  = 15,
    nir_var_all             = (1 << nir_num_variable_modes) - 1,
 } nir_variable_mode;
 MESA_DEFINE_CPP_ENUM_BITFIELD_OPERATORS(nir_variable_mode)
@@ -356,7 +365,7 @@ typedef struct nir_variable {
        *
        * \sa nir_variable_mode
        */
-      unsigned mode:14;
+      unsigned mode:15;
 
       /**
        * Is the variable read-only?
@@ -495,6 +504,12 @@ typedef struct nir_variable {
       unsigned per_view:1;
 
       /**
+       * Whether the variable is per-primitive.
+       * Can be use by Mesh Shader outputs and corresponding Fragment Shader inputs.
+       */
+      unsigned per_primitive:1;
+
+      /**
        * \brief Layout qualifier for gl_FragDepth. See nir_depth_layout.
        *
        * This is not equal to \c ir_depth_layout_none if and only if this
@@ -546,6 +561,9 @@ typedef struct nir_variable {
        *   - Geometry shader output: one of the values from \c gl_varying_slot.
        *   - Fragment shader input: one of the values from \c gl_varying_slot.
        *   - Fragment shader output: one of the values from \c gl_frag_result.
+       *   - Task shader output: one of the values from \c gl_varying_slot.
+       *   - Mesh shader input: one of the values from \c gl_varying_slot.
+       *   - Mesh shader output: one of the values from \c gl_varying_slot.
        *   - Uniforms: Per-stage uniform slot number for default uniform block.
        *   - Uniforms: Index within the uniform block definition for UBO members.
        *   - Non-UBO Uniforms: uniform slot number.
@@ -558,7 +576,8 @@ typedef struct nir_variable {
 
       /**
        * The actual location of the variable in the IR. Only valid for inputs,
-       * outputs, and uniforms (including samplers and images).
+       * outputs, uniforms (including samplers and images), and for UBO and SSBO
+       * variables in GLSL.
        */
       unsigned driver_location;
 
@@ -704,6 +723,12 @@ _nir_shader_variable_has_mode(nir_variable *var, unsigned modes)
 #define nir_foreach_uniform_variable_safe(var, shader) \
    nir_foreach_variable_with_modes_safe(var, shader, nir_var_uniform)
 
+#define nir_foreach_image_variable(var, shader) \
+   nir_foreach_variable_with_modes(var, shader, nir_var_image)
+
+#define nir_foreach_image_variable_safe(var, shader) \
+   nir_foreach_variable_with_modes_safe(var, shader, nir_var_image)
+
 static inline bool
 nir_variable_is_global(const nir_variable *var)
 {
@@ -758,6 +783,7 @@ typedef enum PACKED {
 
 typedef struct nir_instr {
    struct exec_node node;
+   struct list_head gc_node;
    struct nir_block *block;
    nir_instr_type type;
 
@@ -1016,8 +1042,8 @@ nir_is_sequential_comp_swizzle(uint8_t *swiz, unsigned nr_comp)
    return true;
 }
 
-void nir_src_copy(nir_src *dest, const nir_src *src, void *instr_or_if);
-void nir_dest_copy(nir_dest *dest, const nir_dest *src, nir_instr *instr);
+void nir_src_copy(nir_src *dest, const nir_src *src);
+void nir_dest_copy(nir_dest *dest, const nir_dest *src);
 
 typedef struct {
    /** Base source */
@@ -1159,6 +1185,7 @@ nir_get_nir_type_for_glsl_base_type(enum glsl_base_type base_type)
       break;
 
    case GLSL_TYPE_SAMPLER:
+   case GLSL_TYPE_TEXTURE:
    case GLSL_TYPE_IMAGE:
    case GLSL_TYPE_ATOMIC_UINT:
    case GLSL_TYPE_STRUCT:
@@ -1446,10 +1473,8 @@ typedef struct nir_alu_instr {
    nir_alu_src src[];
 } nir_alu_instr;
 
-void nir_alu_src_copy(nir_alu_src *dest, const nir_alu_src *src,
-                      nir_alu_instr *instr);
-void nir_alu_dest_copy(nir_alu_dest *dest, const nir_alu_dest *src,
-                       nir_alu_instr *instr);
+void nir_alu_src_copy(nir_alu_src *dest, const nir_alu_src *src);
+void nir_alu_dest_copy(nir_alu_dest *dest, const nir_alu_dest *src);
 
 bool nir_alu_instr_is_copy(nir_alu_instr *instr);
 
@@ -2172,8 +2197,8 @@ typedef enum {
                                   * identical.
                                   */
    nir_texop_tex_prefetch,       /**< Regular texture look-up, eligible for pre-dispatch */
-   nir_texop_fragment_fetch,     /**< Multisample fragment color texture fetch */
-   nir_texop_fragment_mask_fetch,/**< Multisample fragment mask texture fetch */
+   nir_texop_fragment_fetch_amd,      /**< Multisample fragment color texture fetch */
+   nir_texop_fragment_mask_fetch_amd, /**< Multisample fragment mask texture fetch */
 } nir_texop;
 
 /** Represents a texture instruction */
@@ -2350,7 +2375,7 @@ nir_tex_instr_result_size(const nir_tex_instr *instr)
    case nir_texop_texture_samples:
    case nir_texop_query_levels:
    case nir_texop_samples_identical:
-   case nir_texop_fragment_mask_fetch:
+   case nir_texop_fragment_mask_fetch_amd:
       return 1;
 
    default:
@@ -2939,6 +2964,21 @@ nir_block_ends_in_jump(nir_block *block)
 }
 
 static inline bool
+nir_block_ends_in_return_or_halt(nir_block *block)
+{
+   if (exec_list_is_empty(&block->instr_list))
+      return false;
+
+   nir_instr *instr = nir_block_last_instr(block);
+   if (instr->type != nir_instr_type_jump)
+      return false;
+
+   nir_jump_instr *jump_instr = nir_instr_as_jump(instr);
+   return jump_instr->type == nir_jump_return ||
+          jump_instr->type == nir_jump_halt;
+}
+
+static inline bool
 nir_block_ends_in_break(nir_block *block)
 {
    if (exec_list_is_empty(&block->instr_list))
@@ -3391,6 +3431,16 @@ typedef enum {
    nir_divergence_multiple_workgroup_per_compute_subgroup = (1 << 5),
 } nir_divergence_options;
 
+typedef enum {
+   nir_pack_varying_interp_mode_none          = (1 << 0),
+   nir_pack_varying_interp_mode_smooth        = (1 << 1),
+   nir_pack_varying_interp_mode_flat          = (1 << 2),
+   nir_pack_varying_interp_mode_noperspective = (1 << 3),
+   nir_pack_varying_interp_loc_sample         = (1 << 16),
+   nir_pack_varying_interp_loc_centroid       = (1 << 17),
+   nir_pack_varying_interp_loc_center         = (1 << 18),
+} nir_pack_varying_options;
+
 /** An instruction filtering callback
  *
  * Returns true if the instruction should be processed and false otherwise.
@@ -3590,7 +3640,7 @@ typedef struct nir_shader_compiler_options {
    bool lower_hadd64;
 
    /**
-    * Set if nir_op_add_sat and nir_op_usub_sat should be lowered to simple
+    * Set if nir_op_uadd_sat and nir_op_usub_sat should be lowered to simple
     * arithmetic.
     *
     * If this flag is set, the lowering will be applied to all bit-sizes of
@@ -3598,7 +3648,7 @@ typedef struct nir_shader_compiler_options {
     *
     * \sa ::lower_usub_sat64
     */
-   bool lower_add_sat;
+   bool lower_uadd_sat;
 
    /**
     * Set if only 64-bit nir_op_usub_sat should be lowered to simple
@@ -3607,6 +3657,15 @@ typedef struct nir_shader_compiler_options {
     * \sa ::lower_add_sat
     */
    bool lower_usub_sat64;
+
+   /**
+    * Set if nir_op_iadd_sat and nir_op_isub_sat should be lowered to simple
+    * arithmetic.
+    *
+    * If this flag is set, the lowering will be applied to all bit-sizes of
+    * these instructions.
+    */
+   bool lower_iadd_sat;
 
    /**
     * Should IO be re-vectorized?  Some scalar ISAs still operate on vec4's
@@ -3688,6 +3747,15 @@ typedef struct nir_shader_compiler_options {
     * for rect texture lowering. */
    bool has_txs;
 
+   /** Backend supports sdot_4x8 and udot_4x8 opcodes. */
+   bool has_dot_4x8;
+
+   /** Backend supports sudot_4x8 opcodes. */
+   bool has_sudot_4x8;
+
+   /** Backend supports sdot_2x16 and udot_2x16 opcodes. */
+   bool has_dot_2x16;
+
    /* Whether to generate only scoped_barrier intrinsics instead of the set of
     * memory and control barrier intrinsics based on GLSL.
     */
@@ -3734,6 +3802,13 @@ typedef struct nir_shader_compiler_options {
    nir_lower_int64_options lower_int64_options;
    nir_lower_doubles_options lower_doubles_options;
    nir_divergence_options divergence_analysis_options;
+
+   /**
+    * Support pack varyings with different interpolation location
+    * (center, centroid, sample) and mode (flat, noperspective, smooth)
+    * into same slot.
+    */
+   nir_pack_varying_options pack_varying_options;
 } nir_shader_compiler_options;
 
 typedef struct nir_shader {
@@ -3751,6 +3826,8 @@ typedef struct nir_shader {
    struct shader_info info;
 
    struct exec_list functions; /** < list of nir_function */
+
+   struct list_head gc_list; /** < list of all nir_instrs allocated on the shader but not yet freed. */
 
    /**
     * The size of the variable space for load_input_*, load_uniform_*, etc.
@@ -4165,6 +4242,8 @@ nir_instr_insert_after_cf_list(struct exec_list *list, nir_instr *after)
 }
 
 void nir_instr_remove_v(nir_instr *instr);
+void nir_instr_free(nir_instr *instr);
+void nir_instr_free_list(struct exec_list *list);
 
 static inline nir_cursor
 nir_instr_remove(nir_instr *instr)
@@ -4264,6 +4343,7 @@ void nir_ssa_def_rewrite_uses_src(nir_ssa_def *def, nir_src new_src);
 void nir_ssa_def_rewrite_uses_after(nir_ssa_def *def, nir_ssa_def *new_ssa,
                                     nir_instr *after_me);
 
+nir_component_mask_t nir_src_components_read(const nir_src *src);
 nir_component_mask_t nir_ssa_def_components_read(const nir_ssa_def *def);
 
 static inline bool
@@ -4984,6 +5064,16 @@ typedef struct nir_lower_compute_system_values_options {
 bool nir_lower_compute_system_values(nir_shader *shader,
                                      const nir_lower_compute_system_values_options *options);
 
+struct nir_lower_sysvals_to_varyings_options {
+   bool frag_coord:1;
+   bool front_face:1;
+   bool point_coord:1;
+};
+
+bool
+nir_lower_sysvals_to_varyings(nir_shader *shader,
+                              const struct nir_lower_sysvals_to_varyings_options *options);
+
 enum PACKED nir_lower_tex_packing {
    /** No packing */
    nir_lower_tex_packing_none = 0,
@@ -5157,6 +5247,12 @@ typedef struct nir_lower_tex_options {
     * If true, lowers tg4 with 4 constant offsets to 4 tg4 calls
     */
    bool lower_tg4_offsets;
+
+   /**
+    * Lower txf_ms to fragment_mask_fetch and fragment_fetch and samples_identical to
+    * fragment_mask_fetch.
+    */
+   bool lower_to_fragment_fetch_amd;
 
    /**
     * To lower packed sampler return formats.
@@ -5379,8 +5475,11 @@ bool nir_shader_uses_view_index(nir_shader *shader);
 bool nir_can_lower_multiview(nir_shader *shader);
 bool nir_lower_multiview(nir_shader *shader, uint32_t view_mask);
 
+
 bool nir_lower_fp16_casts(nir_shader *shader);
 bool nir_normalize_cubemap_coords(nir_shader *shader);
+
+bool nir_shader_supports_implicit_lod(nir_shader *shader);
 
 void nir_live_ssa_defs_impl(nir_function_impl *impl);
 

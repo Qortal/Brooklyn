@@ -145,6 +145,20 @@ extract_ABSNEG(struct ir3_register *reg)
 	}
 }
 
+static inline int32_t
+extract_reg_iim(struct ir3_register *reg)
+{
+   assert(reg->flags & IR3_REG_IMMED);
+   return reg->iim_val;
+}
+
+static inline uint32_t
+extract_reg_uim(struct ir3_register *reg)
+{
+   assert(reg->flags & IR3_REG_IMMED);
+   return reg->uim_val;
+}
+
 /**
  * This is a bit messy, to deal with the fact that the optional "s2en"
  * src is the first src, shifting everything else up by one.
@@ -179,7 +193,11 @@ extract_cat5_DESC_MODE(struct ir3_instruction *instr)
 	if (instr->flags & IR3_INSTR_S2EN) {
 		if (instr->flags & IR3_INSTR_B) {
 			if (instr->flags & IR3_INSTR_A1EN) {
-				return CAT5_BINDLESS_A1_UNIFORM;
+				if (instr->flags & IR3_INSTR_NONUNIF) {
+					return CAT5_BINDLESS_A1_NONUNIFORM;
+				} else {
+					return CAT5_BINDLESS_A1_UNIFORM;
+				}
 			} else if (instr->flags & IR3_INSTR_NONUNIF) {
 				return CAT5_BINDLESS_NONUNIFORM;
 			} else {
@@ -298,7 +316,7 @@ __cat3_src_case(struct encode_state *s, struct ir3_register *reg)
 void *
 isa_assemble(struct ir3_shader_variant *v)
 {
-	uint64_t *ptr, *instrs;
+	BITSET_WORD *ptr, *instrs;
 	const struct ir3_info *info = &v->info;
 	struct ir3 *shader = v->ir;
 
@@ -311,7 +329,9 @@ isa_assemble(struct ir3_shader_variant *v)
 				.instr = instr,
 			};
 
-			*(instrs++) = encode__instruction(&s, NULL, instr);
+			const bitmask_t encoded = encode__instruction(&s, NULL, instr);
+			store_instruction(instrs, encoded);
+			instrs += BITMASK_WORDS;
 		}
 	}
 

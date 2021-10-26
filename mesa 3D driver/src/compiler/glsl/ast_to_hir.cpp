@@ -1182,6 +1182,7 @@ do_comparison(void *mem_ctx, int operation, ir_rvalue *op0, ir_rvalue *op1)
    case GLSL_TYPE_ERROR:
    case GLSL_TYPE_VOID:
    case GLSL_TYPE_SAMPLER:
+   case GLSL_TYPE_TEXTURE:
    case GLSL_TYPE_IMAGE:
    case GLSL_TYPE_INTERFACE:
    case GLSL_TYPE_ATOMIC_UINT:
@@ -1703,6 +1704,7 @@ ast_expression::do_hir(exec_list *instructions,
       if ((op[0]->type == glsl_type::error_type ||
            op[1]->type == glsl_type::error_type)) {
          error_emitted = true;
+         result = ir_rvalue::error_value(ctx);
          break;
       }
 
@@ -1740,6 +1742,14 @@ ast_expression::do_hir(exec_list *instructions,
       op[0] = this->subexpressions[0]->hir(instructions, state);
       op[1] = this->subexpressions[1]->hir(instructions, state);
 
+      /* Break out if operand types were not parsed successfully. */
+      if ((op[0]->type == glsl_type::error_type ||
+           op[1]->type == glsl_type::error_type)) {
+         error_emitted = true;
+         result = ir_rvalue::error_value(ctx);
+         break;
+      }
+
       orig_type = op[0]->type;
       type = modulus_result_type(op[0], op[1], state, &loc);
 
@@ -1770,6 +1780,15 @@ ast_expression::do_hir(exec_list *instructions,
       this->subexpressions[0]->set_is_lhs(true);
       op[0] = this->subexpressions[0]->hir(instructions, state);
       op[1] = this->subexpressions[1]->hir(instructions, state);
+
+      /* Break out if operand types were not parsed successfully. */
+      if ((op[0]->type == glsl_type::error_type ||
+           op[1]->type == glsl_type::error_type)) {
+         error_emitted = true;
+         result = ir_rvalue::error_value(ctx);
+         break;
+      }
+
       type = shift_result_type(op[0]->type, op[1]->type, this->oper, state,
                                &loc);
       ir_rvalue *temp_rhs = new(ctx) ir_expression(operations[this->oper],
@@ -1789,6 +1808,14 @@ ast_expression::do_hir(exec_list *instructions,
       this->subexpressions[0]->set_is_lhs(true);
       op[0] = this->subexpressions[0]->hir(instructions, state);
       op[1] = this->subexpressions[1]->hir(instructions, state);
+
+      /* Break out if operand types were not parsed successfully. */
+      if ((op[0]->type == glsl_type::error_type ||
+           op[1]->type == glsl_type::error_type)) {
+         error_emitted = true;
+         result = ir_rvalue::error_value(ctx);
+         break;
+      }
 
       orig_type = op[0]->type;
       type = bit_logic_result_type(op[0], op[1], this->oper, state, &loc);
@@ -3970,9 +3997,9 @@ apply_layout_qualifier_to_variable(const struct ast_type_qualifier *qual,
          _mesa_glsl_error(loc, state, "gl_Layer redeclaration with "
                           "different viewport_relative setting than earlier");
       }
-      state->redeclares_gl_layer = 1;
+      state->redeclares_gl_layer = true;
       if (qual->flags.q.viewport_relative) {
-         state->layer_viewport_relative = 1;
+         state->layer_viewport_relative = true;
       }
    } else if (qual->flags.q.viewport_relative) {
       _mesa_glsl_error(loc, state,
@@ -4196,6 +4223,7 @@ apply_type_qualifier_to_variable(const struct ast_type_qualifier *qual,
       case GLSL_TYPE_INT64:
          break;
       case GLSL_TYPE_SAMPLER:
+      case GLSL_TYPE_TEXTURE:
       case GLSL_TYPE_IMAGE:
          if (state->has_bindless())
             break;
@@ -5406,6 +5434,7 @@ ast_declarator_list::hir(exec_list *instructions,
                error = !state->is_version(410, 0) && !state->ARB_vertex_attrib_64bit_enable;
                break;
             case GLSL_TYPE_SAMPLER:
+            case GLSL_TYPE_TEXTURE:
             case GLSL_TYPE_IMAGE:
                error = !state->has_bindless();
                break;
@@ -6531,8 +6560,8 @@ ast_jump_statement::hir(exec_list *instructions,
          if (state->loop_nesting_ast != NULL &&
              mode == ast_continue && !state->switch_state.is_switch_innermost) {
             if (state->loop_nesting_ast->rest_expression) {
-               state->loop_nesting_ast->rest_expression->hir(instructions,
-                                                             state);
+               clone_ir_list(ctx, instructions,
+                             &state->loop_nesting_ast->rest_instructions);
             }
             if (state->loop_nesting_ast->mode ==
                 ast_iteration_statement::ast_do_while) {
@@ -6780,8 +6809,8 @@ ast_switch_statement::hir(exec_list *instructions,
 
       if (state->loop_nesting_ast != NULL) {
          if (state->loop_nesting_ast->rest_expression) {
-            state->loop_nesting_ast->rest_expression->hir(&irif->then_instructions,
-                                                          state);
+            clone_ir_list(ctx, &irif->then_instructions,
+                          &state->loop_nesting_ast->rest_instructions);
          }
          if (state->loop_nesting_ast->mode ==
              ast_iteration_statement::ast_do_while) {
@@ -6830,8 +6859,11 @@ ir_rvalue *
 ast_switch_body::hir(exec_list *instructions,
                      struct _mesa_glsl_parse_state *state)
 {
-   if (stmts != NULL)
+   if (stmts != NULL) {
+      state->symbols->push_scope();
       stmts->hir(instructions, state);
+      state->symbols->pop_scope();
+   }
 
    /* Switch bodies do not have r-values. */
    return NULL;
@@ -7135,11 +7167,21 @@ ast_iteration_statement::hir(exec_list *instructions,
    if (mode != ast_do_while)
       condition_to_hir(&stmt->body_instructions, state);
 
-   if (body != NULL)
+   if (rest_expression != NULL)
+      rest_expression->hir(&rest_instructions, state);
+
+   if (body != NULL) {
+      if (mode == ast_do_while)
+         state->symbols->push_scope();
+
       body->hir(& stmt->body_instructions, state);
 
+      if (mode == ast_do_while)
+         state->symbols->pop_scope();
+   }
+
    if (rest_expression != NULL)
-      rest_expression->hir(& stmt->body_instructions, state);
+      stmt->body_instructions.append_list(&rest_instructions);
 
    if (mode == ast_do_while)
       condition_to_hir(&stmt->body_instructions, state);
@@ -7189,6 +7231,7 @@ is_valid_default_precision_type(const struct glsl_type *const type)
       /* "int" and "float" are valid, but vectors and matrices are not. */
       return type->vector_elements == 1 && type->matrix_columns == 1;
    case GLSL_TYPE_SAMPLER:
+   case GLSL_TYPE_TEXTURE:
    case GLSL_TYPE_IMAGE:
    case GLSL_TYPE_ATOMIC_UINT:
       return true;

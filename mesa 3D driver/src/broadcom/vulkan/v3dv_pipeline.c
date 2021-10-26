@@ -35,6 +35,7 @@
 
 #include "util/u_atomic.h"
 #include "util/u_prim.h"
+#include "util/os_time.h"
 
 #include "vulkan/util/vk_format.h"
 
@@ -189,11 +190,11 @@ static const struct spirv_to_nir_options default_spirv_options =  {
    .phys_ssbo_addr_format = nir_address_format_64bit_global,
    .push_const_addr_format = nir_address_format_logical,
    .shared_addr_format = nir_address_format_32bit_offset,
-   .frag_coord_is_sysval = false,
 };
 
 const nir_shader_compiler_options v3dv_nir_options = {
-   .lower_add_sat = true,
+   .lower_uadd_sat = true,
+   .lower_iadd_sat = true,
    .lower_all_io_to_temps = true,
    .lower_extract_byte = true,
    .lower_extract_word = true,
@@ -438,7 +439,7 @@ shader_module_compile_to_nir(struct v3dv_device *device,
       uint32_t *spirv = (uint32_t *) stage->module->data;
       assert(stage->module->size % 4 == 0);
 
-      if (V3D_DEBUG & V3D_DEBUG_DUMP_SPIRV)
+      if (unlikely(V3D_DEBUG & V3D_DEBUG_DUMP_SPIRV))
          v3dv_print_spirv(stage->module->data, stage->module->size, stderr);
 
       uint32_t num_spec_entries = 0;
@@ -465,9 +466,15 @@ shader_module_compile_to_nir(struct v3dv_device *device,
    }
    assert(nir->info.stage == broadcom_shader_stage_to_gl(stage->stage));
 
-   if (V3D_DEBUG & (V3D_DEBUG_NIR |
-                    v3d_debug_flag_for_shader_stage(
-                       broadcom_shader_stage_to_gl(stage->stage)))) {
+   const struct nir_lower_sysvals_to_varyings_options sysvals_to_varyings = {
+      .frag_coord = true,
+      .point_coord = true,
+   };
+   NIR_PASS_V(nir, nir_lower_sysvals_to_varyings, &sysvals_to_varyings);
+
+   if (unlikely(V3D_DEBUG & (V3D_DEBUG_NIR |
+                             v3d_debug_flag_for_shader_stage(
+                                broadcom_shader_stage_to_gl(stage->stage))))) {
       fprintf(stderr, "Initial form: %s prog %d NIR:\n",
               broadcom_shader_stage_name(stage->stage),
               stage->program_id);
@@ -1405,8 +1412,13 @@ pipeline_stage_create_binning(const struct v3dv_pipeline_stage *src,
    p_stage->stage = bin_stage;
    p_stage->entrypoint = src->entrypoint;
    p_stage->module = src->module;
-   p_stage->nir = src->nir ? nir_shader_clone(NULL, src->nir) : NULL;
+   /* For binning shaders we will clone the NIR code from the corresponding
+    * render shader later, when we call pipeline_compile_xxx_shader. This way
+    * we only have to run the relevant NIR lowerings once for render shaders
+    */
+   p_stage->nir = NULL;
    p_stage->spec_info = src->spec_info;
+   p_stage->feedback = (VkPipelineCreationFeedbackEXT) { 0 };
    memcpy(p_stage->shader_sha1, src->shader_sha1, 20);
 
    return p_stage;
@@ -1609,14 +1621,16 @@ pipeline_compile_shader_variant(struct v3dv_pipeline_stage *p_stage,
                                 const VkAllocationCallbacks *pAllocator,
                                 VkResult *out_vk_result)
 {
+   int64_t stage_start = os_time_get_nano();
+
    struct v3dv_pipeline *pipeline = p_stage->pipeline;
    struct v3dv_physical_device *physical_device =
       &pipeline->device->instance->physicalDevice;
    const struct v3d_compiler *compiler = physical_device->compiler;
 
-   if (V3D_DEBUG & (V3D_DEBUG_NIR |
-                    v3d_debug_flag_for_shader_stage
-                    (broadcom_shader_stage_to_gl(p_stage->stage)))) {
+   if (unlikely(V3D_DEBUG & (V3D_DEBUG_NIR |
+                             v3d_debug_flag_for_shader_stage
+                             (broadcom_shader_stage_to_gl(p_stage->stage))))) {
       fprintf(stderr, "Just before v3d_compile: %s prog %d NIR:\n",
               broadcom_shader_stage_name(p_stage->stage),
               p_stage->program_id);
@@ -1656,6 +1670,8 @@ pipeline_compile_shader_variant(struct v3dv_pipeline_stage *p_stage,
     * all the temporary p_stage structs used during the pipeline creation when
     * we finish it, so let's not worry about freeing the nir here.
     */
+
+   p_stage->feedback.duration += os_time_get_nano() - stage_start;
 
    return variant;
 }
@@ -1756,6 +1772,8 @@ pipeline_lower_nir(struct v3dv_pipeline *pipeline,
                    struct v3dv_pipeline_stage *p_stage,
                    struct v3dv_pipeline_layout *layout)
 {
+   int64_t stage_start = os_time_get_nano();
+
    assert(pipeline->shared_data &&
           pipeline->shared_data->maps[p_stage->stage]);
 
@@ -1780,6 +1798,8 @@ pipeline_lower_nir(struct v3dv_pipeline *pipeline,
 
    /* Apply the actual pipeline layout to UBOs, SSBOs, and textures */
    NIR_PASS_V(p_stage->nir, lower_pipeline_layout_info, pipeline, layout);
+
+   p_stage->feedback.duration += os_time_get_nano() - stage_start;
 }
 
 /**
@@ -1808,6 +1828,8 @@ pipeline_stage_get_nir(struct v3dv_pipeline_stage *p_stage,
                        struct v3dv_pipeline *pipeline,
                        struct v3dv_pipeline_cache *cache)
 {
+   int64_t stage_start = os_time_get_nano();
+
    nir_shader *nir = NULL;
 
    nir = v3dv_pipeline_cache_search_for_nir(pipeline, cache,
@@ -1816,6 +1838,14 @@ pipeline_stage_get_nir(struct v3dv_pipeline_stage *p_stage,
 
    if (nir) {
       assert(nir->info.stage == broadcom_shader_stage_to_gl(p_stage->stage));
+
+      /* A NIR cach hit doesn't avoid the large majority of pipeline stage
+       * creation so the cache hit is not recorded in the pipeline feedback
+       * flags
+       */
+
+      p_stage->feedback.duration += os_time_get_nano() - stage_start;
+
       return nir;
    }
 
@@ -1835,6 +1865,9 @@ pipeline_stage_get_nir(struct v3dv_pipeline_stage *p_stage,
          v3dv_pipeline_cache_upload_nir(pipeline, default_cache, nir,
                                         p_stage->shader_sha1);
       }
+
+      p_stage->feedback.duration += os_time_get_nano() - stage_start;
+
       return nir;
    }
 
@@ -2119,6 +2152,59 @@ fail:
    return NULL;
 }
 
+static void
+write_creation_feedback(struct v3dv_pipeline *pipeline,
+                        const void *next,
+                        const VkPipelineCreationFeedbackEXT *pipeline_feedback,
+                        uint32_t stage_count,
+                        const VkPipelineShaderStageCreateInfo *stages)
+{
+   const VkPipelineCreationFeedbackCreateInfoEXT *create_feedback =
+      vk_find_struct_const(next, PIPELINE_CREATION_FEEDBACK_CREATE_INFO_EXT);
+
+   if (create_feedback) {
+      typed_memcpy(create_feedback->pPipelineCreationFeedback,
+             pipeline_feedback,
+             1);
+
+      assert(stage_count == create_feedback->pipelineStageCreationFeedbackCount);
+
+      for (uint32_t i = 0; i < stage_count; i++) {
+         gl_shader_stage s = vk_to_mesa_shader_stage(stages[i].stage);
+         switch (s) {
+         case MESA_SHADER_VERTEX:
+            create_feedback->pPipelineStageCreationFeedbacks[i] =
+               pipeline->vs->feedback;
+
+            create_feedback->pPipelineStageCreationFeedbacks[i].duration +=
+               pipeline->vs_bin->feedback.duration;
+            break;
+
+         case MESA_SHADER_GEOMETRY:
+            create_feedback->pPipelineStageCreationFeedbacks[i] =
+               pipeline->gs->feedback;
+
+            create_feedback->pPipelineStageCreationFeedbacks[i].duration +=
+               pipeline->gs_bin->feedback.duration;
+            break;
+
+         case MESA_SHADER_FRAGMENT:
+            create_feedback->pPipelineStageCreationFeedbacks[i] =
+               pipeline->fs->feedback;
+            break;
+
+         case MESA_SHADER_COMPUTE:
+            create_feedback->pPipelineStageCreationFeedbacks[i] =
+               pipeline->cs->feedback;
+            break;
+
+         default:
+            unreachable("not supported shader stage");
+         }
+      }
+   }
+}
+
 static uint32_t
 multiview_gs_input_primitive_from_pipeline(struct v3dv_pipeline *pipeline)
 {
@@ -2294,6 +2380,11 @@ pipeline_compile_graphics(struct v3dv_pipeline *pipeline,
                           const VkGraphicsPipelineCreateInfo *pCreateInfo,
                           const VkAllocationCallbacks *pAllocator)
 {
+   VkPipelineCreationFeedbackEXT pipeline_feedback = {
+      .flags = VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT_EXT,
+   };
+   int64_t pipeline_start = os_time_get_nano();
+
    struct v3dv_device *device = pipeline->device;
    struct v3dv_physical_device *physical_device =
       &device->instance->physicalDevice;
@@ -2408,8 +2499,12 @@ pipeline_compile_graphics(struct v3dv_pipeline *pipeline,
    unsigned char pipeline_sha1[20];
    pipeline_hash_graphics(pipeline, &pipeline_key, pipeline_sha1);
 
+   bool cache_hit = false;
+
    pipeline->shared_data =
-      v3dv_pipeline_cache_search_for_pipeline(cache, pipeline_sha1);
+      v3dv_pipeline_cache_search_for_pipeline(cache,
+                                              pipeline_sha1,
+                                              &cache_hit);
 
    if (pipeline->shared_data != NULL) {
       /* A correct pipeline must have at least a VS and FS */
@@ -2420,6 +2515,11 @@ pipeline_compile_graphics(struct v3dv_pipeline *pipeline,
              pipeline->shared_data->variants[BROADCOM_SHADER_GEOMETRY]);
       assert(!pipeline->gs ||
              pipeline->shared_data->variants[BROADCOM_SHADER_GEOMETRY_BIN]);
+
+      if (cache_hit && cache != &pipeline->device->default_pipeline_cache)
+         pipeline_feedback.flags |=
+            VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT_EXT;
+
       goto success;
    }
 
@@ -2431,6 +2531,14 @@ pipeline_compile_graphics(struct v3dv_pipeline *pipeline,
     */
    pipeline->shared_data =
       v3dv_pipeline_shared_data_new_empty(pipeline_sha1, pipeline, true);
+
+   pipeline->vs->feedback.flags |=
+      VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT_EXT;
+   if (pipeline->gs)
+      pipeline->gs->feedback.flags |=
+         VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT_EXT;
+   pipeline->fs->feedback.flags |=
+      VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT_EXT;
 
    if (!pipeline->vs->nir)
       pipeline->vs->nir = pipeline_stage_get_nir(pipeline->vs, pipeline, cache);
@@ -2490,6 +2598,14 @@ pipeline_compile_graphics(struct v3dv_pipeline *pipeline,
    v3dv_pipeline_cache_upload_pipeline(pipeline, cache);
 
  success:
+
+   pipeline_feedback.duration = os_time_get_nano() - pipeline_start;
+   write_creation_feedback(pipeline,
+                           pCreateInfo->pNext,
+                           &pipeline_feedback,
+                           pCreateInfo->stageCount,
+                           pCreateInfo->pStages);
+
    /* Since we have the variants in the pipeline shared data we can now free
     * the pipeline stages.
     */
@@ -2895,8 +3011,14 @@ pipeline_init(struct v3dv_pipeline *pipeline,
       return result;
    }
 
-   v3dv_X(device, pipeline_pack_compile_state)(pipeline,
-                                               pCreateInfo->pVertexInputState);
+   const VkPipelineVertexInputStateCreateInfo *vi_info =
+      pCreateInfo->pVertexInputState;
+
+   const VkPipelineVertexInputDivisorStateCreateInfoEXT *vd_info =
+      vk_find_struct_const(vi_info->pNext,
+                           PIPELINE_VERTEX_INPUT_DIVISOR_STATE_CREATE_INFO_EXT);
+
+   v3dv_X(device, pipeline_pack_compile_state)(pipeline, vi_info, vd_info);
 
    if (pipeline_has_integer_vertex_attrib(pipeline)) {
       pipeline->default_attribute_values =
@@ -2931,7 +3053,7 @@ graphics_pipeline_create(VkDevice _device,
                                VK_OBJECT_TYPE_PIPELINE);
 
    if (pipeline == NULL)
-      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    result = pipeline_init(pipeline, device, cache,
                           pCreateInfo,
@@ -3019,6 +3141,11 @@ pipeline_compile_compute(struct v3dv_pipeline *pipeline,
                          const VkComputePipelineCreateInfo *info,
                          const VkAllocationCallbacks *alloc)
 {
+   VkPipelineCreationFeedbackEXT pipeline_feedback = {
+      .flags = VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT_EXT,
+   };
+   int64_t pipeline_start = os_time_get_nano();
+
    struct v3dv_device *device = pipeline->device;
    struct v3dv_physical_device *physical_device =
       &device->instance->physicalDevice;
@@ -3038,6 +3165,7 @@ pipeline_compile_compute(struct v3dv_pipeline *pipeline,
    p_stage->entrypoint = sinfo->pName;
    p_stage->module = vk_shader_module_from_handle(sinfo->module);
    p_stage->spec_info = sinfo->pSpecializationInfo;
+   p_stage->feedback = (VkPipelineCreationFeedbackEXT) { 0 };
 
    pipeline_hash_shader(p_stage->module,
                         p_stage->entrypoint,
@@ -3056,11 +3184,16 @@ pipeline_compile_compute(struct v3dv_pipeline *pipeline,
    unsigned char pipeline_sha1[20];
    pipeline_hash_compute(pipeline, &pipeline_key, pipeline_sha1);
 
+   bool cache_hit = false;
    pipeline->shared_data =
-      v3dv_pipeline_cache_search_for_pipeline(cache, pipeline_sha1);
+      v3dv_pipeline_cache_search_for_pipeline(cache, pipeline_sha1, &cache_hit);
 
    if (pipeline->shared_data != NULL) {
       assert(pipeline->shared_data->variants[BROADCOM_SHADER_COMPUTE]);
+      if (cache_hit && cache != &pipeline->device->default_pipeline_cache)
+         pipeline_feedback.flags |=
+            VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT_EXT;
+
       goto success;
    }
 
@@ -3070,6 +3203,8 @@ pipeline_compile_compute(struct v3dv_pipeline *pipeline,
    pipeline->shared_data = v3dv_pipeline_shared_data_new_empty(pipeline_sha1,
                                                                pipeline,
                                                                false);
+
+   p_stage->feedback.flags |= VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT_EXT;
 
    /* If not found on cache, compile it */
    p_stage->nir = pipeline_stage_get_nir(p_stage, pipeline, cache);
@@ -3096,12 +3231,21 @@ pipeline_compile_compute(struct v3dv_pipeline *pipeline,
       return VK_ERROR_OUT_OF_DEVICE_MEMORY;
 
    v3dv_pipeline_cache_upload_pipeline(pipeline, cache);
+
+success:
+
+   pipeline_feedback.duration = os_time_get_nano() - pipeline_start;
+   write_creation_feedback(pipeline,
+                           info->pNext,
+                           &pipeline_feedback,
+                           1,
+                           &info->stage);
+
    /* As we got the variants in pipeline->shared_data, after compiling we
     * don't need the pipeline_stages
     */
    pipeline_free_stages(device, pipeline, alloc);
 
- success:
    pipeline_check_spill_size(pipeline);
 
    return VK_SUCCESS;
@@ -3144,7 +3288,7 @@ compute_pipeline_create(VkDevice _device,
    pipeline = vk_object_zalloc(&device->vk, pAllocator, sizeof(*pipeline),
                                VK_OBJECT_TYPE_PIPELINE);
    if (pipeline == NULL)
-      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    result = compute_pipeline_init(pipeline, device, cache,
                                   pCreateInfo, pAllocator);

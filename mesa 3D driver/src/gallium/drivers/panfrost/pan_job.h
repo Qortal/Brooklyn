@@ -130,16 +130,11 @@ struct panfrost_batch {
         mali_ptr uniform_buffers[PIPE_SHADER_TYPES];
         mali_ptr push_uniforms[PIPE_SHADER_TYPES];
 
-        /* Referenced resources for cleanup */
-        struct util_dynarray resources;
+        /* Referenced resources */
+        struct set *resources;
 };
 
 /* Functions for managing the above */
-
-struct panfrost_batch *
-panfrost_get_fresh_batch(struct panfrost_context *ctx,
-                         const struct pipe_framebuffer_state *key,
-                         const char *reason);
 
 struct panfrost_batch *
 panfrost_get_batch_for_fbo(struct panfrost_context *ctx);
@@ -161,9 +156,6 @@ void
 panfrost_batch_write_rsrc(struct panfrost_batch *batch,
                           struct panfrost_resource *rsrc,
                           enum pipe_shader_type stage);
-
-void
-panfrost_batch_add_fbo_bos(struct panfrost_batch *batch);
 
 struct panfrost_bo *
 panfrost_batch_create_bo(struct panfrost_batch *batch, size_t size,
@@ -202,10 +194,5 @@ void
 panfrost_batch_union_scissor(struct panfrost_batch *batch,
                              unsigned minx, unsigned miny,
                              unsigned maxx, unsigned maxy);
-
-void
-panfrost_batch_intersection_scissor(struct panfrost_batch *batch,
-                                    unsigned minx, unsigned miny,
-                                    unsigned maxx, unsigned maxy);
 
 #endif

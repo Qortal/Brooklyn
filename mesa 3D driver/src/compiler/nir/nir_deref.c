@@ -709,7 +709,7 @@ rematerialize_deref_in_block(nir_deref_instr *deref,
          parent = rematerialize_deref_in_block(parent, state);
          new_deref->parent = nir_src_for_ssa(&parent->dest.ssa);
       } else {
-         nir_src_copy(&new_deref->parent, &deref->parent, new_deref);
+         nir_src_copy(&new_deref->parent, &deref->parent);
       }
    }
 
@@ -726,7 +726,7 @@ rematerialize_deref_in_block(nir_deref_instr *deref,
    case nir_deref_type_array:
    case nir_deref_type_ptr_as_array:
       assert(!nir_src_as_deref(deref->arr.index));
-      nir_src_copy(&new_deref->arr.index, &deref->arr.index, new_deref);
+      nir_src_copy(&new_deref->arr.index, &deref->arr.index);
       break;
 
    case nir_deref_type_struct:
@@ -1012,14 +1012,17 @@ opt_remove_sampler_cast(nir_deref_instr *cast)
       cast_type = glsl_get_array_element(cast_type);
    }
 
-   if (glsl_type_is_array(parent_type) || glsl_type_is_array(cast_type))
+   if (!glsl_type_is_sampler(parent_type))
       return false;
 
-   if (!glsl_type_is_sampler(parent_type) ||
-       cast_type != glsl_bare_sampler_type())
+   if (cast_type != glsl_bare_sampler_type() &&
+       (glsl_type_is_bare_sampler(parent_type) ||
+        cast_type != glsl_sampler_type_to_texture(parent_type)))
       return false;
 
-   /* We're a cast from a more detailed sampler type to a bare sampler */
+   /* We're a cast from a more detailed sampler type to a bare sampler or a
+    * texture type with the same dimensionality.
+    */
    nir_ssa_def_rewrite_uses(&cast->dest.ssa,
                             &parent->dest.ssa);
    nir_instr_remove(&cast->instr);

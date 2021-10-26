@@ -176,8 +176,7 @@ dri_fill_in_modes(struct dri_screen *screen)
 
    allow_rgba_ordering = dri_loader_get_cap(screen, DRI_LOADER_CAP_RGBA_ORDERING);
    allow_rgb10 = driQueryOptionb(&screen->dev->option_cache, "allow_rgb10_configs");
-   allow_fp16 = driQueryOptionb(&screen->dev->option_cache, "allow_fp16_configs");
-   allow_fp16 &= dri_loader_get_cap(screen, DRI_LOADER_CAP_FP16);
+   allow_fp16 = dri_loader_get_cap(screen, DRI_LOADER_CAP_FP16);
 
    msaa_samples_max = (screen->st_api->feature_mask & ST_API_FEATURE_MS_VISUALS_MASK)
       ? MSAA_VISUAL_MAX_SAMPLES : 1;
@@ -378,7 +377,10 @@ dri_fill_st_visual(struct st_visual *stvis,
    }
 
    if (mode->samples > 0) {
-      stvis->samples = mode->samples;
+      if (debug_get_bool_option("DRI_NO_MSAA", false))
+         stvis->samples = 0;
+      else
+         stvis->samples = mode->samples;
    }
 
    switch (mode->depthBits) {
@@ -432,7 +434,9 @@ dri_get_egl_image(struct st_manager *smapi,
    __DRIimage *img = NULL;
    const struct dri2_format_mapping *map;
 
-   if (screen->lookup_egl_image) {
+   if (screen->lookup_egl_image_validated) {
+      img = screen->lookup_egl_image_validated(screen, egl_image);
+   } else if (screen->lookup_egl_image) {
       img = screen->lookup_egl_image(screen, egl_image);
    }
 
@@ -455,6 +459,15 @@ dri_get_egl_image(struct st_manager *smapi,
    }
 
    return TRUE;
+}
+
+static bool
+dri_validate_egl_image(struct st_manager *smapi,
+                       void *egl_image)
+{
+   struct dri_screen *screen = (struct dri_screen *)smapi;
+
+   return screen->validate_egl_image(screen, egl_image);
 }
 
 static int
@@ -542,6 +555,9 @@ dri_init_screen_helper(struct dri_screen *screen,
    screen->base.get_egl_image = dri_get_egl_image;
    screen->base.get_param = dri_get_param;
    screen->base.set_background_context = dri_set_background_context;
+
+   if (screen->validate_egl_image)
+      screen->base.validate_egl_image = dri_validate_egl_image;
 
    screen->st_api = st_gl_api_create();
    if (!screen->st_api)

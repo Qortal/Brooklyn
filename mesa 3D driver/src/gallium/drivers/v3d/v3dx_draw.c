@@ -28,7 +28,6 @@
 #include "util/u_pack_color.h"
 #include "util/u_prim_restart.h"
 #include "util/u_upload_mgr.h"
-#include "indices/u_primconvert.h"
 
 #include "v3d_context.h"
 #include "v3d_resource.h"
@@ -972,14 +971,6 @@ v3d_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
                 }
         }
 
-        if (info->mode >= PIPE_PRIM_QUADS && info->mode <= PIPE_PRIM_POLYGON) {
-                util_primconvert_save_rasterizer_state(v3d->primconvert, &v3d->rasterizer->base);
-                util_primconvert_draw_vbo(v3d->primconvert, info, drawid_offset, indirect, draws, num_draws);
-                perf_debug("Fallback conversion for %d %s vertices\n",
-                           draws[0].count, u_prim_name(info->mode));
-                return;
-        }
-
         /* Before setting up the draw, flush anything writing to the resources
          * that we read from or reading from resources we write to.
          */
@@ -1293,7 +1284,7 @@ v3d_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
                 v3d_flush(pctx);
         }
 
-        if (V3D_DEBUG & V3D_DEBUG_ALWAYS_FLUSH)
+        if (unlikely(V3D_DEBUG & V3D_DEBUG_ALWAYS_FLUSH))
                 v3d_flush(pctx);
 }
 
@@ -1455,7 +1446,7 @@ v3d_launch_grid(struct pipe_context *pctx, const struct pipe_grid_info *info)
 
         v3d->last_perfmon = v3d->active_perfmon;
 
-        if (!(V3D_DEBUG & V3D_DEBUG_NORAST)) {
+        if (!(unlikely(V3D_DEBUG & V3D_DEBUG_NORAST))) {
                 int ret = v3d_ioctl(screen->fd, DRM_IOCTL_V3D_SUBMIT_CSD,
                                     &submit);
                 static bool warned = false;

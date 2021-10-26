@@ -550,7 +550,7 @@ read_src(read_ctx *ctx, nir_src *src, void *mem_ctx)
       src->reg.reg = read_lookup_object(ctx, header.any.object_idx);
       src->reg.base_offset = blob_read_uint32(ctx->blob);
       if (header.any.is_indirect) {
-         src->reg.indirect = ralloc(mem_ctx, nir_src);
+         src->reg.indirect = malloc(sizeof(nir_src));
          read_src(ctx, src->reg.indirect, mem_ctx);
       } else {
          src->reg.indirect = NULL;
@@ -575,14 +575,12 @@ union packed_dest {
 };
 
 enum intrinsic_const_indices_encoding {
-   /* Use the 9 bits of packed_const_indices to store 1-9 indices.
-    * 1 9-bit index, or 2 4-bit indices, or 3 3-bit indices, or
-    * 4 2-bit indices, or 5-9 1-bit indices.
+   /* Use packed_const_indices to store tightly packed indices.
     *
     * The common case for load_ubo is 0, 0, 0, which is trivially represented.
     * The common cases for load_interpolated_input also fit here, e.g.: 7, 3
     */
-   const_indices_9bit_all_combined,
+   const_indices_all_combined,
 
    const_indices_8bit,  /* 8 bits per element */
    const_indices_16bit, /* 16 bits per element */
@@ -627,9 +625,9 @@ union packed_instr {
       unsigned instr_type:4;
       unsigned deref_type:3;
       unsigned cast_type_same_as_last:1;
-      unsigned modes:14; /* deref_var redefines this */
+      unsigned modes:5; /* See (de|en)code_deref_modes() */
+      unsigned _pad:10;
       unsigned packed_src_ssa_16bit:1; /* deref_var redefines this */
-      unsigned _pad:1;  /* deref_var redefines this */
       unsigned dest:8;
    } deref;
    struct {
@@ -641,9 +639,9 @@ union packed_instr {
    } deref_var;
    struct {
       unsigned instr_type:4;
-      unsigned intrinsic:9;
+      unsigned intrinsic:10;
       unsigned const_indices_encoding:2;
-      unsigned packed_const_indices:9;
+      unsigned packed_const_indices:8;
       unsigned dest:8;
    } intrinsic;
    struct {
@@ -770,7 +768,7 @@ read_dest(read_ctx *ctx, nir_dest *dst, nir_instr *instr,
       dst->reg.reg = read_object(ctx);
       dst->reg.base_offset = blob_read_uint32(ctx->blob);
       if (dest.reg.is_indirect) {
-         dst->reg.indirect = ralloc(instr, nir_src);
+         dst->reg.indirect = malloc(sizeof(nir_src));
          read_src(ctx, dst->reg.indirect, instr);
       }
    }
@@ -966,11 +964,51 @@ read_alu(read_ctx *ctx, union packed_instr header)
    return alu;
 }
 
+#define MODE_ENC_GENERIC_BIT (1 << 4)
+
+static nir_variable_mode
+decode_deref_modes(unsigned modes)
+{
+   if (modes & MODE_ENC_GENERIC_BIT) {
+      modes &= ~MODE_ENC_GENERIC_BIT;
+      return modes << (ffs(nir_var_mem_generic) - 1);
+   } else {
+      return 1 << modes;
+   }
+}
+
+static unsigned
+encode_deref_modes(nir_variable_mode modes)
+{
+   /* Mode sets on derefs generally come in two forms.  For certain OpenCL
+    * cases, we can have more than one of the generic modes set.  In this
+    * case, we need the full bitfield.  Fortunately, there are only 4 of
+    * these.  For all other modes, we can only have one mode at a time so we
+    * can compress them by only storing the bit position.  This, plus one bit
+    * to select encoding, lets us pack the entire bitfield in 5 bits.
+    */
+   STATIC_ASSERT((nir_var_all & ~nir_var_mem_generic) <
+                 (1 << MODE_ENC_GENERIC_BIT));
+
+   unsigned enc;
+   if (modes == 0 || (modes & nir_var_mem_generic)) {
+      assert(!(modes & ~nir_var_mem_generic));
+      enc = modes >> (ffs(nir_var_mem_generic) - 1);
+      assert(enc < MODE_ENC_GENERIC_BIT);
+      enc |= MODE_ENC_GENERIC_BIT;
+   } else {
+      assert(util_is_power_of_two_nonzero(modes));
+      enc = ffs(modes) - 1;
+      assert(enc < MODE_ENC_GENERIC_BIT);
+   }
+   assert(modes == decode_deref_modes(enc));
+   return enc;
+}
+
 static void
 write_deref(write_ctx *ctx, const nir_deref_instr *deref)
 {
    assert(deref->deref_type < 8);
-   assert(deref->modes < (1 << 14));
 
    union packed_instr header;
    header.u32 = 0;
@@ -979,7 +1017,7 @@ write_deref(write_ctx *ctx, const nir_deref_instr *deref)
    header.deref.deref_type = deref->deref_type;
 
    if (deref->deref_type == nir_deref_type_cast) {
-      header.deref.modes = deref->modes;
+      header.deref.modes = encode_deref_modes(deref->modes);
       header.deref.cast_type_same_as_last = deref->type == ctx->last_type;
    }
 
@@ -1115,7 +1153,7 @@ read_deref(read_ctx *ctx, union packed_instr header)
    if (deref_type == nir_deref_type_var) {
       deref->modes = deref->var->data.mode;
    } else if (deref->deref_type == nir_deref_type_cast) {
-      deref->modes = header.deref.modes;
+      deref->modes = decode_deref_modes(header.deref.modes);
    } else {
       assert(deref->parent.is_ssa);
       deref->modes = nir_instr_as_deref(deref->parent.ssa->parent_instr)->modes;
@@ -1127,11 +1165,11 @@ read_deref(read_ctx *ctx, union packed_instr header)
 static void
 write_intrinsic(write_ctx *ctx, const nir_intrinsic_instr *intrin)
 {
-   /* 9 bits for nir_intrinsic_op */
-   STATIC_ASSERT(nir_num_intrinsics <= 512);
+   /* 10 bits for nir_intrinsic_op */
+   STATIC_ASSERT(nir_num_intrinsics <= 1024);
    unsigned num_srcs = nir_intrinsic_infos[intrin->intrinsic].num_srcs;
    unsigned num_indices = nir_intrinsic_infos[intrin->intrinsic].num_indices;
-   assert(intrin->intrinsic < 512);
+   assert(intrin->intrinsic < 1024);
 
    union packed_instr header;
    header.u32 = 0;
@@ -1147,11 +1185,11 @@ write_intrinsic(write_ctx *ctx, const nir_intrinsic_instr *intrin)
          max_bits = MAX2(max_bits, max);
       }
 
-      if (max_bits * num_indices <= 9) {
-         header.intrinsic.const_indices_encoding = const_indices_9bit_all_combined;
+      if (max_bits * num_indices <= 8) {
+         header.intrinsic.const_indices_encoding = const_indices_all_combined;
 
-         /* Pack all const indices into 6 bits. */
-         unsigned bit_size = 9 / num_indices;
+         /* Pack all const indices into 8 bits. */
+         unsigned bit_size = 8 / num_indices;
          for (unsigned i = 0; i < num_indices; i++) {
             header.intrinsic.packed_const_indices |=
                intrin->const_index[i] << (i * bit_size);
@@ -1222,8 +1260,8 @@ read_intrinsic(read_ctx *ctx, union packed_instr header)
 
    if (num_indices) {
       switch (header.intrinsic.const_indices_encoding) {
-      case const_indices_9bit_all_combined: {
-         unsigned bit_size = 9 / num_indices;
+      case const_indices_all_combined: {
+         unsigned bit_size = 8 / num_indices;
          unsigned bit_mask = u_bit_consecutive(0, bit_size);
          for (unsigned i = 0; i < num_indices; i++) {
             intrin->const_index[i] =
@@ -1810,6 +1848,7 @@ static void
 write_if(write_ctx *ctx, nir_if *nif)
 {
    write_src(ctx, &nif->condition);
+   blob_write_uint8(ctx->blob, nif->control);
 
    write_cf_list(ctx, &nif->then_list);
    write_cf_list(ctx, &nif->else_list);
@@ -1821,6 +1860,7 @@ read_if(read_ctx *ctx, struct exec_list *cf_list)
    nir_if *nif = nir_if_create(ctx->nir);
 
    read_src(ctx, &nif->condition, nif);
+   nif->control = blob_read_uint8(ctx->blob);
 
    nir_cf_node_insert_end(cf_list, &nif->cf_node);
 
@@ -1831,6 +1871,7 @@ read_if(read_ctx *ctx, struct exec_list *cf_list)
 static void
 write_loop(write_ctx *ctx, nir_loop *loop)
 {
+   blob_write_uint8(ctx->blob, loop->control);
    write_cf_list(ctx, &loop->body);
 }
 
@@ -1841,6 +1882,7 @@ read_loop(read_ctx *ctx, struct exec_list *cf_list)
 
    nir_cf_node_insert_end(cf_list, &loop->cf_node);
 
+   loop->control = blob_read_uint8(ctx->blob);
    read_cf_list(ctx, &loop->body);
 }
 

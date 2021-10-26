@@ -44,6 +44,14 @@ update_bound_stage(struct fd_context *ctx, enum pipe_shader_type shader,
 }
 
 static void
+fd_set_patch_vertices(struct pipe_context *pctx, uint8_t patch_vertices) in_dt
+{
+   struct fd_context *ctx = fd_context(pctx);
+
+   ctx->patch_vertices = patch_vertices;
+}
+
+static void
 fd_vs_state_bind(struct pipe_context *pctx, void *hwcso) in_dt
 {
    struct fd_context *ctx = fd_context(pctx);
@@ -194,6 +202,10 @@ fd_prog_init(struct pipe_context *pctx)
    pctx->bind_tes_state = fd_tes_state_bind;
    pctx->bind_gs_state = fd_gs_state_bind;
    pctx->bind_fs_state = fd_fs_state_bind;
+   pctx->set_patch_vertices = fd_set_patch_vertices;
+
+   if (ctx->flags & PIPE_CONTEXT_COMPUTE_ONLY)
+      return;
 
    ctx->solid_prog.fs = assemble_tgsi(pctx, solid_fs, true);
    ctx->solid_prog.vs = assemble_tgsi(pctx, solid_vs, false);
@@ -228,6 +240,9 @@ fd_prog_fini(struct pipe_context *pctx)
 {
    struct fd_context *ctx = fd_context(pctx);
    int i;
+
+   if (ctx->flags & PIPE_CONTEXT_COMPUTE_ONLY)
+      return;
 
    pctx->delete_vs_state(pctx, ctx->solid_prog.vs);
    pctx->delete_fs_state(pctx, ctx->solid_prog.fs);

@@ -300,6 +300,55 @@ iris_lower_storage_image_derefs(nir_shader *nir)
    }
 }
 
+static bool
+iris_uses_image_atomic(const nir_shader *shader)
+{
+   nir_foreach_function(function, shader) {
+      if (function->impl == NULL)
+         continue;
+
+      nir_foreach_block(block, function->impl) {
+         nir_foreach_instr(instr, block) {
+            if (instr->type != nir_instr_type_intrinsic)
+               continue;
+
+            nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
+            switch (intrin->intrinsic) {
+            case nir_intrinsic_image_deref_atomic_add:
+            case nir_intrinsic_image_deref_atomic_imin:
+            case nir_intrinsic_image_deref_atomic_umin:
+            case nir_intrinsic_image_deref_atomic_imax:
+            case nir_intrinsic_image_deref_atomic_umax:
+            case nir_intrinsic_image_deref_atomic_and:
+            case nir_intrinsic_image_deref_atomic_or:
+            case nir_intrinsic_image_deref_atomic_xor:
+            case nir_intrinsic_image_deref_atomic_exchange:
+            case nir_intrinsic_image_deref_atomic_comp_swap:
+               unreachable("Should have been lowered in "
+                           "iris_lower_storage_image_derefs");
+
+            case nir_intrinsic_image_atomic_add:
+            case nir_intrinsic_image_atomic_imin:
+            case nir_intrinsic_image_atomic_umin:
+            case nir_intrinsic_image_atomic_imax:
+            case nir_intrinsic_image_atomic_umax:
+            case nir_intrinsic_image_atomic_and:
+            case nir_intrinsic_image_atomic_or:
+            case nir_intrinsic_image_atomic_xor:
+            case nir_intrinsic_image_atomic_exchange:
+            case nir_intrinsic_image_atomic_comp_swap:
+               return true;
+
+            default:
+               break;
+            }
+         }
+      }
+   }
+
+   return false;
+}
+
 /**
  * Undo nir_lower_passthrough_edgeflags but keep the inputs_read flag.
  */
@@ -967,7 +1016,7 @@ iris_setup_binding_table(const struct intel_device_info *devinfo,
    }
    bt->size_bytes = next * 4;
 
-   if (INTEL_DEBUG & DEBUG_BT) {
+   if (INTEL_DEBUG(DEBUG_BT)) {
       iris_print_binding_table(stderr, gl_shader_stage_name(info->stage), bt);
    }
 
@@ -1279,7 +1328,7 @@ iris_compile_vs(struct iris_screen *screen,
       nir_shader_gather_info(nir, impl);
    }
 
-   prog_data->use_alt_mode = ish->use_alt_mode;
+   prog_data->use_alt_mode = nir->info.is_arb_asm;
 
    iris_setup_uniforms(compiler, mem_ctx, nir, prog_data, 0, &system_values,
                        &num_system_values, &num_cbufs);
@@ -1898,7 +1947,7 @@ iris_compile_fs(struct iris_screen *screen,
    nir_shader *nir = nir_shader_clone(mem_ctx, ish->nir);
    const struct iris_fs_prog_key *const key = &shader->key.fs;
 
-   prog_data->use_alt_mode = ish->use_alt_mode;
+   prog_data->use_alt_mode = nir->info.is_arb_asm;
 
    iris_setup_uniforms(compiler, mem_ctx, nir, prog_data, 0, &system_values,
                        &num_system_values, &num_cbufs);
@@ -2320,62 +2369,9 @@ iris_get_scratch_space(struct iris_context *ice,
 
    struct iris_bo **bop = &ice->shaders.scratch_bos[encoded_size][stage];
 
-   /* The documentation for 3DSTATE_PS "Scratch Space Base Pointer" says:
-    *
-    *    "Scratch Space per slice is computed based on 4 sub-slices.  SW
-    *     must allocate scratch space enough so that each slice has 4
-    *     slices allowed."
-    *
-    * According to the other driver team, this applies to compute shaders
-    * as well.  This is not currently documented at all.
-    *
-    * This hack is no longer necessary on Gfx11+.
-    *
-    * For, Gfx11+, scratch space allocation is based on the number of threads
-    * in the base configuration.
-    */
-   unsigned subslice_total = screen->subslice_total;
-   if (devinfo->verx10 == 125)
-      subslice_total = 32;
-   else if (devinfo->ver == 12)
-      subslice_total = (devinfo->is_dg1 || devinfo->gt == 2 ? 6 : 2);
-   else if (devinfo->ver == 11)
-      subslice_total = 8;
-   else if (devinfo->ver < 11)
-      subslice_total = 4 * devinfo->num_slices;
-   assert(subslice_total >= screen->subslice_total);
-
    if (!*bop) {
-      unsigned scratch_ids_per_subslice = devinfo->max_cs_threads;
-
-      if (devinfo->ver >= 12) {
-         /* Same as ICL below, but with 16 EUs. */
-         scratch_ids_per_subslice = 16 * 8;
-      } else if (devinfo->ver == 11) {
-         /* The MEDIA_VFE_STATE docs say:
-          *
-          *    "Starting with this configuration, the Maximum Number of
-          *     Threads must be set to (#EU * 8) for GPGPU dispatches.
-          *
-          *     Although there are only 7 threads per EU in the configuration,
-          *     the FFTID is calculated as if there are 8 threads per EU,
-          *     which in turn requires a larger amount of Scratch Space to be
-          *     allocated by the driver."
-          */
-         scratch_ids_per_subslice = 8 * 8;
-      }
-
-      uint32_t max_threads[] = {
-         [MESA_SHADER_VERTEX]    = devinfo->max_vs_threads,
-         [MESA_SHADER_TESS_CTRL] = devinfo->max_tcs_threads,
-         [MESA_SHADER_TESS_EVAL] = devinfo->max_tes_threads,
-         [MESA_SHADER_GEOMETRY]  = devinfo->max_gs_threads,
-         [MESA_SHADER_FRAGMENT]  = devinfo->max_wm_threads,
-         [MESA_SHADER_COMPUTE]   = scratch_ids_per_subslice * subslice_total,
-      };
-
-      uint32_t size = per_thread_scratch * max_threads[stage];
-
+      assert(stage < ARRAY_SIZE(devinfo->max_scratch_ids));
+      uint32_t size = per_thread_scratch * devinfo->max_scratch_ids[stage];
       *bop = iris_bo_alloc(bufmgr, "scratch", size, 1, IRIS_MEMZONE_SHADER, 0);
    }
 
@@ -2433,8 +2429,6 @@ iris_create_uncompiled_shader(struct iris_screen *screen,
                               nir_shader *nir,
                               const struct pipe_stream_output_info *so_info)
 {
-   const struct intel_device_info *devinfo = &screen->devinfo;
-
    struct iris_uncompiled_shader *ish =
       calloc(1, sizeof(struct iris_uncompiled_shader));
    if (!ish)
@@ -2444,15 +2438,7 @@ iris_create_uncompiled_shader(struct iris_screen *screen,
    list_inithead(&ish->variants);
    simple_mtx_init(&ish->lock, mtx_plain);
 
-   NIR_PASS(ish->needs_edge_flag, nir, iris_fix_edge_flags);
-
-   brw_preprocess_nir(screen->compiler, nir, NULL);
-
-   NIR_PASS_V(nir, brw_nir_lower_storage_image, devinfo,
-              &ish->uses_atomic_load_store);
-   NIR_PASS_V(nir, iris_lower_storage_image_derefs);
-
-   nir_sweep(nir);
+   ish->uses_atomic_load_store = iris_uses_image_atomic(nir);
 
    ish->program_id = get_new_program_id(screen);
    ish->nir = nir;
@@ -2460,10 +2446,6 @@ iris_create_uncompiled_shader(struct iris_screen *screen,
       memcpy(&ish->stream_output, so_info, sizeof(*so_info));
       update_so_info(&ish->stream_output, nir->info.outputs_written);
    }
-
-   /* Save this now before potentially dropping nir->info.name */
-   if (nir->info.name && strncmp(nir->info.name, "ARB", 3) == 0)
-      ish->use_alt_mode = true;
 
    if (screen->disk_cache) {
       /* Serialize the NIR to a binary blob that we can hash for the disk
@@ -2530,6 +2512,9 @@ iris_create_compute_state(struct pipe_context *ctx,
       struct iris_compiled_shader *shader =
          iris_create_shader_variant(screen, NULL, IRIS_CACHE_CS,
                                     sizeof(key), &key);
+
+      /* Append our new variant to the shader's variant list. */
+      list_addtail(&shader->link, &ish->variants);
 
       if (!iris_disk_cache_retrieve(screen, uploader, ish, shader,
                                     &key, sizeof(key))) {
@@ -2835,7 +2820,7 @@ iris_bind_vs_state(struct pipe_context *ctx, void *state)
 
       if (ice->state.vs_uses_draw_params != uses_draw_params ||
           ice->state.vs_uses_derived_draw_params != uses_derived_draw_params ||
-          ice->state.vs_needs_edge_flag != ish->needs_edge_flag) {
+          ice->state.vs_needs_edge_flag != info->vs.needs_edge_flag) {
          ice->state.dirty |= IRIS_DIRTY_VERTEX_BUFFERS |
                              IRIS_DIRTY_VERTEX_ELEMENTS;
       }
@@ -2843,7 +2828,7 @@ iris_bind_vs_state(struct pipe_context *ctx, void *state)
       ice->state.vs_uses_draw_params = uses_draw_params;
       ice->state.vs_uses_derived_draw_params = uses_derived_draw_params;
       ice->state.vs_needs_sgvs_element = needs_sgvs_element;
-      ice->state.vs_needs_edge_flag = ish->needs_edge_flag;
+      ice->state.vs_needs_edge_flag = info->vs.needs_edge_flag;
    }
 
    bind_shader_state((void *) ctx, state, MESA_SHADER_VERTEX);
@@ -2859,10 +2844,13 @@ static void
 iris_bind_tes_state(struct pipe_context *ctx, void *state)
 {
    struct iris_context *ice = (struct iris_context *)ctx;
+   struct iris_screen *screen = (struct iris_screen *) ctx->screen;
+   const struct intel_device_info *devinfo = &screen->devinfo;
 
    /* Enabling/disabling optional stages requires a URB reconfiguration. */
    if (!!state != !!ice->shaders.uncompiled[MESA_SHADER_TESS_EVAL])
-      ice->state.dirty |= IRIS_DIRTY_URB;
+      ice->state.dirty |= IRIS_DIRTY_URB | (devinfo->verx10 >= 125 ?
+                                            IRIS_DIRTY_VFG : 0);
 
    bind_shader_state((void *) ctx, state, MESA_SHADER_TESS_EVAL);
 }
@@ -2909,6 +2897,67 @@ static void
 iris_bind_cs_state(struct pipe_context *ctx, void *state)
 {
    bind_shader_state((void *) ctx, state, MESA_SHADER_COMPUTE);
+}
+
+static char *
+iris_finalize_nir(struct pipe_screen *_screen, void *nirptr)
+{
+   struct iris_screen *screen = (struct iris_screen *)_screen;
+   struct nir_shader *nir = (struct nir_shader *) nirptr;
+   const struct intel_device_info *devinfo = &screen->devinfo;
+
+   NIR_PASS_V(nir, iris_fix_edge_flags);
+
+   brw_preprocess_nir(screen->compiler, nir, NULL);
+
+   NIR_PASS_V(nir, brw_nir_lower_storage_image, devinfo);
+   NIR_PASS_V(nir, iris_lower_storage_image_derefs);
+
+   nir_sweep(nir);
+
+   return NULL;
+}
+
+static void
+iris_set_max_shader_compiler_threads(struct pipe_screen *pscreen,
+                                     unsigned max_threads)
+{
+   struct iris_screen *screen = (struct iris_screen *) pscreen;
+   util_queue_adjust_num_threads(&screen->shader_compiler_queue, max_threads);
+}
+
+static bool
+iris_is_parallel_shader_compilation_finished(struct pipe_screen *pscreen,
+                                             void *v_shader,
+                                             enum pipe_shader_type p_stage)
+{
+   struct iris_screen *screen = (struct iris_screen *) pscreen;
+
+   /* Threaded compilation is only used for the precompile.  If precompile is
+    * disabled, threaded compilation is "done."
+    */
+   if (!screen->precompile)
+      return true;
+
+   struct iris_uncompiled_shader *ish = v_shader;
+
+   /* When precompile is enabled, the first entry is the precompile variant.
+    * Check the ready fence of the precompile variant.
+    */
+   struct iris_compiled_shader *first =
+      list_first_entry(&ish->variants, struct iris_compiled_shader, link);
+
+   return util_queue_fence_is_signalled(&first->ready);
+}
+
+void
+iris_init_screen_program_functions(struct pipe_screen *pscreen)
+{
+   pscreen->is_parallel_shader_compilation_finished =
+      iris_is_parallel_shader_compilation_finished;
+   pscreen->set_max_shader_compiler_threads =
+      iris_set_max_shader_compiler_threads;
+   pscreen->finalize_nir = iris_finalize_nir;
 }
 
 void

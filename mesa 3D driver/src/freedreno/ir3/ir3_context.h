@@ -114,6 +114,7 @@ struct ir3_context {
    unsigned stack, max_stack;
 
    unsigned loop_id;
+   unsigned loop_depth;
 
    /* a common pattern for indirect addressing is to request the
     * same address register multiple times.  To avoid generating
@@ -203,7 +204,7 @@ struct ir3_instruction **ir3_get_dst(struct ir3_context *ctx, nir_dest *dst,
 struct ir3_instruction *const *ir3_get_src(struct ir3_context *ctx,
                                            nir_src *src);
 void ir3_put_dst(struct ir3_context *ctx, nir_dest *dst);
-struct ir3_instruction *ir3_create_collect(struct ir3_context *ctx,
+struct ir3_instruction *ir3_create_collect(struct ir3_block *block,
                                            struct ir3_instruction *const *arr,
                                            unsigned arrsz);
 void ir3_split_dest(struct ir3_block *block, struct ir3_instruction **dst,
@@ -215,10 +216,10 @@ void emit_intrinsic_image_size_tex(struct ir3_context *ctx,
                                    nir_intrinsic_instr *intr,
                                    struct ir3_instruction **dst);
 
-#define ir3_collect(ctx, ...)                                                  \
+#define ir3_collect(block, ...)                                                \
    ({                                                                          \
       struct ir3_instruction *__arr[] = {__VA_ARGS__};                         \
-      ir3_create_collect(ctx, __arr, ARRAY_SIZE(__arr));                       \
+      ir3_create_collect(block, __arr, ARRAY_SIZE(__arr));                     \
    })
 
 NORETURN void ir3_context_error(struct ir3_context *ctx, const char *format,
@@ -272,6 +273,18 @@ static inline type_t
 utype_dst(nir_dest dst)
 {
    return utype_for_size(nir_dest_bit_size(dst));
+}
+
+/**
+ * Convert nir bitsize to ir3 bitsize, handling the special case of 1b bools
+ * which can be 16b or 32b depending on gen.
+ */
+static inline unsigned
+ir3_bitsize(struct ir3_context *ctx, unsigned nir_bitsize)
+{
+   if (nir_bitsize == 1)
+      return type_size(ctx->compiler->bool_type);
+   return nir_bitsize;
 }
 
 #endif /* IR3_CONTEXT_H_ */

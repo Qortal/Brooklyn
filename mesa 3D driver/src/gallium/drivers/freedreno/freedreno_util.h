@@ -114,13 +114,19 @@ extern bool fd_binning_enabled;
                    ##__VA_ARGS__);                                             \
    } while (0)
 
-#define perf_debug_ctx(ctx, ...)                                               \
+#define perf_debug_message(debug, type, ...)                                   \
    do {                                                                        \
       if (FD_DBG(PERF))                                                        \
          mesa_logw(__VA_ARGS__);                                               \
+      struct pipe_debug_callback *__d = (debug);                               \
+      if (__d)                                                                 \
+         pipe_debug_message(__d, type, __VA_ARGS__);                           \
+   } while (0)
+
+#define perf_debug_ctx(ctx, ...)                                               \
+   do {                                                                        \
       struct fd_context *__c = (ctx);                                          \
-      if (__c)                                                                 \
-         pipe_debug_message(&__c->debug, PERF_INFO, __VA_ARGS__);              \
+      perf_debug_message(__c ? &__c->debug : NULL, PERF_INFO, __VA_ARGS__);    \
    } while (0)
 
 #define perf_debug(...) perf_debug_ctx(NULL, __VA_ARGS__)
@@ -398,7 +404,7 @@ emit_marker(struct fd_ringbuffer *ring, int scratch_idx)
    if (reg == HW_QUERY_BASE_REG)
       return;
    if (__EMIT_MARKER) {
-      OUT_WFI5(ring);
+      OUT_WFI(ring);
       OUT_PKT0(ring, reg, 1);
       OUT_RING(ring, p_atomic_inc_return(&marker_cnt));
    }

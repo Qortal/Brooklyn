@@ -308,6 +308,9 @@ typedef enum {
    OPC_LDG_A           = _OPC(6, 55),
    OPC_STG_A           = _OPC(6, 56),
 
+   OPC_SPILL_MACRO     = _OPC(6, 57),
+   OPC_RELOAD_MACRO    = _OPC(6, 58),
+
    /* category 7: */
    OPC_BAR             = _OPC(7, 0),
    OPC_FENCE           = _OPC(7, 1),
@@ -375,6 +378,32 @@ type_size(type_t type)
       return 8;
    default:
       ir3_assert(0); /* invalid type */
+      return 0;
+   }
+}
+
+static inline type_t
+type_uint_size(unsigned bit_size)
+{
+   switch (bit_size) {
+   case 8:  return TYPE_U8;
+   case 1:  /* 1b bools are treated as normal half-regs */
+   case 16: return TYPE_U16;
+   case 32: return TYPE_U32;
+   default:
+      ir3_assert(0); /* invalid size */
+      return 0;
+   }
+}
+
+static inline type_t
+type_float_size(unsigned bit_size)
+{
+   switch (bit_size) {
+   case 16: return TYPE_F16;
+   case 32: return TYPE_F32;
+   default:
+      ir3_assert(0); /* invalid size */
       return 0;
    }
 }

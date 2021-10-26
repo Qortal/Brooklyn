@@ -332,10 +332,6 @@ void iris_get_depth_stencil_resources(struct pipe_resource *res,
 bool iris_resource_set_clear_color(struct iris_context *ice,
                                    struct iris_resource *res,
                                    union isl_color_value color);
-union isl_color_value
-iris_resource_get_clear_color(const struct iris_resource *res,
-                              struct iris_bo **clear_color_bo,
-                              uint64_t *clear_color_offset);
 
 void iris_replace_buffer_storage(struct pipe_context *ctx,
                                  struct pipe_resource *dst,
@@ -491,16 +487,6 @@ enum isl_aux_usage iris_image_view_aux_usage(struct iris_context *ice,
                                              const struct shader_info *info);
 enum isl_format iris_image_view_get_format(struct iris_context *ice,
                                            const struct pipe_image_view *img);
-
-static inline bool
-iris_resource_unfinished_aux_import(struct iris_resource *res)
-{
-   return res->aux.bo == NULL && res->mod_info &&
-      res->mod_info->aux_usage != ISL_AUX_USAGE_NONE;
-}
-
-void iris_resource_finish_aux_import(struct pipe_screen *pscreen,
-                                     struct iris_resource *res);
 
 bool iris_has_invalid_primary(const struct iris_resource *res,
                               unsigned start_level, unsigned num_levels,

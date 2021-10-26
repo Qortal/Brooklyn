@@ -91,11 +91,6 @@ dEQP-GLES31.functional.layout_binding.ssbo.fragment_binding_array
 dEQP-GLES3.functional.fbo.blit.conversion.rg8i_to_r16i
 dEQP-GLES3.functional.fbo.blit.conversion.rg8_to_r16f
 
-# Started appearing after disabling cpufreq, devfreq and disabling runtime PM
-dEQP-GLES3.functional.fbo.blit.depth_stencil.depth32f_stencil8_basic
-dEQP-GLES3.functional.fbo.blit.depth_stencil.depth32f_stencil8_scale
-dEQP-GLES3.functional.fbo.blit.depth_stencil.depth32f_stencil8_stencil_only
-
 # Could trip hangcheck timeout
 dEQP-VK.api.command_buffers.record_many_draws_primary_2
 dEQP-VK.api.command_buffers.record_many_draws_secondary_2
@@ -114,6 +109,13 @@ KHR-GLES31.core.tessellation_shader.tessellation_shader_tc_barriers.barrier_guar
 # looks like a cache flushing issue, and it does sometimes pass.
 bypass-dEQP-GLES31.functional.blend_equation_advanced.msaa.*
 
+# Testcase was mostly fixed in 23f7e06cd8d40569f8bfabde9c01d1597573abef, but has
+# flaked in CI since then:
+# " [775] Check failed. Received: [3,0,0,2] instead of: [5,0,0,2]
+#   [806] Check failed. Received: [3,0,0,2] instead of: [5,0,0,2]
+#   ..."
+KHR-GLES31.core.shader_image_load_store.basic-glsl-misc-fs
+
 # Flakes, all seen since merge of:
 # https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/12258
 # Failures seen so far in different flakes:
@@ -126,3 +128,4 @@ bypass-dEQP-GLES31.functional.blend_equation_advanced.msaa.*
 # test does a single point draw in a FS taking the length of the first 7 SSBOs and writing them to
 # ints in SSBO 7, then glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT), then mapping it.
 KHR-GLES31.core.shader_storage_buffer_object.advanced-unsizedArrayLength-fs-std430-matC-pad
+KHR-GLES31.core.shader_storage_buffer_object.advanced-unsizedArrayLength-fs-std430-vec

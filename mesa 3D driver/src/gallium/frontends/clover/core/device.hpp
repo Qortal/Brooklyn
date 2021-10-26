@@ -28,7 +28,7 @@
 
 #include "core/object.hpp"
 #include "core/format.hpp"
-#include "core/module.hpp"
+#include "core/binary.hpp"
 #include "util/lazy.hpp"
 #include "pipe-loader/pipe_loader.h"
 
@@ -106,7 +106,7 @@ namespace clover {
       friend class root_resource;
       friend class hard_event;
       friend std::set<cl_image_format>
-      supported_formats(const context &, cl_mem_object_type);
+      supported_formats(const context &, cl_mem_object_type, cl_mem_flags flags);
       const void *get_compiler_options(enum pipe_shader_ir ir) const;
 
       clover::platform &platform;

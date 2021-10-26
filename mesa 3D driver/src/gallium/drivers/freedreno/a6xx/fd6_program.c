@@ -152,6 +152,35 @@ fd6_emit_shader(struct fd_context *ctx, struct fd_ringbuffer *ring,
    OUT_RELOC(ring, so->bo, 0, 0, 0);
 }
 
+/**
+ * Build a pre-baked state-obj to disable SO, so that we aren't dynamically
+ * building this at draw time whenever we transition from SO enabled->disabled
+ */
+static void
+setup_stream_out_disable(struct fd_context *ctx)
+{
+   unsigned sizedw = 4;
+
+   if (ctx->screen->info->a6xx.tess_use_shared)
+      sizedw += 2;
+
+   struct fd_ringbuffer *ring =
+      fd_ringbuffer_new_object(ctx->pipe, (1 + sizedw) * 4);
+
+   OUT_PKT7(ring, CP_CONTEXT_REG_BUNCH, sizedw);
+   OUT_RING(ring, REG_A6XX_VPC_SO_CNTL);
+   OUT_RING(ring, 0);
+   OUT_RING(ring, REG_A6XX_VPC_SO_STREAM_CNTL);
+   OUT_RING(ring, 0);
+
+   if (ctx->screen->info->a6xx.tess_use_shared) {
+      OUT_RING(ring, REG_A6XX_PC_SO_STREAM_CNTL);
+      OUT_RING(ring, 0);
+   }
+
+   fd6_context(ctx)->streamout_disable_stateobj = ring;
+}
+
 static void
 setup_stream_out(struct fd_context *ctx, struct fd6_program_state *state,
                  const struct ir3_shader_variant *v,
@@ -203,10 +232,14 @@ setup_stream_out(struct fd_context *ctx, struct fd6_program_state *state,
       }
    }
 
-   struct fd_ringbuffer *ring =
-      fd_ringbuffer_new_object(ctx->pipe, (13 + (2 * prog_count)) * 4);
+   unsigned sizedw = 12 + (2 * prog_count);
+   if (ctx->screen->info->a6xx.tess_use_shared)
+      sizedw += 2;
 
-   OUT_PKT7(ring, CP_CONTEXT_REG_BUNCH, 12 + (2 * prog_count));
+   struct fd_ringbuffer *ring =
+      fd_ringbuffer_new_object(ctx->pipe, (1 + sizedw) * 4);
+
+   OUT_PKT7(ring, CP_CONTEXT_REG_BUNCH, sizedw);
    OUT_RING(ring, REG_A6XX_VPC_SO_STREAM_CNTL);
    OUT_RING(ring,
             A6XX_VPC_SO_STREAM_CNTL_STREAM_ENABLE(0x1) |
@@ -227,6 +260,13 @@ setup_stream_out(struct fd_context *ctx, struct fd6_program_state *state,
    for (unsigned i = 0; i < prog_count; i++) {
       OUT_RING(ring, REG_A6XX_VPC_SO_PROG);
       OUT_RING(ring, prog[i]);
+   }
+   if (ctx->screen->info->a6xx.tess_use_shared) {
+      /* Possibly not tess_use_shared related, but the combination of
+       * tess + xfb fails some tests if we don't emit this.
+       */
+      OUT_RING(ring, REG_A6XX_PC_SO_STREAM_CNTL);
+      OUT_RING(ring, A6XX_PC_SO_STREAM_CNTL_STREAM_ENABLE);
    }
 
    state->streamout_stateobj = ring;
@@ -353,10 +393,10 @@ setup_stateobj(struct fd_ringbuffer *ring, struct fd_context *ctx,
    layer_regid = ir3_find_output_regid(vs, VARYING_SLOT_LAYER);
    vertex_regid = ir3_find_sysval_regid(vs, SYSTEM_VALUE_VERTEX_ID);
    instance_regid = ir3_find_sysval_regid(vs, SYSTEM_VALUE_INSTANCE_ID);
-   if (gs)
-      vs_primitive_regid = ir3_find_sysval_regid(gs, SYSTEM_VALUE_PRIMITIVE_ID);
-   else if (hs)
+   if (hs)
       vs_primitive_regid = ir3_find_sysval_regid(hs, SYSTEM_VALUE_PRIMITIVE_ID);
+   else if (gs)
+      vs_primitive_regid = ir3_find_sysval_regid(gs, SYSTEM_VALUE_PRIMITIVE_ID);
    else
       vs_primitive_regid = regid(63, 0);
 
@@ -557,6 +597,9 @@ setup_stateobj(struct fd_ringbuffer *ring, struct fd_context *ctx,
     */
    if (do_streamout && !binning_pass) {
       setup_stream_out(ctx, state, last_shader, &l);
+
+      if (!fd6_context(ctx)->streamout_disable_stateobj)
+         setup_stream_out_disable(ctx);
    }
 
    debug_assert(l.cnt <= 32);
@@ -628,29 +671,45 @@ setup_stateobj(struct fd_ringbuffer *ring, struct fd_context *ctx,
       OUT_PKT4(ring, REG_A6XX_PC_TESS_NUM_VERTEX, 1);
       OUT_RING(ring, hs_info->tess.tcs_vertices_out);
 
-      /* Total attribute slots in HS incoming patch. */
-      OUT_PKT4(ring, REG_A6XX_PC_HS_INPUT_SIZE, 1);
-      OUT_RING(ring, hs_info->tess.tcs_vertices_out * vs->output_size / 4);
+      if (ctx->screen->info->a6xx.tess_use_shared) {
+         unsigned hs_input_size = 6 + (3 * (vs->output_size - 1));
+         unsigned wave_input_size =
+               MIN2(64, DIV_ROUND_UP(hs_input_size * 4,
+                                     hs_info->tess.tcs_vertices_out));
 
-      const uint32_t wavesize = 64;
-      const uint32_t max_wave_input_size = 64;
-      const uint32_t patch_control_points = hs_info->tess.tcs_vertices_out;
+         OUT_PKT4(ring, REG_A6XX_PC_HS_INPUT_SIZE, 1);
+         OUT_RING(ring, hs_input_size);
 
-      /* note: if HS is really just the VS extended, then this
-       * should be by MAX2(patch_control_points, hs_info->tess.tcs_vertices_out)
-       * however that doesn't match the blob, and fails some dEQP tests.
-       */
-      uint32_t prims_per_wave = wavesize / hs_info->tess.tcs_vertices_out;
-      uint32_t max_prims_per_wave = max_wave_input_size * wavesize /
-                                    (vs->output_size * patch_control_points);
-      prims_per_wave = MIN2(prims_per_wave, max_prims_per_wave);
+         OUT_PKT4(ring, REG_A6XX_SP_HS_WAVE_INPUT_SIZE, 1);
+         OUT_RING(ring, wave_input_size);
+      } else {
+         uint32_t hs_input_size =
+               hs_info->tess.tcs_vertices_out * vs->output_size / 4;
 
-      uint32_t total_size =
-         vs->output_size * patch_control_points * prims_per_wave;
-      uint32_t wave_input_size = DIV_ROUND_UP(total_size, wavesize);
+         /* Total attribute slots in HS incoming patch. */
+         OUT_PKT4(ring, REG_A6XX_PC_HS_INPUT_SIZE, 1);
+         OUT_RING(ring, hs_input_size);
 
-      OUT_PKT4(ring, REG_A6XX_SP_HS_WAVE_INPUT_SIZE, 1);
-      OUT_RING(ring, wave_input_size);
+         const uint32_t wavesize = 64;
+         const uint32_t max_wave_input_size = 64;
+         const uint32_t patch_control_points = hs_info->tess.tcs_vertices_out;
+
+         /* note: if HS is really just the VS extended, then this
+          * should be by MAX2(patch_control_points, hs_info->tess.tcs_vertices_out)
+          * however that doesn't match the blob, and fails some dEQP tests.
+          */
+         uint32_t prims_per_wave = wavesize / hs_info->tess.tcs_vertices_out;
+         uint32_t max_prims_per_wave = max_wave_input_size * wavesize /
+               (vs->output_size * patch_control_points);
+         prims_per_wave = MIN2(prims_per_wave, max_prims_per_wave);
+
+         uint32_t total_size =
+               vs->output_size * patch_control_points * prims_per_wave;
+         uint32_t wave_input_size = DIV_ROUND_UP(total_size, wavesize);
+
+         OUT_PKT4(ring, REG_A6XX_SP_HS_WAVE_INPUT_SIZE, 1);
+         OUT_RING(ring, wave_input_size);
+      }
 
       shader_info *ds_info = &ds->shader->nir->info;
       OUT_PKT4(ring, REG_A6XX_PC_TESS_CNTL, 1);
@@ -775,10 +834,6 @@ setup_stateobj(struct fd_ringbuffer *ring, struct fd_context *ctx,
       else
          need_size = true;
    }
-   if (VALIDREG(ij_regid[IJ_LINEAR_PIXEL]))
-      need_size = true;
-
-   /* XXX: enable bits for linear centroid and linear sample bary */
 
    OUT_PKT4(ring, REG_A6XX_GRAS_CNTL, 1);
    OUT_RING(
@@ -787,8 +842,12 @@ setup_stateobj(struct fd_ringbuffer *ring, struct fd_context *ctx,
          CONDREG(ij_regid[IJ_PERSP_CENTROID],
                  A6XX_GRAS_CNTL_IJ_PERSP_CENTROID) |
          CONDREG(ij_regid[IJ_PERSP_SAMPLE], A6XX_GRAS_CNTL_IJ_PERSP_SAMPLE) |
-         COND(need_size, A6XX_GRAS_CNTL_SIZE) |
-         COND(need_size_persamp, A6XX_GRAS_CNTL_SIZE_PERSAMP) |
+         CONDREG(ij_regid[IJ_LINEAR_PIXEL], A6XX_GRAS_CNTL_IJ_LINEAR_PIXEL) |
+         CONDREG(ij_regid[IJ_LINEAR_CENTROID],
+                 A6XX_GRAS_CNTL_IJ_LINEAR_CENTROID) |
+         CONDREG(ij_regid[IJ_LINEAR_SAMPLE], A6XX_GRAS_CNTL_IJ_LINEAR_SAMPLE) |
+         COND(need_size, A6XX_GRAS_CNTL_IJ_LINEAR_PIXEL) |
+         COND(need_size_persamp, A6XX_GRAS_CNTL_IJ_LINEAR_SAMPLE) |
          COND(fs->fragcoord_compmask != 0,
               A6XX_GRAS_CNTL_COORD_MASK(fs->fragcoord_compmask)));
 
@@ -801,9 +860,15 @@ setup_stateobj(struct fd_ringbuffer *ring, struct fd_context *ctx,
                  A6XX_RB_RENDER_CONTROL0_IJ_PERSP_CENTROID) |
          CONDREG(ij_regid[IJ_PERSP_SAMPLE],
                  A6XX_RB_RENDER_CONTROL0_IJ_PERSP_SAMPLE) |
-         COND(need_size, A6XX_RB_RENDER_CONTROL0_SIZE) |
+         CONDREG(ij_regid[IJ_LINEAR_PIXEL],
+              A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_PIXEL) |
+         CONDREG(ij_regid[IJ_LINEAR_CENTROID],
+                 A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_CENTROID) |
+         CONDREG(ij_regid[IJ_LINEAR_SAMPLE],
+                 A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_SAMPLE) |
+         COND(need_size, A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_PIXEL) |
          COND(enable_varyings, A6XX_RB_RENDER_CONTROL0_UNK10) |
-         COND(need_size_persamp, A6XX_RB_RENDER_CONTROL0_SIZE_PERSAMP) |
+         COND(need_size_persamp, A6XX_RB_RENDER_CONTROL0_IJ_LINEAR_SAMPLE) |
          COND(fs->fragcoord_compmask != 0,
               A6XX_RB_RENDER_CONTROL0_COORD_MASK(fs->fragcoord_compmask)));
 

@@ -44,14 +44,12 @@
     BM_KERNEL: /baremetal-files/Image.gz
     BM_DTB: /baremetal-files/apq8016-sbc.dtb
     GPU_VERSION: freedreno-a307
-    DEQP_EXPECTED_RENDERER: FD307
 
 a306_gl:
   extends:
     - .baremetal-deqp-test
     - .a306-test
   variables:
-    DEQP_VER: gles2
     DEQP_SUITE: freedreno-a307
   parallel: 5
 
@@ -66,11 +64,11 @@ a306-traces:
 .a530-test:
   extends:
     - .freedreno-test
+    - .test-manual-mr
   variables:
     BM_KERNEL: /baremetal-files/Image.gz
     BM_DTB: /baremetal-files/apq8096-db820c.dtb
     GPU_VERSION: freedreno-a530
-    DEQP_EXPECTED_RENDERER: FD530
   tags:
     - google-freedreno-db820c
 
@@ -79,7 +77,6 @@ a530_gl:
     - .baremetal-deqp-test
     - .a530-test
   variables:
-    DEQP_VER: gles2
     DEQP_SUITE: freedreno-a530
   parallel: 5
 
@@ -119,11 +116,10 @@ a530-traces:
   extends:
     - .freedreno-test
   variables:
-    DEQP_PARALLEL: 10
+    FDO_CI_CONCURRENT: 10
     BM_KERNEL: /baremetal-files/cheza-kernel
     BM_CMDLINE: "ip=dhcp console=ttyMSM0,115200n8 root=/dev/nfs rw nfsrootdebug nfsroot=,tcp,nfsvers=4.2 init=/init"
     GPU_VERSION: freedreno-a630
-    DEQP_EXPECTED_RENDERER: FD630
   tags:
     - google-freedreno-cheza
   script:
@@ -135,7 +131,6 @@ a630_gl:
     - .a630-test
   parallel: 4
   variables:
-    DEQP_VER: gles2 # for renderer check
     DEQP_SUITE: freedreno-a630
 
 # Robustness tests may be disruptive to other tests, so we run EGL's robustness
@@ -158,15 +153,15 @@ a630_gles_asan:
   variables:
     DEQP_VER: gles31
     DEQP_FRACTION: 10
+    DEQP_EXPECTED_RENDERER: FD630
     GPU_VERSION: freedreno-a630-asan
 
 a630_vk:
   extends:
-    - .baremetal-deqp-test-freedreno-vk
     - .a630-test
+    - .baremetal-deqp-test-freedreno-vk
   parallel: 3
   variables:
-    DEQP_VER: vk
     DEQP_SUITE: freedreno-a630-vk
 
 a630_vk_full:
@@ -182,13 +177,14 @@ a630_vk_full:
 # Clicking play can show you some useful areas for fixing turnip, though.
 a630_vk_asan:
   extends:
-    - .baremetal-deqp-test-freedreno-vk
     - .a630-test
+    - .baremetal-deqp-test-freedreno-vk
     - .baremetal-arm64-asan-test
     - .test-manual
   variables:
+    DEQP_EXPECTED_RENDERER: "Turnip Adreno (TM) 630"
     DEQP_FRACTION: 100
-    DEQP_PARALLEL: 4 # We get OOMkills if we go too wide with asan enabled
+    FDO_CI_CONCURRENT: 4 # We get OOMkills if we go too wide with asan enabled
     TU_DEBUG: forcebin
     # Disable the leak checks, since the library gets dlclose()d and thus get
     # totally useless leak reports.  We can still catch buffer overflows.
@@ -238,5 +234,5 @@ a630-traces-performance:
     # So we aren't capped by VSync by the X server
     EGL_PLATFORM: surfaceless
     GIT_STRATEGY: none
-    HWCI_FREQ_MAX: 1
+    HWCI_FREQ_MAX: "true"
   allow_failure: true

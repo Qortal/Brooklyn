@@ -433,6 +433,22 @@ emit_common_consts(const struct ir3_shader_variant *v,
    }
 }
 
+/* emit kernel params */
+static inline void
+emit_kernel_params(struct fd_context *ctx, const struct ir3_shader_variant *v,
+                   struct fd_ringbuffer *ring, const struct pipe_grid_info *info)
+   assert_dt
+{
+   const struct ir3_const_state *const_state = ir3_const_state(v);
+   uint32_t offset = const_state->offsets.kernel_params;
+   if (v->constlen > offset) {
+      ring_wfi(ctx->batch, ring);
+      emit_const_user(ring, v, offset * 4,
+                      align(v->shader->cs.req_input_mem, 4),
+                      info->input);
+   }
+}
+
 static inline void
 ir3_emit_vs_driver_params(const struct ir3_shader_variant *v,
                           struct fd_ringbuffer *ring, struct fd_context *ctx,
@@ -479,9 +495,10 @@ ir3_emit_vs_driver_params(const struct ir3_shader_variant *v,
     * stream so need to copy them to bo.
     */
    if (indirect && needs_vtxid_base) {
+      uint32_t vertex_params_area = align(vertex_params_size, 16);
       struct pipe_resource *vertex_params_rsc =
          pipe_buffer_create(&ctx->screen->base, PIPE_BIND_CONSTANT_BUFFER,
-                            PIPE_USAGE_STREAM, vertex_params_size * 4);
+                            PIPE_USAGE_STREAM, vertex_params_area * 4);
       unsigned src_off = indirect->offset;
       ;
       void *ptr;
@@ -501,7 +518,7 @@ ir3_emit_vs_driver_params(const struct ir3_shader_variant *v,
       ctx->screen->mem_to_mem(ring, vertex_params_rsc, 0, indirect->buffer,
                               src_off, 1);
 
-      emit_const_prsc(ring, v, offset * 4, 0, vertex_params_size,
+      emit_const_prsc(ring, v, offset * 4, 0, vertex_params_area,
                       vertex_params_rsc);
 
       pipe_resource_reference(&vertex_params_rsc, NULL);
@@ -551,6 +568,7 @@ ir3_emit_cs_consts(const struct ir3_shader_variant *v,
    debug_assert(gl_shader_stage_is_compute(v->type));
 
    emit_common_consts(v, ring, ctx, PIPE_SHADER_COMPUTE);
+   emit_kernel_params(ctx, v, ring, info);
 
    /* emit compute-shader driver-params: */
    const struct ir3_const_state *const_state = ir3_const_state(v);
@@ -591,6 +609,7 @@ ir3_emit_cs_consts(const struct ir3_shader_variant *v,
             [IR3_DP_NUM_WORK_GROUPS_X] = info->grid[0],
             [IR3_DP_NUM_WORK_GROUPS_Y] = info->grid[1],
             [IR3_DP_NUM_WORK_GROUPS_Z] = info->grid[2],
+            [IR3_DP_WORK_DIM]          = info->work_dim,
             [IR3_DP_LOCAL_GROUP_SIZE_X] = info->block[0],
             [IR3_DP_LOCAL_GROUP_SIZE_Y] = info->block[1],
             [IR3_DP_LOCAL_GROUP_SIZE_Z] = info->block[2],

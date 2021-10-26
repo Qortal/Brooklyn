@@ -387,7 +387,7 @@ emit_image_load(struct v3dv_device *device,
          load.height_in_ub_or_stride = slice->stride;
       }
 
-      if (image->samples > VK_SAMPLE_COUNT_1_BIT)
+      if (image->vk.samples > VK_SAMPLE_COUNT_1_BIT)
          load.decimate_mode = V3D_DECIMATE_MODE_ALL_SAMPLES;
       else
          load.decimate_mode = V3D_DECIMATE_MODE_SAMPLE_0;
@@ -448,7 +448,7 @@ emit_image_store(struct v3dv_device *device,
          store.height_in_ub_or_stride = slice->stride;
       }
 
-      if (image->samples > VK_SAMPLE_COUNT_1_BIT)
+      if (image->vk.samples > VK_SAMPLE_COUNT_1_BIT)
          store.decimate_mode = V3D_DECIMATE_MODE_ALL_SAMPLES;
       else if (is_multisample_resolve)
          store.decimate_mode = V3D_DECIMATE_MODE_4X;
@@ -474,11 +474,11 @@ emit_copy_layer_to_buffer_per_tile_list(struct v3dv_job *job,
    cl_emit(cl, TILE_COORDINATES_IMPLICIT, coords);
 
    /* Load image to TLB */
-   assert((image->type != VK_IMAGE_TYPE_3D &&
+   assert((image->vk.image_type != VK_IMAGE_TYPE_3D &&
            layer_offset < region->imageSubresource.layerCount) ||
-          layer_offset < image->extent.depth);
+          layer_offset < image->vk.extent.depth);
 
-   const uint32_t image_layer = image->type != VK_IMAGE_TYPE_3D ?
+   const uint32_t image_layer = image->vk.image_type != VK_IMAGE_TYPE_3D ?
       region->imageSubresource.baseArrayLayer + layer_offset :
       region->imageOffset.z + layer_offset;
 
@@ -505,8 +505,8 @@ emit_copy_layer_to_buffer_per_tile_list(struct v3dv_job *job,
       height = region->bufferImageHeight;
 
    /* Handle copy from compressed format */
-   width = DIV_ROUND_UP(width, vk_format_get_blockwidth(image->vk_format));
-   height = DIV_ROUND_UP(height, vk_format_get_blockheight(image->vk_format));
+   width = DIV_ROUND_UP(width, vk_format_get_blockwidth(image->vk.format));
+   height = DIV_ROUND_UP(height, vk_format_get_blockheight(image->vk.format));
 
    /* If we are storing stencil from a combined depth/stencil format the
     * Vulkan spec states that the output buffer must have packed stencil
@@ -522,7 +522,7 @@ emit_copy_layer_to_buffer_per_tile_list(struct v3dv_job *job,
    uint32_t format = choose_tlb_format(framebuffer,
                                        region->imageSubresource.aspectMask,
                                        true, true, false);
-   bool msaa = image->samples > VK_SAMPLE_COUNT_1_BIT;
+   bool msaa = image->vk.samples > VK_SAMPLE_COUNT_1_BIT;
 
    emit_linear_store(cl, RENDER_TARGET_0, buffer->mem->bo,
                      buffer_offset, buffer_stride, msaa, format);
@@ -582,11 +582,11 @@ emit_resolve_image_layer_per_tile_list(struct v3dv_job *job,
 
    cl_emit(cl, TILE_COORDINATES_IMPLICIT, coords);
 
-   assert((src->type != VK_IMAGE_TYPE_3D &&
+   assert((src->vk.image_type != VK_IMAGE_TYPE_3D &&
            layer_offset < region->srcSubresource.layerCount) ||
-          layer_offset < src->extent.depth);
+          layer_offset < src->vk.extent.depth);
 
-   const uint32_t src_layer = src->type != VK_IMAGE_TYPE_3D ?
+   const uint32_t src_layer = src->vk.image_type != VK_IMAGE_TYPE_3D ?
       region->srcSubresource.baseArrayLayer + layer_offset :
       region->srcOffset.z + layer_offset;
 
@@ -600,11 +600,11 @@ emit_resolve_image_layer_per_tile_list(struct v3dv_job *job,
 
    cl_emit(cl, BRANCH_TO_IMPLICIT_TILE_LIST, branch);
 
-   assert((dst->type != VK_IMAGE_TYPE_3D &&
+   assert((dst->vk.image_type != VK_IMAGE_TYPE_3D &&
            layer_offset < region->dstSubresource.layerCount) ||
-          layer_offset < dst->extent.depth);
+          layer_offset < dst->vk.extent.depth);
 
-   const uint32_t dst_layer = dst->type != VK_IMAGE_TYPE_3D ?
+   const uint32_t dst_layer = dst->vk.image_type != VK_IMAGE_TYPE_3D ?
       region->dstSubresource.baseArrayLayer + layer_offset :
       region->dstOffset.z + layer_offset;
 
@@ -743,11 +743,11 @@ emit_copy_image_layer_per_tile_list(struct v3dv_job *job,
 
    cl_emit(cl, TILE_COORDINATES_IMPLICIT, coords);
 
-   assert((src->type != VK_IMAGE_TYPE_3D &&
+   assert((src->vk.image_type != VK_IMAGE_TYPE_3D &&
            layer_offset < region->srcSubresource.layerCount) ||
-          layer_offset < src->extent.depth);
+          layer_offset < src->vk.extent.depth);
 
-   const uint32_t src_layer = src->type != VK_IMAGE_TYPE_3D ?
+   const uint32_t src_layer = src->vk.image_type != VK_IMAGE_TYPE_3D ?
       region->srcSubresource.baseArrayLayer + layer_offset :
       region->srcOffset.z + layer_offset;
 
@@ -761,11 +761,11 @@ emit_copy_image_layer_per_tile_list(struct v3dv_job *job,
 
    cl_emit(cl, BRANCH_TO_IMPLICIT_TILE_LIST, branch);
 
-   assert((dst->type != VK_IMAGE_TYPE_3D &&
+   assert((dst->vk.image_type != VK_IMAGE_TYPE_3D &&
            layer_offset < region->dstSubresource.layerCount) ||
-          layer_offset < dst->extent.depth);
+          layer_offset < dst->vk.extent.depth);
 
-   const uint32_t dst_layer = dst->type != VK_IMAGE_TYPE_3D ?
+   const uint32_t dst_layer = dst->vk.image_type != VK_IMAGE_TYPE_3D ?
       region->dstSubresource.baseArrayLayer + layer_offset :
       region->dstOffset.z + layer_offset;
 
@@ -815,62 +815,52 @@ v3dX(meta_emit_copy_image_rcl)(struct v3dv_job *job,
 
 void
 v3dX(meta_emit_tfu_job)(struct v3dv_cmd_buffer *cmd_buffer,
-                        struct v3dv_image *dst,
-                        uint32_t dst_mip_level,
-                        uint32_t dst_layer,
-                        struct v3dv_image *src,
-                        uint32_t src_mip_level,
-                        uint32_t src_layer,
+                        uint32_t dst_bo_handle,
+                        uint32_t dst_offset,
+                        enum v3d_tiling_mode dst_tiling,
+                        uint32_t dst_padded_height_or_stride,
+                        uint32_t dst_cpp,
+                        uint32_t src_bo_handle,
+                        uint32_t src_offset,
+                        enum v3d_tiling_mode src_tiling,
+                        uint32_t src_padded_height_or_stride,
+                        uint32_t src_cpp,
                         uint32_t width,
                         uint32_t height,
                         const struct v3dv_format *format)
 {
-   const struct v3d_resource_slice *src_slice = &src->slices[src_mip_level];
-   const struct v3d_resource_slice *dst_slice = &dst->slices[dst_mip_level];
-
-   assert(dst->mem && dst->mem->bo);
-   const struct v3dv_bo *dst_bo = dst->mem->bo;
-
-   assert(src->mem && src->mem->bo);
-   const struct v3dv_bo *src_bo = src->mem->bo;
-
    struct drm_v3d_submit_tfu tfu = {
       .ios = (height << 16) | width,
       .bo_handles = {
-         dst_bo->handle,
-         src_bo->handle != dst_bo->handle ? src_bo->handle : 0
+         dst_bo_handle,
+         src_bo_handle != dst_bo_handle ? src_bo_handle : 0
       },
    };
 
-   const uint32_t src_offset =
-      src_bo->offset + v3dv_layer_offset(src, src_mip_level, src_layer);
    tfu.iia |= src_offset;
 
-   uint32_t icfg;
-   if (src_slice->tiling == V3D_TILING_RASTER) {
-      icfg = V3D_TFU_ICFG_FORMAT_RASTER;
+   if (src_tiling == V3D_TILING_RASTER) {
+      tfu.icfg = V3D_TFU_ICFG_FORMAT_RASTER << V3D_TFU_ICFG_FORMAT_SHIFT;
    } else {
-      icfg = V3D_TFU_ICFG_FORMAT_LINEARTILE +
-             (src_slice->tiling - V3D_TILING_LINEARTILE);
+      tfu.icfg = (V3D_TFU_ICFG_FORMAT_LINEARTILE +
+                  (src_tiling - V3D_TILING_LINEARTILE)) <<
+                   V3D_TFU_ICFG_FORMAT_SHIFT;
    }
-   tfu.icfg |= icfg << V3D_TFU_ICFG_FORMAT_SHIFT;
-
-   const uint32_t dst_offset =
-      dst_bo->offset + v3dv_layer_offset(dst, dst_mip_level, dst_layer);
-   tfu.ioa |= dst_offset;
-
-   tfu.ioa |= (V3D_TFU_IOA_FORMAT_LINEARTILE +
-               (dst_slice->tiling - V3D_TILING_LINEARTILE)) <<
-                V3D_TFU_IOA_FORMAT_SHIFT;
    tfu.icfg |= format->tex_type << V3D_TFU_ICFG_TTYPE_SHIFT;
 
-   switch (src_slice->tiling) {
+   tfu.ioa = dst_offset;
+
+   tfu.ioa |= (V3D_TFU_IOA_FORMAT_LINEARTILE +
+               (dst_tiling - V3D_TILING_LINEARTILE)) <<
+                V3D_TFU_IOA_FORMAT_SHIFT;
+
+   switch (src_tiling) {
    case V3D_TILING_UIF_NO_XOR:
    case V3D_TILING_UIF_XOR:
-      tfu.iis |= src_slice->padded_height / (2 * v3d_utile_height(src->cpp));
+      tfu.iis |= src_padded_height_or_stride / (2 * v3d_utile_height(src_cpp));
       break;
    case V3D_TILING_RASTER:
-      tfu.iis |= src_slice->stride / src->cpp;
+      tfu.iis |= src_padded_height_or_stride / src_cpp;
       break;
    default:
       break;
@@ -880,12 +870,11 @@ v3dX(meta_emit_tfu_job)(struct v3dv_cmd_buffer *cmd_buffer,
     * OPAD field for the destination (how many extra UIF blocks beyond
     * those necessary to cover the height).
     */
-   if (dst_slice->tiling == V3D_TILING_UIF_NO_XOR ||
-       dst_slice->tiling == V3D_TILING_UIF_XOR) {
-      uint32_t uif_block_h = 2 * v3d_utile_height(dst->cpp);
+   if (dst_tiling == V3D_TILING_UIF_NO_XOR || dst_tiling == V3D_TILING_UIF_XOR) {
+      uint32_t uif_block_h = 2 * v3d_utile_height(dst_cpp);
       uint32_t implicit_padded_height = align(height, uif_block_h);
-      uint32_t icfg =
-         (dst_slice->padded_height - implicit_padded_height) / uif_block_h;
+      uint32_t icfg = (dst_padded_height_or_stride - implicit_padded_height) /
+                      uif_block_h;
       tfu.icfg |= icfg << V3D_TFU_ICFG_OPAD_SHIFT;
    }
 
@@ -1053,8 +1042,8 @@ emit_copy_buffer_to_layer_per_tile_list(struct v3dv_job *job,
    cl_emit(cl, TILE_COORDINATES_IMPLICIT, coords);
 
    const VkImageSubresourceLayers *imgrsc = &region->imageSubresource;
-   assert((image->type != VK_IMAGE_TYPE_3D && layer < imgrsc->layerCount) ||
-          layer < image->extent.depth);
+   assert((image->vk.image_type != VK_IMAGE_TYPE_3D && layer < imgrsc->layerCount) ||
+          layer < image->vk.extent.depth);
 
    /* Load TLB from buffer */
    uint32_t width, height;
@@ -1069,8 +1058,8 @@ emit_copy_buffer_to_layer_per_tile_list(struct v3dv_job *job,
       height = region->bufferImageHeight;
 
    /* Handle copy to compressed format using a compatible format */
-   width = DIV_ROUND_UP(width, vk_format_get_blockwidth(image->vk_format));
-   height = DIV_ROUND_UP(height, vk_format_get_blockheight(image->vk_format));
+   width = DIV_ROUND_UP(width, vk_format_get_blockwidth(image->vk.format));
+   height = DIV_ROUND_UP(height, vk_format_get_blockheight(image->vk.format));
 
    uint32_t cpp = imgrsc->aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT ?
                   1 : image->cpp;
@@ -1080,6 +1069,9 @@ emit_copy_buffer_to_layer_per_tile_list(struct v3dv_job *job,
 
    uint32_t format = choose_tlb_format(framebuffer, imgrsc->aspectMask,
                                        false, false, true);
+
+   uint32_t image_layer = layer + (image->vk.image_type != VK_IMAGE_TYPE_3D ?
+      imgrsc->baseArrayLayer : region->imageOffset.z);
 
    emit_linear_load(cl, RENDER_TARGET_0, buffer->mem->bo,
                     buffer_offset, buffer_stride, format);
@@ -1100,13 +1092,13 @@ emit_copy_buffer_to_layer_per_tile_list(struct v3dv_job *job,
       if (imgrsc->aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) {
          emit_image_load(job->device, cl, framebuffer, image,
                          VK_IMAGE_ASPECT_STENCIL_BIT,
-                         imgrsc->baseArrayLayer + layer, imgrsc->mipLevel,
+                         image_layer, imgrsc->mipLevel,
                          false, false);
       } else {
          assert(imgrsc->aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT);
          emit_image_load(job->device, cl, framebuffer, image,
                          VK_IMAGE_ASPECT_DEPTH_BIT,
-                         imgrsc->baseArrayLayer + layer, imgrsc->mipLevel,
+                         image_layer, imgrsc->mipLevel,
                          false, false);
       }
    }
@@ -1117,20 +1109,20 @@ emit_copy_buffer_to_layer_per_tile_list(struct v3dv_job *job,
 
    /* Store TLB to image */
    emit_image_store(job->device, cl, framebuffer, image, imgrsc->aspectMask,
-                    imgrsc->baseArrayLayer + layer, imgrsc->mipLevel,
+                    image_layer, imgrsc->mipLevel,
                     false, true, false);
 
    if (framebuffer->vk_format == VK_FORMAT_D24_UNORM_S8_UINT) {
       if (imgrsc->aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) {
          emit_image_store(job->device, cl, framebuffer, image,
                           VK_IMAGE_ASPECT_STENCIL_BIT,
-                          imgrsc->baseArrayLayer + layer, imgrsc->mipLevel,
+                          image_layer, imgrsc->mipLevel,
                           false, false, false);
       } else {
          assert(imgrsc->aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT);
          emit_image_store(job->device, cl, framebuffer, image,
                           VK_IMAGE_ASPECT_DEPTH_BIT,
-                          imgrsc->baseArrayLayer + layer, imgrsc->mipLevel,
+                          image_layer, imgrsc->mipLevel,
                           false, false, false);
       }
    }

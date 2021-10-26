@@ -100,6 +100,8 @@ typedef struct {
 
    /* map of instruction/var/etc to failed assert string */
    struct hash_table *errors;
+
+   struct set *shader_gc_list;
 } validate_state;
 
 static void
@@ -676,6 +678,7 @@ validate_intrinsic_instr(nir_intrinsic_instr *instr, validate_state *state)
    case nir_intrinsic_load_interpolated_input:
    case nir_intrinsic_load_output:
    case nir_intrinsic_load_per_vertex_output:
+   case nir_intrinsic_load_per_primitive_output:
    case nir_intrinsic_load_push_constant:
       /* All memory load operations must load at least a byte */
       validate_assert(state, nir_dest_bit_size(instr->dest) >= 8);
@@ -886,6 +889,7 @@ validate_tex_instr(nir_tex_instr *instr, validate_state *state)
             break;
 
          validate_assert(state, glsl_type_is_image(deref->type) ||
+                                glsl_type_is_texture(deref->type) ||
                                 glsl_type_is_sampler(deref->type));
          break;
       }
@@ -1071,6 +1075,8 @@ validate_instr(nir_instr *instr, validate_state *state)
    validate_assert(state, instr->block == state->block);
 
    state->instr = instr;
+
+   validate_assert(state, _mesa_set_search(state->shader_gc_list, instr));
 
    switch (instr->type) {
    case nir_instr_type_alu:
@@ -1513,6 +1519,11 @@ validate_var_decl(nir_variable *var, nir_variable_mode valid_modes,
    if (var->constant_initializer)
       validate_constant(var->constant_initializer, var->type, state);
 
+   if (var->data.mode == nir_var_image) {
+      validate_assert(state, !var->data.bindless);
+      validate_assert(state, glsl_type_is_image(glsl_without_array(var->type)));
+   }
+
    /*
     * TODO validate some things ir_validate.cpp does (requires more GLSL type
     * support)
@@ -1666,6 +1677,7 @@ init_validate_state(validate_state *state)
    state->blocks = _mesa_pointer_set_create(state->mem_ctx);
    state->var_defs = _mesa_pointer_hash_table_create(state->mem_ctx);
    state->errors = _mesa_pointer_hash_table_create(state->mem_ctx);
+   state->shader_gc_list = _mesa_pointer_set_create(state->mem_ctx);
 
    state->loop = NULL;
    state->instr = NULL;
@@ -1725,6 +1737,10 @@ nir_validate_shader(nir_shader *shader, const char *when)
    validate_state state;
    init_validate_state(&state);
 
+   list_for_each_entry(nir_instr, instr, &shader->gc_list, gc_node) {
+      _mesa_set_add(state.shader_gc_list, instr);
+   }
+
    state.shader = shader;
 
    nir_variable_mode valid_modes =
@@ -1737,7 +1753,8 @@ nir_validate_shader(nir_shader *shader, const char *when)
       nir_var_mem_ssbo |
       nir_var_mem_shared |
       nir_var_mem_push_const |
-      nir_var_mem_constant;
+      nir_var_mem_constant |
+      nir_var_image;
 
    if (gl_shader_stage_is_callable(shader->info.stage))
       valid_modes |= nir_var_shader_call_data;

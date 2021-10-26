@@ -52,30 +52,14 @@ static LLVMValueRef si_llvm_load_input_gs(struct ac_shader_abi *abi, unsigned in
    unsigned param;
    LLVMValueRef value;
 
-   param = si_shader_io_get_unique_index(info->input_semantic[input_index], false);
+   param = si_shader_io_get_unique_index(info->input[input_index].semantic, false);
 
    /* GFX9 has the ESGS ring in LDS. */
    if (ctx->screen->info.chip_class >= GFX9) {
-      unsigned index = vtx_offset_param;
-
-      switch (index / 2) {
-      case 0:
-         vtx_offset = si_unpack_param(ctx, ctx->gs_vtx01_offset, index % 2 ? 16 : 0, 16);
-         break;
-      case 1:
-         vtx_offset = si_unpack_param(ctx, ctx->gs_vtx23_offset, index % 2 ? 16 : 0, 16);
-         break;
-      case 2:
-         vtx_offset = si_unpack_param(ctx, ctx->gs_vtx45_offset, index % 2 ? 16 : 0, 16);
-         break;
-      default:
-         assert(0);
-         return NULL;
-      }
-
       unsigned offset = param * 4 + swizzle;
-      vtx_offset =
-         LLVMBuildAdd(ctx->ac.builder, vtx_offset, LLVMConstInt(ctx->ac.i32, offset, false), "");
+
+      vtx_offset = LLVMBuildAdd(ctx->ac.builder, ctx->gs_vtx_offset[vtx_offset_param],
+                                LLVMConstInt(ctx->ac.i32, offset, false), "");
 
       LLVMValueRef ptr = ac_build_gep0(&ctx->ac, ctx->esgs_ring, vtx_offset);
       LLVMValueRef value = LLVMBuildLoad(ctx->ac.builder, ptr, "");
@@ -84,9 +68,8 @@ static LLVMValueRef si_llvm_load_input_gs(struct ac_shader_abi *abi, unsigned in
 
    /* GFX6: input load from the ESGS ring in memory. */
    /* Get the vertex offset parameter on GFX6. */
-   LLVMValueRef gs_vtx_offset = ac_get_arg(&ctx->ac, ctx->args.gs_vtx_offset[vtx_offset_param]);
-
-   vtx_offset = LLVMBuildMul(ctx->ac.builder, gs_vtx_offset, LLVMConstInt(ctx->ac.i32, 4, 0), "");
+   vtx_offset = LLVMBuildMul(ctx->ac.builder, ctx->gs_vtx_offset[vtx_offset_param],
+                             LLVMConstInt(ctx->ac.i32, 4, 0), "");
 
    soffset = LLVMConstInt(ctx->ac.i32, (param * 4 + swizzle) * 256, 0);
 
@@ -121,7 +104,7 @@ static void si_set_es_return_value_for_gs(struct si_shader_context *ctx)
 
    ret = si_insert_input_ptr(ctx, ret, ctx->other_const_and_shader_buffers, 0);
    ret = si_insert_input_ptr(ctx, ret, ctx->other_samplers_and_images, 1);
-   if (ctx->shader->key.as_ngg)
+   if (ctx->shader->key.ge.as_ngg)
       ret = si_insert_input_ptr(ctx, ret, ctx->args.gs_tg_info, 2);
    else
       ret = si_insert_input_ret(ctx, ret, ctx->args.gs2vs_offset, 2);
@@ -137,19 +120,20 @@ static void si_set_es_return_value_for_gs(struct si_shader_context *ctx)
 
    unsigned vgpr = 8 + SI_NUM_VS_STATE_RESOURCE_SGPRS;
 
-   ret = si_insert_input_ret_float(ctx, ret, ctx->gs_vtx01_offset, vgpr++);
-   ret = si_insert_input_ret_float(ctx, ret, ctx->gs_vtx23_offset, vgpr++);
+   ret = si_insert_input_ret_float(ctx, ret, ctx->args.gs_vtx_offset[0], vgpr++);
+   ret = si_insert_input_ret_float(ctx, ret, ctx->args.gs_vtx_offset[1], vgpr++);
    ret = si_insert_input_ret_float(ctx, ret, ctx->args.gs_prim_id, vgpr++);
    ret = si_insert_input_ret_float(ctx, ret, ctx->args.gs_invocation_id, vgpr++);
-   ret = si_insert_input_ret_float(ctx, ret, ctx->gs_vtx45_offset, vgpr++);
+   ret = si_insert_input_ret_float(ctx, ret, ctx->args.gs_vtx_offset[2], vgpr++);
    ctx->return_value = ret;
 }
 
-void si_llvm_emit_es_epilogue(struct ac_shader_abi *abi, unsigned max_outputs, LLVMValueRef *addrs)
+void si_llvm_emit_es_epilogue(struct ac_shader_abi *abi)
 {
    struct si_shader_context *ctx = si_shader_context_from_abi(abi);
    struct si_shader *es = ctx->shader;
    struct si_shader_info *info = &es->selector->info;
+   LLVMValueRef *addrs = abi->outputs;
    LLVMValueRef lds_base = NULL;
    unsigned chan;
    int i;
@@ -211,7 +195,7 @@ static LLVMValueRef si_get_gs_wave_id(struct si_shader_context *ctx)
 
 static void emit_gs_epilogue(struct si_shader_context *ctx)
 {
-   if (ctx->shader->key.as_ngg) {
+   if (ctx->shader->key.ge.as_ngg) {
       gfx10_ngg_gs_emit_epilogue(ctx);
       return;
    }
@@ -225,13 +209,12 @@ static void emit_gs_epilogue(struct si_shader_context *ctx)
       ac_build_endif(&ctx->ac, ctx->merged_wrap_if_label);
 }
 
-static void si_llvm_emit_gs_epilogue(struct ac_shader_abi *abi, unsigned max_outputs,
-                                     LLVMValueRef *addrs)
+static void si_llvm_emit_gs_epilogue(struct ac_shader_abi *abi)
 {
    struct si_shader_context *ctx = si_shader_context_from_abi(abi);
    struct si_shader_info UNUSED *info = &ctx->shader->selector->info;
 
-   assert(info->num_outputs <= max_outputs);
+   assert(info->num_outputs <= AC_LLVM_MAX_OUTPUTS);
 
    emit_gs_epilogue(ctx);
 }
@@ -241,7 +224,7 @@ static void si_llvm_emit_vertex(struct ac_shader_abi *abi, unsigned stream, LLVM
 {
    struct si_shader_context *ctx = si_shader_context_from_abi(abi);
 
-   if (ctx->shader->key.as_ngg) {
+   if (ctx->shader->key.ge.as_ngg) {
       gfx10_ngg_gs_emit_vertex(ctx, stream, addrs);
       return;
    }
@@ -316,7 +299,7 @@ static void si_llvm_emit_primitive(struct ac_shader_abi *abi, unsigned stream)
 {
    struct si_shader_context *ctx = si_shader_context_from_abi(abi);
 
-   if (ctx->shader->key.as_ngg) {
+   if (ctx->shader->key.ge.as_ngg) {
       LLVMBuildStore(ctx->ac.builder, ctx->ac.i32_0, ctx->gs_curprim_verts[stream]);
       return;
    }
@@ -444,7 +427,7 @@ struct si_shader *si_generate_gs_copy_shader(struct si_screen *sscreen,
 
    si_llvm_context_init(&ctx, sscreen, compiler,
                         si_get_wave_size(sscreen, MESA_SHADER_VERTEX,
-                                         false, false, false, false));
+                                         false, false));
    ctx.shader = shader;
    ctx.stage = MESA_SHADER_VERTEX;
 
@@ -556,113 +539,6 @@ struct si_shader *si_generate_gs_copy_shader(struct si_screen *sscreen,
       si_fix_resource_usage(sscreen, shader);
    }
    return shader;
-}
-
-/**
- * Build the GS prolog function. Rotate the input vertices for triangle strips
- * with adjacency.
- */
-void si_llvm_build_gs_prolog(struct si_shader_context *ctx, union si_shader_part_key *key)
-{
-   unsigned num_sgprs, num_vgprs;
-   LLVMBuilderRef builder = ctx->ac.builder;
-   LLVMTypeRef returns[AC_MAX_ARGS];
-   LLVMValueRef func, ret;
-
-   memset(&ctx->args, 0, sizeof(ctx->args));
-
-   if (ctx->screen->info.chip_class >= GFX9) {
-      /* Other user SGPRs are not needed by GS. */
-      num_sgprs = 8 + SI_NUM_VS_STATE_RESOURCE_SGPRS;
-      num_vgprs = 5; /* ES inputs are not needed by GS */
-   } else {
-      num_sgprs = GFX6_GS_NUM_USER_SGPR + 2;
-      num_vgprs = 8;
-   }
-
-   for (unsigned i = 0; i < num_sgprs; ++i) {
-      ac_add_arg(&ctx->args, AC_ARG_SGPR, 1, AC_ARG_INT, NULL);
-      returns[i] = ctx->ac.i32;
-   }
-
-   for (unsigned i = 0; i < num_vgprs; ++i) {
-      ac_add_arg(&ctx->args, AC_ARG_VGPR, 1, AC_ARG_INT, NULL);
-      returns[num_sgprs + i] = ctx->ac.f32;
-   }
-
-   /* Create the function. */
-   si_llvm_create_func(ctx, "gs_prolog", returns, num_sgprs + num_vgprs, 0);
-   func = ctx->main_fn;
-
-   /* Copy inputs to outputs. This should be no-op, as the registers match,
-    * but it will prevent the compiler from overwriting them unintentionally.
-    */
-   ret = ctx->return_value;
-   for (unsigned i = 0; i < num_sgprs; i++) {
-      LLVMValueRef p = LLVMGetParam(func, i);
-      ret = LLVMBuildInsertValue(builder, ret, p, i, "");
-   }
-   for (unsigned i = 0; i < num_vgprs; i++) {
-      LLVMValueRef p = LLVMGetParam(func, num_sgprs + i);
-      p = ac_to_float(&ctx->ac, p);
-      ret = LLVMBuildInsertValue(builder, ret, p, num_sgprs + i, "");
-   }
-
-   if (key->gs_prolog.states.tri_strip_adj_fix) {
-      /* Remap the input vertices for every other primitive. */
-      const struct ac_arg gfx6_vtx_params[6] = {
-         {.used = true, .arg_index = num_sgprs},     {.used = true, .arg_index = num_sgprs + 1},
-         {.used = true, .arg_index = num_sgprs + 3}, {.used = true, .arg_index = num_sgprs + 4},
-         {.used = true, .arg_index = num_sgprs + 5}, {.used = true, .arg_index = num_sgprs + 6},
-      };
-      const struct ac_arg gfx9_vtx_params[3] = {
-         {.used = true, .arg_index = num_sgprs},
-         {.used = true, .arg_index = num_sgprs + 1},
-         {.used = true, .arg_index = num_sgprs + 4},
-      };
-      LLVMValueRef vtx_in[6], vtx_out[6];
-      LLVMValueRef prim_id, rotate;
-
-      if (ctx->screen->info.chip_class >= GFX9) {
-         for (unsigned i = 0; i < 3; i++) {
-            vtx_in[i * 2] = si_unpack_param(ctx, gfx9_vtx_params[i], 0, 16);
-            vtx_in[i * 2 + 1] = si_unpack_param(ctx, gfx9_vtx_params[i], 16, 16);
-         }
-      } else {
-         for (unsigned i = 0; i < 6; i++)
-            vtx_in[i] = ac_get_arg(&ctx->ac, gfx6_vtx_params[i]);
-      }
-
-      prim_id = LLVMGetParam(func, num_sgprs + 2);
-      rotate = LLVMBuildTrunc(builder, prim_id, ctx->ac.i1, "");
-
-      for (unsigned i = 0; i < 6; ++i) {
-         LLVMValueRef base, rotated;
-         base = vtx_in[i];
-         rotated = vtx_in[(i + 4) % 6];
-         vtx_out[i] = LLVMBuildSelect(builder, rotate, rotated, base, "");
-      }
-
-      if (ctx->screen->info.chip_class >= GFX9) {
-         for (unsigned i = 0; i < 3; i++) {
-            LLVMValueRef hi, out;
-
-            hi = LLVMBuildShl(builder, vtx_out[i * 2 + 1], LLVMConstInt(ctx->ac.i32, 16, 0), "");
-            out = LLVMBuildOr(builder, vtx_out[i * 2], hi, "");
-            out = ac_to_float(&ctx->ac, out);
-            ret = LLVMBuildInsertValue(builder, ret, out, gfx9_vtx_params[i].arg_index, "");
-         }
-      } else {
-         for (unsigned i = 0; i < 6; i++) {
-            LLVMValueRef out;
-
-            out = ac_to_float(&ctx->ac, vtx_out[i]);
-            ret = LLVMBuildInsertValue(builder, ret, out, gfx6_vtx_params[i].arg_index, "");
-         }
-      }
-   }
-
-   LLVMBuildRet(builder, ret);
 }
 
 void si_llvm_init_gs_callbacks(struct si_shader_context *ctx)

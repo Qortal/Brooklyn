@@ -660,9 +660,11 @@ validate_explicit_variable_location(struct gl_context *ctx,
          glsl_struct_field *field = &type_without_array->fields.structure[i];
          unsigned field_location = field->location -
             (field->patch ? VARYING_SLOT_PATCH0 : VARYING_SLOT_VAR0);
+         unsigned field_slots = field->type->count_attribute_slots(false);
          if (!check_location_aliasing(explicit_locations, var,
                                       field_location,
-                                      0, field_location + 1,
+                                      0,
+                                      field_location + field_slots,
                                       field->type,
                                       field->interpolation,
                                       field->centroid,
@@ -2171,7 +2173,7 @@ varying_matches::store_locations() const
    /* Check is location needs to be packed with lower_packed_varyings() or if
     * we can just use ARB_enhanced_layouts packing.
     */
-   bool pack_loc[MAX_VARYINGS_INCL_PATCH] = { 0 };
+   bool pack_loc[MAX_VARYINGS_INCL_PATCH] = {};
    const glsl_type *loc_type[MAX_VARYINGS_INCL_PATCH][4] = { {NULL, NULL} };
 
    for (unsigned i = 0; i < this->num_matches; i++) {

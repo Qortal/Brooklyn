@@ -58,19 +58,6 @@ fd3_context_destroy(struct pipe_context *pctx) in_dt
    free(fd3_ctx);
 }
 
-/* clang-format off */
-static const uint8_t primtypes[] = {
-   [PIPE_PRIM_POINTS]         = DI_PT_POINTLIST,
-   [PIPE_PRIM_LINES]          = DI_PT_LINELIST,
-   [PIPE_PRIM_LINE_STRIP]     = DI_PT_LINESTRIP,
-   [PIPE_PRIM_LINE_LOOP]      = DI_PT_LINELOOP,
-   [PIPE_PRIM_TRIANGLES]      = DI_PT_TRILIST,
-   [PIPE_PRIM_TRIANGLE_STRIP] = DI_PT_TRISTRIP,
-   [PIPE_PRIM_TRIANGLE_FAN]   = DI_PT_TRIFAN,
-   [PIPE_PRIM_MAX]            = DI_PT_RECTLIST,  /* internal clear blits */
-};
-/* clang-format on */
-
 struct pipe_context *
 fd3_context_create(struct pipe_screen *pscreen, void *priv,
                    unsigned flags) in_dt
@@ -85,6 +72,7 @@ fd3_context_create(struct pipe_screen *pscreen, void *priv,
    pctx = &fd3_ctx->base.base;
    pctx->screen = pscreen;
 
+   fd3_ctx->base.flags = flags;
    fd3_ctx->base.dev = fd_device_ref(screen->dev);
    fd3_ctx->base.screen = fd_screen(pscreen);
    fd3_ctx->base.last.key = &fd3_ctx->last_key;
@@ -100,7 +88,7 @@ fd3_context_create(struct pipe_screen *pscreen, void *priv,
    fd3_prog_init(pctx);
    fd3_emit_init(pctx);
 
-   pctx = fd_context_init(&fd3_ctx->base, pscreen, primtypes, priv, flags);
+   pctx = fd_context_init(&fd3_ctx->base, pscreen, priv, flags);
    if (!pctx)
       return NULL;
 

@@ -67,7 +67,7 @@ panfrost_resource_from_handle(struct pipe_screen *pscreen,
 
         assert(whandle->type == WINSYS_HANDLE_TYPE_FD);
 
-        rsc = rzalloc(pscreen, struct panfrost_resource);
+        rsc = CALLOC_STRUCT(panfrost_resource);
         if (!rsc)
                 return NULL;
 
@@ -98,7 +98,7 @@ panfrost_resource_from_handle(struct pipe_screen *pscreen,
                                            crc_mode, &explicit_layout);
 
         if (!valid) {
-                ralloc_free(rsc);
+                FREE(rsc);
                 return NULL;
         }
 
@@ -107,7 +107,7 @@ panfrost_resource_from_handle(struct pipe_screen *pscreen,
          * memory space to mmap it etc.
          */
         if (!rsc->image.data.bo) {
-                ralloc_free(rsc);
+                FREE(rsc);
                 return NULL;
         }
         if (rsc->image.layout.crc_mode == PAN_IMAGE_CRC_OOB)
@@ -135,8 +135,21 @@ panfrost_resource_get_handle(struct pipe_screen *pscreen,
                              unsigned usage)
 {
         struct panfrost_device *dev = pan_device(pscreen);
-        struct panfrost_resource *rsrc = (struct panfrost_resource *) pt;
-        struct renderonly_scanout *scanout = rsrc->scanout;
+        struct panfrost_resource *rsrc;
+        struct renderonly_scanout *scanout;
+        struct pipe_resource *cur = pt;
+
+        /* Even though panfrost doesn't support multi-planar formats, we
+         * can get here through GBM, which does. Walk the list of planes
+         * to find the right one.
+         */
+        for (int i = 0; i < handle->plane; i++) {
+                cur = cur->next;
+                if (!cur)
+                        return false;
+        }
+        rsrc = pan_resource(cur);
+        scanout = rsrc->scanout;
 
         handle->modifier = rsrc->image.layout.modifier;
         rsrc->modifier_constant = true;
@@ -191,6 +204,8 @@ panfrost_resource_get_param(struct pipe_screen *pscreen,
                             unsigned usage, uint64_t *value)
 {
         struct panfrost_resource *rsrc = (struct panfrost_resource *) prsc;
+        struct pipe_resource *cur;
+        unsigned count;
 
         switch (param) {
         case PIPE_RESOURCE_PARAM_STRIDE:
@@ -201,6 +216,16 @@ panfrost_resource_get_param(struct pipe_screen *pscreen,
                 return true;
         case PIPE_RESOURCE_PARAM_MODIFIER:
                 *value = rsrc->image.layout.modifier;
+                return true;
+        case PIPE_RESOURCE_PARAM_NPLANES:
+                /* Panfrost doesn't directly support multi-planar formats,
+                 * but we should still handle this case for gbm users
+                 * that might want to use resources shared with panfrost
+                 * on video processing hardware that does.
+                 */
+                for (count = 0, cur = prsc; cur; cur = cur->next)
+                        count++;
+                *value = count;
                 return true;
         default:
                 return false;
@@ -218,7 +243,10 @@ panfrost_create_surface(struct pipe_context *pipe,
                         struct pipe_resource *pt,
                         const struct pipe_surface *surf_tmpl)
 {
+        struct panfrost_context *ctx = pan_context(pipe);
         struct pipe_surface *ps = NULL;
+
+        pan_legalize_afbc_format(ctx, pan_resource(pt), surf_tmpl->format);
 
         ps = CALLOC_STRUCT(pipe_surface);
 
@@ -355,8 +383,8 @@ panfrost_should_afbc(struct panfrost_device *dev,
         if (pres->base.bind & ~valid_binding)
                 return false;
 
-        /* AFBC introduced with Mali T760 */
-        if (dev->quirks & MIDGARD_NO_AFBC)
+        /* AFBC support is optional */
+        if (!dev->has_afbc)
                 return false;
 
         /* AFBC<-->staging is expensive */
@@ -554,7 +582,7 @@ panfrost_resource_set_damage_region(struct pipe_screen *screen,
                                 pres->damage.tile_map.stride *
                                 DIV_ROUND_UP(res->height0, 32);
                         pres->damage.tile_map.data =
-                                ralloc_size(pres, pres->damage.tile_map.size);
+                                malloc(pres->damage.tile_map.size);
                 }
 
                 memset(pres->damage.tile_map.data, 0, pres->damage.tile_map.size);
@@ -638,7 +666,7 @@ panfrost_resource_create_with_modifier(struct pipe_screen *screen,
             (PIPE_BIND_DISPLAY_TARGET | PIPE_BIND_SCANOUT | PIPE_BIND_SHARED)))
                 return panfrost_create_scanout_res(screen, template, modifier);
 
-        struct panfrost_resource *so = rzalloc(screen, struct panfrost_resource);
+        struct panfrost_resource *so = CALLOC_STRUCT(panfrost_resource);
         so->base = *template;
         so->base.screen = screen;
 
@@ -676,7 +704,7 @@ panfrost_resource_create_with_modifier(struct pipe_screen *screen,
         panfrost_resource_set_damage_region(screen, &so->base, 0, NULL);
 
         if (template->bind & PIPE_BIND_INDEX_BUFFER)
-                so->index_cache = rzalloc(so, struct panfrost_minmax_cache);
+                so->index_cache = CALLOC_STRUCT(panfrost_minmax_cache);
 
         return (struct pipe_resource *)so;
 }
@@ -727,8 +755,11 @@ panfrost_resource_destroy(struct pipe_screen *screen,
         if (rsrc->image.crc.bo)
                 panfrost_bo_unreference(rsrc->image.crc.bo);
 
+        free(rsrc->index_cache);
+        free(rsrc->damage.tile_map.data);
+
         util_range_destroy(&rsrc->valid_buffer_range);
-        ralloc_free(rsrc);
+        free(rsrc);
 }
 
 /* Most of the time we can do CPU-side transfers, but sometimes we need to use
@@ -871,7 +902,7 @@ panfrost_ptr_map(struct pipe_context *pctx,
 
                 bool valid = BITSET_TEST(rsrc->valid.data, level);
 
-                if ((usage & PIPE_MAP_READ) && (valid || rsrc->track.writer)) {
+                if ((usage & PIPE_MAP_READ) && (valid || rsrc->track.nr_writers > 0)) {
                         pan_blit_to_staging(pctx, transfer);
                         panfrost_flush_writer(ctx, staging, "AFBC read staging blit");
                         panfrost_bo_wait(staging->image.data.bo, INT64_MAX, false);
@@ -895,7 +926,7 @@ panfrost_ptr_map(struct pipe_context *pctx,
             (usage & PIPE_MAP_WRITE) &&
             !(resource->target == PIPE_BUFFER
               && !util_ranges_intersect(&rsrc->valid_buffer_range, box->x, box->x + box->width)) &&
-            BITSET_COUNT(rsrc->track.users) != 0) {
+            rsrc->track.nr_users > 0) {
 
                 /* When a resource to be modified is already being used by a
                  * pending batch, it is often faster to copy the whole BO than
@@ -914,7 +945,7 @@ panfrost_ptr_map(struct pipe_context *pctx,
                  * not ready yet (still accessed by one of the already flushed
                  * batches), we try to allocate a new one to avoid waiting.
                  */
-                if (BITSET_COUNT(rsrc->track.users) ||
+                if (rsrc->track.nr_users > 0 ||
                     !panfrost_bo_wait(bo, 0, true)) {
                         /* We want the BO to be MMAPed. */
                         uint32_t flags = bo->flags & ~PAN_BO_DELAY_MMAP;
@@ -1062,6 +1093,29 @@ pan_resource_modifier_convert(struct panfrost_context *ctx,
         panfrost_resource_setup(pan_device(ctx->base.screen), rsrc, modifier,
                                 blit.dst.format);
         pipe_resource_reference(&tmp_prsrc, NULL);
+}
+
+/* Validate that an AFBC resource may be used as a particular format. If it may
+ * not, decompress it on the fly. Failure to do so can produce wrong results or
+ * invalid data faults when sampling or rendering to AFBC */
+
+void
+pan_legalize_afbc_format(struct panfrost_context *ctx,
+                         struct panfrost_resource *rsrc,
+                         enum pipe_format format)
+{
+        struct panfrost_device *dev = pan_device(ctx->base.screen);
+
+        if (!drm_is_afbc(rsrc->image.layout.modifier))
+                return;
+
+        if (panfrost_afbc_format(dev, pan_blit_format(rsrc->base.format)) ==
+            panfrost_afbc_format(dev, pan_blit_format(format)))
+                return;
+
+        pan_resource_modifier_convert(ctx, rsrc,
+                        DRM_FORMAT_MOD_ARM_16X16_BLOCK_U_INTERLEAVED,
+                        "Reinterpreting AFBC surface as incompatible format");
 }
 
 static bool
@@ -1273,44 +1327,6 @@ panfrost_generate_mipmap(
                                 PIPE_TEX_FILTER_LINEAR);
 
         return blit_res;
-}
-
-/* Computes the address to a texture at a particular slice */
-
-mali_ptr
-panfrost_get_texture_address(struct panfrost_resource *rsrc,
-                             unsigned level, unsigned layer,
-                             unsigned sample)
-{
-        bool is_3d = rsrc->base.target == PIPE_TEXTURE_3D;
-        unsigned array_idx = is_3d ? 0 : layer;
-        unsigned surface_idx = is_3d ? layer : sample;
-        return rsrc->image.data.bo->ptr.gpu +
-               panfrost_texture_offset(&rsrc->image.layout, level,
-                                       array_idx, surface_idx);
-}
-
-void
-panfrost_get_afbc_pointers(struct panfrost_resource *rsrc,
-                           unsigned level, unsigned layer,
-                           mali_ptr *header, mali_ptr *body)
-{
-        assert(drm_is_afbc(rsrc->image.layout.modifier));
-
-        struct pan_image_slice_layout *slice = &rsrc->image.layout.slices[level];
-
-        if (rsrc->base.target == PIPE_TEXTURE_3D) {
-                *header = rsrc->image.data.bo->ptr.gpu + slice->offset +
-                          (layer * slice->afbc.surface_stride);
-                *body = rsrc->image.data.bo->ptr.gpu + slice->offset +
-                        slice->afbc.header_size +
-                        (slice->surface_stride * layer);
-        } else {
-                *header = rsrc->image.data.bo->ptr.gpu +
-                          panfrost_texture_offset(&rsrc->image.layout,
-                                                  level, layer, 0);
-                *body = *header + slice->afbc.header_size;
-        }
 }
 
 static void

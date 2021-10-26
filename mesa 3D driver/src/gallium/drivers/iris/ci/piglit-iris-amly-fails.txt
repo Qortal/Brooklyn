@@ -21,6 +21,9 @@ glx@glx-swap-pixmap-bad,Fail
 glx@glx-visuals-depth -pixmap,Crash
 glx@glx-visuals-stencil -pixmap,Crash
 
+# X error 167 (GLXBadFBConfig (9)) was generated, but X error 8 was expected.
+glx@glx_arb_create_context_no_error@no error,Fail
+
 # "X error 2 (non-GLX error (-1)) was generated, but X error 8 was expected."
 glx@glx_arb_create_context_robustness@invalid reset notification strategy,Fail
 
@@ -43,7 +46,10 @@ glx@glx_ext_import_context@make current- multi process,Fail
 glx@glx_ext_import_context@make current- single process,Fail
 glx@glx_ext_import_context@query context info,Fail
 
-spec@!opengl 1.0@rasterpos,Fail
+# "Unsupported intrinsic: vec4 32 ssa_56 = intrinsic image_load (ssa_44, ssa_55, ssa_40, ssa_44) (5, 0, 12, 80, 160) /* image_dim=Buf */ /* image_array=false */ /* format=r32g32b32a32_float  */ /* access=80 */ /* dest_type=float32 */
+#  rasterpos: ../src/gallium/auxiliary/gallivm/lp_bld_nir.c:1930: visit_intrinsic: Assertion `0' failed."
+spec@!opengl 1.0@rasterpos,Crash
+
 spec@!opengl 1.0@rasterpos@glsl_vs_gs_linked,Fail
 spec@!opengl 1.0@rasterpos@glsl_vs_tes_linked,Fail
 
@@ -196,38 +202,6 @@ spec@egl_khr_gl_image@egl_khr_gl_renderbuffer_image-clear-shared-image gl_depth_
 # eglChooseConfig() failed
 spec@egl_khr_surfaceless_context@viewport,Fail
 spec@egl_mesa_configless_context@basic,Fail
-
-# "Failed to spawn ext_image_dma_buf_import-intel_external_sampler_only"
-# Are we not building these on x86 for some reason?
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-export-tex,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-intel_external_sampler_only,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-invalid_attributes,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-ownership_transfer,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_argb8888,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_nv12,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_p012,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_xyuv,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_y210,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_y216,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_y412,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_yuyv,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_yvu420,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-transcode-nv12-as-r8-gr88,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-export,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-invalid_hints,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-missing_attributes,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-refcount,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-reimport-bug,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_ayuv,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_p010,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_p016,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_uyvy,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_xrgb8888,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_y212,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_y410,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_y416,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-sample_yuv420,Fail
-spec@ext_image_dma_buf_import@ext_image_dma_buf_import-unsupported_format,Fail
 
 # texture-integer: error 0x502 at tests/fbo/fbo-integer.c:300
 spec@ext_texture_integer@fbo-integer,Fail

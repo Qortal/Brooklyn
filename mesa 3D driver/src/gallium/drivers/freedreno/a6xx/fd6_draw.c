@@ -143,7 +143,7 @@ fd6_draw_vbo(struct fd_context *ctx, const struct pipe_draw_info *info,
       .ctx = ctx,
       .vtx = &ctx->vtx,
       .info = info,
-		.drawid_offset = drawid_offset,
+      .drawid_offset = drawid_offset,
       .indirect = indirect,
       .draw = draw,
       .key = {
@@ -161,6 +161,7 @@ fd6_draw_vbo(struct fd_context *ctx, const struct pipe_draw_info *info,
       .sprite_coord_enable = ctx->rasterizer->sprite_coord_enable,
       .sprite_coord_mode = ctx->rasterizer->sprite_coord_mode,
       .primitive_restart = info->primitive_restart && info->index_size,
+      .patch_vertices = ctx->patch_vertices,
    };
 
    if (!(ctx->prog.vs && ctx->prog.fs))
@@ -235,7 +236,7 @@ fd6_draw_vbo(struct fd_context *ctx, const struct pipe_draw_info *info,
    struct fd_ringbuffer *ring = ctx->batch->draw;
 
    struct CP_DRAW_INDX_OFFSET_0 draw0 = {
-      .prim_type = ctx->primtypes[info->mode],
+      .prim_type = ctx->screen->primtypes[info->mode],
       .vis_cull = USE_VISIBILITY,
       .gs_enable = !!emit.key.gs,
    };
@@ -270,7 +271,7 @@ fd6_draw_vbo(struct fd_context *ctx, const struct pipe_draw_info *info,
          unreachable("bad tessmode");
       }
 
-      draw0.prim_type = DI_PT_PATCHES0 + info->vertices_per_patch;
+      draw0.prim_type = DI_PT_PATCHES0 + ctx->patch_vertices;
       draw0.tess_enable = true;
 
       const unsigned max_count = 2048;
@@ -281,10 +282,10 @@ fd6_draw_vbo(struct fd_context *ctx, const struct pipe_draw_info *info,
        * limit.  But in the indirect-draw case we must assume the worst.
        */
       if (indirect && indirect->buffer) {
-         count = ALIGN_NPOT(max_count, info->vertices_per_patch);
+         count = ALIGN_NPOT(max_count, ctx->patch_vertices);
       } else {
          count = MIN2(max_count, draw->count);
-         count = ALIGN_NPOT(count, info->vertices_per_patch);
+         count = ALIGN_NPOT(count, ctx->patch_vertices);
       }
 
       OUT_PKT7(ring, CP_SET_SUBDRAW_SIZE, 1);
@@ -372,7 +373,7 @@ fd6_draw_vbo(struct fd_context *ctx, const struct pipe_draw_info *info,
 }
 
 static void
-fd6_clear_lrz(struct fd_batch *batch, struct fd_resource *zsbuf, double depth)
+fd6_clear_lrz(struct fd_batch *batch, struct fd_resource *zsbuf, double depth) assert_dt
 {
    struct fd_ringbuffer *ring;
    struct fd_screen *screen = batch->ctx->screen;
@@ -431,6 +432,7 @@ fd6_clear_lrz(struct fd_batch *batch, struct fd_resource *zsbuf, double depth)
 
    fd6_event_write(batch, ring, PC_CCU_FLUSH_COLOR_TS, true);
    fd6_event_write(batch, ring, PC_CCU_INVALIDATE_COLOR, false);
+   fd_wfi(batch, ring);
 
    OUT_PKT4(ring, REG_A6XX_RB_2D_SRC_SOLID_C0, 4);
    OUT_RING(ring, fui(depth));
@@ -476,6 +478,7 @@ fd6_clear_lrz(struct fd_batch *batch, struct fd_resource *zsbuf, double depth)
    fd6_event_write(batch, ring, PC_CCU_FLUSH_COLOR_TS, true);
    fd6_event_write(batch, ring, PC_CCU_FLUSH_DEPTH_TS, true);
    fd6_event_write(batch, ring, CACHE_FLUSH_TS, true);
+   fd_wfi(batch, ring);
 
    fd6_cache_inv(batch, ring);
 }

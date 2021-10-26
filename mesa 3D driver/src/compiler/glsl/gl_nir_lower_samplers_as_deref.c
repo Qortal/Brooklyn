@@ -141,7 +141,8 @@ lower_deref(nir_builder *b, struct lower_samplers_as_deref_state *state,
    nir_variable *var = nir_deref_instr_get_variable(deref);
    gl_shader_stage stage = state->shader->info.stage;
 
-   if (var->data.bindless || var->data.mode != nir_var_uniform)
+   if (!(var->data.mode & (nir_var_uniform | nir_var_image)) ||
+       var->data.bindless)
       return NULL;
 
    nir_deref_path path;
@@ -191,7 +192,7 @@ lower_deref(nir_builder *b, struct lower_samplers_as_deref_state *state,
    if (h) {
       var = (nir_variable *)h->data;
    } else {
-      var = nir_variable_create(state->shader, nir_var_uniform, type, name);
+      var = nir_variable_create(state->shader, var->data.mode, type, name);
       var->data.binding = binding;
 
       /* Don't set var->data.location.  The old structure location could be
@@ -232,12 +233,12 @@ record_textures_used(struct shader_info *info,
    const unsigned size =
       glsl_type_is_array(var->type) ? glsl_get_aoa_size(var->type) : 1;
 
-   BITSET_SET_RANGE(info->textures_used, var->data.binding, var->data.binding + (MAX2(size, 1) - 1));
+   BITSET_SET_RANGE_INSIDE_WORD(info->textures_used, var->data.binding, var->data.binding + (MAX2(size, 1) - 1));
 
    if (op == nir_texop_txf ||
        op == nir_texop_txf_ms ||
        op == nir_texop_txf_ms_mcs_intel)
-      BITSET_SET_RANGE(info->textures_used_by_txf, var->data.binding, var->data.binding + (MAX2(size, 1) - 1));
+      BITSET_SET_RANGE_INSIDE_WORD(info->textures_used_by_txf, var->data.binding, var->data.binding + (MAX2(size, 1) - 1));
 }
 
 static bool

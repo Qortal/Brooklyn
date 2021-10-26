@@ -286,16 +286,6 @@ fd_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
    if (!fd_render_condition_check(pctx))
       return;
 
-   /* emulate unsupported primitives: */
-   if (!fd_supported_prim(ctx, info->mode)) {
-      if (ctx->streamout.num_targets > 0)
-         mesa_loge("stream-out with emulated prims");
-      util_primconvert_save_rasterizer_state(ctx->primconvert, ctx->rasterizer);
-      util_primconvert_draw_vbo(ctx->primconvert, info, drawid_offset, indirect, draws,
-                                num_draws);
-      return;
-   }
-
    /* Upload a user index buffer. */
    struct pipe_resource *indexbuf = NULL;
    unsigned index_offset = 0;
@@ -303,7 +293,7 @@ fd_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
    if (info->index_size) {
       if (info->has_user_indices) {
          if (num_draws > 1) {
-				util_draw_multi(pctx, info, drawid_offset, indirect, draws, num_draws);
+            util_draw_multi(pctx, info, drawid_offset, indirect, draws, num_draws);
             return;
          }
          if (!util_upload_index_buffer(pctx, info, &draws[0], &indexbuf,
@@ -319,7 +309,7 @@ fd_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
    }
 
    if ((ctx->streamout.num_targets > 0) && (num_draws > 1)) {
-		util_draw_multi(pctx, info, drawid_offset, indirect, draws, num_draws);
+      util_draw_multi(pctx, info, drawid_offset, indirect, draws, num_draws);
       return;
    }
 

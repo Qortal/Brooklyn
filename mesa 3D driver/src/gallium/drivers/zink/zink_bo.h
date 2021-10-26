@@ -32,6 +32,7 @@
 #include "zink_batch.h"
 
 #define VK_VIS_VRAM (VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
+#define VK_LAZY_VRAM (VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
 enum zink_resource_access {
    ZINK_RESOURCE_ACCESS_READ = 1,
    ZINK_RESOURCE_ACCESS_WRITE = 32,
@@ -42,8 +43,8 @@ enum zink_resource_access {
 enum zink_heap {
    ZINK_HEAP_DEVICE_LOCAL,
    ZINK_HEAP_DEVICE_LOCAL_SPARSE,
+   ZINK_HEAP_DEVICE_LOCAL_LAZY,
    ZINK_HEAP_DEVICE_LOCAL_VISIBLE,
-   ZINK_HEAP_HOST_VISIBLE_ANY,
    ZINK_HEAP_HOST_VISIBLE_COHERENT,
    ZINK_HEAP_HOST_VISIBLE_CACHED,
    ZINK_HEAP_MAX,
@@ -129,11 +130,11 @@ vk_domain_from_heap(enum zink_heap heap)
    case ZINK_HEAP_DEVICE_LOCAL_SPARSE:
       domains = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
       break;
+   case ZINK_HEAP_DEVICE_LOCAL_LAZY:
+      domains = VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+      break;
    case ZINK_HEAP_DEVICE_LOCAL_VISIBLE:
       domains = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-      break;
-   case ZINK_HEAP_HOST_VISIBLE_ANY:
-      domains = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
       break;
    case ZINK_HEAP_HOST_VISIBLE_COHERENT:
       domains = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
@@ -159,13 +160,10 @@ zink_heap_from_domain_flags(VkMemoryPropertyFlags domains, enum zink_alloc_flag 
    if (domains & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
       return ZINK_HEAP_DEVICE_LOCAL;
 
-   if (domains & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
-      return ZINK_HEAP_HOST_VISIBLE_COHERENT;
-
    if (domains & VK_MEMORY_PROPERTY_HOST_CACHED_BIT)
       return ZINK_HEAP_HOST_VISIBLE_CACHED;
 
-   return ZINK_HEAP_HOST_VISIBLE_ANY;
+   return ZINK_HEAP_HOST_VISIBLE_COHERENT;
 }
 
 bool
@@ -252,11 +250,12 @@ zink_bo_usage_set(struct zink_bo *bo, struct zink_batch_state *bs, bool write)
       zink_batch_usage_set(&bo->reads, bs);
 }
 
-static inline void
+static inline bool
 zink_bo_usage_unset(struct zink_bo *bo, struct zink_batch_state *bs)
 {
    zink_batch_usage_unset(&bo->reads, bs);
    zink_batch_usage_unset(&bo->writes, bs);
+   return bo->reads || bo->writes;
 }
 
 

@@ -40,10 +40,24 @@
 #include "decode.h"
 #include "panfrost-quirks.h"
 
+#define foreach_batch(ctx, idx) \
+        BITSET_FOREACH_SET(idx, ctx->batches.active, PAN_MAX_BATCHES)
+
 static unsigned
 panfrost_batch_idx(struct panfrost_batch *batch)
 {
         return batch - batch->ctx->batches.slots;
+}
+
+/* Adds the BO backing surface to a batch if the surface is non-null */
+
+static void
+panfrost_batch_add_surface(struct panfrost_batch *batch, struct pipe_surface *surf)
+{
+        if (surf) {
+                struct panfrost_resource *rsrc = pan_resource(surf->texture);
+                panfrost_batch_write_rsrc(batch, rsrc, PIPE_SHADER_FRAGMENT);
+        }
 }
 
 static void
@@ -67,7 +81,8 @@ panfrost_batch_init(struct panfrost_context *ctx,
         batch->maxx = batch->maxy = 0;
 
         util_copy_framebuffer_state(&batch->key, key);
-        util_dynarray_init(&batch->resources, NULL);
+        batch->resources =_mesa_set_create(NULL, _mesa_hash_pointer,
+                                          _mesa_key_pointer_equal);
 
         /* Preallocate the main pool, since every batch has at least one job
          * structure so it will be used */
@@ -79,18 +94,17 @@ panfrost_batch_init(struct panfrost_context *ctx,
         panfrost_pool_init(&batch->invisible_pool, NULL, dev,
                         PAN_BO_INVISIBLE, 65536, "Varyings", false, true);
 
-        panfrost_batch_add_fbo_bos(batch);
+        for (unsigned i = 0; i < batch->key.nr_cbufs; ++i)
+                panfrost_batch_add_surface(batch, batch->key.cbufs[i]);
+
+        panfrost_batch_add_surface(batch, batch->key.zsbuf);
 
         screen->vtbl.init_batch(batch);
 }
 
 static void
-panfrost_batch_cleanup(struct panfrost_batch *batch)
+panfrost_batch_cleanup(struct panfrost_context *ctx, struct panfrost_batch *batch)
 {
-        if (!batch)
-                return;
-
-        struct panfrost_context *ctx = batch->ctx;
         struct panfrost_device *dev = pan_device(ctx->base.screen);
 
         assert(batch->seqnum);
@@ -110,16 +124,20 @@ panfrost_batch_cleanup(struct panfrost_batch *batch)
                 panfrost_bo_unreference(bo);
         }
 
-        util_dynarray_foreach(&batch->resources, struct panfrost_resource *, rsrc) {
-                BITSET_CLEAR((*rsrc)->track.users, batch_idx);
+        set_foreach_remove(batch->resources, entry) {
+                struct panfrost_resource *rsrc = (void *) entry->key;
 
-                if ((*rsrc)->track.writer == batch)
-                        (*rsrc)->track.writer = NULL;
+                if (_mesa_hash_table_search(ctx->writers, rsrc)) {
+                        _mesa_hash_table_remove_key(ctx->writers, rsrc);
+                        rsrc->track.nr_writers--;
+                }
 
-                pipe_resource_reference((struct pipe_resource **) rsrc, NULL);
+                rsrc->track.nr_users--;
+
+                pipe_resource_reference((struct pipe_resource **) &rsrc, NULL);
         }
 
-        util_dynarray_fini(&batch->resources);
+        _mesa_set_destroy(batch->resources, NULL);
         panfrost_pool_cleanup(&batch->pool);
         panfrost_pool_cleanup(&batch->invisible_pool);
 
@@ -128,10 +146,12 @@ panfrost_batch_cleanup(struct panfrost_batch *batch)
         util_sparse_array_finish(&batch->bos);
 
         memset(batch, 0, sizeof(*batch));
+        BITSET_CLEAR(ctx->batches.active, batch_idx);
 }
 
 static void
-panfrost_batch_submit(struct panfrost_batch *batch,
+panfrost_batch_submit(struct panfrost_context *ctx,
+                      struct panfrost_batch *batch,
                       uint32_t in_sync, uint32_t out_sync);
 
 static struct panfrost_batch *
@@ -158,37 +178,13 @@ panfrost_get_batch(struct panfrost_context *ctx,
 
         /* The selected slot is used, we need to flush the batch */
         if (batch->seqnum)
-                panfrost_batch_submit(batch, 0, 0);
+                panfrost_batch_submit(ctx, batch, 0, 0);
 
         panfrost_batch_init(ctx, key, batch);
 
-        return batch;
-}
+        unsigned batch_idx = panfrost_batch_idx(batch);
+        BITSET_SET(ctx->batches.active, batch_idx);
 
-struct panfrost_batch *
-panfrost_get_fresh_batch(struct panfrost_context *ctx,
-                         const struct pipe_framebuffer_state *key,
-                         const char *reason)
-{
-        struct panfrost_batch *batch = panfrost_get_batch(ctx, key);
-
-        panfrost_dirty_state_all(ctx);
-
-        /* The batch has no draw/clear queued, let's return it directly.
-         * Note that it's perfectly fine to re-use a batch with an
-         * existing clear, we'll just update it with the new clear request.
-         */
-        if (!batch->scoreboard.first_job) {
-                ctx->batch = batch;
-                return batch;
-        }
-
-        /* Otherwise, we need to flush the existing one and instantiate a new
-         * one.
-         */
-        perf_debug_ctx(ctx, "Flushing a batch due to: %s", reason);
-        panfrost_batch_submit(batch, 0, 0);
-        batch = panfrost_get_batch(ctx, key);
         return batch;
 }
 
@@ -225,21 +221,15 @@ panfrost_get_fresh_batch_for_fbo(struct panfrost_context *ctx, const char *reaso
         batch = panfrost_get_batch(ctx, &ctx->pipe_framebuffer);
         panfrost_dirty_state_all(ctx);
 
-        /* The batch has no draw/clear queued, let's return it directly.
-         * Note that it's perfectly fine to re-use a batch with an
-         * existing clear, we'll just update it with the new clear request.
-         */
-        if (!batch->scoreboard.first_job) {
-                ctx->batch = batch;
-                return batch;
+        /* We only need to submit and get a fresh batch if there is no
+         * draw/clear queued. Otherwise we may reuse the batch. */
+
+        if (batch->scoreboard.first_job) {
+                perf_debug_ctx(ctx, "Flushing the current FBO due to: %s", reason);
+                panfrost_batch_submit(ctx, batch, 0, 0);
+                batch = panfrost_get_batch(ctx, &ctx->pipe_framebuffer);
         }
 
-        /* Otherwise, we need to freeze the existing one and instantiate a new
-         * one.
-         */
-        perf_debug_ctx(ctx, "Flushing the current FBO due to: %s", reason);
-        panfrost_batch_submit(batch, 0, 0);
-        batch = panfrost_get_batch(ctx, &ctx->pipe_framebuffer);
         ctx->batch = batch;
         return batch;
 }
@@ -250,33 +240,40 @@ panfrost_batch_update_access(struct panfrost_batch *batch,
 {
         struct panfrost_context *ctx = batch->ctx;
         uint32_t batch_idx = panfrost_batch_idx(batch);
-        struct panfrost_batch *writer = rsrc->track.writer;
+        struct hash_entry *entry = _mesa_hash_table_search(ctx->writers, rsrc);
+        struct panfrost_batch *writer = entry ? entry->data : NULL;
+        bool found = false;
 
-        if (unlikely(!BITSET_TEST(rsrc->track.users, batch_idx))) {
-                BITSET_SET(rsrc->track.users, batch_idx);
+        _mesa_set_search_or_add(batch->resources, rsrc, &found);
+
+        if (!found) {
+                /* Cache number of batches accessing a resource */
+                rsrc->track.nr_users++;
 
                 /* Reference the resource on the batch */
-                struct pipe_resource **dst = util_dynarray_grow(&batch->resources,
-                                struct pipe_resource *, 1);
-
-                *dst = NULL;
-                pipe_resource_reference(dst, &rsrc->base);
+                pipe_reference(NULL, &rsrc->base.reference);
         }
 
         /* Flush users if required */
         if (writes || ((writer != NULL) && (writer != batch))) {
                 unsigned i;
-                BITSET_FOREACH_SET(i, rsrc->track.users, PAN_MAX_BATCHES) {
+                foreach_batch(ctx, i) {
+                        struct panfrost_batch *batch = &ctx->batches.slots[i];
+
                         /* Skip the entry if this our batch. */
                         if (i == batch_idx)
                                 continue;
 
-                        panfrost_batch_submit(&ctx->batches.slots[i], 0, 0);
+                        /* Submit if it's a user */
+                        if (_mesa_set_search(batch->resources, rsrc))
+                                panfrost_batch_submit(ctx, batch, 0, 0);
                 }
         }
 
-        if (writes)
-                rsrc->track.writer = batch;
+        if (writes) {
+                _mesa_hash_table_insert(ctx->writers, rsrc, batch);
+                rsrc->track.nr_writers++;
+        }
 }
 
 static void
@@ -356,26 +353,6 @@ panfrost_batch_write_rsrc(struct panfrost_batch *batch,
         panfrost_batch_update_access(batch, rsrc, true);
 }
 
-/* Adds the BO backing surface to a batch if the surface is non-null */
-
-static void
-panfrost_batch_add_surface(struct panfrost_batch *batch, struct pipe_surface *surf)
-{
-        if (surf) {
-                struct panfrost_resource *rsrc = pan_resource(surf->texture);
-                panfrost_batch_write_rsrc(batch, rsrc, PIPE_SHADER_FRAGMENT);
-        }
-}
-
-void
-panfrost_batch_add_fbo_bos(struct panfrost_batch *batch)
-{
-        for (unsigned i = 0; i < batch->key.nr_cbufs; ++i)
-                panfrost_batch_add_surface(batch, batch->key.cbufs[i]);
-
-        panfrost_batch_add_surface(batch, batch->key.zsbuf);
-}
-
 struct panfrost_bo *
 panfrost_batch_create_bo(struct panfrost_batch *batch, size_t size,
                          uint32_t create_flags, enum pipe_shader_type stage,
@@ -394,52 +371,6 @@ panfrost_batch_create_bo(struct panfrost_batch *batch, size_t size,
          */
         panfrost_bo_unreference(bo);
         return bo;
-}
-
-/* Returns the polygon list's GPU address if available, or otherwise allocates
- * the polygon list.  It's perfectly fast to use allocate/free BO directly,
- * since we'll hit the BO cache and this is one-per-batch anyway. */
-
-static mali_ptr
-panfrost_batch_get_polygon_list(struct panfrost_batch *batch)
-{
-        struct panfrost_device *dev = pan_device(batch->ctx->base.screen);
-
-        assert(!pan_is_bifrost(dev));
-
-        if (!batch->tiler_ctx.midgard.polygon_list) {
-                bool has_draws = batch->scoreboard.first_tiler != NULL;
-                unsigned size =
-                        panfrost_tiler_get_polygon_list_size(dev,
-                                                             batch->key.width,
-                                                             batch->key.height,
-                                                             has_draws);
-                size = util_next_power_of_two(size);
-
-                /* Create the BO as invisible if we can. In the non-hierarchical tiler case,
-                 * we need to write the polygon list manually because there's not WRITE_VALUE
-                 * job in the chain (maybe we should add one...). */
-                bool init_polygon_list = !has_draws && (dev->quirks & MIDGARD_NO_HIER_TILING);
-                batch->tiler_ctx.midgard.polygon_list =
-                        panfrost_batch_create_bo(batch, size,
-                                                 init_polygon_list ? 0 : PAN_BO_INVISIBLE,
-                                                 PIPE_SHADER_VERTEX,
-                                                 "Polygon list");
-                panfrost_batch_add_bo(batch, batch->tiler_ctx.midgard.polygon_list,
-                                PIPE_SHADER_FRAGMENT);
-
-                if (init_polygon_list) {
-                        assert(batch->tiler_ctx.midgard.polygon_list->ptr.cpu);
-                        uint32_t *polygon_list_body =
-                                batch->tiler_ctx.midgard.polygon_list->ptr.cpu +
-                                MALI_MIDGARD_TILER_MINIMUM_HEADER_SIZE;
-                         polygon_list_body[0] = 0xa0000000; /* TODO: Just that? */
-                }
-
-                batch->tiler_ctx.midgard.disable = !has_draws;
-        }
-
-        return batch->tiler_ctx.midgard.polygon_list->ptr.gpu;
 }
 
 struct panfrost_bo *
@@ -712,10 +643,11 @@ panfrost_batch_submit_ioctl(struct panfrost_batch *batch,
                                INT64_MAX, 0, NULL);
 
                 if (dev->debug & PAN_DBG_TRACE)
-                        pandecode_jc(submit.jc, pan_is_bifrost(dev), dev->gpu_id);
+                        pandecode_jc(submit.jc, dev->gpu_id);
 
-                if (dev->debug & PAN_DBG_SYNC)
-                        pandecode_abort_on_fault(submit.jc);
+                /* Jobs won't be complete if blackhole rendering, that's ok */
+                if (!ctx->is_noop && dev->debug & PAN_DBG_SYNC)
+                        pandecode_abort_on_fault(submit.jc, dev->gpu_id);
         }
 
         return 0;
@@ -796,12 +728,12 @@ panfrost_emit_tile_map(struct panfrost_batch *batch, struct pan_fb_info *fb)
 }
 
 static void
-panfrost_batch_submit(struct panfrost_batch *batch,
+panfrost_batch_submit(struct panfrost_context *ctx,
+                      struct panfrost_batch *batch,
                       uint32_t in_sync, uint32_t out_sync)
 {
-        struct pipe_screen *pscreen = batch->ctx->base.screen;
+        struct pipe_screen *pscreen = ctx->base.screen;
         struct panfrost_screen *screen = pan_screen(pscreen);
-        struct panfrost_device *dev = pan_device(pscreen);
         int ret;
 
         /* Nothing to do! */
@@ -814,14 +746,7 @@ panfrost_batch_submit(struct panfrost_batch *batch,
         panfrost_batch_to_fb_info(batch, &fb, rts, &zs, &s, false);
 
         screen->vtbl.preload(batch, &fb);
-
-        if (!pan_is_bifrost(dev)) {
-                mali_ptr polygon_list = panfrost_batch_get_polygon_list(batch);
-
-                panfrost_scoreboard_initialize_tiler(&batch->pool.base,
-                                                     &batch->scoreboard,
-                                                     polygon_list);
-        }
+        screen->vtbl.init_polygon_list(batch);
 
         /* Now that all draws are in, we can finally prepare the
          * FBD for the batch (if there is one). */
@@ -850,13 +775,13 @@ panfrost_batch_submit(struct panfrost_batch *batch,
                 if (!batch->key.cbufs[i])
                         continue;
 
-                panfrost_resource_set_damage_region(batch->ctx->base.screen,
+                panfrost_resource_set_damage_region(ctx->base.screen,
                                                     batch->key.cbufs[i]->texture,
                                                     0, NULL);
         }
 
 out:
-        panfrost_batch_cleanup(batch);
+        panfrost_batch_cleanup(ctx, batch);
 }
 
 /* Submit all batches, applying the out_sync to the currently bound batch */
@@ -865,14 +790,14 @@ void
 panfrost_flush_all_batches(struct panfrost_context *ctx, const char *reason)
 {
         struct panfrost_batch *batch = panfrost_get_batch_for_fbo(ctx);
-        panfrost_batch_submit(batch, ctx->syncobj, ctx->syncobj);
+        panfrost_batch_submit(ctx, batch, ctx->syncobj, ctx->syncobj);
 
         for (unsigned i = 0; i < PAN_MAX_BATCHES; i++) {
                 if (ctx->batches.slots[i].seqnum) {
                         if (reason)
                                 perf_debug_ctx(ctx, "Flushing everything due to: %s", reason);
 
-                        panfrost_batch_submit(&ctx->batches.slots[i],
+                        panfrost_batch_submit(ctx, &ctx->batches.slots[i],
                                               ctx->syncobj, ctx->syncobj);
                 }
         }
@@ -883,10 +808,11 @@ panfrost_flush_writer(struct panfrost_context *ctx,
                       struct panfrost_resource *rsrc,
                       const char *reason)
 {
-        if (rsrc->track.writer) {
+        struct hash_entry *entry = _mesa_hash_table_search(ctx->writers, rsrc);
+
+        if (entry) {
                 perf_debug_ctx(ctx, "Flushing writer due to: %s", reason);
-                panfrost_batch_submit(rsrc->track.writer, ctx->syncobj, ctx->syncobj);
-                rsrc->track.writer = NULL;
+                panfrost_batch_submit(ctx, entry->data, ctx->syncobj, ctx->syncobj);
         }
 }
 
@@ -896,14 +822,15 @@ panfrost_flush_batches_accessing_rsrc(struct panfrost_context *ctx,
                                       const char *reason)
 {
         unsigned i;
-        BITSET_FOREACH_SET(i, rsrc->track.users, PAN_MAX_BATCHES) {
-                perf_debug_ctx(ctx, "Flushing user due to: %s", reason);
-                panfrost_batch_submit(&ctx->batches.slots[i],
-                                      ctx->syncobj, ctx->syncobj);
-        }
+        foreach_batch(ctx, i) {
+                struct panfrost_batch *batch = &ctx->batches.slots[i];
 
-        assert(!BITSET_COUNT(rsrc->track.users));
-        rsrc->track.writer = NULL;
+                if (!_mesa_set_search(batch->resources, rsrc))
+                        continue;
+
+                perf_debug_ctx(ctx, "Flushing user due to: %s", reason);
+                panfrost_batch_submit(ctx, batch, ctx->syncobj, ctx->syncobj);
+        }
 }
 
 void
@@ -973,15 +900,4 @@ panfrost_batch_union_scissor(struct panfrost_batch *batch,
         batch->miny = MIN2(batch->miny, miny);
         batch->maxx = MAX2(batch->maxx, maxx);
         batch->maxy = MAX2(batch->maxy, maxy);
-}
-
-void
-panfrost_batch_intersection_scissor(struct panfrost_batch *batch,
-                                  unsigned minx, unsigned miny,
-                                  unsigned maxx, unsigned maxy)
-{
-        batch->minx = MAX2(batch->minx, minx);
-        batch->miny = MAX2(batch->miny, miny);
-        batch->maxx = MIN2(batch->maxx, maxx);
-        batch->maxy = MIN2(batch->maxy, maxy);
 }

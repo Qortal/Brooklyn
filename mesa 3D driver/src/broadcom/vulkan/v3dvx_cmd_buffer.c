@@ -105,11 +105,12 @@ cmd_buffer_render_pass_emit_load(struct v3dv_cmd_buffer *cmd_buffer,
                                  uint32_t layer,
                                  uint32_t buffer)
 {
-   const struct v3dv_image *image = iview->image;
-   const struct v3d_resource_slice *slice = &image->slices[iview->base_level];
-   uint32_t layer_offset = v3dv_layer_offset(image,
-                                             iview->base_level,
-                                             iview->first_layer + layer);
+   const struct v3dv_image *image = (struct v3dv_image *) iview->vk.image;
+   const struct v3d_resource_slice *slice =
+      &image->slices[iview->vk.base_mip_level];
+   uint32_t layer_offset =
+      v3dv_layer_offset(image, iview->vk.base_mip_level,
+                        iview->vk.base_array_layer + layer);
 
    cl_emit(cl, LOAD_TILE_BUFFER_GENERAL, load) {
       load.buffer_to_load = buffer;
@@ -127,7 +128,7 @@ cmd_buffer_render_pass_emit_load(struct v3dv_cmd_buffer *cmd_buffer,
          load.height_in_ub_or_stride = slice->stride;
       }
 
-      if (image->samples > VK_SAMPLE_COUNT_1_BIT)
+      if (image->vk.samples > VK_SAMPLE_COUNT_1_BIT)
          load.decimate_mode = V3D_DECIMATE_MODE_ALL_SAMPLES;
       else
          load.decimate_mode = V3D_DECIMATE_MODE_SAMPLE_0;
@@ -140,7 +141,7 @@ check_needs_load(const struct v3dv_cmd_buffer_state *state,
                  uint32_t first_subpass_idx,
                  VkAttachmentLoadOp load_op)
 {
-   /* We call this with image->aspects & aspect, so 0 means the aspect we are
+   /* We call this with image->vk.aspects & aspect, so 0 means the aspect we are
     * testing does not exist in the image.
     */
    if (!aspect)
@@ -290,11 +291,12 @@ cmd_buffer_render_pass_emit_store(struct v3dv_cmd_buffer *cmd_buffer,
 {
    const struct v3dv_image_view *iview =
       cmd_buffer->state.framebuffer->attachments[attachment_idx];
-   const struct v3dv_image *image = iview->image;
-   const struct v3d_resource_slice *slice = &image->slices[iview->base_level];
+   const struct v3dv_image *image = (struct v3dv_image *) iview->vk.image;
+   const struct v3d_resource_slice *slice =
+      &image->slices[iview->vk.base_mip_level];
    uint32_t layer_offset = v3dv_layer_offset(image,
-                                             iview->base_level,
-                                             iview->first_layer + layer);
+                                             iview->vk.base_mip_level,
+                                             iview->vk.base_array_layer + layer);
 
    cl_emit(cl, STORE_TILE_BUFFER_GENERAL, store) {
       store.buffer_to_store = buffer;
@@ -313,7 +315,7 @@ cmd_buffer_render_pass_emit_store(struct v3dv_cmd_buffer *cmd_buffer,
          store.height_in_ub_or_stride = slice->stride;
       }
 
-      if (image->samples > VK_SAMPLE_COUNT_1_BIT)
+      if (image->vk.samples > VK_SAMPLE_COUNT_1_BIT)
          store.decimate_mode = V3D_DECIMATE_MODE_ALL_SAMPLES;
       else if (is_multisample_resolve)
          store.decimate_mode = V3D_DECIMATE_MODE_4X;
@@ -329,7 +331,7 @@ check_needs_clear(const struct v3dv_cmd_buffer_state *state,
                   VkAttachmentLoadOp load_op,
                   bool do_clear_with_draw)
 {
-   /* We call this with image->aspects & aspect, so 0 means the aspect we are
+   /* We call this with image->vk.aspects & aspect, so 0 means the aspect we are
     * testing does not exist in the image.
     */
    if (!aspect)
@@ -370,7 +372,7 @@ check_needs_store(const struct v3dv_cmd_buffer_state *state,
                   uint32_t last_subpass_idx,
                   VkAttachmentStoreOp store_op)
 {
-   /* We call this with image->aspects & aspect, so 0 means the aspect we are
+   /* We call this with image->vk.aspects & aspect, so 0 means the aspect we are
     * testing does not exist in the image.
     */
    if (!aspect)
@@ -843,8 +845,9 @@ v3dX(cmd_buffer_emit_render_pass_rcl)(struct v3dv_cmd_buffer *cmd_buffer)
       struct v3dv_image_view *iview =
          state->framebuffer->attachments[attachment_idx];
 
-      const struct v3dv_image *image = iview->image;
-      const struct v3d_resource_slice *slice = &image->slices[iview->base_level];
+      const struct v3dv_image *image = (struct v3dv_image *) iview->vk.image;
+      const struct v3d_resource_slice *slice =
+         &image->slices[iview->vk.base_mip_level];
 
       const uint32_t *clear_color =
          &state->attachments[attachment_idx].clear_value.color[0];
@@ -2265,13 +2268,13 @@ v3dX(cmd_buffer_render_pass_setup_render_target)(struct v3dv_cmd_buffer *cmd_buf
    const struct v3dv_framebuffer *framebuffer = state->framebuffer;
    assert(attachment_idx < framebuffer->attachment_count);
    struct v3dv_image_view *iview = framebuffer->attachments[attachment_idx];
-   assert(iview->aspects & VK_IMAGE_ASPECT_COLOR_BIT);
+   assert(iview->vk.aspects & VK_IMAGE_ASPECT_COLOR_BIT);
 
    *rt_bpp = iview->internal_bpp;
    *rt_type = iview->internal_type;
-   if (vk_format_is_int(iview->vk_format))
+   if (vk_format_is_int(iview->vk.format))
       *rt_clamp = V3D_RENDER_TARGET_CLAMP_INT;
-   else if (vk_format_is_srgb(iview->vk_format))
+   else if (vk_format_is_srgb(iview->vk.format))
       *rt_clamp = V3D_RENDER_TARGET_CLAMP_NORM;
    else
       *rt_clamp = V3D_RENDER_TARGET_CLAMP_NONE;

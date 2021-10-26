@@ -26,8 +26,6 @@
 #include "common/v3d_device_info.h"
 #include "v3d_compiler.h"
 
-#define QPU_R(i) { .magic = false, .index = i }
-
 #define ACC_INDEX     0
 #define ACC_COUNT     6
 #define PHYS_INDEX    (ACC_INDEX + ACC_COUNT)
@@ -261,7 +259,7 @@ v3d_spill_reg(struct v3d_compile *c, int spill_temp)
         }
 
         struct qinst *last_thrsw = c->last_thrsw;
-        assert(!last_thrsw || last_thrsw->is_last_thrsw);
+        assert(last_thrsw && last_thrsw->is_last_thrsw);
 
         int start_num_temps = c->num_temps;
 
@@ -347,29 +345,13 @@ v3d_spill_reg(struct v3d_compile *c, int spill_temp)
                                                                    spill_offset);
                                 }
                         }
-
-                        /* If we didn't have a last-thrsw inserted by nir_to_vir and
-                         * we've been inserting thrsws, then insert a new last_thrsw
-                         * right before we start the vpm/tlb sequence for the last
-                         * thread segment.
-                         */
-                        if (!is_uniform && !last_thrsw && c->last_thrsw &&
-                            (v3d_qpu_writes_vpm(&inst->qpu) ||
-                             v3d_qpu_uses_tlb(&inst->qpu))) {
-                                c->cursor = vir_before_inst(inst);
-                                vir_emit_thrsw(c);
-
-                                last_thrsw = c->last_thrsw;
-                                last_thrsw->is_last_thrsw = true;
-                        }
                 }
         }
 
         /* Make sure c->last_thrsw is the actual last thrsw, not just one we
          * inserted in our most recent unspill.
          */
-        if (last_thrsw)
-                c->last_thrsw = last_thrsw;
+        c->last_thrsw = last_thrsw;
 
         /* Don't allow spilling of our spilling instructions.  There's no way
          * they can help get things colored.

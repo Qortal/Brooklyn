@@ -32,6 +32,7 @@
 #include "util/u_math.h"
 
 #include <stdio.h>
+#include <ctype.h>
 
 #ifdef _WIN32
 #define DRM_CAP_ADDFB2_MODIFIERS 0x10
@@ -553,10 +554,6 @@ bool ac_query_gpu_info(int fd, void *dev_p, struct radeon_info *info,
    info->all_vram_visible = info->vram_size * 0.9 < info->vram_vis_size;
 
    util_cpu_detect();
-   info->smart_access_memory = info->all_vram_visible &&
-                               info->chip_class >= GFX10_3 &&
-                               util_get_cpu_caps()->family >= CPU_AMD_ZEN3 &&
-                               util_get_cpu_caps()->family < CPU_AMD_LAST;
 
    /* Set chip identification. */
    info->pci_id = amdinfo->asic_id; /* TODO: is this correct? */
@@ -636,6 +633,10 @@ bool ac_query_gpu_info(int fd, void *dev_p, struct radeon_info *info,
       return false;
    }
 
+   memset(info->lowercase_name, 0, sizeof(info->lowercase_name));
+   for (unsigned i = 0; info->name[i] && i < ARRAY_SIZE(info->lowercase_name) - 1; i++)
+      info->lowercase_name[i] = tolower(info->name[i]);
+
    if (info->family >= CHIP_SIENNA_CICHLID)
       info->chip_class = GFX10_3;
    else if (info->family >= CHIP_NAVI10)
@@ -652,6 +653,11 @@ bool ac_query_gpu_info(int fd, void *dev_p, struct radeon_info *info,
       fprintf(stderr, "amdgpu: Unknown family.\n");
       return false;
    }
+
+   info->smart_access_memory = info->all_vram_visible &&
+                               info->chip_class >= GFX10_3 &&
+                               util_get_cpu_caps()->family >= CPU_AMD_ZEN3 &&
+                               util_get_cpu_caps()->family < CPU_AMD_LAST;
 
    info->family_id = amdinfo->family_id;
    info->chip_external_rev = amdinfo->chip_external_rev;
@@ -869,6 +875,13 @@ bool ac_query_gpu_info(int fd, void *dev_p, struct radeon_info *info,
    /* Whether chips support double rate packed math instructions. */
    info->has_packed_math_16bit = info->chip_class >= GFX9;
 
+   /* Whether chips support dot product instructions. A subset of these support a smaller
+    * instruction encoding which accumulates with the destination.
+    */
+   info->has_accelerated_dot_product =
+      info->family == CHIP_ARCTURUS || info->family == CHIP_ALDEBARAN ||
+      info->family == CHIP_VEGA20 || info->family >= CHIP_NAVI12;
+
    /* TODO: Figure out how to use LOAD_CONTEXT_REG on GFX6-GFX7. */
    info->has_load_ctx_reg_pkt =
       info->chip_class >= GFX9 || (info->chip_class >= GFX8 && info->me_fw_feature >= 41);
@@ -900,9 +913,7 @@ bool ac_query_gpu_info(int fd, void *dev_p, struct radeon_info *info,
     */
    info->has_two_planes_iterate256_bug = info->chip_class == GFX10;
 
-   /* GE has a bug when a legacy GS draw follows an NGG draw and it requires
-    * a VGT_FLUSH to fix that.
-    */
+   /* GFX10+Sienna: NGG->legacy transitions require VGT_FLUSH. */
    info->has_vgt_flush_ngg_legacy_bug = info->chip_class == GFX10 ||
                                         info->family == CHIP_SIENNA_CICHLID;
 
@@ -1127,6 +1138,7 @@ void ac_print_gpu_info(struct radeon_info *info, FILE *f)
            info->pci_dev, info->pci_func);
 
    fprintf(f, "    name = %s\n", info->name);
+   fprintf(f, "    lowercase_name = %s\n", info->lowercase_name);
    fprintf(f, "    marketing_name = %s\n", info->marketing_name);
    fprintf(f, "    is_pro_graphics = %u\n", info->is_pro_graphics);
    fprintf(f, "    pci_id = 0x%x\n", info->pci_id);

@@ -1057,7 +1057,6 @@ void vir_set_unpack(struct qinst *inst, int src,
 void vir_set_pack(struct qinst *inst, enum v3d_qpu_output_pack pack);
 
 struct qreg vir_get_temp(struct v3d_compile *c);
-void vir_emit_last_thrsw(struct v3d_compile *c);
 void vir_calculate_live_intervals(struct v3d_compile *c);
 int vir_get_nsrc(struct qinst *inst);
 bool vir_has_side_effects(struct v3d_compile *c, struct qinst *inst);
@@ -1104,7 +1103,6 @@ void v3d_nir_lower_robust_buffer_access(nir_shader *shader, struct v3d_compile *
 void v3d_nir_lower_scratch(nir_shader *s);
 void v3d_nir_lower_txf_ms(nir_shader *s, struct v3d_compile *c);
 void v3d_nir_lower_image_load_store(nir_shader *s);
-void vir_lower_uniforms(struct v3d_compile *c);
 
 void v3d33_vir_vpm_read_setup(struct v3d_compile *c, int num_components);
 void v3d33_vir_vpm_write_setup(struct v3d_compile *c);
@@ -1415,30 +1413,6 @@ vir_TLB_COLOR_READ(struct v3d_compile *c)
         ldtlb->qpu.sig.ldtlb = true;
         return vir_emit_def(c, ldtlb);
 }
-
-/*
-static inline struct qreg
-vir_LOAD_IMM(struct v3d_compile *c, uint32_t val)
-{
-        return vir_emit_def(c, vir_inst(QOP_LOAD_IMM, c->undef,
-                                        vir_reg(QFILE_LOAD_IMM, val), c->undef));
-}
-
-static inline struct qreg
-vir_LOAD_IMM_U2(struct v3d_compile *c, uint32_t val)
-{
-        return vir_emit_def(c, vir_inst(QOP_LOAD_IMM_U2, c->undef,
-                                        vir_reg(QFILE_LOAD_IMM, val),
-                                        c->undef));
-}
-static inline struct qreg
-vir_LOAD_IMM_I2(struct v3d_compile *c, uint32_t val)
-{
-        return vir_emit_def(c, vir_inst(QOP_LOAD_IMM_I2, c->undef,
-                                        vir_reg(QFILE_LOAD_IMM, val),
-                                        c->undef));
-}
-*/
 
 static inline struct qinst *
 vir_BRANCH(struct v3d_compile *c, enum v3d_qpu_branch_cond cond)

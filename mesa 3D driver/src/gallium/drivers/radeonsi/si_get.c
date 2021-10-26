@@ -164,6 +164,9 @@ static int si_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_TGSI_ATOMINC_WRAP:
       return 1;
 
+   case PIPE_CAP_DRAW_VERTEX_STATE:
+      return !(sscreen->debug_flags & DBG(NO_FAST_DISPLAY_LIST));
+
    case PIPE_CAP_GLSL_ZERO_INIT:
       return 2;
 
@@ -232,6 +235,7 @@ static int si_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_VERTEX_BUFFER_OFFSET_4BYTE_ALIGNED_ONLY:
    case PIPE_CAP_VERTEX_BUFFER_STRIDE_4BYTE_ALIGNED_ONLY:
    case PIPE_CAP_VERTEX_ELEMENT_SRC_OFFSET_4BYTE_ALIGNED_ONLY:
+   case PIPE_CAP_PREFER_BACK_BUFFER_REUSE:
       return 0;
 
    case PIPE_CAP_SPARSE_BUFFER_PAGE_SIZE:
@@ -943,7 +947,7 @@ static void si_init_renderer_string(struct si_screen *sscreen)
 
    if (sscreen->info.marketing_name) {
       snprintf(first_name, sizeof(first_name), "%s", sscreen->info.marketing_name);
-      snprintf(second_name, sizeof(second_name), "%s, ", sscreen->info.name);
+      snprintf(second_name, sizeof(second_name), "%s, ", sscreen->info.lowercase_name);
    } else {
       snprintf(first_name, sizeof(first_name), "AMD %s", sscreen->info.name);
    }
@@ -952,9 +956,8 @@ static void si_init_renderer_string(struct si_screen *sscreen)
       snprintf(kernel_version, sizeof(kernel_version), ", %s", uname_data.release);
 
    snprintf(sscreen->renderer_string, sizeof(sscreen->renderer_string),
-            "%s (%sDRM %i.%i.%i%s, LLVM " MESA_LLVM_VERSION_STRING ")", first_name, second_name,
-            sscreen->info.drm_major, sscreen->info.drm_minor, sscreen->info.drm_patchlevel,
-            kernel_version);
+            "%s (%sLLVM " MESA_LLVM_VERSION_STRING ", DRM %i.%i%s)", first_name, second_name,
+            sscreen->info.drm_major, sscreen->info.drm_minor, kernel_version);
 }
 
 void si_init_screen_get_functions(struct si_screen *sscreen)
@@ -1033,12 +1036,22 @@ void si_init_screen_get_functions(struct si_screen *sscreen)
       .lower_insert_word = true,
       .lower_rotate = true,
       .lower_to_scalar = true,
+      .has_dot_4x8 = sscreen->info.has_accelerated_dot_product,
+      .has_dot_2x16 = sscreen->info.has_accelerated_dot_product,
       .optimize_sample_mask_in = true,
       .max_unroll_iterations = 32,
+      .max_unroll_iterations_aggressive = 128,
       .use_interpolated_input_intrinsics = true,
       .lower_uniforms_to_ubo = true,
       .support_16bit_alu = sscreen->options.fp16,
       .vectorize_vec2_16bit = sscreen->options.fp16,
+      .pack_varying_options =
+         nir_pack_varying_interp_mode_none |
+         nir_pack_varying_interp_mode_smooth |
+         nir_pack_varying_interp_mode_noperspective |
+         nir_pack_varying_interp_loc_center |
+         nir_pack_varying_interp_loc_sample |
+         nir_pack_varying_interp_loc_centroid,
    };
    sscreen->nir_options = nir_options;
 }

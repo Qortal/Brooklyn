@@ -659,7 +659,7 @@ crocus_get_query_result(struct pipe_context *ctx,
    struct crocus_screen *screen = (void *) ctx->screen;
    const struct intel_device_info *devinfo = &screen->devinfo;
 
-   if (unlikely(screen->no_hw)) {
+   if (unlikely(screen->devinfo.no_hw)) {
       result->u64 = 0;
       return true;
    }
@@ -678,8 +678,12 @@ crocus_get_query_result(struct pipe_context *ctx,
       }
       assert(READ_ONCE(q->map->snapshots_landed));
 #else
-      if (crocus_wait_syncobj(ctx->screen, q->syncobj, wait ? INT64_MAX : 0))
+      if (crocus_wait_syncobj(ctx->screen, q->syncobj, wait ? INT64_MAX : 0)) {
+         /* if we've waited and timedout, just set the query to ready to avoid infinite loop */
+         if (wait)
+            q->ready = true;
          return false;
+      }
 #endif
       calculate_result_on_cpu(devinfo, q);
    }

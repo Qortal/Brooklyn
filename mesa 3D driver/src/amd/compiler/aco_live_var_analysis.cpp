@@ -355,6 +355,7 @@ update_vgpr_sgpr_demand(Program* program, const RegisterDemand new_demand)
    unsigned max_waves_per_simd = program->dev.max_wave64_per_simd * (64 / program->wave_size);
    unsigned simd_per_cu_wgp = program->dev.simd_per_cu * (program->wgp_mode ? 2 : 1);
    unsigned lds_limit = program->wgp_mode ? program->dev.lds_limit * 2 : program->dev.lds_limit;
+   unsigned max_workgroups_per_cu_wgp = program->wgp_mode ? 32 : 16;
 
    assert(program->min_waves >= 1);
    uint16_t sgpr_limit = get_addr_sgpr_from_waves(program, program->min_waves);
@@ -375,14 +376,26 @@ update_vgpr_sgpr_demand(Program* program, const RegisterDemand new_demand)
       /* adjust max_waves for workgroup and LDS limits */
       unsigned waves_per_workgroup = calc_waves_per_workgroup(program);
       unsigned workgroups_per_cu_wgp = max_waves_per_simd * simd_per_cu_wgp / waves_per_workgroup;
-      if (program->config->lds_size) {
-         unsigned lds = program->config->lds_size * program->dev.lds_encoding_granule;
-         lds = align(lds, program->dev.lds_alloc_granule);
-         workgroups_per_cu_wgp = std::min(workgroups_per_cu_wgp, lds_limit / lds);
+
+      unsigned lds_per_workgroup =
+         align(program->config->lds_size * program->dev.lds_encoding_granule,
+               program->dev.lds_alloc_granule);
+
+      if (program->stage == fragment_fs) {
+         /* PS inputs are moved from PC (parameter cache) to LDS before PS waves are launched.
+          * Each PS input occupies 3x vec4 of LDS space. See Figure 10.3 in GCN3 ISA manual.
+          * These limit occupancy the same way as other stages' LDS usage does.
+          */
+         unsigned lds_bytes_per_interp = 3 * 16;
+         unsigned lds_param_bytes = lds_bytes_per_interp * program->info->ps.num_interp;
+         lds_per_workgroup += align(lds_param_bytes, program->dev.lds_alloc_granule);
       }
-      if (waves_per_workgroup > 1 && program->chip_class < GFX10)
-         workgroups_per_cu_wgp = std::min(
-            workgroups_per_cu_wgp, 16u); /* TODO: is this a SI-only limit? what about Navi? */
+
+      if (lds_per_workgroup)
+         workgroups_per_cu_wgp = std::min(workgroups_per_cu_wgp, lds_limit / lds_per_workgroup);
+
+      if (waves_per_workgroup > 1)
+         workgroups_per_cu_wgp = std::min(workgroups_per_cu_wgp, max_workgroups_per_cu_wgp);
 
       /* in cases like waves_per_workgroup=3 or lds=65536 and
        * waves_per_workgroup=1, we want the maximum possible number of waves per

@@ -44,7 +44,6 @@
 #include "util/format/u_format.h"
 #include "util/u_prim.h"
 #include "util/u_prim_restart.h"
-#include "indices/u_primconvert.h"
 #include "tgsi/tgsi_parse.h"
 #include "tgsi/tgsi_from_mesa.h"
 #include "util/u_math.h"
@@ -201,8 +200,11 @@ panfrost_get_blend(struct panfrost_batch *batch, unsigned rti, struct panfrost_b
 
         pthread_mutex_lock(&dev->blend_shaders.lock);
         struct pan_blend_shader_variant *shader =
-                pan_blend_get_shader_locked(dev, &pan_blend,
-                                col0_type, col1_type, rti);
+                pan_screen(ctx->base.screen)->vtbl.get_blend_shader(dev,
+                                                                    &pan_blend,
+                                                                    col0_type,
+                                                                    col1_type,
+                                                                    rti);
 
         /* Size check and upload */
         unsigned offset = *shader_offset;
@@ -298,6 +300,8 @@ panfrost_create_shader_state(
         struct panfrost_device *dev = pan_device(pctx->screen);
         so->base = *cso;
 
+        simple_mtx_init(&so->lock, mtx_plain);
+
         /* Token deep copy to prevent memory corruption */
 
         if (cso->type == PIPE_SHADER_IR_TGSI)
@@ -340,6 +344,8 @@ panfrost_delete_shader_state(
                 panfrost_bo_unreference(shader_state->linkage.bo);
         }
 
+        simple_mtx_destroy(&cso->lock);
+
         free(cso->variants);
         free(so);
 }
@@ -367,8 +373,6 @@ panfrost_variant_matches(
         struct panfrost_shader_state *variant,
         enum pipe_shader_type type)
 {
-        struct panfrost_device *dev = pan_device(ctx->base.screen);
-
         if (variant->info.stage == MESA_SHADER_FRAGMENT &&
             variant->info.fs.outputs_read) {
                 struct pipe_framebuffer_state *fb = &ctx->pipe_framebuffer;
@@ -380,10 +384,7 @@ panfrost_variant_matches(
                         if ((fb->nr_cbufs > i) && fb->cbufs[i])
                                 fmt = fb->cbufs[i]->format;
 
-                        const struct util_format_description *desc =
-                                util_format_description(fmt);
-
-                        if (pan_format_class_load(desc, dev->quirks) == PAN_FORMAT_NATIVE)
+                        if (panfrost_blendable_formats_v6[fmt].internal)
                                 fmt = PIPE_FORMAT_NONE;
 
                         if (variant->rt_formats[i] != fmt)
@@ -445,7 +446,6 @@ panfrost_bind_shader_state(
         enum pipe_shader_type type)
 {
         struct panfrost_context *ctx = pan_context(pctx);
-        struct panfrost_device *dev = pan_device(ctx->base.screen);
         ctx->shader[type] = hwcso;
 
         ctx->dirty |= PAN_DIRTY_TLS_SIZE;
@@ -457,6 +457,8 @@ panfrost_bind_shader_state(
 
         signed variant = -1;
         struct panfrost_shader_variants *variants = (struct panfrost_shader_variants *) hwcso;
+
+        simple_mtx_lock(&variants->lock);
 
         for (unsigned i = 0; i < variants->variant_count; ++i) {
                 if (panfrost_variant_matches(ctx, &variants->variants[i], type)) {
@@ -501,10 +503,7 @@ panfrost_bind_shader_state(
                                 if ((fb->nr_cbufs > i) && fb->cbufs[i])
                                         fmt = fb->cbufs[i]->format;
 
-                                const struct util_format_description *desc =
-                                        util_format_description(fmt);
-
-                                if (pan_format_class_load(desc, dev->quirks) == PAN_FORMAT_NATIVE)
+                                if (panfrost_blendable_formats_v6[fmt].internal)
                                         fmt = PIPE_FORMAT_NONE;
 
                                 v->rt_formats[i] = fmt;
@@ -538,6 +537,11 @@ panfrost_bind_shader_state(
                         update_so_info(&shader_state->stream_output,
                                        shader_state->info.outputs_written);
         }
+
+        /* TODO: it would be more efficient to release the lock before
+         * compiling instead of after, but that can race if thread A compiles a
+         * variant while thread B searches for that same variant */
+        simple_mtx_unlock(&variants->lock);
 }
 
 static void *
@@ -618,6 +622,7 @@ panfrost_set_sampler_views(
         enum pipe_shader_type shader,
         unsigned start_slot, unsigned num_views,
         unsigned unbind_num_trailing_slots,
+        bool take_ownership,
         struct pipe_sampler_view **views)
 {
         struct panfrost_context *ctx = pan_context(pctx);
@@ -634,8 +639,14 @@ panfrost_set_sampler_views(
         for (i = 0; i < num_views; ++i) {
                 if (views[i])
                         new_nr = i + 1;
-		pipe_sampler_view_reference((struct pipe_sampler_view **)&ctx->sampler_views[shader][i],
-		                            views[i]);
+                if (take_ownership) {
+                        pipe_sampler_view_reference((struct pipe_sampler_view **)&ctx->sampler_views[shader][i],
+                                                    NULL);
+                        ctx->sampler_views[shader][i] = (struct panfrost_sampler_view *)views[i];
+                } else {
+                        pipe_sampler_view_reference((struct pipe_sampler_view **)&ctx->sampler_views[shader][i],
+                                                    views[i]);
+                }
         }
 
         for (; i < ctx->sampler_view_count[shader]; i++) {
@@ -643,18 +654,6 @@ panfrost_set_sampler_views(
 		                            NULL);
         }
         ctx->sampler_view_count[shader] = new_nr;
-}
-
-static void
-panfrost_sampler_view_destroy(
-        struct pipe_context *pctx,
-        struct pipe_sampler_view *pview)
-{
-        struct panfrost_sampler_view *view = (struct panfrost_sampler_view *) pview;
-
-        pipe_resource_reference(&pview->texture, NULL);
-        panfrost_bo_unreference(view->state.bo);
-        ralloc_free(view);
 }
 
 static void
@@ -689,11 +688,10 @@ panfrost_set_framebuffer_state(struct pipe_context *pctx,
         }
 
         /* We may need to generate a new variant if the fragment shader is
-         * keyed to the framebuffer format (due to EXT_framebuffer_fetch) */
+         * keyed to the framebuffer format or render target count */
         struct panfrost_shader_variants *fs = ctx->shader[PIPE_SHADER_FRAGMENT];
 
-        if (fs && fs->variant_count &&
-            fs->variants[fs->active_variant].info.fs.outputs_read)
+        if (fs && fs->variant_count)
                 ctx->base.bind_fs_state(&ctx->base, fs);
 }
 
@@ -795,6 +793,8 @@ panfrost_destroy(struct pipe_context *pipe)
 {
         struct panfrost_context *panfrost = pan_context(pipe);
 
+        _mesa_hash_table_destroy(panfrost->writers, NULL);
+
         if (panfrost->blitter)
                 util_blitter_destroy(panfrost->blitter);
 
@@ -803,8 +803,6 @@ panfrost_destroy(struct pipe_context *pipe)
 
         panfrost_pool_cleanup(&panfrost->descs);
         panfrost_pool_cleanup(&panfrost->shaders);
-
-        util_primconvert_destroy(panfrost->primconvert);
 
         ralloc_free(pipe);
 }
@@ -1057,7 +1055,6 @@ panfrost_create_context(struct pipe_screen *screen, void *priv, unsigned flags)
         gallium->set_stencil_ref = panfrost_set_stencil_ref;
 
         gallium->set_sampler_views = panfrost_set_sampler_views;
-        gallium->sampler_view_destroy = panfrost_sampler_view_destroy;
 
         gallium->bind_rasterizer_state = panfrost_bind_rasterizer_state;
         gallium->delete_rasterizer_state = panfrost_generic_cso_delete;
@@ -1118,19 +1115,10 @@ panfrost_create_context(struct pipe_screen *screen, void *priv, unsigned flags)
         panfrost_pool_init(&ctx->shaders, ctx, dev,
                         PAN_BO_EXECUTE, 4096, "Shaders", true, false);
 
-        /* All of our GPUs support ES mode. Midgard supports additionally
-         * QUADS/QUAD_STRIPS/POLYGON. Bifrost supports just QUADS. */
-
-        ctx->draw_modes = (1 << (PIPE_PRIM_QUADS + 1)) - 1;
-
-        if (!pan_is_bifrost(dev)) {
-                ctx->draw_modes |= (1 << PIPE_PRIM_QUAD_STRIP);
-                ctx->draw_modes |= (1 << PIPE_PRIM_POLYGON);
-        }
-
-        ctx->primconvert = util_primconvert_create(gallium, ctx->draw_modes);
-
         ctx->blitter = util_blitter_create(gallium);
+
+        ctx->writers = _mesa_hash_table_create(gallium, _mesa_hash_pointer,
+                                                        _mesa_key_pointer_equal);
 
         assert(ctx->blitter);
 

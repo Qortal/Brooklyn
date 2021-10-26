@@ -44,6 +44,7 @@ static const struct debug_named_value shader_debug_options[] = {
    {"nouboopt",   IR3_DBG_NOUBOOPT,   "Disable lowering UBO to uniform"},
    {"nofp16",     IR3_DBG_NOFP16,     "Don't lower mediump to fp16"},
    {"nocache",    IR3_DBG_NOCACHE,    "Disable shader cache"},
+   {"spillall",   IR3_DBG_SPILLALL,   "Spill as much as possible to test the spiller"},
 #ifdef DEBUG
    /* DEBUG-only options: */
    {"schedmsgs",  IR3_DBG_SCHEDMSGS,  "Enable scheduler debug messages"},
@@ -125,6 +126,9 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
 
       compiler->tess_use_shared =
             fd_dev_info(compiler->dev_id)->a6xx.tess_use_shared;
+
+      compiler->storage_16bit =
+            fd_dev_info(compiler->dev_id)->a6xx.storage_16bit;
    } else {
       compiler->max_const_pipeline = 512;
       compiler->max_const_geom = 512;
@@ -180,6 +184,8 @@ ir3_compiler_create(struct fd_device *dev, const struct fd_dev_id *dev_id,
       compiler->instr_align = 4;
       compiler->const_upload_unit = 8;
    }
+
+   compiler->bool_type = (compiler->gen >= 5) ? TYPE_U16 : TYPE_U32;
 
    ir3_disk_cache_init(compiler);
 
