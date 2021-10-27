@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Link
-Name=Procstats
-Comment=Monitor window process resources.
-Comment[fr]=Affiche les ressources utilisées par les processus de la fenêtre.
-Comment[it]=Monitorizza le risorse dei processi delle finestre.
-Icon=e-module-procstats
-X-Enlightenment-ModuleType=system

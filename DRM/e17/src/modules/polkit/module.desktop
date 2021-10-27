@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Link
-Name=Polkit
-Comment=This module provides a polkit authentication agent.
-Comment[fr]=Ce module fournit un agent d'authentification polkit.
-Comment[it]=Questo modulo fornisce un agente d'autenticazione per polkit.
-Icon=e-module-polkit
-X-Enlightenment-ModuleType=core
