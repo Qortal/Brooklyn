@@ -1,0 +1,2218 @@
+2017-10-12  Aurelien Jarno <aurelien@aurel32.net>
+
+	* polarssl/include/polarssl/bn_mul.h (MULADDC_HUIT_DEAD): Rename
+	from MULADDC_HUIT.
+	[__ARM_FEATURE_DSP] (MULADDC_1024_CORE, MULADDC_1024_LOOP)
+	(MULADDC_INIT, MULADDC_CORE, MULADDC_HUIT, MULADDC_STOP): New.
+
+	* polarssl/library/bignum.c (mpi_montsqr): Check on
+	POLARSSL_HAVE_ASM and __arm__.
+	[__ARM_FEATURE_DSP] (mpi_montsqr): New.
+	(MAX_WSIZE): New.
+	(mpi_exp_mod): Use MAX_WSIZE.
+
+	* src/Makefile (DEFS): Remove BIGNUM_C_IMPLEMENTATION.
+
+	* src/main.c (HEAP_SIZE): Rename from MEMORY_SIZE.
+	(HEAP_END, HEAP_ALIGNMENT, HEAP_ALIGN): Likewise.
+
+	* src/stack-def.h (SIZE_3): Depend on MEMORY_SIZE.
+	* src/configure: Emit DEFS with MEMORY_SIZE.
+
+2017-10-11  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.2.6.
+
+	* regnual/Makefile (LDSCRIPT): Move after include.
+	* regnual/types.h: Add uintptr_t.
+
+	* test/features/002_get_data_static.feature (data object AID): Fix
+	for any binary value.
+	* 402_get_data_static.feature: Likewise.
+	* 802_get_data_static.feature: Likewise.
+
+2017-10-10  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/main.c (main): Support --debug option.
+	* chopstx: Update to 1.5.
+
+2017-10-06  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/configure (flash_override): Fix suggested by Jeremy Drake.
+	(help): STM8S_DISCOVERY is supported again.
+
+2017-10-06  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.ld.in (.stacks): Specify NOLOAD type.
+
+	* src/configure: Allow not specifying VIDPID.
+
+	* src/main.c [GNU_LINUX_EMULATION] (main): Handle "--vidpid"
+	option to assign vendor ID and product ID of USB.
+
+	* src/usb_desc.c [GNU_LINUX_EMULATION] (device_desc): Export.
+
+	* GNUK_USB_DEVICE_ID (0000:0000): New.
+
+2017-10-05  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/stack-def.h (SIZE_1, SIZE_3): Tweak the size.
+
+	* src/call-rsa.c (rsa_genkey): Single step.
+	* src/openpgp-do.c (gpg_do_keygen): Do RSA key generation in single
+	step, using APDU buffer.
+	* src/openpgp.c (cmd_pgp_gakp): Supply the APDU as a buffer.
+
+	* src/Makefile (install): New target.
+
+	* src/configure (prefix. exec_prefix, libexecdir): Add.
+
+	* src/main.c [GNU_LINUX_EMULATION] (main): Option handling.
+
+	* tool/gnuk-emulation-setup: New.
+
+	* polarssl/library/bignum.c (M_LIMBS, limbs_M, MAX_A_LIMBS)
+	(limbs_MAX_A, mpi_gen_prime): Fix for 64-bit machine.
+
+2017-10-04  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/configure (output_vendor_product_serial_strings): Support
+	GNU/Linux emulation.
+
+	* polarssl/library/bignum.c (mpi_div_mpi): Fix for 64-bit machine.
+
+	* src/main.c (gnuk_malloc, gnuk_free): Fix for 64-bit machine.
+
+	* src/stack-def.h (SIZE_3): Tweak the size.
+
+	* src/openpgp-do.c (gpg_do_keygen): Do RSA key generation in two
+	steps.
+
+	* src/call-rsa.c (rsa_genkey_start, rsa_genkey_finish): New.
+	(rsa_genkey): Remove.
+
+2017-10-03  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/call-ec.c (ecc_compute_public): No use of malloc.
+	* src/call-rsa.c (modulus_calc, rsa_genkey): Likewise.
+	* src/ecc-edwards.c (eddsa_compute_public_25519): Likewise.
+	* src/ecc-mont.c (ecdh_compute_public_25519): Likewise.
+	* src/openpgp-do.c (gpg_do_write_prvkey, gpg_do_chks_prvkey)
+	(proc_key_import, gpg_do_keygen): Likewise.
+
+	* polarssl/library/rsa.c: Don't include stdlib.h.
+	* src/gnuk-malloc.h: Rename from stdlib.h.
+	* polarssl/library/bignum.c: Include gnuk-malloc.h.
+
+	* src/Makefile (build/flash.data): Generate.
+
+	* src/main.c (flash_addr_key_storage_start)
+	(flash_addr_data_storage_start): New.
+	(main): Determine flash address.
+
+	* src/flash.c (FLASH_ADDR_KEY_STORAGE_START)
+	(FLASH_ADDR_DATA_STORAGE_START): New.
+	(flash_do_storage_init, flash_terminate, flash_activate)
+	(flash_key_storage_init, flash_copying_gc, flash_do_release)
+	(flash_key_getpage): Use new macros.
+
+2017-10-02  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/main.c (device_initialize_once): Not for GNU/Linux.
+
+	* src/openpgp.c, src/flash.c: Distinguish FLASH_UPGRADE_SUPPORT.
+
+	* src/main.c [GNU_LINUX_EMULATION]: Use emulated_main.
+	(MEMORY_SIZE, MEMORY_END): Fix for GNU/Linux.
+
+	* src/usb-ccid.c (INTR_REQ_USB): Fix for GNU/Linux.
+
+	* polarssl/library/bignum.c (mpi_montsqr): Easy C implementation.
+
+2017-09-30  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/flash.c (flash_terminate, flash_activate)
+	(flash_copying_gc, flash_do_write_internal, flash_do_release)
+	(flash_key_write, flash_check_all_other_keys_released)
+	(flash_key_fill_zero_as_released, flash_key_release)
+	(flash_key_release_page, flash_clear_halfword)
+	(flash_put_data_internal, flash_put_data, flash_bool_clear)
+	(flash_bool_write_internal, flash_bool_write)
+	(flash_enum_write_internal, flash_enum_write)
+	(flash_cnt123_write_internal, flash_cnt123_increment)
+	(flash_cnt123_clear, flash_erase_binary, flash_write_binary): Fix
+	for GNU/Linux.
+
+	* src/usb-ccid.c (ccid_tx_done): Rename from EP1_IN_Callback.
+	(ccid_rx_ready): Rename from EP1_OUT_Callback.
+
+2017-09-29  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/usb-ccid.c (epo_init, epi_init, ccid_thread): Simplify.
+	(EP1_IN_Callback, ccid_prepare_receive, EP1_OUT_Callback)
+	(usb_rx_ready, ccid_error, ccid_power_on, ccid_send_status)
+	(ccid_send_data_block_internal, ccid_send_data_block_0x9000)
+	(ccid_send_data_block_gr, ccid_send_params)
+	(ccid_notify_slot_change, _write) [GNU_LINUX_EMULATION]: Use
+	different usb driver API.
+
+	* src/usb_ctrl.c (usb_device_reset): Fix control endpoint init.
+	(gnuk_setup_endpoints_for_interface): Add DEV
+	argument.
+	(usb_device_reset) [GNU_LINUX_EMULATION]: Use usb_lld_setup_endp.
+
+2017-09-29  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/main.c [FLASH_UPGRADE_SUPPORT] (main): Factor out flash ROM
+	upgrade support.
+	(calculate_regnual_entry_address): Likewise.
+	* src/usb_ctrl.c (usb_setup, download_check_crc32): Likewise.
+
+	* src/openpgp.c (modify_binary): Fix for 64-bit machine.
+	* src/openpgp-do.c (encrypt, decrypt): Likewise.
+	(gpg_data_scan): Likewise.
+	(gpg_do_chks_prvkey): Fix error return path.
+
+	* src/stack-def.h: New.
+
+	* src/gnuk.ld.in: Remove stack definitions.
+	* src/configure: Remove stack size modifications.
+
+	* src/main.c (STACK_MAIN, STACK_PROCESS_1): Use stack-def.h.
+	* src/usb-ccid.c (STACK_PROCESS_3): Likewise.
+	* src/usb-msc.c (STACK_PROCESS_5): Likewise.
+	* src/pin-cir.c (STACK_PROCESS_6, STACK_PROCESS_7): Likewise.
+
+	* src/usb_ctrl.c (download_check_crc32): Use chrc32_rv_ functions.
+
+	* src/mcu-stm32f103.c (rbit, check_crc32): Remove.
+
+	* src/neug.c: Update from NeuG.
+	* src/neug.h: Ditto.
+
+2017-09-28  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/ec_p256k1.c (coefficient_a): Remove.
+
+	* polarssl/library/bignum.c (mpi_fill_pseudo_random): Fix for
+	64-bit machine.
+
+	* src/call-rsa.c (rsa_decrypt): Fix for 64-bit machine.
+
+	* src/flash.c (flash_do_storage_init): Rename from flash_init.
+	(flash_key_storage_init): Rename from flash_init_keys.
+	* src/openpgp.c (gpg_init): Use new function names.
+
+	* src/stdlib.h: Update for GNU/Linux emulation.
+
+	* src/Makefile: Support GNU/Linux emulation.
+	* src/configure: Support GNU/Linux emulation.
+	* emulation: Remove.
+
+2017-08-11  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.2.5.
+	* chopstx: Update to 1.4.
+
+	* src/gnuk.ld.in (__process3_stack_size__): Tweak the size.
+
+	* src/configure: Define STM32F103_OVERRIDE_FLASH_SIZE_KB for
+	BULE_PILL.
+
+	* src/configure: Let generate src/config.mk.
+	* src/Makefile: Rename from src/Makefile.in.
+	* regnual/Makefile: Use src/config.mk.
+
+2017-08-03  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp.c (cmd_terminate_df): Fix for admin-less mode.
+
+2017-08-03  Jeremy Drake <jeremydrake+gnuk@eacceleration.com>
+
+	* regnual/regnual.c (main): Allow compile time
+	flash size definition by STM32F103_OVERRIDE_FLASH_SIZE_KB.
+
+2017-08-02  Jeremy Drake  <jeremydrake+gnuk@eacceleration.com>
+
+	* src/flash.c (flash_terminate): Erase Certificate DO, too.
+
+2017-08-01  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp.c (FILE_CARD_TERMINATED_OPENPGP): Remove.
+	(cmd_select_file): Don't change file_selection.
+
+2017-07-19  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/mod.c (mod_inv): Clear TMP.
+
+	* src/configure (REVISION): Generate even when no git.
+
+	* polarssl/library/bignum.c (mpi_exp_mod): Call mpi_grow for X
+	after the initialization of RR.
+
+2017-07-18  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/configure: Bark when no git available.
+
+2017-07-18  Anthony Romano <anthony.romano@coreos.com>
+
+	* docker: New.
+
+2017-07-18  Anthony Romano <anthony.romano@coreos.com>
+
+	* src/main.c (MEMORY_SIZE, MEM_HEAD_IS_CORRUPT, MEM_HEAD_CHECK):
+	New.
+	(gnuk_malloc, gnuk_free): Add calls to MEM_HEAD_CHECK.
+
+	* src/gnuk.h (FATAL_HEAP): New.
+
+2017-07-18  Anthony Romano <anthony.romano@coreos.com>
+
+	* src/openpgp-do.c (gpg_reset_algo_attr): New.
+	(rw_algorithm_attr): Use gpg_reset_algo_attr.
+	Fix null dereference.
+
+2017-07-18  Anthony Romano <anthony.romano@coreos.com>
+
+	* src/mod.c (mod_reduce): Clean up unused code.
+
+2017-07-18  Anthony Romano <anthony.romano@coreos.com>
+
+	* src/call-rsa.c (modulus_calc): Free modulus on error.
+	(rsa_genkey): Remove bogus check, and call chopstx_cleanup_pop
+	with 1 to release p_q_modulus on error.  Assign NULL to clp.arg
+	when it's goes with no error.
+
+	* src/main.c (gnuk_free): Allow NULL.
+
+2017-07-18  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* Update chopstx (with USBIP emulation).
+
+2017-05-12  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.2.4.
+
+2017-04-28  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/mcu-stm32f103.c: New.
+	(check_crc32, sram_address): New.
+
+	* src/usb_ctrl.c (download_check_crc32): Use check_crc32 and
+	sram_address.
+
+	* src/openpgp-do.c (gpg_write_digital_signature_counter): Fix
+	writing lower 10-bit.
+
+2017-04-27  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.ld.in (_data_pool): Move to the end.
+
+	* src/flash.c (flash_init): Return address of end of data object.
+	* src/openpgp.c (gpg_init): Get address of end of data object.
+	* src/openpgp-do.c (gpg_data_scan): Check the end address.
+
+2017-02-02  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.2.3.
+
+	* src/gnuk.ld.in (__process1_stack_size__): Increase by 0x20.
+	* chopstx: Update to 1.3.
+	* src/configure: Add BLUE_PILL in the help message.
+
+2017-02-01  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* README: Update README.  Thanks to Paul Fertser.
+
+2017-01-02  Szczepan Zalega <szczepan@nitrokey.com>
+
+	* tool/upgrade_by_passwd.py: Add file extention check.
+
+2017-02-01  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* tool/upgrade_by_passwd.py (main): More verbose messages
+	suggested by Szczepan Zalega <szczepan@nitrokey.com>.
+
+	* tool/gnuk_token.py (USB_PRODUCT_LIST): New.
+	(gnuk_devices_by_vidpid): Support searching by USB_PRODUCT_LIST.
+	Thanks to Szczepan Zalega <szczepan@nitrokey.com>.
+
+	* tool/usb_strings.py: Use gnuk_token.py.
+
+2016-10-21  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ecc.c (check_secret): Fix condition.
+
+2016-10-15  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.2.2.
+
+	* tool/gnuk_put_binary_libusb.py (main): Likewise.
+	* tool/upgrade_by_passwd.py (main): Add call of cmd_select_openpgp
+	method.
+
+	* src/openpgp.c (gpg_init): flash_init_keys shoule be after
+	gpg_data_scan since flash_init_keys accesses Data Object for
+	key attributes.
+
+	* src/usb-ccid.c (ccid_power_on): Don't waste stack.
+
+2016-10-14  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/usb-ccid.c (ccid_power_on) [LIFE_CYCLE_MANAGEMENT_SUPPORT]:
+	Change LCS value in ATR at run time.
+
+	* src/openpgp.c (gpg_init): Handle FILE_CARD_TERMINATED.
+	(cmd_select_file): Don't return AID.
+	(cmd_activate_file, cmd_terminate_df): New.
+	(process_command_apdu): Let return GPG_NO_RECORD() when
+	not selected.
+
+	* src/openpgp-do.c (gpg_do_terminate): New.
+	(gpg_data_scan): Handle p_start is NULL.
+	(do_hist_bytes): Remove.
+
+	* src/flash.c (flash_data): Change the value from 0x0000.
+	(flash_init): Support termination state.  Fix handling
+	of the boundary case where gen0 is 0xfffe.
+	(flash_terminate, flash_activate): New.
+	(flash_copying_gc): Skip 0xffff for generation number.
+
+2016-10-13  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/status-code.h: Rename from openpgp.h.
+
+	* chopstx: Update to 1.2.
+
+	* tests: New test suite for OpenPGP card with PyTest.
+
+	* src/configure (factory_reset): New.
+
+	* src/usb-ccid.c (ccid_power_on): Use ATR_head and historical
+	bytes.
+
+	* src/openpgp-do.c (rw_algorithm_attr): Clear fingerprint, timestamp,
+	and possibly ds_counter.
+
+2016-10-12  Niibe Yutaka  <gniibe@fsij.org>
+
+	* test/features/steps.py (cmd_reset_retry_counter): Fix.
+	* tool/gnuk_token.py (gnuk_token.cmd_reset_retry_counter): Fix.
+	(gnuk_token.cmd_select_openpgp): Fix P2.
+
+2016-09-02  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/configure (REVISION): Fix the detection of .git.
+	It may be a regular file (if it's created by worktree).
+
+2016-08-24  Niibe Yutaka  <gniibe@fsij.org>
+
+	* test/features/steps.py (ini): Use GLC (the global context),
+	instead of FTC (the feature context), so that token only is
+	opened once.
+
+2016-08-03  Niibe Yutaka  <gniibe@fsij.org>
+
+	* tool/hub_ctrl.py: Port to Python 3.
+
+2016-07-11  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.2.1.
+
+	* src/usb-ccid.c (ccid_power_on): Fix call of chopstx_create.
+	* src/usb-msc.c (msc_init): Ditto.
+	* src/pin-cir.c (cir_init): Ditto.
+	* src/neug.c (neug_init): Ditto.
+	* src/main.c (main): Ditto.
+
+	* src/usb-ccid.c (struct ccid): Arrange for smaller footprint.
+	* src/gnuk.h (struct apdu): Likewise.
+
+	* src/usb-ccid.c (ccid_card_change_signal): Don't touch ccid_state_p.
+	(ccid_state_p): This is constant.
+
+	* src/configure (output_vendor_product_serial_strings): Add const
+	qualifier.
+
+	* src/usb-ccid.c (epo_init, epi_init): Simplify without notify method.
+	(EP1_IN_Callback, EP1_OUT_Callback): Call notify_tx and notify_icc
+	directly.
+
+2016-07-09  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp.c (openpgp_card_thread): Don't need to get SELF.
+
+2016-07-06  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/pin-cir.c (cir_getchar): Use chopstx_poll.
+	* src/usb-ccid.c (usb_tx_done): Fix ifdef condition.
+	* src/usb_ctrl.c (usb_ctrl_write_finish): Fix ifdef nesting.
+
+2016-07-04  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* doc/conf.py: Remove 'sphinx.ext.pngmath' and 'sphinx.ext.mathjax'.
+	Reported by Kenji Rikitake.
+
+2016-07-01  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* chopstx: Update to 1.1.
+	* src/usb-ccid.c (poll_event_intr, ccid_thread): Follow the
+	change.
+
+2016-06-21  Niibe Yutaka  <gniibe@fsij.org>
+
+	* doc/index.rst: Update documentation by an example
+	Ed25519/cv25519.
+
+2016-06-17  Niibe Yutaka  <gniibe@fsij.org>
+
+	* chopstx: Update to 1.0.
+
+2016-06-15  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.ld.in (__process2_stack_size__): Update
+	thread size for rng by examining NeuG.
+
+	* src/usb-ccid.c (poll_event_intr): New.
+
+2016-06-14  Niibe Yutaka  <gniibe@fsij.org>
+
+	* regnual/regnual.c (usb_device_reset): Rename from
+	usb_cb_device_reset.
+	(usb_ctrl_write_finish): Rename from usb_cb_ctrl_write_finish.
+	(usb_setup): Rename from usb_cb_setup.
+	(usb_get_descriptor): Rename from usb_cb_get_descriptor.
+	(usb_set_configuration): New.
+	(usb_interrupt_handler): New.
+
+	* src/usb-ccid.c (usb_tx_done): Rename from usb_cb_tx_done.
+	(usb_rx_ready): Rename from usb_cb_rx_ready.
+	(usb_event_handle): New.
+	(ccid_thread): Use usb_event_handle.
+
+	* src/usb-msc.c (EP6_IN_Callback): Update to new USB API.
+	(EP6_OUT_Callback): Likewise.
+
+	* src/usb_ctrl.c (usb_device_reset): Rename from
+	usb_cb_device_reset.
+	(vcom_port_data_setup): Update to new USB API.
+	(usb_ctrl_write_finish): Rename from usb_cb_ctrl_write_finish.
+	(usb_setup): Rename from usb_cb_setup.
+	(usb_set_configuration): New, based on usb_cb_handle_event.
+	(usb_set_interface): Rename from usb_cb_interface.
+	(usb_get_interface): New.
+	(usb_get_status_interface): New.
+
+	* src/usb_desc.c (usb_get_descriptor): Rename from
+	usb_cb_get_descriptor.
+
+2016-06-02  Niibe Yutaka  <gniibe@fsij.org>
+
+	* regnual/regnual.c (usb_cb_tx_done): Follow the change of USB
+	API.
+
+	* regnual/reset.c: Rename from sys.c.
+
+2016-06-01  Niibe Yutaka  <gniibe@fsij.org>
+
+	* tool/stlinkv2.py (stlinkv2.__init__): Don't
+	call setConfiguration.
+
+	* tool/gnuk_token.py (gnuk_token, regnual): Don't
+	call setAltInterface, it's not needed.
+
+	* src/usb-ccid.c (ccid_notify_slot_change): New.
+	(ccid_thread): Call ccid_notify_slot_change at
+	interface_reset and EV_CARD_CHANGE.
+
+2016-05-31  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/usb_stm32f103.c, src/stm32f103.h: Remove.
+	* src/adc_stm32f103.c, src/sys.c: Remove.
+
+	* src/usb_ctrl.c (usb_cb_interface): call ccid_usb_reset.
+	(usb_cb_handle_event): Likewise.
+
+	* src/usb-ccid.c (ccid_thread): Handle RESET->CONFIGURE process
+	correctly.
+	(ccid_thread): Handle SET_INTERFACE correctly.
+
+	* polarssl/library/aes.c (FT0, FT1, FT2): Add "weak" flag.
+
+	* src/neug.c: Update from NeuG.
+
+	* src/usb_desc.c (usb_cb_get_descriptor): Only valid if USE_SYS3.
+
+	* src/Makefile.in (USE_SYS, USE_USB, USE_ADC): Enabled.
+	(CHIP): Add.
+
+	* src/sys.c, src/sys.h: Remove.
+	* src/usb_stm32f103.c, src/usb_lld.h: Remove.
+	* src/adc_stm32f103.c, src/adc.h: Remove.
+
+	* chopstx: Update to 0.12.
+
+2016-05-21  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/main.c (led_blink, main): Fix LED blink protocol.
+
+2016-05-20  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.2.0.
+	* src/usb-ccid.c (ccid_thread): Fix timeout.
+	(icc_handle_timeout, icc_send_status): Tweak.
+
+2016-05-19  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/usb_ctrl.c (usb_cb_ctrl_write_finish): Set bDeviceState.
+
+	* src/usb-ccid.c: Rename from usb-icc.c.
+	(ccid_thread): Handle reGNUal upgrade.
+
+	* src/Makefile.in (CSRC): Follow the change.
+
+	* chopstx: Update to 0.11.
+
+2016-05-18  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.ld.in: Tweak thread size.
+	* src/main.c (main): Use chopstx_setpriority.
+	* src/usb-icc.c (ccid_init): Use new eventflag API.
+
+	* regnual/regnual.c (nvic_enable_intr): New.
+	(main): Call nvic_enable_intr.
+
+	* chopstx: Update.
+
+2016-05-16  Niibe Yutaka  <gniibe@fsij.org>
+
+	* regnual/regnual.c (usb_cb_rx_ready, usb_cb_tx_done)
+	(usb_cb_device_reset): Follow the change of USB API.
+
+	* chopstx: Update.
+	* src/sys.c: Update from Chopstx.
+
+2016-05-13  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/neug.c (rng): Call chopstx_claim_irq before adc_start.
+	Remove call of chopstx_release_irq.
+
+2016-05-12  Niibe Yutaka  <gniibe@fsij.org>
+
+	* chopstx: Update.
+	* src/sys.c: Update from Chopstx.
+	* src/usb_lld.h: Likewise.
+	* src/usb_stm32f103.c: Likewise.
+
+	* src/usb_ctrl.c (usb_intr): Follow the change of USB API.
+	(usb_cb_rx_ready, usb_cb_tx_done): Likewise.
+
+	* src/adc.h: Remove unused declarations.
+
+2016-03-08  Niibe Yutaka  <gniibe@fsij.org>
+
+	* tool/gnuk_token.py (gnuk_token.__init__, regnual.__init__):
+	Don't call setConfiguration method.
+
+	* src/usb_lld.h (usb_cb_ctrl_write_finish): Change the API of
+	callback, which possibly needs INDEX, VALUE, and LEN parameters.
+	(usb_lld_set_data_to_recv): Fix the type of P.
+	(USB_DEVICE_DESCRIPTOR_TYPE, USB_CONFIGURATION_DESCRIPTOR_TYPE)
+	(USB_STRING_DESCRIPTOR_TYPE, USB_INTERFACE_DESCRIPTOR_TYPE)
+	(USB_ENDPOINT_DESCRIPTOR_TYPE): Remove, as we have the enumeration
+	values for same things.
+
+	* src/usb_stm32f103.c (handle_in0): Follow the change.
+	* src/usb_ctrl.c (usb_cb_ctrl_write_finish): Likewise.
+
+	* src/usb_desc.c (usb_cb_get_descriptor): Use HID_INTERFACE.
+	(device_desc, config_desc, string_descriptors)
+	(usb_cb_get_descriptor): Use the enumeration types.
+	* src/configure: Use the enumeration types.
+
+	* regnual/regnual.c: Follow the change of usb_lld.h.
+
+2016-02-09  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp.c (cmd_verify): Support VERIFY reset, which is
+	described in the specification V2.2 and V3.1.
+
+	* polarssl/library/bignum.c (mpi_exp_mod): Fix to our local
+	change.  Thanks to Aidan Thornton for the failure test case.
+
+	Fix of mpi_div_mpi from upstream.
+	* polarssl/library/bignum.c (int_clz, int_div_int): New.
+	(mpi_div_mpi): Use int_div_int.
+
+2016-02-09  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp.c (s2k): Include the unique ID of MCU into the
+	computation of S2K function.
+
+2016-02-08  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/modp256r1.c (modp256r1_add, modp256r1_sub): Keep the result
+	less than P256R1.
+	(modp256r1_reduce): Fix wrong calculation.
+	* src/modp256k1.c (modp256k1_add, modp256k1_sub): Likewise.
+	Thanks to Aidan Thornton.
+
+2016-02-05  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/configure: Add submodule check suggested by Elliott
+	Mitchell.
+
+2015-11-30  perillamint  <perillamint@gentoo.moe>
+
+	* src/openpgp.c (card_thread): Fix offset of bConfirmPIN.
+
+2015-09-18  Niibe Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.1.9.
+
+	* src/openpgp-do.c (proc_key_import): Fix error return.
+	(rw_algorithm_attr): Check it's not ALGO_RSA2K.
+
+2015-09-17  Niibe Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.1.8.
+
+2015-09-15  Niibe Yutaka  <gniibe@fsij.org>
+
+	* chopstx: Update to 0.10.
+
+	* src/main.c (main): Don't join after calling ccid_usb_reset.
+	* src/usb-icc.c (ccid_thread): Don't finish on reset, but
+	keep running.
+
+	* src/usb_ctrl.c (usb_cb_device_reset): Stop the interface.
+
+	* src/usb_stm32f103.c (std_set_interface): Bug fix for conf.
+
+	* src/gnuk.ld.in (__process3_stack_size__): Increase stack size of
+	GPG thread.
+	(__process2_stack_size__): Increase stack size of RNG.
+	(__process4_stack_size__): Increase stack size of USB.
+	(__main_stack_size__): Decrease stack size of exception handlers.
+	(__process1_stack_size__): Decrease stack size of CCID.
+
+2015-09-14  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.h (LED_GNUK_EXEC): New.
+	* src/main.c, src/usb-icc.c, src/usb_ctrl.c: icc_state_p access
+	clean up.
+
+2015-09-11  Niibe Yutaka  <gniibe@fsij.org>
+
+	* tool/upgrade_by_passwd.py (main): Loop until finding reGNUal
+	device.
+
+2015-09-10  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/call-rsa.c (rsa_cleanup): New.
+	(rsa_sign, rsa_decrypt, rsa_genkey): Allow cancellation.
+	* src/openpgp.c (cmd_pso, cmd_internal_authenticate): Cancellation
+	is handled by each functions in case of RSA.
+
+2015-09-09  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/sys.h: Update from Chopstx.
+	* src/adc_stm32f103.c: Update from NeuG.
+
+	* src/openpgp.c (process_command_apdu): Protect command execution
+	against cancelling the execution thread.
+	(cmd_pso, cmd_internal_authenticate): Allow cancellation.
+
+	* src/main.c (main): Handle LED_USB_RESET.
+
+	* src/usb-icc.c (ccid_usb_reset): New.
+	(ccid_thread): Upon receival of EV_USB_RESET, finish
+	the thread, canceling the card thread.
+
+2015-09-08  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.h (EV_USB_RESET, LED_USB_RESET): New.
+
+	* src/usb_ctrl.c (CDC_CTRL_DTR): New.
+	(vcom_port_data_setup): Distinguish detail->value for DTR.
+
+	* src/configure (help): Add ST_DONGLE and ST_NUCLEO_F103.
+
+2015-09-04  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp-do.c (do_openpgpcard_aid): Use upper bytes of unique
+	ID of MCU; same as USB serial number.
+
+	* src/configure (help): Add NITROKEY_START.
+
+2015-08-26  Mateusz Zalega  <mateusz@nitrokey.com>
+
+	* GNUK_USB_DEVICE_ID: Add Nitrokey Start.
+
+2015-08-05  Niibe Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.1.7.
+
+2015-08-04  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/adc_stm32f103.c: Update from NeuG 1.0.3.
+
+	* chopstx: Update to 0.08.
+	* src/sys.h: Update.
+
+2015-08-03  Niibe Yutaka  <gniibe@fsij.org>
+
+	* test/features/steps.py (set_msg): Python3 fix.
+	* test/generate_keys.py: Likewise.
+	* test/rsa_keys.py: Likewise.
+
+	* tool/gnuk_token.py (gnuk_token.download, gnuk_token.execute)
+	(regnual.download): Python3 fix.
+	(list_to_string): Remove.
+
+	* tool/upgrade_by_passwd.py (maian): Python3 fix.
+	* tool/usb_strings.py (main): Python3 fix.
+
+2015-07-31  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/configure (output_vendor_product_serial_strings): Fix sed
+	script when string is short.  Remove empty line.
+
+	* regnual/regnual.c (usb_cb_ctrl_write_finish, usb_cb_setup)
+	(usb_cb_get_descriptor, usb_cb_interface): Follow the change
+	of USB API.
+
+	* tool/stlinkv2.py: Support ST-Link/V2-1.
+
+2015-07-28  Niibe Yutaka  <gniibe@fsij.org>
+
+	* tool/stlinkv2.py: Fix for Python3.  Thanks to Bertrand Jacquin.
+
+	* tool/gpg_agent.py: Fix for Python3.
+
+	* src/usb-msc.c: Update from Fraucheky.
+
+	* src/usb_stm32f103.c (struct DATA_INFO): Remove offset.
+	(struct DEVICE_INFO): Integrate CONTROL_INFO.
+
+2015-07-27  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/usb_stm32f103.c (usb_lld_reply_request): New.
+	(usb_lld_set_data_to_send): Remove.
+	(usb_lld_set_data_to_recv): Not a macro but a function.
+	(std_get_status): Don't use statically allocated memory.
+	(std_get_configuration): Use usb_lld_reply_request.
+	(handle_setup0): Follow the change.
+	* src/usb_ctrl.c (vcom_port_data_setup, usb_cb_setup)
+	(usb_cb_interface): Use	usb_lld_reply_request.
+	* src/usb_desc.c (usb_cb_get_descriptor): Likewise.
+
+2015-07-24  Niibe Yutaka  <gniibe@fsij.org>
+
+	* tool/gnuk_put_binary.py: Remove.
+	* tool/gnuk_remove_keys.py: Remove.
+
+2015-07-23  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/configure (nl): New.  Follow the change of NeuG.
+
+2015-07-21  Niibe Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.1.6.
+
+2015-07-20  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp-do.c (gpg_do_keygen): Support ECC.
+	* src/call-ec.c (ecc_check_secret): New.
+	* src/ecc.c (check_secret): New.
+
+2015-07-18  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/configure (keygen): It's always enabled.
+	* src/openpgp-do.c (gpg_do_keygen): Support key generation.
+	* src/openpgp.c (cmd_pgp_gakp): Likewise.
+	* src/call-rsa.c (rsa_genkey): Likewise.
+	* src/random.c (random_gen):  Likewise.
+	* src/Makefile.in (KEYGEN_SUPPORT): Remove.
+	* polarssl/include/polarssl/config.h (POLARSSL_GENPRIME): Define.
+
+2015-07-16  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/configure (FLASH_PAGE_SIZE, FLASH_SIZE, MEMORY_SIZE)
+	[sys1_compat]: Use safe values for common binary.
+	(TARGET_DEFINE): Remove.
+
+2015-07-15  Niibe Yutaka  <gniibe@fsij.org>
+
+	* tool/usb_strings.py (field): Add 'Board'.
+
+	* regnual/regnual.c (usb_cb_get_descriptor): Update.
+	* src/usb_ctrl.c (usb_cb_interface): Call usb_lld_write.
+	* src/usb_desc.c (usb_cb_get_descriptor): Support sys_board_name,
+	using usb_lld_write.
+	* src/usb_lld.h (usb_cb_get_descriptor): Add last argument length
+	for asked length.
+	* src/usb_stm32f103.c (handle_setup0): Allow setup callback to
+	call usb_lld_write with ENDP0.
+	* src/usb_conf.h (NUM_STRING_DESC): Remove.
+
+	* src/configure [!sys1_compat] (CONFIG): Don't include target
+	board name.
+
+	* src/flash.c: Detect flash_page_size at runtime.
+
+	* src/main.c: Remove dependency to board.h.
+
+	* src/neug.c: Update from NeuG 1.0.2.
+	* src/adc_stm32f103.c: Update.
+
+	* chopstx: Update to 0.07.
+	* src/sys.c: Update.
+	* src/sys.h: Update.
+	* src/gnuk.ld.in: Update.
+
+	* tool/stlinkv2.py (stlinkv2.get_chip_id): New.  Detect flash
+	size, too.
+	(main): Call stlinkv2.get_chip_id after MCU reset and stop.
+	Verify read out fix.
+
+2015-07-11  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/configure (help): Add STM32_PRIMER2 and CQ_STARM.
+
+	* chopstx: Update to 0.06.
+
+	* tool/stlinkv2.py: Support 512kB version of STM32F103.
+	The size of executable file should be even.
+
+2015-07-07  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/Makefile.in (CSRC): Add ecc-mont.c.
+
+	* src/ecc-mont.c (mod25638_mul_121665): Fix.
+	(ecdh_compute_public_25519, ecdh_decrypt_curve25519): New.
+
+	* src/openpgp.c (cmd_pso): Support ALGO_CURVE25519.
+
+	* src/openpgp-do.c (algorithm_attr_cv25519): New.
+	(rw_algorithm_attr, get_algo_attr_data_object)
+	(gpg_get_algo_attr_key_size, gpg_do_write_prvkey)
+	(proc_key_import, gpg_do_public_key): Support ALGO_CURVE25519.
+
+	* src/gnuk.h (ALGO_CURVE25519): New.
+
+2015-07-06  Niibe Yutaka  <gniibe@fsij.org>
+
+	Enhancement for FSM-55.
+	* tool/stlinkv2.py (stlinkv2.control_nrst): New.
+	(stlinkv2.get_rdp_key,has_spi_flash,has_protection): New.
+	(stlinkv2.get_core_id): Rename.
+	(stlinkv2.blank_check): Use self.flash_size.
+	(stlinkv2.start): Call control_nrst.  Call get_core_id.
+	Distinguishing chip, and set rdp_key, flash_size and require_nrst.
+	(stlinkv2.flash_write): Use self.flash_block_size.
+	(main): Call control_nrst.
+	(prog_flash_write_body, prog_option_bytes_write_body)
+	(prog_blank_check_body): Support Cortex-M0.
+	(main): Call API V2 halt twice.
+	* tool/asm-thumb/*.S: Updated for Cortex-M0.
+
+2015-06-30  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/sys.c: Update from chopstx/example-cdc/sys.c.
+
+	* src/main.c (device_initialize_once): Apply change of NeuG.
+
+2015-06-03  Niibe Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.1.5.
+
+	* test/ecc_nistp256_keys.py: New.
+
+	* tool/upgrade_by_passwd.py: Remove -p option and add -f option.
+
+	* tool/gnuk_token.py (gnuk_token.download): Add verbose flag.
+	(regnual.download): Ditto.
+
+	* tool/gnuk_upgrade.py: Use gnuk_token module.
+
+2015-06-02  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp.c (cmd_pso): Support OpenPGPcard spec v3.0.
+
+2015-04-20  Niibe Yutaka  <gniibe@fsij.org>
+
+	* chopstx: Upgrade to 0.05.
+
+2015-04-19  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.h (CCID_CARD_INIT): New.
+	* src/usb_desc.c (gnukConfigDescriptor): Update dwDefaultClock,
+	dwMaximumClock,	dwFeatures, and bClassEnvelope.
+	* src/usb_ctrl.c (freq_table): Change the value to 4000MHz.
+	(usb_cb_handle_event): Call ccid_card_change_signal after configure.
+	* src/usb-icc.c (ccid_thread): Change EV_CARD_CHANGE handling.
+
+2015-04-18  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/main.c (main): Call chopstx_main_init.
+	* src/Makefile.in (DEFS): Remove CHX_PRIO_MAIN.
+
+2015-04-17  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/configure: Fix shell syntax.
+
+2015-03-31  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/usb_conf.h (ICC_NUM_INTERFACES, HID_NUM_INTERFACES)
+	(HID_NUM_INTERFACES, VCOM_NUM_INTERFACES, MSC_NUM_INTERFACES)
+	(NUM_INTERFACES): Define here (moved from usb_desc.c).
+	(ICC_INTERFACE, HID_INTERFACE, VCOM_INTERFACE_0, VCOM_INTERFACE_1)
+	(MSC_INTERFACE): New.
+	* src/usb_ctrl.c (gnuk_setup_endpoints_for_interface)
+	(usb_cb_setup, usb_cb_ctrl_write_finish): Use *_INTERFACE.
+	* src/usb_desc.c (gnukConfigDescriptor): Likewise.
+
+2015-03-06  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ecc-edwards.c (eddsa_sign_25519): Return 0.
+
+2015-02-25  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp.c (cmd_internal_authenticate): Fix storing to
+	res_APDU_size.
+
+2015-02-10  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp.c (cmd_pso): Fix counter update for EdDSA.  Thanks
+	to Jonathan Schleifer.
+
+	* src/call-rsa.c (rsa_sign): Don't set res_APDU_len.
+	(rsa_decrypt): Likewise, but get OUTPUT_LEN_P as an argument.
+
+2015-02-09  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp.c (cmd_pso): Fix EdDSA. Use GPG_KEY_FOR_SIGNING.
+
+2014-12-15  Niibe Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.1.4.
+
+2014-12-13  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/flash.c (flash_key_getpage, flash_key_release_page): New.
+
+	* src/openpgp-do.c (gpg_do_delete_prvkey): New arg.
+	(rw_algorithm_attr): Call gpg_do_delete_prvkey with CLEAN_PAGE_FULL.
+
+2014-12-12  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/Makefile.in (build/bignum.o): Specific OPT for this target.
+
+	* src/configure (target): Default is FST-01.
+	(--with-dfu): FST-01 doesn't have DFU.  If set, it must be
+	mistake.
+
+	* boards/STBEE_MINI: Remove, since it is now supported by Chopstx.
+
+	* test/features/802_get_data_static.feature: Reflect the change
+	of extended capabilities.
+	* test/features/402_get_data_static.feature: Ditto.
+	* test/features/002_get_data_static.feature: Ditto.
+
+	* test/features/003_keyattr_change.feature: New test.
+
+	* src/usb_lld.h: Don't use 'extern' for function declarations.
+	* src/usb-icc.c (end_cmd_apdu_data): Fix Le handling.
+
+2014-12-11  Niibe Yutaka  <gniibe@fsij.org>
+
+	* chopstx: Upgrade to 0.04.
+	* src/syc.c: Update from 0.04.
+
+2014-12-10  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ecc-cdh.c: Remove as smartcard only does
+	a part of ECDH computation as gpg-agent does.
+
+	* src/chconf.h, src/halconf.h: Remove files needed for ChibiOS/RT.
+
+2014-12-09  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/call-ec.c (ecc_compute_public): Rename, as we share
+	same routine among ECDSA and ECDH.
+	(ecdh_decrypt): New.
+
+2014-12-09  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ecc.c (compute_kP): Bug fix.  It's P, not G.
+	(point_is_on_the_curve): Bug fix.
+
+2014-12-03  Niibe Yutaka  <gniibe@fsij.org>
+
+	Changes for RSA-4096.
+
+	* src/gnuk.h (MAX_CMD_APDU_DATA_SIZE, MAX_RES_APDU_DATA_SIZE):
+	Send/Recv buffer should be bigger.
+	* polarssl/library/bignum.c (mpi_exp_mod): Don't consume much.
+	* polarssl/library/rsa.c (rsa_rsaes_pkcs1_v15_decrypt): buffer
+	allocation size should be variable.
+
+2014-12-01  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/Makefile.in (DEFS): Don't define compile time preference of
+	key algo attributes.
+
+	* src/openpgp-do.c (proc_key_import): Support modifiable key algo
+	attributes.
+
+2014-11-21  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.h (ALGO_RSA4K, ALGO_NISTP256R1, ALGO_SECP256K1)
+	(ALGO_ED25519, ALGO_RSA2K): New.
+	(struct key_data_internal): Move to ...
+	* src/openpgp-do.c (struct key_data_internal): ... here.
+	(CHECKSUM_ADDR, kdi_len): New.
+	(CKDC_CALC, CKDC_CHECK): New.
+	(compute_key_data_checksum): Add arg PRVKEY_LEN.
+	(gpg_do_load_prvkey, gpg_do_delete_prvkey): Support modifiable key
+	algo attributes.
+	(gpg_do_write_prvkey, gpg_do_public_key, gpg_do_keygen): Likewise.
+	(gpg_do_clear_prvkey): Use MAX_PRVKEY_LEN.
+
+	* src/openpgp.c (gpg_init): Call flash_init_keys after
+	gpg_data_scan.
+	(cmd_pso): Support modifiable key algo attributes.
+	(cmd_internal_authenticate): Likewise.
+
+2014-11-21  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp-do.c (algorithm_attr_rsa2k): Rename from *_rsa.
+	(algorithm_attr_rsa4k): New.
+	(get_algo_attr_pointer, kk_to_nr, gpg_get_algo_attr)
+	(get_algo_attr_data_object, gpg_get_algo_attr_key_size): New.
+	(rw_algorithm_attr): New.
+	(gpg_do_table): Register rw_algorithm_attr for GPG_DO_ALG_*.
+	(gpg_data_scan, gpg_data_copy): Handle algo attributes.
+
+	(rw_pw_status): Fix checking against redundant write.
+
+2014-11-20  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp-do.c (extended_capabilities): Key attributes can be
+	modifid now.
+
+2014-11-20  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.h (NR_NONE, NR_DO__FIRST__): Remove.
+	(NR_DO_*): Redefine.
+	(NR_KEY_ALGO_ATTR_SIG, NR_KEY_ALGO_ATTR_DEC)
+	(NR_KEY_ALGO_ATTR_AUT): New.
+
+	* src/openpgp-do.c (gpg_do_load_prvkey, gpg_do_delete_prvkey)
+	(gpg_do_write_prvkey, gpg_do_chks_prvkey, gpg_data_scan)
+	(gpg_data_copy, gpg_do_read_simple)
+	(gpg_do_write_simple): Don't use NR_DO__FIRST__.
+	(gpg_do_put_data): Don't use NR_NONE any more.
+	(do_tag_to_nr): Use -1 to specify NONE.
+
+	* src/flash.c (flash_enum_clear, flash_enum_write_internal)
+	(flash_enum_write): New.
+
+2014-11-19  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.h (FIRMWARE_UPDATE_KEY_CONTENT_LEN): New.
+	(size_of_key): New enum.
+
+	* src/openpgp.c (gpg_get_firmware_update_key)
+	(cmd_read_binary, cmd_external_authenticate): Use
+	FIRMWARE_UPDATE_KEY_CONTENT_LEN.
+
+	* src/flash.c (KEY_SIZE): Remove.
+	(key_available_at): Add new arg as KEY_SIZE.
+	(flash_check_all_other_keys_released): Likewise.
+	(flash_key_fill_zero_as_released, flash_key_release): Likewise.
+
+	(flash_init): Move initializing keys into another function.
+	(flash_init_keys): New function.
+
+	(flash_key_alloc): Use gpg_get_algo_attr_key_size.
+	(flash_key_write): Add new arg as KEY_DATA_LEN.
+
+	(flash_write_binary): Use FIRMWARE_UPDATE_KEY_CONTENT_LEN.
+
+2014-09-16  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.h (MAX_PRVKEY_LEN): New.
+	(KEY_CONTENT_LEN): Remove.
+
+	* src/call-rsa.c (RSA_SIGNATURE_LENGTH): Remove.
+	(rsa_sign, rsa_verify, rsa_genkey): Add new arg: PUBKEY_LEN.
+	(rsa_decrypt): Don't use KEY_CONTENT_LEN.
+
+2014-06-19  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ecc-mont.c (compute_nQ): Add comment.
+
+	* src/mod.c (mod_inv): Fix comment. X^-1 = 0 when X=0
+	is important for Montgomery curve computation.
+
+2014-06-05  Niibe Yutaka  <gniibe@fsij.org>
+
+	* tool/add_openpgp_authkey_from_gpgssh.py: New.
+
+2014-04-17  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/muladd_256.h (MULADD_256_ASM): New.
+	(MULADD_256): Use MULADD_256_ASM.
+	* src/ecc-mont.c (mod25638_mul_121665): Add asm implementation.
+
+	* src/bn.c (bn256_add_uint, bn256_sub_uint): Simplify.
+	* src/mod25638.c (mod25638_add, mod25638_sub): Simplify.
+	(n25638, add19): Remove.
+	(ADDWORD_256): Add s_ as source pointer.
+	(mod25519_reduce): Remove a call to memcpy.  Use bn256_add_uint.
+	* src/ecc-edwards.c (point_double): Simplify.
+
+2014-04-16  Niibe Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.1.3.
+
+2014-04-15  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ecc-mont.c: New.
+
+	* src/mod25638.c (p25519): Move from ecc-edwards.c.
+	(mod25519_reduce, add19): Likewise.
+	(mod25638_reduce) [!ASM_IMPLEMENTATION]: Use bn256_add_uint.
+
+2014-04-14  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/jpc.c (jpc_to_ac): Error check before mod_inv.
+
+	* src/mod.c (mod_inv): No return value (if N==0 returns ZERO).
+
+	* src/bn.c [BN256_NO_RANDOM]: Only include "random.h" if needed.
+
+2014-04-08  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/mod.c (mod_inv): Use MAX_GCD_STEPS_BN256.
+	Return failure or success.
+	* src/jpc.c (jpc_to_ac): Use mod_inv.
+	* src/modp256k1.c (modp256k1_inv): Remove.
+	* src/modp256r1.c (modp256r1_inv): Remove.
+
+2014-04-07  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp-do.c (algorithm_attr_ed25519): It's OID only.
+
+2014-04-03  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ecc-edwards.c (eddsa_sign_25519): Change type of OUT.
+	* src/openpgp.c (cmd_internal_authenticate): Have a buffer.
+
+	* src/flash.c (flash_init): Fix key address finder.
+
+2014-04-02  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp-do.c (proc_key_import): Handle EdDSA.
+	(algorithm_attr_ed25519): Fix OID and add ID for SHA512.
+
+2014-04-01  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ecc-edwards.c (eddsa_compute_public_25519): New.
+
+	* src/openpgp-do.c (algorithm_attr_ed25519): New.
+	(gpg_do_write_prvkey, proc_key_import, gpg_do_public_key): Add
+	EdDSA handling.
+
+2014-03-31  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ecc-edwards.c (eddsa_sign_25519): Rename and API change.
+
+	* src/openpgp-do.c (gpg_do_load_prvkey, gpg_do_delete_prvkey)
+	(gpg_do_write_prvkey, gpg_do_public_key, gpg_do_keygen): Follow
+	the change of PRVKEY_DATA and KEY_DATA.
+
+	* src/flash.c (key_available_at): New.
+	(flash_init): Initilize KD.
+
+	* src/gnuk.h (struct prvkey_data): Remove member KEY_ADDR.
+	(struct key_data): Addd member KEY_ADDR.
+
+	* src/openpgp-do.c (gpg_do_keygen): Bug fix.  Reset the signature
+	counter when new key is generated.
+
+	* src/flash.c (flash_key_alloc): Change API, supply KK.
+
+2014-03-29  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ecc-edwards.c (point_double, point_add): Rename.
+	(mod25519_reduce): New.
+
+2014-03-28  Niibe Yutaka  <gniibe@fsij.org>
+
+	* misc/t-eddsa.c (main): Update for new API of eddsa_25519.
+
+	* src/ecc-edwards.c (compute_kG_25519): Tune for 252-bit.
+	(eddsa_25519): Public key should be provided by caller.
+	(eddsa_public_key_25519): New.
+
+2014-03-27  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ecc-edwards.c (ed_add_25638): Remove the third argument.
+	(compute_kG_25519): The curve is complete, we don't need to avoid
+	identity element as NIST curve or secp256k1 curve.
+	(eddsa_25519): Change the API, with A and the seed.
+
+2014-03-26  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/mod25638.c (mod25638_reduce): New.
+	(mod25638_mul, mod25638_sqr): Use mod25638_reduce.
+
+	* src/ecc-edwards.c (ptc_to_ac_25519): No need to subtract p25519.
+
+2014-03-25  Niibe Yutaka  <gniibe@fsij.org>
+
+	* misc/t-eddsa.c: New.
+
+	* src/ecc-edwards.c (bnX_mul_C, mod_reduce_M): New.
+	(eddsa_25519): New.
+
+2014-03-20  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ecc-edwards.c (ed_add_25638): Fix for X == A.
+	(main): Compute pre-computed tables.
+	(precomputed_KG, precomputed_2E_KG): Add.
+	(compute_kG_25519): New.
+
+2014-03-19  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/bn.c (bn256_add): Fix for X == B.
+	(bn256_sub): Likewise.
+
+	* src/ecc-edwards.c: New.
+
+2014-03-18  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/mod25638.c (mod25638_add, mod25638_sub, mod25638_sqr)
+	(mod25638_shift): New.
+
+2014-03-13  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/mod25638.c: Rename from fe25519.c.
+	* src/mod25638.h: Likewise.
+
+2014-03-07  Niibe Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.1.2.
+
+2014-02-25  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp-do.c (gpg_do_public_key): Don't put OID.
+
+	* src/configure [certdo] (gnuk.ld): Add TIM_SIZE and EXT_SIZE.
+	Thanks to Vasily Evseenko for the bug report.
+
+2014-02-21  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ecc.c (compute_kG): Compute higer index at first.
+	(point_is_on_the_curve): Don't use coefficient_a if it's zero.
+
+	* src/jpc.c (jpc_double): Care coefficient A.
+
+	* src/ec_p256r1.c (COEFFICIENT_A_IS_MINUS_3): New.
+	* src/ec_p256k1.c (COEFFICIENT_A_IS_ZERO): New.
+	* src/jpc_p256r1.c (COEFFICIENT_A_IS_MINUS_3): Likewise.
+	* src/jpc_p256k1.c (COEFFICIENT_A_IS_MINUS_3): Likewise.
+
+	* src/modp256k1.c (modp256k1_shift): Bug fix.
+
+2014-02-20  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/Makefile.in (CSRC): Add files of p256k1.
+
+	* src/openpgp.c (cmd_pso): Support p256k1 for signature.
+
+	* src/openpgp-do.c (algorithm_attr_p256k1): New.
+	(gpg_do_write_prvkey): Support p256k1 for signature.
+	(proc_key_import, gpg_do_table, gpg_do_public_key): Likewise.
+
+	* src/Makefile.in (DEFS): Add -DRSA_SIG.
+
+	* src/openpgp-do.c (gpg_do_write_prvkey): Use _p256r1.
+	* src/openpgp.c (cmd_internal_authenticate): Likewise.
+
+	* src/call-ec_p256k1.c: New.  Use call-ec.c.
+	* src/call-ec_p256r1.c: Use call-ec.c.
+	* src/call-ec.c: New.
+	(ecdsa_sign): Change the signature.
+
+2014-02-19  Niibe Yutaka  <gniibe@fsij.org>
+
+	* tool/calc_precompute_table_ecc.py: New.
+
+	* src/ec_p256k1.c: New.  Use ecc.c.
+	* src/ec_p256k1.h: New.
+	* src/ec_p256r1.c: Use ecc.c.
+	* src/ecc.c: New.
+
+2014-02-18  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/jpc_p256k1.c: New.  Use jpc.c.
+	* src/jpc_p256r1.c: Use jpc.c.
+	* src/jpc.c: New.
+
+	* src/sha256.c (memcpy_output_bswap32): Bug fix.
+
+	* src/modp256k1.h, src/modp256k1.c: New.
+
+2014-02-17  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/Makefile.in (CSRC): Follow the changes of filenames.
+
+	* src/modp256r1.c (modp256r1_add, modp256r1_sub, S3)
+	(modp256r1_mul, modp256r1_sqr, modp256r1_inv, modp256r1_shift):
+	Use new function names.
+	* src/jpc_p256r1.c (jpc_double_p256r1, jpc_add_ac_signed_p256r1)
+	(jpc_to_ac_p256r1): Likewise.
+	* src/ec_p256r1.c (point_is_on_the_curve)
+	(compute_kG_p256r1, compute_kP_p256r1): Likewise.
+	* src/call-ec_p256r1.c (ecdsa_sign): Likewise.
+
+	* src/modp256r1.h: Rename from modp256.h.
+	* src/jpc-ac_p256r1.h: Rename from jpc-ac.h.
+	* src/ec_p256r1.h: Rename from ec_p256.h.
+
+	* src/modp256r1.c: Rename from modp256.c.
+	* src/jpc_p256r1.c: Rename from jpc.c.
+	* src/ec_p256r1.c: Rename from ec_p256.c.
+	* src/call-ec_p256r1.c: Rename from call-ec_p256.c.
+
+2014-02-05  NIIBE Yutaka  <gniibe@fsij.org>
+
+	* src/sha512.h, src/sha512.c: New.
+
+	* src/sha256.c (initial_state): Don't export, it's internal.
+	(memcpy_output_bswap32): Rename and remove last argument.
+
+2014-01-28  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/muladd_256.h: New.
+	* src/bn.c (bn256_mul, bn256_sqr): Assembler implementation.
+
+	* src/ec_p256.c (get_vk_kP): Bug fix.
+	(compute_kP): Bug fix for index table.
+
+2014-01-27  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ec_p256.c (get_vk_kP): New.
+	(naf4_257_set, naf4_257_get, compute_naf4_257):	Remove.
+	(compute_kP): Change the argument, fixing for constant time.
+
+2014-01-24  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ec_p256.c (get_vk): New.
+	(compute_kG): Fix for constant time.
+	(compute_kP): Simplify.
+
+2014-01-23  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/jpc.c (jpc_add_ac_signed): Fix for constant time.
+
+	* src/ec_p256.c (ecdsa): Bug fix for k selection.
+
+2014-01-22  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/modp256.c (modp256_inv): Fix for constant time.
+
+	* src/bn.c (bn256_sqr): Fix for constant time.
+
+	* src/mod.c (mod_inv): Fix for constant time.
+
+	* src/ec_p256.c (compute_kG): Simplify.
+
+	* src/jpc.c (jpc_double): Support calling with A = infinity.
+
+2014-01-21  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/jpc.c (jpc_add_ac_signed): Bug fix for A check.
+
+	* src/ec_p256.c (ecdsa): Fix for constant time.
+
+	* src/modp256.c (modp256_add, modp256_sub, modp256_reduce)
+	(modp256_shift): Fix for constant time.
+	(modp256_inv): Likewise (not fully constant time, yet).
+
+	* src/mod.c (mod_reduce): Fix for constant time.
+	(mod_inv): Likewise (not fully constant time, yet).
+
+	* src/bn.h (bn256, bn512): words -> word.
+	* src/ec_p256.h (naf4_257): Likewise.
+
+2014-01-20  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/fe25519.h, src/fe25519.c: New.
+
+2014-01-15  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/bn.c (bn256_is_zero, bn256_is_ge, bn256_cmp): Computation
+	should be constant time.
+
+2013-12-25  Niibe Yutaka  <gniibe@fsij.org>
+
+	* VERSION: 1.1.1.
+
+	* tool/gnuk_token.py (gnuk_token.__init__, regnual.__init__): Fix
+	the argument of setAltInterface.
+	* tool/gnuk_upgrade.py: Likewise.
+	* tool/dfuse.py (DFU_STM32.__init__): Likewise.
+	* tool/stlinkv2.py (stlinkv2.__init__): Likewise.
+
+2013-12-24  Niibe Yutaka  <gniibe@fsij.org>
+
+	* polarssl/include/polarssl/bn_mul.h (MULADDC_1024_CORE)
+	(MULADDC_1024_LOOP): Use younger number registers more for shorter
+	instructions and better performance.
+	* polarssl/library/bignum.c (mpi_montsqr): Likewise.  Change loop
+	structure and conditional branch for better performance.
+
+2013-12-23  Niibe Yutaka  <gniibe@fsij.org>
+
+	* polarssl/library/bignum.c (mpi_montmul): Computation
+	time should not depends on input.
+	(mpi_montmul, mpi_montred, mpi_montsqr): Change the API.
+	(mpi_exp_mod): Follow the change of the API.  Allocate memory on
+	stack instead of malloc.
+
+	* src/gnuk.ld.in (__process3_stack_size__): Increase stack size.
+
+2013-12-20  Niibe Yutaka  <gniibe@fsij.org>
+
+	* Version 1.1.0.
+
+	* src/usb_ctrl.c (USB_FSIJ_GNUK_CARD_CHANGE): New.
+	(usb_cb_setup): Support USB_FSIJ_GNUK_CARD_CHANGE.
+	* src/usb-icc.c (ccid_card_change_signal): New argument HOW.
+
+2013-12-20  Niibe Yutaka  <gniibe@fsij.org>
+
+	* polarssl/include/polarssl/bn_mul.h (MULADDC_1024_CORE)
+	(MULADDC_CORE): Reorder instructions for more speed up.
+	* polarssl/library/bignum.c (mpi_montsqr): Likewise.
+
+2013-12-19  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/configure (--enable-hid-card-change): New (experimental).
+	* src/config.h.in (HID_CARD_CHANGE_DEFINE): New.
+	* src/usb_ctrl.c (gnuk_setup_endpoints_for_interface)
+	(usb_cb_setup, usb_cb_ctrl_write_finish): Conditionalize
+	HID_CARD_CHANGE_SUPPORT.
+	* src/usb_desc.c (gnukDeviceDescriptor, usb_cb_get_descriptor):
+	Likewise.
+
+2013-12-19  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp.c (S2KCOUNT): It's now 192, as the threat model
+	of Gnuk Token is different.
+
+2013-12-19  Niibe Yutaka  <gniibe@fsij.org>
+
+	* polarssl/library/bignum.c (mpi_montsqr): New.
+	(mpi_exp_mod): Use mpi_montsqr.
+
+	Note that this change introduces a vulnerability by the
+	Yarom/Falkner flush+reload cache side-channel attack.  When this
+	code is used on general purpose computer where we can observe
+	which code is executed (sqr or mul), it's not safe.
+
+2013-12-16  Niibe Yutaka  <gniibe@fsij.org>
+
+	* polarssl/include/polarssl/bn_mul.h (MULADDC_1024_CORE)
+	(MULADDC_1024_LOOP, MULADDC_HUIT, MULADDC_INIT, MULADDC_CORE)
+	(MULADDC_STOP) [__arm__]: The value of input B won't change.
+	More acculate specification for asm statement.
+
+	* polarssl/library/bignum.c (mpi_cmp_abs_limbs): New.
+	(mpi_montmul): Change the signature and use the upper half of T.
+	(mpi_montred): Likewise.
+	(mpi_exp_mod): Use improved mpi_montmul and mpi_montred.
+	(mpi_sub_hlp, mpi_mul_hlp): Add const qualifier for S.
+
+2013-12-13  Niibe Yutaka  <gniibe@fsij.org>
+
+	* polarssl/library/bignum.c (mpi_exp_mod): Initialize lower
+	half of T with zero.
+	(mpi_montmul): Don't need to clear lower half of
+	T, as we keep zero.  Call mpi_sub_hlp with upper half of T.
+	(mpi_montred): Ditto.
+
+	* polarssl/library/bignum.c (mpi_montmul, mpi_montred): Minimize
+	number of limbs for T.
+	(mpi_exp_mod): Only allocate N-n * 2 for T.
+	Only allocate N->n for X, W[i], and RR.
+
+2013-12-13  Niibe Yutaka  <gniibe@fsij.org>
+
+	* tool/upgrade_by_passwd.py (main): Support -k to specify KEYNO.
+
+2013-12-13  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/usb_ctrl.c (HID_LED_STATUS_CARDCHANGE): Rename from
+	HID_LED_STATUS_NUMLOCK.
+
+	* tool/gnuk_token.py (gnuk_token.stop_gnuk): Detach kernel
+	driver of HID.
+
+2013-12-12  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp-do.c (do_openpgpcard_aid): Coerce to volatile to
+	force memory access at run time.
+
+2013-12-11  Niibe Yutaka  <gniibe@fsij.org>
+
+	* regnual/sys.c (entry): Fix relocation calculation.
+
+2013-11-27  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/stm32f103.h (AFIO_MAPR_SWJ_CFG_DISABLE): New.
+	* src/sys.c: Likewise.
+
+2013-11-26  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/usb_desc.c (hid_report_desc): New.
+	(ICC_TOTAL_LENGTH): Update.
+	(HID_TOTAL_LENGTH, HID_NUM_INTERFACES): New.
+	(W_TOTAL_LENGTH, NUM_INTERFACES): Update.
+	(gnukConfigDescriptor): Add IN2 interrupt endpoint descriptor.
+	Add HID interface descriptor.
+	(usb_cb_get_descriptor): Handle HID.
+
+	* src/usb_ctrl.c (NUM_INTERFACES, MSC_INTERFACE_NO): Add 1.
+	(USB_HID_REQ_*, HID_LED_STATUS_NUMLOCK): New.
+	(gnuk_setup_endpoints_for_interface): Add ENDP2 interrupt
+	endpoint.
+	(usb_cb_setup): Handle HID requests.
+	(usb_cb_ctrl_write_finish): Likewise.
+
+	* src/usb-icc.c (ccid_card_change_signal): New.
+	(ccid_thread): Handle card change.
+	(icc_error, icc_send_status): Handle ICC_STATE_NOCARD state.
+	(icc_handle_data): Add the case of ICC_STATE_NOCARD.
+	(EP2_IN_Callback): New.
+
+2013-11-26  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/pin-dial.c: Remove.
+	* src/configure: Remove pin-dial support.
+
+2013-11-25  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/Makefile.in (HEXOUTPUT_MAKE_OPTION): New.
+	* src/configure (HEXOUTPUT_MAKE_OPTION): New.
+	* src/main.c: Include board.h.
+	* src/stm32f103.h (EXTI0_IRQ, EXTI1_IRQ): New.
+
+2013-11-18  Niibe Yutaka  <gniibe@fsij.org>
+
+	* regnual/sys.c (entry): Bug fix of clearing BSS.
+
+	* src/usb_stm32f103.c: Update from NeuG.
+	(usb_handle_transfer): Add argument ISTR_VALUE.
+
+	* src/openpgp.c (card_thread): Add noinline attribute.
+
+	* src/usb-icc.c (ccid_thread): Join the OpenPGP thread.
+	Add noinline attribute.
+
+2013-11-15  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/configure (options): Add --enable-sys1-compat.
+
+2013-11-12  Niibe Yutaka  <gniibe@fsij.org>
+
+	* chopstx: Upgrade to 0.03.
+
+	* src/usb_desc.c (usb_initial_feature): Remove.
+	(USB_SELF_POWERED): Move to ...
+	* src/usb_conf.h (USB_SELF_POWERED): ... here.
+	* src/usb_ctrl.c (usb_cb_device_reset, usb_intr): Follow the
+	change.
+
+2013-11-11  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/adc_stm32f103.c (adc_wait_completion): Update from NeuG 1.0.
+
+2013-11-03  Niibe Yutaka  <gniibe@fsij.org>
+
+	* regnual/regnual.c (usb_cb_get_descriptor): Update to new API.
+
+	* src/usb_lld.h (usb_initial_feature): Remove.
+
+	* chopstx: Update to 0.01.
+	* src/pin-cir.c: Chatter fix to 200ms.
+	* src/main.c: Fix bDeviceState.
+
+2013-11-02  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/usb_lld.h, src/usb_stm32f103.c (std_get_descriptor): Change
+	the API of usb_cb_get_descriptor.
+	* src/usb_desc.c: Follow the change.
+	* src/usb_conf.h: Modify for CCID INT and HID usage.
+
+2013-11-02  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/pin-cir.c: Port to Chopstx.
+
+	* chopstx: Update.
+	* src/configure (TIM_SIZE, EXT_SIZE): New.
+	* src/gnuk.ld.in (__process6_stack_size__)
+	(__process7_stack_size__): New.
+	* src/main.c (main): Call cir_init.
+	* src/openpgp.c (openpgp_card_thread): Rename from GPGthread.
+	* src/usb-icc.c (icc_power_on): Follow the change.
+
+2013-11-01  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/sys.c: Update from Chopstx.
+	* src/usb_lld.h: Remove interrupt definition.
+	* src/stm32f103.h: Add AFIO, EXTI, and TIMER constants.
+
+2013-10-31  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/main.c (main): Call msc_init before USB interrupt thread.
+	* src/gnuk.h, src/usb-msc.h, src/usb-msc.c, src/pin-dnd.c: Port to
+	Chipstx.
+	* src/openpgp.c (get_pinpad_input): Follow the change.
+	* src/usb_ctrl.c (gnuk_setup_endpoints_for_interface): Don't stall
+	RX of ENDP6.
+
+2013-10-24  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/Makefile.in (DEFS): Add -DCHX_PRIO_MAIN=5 for LED blink.
+	* src/main.c (PRIO_CCID): It's now 3 (was: 2).
+
+2013-10-24  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.ld.in (.gnuk_flash): Three pages for three keys.
+	* src/flash.c (FLASH_KEYSTORE_SIZE): Likewise.
+	(flash_keystore_release): Remove.
+	(flash_key_fill_zero_as_released)
+	(flash_check_all_other_keys_released, flash_key_release): New.
+	(flash_init, flash_key_alloc): New method to handle free space.
+	* src/openpgp-do.c (fetch_four_bytes): New.
+	(gpg_do_load_prvkey, gpg_do_delete_prvkey, gpg_do_public_key): Use
+	fetch_four_bytes.
+	(gpg_do_delete_prvkey): Call flash_key_release.
+
+2013-10-23  Niibe Yutaka  <gniibe@fsij.org>
+
+	* test/features/010_setup_passphrase.feature
+	* test/features/030_key_registration.feature
+	* test/features/040_passphrase_change.feature
+	* test/features/410_setup_passphrase.feature
+	* test/features/430_key_registration.feature
+	* test/features/201_keygen.feature
+	* test/features/601_keygen.feature: Modified to support new way of
+	pass phrase reset by key import / key generation.
+
+	* test/features/201_keygen.feature
+	* test/features/601_keygen.feature
+	* test/features/202_setup_passphrase.feature
+	* test/features/602_setup_passphrase.feature: Rename to change
+	order of execution.
+
+2013-10-23  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp-do.c (gpg_do_write_prvkey): Bug fix of adding
+	num_prv_keys.
+
+2013-10-22  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp-do.c (gpg_do_write_prvkey): Bug fix.
+
+2013-10-15  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp.c (cmd_change_password, cmd_reset_user_password): It
+	is now error to change User's pass phrase with no keys.
+
+	* src/openpgp-do.c (proc_resetting_code): Likewise for resetting
+	code.
+	(gpg_do_delete_prvkey): New.
+	(gpg_do_write_prvkey): Make sure to delete the key before writing.
+	User's pass phrase is always the one of factory setting.
+	(gpg_do_chks_prvkey): Support removing the key.
+	(proc_key_import): Use gpg_do_delete_prvkey.
+	(gpg_do_keygen): Use factory setting pass phrase.
+
+2013-10-11  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ac.c (verify_user_0, verify_admin_00): Fix conditions.
+
+	* src/openpgp-do.c (gpg_do_write_prvkey): Delete keystring
+	information from data object of NR_DO_KEYSTRING_PW3.
+	Fix conditions.
+	(gpg_do_keygen): Likewise.
+
+	* src/openpgp.c (cmd_reset_user_password): Likewise.
+
+2013-10-10  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.h (S2K_ITER): Remove.  It's determined at compile time.
+
+	* src/openpgp-do.c (proc_resetting_code, gpg_do_write_prvkey)
+	(proc_key_import): Remove "iteration" field.
+
+	* src/openpgp.c (cmd_change_password): Likewise.
+
+2013-10-10  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp-do.c (gpg_do_write_prvkey): Access of data object
+	considering garbage collection.
+
+	* src/openpgp.c (cmd_change_password): Call gpg_do_write_simple
+	after accessing the data object (it may cause garbage collection).
+
+2013-10-10  Niibe Yutaka  <gniibe@fsij.org>
+
+	* polarssl/library/bignum.c (mpi_montred): Constant time for
+	carry propagation.  Bug fix for carry propagation.
+	(mpi_exp_mod): Bug fix.  Shrink the size of RR as same as X.
+
+2013-10-09  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ac.c (verify_user_0, verify_admin_00, verify_admin_0): Add a
+	flag to save into keystring_md_pw3.  Add SALT handling.
+	(decode_iterate_count, calc_md, gpg_set_pw3): Remove.
+
+	* src/openpgp-do.c (proc_resetting_code, gpg_do_write_prvkey)
+	(gpg_do_keygen): Add SALT handling.
+	* src/openpgp.c (cmd_change_password, cmd_reset_user_password)
+	(s2k): Ditto.
+	* src/random.c (random_get_salt): Rename from get_salt.
+
+2013-10-09  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp-do.c (gpg_do_write_prvkey): Remove information (but
+	pass phrase length) for admin from keystring data object.
+	(proc_key_import): Recover admin keystring to DO when key deletion.
+
+2013-10-09  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ac.c (verify_user_0, verify_admin_00): Handle PW_LEN_MASK.
+	* src/openpgp-do.c (proc_resetting_code, gpg_do_write_prvkey):
+	Likewise.
+
+	* src/openpgp.c (cmd_change_password, cmd_reset_user_password):
+	Handle PW_LEN_KEYSTRING_BIT.
+
+2013-10-09  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/ac.c (verify_admin_00): New.  Add authentication by loading
+	signature key.
+	(verify_admin_0): Use verify_admin_00.
+
+	* src/openpgp.c (cmd_change_password): Admin keystring handling as
+	same as user's.
+
+2013-10-08  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp.c (modify_binary): Allow odd size of certificate.
+
+	* polarssl/library/rsa.c: Update from PolarSSL 1.2.10.
+	* polarssl/include/polarssl/rsa.h: Ditto.
+
+2013-10-07  Niibe Yutaka  <gniibe@fsij.org>
+
+	* polarssl/library/bignum.c (mpi_sub_hlp): Return CARRY.
+	(mpi_sub_abs): Carry propagatoin is done here.
+	(mpi_mul_hlp_mm): Remove.
+	(mpi_mul_hlp): Return CARRY, computation in constant time.
+	(mpi_mul_mpi): Change the order of computation not to propagate
+	carry.
+	(mpi_montmul): Minimum zero-ing of D and reduce usage of temporary
+	memory, by one word.  Use carry of mpi_mul_hlp.  Use
+	NEED_SUBTRACTION against timing attack.
+	(mpi_exp_mod): Minimum usage of temporary memory.
+
+2013-10-06  Niibe Yutaka  <gniibe@fsij.org>
+
+	* polarssl/library/bignum.c (mpi_mul_hlp_mm): New.  Handle
+	extra-carry in constant time to mitigate timing attack.
+	(mpi_montmul): Use mpi_mul_hlp_mm.
+	* src/call-rsa.c (rsa_sign, rsa_decrypt, rsa_verify): Don't
+	use RSA blinding.
+
+2013-10-05  Niibe Yutaka  <gniibe@fsij.org>
+
+	* polarssl/include/polarssl/aes.h: Update from PolarSSL 1.2.9.
+	* polarssl/include/polarssl/bignum.h: Ditto.
+	* polarssl/include/polarssl/config.h: Ditto.
+	* polarssl/include/polarssl/rsa.h: Ditto.
+	* polarssl/library/aes.c, polarssl/library/bignum.c: Ditto.
+	* polarssl/library/rsa.c: Ditto.  Fix rsa_free.
+	* src/call-rsa.c (rsa_sign, modulus_calc, rsa_decrypt)
+	(rsa_verify): Follow changes of PolarSSL 1.2.9 with RSA blinding.
+	Better error checking.
+
+2013-10-04  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/main.c (gnuk_malloc): Update ->neighbor field of a chunk on
+	the free list.
+	(gnuk_free): Access free list after getting the lock.
+
+2013-10-01  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/random.c (random_gen): Bug fix for INDEXed copy.
+
+	* src/call-rsa.c (rsa_genkey): Call neug_flush and prng_seed.
+	* polarssl/library/bignum.c (small_prime): More constants.
+	(prng_seed, jkiss, mpi_fill_pseudo_random): New.
+	(mpi_is_prime): Use mpi_fill_pseudo_random.
+
+2013-09-30  Niibe Yutaka  <gniibe@fsij.org>
+
+	* polarssl/library/bignum.c (mpi_is_prime): Enable trial divisions
+	by small integers.
+	Add Fermat primality test.
+	(mpi_gen_prime): Limit random value so that two MSBs of result will
+	be 0x11.
+
+2013-09-27  Niibe Yutaka  <gniibe@fsij.org>
+
+	* polarssl/include/polarssl/bignum.h (mpi_is_prime): ifdef-out.
+	* polarssl/library/bignum.c (mpi_is_prime): It's now internal
+	function, assuming we already know its coprime to small primes.
+	(M): New constant MPI.  Multiply primes 2*...*691.
+	(MAX_A): New constant MPI.  2^1024 / M - 1.
+	(mpi_gen_prime): Specialize for 1024-bit, using Fouque-Tibouchi
+	method.
+
+2013-09-25  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/sha256.h, src/adc.h
+	* src/neug.c, src/adc_stm32f103.c: Update from NeuG 0.11.
+
+	* chopstx: Upgrade to new Chopstx 0.00.
+
+	* VERSION: New file.
+
+	* src/configure (SERIALNO, SERIALNO_STR_LEN_DEFINE): New.
+	(REVISION): Use the file VERSION if it doesn't have .git.
+	Thanks to Sumedha Widyadharma for the bug report.
+
+	* src/config.h.in (SERIALNO_STR_LEN_DEFINE): New.
+	* src/main.c (ID_OFFSET): Use SERIALNO_STR_LEN.
+	* src/usb_desc.c (gnukStringSerial): Remove.  It's now
+	generated in usb-strings.c.inc.
+
+	* src/ec_p256.c (compute_kP): Fix for impossible cases.
+	(point_is_on_the_curve): New.
+	(coefficient_a, coefficient_b): New.
+
+2013-09-20  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/call-ec_p256.c (ecdsa_compute_public): Handle possible
+	error (where key_data is the order).
+
+	* src/ec_p256.c	(compute_kG, compute_kP): Handle errors.
+
+	* src/jpc.c (jpc_to_ac): Return -1 on error.
+	(jpc_add_ac_signed): Handle the case where A=inf.
+
+	* src/modp256.c (modp256_inv): Handle error case.
+
+	* src/bn.c (bn256_cmp): New.
+
+2013-07-19  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.ld.in: Layout change following NeuG.
+	(_end): Add alignment of 16.
+
+	* src/neug.c, src/adc.h, src/adc_stm32f103.c: Update from NeuG.
+
+	* src/main.c [DFU_SUPPORT] (main): Fix calling
+	flash_erase_all_and_exec.
+
+	* src/openpgp-do.c (gpg_do_write_prvkey, gpg_do_keygen): Fix
+	allocated memory handling.  Clean up before free.
+	* src/call-rsa.c (modulus_calc, rsa_genkey): Fix removing const.
+	* src/call-ec_p256.c (ecdsa_compute_public): Likewise.
+
+2013-07-18  Niibe Yutaka  <gniibe@fsij.org>
+
+	Port to Chopstx.
+	* src/Makefile.in: Change for Chopstx.
+	* src/configure: Likewise.
+	* src/gnuk.h, src/gnuk.ld.in: Likewise.
+	* src/ac.c: Include stdint.h and string.h, not ch.h.
+	* src/call-rsa.c, src/debug.c, src/flash.c: Likewise.
+	* src/call-ec_p256.c, src/usb_desc.c
+	* src/openpgp-do.c, src/random.c: Likewise.
+	* src/openpgp.c: Likewise.  Use eventflag of Chopstx.
+	* src/usb-icc.c: Likewise.
+	* src/usb_ctrl.c: Update for Chopstx.
+	* src/debug.h: New.
+	* src/stdlib.h: Use gnuk_malloc and gnuk_free for malloc/free.
+	* src/config.h.in: Move FLASH_PAGE_SIZE in board.h.
+	* polarssl/library/aes.c (FT0, FT1, FT2): Export (for sys 2.0).
+	* src/main.c (struct stdout, _write, EP3_IN_Callback)
+	(EP5_OUT_Callback): Rewrite for Chopstx.  No independent thread
+	any more.
+	(display_fatal_code, emit_led, display_status_code, led_blink):
+	Use primitives of Chopstx.
+	(main): Changes for Chopstx.
+	(gnuk_malloc_init, sbrk, gnuk_malloc, gnuk_free): New.
+
+2013-06-20  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/sys.c, src/sys.h, src/neug.c, src/adc.h
+	* src/adc_stm32f103.c, src/usb_stm32f103.c: Update from NeuG 0.10.
+	* src/stm32f103.h: New.  From NeuG 0.10.
+
+2013-06-18  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp-do.c (gpg_do_write_prvkey, proc_key_import, gpg_do_table)
+	(gpg_do_public_key) [RSA_AUTH]: Conditional compilation for RSA/ECDSA.
+	* src/openpgp.c (cmd_internal_authenticate) [RSA_AUTH]: Likewise.
+
+	* src/modp256.c (p256): Add const qualifier.
+
+2013-03-19  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/random.c (random_gen): New (was: random_byte).
+
+	* src/call-rsa.c (rsa_sign): Follow change of API.
+	(rsa_genkey): Use random_gen.
+	(modulus_calc, rsa_decrypt, rsa_verify): Follow change of API.
+	* src/openpgp-do.c (encrypt, decrypt): Likewise.
+
+	* polarssl/include/polarssl/aes.h: Updated from PolarSSL 1.2.6.
+	* polarssl/library/aes.c: Ditto.
+	* polarssl/include/polarssl/rsa.h: Ditto.
+	* polarssl/library/rsa.c: Ditto.
+	* polarssl/include/polarssl/bignum.h: Ditto.
+	* polarssl/library/bignum.c: Ditto.
+	* polarssl: Move from polarssl-0.14.0, and needed files only.
+
+2013-03-15  Niibe Yutaka  <gniibe@fsij.org>
+
+	* regnual/regnual.ld (.bss): Put at RAM1.  This makes reGNUal can
+	be loaded on the lower address.
+
+	* regnual/sys.c (entry): Don't change SP.  Put alignment.
+
+	* regnual/regnual.c (usb_cb_get_descriptor): Fix adding break.
+
+2013-03-14  Niibe Yutaka  <gniibe@fsij.org>
+
+	* tool/stlinkv2.py (stlinkv2.start): Call write_debug_reg to run
+	the core again.
+
+2013-03-12  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.ld.in (__process_stack_size__): Increase (was: 0x200).
+
+	* tool/stlinkv2.py (stlinkv2.exit_from_debug_swd)
+	(stlinkv2.exit_from_debug_swim): New.
+	(stlinkv2.start): Call exit_from_debug_swd or
+	exit_from_debug_swim.
+
+2013-03-09  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp-do.c (gpg_do_public_key): Add OID for ECDSA.
+	(gpg_do_write_prvkey): Add PUBKEY_LEN for ECDSA.
+
+	* src/flash.c (flash_key_write): Argument change for ECDSA key.
+
+	* src/main.c (calculate_regnual_entry_address): New.
+	(main): Use calculate_regnual_entry_address for entry point.
+
+	* src/openpgp-do.c (gpg_do_write_prvkey): Coerce KDI.DATA to
+	uint8_t *.
+
+	* src/usb_stm32f103.c (handle_setup0): Fix selecting handler.
+
+2013-03-08  Niibe Yutaka  <gniibe@fsij.org>
+
+	Relocatable reGNUal.
+
+	* regnual/regnual.ld (MEMORY): 0x1400 was the value of Gnuk 1.0.1.
+	Keep this value.
+	(.text): Include .text.entry next to the .vectors.
+	(.got): New.
+
+	* regnual/sys.c (entry): Now, it's at .text.entry section.
+	Do relocations.
+	Don't use absolute values which causes relocations, but
+	access at GOT.
+
+	* regnual/Makefile (CFLAGS): Add -fpie.
+
+2013-03-07  Niibe Yutaka  <gniibe@fsij.org>
+
+	Follow the USB stack change.
+
+	* regnual/regnual.c (usb_cb_device_reset): Rename from
+	regnual_device_reset.
+	(mem): Change type to uint32_t.
+	(mem_info): Removed.
+	(fetch): Avoid pointer punning.
+	(usb_cb_ctrl_write_finish): Rename from regnual_ctrl_write_finish.
+	(usb_cb_setup): Rename from regnual_setup.
+	(usb_cb_get_descriptor): Rename from regnual_get_descriptor.
+	(usb_cb_handle_event): Rename regnual_usb_event.
+	(usb_cb_interface): Rename regnual_interface.
+	(Device_Method): Remove.
+	(usb_cb_get_descriptor): Not use struct Descriptor.
+
+2013-03-06  Niibe Yutaka  <gniibe@fsij.org>
+
+	USB stack implementation improvement.
+
+	* src/usb_stm32f103.c (Device_Method, method_p): Remove.
+	(usb_interrupt_handler): Call usb_cb_device_reset.
+	(std_get_descriptor): Call usb_cb_get_descriptor.
+	(std_set_configuration): Call usb_cb_handle_event.
+	(std_get_status, std_get_interface, std_set_interface): Call
+	usb_cb_interface.
+	(handle_setup0): Call usb_cb_setup.
+	(handle_in0): Call usb_cb_handle_event and
+	usb_cb_ctrl_write_finish.
+	(request_handler): Remove.
+	(handle_setup0): Call std_* directly, not indirectly by
+	request_handler.
+	(ep_intr_handler_IN, ep_intr_handler_OUT): Remove.
+	(usb_handle_transfer): Call EP*_Callback directly, not indirectly
+	by ep_intr_handler_IN, ep_intr_handler_OUT.
+
+	* src/usb_lld.h (struct usb_device_method, Device_Method): Remove.
+	(usb_cb_device_reset, usb_cb_ctrl_write_finish)
+	(usb_cb_setup, usb_cb_get_descriptor, usb_cb_handle_event)
+	(usb_cb_interface): Define callbacks.
+	(usb_initial_feature): New.
+	(struct Descriptor): Move to ...
+	* src/usb_desc.c: ... here.
+	(usb_initial_feature): New.
+	(usb_cb_get_descriptor): Rename from gnuk_get_descriptor and move
+	from usb_ctrl.c.
+
+	* src/usb_ctrl.c (usb_cb_device_reset): Rename from
+	gnuk_device_reset.
+	(usb_cb_setup): Rename from gnuk_setup.
+	(usb_cb_ctrl_write_finish): Rename from gnuk_ctrl_write_finish.
+	(usb_cb_event): Rename from gnuk_usb_event.
+	(usb_cb_interface): Rename from gnuk_interface.
+	(Device_Method): Remove.
+
+	* src/main.c (main): Use usb_initial_feature.
+
+2013-02-27  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/usb-icc.c (set_sw1sw2): Arguments are C and CHUNK_LEN.
+	Fix reporting remaining bytes.
+	(icc_send_data_block_gr): Follow the arguments change of
+	set_sw1sw2.
+
+2013-02-26  Niibe Yutaka  <gniibe@fsij.org>
+
+	* regnual/regnual.ld (MEMORY): Fix start address.
+
+	* src/random.c (random_fini): New.
+	* src/main.c (main): Call random_fini.
+
+2013-02-25  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/configure: Correct typo in help text.
+
+	* src/gnuk.h (struct key_data_internal): Use uint32_t.
+	* src/openpgp-do.c (do_openpgpcard_aid): Fix calculation of VID.
+	(compute_key_data_checksum): Don't use type-punning pointer.
+	(gpg_do_write_prvkey): Use coercing to char *.
+
+2013-02-22  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp-do.c (gpg_do_public_key): Add header of EC point.
+
+	* src/openpgp-do.c (GPG_DO_DISCRETIONARY, cmp_discretionary): New.
+	(cmp_app_data): Change to factor out GPG_DO_DISCRETIONARY.
+	(gpg_do_table): Add GPG_DO_DISCRETIONARY.
+
+2013-02-21  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/gnuk.ld.in (MEMORY): Fix adding FLASH_SIZE unit.
+
+	* src/call-ec_p256.c (ecdsa_sign): Fix secret key access.
+
+2013-02-20  Niibe Yutaka  <gniibe@fsij.org>
+
+	* src/openpgp.c (cmd_internal_authenticate): Support ECDSA for
+	authentication.
+
+	* src/openpgp-do.c (algorithm_attr_ecdsa): New.
+	(algorithm_attr_rsa): Rename (was: algorithm_attr).
+	(gpg_do_table): Change for GPG_DO_ALG_AUT.
+	(gpg_do_write_prvkey): Support ECDSA key for authentication.
+	(proc_key_import): Likewise.
+	(gpg_do_public_key): Likewise.
+
+	* src/call-ec_p256.c: New.
+	* src/Makefile.in: Add call-ec_p256.c.
+	* src/call-rsa.c (modulus_free): Remove.
+
+2013-02-19  Niibe Yutaka  <gniibe@fsij.org>
+
+	* regnual/regnual.ld (MEMORY): Fix address of regnual.
+
+	* regnual/Makefile (MCFLAGS): Remove -mfix-cortex-m3-ldrd.
+	(CFLAGS): Add output to .lst.
+	* src/Makefile.in (MCFLAGS): Remove.
+
+	* src/sha256.c: Update from NeuG 0.05.
+
+	* ChibiOS_2.0.8: Remove.
+
+2013-02-18  Niibe Yutaka  <gniibe@fsij.org>
+
+	Changes for new ChibiOS/RT.
+	* src/main.c: Include adc.h.
+	(main): Call halInit, adc_init, and chSysInit (change for
+	ChibiOS/RT 2.4.x).
+	* src/random.h: New.
+	* src/ac.c, src/bn.c, src/call-rsa.c, src/main.c: Include random.h.
+	* src/openpgp.c, src/openpgp-do.c: Likewise.
+	* src/configure, src/gnuk.ld.in: Add MEMORY_SIZE.
+	* src/ec_p256.c: Fix call of bn256_add_uint.
+	* boards/STM8S_DISCOVERY/*: Update for ChibiOS/RT 2.4.x.
+	* boards/CQ_STARM/*: Likewise.
+	* boards/FST_01_00/*: Likewise.
+	* boards/OLIMEX_STM32_H103/*: Likewise.
+	* boards/STBEE/*: Likewise.
+	* boards/STBEE_MINI/*: Likewise.
+	* boards/STM32_PRIMER2/*: Likewise.
+
+	Merge ec_p256 branch.
+	* src/Makefile.in: Add ECC files.
+	* src/bn.h, src/bn.c: New.
+	* src/jpc-ac.h, src/jpc.c: New.
+	* src/ec_p256.h, src/ec_p256.c, src/ecc-cdh.c: New.
+	* src/mod.h, src/mod.c, src/modp256.h, src/modp256.c: New.
+
+2013-02-17  Niibe Yutaka  <gniibe@fsij.org>
+
+	* chibios: New submodule for ChibioS/RT 2.4.x.
+	* boards/FST_01/*: Update for ChibiOS/RT 2.4.x.
+	* boards/common/mcuconf-common.h: Ditto.
+
+	* src/chconf.h, src/halconf.h, src/Makefile.in, src/gnuk.ld.in:
+	Update for ChibiOS/RT 2.4.x.
+
+	* src/main.c, src/openpgp.c, src/usb-icc.c: Follow the change of
+	ChibiOS/RT 2.4.x.
+	* boards/common/board-common.c: Rename from hwinit.c.
+	* src/usb_stm32f103.c: Rename from usb_lld.c.
+
+	* src/neug.h, src/neug.c: Update NeuG 0.05.
+	* src/adc_stm32f103.c, src/adc.h: New from NeuG 0.05.
+
+	* src/random.c: Follow the change of NeuG 0.05.

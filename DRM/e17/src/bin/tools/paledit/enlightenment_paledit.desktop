@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Palette Editor
+Name[fr]=Éditeur de palette
+Name[it]=Editor della palette
+Icon=enlightenment_paledit
+Exec=enlightenment_paledit
+Comment=A tool for editing color schemes and palette for Enlightenment
+Comment[fr]=Outil d'édition des jeux de couleurs et palette pour Enlightenment
+Comment[it]=Strumento per la modifica degli schemi colore e palette per Enlightenment
+Categories=Settings;DesktopSettings;
+StartupWMClass=enlightenment_paledit

@@ -1,0 +1,16 @@
+Built-in Audio*|speaker-box
+Starship/Matisse HD Audio*|speaker-box
+Sound Blaster Play*|headphones
+HM[0-9][0-9]00|headset-one-ear
+HN[0-9][0-9]00|headset-one-ear
+WH-[0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z]*|headphones
+WX-[0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z]*|earbud
+WI-[0-9A-Z][0-9A-Z][0-9A-Z][0-9A-Z]*|earbud
+Soundcore*|earbud
+*HD Audio*|speaker-box
+*HDMI*|video-display
+*DisplayPort*|video-display
+*Buds*|earbud
+T1|earbud
+Echo*|speaker-box
+*|audio-volume
