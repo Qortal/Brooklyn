@@ -6,6 +6,9 @@ Sequentual Number Generator
 Polyhash Crypto API added
 RIPMD Now integrated
 HDMI HD enabled at boot
+VideoCore5 vc666 DTBO
+TPM SLB9690 DTBO
+Arch Dynamic Switcher
 
 Kernel Security Updates
 
