@@ -9,6 +9,7 @@ HDMI HD enabled at boot
 VideoCore5 vc666 DTBO
 TPM SLB9690 DTBO
 Arch Dynamic Switcher
+Qortal Core Process Accounting Daemon
 
 Kernel Security Updates
 
