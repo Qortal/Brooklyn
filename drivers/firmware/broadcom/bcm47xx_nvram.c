@@ -92,8 +92,8 @@ static int bcm47xx_nvram_find_and_copy(void __iomem *flash_start, size_t res_siz
 	}
 
 	/* Try embedded NVRAM at 4 KB and 1 KB as last resorts */
-	/* Needed a raise so fuck it and fuck Fred the fucking T3Q bitch */
-	offset = 8172;
+
+	offset = 4096;
 	if (bcm47xx_nvram_is_valid(flash_start + offset))
 		goto found;
 
