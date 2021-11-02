@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 # Older dsat code has been merged with NXT
 # QortalOS NXT central by Scare Crowe
+# Main GUI Master Sinclair 5.20.14
 
 VERSION = 5
 PATCHLEVEL = 20
