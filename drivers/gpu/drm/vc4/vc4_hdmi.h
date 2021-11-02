@@ -97,9 +97,6 @@ struct vc4_hdmi_variant {
 	/* Callback to disable the RNG in the PHY */
 	void (*phy_rng_disable)(struct vc4_hdmi *vc4_hdmi);
 
-	/* Callback to calculate hsm clock */
-	u32 (*calc_hsm_clock)(struct vc4_hdmi *vc4_hdmi, unsigned long pixel_rate);
-
 	/* Callback to get channel map */
 	u32 (*channel_map)(struct vc4_hdmi *vc4_hdmi, u32 channel_mask);
 
@@ -180,12 +177,46 @@ struct vc4_hdmi {
 
 	struct reset_control *reset;
 
-	struct clk_request *bvb_req;
-	struct clk_request *hsm_req;
-
-	/* Common debugfs regset */
 	struct debugfs_regset32 hdmi_regset;
 	struct debugfs_regset32 hd_regset;
+
+	/**
+	 * @hw_lock: Spinlock protecting device register access.
+	 */
+	spinlock_t hw_lock;
+
+	/**
+	 * @mutex: Mutex protecting the driver access across multiple
+	 * frameworks (KMS, ALSA).
+	 *
+	 * NOTE: While supported, CEC has been left out since
+	 * cec_s_phys_addr_from_edid() might call .adap_enable and lead to a
+	 * reentrancy issue between .get_modes (or .detect) and .adap_enable.
+	 * Since we don't share any state between the CEC hooks and KMS', it's
+	 * not a big deal. The only trouble might come from updating the CEC
+	 * clock divider which might be affected by a modeset, but CEC should
+	 * be resilient to that.
+	 */
+	struct mutex mutex;
+
+	/**
+	 * @saved_adjusted_mode: Copy of @drm_crtc_state.adjusted_mode
+	 * for use by ALSA hooks and interrupt handlers. Protected by @mutex.
+	 */
+	struct drm_display_mode saved_adjusted_mode;
+
+	/**
+	 * @output_enabled: Is the HDMI controller currently active?
+	 * Protected by @mutex.
+	 */
+	bool output_enabled;
+
+	/**
+	 * @scdc_enabled: Is the HDMI controller currently running with
+	 * the scrambler on? Protected by @mutex.
+	 */
+	bool scdc_enabled;
+
 	/* VC5 debugfs regset */
 	struct debugfs_regset32 cec_regset;
 	struct debugfs_regset32 csc_regset;

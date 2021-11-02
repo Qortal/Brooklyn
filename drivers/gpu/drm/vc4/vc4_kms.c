@@ -238,6 +238,7 @@ static void vc4_hvs_pv_muxing_commit(struct vc4_dev *vc4,
 	unsigned int i;
 
 	for_each_new_crtc_in_state(state, crtc, crtc_state, i) {
+		struct vc4_crtc *vc4_crtc = to_vc4_crtc(crtc);
 		struct vc4_crtc_state *vc4_state = to_vc4_crtc_state(crtc_state);
 		u32 dispctrl;
 		u32 dsp3_mux;
@@ -258,7 +259,7 @@ static void vc4_hvs_pv_muxing_commit(struct vc4_dev *vc4,
 		 * TXP IP, and we need to disable the FIFO2 -> pixelvalve1
 		 * route.
 		 */
-		if (vc4_state->feed_txp)
+		if (vc4_crtc->feeds_txp)
 			dsp3_mux = VC4_SET_FIELD(3, SCALER_DISPCTRL_DSP3_MUX);
 		else
 			dsp3_mux = VC4_SET_FIELD(2, SCALER_DISPCTRL_DSP3_MUX);
@@ -368,20 +369,6 @@ static void vc4_atomic_commit_tail(struct drm_atomic_state *state)
 		vc4_hvs_mask_underrun(dev, vc4_crtc_state->assigned_channel);
 	}
 
-	if (vc4->hvs && vc4->hvs->hvs5) {
-		unsigned long core_rate = max_t(unsigned long,
-						500000000,
-						new_hvs_state->core_clock_rate);
-
-		core_req = clk_request_start(hvs->core_clk, core_rate);
-
-		/*
-		 * And remove the previous one based on the HVS
-		 * requirements if any.
-		 */
-		clk_request_done(hvs->core_req);
-	}
-
 	for_each_old_crtc_in_state(state, crtc, old_crtc_state, i) {
 		struct vc4_crtc_state *vc4_crtc_state =
 			to_vc4_crtc_state(old_crtc_state);
@@ -402,6 +389,26 @@ static void vc4_atomic_commit_tail(struct drm_atomic_state *state)
 		ret = drm_crtc_commit_wait(commit);
 		if (ret)
 			drm_err(dev, "Timed out waiting for commit\n");
+	}
+
+	if (vc4->hvs && vc4->hvs->hvs5) {
+		unsigned long core_rate = max_t(unsigned long,
+						500000000,
+						new_hvs_state->core_clock_rate);
+
+		drm_dbg(dev, "Raising the core clock at %lu Hz\n", core_rate);
+
+		/*
+		 * Do a temporary request on the core clock during the
+		 * modeset.
+		 */
+		core_req = clk_request_start(hvs->core_clk, core_rate);
+
+		/*
+		 * And remove the previous one based on the HVS
+		 * requirements if any.
+		 */
+		clk_request_done(hvs->core_req);
 	}
 
 	drm_atomic_helper_commit_modeset_disables(dev, state);
