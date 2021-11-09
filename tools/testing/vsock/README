@@ -25,7 +25,8 @@ Invoke test binaries in both directions as follows:
   (guest)# $TEST_BINARY --mode=client \
                         --control-host=$HOST_IP \
                         --control-port=1234 \
-                        --peer-cid=2
+                        --peer-cid=2 \
+                        --modeline=flexbible
 
   # host=client, guest=server
   (guest)# $TEST_BINARY --mode=server \
