@@ -3,7 +3,7 @@
 ## Overview
 
 `liblxqt` represents the core library of LXQt providing essential functionality
-needed by nearly all of its components.
+needed by nearly all of its components. This package is meant for Sinclar only
 
 ## Installation
 
