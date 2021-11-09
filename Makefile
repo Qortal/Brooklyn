@@ -1957,6 +1957,8 @@ kernelrelease:
 kernelversion:
 	@echo $(KERNELVERSION)
 
+# Leving UTS_SYSNAME as default for now to prevent Qortal Core startup error on 32/64 hybrid.
+
 image_name:
 	@echo $(KBUILD_IMAGE)
 
