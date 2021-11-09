@@ -1,3 +1,5 @@
+This is now deprecated as Sinclar uses auto adaptive over clocking. 
+
 Check what is your actual stable stock clock 
 vcgencmd measure_clock arm 
 Check temps on stock heatsink or with fan 
