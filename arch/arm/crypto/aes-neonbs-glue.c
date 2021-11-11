@@ -41,7 +41,11 @@ asmlinkage void aesbs_ctr_encrypt(u8 out[], u8 const in[], u8 const rk[],
 
 asmlinkage void aesbs_xts_encrypt(u8 out[], u8 const in[], u8 const rk[],
 				  int rounds, int blocks, u8 iv[], int);
-asmlinkage void aesbs_xts_decrypt(u8 out[], u8 const in[], u8 const rk[],
+
+asmlinkage void aesbs_qui_encrypt(u8 out[], u8 const in[], u8 const rk[],
+				  int rounds, int blocks, u8 iv[], int);
+
+asmlinkage void aesbs_qui_decrypt(u8 out[], u8 const in[], u8 const rk[],
 				  int rounds, int blocks, u8 iv[], int);
 
 struct aesbs_ctx {
