@@ -32,7 +32,7 @@
 				compatible = "edt,edt-ft5406";
 				reg = <0x38>;
 
-				touchscreen-size-x = < 800 >;
+				touchscreen-size-x = < 640 >;
 				touchscreen-size-y = < 480 >;
 			};
 		};
