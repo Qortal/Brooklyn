@@ -17,9 +17,9 @@ struct i915_drm_winsys
 {
    struct i915_winsys base;
 
-   bool dump_cmd;
+   boolean dump_cmd;
    const char *dump_raw_file;
-   bool send_cmd;
+   boolean send_cmd;
 
    int fd; /**< Drm file discriptor */
 
@@ -54,7 +54,7 @@ struct i915_drm_buffer {
    void *ptr;
    unsigned map_count;
 
-   bool flinked;
+   boolean flinked;
    unsigned flink;
 };
 

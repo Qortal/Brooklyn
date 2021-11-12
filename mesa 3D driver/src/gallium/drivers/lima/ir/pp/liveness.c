@@ -28,30 +28,75 @@
  * union between sets. */
 static void
 ppir_liveness_propagate(ppir_compiler *comp,
-                        BITSET_WORD *dest_set, BITSET_WORD *src_set,
-                        uint8_t *dest_mask, uint8_t *src_mask)
+                        struct ppir_liveness *dest, struct ppir_liveness *src,
+                        struct set *dest_set, struct set *src_set)
 {
-   for (int i = 0; i < BITSET_WORDS(comp->reg_num); i++)
-      dest_set[i] |= src_set[i];
+   set_foreach(src_set, entry_src) {
+      const struct ppir_liveness *s = entry_src->key;
+      assert(s);
 
-   for (int i = 0; i < reg_mask_size(comp->reg_num); i++)
-      dest_mask[i] |= src_mask[i];
+      unsigned int regalloc_index = s->reg->regalloc_index;
+
+      dest[regalloc_index].reg = src[regalloc_index].reg;
+      dest[regalloc_index].mask |= src[regalloc_index].mask;
+      _mesa_set_add(dest_set, &dest[regalloc_index]);
+   }
+}
+
+/* Clone a liveness set (without propagation) */
+static void
+ppir_liveness_set_clone(ppir_compiler *comp,
+                        struct ppir_liveness *dest, struct ppir_liveness *src,
+                        struct set *dest_set, struct set *src_set)
+{
+   _mesa_set_clear(dest_set, NULL);
+   memset(dest, 0, list_length(&comp->reg_list) * sizeof(struct ppir_liveness));
+   memcpy(dest, src,
+          list_length(&comp->reg_list) * sizeof(struct ppir_liveness));
+
+   set_foreach(src_set, entry_src) {
+      const struct ppir_liveness *s = entry_src->key;
+      assert(s);
+
+      unsigned int regalloc_index = s->reg->regalloc_index;
+      dest[regalloc_index].reg = src[regalloc_index].reg;
+      dest[regalloc_index].mask = src[regalloc_index].mask;
+      _mesa_set_add(dest_set, &dest[regalloc_index]);
+   }
 }
 
 /* Check whether two liveness sets are equal. */
 static bool
 ppir_liveness_set_equal(ppir_compiler *comp,
-                        BITSET_WORD *set1, BITSET_WORD *set2,
-                        uint8_t *mask1, uint8_t *mask2)
+                        struct ppir_liveness *l1, struct ppir_liveness *l2,
+                        struct set *set1, struct set *set2)
 {
-   for (int i = 0; i < BITSET_WORDS(comp->reg_num); i++)
-      if (set1[i] != set2[i])
+   set_foreach(set1, entry1) {
+      const struct ppir_liveness *k1 = entry1->key;
+      unsigned int regalloc_index = k1->reg->regalloc_index;
+
+      struct set_entry *entry2 = _mesa_set_search(set2, &l2[regalloc_index]);
+      if (!entry2)
          return false;
 
-   for (int i = 0; i < reg_mask_size(comp->reg_num); i++)
-      if (mask1[i] != mask2[i])
+      const struct ppir_liveness *k2 = entry2->key;
+
+      if (k1->mask != k2->mask)
+         return false;
+   }
+   set_foreach(set2, entry2) {
+      const struct ppir_liveness *k2 = entry2->key;
+      unsigned int regalloc_index = k2->reg->regalloc_index;
+
+      struct set_entry *entry1 = _mesa_set_search(set1, &l1[regalloc_index]);
+      if (!entry1)
          return false;
 
+      const struct ppir_liveness *k1 = entry1->key;
+
+      if (k2->mask != k1->mask)
+         return false;
+   }
    return true;
 }
 
@@ -82,36 +127,38 @@ ppir_liveness_instr_srcs(ppir_compiler *comp, ppir_instr *instr)
          if (!reg || reg->undef)
             continue;
 
-         unsigned int index = reg->regalloc_index;
-
          /* if some other op on this same instruction is writing,
           * we just need to reserve a register for this particular
           * instruction. */
          if (src->node && src->node->instr == instr) {
-            BITSET_SET(instr->live_internal, index);
+            instr->live_internal[reg->regalloc_index].reg = reg;
+            _mesa_set_add(instr->live_internal_set, &instr->live_internal[reg->regalloc_index]);
             continue;
          }
 
-         bool live = BITSET_TEST(instr->live_set, index);
+         struct set_entry *live = _mesa_set_search(instr->live_in_set,
+                                                   &instr->live_in[reg->regalloc_index]);
          if (src->type == ppir_target_ssa) {
             /* reg is read, needs to be live before instr */
             if (live)
                continue;
 
-            BITSET_SET(instr->live_set, index);
+            instr->live_in[reg->regalloc_index].reg = reg;
+            _mesa_set_add(instr->live_in_set, &instr->live_in[reg->regalloc_index]);
          }
          else {
             unsigned int mask = ppir_src_get_mask(src);
-            uint8_t live_mask = get_reg_mask(instr->live_mask, index);
 
             /* read reg is type register, need to check if this sets
              * any additional bits in the current mask */
-            if (live && (live_mask == (live_mask | mask)))
+            if (live && (instr->live_in[reg->regalloc_index].mask ==
+                        (instr->live_in[reg->regalloc_index].mask | mask)))
                continue;
 
             /* some new components */
-            set_reg_mask(instr->live_mask, index, (live_mask | mask));
-            BITSET_SET(instr->live_set, index);
+            instr->live_in[reg->regalloc_index].reg = reg;
+            instr->live_in[reg->regalloc_index].mask |= mask;
+            _mesa_set_add(instr->live_in_set, &instr->live_in[reg->regalloc_index]);
          }
       }
    }
@@ -143,33 +190,34 @@ ppir_liveness_instr_dest(ppir_compiler *comp, ppir_instr *instr)
       if (!reg || reg->undef)
          continue;
 
-      unsigned int index = reg->regalloc_index;
-      bool live = BITSET_TEST(instr->live_set, index);
+      struct set_entry *live = _mesa_set_search(instr->live_in_set,
+                                                &instr->live_in[reg->regalloc_index]);
 
       /* If a register is written but wasn't read in a later instruction, it is
        * either dead code or a bug. For now, assign an interference to it to
        * ensure it doesn't get assigned a live register and overwrites it. */
       if (!live) {
-         BITSET_SET(instr->live_internal, index);
+         instr->live_internal[reg->regalloc_index].reg = reg;
+         _mesa_set_add(instr->live_internal_set, &instr->live_internal[reg->regalloc_index]);
          continue;
       }
 
       if (dest->type == ppir_target_ssa) {
          /* reg is written and ssa, is not live before instr */
-         BITSET_CLEAR(instr->live_set, index);
+         _mesa_set_remove_key(instr->live_in_set, &instr->live_in[reg->regalloc_index]);
       }
       else {
          unsigned int mask = dest->write_mask;
-         uint8_t live_mask = get_reg_mask(instr->live_mask, index);
          /* written reg is type register, need to check if this clears
           * the remaining mask to remove it from the live set */
-         if (live_mask == (live_mask & ~mask))
+         if (instr->live_in[reg->regalloc_index].mask ==
+             (instr->live_in[reg->regalloc_index].mask & ~mask))
             continue;
 
-         set_reg_mask(instr->live_mask, index, (live_mask & ~mask));
+         instr->live_in[reg->regalloc_index].mask &= ~mask;
          /* unset reg if all remaining bits were cleared */
-         if ((live_mask & ~mask) == 0) {
-            BITSET_CLEAR(instr->live_set, index);
+         if (!instr->live_in[reg->regalloc_index].mask) {
+            _mesa_set_remove_key(instr->live_in_set, &instr->live_in[reg->regalloc_index]);
          }
       }
    }
@@ -180,63 +228,62 @@ ppir_liveness_instr_dest(ppir_compiler *comp, ppir_instr *instr)
 static bool
 ppir_liveness_compute_live_sets(ppir_compiler *comp)
 {
-   uint8_t temp_live_mask[reg_mask_size(comp->reg_num)];
-   BITSET_DECLARE(temp_live_set, comp->reg_num);
    bool cont = false;
    list_for_each_entry_rev(ppir_block, block, &comp->block_list, list) {
-      if (list_is_empty(&block->instr_list))
-         continue;
-
+      ppir_instr *first = list_first_entry(&block->instr_list, ppir_instr, list);
       ppir_instr *last = list_last_entry(&block->instr_list, ppir_instr, list);
-      assert(last);
+
+      /* inherit live_out from the other blocks live_in */
+      for (int i = 0; i < 2; i++) {
+         ppir_block *succ = block->successors[i];
+         if (!succ)
+            continue;
+
+         ppir_liveness_propagate(comp, block->live_out, succ->live_in,
+                                 block->live_out_set, succ->live_in_set);
+      }
 
       list_for_each_entry_rev(ppir_instr, instr, &block->instr_list, list) {
-         /* initial copy to check for changes */
-         memset(temp_live_mask, 0, sizeof(temp_live_mask));
-         memset(temp_live_set, 0, sizeof(temp_live_set));
-
-         ppir_liveness_propagate(comp,
-                                 temp_live_set, instr->live_set,
-                                 temp_live_mask, instr->live_mask);
-
          /* inherit (or-) live variables from next instr or block */
          if (instr == last) {
-            ppir_instr *next_instr;
-            /* inherit liveness from the first instruction in the next blocks */
-            for (int i = 0; i < 2; i++) {
-               ppir_block *succ = block->successors[i];
-               if (!succ)
-                  continue;
-
-               /* if the block is empty, go for the next-next until a non-empty
-                * one is found */
-               while (list_is_empty(&succ->instr_list)) {
-                  assert(succ->successors[0] && !succ->successors[1]);
-                  succ = succ->successors[0];
-               }
-
-               next_instr = list_first_entry(&succ->instr_list, ppir_instr, list);
-               assert(next_instr);
-
-               ppir_liveness_propagate(comp,
-                                       instr->live_set, next_instr->live_set,
-                                       instr->live_mask, next_instr->live_mask);
-            }
+            ppir_liveness_set_clone(comp,
+                                    instr->live_out, block->live_out,
+                                    instr->live_out_set, block->live_out_set);
          }
          else {
             ppir_instr *next_instr = LIST_ENTRY(ppir_instr, instr->list.next, list);
-            ppir_liveness_propagate(comp,
-                                    instr->live_set, next_instr->live_set,
-                                    instr->live_mask, next_instr->live_mask);
+            ppir_liveness_set_clone(comp,
+                                    instr->live_out, next_instr->live_in,
+                                    instr->live_out_set, next_instr->live_in_set);
          }
+         /* initial copy to check for changes */
+         struct set *temp_live_in_set = _mesa_set_create(comp,
+                                                         _mesa_hash_pointer,
+                                                         _mesa_key_pointer_equal);
+         struct ppir_liveness temp_live_in[list_length(&comp->reg_list)];
+         ppir_liveness_set_clone(comp,
+               temp_live_in, instr->live_in,
+               temp_live_in_set, instr->live_in_set);
+
+         /* initialize live_in for potential changes */
+         ppir_liveness_propagate(comp, instr->live_in, instr->live_out,
+                                 instr->live_in_set, instr->live_out_set);
 
          ppir_liveness_instr_dest(comp, instr);
          ppir_liveness_instr_srcs(comp, instr);
 
-         cont |= !ppir_liveness_set_equal(comp,
-                                          temp_live_set, instr->live_set,
-                                          temp_live_mask, instr->live_mask);
+         cont |= !ppir_liveness_set_equal(comp, temp_live_in, instr->live_in,
+               temp_live_in_set, instr->live_in_set);
       }
+
+      /* inherit live_in from the first instruction in the block,
+       * or live_out if it is empty */
+      if (!list_is_empty(&block->instr_list) && first && first->scheduled)
+         ppir_liveness_set_clone(comp, block->live_in, first->live_in,
+               block->live_in_set, first->live_in_set);
+      else
+         ppir_liveness_set_clone(comp, block->live_in, block->live_out,
+               block->live_in_set, block->live_out_set);
    }
 
    return cont;
@@ -244,36 +291,34 @@ ppir_liveness_compute_live_sets(ppir_compiler *comp)
 
 /*
  * Liveness analysis is based on https://en.wikipedia.org/wiki/Live_variable_analysis
- * This implementation calculates liveness for each instruction.
- * The liveness set in this implementation is defined as the set of
- * registers live before the instruction executes.
+ * This implementation calculates liveness before/after each
+ * instruction. Aggregated block liveness information is stored
+ * before/after blocks for conveniency (handle e.g. empty blocks).
  * Blocks/instructions/ops are iterated backwards so register reads are
  * propagated up to the instruction that writes it.
  *
- * 1) Before computing liveness for an instruction, propagate liveness
+ * 1) Before computing liveness for each instruction, propagate live_out
  *    from the next instruction. If it is the last instruction in a
- *    block, propagate liveness from all possible next instructions in
- *    the successor blocks.
- * 2) Calculate the live set for the instruction. The initial live set
- *    is a propagated set of the live set from the next instructions.
- *    - Registers which aren't touched by this instruction are kept
- *    intact.
+ *    block, propagate liveness from all possible next instructions
+ *    (in this case, this information comes from the live_out of the
+ *    block itself).
+ * 2) Calculate live_in for the each instruction. The initial live_in is
+ *    a copy of its live_out so registers who aren't touched by this
+ *    instruction are kept intact.
  *    - If a register is written by this instruction, it no longer needs
- *    to be live before the instruction, so it is removed from the live
- *    set of that instruction.
+ *    to be live before the instruction, so it is removed from live_in.
  *    - If a register is read by this instruction, it needs to be live
- *    before its execution, so add it to its live set.
+ *    before its execution, so add it to live_in.
  *    - Non-ssa registers are a special case. For this, the algorithm
  *    keeps and updates the mask of live components following the same
- *    logic as above. The register is only removed from the live set of
- *    the instruction when no live components are left.
+ *    logic as above. The register is only removed from the live set
+ *    when no live components are left.
  *    - If a non-ssa register is written and read in the same
- *    instruction, it stays in the live set.
- *    - Another special case is when a register is only written and read
- *    within a single instruciton. In this case a register needs to be
- *    reserved but not propagated. The algorithm adds it to the
- *    live_internal set so that the register allocator properly assigns
- *    an interference for it.
+ *    instruction, it stays in live_in.
+ *    - Another special case is a ssa register that is written by an
+ *    early op in the instruction, and read by a later op. In this case,
+ *    the algorithm adds it to the live_out set so that the register
+ *    allocator properly assigns an interference for it.
  * 3) The algorithm must run over the entire program until it converges,
  *    i.e. a full run happens without changes. This is because blocks
  *    are updated sequentially and updates in a block may need to be

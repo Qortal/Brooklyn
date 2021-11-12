@@ -102,7 +102,13 @@ rewrite_emit_vertex(nir_intrinsic_instr *intrin, struct state *state)
     */
    nir_push_if(b, nir_ilt(b, count, max_vertices));
 
-   nir_emit_vertex_with_counter(b, count, count_per_primitive, stream);
+   nir_intrinsic_instr *lowered =
+      nir_intrinsic_instr_create(b->shader,
+                                 nir_intrinsic_emit_vertex_with_counter);
+   nir_intrinsic_set_stream_id(lowered, stream);
+   lowered->src[0] = nir_src_for_ssa(count);
+   lowered->src[1] = nir_src_for_ssa(count_per_primitive);
+   nir_builder_instr_insert(b, &lowered->instr);
 
    /* Increment the vertex count by 1 */
    nir_store_var(b, state->vertex_count_vars[stream],
@@ -211,7 +217,13 @@ rewrite_end_primitive(nir_intrinsic_instr *intrin, struct state *state)
    else
       count_per_primitive = nir_ssa_undef(b, count->num_components, count->bit_size);
 
-   nir_end_primitive_with_counter(b, count, count_per_primitive, stream);
+   nir_intrinsic_instr *lowered =
+      nir_intrinsic_instr_create(b->shader,
+                                 nir_intrinsic_end_primitive_with_counter);
+   nir_intrinsic_set_stream_id(lowered, stream);
+   lowered->src[0] = nir_src_for_ssa(count);
+   lowered->src[1] = nir_src_for_ssa(count_per_primitive);
+   nir_builder_instr_insert(b, &lowered->instr);
 
    if (state->count_prims) {
       /* Increment the primitive count by 1 */
@@ -246,11 +258,9 @@ rewrite_intrinsics(nir_block *block, struct state *state)
       nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
       switch (intrin->intrinsic) {
       case nir_intrinsic_emit_vertex:
-      case nir_intrinsic_emit_vertex_with_counter:
          rewrite_emit_vertex(intrin, state);
          break;
       case nir_intrinsic_end_primitive:
-      case nir_intrinsic_end_primitive_with_counter:
          rewrite_end_primitive(intrin, state);
          break;
       default:
@@ -303,52 +313,16 @@ append_set_vertex_and_primitive_count(nir_block *end_block, struct state *state)
                        : nir_ssa_undef(b, 1, 32);
          }
 
-         nir_set_vertex_and_primitive_count(b, vtx_cnt, prim_cnt, stream);
-         state->progress = true;
+         nir_intrinsic_instr *set_cnt_intrin =
+            nir_intrinsic_instr_create(shader,
+               nir_intrinsic_set_vertex_and_primitive_count);
+
+         nir_intrinsic_set_stream_id(set_cnt_intrin, stream);
+         set_cnt_intrin->src[0] = nir_src_for_ssa(vtx_cnt);
+         set_cnt_intrin->src[1] = nir_src_for_ssa(prim_cnt);
+         nir_builder_instr_insert(b, &set_cnt_intrin->instr);
       }
    }
-}
-
-/**
- * Check to see if there are any blocks that need set_vertex_and_primitive_count
- *
- * If every block that could need the set_vertex_and_primitive_count intrinsic
- * already has one, there is nothing for this pass to do.
- */
-static bool
-a_block_needs_set_vertex_and_primitive_count(nir_block *end_block, bool per_stream)
-{
-   set_foreach(end_block->predecessors, entry) {
-      nir_block *pred = (nir_block *) entry->key;
-
-
-      for (unsigned stream = 0; stream < NIR_MAX_XFB_STREAMS; ++stream) {
-         /* When it's not per-stream, we only need to write one variable. */
-         if (!per_stream && stream != 0)
-            continue;
-
-         bool found = false;
-
-         nir_foreach_instr_reverse(instr, pred) {
-            if (instr->type != nir_instr_type_intrinsic)
-               continue;
-
-            const nir_intrinsic_instr *const intrin =
-               nir_instr_as_intrinsic(instr);
-
-            if (intrin->intrinsic == nir_intrinsic_set_vertex_and_primitive_count &&
-                intrin->const_index[0] == stream) {
-               found = true;
-               break;
-            }
-         }
-
-         if (!found)
-            return true;
-      }
-   }
-
-   return false;
 }
 
 bool
@@ -370,9 +344,6 @@ nir_lower_gs_intrinsics(nir_shader *shader, nir_lower_gs_intrinsics_flags option
 
    nir_function_impl *impl = nir_shader_get_entrypoint(shader);
    assert(impl);
-
-   if (!a_block_needs_set_vertex_and_primitive_count(impl->end_block, per_stream))
-      return false;
 
    nir_builder b;
    nir_builder_init(&b, impl);

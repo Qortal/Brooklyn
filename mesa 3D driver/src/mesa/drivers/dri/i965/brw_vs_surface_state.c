@@ -35,7 +35,7 @@
 
 #include "brw_context.h"
 #include "brw_state.h"
-#include "brw_buffer_objects.h"
+#include "intel_buffer_objects.h"
 
 
 /* Creates a new VS constant buffer reflecting the current VS program's

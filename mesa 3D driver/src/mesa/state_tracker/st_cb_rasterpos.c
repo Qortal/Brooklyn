@@ -121,8 +121,8 @@ update_attrib(struct gl_context *ctx, const ubyte *outputMapping,
               GLuint result, GLuint defaultAttrib)
 {
    const GLfloat *src;
-   const ubyte k = outputMapping[result];
-   if (k != 0xff)
+   const GLuint k = outputMapping[result];
+   if (k != ~0U)
       src = vert->data[k];
    else
       src = ctx->Current.Attrib[defaultAttrib];
@@ -144,8 +144,6 @@ rastpos_point(struct draw_stage *stage, struct prim_header *prim)
    const ubyte *outputMapping = stvp->result_to_output;
    const GLfloat *pos;
    GLuint i;
-
-   ctx->PopAttribState |= GL_CURRENT_BIT;
 
    /* if we get here, we didn't get clipped */
    ctx->Current.RasterPosValid = GL_TRUE;
@@ -252,7 +250,6 @@ st_RasterPos(struct gl_context *ctx, const GLfloat v[4])
    st_validate_state(st, ST_PIPELINE_RENDER);
 
    /* This will get set only if rastpos_point(), above, gets called */
-   ctx->PopAttribState |= GL_CURRENT_BIT;
    ctx->Current.RasterPosValid = GL_FALSE;
 
    /* All vertex attribs but position were previously initialized above.
@@ -263,7 +260,8 @@ st_RasterPos(struct gl_context *ctx, const GLfloat v[4])
    _mesa_set_draw_vao(ctx, rs->VAO, VERT_BIT_POS);
 
    /* Draw the point. */
-   st_feedback_draw_vbo(ctx, &rs->prim, 1, NULL, true, false, 0, 0, 1, 1, 0);
+   st_feedback_draw_vbo(ctx, &rs->prim, 1, NULL, GL_TRUE, 0, 1, 1, 0,
+                        NULL, 0);
 
    /* restore draw's rasterization stage depending on rendermode */
    if (ctx->RenderMode == GL_FEEDBACK) {

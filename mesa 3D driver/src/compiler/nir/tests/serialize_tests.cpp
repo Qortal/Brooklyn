@@ -38,18 +38,21 @@ protected:
    nir_alu_instr *get_last_alu(nir_shader *);
    void ASSERT_SWIZZLE_EQ(nir_alu_instr *, nir_alu_instr *, unsigned count, unsigned src);
 
-   nir_builder *b, _b;
+   void *mem_ctx;
+   nir_builder *b;
    nir_shader *dup;
    const nir_shader_compiler_options options;
 };
 
 nir_serialize_test::nir_serialize_test()
-:  dup(NULL), options()
+:  options()
 {
    glsl_type_singleton_init_or_ref();
 
-   _b = nir_builder_init_simple_shader(MESA_SHADER_COMPUTE, &options, "serialize test");
-   b = &_b;
+   mem_ctx = ralloc_context(NULL);
+
+   b = rzalloc(mem_ctx, nir_builder);
+   nir_builder_init_simple_shader(b, mem_ctx, MESA_SHADER_COMPUTE, &options);
 }
 
 nir_serialize_test::~nir_serialize_test()
@@ -62,7 +65,7 @@ nir_serialize_test::~nir_serialize_test()
       nir_print_shader(dup, stdout);
    }
 
-   ralloc_free(b->shader);
+   ralloc_free(mem_ctx);
 
    glsl_type_singleton_decref();
 }
@@ -76,7 +79,7 @@ nir_serialize_test::serialize() {
 
    nir_serialize(&blob, b->shader, false);
    blob_reader_init(&reader, blob.data, blob.size);
-   nir_shader *cloned = nir_deserialize(b->shader, &options, &reader);
+   nir_shader *cloned = nir_deserialize(mem_ctx, &options, &reader);
    blob_finish(&blob);
 
    dup = cloned;

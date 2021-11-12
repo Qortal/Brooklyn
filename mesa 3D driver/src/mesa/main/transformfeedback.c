@@ -33,7 +33,6 @@
 
 #include "buffers.h"
 #include "context.h"
-#include "draw_validate.h"
 #include "hash.h"
 #include "macros.h"
 #include "mtypes.h"
@@ -456,7 +455,7 @@ begin_transform_feedback(struct gl_context *ctx, GLenum mode, bool no_error)
       }
    }
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
    ctx->NewDriverState |= ctx->DriverFlags.NewTransformFeedback;
 
    obj->Active = GL_TRUE;
@@ -484,7 +483,6 @@ begin_transform_feedback(struct gl_context *ctx, GLenum mode, bool no_error)
 
    assert(ctx->Driver.BeginTransformFeedback);
    ctx->Driver.BeginTransformFeedback(ctx, mode, obj);
-   _mesa_update_valid_to_render_state(ctx);
 }
 
 
@@ -508,7 +506,7 @@ static void
 end_transform_feedback(struct gl_context *ctx,
                        struct gl_transform_feedback_object *obj)
 {
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
    ctx->NewDriverState |= ctx->DriverFlags.NewTransformFeedback;
 
    assert(ctx->Driver.EndTransformFeedback);
@@ -518,7 +516,6 @@ end_transform_feedback(struct gl_context *ctx,
    ctx->TransformFeedback.CurrentObject->Active = GL_FALSE;
    ctx->TransformFeedback.CurrentObject->Paused = GL_FALSE;
    ctx->TransformFeedback.CurrentObject->EndedAnytime = GL_TRUE;
-   _mesa_update_valid_to_render_state(ctx);
 }
 
 
@@ -1029,11 +1026,11 @@ _mesa_GetTransformFeedbackVarying(GLuint program, GLuint index,
    if (type)
       _mesa_program_resource_prop((struct gl_shader_program *) shProg,
                                   res, index, GL_TYPE, (GLint*) type,
-                                  false, "glGetTransformFeedbackVarying");
+                                  "glGetTransformFeedbackVarying");
    if (size)
       _mesa_program_resource_prop((struct gl_shader_program *) shProg,
                                   res, index, GL_ARRAY_SIZE, (GLint*) size,
-                                  false, "glGetTransformFeedbackVarying");
+                                  "glGetTransformFeedbackVarying");
 }
 
 
@@ -1252,14 +1249,13 @@ static void
 pause_transform_feedback(struct gl_context *ctx,
                          struct gl_transform_feedback_object *obj)
 {
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
    ctx->NewDriverState |= ctx->DriverFlags.NewTransformFeedback;
 
    assert(ctx->Driver.PauseTransformFeedback);
    ctx->Driver.PauseTransformFeedback(ctx, obj);
 
    obj->Paused = GL_TRUE;
-   _mesa_update_valid_to_render_state(ctx);
 }
 
 
@@ -1297,14 +1293,13 @@ static void
 resume_transform_feedback(struct gl_context *ctx,
                           struct gl_transform_feedback_object *obj)
 {
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
    ctx->NewDriverState |= ctx->DriverFlags.NewTransformFeedback;
 
    obj->Paused = GL_FALSE;
 
    assert(ctx->Driver.ResumeTransformFeedback);
    ctx->Driver.ResumeTransformFeedback(ctx, obj);
-   _mesa_update_valid_to_render_state(ctx);
 }
 
 

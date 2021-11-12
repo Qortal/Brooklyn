@@ -1,29 +1,28 @@
-/**
-****************************************************************************************************
-*
-* Copyright © 2007-2021 Advanced Micro Devices, Inc.
-* All Rights Reserved.
-*
-* Permission is hereby granted, free of charge, to any person obtaining a
-* copy of this software and associated documentation files (the "Software"),
-* to deal in the Software without restriction, including without limitation
-* the rights to use, copy, modify, merge, publish, distribute, sublicense,
-* and/or sell copies of the Software, and to permit persons to whom the
-* Software is furnished to do so, subject to the following conditions:
-*
-* The above copyright notice and this permission notice shall be included in
-* all copies or substantial portions of the Software.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-* THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
-* OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-* ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-* OTHER DEALINGS IN THE SOFTWARE
-*
-****************************************************************************************************
-*/
+/*
+ * Copyright © 2007-2019 Advanced Micro Devices, Inc.
+ * All Rights Reserved.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sub license, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDERS, AUTHORS
+ * AND/OR ITS SUPPLIERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+ * USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * The above copyright notice and this permission notice (including the
+ * next paragraph) shall be included in all copies or substantial portions
+ * of the Software.
+ */
 
 /**
 ****************************************************************************************************
@@ -37,31 +36,40 @@
 
 #include "addrinterface.h"
 
-
-#if !defined(__APPLE__) || defined(HAVE_TSERVER)
+// ADDR_LNX_KERNEL_BUILD is for internal build
+// Moved from addrinterface.h so __KERNEL__ is not needed any more
+#if ADDR_LNX_KERNEL_BUILD // || (defined(__GNUC__) && defined(__KERNEL__))
+    #include <string.h>
+#elif !defined(__APPLE__) || defined(HAVE_TSERVER)
     #include <stdlib.h>
     #include <string.h>
 #endif
 
-#if defined(__GNUC__)
-    #include <assert.h>
+#include <assert.h>
+#include "util/macros.h"
+#include "util/u_endian.h"
+
+#if !defined(DEBUG)
+#ifdef NDEBUG
+#define DEBUG 0
+#else
+#define DEBUG 1
+#endif
+#endif
+
+#if UTIL_ARCH_LITTLE_ENDIAN
+#define LITTLEENDIAN_CPU
+#elif UTIL_ARCH_BIG_ENDIAN
+#define BIGENDIAN_CPU
 #endif
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Platform specific debug break defines
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-#if !defined(DEBUG)
-    #ifdef NDEBUG
-        #define DEBUG 0
-    #else
-        #define DEBUG 1
-    #endif
-#endif
-
 #if DEBUG
     #if defined(__GNUC__)
-        #define ADDR_DBG_BREAK()    { assert(false); }
+        #define ADDR_DBG_BREAK()    assert(false)
     #elif defined(__APPLE__)
         #define ADDR_DBG_BREAK()    { IOPanic("");}
     #else
@@ -944,7 +952,7 @@ static inline UINT_32 GetCoordActiveMask(
 *   ShiftCeil
 *
 *   @brief
-*       Apply right-shift with ceiling
+*       Apply righ-shift with ceiling
 ****************************************************************************************************
 */
 static inline UINT_32 ShiftCeil(
@@ -952,21 +960,6 @@ static inline UINT_32 ShiftCeil(
     UINT_32 b)  ///< [in] number of bits to shift
 {
     return (a >> b) + (((a & ((1 << b) - 1)) != 0) ? 1 : 0);
-}
-
-/**
-****************************************************************************************************
-*   ShiftRight
-*
-*   @brief
-*       Return right-shift value and minimum is 1
-****************************************************************************************************
-*/
-static inline UINT_32 ShiftRight(
-    UINT_32 a,  ///< [in] value to be right-shifted
-    UINT_32 b)  ///< [in] number of bits to shift
-{
-    return Max(a >> b, 1u);
 }
 
 } // Addr

@@ -195,12 +195,11 @@ emit_vertices_seq(struct push_context *ctx, unsigned start, unsigned count)
 }
 
 void
-nv30_push_vbo(struct nv30_context *nv30, const struct pipe_draw_info *info,
-              const struct pipe_draw_start_count_bias *draw)
+nv30_push_vbo(struct nv30_context *nv30, const struct pipe_draw_info *info)
 {
    struct push_context ctx;
    unsigned i, index_size;
-   bool apply_bias = info->index_size && draw->index_bias;
+   bool apply_bias = info->index_size && info->index_bias;
 
    ctx.push = nv30->base.pushbuf;
    ctx.translate = nv30->vertex->translate;
@@ -220,7 +219,7 @@ nv30_push_vbo(struct nv30_context *nv30, const struct pipe_draw_info *info,
                                          vb->buffer_offset, NOUVEAU_BO_RD);
 
       if (apply_bias)
-         data += draw->index_bias * vb->stride;
+         data += info->index_bias * vb->stride;
 
       ctx.translate->set_buffer(ctx.translate, i, data, vb->stride, ~0);
    }
@@ -228,10 +227,10 @@ nv30_push_vbo(struct nv30_context *nv30, const struct pipe_draw_info *info,
    if (info->index_size) {
       if (!info->has_user_indices)
          ctx.idxbuf = nouveau_resource_map_offset(&nv30->base,
-            nv04_resource(info->index.resource), draw->start * info->index_size,
+            nv04_resource(info->index.resource), info->start * info->index_size,
             NOUVEAU_BO_RD);
       else
-         ctx.idxbuf = (char*)info->index.user + draw->start * info->index_size;
+         ctx.idxbuf = info->index.user;
       if (!ctx.idxbuf) {
          nv30_state_release(nv30);
          return;
@@ -260,16 +259,16 @@ nv30_push_vbo(struct nv30_context *nv30, const struct pipe_draw_info *info,
    PUSH_DATA (ctx.push, ctx.prim);
    switch (index_size) {
    case 0:
-      emit_vertices_seq(&ctx, draw->start, draw->count);
+      emit_vertices_seq(&ctx, info->start, info->count);
       break;
    case 1:
-      emit_vertices_i08(&ctx, draw->start, draw->count);
+      emit_vertices_i08(&ctx, info->start, info->count);
       break;
    case 2:
-      emit_vertices_i16(&ctx, draw->start, draw->count);
+      emit_vertices_i16(&ctx, info->start, info->count);
       break;
    case 4:
-      emit_vertices_i32(&ctx, draw->start, draw->count);
+      emit_vertices_i32(&ctx, info->start, info->count);
       break;
    default:
       assert(0);

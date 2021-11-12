@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 import argparse
 import os
@@ -14,16 +14,11 @@ PLATFORM_SYMBOLS = [
     '__cxa_guard_acquire',
     '__cxa_guard_release',
     '__end__',
-    '__odr_asan._glapi_Context',
-    '__odr_asan._glapi_Dispatch',
     '_bss_end__',
     '_edata',
     '_end',
     '_fini',
     '_init',
-    '_fbss',
-    '_fdata',
-    '_ftext',
 ]
 
 def get_symbols_nm(nm, lib):
@@ -73,7 +68,7 @@ def get_symbols_dumpbin(dumpbin, lib):
             continue
         symbol_name = fields[3]
         # De-mangle symbols
-        if symbol_name[0] == '_' and '@' in symbol_name:
+        if symbol_name[0] == '_':
             symbol_name = symbol_name[1:].split('@')[0]
         symbols.append(symbol_name)
     return symbols

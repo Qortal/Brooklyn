@@ -33,8 +33,6 @@
 #include "pipe/p_shader_tokens.h"
 #include "pipe/p_state.h"
 #include "pipe/p_screen.h"
-#include "util/compiler.h"
-#include "util/format/u_format.h"
 #include "util/u_debug.h"
 #include "util/u_debug_describe.h"
 #include "util/u_debug_refcnt.h"
@@ -56,7 +54,7 @@ extern "C" {
 static inline void
 pipe_reference_init(struct pipe_reference *dst, unsigned count)
 {
-   dst->count = count;
+   p_atomic_set(&dst->count, count);
 }
 
 static inline boolean
@@ -135,20 +133,6 @@ pipe_surface_release(struct pipe_context *pipe, struct pipe_surface **ptr)
    *ptr = NULL;
 }
 
-static inline void
-pipe_resource_destroy(struct pipe_resource *res)
-{
-   /* Avoid recursion, which would prevent inlining this function */
-   do {
-      struct pipe_resource *next = res->next;
-
-      res->screen->resource_destroy(res->screen, res);
-      res = next;
-   } while (pipe_reference_described(res ? &res->reference : NULL,
-                                     NULL,
-                                     (debug_reference_descriptor)
-                                     debug_describe_resource));
-}
 
 static inline void
 pipe_resource_reference(struct pipe_resource **dst, struct pipe_resource *src)
@@ -159,23 +143,18 @@ pipe_resource_reference(struct pipe_resource **dst, struct pipe_resource *src)
                                 src ? &src->reference : NULL,
                                 (debug_reference_descriptor)
                                 debug_describe_resource)) {
-      pipe_resource_destroy(old_dst);
+      /* Avoid recursion, which would prevent inlining this function */
+      do {
+         struct pipe_resource *next = old_dst->next;
+
+         old_dst->screen->resource_destroy(old_dst->screen, old_dst);
+         old_dst = next;
+      } while (pipe_reference_described(old_dst ? &old_dst->reference : NULL,
+                                        NULL,
+                                        (debug_reference_descriptor)
+                                        debug_describe_resource));
    }
    *dst = src;
-}
-
-/**
- * Subtract the given number of references.
- */
-static inline void
-pipe_drop_resource_references(struct pipe_resource *dst, int num_refs)
-{
-   int count = p_atomic_add_return(&dst->reference.count, -num_refs);
-
-   assert(count >= 0);
-   /* Underflows shouldn't happen, but let's be safe. */
-   if (count <= 0)
-      pipe_resource_destroy(dst);
 }
 
 /**
@@ -231,18 +210,6 @@ pipe_so_target_reference(struct pipe_stream_output_target **dst,
 }
 
 static inline void
-pipe_vertex_state_reference(struct pipe_vertex_state **dst,
-                            struct pipe_vertex_state *src)
-{
-   struct pipe_vertex_state *old_dst = *dst;
-
-   if (pipe_reference(old_dst ? &old_dst->reference : NULL,
-                      src ? &src->reference : NULL))
-      old_dst->screen->vertex_state_destroy(old_dst->screen, old_dst);
-   *dst = src;
-}
-
-static inline void
 pipe_vertex_buffer_unreference(struct pipe_vertex_buffer *dst)
 {
    if (dst->is_user_buffer)
@@ -255,26 +222,10 @@ static inline void
 pipe_vertex_buffer_reference(struct pipe_vertex_buffer *dst,
                              const struct pipe_vertex_buffer *src)
 {
-   if (dst->buffer.resource == src->buffer.resource) {
-      /* Just copy the fields, don't touch reference counts. */
-      dst->stride = src->stride;
-      dst->is_user_buffer = src->is_user_buffer;
-      dst->buffer_offset = src->buffer_offset;
-      return;
-   }
-
    pipe_vertex_buffer_unreference(dst);
-   /* Don't use memcpy because there is a hole between variables.
-    * dst can be used as a hash key.
-    */
-   dst->stride = src->stride;
-   dst->is_user_buffer = src->is_user_buffer;
-   dst->buffer_offset = src->buffer_offset;
-
-   if (src->is_user_buffer)
-      dst->buffer.user = src->buffer.user;
-   else
+   if (!src->is_user_buffer)
       pipe_resource_reference(&dst->buffer.resource, src->buffer.resource);
+   memcpy(dst, src, sizeof(*src));
 }
 
 static inline void
@@ -390,7 +341,7 @@ pipe_buffer_map_range(struct pipe_context *pipe,
 
    u_box_1d(offset, length, &box);
 
-   map = pipe->buffer_map(pipe, buffer, 0, access, &box, transfer);
+   map = pipe->transfer_map(pipe, buffer, 0, access, &box, transfer);
    if (!map) {
       return NULL;
    }
@@ -419,7 +370,7 @@ static inline void
 pipe_buffer_unmap(struct pipe_context *pipe,
                   struct pipe_transfer *transfer)
 {
-   pipe->buffer_unmap(pipe, transfer);
+   pipe->transfer_unmap(pipe, transfer);
 }
 
 static inline void
@@ -475,23 +426,6 @@ pipe_buffer_write_nooverlap(struct pipe_context *pipe,
                         offset, size, data);
 }
 
-/**
- * Utility for simplifying pipe_context::resource_copy_region calls
- */
-static inline void
-pipe_buffer_copy(struct pipe_context *pipe,
-                 struct pipe_resource *dst,
-                 struct pipe_resource *src,
-                 unsigned dst_offset,
-                 unsigned src_offset,
-                 unsigned size)
-{
-   struct pipe_box box;
-   /* only these fields are used */
-   box.x = (int)src_offset;
-   box.width = (int)size;
-   pipe->resource_copy_region(pipe, dst, 0, dst_offset, 0, 0, src, 0, &box);
-}
 
 /**
  * Create a new resource and immediately put data into it
@@ -539,18 +473,21 @@ pipe_buffer_read(struct pipe_context *pipe,
  * \param access  bitmask of PIPE_MAP_x flags
  */
 static inline void *
-pipe_texture_map(struct pipe_context *context,
-                 struct pipe_resource *resource,
-                 unsigned level, unsigned layer,
-                 unsigned access,
-                 unsigned x, unsigned y,
-                 unsigned w, unsigned h,
-                 struct pipe_transfer **transfer)
+pipe_transfer_map(struct pipe_context *context,
+                  struct pipe_resource *resource,
+                  unsigned level, unsigned layer,
+                  unsigned access,
+                  unsigned x, unsigned y,
+                  unsigned w, unsigned h,
+                  struct pipe_transfer **transfer)
 {
    struct pipe_box box;
    u_box_2d_zslice(x, y, layer, w, h, &box);
-   return context->texture_map(context, resource, level, access,
-                               &box, transfer);
+   return context->transfer_map(context,
+                                resource,
+                                level,
+                                access,
+                                &box, transfer);
 }
 
 
@@ -559,25 +496,28 @@ pipe_texture_map(struct pipe_context *context,
  * \param access  bitmask of PIPE_MAP_x flags
  */
 static inline void *
-pipe_texture_map_3d(struct pipe_context *context,
-                    struct pipe_resource *resource,
-                    unsigned level,
-                    unsigned access,
-                    unsigned x, unsigned y, unsigned z,
-                    unsigned w, unsigned h, unsigned d,
-                    struct pipe_transfer **transfer)
+pipe_transfer_map_3d(struct pipe_context *context,
+                     struct pipe_resource *resource,
+                     unsigned level,
+                     unsigned access,
+                     unsigned x, unsigned y, unsigned z,
+                     unsigned w, unsigned h, unsigned d,
+                     struct pipe_transfer **transfer)
 {
    struct pipe_box box;
    u_box_3d(x, y, z, w, h, d, &box);
-   return context->texture_map(context, resource, level, access,
-                               &box, transfer);
+   return context->transfer_map(context,
+                                resource,
+                                level,
+                                access,
+                                &box, transfer);
 }
 
 static inline void
-pipe_texture_unmap(struct pipe_context *context,
-                   struct pipe_transfer *transfer)
+pipe_transfer_unmap(struct pipe_context *context,
+                    struct pipe_transfer *transfer)
 {
-   context->texture_unmap(context, transfer);
+   context->transfer_unmap(context, transfer);
 }
 
 static inline void
@@ -591,9 +531,9 @@ pipe_set_constant_buffer(struct pipe_context *pipe,
       cb.buffer_offset = 0;
       cb.buffer_size = buf->width0;
       cb.user_buffer = NULL;
-      pipe->set_constant_buffer(pipe, shader, index, false, &cb);
+      pipe->set_constant_buffer(pipe, shader, index, &cb);
    } else {
-      pipe->set_constant_buffer(pipe, shader, index, false, NULL);
+      pipe->set_constant_buffer(pipe, shader, index, NULL);
    }
 }
 
@@ -709,16 +649,10 @@ util_pipe_tex_to_tgsi_tex(enum pipe_texture_target pipe_tex_target,
 
 static inline void
 util_copy_constant_buffer(struct pipe_constant_buffer *dst,
-                          const struct pipe_constant_buffer *src,
-                          bool take_ownership)
+                          const struct pipe_constant_buffer *src)
 {
    if (src) {
-      if (take_ownership) {
-         pipe_resource_reference(&dst->buffer, NULL);
-         dst->buffer = src->buffer;
-      } else {
-         pipe_resource_reference(&dst->buffer, src->buffer);
-      }
+      pipe_resource_reference(&dst->buffer, src->buffer);
       dst->buffer_offset = src->buffer_offset;
       dst->buffer_size = src->buffer_size;
       dst->user_buffer = src->user_buffer;
@@ -774,7 +708,7 @@ util_max_layer(const struct pipe_resource *r, unsigned level)
       return u_minify(r->depth0, level) - 1;
    case PIPE_TEXTURE_CUBE:
       assert(r->array_size == 6);
-      FALLTHROUGH;
+      /* fall-through */
    case PIPE_TEXTURE_1D_ARRAY:
    case PIPE_TEXTURE_2D_ARRAY:
    case PIPE_TEXTURE_CUBE_ARRAY:
@@ -802,52 +736,6 @@ util_texrange_covers_whole_level(const struct pipe_resource *tex,
           depth == util_num_layers(tex, level);
 }
 
-/**
- * Returns true if the blit will fully initialize all pixels in the resource.
- */
-static inline bool
-util_blit_covers_whole_resource(const struct pipe_blit_info *info)
-{
-   /* No conditional rendering or scissoring.  (We assume that the caller would
-    * have dropped any redundant scissoring)
-    */
-   if (info->scissor_enable || info->window_rectangle_include || info->render_condition_enable || info->alpha_blend)
-      return false;
-
-   const struct pipe_resource *dst = info->dst.resource;
-   /* A single blit can't initialize a miptree. */
-   if (dst->last_level != 0)
-      return false;
-
-   assert(info->dst.level == 0);
-
-   /* Make sure the dst box covers the whole resource. */
-   if (!(util_texrange_covers_whole_level(dst, 0,
-         0, 0, 0,
-         info->dst.box.width, info->dst.box.height, info->dst.box.depth))) {
-      return false;
-   }
-
-   /* Make sure the mask actually updates all the channels present in the dst format. */
-   if (info->mask & PIPE_MASK_RGBA) {
-      if ((info->mask & PIPE_MASK_RGBA) != PIPE_MASK_RGBA)
-         return false;
-   }
-
-   if (info->mask & PIPE_MASK_ZS) {
-      const struct util_format_description *format_desc = util_format_description(info->dst.format);
-      uint32_t dst_has = 0;
-      if (util_format_has_depth(format_desc))
-         dst_has |= PIPE_MASK_Z;
-      if (util_format_has_stencil(format_desc))
-         dst_has |= PIPE_MASK_S;
-      if (dst_has & ~(info->mask & PIPE_MASK_ZS))
-         return false;
-   }
-
-   return true;
-}
-
 static inline bool
 util_logicop_reads_dest(enum pipe_logicop op)
 {
@@ -872,26 +760,6 @@ util_logicop_reads_dest(enum pipe_logicop op)
       return false;
    }
    unreachable("bad logicop");
-}
-
-static inline bool
-util_writes_stencil(const struct pipe_stencil_state *s)
-{
-   return s->enabled && s->writemask &&
-        ((s->fail_op != PIPE_STENCIL_OP_KEEP) ||
-         (s->zpass_op != PIPE_STENCIL_OP_KEEP) ||
-         (s->zfail_op != PIPE_STENCIL_OP_KEEP));
-}
-
-static inline bool
-util_writes_depth_stencil(const struct pipe_depth_stencil_alpha_state *zsa)
-{
-   if (zsa->depth_enabled && zsa->depth_writemask &&
-       (zsa->depth_func != PIPE_FUNC_NEVER))
-      return true;
-
-   return util_writes_stencil(&zsa->stencil[0]) ||
-          util_writes_stencil(&zsa->stencil[1]);
 }
 
 static inline struct pipe_context *

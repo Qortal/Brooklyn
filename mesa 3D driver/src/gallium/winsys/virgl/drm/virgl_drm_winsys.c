@@ -62,11 +62,7 @@ static inline boolean can_cache_resource(uint32_t bind)
           bind == VIRGL_BIND_INDEX_BUFFER ||
           bind == VIRGL_BIND_VERTEX_BUFFER ||
           bind == VIRGL_BIND_CUSTOM ||
-          bind == VIRGL_BIND_STAGING ||
-          bind == VIRGL_BIND_DEPTH_STENCIL ||
-          bind == VIRGL_BIND_SAMPLER_VIEW ||
-          bind == VIRGL_BIND_RENDER_TARGET ||
-          bind == 0;
+          bind == VIRGL_BIND_STAGING;
 }
 
 static void virgl_hw_res_destroy(struct virgl_drm_winsys *qdws,
@@ -75,16 +71,6 @@ static void virgl_hw_res_destroy(struct virgl_drm_winsys *qdws,
       struct drm_gem_close args;
 
       mtx_lock(&qdws->bo_handles_mutex);
-
-      /* We intentionally avoid taking the lock in
-       * virgl_drm_resource_reference. Now that the
-       * lock is taken, we need to check the refcount
-       * again. */
-      if (pipe_is_referenced(&res->reference)) {
-         mtx_unlock(&qdws->bo_handles_mutex);
-         return;
-      }
-
       _mesa_hash_table_remove_key(qdws->bo_handles,
                              (void *)(uintptr_t)res->bo_handle);
       if (res->flink_name)
@@ -179,17 +165,6 @@ virgl_drm_winsys_resource_create_blob(struct virgl_winsys *qws,
    struct virgl_drm_winsys *qdws = virgl_drm_winsys(qws);
    struct drm_virtgpu_resource_create_blob drm_rc_blob = { 0 };
    struct virgl_hw_res *res;
-   struct virgl_resource_params params = { .size = size,
-                                           .bind = bind,
-                                           .format = format,
-                                           .flags = flags,
-                                           .nr_samples = nr_samples,
-                                           .width = width,
-                                           .height = height,
-                                           .depth = depth,
-                                           .array_size = array_size,
-                                           .last_level = last_level,
-                                           .target = target };
 
    res = CALLOC_STRUCT(virgl_hw_res);
    if (!res)
@@ -234,11 +209,11 @@ virgl_drm_winsys_resource_create_blob(struct virgl_winsys *qws,
    res->bo_handle = drm_rc_blob.bo_handle;
    res->size = size;
    res->flags = flags;
-   res->maybe_untyped = false;
    pipe_reference_init(&res->reference, 1);
    p_atomic_set(&res->external, false);
    p_atomic_set(&res->num_cs_references, 0);
-   virgl_resource_cache_entry_init(&res->cache_entry, params);
+   virgl_resource_cache_entry_init(&res->cache_entry, size, bind, format,
+                                    flags);
    return res;
 }
 
@@ -261,17 +236,6 @@ virgl_drm_winsys_resource_create(struct virgl_winsys *qws,
    int ret;
    struct virgl_hw_res *res;
    uint32_t stride = width * util_format_get_blocksize(format);
-   struct virgl_resource_params params = { .size = size,
-                                           .bind = bind,
-                                           .format = format,
-                                           .flags = 0,
-                                           .nr_samples = nr_samples,
-                                           .width = width,
-                                           .height = height,
-                                           .depth = depth,
-                                           .array_size = array_size,
-                                           .last_level = last_level,
-                                           .target = target };
 
    res = CALLOC_STRUCT(virgl_hw_res);
    if (!res)
@@ -302,7 +266,6 @@ virgl_drm_winsys_resource_create(struct virgl_winsys *qws,
    res->bo_handle = createcmd.bo_handle;
    res->size = size;
    res->target = target;
-   res->maybe_untyped = false;
    pipe_reference_init(&res->reference, 1);
    p_atomic_set(&res->external, false);
    p_atomic_set(&res->num_cs_references, 0);
@@ -313,7 +276,7 @@ virgl_drm_winsys_resource_create(struct virgl_winsys *qws,
     */
    p_atomic_set(&res->maybe_busy, for_fencing);
 
-   virgl_resource_cache_entry_init(&res->cache_entry, params);
+   virgl_resource_cache_entry_init(&res->cache_entry, size, bind, format, 0);
 
    return res;
 }
@@ -414,24 +377,14 @@ virgl_drm_winsys_resource_cache_create(struct virgl_winsys *qws,
    struct virgl_drm_winsys *qdws = virgl_drm_winsys(qws);
    struct virgl_hw_res *res;
    struct virgl_resource_cache_entry *entry;
-   struct virgl_resource_params params = { .size = size,
-                                     .bind = bind,
-                                     .format = format,
-                                     .flags = flags,
-                                     .nr_samples = nr_samples,
-                                     .width = width,
-                                     .height = height,
-                                     .depth = depth,
-                                     .array_size = array_size,
-                                     .last_level = last_level,
-                                     .target = target };
 
    if (!can_cache_resource(bind))
       goto alloc;
 
    mtx_lock(&qdws->mutex);
 
-   entry = virgl_resource_cache_remove_compatible(&qdws->cache, params);
+   entry = virgl_resource_cache_remove_compatible(&qdws->cache, size,
+                                                  bind, format, flags);
    if (entry) {
       res = cache_entry_container_res(entry);
       mtx_unlock(&qdws->mutex);
@@ -471,10 +424,6 @@ virgl_drm_winsys_resource_create_handle(struct virgl_winsys *qws,
    struct virgl_hw_res *res = NULL;
    uint32_t handle = whandle->handle;
 
-   if (whandle->plane >= VIRGL_MAX_PLANE_COUNT) {
-      return NULL;
-   }
-
    if (whandle->offset != 0 && whandle->type == WINSYS_HANDLE_TYPE_SHARED) {
       _debug_printf("attempt to import unsupported winsys offset %u\n",
                     whandle->offset);
@@ -508,13 +457,8 @@ virgl_drm_winsys_resource_create_handle(struct virgl_winsys *qws,
    }
 
    if (res) {
-      /* qdws->bo_{names,handles} hold weak pointers to virgl_hw_res. Because
-       * virgl_drm_resource_reference does not take qdws->bo_handles_mutex
-       * until it enters virgl_hw_res_destroy, there is a small window that
-       * the refcount can drop to zero. Call p_atomic_inc directly instead of
-       * virgl_drm_resource_reference to avoid hitting assert failures.
-       */
-      p_atomic_inc(&res->reference.count);
+      struct virgl_hw_res *r = NULL;
+      virgl_drm_resource_reference(&qdws->base, &r, res);
       goto done;
    }
 
@@ -551,7 +495,6 @@ virgl_drm_winsys_resource_create_handle(struct virgl_winsys *qws,
    *blob_mem = info_arg.blob_mem;
 
    res->size = info_arg.size;
-   res->maybe_untyped = info_arg.blob_mem ? true : false;
    pipe_reference_init(&res->reference, 1);
    p_atomic_set(&res->external, true);
    res->num_cs_references = 0;
@@ -563,58 +506,6 @@ virgl_drm_winsys_resource_create_handle(struct virgl_winsys *qws,
 done:
    mtx_unlock(&qdws->bo_handles_mutex);
    return res;
-}
-
-static void
-virgl_drm_winsys_resource_set_type(struct virgl_winsys *qws,
-                                   struct virgl_hw_res *res,
-                                   uint32_t format, uint32_t bind,
-                                   uint32_t width, uint32_t height,
-                                   uint32_t usage, uint64_t modifier,
-                                   uint32_t plane_count,
-                                   const uint32_t *plane_strides,
-                                   const uint32_t *plane_offsets)
-{
-   struct virgl_drm_winsys *qdws = virgl_drm_winsys(qws);
-   uint32_t cmd[VIRGL_PIPE_RES_SET_TYPE_SIZE(VIRGL_MAX_PLANE_COUNT)];
-   struct drm_virtgpu_execbuffer eb;
-   int ret;
-
-   mtx_lock(&qdws->bo_handles_mutex);
-
-   if (!res->maybe_untyped) {
-      mtx_unlock(&qdws->bo_handles_mutex);
-      return;
-   }
-   res->maybe_untyped = false;
-
-   assert(plane_count && plane_count <= VIRGL_MAX_PLANE_COUNT);
-
-   cmd[0] = VIRGL_CMD0(VIRGL_CCMD_PIPE_RESOURCE_SET_TYPE, 0, VIRGL_PIPE_RES_SET_TYPE_SIZE(plane_count));
-   cmd[VIRGL_PIPE_RES_SET_TYPE_RES_HANDLE] = res->res_handle,
-   cmd[VIRGL_PIPE_RES_SET_TYPE_FORMAT] = format;
-   cmd[VIRGL_PIPE_RES_SET_TYPE_BIND] = bind;
-   cmd[VIRGL_PIPE_RES_SET_TYPE_WIDTH] = width;
-   cmd[VIRGL_PIPE_RES_SET_TYPE_HEIGHT] = height;
-   cmd[VIRGL_PIPE_RES_SET_TYPE_USAGE] = usage;
-   cmd[VIRGL_PIPE_RES_SET_TYPE_MODIFIER_LO] = (uint32_t)modifier;
-   cmd[VIRGL_PIPE_RES_SET_TYPE_MODIFIER_HI] = (uint32_t)(modifier >> 32);
-   for (uint32_t i = 0; i < plane_count; i++) {
-      cmd[VIRGL_PIPE_RES_SET_TYPE_PLANE_STRIDE(i)] = plane_strides[i];
-      cmd[VIRGL_PIPE_RES_SET_TYPE_PLANE_OFFSET(i)] = plane_offsets[i];
-   }
-
-   memset(&eb, 0, sizeof(eb));
-   eb.command = (uintptr_t)cmd;
-   eb.size = (1 + VIRGL_PIPE_RES_SET_TYPE_SIZE(plane_count)) * 4;
-   eb.num_bo_handles = 1;
-   eb.bo_handles = (uintptr_t)&res->bo_handle;
-
-   ret = drmIoctl(qdws->fd, DRM_IOCTL_VIRTGPU_EXECBUFFER, &eb);
-   if (ret == -1)
-      _debug_printf("failed to set resource type: %s", strerror(errno));
-
-   mtx_unlock(&qdws->bo_handles_mutex);
 }
 
 static boolean virgl_drm_winsys_resource_get_handle(struct virgl_winsys *qws,
@@ -1077,7 +968,8 @@ static void virgl_fence_reference(struct virgl_winsys *vws,
       if (vws->supports_fences) {
          close(dfence->fd);
       } else {
-         virgl_drm_resource_reference(vws, &dfence->hw_res, NULL);
+         struct virgl_drm_winsys *vdws = virgl_drm_winsys(vws);
+         virgl_hw_res_destroy(vdws, dfence->hw_res);
       }
       FREE(dfence);
    }
@@ -1198,7 +1090,6 @@ virgl_drm_winsys_create(int drmFD)
    qdws->base.resource_create = virgl_drm_winsys_resource_cache_create;
    qdws->base.resource_reference = virgl_drm_resource_reference;
    qdws->base.resource_create_from_handle = virgl_drm_winsys_resource_create_handle;
-   qdws->base.resource_set_type = virgl_drm_winsys_resource_set_type;
    qdws->base.resource_get_handle = virgl_drm_winsys_resource_get_handle;
    qdws->base.resource_map = virgl_drm_resource_map;
    qdws->base.resource_wait = virgl_drm_resource_wait;

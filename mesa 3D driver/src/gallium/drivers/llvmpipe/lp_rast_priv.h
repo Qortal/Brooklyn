@@ -176,7 +176,6 @@ lp_rast_get_color_block_pointer(struct lp_rasterizer_task *task,
    color = task->color_tiles[buf] + pixel_offset;
 
    if (layer) {
-      assert(layer <= task->scene->fb_max_layer);
       color += layer * task->scene->cbufs[buf].layer_stride;
    }
 
@@ -247,7 +246,7 @@ lp_rast_shade_quads_all( struct lp_rasterizer_task *task,
          stride[i] = scene->cbufs[i].stride;
          sample_stride[i] = scene->cbufs[i].sample_stride;
          color[i] = lp_rast_get_color_block_pointer(task, i, x, y,
-                                                    inputs->layer + inputs->view_index);
+                                                    inputs->layer);
       }
       else {
          stride[i] = 0;
@@ -257,7 +256,7 @@ lp_rast_shade_quads_all( struct lp_rasterizer_task *task,
    }
 
    if (scene->zsbuf.map) {
-      depth = lp_rast_get_depth_block_pointer(task, x, y, inputs->layer + inputs->view_index);
+      depth = lp_rast_get_depth_block_pointer(task, x, y, inputs->layer);
       depth_sample_stride = scene->zsbuf.sample_stride;
       depth_stride = scene->zsbuf.stride;
    }
@@ -273,7 +272,6 @@ lp_rast_shade_quads_all( struct lp_rasterizer_task *task,
    if ((x % TILE_SIZE) < task->width && (y % TILE_SIZE) < task->height) {
       /* Propagate non-interpolated raster state. */
       task->thread_data.raster_state.viewport_index = inputs->viewport_index;
-      task->thread_data.raster_state.view_index = inputs->view_index;
 
       /* run shader on 4x4 block */
       BEGIN_JIT_CALL(state, task);
@@ -348,10 +346,6 @@ void lp_rast_triangle_32_3_16( struct lp_rasterizer_task *,
 void lp_rast_triangle_32_4_16( struct lp_rasterizer_task *, 
                             const union lp_rast_cmd_arg );
 
-
-void lp_rast_rectangle( struct lp_rasterizer_task *, 
-                        const union lp_rast_cmd_arg );
-
 void lp_rast_triangle_ms_1( struct lp_rasterizer_task *,
                          const union lp_rast_cmd_arg );
 void lp_rast_triangle_ms_2( struct lp_rasterizer_task *,
@@ -410,14 +404,5 @@ lp_rast_set_state(struct lp_rasterizer_task *task,
  
 void
 lp_debug_bin( const struct cmd_bin *bin, int x, int y );
-
-void
-lp_linear_rasterize_bin(struct lp_rasterizer_task *task,
-                        const struct cmd_bin *bin);
-
-void
-lp_rast_linear_rect_fallback(struct lp_rasterizer_task *task,
-                             const struct lp_rast_shader_inputs *inputs,
-                             const struct u_rect *box);
 
 #endif

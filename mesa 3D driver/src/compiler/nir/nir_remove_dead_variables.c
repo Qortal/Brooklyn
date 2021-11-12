@@ -67,29 +67,14 @@ add_var_use_deref(nir_deref_instr *deref, struct set *live)
    if (deref->deref_type != nir_deref_type_var)
       return;
 
-   /* Since these local variables don't escape the shader, writing doesn't
-    * make them live.  Only keep them if they are used by some intrinsic.
+   /* If it's not a local that never escapes the shader, then any access at
+    * all means we need to keep it alive.
     */
-   if ((deref->var->data.mode & (nir_var_function_temp |
-                                 nir_var_shader_temp)) &&
-       !deref_used_for_not_store(deref))
-      return;
-
-   /*
-    * Shared memory blocks (interface type) alias each other, so be
-    * conservative in that case.
-    */
-   if ((deref->var->data.mode & nir_var_mem_shared) &&
-       !glsl_type_is_interface(deref->var->type) &&
-       !deref_used_for_not_store(deref))
-      return;
-
-   nir_variable *var = deref->var;
-   do {
-      _mesa_set_add(live, var);
-      /* Also mark the chain of variables used to initialize it. */
-      var = var->pointer_initializer;
-   } while (var);
+   if (!(deref->var->data.mode & (nir_var_function_temp |
+                                  nir_var_shader_temp |
+                                  nir_var_mem_shared)) ||
+       deref_used_for_not_store(deref))
+      _mesa_set_add(live, deref->var);
 }
 
 static void
@@ -108,7 +93,7 @@ add_var_use_shader(nir_shader *shader, struct set *live, nir_variable_mode modes
 }
 
 static void
-remove_dead_var_writes(nir_shader *shader)
+remove_dead_var_writes(nir_shader *shader, struct set *live)
 {
    nir_foreach_function(function, shader) {
       if (!function->impl)
@@ -160,7 +145,7 @@ remove_dead_var_writes(nir_shader *shader)
 
 static bool
 remove_dead_vars(struct exec_list *var_list, nir_variable_mode modes,
-                 struct set *live, const nir_remove_dead_variables_options *opts)
+                 struct set *live, bool (*can_remove_var)(nir_variable *var))
 {
    bool progress = false;
 
@@ -168,8 +153,7 @@ remove_dead_vars(struct exec_list *var_list, nir_variable_mode modes,
       if (!(var->data.mode & modes))
          continue;
 
-      if (opts && opts->can_remove_var &&
-          !opts->can_remove_var(var, opts->can_remove_var_data))
+      if (can_remove_var && !can_remove_var(var))
          continue;
 
       struct set_entry *entry = _mesa_set_search(live, var);
@@ -186,7 +170,7 @@ remove_dead_vars(struct exec_list *var_list, nir_variable_mode modes,
 
 bool
 nir_remove_dead_variables(nir_shader *shader, nir_variable_mode modes,
-                          const nir_remove_dead_variables_options *opts)
+                          bool (*can_remove_var)(nir_variable *var))
 {
    bool progress = false;
    struct set *live = _mesa_pointer_set_create(NULL);
@@ -195,7 +179,7 @@ nir_remove_dead_variables(nir_shader *shader, nir_variable_mode modes,
 
    if (modes & ~nir_var_function_temp) {
       progress = remove_dead_vars(&shader->variables, modes,
-                                  live, opts) || progress;
+                                  live, can_remove_var) || progress;
    }
 
    if (modes & nir_var_function_temp) {
@@ -203,20 +187,18 @@ nir_remove_dead_variables(nir_shader *shader, nir_variable_mode modes,
          if (function->impl) {
             if (remove_dead_vars(&function->impl->locals,
                                  nir_var_function_temp,
-                                 live, opts))
+                                 live, can_remove_var))
                progress = true;
          }
       }
    }
-
-   _mesa_set_destroy(live, NULL);
 
    nir_foreach_function(function, shader) {
       if (!function->impl)
          continue;
 
       if (progress) {
-         remove_dead_var_writes(shader);
+         remove_dead_var_writes(shader, live);
          nir_metadata_preserve(function->impl, nir_metadata_block_index |
                                                nir_metadata_dominance);
       } else {
@@ -224,5 +206,6 @@ nir_remove_dead_variables(nir_shader *shader, nir_variable_mode modes,
       }
    }
 
+   _mesa_set_destroy(live, NULL);
    return progress;
 }

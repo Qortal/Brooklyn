@@ -21,9 +21,9 @@ Build EGL
    .. code-block:: console
 
       $ meson configure \
-              -D egl=enabled \
-              -D gles1=enabled \
-              -D gles2=enabled \
+              -D egl=true \
+              -D gles1=true \
+              -D gles2=true \
               -D dri-drivers=... \
               -D gallium-drivers=...
 
@@ -43,7 +43,7 @@ Configure Options
 There are several options that control the build of EGL at configuration
 time
 
-``-D egl=enabled``
+``-D egl=true``
    By default, EGL is enabled. When disabled, the main library and the
    drivers will not be built.
 
@@ -60,11 +60,11 @@ time
    Unless for special needs, the build system should select the right
    platforms automatically.
 
-``-D gles1=enabled`` and ``-D gles2=enabled``
+``-D gles1=true`` and ``-D gles2=true``
    These options enable OpenGL ES support in OpenGL. The result is one
    big internal library that supports multiple APIs.
 
-``-D shared-glapi=enabled``
+``-D shared-glapi=true``
    By default, ``libGL`` has its own copy of ``libglapi``. This options
    makes ``libGL`` use the shared ``libglapi``. This is required if
    applications mix OpenGL and OpenGL ES.
@@ -159,7 +159,7 @@ EGL Drivers
 
 ``egl_dri2``
    This driver supports several platforms: ``android``, ``device``,
-   ``drm``, ``surfaceless``, ``wayland`` and ``x11``. It functions as
+   ``drm, ``surfaceless``, ``wayland`` and ``x11``. It functions as
    a DRI driver loader. For ``x11`` support, it talks to the X server
    directly using (XCB-)DRI3 protocol when available, and falls back to
    DRI2 if necessary (can be forced with ``LIBGL_DRI3_DISABLE``).

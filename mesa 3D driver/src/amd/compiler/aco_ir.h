@@ -25,20 +25,22 @@
 #ifndef ACO_IR_H
 #define ACO_IR_H
 
+#include <vector>
+#include <set>
+#include <unordered_set>
+#include <bitset>
+#include <memory>
+
+#include "nir.h"
+#include "ac_binary.h"
+#include "amd_family.h"
 #include "aco_opcodes.h"
 #include "aco_util.h"
 
 #include "vulkan/radv_shader.h"
 
-#include "nir.h"
-
-#include <bitset>
-#include <memory>
-#include <vector>
-
 struct radv_shader_args;
 struct radv_shader_info;
-struct radv_vs_prolog_key;
 
 namespace aco {
 
@@ -52,14 +54,12 @@ enum {
    DEBUG_NO_VN = 0x10,
    DEBUG_NO_OPT = 0x20,
    DEBUG_NO_SCHED = 0x40,
-   DEBUG_PERF_INFO = 0x80,
-   DEBUG_LIVE_INFO = 0x100,
 };
 
 /**
  * Representation of the instruction's microcode encoding format
  * Note: Some Vector ALU Formats can be combined, such that:
- * - VOP2* | VOP3 represents a VOP2 instruction in VOP3 encoding
+ * - VOP2* | VOP3A represents a VOP2 instruction in VOP3A encoding
  * - VOP2* | DPP represents a VOP2 instruction with data parallel primitive.
  * - VOP2* | SDWA represents a VOP2 instruction with sub-dword addressing.
  *
@@ -100,42 +100,20 @@ enum class Format : std::uint16_t {
    VOP2 = 1 << 9,
    VOPC = 1 << 10,
    VOP3 = 1 << 11,
+   VOP3A = 1 << 11,
+   VOP3B = 1 << 11,
    /* Vector Parameter Interpolation Format */
    VINTRP = 1 << 12,
    DPP = 1 << 13,
    SDWA = 1 << 14,
 };
 
-enum class instr_class : uint8_t {
-   valu32 = 0,
-   valu_convert32 = 1,
-   valu64 = 2,
-   valu_quarter_rate32 = 3,
-   valu_fma = 4,
-   valu_transcendental32 = 5,
-   valu_double = 6,
-   valu_double_add = 7,
-   valu_double_convert = 8,
-   valu_double_transcendental = 9,
-   salu = 10,
-   smem = 11,
-   barrier = 12,
-   branch = 13,
-   sendmsg = 14,
-   ds = 15,
-   exp = 16,
-   vmem = 17,
-   waitcnt = 18,
-   other = 19,
-   count,
-};
-
 enum storage_class : uint8_t {
-   storage_none = 0x0,   /* no synchronization and can be reordered around aliasing stores */
+   storage_none = 0x0, /* no synchronization and can be reordered around aliasing stores */
    storage_buffer = 0x1, /* SSBOs and global memory */
    storage_atomic_counter = 0x2, /* not used for Vulkan */
    storage_image = 0x4,
-   storage_shared = 0x8,       /* or TCS output */
+   storage_shared = 0x8, /* or TCS output */
    storage_vmem_output = 0x10, /* GS or TCS output stores using VMEM */
    storage_scratch = 0x20,
    storage_vgpr_spill = 0x40,
@@ -159,8 +137,7 @@ enum memory_semantics : uint8_t {
    /* does not interact with barriers and assumes this lane is the only lane
     * accessing this memory */
    semantic_private = 0x8,
-   /* this operation can be reordered around operations of the same storage.
-    * says nothing about barriers */
+   /* this operation can be reordered around operations of the same storage. says nothing about barriers */
    semantic_can_reorder = 0x10,
    /* this is a atomic instruction (may only read or write memory) */
    semantic_atomic = 0x20,
@@ -181,21 +158,20 @@ enum sync_scope : uint8_t {
 
 struct memory_sync_info {
    memory_sync_info() : storage(storage_none), semantics(semantic_none), scope(scope_invocation) {}
-   memory_sync_info(int storage_, int semantics_ = 0, sync_scope scope_ = scope_invocation)
-       : storage((storage_class)storage_), semantics((memory_semantics)semantics_), scope(scope_)
-   {}
+   memory_sync_info(int storage, int semantics=0, sync_scope scope=scope_invocation)
+      : storage((storage_class)storage), semantics((memory_semantics)semantics), scope(scope) {}
 
-   storage_class storage : 8;
-   memory_semantics semantics : 8;
-   sync_scope scope : 8;
+   storage_class storage:8;
+   memory_semantics semantics:8;
+   sync_scope scope:8;
 
-   bool operator==(const memory_sync_info& rhs) const
-   {
-      return storage == rhs.storage && semantics == rhs.semantics && scope == rhs.scope;
+   bool operator == (const memory_sync_info& rhs) const {
+      return storage == rhs.storage &&
+             semantics == rhs.semantics &&
+             scope == rhs.scope;
    }
 
-   bool can_reorder() const
-   {
+   bool can_reorder() const {
       if (semantics & semantic_acqrel)
          return false;
       /* Also check storage so that zero-initialized memory_sync_info can be
@@ -225,76 +201,46 @@ struct float_mode {
    /* matches encoding of the MODE register */
    union {
       struct {
-         fp_round round32 : 2;
-         fp_round round16_64 : 2;
-         unsigned denorm32 : 2;
-         unsigned denorm16_64 : 2;
+          fp_round round32:2;
+          fp_round round16_64:2;
+          unsigned denorm32:2;
+          unsigned denorm16_64:2;
       };
       struct {
-         uint8_t round : 4;
-         uint8_t denorm : 4;
+         uint8_t round:4;
+         uint8_t denorm:4;
       };
       uint8_t val = 0;
    };
    /* if false, optimizations which may remove infs/nan/-0.0 can be done */
-   bool preserve_signed_zero_inf_nan32 : 1;
-   bool preserve_signed_zero_inf_nan16_64 : 1;
+   bool preserve_signed_zero_inf_nan32:1;
+   bool preserve_signed_zero_inf_nan16_64:1;
    /* if false, optimizations which may remove denormal flushing can be done */
-   bool must_flush_denorms32 : 1;
-   bool must_flush_denorms16_64 : 1;
-   bool care_about_round32 : 1;
-   bool care_about_round16_64 : 1;
+   bool must_flush_denorms32:1;
+   bool must_flush_denorms16_64:1;
+   bool care_about_round32:1;
+   bool care_about_round16_64:1;
 
    /* Returns true if instructions using the mode "other" can safely use the
     * current one instead. */
-   bool canReplace(float_mode other) const noexcept
-   {
+   bool canReplace(float_mode other) const noexcept {
       return val == other.val &&
              (preserve_signed_zero_inf_nan32 || !other.preserve_signed_zero_inf_nan32) &&
              (preserve_signed_zero_inf_nan16_64 || !other.preserve_signed_zero_inf_nan16_64) &&
-             (must_flush_denorms32 || !other.must_flush_denorms32) &&
+             (must_flush_denorms32  || !other.must_flush_denorms32) &&
              (must_flush_denorms16_64 || !other.must_flush_denorms16_64) &&
              (care_about_round32 || !other.care_about_round32) &&
              (care_about_round16_64 || !other.care_about_round16_64);
    }
 };
 
-struct wait_imm {
-   static const uint8_t unset_counter = 0xff;
-
-   uint8_t vm;
-   uint8_t exp;
-   uint8_t lgkm;
-   uint8_t vs;
-
-   wait_imm();
-   wait_imm(uint16_t vm_, uint16_t exp_, uint16_t lgkm_, uint16_t vs_);
-   wait_imm(enum chip_class chip, uint16_t packed);
-
-   uint16_t pack(enum chip_class chip) const;
-
-   bool combine(const wait_imm& other);
-
-   bool empty() const;
+constexpr Format asVOP3(Format format) {
+   return (Format) ((uint32_t) Format::VOP3 | (uint32_t) format);
 };
 
-constexpr Format
-asVOP3(Format format)
-{
-   return (Format)((uint32_t)Format::VOP3 | (uint32_t)format);
-};
-
-constexpr Format
-asSDWA(Format format)
-{
+constexpr Format asSDWA(Format format) {
    assert(format == Format::VOP1 || format == Format::VOP2 || format == Format::VOPC);
-   return (Format)((uint32_t)Format::SDWA | (uint32_t)format);
-}
-
-constexpr Format
-withoutDPP(Format format)
-{
-   return (Format)((uint32_t)format & ~(uint32_t)Format::DPP);
+   return (Format) ((uint32_t) Format::SDWA | (uint32_t) format);
 }
 
 enum class RegType {
@@ -318,10 +264,10 @@ struct RegClass {
       v2 = s2 | (1 << 5),
       v3 = s3 | (1 << 5),
       v4 = s4 | (1 << 5),
-      v5 = 5 | (1 << 5),
-      v6 = 6 | (1 << 5),
-      v7 = 7 | (1 << 5),
-      v8 = 8 | (1 << 5),
+      v5 = 5  | (1 << 5),
+      v6 = 6  | (1 << 5),
+      v7 = 7  | (1 << 5),
+      v8 = 8  | (1 << 5),
       /* byte-sized register class */
       v1b = v1 | (1 << 7),
       v2b = v2 | (1 << 7),
@@ -335,40 +281,30 @@ struct RegClass {
    };
 
    RegClass() = default;
-   constexpr RegClass(RC rc_) : rc(rc_) {}
+   constexpr RegClass(RC rc)
+      : rc(rc) {}
    constexpr RegClass(RegType type, unsigned size)
-       : rc((RC)((type == RegType::vgpr ? 1 << 5 : 0) | size))
-   {}
+      : rc((RC) ((type == RegType::vgpr ? 1 << 5 : 0) | size)) {}
 
    constexpr operator RC() const { return rc; }
    explicit operator bool() = delete;
 
    constexpr RegType type() const { return rc <= RC::s16 ? RegType::sgpr : RegType::vgpr; }
-   constexpr bool is_linear_vgpr() const { return rc & (1 << 6); };
    constexpr bool is_subdword() const { return rc & (1 << 7); }
-   constexpr unsigned bytes() const { return ((unsigned)rc & 0x1F) * (is_subdword() ? 1 : 4); }
-   // TODO: use size() less in favor of bytes()
+   constexpr unsigned bytes() const { return ((unsigned) rc & 0x1F) * (is_subdword() ? 1 : 4); }
+   //TODO: use size() less in favor of bytes()
    constexpr unsigned size() const { return (bytes() + 3) >> 2; }
-   constexpr bool is_linear() const { return rc <= RC::s16 || is_linear_vgpr(); }
-   constexpr RegClass as_linear() const { return RegClass((RC)(rc | (1 << 6))); }
-   constexpr RegClass as_subdword() const { return RegClass((RC)(rc | 1 << 7)); }
+   constexpr bool is_linear() const { return rc <= RC::s16 || rc & (1 << 6); }
+   constexpr RegClass as_linear() const { return RegClass((RC) (rc | (1 << 6))); }
+   constexpr RegClass as_subdword() const { return RegClass((RC) (rc | 1 << 7)); }
 
-   static constexpr RegClass get(RegType type, unsigned bytes)
-   {
+   static constexpr RegClass get(RegType type, unsigned bytes) {
       if (type == RegType::sgpr) {
          return RegClass(type, DIV_ROUND_UP(bytes, 4u));
       } else {
-         return bytes % 4u ? RegClass(type, bytes).as_subdword() : RegClass(type, bytes / 4u);
+         return bytes % 4u ? RegClass(type, bytes).as_subdword() :
+                             RegClass(type, bytes / 4u);
       }
-   }
-
-   constexpr RegClass resize(unsigned bytes) const
-   {
-      if (is_linear_vgpr()) {
-         assert(bytes % 4u == 0);
-         return get(RegType::vgpr, bytes).as_linear();
-      }
-      return get(type(), bytes);
    }
 
 private:
@@ -405,7 +341,8 @@ static constexpr RegClass v8b{RegClass::v8b};
  */
 struct Temp {
    Temp() noexcept : id_(0), reg_class(0) {}
-   constexpr Temp(uint32_t id, RegClass cls) noexcept : id_(id), reg_class(uint8_t(cls)) {}
+   constexpr Temp(uint32_t id, RegClass cls) noexcept
+      : id_(id), reg_class(uint8_t(cls)) {}
 
    constexpr uint32_t id() const noexcept { return id_; }
    constexpr RegClass regClass() const noexcept { return (RegClass::RC)reg_class; }
@@ -415,12 +352,12 @@ struct Temp {
    constexpr RegType type() const noexcept { return regClass().type(); }
    constexpr bool is_linear() const noexcept { return regClass().is_linear(); }
 
-   constexpr bool operator<(Temp other) const noexcept { return id() < other.id(); }
+   constexpr bool operator <(Temp other) const noexcept { return id() < other.id(); }
    constexpr bool operator==(Temp other) const noexcept { return id() == other.id(); }
    constexpr bool operator!=(Temp other) const noexcept { return id() != other.id(); }
 
 private:
-   uint32_t id_ : 24;
+   uint32_t id_: 24;
    uint32_t reg_class : 8;
 };
 
@@ -437,13 +374,8 @@ struct PhysReg {
    constexpr operator unsigned() const { return reg(); }
    constexpr bool operator==(PhysReg other) const { return reg_b == other.reg_b; }
    constexpr bool operator!=(PhysReg other) const { return reg_b != other.reg_b; }
-   constexpr bool operator<(PhysReg other) const { return reg_b < other.reg_b; }
-   constexpr PhysReg advance(int bytes) const
-   {
-      PhysReg res = *this;
-      res.reg_b += bytes;
-      return res;
-   }
+   constexpr bool operator <(PhysReg other) const { return reg_b < other.reg_b; }
+   constexpr PhysReg advance(int bytes) const { PhysReg res = *this; res.reg_b += bytes; return res; }
 
    uint16_t reg_b = 0;
 };
@@ -482,13 +414,13 @@ static constexpr PhysReg scc{253};
  * Temporary registers get mapped to physical register during RA
  * Constant values are inlined into the instruction sequence.
  */
-class Operand final {
+class Operand final
+{
 public:
    constexpr Operand()
-       : reg_(PhysReg{128}), isTemp_(false), isFixed_(true), isConstant_(false), isKill_(false),
-         isUndef_(true), isFirstKill_(false), constSize(0), isLateKill_(false), is16bit_(false),
-         is24bit_(false), signext(false)
-   {}
+      : reg_(PhysReg{128}), isTemp_(false), isFixed_(true), isConstant_(false),
+        isKill_(false), isUndef_(true), isFirstKill_(false), constSize(0),
+        isLateKill_(false) {}
 
    explicit Operand(Temp r) noexcept
    {
@@ -500,149 +432,115 @@ public:
          setFixed(PhysReg{128});
       }
    };
-   explicit Operand(Temp r, PhysReg reg) noexcept
-   {
-      assert(r.id()); /* Don't allow fixing an undef to a register */
-      data_.temp = r;
-      isTemp_ = true;
-      setFixed(reg);
-   };
-
-   /* 8-bit constant */
-   static Operand c8(uint8_t v) noexcept
+   explicit Operand(uint8_t v) noexcept
    {
       /* 8-bit constants are only used for copies and copies from any 8-bit
        * constant can be implemented with a SDWA v_mul_u32_u24. So consider all
        * to be inline constants. */
-      Operand op;
-      op.control_ = 0;
-      op.data_.i = v;
-      op.isConstant_ = true;
-      op.constSize = 0;
-      op.setFixed(PhysReg{0u});
-      return op;
+      data_.i = v;
+      isConstant_ = true;
+      constSize = 0;
+      setFixed(PhysReg{0u});
    };
-
-   /* 16-bit constant */
-   static Operand c16(uint16_t v) noexcept
+   explicit Operand(uint16_t v) noexcept
    {
-      Operand op;
-      op.control_ = 0;
-      op.data_.i = v;
-      op.isConstant_ = true;
-      op.constSize = 1;
+      data_.i = v;
+      isConstant_ = true;
+      constSize = 1;
       if (v <= 64)
-         op.setFixed(PhysReg{128u + v});
+         setFixed(PhysReg{128u + v});
       else if (v >= 0xFFF0) /* [-16 .. -1] */
-         op.setFixed(PhysReg{(unsigned)(192 - (int16_t)v)});
+         setFixed(PhysReg{(unsigned)(192 - (int16_t)v)});
       else if (v == 0x3800) /* 0.5 */
-         op.setFixed(PhysReg{240});
+         setFixed(PhysReg{240});
       else if (v == 0xB800) /* -0.5 */
-         op.setFixed(PhysReg{241});
+         setFixed(PhysReg{241});
       else if (v == 0x3C00) /* 1.0 */
-         op.setFixed(PhysReg{242});
+         setFixed(PhysReg{242});
       else if (v == 0xBC00) /* -1.0 */
-         op.setFixed(PhysReg{243});
+         setFixed(PhysReg{243});
       else if (v == 0x4000) /* 2.0 */
-         op.setFixed(PhysReg{244});
+         setFixed(PhysReg{244});
       else if (v == 0xC000) /* -2.0 */
-         op.setFixed(PhysReg{245});
+         setFixed(PhysReg{245});
       else if (v == 0x4400) /* 4.0 */
-         op.setFixed(PhysReg{246});
+         setFixed(PhysReg{246});
       else if (v == 0xC400) /* -4.0 */
-         op.setFixed(PhysReg{247});
+         setFixed(PhysReg{247});
       else if (v == 0x3118) /* 1/2 PI */
-         op.setFixed(PhysReg{248});
+         setFixed(PhysReg{248});
       else /* Literal Constant */
-         op.setFixed(PhysReg{255});
-      return op;
-   }
-
-   /* 32-bit constant */
-   static Operand c32(uint32_t v) noexcept { return c32_or_c64(v, false); }
-
-   /* 64-bit constant */
-   static Operand c64(uint64_t v) noexcept
+         setFixed(PhysReg{255});
+   };
+   explicit Operand(uint32_t v, bool is64bit = false) noexcept
    {
-      Operand op;
-      op.control_ = 0;
-      op.isConstant_ = true;
-      op.constSize = 3;
-      if (v <= 64) {
-         op.data_.i = (uint32_t)v;
-         op.setFixed(PhysReg{128 + (uint32_t)v});
-      } else if (v >= 0xFFFFFFFFFFFFFFF0) { /* [-16 .. -1] */
-         op.data_.i = (uint32_t)v;
-         op.setFixed(PhysReg{192 - (uint32_t)v});
-      } else if (v == 0x3FE0000000000000) { /* 0.5 */
-         op.data_.i = 0x3f000000;
-         op.setFixed(PhysReg{240});
-      } else if (v == 0xBFE0000000000000) { /* -0.5 */
-         op.data_.i = 0xbf000000;
-         op.setFixed(PhysReg{241});
-      } else if (v == 0x3FF0000000000000) { /* 1.0 */
-         op.data_.i = 0x3f800000;
-         op.setFixed(PhysReg{242});
-      } else if (v == 0xBFF0000000000000) { /* -1.0 */
-         op.data_.i = 0xbf800000;
-         op.setFixed(PhysReg{243});
-      } else if (v == 0x4000000000000000) { /* 2.0 */
-         op.data_.i = 0x40000000;
-         op.setFixed(PhysReg{244});
-      } else if (v == 0xC000000000000000) { /* -2.0 */
-         op.data_.i = 0xc0000000;
-         op.setFixed(PhysReg{245});
-      } else if (v == 0x4010000000000000) { /* 4.0 */
-         op.data_.i = 0x40800000;
-         op.setFixed(PhysReg{246});
-      } else if (v == 0xC010000000000000) { /* -4.0 */
-         op.data_.i = 0xc0800000;
-         op.setFixed(PhysReg{247});
-      } else { /* Literal Constant: we don't know if it is a long or double.*/
-         op.signext = v >> 63;
-         op.data_.i = v & 0xffffffffu;
-         op.setFixed(PhysReg{255});
-         assert(op.constantValue64() == v &&
-                "attempt to create a unrepresentable 64-bit literal constant");
-      }
-      return op;
-   }
-
-   /* 32-bit constant stored as a 32-bit or 64-bit operand */
-   static Operand c32_or_c64(uint32_t v, bool is64bit) noexcept
-   {
-      Operand op;
-      op.control_ = 0;
-      op.data_.i = v;
-      op.isConstant_ = true;
-      op.constSize = is64bit ? 3 : 2;
+      data_.i = v;
+      isConstant_ = true;
+      constSize = is64bit ? 3 : 2;
       if (v <= 64)
-         op.setFixed(PhysReg{128 + v});
+         setFixed(PhysReg{128 + v});
       else if (v >= 0xFFFFFFF0) /* [-16 .. -1] */
-         op.setFixed(PhysReg{192 - v});
+         setFixed(PhysReg{192 - v});
       else if (v == 0x3f000000) /* 0.5 */
-         op.setFixed(PhysReg{240});
+         setFixed(PhysReg{240});
       else if (v == 0xbf000000) /* -0.5 */
-         op.setFixed(PhysReg{241});
+         setFixed(PhysReg{241});
       else if (v == 0x3f800000) /* 1.0 */
-         op.setFixed(PhysReg{242});
+         setFixed(PhysReg{242});
       else if (v == 0xbf800000) /* -1.0 */
-         op.setFixed(PhysReg{243});
+         setFixed(PhysReg{243});
       else if (v == 0x40000000) /* 2.0 */
-         op.setFixed(PhysReg{244});
+         setFixed(PhysReg{244});
       else if (v == 0xc0000000) /* -2.0 */
-         op.setFixed(PhysReg{245});
+         setFixed(PhysReg{245});
       else if (v == 0x40800000) /* 4.0 */
-         op.setFixed(PhysReg{246});
+         setFixed(PhysReg{246});
       else if (v == 0xc0800000) /* -4.0 */
-         op.setFixed(PhysReg{247});
+         setFixed(PhysReg{247});
       else { /* Literal Constant */
          assert(!is64bit && "attempt to create a 64-bit literal constant");
-         op.setFixed(PhysReg{255});
+         setFixed(PhysReg{255});
       }
-      return op;
-   }
-
+   };
+   explicit Operand(uint64_t v) noexcept
+   {
+      isConstant_ = true;
+      constSize = 3;
+      if (v <= 64) {
+         data_.i = (uint32_t) v;
+         setFixed(PhysReg{128 + (uint32_t) v});
+      } else if (v >= 0xFFFFFFFFFFFFFFF0) { /* [-16 .. -1] */
+         data_.i = (uint32_t) v;
+         setFixed(PhysReg{192 - (uint32_t) v});
+      } else if (v == 0x3FE0000000000000) { /* 0.5 */
+         data_.i = 0x3f000000;
+         setFixed(PhysReg{240});
+      } else if (v == 0xBFE0000000000000) { /* -0.5 */
+         data_.i = 0xbf000000;
+         setFixed(PhysReg{241});
+      } else if (v == 0x3FF0000000000000) { /* 1.0 */
+         data_.i = 0x3f800000;
+         setFixed(PhysReg{242});
+      } else if (v == 0xBFF0000000000000) { /* -1.0 */
+         data_.i = 0xbf800000;
+         setFixed(PhysReg{243});
+      } else if (v == 0x4000000000000000) { /* 2.0 */
+         data_.i = 0x40000000;
+         setFixed(PhysReg{244});
+      } else if (v == 0xC000000000000000) { /* -2.0 */
+         data_.i = 0xc0000000;
+         setFixed(PhysReg{245});
+      } else if (v == 0x4010000000000000) { /* 4.0 */
+         data_.i = 0x40800000;
+         setFixed(PhysReg{246});
+      } else if (v == 0xC010000000000000) { /* -4.0 */
+         data_.i = 0xc0800000;
+         setFixed(PhysReg{247});
+      } else { /* Literal Constant: we don't know if it is a long or double.*/
+         isConstant_ = 0;
+         assert(false && "attempt to create a 64-bit literal constant");
+      }
+   };
    explicit Operand(RegClass type) noexcept
    {
       isUndef_ = true;
@@ -655,79 +553,36 @@ public:
       setFixed(reg);
    }
 
-   static Operand zero(unsigned bytes = 4) noexcept
+   constexpr bool isTemp() const noexcept
    {
-      if (bytes == 8)
-         return Operand::c64(0);
-      else if (bytes == 4)
-         return Operand::c32(0);
-      else if (bytes == 2)
-         return Operand::c16(0);
-      assert(bytes == 1);
-      return Operand::c8(0);
+      return isTemp_;
    }
 
-   /* This is useful over the constructors when you want to take a chip class
-    * for 1/2 PI or an unknown operand size.
-    */
-   static Operand get_const(enum chip_class chip, uint64_t val, unsigned bytes)
-   {
-      if (val == 0x3e22f983 && bytes == 4 && chip >= GFX8) {
-         /* 1/2 PI can be an inline constant on GFX8+ */
-         Operand op = Operand::c32(val);
-         op.setFixed(PhysReg{248});
-         return op;
-      }
-
-      if (bytes == 8)
-         return Operand::c64(val);
-      else if (bytes == 4)
-         return Operand::c32(val);
-      else if (bytes == 2)
-         return Operand::c16(val);
-      assert(bytes == 1);
-      return Operand::c8(val);
-   }
-
-   static bool is_constant_representable(uint64_t val, unsigned bytes, bool zext = false,
-                                         bool sext = false)
-   {
-      if (bytes <= 4)
-         return true;
-
-      if (zext && (val & 0xFFFFFFFF00000000) == 0x0000000000000000)
-         return true;
-      uint64_t upper33 = val & 0xFFFFFFFF80000000;
-      if (sext && (upper33 == 0xFFFFFFFF80000000 || upper33 == 0))
-         return true;
-
-      return val >= 0xFFFFFFFFFFFFFFF0 || val <= 64 || /* [-16 .. 64] */
-             val == 0x3FE0000000000000 ||              /* 0.5 */
-             val == 0xBFE0000000000000 ||              /* -0.5 */
-             val == 0x3FF0000000000000 ||              /* 1.0 */
-             val == 0xBFF0000000000000 ||              /* -1.0 */
-             val == 0x4000000000000000 ||              /* 2.0 */
-             val == 0xC000000000000000 ||              /* -2.0 */
-             val == 0x4010000000000000 ||              /* 4.0 */
-             val == 0xC010000000000000;                /* -4.0 */
-   }
-
-   constexpr bool isTemp() const noexcept { return isTemp_; }
-
-   constexpr void setTemp(Temp t) noexcept
-   {
+   constexpr void setTemp(Temp t) noexcept {
       assert(!isConstant_);
       isTemp_ = true;
       data_.temp = t;
    }
 
-   constexpr Temp getTemp() const noexcept { return data_.temp; }
+   constexpr Temp getTemp() const noexcept
+   {
+      return data_.temp;
+   }
 
-   constexpr uint32_t tempId() const noexcept { return data_.temp.id(); }
+   constexpr uint32_t tempId() const noexcept
+   {
+      return data_.temp.id();
+   }
 
-   constexpr bool hasRegClass() const noexcept { return isTemp() || isUndefined(); }
+   constexpr bool hasRegClass() const noexcept
+   {
+      return isTemp() || isUndefined();
+   }
 
-   constexpr RegClass regClass() const noexcept { return data_.temp.regClass(); }
+   constexpr RegClass regClass() const noexcept
+   {
+      return data_.temp.regClass();
+   }
 
    constexpr unsigned bytes() const noexcept
    {
@@ -745,9 +600,15 @@ public:
          return data_.temp.size();
    }
 
-   constexpr bool isFixed() const noexcept { return isFixed_; }
+   constexpr bool isFixed() const noexcept
+   {
+      return isFixed_;
+   }
 
-   constexpr PhysReg physReg() const noexcept { return reg_; }
+   constexpr PhysReg physReg() const noexcept
+   {
+      return reg_;
+   }
 
    constexpr void setFixed(PhysReg reg) noexcept
    {
@@ -755,20 +616,32 @@ public:
       reg_ = reg;
    }
 
-   constexpr bool isConstant() const noexcept { return isConstant_; }
+   constexpr bool isConstant() const noexcept
+   {
+      return isConstant_;
+   }
 
-   constexpr bool isLiteral() const noexcept { return isConstant() && reg_ == 255; }
+   constexpr bool isLiteral() const noexcept
+   {
+      return isConstant() && reg_ == 255;
+   }
 
-   constexpr bool isUndefined() const noexcept { return isUndef_; }
+   constexpr bool isUndefined() const noexcept
+   {
+      return isUndef_;
+   }
 
-   constexpr uint32_t constantValue() const noexcept { return data_.i; }
+   constexpr uint32_t constantValue() const noexcept
+   {
+      return data_.i;
+   }
 
    constexpr bool constantEquals(uint32_t cmp) const noexcept
    {
       return isConstant() && constantValue() == cmp;
    }
 
-   constexpr uint64_t constantValue64() const noexcept
+   constexpr uint64_t constantValue64(bool signext=false) const noexcept
    {
       if (constSize == 3) {
          if (reg_ <= 192)
@@ -777,21 +650,29 @@ public:
             return 0xFFFFFFFFFFFFFFFF - (reg_ - 193);
 
          switch (reg_) {
-         case 240: return 0x3FE0000000000000;
-         case 241: return 0xBFE0000000000000;
-         case 242: return 0x3FF0000000000000;
-         case 243: return 0xBFF0000000000000;
-         case 244: return 0x4000000000000000;
-         case 245: return 0xC000000000000000;
-         case 246: return 0x4010000000000000;
-         case 247: return 0xC010000000000000;
-         case 255:
-            return (signext && (data_.i & 0x80000000u) ? 0xffffffff00000000ull : 0ull) | data_.i;
+         case 240:
+            return 0x3FE0000000000000;
+         case 241:
+            return 0xBFE0000000000000;
+         case 242:
+            return 0x3FF0000000000000;
+         case 243:
+            return 0xBFF0000000000000;
+         case 244:
+            return 0x4000000000000000;
+         case 245:
+            return 0xC000000000000000;
+         case 246:
+            return 0x4010000000000000;
+         case 247:
+            return 0xC010000000000000;
          }
-         unreachable("invalid register for 64-bit constant");
-      } else {
-         return data_.i;
+      } else if (constSize == 1) {
+         return (signext && (data_.i & 0x8000u) ? 0xffffffffffff0000ull : 0ull) | data_.i;
+      } else if (constSize == 0) {
+         return (signext && (data_.i & 0x80u) ? 0xffffffffffffff00ull : 0ull) | data_.i;
       }
+      return (signext && (data_.i & 0x80000000u) ? 0xffffffff00000000ull : 0ull) | data_.i;
    }
 
    constexpr bool isOfType(RegType type) const noexcept
@@ -802,9 +683,15 @@ public:
    /* Indicates that the killed operand's live range intersects with the
     * instruction's definitions. Unlike isKill() and isFirstKill(), this is
     * not set by liveness analysis. */
-   constexpr void setLateKill(bool flag) noexcept { isLateKill_ = flag; }
+   constexpr void setLateKill(bool flag) noexcept
+   {
+      isLateKill_ = flag;
+   }
 
-   constexpr bool isLateKill() const noexcept { return isLateKill_; }
+   constexpr bool isLateKill() const noexcept
+   {
+      return isLateKill_;
+   }
 
    constexpr void setKill(bool flag) noexcept
    {
@@ -813,7 +700,10 @@ public:
          setFirstKill(false);
    }
 
-   constexpr bool isKill() const noexcept { return isKill_ || isFirstKill(); }
+   constexpr bool isKill() const noexcept
+   {
+      return isKill_ || isFirstKill();
+   }
 
    constexpr void setFirstKill(bool flag) noexcept
    {
@@ -824,13 +714,22 @@ public:
 
    /* When there are multiple operands killing the same temporary,
     * isFirstKill() is only returns true for the first one. */
-   constexpr bool isFirstKill() const noexcept { return isFirstKill_; }
+   constexpr bool isFirstKill() const noexcept
+   {
+      return isFirstKill_;
+   }
 
-   constexpr bool isKillBeforeDef() const noexcept { return isKill() && !isLateKill(); }
+   constexpr bool isKillBeforeDef() const noexcept
+   {
+      return isKill() && !isLateKill();
+   }
 
-   constexpr bool isFirstKillBeforeDef() const noexcept { return isFirstKill() && !isLateKill(); }
+   constexpr bool isFirstKillBeforeDef() const noexcept
+   {
+      return isFirstKill() && !isLateKill();
+   }
 
-   constexpr bool operator==(Operand other) const noexcept
+   constexpr bool operator == (Operand other) const noexcept
    {
       if (other.size() != size())
          return false;
@@ -847,37 +746,23 @@ public:
       else
          return other.isTemp() && other.getTemp() == getTemp();
    }
-
-   constexpr bool operator!=(Operand other) const noexcept { return !operator==(other); }
-
-   constexpr void set16bit(bool flag) noexcept { is16bit_ = flag; }
-
-   constexpr bool is16bit() const noexcept { return is16bit_; }
-
-   constexpr void set24bit(bool flag) noexcept { is24bit_ = flag; }
-
-   constexpr bool is24bit() const noexcept { return is24bit_; }
-
 private:
    union {
-      Temp temp;
       uint32_t i;
       float f;
-   } data_ = {Temp(0, s1)};
+      Temp temp = Temp(0, s1);
+   } data_;
    PhysReg reg_;
    union {
       struct {
-         uint8_t isTemp_ : 1;
-         uint8_t isFixed_ : 1;
-         uint8_t isConstant_ : 1;
-         uint8_t isKill_ : 1;
-         uint8_t isUndef_ : 1;
-         uint8_t isFirstKill_ : 1;
-         uint8_t constSize : 2;
-         uint8_t isLateKill_ : 1;
-         uint8_t is16bit_ : 1;
-         uint8_t is24bit_ : 1;
-         uint8_t signext : 1;
+         uint8_t isTemp_:1;
+         uint8_t isFixed_:1;
+         uint8_t isConstant_:1;
+         uint8_t isKill_:1;
+         uint8_t isUndef_:1;
+         uint8_t isFirstKill_:1;
+         uint8_t constSize:2;
+         uint8_t isLateKill_:1;
       };
       /* can't initialize bit-fields in c++11, so work around using a union */
       uint16_t control_ = 0;
@@ -890,39 +775,69 @@ private:
  * and refer to temporary virtual registers
  * which are later mapped to physical registers
  */
-class Definition final {
+class Definition final
+{
 public:
-   constexpr Definition()
-       : temp(Temp(0, s1)), reg_(0), isFixed_(0), hasHint_(0), isKill_(0), isPrecise_(0), isNUW_(0),
-         isNoCSE_(0)
-   {}
-   Definition(uint32_t index, RegClass type) noexcept : temp(index, type) {}
-   explicit Definition(Temp tmp) noexcept : temp(tmp) {}
-   Definition(PhysReg reg, RegClass type) noexcept : temp(Temp(0, type)) { setFixed(reg); }
-   Definition(uint32_t tmpId, PhysReg reg, RegClass type) noexcept : temp(Temp(tmpId, type))
+   constexpr Definition() : temp(Temp(0, s1)), reg_(0), isFixed_(0), hasHint_(0),
+                            isKill_(0), isPrecise_(0), isNUW_(0) {}
+   Definition(uint32_t index, RegClass type) noexcept
+      : temp(index, type) {}
+   explicit Definition(Temp tmp) noexcept
+      : temp(tmp) {}
+   Definition(PhysReg reg, RegClass type) noexcept
+      : temp(Temp(0, type))
+   {
+      setFixed(reg);
+   }
+   Definition(uint32_t tmpId, PhysReg reg, RegClass type) noexcept
+      : temp(Temp(tmpId, type))
    {
       setFixed(reg);
    }
 
-   constexpr bool isTemp() const noexcept { return tempId() > 0; }
+   constexpr bool isTemp() const noexcept
+   {
+      return tempId() > 0;
+   }
 
-   constexpr Temp getTemp() const noexcept { return temp; }
+   constexpr Temp getTemp() const noexcept
+   {
+      return temp;
+   }
 
-   constexpr uint32_t tempId() const noexcept { return temp.id(); }
+   constexpr uint32_t tempId() const noexcept
+   {
+      return temp.id();
+   }
 
-   constexpr void setTemp(Temp t) noexcept { temp = t; }
+   constexpr void setTemp(Temp t) noexcept {
+      temp = t;
+   }
 
-   void swapTemp(Definition& other) noexcept { std::swap(temp, other.temp); }
+   constexpr RegClass regClass() const noexcept
+   {
+      return temp.regClass();
+   }
 
-   constexpr RegClass regClass() const noexcept { return temp.regClass(); }
+   constexpr unsigned bytes() const noexcept
+   {
+      return temp.bytes();
+   }
 
-   constexpr unsigned bytes() const noexcept { return temp.bytes(); }
+   constexpr unsigned size() const noexcept
+   {
+      return temp.size();
+   }
 
-   constexpr unsigned size() const noexcept { return temp.size(); }
+   constexpr bool isFixed() const noexcept
+   {
+      return isFixed_;
+   }
 
-   constexpr bool isFixed() const noexcept { return isFixed_; }
-
-   constexpr PhysReg physReg() const noexcept { return reg_; }
+   constexpr PhysReg physReg() const noexcept
+   {
+      return reg_;
+   }
 
    constexpr void setFixed(PhysReg reg) noexcept
    {
@@ -936,36 +851,52 @@ public:
       reg_ = reg;
    }
 
-   constexpr bool hasHint() const noexcept { return hasHint_; }
+   constexpr bool hasHint() const noexcept
+   {
+      return hasHint_;
+   }
 
-   constexpr void setKill(bool flag) noexcept { isKill_ = flag; }
+   constexpr void setKill(bool flag) noexcept
+   {
+      isKill_ = flag;
+   }
 
-   constexpr bool isKill() const noexcept { return isKill_; }
+   constexpr bool isKill() const noexcept
+   {
+      return isKill_;
+   }
 
-   constexpr void setPrecise(bool precise) noexcept { isPrecise_ = precise; }
+   constexpr void setPrecise(bool precise) noexcept
+   {
+      isPrecise_ = precise;
+   }
 
-   constexpr bool isPrecise() const noexcept { return isPrecise_; }
+   constexpr bool isPrecise() const noexcept
+   {
+      return isPrecise_;
+   }
 
    /* No Unsigned Wrap */
-   constexpr void setNUW(bool nuw) noexcept { isNUW_ = nuw; }
+   constexpr void setNUW(bool nuw) noexcept
+   {
+      isNUW_ = nuw;
+   }
 
-   constexpr bool isNUW() const noexcept { return isNUW_; }
-
-   constexpr void setNoCSE(bool noCSE) noexcept { isNoCSE_ = noCSE; }
-
-   constexpr bool isNoCSE() const noexcept { return isNoCSE_; }
+   constexpr bool isNUW() const noexcept
+   {
+      return isNUW_;
+   }
 
 private:
    Temp temp = Temp(0, s1);
    PhysReg reg_;
    union {
       struct {
-         uint8_t isFixed_ : 1;
-         uint8_t hasHint_ : 1;
-         uint8_t isKill_ : 1;
-         uint8_t isPrecise_ : 1;
-         uint8_t isNUW_ : 1;
-         uint8_t isNoCSE_ : 1;
+         uint8_t isFixed_:1;
+         uint8_t hasHint_:1;
+         uint8_t isKill_:1;
+         uint8_t isPrecise_:1;
+         uint8_t isNUW_:1;
       };
       /* can't initialize bit-fields in c++11, so work around using a union */
       uint8_t control_ = 0;
@@ -973,31 +904,6 @@ private:
 };
 
 struct Block;
-struct Instruction;
-struct Pseudo_instruction;
-struct SOP1_instruction;
-struct SOP2_instruction;
-struct SOPK_instruction;
-struct SOPP_instruction;
-struct SOPC_instruction;
-struct SMEM_instruction;
-struct DS_instruction;
-struct MTBUF_instruction;
-struct MUBUF_instruction;
-struct MIMG_instruction;
-struct Export_instruction;
-struct FLAT_instruction;
-struct Pseudo_branch_instruction;
-struct Pseudo_barrier_instruction;
-struct Pseudo_reduction_instruction;
-struct VOP3P_instruction;
-struct VOP1_instruction;
-struct VOP2_instruction;
-struct VOPC_instruction;
-struct VOP3_instruction;
-struct Interp_instruction;
-struct DPP_instruction;
-struct SDWA_instruction;
 
 struct Instruction {
    aco_opcode opcode;
@@ -1006,6 +912,53 @@ struct Instruction {
 
    aco::span<Operand> operands;
    aco::span<Definition> definitions;
+
+   constexpr bool isVALU() const noexcept
+   {
+      return ((uint16_t) format & (uint16_t) Format::VOP1) == (uint16_t) Format::VOP1
+          || ((uint16_t) format & (uint16_t) Format::VOP2) == (uint16_t) Format::VOP2
+          || ((uint16_t) format & (uint16_t) Format::VOPC) == (uint16_t) Format::VOPC
+          || ((uint16_t) format & (uint16_t) Format::VOP3A) == (uint16_t) Format::VOP3A
+          || ((uint16_t) format & (uint16_t) Format::VOP3B) == (uint16_t) Format::VOP3B
+          || format == Format::VOP3P;
+   }
+
+   constexpr bool isSALU() const noexcept
+   {
+      return format == Format::SOP1 ||
+             format == Format::SOP2 ||
+             format == Format::SOPC ||
+             format == Format::SOPK ||
+             format == Format::SOPP;
+   }
+
+   constexpr bool isVMEM() const noexcept
+   {
+      return format == Format::MTBUF ||
+             format == Format::MUBUF ||
+             format == Format::MIMG;
+   }
+
+   constexpr bool isDPP() const noexcept
+   {
+      return (uint16_t) format & (uint16_t) Format::DPP;
+   }
+
+   constexpr bool isVOP3() const noexcept
+   {
+      return ((uint16_t) format & (uint16_t) Format::VOP3A) ||
+             ((uint16_t) format & (uint16_t) Format::VOP3B);
+   }
+
+   constexpr bool isSDWA() const noexcept
+   {
+      return (uint16_t) format & (uint16_t) Format::SDWA;
+   }
+
+   constexpr bool isFlatOrGlobal() const noexcept
+   {
+      return format == Format::FLAT || format == Format::GLOBAL;
+   }
 
    constexpr bool usesModifiers() const noexcept;
 
@@ -1017,311 +970,6 @@ struct Instruction {
       }
       return false;
    }
-
-   Pseudo_instruction& pseudo() noexcept
-   {
-      assert(isPseudo());
-      return *(Pseudo_instruction*)this;
-   }
-   const Pseudo_instruction& pseudo() const noexcept
-   {
-      assert(isPseudo());
-      return *(Pseudo_instruction*)this;
-   }
-   constexpr bool isPseudo() const noexcept { return format == Format::PSEUDO; }
-   SOP1_instruction& sop1() noexcept
-   {
-      assert(isSOP1());
-      return *(SOP1_instruction*)this;
-   }
-   const SOP1_instruction& sop1() const noexcept
-   {
-      assert(isSOP1());
-      return *(SOP1_instruction*)this;
-   }
-   constexpr bool isSOP1() const noexcept { return format == Format::SOP1; }
-   SOP2_instruction& sop2() noexcept
-   {
-      assert(isSOP2());
-      return *(SOP2_instruction*)this;
-   }
-   const SOP2_instruction& sop2() const noexcept
-   {
-      assert(isSOP2());
-      return *(SOP2_instruction*)this;
-   }
-   constexpr bool isSOP2() const noexcept { return format == Format::SOP2; }
-   SOPK_instruction& sopk() noexcept
-   {
-      assert(isSOPK());
-      return *(SOPK_instruction*)this;
-   }
-   const SOPK_instruction& sopk() const noexcept
-   {
-      assert(isSOPK());
-      return *(SOPK_instruction*)this;
-   }
-   constexpr bool isSOPK() const noexcept { return format == Format::SOPK; }
-   SOPP_instruction& sopp() noexcept
-   {
-      assert(isSOPP());
-      return *(SOPP_instruction*)this;
-   }
-   const SOPP_instruction& sopp() const noexcept
-   {
-      assert(isSOPP());
-      return *(SOPP_instruction*)this;
-   }
-   constexpr bool isSOPP() const noexcept { return format == Format::SOPP; }
-   SOPC_instruction& sopc() noexcept
-   {
-      assert(isSOPC());
-      return *(SOPC_instruction*)this;
-   }
-   const SOPC_instruction& sopc() const noexcept
-   {
-      assert(isSOPC());
-      return *(SOPC_instruction*)this;
-   }
-   constexpr bool isSOPC() const noexcept { return format == Format::SOPC; }
-   SMEM_instruction& smem() noexcept
-   {
-      assert(isSMEM());
-      return *(SMEM_instruction*)this;
-   }
-   const SMEM_instruction& smem() const noexcept
-   {
-      assert(isSMEM());
-      return *(SMEM_instruction*)this;
-   }
-   constexpr bool isSMEM() const noexcept { return format == Format::SMEM; }
-   DS_instruction& ds() noexcept
-   {
-      assert(isDS());
-      return *(DS_instruction*)this;
-   }
-   const DS_instruction& ds() const noexcept
-   {
-      assert(isDS());
-      return *(DS_instruction*)this;
-   }
-   constexpr bool isDS() const noexcept { return format == Format::DS; }
-   MTBUF_instruction& mtbuf() noexcept
-   {
-      assert(isMTBUF());
-      return *(MTBUF_instruction*)this;
-   }
-   const MTBUF_instruction& mtbuf() const noexcept
-   {
-      assert(isMTBUF());
-      return *(MTBUF_instruction*)this;
-   }
-   constexpr bool isMTBUF() const noexcept { return format == Format::MTBUF; }
-   MUBUF_instruction& mubuf() noexcept
-   {
-      assert(isMUBUF());
-      return *(MUBUF_instruction*)this;
-   }
-   const MUBUF_instruction& mubuf() const noexcept
-   {
-      assert(isMUBUF());
-      return *(MUBUF_instruction*)this;
-   }
-   constexpr bool isMUBUF() const noexcept { return format == Format::MUBUF; }
-   MIMG_instruction& mimg() noexcept
-   {
-      assert(isMIMG());
-      return *(MIMG_instruction*)this;
-   }
-   const MIMG_instruction& mimg() const noexcept
-   {
-      assert(isMIMG());
-      return *(MIMG_instruction*)this;
-   }
-   constexpr bool isMIMG() const noexcept { return format == Format::MIMG; }
-   Export_instruction& exp() noexcept
-   {
-      assert(isEXP());
-      return *(Export_instruction*)this;
-   }
-   const Export_instruction& exp() const noexcept
-   {
-      assert(isEXP());
-      return *(Export_instruction*)this;
-   }
-   constexpr bool isEXP() const noexcept { return format == Format::EXP; }
-   FLAT_instruction& flat() noexcept
-   {
-      assert(isFlat());
-      return *(FLAT_instruction*)this;
-   }
-   const FLAT_instruction& flat() const noexcept
-   {
-      assert(isFlat());
-      return *(FLAT_instruction*)this;
-   }
-   constexpr bool isFlat() const noexcept { return format == Format::FLAT; }
-   FLAT_instruction& global() noexcept
-   {
-      assert(isGlobal());
-      return *(FLAT_instruction*)this;
-   }
-   const FLAT_instruction& global() const noexcept
-   {
-      assert(isGlobal());
-      return *(FLAT_instruction*)this;
-   }
-   constexpr bool isGlobal() const noexcept { return format == Format::GLOBAL; }
-   FLAT_instruction& scratch() noexcept
-   {
-      assert(isScratch());
-      return *(FLAT_instruction*)this;
-   }
-   const FLAT_instruction& scratch() const noexcept
-   {
-      assert(isScratch());
-      return *(FLAT_instruction*)this;
-   }
-   constexpr bool isScratch() const noexcept { return format == Format::SCRATCH; }
-   Pseudo_branch_instruction& branch() noexcept
-   {
-      assert(isBranch());
-      return *(Pseudo_branch_instruction*)this;
-   }
-   const Pseudo_branch_instruction& branch() const noexcept
-   {
-      assert(isBranch());
-      return *(Pseudo_branch_instruction*)this;
-   }
-   constexpr bool isBranch() const noexcept { return format == Format::PSEUDO_BRANCH; }
-   Pseudo_barrier_instruction& barrier() noexcept
-   {
-      assert(isBarrier());
-      return *(Pseudo_barrier_instruction*)this;
-   }
-   const Pseudo_barrier_instruction& barrier() const noexcept
-   {
-      assert(isBarrier());
-      return *(Pseudo_barrier_instruction*)this;
-   }
-   constexpr bool isBarrier() const noexcept { return format == Format::PSEUDO_BARRIER; }
-   Pseudo_reduction_instruction& reduction() noexcept
-   {
-      assert(isReduction());
-      return *(Pseudo_reduction_instruction*)this;
-   }
-   const Pseudo_reduction_instruction& reduction() const noexcept
-   {
-      assert(isReduction());
-      return *(Pseudo_reduction_instruction*)this;
-   }
-   constexpr bool isReduction() const noexcept { return format == Format::PSEUDO_REDUCTION; }
-   VOP3P_instruction& vop3p() noexcept
-   {
-      assert(isVOP3P());
-      return *(VOP3P_instruction*)this;
-   }
-   const VOP3P_instruction& vop3p() const noexcept
-   {
-      assert(isVOP3P());
-      return *(VOP3P_instruction*)this;
-   }
-   constexpr bool isVOP3P() const noexcept { return format == Format::VOP3P; }
-   VOP1_instruction& vop1() noexcept
-   {
-      assert(isVOP1());
-      return *(VOP1_instruction*)this;
-   }
-   const VOP1_instruction& vop1() const noexcept
-   {
-      assert(isVOP1());
-      return *(VOP1_instruction*)this;
-   }
-   constexpr bool isVOP1() const noexcept { return (uint16_t)format & (uint16_t)Format::VOP1; }
-   VOP2_instruction& vop2() noexcept
-   {
-      assert(isVOP2());
-      return *(VOP2_instruction*)this;
-   }
-   const VOP2_instruction& vop2() const noexcept
-   {
-      assert(isVOP2());
-      return *(VOP2_instruction*)this;
-   }
-   constexpr bool isVOP2() const noexcept { return (uint16_t)format & (uint16_t)Format::VOP2; }
-   VOPC_instruction& vopc() noexcept
-   {
-      assert(isVOPC());
-      return *(VOPC_instruction*)this;
-   }
-   const VOPC_instruction& vopc() const noexcept
-   {
-      assert(isVOPC());
-      return *(VOPC_instruction*)this;
-   }
-   constexpr bool isVOPC() const noexcept { return (uint16_t)format & (uint16_t)Format::VOPC; }
-   VOP3_instruction& vop3() noexcept
-   {
-      assert(isVOP3());
-      return *(VOP3_instruction*)this;
-   }
-   const VOP3_instruction& vop3() const noexcept
-   {
-      assert(isVOP3());
-      return *(VOP3_instruction*)this;
-   }
-   constexpr bool isVOP3() const noexcept { return (uint16_t)format & (uint16_t)Format::VOP3; }
-   Interp_instruction& vintrp() noexcept
-   {
-      assert(isVINTRP());
-      return *(Interp_instruction*)this;
-   }
-   const Interp_instruction& vintrp() const noexcept
-   {
-      assert(isVINTRP());
-      return *(Interp_instruction*)this;
-   }
-   constexpr bool isVINTRP() const noexcept { return (uint16_t)format & (uint16_t)Format::VINTRP; }
-   DPP_instruction& dpp() noexcept
-   {
-      assert(isDPP());
-      return *(DPP_instruction*)this;
-   }
-   const DPP_instruction& dpp() const noexcept
-   {
-      assert(isDPP());
-      return *(DPP_instruction*)this;
-   }
-   constexpr bool isDPP() const noexcept { return (uint16_t)format & (uint16_t)Format::DPP; }
-   SDWA_instruction& sdwa() noexcept
-   {
-      assert(isSDWA());
-      return *(SDWA_instruction*)this;
-   }
-   const SDWA_instruction& sdwa() const noexcept
-   {
-      assert(isSDWA());
-      return *(SDWA_instruction*)this;
-   }
-   constexpr bool isSDWA() const noexcept { return (uint16_t)format & (uint16_t)Format::SDWA; }
-
-   FLAT_instruction& flatlike() { return *(FLAT_instruction*)this; }
-
-   const FLAT_instruction& flatlike() const { return *(FLAT_instruction*)this; }
-
-   constexpr bool isFlatLike() const noexcept { return isFlat() || isGlobal() || isScratch(); }
-
-   constexpr bool isVALU() const noexcept
-   {
-      return isVOP1() || isVOP2() || isVOPC() || isVOP3() || isVOP3P();
-   }
-
-   constexpr bool isSALU() const noexcept
-   {
-      return isSOP1() || isSOP2() || isSOPC() || isSOPK() || isSOPP();
-   }
-
-   constexpr bool isVMEM() const noexcept { return isMTBUF() || isMUBUF() || isMIMG(); }
 };
 static_assert(sizeof(Instruction) == 16, "Unexpected padding");
 
@@ -1337,13 +985,16 @@ struct SOPP_instruction : public Instruction {
 };
 static_assert(sizeof(SOPP_instruction) == sizeof(Instruction) + 8, "Unexpected padding");
 
-struct SOPC_instruction : public Instruction {};
+struct SOPC_instruction : public Instruction {
+};
 static_assert(sizeof(SOPC_instruction) == sizeof(Instruction) + 0, "Unexpected padding");
 
-struct SOP1_instruction : public Instruction {};
+struct SOP1_instruction : public Instruction {
+};
 static_assert(sizeof(SOP1_instruction) == sizeof(Instruction) + 0, "Unexpected padding");
 
-struct SOP2_instruction : public Instruction {};
+struct SOP2_instruction : public Instruction {
+};
 static_assert(sizeof(SOP2_instruction) == sizeof(Instruction) + 0, "Unexpected padding");
 
 /**
@@ -1361,32 +1012,34 @@ struct SMEM_instruction : public Instruction {
    memory_sync_info sync;
    bool glc : 1; /* VI+: globally coherent */
    bool dlc : 1; /* NAVI: device level coherent */
-   bool nv : 1;  /* VEGA only: Non-volatile */
+   bool nv : 1; /* VEGA only: Non-volatile */
    bool disable_wqm : 1;
    bool prevent_overflow : 1; /* avoid overflow when combining additions */
-   uint8_t padding : 3;
+   uint32_t padding: 3;
 };
 static_assert(sizeof(SMEM_instruction) == sizeof(Instruction) + 4, "Unexpected padding");
 
-struct VOP1_instruction : public Instruction {};
+struct VOP1_instruction : public Instruction {
+};
 static_assert(sizeof(VOP1_instruction) == sizeof(Instruction) + 0, "Unexpected padding");
 
-struct VOP2_instruction : public Instruction {};
+struct VOP2_instruction : public Instruction {
+};
 static_assert(sizeof(VOP2_instruction) == sizeof(Instruction) + 0, "Unexpected padding");
 
-struct VOPC_instruction : public Instruction {};
+struct VOPC_instruction : public Instruction {
+};
 static_assert(sizeof(VOPC_instruction) == sizeof(Instruction) + 0, "Unexpected padding");
 
-struct VOP3_instruction : public Instruction {
+struct VOP3A_instruction : public Instruction {
    bool abs[3];
    bool neg[3];
    uint8_t opsel : 4;
    uint8_t omod : 2;
    bool clamp : 1;
-   uint8_t padding0 : 1;
-   uint8_t padding1;
+   uint32_t padding : 9;
 };
-static_assert(sizeof(VOP3_instruction) == sizeof(Instruction) + 8, "Unexpected padding");
+static_assert(sizeof(VOP3A_instruction) == sizeof(Instruction) + 8, "Unexpected padding");
 
 struct VOP3P_instruction : public Instruction {
    bool neg_lo[3];
@@ -1394,8 +1047,7 @@ struct VOP3P_instruction : public Instruction {
    uint8_t opsel_lo : 3;
    uint8_t opsel_hi : 3;
    bool clamp : 1;
-   uint8_t padding0 : 1;
-   uint8_t padding1;
+   uint32_t padding : 9;
 };
 static_assert(sizeof(VOP3P_instruction) == sizeof(Instruction) + 8, "Unexpected padding");
 
@@ -1412,57 +1064,44 @@ struct DPP_instruction : public Instruction {
    uint8_t row_mask : 4;
    uint8_t bank_mask : 4;
    bool bound_ctrl : 1;
-   uint8_t padding : 7;
+   uint32_t padding : 7;
 };
 static_assert(sizeof(DPP_instruction) == sizeof(Instruction) + 8, "Unexpected padding");
 
-struct SubdwordSel {
-   enum sdwa_sel : uint8_t {
-      ubyte = 0x4,
-      uword = 0x8,
-      dword = 0x10,
-      sext = 0x20,
-      sbyte = ubyte | sext,
-      sword = uword | sext,
+enum sdwa_sel : uint8_t {
+    /* masks */
+    sdwa_wordnum = 0x1,
+    sdwa_bytenum = 0x3,
+    sdwa_asuint = 0x7 | 0x10,
+    sdwa_rasize = 0x3,
 
-      ubyte0 = ubyte,
-      ubyte1 = ubyte | 1,
-      ubyte2 = ubyte | 2,
-      ubyte3 = ubyte | 3,
-      sbyte0 = sbyte,
-      sbyte1 = sbyte | 1,
-      sbyte2 = sbyte | 2,
-      sbyte3 = sbyte | 3,
-      uword0 = uword,
-      uword1 = uword | 2,
-      sword0 = sword,
-      sword1 = sword | 2,
-   };
+    /* flags */
+    sdwa_isword = 0x4,
+    sdwa_sext = 0x8,
+    sdwa_isra = 0x10,
 
-   SubdwordSel() : sel((sdwa_sel)0) {}
-   constexpr SubdwordSel(sdwa_sel sel_) : sel(sel_) {}
-   constexpr SubdwordSel(unsigned size, unsigned offset, bool sign_extend)
-       : sel((sdwa_sel)((sign_extend ? sext : 0) | size << 2 | offset))
-   {}
-   constexpr operator sdwa_sel() const { return sel; }
-   explicit operator bool() const { return sel != 0; }
+    /* specific values */
+    sdwa_ubyte0 = 0,
+    sdwa_ubyte1 = 1,
+    sdwa_ubyte2 = 2,
+    sdwa_ubyte3 = 3,
+    sdwa_uword0 = sdwa_isword | 0,
+    sdwa_uword1 = sdwa_isword | 1,
+    sdwa_udword = 6,
 
-   constexpr unsigned size() const { return (sel >> 2) & 0x7; }
-   constexpr unsigned offset() const { return sel & 0x3; }
-   constexpr bool sign_extend() const { return sel & sext; }
-   constexpr unsigned to_sdwa_sel(unsigned reg_byte_offset) const
-   {
-      reg_byte_offset += offset();
-      if (size() == 1)
-         return reg_byte_offset;
-      else if (size() == 2)
-         return 4 + (reg_byte_offset >> 1);
-      else
-         return 6;
-   }
+    sdwa_sbyte0 = sdwa_ubyte0 | sdwa_sext,
+    sdwa_sbyte1 = sdwa_ubyte1 | sdwa_sext,
+    sdwa_sbyte2 = sdwa_ubyte2 | sdwa_sext,
+    sdwa_sbyte3 = sdwa_ubyte3 | sdwa_sext,
+    sdwa_sword0 = sdwa_uword0 | sdwa_sext,
+    sdwa_sword1 = sdwa_uword1 | sdwa_sext,
+    sdwa_sdword = sdwa_udword | sdwa_sext,
 
-private:
-   sdwa_sel sel;
+    /* register-allocated */
+    sdwa_ubyte = 1 | sdwa_isra,
+    sdwa_uword = 2 | sdwa_isra,
+    sdwa_sbyte = sdwa_ubyte | sdwa_sext,
+    sdwa_sword = sdwa_uword | sdwa_sext,
 };
 
 /**
@@ -1476,13 +1115,14 @@ private:
 struct SDWA_instruction : public Instruction {
    /* these destination modifiers aren't available with VOPC except for
     * clamp on GFX8 */
-   SubdwordSel sel[2];
-   SubdwordSel dst_sel;
+   uint8_t sel[2];
+   uint8_t dst_sel;
    bool neg[2];
    bool abs[2];
+   bool dst_preserve : 1;
    bool clamp : 1;
    uint8_t omod : 2; /* GFX9+ */
-   uint8_t padding : 5;
+   uint32_t padding : 4;
 };
 static_assert(sizeof(SDWA_instruction) == sizeof(Instruction) + 8, "Unexpected padding");
 
@@ -1521,20 +1161,18 @@ static_assert(sizeof(DS_instruction) == sizeof(Instruction) + 8, "Unexpected pad
  */
 struct MUBUF_instruction : public Instruction {
    memory_sync_info sync;
-   bool offen : 1;           /* Supply an offset from VGPR (VADDR) */
-   bool idxen : 1;           /* Supply an index from VGPR (VADDR) */
-   bool addr64 : 1;          /* SI, CIK: Address size is 64-bit */
-   bool glc : 1;             /* globally coherent */
-   bool dlc : 1;             /* NAVI: device level coherent */
-   bool slc : 1;             /* system level coherent */
-   bool tfe : 1;             /* texture fail enable */
-   bool lds : 1;             /* Return read-data to LDS instead of VGPRs */
-   uint16_t disable_wqm : 1; /* Require an exec mask without helper invocations */
-   uint16_t offset : 12;     /* Unsigned byte offset - 12 bit */
-   uint16_t swizzled : 1;
-   uint16_t padding0 : 2;
-   uint16_t vtx_binding : 6; /* 0 if this is not a vertex attribute load */
-   uint16_t padding1 : 10;
+   bool offen : 1; /* Supply an offset from VGPR (VADDR) */
+   bool idxen : 1; /* Supply an index from VGPR (VADDR) */
+   bool addr64 : 1; /* SI, CIK: Address size is 64-bit */
+   bool glc : 1; /* globally coherent */
+   bool dlc : 1; /* NAVI: device level coherent */
+   bool slc : 1; /* system level coherent */
+   bool tfe : 1; /* texture fail enable */
+   bool lds : 1; /* Return read-data to LDS instead of VGPRs */
+   bool disable_wqm : 1; /* Require an exec mask without helper invocations */
+   uint16_t offset : 12; /* Unsigned byte offset - 12 bit */
+   bool swizzled : 1;
+   uint32_t padding1 : 18;
 };
 static_assert(sizeof(MUBUF_instruction) == sizeof(Instruction) + 8, "Unexpected padding");
 
@@ -1548,17 +1186,16 @@ static_assert(sizeof(MUBUF_instruction) == sizeof(Instruction) + 8, "Unexpected 
  */
 struct MTBUF_instruction : public Instruction {
    memory_sync_info sync;
-   uint8_t dfmt : 4;         /* Data Format of data in memory buffer */
-   uint8_t nfmt : 3;         /* Numeric format of data in memory */
-   bool offen : 1;           /* Supply an offset from VGPR (VADDR) */
-   uint16_t idxen : 1;       /* Supply an index from VGPR (VADDR) */
-   uint16_t glc : 1;         /* globally coherent */
-   uint16_t dlc : 1;         /* NAVI: device level coherent */
-   uint16_t slc : 1;         /* system level coherent */
-   uint16_t tfe : 1;         /* texture fail enable */
-   uint16_t disable_wqm : 1; /* Require an exec mask without helper invocations */
-   uint16_t vtx_binding : 6; /* 0 if this is not a vertex attribute load */
-   uint16_t padding : 4;
+   uint8_t dfmt : 4; /* Data Format of data in memory buffer */
+   uint8_t nfmt : 3; /* Numeric format of data in memory */
+   bool offen : 1; /* Supply an offset from VGPR (VADDR) */
+   bool idxen : 1; /* Supply an index from VGPR (VADDR) */
+   bool glc : 1; /* globally coherent */
+   bool dlc : 1; /* NAVI: device level coherent */
+   bool slc : 1; /* system level coherent */
+   bool tfe : 1; /* texture fail enable */
+   bool disable_wqm : 1; /* Require an exec mask without helper invocations */
+   uint32_t padding : 10;
    uint16_t offset; /* Unsigned byte offset - 12 bit */
 };
 static_assert(sizeof(MTBUF_instruction) == sizeof(Instruction) + 8, "Unexpected padding");
@@ -1567,29 +1204,27 @@ static_assert(sizeof(MTBUF_instruction) == sizeof(Instruction) + 8, "Unexpected 
  * Vector Memory Image Instructions
  * Operand(0) SRSRC - Scalar GPR that specifies the resource constant.
  * Operand(1): SSAMP - Scalar GPR that specifies sampler constant.
- * Operand(2): VDATA - Vector GPR for write data or zero if TFE/LWE=1.
- * Operand(3): VADDR - Address source. Can carry an offset or an index.
+ *             or VDATA - Vector GPR for write data.
+ * Operand(2): VADDR - Address source. Can carry an offset or an index.
  * Definition(0): VDATA - Vector GPR for read result.
  *
  */
 struct MIMG_instruction : public Instruction {
    memory_sync_info sync;
-   uint8_t dmask;        /* Data VGPR enable mask */
-   uint8_t dim : 3;      /* NAVI: dimensionality */
-   bool unrm : 1;        /* Force address to be un-normalized */
-   bool dlc : 1;         /* NAVI: device level coherent */
-   bool glc : 1;         /* globally coherent */
-   bool slc : 1;         /* system level coherent */
-   bool tfe : 1;         /* texture fail enable */
-   bool da : 1;          /* declare an array */
-   bool lwe : 1;         /* LOD warning enable */
-   bool r128 : 1;        /* NAVI: Texture resource size */
-   bool a16 : 1;         /* VEGA, NAVI: Address components are 16-bits */
-   bool d16 : 1;         /* Convert 32-bit data to 16-bit data */
+   uint8_t dmask; /* Data VGPR enable mask */
+   uint8_t dim : 3; /* NAVI: dimensionality */
+   bool unrm : 1; /* Force address to be un-normalized */
+   bool dlc : 1; /* NAVI: device level coherent */
+   bool glc : 1; /* globally coherent */
+   bool slc : 1; /* system level coherent */
+   bool tfe : 1; /* texture fail enable */
+   bool da : 1; /* declare an array */
+   bool lwe : 1; /* Force data to be un-normalized */
+   bool r128 : 1; /* NAVI: Texture resource size */
+   bool a16 : 1; /* VEGA, NAVI: Address components are 16-bits */
+   bool d16 : 1; /* Convert 32-bit data to 16-bit data */
    bool disable_wqm : 1; /* Require an exec mask without helper invocations */
-   uint8_t padding0 : 2;
-   uint8_t padding1;
-   uint8_t padding2;
+   uint32_t padding : 18;
 };
 static_assert(sizeof(MIMG_instruction) == sizeof(Instruction) + 8, "Unexpected padding");
 
@@ -1608,7 +1243,7 @@ struct FLAT_instruction : public Instruction {
    bool lds : 1;
    bool nv : 1;
    bool disable_wqm : 1; /* Require an exec mask without helper invocations */
-   uint8_t padding0 : 2;
+   uint32_t padding0 : 2;
    uint16_t offset; /* Vega/Navi only */
    uint16_t padding1;
 };
@@ -1620,8 +1255,7 @@ struct Export_instruction : public Instruction {
    bool compressed : 1;
    bool done : 1;
    bool valid_mask : 1;
-   uint8_t padding0 : 5;
-   uint8_t padding1;
+   uint32_t padding : 13;
 };
 static_assert(sizeof(Export_instruction) == sizeof(Instruction) + 4, "Unexpected padding");
 
@@ -1648,7 +1282,6 @@ struct Pseudo_barrier_instruction : public Instruction {
 static_assert(sizeof(Pseudo_barrier_instruction) == sizeof(Instruction) + 4, "Unexpected padding");
 
 enum ReduceOp : uint16_t {
-   // clang-format off
    iadd8, iadd16, iadd32, iadd64,
    imul8, imul16, imul32, imul64,
           fadd16, fadd32, fadd64,
@@ -1662,8 +1295,6 @@ enum ReduceOp : uint16_t {
    iand8, iand16, iand32, iand64,
    ior8, ior16, ior32, ior64,
    ixor8, ixor16, ixor32, ixor64,
-   num_reduce_ops,
-   // clang-format on
 };
 
 /**
@@ -1683,24 +1314,23 @@ struct Pseudo_reduction_instruction : public Instruction {
    ReduceOp reduce_op;
    uint16_t cluster_size; // must be 0 for scans
 };
-static_assert(sizeof(Pseudo_reduction_instruction) == sizeof(Instruction) + 4,
-              "Unexpected padding");
+static_assert(sizeof(Pseudo_reduction_instruction) == sizeof(Instruction) + 4, "Unexpected padding");
 
 struct instr_deleter_functor {
-   void operator()(void* p) { free(p); }
+   void operator()(void* p) {
+      free(p);
+   }
 };
 
-template <typename T> using aco_ptr = std::unique_ptr<T, instr_deleter_functor>;
+template<typename T>
+using aco_ptr = std::unique_ptr<T, instr_deleter_functor>;
 
-template <typename T>
-T*
-create_instruction(aco_opcode opcode, Format format, uint32_t num_operands,
-                   uint32_t num_definitions)
+template<typename T>
+T* create_instruction(aco_opcode opcode, Format format, uint32_t num_operands, uint32_t num_definitions)
 {
-   std::size_t size =
-      sizeof(T) + num_operands * sizeof(Operand) + num_definitions * sizeof(Definition);
-   char* data = (char*)calloc(1, size);
-   T* inst = (T*)data;
+   std::size_t size = sizeof(T) + num_operands * sizeof(Operand) + num_definitions * sizeof(Definition);
+   char *data = (char*) calloc(1, size);
+   T* inst = (T*) data;
 
    inst->opcode = opcode;
    inst->format = format;
@@ -1713,73 +1343,49 @@ create_instruction(aco_opcode opcode, Format format, uint32_t num_operands,
    return inst;
 }
 
-constexpr bool
-Instruction::usesModifiers() const noexcept
+constexpr bool Instruction::usesModifiers() const noexcept
 {
    if (isDPP() || isSDWA())
       return true;
 
-   if (isVOP3P()) {
-      const VOP3P_instruction& vop3p = this->vop3p();
+   if (format == Format::VOP3P) {
+      const VOP3P_instruction *vop3p = static_cast<const VOP3P_instruction*>(this);
       for (unsigned i = 0; i < operands.size(); i++) {
-         if (vop3p.neg_lo[i] || vop3p.neg_hi[i])
-            return true;
-
-         /* opsel_hi must be 1 to not be considered a modifier - even for constants */
-         if (!(vop3p.opsel_hi & (1 << i)))
+         if (vop3p->neg_lo[i] || vop3p->neg_hi[i])
             return true;
       }
-      return vop3p.opsel_lo || vop3p.clamp;
+      return vop3p->opsel_lo || vop3p->opsel_hi || vop3p->clamp;
    } else if (isVOP3()) {
-      const VOP3_instruction& vop3 = this->vop3();
+      const VOP3A_instruction *vop3 = static_cast<const VOP3A_instruction*>(this);
       for (unsigned i = 0; i < operands.size(); i++) {
-         if (vop3.abs[i] || vop3.neg[i])
+         if (vop3->abs[i] || vop3->neg[i])
             return true;
       }
-      return vop3.opsel || vop3.clamp || vop3.omod;
+      return vop3->opsel || vop3->clamp || vop3->omod;
    }
    return false;
 }
 
-constexpr bool
-is_phi(Instruction* instr)
+constexpr bool is_phi(Instruction* instr)
 {
    return instr->opcode == aco_opcode::p_phi || instr->opcode == aco_opcode::p_linear_phi;
 }
 
-static inline bool
-is_phi(aco_ptr<Instruction>& instr)
+static inline bool is_phi(aco_ptr<Instruction>& instr)
 {
    return is_phi(instr.get());
 }
 
 memory_sync_info get_sync_info(const Instruction* instr);
 
-bool is_dead(const std::vector<uint16_t>& uses, Instruction* instr);
+bool is_dead(const std::vector<uint16_t>& uses, Instruction *instr);
 
 bool can_use_opsel(chip_class chip, aco_opcode op, int idx, bool high);
-bool instr_is_16bit(chip_class chip, aco_opcode op);
-bool can_use_SDWA(chip_class chip, const aco_ptr<Instruction>& instr, bool pre_ra);
-bool can_use_DPP(const aco_ptr<Instruction>& instr, bool pre_ra);
+bool can_use_SDWA(chip_class chip, const aco_ptr<Instruction>& instr);
 /* updates "instr" and returns the old instruction (or NULL if no update was needed) */
 aco_ptr<Instruction> convert_to_SDWA(chip_class chip, aco_ptr<Instruction>& instr);
-aco_ptr<Instruction> convert_to_DPP(aco_ptr<Instruction>& instr);
-bool needs_exec_mask(const Instruction* instr);
-
-aco_opcode get_ordered(aco_opcode op);
-aco_opcode get_unordered(aco_opcode op);
-aco_opcode get_inverse(aco_opcode op);
-aco_opcode get_f32_cmp(aco_opcode op);
-unsigned get_cmp_bitsize(aco_opcode op);
-bool is_cmp(aco_opcode op);
-
-bool can_swap_operands(aco_ptr<Instruction>& instr, aco_opcode* new_op);
 
 uint32_t get_reduction_identity(ReduceOp op, unsigned idx);
-
-unsigned get_mimg_nsa_dwords(const Instruction* instr);
-
-bool should_form_clause(const Instruction* a, const Instruction* b);
 
 enum block_kind {
    /* uniform indicates that leaving this block,
@@ -1802,56 +1408,50 @@ enum block_kind {
    block_kind_export_end = 1 << 15,
 };
 
+
 struct RegisterDemand {
    constexpr RegisterDemand() = default;
-   constexpr RegisterDemand(const int16_t v, const int16_t s) noexcept : vgpr{v}, sgpr{s} {}
+   constexpr RegisterDemand(const int16_t v, const int16_t s) noexcept
+      : vgpr{v}, sgpr{s} {}
    int16_t vgpr = 0;
    int16_t sgpr = 0;
 
-   constexpr friend bool operator==(const RegisterDemand a, const RegisterDemand b) noexcept
-   {
+   constexpr friend bool operator==(const RegisterDemand a, const RegisterDemand b) noexcept {
       return a.vgpr == b.vgpr && a.sgpr == b.sgpr;
    }
 
-   constexpr bool exceeds(const RegisterDemand other) const noexcept
-   {
+   constexpr bool exceeds(const RegisterDemand other) const noexcept {
       return vgpr > other.vgpr || sgpr > other.sgpr;
    }
 
-   constexpr RegisterDemand operator+(const Temp t) const noexcept
-   {
+   constexpr RegisterDemand operator+(const Temp t) const noexcept {
       if (t.type() == RegType::sgpr)
-         return RegisterDemand(vgpr, sgpr + t.size());
+         return RegisterDemand( vgpr, sgpr + t.size() );
       else
-         return RegisterDemand(vgpr + t.size(), sgpr);
+         return RegisterDemand( vgpr + t.size(), sgpr );
    }
 
-   constexpr RegisterDemand operator+(const RegisterDemand other) const noexcept
-   {
+   constexpr RegisterDemand operator+(const RegisterDemand other) const noexcept {
       return RegisterDemand(vgpr + other.vgpr, sgpr + other.sgpr);
    }
 
-   constexpr RegisterDemand operator-(const RegisterDemand other) const noexcept
-   {
+   constexpr RegisterDemand operator-(const RegisterDemand other) const noexcept {
       return RegisterDemand(vgpr - other.vgpr, sgpr - other.sgpr);
    }
 
-   constexpr RegisterDemand& operator+=(const RegisterDemand other) noexcept
-   {
+   constexpr RegisterDemand& operator+=(const RegisterDemand other) noexcept {
       vgpr += other.vgpr;
       sgpr += other.sgpr;
       return *this;
    }
 
-   constexpr RegisterDemand& operator-=(const RegisterDemand other) noexcept
-   {
+   constexpr RegisterDemand& operator-=(const RegisterDemand other) noexcept {
       vgpr -= other.vgpr;
       sgpr -= other.sgpr;
       return *this;
    }
 
-   constexpr RegisterDemand& operator+=(const Temp t) noexcept
-   {
+   constexpr RegisterDemand& operator+=(const Temp t) noexcept {
       if (t.type() == RegType::sgpr)
          sgpr += t.size();
       else
@@ -1859,8 +1459,7 @@ struct RegisterDemand {
       return *this;
    }
 
-   constexpr RegisterDemand& operator-=(const Temp t) noexcept
-   {
+   constexpr RegisterDemand& operator-=(const Temp t) noexcept {
       if (t.type() == RegType::sgpr)
          sgpr -= t.size();
       else
@@ -1868,11 +1467,11 @@ struct RegisterDemand {
       return *this;
    }
 
-   constexpr void update(const RegisterDemand other) noexcept
-   {
+   constexpr void update(const RegisterDemand other) noexcept {
       vgpr = std::max(vgpr, other.vgpr);
       sgpr = std::max(sgpr, other.sgpr);
    }
+
 };
 
 /* CFG */
@@ -1887,17 +1486,17 @@ struct Block {
    std::vector<unsigned> linear_succs;
    RegisterDemand register_demand = RegisterDemand();
    uint16_t loop_nest_depth = 0;
-   uint16_t divergent_if_logical_depth = 0;
-   uint16_t uniform_if_depth = 0;
    uint16_t kind = 0;
    int logical_idom = -1;
    int linear_idom = -1;
+   Temp live_out_exec = Temp();
 
    /* this information is needed for predecessors to blocks with phis when
     * moving out of ssa */
    bool scc_live_out = false;
    PhysReg scratch_sgpr = PhysReg(); /* only needs to be valid if scc_live_out != false */
 
+   Block(unsigned idx) : index(idx) {}
    Block() : index(0) {}
 };
 
@@ -1905,25 +1504,23 @@ struct Block {
  * Shader stages as provided in Vulkan by the application. Contrast this to HWStage.
  */
 enum class SWStage : uint8_t {
-   None = 0,
-   VS = 1 << 0,     /* Vertex Shader */
-   GS = 1 << 1,     /* Geometry Shader */
-   TCS = 1 << 2,    /* Tessellation Control aka Hull Shader */
-   TES = 1 << 3,    /* Tessellation Evaluation aka Domain Shader */
-   FS = 1 << 4,     /* Fragment aka Pixel Shader */
-   CS = 1 << 5,     /* Compute Shader */
-   GSCopy = 1 << 6, /* GS Copy Shader (internal) */
+    None = 0,
+    VS = 1 << 0,     /* Vertex Shader */
+    GS = 1 << 1,     /* Geometry Shader */
+    TCS = 1 << 2,    /* Tessellation Control aka Hull Shader */
+    TES = 1 << 3,    /* Tessellation Evaluation aka Domain Shader */
+    FS = 1 << 4,     /* Fragment aka Pixel Shader */
+    CS = 1 << 5,     /* Compute Shader */
+    GSCopy = 1 << 6, /* GS Copy Shader (internal) */
 
-   /* Stage combinations merged to run on a single HWStage */
-   VS_GS = VS | GS,
-   VS_TCS = VS | TCS,
-   TES_GS = TES | GS,
+    /* Stage combinations merged to run on a single HWStage */
+    VS_GS = VS | GS,
+    VS_TCS = VS | TCS,
+    TES_GS = TES | GS,
 };
 
-constexpr SWStage
-operator|(SWStage a, SWStage b)
-{
-   return static_cast<SWStage>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
+constexpr SWStage operator|(SWStage a, SWStage b) {
+    return static_cast<SWStage>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
 }
 
 /*
@@ -1934,14 +1531,14 @@ operator|(SWStage a, SWStage b)
  * See README.md for details.
  */
 enum class HWStage : uint8_t {
-   VS,
-   ES, /* Export shader: pre-GS (VS or TES) on GFX6-8. Combined into GS on GFX9 (and GFX10/legacy). */
-   GS,  /* Geometry shader on GFX10/legacy and GFX6-9. */
-   NGG, /* Primitive shader, used to implement VS, TES, GS. */
-   LS,  /* Local shader: pre-TCS (VS) on GFX6-8. Combined into HS on GFX9 (and GFX10/legacy). */
-   HS,  /* Hull shader: TCS on GFX6-8. Merged VS and TCS on GFX9-10. */
-   FS,
-   CS,
+    VS,
+    ES,  /* Export shader: pre-GS (VS or TES) on GFX6-8. Combined into GS on GFX9 (and GFX10/legacy). */
+    GS,  /* Geometry shader on GFX10/legacy and GFX6-9. */
+    NGG, /* Primitive shader, used to implement VS, TES, GS. */
+    LS,  /* Local shader: pre-TCS (VS) on GFX6-8. Combined into HS on GFX9 (and GFX10/legacy). */
+    HS,  /* Hull shader: TCS on GFX6-8. Merged VS and TCS on GFX9-10. */
+    FS,
+    CS,
 };
 
 /*
@@ -1949,27 +1546,32 @@ enum class HWStage : uint8_t {
  * HWStage it will run on.
  */
 struct Stage {
-   constexpr Stage() = default;
+    constexpr Stage() = default;
 
-   explicit constexpr Stage(HWStage hw_, SWStage sw_) : sw(sw_), hw(hw_) {}
+    explicit constexpr Stage(HWStage hw_, SWStage sw_) : sw(sw_), hw(hw_) { }
 
-   /* Check if the given SWStage is included */
-   constexpr bool has(SWStage stage) const
-   {
-      return (static_cast<uint8_t>(sw) & static_cast<uint8_t>(stage));
-   }
+    /* Check if the given SWStage is included */
+    constexpr bool has(SWStage stage) const {
+        return (static_cast<uint8_t>(sw) & static_cast<uint8_t>(stage));
+    }
 
-   unsigned num_sw_stages() const { return util_bitcount(static_cast<uint8_t>(sw)); }
+    unsigned num_sw_stages() const {
+        return util_bitcount(static_cast<uint8_t>(sw));
+    }
 
-   constexpr bool operator==(const Stage& other) const { return sw == other.sw && hw == other.hw; }
+    constexpr bool operator==(const Stage& other) const {
+        return sw == other.sw && hw == other.hw;
+    }
 
-   constexpr bool operator!=(const Stage& other) const { return sw != other.sw || hw != other.hw; }
+    constexpr bool operator!=(const Stage& other) const {
+        return sw != other.sw || hw != other.hw;
+    }
 
-   /* Mask of merged software stages */
-   SWStage sw = SWStage::None;
+    /* Mask of merged software stages */
+    SWStage sw = SWStage::None;
 
-   /* Active hardware stage */
-   HWStage hw{};
+    /* Active hardware stage */
+    HWStage hw {};
 };
 
 /* possible settings of Program::stage */
@@ -1991,8 +1593,7 @@ static constexpr Stage tess_eval_geometry_gs(HWStage::GS, SWStage::TES_GS);
 static constexpr Stage vertex_ls(HWStage::LS, SWStage::VS); /* vertex before tesselation control */
 static constexpr Stage vertex_es(HWStage::ES, SWStage::VS); /* vertex before geometry */
 static constexpr Stage tess_control_hs(HWStage::HS, SWStage::TCS);
-static constexpr Stage tess_eval_es(HWStage::ES,
-                                    SWStage::TES); /* tesselation evaluation before geometry */
+static constexpr Stage tess_eval_es(HWStage::ES, SWStage::TES); /* tesselation evaluation before geometry */
 static constexpr Stage geometry_gs(HWStage::GS, SWStage::GS);
 
 enum statistic {
@@ -2000,86 +1601,65 @@ enum statistic {
    statistic_instructions,
    statistic_copies,
    statistic_branches,
-   statistic_latency,
-   statistic_inv_throughput,
+   statistic_cycles,
    statistic_vmem_clauses,
    statistic_smem_clauses,
+   statistic_vmem_score,
+   statistic_smem_score,
    statistic_sgpr_presched,
    statistic_vgpr_presched,
    num_statistics
 };
 
-struct DeviceInfo {
-   uint16_t lds_encoding_granule;
-   uint16_t lds_alloc_granule;
-   uint32_t lds_limit; /* in bytes */
-   bool has_16bank_lds;
-   uint16_t physical_sgprs;
-   uint16_t physical_vgprs;
-   uint16_t vgpr_limit;
-   uint16_t sgpr_limit;
-   uint16_t sgpr_alloc_granule;
-   uint16_t vgpr_alloc_granule; /* must be power of two */
-   unsigned max_wave64_per_simd;
-   unsigned simd_per_cu;
-   bool has_fast_fma32 = false;
-   bool xnack_enabled = false;
-   bool sram_ecc_enabled = false;
-};
-
-enum class CompilationProgress {
-   after_isel,
-   after_spilling,
-   after_ra,
-};
-
 class Program final {
 public:
+   float_mode next_fp_mode;
    std::vector<Block> blocks;
    std::vector<RegClass> temp_rc = {s1};
    RegisterDemand max_reg_demand = RegisterDemand();
    uint16_t num_waves = 0;
    uint16_t max_waves = 0; /* maximum number of waves, regardless of register usage */
    ac_shader_config* config;
-   const struct radv_shader_info* info;
+   struct radv_shader_info *info;
    enum chip_class chip_class;
    enum radeon_family family;
-   DeviceInfo dev;
    unsigned wave_size;
    RegClass lane_mask;
    Stage stage;
    bool needs_exact = false; /* there exists an instruction with disable_wqm = true */
-   bool needs_wqm = false;   /* there exists a p_wqm instruction */
+   bool needs_wqm = false; /* there exists a p_wqm instruction */
+   bool wb_smem_l1_on_end = false;
 
    std::vector<uint8_t> constant_data;
    Temp private_segment_buffer;
    Temp scratch_offset;
 
    uint16_t min_waves = 0;
+   uint16_t lds_alloc_granule;
+   uint32_t lds_limit; /* in bytes */
+   bool has_16bank_lds;
+   uint16_t vgpr_limit;
+   uint16_t sgpr_limit;
+   uint16_t physical_sgprs;
+   uint16_t sgpr_alloc_granule; /* minus one. must be power of two */
+   uint16_t vgpr_alloc_granule; /* minus one. must be power of two */
    unsigned workgroup_size; /* if known; otherwise UINT_MAX */
-   bool wgp_mode;
-   bool early_rast = false; /* whether rasterization can start as soon as the 1st DONE pos export */
+
+   bool xnack_enabled = false;
+   bool sram_ecc_enabled = false;
+   bool has_fast_fma32 = false;
 
    bool needs_vcc = false;
    bool needs_flat_scr = false;
 
-   CompilationProgress progress;
-
    bool collect_statistics = false;
    uint32_t statistics[num_statistics];
 
-   float_mode next_fp_mode;
-   unsigned next_loop_depth = 0;
-   unsigned next_divergent_if_logical_depth = 0;
-   unsigned next_uniform_if_depth = 0;
-
-   std::vector<Definition> vs_inputs;
-
    struct {
-      FILE* output = stderr;
-      bool shorten_messages = false;
-      void (*func)(void* private_data, enum radv_compiler_debug_level level, const char* message);
-      void* private_data;
+      void (*func)(void *private_data,
+                   enum radv_compiler_debug_level level,
+                   const char *message);
+      void *private_data;
    } debug;
 
    uint32_t allocateId(RegClass rc)
@@ -2096,26 +1676,25 @@ public:
       allocationID += amount;
    }
 
-   Temp allocateTmp(RegClass rc) { return Temp(allocateId(rc), rc); }
-
-   uint32_t peekAllocationId() { return allocationID; }
-
-   friend void reindex_ssa(Program* program);
-   friend void reindex_ssa(Program* program, std::vector<IDSet>& live_out);
-
-   Block* create_and_insert_block()
+   Temp allocateTmp(RegClass rc)
    {
-      Block block;
-      return insert_block(std::move(block));
+      return Temp(allocateId(rc), rc);
    }
 
-   Block* insert_block(Block&& block)
+   uint32_t peekAllocationId()
    {
+      return allocationID;
+   }
+
+   Block* create_and_insert_block() {
+      blocks.emplace_back(blocks.size());
+      blocks.back().fp_mode = next_fp_mode;
+      return &blocks.back();
+   }
+
+   Block* insert_block(Block&& block) {
       block.index = blocks.size();
       block.fp_mode = next_fp_mode;
-      block.loop_nest_depth = next_loop_depth;
-      block.divergent_if_logical_depth = next_divergent_if_logical_depth;
-      block.uniform_if_depth = next_uniform_if_depth;
       blocks.emplace_back(std::move(block));
       return &blocks.back();
    }
@@ -2131,114 +1710,84 @@ struct live {
    std::vector<std::vector<RegisterDemand>> register_demand;
 };
 
-struct ra_test_policy {
-   /* Force RA to always use its pessimistic fallback algorithm */
-   bool skip_optimistic_path = false;
-};
-
 void init();
 
-void init_program(Program* program, Stage stage, const struct radv_shader_info* info,
-                  enum chip_class chip_class, enum radeon_family family, bool wgp_mode,
-                  ac_shader_config* config);
+void init_program(Program *program, Stage stage, struct radv_shader_info *info,
+                  enum chip_class chip_class, enum radeon_family family,
+                  ac_shader_config *config);
 
-void select_program(Program* program, unsigned shader_count, struct nir_shader* const* shaders,
-                    ac_shader_config* config, const struct radv_nir_compiler_options* options,
-                    const struct radv_shader_info* info,
-                    const struct radv_shader_args* args);
-void select_gs_copy_shader(Program* program, struct nir_shader* gs_shader, ac_shader_config* config,
-                           const struct radv_nir_compiler_options* options,
-                           const struct radv_shader_info* info,
-                           const struct radv_shader_args* args);
-void select_trap_handler_shader(Program* program, struct nir_shader* shader,
+void select_program(Program *program,
+                    unsigned shader_count,
+                    struct nir_shader *const *shaders,
+                    ac_shader_config* config,
+                    struct radv_shader_args *args);
+void select_gs_copy_shader(Program *program, struct nir_shader *gs_shader,
+                           ac_shader_config* config,
+                           struct radv_shader_args *args);
+void select_trap_handler_shader(Program *program, struct nir_shader *shader,
                                 ac_shader_config* config,
-                                const struct radv_nir_compiler_options* options,
-                                const struct radv_shader_info* info,
-                                const struct radv_shader_args* args);
-void select_vs_prolog(Program* program, const struct radv_vs_prolog_key* key,
-                      ac_shader_config* config,
-                      const struct radv_nir_compiler_options* options,
-                      const struct radv_shader_info* info,
-                      const struct radv_shader_args* args,
-                      unsigned* num_preserved_sgprs);
+                                struct radv_shader_args *args);
 
 void lower_phis(Program* program);
 void calc_min_waves(Program* program);
 void update_vgpr_sgpr_demand(Program* program, const RegisterDemand new_demand);
 live live_var_analysis(Program* program);
-std::vector<uint16_t> dead_code_analysis(Program* program);
+std::vector<uint16_t> dead_code_analysis(Program *program);
 void dominator_tree(Program* program);
-void insert_exec_mask(Program* program);
+void insert_exec_mask(Program *program);
 void value_numbering(Program* program);
 void optimize(Program* program);
-void optimize_postRA(Program* program);
 void setup_reduce_temp(Program* program);
 void lower_to_cssa(Program* program, live& live_vars);
-void register_allocation(Program* program, std::vector<IDSet>& live_out_per_block,
-                         ra_test_policy = {});
+void register_allocation(Program *program, std::vector<IDSet>& live_out_per_block);
 void ssa_elimination(Program* program);
 void lower_to_hw_instr(Program* program);
 void schedule_program(Program* program, live& live_vars);
 void spill(Program* program, live& live_vars);
 void insert_wait_states(Program* program);
 void insert_NOPs(Program* program);
-void form_hard_clauses(Program* program);
+void form_hard_clauses(Program *program);
 unsigned emit_program(Program* program, std::vector<uint32_t>& code);
-/**
- * Returns true if print_asm can disassemble the given program for the current build/runtime
- * configuration
- */
-bool check_print_asm_support(Program* program);
-bool print_asm(Program* program, std::vector<uint32_t>& binary, unsigned exec_size, FILE* output);
+bool print_asm(Program *program, std::vector<uint32_t>& binary,
+               unsigned exec_size, FILE *output);
 bool validate_ir(Program* program);
 bool validate_ra(Program* program);
 #ifndef NDEBUG
-void perfwarn(Program* program, bool cond, const char* msg, Instruction* instr = NULL);
+void perfwarn(Program *program, bool cond, const char *msg, Instruction *instr=NULL);
 #else
-#define perfwarn(program, cond, msg, ...)                                                          \
-   do {                                                                                            \
-   } while (0)
+#define perfwarn(program, cond, msg, ...) do {} while(0)
 #endif
 
-void collect_presched_stats(Program* program);
-void collect_preasm_stats(Program* program);
-void collect_postasm_stats(Program* program, const std::vector<uint32_t>& code);
+void collect_presched_stats(Program *program);
+void collect_preasm_stats(Program *program);
+void collect_postasm_stats(Program *program, const std::vector<uint32_t>& code);
 
-enum print_flags {
-   print_no_ssa = 0x1,
-   print_perf_info = 0x2,
-   print_kill = 0x4,
-   print_live_vars = 0x8,
-};
+void aco_print_instr(const Instruction *instr, FILE *output);
+void aco_print_program(const Program *program, FILE *output);
 
-void aco_print_operand(const Operand* operand, FILE* output, unsigned flags = 0);
-void aco_print_instr(const Instruction* instr, FILE* output, unsigned flags = 0);
-void aco_print_program(const Program* program, FILE* output, unsigned flags = 0);
-void aco_print_program(const Program* program, FILE* output, const live& live_vars,
-                       unsigned flags = 0);
-
-void _aco_perfwarn(Program* program, const char* file, unsigned line, const char* fmt, ...);
-void _aco_err(Program* program, const char* file, unsigned line, const char* fmt, ...);
+void _aco_perfwarn(Program *program, const char *file, unsigned line,
+                   const char *fmt, ...);
+void _aco_err(Program *program, const char *file, unsigned line,
+              const char *fmt, ...);
 
 #define aco_perfwarn(program, ...) _aco_perfwarn(program, __FILE__, __LINE__, __VA_ARGS__)
-#define aco_err(program, ...)      _aco_err(program, __FILE__, __LINE__, __VA_ARGS__)
+#define aco_err(program, ...) _aco_err(program, __FILE__, __LINE__, __VA_ARGS__)
 
 /* utilities for dealing with register demand */
 RegisterDemand get_live_changes(aco_ptr<Instruction>& instr);
 RegisterDemand get_temp_registers(aco_ptr<Instruction>& instr);
-RegisterDemand get_demand_before(RegisterDemand demand, aco_ptr<Instruction>& instr,
-                                 aco_ptr<Instruction>& instr_before);
+RegisterDemand get_demand_before(RegisterDemand demand, aco_ptr<Instruction>& instr, aco_ptr<Instruction>& instr_before);
 
 /* number of sgprs that need to be allocated but might notbe addressable as s0-s105 */
-uint16_t get_extra_sgprs(Program* program);
+uint16_t get_extra_sgprs(Program *program);
 
 /* get number of sgprs/vgprs allocated required to address a number of sgprs/vgprs */
-uint16_t get_sgpr_alloc(Program* program, uint16_t addressable_sgprs);
-uint16_t get_vgpr_alloc(Program* program, uint16_t addressable_vgprs);
+uint16_t get_sgpr_alloc(Program *program, uint16_t addressable_sgprs);
+uint16_t get_vgpr_alloc(Program *program, uint16_t addressable_vgprs);
 
 /* return number of addressable sgprs/vgprs for max_waves */
-uint16_t get_addr_sgpr_from_waves(Program* program, uint16_t max_waves);
-uint16_t get_addr_vgpr_from_waves(Program* program, uint16_t max_waves);
+uint16_t get_addr_sgpr_from_waves(Program *program, uint16_t max_waves);
+uint16_t get_addr_vgpr_from_waves(Program *program, uint16_t max_waves);
 
 typedef struct {
    const int16_t opcode_gfx7[static_cast<int>(aco_opcode::num_opcodes)];
@@ -2247,15 +1796,16 @@ typedef struct {
    const std::bitset<static_cast<int>(aco_opcode::num_opcodes)> can_use_input_modifiers;
    const std::bitset<static_cast<int>(aco_opcode::num_opcodes)> can_use_output_modifiers;
    const std::bitset<static_cast<int>(aco_opcode::num_opcodes)> is_atomic;
-   const char* name[static_cast<int>(aco_opcode::num_opcodes)];
+   const char *name[static_cast<int>(aco_opcode::num_opcodes)];
    const aco::Format format[static_cast<int>(aco_opcode::num_opcodes)];
    /* sizes used for input/output modifiers and constants */
    const unsigned operand_size[static_cast<int>(aco_opcode::num_opcodes)];
-   const instr_class classes[static_cast<int>(aco_opcode::num_opcodes)];
+   const unsigned definition_size[static_cast<int>(aco_opcode::num_opcodes)];
 } Info;
 
 extern const Info instr_info;
 
-} // namespace aco
+}
 
 #endif /* ACO_IR_H */
+

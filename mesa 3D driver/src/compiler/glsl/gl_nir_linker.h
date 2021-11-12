@@ -38,8 +38,7 @@ struct gl_nir_linker_options {
 #define nir_foreach_gl_uniform_variable(var, shader) \
    nir_foreach_variable_with_modes(var, shader, nir_var_uniform | \
                                                 nir_var_mem_ubo | \
-                                                nir_var_mem_ssbo | \
-                                                nir_var_image)
+                                                nir_var_mem_ssbo)
 
 bool gl_nir_link_spirv(struct gl_context *ctx,
                        struct gl_shader_program *prog,

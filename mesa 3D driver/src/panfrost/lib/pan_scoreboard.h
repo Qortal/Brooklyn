@@ -59,14 +59,14 @@ panfrost_add_job(
                 struct pan_pool *pool,
                 struct pan_scoreboard *scoreboard,
                 enum mali_job_type type,
-                bool barrier, bool suppress_prefetch,
-                unsigned local_dep, unsigned global_dep,
+                bool barrier,
+                unsigned local_dep,
                 const struct panfrost_ptr *job,
                 bool inject);
 
-struct panfrost_ptr
-panfrost_scoreboard_initialize_tiler(struct pan_pool *pool,
-                                     struct pan_scoreboard *scoreboard,
-                                     mali_ptr polygon_list);
+void panfrost_scoreboard_initialize_tiler(
+                struct pan_pool *pool,
+                struct pan_scoreboard *scoreboard,
+                mali_ptr polygon_list);
 
 #endif

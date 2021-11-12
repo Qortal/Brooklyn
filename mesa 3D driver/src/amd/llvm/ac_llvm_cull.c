@@ -47,12 +47,12 @@ struct ac_position_w_info {
     */
    LLVMValueRef w_accepted;
 
-   /* The bounding box culling doesn't work and should be skipped when this is true. */
+   LLVMValueRef all_w_positive;
    LLVMValueRef any_w_negative;
 };
 
 static void ac_analyze_position_w(struct ac_llvm_context *ctx, LLVMValueRef pos[3][4],
-                                  struct ac_position_w_info *w, unsigned num_vertices)
+                                  struct ac_position_w_info *w)
 {
    LLVMBuilderRef builder = ctx->builder;
    LLVMValueRef all_w_negative = ctx->i1true;
@@ -60,7 +60,7 @@ static void ac_analyze_position_w(struct ac_llvm_context *ctx, LLVMValueRef pos[
    w->w_reflection = ctx->i1false;
    w->any_w_negative = ctx->i1false;
 
-   for (unsigned i = 0; i < num_vertices; i++) {
+   for (unsigned i = 0; i < 3; i++) {
       LLVMValueRef neg_w;
 
       neg_w = LLVMBuildFCmp(builder, LLVMRealOLT, pos[i][3], ctx->f32_0, "");
@@ -69,6 +69,7 @@ static void ac_analyze_position_w(struct ac_llvm_context *ctx, LLVMValueRef pos[
       w->any_w_negative = LLVMBuildOr(builder, w->any_w_negative, neg_w, "");
       all_w_negative = LLVMBuildAnd(builder, all_w_negative, neg_w, "");
    }
+   w->all_w_positive = LLVMBuildNot(builder, w->any_w_negative, "");
    w->w_accepted = LLVMBuildNot(builder, all_w_negative, "");
 }
 
@@ -92,9 +93,9 @@ static LLVMValueRef ac_cull_face(struct ac_llvm_context *ctx, LLVMValueRef pos[3
    LLVMValueRef det_t1 = LLVMBuildFSub(builder, pos[1][1], pos[0][1], "");
    LLVMValueRef det_t2 = LLVMBuildFSub(builder, pos[0][0], pos[1][0], "");
    LLVMValueRef det_t3 = LLVMBuildFSub(builder, pos[0][1], pos[2][1], "");
-   /* t0 * t1 - t2 * t3  =  t2 * -t3 + t0 * t1  =  fma(t2, -t3, t0 * t1) */
-   LLVMValueRef det = ac_build_fmad(ctx, det_t2, LLVMBuildFNeg(builder, det_t3, ""),
-                                    LLVMBuildFMul(builder, det_t0, det_t1, ""));
+   LLVMValueRef det_p0 = LLVMBuildFMul(builder, det_t0, det_t1, "");
+   LLVMValueRef det_p1 = LLVMBuildFMul(builder, det_t2, det_t3, "");
+   LLVMValueRef det = LLVMBuildFSub(builder, det_p0, det_p1, "");
 
    /* Negative W negates the determinant. */
    det = LLVMBuildSelect(builder, w->w_reflection, LLVMBuildFNeg(builder, det, ""), det, "");
@@ -109,65 +110,58 @@ static LLVMValueRef ac_cull_face(struct ac_llvm_context *ctx, LLVMValueRef pos[3
    } else if (cull_zero_area) {
       accepted = LLVMBuildFCmp(builder, LLVMRealONE, det, ctx->f32_0, "");
    }
-
-   if (accepted) {
-      /* Don't reject NaN and +/-infinity, these are tricky.
-       * Just trust fixed-function HW to handle these cases correctly.
-       */
-      accepted = LLVMBuildOr(builder, accepted, ac_build_is_inf_or_nan(ctx, det), "");
-   }
-
    return accepted;
 }
 
 /* Perform view culling and small primitive elimination and return true
  * if the primitive is accepted and initially_accepted == true. */
-static void cull_bbox(struct ac_llvm_context *ctx, LLVMValueRef pos[3][4],
-                      LLVMValueRef initially_accepted, struct ac_position_w_info *w,
-                      LLVMValueRef vp_scale[2], LLVMValueRef vp_translate[2],
-                      LLVMValueRef small_prim_precision, struct ac_cull_options *options,
-                      ac_cull_accept_func accept_func, void *userdata)
+static LLVMValueRef cull_bbox(struct ac_llvm_context *ctx, LLVMValueRef pos[3][4],
+                              LLVMValueRef initially_accepted, struct ac_position_w_info *w,
+                              LLVMValueRef vp_scale[2], LLVMValueRef vp_translate[2],
+                              LLVMValueRef small_prim_precision, bool cull_view_xy,
+                              bool cull_view_near_z, bool cull_view_far_z, bool cull_small_prims,
+                              bool use_halfz_clip_space)
 {
    LLVMBuilderRef builder = ctx->builder;
 
-   if (!options->cull_view_xy && !options->cull_view_near_z && !options->cull_view_far_z &&
-       !options->cull_small_prims) {
-      if (accept_func)
-         accept_func(ctx, initially_accepted, userdata);
-      return;
-   }
+   if (!cull_view_xy && !cull_view_near_z && !cull_view_far_z && !cull_small_prims)
+      return initially_accepted;
 
-   ac_build_ifcc(ctx, initially_accepted, 10000000);
+   /* Skip the culling if the primitive has already been rejected or
+    * if any W is negative. The bounding box culling doesn't work when
+    * W is negative.
+    */
+   LLVMValueRef cond = LLVMBuildAnd(builder, initially_accepted, w->all_w_positive, "");
+   LLVMValueRef accepted_var = ac_build_alloca_undef(ctx, ctx->i1, "");
+   LLVMBuildStore(builder, initially_accepted, accepted_var);
+
+   ac_build_ifcc(ctx, cond, 10000000 /* does this matter? */);
    {
       LLVMValueRef bbox_min[3], bbox_max[3];
-      LLVMValueRef accepted = ctx->i1true;
+      LLVMValueRef accepted = initially_accepted;
 
       /* Compute the primitive bounding box for easy culling. */
-      for (unsigned chan = 0; chan < (options->cull_view_near_z ||
-                                      options->cull_view_far_z ? 3 : 2); chan++) {
-         assert(options->num_vertices >= 2);
+      for (unsigned chan = 0; chan < (cull_view_near_z || cull_view_far_z ? 3 : 2); chan++) {
          bbox_min[chan] = ac_build_fmin(ctx, pos[0][chan], pos[1][chan]);
-         bbox_max[chan] = ac_build_fmax(ctx, pos[0][chan], pos[1][chan]);
+         bbox_min[chan] = ac_build_fmin(ctx, bbox_min[chan], pos[2][chan]);
 
-         if (options->num_vertices == 3) {
-            bbox_min[chan] = ac_build_fmin(ctx, bbox_min[chan], pos[2][chan]);
-            bbox_max[chan] = ac_build_fmax(ctx, bbox_max[chan], pos[2][chan]);
-         }
+         bbox_max[chan] = ac_build_fmax(ctx, pos[0][chan], pos[1][chan]);
+         bbox_max[chan] = ac_build_fmax(ctx, bbox_max[chan], pos[2][chan]);
       }
 
       /* View culling. */
-      if (options->cull_view_xy || options->cull_view_near_z || options->cull_view_far_z) {
+      if (cull_view_xy || cull_view_near_z || cull_view_far_z) {
          for (unsigned chan = 0; chan < 3; chan++) {
             LLVMValueRef visible;
 
-            if ((options->cull_view_xy && chan <= 1) || (options->cull_view_near_z && chan == 2)) {
-               float t = chan == 2 && options->use_halfz_clip_space ? 0 : -1;
+            if ((cull_view_xy && chan <= 1) || (cull_view_near_z && chan == 2)) {
+               float t = chan == 2 && use_halfz_clip_space ? 0 : -1;
                visible = LLVMBuildFCmp(builder, LLVMRealOGE, bbox_max[chan],
                                        LLVMConstReal(ctx->f32, t), "");
                accepted = LLVMBuildAnd(builder, accepted, visible, "");
             }
 
-            if ((options->cull_view_xy && chan <= 1) || (options->cull_view_far_z && chan == 2)) {
+            if ((cull_view_xy && chan <= 1) || (cull_view_far_z && chan == 2)) {
                visible = LLVMBuildFCmp(builder, LLVMRealOLE, bbox_min[chan], ctx->f32_1, "");
                accepted = LLVMBuildAnd(builder, accepted, visible, "");
             }
@@ -175,7 +169,7 @@ static void cull_bbox(struct ac_llvm_context *ctx, LLVMValueRef pos[3][4],
       }
 
       /* Small primitive elimination. */
-      if (options->cull_small_prims) {
+      if (cull_small_prims) {
          /* Assuming a sample position at (0.5, 0.5), if we round
           * the bounding box min/max extents and the results of
           * the rounding are equal in either the X or Y direction,
@@ -207,15 +201,11 @@ static void cull_bbox(struct ac_llvm_context *ctx, LLVMValueRef pos[3][4],
          accepted = LLVMBuildAnd(builder, accepted, visible, "");
       }
 
-      /* Disregard the bounding box culling if any W is negative because the code
-       * doesn't work with that.
-       */
-      accepted = LLVMBuildOr(builder, accepted, w->any_w_negative, "");
-
-      if (accept_func)
-         accept_func(ctx, accepted, userdata);
+      LLVMBuildStore(builder, accepted, accepted_var);
    }
    ac_build_endif(ctx, 10000000);
+
+   return LLVMBuildLoad(builder, accepted_var, "");
 }
 
 /**
@@ -233,16 +223,14 @@ static void cull_bbox(struct ac_llvm_context *ctx, LLVMValueRef pos[3][4],
  *                              the rasterizer. Set to num_samples / 2^subpixel_bits.
  *                              subpixel_bits are defined by the quantization mode.
  * \param options               See ac_cull_options.
- * \param accept_func           Callback invoked in the inner-most branch where the primitive is accepted.
  */
-void ac_cull_primitive(struct ac_llvm_context *ctx, LLVMValueRef pos[3][4],
-                       LLVMValueRef initially_accepted, LLVMValueRef vp_scale[2],
-                       LLVMValueRef vp_translate[2], LLVMValueRef small_prim_precision,
-                       struct ac_cull_options *options, ac_cull_accept_func accept_func,
-                       void *userdata)
+LLVMValueRef ac_cull_triangle(struct ac_llvm_context *ctx, LLVMValueRef pos[3][4],
+                              LLVMValueRef initially_accepted, LLVMValueRef vp_scale[2],
+                              LLVMValueRef vp_translate[2], LLVMValueRef small_prim_precision,
+                              struct ac_cull_options *options)
 {
    struct ac_position_w_info w;
-   ac_analyze_position_w(ctx, pos, &w, options->num_vertices);
+   ac_analyze_position_w(ctx, pos, &w);
 
    /* W culling. */
    LLVMValueRef accepted = options->cull_w ? w.w_accepted : ctx->i1true;
@@ -255,6 +243,8 @@ void ac_cull_primitive(struct ac_llvm_context *ctx, LLVMValueRef pos[3][4],
       "");
 
    /* View culling and small primitive elimination. */
-   cull_bbox(ctx, pos, accepted, &w, vp_scale, vp_translate, small_prim_precision, options,
-             accept_func, userdata);
+   accepted = cull_bbox(ctx, pos, accepted, &w, vp_scale, vp_translate, small_prim_precision,
+                        options->cull_view_xy, options->cull_view_near_z, options->cull_view_far_z,
+                        options->cull_small_prims, options->use_halfz_clip_space);
+   return accepted;
 }

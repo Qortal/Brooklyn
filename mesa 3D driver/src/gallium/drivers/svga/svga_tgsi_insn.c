@@ -257,7 +257,9 @@ translate_src_register( const struct svga_shader_emitter *emit,
                   reg->Register.SwizzleZ,
                   reg->Register.SwizzleW );
 
-   /* src.mod isn't a bitfield, unfortunately */
+   /* src.mod isn't a bitfield, unfortunately:
+    * See tgsi_util_get_full_src_register_sign_mode for implementation details.
+    */
    if (reg->Register.Absolute) {
       if (reg->Register.Negate)
          src.base.srcMod = SVGA3DSRCMOD_ABSNEG;
@@ -2385,7 +2387,7 @@ emit_lit(struct svga_shader_emitter *emit,
       return emit_simple_instruction(emit, SVGA3DOP_LIT, insn);
    }
    else {
-      /* D3D vs. GL semantics can be fairly easily accommodated by
+      /* D3D vs. GL semantics can be fairly easily accomodated by
        * variations on this sequence.
        *
        * GL:

@@ -98,12 +98,6 @@ mir_use_count(compiler_context *ctx, unsigned value)
                         ++used_count;
         }
 
-        if (ctx->blend_input == value)
-                ++used_count;
-
-        if (ctx->blend_src1 == value)
-                ++used_count;
-
         return used_count;
 }
 
@@ -154,7 +148,7 @@ mir_nontrivial_outmod(midgard_instruction *ins)
                 return true;
 
         if (is_int)
-                return mod != midgard_outmod_keeplo;
+                return mod != midgard_outmod_int_wrap;
         else
                 return mod != midgard_outmod_none;
 }

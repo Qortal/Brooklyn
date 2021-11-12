@@ -113,6 +113,8 @@ _tnl_DestroyContext( struct gl_context *ctx )
    struct tnl_shine_tab *s, *tmps;
    TNLcontext *tnl = TNL_CONTEXT(ctx);
 
+   _math_matrix_dtr(&tnl->_WindowMap);
+
    /* Free lighting shininess exponentiation table */
    foreach_s( s, tmps, tnl->_ShineTabList ) {
       free( s );
@@ -133,9 +135,6 @@ _tnl_InvalidateState( struct gl_context *ctx, GLuint new_state )
    const struct gl_program *vp = ctx->VertexProgram._Current;
    const struct gl_program *fp = ctx->FragmentProgram._Current;
    GLuint i;
-
-   if (new_state & (_NEW_LIGHT_CONSTANTS | _NEW_MATERIAL))
-      _mesa_update_light_materials(ctx);
 
    if (new_state & (_NEW_HINT | _NEW_PROGRAM)) {
       assert(tnl->AllowVertexFog || tnl->AllowPixelFog);

@@ -210,7 +210,6 @@ static const __DRIextension *image_loader_extensions[] = {
    &image_loader_extension.base,
    &image_lookup_extension.base,
    &use_invalidate.base,
-   &background_callable_extension.base,
    NULL,
 };
 
@@ -327,18 +326,14 @@ dri2_initialize_surfaceless(_EGLDisplay *disp)
    dri2_dpy->fd = -1;
    disp->DriverData = (void *) dri2_dpy;
 
-   /* When ForceSoftware is false, we try the HW driver.  When ForceSoftware
-    * is true, we try kms_swrast and swrast in order.
-    */
    driver_loaded = surfaceless_probe_device(disp, disp->Options.ForceSoftware);
-   if (!driver_loaded && disp->Options.ForceSoftware) {
-      _eglLog(_EGL_DEBUG, "Falling back to surfaceless swrast without DRM.");
-      driver_loaded = surfaceless_probe_device_sw(disp);
-   }
 
    if (!driver_loaded) {
-      err = "DRI2: failed to load driver";
-      goto cleanup;
+      _eglLog(_EGL_DEBUG, "Falling back to surfaceless swrast without DRM.");
+      if (!surfaceless_probe_device_sw(disp)) {
+         err = "DRI2: failed to load driver";
+         goto cleanup;
+      }
    }
 
    if (!dri2_create_screen(disp)) {

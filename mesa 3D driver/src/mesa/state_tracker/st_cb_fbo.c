@@ -114,7 +114,7 @@ st_renderbuffer_alloc_storage(struct gl_context * ctx,
                               GLuint width, GLuint height)
 {
    struct st_context *st = st_context(ctx);
-   struct pipe_screen *screen = st->screen;
+   struct pipe_screen *screen = st->pipe->screen;
    struct st_renderbuffer *strb = st_renderbuffer(rb);
    enum pipe_format format = PIPE_FORMAT_NONE;
    struct pipe_resource templ;
@@ -513,12 +513,11 @@ st_update_renderbuffer_surface(struct st_context *st,
    if (strb->is_rtt && resource->array_size > 1 &&
        stTexObj->base.Immutable) {
       const struct gl_texture_object *tex = &stTexObj->base;
-      first_layer += tex->Attrib.MinLayer;
+      first_layer += tex->MinLayer;
       if (!strb->rtt_layered)
-         last_layer += tex->Attrib.MinLayer;
+         last_layer += tex->MinLayer;
       else
-         last_layer = MIN2(first_layer + tex->Attrib.NumLayers - 1,
-                           last_layer);
+         last_layer = MIN2(first_layer + tex->NumLayers - 1, last_layer);
    }
 
    struct pipe_surface **psurf =
@@ -703,7 +702,7 @@ static void
 st_validate_framebuffer(struct gl_context *ctx, struct gl_framebuffer *fb)
 {
    struct st_context *st = st_context(ctx);
-   struct pipe_screen *screen = st->screen;
+   struct pipe_screen *screen = st->pipe->screen;
    const struct gl_renderbuffer_attachment *depth =
          &fb->Attachment[BUFFER_DEPTH];
    const struct gl_renderbuffer_attachment *stencil =
@@ -906,7 +905,7 @@ st_MapRenderbuffer(struct gl_context *ctx,
    else
       y2 = y;
 
-    map = pipe_texture_map(pipe,
+    map = pipe_transfer_map(pipe,
                             strb->texture,
                             strb->surface->u.tex.level,
                             strb->surface->u.tex.first_layer,
@@ -944,7 +943,7 @@ st_UnmapRenderbuffer(struct gl_context *ctx,
       return;
    }
 
-   pipe_texture_unmap(pipe, strb->transfer);
+   pipe_transfer_unmap(pipe, strb->transfer);
    strb->transfer = NULL;
 }
 

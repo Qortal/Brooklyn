@@ -94,9 +94,6 @@ enum gbm_bo_format {
 /* 8 bpp Red */
 #define GBM_FORMAT_R8		__gbm_fourcc_code('R', '8', ' ', ' ') /* [7:0] R */
 
-/* 16 bpp Red */
-#define GBM_FORMAT_R16          __gbm_fourcc_code('R', '1', '6', ' ') /* [15:0] R little endian */
-
 /* 16 bpp RG */
 #define GBM_FORMAT_GR88		__gbm_fourcc_code('G', 'R', '8', '8') /* [15:0] G:R 8:8 little endian */
 
@@ -384,9 +381,6 @@ gbm_bo_get_plane_count(struct gbm_bo *bo);
 
 union gbm_bo_handle
 gbm_bo_get_handle_for_plane(struct gbm_bo *bo, int plane);
-
-int
-gbm_bo_get_fd_for_plane(struct gbm_bo *bo, int plane);
 
 int
 gbm_bo_write(struct gbm_bo *bo, const void *buf, size_t count);

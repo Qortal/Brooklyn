@@ -44,10 +44,6 @@ files_llvmpipe = files(
   'lp_jit.c',
   'lp_jit.h',
   'lp_limits.h',
-  'lp_linear.c',
-  'lp_linear_fastpath.c',
-  'lp_linear_interp.c',
-  'lp_linear_sampler.c',
   'lp_memory.c',
   'lp_memory.h',
   'lp_perf.c',
@@ -58,10 +54,7 @@ files_llvmpipe = files(
   'lp_rast.c',
   'lp_rast_debug.c',
   'lp_rast.h',
-  'lp_rast_linear.c',
-  'lp_rast_linear_fallback.c',
   'lp_rast_priv.h',
-  'lp_rast_rect.c',
   'lp_rast_tri.c',
   'lp_rast_tri_tmp.h',
   'lp_scene.c',
@@ -71,12 +64,10 @@ files_llvmpipe = files(
   'lp_screen.c',
   'lp_screen.h',
   'lp_setup.c',
-  'lp_setup_analysis.c',
   'lp_setup_context.h',
   'lp_setup.h',
   'lp_setup_line.c',
   'lp_setup_point.c',
-  'lp_setup_rect.c',
   'lp_setup_tri.c',
   'lp_setup_vbuf.c',
   'lp_state_blend.c',
@@ -86,10 +77,6 @@ files_llvmpipe = files(
   'lp_state_cs.h',
   'lp_state_fs.c',
   'lp_state_fs.h',
-  'lp_state_fs_analysis.c',
-  'lp_state_fs_fastpath.c',
-  'lp_state_fs_linear.c',
-  'lp_state_fs_linear_llvm.c',
   'lp_state_gs.c',
   'lp_state.h',
   'lp_state_rasterizer.c',
@@ -116,7 +103,7 @@ libllvmpipe = static_library(
   cpp_args : [cpp_msvc_compat_args],
   gnu_symbol_visibility : 'hidden',
   include_directories : [inc_gallium, inc_gallium_aux, inc_include, inc_src],
-  dependencies : [ dep_llvm, idep_nir_headers, idep_mesautil ],
+  dependencies : [ dep_llvm, idep_nir_headers, ],
 )
 
 # This overwrites the softpipe driver dependency, but itself depends on the
@@ -124,10 +111,10 @@ libllvmpipe = static_library(
 driver_swrast = declare_dependency(
   compile_args : '-DGALLIUM_LLVMPIPE',
   link_with : libllvmpipe,
-  dependencies : [driver_swrast, dep_llvm, idep_mesautil],
+  dependencies : [driver_swrast, dep_llvm],
 )
 
-if with_tests and with_gallium_softpipe and draw_with_llvm
+if with_tests and with_gallium_softpipe and with_llvm
   foreach t : ['lp_test_format', 'lp_test_arit', 'lp_test_blend',
                'lp_test_conv', 'lp_test_printf']
     test(
@@ -141,7 +128,7 @@ if with_tests and with_gallium_softpipe and draw_with_llvm
       ),
       suite : ['llvmpipe'],
       should_fail : meson.get_cross_property('xfail', '').contains(t),
-      timeout: 240,
+      timeout: 180,
     )
   endforeach
 endif

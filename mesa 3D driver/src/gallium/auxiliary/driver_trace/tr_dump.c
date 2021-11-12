@@ -43,11 +43,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* for access() */
-#ifdef _WIN32
-# include <io.h>
-#endif
-
 #include "pipe/p_compiler.h"
 #include "os/os_thread.h"
 #include "util/os_time.h"
@@ -68,47 +63,11 @@ static mtx_t call_mutex = _MTX_INITIALIZER_NP;
 static long unsigned call_no = 0;
 static bool dumping = false;
 
-static bool trigger_active = true;
-static char *trigger_filename = NULL;
-
-void
-trace_dump_trigger_active(bool active)
-{
-   trigger_active = active;
-}
-
-void
-trace_dump_check_trigger(void)
-{
-   if (!trigger_filename)
-      return;
-
-   mtx_lock(&call_mutex);
-   if (trigger_active) {
-      trigger_active = false;
-   } else {
-      if (!access(trigger_filename, 2 /* W_OK but compiles on Windows */)) {
-         if (!unlink(trigger_filename)) {
-            trigger_active = true;
-         } else {
-            fprintf(stderr, "error removing trigger file\n");
-            trigger_active = false;
-         }
-      }
-   }
-   mtx_unlock(&call_mutex);
-}
-
-bool
-trace_dump_is_triggered(void)
-{
-   return trigger_active && !!trigger_filename;
-}
 
 static inline void
 trace_dump_write(const char *buf, size_t size)
 {
-   if (stream && trigger_active) {
+   if (stream) {
       fwrite(buf, size, 1, stream);
    }
 }
@@ -216,7 +175,6 @@ static void
 trace_dump_trace_close(void)
 {
    if (stream) {
-      trigger_active = true;
       trace_dump_writes("</trace>\n");
       if (close_stream) {
          fclose(stream);
@@ -224,7 +182,6 @@ trace_dump_trace_close(void)
          stream = NULL;
       }
       call_no = 0;
-      free(trigger_filename);
    }
 }
 
@@ -277,13 +234,6 @@ trace_dump_trace_begin(void)
        * time.
        */
       atexit(trace_dump_trace_close);
-
-      const char *trigger = debug_get_option("GALLIUM_TRACE_TRIGGER", NULL);
-      if (trigger) {
-         trigger_filename = strdup(trigger);
-         trigger_active = false;
-      } else
-         trigger_active = true;
    }
 
    return true;

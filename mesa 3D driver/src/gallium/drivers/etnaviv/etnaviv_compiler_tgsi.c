@@ -160,7 +160,7 @@ struct etna_compile {
    bool dead_inst[ETNA_MAX_TOKENS];
 
    /* Immediate data */
-   enum etna_uniform_contents imm_contents[ETNA_MAX_IMM];
+   enum etna_immediate_contents imm_contents[ETNA_MAX_IMM];
    uint32_t imm_data[ETNA_MAX_IMM];
    uint32_t imm_base; /* base of immediates (in 32 bit units) */
    uint32_t imm_size; /* size of immediates (in 32 bit units) */
@@ -369,7 +369,7 @@ assign_inouts_to_temporaries(struct etna_compile *c, uint file)
  * there is already an immediate with that value, return that.
  */
 static struct etna_inst_src
-alloc_imm(struct etna_compile *c, enum etna_uniform_contents contents,
+alloc_imm(struct etna_compile *c, enum etna_immediate_contents contents,
           uint32_t value)
 {
    int idx;
@@ -383,7 +383,7 @@ alloc_imm(struct etna_compile *c, enum etna_uniform_contents contents,
    /* look if there is an unused slot */
    if (idx == c->imm_size) {
       for (idx = 0; idx < c->imm_size; ++idx) {
-         if (c->imm_contents[idx] == ETNA_UNIFORM_UNUSED)
+         if (c->imm_contents[idx] == ETNA_IMMEDIATE_UNUSED)
             break;
       }
    }
@@ -411,11 +411,11 @@ alloc_imm(struct etna_compile *c, enum etna_uniform_contents contents,
 static struct etna_inst_src
 alloc_imm_u32(struct etna_compile *c, uint32_t value)
 {
-   return alloc_imm(c, ETNA_UNIFORM_CONSTANT, value);
+   return alloc_imm(c, ETNA_IMMEDIATE_CONSTANT, value);
 }
 
 static struct etna_inst_src
-alloc_imm_vec4u(struct etna_compile *c, enum etna_uniform_contents contents,
+alloc_imm_vec4u(struct etna_compile *c, enum etna_immediate_contents contents,
                 const uint32_t *values)
 {
    struct etna_inst_src imm_src = { };
@@ -479,7 +479,7 @@ etna_imm_vec4f(struct etna_compile *c, const float *vec4)
    for (int i = 0; i < 4; i++)
       val[i] = fui(vec4[i]);
 
-   return alloc_imm_vec4u(c, ETNA_UNIFORM_CONSTANT, val);
+   return alloc_imm_vec4u(c, ETNA_IMMEDIATE_CONSTANT, val);
 }
 
 /* Pass -- check register file declarations and immediates */
@@ -504,7 +504,7 @@ etna_compile_parse_declarations(struct etna_compile *c)
             unsigned idx = c->imm_size++;
 
             c->imm_data[idx] = imm->u[i].Uint;
-            c->imm_contents[idx] = ETNA_UNIFORM_CONSTANT;
+            c->imm_contents[idx] = ETNA_IMMEDIATE_CONSTANT;
          }
       }
       break;
@@ -1699,12 +1699,12 @@ trans_sampler(const struct instr_translater *t, struct etna_compile *c,
       ins[0].opcode = INST_OPCODE_MUL;
       ins[0].dst = etna_native_to_dst(temp, INST_COMPS_X);
       ins[0].src[0] = src[0];
-      ins[0].src[1] = alloc_imm(c, ETNA_UNIFORM_TEXRECT_SCALE_X, unit);
+      ins[0].src[1] = alloc_imm(c, ETNA_IMMEDIATE_TEXRECT_SCALE_X, unit);
 
       ins[1].opcode = INST_OPCODE_MUL;
       ins[1].dst = etna_native_to_dst(temp, INST_COMPS_Y);
       ins[1].src[0] = src[0];
-      ins[1].src[1] = alloc_imm(c, ETNA_UNIFORM_TEXRECT_SCALE_Y, unit);
+      ins[1].src[1] = alloc_imm(c, ETNA_IMMEDIATE_TEXRECT_SCALE_Y, unit);
 
       emit_inst(c, &ins[0]);
       emit_inst(c, &ins[1]);
@@ -1882,27 +1882,12 @@ etna_compile_pass_generate_code(struct etna_compile *c)
 
          for (int i = 0; i < tgsi->num_src && i < ETNA_NUM_SRC; i++) {
             const struct tgsi_full_src_register *reg = &inst->Src[i];
-            const struct etna_reg_desc *srcreg = etna_get_src_reg(c, reg->Register);
-            const struct etna_native_reg *n = &srcreg->native;
+            const struct etna_native_reg *n = &etna_get_src_reg(c, reg->Register)->native;
 
             if (!n->valid || n->is_tex)
                continue;
 
             src[i] = etna_create_src(reg, n);
-
-            /*
-	     * Replace W=1.0 for point sprite coordinates, since hardware
-	     * can only replace X,Y and leaves Z,W=0,0 instead of Z,W=0,1
-	     */
-            if (srcreg && srcreg->has_semantic &&
-                srcreg->semantic.Name == TGSI_SEMANTIC_TEXCOORD &&
-                (c->key->sprite_coord_enable & BITFIELD_BIT(srcreg->semantic.Index))) {
-               emit_inst(c, &(struct etna_inst) {
-                  .opcode = INST_OPCODE_SET,
-                  .cond = INST_CONDITION_TRUE,
-                  .dst = etna_native_to_dst(srcreg->native, INST_COMPS_W),
-               });
-            }
          }
 
          const unsigned opc = inst->Instruction.Opcode;
@@ -2099,7 +2084,6 @@ permute_ps_inputs(struct etna_compile *c)
     * gl_FragCoord   VARYING_SLOT_POS   TGSI_SEMANTIC_POSITION
     * gl_FrontFacing VARYING_SLOT_FACE  TGSI_SEMANTIC_FACE
     * gl_PointCoord  VARYING_SLOT_PNTC  TGSI_SEMANTIC_PCOORD
-    * gl_TexCoord    VARYING_SLOT_TEX   TGSI_SEMANTIC_TEXCOORD
     */
    uint native_idx = 1;
 
@@ -2306,17 +2290,17 @@ copy_uniform_state_to_shader(struct etna_compile *c, struct etna_shader_variant 
    uint32_t count = c->imm_base + c->imm_size;
    struct etna_shader_uniform_info *uinfo = &sobj->uniforms;
 
-   uinfo->count = count;
+   uinfo->imm_count = count;
 
-   uinfo->data = malloc(count * sizeof(*c->imm_data));
+   uinfo->imm_data = malloc(count * sizeof(*c->imm_data));
    for (unsigned i = 0; i < c->imm_base; i++)
-      uinfo->data[i] = i;
-   memcpy(&uinfo->data[c->imm_base], c->imm_data, c->imm_size * sizeof(*c->imm_data));
+      uinfo->imm_data[i] = i;
+   memcpy(&uinfo->imm_data[c->imm_base], c->imm_data, c->imm_size * sizeof(*c->imm_data));
 
-   uinfo->contents = malloc(count * sizeof(*c->imm_contents));
+   uinfo->imm_contents = malloc(count * sizeof(*c->imm_contents));
    for (unsigned i = 0; i < c->imm_base; i++)
-      uinfo->contents[i] = ETNA_UNIFORM_UNIFORM;
-   memcpy(&uinfo->contents[c->imm_base], c->imm_contents, c->imm_size * sizeof(*c->imm_contents));
+      uinfo->imm_contents[i] = ETNA_IMMEDIATE_UNIFORM;
+   memcpy(&uinfo->imm_contents[c->imm_base], c->imm_contents, c->imm_size * sizeof(*c->imm_contents));
 
    etna_set_shader_uniforms_dirty_flags(sobj);
 }
@@ -2567,10 +2551,10 @@ etna_link_shader(struct etna_shader_link_info *info,
       varying->use[2] = VARYING_COMPONENT_USE_UNUSED;
       varying->use[3] = VARYING_COMPONENT_USE_UNUSED;
 
-      /* point/tex coord is an input to the PS without matching VS output,
+      /* point coord is an input to the PS without matching VS output,
        * so it gets a varying slot without being assigned a VS register.
        */
-      if (util_varying_is_point_coord(fsio->slot, fs->key.sprite_coord_enable)) {
+      if (fsio->slot == VARYING_SLOT_PNTC) {
          varying->use[0] = VARYING_COMPONENT_USE_POINTCOORD_X;
          varying->use[1] = VARYING_COMPONENT_USE_POINTCOORD_Y;
 

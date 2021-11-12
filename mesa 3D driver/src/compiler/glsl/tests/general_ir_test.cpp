@@ -68,8 +68,6 @@ TEST_F(ir_variable_constructor, interface)
    EXPECT_NE(name, v->name);
    EXPECT_EQ(iface, v->type);
    EXPECT_EQ(iface, v->get_interface_type());
-
-   ralloc_free(mem_ctx);
 }
 
 TEST_F(ir_variable_constructor, interface_array)
@@ -99,6 +97,4 @@ TEST_F(ir_variable_constructor, interface_array)
    EXPECT_NE(name, v->name);
    EXPECT_EQ(interface_array, v->type);
    EXPECT_EQ(iface, v->get_interface_type());
-
-   ralloc_free(mem_ctx);
 }

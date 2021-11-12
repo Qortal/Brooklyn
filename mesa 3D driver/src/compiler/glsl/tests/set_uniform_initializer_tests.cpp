@@ -86,9 +86,6 @@ set_uniform_initializer::TearDown()
    ralloc_free(this->mem_ctx);
    this->mem_ctx = NULL;
 
-   if (this->prog->UniformHash)
-      string_to_uint_map_dtor(this->prog->UniformHash);
-
    ralloc_free(this->prog);
    this->prog = NULL;
 

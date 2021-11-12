@@ -160,9 +160,9 @@ graw_util_default_state(struct graw_info *info, boolean depth_test)
       struct pipe_depth_stencil_alpha_state depthStencilAlpha;
       void *handle;
       memset(&depthStencilAlpha, 0, sizeof depthStencilAlpha);
-      depthStencilAlpha.depth_enabled = depth_test;
-      depthStencilAlpha.depth_writemask = 1;
-      depthStencilAlpha.depth_func = PIPE_FUNC_LESS;
+      depthStencilAlpha.depth.enabled = depth_test;
+      depthStencilAlpha.depth.writemask = 1;
+      depthStencilAlpha.depth.func = PIPE_FUNC_LESS;
       handle = info->ctx->create_depth_stencil_alpha_state(info->ctx,
                                                            &depthStencilAlpha);
       info->ctx->bind_depth_stencil_alpha_state(info->ctx, handle);
@@ -201,11 +201,6 @@ graw_util_viewport(struct graw_info *info,
    vp.translate[1] = half_height + y;
    vp.translate[2] = half_depth + z;
 
-   vp.swizzle_x = PIPE_VIEWPORT_SWIZZLE_POSITIVE_X;
-   vp.swizzle_y = PIPE_VIEWPORT_SWIZZLE_POSITIVE_Y;
-   vp.swizzle_z = PIPE_VIEWPORT_SWIZZLE_POSITIVE_Z;
-   vp.swizzle_w = PIPE_VIEWPORT_SWIZZLE_POSITIVE_W;
-
    info->ctx->set_viewport_states(info->ctx, 0, 1, &vp);
 }
 
@@ -213,7 +208,7 @@ graw_util_viewport(struct graw_info *info,
 static inline void
 graw_util_flush_front(const struct graw_info *info)
 {
-   info->screen->flush_frontbuffer(info->screen, info->ctx, info->color_buf[0],
+   info->screen->flush_frontbuffer(info->screen, info->color_buf[0],
                                    0, 0, info->window, NULL);
 }
 
@@ -261,19 +256,21 @@ graw_util_create_tex2d(const struct graw_info *info,
    {
       struct pipe_transfer *t;
       uint32_t *ptr;
-      t = pipe_texture_map(info->ctx, samptex,
+      t = pipe_transfer_map(info->ctx, samptex,
                             0, 0, /* level, layer */
                             PIPE_MAP_READ,
                             0, 0, SIZE, SIZE); /* x, y, width, height */
 
-      ptr = info->ctx->texture_map(info->ctx, t);
+      ptr = info->ctx->transfer_map(info->ctx, t);
 
       if (memcmp(ptr, tex2d, sizeof tex2d) != 0) {
          assert(0);
          exit(9);
       }
 
-      info->ctx->texture_unmap(info->ctx, t);
+      info->ctx->transfer_unmap(info->ctx, t);
+
+      info->ctx->transfer_destroy(info->ctx, t);
    }
 #endif
 

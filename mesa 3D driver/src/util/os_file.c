@@ -79,22 +79,21 @@ os_dupfd_cloexec(int fd)
 }
 #endif
 
+
+#if DETECT_OS_LINUX
+
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
-#if DETECT_OS_WINDOWS
-typedef ptrdiff_t ssize_t;
-#endif
+/* copied from <linux/kcmp.h> */
+#define KCMP_FILE 0
 
 static ssize_t
 readN(int fd, char *buf, size_t len)
 {
-   /* err was initially set to -ENODATA but in some BSD systems
-    * ENODATA is not defined and ENOATTR is used instead.
-    * As err is not returned by any function it can be initialized
-    * to -EFAULT that exists everywhere.
-    */
-   int err = -EFAULT;
+   int err = -ENODATA;
    size_t total = 0;
    do {
       ssize_t ret = read(fd, buf + total, len - total);
@@ -116,11 +115,6 @@ readN(int fd, char *buf, size_t len)
    return total ? (ssize_t)total : err;
 }
 
-#ifndef O_BINARY
-/* Unix makes no distinction between text and binary files. */
-#define O_BINARY 0
-#endif
-
 char *
 os_read_file(const char *filename, size_t *size)
 {
@@ -131,7 +125,7 @@ os_read_file(const char *filename, size_t *size)
     */
    size_t len = 64;
 
-   int fd = open(filename, O_RDONLY | O_BINARY);
+   int fd = open(filename, O_RDONLY);
    if (fd == -1) {
       /* errno set by open() */
       return NULL;
@@ -191,14 +185,6 @@ os_read_file(const char *filename, size_t *size)
    return buf;
 }
 
-#if DETECT_OS_LINUX
-
-#include <sys/syscall.h>
-#include <unistd.h>
-
-/* copied from <linux/kcmp.h> */
-#define KCMP_FILE 0
-
 int
 os_same_file_description(int fd1, int fd2)
 {
@@ -212,6 +198,15 @@ os_same_file_description(int fd1, int fd2)
 }
 
 #else
+
+#include "u_debug.h"
+
+char *
+os_read_file(const char *filename, size_t *size)
+{
+   errno = -ENOSYS;
+   return NULL;
+}
 
 int
 os_same_file_description(int fd1, int fd2)

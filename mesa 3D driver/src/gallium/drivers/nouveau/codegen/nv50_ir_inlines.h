@@ -336,7 +336,7 @@ static inline Instruction *cloneForward(Function *ctx, Instruction *obj)
 // XXX: use a virtual function so we're really really safe ?
 LValue *Value::asLValue()
 {
-   if (reg.file >= FILE_GPR && reg.file <= LAST_REGISTER_FILE)
+   if (reg.file >= FILE_GPR && reg.file <= FILE_ADDRESS)
       return static_cast<LValue *>(this);
    return NULL;
 }

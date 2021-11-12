@@ -42,20 +42,8 @@ AMD_COMMON_FILES = \
 	common/ac_exp_param.h \
 	common/ac_gpu_info.c \
 	common/ac_gpu_info.h \
-	common/ac_msgpack.c \
-	common/ac_msgpack.h \
-	common/ac_nir.c \
-	common/ac_nir.h \
-	common/ac_nir_lower_esgs_io_to_mem.c \
-	common/ac_nir_lower_tess_io_to_mem.c \
-	common/ac_nir_lower_ngg.c \
-	common/ac_perfcounter.c \
-	common/ac_perfcounter.h \
 	common/ac_surface.c \
 	common/ac_surface.h \
-	common/ac_rgp.c \
-	common/ac_rgp.h \
-	common/ac_rgp_elf_object_pack.c \
 	common/ac_rtld.c \
 	common/ac_rtld.h \
 	common/ac_shader_args.c \
@@ -63,10 +51,7 @@ AMD_COMMON_FILES = \
 	common/ac_shader_util.c \
 	common/ac_shader_util.h \
 	common/ac_shadowed_regs.c \
-	common/ac_shadowed_regs.h \
-	common/ac_sqtt.c \
-	common/ac_sqtt.h \
-	common/amd_family.c
+	common/ac_shadowed_regs.h
 
 AMD_COMMON_LLVM_FILES = \
 	llvm/ac_llvm_build.c \
@@ -111,11 +96,9 @@ ACO_FILES = \
 	compiler/aco_lower_to_cssa.cpp \
 	compiler/aco_lower_to_hw_instr.cpp \
 	compiler/aco_optimizer.cpp \
-	compiler/aco_optimizer_postRA.cpp \
 	compiler/aco_opt_value_numbering.cpp \
 	compiler/aco_print_asm.cpp \
 	compiler/aco_print_ir.cpp \
-	compiler/aco_reindex_ssa.cpp \
 	compiler/aco_scheduler.cpp \
 	compiler/aco_ssa_elimination.cpp \
 	compiler/aco_spill.cpp \

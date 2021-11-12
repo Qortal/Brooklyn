@@ -34,8 +34,6 @@
 #include "gen_state_llvm.h"
 #include "functionpasses/passes.h"
 
-#include "util/compiler.h"
-
 // components with bit-widths <= the QUANTIZE_THRESHOLD will be quantized
 #define QUANTIZE_THRESHOLD 2
 
@@ -187,7 +185,7 @@ struct BlendJit : public Builder
             break;
 
         case SWR_TYPE_UNKNOWN:
-            SWR_INVALID("Unsupported format type: %d", type);
+            SWR_INVALID("Unsupport format type: %d", type);
         }
     }
 
@@ -773,7 +771,7 @@ struct BlendJit : public Builder
 
                 case SWR_TYPE_UNKNOWN:
                 case SWR_TYPE_UNUSED:
-                    FALLTHROUGH;
+                    // fallthrough
 
                 case SWR_TYPE_UINT:
                 case SWR_TYPE_SINT:
@@ -812,7 +810,7 @@ struct BlendJit : public Builder
 
                 case SWR_TYPE_UNKNOWN:
                 case SWR_TYPE_UNUSED:
-                    FALLTHROUGH;
+                    // fallthrough
 
                 case SWR_TYPE_UINT:
                 case SWR_TYPE_SINT:

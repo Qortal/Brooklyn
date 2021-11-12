@@ -57,7 +57,6 @@
 #include "utils.h"
 #include "util/debug.h"
 #include "util/ralloc.h"
-#include "util/u_memory.h"
 
 int INTEL_DEBUG = (0);
 
@@ -72,7 +71,6 @@ i915_get_renderer_string(unsigned deviceID)
    switch (deviceID) {
 #undef CHIPSET
 #define CHIPSET(id, symbol, str) case id: chipset = str; break;
-#include "pci_ids/i830_pci_ids.h"
 #include "pci_ids/i915_pci_ids.h"
    default:
       chipset = "Unknown Intel Chipset";
@@ -355,7 +353,7 @@ _intel_flush(struct gl_context *ctx, const char *file, int line)
 }
 
 static void
-intel_glFlush(struct gl_context *ctx, unsigned gallium_flush_flags)
+intel_glFlush(struct gl_context *ctx)
 {
    struct intel_context *intel = intel_context(ctx);
 
@@ -447,7 +445,7 @@ intelInitContext(struct intel_context *intel,
 	  0, sizeof(ctx->TextureFormatSupported));
 
    driParseConfigFiles(&intel->optionCache, &intelScreen->optionCache,
-                       sPriv->myNum, "i915", NULL, NULL, NULL, 0, NULL, 0);
+                       sPriv->myNum, "i915", NULL, NULL, 0, NULL, 0);
    intel->maxBatchSize = 4096;
 
    /* Estimate the size of the mappable aperture into the GTT.  There's an
@@ -602,7 +600,9 @@ intelDestroyContext(__DRIcontext * driContextPriv)
       /* free the Mesa context */
       _mesa_free_context_data(&intel->ctx, true);
 
-      align_free(intel);
+      _math_matrix_dtr(&intel->ViewportMatrix);
+
+      ralloc_free(intel);
       driContextPriv->driverPrivate = NULL;
    }
 }
@@ -684,7 +684,7 @@ intel_query_dri2_buffers(struct intel_context *intel,
    __DRIscreen *screen = intel->intelScreen->driScrnPriv;
    struct gl_framebuffer *fb = drawable->driverPrivate;
    int i = 0;
-   unsigned attachments[__DRI_BUFFER_COUNT];
+   unsigned attachments[8];
 
    struct intel_renderbuffer *front_rb;
    struct intel_renderbuffer *back_rb;

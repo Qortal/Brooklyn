@@ -567,9 +567,9 @@ CodeEmitterGM107::emitCAL()
    const FlowInstruction *insn = this->insn->asFlow();
 
    if (insn->absolute) {
-      emitInsn(0xe2200000, false); // JCAL
+      emitInsn(0xe2200000, 0); // JCAL
    } else {
-      emitInsn(0xe2600000, false); // CAL
+      emitInsn(0xe2600000, 0); // CAL
    }
 
    if (!insn->srcExists(0) || insn->src(0).getFile() != FILE_MEMORY_CONST) {
@@ -595,7 +595,7 @@ CodeEmitterGM107::emitPCNT()
 {
    const FlowInstruction *insn = this->insn->asFlow();
 
-   emitInsn(0xe2b00000, false);
+   emitInsn(0xe2b00000, 0);
 
    if (!insn->srcExists(0) || insn->src(0).getFile() != FILE_MEMORY_CONST) {
       emitField(0x14, 24, insn->target.bb->binPos - (codeSize + 8));
@@ -617,7 +617,7 @@ CodeEmitterGM107::emitPBK()
 {
    const FlowInstruction *insn = this->insn->asFlow();
 
-   emitInsn(0xe2a00000, false);
+   emitInsn(0xe2a00000, 0);
 
    if (!insn->srcExists(0) || insn->src(0).getFile() != FILE_MEMORY_CONST) {
       emitField(0x14, 24, insn->target.bb->binPos - (codeSize + 8));
@@ -639,7 +639,7 @@ CodeEmitterGM107::emitPRET()
 {
    const FlowInstruction *insn = this->insn->asFlow();
 
-   emitInsn(0xe2700000, false);
+   emitInsn(0xe2700000, 0);
 
    if (!insn->srcExists(0) || insn->src(0).getFile() != FILE_MEMORY_CONST) {
       emitField(0x14, 24, insn->target.bb->binPos - (codeSize + 8));
@@ -661,7 +661,7 @@ CodeEmitterGM107::emitSSY()
 {
    const FlowInstruction *insn = this->insn->asFlow();
 
-   emitInsn(0xe2900000, false);
+   emitInsn(0xe2900000, 0);
 
    if (!insn->srcExists(0) || insn->src(0).getFile() != FILE_MEMORY_CONST) {
       emitField(0x14, 24, insn->target.bb->binPos - (codeSize + 8));
@@ -681,13 +681,13 @@ CodeEmitterGM107::emitSYNC()
 void
 CodeEmitterGM107::emitSAM()
 {
-   emitInsn(0xe3700000, false);
+   emitInsn(0xe3700000, 0);
 }
 
 void
 CodeEmitterGM107::emitRAM()
 {
-   emitInsn(0xe3800000, false);
+   emitInsn(0xe3800000, 0);
 }
 
 /*******************************************************************************
@@ -953,16 +953,7 @@ void
 gm107_selpFlip(const FixupEntry *entry, uint32_t *code, const FixupData& data)
 {
    int loc = entry->loc;
-   bool val = false;
-   switch (entry->ipa) {
-   case 0:
-      val = data.force_persample_interp;
-      break;
-   case 1:
-      val = data.msaa;
-      break;
-   }
-   if (val)
+   if (data.force_persample_interp)
       code[loc + 1] |= 1 << 10;
    else
       code[loc + 1] &= ~(1 << 10);
@@ -994,8 +985,8 @@ CodeEmitterGM107::emitSEL()
    emitGPR (0x08, insn->src(0));
    emitGPR (0x00, insn->def(0));
 
-   if (insn->subOp >= 1) {
-      addInterp(insn->subOp - 1, 0, gm107_selpFlip);
+   if (insn->subOp == 1) {
+      addInterp(0, 0, gm107_selpFlip);
    }
 }
 
@@ -3880,7 +3871,7 @@ void
 SchedDataCalculatorGM107::setReuseFlag(Instruction *insn)
 {
    Instruction *next = insn->next;
-   BitSet defs(255, true);
+   BitSet defs(255, 1);
 
    if (!targ->isReuseSupported(insn))
       return;
@@ -4040,7 +4031,7 @@ SchedDataCalculatorGM107::setDelay(Instruction *insn, int delay,
 bool
 SchedDataCalculatorGM107::needRdDepBar(const Instruction *insn) const
 {
-   BitSet srcs(255, true), defs(255, true);
+   BitSet srcs(255, 1), defs(255, 1);
    int a, b;
 
    if (!targ->isBarrierRequired(insn))
@@ -4202,7 +4193,7 @@ SchedDataCalculatorGM107::insertBarriers(BasicBlock *bb)
    std::list<LiveBarUse> live_uses;
    std::list<LiveBarDef> live_defs;
    Instruction *insn, *next;
-   BitSet bars(6, true);
+   BitSet bars(6, 1);
    int bar_id;
 
    for (insn = bb->getEntry(); insn != NULL; insn = next) {
@@ -4278,7 +4269,7 @@ SchedDataCalculatorGM107::insertBarriers(BasicBlock *bb)
    }
 
    // Remove unnecessary barrier waits.
-   BitSet alive_bars(6, true);
+   BitSet alive_bars(6, 1);
    for (insn = bb->getEntry(); insn != NULL; insn = next) {
       int wr, rd, wt;
 
@@ -4486,10 +4477,7 @@ CodeEmitterGM107::prepareEmission(Program *prog)
 CodeEmitterGM107::CodeEmitterGM107(const TargetGM107 *target)
    : CodeEmitter(target),
      targGM107(target),
-     progType(Program::TYPE_VERTEX),
-     insn(NULL),
-     writeIssueDelays(target->hasSWSched),
-     data(NULL)
+     writeIssueDelays(target->hasSWSched)
 {
    code = NULL;
    codeSize = codeSizeLimit = 0;

@@ -1,29 +1,28 @@
-/**
-****************************************************************************************************
-*
-* Copyright © 2007-2021 Advanced Micro Devices, Inc.
-* All Rights Reserved.
-*
-* Permission is hereby granted, free of charge, to any person obtaining a
-* copy of this software and associated documentation files (the "Software"),
-* to deal in the Software without restriction, including without limitation
-* the rights to use, copy, modify, merge, publish, distribute, sublicense,
-* and/or sell copies of the Software, and to permit persons to whom the
-* Software is furnished to do so, subject to the following conditions:
-*
-* The above copyright notice and this permission notice shall be included in
-* all copies or substantial portions of the Software.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-* THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
-* OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-* ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-* OTHER DEALINGS IN THE SOFTWARE
-*
-****************************************************************************************************
-*/
+/*
+ * Copyright © 2007-2019 Advanced Micro Devices, Inc.
+ * All Rights Reserved.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sub license, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDERS, AUTHORS
+ * AND/OR ITS SUPPLIERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+ * USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * The above copyright notice and this permission notice (including the
+ * next paragraph) shall be included in all copies or substantial portions
+ * of the Software.
+ */
 
 /**
 ****************************************************************************************************
@@ -1708,35 +1707,6 @@ ADDR_E_RETURNCODE ADDR_API Addr2ComputeSubResourceOffsetForSwizzlePattern(
 
 /**
 ****************************************************************************************************
-*   Addr2ComputeNonBlockCompressedView
-*
-*   @brief
-*       Compute non-block-compressed view for a given mipmap level/slice.
-****************************************************************************************************
-*/
-ADDR_E_RETURNCODE ADDR_API Addr2ComputeNonBlockCompressedView(
-    ADDR_HANDLE                                       hLib, ///< handle of addrlib
-    const ADDR2_COMPUTE_NONBLOCKCOMPRESSEDVIEW_INPUT* pIn,  ///< [in] input
-    ADDR2_COMPUTE_NONBLOCKCOMPRESSEDVIEW_OUTPUT*      pOut) ///< [out] output
-{
-    ADDR_E_RETURNCODE returnCode;
-
-    V2::Lib* pLib = V2::Lib::GetLib(hLib);
-
-    if (pLib != NULL)
-    {
-        returnCode = pLib->ComputeNonBlockCompressedView(pIn, pOut);
-    }
-    else
-    {
-        returnCode = ADDR_ERROR;
-    }
-
-    return returnCode;
-}
-
-/**
-****************************************************************************************************
 *   Addr2GetPreferredSurfaceSetting
 *
 *   @brief
@@ -1769,14 +1739,14 @@ ADDR_E_RETURNCODE ADDR_API Addr2GetPreferredSurfaceSetting(
 *   Addr2IsValidDisplaySwizzleMode
 *
 *   @brief
-*       Return whether the swizzle mode is supported by display engine
+*       Return whether the swizzle mode is supported by DCE / DCN.
 ****************************************************************************************************
 */
 ADDR_E_RETURNCODE ADDR_API Addr2IsValidDisplaySwizzleMode(
     ADDR_HANDLE     hLib,
     AddrSwizzleMode swizzleMode,
     UINT_32         bpp,
-    BOOL_32         *pResult)
+    bool            *result)
 {
     ADDR_E_RETURNCODE returnCode;
 
@@ -1784,12 +1754,12 @@ ADDR_E_RETURNCODE ADDR_API Addr2IsValidDisplaySwizzleMode(
 
     if (pLib != NULL)
     {
-        ADDR2_COMPUTE_SURFACE_INFO_INPUT in = {};
+        ADDR2_COMPUTE_SURFACE_INFO_INPUT in = {0};
         in.resourceType = ADDR_RSRC_TEX_2D;
-        in.swizzleMode  = swizzleMode;
-        in.bpp          = bpp;
+        in.swizzleMode = swizzleMode;
+        in.bpp = bpp;
 
-        *pResult   = pLib->IsValidDisplaySwizzleMode(&in);
+        *result = pLib->IsValidDisplaySwizzleMode(&in);
         returnCode = ADDR_OK;
     }
     else

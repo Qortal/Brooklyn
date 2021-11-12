@@ -199,7 +199,6 @@ NIR_GENERATED_FILES = \
 	nir/nir_constant_expressions.c \
 	nir/nir_intrinsics.c \
 	nir/nir_intrinsics.h \
-	nir/nir_intrinsics_indices.h \
 	nir/nir_opcodes.c \
 	nir/nir_opcodes.h \
 	nir/nir_opt_algebraic.c
@@ -242,11 +241,11 @@ NIR_FILES = \
 	nir/nir_lower_array_deref_of_vec.c \
 	nir/nir_lower_atomics_to_ssbo.c \
 	nir/nir_lower_bitmap.c \
-	nir/nir_lower_blend.c \
 	nir/nir_lower_bit_size.c \
 	nir/nir_lower_bool_to_bitsize.c \
 	nir/nir_lower_bool_to_float.c \
 	nir/nir_lower_bool_to_int32.c \
+	nir/nir_lower_cl_images_to_tex.c \
 	nir/nir_lower_clamp_color_outputs.c \
 	nir/nir_lower_clip.c \
 	nir/nir_lower_clip_cull_distance_arrays.c \
@@ -254,13 +253,12 @@ NIR_FILES = \
 	nir/nir_lower_clip_halfz.c \
 	nir/nir_lower_convert_alu_types.c \
 	nir/nir_lower_variable_initializers.c \
-	nir/nir_lower_discard_or_demote.c \
+	nir/nir_lower_discard_to_demote.c \
 	nir/nir_lower_double_ops.c \
 	nir/nir_lower_drawpixels.c \
 	nir/nir_lower_fb_read.c \
 	nir/nir_lower_flatshade.c \
 	nir/nir_lower_flrp.c \
-	nir/nir_lower_fragcolor.c \
 	nir/nir_lower_fragcoord_wtrans.c \
 	nir/nir_lower_frexp.c \
 	nir/nir_lower_global_vars_to_local.c \
@@ -279,9 +277,8 @@ NIR_FILES = \
 	nir/nir_lower_io_to_temporaries.c \
 	nir/nir_lower_io_to_scalar.c \
 	nir/nir_lower_io_to_vector.c \
-	nir/nir_lower_is_helper_invocation.c \
 	nir/nir_lower_multiview.c \
-	nir/nir_lower_mediump.c \
+	nir/nir_lower_mediump_outputs.c \
 	nir/nir_lower_memcpy.c \
 	nir/nir_lower_memory_model.c \
 	nir/nir_lower_non_uniform_access.c \
@@ -289,26 +286,20 @@ NIR_FILES = \
 	nir/nir_lower_passthrough_edgeflags.c \
 	nir/nir_lower_patch_vertices.c \
 	nir/nir_lower_phis_to_scalar.c \
-	nir/nir_lower_pntc_ytransform.c \
 	nir/nir_lower_point_size.c \
 	nir/nir_lower_point_size_mov.c \
-	nir/nir_lower_printf.c \
 	nir/nir_lower_regs_to_ssa.c \
-	nir/nir_lower_readonly_images_to_tex.c \
 	nir/nir_lower_returns.c \
 	nir/nir_lower_samplers.c \
 	nir/nir_lower_scratch.c \
-	nir/nir_lower_shader_calls.c \
 	nir/nir_lower_ssbo.c \
 	nir/nir_lower_subgroups.c \
 	nir/nir_lower_system_values.c \
 	nir/nir_lower_tex.c \
-	nir/nir_lower_texcoord_replace.c \
 	nir/nir_lower_to_source_mods.c \
 	nir/nir_lower_two_sided_color.c \
 	nir/nir_lower_ubo_vec4.c \
 	nir/nir_lower_uniforms_to_ubo.c \
-	nir/nir_lower_undef_to_zero.c \
 	nir/nir_lower_vars_to_ssa.c \
 	nir/nir_lower_var_copies.c \
 	nir/nir_lower_vec_to_movs.c \
@@ -342,8 +333,6 @@ NIR_FILES = \
 	nir/nir_opt_load_store_vectorize.c \
 	nir/nir_opt_memcpy.c \
 	nir/nir_opt_move.c \
-	nir/nir_opt_move_discards_to_top.c \
-	nir/nir_opt_offsets.c \
 	nir/nir_opt_peephole_select.c \
 	nir/nir_opt_rematerialize_compares.c \
 	nir/nir_opt_remove_phis.c \

@@ -271,10 +271,6 @@ void GLAPIENTRY
 _mesa_GetActiveUniformName(GLuint program, GLuint uniformIndex,
 			   GLsizei bufSize, GLsizei *length,
 			   GLchar *uniformName);
-void
-_mesa_GetActiveUniform_impl(GLuint, GLuint, GLsizei, GLsizei *,
-                            GLint *, GLenum *, GLcharARB *,
-                            bool glthread);
 void GLAPIENTRY
 _mesa_GetActiveUniform(GLuint, GLuint, GLsizei, GLsizei *,
                        GLint *, GLenum *, GLcharARB *);

@@ -76,9 +76,6 @@ public:
 
 class ShaderInputVarying : public ShaderInput {
 public:
-   ShaderInputVarying(tgsi_semantic _name, int sid, unsigned driver_location,
-                      unsigned frac, unsigned components, tgsi_interpolate_mode interpolate,
-                      tgsi_interpolate_loc interp_loc);
    ShaderInputVarying(tgsi_semantic name, int sid, nir_variable *input);
    ShaderInputVarying(tgsi_semantic name, const ShaderInputVarying& orig,
                       size_t location);
@@ -93,7 +90,7 @@ public:
 
    int sid() const {return m_sid;}
 
-   void update_mask(int additional_comps, int frac);
+   void update_mask(int additional_comps);
 
    size_t location() const {return m_driver_location;}
    int location_frac() const {return m_location_frac;}
@@ -118,9 +115,6 @@ private:
 
 class ShaderInputColor: public ShaderInputVarying {
 public:
-   ShaderInputColor(tgsi_semantic _name, int sid, unsigned driver_location,
-                    unsigned frac, unsigned components, tgsi_interpolate_mode interpolate,
-                    tgsi_interpolate_loc interp_loc);
    ShaderInputColor(tgsi_semantic name, int sid, nir_variable *input);
    void set_back_color(unsigned back_color_input_idx);
    unsigned back_color_input_index() const {
@@ -155,7 +149,7 @@ public:
 
    size_t size() const {return m_inputs.size();}
 
-   PShaderInput find_varying(tgsi_semantic name, int sid);
+   PShaderInput find_varying(tgsi_semantic name, int sid, int frac);
 
    void update_lds_pos();
 

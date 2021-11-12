@@ -23,14 +23,14 @@
 ///
 /// \file
 /// Tools to generate various forms of binary code from existing LLVM IR in
-/// the given llvm::Module object and output the result as a clover::binary.
+/// the given llvm::Module object and output the result as a clover::module.
 ///
 
 #ifndef CLOVER_LLVM_CODEGEN_HPP
 #define CLOVER_LLVM_CODEGEN_HPP
 
 #include "llvm/util.hpp"
-#include "core/binary.hpp"
+#include "core/module.hpp"
 
 #include <llvm/IR/Module.h>
 
@@ -41,15 +41,15 @@ namespace clover {
       std::string
       print_module_bitcode(const ::llvm::Module &mod);
 
-      binary
+      module
       build_module_library(const ::llvm::Module &mod,
-                           enum binary::section::type section_type);
+                           enum module::section::type section_type);
 
       std::unique_ptr< ::llvm::Module>
-      parse_module_library(const binary &b, ::llvm::LLVMContext &ctx,
+      parse_module_library(const module &m, ::llvm::LLVMContext &ctx,
                            std::string &r_log);
 
-      binary
+      module
       build_module_native(::llvm::Module &mod, const target &target,
                           const clang::CompilerInstance &c,
                           std::string &r_log);
@@ -57,7 +57,7 @@ namespace clover {
       std::string
       print_module_native(const ::llvm::Module &mod, const target &target);
 
-      binary
+      module
       build_module_common(const ::llvm::Module &mod,
                           const std::vector<char> &code,
                           const std::map<std::string, unsigned> &offsets,

@@ -144,7 +144,7 @@ vc4_nir_get_swizzled_channel(nir_builder *b, nir_ssa_def **srcs, int swiz)
         default:
         case PIPE_SWIZZLE_NONE:
                 fprintf(stderr, "warning: unknown swizzle\n");
-                FALLTHROUGH;
+                /* FALLTHROUGH */
         case PIPE_SWIZZLE_0:
                 return nir_imm_float(b, 0.0);
         case PIPE_SWIZZLE_1:
@@ -472,6 +472,17 @@ ntq_emit_tex(struct vc4_compile *c, nir_tex_instr *instr)
                 qir_uniform(c, QUNIFORM_CONSTANT, 0),
         };
         uint32_t next_texture_u = 0;
+
+        /* There is no native support for GL texture rectangle coordinates, so
+         * we have to rescale from ([0, width], [0, height]) to ([0, 1], [0,
+         * 1]).
+         */
+        if (instr->sampler_dim == GLSL_SAMPLER_DIM_RECT) {
+                s = qir_FMUL(c, s,
+                             qir_uniform(c, QUNIFORM_TEXRECT_SCALE_X, unit));
+                t = qir_FMUL(c, t,
+                             qir_uniform(c, QUNIFORM_TEXRECT_SCALE_Y, unit));
+        }
 
         if (instr->sampler_dim == GLSL_SAMPLER_DIM_CUBE || is_txl) {
                 texture_u[2] = qir_uniform(c, QUNIFORM_TEXTURE_CONFIG_P2,
@@ -1276,23 +1287,23 @@ ntq_emit_alu(struct vc4_compile *c, nir_alu_instr *instr)
                 result = ntq_emit_ubfe(c, src[0], src[1], src[2]);
                 break;
 
-        case nir_op_usadd_4x8_vc4:
+        case nir_op_usadd_4x8:
                 result = qir_V8ADDS(c, src[0], src[1]);
                 break;
 
-        case nir_op_ussub_4x8_vc4:
+        case nir_op_ussub_4x8:
                 result = qir_V8SUBS(c, src[0], src[1]);
                 break;
 
-        case nir_op_umin_4x8_vc4:
+        case nir_op_umin_4x8:
                 result = qir_V8MIN(c, src[0], src[1]);
                 break;
 
-        case nir_op_umax_4x8_vc4:
+        case nir_op_umax_4x8:
                 result = qir_V8MAX(c, src[0], src[1]);
                 break;
 
-        case nir_op_umul_unorm_4x8_vc4:
+        case nir_op_umul_unorm_4x8:
                 result = qir_V8MULD(c, src[0], src[1]);
                 break;
 
@@ -1521,7 +1532,7 @@ vc4_optimize_nir(struct nir_shader *s)
 
                 NIR_PASS_V(s, nir_lower_vars_to_ssa);
                 NIR_PASS(progress, s, nir_lower_alu_to_scalar, NULL, NULL);
-                NIR_PASS(progress, s, nir_lower_phis_to_scalar, false);
+                NIR_PASS(progress, s, nir_lower_phis_to_scalar);
                 NIR_PASS(progress, s, nir_copy_prop);
                 NIR_PASS(progress, s, nir_opt_remove_phis);
                 NIR_PASS(progress, s, nir_opt_dce);
@@ -1548,7 +1559,10 @@ vc4_optimize_nir(struct nir_shader *s)
                 }
 
                 NIR_PASS(progress, s, nir_opt_undef);
-                NIR_PASS(progress, s, nir_opt_loop_unroll);
+                NIR_PASS(progress, s, nir_opt_loop_unroll,
+                         nir_var_shader_in |
+                         nir_var_shader_out |
+                         nir_var_function_temp);
         } while (progress);
 }
 
@@ -1863,17 +1877,6 @@ ntq_emit_intrinsic(struct vc4_compile *c, nir_intrinsic_instr *instr)
                 break;
         }
 
-        case nir_intrinsic_load_texture_rect_scaling: {
-                assert(nir_src_is_const(instr->src[0]));
-                int sampler = nir_src_as_int(instr->src[0]);
-
-                ntq_store_dest(c, &instr->dest, 0,
-                                qir_uniform(c, QUNIFORM_TEXRECT_SCALE_X, sampler));
-                ntq_store_dest(c, &instr->dest, 1,
-                                qir_uniform(c, QUNIFORM_TEXRECT_SCALE_Y, sampler));
-                break;
-        }
-
         default:
                 fprintf(stderr, "Unknown intrinsic: ");
                 nir_print_instr(&instr->instr, stderr);
@@ -2170,8 +2173,6 @@ static const nir_shader_compiler_options nir_options = {
         .lower_all_io_to_temps = true,
         .lower_extract_byte = true,
         .lower_extract_word = true,
-        .lower_insert_byte = true,
-        .lower_insert_word = true,
         .lower_fdiv = true,
         .lower_ffma16 = true,
         .lower_ffma32 = true,
@@ -2182,17 +2183,13 @@ static const nir_shader_compiler_options nir_options = {
         .lower_fsat = true,
         .lower_fsqrt = true,
         .lower_ldexp = true,
-        .lower_fneg = true,
-        .lower_ineg = true,
+        .lower_negate = true,
         .lower_rotate = true,
         .lower_to_scalar = true,
         .lower_umax = true,
         .lower_umin = true,
         .lower_isign = true,
-        .has_fsub = true,
-        .has_isub = true,
         .max_unroll_iterations = 32,
-        .force_indirect_unrolling = (nir_var_shader_in | nir_var_shader_out | nir_var_function_temp),
 };
 
 const void *
@@ -2258,6 +2255,11 @@ vc4_shader_ntq(struct vc4_context *vc4, enum qstage stage,
         }
 
         struct nir_lower_tex_options tex_options = {
+                /* We would need to implement txs, but we don't want the
+                 * int/float conversions
+                 */
+                .lower_rect = false,
+
                 .lower_txp = ~0,
 
                 /* Apply swizzles to all samplers. */
@@ -2293,6 +2295,12 @@ vc4_shader_ntq(struct vc4_context *vc4, enum qstage stage,
 
         NIR_PASS_V(c->s, nir_lower_tex, &tex_options);
 
+        if (c->fs_key && c->fs_key->light_twoside)
+                NIR_PASS_V(c->s, nir_lower_two_sided_color, true);
+
+        if (c->vs_key && c->vs_key->clamp_color)
+                NIR_PASS_V(c->s, nir_lower_clamp_color_outputs);
+
         if (c->key->ucp_enables) {
                 if (stage == QSTAGE_FRAG) {
                         NIR_PASS_V(c->s, nir_lower_clip_fs,
@@ -2316,11 +2324,7 @@ vc4_shader_ntq(struct vc4_context *vc4, enum qstage stage,
 
         NIR_PASS_V(c->s, vc4_nir_lower_io, c);
         NIR_PASS_V(c->s, vc4_nir_lower_txf_ms, c);
-        nir_lower_idiv_options idiv_options = {
-                .imprecise_32bit_lowering = true,
-                .allow_fp16 = true,
-        };
-        NIR_PASS_V(c->s, nir_lower_idiv, &idiv_options);
+        NIR_PASS_V(c->s, nir_lower_idiv, nir_lower_idiv_fast);
 
         vc4_optimize_nir(c->s);
 
@@ -2733,8 +2737,12 @@ vc4_update_compiled_fs(struct vc4_context *vc4, uint8_t prim_mode)
         key->stencil_enabled = vc4->zsa->stencil_uniforms[0] != 0;
         key->stencil_twoside = vc4->zsa->stencil_uniforms[1] != 0;
         key->stencil_full_writemasks = vc4->zsa->stencil_uniforms[2] != 0;
-        key->depth_enabled = (vc4->zsa->base.depth_enabled ||
+        key->depth_enabled = (vc4->zsa->base.depth.enabled ||
                               key->stencil_enabled);
+        if (vc4->zsa->base.alpha.enabled)
+                key->alpha_test_func = vc4->zsa->base.alpha.func;
+        else
+                key->alpha_test_func = COMPARE_FUNC_ALWAYS;
 
         if (key->is_points) {
                 key->point_sprite_mask =
@@ -2745,6 +2753,7 @@ vc4_update_compiled_fs(struct vc4_context *vc4, uint8_t prim_mode)
         }
 
         key->ubo_1_size = vc4->constbuf[PIPE_SHADER_FRAGMENT].cb[1].buffer_size;
+        key->light_twoside = vc4->rasterizer->base.light_twoside;
 
         struct vc4_compiled_shader *old_fs = vc4->prog.fs;
         vc4->prog.fs = vc4_get_compiled_shader(vc4, QSTAGE_FRAG, &key->base);
@@ -2781,6 +2790,7 @@ vc4_update_compiled_vs(struct vc4_context *vc4, uint8_t prim_mode)
         vc4_setup_shared_key(vc4, &key->base, &vc4->verttex);
         key->base.shader_state = vc4->prog.bind_vs;
         key->fs_inputs = vc4->prog.fs->fs_inputs;
+        key->clamp_color = vc4->rasterizer->base.clamp_vertex_color;
 
         for (int i = 0; i < ARRAY_SIZE(key->attr_formats); i++)
                 key->attr_formats[i] = vc4->vtx->pipe[i].src_format;

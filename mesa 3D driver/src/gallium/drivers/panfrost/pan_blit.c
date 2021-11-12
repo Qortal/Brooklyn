@@ -34,8 +34,7 @@
 static void
 panfrost_blitter_save(
         struct panfrost_context *ctx,
-        struct blitter_context *blitter,
-        bool render_cond)
+        struct blitter_context *blitter)
 {
 
         util_blitter_save_vertex_buffer_slot(blitter, ctx->vertex_buffers);
@@ -60,28 +59,35 @@ panfrost_blitter_save(
                         (struct pipe_sampler_view **)&ctx->sampler_views[PIPE_SHADER_FRAGMENT]);
         util_blitter_save_fragment_constant_buffer_slot(blitter,
                         ctx->constant_buffer[PIPE_SHADER_FRAGMENT].cb);
+}
 
-        if (!render_cond) {
-                util_blitter_save_render_condition(blitter,
-                                (struct pipe_query *) ctx->cond_query,
-                                ctx->cond_cond, ctx->cond_mode);
-        }
+static bool
+panfrost_u_blitter_blit(struct pipe_context *pipe,
+                        const struct pipe_blit_info *info)
+{
+        struct panfrost_context *ctx = pan_context(pipe);
 
+        if (!util_blitter_is_blit_supported(ctx->blitter, info))
+                unreachable("Unsupported blit\n");
+
+        /* TODO: Scissor */
+
+        panfrost_blitter_save(ctx, ctx->blitter);
+        util_blitter_blit(ctx->blitter, info);
+
+        return true;
 }
 
 void
 panfrost_blit(struct pipe_context *pipe,
               const struct pipe_blit_info *info)
 {
-        struct panfrost_context *ctx = pan_context(pipe);
+        /* We don't have a hardware blit, so we just fake it with
+         * u_blitter. We could do a little better by culling
+         * vertex jobs, though. */
 
-        if (info->render_condition_enable &&
-            !panfrost_render_condition_check(ctx))
+        if (panfrost_u_blitter_blit(pipe, info))
                 return;
 
-        if (!util_blitter_is_blit_supported(ctx->blitter, info))
-                unreachable("Unsupported blit\n");
-
-        panfrost_blitter_save(ctx, ctx->blitter, info->render_condition_enable);
-        util_blitter_blit(ctx->blitter, info);
+        return;
 }

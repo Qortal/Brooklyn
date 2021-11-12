@@ -32,15 +32,15 @@
 #include <sys/resource.h>
 #include <sys/un.h>
 
-#include "common/intel_gem.h"
-#include "dev/intel_device_info.h"
+#include "common/gen_gem.h"
+#include "dev/gen_device_info.h"
 #include "drm-uapi/i915_drm.h"
 #include "drm-shim/drm_shim.h"
 #include "util/macros.h"
 #include "util/vma.h"
 
 struct i915_device {
-   struct intel_device_info devinfo;
+   struct gen_device_info devinfo;
    uint32_t device_id;
 };
 
@@ -93,22 +93,6 @@ i915_ioctl_gem_mmap(int fd, unsigned long request, void *arg)
 }
 
 static int
-i915_ioctl_gem_userptr(int fd, unsigned long request, void *arg)
-{
-   struct shim_fd *shim_fd = drm_shim_fd_lookup(fd);
-   struct drm_i915_gem_userptr *userptr = arg;
-   struct i915_bo *bo = calloc(1, sizeof(*bo));
-
-   drm_shim_bo_init(&bo->base, userptr->user_size);
-
-   userptr->handle = drm_shim_bo_get_handle(shim_fd, &bo->base);
-
-   drm_shim_bo_put(&bo->base);
-
-   return 0;
-}
-
-static int
 i915_ioctl_gem_context_create(int fd, unsigned long request, void *arg)
 {
    struct drm_i915_gem_context_create *create = arg;
@@ -124,7 +108,7 @@ i915_ioctl_gem_context_getparam(int fd, unsigned long request, void *arg)
    struct drm_i915_gem_context_param *param = arg;
 
    if (param->param ==  I915_CONTEXT_PARAM_GTT_SIZE) {
-      if (i915.devinfo.ver >= 8 && !i915.devinfo.is_cherryview)
+      if (i915.devinfo.gen >= 8 && !i915.devinfo.is_cherryview)
          param->value = 1ull << 48;
       else
          param->value = 1ull << 31;
@@ -151,26 +135,26 @@ i915_ioctl_get_param(int fd, unsigned long request, void *arg)
       *gp->value = i915.devinfo.timestamp_frequency;
       return 0;
    case I915_PARAM_HAS_ALIASING_PPGTT:
-      if (i915.devinfo.ver < 6)
+      if (i915.devinfo.gen < 6)
          *gp->value = I915_GEM_PPGTT_NONE;
-      else if (i915.devinfo.ver <= 7)
+      else if (i915.devinfo.gen <= 7)
          *gp->value = I915_GEM_PPGTT_ALIASING;
       else
          *gp->value = I915_GEM_PPGTT_FULL;
       return 0;
 
    case I915_PARAM_NUM_FENCES_AVAIL:
-      *gp->value = 8; /* gfx2/3 value, unused in brw/iris */
+      *gp->value = 8; /* gen2/3 value, unused in brw/iris */
       return 0;
 
    case I915_PARAM_HAS_BLT:
-      *gp->value = 1; /* gfx2/3 value, unused in brw/iris */
+      *gp->value = 1; /* gen2/3 value, unused in brw/iris */
       return 0;
 
    case I915_PARAM_HAS_BSD:
    case I915_PARAM_HAS_LLC:
    case I915_PARAM_HAS_VEBOX:
-      *gp->value = 0; /* gfx2/3 value, unused in brw/iris */
+      *gp->value = 0; /* gen2/3 value, unused in brw/iris */
       return 0;
 
    case I915_PARAM_HAS_GEM:
@@ -187,9 +171,6 @@ i915_ioctl_get_param(int fd, unsigned long request, void *arg)
    case I915_PARAM_HAS_EXEC_NO_RELOC:
    case I915_PARAM_HAS_EXEC_BATCH_FIRST:
       *gp->value = true;
-      return 0;
-   case I915_PARAM_HAS_EXEC_TIMELINE_FENCES:
-      *gp->value = false;
       return 0;
    case I915_PARAM_CMD_PARSER_VERSION:
       /* Most recent version in drivers/gpu/drm/i915/i915_cmd_parser.c */
@@ -318,7 +299,7 @@ i915_gem_get_aperture(int fd, unsigned long request, void *arg)
 {
    struct drm_i915_gem_get_aperture *aperture = arg;
 
-   if (i915.devinfo.ver >= 8 &&
+   if (i915.devinfo.gen >= 8 &&
        !i915.devinfo.is_cherryview) {
       aperture->aper_size = 1ull << 48;
       aperture->aper_available_size = 1ull << 48;
@@ -346,8 +327,6 @@ static ioctl_fn_t driver_ioctls[] = {
    [DRM_I915_GEM_EXECBUFFER2] = i915_ioctl_noop,
    [DRM_I915_GEM_EXECBUFFER2_WR] = i915_ioctl_noop,
 
-   [DRM_I915_GEM_USERPTR] = i915_ioctl_gem_userptr,
-
    [DRM_I915_GEM_GET_APERTURE] = i915_gem_get_aperture,
 
    [DRM_I915_REG_READ] = i915_ioctl_noop,
@@ -355,7 +334,6 @@ static ioctl_fn_t driver_ioctls[] = {
    [DRM_I915_GEM_SET_DOMAIN] = i915_ioctl_noop,
    [DRM_I915_GEM_GET_CACHING] = i915_ioctl_noop,
    [DRM_I915_GEM_SET_CACHING] = i915_ioctl_noop,
-   [DRM_I915_GEM_GET_TILING] = i915_ioctl_noop,
    [DRM_I915_GEM_MADVISE] = i915_ioctl_noop,
    [DRM_I915_GEM_WAIT] = i915_ioctl_noop,
    [DRM_I915_GEM_BUSY] = i915_ioctl_noop,
@@ -367,8 +345,8 @@ drm_shim_driver_init(void)
    const char *user_platform = getenv("INTEL_STUB_GPU_PLATFORM");
 
    /* Use SKL if nothing is specified. */
-   i915.device_id = intel_device_name_to_pci_device_id(user_platform ?: "skl");
-   if (!intel_get_device_info_from_pci_id(i915.device_id, &i915.devinfo))
+   i915.device_id = gen_device_name_to_pci_device_id(user_platform ?: "skl");
+   if (!gen_get_device_info_from_pci_id(i915.device_id, &i915.devinfo))
       return;
 
    shim_device.bus_type = DRM_BUS_PCI;

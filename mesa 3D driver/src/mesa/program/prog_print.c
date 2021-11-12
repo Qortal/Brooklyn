@@ -107,6 +107,7 @@ arb_input_attrib_string(GLuint index, GLenum progType)
       "vertex.color.secondary",
       "vertex.fogcoord",
       "vertex.(six)", /* VERT_ATTRIB_COLOR_INDEX */
+      "vertex.(seven)", /* VERT_ATTRIB_EDGEFLAG */
       "vertex.texcoord[0]",
       "vertex.texcoord[1]",
       "vertex.texcoord[2]",
@@ -115,7 +116,7 @@ arb_input_attrib_string(GLuint index, GLenum progType)
       "vertex.texcoord[5]",
       "vertex.texcoord[6]",
       "vertex.texcoord[7]",
-      "vertex.(pointsize)", /* VERT_ATTRIB_POINT_SIZE */
+      "vertex.(sixteen)", /* VERT_ATTRIB_POINT_SIZE */
       "vertex.attrib[0]",
       "vertex.attrib[1]",
       "vertex.attrib[2]",
@@ -131,8 +132,7 @@ arb_input_attrib_string(GLuint index, GLenum progType)
       "vertex.attrib[12]",
       "vertex.attrib[13]",
       "vertex.attrib[14]",
-      "vertex.attrib[15]", /* MAX_VARYING = 16 */
-      "vertex.(edgeflag)", /* VERT_ATTRIB_EDGEFLAG */
+      "vertex.attrib[15]" /* MAX_VARYING = 16 */
    };
    static const char *const fragAttribs[] = {
       "fragment.position",
@@ -934,7 +934,7 @@ _mesa_fprint_parameter_list(FILE *f,
    fprintf(f, "dirty state flags: 0x%x\n", list->StateFlags);
    for (i = 0; i < list->NumParameters; i++){
       struct gl_program_parameter *param = list->Parameters + i;
-      unsigned pvo = list->Parameters[i].ValueOffset;
+      unsigned pvo = list->ParameterValueOffset[i];
       const GLfloat *v = (GLfloat *) list->ParameterValues + pvo;
 
       fprintf(f, "param[%d] sz=%d %s %s = {%.3g, %.3g, %.3g, %.3g}",
@@ -962,7 +962,6 @@ _mesa_print_parameter_list(const struct gl_program_parameter_list *list)
 void
 _mesa_write_shader_to_file(const struct gl_shader *shader)
 {
-#ifndef CUSTOM_SHADER_REPLACEMENT
    const char *type = "????";
    char filename[100];
    FILE *f;
@@ -1013,7 +1012,6 @@ _mesa_write_shader_to_file(const struct gl_shader *shader)
    }
 
    fclose(f);
-#endif
 }
 
 

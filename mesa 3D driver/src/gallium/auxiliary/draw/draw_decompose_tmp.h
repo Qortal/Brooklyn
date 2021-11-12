@@ -170,10 +170,7 @@ FUNC(FUNC_VARS)
             idx[1] = GET_ELT(i + 1);
             idx[2] = GET_ELT(i + 2);
             idx[3] = GET_ELT(i + 3);
-#ifdef PASS_QUADS
-            QUAD(0, idx[0], idx[1],
-                  idx[2], idx[3]);
-#else
+
             flags = DRAW_PIPE_RESET_STIPPLE |
                     DRAW_PIPE_EDGE_FLAG_0 |
                     DRAW_PIPE_EDGE_FLAG_2;
@@ -183,7 +180,6 @@ FUNC(FUNC_VARS)
             flags = DRAW_PIPE_EDGE_FLAG_0 |
                     DRAW_PIPE_EDGE_FLAG_1;
             TRIANGLE(flags, idx[1], idx[2], idx[3]);
-#endif
          }
       }
       else {
@@ -192,10 +188,7 @@ FUNC(FUNC_VARS)
             idx[1] = GET_ELT(i + 1);
             idx[2] = GET_ELT(i + 2);
             idx[3] = GET_ELT(i + 3);
-#ifdef PASS_QUADS
-            QUAD(0, idx[0], idx[1],
-                  idx[2], idx[3]);
-#else
+
             flags = DRAW_PIPE_RESET_STIPPLE |
                     DRAW_PIPE_EDGE_FLAG_0 |
                     DRAW_PIPE_EDGE_FLAG_1;
@@ -211,7 +204,6 @@ FUNC(FUNC_VARS)
                TRIANGLE(flags, idx[3], idx[1], idx[2]);
             else
                TRIANGLE(flags, idx[0], idx[2], idx[3]);
-#endif
          }
       }
       break;
@@ -228,10 +220,6 @@ FUNC(FUNC_VARS)
                idx[2] = GET_ELT(i + 2);
                idx[3] = GET_ELT(i + 3);
 
-#ifdef PASS_QUADS
-               QUAD(0, idx[2], idx[0],
-                    idx[1], idx[3]);
-#else
                /* always emit idx[3] last */
                flags = DRAW_PIPE_RESET_STIPPLE |
                        DRAW_PIPE_EDGE_FLAG_0 |
@@ -241,7 +229,6 @@ FUNC(FUNC_VARS)
                flags = DRAW_PIPE_EDGE_FLAG_0 |
                        DRAW_PIPE_EDGE_FLAG_1;
                TRIANGLE(flags, idx[0], idx[1], idx[3]);
-#endif
             }
          }
          else {
@@ -251,10 +238,6 @@ FUNC(FUNC_VARS)
                idx[2] = GET_ELT(i + 2);
                idx[3] = GET_ELT(i + 3);
 
-#ifdef PASS_QUADS
-               QUAD(0, idx[3], idx[2],
-                    idx[0], idx[1]);
-#else
                flags = DRAW_PIPE_RESET_STIPPLE |
                        DRAW_PIPE_EDGE_FLAG_0 |
                        DRAW_PIPE_EDGE_FLAG_1;
@@ -270,7 +253,6 @@ FUNC(FUNC_VARS)
                   TRIANGLE(flags, idx[3], idx[0], idx[1]);
                else
                   TRIANGLE(flags, idx[0], idx[1], idx[3]);
-#endif
             }
          }
       }

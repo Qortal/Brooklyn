@@ -89,7 +89,7 @@ validate_DispatchCompute(struct gl_context *ctx, const GLuint *num_groups)
     *  program for the compute shader stage has a variable work group size."
     */
    struct gl_program *prog = ctx->_Shader->CurrentProgram[MESA_SHADER_COMPUTE];
-   if (prog->info.workgroup_size_variable) {
+   if (prog->info.cs.local_size_variable) {
       _mesa_error(ctx, GL_INVALID_OPERATION,
                   "glDispatchCompute(variable work group size forbidden)");
       return GL_FALSE;
@@ -113,7 +113,7 @@ validate_DispatchComputeGroupSizeARB(struct gl_context *ctx,
     *  shader stage has a fixed work group size."
     */
    struct gl_program *prog = ctx->_Shader->CurrentProgram[MESA_SHADER_COMPUTE];
-   if (!prog->info.workgroup_size_variable) {
+   if (!prog->info.cs.local_size_variable) {
       _mesa_error(ctx, GL_INVALID_OPERATION,
                   "glDispatchComputeGroupSizeARB(fixed work group size "
                   "forbidden)");
@@ -269,7 +269,7 @@ valid_dispatch_indirect(struct gl_context *ctx,  GLintptr indirect)
     *  compute shader stage has a variable work group size."
     */
    struct gl_program *prog = ctx->_Shader->CurrentProgram[MESA_SHADER_COMPUTE];
-   if (prog->info.workgroup_size_variable) {
+   if (prog->info.cs.local_size_variable) {
       _mesa_error(ctx, GL_INVALID_OPERATION,
                   "%s(variable work group size forbidden)", name);
       return GL_FALSE;
@@ -285,7 +285,7 @@ dispatch_compute(GLuint num_groups_x, GLuint num_groups_y,
    GET_CURRENT_CONTEXT(ctx);
    const GLuint num_groups[3] = { num_groups_x, num_groups_y, num_groups_z };
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
 
    if (MESA_VERBOSE & VERBOSE_API)
       _mesa_debug(ctx, "glDispatchCompute(%d, %d, %d)\n",
@@ -298,9 +298,6 @@ dispatch_compute(GLuint num_groups_x, GLuint num_groups_y,
        return;
 
    ctx->Driver.DispatchCompute(ctx, num_groups);
-
-   if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH)
-      _mesa_flush(ctx);
 }
 
 void GLAPIENTRY
@@ -323,7 +320,7 @@ dispatch_compute_indirect(GLintptr indirect, bool no_error)
 {
    GET_CURRENT_CONTEXT(ctx);
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
 
    if (MESA_VERBOSE & VERBOSE_API)
       _mesa_debug(ctx, "glDispatchComputeIndirect(%ld)\n", (long) indirect);
@@ -332,9 +329,6 @@ dispatch_compute_indirect(GLintptr indirect, bool no_error)
       return;
 
    ctx->Driver.DispatchComputeIndirect(ctx, indirect);
-
-   if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH)
-      _mesa_flush(ctx);
 }
 
 extern void GLAPIENTRY
@@ -359,7 +353,7 @@ dispatch_compute_group_size(GLuint num_groups_x, GLuint num_groups_y,
    const GLuint num_groups[3] = { num_groups_x, num_groups_y, num_groups_z };
    const GLuint group_size[3] = { group_size_x, group_size_y, group_size_z };
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
 
    if (MESA_VERBOSE & VERBOSE_API)
       _mesa_debug(ctx,
@@ -375,9 +369,6 @@ dispatch_compute_group_size(GLuint num_groups_x, GLuint num_groups_y,
        return;
 
    ctx->Driver.DispatchComputeGroupSize(ctx, num_groups, group_size);
-
-   if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH)
-      _mesa_flush(ctx);
 }
 
 void GLAPIENTRY

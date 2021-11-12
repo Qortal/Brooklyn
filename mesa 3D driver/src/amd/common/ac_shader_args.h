@@ -47,11 +47,11 @@ enum ac_arg_type
 };
 
 struct ac_arg {
-   uint16_t arg_index;
+   uint8_t arg_index;
    bool used;
 };
 
-#define AC_MAX_ARGS 384 /* including all VS->TCS IO */
+#define AC_MAX_ARGS 128
 
 struct ac_shader_args {
    /* Info on how to declare arguments */
@@ -63,58 +63,21 @@ struct ac_shader_args {
       bool skip;
    } args[AC_MAX_ARGS];
 
-   uint16_t arg_count;
-   uint16_t num_sgprs_used;
-   uint16_t num_vgprs_used;
+   uint8_t arg_count;
+   uint8_t sgpr_count;
+   uint8_t num_sgprs_used;
+   uint8_t num_vgprs_used;
 
-   uint16_t return_count;
-   uint16_t num_sgprs_returned;
-   uint16_t num_vgprs_returned;
-
-   /* VS */
    struct ac_arg base_vertex;
    struct ac_arg start_instance;
    struct ac_arg draw_id;
-   struct ac_arg vertex_buffers;
    struct ac_arg vertex_id;
-   struct ac_arg vs_rel_patch_id;
-   struct ac_arg vs_prim_id;
    struct ac_arg instance_id;
-
-   /* Merged shaders */
-   struct ac_arg tess_offchip_offset;
-   struct ac_arg merged_wave_info;
-   /* On gfx10:
-    *  - bits 0..11: ordered_wave_id
-    *  - bits 12..20: number of vertices in group
-    *  - bits 22..30: number of primitives in group
-    */
-   struct ac_arg gs_tg_info;
-   struct ac_arg scratch_offset;
-
-   /* TCS */
-   struct ac_arg tcs_factor_offset;
    struct ac_arg tcs_patch_id;
    struct ac_arg tcs_rel_ids;
-
-   /* TES */
-   struct ac_arg tes_u;
-   struct ac_arg tes_v;
-   struct ac_arg tes_rel_patch_id;
    struct ac_arg tes_patch_id;
-
-   /* GS */
-   struct ac_arg es2gs_offset;      /* separate legacy ES */
-   struct ac_arg gs2vs_offset;      /* legacy GS */
-   struct ac_arg gs_wave_id;        /* legacy GS */
-   struct ac_arg gs_vtx_offset[6];  /* GFX6-8: [0-5], GFX9+: [0-2] packed */
    struct ac_arg gs_prim_id;
    struct ac_arg gs_invocation_id;
-
-   /* Streamout */
-   struct ac_arg streamout_config;
-   struct ac_arg streamout_write_index;
-   struct ac_arg streamout_offset[4];
 
    /* PS */
    struct ac_arg frag_pos[4];
@@ -139,14 +102,12 @@ struct ac_shader_args {
    /* Vulkan only */
    struct ac_arg push_constants;
    struct ac_arg inline_push_consts[AC_MAX_INLINE_PUSH_CONSTS];
+   unsigned num_inline_push_consts;
    unsigned base_inline_push_consts;
    struct ac_arg view_index;
-   struct ac_arg sbt_descriptors;
-   struct ac_arg ray_launch_size;
 };
 
 void ac_add_arg(struct ac_shader_args *info, enum ac_arg_regfile regfile, unsigned registers,
                 enum ac_arg_type type, struct ac_arg *arg);
-void ac_add_return(struct ac_shader_args *info, enum ac_arg_regfile regfile);
 
 #endif

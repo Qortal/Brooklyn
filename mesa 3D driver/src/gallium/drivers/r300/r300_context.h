@@ -389,7 +389,7 @@ struct r300_texture_desc {
 
 struct r300_resource
 {
-    struct pipe_resource b;
+    struct u_resource b;
 
     /* Winsys buffer backing this resource. */
     struct pb_buffer *buf;
@@ -449,7 +449,7 @@ struct r300_context {
     /* The submission context. */
     struct radeon_winsys_ctx *ctx;
     /* The command stream. */
-    struct radeon_cmdbuf cs;
+    struct radeon_cmdbuf *cs;
     /* Screen. */
     struct r300_screen *screen;
 

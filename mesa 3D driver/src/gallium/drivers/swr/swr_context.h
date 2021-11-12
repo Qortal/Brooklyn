@@ -201,7 +201,6 @@ struct swr_context {
    SWR_TILE_INTERFACE tileApi;
 
    uint32_t max_draws_in_flight;
-   uint8_t patch_vertices;
 };
 
 static INLINE struct swr_context *

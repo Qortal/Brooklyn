@@ -134,7 +134,7 @@ update_array_sizes(struct gl_shader_program *prog, nir_variable *var,
          _mesa_hash_table_search(referenced_uniforms[stage], var->name);
       if (entry) {
          ainfo = (struct uniform_array_info *)  entry->data;
-         max_array_size = MAX2(BITSET_LAST_BIT_SIZED(ainfo->indices, words),
+         max_array_size = MAX2(BITSET_LAST_BIT(ainfo->indices, words),
                                max_array_size);
       }
 
@@ -394,8 +394,7 @@ add_var_use_deref(nir_deref_instr *deref, struct hash_table *live,
    if (deref->deref_type != nir_deref_type_var ||
        !nir_deref_mode_is_one_of(deref, nir_var_uniform |
                                         nir_var_mem_ubo |
-                                        nir_var_mem_ssbo |
-                                        nir_var_image)) {
+                                        nir_var_mem_ssbo)) {
       nir_deref_path_finish(&path);
       return;
    }
@@ -660,7 +659,7 @@ add_parameter(struct gl_uniform_storage *uniform,
 
    struct gl_program_parameter_list *params = state->params;
    int base_index = params->NumParameters;
-   _mesa_reserve_parameter_storage(params, num_params, num_params);
+   _mesa_reserve_parameter_storage(params, num_params);
 
    if (ctx->Const.PackedDriverUniformStorage) {
       for (unsigned i = 0; i < num_params; i++) {
@@ -672,10 +671,6 @@ add_parameter(struct gl_uniform_storage *uniform,
             else
                comps = 4;
          }
-
-         /* TODO: This will waste space with 1 and 3 16-bit components. */
-         if (glsl_type_is_16bit(glsl_without_array(type)))
-            comps = DIV_ROUND_UP(comps, 2);
 
          _mesa_add_parameter(params, PROGRAM_UNIFORM, uniform->name, comps,
                              glsl_get_gl_type(type), NULL, NULL, false);
@@ -1656,8 +1651,8 @@ gl_nir_link_uniforms(struct gl_context *ctx,
 
          int location = var->data.location;
 
-         struct gl_uniform_block *blocks = NULL;
-         int num_blocks = 0;
+         struct gl_uniform_block *blocks;
+         int num_blocks;
          int buffer_block_index = -1;
          if (!prog->data->spirv && state.var_is_in_block) {
             /* If the uniform is inside a uniform block determine its block index by
@@ -1734,7 +1729,7 @@ gl_nir_link_uniforms(struct gl_context *ctx,
             }
          }
 
-         if (blocks && !prog->data->spirv && state.var_is_in_block) {
+         if (!prog->data->spirv && state.var_is_in_block) {
             if (glsl_without_array(state.current_var->type) != state.current_var->interface_type) {
                /* this is nested at some offset inside the block */
                bool found = false;

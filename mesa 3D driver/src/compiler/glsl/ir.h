@@ -557,7 +557,7 @@ public:
    /**
     * Get the max_ifc_array_access pointer
     *
-    * A "set" function is not needed because the array is dynamically allocated
+    * A "set" function is not needed because the array is dynmically allocated
     * as necessary.
     */
    inline int *get_max_ifc_array_access()
@@ -891,12 +891,6 @@ public:
        * ARB_bindless_texture.
        */
       unsigned bound:1;
-
-      /**
-       * Non-zero if the variable shall not be implicitly converted during
-       * functions matching.
-       */
-      unsigned implicit_conversion_prohibited:1;
 
       /**
        * Emit a warning if this variable is accessed.
@@ -1282,7 +1276,7 @@ public:
       return intrinsic_id != ir_intrinsic_invalid;
    }
 
-   /** Identifier for this intrinsic. */
+   /** Indentifier for this intrinsic. */
    enum ir_intrinsic_id intrinsic_id;
 
    /** Whether or not a built-in is available for this shader. */
@@ -1859,7 +1853,7 @@ enum ir_texture_opcode {
    ir_tex,		/**< Regular texture look-up */
    ir_txb,		/**< Texture look-up with LOD bias */
    ir_txl,		/**< Texture look-up with explicit LOD */
-   ir_txd,		/**< Texture look-up with partial derivatives */
+   ir_txd,		/**< Texture look-up with partial derivatvies */
    ir_txf,		/**< Texel fetch with explicit LOD */
    ir_txf_ms,           /**< Multisample texture fetch */
    ir_txs,		/**< Texture size */
@@ -2102,7 +2096,7 @@ public:
    {
       /* ir_dereference_variable objects always dereference the entire
        * variable.  However, if this dereference is dereferenced by anything
-       * else, the complete dereference chain is not a whole-variable
+       * else, the complete deferefernce chain is not a whole-variable
        * dereference.  This method should only be called on the top most
        * ir_rvalue in a dereference chain.
        */

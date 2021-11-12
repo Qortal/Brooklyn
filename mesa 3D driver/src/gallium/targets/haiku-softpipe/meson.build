@@ -35,6 +35,5 @@ libswpipe = shared_library(
   dependencies : [
     driver_swrast, cpp.find_library('be'), cpp.find_library('translation'),
     cpp.find_library('network'), dep_unwind, idep_mesautil, idep_nir,
-  ],
-  install : true,
+  ]
 )

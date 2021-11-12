@@ -40,12 +40,11 @@ using namespace brw;
  * Is it safe to eliminate the instruction?
  */
 static bool
-can_eliminate(const intel_device_info *devinfo, const fs_inst *inst,
-              BITSET_WORD *flag_live)
+can_eliminate(const fs_inst *inst, BITSET_WORD *flag_live)
 {
     return !inst->is_control_flow() &&
            !inst->has_side_effects() &&
-           !(flag_live[0] & inst->flags_written(devinfo)) &&
+           !(flag_live[0] & inst->flags_written()) &&
            !inst->writes_accumulator;
 }
 
@@ -97,14 +96,14 @@ fs_visitor::dead_code_eliminate()
                result_live |= BITSET_TEST(live, var + i);
 
             if (!result_live &&
-                (can_omit_write(inst) || can_eliminate(devinfo, inst, flag_live))) {
+                (can_omit_write(inst) || can_eliminate(inst, flag_live))) {
                inst->dst = fs_reg(spread(retype(brw_null_reg(), inst->dst.type),
                                          inst->dst.stride));
                progress = true;
             }
          }
 
-         if (inst->dst.is_null() && can_eliminate(devinfo, inst, flag_live)) {
+         if (inst->dst.is_null() && can_eliminate(inst, flag_live)) {
             inst->opcode = BRW_OPCODE_NOP;
             progress = true;
          }
@@ -119,10 +118,10 @@ fs_visitor::dead_code_eliminate()
          }
 
          if (!inst->predicate && inst->exec_size >= 8)
-            flag_live[0] &= ~inst->flags_written(devinfo);
+            flag_live[0] &= ~inst->flags_written();
 
          if (inst->opcode == BRW_OPCODE_NOP) {
-            inst->remove(block, true);
+            inst->remove(block);
             continue;
          }
 
@@ -139,8 +138,6 @@ fs_visitor::dead_code_eliminate()
          flag_live[0] |= inst->flags_read(devinfo);
       }
    }
-
-   cfg->adjust_block_ips();
 
    ralloc_free(live);
    ralloc_free(flag_live);

@@ -24,7 +24,6 @@
 
 namespace clover {
    const cl_icd_dispatch _dispatch = {
-      // OpenCL 1.0
       clGetPlatformIDs,
       GetPlatformInfo,
       clGetDeviceIDs,
@@ -99,8 +98,6 @@ namespace clover {
       NULL, // clGetGLTextureInfo
       NULL, // clEnqueueAcquireGLObjects
       NULL, // clEnqueueReleaseGLObjects
-
-      // cl_khr_d3d10_sharing
       NULL, // clGetGLContextInfoKHR
       NULL, // clGetDeviceIDsFromD3D10KHR
       NULL, // clCreateFromD3D10BufferKHR
@@ -108,8 +105,6 @@ namespace clover {
       NULL, // clCreateFromD3D10Texture3DKHR
       NULL, // clEnqueueAcquireD3D10ObjectsKHR
       NULL, // clEnqueueReleaseD3D10ObjectsKHR
-
-      // OpenCL 1.1
       clSetEventCallback,
       clCreateSubBuffer,
       clSetMemObjectDestructorCallback,
@@ -118,16 +113,10 @@ namespace clover {
       clEnqueueReadBufferRect,
       clEnqueueWriteBufferRect,
       clEnqueueCopyBufferRect,
-
-      // cl_ext_device_fission
       NULL, // clCreateSubDevicesEXT
       NULL, // clRetainDeviceEXT
       NULL, // clReleaseDeviceEXT
-
-      // cl_khr_gl_event
       NULL, // clCreateEventFromGLsyncKHR
-
-      // OpenCL 1.2
       clCreateSubDevices,
       clRetainDevice,
       clReleaseDevice,
@@ -144,8 +133,6 @@ namespace clover {
       clEnqueueBarrierWithWaitList,
       GetExtensionFunctionAddressForPlatform,
       NULL, // clCreateFromGLTexture
-
-      // cl_khr_d3d11_sharing
       NULL, // clGetDeviceIDsFromD3D11KHR
       NULL, // clCreateFromD3D11BufferKHR
       NULL, // clCreateFromD3D11Texture2DKHR
@@ -153,24 +140,16 @@ namespace clover {
       NULL, // clCreateFromDX9MediaSurfaceKHR
       NULL, // clEnqueueAcquireD3D11ObjectsKHR
       NULL, // clEnqueueReleaseD3D11ObjectsKHR
-
-      // cl_khr_dx9_media_sharing
       NULL, // clGetDeviceIDsFromDX9MediaAdapterKHR
       NULL, // clEnqueueAcquireDX9MediaSurfacesKHR
       NULL, // clEnqueueReleaseDX9MediaSurfacesKHR
-
-      // cl_khr_egl_image
       NULL, // clCreateFromEGLImageKHR
       NULL, // clEnqueueAcquireEGLObjectsKHR
       NULL, // clEnqueueReleaseEGLObjectsKHR
-
-      // cl_khr_egl_event
       NULL, // clCreateEventFromEGLSyncKHR
-
-      // OpenCL 2.0
       clCreateCommandQueueWithProperties,
-      clCreatePipe,
-      clGetPipeInfo,
+      NULL, // clCreatePipe
+      NULL, // clGetPipeInfo
       clSVMAlloc,
       clSVMFree,
       clEnqueueSVMFree,
@@ -181,24 +160,18 @@ namespace clover {
       NULL, // clCreateSamplerWithProperties
       clSetKernelArgSVMPointer,
       clSetKernelExecInfo,
-
-      // cl_khr_sub_groups
       NULL, // clGetKernelSubGroupInfoKHR
-
-      // OpenCL 2.1
       NULL, // clCloneKernel
-      clCreateProgramWithIL,
+      NULL, // clCreateProgramWithIL
       clEnqueueSVMMigrateMem,
-      clGetDeviceAndHostTimer,
-      clGetHostTimer,
-      clGetKernelSubGroupInfo,
-      clSetDefaultDeviceCommandQueue,
-
-      // OpenCL 2.2
-      clSetProgramReleaseCallback,
-      clSetProgramSpecializationConstant,
-      clCreateBufferWithProperties,
-      clCreateImageWithProperties,
+      NULL, // clGetDeviceAndHostTimer
+      NULL, // clGetHostTimer
+      NULL, // clGetKernelSubGroupInfo
+      NULL, // clSetDefaultDeviceCommandQueue
+      NULL, // clSetProgramReleaseCallback
+      NULL, // clSetProgramSpecializationConstant
+      NULL, // clCreateBufferWithProperties
+      NULL, // clCreateImageWithProperties
       clSetContextDestructorCallback
    };
 }

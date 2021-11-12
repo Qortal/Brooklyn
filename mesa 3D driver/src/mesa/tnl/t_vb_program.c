@@ -402,9 +402,6 @@ run_vp( struct gl_context *ctx, struct tnl_pipeline_stage *stage )
    unmap_textures(ctx, program);
 
    if (program->arb.IsPositionInvariant) {
-      /* make sure the inverse is up to date */
-      _math_matrix_analyse(&ctx->_ModelProjectMatrix);
-
       /* We need the exact same transform as in the fixed function path here
        * to guarantee invariance, depending on compiler optimization flags
        * results could be different otherwise.
@@ -420,10 +417,10 @@ run_vp( struct gl_context *ctx, struct tnl_pipeline_stage *stage )
 	 /* impossible */
       case 2:
 	 _mesa_vector4f_clean_elem( VB->ClipPtr, VB->Count, 2 );
-	 FALLTHROUGH;
+	 /* fall-through */
       case 3:
 	 _mesa_vector4f_clean_elem( VB->ClipPtr, VB->Count, 3 );
-	 FALLTHROUGH;
+	 /* fall-through */
       case 4:
 	 break;
       }

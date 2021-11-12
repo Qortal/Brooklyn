@@ -51,11 +51,11 @@
 using namespace brw;
 
 static bool
-cmod_propagate_cmp_to_add(const intel_device_info *devinfo, bblock_t *block,
+cmod_propagate_cmp_to_add(const gen_device_info *devinfo, bblock_t *block,
                           fs_inst *inst)
 {
    bool read_flag = false;
-   const unsigned flags_written = inst->flags_written(devinfo);
+   const unsigned flags_written = inst->flags_written();
 
    foreach_inst_in_block_reverse_starting_from(fs_inst, scan_inst, inst) {
       if (scan_inst->opcode == BRW_OPCODE_ADD &&
@@ -89,8 +89,8 @@ cmod_propagate_cmp_to_add(const intel_device_info *devinfo, bblock_t *block,
           * Perhaps (scan_inst->flags_written() & flags_written) !=
           * flags_written?
           */
-         if (scan_inst->flags_written(devinfo) != 0 &&
-             scan_inst->flags_written(devinfo) != flags_written)
+         if (scan_inst->flags_written() != 0 &&
+             scan_inst->flags_written() != flags_written)
             goto not_match;
 
          /* From the Kaby Lake PRM Vol. 7 "Assigning Conditional Flags":
@@ -135,14 +135,14 @@ cmod_propagate_cmp_to_add(const intel_device_info *devinfo, bblock_t *block,
              ((!read_flag && scan_inst->conditional_mod == BRW_CONDITIONAL_NONE) ||
               scan_inst->conditional_mod == cond)) {
             scan_inst->conditional_mod = cond;
-            inst->remove(block, true);
+            inst->remove(block);
             return true;
          }
          break;
       }
 
    not_match:
-      if ((scan_inst->flags_written(devinfo) & flags_written) != 0)
+      if ((scan_inst->flags_written() & flags_written) != 0)
          break;
 
       read_flag = read_flag ||
@@ -166,12 +166,12 @@ cmod_propagate_cmp_to_add(const intel_device_info *devinfo, bblock_t *block,
  *    or.z.f0(8)      g78<8,8,1>      g76<8,8,1>UD    g77<8,8,1>UD
  */
 static bool
-cmod_propagate_not(const intel_device_info *devinfo, bblock_t *block,
+cmod_propagate_not(const gen_device_info *devinfo, bblock_t *block,
                    fs_inst *inst)
 {
    const enum brw_conditional_mod cond = brw_negate_cmod(inst->conditional_mod);
    bool read_flag = false;
-   const unsigned flags_written = inst->flags_written(devinfo);
+   const unsigned flags_written = inst->flags_written();
 
    if (cond != BRW_CONDITIONAL_Z && cond != BRW_CONDITIONAL_NZ)
       return false;
@@ -195,21 +195,21 @@ cmod_propagate_not(const intel_device_info *devinfo, bblock_t *block,
           * Perhaps (scan_inst->flags_written() & flags_written) !=
           * flags_written?
           */
-         if (scan_inst->flags_written(devinfo) != 0 &&
-             scan_inst->flags_written(devinfo) != flags_written)
+         if (scan_inst->flags_written() != 0 &&
+             scan_inst->flags_written() != flags_written)
             break;
 
          if (scan_inst->can_do_cmod() &&
              ((!read_flag && scan_inst->conditional_mod == BRW_CONDITIONAL_NONE) ||
               scan_inst->conditional_mod == cond)) {
             scan_inst->conditional_mod = cond;
-            inst->remove(block, true);
+            inst->remove(block);
             return true;
          }
          break;
       }
 
-      if ((scan_inst->flags_written(devinfo) & flags_written) != 0)
+      if ((scan_inst->flags_written() & flags_written) != 0)
          break;
 
       read_flag = read_flag ||
@@ -220,7 +220,7 @@ cmod_propagate_not(const intel_device_info *devinfo, bblock_t *block,
 }
 
 static bool
-opt_cmod_propagation_local(const intel_device_info *devinfo, bblock_t *block)
+opt_cmod_propagation_local(const gen_device_info *devinfo, bblock_t *block)
 {
    bool progress = false;
    int ip = block->end_ip + 1;
@@ -285,7 +285,7 @@ opt_cmod_propagation_local(const intel_device_info *devinfo, bblock_t *block)
       }
 
       bool read_flag = false;
-      const unsigned flags_written = inst->flags_written(devinfo);
+      const unsigned flags_written = inst->flags_written();
       foreach_inst_in_block_reverse_starting_from(fs_inst, scan_inst, inst) {
          if (regions_overlap(scan_inst->dst, scan_inst->size_written,
                              inst->src[0], inst->size_read(0))) {
@@ -296,8 +296,8 @@ opt_cmod_propagation_local(const intel_device_info *devinfo, bblock_t *block)
              * Perhaps (scan_inst->flags_written() & flags_written) !=
              * flags_written?
              */
-            if (scan_inst->flags_written(devinfo) != 0 &&
-                scan_inst->flags_written(devinfo) != flags_written)
+            if (scan_inst->flags_written() != 0 &&
+                scan_inst->flags_written() != flags_written)
                break;
 
             if (scan_inst->is_partial_write() ||
@@ -309,7 +309,7 @@ opt_cmod_propagation_local(const intel_device_info *devinfo, bblock_t *block)
             if (inst->conditional_mod == BRW_CONDITIONAL_NZ &&
                 scan_inst->opcode == BRW_OPCODE_CMP &&
                 brw_reg_type_is_integer(inst->dst.type)) {
-               inst->remove(block, true);
+               inst->remove(block);
                progress = true;
                break;
             }
@@ -396,34 +396,24 @@ opt_cmod_propagation_local(const intel_device_info *devinfo, bblock_t *block)
              *   between scan_inst and inst.
              */
             if (!inst->src[0].negate &&
-                scan_inst->flags_written(devinfo)) {
+                scan_inst->flags_written()) {
                if (scan_inst->opcode == BRW_OPCODE_CMP) {
                   if ((inst->conditional_mod == BRW_CONDITIONAL_NZ) ||
                       (inst->conditional_mod == BRW_CONDITIONAL_G &&
                        inst->src[0].type == BRW_REGISTER_TYPE_UD) ||
                       (inst->conditional_mod == BRW_CONDITIONAL_L &&
                        inst->src[0].type == BRW_REGISTER_TYPE_D)) {
-                     inst->remove(block, true);
+                     inst->remove(block);
                      progress = true;
                      break;
                   }
                } else if (scan_inst->conditional_mod == inst->conditional_mod) {
-                  /* On Gfx4 and Gfx5 sel.cond will dirty the flags, but the
-                   * flags value is not based on the result stored in the
-                   * destination.  On all other platforms sel.cond will not
-                   * write the flags, so execution will not get to this point.
-                   */
-                  if (scan_inst->opcode == BRW_OPCODE_SEL) {
-                     assert(devinfo->ver <= 5);
-                  } else {
-                     inst->remove(block, true);
-                     progress = true;
-                  }
-
+                  inst->remove(block);
+                  progress = true;
                   break;
                } else if (!read_flag) {
                   scan_inst->conditional_mod = inst->conditional_mod;
-                  inst->remove(block, true);
+                  inst->remove(block);
                   progress = true;
                   break;
                }
@@ -509,22 +499,19 @@ opt_cmod_propagation_local(const intel_device_info *devinfo, bblock_t *block)
                  scan_inst->conditional_mod == cond)) {
                scan_inst->conditional_mod = cond;
                scan_inst->flag_subreg = inst->flag_subreg;
-               inst->remove(block, true);
+               inst->remove(block);
                progress = true;
             }
             break;
          }
 
-         if ((scan_inst->flags_written(devinfo) & flags_written) != 0)
+         if ((scan_inst->flags_written() & flags_written) != 0)
             break;
 
          read_flag = read_flag ||
                      (scan_inst->flags_read(devinfo) & flags_written) != 0;
       }
    }
-
-   /* There is progress if and only if instructions were removed. */
-   assert(progress == (block->end_ip_delta != 0));
 
    return progress;
 }
@@ -538,11 +525,8 @@ fs_visitor::opt_cmod_propagation()
       progress = opt_cmod_propagation_local(devinfo, block) || progress;
    }
 
-   if (progress) {
-      cfg->adjust_block_ips();
-
+   if (progress)
       invalidate_analysis(DEPENDENCY_INSTRUCTIONS);
-   }
 
    return progress;
 }

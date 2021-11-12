@@ -20,19 +20,27 @@
 # SOFTWARE.
 
 files_panfrost = files(
-  'pan_helpers.c',
   'pan_public.h',
   'pan_screen.c',
   'pan_screen.h',
   'pan_resource.c',
   'pan_resource.h',
+
+  'nir/nir_lower_blend.c',
+
   'pan_context.c',
   'pan_blit.c',
   'pan_job.c',
   'pan_assemble.c',
+  'pan_blending.c',
+  'pan_blend_shaders.c',
+  'pan_blend_cso.c',
+  'pan_cmdstream.c',
   'pan_compute.c',
-  'pan_mempool.c',
-  'pan_mempool.h',
+  'pan_fragment.c',
+  'pan_sfbd.c',
+  'pan_mfbd.c',
+  'pan_partial_update.c',
 )
 
 panfrost_includes = [
@@ -50,34 +58,18 @@ compile_args_panfrost = [
   '-Wno-pointer-arith'
 ]
 
-panfrost_versions = ['4', '5', '6', '7']
-libpanfrost_versions = []
-
-foreach ver : panfrost_versions
-  libpanfrost_versions += static_library(
-    'panfrost-v' + ver,
-    ['pan_cmdstream.c', pan_packers],
-    include_directories : panfrost_includes,
-    c_args : ['-DPAN_ARCH=' + ver],
-    gnu_symbol_visibility : 'hidden',
-    dependencies : [idep_pan_packers, idep_nir, dep_libdrm],
-)
-endforeach
-
 libpanfrost = static_library(
   'panfrost',
   files_panfrost,
   dependencies: [
     dep_thread,
     dep_libdrm,
-    idep_mesautil,
     idep_nir,
-    idep_pan_packers
+    idep_midgard_pack
   ],
   include_directories : panfrost_includes,
   c_args : [c_msvc_compat_args, compile_args_panfrost],
   gnu_symbol_visibility : 'hidden',
-  link_with: [libpanfrost_versions],
 )
 
 driver_panfrost = declare_dependency(

@@ -24,9 +24,6 @@
 #ifndef ANV_ANDROID_H
 #define ANV_ANDROID_H
 
-#if defined(ANDROID) && ANDROID_API_LEVEL >= 26
-#include <vndk/hardware_buffer.h>
-#endif
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_android.h>
 #include <vulkan/vk_android_native_buffer.h>
@@ -40,10 +37,6 @@ VkResult anv_image_from_gralloc(VkDevice device_h,
                                 const VkNativeBufferANDROID *gralloc_info,
                                 const VkAllocationCallbacks *alloc,
                                 VkImage *pImage);
-
-VkResult anv_image_bind_from_gralloc(struct anv_device *device,
-                                     struct anv_image *image,
-                                     const VkNativeBufferANDROID *gralloc_info);
 
 VkResult anv_image_from_external(VkDevice device_h,
                                  const VkImageCreateInfo *base_info,

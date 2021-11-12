@@ -108,8 +108,6 @@ struct stw_framebuffer
    HANDLE hSharedSurface;
    struct stw_shared_surface *shared_surface;
 
-   struct stw_winsys_framebuffer *winsys_framebuffer;
-
    /* For WGL_EXT_swap_control */
    int64_t prev_swap_time;
 
@@ -154,8 +152,7 @@ stw_framebuffer_reference_locked(struct stw_framebuffer *fb)
 
 
 void
-stw_framebuffer_release_locked(struct stw_framebuffer *fb,
-                               struct st_context_iface *stctx);
+stw_framebuffer_release_locked(struct stw_framebuffer *fb);
 
 /**
  * Search a framebuffer with a matching HWND.

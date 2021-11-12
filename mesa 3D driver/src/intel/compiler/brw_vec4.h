@@ -49,8 +49,7 @@ brw_vec4_generate_assembly(const struct brw_compiler *compiler,
                            struct brw_vue_prog_data *prog_data,
                            const struct cfg_t *cfg,
                            const brw::performance &perf,
-                           struct brw_compile_stats *stats,
-                           bool debug_enabled);
+                           struct brw_compile_stats *stats);
 
 #ifdef __cplusplus
 } /* extern "C" */
@@ -72,8 +71,7 @@ public:
                 const nir_shader *shader,
 		void *mem_ctx,
                 bool no_spills,
-                int shader_time_index,
-                bool debug_enabled);
+                int shader_time_index);
 
    dst_reg dst_null_f()
    {
@@ -108,8 +106,6 @@ public:
    const char *current_annotation;
 
    int first_non_payload_grf;
-   unsigned ubo_push_start[4];
-   unsigned push_length;
    unsigned int max_grf;
    brw_analysis<brw::vec4_live_variables, backend_shader> live_analysis;
    brw_analysis<brw::performance, vec4_visitor> performance_analysis;
@@ -141,7 +137,6 @@ public:
    void move_push_constants_to_pull_constants();
    void split_uniform_registers();
    void pack_uniform_registers();
-   void setup_push_ranges();
    virtual void invalidate_analysis(brw::analysis_dependency_class c);
    void split_virtual_grfs();
    bool opt_vector_float();
@@ -259,7 +254,7 @@ public:
 
    void emit_texture(ir_texture_opcode op,
                      dst_reg dest,
-                     int dest_components,
+                     const glsl_type *dest_type,
                      src_reg coordinate,
                      int coord_components,
                      src_reg shadow_comparator,
@@ -273,7 +268,7 @@ public:
 
    src_reg emit_mcs_fetch(const glsl_type *coordinate_type, src_reg coordinate,
                           src_reg surface);
-   void emit_gfx6_gather_wa(uint8_t wa, dst_reg dst);
+   void emit_gen6_gather_wa(uint8_t wa, dst_reg dst);
 
    void emit_ndc_computation();
    void emit_psiz_and_flags(dst_reg reg);
@@ -323,7 +318,6 @@ public:
 
    vec4_instruction *shuffle_64bit_data(dst_reg dst, src_reg src,
                                         bool for_write,
-                                        bool for_scratch = false,
                                         bblock_t *block = NULL,
                                         vec4_instruction *ref = NULL);
 

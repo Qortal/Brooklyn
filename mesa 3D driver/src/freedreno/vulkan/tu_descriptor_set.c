@@ -44,13 +44,35 @@
 #include <unistd.h>
 
 #include "util/mesa-sha1.h"
-#include "vk_descriptors.h"
 #include "vk_util.h"
 
-static inline uint8_t *
-pool_base(struct tu_descriptor_pool *pool)
+static int
+binding_compare(const void *av, const void *bv)
 {
-   return pool->host_bo ?: pool->bo.map;
+   const VkDescriptorSetLayoutBinding *a =
+      (const VkDescriptorSetLayoutBinding *) av;
+   const VkDescriptorSetLayoutBinding *b =
+      (const VkDescriptorSetLayoutBinding *) bv;
+
+   return (a->binding < b->binding) ? -1 : (a->binding > b->binding) ? 1 : 0;
+}
+
+static VkDescriptorSetLayoutBinding *
+create_sorted_bindings(const VkDescriptorSetLayoutBinding *bindings,
+                       unsigned count)
+{
+   VkDescriptorSetLayoutBinding *sorted_bindings =
+      malloc(count * sizeof(VkDescriptorSetLayoutBinding));
+   if (!sorted_bindings)
+      return NULL;
+
+   memcpy(sorted_bindings, bindings,
+          count * sizeof(VkDescriptorSetLayoutBinding));
+
+   qsort(sorted_bindings, count, sizeof(VkDescriptorSetLayoutBinding),
+         binding_compare);
+
+   return sorted_bindings;
 }
 
 static uint32_t
@@ -79,26 +101,7 @@ descriptor_size(VkDescriptorType type)
    }
 }
 
-static uint32_t
-mutable_descriptor_size(const VkMutableDescriptorTypeListVALVE *list)
-{
-   uint32_t max_size = 0;
-
-   /* Since we don't support VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER for
-    * mutable descriptors, max_size should be always A6XX_TEX_CONST_DWORDS * 4.
-    * But we leave this as-is and add an assert.
-    */
-   for (uint32_t i = 0; i < list->descriptorTypeCount; i++) {
-      uint32_t size = descriptor_size(list->pDescriptorTypes[i]);
-      max_size = MAX2(max_size, size);
-   }
-
-   assert(max_size == A6XX_TEX_CONST_DWORDS * 4);
-
-   return max_size;
-}
-
-VKAPI_ATTR VkResult VKAPI_CALL
+VkResult
 tu_CreateDescriptorSetLayout(
    VkDevice _device,
    const VkDescriptorSetLayoutCreateInfo *pCreateInfo,
@@ -114,16 +117,12 @@ tu_CreateDescriptorSetLayout(
       vk_find_struct_const(
          pCreateInfo->pNext,
          DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO_EXT);
-   const VkMutableDescriptorTypeCreateInfoVALVE *mutable_info =
-      vk_find_struct_const(
-         pCreateInfo->pNext,
-         MUTABLE_DESCRIPTOR_TYPE_CREATE_INFO_VALVE);
 
-   uint32_t num_bindings = 0;
+   uint32_t max_binding = 0;
    uint32_t immutable_sampler_count = 0;
    uint32_t ycbcr_sampler_count = 0;
    for (uint32_t j = 0; j < pCreateInfo->bindingCount; j++) {
-      num_bindings = MAX2(num_bindings, pCreateInfo->pBindings[j].binding + 1);
+      max_binding = MAX2(max_binding, pCreateInfo->pBindings[j].binding);
       if ((pCreateInfo->pBindings[j].descriptorType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
            pCreateInfo->pBindings[j].descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER) &&
            pCreateInfo->pBindings[j].pImmutableSamplers) {
@@ -141,7 +140,7 @@ tu_CreateDescriptorSetLayout(
    }
 
    uint32_t samplers_offset =
-         offsetof(struct tu_descriptor_set_layout, binding[num_bindings]);
+         offsetof(struct tu_descriptor_set_layout, binding[max_binding + 1]);
 
    /* note: only need to store TEX_SAMP_DWORDS for immutable samples,
     * but using struct tu_sampler makes things simpler */
@@ -152,24 +151,23 @@ tu_CreateDescriptorSetLayout(
    set_layout = vk_object_zalloc(&device->vk, pAllocator, size,
                                  VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT);
    if (!set_layout)
-      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    set_layout->flags = pCreateInfo->flags;
 
    /* We just allocate all the immutable samplers at the end of the struct */
-   struct tu_sampler *samplers = (void*) &set_layout->binding[num_bindings];
+   struct tu_sampler *samplers = (void*) &set_layout->binding[max_binding + 1];
    struct tu_sampler_ycbcr_conversion *ycbcr_samplers =
       (void*) &samplers[immutable_sampler_count];
 
-   VkDescriptorSetLayoutBinding *bindings = NULL;
-   VkResult result = vk_create_sorted_bindings(
-      pCreateInfo->pBindings, pCreateInfo->bindingCount, &bindings);
-   if (result != VK_SUCCESS) {
+   VkDescriptorSetLayoutBinding *bindings = create_sorted_bindings(
+      pCreateInfo->pBindings, pCreateInfo->bindingCount);
+   if (!bindings) {
       vk_object_free(&device->vk, pAllocator, set_layout);
-      return vk_error(device, result);
+      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
    }
 
-   set_layout->binding_count = num_bindings;
+   set_layout->binding_count = max_binding + 1;
    set_layout->shader_stages = 0;
    set_layout->has_immutable_samplers = false;
    set_layout->size = 0;
@@ -185,24 +183,15 @@ tu_CreateDescriptorSetLayout(
       set_layout->binding[b].array_size = binding->descriptorCount;
       set_layout->binding[b].offset = set_layout->size;
       set_layout->binding[b].dynamic_offset_offset = dynamic_offset_count;
+      set_layout->binding[b].size = descriptor_size(binding->descriptorType);
       set_layout->binding[b].shader_stages = binding->stageFlags;
-
-      if (binding->descriptorType == VK_DESCRIPTOR_TYPE_MUTABLE_VALVE) {
-         /* For mutable descriptor types we must allocate a size that fits the
-          * largest descriptor type that the binding can mutate to.
-          */
-         set_layout->binding[b].size =
-            mutable_descriptor_size(&mutable_info->pMutableDescriptorTypeLists[j]);
-      } else {
-         set_layout->binding[b].size = descriptor_size(binding->descriptorType);
-      }
 
       if (variable_flags && binding->binding < variable_flags->bindingCount &&
           (variable_flags->pBindingFlags[binding->binding] &
            VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT_EXT)) {
          assert(!binding->pImmutableSamplers); /* Terribly ill defined  how
                                                   many samplers are valid */
-         assert(binding->binding == num_bindings - 1);
+         assert(binding->binding == max_binding);
 
          set_layout->has_variable_descriptors = true;
       }
@@ -266,7 +255,7 @@ tu_CreateDescriptorSetLayout(
    return VK_SUCCESS;
 }
 
-VKAPI_ATTR void VKAPI_CALL
+void
 tu_DestroyDescriptorSetLayout(VkDevice _device,
                               VkDescriptorSetLayout _set_layout,
                               const VkAllocationCallbacks *pAllocator)
@@ -280,16 +269,15 @@ tu_DestroyDescriptorSetLayout(VkDevice _device,
    vk_object_free(&device->vk, pAllocator, set_layout);
 }
 
-VKAPI_ATTR void VKAPI_CALL
+void
 tu_GetDescriptorSetLayoutSupport(
    VkDevice device,
    const VkDescriptorSetLayoutCreateInfo *pCreateInfo,
    VkDescriptorSetLayoutSupport *pSupport)
 {
-   VkDescriptorSetLayoutBinding *bindings = NULL;
-   VkResult result = vk_create_sorted_bindings(
-      pCreateInfo->pBindings, pCreateInfo->bindingCount, &bindings);
-   if (result != VK_SUCCESS) {
+   VkDescriptorSetLayoutBinding *bindings = create_sorted_bindings(
+      pCreateInfo->pBindings, pCreateInfo->bindingCount);
+   if (!bindings) {
       pSupport->supported = false;
       return;
    }
@@ -302,11 +290,6 @@ tu_GetDescriptorSetLayoutSupport(
       vk_find_struct(
          (void *) pCreateInfo->pNext,
          DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_LAYOUT_SUPPORT_EXT);
-   const VkMutableDescriptorTypeCreateInfoVALVE *mutable_info =
-      vk_find_struct_const(
-         pCreateInfo->pNext,
-         MUTABLE_DESCRIPTOR_TYPE_CREATE_INFO_VALVE);
-
    if (variable_count) {
       variable_count->maxVariableDescriptorCount = 0;
    }
@@ -316,27 +299,7 @@ tu_GetDescriptorSetLayoutSupport(
    for (uint32_t i = 0; i < pCreateInfo->bindingCount; i++) {
       const VkDescriptorSetLayoutBinding *binding = bindings + i;
 
-      uint64_t descriptor_sz;
-
-      if (binding->descriptorType == VK_DESCRIPTOR_TYPE_MUTABLE_VALVE) {
-         const VkMutableDescriptorTypeListVALVE *list =
-            &mutable_info->pMutableDescriptorTypeLists[i];
-
-         for (uint32_t j = 0; j < list->descriptorTypeCount; j++) {
-            /* Don't support the input attachement and combined image sampler type
-             * for mutable descriptors */
-            if (list->pDescriptorTypes[j] == VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT ||
-                list->pDescriptorTypes[j] == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
-               supported = false;
-               goto out;
-            }
-         }
-
-         descriptor_sz =
-            mutable_descriptor_size(&mutable_info->pMutableDescriptorTypeLists[i]);
-      } else {
-         descriptor_sz = descriptor_size(binding->descriptorType);
-      }
+      uint64_t descriptor_sz = descriptor_size(binding->descriptorType);
       uint64_t descriptor_alignment = 8;
 
       if (size && !ALIGN_POT(size, descriptor_alignment)) {
@@ -351,7 +314,6 @@ tu_GetDescriptorSetLayoutSupport(
       if (max_count < binding->descriptorCount) {
          supported = false;
       }
-
       if (variable_flags && binding->binding < variable_flags->bindingCount &&
           variable_count &&
           (variable_flags->pBindingFlags[binding->binding] &
@@ -362,7 +324,6 @@ tu_GetDescriptorSetLayoutSupport(
       size += binding->descriptorCount * descriptor_sz;
    }
 
-out:
    free(bindings);
 
    pSupport->supported = supported;
@@ -373,7 +334,7 @@ out:
  * just multiple descriptor set layouts pasted together.
  */
 
-VKAPI_ATTR VkResult VKAPI_CALL
+VkResult
 tu_CreatePipelineLayout(VkDevice _device,
                         const VkPipelineLayoutCreateInfo *pCreateInfo,
                         const VkAllocationCallbacks *pAllocator,
@@ -388,7 +349,7 @@ tu_CreatePipelineLayout(VkDevice _device,
    layout = vk_object_alloc(&device->vk, pAllocator, sizeof(*layout),
                             VK_OBJECT_TYPE_PIPELINE_LAYOUT);
    if (layout == NULL)
-      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    layout->num_sets = pCreateInfo->setLayoutCount;
    layout->dynamic_offset_count = 0;
@@ -418,7 +379,7 @@ tu_CreatePipelineLayout(VkDevice _device,
    return VK_SUCCESS;
 }
 
-VKAPI_ATTR void VKAPI_CALL
+void
 tu_DestroyPipelineLayout(VkDevice _device,
                          VkPipelineLayout _pipelineLayout,
                          const VkAllocationCallbacks *pAllocator)
@@ -448,7 +409,7 @@ tu_descriptor_set_create(struct tu_device *device,
 
    if (pool->host_memory_base) {
       if (pool->host_memory_end - pool->host_memory_ptr < mem_size)
-         return vk_error(device, VK_ERROR_OUT_OF_POOL_MEMORY);
+         return vk_error(device->instance, VK_ERROR_OUT_OF_POOL_MEMORY);
 
       set = (struct tu_descriptor_set*)pool->host_memory_ptr;
       pool->host_memory_ptr += mem_size;
@@ -457,7 +418,7 @@ tu_descriptor_set_create(struct tu_device *device,
                       VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
 
       if (!set)
-         return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+         return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
    }
 
    memset(set, 0, mem_size);
@@ -482,16 +443,15 @@ tu_descriptor_set_create(struct tu_device *device,
 
       if (!pool->host_memory_base && pool->entry_count == pool->max_entry_count) {
          vk_object_free(&device->vk, NULL, set);
-         return vk_error(device, VK_ERROR_OUT_OF_POOL_MEMORY);
+         return vk_error(device->instance, VK_ERROR_OUT_OF_POOL_MEMORY);
       }
 
       /* try to allocate linearly first, so that we don't spend
        * time looking for gaps if the app only allocates &
        * resets via the pool. */
       if (pool->current_offset + layout_size <= pool->size) {
-         set->mapped_ptr = (uint32_t*)(pool_base(pool) + pool->current_offset);
-         set->va = pool->host_bo ? 0 : pool->bo.iova + pool->current_offset;
-
+         set->mapped_ptr = (uint32_t*)(pool->bo.map + pool->current_offset);
+         set->va = pool->bo.iova + pool->current_offset;
          if (!pool->host_memory_base) {
             pool->entries[pool->entry_count].offset = pool->current_offset;
             pool->entries[pool->entry_count].size = layout_size;
@@ -511,12 +471,11 @@ tu_descriptor_set_create(struct tu_device *device,
 
          if (pool->size - offset < layout_size) {
             vk_object_free(&device->vk, NULL, set);
-            return vk_error(device, VK_ERROR_OUT_OF_POOL_MEMORY);
+            return vk_error(device->instance, VK_ERROR_OUT_OF_POOL_MEMORY);
          }
 
-         set->mapped_ptr = (uint32_t*)(pool_base(pool) + offset);
-         set->va = pool->host_bo ? 0 : pool->bo.iova + offset;
-
+         set->mapped_ptr = (uint32_t*)(pool->bo.map + offset);
+         set->va = pool->bo.iova + offset;
          memmove(&pool->entries[index + 1], &pool->entries[index],
             sizeof(pool->entries[0]) * (pool->entry_count - index));
          pool->entries[index].offset = offset;
@@ -524,7 +483,7 @@ tu_descriptor_set_create(struct tu_device *device,
          pool->entries[index].set = set;
          pool->entry_count++;
       } else
-         return vk_error(device, VK_ERROR_OUT_OF_POOL_MEMORY);
+         return vk_error(device->instance, VK_ERROR_OUT_OF_POOL_MEMORY);
    }
 
    if (layout->has_immutable_samplers) {
@@ -560,8 +519,7 @@ tu_descriptor_set_destroy(struct tu_device *device,
    assert(!pool->host_memory_base);
 
    if (free_bo && set->size && !pool->host_memory_base) {
-      uint32_t offset = (uint8_t*)set->mapped_ptr - pool_base(pool);
-
+      uint32_t offset = (uint8_t*)set->mapped_ptr - (uint8_t*)pool->bo.map;
       for (int i = 0; i < pool->entry_count; ++i) {
          if (pool->entries[i].offset == offset) {
             memmove(&pool->entries[i], &pool->entries[i+1],
@@ -575,7 +533,7 @@ tu_descriptor_set_destroy(struct tu_device *device,
    vk_object_free(&device->vk, NULL, set);
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL
+VkResult
 tu_CreateDescriptorPool(VkDevice _device,
                         const VkDescriptorPoolCreateInfo *pCreateInfo,
                         const VkAllocationCallbacks *pAllocator,
@@ -587,10 +545,6 @@ tu_CreateDescriptorPool(VkDevice _device,
    uint64_t bo_size = 0, bo_count = 0, dynamic_count = 0;
    VkResult ret;
 
-   const VkMutableDescriptorTypeCreateInfoVALVE *mutable_info =
-      vk_find_struct_const( pCreateInfo->pNext,
-         MUTABLE_DESCRIPTOR_TYPE_CREATE_INFO_VALVE);
-
    for (unsigned i = 0; i < pCreateInfo->poolSizeCount; ++i) {
       if (pCreateInfo->pPoolSizes[i].type != VK_DESCRIPTOR_TYPE_SAMPLER)
          bo_count += pCreateInfo->pPoolSizes[i].descriptorCount;
@@ -599,22 +553,6 @@ tu_CreateDescriptorPool(VkDevice _device,
       case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
       case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
          dynamic_count += pCreateInfo->pPoolSizes[i].descriptorCount;
-         break;
-      case VK_DESCRIPTOR_TYPE_MUTABLE_VALVE:
-         if (mutable_info && i < mutable_info->mutableDescriptorTypeListCount &&
-             mutable_info->pMutableDescriptorTypeLists[i].descriptorTypeCount > 0) {
-            bo_size +=
-               mutable_descriptor_size(&mutable_info->pMutableDescriptorTypeLists[i]) *
-                  pCreateInfo->pPoolSizes[i].descriptorCount;
-         } else {
-            /* Allocate the maximum size possible.
-             * Since we don't support VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER for
-             * mutable descriptors, we can set the default size of descriptor types.
-             */
-            bo_size += A6XX_TEX_CONST_DWORDS * 4 *
-                  pCreateInfo->pPoolSizes[i].descriptorCount;
-         }
-         continue;
       default:
          break;
       }
@@ -635,7 +573,7 @@ tu_CreateDescriptorPool(VkDevice _device,
    pool = vk_object_zalloc(&device->vk, pAllocator, size,
                           VK_OBJECT_TYPE_DESCRIPTOR_POOL);
    if (!pool)
-      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    if (!(pCreateInfo->flags & VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT)) {
       pool->host_memory_base = (uint8_t*)pool + sizeof(struct tu_descriptor_pool);
@@ -644,22 +582,13 @@ tu_CreateDescriptorPool(VkDevice _device,
    }
 
    if (bo_size) {
-      if (!(pCreateInfo->flags & VK_DESCRIPTOR_POOL_CREATE_HOST_ONLY_BIT_VALVE)) {
-         ret = tu_bo_init_new(device, &pool->bo, bo_size, TU_BO_ALLOC_ALLOW_DUMP);
-         if (ret)
-            goto fail_alloc;
+      ret = tu_bo_init_new(device, &pool->bo, bo_size, true);
+      if (ret)
+         goto fail_alloc;
 
-         ret = tu_bo_map(device, &pool->bo);
-         if (ret)
-            goto fail_map;
-      } else {
-         pool->host_bo = vk_alloc2(&device->vk.alloc, pAllocator, bo_size, 8,
-                                   VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
-         if (!pool->host_bo) {
-            ret = VK_ERROR_OUT_OF_HOST_MEMORY;
-            goto fail_alloc;
-         }
-      }
+      ret = tu_bo_map(device, &pool->bo);
+      if (ret)
+         goto fail_map;
    }
    pool->size = bo_size;
    pool->max_entry_count = pCreateInfo->maxSets;
@@ -674,7 +603,7 @@ fail_alloc:
    return ret;
 }
 
-VKAPI_ATTR void VKAPI_CALL
+void
 tu_DestroyDescriptorPool(VkDevice _device,
                          VkDescriptorPool _pool,
                          const VkAllocationCallbacks *pAllocator)
@@ -691,17 +620,13 @@ tu_DestroyDescriptorPool(VkDevice _device,
       }
    }
 
-   if (pool->size) {
-      if (pool->host_bo)
-         vk_free2(&device->vk.alloc, pAllocator, pool->host_bo);
-      else
-         tu_bo_finish(device, &pool->bo);
-   }
+   if (pool->size)
+      tu_bo_finish(device, &pool->bo);
 
    vk_object_free(&device->vk, pAllocator, pool);
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL
+VkResult
 tu_ResetDescriptorPool(VkDevice _device,
                        VkDescriptorPool descriptorPool,
                        VkDescriptorPoolResetFlags flags)
@@ -722,7 +647,7 @@ tu_ResetDescriptorPool(VkDevice _device,
    return VK_SUCCESS;
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL
+VkResult
 tu_AllocateDescriptorSets(VkDevice _device,
                           const VkDescriptorSetAllocateInfo *pAllocateInfo,
                           VkDescriptorSet *pDescriptorSets)
@@ -770,7 +695,7 @@ tu_AllocateDescriptorSets(VkDevice _device,
    return result;
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL
+VkResult
 tu_FreeDescriptorSets(VkDevice _device,
                       VkDescriptorPool descriptorPool,
                       uint32_t count,
@@ -791,13 +716,9 @@ tu_FreeDescriptorSets(VkDevice _device,
 static void
 write_texel_buffer_descriptor(uint32_t *dst, const VkBufferView buffer_view)
 {
-   if (buffer_view == VK_NULL_HANDLE) {
-      memset(dst, 0, A6XX_TEX_CONST_DWORDS * sizeof(uint32_t));
-   } else {
-      TU_FROM_HANDLE(tu_buffer_view, view, buffer_view);
+   TU_FROM_HANDLE(tu_buffer_view, view, buffer_view);
 
-      memcpy(dst, view->descriptor, sizeof(view->descriptor));
-   }
+   memcpy(dst, view->descriptor, sizeof(view->descriptor));
 }
 
 static uint32_t get_range(struct tu_buffer *buf, VkDeviceSize offset,
@@ -811,29 +732,16 @@ static uint32_t get_range(struct tu_buffer *buf, VkDeviceSize offset,
 }
 
 static void
-write_buffer_descriptor(const struct tu_device *device,
-                        uint32_t *dst,
-                        const VkDescriptorBufferInfo *buffer_info)
+write_buffer_descriptor(uint32_t *dst, const VkDescriptorBufferInfo *buffer_info)
 {
-   if (buffer_info->buffer == VK_NULL_HANDLE) {
-      memset(dst, 0, A6XX_TEX_CONST_DWORDS * sizeof(uint32_t));
-      return;
-   }
-
    TU_FROM_HANDLE(tu_buffer, buffer, buffer_info->buffer);
 
-   assert((buffer_info->offset & 63) == 0); /* minStorageBufferOffsetAlignment */
    uint64_t va = tu_buffer_iova(buffer) + buffer_info->offset;
    uint32_t range = get_range(buffer, buffer_info->offset, buffer_info->range);
-
-   /* newer a6xx allows using 16-bit descriptor for both 16-bit and 32-bit access */
-   if (device->physical_device->info->a6xx.storage_16bit) {
-      dst[0] = A6XX_IBO_0_TILE_MODE(TILE6_LINEAR) | A6XX_IBO_0_FMT(FMT6_16_UINT);
-      dst[1] = DIV_ROUND_UP(range, 2);
-   } else {
-      dst[0] = A6XX_IBO_0_TILE_MODE(TILE6_LINEAR) | A6XX_IBO_0_FMT(FMT6_32_UINT);
-      dst[1] = DIV_ROUND_UP(range, 4);
-   }
+   range = ALIGN_POT(range, 4) / 4;
+   dst[0] =
+      A6XX_IBO_0_TILE_MODE(TILE6_LINEAR) | A6XX_IBO_0_FMT(FMT6_32_UINT);
+   dst[1] = range;
    dst[2] =
       A6XX_IBO_2_UNK4 | A6XX_IBO_2_TYPE(A6XX_TEX_1D) | A6XX_IBO_2_UNK31;
    dst[3] = 0;
@@ -846,18 +754,12 @@ write_buffer_descriptor(const struct tu_device *device,
 static void
 write_ubo_descriptor(uint32_t *dst, const VkDescriptorBufferInfo *buffer_info)
 {
-   if (buffer_info->buffer == VK_NULL_HANDLE) {
-      dst[0] = dst[1] = 0;
-      return;
-   }
-
    TU_FROM_HANDLE(tu_buffer, buffer, buffer_info->buffer);
 
    uint32_t range = get_range(buffer, buffer_info->offset, buffer_info->range);
    /* The HW range is in vec4 units */
    range = ALIGN_POT(range, 16) / 16;
    uint64_t va = tu_buffer_iova(buffer) + buffer_info->offset;
-
    dst[0] = A6XX_UBO_0_BASE_LO(va);
    dst[1] = A6XX_UBO_1_BASE_HI(va >> 32) | A6XX_UBO_1_SIZE(range);
 }
@@ -867,17 +769,12 @@ write_image_descriptor(uint32_t *dst,
                        VkDescriptorType descriptor_type,
                        const VkDescriptorImageInfo *image_info)
 {
-   if (image_info->imageView == VK_NULL_HANDLE) {
-      memset(dst, 0, A6XX_TEX_CONST_DWORDS * sizeof(uint32_t));
-      return;
-   }
-
    TU_FROM_HANDLE(tu_image_view, iview, image_info->imageView);
 
    if (descriptor_type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
-      memcpy(dst, iview->view.storage_descriptor, sizeof(iview->view.storage_descriptor));
+      memcpy(dst, iview->storage_descriptor, sizeof(iview->storage_descriptor));
    } else {
-      memcpy(dst, iview->view.descriptor, sizeof(iview->view.descriptor));
+      memcpy(dst, iview->descriptor, sizeof(iview->descriptor));
    }
 }
 
@@ -887,10 +784,11 @@ write_combined_image_sampler_descriptor(uint32_t *dst,
                                         const VkDescriptorImageInfo *image_info,
                                         bool has_sampler)
 {
+   TU_FROM_HANDLE(tu_sampler, sampler, image_info->sampler);
+
    write_image_descriptor(dst, descriptor_type, image_info);
    /* copy over sampler state */
    if (has_sampler) {
-      TU_FROM_HANDLE(tu_sampler, sampler, image_info->sampler);
       memcpy(dst + A6XX_TEX_CONST_DWORDS, sampler->descriptor, sizeof(sampler->descriptor));
    }
 }
@@ -911,8 +809,7 @@ write_sampler_push(uint32_t *dst, const struct tu_sampler *sampler)
 }
 
 void
-tu_update_descriptor_sets(const struct tu_device *device,
-                          VkDescriptorSet dstSetOverride,
+tu_update_descriptor_sets(VkDescriptorSet dstSetOverride,
                           uint32_t descriptorWriteCount,
                           const VkWriteDescriptorSet *pDescriptorWrites,
                           uint32_t descriptorCopyCount,
@@ -951,12 +848,12 @@ tu_update_descriptor_sets(const struct tu_device *device,
             assert(!(set->layout->flags & VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR));
             unsigned idx = writeset->dstArrayElement + j;
             idx += binding_layout->dynamic_offset_offset;
-            write_buffer_descriptor(device, set->dynamic_descriptors + A6XX_TEX_CONST_DWORDS * idx,
+            write_buffer_descriptor(set->dynamic_descriptors + A6XX_TEX_CONST_DWORDS * idx,
                                     writeset->pBufferInfo + j);
             break;
          }
          case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-            write_buffer_descriptor(device, ptr, writeset->pBufferInfo + j);
+            write_buffer_descriptor(ptr, writeset->pBufferInfo + j);
             break;
          case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
          case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
@@ -1011,11 +908,6 @@ tu_update_descriptor_sets(const struct tu_device *device,
       src_ptr += src_binding_layout->size * copyset->srcArrayElement / 4;
       dst_ptr += dst_binding_layout->size * copyset->dstArrayElement / 4;
 
-      /* In case of copies between mutable descriptor types
-       * and non-mutable descriptor types.
-       */
-      uint32_t copy_size = MIN2(src_binding_layout->size, dst_binding_layout->size);
-
       for (j = 0; j < copyset->descriptorCount; ++j) {
          switch (src_binding_layout->type) {
          case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
@@ -1032,7 +924,7 @@ tu_update_descriptor_sets(const struct tu_device *device,
             break;
          }
          default:
-            memcpy(dst_ptr, src_ptr, copy_size);
+            memcpy(dst_ptr, src_ptr, src_binding_layout->size);
          }
 
          src_ptr += src_binding_layout->size / 4;
@@ -1041,20 +933,19 @@ tu_update_descriptor_sets(const struct tu_device *device,
    }
 }
 
-VKAPI_ATTR void VKAPI_CALL
+void
 tu_UpdateDescriptorSets(VkDevice _device,
                         uint32_t descriptorWriteCount,
                         const VkWriteDescriptorSet *pDescriptorWrites,
                         uint32_t descriptorCopyCount,
                         const VkCopyDescriptorSet *pDescriptorCopies)
 {
-   TU_FROM_HANDLE(tu_device, device, _device);
-   tu_update_descriptor_sets(device, VK_NULL_HANDLE,
+   tu_update_descriptor_sets(VK_NULL_HANDLE,
                              descriptorWriteCount, pDescriptorWrites,
                              descriptorCopyCount, pDescriptorCopies);
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL
+VkResult
 tu_CreateDescriptorUpdateTemplate(
    VkDevice _device,
    const VkDescriptorUpdateTemplateCreateInfo *pCreateInfo,
@@ -1073,7 +964,7 @@ tu_CreateDescriptorUpdateTemplate(
    templ = vk_object_alloc(&device->vk, pAllocator, size,
                            VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE);
    if (!templ)
-      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    templ->entry_count = entry_count;
 
@@ -1114,7 +1005,7 @@ tu_CreateDescriptorUpdateTemplate(
             immutable_samplers =
                tu_immutable_samplers(set_layout, binding_layout) + entry->dstArrayElement;
          }
-         FALLTHROUGH;
+         /* fallthrough */
       default:
          dst_offset = binding_layout->offset / 4;
          dst_offset += (binding_layout->size * entry->dstArrayElement) / 4;
@@ -1139,7 +1030,7 @@ tu_CreateDescriptorUpdateTemplate(
    return VK_SUCCESS;
 }
 
-VKAPI_ATTR void VKAPI_CALL
+void
 tu_DestroyDescriptorUpdateTemplate(
    VkDevice _device,
    VkDescriptorUpdateTemplate descriptorUpdateTemplate,
@@ -1157,7 +1048,6 @@ tu_DestroyDescriptorUpdateTemplate(
 
 void
 tu_update_descriptor_set_with_template(
-   const struct tu_device *device,
    struct tu_descriptor_set *set,
    VkDescriptorUpdateTemplate descriptorUpdateTemplate,
    const void *pData)
@@ -1184,11 +1074,11 @@ tu_update_descriptor_set_with_template(
             break;
          case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC: {
             assert(!(set->layout->flags & VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR));
-            write_buffer_descriptor(device, set->dynamic_descriptors + dst_offset, src);
+            write_buffer_descriptor(set->dynamic_descriptors + dst_offset, src);
             break;
          }
          case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
-            write_buffer_descriptor(device, ptr, src);
+            write_buffer_descriptor(ptr, src);
             break;
          case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
          case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
@@ -1227,20 +1117,19 @@ tu_update_descriptor_set_with_template(
    }
 }
 
-VKAPI_ATTR void VKAPI_CALL
+void
 tu_UpdateDescriptorSetWithTemplate(
    VkDevice _device,
    VkDescriptorSet descriptorSet,
    VkDescriptorUpdateTemplate descriptorUpdateTemplate,
    const void *pData)
 {
-   TU_FROM_HANDLE(tu_device, device, _device);
    TU_FROM_HANDLE(tu_descriptor_set, set, descriptorSet);
 
-   tu_update_descriptor_set_with_template(device, set, descriptorUpdateTemplate, pData);
+   tu_update_descriptor_set_with_template(set, descriptorUpdateTemplate, pData);
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL
+VkResult
 tu_CreateSamplerYcbcrConversion(
    VkDevice _device,
    const VkSamplerYcbcrConversionCreateInfo *pCreateInfo,
@@ -1253,7 +1142,7 @@ tu_CreateSamplerYcbcrConversion(
    conversion = vk_object_alloc(&device->vk, pAllocator, sizeof(*conversion),
                                 VK_OBJECT_TYPE_SAMPLER_YCBCR_CONVERSION);
    if (!conversion)
-      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    conversion->format = pCreateInfo->format;
    conversion->ycbcr_model = pCreateInfo->ycbcrModel;
@@ -1267,7 +1156,7 @@ tu_CreateSamplerYcbcrConversion(
    return VK_SUCCESS;
 }
 
-VKAPI_ATTR void VKAPI_CALL
+void
 tu_DestroySamplerYcbcrConversion(VkDevice _device,
                                  VkSamplerYcbcrConversion ycbcrConversion,
                                  const VkAllocationCallbacks *pAllocator)

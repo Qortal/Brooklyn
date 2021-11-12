@@ -125,9 +125,6 @@ struct nv50_ir_prog_info
       uint8_t msInfoCBSlot;      /* cX[] used for multisample info */
       uint16_t msInfoBase;       /* base address for multisample info */
       uint16_t uboInfoBase;      /* base address for compute UBOs (gk104+) */
-
-      uint16_t membarOffset;     /* base address for membar reads (nv50) */
-      uint8_t gmemMembar;        /* gX[] on which to perform membar reads (nv50) */
    } io;
 
    /* driver callback to assign input/output locations */
@@ -187,13 +184,6 @@ struct nv50_ir_prog_info_out
          bool readsSampleLocations  : 1;
          bool separateFragData      : 1;
       } fp;
-      struct {
-         struct {
-            unsigned valid : 1;
-            unsigned image : 1;
-            unsigned slot  : 6;
-         } gmem[16]; /* nv50 only */
-      } cp;
    } prop;
 
    struct {
@@ -234,7 +224,7 @@ extern void nv50_ir_relocate_code(void *relocData, uint32_t *code,
 extern void
 nv50_ir_apply_fixups(void *fixupData, uint32_t *code,
                      bool force_per_sample, bool flatshade,
-                     uint8_t alphatest, bool msaa);
+                     uint8_t alphatest);
 
 /* obtain code that will be shared among programs */
 extern void nv50_ir_get_target_library(uint32_t chipset,
@@ -244,8 +234,8 @@ extern void nv50_ir_get_target_library(uint32_t chipset,
 #ifdef __cplusplus
 namespace nv50_ir
 {
-   struct FixupEntry;
-   struct FixupData;
+   class FixupEntry;
+   class FixupData;
 
    void
    gk110_interpApply(const nv50_ir::FixupEntry *entry, uint32_t *code,

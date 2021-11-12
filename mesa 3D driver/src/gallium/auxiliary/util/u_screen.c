@@ -35,8 +35,6 @@ int
 u_pipe_screen_get_param_defaults(struct pipe_screen *pscreen,
                                  enum pipe_cap param)
 {
-   assert(param < PIPE_CAP_LAST);
-
    /* Let's keep these sorted by position in p_defines.h. */
    switch (param) {
    case PIPE_CAP_NPOT_TEXTURES:
@@ -46,7 +44,6 @@ u_pipe_screen_get_param_defaults(struct pipe_screen *pscreen,
       return 0;
 
    case PIPE_CAP_GRAPHICS:
-   case PIPE_CAP_GL_CLAMP:
    case PIPE_CAP_MAX_RENDER_TARGETS:
       return 1;
 
@@ -77,7 +74,6 @@ u_pipe_screen_get_param_defaults(struct pipe_screen *pscreen,
    case PIPE_CAP_TGSI_FS_COORD_PIXEL_CENTER_INTEGER:
    case PIPE_CAP_DEPTH_CLIP_DISABLE:
    case PIPE_CAP_DEPTH_CLIP_DISABLE_SEPARATE:
-   case PIPE_CAP_DEPTH_CLAMP_ENABLE:
    case PIPE_CAP_SHADER_STENCIL_EXPORT:
    case PIPE_CAP_TGSI_INSTANCEID:
    case PIPE_CAP_VERTEX_ELEMENT_INSTANCE_DIVISOR:
@@ -87,10 +83,6 @@ u_pipe_screen_get_param_defaults(struct pipe_screen *pscreen,
    case PIPE_CAP_SEAMLESS_CUBE_MAP_PER_TEXTURE:
    case PIPE_CAP_RGB_OVERRIDE_DST_ALPHA_BLEND:
       return 0;
-
-   case PIPE_CAP_SUPPORTED_PRIM_MODES_WITH_RESTART:
-   case PIPE_CAP_SUPPORTED_PRIM_MODES:
-      return BITFIELD_MASK(PIPE_PRIM_MAX);
 
    case PIPE_CAP_MIN_TEXEL_OFFSET:
       /* GL 3.x minimum value. */
@@ -156,7 +148,6 @@ u_pipe_screen_get_param_defaults(struct pipe_screen *pscreen,
 
    case PIPE_CAP_BUFFER_SAMPLER_VIEW_RGBA_ONLY:
    case PIPE_CAP_TGSI_TEXCOORD:
-   case PIPE_CAP_TEXTURE_BUFFER_SAMPLER:
       return 0;
 
    case PIPE_CAP_PREFER_BLIT_BASED_TEXTURE_TRANSFER:
@@ -232,15 +223,7 @@ u_pipe_screen_get_param_defaults(struct pipe_screen *pscreen,
    case PIPE_CAP_DEPTH_BOUNDS_TEST:
    case PIPE_CAP_TGSI_TXQS:
    case PIPE_CAP_FORCE_PERSAMPLE_INTERP:
-      return 0;
-
-   /* All drivers should expose this cap, as it is required for applications to
-    * be able to efficiently compile GL shaders from multiple threads during
-    * load.
-    */
    case PIPE_CAP_SHAREABLE_SHADERS:
-      return 1;
-
    case PIPE_CAP_COPY_BETWEEN_COMPRESSED_AND_PLAIN_FORMATS:
    case PIPE_CAP_CLEAR_TEXTURE:
    case PIPE_CAP_CLEAR_SCISSORED:
@@ -274,6 +257,7 @@ u_pipe_screen_get_param_defaults(struct pipe_screen *pscreen,
    case PIPE_CAP_FRAMEBUFFER_NO_ATTACHMENT:
    case PIPE_CAP_ROBUST_BUFFER_ACCESS_BEHAVIOR:
    case PIPE_CAP_CULL_DISTANCE:
+   case PIPE_CAP_PRIMITIVE_RESTART_FOR_PATCHES:
    case PIPE_CAP_TGSI_VOTE:
    case PIPE_CAP_MAX_WINDOW_RECTANGLES: /* Enables EXT_window_rectangles */
    case PIPE_CAP_POLYGON_OFFSET_UNITS_UNSCALED:
@@ -291,7 +275,6 @@ u_pipe_screen_get_param_defaults(struct pipe_screen *pscreen,
       return 4; /* GLES 2.0 minimum value */
 
    case PIPE_CAP_GLSL_OPTIMIZE_CONSERVATIVELY:
-   case PIPE_CAP_PREFER_BACK_BUFFER_REUSE:
       return 1;
 
    case PIPE_CAP_GLSL_TESS_LEVELS_AS_INPUTS:
@@ -432,6 +415,7 @@ u_pipe_screen_get_param_defaults(struct pipe_screen *pscreen,
 
    case PIPE_CAP_OPENCL_INTEGER_FUNCTIONS:
    case PIPE_CAP_INTEGER_MULTIPLY_32X16:
+   case PIPE_CAP_DRAW_INFO_START_WITH_USER_INDICES:
       return 0;
    case PIPE_CAP_NIR_IMAGES_AS_DEREF:
       return 1;
@@ -455,24 +439,9 @@ u_pipe_screen_get_param_defaults(struct pipe_screen *pscreen,
    case PIPE_CAP_ALPHA_TO_COVERAGE_DITHER_CONTROL:
    case PIPE_CAP_NO_CLIP_ON_COPY_TEX:
    case PIPE_CAP_MAX_TEXTURE_MB:
-   case PIPE_CAP_PREFER_REAL_BUFFER_IN_CONSTBUF0:
       return 0;
-
-   case PIPE_CAP_TEXRECT:
-      return 1;
 
    case PIPE_CAP_SHADER_ATOMIC_INT64:
-      return 0;
-
-   case PIPE_CAP_SAMPLER_REDUCTION_MINMAX:
-   case PIPE_CAP_SAMPLER_REDUCTION_MINMAX_ARB:
-      return 0;
-
-   case PIPE_CAP_ALLOW_DYNAMIC_VAO_FASTPATH:
-      return 1;
-
-   case PIPE_CAP_EMULATE_NONFIXED_PRIMITIVE_RESTART:
-   case PIPE_CAP_DRAW_VERTEX_STATE:
       return 0;
 
    default:

@@ -49,10 +49,6 @@
 
 #include "util/u_debug.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 struct u_log_page;
 struct u_log_auto_logger;
 
@@ -100,9 +96,5 @@ u_log_page_destroy(struct u_log_page *page);
 
 void
 u_log_page_print(struct u_log_page *page, FILE *stream);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* U_LOG_H */

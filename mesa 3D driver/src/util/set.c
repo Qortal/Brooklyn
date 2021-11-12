@@ -116,27 +116,6 @@ entry_is_present(struct set_entry *entry)
    return entry->key != NULL && entry->key != deleted_key;
 }
 
-bool
-_mesa_set_init(struct set *ht, void *mem_ctx,
-                 uint32_t (*key_hash_function)(const void *key),
-                 bool (*key_equals_function)(const void *a,
-                                             const void *b))
-{
-   ht->size_index = 0;
-   ht->size = hash_sizes[ht->size_index].size;
-   ht->rehash = hash_sizes[ht->size_index].rehash;
-   ht->size_magic = hash_sizes[ht->size_index].size_magic;
-   ht->rehash_magic = hash_sizes[ht->size_index].rehash_magic;
-   ht->max_entries = hash_sizes[ht->size_index].max_entries;
-   ht->key_hash_function = key_hash_function;
-   ht->key_equals_function = key_equals_function;
-   ht->table = rzalloc_array(mem_ctx, struct set_entry, ht->size);
-   ht->entries = 0;
-   ht->deleted_entries = 0;
-
-   return ht->table != NULL;
-}
-
 struct set *
 _mesa_set_create(void *mem_ctx,
                  uint32_t (*key_hash_function)(const void *key),
@@ -149,7 +128,19 @@ _mesa_set_create(void *mem_ctx,
    if (ht == NULL)
       return NULL;
 
-   if (!_mesa_set_init(ht, ht, key_hash_function, key_equals_function)) {
+   ht->size_index = 0;
+   ht->size = hash_sizes[ht->size_index].size;
+   ht->rehash = hash_sizes[ht->size_index].rehash;
+   ht->size_magic = hash_sizes[ht->size_index].size_magic;
+   ht->rehash_magic = hash_sizes[ht->size_index].rehash_magic;
+   ht->max_entries = hash_sizes[ht->size_index].max_entries;
+   ht->key_hash_function = key_hash_function;
+   ht->key_equals_function = key_equals_function;
+   ht->table = rzalloc_array(ht, struct set_entry, ht->size);
+   ht->entries = 0;
+   ht->deleted_entries = 0;
+
+   if (ht->table == NULL) {
       ralloc_free(ht);
       return NULL;
    }
@@ -174,7 +165,7 @@ key_u32_equals(const void *a, const void *b)
 struct set *
 _mesa_set_create_u32_keys(void *mem_ctx)
 {
-   return _mesa_set_create(mem_ctx, key_u32_hash, key_u32_equals);
+   return _mesa_set_create(NULL, key_u32_hash, key_u32_equals);
 }
 
 struct set *
@@ -220,14 +211,6 @@ _mesa_set_destroy(struct set *ht, void (*delete_function)(struct set_entry *entr
    ralloc_free(ht);
 }
 
-
-static void
-set_clear_fast(struct set *ht)
-{
-   memset(ht->table, 0, sizeof(struct set_entry) * hash_sizes[ht->size_index].size);
-   ht->entries = ht->deleted_entries = 0;
-}
-
 /**
  * Clears all values from the given set.
  *
@@ -242,17 +225,15 @@ _mesa_set_clear(struct set *set, void (*delete_function)(struct set_entry *entry
 
    struct set_entry *entry;
 
-   if (delete_function) {
-      for (entry = set->table; entry != set->table + set->size; entry++) {
-         if (entry_is_present(entry))
-            delete_function(entry);
+   for (entry = set->table; entry != set->table + set->size; entry++) {
+      if (entry_is_present(entry) && delete_function != NULL)
+         delete_function(entry);
 
-         entry->key = NULL;
-      }
-      set->entries = 0;
-      set->deleted_entries = 0;
-   } else
-      set_clear_fast(set);
+      entry->key = NULL;
+   }
+
+   set->entries = 0;
+   set->deleted_entries = 0;
 }
 
 /**
@@ -333,16 +314,10 @@ set_rehash(struct set *ht, unsigned new_size_index)
    struct set old_ht;
    struct set_entry *table;
 
-   if (ht->size_index == new_size_index && ht->deleted_entries == ht->max_entries) {
-      set_clear_fast(ht);
-      assert(!ht->entries);
-      return;
-   }
-
    if (new_size_index >= ARRAY_SIZE(hash_sizes))
       return;
 
-   table = rzalloc_array(ralloc_parent(ht->table), struct set_entry,
+   table = rzalloc_array(ht, struct set_entry,
                          hash_sizes[new_size_index].size);
    if (table == NULL)
       return;
@@ -519,15 +494,15 @@ _mesa_set_search_and_add_pre_hashed(struct set *set, uint32_t hash,
 }
 
 struct set_entry *
-_mesa_set_search_or_add(struct set *set, const void *key, bool *found)
+_mesa_set_search_or_add(struct set *set, const void *key)
 {
    assert(set->key_hash_function);
-   return set_search_or_add(set, set->key_hash_function(key), key, found);
+   return set_search_or_add(set, set->key_hash_function(key), key, NULL);
 }
 
 struct set_entry *
 _mesa_set_search_or_add_pre_hashed(struct set *set, uint32_t hash,
-                                   const void *key, bool *found)
+                                   const void *key)
 {
    assert(set->key_hash_function == NULL ||
           hash == set->key_hash_function(key));
@@ -558,27 +533,6 @@ void
 _mesa_set_remove_key(struct set *set, const void *key)
 {
    _mesa_set_remove(set, _mesa_set_search(set, key));
-}
-
-/**
- * This function is an iterator over the set when no deleted entries are present.
- *
- * Pass in NULL for the first entry, as in the start of a for loop.
- */
-struct set_entry *
-_mesa_set_next_entry_unsafe(const struct set *ht, struct set_entry *entry)
-{
-   assert(!ht->deleted_entries);
-   if (!ht->entries)
-      return NULL;
-   if (entry == NULL)
-      entry = ht->table;
-   else
-      entry = entry + 1;
-   if (entry != ht->table + ht->size)
-      return entry->key ? entry : _mesa_set_next_entry_unsafe(ht, entry);
-
-   return NULL;
 }
 
 /**

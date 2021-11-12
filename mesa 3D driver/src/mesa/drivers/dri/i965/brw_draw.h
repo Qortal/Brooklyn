@@ -26,7 +26,7 @@
 #ifndef BRW_DRAW_H
 #define BRW_DRAW_H
 
-#include "main/mtypes.h"
+#include "main/mtypes.h"		/* for struct gl_context... */
 #include "brw_bufmgr.h"
 
 struct brw_context;
@@ -45,16 +45,16 @@ brw_emit_vertex_buffer_state(struct brw_context *brw,
    brw_emit_vertex_buffer_state(__VA_ARGS__, __map)
 
 void brw_draw_prims(struct gl_context *ctx,
-                    const struct _mesa_prim *prims,
-                    unsigned nr_prims,
-                    const struct _mesa_index_buffer *ib,
-                    bool index_bounds_valid,
-                    bool primitive_restart,
-                    unsigned restart_index,
-                    unsigned min_index,
-                    unsigned max_index,
-                    unsigned num_instances,
-                    unsigned base_instance);
+		     const struct _mesa_prim *prims,
+		     GLuint nr_prims,
+		     const struct _mesa_index_buffer *ib,
+		     GLboolean index_bounds_valid,
+		     GLuint min_index,
+		     GLuint max_index,
+                     GLuint num_instances,
+                     GLuint base_instance,
+		     struct gl_transform_feedback_object *unused_tfb_object,
+                     unsigned stream);
 
 void brw_init_draw_functions(struct dd_function_table *functions);
 void brw_draw_init( struct brw_context *brw );
@@ -68,9 +68,7 @@ brw_handle_primitive_restart(struct gl_context *ctx,
                              const struct _mesa_prim *prims,
                              GLuint nr_prims,
                              const struct _mesa_index_buffer *ib,
-                             GLuint num_instances, GLuint base_instance,
-                             bool primitive_restart,
-                             unsigned restart_index);
+                             GLuint num_instances, GLuint base_instance);
 
 void
 brw_draw_indirect_prims(struct gl_context *ctx,
@@ -81,7 +79,5 @@ brw_draw_indirect_prims(struct gl_context *ctx,
                         unsigned stride,
                         struct gl_buffer_object *indirect_params,
                         GLsizeiptr indirect_params_offset,
-                        const struct _mesa_index_buffer *ib,
-                        bool primitive_restart,
-                        unsigned restart_index);
+                        const struct _mesa_index_buffer *ib);
 #endif

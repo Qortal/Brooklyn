@@ -200,12 +200,12 @@ get_texgen_coord(struct gl_fixedfunc_texture_unit *u, int i)
 }
 
 static inline float *
-get_texgen_coeff(struct gl_fixedfunc_texture_unit *u, GLenum mode, unsigned chan)
+get_texgen_coeff(struct gl_texgen *c)
 {
-	if (mode == GL_OBJECT_LINEAR)
-		return u->ObjectPlane[chan];
-	else if (mode == GL_EYE_LINEAR)
-		return u->EyePlane[chan];
+	if (c->Mode == GL_OBJECT_LINEAR)
+		return c->ObjectPlane;
+	else if (c->Mode == GL_EYE_LINEAR)
+		return c->EyePlane;
 	else
 		return NULL;
 }

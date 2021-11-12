@@ -57,8 +57,15 @@ blend_depends_on_dst_color(struct vc4_compile *c)
 static nir_ssa_def *
 vc4_nir_get_dst_color(nir_builder *b, int sample)
 {
-        return nir_load_input(b, 1, 32, nir_imm_int(b, 0),
-                              .base = VC4_NIR_TLB_COLOR_READ_INPUT + sample);
+        nir_intrinsic_instr *load =
+                nir_intrinsic_instr_create(b->shader,
+                                           nir_intrinsic_load_input);
+        load->num_components = 1;
+        nir_intrinsic_set_base(load, VC4_NIR_TLB_COLOR_READ_INPUT + sample);
+        load->src[0] = nir_src_for_ssa(nir_imm_int(b, 0));
+        nir_ssa_dest_init(&load->instr, &load->dest, 1, 32, NULL);
+        nir_builder_instr_insert(b, &load->instr);
+        return &load->dest.ssa;
 }
 
 static nir_ssa_def *
@@ -159,7 +166,7 @@ vc4_blend_channel_i(nir_builder *b,
                 return dst;
         case PIPE_BLENDFACTOR_SRC_ALPHA_SATURATE:
                 return vc4_nir_set_packed_chan(b,
-                                               nir_umin_4x8_vc4(b,
+                                               nir_umin_4x8(b,
                                                             src_a,
                                                             nir_inot(b, dst_a)),
                                                nir_imm_int(b, ~0),
@@ -226,15 +233,15 @@ vc4_blend_func_i(nir_builder *b, nir_ssa_def *src, nir_ssa_def *dst,
 {
         switch (func) {
         case PIPE_BLEND_ADD:
-                return nir_usadd_4x8_vc4(b, src, dst);
+                return nir_usadd_4x8(b, src, dst);
         case PIPE_BLEND_SUBTRACT:
-                return nir_ussub_4x8_vc4(b, src, dst);
+                return nir_ussub_4x8(b, src, dst);
         case PIPE_BLEND_REVERSE_SUBTRACT:
-                return nir_ussub_4x8_vc4(b, dst, src);
+                return nir_ussub_4x8(b, dst, src);
         case PIPE_BLEND_MIN:
-                return nir_umin_4x8_vc4(b, src, dst);
+                return nir_umin_4x8(b, src, dst);
         case PIPE_BLEND_MAX:
-                return nir_umax_4x8_vc4(b, src, dst);
+                return nir_umax_4x8(b, src, dst);
 
         default:
                 /* Unsupported. */
@@ -353,8 +360,8 @@ vc4_do_blending_i(struct vc4_compile *c, nir_builder *b,
                                                      dst_alpha_factor,
                                                      alpha_chan);
         }
-        nir_ssa_def *src_blend = nir_umul_unorm_4x8_vc4(b, src_color, src_factor);
-        nir_ssa_def *dst_blend = nir_umul_unorm_4x8_vc4(b, dst_color, dst_factor);
+        nir_ssa_def *src_blend = nir_umul_unorm_4x8(b, src_color, src_factor);
+        nir_ssa_def *dst_blend = nir_umul_unorm_4x8(b, dst_color, dst_factor);
 
         nir_ssa_def *result =
                 vc4_blend_func_i(b, src_blend, dst_blend, blend->rgb_func);
@@ -406,7 +413,7 @@ vc4_logicop(nir_builder *b, int logicop_func,
                 return nir_imm_int(b, ~0);
         default:
                 fprintf(stderr, "Unknown logic op %d\n", logicop_func);
-                FALLTHROUGH;
+                /* FALLTHROUGH */
         case PIPE_LOGICOP_COPY:
                 return src;
         }
@@ -515,8 +522,14 @@ vc4_nir_store_sample_mask(struct vc4_compile *c, nir_builder *b,
         sample_mask->data.driver_location = c->s->num_outputs++;
         sample_mask->data.location = FRAG_RESULT_SAMPLE_MASK;
 
-        nir_store_output(b, val, nir_imm_int(b, 0),
-                         .base = sample_mask->data.driver_location);
+        nir_intrinsic_instr *intr =
+                nir_intrinsic_instr_create(c->s, nir_intrinsic_store_output);
+        intr->num_components = 1;
+        nir_intrinsic_set_base(intr, sample_mask->data.driver_location);
+
+        intr->src[0] = nir_src_for_ssa(val);
+        intr->src[1] = nir_src_for_ssa(nir_imm_int(b, 0));
+        nir_builder_instr_insert(b, &intr->instr);
 }
 
 static void

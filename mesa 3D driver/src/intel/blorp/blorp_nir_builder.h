@@ -29,8 +29,9 @@ blorp_nir_init_shader(nir_builder *b,
                       gl_shader_stage stage,
                       const char *name)
 {
-   *b = nir_builder_init_simple_shader(stage, NULL, "%s", name ? name : "");
-   ralloc_steal(mem_ctx, b->shader);
+   nir_builder_init_simple_shader(b, mem_ctx, stage, NULL);
+   if (name != NULL)
+      b->shader->info.name = ralloc_strdup(b->shader, name);
    if (stage == MESA_SHADER_FRAGMENT)
       b->shader->info.fs.origin_upper_left = true;
 }
@@ -39,9 +40,9 @@ static inline nir_ssa_def *
 blorp_nir_txf_ms_mcs(nir_builder *b, nir_ssa_def *xy_pos, nir_ssa_def *layer)
 {
    nir_tex_instr *tex = nir_tex_instr_create(b->shader, 1);
-   tex->op = nir_texop_txf_ms_mcs_intel;
+   tex->op = nir_texop_txf_ms_mcs;
    tex->sampler_dim = GLSL_SAMPLER_DIM_MS;
-   tex->dest_type = nir_type_int32;
+   tex->dest_type = nir_type_int;
 
    nir_ssa_def *coord;
    if (layer) {

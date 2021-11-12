@@ -43,7 +43,6 @@ lp_cs_tpool_worker(void *data)
 
    while (!pool->shutdown) {
       struct lp_cs_tpool_task *task;
-      unsigned iter_per_thread;
 
       while (list_is_empty(&pool->workqueue) && !pool->shutdown)
          cnd_wait(&pool->new_work, &pool->m);
@@ -53,28 +52,15 @@ lp_cs_tpool_worker(void *data)
 
       task = list_first_entry(&pool->workqueue, struct lp_cs_tpool_task,
                               list);
-
-      unsigned this_iter = task->iter_start;
-
-      iter_per_thread = task->iter_per_thread;
-
-      if (task->iter_remainder &&
-          task->iter_start + task->iter_remainder == task->iter_total) {
-         task->iter_remainder--;
-         iter_per_thread = 1;
-      }
-
-      task->iter_start += iter_per_thread;
+      unsigned this_iter = task->iter_start++;
 
       if (task->iter_start == task->iter_total)
          list_del(&task->list);
 
       mtx_unlock(&pool->m);
-      for (unsigned i = 0; i < iter_per_thread; i++)
-         task->work(task->data, this_iter + i, &lmem);
-
+      task->work(task->data, this_iter, &lmem);
       mtx_lock(&pool->m);
-      task->iter_finished += iter_per_thread;
+      task->iter_finished++;
       if (task->iter_finished == task->iter_total)
          cnd_broadcast(&task->finish);
    }
@@ -135,7 +121,6 @@ lp_cs_tpool_queue_task(struct lp_cs_tpool *pool,
       for (unsigned t = 0; t < num_iters; t++) {
          work(data, t, &lmem);
       }
-      FREE(lmem.local_mem_ptr);
       return NULL;
    }
    task = CALLOC_STRUCT(lp_cs_tpool_task);
@@ -146,10 +131,6 @@ lp_cs_tpool_queue_task(struct lp_cs_tpool *pool,
    task->work = work;
    task->data = data;
    task->iter_total = num_iters;
-
-   task->iter_per_thread = num_iters / pool->num_threads;
-   task->iter_remainder = num_iters % pool->num_threads;
-
    cnd_init(&task->finish);
 
    mtx_lock(&pool->m);

@@ -675,6 +675,7 @@ initialize_visual_and_buffer(XMesaVisual v, XMesaBuffer b,
     */
    if (getenv("MESA_INFO")) {
       printf("X/Mesa visual = %p\n", (void *) v);
+      printf("X/Mesa level = %d\n", v->mesa_visual.level);
       printf("X/Mesa depth = %d\n", v->visinfo->depth);
       printf("X/Mesa bits per pixel = %d\n", v->BitsPerPixel);
    }
@@ -809,6 +810,8 @@ XMesaVisual XMesaCreateVisual( Display *display,
    v->visualType = xmesa_convert_from_x_visual_type(visinfo->c_class);
 #endif
 
+   v->mesa_visual.visualRating = visualCaveat;
+
    if (alpha_flag)
       v->mesa_visual.alphaBits = 8;
 
@@ -857,6 +860,9 @@ XMesaVisual XMesaCreateVisual( Display *display,
       vis->accumBlueBits  = accum_blue_size;
       vis->accumAlphaBits = accum_alpha_size;
 
+      vis->numAuxBuffers = 0;
+      vis->level = 0;
+      vis->sampleBuffers = num_samples > 1;
       vis->samples = num_samples;
    }
 
@@ -894,7 +900,10 @@ XMesaVisual XMesaCreateVisual( Display *display,
       PIPE_FORMAT_R16G16B16A16_SNORM : PIPE_FORMAT_NONE;
 
    v->stvis.samples = num_samples;
+   v->stvis.render_buffer = ST_ATTACHMENT_INVALID;
 
+   /* XXX minor hack */
+   v->mesa_visual.level = level;
    return v;
 }
 
@@ -980,7 +989,7 @@ XMesaContext XMesaCreateContext( XMesaVisual v, XMesaContext share_list,
          attribs.profile = ST_PROFILE_OPENGL_CORE;
          break;
       }
-      FALLTHROUGH;
+      /* fall-through */
    case GLX_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB:
       /*
        * The spec also says:
@@ -1020,7 +1029,7 @@ XMesaContext XMesaCreateContext( XMesaVisual v, XMesaContext share_list,
 
    c->st->st_manager_private = (void *) c;
 
-   c->hud = hud_create(c->st->cso_context, c->st, NULL);
+   c->hud = hud_create(c->st->cso_context, NULL);
 
    return c;
 
@@ -1495,7 +1504,7 @@ XMesaBindTexImage(Display *dpy, XMesaBuffer drawable, int buffer,
 
       internal_format = choose_pixel_format(drawable->xm_visual);
 
-      map = pipe_texture_map(pipe, res,
+      map = pipe_transfer_map(pipe, res,
                               0, 0,    /* level, layer */
                               PIPE_MAP_WRITE,
                               x, y,
@@ -1512,7 +1521,7 @@ XMesaBindTexImage(Display *dpy, XMesaBuffer drawable, int buffer,
                       ZPixmap);
 
       if (!img) {
-         pipe_texture_unmap(pipe, tex_xfer);
+         pipe_transfer_unmap(pipe, tex_xfer);
          return;
       }
 
@@ -1524,7 +1533,7 @@ XMesaBindTexImage(Display *dpy, XMesaBuffer drawable, int buffer,
                 &img->data[line * img->bytes_per_line],
                 byte_width);
 
-      pipe_texture_unmap(pipe, tex_xfer);
+      pipe_transfer_unmap(pipe, tex_xfer);
 
       st->teximage(st,
                    ST_TEXTURE_2D,

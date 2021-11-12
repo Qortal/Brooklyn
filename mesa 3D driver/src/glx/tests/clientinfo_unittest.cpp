@@ -42,7 +42,11 @@ public:
    {
       this->next = 0;
       this->dpy = dpy;
+      this->majorOpcode = 0;
+      this->majorVersion = major;
       this->minorVersion = minor;
+      this->serverGLXvendor = 0;
+      this->serverGLXversion = 0;
       this->glXDrawHash = 0;
 
       this->screens = new glx_screen *[dpy->nscreens];
@@ -52,8 +56,8 @@ public:
    ~fake_glx_display()
    {
       for (int i = 0; i < this->dpy->nscreens; i++) {
-         if (this->screens[i] != NULL)
-            delete (fake_glx_screen *)this->screens[i];
+	 if (this->screens[i] != NULL)
+	    delete this->screens[i];
       }
 
       delete [] this->screens;
@@ -67,7 +71,6 @@ public:
    glX_send_client_info_test();
    virtual ~glX_send_client_info_test();
    virtual void SetUp();
-   virtual void TearDown();
 
    void common_protocol_expected_false_test(unsigned major, unsigned minor,
 					    const char *glx_ext, bool *value);
@@ -128,7 +131,7 @@ xcb_glx_client_info(xcb_connection_t *c,
    ClientInfo_was_sent = true;
    connection_used = c;
 
-   gl_ext_string = new char[str_len];
+   gl_ext_string = (char *) malloc(str_len);
    memcpy(gl_ext_string, string, str_len);
    gl_ext_length = str_len;
 
@@ -234,6 +237,24 @@ glX_send_client_info_test::~glX_send_client_info_test()
 }
 
 void
+glX_send_client_info_test::destroy_display()
+{
+   if (this->glx_dpy != NULL) {
+      if (this->glx_dpy->screens != NULL) {
+	 for (int i = 0; i < this->display->nscreens; i++) {
+	    delete [] this->glx_dpy->screens[i]->serverGLXexts;
+	    delete this->glx_dpy->screens[i];
+	 }
+
+	 delete [] this->glx_dpy->screens;
+      }
+
+      delete this->glx_dpy;
+      delete this->display;
+   }
+}
+
+void
 glX_send_client_info_test::SetUp()
 {
    ClientInfo_was_sent = false;
@@ -248,17 +269,6 @@ glX_send_client_info_test::SetUp()
    gl_versions = (uint32_t *) 0;
    glx_major = 0;
    glx_minor = 0;
-}
-
-void
-glX_send_client_info_test::TearDown()
-{
-   if (gl_ext_string)
-      delete [] gl_ext_string;
-   if (glx_ext_string)
-      delete [] glx_ext_string;
-   if (gl_versions)
-      delete [] gl_versions;
 }
 
 void
@@ -566,7 +576,6 @@ TEST_F(glX_send_client_info_test, gl_versions_and_profiles_are_sane)
 
    const uint32_t all_valid_bits = GLX_CONTEXT_CORE_PROFILE_BIT_ARB
       | GLX_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB;
-   const uint32_t es_bit = GLX_CONTEXT_ES2_PROFILE_BIT_EXT;
 
    unsigned versions_below_3_0 = 0;
 
@@ -579,24 +588,14 @@ TEST_F(glX_send_client_info_test, gl_versions_and_profiles_are_sane)
        */
       switch (gl_versions[i * 3]) {
       case 1:
-         if (gl_versions[i * 3 + 2] & es_bit) {
-            EXPECT_GE(1u, gl_versions[i * 3 + 1]);
-            EXPECT_EQ(es_bit, gl_versions[i * 3 + 2]);
-         } else {
-            EXPECT_GE(5u, gl_versions[i * 3 + 1]);
-            EXPECT_EQ(0u, gl_versions[i * 3 + 2]);
-            versions_below_3_0++;
-         }
+	 EXPECT_GE(5u, gl_versions[i * 3 + 1]);
+	 EXPECT_EQ(0u, gl_versions[i * 3 + 2]);
+	 versions_below_3_0++;
 	 break;
       case 2:
-         if (gl_versions[i * 3 + 2] & es_bit) {
-            EXPECT_EQ(0u, gl_versions[i * 3 + 1]);
-            EXPECT_EQ(es_bit, gl_versions[i * 3 + 2]);
-         } else {
-            EXPECT_GE(1u, gl_versions[i * 3 + 1]);
-            EXPECT_EQ(0u, gl_versions[i * 3 + 2]);
-            versions_below_3_0++;
-         }
+	 EXPECT_GE(1u, gl_versions[i * 3 + 1]);
+	 EXPECT_EQ(0u, gl_versions[i * 3 + 2]);
+	 versions_below_3_0++;
 	 break;
       case 3:
 	 EXPECT_GE(3u, gl_versions[i * 3 + 1]);
@@ -604,16 +603,14 @@ TEST_F(glX_send_client_info_test, gl_versions_and_profiles_are_sane)
 	 /* Profiles were not introduced until OpenGL 3.2.
 	  */
 	 if (gl_versions[i * 3 + 1] < 2) {
-	    EXPECT_EQ(0u, gl_versions[i * 3 + 2] & ~(es_bit));
-	 } else if (gl_versions[i * 3 + 1] == 2) {
-	    EXPECT_EQ(0u, gl_versions[i * 3 + 2] & ~(all_valid_bits | es_bit));
+	    EXPECT_EQ(0u, gl_versions[i * 3 + 2]);
 	 } else {
-	    EXPECT_EQ(0u, gl_versions[i * 3 + 2] & ~(all_valid_bits));
-         }
+	    EXPECT_EQ(0u, gl_versions[i * 3 + 2] & ~all_valid_bits);
+	 }
 	 break;
       case 4:
-	 EXPECT_GE(6u, gl_versions[i * 3 + 1]);
-	 EXPECT_EQ(0u, gl_versions[i * 3 + 2] & ~(all_valid_bits));
+	 EXPECT_GE(2u, gl_versions[i * 3 + 1]);
+	 EXPECT_EQ(0u, gl_versions[i * 3 + 2] & ~all_valid_bits);
 	 break;
       }
    }

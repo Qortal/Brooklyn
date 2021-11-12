@@ -25,7 +25,6 @@
  */
 
 #include "etnaviv_compiler_nir.h"
-#include "util/compiler.h"
 
 /* to map nir srcs should to etna_inst srcs */
 enum {
@@ -147,7 +146,7 @@ etna_emit_alu(struct etna_compile *c, nir_op op, struct etna_inst_dst dst,
    case nir_op_fcos:
       if (c->specs->has_new_transcendentals)
          inst.tex.amode = 1;
-      FALLTHROUGH;
+      /* fall through */
    case nir_op_frsq:
    case nir_op_frcp:
    case nir_op_fexp2:

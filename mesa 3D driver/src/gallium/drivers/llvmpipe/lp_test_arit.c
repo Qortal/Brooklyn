@@ -293,27 +293,6 @@ const float fract_values[] = {
  * Unary test cases.
  */
 
-#ifdef _MSC_VER
-#define WRAP(func) \
-static float \
-wrap_ ## func(float x) \
-{ \
-   return func(x); \
-}
-WRAP(expf)
-WRAP(logf)
-WRAP(sinf)
-WRAP(cosf)
-WRAP(floorf)
-WRAP(ceilf)
-#define expf wrap_expf
-#define logf wrap_logf
-#define sinf wrap_sinf
-#define cosf wrap_cosf
-#define floorf wrap_floorf
-#define ceilf wrap_ceilf
-#endif
-
 static const struct unary_test_t
 unary_tests[] = {
    {"abs", &lp_build_abs, &fabsf, sgn_values, ARRAY_SIZE(sgn_values), 20.0 },
@@ -403,7 +382,7 @@ flush_denorm_to_zero(float val)
    fi_val.f = val;
 
 #if defined(PIPE_ARCH_SSE)
-   if (util_get_cpu_caps()->has_sse) {
+   if (util_cpu_caps.has_sse) {
       if ((fi_val.ui & 0x7f800000) == 0) {
          fi_val.ui &= 0xff800000;
       }
@@ -479,7 +458,7 @@ test_unary(unsigned verbose, FILE *fp, const struct unary_test_t *test, unsigned
             continue;
          }
 
-         if (!util_get_cpu_caps()->has_neon &&
+         if (!util_cpu_caps.has_neon &&
              test->ref == &nearbyintf && length == 2 &&
              ref != roundf(testval)) {
             /* FIXME: The generic (non SSE) path in lp_build_iround, which is

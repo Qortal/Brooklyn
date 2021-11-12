@@ -63,7 +63,7 @@ static void (*get_pic_param)(struct rvce_encoder *enc,
  */
 static void flush(struct rvce_encoder *enc)
 {
-	enc->ws->cs_flush(&enc->cs, PIPE_FLUSH_ASYNC, NULL);
+	enc->ws->cs_flush(enc->cs, PIPE_FLUSH_ASYNC, NULL);
 	enc->task_info_idx = 0;
 	enc->bs_idx = 0;
 }
@@ -71,7 +71,7 @@ static void flush(struct rvce_encoder *enc)
 #if 0
 static void dump_feedback(struct rvce_encoder *enc, struct rvid_buffer *fb)
 {
-	uint32_t *ptr = enc->ws->buffer_map(fb->res->buf, &enc->cs, PIPE_MAP_READ_WRITE);
+	uint32_t *ptr = enc->ws->buffer_map(fb->res->buf, enc->cs, PIPE_MAP_READ_WRITE);
 	unsigned i = 0;
 	fprintf(stderr, "\n");
 	fprintf(stderr, "encStatus:\t\t\t%08x\n", ptr[i++]);
@@ -105,7 +105,7 @@ static void reset_cpb(struct rvce_encoder *enc)
 	for (i = 0; i < enc->cpb_num; ++i) {
 		struct rvce_cpb_slot *slot = &enc->cpb_array[i];
 		slot->index = i;
-		slot->picture_type = PIPE_H2645_ENC_PICTURE_TYPE_SKIP;
+		slot->picture_type = PIPE_H264_ENC_PICTURE_TYPE_SKIP;
 		slot->frame_num = 0;
 		slot->pic_order_cnt = 0;
 		list_addtail(&slot->list, &enc->cpb_slots);
@@ -126,10 +126,10 @@ static void sort_cpb(struct rvce_encoder *enc)
 		if (i->frame_num == enc->pic.ref_idx_l1)
 			l1 = i;
 
-		if (enc->pic.picture_type == PIPE_H2645_ENC_PICTURE_TYPE_P && l0)
+		if (enc->pic.picture_type == PIPE_H264_ENC_PICTURE_TYPE_P && l0)
 			break;
 
-		if (enc->pic.picture_type == PIPE_H2645_ENC_PICTURE_TYPE_B &&
+		if (enc->pic.picture_type == PIPE_H264_ENC_PICTURE_TYPE_B &&
 		    l0 && l1)
 			break;
 	}
@@ -256,7 +256,7 @@ static void rvce_destroy(struct pipe_video_codec *encoder)
 		rvid_destroy_buffer(&fb);
 	}
 	rvid_destroy_buffer(&enc->cpb);
-	enc->ws->cs_destroy(&enc->cs);
+	enc->ws->cs_destroy(enc->cs);
 	FREE(enc->cpb_array);
 	FREE(enc);
 }
@@ -270,7 +270,7 @@ static void rvce_begin_frame(struct pipe_video_codec *encoder,
 	struct pipe_h264_enc_picture_desc *pic = (struct pipe_h264_enc_picture_desc *)picture;
 
 	bool need_rate_control =
-		enc->pic.rate_ctrl[0].rate_ctrl_method != pic->rate_ctrl[0].rate_ctrl_method ||
+		enc->pic.rate_ctrl.rate_ctrl_method != pic->rate_ctrl.rate_ctrl_method ||
 		enc->pic.quant_i_frames != pic->quant_i_frames ||
 		enc->pic.quant_p_frames != pic->quant_p_frames ||
 		enc->pic.quant_b_frames != pic->quant_b_frames;
@@ -281,10 +281,10 @@ static void rvce_begin_frame(struct pipe_video_codec *encoder,
 	enc->get_buffer(vid_buf->resources[0], &enc->handle, &enc->luma);
 	enc->get_buffer(vid_buf->resources[1], NULL, &enc->chroma);
 
-	if (pic->picture_type == PIPE_H2645_ENC_PICTURE_TYPE_IDR)
+	if (pic->picture_type == PIPE_H264_ENC_PICTURE_TYPE_IDR)
 		reset_cpb(enc);
-	else if (pic->picture_type == PIPE_H2645_ENC_PICTURE_TYPE_P ||
-	         pic->picture_type == PIPE_H2645_ENC_PICTURE_TYPE_B)
+	else if (pic->picture_type == PIPE_H264_ENC_PICTURE_TYPE_P ||
+	         pic->picture_type == PIPE_H264_ENC_PICTURE_TYPE_B)
 		sort_cpb(enc);
 	
 	if (!enc->stream_handle) {
@@ -323,7 +323,7 @@ static void rvce_encode_bitstream(struct pipe_video_codec *encoder,
 		RVID_ERR("Can't create feedback buffer.\n");
 		return;
 	}
-	if (!radeon_emitted(&enc->cs, 0))
+	if (!radeon_emitted(enc->cs, 0))
 		enc->session(enc);
 	enc->encode(enc);
 	enc->feedback(enc);
@@ -357,8 +357,8 @@ static void rvce_get_feedback(struct pipe_video_codec *encoder,
 	struct rvid_buffer *fb = feedback;
 
 	if (size) {
-		uint32_t *ptr = enc->ws->buffer_map(enc->ws,
-			fb->res->buf, &enc->cs,
+		uint32_t *ptr = enc->ws->buffer_map(
+			fb->res->buf, enc->cs,
 			PIPE_MAP_READ_WRITE | RADEON_MAP_TEMPORARY);
 
 		if (ptr[1]) {
@@ -367,7 +367,7 @@ static void rvce_get_feedback(struct pipe_video_codec *encoder,
 			*size = 0;
 		}
 
-		enc->ws->buffer_unmap(enc->ws, fb->res->buf);
+		enc->ws->buffer_unmap(fb->res->buf);
 	}
 	//dump_feedback(enc, fb);
 	rvid_destroy_buffer(fb);
@@ -431,8 +431,8 @@ struct pipe_video_codec *rvce_create_encoder(struct pipe_context *context,
 
 	enc->screen = context->screen;
 	enc->ws = ws;
-
-	if (!ws->cs_create(&enc->cs, rctx->ctx, RING_VCE, rvce_cs_flush, enc, false)) {
+	enc->cs = ws->cs_create(rctx->ctx, RING_VCE, rvce_cs_flush, enc, false);
+	if (!enc->cs) {
 		RVID_ERR("Can't get command submission context.\n");
 		goto error;
 	}
@@ -477,7 +477,8 @@ struct pipe_video_codec *rvce_create_encoder(struct pipe_context *context,
 	return &enc->base;
 
 error:
-	enc->ws->cs_destroy(&enc->cs);
+	if (enc->cs)
+		enc->ws->cs_destroy(enc->cs);
 
 	rvid_destroy_buffer(&enc->cpb);
 
@@ -518,7 +519,7 @@ void rvce_add_buffer(struct rvce_encoder *enc, struct pb_buffer *buf,
 {
 	int reloc_idx;
 
-	reloc_idx = enc->ws->cs_add_buffer(&enc->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED,
+	reloc_idx = enc->ws->cs_add_buffer(enc->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED,
 					   domain, 0);
 	if (enc->use_vm) {
 		uint64_t addr;

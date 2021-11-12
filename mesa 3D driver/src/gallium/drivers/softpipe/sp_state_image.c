@@ -30,7 +30,6 @@ static void softpipe_set_shader_images(struct pipe_context *pipe,
                                        enum pipe_shader_type shader,
                                        unsigned start,
                                        unsigned num,
-                                       unsigned unbind_num_trailing_slots,
                                        const struct pipe_image_view *images)
 {
    struct softpipe_context *softpipe = softpipe_context(pipe);
@@ -50,13 +49,6 @@ static void softpipe_set_shader_images(struct pipe_context *pipe,
          pipe_resource_reference(&softpipe->tgsi.image[shader]->sp_iview[idx].resource, NULL);
          memset(&softpipe->tgsi.image[shader]->sp_iview[idx], 0, sizeof(struct pipe_image_view));
       }
-   }
-
-   for (i = 0; i < unbind_num_trailing_slots; i++) {
-      int idx = start + num + i;
-
-      pipe_resource_reference(&softpipe->tgsi.image[shader]->sp_iview[idx].resource, NULL);
-      memset(&softpipe->tgsi.image[shader]->sp_iview[idx], 0, sizeof(struct pipe_image_view));
    }
 }
 

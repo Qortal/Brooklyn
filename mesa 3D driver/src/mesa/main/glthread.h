@@ -53,10 +53,6 @@
 #include "compiler/shader_enums.h"
 #include "main/config.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 struct gl_context;
 struct gl_buffer_object;
 struct _mesa_HashTable;
@@ -100,16 +96,16 @@ struct glthread_batch
    /** The worker thread will access the context with this. */
    struct gl_context *ctx;
 
-   /**
-    * Number of uint64_t elements filled already.
-    * This is 0 when it's being filled because glthread::used holds the real
-    * value temporarily, and glthread::used is copied to this variable when
-    * the batch is submitted.
-    */
-   unsigned used;
+   /** Amount of data used by batch commands, in bytes. */
+   int used;
 
    /** Data contained in the command buffer. */
-   uint64_t buffer[MARSHAL_MAX_CMD_SIZE / 8];
+#ifdef _MSC_VER
+   __declspec(align(8))
+#else
+   __attribute__((aligned(8)))
+#endif
+   uint8_t buffer[MARSHAL_MAX_CMD_SIZE];
 };
 
 struct glthread_client_attrib {
@@ -124,24 +120,6 @@ struct glthread_client_attrib {
    bool Valid;
 };
 
-/* For glPushAttrib / glPopAttrib. */
-struct glthread_attrib_node {
-   GLbitfield Mask;
-   int ActiveTexture;
-   GLenum MatrixMode;
-};
-
-typedef enum {
-   M_MODELVIEW,
-   M_PROJECTION,
-   M_PROGRAM0,
-   M_PROGRAM_LAST = M_PROGRAM0 + MAX_PROGRAM_MATRICES - 1,
-   M_TEXTURE0,
-   M_TEXTURE_LAST = M_TEXTURE0 + MAX_TEXTURE_UNITS - 1,
-   M_DUMMY, /* used instead of reporting errors */
-   M_NUM_MATRIX_STACKS,
-} gl_matrix_index;
-
 struct glthread_state
 {
    /** Multithreaded queue. */
@@ -153,10 +131,8 @@ struct glthread_state
    /** Whether GLThread is enabled. */
    bool enabled;
 
-   /** Display lists. */
-   GLenum ListMode; /**< Zero if not inside display list, else list mode. */
-   unsigned ListBase;
-   unsigned ListCallDepth;
+   /** Whether GLThread is inside a display list generation. */
+   bool inside_dlist;
 
    /** For L3 cache pinning. */
    unsigned pin_thread_counter;
@@ -172,9 +148,6 @@ struct glthread_state
 
    /** Index of the batch being filled and about to be submitted. */
    unsigned next;
-
-   /** Number of uint64_t elements filled already. */
-   unsigned used;
 
    /** Upload buffer. */
    struct gl_buffer_object *upload_buffer;
@@ -205,28 +178,6 @@ struct glthread_state
    /** Currently-bound buffer object IDs. */
    GLuint CurrentArrayBufferName;
    GLuint CurrentDrawIndirectBufferName;
-   GLuint CurrentPixelPackBufferName;
-   GLuint CurrentPixelUnpackBufferName;
-
-   /**
-    * The batch index of the last occurence of glLinkProgram or
-    * glDeleteProgram or -1 if there is no such enqueued call.
-    */
-   int LastProgramChangeBatch;
-
-   /**
-    * The batch index of the last occurence of glEndList or
-    * glDeleteLists or -1 if there is no such enqueued call.
-    */
-   int LastDListChangeBatchIndex;
-
-   /** Basic matrix state tracking. */
-   int ActiveTexture;
-   GLenum MatrixMode;
-   gl_matrix_index MatrixIndex;
-   struct glthread_attrib_node AttribStack[MAX_ATTRIB_STACK_DEPTH];
-   int AttribStackDepth;
-   int MatrixStackDepth[M_NUM_MATRIX_STACKS];
 };
 
 void _mesa_glthread_init(struct gl_context *ctx);
@@ -242,9 +193,6 @@ void _mesa_glthread_upload(struct gl_context *ctx, const void *data,
                            struct gl_buffer_object **out_buffer,
                            uint8_t **out_ptr);
 void _mesa_glthread_reset_vao(struct glthread_vao *vao);
-void _mesa_error_glthread_safe(struct gl_context *ctx, GLenum error,
-                               bool glthread, const char *format, ...);
-void _mesa_glthread_execute_list(struct gl_context *ctx, GLuint list);
 
 void _mesa_glthread_BindBuffer(struct gl_context *ctx, GLenum target,
                                GLuint buffer);
@@ -301,10 +249,5 @@ void _mesa_glthread_PopClientAttrib(struct gl_context *ctx);
 void _mesa_glthread_ClientAttribDefault(struct gl_context *ctx, GLbitfield mask);
 void _mesa_glthread_InterleavedArrays(struct gl_context *ctx, GLenum format,
                                       GLsizei stride, const GLvoid *pointer);
-void _mesa_glthread_ProgramChanged(struct gl_context *ctx);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* _GLTHREAD_H*/

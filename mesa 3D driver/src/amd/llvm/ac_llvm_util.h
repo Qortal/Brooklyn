@@ -27,7 +27,6 @@
 #define AC_LLVM_UTIL_H
 
 #include "amd_family.h"
-#include "util/macros.h"
 #include <llvm-c/TargetMachine.h>
 #include <llvm/Config/llvm-config.h>
 
@@ -61,10 +60,14 @@ enum ac_func_attr
 
 enum ac_target_machine_options
 {
-   AC_TM_SUPPORTS_SPILL       = 1 << 0,
-   AC_TM_CHECK_IR             = 1 << 1,
-   AC_TM_ENABLE_GLOBAL_ISEL   = 1 << 2,
-   AC_TM_CREATE_LOW_OPT       = 1 << 3,
+   AC_TM_SUPPORTS_SPILL = (1 << 0),
+   AC_TM_FORCE_ENABLE_XNACK = (1 << 1),
+   AC_TM_FORCE_DISABLE_XNACK = (1 << 2),
+   AC_TM_PROMOTE_ALLOCA_TO_SCRATCH = (1 << 3),
+   AC_TM_CHECK_IR = (1 << 4),
+   AC_TM_ENABLE_GLOBAL_ISEL = (1 << 5),
+   AC_TM_CREATE_LOW_OPT = (1 << 6),
+   AC_TM_WAVE32 = (1 << 7),
 };
 
 enum ac_float_mode
@@ -82,6 +85,10 @@ struct ac_llvm_compiler {
    /* Default compiler. */
    LLVMTargetMachineRef tm;
    struct ac_compiler_passes *passes;
+
+   /* Wave32 compiler for GFX10. */
+   LLVMTargetMachineRef tm_wave32;
+   struct ac_compiler_passes *passes_wave32;
 
    /* Optional compiler for faster compilation with fewer optimizations.
     * LLVM modules can be created with "tm" too. There is no difference.
@@ -109,7 +116,6 @@ void ac_disable_signed_zeros(struct ac_llvm_context *ctx);
 
 void ac_llvm_add_target_dep_function_attr(LLVMValueRef F, const char *name, unsigned value);
 void ac_llvm_set_workgroup_size(LLVMValueRef F, unsigned size);
-void ac_llvm_set_target_features(LLVMValueRef F, struct ac_llvm_context *ctx);
 
 static inline unsigned ac_get_load_intr_attribs(bool can_speculate)
 {
@@ -122,7 +128,7 @@ unsigned ac_count_scratch_private_memory(LLVMValueRef function);
 
 LLVMTargetLibraryInfoRef ac_create_target_library_info(const char *triple);
 void ac_dispose_target_library_info(LLVMTargetLibraryInfoRef library_info);
-PUBLIC void ac_init_shared_llvm_once(void); /* Do not use directly, use ac_init_llvm_once */
+void ac_init_shared_llvm_once(void); /* Do not use directly, use ac_init_llvm_once */
 void ac_init_llvm_once(void);
 
 bool ac_init_llvm_compiler(struct ac_llvm_compiler *compiler, enum radeon_family family,
@@ -138,8 +144,12 @@ void ac_enable_global_isel(LLVMTargetMachineRef tm);
 
 static inline bool ac_has_vec3_support(enum chip_class chip, bool use_format)
 {
-   /* GFX6 only supports vec3 with load/store format. */
-   return chip != GFX6 || use_format;
+   if (chip == GFX6 && !use_format) {
+      /* GFX6 only supports vec3 with load/store format. */
+      return false;
+   }
+
+   return LLVM_VERSION_MAJOR >= 9;
 }
 
 #ifdef __cplusplus

@@ -50,8 +50,9 @@ struct translate_generic {
    struct {
       enum translate_element_type type;
 
-      void (*fetch)(void *restrict dst, const uint8_t *restrict src,
-                    unsigned width);
+      void (*fetch)(void *dst, unsigned dst_stride,
+                    const uint8_t *src, unsigned src_stride,
+                    unsigned width, unsigned height);
       unsigned buffer;
       unsigned input_offset;
       unsigned instance_divisor;
@@ -624,7 +625,7 @@ generic_run_one(struct translate_generic *tg,
          if (likely(copy_size >= 0)) {
             memcpy(dst, src, copy_size);
          } else {
-            tg->attrib[attr].fetch(data, src, 1);
+            tg->attrib[attr].fetch(data, 0, src, 0, 1, 1);
 
             if (0)
                debug_printf("Fetch linear attr %d  from %p  stride %d  index %d: "

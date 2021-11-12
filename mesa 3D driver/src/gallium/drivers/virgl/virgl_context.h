@@ -85,7 +85,6 @@ struct virgl_context {
    struct virgl_staging_mgr staging;
    bool encoded_transfers;
    bool supports_staging;
-   uint8_t patch_vertices;
 
    struct pipe_vertex_buffer vertex_buffer[PIPE_MAX_ATTRIBS];
    unsigned num_vertex_buffers;
@@ -128,7 +127,7 @@ void virgl_init_blit_functions(struct virgl_context *vctx);
 void virgl_init_query_functions(struct virgl_context *vctx);
 void virgl_init_so_functions(struct virgl_context *vctx);
 
-struct tgsi_token *virgl_tgsi_transform(struct virgl_screen *vscreen, const struct tgsi_token *tokens_in);
+struct tgsi_token *virgl_tgsi_transform(struct virgl_context *vctx, const struct tgsi_token *tokens_in);
 
 bool
 virgl_can_rebind_resource(struct virgl_context *vctx,
@@ -138,6 +137,4 @@ void
 virgl_rebind_resource(struct virgl_context *vctx,
                       struct pipe_resource *res);
 
-void virgl_flush_eq(struct virgl_context *ctx, void *closure,
-		    struct pipe_fence_handle **fence);
 #endif

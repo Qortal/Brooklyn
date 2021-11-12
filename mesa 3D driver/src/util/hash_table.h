@@ -73,9 +73,6 @@ _mesa_hash_table_init(struct hash_table *ht,
                                                   const void *b));
 
 struct hash_table *
-_mesa_hash_table_create_u32_keys(void *mem_ctx);
-
-struct hash_table *
 _mesa_hash_table_clone(struct hash_table *src, void *dst_mem_ctx);
 void _mesa_hash_table_destroy(struct hash_table *ht,
                               void (*delete_function)(struct hash_entry *entry));
@@ -106,14 +103,11 @@ void _mesa_hash_table_remove_key(struct hash_table *ht,
 
 struct hash_entry *_mesa_hash_table_next_entry(struct hash_table *ht,
                                                struct hash_entry *entry);
-struct hash_entry *_mesa_hash_table_next_entry_unsafe(const struct hash_table *ht,
-                                               struct hash_entry *entry);
 struct hash_entry *
 _mesa_hash_table_random_entry(struct hash_table *ht,
                               bool (*predicate)(struct hash_entry *entry));
 
 uint32_t _mesa_hash_data(const void *data, size_t size);
-uint32_t _mesa_hash_data_with_seed(const void *data, size_t size, uint32_t seed);
 
 uint32_t _mesa_hash_int(const void *key);
 uint32_t _mesa_hash_uint(const void *key);
@@ -141,15 +135,6 @@ _mesa_hash_table_reserve(struct hash_table *ht, unsigned size);
    for (struct hash_entry *entry = _mesa_hash_table_next_entry(ht, NULL);  \
         entry != NULL;                                                     \
         entry = _mesa_hash_table_next_entry(ht, entry))
-/**
- * This foreach function destroys the table as it iterates.
- * It is not safe to use when inserting or removing entries.
- */
-#define hash_table_foreach_remove(ht, entry)                                      \
-   for (struct hash_entry *entry = _mesa_hash_table_next_entry_unsafe(ht, NULL);  \
-        (ht)->entries;                                                     \
-        entry->hash = 0, entry->key = (void*)NULL, entry->data = NULL,      \
-        (ht)->entries--, entry = _mesa_hash_table_next_entry_unsafe(ht, entry))
 
 static inline void
 hash_table_call_foreach(struct hash_table *ht,
@@ -175,7 +160,8 @@ struct hash_table_u64 *
 _mesa_hash_table_u64_create(void *mem_ctx);
 
 void
-_mesa_hash_table_u64_destroy(struct hash_table_u64 *ht);
+_mesa_hash_table_u64_destroy(struct hash_table_u64 *ht,
+                             void (*delete_function)(struct hash_entry *entry));
 
 void
 _mesa_hash_table_u64_insert(struct hash_table_u64 *ht, uint64_t key,
@@ -188,7 +174,8 @@ void
 _mesa_hash_table_u64_remove(struct hash_table_u64 *ht, uint64_t key);
 
 void
-_mesa_hash_table_u64_clear(struct hash_table_u64 *ht);
+_mesa_hash_table_u64_clear(struct hash_table_u64 *ht,
+                           void (*delete_function)(struct hash_entry *entry));
 
 #ifdef __cplusplus
 } /* extern C */

@@ -110,7 +110,7 @@ struct blorp_surf
 
    /**
     * If set (bo != NULL), clear_color is ignored and the actual clear color
-    * is fetched from this address.  On gfx7-8, this is all of dword 7 of
+    * is fetched from this address.  On gen7-8, this is all of dword 7 of
     * RENDER_SURFACE_STATE and is the responsibility of the caller to ensure
     * that it contains a swizzle of RGBA and resource min LOD of 0.
     */
@@ -187,7 +187,7 @@ blorp_clear_depth_stencil(struct blorp_batch *batch,
                           bool clear_depth, float depth_value,
                           uint8_t stencil_mask, uint8_t stencil_value);
 bool
-blorp_can_hiz_clear_depth(const struct intel_device_info *devinfo,
+blorp_can_hiz_clear_depth(const struct gen_device_info *devinfo,
                           const struct isl_surf *surf,
                           enum isl_aux_usage aux_usage,
                           uint32_t level, uint32_t layer,
@@ -205,7 +205,7 @@ blorp_hiz_clear_depth_stencil(struct blorp_batch *batch,
 
 
 void
-blorp_gfx8_hiz_clear_attachments(struct blorp_batch *batch,
+blorp_gen8_hiz_clear_attachments(struct blorp_batch *batch,
                                  uint32_t num_samples,
                                  uint32_t x0, uint32_t y0,
                                  uint32_t x1, uint32_t y1,
@@ -245,6 +245,10 @@ blorp_hiz_op(struct blorp_batch *batch, struct blorp_surf *surf,
              uint32_t level, uint32_t start_layer, uint32_t num_layers,
              enum isl_aux_op op);
 
+void
+blorp_hiz_stencil_op(struct blorp_batch *batch, struct blorp_surf *stencil,
+                     uint32_t level, uint32_t start_layer,
+                     uint32_t num_layers, enum isl_aux_op op);
 #ifdef __cplusplus
 } /* end extern "C" */
 #endif /* __cplusplus */

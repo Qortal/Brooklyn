@@ -26,7 +26,6 @@
  *    Christian Gmeiner <christian.gmeiner@gmail.com>
  */
 
-#include "util/compiler.h"
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
 
@@ -48,9 +47,9 @@ occlusion_supports(unsigned query_type)
 {
    switch (query_type) {
    case PIPE_QUERY_OCCLUSION_COUNTER:
-      FALLTHROUGH;
+      /* fallthrough */
    case PIPE_QUERY_OCCLUSION_PREDICATE:
-      FALLTHROUGH;
+      /* fallthrough */
    case PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE:
       return true;
    default:

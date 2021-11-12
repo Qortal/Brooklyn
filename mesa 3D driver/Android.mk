@@ -21,12 +21,6 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-ifneq ($(filter true, $(BOARD_MESA3D_USES_MESON_BUILD)),)
-
-include $(call my-dir)/android/Android.mk
-
-else
-
 # BOARD_GPU_DRIVERS should be defined.  The valid values are
 #
 #   classic drivers: i915 i965
@@ -103,7 +97,7 @@ endif
 define mesa-build-with-llvm
   $(if $(filter $(MESA_ANDROID_MAJOR_VERSION), 4 5 6 7), \
     $(warning Unsupported LLVM version in Android $(MESA_ANDROID_MAJOR_VERSION)),) \
-  $(eval LOCAL_CFLAGS += -DLLVM_AVAILABLE -DDRAW_LLVM_AVAILABLE -DLLVM_IS_SHARED=1 -DMESA_LLVM_VERSION_STRING=\"3.9\") \
+  $(eval LOCAL_CFLAGS += -DLLVM_AVAILABLE -DLLVM_IS_SHARED=1 -DMESA_LLVM_VERSION_STRING=\"3.9\") \
   $(eval LOCAL_SHARED_LIBRARIES += libLLVM)
 endef
 
@@ -128,5 +122,3 @@ SUBDIRS := \
 INC_DIRS := $(call all-named-subdir-makefiles,$(SUBDIRS))
 INC_DIRS += $(call all-named-subdir-makefiles,src/gallium)
 include $(INC_DIRS)
-
-endif

@@ -32,7 +32,6 @@
 #include "framebuffer.h"
 #include "image.h"
 #include "pbo.h"
-#include "pixel.h"
 #include "state.h"
 #include "glformats.h"
 #include "fbobject.h"
@@ -50,7 +49,7 @@ _mesa_DrawPixels( GLsizei width, GLsizei height,
    GLenum err;
    GET_CURRENT_CONTEXT(ctx);
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
 
    if (MESA_VERBOSE & VERBOSE_API)
       _mesa_debug(ctx, "glDrawPixels(%d, %d, %s, %s, %p) // to %s at %ld, %ld\n",
@@ -73,15 +72,9 @@ _mesa_DrawPixels( GLsizei width, GLsizei height,
     */
    _mesa_set_vp_override(ctx, GL_TRUE);
 
-   if (ctx->NewState & _NEW_PIXEL)
-      _mesa_update_pixel(ctx);
-
-   if (ctx->NewState)
-      _mesa_update_state(ctx);
-
-   if (!ctx->DrawPixValid) {
-      _mesa_error(ctx, GL_INVALID_OPERATION, "glDrawPixels");
-      goto end;
+   /* Note: this call does state validation */
+   if (!_mesa_valid_to_render(ctx, "glDrawPixels")) {
+      goto end;      /* the error code was recorded */
    }
 
    /* GL 3.0 introduced a new restriction on glDrawPixels() over what was in
@@ -200,7 +193,7 @@ _mesa_CopyPixels( GLint srcx, GLint srcy, GLsizei width, GLsizei height,
 {
    GET_CURRENT_CONTEXT(ctx);
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
 
    if (MESA_VERBOSE & VERBOSE_API)
       _mesa_debug(ctx,
@@ -245,15 +238,9 @@ _mesa_CopyPixels( GLint srcx, GLint srcy, GLsizei width, GLsizei height,
     */
    _mesa_set_vp_override(ctx, GL_TRUE);
 
-   if (ctx->NewState & _NEW_PIXEL)
-      _mesa_update_pixel(ctx);
-
-   if (ctx->NewState)
-      _mesa_update_state(ctx);
-
-   if (!ctx->DrawPixValid) {
-      _mesa_error(ctx, GL_INVALID_OPERATION, "glCopyPixels");
-      goto end;
+   /* Note: this call does state validation */
+   if (!_mesa_valid_to_render(ctx, "glCopyPixels")) {
+      goto end;      /* the error code was recorded */
    }
 
    /* Check read buffer's status (draw buffer was already checked) */
@@ -323,7 +310,7 @@ _mesa_Bitmap( GLsizei width, GLsizei height,
 {
    GET_CURRENT_CONTEXT(ctx);
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
 
    if (width < 0 || height < 0) {
       _mesa_error( ctx, GL_INVALID_VALUE, "glBitmap(width or height < 0)" );
@@ -334,14 +321,9 @@ _mesa_Bitmap( GLsizei width, GLsizei height,
       return;    /* do nothing */
    }
 
-   if (ctx->NewState & _NEW_PIXEL)
-      _mesa_update_pixel(ctx);
-
-   if (ctx->NewState)
-      _mesa_update_state(ctx);
-
-   if (!ctx->DrawPixValid) {
-      _mesa_error(ctx, GL_INVALID_OPERATION, "glBitmap");
+   /* Note: this call does state validation */
+   if (!_mesa_valid_to_render(ctx, "glBitmap")) {
+      /* the error code was recorded */
       return;
    }
 
@@ -391,7 +373,6 @@ _mesa_Bitmap( GLsizei width, GLsizei height,
    /* update raster position */
    ctx->Current.RasterPos[0] += xmove;
    ctx->Current.RasterPos[1] += ymove;
-   ctx->PopAttribState |= GL_CURRENT_BIT;
 
    if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH) {
       _mesa_flush(ctx);

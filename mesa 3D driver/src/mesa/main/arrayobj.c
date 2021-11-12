@@ -47,7 +47,6 @@
 #include "context.h"
 #include "bufferobj.h"
 #include "arrayobj.h"
-#include "draw_validate.h"
 #include "macros.h"
 #include "mtypes.h"
 #include "state.h"
@@ -75,6 +74,7 @@ _mesa_vao_attribute_map[ATTRIBUTE_MAP_MODE_MAX][VERT_ATTRIB_MAX] =
       VERT_ATTRIB_COLOR1,              /* VERT_ATTRIB_COLOR1 */
       VERT_ATTRIB_FOG,                 /* VERT_ATTRIB_FOG */
       VERT_ATTRIB_COLOR_INDEX,         /* VERT_ATTRIB_COLOR_INDEX */
+      VERT_ATTRIB_EDGEFLAG,            /* VERT_ATTRIB_EDGEFLAG */
       VERT_ATTRIB_TEX0,                /* VERT_ATTRIB_TEX0 */
       VERT_ATTRIB_TEX1,                /* VERT_ATTRIB_TEX1 */
       VERT_ATTRIB_TEX2,                /* VERT_ATTRIB_TEX2 */
@@ -99,8 +99,7 @@ _mesa_vao_attribute_map[ATTRIBUTE_MAP_MODE_MAX][VERT_ATTRIB_MAX] =
       VERT_ATTRIB_GENERIC12,           /* VERT_ATTRIB_GENERIC12 */
       VERT_ATTRIB_GENERIC13,           /* VERT_ATTRIB_GENERIC13 */
       VERT_ATTRIB_GENERIC14,           /* VERT_ATTRIB_GENERIC14 */
-      VERT_ATTRIB_GENERIC15,           /* VERT_ATTRIB_GENERIC15 */
-      VERT_ATTRIB_EDGEFLAG,            /* VERT_ATTRIB_EDGEFLAG */
+      VERT_ATTRIB_GENERIC15            /* VERT_ATTRIB_GENERIC15 */
    },
 
    /* ATTRIBUTE_MAP_MODE_POSITION
@@ -116,6 +115,7 @@ _mesa_vao_attribute_map[ATTRIBUTE_MAP_MODE_MAX][VERT_ATTRIB_MAX] =
       VERT_ATTRIB_COLOR1,              /* VERT_ATTRIB_COLOR1 */
       VERT_ATTRIB_FOG,                 /* VERT_ATTRIB_FOG */
       VERT_ATTRIB_COLOR_INDEX,         /* VERT_ATTRIB_COLOR_INDEX */
+      VERT_ATTRIB_EDGEFLAG,            /* VERT_ATTRIB_EDGEFLAG */
       VERT_ATTRIB_TEX0,                /* VERT_ATTRIB_TEX0 */
       VERT_ATTRIB_TEX1,                /* VERT_ATTRIB_TEX1 */
       VERT_ATTRIB_TEX2,                /* VERT_ATTRIB_TEX2 */
@@ -140,8 +140,7 @@ _mesa_vao_attribute_map[ATTRIBUTE_MAP_MODE_MAX][VERT_ATTRIB_MAX] =
       VERT_ATTRIB_GENERIC12,           /* VERT_ATTRIB_GENERIC12 */
       VERT_ATTRIB_GENERIC13,           /* VERT_ATTRIB_GENERIC13 */
       VERT_ATTRIB_GENERIC14,           /* VERT_ATTRIB_GENERIC14 */
-      VERT_ATTRIB_GENERIC15,           /* VERT_ATTRIB_GENERIC15 */
-      VERT_ATTRIB_EDGEFLAG,            /* VERT_ATTRIB_EDGEFLAG */
+      VERT_ATTRIB_GENERIC15            /* VERT_ATTRIB_GENERIC15 */
    },
 
    /* ATTRIBUTE_MAP_MODE_GENERIC0
@@ -157,6 +156,7 @@ _mesa_vao_attribute_map[ATTRIBUTE_MAP_MODE_MAX][VERT_ATTRIB_MAX] =
       VERT_ATTRIB_COLOR1,              /* VERT_ATTRIB_COLOR1 */
       VERT_ATTRIB_FOG,                 /* VERT_ATTRIB_FOG */
       VERT_ATTRIB_COLOR_INDEX,         /* VERT_ATTRIB_COLOR_INDEX */
+      VERT_ATTRIB_EDGEFLAG,            /* VERT_ATTRIB_EDGEFLAG */
       VERT_ATTRIB_TEX0,                /* VERT_ATTRIB_TEX0 */
       VERT_ATTRIB_TEX1,                /* VERT_ATTRIB_TEX1 */
       VERT_ATTRIB_TEX2,                /* VERT_ATTRIB_TEX2 */
@@ -181,8 +181,7 @@ _mesa_vao_attribute_map[ATTRIBUTE_MAP_MODE_MAX][VERT_ATTRIB_MAX] =
       VERT_ATTRIB_GENERIC12,           /* VERT_ATTRIB_GENERIC12 */
       VERT_ATTRIB_GENERIC13,           /* VERT_ATTRIB_GENERIC13 */
       VERT_ATTRIB_GENERIC14,           /* VERT_ATTRIB_GENERIC14 */
-      VERT_ATTRIB_GENERIC15,           /* VERT_ATTRIB_GENERIC15 */
-      VERT_ATTRIB_EDGEFLAG,            /* VERT_ATTRIB_EDGEFLAG */
+      VERT_ATTRIB_GENERIC15            /* VERT_ATTRIB_GENERIC15 */
    }
 };
 
@@ -1011,13 +1010,6 @@ bind_vertex_array(struct gl_context *ctx, GLuint id, bool no_error)
    _mesa_set_draw_vao(ctx, ctx->Array._EmptyVAO, 0);
 
    _mesa_reference_vao(ctx, &ctx->Array.VAO, newObj);
-
-   /* Update the valid-to-render state if binding on unbinding default VAO
-    * if drawing with the default VAO is invalid.
-    */
-   if (ctx->API == API_OPENGL_CORE &&
-       (oldObj == ctx->Array.DefaultVAO) != (newObj == ctx->Array.DefaultVAO))
-      _mesa_update_valid_to_render_state(ctx);
 }
 
 

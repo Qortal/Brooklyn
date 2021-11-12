@@ -78,6 +78,19 @@ struct field {
    nir_variable *var;
 };
 
+static const struct glsl_type *
+wrap_type_in_array(const struct glsl_type *type,
+                   const struct glsl_type *array_type)
+{
+   if (!glsl_type_is_array(array_type))
+      return type;
+
+   const struct glsl_type *elem_type =
+      wrap_type_in_array(type, glsl_get_array_element(array_type));
+   assert(glsl_get_explicit_stride(array_type) == 0);
+   return glsl_array_type(elem_type, glsl_get_length(array_type), 0);
+}
+
 static int
 num_array_levels_in_array_of_vector_type(const struct glsl_type *type)
 {
@@ -128,7 +141,7 @@ init_field_for_type(struct field *field, struct field *parent,
    } else {
       const struct glsl_type *var_type = type;
       for (struct field *f = field->parent; f; f = f->parent)
-         var_type = glsl_type_wrap_in_arrays(var_type, f->type);
+         var_type = wrap_type_in_array(var_type, f->type);
 
       nir_variable_mode mode = state->base_var->data.mode;
       if (mode == nir_var_function_temp) {
@@ -278,7 +291,7 @@ split_struct_derefs_impl(nir_function_impl *impl,
 
          assert(new_deref->type == deref->type);
          nir_ssa_def_rewrite_uses(&deref->dest.ssa,
-                                  &new_deref->dest.ssa);
+                                  nir_src_for_ssa(&new_deref->dest.ssa));
          nir_deref_instr_remove_if_unused(deref);
       }
    }
@@ -482,7 +495,7 @@ mark_array_usage_impl(nir_function_impl *impl,
          case nir_intrinsic_copy_deref:
             mark_array_deref_used(nir_src_as_deref(intrin->src[1]),
                                   var_info_map, modes, mem_ctx);
-            FALLTHROUGH;
+            /* Fall Through */
 
          case nir_intrinsic_load_deref:
          case nir_intrinsic_store_deref:
@@ -807,7 +820,7 @@ split_array_access_impl(nir_function_impl *impl,
                      nir_ssa_undef(&b, intrin->dest.ssa.num_components,
                                        intrin->dest.ssa.bit_size);
                   nir_ssa_def_rewrite_uses(&intrin->dest.ssa,
-                                           u);
+                                           nir_src_for_ssa(u));
                }
                nir_instr_remove(&intrin->instr);
                for (unsigned i = 0; i < num_derefs; i++)
@@ -1536,7 +1549,7 @@ shrink_vec_var_access_impl(nir_function_impl *impl,
                      nir_ssa_undef(&b, intrin->dest.ssa.num_components,
                                        intrin->dest.ssa.bit_size);
                   nir_ssa_def_rewrite_uses(&intrin->dest.ssa,
-                                           u);
+                                           nir_src_for_ssa(u));
                }
                nir_instr_remove(&intrin->instr);
                nir_deref_instr_remove_if_unused(deref);
@@ -1565,7 +1578,7 @@ shrink_vec_var_access_impl(nir_function_impl *impl,
                nir_ssa_def *vec = nir_vec(&b, vec_srcs, intrin->num_components);
 
                nir_ssa_def_rewrite_uses_after(&intrin->dest.ssa,
-                                              vec,
+                                              nir_src_for_ssa(vec),
                                               vec->parent_instr);
 
                /* The SSA def is now only used by the swizzle.  It's safe to

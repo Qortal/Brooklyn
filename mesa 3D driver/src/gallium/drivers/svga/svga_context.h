@@ -505,7 +505,7 @@ struct svga_context
    /* Bitmask of depth/stencil state objects IDs */
    struct util_bitmask *ds_object_id_bm;
 
-   /* Bitmask of input element object IDs */
+   /* Bitmaks of input element object IDs */
    struct util_bitmask *input_element_object_id_bm;
 
    /* Bitmask of rasterizer object IDs */
@@ -655,7 +655,6 @@ struct svga_context
 
    boolean render_condition;
    boolean disable_rasterizer; /* Set if to disable rasterization */
-   uint8_t patch_vertices;
 
    struct {
       struct svga_tcs_shader *passthrough_tcs;

@@ -118,10 +118,7 @@ event::wait_signalled() const {
 
 void
 event::wait() const {
-   std::vector<intrusive_ref<event>> evs;
-   std::swap(deps, evs);
-
-   for (event &ev : evs)
+   for (event &ev : deps)
       ev.wait();
 
    wait_signalled();
@@ -206,10 +203,8 @@ hard_event::time_end() const {
 
 void
 hard_event::fence(pipe_fence_handle *fence) {
-   assert(fence);
    pipe_screen *screen = queue()->device().pipe;
    screen->fence_reference(screen, &_fence, fence);
-   deps.clear();
 }
 
 event::action

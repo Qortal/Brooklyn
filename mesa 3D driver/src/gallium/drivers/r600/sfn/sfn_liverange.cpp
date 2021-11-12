@@ -706,7 +706,7 @@ register_live_range temp_comp_access::get_required_live_range()
 
       first_write_scope = first_write_scope->parent();
 
-      /* Propagate live_range if we are now in a loop */
+      /* Propagte live_range if we are now in a loop */
       if (keep_for_full_loop && first_write_scope->is_loop())
 	  propagate_live_range_to_dominant_write_scope();
    }

@@ -164,11 +164,11 @@ swr_set_blend_color(struct pipe_context *pipe,
 
 static void
 swr_set_stencil_ref(struct pipe_context *pipe,
-                    const struct pipe_stencil_ref ref)
+                    const struct pipe_stencil_ref *ref)
 {
    struct swr_context *ctx = swr_context(pipe);
 
-   ctx->stencil_ref = ref;
+   ctx->stencil_ref = *ref;
 
    ctx->dirty |= SWR_NEW_DEPTH_STENCIL_ALPHA;
 }
@@ -300,8 +300,6 @@ swr_set_sampler_views(struct pipe_context *pipe,
                       enum pipe_shader_type shader,
                       unsigned start,
                       unsigned num,
-                      unsigned unbind_num_trailing_slots,
-                      bool take_ownership,
                       struct pipe_sampler_view **views)
 {
    struct swr_context *ctx = swr_context(pipe);
@@ -315,18 +313,8 @@ swr_set_sampler_views(struct pipe_context *pipe,
    /* set the new sampler views */
    ctx->num_sampler_views[shader] = num;
    for (i = 0; i < num; i++) {
-      if (take_ownership) {
-         pipe_sampler_view_reference(&ctx->sampler_views[shader][start + i],
-                                     NULL);
-         ctx->sampler_views[shader][start + i] = views[i];
-      } else {
-         pipe_sampler_view_reference(&ctx->sampler_views[shader][start + i],
-                                     views[i]);
-      }
-   }
-   for (; i < num + unbind_num_trailing_slots; i++) {
       pipe_sampler_view_reference(&ctx->sampler_views[shader][start + i],
-                                  NULL);
+                                  views[i]);
    }
 
    ctx->dirty |= SWR_NEW_SAMPLER_VIEW;
@@ -558,7 +546,7 @@ swr_delete_tes_state(struct pipe_context *pipe, void *tes)
 static void
 swr_set_constant_buffer(struct pipe_context *pipe,
                         enum pipe_shader_type shader,
-                        uint index, bool take_ownership,
+                        uint index,
                         const struct pipe_constant_buffer *cb)
 {
    struct swr_context *ctx = swr_context(pipe);
@@ -568,7 +556,7 @@ swr_set_constant_buffer(struct pipe_context *pipe,
    assert(index < ARRAY_SIZE(ctx->constants[shader]));
 
    /* note: reference counting */
-   util_copy_constant_buffer(&ctx->constants[shader][index], cb, take_ownership);
+   util_copy_constant_buffer(&ctx->constants[shader][index], cb);
 
    if (shader == PIPE_SHADER_VERTEX) {
       ctx->dirty |= SWR_NEW_VSCONSTANTS;
@@ -603,11 +591,11 @@ swr_create_vertex_elements_state(struct pipe_context *pipe,
          // XXX: we should do this keyed on the VS usage info
 
          const struct util_format_description *desc =
-            util_format_description((enum pipe_format)attribs[i].src_format);
+            util_format_description(attribs[i].src_format);
 
          velems->fsState.layout[i].AlignedByteOffset = attribs[i].src_offset;
          velems->fsState.layout[i].Format =
-            mesa_to_swr_format((enum pipe_format)attribs[i].src_format);
+            mesa_to_swr_format(attribs[i].src_format);
          velems->fsState.layout[i].StreamIndex =
             attribs[i].vertex_buffer_index;
          velems->fsState.layout[i].InstanceEnable =
@@ -634,7 +622,7 @@ swr_create_vertex_elements_state(struct pipe_context *pipe,
 
          /* Calculate the pitch of each stream */
          const SWR_FORMAT_INFO &swr_desc = GetFormatInfo(
-            mesa_to_swr_format((enum pipe_format)attribs[i].src_format));
+            mesa_to_swr_format(attribs[i].src_format));
          velems->stream_pitch[attribs[i].vertex_buffer_index] += swr_desc.Bpp;
 
          if (attribs[i].instance_divisor != 0) {
@@ -676,8 +664,6 @@ static void
 swr_set_vertex_buffers(struct pipe_context *pipe,
                        unsigned start_slot,
                        unsigned num_elements,
-                       unsigned unbind_num_trailing_slots,
-                       bool take_ownership,
                        const struct pipe_vertex_buffer *buffers)
 {
    struct swr_context *ctx = swr_context(pipe);
@@ -688,9 +674,7 @@ swr_set_vertex_buffers(struct pipe_context *pipe,
                                  &ctx->num_vertex_buffers,
                                  buffers,
                                  start_slot,
-                                 num_elements,
-                                 unbind_num_trailing_slots,
-                                 take_ownership);
+                                 num_elements);
 
    ctx->dirty |= SWR_NEW_VERTEX;
 }
@@ -1120,8 +1104,7 @@ swr_user_vbuf_range(const struct pipe_draw_info *info,
                     uint32_t i,
                     uint32_t *totelems,
                     uint32_t *base,
-                    uint32_t *size,
-                    int index_bias)
+                    uint32_t *size)
 {
    /* FIXME: The size is too large - we don't access the full extra stride. */
    unsigned elems;
@@ -1133,8 +1116,8 @@ swr_user_vbuf_range(const struct pipe_draw_info *info,
       *size = elems * elem_pitch;
    } else if (vb->stride) {
       elems = info->max_index - info->min_index + 1;
-      *totelems = (info->max_index + (info->index_size ? index_bias : 0)) + 1;
-      *base = (info->min_index + (info->index_size ? index_bias : 0)) * vb->stride;
+      *totelems = (info->max_index + info->index_bias) + 1;
+      *base = (info->min_index + info->index_bias) * vb->stride;
       *size = elems * elem_pitch;
    } else {
       *totelems = 1;
@@ -1175,8 +1158,7 @@ swr_get_last_fe(const struct swr_context *ctx)
 
 void
 swr_update_derived(struct pipe_context *pipe,
-                   const struct pipe_draw_info *p_draw_info,
-                   const struct pipe_draw_start_count_bias *draw)
+                   const struct pipe_draw_info *p_draw_info)
 {
    struct swr_context *ctx = swr_context(pipe);
    struct swr_screen *screen = swr_screen(pipe->screen);
@@ -1438,9 +1420,9 @@ swr_update_derived(struct pipe_context *pipe,
             post_update_dirty_flags |= SWR_NEW_VERTEX;
 
             uint32_t base;
-            swr_user_vbuf_range(&info, ctx->velems, vb, i, &elems, &base, &size, draw->index_bias);
+            swr_user_vbuf_range(&info, ctx->velems, vb, i, &elems, &base, &size);
             partial_inbounds = 0;
-            min_vertex_index = info.min_index + (info.index_size ? draw->index_bias : 0);
+            min_vertex_index = info.min_index + info.index_bias;
 
             size = AlignUp(size, 4);
             /* If size of client memory copy is too large, don't copy. The
@@ -1514,7 +1496,7 @@ swr_update_derived(struct pipe_context *pipe,
              * revalidate on each draw */
             post_update_dirty_flags |= SWR_NEW_VERTEX;
 
-            size = draw->count * pitch;
+            size = info.count * pitch;
 
             size = AlignUp(size, 4);
             /* If size of client memory copy is too large, don't copy. The
@@ -1522,12 +1504,10 @@ swr_update_derived(struct pipe_context *pipe,
              * faster than queuing many large client draws. */
             if (size >= screen->client_copy_limit) {
                post_update_dirty_flags |= SWR_BLOCK_CLIENT_DRAW;
-               p_data = (const uint8_t *) info.index.user +
-                        draw->start * info.index_size;
+               p_data = (const uint8_t *) info.index.user;
             } else {
                /* Copy indices to scratch space */
-               const void *ptr = (char*)info.index.user +
-                                 draw->start * info.index_size;
+               const void *ptr = info.index.user;
                ptr = swr_copy_to_scratch_space(
                      ctx, &ctx->scratch->index_buffer, ptr, size);
                p_data = (const uint8_t *)ptr;
@@ -1658,7 +1638,7 @@ swr_update_derived(struct pipe_context *pipe,
                      SWR_NEW_SAMPLER |
                      SWR_NEW_SAMPLER_VIEW)) {
       if (ctx->tcs) {
-         ctx->tcs->vertices_per_patch = ctx->patch_vertices;
+         ctx->tcs->vertices_per_patch = p_draw_info->vertices_per_patch;
 
          swr_jit_tcs_key key;
          swr_generate_tcs_key(key, ctx, ctx->tcs);
@@ -1847,8 +1827,8 @@ swr_update_derived(struct pipe_context *pipe,
 
    /* Depth/stencil state */
    if (ctx->dirty & (SWR_NEW_DEPTH_STENCIL_ALPHA | SWR_NEW_FRAMEBUFFER)) {
-      struct pipe_depth_stencil_alpha_state *depth = ctx->depth_stencil;
-      struct pipe_stencil_state *stencil = depth->stencil;
+      struct pipe_depth_state *depth = &(ctx->depth_stencil->depth);
+      struct pipe_stencil_state *stencil = ctx->depth_stencil->stencil;
       SWR_DEPTH_STENCIL_STATE depthStencilState = {{0}};
       SWR_DEPTH_BOUNDS_STATE depthBoundsState = {0};
 
@@ -1856,6 +1836,7 @@ swr_update_derived(struct pipe_context *pipe,
       struct pipe_stencil_state *front_stencil =
       ctx->depth_stencil.stencil[0];
       struct pipe_stencil_state *back_stencil = ctx->depth_stencil.stencil[1];
+      struct pipe_alpha_state alpha;
       */
       if (stencil[0].enabled) {
          depthStencilState.stencilWriteEnable = 1;
@@ -1892,14 +1873,14 @@ swr_update_derived(struct pipe_context *pipe,
             ctx->stencil_ref.ref_value[1];
       }
 
-      depthStencilState.depthTestEnable = depth->depth_enabled;
-      depthStencilState.depthTestFunc = swr_convert_depth_func(depth->depth_func);
-      depthStencilState.depthWriteEnable = depth->depth_writemask;
+      depthStencilState.depthTestEnable = depth->enabled;
+      depthStencilState.depthTestFunc = swr_convert_depth_func(depth->func);
+      depthStencilState.depthWriteEnable = depth->writemask;
       ctx->api.pfnSwrSetDepthStencilState(ctx->swrContext, &depthStencilState);
 
-      depthBoundsState.depthBoundsTestEnable = depth->depth_bounds_test;
-      depthBoundsState.depthBoundsTestMinValue = depth->depth_bounds_min;
-      depthBoundsState.depthBoundsTestMaxValue = depth->depth_bounds_max;
+      depthBoundsState.depthBoundsTestEnable = depth->bounds_test;
+      depthBoundsState.depthBoundsTestMinValue = depth->bounds_min;
+      depthBoundsState.depthBoundsTestMaxValue = depth->bounds_max;
       ctx->api.pfnSwrSetDepthBoundsState(ctx->swrContext, &depthBoundsState);
    }
 
@@ -1917,7 +1898,7 @@ swr_update_derived(struct pipe_context *pipe,
       blendState.constantColor[2] = ctx->blend_color.color[2];
       blendState.constantColor[3] = ctx->blend_color.color[3];
       blendState.alphaTestReference =
-         *((uint32_t*)&ctx->depth_stencil->alpha_ref_value);
+         *((uint32_t*)&ctx->depth_stencil->alpha.ref_value);
 
       blendState.sampleMask = ctx->sample_mask;
       blendState.sampleCount = GetSampleCount(fb->samples);
@@ -1960,13 +1941,13 @@ swr_update_derived(struct pipe_context *pipe,
 
             if (compileState.blendState.blendEnable == false &&
                 compileState.blendState.logicOpEnable == false &&
-                ctx->depth_stencil->alpha_enabled == 0) {
+                ctx->depth_stencil->alpha.enabled == 0) {
                ctx->api.pfnSwrSetBlendFunc(ctx->swrContext, target, NULL);
                continue;
             }
 
             compileState.desc.alphaTestEnable =
-               ctx->depth_stencil->alpha_enabled;
+               ctx->depth_stencil->alpha.enabled;
             compileState.desc.independentAlphaBlendEnable =
                (compileState.blendState.sourceBlendFactor !=
                 compileState.blendState.sourceAlphaBlendFactor) ||
@@ -1980,7 +1961,7 @@ swr_update_derived(struct pipe_context *pipe,
             compileState.desc.numSamples = fb->samples;
 
             compileState.alphaTestFunction =
-               swr_convert_depth_func(ctx->depth_stencil->alpha_func);
+               swr_convert_depth_func(ctx->depth_stencil->alpha.func);
             compileState.alphaTestFormat = ALPHA_TEST_FLOAT32; // xxx
 
             compileState.Canonicalize();
@@ -2162,14 +2143,6 @@ swr_set_so_targets(struct pipe_context *pipe,
    swr->dirty |= SWR_NEW_SO;
 }
 
-static void
-swr_set_patch_vertices(struct pipe_context *pipe, uint8_t patch_vertices)
-{
-   struct swr_context *swr = swr_context(pipe);
-
-   swr->patch_vertices = patch_vertices;
-}
-
 
 void
 swr_state_init(struct pipe_context *pipe)
@@ -2238,6 +2211,4 @@ swr_state_init(struct pipe_context *pipe)
    pipe->create_stream_output_target = swr_create_so_target;
    pipe->stream_output_target_destroy = swr_destroy_so_target;
    pipe->set_stream_output_targets = swr_set_so_targets;
-
-   pipe->set_patch_vertices = swr_set_patch_vertices;
 }

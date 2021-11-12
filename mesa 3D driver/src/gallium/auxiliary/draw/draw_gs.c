@@ -29,7 +29,7 @@
 
 #include "draw_private.h"
 #include "draw_context.h"
-#ifdef DRAW_LLVM_AVAILABLE
+#ifdef LLVM_AVAILABLE
 #include "draw_llvm.h"
 #endif
 
@@ -218,11 +218,33 @@ static void tgsi_gs_run(struct draw_geometry_shader *shader,
    /* run interpreter */
    tgsi_exec_machine_run(machine, 0);
 
-   for (i = 0; i < 4; i++)
-      out_prims[i] = machine->OutputPrimCount[i];
+   for (i = 0; i < 4; i++) {
+      int prim_i;
+      int prim_c;
+      switch (i) {
+      case 0:
+         prim_i = TGSI_EXEC_TEMP_PRIMITIVE_I;
+         prim_c = TGSI_EXEC_TEMP_PRIMITIVE_C;
+         break;
+      case 1:
+         prim_i = TGSI_EXEC_TEMP_PRIMITIVE_S1_I;
+         prim_c = TGSI_EXEC_TEMP_PRIMITIVE_S1_C;
+         break;
+      case 2:
+         prim_i = TGSI_EXEC_TEMP_PRIMITIVE_S2_I;
+         prim_c = TGSI_EXEC_TEMP_PRIMITIVE_S2_C;
+         break;
+      case 3:
+         prim_i = TGSI_EXEC_TEMP_PRIMITIVE_S3_I;
+         prim_c = TGSI_EXEC_TEMP_PRIMITIVE_S3_C;
+         break;
+      };
+
+      out_prims[i] = machine->Temps[prim_i].xyzw[prim_c].u[0];
+   }
 }
 
-#ifdef DRAW_LLVM_AVAILABLE
+#ifdef LLVM_AVAILABLE
 
 static void
 llvm_fetch_gs_input(struct draw_geometry_shader *shader,
@@ -398,8 +420,7 @@ llvm_gs_run(struct draw_geometry_shader *shader,
       input_primitives,
       shader->draw->instance_id,
       shader->llvm_prim_ids,
-      shader->invocation_id,
-      shader->draw->pt.user.viewid);
+      shader->invocation_id);
 
    for (unsigned i = 0; i < shader->num_vertex_streams; i++) {
       out_prims[i] = shader->jit_context->emitted_prims[i];
@@ -589,8 +610,7 @@ int draw_geometry_shader_run(struct draw_geometry_shader *shader,
       output_verts[i].stride = output_verts[i].vertex_size;
       output_verts[i].verts =
          (struct vertex_header *)MALLOC(output_verts[i].vertex_size *
-                                        total_verts_per_buffer * shader->num_invocations +
-                                        DRAW_EXTRA_VERTICES_PADDING);
+                                        total_verts_per_buffer * shader->num_invocations);
       debug_assert(output_verts[i].verts);
    }
 
@@ -624,7 +644,7 @@ int draw_geometry_shader_run(struct draw_geometry_shader *shader,
    shader->input = input;
    shader->input_info = input_info;
 
-#ifdef DRAW_LLVM_AVAILABLE
+#ifdef LLVM_AVAILABLE
    if (shader->draw->llvm) {
       for (i = 0; i < shader->num_vertex_streams; i++) {
          shader->gs_output[i] = output_verts[i].verts;
@@ -755,14 +775,14 @@ struct draw_geometry_shader *
 draw_create_geometry_shader(struct draw_context *draw,
                             const struct pipe_shader_state *state)
 {
-#ifdef DRAW_LLVM_AVAILABLE
+#ifdef LLVM_AVAILABLE
    boolean use_llvm = draw->llvm != NULL;
    struct llvm_geometry_shader *llvm_gs = NULL;
 #endif
    struct draw_geometry_shader *gs;
    unsigned i;
 
-#ifdef DRAW_LLVM_AVAILABLE
+#ifdef LLVM_AVAILABLE
    if (use_llvm) {
       llvm_gs = CALLOC_STRUCT(llvm_geometry_shader);
 
@@ -798,7 +818,7 @@ draw_create_geometry_shader(struct draw_context *draw,
    /* setup the defaults */
    gs->max_out_prims = 0;
 
-#ifdef DRAW_LLVM_AVAILABLE
+#ifdef LLVM_AVAILABLE
    if (use_llvm) {
       /* TODO: change the input array to handle the following
          vector length, instead of the currently hardcoded
@@ -834,27 +854,18 @@ draw_create_geometry_shader(struct draw_context *draw,
    gs->primitive_boundary = gs->max_output_vertices + 1;
 
    gs->position_output = -1;
-   bool found_clipvertex = false;
    for (i = 0; i < gs->info.num_outputs; i++) {
       if (gs->info.output_semantic_name[i] == TGSI_SEMANTIC_POSITION &&
           gs->info.output_semantic_index[i] == 0)
          gs->position_output = i;
       if (gs->info.output_semantic_name[i] == TGSI_SEMANTIC_VIEWPORT_INDEX)
          gs->viewport_index_output = i;
-      if (gs->info.output_semantic_name[i] == TGSI_SEMANTIC_CLIPVERTEX &&
-          gs->info.output_semantic_index[i] == 0) {
-         found_clipvertex = true;
-         gs->clipvertex_output = i;
-      }
       if (gs->info.output_semantic_name[i] == TGSI_SEMANTIC_CLIPDIST) {
          debug_assert(gs->info.output_semantic_index[i] <
                       PIPE_MAX_CLIP_OR_CULL_DISTANCE_ELEMENT_COUNT);
          gs->ccdistance_output[gs->info.output_semantic_index[i]] = i;
       }
    }
-
-   if (!found_clipvertex)
-      gs->clipvertex_output = gs->position_output;
 
    gs->machine = draw->gs.tgsi.machine;
 
@@ -864,7 +875,7 @@ draw_create_geometry_shader(struct draw_context *draw,
          gs->num_vertex_streams = gs->state.stream_output.output[i].stream + 1;
    }
 
-#ifdef DRAW_LLVM_AVAILABLE
+#ifdef LLVM_AVAILABLE
    if (use_llvm) {
       int vector_size = gs->vector_length * sizeof(float);
       gs->gs_input = align_malloc(sizeof(struct draw_gs_inputs), 16);
@@ -909,7 +920,6 @@ void draw_bind_geometry_shader(struct draw_context *draw,
       draw->gs.geometry_shader = dgs;
       draw->gs.num_gs_outputs = dgs->info.num_outputs;
       draw->gs.position_output = dgs->position_output;
-      draw->gs.clipvertex_output = dgs->clipvertex_output;
       draw_geometry_shader_prepare(dgs, draw);
    }
    else {
@@ -925,7 +935,7 @@ void draw_delete_geometry_shader(struct draw_context *draw,
    if (!dgs) {
       return;
    }
-#ifdef DRAW_LLVM_AVAILABLE
+#ifdef LLVM_AVAILABLE
    if (draw->llvm) {
       struct llvm_geometry_shader *shader = llvm_geometry_shader(dgs);
       struct draw_gs_llvm_variant_list_item *li;
@@ -954,9 +964,6 @@ void draw_delete_geometry_shader(struct draw_context *draw,
    }
 #endif
 
-   if (draw->gs.tgsi.machine && draw->gs.tgsi.machine->Tokens == dgs->state.tokens)
-      draw->gs.tgsi.machine->Tokens = NULL;
-
    for (i = 0; i < TGSI_MAX_VERTEX_STREAMS; i++)
       FREE(dgs->stream[i].primitive_lengths);
 
@@ -967,7 +974,7 @@ void draw_delete_geometry_shader(struct draw_context *draw,
 }
 
 
-#ifdef DRAW_LLVM_AVAILABLE
+#ifdef LLVM_AVAILABLE
 void draw_gs_set_current_variant(struct draw_geometry_shader *shader,
                                  struct draw_gs_llvm_variant *variant)
 {

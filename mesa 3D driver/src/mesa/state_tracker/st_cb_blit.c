@@ -39,7 +39,6 @@
 #include "st_cb_bitmap.h"
 #include "st_cb_blit.h"
 #include "st_cb_fbo.h"
-#include "st_cb_texture.h"
 #include "st_manager.h"
 #include "st_scissor.h"
 #include "st_util.h"
@@ -170,7 +169,7 @@ st_BlitFramebuffer(struct gl_context *ctx,
       st_window_rectangles_to_blit(ctx, &blit);
 
    blit.filter = pFilter;
-   blit.render_condition_enable = st->has_conditional_render;
+   blit.render_condition_enable = TRUE;
    blit.alpha_blend = FALSE;
 
    if (mask & GL_COLOR_BUFFER_BIT) {
@@ -181,12 +180,6 @@ st_BlitFramebuffer(struct gl_context *ctx,
       blit.mask = PIPE_MASK_RGBA;
 
       if (srcAtt->Type == GL_TEXTURE) {
-         /* Make sure that the st_texture_object->pt is the current storage for
-          * our miplevel.  The finalize would happen at some point anyway, might
-          * as well be now.
-          */
-         st_finalize_texture(ctx, st->pipe, srcAtt->Texture, srcAtt->CubeMapFace);
-
          struct st_texture_object *srcObj = st_texture_object(srcAtt->Texture);
 
          if (!srcObj || !srcObj->pt) {
@@ -196,7 +189,7 @@ st_BlitFramebuffer(struct gl_context *ctx,
          blit.src.resource = srcObj->pt;
          blit.src.level = srcAtt->TextureLevel;
          blit.src.box.z = srcAtt->Zoffset + srcAtt->CubeMapFace;
-         blit.src.format = srcObj->surface_based ? srcObj->surface_format : srcObj->pt->format;
+         blit.src.format = srcObj->pt->format;
 
          if (!ctx->Color.sRGBEnabled)
             blit.src.format = util_format_linear(blit.src.format);

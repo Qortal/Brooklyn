@@ -28,6 +28,8 @@
 # Generate a C header file containing hash tables of glGet parameter
 # names for each GL API. The generated file is to be included by glGet.c
 
+from __future__ import print_function
+
 import os, sys, getopt
 from collections import defaultdict
 import get_hash_params

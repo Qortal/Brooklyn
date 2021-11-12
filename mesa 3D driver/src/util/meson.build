@@ -33,10 +33,7 @@ files_mesa_util = files(
   'blob.h',
   'build_id.c',
   'build_id.h',
-  'cnd_monotonic.h',
   'compiler.h',
-  'compress.c',
-  'compress.h',
   'crc32.c',
   'crc32.h',
   'dag.c',
@@ -54,8 +51,6 @@ files_mesa_util = files(
   'format_r11g11b10f.h',
   'format_rgb9e5.h',
   'format_srgb.h',
-  'fossilize_db.c',
-  'fossilize_db.h',
   'futex.h',
   'half_float.c',
   'half_float.h',
@@ -79,8 +74,6 @@ files_mesa_util = files(
   'os_socket.h',
   'u_process.c',
   'u_process.h',
-  'u_qsort.cpp',
-  'u_qsort.h',
   'rwlock.h',
   'sha1/sha1.c',
   'sha1/sha1.h',
@@ -132,8 +125,6 @@ files_mesa_util = files(
   'u_debug_memory.c',
   'u_cpu_detect.c',
   'u_cpu_detect.h',
-  'u_printf.cpp',
-  'u_printf.h',
   'vma.c',
   'vma.h',
   'xxhash.h',
@@ -158,15 +149,6 @@ endif
 files_xmlconfig = files(
   'xmlconfig.c',
   'xmlconfig.h',
-)
-
-files_xmlconfig += custom_target(
-  'driconf_static.h',
-  input: ['driconf_static.py', '00-mesa-defaults.conf'],
-  output: 'driconf_static.h',
-  command: [
-    prog_python, '@INPUT0@', '@INPUT1@', '@OUTPUT@'
-  ],
 )
 
 format_srgb = custom_target(
@@ -200,18 +182,6 @@ if with_platform_android
   )
 endif
 
-if with_platform_haiku
-  deps_for_libmesa_util += dep_network
-endif
-
-if with_perfetto
-  files_mesa_util += files(
-    'u_perfetto.cc',
-    'u_perfetto.h',
-  )
-  deps_for_libmesa_util += dep_perfetto
-endif
-
 _libmesa_util = static_library(
   'mesa_util',
   [files_mesa_util, files_debug_stack, format_srgb],
@@ -225,15 +195,14 @@ _libmesa_util = static_library(
 
 idep_mesautil = declare_dependency(
   link_with : _libmesa_util,
-  include_directories : [inc_util, inc_gallium],
-  dependencies : [dep_zlib, dep_clock, dep_thread, dep_atomic, dep_m, dep_valgrind],
+  include_directories : inc_util,
+  dependencies : [dep_zlib, dep_clock, dep_thread, dep_atomic, dep_m],
 )
 
 xmlconfig_deps = []
 if not (with_platform_android or with_platform_windows)
   xmlconfig_deps += dep_expat
 endif
-xmlconfig_deps += dep_regex
 
 _libxmlconfig = static_library(
   'xmlconfig',
@@ -273,10 +242,6 @@ if with_tests
         cpp_args: ['-Wno-write-strings']
       ),
       suite : ['util'],
-      env: ['HOME=' + join_paths(meson.current_source_dir(),
-                                 'tests', 'drirc_home'),
-            'DRIRC_CONFIGDIR=' + join_paths(meson.current_source_dir(),
-                                            'tests', 'drirc_configdir')]
         )
   endif
 
@@ -344,18 +309,28 @@ if with_tests
     )
   endif
 
-  foreach t: ['bitset', 'register_allocate', 'u_debug_stack', 'u_qsort']
-    test(
-      t,
-      executable(
-        t + '_test',
-        files(t + '_test.cpp'),
-        include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux],
-        dependencies : [idep_mesautil, idep_gtest],
-      ),
-      suite : ['util'],
-    )
-  endforeach
+  test(
+    'bitset',
+    executable(
+       'bitset_test',
+       files('bitset_test.cpp'),
+       include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux],
+       dependencies : [idep_mesautil, idep_gtest],
+     ),
+     suite : ['util'],
+  )
+
+  test(
+    'u_debug_stack',
+    executable(
+      'u_debug_stack_test',
+      files('u_debug_stack_test.cpp'),
+      include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux],
+      dependencies : [idep_mesautil, idep_gtest],
+      c_args : [c_msvc_compat_args],
+    ),
+     suite : ['util'],
+  )
 
   process_test_exe = executable(
     'process_test',
@@ -383,27 +358,6 @@ if with_tests
     env: ['BUILD_FULL_PATH='+process_test_exe_full_path]
   )
 
-  test('int_min_max',
-    executable('int_min_max_test',
-    files('tests/int_min_max.cpp'),
-      include_directories : [inc_include, inc_src],
-      dependencies : [idep_mesautil, idep_gtest],
-    ),
-    suite : ['util'],
-  )
-
-  test(
-    'dag',
-    executable(
-      'dag_test',
-      'tests/dag_test.cpp',
-      dependencies : [idep_mesautil, idep_gtest],
-      include_directories : [inc_include, inc_src],
-    ),
-    suite : ['util'],
-  )
-
-  subdir('tests/cache')
   subdir('tests/fast_idiv_by_const')
   subdir('tests/fast_urem_by_const')
   subdir('tests/hash_table')

@@ -49,7 +49,7 @@ VkResult lvp_CreateWaylandSurfaceKHR(
    if (pAllocator)
       alloc = pAllocator;
    else
-      alloc = &instance->vk.alloc;
+      alloc = &instance->alloc;
 
    return wsi_create_wl_surface(alloc, pCreateInfo, pSurface);
 }

@@ -118,16 +118,8 @@
 #define PIPE_ARCH_ARM
 #endif
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__)
 #define PIPE_ARCH_AARCH64
-#endif
-
-#if defined(__mips64) && defined(__LP64__)
-#define PIPE_ARCH_MIPS64
-#endif
-
-#if defined(__mips__)
-#define  PIPE_ARCH_MIPS
 #endif
 
 /*

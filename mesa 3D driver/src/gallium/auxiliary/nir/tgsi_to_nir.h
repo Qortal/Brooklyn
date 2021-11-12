@@ -27,10 +27,6 @@
 #include "compiler/nir/nir.h"
 #include "pipe/p_screen.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 struct nir_shader *
 tgsi_to_nir(const void *tgsi_tokens,
             struct pipe_screen *screen,
@@ -42,9 +38,5 @@ tgsi_to_nir_noscreen(const void *tgsi_tokens,
 
 gl_varying_slot
 tgsi_varying_semantic_to_slot(unsigned semantic, unsigned index);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

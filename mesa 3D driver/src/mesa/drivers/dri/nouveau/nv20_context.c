@@ -435,7 +435,7 @@ nv20_context_destroy(struct gl_context *ctx)
 	nouveau_object_del(&nctx->hw.eng3d);
 
 	nouveau_context_deinit(ctx);
-	align_free(ctx);
+	free(ctx);
 }
 
 static struct gl_context *
@@ -448,7 +448,7 @@ nv20_context_create(struct nouveau_screen *screen, gl_api api,
 	unsigned kelvin_class;
 	int ret;
 
-	nctx = align_calloc(sizeof(struct nouveau_context), 16);
+	nctx = CALLOC_STRUCT(nouveau_context);
 	if (!nctx)
 		return NULL;
 

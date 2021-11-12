@@ -50,7 +50,7 @@ get_texture_size(struct ycbcr_state *state, nir_deref_instr *texture)
    tex->sampler_dim = glsl_get_sampler_dim(type);
    tex->is_array = glsl_sampler_type_is_array(type);
    tex->is_shadow = glsl_sampler_type_is_shadow(type);
-   tex->dest_type = nir_type_int32;
+   tex->dest_type = nir_type_int;
 
    tex->src[0].src_type = nir_tex_src_texture_deref;
    tex->src[0].src = nir_src_for_ssa(&texture->dest.ssa);
@@ -133,7 +133,7 @@ create_plane_tex_instr_implicit(struct ycbcr_state *state,
                                                            plane_format));
             break;
          }
-         FALLTHROUGH;
+         /* fall through */
       default:
          nir_src_copy(&tex->src[i].src, &old_tex->src[i].src, tex);
          break;
@@ -324,7 +324,7 @@ try_lower_tex_ycbcr(const struct anv_pipeline_layout *layout,
                                         swizzled_bpcs);
    }
 
-   nir_ssa_def_rewrite_uses(&tex->dest.ssa, result);
+   nir_ssa_def_rewrite_uses(&tex->dest.ssa, nir_src_for_ssa(result));
    nir_instr_remove(&tex->instr);
 
    return true;

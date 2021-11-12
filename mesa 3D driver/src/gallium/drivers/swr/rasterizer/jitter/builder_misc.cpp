@@ -392,9 +392,7 @@ namespace SwrJit
             if (pType->isVectorTy())
             {
                 Type* pContainedType = pType->getContainedType(0);
-#if LLVM_VERSION_MAJOR >= 12
-                FixedVectorType* pVectorType = cast<FixedVectorType>(pType);
-#elif LLVM_VERSION_MAJOR >= 11
+#if LLVM_VERSION_MAJOR >= 11
                 VectorType* pVectorType = cast<VectorType>(pType);
 #endif
                 if (toupper(tempStr[pos + 1]) == 'X')
@@ -493,7 +491,7 @@ namespace SwrJit
                 }
             }
 
-            // advance to the next argument
+            // advance to the next arguement
             v++;
             pos = tempStr.find('%', ++pos);
         }
@@ -577,11 +575,7 @@ namespace SwrJit
     Value* Builder::VMOVMSK(Value* mask)
     {
 #if LLVM_VERSION_MAJOR >= 11
-#if LLVM_VERSION_MAJOR >= 12
-        FixedVectorType* pVectorType = cast<FixedVectorType>(mask->getType());
-#else
         VectorType* pVectorType = cast<VectorType>(mask->getType());
-#endif
         SWR_ASSERT(pVectorType->getElementType() == mInt1Ty);
         uint32_t numLanes = pVectorType->getNumElements();
 #else
@@ -626,11 +620,7 @@ namespace SwrJit
             Constant* cB = dyn_cast<Constant>(b);
             assert(cB != nullptr);
             // number of 8 bit elements in b
-#if LLVM_VERSION_MAJOR >= 12
-            uint32_t numElms = cast<FixedVectorType>(cB->getType())->getNumElements();
-#else
             uint32_t numElms = cast<VectorType>(cB->getType())->getNumElements();
-#endif
             // output vector
             Value* vShuf = UndefValue::get(getVectorType(mInt8Ty, numElms));
 
@@ -697,9 +687,7 @@ namespace SwrJit
     Value* Builder::CVTPH2PS(Value* a, const llvm::Twine& name)
     {
         // Bitcast Nxint16 to Nxhalf
-#if LLVM_VERSION_MAJOR >= 12
-        uint32_t numElems = cast<FixedVectorType>(a->getType())->getNumElements();
-#elif LLVM_VERSION_MAJOR >= 11
+#if LLVM_VERSION_MAJOR >= 11
         uint32_t numElems = cast<VectorType>(a->getType())->getNumElements();
 #else
         uint32_t numElems = a->getType()->getVectorNumElements();

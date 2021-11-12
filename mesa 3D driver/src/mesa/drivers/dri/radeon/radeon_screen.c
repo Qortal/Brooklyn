@@ -192,7 +192,7 @@ radeonDRI2Flush(__DRIdrawable *drawable)
     radeonContextPtr rmesa;
 
     rmesa = (radeonContextPtr) drawable->driContextPriv->driverPrivate;
-    radeonFlush(&rmesa->glCtx, 0);
+    radeonFlush(&rmesa->glCtx);
 }
 
 static const struct __DRI2flushExtensionRec radeonFlushExtension = {
@@ -746,7 +746,8 @@ radeonCreateBuffer( __DRIscreen *driScrnPriv,
 	    swDepth,
 	    swStencil,
 	    swAccum,
-	    swAlpha);
+	    swAlpha,
+	    GL_FALSE /* aux */);
     driDrawPriv->driverPrivate = (void *) rfb;
 
     return (driDrawPriv->driverPrivate != NULL);
@@ -838,7 +839,7 @@ __DRIconfig **radeonInitScreen2(__DRIscreen *psp)
 				     ARRAY_SIZE(back_buffer_modes),
 				     msaa_samples_array,
 				     ARRAY_SIZE(msaa_samples_array),
-				     GL_TRUE, GL_FALSE);
+				     GL_TRUE, GL_FALSE, GL_FALSE);
       configs = driConcatConfigs(configs, new_configs);
    }
 

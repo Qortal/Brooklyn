@@ -183,13 +183,13 @@ main(int argc, char **argv)
       do {
          ppir_codegen_ctrl *ctrl = (ppir_codegen_ctrl *)bin;
          printf("@%6d: ", offset);
-         ppir_disassemble_instr(bin, offset, stdout);
+         ppir_disassemble_instr(bin, offset);
          bin += ctrl->count;
          offset += ctrl->count;
          size -= ctrl->count;
       } while (size);
    } else {
-      gpir_disassemble_program((gpir_codegen_instr *)prog, size / (sizeof(gpir_codegen_instr)), stdout);
+      gpir_disassemble_program((gpir_codegen_instr *)prog, size / (sizeof(gpir_codegen_instr)));
    }
 
    ralloc_free(prog);

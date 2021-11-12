@@ -109,39 +109,13 @@ void ShaderInputSystemValue::set_specific_ioinfo(r600_shader_io& io) const
    io.ij_index = 0;
 }
 
-ShaderInputVarying::ShaderInputVarying(tgsi_semantic _name, int sid, unsigned driver_location,
-                                       unsigned frac, unsigned components,
-                                       tgsi_interpolate_mode interpolate,
-                                       tgsi_interpolate_loc interp_loc):
-   ShaderInput(_name),
-   m_driver_location(driver_location),
-   m_location_frac(frac),
-   m_sid(sid),
-   m_interpolate(interpolate),
-   m_interpolate_loc(interp_loc),
-   m_ij_index(-10),
-   m_lds_pos(0),
-   m_mask(((1 << components) - 1) << frac)
-{
-   evaluate_spi_sid();
-
-   m_ij_index = interpolate == TGSI_INTERPOLATE_LINEAR ? 3 : 0;
-   switch (interp_loc) {
-   case TGSI_INTERPOLATE_LOC_CENTROID: m_ij_index += 2; break;
-   case TGSI_INTERPOLATE_LOC_CENTER: m_ij_index += 1; break;
-   default:
-      ;
-   }
-}
-
 ShaderInputVarying::ShaderInputVarying(tgsi_semantic _name, int sid, nir_variable *input):
    ShaderInput(_name),
    m_driver_location(input->data.driver_location),
    m_location_frac(input->data.location_frac),
    m_sid(sid),
    m_ij_index(-10),
-   m_lds_pos(0),
-   m_mask(((1 << input->type->components()) - 1) << input->data.location_frac)
+   m_mask((1 << input->type->components()) - 1)
 {
    sfn_log << SfnLog::io << __func__
            << "name:" << _name
@@ -165,7 +139,7 @@ ShaderInputVarying::ShaderInputVarying(tgsi_semantic _name, int sid, nir_variabl
          m_ij_index = 0;
          break;
       }
-      FALLTHROUGH;
+      /* fall-through */
 
    case INTERP_MODE_SMOOTH:
       assert(!glsl_base_type_is_integer(base_type));
@@ -182,10 +156,6 @@ ShaderInputVarying::ShaderInputVarying(tgsi_semantic _name, int sid, nir_variabl
       break;
 
    case INTERP_MODE_FLAT:
-      m_interpolate = TGSI_INTERPOLATE_CONSTANT;
-      break;
-
-   default:
       m_interpolate = TGSI_INTERPOLATE_CONSTANT;
       break;
    }
@@ -210,22 +180,20 @@ bool ShaderInputVarying::is_varying() const
    return true;
 }
 
-void ShaderInputVarying::update_mask(int additional_comps, int frac)
+void ShaderInputVarying::update_mask(int additional_comps)
 {
-   m_mask |= ((1 << additional_comps) - 1) << frac;
+   m_mask |= additional_comps;
 }
 
 void ShaderInputVarying::evaluate_spi_sid()
 {
    switch (name()) {
+   case TGSI_SEMANTIC_POSITION:
    case TGSI_SEMANTIC_PSIZE:
    case TGSI_SEMANTIC_EDGEFLAG:
    case TGSI_SEMANTIC_FACE:
    case TGSI_SEMANTIC_SAMPLEMASK:
       assert(0 && "System value used as varying");
-      break;
-   case TGSI_SEMANTIC_POSITION:
-      m_spi_sid = 0;
       break;
    case TGSI_SEMANTIC_GENERIC:
    case TGSI_SEMANTIC_TEXCOORD:
@@ -249,8 +217,7 @@ ShaderInputVarying::ShaderInputVarying(tgsi_semantic name,
    m_interpolate(orig.m_interpolate),
    m_interpolate_loc(orig.m_interpolate_loc),
    m_ij_index(orig.m_ij_index),
-   m_lds_pos(0),
-   m_mask(0)
+   m_lds_pos(0)
 {
    evaluate_spi_sid();
 }
@@ -296,15 +263,6 @@ ShaderInputColor::ShaderInputColor(tgsi_semantic name, int sid, nir_variable *in
    sfn_log << SfnLog::io << __func__ << "name << " << name << " sid << " << sid << "\n";
 }
 
-ShaderInputColor::ShaderInputColor(tgsi_semantic _name, int sid, unsigned driver_location,
-                                   unsigned frac, unsigned components, tgsi_interpolate_mode interpolate,
-                                   tgsi_interpolate_loc interp_loc):
-   ShaderInputVarying(_name, sid, driver_location,frac, components, interpolate, interp_loc),
-   m_back_color_input_idx(0)
-{
-   sfn_log << SfnLog::io << __func__ << "name << " << _name << " sid << " << sid << "\n";
-}
-
 void ShaderInputColor::set_back_color(unsigned back_color_input_idx)
 {
    sfn_log << SfnLog::io << "Set back color index " << back_color_input_idx << "\n";
@@ -323,13 +281,13 @@ size_t ShaderIO::add_input(ShaderInput *input)
    return m_inputs.size() - 1;
 }
 
-PShaderInput ShaderIO::find_varying(tgsi_semantic name, int sid)
+PShaderInput ShaderIO::find_varying(tgsi_semantic name, int sid, int frac)
 {
    for (auto& a : m_inputs) {
       if (a->name() == name) {
          assert(a->is_varying());
          auto& v = static_cast<ShaderInputVarying&>(*a);
-         if (v.sid() == sid)
+         if (v.sid() == sid && (v.location_frac() == frac))
             return a;
       }
    }
@@ -386,9 +344,6 @@ void ShaderIO::update_lds_pos()
          continue;
 
       auto& v = static_cast<ShaderInputVarying&>(*i);
-      if (v.name() == TGSI_SEMANTIC_POSITION)
-         continue;
-
       if (m_ldspos[v.location()] < 0) {
          ++m_lds_pos;
          m_ldspos[v.location()] = m_lds_pos;
@@ -416,7 +371,7 @@ ShaderInput& ShaderIO::input(size_t driver_loc, int frac)
          continue;
 
       auto& v = static_cast<ShaderInputVarying&>(*i);
-      if (v.location() == driver_loc)
+      if (v.location() == driver_loc && v.location_frac() == frac)
          return v;
    }
    return input(driver_loc);

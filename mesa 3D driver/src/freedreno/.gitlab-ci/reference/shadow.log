@@ -1,4 +1,6 @@
 Analyzing Data...
+Reading src/freedreno/.gitlab-ci/traces/shadow.rd.gz...
+Parsing src/freedreno/.gitlab-ci/traces/shadow.rd.gz
 
 Blit:
 -----

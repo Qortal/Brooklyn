@@ -20,14 +20,15 @@ class GLRendererRoster;
 
 typedef unsigned long renderer_id;
 
-class _EXPORT BGLRenderer
+class BGLRenderer
 {
 							// Private unimplemented copy constructors
 							BGLRenderer(const BGLRenderer &);
 							BGLRenderer & operator=(const BGLRenderer &);
 
 public:
-							BGLRenderer(BGLView *view, ulong bgl_options);
+							BGLRenderer(BGLView *view, ulong bgl_options,
+								BGLDispatcher *dispatcher);
 	virtual					~BGLRenderer();
 
 	void 					Acquire();
@@ -49,6 +50,7 @@ public:
 	inline	int32			ReferenceCount() const { return fRefCount; };
 	inline	ulong			Options() const { return fOptions; };
 	inline	BGLView*		GLView() { return fView; };
+	inline	BGLDispatcher*	GLDispatcher() { return fDispatcher; };
 
 private:
 	friend class GLRendererRoster;
@@ -62,12 +64,13 @@ private:
 	int32					fRefCount;	// How much we're still useful
 	BGLView*				fView;		// Never forget who is the boss!
 	ulong					fOptions;	// Keep that tune in memory
+	BGLDispatcher*			fDispatcher;// Our personal GL API call dispatcher
 
 	GLRendererRoster*		fOwningRoster;
 	renderer_id				fID;
 };
 
-extern "C" _EXPORT BGLRenderer* instantiate_gl_renderer(BGLView *view, ulong options);
+extern "C" _EXPORT BGLRenderer* instantiate_gl_renderer(BGLView *view, ulong options, BGLDispatcher *dispatcher);
 
 
 #endif	// GLRENDERER_H

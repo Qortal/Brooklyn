@@ -66,12 +66,11 @@ pan_unpacked_type_for_format(const struct util_format_description *desc)
                 unreachable("Void format not renderable");
 
         bool large = (desc->channel[c].size > 16);
-        bool large_norm = (desc->channel[c].size > 8);
         bool bit8 = (desc->channel[c].size == 8);
         assert(desc->channel[c].size <= 32);
 
         if (desc->channel[c].normalized)
-                return large_norm ? nir_type_float32 : nir_type_float16;
+                return large ? nir_type_float32 : nir_type_float16;
 
         switch (desc->channel[c].type) {
         case UTIL_FORMAT_TYPE_UNSIGNED:
@@ -156,12 +155,12 @@ pan_format_class(const struct util_format_description *desc, unsigned quirks, bo
  * replicate to fill */
 
 static nir_ssa_def *
-pan_pack_pure_32(nir_builder *b, nir_ssa_def *v, unsigned num_components)
+pan_pack_pure_32(nir_builder *b, nir_ssa_def *v)
 {
         nir_ssa_def *replicated[4];
 
         for (unsigned i = 0; i < 4; ++i)
-                replicated[i] = nir_channel(b, v, i % num_components);
+                replicated[i] = nir_channel(b, v, i % v->num_components);
 
         return nir_vec(b, replicated, 4);
 }
@@ -176,7 +175,7 @@ pan_unpack_pure_32(nir_builder *b, nir_ssa_def *pack, unsigned num_components)
  * upper/lower halves of course */
 
 static nir_ssa_def *
-pan_pack_pure_16(nir_builder *b, nir_ssa_def *v, unsigned num_components)
+pan_pack_pure_16(nir_builder *b, nir_ssa_def *v)
 {
         nir_ssa_def *replicated[4];
 
@@ -184,8 +183,8 @@ pan_pack_pure_16(nir_builder *b, nir_ssa_def *v, unsigned num_components)
                 unsigned c = 2 * i;
 
                 nir_ssa_def *parts[2] = {
-                        nir_channel(b, v, (c + 0) % num_components),
-                        nir_channel(b, v, (c + 1) % num_components)
+                        nir_channel(b, v, (c + 0) % v->num_components),
+                        nir_channel(b, v, (c + 1) % v->num_components)
                 };
 
                 replicated[i] = nir_pack_32_2x16(b, nir_vec(b, parts, 2));
@@ -220,13 +219,13 @@ pan_unpack_pure_16(nir_builder *b, nir_ssa_def *pack, unsigned num_components)
  * 4-channel vector from a scalar via replication */
 
 static nir_ssa_def *
-pan_fill_4(nir_builder *b, nir_ssa_def *v, unsigned num_components)
+pan_fill_4(nir_builder *b, nir_ssa_def *v)
 {
         nir_ssa_def *q[4];
         assert(v->num_components <= 4);
 
         for (unsigned j = 0; j < 4; ++j)
-                q[j] = nir_channel(b, v, j % num_components);
+                q[j] = nir_channel(b, v, j % v->num_components);
 
         return nir_vec(b, q, 4);
 }
@@ -242,7 +241,7 @@ pan_extend(nir_builder *b, nir_ssa_def *v, unsigned N)
                 q[j] = nir_channel(b, v, j);
 
         for (unsigned j = v->num_components; j < N; ++j)
-                q[j] = nir_imm_intN_t(b, 0, v->bit_size);
+                q[j] = nir_imm_int(b, 0);
 
         return nir_vec(b, q, N);
 }
@@ -255,9 +254,9 @@ pan_replicate_4(nir_builder *b, nir_ssa_def *v)
 }
 
 static nir_ssa_def *
-pan_pack_pure_8(nir_builder *b, nir_ssa_def *v, unsigned num_components)
+pan_pack_pure_8(nir_builder *b, nir_ssa_def *v)
 {
-        return pan_replicate_4(b, nir_pack_32_4x8(b, pan_fill_4(b, v, num_components)));
+        return pan_replicate_4(b, nir_pack_32_4x8(b, pan_fill_4(b, v)));
 }
 
 static nir_ssa_def *
@@ -277,7 +276,7 @@ pan_pack_unorm_8(nir_builder *b, nir_ssa_def *v)
 {
         return pan_replicate_4(b, nir_pack_32_4x8(b,
                 nir_f2u8(b, nir_fround_even(b, nir_fmul(b, nir_fsat(b,
-                        pan_fill_4(b, v, v->num_components)), nir_imm_float16(b, 255.0))))));
+                        pan_fill_4(b, v)), nir_imm_float16(b, 255.0))))));
 }
 
 static nir_ssa_def *
@@ -303,7 +302,7 @@ static nir_ssa_def *
 pan_pack_unorm_small(nir_builder *b, nir_ssa_def *v,
                 nir_ssa_def *scales, nir_ssa_def *shifts)
 {
-        nir_ssa_def *f = nir_fmul(b, nir_fsat(b, pan_fill_4(b, v, v->num_components)), scales);
+        nir_ssa_def *f = nir_fmul(b, nir_fsat(b, pan_fill_4(b, v)), scales);
         nir_ssa_def *u8 = nir_f2u8(b, nir_fround_even(b, f));
         nir_ssa_def *s = nir_ishl(b, u8, shifts);
         nir_ssa_def *repl = nir_pack_32_4x8(b, s);
@@ -316,7 +315,7 @@ pan_unpack_unorm_small(nir_builder *b, nir_ssa_def *pack,
                 nir_ssa_def *scales, nir_ssa_def *shifts)
 {
         nir_ssa_def *channels = nir_unpack_32_4x8(b, nir_channel(b, pack, 0));
-        nir_ssa_def *raw = nir_ushr(b, nir_i2i16(b, channels), shifts);
+        nir_ssa_def *raw = nir_ushr(b, nir_i2imp(b, channels), shifts);
         return nir_fmul(b, nir_u2f16(b, raw), scales);
 }
 
@@ -403,12 +402,12 @@ pan_unpack_unorm_1010102(nir_builder *b, nir_ssa_def *packed)
 {
         nir_ssa_def *p = nir_channel(b, packed, 0);
         nir_ssa_def *bytes = nir_unpack_32_4x8(b, p);
-        nir_ssa_def *ubytes = nir_i2i16(b, bytes);
+        nir_ssa_def *ubytes = nir_i2imp(b, bytes);
 
         nir_ssa_def *shifts = nir_ushr(b, pan_replicate_4(b, nir_channel(b, ubytes, 3)),
                         nir_imm_ivec4(b, 0, 2, 4, 6));
         nir_ssa_def *precision = nir_iand(b, shifts,
-                        nir_i2i16(b, nir_imm_ivec4(b, 0x3, 0x3, 0x3, 0x3)));
+                        nir_i2imp(b, nir_imm_ivec4(b, 0x3, 0x3, 0x3, 0x3)));
 
         nir_ssa_def *top_rgb = nir_ishl(b, nir_channels(b, ubytes, 0x7), nir_imm_int(b, 2));
         top_rgb = nir_ior(b, nir_channels(b, precision, 0x7), top_rgb);
@@ -450,7 +449,7 @@ pan_unpack_uint_1010102(nir_builder *b, nir_ssa_def *packed)
         nir_ssa_def *mask = nir_iand(b, shift,
                         nir_imm_ivec4(b, 0x3ff, 0x3ff, 0x3ff, 0x3));
 
-        return nir_i2i16(b, mask);
+        return nir_i2imp(b, mask);
 }
 
 /* NIR means we can *finally* catch a break */
@@ -613,11 +612,11 @@ pan_pack(nir_builder *b,
                         assert(!d.normalized);
                         assert(d.type == UTIL_FORMAT_TYPE_FLOAT || d.pure_integer);
 
-                        return d.size == 32 ? pan_pack_pure_32(b, unpacked, desc->nr_channels) :
-                                pan_pack_pure_16(b, unpacked, desc->nr_channels);
+                        return d.size == 32 ? pan_pack_pure_32(b, unpacked) :
+                                pan_pack_pure_16(b, unpacked);
                 } else if (d.size == 8) {
                         assert(d.pure_integer);
-                        return pan_pack_pure_8(b, unpacked, desc->nr_channels);
+                        return pan_pack_pure_8(b, unpacked);
                 } else {
                         unreachable("Unrenderable size");
                 }
@@ -654,7 +653,11 @@ pan_lower_fb_store(nir_shader *shader,
         nir_ssa_def *unpacked = nir_ssa_for_src(b, intr->src[1], 4);
         nir_ssa_def *packed = pan_pack(b, desc, unpacked);
 
-        nir_store_raw_output_pan(b, packed);
+        nir_intrinsic_instr *new =
+                nir_intrinsic_instr_create(shader, nir_intrinsic_store_raw_output_pan);
+        new->src[0] = nir_src_for_ssa(packed);
+        new->num_components = 4;
+        nir_builder_instr_insert(b, &new->instr);
 }
 
 static nir_ssa_def *
@@ -670,11 +673,18 @@ pan_lower_fb_load(nir_shader *shader,
                 const struct util_format_description *desc,
                 unsigned base, int sample, unsigned quirks)
 {
-        nir_ssa_def *packed =
-                nir_load_raw_output_pan(b, 4, 32, pan_sample_id(b, sample),
-                                        .base = base);
+        nir_intrinsic_instr *new = nir_intrinsic_instr_create(shader,
+                       nir_intrinsic_load_raw_output_pan);
+        new->num_components = 4;
+        new->src[0] = nir_src_for_ssa(pan_sample_id(b, sample));
+
+        nir_intrinsic_set_base(new, base);
+
+        nir_ssa_dest_init(&new->instr, &new->dest, 4, 32, NULL);
+        nir_builder_instr_insert(b, &new->instr);
 
         /* Convert the raw value */
+        nir_ssa_def *packed = &new->dest.ssa;
         nir_ssa_def *unpacked = pan_unpack(b, desc, packed);
 
         if (desc->colorspace == UTIL_FORMAT_COLORSPACE_SRGB)
@@ -707,7 +717,8 @@ pan_lower_fb_load(nir_shader *shader,
         unpacked = nir_convert_to_bit_size(b, unpacked, src_type, bits);
         unpacked = pan_extend(b, unpacked, nir_dest_num_components(intr->dest));
 
-        nir_ssa_def_rewrite_uses_after(&intr->dest.ssa, unpacked, &intr->instr);
+        nir_src rewritten = nir_src_for_ssa(unpacked);
+        nir_ssa_def_rewrite_uses_after(&intr->dest.ssa, rewritten, &intr->instr);
 }
 
 bool
@@ -738,11 +749,15 @@ pan_lower_framebuffer(nir_shader *shader, const enum pipe_format *rt_fmts,
                                 if (var->data.mode != nir_var_shader_out)
                                         continue;
 
-                                if (var->data.location < FRAG_RESULT_DATA0)
-                                        continue;
-
                                 unsigned base = var->data.driver_location;
-                                unsigned rt = var->data.location - FRAG_RESULT_DATA0;
+
+                                unsigned rt;
+                                if (var->data.location == FRAG_RESULT_COLOR)
+                                        rt = 0;
+                                else if (var->data.location >= FRAG_RESULT_DATA0)
+                                        rt = var->data.location - FRAG_RESULT_DATA0;
+                                else
+                                        continue;
 
                                 if (rt_fmts[rt] == PIPE_FORMAT_NONE)
                                         continue;

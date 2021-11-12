@@ -63,9 +63,9 @@ LOCAL_STATIC_LIBRARIES += \
 	libfreedreno_ir3 \
 	libfreedreno_perfcntrs \
 	libmesa_gallium \
-	libpanfrost_lib \
 	libpanfrost_bifrost \
 	libpanfrost_bifrost_disasm \
+	libpanfrost_lib \
 	libpanfrost_midgard \
 	libpanfrost_midgard_disasm \
 	libpanfrost_shared \
@@ -90,8 +90,6 @@ LOCAL_WHOLE_STATIC_LIBRARIES := \
 	libmesa_pipe_loader \
 	libmesa_util \
 	libmesa_loader
-
-LOCAL_SHARED_LIBRARIES += libcutils
 
 # sort GALLIUM_SHARED_LIBS to remove any duplicates
 LOCAL_SHARED_LIBRARIES += $(sort $(GALLIUM_SHARED_LIBS))

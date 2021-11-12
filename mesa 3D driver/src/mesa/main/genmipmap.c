@@ -115,9 +115,9 @@ generate_texture_mipmap(struct gl_context *ctx,
 {
    struct gl_texture_image *srcImage;
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
 
-   if (texObj->Attrib.BaseLevel >= texObj->Attrib.MaxLevel) {
+   if (texObj->BaseLevel >= texObj->MaxLevel) {
       /* nothing to do */
       return;
    }
@@ -131,7 +131,7 @@ generate_texture_mipmap(struct gl_context *ctx,
 
    _mesa_lock_texture(ctx, texObj);
 
-   srcImage = _mesa_select_tex_image(texObj, target, texObj->Attrib.BaseLevel);
+   srcImage = _mesa_select_tex_image(texObj, target, texObj->BaseLevel);
    if (caller) {
       if (!srcImage) {
          _mesa_unlock_texture(ctx, texObj);

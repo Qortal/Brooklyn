@@ -53,7 +53,6 @@
 extern "C" {
 #endif
 
-struct gl_buffer_object;
 
 /**
  * Implementation limits
@@ -117,7 +116,6 @@ struct pipe_rasterizer_state
    unsigned line_smooth:1;
    unsigned line_stipple_enable:1;
    unsigned line_last_pixel:1;
-   unsigned line_rectangular:1; /** lines rasterized as rectangles or parallelograms */
    unsigned conservative_raster_mode:2; /**< PIPE_CONSERVATIVE_RASTER_x */
 
    /**
@@ -303,6 +301,16 @@ pipe_shader_state_from_tgsi(struct pipe_shader_state *state,
    memset(&state->stream_output, 0, sizeof(state->stream_output));
 }
 
+struct pipe_depth_state
+{
+   unsigned enabled:1;         /**< depth test enabled? */
+   unsigned writemask:1;       /**< allow depth buffer writes? */
+   unsigned func:3;            /**< depth test func (PIPE_FUNC_x) */
+   unsigned bounds_test:1;     /**< depth bounds test enabled? */
+   float bounds_min;           /**< minimum depth bound */
+   float bounds_max;           /**< maximum depth bound */
+};
+
 
 struct pipe_stencil_state
 {
@@ -316,21 +324,19 @@ struct pipe_stencil_state
 };
 
 
+struct pipe_alpha_state
+{
+   unsigned enabled:1;
+   unsigned func:3;     /**< PIPE_FUNC_x */
+   float ref_value;     /**< reference value */
+};
+
+
 struct pipe_depth_stencil_alpha_state
 {
+   struct pipe_depth_state depth;
    struct pipe_stencil_state stencil[2]; /**< [0] = front, [1] = back */
-
-   unsigned alpha_enabled:1;         /**< alpha test enabled? */
-   unsigned alpha_func:3;            /**< PIPE_FUNC_x */
-
-   unsigned depth_enabled:1;         /**< depth test enabled? */
-   unsigned depth_writemask:1;       /**< allow depth buffer writes? */
-   unsigned depth_func:3;            /**< depth test func (PIPE_FUNC_x) */
-   unsigned depth_bounds_test:1;     /**< depth bounds test enabled? */
-
-   float alpha_ref_value;            /**< reference value */
-   double depth_bounds_min;          /**< minimum depth bound */
-   double depth_bounds_max;          /**< maximum depth bound */
+   struct pipe_alpha_state alpha;
 };
 
 
@@ -413,9 +419,6 @@ struct pipe_sampler_state
    unsigned normalized_coords:1; /**< Are coords normalized to [0,1]? */
    unsigned max_anisotropy:5;
    unsigned seamless_cube_map:1;
-   unsigned border_color_is_integer:1;
-   unsigned reduction_mode:2;    /**< PIPE_TEX_REDUCTION_x */
-   unsigned pad:5;               /**< take bits from this for new members */
    float lod_bias;               /**< LOD/lambda bias */
    float min_lod, max_lod;       /**< LOD clamp range, after bias */
    union pipe_color_union border_color;
@@ -583,16 +586,11 @@ struct pipe_memory_allocation;
 struct pipe_transfer
 {
    struct pipe_resource *resource; /**< resource to transfer to/from  */
-   enum pipe_map_flags usage:24;
-   unsigned level:8;               /**< texture mipmap level */
+   unsigned level;                 /**< texture mipmap level */
+   enum pipe_map_flags usage;
    struct pipe_box box;            /**< region of the resource to access */
    unsigned stride;                /**< row stride in bytes */
    unsigned layer_stride;          /**< image/layer stride in bytes */
-
-   /* Offset into a driver-internal staging buffer to make use of unused
-    * padding in this structure.
-    */
-   unsigned offset;
 };
 
 
@@ -674,26 +672,14 @@ struct pipe_stream_output_target
 struct pipe_vertex_element
 {
    /** Offset of this attribute, in bytes, from the start of the vertex */
-   uint16_t src_offset;
+   unsigned src_offset:16;
 
    /** Which vertex_buffer (as given to pipe->set_vertex_buffer()) does
     * this attribute live in?
     */
-   uint8_t vertex_buffer_index:7;
+   unsigned vertex_buffer_index:5;
 
-   /**
-    * Whether this element refers to a dual-slot vertex shader input.
-    * The purpose of this field is to do dual-slot lowering when the CSO is
-    * created instead of during every state change.
-    *
-    * It's lowered by util_lower_uint64_vertex_elements.
-    */
-   bool dual_slot:1;
-
-   /**
-    * This has only 8 bits because all vertex formats should be <= 255.
-    */
-   uint8_t src_format; /* low 8 bits of enum pipe_format. */
+   enum pipe_format src_format:11;
 
    /** Instance data rate divisor. 0 means this is per-vertex data,
     *  n means per-instance data used for n consecutive instances (n > 0).
@@ -726,8 +712,6 @@ struct pipe_draw_indirect_info
     *     uint32_t start;
     *     uint32_t start_instance;
     *  };
-    *
-    * If NULL, count_from_stream_output != NULL.
     */
    struct pipe_resource *buffer;
 
@@ -735,6 +719,64 @@ struct pipe_draw_indirect_info
     * is to be used as the real draw_count.
     */
    struct pipe_resource *indirect_draw_count;
+};
+
+struct pipe_draw_start_count {
+   unsigned start;
+   unsigned count;
+};
+
+/**
+ * Information to describe a draw_vbo call.
+ */
+struct pipe_draw_info
+{
+   /**
+    * Direct draws: start is the index of the first vertex
+    * Non-indexed indirect draws: not used
+    * Indexed indirect draws: start is added to the indirect start.
+    */
+   unsigned start;
+   unsigned count;  /**< number of vertices */
+
+   enum pipe_prim_type mode:8;  /**< the mode of the primitive */
+   ubyte vertices_per_patch; /**< the number of vertices per patch */
+   ubyte index_size;  /**< if 0, the draw is not indexed. */
+   bool primitive_restart:1;
+   bool has_user_indices:1; /**< if true, use index.user_buffer */
+   char _pad:6;             /**< padding for memcmp */
+
+   unsigned start_instance; /**< first instance id */
+   unsigned instance_count; /**< number of instances */
+
+   unsigned drawid; /**< id of this draw in a multidraw */
+
+   /**
+    * For indexed drawing, these fields apply after index lookup.
+    */
+   int index_bias; /**< a bias to be added to each index */
+   unsigned min_index; /**< the min index */
+   unsigned max_index; /**< the max index */
+
+   /**
+    * Primitive restart enable/index (only applies to indexed drawing)
+    */
+   unsigned restart_index;
+
+   /* Pointers must be at the end for an optimal structure layout on 64-bit. */
+
+   /**
+    * An index buffer.  When an index buffer is bound, all indices to vertices
+    * will be looked up from the buffer.
+    *
+    * If has_user_indices, use index.user, else use index.resource.
+    */
+   union {
+      struct pipe_resource *resource;  /**< real buffer */
+      const void *user;  /**< pointer to a user buffer */
+   } index;
+
+   struct pipe_draw_indirect_info *indirect; /**< Indirect draw. */
 
    /**
     * Stream output target. If not NULL, it's used to provide the 'count'
@@ -751,59 +793,6 @@ struct pipe_draw_indirect_info
     * be set via set_vertex_buffers manually.
     */
    struct pipe_stream_output_target *count_from_stream_output;
-};
-
-struct pipe_draw_start_count_bias {
-   unsigned start;
-   unsigned count;
-   int index_bias; /**< a bias to be added to each index */
-};
-
-/**
- * Information to describe a draw_vbo call.
- */
-struct pipe_draw_info
-{
-   enum pipe_prim_type mode:8;  /**< the mode of the primitive */
-   ubyte vertices_per_patch; /**< the number of vertices per patch */
-   unsigned index_size:4;  /**< if 0, the draw is not indexed. */
-   unsigned view_mask:6; /**< mask of multiviews for this draw */
-   bool primitive_restart:1;
-   bool has_user_indices:1;   /**< if true, use index.user_buffer */
-   bool index_bounds_valid:1; /**< whether min_index and max_index are valid;
-                                   they're always invalid if index_size == 0 */
-   bool increment_draw_id:1;  /**< whether drawid increments for direct draws */
-   bool take_index_buffer_ownership:1; /**< callee inherits caller's refcount
-         (no need to reference indexbuf, but still needs to unreference it) */
-   bool index_bias_varies:1;   /**< true if index_bias varies between draws */
-
-   unsigned start_instance; /**< first instance id */
-   unsigned instance_count; /**< number of instances */
-
-   /**
-    * Primitive restart enable/index (only applies to indexed drawing)
-    */
-   unsigned restart_index;
-
-   /* Pointers must be placed appropriately for optimal structure packing on
-    * 64-bit CPUs.
-    */
-
-   /**
-    * An index buffer.  When an index buffer is bound, all indices to vertices
-    * will be looked up from the buffer.
-    *
-    * If has_user_indices, use index.user, else use index.resource.
-    */
-   union {
-      struct pipe_resource *resource;  /**< real buffer */
-      struct gl_buffer_object *gl_bo; /**< for the GL frontend, not passed to drivers */
-      const void *user;  /**< pointer to a user buffer */
-   } index;
-
-   /* These must be last for better packing in u_threaded_context. */
-   unsigned min_index; /**< the min index */
-   unsigned max_index; /**< the max index */
 };
 
 
@@ -892,11 +881,6 @@ struct pipe_grid_info
     * Determine the layout of the grid (in block units) to be used.
     */
    uint grid[3];
-
-   /**
-    * Base offsets to launch grids from
-    */
-   uint grid_base[3];
 
    /* Indirect compute parameters resource: If not NULL, block sizes are taken
     * from this buffer instead, which is laid out as follows:

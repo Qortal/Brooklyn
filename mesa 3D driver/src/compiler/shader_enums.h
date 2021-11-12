@@ -73,15 +73,6 @@ gl_shader_stage_is_compute(gl_shader_stage stage)
 }
 
 static inline bool
-gl_shader_stage_uses_workgroup(gl_shader_stage stage)
-{
-   return stage == MESA_SHADER_COMPUTE ||
-          stage == MESA_SHADER_KERNEL ||
-          stage == MESA_SHADER_TASK ||
-          stage == MESA_SHADER_MESH;
-}
-
-static inline bool
 gl_shader_stage_is_callable(gl_shader_stage stage)
 {
    return stage == MESA_SHADER_ANY_HIT ||
@@ -95,7 +86,7 @@ gl_shader_stage_is_callable(gl_shader_stage stage)
  * Number of STATE_* values we need to address any GL state.
  * Used to dimension arrays.
  */
-#define STATE_LENGTH 4
+#define STATE_LENGTH 5
 
 typedef short gl_state_index16; /* see enum gl_state_index */
 
@@ -144,6 +135,7 @@ typedef enum
    VERT_ATTRIB_COLOR1,
    VERT_ATTRIB_FOG,
    VERT_ATTRIB_COLOR_INDEX,
+   VERT_ATTRIB_EDGEFLAG,
    VERT_ATTRIB_TEX0,
    VERT_ATTRIB_TEX1,
    VERT_ATTRIB_TEX2,
@@ -169,29 +161,21 @@ typedef enum
    VERT_ATTRIB_GENERIC13,
    VERT_ATTRIB_GENERIC14,
    VERT_ATTRIB_GENERIC15,
-   /* This must be last to keep VS inputs and vertex attributes in the same
-    * order in st/mesa, and st/mesa always adds edgeflags as the last input.
-    */
-   VERT_ATTRIB_EDGEFLAG,
    VERT_ATTRIB_MAX
 } gl_vert_attrib;
 
 const char *gl_vert_attrib_name(gl_vert_attrib attrib);
 
 /**
- * Max number of texture coordinate units.  This mainly just applies to
- * the fixed-function vertex code.  This will be difficult to raise above
- * eight because of various vertex attribute bitvectors.
- */
-#define MAX_TEXTURE_COORD_UNITS     8
-#define MAX_VERTEX_GENERIC_ATTRIBS  16
-
-/**
  * Symbolic constats to help iterating over
  * specific blocks of vertex attributes.
  *
+ * VERT_ATTRIB_FF
+ *   includes all fixed function attributes as well as
+ *   the aliased GL_NV_vertex_program shader attributes.
  * VERT_ATTRIB_TEX
  *   include the classic texture coordinate attributes.
+ *   Is a subset of VERT_ATTRIB_FF.
  * VERT_ATTRIB_GENERIC
  *   include the OpenGL 2.0+ GLSL generic shader attributes.
  *   These alias the generic GL_ARB_vertex_shader attributes.
@@ -201,6 +185,9 @@ const char *gl_vert_attrib_name(gl_vert_attrib attrib);
  *   They are located at the end of the generic attribute
  *   block not to overlap with the generic 0 attribute.
  */
+#define VERT_ATTRIB_FF(i)           (VERT_ATTRIB_POS + (i))
+#define VERT_ATTRIB_FF_MAX          VERT_ATTRIB_GENERIC0
+
 #define VERT_ATTRIB_TEX(i)          (VERT_ATTRIB_TEX0 + (i))
 #define VERT_ATTRIB_TEX_MAX         MAX_TEXTURE_COORD_UNITS
 
@@ -224,6 +211,7 @@ const char *gl_vert_attrib_name(gl_vert_attrib attrib);
 #define VERT_BIT_COLOR1          BITFIELD_BIT(VERT_ATTRIB_COLOR1)
 #define VERT_BIT_FOG             BITFIELD_BIT(VERT_ATTRIB_FOG)
 #define VERT_BIT_COLOR_INDEX     BITFIELD_BIT(VERT_ATTRIB_COLOR_INDEX)
+#define VERT_BIT_EDGEFLAG        BITFIELD_BIT(VERT_ATTRIB_EDGEFLAG)
 #define VERT_BIT_TEX0            BITFIELD_BIT(VERT_ATTRIB_TEX0)
 #define VERT_BIT_TEX1            BITFIELD_BIT(VERT_ATTRIB_TEX1)
 #define VERT_BIT_TEX2            BITFIELD_BIT(VERT_ATTRIB_TEX2)
@@ -234,13 +222,12 @@ const char *gl_vert_attrib_name(gl_vert_attrib attrib);
 #define VERT_BIT_TEX7            BITFIELD_BIT(VERT_ATTRIB_TEX7)
 #define VERT_BIT_POINT_SIZE      BITFIELD_BIT(VERT_ATTRIB_POINT_SIZE)
 #define VERT_BIT_GENERIC0        BITFIELD_BIT(VERT_ATTRIB_GENERIC0)
-#define VERT_BIT_EDGEFLAG        BITFIELD_BIT(VERT_ATTRIB_EDGEFLAG)
 
 #define VERT_BIT(i)              BITFIELD_BIT(i)
 #define VERT_BIT_ALL             BITFIELD_RANGE(0, VERT_ATTRIB_MAX)
 
-#define VERT_BIT_FF_ALL          (BITFIELD_RANGE(0, VERT_ATTRIB_GENERIC0) | \
-                                  VERT_BIT_EDGEFLAG)
+#define VERT_BIT_FF(i)           VERT_BIT(i)
+#define VERT_BIT_FF_ALL          BITFIELD_RANGE(0, VERT_ATTRIB_FF_MAX)
 #define VERT_BIT_TEX(i)          VERT_BIT(VERT_ATTRIB_TEX(i))
 #define VERT_BIT_TEX_ALL         \
    BITFIELD_RANGE(VERT_ATTRIB_TEX(0), VERT_ATTRIB_TEX_MAX)
@@ -266,7 +253,6 @@ const char *gl_vert_attrib_name(gl_vert_attrib attrib);
  * - vertResults (in prog_print.c's arb_output_attrib_string())
  * - fragAttribs (in prog_print.c's arb_input_attrib_string())
  * - _mesa_varying_slot_in_fs()
- * - _mesa_varying_slot_name_for_stage()
  */
 typedef enum
 {
@@ -302,13 +288,7 @@ typedef enum
    VARYING_SLOT_BOUNDING_BOX1, /* Only appears as TCS output. */
    VARYING_SLOT_VIEW_INDEX,
    VARYING_SLOT_VIEWPORT_MASK, /* Does not appear in FS */
-   VARYING_SLOT_PRIMITIVE_SHADING_RATE = VARYING_SLOT_FACE, /* Does not appear in FS. */
-
-   VARYING_SLOT_PRIMITIVE_COUNT = VARYING_SLOT_TESS_LEVEL_OUTER, /* Only appears in MESH. */
-   VARYING_SLOT_PRIMITIVE_INDICES = VARYING_SLOT_TESS_LEVEL_INNER, /* Only appears in MESH. */
-   VARYING_SLOT_TASK_COUNT = VARYING_SLOT_BOUNDING_BOX0, /* Only appears in TASK. */
-
-   VARYING_SLOT_VAR0 = 32, /* First generic varying slot */
+   VARYING_SLOT_VAR0, /* First generic varying slot */
    /* the remaining are simply for the benefit of gl_varying_slot_name()
     * and not to be construed as an upper bound:
     */
@@ -343,80 +323,15 @@ typedef enum
    VARYING_SLOT_VAR29,
    VARYING_SLOT_VAR30,
    VARYING_SLOT_VAR31,
-   /* Per-patch varyings for tessellation. */
-   VARYING_SLOT_PATCH0,
-   VARYING_SLOT_PATCH1,
-   VARYING_SLOT_PATCH2,
-   VARYING_SLOT_PATCH3,
-   VARYING_SLOT_PATCH4,
-   VARYING_SLOT_PATCH5,
-   VARYING_SLOT_PATCH6,
-   VARYING_SLOT_PATCH7,
-   VARYING_SLOT_PATCH8,
-   VARYING_SLOT_PATCH9,
-   VARYING_SLOT_PATCH10,
-   VARYING_SLOT_PATCH11,
-   VARYING_SLOT_PATCH12,
-   VARYING_SLOT_PATCH13,
-   VARYING_SLOT_PATCH14,
-   VARYING_SLOT_PATCH15,
-   VARYING_SLOT_PATCH16,
-   VARYING_SLOT_PATCH17,
-   VARYING_SLOT_PATCH18,
-   VARYING_SLOT_PATCH19,
-   VARYING_SLOT_PATCH20,
-   VARYING_SLOT_PATCH21,
-   VARYING_SLOT_PATCH22,
-   VARYING_SLOT_PATCH23,
-   VARYING_SLOT_PATCH24,
-   VARYING_SLOT_PATCH25,
-   VARYING_SLOT_PATCH26,
-   VARYING_SLOT_PATCH27,
-   VARYING_SLOT_PATCH28,
-   VARYING_SLOT_PATCH29,
-   VARYING_SLOT_PATCH30,
-   VARYING_SLOT_PATCH31,
-   /* 32 16-bit vec4 slots packed in 16 32-bit vec4 slots for GLES/mediump.
-    * They are really just additional generic slots used for 16-bit data to
-    * prevent conflicts between neighboring mediump and non-mediump varyings
-    * that can't be packed without breaking one or the other, which is
-    * a limitation of separate shaders. This allows linking shaders in 32 bits
-    * and then get an optimally packed 16-bit varyings by remapping the IO
-    * locations to these slots. The remapping can also be undone trivially.
-    *
-    * nir_io_semantics::high_16bit determines which half of the slot is
-    * accessed. The low and high halves share the same IO "base" number.
-    * Drivers can treat these as 32-bit slots everywhere except for FP16
-    * interpolation.
-    */
-   VARYING_SLOT_VAR0_16BIT,
-   VARYING_SLOT_VAR1_16BIT,
-   VARYING_SLOT_VAR2_16BIT,
-   VARYING_SLOT_VAR3_16BIT,
-   VARYING_SLOT_VAR4_16BIT,
-   VARYING_SLOT_VAR5_16BIT,
-   VARYING_SLOT_VAR6_16BIT,
-   VARYING_SLOT_VAR7_16BIT,
-   VARYING_SLOT_VAR8_16BIT,
-   VARYING_SLOT_VAR9_16BIT,
-   VARYING_SLOT_VAR10_16BIT,
-   VARYING_SLOT_VAR11_16BIT,
-   VARYING_SLOT_VAR12_16BIT,
-   VARYING_SLOT_VAR13_16BIT,
-   VARYING_SLOT_VAR14_16BIT,
-   VARYING_SLOT_VAR15_16BIT,
-
-   NUM_TOTAL_VARYING_SLOTS,
 } gl_varying_slot;
 
 
 #define VARYING_SLOT_MAX	(VARYING_SLOT_VAR0 + MAX_VARYING)
+#define VARYING_SLOT_PATCH0	(VARYING_SLOT_MAX)
 #define VARYING_SLOT_TESS_MAX	(VARYING_SLOT_PATCH0 + MAX_VARYING)
 #define MAX_VARYINGS_INCL_PATCH (VARYING_SLOT_TESS_MAX - VARYING_SLOT_VAR0)
 
-const char *gl_varying_slot_name_for_stage(gl_varying_slot slot,
-                                           gl_shader_stage stage);
-
+const char *gl_varying_slot_name(gl_varying_slot slot);
 
 /**
  * Bitflags for varying slots.
@@ -462,6 +377,14 @@ const char *gl_varying_slot_name_for_stage(gl_varying_slot slot,
 #define VARYING_BIT_VIEWPORT_MASK BITFIELD64_BIT(VARYING_SLOT_VIEWPORT_MASK)
 #define VARYING_BIT_VAR(V) BITFIELD64_BIT(VARYING_SLOT_VAR0 + (V))
 /*@}*/
+
+/**
+ * Bitflags for system values.
+ */
+#define SYSTEM_BIT_SAMPLE_ID ((uint64_t)1 << SYSTEM_VALUE_SAMPLE_ID)
+#define SYSTEM_BIT_SAMPLE_POS ((uint64_t)1 << SYSTEM_VALUE_SAMPLE_POS)
+#define SYSTEM_BIT_SAMPLE_MASK_IN ((uint64_t)1 << SYSTEM_VALUE_SAMPLE_MASK_IN)
+#define SYSTEM_BIT_LOCAL_INVOCATION_ID ((uint64_t)1 << SYSTEM_VALUE_LOCAL_INVOCATION_ID)
 
 /**
  * If the gl_register_file is PROGRAM_SYSTEM_VALUE, the register index will be
@@ -720,9 +643,9 @@ typedef enum
    SYSTEM_VALUE_GLOBAL_INVOCATION_ID,
    SYSTEM_VALUE_BASE_GLOBAL_INVOCATION_ID,
    SYSTEM_VALUE_GLOBAL_INVOCATION_INDEX,
-   SYSTEM_VALUE_WORKGROUP_ID,
-   SYSTEM_VALUE_NUM_WORKGROUPS,
-   SYSTEM_VALUE_WORKGROUP_SIZE,
+   SYSTEM_VALUE_WORK_GROUP_ID,
+   SYSTEM_VALUE_NUM_WORK_GROUPS,
+   SYSTEM_VALUE_LOCAL_GROUP_SIZE,
    SYSTEM_VALUE_GLOBAL_GROUP_SIZE,
    SYSTEM_VALUE_WORK_DIM,
    SYSTEM_VALUE_USER_DATA_AMD,
@@ -783,16 +706,6 @@ typedef enum
     */
    SYSTEM_VALUE_GS_HEADER_IR3,
    SYSTEM_VALUE_TCS_HEADER_IR3,
-
-   /* IR3 specific system value that contains the patch id for the current
-    * subdraw.
-    */
-   SYSTEM_VALUE_REL_PATCH_ID_IR3,
-
-   /**
-    * Fragment shading rate used for KHR_fragment_shading_rate (Vulkan).
-    */
-   SYSTEM_VALUE_FRAG_SHADING_RATE,
 
    SYSTEM_VALUE_MAX             /**< Number of values */
 } gl_system_value;
@@ -884,11 +797,7 @@ enum gl_access_qualifier
    ACCESS_COHERENT      = (1 << 0),
    ACCESS_RESTRICT      = (1 << 1),
    ACCESS_VOLATILE      = (1 << 2),
-
-   /* The memory used by the access/variable is not read. */
    ACCESS_NON_READABLE  = (1 << 3),
-
-   /* The memory used by the access/variable is not written. */
    ACCESS_NON_WRITEABLE = (1 << 4),
 
    /** The access may use a non-uniform buffer or image index */
@@ -897,7 +806,8 @@ enum gl_access_qualifier
    /* This has the same semantics as NIR_INTRINSIC_CAN_REORDER, only to be
     * used with loads. In other words, it means that the load can be
     * arbitrarily reordered, or combined with other loads to the same address.
-    * It is implied by ACCESS_NON_WRITEABLE and a lack of ACCESS_VOLATILE.
+    * It is implied by ACCESS_NON_WRITEABLE together with ACCESS_RESTRICT, and
+    * a lack of ACCESS_COHERENT and ACCESS_VOLATILE.
     */
    ACCESS_CAN_REORDER = (1 << 6),
 

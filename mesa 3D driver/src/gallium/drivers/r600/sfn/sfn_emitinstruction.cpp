@@ -109,14 +109,29 @@ GPRVector EmitInstruction::vec_from_nir_with_fetch_constant(const nir_src& src, 
    return m_proc.vec_from_nir_with_fetch_constant(src, mask, swizzle, match);
 }
 
+int EmitInstruction::lookup_register_index(const nir_src& src) const
+{
+   return m_proc.lookup_register_index(src);
+}
+
+int EmitInstruction::allocate_temp_register()
+{
+   return m_proc.allocate_temp_register();
+}
+
+int EmitInstruction::lookup_register_index(const nir_dest& dst)
+{
+   return m_proc.lookup_register_index(dst);
+}
+
 PGPRValue EmitInstruction::get_temp_register(int channel)
 {
    return m_proc.get_temp_register(channel);
 }
 
-GPRVector EmitInstruction::get_temp_vec4(const GPRVector::Swizzle& swizzle)
+GPRVector EmitInstruction::get_temp_vec4()
 {
-   return m_proc.get_temp_vec4(swizzle);
+   return m_proc.get_temp_vec4();
 }
 
 PValue EmitInstruction::create_register_from_nir_src(const nir_src& src, unsigned swizzle)
@@ -148,11 +163,6 @@ bool EmitInstruction::inject_register(unsigned sel, unsigned swizzle,
 int EmitInstruction::remap_atomic_base(int base)
 {
 	return m_proc.remap_atomic_base(base);
-}
-
-void EmitInstruction::set_has_txs_cube_array_comp()
-{
-   m_proc.sh_info().has_txq_cube_array_z_comp = 1;
 }
 
 const std::set<AluModifiers> EmitInstruction::empty = {};

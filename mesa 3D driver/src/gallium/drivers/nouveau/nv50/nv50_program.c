@@ -24,8 +24,8 @@
 
 #include "compiler/nir/nir.h"
 
-#include "nv50/nv50_context.h"
 #include "nv50/nv50_program.h"
+#include "nv50/nv50_context.h"
 
 #include "codegen/nv50_ir_driver.h"
 
@@ -359,13 +359,9 @@ nv50_program_translate(struct nv50_program *prog, uint16_t chipset,
       info->io.alphaRefBase = NV50_CB_AUX_ALPHATEST_OFFSET;
 
    info->io.suInfoBase = NV50_CB_AUX_TEX_MS_OFFSET;
-   info->io.bufInfoBase = NV50_CB_AUX_BUF_INFO(0);
    info->io.sampleInfoBase = NV50_CB_AUX_SAMPLE_OFFSET;
    info->io.msInfoCBSlot = 15;
    info->io.msInfoBase = NV50_CB_AUX_MS_OFFSET;
-
-   info->io.membarOffset = NV50_CB_AUX_MEMBAR_OFFSET;
-   info->io.gmemMembar = 15;
 
    info->assignSlots = nv50_program_assign_varying_slots;
 
@@ -379,7 +375,7 @@ nv50_program_translate(struct nv50_program *prog, uint16_t chipset,
    prog->gp.has_viewport = 0;
 
    if (prog->type == PIPE_SHADER_COMPUTE)
-      info->prop.cp.inputOffset = 0x14;
+      info->prop.cp.inputOffset = 0x10;
 
    info_out.driverPriv = prog;
 
@@ -437,15 +433,6 @@ nv50_program_translate(struct nv50_program *prog, uint16_t chipset,
          break;
       }
       prog->gp.vert_count = CLAMP(info_out.prop.gp.maxVertices, 1, 1024);
-   } else
-   if (prog->type == PIPE_SHADER_COMPUTE) {
-      for (i = 0; i < NV50_MAX_GLOBALS; i++) {
-         prog->cp.gmem[i] = (struct nv50_gmem_state){
-            .valid = info_out.prop.cp.gmem[i].valid,
-            .image = info_out.prop.cp.gmem[i].image,
-            .slot  = info_out.prop.cp.gmem[i].slot
-         };
-      }
    }
 
    if (prog->pipe.stream_output.num_outputs)
@@ -523,8 +510,7 @@ nv50_program_upload_code(struct nv50_context *nv50, struct nv50_program *prog)
       nv50_ir_apply_fixups(prog->interps, prog->code,
                            prog->fp.force_persample_interp,
                            false /* flatshade */,
-                           prog->fp.alphatest - 1,
-                           false /* msaa */);
+                           prog->fp.alphatest - 1);
 
    nv50_sifc_linear_u8(&nv50->base, nv50->screen->code,
                        (prog_type << NV50_CODE_BO_SIZE_LOG2) + prog->code_base,

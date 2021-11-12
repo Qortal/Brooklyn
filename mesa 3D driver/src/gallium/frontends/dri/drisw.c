@@ -198,7 +198,7 @@ drisw_put_image_shm(struct dri_drawable *drawable,
 }
 
 static inline void
-drisw_present_texture(struct pipe_context *pipe, __DRIdrawable *dPriv,
+drisw_present_texture(__DRIdrawable *dPriv,
                       struct pipe_resource *ptex, struct pipe_box *sub_box)
 {
    struct dri_drawable *drawable = dri_drawable(dPriv);
@@ -207,7 +207,7 @@ drisw_present_texture(struct pipe_context *pipe, __DRIdrawable *dPriv,
    if (screen->swrast_no_present)
       return;
 
-   screen->base.screen->flush_frontbuffer(screen->base.screen, pipe, ptex, 0, 0, drawable, sub_box);
+   screen->base.screen->flush_frontbuffer(screen->base.screen, ptex, 0, 0, drawable, sub_box);
 }
 
 static inline void
@@ -221,11 +221,10 @@ drisw_invalidate_drawable(__DRIdrawable *dPriv)
 }
 
 static inline void
-drisw_copy_to_front(struct pipe_context *pipe,
-                    __DRIdrawable * dPriv,
+drisw_copy_to_front(__DRIdrawable * dPriv,
                     struct pipe_resource *ptex)
 {
-   drisw_present_texture(pipe, dPriv, ptex, NULL);
+   drisw_present_texture(dPriv, ptex, NULL);
 
    drisw_invalidate_drawable(dPriv);
 }
@@ -262,7 +261,7 @@ drisw_swap_buffers(__DRIdrawable *dPriv)
                        drawable->msaa_textures[ST_ATTACHMENT_BACK_LEFT]);
       }
 
-      drisw_copy_to_front(ctx->st->pipe, dPriv, ptex);
+      drisw_copy_to_front(dPriv, ptex);
    }
 }
 
@@ -286,19 +285,19 @@ drisw_copy_sub_buffer(__DRIdrawable *dPriv, int x, int y,
       ctx->st->flush(ctx->st, ST_FLUSH_FRONT, NULL, NULL, NULL);
 
       u_box_2d(x, dPriv->h - y - h, w, h, &box);
-      drisw_present_texture(ctx->st->pipe, dPriv, ptex, &box);
+      drisw_present_texture(dPriv, ptex, &box);
    }
 }
 
-static bool
+static void
 drisw_flush_frontbuffer(struct dri_context *ctx,
                         struct dri_drawable *drawable,
                         enum st_attachment_type statt)
 {
    struct pipe_resource *ptex;
 
-   if (!ctx || statt != ST_ATTACHMENT_FRONT_LEFT)
-      return false;
+   if (!ctx)
+      return;
 
    if (drawable->stvis.samples > 1) {
       /* Resolve the front buffer. */
@@ -309,10 +308,8 @@ drisw_flush_frontbuffer(struct dri_context *ctx,
    ptex = drawable->textures[statt];
 
    if (ptex) {
-      drisw_copy_to_front(ctx->st->pipe, ctx->dPriv, ptex);
+      drisw_copy_to_front(ctx->dPriv, ptex);
    }
-
-   return true;
 }
 
 /**
@@ -369,7 +366,7 @@ drisw_allocate_textures(struct dri_context *stctx,
 
       /* if we don't do any present, no need for display targets */
       if (statts[i] != ST_ATTACHMENT_DEPTH_STENCIL && !screen->swrast_no_present)
-         bind |= PIPE_BIND_DISPLAY_TARGET;
+         bind |= PIPE_BIND_DISPLAY_TARGET | PIPE_BIND_LINEAR;
 
       if (format == PIPE_FORMAT_NONE)
          continue;
@@ -423,7 +420,7 @@ drisw_update_tex_buffer(struct dri_drawable *drawable,
 
    get_drawable_info(dPriv, &x, &y, &w, &h);
 
-   map = pipe_texture_map(pipe, res,
+   map = pipe_transfer_map(pipe, res,
                            0, 0, // level, layer,
                            PIPE_MAP_WRITE,
                            x, y, w, h, &transfer);
@@ -441,7 +438,7 @@ drisw_update_tex_buffer(struct dri_drawable *drawable,
               ximage_stride);
    }
 
-   pipe_texture_unmap(pipe, transfer);
+   pipe_transfer_unmap(pipe, transfer);
 }
 
 static __DRIimageExtension driSWImageExtension = {
@@ -522,8 +519,9 @@ drisw_init_screen(__DRIscreen * sPriv)
    }
 
    if (pipe_loader_sw_probe_dri(&screen->dev, lf)) {
-      pscreen = pipe_loader_create_screen(screen->dev);
       dri_init_options(screen);
+
+      pscreen = pipe_loader_create_screen(screen->dev);
    }
 
    if (!pscreen)
@@ -540,15 +538,6 @@ drisw_init_screen(__DRIscreen * sPriv)
    else
       sPriv->extensions = drisw_screen_extensions;
    screen->lookup_egl_image = dri2_lookup_egl_image;
-
-   const __DRIimageLookupExtension *image = sPriv->dri2.image;
-   if (image &&
-       image->base.version >= 2 &&
-       image->validateEGLImage &&
-       image->lookupEGLImageValidated) {
-      screen->validate_egl_image = dri2_validate_egl_image;
-      screen->lookup_egl_image_validated = dri2_lookup_egl_image_validated;
-   }
 
    return configs;
 fail:

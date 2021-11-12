@@ -24,9 +24,7 @@
 #ifndef __FREEDRENO_UUID_H__
 #define __FREEDRENO_UUID_H__
 
-struct fd_dev_id;
-
 void fd_get_driver_uuid(void *uuid);
-void fd_get_device_uuid(void *uuid, const struct fd_dev_id *id);
+void fd_get_device_uuid(void *uuid, unsigned gpu_id);
 
 #endif /* __FREEDRENO_UUID_H__ */

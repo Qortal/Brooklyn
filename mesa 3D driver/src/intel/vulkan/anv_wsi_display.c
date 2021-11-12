@@ -22,6 +22,7 @@
 
 #include "anv_private.h"
 #include "wsi_common.h"
+#include "vk_format_info.h"
 #include "vk_util.h"
 #include "wsi_common_display.h"
 
@@ -184,7 +185,7 @@ anv_CreateDisplayPlaneSurfaceKHR(
    if (allocator)
      alloc = allocator;
    else
-     alloc = &instance->vk.alloc;
+     alloc = &instance->alloc;
 
    return wsi_create_display_surface(_instance, alloc, create_info, surface);
 }
@@ -314,25 +315,4 @@ anv_GetSwapchainCounterEXT(VkDevice _device,
    return wsi_get_swapchain_counter(
       _device, &device->physical->wsi_device,
       swapchain, flag_bits, value);
-}
-
-VkResult
-anv_AcquireDrmDisplayEXT(VkPhysicalDevice physical_device,
-                         int32_t drm_fd,
-                         VkDisplayKHR display)
-{
-   ANV_FROM_HANDLE(anv_physical_device, pdevice, physical_device);
-
-   return wsi_acquire_drm_display(physical_device, &pdevice->wsi_device, drm_fd, display);
-}
-
-VkResult
-anv_GetDrmDisplayEXT(VkPhysicalDevice physical_device,
-                     int32_t drm_fd,
-                     uint32_t connector_id,
-                     VkDisplayKHR *display)
-{
-   ANV_FROM_HANDLE(anv_physical_device, pdevice, physical_device);
-
-   return wsi_get_drm_display(physical_device, &pdevice->wsi_device, drm_fd, connector_id, display);
 }

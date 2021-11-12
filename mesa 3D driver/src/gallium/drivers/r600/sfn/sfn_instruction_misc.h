@@ -36,10 +36,6 @@ public:
    EmitVertex(int stream, bool cut);
    ECFOpCode op() const {return m_cut ? cf_cut_vertex: cf_emit_vertex;}
    int stream() const { return m_stream;}
-
-   bool accept(InstructionVisitor& visitor) override {return visitor.visit(*this);}
-   bool accept(ConstInstructionVisitor& visitor) const override {return visitor.visit(*this);}
-
 private:
 
    bool is_equal_to(const Instruction& lhs) const override;
@@ -53,10 +49,6 @@ public:
    WaitAck(int nack);
    ECFOpCode op() const {return cf_wait_ack;}
    int n_ack() const {return m_nack;}
-
-   bool accept(InstructionVisitor& visitor) override {return visitor.visit(*this);}
-   bool accept(ConstInstructionVisitor& visitor) const override {return visitor.visit(*this);}
-
 private:
 
    bool is_equal_to(const Instruction& lhs) const override;

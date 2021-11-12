@@ -2,7 +2,6 @@
 #include "pipe/p_context.h"
 #include "pipe/p_defines.h"
 #include "pipe/p_state.h"
-#include "util/compiler.h"
 #include "util/u_dynarray.h"
 #include "util/u_debug.h"
 #include "util/u_memory.h"
@@ -845,7 +844,7 @@ nvfx_vertprog_parse_decl_output(struct nvfx_vpc *vpc,
    case TGSI_SEMANTIC_GENERIC:
       /* this is really an identifier for VP/FP linkage */
       semantic_index += 8;
-      FALLTHROUGH;
+      /* fall through */
    case TGSI_SEMANTIC_TEXCOORD:
       for (i = 0; i < num_texcoords; i++) {
          if (vpc->vp->texcoord[i] == semantic_index) {

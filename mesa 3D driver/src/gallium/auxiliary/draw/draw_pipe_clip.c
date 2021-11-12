@@ -469,18 +469,12 @@ do_clip_tri(struct draw_stage *stage,
             new_edge = &outEdges[outcount];
             outlist[outcount++] = new_vert;
 
-            float denom = dp - dp_prev;
             if (dp < 0.0f) {
                /* Going out of bounds.  Avoid division by zero as we
                 * know dp != dp_prev from different_sign, above.
                 */
-               if (-dp < dp_prev) {
-                  float t = dp / denom;
-                  interp( clipper, new_vert, t, vert, vert_prev, viewport_index );
-               } else {
-                  float t = -dp_prev / denom;
-                  interp( clipper, new_vert, t, vert_prev, vert, viewport_index );
-               }
+               float t = dp / (dp - dp_prev);
+               interp( clipper, new_vert, t, vert, vert_prev, viewport_index );
 
                /* Whether or not to set edge flag for the new vert depends
                 * on whether it's a user-defined clipping plane.  We're
@@ -500,13 +494,8 @@ do_clip_tri(struct draw_stage *stage,
             else {
                /* Coming back in.
                 */
-               if (-dp_prev < dp) {
-                  float t = -dp_prev / denom;
-                  interp( clipper, new_vert, t, vert_prev, vert, viewport_index );
-               } else {
-                  float t = dp / denom;
-                  interp( clipper, new_vert, t, vert, vert_prev, viewport_index );
-               }
+               float t = dp_prev / (dp_prev - dp);
+               interp( clipper, new_vert, t, vert_prev, vert, viewport_index );
 
                /* Copy starting vert's edgeflag:
                 */

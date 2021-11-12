@@ -21,6 +21,7 @@
 
 """Run glcpp tests with various line endings."""
 
+from __future__ import print_function
 import argparse
 import difflib
 import errno
@@ -28,6 +29,7 @@ import io
 import os
 import subprocess
 import sys
+import tempfile
 
 # The meson version handles windows paths better, but if it's not available
 # fall back to shlex
@@ -49,32 +51,34 @@ def arg_parser():
     return parser.parse_args()
 
 
-def parse_test_file(contents, nl_format):
+def parse_test_file(filename, nl_format):
     """Check for any special arguments and return them as a list."""
     # Disable "universal newlines" mode; we can't directly use `nl_format` as
     # the `newline` argument, because the "bizarro" test uses something Python
     # considers invalid.
-    for l in contents.decode('utf-8').split(nl_format):
+    with io.open(filename, newline='') as f:
+        for l in f.read().split(nl_format):
             if 'glcpp-args:' in l:
                 return l.split('glcpp-args:')[1].strip().split()
     return []
 
 
-def test_output(glcpp, contents, expfile, nl_format='\n'):
+def test_output(glcpp, filename, expfile, nl_format='\n'):
     """Test that the output of glcpp is what we expect."""
-    extra_args = parse_test_file(contents, nl_format)
+    extra_args = parse_test_file(filename, nl_format)
 
-    proc = subprocess.Popen(
-        glcpp + extra_args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        stdin=subprocess.PIPE)
-    actual, _ = proc.communicate(contents)
-    actual = actual.decode('utf-8')
+    with open(filename, 'rb') as f:
+        proc = subprocess.Popen(
+            glcpp + extra_args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.PIPE)
+        actual, _ = proc.communicate(f.read())
+        actual = actual.decode('utf-8')
 
-    if proc.returncode == 255:
-        print("Test returned general error, possibly missing linker")
-        sys.exit(77)
+        if proc.returncode == 255:
+            print("Test returned general error, possibly missing linker")
+            sys.exit(77)
 
     with open(expfile, 'r') as f:
         expected = f.read()
@@ -90,19 +94,25 @@ def test_output(glcpp, contents, expfile, nl_format='\n'):
 
 def _valgrind(glcpp, filename):
     """Run valgrind and report any warnings."""
-    with open(filename, 'rb') as f:
-        contents = f.read()
-    extra_args = parse_test_file(contents, nl_format='\n')
+    extra_args = parse_test_file(filename, nl_format='\n')
 
-    proc = subprocess.Popen(
-        ['valgrind', '--error-exitcode=126'] + glcpp + extra_args,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        stdin=subprocess.PIPE)
-    _, errors = proc.communicate(contents)
-    if proc.returncode != 126:
-        return (True, [])
-    return (False, errors.decode('utf-8'))
+    try:
+        fd, tmpfile = tempfile.mkstemp()
+        os.close(fd)
+        with open(filename, 'rb') as f:
+            proc = subprocess.Popen(
+                ['valgrind', '--error-exitcode=31', '--log-file', tmpfile] + glcpp + extra_args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.PIPE)
+            proc.communicate(f.read())
+            if proc.returncode != 31:
+                return (True, [])
+        with open(tmpfile, 'rb') as f:
+            contents = f.read()
+        return (False, contents)
+    finally:
+        os.unlink(tmpfile)
 
 
 def test_unix(args):
@@ -119,9 +129,7 @@ def test_unix(args):
         total += 1
 
         testfile = os.path.join(args.testdir, filename)
-        with open(testfile, 'rb') as f:
-            contents = f.read()
-        valid, diff = test_output(args.glcpp, contents, testfile + '.expected')
+        valid, diff = test_output(args.glcpp, testfile, testfile + '.expected')
         if valid:
             passed += 1
             print('PASS')
@@ -149,12 +157,17 @@ def _replace_test(args, replace):
         print(   '{}:'.format(os.path.splitext(filename)[0]), end=' ')
         total += 1
         testfile = os.path.join(args.testdir, filename)
-
-        with open(testfile, 'rt') as f:
-            contents = f.read()
-        contents = contents.replace('\n', replace).encode('utf-8')
-        valid, diff = test_output(
-            args.glcpp, contents, testfile + '.expected', nl_format=replace)
+        try:
+            fd, tmpfile = tempfile.mkstemp()
+            os.close(fd)
+            with io.open(testfile, 'rt') as f:
+                contents = f.read()
+            with io.open(tmpfile, 'wt') as f:
+                f.write(contents.replace('\n', replace))
+            valid, diff = test_output(
+                args.glcpp, tmpfile, testfile + '.expected', nl_format=replace)
+        finally:
+            os.unlink(tmpfile)
 
         if valid:
             passed += 1

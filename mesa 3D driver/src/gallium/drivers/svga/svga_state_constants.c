@@ -671,7 +671,7 @@ emit_constbuf(struct svga_context *svga,
       }
    }
    else if (sbuf) {
-      dst_handle = svga_buffer_handle(svga, &sbuf->b, PIPE_BIND_CONSTANT_BUFFER);
+      dst_handle = svga_buffer_handle(svga, &sbuf->b.b, PIPE_BIND_CONSTANT_BUFFER);
       new_buf_size = align(buffer_size, 16);
       offset = buffer_offset;
    }
@@ -834,14 +834,14 @@ emit_constbuf_vgpu10(struct svga_context *svga, enum pipe_shader_type shader)
          /* GL's buffer range sizes can be any number of bytes but the
           * SVGA3D device requires a multiple of 16 bytes.
           */
-         const unsigned total_size = buffer->b.width0;
+         const unsigned total_size = buffer->b.b.width0;
 
          if (offset + align(size, 16) <= total_size) {
             /* round up size to multiple of 16 */
             size = align(size, 16);
          }
          else {
-            /* round down to multiple of 16 (this may cause rendering problems
+            /* round down to mulitple of 16 (this may cause rendering problems
              * but should avoid a device error).
              */
             size &= ~15;

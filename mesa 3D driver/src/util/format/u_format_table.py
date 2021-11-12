@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 CopyRight = '''
 /**************************************************************************
  *
@@ -90,12 +92,6 @@ def has_access(format):
         'p010',
         'p012',
         'p016',
-        'y210',
-        'y212',
-        'y216',
-        'y410',
-        'y412',
-        'y416',
         'xyuv',
         'ayuv',
         'r8g8_r8b8_unorm',
@@ -112,7 +108,7 @@ def has_access(format):
     ]
     if format.short_name() in noaccess_formats:
         return False
-    if format.layout in ('astc', 'atc'):
+    if format.layout in ('astc', 'atc', 'fxt1'):
         return False
     if format.layout == 'etc' and format.short_name() != 'etc1_rgb8':
         return False
@@ -129,7 +125,6 @@ def write_format_table_header(file):
 def write_format_table(formats):
     write_format_table_header(sys.stdout)
     print('#include "u_format_bptc.h"')
-    print('#include "u_format_fxt1.h"')
     print('#include "u_format_s3tc.h"')
     print('#include "u_format_rgtc.h"')
     print('#include "u_format_latc.h"')
@@ -170,11 +165,8 @@ def write_format_table(formats):
         print("   },")
 
     def generate_table_getter(type):
-        suffix = ""
-        if type == "unpack_":
-            suffix = "_generic"
         print("const struct util_format_%sdescription *" % type)
-        print("util_format_%sdescription%s(enum pipe_format format)" % (type, suffix))
+        print("util_format_%sdescription(enum pipe_format format)" % type)
         print("{")
         print("   if (format >= ARRAY_SIZE(util_format_%sdescriptions))" % (type))
         print("      return NULL;")
@@ -249,6 +241,7 @@ def write_format_table(formats):
     print("};")
     print()
     generate_table_getter("pack_")
+
     print('static const struct util_format_unpack_description')
     print('util_format_unpack_descriptions[] = {')
     for format in formats:
@@ -261,17 +254,10 @@ def write_format_table(formats):
         print("   [%s] = {" % (format.name,))
 
         if format.colorspace != ZS and not format.is_pure_color():
+            print("      .unpack_rgba_8unorm = &util_format_%s_unpack_rgba_8unorm," % sn)
             if format.layout == 's3tc' or format.layout == 'rgtc':
                 print("      .fetch_rgba_8unorm = &util_format_%s_fetch_rgba_8unorm," % sn)
-            if format.block_width > 1:
-                print(
-                    "      .unpack_rgba_8unorm_rect = &util_format_%s_unpack_rgba_8unorm," % sn)
-                print(
-                    "      .unpack_rgba_rect = &util_format_%s_unpack_rgba_float," % sn)
-            else:
-                print(
-                    "      .unpack_rgba_8unorm = &util_format_%s_unpack_rgba_8unorm," % sn)
-                print("      .unpack_rgba = &util_format_%s_unpack_rgba_float," % sn)
+            print("      .unpack_rgba = &util_format_%s_unpack_rgba_float," % sn)
 
         if format.has_depth():
             print("      .unpack_z_32unorm = &util_format_%s_unpack_z_32unorm," % sn)

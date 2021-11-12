@@ -86,7 +86,6 @@ struct draw_jit_sampler
    float max_lod;
    float lod_bias;
    float border_color[4];
-   float max_aniso;
 };
 
 
@@ -123,7 +122,6 @@ enum {
    DRAW_JIT_SAMPLER_MAX_LOD,
    DRAW_JIT_SAMPLER_LOD_BIAS,
    DRAW_JIT_SAMPLER_BORDER_COLOR,
-   DRAW_JIT_SAMPLER_MAX_ANISO,
    DRAW_JIT_SAMPLER_NUM_FIELDS  /* number of fields above */
 };
 
@@ -170,8 +168,6 @@ struct draw_jit_context
 
    const uint32_t *vs_ssbos[LP_MAX_TGSI_SHADER_BUFFERS];
    int num_vs_ssbos[LP_MAX_TGSI_SHADER_BUFFERS];
-
-   const float *aniso_filter_table;
 };
 
 enum {
@@ -184,7 +180,6 @@ enum {
    DRAW_JIT_CTX_IMAGES               = 6,
    DRAW_JIT_CTX_SSBOS                = 7,
    DRAW_JIT_CTX_NUM_SSBOS            = 8,
-   DRAW_JIT_CTX_ANISO_FILTER_TABLE   = 9,
    DRAW_JIT_CTX_NUM_FIELDS
 };
 
@@ -214,9 +209,6 @@ enum {
 
 #define draw_jit_context_num_vs_ssbos(_gallivm, _ptr) \
    lp_build_struct_get_ptr(_gallivm, _ptr, DRAW_JIT_CTX_NUM_SSBOS, "num_vs_ssbos")
-
-#define draw_jit_context_aniso_filter_table(_gallivm, _ptr) \
-   lp_build_struct_get(_gallivm, _ptr, DRAW_JIT_CTX_ANISO_FILTER_TABLE, "aniso_filter_table")
 
 
 #define draw_jit_header_id(_gallivm, _ptr)              \
@@ -278,7 +270,6 @@ struct draw_gs_jit_context
    const uint32_t *ssbos[LP_MAX_TGSI_SHADER_BUFFERS];
    int num_ssbos[LP_MAX_TGSI_SHADER_BUFFERS];
 
-   const float *aniso_filter_table;
 };
 
 enum {
@@ -298,8 +289,7 @@ enum {
    DRAW_GS_JIT_CTX_EMITTED_PRIMS = 9,
    DRAW_GS_JIT_CTX_SSBOS = 10,
    DRAW_GS_JIT_CTX_NUM_SSBOS = 11,
-   DRAW_GS_JIT_CTX_ANISO_FILTER_TABLE = 12,
-   DRAW_GS_JIT_CTX_NUM_FIELDS = 13
+   DRAW_GS_JIT_CTX_NUM_FIELDS = 12
 };
 
 #define draw_gs_jit_context_constants(_gallivm, _ptr) \
@@ -338,8 +328,6 @@ enum {
 #define draw_gs_jit_context_num_ssbos(_gallivm, _ptr) \
    lp_build_struct_get_ptr(_gallivm, _ptr, DRAW_GS_JIT_CTX_NUM_SSBOS, "num_ssbos")
 
-#define draw_gs_jit_context_aniso_filter_table(_gallivm, _ptr) \
-   lp_build_struct_get(_gallivm, _ptr, DRAW_GS_JIT_CTX_ANISO_FILTER_TABLE, "aniso_filter_table")
 
 struct draw_tcs_jit_context {
    const float *constants[LP_MAX_TGSI_CONST_BUFFERS];
@@ -355,8 +343,6 @@ struct draw_tcs_jit_context {
 
    const uint32_t *ssbos[LP_MAX_TGSI_SHADER_BUFFERS];
    int num_ssbos[LP_MAX_TGSI_SHADER_BUFFERS];
-
-   const float *aniso_filter_table;
 };
 
 enum {
@@ -367,8 +353,7 @@ enum {
    DRAW_TCS_JIT_CTX_IMAGES = DRAW_JIT_CTX_IMAGES,
    DRAW_TCS_JIT_CTX_SSBOS = 7,
    DRAW_TCS_JIT_CTX_NUM_SSBOS = 8,
-   DRAW_TCS_JIT_CTX_ANISO_FILTER_TABLE = 9,
-   DRAW_TCS_JIT_CTX_NUM_FIELDS = 10,
+   DRAW_TCS_JIT_CTX_NUM_FIELDS = 9,
 };
 
 #define draw_tcs_jit_context_constants(_gallivm, _ptr) \
@@ -392,9 +377,6 @@ enum {
 #define draw_tcs_jit_context_num_ssbos(_gallivm, _ptr) \
    lp_build_struct_get_ptr(_gallivm, _ptr, DRAW_TCS_JIT_CTX_NUM_SSBOS, "num_ssbos")
 
-#define draw_tcs_jit_context_aniso_filter_table(_gallivm, _ptr) \
-   lp_build_struct_get(_gallivm, _ptr, DRAW_TCS_JIT_CTX_ANISO_FILTER_TABLE, "aniso_filter_table")
-
 struct draw_tes_jit_context {
    const float *constants[LP_MAX_TGSI_CONST_BUFFERS];
    int num_constants[LP_MAX_TGSI_CONST_BUFFERS];
@@ -409,8 +391,6 @@ struct draw_tes_jit_context {
 
    const uint32_t *ssbos[LP_MAX_TGSI_SHADER_BUFFERS];
    int num_ssbos[LP_MAX_TGSI_SHADER_BUFFERS];
-
-   const float *aniso_filter_table;
 };
 
 enum {
@@ -421,8 +401,7 @@ enum {
    DRAW_TES_JIT_CTX_IMAGES = DRAW_JIT_CTX_IMAGES,
    DRAW_TES_JIT_CTX_SSBOS = 7,
    DRAW_TES_JIT_CTX_NUM_SSBOS = 8,
-   DRAW_TES_JIT_CTX_ANISO_FILTER_TABLE = 9,
-   DRAW_TES_JIT_CTX_NUM_FIELDS = 10,
+   DRAW_TES_JIT_CTX_NUM_FIELDS = 9,
 };
 
 #define draw_tes_jit_context_constants(_gallivm, _ptr) \
@@ -446,9 +425,6 @@ enum {
 #define draw_tes_jit_context_num_ssbos(_gallivm, _ptr) \
    lp_build_struct_get_ptr(_gallivm, _ptr, DRAW_TES_JIT_CTX_NUM_SSBOS, "num_ssbos")
 
-#define draw_tes_jit_context_aniso_filter_table(_gallivm, _ptr) \
-   lp_build_struct_get(_gallivm, _ptr, DRAW_TES_JIT_CTX_ANISO_FILTER_TABLE, "aniso_filter_table")
-
 typedef boolean
 (*draw_jit_vert_func)(struct draw_jit_context *context,
                       struct vertex_header *io,
@@ -461,7 +437,7 @@ typedef boolean
                       unsigned vertex_id_offset,
                       unsigned start_instance,
                       const unsigned *fetch_elts,
-                      unsigned draw_id, unsigned view_id);
+                      unsigned draw_id);
 
 
 typedef int
@@ -471,15 +447,13 @@ typedef int
                     unsigned num_prims,
                     unsigned instance_id,
                     int *prim_ids,
-                    unsigned invocation_id,
-                    unsigned view_id);
+                    unsigned invocation_id);
 
 typedef int
 (*draw_tcs_jit_func)(struct draw_tcs_jit_context *context,
                      float inputs[32][NUM_TCS_INPUTS][TGSI_NUM_CHANNELS],
                      float outputs[32][PIPE_MAX_SHADER_INPUTS][TGSI_NUM_CHANNELS],
-                     uint32_t prim_id, uint32_t patch_vertices_in,
-                     unsigned view_id);
+                     uint32_t prim_id, uint32_t patch_vertices_in);
 
 typedef int
 (*draw_tes_jit_func)(struct draw_tes_jit_context *context,
@@ -487,8 +461,7 @@ typedef int
                      struct vertex_header *io,
                      uint32_t prim_id, uint32_t num_tess_coord,
                      float *tess_coord_x, float *tess_coord_y, float *tess_outer,
-                     float *tess_inner, uint32_t patch_vertices_in,
-                     unsigned view_id);
+                     float *tess_inner, uint32_t patch_vertices_in);
 
 
 struct draw_llvm_variant_key
@@ -527,7 +500,7 @@ struct draw_gs_llvm_variant_key
    unsigned nr_images:8;
    unsigned num_outputs:8;
    /* note padding here - must use memset */
-   unsigned clamp_vertex_color:1;
+
    struct draw_sampler_static_state samplers[1];
    /* Followed by variable number of images.*/
 };
@@ -546,9 +519,6 @@ struct draw_tes_llvm_variant_key
    unsigned nr_samplers:8;
    unsigned nr_sampler_views:8;
    unsigned nr_images:8;
-   unsigned primid_output:7;
-   unsigned primid_needed:1;
-   unsigned clamp_vertex_color:1;
    struct draw_sampler_static_state samplers[1];
    /* Followed by variable number of images.*/
 };

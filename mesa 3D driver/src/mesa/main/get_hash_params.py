@@ -247,7 +247,7 @@ descriptor=[
   [ "TEXTURE_COORD_ARRAY_BUFFER_BINDING_ARB", "LOC_CUSTOM, TYPE_INT, NO_OFFSET, NO_EXTRA" ],
 
 # GL_OES_point_sprite
-  [ "POINT_SPRITE", "CONTEXT_BOOL(Point.PointSprite), extra_ARB_point_sprite" ],
+  [ "POINT_SPRITE_NV", "CONTEXT_BOOL(Point.PointSprite), extra_NV_point_sprite_ARB_point_sprite" ],
 ]},
 
 
@@ -505,21 +505,21 @@ descriptor=[
   [ "TEXTURE_BUFFER_OFFSET_ALIGNMENT", "CONTEXT_INT(Const.TextureBufferOffsetAlignment), extra_ARB_texture_buffer_range" ],
 
 # GL_ARB_shader_image_load_store / GLES 3.1
-  [ "MAX_IMAGE_UNITS", "CONTEXT_INT(Const.MaxImageUnits), extra_ARB_shader_image_load_store_es31" ],
-  [ "MAX_VERTEX_IMAGE_UNIFORMS", "CONTEXT_INT(Const.Program[MESA_SHADER_VERTEX].MaxImageUniforms), extra_ARB_shader_image_load_store_es31" ],
-  [ "MAX_FRAGMENT_IMAGE_UNIFORMS", "CONTEXT_INT(Const.Program[MESA_SHADER_FRAGMENT].MaxImageUniforms), extra_ARB_shader_image_load_store_es31" ],
-  [ "MAX_COMBINED_IMAGE_UNIFORMS", "CONTEXT_INT(Const.MaxCombinedImageUniforms), extra_ARB_shader_image_load_store_es31" ],
+  [ "MAX_IMAGE_UNITS", "CONTEXT_INT(Const.MaxImageUnits), extra_ARB_shader_image_load_store" ],
+  [ "MAX_VERTEX_IMAGE_UNIFORMS", "CONTEXT_INT(Const.Program[MESA_SHADER_VERTEX].MaxImageUniforms), extra_ARB_shader_image_load_store" ],
+  [ "MAX_FRAGMENT_IMAGE_UNIFORMS", "CONTEXT_INT(Const.Program[MESA_SHADER_FRAGMENT].MaxImageUniforms), extra_ARB_shader_image_load_store" ],
+  [ "MAX_COMBINED_IMAGE_UNIFORMS", "CONTEXT_INT(Const.MaxCombinedImageUniforms), extra_ARB_shader_image_load_store" ],
 
 # GL_ARB_shader_atomic_counters / GLES 3.1
-  [ "ATOMIC_COUNTER_BUFFER_BINDING", "LOC_CUSTOM, TYPE_INT, 0, extra_ARB_shader_atomic_counters_es31" ],
-  [ "MAX_ATOMIC_COUNTER_BUFFER_BINDINGS", "CONTEXT_INT(Const.MaxAtomicBufferBindings), extra_ARB_shader_atomic_counters_es31" ],
-  [ "MAX_ATOMIC_COUNTER_BUFFER_SIZE", "CONTEXT_INT(Const.MaxAtomicBufferSize), extra_ARB_shader_atomic_counters_es31" ],
-  [ "MAX_VERTEX_ATOMIC_COUNTER_BUFFERS", "CONTEXT_INT(Const.Program[MESA_SHADER_VERTEX].MaxAtomicBuffers), extra_ARB_shader_atomic_counters_es31" ],
-  [ "MAX_VERTEX_ATOMIC_COUNTERS", "CONTEXT_INT(Const.Program[MESA_SHADER_VERTEX].MaxAtomicCounters), extra_ARB_shader_atomic_counters_es31" ],
-  [ "MAX_FRAGMENT_ATOMIC_COUNTER_BUFFERS", "CONTEXT_INT(Const.Program[MESA_SHADER_FRAGMENT].MaxAtomicBuffers), extra_ARB_shader_atomic_counters_es31" ],
-  [ "MAX_FRAGMENT_ATOMIC_COUNTERS", "CONTEXT_INT(Const.Program[MESA_SHADER_FRAGMENT].MaxAtomicCounters), extra_ARB_shader_atomic_counters_es31" ],
-  [ "MAX_COMBINED_ATOMIC_COUNTER_BUFFERS", "CONTEXT_INT(Const.MaxCombinedAtomicBuffers), extra_ARB_shader_atomic_counters_es31" ],
-  [ "MAX_COMBINED_ATOMIC_COUNTERS", "CONTEXT_INT(Const.MaxCombinedAtomicCounters), extra_ARB_shader_atomic_counters_es31" ],
+  [ "ATOMIC_COUNTER_BUFFER_BINDING", "LOC_CUSTOM, TYPE_INT, 0, extra_ARB_shader_atomic_counters" ],
+  [ "MAX_ATOMIC_COUNTER_BUFFER_BINDINGS", "CONTEXT_INT(Const.MaxAtomicBufferBindings), extra_ARB_shader_atomic_counters" ],
+  [ "MAX_ATOMIC_COUNTER_BUFFER_SIZE", "CONTEXT_INT(Const.MaxAtomicBufferSize), extra_ARB_shader_atomic_counters" ],
+  [ "MAX_VERTEX_ATOMIC_COUNTER_BUFFERS", "CONTEXT_INT(Const.Program[MESA_SHADER_VERTEX].MaxAtomicBuffers), extra_ARB_shader_atomic_counters" ],
+  [ "MAX_VERTEX_ATOMIC_COUNTERS", "CONTEXT_INT(Const.Program[MESA_SHADER_VERTEX].MaxAtomicCounters), extra_ARB_shader_atomic_counters" ],
+  [ "MAX_FRAGMENT_ATOMIC_COUNTER_BUFFERS", "CONTEXT_INT(Const.Program[MESA_SHADER_FRAGMENT].MaxAtomicBuffers), extra_ARB_shader_atomic_counters" ],
+  [ "MAX_FRAGMENT_ATOMIC_COUNTERS", "CONTEXT_INT(Const.Program[MESA_SHADER_FRAGMENT].MaxAtomicCounters), extra_ARB_shader_atomic_counters" ],
+  [ "MAX_COMBINED_ATOMIC_COUNTER_BUFFERS", "CONTEXT_INT(Const.MaxCombinedAtomicBuffers), extra_ARB_shader_atomic_counters" ],
+  [ "MAX_COMBINED_ATOMIC_COUNTERS", "CONTEXT_INT(Const.MaxCombinedAtomicCounters), extra_ARB_shader_atomic_counters" ],
 
 # GL_ARB_texture_multisample / GLES 3.1
   [ "TEXTURE_BINDING_2D_MULTISAMPLE", "LOC_CUSTOM, TYPE_INT, TEXTURE_2D_MULTISAMPLE_INDEX, extra_ARB_texture_multisample" ],
@@ -701,7 +701,7 @@ descriptor=[
   [ "ALPHA_SCALE", "CONTEXT_FLOAT(Pixel.AlphaScale), NO_EXTRA" ],
   [ "ATTRIB_STACK_DEPTH", "CONTEXT_INT(AttribStackDepth), NO_EXTRA" ],
   [ "AUTO_NORMAL", "CONTEXT_BOOL(Eval.AutoNormal), NO_EXTRA" ],
-  [ "AUX_BUFFERS", "CONST(0), NO_EXTRA" ],
+  [ "AUX_BUFFERS", "BUFFER_INT(Visual.numAuxBuffers), NO_EXTRA" ],
   [ "BLUE_BIAS", "CONTEXT_FLOAT(Pixel.BlueBias), NO_EXTRA" ],
   [ "BLUE_SCALE", "CONTEXT_FLOAT(Pixel.BlueScale), NO_EXTRA" ],
   [ "CLIENT_ATTRIB_STACK_DEPTH", "CONTEXT_INT(ClientAttribStackDepth), NO_EXTRA" ],
@@ -867,8 +867,9 @@ descriptor=[
 # GL_IBM_rasterpos_clip
   [ "RASTER_POSITION_UNCLIPPED_IBM", "CONTEXT_BOOL(Transform.RasterPositionUnclipped), NO_EXTRA" ],
 
-# GL_ARB_point_sprite
-  [ "POINT_SPRITE_COORD_ORIGIN", "CONTEXT_ENUM16(Point.SpriteOrigin), extra_ARB_point_sprite" ],
+# GL_NV_point_sprite
+  [ "POINT_SPRITE_R_MODE_NV", "CONTEXT_ENUM16(Point.SpriteRMode), extra_NV_point_sprite" ],
+  [ "POINT_SPRITE_COORD_ORIGIN", "CONTEXT_ENUM16(Point.SpriteOrigin), extra_NV_point_sprite_ARB_point_sprite" ],
 
 # GL_NV_texture_rectangle
   [ "TEXTURE_RECTANGLE_NV", "LOC_CUSTOM, TYPE_BOOLEAN, 0, extra_NV_texture_rectangle" ],

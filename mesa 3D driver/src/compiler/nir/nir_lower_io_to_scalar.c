@@ -52,7 +52,7 @@ lower_load_input_to_scalar(nir_builder *b, nir_intrinsic_instr *intr)
       nir_intrinsic_set_dest_type(chan_intr, nir_intrinsic_dest_type(intr));
       nir_intrinsic_set_io_semantics(chan_intr, nir_intrinsic_io_semantics(intr));
       /* offset */
-      nir_src_copy(&chan_intr->src[0], &intr->src[0]);
+      nir_src_copy(&chan_intr->src[0], &intr->src[0], chan_intr);
 
       nir_builder_instr_insert(b, &chan_intr->instr);
 
@@ -60,7 +60,8 @@ lower_load_input_to_scalar(nir_builder *b, nir_intrinsic_instr *intr)
    }
 
    nir_ssa_def_rewrite_uses(&intr->dest.ssa,
-                            nir_vec(b, loads, intr->num_components));
+                            nir_src_for_ssa(nir_vec(b, loads,
+                                                    intr->num_components)));
    nir_instr_remove(&intr->instr);
 }
 
@@ -88,7 +89,7 @@ lower_store_output_to_scalar(nir_builder *b, nir_intrinsic_instr *intr)
       /* value */
       chan_intr->src[0] = nir_src_for_ssa(nir_channel(b, value, i));
       /* offset */
-      nir_src_copy(&chan_intr->src[1], &intr->src[1]);
+      nir_src_copy(&chan_intr->src[1], &intr->src[1], chan_intr);
 
       nir_builder_instr_insert(b, &chan_intr->instr);
    }
@@ -222,7 +223,7 @@ lower_load_to_scalar_early(nir_builder *b, nir_intrinsic_instr *intr,
       if (intr->intrinsic == nir_intrinsic_interp_deref_at_offset ||
           intr->intrinsic == nir_intrinsic_interp_deref_at_sample ||
           intr->intrinsic == nir_intrinsic_interp_deref_at_vertex)
-         nir_src_copy(&chan_intr->src[1], &intr->src[1]);
+         nir_src_copy(&chan_intr->src[1], &intr->src[1], &chan_intr->instr);
 
       nir_builder_instr_insert(b, &chan_intr->instr);
 
@@ -230,7 +231,8 @@ lower_load_to_scalar_early(nir_builder *b, nir_intrinsic_instr *intr,
    }
 
    nir_ssa_def_rewrite_uses(&intr->dest.ssa,
-                            nir_vec(b, loads, intr->num_components));
+                            nir_src_for_ssa(nir_vec(b, loads,
+                                                    intr->num_components)));
 
    /* Remove the old load intrinsic */
    nir_instr_remove(&intr->instr);

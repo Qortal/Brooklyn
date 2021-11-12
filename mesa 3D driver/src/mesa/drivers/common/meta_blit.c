@@ -176,8 +176,8 @@ blitframebuffer_texture(struct gl_context *ctx,
 
    target = texObj->Target;
    fb_tex_blit.tex_obj = texObj;
-   fb_tex_blit.baseLevelSave = texObj->Attrib.BaseLevel;
-   fb_tex_blit.maxLevelSave = texObj->Attrib.MaxLevel;
+   fb_tex_blit.baseLevelSave = texObj->BaseLevel;
+   fb_tex_blit.maxLevelSave = texObj->MaxLevel;
    fb_tex_blit.stencilSamplingSave = texObj->StencilSampling;
 
    if (glsl_version) {
@@ -329,11 +329,11 @@ _mesa_meta_fb_tex_blit_end(struct gl_context *ctx, GLenum target,
       /* If the target restricts values for base level or max level, we assume
        * that the original values were valid.
        */
-      if (blit->baseLevelSave != texObj->Attrib.BaseLevel)
+      if (blit->baseLevelSave != texObj->BaseLevel)
          _mesa_texture_parameteriv(ctx, texObj, GL_TEXTURE_BASE_LEVEL,
                                    &blit->baseLevelSave, false);
 
-      if (blit->maxLevelSave != texObj->Attrib.MaxLevel)
+      if (blit->maxLevelSave != texObj->MaxLevel)
          _mesa_texture_parameteriv(ctx, texObj, GL_TEXTURE_MAX_LEVEL,
                                    &blit->maxLevelSave, false);
 
@@ -393,7 +393,7 @@ setup_sampler(struct gl_context *ctx, struct gl_texture_object *texObj,
    _mesa_bind_sampler(ctx, ctx->Texture.CurrentUnit, samp_obj);
    _mesa_set_sampler_filters(ctx, samp_obj, filter, filter);
    _mesa_set_sampler_wrap(ctx, samp_obj, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE,
-                          samp_obj->Attrib.WrapR);
+                          samp_obj->WrapR);
 
    /* Prepare src texture state */
    _mesa_bind_texture(ctx, target, texObj);

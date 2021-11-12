@@ -47,10 +47,10 @@
 /** Subclass of draw_stage */
 struct stipple_stage {
    struct draw_stage stage;
-   unsigned counter;
+   float counter;
    ushort pattern;
    ushort factor;
-   bool rectangular;
+   bool smooth;
 };
 
 
@@ -110,9 +110,9 @@ emit_segment(struct draw_stage *stage, struct prim_header *header,
 
 
 static inline bool
-stipple_test(unsigned counter, ushort pattern, ushort factor)
+stipple_test(int counter, ushort pattern, ushort factor)
 {
-   unsigned b = (counter / factor) & 0xf;
+   int b = (counter / factor) & 0xf;
    return !!((1 << b) & pattern);
 }
 
@@ -141,7 +141,7 @@ stipple_line(struct draw_stage *stage, struct prim_header *header)
    if (header->flags & DRAW_PIPE_RESET_STIPPLE)
       stipple->counter = 0;
 
-   if (stipple->rectangular) {
+   if (stipple->smooth) {
       float dx = x1 - x0;
       float dy = y1 - y0;
       length = sqrtf(dx*dx + dy*dy);
@@ -159,7 +159,7 @@ stipple_line(struct draw_stage *stage, struct prim_header *header)
    /* XXX ToDo: instead of iterating pixel-by-pixel, use a look-up table.
     */
    for (i = 0; i < intlength; i++) {
-      bool result = stipple_test(stipple->counter + i,
+      bool result = stipple_test((int)stipple->counter + i,
                                  stipple->pattern, stipple->factor);
       if (result != state) {
          /* changing from "off" to "on" or vice versa */
@@ -178,7 +178,7 @@ stipple_line(struct draw_stage *stage, struct prim_header *header)
    if (state && start < length)
       emit_segment(stage, header, start / length, 1.0);
 
-   stipple->counter += intlength;
+   stipple->counter += length;
 }
 
 
@@ -216,7 +216,7 @@ stipple_first_line(struct draw_stage *stage,
 
    stipple->pattern = draw->rasterizer->line_stipple_pattern;
    stipple->factor = draw->rasterizer->line_stipple_factor + 1;
-   stipple->rectangular = draw->rasterizer->line_rectangular;
+   stipple->smooth = draw->rasterizer->line_smooth;
 
    stage->line = stipple_line;
    stage->line(stage, header);

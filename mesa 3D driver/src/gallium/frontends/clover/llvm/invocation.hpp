@@ -24,25 +24,25 @@
 #define CLOVER_LLVM_INVOCATION_HPP
 
 #include "core/error.hpp"
-#include "core/binary.hpp"
+#include "core/module.hpp"
 #include "core/program.hpp"
 #include "pipe/p_defines.h"
 
 namespace clover {
    namespace llvm {
-      binary compile_program(const std::string &source,
+      module compile_program(const std::string &source,
                              const header_map &headers,
                              const device &device,
                              const std::string &opts,
                              std::string &r_log);
 
-      binary link_program(const std::vector<binary> &binaries,
+      module link_program(const std::vector<module> &modules,
                           const device &device,
                           const std::string &opts,
                           std::string &r_log);
 
 #ifdef HAVE_CLOVER_SPIRV
-      binary compile_to_spirv(const std::string &source,
+      module compile_to_spirv(const std::string &source,
                               const header_map &headers,
                               const device &dev,
                               const std::string &opts,

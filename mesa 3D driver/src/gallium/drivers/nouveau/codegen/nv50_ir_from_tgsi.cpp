@@ -1012,9 +1012,6 @@ public:
    std::map<int, std::pair<int, int> > tempArrayInfo;
    std::vector<int> tempArrayId;
 
-   std::map<int, int> bufferIds;
-   std::map<int, int> imageIds;
-
    int clipVertexOutput;
 
    struct TextureView {
@@ -1044,7 +1041,6 @@ public:
    } immd;
 
 private:
-   int gmemSlot;
    nv50_ir::Program *prog;
    int inferSysValDirection(unsigned sn) const;
    bool scanDeclaration(const struct tgsi_full_declaration *);
@@ -1060,8 +1056,7 @@ private:
 
 Source::Source(struct nv50_ir_prog_info *info, struct nv50_ir_prog_info_out *info_out,
                nv50_ir::Program *prog)
-:  insns(NULL), info(info), info_out(info_out), clipVertexOutput(-1),
-   gmemSlot(0), prog(prog)
+:  insns(NULL), info(info), info_out(info_out), clipVertexOutput(-1), prog(prog)
 {
    tokens = (const struct tgsi_token *)info->bin.source;
 
@@ -1185,7 +1180,6 @@ void Source::scanProperty(const struct tgsi_full_property *prop)
    case TGSI_PROPERTY_FS_COORD_PIXEL_CENTER:
    case TGSI_PROPERTY_FS_DEPTH_LAYOUT:
    case TGSI_PROPERTY_GS_INPUT_PRIM:
-   case TGSI_PROPERTY_FS_BLEND_EQUATION_ADVANCED:
       // we don't care
       break;
    case TGSI_PROPERTY_VS_PROHIBIT_UCPS:
@@ -1365,7 +1359,7 @@ bool Source::scanDeclaration(const struct tgsi_full_declaration *decl)
             break;
          case TGSI_SEMANTIC_PATCH:
             info_out->numPatchConstants = MAX2(info_out->numPatchConstants, si + 1);
-            FALLTHROUGH;
+            /* fallthrough */
          case TGSI_SEMANTIC_TESSOUTER:
          case TGSI_SEMANTIC_TESSINNER:
             info_out->out[i].patch = 1;
@@ -1442,27 +1436,12 @@ bool Source::scanDeclaration(const struct tgsi_full_declaration *decl)
    case TGSI_FILE_BUFFER:
       for (i = first; i <= last; ++i)
          bufferAtomics[i] = decl->Declaration.Atomic;
-      if (info->type == PIPE_SHADER_COMPUTE && info->target < NVISA_GF100_CHIPSET) {
-         for (i = first; i <= last; i++) {
-            bufferIds.insert(std::make_pair(i, gmemSlot));
-            info_out->prop.cp.gmem[gmemSlot++] = {.valid = 1, .image = 0, .slot = i};
-            assert(gmemSlot < 16);
-         }
-      }
-      break;
-   case TGSI_FILE_IMAGE:
-      if (info->type == PIPE_SHADER_COMPUTE && info->target < NVISA_GF100_CHIPSET) {
-         for (i = first; i <= last; i++) {
-            imageIds.insert(std::make_pair(i, gmemSlot));
-            info_out->prop.cp.gmem[gmemSlot++] = {.valid = 1, .image = 1, .slot = i};
-            assert(gmemSlot < 16);
-         }
-      }
       break;
    case TGSI_FILE_ADDRESS:
    case TGSI_FILE_CONSTANT:
    case TGSI_FILE_IMMEDIATE:
    case TGSI_FILE_SAMPLER:
+   case TGSI_FILE_IMAGE:
       break;
    default:
       ERROR("unhandled TGSI_FILE %d\n", decl->Declaration.File);
@@ -1697,8 +1676,6 @@ private:
 
    // Symbol *getResourceBase(int r);
    void getImageCoords(std::vector<Value *>&, int s);
-   int remapImageId(int);
-   int remapBufferId(int);
 
    void handleLOAD(Value *dst0[4]);
    void handleSTORE();
@@ -1714,7 +1691,7 @@ private:
 
    class BindArgumentsPass : public Pass {
    public:
-      BindArgumentsPass(Converter &conv) : conv(conv), sub(NULL) { }
+      BindArgumentsPass(Converter &conv) : conv(conv) { }
 
    private:
       Converter &conv;
@@ -1800,7 +1777,6 @@ Converter::makeSym(uint tgsiFile, int fileIdx, int idx, int c, uint32_t address)
          break;
       case TGSI_MEMORY_TYPE_SHARED:
          sym->setFile(FILE_MEMORY_SHARED);
-         address += info->prop.cp.inputOffset;
          break;
       case TGSI_MEMORY_TYPE_INPUT:
          assert(prog->getType() == Program::TYPE_COMPUTE);
@@ -2089,7 +2065,7 @@ Converter::fetchSrc(tgsi::Instruction::SrcRegister src, int c, Value *ptr)
          arrayid = code->tempArrayId[idx];
       adjustTempIndex(arrayid, idx, idx2d);
    }
-      FALLTHROUGH;
+      /* fallthrough */
    default:
       return getArrayForFile(src.getFile(), idx2d)->load(
          sub.cur->values, idx, swz, shiftAddress(ptr));
@@ -2458,7 +2434,7 @@ Converter::handleFBFETCH(Value *dst[4])
    unsigned int c, d;
 
    texi->tex.target = TEX_TARGET_2D_MS_ARRAY;
-   texi->tex.levelZero = true;
+   texi->tex.levelZero = 1;
    texi->tex.useOffsets = 0;
 
    for (c = 0, d = 0; c < 4; ++c) {
@@ -2632,30 +2608,12 @@ Converter::getImageCoords(std::vector<Value *> &coords, int s)
       coords.push_back(fetchSrc(s, 3));
 }
 
-int
-Converter::remapBufferId(int id)
-{
-   std::map<int, int>::const_iterator it = code->bufferIds.find(id);
-   if (it != code->bufferIds.end())
-      return it->second;
-   return id;
-}
-
-int
-Converter::remapImageId(int id)
-{
-   std::map<int, int>::const_iterator it = code->imageIds.find(id);
-   if (it != code->imageIds.end())
-      return it->second;
-   return id;
-}
-
 // For raw loads, granularity is 4 byte.
 // Usage of the texture read mask on OP_SULDP is not allowed.
 void
 Converter::handleLOAD(Value *dst0[4])
 {
-   int r = tgsi.getSrc(0).getIndex(0);
+   const int r = tgsi.getSrc(0).getIndex(0);
    int c;
    std::vector<Value *> off, src, ldv, def;
    Value *ind = NULL;
@@ -2665,8 +2623,6 @@ Converter::handleLOAD(Value *dst0[4])
 
    switch (tgsi.getSrc(0).getFile()) {
    case TGSI_FILE_BUFFER:
-      r = remapBufferId(r);
-      /* fallthrough */
    case TGSI_FILE_MEMORY:
       for (c = 0; c < 4; ++c) {
          if (!dst0[c])
@@ -2690,7 +2646,7 @@ Converter::handleLOAD(Value *dst0[4])
 
          Instruction *ld = mkLoad(TYPE_U32, dst0[c], sym, off);
          if (tgsi.getSrc(0).getFile() == TGSI_FILE_BUFFER &&
-             code->bufferAtomics[tgsi.getSrc(0).getIndex(0)])
+             code->bufferAtomics[r])
             ld->cache = nv50_ir::CACHE_CG;
          else
             ld->cache = tgsi.getCacheMode();
@@ -2699,7 +2655,6 @@ Converter::handleLOAD(Value *dst0[4])
       }
       break;
    default: {
-      r = remapImageId(r);
       getImageCoords(off, 1);
       def.resize(4);
 
@@ -2807,7 +2762,7 @@ Converter::handleLOAD(Value *dst0[4])
 void
 Converter::handleSTORE()
 {
-   int r = tgsi.getDst(0).getIndex(0);
+   const int r = tgsi.getDst(0).getIndex(0);
    int c;
    std::vector<Value *> off, src, dummy;
    Value *ind = NULL;
@@ -2817,8 +2772,6 @@ Converter::handleSTORE()
 
    switch (tgsi.getDst(0).getFile()) {
    case TGSI_FILE_BUFFER:
-      r = remapBufferId(r);
-      /* fallthrough */
    case TGSI_FILE_MEMORY:
       for (c = 0; c < 4; ++c) {
          if (!(tgsi.getDst(0).getMask() & (1 << c)))
@@ -2843,7 +2796,6 @@ Converter::handleSTORE()
       }
       break;
    default: {
-      r = remapImageId(r);
       getImageCoords(off, 0);
       src = off;
 
@@ -2927,7 +2879,7 @@ Converter::handleSTORE()
 void
 Converter::handleATOM(Value *dst0[4], DataType ty, uint16_t subOp)
 {
-   int r = tgsi.getSrc(0).getIndex(0);
+   const int r = tgsi.getSrc(0).getIndex(0);
    std::vector<Value *> srcv;
    std::vector<Value *> defv;
    LValue *dst = getScratch();
@@ -2938,8 +2890,6 @@ Converter::handleATOM(Value *dst0[4], DataType ty, uint16_t subOp)
 
    switch (tgsi.getSrc(0).getFile()) {
    case TGSI_FILE_BUFFER:
-      r = remapBufferId(r);
-      /* fallthrough */
    case TGSI_FILE_MEMORY:
       for (int c = 0; c < 4; ++c) {
          if (!dst0[c])
@@ -2968,7 +2918,6 @@ Converter::handleATOM(Value *dst0[4], DataType ty, uint16_t subOp)
             dst0[c] = dst; // not equal to rDst so handleInstruction will do mkMov
       break;
    default: {
-      r = remapImageId(r);
       getImageCoords(srcv, 1);
       defv.push_back(dst);
       srcv.push_back(fetchSrc(2, 0));
@@ -3097,19 +3046,11 @@ Converter::handleINTERP(Value *dst[4])
    case TGSI_OPCODE_INTERP_CENTROID:
       mode |= NV50_IR_INTERP_CENTROID;
       break;
-   case TGSI_OPCODE_INTERP_SAMPLE: {
-      // When using a non-MS buffer, we're supposed to always use the center
-      // (i.e. sample 0). This adds a SELP which will be always true or false
-      // based on a data fixup.
-      Value *sample = getScratch();
-      mkOp3(OP_SELP, TYPE_U32, sample, mkImm(0), fetchSrc(1, 0), mkImm(0))
-         ->subOp = 2;
-
-      insn = mkOp1(OP_PIXLD, TYPE_U32, (offset = getScratch()), sample);
+   case TGSI_OPCODE_INTERP_SAMPLE:
+      insn = mkOp1(OP_PIXLD, TYPE_U32, (offset = getScratch()), fetchSrc(1, 0));
       insn->subOp = NV50_IR_SUBOP_PIXLD_OFFSET;
       mode |= NV50_IR_INTERP_OFFSET;
       break;
-   }
    case TGSI_OPCODE_INTERP_OFFSET: {
       // The input in src1.xy is float, but we need a single 32-bit value
       // where the upper and lower 16 bits are encoded in S0.12 format. We need
@@ -3171,7 +3112,7 @@ Converter::handleInstruction(const struct tgsi_full_instruction *insn)
 
    Value *dst0[4], *rDst0[4];
    Value *src0, *src1, *src2, *src3;
-   Value *val0 = NULL, *val1 = NULL;
+   Value *val0, *val1;
    int c;
 
    tgsi = tgsi::Instruction(insn);
@@ -3385,7 +3326,7 @@ Converter::handleInstruction(const struct tgsi_full_instruction *insn)
       break;
    case TGSI_OPCODE_UCMP:
       srcTy = TYPE_U32;
-      FALLTHROUGH;
+      /* fallthrough */
    case TGSI_OPCODE_CMP:
       FOR_EACH_DST_ENABLED_CHANNEL(0, c, tgsi) {
          src0 = fetchSrc(0, c);
@@ -3461,12 +3402,10 @@ Converter::handleInstruction(const struct tgsi_full_instruction *insn)
       mkOp1(OP_BREV, TYPE_U32, val0, val0);
       mkOp1(OP_BFIND, TYPE_U32, val0, val0)->subOp = NV50_IR_SUBOP_BFIND_SAMT;
       src1 = val0;
-      FALLTHROUGH;
+      /* fallthrough */
    case TGSI_OPCODE_READ_INVOC:
       if (tgsi.getOpcode() == TGSI_OPCODE_READ_INVOC)
          src1 = fetchSrc(1, 0);
-      else
-         src1 = val0;
       FOR_EACH_DST_ENABLED_CHANNEL(0, c, tgsi) {
          geni = mkOp3(op, dstTy, dst0[c], fetchSrc(0, c), src1, mkImm(0x1f));
          geni->subOp = NV50_IR_SUBOP_SHFL_IDX;
@@ -3592,7 +3531,7 @@ Converter::handleInstruction(const struct tgsi_full_instruction *insn)
       /* handle user clip planes for each emitted vertex */
       if (info_out->io.genUserClip > 0)
          handleUserClipPlanes();
-      FALLTHROUGH;
+      /* fallthrough */
    case TGSI_OPCODE_ENDPRIM:
    {
       // get vertex stream (must be immediate)

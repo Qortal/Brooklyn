@@ -71,27 +71,27 @@ etna_dump_shader(const struct etna_shader_variant *shader)
    printf("num loops: %i\n", shader->num_loops);
    printf("num temps: %i\n", shader->num_temps);
    printf("immediates:\n");
-   for (int idx = 0; idx < shader->uniforms.count; ++idx) {
+   for (int idx = 0; idx < shader->uniforms.imm_count; ++idx) {
       printf(" [%i].%s = %f (0x%08x) (%d)\n",
              idx / 4,
              tgsi_swizzle_names[idx % 4],
-             *((float *)&shader->uniforms.data[idx]),
-             shader->uniforms.data[idx],
-             shader->uniforms.contents[idx]);
+             *((float *)&shader->uniforms.imm_data[idx]),
+             shader->uniforms.imm_data[idx],
+             shader->uniforms.imm_contents[idx]);
    }
    printf("inputs:\n");
    for (int idx = 0; idx < shader->infile.num_reg; ++idx) {
       printf(" [%i] name=%s comps=%i\n", shader->infile.reg[idx].reg,
                (shader->stage == MESA_SHADER_VERTEX) ?
                gl_vert_attrib_name(shader->infile.reg[idx].slot) :
-               gl_varying_slot_name_for_stage(shader->infile.reg[idx].slot, shader->stage),
+               gl_varying_slot_name(shader->infile.reg[idx].slot),
                shader->infile.reg[idx].num_components);
    }
    printf("outputs:\n");
    for (int idx = 0; idx < shader->outfile.num_reg; ++idx) {
       printf(" [%i] name=%s comps=%i\n", shader->outfile.reg[idx].reg,
                (shader->stage == MESA_SHADER_VERTEX) ?
-               gl_varying_slot_name_for_stage(shader->outfile.reg[idx].slot, shader->stage) :
+               gl_varying_slot_name(shader->outfile.reg[idx].slot) :
                gl_frag_result_name(shader->outfile.reg[idx].slot),
                shader->outfile.reg[idx].num_components);
    }
@@ -302,8 +302,8 @@ etna_destroy_shader(struct etna_shader_variant *shader)
    assert(shader);
 
    FREE(shader->code);
-   FREE(shader->uniforms.data);
-   FREE(shader->uniforms.contents);
+   FREE(shader->uniforms.imm_data);
+   FREE(shader->uniforms.imm_contents);
    FREE(shader);
 }
 
@@ -389,7 +389,7 @@ dump_shader_info(struct etna_shader_variant *v, struct pipe_debug_callback *debu
          etna_shader_stage(v),
          v->code_size,
          v->num_temps,
-         v->uniforms.count,
+         v->uniforms.imm_count,
          v->num_loops);
 }
 

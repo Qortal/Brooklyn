@@ -39,11 +39,9 @@
 #include "sw/null/null_sw_winsys.h"
 #include "sw/wrapper/wrapper_sw_winsys.h"
 #include "target-helpers/sw_helper_public.h"
-#include "target-helpers/inline_debug_helper.h"
 #include "frontend/drisw_api.h"
 #include "frontend/sw_driver.h"
 #include "frontend/sw_winsys.h"
-
 
 struct pipe_loader_sw_device {
    struct pipe_loader_device base;
@@ -61,7 +59,7 @@ static const struct pipe_loader_ops pipe_loader_sw_ops;
 
 #ifdef GALLIUM_STATIC_TARGETS
 static const struct sw_driver_descriptor driver_descriptors = {
-   .create_screen = sw_screen_create_vk,
+   .create_screen = sw_screen_create,
    .winsys = {
 #ifdef HAVE_PIPE_LOADER_DRI
       {
@@ -75,7 +73,11 @@ static const struct sw_driver_descriptor driver_descriptors = {
          .create_winsys = kms_dri_create_winsys,
       },
 #endif
-#ifndef __ANDROID__
+/**
+ * XXX: Do not include these two for non autotools builds.
+ * They don't have neither opencl nor nine, where these are used.
+ */
+#ifndef DROP_PIPE_LOADER_MISC
       {
          .name = "null",
          .create_winsys = null_sw_create,
@@ -305,16 +307,16 @@ pipe_loader_sw_get_driconf(struct pipe_loader_device *dev, unsigned *count)
 
 static struct pipe_screen *
 pipe_loader_sw_create_screen(struct pipe_loader_device *dev,
-                             const struct pipe_screen_config *config, bool sw_vk)
+                             const struct pipe_screen_config *config)
 {
    struct pipe_loader_sw_device *sdev = pipe_loader_sw_device(dev);
    struct pipe_screen *screen;
 
-   screen = sdev->dd->create_screen(sdev->ws, sw_vk);
+   screen = sdev->dd->create_screen(sdev->ws);
    if (!screen)
       sdev->ws->destroy(sdev->ws);
 
-   return screen ? debug_screen_wrap(screen) : NULL;
+   return screen;
 }
 
 static const struct pipe_loader_ops pipe_loader_sw_ops = {

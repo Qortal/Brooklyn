@@ -79,9 +79,6 @@ public:
    PValue uav_id() const {return m_uav_id;}
    int uav_base() const {return m_uav_base;}
 
-   bool accept(InstructionVisitor& visitor) override {return visitor.visit(*this);}
-   bool accept(ConstInstructionVisitor& visitor) const override {return visitor.visit(*this);}
-
 private:
 
    bool is_equal_to(const Instruction& lhs) const override;
@@ -175,10 +172,6 @@ public:
 
    void set_ack() {m_need_ack = true; }
 
-   bool accept(InstructionVisitor& visitor) override {return visitor.visit(*this);}
-   bool accept(ConstInstructionVisitor& visitor) const override {return visitor.visit(*this);}
-
-
 private:
 
    bool is_equal_to(const Instruction& lhs) const override;
@@ -209,10 +202,6 @@ public:
       int chan(int i ) const {return m_value.chan_i(i);}
 
       void replace_values(const ValueSet& candiates, PValue new_value) override;
-
-      bool accept(InstructionVisitor& visitor) override {return visitor.visit(*this);}
-      bool accept(ConstInstructionVisitor& visitor) const override {return visitor.visit(*this);}
-
 private:
       bool is_equal_to(const Instruction& lhs) const override;
       void do_print(std::ostream& os) const override;

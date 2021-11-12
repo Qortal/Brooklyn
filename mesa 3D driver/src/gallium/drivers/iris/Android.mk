@@ -42,15 +42,15 @@ IRIS_COMMON_INCLUDES := \
 	$(MESA_TOP)/src/gallium/auxiliary
 
 #
-# libiris for gfx8
+# libiris for gen8
 #
 
 include $(CLEAR_VARS)
-LOCAL_MODULE := libmesa_iris_gfx8
+LOCAL_MODULE := libmesa_iris_gen8
 LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 
 LOCAL_SRC_FILES := $(LIBIRIS_SRC_FILES)
-LOCAL_CFLAGS := -DGFX_VERx10=80
+LOCAL_CFLAGS := -DGEN_VERSIONx10=80
 
 LOCAL_C_INCLUDES := $(IRIS_COMMON_INCLUDES)
 
@@ -62,15 +62,15 @@ include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
 
 #
-# libiris for gfx9
+# libiris for gen9
 #
 
 include $(CLEAR_VARS)
-LOCAL_MODULE := libmesa_iris_gfx9
+LOCAL_MODULE := libmesa_iris_gen9
 LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 
 LOCAL_SRC_FILES := $(LIBIRIS_SRC_FILES)
-LOCAL_CFLAGS := -DGFX_VERx10=90
+LOCAL_CFLAGS := -DGEN_VERSIONx10=90
 
 LOCAL_C_INCLUDES := $(IRIS_COMMON_INCLUDES)
 
@@ -82,15 +82,15 @@ include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
 
 #
-# libiris for gfx11
+# libiris for gen11
 #
 
 include $(CLEAR_VARS)
-LOCAL_MODULE := libmesa_iris_gfx11
+LOCAL_MODULE := libmesa_iris_gen11
 LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 
 LOCAL_SRC_FILES := $(LIBIRIS_SRC_FILES)
-LOCAL_CFLAGS := -DGFX_VERx10=110
+LOCAL_CFLAGS := -DGEN_VERSIONx10=110
 
 LOCAL_C_INCLUDES := $(IRIS_COMMON_INCLUDES)
 
@@ -102,35 +102,15 @@ include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
 
 #
-# libiris for gfx12
+# libiris for gen12
 #
 
 include $(CLEAR_VARS)
-LOCAL_MODULE := libmesa_iris_gfx12
+LOCAL_MODULE := libmesa_iris_gen12
 LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 
 LOCAL_SRC_FILES := $(LIBIRIS_SRC_FILES)
-LOCAL_CFLAGS := -DGFX_VERx10=120
-
-LOCAL_C_INCLUDES := $(IRIS_COMMON_INCLUDES)
-
-LOCAL_STATIC_LIBRARIES := $(LIBIRIS_STATIC_LIBS)
-
-LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_genxml
-
-include $(MESA_COMMON_MK)
-include $(BUILD_STATIC_LIBRARY)
-
-#
-# libiris for gfx125
-#
-
-include $(CLEAR_VARS)
-LOCAL_MODULE := libmesa_iris_gfx125
-LOCAL_MODULE_CLASS := STATIC_LIBRARIES
-
-LOCAL_SRC_FILES := $(LIBIRIS_SRC_FILES)
-LOCAL_CFLAGS := -DGFX_VERx10=125
+LOCAL_CFLAGS := -DGEN_VERSIONx10=120
 
 LOCAL_C_INCLUDES := $(IRIS_COMMON_INCLUDES)
 
@@ -167,11 +147,10 @@ LOCAL_WHOLE_STATIC_LIBRARIES := \
 	libmesa_intel_common \
 	libmesa_intel_compiler \
 	libmesa_intel_perf \
-	libmesa_iris_gfx8 \
-	libmesa_iris_gfx9 \
-	libmesa_iris_gfx11 \
-	libmesa_iris_gfx12 \
-	libmesa_iris_gfx125
+	libmesa_iris_gen8 \
+	libmesa_iris_gen9 \
+	libmesa_iris_gen11 \
+	libmesa_iris_gen12
 
 include $(GALLIUM_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)

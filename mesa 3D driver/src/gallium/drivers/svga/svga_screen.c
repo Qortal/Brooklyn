@@ -98,7 +98,7 @@ svga_get_name( struct pipe_screen *pscreen )
 #else
    build = "build: RELEASE;";
 #endif
-#ifdef DRAW_LLVM_AVAILABLE
+#ifdef LLVM_AVAILABLE
    llvm = "LLVM;";
 #endif
 
@@ -159,7 +159,7 @@ svga_get_paramf(struct pipe_screen *screen, enum pipe_capf param)
       return svgascreen->maxLineWidthAA;
 
    case PIPE_CAPF_MAX_POINT_WIDTH:
-      FALLTHROUGH;
+      /* fall-through */
    case PIPE_CAPF_MAX_POINT_WIDTH_AA:
       return svgascreen->maxPointSize;
 
@@ -170,9 +170,9 @@ svga_get_paramf(struct pipe_screen *screen, enum pipe_capf param)
       return 15.0;
 
    case PIPE_CAPF_MIN_CONSERVATIVE_RASTER_DILATE:
-      FALLTHROUGH;
+      /* fall-through */
    case PIPE_CAPF_MAX_CONSERVATIVE_RASTER_DILATE:
-      FALLTHROUGH;
+      /* fall-through */
    case PIPE_CAPF_CONSERVATIVE_RASTER_DILATE_GRANULARITY:
       return 0.0f;
 
@@ -366,9 +366,6 @@ svga_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_BUFFER_MAP_PERSISTENT_COHERENT:
       return sws->have_coherent;
 
-   case PIPE_CAP_SHAREABLE_SHADERS:
-      return 0;
-
    case PIPE_CAP_PCI_GROUP:
    case PIPE_CAP_PCI_BUS:
    case PIPE_CAP_PCI_DEVICE:
@@ -484,7 +481,6 @@ vgpu9_get_shader_param(struct pipe_screen *screen,
          return 0;
       case PIPE_SHADER_CAP_FP16:
       case PIPE_SHADER_CAP_FP16_DERIVATIVES:
-      case PIPE_SHADER_CAP_FP16_CONST_BUFFERS:
       case PIPE_SHADER_CAP_INT16:
       case PIPE_SHADER_CAP_GLSL_16BIT_CONSTS:
          return 0;
@@ -494,7 +490,7 @@ vgpu9_get_shader_param(struct pipe_screen *screen,
       case PIPE_SHADER_CAP_PREFERRED_IR:
          return PIPE_SHADER_IR_TGSI;
       case PIPE_SHADER_CAP_SUPPORTED_IRS:
-         return 1 << PIPE_SHADER_IR_TGSI;
+         return 0;
       case PIPE_SHADER_CAP_TGSI_DROUND_SUPPORTED:
       case PIPE_SHADER_CAP_TGSI_DFRACEXP_DLDEXP_SUPPORTED:
       case PIPE_SHADER_CAP_TGSI_LDEXP_SUPPORTED:
@@ -555,7 +551,6 @@ vgpu9_get_shader_param(struct pipe_screen *screen,
          return 0;
       case PIPE_SHADER_CAP_FP16:
       case PIPE_SHADER_CAP_FP16_DERIVATIVES:
-      case PIPE_SHADER_CAP_FP16_CONST_BUFFERS:
       case PIPE_SHADER_CAP_INT16:
       case PIPE_SHADER_CAP_GLSL_16BIT_CONSTS:
          return 0;
@@ -565,7 +560,7 @@ vgpu9_get_shader_param(struct pipe_screen *screen,
       case PIPE_SHADER_CAP_PREFERRED_IR:
          return PIPE_SHADER_IR_TGSI;
       case PIPE_SHADER_CAP_SUPPORTED_IRS:
-         return 1 << PIPE_SHADER_IR_TGSI;
+         return 0;
       case PIPE_SHADER_CAP_TGSI_DROUND_SUPPORTED:
       case PIPE_SHADER_CAP_TGSI_DFRACEXP_DLDEXP_SUPPORTED:
       case PIPE_SHADER_CAP_TGSI_LDEXP_SUPPORTED:
@@ -667,7 +662,6 @@ vgpu10_get_shader_param(struct pipe_screen *screen,
       return TRUE;
    case PIPE_SHADER_CAP_FP16:
    case PIPE_SHADER_CAP_FP16_DERIVATIVES:
-   case PIPE_SHADER_CAP_FP16_CONST_BUFFERS:
    case PIPE_SHADER_CAP_INT16:
    case PIPE_SHADER_CAP_GLSL_16BIT_CONSTS:
       return FALSE;
@@ -677,7 +671,7 @@ vgpu10_get_shader_param(struct pipe_screen *screen,
    case PIPE_SHADER_CAP_PREFERRED_IR:
       return PIPE_SHADER_IR_TGSI;
    case PIPE_SHADER_CAP_SUPPORTED_IRS:
-      return 1 << PIPE_SHADER_IR_TGSI;
+      return 0;
    case PIPE_SHADER_CAP_TGSI_DROUND_SUPPORTED:
    case PIPE_SHADER_CAP_TGSI_DFRACEXP_DLDEXP_SUPPORTED:
    case PIPE_SHADER_CAP_TGSI_LDEXP_SUPPORTED:

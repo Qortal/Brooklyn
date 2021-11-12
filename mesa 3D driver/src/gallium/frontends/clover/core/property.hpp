@@ -199,16 +199,10 @@ namespace clover {
       }
 
       template<typename S>
-      typename std::enable_if<!std::is_convertible<T, S>::value, S>::type
+      S
       as() const {
-         static_assert(sizeof(S) <= sizeof(T), "Ensure type fits in property list");
+         assert(sizeof(S) <= sizeof(T));
          return reinterpret_cast<S>(x);
-      }
-
-      template<typename S>
-      typename std::enable_if<std::is_convertible<T, S>::value, S>::type
-      as() const {
-         return static_cast<S>(x);
       }
 
    private:

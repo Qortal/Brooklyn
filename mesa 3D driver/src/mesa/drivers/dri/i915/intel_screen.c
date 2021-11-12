@@ -153,21 +153,16 @@ static const __DRItexBufferExtension intelTexBufferExtension = {
 };
 
 static void
-intelDRI2FlushWithFlags(__DRIcontext *context,
-                        __DRIdrawable *drawable,
-                        unsigned flags,
-                        enum __DRI2throttleReason reason)
+intelDRI2Flush(__DRIdrawable *drawable)
 {
-   struct intel_context *intel = context->driverPrivate;
+   GET_CURRENT_CONTEXT(ctx);
+   struct intel_context *intel = intel_context(ctx);
    if (intel == NULL)
       return;
-   struct gl_context *ctx = &intel->ctx;
 
    INTEL_FIREVERTICES(intel);
 
-   if (reason == __DRI2_THROTTLE_SWAPBUFFER ||
-       reason == __DRI2_THROTTLE_FLUSHFRONT)
-      intel->need_throttle = true;
+   intel->need_throttle = true;
 
    if (intel->batch.used)
       intel_batchbuffer_flush(intel);
@@ -177,20 +172,11 @@ intelDRI2FlushWithFlags(__DRIcontext *context,
    }
 }
 
-static void
-intelDRI2Flush(__DRIdrawable *drawable)
-{
-   intelDRI2FlushWithFlags(drawable->driContextPriv, drawable,
-                           __DRI2_FLUSH_DRAWABLE,
-                           __DRI2_THROTTLE_SWAPBUFFER);
-}
-
 static const struct __DRI2flushExtensionRec intelFlushExtension = {
-    .base = { __DRI2_FLUSH, 4 },
+    .base = { __DRI2_FLUSH, 3 },
 
     .flush              = intelDRI2Flush,
     .invalidate         = dri2InvalidateDrawable,
-    .flush_with_flags   = intelDRI2FlushWithFlags,
 };
 
 static struct intel_image_format intel_image_formats[] = {
@@ -406,7 +392,7 @@ intel_create_image_from_texture(__DRIcontext *context, int target,
       return NULL;
    }
 
-   if (level < obj->Attrib.BaseLevel || level > obj->_MaxLevel) {
+   if (level < obj->BaseLevel || level > obj->_MaxLevel) {
       *error = __DRI_IMAGE_ERROR_BAD_MATCH;
       return NULL;
    }
@@ -509,10 +495,7 @@ intel_query_image(__DRIimage *image, int attrib, int *value)
       return true;
    case __DRI_IMAGE_ATTRIB_FD:
       return !drm_intel_bo_gem_export_to_prime(image->region->bo, value);
-   case __DRI_IMAGE_ATTRIB_OFFSET:
-      *value = image->offset;
-      return true;
-   default:
+  default:
       return false;
    }
 }
@@ -929,7 +912,8 @@ intelCreateBuffer(__DRIscreen * driScrnPriv,
                                   false, /* never sw depth */
                                   false, /* never sw stencil */
                                   mesaVis->accumRedBits > 0,
-                                  false /* never sw alpha */);
+                                  false, /* never sw alpha */
+                                  false  /* never sw aux */ );
    driDrawPriv->driverPrivate = fb;
 
    return true;
@@ -1083,7 +1067,7 @@ intel_screen_make_configs(__DRIscreen *dri_screen)
                                      num_depth_stencil_bits,
                                      back_buffer_modes, 2,
                                      singlesample_samples, 1,
-                                     false, false);
+                                     false, false, false);
       configs = driConcatConfigs(configs, new_configs);
    }
 
@@ -1105,7 +1089,7 @@ intel_screen_make_configs(__DRIscreen *dri_screen)
                                      depth_bits, stencil_bits, 1,
                                      back_buffer_modes, 1,
                                      singlesample_samples, 1,
-                                     true, false);
+                                     true, false, false);
       configs = driConcatConfigs(configs, new_configs);
    }
 
@@ -1283,13 +1267,6 @@ static const __DRIextension *i915_driver_extensions[] = {
 };
 
 PUBLIC const __DRIextension **__driDriverGetExtensions_i915(void)
-{
-   globalDriverAPI = &i915_driver_api;
-
-   return i915_driver_extensions;
-}
-
-PUBLIC const __DRIextension **__driDriverGetExtensions_i830(void)
 {
    globalDriverAPI = &i915_driver_api;
 

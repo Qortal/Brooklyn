@@ -39,6 +39,9 @@ endif
 if with_gallium_drisw_kms
   libpipe_loader_defines += '-DHAVE_PIPE_LOADER_KMS'
 endif
+if not (with_gallium_st_nine or with_gallium_opencl)
+  libpipe_loader_defines += '-DDROP_PIPE_LOADER_MISC'
+endif
 
 libpipe_loader_static = static_library(
   'pipe_loader_static',
@@ -50,7 +53,7 @@ libpipe_loader_static = static_library(
   c_args : [libpipe_loader_defines, '-DGALLIUM_STATIC_TARGETS=1'],
   gnu_symbol_visibility : 'hidden',
   link_with : [libpipe_loader_links],
-  dependencies : [dep_libdrm, idep_xmlconfig, idep_mesautil],
+  dependencies : [dep_libdrm, idep_xmlconfig],
   build_by_default : false,
 )
 
@@ -69,6 +72,6 @@ libpipe_loader_dynamic = static_library(
   ],
   gnu_symbol_visibility : 'hidden',
   link_with : [libpipe_loader_links],
-  dependencies : [dep_libdrm, idep_xmlconfig, idep_mesautil],
+  dependencies : [dep_libdrm, idep_xmlconfig],
   build_by_default : false,
 )

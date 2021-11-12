@@ -374,21 +374,17 @@ iterate_type_fill_variables(const struct glsl_type *type,
                             struct gl_shader_program *prog,
                             struct gl_uniform_block *block)
 {
-   unsigned length = glsl_get_length(type);
-   if (length == 0)
-      return;
+   unsigned int struct_base_offset;
 
-   unsigned struct_base_offset;
-
-   bool struct_or_ifc = glsl_type_is_struct_or_ifc(type);
-   if (struct_or_ifc)
-      struct_base_offset = *offset;
-
-   for (unsigned i = 0; i < length; i++) {
+   for (unsigned i = 0; i < glsl_get_length(type); i++) {
       const struct glsl_type *field_type;
 
-      if (struct_or_ifc) {
+      if (glsl_type_is_struct_or_ifc(type)) {
          field_type = glsl_get_struct_field(type, i);
+
+         if (i == 0) {
+            struct_base_offset = *offset;
+         }
 
          *offset = struct_base_offset + glsl_get_struct_field_offset(type, i);
       } else {
@@ -587,7 +583,7 @@ gl_nir_link_uniform_blocks(struct gl_context *ctx,
                            struct gl_shader_program *prog)
 {
    void *mem_ctx = ralloc_context(NULL);
-   bool ret = false;
+
    for (int stage = 0; stage < MESA_SHADER_STAGES; stage++) {
       struct gl_linked_shader *const linked = prog->_LinkedShaders[stage];
       struct gl_uniform_block *ubo_blocks = NULL;
@@ -607,7 +603,7 @@ gl_nir_link_uniform_blocks(struct gl_context *ctx,
                                         BLOCK_SSBO);
 
       if (!prog->data->LinkStatus) {
-         goto out;
+         return false;
       }
 
       prog->data->linked_stages |= 1 << stage;
@@ -642,13 +638,10 @@ gl_nir_link_uniform_blocks(struct gl_context *ctx,
    }
 
    if (!nir_interstage_cross_validate_uniform_blocks(prog, BLOCK_UBO))
-      goto out;
+      return false;
 
    if (!nir_interstage_cross_validate_uniform_blocks(prog, BLOCK_SSBO))
-      goto out;
+      return false;
 
-   ret = true;
-out:
-   ralloc_free(mem_ctx);
-   return ret;
+   return true;
 }

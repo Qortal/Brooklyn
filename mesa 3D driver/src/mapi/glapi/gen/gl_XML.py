@@ -24,6 +24,8 @@
 # Authors:
 #    Ian Romanick <idr@us.ibm.com>
 
+from __future__ import print_function
+
 from collections import OrderedDict
 from decimal import Decimal
 import xml.etree.ElementTree as ET
@@ -650,12 +652,6 @@ class gl_function( gl_item ):
     def process_element(self, element):
         name = element.get( "name" )
         alias = element.get( "alias" )
-
-        # marshal isn't allowed with alias
-        assert not alias or not element.get('marshal')
-        assert not alias or not element.get('marshal_count')
-        assert not alias or not element.get('marshal_sync')
-        assert not alias or not element.get('marshal_call_after')
 
         if name in static_data.functions:
             self.static_entry_points.append(name)

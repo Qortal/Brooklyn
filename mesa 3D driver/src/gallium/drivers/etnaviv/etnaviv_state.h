@@ -34,7 +34,7 @@
 static inline bool
 etna_depth_enabled(struct etna_context *ctx)
 {
-   return ctx->zsa && ctx->zsa->depth_enabled;
+   return ctx->zsa && ctx->zsa->depth.enabled;
 }
 
 static inline bool

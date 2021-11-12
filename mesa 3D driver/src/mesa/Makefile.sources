@@ -99,7 +99,9 @@ MAIN_FILES = \
 	main/format_fallback.c \
 	main/format_info.h \
 	main/format_pack.h \
+	main/format_pack.c \
 	main/format_unpack.h \
+	main/format_unpack.c \
 	main/formatquery.c \
 	main/formatquery.h \
 	main/formats.c \
@@ -122,7 +124,6 @@ MAIN_FILES = \
 	main/glthread.h \
 	main/glthread_bufferobj.c \
 	main/glthread_draw.c \
-        main/glthread_get.c \
 	main/glthread_marshal.h \
 	main/glthread_shaderobj.c \
 	main/glthread_varray.c \
@@ -421,6 +422,7 @@ VBO_FILES = \
 	vbo/vbo_minmax_index.c \
 	vbo/vbo_noop.c \
 	vbo/vbo_noop.h \
+	vbo/vbo_primitive_restart.c \
 	vbo/vbo_private.h \
 	vbo/vbo_save_api.c \
 	vbo/vbo_save.c \
@@ -430,8 +432,8 @@ VBO_FILES = \
 	vbo/vbo_util.h
 
 STATETRACKER_FILES = \
-	state_tracker/st_atifs_to_nir.c \
-	state_tracker/st_atifs_to_nir.h \
+	state_tracker/st_atifs_to_tgsi.c \
+	state_tracker/st_atifs_to_tgsi.h \
 	state_tracker/st_atom_array.c \
 	state_tracker/st_atom_atomicbuf.c \
 	state_tracker/st_atom_blend.c \
@@ -542,6 +544,8 @@ STATETRACKER_FILES = \
 	state_tracker/st_glsl_to_tgsi_temprename.h \
 	state_tracker/st_manager.c \
 	state_tracker/st_manager.h \
+	state_tracker/st_mesa_to_tgsi.c \
+	state_tracker/st_mesa_to_tgsi.h \
 	state_tracker/st_nir.h \
 	state_tracker/st_nir_builtins.c \
 	state_tracker/st_nir_lower_builtin.c \

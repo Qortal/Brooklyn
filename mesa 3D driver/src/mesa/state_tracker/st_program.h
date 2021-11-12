@@ -47,6 +47,8 @@
 extern "C" {
 #endif
 
+#define ST_DOUBLE_ATTRIB_PLACEHOLDER 0xff
+
 struct st_external_sampler_key
 {
    GLuint lower_nv12;             /**< bitmask of 2 plane YUV samplers */
@@ -56,8 +58,6 @@ struct st_external_sampler_key
    GLuint lower_ayuv;
    GLuint lower_xyuv;
    GLuint lower_yuv;
-   GLuint lower_yu_yv;
-   GLuint lower_y41x;
 };
 
 static inline struct st_external_sampler_key
@@ -84,7 +84,7 @@ st_get_external_sampler_key(struct st_context *st, struct gl_program *prog)
             key.lower_yuv |= (1 << unit);
             break;
          }
-         FALLTHROUGH;
+         /* fallthrough */
       case PIPE_FORMAT_P010:
       case PIPE_FORMAT_P012:
       case PIPE_FORMAT_P016:
@@ -94,21 +94,9 @@ st_get_external_sampler_key(struct st_context *st, struct gl_program *prog)
          key.lower_iyuv |= (1 << unit);
          break;
       case PIPE_FORMAT_YUYV:
-         if (stObj->pt->format == PIPE_FORMAT_R8G8_R8B8_UNORM) {
-            key.lower_yu_yv |= (1 << unit);
-            break;
-         }
-         FALLTHROUGH;
-      case PIPE_FORMAT_Y210:
-      case PIPE_FORMAT_Y212:
-      case PIPE_FORMAT_Y216:
          key.lower_yx_xuxv |= (1 << unit);
          break;
       case PIPE_FORMAT_UYVY:
-         if (stObj->pt->format == PIPE_FORMAT_G8R8_B8R8_UNORM) {
-            key.lower_yu_yv |= (1 << unit);
-            break;
-         }
          key.lower_xy_uxvx |= (1 << unit);
          break;
       case PIPE_FORMAT_AYUV:
@@ -116,11 +104,6 @@ st_get_external_sampler_key(struct st_context *st, struct gl_program *prog)
          break;
       case PIPE_FORMAT_XYUV:
          key.lower_xyuv |= (1 << unit);
-         break;
-      case PIPE_FORMAT_Y410:
-      case PIPE_FORMAT_Y412:
-      case PIPE_FORMAT_Y416:
-         key.lower_y41x |= (1 << unit);
          break;
       default:
          printf("mesa: st_get_external_sampler_key: unhandled pipe format %u\n",
@@ -132,10 +115,7 @@ st_get_external_sampler_key(struct st_context *st, struct gl_program *prog)
    return key;
 }
 
-/** Fragment program variant key
- *
- * Please update st_get_fp_variant() perf_debug() when adding fields.
- */
+/** Fragment program variant key */
 struct st_fp_variant_key
 {
    struct st_context *st;         /**< variants are per-context */
@@ -164,16 +144,12 @@ struct st_fp_variant_key
    GLuint lower_two_sided_color:1;
 
    GLuint lower_flatshade:1;
-   GLuint lower_texcoord_replace:MAX_TEXTURE_COORD_UNITS;
    unsigned lower_alpha_func:3;
 
    /** needed for ATI_fragment_shader */
-   uint8_t texture_index[MAX_NUM_FRAGMENT_REGISTERS_ATI];
+   char texture_targets[MAX_NUM_FRAGMENT_REGISTERS_ATI];
 
    struct st_external_sampler_key external;
-
-   /* bitmask of sampler units; PIPE_CAP_GL_CLAMP */
-   uint32_t gl_clamp[3];
 };
 
 /**
@@ -209,10 +185,7 @@ struct st_fp_variant
 };
 
 
-/** Shader key shared by other shaders.
- *
- * Please update st_get_common_variant() perf_debug() when adding fields.
- */
+/** Shader key shared by other shaders */
 struct st_common_variant_key
 {
    struct st_context *st;          /**< variants are per-context */
@@ -235,9 +208,6 @@ struct st_common_variant_key
     * not for the driver.
     */
    bool is_draw_shader;
-
-   /* bitmask of sampler units; PIPE_CAP_GL_CLAMP */
-   uint32_t gl_clamp[3];
 };
 
 
@@ -251,7 +221,9 @@ struct st_common_variant
    /* Parameters which generated this variant. */
    struct st_common_variant_key key;
 
-   /* Bitfield of VERT_BIT_* bits matching vertex shader inputs. */
+   /* Bitfield of VERT_BIT_* bits matching vertex shader inputs,
+    * but not include the high part of doubles.
+    */
    GLbitfield vert_attrib_mask;
 };
 
@@ -281,8 +253,11 @@ struct st_vertex_program
 {
    struct st_program Base;
 
-   uint32_t vert_attrib_mask; /**< mask of sourced vertex attribs */
+   /** maps a TGSI input index back to a Mesa VERT_ATTRIB_x */
+   ubyte index_to_input[PIPE_MAX_ATTRIBS];
    ubyte num_inputs;
+   /** Reverse mapping of the above */
+   ubyte input_to_index[VERT_ATTRIB_MAX];
 
    /** Maps VARYING_SLOT_x to slot */
    ubyte result_to_output[VARYING_SLOT_MAX];
@@ -330,13 +305,18 @@ st_get_generic_varying_index(struct st_context *st, GLuint attr)
 extern void
 st_set_prog_affected_state_flags(struct gl_program *prog);
 
+extern struct st_common_variant *
+st_get_vp_variant(struct st_context *st,
+                  struct st_program *stvp,
+                  const struct st_common_variant_key *key);
+
 
 extern struct st_fp_variant *
 st_get_fp_variant(struct st_context *st,
                   struct st_program *stfp,
                   const struct st_fp_variant_key *key);
 
-extern struct st_common_variant *
+extern struct st_variant *
 st_get_common_variant(struct st_context *st,
                       struct st_program *p,
                       const struct st_common_variant_key *key);
@@ -354,7 +334,7 @@ extern void
 st_finalize_nir_before_variants(struct nir_shader *nir);
 
 extern void
-st_prepare_vertex_program(struct st_program *stvp, uint8_t *attrib_to_index);
+st_prepare_vertex_program(struct st_program *stvp);
 
 extern void
 st_translate_stream_output_info(struct gl_program *prog);
@@ -376,9 +356,6 @@ st_serialize_nir(struct st_program *stp);
 
 extern void
 st_finalize_program(struct st_context *st, struct gl_program *prog);
-
-struct pipe_shader_state *
-st_create_nir_shader(struct st_context *st, struct pipe_shader_state *state);
 
 #ifdef __cplusplus
 }

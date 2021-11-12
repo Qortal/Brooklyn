@@ -27,6 +27,11 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
+#define typed_memcpy(dest, src, count) ({ \
+   STATIC_ASSERT(sizeof(*src) == sizeof(*dest)); \
+   memcpy((dest), (src), (count) * sizeof(*(src))); \
+})
+
 VkResult
 wsi_display_get_physical_device_display_properties(
    VkPhysicalDevice physical_device,
@@ -156,19 +161,5 @@ wsi_get_swapchain_counter(VkDevice                      device,
                           VkSwapchainKHR                swapchain,
                           VkSurfaceCounterFlagBitsEXT   flag_bits,
                           uint64_t                      *value);
-
-/* VK_EXT_acquire_drm_display */
-VkResult
-wsi_acquire_drm_display(VkPhysicalDevice     pDevice,
-                        struct wsi_device    *wsi_device,
-                        int                  drmFd,
-                        VkDisplayKHR         display);
-
-VkResult
-wsi_get_drm_display(VkPhysicalDevice      pDevice,
-                    struct wsi_device     *wsi_device,
-                    int                   drmFd,
-                    int                   connectorId,
-                    VkDisplayKHR          *display);
 
 #endif

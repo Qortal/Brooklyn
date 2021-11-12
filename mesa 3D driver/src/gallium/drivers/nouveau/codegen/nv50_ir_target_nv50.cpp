@@ -207,7 +207,6 @@ TargetNV50::getFileSize(DataFile file) const
    case FILE_PREDICATE:     return 0;
    case FILE_FLAGS:         return 4;
    case FILE_ADDRESS:       return 4;
-   case FILE_BARRIER:       return 0;
    case FILE_IMMEDIATE:     return 0;
    case FILE_MEMORY_CONST:  return 65536;
    case FILE_SHADER_INPUT:  return 0x200;
@@ -252,9 +251,9 @@ TargetNV50::getSVAddress(DataFile shaderFile, const Symbol *sym) const
       return shaderFile == FILE_SHADER_INPUT ? 0x18 :
          sysvalLocation[sym->reg.data.sv.sv];
    case SV_NCTAID:
-      return sym->reg.data.sv.index >= 2 ? 0x10 : 0x8 + 2 * sym->reg.data.sv.index;
+      return 0x8 + 2 * sym->reg.data.sv.index;
    case SV_CTAID:
-      return sym->reg.data.sv.index >= 2 ? 0x12 : 0xc + 2 * sym->reg.data.sv.index;
+      return 0xc + 2 * sym->reg.data.sv.index;
    case SV_NTID:
       return 0x2 + 2 * sym->reg.data.sv.index;
    case SV_TID:
@@ -262,8 +261,6 @@ TargetNV50::getSVAddress(DataFile shaderFile, const Symbol *sym) const
       return 0;
    case SV_SAMPLE_POS:
       return 0; /* sample position is handled differently */
-   case SV_THREAD_KILL:
-      return 0;
    default:
       return sysvalLocation[sym->reg.data.sv.sv];
    }
@@ -279,14 +276,10 @@ TargetNV50::insnCanLoad(const Instruction *i, int s,
    DataFile sf = ld->src(0).getFile();
 
    // immediate 0 can be represented by GPR $r63/$r127
-   // this does not work with global memory ld/st/atom
    if (sf == FILE_IMMEDIATE && ld->getSrc(0)->reg.data.u64 == 0)
       return (!i->isPseudo() &&
               !i->asTex() &&
-              i->op != OP_EXPORT &&
-              i->op != OP_STORE &&
-              ((i->op != OP_ATOM && i->op != OP_LOAD) ||
-               i->src(0).getFile() != FILE_MEMORY_GLOBAL));
+              i->op != OP_EXPORT && i->op != OP_STORE);
 
    if (sf == FILE_IMMEDIATE && (i->predSrc >= 0 || i->flagsDef >= 0))
       return false;
@@ -362,11 +355,8 @@ TargetNV50::insnCanLoad(const Instruction *i, int s,
       ldSize = typeSizeof(ld->dType);
    }
 
-   if (sf == FILE_IMMEDIATE) {
-      if (ldSize == 2 && (i->op == OP_AND || i->op == OP_OR || i->op == OP_XOR))
-         return false;
+   if (sf == FILE_IMMEDIATE)
       return ldSize <= 4;
-   }
 
 
    // Check if memory access is encodable:
@@ -407,12 +397,11 @@ TargetNV50::insnCanLoadOffset(const Instruction *i, int s, int offset) const
    if (!i->src(s).isIndirect(0))
       return true;
    offset += i->src(s).get()->reg.data.offset;
-   if (i->op == OP_LOAD || i->op == OP_STORE || i->op == OP_ATOM) {
+   if (i->op == OP_LOAD || i->op == OP_STORE) {
       // There are some restrictions in theory, but in practice they're never
-      // going to be hit. However offsets on global/shared memory are just
-      // plain not supported.
-      return i->src(s).getFile() != FILE_MEMORY_GLOBAL &&
-         i->src(s).getFile() != FILE_MEMORY_SHARED;
+      // going to be hit. When we enable shared/global memory, this will
+      // become more important.
+      return true;
    }
    return offset >= 0 && offset <= (int32_t)(127 * i->src(s).get()->reg.size);
 }

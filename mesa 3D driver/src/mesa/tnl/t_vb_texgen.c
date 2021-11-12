@@ -370,12 +370,12 @@ static void texgen( struct gl_context *ctx,
       case GL_OBJECT_LINEAR:
 	 _mesa_dotprod_tab[obj->size]( (GLfloat *)out->data,
 				       sizeof(out->data[0]), obj,
-				       texUnit->ObjectPlane[GEN_S] );
+				       texUnit->GenS.ObjectPlane );
 	 break;
       case GL_EYE_LINEAR:
 	 _mesa_dotprod_tab[eye->size]( (GLfloat *)out->data,
 				       sizeof(out->data[0]), eye,
-				       texUnit->EyePlane[GEN_S] );
+				       texUnit->GenS.EyePlane );
 	 break;
       case GL_SPHERE_MAP:
          for (i = 0; i < count; i++)
@@ -403,12 +403,12 @@ static void texgen( struct gl_context *ctx,
       case GL_OBJECT_LINEAR:
 	 _mesa_dotprod_tab[obj->size]( &(out->data[0][1]),
 				       sizeof(out->data[0]), obj,
-				       texUnit->ObjectPlane[GEN_T] );
+				       texUnit->GenT.ObjectPlane );
 	 break;
       case GL_EYE_LINEAR:
 	 _mesa_dotprod_tab[eye->size]( &(out->data[0][1]),
 				       sizeof(out->data[0]), eye,
-				       texUnit->EyePlane[GEN_T] );
+				       texUnit->GenT.EyePlane );
 	 break;
       case GL_SPHERE_MAP:
          for (i = 0; i < count; i++)
@@ -436,12 +436,12 @@ static void texgen( struct gl_context *ctx,
       case GL_OBJECT_LINEAR:
 	 _mesa_dotprod_tab[obj->size]( &(out->data[0][2]),
 				       sizeof(out->data[0]), obj,
-				       texUnit->ObjectPlane[GEN_R] );
+				       texUnit->GenR.ObjectPlane );
 	 break;
       case GL_EYE_LINEAR:
 	 _mesa_dotprod_tab[eye->size]( &(out->data[0][2]),
 				       sizeof(out->data[0]), eye,
-				       texUnit->EyePlane[GEN_R] );
+				       texUnit->GenR.EyePlane );
 	 break;
       case GL_REFLECTION_MAP_NV:
 	 for (i=0;i<count;i++)
@@ -464,12 +464,12 @@ static void texgen( struct gl_context *ctx,
       case GL_OBJECT_LINEAR:
 	 _mesa_dotprod_tab[obj->size]( &(out->data[0][3]),
 				       sizeof(out->data[0]), obj,
-				       texUnit->ObjectPlane[GEN_Q] );
+				       texUnit->GenQ.ObjectPlane );
 	 break;
       case GL_EYE_LINEAR:
 	 _mesa_dotprod_tab[eye->size]( &(out->data[0][3]),
 				       sizeof(out->data[0]), eye,
-				       texUnit->EyePlane[GEN_Q] );
+				       texUnit->GenQ.EyePlane );
 	 break;
       default:
 	 _mesa_problem(ctx, "Bad Q texgen");

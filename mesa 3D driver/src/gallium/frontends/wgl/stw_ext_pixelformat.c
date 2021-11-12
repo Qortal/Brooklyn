@@ -49,12 +49,12 @@
 
 
 static boolean
-stw_query_attrib(HDC hdc, int iPixelFormat, int iLayerPlane, int attrib, int *pvalue)
+stw_query_attrib(int iPixelFormat, int iLayerPlane, int attrib, int *pvalue)
 {
    uint count;
    const struct stw_pixelformat_info *pfi;
 
-   count = stw_pixelformat_get_extended_count(hdc);
+   count = stw_pixelformat_get_extended_count();
 
    if (attrib == WGL_NUMBER_PIXEL_FORMATS_ARB) {
       *pvalue = (int) count;
@@ -331,8 +331,7 @@ struct stw_pixelformat_score
 
 
 static BOOL
-score_pixelformats(HDC hdc,
-                   struct stw_pixelformat_score *scores,
+score_pixelformats(struct stw_pixelformat_score *scores,
                    uint count,
                    int attribute,
                    int expected_value)
@@ -358,7 +357,7 @@ score_pixelformats(HDC hdc,
    for (index = 0; index < count; index++) {
       int actual_value;
 
-      if (!stw_query_attrib(hdc, index + 1, 0, attribute, &actual_value))
+      if (!stw_query_attrib(index + 1, 0, attribute, &actual_value))
          return FALSE;
 
       if (ami->exact) {
@@ -404,7 +403,7 @@ wglChoosePixelFormatARB(HDC hdc, const int *piAttribIList,
     * points for a mismatch when the match does not have to be exact.
     * Set a score to 0 if there is a mismatch for an exact match criteria.
     */
-   count = stw_pixelformat_get_extended_count(hdc);
+   count = stw_pixelformat_get_extended_count();
    scores = (struct stw_pixelformat_score *)
       MALLOC(count * sizeof(struct stw_pixelformat_score));
    if (scores == NULL)
@@ -418,7 +417,7 @@ wglChoosePixelFormatARB(HDC hdc, const int *piAttribIList,
     */
    if (piAttribIList != NULL) {
       while (*piAttribIList != 0) {
-         if (!score_pixelformats(hdc, scores, count, piAttribIList[0],
+         if (!score_pixelformats(scores, count, piAttribIList[0],
                                  piAttribIList[1])) {
             FREE(scores);
             return FALSE;
@@ -428,7 +427,7 @@ wglChoosePixelFormatARB(HDC hdc, const int *piAttribIList,
    }
    if (pfAttribFList != NULL) {
       while (*pfAttribFList != 0) {
-         if (!score_pixelformats(hdc, scores, count, (int) pfAttribFList[0],
+         if (!score_pixelformats(scores, count, (int) pfAttribFList[0],
                                  (int) pfAttribFList[1])) {
             FREE(scores);
             return FALSE;
@@ -485,10 +484,12 @@ wglGetPixelFormatAttribfvARB(HDC hdc, int iPixelFormat, int iLayerPlane,
 {
    UINT i;
 
+   (void) hdc;
+
    for (i = 0; i < nAttributes; i++) {
       int value = 0;
 
-      if (!stw_query_attrib(hdc, iPixelFormat, iLayerPlane,
+      if (!stw_query_attrib(iPixelFormat, iLayerPlane,
                              piAttributes[i], &value))
          return FALSE;
       pfValues[i] = (FLOAT) value;
@@ -505,8 +506,10 @@ wglGetPixelFormatAttribivARB(HDC hdc, int iPixelFormat, int iLayerPlane,
 {
    UINT i;
 
+   (void) hdc;
+
    for (i = 0; i < nAttributes; i++) {
-      if (!stw_query_attrib(hdc, iPixelFormat, iLayerPlane,
+      if (!stw_query_attrib(iPixelFormat, iLayerPlane,
                             piAttributes[i], &piValues[i]))
          return FALSE;
    }

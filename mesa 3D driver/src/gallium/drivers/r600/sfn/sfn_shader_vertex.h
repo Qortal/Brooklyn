@@ -39,6 +39,7 @@ public:
                        const r600_shader_key &key, r600_shader *gs_shader,
                        enum chip_class chip_class);
 
+   bool do_emit_load_deref(const nir_variable *in_var, nir_intrinsic_instr* instr) override;
    bool scan_sysvalue_access(nir_instr *instr) override;
 
    PValue primitive_id() override {return m_primitive_id;}
@@ -54,16 +55,14 @@ protected:
    void do_finalize() override;
 
    std::map<unsigned, unsigned> m_param_map;
-
-   bool scan_inputs_read(const nir_shader *sh) override;
-
 private:
-   bool load_input(nir_intrinsic_instr* instr);
-
+   bool do_emit_store_deref(const nir_variable *out_var, nir_intrinsic_instr* instr) override;
    void finalize_exports();
 
    void emit_shader_start() override;
+   bool do_process_inputs(nir_variable *input) override;
    bool do_allocate_reserved_registers() override;
+   bool do_process_outputs(nir_variable *output) override;
    bool emit_intrinsic_instruction_override(nir_intrinsic_instr* instr) override;
    bool emit_store_local_shared(nir_intrinsic_instr* instr);
 

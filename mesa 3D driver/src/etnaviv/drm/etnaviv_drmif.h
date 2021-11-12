@@ -58,7 +58,6 @@ enum etna_param_id {
 	ETNA_GPU_FEATURES_5                = 0x8,
 	ETNA_GPU_FEATURES_6                = 0x9,
 	ETNA_GPU_FEATURES_7                = 0xa,
-	ETNA_GPU_FEATURES_8                = 0xb,
 
 	ETNA_GPU_STREAM_COUNT              = 0x10,
 	ETNA_GPU_REGISTER_MAX              = 0x11,
@@ -89,15 +88,12 @@ enum etna_param_id {
 /* device functions:
  */
 
-#define ETNA_DRM_VERSION(major, minor) ((major) << 16 | (minor))
-
 struct etna_device *etna_device_new(int fd);
 struct etna_device *etna_device_new_dup(int fd);
 struct etna_device *etna_device_ref(struct etna_device *dev);
 void etna_device_del(struct etna_device *dev);
 int etna_device_fd(struct etna_device *dev);
 bool etnaviv_device_softpin_capable(struct etna_device *dev);
-uint32_t etnaviv_device_version(struct etna_device *dev);
 
 /* gpu functions:
  */

@@ -24,7 +24,6 @@
 #define _NINE_TEXTURE9_H_
 
 #include "basetexture9.h"
-#include "nine_memory_helper.h"
 #include "surface9.h"
 
 struct NineTexture9
@@ -32,7 +31,7 @@ struct NineTexture9
     struct NineBaseTexture9 base;
     struct NineSurface9 **surfaces;
     struct pipe_box dirty_rect; /* covers all mip levels */
-    struct nine_allocation *managed_buffer;
+    uint8_t *managed_buffer;
 };
 static inline struct NineTexture9 *
 NineTexture9( void *data )

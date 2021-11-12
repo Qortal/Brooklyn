@@ -48,8 +48,7 @@ set_scissor_no_notify(struct gl_context *ctx, unsigned idx,
        height == ctx->Scissor.ScissorArray[idx].Height)
       return;
 
-   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewScissorRect ? 0 : _NEW_SCISSOR,
-                  GL_SCISSOR_BIT);
+   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewScissorRect ? 0 : _NEW_SCISSOR);
    ctx->NewDriverState |= ctx->DriverFlags.NewScissorRect;
 
    ctx->Scissor.ScissorArray[idx].X = x;
@@ -302,7 +301,7 @@ _mesa_WindowRectanglesEXT(GLenum mode, GLsizei count, const GLint *box)
       box += 4;
    }
 
-   FLUSH_VERTICES(ctx, 0, GL_SCISSOR_BIT);
+   FLUSH_VERTICES(ctx, 0);
    ctx->NewDriverState |= ctx->DriverFlags.NewWindowRectangles;
 
    memcpy(ctx->Scissor.WindowRects, newval,

@@ -60,12 +60,12 @@ get_post_sync_flags(enum pipe_control_flags flags)
 }
 
 #define IS_COMPUTE_PIPELINE(brw) \
-   (GFX_VER >= 7 && brw->last_pipeline == BRW_COMPUTE_PIPELINE)
+   (GEN_GEN >= 7 && brw->last_pipeline == BRW_COMPUTE_PIPELINE)
 
-/* Closed interval - GFX_VER \in [x, y] */
-#define IS_GFX_VER_BETWEEN(x, y) (GFX_VER >= x && GFX_VER <= y)
-#define IS_GFX_VERx10_BETWEEN(x, y) \
-   (GFX_VERx10 >= x && GFX_VERx10 <= y)
+/* Closed interval - GEN_GEN \in [x, y] */
+#define IS_GEN_BETWEEN(x, y) (GEN_GEN >= x && GEN_GEN <= y)
+#define IS_GENx10_BETWEEN(x, y) \
+   (GEN_VERSIONx10 >= x && GEN_VERSIONx10 <= y)
 
 /**
  * Emit a series of PIPE_CONTROL commands, taking into account any
@@ -83,7 +83,7 @@ void
 genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
                             struct brw_bo *bo, uint32_t offset, uint64_t imm)
 {
-   UNUSED const struct intel_device_info *devinfo = &brw->screen->devinfo;
+   UNUSED const struct gen_device_info *devinfo = &brw->screen->devinfo;
    enum pipe_control_flags post_sync_flags = get_post_sync_flags(flags);
    enum pipe_control_flags non_lri_post_sync_flags =
       post_sync_flags & ~PIPE_CONTROL_LRI_POST_SYNC_OP;
@@ -94,7 +94,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
     * We do these first because we want to look at the original operation,
     * rather than any workarounds we set.
     */
-   if (GFX_VER == 6 && (flags & PIPE_CONTROL_RENDER_TARGET_FLUSH)) {
+   if (GEN_GEN == 6 && (flags & PIPE_CONTROL_RENDER_TARGET_FLUSH)) {
       /* Hardware workaround: SNB B-Spec says:
        *
        *    "[Dev-SNB{W/A}]: Before a PIPE_CONTROL with Write Cache Flush
@@ -104,7 +104,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
       brw_emit_post_sync_nonzero_flush(brw);
    }
 
-   if (GFX_VER == 9 && (flags & PIPE_CONTROL_VF_CACHE_INVALIDATE)) {
+   if (GEN_GEN == 9 && (flags & PIPE_CONTROL_VF_CACHE_INVALIDATE)) {
       /* The PIPE_CONTROL "VF Cache Invalidation Enable" bit description
        * lists several workarounds:
        *
@@ -119,7 +119,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
       genX(emit_raw_pipe_control)(brw, 0, NULL, 0, 0);
    }
 
-   if (GFX_VER == 9 && IS_COMPUTE_PIPELINE(brw) && post_sync_flags) {
+   if (GEN_GEN == 9 && IS_COMPUTE_PIPELINE(brw) && post_sync_flags) {
       /* Project: SKL / Argument: LRI Post Sync Operation [23]
        *
        * "PIPECONTROL command with “Command Streamer Stall Enable” must be
@@ -136,8 +136,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
     * We do these now because they may add post-sync operations or CS stalls.
     */
 
-   if (IS_GFX_VER_BETWEEN(8, 10) &&
-       (flags & PIPE_CONTROL_VF_CACHE_INVALIDATE)) {
+   if (IS_GEN_BETWEEN(8, 10) && (flags & PIPE_CONTROL_VF_CACHE_INVALIDATE)) {
       /* Project: BDW, SKL+ (stopping at CNL) / Argument: VF Invalidate
        *
        * "'Post Sync Operation' must be enabled to 'Write Immediate Data' or
@@ -152,7 +151,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
       }
    }
 
-   if (GFX_VERx10 < 75 && (flags & PIPE_CONTROL_DEPTH_STALL)) {
+   if (GEN_VERSIONx10 < 75 && (flags & PIPE_CONTROL_DEPTH_STALL)) {
       /* Project: PRE-HSW / Argument: Depth Stall
        *
        * "The following bits must be clear:
@@ -163,7 +162,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
                         PIPE_CONTROL_DEPTH_CACHE_FLUSH)));
    }
 
-   if (GFX_VER >= 6 && (flags & PIPE_CONTROL_DEPTH_STALL)) {
+   if (GEN_GEN >= 6 && (flags & PIPE_CONTROL_DEPTH_STALL)) {
       /* From the PIPE_CONTROL instruction table, bit 13 (Depth Stall Enable):
        *
        *    "This bit must be DISABLED for operations other than writing
@@ -171,7 +170,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
        *
        * This seems like nonsense.  An Ivybridge workaround requires us to
        * emit a PIPE_CONTROL with a depth stall and write immediate post-sync
-       * operation.  Gfx8+ requires us to emit depth stalls and depth cache
+       * operation.  Gen8+ requires us to emit depth stalls and depth cache
        * flushes together.  So, it's hard to imagine this means anything other
        * than "we originally intended this to be used for PS_DEPTH_COUNT".
        *
@@ -179,7 +178,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
        */
    }
 
-   if (GFX_VERx10 < 75 && (flags & PIPE_CONTROL_DEPTH_CACHE_FLUSH)) {
+   if (GEN_VERSIONx10 < 75 && (flags & PIPE_CONTROL_DEPTH_CACHE_FLUSH)) {
       /* Project: PRE-HSW / Argument: Depth Cache Flush
        *
        * "Depth Stall must be clear ([13] of DW1)."
@@ -200,7 +199,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
                                   PIPE_CONTROL_WRITE_TIMESTAMP)));
    }
 
-   if (GFX_VER < 11 && (flags & PIPE_CONTROL_STALL_AT_SCOREBOARD)) {
+   if (GEN_GEN < 11 && (flags & PIPE_CONTROL_STALL_AT_SCOREBOARD)) {
       /* From the PIPE_CONTROL instruction table, bit 1:
        *
        *    "This bit is ignored if Depth Stall Enable is set.
@@ -210,7 +209,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
        * We assert that the caller doesn't do this combination, to try and
        * prevent mistakes.  It shouldn't hurt the GPU, though.
        *
-       * We skip this check on Gfx11+ as the "Stall and Pixel Scoreboard"
+       * We skip this check on Gen11+ as the "Stall and Pixel Scoreboard"
        * and "Render Target Flush" combo is explicitly required for BTI
        * update workarounds.
        */
@@ -220,8 +219,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
 
    /* PIPE_CONTROL page workarounds ------------------------------------- */
 
-   if (IS_GFX_VER_BETWEEN(7, 8) &&
-       (flags & PIPE_CONTROL_STATE_CACHE_INVALIDATE)) {
+   if (IS_GEN_BETWEEN(7, 8) && (flags & PIPE_CONTROL_STATE_CACHE_INVALIDATE)) {
       /* From the PIPE_CONTROL page itself:
        *
        *    "IVB, HSW, BDW
@@ -232,7 +230,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
       flags |= PIPE_CONTROL_CS_STALL;
    }
 
-   if (GFX_VERx10 == 75) {
+   if (GEN_IS_HASWELL) {
       /* From the PIPE_CONTROL page itself:
        *
        *    "HSW - Programming Note: PIPECONTROL with RO Cache Invalidation:
@@ -314,8 +312,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
       assert(non_lri_post_sync_flags != 0);
    }
 
-   if (IS_GFX_VERx10_BETWEEN(60, 75) &&
-       (flags & PIPE_CONTROL_TLB_INVALIDATE)) {
+   if (IS_GENx10_BETWEEN(60, 75) && (flags & PIPE_CONTROL_TLB_INVALIDATE)) {
       /* Project: SNB, IVB, HSW / Argument: TLB inv
        *
        * "{All SKUs}{All Steppings}: Post-Sync Operation ([15:14] of DW1)
@@ -326,7 +323,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
       assert(non_lri_post_sync_flags != 0);
    }
 
-   if (GFX_VER >= 7 && (flags & PIPE_CONTROL_TLB_INVALIDATE)) {
+   if (GEN_GEN >= 7 && (flags & PIPE_CONTROL_TLB_INVALIDATE)) {
       /* Project: IVB+ / Argument: TLB inv
        *
        *    "Requires stall bit ([20] of DW1) set."
@@ -343,21 +340,21 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
       flags |= PIPE_CONTROL_CS_STALL;
    }
 
-   if (GFX_VER == 9 && devinfo->gt == 4) {
+   if (GEN_GEN == 9 && devinfo->gt == 4) {
       /* TODO: The big Skylake GT4 post sync op workaround */
    }
 
    /* "GPGPU specific workarounds" (both post-sync and flush) ------------ */
 
    if (IS_COMPUTE_PIPELINE(brw)) {
-      if (GFX_VER >= 9 && (flags & PIPE_CONTROL_TEXTURE_CACHE_INVALIDATE)) {
+      if (GEN_GEN >= 9 && (flags & PIPE_CONTROL_TEXTURE_CACHE_INVALIDATE)) {
          /* Project: SKL+ / Argument: Tex Invalidate
           * "Requires stall bit ([20] of DW) set for all GPGPU Workloads."
           */
          flags |= PIPE_CONTROL_CS_STALL;
       }
 
-      if (GFX_VER == 8 && (post_sync_flags ||
+      if (GEN_GEN == 8 && (post_sync_flags ||
                            (flags & (PIPE_CONTROL_NOTIFY_ENABLE |
                                      PIPE_CONTROL_DEPTH_STALL |
                                      PIPE_CONTROL_RENDER_TARGET_FLUSH |
@@ -410,7 +407,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
     * don't skip the ones with only read-cache-invalidate bits set.  This
     * may or may not be a problem...
     */
-   if (GFX_VERx10 == 70) {
+   if (GEN_GEN == 7 && !GEN_IS_HASWELL) {
       if (flags & PIPE_CONTROL_CS_STALL) {
          /* If we're doing a CS stall, reset the counter and carry on. */
          brw->pipe_controls_since_last_cs_stall = 0;
@@ -428,7 +425,7 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
     * some additional CS stalls above.
     */
 
-   if (GFX_VER < 9 && (flags & PIPE_CONTROL_CS_STALL)) {
+   if (GEN_GEN < 9 && (flags & PIPE_CONTROL_CS_STALL)) {
       /* Project: PRE-SKL, VLV, CHV
        *
        * "[All Stepping][All SKUs]:
@@ -463,15 +460,15 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
    /* Emit --------------------------------------------------------------- */
 
    brw_batch_emit(brw, GENX(PIPE_CONTROL), pc) {
-   #if GFX_VER >= 9
+   #if GEN_GEN >= 9
       pc.FlushLLC = 0;
    #endif
-   #if GFX_VER >= 7
+   #if GEN_GEN >= 7
       pc.LRIPostSyncOperation = NoLRIOperation;
       pc.PipeControlFlushEnable = flags & PIPE_CONTROL_FLUSH_ENABLE;
       pc.DCFlushEnable = flags & PIPE_CONTROL_DATA_CACHE_FLUSH;
    #endif
-   #if GFX_VER >= 6
+   #if GEN_GEN >= 6
       pc.StoreDataIndex = 0;
       pc.CommandStreamerStallEnable = flags & PIPE_CONTROL_CS_STALL;
       pc.GlobalSnapshotCountReset =
@@ -495,19 +492,19 @@ genX(emit_raw_pipe_control)(struct brw_context *brw, uint32_t flags,
       pc.InstructionCacheInvalidateEnable =
          flags & PIPE_CONTROL_INSTRUCTION_INVALIDATE;
       pc.NotifyEnable = flags & PIPE_CONTROL_NOTIFY_ENABLE;
-   #if GFX_VERx10 >= 45
+   #if GEN_GEN >= 5 || GEN_IS_G4X
       pc.IndirectStatePointersDisable =
          flags & PIPE_CONTROL_INDIRECT_STATE_POINTERS_DISABLE;
    #endif
-   #if GFX_VER >= 6
+   #if GEN_GEN >= 6
       pc.TextureCacheInvalidationEnable =
          flags & PIPE_CONTROL_TEXTURE_CACHE_INVALIDATE;
-   #elif GFX_VER == 5 || GFX_VERx10 == 45
+   #elif GEN_GEN == 5 || GEN_IS_G4X
       pc.TextureCacheFlushEnable =
          flags & PIPE_CONTROL_TEXTURE_CACHE_INVALIDATE;
    #endif
       pc.Address = ggtt_bo(bo, offset);
-      if (GFX_VER < 7 && bo)
+      if (GEN_GEN < 7 && bo)
          pc.DestinationAddressType = DAT_GGTT;
       pc.ImmediateData = imm;
    }

@@ -45,6 +45,9 @@
 #define MIDGARD_BROKEN_FP16 (1 << 2)
 
 /* What it says on the tin */
+#define IS_BIFROST (1 << 3)
+
+/* What it says on the tin */
 #define HAS_SWIZZLES (1 << 4)
 
 /* bit 5 unused */
@@ -65,33 +68,28 @@
 /* Lack support for AFBC */
 #define MIDGARD_NO_AFBC (1 << 10)
 
-/* Does this GPU support anisotropic filtering? */
-#define HAS_ANISOTROPIC (1 << 11)
-
-#define NO_TILE_ENABLE_MAP (1 << 12)
-
 /* Quirk collections common to particular uarchs */
 
 #define MIDGARD_QUIRKS (MIDGARD_BROKEN_FP16 | HAS_SWIZZLES \
                 | MIDGARD_NO_TYPED_BLEND_STORES \
                 | MIDGARD_MISSING_LOADS)
 
-#define BIFROST_QUIRKS NO_BLEND_PACKS
+/* TODO: AFBC on Bifrost */
+#define BIFROST_QUIRKS (IS_BIFROST | NO_BLEND_PACKS | MIDGARD_NO_AFBC)
 
 static inline unsigned
-panfrost_get_quirks(unsigned gpu_id, unsigned gpu_revision)
+panfrost_get_quirks(unsigned gpu_id)
 {
         switch (gpu_id) {
         case 0x600:
         case 0x620:
                 return MIDGARD_QUIRKS | MIDGARD_SFBD
                         | MIDGARD_NO_TYPED_BLEND_LOADS
-                        | NO_BLEND_PACKS | MIDGARD_NO_AFBC
-                        | NO_TILE_ENABLE_MAP;
+                        | NO_BLEND_PACKS | MIDGARD_NO_AFBC;
 
         case 0x720:
                 return MIDGARD_QUIRKS | MIDGARD_SFBD | MIDGARD_NO_HIER_TILING
-                        | MIDGARD_NO_AFBC | NO_TILE_ENABLE_MAP;
+                        | MIDGARD_NO_AFBC;
 
         case 0x820:
         case 0x830:
@@ -107,17 +105,12 @@ panfrost_get_quirks(unsigned gpu_id, unsigned gpu_revision)
                 return MIDGARD_QUIRKS;
 
         case 0x6000: /* G71 */
-                return BIFROST_QUIRKS | HAS_SWIZZLES;
-
         case 0x6221: /* G72 */
-                /* Anisotropic filtering is supported from r0p3 onwards */
-                return BIFROST_QUIRKS | HAS_SWIZZLES
-                        | (gpu_revision >= 0x30 ? HAS_ANISOTROPIC : 0);
+                return BIFROST_QUIRKS | HAS_SWIZZLES;
 
         case 0x7093: /* G31 */
         case 0x7212: /* G52 */
-        case 0x7402: /* G52r1 */
-                return BIFROST_QUIRKS | HAS_ANISOTROPIC;
+                return BIFROST_QUIRKS;
 
         default:
                 unreachable("Unknown Panfrost GPU ID");

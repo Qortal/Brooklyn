@@ -76,7 +76,7 @@ static void *blit_compute_shader(struct pipe_context *ctx)
 }
 
 void util_compute_blit(struct pipe_context *ctx, struct pipe_blit_info *blit_info,
-                       void **compute_state, bool half_texel_offset)
+                       void **compute_state)
 {
    if (blit_info->src.box.width == 0 || blit_info->src.box.height == 0 ||
        blit_info->dst.box.width == 0 || blit_info->dst.box.height == 0)
@@ -91,10 +91,9 @@ void util_compute_blit(struct pipe_context *ctx, struct pipe_blit_info *blit_inf
    float x_scale = blit_info->src.box.width / (float)blit_info->dst.box.width;
    float y_scale = blit_info->src.box.height / (float)blit_info->dst.box.height;
    float z_scale = blit_info->src.box.depth / (float)blit_info->dst.box.depth;
-   float offset = half_texel_offset ? 0.5 : 0.0;
 
-   unsigned data[] = {u_bitcast_f2u((blit_info->src.box.x + offset) / (float)src->width0),
-                      u_bitcast_f2u((blit_info->src.box.y + offset) / (float)src->height0),
+   unsigned data[] = {u_bitcast_f2u((blit_info->src.box.x + 0.5) / (float)src->width0),
+                      u_bitcast_f2u((blit_info->src.box.y + 0.5) / (float)src->height0),
                       u_bitcast_f2u(blit_info->src.box.z),
                       u_bitcast_f2u(0),
                       u_bitcast_f2u(x_scale / src->width0),
@@ -109,7 +108,7 @@ void util_compute_blit(struct pipe_context *ctx, struct pipe_blit_info *blit_inf
    struct pipe_constant_buffer cb = {0};
    cb.buffer_size = sizeof(data);
    cb.user_buffer = data;
-   ctx->set_constant_buffer(ctx, PIPE_SHADER_COMPUTE, 0, false, &cb);
+   ctx->set_constant_buffer(ctx, PIPE_SHADER_COMPUTE, 0, &cb);
 
    struct pipe_image_view image = {0};
    image.resource = dst;
@@ -119,7 +118,7 @@ void util_compute_blit(struct pipe_context *ctx, struct pipe_blit_info *blit_inf
    image.u.tex.first_layer = 0;
    image.u.tex.last_layer = (unsigned)(dst->array_size - 1);
 
-   ctx->set_shader_images(ctx, PIPE_SHADER_COMPUTE, 0, 1, 0, &image);
+   ctx->set_shader_images(ctx, PIPE_SHADER_COMPUTE, 0, 1, &image);
 
    struct pipe_sampler_state sampler_state={0};
    sampler_state.wrap_s = PIPE_TEX_WRAP_CLAMP_TO_EDGE;
@@ -139,7 +138,7 @@ void util_compute_blit(struct pipe_context *ctx, struct pipe_blit_info *blit_inf
    u_sampler_view_default_template(&src_templ, src, src->format);
    src_templ.format = util_format_linear(blit_info->src.format);
    src_view = ctx->create_sampler_view(ctx, src, &src_templ);
-   ctx->set_sampler_views(ctx, PIPE_SHADER_COMPUTE, 0, 1, 0, false, &src_view);
+   ctx->set_sampler_views(ctx, PIPE_SHADER_COMPUTE, 0, 1, &src_view);
 
    if (!*compute_state)
      *compute_state = blit_compute_shader(ctx);
@@ -158,9 +157,9 @@ void util_compute_blit(struct pipe_context *ctx, struct pipe_blit_info *blit_inf
 
    ctx->memory_barrier(ctx, PIPE_BARRIER_ALL);
 
-   ctx->set_shader_images(ctx, PIPE_SHADER_COMPUTE, 0, 0, 1, NULL);
-   ctx->set_constant_buffer(ctx, PIPE_SHADER_COMPUTE, 0, false, NULL);
-   ctx->set_sampler_views(ctx, PIPE_SHADER_COMPUTE, 0, 0, 1, false, NULL);
+   ctx->set_shader_images(ctx, PIPE_SHADER_COMPUTE, 0, 1, NULL);
+   ctx->set_constant_buffer(ctx, PIPE_SHADER_COMPUTE, 0, NULL);
+   ctx->set_sampler_views(ctx, PIPE_SHADER_COMPUTE, 0, 1, NULL);
    pipe_sampler_view_reference(&src_view, NULL);
    ctx->delete_sampler_state(ctx, sampler_state_p);
    ctx->bind_compute_state(ctx, NULL);

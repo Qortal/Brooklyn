@@ -36,7 +36,6 @@ if with_platform_x11
     dep_xcb_dri3,
     dep_xcb_present,
     dep_xcb_sync,
-    dep_xcb_xrandr,
     dep_xshmfence,
   ]
   vulkan_wsi_list += ['xcb', 'x11']
@@ -46,9 +45,6 @@ if with_platform_wayland
   vulkan_wsi_deps += dep_wayland_client
   vulkan_wsi_list += ['wayland']
 endif
-if with_platform_windows
-  vulkan_wsi_args += ['-DVK_USE_PLATFORM_WIN32_KHR']
-endif
 if system_has_kms_drm and not with_platform_android
   vulkan_wsi_args += '-DVK_USE_PLATFORM_DISPLAY_KHR'
   vulkan_wsi_deps += [dep_libdrm]
@@ -56,7 +52,7 @@ if system_has_kms_drm and not with_platform_android
 endif
 if with_xlib_lease
   vulkan_wsi_args += '-DVK_USE_PLATFORM_XLIB_XRANDR_EXT'
-  vulkan_wsi_deps += [dep_xlib_xrandr]
+  vulkan_wsi_deps += [dep_xcb_xrandr, dep_xlib_xrandr]
   vulkan_wsi_list += ['xlib_xrandr']
 endif
 
@@ -66,6 +62,6 @@ subdir('wsi')
 if with_vulkan_overlay_layer
   subdir('overlay-layer')
 endif
-if with_vulkan_device_select_layer
+if get_option('vulkan-device-select-layer')
   subdir('device-select-layer')
 endif

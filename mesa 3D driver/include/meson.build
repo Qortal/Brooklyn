@@ -96,7 +96,7 @@ if with_egl
   )
 endif
 
-if with_osmesa
+if with_osmesa != 'none'
   install_headers('GL/osmesa.h', subdir : 'GL')
 endif
 
@@ -141,4 +141,8 @@ if with_gallium_opencl and not with_opencl_icd
     'CL/opencl.h',
     subdir: 'CL'
   )
+endif
+
+if with_intel_vk
+  install_headers('vulkan/vulkan_intel.h', subdir : 'vulkan')
 endif

@@ -315,13 +315,13 @@ static bool gpir_emit_load_const(gpir_block *block, nir_instr *ni)
 
 static bool gpir_emit_ssa_undef(gpir_block *block, nir_instr *ni)
 {
-   gpir_error("nir_ssa_undef_instr is not supported\n");
+   gpir_error("nir_ssa_undef_instr not support\n");
    return false;
 }
 
 static bool gpir_emit_tex(gpir_block *block, nir_instr *ni)
 {
-   gpir_error("texture operations are not supported\n");
+   gpir_error("nir_jump_instr not support\n");
    return false;
 }
 
@@ -447,7 +447,7 @@ static void gpir_print_shader_db(struct nir_shader *nir, gpir_compiler *comp,
    free(shaderdb);
 }
 
-bool gpir_compile_nir(struct lima_vs_compiled_shader *prog, struct nir_shader *nir,
+bool gpir_compile_nir(struct lima_vs_shader_state *prog, struct nir_shader *nir,
                       struct pipe_debug_callback *debug)
 {
    nir_function_impl *func = nir_shader_get_entrypoint(nir);
@@ -456,9 +456,9 @@ bool gpir_compile_nir(struct lima_vs_compiled_shader *prog, struct nir_shader *n
       return false;
 
    comp->constant_base = nir->num_uniforms;
-   prog->state.uniform_size = nir->num_uniforms * 16;
-   prog->state.gl_pos_idx = 0;
-   prog->state.point_size_idx = -1;
+   prog->uniform_size = nir->num_uniforms * 16;
+   prog->gl_pos_idx = 0;
+   prog->point_size_idx = -1;
 
    if (!gpir_emit_function(comp, func))
       goto err_out0;
@@ -487,31 +487,25 @@ bool gpir_compile_nir(struct lima_vs_compiled_shader *prog, struct nir_shader *n
    if (!gpir_codegen_prog(comp))
       goto err_out0;
 
-   /* initialize to support accumulating below */
-   nir_foreach_shader_out_variable(var, nir) {
-      struct lima_varying_info *v = prog->state.varying + var->data.driver_location;
-      v->components = 0;
-   }
-
    nir_foreach_shader_out_variable(var, nir) {
       bool varying = true;
       switch (var->data.location) {
       case VARYING_SLOT_POS:
-         prog->state.gl_pos_idx = var->data.driver_location;
+         prog->gl_pos_idx = var->data.driver_location;
          varying = false;
          break;
       case VARYING_SLOT_PSIZ:
-         prog->state.point_size_idx = var->data.driver_location;
+         prog->point_size_idx = var->data.driver_location;
          varying = false;
          break;
       }
 
-      struct lima_varying_info *v = prog->state.varying + var->data.driver_location;
+      struct lima_varying_info *v = prog->varying + var->data.driver_location;
       if (!v->components) {
          v->component_size = gpir_glsl_type_size(glsl_get_base_type(var->type));
-         prog->state.num_outputs++;
+         prog->num_outputs++;
          if (varying)
-            prog->state.num_varyings++;
+            prog->num_varyings++;
       }
 
       v->components += glsl_get_components(var->type);

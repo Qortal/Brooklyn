@@ -78,10 +78,10 @@ pandecode_add_name(struct pandecode_mapped_memory *mem, uint64_t gpu_va, const c
         if (!name) {
                 /* If we don't have a name, assign one */
 
-                snprintf(mem->name, sizeof(mem->name) - 1,
+                snprintf(mem->name, ARRAY_SIZE(mem->name) - 1,
                          "memory_%" PRIx64, gpu_va);
         } else {
-                assert((strlen(name) + 1) < sizeof(mem->name));
+                assert((strlen(name) + 1) < ARRAY_SIZE(mem->name));
                 memcpy(mem->name, name, strlen(name) + 1);
         }
 }
@@ -115,24 +115,6 @@ pandecode_inject_mmap(uint64_t gpu_va, void *cpu, unsigned sz, const char *name)
 
         for (unsigned i = 0; i < sz; i += 4096)
                 _mesa_hash_table_u64_insert(mmap_table, gpu_va + i, mapped_mem);
-}
-
-void
-pandecode_inject_free(uint64_t gpu_va, unsigned sz)
-{
-        struct pandecode_mapped_memory *mem =
-                pandecode_find_mapped_gpu_mem_containing_rw(gpu_va);
-
-        if (!mem)
-                return;
-
-        assert(mem->gpu_va == gpu_va);
-        assert(mem->length == sz);
-
-        free(mem);
-
-        for (unsigned i = 0; i < sz; i += 4096)
-                _mesa_hash_table_u64_remove(mmap_table, gpu_va + i);
 }
 
 char *
@@ -189,9 +171,7 @@ static void
 pandecode_dump_file_close(void)
 {
         if (pandecode_dump_stream && pandecode_dump_stream != stderr) {
-                if (fclose(pandecode_dump_stream))
-                        perror("pandecode: dump file");
-
+                fclose(pandecode_dump_stream);
                 pandecode_dump_stream = NULL;
         }
 }
@@ -214,7 +194,7 @@ pandecode_next_frame(void)
 void
 pandecode_close(void)
 {
-        _mesa_hash_table_u64_destroy(mmap_table);
+        _mesa_hash_table_u64_destroy(mmap_table, NULL);
         util_dynarray_fini(&ro_mappings);
         pandecode_dump_file_close();
 }

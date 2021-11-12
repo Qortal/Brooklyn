@@ -39,7 +39,6 @@
 
 #include "pipe/p_defines.h"
 #include "pipe/p_state.h"
-#include "util/compiler.h"
 #include "util/u_blitter.h"
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
@@ -79,13 +78,13 @@ etna_clear_blit_pack_rgba(enum pipe_format format, const union pipe_color_union 
    switch (util_format_get_blocksize(format)) {
    case 1:
       uc.ui[0] = uc.ui[0] << 8 | (uc.ui[0] & 0xff);
-      FALLTHROUGH;
+      /* fallthrough */
    case 2:
       uc.ui[0] =  uc.ui[0] << 16 | (uc.ui[0] & 0xffff);
-      FALLTHROUGH;
+      /* fallthrough */
    case 4:
       uc.ui[1] = uc.ui[0];
-      FALLTHROUGH;
+      /* fallthrough */
    default:
       return (uint64_t) uc.ui[1] << 32 | uc.ui[0];
    }
@@ -156,8 +155,16 @@ etna_resource_copy_region(struct pipe_context *pctx, struct pipe_resource *dst,
 {
    struct etna_context *ctx = etna_context(pctx);
 
-   if (src->target != PIPE_BUFFER && dst->target != PIPE_BUFFER &&
-       util_blitter_is_copy_supported(ctx->blitter, dst, src)) {
+   /* XXX we can use the RS as a literal copy engine here
+    * the only complexity is tiling; the size of the boxes needs to be aligned
+    * to the tile size
+    * how to handle the case where a resource is copied from/to a non-aligned
+    * position?
+    * from non-aligned: can fall back to rendering-based copy?
+    * to non-aligned: can fall back to rendering-based copy?
+    * XXX this goes wrong when source surface is supertiled.
+    */
+   if (util_blitter_is_copy_supported(ctx->blitter, dst, src)) {
       etna_blit_save_state(ctx);
       util_blitter_copy_texture(ctx->blitter, dst, dst_level, dstx, dsty, dstz,
                                 src, src_level, src_box);

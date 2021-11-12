@@ -53,7 +53,6 @@ lower_alu_instr(nir_alu_instr *alu)
    case nir_op_vec2:
    case nir_op_vec3:
    case nir_op_vec4:
-   case nir_op_vec5:
    case nir_op_vec8:
    case nir_op_vec16:
    case nir_op_inot:
@@ -103,8 +102,6 @@ lower_alu_instr(nir_alu_instr *alu)
 
    case nir_op_bcsel: alu->op = nir_op_b32csel; break;
 
-   case nir_op_fisfinite: alu->op = nir_op_fisfinite32; break;
-
    default:
       assert(alu->dest.dest.ssa.bit_size > 1);
       for (unsigned i = 0; i < op_info->num_inputs; i++)
@@ -116,18 +113,6 @@ lower_alu_instr(nir_alu_instr *alu)
       alu->dest.dest.ssa.bit_size = 32;
 
    return true;
-}
-
-static bool
-lower_tex_instr(nir_tex_instr *tex)
-{
-   bool progress = false;
-   rewrite_1bit_ssa_def_to_32bit(&tex->dest.ssa, &progress);
-   if (tex->dest_type == nir_type_bool1) {
-      tex->dest_type = nir_type_bool32;
-      progress = true;
-   }
-   return progress;
 }
 
 static bool
@@ -157,12 +142,9 @@ nir_lower_bool_to_int32_impl(nir_function_impl *impl)
          case nir_instr_type_intrinsic:
          case nir_instr_type_ssa_undef:
          case nir_instr_type_phi:
+         case nir_instr_type_tex:
             nir_foreach_ssa_def(instr, rewrite_1bit_ssa_def_to_32bit,
                                 &progress);
-            break;
-
-         case nir_instr_type_tex:
-            progress |= lower_tex_instr(nir_instr_as_tex(instr));
             break;
 
          default:

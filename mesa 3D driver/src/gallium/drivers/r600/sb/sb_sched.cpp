@@ -1950,10 +1950,7 @@ void post_scheduler::release_src_vec(vvec& vv, bool src) {
 }
 
 void literal_tracker::reset() {
-	lt[0].u = 0;
-	lt[1].u = 0;
-	lt[2].u = 0;
-	lt[3].u = 0;
+	memset(lt, 0, sizeof(lt));
 	memset(uc, 0, sizeof(uc));
 }
 

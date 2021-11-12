@@ -45,8 +45,6 @@
 
 #include "radeon_program_pair.h"
 
-#include "util/compiler.h"
-
 #define PROG_CODE \
 	struct r500_fragment_program_code *code = &c->code->code.r500
 
@@ -103,9 +101,9 @@ static unsigned int translate_rgb_op(struct r300_fragment_program_compiler *c, r
 	case RC_OPCODE_FRC: return R500_ALU_RGBA_OP_FRC;
 	default:
 		error("translate_rgb_op: unknown opcode %s\n", rc_get_opcode_info(opcode)->Name);
-		FALLTHROUGH;
+		/* fall through */
 	case RC_OPCODE_NOP:
-		FALLTHROUGH;
+		/* fall through */
 	case RC_OPCODE_MAD: return R500_ALU_RGBA_OP_MAD;
 	case RC_OPCODE_MAX: return R500_ALU_RGBA_OP_MAX;
 	case RC_OPCODE_MIN: return R500_ALU_RGBA_OP_MIN;
@@ -128,9 +126,9 @@ static unsigned int translate_alpha_op(struct r300_fragment_program_compiler *c,
 	case RC_OPCODE_LG2: return R500_ALPHA_OP_LN2;
 	default:
 		error("translate_alpha_op: unknown opcode %s\n", rc_get_opcode_info(opcode)->Name);
-		FALLTHROUGH;
+		/* fall through */
 	case RC_OPCODE_NOP:
-		FALLTHROUGH;
+		/* fall through */
 	case RC_OPCODE_MAD: return R500_ALPHA_OP_MAD;
 	case RC_OPCODE_MAX: return R500_ALPHA_OP_MAX;
 	case RC_OPCODE_MIN: return R500_ALPHA_OP_MIN;
@@ -453,7 +451,7 @@ static void emit_flowcontrol(struct emit_state * s, struct rc_instruction * inst
 
 	newip = ++s->Code->inst_end;
 
-	/* Currently all loops use the same integer constant to initialize
+	/* Currently all loops use the same integer constant to intialize
 	 * the loop variables. */
 	if(!s->Code->int_constants[0]) {
 		s->Code->int_constants[0] = R500_FC_INT_CONST_KR(0xff);

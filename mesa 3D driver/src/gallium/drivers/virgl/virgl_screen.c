@@ -26,12 +26,10 @@
 #include "util/u_screen.h"
 #include "util/u_video.h"
 #include "util/u_math.h"
-#include "util/u_inlines.h"
 #include "util/os_time.h"
 #include "util/xmlconfig.h"
 #include "pipe/p_defines.h"
 #include "pipe/p_screen.h"
-#include "nir/nir_to_tgsi.h"
 
 #include "tgsi/tgsi_exec.h"
 
@@ -40,21 +38,18 @@
 #include "virgl_public.h"
 #include "virgl_context.h"
 #include "virtio-gpu/virgl_protocol.h"
-#include "virgl_encode.h"
 
 int virgl_debug = 0;
-static const struct debug_named_value virgl_debug_options[] = {
+static const struct debug_named_value debug_options[] = {
    { "verbose",   VIRGL_DEBUG_VERBOSE,             NULL },
    { "tgsi",      VIRGL_DEBUG_TGSI,                NULL },
-   { "nir",       VIRGL_DEBUG_NIR,                 NULL },
    { "noemubgra", VIRGL_DEBUG_NO_EMULATE_BGRA,     "Disable tweak to emulate BGRA as RGBA on GLES hosts"},
    { "nobgraswz", VIRGL_DEBUG_NO_BGRA_DEST_SWIZZLE,"Disable tweak to swizzle emulated BGRA on GLES hosts" },
    { "sync",      VIRGL_DEBUG_SYNC,                "Sync after every flush" },
    { "xfer",      VIRGL_DEBUG_XFER,                "Do not optimize for transfers" },
-   { "nocoherent", VIRGL_DEBUG_NO_COHERENT,        "Disable coherent memory"},
    DEBUG_NAMED_VALUE_END
 };
-DEBUG_GET_ONCE_FLAGS_OPTION(virgl_debug, "VIRGL_DEBUG", virgl_debug_options, 0)
+DEBUG_GET_ONCE_FLAGS_OPTION(virgl_debug, "VIRGL_DEBUG", debug_options, 0)
 
 static const char *
 virgl_get_vendor(struct pipe_screen *screen)
@@ -66,10 +61,6 @@ virgl_get_vendor(struct pipe_screen *screen)
 static const char *
 virgl_get_name(struct pipe_screen *screen)
 {
-   struct virgl_screen *vscreen = virgl_screen(screen);
-   if (vscreen->caps.caps.v2.host_feature_check_version >= 5)
-      return vscreen->caps.caps.v2.renderer;
-
    return "virgl";
 }
 
@@ -85,7 +76,7 @@ virgl_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_VERTEX_SHADER_SATURATE:
       return 1;
    case PIPE_CAP_ANISOTROPIC_FILTER:
-      return vscreen->caps.caps.v2.max_anisotropy > 1.0;
+      return 1;
    case PIPE_CAP_POINT_SPRITE:
       return 1;
    case PIPE_CAP_MAX_RENDER_TARGETS:
@@ -173,7 +164,6 @@ virgl_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_GLSL_FEATURE_LEVEL_COMPATIBILITY:
       return MIN2(vscreen->caps.caps.v1.glsl_level, 140);
    case PIPE_CAP_QUADS_FOLLOW_PROVOKING_VERTEX_CONVENTION:
-      return 1;
    case PIPE_CAP_DEPTH_CLIP_DISABLE_SEPARATE:
       return 0;
    case PIPE_CAP_COMPUTE:
@@ -192,7 +182,6 @@ virgl_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_VERTEX_BUFFER_STRIDE_4BYTE_ALIGNED_ONLY:
    case PIPE_CAP_VERTEX_ELEMENT_SRC_OFFSET_4BYTE_ALIGNED_ONLY:
    case PIPE_CAP_PREFER_BLIT_BASED_TEXTURE_TRANSFER:
-   case PIPE_CAP_NIR_IMAGES_AS_DEREF:
       return 0;
    case PIPE_CAP_QUERY_TIMESTAMP:
       return 1;
@@ -305,7 +294,7 @@ virgl_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_BUFFER_MAP_PERSISTENT_COHERENT:
       return (vscreen->caps.caps.v2.capability_bits & VIRGL_CAP_ARB_BUFFER_STORAGE) &&
              (vscreen->caps.caps.v2.host_feature_check_version >= 4) &&
-              vscreen->vws->supports_coherent && !vscreen->no_coherent;
+              vscreen->vws->supports_coherent;
    case PIPE_CAP_PCI_GROUP:
    case PIPE_CAP_PCI_BUS:
    case PIPE_CAP_PCI_DEVICE:
@@ -329,8 +318,6 @@ virgl_get_param(struct pipe_screen *screen, enum pipe_cap param)
       return 1;
    case PIPE_CAP_UMA:
    case PIPE_CAP_VIDEO_MEMORY:
-      if (vscreen->caps.caps.v2.capability_bits_v2 & VIRGL_CAP_V2_VIDEO_MEMORY)
-         return vscreen->caps.caps.v2.max_video_memory;
       return 0;
    case PIPE_CAP_NATIVE_FENCE_FD:
       return vscreen->vws->supports_fences;
@@ -339,17 +326,6 @@ virgl_get_param(struct pipe_screen *screen, enum pipe_cap param)
             (vscreen->caps.caps.v2.host_feature_check_version < 1);
    case PIPE_CAP_TGSI_SKIP_SHRINK_IO_ARRAYS:
       return vscreen->caps.caps.v2.capability_bits & VIRGL_CAP_INDIRECT_INPUT_ADDR;
-   case PIPE_CAP_SHAREABLE_SHADERS:
-      /* Shader creation emits the shader through the context's command buffer
-       * in virgl_encode_shader_state().
-       */
-      return 0;
-   case PIPE_CAP_QUERY_MEMORY_INFO:
-      return vscreen->caps.caps.v2.capability_bits_v2 & VIRGL_CAP_V2_MEMINFO;
-   case PIPE_CAP_STRING_MARKER:
-       return vscreen->caps.caps.v2.capability_bits_v2 & VIRGL_CAP_V2_STRING_MARKER;
-   case PIPE_CAP_SURFACE_SAMPLE_COUNT:
-       return vscreen->caps.caps.v2.capability_bits_v2 & VIRGL_CAP_V2_IMPLICIT_MSAA;
    default:
       return u_pipe_screen_get_param_defaults(screen, param);
    }
@@ -428,10 +404,8 @@ virgl_get_shader_param(struct pipe_screen *screen,
             return vscreen->caps.caps.v2.max_shader_image_frag_compute;
          else
             return vscreen->caps.caps.v2.max_shader_image_other_stages;
-      case PIPE_SHADER_CAP_PREFERRED_IR:
-         return (virgl_debug & VIRGL_DEBUG_NIR) ? PIPE_SHADER_IR_NIR : PIPE_SHADER_IR_TGSI;
       case PIPE_SHADER_CAP_SUPPORTED_IRS:
-         return (1 << PIPE_SHADER_IR_TGSI) | ((virgl_debug & VIRGL_DEBUG_NIR) ? (1 << PIPE_SHADER_IR_NIR) : 0);
+         return (1 << PIPE_SHADER_IR_TGSI);
       case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTERS:
          return vscreen->caps.caps.v2.max_atomic_counters[shader];
       case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTER_BUFFERS:
@@ -441,7 +415,6 @@ virgl_get_shader_param(struct pipe_screen *screen,
       case PIPE_SHADER_CAP_INT64_ATOMICS:
       case PIPE_SHADER_CAP_FP16:
       case PIPE_SHADER_CAP_FP16_DERIVATIVES:
-      case PIPE_SHADER_CAP_FP16_CONST_BUFFERS:
       case PIPE_SHADER_CAP_INT16:
       case PIPE_SHADER_CAP_GLSL_16BIT_CONSTS:
          return 0;
@@ -467,7 +440,7 @@ virgl_get_paramf(struct pipe_screen *screen, enum pipe_capf param)
    case PIPE_CAPF_MAX_POINT_WIDTH_AA:
       return vscreen->caps.caps.v2.max_smooth_point_size;
    case PIPE_CAPF_MAX_TEXTURE_ANISOTROPY:
-      return vscreen->caps.caps.v2.max_anisotropy;
+      return 16.0;
    case PIPE_CAPF_MAX_TEXTURE_LOD_BIAS:
       return vscreen->caps.caps.v2.max_texture_lod_bias;
    case PIPE_CAPF_MIN_CONSERVATIVE_RASTER_DILATE:
@@ -751,10 +724,6 @@ virgl_is_format_supported( struct pipe_screen *screen,
       goto out_lookup;
    }
 
-   if (format_desc->layout == UTIL_FORMAT_LAYOUT_ASTC) {
-     goto out_lookup;
-   }
-
    /* Find the first non-VOID channel. */
    for (i = 0; i < 4; i++) {
       if (format_desc->channel[i].type != UTIL_FORMAT_TYPE_VOID) {
@@ -776,7 +745,6 @@ virgl_is_format_supported( struct pipe_screen *screen,
 }
 
 static void virgl_flush_frontbuffer(struct pipe_screen *screen,
-                                    struct pipe_context *ctx,
                                       struct pipe_resource *res,
                                       unsigned level, unsigned layer,
                                     void *winsys_drawable_handle, struct pipe_box *sub_box)
@@ -807,10 +775,6 @@ static bool virgl_fence_finish(struct pipe_screen *screen,
 {
    struct virgl_screen *vscreen = virgl_screen(screen);
    struct virgl_winsys *vws = vscreen->vws;
-   struct virgl_context *vctx = virgl_context(ctx);
-
-   if (vctx && timeout)
-      virgl_flush_eq(vctx, NULL, NULL);
 
    return vws->fence_wait(vws, fence, timeout);
 }
@@ -840,9 +804,6 @@ virgl_destroy_screen(struct pipe_screen *screen)
 
    if (vws)
       vws->destroy(vws);
-
-   disk_cache_destroy(vscreen->disk_cache);
-
    FREE(vscreen);
 }
 
@@ -852,7 +813,7 @@ fixup_formats(union virgl_caps *caps, struct virgl_supported_format_mask *mask)
    const size_t size = ARRAY_SIZE(mask->bitmask);
    for (int i = 0; i < size; ++i) {
       if (mask->bitmask[i] != 0)
-         return; /* we got some formats, we definitely have a new protocol */
+         return; /* we got some formats, we definately have a new protocol */
    }
 
    /* old protocol used; fall back to considering all sampleable formats valid
@@ -860,92 +821,6 @@ fixup_formats(union virgl_caps *caps, struct virgl_supported_format_mask *mask)
     */
    for (int i = 0; i < size; ++i)
       mask->bitmask[i] = caps->v1.sampler.bitmask[i];
-}
-
-static void virgl_query_memory_info(struct pipe_screen *screen, struct pipe_memory_info *info)
-{
-   struct virgl_screen *vscreen = virgl_screen(screen);
-   struct pipe_context *ctx = screen->context_create(screen, NULL, 0);
-   struct virgl_context *vctx = virgl_context(ctx);
-   struct virgl_resource *res;
-   struct virgl_memory_info virgl_info = {0};
-   const static struct pipe_resource templ = {
-      .target = PIPE_BUFFER,
-      .format = PIPE_FORMAT_R8_UNORM,
-      .bind = PIPE_BIND_CUSTOM,
-      .width0 = sizeof(struct virgl_memory_info),
-      .height0 = 1,
-      .depth0 = 1,
-      .array_size = 1,
-      .last_level = 0,
-      .nr_samples = 0,
-      .flags = 0
-   };
-
-   res = (struct virgl_resource*) screen->resource_create(screen, &templ);
-
-   virgl_encode_get_memory_info(vctx, res);
-   ctx->flush(ctx, NULL, 0);
-   vscreen->vws->resource_wait(vscreen->vws, res->hw_res);
-   pipe_buffer_read(ctx, &res->b, 0, sizeof(struct virgl_memory_info), &virgl_info);
-
-   info->avail_device_memory = virgl_info.avail_device_memory;
-   info->avail_staging_memory = virgl_info.avail_staging_memory;
-   info->device_memory_evicted = virgl_info.device_memory_evicted;
-   info->nr_device_memory_evictions = virgl_info.nr_device_memory_evictions;
-   info->total_device_memory = virgl_info.total_device_memory;
-   info->total_staging_memory = virgl_info.total_staging_memory;
-
-   screen->resource_destroy(screen, &res->b);
-   ctx->destroy(ctx);
-}
-
-static struct disk_cache *virgl_get_disk_shader_cache (struct pipe_screen *pscreen)
-{
-   struct virgl_screen *screen = virgl_screen(pscreen);
-
-   return screen->disk_cache;
-}
-
-static void virgl_disk_cache_create(struct virgl_screen *screen)
-{
-   const struct build_id_note *note =
-      build_id_find_nhdr_for_addr(virgl_disk_cache_create);
-   unsigned build_id_len = build_id_length(note);
-   assert(note && build_id_len == 20); /* sha1 */
-
-   const uint8_t *id_sha1 = build_id_data(note);
-   assert(id_sha1);
-
-   struct mesa_sha1 sha1_ctx;
-   _mesa_sha1_init(&sha1_ctx);
-   _mesa_sha1_update(&sha1_ctx, id_sha1, build_id_len);
-
-   uint32_t shader_debug_flags = virgl_debug & VIRGL_DEBUG_NIR;
-   _mesa_sha1_update(&sha1_ctx, &shader_debug_flags, sizeof(shader_debug_flags));
-
-   uint8_t sha1[20];
-   _mesa_sha1_final(&sha1_ctx, sha1);
-   char timestamp[41];
-   _mesa_sha1_format(timestamp, sha1);
-
-   screen->disk_cache = disk_cache_create("virgl", timestamp, 0);
-}
-
-static void
-fixup_renderer(union virgl_caps *caps)
-{
-   if (caps->v2.host_feature_check_version < 5)
-      return;
-
-   char renderer[64];
-   int renderer_len = snprintf(renderer, sizeof(renderer), "virgl (%s)",
-                               caps->v2.renderer);
-   if (renderer_len >= 64) {
-      memcpy(renderer + 59, "...)", 4);
-      renderer_len = 63;
-   }
-   memcpy(caps->v2.renderer, renderer, renderer_len + 1);
 }
 
 struct pipe_screen *
@@ -963,9 +838,6 @@ virgl_create_screen(struct virgl_winsys *vws, const struct pipe_screen_config *c
    virgl_debug = debug_get_option_virgl_debug();
 
    if (config && config->options) {
-      driParseConfigFiles(config->options, config->options_info, 0, "virtio_gpu",
-                          NULL, NULL, NULL, 0, NULL, 0);
-
       screen->tweak_gles_emulate_bgra =
             driQueryOptionb(config->options, VIRGL_GLES_EMULATE_BGRA);
       screen->tweak_gles_apply_bgra_dest_swizzle =
@@ -975,7 +847,6 @@ virgl_create_screen(struct virgl_winsys *vws, const struct pipe_screen_config *c
    }
    screen->tweak_gles_emulate_bgra &= !(virgl_debug & VIRGL_DEBUG_NO_EMULATE_BGRA);
    screen->tweak_gles_apply_bgra_dest_swizzle &= !(virgl_debug & VIRGL_DEBUG_NO_BGRA_DEST_SWIZZLE);
-   screen->no_coherent = virgl_debug & VIRGL_DEBUG_NO_COHERENT;
 
    screen->vws = vws;
    screen->base.get_name = virgl_get_name;
@@ -984,7 +855,6 @@ virgl_create_screen(struct virgl_winsys *vws, const struct pipe_screen_config *c
    screen->base.get_shader_param = virgl_get_shader_param;
    screen->base.get_compute_param = virgl_get_compute_param;
    screen->base.get_paramf = virgl_get_paramf;
-   screen->base.get_compiler_options = nir_to_tgsi_get_compiler_options;
    screen->base.is_format_supported = virgl_is_format_supported;
    screen->base.destroy = virgl_destroy_screen;
    screen->base.context_create = virgl_context_create;
@@ -994,8 +864,6 @@ virgl_create_screen(struct virgl_winsys *vws, const struct pipe_screen_config *c
    //screen->base.fence_signalled = virgl_fence_signalled;
    screen->base.fence_finish = virgl_fence_finish;
    screen->base.fence_get_fd = virgl_fence_get_fd;
-   screen->base.query_memory_info = virgl_query_memory_info;
-   screen->base.get_disk_shader_cache = virgl_get_disk_shader_cache;
 
    virgl_init_screen_resource_functions(&screen->base);
 
@@ -1003,7 +871,6 @@ virgl_create_screen(struct virgl_winsys *vws, const struct pipe_screen_config *c
    fixup_formats(&screen->caps.caps,
                  &screen->caps.caps.v2.supported_readback_formats);
    fixup_formats(&screen->caps.caps, &screen->caps.caps.v2.scanout);
-   fixup_renderer(&screen->caps.caps);
 
    union virgl_caps *caps = &screen->caps.caps;
    screen->tweak_gles_emulate_bgra &= !virgl_format_check_bitmask(PIPE_FORMAT_B8G8R8A8_SRGB, caps->v1.render.bitmask, false);
@@ -1011,6 +878,5 @@ virgl_create_screen(struct virgl_winsys *vws, const struct pipe_screen_config *c
 
    slab_create_parent(&screen->transfer_pool, sizeof(struct virgl_transfer), 16);
 
-   virgl_disk_cache_create(screen);
    return &screen->base;
 }

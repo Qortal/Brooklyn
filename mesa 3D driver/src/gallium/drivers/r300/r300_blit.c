@@ -281,7 +281,7 @@ static void r300_clear(struct pipe_context* pipe,
             if (!r300->hyperz_enabled &&
                 (r300->screen->caps.is_r500 || debug_get_option_hyperz())) {
                 r300->hyperz_enabled =
-                    r300->rws->cs_request_feature(&r300->cs,
+                    r300->rws->cs_request_feature(r300->cs,
                                                 RADEON_FID_R300_HYPERZ_ACCESS,
                                                 TRUE);
                 if (r300->hyperz_enabled) {
@@ -319,7 +319,7 @@ static void r300_clear(struct pipe_context* pipe,
         /* Try to obtain the access to the CMASK if we don't have one. */
         if (!r300->cmask_access) {
             r300->cmask_access =
-                r300->rws->cs_request_feature(&r300->cs,
+                r300->rws->cs_request_feature(r300->cs,
                                               RADEON_FID_R300_CMASK_ACCESS,
                                               TRUE);
         }
@@ -384,7 +384,7 @@ static void r300_clear(struct pipe_context* pipe,
             r300_get_num_cs_end_dwords(r300);
 
         /* Reserve CS space. */
-        if (!r300->rws->cs_check_space(&r300->cs, dwords)) {
+        if (!r300->rws->cs_check_space(r300->cs, dwords, false)) {
             r300_flush(&r300->context, PIPE_FLUSH_ASYNC, NULL);
         }
 
@@ -676,7 +676,7 @@ static void r300_resource_copy_region(struct pipe_context *pipe,
     util_blitter_blit_generic(r300->blitter, dst_view, &dstbox,
                               src_view, src_box, src_width0, src_height0,
                               PIPE_MASK_RGBAZS, PIPE_TEX_FILTER_NEAREST, NULL,
-                              FALSE, FALSE);
+                              FALSE);
     r300_blitter_end(r300);
 
     pipe_surface_reference(&dst_view, NULL);

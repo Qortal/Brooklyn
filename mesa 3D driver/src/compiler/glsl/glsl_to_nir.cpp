@@ -256,7 +256,6 @@ glsl_to_nir(struct gl_context *ctx,
    if (shader->info.stage == MESA_SHADER_FRAGMENT) {
       shader->info.fs.pixel_center_integer = sh->Program->info.fs.pixel_center_integer;
       shader->info.fs.origin_upper_left = sh->Program->info.fs.origin_upper_left;
-      shader->info.fs.advanced_blend_modes = sh->Program->info.fs.advanced_blend_modes;
    }
 
    return shader;
@@ -432,6 +431,17 @@ nir_visitor::constant_copy(ir_constant *ir, void *mem_ctx)
    return ret;
 }
 
+static const glsl_type *
+wrap_type_in_array(const glsl_type *elem_type, const glsl_type *array_type)
+{
+   if (!array_type->is_array())
+      return elem_type;
+
+   elem_type = wrap_type_in_array(elem_type, array_type->fields.array);
+
+   return glsl_type::get_array_instance(elem_type, array_type->length);
+}
+
 static unsigned
 get_nir_how_declared(unsigned how_declared)
 {
@@ -534,8 +544,6 @@ nir_visitor::visit(ir_variable *ir)
    case ir_var_uniform:
       if (ir->get_interface_type())
          var->data.mode = nir_var_mem_ubo;
-      else if (ir->type->contains_image() && !ir->data.bindless)
-         var->data.mode = nir_var_image;
       else
          var->data.mode = nir_var_uniform;
       break;
@@ -577,7 +585,7 @@ nir_visitor::visit(ir_variable *ir)
          /* If the type contains the interface, wrap the explicit type in the
           * right number of arrays.
           */
-         var->type = glsl_type_wrap_in_arrays(explicit_ifc_type, ir->type);
+         var->type = wrap_type_in_array(explicit_ifc_type, ir->type);
       } else {
          /* Otherwise, this variable is one entry in the interface */
          UNUSED bool found = false;
@@ -655,7 +663,7 @@ nir_visitor::visit(ir_variable *ir)
 
       ir_state_slot *state_slots = ir->get_state_slots();
       for (unsigned i = 0; i < var->num_state_slots; i++) {
-         for (unsigned j = 0; j < 4; j++)
+         for (unsigned j = 0; j < 5; j++)
             var->state_slots[i].tokens[j] = state_slots[i].tokens[j];
          var->state_slots[i].swizzle = state_slots[i].swizzle;
       }
@@ -803,28 +811,44 @@ nir_visitor::visit(ir_discard *ir)
     * discards will be immediately followed by a return.
     */
 
-   if (ir->condition)
-      nir_discard_if(&b, evaluate_rvalue(ir->condition));
-   else
-      nir_discard(&b);
+   nir_intrinsic_instr *discard;
+   if (ir->condition) {
+      discard = nir_intrinsic_instr_create(this->shader,
+                                           nir_intrinsic_discard_if);
+      discard->src[0] =
+         nir_src_for_ssa(evaluate_rvalue(ir->condition));
+   } else {
+      discard = nir_intrinsic_instr_create(this->shader, nir_intrinsic_discard);
+   }
+
+   nir_builder_instr_insert(&b, &discard->instr);
 }
 
 void
 nir_visitor::visit(ir_demote *ir)
 {
-   nir_demote(&b);
+   nir_intrinsic_instr *demote =
+      nir_intrinsic_instr_create(this->shader, nir_intrinsic_demote);
+
+   nir_builder_instr_insert(&b, &demote->instr);
 }
 
 void
 nir_visitor::visit(ir_emit_vertex *ir)
 {
-   nir_emit_vertex(&b, (unsigned)ir->stream_id());
+   nir_intrinsic_instr *instr =
+      nir_intrinsic_instr_create(this->shader, nir_intrinsic_emit_vertex);
+   nir_intrinsic_set_stream_id(instr, ir->stream_id());
+   nir_builder_instr_insert(&b, &instr->instr);
 }
 
 void
 nir_visitor::visit(ir_end_primitive *ir)
 {
-   nir_end_primitive(&b, (unsigned)ir->stream_id());
+   nir_intrinsic_instr *instr =
+      nir_intrinsic_instr_create(this->shader, nir_intrinsic_end_primitive);
+   nir_intrinsic_set_stream_id(instr, ir->stream_id());
+   nir_builder_instr_insert(&b, &instr->instr);
 }
 
 void
@@ -1296,6 +1320,10 @@ nir_visitor::visit(ir_call *ir)
       case nir_intrinsic_image_deref_size:
       case nir_intrinsic_image_deref_atomic_inc_wrap:
       case nir_intrinsic_image_deref_atomic_dec_wrap: {
+         nir_ssa_undef_instr *instr_undef =
+            nir_ssa_undef_instr_create(shader, 1, 32);
+         nir_builder_instr_insert(&b, &instr_undef->instr);
+
          /* Set the image variable dereference. */
          exec_node *param = ir->actual_parameters.get_head();
          ir_dereference *image = (ir_dereference *)param;
@@ -1306,9 +1334,6 @@ nir_visitor::visit(ir_call *ir)
 
          instr->src[0] = nir_src_for_ssa(&deref->dest.ssa);
          param = param->get_next();
-         nir_intrinsic_set_image_dim(instr,
-            (glsl_sampler_dim)type->sampler_dimensionality);
-         nir_intrinsic_set_image_array(instr, type->sampler_array);
 
          /* Set the intrinsic destination. */
          if (ir->return_deref) {
@@ -1351,7 +1376,7 @@ nir_visitor::visit(ir_call *ir)
             if (i < type->coordinate_components())
                srcs[i] = nir_channel(&b, src_addr, i);
             else
-               srcs[i] = nir_ssa_undef(&b, 1, 32);
+               srcs[i] = &instr_undef->def;
          }
 
          instr->src[1] = nir_src_for_ssa(nir_vec(&b, srcs, 4));
@@ -1365,7 +1390,7 @@ nir_visitor::visit(ir_call *ir)
                nir_src_for_ssa(evaluate_rvalue((ir_dereference *)param));
             param = param->get_next();
          } else {
-            instr->src[2] = nir_src_for_ssa(nir_ssa_undef(&b, 1, 32));
+            instr->src[2] = nir_src_for_ssa(&instr_undef->def);
          }
 
          /* Set the intrinsic parameters. */
@@ -1534,7 +1559,7 @@ nir_visitor::visit(ir_call *ir)
       }
       case nir_intrinsic_vote_ieq:
          instr->num_components = 1;
-         FALLTHROUGH;
+         /* fall-through */
       case nir_intrinsic_vote_any:
       case nir_intrinsic_vote_all: {
          nir_ssa_dest_init(&instr->instr, &instr->dest, 1, 1, NULL);
@@ -1626,7 +1651,7 @@ nir_visitor::visit(ir_call *ir)
          nir_ssa_def *val = evaluate_rvalue(param_rvalue);
          nir_src src = nir_src_for_ssa(val);
 
-         nir_src_copy(&call->params[i], &src);
+         nir_src_copy(&call->params[i], &src, call);
       } else if (sig_param->data.mode == ir_var_function_inout) {
          unreachable("unimplemented: inout parameters");
       }
@@ -2265,7 +2290,13 @@ nir_visitor::visit(ir_expression *ir)
       }
       break;
    case ir_binop_dot:
-      result = nir_fdot(&b, srcs[0], srcs[1]);
+      switch (ir->operands[0]->type->vector_elements) {
+         case 2: result = nir_fdot2(&b, srcs[0], srcs[1]); break;
+         case 3: result = nir_fdot3(&b, srcs[0], srcs[1]); break;
+         case 4: result = nir_fdot4(&b, srcs[0], srcs[1]); break;
+         default:
+            unreachable("not reached");
+      }
       break;
    case ir_binop_vector_extract: {
       result = nir_channel(&b, srcs[0], 0);
@@ -2410,7 +2441,29 @@ nir_visitor::visit(ir_texture *ir)
    instr->is_shadow = ir->sampler->type->sampler_shadow;
    if (instr->is_shadow)
       instr->is_new_style_shadow = (ir->type->vector_elements == 1);
-   instr->dest_type = nir_get_nir_type_for_glsl_type(ir->type);
+   switch (ir->type->base_type) {
+   case GLSL_TYPE_FLOAT:
+      instr->dest_type = nir_type_float;
+      break;
+   case GLSL_TYPE_FLOAT16:
+      instr->dest_type = nir_type_float16;
+      break;
+   case GLSL_TYPE_INT16:
+      instr->dest_type = nir_type_int16;
+      break;
+   case GLSL_TYPE_UINT16:
+      instr->dest_type = nir_type_uint16;
+      break;
+   case GLSL_TYPE_INT:
+      instr->dest_type = nir_type_int;
+      break;
+   case GLSL_TYPE_BOOL:
+   case GLSL_TYPE_UINT:
+      instr->dest_type = nir_type_uint;
+      break;
+   default:
+      unreachable("not reached");
+   }
 
    nir_deref_instr *sampler_deref = evaluate_deref(ir->sampler);
 
@@ -2595,12 +2648,21 @@ nir_visitor::visit(ir_dereference_array *ir)
 void
 nir_visitor::visit(ir_barrier *)
 {
-   if (shader->info.stage == MESA_SHADER_COMPUTE)
-      nir_memory_barrier_shared(&b);
-   else if (shader->info.stage == MESA_SHADER_TESS_CTRL)
-      nir_memory_barrier_tcs_patch(&b);
+   if (shader->info.stage == MESA_SHADER_COMPUTE) {
+      nir_intrinsic_instr *shared_barrier =
+         nir_intrinsic_instr_create(this->shader,
+                                    nir_intrinsic_memory_barrier_shared);
+      nir_builder_instr_insert(&b, &shared_barrier->instr);
+   } else if (shader->info.stage == MESA_SHADER_TESS_CTRL) {
+      nir_intrinsic_instr *patch_barrier =
+         nir_intrinsic_instr_create(this->shader,
+                                    nir_intrinsic_memory_barrier_tcs_patch);
+      nir_builder_instr_insert(&b, &patch_barrier->instr);
+   }
 
-   nir_control_barrier(&b);
+   nir_intrinsic_instr *instr =
+      nir_intrinsic_instr_create(this->shader, nir_intrinsic_control_barrier);
+   nir_builder_instr_insert(&b, &instr->instr);
 }
 
 nir_shader *

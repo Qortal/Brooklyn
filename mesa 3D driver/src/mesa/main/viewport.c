@@ -71,8 +71,7 @@ set_viewport_no_notify(struct gl_context *ctx, unsigned idx,
        ctx->ViewportArray[idx].Height == height)
       return;
 
-   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewViewport ? 0 : _NEW_VIEWPORT,
-                  GL_VIEWPORT_BIT);
+   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewViewport ? 0 : _NEW_VIEWPORT);
    ctx->NewDriverState |= ctx->DriverFlags.NewViewport;
 
    ctx->ViewportArray[idx].X = x;
@@ -293,7 +292,7 @@ set_depth_range_no_notify(struct gl_context *ctx, unsigned idx,
       return;
 
    /* The depth range is needed by program state constants. */
-   FLUSH_VERTICES(ctx, _NEW_VIEWPORT, GL_VIEWPORT_BIT);
+   FLUSH_VERTICES(ctx, _NEW_VIEWPORT);
    ctx->NewDriverState |= ctx->DriverFlags.NewViewport;
 
    ctx->ViewportArray[idx].Near = SATURATE(nearval);
@@ -521,7 +520,7 @@ clip_control(struct gl_context *ctx, GLenum origin, GLenum depth, bool no_error)
 
    /* Affects transform state and the viewport transform */
    FLUSH_VERTICES(ctx, ctx->DriverFlags.NewClipControl ? 0 :
-                  _NEW_TRANSFORM | _NEW_VIEWPORT, GL_TRANSFORM_BIT);
+                  _NEW_TRANSFORM | _NEW_VIEWPORT);
    ctx->NewDriverState |= ctx->DriverFlags.NewClipControl;
 
    if (ctx->Transform.ClipOrigin != origin) {
@@ -615,7 +614,7 @@ subpixel_precision_bias(struct gl_context *ctx, GLuint xbits, GLuint ybits)
    if (MESA_VERBOSE & VERBOSE_API)
       _mesa_debug(ctx, "glSubpixelPrecisionBiasNV(%u, %u)\n", xbits, ybits);
 
-   FLUSH_VERTICES(ctx, 0, GL_VIEWPORT_BIT);
+   FLUSH_VERTICES(ctx, 0);
 
    ctx->SubpixelPrecisionBias[0] = xbits;
    ctx->SubpixelPrecisionBias[1] = ybits;
@@ -676,7 +675,7 @@ set_viewport_swizzle(struct gl_context *ctx, GLuint index,
        viewport->SwizzleW == swizzlew)
       return;
 
-   FLUSH_VERTICES(ctx, _NEW_VIEWPORT, GL_VIEWPORT_BIT);
+   FLUSH_VERTICES(ctx, _NEW_VIEWPORT);
    ctx->NewDriverState |= ctx->DriverFlags.NewViewport;
 
    viewport->SwizzleX = swizzlex;

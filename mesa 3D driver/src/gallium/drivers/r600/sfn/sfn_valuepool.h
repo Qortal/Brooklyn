@@ -117,6 +117,17 @@ public:
     */
    PValue from_nir(const nir_dest& v, unsigned component);
 
+   /** Get the register index mapped from the NIR code to the r600 ir
+    * \param index NIR index of register
+    * \returns r600 ir inxex
+    */
+   int lookup_register_index(const nir_src& src) const;
+
+   /** Get the register index mapped from the NIR code to the r600 ir
+    * \param index NIR index of register
+    * \returns r600 ir inxex
+    */
+   int lookup_register_index(const nir_dest& dst);
 
    /** Inject a register into a given ssa index position
     * This is used to redirect loads from system values and vertex attributes
@@ -138,6 +149,11 @@ public:
       m_next_register_index =rr;
    }
 
+   /** Allocate a register that is is needed for lowering an instruction
+    * that requires complex calculations,
+    */
+   int allocate_temp_register();
+
    /** Reserve a undef register, currently it uses (0,7),
     * \todo should be eliminated in the final pass
     */
@@ -154,38 +170,17 @@ public:
 
    size_t register_count() const {return m_next_register_index;}
 
+   PValue create_register(unsigned index, unsigned swizzle);
+
+   unsigned get_dst_ssa_register_index(const nir_ssa_def& ssa);
+
    PValue literal(uint32_t value);
 
    PGPRValue get_temp_register(int channel = -1);
 
-   GPRVector get_temp_vec4(const GPRVector::Swizzle &swizzle = {0,1,2,3});
-
-protected:
-   std::vector<PGPRArray> m_reg_arrays;
+   GPRVector get_temp_vec4();
 
 private:
-
-   /** Get the register index mapped from the NIR code to the r600 ir
-    * \param index NIR index of register
-    * \returns r600 ir inxex
-    */
-   int lookup_register_index(const nir_src& src) const;
-
-   /** Get the register index mapped from the NIR code to the r600 ir
-    * \param index NIR index of register
-    * \returns r600 ir inxex
-    */
-   int lookup_register_index(const nir_dest& dst);
-
-   /** Allocate a register that is is needed for lowering an instruction
-    * that requires complex calculations,
-    */
-   int allocate_temp_register();
-
-
-   PValue create_register(unsigned index, unsigned swizzle);
-
-   unsigned get_dst_ssa_register_index(const nir_ssa_def& ssa);
 
    unsigned get_ssa_register_index(const nir_ssa_def& ssa) const;
 
@@ -205,6 +200,13 @@ private:
     */
    int allocate_with_mask(unsigned index, unsigned mask, bool pre_alloc);
 
+   /** Allocate a register index with the given component.
+    * If the component is already been allocated the function
+    * will signal an error bz returning -1, otherwise a register index is
+    * returned.
+    */
+   int allocate_component(unsigned index, unsigned comp, bool pre_alloc);
+
    /** search for a new register with the given index in the
     * lookup map.
     * \param sel register sel value
@@ -215,6 +217,7 @@ private:
 
    std::set<unsigned> m_ssa_undef;
 
+   std::map<unsigned, unsigned> m_local_register_map;
    std::map<unsigned, unsigned> m_ssa_register_map;
 
    std::map<unsigned, PValue> m_registers;
@@ -230,6 +233,7 @@ private:
 
    unsigned m_next_register_index;
 
+   std::map<unsigned, PGPRArray> m_arrays_map;
 
    std::map<uint32_t, PValue> m_literals;
 

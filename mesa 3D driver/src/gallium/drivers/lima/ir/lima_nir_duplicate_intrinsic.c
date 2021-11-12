@@ -48,7 +48,8 @@ lima_nir_duplicate_intrinsic(nir_builder *b, nir_intrinsic_instr *itr,
             dupl->src[0].reg = itr->src[0].reg;
 
          nir_ssa_dest_init(&dupl->instr, &dupl->dest,
-               dupl->num_components, itr->dest.ssa.bit_size, NULL);
+               dupl->num_components, itr->dest.ssa.bit_size,
+               itr->dest.ssa.name);
 
          dupl->instr.pass_flags = 1;
          nir_builder_instr_insert(b, &dupl->instr);
@@ -81,7 +82,8 @@ lima_nir_duplicate_intrinsic(nir_builder *b, nir_intrinsic_instr *itr,
             dupl->src[0].reg = itr->src[0].reg;
 
          nir_ssa_dest_init(&dupl->instr, &dupl->dest,
-               dupl->num_components, itr->dest.ssa.bit_size, NULL);
+               dupl->num_components, itr->dest.ssa.bit_size,
+               itr->dest.ssa.name);
 
          dupl->instr.pass_flags = 1;
          nir_builder_instr_insert(b, &dupl->instr);

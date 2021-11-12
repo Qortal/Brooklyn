@@ -24,6 +24,8 @@
 # Authors:
 #    Chia-I Wu <olv@lunarg.com>
 
+from __future__ import print_function
+
 import sys
 # make it possible to import glapi
 import os
@@ -478,10 +480,6 @@ class ABIPrinter(object):
         print()
         print('#ifdef MAPI_TMP_DEFINES')
         print(self.c_public_includes())
-        print()
-        print('#ifdef MemoryBarrier')
-        print('#undef MemoryBarrier')
-        print('#endif')
         print()
         print(self.c_public_declarations(self.prefix_lib))
         print('#undef MAPI_TMP_DEFINES')

@@ -37,8 +37,7 @@ public:
                    struct brw_vs_prog_data *vs_prog_data,
                    const nir_shader *shader,
                    void *mem_ctx,
-                   int shader_time_index,
-                   bool debug_enabled);
+                   int shader_time_index);
 
 protected:
    virtual void setup_payload();

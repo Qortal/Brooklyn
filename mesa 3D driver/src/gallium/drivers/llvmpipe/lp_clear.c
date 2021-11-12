@@ -38,7 +38,6 @@
 #include "lp_setup.h"
 #include "lp_query.h"
 #include "lp_debug.h"
-#include "lp_state.h"
 
 
 /**
@@ -57,8 +56,6 @@ llvmpipe_clear(struct pipe_context *pipe,
 
    if (!llvmpipe_check_render_cond(llvmpipe))
       return;
-
-   llvmpipe_update_derived_clear(llvmpipe);
 
    if (LP_PERF & PERF_NO_DEPTH)
       buffers &= ~PIPE_CLEAR_DEPTHSTENCIL;

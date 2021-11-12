@@ -71,8 +71,6 @@ draw_pt_emit_prepare(struct pt_emit *emit,
    emit->prim = prim;
 
    draw->render->set_primitive(draw->render, emit->prim);
-   if (draw->render->set_view_index)
-      draw->render->set_view_index(draw->render, draw->pt.user.viewid);
 
    /* Must do this after set_primitive() above:
     */
@@ -159,8 +157,6 @@ draw_pt_emit(struct pt_emit *emit,
     * between vbuf.c and here...
     */
    render->set_primitive(draw->render, prim_info->prim);
-   if (draw->render->set_view_index)
-      draw->render->set_view_index(draw->render, draw->pt.user.viewid);
 
    assert(vertex_count <= 65535);
    render->allocate_vertices(render,
@@ -233,8 +229,6 @@ draw_pt_emit_linear(struct pt_emit *emit,
     * between vbuf.c and here...
     */
    render->set_primitive(draw->render, prim_info->prim);
-   if (draw->render->set_view_index)
-      draw->render->set_view_index(draw->render, draw->pt.user.viewid);
 
    assert(count <= 65535);
    if (!render->allocate_vertices(render,

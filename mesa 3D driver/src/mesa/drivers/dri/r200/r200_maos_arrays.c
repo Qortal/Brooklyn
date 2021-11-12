@@ -92,7 +92,7 @@ void r200EmitArrays( struct gl_context *ctx, GLubyte *vimap_rev )
 	    switch (emitsize) {
 	    case 4:
 	       vfmt0 |= R200_VTX_W0;
-	       FALLTHROUGH;
+	       /* fallthrough */
 	    case 3:
 	       vfmt0 |= R200_VTX_Z0;
 	       break;
@@ -158,12 +158,13 @@ void r200EmitArrays( struct gl_context *ctx, GLubyte *vimap_rev )
 	    switch (emitsize) {
 	    case 2:
 	       vfmt0 |= R200_VTX_XY1;
-	       FALLTHROUGH;
+	       /* fallthrough */
 	    case 3:
 	       vfmt0 |= R200_VTX_Z1;
-	       FALLTHROUGH;
+	       /* fallthrough */
 	    case 4:
 	       vfmt0 |= R200_VTX_W1;
+	       /* fallthrough */
 	    }
 	    break;
 	 default:

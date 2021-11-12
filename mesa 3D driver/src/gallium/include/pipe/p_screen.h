@@ -68,12 +68,6 @@ struct u_transfer_helper;
  * context.
  */
 struct pipe_screen {
-   /**
-    * Atomically incremented by drivers to track the number of contexts.
-    * If it's 0, it can be assumed that contexts are not tracked.
-    * Used by some places to skip locking if num_contexts == 1.
-    */
-   unsigned num_contexts;
 
    /**
     * For drivers using u_transfer_helper:
@@ -324,7 +318,6 @@ struct pipe_screen {
     * \param subbox an optional sub region to flush
     */
    void (*flush_frontbuffer)( struct pipe_screen *screen,
-                              struct pipe_context *ctx,
                               struct pipe_resource *resource,
                               unsigned level, unsigned layer,
                               void *winsys_drawable_handle,
@@ -520,8 +513,11 @@ struct pipe_screen {
     *
     * gallium frontends should call this before passing shaders to drivers,
     * and ideally also before shader caching.
+    *
+    * \param optimize  Whether the input shader hasn't been optimized and
+    *                  should be.
     */
-   void (*finalize_nir)(struct pipe_screen *screen, void *nir);
+   void (*finalize_nir)(struct pipe_screen *screen, void *nir, bool optimize);
 
    /*Separated memory/resource allocations interfaces for Vulkan */
 
@@ -547,7 +543,7 @@ struct pipe_screen {
    /**
     * Bind memory to a resource.
     */
-   bool (*resource_bind_backing)(struct pipe_screen *screen,
+   void (*resource_bind_backing)(struct pipe_screen *screen,
                                  struct pipe_resource *pt,
                                  struct pipe_memory_allocation *pmem,
                                  uint64_t offset);
@@ -563,44 +559,6 @@ struct pipe_screen {
     */
    void (*unmap_memory)(struct pipe_screen *screen,
                         struct pipe_memory_allocation *pmem);
-
-   /**
-    * Determine whether the screen supports the specified modifier
-    *
-    * Query whether the driver supports a \p modifier in combination with
-    * \p format.  If \p external_only is not NULL, the value it points to will
-    * be set to 0 or a non-zero value to indicate whether the modifier and
-    * format combination is supported only with external, or also with non-
-    * external texture targets respectively.  The \p external_only parameter is
-    * not used when the function returns false.
-    *
-    * \return true if the format+modifier pair is supported on \p screen, false
-    *         otherwise.
-    */
-   bool (*is_dmabuf_modifier_supported)(struct pipe_screen *screen,
-                                        uint64_t modifier, enum pipe_format,
-                                        bool *external_only);
-
-   /**
-    * Get the number of planes required for a given modifier/format pair.
-    *
-    * If not NULL, this function returns the number of planes needed to
-    * represent \p format in the layout specified by \p modifier, including
-    * any driver-specific auxiliary data planes.
-    *
-    * Must only be called on a modifier supported by the screen for the
-    * specified format.
-    *
-    * If NULL, no auxiliary planes are required for any modifier+format pairs
-    * supported by \p screen.  Hence, the plane count can be derived directly
-    * from \p format.
-    *
-    * \return Number of planes needed to store image data in the layout defined
-    *         by \p format and \p modifier.
-    */
-   unsigned int (*get_dmabuf_modifier_planes)(struct pipe_screen *screen,
-                                              uint64_t modifier,
-                                              enum pipe_format format);
 };
 
 
@@ -608,8 +566,7 @@ struct pipe_screen {
  * Global configuration options for screen creation.
  */
 struct pipe_screen_config {
-   struct driOptionCache *options;
-   const struct driOptionCache *options_info;
+   const struct driOptionCache *options;
 };
 
 

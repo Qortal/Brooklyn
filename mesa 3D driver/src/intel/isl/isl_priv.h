@@ -28,7 +28,7 @@
 #include <stddef.h>
 #include <strings.h>
 
-#include "dev/intel_device_info.h"
+#include "dev/gen_device_info.h"
 #include "util/macros.h"
 
 #include "isl.h"
@@ -205,34 +205,31 @@ _isl_memcpy_tiled_to_linear_sse41(uint32_t xt1, uint32_t xt2,
 #ifdef genX
 #  include "isl_genX_priv.h"
 #else
-#  define genX(x) gfx4_##x
+#  define genX(x) gen4_##x
 #  include "isl_genX_priv.h"
 #  undef genX
-#  define genX(x) gfx5_##x
+#  define genX(x) gen5_##x
 #  include "isl_genX_priv.h"
 #  undef genX
-#  define genX(x) gfx6_##x
+#  define genX(x) gen6_##x
 #  include "isl_genX_priv.h"
 #  undef genX
-#  define genX(x) gfx7_##x
+#  define genX(x) gen7_##x
 #  include "isl_genX_priv.h"
 #  undef genX
-#  define genX(x) gfx75_##x
+#  define genX(x) gen75_##x
 #  include "isl_genX_priv.h"
 #  undef genX
-#  define genX(x) gfx8_##x
+#  define genX(x) gen8_##x
 #  include "isl_genX_priv.h"
 #  undef genX
-#  define genX(x) gfx9_##x
+#  define genX(x) gen9_##x
 #  include "isl_genX_priv.h"
 #  undef genX
-#  define genX(x) gfx11_##x
+#  define genX(x) gen11_##x
 #  include "isl_genX_priv.h"
 #  undef genX
-#  define genX(x) gfx12_##x
-#  include "isl_genX_priv.h"
-#  undef genX
-#  define genX(x) gfx125_##x
+#  define genX(x) gen12_##x
 #  include "isl_genX_priv.h"
 #  undef genX
 #endif

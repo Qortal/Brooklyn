@@ -26,6 +26,7 @@
 
 extern "C" {
 #include "nouveau_debug.h"
+#include "nv50/nv50_program.h"
 }
 
 namespace nv50_ir {
@@ -110,12 +111,12 @@ bool ValueRef::getImmediate(ImmediateValue &imm) const
    return false;
 }
 
-ValueDef::ValueDef(Value *v) : value(NULL), origin(NULL), insn(NULL)
+ValueDef::ValueDef(Value *v) : value(NULL), insn(NULL)
 {
    set(v);
 }
 
-ValueDef::ValueDef(const ValueDef& def) : value(NULL), origin(NULL), insn(NULL)
+ValueDef::ValueDef(const ValueDef& def) : value(NULL), insn(NULL)
 {
    set(def.get());
 }
@@ -214,7 +215,7 @@ ValueDef::replace(const ValueRef &repVal, bool doSet)
       set(repVal.get());
 }
 
-Value::Value() : id(-1)
+Value::Value()
 {
   join = this;
   memset(&reg, 0, sizeof(reg));
@@ -438,7 +439,7 @@ ImmediateValue::applyLog2()
    case TYPE_S16:
    case TYPE_S32:
       assert(!this->isNegative());
-      FALLTHROUGH;
+      // fall through
    case TYPE_U8:
    case TYPE_U16:
    case TYPE_U32:
@@ -446,7 +447,7 @@ ImmediateValue::applyLog2()
       break;
    case TYPE_S64:
       assert(!this->isNegative());
-      FALLTHROUGH;
+      // fall through
    case TYPE_U64:
       reg.data.u64 = util_logbase2_64(reg.data.u64);
       break;
@@ -562,7 +563,6 @@ Symbol::equals(const Value *that, bool strict) const
 void Instruction::init()
 {
    next = prev = 0;
-   serial = 0;
 
    cc = CC_ALWAYS;
    rnd = ROUND_N;
@@ -589,9 +589,6 @@ void Instruction::init()
    predSrc = -1;
    flagsDef = -1;
    flagsSrc = -1;
-
-   sched = 0;
-   bb = NULL;
 }
 
 Instruction::Instruction()
@@ -602,6 +599,7 @@ Instruction::Instruction()
    dType = sType = TYPE_F32;
 
    id = -1;
+   bb = 0;
 }
 
 Instruction::Instruction(Function *fn, operation opr, DataType ty)
@@ -749,7 +747,7 @@ Instruction::clone(ClonePolicy<Function>& pol, Instruction *i) const
 {
    if (!i)
       i = new_Instruction(pol.context(), op, dType);
-#if !defined(NDEBUG) && defined(__cpp_rtti)
+#ifndef NDEBUG // non-conformant assert, so this is required
    assert(typeid(*i) == typeid(*this));
 #endif
 
@@ -1171,16 +1169,13 @@ FlowInstruction::clone(ClonePolicy<Function>& pol, Instruction *i) const
 Program::Program(Type type, Target *arch)
    : progType(type),
      target(arch),
-     tlsSize(0),
      mem_Instruction(sizeof(Instruction), 6),
      mem_CmpInstruction(sizeof(CmpInstruction), 4),
      mem_TexInstruction(sizeof(TexInstruction), 4),
      mem_FlowInstruction(sizeof(FlowInstruction), 4),
      mem_LValue(sizeof(LValue), 8),
      mem_Symbol(sizeof(Symbol), 7),
-     mem_ImmediateValue(sizeof(ImmediateValue), 7),
-     driver(NULL),
-     driver_out(NULL)
+     mem_ImmediateValue(sizeof(ImmediateValue), 7)
 {
    code = NULL;
    binSize = 0;

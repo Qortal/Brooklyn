@@ -38,6 +38,7 @@
 
 #include "gallivm/lp_bld.h"
 
+struct pipe_alpha_state;
 struct util_format_description;
 struct gallivm_state;
 struct lp_type;

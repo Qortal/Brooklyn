@@ -46,9 +46,7 @@
 
 /* Conversion to apply in the fragment shader. */
 enum st_pbo_conversion {
-   ST_PBO_CONVERT_FLOAT = 0,
-   ST_PBO_CONVERT_UINT,
-   ST_PBO_CONVERT_SINT,
+   ST_PBO_CONVERT_NONE = 0,
    ST_PBO_CONVERT_UINT_TO_SINT,
    ST_PBO_CONVERT_SINT_TO_UINT,
 
@@ -196,7 +194,6 @@ st_pbo_draw(struct st_context *st, const struct st_pbo_addresses *addr,
             unsigned surface_width, unsigned surface_height)
 {
    struct cso_context *cso = st->cso_context;
-   struct pipe_context *pipe = st->pipe;
 
    /* Setup vertex and geometry shaders */
    if (!st->pbo.vs) {
@@ -254,12 +251,10 @@ st_pbo_draw(struct st_context *st, const struct st_pbo_addresses *addr,
       velem.velems[0].instance_divisor = 0;
       velem.velems[0].vertex_buffer_index = 0;
       velem.velems[0].src_format = PIPE_FORMAT_R32G32_FLOAT;
-      velem.velems[0].dual_slot = false;
 
       cso_set_vertex_elements(cso, &velem);
 
       cso_set_vertex_buffers(cso, 0, 1, &vbo);
-      st->last_num_vbuffers = MAX2(st->last_num_vbuffers, 1);
 
       pipe_resource_reference(&vbo.buffer.resource, NULL);
    }
@@ -273,7 +268,7 @@ st_pbo_draw(struct st_context *st, const struct st_pbo_addresses *addr,
       cb.buffer_offset = 0;
       cb.buffer_size = sizeof(addr->constants);
 
-      pipe->set_constant_buffer(pipe, PIPE_SHADER_FRAGMENT, 0, false, &cb);
+      cso_set_constant_buffer(cso, PIPE_SHADER_FRAGMENT, 0, &cb);
 
       pipe_resource_reference(&cb.buffer, NULL);
    }
@@ -301,8 +296,8 @@ st_pbo_create_vs(struct st_context *st)
    const nir_shader_compiler_options *options =
       st_get_nir_compiler_options(st, MESA_SHADER_VERTEX);
 
-   nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_VERTEX, options,
-                                                  "st/pbo VS");
+   nir_builder b;
+   nir_builder_init_simple_shader(&b, NULL, MESA_SHADER_VERTEX, options);
 
    nir_variable *in_pos = nir_variable_create(b.shader, nir_var_shader_in,
                                               vec4, "in_pos");
@@ -338,7 +333,7 @@ st_pbo_create_vs(struct st_context *st)
       }
    }
 
-   return st_nir_finish_builtin_shader(st, b.shader);
+   return st_nir_finish_builtin_shader(st, b.shader, "st/pbo VS");
 }
 
 void *
@@ -386,8 +381,7 @@ st_pbo_create_gs(struct st_context *st)
 }
 
 static const struct glsl_type *
-sampler_type_for_target(enum pipe_texture_target target,
-                        enum st_pbo_conversion conv)
+sampler_type_for_target(enum pipe_texture_target target)
 {
    bool is_array = target >= PIPE_TEXTURE_1D_ARRAY;
    static const enum glsl_sampler_dim dim[] = {
@@ -402,34 +396,23 @@ sampler_type_for_target(enum pipe_texture_target target,
       [PIPE_TEXTURE_CUBE_ARRAY] = GLSL_SAMPLER_DIM_CUBE,
    };
 
-   static const enum glsl_base_type type[] = {
-      [ST_PBO_CONVERT_FLOAT] = GLSL_TYPE_FLOAT,
-      [ST_PBO_CONVERT_UINT] = GLSL_TYPE_UINT,
-      [ST_PBO_CONVERT_UINT_TO_SINT] = GLSL_TYPE_UINT,
-      [ST_PBO_CONVERT_SINT] = GLSL_TYPE_INT,
-      [ST_PBO_CONVERT_SINT_TO_UINT] = GLSL_TYPE_INT,
-   };
-
-   return glsl_sampler_type(dim[target], false, is_array, type[conv]);
+   return glsl_sampler_type(dim[target], false, is_array, GLSL_TYPE_FLOAT);
 }
 
 
 static void *
 create_fs(struct st_context *st, bool download,
           enum pipe_texture_target target,
-          enum st_pbo_conversion conversion,
-          bool need_layer)
+          enum st_pbo_conversion conversion)
 {
-   struct pipe_screen *screen = st->screen;
+   struct pipe_screen *screen = st->pipe->screen;
+   struct nir_builder b;
    const nir_shader_compiler_options *options =
       st_get_nir_compiler_options(st, MESA_SHADER_FRAGMENT);
    bool pos_is_sysval =
       screen->get_param(screen, PIPE_CAP_TGSI_FS_POSITION_IS_SYSVAL);
 
-   nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_FRAGMENT, options,
-                                                  download ?
-                                                  "st/pbo download FS" :
-                                                  "st/pbo upload FS");
+   nir_builder_init_simple_shader(&b, NULL, MESA_SHADER_FRAGMENT, options);
 
    nir_ssa_def *zero = nir_imm_int(&b, 0);
 
@@ -452,16 +435,11 @@ create_fs(struct st_context *st, bool download,
                                        target == PIPE_TEXTURE_3D ||
                                        target == PIPE_TEXTURE_CUBE ||
                                        target == PIPE_TEXTURE_CUBE_ARRAY)) {
-      if (need_layer) {
-         nir_variable *var = nir_variable_create(b.shader, nir_var_shader_in,
-                                                glsl_int_type(), "gl_Layer");
-         var->data.location = VARYING_SLOT_LAYER;
-         var->data.interpolation = INTERP_MODE_FLAT;
-         layer = nir_load_var(&b, var);
-      }
-      else {
-         layer = zero;
-      }
+      nir_variable *var = nir_variable_create(b.shader, nir_var_shader_in,
+                                              glsl_int_type(), "gl_Layer");
+      var->data.location = VARYING_SLOT_LAYER;
+      var->data.interpolation = INTERP_MODE_FLAT;
+      layer = nir_load_var(&b, var);
    }
 
    /* offset_pos = param.xy + f2i(coord.xy) */
@@ -484,11 +462,6 @@ create_fs(struct st_context *st, bool download,
    if (download) {
       texcoord = nir_f2i32(&b, nir_channels(&b, coord, TGSI_WRITEMASK_XY));
 
-      if (target == PIPE_TEXTURE_1D) {
-         unsigned sw = 0;
-         texcoord = nir_swizzle(&b, texcoord, &sw, 1);
-      }
-
       if (layer) {
          nir_ssa_def *src_layer = layer;
 
@@ -503,14 +476,9 @@ create_fs(struct st_context *st, bool download,
             src_layer = nir_iadd(&b, layer, layer_offset);
          }
 
-         if (target == PIPE_TEXTURE_1D_ARRAY) {
-            texcoord = nir_vec2(&b, nir_channel(&b, texcoord, 0),
-                                    src_layer);
-         } else {
-            texcoord = nir_vec3(&b, nir_channel(&b, texcoord, 0),
-                                    nir_channel(&b, texcoord, 1),
-                                    src_layer);
-         }
+         texcoord = nir_vec3(&b, nir_channel(&b, texcoord, 0),
+                                 nir_channel(&b, texcoord, 1),
+                                 src_layer);
       }
    } else {
       texcoord = pbo_addr;
@@ -518,8 +486,7 @@ create_fs(struct st_context *st, bool download,
 
    nir_variable *tex_var =
       nir_variable_create(b.shader, nir_var_uniform,
-                          sampler_type_for_target(target, conversion),
-                          "tex");
+                          sampler_type_for_target(target), "tex");
    tex_var->data.explicit_binding = true;
    tex_var->data.binding = 0;
 
@@ -530,9 +497,7 @@ create_fs(struct st_context *st, bool download,
    tex->sampler_dim = glsl_get_sampler_dim(tex_var->type);
    tex->coord_components =
       glsl_get_sampler_coordinate_components(tex_var->type);
-   tex->is_array = target >= PIPE_TEXTURE_1D_ARRAY;
-
-   tex->dest_type = nir_get_nir_type_for_glsl_base_type(glsl_get_sampler_result_type(tex_var->type));
+   tex->dest_type = nir_type_float;
    tex->src[0].src_type = nir_tex_src_texture_deref;
    tex->src[0].src = nir_src_for_ssa(&tex_deref->dest.ssa);
    tex->src[1].src_type = nir_tex_src_sampler_deref;
@@ -549,28 +514,24 @@ create_fs(struct st_context *st, bool download,
       result = nir_umin(&b, result, nir_imm_int(&b, (1u << 31) - 1));
 
    if (download) {
-      static const enum glsl_base_type type[] = {
-         [ST_PBO_CONVERT_FLOAT] = GLSL_TYPE_FLOAT,
-         [ST_PBO_CONVERT_UINT] = GLSL_TYPE_UINT,
-         [ST_PBO_CONVERT_UINT_TO_SINT] = GLSL_TYPE_INT,
-         [ST_PBO_CONVERT_SINT] = GLSL_TYPE_INT,
-         [ST_PBO_CONVERT_SINT_TO_UINT] = GLSL_TYPE_UINT,
-      };
       nir_variable *img_var =
          nir_variable_create(b.shader, nir_var_uniform,
                              glsl_image_type(GLSL_SAMPLER_DIM_BUF, false,
-                                             type[conversion]), "img");
+                                             GLSL_TYPE_FLOAT), "img");
       img_var->data.access = ACCESS_NON_READABLE;
       img_var->data.explicit_binding = true;
       img_var->data.binding = 0;
       nir_deref_instr *img_deref = nir_build_deref_var(&b, img_var);
-
-      nir_image_deref_store(&b, &img_deref->dest.ssa,
-                            nir_vec4(&b, pbo_addr, zero, zero, zero),
-                            zero,
-                            result,
-                            nir_imm_int(&b, 0),
-                            .image_dim = GLSL_SAMPLER_DIM_BUF);
+      nir_intrinsic_instr *intrin =
+         nir_intrinsic_instr_create(b.shader, nir_intrinsic_image_deref_store);
+      intrin->src[0] = nir_src_for_ssa(&img_deref->dest.ssa);
+      intrin->src[1] =
+         nir_src_for_ssa(nir_vec4(&b, pbo_addr, zero, zero, zero));
+      intrin->src[2] = nir_src_for_ssa(zero);
+      intrin->src[3] = nir_src_for_ssa(result);
+      intrin->src[4] = nir_src_for_ssa(nir_imm_int(&b, 0));
+      intrin->num_components = 4;
+      nir_builder_instr_insert(&b, &intrin->instr);
    } else {
       nir_variable *color =
          nir_variable_create(b.shader, nir_var_shader_out, glsl_vec4_type(),
@@ -580,64 +541,61 @@ create_fs(struct st_context *st, bool download,
       nir_store_var(&b, color, result, TGSI_WRITEMASK_XYZW);
    }
 
-   return st_nir_finish_builtin_shader(st, b.shader);
+   return st_nir_finish_builtin_shader(st, b.shader, download ?
+                                       "st/pbo download FS" :
+                                       "st/pbo upload FS");
 }
 
 static enum st_pbo_conversion
 get_pbo_conversion(enum pipe_format src_format, enum pipe_format dst_format)
 {
    if (util_format_is_pure_uint(src_format)) {
-      if (util_format_is_pure_uint(dst_format))
-         return ST_PBO_CONVERT_UINT;
       if (util_format_is_pure_sint(dst_format))
          return ST_PBO_CONVERT_UINT_TO_SINT;
    } else if (util_format_is_pure_sint(src_format)) {
-      if (util_format_is_pure_sint(dst_format))
-         return ST_PBO_CONVERT_SINT;
       if (util_format_is_pure_uint(dst_format))
          return ST_PBO_CONVERT_SINT_TO_UINT;
    }
 
-   return ST_PBO_CONVERT_FLOAT;
+   return ST_PBO_CONVERT_NONE;
 }
 
 void *
 st_pbo_get_upload_fs(struct st_context *st,
                      enum pipe_format src_format,
-                     enum pipe_format dst_format,
-                     bool need_layer)
+                     enum pipe_format dst_format)
 {
    STATIC_ASSERT(ARRAY_SIZE(st->pbo.upload_fs) == ST_NUM_PBO_CONVERSIONS);
 
    enum st_pbo_conversion conversion = get_pbo_conversion(src_format, dst_format);
 
-   if (!st->pbo.upload_fs[conversion][need_layer])
-      st->pbo.upload_fs[conversion][need_layer] = create_fs(st, false, 0, conversion, need_layer);
+   if (!st->pbo.upload_fs[conversion])
+      st->pbo.upload_fs[conversion] = create_fs(st, false, 0, conversion);
 
-   return st->pbo.upload_fs[conversion][need_layer];
+   return st->pbo.upload_fs[conversion];
 }
 
 void *
 st_pbo_get_download_fs(struct st_context *st, enum pipe_texture_target target,
                        enum pipe_format src_format,
-                       enum pipe_format dst_format,
-                       bool need_layer)
+                       enum pipe_format dst_format)
 {
    STATIC_ASSERT(ARRAY_SIZE(st->pbo.download_fs) == ST_NUM_PBO_CONVERSIONS);
    assert(target < PIPE_MAX_TEXTURE_TYPES);
 
    enum st_pbo_conversion conversion = get_pbo_conversion(src_format, dst_format);
 
-   if (!st->pbo.download_fs[conversion][target][need_layer])
-      st->pbo.download_fs[conversion][target][need_layer] = create_fs(st, true, target, conversion, need_layer);
+   if (!st->pbo.download_fs[conversion][target])
+      st->pbo.download_fs[conversion][target] = create_fs(st, true, target, conversion);
 
-   return st->pbo.download_fs[conversion][target][need_layer];
+   return st->pbo.download_fs[conversion][target];
 }
 
 void
 st_init_pbo_helpers(struct st_context *st)
 {
-   struct pipe_screen *screen = st->screen;
+   struct pipe_context *pipe = st->pipe;
+   struct pipe_screen *screen = pipe->screen;
 
    st->pbo.upload_enabled =
       screen->get_param(screen, PIPE_CAP_TEXTURE_BUFFER_OBJECTS) &&
@@ -680,21 +638,17 @@ st_destroy_pbo_helpers(struct st_context *st)
    unsigned i;
 
    for (i = 0; i < ARRAY_SIZE(st->pbo.upload_fs); ++i) {
-      for (unsigned j = 0; j < ARRAY_SIZE(st->pbo.upload_fs[0]); j++) {
-         if (st->pbo.upload_fs[i][j]) {
-            st->pipe->delete_fs_state(st->pipe, st->pbo.upload_fs[i][j]);
-            st->pbo.upload_fs[i][j] = NULL;
-         }
+      if (st->pbo.upload_fs[i]) {
+         st->pipe->delete_fs_state(st->pipe, st->pbo.upload_fs[i]);
+         st->pbo.upload_fs[i] = NULL;
       }
    }
 
    for (i = 0; i < ARRAY_SIZE(st->pbo.download_fs); ++i) {
       for (unsigned j = 0; j < ARRAY_SIZE(st->pbo.download_fs[0]); ++j) {
-         for (unsigned k = 0; k < ARRAY_SIZE(st->pbo.download_fs[0][0]); k++) {
-            if (st->pbo.download_fs[i][j][k]) {
-               st->pipe->delete_fs_state(st->pipe, st->pbo.download_fs[i][j][k]);
-               st->pbo.download_fs[i][j][k] = NULL;
-            }
+         if (st->pbo.download_fs[i][j]) {
+            st->pipe->delete_fs_state(st->pipe, st->pbo.download_fs[i][j]);
+            st->pbo.download_fs[i][j] = NULL;
          }
       }
    }

@@ -23,7 +23,6 @@
 
 #include "glthread_marshal.h"
 #include "dispatch.h"
-#include "uniforms.h"
 
 struct marshal_cmd_ShaderSource
 {
@@ -36,10 +35,9 @@ struct marshal_cmd_ShaderSource
 };
 
 
-uint32_t
+void
 _mesa_unmarshal_ShaderSource(struct gl_context *ctx,
-                             const struct marshal_cmd_ShaderSource *cmd,
-                             const uint64_t *last)
+                             const struct marshal_cmd_ShaderSource *cmd)
 {
    const GLint *cmd_length = (const GLint *) (cmd + 1);
    const GLchar *cmd_strings = (const GLchar *) (cmd_length + cmd->count);
@@ -54,7 +52,6 @@ _mesa_unmarshal_ShaderSource(struct gl_context *ctx,
    CALL_ShaderSource(ctx->CurrentServerDispatch,
                      (cmd->shader, cmd->count, string, cmd_length));
    free((void *)string);
-   return cmd->cmd_base.cmd_size;
 }
 
 
@@ -115,48 +112,4 @@ _mesa_marshal_ShaderSource(GLuint shader, GLsizei count,
                         (shader, count, string, length_tmp));
    }
    free(length_tmp);
-}
-
-void
-_mesa_glthread_ProgramChanged(struct gl_context *ctx)
-{
-   struct glthread_state *glthread = &ctx->GLThread;
-
-   /* Track the last change. */
-   p_atomic_set(&glthread->LastProgramChangeBatch, glthread->next);
-   _mesa_glthread_flush_batch(ctx);
-}
-
-uint32_t
-_mesa_unmarshal_GetActiveUniform(struct gl_context *ctx,
-                                 const struct marshal_cmd_GetActiveUniform *cmd,
-                                 const uint64_t *last)
-{
-   unreachable("never executed");
-   return 0;
-}
-
-void GLAPIENTRY
-_mesa_marshal_GetActiveUniform(GLuint program, GLuint index, GLsizei bufSize,
-                               GLsizei *length, GLint *size, GLenum *type,
-                               GLchar * name)
-{
-   GET_CURRENT_CONTEXT(ctx);
-
-   /* Wait for the last glLinkProgram call. */
-   int batch = p_atomic_read(&ctx->GLThread.LastProgramChangeBatch);
-   if (batch != -1) {
-      util_queue_fence_wait(&ctx->GLThread.batches[batch].fence);
-      assert(p_atomic_read(&ctx->GLThread.LastProgramChangeBatch) == -1);
-   }
-
-   /* We can execute glGetActiveUniform without syncing if we are sync'd to
-    * the last calls of glLinkProgram and glDeleteProgram because shader
-    * object IDs and their contents are immutable after those calls and
-    * also thread-safe because they are shared between contexts.
-    * glCreateShaderProgram calls glLinkProgram internally and it always
-    * syncs, so it doesn't need any handling.
-    */
-   _mesa_GetActiveUniform_impl(program, index, bufSize, length, size, type,
-                               name, true);
 }

@@ -110,22 +110,25 @@ panfrost_add_job(
                 struct pan_pool *pool,
                 struct pan_scoreboard *scoreboard,
                 enum mali_job_type type,
-                bool barrier, bool suppress_prefetch,
-                unsigned local_dep, unsigned global_dep,
+                bool barrier,
+                unsigned local_dep,
                 const struct panfrost_ptr *job,
                 bool inject)
 {
+        bool is_bifrost = !!(pool->dev->quirks & IS_BIFROST);
+        unsigned global_dep = 0;
+
         if (type == MALI_JOB_TYPE_TILER) {
                 /* Tiler jobs must be chained, and on Midgard, the first tiler
                  * job must depend on the write value job, whose index we
                  * reserve now */
 
-                if (!pan_is_bifrost(pool->dev) && !scoreboard->write_value_index)
+                if (is_bifrost && !scoreboard->write_value_index)
                         scoreboard->write_value_index = ++scoreboard->job_index;
 
                 if (scoreboard->tiler_dep && !inject)
                         global_dep = scoreboard->tiler_dep;
-                else if (!pan_is_bifrost(pool->dev))
+                else if (is_bifrost)
                         global_dep = scoreboard->write_value_index;
         }
 
@@ -135,7 +138,6 @@ panfrost_add_job(
         pan_pack(job->cpu, JOB_HEADER, header) {
                 header.type = type;
                 header.barrier = barrier;
-                header.suppress_prefetch = suppress_prefetch;
                 header.index = index;
                 header.dependency_1 = local_dep;
                 header.dependency_2 = global_dep;
@@ -145,18 +147,18 @@ panfrost_add_job(
         }
 
         if (inject) {
-                assert(type == MALI_JOB_TYPE_TILER && "only for blit shaders");
+                if (type == MALI_JOB_TYPE_TILER) {
+                        if (scoreboard->first_tiler) {
+                                /* Manual update of the dep2 field. This is bad,
+                                 * don't copy this pattern.
+                                 */
+                                scoreboard->first_tiler->opaque[5] =
+                                        scoreboard->first_tiler_dep1 | (index << 16);
+                        }
 
-                if (scoreboard->first_tiler) {
-                        /* Manual update of the dep2 field. This is bad,
-                         * don't copy this pattern.
-                         */
-                        scoreboard->first_tiler->opaque[5] =
-                                scoreboard->first_tiler_dep1 | (index << 16);
+                        scoreboard->first_tiler = (void *)job->cpu;
+                        scoreboard->first_tiler_dep1 = local_dep;
                 }
-
-                scoreboard->first_tiler = (void *)job->cpu;
-                scoreboard->first_tiler_dep1 = local_dep;
                 scoreboard->first_job = job->gpu;
                 return index;
         }
@@ -189,21 +191,22 @@ panfrost_add_job(
 /* Generates a write value job, used to initialize the tiler structures. Note
  * this is called right before frame submission. */
 
-struct panfrost_ptr
+void
 panfrost_scoreboard_initialize_tiler(struct pan_pool *pool,
-                                     struct pan_scoreboard *scoreboard,
-                                     mali_ptr polygon_list)
+                struct pan_scoreboard *scoreboard,
+                mali_ptr polygon_list)
 {
-        struct panfrost_ptr transfer = { 0 };
-
         /* Check if we even need tiling */
-        if (pan_is_bifrost(pool->dev) || !scoreboard->first_tiler)
-                return transfer;
+        if (pool->dev->quirks & IS_BIFROST || !scoreboard->tiler_dep)
+                return;
 
         /* Okay, we do. Let's generate it. We'll need the job's polygon list
          * regardless of size. */
 
-        transfer = pan_pool_alloc_desc(pool, WRITE_VALUE_JOB);
+        struct panfrost_ptr transfer =
+                panfrost_pool_alloc_aligned(pool,
+                                            MALI_WRITE_VALUE_JOB_LENGTH,
+                                            64);
 
         pan_section_pack(transfer.cpu, WRITE_VALUE_JOB, HEADER, header) {
                 header.type = MALI_JOB_TYPE_WRITE_VALUE;
@@ -217,5 +220,4 @@ panfrost_scoreboard_initialize_tiler(struct pan_pool *pool,
         }
 
         scoreboard->first_job = transfer.gpu;
-        return transfer;
 }

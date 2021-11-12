@@ -36,7 +36,7 @@
 
 struct draw_context;
 
-#ifdef DRAW_LLVM_AVAILABLE
+#ifdef LLVM_AVAILABLE
 struct draw_gs_jit_context;
 struct draw_gs_llvm_variant;
 
@@ -75,7 +75,6 @@ struct draw_geometry_shader {
    struct tgsi_shader_info info;
    unsigned position_output;
    unsigned viewport_index_output;
-   unsigned clipvertex_output;
    unsigned ccdistance_output[PIPE_MAX_CLIP_OR_CULL_DISTANCE_ELEMENT_COUNT];
 
    unsigned max_output_vertices;
@@ -97,7 +96,7 @@ struct draw_geometry_shader {
 
    unsigned num_invocations;
    unsigned invocation_id;
-#ifdef DRAW_LLVM_AVAILABLE
+#ifdef LLVM_AVAILABLE
    struct draw_gs_inputs *gs_input;
    struct draw_gs_jit_context *jit_context;
    struct draw_gs_llvm_variant *current_variant;
@@ -147,7 +146,7 @@ void draw_geometry_shader_prepare(struct draw_geometry_shader *shader,
 int draw_gs_max_output_vertices(struct draw_geometry_shader *shader,
                                 unsigned pipe_prim);
 
-#ifdef DRAW_LLVM_AVAILABLE
+#ifdef LLVM_AVAILABLE
 void draw_gs_set_current_variant(struct draw_geometry_shader *shader,
                                  struct draw_gs_llvm_variant *variant);
 #endif

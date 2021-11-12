@@ -24,7 +24,6 @@
 #include "nir.h"
 #include "nir_constant_expressions.h"
 #include "nir_loop_analyze.h"
-#include "util/bitset.h"
 
 typedef enum {
    undefined,
@@ -59,9 +58,6 @@ typedef struct {
    /* True if variable is in a nested loop */
    bool in_nested_loop;
 
-   /* Could be a basic_induction if following uniforms are inlined */
-   nir_src *init_src;
-   nir_alu_src *update_src;
 } nir_loop_variable;
 
 typedef struct {
@@ -70,7 +66,6 @@ typedef struct {
 
    /* Loop_variable for all ssa_defs in function */
    nir_loop_variable *loop_vars;
-   BITSET_WORD *loop_vars_init;
 
    /* A list of the loop_vars to analyze */
    struct list_head process_list;
@@ -82,24 +77,7 @@ typedef struct {
 static nir_loop_variable *
 get_loop_var(nir_ssa_def *value, loop_info_state *state)
 {
-   nir_loop_variable *var = &(state->loop_vars[value->index]);
-
-   if (!BITSET_TEST(state->loop_vars_init, value->index)) {
-      var->in_loop = false;
-      var->def = value;
-      var->in_if_branch = false;
-      var->in_nested_loop = false;
-      var->init_src = NULL;
-      var->update_src = NULL;
-      if (value->parent_instr->type == nir_instr_type_load_const)
-         var->type = invariant;
-      else
-         var->type = undefined;
-
-      BITSET_SET(state->loop_vars_init, value->index);
-   }
-
-   return var;
+   return &(state->loop_vars[value->index]);
 }
 
 typedef struct {
@@ -151,14 +129,6 @@ instr_cost(nir_instr *instr, const nir_shader_compiler_options *options)
 
    nir_alu_instr *alu = nir_instr_as_alu(instr);
    const nir_op_info *info = &nir_op_infos[alu->op];
-   unsigned cost = 1;
-
-   if (alu->op == nir_op_flrp) {
-      if ((options->lower_flrp16 && nir_dest_bit_size(alu->dest.dest) == 16) ||
-          (options->lower_flrp32 && nir_dest_bit_size(alu->dest.dest) == 32) ||
-          (options->lower_flrp64 && nir_dest_bit_size(alu->dest.dest) == 64))
-         cost *= 3;
-   }
 
    /* Assume everything 16 or 32-bit is cheap.
     *
@@ -167,7 +137,7 @@ instr_cost(nir_instr *instr, const nir_shader_compiler_options *options)
     */
    if (nir_dest_bit_size(alu->dest.dest) < 64 &&
        nir_src_bit_size(alu->src[0].src) < 64)
-      return cost;
+      return 1;
 
    bool is_fp64 = nir_dest_bit_size(alu->dest.dest) == 64 &&
       nir_alu_type_get_base_type(info->output_type) == nir_type_float;
@@ -179,6 +149,7 @@ instr_cost(nir_instr *instr, const nir_shader_compiler_options *options)
 
    if (is_fp64) {
       /* If it's something lowered normally, it's expensive. */
+      unsigned cost = 1;
       if (options->lower_doubles_options &
           nir_lower_doubles_op_to_options_mask(alu->op))
          cost *= 20;
@@ -195,13 +166,13 @@ instr_cost(nir_instr *instr, const nir_shader_compiler_options *options)
          if (alu->op == nir_op_idiv || alu->op == nir_op_udiv ||
              alu->op == nir_op_imod || alu->op == nir_op_umod ||
              alu->op == nir_op_irem)
-            return cost * 100;
+            return 100;
 
          /* Other int64 lowering isn't usually all that expensive */
-         return cost * 5;
+         return 5;
       }
 
-      return cost;
+      return 1;
    }
 }
 
@@ -332,45 +303,9 @@ alu_src_has_identity_swizzle(nir_alu_instr *alu, unsigned src_idx)
 }
 
 static bool
-is_only_uniform_src(nir_src *src)
-{
-   if (!src->is_ssa)
-      return false;
-
-   nir_instr *instr = src->ssa->parent_instr;
-
-   switch (instr->type) {
-   case nir_instr_type_alu: {
-      /* Return true if all sources return true. */
-      nir_alu_instr *alu = nir_instr_as_alu(instr);
-      for (unsigned i = 0; i < nir_op_infos[alu->op].num_inputs; i++) {
-         if (!is_only_uniform_src(&alu->src[i].src))
-             return false;
-      }
-      return true;
-   }
-
-   case nir_instr_type_intrinsic: {
-      nir_intrinsic_instr *inst = nir_instr_as_intrinsic(instr);
-      /* current uniform inline only support load ubo */
-      return inst->intrinsic == nir_intrinsic_load_ubo;
-   }
-
-   case nir_instr_type_load_const:
-      /* Always return true for constants. */
-      return true;
-
-   default:
-      return false;
-   }
-}
-
-static bool
 compute_induction_information(loop_info_state *state)
 {
    bool found_induction_var = false;
-   unsigned num_induction_vars = 0;
-
    list_for_each_entry_safe(nir_loop_variable, var, &state->process_list,
                             process_link) {
 
@@ -391,7 +326,6 @@ compute_induction_information(loop_info_state *state)
       nir_phi_instr *phi = nir_instr_as_phi(var->def->parent_instr);
       nir_basic_induction_var *biv = rzalloc(state, nir_basic_induction_var);
 
-      nir_src *init_src = NULL;
       nir_loop_variable *alu_src_var = NULL;
       nir_foreach_phi_src(src, phi) {
          nir_loop_variable *src_var = get_loop_var(src->src.ssa, state);
@@ -418,33 +352,19 @@ compute_induction_information(loop_info_state *state)
 
          if (!src_var->in_loop && !biv->def_outside_loop) {
             biv->def_outside_loop = src_var->def;
-            init_src = &src->src;
          } else if (is_var_alu(src_var) && !biv->alu) {
             alu_src_var = src_var;
             nir_alu_instr *alu = nir_instr_as_alu(src_var->def->parent_instr);
 
-            /* Check for unsupported alu operations */
-            if (alu->op != nir_op_iadd && alu->op != nir_op_fadd)
-               break;
-
             if (nir_op_infos[alu->op].num_inputs == 2) {
                for (unsigned i = 0; i < 2; i++) {
-                  /* Is one of the operands const or uniform, and the other the phi.
-                   * The phi source can't be swizzled in any way.
+                  /* Is one of the operands const, and the other the phi.  The
+                   * phi source can't be swizzled in any way.
                    */
-                  if (alu->src[1-i].src.ssa == &phi->dest.ssa &&
-                      alu_src_has_identity_swizzle(alu, 1 - i)) {
-                     nir_src *src = &alu->src[i].src;
-                     if (nir_src_is_const(*src))
-                        biv->alu = alu;
-                     else if (is_only_uniform_src(src)) {
-                        /* Update value of induction variable is a statement
-                         * contains only uniform and constant
-                         */
-                        var->update_src = alu->src + i;
-                        biv->alu = alu;
-                     }
-                  }
+                  if (nir_src_is_const(alu->src[i].src) &&
+                      alu->src[1-i].src.ssa == &phi->dest.ssa &&
+                      alu_src_has_identity_swizzle(alu, 1 - i))
+                     biv->alu = alu;
                }
             }
 
@@ -456,65 +376,37 @@ compute_induction_information(loop_info_state *state)
          }
       }
 
-      if (biv->alu && biv->def_outside_loop) {
-         nir_instr *inst = biv->def_outside_loop->parent_instr;
-         if (inst->type == nir_instr_type_load_const)  {
-            /* Initial value of induction variable is a constant */
-            if (var->update_src) {
-               alu_src_var->update_src = var->update_src;
-               ralloc_free(biv);
-            } else {
-               alu_src_var->type = basic_induction;
-               alu_src_var->ind = biv;
-               var->type = basic_induction;
-               var->ind = biv;
+      if (biv->alu && biv->def_outside_loop &&
+          biv->def_outside_loop->parent_instr->type == nir_instr_type_load_const) {
+         alu_src_var->type = basic_induction;
+         alu_src_var->ind = biv;
+         var->type = basic_induction;
+         var->ind = biv;
 
-               found_induction_var = true;
-            }
-            num_induction_vars += 2;
-         } else if (is_only_uniform_src(init_src)) {
-            /* Initial value of induction variable is a uniform */
-            var->init_src = init_src;
-
-            alu_src_var->init_src = var->init_src;
-            alu_src_var->update_src = var->update_src;
-
-            num_induction_vars += 2;
-            ralloc_free(biv);
-         } else {
-            var->update_src = NULL;
-            ralloc_free(biv);
-         }
+         found_induction_var = true;
       } else {
-         var->update_src = NULL;
          ralloc_free(biv);
       }
    }
+   return found_induction_var;
+}
 
-   nir_loop_info *info = state->loop->info;
-   ralloc_free(info->induction_vars);
-   info->num_induction_vars = 0;
+static bool
+initialize_ssa_def(nir_ssa_def *def, void *void_state)
+{
+   loop_info_state *state = void_state;
+   nir_loop_variable *var = get_loop_var(def, state);
 
-   /* record induction variables into nir_loop_info */
-   if (num_induction_vars) {
-      info->induction_vars = ralloc_array(info, nir_loop_induction_variable,
-                                          num_induction_vars);
+   var->in_loop = false;
+   var->def = def;
 
-      list_for_each_entry(nir_loop_variable, var, &state->process_list,
-                          process_link) {
-         if (var->type == basic_induction || var->init_src || var->update_src) {
-            nir_loop_induction_variable *ivar =
-               &info->induction_vars[info->num_induction_vars++];
-             ivar->def = var->def;
-             ivar->init_src = var->init_src;
-             ivar->update_src = var->update_src;
-         }
-      }
-      /* don't overflow */
-      assert(info->num_induction_vars <= num_induction_vars);
+   if (def->parent_instr->type == nir_instr_type_load_const) {
+      var->type = invariant;
+   } else {
+      var->type = undefined;
    }
 
-   return found_induction_var;
+   return true;
 }
 
 static bool
@@ -868,8 +760,9 @@ calculate_iterations(nir_const_value initial, nir_const_value step,
              induction_base_type);
    }
 
-   /* Only variable with these update ops were marked as induction. */
-   assert(alu->op == nir_op_iadd || alu->op == nir_op_fadd);
+   /* Check for nsupported alu operations */
+   if (alu->op != nir_op_iadd && alu->op != nir_op_fadd)
+      return -1;
 
    /* do-while loops can increment the starting value before the condition is
     * checked. e.g.
@@ -965,6 +858,17 @@ inverse_comparison(nir_op alu_op)
 }
 
 static bool
+is_supported_terminator_condition(nir_ssa_scalar cond)
+{
+   if (!nir_ssa_scalar_is_alu(cond))
+      return false;
+
+   nir_alu_instr *alu = nir_instr_as_alu(cond.def->parent_instr);
+   return nir_alu_instr_is_comparison(alu) &&
+          nir_op_infos[alu->op].num_inputs == 2;
+}
+
+static bool
 get_induction_and_limit_vars(nir_ssa_scalar cond,
                              nir_ssa_scalar *ind,
                              nir_ssa_scalar *limit,
@@ -1033,7 +937,7 @@ try_find_trip_count_vars_in_iand(nir_ssa_scalar *cond,
    bool found_induction_var = false;
    for (unsigned i = 0; i < 2; i++) {
       nir_ssa_scalar src = nir_ssa_scalar_chase_alu_src(iand, i);
-      if (nir_is_supported_terminator_condition(src) &&
+      if (is_supported_terminator_condition(src) &&
           get_induction_and_limit_vars(src, ind, limit, limit_rhs, state)) {
          *cond = src;
          found_induction_var = true;
@@ -1094,7 +998,7 @@ find_trip_count(loop_info_state *state, unsigned execution_mode)
       }
 
       if (!basic_ind.def) {
-         if (nir_is_supported_terminator_condition(cond)) {
+         if (is_supported_terminator_condition(cond)) {
             get_induction_and_limit_vars(cond, &basic_ind,
                                          &limit, &limit_rhs, state);
          }
@@ -1256,6 +1160,14 @@ get_loop_info(loop_info_state *state, nir_function_impl *impl)
    nir_shader *shader = impl->function->shader;
    const nir_shader_compiler_options *options = shader->options;
 
+   /* Initialize all variables to "outside_loop". This also marks defs
+    * invariant and constant if they are nir_instr_type_load_consts
+    */
+   nir_foreach_block(block, impl) {
+      nir_foreach_instr(instr, block)
+         nir_foreach_ssa_def(instr, initialize_ssa_def, state);
+   }
+
    /* Add all entries in the outermost part of the loop to the processing list
     * Mark the entries in conditionals or in nested loops accordingly
     */
@@ -1319,10 +1231,8 @@ initialize_loop_info_state(nir_loop *loop, void *mem_ctx,
                            nir_function_impl *impl)
 {
    loop_info_state *state = rzalloc(mem_ctx, loop_info_state);
-   state->loop_vars = ralloc_array(mem_ctx, nir_loop_variable,
-                                   impl->ssa_alloc);
-   state->loop_vars_init = rzalloc_array(mem_ctx, BITSET_WORD,
-                                         BITSET_WORDS(impl->ssa_alloc));
+   state->loop_vars = rzalloc_array(mem_ctx, nir_loop_variable,
+                                    impl->ssa_alloc);
    state->loop = loop;
 
    list_inithead(&state->process_list);

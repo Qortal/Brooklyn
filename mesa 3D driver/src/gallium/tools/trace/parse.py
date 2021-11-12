@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python2
 ##########################################################################
 # 
 # Copyright 2008 VMware, Inc.
@@ -27,12 +27,10 @@
 ##########################################################################
 
 
-import io
 import sys
-import xml.parsers.expat as xpat
-import argparse
+import xml.parsers.expat
+import optparse
 
-import format
 from model import *
 
 
@@ -74,7 +72,7 @@ class XmlTokenizer:
         self.character_pos = 0, 0
         self.character_data = ''
         
-        self.parser = xpat.ParserCreate()
+        self.parser = xml.parsers.expat.ParserCreate()
         self.parser.StartElementHandler  = self.handle_element_start
         self.parser.EndElementHandler    = self.handle_element_end
         self.parser.CharacterDataHandler = self.handle_character_data
@@ -114,8 +112,8 @@ class XmlTokenizer:
             data = data.rstrip('\0')
             try:
                 self.parser.Parse(data, self.final)
-            except xpat.ExpatError as e:
-                #if e.code == xpat.errors.XML_ERROR_NO_ELEMENTS:
+            except xml.parsers.expat.ExpatError, e:
+                #if e.code == xml.parsers.expat.errors.XML_ERROR_NO_ELEMENTS:
                 if e.code == 3:
                     pass
                 else:
@@ -207,7 +205,7 @@ class TraceParser(XmlParser):
         attrs = self.element_start('call')
         try:
             no = int(attrs['no'])
-        except KeyError as e:
+        except KeyError:
             self.last_call_no += 1
             no = self.last_call_no
         else:
@@ -237,151 +235,131 @@ class TraceParser(XmlParser):
     def parse_arg(self):
         attrs = self.element_start('arg')
         name = attrs['name']
-        value = self.parse_value(name)
+        value = self.parse_value()
         self.element_end('arg')
 
         return name, value
 
     def parse_ret(self):
         attrs = self.element_start('ret')
-        value = self.parse_value('ret')
+        value = self.parse_value()
         self.element_end('ret')
 
         return value
 
     def parse_time(self):
         attrs = self.element_start('time')
-        time = self.parse_value('time');
+        time = self.parse_value();
         self.element_end('time')
         return time
 
-    def parse_value(self, name):
+    def parse_value(self):
         expected_tokens = ('null', 'bool', 'int', 'uint', 'float', 'string', 'enum', 'array', 'struct', 'ptr', 'bytes')
         if self.token.type == ELEMENT_START:
             if self.token.name_or_data in expected_tokens:
                 method = getattr(self, 'parse_' +  self.token.name_or_data)
-                return method(name)
+                return method()
         raise TokenMismatch(" or " .join(expected_tokens), self.token)
 
-    def parse_null(self, pname):
+    def parse_null(self):
         self.element_start('null')
         self.element_end('null')
         return Literal(None)
         
-    def parse_bool(self, pname):
+    def parse_bool(self):
         self.element_start('bool')
         value = int(self.character_data())
         self.element_end('bool')
         return Literal(value)
         
-    def parse_int(self, pname):
+    def parse_int(self):
         self.element_start('int')
         value = int(self.character_data())
         self.element_end('int')
         return Literal(value)
         
-    def parse_uint(self, pname):
+    def parse_uint(self):
         self.element_start('uint')
         value = int(self.character_data())
         self.element_end('uint')
         return Literal(value)
         
-    def parse_float(self, pname):
+    def parse_float(self):
         self.element_start('float')
         value = float(self.character_data())
         self.element_end('float')
         return Literal(value)
         
-    def parse_enum(self, pname):
+    def parse_enum(self):
         self.element_start('enum')
         name = self.character_data()
         self.element_end('enum')
         return NamedConstant(name)
         
-    def parse_string(self, pname):
+    def parse_string(self):
         self.element_start('string')
         value = self.character_data()
         self.element_end('string')
         return Literal(value)
         
-    def parse_bytes(self, pname):
+    def parse_bytes(self):
         self.element_start('bytes')
         value = self.character_data()
         self.element_end('bytes')
         return Blob(value)
         
-    def parse_array(self, pname):
+    def parse_array(self):
         self.element_start('array')
         elems = []
         while self.token.type != ELEMENT_END:
-            elems.append(self.parse_elem('array'))
+            elems.append(self.parse_elem())
         self.element_end('array')
         return Array(elems)
 
-    def parse_elem(self, pname):
+    def parse_elem(self):
         self.element_start('elem')
-        value = self.parse_value('elem')
+        value = self.parse_value()
         self.element_end('elem')
         return value
 
-    def parse_struct(self, pname):
+    def parse_struct(self):
         attrs = self.element_start('struct')
         name = attrs['name']
         members = []
         while self.token.type != ELEMENT_END:
-            members.append(self.parse_member(name))
+            members.append(self.parse_member())
         self.element_end('struct')
         return Struct(name, members)
 
-    def parse_member(self, pname):
+    def parse_member(self):
         attrs = self.element_start('member')
         name = attrs['name']
-        value = self.parse_value(name)
+        value = self.parse_value()
         self.element_end('member')
 
         return name, value
 
-    def parse_ptr(self, pname):
+    def parse_ptr(self):
         self.element_start('ptr')
         address = self.character_data()
         self.element_end('ptr')
 
-        return Pointer(address, pname)
+        return Pointer(address)
 
     def handle_call(self, call):
         pass
     
     
-class SimpleTraceDumper(TraceParser):
+class TraceDumper(TraceParser):
     
-    def __init__(self, fp, options, formatter):
+    def __init__(self, fp, outStream = sys.stdout):
         TraceParser.__init__(self, fp)
-        self.options = options
-        self.formatter = formatter
-        self.pretty_printer = PrettyPrinter(self.formatter, options)
+        self.formatter = format.DefaultFormatter(outStream)
+        self.pretty_printer = PrettyPrinter(self.formatter)
 
     def handle_call(self, call):
         call.visit(self.pretty_printer)
         self.formatter.newline()
-
-
-class TraceDumper(SimpleTraceDumper):
-
-    def __init__(self, fp, options, formatter):
-        SimpleTraceDumper.__init__(self, fp, options, formatter)
-        self.call_stack = []
-
-    def handle_call(self, call):
-        if self.options.named_ptrs:
-            self.call_stack.append(call)
-        else:
-            call.visit(self.pretty_printer)
-            self.formatter.newline()
-
-    def dump_calls(self):
-        for call in self.call_stack:
-            call.visit(self.pretty_printer)
-            self.formatter.newline()
         
 
 class Main:
@@ -392,55 +370,30 @@ class Main:
 
     def main(self):
         optparser = self.get_optparser()
-        args = optparser.parse_args()
+        (options, args) = optparser.parse_args(sys.argv[1:])
+    
+        if not args:
+            optparser.error('insufficient number of arguments')
 
-        for fname in args.filename:
-            try:
-                if fname.endswith('.gz'):
-                    from gzip import GzipFile
-                    stream = io.TextIOWrapper(GzipFile(fname, 'rb'))
-                elif fname.endswith('.bz2'):
-                    from bz2 import BZ2File
-                    stream = io.TextIOWrapper(BZ2File(fname, 'rb'))
-                else:
-                    stream = open(fname, 'rt')
-            except Exception as e:
-                print("ERROR: {}".format(str(e)))
-                sys.exit(1)
-
-            self.process_arg(stream, args)
+        for arg in args:
+            if arg.endswith('.gz'):
+                from gzip import GzipFile
+                stream = GzipFile(arg, 'rt')
+            elif arg.endswith('.bz2'):
+                from bz2 import BZ2File
+                stream = BZ2File(arg, 'rU')
+            else:
+                stream = open(arg, 'rt')
+            self.process_arg(stream, options)
 
     def get_optparser(self):
-        optparser = argparse.ArgumentParser(
-            description="Parse and dump Gallium trace(s)")
-        optparser.add_argument("filename", action="extend", nargs="+",
-            type=str, metavar="filename", help="Gallium trace filename (plain or .gz, .bz2)")
-        optparser.add_argument("-p", "--plain",
-            action="store_const", const=True, default=False,
-            dest="plain", help="disable ANSI color etc. formatting")
-        optparser.add_argument("-S", "--suppress",
-            action="store_const", const=True, default=False,
-            dest="suppress_variants", help="suppress some variants in output for better diffability")
-        optparser.add_argument("-N", "--named",
-            action="store_const", const=True, default=False,
-            dest="named_ptrs", help="generate symbolic names for raw pointer values")
-        optparser.add_argument("-M", "--method-only",
-            action="store_const", const=True, default=False,
-            dest="method_only", help="output only call names without arguments")
-
+        optparser = optparse.OptionParser(
+            usage="\n\t%prog [options] TRACE  [...]")
         return optparser
 
     def process_arg(self, stream, options):
-        if options.plain:
-            formatter = format.Formatter(sys.stdout)
-        else:
-            formatter = format.DefaultFormatter(sys.stdout)
-
-        parser = TraceDumper(stream, options, formatter)
+        parser = TraceDumper(stream)
         parser.parse()
-
-        if options.named_ptrs:
-            parser.dump_calls()
 
 
 if __name__ == '__main__':

@@ -11,41 +11,40 @@
 
 #include <GLRenderer.h>
 
-#include <vector>
+#include <map>
 
-
-typedef BGLRenderer* (*InstantiateRenderer) (BGLView* view, ulong options);
 
 struct renderer_item {
-	InstantiateRenderer entry;
+	BGLRenderer* renderer;
 	entry_ref	ref;
 	ino_t		node;
 	image_id	image;
 };
 
-typedef std::vector<renderer_item> RendererMap;
+typedef std::map<renderer_id, renderer_item> RendererMap;
 
 
 class GLRendererRoster {
 	public:
-		static GLRendererRoster *Roster();
-		BGLRenderer* GetRenderer(BGLView *view, ulong options);
-
-	private:
-		GLRendererRoster();
+		GLRendererRoster(BGLView* view, ulong options);
 		virtual ~GLRendererRoster();
 
+		BGLRenderer* GetRenderer(int32 id = 0);
+
+	private:
 		void AddDefaultPaths();
 		status_t AddPath(const char* path);
-		status_t AddRenderer(InstantiateRenderer entry, image_id image,
-			const entry_ref* ref, ino_t node);
+		status_t AddRenderer(BGLRenderer* renderer,
+			image_id image, const entry_ref* ref, ino_t node);
 		status_t CreateRenderer(const entry_ref& ref);
 
-		static GLRendererRoster* fInstance;
+		RendererMap	fRenderers;
+		int32		fNextID;
+		BGLView*	fView;
+		ulong		fOptions;
 		bool		fSafeMode;
 		const char*	fABISubDirectory;
 
-		RendererMap fRenderers;
 };
 
 

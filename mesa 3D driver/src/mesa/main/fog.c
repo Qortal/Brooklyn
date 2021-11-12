@@ -104,12 +104,10 @@ _mesa_Fogfv( GLenum pname, const GLfloat *params )
 	 }
 	 if (ctx->Fog.Mode == m)
 	    return;
-	 FLUSH_VERTICES(ctx, _NEW_FOG, GL_FOG_BIT);
+	 FLUSH_VERTICES(ctx, _NEW_FOG);
 	 ctx->Fog.Mode = m;
-         if (ctx->Fog.Enabled) {
-            ctx->Fog._PackedEnabledMode = ctx->Fog._PackedMode;
-            ctx->NewState |= _NEW_FF_FRAG_PROGRAM;
-         }
+	 ctx->Fog._PackedEnabledMode = ctx->Fog.Enabled ?
+				       ctx->Fog._PackedMode : FOG_NONE;
 	 break;
       case GL_FOG_DENSITY:
 	 if (*params<0.0F) {
@@ -118,19 +116,19 @@ _mesa_Fogfv( GLenum pname, const GLfloat *params )
 	 }
 	 if (ctx->Fog.Density == *params)
 	    return;
-	 FLUSH_VERTICES(ctx, _NEW_FOG, GL_FOG_BIT);
+	 FLUSH_VERTICES(ctx, _NEW_FOG);
 	 ctx->Fog.Density = *params;
 	 break;
       case GL_FOG_START:
          if (ctx->Fog.Start == *params)
             return;
-         FLUSH_VERTICES(ctx, _NEW_FOG, GL_FOG_BIT);
+         FLUSH_VERTICES(ctx, _NEW_FOG);
          ctx->Fog.Start = *params;
          break;
       case GL_FOG_END:
          if (ctx->Fog.End == *params)
             return;
-         FLUSH_VERTICES(ctx, _NEW_FOG, GL_FOG_BIT);
+         FLUSH_VERTICES(ctx, _NEW_FOG);
          ctx->Fog.End = *params;
          break;
       case GL_FOG_INDEX:
@@ -138,13 +136,13 @@ _mesa_Fogfv( GLenum pname, const GLfloat *params )
             goto invalid_pname;
  	 if (ctx->Fog.Index == *params)
 	    return;
-	 FLUSH_VERTICES(ctx, _NEW_FOG, GL_FOG_BIT);
+	 FLUSH_VERTICES(ctx, _NEW_FOG);
  	 ctx->Fog.Index = *params;
 	 break;
       case GL_FOG_COLOR:
 	 if (TEST_EQ_4V(ctx->Fog.Color, params))
 	    return;
-	 FLUSH_VERTICES(ctx, _NEW_FOG, GL_FOG_BIT);
+	 FLUSH_VERTICES(ctx, _NEW_FOG);
 	 ctx->Fog.ColorUnclamped[0] = params[0];
 	 ctx->Fog.ColorUnclamped[1] = params[1];
 	 ctx->Fog.ColorUnclamped[2] = params[2];
@@ -163,7 +161,7 @@ _mesa_Fogfv( GLenum pname, const GLfloat *params )
 	 }
 	 if (ctx->Fog.FogCoordinateSource == p)
 	    return;
-	 FLUSH_VERTICES(ctx, _NEW_FOG | _NEW_FF_VERT_PROGRAM, GL_FOG_BIT);
+	 FLUSH_VERTICES(ctx, _NEW_FOG);
 	 ctx->Fog.FogCoordinateSource = p;
 	 break;
       }
@@ -176,7 +174,7 @@ _mesa_Fogfv( GLenum pname, const GLfloat *params )
 	 }
 	 if (ctx->Fog.FogDistanceMode == p)
 	    return;
-	 FLUSH_VERTICES(ctx, _NEW_FOG | _NEW_FF_VERT_PROGRAM, GL_FOG_BIT);
+	 FLUSH_VERTICES(ctx, _NEW_FOG);
 	 ctx->Fog.FogDistanceMode = p;
 	 break;
       }

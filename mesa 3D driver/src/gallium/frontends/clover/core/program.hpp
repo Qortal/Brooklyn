@@ -27,7 +27,7 @@
 
 #include "core/object.hpp"
 #include "core/context.hpp"
-#include "core/binary.hpp"
+#include "core/module.hpp"
 
 namespace clover {
    typedef std::vector<std::pair<std::string, std::string>> header_map;
@@ -38,14 +38,11 @@ namespace clover {
          evals, const std::vector<intrusive_ref<device>> &> device_range;
 
    public:
-      enum class il_type { none, source, spirv };
-
       program(clover::context &ctx,
-              std::string &&il,
-              enum il_type il_type);
+              const std::string &source);
       program(clover::context &ctx,
               const ref_vector<device> &devs = {},
-              const std::vector<binary> &binaries = {});
+              const std::vector<module> &binaries = {});
 
       program(const program &prog) = delete;
       program &
@@ -56,26 +53,26 @@ namespace clover {
       void link(const ref_vector<device> &devs, const std::string &opts,
                 const ref_vector<program> &progs);
 
+      const bool has_source;
       const std::string &source() const;
-      enum il_type il_type() const;
 
       device_range devices() const;
 
       struct build {
-         build(const binary &b = {}, const std::string &opts = {},
-               const std::string &log = {}) : bin(b), opts(opts), log(log) {}
+         build(const module &m = {}, const std::string &opts = {},
+               const std::string &log = {}) : binary(m), opts(opts), log(log) {}
 
          cl_build_status status() const;
          cl_program_binary_type binary_type() const;
 
-         binary bin;
+         module binary;
          std::string opts;
          std::string log;
       };
 
       const build &build(const device &dev) const;
 
-      const std::vector<binary::symbol> &symbols() const;
+      const std::vector<module::symbol> &symbols() const;
 
       unsigned kernel_ref_count() const;
 
@@ -88,7 +85,6 @@ namespace clover {
       std::map<const device *, struct build> _builds;
       std::string _source;
       ref_counter _kernel_ref_counter;
-      enum il_type _il_type;
    };
 }
 

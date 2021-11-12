@@ -159,14 +159,14 @@ r600_create_new_load(nir_builder *b, nir_intrinsic_instr *intr, nir_variable *va
 
    if (intr->intrinsic == nir_intrinsic_interp_deref_at_offset ||
        intr->intrinsic == nir_intrinsic_interp_deref_at_sample)
-      nir_src_copy(&new_intr->src[1], &intr->src[1]);
+      nir_src_copy(&new_intr->src[1], &intr->src[1], &new_intr->instr);
 
    nir_builder_instr_insert(b, &new_intr->instr);
 
    for (unsigned i = 0; i < old_num_comps; ++i)
       channels[i] = comp - var->data.location_frac + i;
    nir_ssa_def *load = nir_swizzle(b, &new_intr->dest.ssa, channels, old_num_comps);
-   nir_ssa_def_rewrite_uses(&intr->dest.ssa, load);
+   nir_ssa_def_rewrite_uses(&intr->dest.ssa, nir_src_for_ssa(load));
 
    /* Remove the old load intrinsic */
    nir_instr_remove(&intr->instr);
@@ -443,8 +443,6 @@ r600_vectorize_io_impl(nir_function_impl *impl)
    if (progress) {
       nir_metadata_preserve(impl, nir_metadata_block_index |
                                   nir_metadata_dominance);
-   } else {
-      nir_metadata_preserve(impl, nir_metadata_all);
    }
 
    r600_vec_instr_set_destroy(instr_set);

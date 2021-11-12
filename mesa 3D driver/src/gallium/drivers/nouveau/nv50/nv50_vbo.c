@@ -22,9 +22,7 @@
 
 #include "pipe/p_context.h"
 #include "pipe/p_state.h"
-#include "util/u_draw.h"
 #include "util/u_inlines.h"
-#include "util/u_prim.h"
 #include "util/format/u_format.h"
 #include "translate/translate.h"
 
@@ -190,10 +188,9 @@ nv50_user_vbuf_range(struct nv50_context *nv50, unsigned vbi,
 {
    assert(vbi < PIPE_MAX_ATTRIBS);
    if (unlikely(nv50->vertex->instance_bufs & (1 << vbi))) {
-      const uint32_t div = nv50->vertex->min_instance_div[vbi];
-      *base = nv50->instance_off * nv50->vtxbuf[vbi].stride;
-      *size = (nv50->instance_max / div) * nv50->vtxbuf[vbi].stride +
-         nv50->vertex->vb_access_size[vbi];
+      /* TODO: use min and max instance divisor to get a proper range */
+      *base = 0;
+      *size = nv50->vtxbuf[vbi].buffer.resource->width0;
    } else {
       /* NOTE: if there are user buffers, we *must* have index bounds */
       assert(nv50->vb_elt_limit != ~0);
@@ -702,11 +699,10 @@ nv50_draw_elements(struct nv50_context *nv50, bool shorten,
 
 static void
 nva0_draw_stream_output(struct nv50_context *nv50,
-                        const struct pipe_draw_info *info,
-                        const struct pipe_draw_indirect_info *indirect)
+                        const struct pipe_draw_info *info)
 {
    struct nouveau_pushbuf *push = nv50->base.pushbuf;
-   struct nv50_so_target *so = nv50_so_target(indirect->count_from_stream_output);
+   struct nv50_so_target *so = nv50_so_target(info->count_from_stream_output);
    struct nv04_resource *res = nv04_resource(so->pipe.buffer);
    unsigned num_instances = info->instance_count;
    unsigned mode = nv50_prim_gl(info->mode);
@@ -757,28 +753,8 @@ nv50_draw_vbo_kick_notify(struct nouveau_pushbuf *chan)
 }
 
 void
-nv50_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info,
-              unsigned drawid_offset,
-              const struct pipe_draw_indirect_info *indirect,
-              const struct pipe_draw_start_count_bias *draws,
-              unsigned num_draws)
+nv50_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info)
 {
-   if (num_draws > 1) {
-      util_draw_multi(pipe, info, drawid_offset, indirect, draws, num_draws);
-      return;
-   }
-
-   if (!indirect && (!draws[0].count || !info->instance_count))
-      return;
-
-   /* We don't actually support indirect draws, so add a fallback for ES 3.1's
-    * benefit.
-    */
-   if (indirect && indirect->buffer) {
-      util_draw_indirect(pipe, info, indirect);
-      return;
-   }
-
    struct nv50_context *nv50 = nv50_context(pipe);
    struct nouveau_pushbuf *push = nv50->base.pushbuf;
    bool tex_dirty = false;
@@ -788,13 +764,8 @@ nv50_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info,
       BCTX_REFN(nv50->bufctx_3d, 3D_INDEX, nv04_resource(info->index.resource), RD);
 
    /* NOTE: caller must ensure that (min_index + index_bias) is >= 0 */
-   if (info->index_bounds_valid) {
-      nv50->vb_elt_first = info->min_index + (info->index_size ? draws->index_bias : 0);
-      nv50->vb_elt_limit = info->max_index - info->min_index;
-   } else {
-      nv50->vb_elt_first = 0;
-      nv50->vb_elt_limit = ~0;
-   }
+   nv50->vb_elt_first = info->min_index + info->index_bias;
+   nv50->vb_elt_limit = info->max_index - info->min_index;
    nv50->instance_off = info->start_instance;
    nv50->instance_max = info->instance_count - 1;
 
@@ -802,7 +773,7 @@ nv50_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info,
     * if index count is larger and we expect repeated vertices, suggest upload.
     */
    nv50->vbo_push_hint = /* the 64 is heuristic */
-      !(info->index_size && ((nv50->vb_elt_limit + 64) < draws[0].count));
+      !(info->index_size && ((nv50->vb_elt_limit + 64) < info->count));
 
    if (nv50->vbo_user && !(nv50->dirty_3d & (NV50_NEW_3D_ARRAYS | NV50_NEW_3D_VERTEX))) {
       if (!!nv50->vbo_fifo != nv50->vbo_push_hint)
@@ -819,7 +790,7 @@ nv50_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info,
 
    push->kick_notify = nv50_draw_vbo_kick_notify;
 
-   for (s = 0; s < NV50_MAX_3D_SHADER_STAGES && !nv50->cb_dirty; ++s) {
+   for (s = 0; s < 3 && !nv50->cb_dirty; ++s) {
       if (nv50->constbuf_coherent[s])
          nv50->cb_dirty = true;
    }
@@ -831,7 +802,7 @@ nv50_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info,
       nv50->cb_dirty = false;
    }
 
-   for (s = 0; s < NV50_MAX_3D_SHADER_STAGES && !tex_dirty; ++s) {
+   for (s = 0; s < 3 && !tex_dirty; ++s) {
       if (nv50->textures_coherent[s])
          tex_dirty = true;
    }
@@ -854,20 +825,8 @@ nv50_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info,
       PUSH_DATA (push, 0x00010000 * !!nv50->state.mul_zero_wins);
    }
 
-   /* Make starting/pausing streamout work pre-NVA0 enough for ES3.0. This
-    * means counting vertices in a vertex shader when it has so outputs.
-    */
-   if (nv50->screen->base.class_3d < NVA0_3D_CLASS &&
-       nv50->vertprog->pipe.stream_output.num_outputs) {
-      for (int i = 0; i < nv50->num_so_targets; i++) {
-         nv50->so_used[i] += info->instance_count *
-            u_stream_outputs_for_vertices(info->mode, draws[0].count) *
-            nv50->vertprog->pipe.stream_output.stride[i] * 4;
-      }
-   }
-
    if (nv50->vbo_fifo) {
-      nv50_push_vbo(nv50, info, indirect, &draws[0]);
+      nv50_push_vbo(nv50, info);
       goto cleanup;
    }
 
@@ -887,7 +846,7 @@ nv50_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info,
    }
 
    if (info->index_size) {
-      bool shorten = info->index_bounds_valid && info->max_index <= 65535;
+      bool shorten = info->max_index <= 65535;
 
       if (info->primitive_restart != nv50->state.prim_restart) {
          if (info->primitive_restart) {
@@ -912,14 +871,14 @@ nv50_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info,
       }
 
       nv50_draw_elements(nv50, shorten, info,
-                         info->mode, draws[0].start, draws[0].count,
-                         info->instance_count, draws->index_bias, info->index_size);
+                         info->mode, info->start, info->count,
+                         info->instance_count, info->index_bias, info->index_size);
    } else
-   if (unlikely(indirect && indirect->count_from_stream_output)) {
-      nva0_draw_stream_output(nv50, info, indirect);
+   if (unlikely(info->count_from_stream_output)) {
+      nva0_draw_stream_output(nv50, info);
    } else {
       nv50_draw_arrays(nv50,
-                       info->mode, draws[0].start, draws[0].count,
+                       info->mode, info->start, info->count,
                        info->instance_count);
    }
 

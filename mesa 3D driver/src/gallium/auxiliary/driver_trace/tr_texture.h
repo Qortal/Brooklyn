@@ -33,7 +33,6 @@
 #include "pipe/p_state.h"
 
 #include "tr_screen.h"
-#include "util/u_threaded_context.h"
 
 struct trace_context;
 
@@ -57,7 +56,6 @@ struct trace_surface
 struct trace_sampler_view
 {
    struct pipe_sampler_view base;
-   unsigned refcount;
 
    struct pipe_sampler_view *sampler_view;
 };
@@ -65,7 +63,7 @@ struct trace_sampler_view
 
 struct trace_transfer
 {
-   struct threaded_transfer base;
+   struct pipe_transfer base;
 
    struct pipe_transfer *transfer;
    struct pipe_context *pipe;

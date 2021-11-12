@@ -24,22 +24,24 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  *
  **************************************************************************/
-/*
- * Authors:
- *   Keith Whitwell <keithw@vmware.com>
- */
+ /*
+  * Authors:
+  *   Keith Whitwell <keithw@vmware.com>
+  */
 
-#include "util/u_memory.h"
-#include "i915_context.h"
-#include "i915_reg.h"
-#include "i915_state.h"
 #include "i915_state_inlines.h"
+#include "i915_context.h"
+#include "i915_state.h"
+#include "i915_reg.h"
+#include "util/u_memory.h"
+
 
 /* Convinience function to check immediate state.
  */
 
-static inline void
-set_immediate(struct i915_context *i915, unsigned offset, const unsigned state)
+static inline void set_immediate(struct i915_context *i915,
+                                 unsigned offset,
+                                 const unsigned state)
 {
    if (i915->current.immediate[offset] == state)
       return;
@@ -49,11 +51,12 @@ set_immediate(struct i915_context *i915, unsigned offset, const unsigned state)
    i915->hardware_dirty |= I915_HW_IMMEDIATE;
 }
 
+
+
 /***********************************************************************
  * S0,S1: Vertex buffer state.
  */
-static void
-upload_S0S1(struct i915_context *i915)
+static void upload_S0S1(struct i915_context *i915)
 {
    unsigned LIS0, LIS1;
 
@@ -72,7 +75,8 @@ upload_S0S1(struct i915_context *i915)
    {
       unsigned vertex_size = i915->current.vertex_info.size;
 
-      LIS1 = ((vertex_size << 24) | (vertex_size << 16));
+      LIS1 = ((vertex_size << 24) |
+              (vertex_size << 16));
    }
 
    set_immediate(i915, I915_IMMEDIATE_S0, LIS0);
@@ -80,13 +84,17 @@ upload_S0S1(struct i915_context *i915)
 }
 
 const struct i915_tracked_state i915_upload_S0S1 = {
-   "imm S0 S1", upload_S0S1, I915_NEW_VBO | I915_NEW_VERTEX_FORMAT};
+   "imm S0 S1",
+   upload_S0S1,
+   I915_NEW_VBO | I915_NEW_VERTEX_FORMAT
+};
+
+
 
 /***********************************************************************
  * S4: Vertex format, rasterization state
  */
-static void
-upload_S2S4(struct i915_context *i915)
+static void upload_S2S4(struct i915_context *i915)
 {
    unsigned LIS2, LIS4;
 
@@ -105,25 +113,24 @@ upload_S2S4(struct i915_context *i915)
 }
 
 const struct i915_tracked_state i915_upload_S2S4 = {
-   "imm S2 S4", upload_S2S4, I915_NEW_RASTERIZER | I915_NEW_VERTEX_FORMAT};
+   "imm S2 S4",
+   upload_S2S4,
+   I915_NEW_RASTERIZER | I915_NEW_VERTEX_FORMAT
+};
+
+
 
 /***********************************************************************
  */
-static void
-upload_S5(struct i915_context *i915)
+static void upload_S5(struct i915_context *i915)
 {
    unsigned LIS5 = 0;
-   bool stencil_ccw = i915_stencil_ccw(i915);
 
    /* I915_NEW_DEPTH_STENCIL
     */
-   if (stencil_ccw)
-      LIS5 |= i915->depth_stencil->stencil_LIS5_ccw;
-   else
-      LIS5 |= i915->depth_stencil->stencil_LIS5_cw;
-   /* hope it's safe to set stencil ref value even if stencil test is disabled?
-    */
-   LIS5 |= i915->stencil_ref.ref_value[stencil_ccw] << S5_STENCIL_REF_SHIFT;
+   LIS5 |= i915->depth_stencil->stencil_LIS5;
+   /* hope it's safe to set stencil ref value even if stencil test is disabled? */
+   LIS5 |= i915->stencil_ref.ref_value[0] << S5_STENCIL_REF_SHIFT;
 
    /* I915_NEW_BLEND
     */
@@ -141,15 +148,18 @@ upload_S5(struct i915_context *i915)
 }
 
 const struct i915_tracked_state i915_upload_S5 = {
-   "imm S5", upload_S5,
-   I915_NEW_DEPTH_STENCIL | I915_NEW_BLEND | I915_NEW_RASTERIZER};
+   "imm S5",
+   upload_S5,
+   I915_NEW_DEPTH_STENCIL | I915_NEW_BLEND | I915_NEW_RASTERIZER
+};
+
+
 
 /***********************************************************************
  */
-static void
-upload_S6(struct i915_context *i915)
+static void upload_S6(struct i915_context *i915)
 {
-   unsigned LIS6 = 0;
+   unsigned LIS6 = (2 << S6_TRISTRIP_PV_SHIFT);
 
    /* I915_NEW_FRAMEBUFFER
     */
@@ -158,36 +168,28 @@ upload_S6(struct i915_context *i915)
 
    /* I915_NEW_BLEND
     */
-   if (i915->blend) {
-      struct i915_surface *cbuf = i915_surface(i915->framebuffer.cbufs[0]);
-      if (cbuf && cbuf->alpha_in_g)
-         LIS6 |= i915->blend->LIS6_alpha_in_g;
-      else if (cbuf && cbuf->alpha_is_x)
-         LIS6 |= i915->blend->LIS6_alpha_is_x;
-      else
-         LIS6 |= i915->blend->LIS6;
-   }
+   if (i915->blend)
+      LIS6 |= i915->blend->LIS6;
 
    /* I915_NEW_DEPTH
     */
    if (i915->depth_stencil)
       LIS6 |= i915->depth_stencil->depth_LIS6;
 
-   if (i915->rasterizer)
-      LIS6 |= i915->rasterizer->LIS6;
-
    set_immediate(i915, I915_IMMEDIATE_S6, LIS6);
 }
 
 const struct i915_tracked_state i915_upload_S6 = {
-   "imm S6", upload_S6,
-   I915_NEW_BLEND | I915_NEW_DEPTH_STENCIL | I915_NEW_FRAMEBUFFER |
-      I915_NEW_RASTERIZER};
+   "imm S6",
+   upload_S6,
+   I915_NEW_BLEND | I915_NEW_DEPTH_STENCIL | I915_NEW_FRAMEBUFFER
+};
+
+
 
 /***********************************************************************
  */
-static void
-upload_S7(struct i915_context *i915)
+static void upload_S7(struct i915_context *i915)
 {
 #if 0
    unsigned LIS7;
@@ -200,17 +202,25 @@ upload_S7(struct i915_context *i915)
 #endif
 }
 
-const struct i915_tracked_state i915_upload_S7 = {"imm S7", upload_S7,
-                                                  I915_NEW_RASTERIZER};
+const struct i915_tracked_state i915_upload_S7 = {
+   "imm S7",
+   upload_S7,
+   I915_NEW_RASTERIZER
+};
+
+
 
 /***********************************************************************
  */
 static const struct i915_tracked_state *atoms[] = {
-   &i915_upload_S0S1, &i915_upload_S2S4, &i915_upload_S5, &i915_upload_S6,
-   &i915_upload_S7};
+   &i915_upload_S0S1,
+   &i915_upload_S2S4,
+   &i915_upload_S5,
+   &i915_upload_S6,
+   &i915_upload_S7
+};
 
-static void
-update_immediate(struct i915_context *i915)
+static void update_immediate(struct i915_context *i915)
 {
    int i;
 
@@ -220,6 +230,7 @@ update_immediate(struct i915_context *i915)
 }
 
 struct i915_tracked_state i915_hw_immediate = {
-   "immediate", update_immediate,
+   "immediate",
+   update_immediate,
    ~0 /* all state atoms, because we do internal checking */
 };

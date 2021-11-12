@@ -504,13 +504,13 @@ interpolate_texcoords(struct gl_context *ctx, SWspan *span)
                swrast_texture_image_const(img);
             const struct gl_sampler_object *samp = _mesa_get_samplerobj(ctx, u);
 
-            needLambda = (samp->Attrib.MinFilter != samp->Attrib.MagFilter)
+            needLambda = (samp->MinFilter != samp->MagFilter)
                || _swrast_use_fragment_program(ctx);
             /* LOD is calculated directly in the ansiotropic filter, we can
              * skip the normal lambda function as the result is ignored.
              */
-            if (samp->Attrib.MaxAnisotropy > 1.0F &&
-                samp->Attrib.MinFilter == GL_LINEAR_MIPMAP_LINEAR) {
+            if (samp->MaxAnisotropy > 1.0F &&
+                samp->MinFilter == GL_LINEAR_MIPMAP_LINEAR) {
                needLambda = GL_FALSE;
             }
             texW = swImg->WidthScale;
@@ -1041,23 +1041,25 @@ put_values(struct gl_context *ctx, struct gl_renderbuffer *rb,
            GLuint count, const GLint x[], const GLint y[],
            const void *values, const GLubyte *mask)
 {
-   struct swrast_renderbuffer *srb = swrast_renderbuffer(rb);
+   mesa_pack_ubyte_rgba_func pack_ubyte = NULL;
+   mesa_pack_float_rgba_func pack_float = NULL;
    GLuint i;
+
+   if (datatype == GL_UNSIGNED_BYTE)
+      pack_ubyte = _mesa_get_pack_ubyte_rgba_function(rb->Format);
+   else
+      pack_float = _mesa_get_pack_float_rgba_function(rb->Format);
 
    for (i = 0; i < count; i++) {
       if (mask[i]) {
+         GLubyte *dst = _swrast_pixel_address(rb, x[i], y[i]);
+
          if (datatype == GL_UNSIGNED_BYTE) {
-            util_format_write_4ub(rb->Format,
-                                  (uint8_t *)values + 4 * i, 0,
-                                  srb->Map, srb->RowStride,
-                                  x[i], y[i], 1, 1);
+            pack_ubyte((const GLubyte *) values + 4 * i, dst);
          }
          else {
             assert(datatype == GL_FLOAT);
-            util_format_write_4(rb->Format,
-                                (float *)values + 4 * i, 0,
-                                srb->Map, srb->RowStride,
-                                x[i], y[i], 1, 1);
+            pack_float((const GLfloat *) values + 4 * i, dst);
          }
       }
    }
@@ -1075,7 +1077,8 @@ _swrast_put_row(struct gl_context *ctx, struct gl_renderbuffer *rb,
 
    if (!mask) {
       if (datatype == GL_UNSIGNED_BYTE) {
-         _mesa_pack_ubyte_rgba_row(rb->Format, count, values, dst);
+         _mesa_pack_ubyte_rgba_row(rb->Format, count,
+                                   (const GLubyte (*)[4]) values, dst);
       }
       else {
          assert(datatype == GL_FLOAT);
@@ -1102,7 +1105,7 @@ _swrast_put_row(struct gl_context *ctx, struct gl_renderbuffer *rb,
             if (runLen > 0) {
                if (datatype == GL_UNSIGNED_BYTE) {
                   _mesa_pack_ubyte_rgba_row(rb->Format, runLen,
-                                     (uint8_t *)values + runStart,
+                                     (const GLubyte (*)[4]) values + runStart,
                                      dst + runStart * bpp);
                }
                else {

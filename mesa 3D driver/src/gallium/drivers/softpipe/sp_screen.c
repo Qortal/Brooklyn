@@ -55,7 +55,6 @@ static const struct debug_named_value sp_debug_options[] = {
    {"no_rast",   SP_DBG_NO_RAST,    "no-ops rasterization, for profiling purposes"},
    {"use_llvm",  SP_DBG_USE_LLVM,   "Use LLVM if available for shaders"},
    {"use_tgsi",  SP_DBG_USE_TGSI,   "Request TGSI from the API instead of NIR"},
-   DEBUG_NAMED_VALUE_END
 };
 
 int sp_debug;
@@ -79,13 +78,11 @@ static const nir_shader_compiler_options sp_compiler_options = {
    .fuse_ffma64 = true,
    .lower_extract_byte = true,
    .lower_extract_word = true,
-   .lower_insert_byte = true,
-   .lower_insert_word = true,
    .lower_fdph = true,
    .lower_flrp64 = true,
    .lower_fmod = true,
    .lower_rotate = true,
-   .lower_uniforms_to_ubo = true,
+   .lower_sub = true,
    .lower_vector_cmp = true,
    .use_interpolated_input_intrinsics = true,
 };
@@ -149,7 +146,6 @@ softpipe_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_TGSI_FS_COORD_PIXEL_CENTER_INTEGER:
       return 1;
    case PIPE_CAP_DEPTH_CLIP_DISABLE:
-   case PIPE_CAP_DEPTH_BOUNDS_TEST:
       return 1;
    case PIPE_CAP_MAX_STREAM_OUTPUT_BUFFERS:
       return PIPE_MAX_SO_BUFFERS;
@@ -193,8 +189,9 @@ softpipe_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_MIXED_COLORBUFFER_FORMATS:
       return 1;
    case PIPE_CAP_GLSL_FEATURE_LEVEL:
-   case PIPE_CAP_GLSL_FEATURE_LEVEL_COMPATIBILITY:
       return 400;
+   case PIPE_CAP_GLSL_FEATURE_LEVEL_COMPATIBILITY:
+      return 140;
    case PIPE_CAP_COMPUTE:
       return 1;
    case PIPE_CAP_USER_VERTEX_BUFFERS:
@@ -247,12 +244,6 @@ softpipe_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_QUERY_SO_OVERFLOW:
       return 1;
    case PIPE_CAP_NIR_IMAGES_AS_DEREF:
-      return 0;
-
-   case PIPE_CAP_SHAREABLE_SHADERS:
-      /* Can't expose shareable shaders because the draw shaders reference the
-       * draw module's state, which is per-context.
-       */
       return 0;
 
    case PIPE_CAP_VENDOR_ID:
@@ -349,11 +340,11 @@ softpipe_get_paramf(struct pipe_screen *screen, enum pipe_capf param)
 {
    switch (param) {
    case PIPE_CAPF_MAX_LINE_WIDTH:
-      FALLTHROUGH;
+      /* fall-through */
    case PIPE_CAPF_MAX_LINE_WIDTH_AA:
       return 255.0; /* arbitrary */
    case PIPE_CAPF_MAX_POINT_WIDTH:
-      FALLTHROUGH;
+      /* fall-through */
    case PIPE_CAPF_MAX_POINT_WIDTH_AA:
       return 255.0; /* arbitrary */
    case PIPE_CAPF_MAX_TEXTURE_ANISOTROPY:
@@ -490,7 +481,6 @@ softpipe_destroy_screen( struct pipe_screen *screen )
  */
 static void
 softpipe_flush_frontbuffer(struct pipe_screen *_screen,
-                           struct pipe_context *pipe,
                            struct pipe_resource *resource,
                            unsigned level, unsigned layer,
                            void *context_private,

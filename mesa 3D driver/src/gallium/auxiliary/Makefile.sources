@@ -40,6 +40,7 @@ C_SOURCES := \
 	draw/draw_pt_decompose.h \
 	draw/draw_pt_emit.c \
 	draw/draw_pt_fetch.c \
+	draw/draw_pt_fetch_emit.c \
 	draw/draw_pt_fetch_shade_emit.c \
 	draw/draw_pt_fetch_shade_pipeline.c \
 	draw/draw_pt.h \
@@ -297,9 +298,6 @@ C_SOURCES := \
 	util/u_texture.h \
 	util/u_tile.c \
 	util/u_tile.h \
-	util/u_trace.c \
-	util/u_trace.h \
-	util/u_trace_priv.h \
 	util/u_transfer.c \
 	util/u_transfer.h \
 	util/u_transfer_helper.c \
@@ -379,9 +377,7 @@ VL_STUB_SOURCES := \
 
 GENERATED_SOURCES := \
 	indices/u_indices_gen.c \
-	indices/u_unfilled_gen.c \
-	util/u_tracepoints.c \
-	util/u_tracepoints.h
+	indices/u_unfilled_gen.c
 
 GALLIVM_SOURCES := \
 	gallivm/lp_bld_arit.c \

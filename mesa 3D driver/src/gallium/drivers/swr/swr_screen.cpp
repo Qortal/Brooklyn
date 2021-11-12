@@ -287,9 +287,6 @@ swr_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_STREAM_OUTPUT_PAUSE_RESUME:
       return 1;
 
-   case PIPE_CAP_SHAREABLE_SHADERS:
-      return 0;
-
    /* MSAA support
     * If user has explicitly set max_sample_count = 1 (via SWR_MSAA_MAX_COUNT)
     * then disable all MSAA support and go back to old (FAKE_SW_MSAA) caps. */
@@ -345,19 +342,16 @@ swr_get_shader_param(struct pipe_screen *screen,
                      enum pipe_shader_type shader,
                      enum pipe_shader_cap param)
 {
-   if (shader != PIPE_SHADER_VERTEX &&
-       shader != PIPE_SHADER_FRAGMENT &&
-       shader != PIPE_SHADER_GEOMETRY &&
-       shader != PIPE_SHADER_TESS_CTRL &&
-       shader != PIPE_SHADER_TESS_EVAL)
-      return 0;
+   if (shader == PIPE_SHADER_VERTEX ||
+       shader == PIPE_SHADER_FRAGMENT ||
+       shader == PIPE_SHADER_GEOMETRY
+       || shader == PIPE_SHADER_TESS_CTRL ||
+       shader == PIPE_SHADER_TESS_EVAL
+   )
+      return gallivm_get_shader_param(param);
 
-   if (param == PIPE_SHADER_CAP_MAX_SHADER_BUFFERS ||
-       param == PIPE_SHADER_CAP_MAX_SHADER_IMAGES) {
-      return 0;
-   }
-
-   return gallivm_get_shader_param(param);
+   // Todo: compute
+   return 0;
 }
 
 
@@ -993,7 +987,6 @@ swr_resource_destroy(struct pipe_screen *p_screen, struct pipe_resource *pt)
 
 static void
 swr_flush_frontbuffer(struct pipe_screen *p_screen,
-                      struct pipe_context *pipe,
                       struct pipe_resource *resource,
                       unsigned level,
                       unsigned layer,
@@ -1003,6 +996,7 @@ swr_flush_frontbuffer(struct pipe_screen *p_screen,
    struct swr_screen *screen = swr_screen(p_screen);
    struct sw_winsys *winsys = screen->winsys;
    struct swr_resource *spr = swr_resource(resource);
+   struct pipe_context *pipe = screen->pipe;
    struct swr_context *ctx = swr_context(pipe);
 
    if (pipe) {

@@ -36,7 +36,7 @@
 #include "util/macros.h"
 
 #ifdef __cplusplus
-#include "mesa/main/config.h"
+#include "main/config.h"
 #endif
 
 struct glsl_type;
@@ -84,7 +84,6 @@ enum glsl_base_type {
    GLSL_TYPE_INT64,
    GLSL_TYPE_BOOL,
    GLSL_TYPE_SAMPLER,
-   GLSL_TYPE_TEXTURE,
    GLSL_TYPE_IMAGE,
    GLSL_TYPE_ATOMIC_UINT,
    GLSL_TYPE_STRUCT,
@@ -123,7 +122,6 @@ static unsigned glsl_base_type_bit_size(enum glsl_base_type type)
    case GLSL_TYPE_INT64:
    case GLSL_TYPE_UINT64:
    case GLSL_TYPE_IMAGE:
-   case GLSL_TYPE_TEXTURE:
    case GLSL_TYPE_SAMPLER:
       return 64;
 
@@ -160,7 +158,6 @@ static inline bool glsl_base_type_is_integer(enum glsl_base_type type)
           type == GLSL_TYPE_INT64 ||
           type == GLSL_TYPE_BOOL ||
           type == GLSL_TYPE_SAMPLER ||
-          type == GLSL_TYPE_TEXTURE ||
           type == GLSL_TYPE_IMAGE;
 }
 
@@ -191,7 +188,6 @@ glsl_base_type_get_bit_size(const enum glsl_base_type base_type)
    case GLSL_TYPE_UINT64:
    case GLSL_TYPE_IMAGE:
    case GLSL_TYPE_SAMPLER:
-   case GLSL_TYPE_TEXTURE:
       return 64;
 
    default:
@@ -292,7 +288,7 @@ enum {
 
 #include "GL/gl.h"
 #include "util/ralloc.h"
-#include "mesa/main/menums.h" /* for gl_texture_index, C++'s enum rules are broken */
+#include "main/menums.h" /* for gl_texture_index, C++'s enum rules are broken */
 
 struct glsl_type {
    GLenum gl_type;
@@ -463,10 +459,6 @@ public:
                                                 bool array,
                                                 glsl_base_type type);
 
-   static const glsl_type *get_texture_instance(enum glsl_sampler_dim dim,
-                                                bool array,
-                                                glsl_base_type type);
-
    static const glsl_type *get_image_instance(enum glsl_sampler_dim dim,
                                               bool array, glsl_base_type type);
 
@@ -528,8 +520,6 @@ public:
     * might occupy.
     */
    unsigned component_slots() const;
-
-   unsigned component_slots_aligned(unsigned offset) const;
 
    /**
     * Calculate offset between the base location of the struct in
@@ -648,7 +638,7 @@ public:
     *    possible following the alignment required by the size/align func.
     *
     *  - All composite types (structures, matrices, and arrays) have an
-    *    alignment equal to the highest alignment of any member of the composite.
+    *    alignment equal to the highest alighment of any member of the composite.
     *
     * The types returned by this function are likely not suitable for most UBO
     * or SSBO layout because they do not add the extra array and substructure
@@ -804,7 +794,7 @@ public:
     */
    bool is_integer_16_32() const
    {
-      return is_integer_16() || is_integer_32();
+      return is_integer_16() || is_integer_32() || is_integer_64();
    }
 
    /**
@@ -950,14 +940,6 @@ public:
    }
 
    /**
-    * Query whether or not a type is a texture
-    */
-   bool is_texture() const
-   {
-      return base_type == GLSL_TYPE_TEXTURE;
-   }
-
-   /**
     * Query whether or not type is a sampler, or for struct, interface and
     * array types, contains a sampler.
     */
@@ -1075,11 +1057,11 @@ public:
          return 0;
 
       unsigned size = length;
-      const glsl_type *array_base_type = fields.array;
+      const glsl_type *base_type = fields.array;
 
-      while (array_base_type->is_array()) {
-         size = size * array_base_type->length;
-         array_base_type = array_base_type->fields.array;
+      while (base_type->is_array()) {
+         size = size * base_type->length;
+         base_type = base_type->fields.array;
       }
       return size;
    }
@@ -1389,12 +1371,6 @@ struct glsl_struct_field {
    int location;
 
    /**
-    * For interface blocks, members may explicitly assign the component used
-    * by a varying. Ignored for structs.
-    */
-   int component;
-
-   /**
     * For interface blocks, members may have an explicit byte offset
     * specified; -1 otherwise. Also used for xfb_offset layout qualifier.
     *
@@ -1413,7 +1389,6 @@ struct glsl_struct_field {
     * -1 otherwise.
     */
    int xfb_stride;
-
    /**
     * Layout format, applicable to image variables only.
     */
@@ -1478,8 +1453,8 @@ struct glsl_struct_field {
    };
 #ifdef __cplusplus
 #define DEFAULT_CONSTRUCTORS(_type, _name)                  \
-   type(_type), name(_name), location(-1), component(-1), offset(-1), \
-   xfb_buffer(0),  xfb_stride(0), image_format(PIPE_FORMAT_NONE), flags(0) \
+   type(_type), name(_name), location(-1), offset(-1), xfb_buffer(0),   \
+   xfb_stride(0), image_format(PIPE_FORMAT_NONE), flags(0) \
 
    glsl_struct_field(const struct glsl_type *_type,
                      int _precision,

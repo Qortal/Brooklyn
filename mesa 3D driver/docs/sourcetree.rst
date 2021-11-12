@@ -204,10 +204,8 @@ each directory.
    -  **panfrost** - Panfrost-specific sources
 
          -  **bifrost** - shader compiler for the Bifrost generation GPUs
-         -  **lib** - GPU data structures (command stream) support code`
          -  **midgard** - shader compiler for the Midgard generation GPUs
-         -  **shared** - shared Mali code between Lima and Panfrost
-         -  **util** - shared code between Midgard and Bifrost shader compilers
+         -  **pandecode** - command stream debugger
 
    -  **util** - Various utility codes
    -  **vulkan** - Common code for Vulkan drivers

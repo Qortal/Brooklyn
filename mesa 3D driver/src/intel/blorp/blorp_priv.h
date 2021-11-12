@@ -26,7 +26,6 @@
 
 #include <stdint.h>
 
-#include "common/intel_measure.h"
 #include "compiler/nir/nir.h"
 #include "compiler/brw_compiler.h"
 
@@ -219,7 +218,6 @@ struct blorp_params
 
    bool use_pre_baked_binding_table;
    uint32_t pre_baked_binding_table_offset;
-   enum intel_measure_snapshot_type snapshot_type;
 };
 
 void blorp_params_init(struct blorp_params *params);
@@ -230,24 +228,12 @@ enum blorp_shader_type {
    BLORP_SHADER_TYPE_CLEAR,
    BLORP_SHADER_TYPE_MCS_PARTIAL_RESOLVE,
    BLORP_SHADER_TYPE_LAYER_OFFSET_VS,
-   BLORP_SHADER_TYPE_GFX4_SF,
+   BLORP_SHADER_TYPE_GEN4_SF,
 };
-
-struct brw_blorp_base_key
-{
-   char name[8];
-   enum blorp_shader_type shader_type;
-};
-
-#define BRW_BLORP_BASE_KEY_INIT(_type) \
-   (struct brw_blorp_base_key) {       \
-      .name = "blorp",                 \
-      .shader_type = _type,            \
-   }
 
 struct brw_blorp_blit_prog_key
 {
-   struct brw_blorp_base_key base;
+   enum blorp_shader_type shader_type; /* Must be BLORP_SHADER_TYPE_BLIT */
 
    /* Number of samples per pixel that have been configured in the surface
     * state for texturing from.
@@ -371,7 +357,7 @@ struct brw_blorp_blit_prog_key
  * \name BLORP internals
  * \{
  *
- * Used internally by gfx6_blorp_exec() and gfx7_blorp_exec().
+ * Used internally by gen6_blorp_exec() and gen7_blorp_exec().
  */
 
 void brw_blorp_init_wm_prog_key(struct brw_wm_prog_key *wm_key);

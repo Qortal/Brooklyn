@@ -378,8 +378,8 @@ _mesa_init_resident_handles(struct gl_context *ctx)
 void
 _mesa_free_resident_handles(struct gl_context *ctx)
 {
-   _mesa_hash_table_u64_destroy(ctx->ResidentTextureHandles);
-   _mesa_hash_table_u64_destroy(ctx->ResidentImageHandles);
+   _mesa_hash_table_u64_destroy(ctx->ResidentTextureHandles, NULL);
+   _mesa_hash_table_u64_destroy(ctx->ResidentImageHandles, NULL);
 }
 
 /**
@@ -397,10 +397,10 @@ void
 _mesa_free_shared_handles(struct gl_shared_state *shared)
 {
    if (shared->TextureHandles)
-      _mesa_hash_table_u64_destroy(shared->TextureHandles);
+      _mesa_hash_table_u64_destroy(shared->TextureHandles, NULL);
 
    if (shared->ImageHandles)
-      _mesa_hash_table_u64_destroy(shared->ImageHandles);
+      _mesa_hash_table_u64_destroy(shared->ImageHandles, NULL);
 
    mtx_destroy(&shared->HandlesMutex);
 }
@@ -510,7 +510,7 @@ is_sampler_border_color_valid(struct gl_sampler_object *samp)
       { 1, 1, 1, 0 },
       { 1, 1, 1, 1 },
    };
-   size_t size = sizeof(samp->Attrib.state.border_color.ui);
+   size_t size = sizeof(samp->BorderColor.ui);
 
    /* The ARB_bindless_texture spec says:
     *
@@ -523,16 +523,16 @@ is_sampler_border_color_valid(struct gl_sampler_object *samp)
     *  (0.0,0.0,0.0,0.0), (0.0,0.0,0.0,1.0), (1.0,1.0,1.0,0.0), and
     *  (1.0,1.0,1.0,1.0)."
     */
-   if (!memcmp(samp->Attrib.state.border_color.f, valid_float_border_colors[0], size) ||
-       !memcmp(samp->Attrib.state.border_color.f, valid_float_border_colors[1], size) ||
-       !memcmp(samp->Attrib.state.border_color.f, valid_float_border_colors[2], size) ||
-       !memcmp(samp->Attrib.state.border_color.f, valid_float_border_colors[3], size))
+   if (!memcmp(samp->BorderColor.f, valid_float_border_colors[0], size) ||
+       !memcmp(samp->BorderColor.f, valid_float_border_colors[1], size) ||
+       !memcmp(samp->BorderColor.f, valid_float_border_colors[2], size) ||
+       !memcmp(samp->BorderColor.f, valid_float_border_colors[3], size))
       return GL_TRUE;
 
-   if (!memcmp(samp->Attrib.state.border_color.ui, valid_integer_border_colors[0], size) ||
-       !memcmp(samp->Attrib.state.border_color.ui, valid_integer_border_colors[1], size) ||
-       !memcmp(samp->Attrib.state.border_color.ui, valid_integer_border_colors[2], size) ||
-       !memcmp(samp->Attrib.state.border_color.ui, valid_integer_border_colors[3], size))
+   if (!memcmp(samp->BorderColor.ui, valid_integer_border_colors[0], size) ||
+       !memcmp(samp->BorderColor.ui, valid_integer_border_colors[1], size) ||
+       !memcmp(samp->BorderColor.ui, valid_integer_border_colors[2], size) ||
+       !memcmp(samp->BorderColor.ui, valid_integer_border_colors[3], size))
       return GL_TRUE;
 
    return GL_FALSE;

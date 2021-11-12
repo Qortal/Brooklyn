@@ -21,8 +21,7 @@
 inc_egl = include_directories('.', 'main')
 inc_egl_dri2 = include_directories('drivers/dri2')
 
-c_args_for_egl = [asan_c_args]
-cpp_args_for_egl = []
+c_args_for_egl = []
 link_for_egl = []
 deps_for_egl = []
 incs_for_egl = [inc_include, inc_src, inc_egl]
@@ -106,7 +105,7 @@ if with_dri2
     endif
     deps_for_egl += [dep_x11_xcb, dep_xcb_dri2, dep_xcb_xfixes]
   endif
-  if with_gbm and not with_platform_android
+  if with_gbm
     files_egl += files('drivers/dri2/platform_drm.c')
     link_for_egl += libgbm
     incs_for_egl += [inc_gbm, include_directories('../gbm/main')]
@@ -126,11 +125,6 @@ if with_dri2
   if with_platform_android
     deps_for_egl += dep_android
     files_egl += files('drivers/dri2/platform_android.c')
-    if dep_android_mapper4.found()
-      files_egl += files('drivers/dri2/platform_android_mapper.cpp')
-      c_args_for_egl += '-DUSE_IMAPPER4_METADATA_API'
-      cpp_args_for_egl += ['-std=c++17', '-DUSE_IMAPPER4_METADATA_API']
-    endif
   endif
 elif with_platform_haiku
   incs_for_egl += inc_haikugl
@@ -140,13 +134,6 @@ elif with_platform_haiku
   files_egl += files('drivers/haiku/egl_haiku.cpp')
   link_for_egl += libgl
   deps_for_egl += cpp.find_library('be')
-elif with_platform_windows
-  c_args_for_egl += [
-    '-DEGLAPI=', '-DPUBLIC='
-  ]
-  files_egl += files('drivers/wgl/egl_wgl.c')
-  incs_for_egl += [inc_wgl, inc_gallium, inc_gallium_aux]
-  link_for_egl += libgallium_wgl
 endif
 
 if cc.has_function('mincore')
@@ -156,21 +143,14 @@ endif
 if not with_glvnd
   egl_lib_name = 'EGL' + get_option('egl-lib-suffix')
   egl_lib_version = '1.0.0'
-  egl_lib_soversion = host_machine.system() == 'windows' ? '' : '1'
 else
-  egl_lib_name = 'EGL_@0@'.format(glvnd_vendor_name)
+  egl_lib_name = 'EGL_mesa'
   egl_lib_version = '0.0.0'
-  egl_lib_soversion = '0'
   deps_for_egl += dep_glvnd
   files_egl += [g_egldispatchstubs_h, g_egldispatchstubs_c]
   files_egl += files('main/eglglvnd.c', 'main/egldispatchstubs.c')
-  glvnd_config = configuration_data()
-  glvnd_config.set('glvnd_vendor_name', get_option('glvnd-vendor-name'))
-  configure_file(
-    configuration: glvnd_config,
-    input : 'main/50_mesa.json',
-    output: '50_@0@.json'.format(glvnd_vendor_name),
-    install : true,
+  install_data(
+    'main/50_mesa.json',
     install_dir : join_paths(get_option('datadir'), 'glvnd', 'egl_vendor.d')
   )
 endif
@@ -182,7 +162,6 @@ libegl = shared_library(
     c_args_for_egl,
     '-D_EGL_NATIVE_PLATFORM=_EGL_PLATFORM_@0@'.format(egl_native_platform.to_upper()),
   ],
-  cpp_args : [cpp_args_for_egl],
   gnu_symbol_visibility : 'hidden',
   include_directories : incs_for_egl,
   link_with : [link_for_egl, libglapi],
@@ -190,9 +169,6 @@ libegl = shared_library(
   dependencies : [deps_for_egl, dep_dl, dep_libdrm, dep_clock, dep_thread, idep_mesautil],
   install : true,
   version : egl_lib_version,
-  soversion : egl_lib_soversion,
-  name_prefix : 'lib', # even on windows
-  vs_module_defs : 'main/egl.def'
 )
 
 if not with_glvnd

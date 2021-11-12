@@ -21,7 +21,7 @@
 libgl = shared_library(
   'GL',
   files(
-    'GLView.cpp', 'GLRenderer.cpp', 'GLRendererRoster.cpp',
+    'GLView.cpp', 'GLRenderer.cpp', 'GLRendererRoster.cpp', 'GLDispatcher.cpp',
   ),
   link_args : [ld_args_bsymbolic, ld_args_gc_sections],
   include_directories : [
@@ -30,7 +30,6 @@ libgl = shared_library(
   ],
   link_with : [libglapi_static, libglapi],
   dependencies : cpp.find_library('be'),
-  version : '1.0.0',
   install : true,
 )
 

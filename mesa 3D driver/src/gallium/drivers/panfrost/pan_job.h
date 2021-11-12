@@ -28,10 +28,28 @@
 
 #include "util/u_dynarray.h"
 #include "pipe/p_state.h"
-#include "pan_cs.h"
-#include "pan_mempool.h"
+#include "pan_pool.h"
 #include "pan_resource.h"
 #include "pan_scoreboard.h"
+
+/* panfrost_batch_fence is the out fence of a batch that users or other batches
+ * might want to wait on. The batch fence lifetime is different from the batch
+ * one as want will certainly want to wait upon the fence after the batch has
+ * been submitted (which is when panfrost_batch objects are freed).
+ */
+struct panfrost_batch_fence {
+        /* Refcounting object for the fence. */
+        struct pipe_reference reference;
+
+        /* Batch that created this fence object. Will become NULL at batch
+         * submission time. This field is mainly here to know whether the
+         * batch has been flushed or not.
+         */
+        struct panfrost_batch *batch;
+};
+
+#define PAN_REQ_MSAA            (1 << 0)
+#define PAN_REQ_DEPTH_WRITE     (1 << 1)
 
 /* A panfrost_batch corresponds to a bound FBO we're rendering to,
  * collecting over multiple draws. */
@@ -40,20 +58,11 @@ struct panfrost_batch {
         struct panfrost_context *ctx;
         struct pipe_framebuffer_state key;
 
-        /* Sequence number used to implement LRU eviction when all batch slots are used */
-        uint64_t seqnum;
-
         /* Buffers cleared (PIPE_CLEAR_* bitmask) */
         unsigned clear;
 
         /* Buffers drawn */
         unsigned draws;
-
-        /* Buffers read */
-        unsigned read;
-
-        /* Buffers needing resolve to memory */
-        unsigned resolve;
 
         /* Packed clear values, indexed by both render target as well as word.
          * Essentially, a single pixel is packed, with some padding to bring it
@@ -70,27 +79,26 @@ struct panfrost_batch {
         /* Amount of shared memory needed per workgroup (for compute) */
         unsigned shared_size;
 
+        /* Whether this job uses the corresponding requirement (PAN_REQ_*
+         * bitmask) */
+        unsigned requirements;
+
         /* The bounding box covered by this job, taking scissors into account.
          * Basically, the bounding box we have to run fragment shaders for */
 
         unsigned minx, miny;
         unsigned maxx, maxy;
 
-        /* Acts as a rasterizer discard */
-        bool scissor_culls_everything;
-
         /* BOs referenced not in the pool */
-        int first_bo, last_bo;
-        unsigned num_bos;
-        struct util_sparse_array bos;
+        struct hash_table *bos;
 
         /* Pool owned by this batch (released when the batch is released) used for temporary descriptors */
-        struct panfrost_pool pool;
+        struct pan_pool pool;
 
         /* Pool also owned by this batch that is not CPU mapped (created as
          * INVISIBLE) used for private GPU-internal structures, particularly
          * varyings */
-        struct panfrost_pool invisible_pool;
+        struct pan_pool invisible_pool;
 
         /* Job scoreboarding state */
         struct pan_scoreboard scoreboard;
@@ -104,76 +112,63 @@ struct panfrost_batch {
         /* Shared memory BO bound to the batch, or NULL if none bound yet */
         struct panfrost_bo *shared_memory;
 
+        /* Tiler heap BO bound to the batch, or NULL if none bound yet */
+        struct panfrost_bo *tiler_heap;
+
+        /* Dummy tiler BO bound to the batch, or NULL if none bound yet */
+        struct panfrost_bo *tiler_dummy;
+
         /* Framebuffer descriptor. */
         struct panfrost_ptr framebuffer;
 
-        /* Thread local storage descriptor. */
-        struct panfrost_ptr tls;
+        /* Bifrost tiler meta descriptor. */
+        mali_ptr tiler_meta;
 
-        /* Tiler context */
-        struct pan_tiler_context tiler_ctx;
+        /* Output sync object. Only valid when submitted is true. */
+        struct panfrost_batch_fence *out_sync;
 
-        /* Indirect draw data */
-        struct panfrost_ptr indirect_draw_ctx;
-        unsigned indirect_draw_job_id;
-
-        /* Keep the num_work_groups sysval around for indirect dispatch */
-        mali_ptr num_wg_sysval[3];
-
-        /* Cached descriptors */
-        mali_ptr viewport;
-        mali_ptr rsd[PIPE_SHADER_TYPES];
-        mali_ptr textures[PIPE_SHADER_TYPES];
-        mali_ptr samplers[PIPE_SHADER_TYPES];
-        mali_ptr attribs[PIPE_SHADER_TYPES];
-        mali_ptr attrib_bufs[PIPE_SHADER_TYPES];
-        mali_ptr uniform_buffers[PIPE_SHADER_TYPES];
-        mali_ptr push_uniforms[PIPE_SHADER_TYPES];
-
-        /* Referenced resources */
-        struct set *resources;
+        /* Batch dependencies */
+        struct util_dynarray dependencies;
 };
 
 /* Functions for managing the above */
+
+void
+panfrost_batch_fence_unreference(struct panfrost_batch_fence *fence);
+
+void
+panfrost_batch_fence_reference(struct panfrost_batch_fence *batch);
 
 struct panfrost_batch *
 panfrost_get_batch_for_fbo(struct panfrost_context *ctx);
 
 struct panfrost_batch *
-panfrost_get_fresh_batch_for_fbo(struct panfrost_context *ctx, const char *reason);
+panfrost_get_fresh_batch_for_fbo(struct panfrost_context *ctx);
 
 void
-panfrost_batch_add_bo(struct panfrost_batch *batch,
-                      struct panfrost_bo *bo,
-                      enum pipe_shader_type stage);
+panfrost_batch_init(struct panfrost_context *ctx);
 
 void
-panfrost_batch_read_rsrc(struct panfrost_batch *batch,
-                         struct panfrost_resource *rsrc,
-                         enum pipe_shader_type stage);
-
-void
-panfrost_batch_write_rsrc(struct panfrost_batch *batch,
-                          struct panfrost_resource *rsrc,
-                          enum pipe_shader_type stage);
+panfrost_batch_add_bo(struct panfrost_batch *batch, struct panfrost_bo *bo,
+                      uint32_t flags);
 
 struct panfrost_bo *
 panfrost_batch_create_bo(struct panfrost_batch *batch, size_t size,
-                         uint32_t create_flags, uint32_t access_flags,
-                         const char *label);
+                         uint32_t create_flags, uint32_t access_flags);
 
 void
-panfrost_flush_all_batches(struct panfrost_context *ctx, const char *reason);
+panfrost_flush_all_batches(struct panfrost_context *ctx, uint32_t out_sync);
+
+bool
+panfrost_pending_batches_access_bo(struct panfrost_context *ctx,
+                                   const struct panfrost_bo *bo);
 
 void
-panfrost_flush_batches_accessing_rsrc(struct panfrost_context *ctx,
-                                      struct panfrost_resource *rsrc,
-                                      const char *reason);
+panfrost_flush_batches_accessing_bo(struct panfrost_context *ctx,
+                                    struct panfrost_bo *bo, bool flush_readers);
 
 void
-panfrost_flush_writer(struct panfrost_context *ctx,
-                      struct panfrost_resource *rsrc,
-                      const char *reason);
+panfrost_batch_set_requirements(struct panfrost_batch *batch);
 
 void
 panfrost_batch_adjust_stack_size(struct panfrost_batch *batch);
@@ -183,6 +178,12 @@ panfrost_batch_get_scratchpad(struct panfrost_batch *batch, unsigned size, unsig
 
 struct panfrost_bo *
 panfrost_batch_get_shared_memory(struct panfrost_batch *batch, unsigned size, unsigned workgroup_count);
+
+mali_ptr
+panfrost_batch_get_polygon_list(struct panfrost_batch *batch, unsigned size);
+
+struct panfrost_bo *
+panfrost_batch_get_tiler_dummy(struct panfrost_batch *batch);
 
 void
 panfrost_batch_clear(struct panfrost_batch *batch,
@@ -194,5 +195,19 @@ void
 panfrost_batch_union_scissor(struct panfrost_batch *batch,
                              unsigned minx, unsigned miny,
                              unsigned maxx, unsigned maxy);
+
+void
+panfrost_batch_intersection_scissor(struct panfrost_batch *batch,
+                                    unsigned minx, unsigned miny,
+                                    unsigned maxx, unsigned maxy);
+
+bool
+panfrost_batch_is_scanout(struct panfrost_batch *batch);
+
+mali_ptr
+panfrost_batch_get_bifrost_tiler(struct panfrost_batch *batch, unsigned vertex_count);
+
+mali_ptr
+panfrost_batch_reserve_framebuffer(struct panfrost_batch *batch);
 
 #endif

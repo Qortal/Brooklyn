@@ -30,7 +30,6 @@
 #define PB_CACHE_H
 
 #include "pb_buffer.h"
-#include "util/simple_mtx.h"
 #include "util/list.h"
 #include "os/os_thread.h"
 
@@ -53,8 +52,7 @@ struct pb_cache
     */
    struct list_head *buckets;
 
-   simple_mtx_t mutex;
-   void *winsys;
+   mtx_t mutex;
    uint64_t cache_size;
    uint64_t max_cache_size;
    unsigned num_heaps;
@@ -63,8 +61,8 @@ struct pb_cache
    unsigned bypass_usage;
    float size_factor;
 
-   void (*destroy_buffer)(void *winsys, struct pb_buffer *buf);
-   bool (*can_reclaim)(void *winsys, struct pb_buffer *buf);
+   void (*destroy_buffer)(struct pb_buffer *buf);
+   bool (*can_reclaim)(struct pb_buffer *buf);
 };
 
 void pb_cache_add_buffer(struct pb_cache_entry *entry);
@@ -77,9 +75,8 @@ void pb_cache_init_entry(struct pb_cache *mgr, struct pb_cache_entry *entry,
 void pb_cache_init(struct pb_cache *mgr, uint num_heaps,
                    uint usecs, float size_factor,
                    unsigned bypass_usage, uint64_t maximum_cache_size,
-                   void *winsys,
-                   void (*destroy_buffer)(void *winsys, struct pb_buffer *buf),
-                   bool (*can_reclaim)(void *winsys, struct pb_buffer *buf));
+                   void (*destroy_buffer)(struct pb_buffer *buf),
+                   bool (*can_reclaim)(struct pb_buffer *buf));
 void pb_cache_deinit(struct pb_cache *mgr);
 
 #endif

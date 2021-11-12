@@ -24,13 +24,10 @@
 #ifndef UTIL_MACROS_H
 #define UTIL_MACROS_H
 
-#include <stdio.h>
 #include <assert.h>
 
 #include "c99_compat.h"
 #include "c11_compat.h"
-
-#include <stdint.h>
 
 /* Compute the size of an array */
 #ifndef ARRAY_SIZE
@@ -40,10 +37,6 @@
 /* For compatibility with Clang's __has_builtin() */
 #ifndef __has_builtin
 #  define __has_builtin(x) 0
-#endif
-
-#ifndef __has_attribute
-#  define __has_attribute(x) 0
 #endif
 
 /**
@@ -63,57 +56,17 @@
 #  endif
 #endif
 
-/**
- * __builtin_types_compatible_p compat
- */
-#if defined(__cplusplus) || !defined(HAVE___BUILTIN_TYPES_COMPATIBLE_P)
-#  define __builtin_types_compatible_p(type1, type2) (1)
-#endif
 
 /**
  * Static (compile-time) assertion.
+ * Basically, use COND to dimension an array.  If COND is false/zero the
+ * array size will be -1 and we'll get a compilation error.
  */
-#if defined(_MSC_VER)
-   /* MSVC doesn't like VLA's, but it also dislikes zero length arrays
-    * (which gcc is happy with), so we have to define STATIC_ASSERT()
-    * slightly differently.
-    */
-#  define STATIC_ASSERT(COND) do {         \
-      (void) sizeof(char [(COND) != 0]);   \
-   } while (0)
-#elif defined(__GNUC__)
-   /* This version of STATIC_ASSERT() relies on VLAs.  If COND is
-    * false/zero, the array size will be -1 and we'll get a compile
-    * error
-    */
-#  define STATIC_ASSERT(COND) do {         \
+#define STATIC_ASSERT(COND) \
+   do { \
       (void) sizeof(char [1 - 2*!(COND)]); \
    } while (0)
-#else
-#  define STATIC_ASSERT(COND) do { } while (0)
-#endif
 
-/**
- * container_of - cast a member of a structure out to the containing structure
- * @ptr:        the pointer to the member.
- * @type:       the type of the container struct this is embedded in.
- * @member:     the name of the member within the struct.
- */
-#ifndef __GNUC__
-   /* a grown-up compiler is required for the extra type checking: */
-#  define container_of(ptr, type, member)                               \
-      (type*)((uint8_t *)ptr - offsetof(type, member))
-#else
-#  define __same_type(a, b) \
-      __builtin_types_compatible_p(__typeof__(a), __typeof__(b))
-#  define container_of(ptr, type, member) ({                            \
-         uint8_t *__mptr = (uint8_t *)(ptr);                            \
-         STATIC_ASSERT(__same_type(*(ptr), ((type *)0)->member) ||      \
-                       __same_type(*(ptr), void) ||                     \
-                       !"pointer type mismatch in container_of()");     \
-         ((type *)(__mptr - offsetof(type, member)));                   \
-      })
-#endif
 
 /**
  * Unreachable macro. Useful for suppressing "control reaches end of non-void
@@ -173,11 +126,7 @@ do {                       \
 #endif
 
 #ifdef HAVE_FUNC_ATTRIBUTE_FORMAT
-#if defined (__MINGW_PRINTF_FORMAT)
-# define PRINTFLIKE(f, a) __attribute__ ((format(__MINGW_PRINTF_FORMAT, f, a)))
-#else
-# define PRINTFLIKE(f, a) __attribute__ ((format(__printf__, f, a)))
-#endif
+#define PRINTFLIKE(f, a) __attribute__ ((format(__printf__, f, a)))
 #else
 #define PRINTFLIKE(f, a)
 #endif
@@ -232,12 +181,6 @@ do {                       \
 #  else
 #    define NORETURN
 #  endif
-#endif
-
-#ifdef _MSC_VER
-#define ALIGN16 __declspec(align(16))
-#else
-#define ALIGN16 __attribute__((aligned(16)))
 #endif
 
 #ifdef __cplusplus
@@ -394,30 +337,6 @@ do {                       \
 #define BITFIELD64_RANGE(b, count) \
    (BITFIELD64_MASK((b) + (count)) & ~BITFIELD64_MASK(b))
 
-static inline int64_t
-u_intN_max(unsigned bit_size)
-{
-   assert(bit_size <= 64 && bit_size > 0);
-   return INT64_MAX >> (64 - bit_size);
-}
-
-static inline int64_t
-u_intN_min(unsigned bit_size)
-{
-   /* On 2's compliment platforms, which is every platform Mesa is likely to
-    * every worry about, stdint.h generally calculated INT##_MIN in this
-    * manner.
-    */
-   return (-u_intN_max(bit_size)) - 1;
-}
-
-static inline uint64_t
-u_uintN_max(unsigned bit_size)
-{
-   assert(bit_size <= 64 && bit_size > 0);
-   return UINT64_MAX >> (64 - bit_size);
-}
-
 /* TODO: In future we should try to move this to u_debug.h once header
  * dependencies are reorganised to allow this.
  */
@@ -440,34 +359,6 @@ enum pipe_debug_type
 #else
 #define alignof(t) __alignof__(t)
 #endif
-#endif
-
-/* Macros for static type-safety checking.
- *
- * https://clang.llvm.org/docs/ThreadSafetyAnalysis.html
- */
-
-#if __has_attribute(capability)
-typedef int __attribute__((capability("mutex"))) lock_cap_t;
-
-#define guarded_by(l) __attribute__((guarded_by(l)))
-#define acquire_cap(l) __attribute((acquire_capability(l), no_thread_safety_analysis))
-#define release_cap(l) __attribute((release_capability(l), no_thread_safety_analysis))
-#define assert_cap(l) __attribute((assert_capability(l), no_thread_safety_analysis))
-#define requires_cap(l) __attribute((requires_capability(l)))
-#define disable_thread_safety_analysis __attribute((no_thread_safety_analysis))
-
-#else
-
-typedef int lock_cap_t;
-
-#define guarded_by(l)
-#define acquire_cap(l)
-#define release_cap(l)
-#define assert_cap(l)
-#define requires_cap(l)
-#define disable_thread_safety_analysis
-
 #endif
 
 #endif /* UTIL_MACROS_H */

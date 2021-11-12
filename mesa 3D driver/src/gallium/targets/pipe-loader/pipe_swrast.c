@@ -8,10 +8,10 @@
 #include "sw/wrapper/wrapper_sw_winsys.h"
 
 PUBLIC struct pipe_screen *
-swrast_create_screen(struct sw_winsys *ws, bool sw_vk);
+swrast_create_screen(struct sw_winsys *ws);
 
 struct pipe_screen *
-swrast_create_screen(struct sw_winsys *ws, bool sw_vk)
+swrast_create_screen(struct sw_winsys *ws)
 {
    struct pipe_screen *screen;
 

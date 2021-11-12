@@ -59,7 +59,7 @@
  *     blits (because the smaller blits cannot be batched, and we have to wait
  *     for the GPU after each one).
  *
- * (2) texture_map implicitly involves a blit as well (for de-tiling, copy
+ * (2) transfer_map implicitly involves a blit as well (for de-tiling, copy
  *     from VRAM, etc.), so that it is beneficial to replace the
  *     _mesa_readpixels path as well when possible.
  *
@@ -97,12 +97,11 @@ static bool
 try_pbo_readpixels(struct st_context *st, struct st_renderbuffer *strb,
                    bool invert_y,
                    GLint x, GLint y, GLsizei width, GLsizei height,
-                   GLenum gl_format,
                    enum pipe_format src_format, enum pipe_format dst_format,
                    const struct gl_pixelstore_attrib *pack, void *pixels)
 {
    struct pipe_context *pipe = st->pipe;
-   struct pipe_screen *screen = st->screen;
+   struct pipe_screen *screen = pipe->screen;
    struct cso_context *cso = st->cso_context;
    struct pipe_surface *surface = strb->surface;
    struct pipe_resource *texture = strb->texture;
@@ -111,12 +110,6 @@ try_pbo_readpixels(struct st_context *st, struct st_renderbuffer *strb,
    struct pipe_framebuffer_state fb;
    enum pipe_texture_target view_target;
    bool success = false;
-
-   /* Make sure we have stencil format in case of GL_STENCIL_INDEX to
-    * create correct type of a sampler view.
-    */
-   if (gl_format == GL_STENCIL_INDEX)
-      src_format = util_format_stencil_only(src_format);
 
    if (texture->nr_samples > 1)
       return false;
@@ -137,9 +130,12 @@ try_pbo_readpixels(struct st_context *st, struct st_renderbuffer *strb,
    if (!st_pbo_addresses_pixelstore(st, GL_TEXTURE_2D, false, pack, pixels, &addr))
       return false;
 
-   cso_save_state(cso, (CSO_BIT_FRAGMENT_SAMPLERS |
+   cso_save_state(cso, (CSO_BIT_FRAGMENT_SAMPLER_VIEWS |
+                        CSO_BIT_FRAGMENT_SAMPLERS |
+                        CSO_BIT_FRAGMENT_IMAGE0 |
                         CSO_BIT_BLEND |
                         CSO_BIT_VERTEX_ELEMENTS |
+                        CSO_BIT_AUX_VERTEX_BUFFER_SLOT |
                         CSO_BIT_FRAMEBUFFER |
                         CSO_BIT_VIEWPORT |
                         CSO_BIT_RASTERIZER |
@@ -150,6 +146,7 @@ try_pbo_readpixels(struct st_context *st, struct st_renderbuffer *strb,
                         CSO_BIT_MIN_SAMPLES |
                         CSO_BIT_RENDER_CONDITION |
                         CSO_BITS_ALL_SHADERS));
+   cso_save_constant_buffer_slot0(cso, PIPE_SHADER_FRAGMENT);
 
    cso_set_sample_mask(cso, ~0);
    cso_set_min_samples(cso, 1);
@@ -189,10 +186,7 @@ try_pbo_readpixels(struct st_context *st, struct st_renderbuffer *strb,
       if (sampler_view == NULL)
          goto fail;
 
-      pipe->set_sampler_views(pipe, PIPE_SHADER_FRAGMENT, 0, 1, 0,
-                              &sampler_view);
-      st->state.num_sampler_views[PIPE_SHADER_FRAGMENT] =
-         MAX2(st->state.num_sampler_views[PIPE_SHADER_FRAGMENT], 1);
+      cso_set_sampler_views(cso, PIPE_SHADER_FRAGMENT, 1, &sampler_view);
 
       pipe_sampler_view_reference(&sampler_view, NULL);
 
@@ -212,7 +206,7 @@ try_pbo_readpixels(struct st_context *st, struct st_renderbuffer *strb,
       image.u.buf.size = (addr.last_element - addr.first_element + 1) *
                          addr.bytes_per_pixel;
 
-      pipe->set_shader_images(pipe, PIPE_SHADER_FRAGMENT, 0, 1, 0, &image);
+      cso_set_shader_images(cso, PIPE_SHADER_FRAGMENT, 0, 1, &image);
    }
 
    /* Set up no-attachment framebuffer */
@@ -241,7 +235,7 @@ try_pbo_readpixels(struct st_context *st, struct st_renderbuffer *strb,
 
    /* Set up the fragment shader */
    {
-      void *fs = st_pbo_get_download_fs(st, view_target, src_format, dst_format, addr.depth != 1);
+      void *fs = st_pbo_get_download_fs(st, view_target, src_format, dst_format);
       if (!fs)
          goto fail;
 
@@ -255,20 +249,7 @@ try_pbo_readpixels(struct st_context *st, struct st_renderbuffer *strb,
 
 fail:
    cso_restore_state(cso);
-
-   /* Unbind all because st/mesa won't do it if the current shader doesn't
-    * use them.
-    */
-   pipe->set_sampler_views(pipe, PIPE_SHADER_FRAGMENT, 0, 0,
-                           st->state.num_sampler_views[PIPE_SHADER_FRAGMENT],
-                           NULL);
-   st->state.num_sampler_views[PIPE_SHADER_FRAGMENT] = 0;
-   pipe->set_shader_images(pipe, PIPE_SHADER_FRAGMENT, 0, 0, 1, NULL);
-
-   st->dirty |= ST_NEW_FS_CONSTANTS |
-                ST_NEW_FS_IMAGES |
-                ST_NEW_FS_SAMPLER_VIEWS |
-                ST_NEW_VERTEX_ARRAYS;
+   cso_restore_constant_buffer_slot0(cso, PIPE_SHADER_FRAGMENT);
 
    return success;
 }
@@ -283,7 +264,8 @@ blit_to_staging(struct st_context *st, struct st_renderbuffer *strb,
                    GLenum format,
                    enum pipe_format src_format, enum pipe_format dst_format)
 {
-   struct pipe_screen *screen = st->screen;
+   struct pipe_context *pipe = st->pipe;
+   struct pipe_screen *screen = pipe->screen;
    struct pipe_resource dst_templ;
    struct pipe_resource *dst;
    struct pipe_blit_info blit;
@@ -424,7 +406,7 @@ st_ReadPixels(struct gl_context *ctx, GLint x, GLint y,
          _mesa_get_read_renderbuffer_for_format(ctx, format);
    struct st_renderbuffer *strb = st_renderbuffer(rb);
    struct pipe_context *pipe = st->pipe;
-   struct pipe_screen *screen = st->screen;
+   struct pipe_screen *screen = pipe->screen;
    struct pipe_resource *src;
    struct pipe_resource *dst = NULL;
    enum pipe_format dst_format, src_format;
@@ -464,7 +446,7 @@ st_ReadPixels(struct gl_context *ctx, GLint x, GLint y,
 
    /* Convert the source format to what is expected by ReadPixels
     * and see if it's supported. */
-   src_format = util_format_linear(strb->Base.Format);
+   src_format = util_format_linear(src->format);
    src_format = util_format_luminance_to_red(src_format);
    src_format = util_format_intensity_to_red(src_format);
 
@@ -492,7 +474,7 @@ st_ReadPixels(struct gl_context *ctx, GLint x, GLint y,
       if (try_pbo_readpixels(st, strb,
                              st_fb_orientation(ctx->ReadBuffer) == Y_0_TOP,
                              x, y, width, height,
-                             format, src_format, dst_format,
+                             src_format, dst_format,
                              pack, pixels))
          return;
    }
@@ -533,7 +515,7 @@ st_ReadPixels(struct gl_context *ctx, GLint x, GLint y,
    /* map resources */
    pixels = _mesa_map_pbo_dest(ctx, pack, pixels);
 
-   map = pipe_texture_map_3d(pipe, dst, 0, PIPE_MAP_READ,
+   map = pipe_transfer_map_3d(pipe, dst, 0, PIPE_MAP_READ,
                               dst_x, dst_y, 0, width, height, 1, &tex_xfer);
    if (!map) {
       _mesa_unmap_pbo_dest(ctx, pack);
@@ -562,7 +544,7 @@ st_ReadPixels(struct gl_context *ctx, GLint x, GLint y,
       }
    }
 
-   pipe_texture_unmap(pipe, tex_xfer);
+   pipe_transfer_unmap(pipe, tex_xfer);
    _mesa_unmap_pbo_dest(ctx, pack);
    pipe_resource_reference(&dst, NULL);
    return;

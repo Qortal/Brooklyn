@@ -23,10 +23,6 @@
 #ifndef UTIL_INDEX_MODIFY_H
 #define UTIL_INDEX_MODIFY_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 struct pipe_context;
 struct pipe_resource;
 
@@ -51,9 +47,5 @@ void util_rebuild_uint_elts_to_userptr(struct pipe_context *context,
 				       int index_bias,
 				       unsigned start, unsigned count,
 				       void *out);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

@@ -30,17 +30,14 @@
 
 
 #include "pipe/p_compiler.h"
-#include "frontend/api.h"
 #include "util/u_handle_table.h"
-#include "util/u_dynarray.h"
-#include "util/xmlconfig.h"
 #include <GL/gl.h>
 #include "gldrv.h"
 #include "stw_pixelformat.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+
+#define STW_MAX_PIXELFORMATS   256
+
 
 struct pipe_screen;
 struct st_api;
@@ -63,8 +60,9 @@ struct stw_device
 
    LUID AdapterLuid;
 
-   struct util_dynarray pixelformats;
+   struct stw_pixelformat_info pixelformats[STW_MAX_PIXELFORMATS];
    unsigned pixelformat_count;
+   unsigned pixelformat_extended_count;
 
    struct WGLCALLBACKS callbacks;
 
@@ -86,10 +84,6 @@ struct stw_device
    int refresh_rate;
    int swap_interval;
 
-   driOptionCache option_cache;
-   driOptionCache option_info;
-   struct st_config_options st_options;
-
    bool initialized;
 };
 
@@ -97,7 +91,7 @@ struct stw_device
 extern struct stw_device *stw_dev;
 
 boolean
-stw_init_screen(HDC hdc);
+stw_init_screen(void);
 
 static inline struct stw_context *
 stw_lookup_context_locked( DHGLRC dhglrc )
@@ -135,8 +129,5 @@ stw_unlock_framebuffers(struct stw_device *stw_dev)
    LeaveCriticalSection(&stw_dev->fb_mutex);
 }
 
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* STW_DEVICE_H_ */

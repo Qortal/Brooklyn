@@ -31,13 +31,11 @@ endif
 if with_platform_wayland
   files_vulkan_wsi += files('wsi_common_wayland.c')
   files_vulkan_wsi += [
+    wayland_drm_client_protocol_h,
+    wayland_drm_protocol_c,
     linux_dmabuf_unstable_v1_client_protocol_h,
     linux_dmabuf_unstable_v1_protocol_c,
   ]
-endif
-
-if with_platform_windows
-  files_vulkan_wsi += files('wsi_common_win32.c')
 endif
 
 if system_has_kms_drm and not with_platform_android

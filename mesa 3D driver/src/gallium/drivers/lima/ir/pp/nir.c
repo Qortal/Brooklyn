@@ -551,7 +551,7 @@ static bool ppir_emit_tex(ppir_block *block, nir_instr *ni)
 
 static ppir_block *ppir_get_block(ppir_compiler *comp, nir_block *nblock)
 {
-   ppir_block *block = _mesa_hash_table_u64_search(comp->blocks, (uintptr_t)nblock);
+   ppir_block *block = _mesa_hash_table_u64_search(comp->blocks, (uint64_t)nblock);
 
    return block;
 }
@@ -778,7 +778,6 @@ static ppir_compiler *ppir_compiler_create(void *prog, unsigned num_reg, unsigne
 
    list_inithead(&comp->block_list);
    list_inithead(&comp->reg_list);
-   comp->reg_num = 0;
    comp->blocks = _mesa_hash_table_u64_create(prog);
 
    comp->var_nodes = (ppir_node **)(comp + 1);
@@ -874,7 +873,7 @@ static void ppir_add_write_after_read_deps(ppir_compiler *comp)
    }
 }
 
-bool ppir_compile_nir(struct lima_fs_compiled_shader *prog, struct nir_shader *nir,
+bool ppir_compile_nir(struct lima_fs_shader_state *prog, struct nir_shader *nir,
                       struct ra_regs *ra,
                       struct pipe_debug_callback *debug)
 {
@@ -896,7 +895,7 @@ bool ppir_compile_nir(struct lima_fs_compiled_shader *prog, struct nir_shader *n
          if (!block)
             return false;
          block->index = nblock->index;
-         _mesa_hash_table_u64_insert(comp->blocks, (uintptr_t)nblock, block);
+         _mesa_hash_table_u64_insert(comp->blocks, (uint64_t)nblock, block);
       }
    }
 
@@ -938,7 +937,6 @@ bool ppir_compile_nir(struct lima_fs_compiled_shader *prog, struct nir_shader *n
       r->num_components = reg->num_components;
       r->is_head = false;
       list_addtail(&r->list, &comp->reg_list);
-      comp->reg_num++;
    }
 
    if (!ppir_emit_cf_list(comp, &func->body))
@@ -972,12 +970,12 @@ bool ppir_compile_nir(struct lima_fs_compiled_shader *prog, struct nir_shader *n
 
    ppir_print_shader_db(nir, comp, debug);
 
-   _mesa_hash_table_u64_destroy(comp->blocks);
+   _mesa_hash_table_u64_destroy(comp->blocks, NULL);
    ralloc_free(comp);
    return true;
 
 err_out0:
-   _mesa_hash_table_u64_destroy(comp->blocks);
+   _mesa_hash_table_u64_destroy(comp->blocks, NULL);
    ralloc_free(comp);
    return false;
 }

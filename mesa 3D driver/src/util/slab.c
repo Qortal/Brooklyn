@@ -257,8 +257,7 @@ void slab_free(struct slab_child_pool *pool, void *ptr)
    }
 
    /* The slow case: migration or an orphaned page. */
-   if (pool->parent)
-      mtx_lock(&pool->parent->mutex);
+   mtx_lock(&pool->parent->mutex);
 
    /* Note: we _must_ re-read elt->owner here because the owning child pool
     * may have been destroyed by another thread in the meantime.
@@ -269,11 +268,9 @@ void slab_free(struct slab_child_pool *pool, void *ptr)
       struct slab_child_pool *owner = (struct slab_child_pool *)owner_int;
       elt->next = owner->migrated;
       owner->migrated = elt;
-      if (pool->parent)
-         mtx_unlock(&pool->parent->mutex);
+      mtx_unlock(&pool->parent->mutex);
    } else {
-      if (pool->parent)
-         mtx_unlock(&pool->parent->mutex);
+      mtx_unlock(&pool->parent->mutex);
 
       slab_free_orphaned(elt);
    }

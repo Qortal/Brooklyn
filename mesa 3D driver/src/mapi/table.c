@@ -25,12 +25,9 @@
  *    Chia-I Wu <olv@lunarg.com>
  */
 
-#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
 
-#include "c11/threads.h"
 #include "table.h"
 
 static nop_handler_proc nop_handler = NULL;
@@ -41,17 +38,6 @@ table_set_noop_handler(nop_handler_proc func)
    nop_handler = func;
 }
 
-static bool log_noop;
-
-static void check_debug_env(void)
-{
-   const char *debug = getenv("MESA_DEBUG");
-   if (!debug)
-      debug = getenv("LIBGL_DEBUG");
-   if (debug && strcmp(debug, "silent") != 0)
-      log_noop = true;
-}
-
 static void
 noop_warn(const char *name)
 {
@@ -59,10 +45,12 @@ noop_warn(const char *name)
       nop_handler(name);
    }
    else {
-      static once_flag flag = ONCE_FLAG_INIT;
-      call_once(&flag, check_debug_env);
+      static int debug = -1;
+   
+      if (debug < 0)
+         debug = (getenv("MESA_DEBUG") || getenv("LIBGL_DEBUG"));
 
-      if (log_noop)
+      if (debug)
          fprintf(stderr, "%s is no-op\n", name);
    }
 }

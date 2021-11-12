@@ -35,11 +35,8 @@ lower_impl(nir_function_impl *impl)
    nir_builder_init(&b, impl);
    b.cursor = nir_before_cf_list(&impl->body);
 
-   /* The edge flag is the last input in st/mesa.  This code is also called by
-    * i965 which calls it before any input locations are assigned.
-    */
-   assert(shader->num_inputs == 0 ||
-          shader->num_inputs == util_bitcount64(shader->info.inputs_read));
+   /* The edge flag is the last input in st/mesa. */
+   assert(shader->num_inputs == util_bitcount64(shader->info.inputs_read));
 
    /* Lowered IO only uses intrinsics. It doesn't use variables. */
    if (shader->info.io_lowered) {
@@ -47,28 +44,40 @@ lower_impl(nir_function_impl *impl)
              util_bitcount64(shader->info.outputs_written));
 
       /* Load an edge flag. */
+      nir_intrinsic_instr *load =
+         nir_intrinsic_instr_create(shader, nir_intrinsic_load_input);
+      load->num_components = 1;
+      load->src[0] = nir_src_for_ssa(nir_imm_int(&b, 0));
+      nir_ssa_dest_init(&load->instr, &load->dest,
+                        load->num_components, 32, NULL);
+
+      nir_intrinsic_set_base(load, shader->num_inputs++);
+      nir_intrinsic_set_component(load, 0);
+      nir_intrinsic_set_dest_type(load, nir_type_float32);
+
       nir_io_semantics load_sem = {0};
       load_sem.location = VERT_ATTRIB_EDGEFLAG;
       load_sem.num_slots = 1;
-
-      nir_ssa_def *load =
-         nir_load_input(&b, 1, 32, nir_imm_int(&b, 0),
-                        .base = shader->num_inputs++,
-                        .component = 0,
-                        .dest_type = nir_type_float32,
-                        .io_semantics = load_sem);
+      nir_intrinsic_set_io_semantics(load, load_sem);
+      nir_builder_instr_insert(&b, &load->instr);
 
       /* Store an edge flag. */
+      nir_intrinsic_instr *store =
+         nir_intrinsic_instr_create(shader, nir_intrinsic_store_output);
+      store->num_components = 1;
+      store->src[0] = nir_src_for_ssa(&load->dest.ssa);
+      store->src[1] = nir_src_for_ssa(nir_imm_int(&b, 0));
+
+      nir_intrinsic_set_base(store, shader->num_outputs++);
+      nir_intrinsic_set_component(store, 0);
+      nir_intrinsic_set_src_type(store, nir_type_float32);
+      nir_intrinsic_set_write_mask(store, 0x1);
+
       nir_io_semantics semantics = {0};
       semantics.location = VARYING_SLOT_EDGE;
       semantics.num_slots = 1;
-
-      nir_store_output(&b, load, nir_imm_int(&b, 0),
-                       .base = shader->num_outputs++,
-                       .component = 0,
-                       .io_semantics = semantics,
-                       .src_type = nir_type_float32,
-                       .write_mask = 0x1);
+      nir_intrinsic_set_io_semantics(store, semantics);
+      nir_builder_instr_insert(&b, &store->instr);
 
       nir_metadata_preserve(impl, nir_metadata_block_index |
                                   nir_metadata_dominance);
@@ -80,12 +89,11 @@ lower_impl(nir_function_impl *impl)
    in->data.location = VERT_ATTRIB_EDGEFLAG;
 
    in->data.driver_location = shader->num_inputs++;
-   shader->info.inputs_read |= VERT_BIT_EDGEFLAG;
+   shader->info.inputs_read |= BITFIELD64_BIT(VERT_ATTRIB_EDGEFLAG);
 
    out = nir_variable_create(shader, nir_var_shader_out,
                              glsl_vec4_type(), "edgeflag_out");
    out->data.location = VARYING_SLOT_EDGE;
-   shader->info.outputs_written |= VARYING_BIT_EDGE;
 
    def = nir_load_var(&b, in);
    nir_store_var(&b, out, def, 0xf);
@@ -96,9 +104,5 @@ lower_impl(nir_function_impl *impl)
 
 void nir_lower_passthrough_edgeflags(nir_shader *shader)
 {
-   assert(shader->info.stage == MESA_SHADER_VERTEX);
-
-   shader->info.vs.needs_edge_flag = true;
-
    lower_impl(nir_shader_get_entrypoint(shader));
 }

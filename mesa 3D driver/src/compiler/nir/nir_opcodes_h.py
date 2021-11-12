@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 template = """\
 /* Copyright (C) 2014 Connor Abbott
  *

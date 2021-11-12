@@ -145,7 +145,7 @@ static VAStatus vlVaPostProcBlit(vlVaDriver *drv, vlVaContext *context,
       surf->templat.interlaced = false;
       dst->destroy(dst);
 
-      if (vlVaHandleSurfaceAllocate(drv, surf, &surf->templat, NULL, 0) != VA_STATUS_SUCCESS)
+      if (vlVaHandleSurfaceAllocate(drv, surf, &surf->templat) != VA_STATUS_SUCCESS)
          return VA_STATUS_ERROR_ALLOCATION_FAILED;
 
       dst = context->target = surf->buffer;
@@ -222,7 +222,7 @@ static VAStatus vlVaPostProcBlit(vlVaDriver *drv, vlVaContext *context,
 
       if (drv->pipe->screen->get_param(drv->pipe->screen,
                                        PIPE_CAP_PREFER_COMPUTE_FOR_MULTIMEDIA))
-         util_compute_blit(drv->pipe, &blit, &context->blit_cs, !drv->compositor.deinterlace);
+         util_compute_blit(drv->pipe, &blit, &context->blit_cs);
       else
          drv->pipe->blit(drv->pipe, &blit);
    }
@@ -281,11 +281,11 @@ vlVaApplyDeint(vlVaDriver *drv, vlVaContext *context,
 VAStatus
 vlVaHandleVAProcPipelineParameterBufferType(vlVaDriver *drv, vlVaContext *context, vlVaBuffer *buf)
 {
-   enum vl_compositor_deinterlace deinterlace = VL_COMPOSITOR_NONE;
+   enum vl_compositor_deinterlace deinterlace = VL_COMPOSITOR_WEAVE;
    VARectangle def_src_region, def_dst_region;
    const VARectangle *src_region, *dst_region;
    VAProcPipelineParameterBuffer *param;
-   struct pipe_video_buffer *src, *dst;
+   struct pipe_video_buffer *src;
    vlVaSurface *src_surface, *dst_surface;
    unsigned i;
 
@@ -307,21 +307,6 @@ vlVaHandleVAProcPipelineParameterBufferType(vlVaDriver *drv, vlVaContext *contex
       return VA_STATUS_ERROR_INVALID_SURFACE;
 
    src = src_surface->buffer;
-   dst = dst_surface->buffer;
-
-   /* convert the destination buffer to progressive if we're deinterlacing
-      otherwise we might end up deinterlacing twice */
-   if (param->num_filters && dst->interlaced) {
-      vlVaSurface *surf;
-      surf = dst_surface;
-      surf->templat.interlaced = false;
-      dst->destroy(dst);
-
-      if (vlVaHandleSurfaceAllocate(drv, surf, &surf->templat, NULL, 0) != VA_STATUS_SUCCESS)
-         return VA_STATUS_ERROR_ALLOCATION_FAILED;
-
-      dst = context->target = surf->buffer;
-   }
 
    for (i = 0; i < param->num_filters; i++) {
       vlVaBuffer *buf = handle_table_get(drv->htab, param->filters[i]);
@@ -349,13 +334,12 @@ vlVaHandleVAProcPipelineParameterBufferType(vlVaDriver *drv, vlVaContext *contex
          case VAProcDeinterlacingMotionAdaptive:
             src = vlVaApplyDeint(drv, context, param, src,
 				 !!(deint->flags & VA_DEINTERLACING_BOTTOM_FIELD));
-             deinterlace = VL_COMPOSITOR_MOTION_ADAPTIVE;
             break;
 
          default:
             return VA_STATUS_ERROR_UNIMPLEMENTED;
          }
-         drv->compositor.deinterlace = deinterlace;
+
          break;
       }
 

@@ -80,70 +80,49 @@ parse_atomic_op(nir_intrinsic_op op, unsigned *offset_src, unsigned *data_src)
    }
 }
 
-static unsigned
-get_dim(nir_ssa_scalar scalar)
-{
-   if (!scalar.def->divergent)
-      return 0;
-
-   if (scalar.def->parent_instr->type == nir_instr_type_intrinsic) {
-      nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(scalar.def->parent_instr);
-      if (intrin->intrinsic == nir_intrinsic_load_subgroup_invocation)
-         return 0x8;
-      else if (intrin->intrinsic == nir_intrinsic_load_local_invocation_index)
-         return 0x7;
-      else if (intrin->intrinsic == nir_intrinsic_load_local_invocation_id)
-         return 1 << scalar.comp;
-      else if (intrin->intrinsic == nir_intrinsic_load_global_invocation_index)
-         return 0x7;
-      else if (intrin->intrinsic == nir_intrinsic_load_global_invocation_id)
-         return 1 << scalar.comp;
-   } else if (nir_ssa_scalar_is_alu(scalar)) {
-      if (nir_ssa_scalar_alu_op(scalar) == nir_op_iadd ||
-          nir_ssa_scalar_alu_op(scalar) == nir_op_imul) {
-         nir_ssa_scalar src0 = nir_ssa_scalar_chase_alu_src(scalar, 0);
-         nir_ssa_scalar src1 = nir_ssa_scalar_chase_alu_src(scalar, 1);
-
-         unsigned src0_dim = get_dim(src0);
-         if (!src0_dim && src0.def->divergent)
-            return 0;
-         unsigned src1_dim = get_dim(src1);
-         if (!src1_dim && src1.def->divergent)
-            return 0;
-
-         return src0_dim | src1_dim;
-      } else if (nir_ssa_scalar_alu_op(scalar) == nir_op_ishl) {
-         nir_ssa_scalar src0 = nir_ssa_scalar_chase_alu_src(scalar, 0);
-         nir_ssa_scalar src1 = nir_ssa_scalar_chase_alu_src(scalar, 1);
-         return src1.def->divergent ? 0 : get_dim(src0);
-      }
-   }
-
-   return 0;
-}
-
 /* Returns a bitmask of invocation indices that are compared against a subgroup
  * uniform value.
  */
 static unsigned
 match_invocation_comparison(nir_ssa_scalar scalar)
 {
-   bool is_alu = nir_ssa_scalar_is_alu(scalar);
-   if (is_alu && nir_ssa_scalar_alu_op(scalar) == nir_op_iand) {
+   if (!nir_ssa_scalar_is_alu(scalar))
+      return 0;
+
+   if (nir_ssa_scalar_alu_op(scalar) == nir_op_iand) {
       return match_invocation_comparison(nir_ssa_scalar_chase_alu_src(scalar, 0)) |
              match_invocation_comparison(nir_ssa_scalar_chase_alu_src(scalar, 1));
-   } else if (is_alu && nir_ssa_scalar_alu_op(scalar) == nir_op_ieq) {
-      if (!nir_ssa_scalar_chase_alu_src(scalar, 0).def->divergent)
-         return get_dim(nir_ssa_scalar_chase_alu_src(scalar, 1));
-      if (!nir_ssa_scalar_chase_alu_src(scalar, 1).def->divergent)
-         return get_dim(nir_ssa_scalar_chase_alu_src(scalar, 0));
+   } else if (nir_ssa_scalar_alu_op(scalar) == nir_op_ieq) {
+      unsigned dims = 0;
+      for (unsigned i = 0; i < 2; i++) {
+         nir_ssa_scalar src = nir_ssa_scalar_chase_alu_src(scalar, i);
+         if (src.def->parent_instr->type != nir_instr_type_intrinsic)
+            continue;
+         if (nir_ssa_scalar_chase_alu_src(scalar, !i).def->divergent)
+            continue;
+
+         nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(src.def->parent_instr);
+         if (intrin->intrinsic == nir_intrinsic_load_subgroup_invocation)
+            dims = 0x8;
+         else if (intrin->intrinsic == nir_intrinsic_load_local_invocation_index)
+            dims = 0x7;
+         else if (intrin->intrinsic == nir_intrinsic_load_local_invocation_id)
+            dims = 1 << src.comp;
+         else if (intrin->intrinsic == nir_intrinsic_load_global_invocation_index)
+            dims = 0x7;
+         else if (intrin->intrinsic == nir_intrinsic_load_global_invocation_id)
+            dims = 1 << src.comp;
+      }
+
+      return dims;
    } else if (scalar.def->parent_instr->type == nir_instr_type_intrinsic) {
       nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(scalar.def->parent_instr);
       if (intrin->intrinsic == nir_intrinsic_elect)
          return 0x8;
+      return 0;
+   } else {
+      return 0;
    }
-
-   return 0;
 }
 
 /* Returns true if the intrinsic is already conditional so that at most one
@@ -169,9 +148,32 @@ is_atomic_already_optimized(nir_shader *shader, nir_intrinsic_instr *instr)
 
    unsigned dims_needed = 0;
    for (unsigned i = 0; i < 3; i++)
-      dims_needed |= (shader->info.workgroup_size[i] > 1) << i;
+      dims_needed |= (shader->info.cs.local_size[i] > 1) << i;
 
    return (dims & dims_needed) == dims_needed || dims & 0x8;
+}
+
+static nir_ssa_def *
+emit_scalar_intrinsic(nir_builder *b, nir_intrinsic_op op, unsigned bit_size)
+{
+   nir_intrinsic_instr *intrin = nir_intrinsic_instr_create(b->shader, op);
+   nir_ssa_dest_init(&intrin->instr, &intrin->dest, 1, bit_size, NULL);
+   nir_builder_instr_insert(b, &intrin->instr);
+   return &intrin->dest.ssa;
+}
+
+static nir_ssa_def *
+emit_read_invocation(nir_builder *b, nir_ssa_def *data, nir_ssa_def *lane)
+{
+   nir_intrinsic_instr *ri = nir_intrinsic_instr_create(
+         b->shader, lane ? nir_intrinsic_read_invocation : nir_intrinsic_read_first_invocation);
+   nir_ssa_dest_init(&ri->instr, &ri->dest, 1, data->bit_size, NULL);
+   ri->num_components = 1;
+   ri->src[0] = nir_src_for_ssa(data);
+   if (lane)
+      ri->src[1] = nir_src_for_ssa(lane);
+   nir_builder_instr_insert(b, &ri->instr);
+   return &ri->dest.ssa;
 }
 
 /* Perform a reduction and/or exclusive scan. */
@@ -179,15 +181,25 @@ static void
 reduce_data(nir_builder *b, nir_op op, nir_ssa_def *data,
             nir_ssa_def **reduce, nir_ssa_def **scan)
 {
-   if (scan) {
-      *scan = nir_exclusive_scan(b, data, .reduction_op=op);
-      if (reduce) {
-         nir_ssa_def *last_lane = nir_last_invocation(b);
-         nir_ssa_def *res = nir_build_alu(b, op, *scan, data, NULL, NULL);
-         *reduce = nir_read_invocation(b, res, last_lane);
-      }
-   } else {
-      *reduce = nir_reduce(b, data, .reduction_op=op);
+   nir_intrinsic_op intrin_op = scan ? nir_intrinsic_exclusive_scan : nir_intrinsic_reduce;
+   nir_intrinsic_instr *intrin =
+      nir_intrinsic_instr_create(b->shader, intrin_op);
+   intrin->num_components = 1;
+   intrin->src[0] = nir_src_for_ssa(data);
+   nir_intrinsic_set_reduction_op(intrin, op);
+   nir_ssa_dest_init(&intrin->instr, &intrin->dest, 1, data->bit_size, NULL);
+   nir_builder_instr_insert(b, &intrin->instr);
+
+   if (scan)
+      *scan = &intrin->dest.ssa;
+
+   if (scan && reduce) {
+      *scan = &intrin->dest.ssa;
+      nir_ssa_def *last_lane = emit_scalar_intrinsic(b, nir_intrinsic_last_invocation, 32);
+      nir_ssa_def *res = nir_build_alu(b, op, *scan, data, NULL, NULL);
+      *reduce = emit_read_invocation(b, res, last_lane);
+   } else if (reduce) {
+      *reduce = &intrin->dest.ssa;
    }
 }
 
@@ -206,7 +218,7 @@ optimize_atomic(nir_builder *b, nir_intrinsic_instr *intrin, bool return_prev)
    nir_instr_rewrite_src(&intrin->instr, &intrin->src[data_src], nir_src_for_ssa(reduce));
    nir_update_instr_divergence(b->shader, &intrin->instr);
 
-   nir_ssa_def *cond = nir_elect(b, 1);
+   nir_ssa_def *cond = emit_scalar_intrinsic(b, nir_intrinsic_elect, 1);
 
    nir_if *nif = nir_push_if(b, cond);
 
@@ -220,7 +232,7 @@ optimize_atomic(nir_builder *b, nir_intrinsic_instr *intrin, bool return_prev)
 
       nir_pop_if(b, nif);
       nir_ssa_def *result = nir_if_phi(b, &intrin->dest.ssa, undef);
-      result = nir_read_first_invocation(b, result);
+      result = emit_read_invocation(b, result, NULL);
 
       if (!combined_scan_reduce)
          reduce_data(b, op, data, NULL, &scan);
@@ -237,12 +249,13 @@ optimize_and_rewrite_atomic(nir_builder *b, nir_intrinsic_instr *intrin)
 {
    nir_if *helper_nif = NULL;
    if (b->shader->info.stage == MESA_SHADER_FRAGMENT) {
-      nir_ssa_def *helper = nir_is_helper_invocation(b, 1);
+      nir_ssa_def *helper = emit_scalar_intrinsic(b, nir_intrinsic_is_helper_invocation, 1);
       helper_nif = nir_push_if(b, nir_inot(b, helper));
    }
 
    ASSERTED bool original_result_divergent = intrin->dest.ssa.divergent;
-   bool return_prev = !nir_ssa_def_is_unused(&intrin->dest.ssa);
+   bool return_prev = !list_is_empty(&intrin->dest.ssa.uses) ||
+                      !list_is_empty(&intrin->dest.ssa.if_uses);
 
    nir_ssa_def old_result = intrin->dest.ssa;
    list_replace(&intrin->dest.ssa.uses, &old_result.uses);
@@ -261,7 +274,7 @@ optimize_and_rewrite_atomic(nir_builder *b, nir_intrinsic_instr *intrin)
 
    if (result) {
       assert(result->divergent == original_result_divergent);
-      nir_ssa_def_rewrite_uses(&old_result, result);
+      nir_ssa_def_rewrite_uses(&old_result, nir_src_for_ssa(result));
    }
 }
 
@@ -306,10 +319,9 @@ nir_opt_uniform_atomics(nir_shader *shader)
    /* A 1x1x1 workgroup only ever has one active lane, so there's no point in
     * optimizing any atomics.
     */
-   if (gl_shader_stage_uses_workgroup(shader->info.stage) &&
-       !shader->info.workgroup_size_variable &&
-       shader->info.workgroup_size[0] == 1 && shader->info.workgroup_size[1] == 1 &&
-       shader->info.workgroup_size[2] == 1)
+   if (shader->info.stage == MESA_SHADER_COMPUTE && !shader->info.cs.local_size_variable &&
+       shader->info.cs.local_size[0] == 1 && shader->info.cs.local_size[1] == 1 &&
+       shader->info.cs.local_size[2] == 1)
       return false;
 
    nir_foreach_function(function, shader) {

@@ -27,11 +27,11 @@
 #include <string.h>
 #include <stdarg.h>
 
-#include "common/intel_gem.h"
+#include "common/gen_gem.h"
 #include "util/macros.h"
 
 #include "aub_read.h"
-#include "intel_context.h"
+#include "gen_context.h"
 #include "intel_aub.h"
 
 #define TYPE(dw)       (((dw) >> 29) & 7)
@@ -57,7 +57,9 @@
 #define SUBOPCODE_MEM_WRITE 0x06
 #define SUBOPCODE_VERSION   0x0e
 
-static PRINTFLIKE(3, 4) void
+#define MAKE_GEN(major, minor) (((major) << 8) | (minor))
+
+static void
 parse_error(struct aub_read *read, const uint32_t *p, const char *fmt, ...)
 {
    if (!read->error)
@@ -85,7 +87,7 @@ handle_trace_header(struct aub_read *read, const uint32_t *p)
 
    if (end > &p[12] && p[12] > 0) {
       if (sscanf((char *)&p[13], "PCI-ID=%i", &aub_pci_id) > 0) {
-         if (!intel_get_device_info_from_pci_id(aub_pci_id, &read->devinfo)) {
+         if (!gen_get_device_info_from_pci_id(aub_pci_id, &read->devinfo)) {
             parse_error(read, p,
                         "can't find device information: pci_id=0x%x\n", aub_pci_id);
             return false;
@@ -116,7 +118,7 @@ handle_memtrace_version(struct aub_read *read, const uint32_t *p)
    app_name[app_name_len] = 0;
 
    if (sscanf(app_name, "PCI-ID=%i %n", &aub_pci_id, &pci_id_len) > 0) {
-      if (!intel_get_device_info_from_pci_id(aub_pci_id, &read->devinfo)) {
+      if (!gen_get_device_info_from_pci_id(aub_pci_id, &read->devinfo)) {
          parse_error(read, p, "can't find device information: pci_id=0x%x\n", aub_pci_id);
          return false;
       }
@@ -137,8 +139,8 @@ handle_trace_block(struct aub_read *read, const uint32_t *p)
    int header_length = p[0] & 0xffff;
    enum drm_i915_gem_engine_class engine = I915_ENGINE_CLASS_RENDER;
    const void *data = p + header_length + 2;
-   uint64_t address = intel_48b_address((read->devinfo.ver >= 8 ? ((uint64_t) p[5] << 32) : 0) |
-                                        ((uint64_t) p[3]));
+   uint64_t address = gen_48b_address((read->devinfo.gen >= 8 ? ((uint64_t) p[5] << 32) : 0) |
+                                      ((uint64_t) p[3]));
    uint32_t size = p[4];
 
    switch (operation) {
@@ -260,7 +262,7 @@ static void
 handle_memtrace_mem_write(struct aub_read *read, const uint32_t *p)
 {
    const void *data = p + 5;
-   uint64_t addr = intel_48b_address(*(uint64_t*)&p[1]);
+   uint64_t addr = gen_48b_address(*(uint64_t*)&p[1]);
    uint32_t size = p[4];
    uint32_t address_space = p[3] >> 28;
 
@@ -314,13 +316,7 @@ aub_read_command(struct aub_read *read, const void *data, uint32_t data_len)
       next += p[4] / 4;
    }
 
-   if (next > end) {
-      parse_error(read, data,
-            "input ends unexpectedly (command length: %zu, remaining bytes: %zu)\n",
-            (uintptr_t)next - (uintptr_t)data,
-            (uintptr_t)end  - (uintptr_t)data);
-      return -1;
-   }
+   assert(next <= end);
 
    switch (h & 0xffff0000) {
    case MAKE_HEADER(TYPE_AUB, OPCODE_AUB, SUBOPCODE_HEADER):

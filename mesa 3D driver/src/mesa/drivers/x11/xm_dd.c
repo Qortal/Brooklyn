@@ -51,7 +51,7 @@
 
 
 static void
-finish(struct gl_context *ctx)
+finish_or_flush( struct gl_context *ctx )
 {
    const XMesaContext xmesa = XMESA_CONTEXT(ctx);
    if (xmesa) {
@@ -59,13 +59,6 @@ finish(struct gl_context *ctx)
       XSync( xmesa->display, False );
       mtx_unlock(&_xmesa_lock);
    }
-}
-
-
-static void
-flush(struct gl_context *ctx, unsigned gallium_flush_flags)
-{
-   finish(ctx);
 }
 
 
@@ -844,8 +837,8 @@ xmesa_init_driver_functions( XMesaVisual xmvisual,
 {
    driver->GetString = get_string;
    driver->UpdateState = xmesa_update_state;
-   driver->Flush = flush;
-   driver->Finish = finish;
+   driver->Flush = finish_or_flush;
+   driver->Finish = finish_or_flush;
    driver->ColorMask = color_mask;
    driver->Enable = enable;
    driver->Viewport = xmesa_viewport;

@@ -272,7 +272,6 @@ clGetEventProfilingInfo(cl_event d_ev, cl_profiling_info param,
       break;
 
    case CL_PROFILING_COMMAND_END:
-   case CL_PROFILING_COMMAND_COMPLETE:
       buf.as_scalar<cl_ulong>() = hev.time_end();
       break;
 
@@ -282,10 +281,10 @@ clGetEventProfilingInfo(cl_event d_ev, cl_profiling_info param,
 
    return CL_SUCCESS;
 
-} catch (std::bad_cast &) {
+} catch (std::bad_cast &e) {
    return CL_PROFILING_INFO_NOT_AVAILABLE;
 
-} catch (lazy<cl_ulong>::undefined_error &) {
+} catch (lazy<cl_ulong>::undefined_error &e) {
    return CL_PROFILING_INFO_NOT_AVAILABLE;
 
 } catch (error &e) {

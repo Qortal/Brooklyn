@@ -47,7 +47,6 @@ _mesa_ClearDepth( GLclampd depth )
    if (MESA_VERBOSE & VERBOSE_API)
       _mesa_debug(ctx, "glClearDepth(%f)\n", depth);
 
-   ctx->PopAttribState |= GL_DEPTH_BUFFER_BIT;
    ctx->Depth.Clear = CLAMP( depth, 0.0, 1.0 );
 }
 
@@ -82,8 +81,7 @@ depth_func(struct gl_context *ctx, GLenum func, bool no_error)
       }
    }
 
-   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewDepth ? 0 : _NEW_DEPTH,
-                  GL_DEPTH_BUFFER_BIT);
+   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewDepth ? 0 : _NEW_DEPTH);
    ctx->NewDriverState |= ctx->DriverFlags.NewDepth;
    ctx->Depth.Func = func;
    _mesa_update_allow_draw_out_of_order(ctx);
@@ -129,8 +127,7 @@ _mesa_DepthMask( GLboolean flag )
    if (ctx->Depth.Mask == flag)
       return;
 
-   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewDepth ? 0 : _NEW_DEPTH,
-                  GL_DEPTH_BUFFER_BIT);
+   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewDepth ? 0 : _NEW_DEPTH);
    ctx->NewDriverState |= ctx->DriverFlags.NewDepth;
    ctx->Depth.Mask = flag;
    _mesa_update_allow_draw_out_of_order(ctx);
@@ -163,11 +160,10 @@ _mesa_DepthBoundsEXT( GLclampd zmin, GLclampd zmax )
    if (ctx->Depth.BoundsMin == zmin && ctx->Depth.BoundsMax == zmax)
       return;
 
-   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewDepth ? 0 : _NEW_DEPTH,
-                  GL_DEPTH_BUFFER_BIT);
+   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewDepth ? 0 : _NEW_DEPTH);
    ctx->NewDriverState |= ctx->DriverFlags.NewDepth;
-   ctx->Depth.BoundsMin = zmin;
-   ctx->Depth.BoundsMax = zmax;
+   ctx->Depth.BoundsMin = (GLfloat) zmin;
+   ctx->Depth.BoundsMax = (GLfloat) zmax;
 }
 
 

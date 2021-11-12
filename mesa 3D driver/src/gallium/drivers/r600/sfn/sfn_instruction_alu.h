@@ -100,6 +100,7 @@ public:
                   PValue src2,
                   const std::set<AluModifiers>& m_flags);
 
+
    void set_flag(AluModifiers flag);
    unsigned n_sources() const;
 
@@ -116,10 +117,7 @@ public:
    ECFAluOpCode cf_type() const {return m_cf_type;}
    void set_cf_type(ECFAluOpCode cf_type){ m_cf_type = cf_type; }
 
-   void replace_values(const ValueSet& candidates, PValue new_value) override;
-
-   bool accept(InstructionVisitor& visitor) override {return visitor.visit(*this);}
-   bool accept(ConstInstructionVisitor& visitor) const override {return visitor.visit(*this);}
+   void replace_values(const ValueSet& candiates, PValue new_value) override;
 
 private:
 

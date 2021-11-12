@@ -23,8 +23,6 @@
 
 #include "lvp_private.h"
 
-#include "vk_util.h"
-
 static void
 lvp_render_pass_compile(struct lvp_render_pass *pass)
 {
@@ -136,7 +134,7 @@ lvp_render_pass_compile(struct lvp_render_pass *pass)
 }
 
 static unsigned
-lvp_num_subpass_attachments2(const VkSubpassDescription2 *desc)
+lvp_num_subpass_attachments(const VkSubpassDescription *desc)
 {
    return desc->inputAttachmentCount +
       desc->colorAttachmentCount +
@@ -144,16 +142,18 @@ lvp_num_subpass_attachments2(const VkSubpassDescription2 *desc)
       (desc->pDepthStencilAttachment != NULL);
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateRenderPass2(
-    VkDevice                                    _device,
-    const VkRenderPassCreateInfo2*              pCreateInfo,
-    const VkAllocationCallbacks*                pAllocator,
-    VkRenderPass*                               pRenderPass)
+VkResult lvp_CreateRenderPass(
+   VkDevice                                    _device,
+   const VkRenderPassCreateInfo*               pCreateInfo,
+   const VkAllocationCallbacks*                pAllocator,
+   VkRenderPass*                               pRenderPass)
 {
    LVP_FROM_HANDLE(lvp_device, device, _device);
    struct lvp_render_pass *pass;
-   size_t attachments_offset;
    size_t size;
+   size_t attachments_offset;
+
+   assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO);
 
    size = sizeof(*pass);
    size += pCreateInfo->subpassCount * sizeof(pass->subpasses[0]);
@@ -174,7 +174,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateRenderPass2(
                        VK_OBJECT_TYPE_RENDER_PASS);
    pass->attachment_count = pCreateInfo->attachmentCount;
    pass->subpass_count = pCreateInfo->subpassCount;
-   pass->attachments = (struct lvp_render_pass_attachment *)((char *)pass + attachments_offset);
+   pass->attachments = (void *) pass + attachments_offset;
 
    for (uint32_t i = 0; i < pCreateInfo->attachmentCount; i++) {
       struct lvp_render_pass_attachment *att = &pass->attachments[i];
@@ -185,14 +185,11 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateRenderPass2(
       att->stencil_load_op = pCreateInfo->pAttachments[i].stencilLoadOp;
       att->final_layout = pCreateInfo->pAttachments[i].finalLayout;
       att->first_subpass_idx = UINT32_MAX;
-
-      bool is_zs = util_format_is_depth_or_stencil(lvp_vk_format_to_pipe_format(att->format));
-      pass->has_zs_attachment |= is_zs;
-      pass->has_color_attachment |= !is_zs;
    }
+
    uint32_t subpass_attachment_count = 0;
    for (uint32_t i = 0; i < pCreateInfo->subpassCount; i++) {
-      subpass_attachment_count += lvp_num_subpass_attachments2(&pCreateInfo->pSubpasses[i]);
+      subpass_attachment_count += lvp_num_subpass_attachments(&pCreateInfo->pSubpasses[i]);
    }
 
    if (subpass_attachment_count) {
@@ -209,14 +206,13 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateRenderPass2(
 
    struct lvp_subpass_attachment *p = pass->subpass_attachments;
    for (uint32_t i = 0; i < pCreateInfo->subpassCount; i++) {
-      const VkSubpassDescription2 *desc = &pCreateInfo->pSubpasses[i];
+      const VkSubpassDescription *desc = &pCreateInfo->pSubpasses[i];
       struct lvp_subpass *subpass = &pass->subpasses[i];
 
       subpass->input_count = desc->inputAttachmentCount;
       subpass->color_count = desc->colorAttachmentCount;
-      subpass->attachment_count = lvp_num_subpass_attachments2(desc);
+      subpass->attachment_count = lvp_num_subpass_attachments(desc);
       subpass->attachments = p;
-      subpass->view_mask = desc->viewMask;
 
       if (desc->inputAttachmentCount > 0) {
          subpass->input_attachments = p;
@@ -270,7 +266,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateRenderPass2(
    return VK_SUCCESS;
 }
 
-VKAPI_ATTR void VKAPI_CALL lvp_DestroyRenderPass(
+void lvp_DestroyRenderPass(
    VkDevice                                    _device,
    VkRenderPass                                _pass,
    const VkAllocationCallbacks*                pAllocator)
@@ -285,7 +281,7 @@ VKAPI_ATTR void VKAPI_CALL lvp_DestroyRenderPass(
    vk_free2(&device->vk.alloc, pAllocator, pass);
 }
 
-VKAPI_ATTR void VKAPI_CALL lvp_GetRenderAreaGranularity(
+void lvp_GetRenderAreaGranularity(
    VkDevice                                    device,
    VkRenderPass                                renderPass,
    VkExtent2D*                                 pGranularity)

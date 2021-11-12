@@ -1,3 +1,5 @@
+from __future__ import print_function, division, unicode_literals
+
 CopyRight = '''
 /*
  * Copyright 2015-2019 Advanced Micro Devices, Inc.
@@ -38,10 +40,6 @@ sys.path.append(AMD_REGISTERS)
 from regdb import Object, RegisterDatabase
 
 
-def string_to_chars(string):
-    return "'" + "', '".join(string) + "', '\\0',"
-
-
 class StringTable:
     """
     A class for collecting multiple strings in a single larger string that is
@@ -72,14 +70,13 @@ class StringTable:
         to filp.
         """
         fragments = [
-            '%s /* %s (%s) */' % (
-                string_to_chars(te[0].encode('unicode_escape').decode()),
+            '"%s\\0" /* %s */' % (
                 te[0].encode('unicode_escape').decode(),
                 ', '.join(str(idx) for idx in sorted(te[2]))
             )
             for te in self.table
         ]
-        filp.write('%sconst char %s[] = {\n%s\n};\n' % (
+        filp.write('%sconst char %s[] =\n%s;\n' % (
             'static ' if static else '',
             name,
             '\n'.join('\t' + fragment for fragment in fragments)

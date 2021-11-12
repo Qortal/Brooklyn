@@ -228,7 +228,7 @@ get_query_binding_point(struct gl_context *ctx, GLenum target, GLuint index)
    case GL_GEOMETRY_SHADER_INVOCATIONS:
       /* GL_GEOMETRY_SHADER_INVOCATIONS is defined in a non-sequential order */
       target = GL_VERTICES_SUBMITTED + MAX_PIPELINE_STATISTICS - 1;
-      FALLTHROUGH;
+      /* fallthrough */
    case GL_GEOMETRY_SHADER_PRIMITIVES_EMITTED:
       if (_mesa_has_geometry_shaders(ctx))
          return get_pipe_stats_binding_point(ctx, target);
@@ -327,7 +327,7 @@ _mesa_DeleteQueries(GLsizei n, const GLuint *ids)
 {
    GLint i;
    GET_CURRENT_CONTEXT(ctx);
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
 
    if (MESA_VERBOSE & VERBOSE_API)
       _mesa_debug(ctx, "glDeleteQueries(%d)\n", n);
@@ -415,7 +415,7 @@ _mesa_BeginQueryIndexed(GLenum target, GLuint index, GLuint id)
    if (!query_error_check_index(ctx, target, index))
       return;
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
 
    bindpt = get_query_binding_point(ctx, target, index);
    if (!bindpt) {
@@ -521,7 +521,7 @@ _mesa_EndQueryIndexed(GLenum target, GLuint index)
    if (!query_error_check_index(ctx, target, index))
       return;
 
-   FLUSH_VERTICES(ctx, 0, 0);
+   FLUSH_VERTICES(ctx, 0);
 
    bindpt = get_query_binding_point(ctx, target, index);
    if (!bindpt) {
@@ -671,7 +671,7 @@ _mesa_GetQueryIndexediv(GLenum target, GLuint index, GLenum pname,
       case GL_QUERY_COUNTER_BITS:
          if (_mesa_has_EXT_disjoint_timer_query(ctx))
             break;
-         FALLTHROUGH;
+         /* fallthrough */
       default:
          _mesa_error(ctx, GL_INVALID_ENUM, "glGetQueryivEXT(%s)",
                      _mesa_enum_to_string(pname));

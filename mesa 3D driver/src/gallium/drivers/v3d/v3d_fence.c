@@ -61,25 +61,17 @@ v3d_fence_reference(struct pipe_screen *pscreen,
         *p = f;
 }
 
-void
-v3d_fence_unreference(struct v3d_fence **fence)
+static bool
+v3d_fence_finish(struct pipe_screen *pscreen,
+		 struct pipe_context *ctx,
+                 struct pipe_fence_handle *pf,
+                 uint64_t timeout_ns)
 {
-        assert(fence);
-
-        if (!*fence)
-                return;
-
-        v3d_fence_reference(NULL, (struct pipe_fence_handle **)fence, NULL);
-}
-
-bool
-v3d_fence_wait(struct v3d_screen *screen,
-               struct v3d_fence *fence,
-               uint64_t timeout_ns)
-{
+        struct v3d_screen *screen = v3d_screen(pscreen);
+        struct v3d_fence *f = (struct v3d_fence *)pf;
         int ret;
-        unsigned syncobj;
 
+        unsigned syncobj;
         ret = drmSyncobjCreate(screen->fd, 0, &syncobj);
         if (ret) {
                 fprintf(stderr, "Failed to create syncobj to wait on: %d\n",
@@ -87,7 +79,7 @@ v3d_fence_wait(struct v3d_screen *screen,
                 return false;
         }
 
-        ret = drmSyncobjImportSyncFile(screen->fd, syncobj, fence->fd);
+        ret = drmSyncobjImportSyncFile(screen->fd, syncobj, f->fd);
         if (ret) {
                 fprintf(stderr, "Failed to import fence to syncobj: %d\n", ret);
                 return false;
@@ -102,18 +94,6 @@ v3d_fence_wait(struct v3d_screen *screen,
         drmSyncobjDestroy(screen->fd, syncobj);
 
         return ret >= 0;
-}
-
-static bool
-v3d_fence_finish(struct pipe_screen *pscreen,
-		 struct pipe_context *ctx,
-                 struct pipe_fence_handle *pf,
-                 uint64_t timeout_ns)
-{
-        struct v3d_screen *screen = v3d_screen(pscreen);
-        struct v3d_fence *fence = (struct v3d_fence *)pf;
-
-        return v3d_fence_wait(screen, fence, timeout_ns);
 }
 
 struct v3d_fence *

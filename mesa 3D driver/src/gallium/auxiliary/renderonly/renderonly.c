@@ -37,6 +37,20 @@
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
 
+struct renderonly *
+renderonly_dup(const struct renderonly *ro)
+{
+   struct renderonly *copy;
+
+   copy = CALLOC_STRUCT(renderonly);
+   if (!copy)
+      return NULL;
+
+   memcpy(copy, ro, sizeof(*ro));
+
+   return copy;
+}
+
 void
 renderonly_scanout_destroy(struct renderonly_scanout *scanout,
 			   struct renderonly *ro)
@@ -134,8 +148,10 @@ renderonly_create_gpu_import_for_resource(struct pipe_resource *rsc,
    err = drmPrimeFDToHandle(ro->kms_fd, fd, &scanout->handle);
    close(fd);
 
-   if (err < 0)
+   if (err < 0) {
+      fprintf(stderr, "drmPrimeFDToHandle() failed: %s\n", strerror(errno));
       goto free_scanout;
+   }
 
    return scanout;
 

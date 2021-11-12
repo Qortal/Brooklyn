@@ -27,17 +27,6 @@
 
 #include "nir.h"
 #include "nir_builder.h"
-#include "util/u_math.h"
-#include "util/set.h"
-
-struct lower_sysval_state {
-   const nir_lower_compute_system_values_options *options;
-
-   /* List of intrinsics that have already been lowered and shouldn't be
-    * lowered again.
-    */
-   struct set *lower_once_list;
-};
 
 static nir_ssa_def *
 sanitize_32bit_sysval(nir_builder *b, nir_intrinsic_instr *intrin)
@@ -54,10 +43,10 @@ sanitize_32bit_sysval(nir_builder *b, nir_intrinsic_instr *intrin)
 static nir_ssa_def*
 build_global_group_size(nir_builder *b, unsigned bit_size)
 {
-   nir_ssa_def *group_size = nir_load_workgroup_size(b);
-   nir_ssa_def *num_workgroups = nir_load_num_workgroups(b, bit_size);
+   nir_ssa_def *group_size = nir_load_local_group_size(b);
+   nir_ssa_def *num_work_groups = nir_load_num_work_groups(b, bit_size);
    return nir_imul(b, nir_u2u(b, group_size, bit_size),
-                      num_workgroups);
+                      num_work_groups);
 }
 
 static bool
@@ -116,7 +105,7 @@ lower_system_value_instr(nir_builder *b, nir_instr *instr, void *_state)
 
    case nir_intrinsic_load_local_invocation_id:
    case nir_intrinsic_load_local_invocation_index:
-   case nir_intrinsic_load_workgroup_size:
+   case nir_intrinsic_load_local_group_size:
       return sanitize_32bit_sysval(b, intrin);
 
    case nir_intrinsic_load_deref: {
@@ -250,18 +239,17 @@ nir_lower_system_values(nir_shader *shader)
 }
 
 static bool
-lower_compute_system_value_filter(const nir_instr *instr, const void *_state)
+lower_compute_system_value_filter(const nir_instr *instr, const void *_options)
 {
    return instr->type == nir_instr_type_intrinsic;
 }
 
 static nir_ssa_def *
 lower_compute_system_value_instr(nir_builder *b,
-                                 nir_instr *instr, void *_state)
+                                 nir_instr *instr, void *_options)
 {
    nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
-   struct lower_sysval_state *state = (struct lower_sysval_state *)_state;
-   const nir_lower_compute_system_values_options *options = state->options;
+   const nir_lower_compute_system_values_options *options = _options;
 
    /* All the intrinsics we care about are loads */
    if (!nir_intrinsic_infos[intrin->intrinsic].has_dest)
@@ -294,7 +282,7 @@ lower_compute_system_value_instr(nir_builder *b,
           * large so it can safely be omitted.
           */
          nir_ssa_def *local_index = nir_load_local_invocation_index(b);
-         nir_ssa_def *local_size = nir_load_workgroup_size(b);
+         nir_ssa_def *local_size = nir_load_local_group_size(b);
 
          /* Because no hardware supports a local workgroup size greater than
           * about 1K, this calculation can be done in 32-bit and can save some
@@ -310,91 +298,15 @@ lower_compute_system_value_instr(nir_builder *b,
                             nir_imul(b, nir_channel(b, local_size, 0),
                                         nir_channel(b, local_size, 1)));
          return nir_u2u(b, nir_vec3(b, id_x, id_y, id_z), bit_size);
+      } else {
+         return NULL;
       }
-      if (options && options->shuffle_local_ids_for_quad_derivatives &&
-          b->shader->info.cs.derivative_group == DERIVATIVE_GROUP_QUADS &&
-          _mesa_set_search(state->lower_once_list, instr) == NULL) {
-         nir_ssa_def *ids = nir_load_local_invocation_id(b);
-         _mesa_set_add(state->lower_once_list, ids->parent_instr);
-
-         nir_ssa_def *x = nir_channel(b, ids, 0);
-         nir_ssa_def *y = nir_channel(b, ids, 1);
-         nir_ssa_def *z = nir_channel(b, ids, 2);
-         unsigned size_x = b->shader->info.workgroup_size[0];
-         nir_ssa_def *size_x_imm;
-
-         if (b->shader->info.workgroup_size_variable)
-            size_x_imm = nir_channel(b, nir_load_workgroup_size(b), 0);
-         else
-            size_x_imm = nir_imm_int(b, size_x);
-
-         /* Remap indices from:
-          *    | 0| 1| 2| 3|
-          *    | 4| 5| 6| 7|
-          *    | 8| 9|10|11|
-          *    |12|13|14|15|
-          * to:
-          *    | 0| 1| 4| 5|
-          *    | 2| 3| 6| 7|
-          *    | 8| 9|12|13|
-          *    |10|11|14|15|
-          *
-          * That's the layout required by AMD hardware for derivatives to
-          * work. Other hardware may work differently.
-          *
-          * It's a classic tiling pattern that can be implemented by inserting
-          * bit y[0] between bits x[0] and x[1] like this:
-          *
-          *    x[0],y[0],x[1],...x[last],y[1],...,y[last]
-          *
-          * If the width is a power of two, use:
-          *    i = ((x & 1) | ((y & 1) << 1) | ((x & ~1) << 1)) | ((y & ~1) << logbase2(size_x))
-          *
-          * If the width is not a power of two or the local size is variable, use:
-          *    i = ((x & 1) | ((y & 1) << 1) | ((x & ~1) << 1)) + ((y & ~1) * size_x)
-          *
-          * GL_NV_compute_shader_derivatives requires that the width and height
-          * are a multiple of two, which is also a requirement for the second
-          * expression to work.
-          *
-          * The 2D result is: (x,y) = (i % w, i / w)
-          */
-
-         nir_ssa_def *one = nir_imm_int(b, 1);
-         nir_ssa_def *inv_one = nir_imm_int(b, ~1);
-         nir_ssa_def *x_bit0 = nir_iand(b, x, one);
-         nir_ssa_def *y_bit0 = nir_iand(b, y, one);
-         nir_ssa_def *x_bits_1n = nir_iand(b, x, inv_one);
-         nir_ssa_def *y_bits_1n = nir_iand(b, y, inv_one);
-         nir_ssa_def *bits_01 = nir_ior(b, x_bit0, nir_ishl(b, y_bit0, one));
-         nir_ssa_def *bits_01x = nir_ior(b, bits_01,
-                                         nir_ishl(b, x_bits_1n, one));
-         nir_ssa_def *i;
-
-         if (!b->shader->info.workgroup_size_variable &&
-             util_is_power_of_two_nonzero(size_x)) {
-            nir_ssa_def *log2_size_x = nir_imm_int(b, util_logbase2(size_x));
-            i = nir_ior(b, bits_01x, nir_ishl(b, y_bits_1n, log2_size_x));
-         } else {
-            i = nir_iadd(b, bits_01x, nir_imul(b, y_bits_1n, size_x_imm));
-         }
-
-         /* This should be fast if size_x is an immediate or even a power
-          * of two.
-          */
-         x = nir_umod(b, i, size_x_imm);
-         y = nir_udiv(b, i, size_x_imm);
-
-         return nir_vec3(b, x, y, z);
-      }
-      return NULL;
 
    case nir_intrinsic_load_local_invocation_index:
       /* If lower_cs_local_index_from_id is true, then we derive the local
        * index from the local id.
        */
-      if (b->shader->options->lower_cs_local_index_from_id ||
-          (options && options->lower_local_invocation_index)) {
+      if (b->shader->options->lower_cs_local_index_from_id) {
          /* From the GLSL man page for gl_LocalInvocationIndex:
           *
           *    "The value of gl_LocalInvocationIndex is equal to
@@ -405,9 +317,9 @@ lower_compute_system_value_instr(nir_builder *b,
          nir_ssa_def *local_id = nir_load_local_invocation_id(b);
 
          nir_ssa_def *size_x =
-            nir_imm_int(b, b->shader->info.workgroup_size[0]);
+            nir_imm_int(b, b->shader->info.cs.local_size[0]);
          nir_ssa_def *size_y =
-            nir_imm_int(b, b->shader->info.workgroup_size[1]);
+            nir_imm_int(b, b->shader->info.cs.local_size[1]);
 
          /* Because no hardware supports a local workgroup size greater than
           * about 1K, this calculation can be done in 32-bit and can save some
@@ -424,8 +336,8 @@ lower_compute_system_value_instr(nir_builder *b,
          return NULL;
       }
 
-   case nir_intrinsic_load_workgroup_size:
-      if (b->shader->info.workgroup_size_variable) {
+   case nir_intrinsic_load_local_group_size:
+      if (b->shader->info.cs.local_size_variable) {
          /* If the local work group size is variable it can't be lowered at
           * this point.  We do, however, have to make sure that the intrinsic
           * is only 32-bit.
@@ -434,19 +346,19 @@ lower_compute_system_value_instr(nir_builder *b,
       } else {
          /* using a 32 bit constant is safe here as no device/driver needs more
           * than 32 bits for the local size */
-         nir_const_value workgroup_size_const[3];
-         memset(workgroup_size_const, 0, sizeof(workgroup_size_const));
-         workgroup_size_const[0].u32 = b->shader->info.workgroup_size[0];
-         workgroup_size_const[1].u32 = b->shader->info.workgroup_size[1];
-         workgroup_size_const[2].u32 = b->shader->info.workgroup_size[2];
-         return nir_u2u(b, nir_build_imm(b, 3, 32, workgroup_size_const), bit_size);
+         nir_const_value local_size_const[3];
+         memset(local_size_const, 0, sizeof(local_size_const));
+         local_size_const[0].u32 = b->shader->info.cs.local_size[0];
+         local_size_const[1].u32 = b->shader->info.cs.local_size[1];
+         local_size_const[2].u32 = b->shader->info.cs.local_size[2];
+         return nir_u2u(b, nir_build_imm(b, 3, 32, local_size_const), bit_size);
       }
 
    case nir_intrinsic_load_global_invocation_id_zero_base: {
-      if ((options && options->has_base_workgroup_id) ||
+      if ((options && options->has_base_work_group_id) ||
           !b->shader->options->has_cs_global_id) {
-         nir_ssa_def *group_size = nir_load_workgroup_size(b);
-         nir_ssa_def *group_id = nir_load_workgroup_id(b, bit_size);
+         nir_ssa_def *group_size = nir_load_local_group_size(b);
+         nir_ssa_def *group_id = nir_load_work_group_id(b, bit_size);
          nir_ssa_def *local_id = nir_load_local_invocation_id(b);
 
          return nir_iadd(b, nir_imul(b, group_id,
@@ -461,7 +373,7 @@ lower_compute_system_value_instr(nir_builder *b,
       if (options && options->has_base_global_invocation_id)
          return nir_iadd(b, nir_load_global_invocation_id_zero_base(b, bit_size),
                             nir_load_base_global_invocation_id(b, bit_size));
-      else if ((options && options->has_base_workgroup_id) ||
+      else if ((options && options->has_base_work_group_id) ||
                !b->shader->options->has_cs_global_id)
          return nir_load_global_invocation_id_zero_base(b, bit_size);
       else
@@ -485,10 +397,10 @@ lower_compute_system_value_instr(nir_builder *b,
       return index;
    }
 
-   case nir_intrinsic_load_workgroup_id: {
-      if (options && options->has_base_workgroup_id)
-         return nir_iadd(b, nir_u2u(b, nir_load_workgroup_id_zero_base(b), bit_size),
-                            nir_load_base_workgroup_id(b, bit_size));
+   case nir_intrinsic_load_work_group_id: {
+      if (options && options->has_base_work_group_id)
+         return nir_iadd(b, nir_u2u(b, nir_load_work_group_id_zero_base(b), bit_size),
+                            nir_load_base_work_group_id(b, bit_size));
       else
          return NULL;
    }
@@ -502,24 +414,12 @@ bool
 nir_lower_compute_system_values(nir_shader *shader,
                                 const nir_lower_compute_system_values_options *options)
 {
-   if (!gl_shader_stage_uses_workgroup(shader->info.stage))
+   if (shader->info.stage != MESA_SHADER_COMPUTE &&
+       shader->info.stage != MESA_SHADER_KERNEL)
       return false;
 
-   struct lower_sysval_state state;
-   state.options = options;
-   state.lower_once_list = _mesa_pointer_set_create(NULL);
-
-   bool progress =
-      nir_shader_lower_instructions(shader,
-                                    lower_compute_system_value_filter,
-                                    lower_compute_system_value_instr,
-                                    (void*)&state);
-   ralloc_free(state.lower_once_list);
-
-   /* Update this so as not to lower it again. */
-   if (options && options->shuffle_local_ids_for_quad_derivatives &&
-       shader->info.cs.derivative_group == DERIVATIVE_GROUP_QUADS)
-      shader->info.cs.derivative_group = DERIVATIVE_GROUP_LINEAR;
-
-   return progress;
+   return nir_shader_lower_instructions(shader,
+                                        lower_compute_system_value_filter,
+                                        lower_compute_system_value_instr,
+                                        (void*)options);
 }

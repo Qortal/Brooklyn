@@ -47,6 +47,12 @@ aco_builder_h = custom_target(
   depend_files : aco_depends,
 )
 
+# Headers-only dependency
+idep_aco_headers = declare_dependency(
+  sources : [aco_opcodes_h],
+  include_directories : include_directories('.'),
+)
+
 libaco_files = files(
   'aco_dead_code_analysis.cpp',
   'aco_dominance.cpp',
@@ -69,11 +75,9 @@ libaco_files = files(
   'aco_lower_to_cssa.cpp',
   'aco_lower_to_hw_instr.cpp',
   'aco_optimizer.cpp',
-  'aco_optimizer_postRA.cpp',
   'aco_opt_value_numbering.cpp',
   'aco_print_asm.cpp',
   'aco_print_ir.cpp',
-  'aco_reindex_ssa.cpp',
   'aco_scheduler.cpp',
   'aco_spill.cpp',
   'aco_ssa_elimination.cpp',
@@ -82,24 +86,28 @@ libaco_files = files(
   'aco_validate.cpp',
 )
 
-cpp_args_aco = cpp.get_supported_arguments(['-fno-exceptions', '-fno-rtti', '-Wimplicit-fallthrough', '-Wshadow', '-DNOMINMAX'])
+cpp_args_aco = cpp.get_supported_arguments(['-fno-exceptions', '-fno-rtti'])
 
 _libaco = static_library(
   'aco',
   [libaco_files, aco_opcodes_c, aco_opcodes_h, aco_builder_h],
   include_directories : [
-   inc_include, inc_src, inc_compiler, inc_amd, inc_amd_common,
+   inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux, inc_compiler, inc_amd, inc_amd_common, inc_amd_common_llvm,
+  ],
+  link_with : [
+    libamd_common
   ],
   dependencies : [
-    dep_llvm, dep_thread, dep_valgrind, idep_nir_headers, idep_amdgfxregs_h, idep_mesautil,
+    dep_llvm, dep_thread, dep_elf, dep_libdrm_amdgpu, dep_valgrind,
+    idep_nir_headers, idep_amdgfxregs_h,
   ],
   gnu_symbol_visibility : 'hidden',
   build_by_default : true,
-  cpp_args : [cpp_args_aco, cpp_msvc_compat_args],
+  cpp_args : cpp_args_aco,
 )
 
 # Also link with aco
 idep_aco = declare_dependency(
-  include_directories : include_directories('.'),
+  dependencies : idep_aco_headers,
   link_with : _libaco,
 )

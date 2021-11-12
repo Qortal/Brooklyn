@@ -27,10 +27,6 @@
 
 #include "v3d_context.h"
 #include "compiler/v3d_compiler.h"
-
-/* We don't expect that the packets we use in this file change across across
- * hw versions, so we just include directly the v33 header
- */
 #include "broadcom/cle/v3d_packet_v33_pack.h"
 
 static uint32_t
@@ -311,6 +307,11 @@ v3d_write_uniforms(struct v3d_context *v3d, struct v3d_job *job,
                                                       data));
                         break;
 
+                case QUNIFORM_ALPHA_REF:
+                        cl_aligned_f(&uniforms,
+                                     v3d->zsa->base.alpha.ref_value);
+                        break;
+
                 case QUNIFORM_LINE_WIDTH:
                         cl_aligned_f(&uniforms,
                                      v3d->rasterizer->base.line_width);
@@ -421,18 +422,18 @@ v3d_set_shader_uniform_dirty_flags(struct v3d_compiled_shader *shader)
                         break;
                 case QUNIFORM_UNIFORM:
                 case QUNIFORM_UBO_ADDR:
-                        dirty |= V3D_DIRTY_CONSTBUF;
+                        dirty |= VC5_DIRTY_CONSTBUF;
                         break;
 
                 case QUNIFORM_VIEWPORT_X_SCALE:
                 case QUNIFORM_VIEWPORT_Y_SCALE:
                 case QUNIFORM_VIEWPORT_Z_OFFSET:
                 case QUNIFORM_VIEWPORT_Z_SCALE:
-                        dirty |= V3D_DIRTY_VIEWPORT;
+                        dirty |= VC5_DIRTY_VIEWPORT;
                         break;
 
                 case QUNIFORM_USER_CLIP_PLANE:
-                        dirty |= V3D_DIRTY_CLIP;
+                        dirty |= VC5_DIRTY_CLIP;
                         break;
 
                 case QUNIFORM_TMU_CONFIG_P0:
@@ -451,13 +452,13 @@ v3d_set_shader_uniform_dirty_flags(struct v3d_compiled_shader *shader)
                         /* We could flag this on just the stage we're
                          * compiling for, but it's not passed in.
                          */
-                        dirty |= V3D_DIRTY_FRAGTEX | V3D_DIRTY_VERTTEX |
-                                 V3D_DIRTY_GEOMTEX | V3D_DIRTY_COMPTEX;
+                        dirty |= VC5_DIRTY_FRAGTEX | VC5_DIRTY_VERTTEX |
+                                 VC5_DIRTY_GEOMTEX | VC5_DIRTY_COMPTEX;
                         break;
 
                 case QUNIFORM_SSBO_OFFSET:
                 case QUNIFORM_GET_SSBO_SIZE:
-                        dirty |= V3D_DIRTY_SSBO;
+                        dirty |= VC5_DIRTY_SSBO;
                         break;
 
                 case QUNIFORM_IMAGE_TMU_CONFIG_P0:
@@ -465,12 +466,16 @@ v3d_set_shader_uniform_dirty_flags(struct v3d_compiled_shader *shader)
                 case QUNIFORM_IMAGE_HEIGHT:
                 case QUNIFORM_IMAGE_DEPTH:
                 case QUNIFORM_IMAGE_ARRAY_SIZE:
-                        dirty |= V3D_DIRTY_SHADER_IMAGE;
+                        dirty |= VC5_DIRTY_SHADER_IMAGE;
+                        break;
+
+                case QUNIFORM_ALPHA_REF:
+                        dirty |= VC5_DIRTY_ZSA;
                         break;
 
                 case QUNIFORM_LINE_WIDTH:
                 case QUNIFORM_AA_LINE_WIDTH:
-                        dirty |= V3D_DIRTY_RASTERIZER;
+                        dirty |= VC5_DIRTY_RASTERIZER;
                         break;
 
                 case QUNIFORM_NUM_WORK_GROUPS:
@@ -479,13 +484,13 @@ v3d_set_shader_uniform_dirty_flags(struct v3d_compiled_shader *shader)
                         break;
 
                 case QUNIFORM_FB_LAYERS:
-                        dirty |= V3D_DIRTY_FRAMEBUFFER;
+                        dirty |= VC5_DIRTY_FRAMEBUFFER;
                         break;
 
                 default:
                         assert(quniform_contents_is_texture_p0(shader->prog_data.base->uniforms.contents[i]));
-                        dirty |= V3D_DIRTY_FRAGTEX | V3D_DIRTY_VERTTEX |
-                                 V3D_DIRTY_GEOMTEX | V3D_DIRTY_COMPTEX;
+                        dirty |= VC5_DIRTY_FRAGTEX | VC5_DIRTY_VERTTEX |
+                                 VC5_DIRTY_GEOMTEX | VC5_DIRTY_COMPTEX;
                         break;
                 }
         }

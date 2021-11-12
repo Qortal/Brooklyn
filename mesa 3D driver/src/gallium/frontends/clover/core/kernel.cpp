@@ -29,22 +29,22 @@
 using namespace clover;
 
 kernel::kernel(clover::program &prog, const std::string &name,
-               const std::vector<binary::argument> &bargs) :
+               const std::vector<module::argument> &margs) :
    program(prog), _name(name), exec(*this),
    program_ref(prog._kernel_ref_counter) {
-   for (auto &barg : bargs) {
-      if (barg.semantic == binary::argument::general)
-         _args.emplace_back(argument::create(barg));
+   for (auto &marg : margs) {
+      if (marg.semantic == module::argument::general)
+         _args.emplace_back(argument::create(marg));
    }
    for (auto &dev : prog.devices()) {
-      auto &b = prog.build(dev).bin;
-      auto bsym = find(name_equals(name), b.syms);
-      const auto f = id_type_equals(bsym.section, binary::section::data_constant);
-      if (!any_of(f, b.secs))
+      auto &m = prog.build(dev).binary;
+      auto msym = find(name_equals(name), m.syms);
+      const auto f = id_type_equals(msym.section, module::section::data_constant);
+      if (!any_of(f, m.secs))
          continue;
 
-      auto mconst = find(f, b.secs);
-      auto rb = std::make_unique<root_buffer>(prog.context(), std::vector<cl_mem_properties>(),
+      auto mconst = find(f, m.secs);
+      auto rb = std::make_unique<root_buffer>(prog.context(),
                                               CL_MEM_COPY_HOST_PTR | CL_MEM_READ_ONLY,
                                               mconst.size, mconst.data.data());
       _constant_buffers.emplace(&dev, std::move(rb));
@@ -64,13 +64,9 @@ kernel::launch(command_queue &q,
                const std::vector<size_t> &grid_offset,
                const std::vector<size_t> &grid_size,
                const std::vector<size_t> &block_size) {
-   const auto b = program().build(q.device()).bin;
+   const auto m = program().build(q.device()).binary;
    const auto reduced_grid_size =
       map(divides(), grid_size, block_size);
-
-   if (any_of(is_zero(), grid_size))
-      return;
-
    void *st = exec.bind(&q, grid_offset);
    struct pipe_grid_info info = {};
 
@@ -86,9 +82,9 @@ kernel::launch(command_queue &q,
                                exec.samplers.data());
 
    q.pipe->set_sampler_views(q.pipe, PIPE_SHADER_COMPUTE, 0,
-                             exec.sviews.size(), 0, false, exec.sviews.data());
+                             exec.sviews.size(), exec.sviews.data());
    q.pipe->set_shader_images(q.pipe, PIPE_SHADER_COMPUTE, 0,
-                             exec.iviews.size(), 0, exec.iviews.data());
+                             exec.iviews.size(), exec.iviews.data());
    q.pipe->set_compute_resources(q.pipe, 0, exec.resources.size(),
                                  exec.resources.data());
    q.pipe->set_global_binding(q.pipe, 0, exec.g_buffers.size(),
@@ -98,7 +94,7 @@ kernel::launch(command_queue &q,
    info.work_dim = grid_size.size();
    copy(pad_vector(q, block_size, 1), info.block);
    copy(pad_vector(q, reduced_grid_size, 1), info.grid);
-   info.pc = find(name_equals(_name), b.syms).offset;
+   info.pc = find(name_equals(_name), m.syms).offset;
    info.input = exec.input.data();
 
    q.pipe->launch_grid(q.pipe, &info);
@@ -106,9 +102,9 @@ kernel::launch(command_queue &q,
    q.pipe->set_global_binding(q.pipe, 0, exec.g_buffers.size(), NULL, NULL);
    q.pipe->set_compute_resources(q.pipe, 0, exec.resources.size(), NULL);
    q.pipe->set_shader_images(q.pipe, PIPE_SHADER_COMPUTE, 0,
-                             0, exec.iviews.size(), NULL);
+                             exec.iviews.size(), NULL);
    q.pipe->set_sampler_views(q.pipe, PIPE_SHADER_COMPUTE, 0,
-                             0, exec.sviews.size(), false, NULL);
+                             exec.sviews.size(), NULL);
    q.pipe->bind_sampler_states(q.pipe, PIPE_SHADER_COMPUTE, 0,
                                exec.samplers.size(), NULL);
 
@@ -141,9 +137,6 @@ kernel::name() const {
 std::vector<size_t>
 kernel::optimal_block_size(const command_queue &q,
                            const std::vector<size_t> &grid_size) const {
-   if (any_of(is_zero(), grid_size))
-      return grid_size;
-
    return factor::find_grid_optimal_factor<size_t>(
       q.device().max_threads_per_block(), q.device().max_block_size(),
       grid_size);
@@ -164,23 +157,23 @@ kernel::args() const {
    return map(derefs(), _args);
 }
 
-std::vector<clover::binary::arg_info>
+std::vector<clover::module::arg_info>
 kernel::args_infos() {
-   std::vector<clover::binary::arg_info> infos;
-   for (auto &barg: find(name_equals(_name), program().symbols()).args)
-      if (barg.semantic == clover::binary::argument::general)
-         infos.emplace_back(barg.info);
+   std::vector<clover::module::arg_info> infos;
+   for (auto &marg: find(name_equals(_name), program().symbols()).args)
+      if (marg.semantic == clover::module::argument::general)
+         infos.emplace_back(marg.info);
 
    return infos;
 }
 
-const binary &
-kernel::binary(const command_queue &q) const {
-   return program().build(q.device()).bin;
+const module &
+kernel::module(const command_queue &q) const {
+   return program().build(q.device()).binary;
 }
 
 kernel::exec_context::exec_context(kernel &kern) :
-   kern(kern), q(NULL), print_handler(), mem_local(0), st(NULL), cs() {
+   kern(kern), q(NULL), mem_local(0), st(NULL), cs() {
 }
 
 kernel::exec_context::~exec_context() {
@@ -194,79 +187,68 @@ kernel::exec_context::bind(intrusive_ptr<command_queue> _q,
    std::swap(q, _q);
 
    // Bind kernel arguments.
-   auto &b = kern.program().build(q->device()).bin;
-   auto bsym = find(name_equals(kern.name()), b.syms);
-   auto bargs = bsym.args;
-   auto msec = find(id_type_equals(bsym.section, binary::section::text_executable), b.secs);
+   auto &m = kern.program().build(q->device()).binary;
+   auto msym = find(name_equals(kern.name()), m.syms);
+   auto margs = msym.args;
+   auto msec = find(id_type_equals(msym.section, module::section::text_executable), m.secs);
    auto explicit_arg = kern._args.begin();
 
-   for (auto &barg : bargs) {
-      switch (barg.semantic) {
-      case binary::argument::general:
-         (*(explicit_arg++))->bind(*this, barg);
+   for (auto &marg : margs) {
+      switch (marg.semantic) {
+      case module::argument::general:
+         (*(explicit_arg++))->bind(*this, marg);
          break;
 
-      case binary::argument::grid_dimension: {
+      case module::argument::grid_dimension: {
          const cl_uint dimension = grid_offset.size();
-         auto arg = argument::create(barg);
+         auto arg = argument::create(marg);
 
          arg->set(sizeof(dimension), &dimension);
-         arg->bind(*this, barg);
+         arg->bind(*this, marg);
          break;
       }
-      case binary::argument::grid_offset: {
+      case module::argument::grid_offset: {
          for (cl_uint x : pad_vector(*q, grid_offset, 0)) {
-            auto arg = argument::create(barg);
+            auto arg = argument::create(marg);
 
             arg->set(sizeof(x), &x);
-            arg->bind(*this, barg);
+            arg->bind(*this, marg);
          }
          break;
       }
-      case binary::argument::image_size: {
+      case module::argument::image_size: {
          auto img = dynamic_cast<image_argument &>(**(explicit_arg - 1)).get();
          std::vector<cl_uint> image_size{
                static_cast<cl_uint>(img->width()),
                static_cast<cl_uint>(img->height()),
                static_cast<cl_uint>(img->depth())};
          for (auto x : image_size) {
-            auto arg = argument::create(barg);
+            auto arg = argument::create(marg);
 
             arg->set(sizeof(x), &x);
-            arg->bind(*this, barg);
+            arg->bind(*this, marg);
          }
          break;
       }
-      case binary::argument::image_format: {
+      case module::argument::image_format: {
          auto img = dynamic_cast<image_argument &>(**(explicit_arg - 1)).get();
          cl_image_format fmt = img->format();
          std::vector<cl_uint> image_format{
                static_cast<cl_uint>(fmt.image_channel_data_type),
                static_cast<cl_uint>(fmt.image_channel_order)};
          for (auto x : image_format) {
-            auto arg = argument::create(barg);
+            auto arg = argument::create(marg);
 
             arg->set(sizeof(x), &x);
-            arg->bind(*this, barg);
+            arg->bind(*this, marg);
          }
          break;
       }
-      case binary::argument::constant_buffer: {
-         auto arg = argument::create(barg);
+      case module::argument::constant_buffer: {
+         auto arg = argument::create(marg);
          cl_mem buf = kern._constant_buffers.at(&q->device()).get();
-         arg->set(sizeof(buf), &buf);
-         arg->bind(*this, barg);
-         break;
-      }
-      case binary::argument::printf_buffer: {
-         print_handler = printf_handler::create(q, b.printf_infos,
-                                                b.printf_strings_in_buffer,
-                                                q->device().max_printf_buffer_size());
-         cl_mem print_mem = print_handler->get_mem();
-
-         auto arg = argument::create(barg);
-         arg->set(sizeof(cl_mem), &print_mem);
-         arg->bind(*this, barg);
+         arg->set(q->device().address_bits() / 8, &buf);
+         arg->bind(*this, marg);
          break;
       }
       }
@@ -295,9 +277,6 @@ kernel::exec_context::bind(intrusive_ptr<command_queue> _q,
 
 void
 kernel::exec_context::unbind() {
-   if (print_handler)
-      print_handler->print();
-
    for (auto &arg : kern.args())
       arg.unbind(*this);
 
@@ -352,9 +331,9 @@ namespace {
    ///
    template<typename T>
    void
-   extend(T &v, enum binary::argument::ext_type ext, size_t n) {
+   extend(T &v, enum module::argument::ext_type ext, size_t n) {
       const size_t m = std::min(v.size(), n);
-      const bool sign_ext = (ext == binary::argument::sign_ext);
+      const bool sign_ext = (ext == module::argument::sign_ext);
       const uint8_t fill = (sign_ext && msb(v) ? ~0 : 0);
       T w(n, fill);
 
@@ -388,27 +367,29 @@ namespace {
 }
 
 std::unique_ptr<kernel::argument>
-kernel::argument::create(const binary::argument &barg) {
-   switch (barg.type) {
-   case binary::argument::scalar:
-      return std::unique_ptr<kernel::argument>(new scalar_argument(barg.size));
+kernel::argument::create(const module::argument &marg) {
+   switch (marg.type) {
+   case module::argument::scalar:
+      return std::unique_ptr<kernel::argument>(new scalar_argument(marg.size));
 
-   case binary::argument::global:
+   case module::argument::global:
       return std::unique_ptr<kernel::argument>(new global_argument);
 
-   case binary::argument::local:
+   case module::argument::local:
       return std::unique_ptr<kernel::argument>(new local_argument);
 
-   case binary::argument::constant:
+   case module::argument::constant:
       return std::unique_ptr<kernel::argument>(new constant_argument);
 
-   case binary::argument::image_rd:
+   case module::argument::image2d_rd:
+   case module::argument::image3d_rd:
       return std::unique_ptr<kernel::argument>(new image_rd_argument);
 
-   case binary::argument::image_wr:
+   case module::argument::image2d_wr:
+   case module::argument::image3d_wr:
       return std::unique_ptr<kernel::argument>(new image_wr_argument);
 
-   case binary::argument::sampler:
+   case module::argument::sampler:
       return std::unique_ptr<kernel::argument>(new sampler_argument);
 
    }
@@ -445,20 +426,17 @@ kernel::scalar_argument::set(size_t size, const void *value) {
 
 void
 kernel::scalar_argument::bind(exec_context &ctx,
-                              const binary::argument &barg) {
+                              const module::argument &marg) {
    auto w = v;
 
-   extend(w, barg.ext_type, barg.target_size);
+   extend(w, marg.ext_type, marg.target_size);
    byteswap(w, ctx.q->device().endianness());
-   align(ctx.input, barg.target_align);
+   align(ctx.input, marg.target_align);
    insert(ctx.input, w);
 }
 
 void
 kernel::scalar_argument::unbind(exec_context &ctx) {
-}
-
-kernel::global_argument::global_argument() : buf(nullptr), svm(nullptr) {
 }
 
 void
@@ -480,8 +458,8 @@ kernel::global_argument::set_svm(const void *value) {
 
 void
 kernel::global_argument::bind(exec_context &ctx,
-                              const binary::argument &barg) {
-   align(ctx.input, barg.target_align);
+                              const module::argument &marg) {
+   align(ctx.input, marg.target_align);
 
    if (buf) {
       const resource &r = buf->resource_in(*ctx.q);
@@ -492,17 +470,17 @@ kernel::global_argument::bind(exec_context &ctx,
       // We don't need to.  Buffer offsets are always
       // one-dimensional.
       auto v = bytes(r.offset[0]);
-      extend(v, barg.ext_type, barg.target_size);
+      extend(v, marg.ext_type, marg.target_size);
       byteswap(v, ctx.q->device().endianness());
       insert(ctx.input, v);
    } else if (svm) {
       auto v = bytes(svm);
-      extend(v, barg.ext_type, barg.target_size);
+      extend(v, marg.ext_type, marg.target_size);
       byteswap(v, ctx.q->device().endianness());
       insert(ctx.input, v);
    } else {
       // Null pointer.
-      allocate(ctx.input, barg.target_size);
+      allocate(ctx.input, marg.target_size);
    }
 }
 
@@ -529,13 +507,12 @@ kernel::local_argument::set(size_t size, const void *value) {
 
 void
 kernel::local_argument::bind(exec_context &ctx,
-                             const binary::argument &barg) {
-   ctx.mem_local = ::align(ctx.mem_local, barg.target_align);
+                             const module::argument &marg) {
    auto v = bytes(ctx.mem_local);
 
-   extend(v, binary::argument::zero_ext, barg.target_size);
+   extend(v, module::argument::zero_ext, marg.target_size);
    byteswap(v, ctx.q->device().endianness());
-   align(ctx.input, ctx.q->device().address_bits() / 8);
+   align(ctx.input, marg.target_align);
    insert(ctx.input, v);
 
    ctx.mem_local += _storage;
@@ -543,9 +520,6 @@ kernel::local_argument::bind(exec_context &ctx,
 
 void
 kernel::local_argument::unbind(exec_context &ctx) {
-}
-
-kernel::constant_argument::constant_argument() : buf(nullptr), st(nullptr) {
 }
 
 void
@@ -559,14 +533,14 @@ kernel::constant_argument::set(size_t size, const void *value) {
 
 void
 kernel::constant_argument::bind(exec_context &ctx,
-                                const binary::argument &barg) {
-   align(ctx.input, barg.target_align);
+                                const module::argument &marg) {
+   align(ctx.input, marg.target_align);
 
    if (buf) {
       resource &r = buf->resource_in(*ctx.q);
       auto v = bytes(ctx.resources.size() << 24 | r.offset[0]);
 
-      extend(v, binary::argument::zero_ext, barg.target_size);
+      extend(v, module::argument::zero_ext, marg.target_size);
       byteswap(v, ctx.q->device().endianness());
       insert(ctx.input, v);
 
@@ -574,7 +548,7 @@ kernel::constant_argument::bind(exec_context &ctx,
       ctx.resources.push_back(st);
    } else {
       // Null pointer.
-      allocate(ctx.input, barg.target_size);
+      allocate(ctx.input, marg.target_size);
    }
 }
 
@@ -598,12 +572,12 @@ kernel::image_rd_argument::set(size_t size, const void *value) {
 
 void
 kernel::image_rd_argument::bind(exec_context &ctx,
-                                const binary::argument &barg) {
+                                const module::argument &marg) {
    auto v = bytes(ctx.sviews.size());
 
-   extend(v, binary::argument::zero_ext, barg.target_size);
+   extend(v, module::argument::zero_ext, marg.target_size);
    byteswap(v, ctx.q->device().endianness());
-   align(ctx.input, barg.target_align);
+   align(ctx.input, marg.target_align);
    insert(ctx.input, v);
 
    st = img->resource_in(*ctx.q).bind_sampler_view(*ctx.q);
@@ -629,21 +603,18 @@ kernel::image_wr_argument::set(size_t size, const void *value) {
 
 void
 kernel::image_wr_argument::bind(exec_context &ctx,
-                                const binary::argument &barg) {
+                                const module::argument &marg) {
    auto v = bytes(ctx.iviews.size());
 
-   extend(v, binary::argument::zero_ext, barg.target_size);
+   extend(v, module::argument::zero_ext, marg.target_size);
    byteswap(v, ctx.q->device().endianness());
-   align(ctx.input, barg.target_align);
+   align(ctx.input, marg.target_align);
    insert(ctx.input, v);
    ctx.iviews.push_back(img->resource_in(*ctx.q).create_image_view(*ctx.q));
 }
 
 void
 kernel::image_wr_argument::unbind(exec_context &ctx) {
-}
-
-kernel::sampler_argument::sampler_argument() : s(nullptr), st(nullptr) {
 }
 
 void
@@ -660,7 +631,7 @@ kernel::sampler_argument::set(size_t size, const void *value) {
 
 void
 kernel::sampler_argument::bind(exec_context &ctx,
-                               const binary::argument &barg) {
+                               const module::argument &marg) {
    st = s->bind(*ctx.q);
    ctx.samplers.push_back(st);
 }

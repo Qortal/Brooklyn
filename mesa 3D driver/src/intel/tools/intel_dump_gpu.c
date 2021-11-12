@@ -43,8 +43,8 @@
 #include "intel_aub.h"
 #include "aub_write.h"
 
-#include "dev/intel_debug.h"
-#include "dev/intel_device_info.h"
+#include "dev/gen_debug.h"
+#include "dev/gen_device_info.h"
 #include "util/macros.h"
 
 static int close_init_helper(int fd);
@@ -112,7 +112,7 @@ align_u32(uint32_t v, uint32_t a)
    return (v + a - 1) & ~(a - 1);
 }
 
-static struct intel_device_info devinfo = {0};
+static struct gen_device_info devinfo = {0};
 static int device = 0;
 static struct aub_file aub_file;
 
@@ -121,11 +121,11 @@ ensure_device_info(int fd)
 {
    /* We can't do this at open time as we're not yet authenticated. */
    if (device == 0) {
-      fail_if(!intel_get_device_info_from_fd(fd, &devinfo),
+      fail_if(!gen_get_device_info_from_fd(fd, &devinfo),
               "failed to identify chipset.\n");
       device = devinfo.chipset_id;
-   } else if (devinfo.ver == 0) {
-      fail_if(!intel_get_device_info_from_pci_id(device, &devinfo),
+   } else if (devinfo.gen == 0) {
+      fail_if(!gen_get_device_info_from_pci_id(device, &devinfo),
               "failed to identify chipset.\n");
    }
 }
@@ -229,7 +229,7 @@ dump_execbuffer2(int fd, struct drm_i915_gem_execbuffer2 *execbuffer2)
 
       if (verbose)
          printf("[running, output file %s, chipset id 0x%04x, gen %d]\n",
-                output_filename, device, devinfo.ver);
+                output_filename, device, devinfo.gen);
    }
 
    if (aub_use_execlists(&aub_file))
@@ -251,8 +251,6 @@ dump_execbuffer2(int fd, struct drm_i915_gem_execbuffer2 *execbuffer2)
       }
 
       if (obj->flags & EXEC_OBJECT_PINNED) {
-         if (bo->offset != obj->offset)
-            bo->gtt_mapped = false;
          bo->offset = obj->offset;
       } else {
          if (obj->alignment != 0)
@@ -275,9 +273,9 @@ dump_execbuffer2(int fd, struct drm_i915_gem_execbuffer2 *execbuffer2)
          /* Check against frame_id requirements. */
          if (memcmp(bo->map, intel_debug_identifier(),
                     intel_debug_identifier_size()) == 0) {
-            const struct intel_debug_block_frame *frame_desc =
+            const struct gen_debug_block_frame *frame_desc =
                intel_debug_get_identifier_block(bo->map, bo->size,
-                                                INTEL_DEBUG_BLOCK_TYPE_FRAME);
+                                                GEN_DEBUG_BLOCK_TYPE_FRAME);
 
             current_frame_id = frame_desc ? frame_desc->frame_id : 0;
             break;
@@ -455,13 +453,10 @@ maybe_init(int fd)
          device_override = true;
       } else if (!strcmp(key, "platform")) {
          fail_if(device != 0, "Device/Platform override specified multiple times.\n");
-         device = intel_device_name_to_pci_device_id(value);
+         device = gen_device_name_to_pci_device_id(value);
          fail_if(device == -1, "Unknown platform '%s'\n", value);
          device_override = true;
       } else if (!strcmp(key, "file")) {
-         free(output_filename);
-         if (output_file)
-            fclose(output_file);
          output_filename = strdup(value);
          output_file = fopen(output_filename, "w+");
          fail_if(output_file == NULL,
@@ -483,7 +478,7 @@ maybe_init(int fd)
    bos = calloc(MAX_FD_COUNT * MAX_BO_COUNT, sizeof(bos[0]));
    fail_if(bos == NULL, "out of memory\n");
 
-   ASSERTED int ret = get_pci_id(fd, &device);
+   int ret = get_pci_id(fd, &device);
    assert(ret == 0);
 
    aub_file_init(&aub_file, output_file,
@@ -493,7 +488,7 @@ maybe_init(int fd)
 
    if (verbose)
       printf("[running, output file %s, chipset id 0x%04x, gen %d]\n",
-             output_filename, device, devinfo.ver);
+             output_filename, device, devinfo.gen);
 }
 
 __attribute__ ((visibility ("default"))) int
@@ -563,7 +558,7 @@ ioctl(int fd, unsigned long request, ...)
                return 0;
 
             case I915_PARAM_HAS_EXEC_SOFTPIN:
-               *getparam->value = devinfo.ver >= 8 && !devinfo.is_cherryview;
+               *getparam->value = devinfo.gen >= 8 && !devinfo.is_cherryview;
                return 0;
 
             default:
@@ -584,7 +579,7 @@ ioctl(int fd, unsigned long request, ...)
             case I915_CONTEXT_PARAM_GTT_SIZE:
                if (devinfo.is_elkhartlake)
                   getparam->value = 1ull << 36;
-               else if (devinfo.ver >= 8 && !devinfo.is_cherryview)
+               else if (devinfo.gen >= 8 && !devinfo.is_cherryview)
                   getparam->value = 1ull << 48;
                else
                   getparam->value = 1ull << 31;
@@ -713,17 +708,6 @@ ioctl(int fd, unsigned long request, ...)
          return ret;
       }
 
-      case DRM_IOCTL_I915_GEM_MMAP_OFFSET: {
-         ret = libc_ioctl(fd, request, argp);
-         if (ret == 0) {
-            struct drm_i915_gem_mmap_offset *mmap = argp;
-            struct bo *bo = get_bo(fd, mmap->handle);
-            bo->user_mapped = true;
-            bo->dirty = true;
-         }
-         return ret;
-      }
-
       default:
          return libc_ioctl(fd, request, argp);
       }
@@ -780,7 +764,7 @@ munmap_init_helper(void *addr, size_t length)
 static void __attribute__ ((destructor))
 fini(void)
 {
-   if (devinfo.ver != 0) {
+   if (devinfo.gen != 0) {
       free(output_filename);
       if (!capture_finished)
          aub_file_finish(&aub_file);

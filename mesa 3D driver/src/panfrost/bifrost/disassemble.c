@@ -33,7 +33,6 @@
 #include "bifrost.h"
 #include "disassemble.h"
 #include "bi_print_common.h"
-#include "util/compiler.h"
 #include "util/macros.h"
 
 // return bits (high, lo]
@@ -163,7 +162,7 @@ static struct bifrost_reg_ctrl DecodeRegCtrl(FILE *fp, struct bifrost_regs regs,
 static void dump_regs(FILE *fp, struct bifrost_regs srcs, bool first)
 {
         struct bifrost_reg_ctrl ctrl = DecodeRegCtrl(fp, srcs, first);
-        fprintf(fp, "    # ");
+        fprintf(fp, "# ");
         if (ctrl.read_reg0)
                 fprintf(fp, "slot 0: r%d ", get_reg0(srcs));
         if (ctrl.read_reg1)
@@ -187,8 +186,11 @@ static void dump_regs(FILE *fp, struct bifrost_regs srcs, bool first)
         else if (ctrl.slot23.slot3 == BIFROST_OP_WRITE_HI)
                 fprintf(fp, "slot 3: r%d (write hi %s) ", srcs.reg3, slot3_fma);
 
-        if (srcs.fau_idx)
-                fprintf(fp, "fau %X ", srcs.fau_idx);
+        if (srcs.fau_idx) {
+                if (srcs.fau_idx & 0x80) {
+                        fprintf(fp, "uniform: u%d", (srcs.fau_idx & 0x7f) * 2);
+                }
+        }
 
         fprintf(fp, "\n");
 }
@@ -241,13 +243,8 @@ static void dump_const_imm(FILE *fp, uint32_t imm)
 }
 
 static void
-dump_pc_imm(FILE *fp, uint64_t imm, unsigned branch_offset, enum bi_constmod mod, bool high32)
+dump_pc_imm(FILE *fp, uint64_t imm, enum bi_constmod mod, bool high32)
 {
-        if (mod == BI_CONSTMOD_PC_HI && !high32) {
-                dump_const_imm(fp, imm);
-                return;
-        }
-
         /* 60-bit sign-extend */
         uint64_t zx64 = (imm << 4);
         int64_t sx64 = zx64;
@@ -260,32 +257,24 @@ dump_pc_imm(FILE *fp, uint64_t imm, unsigned branch_offset, enum bi_constmod mod
         sx32[0] >>= 4;
         sx32[1] >>= 4;
 
-        int64_t offs = 0;
-
         switch (mod) {
         case BI_CONSTMOD_PC_LO:
-                offs = sx64;
+                fprintf(fp, "(pc + %" PRId64 ")%s",
+                        sx64,
+                        high32 ? " >> 32" : "");
                 break;
         case BI_CONSTMOD_PC_HI:
-                offs = sx32[1];
+                if (high32)
+                        fprintf(fp, "(pc + %d)", sx32[1]);
+                else
+                        dump_const_imm(fp, imm);
                 break;
         case BI_CONSTMOD_PC_LO_HI:
-                offs = sx32[high32];
+                fprintf(fp, "(pc + %d)", sx32[high32]);
                 break;
         default:
                 unreachable("Invalid PC modifier");
         }
-
-        assert((offs & 15) == 0);
-        fprintf(fp, "clause_%" PRId64, branch_offset + (offs / 16));
-
-        if (mod == BI_CONSTMOD_PC_LO && high32)
-                fprintf(fp, " >> 32");
-
-        /* While technically in spec, referencing the current clause as (pc +
-         * 0) likely indicates an unintended infinite loop  */
-        if (offs == 0)
-                fprintf(fp, " /* XXX: likely an infinite loop */");
 }
 
 /* Convert an index to an embedded constant in FAU-RAM to the index of the
@@ -302,7 +291,7 @@ const_fau_to_idx(unsigned fau_value)
         return map[fau_value];
 }
 
-static void dump_fau_src(FILE *fp, struct bifrost_regs srcs, unsigned branch_offset, struct bi_constants *consts, bool high32)
+static void dump_fau_src(FILE *fp, struct bifrost_regs srcs, struct bi_constants *consts, bool high32)
 {
         if (srcs.fau_idx & 0x80) {
                 unsigned uniform = (srcs.fau_idx & 0x7f);
@@ -312,7 +301,7 @@ static void dump_fau_src(FILE *fp, struct bifrost_regs srcs, unsigned branch_off
                 uint64_t imm = consts->raw[idx];
                 imm |= (srcs.fau_idx & 0xf);
                 if (consts->mods[idx] != BI_CONSTMOD_NONE)
-                        dump_pc_imm(fp, imm, branch_offset, consts->mods[idx], high32);
+                        dump_pc_imm(fp, imm, consts->mods[idx], high32);
                 else if (high32)
                         dump_const_imm(fp, imm >> 32);
                 else
@@ -363,7 +352,7 @@ static void dump_fau_src(FILE *fp, struct bifrost_regs srcs, unsigned branch_off
 }
 
 void
-dump_src(FILE *fp, unsigned src, struct bifrost_regs srcs, unsigned branch_offset, struct bi_constants *consts, bool isFMA)
+dump_src(FILE *fp, unsigned src, struct bifrost_regs srcs, struct bi_constants *consts, bool isFMA)
 {
         switch (src) {
         case 0:
@@ -382,10 +371,10 @@ dump_src(FILE *fp, unsigned src, struct bifrost_regs srcs, unsigned branch_offse
                         fprintf(fp, "t"); // i.e. the output of FMA this cycle
                 break;
         case 4:
-                dump_fau_src(fp, srcs, branch_offset, consts, false);
+                dump_fau_src(fp, srcs, consts, false);
                 break;
         case 5:
-                dump_fau_src(fp, srcs, branch_offset, consts, true);
+                dump_fau_src(fp, srcs, consts, true);
                 break;
         case 6:
                 fprintf(fp, "t0");
@@ -439,7 +428,7 @@ decode_M(enum bi_constmod *mod, unsigned M1, unsigned M2, bool single)
         }
 }
 
-static void dump_clause(FILE *fp, uint32_t *words, unsigned *size, unsigned offset, bool verbose)
+static bool dump_clause(FILE *fp, uint32_t *words, unsigned *size, unsigned offset, bool verbose)
 {
         // State for a decoded clause
         struct bifrost_alu_inst instrs[8] = {};
@@ -447,6 +436,7 @@ static void dump_clause(FILE *fp, uint32_t *words, unsigned *size, unsigned offs
         unsigned num_instrs = 0;
         unsigned num_consts = 0;
         uint64_t header_bits = 0;
+        bool stopbit = false;
 
         unsigned i;
         for (i = 0; ; i++, words += 4) {
@@ -566,7 +556,7 @@ static void dump_clause(FILE *fp, uint32_t *words, unsigned *size, unsigned offs
                                 /* Format 0 - followed by constants */
                                 num_instrs = 1;
                                 done = stop;
-                                FALLTHROUGH;
+                                /* fallthrough */
                         case 0x5:
                                 /* Format 0 - followed by instructions */
                                 header_bits = bits(words[2], 19, 32) | ((uint64_t) words[3] << (32 - 19));
@@ -577,33 +567,45 @@ static void dump_clause(FILE *fp, uint32_t *words, unsigned *size, unsigned offs
                         case 0x7: {
                                 /* Format 12 */
                                 unsigned pos = tag & 0xf;
-
-                                struct {
-                                        unsigned const_idx;
-                                        unsigned nr_tuples;
-                                } pos_table[0x10] = {
-                                        { 0, 1 },
-                                        { 0, 2 },
-                                        { 0, 4 },
-                                        { 1, 3 },
-                                        { 1, 5 },
-                                        { 2, 4 },
-                                        { 0, 7 },
-                                        { 1, 6 },
-                                        { 3, 5 },
-                                        { 1, 8 },
-                                        { 2, 7 },
-                                        { 3, 6 },
-                                        { 3, 8 },
-                                        { 4, 7 },
-                                        { 5, 6 },
-                                        { ~0, ~0 }
-                                };
-
-                                ASSERTED bool valid_count = pos_table[pos].nr_tuples == num_instrs;
-                                assert(valid_count && "INSTR_INVALID_ENC");
-
-                                unsigned const_idx = pos_table[pos].const_idx;
+                                // note that `pos' encodes both the total number of
+                                // instructions and the position in the constant stream,
+                                // presumably because decoded constants and instructions
+                                // share a buffer in the decoder, but we only care about
+                                // the position in the constant stream; the total number of
+                                // instructions is redundant.
+                                unsigned const_idx = 0;
+                                switch (pos) {
+                                case 0:
+                                case 1:
+                                case 2:
+                                case 6:
+                                        const_idx = 0;
+                                        break;
+                                case 3:
+                                case 4:
+                                case 7:
+                                case 9:
+                                        const_idx = 1;
+                                        break;
+                                case 5:
+                                case 0xa:
+                                        const_idx = 2;
+                                        break;
+                                case 8:
+                                case 0xb:
+                                case 0xc:
+                                        const_idx = 3;
+                                        break;
+                                case 0xd:
+                                        const_idx = 4;
+                                        break;
+                                case 0xe:
+                                        const_idx = 5;
+                                        break;
+                                default:
+                                        fprintf(fp, "# unknown pos 0x%x\n", pos);
+                                        break;
+                                }
 
                                 if (num_consts < const_idx + 2)
                                         num_consts = const_idx + 2;
@@ -612,17 +614,15 @@ static void dump_clause(FILE *fp, uint32_t *words, unsigned *size, unsigned offs
                                 consts.raw[const_idx + 1] = const1;
 
                                 /* Calculate M values from A, B and 4-bit
-                                 * unsigned arithmetic. Mathematically it
-                                 * should be (A - B) % 16 but we use this
-                                 * alternate form to avoid sign issues */
+                                 * unsigned arithmetic */
 
-                                unsigned A1 = bits(words[2], 0, 4);
-                                unsigned B1 = bits(words[3], 28, 32);
-                                unsigned A2 = bits(words[1], 0, 4);
-                                unsigned B2 = bits(words[2], 28, 32);
+                                signed A1 = bits(words[2], 0, 4);
+                                signed B1 = bits(words[3], 28, 32);
+                                signed A2 = bits(words[1], 0, 4);
+                                signed B2 = bits(words[2], 28, 32);
 
-                                unsigned M1 = (16 + A1 - B1) & 0xF;
-                                unsigned M2 = (16 + A2 - B2) & 0xF;
+                                unsigned M1 = (A1 - B1) % 16;
+                                unsigned M2 = (A2 - B2) % 16;
 
                                 decode_M(&consts.mods[const_idx], M1, M2, false);
 
@@ -647,6 +647,8 @@ static void dump_clause(FILE *fp, uint32_t *words, unsigned *size, unsigned offs
         struct bifrost_header header;
         memcpy((char *) &header, (char *) &header_bits, sizeof(struct bifrost_header));
         dump_header(fp, header, verbose);
+        if (header.flow_control == BIFROST_FLOW_END)
+                stopbit = true;
 
         fprintf(fp, "{\n");
         for (i = 0; i < num_instrs; i++) {
@@ -662,7 +664,7 @@ static void dump_clause(FILE *fp, uint32_t *words, unsigned *size, unsigned offs
                 memcpy((char *) &regs, (char *) &instrs[i].reg_bits, sizeof(regs));
 
                 if (verbose) {
-                        fprintf(fp, "    # regs: %016" PRIx64 "\n", instrs[i].reg_bits);
+                        fprintf(fp, "# regs: %016" PRIx64 "\n", instrs[i].reg_bits);
                         dump_regs(fp, regs, i == 0);
                 }
 
@@ -682,9 +684,7 @@ static void dump_clause(FILE *fp, uint32_t *words, unsigned *size, unsigned offs
                         fprintf(fp, "# const%d: %08" PRIx64 "\n", 2 * i + 1, consts.raw[i] >> 32);
                 }
         }
-
-        fprintf(fp, "\n");
-        return;
+        return stopbit;
 }
 
 void disassemble_bifrost(FILE *fp, uint8_t *code, size_t size, bool verbose)
@@ -694,16 +694,16 @@ void disassemble_bifrost(FILE *fp, uint8_t *code, size_t size, bool verbose)
         // used for displaying branch targets
         unsigned offset = 0;
         while (words != words_end) {
-                /* Shaders have zero bytes at the end for padding; stop
-                 * disassembling when we hit them. */
-                if (*words == 0)
+                // we don't know what the program-end bit is quite yet, so for now just
+                // assume that an all-0 quadword is padding
+                uint32_t zero[4] = {};
+                if (memcmp(words, zero, 4 * sizeof(uint32_t)) == 0)
                         break;
-
                 fprintf(fp, "clause_%d:\n", offset);
-
                 unsigned size;
-                dump_clause(fp, words, &size, offset, verbose);
-
+                if (dump_clause(fp, words, &size, offset, verbose) == true) {
+                        break;
+                }
                 words += size * 4;
                 offset += size;
         }

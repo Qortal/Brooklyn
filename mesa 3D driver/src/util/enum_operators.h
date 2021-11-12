@@ -23,27 +23,20 @@
 
 #ifdef __cplusplus
 
-#include "macros.h"
-#include <type_traits>
-
 // some enum helpers
 #define MESA_DEFINE_CPP_ENUM_BINARY_OPERATOR(Enum, op) \
 extern "C++" {                                         \
-UNUSED static constexpr                                \
+static inline                                          \
 Enum operator op (Enum a, Enum b)                      \
 {                                                      \
-   using IntType = std::underlying_type_t<Enum>;       \
-   IntType ua = static_cast<IntType>(a);               \
-   IntType ub = static_cast<IntType>(b);               \
+   uint64_t ua = a, ub = b;                            \
    return static_cast<Enum>(ua op ub);                 \
 }                                                      \
                                                        \
-UNUSED static constexpr                                \
+static inline                                          \
 Enum& operator op##= (Enum &a, Enum b)                 \
 {                                                      \
-   using IntType = std::underlying_type_t<Enum>;       \
-   IntType ua = static_cast<IntType>(a);               \
-   IntType ub = static_cast<IntType>(b);               \
+   uint64_t ua = a, ub = b;                            \
    ua op##= ub;                                        \
    a = static_cast<Enum>(ua);                          \
    return a;                                           \
@@ -52,11 +45,10 @@ Enum& operator op##= (Enum &a, Enum b)                 \
 
 #define MESA_DEFINE_CPP_ENUM_UNARY_OPERATOR(Enum, op) \
 extern "C++" {                                        \
-UNUSED static constexpr                               \
+static inline                                         \
 Enum operator op (Enum a)                             \
 {                                                     \
-   using IntType = std::underlying_type_t<Enum>;      \
-   IntType ua = static_cast<IntType>(a);              \
+   uint64_t ua = a;                                   \
    return static_cast<Enum>(op ua);                   \
 }                                                     \
 }

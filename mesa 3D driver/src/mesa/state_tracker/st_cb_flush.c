@@ -57,7 +57,6 @@ st_flush(struct st_context *st,
     */
    st_context_free_zombie_objects(st);
 
-   st_flush_bitmap_cache(st);
    st->pipe->flush(st->pipe, fence, flags);
 }
 
@@ -70,12 +69,13 @@ st_finish(struct st_context *st)
 {
    struct pipe_fence_handle *fence = NULL;
 
+   st_flush_bitmap_cache(st);
    st_flush(st, &fence, PIPE_FLUSH_ASYNC | PIPE_FLUSH_HINT_FINISH);
 
    if (fence) {
-      st->screen->fence_finish(st->screen, NULL, fence,
-                               PIPE_TIMEOUT_INFINITE);
-      st->screen->fence_reference(st->screen, &fence, NULL);
+      st->pipe->screen->fence_finish(st->pipe->screen, NULL, fence,
+                                     PIPE_TIMEOUT_INFINITE);
+      st->pipe->screen->fence_reference(st->pipe->screen, &fence, NULL);
    }
 
    st_manager_flush_swapbuffers();
@@ -87,16 +87,18 @@ st_finish(struct st_context *st)
  * Called via ctx->Driver.Flush()
  */
 static void
-st_glFlush(struct gl_context *ctx, unsigned gallium_flush_flags)
+st_glFlush(struct gl_context *ctx)
 {
    struct st_context *st = st_context(ctx);
+
+   st_flush_bitmap_cache(st);
 
    /* Don't call st_finish() here.  It is not the state tracker's
     * responsibilty to inject sleeps in the hope of avoiding buffer
     * synchronization issues.  Calling finish() here will just hide
     * problems that need to be fixed elsewhere.
     */
-   st_flush(st, NULL, gallium_flush_flags);
+   st_flush(st, NULL, 0);
 
    st_manager_flush_frontbuffer(st);
 }

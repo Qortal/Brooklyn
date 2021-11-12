@@ -240,22 +240,15 @@ etna_texture_handle_incompatible(struct pipe_context *pctx, struct pipe_resource
 
 static void
 set_sampler_views(struct etna_context *ctx, unsigned start, unsigned end,
-                  unsigned nr, bool take_ownership, struct pipe_sampler_view **views)
+                  unsigned nr, struct pipe_sampler_view **views)
 {
    unsigned i, j;
    uint32_t mask = 1 << start;
    uint32_t prev_active_sampler_views = ctx->active_sampler_views;
 
    for (i = start, j = 0; j < nr; i++, j++, mask <<= 1) {
-      struct pipe_sampler_view *view = views ? views[j] : NULL;
-
-      if (take_ownership) {
-         pipe_sampler_view_reference(&ctx->sampler_view[i], NULL);
-         ctx->sampler_view[i] = view;
-      } else {
-         pipe_sampler_view_reference(&ctx->sampler_view[i], view);
-      }
-      if (view) {
+      pipe_sampler_view_reference(&ctx->sampler_view[i], views[j]);
+      if (views[j]) {
          ctx->active_sampler_views |= mask;
          ctx->dirty_sampler_views |= mask;
       } else
@@ -273,35 +266,31 @@ set_sampler_views(struct etna_context *ctx, unsigned start, unsigned end,
 
 static inline void
 etna_fragtex_set_sampler_views(struct etna_context *ctx, unsigned nr,
-                               bool take_ownership,
                                struct pipe_sampler_view **views)
 {
    struct etna_screen *screen = ctx->screen;
    unsigned start = 0;
    unsigned end = start + screen->specs.fragment_sampler_count;
 
-   set_sampler_views(ctx, start, end, nr, take_ownership, views);
+   set_sampler_views(ctx, start, end, nr, views);
    ctx->num_fragment_sampler_views = nr;
 }
 
 
 static inline void
 etna_vertex_set_sampler_views(struct etna_context *ctx, unsigned nr,
-                              bool take_ownership,
                               struct pipe_sampler_view **views)
 {
    struct etna_screen *screen = ctx->screen;
    unsigned start = screen->specs.vertex_sampler_offset;
    unsigned end = start + screen->specs.vertex_sampler_count;
 
-   set_sampler_views(ctx, start, end, nr, take_ownership, views);
+   set_sampler_views(ctx, start, end, nr, views);
 }
 
 static void
 etna_set_sampler_views(struct pipe_context *pctx, enum pipe_shader_type shader,
                        unsigned start_slot, unsigned num_views,
-                       unsigned unbind_num_trailing_slots,
-                       bool take_ownership,
                        struct pipe_sampler_view **views)
 {
    struct etna_context *ctx = etna_context(pctx);
@@ -311,10 +300,10 @@ etna_set_sampler_views(struct pipe_context *pctx, enum pipe_shader_type shader,
 
    switch (shader) {
    case PIPE_SHADER_FRAGMENT:
-      etna_fragtex_set_sampler_views(ctx, num_views, take_ownership, views);
+      etna_fragtex_set_sampler_views(ctx, num_views, views);
       break;
    case PIPE_SHADER_VERTEX:
-      etna_vertex_set_sampler_views(ctx, num_views, take_ownership, views);
+      etna_vertex_set_sampler_views(ctx, num_views, views);
       break;
    default:;
    }

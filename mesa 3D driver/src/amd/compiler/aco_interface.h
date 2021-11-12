@@ -19,7 +19,6 @@
  * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
- *
  */
 
 #ifndef ACO_INTERFACE_H
@@ -38,20 +37,16 @@ struct aco_compiler_statistic_info {
    char desc[64];
 };
 
-extern const unsigned aco_num_statistics;
-extern const struct aco_compiler_statistic_info* aco_statistic_infos;
+struct aco_compiler_statistics {
+   unsigned count;
+   struct aco_compiler_statistic_info *infos;
+   uint32_t values[];
+};
 
-void aco_compile_shader(const struct radv_nir_compiler_options* options,
-                        const struct radv_shader_info* info,
-                        unsigned shader_count, struct nir_shader* const* shaders,
-                        const struct radv_shader_args *args,
-                        struct radv_shader_binary** binary);
-
-void aco_compile_vs_prolog(const struct radv_nir_compiler_options* options,
-                           const struct radv_shader_info* info,
-                           const struct radv_vs_prolog_key* key,
-                           const struct radv_shader_args* args,
-                           struct radv_prolog_binary** binary);
+void aco_compile_shader(unsigned shader_count,
+                        struct nir_shader *const *shaders,
+                        struct radv_shader_binary** binary,
+                        struct radv_shader_args *args);
 
 #ifdef __cplusplus
 }

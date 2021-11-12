@@ -162,13 +162,21 @@ private:
    } m_value;
 };
 
-class InlineConstValue: public Value {
-public:
-   InlineConstValue(int value, int chan);
+class SpecialValue: public Value {
+protected:
+   SpecialValue(Type type, int value, int chan);
    uint32_t sel() const override final;
 private:
    void do_print(std::ostream& os) const override;
+   AluInlineConstants m_value;
+};
+
+class InlineConstValue: public SpecialValue {
+public:
+   InlineConstValue(int value, int chan);
    bool is_equal_to(const Value& other) const override;
+
+private:
    AluInlineConstants m_value;
 };
 

@@ -24,90 +24,88 @@
 #include "vk_debug_report.h"
 
 #include "vk_alloc.h"
-#include "vk_common_entrypoints.h"
-#include "vk_instance.h"
 #include "vk_util.h"
 
-struct vk_debug_report_callback {
-   struct vk_object_base                        base;
-
-   /* Link in the 'callbacks' list in anv_instance struct. */
-   struct list_head                             link;
-   VkDebugReportFlagsEXT                        flags;
-   PFN_vkDebugReportCallbackEXT                 callback;
-   void *                                       data;
-};
-
-VK_DEFINE_NONDISP_HANDLE_CASTS(vk_debug_report_callback, base,
-                               VkDebugReportCallbackEXT,
-                               VK_OBJECT_TYPE_DEBUG_REPORT_CALLBACK_EXT)
-
-VKAPI_ATTR VkResult VKAPI_CALL
-vk_common_CreateDebugReportCallbackEXT(VkInstance _instance,
-                                       const VkDebugReportCallbackCreateInfoEXT *pCreateInfo,
-                                       const VkAllocationCallbacks *pAllocator,
-                                       VkDebugReportCallbackEXT *pCallback)
+VkResult vk_debug_report_instance_init(struct vk_debug_report_instance *instance)
 {
-   VK_FROM_HANDLE(vk_instance, instance, _instance);
+   if (pthread_mutex_init(&instance->callbacks_mutex, NULL) != 0) {
+      return VK_ERROR_INITIALIZATION_FAILED;
+   }
+
+   list_inithead(&instance->callbacks);
+
+   return VK_SUCCESS;
+}
+
+void vk_debug_report_instance_destroy(struct vk_debug_report_instance *instance)
+{
+   pthread_mutex_destroy(&instance->callbacks_mutex);
+}
+
+VkResult
+vk_create_debug_report_callback(struct vk_debug_report_instance *instance,
+                                const VkDebugReportCallbackCreateInfoEXT* pCreateInfo,
+                                const VkAllocationCallbacks* pAllocator,
+                                const VkAllocationCallbacks* instance_allocator,
+                                VkDebugReportCallbackEXT* pCallback)
+{
 
    struct vk_debug_report_callback *cb =
-      vk_alloc2(&instance->alloc, pAllocator,
+      vk_alloc2(instance_allocator, pAllocator,
                 sizeof(struct vk_debug_report_callback), 8,
                 VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
 
    if (!cb)
       return VK_ERROR_OUT_OF_HOST_MEMORY;
 
-   vk_object_base_init(NULL, &cb->base,
-                       VK_OBJECT_TYPE_DEBUG_REPORT_CALLBACK_EXT);
-
    cb->flags = pCreateInfo->flags;
    cb->callback = pCreateInfo->pfnCallback;
    cb->data = pCreateInfo->pUserData;
 
-   mtx_lock(&instance->debug_report.callbacks_mutex);
-   list_addtail(&cb->link, &instance->debug_report.callbacks);
-   mtx_unlock(&instance->debug_report.callbacks_mutex);
+   pthread_mutex_lock(&instance->callbacks_mutex);
+   list_addtail(&cb->link, &instance->callbacks);
+   pthread_mutex_unlock(&instance->callbacks_mutex);
 
-   *pCallback = vk_debug_report_callback_to_handle(cb);
+   *pCallback = (VkDebugReportCallbackEXT)(uintptr_t)cb;
 
    return VK_SUCCESS;
 }
 
-VKAPI_ATTR void VKAPI_CALL
-vk_common_DestroyDebugReportCallbackEXT(VkInstance _instance,
-                                        VkDebugReportCallbackEXT _callback,
-                                        const VkAllocationCallbacks *pAllocator)
+void
+vk_destroy_debug_report_callback(struct vk_debug_report_instance *instance,
+                                 VkDebugReportCallbackEXT _callback,
+                                 const VkAllocationCallbacks* pAllocator,
+                                 const VkAllocationCallbacks* instance_allocator)
 {
-   VK_FROM_HANDLE(vk_instance, instance, _instance);
-   VK_FROM_HANDLE(vk_debug_report_callback, callback, _callback);
-
-   if (callback == NULL)
+   if (_callback == VK_NULL_HANDLE)
       return;
+
+   struct vk_debug_report_callback *callback =
+            (struct vk_debug_report_callback *)(uintptr_t)_callback;
 
    /* Remove from list and destroy given callback. */
-   mtx_lock(&instance->debug_report.callbacks_mutex);
+   pthread_mutex_lock(&instance->callbacks_mutex);
    list_del(&callback->link);
-   vk_object_base_finish(&callback->base);
-   vk_free2(&instance->alloc, pAllocator, callback);
-   mtx_unlock(&instance->debug_report.callbacks_mutex);
+   vk_free2(instance_allocator, pAllocator, callback);
+   pthread_mutex_unlock(&instance->callbacks_mutex);
 }
 
-static void
-debug_report(struct vk_instance *instance,
-             VkDebugReportFlagsEXT flags,
-             VkDebugReportObjectTypeEXT object_type,
-             uint64_t handle,
-             size_t location,
-             int32_t messageCode,
-             const char* pLayerPrefix,
-             const char *pMessage)
+
+void
+vk_debug_report(struct vk_debug_report_instance *instance,
+                VkDebugReportFlagsEXT flags,
+                VkDebugReportObjectTypeEXT object_type,
+                uint64_t handle,
+                size_t location,
+                int32_t messageCode,
+                const char* pLayerPrefix,
+                const char *pMessage)
 {
    /* Allow NULL for convinience, return if no callbacks registered. */
-   if (!instance || list_is_empty(&instance->debug_report.callbacks))
+   if (!instance || list_is_empty(&instance->callbacks))
       return;
 
-   mtx_lock(&instance->debug_report.callbacks_mutex);
+   pthread_mutex_lock(&instance->callbacks_mutex);
 
    /* Section 33.2 of the Vulkan 1.0.59 spec says:
     *
@@ -117,41 +115,11 @@ debug_report(struct vk_instance *instance,
     *    is active."
     */
    list_for_each_entry(struct vk_debug_report_callback, cb,
-                       &instance->debug_report.callbacks, link) {
+                       &instance->callbacks, link) {
       if (cb->flags & flags)
          cb->callback(flags, object_type, handle, location, messageCode,
                       pLayerPrefix, pMessage, cb->data);
    }
 
-   mtx_unlock(&instance->debug_report.callbacks_mutex);
-}
-
-VKAPI_ATTR void VKAPI_CALL
-vk_common_DebugReportMessageEXT(VkInstance _instance,
-                                VkDebugReportFlagsEXT flags,
-                                VkDebugReportObjectTypeEXT objectType,
-                                uint64_t object,
-                                size_t location,
-                                int32_t messageCode,
-                                const char* pLayerPrefix,
-                                const char* pMessage)
-{
-   VK_FROM_HANDLE(vk_instance, instance, _instance);
-   debug_report(instance, flags, objectType,
-                object, location, messageCode, pLayerPrefix, pMessage);
-}
-
-void
-vk_debug_report(struct vk_instance *instance,
-                VkDebugReportFlagsEXT flags,
-                const struct vk_object_base *object,
-                size_t location,
-                int32_t messageCode,
-                const char* pLayerPrefix,
-                const char *pMessage)
-{
-   VkDebugReportObjectTypeEXT object_type =
-      object ? object->type : VK_OBJECT_TYPE_UNKNOWN;
-   debug_report(instance, flags, object_type, (uint64_t)(uintptr_t)object,
-                location, messageCode, pLayerPrefix, pMessage);
+   pthread_mutex_unlock(&instance->callbacks_mutex);
 }

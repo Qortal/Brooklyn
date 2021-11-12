@@ -81,31 +81,29 @@ vbo_exec_wrap_buffers(struct vbo_exec_context *exec)
       exec->vtx.buffer_ptr = exec->vtx.buffer_map;
    }
    else {
-      struct gl_context *ctx = gl_context_from_vbo_exec(exec);
-      unsigned last = exec->vtx.prim_count - 1;
-      struct pipe_draw_start_count_bias *last_draw = &exec->vtx.draw[last];
-      const bool last_begin = exec->vtx.markers[last].begin;
-      GLuint last_count = 0;
+      struct _mesa_prim *last_prim = &exec->vtx.prim[exec->vtx.prim_count - 1];
+      const GLuint last_begin = last_prim->begin;
+      GLuint last_count;
 
-      if (_mesa_inside_begin_end(ctx)) {
-         last_draw->count = exec->vtx.vert_count - last_draw->start;
-         last_count = last_draw->count;
-         exec->vtx.markers[last].end = 0;
+      if (_mesa_inside_begin_end(exec->ctx)) {
+         last_prim->count = exec->vtx.vert_count - last_prim->start;
       }
 
+      last_count = last_prim->count;
+
       /* Special handling for wrapping GL_LINE_LOOP */
-      if (exec->vtx.mode[last] == GL_LINE_LOOP &&
+      if (last_prim->mode == GL_LINE_LOOP &&
           last_count > 0 &&
-          !exec->vtx.markers[last].end) {
+          !last_prim->end) {
          /* draw this section of the incomplete line loop as a line strip */
-         exec->vtx.mode[last] = GL_LINE_STRIP;
-         if (!last_begin) {
+         last_prim->mode = GL_LINE_STRIP;
+         if (!last_prim->begin) {
             /* This is not the first section of the line loop, so don't
              * draw the 0th vertex.  We're saving it until we draw the
              * very last section of the loop.
              */
-            last_draw->start++;
-            last_draw->count--;
+            last_prim->start++;
+            last_prim->count--;
          }
       }
 
@@ -122,14 +120,16 @@ vbo_exec_wrap_buffers(struct vbo_exec_context *exec)
        */
       assert(exec->vtx.prim_count == 0);
 
-      if (_mesa_inside_begin_end(ctx)) {
-         exec->vtx.mode[0] = ctx->Driver.CurrentExecPrimitive;
-         exec->vtx.draw[0].start = 0;
-         exec->vtx.markers[0].begin = 0;
+      if (_mesa_inside_begin_end(exec->ctx)) {
+         exec->vtx.prim[0].mode = exec->ctx->Driver.CurrentExecPrimitive;
+         exec->vtx.prim[0].begin = 0;
+         exec->vtx.prim[0].end = 0;
+         exec->vtx.prim[0].start = 0;
+         exec->vtx.prim[0].count = 0;
          exec->vtx.prim_count++;
 
          if (exec->vtx.copied.nr == last_count)
-            exec->vtx.markers[0].begin = last_begin;
+            exec->vtx.prim[0].begin = last_begin;
       }
    }
 }
@@ -175,10 +175,9 @@ vbo_exec_vtx_wrap(struct vbo_exec_context *exec)
 static void
 vbo_exec_copy_to_current(struct vbo_exec_context *exec)
 {
-   struct gl_context *ctx = gl_context_from_vbo_exec(exec);
+   struct gl_context *ctx = exec->ctx;
    struct vbo_context *vbo = vbo_context(ctx);
    GLbitfield64 enabled = exec->vtx.enabled & (~BITFIELD64_BIT(VBO_ATTRIB_POS));
-   bool color0_changed = false;
 
    while (enabled) {
       const int i = u_bit_scan64(&enabled);
@@ -188,7 +187,11 @@ vbo_exec_copy_to_current(struct vbo_exec_context *exec)
        */
       GLfloat *current = (GLfloat *)vbo->current[i].Ptr;
       fi_type tmp[8]; /* space for doubles */
-      int dmul_shift = 0;
+      int dmul = 1;
+
+      if (exec->vtx.attr[i].type == GL_DOUBLE ||
+          exec->vtx.attr[i].type == GL_UNSIGNED_INT64_ARB)
+         dmul = 2;
 
       assert(exec->vtx.attr[i].size);
 
@@ -196,7 +199,6 @@ vbo_exec_copy_to_current(struct vbo_exec_context *exec)
           exec->vtx.attr[i].type == GL_UNSIGNED_INT64_ARB) {
          memset(tmp, 0, sizeof(tmp));
          memcpy(tmp, exec->vtx.attrptr[i], exec->vtx.attr[i].size * sizeof(GLfloat));
-         dmul_shift = 1;
       } else {
          COPY_CLEAN_4V_TYPE_AS_UNION(tmp,
                                      exec->vtx.attr[i].size,
@@ -204,41 +206,35 @@ vbo_exec_copy_to_current(struct vbo_exec_context *exec)
                                      exec->vtx.attr[i].type);
       }
 
-      if (memcmp(current, tmp, 4 * sizeof(GLfloat) << dmul_shift) != 0) {
-         memcpy(current, tmp, 4 * sizeof(GLfloat) << dmul_shift);
-
-         if (i == VBO_ATTRIB_COLOR0)
-            color0_changed = true;
-
-         if (i >= VBO_ATTRIB_MAT_FRONT_AMBIENT) {
-            ctx->NewState |= _NEW_MATERIAL;
-            ctx->PopAttribState |= GL_LIGHTING_BIT;
-
-            /* The fixed-func vertex program uses this. */
-            if (i == VBO_ATTRIB_MAT_FRONT_SHININESS ||
-                i == VBO_ATTRIB_MAT_BACK_SHININESS)
-               ctx->NewState |= _NEW_FF_VERT_PROGRAM;
-         } else {
-            ctx->NewState |= _NEW_CURRENT_ATTRIB;
-            ctx->PopAttribState |= GL_CURRENT_BIT;
-         }
-      }
-
-      /* Given that we explicitly state size here, there is no need
-       * for the COPY_CLEAN above, could just copy 16 bytes and be
-       * done.  The only problem is when Mesa accesses ctx->Current
-       * directly.
-       */
-      /* Size here is in components - not bytes */
       if (exec->vtx.attr[i].type != vbo->current[i].Format.Type ||
-          (exec->vtx.attr[i].size >> dmul_shift) != vbo->current[i].Format.Size) {
+          memcmp(current, tmp, 4 * sizeof(GLfloat) * dmul) != 0) {
+         memcpy(current, tmp, 4 * sizeof(GLfloat) * dmul);
+
+         /* Given that we explicitly state size here, there is no need
+          * for the COPY_CLEAN above, could just copy 16 bytes and be
+          * done.  The only problem is when Mesa accesses ctx->Current
+          * directly.
+          */
+         /* Size here is in components - not bytes */
          vbo_set_vertex_format(&vbo->current[i].Format,
-                               exec->vtx.attr[i].size >> dmul_shift,
+                               exec->vtx.attr[i].size / dmul,
                                exec->vtx.attr[i].type);
+
+         /* This triggers rather too much recalculation of Mesa state
+          * that doesn't get used (eg light positions).
+          */
+         if (i >= VBO_ATTRIB_MAT_FRONT_AMBIENT &&
+             i <= VBO_ATTRIB_MAT_BACK_INDEXES)
+            ctx->NewState |= _NEW_LIGHT;
+
+         ctx->NewState |= _NEW_CURRENT_ATTRIB;
       }
    }
 
-   if (color0_changed && ctx->Light.ColorMaterialEnabled) {
+   /* Colormaterial -- this kindof sucks.
+    */
+   if (ctx->Light.ColorMaterialEnabled &&
+       exec->vtx.attr[VBO_ATTRIB_COLOR0].size) {
       _mesa_update_color_material(ctx,
                                   ctx->Current.Attrib[VBO_ATTRIB_COLOR0]);
    }
@@ -257,7 +253,7 @@ static void
 vbo_exec_wrap_upgrade_vertex(struct vbo_exec_context *exec,
                              GLuint attr, GLuint newSize, GLenum newType)
 {
-   struct gl_context *ctx = gl_context_from_vbo_exec(exec);
+   struct gl_context *ctx = exec->ctx;
    struct vbo_context *vbo = vbo_context(ctx);
    const GLint lastcount = exec->vtx.vert_count;
    fi_type *old_attrptr[VBO_ATTRIB_MAX];
@@ -267,13 +263,6 @@ vbo_exec_wrap_upgrade_vertex(struct vbo_exec_context *exec,
    GLuint i;
 
    assert(attr < VBO_ATTRIB_MAX);
-
-   if (unlikely(!exec->vtx.buffer_ptr)) {
-      /* We should only hit this when use_buffer_objects=true */
-      assert(exec->vtx.bufferobj);
-      vbo_exec_vtx_map(exec);
-      assert(exec->vtx.buffer_ptr);
-   }
 
    /* Run pipeline on current vertices, copy wrapped vertices
     * to exec->vtx.copied.
@@ -495,6 +484,7 @@ do {                                                                    \
    int sz = (sizeof(C) / sizeof(GLfloat));                              \
                                                                         \
    assert(sz == 1 || sz == 2);                                          \
+                                                                        \
    /* store a copy of the attribute in exec except for glVertex */      \
    if ((A) != 0) {                                                      \
       /* Check if attribute size or type is changing. */                \
@@ -684,7 +674,7 @@ vbo_exec_Materialfv(GLenum face, GLenum pname, const GLfloat *params)
 static void
 vbo_exec_FlushVertices_internal(struct vbo_exec_context *exec, unsigned flags)
 {
-   struct gl_context *ctx = gl_context_from_vbo_exec(exec);
+   struct gl_context *ctx = exec->ctx;
 
    if (flags & FLUSH_STORED_VERTICES) {
       if (exec->vtx.vert_count) {
@@ -829,12 +819,11 @@ vbo_exec_Begin(GLenum mode)
       return;
    }
 
-   if (ctx->NewState)
-      _mesa_update_state(ctx);
+   if (!_mesa_valid_prim_mode(ctx, mode, "glBegin")) {
+      return;
+   }
 
-   GLenum error = _mesa_valid_prim_mode(ctx, mode);
-   if (error != GL_NO_ERROR) {
-      _mesa_error(ctx, error, "glBegin");
+   if (!_mesa_valid_to_render(ctx, "glBegin")) {
       return;
    }
 
@@ -848,9 +837,11 @@ vbo_exec_Begin(GLenum mode)
       vbo_exec_FlushVertices_internal(exec, FLUSH_STORED_VERTICES);
 
    i = exec->vtx.prim_count++;
-   exec->vtx.mode[i] = mode;
-   exec->vtx.draw[i].start = exec->vtx.vert_count;
-   exec->vtx.markers[i].begin = 1;
+   exec->vtx.prim[i].mode = mode;
+   exec->vtx.prim[i].begin = 1;
+   exec->vtx.prim[i].end = 0;
+   exec->vtx.prim[i].start = exec->vtx.vert_count;
+   exec->vtx.prim[i].count = 0;
 
    ctx->Driver.CurrentExecPrimitive = mode;
 
@@ -876,27 +867,17 @@ vbo_exec_Begin(GLenum mode)
 static void
 try_vbo_merge(struct vbo_exec_context *exec)
 {
-   unsigned cur = exec->vtx.prim_count - 1;
+   struct _mesa_prim *cur =  &exec->vtx.prim[exec->vtx.prim_count - 1];
 
    assert(exec->vtx.prim_count >= 1);
 
-   vbo_try_prim_conversion(&exec->vtx.mode[cur], &exec->vtx.draw[cur].count);
+   vbo_try_prim_conversion(cur);
 
    if (exec->vtx.prim_count >= 2) {
-      struct gl_context *ctx = gl_context_from_vbo_exec(exec);
-      unsigned prev = cur - 1;
+      struct _mesa_prim *prev = &exec->vtx.prim[exec->vtx.prim_count - 2];
+      assert(prev == cur - 1);
 
-      if (vbo_merge_draws(ctx, false,
-                          exec->vtx.mode[prev],
-                          exec->vtx.mode[cur],
-                          exec->vtx.draw[prev].start,
-                          exec->vtx.draw[cur].start,
-                          &exec->vtx.draw[prev].count,
-                          exec->vtx.draw[cur].count,
-                          0, 0,
-                          &exec->vtx.markers[prev].end,
-                          exec->vtx.markers[cur].begin,
-                          exec->vtx.markers[cur].end))
+      if (vbo_merge_draws(exec->ctx, false, prev, cur))
          exec->vtx.prim_count--;  /* drop the last primitive */
    }
 }
@@ -927,33 +908,31 @@ vbo_exec_End(void)
 
    if (exec->vtx.prim_count > 0) {
       /* close off current primitive */
-      unsigned last = exec->vtx.prim_count - 1;
-      struct pipe_draw_start_count_bias *last_draw = &exec->vtx.draw[last];
-      unsigned count = exec->vtx.vert_count - last_draw->start;
+      struct _mesa_prim *last_prim = &exec->vtx.prim[exec->vtx.prim_count - 1];
+      unsigned count = exec->vtx.vert_count - last_prim->start;
 
-      last_draw->count = count;
-      exec->vtx.markers[last].end = 1;
+      last_prim->end = 1;
+      last_prim->count = count;
 
       if (count)
          ctx->Driver.NeedFlush |= FLUSH_STORED_VERTICES;
 
       /* Special handling for GL_LINE_LOOP */
-      if (exec->vtx.mode[last] == GL_LINE_LOOP &&
-          exec->vtx.markers[last].begin == 0) {
+      if (last_prim->mode == GL_LINE_LOOP && last_prim->begin == 0) {
          /* We're finishing drawing a line loop.  Append 0th vertex onto
           * end of vertex buffer so we can draw it as a line strip.
           */
          const fi_type *src = exec->vtx.buffer_map +
-            last_draw->start * exec->vtx.vertex_size;
+            last_prim->start * exec->vtx.vertex_size;
          fi_type *dst = exec->vtx.buffer_map +
             exec->vtx.vert_count * exec->vtx.vertex_size;
 
          /* copy 0th vertex to end of buffer */
          memcpy(dst, src, exec->vtx.vertex_size * sizeof(fi_type));
 
-         last_draw->start++;  /* skip vertex0 */
-         /* note that the count stays unchanged */
-         exec->vtx.mode[last] = GL_LINE_STRIP;
+         last_prim->start++;  /* skip vertex0 */
+         /* note that last_prim->count stays unchanged */
+         last_prim->mode = GL_LINE_STRIP;
 
          /* Increment the vertex count so the next primitive doesn't
           * overwrite the last vertex which we just added.
@@ -1000,7 +979,7 @@ vbo_exec_PrimitiveRestartNV(void)
 static void
 vbo_exec_vtxfmt_init(struct vbo_exec_context *exec)
 {
-   struct gl_context *ctx = gl_context_from_vbo_exec(exec);
+   struct gl_context *ctx = exec->ctx;
    GLvertexformat *vfmt = &exec->vtxfmt;
 
 #define NAME_AE(x) _ae_##x
@@ -1032,12 +1011,17 @@ vbo_reset_all_attr(struct vbo_exec_context *exec)
 void
 vbo_exec_vtx_init(struct vbo_exec_context *exec, bool use_buffer_objects)
 {
-   struct gl_context *ctx = gl_context_from_vbo_exec(exec);
+   struct gl_context *ctx = exec->ctx;
 
    if (use_buffer_objects) {
       /* Use buffer objects for immediate mode. */
       struct vbo_exec_context *exec = &vbo_context(ctx)->exec;
+
       exec->vtx.bufferobj = ctx->Driver.NewBufferObject(ctx, IMM_BUFFER_NAME);
+
+      /* Map the buffer. */
+      vbo_exec_vtx_map(exec);
+      assert(exec->vtx.buffer_ptr);
    } else {
       /* Use allocated memory for immediate mode. */
       exec->vtx.bufferobj = NULL;
@@ -1051,9 +1035,6 @@ vbo_exec_vtx_init(struct vbo_exec_context *exec, bool use_buffer_objects)
 
    exec->vtx.enabled = u_bit_consecutive64(0, VBO_ATTRIB_MAX); /* reset all */
    vbo_reset_all_attr(exec);
-
-   exec->vtx.info.instance_count = 1;
-   exec->vtx.info.max_index = ~0;
 }
 
 
@@ -1061,7 +1042,7 @@ void
 vbo_exec_vtx_destroy(struct vbo_exec_context *exec)
 {
    /* using a real VBO for vertex data */
-   struct gl_context *ctx = gl_context_from_vbo_exec(exec);
+   struct gl_context *ctx = exec->ctx;
 
    /* True VBOs should already be unmapped
     */

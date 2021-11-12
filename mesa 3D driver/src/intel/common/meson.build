@@ -18,49 +18,37 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+# TODO: android?
+
 files_libintel_common = files(
-  'intel_aux_map.c',
-  'intel_aux_map.h',
-  'intel_buffer_alloc.h',
-  'intel_clflush.h',
-  'intel_decoder.h',
-  'intel_disasm.c',
-  'intel_disasm.h',
-  'intel_gem.c',
-  'intel_gem.h',
-  'intel_guardband.h',
-  'intel_l3_config.c',
-  'intel_l3_config.h',
-  'intel_urb_config.c',
-  'intel_sample_positions.c',
-  'intel_sample_positions.h',
-  'intel_uuid.c',
-  'intel_uuid.h',
-  'intel_measure.c',
-  'intel_measure.h',
+  'gen_aux_map.c',
+  'gen_aux_map.h',
+  'gen_buffer_alloc.h',
+  'gen_clflush.h',
+  'gen_batch_decoder.c',
+  'gen_decoder.c',
+  'gen_decoder.h',
+  'gen_disasm.c',
+  'gen_disasm.h',
+  'gen_gem.c',
+  'gen_gem.h',
+  'gen_guardband.h',
+  'gen_l3_config.c',
+  'gen_l3_config.h',
+  'gen_urb_config.c',
+  'gen_sample_positions.h',
+  'gen_uuid.c',
+  'gen_uuid.h',
 )
-
-files_batch_decoder = files(
-  'intel_batch_decoder.c',
-  'intel_decoder.c',
-)
-
-batch_decoder_dependencies = []
-if with_platform_android
-  files_libintel_common += 'intel_batch_decoder_stub.c'
-else
-  batch_decoder_dependencies += dep_expat
-  files_libintel_common += files_batch_decoder
-endif
 
 libintel_common = static_library(
-  'intel_common',
-  [files_libintel_common, genX_xml_h, sha1_h],
+  ['intel_common', genX_xml_h],
+  files_libintel_common,
   include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_intel],
   c_args : [no_override_init_args],
   gnu_symbol_visibility : 'hidden',
   link_with : [libisl],
-  dependencies : [batch_decoder_dependencies, dep_libdrm, dep_thread, idep_genxml, idep_mesautil],
+  dependencies : [dep_expat, dep_libdrm, dep_thread, idep_genxml],
 )
 
 libintel_extra_dependencies = []
@@ -76,15 +64,14 @@ idep_libintel_common = declare_dependency(
 install_intel_gpu_tests = get_option('install-intel-gpu-tests')
 
 if install_intel_gpu_tests
-  foreach g : [['70', 'gfx7'], ['75', 'hsw'], ['80', 'gfx8'],
-               ['90', 'gfx9'], ['110', 'gfx11'], ['120', 'gfx12'],
-               ['125', 'gfx125']]
+  foreach g : [['70', 'gen7'], ['75', 'hsw'], ['80', 'gen8'],
+               ['90', 'gen9'], ['110', 'gen11'], ['120', 'gen12']]
     executable(
       'intel_@0@_mi_builder_test'.format(g[1]),
-      files('tests/mi_builder_test.cpp'),
+      files('tests/gen_mi_builder_test.cpp'),
       cpp_args : [
         cpp_msvc_compat_args,
-        '-DGFX_VERx10=@0@'.format(g[0])
+        '-DGEN_VERSIONx10=@0@'.format(g[0])
       ],
       gnu_symbol_visibility : 'hidden',
       include_directories : [inc_include, inc_src, inc_intel],
@@ -95,7 +82,7 @@ if install_intel_gpu_tests
   endforeach
 endif
 
-if with_tests and not with_platform_android
+if with_tests
   gentest_xml = files('tests/gentest.xml')
   _name = 'gentest_pack.h'
   gentest_pack = custom_target(

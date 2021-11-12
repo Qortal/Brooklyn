@@ -109,7 +109,7 @@ running "meson build/" but this feature is being discussed upstream. For
 now, we have a ``bin/meson-options.py`` script that prints the options
 for you. If that script doesn't work for some reason, you can always
 look in the
-`meson_options.txt <https://gitlab.freedesktop.org/mesa/mesa/-/blob/main/meson_options.txt>`__
+`meson_options.txt <https://gitlab.freedesktop.org/mesa/mesa/-/blob/master/meson_options.txt>`__
 file at the root of the project.
 
 With additional arguments ``meson configure`` can be used to change
@@ -157,7 +157,9 @@ CC and CXX environment variables.
 
 All of these compilers are tested and work with Ninja, but if you want
 Visual Studio integration or you just like msbuild, passing
-``--backend=vs`` to Meson will generate a Visual Studio solution.
+``--backend=vs`` to Meson will generate a Visual Studio solution. If you
+want to use ICL or clang-cl with the vsbackend you will need Meson
+0.52.0 or greater. Older versions always use the Microsoft compiler.
 
 3. Advanced Usage
 -----------------
@@ -165,8 +167,8 @@ Visual Studio integration or you just like msbuild, passing
 Installation Location
 ^^^^^^^^^^^^^^^^^^^^^
 
-Meson default to installing :file:`libGL.so` in your system's main
-:file:`lib/` directory and DRI drivers to a :file:`dri/` subdirectory.
+Meson default to installing libGL.so in your system's main lib/
+directory and DRI drivers to a dri/ subdirectory.
 
 Developers will often want to install Mesa to a testing directory rather
 than the system library directory. This can be done with the --prefix
@@ -228,11 +230,12 @@ LLVM
 Meson includes upstream logic to wrap llvm-config using its standard
 dependency interface.
 
-Meson can use CMake to find LLVM. But due to the way LLVM implements its
-CMake finder it will only find static libraries, it will never find
-:file:`libllvm.so`. There is also a ``-Dcmake_module_path`` option,
-which points to the root of an alternative installation (the prefix).
-For example:
+As of Meson 0.51.0 Meson can use CMake to find LLVM (the CMake finder
+was added in Meson 0.49.0, but LLVM cannot be found until 0.51) Due to
+the way LLVM implements its CMake finder it will only find static
+libraries, it will never find libllvm.so. There is also a
+``-Dcmake_module_path`` option in this Meson version, which points to
+the root of an alternative installation (the prefix). For example:
 
 .. code-block:: console
 
@@ -244,8 +247,9 @@ provide information about the native build environment (as opposed to a
 cross build environment). They are ini formatted and can override where
 to find llvm-config:
 
-.. code-block:: ini
-   :caption: custom-llvm.ini
+custom-llvm.ini
+
+::
 
    [binaries]
    llvm-config = '/usr/local/bin/llvm/llvm-config'
@@ -256,12 +260,22 @@ Then configure Meson:
 
    meson builddir/ --native-file custom-llvm.ini
 
+Meson < 0.49 doesn't support native files, so to specify a custom
+``llvm-config`` you need to modify your ``$PATH`` (or ``%PATH%`` on
+Windows), which will be searched for ``llvm-config``,
+``llvm-config$version``, and ``llvm-config-$version``:
+
+.. code-block:: console
+
+   PATH=/path/to/folder/with/llvm-config:$PATH meson build
+
 For selecting llvm-config for cross compiling a `"cross
 file" <https://mesonbuild.com/Cross-compilation.html#defining-the-environment>`__
 should be used. It uses the same format as the native file above:
 
-.. code-block:: ini
-   :caption: cross-llvm.ini
+cross-llvm.ini
+
+::
 
    [binaries]
    ...
@@ -286,7 +300,7 @@ this case a "binary wrap". Follow the steps below:
 
 -  Install the binaries and headers into the
    ``$mesa_src/subprojects/llvm``
--  Add a :file:`meson.build` file to that directory (more on that later)
+-  Add a meson.build file to that directory (more on that later)
 
 The wrap file must define the following:
 
@@ -300,7 +314,7 @@ It may also define:
 -  ``has_rtti``: a ``bool`` that declares whether LLVM was built with
    RTTI. Defaults to true
 
-such a :file:`meson.build` file might look like:
+such a meson.build file might look like:
 
 ::
 
@@ -368,7 +382,7 @@ passed as --option=foo to ``meson``, but -Doption=foo to
 For those coming from autotools be aware of the following:
 
 ``--buildtype/-Dbuildtype``
-   This option will set the compiler debug/optimization levels to aid
+   This option will set the compiler debug/optimisation levels to aid
    debugging the Mesa libraries.
 
    Note that in Meson this defaults to ``debugoptimized``, and not
@@ -399,8 +413,8 @@ this file to ``meson`` or ``meson configure`` with the ``--cross-file``
 parameter.
 
 This file can live at any location, but you can use the bare filename
-(without the folder path) if you put it in
-:file:`$XDG_DATA_HOME/meson/cross` or :file:`~/.local/share/meson/cross`
+(without the folder path) if you put it in $XDG_DATA_HOME/meson/cross or
+~/.local/share/meson/cross
 
 Below are a few example of cross files, but keep in mind that you will
 likely have to alter them for your system.
@@ -413,7 +427,7 @@ of those, as they'll have the right values for your system:
 
 32-bit build on x86 linux:
 
-.. code-block:: ini
+::
 
    [binaries]
    c = '/usr/bin/gcc'
@@ -437,7 +451,7 @@ of those, as they'll have the right values for your system:
 
 64-bit build on ARM linux:
 
-.. code-block:: ini
+::
 
    [binaries]
    c = '/usr/bin/aarch64-linux-gnu-gcc'
@@ -455,7 +469,7 @@ of those, as they'll have the right values for your system:
 
 64-bit build on x86 Windows:
 
-.. code-block:: ini
+::
 
    [binaries]
    c = '/usr/bin/x86_64-w64-mingw32-gcc'

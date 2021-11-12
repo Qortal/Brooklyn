@@ -181,13 +181,13 @@ void LoopFrame::fixup_mid(UNUSED r600_bytecode_cf *mid)
 
 void LoopFrame::fixup_pop(r600_bytecode_cf *final)
 {
-   /* LOOP END address is past LOOP START */
+   /* LOOP END addess is past LOOP START */
    final->cf_addr = start->id + 2;
 
-   /* LOOP START address is past LOOP END*/
+   /* LOOP START addess is past LOOP END*/
    start->cf_addr = final->id + 2;
 
-   /* BREAK and CONTINUE point at LOOP END*/
+   /* BREAK amd CONINUE point at LOOP END*/
    for (auto m : mid)
       m->cf_addr = final->id;
 }

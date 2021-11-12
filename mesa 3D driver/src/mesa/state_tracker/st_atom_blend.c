@@ -303,9 +303,8 @@ st_update_blend( struct st_context *st )
 void
 st_update_blend_color(struct st_context *st)
 {
-   struct pipe_context *pipe = st->pipe;
-   struct pipe_blend_color *bc =
-      (struct pipe_blend_color *)st->ctx->Color.BlendColorUnclamped;
+   struct pipe_blend_color bc;
 
-   pipe->set_blend_color(pipe, bc);
+   COPY_4FV(bc.color, st->ctx->Color.BlendColorUnclamped);
+   cso_set_blend_color(st->cso_context, &bc);
 }

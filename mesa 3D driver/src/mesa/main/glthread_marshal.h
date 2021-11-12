@@ -43,44 +43,34 @@ struct marshal_cmd_base
    uint16_t cmd_id;
 
    /**
-    * Number of uint64_t elements used by the command.
+    * Size of command, in multiples of 4 bytes, including cmd_base.
     */
    uint16_t cmd_size;
 };
 
-typedef uint32_t (*_mesa_unmarshal_func)(struct gl_context *ctx, const void *cmd, const uint64_t *last);
+typedef void (*_mesa_unmarshal_func)(struct gl_context *ctx, const void *cmd);
 extern const _mesa_unmarshal_func _mesa_unmarshal_dispatch[NUM_DISPATCH_CMD];
 
 static inline void *
 _mesa_glthread_allocate_command(struct gl_context *ctx,
                                 uint16_t cmd_id,
-                                unsigned size)
+                                int size)
 {
    struct glthread_state *glthread = &ctx->GLThread;
-   const unsigned num_elements = align(size, 8) / 8;
-
-   if (unlikely(glthread->used + num_elements > MARSHAL_MAX_CMD_SIZE / 8))
-      _mesa_glthread_flush_batch(ctx);
-
    struct glthread_batch *next = glthread->next_batch;
-   struct marshal_cmd_base *cmd_base =
-      (struct marshal_cmd_base *)&next->buffer[glthread->used];
-   glthread->used += num_elements;
+   struct marshal_cmd_base *cmd_base;
+
+   if (unlikely(next->used + size > MARSHAL_MAX_CMD_SIZE)) {
+      _mesa_glthread_flush_batch(ctx);
+      next = glthread->next_batch;
+   }
+
+   const int aligned_size = align(size, 8);
+   cmd_base = (struct marshal_cmd_base *)&next->buffer[next->used];
+   next->used += aligned_size;
    cmd_base->cmd_id = cmd_id;
-   cmd_base->cmd_size = num_elements;
+   cmd_base->cmd_size = aligned_size;
    return cmd_base;
-}
-
-static inline bool
-_mesa_glthread_has_no_pack_buffer(const struct gl_context *ctx)
-{
-   return ctx->GLThread.CurrentPixelPackBufferName == 0;
-}
-
-static inline bool
-_mesa_glthread_has_no_unpack_buffer(const struct gl_context *ctx)
-{
-   return ctx->GLThread.CurrentPixelUnpackBufferName == 0;
 }
 
 /**
@@ -168,7 +158,6 @@ _mesa_tex_param_enum_to_count(GLenum pname)
    case GL_DEPTH_TEXTURE_MODE_ARB:
    case GL_DEPTH_STENCIL_TEXTURE_MODE:
    case GL_TEXTURE_SRGB_DECODE_EXT:
-   case GL_TEXTURE_REDUCTION_MODE_EXT:
    case GL_TEXTURE_CUBE_MAP_SEAMLESS:
    case GL_TEXTURE_SWIZZLE_R:
    case GL_TEXTURE_SWIZZLE_G:
@@ -272,7 +261,7 @@ _mesa_texenv_enum_to_count(GLenum pname)
    case GL_RGB_SCALE:
    case GL_ALPHA_SCALE:
    case GL_TEXTURE_LOD_BIAS_EXT:
-   case GL_COORD_REPLACE:
+   case GL_COORD_REPLACE_NV:
       return 1;
    case GL_TEXTURE_ENV_COLOR:
       return 4;
@@ -323,6 +312,7 @@ _mesa_point_param_enum_to_count(GLenum pname)
    case GL_POINT_SIZE_MIN_EXT:
    case GL_POINT_SIZE_MAX_EXT:
    case GL_POINT_FADE_THRESHOLD_SIZE_EXT:
+   case GL_POINT_SPRITE_R_MODE_NV:
    case GL_POINT_SPRITE_COORD_ORIGIN:
       return 1;
    default:
@@ -417,314 +407,5 @@ _mesa_array_to_attrib(struct gl_context *ctx, GLenum array)
       return VERT_ATTRIB_MAX;
    }
 }
-
-static inline gl_matrix_index
-_mesa_get_matrix_index(struct gl_context *ctx, GLenum mode)
-{
-   if (mode == GL_MODELVIEW || mode == GL_PROJECTION)
-      return M_MODELVIEW + (mode - GL_MODELVIEW);
-
-   if (mode == GL_TEXTURE)
-      return M_TEXTURE0 + ctx->GLThread.ActiveTexture;
-
-   if (mode >= GL_TEXTURE0 && mode <= GL_TEXTURE0 + MAX_TEXTURE_UNITS - 1)
-      return M_TEXTURE0 + (mode - GL_TEXTURE0);
-
-   if (mode >= GL_MATRIX0_ARB && mode <= GL_MATRIX0_ARB + MAX_PROGRAM_MATRICES - 1)
-      return M_PROGRAM0 + (mode - GL_MATRIX0_ARB);
-
-   return M_DUMMY;
-}
-
-static inline void
-_mesa_glthread_Enable(struct gl_context *ctx, GLenum cap)
-{
-   if (ctx->GLThread.ListMode == GL_COMPILE)
-      return;
-
-   if (cap == GL_PRIMITIVE_RESTART ||
-       cap == GL_PRIMITIVE_RESTART_FIXED_INDEX)
-      _mesa_glthread_set_prim_restart(ctx, cap, true);
-   else if (cap == GL_DEBUG_OUTPUT_SYNCHRONOUS_ARB)
-      _mesa_glthread_disable(ctx, "Enable(DEBUG_OUTPUT_SYNCHRONOUS)");
-}
-
-static inline void
-_mesa_glthread_Disable(struct gl_context *ctx, GLenum cap)
-{
-   if (ctx->GLThread.ListMode == GL_COMPILE)
-      return;
-
-   if (cap == GL_PRIMITIVE_RESTART ||
-       cap == GL_PRIMITIVE_RESTART_FIXED_INDEX)
-      _mesa_glthread_set_prim_restart(ctx, cap, false);
-}
-
-static inline void
-_mesa_glthread_PushAttrib(struct gl_context *ctx, GLbitfield mask)
-{
-   if (ctx->GLThread.ListMode == GL_COMPILE)
-      return;
-
-   struct glthread_attrib_node *attr =
-      &ctx->GLThread.AttribStack[ctx->GLThread.AttribStackDepth++];
-
-   attr->Mask = mask;
-
-   if (mask & GL_TEXTURE_BIT)
-      attr->ActiveTexture = ctx->GLThread.ActiveTexture;
-
-   if (mask & GL_TRANSFORM_BIT)
-      attr->MatrixMode = ctx->GLThread.MatrixMode;
-}
-
-static inline void
-_mesa_glthread_PopAttrib(struct gl_context *ctx)
-{
-   if (ctx->GLThread.ListMode == GL_COMPILE)
-      return;
-
-   struct glthread_attrib_node *attr =
-      &ctx->GLThread.AttribStack[--ctx->GLThread.AttribStackDepth];
-   unsigned mask = attr->Mask;
-
-   if (mask & GL_TEXTURE_BIT)
-      ctx->GLThread.ActiveTexture = attr->ActiveTexture;
-
-   if (mask & GL_TRANSFORM_BIT) {
-      ctx->GLThread.MatrixMode = attr->MatrixMode;
-      ctx->GLThread.MatrixIndex = _mesa_get_matrix_index(ctx, attr->MatrixMode);
-   }
-}
-
-static inline void
-_mesa_glthread_MatrixPushEXT(struct gl_context *ctx, GLenum matrixMode)
-{
-   if (ctx->GLThread.ListMode == GL_COMPILE)
-      return;
-
-   ctx->GLThread.MatrixStackDepth[_mesa_get_matrix_index(ctx, matrixMode)]++;
-}
-
-static inline void
-_mesa_glthread_MatrixPopEXT(struct gl_context *ctx, GLenum matrixMode)
-{
-   if (ctx->GLThread.ListMode == GL_COMPILE)
-      return;
-
-   ctx->GLThread.MatrixStackDepth[_mesa_get_matrix_index(ctx, matrixMode)]--;
-}
-
-static inline void
-_mesa_glthread_ActiveTexture(struct gl_context *ctx, GLenum texture)
-{
-   if (ctx->GLThread.ListMode == GL_COMPILE)
-      return;
-
-   ctx->GLThread.ActiveTexture = texture - GL_TEXTURE0;
-   if (ctx->GLThread.MatrixMode == GL_TEXTURE)
-      ctx->GLThread.MatrixIndex = _mesa_get_matrix_index(ctx, texture);
-}
-
-static inline void
-_mesa_glthread_PushMatrix(struct gl_context *ctx)
-{
-   if (ctx->GLThread.ListMode == GL_COMPILE)
-      return;
-
-   ctx->GLThread.MatrixStackDepth[ctx->GLThread.MatrixIndex]++;
-}
-
-static inline void
-_mesa_glthread_PopMatrix(struct gl_context *ctx)
-{
-   if (ctx->GLThread.ListMode == GL_COMPILE)
-      return;
-
-   ctx->GLThread.MatrixStackDepth[ctx->GLThread.MatrixIndex]--;
-}
-
-static inline void
-_mesa_glthread_MatrixMode(struct gl_context *ctx, GLenum mode)
-{
-   if (ctx->GLThread.ListMode == GL_COMPILE)
-      return;
-
-   ctx->GLThread.MatrixIndex = _mesa_get_matrix_index(ctx, mode);
-   ctx->GLThread.MatrixMode = mode;
-}
-
-static inline void
-_mesa_glthread_ListBase(struct gl_context *ctx, GLuint base)
-{
-   if (ctx->GLThread.ListMode == GL_COMPILE)
-      return;
-
-   ctx->GLThread.ListBase = base;
-}
-
-static inline void
-_mesa_glthread_CallList(struct gl_context *ctx, GLuint list)
-{
-   if (ctx->GLThread.ListMode == GL_COMPILE)
-      return;
-
-   /* Wait for all glEndList and glDeleteLists calls to finish to ensure that
-    * all display lists are up to date and the driver thread is not
-    * modifiying them. We will be executing them in the application thread.
-    */
-   int batch = p_atomic_read(&ctx->GLThread.LastDListChangeBatchIndex);
-   if (batch != -1) {
-      util_queue_fence_wait(&ctx->GLThread.batches[batch].fence);
-      p_atomic_set(&ctx->GLThread.LastDListChangeBatchIndex, -1);
-   }
-
-   /* Clear GL_COMPILE_AND_EXECUTE if needed. We only execute here. */
-   unsigned saved_mode = ctx->GLThread.ListMode;
-   ctx->GLThread.ListMode = 0;
-
-   _mesa_glthread_execute_list(ctx, list);
-
-   ctx->GLThread.ListMode = saved_mode;
-}
-
-static inline void
-_mesa_glthread_CallLists(struct gl_context *ctx, GLsizei n, GLenum type,
-                         const GLvoid *lists)
-{
-   if (ctx->GLThread.ListMode == GL_COMPILE)
-      return;
-
-   if (n <= 0 || !lists)
-      return;
-
-   /* Wait for all glEndList and glDeleteLists calls to finish to ensure that
-    * all display lists are up to date and the driver thread is not
-    * modifiying them. We will be executing them in the application thread.
-    */
-   int batch = p_atomic_read(&ctx->GLThread.LastDListChangeBatchIndex);
-   if (batch != -1) {
-      util_queue_fence_wait(&ctx->GLThread.batches[batch].fence);
-      p_atomic_set(&ctx->GLThread.LastDListChangeBatchIndex, -1);
-   }
-
-   /* Clear GL_COMPILE_AND_EXECUTE if needed. We only execute here. */
-   unsigned saved_mode = ctx->GLThread.ListMode;
-   ctx->GLThread.ListMode = 0;
-
-   unsigned base = ctx->GLThread.ListBase;
-
-   GLbyte *bptr;
-   GLubyte *ubptr;
-   GLshort *sptr;
-   GLushort *usptr;
-   GLint *iptr;
-   GLuint *uiptr;
-   GLfloat *fptr;
-
-   switch (type) {
-   case GL_BYTE:
-      bptr = (GLbyte *) lists;
-      for (unsigned i = 0; i < n; i++)
-         _mesa_glthread_CallList(ctx, base + bptr[i]);
-      break;
-   case GL_UNSIGNED_BYTE:
-      ubptr = (GLubyte *) lists;
-      for (unsigned i = 0; i < n; i++)
-         _mesa_glthread_CallList(ctx, base + ubptr[i]);
-      break;
-   case GL_SHORT:
-      sptr = (GLshort *) lists;
-      for (unsigned i = 0; i < n; i++)
-         _mesa_glthread_CallList(ctx, base + sptr[i]);
-      break;
-   case GL_UNSIGNED_SHORT:
-      usptr = (GLushort *) lists;
-      for (unsigned i = 0; i < n; i++)
-         _mesa_glthread_CallList(ctx, base + usptr[i]);
-      break;
-   case GL_INT:
-      iptr = (GLint *) lists;
-      for (unsigned i = 0; i < n; i++)
-         _mesa_glthread_CallList(ctx, base + iptr[i]);
-      break;
-   case GL_UNSIGNED_INT:
-      uiptr = (GLuint *) lists;
-      for (unsigned i = 0; i < n; i++)
-         _mesa_glthread_CallList(ctx, base + uiptr[i]);
-      break;
-   case GL_FLOAT:
-      fptr = (GLfloat *) lists;
-      for (unsigned i = 0; i < n; i++)
-         _mesa_glthread_CallList(ctx, base + fptr[i]);
-      break;
-   case GL_2_BYTES:
-      ubptr = (GLubyte *) lists;
-      for (unsigned i = 0; i < n; i++) {
-         _mesa_glthread_CallList(ctx, base +
-                                 (GLint)ubptr[2 * i] * 256 +
-                                 (GLint)ubptr[2 * i + 1]);
-      }
-      break;
-   case GL_3_BYTES:
-      ubptr = (GLubyte *) lists;
-      for (unsigned i = 0; i < n; i++) {
-         _mesa_glthread_CallList(ctx, base +
-                                 (GLint)ubptr[3 * i] * 65536 +
-                                 (GLint)ubptr[3 * i + 1] * 256 +
-                                 (GLint)ubptr[3 * i + 2]);
-      }
-      break;
-   case GL_4_BYTES:
-      ubptr = (GLubyte *) lists;
-      for (unsigned i = 0; i < n; i++) {
-         _mesa_glthread_CallList(ctx, base +
-                                 (GLint)ubptr[4 * i] * 16777216 +
-                                 (GLint)ubptr[4 * i + 1] * 65536 +
-                                 (GLint)ubptr[4 * i + 2] * 256 +
-                                 (GLint)ubptr[4 * i + 3]);
-      }
-      break;
-   }
-
-   ctx->GLThread.ListMode = saved_mode;
-}
-
-static inline void
-_mesa_glthread_NewList(struct gl_context *ctx, GLuint list, GLuint mode)
-{
-   if (!ctx->GLThread.ListMode)
-      ctx->GLThread.ListMode = mode;
-}
-
-static inline void
-_mesa_glthread_EndList(struct gl_context *ctx)
-{
-   if (!ctx->GLThread.ListMode)
-      return;
-
-   ctx->GLThread.ListMode = 0;
-
-   /* Track the last display list change. */
-   p_atomic_set(&ctx->GLThread.LastDListChangeBatchIndex, ctx->GLThread.next);
-   _mesa_glthread_flush_batch(ctx);
-}
-
-static inline void
-_mesa_glthread_DeleteLists(struct gl_context *ctx, GLsizei range)
-{
-   if (range < 0)
-      return;
-
-   /* Track the last display list change. */
-   p_atomic_set(&ctx->GLThread.LastDListChangeBatchIndex, ctx->GLThread.next);
-   _mesa_glthread_flush_batch(ctx);
-}
-
-struct marshal_cmd_CallList
-{
-   struct marshal_cmd_base cmd_base;
-   GLuint list;
-};
 
 #endif /* MARSHAL_H */

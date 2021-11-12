@@ -305,7 +305,7 @@ static void lp_exec_default(struct lp_exec_mask *mask,
    LLVMBuilderRef builder = mask->bld->gallivm->builder;
    struct function_ctx *ctx = func_ctx(mask);
 
-   int default_exec_pc = 0;
+   int default_exec_pc;
    boolean default_is_last;
 
    if (ctx->switch_stack_size > LP_MAX_TGSI_NESTING) {
@@ -2091,14 +2091,14 @@ emit_tex( struct lp_build_tgsi_soa_context *bld,
    switch (inst->Texture.Texture) {
    case TGSI_TEXTURE_1D_ARRAY:
       layer_coord = 1;
-      FALLTHROUGH;
+      /* fallthrough */
    case TGSI_TEXTURE_1D:
       num_offsets = 1;
       num_derivs = 1;
       break;
    case TGSI_TEXTURE_2D_ARRAY:
       layer_coord = 2;
-      FALLTHROUGH;
+      /* fallthrough */
    case TGSI_TEXTURE_2D:
    case TGSI_TEXTURE_RECT:
       num_offsets = 2;
@@ -2106,7 +2106,7 @@ emit_tex( struct lp_build_tgsi_soa_context *bld,
       break;
    case TGSI_TEXTURE_SHADOW1D_ARRAY:
       layer_coord = 1;
-      FALLTHROUGH;
+      /* fallthrough */
    case TGSI_TEXTURE_SHADOW1D:
       shadow_coord = 2;
       num_offsets = 1;

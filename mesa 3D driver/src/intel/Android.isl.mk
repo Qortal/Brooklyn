@@ -29,16 +29,16 @@ LIBISL_GENX_COMMON_INCLUDES := \
 	$(MESA_TOP)/src/gallium/include/
 
 # ---------------------------------------
-# Build libmesa_isl_gfx4
+# Build libmesa_isl_gen4
 # ---------------------------------------
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := libmesa_isl_gfx4
+LOCAL_MODULE := libmesa_isl_gen4
 
-LOCAL_SRC_FILES := $(ISL_GFX4_FILES)
+LOCAL_SRC_FILES := $(ISL_GEN4_FILES)
 
-LOCAL_CFLAGS := -DGFX_VERx10=40
+LOCAL_CFLAGS := -DGEN_VERSIONx10=40
 
 LOCAL_C_INCLUDES := $(LIBISL_GENX_COMMON_INCLUDES)
 
@@ -48,16 +48,16 @@ include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
 
 # ---------------------------------------
-# Build libmesa_isl_gfx5
+# Build libmesa_isl_gen5
 # ---------------------------------------
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := libmesa_isl_gfx5
+LOCAL_MODULE := libmesa_isl_gen5
 
-LOCAL_SRC_FILES := $(ISL_GFX5_FILES)
+LOCAL_SRC_FILES := $(ISL_GEN5_FILES)
 
-LOCAL_CFLAGS := -DGFX_VERx10=50
+LOCAL_CFLAGS := -DGEN_VERSIONx10=50
 
 LOCAL_C_INCLUDES := $(LIBISL_GENX_COMMON_INCLUDES)
 
@@ -67,16 +67,16 @@ include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
 
 # ---------------------------------------
-# Build libmesa_isl_gfx6
+# Build libmesa_isl_gen6
 # ---------------------------------------
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := libmesa_isl_gfx6
+LOCAL_MODULE := libmesa_isl_gen6
 
-LOCAL_SRC_FILES := $(ISL_GFX6_FILES)
+LOCAL_SRC_FILES := $(ISL_GEN6_FILES)
 
-LOCAL_CFLAGS := -DGFX_VERx10=60
+LOCAL_CFLAGS := -DGEN_VERSIONx10=60
 
 LOCAL_C_INCLUDES := $(LIBISL_GENX_COMMON_INCLUDES)
 
@@ -86,16 +86,16 @@ include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
 
 # ---------------------------------------
-# Build libmesa_isl_gfx7
+# Build libmesa_isl_gen7
 # ---------------------------------------
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := libmesa_isl_gfx7
+LOCAL_MODULE := libmesa_isl_gen7
 
-LOCAL_SRC_FILES := $(ISL_GFX7_FILES)
+LOCAL_SRC_FILES := $(ISL_GEN7_FILES)
 
-LOCAL_CFLAGS := -DGFX_VERx10=70
+LOCAL_CFLAGS := -DGEN_VERSIONx10=70
 
 LOCAL_C_INCLUDES := $(LIBISL_GENX_COMMON_INCLUDES)
 
@@ -105,16 +105,16 @@ include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
 
 # ---------------------------------------
-# Build libmesa_isl_gfx75
+# Build libmesa_isl_gen75
 # ---------------------------------------
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := libmesa_isl_gfx75
+LOCAL_MODULE := libmesa_isl_gen75
 
-LOCAL_SRC_FILES := $(ISL_GFX75_FILES)
+LOCAL_SRC_FILES := $(ISL_GEN75_FILES)
 
-LOCAL_CFLAGS := -DGFX_VERx10=75
+LOCAL_CFLAGS := -DGEN_VERSIONx10=75
 
 LOCAL_C_INCLUDES := $(LIBISL_GENX_COMMON_INCLUDES)
 
@@ -124,16 +124,16 @@ include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
 
 # ---------------------------------------
-# Build libmesa_isl_gfx8
+# Build libmesa_isl_gen8
 # ---------------------------------------
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := libmesa_isl_gfx8
+LOCAL_MODULE := libmesa_isl_gen8
 
-LOCAL_SRC_FILES := $(ISL_GFX8_FILES)
+LOCAL_SRC_FILES := $(ISL_GEN8_FILES)
 
-LOCAL_CFLAGS := -DGFX_VERx10=80
+LOCAL_CFLAGS := -DGEN_VERSIONx10=80
 
 LOCAL_C_INCLUDES := $(LIBISL_GENX_COMMON_INCLUDES)
 
@@ -143,16 +143,16 @@ include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
 
 # ---------------------------------------
-# Build libmesa_isl_gfx9
+# Build libmesa_isl_gen9
 # ---------------------------------------
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := libmesa_isl_gfx9
+LOCAL_MODULE := libmesa_isl_gen9
 
-LOCAL_SRC_FILES := $(ISL_GFX9_FILES)
+LOCAL_SRC_FILES := $(ISL_GEN9_FILES)
 
-LOCAL_CFLAGS := -DGFX_VERx10=90
+LOCAL_CFLAGS := -DGEN_VERSIONx10=90
 
 LOCAL_C_INCLUDES := $(LIBISL_GENX_COMMON_INCLUDES)
 
@@ -162,16 +162,16 @@ include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
 
 # ---------------------------------------
-# Build libmesa_isl_gfx11
+# Build libmesa_isl_gen11
 # ---------------------------------------
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := libmesa_isl_gfx11
+LOCAL_MODULE := libmesa_isl_gen11
 
-LOCAL_SRC_FILES := $(ISL_GFX11_FILES)
+LOCAL_SRC_FILES := $(ISL_GEN11_FILES)
 
-LOCAL_CFLAGS := -DGFX_VERx10=110
+LOCAL_CFLAGS := -DGEN_VERSIONx10=110
 
 LOCAL_C_INCLUDES := $(LIBISL_GENX_COMMON_INCLUDES)
 
@@ -181,35 +181,16 @@ include $(MESA_COMMON_MK)
 include $(BUILD_STATIC_LIBRARY)
 
 # ---------------------------------------
-# Build libmesa_isl_gfx12
+# Build libmesa_isl_gen12
 # ---------------------------------------
 
 include $(CLEAR_VARS)
 
-LOCAL_MODULE := libmesa_isl_gfx12
+LOCAL_MODULE := libmesa_isl_gen12
 
-LOCAL_SRC_FILES := $(ISL_GFX12_FILES)
+LOCAL_SRC_FILES := $(ISL_GEN12_FILES)
 
-LOCAL_CFLAGS := -DGFX_VERx10=120
-
-LOCAL_C_INCLUDES := $(LIBISL_GENX_COMMON_INCLUDES)
-
-LOCAL_WHOLE_STATIC_LIBRARIES := libmesa_genxml
-
-include $(MESA_COMMON_MK)
-include $(BUILD_STATIC_LIBRARY)
-
-# ---------------------------------------
-# Build libmesa_isl_gfx125
-# ---------------------------------------
-
-include $(CLEAR_VARS)
-
-LOCAL_MODULE := libmesa_isl_gfx125
-
-LOCAL_SRC_FILES := $(ISL_GFX125_FILES)
-
-LOCAL_CFLAGS := -DGFX_VERx10=125
+LOCAL_CFLAGS := -DGEN_VERSIONx10=120
 
 LOCAL_C_INCLUDES := $(LIBISL_GENX_COMMON_INCLUDES)
 
@@ -279,16 +260,15 @@ LOCAL_C_INCLUDES := \
 LOCAL_EXPORT_C_INCLUDE_DIRS := $(MESA_TOP)/src/intel
 
 LOCAL_WHOLE_STATIC_LIBRARIES := \
-	libmesa_isl_gfx4 \
-	libmesa_isl_gfx5 \
-	libmesa_isl_gfx6 \
-	libmesa_isl_gfx7 \
-	libmesa_isl_gfx75 \
-	libmesa_isl_gfx8 \
-	libmesa_isl_gfx9 \
-	libmesa_isl_gfx11 \
-	libmesa_isl_gfx12 \
-	libmesa_isl_gfx125 \
+	libmesa_isl_gen4 \
+	libmesa_isl_gen5 \
+	libmesa_isl_gen6 \
+	libmesa_isl_gen7 \
+	libmesa_isl_gen75 \
+	libmesa_isl_gen8 \
+	libmesa_isl_gen9 \
+	libmesa_isl_gen11 \
+	libmesa_isl_gen12 \
 	libmesa_genxml \
 	libmesa_isl_tiled_memcpy
 

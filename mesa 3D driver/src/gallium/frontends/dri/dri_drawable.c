@@ -124,7 +124,9 @@ dri_st_framebuffer_flush_front(struct st_context_iface *stctx,
       (struct dri_drawable *) stfbi->st_manager_private;
 
    /* XXX remove this and just set the correct one on the framebuffer */
-   return drawable->flush_frontbuffer(ctx, drawable, statt);
+   drawable->flush_frontbuffer(ctx, drawable, statt);
+
+   return true;
 }
 
 /**
@@ -193,6 +195,8 @@ dri_destroy_buffer(__DRIdrawable * dPriv)
    struct dri_screen *screen = drawable->screen;
    struct st_api *stapi = screen->st_api;
    int i;
+
+   pipe_surface_reference(&drawable->drisw_surface, NULL);
 
    for (i = 0; i < ST_ATTACHMENT_COUNT; i++)
       pipe_resource_reference(&drawable->textures[i], NULL);

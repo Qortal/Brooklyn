@@ -71,7 +71,6 @@
 #define RENCODE_DIRECT_OUTPUT_NALU_TYPE_PPS                                         0x00000003
 #define RENCODE_DIRECT_OUTPUT_NALU_TYPE_PREFIX                                      0x00000004
 #define RENCODE_DIRECT_OUTPUT_NALU_TYPE_END_OF_SEQUENCE                             0x00000005
-#define RENCODE_DIRECT_OUTPUT_NALU_TYPE_SEI                                         0x00000006
 
 #define RENCODE_SLICE_HEADER_TEMPLATE_MAX_TEMPLATE_SIZE_IN_DWORDS                   16
 #define RENCODE_SLICE_HEADER_TEMPLATE_MAX_NUM_INSTRUCTIONS                          16
@@ -83,8 +82,6 @@
 #define RENCODE_HEVC_HEADER_INSTRUCTION_FIRST_SLICE                                 0x00010001
 #define RENCODE_HEVC_HEADER_INSTRUCTION_SLICE_SEGMENT                               0x00010002
 #define RENCODE_HEVC_HEADER_INSTRUCTION_SLICE_QP_DELTA                              0x00010003
-#define RENCODE_HEVC_HEADER_INSTRUCTION_SAO_ENABLE                                  0x00010004
-#define RENCODE_HEVC_HEADER_INSTRUCTION_LOOP_FILTER_ACROSS_SLICES_ENABLE            0x00010005
 
 #define RENCODE_H264_HEADER_INSTRUCTION_FIRST_MB                                    0x00020000
 #define RENCODE_H264_HEADER_INSTRUCTION_SLICE_QP_DELTA                              0x00020001
@@ -126,12 +123,10 @@
 #define RENCODE_FEEDBACK_BUFFER_MODE_LINEAR                                         0
 #define RENCODE_FEEDBACK_BUFFER_MODE_CIRCULAR                                       1
 
-#define RENCODE_MAX_NUM_TEMPORAL_LAYERS                                             4
-
-#define RADEON_ENC_CS(value) (enc->cs.current.buf[enc->cs.current.cdw++] = (value))
+#define RADEON_ENC_CS(value) (enc->cs->current.buf[enc->cs->current.cdw++] = (value))
 #define RADEON_ENC_BEGIN(cmd)                                                                      \
    {                                                                                               \
-      uint32_t *begin = &enc->cs.current.buf[enc->cs.current.cdw++];                             \
+      uint32_t *begin = &enc->cs->current.buf[enc->cs->current.cdw++];                             \
       RADEON_ENC_CS(cmd)
 #define RADEON_ENC_READ(buf, domain, off)                                                          \
    radeon_enc_add_buffer(enc, (buf), RADEON_USAGE_READ, (domain), (off))
@@ -140,7 +135,7 @@
 #define RADEON_ENC_READWRITE(buf, domain, off)                                                     \
    radeon_enc_add_buffer(enc, (buf), RADEON_USAGE_READWRITE, (domain), (off))
 #define RADEON_ENC_END()                                                                           \
-   *begin = (&enc->cs.current.buf[enc->cs.current.cdw] - begin) * 4;                             \
+   *begin = (&enc->cs->current.buf[enc->cs->current.cdw] - begin) * 4;                             \
    enc->total_task_size += *begin;                                                                 \
    }
 
@@ -412,7 +407,7 @@ struct pipe_video_codec *radeon_create_encoder(struct pipe_context *context,
                                                radeon_enc_get_buffer get_buffer);
 
 struct radeon_enc_pic {
-   enum pipe_h2645_enc_picture_type picture_type;
+   enum pipe_h264_enc_picture_type picture_type;
 
    unsigned frame_num;
    unsigned pic_order_cnt;
@@ -441,9 +436,6 @@ struct radeon_enc_pic {
    unsigned bit_depth_chroma_minus8;
    unsigned nal_unit_type;
    unsigned max_num_merge_cand;
-   unsigned temporal_id;
-   unsigned num_temporal_layers;
-   unsigned temporal_layer_pattern_index;
 
    bool not_referenced;
    bool is_idr;
@@ -462,7 +454,7 @@ struct radeon_enc_pic {
    rvcn_enc_h264_spec_misc_t spec_misc;
    rvcn_enc_hevc_spec_misc_t hevc_spec_misc;
    rvcn_enc_rate_ctl_session_init_t rc_session_init;
-   rvcn_enc_rate_ctl_layer_init_t rc_layer_init[RENCODE_MAX_NUM_TEMPORAL_LAYERS];
+   rvcn_enc_rate_ctl_layer_init_t rc_layer_init;
    rvcn_enc_h264_encode_params_t h264_enc_params;
    rvcn_enc_h264_deblocking_filter_t h264_deblock;
    rvcn_enc_hevc_deblocking_filter_t hevc_deblock;
@@ -496,8 +488,6 @@ struct radeon_encoder {
    void (*nalu_pps)(struct radeon_encoder *enc);
    void (*nalu_vps)(struct radeon_encoder *enc);
    void (*nalu_aud)(struct radeon_encoder *enc);
-   void (*nalu_sei)(struct radeon_encoder *enc);
-   void (*nalu_prefix)(struct radeon_encoder *enc);
    void (*slice_header)(struct radeon_encoder *enc);
    void (*ctx)(struct radeon_encoder *enc);
    void (*bitstream)(struct radeon_encoder *enc);
@@ -511,7 +501,7 @@ struct radeon_encoder {
    void (*op_enc)(struct radeon_encoder *enc);
    void (*op_init_rc)(struct radeon_encoder *enc);
    void (*op_init_rc_vbv)(struct radeon_encoder *enc);
-   void (*op_preset)(struct radeon_encoder *enc);
+   void (*op_speed)(struct radeon_encoder *enc);
    void (*encode_headers)(struct radeon_encoder *enc);
    void (*input_format)(struct radeon_encoder *enc);
    void (*output_format)(struct radeon_encoder *enc);
@@ -520,7 +510,7 @@ struct radeon_encoder {
 
    struct pipe_screen *screen;
    struct radeon_winsys *ws;
-   struct radeon_cmdbuf cs;
+   struct radeon_cmdbuf *cs;
 
    radeon_enc_get_buffer get_buffer;
 
@@ -545,7 +535,6 @@ struct radeon_encoder {
    unsigned num_zeros;
    unsigned byte_index;
    unsigned bits_output;
-   unsigned bits_size;
    uint32_t total_task_size;
    uint32_t *p_task_size;
 

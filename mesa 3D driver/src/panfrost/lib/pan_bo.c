@@ -31,7 +31,6 @@
 #include "drm-uapi/panfrost_drm.h"
 
 #include "pan_bo.h"
-#include "pan_device.h"
 #include "pan_util.h"
 #include "wrap.h"
 
@@ -57,7 +56,7 @@
 
 static struct panfrost_bo *
 panfrost_bo_alloc(struct panfrost_device *dev, size_t size,
-                  uint32_t flags, const char *label)
+                  uint32_t flags)
 {
         struct drm_panfrost_create_bo create_bo = { .size = size };
         struct panfrost_bo *bo;
@@ -85,7 +84,6 @@ panfrost_bo_alloc(struct panfrost_device *dev, size_t size,
         bo->gem_handle = create_bo.handle;
         bo->flags = flags;
         bo->dev = dev;
-        bo->label = label;
         return bo;
 }
 
@@ -190,8 +188,7 @@ pan_bucket(struct panfrost_device *dev, unsigned size)
 
 static struct panfrost_bo *
 panfrost_bo_cache_fetch(struct panfrost_device *dev,
-                        size_t size, uint32_t flags, const char *label,
-                        bool dontwait)
+                        size_t size, uint32_t flags, bool dontwait)
 {
         pthread_mutex_lock(&dev->bo_cache.lock);
         struct list_head *bucket = pan_bucket(dev, size);
@@ -203,11 +200,9 @@ panfrost_bo_cache_fetch(struct panfrost_device *dev,
                 if (entry->size < size || entry->flags != flags)
                         continue;
 
-                /* If the oldest BO in the cache is busy, likely so is
-                 * everything newer, so bail. */
                 if (!panfrost_bo_wait(entry, dontwait ? 0 : INT64_MAX,
                                       PAN_BO_ACCESS_RW))
-                        break;
+                        continue;
 
                 struct drm_panfrost_madvise madv = {
                         .handle = entry->gem_handle,
@@ -226,7 +221,6 @@ panfrost_bo_cache_fetch(struct panfrost_device *dev,
                 }
                 /* Let's go! */
                 bo = entry;
-                bo->label = label;
                 break;
         }
         pthread_mutex_unlock(&dev->bo_cache.lock);
@@ -267,7 +261,7 @@ panfrost_bo_cache_put(struct panfrost_bo *bo)
 {
         struct panfrost_device *dev = bo->dev;
 
-        if (bo->flags & PAN_BO_SHARED || dev->debug & PAN_DBG_NO_CACHE)
+        if (bo->flags & PAN_BO_SHARED)
                 return false;
 
         pthread_mutex_lock(&dev->bo_cache.lock);
@@ -294,9 +288,6 @@ panfrost_bo_cache_put(struct panfrost_bo *bo)
          */
         panfrost_bo_cache_evict_stale_bos(dev);
         pthread_mutex_unlock(&dev->bo_cache.lock);
-
-        /* Update the label to help debug BO cache memory usage issues */
-        bo->label = "Unused (BO cache)";
 
         return true;
 }
@@ -343,11 +334,8 @@ panfrost_bo_mmap(struct panfrost_bo *bo)
         bo->ptr.cpu = os_mmap(NULL, bo->size, PROT_READ | PROT_WRITE, MAP_SHARED,
                               bo->dev->fd, mmap_bo.offset);
         if (bo->ptr.cpu == MAP_FAILED) {
-                bo->ptr.cpu = NULL;
-                fprintf(stderr,
-                        "mmap failed: result=%p size=0x%llx fd=%i offset=0x%llx %m\n",
-                        bo->ptr.cpu, (long long)bo->size, bo->dev->fd,
-                        (long long)mmap_bo.offset);
+                fprintf(stderr, "mmap failed: %p %m\n", bo->ptr.cpu);
+                assert(0);
         }
 }
 
@@ -367,7 +355,7 @@ panfrost_bo_munmap(struct panfrost_bo *bo)
 
 struct panfrost_bo *
 panfrost_bo_create(struct panfrost_device *dev, size_t size,
-                   uint32_t flags, const char *label)
+                   uint32_t flags)
 {
         struct panfrost_bo *bo;
 
@@ -375,7 +363,7 @@ panfrost_bo_create(struct panfrost_device *dev, size_t size,
         assert(size > 0);
 
         /* To maximize BO cache usage, don't allocate tiny BOs */
-        size = ALIGN_POT(size, 4096);
+        size = MAX2(size, 4096);
 
         /* GROWABLE BOs cannot be mmapped */
         if (flags & PAN_BO_GROWABLE)
@@ -388,11 +376,11 @@ panfrost_bo_create(struct panfrost_device *dev, size_t size,
          * and if that fails too, we try one more time to allocate from the
          * cache, but this time we accept to wait.
          */
-        bo = panfrost_bo_cache_fetch(dev, size, flags, label, true);
+        bo = panfrost_bo_cache_fetch(dev, size, flags, true);
         if (!bo)
-                bo = panfrost_bo_alloc(dev, size, flags, label);
+                bo = panfrost_bo_alloc(dev, size, flags);
         if (!bo)
-                bo = panfrost_bo_cache_fetch(dev, size, flags, label, false);
+                bo = panfrost_bo_cache_fetch(dev, size, flags, false);
 
         if (!bo)
                 fprintf(stderr, "BO creation failed\n");
@@ -448,9 +436,6 @@ panfrost_bo_unreference(struct panfrost_bo *bo)
                 /* When the reference count goes to zero, we need to cleanup */
                 panfrost_bo_munmap(bo);
 
-                if (dev->debug & (PAN_DBG_TRACE | PAN_DBG_SYNC))
-                        pandecode_inject_free(bo->ptr.gpu, bo->size);
-
                 /* Rather than freeing the BO now, we'll cache the BO for later
                  * allocations if we're allowed to.
                  */
@@ -483,16 +468,9 @@ panfrost_bo_import(struct panfrost_device *dev, int fd)
                 bo->dev = dev;
                 bo->ptr.gpu = (mali_ptr) get_bo_offset.offset;
                 bo->size = lseek(fd, 0, SEEK_END);
-                /* Sometimes this can fail and return -1. size of -1 is not
-                 * a nice thing for mmap to try mmap. Be more robust also
-                 * for zero sized maps and fail nicely too
-                 */
-                if ((bo->size == 0) || (bo->size == (size_t)-1)) {
-                        pthread_mutex_unlock(&dev->bo_map_lock);
-                        return NULL;
-                }
                 bo->flags = PAN_BO_SHARED;
                 bo->gem_handle = gem_handle;
+                assert(bo->size > 0);
                 p_atomic_set(&bo->refcnt, 1);
                 // TODO map and unmap on demand?
                 panfrost_bo_mmap(bo);

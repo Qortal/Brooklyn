@@ -19,7 +19,6 @@
 # SOFTWARE.
 
 computerator_files = [
-  'a4xx.c',
   'a6xx.c',
   'ir3_asm.c',
   'main.c',
@@ -43,7 +42,6 @@ computerator = executable(
     libfreedreno_drm,
     libfreedreno_ir3,
     libfreedreno_perfcntrs,
-    libfreedreno_common,
   ],
   dependencies : [
     dep_libdrm,

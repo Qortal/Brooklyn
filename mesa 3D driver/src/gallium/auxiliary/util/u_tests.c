@@ -48,7 +48,7 @@ util_create_texture2d(struct pipe_screen *screen, unsigned width,
                       unsigned height, enum pipe_format format,
                       unsigned num_samples)
 {
-   struct pipe_resource templ = {0};
+   struct pipe_resource templ = {{0}};
 
    templ.target = PIPE_TEXTURE_2D;
    templ.width0 = width;
@@ -97,7 +97,7 @@ util_set_blend_normal(struct cso_context *cso)
 static void
 util_set_dsa_disable(struct cso_context *cso)
 {
-   struct pipe_depth_stencil_alpha_state dsa = {{{0}}};
+   struct pipe_depth_stencil_alpha_state dsa = {{0}};
 
    cso_set_depth_stencil_alpha(cso, &dsa);
 }
@@ -126,10 +126,6 @@ util_set_max_viewport(struct cso_context *cso, struct pipe_resource *tex)
    viewport.translate[0] = 0.5f * tex->width0;
    viewport.translate[1] = 0.5f * tex->height0;
    viewport.translate[2] = 0.0f;
-   viewport.swizzle_x = PIPE_VIEWPORT_SWIZZLE_POSITIVE_X;
-   viewport.swizzle_y = PIPE_VIEWPORT_SWIZZLE_POSITIVE_Y;
-   viewport.swizzle_z = PIPE_VIEWPORT_SWIZZLE_POSITIVE_Z;
-   viewport.swizzle_w = PIPE_VIEWPORT_SWIZZLE_POSITIVE_W;
 
    cso_set_viewport(cso, &viewport);
 }
@@ -231,10 +227,10 @@ util_probe_rect_rgba_multi(struct pipe_context *ctx, struct pipe_resource *tex,
    unsigned x,y,e,c;
    bool pass = true;
 
-   map = pipe_texture_map(ctx, tex, 0, 0, PIPE_MAP_READ,
+   map = pipe_transfer_map(ctx, tex, 0, 0, PIPE_MAP_READ,
                            offx, offy, w, h, &transfer);
    pipe_get_tile_rgba(transfer, map, 0, 0, w, h, tex->format, pixels);
-   pipe_texture_unmap(ctx, transfer);
+   pipe_transfer_unmap(ctx, transfer);
 
    for (e = 0; e < num_expected_colors; e++) {
       for (y = 0; y < h; y++) {
@@ -392,7 +388,7 @@ null_sampler_view(struct pipe_context *ctx, unsigned tgsi_tex_target)
                               PIPE_FORMAT_R8G8B8A8_UNORM, 0);
    util_set_common_states_and_clear(cso, ctx, cb);
 
-   ctx->set_sampler_views(ctx, PIPE_SHADER_FRAGMENT, 0, 0, 1, false, NULL);
+   ctx->set_sampler_views(ctx, PIPE_SHADER_FRAGMENT, 0, 1, NULL);
 
    /* Fragment shader. */
    fs = util_make_fragment_tex_shader(ctx, tgsi_tex_target,
@@ -447,7 +443,7 @@ util_test_constant_buffer(struct pipe_context *ctx,
             "MOV OUT[0], CONST[0][0]\n"
             "END\n";
       struct tgsi_token tokens[1000];
-      struct pipe_shader_state state = {0};
+      struct pipe_shader_state state;
 
       if (!tgsi_text_translate(text, tokens, ARRAY_SIZE(tokens))) {
          puts("Can't compile a fragment shader.");
@@ -477,7 +473,7 @@ util_test_constant_buffer(struct pipe_context *ctx,
 }
 
 static void
-disabled_fragment_shader(struct pipe_context *ctx)
+null_fragment_shader(struct pipe_context *ctx)
 {
    struct cso_context *cso;
    struct pipe_resource *cb;
@@ -497,9 +493,6 @@ disabled_fragment_shader(struct pipe_context *ctx)
 
    vs = util_set_passthrough_vertex_shader(cso, ctx, false);
 
-   void *fs = util_make_empty_fragment_shader(ctx);
-   cso_set_fragment_shader_handle(cso, fs);
-
    query = ctx->create_query(ctx, PIPE_QUERY_PRIMITIVES_GENERATED, 0);
    ctx->begin_query(ctx, query);
    util_draw_fullscreen_quad(cso);
@@ -509,7 +502,6 @@ disabled_fragment_shader(struct pipe_context *ctx)
    /* Cleanup. */
    cso_destroy_context(cso);
    ctx->delete_vs_state(ctx, vs);
-   ctx->delete_fs_state(ctx, fs);
    ctx->destroy_query(ctx, query);
    pipe_resource_reference(&cb, NULL);
 
@@ -698,7 +690,7 @@ test_texture_barrier(struct pipe_context *ctx, bool use_fbfetch,
              "ADD OUT[0], TEMP[0], IMM[0]\n"
              "END\n";
    } else {
-      struct pipe_sampler_view templ = {0};
+      struct pipe_sampler_view templ = {{0}};
       templ.format = cb->format;
       templ.target = cb->target;
       templ.swizzle_r = PIPE_SWIZZLE_X;
@@ -706,7 +698,7 @@ test_texture_barrier(struct pipe_context *ctx, bool use_fbfetch,
       templ.swizzle_b = PIPE_SWIZZLE_Z;
       templ.swizzle_a = PIPE_SWIZZLE_W;
       view = ctx->create_sampler_view(ctx, cb, &templ);
-      ctx->set_sampler_views(ctx, PIPE_SHADER_FRAGMENT, 0, 1, 0, false, &view);
+      ctx->set_sampler_views(ctx, PIPE_SHADER_FRAGMENT, 0, 1, &view);
 
       /* Fragment shader. */
       if (num_samples > 1) {
@@ -743,7 +735,7 @@ test_texture_barrier(struct pipe_context *ctx, bool use_fbfetch,
    }
 
    struct tgsi_token tokens[1000];
-   struct pipe_shader_state state = {0};
+   struct pipe_shader_state state;
 
    if (!tgsi_text_translate(text, tokens, ARRAY_SIZE(tokens))) {
       assert(0);
@@ -842,7 +834,7 @@ test_compute_clear_image(struct pipe_context *ctx)
    image.shader_access = image.access = PIPE_IMAGE_ACCESS_READ_WRITE;
    image.format = cb->format;
 
-   ctx->set_shader_images(ctx, PIPE_SHADER_COMPUTE, 0, 1, 0, &image);
+   ctx->set_shader_images(ctx, PIPE_SHADER_COMPUTE, 0, 1, &image);
 
    /* Dispatch compute. */
    struct pipe_grid_info info = {0};
@@ -1032,7 +1024,7 @@ util_run_tests(struct pipe_screen *screen)
 {
    struct pipe_context *ctx = screen->context_create(screen, NULL, 0);
 
-   disabled_fragment_shader(ctx);
+   null_fragment_shader(ctx);
    tgsi_vs_window_space_position(ctx);
    null_sampler_view(ctx, TGSI_TEXTURE_2D);
    null_sampler_view(ctx, TGSI_TEXTURE_BUFFER);

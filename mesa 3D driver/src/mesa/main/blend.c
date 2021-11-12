@@ -32,7 +32,6 @@
 #include "glheader.h"
 #include "blend.h"
 #include "context.h"
-#include "draw_validate.h"
 #include "enums.h"
 #include "macros.h"
 #include "mtypes.h"
@@ -168,23 +167,14 @@ blend_factor_is_dual_src(GLenum factor)
 	   factor == GL_ONE_MINUS_SRC1_ALPHA);
 }
 
-static bool
+static void
 update_uses_dual_src(struct gl_context *ctx, int buf)
 {
-   bool uses_dual_src =
+   ctx->Color.Blend[buf]._UsesDualSrc =
       (blend_factor_is_dual_src(ctx->Color.Blend[buf].SrcRGB) ||
        blend_factor_is_dual_src(ctx->Color.Blend[buf].DstRGB) ||
        blend_factor_is_dual_src(ctx->Color.Blend[buf].SrcA) ||
        blend_factor_is_dual_src(ctx->Color.Blend[buf].DstA));
-
-   if (((ctx->Color._BlendUsesDualSrc >> buf) & 0x1) != uses_dual_src) {
-      if (uses_dual_src)
-         ctx->Color._BlendUsesDualSrc |= 1 << buf;
-      else
-         ctx->Color._BlendUsesDualSrc &= ~(1 << buf);
-      return true; /* changed state */
-   }
-   return false; /* no change */
 }
 
 
@@ -239,8 +229,7 @@ blend_func_separate(struct gl_context *ctx,
                     GLenum sfactorRGB, GLenum dfactorRGB,
                     GLenum sfactorA, GLenum dfactorA)
 {
-   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewBlend ? 0 : _NEW_COLOR,
-                  GL_COLOR_BUFFER_BIT);
+   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewBlend ? 0 : _NEW_COLOR);
    ctx->NewDriverState |= ctx->DriverFlags.NewBlend;
 
    const unsigned numBuffers = num_buffers(ctx);
@@ -251,16 +240,10 @@ blend_func_separate(struct gl_context *ctx,
       ctx->Color.Blend[buf].DstA = dfactorA;
    }
 
-   GLbitfield old_blend_uses_dual_src = ctx->Color._BlendUsesDualSrc;
    update_uses_dual_src(ctx, 0);
-   /* We have to replicate the bit to all color buffers. */
-   if (ctx->Color._BlendUsesDualSrc & 0x1)
-      ctx->Color._BlendUsesDualSrc |= BITFIELD_RANGE(1, numBuffers - 1);
-   else
-      ctx->Color._BlendUsesDualSrc = 0;
-
-   if (ctx->Color._BlendUsesDualSrc != old_blend_uses_dual_src)
-      _mesa_update_valid_to_render_state(ctx);
+   for (unsigned buf = 1; buf < numBuffers; buf++) {
+      ctx->Color.Blend[buf]._UsesDualSrc = ctx->Color.Blend[0]._UsesDualSrc;
+   }
 
    ctx->Color._BlendFuncPerBuffer = GL_FALSE;
 
@@ -406,16 +389,14 @@ blend_func_separatei(GLuint buf, GLenum sfactorRGB, GLenum dfactorRGB,
       return;
    }
 
-   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewBlend ? 0 : _NEW_COLOR,
-                  GL_COLOR_BUFFER_BIT);
+   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewBlend ? 0 : _NEW_COLOR);
    ctx->NewDriverState |= ctx->DriverFlags.NewBlend;
 
    ctx->Color.Blend[buf].SrcRGB = sfactorRGB;
    ctx->Color.Blend[buf].DstRGB = dfactorRGB;
    ctx->Color.Blend[buf].SrcA = sfactorA;
    ctx->Color.Blend[buf].DstA = dfactorA;
-   if (update_uses_dual_src(ctx, buf))
-      _mesa_update_valid_to_render_state(ctx);
+   update_uses_dual_src(ctx, buf);
    ctx->Color._BlendFuncPerBuffer = GL_TRUE;
 }
 
@@ -514,16 +495,6 @@ advanced_blend_mode(const struct gl_context *ctx, GLenum mode)
           advanced_blend_mode_from_gl_enum(mode) : BLEND_NONE;
 }
 
-static void
-set_advanced_blend_mode(struct gl_context *ctx,
-                        enum gl_advanced_blend_mode advanced_mode)
-{
-   if (ctx->Color._AdvancedBlendMode != advanced_mode) {
-      ctx->Color._AdvancedBlendMode = advanced_mode;
-      _mesa_update_valid_to_render_state(ctx);
-   }
-}
-
 /* This is really an extension function! */
 void GLAPIENTRY
 _mesa_BlendEquation( GLenum mode )
@@ -573,7 +544,7 @@ _mesa_BlendEquation( GLenum mode )
       ctx->Color.Blend[buf].EquationA = mode;
    }
    ctx->Color._BlendEquationPerBuffer = GL_FALSE;
-   set_advanced_blend_mode(ctx, advanced_mode);
+   ctx->Color._AdvancedBlendMode = advanced_mode;
 
    if (ctx->Driver.BlendEquationSeparate)
       ctx->Driver.BlendEquationSeparate(ctx, mode, mode);
@@ -598,7 +569,7 @@ blend_equationi(struct gl_context *ctx, GLuint buf, GLenum mode,
    ctx->Color._BlendEquationPerBuffer = GL_TRUE;
 
    if (buf == 0)
-      set_advanced_blend_mode(ctx, advanced_mode);
+      ctx->Color._AdvancedBlendMode = advanced_mode;
 }
 
 
@@ -697,7 +668,7 @@ blend_equation_separate(struct gl_context *ctx, GLenum modeRGB, GLenum modeA,
       ctx->Color.Blend[buf].EquationA = modeA;
    }
    ctx->Color._BlendEquationPerBuffer = GL_FALSE;
-   set_advanced_blend_mode(ctx, BLEND_NONE);
+   ctx->Color._AdvancedBlendMode = BLEND_NONE;
 
    if (ctx->Driver.BlendEquationSeparate)
       ctx->Driver.BlendEquationSeparate(ctx, modeRGB, modeA);
@@ -756,7 +727,7 @@ blend_equation_separatei(struct gl_context *ctx, GLuint buf, GLenum modeRGB,
    ctx->Color.Blend[buf].EquationRGB = modeRGB;
    ctx->Color.Blend[buf].EquationA = modeA;
    ctx->Color._BlendEquationPerBuffer = GL_TRUE;
-   set_advanced_blend_mode(ctx, BLEND_NONE);
+   ctx->Color._AdvancedBlendMode = BLEND_NONE;
 }
 
 
@@ -820,8 +791,7 @@ _mesa_BlendColor( GLclampf red, GLclampf green, GLclampf blue, GLclampf alpha )
    if (TEST_EQ_4V(tmp, ctx->Color.BlendColorUnclamped))
       return;
 
-   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewBlendColor ? 0 : _NEW_COLOR,
-                  GL_COLOR_BUFFER_BIT);
+   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewBlendColor ? 0 : _NEW_COLOR);
    ctx->NewDriverState |= ctx->DriverFlags.NewBlendColor;
    COPY_4FV( ctx->Color.BlendColorUnclamped, tmp );
 
@@ -866,8 +836,7 @@ _mesa_AlphaFunc( GLenum func, GLclampf ref )
    case GL_NOTEQUAL:
    case GL_GEQUAL:
    case GL_ALWAYS:
-      FLUSH_VERTICES(ctx, ctx->DriverFlags.NewAlphaTest ? 0 : _NEW_COLOR,
-                     GL_COLOR_BUFFER_BIT);
+      FLUSH_VERTICES(ctx, ctx->DriverFlags.NewAlphaTest ? 0 : _NEW_COLOR);
       ctx->NewDriverState |= ctx->DriverFlags.NewAlphaTest;
       ctx->Color.AlphaFunc = func;
       ctx->Color.AlphaRefUnclamped = ref;
@@ -933,8 +902,7 @@ logic_op(struct gl_context *ctx, GLenum opcode, bool no_error)
       }
    }
 
-   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewLogicOp ? 0 : _NEW_COLOR,
-                  GL_COLOR_BUFFER_BIT);
+   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewLogicOp ? 0 : _NEW_COLOR);
    ctx->NewDriverState |= ctx->DriverFlags.NewLogicOp;
    ctx->Color.LogicOp = opcode;
    ctx->Color._LogicOp = color_logicop_mapping[opcode & 0x0f];
@@ -983,8 +951,7 @@ _mesa_IndexMask( GLuint mask )
    if (ctx->Color.IndexMask == mask)
       return;
 
-   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewColorMask ? 0 : _NEW_COLOR,
-                  GL_COLOR_BUFFER_BIT);
+   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewColorMask ? 0 : _NEW_COLOR);
    ctx->NewDriverState |= ctx->DriverFlags.NewColorMask;
    ctx->Color.IndexMask = mask;
 }
@@ -1023,8 +990,7 @@ _mesa_ColorMask( GLboolean red, GLboolean green,
    if (ctx->Color.ColorMask == mask)
       return;
 
-   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewColorMask ? 0 : _NEW_COLOR,
-                  GL_COLOR_BUFFER_BIT);
+   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewColorMask ? 0 : _NEW_COLOR);
    ctx->NewDriverState |= ctx->DriverFlags.NewColorMask;
    ctx->Color.ColorMask = mask;
    _mesa_update_allow_draw_out_of_order(ctx);
@@ -1060,8 +1026,7 @@ _mesa_ColorMaski(GLuint buf, GLboolean red, GLboolean green,
    if (GET_COLORMASK(ctx->Color.ColorMask, buf) == mask)
       return;
 
-   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewColorMask ? 0 : _NEW_COLOR,
-                  GL_COLOR_BUFFER_BIT);
+   FLUSH_VERTICES(ctx, ctx->DriverFlags.NewColorMask ? 0 : _NEW_COLOR);
    ctx->NewDriverState |= ctx->DriverFlags.NewColorMask;
    ctx->Color.ColorMask &= ~(0xf << (4 * buf));
    ctx->Color.ColorMask |= mask << (4 * buf);
@@ -1091,7 +1056,7 @@ _mesa_ClampColor(GLenum target, GLenum clamp)
    case GL_CLAMP_VERTEX_COLOR_ARB:
       if (ctx->API == API_OPENGL_CORE)
          goto invalid_enum;
-      FLUSH_VERTICES(ctx, _NEW_LIGHT_STATE, GL_LIGHTING_BIT | GL_ENABLE_BIT);
+      FLUSH_VERTICES(ctx, _NEW_LIGHT);
       ctx->Light.ClampVertexColor = clamp;
       _mesa_update_clamp_vertex_color(ctx, ctx->DrawBuffer);
       break;
@@ -1099,14 +1064,12 @@ _mesa_ClampColor(GLenum target, GLenum clamp)
       if (ctx->API == API_OPENGL_CORE)
          goto invalid_enum;
       if (ctx->Color.ClampFragmentColor != clamp) {
-         FLUSH_VERTICES(ctx, 0, GL_COLOR_BUFFER_BIT | GL_ENABLE_BIT);
          ctx->Color.ClampFragmentColor = clamp;
          _mesa_update_clamp_fragment_color(ctx, ctx->DrawBuffer);
       }
       break;
    case GL_CLAMP_READ_COLOR_ARB:
       ctx->Color.ClampReadColor = clamp;
-      ctx->PopAttribState |= GL_COLOR_BUFFER_BIT | GL_ENABLE_BIT;
       break;
    default:
       goto invalid_enum;

@@ -28,6 +28,6 @@ from pick.ui import UI, PALETTE
 if __name__ == "__main__":
     u = UI()
     evl = urwid.AsyncioEventLoop(loop=asyncio.get_event_loop())
-    loop = urwid.MainLoop(u.render(), PALETTE, event_loop=evl, handle_mouse=False)
+    loop = urwid.MainLoop(u.render(), PALETTE, event_loop=evl)
     u.mainloop = loop
     loop.run()

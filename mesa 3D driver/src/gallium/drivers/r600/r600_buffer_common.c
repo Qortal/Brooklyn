@@ -25,7 +25,6 @@
  */
 
 #include "r600_cs.h"
-#include "evergreen_compute.h"
 #include "util/u_memory.h"
 #include "util/u_upload_mgr.h"
 #include <inttypes.h>
@@ -35,11 +34,11 @@ bool r600_rings_is_buffer_referenced(struct r600_common_context *ctx,
 				     struct pb_buffer *buf,
 				     enum radeon_bo_usage usage)
 {
-	if (ctx->ws->cs_is_buffer_referenced(&ctx->gfx.cs, buf, usage)) {
+	if (ctx->ws->cs_is_buffer_referenced(ctx->gfx.cs, buf, usage)) {
 		return true;
 	}
-	if (radeon_emitted(&ctx->dma.cs, 0) &&
-	    ctx->ws->cs_is_buffer_referenced(&ctx->dma.cs, buf, usage)) {
+	if (radeon_emitted(ctx->dma.cs, 0) &&
+	    ctx->ws->cs_is_buffer_referenced(ctx->dma.cs, buf, usage)) {
 		return true;
 	}
 	return false;
@@ -55,7 +54,7 @@ void *r600_buffer_map_sync_with_rings(struct r600_common_context *ctx,
 	assert(!(resource->flags & RADEON_FLAG_SPARSE));
 
 	if (usage & PIPE_MAP_UNSYNCHRONIZED) {
-		return ctx->ws->buffer_map(ctx->ws, resource->buf, NULL, usage);
+		return ctx->ws->buffer_map(resource->buf, NULL, usage);
 	}
 
 	if (!(usage & PIPE_MAP_WRITE)) {
@@ -63,8 +62,8 @@ void *r600_buffer_map_sync_with_rings(struct r600_common_context *ctx,
 		rusage = RADEON_USAGE_WRITE;
 	}
 
-	if (radeon_emitted(&ctx->gfx.cs, ctx->initial_gfx_cs_size) &&
-	    ctx->ws->cs_is_buffer_referenced(&ctx->gfx.cs,
+	if (radeon_emitted(ctx->gfx.cs, ctx->initial_gfx_cs_size) &&
+	    ctx->ws->cs_is_buffer_referenced(ctx->gfx.cs,
 					     resource->buf, rusage)) {
 		if (usage & PIPE_MAP_DONTBLOCK) {
 			ctx->gfx.flush(ctx, PIPE_FLUSH_ASYNC, NULL);
@@ -74,8 +73,8 @@ void *r600_buffer_map_sync_with_rings(struct r600_common_context *ctx,
 			busy = true;
 		}
 	}
-	if (radeon_emitted(&ctx->dma.cs, 0) &&
-	    ctx->ws->cs_is_buffer_referenced(&ctx->dma.cs,
+	if (radeon_emitted(ctx->dma.cs, 0) &&
+	    ctx->ws->cs_is_buffer_referenced(ctx->dma.cs,
 					     resource->buf, rusage)) {
 		if (usage & PIPE_MAP_DONTBLOCK) {
 			ctx->dma.flush(ctx, PIPE_FLUSH_ASYNC, NULL);
@@ -86,20 +85,20 @@ void *r600_buffer_map_sync_with_rings(struct r600_common_context *ctx,
 		}
 	}
 
-	if (busy || !ctx->ws->buffer_wait(ctx->ws, resource->buf, 0, rusage)) {
+	if (busy || !ctx->ws->buffer_wait(resource->buf, 0, rusage)) {
 		if (usage & PIPE_MAP_DONTBLOCK) {
 			return NULL;
 		} else {
 			/* We will be wait for the GPU. Wait for any offloaded
 			 * CS flush to complete to avoid busy-waiting in the winsys. */
-			ctx->ws->cs_sync_flush(&ctx->gfx.cs);
-			if (ctx->dma.cs.priv)
-				ctx->ws->cs_sync_flush(&ctx->dma.cs);
+			ctx->ws->cs_sync_flush(ctx->gfx.cs);
+			if (ctx->dma.cs)
+				ctx->ws->cs_sync_flush(ctx->dma.cs);
 		}
 	}
 
 	/* Setting the CS to NULL will prevent doing checks we have done already. */
-	return ctx->ws->buffer_map(ctx->ws, resource->buf, NULL, usage);
+	return ctx->ws->buffer_map(resource->buf, NULL, usage);
 }
 
 void r600_init_resource_fields(struct r600_common_screen *rscreen,
@@ -117,7 +116,7 @@ void r600_init_resource_fields(struct r600_common_screen *rscreen,
 	switch (res->b.b.usage) {
 	case PIPE_USAGE_STREAM:
 		res->flags = RADEON_FLAG_GTT_WC;
-		FALLTHROUGH;
+		/* fall through */
 	case PIPE_USAGE_STAGING:
 		/* Transfers are likely to occur more often with these
 		 * resources. */
@@ -132,7 +131,7 @@ void r600_init_resource_fields(struct r600_common_screen *rscreen,
 			res->flags |= RADEON_FLAG_GTT_WC;
 			break;
 		}
-		FALLTHROUGH;
+		/* fall through */
 	case PIPE_USAGE_DEFAULT:
 	case PIPE_USAGE_IMMUTABLE:
 	default:
@@ -223,7 +222,8 @@ bool r600_alloc_resource(struct r600_common_screen *rscreen,
 	return true;
 }
 
-void r600_buffer_destroy(struct pipe_screen *screen, struct pipe_resource *buf)
+static void r600_buffer_destroy(struct pipe_screen *screen,
+				struct pipe_resource *buf)
 {
 	struct r600_resource *rbuffer = r600_resource(buf);
 
@@ -254,7 +254,7 @@ r600_invalidate_buffer(struct r600_common_context *rctx,
 
 	/* Check if mapping this buffer would cause waiting for the GPU. */
 	if (r600_rings_is_buffer_referenced(rctx, rbuffer->buf, RADEON_USAGE_READWRITE) ||
-	    !rctx->ws->buffer_wait(rctx->ws, rbuffer->buf, 0, RADEON_USAGE_READWRITE)) {
+	    !rctx->ws->buffer_wait(rbuffer->buf, 0, RADEON_USAGE_READWRITE)) {
 		rctx->invalidate_buffer(&rctx->b, &rbuffer->b.b);
 	} else {
 		util_range_set_empty(&rbuffer->valid_buffer_range);
@@ -322,7 +322,7 @@ static void *r600_buffer_get_transfer(struct pipe_context *ctx,
 	transfer->b.b.stride = 0;
 	transfer->b.b.layer_stride = 0;
 	transfer->b.staging = NULL;
-	transfer->b.b.offset = offset;
+	transfer->offset = offset;
 	transfer->staging = staging;
 	*ptransfer = &transfer->b.b;
 	return data;
@@ -334,26 +334,22 @@ static bool r600_can_dma_copy_buffer(struct r600_common_context *rctx,
 	bool dword_aligned = !(dstx % 4) && !(srcx % 4) && !(size % 4);
 
 	return rctx->screen->has_cp_dma ||
-	       (dword_aligned && (rctx->dma.cs.priv ||
+	       (dword_aligned && (rctx->dma.cs ||
 				  rctx->screen->has_streamout));
 
 }
 
-void *r600_buffer_transfer_map(struct pipe_context *ctx,
-                               struct pipe_resource *resource,
-                               unsigned level,
-                               unsigned usage,
-                               const struct pipe_box *box,
-                               struct pipe_transfer **ptransfer)
+static void *r600_buffer_transfer_map(struct pipe_context *ctx,
+                                      struct pipe_resource *resource,
+                                      unsigned level,
+                                      unsigned usage,
+                                      const struct pipe_box *box,
+                                      struct pipe_transfer **ptransfer)
 {
 	struct r600_common_context *rctx = (struct r600_common_context*)ctx;
 	struct r600_common_screen *rscreen = (struct r600_common_screen*)ctx->screen;
 	struct r600_resource *rbuffer = r600_resource(resource);
 	uint8_t *data;
-
-	if (r600_resource(resource)->compute_global_bo) {
-		return r600_compute_global_transfer_map(ctx, resource, level, usage, box, ptransfer);
-	}
 
 	assert(box->x + box->width <= resource->width0);
 
@@ -413,7 +409,7 @@ void *r600_buffer_transfer_map(struct pipe_context *ctx,
 		 */
 		if (rbuffer->flags & RADEON_FLAG_SPARSE ||
 		    r600_rings_is_buffer_referenced(rctx, rbuffer->buf, RADEON_USAGE_READWRITE) ||
-		    !rctx->ws->buffer_wait(rctx->ws, rbuffer->buf, 0, RADEON_USAGE_READWRITE)) {
+		    !rctx->ws->buffer_wait(rbuffer->buf, 0, RADEON_USAGE_READWRITE)) {
 			/* Do a wait-free write-only transfer using a temporary buffer. */
 			unsigned offset;
 			struct r600_resource *staging = NULL;
@@ -494,7 +490,7 @@ static void r600_buffer_do_flush_region(struct pipe_context *ctx,
 
 		dst = transfer->resource;
 		src = &rtransfer->staging->b.b;
-		soffset = rtransfer->b.b.offset + box->x % R600_MAP_BUFFER_ALIGNMENT;
+		soffset = rtransfer->offset + box->x % R600_MAP_BUFFER_ALIGNMENT;
 
 		u_box_1d(soffset, box->width, &dma_box);
 
@@ -506,15 +502,12 @@ static void r600_buffer_do_flush_region(struct pipe_context *ctx,
 		       box->x + box->width);
 }
 
-void r600_buffer_flush_region(struct pipe_context *ctx,
-			      struct pipe_transfer *transfer,
-			      const struct pipe_box *rel_box)
+static void r600_buffer_flush_region(struct pipe_context *ctx,
+				     struct pipe_transfer *transfer,
+				     const struct pipe_box *rel_box)
 {
 	unsigned required_usage = PIPE_MAP_WRITE |
 				  PIPE_MAP_FLUSH_EXPLICIT;
-
-	if (r600_resource(transfer->resource)->compute_global_bo)
-		return;
 
 	if ((transfer->usage & required_usage) == required_usage) {
 		struct pipe_box box;
@@ -524,16 +517,11 @@ void r600_buffer_flush_region(struct pipe_context *ctx,
 	}
 }
 
-void r600_buffer_transfer_unmap(struct pipe_context *ctx,
-				struct pipe_transfer *transfer)
+static void r600_buffer_transfer_unmap(struct pipe_context *ctx,
+				       struct pipe_transfer *transfer)
 {
 	struct r600_common_context *rctx = (struct r600_common_context*)ctx;
 	struct r600_transfer *rtransfer = (struct r600_transfer*)transfer;
-
-	if (r600_resource(transfer->resource)->compute_global_bo) {
-		r600_compute_global_transfer_unmap(ctx, transfer);
-		return;
-	}
 
 	if (transfer->usage & PIPE_MAP_WRITE &&
 	    !(transfer->usage & PIPE_MAP_FLUSH_EXPLICIT))
@@ -571,6 +559,15 @@ void r600_buffer_subdata(struct pipe_context *ctx,
 	r600_buffer_transfer_unmap(ctx, transfer);
 }
 
+static const struct u_resource_vtbl r600_buffer_vtbl =
+{
+	NULL,				/* get_handle */
+	r600_buffer_destroy,		/* resource_destroy */
+	r600_buffer_transfer_map,	/* transfer_map */
+	r600_buffer_flush_region,	/* transfer_flush_region */
+	r600_buffer_transfer_unmap,	/* transfer_unmap */
+};
+
 static struct r600_resource *
 r600_alloc_buffer_struct(struct pipe_screen *screen,
 			 const struct pipe_resource *templ)
@@ -584,12 +581,12 @@ r600_alloc_buffer_struct(struct pipe_screen *screen,
 	pipe_reference_init(&rbuffer->b.b.reference, 1);
 	rbuffer->b.b.screen = screen;
 
-	threaded_resource_init(&rbuffer->b.b, false, 0);
+	rbuffer->b.vtbl = &r600_buffer_vtbl;
+	threaded_resource_init(&rbuffer->b.b);
 
 	rbuffer->buf = NULL;
 	rbuffer->bind_history = 0;
 	rbuffer->immed_buffer = NULL;
-	rbuffer->compute_global_bo = false;
 	util_range_init(&rbuffer->valid_buffer_range);
 	return rbuffer;
 }

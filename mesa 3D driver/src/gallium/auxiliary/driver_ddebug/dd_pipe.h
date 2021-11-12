@@ -122,10 +122,8 @@ struct call_flush {
 };
 
 struct call_draw_info {
-   struct pipe_draw_info info;
-   unsigned drawid_offset;
+   struct pipe_draw_info draw;
    struct pipe_draw_indirect_info indirect;
-   struct pipe_draw_start_count_bias draw;
 };
 
 struct call_get_query_result_resource {

@@ -99,14 +99,6 @@ nvc0_screen_is_format_supported(struct pipe_screen *pscreen,
       }
    }
 
-   if (bindings & PIPE_BIND_INDEX_BUFFER) {
-      if (format != PIPE_FORMAT_R8_UINT &&
-          format != PIPE_FORMAT_R16_UINT &&
-          format != PIPE_FORMAT_R32_UINT)
-         return false;
-      bindings &= ~PIPE_BIND_INDEX_BUFFER;
-   }
-
    return (( nvc0_format_table[format].usage |
             nvc0_vertex_format[format].usage) & bindings) == bindings;
 }
@@ -117,7 +109,6 @@ nvc0_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    const uint16_t class_3d = nouveau_screen(pscreen)->class_3d;
    const struct nouveau_screen *screen = nouveau_screen(pscreen);
    struct nouveau_device *dev = screen->device;
-   static bool debug_cap_printed[PIPE_CAP_LAST] = {};
 
    switch (param) {
    /* non-boolean caps */
@@ -205,12 +196,6 @@ nvc0_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return 16;
    case PIPE_CAP_GL_BEGIN_END_BUFFER_SIZE:
       return 512 * 1024; /* TODO: Investigate tuning this */
-   case PIPE_CAP_MAX_TEXTURE_MB:
-      return 0; /* TODO: use 1/2 of VRAM for this? */
-
-   case PIPE_CAP_SUPPORTED_PRIM_MODES_WITH_RESTART:
-   case PIPE_CAP_SUPPORTED_PRIM_MODES:
-      return BITFIELD_MASK(PIPE_PRIM_MAX);
 
    /* supported caps */
    case PIPE_CAP_TEXTURE_MIRROR_CLAMP:
@@ -273,6 +258,7 @@ nvc0_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_TGSI_TXQS:
    case PIPE_CAP_COPY_BETWEEN_COMPRESSED_AND_PLAIN_FORMATS:
    case PIPE_CAP_FORCE_PERSAMPLE_INTERP:
+   case PIPE_CAP_SHAREABLE_SHADERS:
    case PIPE_CAP_CLEAR_TEXTURE:
    case PIPE_CAP_DRAW_PARAMETERS:
    case PIPE_CAP_TGSI_PACK_HALF_FLOAT:
@@ -284,6 +270,7 @@ nvc0_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_STRING_MARKER:
    case PIPE_CAP_FRAMEBUFFER_NO_ATTACHMENT:
    case PIPE_CAP_CULL_DISTANCE:
+   case PIPE_CAP_PRIMITIVE_RESTART_FOR_PATCHES:
    case PIPE_CAP_ROBUST_BUFFER_ACCESS_BEHAVIOR:
    case PIPE_CAP_TGSI_VOTE:
    case PIPE_CAP_POLYGON_OFFSET_UNITS_UNSCALED:
@@ -310,8 +297,7 @@ nvc0_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_CLIP_PLANES:
    case PIPE_CAP_TEXTURE_SHADOW_LOD:
    case PIPE_CAP_PACKED_STREAM_OUTPUT:
-   case PIPE_CAP_CLEAR_SCISSORED:
-   case PIPE_CAP_GL_CLAMP:
+   case PIPE_CAP_DRAW_INFO_START_WITH_USER_INDICES:
       return 1;
    case PIPE_CAP_PREFER_BLIT_BASED_TEXTURE_TRANSFER:
       return nouveau_screen(pscreen)->vram_domain & NOUVEAU_BO_VRAM ? 1 : 0;
@@ -334,7 +320,6 @@ nvc0_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_PROGRAMMABLE_SAMPLE_LOCATIONS:
    case PIPE_CAP_VIEWPORT_SWIZZLE:
    case PIPE_CAP_VIEWPORT_MASK:
-   case PIPE_CAP_SAMPLER_REDUCTION_MINMAX:
       return class_3d >= GM200_3D_CLASS;
    case PIPE_CAP_CONSERVATIVE_RASTER_PRE_SNAP_TRIANGLES:
       return class_3d >= GP100_3D_CLASS;
@@ -353,7 +338,6 @@ nvc0_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return 0;
 
    /* unsupported caps */
-   case PIPE_CAP_EMULATE_NONFIXED_PRIMITIVE_RESTART:
    case PIPE_CAP_DEPTH_CLIP_DISABLE_SEPARATE:
    case PIPE_CAP_TGSI_FS_COORD_ORIGIN_LOWER_LEFT:
    case PIPE_CAP_TGSI_FS_COORD_PIXEL_CENTER_INTEGER:
@@ -416,16 +400,6 @@ nvc0_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_SHADER_SAMPLES_IDENTICAL:
    case PIPE_CAP_VIEWPORT_TRANSFORM_LOWERED:
    case PIPE_CAP_PSIZ_CLAMPED:
-   case PIPE_CAP_TEXTURE_BUFFER_SAMPLER:
-   case PIPE_CAP_PREFER_REAL_BUFFER_IN_CONSTBUF0:
-   case PIPE_CAP_MAP_UNSYNCHRONIZED_THREAD_SAFE: /* when we fix MT stuff */
-   case PIPE_CAP_ALPHA_TO_COVERAGE_DITHER_CONTROL: /* TODO */
-   case PIPE_CAP_SHADER_ATOMIC_INT64: /* TODO */
-   case PIPE_CAP_GLSL_ZERO_INIT:
-   case PIPE_CAP_BLEND_EQUATION_ADVANCED:
-   case PIPE_CAP_NO_CLIP_ON_COPY_TEX:
-   case PIPE_CAP_DEVICE_PROTECTED_CONTENT:
-   case PIPE_CAP_SAMPLER_REDUCTION_MINMAX_ARB:
       return 0;
 
    case PIPE_CAP_VENDOR_ID:
@@ -446,11 +420,8 @@ nvc0_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
       return 0;
 
    default:
-      if (!debug_cap_printed[param]) {
-         debug_printf("%s: unhandled cap %d\n", __func__, param);
-         debug_cap_printed[param] = true;
-      }
-      FALLTHROUGH;
+      debug_printf("%s: unhandled cap %d\n", __func__, param);
+      /* fallthrough */
    /* caps where we want the default value */
    case PIPE_CAP_DMABUF:
    case PIPE_CAP_ESSL_FEATURE_LEVEL:
@@ -541,7 +512,6 @@ nvc0_screen_get_shader_param(struct pipe_screen *pscreen,
    case PIPE_SHADER_CAP_INT64_ATOMICS:
    case PIPE_SHADER_CAP_FP16:
    case PIPE_SHADER_CAP_FP16_DERIVATIVES:
-   case PIPE_SHADER_CAP_FP16_CONST_BUFFERS:
    case PIPE_SHADER_CAP_INT16:
    case PIPE_SHADER_CAP_GLSL_16BIT_CONSTS:
    case PIPE_SHADER_CAP_MAX_HW_ATOMIC_COUNTERS:
@@ -635,10 +605,13 @@ nvc0_screen_get_compute_param(struct pipe_screen *pscreen,
       switch (obj_class) {
       case GM200_COMPUTE_CLASS:
          RET((uint64_t []) { 96 << 10 });
+         break;
       case GM107_COMPUTE_CLASS:
          RET((uint64_t []) { 64 << 10 });
+         break;
       default:
          RET((uint64_t []) { 48 << 10 });
+         break;
       }
    case PIPE_COMPUTE_CAP_MAX_PRIVATE_SIZE: /* l[] */
       RET((uint64_t []) { 512 << 10 });
@@ -701,8 +674,17 @@ nvc0_screen_destroy(struct pipe_screen *pscreen)
    if (!nouveau_drm_screen_unref(&screen->base))
       return;
 
-   nouveau_fence_cleanup(&screen->base);
+   if (screen->base.fence.current) {
+      struct nouveau_fence *current = NULL;
 
+      /* nouveau_fence_wait will create a new current fence, so wait on the
+       * _current_ one, and remove both.
+       */
+      nouveau_fence_ref(screen->base.fence.current, &current);
+      nouveau_fence_wait(current, NULL);
+      nouveau_fence_ref(NULL, &current);
+      nouveau_fence_ref(NULL, &screen->base.fence.current);
+   }
    if (screen->base.pushbuf)
       screen->base.pushbuf->user_priv = NULL;
 

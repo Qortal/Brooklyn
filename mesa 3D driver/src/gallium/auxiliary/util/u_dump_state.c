@@ -521,11 +521,15 @@ util_dump_depth_stencil_alpha_state(FILE *stream, const struct pipe_depth_stenci
 
    util_dump_struct_begin(stream, "pipe_depth_stencil_alpha_state");
 
-   util_dump_member(stream, bool, state, depth_enabled);
-   if (state->depth_enabled) {
-      util_dump_member(stream, bool, state, depth_writemask);
-      util_dump_member(stream, enum_func, state, depth_func);
+   util_dump_member_begin(stream, "depth");
+   util_dump_struct_begin(stream, "pipe_depth_state");
+   util_dump_member(stream, bool, &state->depth, enabled);
+   if (state->depth.enabled) {
+      util_dump_member(stream, bool, &state->depth, writemask);
+      util_dump_member(stream, enum_func, &state->depth, func);
    }
+   util_dump_struct_end(stream);
+   util_dump_member_end(stream);
 
    util_dump_member_begin(stream, "stencil");
    util_dump_array_begin(stream);
@@ -550,11 +554,15 @@ util_dump_depth_stencil_alpha_state(FILE *stream, const struct pipe_depth_stenci
    util_dump_array_end(stream);
    util_dump_member_end(stream);
 
-   util_dump_member(stream, bool, state, alpha_enabled);
-   if (state->alpha_enabled) {
-      util_dump_member(stream, enum_func, state, alpha_func);
-      util_dump_member(stream, float, state, alpha_ref_value);
+   util_dump_member_begin(stream, "alpha");
+   util_dump_struct_begin(stream, "pipe_alpha_state");
+   util_dump_member(stream, bool, &state->alpha, enabled);
+   if (state->alpha.enabled) {
+      util_dump_member(stream, enum_func, &state->alpha, func);
+      util_dump_member(stream, float, &state->alpha, ref_value);
    }
+   util_dump_struct_end(stream);
+   util_dump_member_end(stream);
 
    util_dump_struct_end(stream);
 }
@@ -909,10 +917,17 @@ util_dump_draw_info(FILE *stream, const struct pipe_draw_info *state)
    util_dump_member(stream, uint, state, has_user_indices);
 
    util_dump_member(stream, enum_prim_mode, state, mode);
+   util_dump_member(stream, uint, state, start);
+   util_dump_member(stream, uint, state, count);
 
    util_dump_member(stream, uint, state, start_instance);
    util_dump_member(stream, uint, state, instance_count);
 
+   util_dump_member(stream, uint, state, drawid);
+
+   util_dump_member(stream, uint, state, vertices_per_patch);
+
+   util_dump_member(stream, int,  state, index_bias);
    util_dump_member(stream, uint, state, min_index);
    util_dump_member(stream, uint, state, max_index);
 
@@ -926,36 +941,19 @@ util_dump_draw_info(FILE *stream, const struct pipe_draw_info *state)
       else
          util_dump_member(stream, ptr, state, index.resource);
    }
-   util_dump_struct_end(stream);
-}
+   util_dump_member(stream, ptr, state, count_from_stream_output);
 
-void
-util_dump_draw_start_count_bias(FILE *stream, const struct pipe_draw_start_count_bias *state)
-{
-   util_dump_struct_begin(stream, "pipe_draw_start_count_bias");
-   util_dump_member(stream, uint, state, start);
-   util_dump_member(stream, uint, state, count);
-   util_dump_member(stream, int,  state, index_bias);
-   util_dump_struct_end(stream);
-}
-
-void
-util_dump_draw_indirect_info(FILE *stream,
-                             const struct pipe_draw_indirect_info *state)
-{
-   if (!state) {
-      util_dump_null(stream);
-      return;
+   if (!state->indirect) {
+      util_dump_member(stream, ptr, state, indirect);
+   } else {
+      util_dump_member(stream, uint, state, indirect->offset);
+      util_dump_member(stream, uint, state, indirect->stride);
+      util_dump_member(stream, uint, state, indirect->draw_count);
+      util_dump_member(stream, uint, state, indirect->indirect_draw_count_offset);
+      util_dump_member(stream, ptr, state, indirect->buffer);
+      util_dump_member(stream, ptr, state, indirect->indirect_draw_count);
    }
 
-   util_dump_struct_begin(stream, "pipe_draw_indirect_info");
-   util_dump_member(stream, uint, state, offset);
-   util_dump_member(stream, uint, state, stride);
-   util_dump_member(stream, uint, state, draw_count);
-   util_dump_member(stream, uint, state, indirect_draw_count_offset);
-   util_dump_member(stream, ptr, state, buffer);
-   util_dump_member(stream, ptr, state, indirect_draw_count);
-   util_dump_member(stream, ptr, state, count_from_stream_output);
    util_dump_struct_end(stream);
 }
 

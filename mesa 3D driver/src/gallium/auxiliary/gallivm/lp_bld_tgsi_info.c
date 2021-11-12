@@ -26,7 +26,6 @@
  **************************************************************************/
 
 
-#include "util/compiler.h"
 #include "util/u_memory.h"
 #include "util/u_math.h"
 #include "tgsi/tgsi_parse.h"
@@ -459,7 +458,6 @@ analyse_instruction(struct analysis_context *ctx,
       /* XXX: Are there more cases? */
       memset(&ctx->temp, 0, sizeof ctx->temp);
       memset(&info->output, 0, sizeof info->output);
-      FALLTHROUGH;
    default:
       break;
    }

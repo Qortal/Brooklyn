@@ -88,7 +88,7 @@ swizzled_border_color(const struct v3d_device_info *devinfo,
         uint8_t swiz = chan;
 
         /* If we're doing swizzling in the sampler, then only rearrange the
-         * border color for the mismatch between the V3D texture format and
+         * border color for the mismatch between the VC5 texture format and
          * the PIPE_FORMAT, since GL_ARB_texture_swizzle will be handled by
          * the sampler's swizzle.
          *
@@ -177,8 +177,7 @@ emit_one_texture(struct v3d_context *v3d, struct v3d_texture_stateobj *stage_tex
                                             MAX2(psampler->min_lod, 0),
                                             psview->u.tex.last_level),
                 .max_level_of_detail = MIN2(psview->u.tex.first_level +
-                                            MAX2(psampler->max_lod,
-                                                 psampler->min_lod),
+                                            psampler->max_lod,
                                             psview->u.tex.last_level),
 
                 .texture_base_pointer = cl_address(rsc->bo,
@@ -418,8 +417,8 @@ v3dX(emit_state)(struct pipe_context *pctx)
         struct v3d_job *job = v3d->job;
         bool rasterizer_discard = v3d->rasterizer->base.rasterizer_discard;
 
-        if (v3d->dirty & (V3D_DIRTY_SCISSOR | V3D_DIRTY_VIEWPORT |
-                          V3D_DIRTY_RASTERIZER)) {
+        if (v3d->dirty & (VC5_DIRTY_SCISSOR | VC5_DIRTY_VIEWPORT |
+                          VC5_DIRTY_RASTERIZER)) {
                 float *vpscale = v3d->viewport.scale;
                 float *vptranslate = v3d->viewport.translate;
                 float vp_minx = -fabsf(vpscale[0]) + vptranslate[0];
@@ -469,32 +468,12 @@ v3dX(emit_state)(struct pipe_context *pctx)
                 job->draw_min_y = MIN2(job->draw_min_y, miny);
                 job->draw_max_x = MAX2(job->draw_max_x, maxx);
                 job->draw_max_y = MAX2(job->draw_max_y, maxy);
-
-                if (!v3d->rasterizer->base.scissor) {
-                    job->scissor.disabled = true;
-                } else if (!job->scissor.disabled &&
-                           (v3d->dirty & V3D_DIRTY_SCISSOR)) {
-                        if (job->scissor.count < MAX_JOB_SCISSORS) {
-                                job->scissor.rects[job->scissor.count].min_x =
-                                        v3d->scissor.minx;
-                                job->scissor.rects[job->scissor.count].min_y =
-                                        v3d->scissor.miny;
-                                job->scissor.rects[job->scissor.count].max_x =
-                                        v3d->scissor.maxx - 1;
-                                job->scissor.rects[job->scissor.count].max_y =
-                                        v3d->scissor.maxy - 1;
-                                job->scissor.count++;
-                        } else {
-                                job->scissor.disabled = true;
-                                perf_debug("Too many scissor rects.");
-                        }
-                }
         }
 
-        if (v3d->dirty & (V3D_DIRTY_RASTERIZER |
-                          V3D_DIRTY_ZSA |
-                          V3D_DIRTY_BLEND |
-                          V3D_DIRTY_COMPILED_FS)) {
+        if (v3d->dirty & (VC5_DIRTY_RASTERIZER |
+                          VC5_DIRTY_ZSA |
+                          VC5_DIRTY_BLEND |
+                          VC5_DIRTY_COMPILED_FS)) {
                 cl_emit(&job->bcl, CFG_BITS, config) {
                         config.enable_forward_facing_primitive =
                                 !rasterizer_discard &&
@@ -534,14 +513,14 @@ v3dX(emit_state)(struct pipe_context *pctx)
                          * along with ZSA
                          */
                         config.early_z_updates_enable =
-                                (job->ez_state != V3D_EZ_DISABLED);
-                        if (v3d->zsa->base.depth_enabled) {
+                                (job->ez_state != VC5_EZ_DISABLED);
+                        if (v3d->zsa->base.depth.enabled) {
                                 config.z_updates_enable =
-                                        v3d->zsa->base.depth_writemask;
+                                        v3d->zsa->base.depth.writemask;
                                 config.early_z_enable =
                                         config.early_z_updates_enable;
                                 config.depth_test_function =
-                                        v3d->zsa->base.depth_func;
+                                        v3d->zsa->base.depth.func;
                         } else {
                                 config.depth_test_function = PIPE_FUNC_ALWAYS;
                         }
@@ -558,7 +537,7 @@ v3dX(emit_state)(struct pipe_context *pctx)
 
         }
 
-        if (v3d->dirty & V3D_DIRTY_RASTERIZER &&
+        if (v3d->dirty & VC5_DIRTY_RASTERIZER &&
             v3d->rasterizer->base.offset_tri) {
                 if (job->zsbuf &&
                     job->zsbuf->format == PIPE_FORMAT_Z16_UNORM) {
@@ -572,7 +551,7 @@ v3dX(emit_state)(struct pipe_context *pctx)
                 }
         }
 
-        if (v3d->dirty & V3D_DIRTY_RASTERIZER) {
+        if (v3d->dirty & VC5_DIRTY_RASTERIZER) {
                 cl_emit(&job->bcl, POINT_SIZE, point_size) {
                         point_size.point_size = v3d->rasterizer->point_size;
                 }
@@ -582,7 +561,7 @@ v3dX(emit_state)(struct pipe_context *pctx)
                 }
         }
 
-        if (v3d->dirty & V3D_DIRTY_VIEWPORT) {
+        if (v3d->dirty & VC5_DIRTY_VIEWPORT) {
                 cl_emit(&job->bcl, CLIPPER_XY_SCALING, clip) {
                         clip.viewport_half_width_in_1_256th_of_pixel =
                                 v3d->viewport.scale[0] * 256.0f;
@@ -613,7 +592,7 @@ v3dX(emit_state)(struct pipe_context *pctx)
                 }
         }
 
-        if (v3d->dirty & V3D_DIRTY_BLEND) {
+        if (v3d->dirty & VC5_DIRTY_BLEND) {
                 struct v3d_blend_state *blend = v3d->blend;
 
                 if (blend->blend_enables) {
@@ -632,7 +611,7 @@ v3dX(emit_state)(struct pipe_context *pctx)
                 }
         }
 
-        if (v3d->dirty & V3D_DIRTY_BLEND) {
+        if (v3d->dirty & VC5_DIRTY_BLEND) {
                 struct pipe_blend_state *blend = &v3d->blend->base;
 
                 cl_emit(&job->bcl, COLOR_WRITE_MASKS, mask) {
@@ -649,8 +628,8 @@ v3dX(emit_state)(struct pipe_context *pctx)
         /* GFXH-1431: On V3D 3.x, writing BLEND_CONFIG resets the constant
          * color.
          */
-        if (v3d->dirty & V3D_DIRTY_BLEND_COLOR ||
-            (V3D_VERSION < 41 && (v3d->dirty & V3D_DIRTY_BLEND))) {
+        if (v3d->dirty & VC5_DIRTY_BLEND_COLOR ||
+            (V3D_VERSION < 41 && (v3d->dirty & VC5_DIRTY_BLEND))) {
                 cl_emit(&job->bcl, BLEND_CONSTANT_COLOR, color) {
                         color.red_f16 = (v3d->swap_color_rb ?
                                           v3d->blend_color.hf[2] :
@@ -663,7 +642,7 @@ v3dX(emit_state)(struct pipe_context *pctx)
                 }
         }
 
-        if (v3d->dirty & (V3D_DIRTY_ZSA | V3D_DIRTY_STENCIL_REF)) {
+        if (v3d->dirty & (VC5_DIRTY_ZSA | VC5_DIRTY_STENCIL_REF)) {
                 struct pipe_stencil_state *front = &v3d->zsa->base.stencil[0];
                 struct pipe_stencil_state *back = &v3d->zsa->base.stencil[1];
 
@@ -688,17 +667,17 @@ v3dX(emit_state)(struct pipe_context *pctx)
         /* Pre-4.x, we have texture state that depends on both the sampler and
          * the view, so we merge them together at draw time.
          */
-        if (v3d->dirty & V3D_DIRTY_FRAGTEX)
+        if (v3d->dirty & VC5_DIRTY_FRAGTEX)
                 emit_textures(v3d, &v3d->tex[PIPE_SHADER_FRAGMENT]);
 
-        if (v3d->dirty & V3D_DIRTY_GEOMTEX)
+        if (v3d->dirty & VC5_DIRTY_GEOMTEX)
                 emit_textures(v3d, &v3d->tex[PIPE_SHADER_GEOMETRY]);
 
-        if (v3d->dirty & V3D_DIRTY_VERTTEX)
+        if (v3d->dirty & VC5_DIRTY_VERTTEX)
                 emit_textures(v3d, &v3d->tex[PIPE_SHADER_VERTEX]);
 #endif
 
-        if (v3d->dirty & V3D_DIRTY_FLAT_SHADE_FLAGS) {
+        if (v3d->dirty & VC5_DIRTY_FLAT_SHADE_FLAGS) {
                 if (!emit_varying_flags(job,
                                         v3d->prog.fs->prog_data.fs->flat_shade_flags,
                                         emit_flat_shade_flags)) {
@@ -707,7 +686,7 @@ v3dX(emit_state)(struct pipe_context *pctx)
         }
 
 #if V3D_VERSION >= 40
-        if (v3d->dirty & V3D_DIRTY_NOPERSPECTIVE_FLAGS) {
+        if (v3d->dirty & VC5_DIRTY_NOPERSPECTIVE_FLAGS) {
                 if (!emit_varying_flags(job,
                                         v3d->prog.fs->prog_data.fs->noperspective_flags,
                                         emit_noperspective_flags)) {
@@ -715,7 +694,7 @@ v3dX(emit_state)(struct pipe_context *pctx)
                 }
         }
 
-        if (v3d->dirty & V3D_DIRTY_CENTROID_FLAGS) {
+        if (v3d->dirty & VC5_DIRTY_CENTROID_FLAGS) {
                 if (!emit_varying_flags(job,
                                         v3d->prog.fs->prog_data.fs->centroid_flags,
                                         emit_centroid_flags)) {
@@ -727,9 +706,9 @@ v3dX(emit_state)(struct pipe_context *pctx)
         /* Set up the transform feedback data specs (which VPM entries to
          * output to which buffers).
          */
-        if (v3d->dirty & (V3D_DIRTY_STREAMOUT |
-                          V3D_DIRTY_RASTERIZER |
-                          V3D_DIRTY_PRIM_MODE)) {
+        if (v3d->dirty & (VC5_DIRTY_STREAMOUT |
+                          VC5_DIRTY_RASTERIZER |
+                          VC5_DIRTY_PRIM_MODE)) {
                 struct v3d_streamout_stateobj *so = &v3d->streamout;
                 if (so->num_targets) {
                         bool psiz_per_vertex = (v3d->prim_mode == PIPE_PRIM_POINTS &&
@@ -769,8 +748,8 @@ v3dX(emit_state)(struct pipe_context *pctx)
                 }
         }
 
-        /* Set up the transform feedback buffers. */
-        if (v3d->dirty & V3D_DIRTY_STREAMOUT) {
+        /* Set up the trasnform feedback buffers. */
+        if (v3d->dirty & VC5_DIRTY_STREAMOUT) {
                 struct v3d_uncompiled_shader *tf_shader = get_tf_shader(v3d);
                 struct v3d_streamout_stateobj *so = &v3d->streamout;
                 for (int i = 0; i < so->num_targets; i++) {
@@ -814,7 +793,7 @@ v3dX(emit_state)(struct pipe_context *pctx)
                 }
         }
 
-        if (v3d->dirty & V3D_DIRTY_OQ) {
+        if (v3d->dirty & VC5_DIRTY_OQ) {
                 cl_emit(&job->bcl, OCCLUSION_QUERY_COUNTER, counter) {
                         if (v3d->active_queries && v3d->current_oq) {
                                 counter.address = cl_address(v3d->current_oq, 0);
@@ -823,7 +802,7 @@ v3dX(emit_state)(struct pipe_context *pctx)
         }
 
 #if V3D_VERSION >= 40
-        if (v3d->dirty & V3D_DIRTY_SAMPLE_STATE) {
+        if (v3d->dirty & VC5_DIRTY_SAMPLE_STATE) {
                 cl_emit(&job->bcl, SAMPLE_STATE, state) {
                         /* Note: SampleCoverage was handled at the
                          * frontend level by converting to sample_mask.

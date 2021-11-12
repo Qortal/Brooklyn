@@ -360,8 +360,7 @@ _mesa_GetProgramResourceName(GLuint program, GLenum programInterface,
    }
 
    _mesa_get_program_resource_name(shProg, programInterface, index, bufSize,
-                                   length, name, false,
-                                   "glGetProgramResourceName");
+                                   length, name, "glGetProgramResourceName");
 }
 
 void GLAPIENTRY

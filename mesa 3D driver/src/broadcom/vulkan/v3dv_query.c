@@ -23,7 +23,7 @@
 
 #include "v3dv_private.h"
 
-VKAPI_ATTR VkResult VKAPI_CALL
+VkResult
 v3dv_CreateQueryPool(VkDevice _device,
                      const VkQueryPoolCreateInfo *pCreateInfo,
                      const VkAllocationCallbacks *pAllocator,
@@ -35,11 +35,14 @@ v3dv_CreateQueryPool(VkDevice _device,
           pCreateInfo->queryType == VK_QUERY_TYPE_TIMESTAMP);
    assert(pCreateInfo->queryCount > 0);
 
+   /* FIXME: the hw allows us to allocate up to 16 queries in a single block
+    *        for occlussion queries so we should try to use that.
+    */
    struct v3dv_query_pool *pool =
-      vk_object_zalloc(&device->vk, pAllocator, sizeof(*pool),
-                       VK_OBJECT_TYPE_QUERY_POOL);
+      vk_alloc2(&device->alloc, pAllocator, sizeof(*pool), 8,
+                VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (pool == NULL)
-      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    pool->query_type = pCreateInfo->queryType;
    pool->query_count = pCreateInfo->queryCount;
@@ -47,42 +50,29 @@ v3dv_CreateQueryPool(VkDevice _device,
    VkResult result;
 
    const uint32_t pool_bytes = sizeof(struct v3dv_query) * pool->query_count;
-   pool->queries = vk_alloc2(&device->vk.alloc, pAllocator, pool_bytes, 8,
+   pool->queries = vk_alloc2(&device->alloc, pAllocator, pool_bytes, 8,
                              VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (pool->queries == NULL) {
-      result = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
-      goto fail;
-   }
-
-   if (pool->query_type == VK_QUERY_TYPE_OCCLUSION) {
-      /* The hardware allows us to setup groups of 16 queries in consecutive
-       * 4-byte addresses, requiring only that each group of 16 queries is
-       * aligned to a 1024 byte boundary.
-       */
-      const uint32_t query_groups = DIV_ROUND_UP(pool->query_count, 16);
-      const uint32_t bo_size = query_groups * 1024;
-      pool->bo = v3dv_bo_alloc(device, bo_size, "query", true);
-      if (!pool->bo) {
-         result = vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
-         goto fail;
-      }
-      if (!v3dv_bo_map(device, pool->bo, bo_size)) {
-         result = vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
-         goto fail;
-      }
+      result = vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+      goto fail_alloc_bo_list;
    }
 
    uint32_t i;
    for (i = 0; i < pool->query_count; i++) {
       pool->queries[i].maybe_available = false;
       switch (pool->query_type) {
-      case VK_QUERY_TYPE_OCCLUSION: {
-         const uint32_t query_group = i / 16;
-         const uint32_t query_offset = query_group * 1024 + (i % 16) * 4;
-         pool->queries[i].bo = pool->bo;
-         pool->queries[i].offset = query_offset;
-         break;
+      case VK_QUERY_TYPE_OCCLUSION:
+         pool->queries[i].bo = v3dv_bo_alloc(device, 4096, "query", true);
+         if (!pool->queries[i].bo) {
+            result = vk_error(device->instance, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+            goto fail_alloc_bo;
          }
+         /* For occlusion queries we only need a 4-byte counter */
+         if (!v3dv_bo_map(device, pool->queries[i].bo, 4)) {
+            result = vk_error(device->instance, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+            goto fail_alloc_bo;
+         }
+         break;
       case VK_QUERY_TYPE_TIMESTAMP:
          pool->queries[i].value = 0;
          break;
@@ -95,17 +85,18 @@ v3dv_CreateQueryPool(VkDevice _device,
 
    return VK_SUCCESS;
 
-fail:
-   if (pool->bo)
-      v3dv_bo_free(device, pool->bo);
-   if (pool->queries)
-      vk_free2(&device->vk.alloc, pAllocator, pool->queries);
-   vk_object_free(&device->vk, pAllocator, pool);
+fail_alloc_bo:
+   for (uint32_t j = 0; j < i; j++)
+      v3dv_bo_free(device, pool->queries[j].bo);
+   vk_free2(&device->alloc, pAllocator, pool->queries);
+
+fail_alloc_bo_list:
+   vk_free2(&device->alloc, pAllocator, pool);
 
    return result;
 }
 
-VKAPI_ATTR void VKAPI_CALL
+void
 v3dv_DestroyQueryPool(VkDevice _device,
                       VkQueryPool queryPool,
                       const VkAllocationCallbacks *pAllocator)
@@ -116,13 +107,13 @@ v3dv_DestroyQueryPool(VkDevice _device,
    if (!pool)
       return;
 
-   if (pool->bo)
-      v3dv_bo_free(device, pool->bo);
+   if (pool->query_type == VK_QUERY_TYPE_OCCLUSION) {
+      for (uint32_t i = 0; i < pool->query_count; i++)
+         v3dv_bo_free(device, pool->queries[i].bo);
+   }
 
-   if (pool->queries)
-      vk_free2(&device->vk.alloc, pAllocator, pool->queries);
-
-   vk_object_free(&device->vk, pAllocator, pool);
+   vk_free2(&device->alloc, pAllocator, pool->queries);
+   vk_free2(&device->alloc, pAllocator, pool);
 }
 
 static void
@@ -137,13 +128,12 @@ write_query_result(void *dst, uint32_t idx, bool do_64bit, uint64_t value)
    }
 }
 
-static VkResult
+static uint64_t
 get_occlusion_query_result(struct v3dv_device *device,
                            struct v3dv_query_pool *pool,
                            uint32_t query,
                            bool do_wait,
-                           bool *available,
-                           uint64_t *value)
+                           bool *available)
 {
    assert(pool && pool->query_type == VK_QUERY_TYPE_OCCLUSION);
 
@@ -159,28 +149,25 @@ get_occlusion_query_result(struct v3dv_device *device,
        *     error may occur."
        */
       if (!q->maybe_available)
-         return vk_error(device, VK_ERROR_DEVICE_LOST);
+         return vk_error(device->instance, VK_ERROR_DEVICE_LOST);
 
       if (!v3dv_bo_wait(device, q->bo, 0xffffffffffffffffull))
-         return vk_error(device, VK_ERROR_DEVICE_LOST);
+         return vk_error(device->instance, VK_ERROR_DEVICE_LOST);
 
       *available = true;
    } else {
       *available = q->maybe_available && v3dv_bo_wait(device, q->bo, 0);
    }
 
-   const uint8_t *query_addr = ((uint8_t *) q->bo->map) + q->offset;
-   *value = (uint64_t) *((uint32_t *)query_addr);
-   return VK_SUCCESS;
+   return (uint64_t) *((uint32_t *) q->bo->map);
 }
 
-static VkResult
+static uint64_t
 get_timestamp_query_result(struct v3dv_device *device,
                            struct v3dv_query_pool *pool,
                            uint32_t query,
                            bool do_wait,
-                           bool *available,
-                           uint64_t *value)
+                           bool *available)
 {
    assert(pool && pool->query_type == VK_QUERY_TYPE_TIMESTAMP);
 
@@ -195,32 +182,28 @@ get_timestamp_query_result(struct v3dv_device *device,
        *     error may occur."
        */
       if (!q->maybe_available)
-         return vk_error(device, VK_ERROR_DEVICE_LOST);
+         return vk_error(device->instance, VK_ERROR_DEVICE_LOST);
 
       *available = true;
    } else {
       *available = q->maybe_available;
    }
 
-   *value = q->value;
-   return VK_SUCCESS;
+   return q->value;
 }
 
-static VkResult
+static uint64_t
 get_query_result(struct v3dv_device *device,
                  struct v3dv_query_pool *pool,
                  uint32_t query,
                  bool do_wait,
-                 bool *available,
-                 uint64_t *value)
+                 bool *available)
 {
    switch (pool->query_type) {
    case VK_QUERY_TYPE_OCCLUSION:
-      return get_occlusion_query_result(device, pool, query, do_wait,
-                                        available, value);
+      return get_occlusion_query_result(device, pool, query, do_wait, available);
    case VK_QUERY_TYPE_TIMESTAMP:
-      return get_timestamp_query_result(device, pool, query, do_wait,
-                                        available, value);
+      return get_timestamp_query_result(device, pool, query, do_wait, available);
    default:
       unreachable("Unsupported query type");
    }
@@ -245,12 +228,8 @@ v3dv_get_query_pool_results_cpu(struct v3dv_device *device,
 
    VkResult result = VK_SUCCESS;
    for (uint32_t i = first; i < first + count; i++) {
-      bool available = false;
-      uint64_t value = 0;
-      VkResult query_result =
-         get_query_result(device, pool, i, do_wait, &available, &value);
-      if (query_result == VK_ERROR_DEVICE_LOST)
-         result = VK_ERROR_DEVICE_LOST;
+      bool available;
+      uint64_t value = get_query_result(device, pool, i, do_wait, &available);
 
       /**
        * From the Vulkan 1.0 spec:
@@ -272,7 +251,7 @@ v3dv_get_query_pool_results_cpu(struct v3dv_device *device,
       if (flags & VK_QUERY_RESULT_WITH_AVAILABILITY_BIT)
          write_query_result(data, slot++, do_64bit, available ? 1u : 0u);
 
-      if (!write_result && result != VK_ERROR_DEVICE_LOST)
+      if (!write_result)
          result = VK_NOT_READY;
 
       data += stride;
@@ -281,7 +260,7 @@ v3dv_get_query_pool_results_cpu(struct v3dv_device *device,
    return result;
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL
+VkResult
 v3dv_GetQueryPoolResults(VkDevice _device,
                          VkQueryPool queryPool,
                          uint32_t firstQuery,
@@ -298,7 +277,7 @@ v3dv_GetQueryPoolResults(VkDevice _device,
                                           pData, stride, flags);
 }
 
-VKAPI_ATTR void VKAPI_CALL
+void
 v3dv_CmdResetQueryPool(VkCommandBuffer commandBuffer,
                        VkQueryPool queryPool,
                        uint32_t firstQuery,
@@ -310,7 +289,7 @@ v3dv_CmdResetQueryPool(VkCommandBuffer commandBuffer,
    v3dv_cmd_buffer_reset_queries(cmd_buffer, pool, firstQuery, queryCount);
 }
 
-VKAPI_ATTR void VKAPI_CALL
+void
 v3dv_CmdCopyQueryPoolResults(VkCommandBuffer commandBuffer,
                              VkQueryPool queryPool,
                              uint32_t firstQuery,
@@ -329,7 +308,7 @@ v3dv_CmdCopyQueryPoolResults(VkCommandBuffer commandBuffer,
                                       dst, dstOffset, stride, flags);
 }
 
-VKAPI_ATTR void VKAPI_CALL
+void
 v3dv_CmdBeginQuery(VkCommandBuffer commandBuffer,
                    VkQueryPool queryPool,
                    uint32_t query,
@@ -341,7 +320,7 @@ v3dv_CmdBeginQuery(VkCommandBuffer commandBuffer,
    v3dv_cmd_buffer_begin_query(cmd_buffer, pool, query, flags);
 }
 
-VKAPI_ATTR void VKAPI_CALL
+void
 v3dv_CmdEndQuery(VkCommandBuffer commandBuffer,
                  VkQueryPool queryPool,
                  uint32_t query)
@@ -350,42 +329,4 @@ v3dv_CmdEndQuery(VkCommandBuffer commandBuffer,
    V3DV_FROM_HANDLE(v3dv_query_pool, pool, queryPool);
 
    v3dv_cmd_buffer_end_query(cmd_buffer, pool, query);
-}
-
-void
-v3dv_reset_query_pools(struct v3dv_device *device,
-                       struct v3dv_query_pool *pool,
-                       uint32_t first,
-                       uint32_t count)
-{
-   for (uint32_t i = first; i < first + count; i++) {
-      assert(i < pool->query_count);
-      struct v3dv_query *q = &pool->queries[i];
-      q->maybe_available = false;
-      switch (pool->query_type) {
-      case VK_QUERY_TYPE_OCCLUSION: {
-         const uint8_t *q_addr = ((uint8_t *) q->bo->map) + q->offset;
-         uint32_t *counter = (uint32_t *) q_addr;
-         *counter = 0;
-         break;
-      }
-      case VK_QUERY_TYPE_TIMESTAMP:
-         q->value = 0;
-         break;
-      default:
-         unreachable("Unsupported query type");
-      }
-   }
-}
-
-VKAPI_ATTR void VKAPI_CALL
-v3dv_ResetQueryPool(VkDevice _device,
-                    VkQueryPool queryPool,
-                    uint32_t firstQuery,
-                    uint32_t queryCount)
-{
-   V3DV_FROM_HANDLE(v3dv_device, device, _device);
-   V3DV_FROM_HANDLE(v3dv_query_pool, pool, queryPool);
-
-   v3dv_reset_query_pools(device, pool, firstQuery, queryCount);
 }

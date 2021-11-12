@@ -1111,24 +1111,23 @@
     <type name="DEBUGPROC" size="4" pointer="true"/>
 
     <function name="NewList" deprecated="3.1"
-              marshal_call_after="_mesa_glthread_NewList(ctx, list, mode);">
+              marshal_call_after="if (COMPAT) ctx->GLThread.inside_dlist = true;">
         <param name="list" type="GLuint"/>
         <param name="mode" type="GLenum"/>
         <glx sop="101"/>
     </function>
 
     <function name="EndList" deprecated="3.1"
-              marshal_call_after="_mesa_glthread_EndList(ctx);">
+              marshal_call_after="if (COMPAT) ctx->GLThread.inside_dlist = false;">
         <glx sop="102"/>
     </function>
 
-    <function name="CallList" deprecated="3.1" marshal="custom">
+    <function name="CallList" deprecated="3.1">
         <param name="list" type="GLuint"/>
         <glx rop="1"/>
     </function>
 
-    <function name="CallLists" deprecated="3.1"
-              marshal_call_after="_mesa_glthread_CallLists(ctx, n, type, lists);">
+    <function name="CallLists" deprecated="3.1">
         <param name="n" type="GLsizei" counter="true"/>
         <param name="type" type="GLenum"/>
         <param name="lists" type="const GLvoid *" variable_param="type" count="n"
@@ -1136,8 +1135,7 @@
         <glx rop="2" large="true"/>
     </function>
 
-    <function name="DeleteLists" deprecated="3.1"
-              marshal_call_after="_mesa_glthread_DeleteLists(ctx, range);">
+    <function name="DeleteLists" deprecated="3.1">
         <param name="list" type="GLuint"/>
         <param name="range" type="GLsizei"/>
         <glx sop="103"/>
@@ -1149,8 +1147,7 @@
         <glx sop="104"/>
     </function>
 
-    <function name="ListBase" deprecated="3.1"
-              marshal_call_after="_mesa_glthread_ListBase(ctx, base);">
+    <function name="ListBase" deprecated="3.1">
         <param name="base" type="GLuint"/>
         <glx rop="3"/>
     </function>
@@ -1160,8 +1157,7 @@
         <glx rop="4"/>
     </function>
 
-    <function name="Bitmap" deprecated="3.1"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="Bitmap" deprecated="3.1">
         <param name="width" type="GLsizei"/>
         <param name="height" type="GLsizei"/>
         <param name="xorig" type="GLfloat"/>
@@ -1598,53 +1594,53 @@
         <glx rop="44"/>
     </function>
 
-    <function name="Rectd" vectorequiv="Rectdv" deprecated="3.1">
+    <function name="Rectd" vectorequiv="Rectdv" deprecated="3.1" exec="dynamic">
         <param name="x1" type="GLdouble"/>
         <param name="y1" type="GLdouble"/>
         <param name="x2" type="GLdouble"/>
         <param name="y2" type="GLdouble"/>
     </function>
 
-    <function name="Rectdv" deprecated="3.1">
+    <function name="Rectdv" deprecated="3.1" exec="dynamic">
         <param name="v1" type="const GLdouble *" count="2"/>
         <param name="v2" type="const GLdouble *" count="2"/>
         <glx rop="45"/>
     </function>
 
-    <function name="Rectf" vectorequiv="Rectfv" deprecated="3.1">
+    <function name="Rectf" vectorequiv="Rectfv" deprecated="3.1" exec="dynamic">
         <param name="x1" type="GLfloat"/>
         <param name="y1" type="GLfloat"/>
         <param name="x2" type="GLfloat"/>
         <param name="y2" type="GLfloat"/>
     </function>
 
-    <function name="Rectfv" deprecated="3.1">
+    <function name="Rectfv" deprecated="3.1" exec="dynamic">
         <param name="v1" type="const GLfloat *" count="2"/>
         <param name="v2" type="const GLfloat *" count="2"/>
         <glx rop="46"/>
     </function>
 
-    <function name="Recti" vectorequiv="Rectiv" deprecated="3.1">
+    <function name="Recti" vectorequiv="Rectiv" deprecated="3.1" exec="dynamic">
         <param name="x1" type="GLint"/>
         <param name="y1" type="GLint"/>
         <param name="x2" type="GLint"/>
         <param name="y2" type="GLint"/>
     </function>
 
-    <function name="Rectiv" deprecated="3.1">
+    <function name="Rectiv" deprecated="3.1" exec="dynamic">
         <param name="v1" type="const GLint *" count="2"/>
         <param name="v2" type="const GLint *" count="2"/>
         <glx rop="47"/>
     </function>
 
-    <function name="Rects" vectorequiv="Rectsv" deprecated="3.1">
+    <function name="Rects" vectorequiv="Rectsv" deprecated="3.1" exec="dynamic">
         <param name="x1" type="GLshort"/>
         <param name="y1" type="GLshort"/>
         <param name="x2" type="GLshort"/>
         <param name="y2" type="GLshort"/>
     </function>
 
-    <function name="Rectsv" deprecated="3.1">
+    <function name="Rectsv" deprecated="3.1" exec="dynamic">
         <param name="v1" type="const GLshort *" count="2"/>
         <param name="v2" type="const GLshort *" count="2"/>
         <glx rop="48"/>
@@ -2119,8 +2115,7 @@
         <glx rop="101"/>
     </function>
 
-    <function name="PolygonStipple" deprecated="3.1"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="PolygonStipple" deprecated="3.1">
         <param name="mask" type="const GLubyte *" img_width="32" img_height="32" img_format="GL_COLOR_INDEX" img_type="GL_BITMAP" img_target="0" img_pad_dimensions="false"/>
         <glx rop="102"/>
     </function>
@@ -2168,8 +2163,7 @@
         <glx rop="108"/>
     </function>
 
-    <function name="TexImage1D" no_error="true"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="TexImage1D" no_error="true">
         <param name="target" type="GLenum"/>
         <param name="level" type="GLint"/>
         <param name="internalformat" type="GLint"/>
@@ -2181,8 +2175,7 @@
         <glx rop="109" large="true"/>
     </function>
 
-    <function name="TexImage2D" es1="1.0" es2="2.0" no_error="true"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="TexImage2D" es1="1.0" es2="2.0" no_error="true">
         <param name="target" type="GLenum"/>
         <param name="level" type="GLint"/>
         <param name="internalformat" type="GLint"/>
@@ -2383,13 +2376,13 @@
     </function>
 
     <function name="Disable" es1="1.0" es2="2.0"
-              marshal_call_after="_mesa_glthread_Disable(ctx, cap);">
+              marshal_call_after="if (cap == GL_PRIMITIVE_RESTART || cap == GL_PRIMITIVE_RESTART_FIXED_INDEX) _mesa_glthread_set_prim_restart(ctx, cap, false);">
         <param name="cap" type="GLenum"/>
         <glx rop="138" handcode="client"/>
     </function>
 
     <function name="Enable" es1="1.0" es2="2.0"
-              marshal_call_after='_mesa_glthread_Enable(ctx, cap);'>
+              marshal_call_after='if (cap == GL_PRIMITIVE_RESTART || cap == GL_PRIMITIVE_RESTART_FIXED_INDEX) { _mesa_glthread_set_prim_restart(ctx, cap, true); } else if (cap == GL_DEBUG_OUTPUT_SYNCHRONOUS_ARB) { _mesa_glthread_disable(ctx, "Enable(DEBUG_OUTPUT_SYNCHRONOUS)"); }'>
         <param name="cap" type="GLenum"/>
         <glx rop="139" handcode="client"/>
     </function>
@@ -2398,18 +2391,22 @@
         <glx sop="108" handcode="true"/>
     </function>
 
+    <!-- Shared contexts have to wait for glthread to finish execution after glFlush,
+         so that other contexts can see the effect of previous GL calls when glFlush returns.
+         This is harmless if the contexts run on different threads, because we only stall
+         1 thread that's asynchronous anyway. It's worse when the contexts run on the same
+         thread, but that's not a good use of multiple contexts.
+    -->
     <function name="Flush" es1="1.0" es2="2.0"
-              marshal_call_after="_mesa_glthread_flush_batch(ctx); if (ctx->Shared->HasExternallySharedImages) _mesa_glthread_finish(ctx);">
+              marshal_call_after="_mesa_glthread_flush_batch(ctx); if (ctx->Shared->RefCount > 1) _mesa_glthread_finish(ctx);">
         <glx sop="142" handcode="true"/>
     </function>
 
-    <function name="PopAttrib" deprecated="3.1"
-              marshal_call_after="_mesa_glthread_PopAttrib(ctx);">
+    <function name="PopAttrib" deprecated="3.1">
         <glx rop="141"/>
     </function>
 
-    <function name="PushAttrib" deprecated="3.1"
-              marshal_call_after="_mesa_glthread_PushAttrib(ctx, mask);">
+    <function name="PushAttrib" deprecated="3.1">
         <param name="mask" type="GLbitfield"/>
         <glx rop="142"/>
     </function>
@@ -2629,24 +2626,21 @@
         <glx sop="110" handcode="client"/>
     </function>
 
-    <function name="PixelMapfv" deprecated="3.1"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="PixelMapfv" deprecated="3.1" marshal="sync">
         <param name="map" type="GLenum"/>
         <param name="mapsize" type="GLsizei" counter="true"/>
         <param name="values" type="const GLfloat *" count="mapsize"/>
         <glx rop="168" large="true"/>
     </function>
 
-    <function name="PixelMapuiv" deprecated="3.1"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="PixelMapuiv" deprecated="3.1" marshal="sync">
         <param name="map" type="GLenum"/>
         <param name="mapsize" type="GLsizei" counter="true"/>
         <param name="values" type="const GLuint *" count="mapsize"/>
         <glx rop="169" large="true"/>
     </function>
 
-    <function name="PixelMapusv" deprecated="3.1"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="PixelMapusv" deprecated="3.1" marshal="sync">
         <param name="map" type="GLenum"/>
         <param name="mapsize" type="GLsizei" counter="true"/>
         <param name="values" type="const GLushort *" count="mapsize"/>
@@ -2667,8 +2661,7 @@
         <glx rop="172"/>
     </function>
 
-    <function name="ReadPixels" es1="1.0" es2="2.0" no_error="true"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_pack_buffer(ctx)">
+    <function name="ReadPixels" es1="1.0" es2="2.0" no_error="true">
         <param name="x" type="GLint"/>
         <param name="y" type="GLint"/>
         <param name="width" type="GLsizei"/>
@@ -2679,8 +2672,7 @@
         <glx sop="111"/>
     </function>
 
-    <function name="DrawPixels" deprecated="3.1"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="DrawPixels" deprecated="3.1">
         <param name="width" type="GLsizei"/>
         <param name="height" type="GLsizei"/>
         <param name="format" type="GLenum"/>
@@ -2718,7 +2710,7 @@
         <glx sop="116" handcode="client"/>
     </function>
 
-    <function name="GetIntegerv" es1="1.0" es2="2.0" marshal="custom">
+    <function name="GetIntegerv" es1="1.0" es2="2.0">
         <param name="pname" type="GLenum"/>
         <param name="params" type="GLint *" output="true" variable_param="pname"/>
         <glx sop="117" handcode="client"/>
@@ -2773,29 +2765,25 @@
         <glx sop="124"/>
     </function>
 
-    <function name="GetPixelMapfv" deprecated="3.1"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_pack_buffer(ctx)">
+    <function name="GetPixelMapfv" deprecated="3.1">
         <param name="map" type="GLenum"/>
         <param name="values" type="GLfloat *" output="true" variable_param="map"/>
         <glx sop="125"/>
     </function>
 
-    <function name="GetPixelMapuiv" deprecated="3.1"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_pack_buffer(ctx)">
+    <function name="GetPixelMapuiv" deprecated="3.1">
         <param name="map" type="GLenum"/>
         <param name="values" type="GLuint *" output="true" variable_param="map"/>
         <glx sop="126"/>
     </function>
 
-    <function name="GetPixelMapusv" deprecated="3.1"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_pack_buffer(ctx)">
+    <function name="GetPixelMapusv" deprecated="3.1">
         <param name="map" type="GLenum"/>
         <param name="values" type="GLushort *" output="true" variable_param="map"/>
         <glx sop="127"/>
     </function>
 
-    <function name="GetPolygonStipple" deprecated="3.1"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_pack_buffer(ctx)">
+    <function name="GetPolygonStipple" deprecated="3.1">
         <param name="mask" type="GLubyte *" output="true" img_width="32" img_height="32" img_format="GL_COLOR_INDEX" img_type="GL_BITMAP"/>
         <glx sop="128"/>
     </function>
@@ -2841,8 +2829,7 @@
         <glx sop="134"/>
     </function>
 
-    <function name="GetTexImage"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_pack_buffer(ctx)">
+    <function name="GetTexImage">
         <param name="target" type="GLenum"/>
         <param name="level" type="GLint"/>
         <param name="format" type="GLenum"/>
@@ -2923,8 +2910,7 @@
         <glx rop="178"/>
     </function>
 
-    <function name="MatrixMode" es1="1.0" deprecated="3.1"
-              marshal_call_after="_mesa_glthread_MatrixMode(ctx, mode);">
+    <function name="MatrixMode" es1="1.0" deprecated="3.1">
         <param name="mode" type="GLenum"/>
         <glx rop="179"/>
     </function>
@@ -2949,13 +2935,11 @@
         <glx rop="182"/>
     </function>
 
-    <function name="PopMatrix" es1="1.0" deprecated="3.1"
-              marshal_call_after="_mesa_glthread_PopMatrix(ctx);">
+    <function name="PopMatrix" es1="1.0" deprecated="3.1">
         <glx rop="183"/>
     </function>
 
-    <function name="PushMatrix" es1="1.0" deprecated="3.1"
-              marshal_call_after="_mesa_glthread_PushMatrix(ctx);">
+    <function name="PushMatrix" es1="1.0" deprecated="3.1">
         <glx rop="184"/>
     </function>
 
@@ -3185,7 +3169,7 @@
     <enum name="CLIENT_VERTEX_ARRAY_BIT"                  value="0x00000002"/>
     <enum name="CLIENT_ALL_ATTRIB_BITS"                   value="0xFFFFFFFF"/>
 
-    <function name="ArrayElement" deprecated="3.1" exec="dynamic">
+    <function name="ArrayElement" deprecated="3.1" exec="dynamic" marshal="draw">
         <param name="i" type="GLint"/>
         <glx handcode="true"/>
     </function>
@@ -3206,14 +3190,14 @@
         <glx handcode="true"/>
     </function>
 
-    <function name="DrawArrays" es1="1.0" es2="2.0" marshal="custom">
+    <function name="DrawArrays" es1="1.0" es2="2.0" exec="dynamic" marshal="custom">
         <param name="mode" type="GLenum"/>
         <param name="first" type="GLint"/>
         <param name="count" type="GLsizei"/>
         <glx rop="193" handcode="true"/>
     </function>
 
-    <function name="DrawElements" es1="1.0" es2="2.0" marshal="custom">
+    <function name="DrawElements" es1="1.0" es2="2.0" exec="dynamic" marshal="custom">
         <param name="mode" type="GLenum"/>
         <param name="count" type="GLsizei"/>
         <param name="type" type="GLenum"/>
@@ -3338,8 +3322,7 @@
         <glx rop="4122"/>
     </function>
 
-    <function name="TexSubImage1D" no_error="true"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="TexSubImage1D" no_error="true">
         <param name="target" type="GLenum"/>
         <param name="level" type="GLint"/>
         <param name="xoffset" type="GLint"/>
@@ -3351,8 +3334,7 @@
         <glx rop="4099" large="true"/>
     </function>
 
-    <function name="TexSubImage2D" es1="1.0" es2="2.0" no_error="true"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="TexSubImage2D" es1="1.0" es2="2.0" no_error="true">
         <param name="target" type="GLenum"/>
         <param name="level" type="GLint"/>
         <param name="xoffset" type="GLint"/>
@@ -3415,12 +3397,12 @@
     </function>
 
     <function name="PopClientAttrib" deprecated="3.1"
-              marshal_call_after="_mesa_glthread_PopClientAttrib(ctx);">
+              marshal_call_after="if (COMPAT) _mesa_glthread_PopClientAttrib(ctx);">
         <glx handcode="true"/>
     </function>
 
     <function name="PushClientAttrib" deprecated="3.1"
-              marshal_call_after="_mesa_glthread_PushClientAttrib(ctx, mask, false);">
+              marshal_call_after="if (COMPAT) _mesa_glthread_PushClientAttrib(ctx, mask, false);">
         <param name="mask" type="GLbitfield"/>
         <glx handcode="true"/>
     </function>
@@ -3786,7 +3768,7 @@
         <glx rop="4097"/>
     </function>
 
-    <function name="DrawRangeElements" es2="3.0" marshal="custom">
+    <function name="DrawRangeElements" es2="3.0" exec="dynamic" marshal="custom">
         <param name="mode" type="GLenum"/>
         <param name="start" type="GLuint"/>
         <param name="end" type="GLuint"/>
@@ -4053,8 +4035,7 @@
         <glx rop="4113"/>
     </function>
 
-    <function name="TexImage3D" es2="3.0" no_error="true"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="TexImage3D" es2="3.0" no_error="true">
         <param name="target" type="GLenum"/>
         <param name="level" type="GLint"/>
         <param name="internalformat" type="GLint"/>
@@ -4068,8 +4049,7 @@
         <glx rop="4114" large="true"/>
     </function>
 
-    <function name="TexSubImage3D" es2="3.0" no_error="true"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="TexSubImage3D" es2="3.0" no_error="true">
         <param name="target" type="GLenum"/>
         <param name="level" type="GLint"/>
         <param name="xoffset" type="GLint"/>
@@ -4312,8 +4292,7 @@
     <enum name="DOT3_RGB"                                 value="0x86AE"/>
     <enum name="DOT3_RGBA"                                value="0x86AF"/>
 
-    <function name="ActiveTexture" es1="1.0" es2="2.0" no_error="true"
-              marshal_call_after="ctx->GLThread.ActiveTexture = texture - GL_TEXTURE0; if (ctx->GLThread.MatrixMode == GL_TEXTURE) ctx->GLThread.MatrixIndex = _mesa_get_matrix_index(ctx, texture);">
+    <function name="ActiveTexture" es1="1.0" es2="2.0" no_error="true">
         <param name="texture" type="GLenum"/>
         <glx rop="197"/>
     </function>
@@ -4553,8 +4532,8 @@
         <glx rop="229"/>
     </function>
 
-    <function name="CompressedTexImage3D" es2="3.0" no_error="true"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="CompressedTexImage3D" es2="3.0" marshal="sync"
+              no_error="true">
         <param name="target" type="GLenum"/>
         <param name="level" type="GLint"/>
         <param name="internalformat" type="GLenum"/>
@@ -4567,8 +4546,8 @@
         <glx rop="216" handcode="client"/>
     </function>
 
-    <function name="CompressedTexImage2D" es1="1.0" es2="2.0" no_error="true"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="CompressedTexImage2D" es1="1.0" es2="2.0" marshal="sync"
+               no_error="true">
         <param name="target" type="GLenum"/>
         <param name="level" type="GLint"/>
         <param name="internalformat" type="GLenum"/>
@@ -4580,8 +4559,7 @@
         <glx rop="215" handcode="client"/>
     </function>
 
-    <function name="CompressedTexImage1D" no_error="true"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="CompressedTexImage1D" marshal="sync" no_error="true">
         <param name="target" type="GLenum"/>
         <param name="level" type="GLint"/>
         <param name="internalformat" type="GLenum"/>
@@ -4592,8 +4570,8 @@
         <glx rop="214" handcode="client"/>
     </function>
 
-    <function name="CompressedTexSubImage3D" es2="3.0" no_error="true"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="CompressedTexSubImage3D" es2="3.0" marshal="sync"
+              no_error="true">
         <param name="target" type="GLenum"/>
         <param name="level" type="GLint"/>
         <param name="xoffset" type="GLint"/>
@@ -4608,8 +4586,8 @@
         <glx rop="219" handcode="client"/>
     </function>
 
-    <function name="CompressedTexSubImage2D" es1="1.0" es2="2.0" no_error="true"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="CompressedTexSubImage2D" es1="1.0" es2="2.0" marshal="sync"
+              no_error="true">
         <param name="target" type="GLenum"/>
         <param name="level" type="GLint"/>
         <param name="xoffset" type="GLint"/>
@@ -4622,8 +4600,7 @@
         <glx rop="218" handcode="client"/>
     </function>
 
-    <function name="CompressedTexSubImage1D" no_error="true"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_unpack_buffer(ctx)">
+    <function name="CompressedTexSubImage1D" marshal="sync" no_error="true">
         <param name="target" type="GLenum"/>
         <param name="level" type="GLint"/>
         <param name="xoffset" type="GLint"/>
@@ -4634,8 +4611,7 @@
         <glx rop="217" handcode="client"/>
     </function>
 
-    <function name="GetCompressedTexImage"
-              marshal="async" marshal_sync="_mesa_glthread_has_no_pack_buffer(ctx)">
+    <function name="GetCompressedTexImage">
         <param name="target" type="GLenum"/>
         <param name="level" type="GLint"/>
         <param name="img" type="GLvoid *" output="true"/>
@@ -5162,7 +5138,7 @@
         <glx ignore="true"/>
     </function>
 
-    <function name="UnmapBuffer" es2="3.0" no_error="true" marshal="async">
+    <function name="UnmapBuffer" es2="3.0" no_error="true">
         <param name="target" type="GLenum"/>
         <return type="GLboolean"/>
         <glx ignore="true"/>
@@ -5377,8 +5353,7 @@
         <glx ignore="true"/>
     </function>
 
-    <function name="DeleteProgram" es2="2.0"
-              marshal_call_after="_mesa_glthread_ProgramChanged(ctx);">
+    <function name="DeleteProgram" es2="2.0">
         <param name="program" type="GLuint"/>
         <glx ignore="true"/>
     </function>
@@ -5419,7 +5394,7 @@
         <glx ignore="true"/>
     </function>
 
-    <function name="GetActiveUniform" es2="2.0" marshal="custom">
+    <function name="GetActiveUniform" es2="2.0">
         <param name="program" type="GLuint"/>
         <param name="index" type="GLuint"/>
         <param name="bufSize" type="GLsizei"/>
@@ -5548,8 +5523,7 @@
         <glx ignore="true"/>
     </function>
 
-    <function name="LinkProgram" es2="2.0" no_error="true"
-              marshal_call_after="_mesa_glthread_ProgramChanged(ctx);">
+    <function name="LinkProgram" es2="2.0" no_error="true">
         <param name="program" type="GLuint"/>
         <glx ignore="true"/>
     </function>
@@ -7727,8 +7701,7 @@
     <type name="charARB"   size="1" glx_name="CARD8"/>
     <type name="handleARB" size="4" glx_name="CARD32"/>
 
-    <function name="DeleteObjectARB"
-              marshal_call_after="_mesa_glthread_ProgramChanged(ctx);">
+    <function name="DeleteObjectARB">
         <param name="obj" type="GLhandleARB"/>
         <glx ignore="true"/>
     </function>
@@ -8180,7 +8153,7 @@
   <enum name="MAX_TRANSFORM_FEEDBACK_BUFFERS" value="0x8E70"/>
   <enum name="MAX_VERTEX_STREAMS"             value="0x8E71"/>
 
-  <function name="DrawTransformFeedbackStream">
+  <function name="DrawTransformFeedbackStream" marshal="draw">
     <param name="mode" type="GLenum"/>
     <param name="id" type="GLuint"/>
     <param name="stream" type="GLuint"/>
@@ -8228,13 +8201,13 @@
 <xi:include href="ARB_base_instance.xml" xmlns:xi="http://www.w3.org/2001/XInclude"/>
 
 <category name="GL_ARB_transform_feedback_instanced" number="109">
-  <function name="DrawTransformFeedbackInstanced">
+  <function name="DrawTransformFeedbackInstanced" marshal="draw">
     <param name="mode" type="GLenum"/>
     <param name="id" type="GLuint"/>
     <param name="primcount" type="GLsizei"/>
   </function>
 
-  <function name="DrawTransformFeedbackStreamInstanced">
+  <function name="DrawTransformFeedbackStreamInstanced" marshal="draw">
     <param name="mode" type="GLenum"/>
     <param name="id" type="GLuint"/>
     <param name="stream" type="GLuint"/>
@@ -10312,14 +10285,14 @@
 </category>
 
 <category name="GL_EXT_multi_draw_arrays" number="148">
-    <function name="MultiDrawArraysEXT" es1="1.0" es2="2.0" alias="MultiDrawArrays">
+    <function name="MultiDrawArraysEXT" es1="1.0" es2="2.0" exec="dynamic" alias="MultiDrawArrays">
         <param name="mode" type="GLenum"/>
         <param name="first" type="const GLint *"/>
         <param name="count" type="const GLsizei *"/>
         <param name="primcount" type="GLsizei"/>
     </function>
 
-    <function name="MultiDrawElementsEXT" es1="1.0" es2="2.0" marshal="custom">
+    <function name="MultiDrawElementsEXT" es1="1.0" es2="2.0" exec="dynamic" marshal="custom">
         <param name="mode" type="GLenum"/>
         <param name="count" type="const GLsizei *" count="primcount"/>
         <param name="type" type="GLenum"/>
@@ -11433,7 +11406,7 @@
 </category>
 
 <category name="GL_IBM_multimode_draw_arrays" number="200">
-    <function name="MultiModeDrawArraysIBM"
+    <function name="MultiModeDrawArraysIBM" marshal="draw"
               marshal_sync="_mesa_glthread_has_non_vbo_vertices(ctx)">
         <param name="mode" type="const GLenum *" count="primcount"/>
         <param name="first" type="const GLint *" count="primcount"/>
@@ -11443,7 +11416,7 @@
         <glx handcode="true" ignore="true"/>
     </function>
 
-    <function name="MultiModeDrawElementsIBM"
+    <function name="MultiModeDrawElementsIBM" marshal="draw"
               marshal_sync="_mesa_glthread_has_non_vbo_vertices_or_indices(ctx)">
         <param name="mode" type="const GLenum *" count="primcount"/>
         <param name="count" type="const GLsizei *" count="primcount"/>
@@ -13331,11 +13304,6 @@
         <param name="size" type="GLsizeiptr"/>
         <param name="named" type="GLboolean"/>
         <param name="ext_dsa" type="GLboolean"/>
-    </function>
-
-    <!-- Set a GL error. Used by glthread to set errors without syncing. -->
-    <function name="InternalSetError" es2="2.0">
-        <param name="error" type="GLenum"/>
     </function>
 </category>
 

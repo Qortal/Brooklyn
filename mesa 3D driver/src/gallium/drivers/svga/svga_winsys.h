@@ -99,9 +99,6 @@ struct svga_winsys_stats_timeframe {
    uint64 startTime;
    uint64 adjustedStartTime;
    struct svga_winsys_stats_timeframe *enclosing;
-
-   struct svga_winsys_screen *sws;
-   int32 slot;
 };
 
 enum svga_stats_count {
@@ -403,7 +400,7 @@ struct svga_winsys_context
     * Map a guest-backed surface.
     * \param swc The winsys context
     * \param surface The surface to map
-    * \param flags  bitmask of PIPE_MAP_x flags
+    * \param flags  bitmaks of PIPE_MAP_x flags
     * \param retry Whether to flush and retry the map
     * \param rebind Whether to issue an immediate rebind and flush.
     *
@@ -765,19 +762,19 @@ struct svga_winsys_screen
     * Increment a statistic counter
     */
    void
-   (*stats_inc)(struct svga_winsys_screen *, enum svga_stats_count);
+   (*stats_inc)(enum svga_stats_count);
 
    /**
     * Push a time frame onto the stack
     */
    void
-   (*stats_time_push)(struct svga_winsys_screen *, enum svga_stats_time, struct svga_winsys_stats_timeframe *);
+   (*stats_time_push)(enum svga_stats_time, struct svga_winsys_stats_timeframe *);
 
    /**
     * Pop a time frame.
     */
    void
-   (*stats_time_pop)(struct svga_winsys_screen *);
+   (*stats_time_pop)();
 
    /**
     * Send a host log message
@@ -794,7 +791,7 @@ struct svga_winsys_screen
    /** Have SM5 hardware? */
    boolean have_sm5;
 
-   /** To rebind resources at the beginning of a new command buffer */
+   /** To rebind resources at the beginnning of a new command buffer */
    boolean need_to_rebind_resources;
 
    boolean have_generate_mipmap_cmd;

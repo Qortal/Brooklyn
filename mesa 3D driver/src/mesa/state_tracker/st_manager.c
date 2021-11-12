@@ -99,6 +99,7 @@ attachment_to_buffer_index(enum st_attachment_type statt)
    case ST_ATTACHMENT_ACCUM:
       index = BUFFER_ACCUM;
       break;
+   case ST_ATTACHMENT_SAMPLE:
    default:
       index = BUFFER_COUNT;
       break;
@@ -282,10 +283,6 @@ st_framebuffer_update_attachments(struct st_framebuffer *stfb)
    gl_buffer_index idx;
 
    stfb->num_statts = 0;
-
-   for (enum st_attachment_type i = 0; i < ST_ATTACHMENT_COUNT; i++)
-      stfb->statts[i] = ST_ATTACHMENT_INVALID;
-
    for (idx = 0; idx < BUFFER_COUNT; idx++) {
       struct st_renderbuffer *strb;
       enum st_attachment_type statt;
@@ -427,6 +424,7 @@ st_visual_to_context_mode(const struct st_visual *visual,
    }
 
    if (visual->samples > 1) {
+      mode->sampleBuffers = 1;
       mode->samples = visual->samples;
    }
 }
@@ -473,7 +471,7 @@ st_framebuffer_create(struct st_context *st,
     * is also expressed by using the same extension flag
     */
    if (_mesa_has_EXT_framebuffer_sRGB(st->ctx)) {
-      struct pipe_screen *screen = st->screen;
+      struct pipe_screen *screen = st->pipe->screen;
       const enum pipe_format srgb_format =
          util_format_srgb(stfbi->visual->color_format);
 
@@ -664,11 +662,11 @@ st_context_flush(struct st_context_iface *stctxi, unsigned flags,
    if (flags & ST_FLUSH_FENCE_FD)
       pipe_flags |= PIPE_FLUSH_FENCE_FD;
 
-   /* We can do these in any order because FLUSH_VERTICES will also flush
-    * the bitmap cache if there are any unflushed vertices.
+   /* If both the bitmap cache is dirty and there are unflushed vertices,
+    * it means that glBitmap was called first and then glBegin.
     */
    st_flush_bitmap_cache(st);
-   FLUSH_VERTICES(st->ctx, 0, 0);
+   FLUSH_VERTICES(st->ctx, 0);
 
    /* Notify the caller that we're ready to flush */
    if (before_flush_cb)
@@ -676,9 +674,9 @@ st_context_flush(struct st_context_iface *stctxi, unsigned flags,
    st_flush(st, fence, pipe_flags);
 
    if ((flags & ST_FLUSH_WAIT) && fence && *fence) {
-      st->screen->fence_finish(st->screen, NULL, *fence,
+      st->pipe->screen->fence_finish(st->pipe->screen, NULL, *fence,
                                      PIPE_TIMEOUT_INFINITE);
-      st->screen->fence_reference(st->screen, fence, NULL);
+      st->pipe->screen->fence_reference(st->pipe->screen, fence, NULL);
    }
 
    if (flags & ST_FLUSH_FRONT)
@@ -836,23 +834,6 @@ st_thread_finish(struct st_context_iface *stctxi)
 
 
 static void
-st_context_invalidate_state(struct st_context_iface *stctxi,
-                            unsigned flags)
-{
-   struct st_context *st = (struct st_context *) stctxi;
-
-   if (flags & ST_INVALIDATE_FS_SAMPLER_VIEWS)
-      st->dirty |= ST_NEW_FS_SAMPLER_VIEWS;
-   if (flags & ST_INVALIDATE_FS_CONSTBUF0)
-      st->dirty |= ST_NEW_FS_CONSTANTS;
-   if (flags & ST_INVALIDATE_VS_CONSTBUF0)
-      st->dirty |= ST_NEW_VS_CONSTANTS;
-   if (flags & ST_INVALIDATE_VERTEX_BUFFERS)
-      st->dirty |= ST_NEW_VERTEX_ARRAYS;
-}
-
-
-static void
 st_manager_destroy(struct st_manager *smapi)
 {
    struct st_manager_private *smPriv = smapi->st_manager_private;
@@ -875,7 +856,8 @@ st_api_create_context(struct st_api *stapi, struct st_manager *smapi,
    struct st_context *shared_ctx = (struct st_context *) shared_stctxi;
    struct st_context *st;
    struct pipe_context *pipe;
-   struct gl_config mode, *mode_ptr = &mode;
+   struct gl_config* mode_ptr;
+   struct gl_config mode;
    gl_api api;
    bool no_error = false;
    unsigned ctx_flags = PIPE_CONTEXT_PREFER_THREADED;
@@ -939,8 +921,12 @@ st_api_create_context(struct st_api *stapi, struct st_manager *smapi,
    }
 
    st_visual_to_context_mode(&attribs->visual, &mode);
-   if (attribs->visual.color_format == PIPE_FORMAT_NONE)
+
+   if (attribs->visual.no_config)
       mode_ptr = NULL;
+   else
+      mode_ptr = &mode;
+
    st = st_create_context(api, pipe, mode_ptr, shared_ctx,
                           &attribs->options, no_error);
    if (!st) {
@@ -987,7 +973,7 @@ st_api_create_context(struct st_api *stapi, struct st_manager *smapi,
       }
    }
 
-   st->can_scissor_clear = !!st->screen->get_param(st->screen, PIPE_CAP_CLEAR_SCISSORED);
+   st->can_scissor_clear = !!st->pipe->screen->get_param(st->pipe->screen, PIPE_CAP_CLEAR_SCISSORED);
 
    st->invalidate_on_gl_viewport =
       smapi->get_param(smapi, ST_MANAGER_BROKEN_INVALIDATE);
@@ -999,15 +985,10 @@ st_api_create_context(struct st_api *stapi, struct st_manager *smapi,
    st->iface.share = st_context_share;
    st->iface.start_thread = st_start_thread;
    st->iface.thread_finish = st_thread_finish;
-   st->iface.invalidate_state = st_context_invalidate_state;
    st->iface.st_context_private = (void *) smapi;
    st->iface.cso_context = st->cso_context;
    st->iface.pipe = st->pipe;
    st->iface.state_manager = smapi;
-
-   if (st->ctx->IntelBlackholeRender &&
-       st->screen->get_param(st->screen, PIPE_CAP_FRONTEND_NOOP))
-      st->pipe->set_frontend_noop(st->pipe, st->ctx->IntelBlackholeRender);
 
    *error = ST_CONTEXT_SUCCESS;
    return &st->iface;
@@ -1093,10 +1074,6 @@ st_api_make_current(struct st_api *stapi, struct st_context_iface *stctxi,
             st_framebuffer_reference(&stread, stdraw);
       }
 
-      /* If framebuffers were asked for, we'd better have allocated them */
-      if ((stdrawi && !stdraw) || (streadi && !stread))
-         return false;
-
       if (stdraw && stread) {
          st_framebuffer_validate(stdraw, st);
          if (stread != stdraw)
@@ -1167,22 +1144,15 @@ st_manager_flush_frontbuffer(struct st_context *st)
        !stfb->Base.Visual.doubleBufferMode)
       return;
 
-   /* Check front buffer used at the GL API level. */
-   enum st_attachment_type statt = ST_ATTACHMENT_FRONT_LEFT;
    strb = st_renderbuffer(stfb->Base.Attachment[BUFFER_FRONT_LEFT].
                           Renderbuffer);
-   if (!strb) {
-       /* Check back buffer redirected by EGL_KHR_mutable_render_buffer. */
-       statt = ST_ATTACHMENT_BACK_LEFT;
-       strb = st_renderbuffer(stfb->Base.Attachment[BUFFER_BACK_LEFT].
-                              Renderbuffer);
-   }
 
    /* Do we have a front color buffer and has it been drawn to since last
     * frontbuffer flush?
     */
-   if (strb && strb->defined &&
-       stfb->iface->flush_front(&st->iface, stfb->iface, statt)) {
+   if (strb && strb->defined) {
+      stfb->iface->flush_front(&st->iface, stfb->iface,
+                               ST_ATTACHMENT_FRONT_LEFT);
       strb->defined = GL_FALSE;
 
       /* Trigger an update of strb->defined on next draw */

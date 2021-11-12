@@ -70,7 +70,6 @@ static const struct v3d_format format_table[] = {
         FORMAT(R8G8B8A8_SNORM,    NO,           RGBA8_SNORM, SWIZ_XYZW, 16, 0),
         FORMAT(R8G8B8X8_SNORM,    NO,           RGBA8_SNORM, SWIZ_XYZ1, 16, 0),
         FORMAT(R10G10B10A2_UNORM, RGB10_A2,     RGB10_A2,    SWIZ_XYZW, 16, 0),
-        FORMAT(R10G10B10X2_UNORM, RGB10_A2,     RGB10_A2,    SWIZ_XYZ1, 16, 0),
         FORMAT(R10G10B10A2_UINT,  RGB10_A2UI,   RGB10_A2UI,  SWIZ_XYZW, 16, 0),
 
         FORMAT(A4B4G4R4_UNORM,    ABGR4444,     RGBA4,       SWIZ_XYZW, 16, 0),
@@ -327,8 +326,7 @@ v3dX(get_internal_type_bpp_for_output_format)(uint32_t format,
 }
 
 bool
-v3dX(tfu_supports_tex_format)(enum V3DX(Texture_Data_Formats) format,
-                              bool for_mipmap)
+v3dX(tfu_supports_tex_format)(enum V3DX(Texture_Data_Formats) format)
 {
         switch (format) {
         case TEXTURE_DATA_FORMAT_R8:
@@ -353,11 +351,6 @@ v3dX(tfu_supports_tex_format)(enum V3DX(Texture_Data_Formats) format,
         case TEXTURE_DATA_FORMAT_R11F_G11F_B10F:
         case TEXTURE_DATA_FORMAT_R4:
                 return true;
-        case TEXTURE_DATA_FORMAT_RGB9_E5:
-        case TEXTURE_DATA_FORMAT_R32F:
-        case TEXTURE_DATA_FORMAT_RG32F:
-        case TEXTURE_DATA_FORMAT_RGBA32F:
-                return !for_mipmap;
         default:
                 return false;
         }

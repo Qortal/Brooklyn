@@ -1074,8 +1074,6 @@ _mesa_is_color_format(GLenum format)
       case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
       case GL_COMPRESSED_RGB_FXT1_3DFX:
       case GL_COMPRESSED_RGBA_FXT1_3DFX:
-      case GL_SR8_EXT:
-      case GL_SRG8_EXT:
       case GL_SRGB_EXT:
       case GL_SRGB8_EXT:
       case GL_SRGB_ALPHA_EXT:
@@ -1238,7 +1236,7 @@ _mesa_is_color_format(GLenum format)
       case GL_RGB10_A2UI:
          return GL_TRUE;
       case GL_YCBCR_MESA:  /* not considered to be RGB */
-         FALLTHROUGH;
+         /* fall-through */
       default:
          return GL_FALSE;
    }
@@ -1423,8 +1421,6 @@ GLboolean
 _mesa_is_srgb_format(GLenum format)
 {
    switch (format) {
-   case GL_SR8_EXT:
-   case GL_SRG8_EXT:
    case GL_SRGB:
    case GL_SRGB8:
    case GL_SRGB_ALPHA:
@@ -1899,7 +1895,7 @@ _mesa_error_check_format_and_type(const struct gl_context *ctx,
       case GL_RED:
          if (_mesa_has_rg_textures(ctx))
             return GL_NO_ERROR;
-         FALLTHROUGH;
+         /* fallthrough */
       default:
          return GL_INVALID_OPERATION;
       }
@@ -2194,7 +2190,7 @@ _mesa_es_error_check_format_and_type(const struct gl_context *ctx,
    case GL_RG:
       if (!_mesa_has_rg_textures(ctx))
          return GL_INVALID_VALUE;
-      FALLTHROUGH;
+      /* fallthrough */
    case GL_ALPHA:
    case GL_LUMINANCE:
    case GL_LUMINANCE_ALPHA:
@@ -2515,15 +2511,6 @@ _mesa_base_tex_format(const struct gl_context *ctx, GLint internalFormat)
       }
    }
 
-   if (_mesa_has_EXT_texture_sRGB_RG8(ctx)) {
-      switch (internalFormat) {
-      case GL_SRG8_EXT:
-         return GL_RG;
-      default:
-         ; /* fallthrough */
-      }
-   }
-
    if (_mesa_has_integer_textures(ctx)) {
       switch (internalFormat) {
       case GL_RGBA8UI_EXT:
@@ -2603,7 +2590,7 @@ _mesa_base_tex_format(const struct gl_context *ctx, GLint internalFormat)
       case GL_R32UI:
          if (!_mesa_has_integer_textures(ctx))
             break;
-         FALLTHROUGH;
+         /* FALLTHROUGH */
       case GL_R8:
       case GL_R16:
       case GL_RED:
@@ -2626,7 +2613,7 @@ _mesa_base_tex_format(const struct gl_context *ctx, GLint internalFormat)
       case GL_RG32UI:
          if (!_mesa_has_integer_textures(ctx))
             break;
-         FALLTHROUGH;
+         /* FALLTHROUGH */
       case GL_RG:
       case GL_RG8:
       case GL_RG16:
@@ -2757,7 +2744,7 @@ gles_effective_internal_format_for_format_and_type(GLenum format,
    case GL_FLOAT:
       if (format == GL_DEPTH_COMPONENT)
          return GL_DEPTH_COMPONENT32F;
-      FALLTHROUGH;
+      /* fall through */
    case GL_HALF_FLOAT_OES:
       switch (format) {
       case GL_RGBA:
@@ -2859,17 +2846,7 @@ _mesa_gles_error_check_format_and_type(const struct gl_context *ctx,
 
    switch (format) {
    case GL_BGRA_EXT:
-      if (type != GL_UNSIGNED_BYTE ||
-              (internalFormat != GL_BGRA &&
-               internalFormat != GL_RGBA8 &&
-               internalFormat != GL_SRGB8_ALPHA8))
-         return GL_INVALID_OPERATION;
-      break;
-
-   case GL_BGR_EXT:
-      if (type != GL_UNSIGNED_BYTE ||
-              (internalFormat != GL_RGB8 &&
-               internalFormat != GL_SRGB8))
+      if (type != GL_UNSIGNED_BYTE || internalFormat != GL_BGRA)
          return GL_INVALID_OPERATION;
       break;
 
@@ -3180,13 +3157,11 @@ _mesa_gles_error_check_format_and_type(const struct gl_context *ctx,
          return GL_INVALID_OPERATION;
       switch (type) {
       case GL_UNSIGNED_BYTE:
-         if (internalFormat == GL_RG8 ||
-             (_mesa_has_EXT_texture_compression_rgtc(ctx) &&
-              internalFormat == GL_COMPRESSED_RED_GREEN_RGTC2_EXT) ||
-             (_mesa_has_EXT_texture_sRGB_RG8(ctx) &&
-              internalFormat == GL_SRG8_EXT))
-            break;
-         return GL_INVALID_OPERATION;
+         if (internalFormat != GL_RG8 &&
+             (!_mesa_has_EXT_texture_compression_rgtc(ctx) ||
+              internalFormat != GL_COMPRESSED_RED_GREEN_RGTC2_EXT))
+            return GL_INVALID_OPERATION;
+         break;
 
       case GL_BYTE:
          if (internalFormat != GL_RG8_SNORM &&

@@ -518,7 +518,7 @@ def _get_datatype(type, size):
    else:
       assert False
 
-def _parse_channels(fields):
+def _parse_channels(fields, layout, colorspace, swizzle):
    channels = []
    for field in fields:
       if not field:
@@ -569,7 +569,6 @@ def parse(filename):
             swizzle = Swizzle(fields[9])
          except:
             sys.exit("error parsing swizzle for format " + name)
-
-         channels = _parse_channels(fields[5:9])
+         channels = _parse_channels(fields[5:9], layout, colorspace, swizzle)
 
          yield Format(name, layout, block_width, block_height, block_depth, channels, swizzle, colorspace)

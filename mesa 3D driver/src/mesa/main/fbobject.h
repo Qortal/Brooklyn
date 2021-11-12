@@ -54,6 +54,9 @@ _mesa_is_winsys_fbo(const struct gl_framebuffer *fb)
 
 
 
+extern void
+_mesa_init_fbobjects(struct gl_context *ctx);
+
 extern struct gl_framebuffer *
 _mesa_get_incomplete_framebuffer(void);
 

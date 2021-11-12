@@ -26,7 +26,7 @@
 #include <stdbool.h>
 #include "util/ralloc.h"
 #include "brw_eu.h"
-#include "brw_gfx_ver_enum.h"
+#include "brw_gen_enum.h"
 
 static bool
 test_compact_instruction(struct brw_codegen *p, brw_inst src)
@@ -65,7 +65,7 @@ test_compact_instruction(struct brw_codegen *p, brw_inst src)
  * become meaningless once fuzzing twiddles a related bit.
  */
 static void
-clear_pad_bits(const struct intel_device_info *devinfo, brw_inst *inst)
+clear_pad_bits(const struct gen_device_info *devinfo, brw_inst *inst)
 {
    if (brw_inst_opcode(devinfo, inst) != BRW_OPCODE_SEND &&
        brw_inst_opcode(devinfo, inst) != BRW_OPCODE_SENDC &&
@@ -74,7 +74,7 @@ clear_pad_bits(const struct intel_device_info *devinfo, brw_inst *inst)
       brw_inst_set_bits(inst, 127, 111, 0);
    }
 
-   if (devinfo->ver == 8 && !devinfo->is_cherryview &&
+   if (devinfo->gen == 8 && !devinfo->is_cherryview &&
        is_3src(devinfo, brw_inst_opcode(devinfo, inst))) {
       brw_inst_set_bits(inst, 105, 105, 0);
       brw_inst_set_bits(inst, 84, 84, 0);
@@ -83,7 +83,7 @@ clear_pad_bits(const struct intel_device_info *devinfo, brw_inst *inst)
 }
 
 static bool
-skip_bit(const struct intel_device_info *devinfo, brw_inst *src, int bit)
+skip_bit(const struct gen_device_info *devinfo, brw_inst *src, int bit)
 {
    /* pad bit */
    if (bit == 7)
@@ -94,7 +94,7 @@ skip_bit(const struct intel_device_info *devinfo, brw_inst *src, int bit)
       return true;
 
    if (is_3src(devinfo, brw_inst_opcode(devinfo, src))) {
-      if (devinfo->ver >= 9 || devinfo->is_cherryview) {
+      if (devinfo->gen >= 9 || devinfo->is_cherryview) {
          if (bit == 127)
             return true;
       } else {
@@ -114,14 +114,14 @@ skip_bit(const struct intel_device_info *devinfo, brw_inst *src, int bit)
       if (bit == 47)
          return true;
 
-      if (devinfo->ver >= 8) {
+      if (devinfo->gen >= 8) {
          if (bit == 11)
             return true;
 
          if (bit == 95)
             return true;
       } else {
-         if (devinfo->ver < 7 && bit == 90)
+         if (devinfo->gen < 7 && bit == 90)
             return true;
 
          if (bit >= 91 && bit <= 95)
@@ -174,7 +174,7 @@ test_fuzz_compact_instruction(struct brw_codegen *p, brw_inst src)
 }
 
 static void
-test_ADD_GRF_GRF_GRF(struct brw_codegen *p)
+gen_ADD_GRF_GRF_GRF(struct brw_codegen *p)
 {
    struct brw_reg g0 = brw_vec8_grf(0, 0);
    struct brw_reg g2 = brw_vec8_grf(2, 0);
@@ -184,7 +184,7 @@ test_ADD_GRF_GRF_GRF(struct brw_codegen *p)
 }
 
 static void
-test_ADD_GRF_GRF_IMM(struct brw_codegen *p)
+gen_ADD_GRF_GRF_IMM(struct brw_codegen *p)
 {
    struct brw_reg g0 = brw_vec8_grf(0, 0);
    struct brw_reg g2 = brw_vec8_grf(2, 0);
@@ -193,7 +193,7 @@ test_ADD_GRF_GRF_IMM(struct brw_codegen *p)
 }
 
 static void
-test_ADD_GRF_GRF_IMM_d(struct brw_codegen *p)
+gen_ADD_GRF_GRF_IMM_d(struct brw_codegen *p)
 {
    struct brw_reg g0 = retype(brw_vec8_grf(0, 0), BRW_REGISTER_TYPE_D);
    struct brw_reg g2 = retype(brw_vec8_grf(2, 0), BRW_REGISTER_TYPE_D);
@@ -202,7 +202,7 @@ test_ADD_GRF_GRF_IMM_d(struct brw_codegen *p)
 }
 
 static void
-test_MOV_GRF_GRF(struct brw_codegen *p)
+gen_MOV_GRF_GRF(struct brw_codegen *p)
 {
    struct brw_reg g0 = brw_vec8_grf(0, 0);
    struct brw_reg g2 = brw_vec8_grf(2, 0);
@@ -211,7 +211,7 @@ test_MOV_GRF_GRF(struct brw_codegen *p)
 }
 
 static void
-test_ADD_MRF_GRF_GRF(struct brw_codegen *p)
+gen_ADD_MRF_GRF_GRF(struct brw_codegen *p)
 {
    struct brw_reg m6 = brw_vec8_reg(BRW_MESSAGE_REGISTER_FILE, 6, 0);
    struct brw_reg g2 = brw_vec8_grf(2, 0);
@@ -221,7 +221,7 @@ test_ADD_MRF_GRF_GRF(struct brw_codegen *p)
 }
 
 static void
-test_ADD_vec1_GRF_GRF_GRF(struct brw_codegen *p)
+gen_ADD_vec1_GRF_GRF_GRF(struct brw_codegen *p)
 {
    struct brw_reg g0 = brw_vec1_grf(0, 0);
    struct brw_reg g2 = brw_vec1_grf(2, 0);
@@ -231,7 +231,7 @@ test_ADD_vec1_GRF_GRF_GRF(struct brw_codegen *p)
 }
 
 static void
-test_PLN_MRF_GRF_GRF(struct brw_codegen *p)
+gen_PLN_MRF_GRF_GRF(struct brw_codegen *p)
 {
    struct brw_reg m6 = brw_vec8_reg(BRW_MESSAGE_REGISTER_FILE, 6, 0);
    struct brw_reg interp = brw_vec1_grf(2, 0);
@@ -241,7 +241,7 @@ test_PLN_MRF_GRF_GRF(struct brw_codegen *p)
 }
 
 static void
-test_f0_0_MOV_GRF_GRF(struct brw_codegen *p)
+gen_f0_0_MOV_GRF_GRF(struct brw_codegen *p)
 {
    struct brw_reg g0 = brw_vec8_grf(0, 0);
    struct brw_reg g2 = brw_vec8_grf(2, 0);
@@ -252,12 +252,12 @@ test_f0_0_MOV_GRF_GRF(struct brw_codegen *p)
    brw_pop_insn_state(p);
 }
 
-/* The handling of f0.1 vs f0.0 changes between gfx6 and gfx7.  Explicitly test
+/* The handling of f0.1 vs f0.0 changes between gen6 and gen7.  Explicitly test
  * it, so that we run the fuzzing can run over all the other bits that might
  * interact with it.
  */
 static void
-test_f0_1_MOV_GRF_GRF(struct brw_codegen *p)
+gen_f0_1_MOV_GRF_GRF(struct brw_codegen *p)
 {
    struct brw_reg g0 = brw_vec8_grf(0, 0);
    struct brw_reg g2 = brw_vec8_grf(2, 0);
@@ -271,31 +271,31 @@ test_f0_1_MOV_GRF_GRF(struct brw_codegen *p)
 
 struct {
    void (*func)(struct brw_codegen *p);
-   int gfx_vers;
+   int gens;
 } tests[] = {
-   { test_MOV_GRF_GRF,          GFX_ALL      },
-   { test_ADD_GRF_GRF_GRF,      GFX_ALL      },
-   { test_ADD_GRF_GRF_IMM,      GFX_ALL      },
-   { test_ADD_GRF_GRF_IMM_d,    GFX_ALL      },
-   { test_ADD_MRF_GRF_GRF,      GFX_LE(GFX6) },
-   { test_ADD_vec1_GRF_GRF_GRF, GFX_ALL      },
-   { test_PLN_MRF_GRF_GRF,      GFX_LE(GFX6) },
-   { test_f0_0_MOV_GRF_GRF,     GFX_ALL      },
-   { test_f0_1_MOV_GRF_GRF,     GFX_ALL      },
+   { gen_MOV_GRF_GRF,          GEN_ALL      },
+   { gen_ADD_GRF_GRF_GRF,      GEN_ALL      },
+   { gen_ADD_GRF_GRF_IMM,      GEN_ALL      },
+   { gen_ADD_GRF_GRF_IMM_d,    GEN_ALL      },
+   { gen_ADD_MRF_GRF_GRF,      GEN_LE(GEN6) },
+   { gen_ADD_vec1_GRF_GRF_GRF, GEN_ALL      },
+   { gen_PLN_MRF_GRF_GRF,      GEN_LE(GEN6) },
+   { gen_f0_0_MOV_GRF_GRF,     GEN_ALL      },
+   { gen_f0_1_MOV_GRF_GRF,     GEN_ALL      },
 };
 
 static bool
-run_tests(const struct intel_device_info *devinfo)
+run_tests(const struct gen_device_info *devinfo)
 {
    bool fail = false;
 
    for (unsigned i = 0; i < ARRAY_SIZE(tests); i++) {
-      if ((tests[i].gfx_vers & gfx_ver_from_devinfo(devinfo)) == 0)
+      if ((tests[i].gens & gen_from_devinfo(devinfo)) == 0)
          continue;
 
       for (int align_16 = 0; align_16 <= 1; align_16++) {
-         /* Align16 support is not present on Gfx11+ */
-         if (devinfo->ver >= 11 && align_16)
+         /* Align16 support is not present on Gen11+ */
+         if (devinfo->gen >= 11 && align_16)
             continue;
 
 	 struct brw_codegen *p = rzalloc(NULL, struct brw_codegen);
@@ -330,17 +330,15 @@ run_tests(const struct intel_device_info *devinfo)
 int
 main(UNUSED int argc, UNUSED char **argv)
 {
-   struct intel_device_info *devinfo = (struct intel_device_info *)calloc(1, sizeof(*devinfo));
+   struct gen_device_info *devinfo = (struct gen_device_info *)calloc(1, sizeof(*devinfo));
    bool fail = false;
 
-   for (devinfo->ver = 5; devinfo->ver <= 12; devinfo->ver++) {
-      if (devinfo->ver == 10)
+   for (devinfo->gen = 5; devinfo->gen <= 12; devinfo->gen++) {
+      if (devinfo->gen == 10)
          continue;
 
-      devinfo->verx10 = devinfo->ver * 10;
       fail |= run_tests(devinfo);
    }
 
-   free(devinfo);
    return fail;
 }

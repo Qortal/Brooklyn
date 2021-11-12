@@ -36,14 +36,6 @@
 #include "menums.h"
 #include "compiler/shader_enums.h"
 
-/* Windows winnt.h defines MemoryBarrier as a macro on some platforms,
- * including as a function-like macro in some cases. That either causes
- * the table entry below to have a weird name, or fail to compile.
- */
-#ifdef MemoryBarrier
-#undef MemoryBarrier
-#endif
-
 struct gl_bitmap_atlas;
 struct gl_buffer_object;
 struct gl_context;
@@ -64,8 +56,6 @@ struct ati_fragment_shader;
 struct util_queue_monitoring;
 struct _mesa_prim;
 struct _mesa_index_buffer;
-struct pipe_draw_info;
-struct pipe_draw_start_count_bias;
 
 /* GL_ARB_vertex_buffer_object */
 /* Modifies GL_MAP_UNSYNCHRONIZED_BIT to allow driver to fail (return
@@ -83,9 +73,6 @@ struct pipe_draw_start_count_bias;
 
 /* Mapping a buffer is allowed from any thread. */
 #define MESA_MAP_THREAD_SAFE_BIT  0x8000
-
-/* This buffer will only be mapped/unmapped once */
-#define MESA_MAP_ONCE            0x10000
 
 
 /**
@@ -125,7 +112,7 @@ struct dd_function_table {
    /**
     * This is called whenever glFlush() is called.
     */
-   void (*Flush)(struct gl_context *ctx, unsigned gallium_flush_flags);
+   void (*Flush)( struct gl_context *ctx );
 
    /**
     * Clear the color/depth/stencil/accum buffer(s).
@@ -554,51 +541,24 @@ struct dd_function_table {
     * \param max_index  highest vertex index used
     * \param num_instances  instance count from ARB_draw_instanced
     * \param base_instance  base instance from ARB_base_instance
+    * \param tfb_vertcount  if non-null, indicates which transform feedback
+    *                       object has the vertex count.
+    * \param tfb_stream  If called via DrawTransformFeedbackStream, specifies
+    *                    the vertex stream buffer from which to get the vertex
+    *                    count.
+    * \param indirect  If any prims are indirect, this specifies the buffer
+    *                  to find the "DrawArrays/ElementsIndirectCommand" data.
+    *                  This may be deprecated in the future
     */
    void (*Draw)(struct gl_context *ctx,
-                const struct _mesa_prim *prims, unsigned nr_prims,
+                const struct _mesa_prim *prims, GLuint nr_prims,
                 const struct _mesa_index_buffer *ib,
-                bool index_bounds_valid,
-                bool primitive_restart,
-                unsigned restart_index,
-                unsigned min_index, unsigned max_index,
-                unsigned num_instances, unsigned base_instance);
+                GLboolean index_bounds_valid,
+                GLuint min_index, GLuint max_index,
+                GLuint num_instances, GLuint base_instance,
+                struct gl_transform_feedback_object *tfb_vertcount,
+                unsigned tfb_stream);
 
-   /**
-    * Optimal Gallium version of Draw() that doesn't require translation
-    * of draw info in the state tracker.
-    *
-    * The interface is identical to pipe_context::draw_vbo
-    * with indirect == NULL.
-    *
-    * "info" is not const and the following fields can be changed by
-    * the callee, so callers should be aware:
-    * - info->index_bounds_valid (if false)
-    * - info->min_index (if index_bounds_valid is false)
-    * - info->max_index (if index_bounds_valid is false)
-    * - info->drawid (if increment_draw_id is true)
-    * - info->index.gl_bo (if index_size && !has_user_indices)
-    */
-   void (*DrawGallium)(struct gl_context *ctx,
-                       struct pipe_draw_info *info,
-                       unsigned drawid_offset,
-                       const struct pipe_draw_start_count_bias *draws,
-                       unsigned num_draws);
-
-   /**
-    * Same as DrawGallium, but mode can also change between draws.
-    *
-    * "info" is not const and the following fields can be changed by
-    * the callee in addition to the fields listed by DrawGallium:
-    * - info->mode
-    *
-    * This function exists to decrease complexity of DrawGallium.
-    */
-   void (*DrawGalliumMultiMode)(struct gl_context *ctx,
-                                struct pipe_draw_info *info,
-                                const struct pipe_draw_start_count_bias *draws,
-                                const unsigned char *mode,
-                                unsigned num_draws);
 
    /**
     * Draw a primitive, getting the vertex count, instance count, start
@@ -623,24 +583,7 @@ struct dd_function_table {
                         unsigned stride,
                         struct gl_buffer_object *indirect_draw_count_buffer,
                         GLsizeiptr indirect_draw_count_offset,
-                        const struct _mesa_index_buffer *ib,
-                        bool primitive_restart,
-                        unsigned restart_index);
-
-   /**
-    * Driver implementation of glDrawTransformFeedback.
-    *
-    * \param mode    Primitive type
-    * \param num_instances  instance count from ARB_draw_instanced
-    * \param stream  If called via DrawTransformFeedbackStream, specifies
-    *                the vertex stream buffer from which to get the vertex
-    *                count.
-    * \param tfb_vertcount  if non-null, indicates which transform feedback
-    *                       object has the vertex count.
-    */
-   void (*DrawTransformFeedback)(struct gl_context *ctx, GLenum mode,
-                                 unsigned num_instances, unsigned stream,
-                                 struct gl_transform_feedback_object *tfb_vertcount);
+                        const struct _mesa_index_buffer *ib);
    /*@}*/
 
 
@@ -946,7 +889,7 @@ struct dd_function_table {
                          struct gl_perf_query_object *obj);
    bool (*IsPerfQueryReady)(struct gl_context *ctx,
                             struct gl_perf_query_object *obj);
-   bool (*GetPerfQueryData)(struct gl_context *ctx,
+   void (*GetPerfQueryData)(struct gl_context *ctx,
                             struct gl_perf_query_object *obj,
                             GLsizei dataSize,
                             GLuint *data,
@@ -1592,18 +1535,6 @@ typedef struct {
    void (GLAPIENTRYP MultiTexCoord3hvNV)( GLenum, const GLhalfNV * );
    void (GLAPIENTRYP MultiTexCoord4hNV)( GLenum, GLhalfNV, GLhalfNV, GLhalfNV, GLhalfNV );
    void (GLAPIENTRYP MultiTexCoord4hvNV)( GLenum, const GLhalfNV * );
-   void (GLAPIENTRYP VertexAttrib1hNV)( GLuint index, GLhalfNV x );
-   void (GLAPIENTRYP VertexAttrib1hvNV)( GLuint index, const GLhalfNV *v );
-   void (GLAPIENTRYP VertexAttrib2hNV)( GLuint index, GLhalfNV x, GLhalfNV y );
-   void (GLAPIENTRYP VertexAttrib2hvNV)( GLuint index, const GLhalfNV *v );
-   void (GLAPIENTRYP VertexAttrib3hNV)( GLuint index, GLhalfNV x, GLhalfNV y, GLhalfNV z );
-   void (GLAPIENTRYP VertexAttrib3hvNV)( GLuint index, const GLhalfNV *v );
-   void (GLAPIENTRYP VertexAttrib4hNV)( GLuint index, GLhalfNV x, GLhalfNV y, GLhalfNV z, GLhalfNV w );
-   void (GLAPIENTRYP VertexAttrib4hvNV)( GLuint index, const GLhalfNV *v );
-   void (GLAPIENTRYP VertexAttribs1hvNV)(GLuint index, GLsizei n, const GLhalfNV *v);
-   void (GLAPIENTRYP VertexAttribs2hvNV)(GLuint index, GLsizei n, const GLhalfNV *v);
-   void (GLAPIENTRYP VertexAttribs3hvNV)(GLuint index, GLsizei n, const GLhalfNV *v);
-   void (GLAPIENTRYP VertexAttribs4hvNV)(GLuint index, GLsizei n, const GLhalfNV *v);
    void (GLAPIENTRYP FogCoordhNV)( GLhalfNV );
    void (GLAPIENTRYP FogCoordhvNV)( const GLhalfNV * );
    void (GLAPIENTRYP SecondaryColor3hNV)( GLhalfNV, GLhalfNV, GLhalfNV );

@@ -238,9 +238,9 @@ static const float nv10_spot_params[2][16] = {
 };
 
 void
-nv10_get_spot_coeff(struct gl_light *l, struct gl_light_uniforms *lu, float k[7])
+nv10_get_spot_coeff(struct gl_light *l, float k[7])
 {
-	float e = lu->SpotExponent;
+	float e = l->SpotExponent;
 	float a0, b0, a1, a2, b2, a3;
 
 	if (e > 0)
@@ -256,8 +256,8 @@ nv10_get_spot_coeff(struct gl_light *l, struct gl_light_uniforms *lu, float k[7]
 
 	a3 = 0.9 + 0.278 * e;
 
-	if (lu->SpotCutoff > 0) {
-		float cutoff = MAX2(a3, 1 / (1 - lu->_CosCutoff));
+	if (l->SpotCutoff > 0) {
+		float cutoff = MAX2(a3, 1 / (1 - l->_CosCutoff));
 
 		k[0] = MAX2(0, a0 + b0 * cutoff);
 		k[1] = a1;
@@ -284,16 +284,15 @@ nv10_emit_light_source(struct gl_context *ctx, int emit)
 	const int i = emit - NOUVEAU_STATE_LIGHT_SOURCE0;
 	struct nouveau_pushbuf *push = context_push(ctx);
 	struct gl_light *l = &ctx->Light.Light[i];
-        struct gl_light_uniforms *lu = &ctx->Light.LightSource[i];
 
 	if (l->_Flags & LIGHT_POSITIONAL) {
 		BEGIN_NV04(push, NV10_3D(LIGHT_POSITION_X(i)), 3);
 		PUSH_DATAp(push, l->_Position, 3);
 
 		BEGIN_NV04(push, NV10_3D(LIGHT_ATTENUATION_CONSTANT(i)), 3);
-		PUSH_DATAf(push, lu->ConstantAttenuation);
-		PUSH_DATAf(push, lu->LinearAttenuation);
-		PUSH_DATAf(push, lu->QuadraticAttenuation);
+		PUSH_DATAf(push, l->ConstantAttenuation);
+		PUSH_DATAf(push, l->LinearAttenuation);
+		PUSH_DATAf(push, l->QuadraticAttenuation);
 
 	} else {
 		BEGIN_NV04(push, NV10_3D(LIGHT_DIRECTION_X(i)), 3);
@@ -306,7 +305,7 @@ nv10_emit_light_source(struct gl_context *ctx, int emit)
 	if (l->_Flags & LIGHT_SPOT) {
 		float k[7];
 
-		nv10_get_spot_coeff(l, lu, k);
+		nv10_get_spot_coeff(l, k);
 
 		BEGIN_NV04(push, NV10_3D(LIGHT_SPOT_CUTOFF(i, 0)), 7);
 		PUSH_DATAp(push, k, 7);
@@ -351,9 +350,8 @@ nv10_emit_material_ambient(struct gl_context *ctx, int emit)
 	while (mask) {
 		const int i = u_bit_scan(&mask);
 		struct gl_light *l = &ctx->Light.Light[i];
-                struct gl_light_uniforms *lu = &ctx->Light.LightSource[i];
 		float *c_light = (USE_COLOR_MATERIAL(AMBIENT) ?
-				  lu->Ambient :
+				  l->Ambient :
 				  l->_MatAmbient[0]);
 
 		BEGIN_NV04(push, NV10_3D(LIGHT_AMBIENT_R(i)), 3);
@@ -375,9 +373,8 @@ nv10_emit_material_diffuse(struct gl_context *ctx, int emit)
 	while (mask) {
 		const int i = u_bit_scan(&mask);
 		struct gl_light *l = &ctx->Light.Light[i];
-                struct gl_light_uniforms *lu = &ctx->Light.LightSource[i];
 		float *c_light = (USE_COLOR_MATERIAL(DIFFUSE) ?
-				  lu->Diffuse :
+				  l->Diffuse :
 				  l->_MatDiffuse[0]);
 
 		BEGIN_NV04(push, NV10_3D(LIGHT_DIFFUSE_R(i)), 3);
@@ -395,9 +392,8 @@ nv10_emit_material_specular(struct gl_context *ctx, int emit)
 	while (mask) {
 		const int i = u_bit_scan(&mask);
 		struct gl_light *l = &ctx->Light.Light[i];
-                struct gl_light_uniforms *lu = &ctx->Light.LightSource[i];
 		float *c_light = (USE_COLOR_MATERIAL(SPECULAR) ?
-				  lu->Specular :
+				  l->Specular :
 				  l->_MatSpecular[0]);
 
 		BEGIN_NV04(push, NV10_3D(LIGHT_SPECULAR_R(i)), 3);
@@ -494,4 +490,6 @@ nv10_emit_projection(struct gl_context *ctx, int emit)
 
 	BEGIN_NV04(push, NV10_3D(PROJECTION_MATRIX(0)), 16);
 	PUSH_DATAm(push, m.m);
+
+	_math_matrix_dtr(&m);
 }

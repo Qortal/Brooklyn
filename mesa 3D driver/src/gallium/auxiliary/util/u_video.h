@@ -83,9 +83,6 @@ u_reduce_video_profile(enum pipe_video_profile profile)
       case PIPE_VIDEO_PROFILE_VP9_PROFILE2:
          return PIPE_VIDEO_FORMAT_VP9;
 
-      case PIPE_VIDEO_PROFILE_AV1_MAIN:
-         return PIPE_VIDEO_FORMAT_AV1;
-
       default:
          return PIPE_VIDEO_FORMAT_UNKNOWN;
    }

@@ -37,12 +37,9 @@
 #include <windows.h>
 
 #include "util/u_debug.h"
-#include "util/debug.h"
 #include "stw_winsys.h"
 #include "stw_device.h"
 #include "gdi/gdi_sw_winsys.h"
-#include "pipe/p_screen.h"
-#include "pipe/p_context.h"
 
 #ifdef GALLIUM_SOFTPIPE
 #include "softpipe/sp_texture.h"
@@ -59,13 +56,6 @@
 #ifdef GALLIUM_SWR
 #include "swr/swr_public.h"
 #endif
-#ifdef GALLIUM_D3D12
-#include "d3d12/wgl/d3d12_wgl_public.h"
-#endif
-
-#ifdef GALLIUM_ZINK
-#include "zink/zink_public.h"
-#endif
 
 #ifdef GALLIUM_LLVMPIPE
 static boolean use_llvmpipe = FALSE;
@@ -73,104 +63,65 @@ static boolean use_llvmpipe = FALSE;
 #ifdef GALLIUM_SWR
 static boolean use_swr = FALSE;
 #endif
-#ifdef GALLIUM_D3D12
-static boolean use_d3d12 = FALSE;
-#endif
-#ifdef GALLIUM_ZINK
-static boolean use_zink = FALSE;
-#endif
-
-static const char *created_driver_name = NULL;
 
 static struct pipe_screen *
-gdi_screen_create_by_name(HDC hDC, const char* driver, struct sw_winsys *winsys)
+gdi_screen_create(void)
 {
-   struct pipe_screen* screen = NULL;
+   const char *default_driver;
+   const char *driver;
+   struct pipe_screen *screen = NULL;
+   struct sw_winsys *winsys;
+
+   winsys = gdi_create_sw_winsys();
+   if(!winsys)
+      goto no_winsys;
+
+#ifdef GALLIUM_LLVMPIPE
+   default_driver = "llvmpipe";
+#elif GALLIUM_SWR
+   default_driver = "swr";
+#elif defined(GALLIUM_SOFTPIPE)
+   default_driver = "softpipe";
+#else
+#error "no suitable default-driver"
+#endif
+
+   driver = debug_get_option("GALLIUM_DRIVER", default_driver);
 
 #ifdef GALLIUM_LLVMPIPE
    if (strcmp(driver, "llvmpipe") == 0) {
-      screen = llvmpipe_create_screen(winsys);
+      screen = llvmpipe_create_screen( winsys );
       if (screen)
          use_llvmpipe = TRUE;
    }
 #endif
 #ifdef GALLIUM_SWR
    if (strcmp(driver, "swr") == 0) {
-      screen = swr_create_screen(winsys);
+      screen = swr_create_screen( winsys );
       if (screen)
          use_swr = TRUE;
    }
 #endif
-#ifdef GALLIUM_D3D12
-   if (strcmp(driver, "d3d12") == 0) {
-      screen = d3d12_wgl_create_screen(winsys, hDC);
-      if (screen)
-         use_d3d12 = TRUE;
-   }
-#endif
-#ifdef GALLIUM_ZINK
-   if (strcmp(driver, "zink") == 0) {
-      screen = zink_create_screen(winsys);
-      if (screen)
-         use_zink = TRUE;
-   }
-#endif
+   (void) driver;
+
 #ifdef GALLIUM_SOFTPIPE
-   if (strcmp(driver, "softpipe") == 0) {
-      screen = softpipe_create_screen(winsys);
-   }
+   if (screen == NULL)
+      screen = softpipe_create_screen( winsys );
 #endif
+   if (!screen)
+      goto no_screen;
 
    return screen;
-}
-
-static struct pipe_screen *
-gdi_screen_create(HDC hDC)
-{
-   struct sw_winsys *winsys;
-   UNUSED bool sw_only = env_var_as_boolean("LIBGL_ALWAYS_SOFTWARE", false);
-
-   winsys = gdi_create_sw_winsys();
-   if (!winsys)
-      return NULL;
-
-   const char *const drivers[] = {
-      debug_get_option("GALLIUM_DRIVER", ""),
-#ifdef GALLIUM_D3D12
-      sw_only ? "" : "d3d12",
-#endif
-#if defined(GALLIUM_LLVMPIPE)
-      "llvmpipe",
-#endif
-#if GALLIUM_SWR
-      "swr",
-#endif
-#if defined(GALLIUM_SOFTPIPE)
-      "softpipe",
-#endif
-   };
    
-   /* If the default driver screen creation fails, fall back to the next option in the
-    * sorted list. Don't do this if GALLIUM_DRIVER is specified.
-    */
-   for (unsigned i = 0; i < ARRAY_SIZE(drivers); ++i) {
-      struct pipe_screen* screen = gdi_screen_create_by_name(hDC, drivers[i], winsys);
-      if (screen) {
-         created_driver_name = drivers[i];
-         return screen;
-      }
-      if (i == 0 && drivers[i][0] != '\0')
-         break;
-   }
-
+no_screen:
    winsys->destroy(winsys);
+no_winsys:
    return NULL;
 }
 
 
 static void
 gdi_present(struct pipe_screen *screen,
-            struct pipe_context *ctx,
             struct pipe_resource *res,
             HDC hDC)
 {
@@ -198,21 +149,7 @@ gdi_present(struct pipe_screen *screen,
 
 #ifdef GALLIUM_SWR
    if (use_swr) {
-      swr_gdi_swap(screen, ctx, res, hDC);
-      return;
-   }
-#endif
-
-#ifdef GALLIUM_D3D12
-   if (use_d3d12) {
-      d3d12_wgl_present(screen, ctx, res, hDC);
-      return;
-   }
-#endif
-
-#ifdef GALLIUM_ZINK
-   if (use_zink) {
-      screen->flush_frontbuffer(screen, ctx, res, 0, 0, hDC, NULL);
+      swr_gdi_swap(screen, res, hDC);
       return;
    }
 #endif
@@ -225,65 +162,13 @@ gdi_present(struct pipe_screen *screen,
 }
 
 
-#if WINVER >= 0xA00
-static boolean
-gdi_get_adapter_luid(struct pipe_screen* screen,
-   HDC hDC,
-   LUID* adapter_luid)
-{
-   if (!stw_dev || !stw_dev->callbacks.pfnGetAdapterLuid)
-      return false;
-
-   stw_dev->callbacks.pfnGetAdapterLuid(hDC, adapter_luid);
-   return true;
-}
-#endif
-
-
-static unsigned
-gdi_get_pfd_flags(struct pipe_screen *screen)
-{
-#ifdef GALLIUM_D3D12
-   if (use_d3d12)
-      return d3d12_wgl_get_pfd_flags(screen);
-#endif
-   return stw_pfd_gdi_support;
-}
-
-
-static struct stw_winsys_framebuffer *
-gdi_create_framebuffer(struct pipe_screen *screen,
-                       HDC hDC,
-                       int iPixelFormat)
-{
-#ifdef GALLIUM_D3D12
-   if (use_d3d12)
-      return d3d12_wgl_create_framebuffer(screen, hDC, iPixelFormat);
-#endif
-   return NULL;
-}
-
-static const char *
-gdi_get_name(void)
-{
-   return created_driver_name;
-}
-
-
 static const struct stw_winsys stw_winsys = {
    &gdi_screen_create,
    &gdi_present,
-#if WINVER >= 0xA00
-   &gdi_get_adapter_luid,
-#else
    NULL, /* get_adapter_luid */
-#endif
    NULL, /* shared_surface_open */
    NULL, /* shared_surface_close */
-   NULL, /* compose */
-   &gdi_get_pfd_flags,
-   &gdi_create_framebuffer,
-   &gdi_get_name,
+   NULL  /* compose */
 };
 
 

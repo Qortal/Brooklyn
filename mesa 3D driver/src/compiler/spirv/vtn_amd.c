@@ -33,13 +33,18 @@ vtn_handle_amd_gcn_shader_instruction(struct vtn_builder *b, SpvOp ext_opcode,
    nir_ssa_def *def;
    switch ((enum GcnShaderAMD)ext_opcode) {
    case CubeFaceIndexAMD:
-      def = nir_cube_face_index_amd(&b->nb, vtn_get_nir_ssa(b, w[5]));
+      def = nir_cube_face_index(&b->nb, vtn_get_nir_ssa(b, w[5]));
       break;
    case CubeFaceCoordAMD:
-      def = nir_cube_face_coord_amd(&b->nb, vtn_get_nir_ssa(b, w[5]));
+      def = nir_cube_face_coord(&b->nb, vtn_get_nir_ssa(b, w[5]));
       break;
    case TimeAMD: {
-      def = nir_pack_64_2x32(&b->nb, nir_shader_clock(&b->nb, NIR_SCOPE_SUBGROUP));
+      nir_intrinsic_instr *intrin = nir_intrinsic_instr_create(b->nb.shader,
+                                    nir_intrinsic_shader_clock);
+      nir_ssa_dest_init(&intrin->instr, &intrin->dest, 2, 32, NULL);
+      nir_intrinsic_set_memory_scope(intrin, NIR_SCOPE_SUBGROUP);
+      nir_builder_instr_insert(&b->nb, &intrin->instr);
+      def = nir_pack_64_2x32(&b->nb, &intrin->dest.ssa);
       break;
    }
    default:
@@ -101,11 +106,6 @@ vtn_handle_amd_shader_ballot_instruction(struct vtn_builder *b, SpvOp ext_opcode
                       val->constant->values[1].u32 << 5 |
                       val->constant->values[2].u32 << 10;
       nir_intrinsic_set_swizzle_mask(intrin, mask);
-   } else if (intrin->intrinsic == nir_intrinsic_mbcnt_amd) {
-      /* The v_mbcnt instruction has an additional source that is added to the result.
-       * This is exposed by the NIR intrinsic but not by SPIR-V, so we add zero here.
-       */
-      intrin->src[1] = nir_src_for_ssa(nir_imm_int(&b->nb, 0));
    }
 
    nir_builder_instr_insert(&b->nb, &intrin->instr);

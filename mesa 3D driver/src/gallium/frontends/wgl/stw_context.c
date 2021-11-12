@@ -35,9 +35,9 @@
 #include "pipe/p_compiler.h"
 #include "pipe/p_context.h"
 #include "pipe/p_state.h"
-#include "util/compiler.h"
 #include "util/u_memory.h"
 #include "util/u_atomic.h"
+#include "frontend/api.h"
 #include "hud/hud_context.h"
 
 #include "gldrv.h"
@@ -238,7 +238,7 @@ stw_create_context_attribs(HDC hdc, INT iLayerPlane, DHGLRC hShareContext,
          attribs.profile = ST_PROFILE_OPENGL_CORE;
          break;
       }
-      FALLTHROUGH;
+      /* fall-through */
    case WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB:
       /*
        * The spec also says:
@@ -270,8 +270,6 @@ stw_create_context_attribs(HDC hdc, INT iLayerPlane, DHGLRC hShareContext,
       goto no_st_ctx;
    }
 
-   attribs.options = stw_dev->st_options;
-
    ctx->st = stw_dev->stapi->create_context(stw_dev->stapi,
          stw_dev->smapi, &attribs, &ctx_err, shareCtx ? shareCtx->st : NULL);
    if (ctx->st == NULL)
@@ -280,7 +278,7 @@ stw_create_context_attribs(HDC hdc, INT iLayerPlane, DHGLRC hShareContext,
    ctx->st->st_manager_private = (void *) ctx;
 
    if (ctx->st->cso_context) {
-      ctx->hud = hud_create(ctx->st->cso_context, ctx->st, NULL);
+      ctx->hud = hud_create(ctx->st->cso_context, NULL);
    }
 
    stw_lock_contexts(stw_dev);
@@ -448,21 +446,13 @@ stw_make_current(HDC hDrawDC, HDC hReadDC, DHGLRC dhglrc)
          }
       } else {
          if (old_ctx->shared) {
-            if (old_ctx->current_framebuffer) {
-               stw_st_flush(old_ctx->st, old_ctx->current_framebuffer->stfb,
-                            ST_FLUSH_FRONT | ST_FLUSH_WAIT);
-            } else {
-               struct pipe_fence_handle *fence = NULL;
-               old_ctx->st->flush(old_ctx->st,
-                                  ST_FLUSH_FRONT | ST_FLUSH_WAIT, &fence,
-                                  NULL, NULL);
-            }
-         } else {
-            if (old_ctx->current_framebuffer)
-               stw_st_flush(old_ctx->st, old_ctx->current_framebuffer->stfb,
-                            ST_FLUSH_FRONT);
-            else
-               old_ctx->st->flush(old_ctx->st, ST_FLUSH_FRONT, NULL, NULL, NULL);
+            struct pipe_fence_handle *fence = NULL;
+            old_ctx->st->flush(old_ctx->st,
+                               ST_FLUSH_FRONT | ST_FLUSH_WAIT, &fence,
+                               NULL, NULL);
+         }
+         else {
+            old_ctx->st->flush(old_ctx->st, ST_FLUSH_FRONT, NULL, NULL, NULL);
          }
       }
    }
@@ -557,7 +547,7 @@ stw_make_current(HDC hDrawDC, HDC hReadDC, DHGLRC dhglrc)
       if (old_fb && old_fb != fb) {
          stw_lock_framebuffers(stw_dev);
          stw_framebuffer_lock(old_fb);
-         stw_framebuffer_release_locked(old_fb, old_ctx->st);
+         stw_framebuffer_release_locked(old_fb);
          stw_unlock_framebuffers(stw_dev);
       }
 
@@ -586,7 +576,7 @@ fail:
          old_ctx->current_framebuffer = NULL;
          stw_lock_framebuffers(stw_dev);
          stw_framebuffer_lock(old_fb);
-         stw_framebuffer_release_locked(old_fb, old_ctx->st);
+         stw_framebuffer_release_locked(old_fb);
          stw_unlock_framebuffers(stw_dev);
       }
    }

@@ -25,13 +25,13 @@ rnn_src_path = meson.source_root() + '/src/freedreno/registers'
 rnn_install_path = get_option('datadir') + '/freedreno/registers'
 rnn_path = rnn_src_path + ':' + get_option('prefix') + '/' + rnn_install_path
 
-# TODO: use multi-argument dependency() in meson 0.60
-foreach lua : ['lua54', 'lua53', 'lua52', 'lua']
-    dep_lua = dependency(lua, required: false, version: '>=5.2')
-    if dep_lua.found()
-        break
-    endif
-endforeach
+dep_lua = dependency('lua53', required: false)
+if not dep_lua.found()
+  dep_lua = dependency('lua52', required: false)
+endif
+if not dep_lua.found()
+  dep_lua = dependency('lua', required: false, version : '>=5.2')
+endif
 
 dep_libarchive = dependency('libarchive', required: false)
 dep_libxml2 = dependency('libxml-2.0', required: false)
@@ -42,17 +42,12 @@ install_fd_decode_tools = dep_libxml2.found() and prog_gzip.found() and \
 
 subdir('common')
 subdir('registers')
-subdir('isa')
 subdir('drm')
 subdir('ir2')
 subdir('ir3')
 subdir('fdl')
 subdir('perfcntrs')
 subdir('computerator')
-
-if with_perfetto and (with_datasources.contains('freedreno') or with_datasources.contains('auto'))
-  subdir('ds')
-endif
 
 # Everything that depends on rnn requires (indirectly) libxml2:
 if dep_libxml2.found()

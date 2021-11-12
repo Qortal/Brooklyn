@@ -61,7 +61,7 @@ static void r200Clear( struct gl_context *ctx, GLbitfield mask )
                    BUFFER_BIT_DEPTH | BUFFER_BIT_STENCIL |
                    BUFFER_BIT_COLOR0;
 
-   radeonFlush( ctx, 0 );
+   radeonFlush( ctx );
 
    hwmask = mask & hwbits;
    swmask = mask & ~hwbits;

@@ -51,15 +51,8 @@
  * the drawing to the 'draw' module.
  */
 static void
-llvmpipe_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info,
-                  unsigned drawid_offset,
-                  const struct pipe_draw_indirect_info *indirect,
-                  const struct pipe_draw_start_count_bias *draws,
-                  unsigned num_draws)
+llvmpipe_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info)
 {
-   if (!indirect && (!draws[0].count || !info->instance_count))
-      return;
-
    struct llvmpipe_context *lp = llvmpipe_context(pipe);
    struct draw_context *draw = lp->draw;
    const void *mapped_indices = NULL;
@@ -68,8 +61,8 @@ llvmpipe_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info,
    if (!llvmpipe_check_render_cond(lp))
       return;
 
-   if (indirect && indirect->buffer) {
-      util_draw_indirect(pipe, info, indirect);
+   if (info->indirect) {
+      util_draw_indirect(pipe, info);
       return;
    }
 
@@ -146,8 +139,7 @@ llvmpipe_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info,
                                      !lp->queries_disabled);
 
    /* draw! */
-   draw_vbo(draw, info, drawid_offset, indirect, draws, num_draws,
-            lp->patch_vertices);
+   draw_vbo(draw, info);
 
    /*
     * unmap vertex/index buffers
@@ -166,16 +158,6 @@ llvmpipe_draw_vbo(struct pipe_context *pipe, const struct pipe_draw_info *info,
          draw_vs_reset_so(lp->vs);
       }
    }
-
-   llvmpipe_cleanup_stage_sampling(lp, PIPE_SHADER_VERTEX);
-   llvmpipe_cleanup_stage_sampling(lp, PIPE_SHADER_GEOMETRY);
-   llvmpipe_cleanup_stage_sampling(lp, PIPE_SHADER_TESS_CTRL);
-   llvmpipe_cleanup_stage_sampling(lp, PIPE_SHADER_TESS_EVAL);
-
-   llvmpipe_cleanup_stage_images(lp, PIPE_SHADER_VERTEX);
-   llvmpipe_cleanup_stage_images(lp, PIPE_SHADER_GEOMETRY);
-   llvmpipe_cleanup_stage_images(lp, PIPE_SHADER_TESS_CTRL);
-   llvmpipe_cleanup_stage_images(lp, PIPE_SHADER_TESS_EVAL);
 
    /*
     * TODO: Flush only when a user vertex/index buffer is present

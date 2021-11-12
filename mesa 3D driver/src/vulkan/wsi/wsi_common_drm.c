@@ -37,9 +37,6 @@
 bool
 wsi_device_matches_drm_fd(const struct wsi_device *wsi, int drm_fd)
 {
-   if (wsi->can_present_on_device)
-      return wsi->can_present_on_device(wsi->pdevice, drm_fd);
-
    drmDevicePtr fd_device;
    int ret = drmGetDevice2(drm_fd, 0, &fd_device);
    if (ret)
@@ -65,25 +62,13 @@ wsi_device_matches_drm_fd(const struct wsi_device *wsi, int drm_fd)
 
 static uint32_t
 select_memory_type(const struct wsi_device *wsi,
-                   bool want_device_local,
+                   VkMemoryPropertyFlags props,
                    uint32_t type_bits)
 {
-   assert(type_bits);
-
-   bool all_local = true;
    for (uint32_t i = 0; i < wsi->memory_props.memoryTypeCount; i++) {
        const VkMemoryType type = wsi->memory_props.memoryTypes[i];
-       bool local = type.propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-
-       if ((type_bits & (1 << i)) && local == want_device_local)
+       if ((type_bits & (1 << i)) && (type.propertyFlags & props) == props)
          return i;
-       all_local &= local;
-   }
-
-   /* ignore want_device_local when all memory types are device-local */
-   if (all_local) {
-      assert(!want_device_local);
-      return ffs(type_bits) - 1;
    }
 
    unreachable("No memory type found");
@@ -116,12 +101,8 @@ wsi_create_native_image(const struct wsi_swapchain *chain,
    for (int i = 0; i < ARRAY_SIZE(image->fds); i++)
       image->fds[i] = -1;
 
-   struct wsi_image_create_info image_wsi_info = {
-      .sType = VK_STRUCTURE_TYPE_WSI_IMAGE_CREATE_INFO_MESA,
-   };
    VkImageCreateInfo image_info = {
       .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-      .pNext = &image_wsi_info,
       .flags = 0,
       .imageType = VK_IMAGE_TYPE_2D,
       .format = pCreateInfo->imageFormat,
@@ -164,6 +145,7 @@ wsi_create_native_image(const struct wsi_swapchain *chain,
       __vk_append_struct(&image_info, &image_format_list);
    }
 
+   struct wsi_image_create_info image_wsi_info;
    VkImageDrmFormatModifierListCreateInfoEXT image_modifier_list;
 
    uint32_t image_modifier_count = 0, modifier_prop_count = 0;
@@ -171,7 +153,11 @@ wsi_create_native_image(const struct wsi_swapchain *chain,
    uint64_t *image_modifiers = NULL;
    if (num_modifier_lists == 0) {
       /* If we don't have modifiers, fall back to the legacy "scanout" flag */
-      image_wsi_info.scanout = true;
+      image_wsi_info = (struct wsi_image_create_info) {
+         .sType = VK_STRUCTURE_TYPE_WSI_IMAGE_CREATE_INFO_MESA,
+         .scanout = true,
+      };
+      __vk_append_struct(&image_info, &image_wsi_info);
    } else {
       /* The winsys can't request modifiers if we don't support them. */
       assert(wsi->supports_modifiers);
@@ -317,7 +303,8 @@ wsi_create_native_image(const struct wsi_swapchain *chain,
       .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
       .pNext = &memory_dedicated_info,
       .allocationSize = reqs.size,
-      .memoryTypeIndex = select_memory_type(wsi, true, reqs.memoryTypeBits),
+      .memoryTypeIndex = select_memory_type(wsi, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                            reqs.memoryTypeBits),
    };
    result = wsi->AllocateMemory(chain->device, &memory_info,
                                 &chain->alloc, &image->memory);
@@ -488,7 +475,7 @@ wsi_create_prime_image(const struct wsi_swapchain *chain,
       .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
       .pNext = &prime_memory_dedicated_info,
       .allocationSize = linear_size,
-      .memoryTypeIndex = select_memory_type(wsi, false, reqs.memoryTypeBits),
+      .memoryTypeIndex = select_memory_type(wsi, 0, reqs.memoryTypeBits),
    };
    result = wsi->AllocateMemory(chain->device, &prime_memory_info,
                                 &chain->alloc, &image->prime.memory);
@@ -500,13 +487,9 @@ wsi_create_prime_image(const struct wsi_swapchain *chain,
    if (result != VK_SUCCESS)
       goto fail;
 
-   const struct wsi_image_create_info image_wsi_info = {
-      .sType = VK_STRUCTURE_TYPE_WSI_IMAGE_CREATE_INFO_MESA,
-      .prime_blit_src = true,
-   };
    const VkImageCreateInfo image_info = {
       .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-      .pNext = &image_wsi_info,
+      .pNext = NULL,
       .flags = 0,
       .imageType = VK_IMAGE_TYPE_2D,
       .format = pCreateInfo->imageFormat,
@@ -542,7 +525,8 @@ wsi_create_prime_image(const struct wsi_swapchain *chain,
       .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
       .pNext = &memory_dedicated_info,
       .allocationSize = reqs.size,
-      .memoryTypeIndex = select_memory_type(wsi, true, reqs.memoryTypeBits),
+      .memoryTypeIndex = select_memory_type(wsi, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                            reqs.memoryTypeBits),
    };
    result = wsi->AllocateMemory(chain->device, &memory_info,
                                 &chain->alloc, &image->memory);

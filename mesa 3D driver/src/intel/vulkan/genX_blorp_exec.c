@@ -24,24 +24,15 @@
 #include <assert.h>
 
 #include "anv_private.h"
-#include "anv_measure.h"
 
 /* These are defined in anv_private.h and blorp_genX_exec.h */
 #undef __gen_address_type
 #undef __gen_user_data
 #undef __gen_combine_address
 
-#include "common/intel_l3_config.h"
+#include "common/gen_l3_config.h"
+#include "common/gen_sample_positions.h"
 #include "blorp/blorp_genX_exec.h"
-
-static void blorp_measure_start(struct blorp_batch *_batch,
-                                const struct blorp_params *params)
-{
-   struct anv_cmd_buffer *cmd_buffer = _batch->driver_batch;
-   anv_measure_snapshot(cmd_buffer,
-                        params->snapshot_type,
-                        NULL, 0);
-}
 
 static void *
 blorp_emit_dwords(struct blorp_batch *batch, unsigned n)
@@ -66,23 +57,11 @@ blorp_surface_reloc(struct blorp_batch *batch, uint32_t ss_offset,
                     struct blorp_address address, uint32_t delta)
 {
    struct anv_cmd_buffer *cmd_buffer = batch->driver_batch;
-   VkResult result;
-
-   if (ANV_ALWAYS_SOFTPIN) {
-      result = anv_reloc_list_add_bo(&cmd_buffer->surface_relocs,
-                                     &cmd_buffer->pool->alloc,
-                                     address.buffer);
-      if (unlikely(result != VK_SUCCESS))
-         anv_batch_set_error(&cmd_buffer->batch, result);
-      return;
-   }
-
    uint64_t address_u64 = 0;
-   result = anv_reloc_list_add(&cmd_buffer->surface_relocs,
-                               &cmd_buffer->pool->alloc,
-                               ss_offset, address.buffer,
-                               address.offset + delta,
-                               &address_u64);
+   VkResult result =
+      anv_reloc_list_add(&cmd_buffer->surface_relocs, &cmd_buffer->pool->alloc,
+                         ss_offset, address.buffer, address.offset + delta,
+                         &address_u64);
    if (result != VK_SUCCESS)
       anv_batch_set_error(&cmd_buffer->batch, result);
 
@@ -95,19 +74,11 @@ static uint64_t
 blorp_get_surface_address(struct blorp_batch *blorp_batch,
                           struct blorp_address address)
 {
-   if (ANV_ALWAYS_SOFTPIN) {
-      struct anv_address anv_addr = {
-         .bo = address.buffer,
-         .offset = address.offset,
-      };
-      return anv_address_physical(anv_addr);
-   } else {
-      /* We'll let blorp_surface_reloc write the address. */
-      return 0;
-   }
+   /* We'll let blorp_surface_reloc write the address. */
+   return 0ull;
 }
 
-#if GFX_VER >= 7 && GFX_VER < 10
+#if GEN_GEN >= 7 && GEN_GEN < 10
 static struct blorp_address
 blorp_get_surface_base_address(struct blorp_batch *batch)
 {
@@ -175,7 +146,7 @@ blorp_alloc_vertex_buffer(struct blorp_batch *batch, uint32_t size,
       .buffer = cmd_buffer->device->dynamic_state_pool.block_pool.bo,
       .offset = vb_state.offset,
       .mocs = isl_mocs(&cmd_buffer->device->isl_dev,
-                       ISL_SURF_USAGE_VERTEX_BUFFER_BIT, false),
+                       ISL_SURF_USAGE_VERTEX_BUFFER_BIT),
    };
 
    return vb_state.map;
@@ -194,7 +165,7 @@ blorp_vf_invalidate_for_vb_48b_transitions(struct blorp_batch *batch,
          .bo = addrs[i].buffer,
          .offset = addrs[i].offset,
       };
-      genX(cmd_buffer_set_binding_for_gfx8_vb_flush)(cmd_buffer,
+      genX(cmd_buffer_set_binding_for_gen8_vb_flush)(cmd_buffer,
                                                      i, anv_addr, sizes[i]);
    }
 
@@ -204,7 +175,7 @@ blorp_vf_invalidate_for_vb_48b_transitions(struct blorp_batch *batch,
     * really matter for blorp because we never call apply_pipe_flushes after
     * this point.
     */
-   genX(cmd_buffer_update_dirty_vbs_for_gfx8_vb_flush)(cmd_buffer, SEQUENTIAL,
+   genX(cmd_buffer_update_dirty_vbs_for_gen8_vb_flush)(cmd_buffer, SEQUENTIAL,
                                                        (1 << num_vbs) - 1);
 }
 
@@ -226,7 +197,7 @@ blorp_flush_range(struct blorp_batch *batch, void *start, size_t size)
     */
 }
 
-static const struct intel_l3_config *
+static const struct gen_l3_config *
 blorp_get_l3_config(struct blorp_batch *batch)
 {
    struct anv_cmd_buffer *cmd_buffer = batch->driver_batch;
@@ -240,8 +211,8 @@ genX(blorp_exec)(struct blorp_batch *batch,
    struct anv_cmd_buffer *cmd_buffer = batch->driver_batch;
 
    if (!cmd_buffer->state.current_l3_config) {
-      const struct intel_l3_config *cfg =
-         intel_get_default_l3_config(&cmd_buffer->device->info);
+      const struct gen_l3_config *cfg =
+         gen_get_default_l3_config(&cmd_buffer->device->info);
       genX(cmd_buffer_config_l3)(cmd_buffer, cfg);
    }
 
@@ -249,7 +220,7 @@ genX(blorp_exec)(struct blorp_batch *batch,
    genX(cmd_buffer_emit_hashing_mode)(cmd_buffer, params->x1 - params->x0,
                                       params->y1 - params->y0, scale);
 
-#if GFX_VER >= 11
+#if GEN_GEN >= 11
    /* The PIPE_CONTROL command description says:
     *
     *    "Whenever a Binding Table Index (BTI) used by a Render Taget Message
@@ -258,46 +229,26 @@ genX(blorp_exec)(struct blorp_batch *batch,
     *     is set due to new association of BTI, PS Scoreboard Stall bit must
     *     be set in this packet."
     */
-   anv_add_pending_pipe_bits(cmd_buffer,
-                             ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT |
-                             ANV_PIPE_STALL_AT_SCOREBOARD_BIT,
-                             "before blorp BTI change");
+   cmd_buffer->state.pending_pipe_bits |=
+      ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT |
+      ANV_PIPE_STALL_AT_SCOREBOARD_BIT;
 #endif
 
-#if GFX_VERx10 == 120
-   if (!(batch->flags & BLORP_BATCH_NO_EMIT_DEPTH_STENCIL)) {
-      /* Wa_14010455700
-       *
-       * ISL will change some CHICKEN registers depending on the depth surface
-       * format, along with emitting the depth and stencil packets. In that
-       * case, we want to do a depth flush and stall, so the pipeline is not
-       * using these settings while we change the registers.
-       */
-      cmd_buffer->state.pending_pipe_bits |=
-         ANV_PIPE_DEPTH_CACHE_FLUSH_BIT |
-         ANV_PIPE_DEPTH_STALL_BIT |
-         ANV_PIPE_END_OF_PIPE_SYNC_BIT;
-   }
-#endif
-
-#if GFX_VER == 7
+#if GEN_GEN == 7
    /* The MI_LOAD/STORE_REGISTER_MEM commands which BLORP uses to implement
     * indirect fast-clear colors can cause GPU hangs if we don't stall first.
     * See genX(cmd_buffer_mi_memcpy) for more details.
     */
    if (params->src.clear_color_addr.buffer ||
-       params->dst.clear_color_addr.buffer) {
-      anv_add_pending_pipe_bits(cmd_buffer,
-                                ANV_PIPE_CS_STALL_BIT,
-                                "before blorp prep fast clear");
-   }
+       params->dst.clear_color_addr.buffer)
+      cmd_buffer->state.pending_pipe_bits |= ANV_PIPE_CS_STALL_BIT;
 #endif
 
    genX(cmd_buffer_apply_pipe_flushes)(cmd_buffer);
 
    genX(flush_pipeline_select_3d)(cmd_buffer);
 
-   genX(cmd_buffer_emit_gfx7_depth_flush)(cmd_buffer);
+   genX(cmd_buffer_emit_gen7_depth_flush)(cmd_buffer);
 
    /* BLORP doesn't do anything fancy with depth such as discards, so we want
     * the PMA fix off.  Also, off is always the safe option.
@@ -306,7 +257,7 @@ genX(blorp_exec)(struct blorp_batch *batch,
 
    blorp_exec(batch, params);
 
-#if GFX_VER >= 11
+#if GEN_GEN >= 11
    /* The PIPE_CONTROL command description says:
     *
     *    "Whenever a Binding Table Index (BTI) used by a Render Taget Message
@@ -315,10 +266,9 @@ genX(blorp_exec)(struct blorp_batch *batch,
     *     is set due to new association of BTI, PS Scoreboard Stall bit must
     *     be set in this packet."
     */
-   anv_add_pending_pipe_bits(cmd_buffer,
-                             ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT |
-                             ANV_PIPE_STALL_AT_SCOREBOARD_BIT,
-                             "after blorp BTI change");
+   cmd_buffer->state.pending_pipe_bits |=
+      ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT |
+      ANV_PIPE_STALL_AT_SCOREBOARD_BIT;
 #endif
 
    cmd_buffer->state.gfx.vb_dirty = ~0;

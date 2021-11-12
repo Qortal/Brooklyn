@@ -33,8 +33,7 @@
 #include "wsi_common_x11.h"
 #include "v3dv_private.h"
 
-VKAPI_ATTR VkBool32 VKAPI_CALL
-v3dv_GetPhysicalDeviceXcbPresentationSupportKHR(
+VkBool32 v3dv_GetPhysicalDeviceXcbPresentationSupportKHR(
    VkPhysicalDevice                            physicalDevice,
    uint32_t                                    queueFamilyIndex,
    xcb_connection_t*                           connection,
@@ -48,8 +47,7 @@ v3dv_GetPhysicalDeviceXcbPresentationSupportKHR(
              connection, visual_id);
 }
 
-VKAPI_ATTR VkBool32 VKAPI_CALL
-v3dv_GetPhysicalDeviceXlibPresentationSupportKHR(
+VkBool32 v3dv_GetPhysicalDeviceXlibPresentationSupportKHR(
    VkPhysicalDevice                            physicalDevice,
    uint32_t                                    queueFamilyIndex,
    Display*                                    dpy,
@@ -63,8 +61,7 @@ v3dv_GetPhysicalDeviceXlibPresentationSupportKHR(
              XGetXCBConnection(dpy), visualID);
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL
-v3dv_CreateXcbSurfaceKHR(
+VkResult v3dv_CreateXcbSurfaceKHR(
    VkInstance                                  _instance,
    const VkXcbSurfaceCreateInfoKHR*            pCreateInfo,
    const VkAllocationCallbacks*                pAllocator,
@@ -77,13 +74,12 @@ v3dv_CreateXcbSurfaceKHR(
    if (pAllocator)
       alloc = pAllocator;
    else
-      alloc = &instance->vk.alloc;
+      alloc = &instance->alloc;
 
    return wsi_create_xcb_surface(alloc, pCreateInfo, pSurface);
 }
 
-VKAPI_ATTR VkResult VKAPI_CALL
-v3dv_CreateXlibSurfaceKHR(
+VkResult v3dv_CreateXlibSurfaceKHR(
    VkInstance                                  _instance,
    const VkXlibSurfaceCreateInfoKHR*           pCreateInfo,
    const VkAllocationCallbacks*                pAllocator,
@@ -97,7 +93,7 @@ v3dv_CreateXlibSurfaceKHR(
    if (pAllocator)
       alloc = pAllocator;
    else
-      alloc = &instance->vk.alloc;
+      alloc = &instance->alloc;
 
    return wsi_create_xlib_surface(alloc, pCreateInfo, pSurface);
 }

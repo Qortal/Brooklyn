@@ -121,7 +121,7 @@ RegisterSet::reset(DataFile f, bool resetMax)
 void
 RegisterSet::init(const Target *targ)
 {
-   for (unsigned int rf = 0; rf <= LAST_REGISTER_FILE; ++rf) {
+   for (unsigned int rf = 0; rf <= FILE_ADDRESS; ++rf) {
       DataFile f = static_cast<DataFile>(rf);
       last[rf] = targ->getFileSize(f) - 1;
       unit[rf] = targ->getFileUnit(f);
@@ -224,7 +224,7 @@ RegisterSet::release(DataFile f, int32_t reg, unsigned int size)
 class RegAlloc
 {
 public:
-   RegAlloc(Program *program) : prog(program), func(NULL), sequence(0) { }
+   RegAlloc(Program *program) : prog(program), sequence(0) { }
 
    bool exec();
    bool execFunc();
@@ -251,7 +251,6 @@ private:
 
    class InsertConstraintsPass : public Pass {
    public:
-      InsertConstraintsPass() : targ(NULL) { }
       bool exec(Function *func);
    private:
       virtual bool visit(BasicBlock *);
@@ -876,9 +875,9 @@ private:
 
 const GCRA::RelDegree GCRA::relDegree;
 
-GCRA::RIG_Node::RIG_Node() : Node(NULL), degree(0), degreeLimit(0), maxReg(0),
-   colors(0), f(FILE_NULL), reg(0), weight(0), next(this), prev(this)
+GCRA::RIG_Node::RIG_Node() : Node(NULL), next(this), prev(this)
 {
+   colors = 0;
 }
 
 void
@@ -1211,8 +1210,6 @@ GCRA::RIG_Node::addRegPreference(RIG_Node *node)
 }
 
 GCRA::GCRA(Function *fn, SpillCodeInserter& spill, MergedDefs& mergedDefs) :
-   nodes(NULL),
-   nodeCount(0),
    func(fn),
    regs(fn->getProgram()->getTarget()),
    spill(spill),
@@ -1270,8 +1267,7 @@ GCRA::buildRIG(ArrayList& insns)
    for (int i = 0; i < insns.getSize(); ++i) {
       Instruction *insn = reinterpret_cast<Instruction *>(insns.get(i));
       for (int d = 0; insn->defExists(d); ++d)
-         if (insn->getDef(d)->reg.file <= LAST_REGISTER_FILE &&
-             insn->getDef(d)->rep() == insn->getDef(d))
+         if (insn->getDef(d)->rep() == insn->getDef(d))
             insertOrderedTail(values, getNode(insn->getDef(d)->asLValue()));
    }
    checkList(values);
@@ -2570,25 +2566,11 @@ RegAlloc::InsertConstraintsPass::visit(BasicBlock *bb)
             addHazard(i, i->src(0).getIndirect(0));
          if (i->src(0).isIndirect(1) && typeSizeof(i->dType) >= 8)
             addHazard(i, i->src(0).getIndirect(1));
-         if (i->op == OP_LOAD && i->fixed && targ->getChipset() < 0xc0) {
-            // Add a hazard to make sure we keep the op around. These are used
-            // for membars.
-            Instruction *nop = new_Instruction(func, OP_NOP, i->dType);
-            nop->setSrc(0, i->getDef(0));
-            i->bb->insertAfter(i, nop);
-         }
       } else
       if (i->op == OP_UNION ||
           i->op == OP_MERGE ||
           i->op == OP_SPLIT) {
          constrList.push_back(i);
-      } else
-      if (i->op == OP_ATOM && i->subOp == NV50_IR_SUBOP_ATOM_CAS &&
-          targ->getChipset() < 0xc0) {
-         // Like a hazard, but for a def.
-         Instruction *nop = new_Instruction(func, OP_NOP, i->dType);
-         nop->setSrc(0, i->getDef(0));
-         i->bb->insertAfter(i, nop);
       }
    }
    return true;
@@ -2653,7 +2635,7 @@ RegAlloc::InsertConstraintsPass::insertConstraintMoves()
       Instruction *cst = *it;
       Instruction *mov;
 
-      if (cst->op == OP_SPLIT && false) {
+      if (cst->op == OP_SPLIT && 0) {
          // spilling splits is annoying, just make sure they're separate
          for (int d = 0; cst->defExists(d); ++d) {
             if (!cst->getDef(d)->refCount())

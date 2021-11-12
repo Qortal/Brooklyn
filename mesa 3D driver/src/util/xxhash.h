@@ -78,8 +78,6 @@ XXH32        6.8 GB/s            6.0 GB/s
 #define XXH_FORCE_ALIGN_CHECK 0
 #define XXH_FORCE_MEMORY_ACCESS 0
 
-#include "util/compiler.h" /* for FALLTHROUGH */
-
 #if defined (__cplusplus)
 extern "C" {
 #endif
@@ -731,41 +729,41 @@ XXH32_finalize(xxh_u32 h32, const xxh_u8* ptr, size_t len, XXH_alignment align)
     } else {
          switch(len&15) /* or switch(bEnd - p) */ {
            case 12:      PROCESS4;
-                         FALLTHROUGH;
+                         /* fallthrough */
            case 8:       PROCESS4;
-                         FALLTHROUGH;
+                         /* fallthrough */
            case 4:       PROCESS4;
                          return XXH32_avalanche(h32);
 
            case 13:      PROCESS4;
-                         FALLTHROUGH;
+                         /* fallthrough */
            case 9:       PROCESS4;
-                         FALLTHROUGH;
+                         /* fallthrough */
            case 5:       PROCESS4;
                          PROCESS1;
                          return XXH32_avalanche(h32);
 
            case 14:      PROCESS4;
-                         FALLTHROUGH;
+                         /* fallthrough */
            case 10:      PROCESS4;
-                         FALLTHROUGH;
+                         /* fallthrough */
            case 6:       PROCESS4;
                          PROCESS1;
                          PROCESS1;
                          return XXH32_avalanche(h32);
 
            case 15:      PROCESS4;
-                         FALLTHROUGH;
+                         /* fallthrough */
            case 11:      PROCESS4;
-                         FALLTHROUGH;
+                         /* fallthrough */
            case 7:       PROCESS4;
-                         FALLTHROUGH;
+                         /* fallthrough */
            case 3:       PROCESS1;
-                         FALLTHROUGH;
+                         /* fallthrough */
            case 2:       PROCESS1;
-                         FALLTHROUGH;
+                         /* fallthrough */
            case 1:       PROCESS1;
-                         FALLTHROUGH;
+                         /* fallthrough */
            case 0:       return XXH32_avalanche(h32);
         }
         XXH_ASSERT(0);
@@ -1146,63 +1144,63 @@ XXH64_finalize(xxh_u64 h64, const xxh_u8* ptr, size_t len, XXH_alignment align)
     } else {
         switch(len & 31) {
            case 24: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case 16: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case  8: PROCESS8_64;
                     return XXH64_avalanche(h64);
 
            case 28: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case 20: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case 12: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case  4: PROCESS4_64;
                     return XXH64_avalanche(h64);
 
            case 25: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case 17: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case  9: PROCESS8_64;
                     PROCESS1_64;
                     return XXH64_avalanche(h64);
 
            case 29: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case 21: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case 13: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case  5: PROCESS4_64;
                     PROCESS1_64;
                     return XXH64_avalanche(h64);
 
            case 26: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case 18: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case 10: PROCESS8_64;
                     PROCESS1_64;
                     PROCESS1_64;
                     return XXH64_avalanche(h64);
 
            case 30: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case 22: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case 14: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case  6: PROCESS4_64;
                     PROCESS1_64;
                     PROCESS1_64;
                     return XXH64_avalanche(h64);
 
            case 27: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case 19: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case 11: PROCESS8_64;
                     PROCESS1_64;
                     PROCESS1_64;
@@ -1210,19 +1208,19 @@ XXH64_finalize(xxh_u64 h64, const xxh_u8* ptr, size_t len, XXH_alignment align)
                     return XXH64_avalanche(h64);
 
            case 31: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case 23: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case 15: PROCESS8_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case  7: PROCESS4_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case  3: PROCESS1_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case  2: PROCESS1_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case  1: PROCESS1_64;
-                    FALLTHROUGH;
+                         /* fallthrough */
            case  0: return XXH64_avalanche(h64);
         }
     }

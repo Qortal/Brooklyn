@@ -31,7 +31,7 @@
 #include "util/u_dynarray.h"
 
 #include "drm-uapi/i915_drm.h"
-#include "common/intel_decoder.h"
+#include "common/gen_decoder.h"
 
 #include "iris_fence.h"
 #include "iris_fine_fence.h"
@@ -41,12 +41,11 @@ struct iris_context;
 /* The kernel assumes batchbuffers are smaller than 256kB. */
 #define MAX_BATCH_SIZE (256 * 1024)
 
-/* Terminating the batch takes either 4 bytes for MI_BATCH_BUFFER_END or 12
- * bytes for MI_BATCH_BUFFER_START (when chaining).  Plus another 24 bytes for
- * the seqno write (using PIPE_CONTROL), and another 24 bytes for the ISP
- * invalidation pipe control.
+/* Terminating the batch takes either 4 bytes for MI_BATCH_BUFFER_END
+ * or 12 bytes for MI_BATCH_BUFFER_START (when chaining).  Plus another
+ * 24 bytes for the seqno write (using PIPE_CONTROL).
  */
-#define BATCH_RESERVED 60
+#define BATCH_RESERVED 36
 
 /* Our target batch size - flush approximately at this point. */
 #define BATCH_SZ (64 * 1024 - BATCH_RESERVED)
@@ -56,8 +55,9 @@ enum iris_batch_name {
    IRIS_BATCH_COMPUTE,
 };
 
+#define IRIS_BATCH_COUNT 2
+
 struct iris_batch {
-   struct iris_context *ice;
    struct iris_screen *screen;
    struct pipe_debug_callback *dbg;
    struct pipe_device_reset_callback *reset;
@@ -81,13 +81,11 @@ struct iris_batch {
 
    uint32_t hw_ctx_id;
 
-   /** A list of all BOs referenced by this batch */
+   /** The validation list */
+   struct drm_i915_gem_exec_object2 *validation_list;
    struct iris_bo **exec_bos;
    int exec_count;
    int exec_array_size;
-   /** Bitset of whether this batch writes to BO `i'. */
-   BITSET_WORD *bos_written;
-   uint32_t max_gem_handle;
 
    /** Whether INTEL_BLACKHOLE_RENDER is enabled in the batch (aka first
     * instruction is a MI_BATCH_BUFFER_END).
@@ -136,7 +134,7 @@ struct iris_batch {
       struct hash_table *render;
    } cache;
 
-   struct intel_batch_decode_ctx decoder;
+   struct gen_batch_decode_ctx decoder;
    struct hash_table_u64 *state_sizes;
 
    /**
@@ -163,9 +161,6 @@ struct iris_batch {
    /** Have we emitted any draw calls with next_seqno? */
    bool contains_draw_with_next_seqno;
 
-   /** Batch contains fence signal operation. */
-   bool contains_fence_signal;
-
    /**
     * Number of times iris_batch_sync_region_start() has been called without a
     * matching iris_batch_sync_region_end() on this batch.
@@ -173,7 +168,6 @@ struct iris_batch {
    uint32_t sync_region_depth;
 
    uint32_t last_aux_map_state;
-   struct iris_measure_batch *measure;
 };
 
 void iris_init_batch(struct iris_context *ice,
@@ -269,7 +263,7 @@ iris_batch_reference_signal_syncobj(struct iris_batch *batch,
                                    struct iris_syncobj **out_syncobj)
 {
    struct iris_syncobj *syncobj = iris_batch_get_signal_syncobj(batch);
-   iris_syncobj_reference(batch->screen->bufmgr, out_syncobj, syncobj);
+   iris_syncobj_reference(batch->screen, out_syncobj, syncobj);
 }
 
 /**

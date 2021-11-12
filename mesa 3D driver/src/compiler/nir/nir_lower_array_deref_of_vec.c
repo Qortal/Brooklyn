@@ -151,11 +151,11 @@ nir_lower_array_deref_of_vec_impl(nir_function_impl *impl,
                nir_vector_extract(&b, &intrin->dest.ssa, index);
             if (scalar->parent_instr->type == nir_instr_type_ssa_undef) {
                nir_ssa_def_rewrite_uses(&intrin->dest.ssa,
-                                        scalar);
+                                        nir_src_for_ssa(scalar));
                nir_instr_remove(&intrin->instr);
             } else {
                nir_ssa_def_rewrite_uses_after(&intrin->dest.ssa,
-                                              scalar,
+                                              nir_src_for_ssa(scalar),
                                               scalar->parent_instr);
             }
             progress = true;

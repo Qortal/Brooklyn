@@ -25,16 +25,10 @@
 
 #include <stdio.h>
 #include "context.h"
-#include "draw_validate.h"
-
-#include "util/os_misc.h"
-#include "util/simple_mtx.h"
 
 #include "mtypes.h"
 #include "version.h"
 #include "git_sha1.h"
-
-static simple_mtx_t override_lock = _SIMPLE_MTX_INITIALIZER_NP;
 
 /**
  * Scans 'string' to see if it ends with 'ending'.
@@ -78,15 +72,13 @@ get_gl_override(gl_api api, int *version, bool *fwd_context,
 
    STATIC_ASSERT(ARRAY_SIZE(override) == API_OPENGL_LAST + 1);
 
-   simple_mtx_lock(&override_lock);
-
    if (api == API_OPENGLES)
       goto exit;
 
    if (override[api].version < 0) {
       override[api].version = 0;
 
-      version_str = os_get_option(env_var);
+      version_str = getenv(env_var);
       if (version_str) {
          override[api].fc_suffix = check_for_ending(version_str, "FC");
          override[api].compat_suffix = check_for_ending(version_str, "COMPAT");
@@ -116,8 +108,6 @@ exit:
    *version = override[api].version;
    *fwd_context = override[api].fc_suffix;
    *compat_context = override[api].compat_suffix;
-
-   simple_mtx_unlock(&override_lock);
 }
 
 /**
@@ -541,10 +531,7 @@ compute_version_es2(const struct gl_extensions *extensions,
                          extensions->OES_depth_texture_cube_map &&
                          extensions->EXT_texture_type_2_10_10_10_REV);
    const bool es31_compute_shader =
-      consts->MaxComputeWorkGroupInvocations >= 128 &&
-      consts->Program[MESA_SHADER_COMPUTE].MaxShaderStorageBlocks &&
-      consts->Program[MESA_SHADER_COMPUTE].MaxAtomicBuffers &&
-      consts->Program[MESA_SHADER_COMPUTE].MaxImageUniforms;
+      consts->MaxComputeWorkGroupInvocations >= 128;
    const bool ver_3_1 = (ver_3_0 &&
                          consts->MaxVertexAttribStride >= 2048 &&
                          extensions->ARB_arrays_of_arrays &&
@@ -552,6 +539,10 @@ compute_version_es2(const struct gl_extensions *extensions,
                          extensions->ARB_draw_indirect &&
                          extensions->ARB_explicit_uniform_location &&
                          extensions->ARB_framebuffer_no_attachments &&
+                         extensions->ARB_shader_atomic_counters &&
+                         extensions->ARB_shader_image_load_store &&
+                         extensions->ARB_shader_image_size &&
+                         extensions->ARB_shader_storage_buffer_object &&
                          extensions->ARB_shading_language_packing &&
                          extensions->ARB_stencil_texturing &&
                          extensions->ARB_texture_multisample &&
@@ -559,14 +550,6 @@ compute_version_es2(const struct gl_extensions *extensions,
                          extensions->MESA_shader_integer_functions &&
                          extensions->EXT_shader_integer_mix);
    const bool ver_3_2 = (ver_3_1 &&
-                         /* ES 3.2 requires that images/buffers be accessible
-                          * from fragment shaders as well
-                          */
-                         extensions->ARB_shader_atomic_counters &&
-                         extensions->ARB_shader_image_load_store &&
-                         extensions->ARB_shader_image_size &&
-                         extensions->ARB_shader_storage_buffer_object &&
-
                          extensions->EXT_draw_buffers2 &&
                          extensions->KHR_blend_equation_advanced &&
                          extensions->KHR_robustness &&
@@ -607,7 +590,7 @@ _mesa_get_version(const struct gl_extensions *extensions,
       if (!consts->AllowHigherCompatVersion) {
          consts->GLSLVersion = consts->GLSLVersionCompat;
       }
-      FALLTHROUGH;
+      /* fall through */
    case API_OPENGL_CORE:
       return compute_version(extensions, consts, api);
    case API_OPENGLES:
@@ -638,7 +621,7 @@ _mesa_compute_version(struct gl_context *ctx)
    if (_mesa_is_desktop_gl(ctx)) {
       switch (ctx->Version) {
       case 20:
-         FALLTHROUGH; /* GLSL 1.20 is the minimum we support */
+         /* fall-through, GLSL 1.20 is the minimum we support */
       case 21:
          ctx->Const.GLSLVersion = 120;
          break;
@@ -684,35 +667,6 @@ _mesa_compute_version(struct gl_context *ctx)
 done:
    if (ctx->API == API_OPENGL_COMPAT && ctx->Version >= 31)
       ctx->Extensions.ARB_compatibility = GL_TRUE;
-
-   /* Precompute valid primitive types for faster draw time validation. */
-   /* All primitive type enums are less than 32, so we can use the shift. */
-   ctx->SupportedPrimMask = (1 << GL_POINTS) |
-                           (1 << GL_LINES) |
-                           (1 << GL_LINE_LOOP) |
-                           (1 << GL_LINE_STRIP) |
-                           (1 << GL_TRIANGLES) |
-                           (1 << GL_TRIANGLE_STRIP) |
-                           (1 << GL_TRIANGLE_FAN);
-
-   if (ctx->API == API_OPENGL_COMPAT) {
-      ctx->SupportedPrimMask |= (1 << GL_QUADS) |
-                               (1 << GL_QUAD_STRIP) |
-                               (1 << GL_POLYGON);
-   }
-
-   if (_mesa_has_geometry_shaders(ctx)) {
-      ctx->SupportedPrimMask |= (1 << GL_LINES_ADJACENCY) |
-                               (1 << GL_LINE_STRIP_ADJACENCY) |
-                               (1 << GL_TRIANGLES_ADJACENCY) |
-                               (1 << GL_TRIANGLE_STRIP_ADJACENCY);
-   }
-
-   if (_mesa_has_tessellation(ctx))
-      ctx->SupportedPrimMask |= 1 << GL_PATCHES;
-
-   /* First time initialization. */
-   _mesa_update_valid_to_render_state(ctx);
 }
 
 

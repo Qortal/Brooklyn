@@ -30,14 +30,14 @@
 
 #ifdef VMX86_STATS
 #define SVGA_STATS_COUNT_INC(_sws, _stat)                    \
-   _sws->stats_inc(_sws, _stat);
+   _sws->stats_inc(_stat);
 
 #define SVGA_STATS_TIME_PUSH(_sws, _stat)                    \
    struct svga_winsys_stats_timeframe timeFrame;             \
-   _sws->stats_time_push(_sws, _stat, &timeFrame);
+   _sws->stats_time_push(_stat, &timeFrame);
 
 #define SVGA_STATS_TIME_POP(_sws)                            \
-   _sws->stats_time_pop(_sws);
+   _sws->stats_time_pop();
 
 #else
 

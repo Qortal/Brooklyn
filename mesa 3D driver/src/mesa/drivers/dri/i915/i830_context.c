@@ -36,7 +36,6 @@
 #include "tnl/t_pipeline.h"
 #include "intel_tris.h"
 #include "util/ralloc.h"
-#include "util/u_memory.h"
 
 /***************************************
  * Mesa's Driver Functions
@@ -62,7 +61,7 @@ i830CreateContext(int api,
                   void *sharedContextPrivate)
 {
    struct dd_function_table functions;
-   struct i830_context *i830 = align_calloc(sizeof(struct i830_context), 16);
+   struct i830_context *i830 = rzalloc(NULL, struct i830_context);
    struct intel_context *intel = &i830->intel;
    struct gl_context *ctx = &intel->ctx;
 
@@ -79,7 +78,7 @@ i830CreateContext(int api,
                          mesaVis, driContextPriv,
                          sharedContextPrivate, &functions,
                          error)) {
-      align_free(i830);
+      ralloc_free(i830);
       return false;
    }
 

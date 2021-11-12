@@ -55,12 +55,6 @@ struct set {
    uint32_t deleted_entries;
 };
 
-bool
-_mesa_set_init(struct set *ht, void *mem_ctx,
-                 uint32_t (*key_hash_function)(const void *key),
-                 bool (*key_equals_function)(const void *a,
-                                             const void *b));
-
 struct set *
 _mesa_set_create(void *mem_ctx,
                  uint32_t (*key_hash_function)(const void *key),
@@ -87,10 +81,10 @@ struct set_entry *
 _mesa_set_add_pre_hashed(struct set *set, uint32_t hash, const void *key);
 
 struct set_entry *
-_mesa_set_search_or_add(struct set *set, const void *key, bool *found);
+_mesa_set_search_or_add(struct set *set, const void *key);
 struct set_entry *
 _mesa_set_search_or_add_pre_hashed(struct set *set, uint32_t hash,
-                                   const void *key, bool *found);
+                                   const void *key);
 
 struct set_entry *
 _mesa_set_search(const struct set *set, const void *key);
@@ -111,8 +105,6 @@ _mesa_set_remove_key(struct set *set, const void *key);
 
 struct set_entry *
 _mesa_set_next_entry(const struct set *set, struct set_entry *entry);
-struct set_entry *
-_mesa_set_next_entry_unsafe(const struct set *set, struct set_entry *entry);
 
 struct set_entry *
 _mesa_set_random_entry(struct set *set,
@@ -133,15 +125,6 @@ _mesa_set_intersects(struct set *a, struct set *b);
    for (struct set_entry *entry = _mesa_set_next_entry(set, NULL);  \
         entry != NULL;                                              \
         entry = _mesa_set_next_entry(set, entry))
-
-/**
- * This foreach function destroys the table as it iterates.
- * It is not safe to use when inserting or removing entries.
- */
-#define set_foreach_remove(set, entry)                              \
-   for (struct set_entry *entry = _mesa_set_next_entry_unsafe(set, NULL);  \
-        (set)->entries;                                              \
-        entry->hash = 0, entry->key = (void*)NULL, (set)->entries--, entry = _mesa_set_next_entry_unsafe(set, entry))
 
 #ifdef __cplusplus
 } /* extern C */

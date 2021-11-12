@@ -52,7 +52,7 @@
 GBM_EXPORT int
 gbm_device_get_fd(struct gbm_device *gbm)
 {
-   return gbm->v0.fd;
+   return gbm->fd;
 }
 
 /** Get the backend name for the given gbm device
@@ -63,7 +63,7 @@ gbm_device_get_fd(struct gbm_device *gbm)
 GBM_EXPORT const char *
 gbm_device_get_backend_name(struct gbm_device *gbm)
 {
-   return gbm->v0.name;
+   return gbm->name;
 }
 
 /** Test if a format is supported for a given set of usage flags.
@@ -82,7 +82,7 @@ GBM_EXPORT int
 gbm_device_is_format_supported(struct gbm_device *gbm,
                                uint32_t format, uint32_t usage)
 {
-   return gbm->v0.is_format_supported(gbm, format, usage);
+   return gbm->is_format_supported(gbm, format, usage);
 }
 
 /** Get the number of planes that are required for a given format+modifier
@@ -96,7 +96,7 @@ gbm_device_get_format_modifier_plane_count(struct gbm_device *gbm,
                                            uint32_t format,
                                            uint64_t modifier)
 {
-   return gbm->v0.get_format_modifier_plane_count(gbm, format, modifier);
+   return gbm->get_format_modifier_plane_count(gbm, format, modifier);
 }
 
 /** Destroy the gbm device and free all resources associated with it.
@@ -106,7 +106,9 @@ gbm_device_get_format_modifier_plane_count(struct gbm_device *gbm,
 GBM_EXPORT void
 gbm_device_destroy(struct gbm_device *gbm)
 {
-   _gbm_device_destroy(gbm);
+   gbm->refcount--;
+   if (gbm->refcount == 0)
+      gbm->destroy(gbm);
 }
 
 /** Create a gbm device for allocating buffers
@@ -137,6 +139,8 @@ gbm_create_device(int fd)
       return NULL;
 
    gbm->dummy = gbm_create_device;
+   gbm->stat = buf;
+   gbm->refcount = 1;
 
    return gbm;
 }
@@ -150,7 +154,7 @@ gbm_create_device(int fd)
 GBM_EXPORT uint32_t
 gbm_bo_get_width(struct gbm_bo *bo)
 {
-   return bo->v0.width;
+   return bo->width;
 }
 
 /** Get the height of the buffer object
@@ -161,7 +165,7 @@ gbm_bo_get_width(struct gbm_bo *bo)
 GBM_EXPORT uint32_t
 gbm_bo_get_height(struct gbm_bo *bo)
 {
-   return bo->v0.height;
+   return bo->height;
 }
 
 /** Get the stride of the buffer object
@@ -188,7 +192,7 @@ gbm_bo_get_stride(struct gbm_bo *bo)
 GBM_EXPORT uint32_t
 gbm_bo_get_stride_for_plane(struct gbm_bo *bo, int plane)
 {
-   return bo->gbm->v0.bo_get_stride(bo, plane);
+   return bo->gbm->bo_get_stride(bo, plane);
 }
 
 /** Get the format of the buffer object
@@ -201,7 +205,7 @@ gbm_bo_get_stride_for_plane(struct gbm_bo *bo, int plane)
 GBM_EXPORT uint32_t
 gbm_bo_get_format(struct gbm_bo *bo)
 {
-   return bo->v0.format;
+   return bo->format;
 }
 
 /** Get the bit-per-pixel of the buffer object's format
@@ -219,7 +223,7 @@ gbm_bo_get_format(struct gbm_bo *bo)
 GBM_EXPORT uint32_t
 gbm_bo_get_bpp(struct gbm_bo *bo)
 {
-   switch (bo->v0.format) {
+   switch (bo->format) {
       default:
          return 0;
       case GBM_FORMAT_C8:
@@ -285,7 +289,7 @@ gbm_bo_get_bpp(struct gbm_bo *bo)
 GBM_EXPORT uint32_t
 gbm_bo_get_offset(struct gbm_bo *bo, int plane)
 {
-   return bo->gbm->v0.bo_get_offset(bo, plane);
+   return bo->gbm->bo_get_offset(bo, plane);
 }
 
 /** Get the gbm device used to create the buffer object
@@ -310,7 +314,7 @@ gbm_bo_get_device(struct gbm_bo *bo)
 GBM_EXPORT union gbm_bo_handle
 gbm_bo_get_handle(struct gbm_bo *bo)
 {
-   return bo->v0.handle;
+   return bo->handle;
 }
 
 /** Get a DMA-BUF file descriptor for the buffer object
@@ -327,7 +331,7 @@ gbm_bo_get_handle(struct gbm_bo *bo)
 GBM_EXPORT int
 gbm_bo_get_fd(struct gbm_bo *bo)
 {
-   return bo->gbm->v0.bo_get_fd(bo);
+   return bo->gbm->bo_get_fd(bo);
 }
 
 /** Get the number of planes for the given bo.
@@ -338,7 +342,7 @@ gbm_bo_get_fd(struct gbm_bo *bo)
 GBM_EXPORT int
 gbm_bo_get_plane_count(struct gbm_bo *bo)
 {
-   return bo->gbm->v0.bo_get_planes(bo);
+   return bo->gbm->bo_get_planes(bo);
 }
 
 /** Get the handle for the specified plane of the buffer object
@@ -356,27 +360,7 @@ gbm_bo_get_plane_count(struct gbm_bo *bo)
 GBM_EXPORT union gbm_bo_handle
 gbm_bo_get_handle_for_plane(struct gbm_bo *bo, int plane)
 {
-   return bo->gbm->v0.bo_get_handle(bo, plane);
-}
-
-/** Get a DMA-BUF file descriptor for the specified plane of the buffer object
- *
- * This function creates a DMA-BUF (also known as PRIME) file descriptor
- * handle for the specified plane of the buffer object.  Each call to
- * gbm_bo_get_fd_for_plane() returns a new file descriptor and the caller is
- * responsible for closing the file descriptor.
-
- * \param bo The buffer object
- * \param plane The plane to get a DMA-BUF for
- * \return Returns a file descriptor referring to the underlying buffer or -1
- * if an error occurs.
- *
- * \sa gbm_bo_get_fd()
- */
-GBM_EXPORT int
-gbm_bo_get_fd_for_plane(struct gbm_bo *bo, int plane)
-{
-   return bo->gbm->v0.bo_get_plane_fd(bo, plane);
+   return bo->gbm->bo_get_handle(bo, plane);
 }
 
 /**
@@ -395,7 +379,7 @@ gbm_bo_get_fd_for_plane(struct gbm_bo *bo, int plane)
 GBM_EXPORT uint64_t
 gbm_bo_get_modifier(struct gbm_bo *bo)
 {
-   return bo->gbm->v0.bo_get_modifier(bo);
+   return bo->gbm->bo_get_modifier(bo);
 }
 
 /** Write data into the buffer object
@@ -414,7 +398,7 @@ gbm_bo_get_modifier(struct gbm_bo *bo)
 GBM_EXPORT int
 gbm_bo_write(struct gbm_bo *bo, const void *buf, size_t count)
 {
-   return bo->gbm->v0.bo_write(bo, buf, count);
+   return bo->gbm->bo_write(bo, buf, count);
 }
 
 /** Set the user data associated with a buffer object
@@ -428,8 +412,8 @@ GBM_EXPORT void
 gbm_bo_set_user_data(struct gbm_bo *bo, void *data,
 		     void (*destroy_user_data)(struct gbm_bo *, void *))
 {
-   bo->v0.user_data = data;
-   bo->v0.destroy_user_data = destroy_user_data;
+   bo->user_data = data;
+   bo->destroy_user_data = destroy_user_data;
 }
 
 /** Get the user data associated with a buffer object
@@ -443,7 +427,7 @@ gbm_bo_set_user_data(struct gbm_bo *bo, void *data,
 GBM_EXPORT void *
 gbm_bo_get_user_data(struct gbm_bo *bo)
 {
-   return bo->v0.user_data;
+   return bo->user_data;
 }
 
 /**
@@ -455,10 +439,10 @@ gbm_bo_get_user_data(struct gbm_bo *bo)
 GBM_EXPORT void
 gbm_bo_destroy(struct gbm_bo *bo)
 {
-   if (bo->v0.destroy_user_data)
-      bo->v0.destroy_user_data(bo, bo->v0.user_data);
+   if (bo->destroy_user_data)
+      bo->destroy_user_data(bo, bo->user_data);
 
-   bo->gbm->v0.bo_destroy(bo);
+   bo->gbm->bo_destroy(bo);
 }
 
 /**
@@ -487,7 +471,7 @@ gbm_bo_create(struct gbm_device *gbm,
       return NULL;
    }
 
-   return gbm->v0.bo_create(gbm, width, height, format, usage, NULL, 0);
+   return gbm->bo_create(gbm, width, height, format, usage, NULL, 0);
 }
 
 GBM_EXPORT struct gbm_bo *
@@ -507,7 +491,7 @@ gbm_bo_create_with_modifiers(struct gbm_device *gbm,
       return NULL;
    }
 
-   return gbm->v0.bo_create(gbm, width, height, format, 0, modifiers, count);
+   return gbm->bo_create(gbm, width, height, format, 0, modifiers, count);
 }
 
 /**
@@ -541,7 +525,7 @@ GBM_EXPORT struct gbm_bo *
 gbm_bo_import(struct gbm_device *gbm,
               uint32_t type, void *buffer, uint32_t usage)
 {
-   return gbm->v0.bo_import(gbm, type, buffer, usage);
+   return gbm->bo_import(gbm, type, buffer, usage);
 }
 
 /**
@@ -583,8 +567,8 @@ gbm_bo_map(struct gbm_bo *bo,
       return NULL;
    }
 
-   return bo->gbm->v0.bo_map(bo, x, y, width, height,
-                             flags, stride, map_data);
+   return bo->gbm->bo_map(bo, x, y, width, height,
+                          flags, stride, map_data);
 }
 
 /**
@@ -599,7 +583,7 @@ gbm_bo_map(struct gbm_bo *bo,
 GBM_EXPORT void
 gbm_bo_unmap(struct gbm_bo *bo, void *map_data)
 {
-   bo->gbm->v0.bo_unmap(bo, map_data);
+   bo->gbm->bo_unmap(bo, map_data);
 }
 
 /**
@@ -621,7 +605,7 @@ gbm_surface_create(struct gbm_device *gbm,
                    uint32_t width, uint32_t height,
 		   uint32_t format, uint32_t flags)
 {
-   return gbm->v0.surface_create(gbm, width, height, format, flags, NULL, 0);
+   return gbm->surface_create(gbm, width, height, format, flags, NULL, 0);
 }
 
 GBM_EXPORT struct gbm_surface *
@@ -636,8 +620,8 @@ gbm_surface_create_with_modifiers(struct gbm_device *gbm,
       return NULL;
    }
 
-   return gbm->v0.surface_create(gbm, width, height, format, 0,
-                                 modifiers, count);
+   return gbm->surface_create(gbm, width, height, format, 0,
+                              modifiers, count);
 }
 
 /**
@@ -652,7 +636,7 @@ gbm_surface_create_with_modifiers(struct gbm_device *gbm,
 GBM_EXPORT void
 gbm_surface_destroy(struct gbm_surface *surf)
 {
-   surf->gbm->v0.surface_destroy(surf);
+   surf->gbm->surface_destroy(surf);
 }
 
 /**
@@ -679,7 +663,7 @@ gbm_surface_destroy(struct gbm_surface *surf)
 GBM_EXPORT struct gbm_bo *
 gbm_surface_lock_front_buffer(struct gbm_surface *surf)
 {
-   return surf->gbm->v0.surface_lock_front_buffer(surf);
+   return surf->gbm->surface_lock_front_buffer(surf);
 }
 
 /**
@@ -697,7 +681,7 @@ gbm_surface_lock_front_buffer(struct gbm_surface *surf)
 GBM_EXPORT void
 gbm_surface_release_buffer(struct gbm_surface *surf, struct gbm_bo *bo)
 {
-   surf->gbm->v0.surface_release_buffer(surf, bo);
+   surf->gbm->surface_release_buffer(surf, bo);
 }
 
 /**
@@ -719,14 +703,14 @@ gbm_surface_release_buffer(struct gbm_surface *surf, struct gbm_bo *bo)
 GBM_EXPORT int
 gbm_surface_has_free_buffers(struct gbm_surface *surf)
 {
-   return surf->gbm->v0.surface_has_free_buffers(surf);
+   return surf->gbm->surface_has_free_buffers(surf);
 }
 
 /* The two GBM_BO_FORMAT_[XA]RGB8888 formats alias the GBM_FORMAT_*
  * formats of the same name. We want to accept them whenever someone
  * has a GBM format, but never return them to the user. */
-static uint32_t
-format_canonicalize(uint32_t gbm_format)
+uint32_t
+gbm_format_canonicalize(uint32_t gbm_format)
 {
    switch (gbm_format) {
    case GBM_BO_FORMAT_XRGB8888:
@@ -747,7 +731,7 @@ format_canonicalize(uint32_t gbm_format)
 GBM_EXPORT char *
 gbm_format_get_name(uint32_t gbm_format, struct gbm_format_name_desc *desc)
 {
-   gbm_format = format_canonicalize(gbm_format);
+   gbm_format = gbm_format_canonicalize(gbm_format);
 
    desc->name[0] = gbm_format;
    desc->name[1] = gbm_format >> 8;
@@ -757,12 +741,3 @@ gbm_format_get_name(uint32_t gbm_format, struct gbm_format_name_desc *desc)
 
    return desc->name;
 }
-
-/**
- * A global table of functions and global variables defined in the core GBM
- * code that need to be accessed directly by GBM backends.
- */
-struct gbm_core gbm_core = {
-   .v0.core_version = GBM_BACKEND_ABI_VERSION,
-   .v0.format_canonicalize = format_canonicalize,
-};

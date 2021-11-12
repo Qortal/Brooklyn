@@ -43,9 +43,7 @@
 void
 nir_lower_viewport_transform(nir_shader *shader)
 {
-   assert((shader->info.stage == MESA_SHADER_VERTEX)
-         || (shader->info.stage == MESA_SHADER_GEOMETRY)
-         || (shader->info.stage == MESA_SHADER_TESS_EVAL));
+   assert(shader->info.stage == MESA_SHADER_VERTEX);
 
    nir_foreach_function(func, shader) {
       nir_foreach_block(block, func->impl) {

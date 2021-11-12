@@ -303,12 +303,8 @@ subscript(fs_reg reg, brw_reg_type type, unsigned i)
       reg.vstride += (reg.vstride ? delta : 0);
 
    } else if (reg.file == IMM) {
-      unsigned bit_size = type_sz(type) * 8;
-      reg.u64 >>= i * bit_size;
-      reg.u64 &= BITFIELD64_MASK(bit_size);
-      if (bit_size <= 16)
-         reg.u64 |= reg.u64 << 16;
-      return retype(reg, type);
+      assert(reg.type == type);
+
    } else {
       reg.stride *= type_sz(reg.type) / type_sz(type);
    }
@@ -355,7 +351,7 @@ public:
    bool is_partial_write() const;
    unsigned components_read(unsigned i) const;
    unsigned size_read(int arg) const;
-   bool can_do_source_mods(const struct intel_device_info *devinfo) const;
+   bool can_do_source_mods(const struct gen_device_info *devinfo) const;
    bool can_do_cmod();
    bool can_change_types() const;
    bool has_source_and_destination_hazard() const;
@@ -372,13 +368,13 @@ public:
     * Return the subset of flag registers read by the instruction as a bitset
     * with byte granularity.
     */
-   unsigned flags_read(const intel_device_info *devinfo) const;
+   unsigned flags_read(const gen_device_info *devinfo) const;
 
    /**
     * Return the subset of flag registers updated by the instruction (either
     * partially or fully) as a bitset with byte granularity.
     */
-   unsigned flags_written(const intel_device_info *devinfo) const;
+   unsigned flags_written() const;
 
    fs_reg dst;
    fs_reg *src;
@@ -455,15 +451,13 @@ regs_written(const fs_inst *inst)
  * Return the number of dataflow registers read by the instruction (either
  * fully or partially) counted from 'floor(reg_offset(inst->src[i]) /
  * register_size)'.  The somewhat arbitrary register size unit is 4B for the
- * UNIFORM files and 32B for all other files.
+ * UNIFORM and IMM files and 32B for all other files.
  */
 inline unsigned
 regs_read(const fs_inst *inst, unsigned i)
 {
-   if (inst->src[i].file == IMM)
-      return 1;
-
-   const unsigned reg_size = inst->src[i].file == UNIFORM ? 4 : REG_SIZE;
+   const unsigned reg_size =
+      inst->src[i].file == UNIFORM || inst->src[i].file == IMM ? 4 : REG_SIZE;
    return DIV_ROUND_UP(reg_offset(inst->src[i]) % reg_size +
                        inst->size_read(i) -
                        MIN2(inst->size_read(i), reg_padding(inst->src[i])),
@@ -552,9 +546,8 @@ is_unordered(const fs_inst *inst)
  *     scalar source."
  */
 static inline bool
-has_dst_aligned_region_restriction(const intel_device_info *devinfo,
-                                   const fs_inst *inst,
-                                   brw_reg_type dst_type)
+has_dst_aligned_region_restriction(const gen_device_info *devinfo,
+                                   const fs_inst *inst)
 {
    const brw_reg_type exec_type = get_exec_type(inst);
    /* Even though the hardware spec claims that "integer DWord multiply"
@@ -568,23 +561,11 @@ has_dst_aligned_region_restriction(const intel_device_info *devinfo,
        (inst->opcode == BRW_OPCODE_MAD &&
         MIN2(type_sz(inst->src[1].type), type_sz(inst->src[2].type)) >= 4));
 
-   if (type_sz(dst_type) > 4 || type_sz(exec_type) > 4 ||
+   if (type_sz(inst->dst.type) > 4 || type_sz(exec_type) > 4 ||
        (type_sz(exec_type) == 4 && is_dword_multiply))
-      return devinfo->is_cherryview || intel_device_info_is_9lp(devinfo) ||
-             devinfo->verx10 >= 125;
-
-   else if (brw_reg_type_is_floating_point(dst_type))
-      return devinfo->verx10 >= 125;
-
+      return devinfo->is_cherryview || gen_device_info_is_9lp(devinfo);
    else
       return false;
-}
-
-static inline bool
-has_dst_aligned_region_restriction(const intel_device_info *devinfo,
-                                   const fs_inst *inst)
-{
-   return has_dst_aligned_region_restriction(devinfo, inst, inst->dst.type);
 }
 
 /**
@@ -687,6 +668,6 @@ is_coalescing_payload(const brw::simple_allocator &alloc, const fs_inst *inst)
 }
 
 bool
-has_bank_conflict(const intel_device_info *devinfo, const fs_inst *inst);
+has_bank_conflict(const gen_device_info *devinfo, const fs_inst *inst);
 
 #endif

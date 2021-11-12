@@ -81,8 +81,6 @@ public:
    int num_vars;
    int bitset_words;
 
-   const struct intel_device_info *devinfo;
-
    /** Per-basic-block information on live variables */
    struct block_data *block_data;
 

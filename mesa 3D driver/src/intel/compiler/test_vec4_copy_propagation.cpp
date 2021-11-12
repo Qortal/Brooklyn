@@ -31,12 +31,11 @@ int ret = 0;
 
 class copy_propagation_test : public ::testing::Test {
    virtual void SetUp();
-   virtual void TearDown();
 
 public:
    struct brw_compiler *compiler;
-   struct intel_device_info *devinfo;
-   void *ctx;
+   struct gen_device_info *devinfo;
+   struct gl_context *ctx;
    struct gl_shader_program *shader_prog;
    struct brw_vue_prog_data *prog_data;
    vec4_visitor *v;
@@ -46,11 +45,10 @@ class copy_propagation_vec4_visitor : public vec4_visitor
 {
 public:
    copy_propagation_vec4_visitor(struct brw_compiler *compiler,
-                                 void *mem_ctx,
                                  nir_shader *shader,
                                  struct brw_vue_prog_data *prog_data)
-      : vec4_visitor(compiler, NULL, NULL, prog_data, shader, mem_ctx,
-                     false /* no_spills */, -1, false)
+      : vec4_visitor(compiler, NULL, NULL, prog_data, shader, NULL,
+                     false /* no_spills */, -1)
    {
       prog_data->dispatch_mode = DISPATCH_MODE_4X2_DUAL_OBJECT;
    }
@@ -90,30 +88,19 @@ protected:
 
 void copy_propagation_test::SetUp()
 {
-   ctx = ralloc_context(NULL);
-   compiler = rzalloc(ctx, struct brw_compiler);
-   devinfo = rzalloc(ctx, struct intel_device_info);
+   ctx = (struct gl_context *)calloc(1, sizeof(*ctx));
+   compiler = (struct brw_compiler *)calloc(1, sizeof(*compiler));
+   devinfo = (struct gen_device_info *)calloc(1, sizeof(*devinfo));
+   prog_data = (struct brw_vue_prog_data *)calloc(1, sizeof(*prog_data));
    compiler->devinfo = devinfo;
 
-   prog_data = ralloc(ctx, struct brw_vue_prog_data);
    nir_shader *shader =
-      nir_shader_create(ctx, MESA_SHADER_VERTEX, NULL, NULL);
+      nir_shader_create(NULL, MESA_SHADER_VERTEX, NULL, NULL);
 
-   v = new copy_propagation_vec4_visitor(compiler, ctx, shader, prog_data);
+   v = new copy_propagation_vec4_visitor(compiler, shader, prog_data);
 
-   devinfo->ver = 4;
-   devinfo->verx10 = devinfo->ver * 10;
+   devinfo->gen = 4;
 }
-
-void copy_propagation_test::TearDown()
-{
-   delete v;
-   v = NULL;
-
-   ralloc_free(ctx);
-   ctx = NULL;
-}
-
 
 static void
 copy_propagation(vec4_visitor *v)

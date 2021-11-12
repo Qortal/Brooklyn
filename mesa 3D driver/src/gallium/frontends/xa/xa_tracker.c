@@ -155,7 +155,7 @@ xa_get_pipe_format(struct xa_tracker *xa, enum xa_formats xa_format)
             fdesc.format = PIPE_FORMAT_L8_UNORM;
 	break;
     default:
-	unreachable("Unexpected format");
+	fdesc.xa_format = xa_format_unknown;
 	break;
     }
     return fdesc;

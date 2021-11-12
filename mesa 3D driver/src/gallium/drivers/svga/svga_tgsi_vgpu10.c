@@ -981,13 +981,13 @@ translate_opcode(enum tgsi_opcode opcode)
        * only the TGSI_SEMANTIC_SAMPLEPOS system value which contains the
        * position of the current sample in the render target.
        */
-      FALLTHROUGH;
+      /* FALL-THROUGH */
    case TGSI_OPCODE_SAMPLE_INFO:
       /* NOTE: we never actually get this opcode because the GLSL compiler
        * implements the gl_NumSamples variable with a simple constant in the
        * constant buffer.
        */
-      FALLTHROUGH;
+      /* FALL-THROUGH */
    default:
       assert(!"Unexpected TGSI opcode in translate_opcode()");
       return VGPU10_OPCODE_NOP;
@@ -4662,7 +4662,6 @@ emit_vgpu10_declaration(struct svga_shader_emitter_v10 *emit,
          unsigned unit = decl->Range.First;
          assert(decl->Range.First == decl->Range.Last);
          emit->sampler_target[unit] = decl->SamplerView.Resource;
-
          /* Note: we can ignore YZW return types for now */
          emit->sampler_return_type[unit] = decl->SamplerView.ReturnTypeX;
          emit->sampler_view[unit] = TRUE;
@@ -5606,14 +5605,15 @@ emit_constant_declaration(struct svga_shader_emitter_v10 *emit)
 
    for (i = 0; i < emit->num_samplers; i++) {
 
-      if (emit->key.tex[i].sampler_view) {
+      if (emit->sampler_view[i]) {
+
          /* Texcoord scale factors for RECT textures */
          if (emit->key.tex[i].unnormalized) {
             emit->texcoord_scale_index[i] = total_consts++;
          }
 
          /* Texture buffer sizes */
-         if (emit->key.tex[i].target == PIPE_BUFFER) {
+         if (emit->sampler_target[i] == TGSI_TEXTURE_BUFFER) {
             emit->texture_buffer_size_index[i] = total_consts++;
          }
       }
@@ -5674,48 +5674,6 @@ emit_sampler_declarations(struct svga_shader_emitter_v10 *emit)
    }
 
    return TRUE;
-}
-
-
-/**
- * Translate PIPE_TEXTURE_x to VGPU10_RESOURCE_DIMENSION_x.
- */
-static unsigned
-pipe_texture_to_resource_dimension(enum tgsi_texture_type target,
-                                   unsigned num_samples,
-                                   boolean is_array)
-{
-   switch (target) {
-   case PIPE_BUFFER:
-      return VGPU10_RESOURCE_DIMENSION_BUFFER;
-   case PIPE_TEXTURE_1D:
-      return VGPU10_RESOURCE_DIMENSION_TEXTURE1D;
-   case PIPE_TEXTURE_2D:
-      return num_samples > 2 ? VGPU10_RESOURCE_DIMENSION_TEXTURE2DMS :
-         VGPU10_RESOURCE_DIMENSION_TEXTURE2D;
-   case PIPE_TEXTURE_RECT:
-      return VGPU10_RESOURCE_DIMENSION_TEXTURE2D;
-   case PIPE_TEXTURE_3D:
-      return VGPU10_RESOURCE_DIMENSION_TEXTURE3D;
-   case PIPE_TEXTURE_CUBE:
-      return VGPU10_RESOURCE_DIMENSION_TEXTURECUBE;
-   case PIPE_TEXTURE_1D_ARRAY:
-      return is_array ? VGPU10_RESOURCE_DIMENSION_TEXTURE1DARRAY
-         : VGPU10_RESOURCE_DIMENSION_TEXTURE1D;
-   case PIPE_TEXTURE_2D_ARRAY:
-      if (num_samples > 2 && is_array)
-         return VGPU10_RESOURCE_DIMENSION_TEXTURE2DMSARRAY;
-      else if (is_array)
-         return VGPU10_RESOURCE_DIMENSION_TEXTURE2DARRAY;
-      else
-         return VGPU10_RESOURCE_DIMENSION_TEXTURE2D;
-   case PIPE_TEXTURE_CUBE_ARRAY:
-         return is_array ? VGPU10_RESOURCE_DIMENSION_TEXTURECUBEARRAY :
-                         VGPU10_RESOURCE_DIMENSION_TEXTURECUBE;
-   default:
-      assert(!"Unexpected resource type");
-      return VGPU10_RESOURCE_DIMENSION_TEXTURE2D;
-   }
 }
 
 
@@ -5818,18 +5776,10 @@ emit_resource_declarations(struct svga_shader_emitter_v10 *emit)
 
       opcode0.value = 0;
       opcode0.opcodeType = VGPU10_OPCODE_DCL_RESOURCE;
-      if (emit->sampler_view[i] || !emit->key.tex[i].sampler_view) {
-         opcode0.resourceDimension =
-            tgsi_texture_to_resource_dimension(emit->sampler_target[i],
-                                               emit->key.tex[i].num_samples,
-                                               emit->key.tex[i].is_array);
-      }
-      else {
-         opcode0.resourceDimension =
-            pipe_texture_to_resource_dimension(emit->key.tex[i].target,
-                                               emit->key.tex[i].num_samples,
-                                               emit->key.tex[i].is_array);
-      }
+      opcode0.resourceDimension =
+         tgsi_texture_to_resource_dimension(emit->sampler_target[i],
+                                            emit->key.tex[i].num_samples,
+                                            emit->key.tex[i].is_array);
       opcode0.sampleCount = emit->key.tex[i].num_samples;
       operand0.value = 0;
       operand0.numComponents = VGPU10_OPERAND_0_COMPONENT;
@@ -5845,12 +5795,7 @@ emit_resource_declarations(struct svga_shader_emitter_v10 *emit)
       STATIC_ASSERT(VGPU10_RETURN_TYPE_UINT == TGSI_RETURN_TYPE_UINT + 1);
       STATIC_ASSERT(VGPU10_RETURN_TYPE_FLOAT == TGSI_RETURN_TYPE_FLOAT + 1);
       assert(emit->sampler_return_type[i] <= TGSI_RETURN_TYPE_FLOAT);
-      if (emit->sampler_view[i] || !emit->key.tex[i].sampler_view) {
-         rt = emit->sampler_return_type[i] + 1;
-      }
-      else {
-         rt = emit->key.tex[i].sampler_return_type;
-      }
+      rt = emit->sampler_return_type[i] + 1;
 #else
       switch (emit->sampler_return_type[i]) {
          case TGSI_RETURN_TYPE_UNORM: rt = VGPU10_RETURN_TYPE_UNORM; break;
@@ -7721,7 +7666,7 @@ setup_texcoord(struct svga_shader_emitter_v10 *emit,
                unsigned unit,
                const struct tgsi_full_src_register *coord)
 {
-   if (emit->key.tex[unit].sampler_view && emit->key.tex[unit].unnormalized) {
+   if (emit->sampler_view[unit] && emit->key.tex[unit].unnormalized) {
       unsigned scale_index = emit->texcoord_scale_index[unit];
       unsigned tmp = get_temp_index(emit);
       struct tgsi_full_src_register tmp_src = make_src_temp_reg(tmp);
@@ -8561,7 +8506,7 @@ emit_txq(struct svga_shader_emitter_v10 *emit,
 {
    const uint unit = inst->Src[1].Register.Index;
 
-   if (emit->key.tex[unit].target == PIPE_BUFFER) {
+   if (emit->sampler_target[unit] == TGSI_TEXTURE_BUFFER) {
       /* RESINFO does not support querying texture buffers, so we instead
        * store texture buffer sizes in shader constants, then copy them to
        * implement TXQ instead of emitting RESINFO.
@@ -9376,7 +9321,7 @@ emit_vgpu10_instruction(struct svga_shader_emitter_v10 *emit,
    case TGSI_OPCODE_IABS:
       return emit_iabs(emit, inst);
    case TGSI_OPCODE_ARL:
-      FALLTHROUGH;
+      /* fall-through */
    case TGSI_OPCODE_UARL:
       return emit_arl_uarl(emit, inst);
    case TGSI_OPCODE_BGNSUB:
@@ -10301,7 +10246,7 @@ emit_temp_tessfactor_instructions(struct svga_shader_emitter_v10 *emit)
                   emit->tes.inner.in_index + 1, TGSI_SWIZZLE_X);
          dst = writemask_dst(&dst, TGSI_WRITEMASK_Y);
          emit_instruction_op1(emit, VGPU10_OPCODE_MOV, &dst, &src);
-         FALLTHROUGH;
+         /* fallthrough */
       case PIPE_PRIM_TRIANGLES:
          src = make_src_scalar_reg(TGSI_FILE_INPUT,
                   emit->tes.inner.in_index, TGSI_SWIZZLE_X);
@@ -10333,13 +10278,13 @@ emit_temp_tessfactor_instructions(struct svga_shader_emitter_v10 *emit)
                   emit->tes.outer.in_index + 3, TGSI_SWIZZLE_X);
          dst = writemask_dst(&dst, TGSI_WRITEMASK_W);
          emit_instruction_op1(emit, VGPU10_OPCODE_MOV, &dst, &src);
-         FALLTHROUGH;
+         /* fallthrough */
       case PIPE_PRIM_TRIANGLES:
          src = make_src_scalar_reg(TGSI_FILE_INPUT,
                   emit->tes.outer.in_index + 2, TGSI_SWIZZLE_X);
          dst = writemask_dst(&dst, TGSI_WRITEMASK_Z);
          emit_instruction_op1(emit, VGPU10_OPCODE_MOV, &dst, &src);
-         FALLTHROUGH;
+         /* fallthrough */
       case PIPE_PRIM_LINES:
          src = make_src_scalar_reg(TGSI_FILE_INPUT,
                   emit->tes.outer.in_index + 1, TGSI_SWIZZLE_X);
@@ -10890,7 +10835,6 @@ transform_fs_pstipple(struct svga_shader_emitter_v10 *emit,
    emit->key.tex[unit].swizzle_g = TGSI_SWIZZLE_Y;
    emit->key.tex[unit].swizzle_b = TGSI_SWIZZLE_Z;
    emit->key.tex[unit].swizzle_a = TGSI_SWIZZLE_W;
-   emit->key.tex[unit].target = PIPE_TEXTURE_2D;
 
    if (0) {
       debug_printf("After pstipple ------------------\n");

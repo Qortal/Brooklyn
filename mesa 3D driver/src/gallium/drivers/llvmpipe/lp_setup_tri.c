@@ -104,9 +104,8 @@ lp_setup_alloc_triangle(struct lp_scene *scene,
    tri->inputs.stride = input_array_sz;
 
    {
-      ASSERTED char *a = (char *)tri;
-      ASSERTED char *b = (char *)&GET_PLANES(tri)[nr_planes];
-
+      char *a = (char *)tri;
+      char *b = (char *)&GET_PLANES(tri)[nr_planes];
       assert(b - a == *tri_size);
    }
 
@@ -205,7 +204,6 @@ lp_rast_32_tri_tab[MAX_PLANES+1] = {
    LP_RAST_OP_TRIANGLE_32_8
 };
 
-
 static unsigned
 lp_rast_ms_tri_tab[MAX_PLANES+1] = {
    0,               /* should be impossible */
@@ -219,44 +217,54 @@ lp_rast_ms_tri_tab[MAX_PLANES+1] = {
    LP_RAST_OP_MS_TRIANGLE_8
 };
 
-/*
- * Detect big primitives drawn with an alpha == 1.0.
+/**
+ * The primitive covers the whole tile- shade whole tile.
  *
- * This is used when simulating anti-aliasing primitives in shaders, e.g.,
- * when drawing the windows client area in Aero's flip-3d effect.
+ * \param tx, ty  the tile position in tiles, not pixels
  */
 static boolean
-check_opaque(struct lp_setup_context *setup,
-             const float (*v1)[4],
-             const float (*v2)[4],
-             const float (*v3)[4])
+lp_setup_whole_tile(struct lp_setup_context *setup,
+                    const struct lp_rast_shader_inputs *inputs,
+                    int tx, int ty)
 {
-   const struct lp_fragment_shader_variant *variant =
-      setup->fs.current.variant;
-   const struct lp_tgsi_channel_info *alpha_info = &variant->shader->info.cbuf[0][3];
+   struct lp_scene *scene = setup->scene;
 
-   if (variant->opaque)
-      return TRUE;
-   
-   if (!variant->potentially_opaque)
-      return FALSE;
+   LP_COUNT(nr_fully_covered_64);
 
-   if (alpha_info->file == TGSI_FILE_CONSTANT) {
-      const float *constants = setup->fs.current.jit_context.constants[0];
-      float alpha = constants[alpha_info->u.index*4 +
-                              alpha_info->swizzle];
-      return alpha == 1.0f;
+   /* if variant is opaque and scissor doesn't effect the tile */
+   if (inputs->opaque) {
+      /* Several things prevent this optimization from working:
+       * - For layered rendering we can't determine if this covers the same layer
+       * as previous rendering (or in case of clears those actually always cover
+       * all layers so optimization is impossible). Need to use fb_max_layer and
+       * not setup->layer_slot to determine this since even if there's currently
+       * no slot assigned previous rendering could have used one.
+       * - If there were any Begin/End query commands in the scene then those
+       * would get removed which would be very wrong. Furthermore, if queries
+       * were just active we also can't do the optimization since to get
+       * accurate query results we unfortunately need to execute the rendering
+       * commands.
+       */
+      if (!scene->fb.zsbuf && scene->fb_max_layer == 0 && !scene->had_queries) {
+         /*
+          * All previous rendering will be overwritten so reset the bin.
+          */
+         lp_scene_bin_reset( scene, tx, ty );
+      }
+
+      LP_COUNT(nr_shade_opaque_64);
+      return lp_scene_bin_cmd_with_state( scene, tx, ty,
+                                          setup->fs.stored,
+                                          LP_RAST_OP_SHADE_TILE_OPAQUE,
+                                          lp_rast_arg_inputs(inputs) );
+   } else {
+      LP_COUNT(nr_shade_64);
+      return lp_scene_bin_cmd_with_state( scene, tx, ty,
+                                          setup->fs.stored,
+                                          LP_RAST_OP_SHADE_TILE,
+                                          lp_rast_arg_inputs(inputs) );
    }
-
-   if (alpha_info->file == TGSI_FILE_INPUT) {
-      return (v1[1 + alpha_info->u.index][alpha_info->swizzle] == 1.0f &&
-              v2[1 + alpha_info->u.index][alpha_info->swizzle] == 1.0f &&
-              v3[1 + alpha_info->u.index][alpha_info->swizzle] == 1.0f);
-   }
-
-   return FALSE;
 }
-
 
 
 /**
@@ -324,8 +332,15 @@ do_triangle_ccw(struct lp_setup_context *setup,
       bbox.y1 = (MAX3(position->y[0], position->y[1], position->y[2]) - 1 + adj) >> FIXED_ORDER;
    }
 
+   if (bbox.x1 < bbox.x0 ||
+       bbox.y1 < bbox.y0) {
+      if (0) debug_printf("empty bounding box\n");
+      LP_COUNT(nr_culled_tris);
+      return TRUE;
+   }
+
    if (!u_rect_test_intersection(&setup->draw_regions[viewport_index], &bbox)) {
-      if (0) debug_printf("no intersection\n");
+      if (0) debug_printf("offscreen\n");
       LP_COUNT(nr_culled_tris);
       return TRUE;
    }
@@ -366,100 +381,19 @@ do_triangle_ccw(struct lp_setup_context *setup,
 
    LP_COUNT(nr_tris);
 
-   /*
-    * Rotate the tri such that v0 is closest to the fb origin.
-    * This can give more accurate a0 value (which is at fb origin)
-    * when calculating the interpolants.
-    * It can't work when there's flat shading for instance in one
-    * of the attributes, hence restrict this to just a single attribute
-    * which is what causes some test failures.
-    * (This does not address the problem that interpolation may be
-    * inaccurate if gradients are relatively steep in small tris far
-    * away from the origin. It does however fix the (silly) wgf11rasterizer
-    * Interpolator test.)
-    * XXX This causes problems with mipgen -EmuTexture for not yet really
-    * understood reasons (if the vertices would be submitted in a different
-    * order, we'd also generate the same "wrong" results here without
-    * rotation). In any case, that we generate different values if a prim
-    * has the vertices rotated but is otherwise the same (which is due to
-    * numerical issues) is not a nice property. An additional problem by
-    * swapping the vertices here (which is possibly worse) is that
-    * the same primitive coming in twice might generate different values
-    * (in particular for z) due to the swapping potentially not happening
-    * both times, if the attributes to be interpolated are different. For now,
-    * just restrict this to not get used with dx9 (by checking pixel offset),
-    * could also restrict it further to only trigger with wgf11Interpolator
-    * Rasterizer test (the only place which needs it, with always the same
-    * vertices even).
-    */
-   if ((LP_DEBUG & DEBUG_ACCURATE_A0) &&
-       setup->pixel_offset == 0.5f &&
-       key->num_inputs == 1 &&
-       (key->inputs[0].interp == LP_INTERP_LINEAR ||
-        key->inputs[0].interp == LP_INTERP_PERSPECTIVE)) {
-      float dist0 = v0[0][0] * v0[0][0] + v0[0][1] * v0[0][1];
-      float dist1 = v1[0][0] * v1[0][0] + v1[0][1] * v1[0][1];
-      float dist2 = v2[0][0] * v2[0][0] + v2[0][1] * v2[0][1];
-      if (dist0 > dist1 && dist1 < dist2) {
-         const float (*vt)[4];
-         int x, y;
-         vt = v0;
-         v0 = v1;
-         v1 = v2;
-         v2 = vt;
-         x = position->x[0];
-         y = position->y[0];
-         position->x[0] = position->x[1];
-         position->y[0] = position->y[1];
-         position->x[1] = position->x[2];
-         position->y[1] = position->y[2];
-         position->x[2] = x;
-         position->y[2] = y;
-
-         position->dx20 = position->dx01;
-         position->dy20 = position->dy01;
-         position->dx01 = position->x[0] - position->x[1];
-         position->dy01 = position->y[0] - position->y[1];
-      }
-      else if (dist0 > dist2) {
-         const float (*vt)[4];
-         int x, y;
-         vt = v0;
-         v0 = v2;
-         v2 = v1;
-         v1 = vt;
-         x = position->x[0];
-         y = position->y[0];
-         position->x[0] = position->x[2];
-         position->y[0] = position->y[2];
-         position->x[2] = position->x[1];
-         position->y[2] = position->y[1];
-         position->x[1] = x;
-         position->y[1] = y;
-
-         position->dx01 = position->dx20;
-         position->dy01 = position->dy20;
-         position->dx20 = position->x[2] - position->x[0];
-         position->dy20 = position->y[2] - position->y[0];
-      }
-   }
-
    /* Setup parameter interpolants:
     */
    setup->setup.variant->jit_function(v0, v1, v2,
                                       frontfacing,
                                       GET_A0(&tri->inputs),
                                       GET_DADX(&tri->inputs),
-                                      GET_DADY(&tri->inputs),
-                                      &setup->setup.variant->key);
+                                      GET_DADY(&tri->inputs));
 
    tri->inputs.frontfacing = frontfacing;
    tri->inputs.disable = FALSE;
-   tri->inputs.is_blit = FALSE;
-   tri->inputs.opaque = check_opaque(setup, v0, v1, v2);
+   tri->inputs.opaque = setup->fs.current.variant->opaque;
    tri->inputs.layer = layer;
    tri->inputs.viewport_index = viewport_index;
-   tri->inputs.view_index = setup->view_index;
 
    if (0)
       lp_dump_setup_coef(&setup->setup.variant->key,
@@ -734,8 +668,61 @@ do_triangle_ccw(struct lp_setup_context *setup,
                    plane[2].eo);
    }
 
+
+   /* 
+    * When rasterizing scissored tris, use the intersection of the
+    * triangle bounding box and the scissor rect to generate the
+    * scissor planes.
+    *
+    * This permits us to cut off the triangle "tails" that are present
+    * in the intermediate recursive levels caused when two of the
+    * triangles edges don't diverge quickly enough to trivially reject
+    * exterior blocks from the triangle.
+    *
+    * It's not really clear if it's worth worrying about these tails,
+    * but since we generate the planes for each scissored tri, it's
+    * free to trim them in this case.
+    * 
+    * Note that otherwise, the scissor planes only vary in 'C' value,
+    * and even then only on state-changes.  Could alternatively store
+    * these planes elsewhere.
+    * (Or only store the c value together with a bit indicating which
+    * scissor edge this is, so rasterization would treat them differently
+    * (easier to evaluate) to ordinary planes.)
+    */
    if (nr_planes > 3) {
-      lp_setup_add_scissor_planes(scissor, &plane[3], s_planes, setup->multisample);
+      /* why not just use draw_regions */
+      struct lp_rast_plane *plane_s = &plane[3];
+
+      if (s_planes[0]) {
+         plane_s->dcdx = ~0U << 8;
+         plane_s->dcdy = 0;
+         plane_s->c = (1-scissor->x0) << 8;
+         plane_s->eo = 1 << 8;
+         plane_s++;
+      }
+      if (s_planes[1]) {
+         plane_s->dcdx = 1 << 8;
+         plane_s->dcdy = 0;
+         plane_s->c = (scissor->x1+1) << 8;
+         plane_s->eo = 0 << 8;
+         plane_s++;
+      }
+      if (s_planes[2]) {
+         plane_s->dcdx = 0;
+         plane_s->dcdy = 1 << 8;
+         plane_s->c = (1-scissor->y0) << 8;
+         plane_s->eo = 1 << 8;
+         plane_s++;
+      }
+      if (s_planes[3]) {
+         plane_s->dcdx = 0;
+         plane_s->dcdy = ~0U << 8;
+         plane_s->c = (scissor->y1+1) << 8;
+         plane_s->eo = 0;
+         plane_s++;
+      }
+      assert(plane_s == &plane[nr_planes]);
    }
 
    return lp_setup_bin_triangle(setup, tri, &bbox, &bboxpos, nr_planes, viewport_index);
@@ -923,8 +910,8 @@ lp_setup_bin_triangle(struct lp_setup_context *setup,
          ystep[i] = ((int64_t)plane[i].dcdy) << TILE_ORDER;
       }
 
-      tri->inputs.is_blit = lp_setup_is_blit(setup, &tri->inputs);
-     
+
+
       /* Test tile-sized blocks against the triangle.
        * Discard blocks fully outside the tri.  If the block is fully
        * contained inside the tri, bin an lp_rast_shade_tile command.

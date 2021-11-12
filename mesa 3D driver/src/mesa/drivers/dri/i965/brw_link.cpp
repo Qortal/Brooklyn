@@ -78,12 +78,12 @@ static void
 brw_lower_packing_builtins(struct brw_context *brw,
                            exec_list *ir)
 {
-   const struct intel_device_info *devinfo = &brw->screen->devinfo;
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
 
    /* Gens < 7 don't have instructions to convert to or from half-precision,
     * and Gens < 6 don't expose that functionality.
     */
-   if (devinfo->ver != 6)
+   if (devinfo->gen != 6)
       return;
 
    lower_packing_builtins(ir, LOWER_PACK_HALF_2x16 | LOWER_UNPACK_HALF_2x16);
@@ -94,7 +94,7 @@ process_glsl_ir(struct brw_context *brw,
                 struct gl_shader_program *shader_prog,
                 struct gl_linked_shader *shader)
 {
-   const struct intel_device_info *devinfo = &brw->screen->devinfo;
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
    struct gl_context *ctx = &brw->ctx;
 
    /* Temporary memory context for any new IR. */
@@ -116,7 +116,7 @@ process_glsl_ir(struct brw_context *brw,
                                      EXP_TO_EXP2 |
                                      LOG_TO_LOG2 |
                                      DFREXP_DLDEXP_TO_ARITH);
-   if (devinfo->ver < 7) {
+   if (devinfo->gen < 7) {
       instructions_to_lower |= BIT_COUNT_TO_MATH |
                                EXTRACT_TO_SHIFTS |
                                INSERT_TO_SHIFTS |
@@ -125,12 +125,13 @@ process_glsl_ir(struct brw_context *brw,
 
    lower_instructions(shader->ir, instructions_to_lower);
 
-   /* Pre-gfx6 HW can only nest if-statements 16 deep.  Beyond this,
+   /* Pre-gen6 HW can only nest if-statements 16 deep.  Beyond this,
     * if-statements need to be flattened.
     */
-   if (devinfo->ver < 6)
+   if (devinfo->gen < 6)
       lower_if_to_cond_assign(shader->Stage, shader->ir, 16);
 
+   do_lower_texture_projection(shader->ir);
    do_vec_index_to_cond_assign(shader->ir);
    lower_vector_insert(shader->ir, true);
    lower_offset_arrays(shader->ir);
@@ -305,7 +306,7 @@ brw_link_shader(struct gl_context *ctx, struct gl_shader_program *shProg)
     * TODO: Look into Shadow of Mordor regressions on HSW and enable this for
     * all platforms. See: https://bugs.freedesktop.org/show_bug.cgi?id=103537
     */
-    if (first != last && brw->screen->devinfo.ver >= 8) {
+    if (first != last && brw->screen->devinfo.gen >= 8) {
        int next = last;
        for (int i = next - 1; i >= 0; i--) {
           if (shProg->_LinkedShaders[i] == NULL)

@@ -31,8 +31,8 @@
  * Public definitions of Intel-specific bufmgr functions.
  */
 
-#ifndef BRW_BUFMGR_H
-#define BRW_BUFMGR_H
+#ifndef INTEL_BUFMGR_H
+#define INTEL_BUFMGR_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -47,7 +47,7 @@
 extern "C" {
 #endif
 
-struct intel_device_info;
+struct gen_device_info;
 struct brw_context;
 
 /**
@@ -351,8 +351,8 @@ int brw_bo_busy(struct brw_bo *bo);
 int brw_bo_madvise(struct brw_bo *bo, int madv);
 
 /* drm_bacon_bufmgr_gem.c */
-struct brw_bufmgr *brw_bufmgr_get_for_fd(struct intel_device_info *devinfo,
-                                         int fd, bool bo_reuse);
+struct brw_bufmgr *brw_bufmgr_get_for_fd(struct gen_device_info *devinfo, int fd,
+                                         bool bo_reuse);
 
 struct brw_bo *brw_bo_gem_create_from_name(struct brw_bufmgr *bufmgr,
                                            const char *name,
@@ -402,4 +402,4 @@ bool brw_using_softpin(struct brw_bufmgr *bufmgr);
 #if defined(__cplusplus)
 }
 #endif
-#endif /* BRW_BUFMGR_H */
+#endif /* INTEL_BUFMGR_H */

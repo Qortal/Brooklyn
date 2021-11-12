@@ -23,7 +23,7 @@
 
 /** @file v3d_job.c
  *
- * Functions for submitting V3D render jobs to the kernel.
+ * Functions for submitting VC5 render jobs to the kernel.
  */
 
 #include <xf86drm.h>
@@ -55,7 +55,7 @@ v3d_job_free(struct v3d_context *v3d, struct v3d_job *job)
                 }
         }
 
-        for (int i = 0; i < job->nr_cbufs; i++) {
+        for (int i = 0; i < V3D_MAX_DRAW_BUFFERS; i++) {
                 if (job->cbufs[i]) {
                         _mesa_hash_table_remove_key(v3d->write_jobs,
                                                     job->cbufs[i]->texture);
@@ -72,8 +72,6 @@ v3d_job_free(struct v3d_context *v3d, struct v3d_job *job)
                                             job->zsbuf->texture);
                 pipe_surface_reference(&job->zsbuf, NULL);
         }
-        if (job->bbuf)
-                pipe_surface_reference(&job->bbuf, NULL);
 
         if (v3d->job == job)
                 v3d->job = NULL;
@@ -276,6 +274,41 @@ v3d_flush_jobs_reading_resource(struct v3d_context *v3d,
         }
 }
 
+static void
+v3d_job_set_tile_buffer_size(struct v3d_job *job)
+{
+        static const uint8_t tile_sizes[] = {
+                64, 64,
+                64, 32,
+                32, 32,
+                32, 16,
+                16, 16,
+        };
+        int tile_size_index = 0;
+        if (job->msaa)
+                tile_size_index += 2;
+
+        if (job->cbufs[3] || job->cbufs[2])
+                tile_size_index += 2;
+        else if (job->cbufs[1])
+                tile_size_index++;
+
+        int max_bpp = RENDER_TARGET_MAXIMUM_32BPP;
+        for (int i = 0; i < V3D_MAX_DRAW_BUFFERS; i++) {
+                if (job->cbufs[i]) {
+                        struct v3d_surface *surf = v3d_surface(job->cbufs[i]);
+                        max_bpp = MAX2(max_bpp, surf->internal_bpp);
+                }
+        }
+        job->internal_bpp = max_bpp;
+        STATIC_ASSERT(RENDER_TARGET_MAXIMUM_32BPP == 0);
+        tile_size_index += max_bpp;
+
+        assert(tile_size_index < ARRAY_SIZE(tile_sizes));
+        job->tile_width = tile_sizes[tile_size_index * 2 + 0];
+        job->tile_height = tile_sizes[tile_size_index * 2 + 1];
+}
+
 /**
  * Returns a v3d_job struture for tracking V3D rendering to a particular FBO.
  *
@@ -286,10 +319,7 @@ v3d_flush_jobs_reading_resource(struct v3d_context *v3d,
  */
 struct v3d_job *
 v3d_get_job(struct v3d_context *v3d,
-            uint32_t nr_cbufs,
-            struct pipe_surface **cbufs,
-            struct pipe_surface *zsbuf,
-            struct pipe_surface *bbuf)
+            struct pipe_surface **cbufs, struct pipe_surface *zsbuf)
 {
         /* Return the existing job for this FBO if we have one */
         struct v3d_job_key local_key = {
@@ -300,7 +330,6 @@ v3d_get_job(struct v3d_context *v3d,
                         cbufs[3],
                 },
                 .zsbuf = zsbuf,
-                .bbuf = bbuf,
         };
         struct hash_entry *entry = _mesa_hash_table_search(v3d->jobs,
                                                            &local_key);
@@ -311,9 +340,8 @@ v3d_get_job(struct v3d_context *v3d,
          * writing these buffers are flushed.
          */
         struct v3d_job *job = v3d_job_create(v3d);
-        job->nr_cbufs = nr_cbufs;
 
-        for (int i = 0; i < job->nr_cbufs; i++) {
+        for (int i = 0; i < V3D_MAX_DRAW_BUFFERS; i++) {
                 if (cbufs[i]) {
                         v3d_flush_jobs_reading_resource(v3d, cbufs[i]->texture,
                                                         V3D_FLUSH_DEFAULT,
@@ -332,13 +360,8 @@ v3d_get_job(struct v3d_context *v3d,
                 if (zsbuf->texture->nr_samples > 1)
                         job->msaa = true;
         }
-        if (bbuf) {
-                pipe_surface_reference(&job->bbuf, bbuf);
-                if (bbuf->texture->nr_samples > 1)
-                        job->msaa = true;
-        }
 
-        for (int i = 0; i < job->nr_cbufs; i++) {
+        for (int i = 0; i < V3D_MAX_DRAW_BUFFERS; i++) {
                 if (cbufs[i])
                         _mesa_hash_table_insert(v3d->write_jobs,
                                                 cbufs[i]->texture, job);
@@ -370,19 +393,14 @@ v3d_get_job_for_fbo(struct v3d_context *v3d)
         if (v3d->job)
                 return v3d->job;
 
-        uint32_t nr_cbufs = v3d->framebuffer.nr_cbufs;
         struct pipe_surface **cbufs = v3d->framebuffer.cbufs;
         struct pipe_surface *zsbuf = v3d->framebuffer.zsbuf;
-        struct v3d_job *job = v3d_get_job(v3d, nr_cbufs, cbufs, zsbuf, NULL);
+        struct v3d_job *job = v3d_get_job(v3d, cbufs, zsbuf);
 
         if (v3d->framebuffer.samples >= 1)
                 job->msaa = true;
 
-        v3d_get_tile_buffer_size(job->msaa, job->nr_cbufs,
-                                 job->cbufs, job->bbuf,
-                                 &job->tile_width,
-                                 &job->tile_height,
-                                 &job->internal_bpp);
+        v3d_job_set_tile_buffer_size(job);
 
         /* The dirty flags are tracking what's been updated while v3d->job has
          * been bound, so set them all to ~0 when switching between jobs.  We
@@ -393,7 +411,7 @@ v3d_get_job_for_fbo(struct v3d_context *v3d)
         /* If we're binding to uninitialized buffers, no need to load their
          * contents before drawing.
          */
-        for (int i = 0; i < nr_cbufs; i++) {
+        for (int i = 0; i < 4; i++) {
                 if (cbufs[i]) {
                         struct v3d_resource *rsc = v3d_resource(cbufs[i]->texture);
                         if (!rsc->writes)
@@ -426,16 +444,12 @@ v3d_get_job_for_fbo(struct v3d_context *v3d)
 static void
 v3d_clif_dump(struct v3d_context *v3d, struct v3d_job *job)
 {
-        if (!(unlikely(V3D_DEBUG & (V3D_DEBUG_CL |
-                                    V3D_DEBUG_CL_NO_BIN |
-                                    V3D_DEBUG_CLIF))))
+        if (!(V3D_DEBUG & (V3D_DEBUG_CL | V3D_DEBUG_CLIF)))
                 return;
 
         struct clif_dump *clif = clif_dump_init(&v3d->screen->devinfo,
                                                 stderr,
-                                                V3D_DEBUG & (V3D_DEBUG_CL |
-                                                             V3D_DEBUG_CL_NO_BIN),
-                                                V3D_DEBUG & V3D_DEBUG_CL_NO_BIN);
+                                                V3D_DEBUG & V3D_DEBUG_CL);
 
         set_foreach(job->bos, entry) {
                 struct v3d_bo *bo = (void *)entry->key;
@@ -506,20 +520,6 @@ v3d_job_submit(struct v3d_context *v3d, struct v3d_job *job)
         job->submit.bcl_end = job->bcl.bo->offset + cl_offset(&job->bcl);
         job->submit.rcl_end = job->rcl.bo->offset + cl_offset(&job->rcl);
 
-        if (v3d->active_perfmon) {
-                assert(screen->has_perfmon);
-                job->submit.perfmon_id = v3d->active_perfmon->kperfmon_id;
-        }
-
-        /* If we are submitting a job with a different perfmon, we need to
-         * ensure the previous one fully finishes before starting this;
-         * otherwise it would wrongly mix counter results.
-         */
-        if (v3d->active_perfmon != v3d->last_perfmon) {
-                v3d->last_perfmon = v3d->active_perfmon;
-                job->submit.in_sync_bcl = v3d->out_sync;
-        }
-
         job->submit.flags = 0;
         if (job->tmu_dirty_rcl && screen->has_cache_flush)
                 job->submit.flags |= DRM_V3D_SUBMIT_CL_FLUSH_CACHE;
@@ -538,7 +538,7 @@ v3d_job_submit(struct v3d_context *v3d, struct v3d_job *job)
 
         v3d_clif_dump(v3d, job);
 
-        if (!(unlikely(V3D_DEBUG & V3D_DEBUG_NORAST))) {
+        if (!(V3D_DEBUG & V3D_DEBUG_NORAST)) {
                 int ret;
 
                 ret = v3d_ioctl(v3d->fd, DRM_IOCTL_V3D_SUBMIT_CL, &job->submit);
@@ -547,9 +547,6 @@ v3d_job_submit(struct v3d_context *v3d, struct v3d_job *job)
                         fprintf(stderr, "Draw call returned %s.  "
                                         "Expect corruption.\n", strerror(errno));
                         warned = true;
-                } else if (!ret) {
-                        if (v3d->active_perfmon)
-                                v3d->active_perfmon->job_submitted = true;
                 }
 
                 /* If we are submitting a job in the middle of transform

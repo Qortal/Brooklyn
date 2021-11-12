@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 import argparse
 from generate.eglFunctionList import EGL_FUNCTIONS as GLVND_ENTRYPOINTS

@@ -22,15 +22,15 @@
  */
 
 #include "anv_private.h"
-#include "anv_measure.h"
 #include "wsi_common.h"
+#include "vk_format_info.h"
 #include "vk_util.h"
 
 static PFN_vkVoidFunction
 anv_wsi_proc_addr(VkPhysicalDevice physicalDevice, const char *pName)
 {
-   ANV_FROM_HANDLE(anv_physical_device, pdevice, physicalDevice);
-   return vk_instance_get_proc_addr_unchecked(&pdevice->instance->vk, pName);
+   ANV_FROM_HANDLE(anv_physical_device, physical_device, physicalDevice);
+   return anv_lookup_entrypoint(&physical_device->info, pName);
 }
 
 static void
@@ -83,7 +83,7 @@ anv_init_wsi(struct anv_physical_device *physical_device)
    result = wsi_device_init(&physical_device->wsi_device,
                             anv_physical_device_to_handle(physical_device),
                             anv_wsi_proc_addr,
-                            &physical_device->instance->vk.alloc,
+                            &physical_device->instance->alloc,
                             physical_device->master_fd,
                             &physical_device->instance->dri_options,
                             false);
@@ -103,7 +103,7 @@ void
 anv_finish_wsi(struct anv_physical_device *physical_device)
 {
    wsi_device_finish(&physical_device->wsi_device,
-                     &physical_device->instance->vk.alloc);
+                     &physical_device->instance->alloc);
 }
 
 void anv_DestroySurfaceKHR(
@@ -117,7 +117,7 @@ void anv_DestroySurfaceKHR(
    if (!surface)
       return;
 
-   vk_free2(&instance->vk.alloc, pAllocator, surface);
+   vk_free2(&instance->alloc, pAllocator, surface);
 }
 
 VkResult anv_GetPhysicalDeviceSurfaceSupportKHR(
@@ -280,7 +280,6 @@ VkResult anv_AcquireNextImage2KHR(
 {
    ANV_FROM_HANDLE(anv_device, device, _device);
 
-   anv_measure_acquire(device);
    return wsi_common_acquire_next_image2(&device->physical->wsi_device,
                                          _device, pAcquireInfo, pImageIndex);
 }
@@ -295,7 +294,7 @@ VkResult anv_QueuePresentKHR(
    if (device->debug_frame_desc) {
       device->debug_frame_desc->frame_id++;
       if (!device->info.has_llc) {
-         intel_clflush_range(device->debug_frame_desc,
+         gen_clflush_range(device->debug_frame_desc,
                            sizeof(*device->debug_frame_desc));
       }
    }
@@ -305,14 +304,11 @@ VkResult anv_QueuePresentKHR(
       /* Make sure all of the dependency semaphores have materialized when
        * using a threaded submission.
        */
-      VK_MULTIALLOC(ma);
-      VK_MULTIALLOC_DECL(&ma, uint64_t, values,
-                              pPresentInfo->waitSemaphoreCount);
-      VK_MULTIALLOC_DECL(&ma, uint32_t, syncobjs,
-                              pPresentInfo->waitSemaphoreCount);
+      uint32_t *syncobjs = vk_alloc(&device->vk.alloc,
+                                    sizeof(*syncobjs) * pPresentInfo->waitSemaphoreCount, 8,
+                                    VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
 
-      if (!vk_multialloc_alloc(&ma, &device->vk.alloc,
-                               VK_SYSTEM_ALLOCATION_SCOPE_COMMAND))
+      if (!syncobjs)
          return vk_error(VK_ERROR_OUT_OF_HOST_MEMORY);
 
       uint32_t wait_count = 0;
@@ -325,22 +321,18 @@ VkResult anv_QueuePresentKHR(
          if (impl->type == ANV_SEMAPHORE_TYPE_DUMMY)
             continue;
          assert(impl->type == ANV_SEMAPHORE_TYPE_DRM_SYNCOBJ);
-         syncobjs[wait_count] = impl->syncobj;
-         values[wait_count] = 0;
-         wait_count++;
+         syncobjs[wait_count++] = impl->syncobj;
       }
 
       int ret = 0;
       if (wait_count > 0) {
          ret =
-            anv_gem_syncobj_timeline_wait(device,
-                                          syncobjs, values, wait_count,
-                                          anv_get_absolute_timeout(INT64_MAX),
-                                          true /* wait_all */,
-                                          true /* wait_materialize */);
+            anv_gem_syncobj_wait(device, syncobjs, wait_count,
+                                 anv_get_absolute_timeout(INT64_MAX),
+                                 true /* wait_all */);
       }
 
-      vk_free(&device->vk.alloc, values);
+      vk_free(&device->vk.alloc, syncobjs);
 
       if (ret)
          return vk_error(VK_ERROR_DEVICE_LOST);

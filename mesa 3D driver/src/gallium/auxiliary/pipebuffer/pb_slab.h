@@ -45,7 +45,6 @@
 #define PB_SLAB_H
 
 #include "pb_buffer.h"
-#include "util/simple_mtx.h"
 #include "util/list.h"
 #include "os/os_thread.h"
 
@@ -63,7 +62,6 @@ struct pb_slab_entry
    struct list_head head;
    struct pb_slab *slab; /* the slab that contains this buffer */
    unsigned group_index; /* index into pb_slabs::groups */
-   unsigned entry_size;
 };
 
 /* Descriptor of a slab from which many entries are carved out.
@@ -112,14 +110,13 @@ typedef bool (slab_can_reclaim_fn)(void *priv, struct pb_slab_entry *);
  */
 struct pb_slabs
 {
-   simple_mtx_t mutex;
+   mtx_t mutex;
 
    unsigned min_order;
    unsigned num_orders;
    unsigned num_heaps;
-   bool allow_three_fourths_allocations;
 
-   /* One group per (heap, order, three_fourth_allocations). */
+   /* One group per (heap, order) pair. */
    struct pb_slab_group *groups;
 
    /* List of entries waiting to be reclaimed, i.e. they have been passed to
@@ -146,7 +143,7 @@ pb_slabs_reclaim(struct pb_slabs *slabs);
 bool
 pb_slabs_init(struct pb_slabs *slabs,
               unsigned min_order, unsigned max_order,
-              unsigned num_heaps, bool allow_three_fourth_allocations,
+              unsigned num_heaps,
               void *priv,
               slab_can_reclaim_fn *can_reclaim,
               slab_alloc_fn *slab_alloc,

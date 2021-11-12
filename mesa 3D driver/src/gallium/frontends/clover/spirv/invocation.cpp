@@ -22,7 +22,6 @@
 
 #include "invocation.hpp"
 
-#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -47,14 +46,14 @@
 
 using namespace clover;
 
-using clover::detokenize;
-
 #ifdef HAVE_CLOVER_SPIRV
 namespace {
 
-   static const std::array<std::string,7> type_strs = {
-      "uchar", "ushort", "uint", "ulong", "half", "float", "double"
-   };
+   uint32_t
+   make_spirv_version(uint8_t major, uint8_t minor) {
+      return (static_cast<uint32_t>(major) << 16u) |
+             (static_cast<uint32_t>(minor) << 8u);
+   }
 
    template<typename T>
    T get(const char *source, size_t index) {
@@ -62,17 +61,17 @@ namespace {
       return static_cast<T>(word_ptr[index]);
    }
 
-   enum binary::argument::type
+   enum module::argument::type
    convert_storage_class(SpvStorageClass storage_class, std::string &err) {
       switch (storage_class) {
       case SpvStorageClassFunction:
-         return binary::argument::scalar;
+         return module::argument::scalar;
       case SpvStorageClassUniformConstant:
-         return binary::argument::global;
+         return module::argument::global;
       case SpvStorageClassWorkgroup:
-         return binary::argument::local;
+         return module::argument::local;
       case SpvStorageClassCrossWorkgroup:
-         return binary::argument::global;
+         return module::argument::global;
       default:
          err += "Invalid storage type " + std::to_string(storage_class) + "\n";
          throw build_error();
@@ -94,36 +93,30 @@ namespace {
       }
    }
 
-   enum binary::argument::type
+   enum module::argument::type
    convert_image_type(SpvId id, SpvDim dim, SpvAccessQualifier access,
                       std::string &err) {
-      switch (dim) {
-      case SpvDim1D:
-      case SpvDim2D:
-      case SpvDim3D:
-      case SpvDimBuffer:
-         switch (access) {
-         case SpvAccessQualifierReadOnly:
-            return binary::argument::image_rd;
-         case SpvAccessQualifierWriteOnly:
-            return binary::argument::image_wr;
-         default:
-            err += "Unknown access qualifier " + std::to_string(access) + " for image "
-                +  std::to_string(id) + ".\n";
-            throw build_error();
-         }
-      default:
-         err += "Unknown dimension " + std::to_string(dim) + " for image "
+      if (dim == SpvDim2D && access == SpvAccessQualifierReadOnly)
+         return module::argument::image2d_rd;
+      else if (dim == SpvDim2D && access == SpvAccessQualifierWriteOnly)
+         return module::argument::image2d_wr;
+      else if (dim == SpvDim3D && access == SpvAccessQualifierReadOnly)
+         return module::argument::image3d_rd;
+      else if (dim == SpvDim3D && access == SpvAccessQualifierWriteOnly)
+         return module::argument::image3d_wr;
+      else {
+         err += "Unknown access qualifier " + std::to_string(access)
+             +  " or dimension " + std::to_string(dim) + " for image "
              +  std::to_string(id) + ".\n";
          throw build_error();
       }
    }
 
-   binary::section
-   make_text_section(const std::string &code,
-                     enum binary::section::type section_type) {
+   module::section
+   make_text_section(const std::vector<char> &code,
+                     enum module::section::type section_type) {
       const pipe_binary_program_header header { uint32_t(code.size()) };
-      binary::section text { 0, section_type, header.num_bytes, {} };
+      module::section text { 0, section_type, header.num_bytes, {} };
 
       text.data.insert(text.data.end(), reinterpret_cast<const char *>(&header),
                        reinterpret_cast<const char *>(&header) + sizeof(header));
@@ -132,8 +125,8 @@ namespace {
       return text;
    }
 
-   binary
-   create_binary_from_spirv(const std::string &source,
+   module
+   create_module_from_spirv(const std::vector<char> &source,
                             size_t pointer_byte_size,
                             std::string &err) {
       const size_t length = source.size() / sizeof(uint32_t);
@@ -141,15 +134,14 @@ namespace {
 
       std::string kernel_name;
       size_t kernel_nb = 0u;
-      std::vector<binary::argument> args;
+      std::vector<module::argument> args;
       std::vector<size_t> req_local_size;
 
-      binary b;
+      module m;
 
-      std::vector<std::string> attributes;
       std::unordered_map<SpvId, std::vector<size_t> > req_local_sizes;
       std::unordered_map<SpvId, std::string> kernels;
-      std::unordered_map<SpvId, binary::argument> types;
+      std::unordered_map<SpvId, module::argument> types;
       std::unordered_map<SpvId, SpvId> pointer_types;
       std::unordered_map<SpvId, unsigned int> constants;
       std::unordered_set<SpvId> packed_structures;
@@ -197,47 +189,13 @@ namespace {
 
          case SpvOpExecutionMode:
             switch (get<SpvExecutionMode>(inst, 2)) {
-            case SpvExecutionModeLocalSize: {
+            case SpvExecutionModeLocalSize:
                req_local_sizes[get<SpvId>(inst, 1)] = {
                   get<uint32_t>(inst, 3),
                   get<uint32_t>(inst, 4),
                   get<uint32_t>(inst, 5)
                };
-               std::string s = "reqd_work_group_size(";
-               s += std::to_string(get<uint32_t>(inst, 3));
-               s += ",";
-               s += std::to_string(get<uint32_t>(inst, 4));
-               s += ",";
-               s += std::to_string(get<uint32_t>(inst, 5));
-               s += ")";
-               attributes.emplace_back(s);
                break;
-            }
-            case SpvExecutionModeLocalSizeHint: {
-               std::string s = "work_group_size_hint(";
-               s += std::to_string(get<uint32_t>(inst, 3));
-               s += ",";
-               s += std::to_string(get<uint32_t>(inst, 4));
-               s += ",";
-               s += std::to_string(get<uint32_t>(inst, 5));
-               s += ")";
-               attributes.emplace_back(s);
-               break;
-            }
-	    case SpvExecutionModeVecTypeHint: {
-               uint32_t val = get<uint32_t>(inst, 3);
-               uint32_t size = val >> 16;
-
-               val &= 0xf;
-               if (val > 6)
-                  val = 0;
-               std::string s = "vec_type_hint(";
-               s += type_strs[val];
-               s += std::to_string(size);
-               s += ")";
-               attributes.emplace_back(s);
-	       break;
-            }
             default:
                break;
             }
@@ -291,7 +249,7 @@ namespace {
          case SpvOpConstant:
             // We only care about constants that represent the size of arrays.
             // If they are passed as argument, they will never be more than
-            // 4GB-wide, and even if they did, a clover::binary::argument size
+            // 4GB-wide, and even if they did, a clover::module::argument size
             // is represented by an int.
             constants[get<SpvId>(inst, 2)] = get<unsigned int>(inst, 3u);
             break;
@@ -300,8 +258,8 @@ namespace {
          case SpvOpTypeFloat: {
             const auto size = get<uint32_t>(inst, 2) / 8u;
             const auto id = get<SpvId>(inst, 1);
-            types[id] = { binary::argument::scalar, size, size, size,
-                          binary::argument::zero_ext };
+            types[id] = { module::argument::scalar, size, size, size,
+                          module::argument::zero_ext };
             types[id].info.address_qualifier = CL_KERNEL_ARG_ADDRESS_PRIVATE;
             break;
          }
@@ -323,9 +281,9 @@ namespace {
             const auto elem_size = types_iter->second.size;
             const auto elem_nbs = constants_iter->second;
             const auto size = elem_size * elem_nbs;
-            types[id] = { binary::argument::scalar, size, size,
+            types[id] = { module::argument::scalar, size, size,
                           types_iter->second.target_align,
-                          binary::argument::zero_ext };
+                          module::argument::zero_ext };
             break;
          }
 
@@ -340,7 +298,7 @@ namespace {
                const auto types_iter = types.find(type_id);
 
                // If a type was not found, that means it is not one of the
-               // types allowed as kernel arguments. And since the binary has
+               // types allowed as kernel arguments. And since the module has
                // been validated, this means this type is not used for kernel
                // arguments, and therefore can be ignored.
                if (types_iter == types.end())
@@ -353,8 +311,8 @@ namespace {
                struct_align = std::max(struct_align, alignment);
             }
             struct_size += (-struct_size) & (struct_align - 1u);
-            types[id] = { binary::argument::scalar, struct_size, struct_size,
-                          struct_align, binary::argument::zero_ext };
+            types[id] = { module::argument::scalar, struct_size, struct_size,
+                          struct_align, module::argument::zero_ext };
             break;
          }
 
@@ -364,7 +322,7 @@ namespace {
             const auto types_iter = types.find(type_id);
 
             // If a type was not found, that means it is not one of the
-            // types allowed as kernel arguments. And since the binary has
+            // types allowed as kernel arguments. And since the module has
             // been validated, this means this type is not used for kernel
             // arguments, and therefore can be ignored.
             if (types_iter == types.end())
@@ -372,9 +330,10 @@ namespace {
 
             const auto elem_size = types_iter->second.size;
             const auto elem_nbs = get<uint32_t>(inst, 3);
-            const auto size = elem_size * (elem_nbs != 3 ? elem_nbs : 4);
-            types[id] = { binary::argument::scalar, size, size, size,
-                          binary::argument::zero_ext };
+            const auto size = elem_size * elem_nbs;
+            const auto align = elem_size * util_next_power_of_two(elem_nbs);
+            types[id] = { module::argument::scalar, size, size, align,
+                          module::argument::zero_ext };
             types[id].info.address_qualifier = CL_KERNEL_ARG_ADDRESS_PRIVATE;
             break;
          }
@@ -391,23 +350,17 @@ namespace {
             if (opcode == SpvOpTypePointer)
                pointer_types[id] = get<SpvId>(inst, 3);
 
-            binary::size_t alignment;
-            if (storage_class == SpvStorageClassWorkgroup)
-               alignment = opcode == SpvOpTypePointer ? types[pointer_types[id]].target_align : 0;
-            else
-               alignment = pointer_byte_size;
-
             types[id] = { convert_storage_class(storage_class, err),
                           sizeof(cl_mem),
-                          static_cast<binary::size_t>(pointer_byte_size),
-                          alignment,
-                          binary::argument::zero_ext };
+                          static_cast<module::size_t>(pointer_byte_size),
+                          static_cast<module::size_t>(pointer_byte_size),
+                          module::argument::zero_ext };
             types[id].info.address_qualifier = convert_storage_class_to_cl(storage_class);
             break;
          }
 
          case SpvOpTypeSampler:
-            types[get<SpvId>(inst, 1)] = { binary::argument::sampler,
+            types[get<SpvId>(inst, 1)] = { module::argument::sampler,
                                              sizeof(cl_sampler) };
             break;
 
@@ -417,7 +370,7 @@ namespace {
             const auto access = get<SpvAccessQualifier>(inst, 9);
             types[id] = { convert_image_type(id, dim, access, err),
                           sizeof(cl_mem), sizeof(cl_mem), sizeof(cl_mem),
-                          binary::argument::zero_ext };
+                          module::argument::zero_ext };
             break;
          }
 
@@ -457,10 +410,10 @@ namespace {
                for (auto &i : func_param_attr_iter->second) {
                   switch (i) {
                   case SpvFunctionParameterAttributeSext:
-                     arg.ext_type = binary::argument::sign_ext;
+                     arg.ext_type = module::argument::sign_ext;
                      break;
                   case SpvFunctionParameterAttributeZext:
-                     arg.ext_type = binary::argument::zero_ext;
+                     arg.ext_type = module::argument::zero_ext;
                      break;
                   case SpvFunctionParameterAttributeByVal: {
                      const SpvId ptr_type_id =
@@ -498,12 +451,11 @@ namespace {
             for (size_t i = 0; i < param_type_names[kernel_name].size(); i++)
                args[i].info.type_name = param_type_names[kernel_name][i];
 
-            b.syms.emplace_back(kernel_name, detokenize(attributes, " "),
+            m.syms.emplace_back(kernel_name, std::string(),
                                 req_local_size, 0, kernel_nb, args);
             ++kernel_nb;
             kernel_name.clear();
             args.clear();
-            attributes.clear();
             break;
 
          default:
@@ -513,39 +465,13 @@ namespace {
          i += num_operands;
       }
 
-      b.secs.push_back(make_text_section(source,
-                                         binary::section::text_intermediate));
-      return b;
+      m.secs.push_back(make_text_section(source,
+                                         module::section::text_intermediate));
+      return m;
    }
 
    bool
-   check_spirv_version(const device &dev, const char *binary,
-                       std::string &r_log) {
-      const auto spirv_version = get<uint32_t>(binary, 1u);
-      const auto supported_spirv_versions = clover::spirv::supported_versions();
-      const auto compare_versions =
-         [module_version =
-            clover::spirv::to_opencl_version_encoding(spirv_version)](const cl_name_version &supported){
-         return supported.version == module_version;
-      };
-
-      if (std::find_if(supported_spirv_versions.cbegin(),
-                       supported_spirv_versions.cend(),
-                       compare_versions) != supported_spirv_versions.cend())
-         return true;
-
-      r_log += "SPIR-V version " +
-               clover::spirv::version_to_string(spirv_version) +
-               " is not supported; supported versions:";
-      for (const auto &version : supported_spirv_versions) {
-         r_log += " " + clover::spirv::version_to_string(version.version);
-      }
-      r_log += "\n";
-      return false;
-   }
-
-   bool
-   check_capabilities(const device &dev, const std::string &source,
+   check_capabilities(const device &dev, const std::vector<char> &source,
                       std::string &r_log) {
       const size_t length = source.size() / sizeof(uint32_t);
       size_t i = SPIRV_HEADER_WORD_SIZE; // Skip header
@@ -615,7 +541,7 @@ namespace {
    }
 
    bool
-   check_extensions(const device &dev, const std::string &source,
+   check_extensions(const device &dev, const std::vector<char> &source,
                     std::string &r_log) {
       const size_t length = source.size() / sizeof(uint32_t);
       size_t i = SPIRV_HEADER_WORD_SIZE; // Skip header
@@ -646,7 +572,7 @@ namespace {
    }
 
    bool
-   check_memory_model(const device &dev, const std::string &source,
+   check_memory_model(const device &dev, const std::vector<char> &source,
                       std::string &r_log) {
       const size_t length = source.size() / sizeof(uint32_t);
       size_t i = SPIRV_HEADER_WORD_SIZE; // Skip header
@@ -679,8 +605,8 @@ namespace {
    }
 
    // Copies the input binary and convert it to the endianness of the host CPU.
-   std::string
-   spirv_to_cpu(const std::string &binary)
+   std::vector<char>
+   spirv_to_cpu(const std::vector<char> &binary)
    {
       const uint32_t first_word = get<uint32_t>(binary.data(), 0u);
       if (first_word == SpvMagicNumber)
@@ -693,8 +619,7 @@ namespace {
             util_bswap32(word);
       }
 
-      return std::string(cpu_endianness_binary.begin(),
-                         cpu_endianness_binary.end());
+      return cpu_endianness_binary;
    }
 
 #ifdef HAVE_CLOVER_SPIRV
@@ -727,19 +652,19 @@ namespace {
    }
 
    spv_target_env
-   convert_opencl_version_to_target_env(const cl_version opencl_version) {
+   convert_opencl_str_to_target_env(const std::string &opencl_version) {
       // Pick 1.2 for 3.0 for now
-      if (opencl_version == CL_MAKE_VERSION(3, 0, 0)) {
+      if (opencl_version == "3.0") {
          return SPV_ENV_OPENCL_1_2;
-      } else if (opencl_version == CL_MAKE_VERSION(2, 2, 0)) {
+      } else if (opencl_version == "2.2") {
          return SPV_ENV_OPENCL_2_2;
-      } else if (opencl_version == CL_MAKE_VERSION(2, 1, 0)) {
+      } else if (opencl_version == "2.1") {
          return SPV_ENV_OPENCL_2_1;
-      } else if (opencl_version == CL_MAKE_VERSION(2, 0, 0)) {
+      } else if (opencl_version == "2.0") {
          return SPV_ENV_OPENCL_2_0;
-      } else if (opencl_version == CL_MAKE_VERSION(1, 2, 0) ||
-                 opencl_version == CL_MAKE_VERSION(1, 1, 0) ||
-                 opencl_version == CL_MAKE_VERSION(1, 0, 0)) {
+      } else if (opencl_version == "1.2" ||
+                 opencl_version == "1.1" ||
+                 opencl_version == "1.0") {
          // SPIR-V is only defined for OpenCL >= 1.2, however some drivers
          // might use it with OpenCL 1.0 and 1.1.
          return SPV_ENV_OPENCL_1_2;
@@ -751,39 +676,15 @@ namespace {
 
 }
 
-bool
-clover::spirv::is_binary_spirv(const std::string &binary)
-{
-   // A SPIR-V binary is at the very least 5 32-bit words, which represent the
-   // SPIR-V header.
-   if (binary.size() < 20u)
-      return false;
-
-   const uint32_t first_word =
-      reinterpret_cast<const uint32_t *>(binary.data())[0u];
-   return (first_word == SpvMagicNumber) ||
-          (util_bswap32(first_word) == SpvMagicNumber);
-}
-
-std::string
-clover::spirv::version_to_string(uint32_t version) {
-   const uint32_t major_version = (version >> 16) & 0xff;
-   const uint32_t minor_version = (version >> 8) & 0xff;
-   return std::to_string(major_version) + '.' +
-      std::to_string(minor_version);
-}
-
-binary
-clover::spirv::compile_program(const std::string &binary,
+module
+clover::spirv::compile_program(const std::vector<char> &binary,
                                const device &dev, std::string &r_log,
                                bool validate) {
-   std::string source = spirv_to_cpu(binary);
+   std::vector<char> source = spirv_to_cpu(binary);
 
    if (validate && !is_valid_spirv(source, dev.device_version(), r_log))
       throw build_error();
 
-   if (!check_spirv_version(dev, source.data(), r_log))
-      throw build_error();
    if (!check_capabilities(dev, source, r_log))
       throw build_error();
    if (!check_extensions(dev, source, r_log))
@@ -791,12 +692,12 @@ clover::spirv::compile_program(const std::string &binary,
    if (!check_memory_model(dev, source, r_log))
       throw build_error();
 
-   return create_binary_from_spirv(source,
+   return create_module_from_spirv(source,
                                    dev.address_bits() == 32 ? 4u : 8u, r_log);
 }
 
-binary
-clover::spirv::link_program(const std::vector<binary> &binaries,
+module
+clover::spirv::link_program(const std::vector<module> &modules,
                             const device &dev, const std::string &opts,
                             std::string &r_log) {
    std::vector<std::string> options = tokenize(opts);
@@ -819,15 +720,15 @@ clover::spirv::link_program(const std::vector<binary> &binaries,
    spvtools::LinkerOptions linker_options;
    linker_options.SetCreateLibrary(create_library);
 
-   binary b;
+   module m;
 
-   const auto section_type = create_library ? binary::section::text_library :
-                                              binary::section::text_executable;
+   const auto section_type = create_library ? module::section::text_library :
+                                              module::section::text_executable;
 
    std::vector<const uint32_t *> sections;
-   sections.reserve(binaries.size());
+   sections.reserve(modules.size());
    std::vector<size_t> lengths;
-   lengths.reserve(binaries.size());
+   lengths.reserve(modules.size());
 
    auto const validator_consumer = [&r_log](spv_message_level_t level,
                                             const char *source,
@@ -836,17 +737,14 @@ clover::spirv::link_program(const std::vector<binary> &binaries,
       r_log += format_validator_msg(level, source, position, message);
    };
 
-   for (const auto &bin : binaries) {
-      const auto &bsec = find([](const binary::section &sec) {
-                  return sec.type == binary::section::text_intermediate ||
-                         sec.type == binary::section::text_library;
-               }, bin.secs);
+   for (const auto &mod : modules) {
+      const auto &msec = find([](const module::section &sec) {
+                  return sec.type == module::section::text_intermediate ||
+                         sec.type == module::section::text_library;
+               }, mod.secs);
 
-      const auto c_il = ((struct pipe_binary_program_header*)bsec.data.data())->blob;
-      const auto length = bsec.size;
-
-      if (!check_spirv_version(dev, c_il, r_log))
-         throw error(CL_LINK_PROGRAM_FAILURE);
+      const auto c_il = ((struct pipe_binary_program_header*)msec.data.data())->blob;
+      const auto length = msec.size;
 
       sections.push_back(reinterpret_cast<const uint32_t *>(c_il));
       lengths.push_back(length / sizeof(uint32_t));
@@ -854,9 +752,9 @@ clover::spirv::link_program(const std::vector<binary> &binaries,
 
    std::vector<uint32_t> linked_binary;
 
-   const cl_version opencl_version = dev.device_version();
+   const std::string opencl_version = dev.device_version();
    const spv_target_env target_env =
-      convert_opencl_version_to_target_env(opencl_version);
+      convert_opencl_str_to_target_env(opencl_version);
 
    const spvtools::MessageConsumer consumer = validator_consumer;
    spvtools::Context context(target_env);
@@ -866,7 +764,7 @@ clover::spirv::link_program(const std::vector<binary> &binaries,
             &linked_binary, linker_options) != SPV_SUCCESS)
       throw error(CL_LINK_PROGRAM_FAILURE);
 
-   std::string final_binary{
+   std::vector<char> final_binary{
          reinterpret_cast<char *>(linked_binary.data()),
          reinterpret_cast<char *>(linked_binary.data() +
                linked_binary.size()) };
@@ -876,17 +774,17 @@ clover::spirv::link_program(const std::vector<binary> &binaries,
    if (has_flag(llvm::debug::spirv))
       llvm::debug::log(".spvasm", spirv::print_module(final_binary, dev.device_version()));
 
-   for (const auto &bin : binaries)
-      b.syms.insert(b.syms.end(), bin.syms.begin(), bin.syms.end());
+   for (const auto &mod : modules)
+      m.syms.insert(m.syms.end(), mod.syms.begin(), mod.syms.end());
 
-   b.secs.emplace_back(make_text_section(final_binary, section_type));
+   m.secs.emplace_back(make_text_section(final_binary, section_type));
 
-   return b;
+   return m;
 }
 
 bool
-clover::spirv::is_valid_spirv(const std::string &binary,
-                              const cl_version opencl_version,
+clover::spirv::is_valid_spirv(const std::vector<char> &binary,
+                              const std::string &opencl_version,
                               std::string &r_log) {
    auto const validator_consumer =
       [&r_log](spv_message_level_t level, const char *source,
@@ -895,27 +793,23 @@ clover::spirv::is_valid_spirv(const std::string &binary,
    };
 
    const spv_target_env target_env =
-      convert_opencl_version_to_target_env(opencl_version);
+      convert_opencl_str_to_target_env(opencl_version);
    spvtools::SpirvTools spvTool(target_env);
    spvTool.SetMessageConsumer(validator_consumer);
 
-   spvtools::ValidatorOptions validator_options;
-   validator_options.SetUniversalLimit(spv_validator_limit_max_function_args,
-                                       std::numeric_limits<uint32_t>::max());
-
    return spvTool.Validate(reinterpret_cast<const uint32_t *>(binary.data()),
-                           binary.size() / 4u, validator_options);
+                           binary.size() / 4u);
 }
 
 std::string
-clover::spirv::print_module(const std::string &binary,
-                            const cl_version opencl_version) {
+clover::spirv::print_module(const std::vector<char> &binary,
+                            const std::string &opencl_version) {
    const spv_target_env target_env =
-      convert_opencl_version_to_target_env(opencl_version);
+      convert_opencl_str_to_target_env(opencl_version);
    spvtools::SpirvTools spvTool(target_env);
    spv_context spvContext = spvContextCreate(target_env);
    if (!spvContext)
-      return "Failed to create an spv_context for disassembling the binary.";
+      return "Failed to create an spv_context for disassembling the module.";
 
    spv_text disassembly;
    spvBinaryToText(spvContext,
@@ -938,52 +832,29 @@ clover::spirv::supported_extensions() {
    };
 }
 
-std::vector<cl_name_version>
+std::vector<uint32_t>
 clover::spirv::supported_versions() {
-   return { cl_name_version { CL_MAKE_VERSION(1u, 0u, 0u), "SPIR-V" } };
-}
-
-cl_version
-clover::spirv::to_opencl_version_encoding(uint32_t version) {
-      return CL_MAKE_VERSION((version >> 16u) & 0xff,
-                             (version >> 8u) & 0xff, 0u);
-}
-
-uint32_t
-clover::spirv::to_spirv_version_encoding(cl_version version) {
-   return ((CL_VERSION_MAJOR(version) & 0xff) << 16u) |
-          ((CL_VERSION_MINOR(version) & 0xff) << 8u);
+   return { make_spirv_version(1u, 0u) };
 }
 
 #else
 bool
-clover::spirv::is_binary_spirv(const std::string &binary)
-{
-   return false;
-}
-
-bool
-clover::spirv::is_valid_spirv(const std::string &/*binary*/,
-                              const cl_version opencl_version,
+clover::spirv::is_valid_spirv(const std::vector<char> &/*binary*/,
+                              const std::string &/*opencl_version*/,
                               std::string &/*r_log*/) {
    return false;
 }
 
-std::string
-clover::spirv::version_to_string(uint32_t version) {
-   return "";
-}
-
-binary
-clover::spirv::compile_program(const std::string &binary,
+module
+clover::spirv::compile_program(const std::vector<char> &binary,
                                const device &dev, std::string &r_log,
                                bool validate) {
    r_log += "SPIR-V support in clover is not enabled.\n";
    throw build_error();
 }
 
-binary
-clover::spirv::link_program(const std::vector<binary> &/*binaries*/,
+module
+clover::spirv::link_program(const std::vector<module> &/*modules*/,
                             const device &/*dev*/, const std::string &/*opts*/,
                             std::string &r_log) {
    r_log += "SPIR-V support in clover is not enabled.\n";
@@ -991,8 +862,8 @@ clover::spirv::link_program(const std::vector<binary> &/*binaries*/,
 }
 
 std::string
-clover::spirv::print_module(const std::string &binary,
-                            const cl_version opencl_version) {
+clover::spirv::print_module(const std::vector<char> &binary,
+                            const std::string &opencl_version) {
    return std::string();
 }
 
@@ -1001,18 +872,8 @@ clover::spirv::supported_extensions() {
    return {};
 }
 
-std::vector<cl_name_version>
+std::vector<uint32_t>
 clover::spirv::supported_versions() {
    return {};
-}
-
-cl_version
-clover::spirv::to_opencl_version_encoding(uint32_t version) {
-   return CL_MAKE_VERSION(0u, 0u, 0u);
-}
-
-uint32_t
-clover::spirv::to_spirv_version_encoding(cl_version version) {
-   return 0u;
 }
 #endif

@@ -39,7 +39,6 @@
 #include "egldisplay.h"
 
 #include "util/macros.h"
-#include "util/os_misc.h"
 
 #ifdef HAVE_MINCORE
 #include <unistd.h>
@@ -90,9 +89,6 @@ struct _egl_global _eglGlobal =
    " EGL_EXT_platform_x11"
    " EGL_KHR_platform_x11"
 #endif
-#ifdef HAVE_XCB_PLATFORM
-   " EGL_MESA_platform_xcb"
-#endif
 #ifdef HAVE_DRM_PLATFORM
    " EGL_MESA_platform_gbm"
    " EGL_KHR_platform_gbm"
@@ -138,8 +134,7 @@ EGLBoolean
 _eglPointerIsDereferencable(void *p)
 {
    uintptr_t addr = (uintptr_t) p;
-   uint64_t page_size = 0;
-   os_get_page_size(&page_size);
+   const long page_size = getpagesize();
 #ifdef HAVE_MINCORE
    unsigned char valid = 0;
 
@@ -149,10 +144,7 @@ _eglPointerIsDereferencable(void *p)
    /* align addr to page_size */
    addr &= ~(page_size - 1);
 
-   /* mincore expects &valid to be unsigned char* on Linux but char* on BSD:
-    * we cast pointers to void, to fix type mismatch warnings in all systems
-    */
-   if (mincore((void *) addr, page_size, (void*)&valid) < 0) {
+   if (mincore((void *) addr, page_size, &valid) < 0) {
       return EGL_FALSE;
    }
 

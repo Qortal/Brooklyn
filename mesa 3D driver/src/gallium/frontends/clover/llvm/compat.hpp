@@ -38,28 +38,20 @@
 
 #include <llvm/Config/llvm-config.h>
 
-#include <llvm/ADT/Triple.h>
-#include <llvm/Analysis/TargetLibraryInfo.h>
-#include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/Type.h>
 #include <llvm/Linker/Linker.h>
-#include <llvm/Target/TargetMachine.h>
 #include <llvm/Transforms/IPO.h>
 #include <llvm/Transforms/Utils/Cloning.h>
+#include <llvm/Target/TargetMachine.h>
+
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/Analysis/TargetLibraryInfo.h>
 
 #include <clang/Basic/TargetInfo.h>
 #include <clang/Frontend/CompilerInstance.h>
-#include <clang/Lex/PreprocessorOptions.h>
 
 #if LLVM_VERSION_MAJOR >= 10
 #include <llvm/Support/CodeGen.h>
-#endif
-
-#if LLVM_VERSION_MAJOR >= 14
-#include <llvm/MC/TargetRegistry.h>
-#else
-#include <llvm/Support/TargetRegistry.h>
 #endif
 
 namespace clover {
@@ -94,50 +86,6 @@ namespace clover {
 #else
             return clang::CompilerInvocation::CreateFromArgs(
                cinv, copts.data(), copts.data() + copts.size(), diag);
-#endif
-         }
-
-         static inline void
-         compiler_set_lang_defaults(std::unique_ptr<clang::CompilerInstance> &c,
-                                    clang::InputKind ik, const ::llvm::Triple& triple,
-                                    clang::LangStandard::Kind d)
-         {
-            c->getInvocation().setLangDefaults(c->getLangOpts(), ik, triple,
-#if LLVM_VERSION_MAJOR >= 12
-                                               c->getPreprocessorOpts().Includes,
-#else
-                                               c->getPreprocessorOpts(),
-#endif
-                                               d);
-         }
-
-         static inline bool
-         is_scalable_vector(const ::llvm::Type *type)
-         {
-#if LLVM_VERSION_MAJOR >= 11
-            return ::llvm::isa<::llvm::ScalableVectorType>(type);
-#else
-            return false;
-#endif
-         }
-
-         static inline bool
-         is_fixed_vector(const ::llvm::Type *type)
-         {
-#if LLVM_VERSION_MAJOR >= 11
-            return ::llvm::isa<::llvm::FixedVectorType>(type);
-#else
-            return type->isVectorTy();
-#endif
-         }
-
-         static inline unsigned
-         get_fixed_vector_elements(const ::llvm::Type *type)
-         {
-#if LLVM_VERSION_MAJOR >= 11
-            return ::llvm::cast<::llvm::FixedVectorType>(type)->getNumElements();
-#else
-            return ((::llvm::VectorType*)type)->getNumElements();
 #endif
          }
       }

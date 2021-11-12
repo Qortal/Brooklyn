@@ -27,8 +27,6 @@
 
 #include <amdgpu.h>
 
-struct radv_amdgpu_winsys;
-
 void radv_amdgpu_surface_init_functions(struct radv_amdgpu_winsys *ws);
 
 #endif /* RADV_AMDGPU_SURFACE_H */

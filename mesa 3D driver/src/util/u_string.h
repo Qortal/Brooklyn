@@ -42,7 +42,6 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include <string.h>
-#include <limits.h>
 
 #include "util/macros.h" // PRINTFLIKE
 
@@ -73,7 +72,7 @@ util_sprintf(char *str, const char *format, ...)
 {
    va_list ap;
    va_start(ap, format);
-   vsnprintf(str, INT_MAX, format, ap);
+   vsnprintf(str, (size_t)-1, format, ap);
    va_end(ap);
 }
 

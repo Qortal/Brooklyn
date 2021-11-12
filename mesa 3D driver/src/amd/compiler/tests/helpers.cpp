@@ -23,7 +23,7 @@
  */
 #include "helpers.h"
 #include "vulkan/vk_format.h"
-#include "common/amd_family.h"
+#include "llvm/ac_llvm_util.h"
 #include <stdio.h>
 #include <sstream>
 #include <llvm-c/Target.h>
@@ -42,6 +42,8 @@ radv_shader_info info;
 std::unique_ptr<Program> program;
 Builder bld(NULL);
 Temp inputs[16];
+Temp exec_input;
+const char *subvariant = "";
 
 static VkInstance instance_cache[CHIP_LAST] = {VK_NULL_HANDLE};
 static VkDevice device_cache[CHIP_LAST] = {VK_NULL_HANDLE};
@@ -78,17 +80,7 @@ void create_program(enum chip_class chip_class, Stage stage, unsigned wave_size,
    info.wave_size = wave_size;
 
    program.reset(new Program);
-   aco::init_program(program.get(), stage, &info, chip_class, family, false, &config);
-   program->workgroup_size = UINT_MAX;
-   calc_min_waves(program.get());
-
-   program->debug.func = nullptr;
-   program->debug.private_data = nullptr;
-
-   program->debug.output = output;
-   program->debug.shorten_messages = true;
-   program->debug.func = nullptr;
-   program->debug.private_data = nullptr;
+   aco::init_program(program.get(), stage, &info, chip_class, family, &config);
 
    Block *block = program->create_and_insert_block();
    block->kind = block_kind_top_level;
@@ -99,10 +91,11 @@ void create_program(enum chip_class chip_class, Stage stage, unsigned wave_size,
 }
 
 bool setup_cs(const char *input_spec, enum chip_class chip_class,
-              enum radeon_family family, const char* subvariant,
-              unsigned wave_size)
+              enum radeon_family family, unsigned wave_size)
 {
-   if (!set_variant(chip_class, subvariant))
+   const char *old_subvariant = subvariant;
+   subvariant = "";
+   if (!set_variant(chip_class, old_subvariant))
       return false;
 
    memset(&info, 0, sizeof(info));
@@ -114,31 +107,36 @@ bool setup_cs(const char *input_spec, enum chip_class chip_class,
 
    if (input_spec) {
       unsigned num_inputs = DIV_ROUND_UP(strlen(input_spec), 3u);
-      aco_ptr<Instruction> startpgm{create_instruction<Pseudo_instruction>(aco_opcode::p_startpgm, Format::PSEUDO, 0, num_inputs)};
+      aco_ptr<Instruction> startpgm{create_instruction<Pseudo_instruction>(aco_opcode::p_startpgm, Format::PSEUDO, 0, num_inputs + 1)};
       for (unsigned i = 0; i < num_inputs; i++) {
          RegClass cls(input_spec[i * 3] == 'v' ? RegType::vgpr : RegType::sgpr, input_spec[i * 3 + 1] - '0');
          inputs[i] = bld.tmp(cls);
          startpgm->definitions[i] = Definition(inputs[i]);
       }
+      exec_input = bld.tmp(program->lane_mask);
+      startpgm->definitions[num_inputs] = bld.exec(Definition(exec_input));
       bld.insert(std::move(startpgm));
    }
 
    return true;
 }
 
-void finish_program(Program *prog)
+void finish_program(Program *program)
 {
-   for (Block& BB : prog->blocks) {
+   for (Block& BB : program->blocks) {
       for (unsigned idx : BB.linear_preds)
-         prog->blocks[idx].linear_succs.emplace_back(BB.index);
+         program->blocks[idx].linear_succs.emplace_back(BB.index);
       for (unsigned idx : BB.logical_preds)
-         prog->blocks[idx].logical_succs.emplace_back(BB.index);
+         program->blocks[idx].logical_succs.emplace_back(BB.index);
    }
 
-   for (Block& block : prog->blocks) {
+   for (Block& block : program->blocks) {
       if (block.linear_succs.size() == 0) {
          block.kind |= block_kind_uniform;
-         Builder(prog, &block).sopp(aco_opcode::s_endpgm);
+         Builder bld(program, &block);
+         if (program->wb_smem_l1_on_end)
+            bld.smem(aco_opcode::s_dcache_wb, false);
+         bld.sopp(aco_opcode::s_endpgm);
       }
    }
 }
@@ -169,56 +167,10 @@ void finish_opt_test()
    aco_print_program(program.get(), output);
 }
 
-void finish_ra_test(ra_test_policy policy, bool lower)
-{
-   finish_program(program.get());
-   if (!aco::validate_ir(program.get())) {
-      fail_test("Validation before register allocation failed");
-      return;
-   }
-
-   program->workgroup_size = program->wave_size;
-   aco::live live_vars = aco::live_var_analysis(program.get());
-   aco::register_allocation(program.get(), live_vars.live_out, policy);
-
-   if (aco::validate_ra(program.get())) {
-      fail_test("Validation after register allocation failed");
-      return;
-   }
-
-   if (lower) {
-      aco::ssa_elimination(program.get());
-      aco::lower_to_hw_instr(program.get());
-   }
-
-   aco_print_program(program.get(), output);
-}
-
-void finish_optimizer_postRA_test()
-{
-   finish_program(program.get());
-   aco::optimize_postRA(program.get());
-   aco_print_program(program.get(), output);
-}
-
 void finish_to_hw_instr_test()
 {
    finish_program(program.get());
    aco::lower_to_hw_instr(program.get());
-   aco_print_program(program.get(), output);
-}
-
-void finish_insert_nops_test()
-{
-   finish_program(program.get());
-   aco::insert_NOPs(program.get());
-   aco_print_program(program.get(), output);
-}
-
-void finish_form_hard_clause_test()
-{
-   finish_program(program.get());
-   aco::form_hard_clauses(program.get());
    aco_print_program(program.get(), output);
 }
 
@@ -230,7 +182,11 @@ void finish_assembler_test()
 
    /* we could use CLRX for disassembly but that would require it to be
     * installed */
-   if (program->chip_class >= GFX8) {
+   if (program->chip_class == GFX10_3 && LLVM_VERSION_MAJOR < 9) {
+      skip_test("LLVM 11 needed for GFX10_3 disassembly");
+   } else if (program->chip_class == GFX10 && LLVM_VERSION_MAJOR < 9) {
+      skip_test("LLVM 9 needed for GFX10 disassembly");
+   } else if (program->chip_class >= GFX8) {
       print_asm(program.get(), binary, exec_size / 4u, output);
    } else {
       //TODO: maybe we should use CLRX and skip this test if it's not available?
@@ -242,37 +198,9 @@ void finish_assembler_test()
 void writeout(unsigned i, Temp tmp)
 {
    if (tmp.id())
-      bld.pseudo(aco_opcode::p_unit_test, Operand::c32(i), tmp);
+      bld.pseudo(aco_opcode::p_unit_test, Operand(i), tmp);
    else
-      bld.pseudo(aco_opcode::p_unit_test, Operand::c32(i));
-}
-
-void writeout(unsigned i, aco::Builder::Result res)
-{
-   bld.pseudo(aco_opcode::p_unit_test, Operand::c32(i), res);
-}
-
-void writeout(unsigned i, Operand op)
-{
-   bld.pseudo(aco_opcode::p_unit_test, Operand::c32(i), op);
-}
-
-void writeout(unsigned i, Operand op0, Operand op1)
-{
-   bld.pseudo(aco_opcode::p_unit_test, Operand::c32(i), op0, op1);
-}
-
-Temp fneg(Temp src)
-{
-   return bld.vop2(aco_opcode::v_mul_f32, bld.def(v1), Operand::c32(0xbf800000u), src);
-}
-
-Temp fabs(Temp src)
-{
-   Builder::Result res =
-      bld.vop2_e64(aco_opcode::v_mul_f32, bld.def(v1), Operand::c32(0x3f800000u), src);
-   res.instr->vop3().abs[1] = true;
-   return res;
+      bld.pseudo(aco_opcode::p_unit_test, Operand(i));
 }
 
 VkDevice get_vk_device(enum chip_class chip_class)
@@ -294,9 +222,6 @@ VkDevice get_vk_device(enum chip_class chip_class)
    case GFX10:
       family = CHIP_NAVI10;
       break;
-   case GFX10_3:
-      family = CHIP_SIENNA_CICHLID;
-      break;
    default:
       family = CHIP_UNKNOWN;
       break;
@@ -313,7 +238,7 @@ VkDevice get_vk_device(enum radeon_family family)
    if (device_cache[family])
       return device_cache[family];
 
-   setenv("RADV_FORCE_FAMILY", ac_get_family_name(family), 1);
+   setenv("RADV_FORCE_FAMILY", ac_get_llvm_processor_name(family), 1);
 
    VkApplicationInfo app_info = {};
    app_info.pApplicationName = "aco_tests";
@@ -321,7 +246,7 @@ VkDevice get_vk_device(enum radeon_family family)
    VkInstanceCreateInfo instance_create_info = {};
    instance_create_info.pApplicationInfo = &app_info;
    instance_create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-   ASSERTED VkResult result = ((PFN_vkCreateInstance)vk_icdGetInstanceProcAddr(NULL, "vkCreateInstance"))(&instance_create_info, NULL, &instance_cache[family]);
+   VkResult result = ((PFN_vkCreateInstance)vk_icdGetInstanceProcAddr(NULL, "vkCreateInstance"))(&instance_create_info, NULL, &instance_cache[family]);
    assert(result == VK_SUCCESS);
 
    #define ITEM(n) n = (PFN_vk##n)vk_icdGetInstanceProcAddr(instance_cache[family], "vk" #n);
@@ -364,7 +289,7 @@ void print_pipeline_ir(VkDevice device, VkPipeline pipeline, VkShaderStageFlagBi
    pipeline_info.sType = VK_STRUCTURE_TYPE_PIPELINE_INFO_KHR;
    pipeline_info.pNext = NULL;
    pipeline_info.pipeline = pipeline;
-   ASSERTED VkResult result = GetPipelineExecutablePropertiesKHR(device, &pipeline_info, &executable_count, executables);
+   VkResult result = GetPipelineExecutablePropertiesKHR(device, &pipeline_info, &executable_count, executables);
    assert(result == VK_SUCCESS);
 
    uint32_t executable = 0;
@@ -386,44 +311,41 @@ void print_pipeline_ir(VkDevice device, VkPipeline pipeline, VkShaderStageFlagBi
    result = GetPipelineExecutableInternalRepresentationsKHR(device, &exec_info, &ir_count, ir);
    assert(result == VK_SUCCESS);
 
-   VkPipelineExecutableInternalRepresentationKHR* requested_ir = nullptr;
-   for (unsigned i = 0; i < ir_count; ++i) {
-      if (strcmp(ir[i].name, name) == 0) {
-         requested_ir = &ir[i];
-         break;
-      }
-   }
-   assert(requested_ir && "Could not find requested IR");
+   for (unsigned i = 0; i < ir_count; i++) {
+      if (strcmp(ir[i].name, name))
+         continue;
 
-   char *data = (char*)malloc(requested_ir->dataSize);
-   requested_ir->pData = data;
-   result = GetPipelineExecutableInternalRepresentationsKHR(device, &exec_info, &ir_count, ir);
-   assert(result == VK_SUCCESS);
+      char *data = (char*)malloc(ir[i].dataSize);
+      ir[i].pData = data;
+      result = GetPipelineExecutableInternalRepresentationsKHR(device, &exec_info, &ir_count, ir);
+      assert(result == VK_SUCCESS);
 
-   if (remove_encoding) {
-      for (char *c = data; *c; c++) {
-         if (*c == ';') {
-            for (; *c && *c != '\n'; c++)
-               *c = ' ';
+      if (remove_encoding) {
+         for (char *c = data; *c; c++) {
+            if (*c == ';') {
+               for (; *c && *c != '\n'; c++)
+                  *c = ' ';
+            }
          }
       }
-   }
 
-   fprintf(output, "%s", data);
-   free(data);
+      fprintf(output, "%s", data);
+      free(data);
+      return;
+   }
 }
 
-VkShaderModule __qoCreateShaderModule(VkDevice dev, const QoShaderModuleCreateInfo *module_info)
+VkShaderModule __qoCreateShaderModule(VkDevice dev, const QoShaderModuleCreateInfo *info)
 {
-    VkShaderModuleCreateInfo vk_module_info;
-    vk_module_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    vk_module_info.pNext = NULL;
-    vk_module_info.flags = 0;
-    vk_module_info.codeSize = module_info->spirvSize;
-    vk_module_info.pCode = (const uint32_t*)module_info->pSpirv;
+    VkShaderModuleCreateInfo module_info;
+    module_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    module_info.pNext = NULL;
+    module_info.flags = 0;
+    module_info.codeSize = info->spirvSize;
+    module_info.pCode = (const uint32_t*)info->pSpirv;
 
     VkShaderModule module;
-    ASSERTED VkResult result = CreateShaderModule(dev, &vk_module_info, NULL, &module);
+    VkResult result = CreateShaderModule(dev, &module_info, NULL, &module);
     assert(result == VK_SUCCESS);
 
     return module;
@@ -557,13 +479,6 @@ void PipelineBuilder::add_stage(VkShaderStageFlagBits stage, VkShaderModule modu
    owned_stages |= stage;
 }
 
-void PipelineBuilder::add_stage(VkShaderStageFlagBits stage, QoShaderModuleCreateInfo module, const char *name)
-{
-   add_stage(stage, __qoCreateShaderModule(device, &module), name);
-   add_resource_decls(&module);
-   add_io_decls(&module);
-}
-
 void PipelineBuilder::add_vsfs(VkShaderModule vs, VkShaderModule fs)
 {
    add_stage(VK_SHADER_STAGE_VERTEX_BIT, vs);
@@ -572,8 +487,11 @@ void PipelineBuilder::add_vsfs(VkShaderModule vs, VkShaderModule fs)
 
 void PipelineBuilder::add_vsfs(QoShaderModuleCreateInfo vs, QoShaderModuleCreateInfo fs)
 {
-   add_stage(VK_SHADER_STAGE_VERTEX_BIT, vs);
-   add_stage(VK_SHADER_STAGE_FRAGMENT_BIT, fs);
+   add_vsfs(__qoCreateShaderModule(device, &vs), __qoCreateShaderModule(device, &fs));
+   add_resource_decls(&vs);
+   add_io_decls(&vs);
+   add_resource_decls(&fs);
+   add_io_decls(&fs);
 }
 
 void PipelineBuilder::add_cs(VkShaderModule cs)
@@ -583,7 +501,8 @@ void PipelineBuilder::add_cs(VkShaderModule cs)
 
 void PipelineBuilder::add_cs(QoShaderModuleCreateInfo cs)
 {
-   add_stage(VK_SHADER_STAGE_COMPUTE_BIT, cs);
+   add_cs(__qoCreateShaderModule(device, &cs));
+   add_resource_decls(&cs);
 }
 
 bool PipelineBuilder::is_compute() {
@@ -600,7 +519,7 @@ void PipelineBuilder::create_compute_pipeline() {
    create_info.basePipelineHandle = VK_NULL_HANDLE;
    create_info.basePipelineIndex = 0;
 
-   ASSERTED VkResult result = CreateComputePipelines(device, VK_NULL_HANDLE, 1, &create_info, NULL, &pipeline);
+   VkResult result = CreateComputePipelines(device, VK_NULL_HANDLE, 1, &create_info, NULL, &pipeline);
    assert(result == VK_SUCCESS);
 }
 
@@ -728,7 +647,6 @@ void PipelineBuilder::create_graphics_pipeline() {
    ds_state.front.depthFailOp = VK_STENCIL_OP_REPLACE;
    ds_state.front.compareOp = VK_COMPARE_OP_ALWAYS;
    ds_state.front.compareMask = 0xffffffff,
-   ds_state.front.writeMask = 0;
    ds_state.front.reference = 0;
    ds_state.back = ds_state.front;
 
@@ -797,7 +715,7 @@ void PipelineBuilder::create_graphics_pipeline() {
    renderpass_info.dependencyCount = 0;
    renderpass_info.pDependencies = NULL;
 
-   ASSERTED VkResult result = CreateRenderPass(device, &renderpass_info, NULL, &render_pass);
+   VkResult result = CreateRenderPass(device, &renderpass_info, NULL, &render_pass);
    assert(result == VK_SUCCESS);
 
    gfx_pipeline_info.layout = pipeline_layout;
@@ -823,7 +741,7 @@ void PipelineBuilder::create_pipeline() {
       desc_layout_info.bindingCount = num_desc_bindings[i];
       desc_layout_info.pBindings = desc_bindings[i];
 
-      ASSERTED VkResult result = CreateDescriptorSetLayout(device, &desc_layout_info, NULL, &desc_layouts[num_desc_layouts]);
+      VkResult result = CreateDescriptorSetLayout(device, &desc_layout_info, NULL, &desc_layouts[num_desc_layouts]);
       assert(result == VK_SUCCESS);
       num_desc_layouts++;
    }
@@ -837,7 +755,7 @@ void PipelineBuilder::create_pipeline() {
    pipeline_layout_info.setLayoutCount = num_desc_layouts;
    pipeline_layout_info.pSetLayouts = desc_layouts;
 
-   ASSERTED VkResult result = CreatePipelineLayout(device, &pipeline_layout_info, NULL, &pipeline_layout);
+   VkResult result = CreatePipelineLayout(device, &pipeline_layout_info, NULL, &pipeline_layout);
    assert(result == VK_SUCCESS);
 
    if (is_compute())
@@ -846,9 +764,9 @@ void PipelineBuilder::create_pipeline() {
       create_graphics_pipeline();
 }
 
-void PipelineBuilder::print_ir(VkShaderStageFlagBits stage_flags, const char *name, bool remove_encoding)
+void PipelineBuilder::print_ir(VkShaderStageFlagBits stages, const char *name, bool remove_encoding)
 {
    if (!pipeline)
       create_pipeline();
-   print_pipeline_ir(device, pipeline, stage_flags, name, remove_encoding);
+   print_pipeline_ir(device, pipeline, stages, name, remove_encoding);
 }

@@ -98,7 +98,7 @@ emit_load_store_deref(nir_builder *b, nir_intrinsic_instr *orig_instr,
       /* Copy over any other sources.  This is needed for interp_deref_at */
       for (unsigned i = 1;
            i < nir_intrinsic_infos[orig_instr->intrinsic].num_srcs; i++)
-         nir_src_copy(&load->src[i], &orig_instr->src[i]);
+         nir_src_copy(&load->src[i], &orig_instr->src[i], load);
 
       nir_ssa_dest_init(&load->instr, &load->dest,
                         orig_instr->dest.ssa.num_components,
@@ -114,8 +114,7 @@ emit_load_store_deref(nir_builder *b, nir_intrinsic_instr *orig_instr,
 static bool
 lower_indirect_derefs_block(nir_block *block, nir_builder *b,
                             nir_variable_mode modes,
-                            uint32_t max_lower_array_len,
-                            bool builtins_only)
+                            uint32_t max_lower_array_len)
 {
    bool progress = false;
 
@@ -159,10 +158,6 @@ lower_indirect_derefs_block(nir_block *block, nir_builder *b,
       if (!(modes & base->var->data.mode) && !base->var->data.compact)
          continue;
 
-      /* built-in's will always start with "gl_" */
-      if (builtins_only && strncmp(base->var->name, "gl_", 3))
-         continue;
-
       b->cursor = nir_instr_remove(&intrin->instr);
 
       nir_deref_path path;
@@ -177,7 +172,7 @@ lower_indirect_derefs_block(nir_block *block, nir_builder *b,
          nir_ssa_def *result;
          emit_load_store_deref(b, intrin, base, &path.path[1],
                                &result, NULL);
-         nir_ssa_def_rewrite_uses(&intrin->dest.ssa, result);
+         nir_ssa_def_rewrite_uses(&intrin->dest.ssa, nir_src_for_ssa(result));
       }
 
       nir_deref_path_finish(&path);
@@ -190,7 +185,7 @@ lower_indirect_derefs_block(nir_block *block, nir_builder *b,
 
 static bool
 lower_indirects_impl(nir_function_impl *impl, nir_variable_mode modes,
-                     uint32_t max_lower_array_len, bool builtins_only)
+                     uint32_t max_lower_array_len)
 {
    nir_builder builder;
    nir_builder_init(&builder, impl);
@@ -198,7 +193,7 @@ lower_indirects_impl(nir_function_impl *impl, nir_variable_mode modes,
 
    nir_foreach_block_safe(block, impl) {
       progress |= lower_indirect_derefs_block(block, &builder, modes,
-                                              max_lower_array_len, builtins_only);
+                                              max_lower_array_len);
    }
 
    if (progress)
@@ -223,28 +218,7 @@ nir_lower_indirect_derefs(nir_shader *shader, nir_variable_mode modes,
    nir_foreach_function(function, shader) {
       if (function->impl) {
          progress = lower_indirects_impl(function->impl, modes,
-                                         max_lower_array_len, false) || progress;
-      }
-   }
-
-   return progress;
-}
-
-/** Lowers indirect variable loads/stores to direct loads/stores.
- *
- * The pass works by replacing any indirect load or store with an if-ladder
- * that does a binary search on the array index. It only changes uniform variable builtins,
- * e.g., gl_LightSource
- */
-bool
-nir_lower_indirect_builtin_uniform_derefs(nir_shader *shader)
-{
-   bool progress = false;
-
-   nir_foreach_function(function, shader) {
-      if (function->impl) {
-         progress = lower_indirects_impl(function->impl, nir_var_uniform,
-                                         UINT_MAX, true) || progress;
+                                         max_lower_array_len) || progress;
       }
    }
 

@@ -31,7 +31,6 @@
 #include "main/glheader.h"
 #include "main/bufferobj.h"
 #include "main/context.h"
-#include "main/enable.h"
 #include "main/mesa_private.h"
 #include "main/macros.h"
 #include "main/light.h"
@@ -44,8 +43,7 @@
 
 static void
 copy_vao(struct gl_context *ctx, const struct gl_vertex_array_object *vao,
-         GLbitfield mask, GLbitfield state, GLbitfield pop_state,
-         int shift, fi_type **data, bool *color0_changed)
+         GLbitfield mask, GLbitfield state, int shift, fi_type **data)
 {
    struct vbo_context *vbo = vbo_context(ctx);
 
@@ -53,39 +51,29 @@ copy_vao(struct gl_context *ctx, const struct gl_vertex_array_object *vao,
    while (mask) {
       const int i = u_bit_scan(&mask);
       const struct gl_array_attributes *attrib = &vao->VertexAttrib[i];
-      unsigned current_index = shift + i;
-      struct gl_array_attributes *currval = &vbo->current[current_index];
+      struct gl_array_attributes *currval = &vbo->current[shift + i];
       const GLubyte size = attrib->Format.Size;
       const GLenum16 type = attrib->Format.Type;
       fi_type tmp[8];
-      int dmul_shift = 0;
+      int dmul = 1;
 
       if (type == GL_DOUBLE ||
-          type == GL_UNSIGNED_INT64_ARB) {
-         dmul_shift = 1;
-         memcpy(tmp, *data, size * 2 * sizeof(GLfloat));
-      } else {
+          type == GL_UNSIGNED_INT64_ARB)
+         dmul = 2;
+
+      if (dmul == 2)
+         memcpy(tmp, *data, size * dmul * sizeof(GLfloat));
+      else
          COPY_CLEAN_4V_TYPE_AS_UNION(tmp, size, *data, type);
-      }
-
-      if (memcmp(currval->Ptr, tmp, 4 * sizeof(GLfloat) << dmul_shift) != 0) {
-         memcpy((fi_type*)currval->Ptr, tmp, 4 * sizeof(GLfloat) << dmul_shift);
-
-         if (current_index == VBO_ATTRIB_COLOR0)
-            *color0_changed = true;
-
-         /* The fixed-func vertex program uses this. */
-         if (current_index == VBO_ATTRIB_MAT_FRONT_SHININESS ||
-             current_index == VBO_ATTRIB_MAT_BACK_SHININESS)
-            ctx->NewState |= _NEW_FF_VERT_PROGRAM;
-
-         ctx->NewState |= state;
-         ctx->PopAttribState |= pop_state;
-      }
 
       if (type != currval->Format.Type ||
-          (size >> dmul_shift) != currval->Format.Size)
-         vbo_set_vertex_format(&currval->Format, size >> dmul_shift, type);
+          memcmp(currval->Ptr, tmp, 4 * sizeof(GLfloat) * dmul) != 0) {
+         memcpy((fi_type*)currval->Ptr, tmp, 4 * sizeof(GLfloat) * dmul);
+
+         vbo_set_vertex_format(&currval->Format, size, type);
+
+         ctx->NewState |= state;
+      }
 
       *data += size;
    }
@@ -99,28 +87,27 @@ static void
 playback_copy_to_current(struct gl_context *ctx,
                          const struct vbo_save_vertex_list *node)
 {
-   if (!node->cold->current_data)
+   if (!node->current_data)
       return;
 
-   fi_type *data = node->cold->current_data;
-   bool color0_changed = false;
-
+   fi_type *data = node->current_data;
    /* Copy conventional attribs and generics except pos */
    copy_vao(ctx, node->VAO[VP_MODE_SHADER], ~VERT_BIT_POS & VERT_BIT_ALL,
-            _NEW_CURRENT_ATTRIB, GL_CURRENT_BIT, 0, &data, &color0_changed);
+            _NEW_CURRENT_ATTRIB, 0, &data);
    /* Copy materials */
    copy_vao(ctx, node->VAO[VP_MODE_FF], VERT_BIT_MAT_ALL,
-            _NEW_MATERIAL, GL_LIGHTING_BIT,
-            VBO_MATERIAL_SHIFT, &data, &color0_changed);
+            _NEW_CURRENT_ATTRIB | _NEW_LIGHT, VBO_MATERIAL_SHIFT, &data);
 
-   if (color0_changed && ctx->Light.ColorMaterialEnabled) {
+   /* Colormaterial -- this kindof sucks.
+    */
+   if (ctx->Light.ColorMaterialEnabled) {
       _mesa_update_color_material(ctx, ctx->Current.Attrib[VBO_ATTRIB_COLOR0]);
    }
 
    /* CurrentExecPrimitive
     */
-   if (node->cold->prim_count) {
-      const struct _mesa_prim *prim = &node->cold->prims[node->cold->prim_count - 1];
+   if (node->prim_count) {
+      const struct _mesa_prim *prim = &node->prims[node->prim_count - 1];
       if (prim->end)
          ctx->Driver.CurrentExecPrimitive = PRIM_OUTSIDE_BEGIN_END;
       else
@@ -147,38 +134,15 @@ loopback_vertex_list(struct gl_context *ctx,
                      const struct vbo_save_vertex_list *list)
 {
    struct gl_buffer_object *bo = list->VAO[0]->BufferBinding[0].BufferObj;
-   void *buffer = ctx->Driver.MapBufferRange(ctx, 0, bo->Size, GL_MAP_READ_BIT, /* ? */
-                                             bo, MAP_INTERNAL);
+   ctx->Driver.MapBufferRange(ctx, 0, bo->Size, GL_MAP_READ_BIT, /* ? */
+                              bo, MAP_INTERNAL);
 
-   /* TODO: in this case, we shouldn't create a bo at all and instead keep
-    * the in-RAM buffer. */
-   _vbo_loopback_vertex_list(ctx, list, buffer);
+   /* Note that the range of referenced vertices must be mapped already */
+   _vbo_loopback_vertex_list(ctx, list);
 
    ctx->Driver.UnmapBuffer(ctx, bo, MAP_INTERNAL);
 }
 
-
-void
-vbo_save_playback_vertex_list_loopback(struct gl_context *ctx, void *data)
-{
-   const struct vbo_save_vertex_list *node =
-      (const struct vbo_save_vertex_list *) data;
-
-   FLUSH_FOR_DRAW(ctx);
-
-   if (_mesa_inside_begin_end(ctx) && node->cold->prims[0].begin) {
-      /* Error: we're about to begin a new primitive but we're already
-       * inside a glBegin/End pair.
-       */
-      _mesa_error(ctx, GL_INVALID_OPERATION,
-                  "draw operation inside glBegin/End");
-      return;
-   }
-   /* Various degenerate cases: translate into immediate mode
-    * calls rather than trying to execute in place.
-    */
-   loopback_vertex_list(ctx, node);
-}
 
 /**
  * Execute the buffer and save copied verts.
@@ -186,56 +150,79 @@ vbo_save_playback_vertex_list_loopback(struct gl_context *ctx, void *data)
  * a drawing command.
  */
 void
-vbo_save_playback_vertex_list(struct gl_context *ctx, void *data, bool copy_to_current)
+vbo_save_playback_vertex_list(struct gl_context *ctx, void *data)
 {
    const struct vbo_save_vertex_list *node =
       (const struct vbo_save_vertex_list *) data;
+   struct vbo_context *vbo = vbo_context(ctx);
+   struct vbo_save_context *save = &vbo->save;
+   GLboolean remap_vertex_store = GL_FALSE;
+
+   if (save->vertex_store && save->vertex_store->buffer_map) {
+      /* The vertex store is currently mapped but we're about to replay
+       * a display list.  This can happen when a nested display list is
+       * being build with GL_COMPILE_AND_EXECUTE.
+       * We never want to have mapped vertex buffers when we're drawing.
+       * Unmap the vertex store, execute the list, then remap the vertex
+       * store.
+       */
+      vbo_save_unmap_vertex_store(ctx, save->vertex_store);
+      remap_vertex_store = GL_TRUE;
+   }
 
    FLUSH_FOR_DRAW(ctx);
 
-   if (_mesa_inside_begin_end(ctx) && node->cold->prims[0].begin) {
-      /* Error: we're about to begin a new primitive but we're already
-       * inside a glBegin/End pair.
-       */
-      _mesa_error(ctx, GL_INVALID_OPERATION,
-                  "draw operation inside glBegin/End");
-      return;
+   if (node->prim_count > 0) {
+
+      if (_mesa_inside_begin_end(ctx) && node->prims[0].begin) {
+         /* Error: we're about to begin a new primitive but we're already
+          * inside a glBegin/End pair.
+          */
+         _mesa_error(ctx, GL_INVALID_OPERATION,
+                     "draw operation inside glBegin/End");
+         goto end;
+      }
+      else if (save->replay_flags) {
+         /* Various degenerate cases: translate into immediate mode
+          * calls rather than trying to execute in place.
+          */
+         loopback_vertex_list(ctx, node);
+
+         goto end;
+      }
+
+      bind_vertex_list(ctx, node);
+
+      /* Need that at least one time. */
+      if (ctx->NewState)
+         _mesa_update_state(ctx);
+
+      /* XXX also need to check if shader enabled, but invalid */
+      if ((ctx->VertexProgram.Enabled &&
+           !_mesa_arb_vertex_program_enabled(ctx)) ||
+          (ctx->FragmentProgram.Enabled &&
+           !_mesa_arb_fragment_program_enabled(ctx))) {
+         _mesa_error(ctx, GL_INVALID_OPERATION,
+                     "glBegin (invalid vertex/fragment program)");
+         return;
+      }
+
+      assert(ctx->NewState == 0);
+
+      if (node->vertex_count > 0) {
+         GLuint min_index = _vbo_save_get_min_index(node);
+         GLuint max_index = _vbo_save_get_max_index(node);
+         ctx->Driver.Draw(ctx, node->prims, node->prim_count, NULL, GL_TRUE,
+                          min_index, max_index, 1, 0, NULL, 0);
+      }
    }
 
-   bind_vertex_list(ctx, node);
+   /* Copy to current?
+    */
+   playback_copy_to_current(ctx, node);
 
-   /* Need that at least one time. */
-   if (ctx->NewState)
-      _mesa_update_state(ctx);
-
-   /* XXX also need to check if shader enabled, but invalid */
-   if ((ctx->VertexProgram.Enabled &&
-        !_mesa_arb_vertex_program_enabled(ctx)) ||
-       (ctx->FragmentProgram.Enabled &&
-        !_mesa_arb_fragment_program_enabled(ctx))) {
-      _mesa_error(ctx, GL_INVALID_OPERATION,
-                  "glBegin (invalid vertex/fragment program)");
-      return;
+end:
+   if (remap_vertex_store) {
+      save->buffer_ptr = vbo_save_map_vertex_store(ctx, save->vertex_store);
    }
-
-   assert(ctx->NewState == 0);
-
-   struct pipe_draw_info *info = (struct pipe_draw_info *) &node->merged.info;
-   info->vertices_per_patch = ctx->TessCtrlProgram.patch_vertices;
-   void *gl_bo = info->index.gl_bo;
-   if (node->merged.mode) {
-      ctx->Driver.DrawGalliumMultiMode(ctx, info,
-                                       node->merged.start_counts,
-                                       node->merged.mode,
-                                       node->merged.num_draws);
-   } else if (node->merged.num_draws == 1) {
-      ctx->Driver.DrawGallium(ctx, info, 0, &node->merged.start_count, 1);
-   } else if (node->merged.num_draws) {
-      ctx->Driver.DrawGallium(ctx, info, 0, node->merged.start_counts,
-                              node->merged.num_draws);
-   }
-   info->index.gl_bo = gl_bo;
-
-   if (copy_to_current)
-      playback_copy_to_current(ctx, node);
 }

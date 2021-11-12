@@ -1,29 +1,28 @@
-/**
-***********************************************************************************************************************
-*
-* Copyright © 2007-2021 Advanced Micro Devices, Inc.
-* All Rights Reserved.
-*
-* Permission is hereby granted, free of charge, to any person obtaining a
-* copy of this software and associated documentation files (the "Software"),
-* to deal in the Software without restriction, including without limitation
-* the rights to use, copy, modify, merge, publish, distribute, sublicense,
-* and/or sell copies of the Software, and to permit persons to whom the
-* Software is furnished to do so, subject to the following conditions:
-*
-* The above copyright notice and this permission notice shall be included in
-* all copies or substantial portions of the Software.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-* THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
-* OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-* ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-* OTHER DEALINGS IN THE SOFTWARE
-*
-***********************************************************************************************************************
-*/
+/*
+ * Copyright © 2017-2019 Advanced Micro Devices, Inc.
+ * All Rights Reserved.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sub license, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDERS, AUTHORS
+ * AND/OR ITS SUPPLIERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+ * USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * The above copyright notice and this permission notice (including the
+ * next paragraph) shall be included in all copies or substantial portions
+ * of the Software.
+ */
 
 #ifndef _AMDGPU_ASIC_ADDR_H
 #define _AMDGPU_ASIC_ADDR_H
@@ -46,7 +45,6 @@
 #define FAMILY_RV      0x8E
 #define FAMILY_NV      0x8F
 #define FAMILY_VGH     0x90
-#define FAMILY_YC      0x92
 
 // AMDGPU_FAMILY_IS(familyId, familyName)
 #define FAMILY_IS(f, fn)     (f == FAMILY_##fn)
@@ -60,7 +58,6 @@
 #define FAMILY_IS_AI(f)      FAMILY_IS(f, AI)
 #define FAMILY_IS_RV(f)      FAMILY_IS(f, RV)
 #define FAMILY_IS_NV(f)      FAMILY_IS(f, NV)
-#define FAMILY_IS_YC(f)      FAMILY_IS(f, YC)
 
 #define AMDGPU_UNKNOWN          0xFF
 
@@ -92,8 +89,7 @@
 #define AMDGPU_VEGA10_RANGE     0x01, 0x14
 #define AMDGPU_VEGA12_RANGE     0x14, 0x28
 #define AMDGPU_VEGA20_RANGE     0x28, 0x32
-#define AMDGPU_ARCTURUS_RANGE   0x32, 0x3C
-#define AMDGPU_ALDEBARAN_RANGE  0x3C, 0xFF
+#define AMDGPU_ARCTURUS_RANGE   0x32, 0xFF
 
 #define AMDGPU_RAVEN_RANGE      0x01, 0x81
 #define AMDGPU_RAVEN2_RANGE     0x81, 0x91
@@ -105,11 +101,8 @@
 #define AMDGPU_SIENNA_CICHLID_RANGE     0x28, 0x32
 #define AMDGPU_NAVY_FLOUNDER_RANGE      0x32, 0x3C
 #define AMDGPU_DIMGREY_CAVEFISH_RANGE   0x3C, 0x46
-#define AMDGPU_BEIGE_GOBY_RANGE         0x46, 0x50
 
 #define AMDGPU_VANGOGH_RANGE    0x01, 0xFF
-
-#define AMDGPU_YELLOW_CARP_RANGE 0x01, 0xFF
 
 #define AMDGPU_EXPAND_FIX(x) x
 #define AMDGPU_RANGE_HELPER(val, min, max) ((val >= min) && (val < max))
@@ -150,7 +143,6 @@
 #define ASICREV_IS_VEGA12_p(r)         ASICREV_IS(r, VEGA12)
 #define ASICREV_IS_VEGA20_P(r)         ASICREV_IS(r, VEGA20)
 #define ASICREV_IS_ARCTURUS(r)         ASICREV_IS(r, ARCTURUS)
-#define ASICREV_IS_ALDEBARAN(r)        ASICREV_IS(r, ALDEBARAN)
 
 #define ASICREV_IS_RAVEN(r)            ASICREV_IS(r, RAVEN)
 #define ASICREV_IS_RAVEN2(r)           ASICREV_IS(r, RAVEN2)
@@ -162,10 +154,7 @@
 #define ASICREV_IS_SIENNA_CICHLID(r)   ASICREV_IS(r, SIENNA_CICHLID)
 #define ASICREV_IS_NAVY_FLOUNDER(r)    ASICREV_IS(r, NAVY_FLOUNDER)
 #define ASICREV_IS_DIMGREY_CAVEFISH(r) ASICREV_IS(r, DIMGREY_CAVEFISH)
-#define ASICREV_IS_BEIGE_GOBY(r)       ASICREV_IS(r, BEIGE_GOBY)
 
 #define ASICREV_IS_VANGOGH(r)          ASICREV_IS(r, VANGOGH)
-
-#define ASICREV_IS_YELLOW_CARP(r)      ASICREV_IS(r, YELLOW_CARP)
 
 #endif // _AMDGPU_ASIC_ADDR_H

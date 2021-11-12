@@ -143,10 +143,15 @@ softpipe_create_shader_state(struct pipe_context *pipe,
                              bool debug)
 {
    if (templ->type == PIPE_SHADER_IR_NIR) {
+      shader->tokens = nir_to_tgsi(templ->ir.nir, pipe->screen);
+
+      /* Note: Printing the final NIR after nir-to-tgsi transformed and
+       * optimized it
+       */
       if (debug)
          nir_print_shader(templ->ir.nir, stderr);
 
-      shader->tokens = nir_to_tgsi(templ->ir.nir, pipe->screen);
+      ralloc_free(templ->ir.nir);
    } else {
       assert(templ->type == PIPE_SHADER_IR_TGSI);
       /* we need to keep a local copy of the tokens */
@@ -373,7 +378,6 @@ softpipe_delete_gs_state(struct pipe_context *pipe, void *gs)
 static void
 softpipe_set_constant_buffer(struct pipe_context *pipe,
                              enum pipe_shader_type shader, uint index,
-                             bool take_ownership,
                              const struct pipe_constant_buffer *cb)
 {
    struct softpipe_context *softpipe = softpipe_context(pipe);
@@ -398,12 +402,7 @@ softpipe_set_constant_buffer(struct pipe_context *pipe,
    draw_flush(softpipe->draw);
 
    /* note: reference counting */
-   if (take_ownership) {
-      pipe_resource_reference(&softpipe->constants[shader][index], NULL);
-      softpipe->constants[shader][index] = constants;
-   } else {
-      pipe_resource_reference(&softpipe->constants[shader][index], constants);
-   }
+   pipe_resource_reference(&softpipe->constants[shader][index], constants);
 
    if (shader == PIPE_SHADER_VERTEX || shader == PIPE_SHADER_GEOMETRY) {
       draw_set_mapped_constant_buffer(softpipe->draw, shader, index, data, size);
@@ -434,6 +433,7 @@ softpipe_create_compute_state(struct pipe_context *pipe,
          nir_print_shader(s, stderr);
 
       state->tokens = (void *)nir_to_tgsi(s, pipe->screen);
+      ralloc_free(s);
    } else {
       assert(templ->ir_type == PIPE_SHADER_IR_TGSI);
       /* we need to keep a local copy of the tokens */

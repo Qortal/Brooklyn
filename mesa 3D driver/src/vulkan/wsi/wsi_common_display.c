@@ -282,17 +282,16 @@ wsi_display_alloc_connector(struct wsi_display *wsi,
 
 static struct wsi_display_connector *
 wsi_display_get_connector(struct wsi_device *wsi_device,
-                          int drm_fd,
                           uint32_t connector_id)
 {
    struct wsi_display *wsi =
       (struct wsi_display *) wsi_device->wsi[VK_ICD_WSI_PLATFORM_DISPLAY];
 
-   if (drm_fd < 0)
+   if (wsi->fd < 0)
       return NULL;
 
    drmModeConnectorPtr drm_connector =
-      drmModeGetConnector(drm_fd, connector_id);
+      drmModeGetConnector(wsi->fd, connector_id);
 
    if (!drm_connector)
       return NULL;
@@ -315,7 +314,7 @@ wsi_display_get_connector(struct wsi_device *wsi_device,
    for (int p = 0; connector->dpms_property == 0 &&
            p < drm_connector->count_props; p++)
    {
-      drmModePropertyPtr prop = drmModeGetProperty(drm_fd,
+      drmModePropertyPtr prop = drmModeGetProperty(wsi->fd,
                                                    drm_connector->props[p]);
       if (!prop)
          continue;
@@ -481,8 +480,7 @@ wsi_display_get_physical_device_display_properties2(
 
    for (int c = 0; c < mode_res->count_connectors; c++) {
       struct wsi_display_connector *connector =
-         wsi_display_get_connector(wsi_device, wsi->fd,
-               mode_res->connectors[c]);
+         wsi_display_get_connector(wsi_device, mode_res->connectors[c]);
 
       if (!connector) {
          drmModeFreeResources(mode_res);
@@ -817,10 +815,7 @@ wsi_display_surface_get_support(VkIcdSurfaceBase *surface,
                                 uint32_t queueFamilyIndex,
                                 VkBool32* pSupported)
 {
-   struct wsi_display *wsi =
-      (struct wsi_display *) wsi_device->wsi[VK_ICD_WSI_PLATFORM_DISPLAY];
-
-   *pSupported = wsi->fd != -1;
+   *pSupported = VK_TRUE;
    return VK_SUCCESS;
 }
 
@@ -2600,59 +2595,6 @@ wsi_get_swapchain_counter(VkDevice device,
    if (ret)
       *value = 0;
 
-   return VK_SUCCESS;
-}
-
-VkResult
-wsi_acquire_drm_display(VkPhysicalDevice     pDevice,
-                        struct wsi_device    *wsi_device,
-                        int                  drm_fd,
-                        VkDisplayKHR         display)
-{
-   if (!wsi_device_matches_drm_fd(wsi_device, drm_fd))
-      return VK_ERROR_UNKNOWN;
-
-   struct wsi_display *wsi =
-      (struct wsi_display *) wsi_device->wsi[VK_ICD_WSI_PLATFORM_DISPLAY];
-
-   /* XXX no support for mulitple leases yet */
-   if (wsi->fd >= 0 || !local_drmIsMaster(drm_fd))
-      return VK_ERROR_INITIALIZATION_FAILED;
-
-   struct wsi_display_connector *connector =
-         wsi_display_connector_from_handle(display);
-
-   drmModeConnectorPtr drm_connector =
-         drmModeGetConnectorCurrent(drm_fd, connector->id);
-
-   if (!drm_connector)
-      return VK_ERROR_INITIALIZATION_FAILED;
-
-   drmModeFreeConnector(drm_connector);
-
-   wsi->fd = drm_fd;
-   return VK_SUCCESS;
-}
-
-VkResult
-wsi_get_drm_display(VkPhysicalDevice      pDevice,
-                    struct wsi_device     *wsi_device,
-                    int                   drm_fd,
-                    int                   connector_id,
-                    VkDisplayKHR          *display)
-{
-   if (!wsi_device_matches_drm_fd(wsi_device, drm_fd))
-      return VK_ERROR_UNKNOWN;
-
-   struct wsi_display_connector *connector =
-      wsi_display_get_connector(wsi_device, drm_fd, connector_id);
-
-   if (!connector) {
-      *display = VK_NULL_HANDLE;
-      return VK_ERROR_UNKNOWN;
-   }
-
-   *display = wsi_display_connector_to_handle(connector);
    return VK_SUCCESS;
 }
 

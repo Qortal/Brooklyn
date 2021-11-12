@@ -34,7 +34,7 @@
 
 #include "pipe/p_state.h"
 #include "pipe/p_defines.h"
-#include "util/u_cpu_detect.h"
+
 
 /*
  * TGSI translation limits.
@@ -73,12 +73,11 @@
 /**
  * Maximum control flow nesting
  *
- * Vulkan CTS tests seem to have up to 76 levels. Add a few for safety.
  * SM4.0 requires 64 (per subroutine actually, subroutine nesting itself is 32)
  * SM3.0 requires 24 (most likely per subroutine too)
  * add 2 more (some translation could add one more)
  */
-#define LP_MAX_TGSI_NESTING 80
+#define LP_MAX_TGSI_NESTING 66
 
 /**
  * Maximum iterations before loop termination
@@ -86,11 +85,6 @@
  */
 #define LP_MAX_TGSI_LOOP_ITERATIONS 65535
 
-static inline bool
-lp_has_fp16(void)
-{
-   return util_get_cpu_caps()->has_f16c;
-}
 
 /**
  * Some of these limits are actually infinite (i.e., only limited by available
@@ -130,15 +124,12 @@ gallivm_get_shader_param(enum pipe_shader_cap param)
       return 1;
    case PIPE_SHADER_CAP_INTEGERS:
       return 1;
+   case PIPE_SHADER_CAP_INT64_ATOMICS:
    case PIPE_SHADER_CAP_FP16:
    case PIPE_SHADER_CAP_FP16_DERIVATIVES:
-   case PIPE_SHADER_CAP_FP16_CONST_BUFFERS:
-      return lp_has_fp16();
-   case PIPE_SHADER_CAP_INT64_ATOMICS:
-      return 0;
    case PIPE_SHADER_CAP_INT16:
    case PIPE_SHADER_CAP_GLSL_16BIT_CONSTS:
-      return 1;
+      return 0;
    case PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS:
       return PIPE_MAX_SAMPLERS;
    case PIPE_SHADER_CAP_MAX_SAMPLER_VIEWS:

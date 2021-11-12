@@ -1366,9 +1366,7 @@ xsi:schemaLocation="http://nouveau.freedesktop.org/ rules-ng.xsd">
 		<bitfield high="1" low="1" name="CP_ME_BUSY" />
 		<bitfield high="0" low="0" name="HI_BUSY" />
 	</reg32>
-	<reg32 offset="0x0530" name="RBBM_STATUS3">
-		<bitfield pos="24" name="SMMU_STALLED_ON_FAULT" type="boolean"/>
-	</reg32>
+	<reg32 offset="0x0530" name="RBBM_STATUS3"/>
 	<reg32 offset="0x04e1" name="RBBM_INT_0_STATUS"/>
 	<reg32 offset="0x04f0" name="RBBM_AHB_ME_SPLIT_STATUS"/>
 	<reg32 offset="0x04f1" name="RBBM_AHB_PFP_SPLIT_STATUS"/>
@@ -1814,20 +1812,21 @@ xsi:schemaLocation="http://nouveau.freedesktop.org/ rules-ng.xsd">
 	<reg32 offset="0xe000" name="GRAS_CL_CNTL">
 		<bitfield name="ZERO_GB_SCALE_Z" pos="6" type="boolean"/>
 	</reg32>
-	<bitset name="a5xx_gras_xs_cl_cntl" inline="yes">
-		<bitfield name="CLIP_MASK" low="0" high="7"/>
-		<bitfield name="CULL_MASK" low="8" high="15"/>
-	</bitset>
-	<reg32 offset="0xe001" name="GRAS_VS_CL_CNTL" type="a5xx_gras_xs_cl_cntl"/>
+	<reg32 offset="0xe001" name="UNKNOWN_E001"/> <!-- always 00000000? -->
 	<reg32 offset="0xe004" name="UNKNOWN_E004"/> <!-- always 00000000? -->
 	<reg32 offset="0xe005" name="GRAS_CNTL">
 		<!-- see also RB_RENDER_CONTROL0 -->
 		<bitfield name="IJ_PERSP_PIXEL" pos="0" type="boolean"/>
 		<bitfield name="IJ_PERSP_CENTROID" pos="1" type="boolean"/>
 		<bitfield name="IJ_PERSP_SAMPLE" pos="2" type="boolean"/>
-		<bitfield name="IJ_LINEAR_PIXEL" pos="3" type="boolean"/>
-		<bitfield name="IJ_LINEAR_CENTROID" pos="4" type="boolean"/>
-		<bitfield name="IJ_LINEAR_SAMPLE" pos="5" type="boolean"/>
+		<!--
+		bit 3 set when blob turns on WCOORD.. which also corresponds to
+		register being set in in HLSQ_CONTROL_3_REG bits 8..15 (which
+		shader does not use).. possibly providing wcoord in an alternate
+		way??
+		Also, when that happens, VARYING bits are turned on as well.
+		 -->
+		<bitfield name="SIZE" pos="3" type="boolean"/>
 		<bitfield name="COORD_MASK" low="6" high="9" type="hex"/>
 	</reg32>
 	<reg32 offset="0xe006" name="GRAS_CL_GUARDBAND_CLIP_ADJ">
@@ -1846,7 +1845,7 @@ xsi:schemaLocation="http://nouveau.freedesktop.org/ rules-ng.xsd">
 		<bitfield name="FRONT_CW" pos="2" type="boolean"/>
 		<bitfield name="LINEHALFWIDTH" low="3" high="10" radix="2" type="fixed"/>
 		<bitfield name="POLY_OFFSET" pos="11" type="boolean"/>
-		<bitfield name="LINE_MODE" pos="13" type="a5xx_line_mode"/>
+		<bitfield name="MSAA_ENABLE" pos="13" type="boolean"/>
 		<!-- probably LINEHALFWIDTH is the same as a4xx.. -->
 	</reg32>
 	<reg32 offset="0xe091" name="GRAS_SU_POINT_MINMAX">
@@ -1973,9 +1972,14 @@ bit 7 for RECTLIST (clear) when z32s8 (used for clear of depth32?  not set
 		<bitfield name="IJ_PERSP_PIXEL" pos="0" type="boolean"/>
 		<bitfield name="IJ_PERSP_CENTROID" pos="1" type="boolean"/>
 		<bitfield name="IJ_PERSP_SAMPLE" pos="2" type="boolean"/>
-		<bitfield name="IJ_LINEAR_PIXEL" pos="3" type="boolean"/>
-		<bitfield name="IJ_LINEAR_CENTROID" pos="4" type="boolean"/>
-		<bitfield name="IJ_LINEAR_SAMPLE" pos="5" type="boolean"/>
+		<!--
+		bit 3 set when blob turns on WCOORD.. which also corresponds to
+		register being set in in HLSQ_CONTROL_3_REG bits 8..15 (which
+		shader does not use).. possibly providing wcoord in an alternate
+		way??
+		Also, when that happens, VARYING bits are turned on as well.
+		 -->
+		<bitfield name="SIZE" pos="3" type="boolean"/>
 		<bitfield name="COORD_MASK" low="6" high="9" type="hex"/>
 	</reg32>
 	<reg32 offset="0xe145" name="RB_RENDER_CONTROL1">
@@ -2078,11 +2082,11 @@ bit 7 for RECTLIST (clear) when z32s8 (used for clear of depth32?  not set
 		<bitfield name="UNK1" pos="1" type="boolean"/>
 	</reg32>
 	<reg32 offset="0xe1b1" name="RB_DEPTH_CNTL">
-		<bitfield name="Z_TEST_ENABLE" pos="0" type="boolean"/>
+		<bitfield name="Z_ENABLE" pos="0" type="boolean"/>
 		<bitfield name="Z_WRITE_ENABLE" pos="1" type="boolean"/>
 		<bitfield name="ZFUNC" low="2" high="4" type="adreno_compare_func"/>
-		<doc>Z_READ_ENABLE bit is set for zfunc other than GL_ALWAYS or GL_NEVER</doc>
-		<bitfield name="Z_READ_ENABLE" pos="6" type="boolean"/>
+		<doc>Z_TEST_ENABLE bit is set for zfunc other than GL_ALWAYS or GL_NEVER</doc>
+		<bitfield name="Z_TEST_ENABLE" pos="6" type="boolean"/>
 	</reg32>
 	<reg32 offset="0xe1b2" name="RB_DEPTH_BUFFER_INFO">
 		<bitfield name="DEPTH_FORMAT" low="0" high="2" type="a5xx_depth_format"/>
@@ -2275,16 +2279,7 @@ bit 7 for RECTLIST (clear) when z32s8 (used for clear of depth32?  not set
 		<reg32 offset="0" name="DISABLE"/>
 	</array>
 	<reg32 offset="0xe298" name="VPC_GS_SIV_CNTL"/>
-	<reg32 offset="0xe29a" name="VPC_CLIP_CNTL">
-		<bitfield name="CLIP_MASK" low="0" high="7" type="uint"/>
-		<!-- there can be up to 8 total clip/cull distance outputs,
-		     but apparenly VPC can only deal with vec4, so when there are
-		     more than 4 outputs a second location needs to be programmed
-		-->
-		<bitfield name="CLIP_DIST_03_LOC" low="8" high="15" type="uint"/>
-		<bitfield name="CLIP_DIST_47_LOC" low="16" high="23" type="uint"/>
-	</reg32>
-
+	<reg32 offset="0xe29a" name="UNKNOWN_E29A"/>
 	<reg32 offset="0xe29d" name="VPC_PACK">
 		<bitfield name="NUMNONPOSVAR" low="0" high="7" type="uint"/>
 		<!--
@@ -2379,9 +2374,7 @@ bit 7 for RECTLIST (clear) when z32s8 (used for clear of depth32?  not set
 		<bitfield name="POLYMODE_BACK_PTYPE" low="3" high="5" type="adreno_pa_su_sc_draw"/>
 		<bitfield name="POLYMODE_ENABLE" pos="6" type="boolean"/>
 	</reg32>
-	<reg32 offset="0xe389" name="PC_CLIP_CNTL">
-		<bitfield name="CLIP_MASK" low="0" high="7"/>
-	</reg32>
+	<reg32 offset="0xe389" name="UNKNOWN_E389"/>
 	<reg32 offset="0xe38c" name="PC_RESTART_INDEX"/>
 	<reg32 offset="0xe38d" name="PC_GS_LAYERED"/>
 	<reg32 offset="0xe38e" name="PC_GS_PARAM">
@@ -2519,8 +2512,7 @@ bit 7 for RECTLIST (clear) when z32s8 (used for clear of depth32?  not set
 	<reg32 offset="0xe5c3" name="SP_FS_OBJ_START_LO"/>
 	<reg32 offset="0xe5c4" name="SP_FS_OBJ_START_HI"/>
 	<reg32 offset="0xe5c9" name="SP_BLEND_CNTL">
-		<!-- per-mrt enable bit -->
-		<bitfield name="ENABLE_BLEND" low="0" high="7"/>
+		<bitfield name="ENABLED" pos="0" type="boolean"/>
 		<bitfield name="UNK8" pos="8" type="boolean"/>
 		<bitfield name="ALPHA_TO_COVERAGE" pos="10" type="boolean"/>
 	</reg32>
@@ -2875,7 +2867,7 @@ different border-color states per texture..  Looks something like:
 0340: 3c003c00 3c003c00 00000000 00000000 00000000 00000000 00000000 00000000
 
 		 -->
-		<bitfield name="BCOLOR_OFFSET" low="7" high="31"/>
+		<bitfield name="BCOLOR_OFFSET" low="4" high="31"/>
 	</reg32>
 	<reg32 offset="3" name="3"/>
 </domain>
@@ -2913,20 +2905,11 @@ different border-color states per texture..  Looks something like:
 		<bitfield name="HEIGHT" low="15" high="29" type="uint"/>
 	</reg32>
 	<reg32 offset="2" name="2">
-		<!--
-		b4 and b31 set for buffer/ssbo case, in which case low 15 bits
-		of size encoded in WIDTH, and high 15 bits encoded in HEIGHT
-
-		b31 is probably the 'BUFFER' bit.. it is the one that changes
-		behavior of texture in dEQP-GLES31.functional.texture.texture_buffer.render.as_fragment_texture.buffer_size_131071
-		 -->
-		<bitfield name="UNK4" pos="4" type="boolean"/>
 		<!-- minimum pitch (for mipmap levels): log2(pitchalign / 64) -->
 		<bitfield name="PITCHALIGN" low="0" high="3" type="uint"/>
 		<doc>Pitch in bytes (so actually stride)</doc>
 		<bitfield name="PITCH" low="7" high="28" type="uint"/>
 		<bitfield name="TYPE" low="29" high="30" type="a5xx_tex_type"/>
-		<bitfield name="UNK31" pos="31" type="boolean"/>
 	</reg32>
 	<reg32 offset="3" name="3">
 		<!--

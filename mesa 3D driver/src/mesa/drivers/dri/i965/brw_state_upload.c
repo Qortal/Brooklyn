@@ -36,8 +36,8 @@
 #include "brw_state.h"
 #include "brw_program.h"
 #include "drivers/common/meta.h"
-#include "brw_batch.h"
-#include "brw_buffers.h"
+#include "intel_batchbuffer.h"
+#include "intel_buffers.h"
 #include "brw_vs.h"
 #include "brw_ff_gs.h"
 #include "brw_gs.h"
@@ -49,8 +49,8 @@
 void
 brw_enable_obj_preemption(struct brw_context *brw, bool enable)
 {
-   ASSERTED const struct intel_device_info *devinfo = &brw->screen->devinfo;
-   assert(devinfo->ver >= 9);
+   ASSERTED const struct gen_device_info *devinfo = &brw->screen->devinfo;
+   assert(devinfo->gen >= 9);
 
    if (enable == brw->object_preemption)
       return;
@@ -59,25 +59,25 @@ brw_enable_obj_preemption(struct brw_context *brw, bool enable)
    brw_emit_end_of_pipe_sync(brw, PIPE_CONTROL_RENDER_TARGET_FLUSH);
 
    bool replay_mode = enable ?
-      GFX9_REPLAY_MODE_MIDOBJECT : GFX9_REPLAY_MODE_MIDBUFFER;
+      GEN9_REPLAY_MODE_MIDOBJECT : GEN9_REPLAY_MODE_MIDBUFFER;
 
    /* enable object level preemption */
    brw_load_register_imm32(brw, CS_CHICKEN1,
-                           replay_mode | GFX9_REPLAY_MODE_MASK);
+                           replay_mode | GEN9_REPLAY_MODE_MASK);
 
    brw->object_preemption = enable;
 }
 
 static void
-brw_upload_gfx11_slice_hashing_state(struct brw_context *brw)
+brw_upload_gen11_slice_hashing_state(struct brw_context *brw)
 {
-   const struct intel_device_info *devinfo = &brw->screen->devinfo;
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
    int subslices_delta =
       devinfo->ppipe_subslices[0] - devinfo->ppipe_subslices[1];
    if (subslices_delta == 0)
       return;
 
-   unsigned size = GFX11_SLICE_HASH_TABLE_length * 4;
+   unsigned size = GEN11_SLICE_HASH_TABLE_length * 4;
    uint32_t hash_address;
 
    uint32_t *map = brw_state_batch(brw, size, 64, &hash_address);
@@ -115,7 +115,7 @@ brw_upload_gfx11_slice_hashing_state(struct brw_context *brw)
     * pixel pipe 1. When pixel pipe 0 has more subslices, then a similar table
     * with 0's and 1's inverted is used.
     */
-   for (int i = 0; i < GFX11_SLICE_HASH_TABLE_length; i++) {
+   for (int i = 0; i < GEN11_SLICE_HASH_TABLE_length; i++) {
       uint32_t dw = 0;
 
       for (int j = 0; j < 8; j++) {
@@ -130,7 +130,7 @@ brw_upload_gfx11_slice_hashing_state(struct brw_context *brw)
    OUT_RELOC(brw->batch.state.bo, 0, hash_address | 1);
    ADVANCE_BATCH();
 
-   /* From gfx10/gfx11 workaround table in h/w specs:
+   /* From gen10/gen11 workaround table in h/w specs:
     *
     *    "On 3DSTATE_3D_MODE, driver must always program bits 31:16 of DW1
     *     a value of 0xFFFF"
@@ -144,14 +144,14 @@ brw_upload_gfx11_slice_hashing_state(struct brw_context *brw)
     */
    BEGIN_BATCH(2);
    OUT_BATCH(_3DSTATE_3D_MODE  << 16 | (2 - 2));
-   OUT_BATCH(0xffff0000 | SLICE_HASHING_TABLE_ENABLE);
+   OUT_BATCH(0xffff | SLICE_HASHING_TABLE_ENABLE);
    ADVANCE_BATCH();
 }
 
 static void
 brw_upload_initial_gpu_state(struct brw_context *brw)
 {
-   const struct intel_device_info *devinfo = &brw->screen->devinfo;
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
    const struct brw_compiler *compiler = brw->screen->compiler;
 
    /* On platforms with hardware contexts, we can set our initial GPU state
@@ -161,18 +161,18 @@ brw_upload_initial_gpu_state(struct brw_context *brw)
    if (!brw->hw_ctx)
       return;
 
-   if (devinfo->ver == 6)
+   if (devinfo->gen == 6)
       brw_emit_post_sync_nonzero_flush(brw);
 
    brw_upload_invariant_state(brw);
 
-   if (devinfo->ver == 11) {
+   if (devinfo->gen == 11) {
       /* The default behavior of bit 5 "Headerless Message for Pre-emptable
        * Contexts" in SAMPLER MODE register is set to 0, which means
        * headerless sampler messages are not allowed for pre-emptable
        * contexts. Set the bit 5 to 1 to allow them.
        */
-      brw_load_register_imm32(brw, GFX11_SAMPLER_MODE,
+      brw_load_register_imm32(brw, GEN11_SAMPLER_MODE,
                               HEADERLESS_MESSAGE_FOR_PREEMPTABLE_CONTEXTS_MASK |
                               HEADERLESS_MESSAGE_FOR_PREEMPTABLE_CONTEXTS);
 
@@ -183,38 +183,38 @@ brw_upload_initial_gpu_state(struct brw_context *brw)
                               TEXEL_OFFSET_FIX_MASK |
                               TEXEL_OFFSET_FIX_ENABLE);
 
-      /* Wa_1406697149: Bit 9 "Error Detection Behavior Control" must be set
+      /* WA_1406697149: Bit 9 "Error Detection Behavior Control" must be set
        * in L3CNTLREG register. The default setting of the bit is not the
        * desirable behavior.
        */
-      brw_load_register_imm32(brw, GFX8_L3CNTLREG,
-                              GFX8_L3CNTLREG_EDBC_NO_HANG);
+      brw_load_register_imm32(brw, GEN8_L3CNTLREG,
+                              GEN8_L3CNTLREG_EDBC_NO_HANG);
    }
 
    /* hardware specification recommends disabling repacking for
     * the compatibility with decompression mechanism in display controller.
     */
    if (devinfo->disable_ccs_repack) {
-      brw_load_register_imm32(brw, GFX7_CACHE_MODE_0,
-                              GFX11_DISABLE_REPACKING_FOR_COMPRESSION |
-                              REG_MASK(GFX11_DISABLE_REPACKING_FOR_COMPRESSION));
+      brw_load_register_imm32(brw, GEN7_CACHE_MODE_0,
+                              GEN11_DISABLE_REPACKING_FOR_COMPRESSION |
+                              REG_MASK(GEN11_DISABLE_REPACKING_FOR_COMPRESSION));
    }
 
-   if (devinfo->ver == 9) {
+   if (devinfo->gen == 9) {
       /* Recommended optimizations for Victim Cache eviction and floating
        * point blending.
        */
-      brw_load_register_imm32(brw, GFX7_CACHE_MODE_1,
-                              REG_MASK(GFX9_FLOAT_BLEND_OPTIMIZATION_ENABLE) |
-                              REG_MASK(GFX9_MSC_RAW_HAZARD_AVOIDANCE_BIT) |
-                              REG_MASK(GFX9_PARTIAL_RESOLVE_DISABLE_IN_VC) |
-                              GFX9_FLOAT_BLEND_OPTIMIZATION_ENABLE |
-                              GFX9_MSC_RAW_HAZARD_AVOIDANCE_BIT |
-                              GFX9_PARTIAL_RESOLVE_DISABLE_IN_VC);
+      brw_load_register_imm32(brw, GEN7_CACHE_MODE_1,
+                              REG_MASK(GEN9_FLOAT_BLEND_OPTIMIZATION_ENABLE) |
+                              REG_MASK(GEN9_MSC_RAW_HAZARD_AVOIDANCE_BIT) |
+                              REG_MASK(GEN9_PARTIAL_RESOLVE_DISABLE_IN_VC) |
+                              GEN9_FLOAT_BLEND_OPTIMIZATION_ENABLE |
+                              GEN9_MSC_RAW_HAZARD_AVOIDANCE_BIT |
+                              GEN9_PARTIAL_RESOLVE_DISABLE_IN_VC);
    }
 
-   if (devinfo->ver >= 8) {
-      gfx8_emit_3dstate_sample_pattern(brw);
+   if (devinfo->gen >= 8) {
+      gen8_emit_3dstate_sample_pattern(brw);
 
       BEGIN_BATCH(5);
       OUT_BATCH(_3DSTATE_WM_HZ_OP << 16 | (5 - 2));
@@ -236,14 +236,14 @@ brw_upload_initial_gpu_state(struct brw_context *brw)
     * This is only safe on kernels with context isolation support.
     */
    if (!compiler->constant_buffer_0_is_relative) {
-      if (devinfo->ver >= 9) {
+      if (devinfo->gen >= 9) {
          BEGIN_BATCH(3);
          OUT_BATCH(MI_LOAD_REGISTER_IMM | (3 - 2));
          OUT_BATCH(CS_DEBUG_MODE2);
          OUT_BATCH(REG_MASK(CSDBG2_CONSTANT_BUFFER_ADDRESS_OFFSET_DISABLE) |
                    CSDBG2_CONSTANT_BUFFER_ADDRESS_OFFSET_DISABLE);
          ADVANCE_BATCH();
-      } else if (devinfo->ver == 8) {
+      } else if (devinfo->gen == 8) {
          BEGIN_BATCH(3);
          OUT_BATCH(MI_LOAD_REGISTER_IMM | (3 - 2));
          OUT_BATCH(INSTPM);
@@ -255,11 +255,11 @@ brw_upload_initial_gpu_state(struct brw_context *brw)
 
    brw->object_preemption = false;
 
-   if (devinfo->ver >= 10)
+   if (devinfo->gen >= 10)
       brw_enable_obj_preemption(brw, true);
 
-   if (devinfo->ver == 11)
-      brw_upload_gfx11_slice_hashing_state(brw);
+   if (devinfo->gen == 11)
+      brw_upload_gen11_slice_hashing_state(brw);
 }
 
 static inline const struct brw_tracked_state *
@@ -302,33 +302,33 @@ brw_copy_pipeline_atoms(struct brw_context *brw,
 void brw_init_state( struct brw_context *brw )
 {
    struct gl_context *ctx = &brw->ctx;
-   const struct intel_device_info *devinfo = &brw->screen->devinfo;
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
 
    /* Force the first brw_select_pipeline to emit pipeline select */
    brw->last_pipeline = BRW_NUM_PIPELINES;
 
    brw_init_caches(brw);
 
-   if (devinfo->ver >= 11)
-      gfx11_init_atoms(brw);
-   else if (devinfo->ver >= 10)
-      unreachable("Gfx10 support dropped.");
-   else if (devinfo->ver >= 9)
-      gfx9_init_atoms(brw);
-   else if (devinfo->ver >= 8)
-      gfx8_init_atoms(brw);
+   if (devinfo->gen >= 11)
+      gen11_init_atoms(brw);
+   else if (devinfo->gen >= 10)
+      unreachable("Gen10 support dropped.");
+   else if (devinfo->gen >= 9)
+      gen9_init_atoms(brw);
+   else if (devinfo->gen >= 8)
+      gen8_init_atoms(brw);
    else if (devinfo->is_haswell)
-      gfx75_init_atoms(brw);
-   else if (devinfo->ver >= 7)
-      gfx7_init_atoms(brw);
-   else if (devinfo->ver >= 6)
-      gfx6_init_atoms(brw);
-   else if (devinfo->ver >= 5)
-      gfx5_init_atoms(brw);
+      gen75_init_atoms(brw);
+   else if (devinfo->gen >= 7)
+      gen7_init_atoms(brw);
+   else if (devinfo->gen >= 6)
+      gen6_init_atoms(brw);
+   else if (devinfo->gen >= 5)
+      gen5_init_atoms(brw);
    else if (devinfo->is_g4x)
-      gfx45_init_atoms(brw);
+      gen45_init_atoms(brw);
    else
-      gfx4_init_atoms(brw);
+      gen4_init_atoms(brw);
 
    brw_upload_initial_gpu_state(brw);
 
@@ -372,18 +372,17 @@ check_state(const struct brw_state_flags *a, const struct brw_state_flags *b)
    return ((a->mesa & b->mesa) | (a->brw & b->brw)) != 0;
 }
 
-static void
-accumulate_state(struct brw_state_flags *a, const struct brw_state_flags *b)
+static void accumulate_state( struct brw_state_flags *a,
+			      const struct brw_state_flags *b )
 {
    a->mesa |= b->mesa;
    a->brw |= b->brw;
 }
 
 
-static void
-xor_states(struct brw_state_flags *result,
-           const struct brw_state_flags *a,
-           const struct brw_state_flags *b)
+static void xor_states( struct brw_state_flags *result,
+			     const struct brw_state_flags *a,
+			      const struct brw_state_flags *b )
 {
    result->mesa = a->mesa ^ b->mesa;
    result->brw = a->brw ^ b->brw;
@@ -425,6 +424,8 @@ static struct dirty_bit_map mesa_bits[] = {
    DEFINE_BIT(_NEW_PROGRAM),
    DEFINE_BIT(_NEW_PROGRAM_CONSTANTS),
    DEFINE_BIT(_NEW_FRAG_CLAMP),
+   /* Avoid sign extension problems. */
+   {(unsigned) _NEW_VARYING_VP_INPUTS, "_NEW_VARYING_VP_INPUTS", 0},
    {0, 0, 0}
 };
 
@@ -472,7 +473,7 @@ static struct dirty_bit_map brw_bits[] = {
    DEFINE_BIT(BRW_NEW_PUSH_CONSTANT_ALLOCATION),
    DEFINE_BIT(BRW_NEW_NUM_SAMPLES),
    DEFINE_BIT(BRW_NEW_TEXTURE_BUFFER),
-   DEFINE_BIT(BRW_NEW_GFX4_UNIT_STATE),
+   DEFINE_BIT(BRW_NEW_GEN4_UNIT_STATE),
    DEFINE_BIT(BRW_NEW_CC_VP),
    DEFINE_BIT(BRW_NEW_SF_VP),
    DEFINE_BIT(BRW_NEW_CLIP_VP),
@@ -495,7 +496,7 @@ brw_update_dirty_count(struct dirty_bit_map *bit_map, uint64_t bits)
 {
    for (int i = 0; bit_map[i].bit != 0; i++) {
       if (bit_map[i].bit & bits)
-         bit_map[i].count++;
+	 bit_map[i].count++;
    }
 }
 
@@ -527,7 +528,7 @@ brw_upload_programs(struct brw_context *brw,
                     enum brw_pipeline pipeline)
 {
    struct gl_context *ctx = &brw->ctx;
-   const struct intel_device_info *devinfo = &brw->screen->devinfo;
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
 
    if (pipeline == BRW_RENDER_PIPELINE) {
       brw_upload_vs_prog(brw);
@@ -537,7 +538,7 @@ brw_upload_programs(struct brw_context *brw,
          brw_upload_gs_prog(brw);
       } else {
          brw->gs.base.prog_data = NULL;
-         if (devinfo->ver < 7)
+         if (devinfo->gen < 7)
             brw_upload_ff_gs_prog(brw);
       }
 
@@ -571,7 +572,7 @@ brw_upload_programs(struct brw_context *brw,
 
       brw_upload_wm_prog(brw);
 
-      if (devinfo->ver < 6) {
+      if (devinfo->gen < 6) {
          brw_upload_clip_prog(brw);
          brw_upload_sf_prog(brw);
       }
@@ -606,7 +607,7 @@ static inline void
 brw_upload_pipeline_state(struct brw_context *brw,
                           enum brw_pipeline pipeline)
 {
-   const struct intel_device_info *devinfo = &brw->screen->devinfo;
+   const struct gen_device_info *devinfo = &brw->screen->devinfo;
    struct gl_context *ctx = &brw->ctx;
    int i;
    static int dirty_count = 0;
@@ -677,7 +678,7 @@ brw_upload_pipeline_state(struct brw_context *brw,
       return;
 
    /* Emit Sandybridge workaround flushes on every primitive, for safety. */
-   if (devinfo->ver == 6)
+   if (devinfo->gen == 6)
       brw_emit_post_sync_nonzero_flush(brw);
 
    brw_upload_programs(brw, pipeline);
@@ -699,25 +700,25 @@ brw_upload_pipeline_state(struct brw_context *brw,
       prev = state;
 
       for (i = 0; i < num_atoms; i++) {
-         const struct brw_tracked_state *atom = &atoms[i];
-         struct brw_state_flags generated;
+	 const struct brw_tracked_state *atom = &atoms[i];
+	 struct brw_state_flags generated;
 
          check_and_emit_atom(brw, &state, atom);
 
-         accumulate_state(&examined, &atom->dirty);
+	 accumulate_state(&examined, &atom->dirty);
 
-         /* generated = (prev ^ state)
-          * if (examined & generated)
-          *     fail;
-          */
-         xor_states(&generated, &prev, &state);
-         assert(!check_state(&examined, &generated));
-         prev = state;
+	 /* generated = (prev ^ state)
+	  * if (examined & generated)
+	  *     fail;
+	  */
+	 xor_states(&generated, &prev, &state);
+	 assert(!check_state(&examined, &generated));
+	 prev = state;
       }
    }
    else {
       for (i = 0; i < num_atoms; i++) {
-         const struct brw_tracked_state *atom = &atoms[i];
+	 const struct brw_tracked_state *atom = &atoms[i];
 
          check_and_emit_atom(brw, &state, atom);
       }
@@ -729,9 +730,9 @@ brw_upload_pipeline_state(struct brw_context *brw,
       brw_update_dirty_count(mesa_bits, state.mesa);
       brw_update_dirty_count(brw_bits, state.brw);
       if (dirty_count++ % 1000 == 0) {
-         brw_print_dirty_count(mesa_bits);
-         brw_print_dirty_count(brw_bits);
-         fprintf(stderr, "\n");
+	 brw_print_dirty_count(mesa_bits);
+	 brw_print_dirty_count(brw_bits);
+	 fprintf(stderr, "\n");
       }
    }
 }

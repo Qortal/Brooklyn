@@ -23,7 +23,7 @@
 
 #include "brw_clip.h"
 
-#include "dev/intel_debug.h"
+#include "dev/gen_debug.h"
 
 const unsigned *
 brw_compile_clip(const struct brw_compiler *compiler,

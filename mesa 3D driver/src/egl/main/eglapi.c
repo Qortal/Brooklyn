@@ -388,11 +388,6 @@ _eglGetPlatformDisplayCommon(EGLenum platform, void *native_display,
       disp = _eglGetX11Display((Display*) native_display, attrib_list);
       break;
 #endif
-#ifdef HAVE_XCB_PLATFORM
-   case EGL_PLATFORM_XCB_EXT:
-      disp = _eglGetXcbDisplay((xcb_connection_t*) native_display, attrib_list);
-      break;
-#endif
 #ifdef HAVE_DRM_PLATFORM
    case EGL_PLATFORM_GBM_MESA:
       disp = _eglGetGbmDisplay((struct gbm_device*) native_display,
@@ -501,8 +496,7 @@ _eglCreateExtensionsString(_EGLDisplay *disp)
    _EGL_CHECK_EXTENSION(EXT_create_context_robustness);
    _EGL_CHECK_EXTENSION(EXT_image_dma_buf_import);
    _EGL_CHECK_EXTENSION(EXT_image_dma_buf_import_modifiers);
-   _EGL_CHECK_EXTENSION(EXT_protected_surface);
-   _EGL_CHECK_EXTENSION(EXT_present_opaque);
+   _EGL_CHECK_EXTENSION(EXT_protected_content);
    _EGL_CHECK_EXTENSION(EXT_surface_CTA861_3_metadata);
    _EGL_CHECK_EXTENSION(EXT_surface_SMPTE2086_metadata);
    _EGL_CHECK_EXTENSION(EXT_swap_buffers_with_damage);
@@ -2145,7 +2139,7 @@ eglDupNativeFenceFDANDROID(EGLDisplay dpy, EGLSync sync)
 {
    _EGLDisplay *disp = _eglLockDisplay(dpy);
    _EGLSync *s = _eglLookupSync(sync, disp);
-   EGLint ret;
+   EGLBoolean ret;
 
    _EGL_FUNC_START(disp, EGL_OBJECT_SYNC_KHR, s, EGL_FALSE);
 
@@ -2160,7 +2154,7 @@ eglDupNativeFenceFDANDROID(EGLDisplay dpy, EGLSync sync)
    assert(disp->Extensions.ANDROID_native_fence_sync);
    ret = disp->Driver->DupNativeFenceFDANDROID(disp, s);
 
-   RETURN_EGL_SUCCESS(disp, ret);
+   RETURN_EGL_EVAL(disp, ret);
 }
 
 static EGLBoolean EGLAPIENTRY

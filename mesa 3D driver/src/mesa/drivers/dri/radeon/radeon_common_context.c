@@ -45,7 +45,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "swrast/swrast.h"
 #include "swrast_setup/swrast_setup.h"
 #include "tnl/tnl.h"
-#include "util/u_memory.h"
 
 #ifndef RADEON_DEBUG
 int RADEON_DEBUG = (0);
@@ -287,7 +286,7 @@ void radeonDestroyContext(__DRIcontext *driContextPriv )
 		fclose(track);
 	}
 #endif
-	align_free(radeon);
+	free(radeon);
 }
 
 /* Force the context `c' to be unbound from its buffer.
@@ -361,7 +360,7 @@ void
 radeon_update_renderbuffers(__DRIcontext *context, __DRIdrawable *drawable,
 			    GLboolean front_only)
 {
-	unsigned int attachments[__DRI_BUFFER_COUNT];
+	unsigned int attachments[10];
 	__DRIbuffer *buffers = NULL;
 	__DRIscreen *screen;
 	struct radeon_renderbuffer *rb;
@@ -605,7 +604,7 @@ GLboolean radeonMakeCurrent(__DRIcontext * driContextPriv,
 	}
 
 	if(driDrawPriv == NULL && driReadPriv == NULL) {
-		drfb = _mesa_get_incomplete_framebuffer();
+		drfb = _mesa_create_framebuffer(&radeon->glCtx.Visual);
 		readfb = drfb;
 	}
 	else {

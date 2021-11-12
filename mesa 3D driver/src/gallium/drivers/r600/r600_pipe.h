@@ -268,9 +268,6 @@ struct r600_gs_rings_state {
 #define DBG_SB_NO_FALLBACK	(1 << 26)
 #define DBG_SB_DISASM	(1 << 27)
 #define DBG_SB_SAFEMATH	(1 << 28)
-#define DBG_NIR_SB	(1 << 28)
-
-#define DBG_NIR_PREFERRED (DBG_NIR_SB | DBG_NIR)
 
 struct r600_screen {
 	struct r600_common_screen	b;
@@ -493,7 +490,7 @@ struct r600_context {
 	struct r600_common_context	b;
 	struct r600_screen		*screen;
 	struct blitter_context		*blitter;
-	struct u_suballocator		allocator_fetch_shader;
+	struct u_suballocator		*allocator_fetch_shader;
 
 	/* Hardware info. */
 	boolean				has_vertex_cache;
@@ -614,7 +611,6 @@ struct r600_context {
 	struct r600_resource	*trace_buf;
 	unsigned		trace_id;
 
-	uint8_t patch_vertices;
 	bool cmd_buf_is_compute;
 	struct pipe_resource *append_fence;
 	uint32_t append_fence_id;

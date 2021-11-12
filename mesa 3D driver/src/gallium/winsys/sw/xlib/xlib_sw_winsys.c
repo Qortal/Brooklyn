@@ -295,15 +295,13 @@ xlib_displaytarget_destroy(struct sw_winsys *ws,
  */
 static void
 xlib_sw_display(struct xlib_drawable *xlib_drawable,
-                struct sw_displaytarget *dt,
-                struct pipe_box *box)
+                struct sw_displaytarget *dt)
 {
    static bool no_swap = false;
    static bool firsttime = true;
    struct xlib_displaytarget *xlib_dt = xlib_displaytarget(dt);
    Display *display = xlib_dt->display;
    XImage *ximage;
-   struct pipe_box _box = {};
 
    if (firsttime) {
       no_swap = getenv("SP_NO_RAST") != NULL;
@@ -312,12 +310,6 @@ xlib_sw_display(struct xlib_drawable *xlib_drawable,
 
    if (no_swap)
       return;
-
-   if (!box) {
-      _box.width = xlib_dt->width;
-      _box.height = xlib_dt->height;
-      box = &_box;
-   }
 
    if (xlib_dt->drawable != xlib_drawable->drawable) {
       if (xlib_dt->gc) {
@@ -354,8 +346,7 @@ xlib_sw_display(struct xlib_drawable *xlib_drawable,
 
       /* _debug_printf("XSHM\n"); */
       XShmPutImage(xlib_dt->display, xlib_drawable->drawable, xlib_dt->gc,
-                   ximage, box->x, box->y, box->x, box->y,
-                   box->width, box->height, False);
+                   ximage, 0, 0, 0, 0, xlib_dt->width, xlib_dt->height, False);
    }
    else {
       /* display image in Window */
@@ -373,8 +364,7 @@ xlib_sw_display(struct xlib_drawable *xlib_drawable,
 
       /* _debug_printf("XPUT\n"); */
       XPutImage(xlib_dt->display, xlib_drawable->drawable, xlib_dt->gc,
-                ximage, box->x, box->y, box->x, box->y,
-                box->width, box->height);
+                ximage, 0, 0, 0, 0, xlib_dt->width, xlib_dt->height);
    }
 
    XFlush(xlib_dt->display);
@@ -392,7 +382,7 @@ xlib_displaytarget_display(struct sw_winsys *ws,
                            struct pipe_box *box)
 {
    struct xlib_drawable *xlib_drawable = (struct xlib_drawable *)context_private;
-   xlib_sw_display(xlib_drawable, dt, box);
+   xlib_sw_display(xlib_drawable, dt);
 }
 
 

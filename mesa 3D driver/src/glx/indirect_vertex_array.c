@@ -27,8 +27,6 @@
 #include <assert.h>
 #include <string.h>
 
-#include "util/compiler.h"
-
 #include "glxclient.h"
 #include "indirect.h"
 #include <GL/glxproto.h>
@@ -1751,7 +1749,7 @@ __indirect_glVertexAttribPointerNV(GLuint index, GLint size,
          return;
       }
       normalized = GL_TRUE;
-      FALLTHROUGH;
+      /* fallthrough */
    case GL_SHORT:
    case GL_FLOAT:
    case GL_DOUBLE:

@@ -63,7 +63,7 @@ enum ib_type {
 };
 
 struct amdgpu_ib {
-   struct radeon_cmdbuf *rcs; /* pointer to the driver-owned data */
+   struct radeon_cmdbuf base;
 
    /* A buffer out of which new IBs are allocated. */
    struct pb_buffer        *big_ib_buffer;
@@ -104,7 +104,7 @@ struct amdgpu_cs_context {
    unsigned                    max_sparse_buffers;
    struct amdgpu_cs_buffer     *sparse_buffers;
 
-   int16_t                     *buffer_indices_hashlist;
+   int                         buffer_indices_hashlist[4096];
 
    struct amdgpu_winsys_bo     *last_added_bo;
    unsigned                    last_added_bo_index;
@@ -128,12 +128,9 @@ struct amdgpu_cs_context {
    bool secure;
 };
 
-#define BUFFER_HASHLIST_SIZE 4096
-
 struct amdgpu_cs {
    struct amdgpu_ib main; /* must be first because this is inherited */
-   struct amdgpu_ib compute_ib;      /* optional parallel compute IB */
-   struct amdgpu_winsys *ws;
+   struct amdgpu_ib compute_ib; /* optional parallel compute IB */
    struct amdgpu_ctx *ctx;
    enum ring_type ring_type;
    struct drm_amdgpu_cs_chunk_fence fence_chunk;
@@ -147,20 +144,11 @@ struct amdgpu_cs {
    struct amdgpu_cs_context *csc;
    /* The CS being currently-owned by the other thread. */
    struct amdgpu_cs_context *cst;
-   /* buffer_indices_hashlist[hash(bo)] returns -1 if the bo
-    * isn't part of any buffer lists or the index where the bo could be found.
-    * Since 1) hash collisions of 2 different bo can happen and 2) we use a
-    * single hashlist for the 3 buffer list, this is only a hint.
-    * amdgpu_lookup_buffer uses this hint to speed up buffers look up.
-    */
-   int16_t buffer_indices_hashlist[BUFFER_HASHLIST_SIZE];
 
    /* Flush CS. */
    void (*flush_cs)(void *ctx, unsigned flags, struct pipe_fence_handle **fence);
    void *flush_data;
    bool stop_exec_on_failure;
-   bool noop;
-   bool has_chaining;
 
    struct util_queue_fence flush_completed;
    struct pipe_fence_handle *next_fence;
@@ -219,24 +207,44 @@ static inline void amdgpu_fence_reference(struct pipe_fence_handle **dst,
    *adst = asrc;
 }
 
-int amdgpu_lookup_buffer_any_type(struct amdgpu_cs_context *cs, struct amdgpu_winsys_bo *bo);
+int amdgpu_lookup_buffer(struct amdgpu_cs_context *cs, struct amdgpu_winsys_bo *bo);
+
+static inline struct amdgpu_ib *
+amdgpu_ib(struct radeon_cmdbuf *base)
+{
+   return (struct amdgpu_ib *)base;
+}
 
 static inline struct amdgpu_cs *
-amdgpu_cs(struct radeon_cmdbuf *rcs)
+amdgpu_cs(struct radeon_cmdbuf *base)
 {
-   struct amdgpu_cs *cs = (struct amdgpu_cs*)rcs->priv;
-   assert(!cs || cs->main.ib_type == IB_MAIN);
-   return cs;
+   assert(amdgpu_ib(base)->ib_type == IB_MAIN);
+   return (struct amdgpu_cs*)base;
 }
 
 #define get_container(member_ptr, container_type, container_member) \
    (container_type *)((char *)(member_ptr) - offsetof(container_type, container_member))
 
+static inline struct amdgpu_cs *
+amdgpu_cs_from_ib(struct amdgpu_ib *ib)
+{
+   switch (ib->ib_type) {
+   case IB_MAIN:
+      return get_container(ib, struct amdgpu_cs, main);
+   case IB_PARALLEL_COMPUTE:
+      return get_container(ib, struct amdgpu_cs, compute_ib);
+   default:
+      unreachable("bad ib_type");
+   }
+}
+
 static inline bool
 amdgpu_bo_is_referenced_by_cs(struct amdgpu_cs *cs,
                               struct amdgpu_winsys_bo *bo)
 {
-   return amdgpu_lookup_buffer_any_type(cs->csc, bo) != -1;
+   int num_refs = bo->num_cs_references;
+   return num_refs == bo->ws->num_cs ||
+         (num_refs && amdgpu_lookup_buffer(cs->csc, bo) != -1);
 }
 
 static inline bool
@@ -247,15 +255,24 @@ amdgpu_bo_is_referenced_by_cs_with_usage(struct amdgpu_cs *cs,
    int index;
    struct amdgpu_cs_buffer *buffer;
 
-   index = amdgpu_lookup_buffer_any_type(cs->csc, bo);
+   if (!bo->num_cs_references)
+      return false;
+
+   index = amdgpu_lookup_buffer(cs->csc, bo);
    if (index == -1)
       return false;
 
    buffer = bo->bo ? &cs->csc->real_buffers[index] :
-            bo->base.usage & RADEON_FLAG_SPARSE ? &cs->csc->sparse_buffers[index] :
+            bo->sparse ? &cs->csc->sparse_buffers[index] :
             &cs->csc->slab_buffers[index];
 
    return (buffer->usage & usage) != 0;
+}
+
+static inline bool
+amdgpu_bo_is_referenced_by_any_cs(struct amdgpu_winsys_bo *bo)
+{
+   return bo->num_cs_references != 0;
 }
 
 bool amdgpu_fence_wait(struct pipe_fence_handle *fence, uint64_t timeout,

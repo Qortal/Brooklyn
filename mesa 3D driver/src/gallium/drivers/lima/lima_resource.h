@@ -29,7 +29,6 @@
 
 /* max texture size is 4096x4096 */
 #define LIMA_MAX_MIP_LEVELS 13
-#define LAYOUT_CONVERT_THRESHOLD 8
 
 struct lima_screen;
 struct panfrost_minmax_cache;
@@ -56,8 +55,6 @@ struct lima_resource {
    struct lima_bo *bo;
    struct panfrost_minmax_cache *index_cache;
    bool tiled;
-   bool modifier_constant;
-   unsigned full_updates;
 
    struct lima_resource_level levels[LIMA_MAX_MIP_LEVELS];
 };

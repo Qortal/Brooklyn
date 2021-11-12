@@ -81,7 +81,7 @@ namespace clover {
    protected:
       void chain(event &ev);
 
-      mutable std::vector<intrusive_ref<event>> deps;
+      std::vector<intrusive_ref<event>> deps;
 
    private:
       std::vector<intrusive_ref<event>> trigger_self();

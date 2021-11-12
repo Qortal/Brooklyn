@@ -59,12 +59,11 @@ struct RelocInfo
 };
 
 struct FixupData {
-   FixupData(bool force, bool flat, uint8_t alphatest, bool msaa) :
-      force_persample_interp(force), flatshade(flat), alphatest(alphatest), msaa(msaa) {}
+   FixupData(bool force, bool flat, uint8_t alphatest) :
+      force_persample_interp(force), flatshade(flat), alphatest(alphatest) {}
    bool force_persample_interp;
    bool flatshade;
    uint8_t alphatest;
-   bool msaa;
 };
 
 struct FixupEntry;

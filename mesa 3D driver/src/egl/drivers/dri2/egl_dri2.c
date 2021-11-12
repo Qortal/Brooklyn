@@ -62,13 +62,26 @@
 #include "egl_dri2.h"
 #include "GL/mesa_glinterop.h"
 #include "loader/loader.h"
-#include "util/libsync.h"
 #include "util/os_file.h"
 #include "util/u_atomic.h"
 #include "util/u_vector.h"
 #include "mapi/glapi/glapi.h"
 #include "util/bitscan.h"
 #include "util/u_math.h"
+
+/* Additional definitions not yet in the drm_fourcc.h.
+ */
+#ifndef DRM_FORMAT_P010
+#define DRM_FORMAT_P010 	 fourcc_code('P', '0', '1', '0') /* 2x2 subsampled Cb:Cr plane 10 bits per channel */
+#endif
+
+#ifndef DRM_FORMAT_P012
+#define DRM_FORMAT_P012 	 fourcc_code('P', '0', '1', '2') /* 2x2 subsampled Cb:Cr plane 12 bits per channel */
+#endif
+
+#ifndef DRM_FORMAT_P016
+#define DRM_FORMAT_P016 	 fourcc_code('P', '0', '1', '6') /* 2x2 subsampled Cb:Cr plane 16 bits per channel */
+#endif
 
 #define NUM_ATTRIBS 12
 
@@ -168,6 +181,11 @@ dri_is_thread_safe(void *loaderPrivate)
     */
    if (display->Platform == _EGL_PLATFORM_X11 && xdpy && !xdpy->lock_fns)
       return false;
+#endif
+
+#ifdef HAVE_WAYLAND_PLATFORM
+   if (display->Platform == _EGL_PLATFORM_WAYLAND)
+      return true;
 #endif
 
    return true;
@@ -564,6 +582,15 @@ dri2_add_config(_EGLDisplay *disp, const __DRIconfig *dri_config, int id,
       surface_type &= ~EGL_PIXMAP_BIT;
    }
 
+   /* No support for pbuffer + MSAA for now.
+    *
+    * XXX TODO: pbuffer + MSAA does not work and causes crashes.
+    * See QT bugreport: https://bugreports.qt.io/browse/QTBUG-47509
+    */
+   if (base.Samples) {
+      surface_type &= ~EGL_PBUFFER_BIT;
+   }
+
    if (!surface_type)
       return NULL;
 
@@ -649,53 +676,33 @@ dri2_add_pbuffer_configs_for_visuals(_EGLDisplay *disp)
    return (config_count != 0);
 }
 
-GLboolean
-dri2_validate_egl_image(void *image, void *data)
+__DRIimage *
+dri2_lookup_egl_image(__DRIscreen *screen, void *image, void *data)
 {
    _EGLDisplay *disp = data;
+   struct dri2_egl_image *dri2_img;
    _EGLImage *img;
+
+   (void) screen;
 
    mtx_lock(&disp->Mutex);
    img = _eglLookupImage(image, disp);
    mtx_unlock(&disp->Mutex);
 
    if (img == NULL) {
-      _eglError(EGL_BAD_PARAMETER, "dri2_validate_egl_image");
-      return false;
+      _eglError(EGL_BAD_PARAMETER, "dri2_lookup_egl_image");
+      return NULL;
    }
-
-   return true;
-}
-
-__DRIimage *
-dri2_lookup_egl_image_validated(void *image, void *data)
-{
-   struct dri2_egl_image *dri2_img;
-
-   (void)data;
 
    dri2_img = dri2_egl_image(image);
 
    return dri2_img->dri_image;
 }
 
-__DRIimage *
-dri2_lookup_egl_image(__DRIscreen *screen, void *image, void *data)
-{
-   (void) screen;
-
-   if (!dri2_validate_egl_image(image, data))
-      return NULL;
-
-   return dri2_lookup_egl_image_validated(image, data);
-}
-
 const __DRIimageLookupExtension image_lookup_extension = {
-   .base = { __DRI_IMAGE_LOOKUP, 2 },
+   .base = { __DRI_IMAGE_LOOKUP, 1 },
 
-   .lookupEGLImage       = dri2_lookup_egl_image,
-   .validateEGLImage     = dri2_validate_egl_image,
-   .lookupEGLImageValidated = dri2_lookup_egl_image_validated,
+   .lookupEGLImage       = dri2_lookup_egl_image
 };
 
 struct dri2_extension_match {
@@ -1014,7 +1021,7 @@ dri2_setup_screen(_EGLDisplay *disp)
    if (dri2_dpy->buffer_damage && dri2_dpy->buffer_damage->set_damage_region)
       disp->Extensions.KHR_partial_update = EGL_TRUE;
 
-   disp->Extensions.EXT_protected_surface =
+   disp->Extensions.EXT_protected_content =
       dri2_renderer_query_integer(dri2_dpy,
                                   __DRI2_RENDERER_HAS_PROTECTED_CONTENT);
 }
@@ -1174,7 +1181,6 @@ dri2_initialize(_EGLDisplay *disp)
       ret = dri2_initialize_device(disp);
       break;
    case _EGL_PLATFORM_X11:
-   case _EGL_PLATFORM_XCB:
       ret = dri2_initialize_x11(disp);
       break;
    case _EGL_PLATFORM_DRM:
@@ -1235,15 +1241,8 @@ dri2_display_destroy(_EGLDisplay *disp)
    }
    if (dri2_dpy->fd >= 0)
       close(dri2_dpy->fd);
-
-   /* Don't dlclose the driver when building with the address sanitizer, so you
-    * get good symbols from the leak reports.
-    */
-#if !BUILT_WITH_ASAN || defined(NDEBUG)
    if (dri2_dpy->driver)
       dlclose(dri2_dpy->driver);
-#endif
-
    free(dri2_dpy->driver_name);
 
 #ifdef HAVE_WAYLAND_PLATFORM
@@ -2459,7 +2458,7 @@ dri2_create_image_khr_texture(_EGLDisplay *disp, _EGLContext *ctx,
                                               depth,
                                               attrs.GLTextureLevel,
                                               &error,
-                                              NULL);
+                                              dri2_img);
    dri2_create_image_khr_texture_error(error);
 
    if (!dri2_img->dri_image) {
@@ -2657,12 +2656,6 @@ dri2_num_fourcc_format_planes(EGLint format)
    case DRM_FORMAT_VYUY:
    case DRM_FORMAT_AYUV:
    case DRM_FORMAT_XYUV8888:
-   case DRM_FORMAT_Y210:
-   case DRM_FORMAT_Y212:
-   case DRM_FORMAT_Y216:
-   case DRM_FORMAT_Y410:
-   case DRM_FORMAT_Y412:
-   case DRM_FORMAT_Y416:
       return 1;
 
    case DRM_FORMAT_NV12:
@@ -3246,17 +3239,10 @@ dri2_bind_wayland_display_wl(_EGLDisplay *disp, struct wl_display *wl_dpy)
       .is_format_supported = dri2_wl_is_format_supported
    };
    int flags = 0;
-   char *device_name;
    uint64_t cap;
 
    if (dri2_dpy->wl_server_drm)
            return EGL_FALSE;
-
-   device_name = drmGetRenderDeviceNameFromFd(dri2_dpy->fd);
-   if (!device_name)
-      device_name = strdup(dri2_dpy->device_name);
-   if (!device_name)
-      return EGL_FALSE;
 
    if (drmGetCap(dri2_dpy->fd, DRM_CAP_PRIME, &cap) == 0 &&
        cap == (DRM_PRIME_CAP_IMPORT | DRM_PRIME_CAP_EXPORT) &&
@@ -3265,10 +3251,8 @@ dri2_bind_wayland_display_wl(_EGLDisplay *disp, struct wl_display *wl_dpy)
       flags |= WAYLAND_DRM_PRIME;
 
    dri2_dpy->wl_server_drm =
-           wayland_drm_init(wl_dpy, device_name,
+           wayland_drm_init(wl_dpy, dri2_dpy->device_name,
                             &wl_drm_callbacks, disp, flags);
-
-   free(device_name);
 
    if (!dri2_dpy->wl_server_drm)
            return EGL_FALSE;
@@ -3506,8 +3490,6 @@ dri2_dup_native_fence_fd(_EGLDisplay *disp, _EGLSync *sync)
       _eglError(EGL_BAD_PARAMETER, "eglDupNativeFenceFDANDROID");
       return EGL_NO_NATIVE_FENCE_FD_ANDROID;
    }
-
-   assert(sync_valid_fd(sync->SyncFd));
 
    return os_dupfd_cloexec(sync->SyncFd);
 }

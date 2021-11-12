@@ -324,18 +324,18 @@ fs_visitor::opt_cse_local(const fs_live_variables &live, bblock_t *block, int &i
        * with instructions dependent on the current execution mask like
        * SHADER_OPCODE_FIND_LIVE_CHANNEL.
        */
-      if (inst->opcode == BRW_OPCODE_HALT ||
-          inst->opcode == SHADER_OPCODE_HALT_TARGET)
+      if (inst->opcode == FS_OPCODE_DISCARD_JUMP ||
+          inst->opcode == FS_OPCODE_PLACEHOLDER_HALT)
          aeb.make_empty();
 
       foreach_in_list_safe(aeb_entry, entry, &aeb) {
          /* Kill all AEB entries that write a different value to or read from
           * the flag register if we just wrote it.
           */
-         if (inst->flags_written(devinfo)) {
+         if (inst->flags_written()) {
             bool negate; /* dummy */
             if (entry->generator->flags_read(devinfo) ||
-                (entry->generator->flags_written(devinfo) &&
+                (entry->generator->flags_written() &&
                  !instructions_match(inst, entry->generator, &negate))) {
                entry->remove();
                ralloc_free(entry);

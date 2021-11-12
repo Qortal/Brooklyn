@@ -28,7 +28,6 @@
 #include "tgsi/tgsi_scan.h"
 #include "tgsi/tgsi_dump.h"
 
-#include "util/compiler.h"
 #include "util/u_debug.h"
 #include "util/u_math.h"
 
@@ -1069,7 +1068,7 @@ transform_samp(struct tgsi_transform_context *tctx,
       if (ctx->config->saturate_r & smask)
          mask |= TGSI_WRITEMASK_Z;
       pmask |= TGSI_WRITEMASK_Z;
-      FALLTHROUGH;
+      /* fallthrough */
 
    case TGSI_TEXTURE_2D:
    case TGSI_TEXTURE_2D_ARRAY:
@@ -1080,7 +1079,7 @@ transform_samp(struct tgsi_transform_context *tctx,
       if (ctx->config->saturate_t & smask)
          mask |= TGSI_WRITEMASK_Y;
       pmask |= TGSI_WRITEMASK_Y;
-      FALLTHROUGH;
+      /* fallthrough */
 
    case TGSI_TEXTURE_1D:
    case TGSI_TEXTURE_1D_ARRAY:
@@ -1188,6 +1187,7 @@ emit_twoside(struct tgsi_transform_context *tctx)
       decl.Declaration.Interpolate = true;
       decl.Interp.Interpolate = info->input_interpolate[in_idx];
       decl.Interp.Location = info->input_interpolate_loc[in_idx];
+      decl.Interp.CylindricalWrap = info->input_cylindrical_wrap[in_idx];
       tctx->emit_declaration(tctx, &decl);
    }
 

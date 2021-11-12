@@ -127,7 +127,8 @@ nir_lower_to_source_mods_block(nir_block *block,
             alu->src[i].swizzle[j] = parent->src[0].swizzle[alu->src[i].swizzle[j]];
          }
 
-         if (nir_ssa_def_is_unused(&parent->dest.dest.ssa))
+         if (list_is_empty(&parent->dest.dest.ssa.uses) &&
+             list_is_empty(&parent->dest.dest.ssa.if_uses))
             nir_instr_remove(&parent->instr);
 
          progress = true;

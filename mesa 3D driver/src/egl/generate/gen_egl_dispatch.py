@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 # (C) Copyright 2016, NVIDIA CORPORATION.
 # All Rights Reserved.

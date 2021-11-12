@@ -34,8 +34,6 @@
 #include "radeon_variable.h"
 #include "r300_reg.h"
 
-#include "util/compiler.h"
-
 /**
  * Rewrite IF instructions to use the ALU result special register.
  */
@@ -140,13 +138,13 @@ int r500_transform_IF(
 				break;
 			case RC_OPCODE_SLE:
 				reverse_srcs = 1;
-				FALLTHROUGH;
+				/* Fall through */
 			case RC_OPCODE_SGE:
 				compare_func = RC_COMPARE_FUNC_GEQUAL;
 				break;
 			case RC_OPCODE_SGT:
 				reverse_srcs = 1;
-				FALLTHROUGH;
+				/* Fall through */
 			case RC_OPCODE_SLT:
 				compare_func = RC_COMPARE_FUNC_LESS;
 				break;
@@ -266,7 +264,7 @@ static void r500_swizzle_split(struct rc_src_register src, unsigned int usemask,
 	}
 }
 
-const struct rc_swizzle_caps r500_swizzle_caps = {
+struct rc_swizzle_caps r500_swizzle_caps = {
 	.IsNative = r500_swizzle_is_native,
 	.Split = r500_swizzle_split
 };

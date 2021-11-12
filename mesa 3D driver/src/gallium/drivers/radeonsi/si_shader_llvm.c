@@ -22,7 +22,6 @@
  * USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "ac_exp_param.h"
 #include "ac_nir_to_llvm.h"
 #include "ac_rtld.h"
 #include "si_pipe.h"
@@ -94,7 +93,9 @@ bool si_compile_llvm(struct si_screen *sscreen, struct si_shader_binary *binary,
    if (!si_replace_shader(count, binary)) {
       struct ac_compiler_passes *passes = compiler->passes;
 
-      if (less_optimized && compiler->low_opt_passes)
+      if (ac->wave_size == 32)
+         passes = compiler->passes_wave32;
+      else if (less_optimized && compiler->low_opt_passes)
          passes = compiler->low_opt_passes;
 
       struct si_llvm_diagnostics diag = {debug};
@@ -133,7 +134,7 @@ void si_llvm_context_init(struct si_shader_context *ctx, struct si_screen *sscre
    ctx->compiler = compiler;
 
    ac_llvm_context_init(&ctx->ac, compiler, sscreen->info.chip_class, sscreen->info.family,
-                        &sscreen->info, AC_FLOAT_MODE_DEFAULT_OPENGL, wave_size, 64);
+                        AC_FLOAT_MODE_DEFAULT_OPENGL, wave_size, 64);
 }
 
 void si_llvm_create_func(struct si_shader_context *ctx, const char *name, LLVMTypeRef *return_types,
@@ -150,10 +151,10 @@ void si_llvm_create_func(struct si_shader_context *ctx, const char *name, LLVMTy
    gl_shader_stage real_stage = ctx->stage;
 
    /* LS is merged into HS (TCS), and ES is merged into GS. */
-   if (ctx->screen->info.chip_class >= GFX9 && ctx->stage <= MESA_SHADER_GEOMETRY) {
-      if (ctx->shader->key.ge.as_ls)
+   if (ctx->screen->info.chip_class >= GFX9) {
+      if (ctx->shader->key.as_ls)
          real_stage = MESA_SHADER_TESS_CTRL;
-      else if (ctx->shader->key.ge.as_es || ctx->shader->key.ge.as_ngg)
+      else if (ctx->shader->key.as_es || ctx->shader->key.as_ngg)
          real_stage = MESA_SHADER_GEOMETRY;
    }
 
@@ -189,62 +190,6 @@ void si_llvm_create_func(struct si_shader_context *ctx, const char *name, LLVMTy
    }
 
    ac_llvm_set_workgroup_size(ctx->main_fn, max_workgroup_size);
-   ac_llvm_set_target_features(ctx->main_fn, &ctx->ac);
-}
-
-void si_llvm_create_main_func(struct si_shader_context *ctx, bool ngg_cull_shader)
-{
-   struct si_shader *shader = ctx->shader;
-   LLVMTypeRef returns[AC_MAX_ARGS];
-   unsigned i;
-
-   si_init_shader_args(ctx, ngg_cull_shader);
-
-   for (i = 0; i < ctx->args.num_sgprs_returned; i++)
-      returns[i] = ctx->ac.i32; /* SGPR */
-   for (; i < ctx->args.return_count; i++)
-      returns[i] = ctx->ac.f32; /* VGPR */
-
-   si_llvm_create_func(ctx, ngg_cull_shader ? "ngg_cull_main" : "main", returns,
-                       ctx->args.return_count, si_get_max_workgroup_size(shader));
-
-   /* Reserve register locations for VGPR inputs the PS prolog may need. */
-   if (ctx->stage == MESA_SHADER_FRAGMENT && !ctx->shader->is_monolithic) {
-      ac_llvm_add_target_dep_function_attr(
-         ctx->main_fn, "InitialPSInputAddr",
-         S_0286D0_PERSP_SAMPLE_ENA(1) | S_0286D0_PERSP_CENTER_ENA(1) |
-            S_0286D0_PERSP_CENTROID_ENA(1) | S_0286D0_LINEAR_SAMPLE_ENA(1) |
-            S_0286D0_LINEAR_CENTER_ENA(1) | S_0286D0_LINEAR_CENTROID_ENA(1) |
-            S_0286D0_FRONT_FACE_ENA(1) | S_0286D0_ANCILLARY_ENA(1) | S_0286D0_POS_FIXED_PT_ENA(1));
-   }
-
-
-   if (ctx->stage <= MESA_SHADER_GEOMETRY &&
-       (shader->key.ge.as_ls || ctx->stage == MESA_SHADER_TESS_CTRL)) {
-      if (USE_LDS_SYMBOLS) {
-         /* The LSHS size is not known until draw time, so we append it
-          * at the end of whatever LDS use there may be in the rest of
-          * the shader (currently none, unless LLVM decides to do its
-          * own LDS-based lowering).
-          */
-         ctx->ac.lds = LLVMAddGlobalInAddressSpace(ctx->ac.module, LLVMArrayType(ctx->ac.i32, 0),
-                                                   "__lds_end", AC_ADDR_SPACE_LDS);
-         LLVMSetAlignment(ctx->ac.lds, 256);
-      } else {
-         ac_declare_lds_as_pointer(&ctx->ac);
-      }
-   }
-
-   /* Unlike radv, we override these arguments in the prolog, so to the
-    * API shader they appear as normal arguments.
-    */
-   if (ctx->stage == MESA_SHADER_VERTEX) {
-      ctx->abi.vertex_id = ac_get_arg(&ctx->ac, ctx->args.vertex_id);
-      ctx->abi.instance_id = ac_get_arg(&ctx->ac, ctx->args.instance_id);
-   } else if (ctx->stage == MESA_SHADER_FRAGMENT) {
-      ctx->abi.persp_centroid = ac_get_arg(&ctx->ac, ctx->args.persp_centroid);
-      ctx->abi.linear_centroid = ac_get_arg(&ctx->ac, ctx->args.linear_centroid);
-   }
 }
 
 void si_llvm_optimize_module(struct si_shader_context *ctx)
@@ -271,8 +216,7 @@ void si_llvm_dispose(struct si_shader_context *ctx)
 LLVMValueRef si_buffer_load_const(struct si_shader_context *ctx, LLVMValueRef resource,
                                   LLVMValueRef offset)
 {
-   return ac_build_buffer_load(&ctx->ac, resource, 1, NULL, offset, NULL, 0, ctx->ac.f32,
-                               0, true, true);
+   return ac_build_buffer_load(&ctx->ac, resource, 1, NULL, offset, NULL, 0, 0, true, true);
 }
 
 void si_llvm_build_ret(struct si_shader_context *ctx, LLVMValueRef ret)
@@ -307,12 +251,12 @@ LLVMValueRef si_insert_input_ptr(struct si_shader_context *ctx, LLVMValueRef ret
    return LLVMBuildInsertValue(builder, ret, ptr, return_index, "");
 }
 
-LLVMValueRef si_prolog_get_internal_bindings(struct si_shader_context *ctx)
+LLVMValueRef si_prolog_get_rw_buffers(struct si_shader_context *ctx)
 {
    LLVMValueRef ptr[2], list;
    bool merged_shader = si_is_merged_shader(ctx->shader);
 
-   ptr[0] = LLVMGetParam(ctx->main_fn, (merged_shader ? 8 : 0) + SI_SGPR_INTERNAL_BINDINGS);
+   ptr[0] = LLVMGetParam(ctx->main_fn, (merged_shader ? 8 : 0) + SI_SGPR_RW_BUFFERS);
    list =
       LLVMBuildIntToPtr(ctx->ac.builder, ptr[0], ac_array_in_const32_addr_space(ctx->ac.v4i32), "");
    return list;
@@ -350,8 +294,7 @@ void si_llvm_declare_esgs_ring(struct si_shader_context *ctx)
    LLVMSetAlignment(ctx->esgs_ring, 64 * 1024);
 }
 
-static void si_init_exec_from_input(struct si_shader_context *ctx, struct ac_arg param,
-                                    unsigned bitoffset)
+void si_init_exec_from_input(struct si_shader_context *ctx, struct ac_arg param, unsigned bitoffset)
 {
    LLVMValueRef args[] = {
       ac_get_arg(&ctx->ac, param),
@@ -396,7 +339,7 @@ LLVMValueRef si_get_primitive_id(struct si_shader_context *ctx, unsigned swizzle
 
    switch (ctx->stage) {
    case MESA_SHADER_VERTEX:
-      return ac_get_arg(&ctx->ac, ctx->args.vs_prim_id);
+      return ac_get_arg(&ctx->ac, ctx->vs_prim_id);
    case MESA_SHADER_TESS_CTRL:
       return ac_get_arg(&ctx->ac, ctx->args.tcs_patch_id);
    case MESA_SHADER_TESS_EVAL:
@@ -409,25 +352,18 @@ LLVMValueRef si_get_primitive_id(struct si_shader_context *ctx, unsigned swizzle
    }
 }
 
-static LLVMValueRef si_llvm_get_block_size(struct ac_shader_abi *abi)
+LLVMValueRef si_llvm_get_block_size(struct ac_shader_abi *abi)
 {
    struct si_shader_context *ctx = si_shader_context_from_abi(abi);
 
-   assert(ctx->shader->selector->info.base.workgroup_size_variable &&
-          ctx->shader->selector->info.uses_variable_block_size);
-
-   LLVMValueRef chan[3] = {
-      si_unpack_param(ctx, ctx->block_size, 0, 10),
-      si_unpack_param(ctx, ctx->block_size, 10, 10),
-      si_unpack_param(ctx, ctx->block_size, 20, 10),
-   };
-   return ac_build_gather_values(&ctx->ac, chan, 3);
+   assert(ctx->shader->selector->info.base.cs.local_size_variable);
+   return ac_get_arg(&ctx->ac, ctx->block_size);
 }
 
-static void si_llvm_declare_compute_memory(struct si_shader_context *ctx)
+void si_llvm_declare_compute_memory(struct si_shader_context *ctx)
 {
    struct si_shader_selector *sel = ctx->shader->selector;
-   unsigned lds_size = sel->info.base.shared_size;
+   unsigned lds_size = sel->info.base.cs.shared_size;
 
    LLVMTypeRef i8p = LLVMPointerType(ctx->ac.i8, AC_ADDR_SPACE_LDS);
    LLVMValueRef var;
@@ -441,33 +377,10 @@ static void si_llvm_declare_compute_memory(struct si_shader_context *ctx)
    ctx->ac.lds = LLVMBuildBitCast(ctx->ac.builder, var, i8p, "");
 }
 
-static bool si_nir_build_llvm(struct si_shader_context *ctx, struct nir_shader *nir)
+bool si_nir_build_llvm(struct si_shader_context *ctx, struct nir_shader *nir)
 {
-   if (nir->info.stage == MESA_SHADER_GEOMETRY) {
-      /* Unpack GS vertex offsets. */
-      for (unsigned i = 0; i < 6; i++) {
-         if (ctx->screen->info.chip_class >= GFX9) {
-            ctx->gs_vtx_offset[i] = si_unpack_param(ctx, ctx->args.gs_vtx_offset[i / 2], (i & 1) * 16, 16);
-         } else {
-            ctx->gs_vtx_offset[i] = ac_get_arg(&ctx->ac, ctx->args.gs_vtx_offset[i]);
-         }
-      }
-
-      /* Apply the hw bug workaround for triangle strips with adjacency. */
-      if (ctx->screen->info.chip_class <= GFX9 &&
-          ctx->shader->key.ge.mono.u.gs_tri_strip_adj_fix) {
-         LLVMValueRef prim_id = ac_get_arg(&ctx->ac, ctx->args.gs_prim_id);
-         /* Remap GS vertex offsets for every other primitive. */
-         LLVMValueRef rotate = LLVMBuildTrunc(ctx->ac.builder, prim_id, ctx->ac.i1, "");
-         LLVMValueRef fixed[6];
-
-         for (unsigned i = 0; i < 6; i++) {
-            fixed[i] = LLVMBuildSelect(ctx->ac.builder, rotate,
-                                       ctx->gs_vtx_offset[(i + 4) % 6],
-                                       ctx->gs_vtx_offset[i], "");
-         }
-         memcpy(ctx->gs_vtx_offset, fixed, sizeof(fixed));
-      }
+   if (nir->info.stage == MESA_SHADER_VERTEX) {
+      si_llvm_load_vs_inputs(ctx, nir);
    } else if (nir->info.stage == MESA_SHADER_FRAGMENT) {
       unsigned colors_read = ctx->shader->selector->info.colors_read;
       LLVMValueRef main_fn = ctx->main_fn;
@@ -496,7 +409,7 @@ static bool si_nir_build_llvm(struct si_shader_context *ctx, struct nir_shader *
       }
 
       ctx->abi.interp_at_sample_force_center =
-         ctx->shader->key.ps.mono.interpolate_at_sample_force_center;
+         ctx->shader->key.mono.u.ps.interpolate_at_sample_force_center;
 
       ctx->abi.kill_ps_if_inf_interp =
          ctx->screen->options.no_infinite_interp &&
@@ -511,23 +424,21 @@ static bool si_nir_build_llvm(struct si_shader_context *ctx, struct nir_shader *
                                                       nir->info.cs.user_data_components_amd);
       }
 
-      if (ctx->shader->selector->info.base.shared_size)
+      if (ctx->shader->selector->info.base.cs.shared_size)
          si_llvm_declare_compute_memory(ctx);
    }
 
+   ctx->abi.inputs = &ctx->inputs[0];
    ctx->abi.clamp_shadow_reference = true;
    ctx->abi.robust_buffer_access = true;
    ctx->abi.convert_undef_to_zero = true;
    ctx->abi.clamp_div_by_zero = ctx->screen->options.clamp_div_by_zero;
-   ctx->abi.adjust_frag_coord_z = false;
 
    const struct si_shader_info *info = &ctx->shader->selector->info;
    for (unsigned i = 0; i < info->num_outputs; i++) {
       LLVMTypeRef type = ctx->ac.f32;
 
-      /* Only FS uses unpacked f16. Other stages pack 16-bit outputs into low and high bits of f32. */
-      if (nir->info.stage == MESA_SHADER_FRAGMENT &&
-          nir_alu_type_get_type_size(ctx->shader->selector->info.output_type[i]) == 16)
+      if (nir_alu_type_get_type_size(ctx->shader->selector->info.output_type[i]) == 16)
          type = ctx->ac.f16;
 
       for (unsigned j = 0; j < 4; j++)
@@ -545,7 +456,7 @@ static bool si_nir_build_llvm(struct si_shader_context *ctx, struct nir_shader *
  */
 void si_build_wrapper_function(struct si_shader_context *ctx, LLVMValueRef *parts,
                                unsigned num_parts, unsigned main_part,
-                               unsigned next_shader_first_part, bool same_thread_count)
+                               unsigned next_shader_first_part)
 {
    LLVMBuilderRef builder = ctx->ac.builder;
    /* PS epilog has one arg per color component; gfx9 merged shader
@@ -648,7 +559,7 @@ void si_build_wrapper_function(struct si_shader_context *ctx, LLVMValueRef *part
    si_llvm_create_func(ctx, "wrapper", returns, num_returns,
                        si_get_max_workgroup_size(ctx->shader));
 
-   if (si_is_merged_shader(ctx->shader) && !same_thread_count)
+   if (si_is_merged_shader(ctx->shader))
       ac_init_exec_full_mask(&ctx->ac);
 
    /* Record the arguments of the function as if they were an output of
@@ -707,19 +618,11 @@ void si_build_wrapper_function(struct si_shader_context *ctx, LLVMValueRef *part
       /* Merged shaders are executed conditionally depending
        * on the number of enabled threads passed in the input SGPRs. */
       if (si_is_multi_part_shader(ctx->shader) && part == 0) {
-         if (same_thread_count) {
-            struct ac_arg arg;
-            arg.arg_index = 3;
-            arg.used = true;
+         LLVMValueRef ena, count = initial[3];
 
-            si_init_exec_from_input(ctx, arg, 0);
-         } else {
-            LLVMValueRef ena, count = initial[3];
-
-            count = LLVMBuildAnd(builder, count, LLVMConstInt(ctx->ac.i32, 0x7f, 0), "");
-            ena = LLVMBuildICmp(builder, LLVMIntULT, ac_get_thread_id(&ctx->ac), count, "");
-            ac_build_ifcc(&ctx->ac, ena, 6506);
-         }
+         count = LLVMBuildAnd(builder, count, LLVMConstInt(ctx->ac.i32, 0x7f, 0), "");
+         ena = LLVMBuildICmp(builder, LLVMIntULT, ac_get_thread_id(&ctx->ac), count, "");
+         ac_build_ifcc(&ctx->ac, ena, 6506);
       }
 
       /* Derive arguments for the next part from outputs of the
@@ -772,8 +675,7 @@ void si_build_wrapper_function(struct si_shader_context *ctx, LLVMValueRef *part
 
       ret = ac_build_call(&ctx->ac, parts[part], in, num_params);
 
-      if (!same_thread_count &&
-          si_is_multi_part_shader(ctx->shader) && part + 1 == next_shader_first_part) {
+      if (si_is_multi_part_shader(ctx->shader) && part + 1 == next_shader_first_part) {
          ac_build_endif(&ctx->ac, 6506);
 
          /* The second half of the merged shader should use
@@ -787,18 +689,6 @@ void si_build_wrapper_function(struct si_shader_context *ctx, LLVMValueRef *part
          memcpy(out, initial, sizeof(initial));
          num_out = initial_num_out;
          num_out_sgpr = initial_num_out_sgpr;
-
-         /* Execute the second shader conditionally based on the number of
-          * enabled threads there.
-          */
-         if (ctx->stage == MESA_SHADER_TESS_CTRL) {
-            LLVMValueRef ena, count = initial[3];
-
-            count = LLVMBuildLShr(builder, count, LLVMConstInt(ctx->ac.i32, 8, 0), "");
-            count = LLVMBuildAnd(builder, count, LLVMConstInt(ctx->ac.i32, 0x7f, 0), "");
-            ena = LLVMBuildICmp(builder, LLVMIntULT, ac_get_thread_id(&ctx->ac), count, "");
-            ac_build_ifcc(&ctx->ac, ena, 6507);
-         }
          continue;
       }
 
@@ -826,486 +716,9 @@ void si_build_wrapper_function(struct si_shader_context *ctx, LLVMValueRef *part
       }
    }
 
-   /* Close the conditional wrapping the second shader. */
-   if (ctx->stage == MESA_SHADER_TESS_CTRL &&
-       !same_thread_count && si_is_multi_part_shader(ctx->shader))
-      ac_build_endif(&ctx->ac, 6507);
-
+   /* Return the value from the last part. */
    if (LLVMGetTypeKind(LLVMTypeOf(ret)) == LLVMVoidTypeKind)
       LLVMBuildRetVoid(builder);
    else
       LLVMBuildRet(builder, ret);
-}
-
-bool si_llvm_translate_nir(struct si_shader_context *ctx, struct si_shader *shader,
-                           struct nir_shader *nir, bool free_nir, bool ngg_cull_shader)
-{
-   struct si_shader_selector *sel = shader->selector;
-   const struct si_shader_info *info = &sel->info;
-
-   ctx->shader = shader;
-   ctx->stage = sel->info.stage;
-
-   ctx->num_const_buffers = info->base.num_ubos;
-   ctx->num_shader_buffers = info->base.num_ssbos;
-
-   ctx->num_samplers = BITSET_LAST_BIT(info->base.textures_used);
-   ctx->num_images = info->base.num_images;
-
-   si_llvm_init_resource_callbacks(ctx);
-
-   switch (ctx->stage) {
-   case MESA_SHADER_VERTEX:
-      si_llvm_init_vs_callbacks(ctx, ngg_cull_shader);
-      break;
-   case MESA_SHADER_TESS_CTRL:
-      si_llvm_init_tcs_callbacks(ctx);
-      break;
-   case MESA_SHADER_TESS_EVAL:
-      si_llvm_init_tes_callbacks(ctx, ngg_cull_shader);
-      break;
-   case MESA_SHADER_GEOMETRY:
-      si_llvm_init_gs_callbacks(ctx);
-      break;
-   case MESA_SHADER_FRAGMENT:
-      si_llvm_init_ps_callbacks(ctx);
-      break;
-   case MESA_SHADER_COMPUTE:
-      ctx->abi.load_local_group_size = si_llvm_get_block_size;
-      break;
-   default:
-      assert(!"Unsupported shader type");
-      return false;
-   }
-
-   si_llvm_create_main_func(ctx, ngg_cull_shader);
-
-   if (ctx->stage <= MESA_SHADER_GEOMETRY &&
-       (ctx->shader->key.ge.as_es || ctx->stage == MESA_SHADER_GEOMETRY))
-      si_preload_esgs_ring(ctx);
-
-   if (ctx->stage == MESA_SHADER_GEOMETRY)
-      si_preload_gs_rings(ctx);
-   else if (ctx->stage == MESA_SHADER_TESS_EVAL)
-      si_llvm_preload_tes_rings(ctx);
-
-   if (ctx->stage == MESA_SHADER_TESS_CTRL && sel->info.tessfactors_are_def_in_all_invocs) {
-      for (unsigned i = 0; i < 6; i++) {
-         ctx->invoc0_tess_factors[i] = ac_build_alloca_undef(&ctx->ac, ctx->ac.i32, "");
-      }
-   }
-
-   if (ctx->stage == MESA_SHADER_GEOMETRY) {
-      for (unsigned i = 0; i < 4; i++) {
-         ctx->gs_next_vertex[i] = ac_build_alloca(&ctx->ac, ctx->ac.i32, "");
-      }
-      if (shader->key.ge.as_ngg) {
-         for (unsigned i = 0; i < 4; ++i) {
-            ctx->gs_curprim_verts[i] = ac_build_alloca(&ctx->ac, ctx->ac.i32, "");
-            ctx->gs_generated_prims[i] = ac_build_alloca(&ctx->ac, ctx->ac.i32, "");
-         }
-
-         assert(!ctx->gs_ngg_scratch);
-         LLVMTypeRef ai32 = LLVMArrayType(ctx->ac.i32, gfx10_ngg_get_scratch_dw_size(shader));
-         ctx->gs_ngg_scratch =
-            LLVMAddGlobalInAddressSpace(ctx->ac.module, ai32, "ngg_scratch", AC_ADDR_SPACE_LDS);
-         LLVMSetInitializer(ctx->gs_ngg_scratch, LLVMGetUndef(ai32));
-         LLVMSetAlignment(ctx->gs_ngg_scratch, 4);
-
-         ctx->gs_ngg_emit = LLVMAddGlobalInAddressSpace(
-            ctx->ac.module, LLVMArrayType(ctx->ac.i32, 0), "ngg_emit", AC_ADDR_SPACE_LDS);
-         LLVMSetLinkage(ctx->gs_ngg_emit, LLVMExternalLinkage);
-         LLVMSetAlignment(ctx->gs_ngg_emit, 4);
-      }
-   }
-
-   if ((ctx->stage == MESA_SHADER_VERTEX || ctx->stage == MESA_SHADER_TESS_EVAL) &&
-       shader->key.ge.as_ngg && !shader->key.ge.as_es) {
-      /* Unconditionally declare scratch space base for streamout and
-       * vertex compaction. Whether space is actually allocated is
-       * determined during linking / PM4 creation.
-       */
-      si_llvm_declare_esgs_ring(ctx);
-
-      /* This is really only needed when streamout and / or vertex
-       * compaction is enabled.
-       */
-      if (!ctx->gs_ngg_scratch && (sel->so.num_outputs || shader->key.ge.opt.ngg_culling)) {
-         LLVMTypeRef asi32 = LLVMArrayType(ctx->ac.i32, gfx10_ngg_get_scratch_dw_size(shader));
-         ctx->gs_ngg_scratch =
-            LLVMAddGlobalInAddressSpace(ctx->ac.module, asi32, "ngg_scratch", AC_ADDR_SPACE_LDS);
-         LLVMSetInitializer(ctx->gs_ngg_scratch, LLVMGetUndef(asi32));
-         LLVMSetAlignment(ctx->gs_ngg_scratch, 4);
-      }
-   }
-
-   /* For merged shaders (VS-TCS, VS-GS, TES-GS): */
-   if (ctx->screen->info.chip_class >= GFX9 && si_is_merged_shader(shader)) {
-      LLVMValueRef thread_enabled = NULL;
-
-      /* TES is special because it has only 1 shader part if NGG shader culling is disabled,
-       * and therefore it doesn't use the wrapper function.
-       */
-      bool no_wrapper_func = ctx->stage == MESA_SHADER_TESS_EVAL && !shader->key.ge.as_es &&
-                             !shader->key.ge.opt.ngg_culling;
-
-      /* Set EXEC = ~0 before the first shader. If the prolog is present, EXEC is set there
-       * instead. For monolithic shaders, the wrapper function does this.
-       */
-      if ((!shader->is_monolithic || no_wrapper_func) &&
-          (ctx->stage == MESA_SHADER_TESS_EVAL ||
-           (ctx->stage == MESA_SHADER_VERTEX &&
-            !si_vs_needs_prolog(sel, &shader->key.ge.part.vs.prolog, &shader->key, ngg_cull_shader))))
-         ac_init_exec_full_mask(&ctx->ac);
-
-      /* NGG VS and NGG TES: Send gs_alloc_req and the prim export at the beginning to decrease
-       * register usage.
-       */
-      if ((ctx->stage == MESA_SHADER_VERTEX || ctx->stage == MESA_SHADER_TESS_EVAL) &&
-          shader->key.ge.as_ngg && !shader->key.ge.as_es && !shader->key.ge.opt.ngg_culling) {
-         /* GFX10 requires a barrier before gs_alloc_req due to a hw bug. */
-         if (ctx->screen->info.chip_class == GFX10)
-            ac_build_s_barrier(&ctx->ac);
-
-         gfx10_ngg_build_sendmsg_gs_alloc_req(ctx);
-
-         /* Build the primitive export at the beginning
-          * of the shader if possible.
-          */
-         if (gfx10_ngg_export_prim_early(shader))
-            gfx10_ngg_build_export_prim(ctx, NULL, NULL);
-      }
-
-      /* NGG GS: Initialize LDS and insert s_barrier, which must not be inside the if statement. */
-      if (ctx->stage == MESA_SHADER_GEOMETRY && shader->key.ge.as_ngg)
-         gfx10_ngg_gs_emit_prologue(ctx);
-
-      if (ctx->stage == MESA_SHADER_GEOMETRY ||
-          (ctx->stage == MESA_SHADER_TESS_CTRL && !shader->is_monolithic)) {
-         /* Wrap both shaders in an if statement according to the number of enabled threads
-          * there. For monolithic TCS, the if statement is inserted by the wrapper function,
-          * not here.
-          */
-         thread_enabled = si_is_gs_thread(ctx); /* 2nd shader: thread enabled bool */
-      } else if (((shader->key.ge.as_ls || shader->key.ge.as_es) && !shader->is_monolithic) ||
-                 (shader->key.ge.as_ngg && !shader->key.ge.as_es)) {
-         /* This is NGG VS or NGG TES or VS before GS or TES before GS or VS before TCS.
-          * For monolithic LS (VS before TCS) and ES (VS before GS and TES before GS),
-          * the if statement is inserted by the wrapper function.
-          */
-         thread_enabled = si_is_es_thread(ctx); /* 1st shader: thread enabled bool */
-      }
-
-      if (thread_enabled) {
-         ctx->merged_wrap_if_entry_block = LLVMGetInsertBlock(ctx->ac.builder);
-         ctx->merged_wrap_if_label = 11500;
-         ac_build_ifcc(&ctx->ac, thread_enabled, ctx->merged_wrap_if_label);
-      }
-
-      /* Execute a barrier before the second shader in
-       * a merged shader.
-       *
-       * Execute the barrier inside the conditional block,
-       * so that empty waves can jump directly to s_endpgm,
-       * which will also signal the barrier.
-       *
-       * This is possible in gfx9, because an empty wave
-       * for the second shader does not participate in
-       * the epilogue. With NGG, empty waves may still
-       * be required to export data (e.g. GS output vertices),
-       * so we cannot let them exit early.
-       *
-       * If the shader is TCS and the TCS epilog is present
-       * and contains a barrier, it will wait there and then
-       * reach s_endpgm.
-       */
-      if (ctx->stage == MESA_SHADER_TESS_CTRL) {
-         /* We need the barrier only if TCS inputs are read from LDS. */
-         if (!shader->key.ge.opt.same_patch_vertices ||
-             shader->selector->info.base.inputs_read &
-             ~shader->selector->tcs_vgpr_only_inputs)
-            ac_build_s_barrier(&ctx->ac);
-      } else if (ctx->stage == MESA_SHADER_GEOMETRY && !shader->key.ge.as_ngg) {
-         /* gfx10_ngg_gs_emit_prologue inserts the barrier for NGG. */
-         ac_build_s_barrier(&ctx->ac);
-      }
-   }
-
-   bool success = si_nir_build_llvm(ctx, nir);
-   if (free_nir)
-      ralloc_free(nir);
-   if (!success) {
-      fprintf(stderr, "Failed to translate shader from NIR to LLVM\n");
-      return false;
-   }
-
-   si_llvm_build_ret(ctx, ctx->return_value);
-   return true;
-}
-
-static bool si_should_optimize_less(struct ac_llvm_compiler *compiler,
-                                    struct si_shader_selector *sel)
-{
-   if (!compiler->low_opt_passes)
-      return false;
-
-   /* Assume a slow CPU. */
-   assert(!sel->screen->info.has_dedicated_vram && sel->screen->info.chip_class <= GFX8);
-
-   /* For a crazy dEQP test containing 2597 memory opcodes, mostly
-    * buffer stores. */
-   return sel->info.stage == MESA_SHADER_COMPUTE && sel->info.num_memory_stores > 1000;
-}
-
-static void si_optimize_vs_outputs(struct si_shader_context *ctx)
-{
-   struct si_shader *shader = ctx->shader;
-   struct si_shader_info *info = &shader->selector->info;
-   unsigned skip_vs_optim_mask = 0;
-
-   if ((ctx->stage != MESA_SHADER_VERTEX && ctx->stage != MESA_SHADER_TESS_EVAL) ||
-       shader->key.ge.as_ls || shader->key.ge.as_es)
-      return;
-
-   /* Optimizing these outputs is not possible, since they might be overriden
-    * at runtime with S_028644_PT_SPRITE_TEX. */
-   for (int i = 0; i < info->num_outputs; i++) {
-      if (info->output_semantic[i] == VARYING_SLOT_PNTC ||
-          (info->output_semantic[i] >= VARYING_SLOT_TEX0 &&
-           info->output_semantic[i] <= VARYING_SLOT_TEX7)) {
-         skip_vs_optim_mask |= 1u << shader->info.vs_output_param_offset[i];
-      }
-   }
-
-   ac_optimize_vs_outputs(&ctx->ac, ctx->main_fn, shader->info.vs_output_param_offset,
-                          info->num_outputs, skip_vs_optim_mask,
-                          &shader->info.nr_param_exports);
-}
-
-bool si_llvm_compile_shader(struct si_screen *sscreen, struct ac_llvm_compiler *compiler,
-                            struct si_shader *shader, struct pipe_debug_callback *debug,
-                            struct nir_shader *nir, bool free_nir)
-{
-   struct si_shader_selector *sel = shader->selector;
-   struct si_shader_context ctx;
-
-   si_llvm_context_init(&ctx, sscreen, compiler, si_get_shader_wave_size(shader));
-
-   LLVMValueRef ngg_cull_main_fn = NULL;
-   if (ctx.stage <= MESA_SHADER_GEOMETRY && shader->key.ge.opt.ngg_culling) {
-      if (!si_llvm_translate_nir(&ctx, shader, nir, false, true)) {
-         si_llvm_dispose(&ctx);
-         return false;
-      }
-      ngg_cull_main_fn = ctx.main_fn;
-      ctx.main_fn = NULL;
-   }
-
-   if (!si_llvm_translate_nir(&ctx, shader, nir, free_nir, false)) {
-      si_llvm_dispose(&ctx);
-      return false;
-   }
-
-   if (shader->is_monolithic && ctx.stage == MESA_SHADER_VERTEX) {
-      LLVMValueRef parts[4];
-      unsigned num_parts = 0;
-      bool first_is_prolog = false;
-      LLVMValueRef main_fn = ctx.main_fn;
-
-      if (ngg_cull_main_fn) {
-         if (si_vs_needs_prolog(sel, &shader->key.ge.part.vs.prolog, &shader->key, true)) {
-            union si_shader_part_key prolog_key;
-            si_get_vs_prolog_key(&sel->info, shader->info.num_input_sgprs, true,
-                                 &shader->key.ge.part.vs.prolog, shader, &prolog_key);
-            prolog_key.vs_prolog.is_monolithic = true;
-            si_llvm_build_vs_prolog(&ctx, &prolog_key);
-            parts[num_parts++] = ctx.main_fn;
-            first_is_prolog = true;
-         }
-         parts[num_parts++] = ngg_cull_main_fn;
-      }
-
-      if (si_vs_needs_prolog(sel, &shader->key.ge.part.vs.prolog, &shader->key, false)) {
-         union si_shader_part_key prolog_key;
-         si_get_vs_prolog_key(&sel->info, shader->info.num_input_sgprs, false,
-                              &shader->key.ge.part.vs.prolog, shader, &prolog_key);
-         prolog_key.vs_prolog.is_monolithic = true;
-         si_llvm_build_vs_prolog(&ctx, &prolog_key);
-         parts[num_parts++] = ctx.main_fn;
-         if (num_parts == 1)
-            first_is_prolog = true;
-      }
-      parts[num_parts++] = main_fn;
-
-      si_build_wrapper_function(&ctx, parts, num_parts, first_is_prolog ? 1 : 0, 0, false);
-   } else if (shader->is_monolithic && ctx.stage == MESA_SHADER_TESS_EVAL && ngg_cull_main_fn) {
-      LLVMValueRef parts[3], prolog, main_fn = ctx.main_fn;
-
-      /* We reuse the VS prolog code for TES just to load the input VGPRs from LDS. */
-      union si_shader_part_key prolog_key;
-      memset(&prolog_key, 0, sizeof(prolog_key));
-      prolog_key.vs_prolog.num_input_sgprs = shader->info.num_input_sgprs;
-      prolog_key.vs_prolog.num_merged_next_stage_vgprs = 5;
-      prolog_key.vs_prolog.as_ngg = 1;
-      prolog_key.vs_prolog.load_vgprs_after_culling = 1;
-      prolog_key.vs_prolog.is_monolithic = true;
-      si_llvm_build_vs_prolog(&ctx, &prolog_key);
-      prolog = ctx.main_fn;
-
-      parts[0] = ngg_cull_main_fn;
-      parts[1] = prolog;
-      parts[2] = main_fn;
-
-      si_build_wrapper_function(&ctx, parts, 3, 0, 0, false);
-   } else if (shader->is_monolithic && ctx.stage == MESA_SHADER_TESS_CTRL) {
-      if (sscreen->info.chip_class >= GFX9) {
-         struct si_shader_selector *ls = shader->key.ge.part.tcs.ls;
-         LLVMValueRef parts[4];
-         bool vs_needs_prolog =
-            si_vs_needs_prolog(ls, &shader->key.ge.part.tcs.ls_prolog, &shader->key, false);
-
-         /* TCS main part */
-         parts[2] = ctx.main_fn;
-
-         /* TCS epilog */
-         union si_shader_part_key tcs_epilog_key;
-         memset(&tcs_epilog_key, 0, sizeof(tcs_epilog_key));
-         tcs_epilog_key.tcs_epilog.states = shader->key.ge.part.tcs.epilog;
-         si_llvm_build_tcs_epilog(&ctx, &tcs_epilog_key);
-         parts[3] = ctx.main_fn;
-
-         /* VS as LS main part */
-         ctx.next_shader_sel = ctx.shader->selector;
-
-         struct si_shader shader_ls = {};
-         shader_ls.selector = ls;
-         shader_ls.key.ge.part.vs.prolog = shader->key.ge.part.tcs.ls_prolog;
-         shader_ls.key.ge.as_ls = 1;
-         shader_ls.key.ge.mono = shader->key.ge.mono;
-         shader_ls.key.ge.opt = shader->key.ge.opt;
-         shader_ls.key.ge.opt.inline_uniforms = false; /* only TCS can inline uniforms */
-         shader_ls.is_monolithic = true;
-
-         nir = si_get_nir_shader(ls, &shader_ls.key, &free_nir);
-
-         if (!si_llvm_translate_nir(&ctx, &shader_ls, nir, free_nir, false)) {
-            si_llvm_dispose(&ctx);
-            return false;
-         }
-         shader->info.uses_instanceid |= ls->info.uses_instanceid;
-         parts[1] = ctx.main_fn;
-
-         /* LS prolog */
-         if (vs_needs_prolog) {
-            union si_shader_part_key vs_prolog_key;
-            si_get_vs_prolog_key(&ls->info, shader_ls.info.num_input_sgprs, false,
-                                 &shader->key.ge.part.tcs.ls_prolog, shader, &vs_prolog_key);
-            vs_prolog_key.vs_prolog.is_monolithic = true;
-            si_llvm_build_vs_prolog(&ctx, &vs_prolog_key);
-            parts[0] = ctx.main_fn;
-         }
-
-         /* Reset the shader context. */
-         ctx.shader = shader;
-         ctx.stage = MESA_SHADER_TESS_CTRL;
-
-         si_build_wrapper_function(&ctx, parts + !vs_needs_prolog, 4 - !vs_needs_prolog,
-                                   vs_needs_prolog, vs_needs_prolog ? 2 : 1,
-                                   shader->key.ge.opt.same_patch_vertices);
-      } else {
-         LLVMValueRef parts[2];
-         union si_shader_part_key epilog_key;
-
-         parts[0] = ctx.main_fn;
-
-         memset(&epilog_key, 0, sizeof(epilog_key));
-         epilog_key.tcs_epilog.states = shader->key.ge.part.tcs.epilog;
-         si_llvm_build_tcs_epilog(&ctx, &epilog_key);
-         parts[1] = ctx.main_fn;
-
-         si_build_wrapper_function(&ctx, parts, 2, 0, 0, false);
-      }
-   } else if (shader->is_monolithic && ctx.stage == MESA_SHADER_GEOMETRY) {
-      if (ctx.screen->info.chip_class >= GFX9) {
-         struct si_shader_selector *es = shader->key.ge.part.gs.es;
-         LLVMValueRef es_prolog = NULL;
-         LLVMValueRef es_main = NULL;
-         LLVMValueRef gs_main = ctx.main_fn;
-
-         /* ES main part */
-         struct si_shader shader_es = {};
-         shader_es.selector = es;
-         shader_es.key.ge.part.vs.prolog = shader->key.ge.part.gs.vs_prolog;
-         shader_es.key.ge.as_es = 1;
-         shader_es.key.ge.as_ngg = shader->key.ge.as_ngg;
-         shader_es.key.ge.mono = shader->key.ge.mono;
-         shader_es.key.ge.opt = shader->key.ge.opt;
-         shader_es.key.ge.opt.inline_uniforms = false; /* only GS can inline uniforms */
-         shader_es.is_monolithic = true;
-
-         nir = si_get_nir_shader(es, &shader_es.key, &free_nir);
-
-         if (!si_llvm_translate_nir(&ctx, &shader_es, nir, free_nir, false)) {
-            si_llvm_dispose(&ctx);
-            return false;
-         }
-         shader->info.uses_instanceid |= es->info.uses_instanceid;
-         es_main = ctx.main_fn;
-
-         /* ES prolog */
-         if (es->info.stage == MESA_SHADER_VERTEX &&
-             si_vs_needs_prolog(es, &shader->key.ge.part.gs.vs_prolog, &shader->key, false)) {
-            union si_shader_part_key vs_prolog_key;
-            si_get_vs_prolog_key(&es->info, shader_es.info.num_input_sgprs, false,
-                                 &shader->key.ge.part.gs.vs_prolog, shader, &vs_prolog_key);
-            vs_prolog_key.vs_prolog.is_monolithic = true;
-            si_llvm_build_vs_prolog(&ctx, &vs_prolog_key);
-            es_prolog = ctx.main_fn;
-         }
-
-         /* Reset the shader context. */
-         ctx.shader = shader;
-         ctx.stage = MESA_SHADER_GEOMETRY;
-
-         /* Prepare the array of shader parts. */
-         LLVMValueRef parts[4];
-         unsigned num_parts = 0, main_part;
-
-         if (es_prolog)
-            parts[num_parts++] = es_prolog;
-
-         parts[main_part = num_parts++] = es_main;
-         parts[num_parts++] = gs_main;
-
-         si_build_wrapper_function(&ctx, parts, num_parts, main_part, main_part + 1, false);
-      } else {
-         /* Nothing to do for gfx6-8. The shader has only 1 part and it's ctx.main_fn. */
-      }
-   } else if (shader->is_monolithic && ctx.stage == MESA_SHADER_FRAGMENT) {
-      si_llvm_build_monolithic_ps(&ctx, shader);
-   }
-
-   si_llvm_optimize_module(&ctx);
-
-   /* Post-optimization transformations and analysis. */
-   si_optimize_vs_outputs(&ctx);
-
-   if ((debug && debug->debug_message) || si_can_dump_shader(sscreen, ctx.stage)) {
-      ctx.shader->info.private_mem_vgprs = ac_count_scratch_private_memory(ctx.main_fn);
-   }
-
-   /* Make sure the input is a pointer and not integer followed by inttoptr. */
-   assert(LLVMGetTypeKind(LLVMTypeOf(LLVMGetParam(ctx.main_fn, 0))) == LLVMPointerTypeKind);
-
-   /* Compile to bytecode. */
-   if (!si_compile_llvm(sscreen, &shader->binary, &shader->config, compiler, &ctx.ac, debug,
-                        ctx.stage, si_get_shader_name(shader),
-                        si_should_optimize_less(compiler, shader->selector))) {
-      si_llvm_dispose(&ctx);
-      fprintf(stderr, "LLVM failed to compile shader\n");
-      return false;
-   }
-
-   si_llvm_dispose(&ctx);
-   return true;
 }

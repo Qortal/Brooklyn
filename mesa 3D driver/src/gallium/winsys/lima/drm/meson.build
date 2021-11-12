@@ -26,5 +26,4 @@ liblimawinsys = static_library(
     inc_src, inc_include,
     inc_gallium, inc_gallium_aux, inc_gallium_drivers,
   ],
-  dependencies : idep_mesautil,
 )

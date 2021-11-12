@@ -121,10 +121,6 @@ init_map(void)
 void *
 u_execmem_alloc(unsigned int size)
 {
-#ifndef MESA_EXECMEM
-   (void)size;
-   return NULL;
-#else
    void *addr = NULL;
 
    mtx_lock(&exec_mutex);
@@ -144,7 +140,6 @@ bail:
    mtx_unlock(&exec_mutex);
 
    return addr;
-#endif /* MESA_EXECMEM */
 }
 
 

@@ -34,6 +34,7 @@
 #include <sync/sync.h>
 
 #include "anv_private.h"
+#include "vk_format_info.h"
 #include "vk_util.h"
 
 static int anv_hal_open(const struct hw_module_t* mod, const char* id, struct hw_device_t** dev);
@@ -103,69 +104,6 @@ anv_hal_close(struct hw_device_t *dev)
 }
 
 #if ANDROID_API_LEVEL >= 26
-#include <vndk/hardware_buffer.h>
-/* See i915_private_android_types.h in minigbm. */
-#define HAL_PIXEL_FORMAT_NV12_Y_TILED_INTEL 0x100
-
-enum {
-   /* Usage bit equal to GRALLOC_USAGE_HW_CAMERA_MASK */
-   AHARDWAREBUFFER_USAGE_CAMERA_MASK = 0x00060000U,
-};
-
-inline VkFormat
-vk_format_from_android(unsigned android_format, unsigned android_usage)
-{
-   switch (android_format) {
-   case AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM:
-      return VK_FORMAT_R8G8B8A8_UNORM;
-   case AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM:
-   case AHARDWAREBUFFER_FORMAT_R8G8B8_UNORM:
-      return VK_FORMAT_R8G8B8_UNORM;
-   case AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM:
-      return VK_FORMAT_R5G6B5_UNORM_PACK16;
-   case AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT:
-      return VK_FORMAT_R16G16B16A16_SFLOAT;
-   case AHARDWAREBUFFER_FORMAT_R10G10B10A2_UNORM:
-      return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
-   case AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420:
-   case HAL_PIXEL_FORMAT_NV12_Y_TILED_INTEL:
-      return VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
-   case AHARDWAREBUFFER_FORMAT_IMPLEMENTATION_DEFINED:
-      if (android_usage & AHARDWAREBUFFER_USAGE_CAMERA_MASK)
-         return VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
-      else
-         return VK_FORMAT_R8G8B8_UNORM;
-   case AHARDWAREBUFFER_FORMAT_BLOB:
-   default:
-      return VK_FORMAT_UNDEFINED;
-   }
-}
-
-static inline unsigned
-android_format_from_vk(unsigned vk_format)
-{
-   switch (vk_format) {
-   case VK_FORMAT_R8G8B8A8_UNORM:
-      return AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
-   case VK_FORMAT_R8G8B8_UNORM:
-      return AHARDWAREBUFFER_FORMAT_R8G8B8_UNORM;
-   case VK_FORMAT_R5G6B5_UNORM_PACK16:
-      return AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM;
-   case VK_FORMAT_R16G16B16A16_SFLOAT:
-      return AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT;
-   case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
-      return AHARDWAREBUFFER_FORMAT_R10G10B10A2_UNORM;
-   case VK_FORMAT_G8_B8R8_2PLANE_420_UNORM:
-#ifdef HAVE_CROS_GRALLOC
-      return AHARDWAREBUFFER_FORMAT_Y8Cb8Cr8_420;
-#else
-      return HAL_PIXEL_FORMAT_NV12_Y_TILED_INTEL;
-#endif
-   default:
-      return AHARDWAREBUFFER_FORMAT_BLOB;
-   }
-}
-
 static VkResult
 get_ahw_buffer_format_properties(
    VkDevice device_h,
@@ -208,7 +146,7 @@ get_ahw_buffer_format_properties(
 
    p->formatFeatures =
       anv_get_image_format_features(&device->info, p->format, anv_format,
-                                    tiling, NULL);
+                                    tiling);
 
    /* "Images can be created with an external format even if the Android hardware
     *  buffer has a format which has an equivalent Vulkan format to enable
@@ -392,6 +330,8 @@ anv_create_ahw_memory(VkDevice device_h,
                       const VkMemoryAllocateInfo *pAllocateInfo)
 {
 #if ANDROID_API_LEVEL >= 26
+   ANV_FROM_HANDLE(anv_device, dev, device_h);
+
    const VkMemoryDedicatedAllocateInfo *dedicated_info =
       vk_find_struct_const(pAllocateInfo->pNext,
                            MEMORY_DEDICATED_ALLOCATE_INFO);
@@ -405,11 +345,11 @@ anv_create_ahw_memory(VkDevice device_h,
    /* If caller passed dedicated information. */
    if (dedicated_info && dedicated_info->image) {
       ANV_FROM_HANDLE(anv_image, image, dedicated_info->image);
-      w = image->vk.extent.width;
-      h = image->vk.extent.height;
-      layers = image->vk.array_layers;
-      format = android_format_from_vk(image->vk.format);
-      usage = anv_ahw_usage_from_vk_usage(image->vk.create_flags, image->vk.usage);
+      w = image->extent.width;
+      h = image->extent.height;
+      layers = image->array_size;
+      format = android_format_from_vk(image->vk_format);
+      usage = anv_ahw_usage_from_vk_usage(image->create_flags, image->usage);
    } else if (dedicated_info && dedicated_info->buffer) {
       ANV_FROM_HANDLE(anv_buffer, buffer, dedicated_info->buffer);
       w = buffer->size;
@@ -435,20 +375,54 @@ anv_create_ahw_memory(VkDevice device_h,
    if (AHardwareBuffer_allocate(&desc, &ahw) != 0)
       return VK_ERROR_OUT_OF_HOST_MEMORY;
 
-   const VkImportAndroidHardwareBufferInfoANDROID import_info = {
-      .buffer = ahw,
-   };
-   VkResult result = anv_import_ahw_memory(device_h, mem, &import_info);
-
-   /* Release a reference to avoid leak for AHB allocation. */
-   AHardwareBuffer_release(ahw);
-
-   return result;
+   mem->ahw = ahw;
+   return VK_SUCCESS;
 #else
    return VK_ERROR_EXTENSION_NOT_PRESENT;
 #endif
 
 }
+
+VkResult
+anv_image_from_external(
+   VkDevice device_h,
+   const VkImageCreateInfo *base_info,
+   const VkExternalMemoryImageCreateInfo *create_info,
+   const VkAllocationCallbacks *alloc,
+   VkImage *out_image_h)
+{
+#if ANDROID_API_LEVEL >= 26
+   ANV_FROM_HANDLE(anv_device, device, device_h);
+
+   const VkExternalFormatANDROID *ext_info =
+      vk_find_struct_const(base_info->pNext, EXTERNAL_FORMAT_ANDROID);
+
+   if (ext_info && ext_info->externalFormat != 0) {
+      assert(base_info->format == VK_FORMAT_UNDEFINED);
+      assert(base_info->imageType == VK_IMAGE_TYPE_2D);
+      assert(base_info->usage == VK_IMAGE_USAGE_SAMPLED_BIT);
+      assert(base_info->tiling == VK_IMAGE_TILING_OPTIMAL);
+   }
+
+   struct anv_image_create_info anv_info = {
+      .vk_info = base_info,
+      .isl_extra_usage_flags = ISL_SURF_USAGE_DISABLE_AUX_BIT,
+      .external_format = true,
+   };
+
+   VkImage image_h;
+   VkResult result = anv_image_create(device_h, &anv_info, alloc, &image_h);
+   if (result != VK_SUCCESS)
+      return result;
+
+   *out_image_h = image_h;
+
+   return VK_SUCCESS;
+#else
+   return VK_ERROR_EXTENSION_NOT_PRESENT;
+#endif
+}
+
 
 VkResult
 anv_image_from_gralloc(VkDevice device_h,
@@ -470,8 +444,7 @@ anv_image_from_gralloc(VkDevice device_h,
    };
 
    if (gralloc_info->handle->numFds != 1) {
-      return vk_errorf(device, &device->vk.base,
-                       VK_ERROR_INVALID_EXTERNAL_HANDLE,
+      return vk_errorf(device, device, VK_ERROR_INVALID_EXTERNAL_HANDLE,
                        "VkNativeBufferANDROID::handle::numFds is %d, "
                        "expected 1", gralloc_info->handle->numFds);
    }
@@ -497,7 +470,7 @@ anv_image_from_gralloc(VkDevice device_h,
                                  0 /* client_address */,
                                  &bo);
    if (result != VK_SUCCESS) {
-      return vk_errorf(device, &device->vk.base, result,
+      return vk_errorf(device, device, result,
                        "failed to import dma-buf from VkNativeBufferANDROID");
    }
 
@@ -513,14 +486,12 @@ anv_image_from_gralloc(VkDevice device_h,
       anv_info.isl_tiling_flags = ISL_TILING_Y0_BIT;
       break;
    case -1:
-      result = vk_errorf(device, &device->vk.base,
-                         VK_ERROR_INVALID_EXTERNAL_HANDLE,
+      result = vk_errorf(device, device, VK_ERROR_INVALID_EXTERNAL_HANDLE,
                          "DRM_IOCTL_I915_GEM_GET_TILING failed for "
                          "VkNativeBufferANDROID");
       goto fail_tiling;
    default:
-      result = vk_errorf(device, &device->vk.base,
-                         VK_ERROR_INVALID_EXTERNAL_HANDLE,
+      result = vk_errorf(device, device, VK_ERROR_INVALID_EXTERNAL_HANDLE,
                          "DRM_IOCTL_I915_GEM_GET_TILING returned unknown "
                          "tiling %d for VkNativeBufferANDROID", i915_tiling);
       goto fail_tiling;
@@ -532,43 +503,27 @@ anv_image_from_gralloc(VkDevice device_h,
                                                base_info->tiling);
    assert(format != ISL_FORMAT_UNSUPPORTED);
 
+   anv_info.stride = gralloc_info->stride *
+                     (isl_format_get_layout(format)->bpb / 8);
+
    result = anv_image_create(device_h, &anv_info, alloc, &image_h);
    image = anv_image_from_handle(image_h);
    if (result != VK_SUCCESS)
       goto fail_create;
 
-   VkImageMemoryRequirementsInfo2 mem_reqs_info = {
-      .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2,
-      .image = image_h,
-   };
-
-   VkMemoryRequirements2 mem_reqs = {
-      .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,
-   };
-
-   anv_GetImageMemoryRequirements2(device_h, &mem_reqs_info, &mem_reqs);
-
-   VkDeviceSize aligned_image_size =
-      align_u64(mem_reqs.memoryRequirements.size,
-                mem_reqs.memoryRequirements.alignment);
-
-   if (bo->size < aligned_image_size) {
-      result = vk_errorf(device, &device->vk.base,
-                         VK_ERROR_INVALID_EXTERNAL_HANDLE,
+   if (bo->size < image->size) {
+      result = vk_errorf(device, device, VK_ERROR_INVALID_EXTERNAL_HANDLE,
                          "dma-buf from VkNativeBufferANDROID is too small for "
                          "VkImage: %"PRIu64"B < %"PRIu64"B",
-                         bo->size, aligned_image_size);
+                         bo->size, image->size);
       goto fail_size;
    }
 
-   assert(!image->disjoint);
    assert(image->n_planes == 1);
-   assert(image->planes[0].primary_surface.memory_range.binding ==
-          ANV_IMAGE_MEMORY_BINDING_MAIN);
-   assert(image->bindings[ANV_IMAGE_MEMORY_BINDING_MAIN].address.bo == NULL);
-   assert(image->bindings[ANV_IMAGE_MEMORY_BINDING_MAIN].address.offset == 0);
-   image->bindings[ANV_IMAGE_MEMORY_BINDING_MAIN].address.bo = bo;
-   image->from_gralloc = true;
+   assert(image->planes[0].address.offset == 0);
+
+   image->planes[0].address.bo = bo;
+   image->planes[0].bo_is_owned = true;
 
    /* Don't clobber the out-parameter until success is certain. */
    *out_image_h = image_h;
@@ -582,59 +537,6 @@ anv_image_from_gralloc(VkDevice device_h,
    anv_device_release_bo(device, bo);
 
    return result;
-}
-
-VkResult
-anv_image_bind_from_gralloc(struct anv_device *device,
-                            struct anv_image *image,
-                            const VkNativeBufferANDROID *gralloc_info)
-{
-   /* Do not close the gralloc handle's dma_buf. The lifetime of the dma_buf
-    * must exceed that of the gralloc handle, and we do not own the gralloc
-    * handle.
-    */
-   int dma_buf = gralloc_info->handle->data[0];
-
-   /* We need to set the WRITE flag on window system buffers so that GEM will
-    * know we're writing to them and synchronize uses on other rings (for
-    * example, if the display server uses the blitter ring).
-    *
-    * If this function fails and if the imported bo was resident in the cache,
-    * we should avoid updating the bo's flags. Therefore, we defer updating
-    * the flags until success is certain.
-    *
-    */
-   struct anv_bo *bo = NULL;
-   VkResult result = anv_device_import_bo(device, dma_buf,
-                                          ANV_BO_ALLOC_IMPLICIT_SYNC |
-                                          ANV_BO_ALLOC_IMPLICIT_WRITE,
-                                          0 /* client_address */,
-                                          &bo);
-   if (result != VK_SUCCESS) {
-      return vk_errorf(device, &device->vk.base, result,
-                       "failed to import dma-buf from VkNativeBufferANDROID");
-   }
-
-   uint64_t img_size = image->bindings[ANV_IMAGE_MEMORY_BINDING_MAIN].memory_range.size;
-   if (img_size < bo->size) {
-      result = vk_errorf(device, &device->vk.base, VK_ERROR_INVALID_EXTERNAL_HANDLE,
-                         "dma-buf from VkNativeBufferANDROID is too small for "
-                         "VkImage: %"PRIu64"B < %"PRIu64"B",
-                         bo->size, img_size);
-      anv_device_release_bo(device, bo);
-      return result;
-   }
-
-   assert(!image->disjoint);
-   assert(image->n_planes == 1);
-   assert(image->planes[0].primary_surface.memory_range.binding ==
-          ANV_IMAGE_MEMORY_BINDING_MAIN);
-   assert(image->bindings[ANV_IMAGE_MEMORY_BINDING_MAIN].address.bo == NULL);
-   assert(image->bindings[ANV_IMAGE_MEMORY_BINDING_MAIN].address.offset == 0);
-   image->bindings[ANV_IMAGE_MEMORY_BINDING_MAIN].address.bo = bo;
-   image->from_gralloc = true;
-
-   return VK_SUCCESS;
 }
 
 static VkResult
@@ -661,7 +563,7 @@ format_supported_with_usage(VkDevice device_h, VkFormat format,
    result = anv_GetPhysicalDeviceImageFormatProperties2(phys_dev_h,
                &image_format_info, &image_format_props);
    if (result != VK_SUCCESS) {
-      return vk_errorf(device, &device->vk.base, result,
+      return vk_errorf(device, device, result,
                        "anv_GetPhysicalDeviceImageFormatProperties2 failed "
                        "inside %s", __func__);
    }
@@ -700,7 +602,7 @@ setup_gralloc0_usage(struct anv_device *device, VkFormat format,
     * gralloc swapchains.
     */
    if (imageUsage != 0) {
-      return vk_errorf(device, &device->vk.base, VK_ERROR_FORMAT_NOT_SUPPORTED,
+      return vk_errorf(device, device, VK_ERROR_FORMAT_NOT_SUPPORTED,
                        "unsupported VkImageUsageFlags(0x%x) for gralloc "
                        "swapchain", imageUsage);
    }
@@ -805,74 +707,70 @@ anv_AcquireImageANDROID(
       VkSemaphore         semaphore_h,
       VkFence             fence_h)
 {
+   ANV_FROM_HANDLE(anv_device, device, device_h);
    VkResult result = VK_SUCCESS;
 
-   /* From https://source.android.com/devices/graphics/implement-vulkan :
-    *
-    *    "The driver takes ownership of the fence file descriptor and closes
-    *    the fence file descriptor when no longer needed. The driver must do
-    *    so even if neither a semaphore or fence object is provided, or even
-    *    if vkAcquireImageANDROID fails and returns an error."
-    *
-    * The Vulkan spec for VkImportFence/SemaphoreFdKHR(), however, requires
-    * the file descriptor to be left alone on failure.
-    */
-   int semaphore_fd = -1, fence_fd = -1;
-   if (nativeFenceFd >= 0) {
-      if (semaphore_h != VK_NULL_HANDLE && fence_h != VK_NULL_HANDLE) {
-         /* We have both so we have to import the sync file twice. One of
-          * them needs to be a dup.
-          */
-         semaphore_fd = nativeFenceFd;
-         fence_fd = dup(nativeFenceFd);
-         if (fence_fd < 0) {
-            VkResult err = (errno == EMFILE) ? VK_ERROR_TOO_MANY_OBJECTS :
-                                               VK_ERROR_OUT_OF_HOST_MEMORY;
-            close(nativeFenceFd);
-            return vk_error(err);
-         }
-      } else if (semaphore_h != VK_NULL_HANDLE) {
-         semaphore_fd = nativeFenceFd;
-      } else if (fence_h != VK_NULL_HANDLE) {
-         fence_fd = nativeFenceFd;
-      } else {
-         /* Nothing to import into so we have to close the file */
-         close(nativeFenceFd);
+   if (nativeFenceFd != -1) {
+      /* As a simple, firstpass implementation of VK_ANDROID_native_buffer, we
+       * block on the nativeFenceFd. This may introduce latency and is
+       * definitiely inefficient, yet it's correct.
+       *
+       * FINISHME(chadv): Import the nativeFenceFd into the VkSemaphore and
+       * VkFence.
+       */
+      if (sync_wait(nativeFenceFd, /*timeout*/ -1) < 0) {
+         result = vk_errorf(device, device, VK_ERROR_DEVICE_LOST,
+                            "%s: failed to wait on nativeFenceFd=%d",
+                            __func__, nativeFenceFd);
+      }
+
+      /* From VK_ANDROID_native_buffer's pseudo spec
+       * (https://source.android.com/devices/graphics/implement-vulkan):
+       *
+       *    The driver takes ownership of the fence fd and is responsible for
+       *    closing it [...] even if vkAcquireImageANDROID fails and returns
+       *    an error.
+       */
+      close(nativeFenceFd);
+
+      if (result != VK_SUCCESS)
+         return result;
+   }
+
+   if (semaphore_h || fence_h) {
+      /* Thanks to implicit sync, the image is ready for GPU access.  But we
+       * must still put the semaphore into the "submit" state; otherwise the
+       * client may get unexpected behavior if the client later uses it as
+       * a wait semaphore.
+       *
+       * Because we blocked above on the nativeFenceFd, the image is also
+       * ready for foreign-device access (including CPU access). But we must
+       * still signal the fence; otherwise the client may get unexpected
+       * behavior if the client later waits on it.
+       *
+       * For some values of anv_semaphore_type, we must submit the semaphore
+       * to execbuf in order to signal it.  Likewise for anv_fence_type.
+       * Instead of open-coding here the signal operation for each
+       * anv_semaphore_type and anv_fence_type, we piggy-back on
+       * vkQueueSubmit.
+       */
+      const VkSubmitInfo submit = {
+         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+         .waitSemaphoreCount = 0,
+         .commandBufferCount = 0,
+         .signalSemaphoreCount = (semaphore_h ? 1 : 0),
+         .pSignalSemaphores = &semaphore_h,
+      };
+
+      result = anv_QueueSubmit(anv_queue_to_handle(&device->queue), 1,
+                               &submit, fence_h);
+      if (result != VK_SUCCESS) {
+         return vk_errorf(device, device, result,
+                          "anv_QueueSubmit failed inside %s", __func__);
       }
    }
 
-   if (semaphore_h != VK_NULL_HANDLE) {
-      const VkImportSemaphoreFdInfoKHR info = {
-         .sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR,
-         .semaphore = semaphore_h,
-         .flags = VK_SEMAPHORE_IMPORT_TEMPORARY_BIT,
-         .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
-         .fd = semaphore_fd,
-      };
-      result = anv_ImportSemaphoreFdKHR(device_h, &info);
-      if (result == VK_SUCCESS)
-         semaphore_fd = -1; /* ANV took ownership */
-   }
-
-   if (result == VK_SUCCESS && fence_h != VK_NULL_HANDLE) {
-      const VkImportFenceFdInfoKHR info = {
-         .sType = VK_STRUCTURE_TYPE_IMPORT_FENCE_FD_INFO_KHR,
-         .fence = fence_h,
-         .flags = VK_FENCE_IMPORT_TEMPORARY_BIT,
-         .handleType = VK_EXTERNAL_FENCE_HANDLE_TYPE_SYNC_FD_BIT,
-         .fd = fence_fd,
-      };
-      result = anv_ImportFenceFdKHR(device_h, &info);
-      if (result == VK_SUCCESS)
-         fence_fd = -1; /* ANV took ownership */
-   }
-
-   if (semaphore_fd >= 0)
-      close(semaphore_fd);
-   if (fence_fd >= 0)
-      close(fence_fd);
-
-   return result;
+   return VK_SUCCESS;
 }
 
 VkResult

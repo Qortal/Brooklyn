@@ -33,7 +33,6 @@
 
 #include "sid.h"
 #include "sid_tables.h"
-#include "util/compiler.h"
 #include "util/memstream.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
@@ -41,8 +40,6 @@
 
 #include <assert.h>
 #include <inttypes.h>
-
-DEBUG_GET_ONCE_BOOL_OPTION(color, "AMD_COLOR", true);
 
 /* Parsed IBs are difficult to read without colors. Use "less -R file" to
  * read them, or use "aha -b -f file" to convert them to html.
@@ -52,12 +49,6 @@ DEBUG_GET_ONCE_BOOL_OPTION(color, "AMD_COLOR", true);
 #define COLOR_GREEN  "\033[1;32m"
 #define COLOR_YELLOW "\033[1;33m"
 #define COLOR_CYAN   "\033[1;36m"
-
-#define O_COLOR_RESET  (debug_get_option_color() ? COLOR_RESET : "")
-#define O_COLOR_RED    (debug_get_option_color() ? COLOR_RED : "")
-#define O_COLOR_GREEN  (debug_get_option_color() ? COLOR_GREEN : "")
-#define O_COLOR_YELLOW (debug_get_option_color() ? COLOR_YELLOW : "")
-#define O_COLOR_CYAN   (debug_get_option_color() ? COLOR_CYAN : "")
 
 #define INDENT_PKT 8
 
@@ -103,9 +94,7 @@ static void print_value(FILE *file, uint32_t value, int bits)
 static void print_named_value(FILE *file, const char *name, uint32_t value, int bits)
 {
    print_spaces(file, INDENT_PKT);
-   fprintf(file, "%s%s%s <- ",
-           O_COLOR_YELLOW, name,
-           O_COLOR_RESET);
+   fprintf(file, COLOR_YELLOW "%s" COLOR_RESET " <- ", name);
    print_value(file, value, bits);
 }
 
@@ -167,9 +156,7 @@ void ac_dump_reg(FILE *file, enum chip_class chip_class, unsigned offset, uint32
       bool first_field = true;
 
       print_spaces(file, INDENT_PKT);
-      fprintf(file, "%s%s%s <- ",
-              O_COLOR_YELLOW, reg_name,
-              O_COLOR_RESET);
+      fprintf(file, COLOR_YELLOW "%s" COLOR_RESET " <- ", reg_name);
 
       if (!reg->num_fields) {
          print_value(file, value, 32);
@@ -202,9 +189,7 @@ void ac_dump_reg(FILE *file, enum chip_class chip_class, unsigned offset, uint32
    }
 
    print_spaces(file, INDENT_PKT);
-   fprintf(file, "%s0x%05x%s <- 0x%08x\n",
-           O_COLOR_YELLOW, offset,
-           O_COLOR_RESET, value);
+   fprintf(file, COLOR_YELLOW "0x%05x" COLOR_RESET " <- 0x%08x\n", offset, value);
 }
 
 static uint32_t ac_ib_get(struct ac_ib_parser *ib)
@@ -222,8 +207,7 @@ static uint32_t ac_ib_get(struct ac_ib_parser *ib)
        * and radeon_emit is performance sensitive...
        */
       if (VALGRIND_CHECK_VALUE_IS_DEFINED(v))
-         fprintf(ib->f, "%sValgrind: The next DWORD is garbage%s\n",
-                 debug_get_option_color() ? COLOR_RED : "", O_COLOR_RESET);
+         fprintf(ib->f, COLOR_RED "Valgrind: The next DWORD is garbage" COLOR_RESET "\n");
 #endif
       fprintf(ib->f, "\n\035#%08x ", v);
    } else {
@@ -270,11 +254,11 @@ static void ac_parse_packet3(FILE *f, uint32_t header, struct ac_ib_parser *ib,
 
       if (op == PKT3_SET_CONTEXT_REG || op == PKT3_SET_CONFIG_REG || op == PKT3_SET_UCONFIG_REG ||
           op == PKT3_SET_UCONFIG_REG_INDEX || op == PKT3_SET_SH_REG)
-         fprintf(f, "%s%s%s%s:\n", O_COLOR_CYAN, name, predicate, O_COLOR_RESET);
+         fprintf(f, COLOR_CYAN "%s%s" COLOR_CYAN ":\n", name, predicate);
       else
-         fprintf(f, "%s%s%s%s:\n", O_COLOR_GREEN, name, predicate, O_COLOR_RESET);
+         fprintf(f, COLOR_GREEN "%s%s" COLOR_RESET ":\n", name, predicate);
    } else
-      fprintf(f, "%sPKT3_UNKNOWN 0x%x%s%s:\n", O_COLOR_RED, op, predicate, O_COLOR_RESET);
+      fprintf(f, COLOR_RED "PKT3_UNKNOWN 0x%x%s" COLOR_RESET ":\n", op, predicate);
 
    /* Print the contents. */
    switch (op) {
@@ -409,7 +393,7 @@ static void ac_parse_packet3(FILE *f, uint32_t header, struct ac_ib_parser *ib,
       ac_dump_reg(f, ib->chip_class, R_411_CP_DMA_WORD1, ac_ib_get(ib), ~0);
       ac_dump_reg(f, ib->chip_class, R_412_CP_DMA_WORD2, ac_ib_get(ib), ~0);
       ac_dump_reg(f, ib->chip_class, R_413_CP_DMA_WORD3, ac_ib_get(ib), ~0);
-      ac_dump_reg(f, ib->chip_class, R_415_COMMAND, ac_ib_get(ib), ~0);
+      ac_dump_reg(f, ib->chip_class, R_414_COMMAND, ac_ib_get(ib), ~0);
       break;
    case PKT3_DMA_DATA:
       ac_dump_reg(f, ib->chip_class, R_500_DMA_DATA_WORD0, ac_ib_get(ib), ~0);
@@ -417,7 +401,7 @@ static void ac_parse_packet3(FILE *f, uint32_t header, struct ac_ib_parser *ib,
       ac_dump_reg(f, ib->chip_class, R_502_SRC_ADDR_HI, ac_ib_get(ib), ~0);
       ac_dump_reg(f, ib->chip_class, R_503_DST_ADDR_LO, ac_ib_get(ib), ~0);
       ac_dump_reg(f, ib->chip_class, R_504_DST_ADDR_HI, ac_ib_get(ib), ~0);
-      ac_dump_reg(f, ib->chip_class, R_415_COMMAND, ac_ib_get(ib), ~0);
+      ac_dump_reg(f, ib->chip_class, R_414_COMMAND, ac_ib_get(ib), ~0);
       break;
    case PKT3_INDIRECT_BUFFER_SI:
    case PKT3_INDIRECT_BUFFER_CONST:
@@ -474,7 +458,7 @@ static void ac_parse_packet3(FILE *f, uint32_t header, struct ac_ib_parser *ib,
          unsigned packet_id = AC_GET_TRACE_POINT_ID(ib->ib[ib->cur_dw]);
 
          print_spaces(f, INDENT_PKT);
-         fprintf(f, "%sTrace point ID: %u%s\n", O_COLOR_RED, packet_id, O_COLOR_RESET);
+         fprintf(f, COLOR_RED "Trace point ID: %u\n", packet_id);
 
          if (!ib->trace_id_count)
             break; /* tracing was disabled */
@@ -482,22 +466,17 @@ static void ac_parse_packet3(FILE *f, uint32_t header, struct ac_ib_parser *ib,
          *current_trace_id = packet_id;
 
          print_spaces(f, INDENT_PKT);
-         if (packet_id < *ib->trace_ids) {
-            fprintf(f, "%sThis trace point was reached by the CP.%s\n",
-                    O_COLOR_RED, O_COLOR_RESET);
-         } else if (packet_id == *ib->trace_ids) {
-            fprintf(f, "%s!!!!! This is the last trace point that "
-                                 "was reached by the CP !!!!!%s\n",
-                    O_COLOR_RED, O_COLOR_RESET);
-         } else if (packet_id + 1 == *ib->trace_ids) {
-            fprintf(f, "%s!!!!! This is the first trace point that "
-                                 "was NOT been reached by the CP !!!!!%s\n",
-                    O_COLOR_RED, O_COLOR_RESET);
-         } else {
-            fprintf(f, "%s!!!!! This trace point was NOT reached "
-                                 "by the CP !!!!!%s\n",
-                    O_COLOR_RED, O_COLOR_RESET);
-         }
+         if (packet_id < *ib->trace_ids)
+            fprintf(f, COLOR_RED "This trace point was reached by the CP." COLOR_RESET "\n");
+         else if (packet_id == *ib->trace_ids)
+            fprintf(f, COLOR_RED "!!!!! This is the last trace point that "
+                                 "was reached by the CP !!!!!" COLOR_RESET "\n");
+         else if (packet_id + 1 == *ib->trace_ids)
+            fprintf(f, COLOR_RED "!!!!! This is the first trace point that "
+                                 "was NOT been reached by the CP !!!!!" COLOR_RESET "\n");
+         else
+            fprintf(f, COLOR_RED "!!!!! This trace point was NOT reached "
+                                 "by the CP !!!!!" COLOR_RESET "\n");
          break;
       }
       break;
@@ -508,8 +487,7 @@ static void ac_parse_packet3(FILE *f, uint32_t header, struct ac_ib_parser *ib,
       ac_ib_get(ib);
 
    if (ib->cur_dw > first_dw + count + 1)
-      fprintf(f, "%s !!!!! count in header too low !!!!!%s\n",
-              O_COLOR_RED, O_COLOR_RESET);
+      fprintf(f, COLOR_RED "\n!!!!! count in header too low !!!!!" COLOR_RESET "\n");
 }
 
 /**
@@ -530,11 +508,10 @@ static void ac_do_parse_ib(FILE *f, struct ac_ib_parser *ib)
       case 2:
          /* type-2 nop */
          if (header == 0x80000000) {
-            fprintf(f, "%sNOP (type 2)%s\n",
-                    O_COLOR_GREEN, O_COLOR_RESET);
+            fprintf(f, COLOR_GREEN "NOP (type 2)" COLOR_RESET "\n");
             break;
          }
-         FALLTHROUGH;
+         /* fall through */
       default:
          fprintf(f, "Unknown packet type %i\n", type);
          break;
@@ -662,9 +639,6 @@ void ac_parse_ib(FILE *f, uint32_t *ib, int num_dw, const int *trace_ids, unsign
 bool ac_vm_fault_occured(enum chip_class chip_class, uint64_t *old_dmesg_timestamp,
                          uint64_t *out_addr)
 {
-#ifdef _WIN32
-   return false;
-#else
    char line[2000];
    unsigned sec, usec;
    int progress = 0;
@@ -759,7 +733,6 @@ bool ac_vm_fault_occured(enum chip_class chip_class, uint64_t *old_dmesg_timesta
       *old_dmesg_timestamp = dmesg_timestamp;
 
    return fault;
-#endif
 }
 
 static int compare_wave(const void *p1, const void *p2)
@@ -800,9 +773,6 @@ static int compare_wave(const void *p1, const void *p2)
 unsigned ac_get_wave_info(enum chip_class chip_class,
                           struct ac_wave_info waves[AC_MAX_WAVES_PER_CHIP])
 {
-#ifdef _WIN32
-   return 0;
-#else
    char line[2000], cmd[128];
    unsigned num_waves = 0;
 
@@ -838,5 +808,4 @@ unsigned ac_get_wave_info(enum chip_class chip_class,
 
    pclose(p);
    return num_waves;
-#endif
 }

@@ -47,9 +47,9 @@ static const gpir_codegen_store_src gp_unit_to_store_src[num_units] = {
 };
 
 static void
-print_dest(gpir_codegen_instr *instr, gp_unit unit, unsigned cur_dest_index, FILE *fp)
+print_dest(gpir_codegen_instr *instr, gp_unit unit, unsigned cur_dest_index)
 {
-   fprintf(fp, "^%u", cur_dest_index + unit);
+   printf("^%u", cur_dest_index + unit);
 
    gpir_codegen_store_src src = gp_unit_to_store_src[unit];
 
@@ -59,54 +59,54 @@ print_dest(gpir_codegen_instr *instr, gp_unit unit, unsigned cur_dest_index, FIL
          /* Temporary stores ignore the address, and always use whatever's
           * stored in address register 0.
           */
-         fprintf(fp, "/t[addr0]");
+         printf("/t[addr0]");
       } else {
          if (instr->store0_varying)
-            fprintf(fp, "/v");
+            printf("/v");
          else
-            fprintf(fp, "/$");
-         fprintf(fp, "%u", instr->store0_addr);
+            printf("/$");
+         printf("%u", instr->store0_addr);
       }
 
-      fprintf(fp, ".");
+      printf(".");
       if (instr->store0_src_x == src)
-         fprintf(fp, "x");
+         printf("x");
       if (instr->store0_src_y == src)
-         fprintf(fp, "y");
+         printf("y");
    }
 
    if (instr->store1_src_z == src ||
        instr->store1_src_w == src) {
       if (instr->store1_temporary) {
-         fprintf(fp, "/t[addr0]");
+         printf("/t[addr0]");
       } else {
          if (instr->store1_varying)
-            fprintf(fp, "/v");
+            printf("/v");
          else
-            fprintf(fp, "/$");
-         fprintf(fp, "%u", instr->store1_addr);
+            printf("/$");
+         printf("%u", instr->store1_addr);
       }
 
-      fprintf(fp, ".");
+      printf(".");
       if (instr->store1_src_z == src)
-         fprintf(fp, "z");
+         printf("z");
       if (instr->store1_src_w == src)
-         fprintf(fp, "w");
+         printf("w");
    }
 
    if (unit == unit_complex) {
       switch (instr->complex_op) {
       case gpir_codegen_complex_op_temp_store_addr:
-         fprintf(fp, "/addr0");
+         printf("/addr0");
          break;
       case gpir_codegen_complex_op_temp_load_addr_0:
-         fprintf(fp, "/addr1");
+         printf("/addr1");
          break;
       case gpir_codegen_complex_op_temp_load_addr_1:
-         fprintf(fp, "/addr2");
+         printf("/addr2");
          break;
       case gpir_codegen_complex_op_temp_load_addr_2:
-         fprintf(fp, "/addr3");
+         printf("/addr3");
          break;
       default:
          break;
@@ -117,14 +117,14 @@ print_dest(gpir_codegen_instr *instr, gp_unit unit, unsigned cur_dest_index, FIL
 static void
 print_src(gpir_codegen_src src, gp_unit unit, unsigned unit_src_num,
           gpir_codegen_instr *instr, gpir_codegen_instr *prev_instr,
-          unsigned cur_dest_index, FILE *fp)
+          unsigned cur_dest_index)
 {
    switch (src) {
    case gpir_codegen_src_attrib_x:
    case gpir_codegen_src_attrib_y:
    case gpir_codegen_src_attrib_z:
    case gpir_codegen_src_attrib_w:
-      fprintf(fp, "%c%d.%c", instr->register0_attribute ? 'a' : '$',
+      printf("%c%d.%c", instr->register0_attribute ? 'a' : '$',
              instr->register0_addr, "xyzw"[src - gpir_codegen_src_attrib_x]);
       break;
 
@@ -132,7 +132,7 @@ print_src(gpir_codegen_src src, gp_unit unit, unsigned unit_src_num,
    case gpir_codegen_src_register_y:
    case gpir_codegen_src_register_z:
    case gpir_codegen_src_register_w:
-      fprintf(fp, "$%d.%c", instr->register1_addr,
+      printf("$%d.%c", instr->register1_addr,
              "xyzw"[src - gpir_codegen_src_register_x]);
       break;
 
@@ -140,54 +140,54 @@ print_src(gpir_codegen_src src, gp_unit unit, unsigned unit_src_num,
    case gpir_codegen_src_unknown_1:
    case gpir_codegen_src_unknown_2:
    case gpir_codegen_src_unknown_3:
-      fprintf(fp, "unknown%d", src - gpir_codegen_src_unknown_0);
+      printf("unknown%d", src - gpir_codegen_src_unknown_0);
       break;
 
    case gpir_codegen_src_load_x:
    case gpir_codegen_src_load_y:
    case gpir_codegen_src_load_z:
    case gpir_codegen_src_load_w:
-      fprintf(fp, "t[%d", instr->load_addr);
+      printf("t[%d", instr->load_addr);
       switch (instr->load_offset) {
       case gpir_codegen_load_off_ld_addr_0:
-         fprintf(fp, "+addr1");
+         printf("+addr1");
          break;
       case gpir_codegen_load_off_ld_addr_1:
-         fprintf(fp, "+addr2");
+         printf("+addr2");
          break;
       case gpir_codegen_load_off_ld_addr_2:
-         fprintf(fp, "+addr3");
+         printf("+addr3");
          break;
       case gpir_codegen_load_off_none:
          break;
       default:
-         fprintf(fp, "+unk%d", instr->load_offset);
+         printf("+unk%d", instr->load_offset);
       }
-      fprintf(fp, "].%c", "xyzw"[src - gpir_codegen_src_load_x]);
+      printf("].%c", "xyzw"[src - gpir_codegen_src_load_x]);
       break;
 
    case gpir_codegen_src_p1_acc_0:
-      fprintf(fp, "^%d", cur_dest_index - 1 * num_units + unit_acc_0);
+      printf("^%d", cur_dest_index - 1 * num_units + unit_acc_0);
       break;
 
    case gpir_codegen_src_p1_acc_1:
-      fprintf(fp, "^%d", cur_dest_index - 1 * num_units + unit_acc_1);
+      printf("^%d", cur_dest_index - 1 * num_units + unit_acc_1);
       break;
 
    case gpir_codegen_src_p1_mul_0:
-      fprintf(fp, "^%d", cur_dest_index - 1 * num_units + unit_mul_0);
+      printf("^%d", cur_dest_index - 1 * num_units + unit_mul_0);
       break;
 
    case gpir_codegen_src_p1_mul_1:
-      fprintf(fp, "^%d", cur_dest_index - 1 * num_units + unit_mul_1);
+      printf("^%d", cur_dest_index - 1 * num_units + unit_mul_1);
       break;
 
    case gpir_codegen_src_p1_pass:
-      fprintf(fp, "^%d", cur_dest_index - 1 * num_units + unit_pass);
+      printf("^%d", cur_dest_index - 1 * num_units + unit_pass);
       break;
 
    case gpir_codegen_src_unused:
-      fprintf(fp, "unused");
+      printf("unused");
       break;
 
    case gpir_codegen_src_p1_complex: /* Also ident */
@@ -195,48 +195,48 @@ print_src(gpir_codegen_src src, gp_unit unit, unsigned unit_src_num,
       case unit_acc_0:
       case unit_acc_1:
          if (unit_src_num == 1) {
-            fprintf(fp, "0");
+            printf("0");
             return;
          }
          break;
       case unit_mul_0:
       case unit_mul_1:
          if (unit_src_num == 1) {
-            fprintf(fp, "1");
+            printf("1");
             return;
          }
          break;
       default:
          break;
       }
-      fprintf(fp, "^%d", cur_dest_index - 1 * num_units + unit_complex);
+      printf("^%d", cur_dest_index - 1 * num_units + unit_complex);
       break;
 
    case gpir_codegen_src_p2_pass:
-      fprintf(fp, "^%d", cur_dest_index - 2 * num_units + unit_pass);
+      printf("^%d", cur_dest_index - 2 * num_units + unit_pass);
       break;
 
    case gpir_codegen_src_p2_acc_0:
-      fprintf(fp, "^%d", cur_dest_index - 2 * num_units + unit_acc_0);
+      printf("^%d", cur_dest_index - 2 * num_units + unit_acc_0);
       break;
 
    case gpir_codegen_src_p2_acc_1:
-      fprintf(fp, "^%d", cur_dest_index - 2 * num_units + unit_acc_1);
+      printf("^%d", cur_dest_index - 2 * num_units + unit_acc_1);
       break;
 
    case gpir_codegen_src_p2_mul_0:
-      fprintf(fp, "^%d", cur_dest_index - 2 * num_units + unit_mul_0);
+      printf("^%d", cur_dest_index - 2 * num_units + unit_mul_0);
       break;
 
    case gpir_codegen_src_p2_mul_1:
-      fprintf(fp, "^%d", cur_dest_index - 2 * num_units + unit_mul_1);
+      printf("^%d", cur_dest_index - 2 * num_units + unit_mul_1);
       break;
 
    case gpir_codegen_src_p1_attrib_x:
    case gpir_codegen_src_p1_attrib_y:
    case gpir_codegen_src_p1_attrib_z:
    case gpir_codegen_src_p1_attrib_w:
-      fprintf(fp, "%c%d.%c", prev_instr->register0_attribute ? 'a' : '$',
+      printf("%c%d.%c", prev_instr->register0_attribute ? 'a' : '$',
              prev_instr->register0_addr,
              "xyzw"[src - gpir_codegen_src_p1_attrib_x]);
       break;
@@ -245,7 +245,7 @@ print_src(gpir_codegen_src src, gp_unit unit, unsigned unit_src_num,
 
 static bool
 print_mul(gpir_codegen_instr *instr, gpir_codegen_instr *prev_instr,
-          unsigned cur_dest_index, FILE *fp)
+          unsigned cur_dest_index)
 {
    bool printed = false;
 
@@ -255,113 +255,113 @@ print_mul(gpir_codegen_instr *instr, gpir_codegen_instr *prev_instr,
       if (instr->mul0_src0 != gpir_codegen_src_unused &&
           instr->mul0_src1 != gpir_codegen_src_unused) {
          printed = true;
-         fprintf(fp, "\t");
+         printf("\t");
          if (instr->mul0_src1 == gpir_codegen_src_ident &&
              !instr->mul0_neg) {
-            fprintf(fp, "mov.m0 ");
-            print_dest(instr, unit_mul_0, cur_dest_index, fp);
-            fprintf(fp, " ");
+            printf("mov.m0 ");
+            print_dest(instr, unit_mul_0, cur_dest_index);
+            printf(" ");
             print_src(instr->mul0_src0, unit_mul_0, 0, instr, prev_instr,
-                      cur_dest_index, fp);
+                      cur_dest_index);
          } else {
             if (instr->mul_op == gpir_codegen_mul_op_complex2)
-               fprintf(fp, "complex2.m0 ");
+               printf("complex2.m0 ");
             else
-               fprintf(fp, "mul.m0 ");
+               printf("mul.m0 ");
 
-            print_dest(instr, unit_mul_0, cur_dest_index, fp);
-            fprintf(fp, " ");
+            print_dest(instr, unit_mul_0, cur_dest_index);
+            printf(" ");
             print_src(instr->mul0_src0, unit_mul_0, 0, instr, prev_instr,
-                      cur_dest_index, fp);
-            fprintf(fp, " ");
+                      cur_dest_index);
+            printf(" ");
             if (instr->mul0_neg)
-               fprintf(fp, "-");
+               printf("-");
             print_src(instr->mul0_src1, unit_mul_0, 1, instr, prev_instr,
-                      cur_dest_index, fp);
+                      cur_dest_index);
          }
 
-         fprintf(fp, "\n");
+         printf("\n");
       }
 
       if (instr->mul1_src0 != gpir_codegen_src_unused &&
           instr->mul1_src1 != gpir_codegen_src_unused) {
          printed = true;
-         fprintf(fp, "\t");
+         printf("\t");
          if (instr->mul1_src1 == gpir_codegen_src_ident &&
              !instr->mul1_neg) {
-            fprintf(fp, "mov.m1 ");
-            print_dest(instr, unit_mul_1, cur_dest_index, fp);
-            fprintf(fp, " ");
+            printf("mov.m1 ");
+            print_dest(instr, unit_mul_1, cur_dest_index);
+            printf(" ");
             print_src(instr->mul1_src0, unit_mul_1, 0, instr, prev_instr,
-                      cur_dest_index, fp);
+                      cur_dest_index);
          } else {
-            fprintf(fp, "mul.m1 ");
-            print_dest(instr, unit_mul_1, cur_dest_index, fp);
-            fprintf(fp, " ");
+            printf("mul.m1 ");
+            print_dest(instr, unit_mul_1, cur_dest_index);
+            printf(" ");
             print_src(instr->mul1_src0, unit_mul_1, 0, instr, prev_instr,
-                      cur_dest_index, fp);
-            fprintf(fp, " ");
+                      cur_dest_index);
+            printf(" ");
             if (instr->mul1_neg)
-               fprintf(fp, "-");
+               printf("-");
             print_src(instr->mul1_src1, unit_mul_0, 1, instr, prev_instr,
-                      cur_dest_index, fp);
+                      cur_dest_index);
          }
-         fprintf(fp, "\n");
+         printf("\n");
       }
 
       break;
    case gpir_codegen_mul_op_complex1:
       printed = true;
-      fprintf(fp, "\tcomplex1.m01 ");
-      print_dest(instr, unit_mul_0, cur_dest_index, fp);
-      fprintf(fp, " ");
+      printf("\tcomplex1.m01 ");
+      print_dest(instr, unit_mul_0, cur_dest_index);
+      printf(" ");
       print_src(instr->mul0_src0, unit_mul_0, 0, instr, prev_instr,
-                cur_dest_index, fp);
-      fprintf(fp, " ");
+                cur_dest_index);
+      printf(" ");
       print_src(instr->mul0_src1, unit_mul_0, 1, instr, prev_instr,
-                cur_dest_index, fp);
-      fprintf(fp, " ");
+                cur_dest_index);
+      printf(" ");
       print_src(instr->mul1_src0, unit_mul_1, 0, instr, prev_instr,
-                cur_dest_index, fp);
-      fprintf(fp, " ");
+                cur_dest_index);
+      printf(" ");
       print_src(instr->mul1_src1, unit_mul_1, 1, instr, prev_instr,
-                cur_dest_index, fp);
-      fprintf(fp, "\n");
+                cur_dest_index);
+      printf("\n");
       break;
 
    case gpir_codegen_mul_op_select:
       printed = true;
-      fprintf(fp, "\tsel.m01 ");
-      print_dest(instr, unit_mul_0, cur_dest_index, fp);
-      fprintf(fp, " ");
+      printf("\tsel.m01 ");
+      print_dest(instr, unit_mul_0, cur_dest_index);
+      printf(" ");
       print_src(instr->mul0_src1, unit_mul_0, 1, instr, prev_instr,
-                cur_dest_index, fp);
-      fprintf(fp, " ");
+                cur_dest_index);
+      printf(" ");
       print_src(instr->mul0_src0, unit_mul_0, 0, instr, prev_instr,
-                cur_dest_index, fp);
-      fprintf(fp, " ");
+                cur_dest_index);
+      printf(" ");
       print_src(instr->mul1_src0, unit_mul_1, 0, instr, prev_instr,
-                cur_dest_index, fp);
-      fprintf(fp, "\n");
+                cur_dest_index);
+      printf("\n");
       break;
 
    default:
       printed = true;
-      fprintf(fp, "\tunknown%u.m01 ", instr->mul_op);
-      print_dest(instr, unit_mul_0, cur_dest_index, fp);
-      fprintf(fp, " ");
+      printf("\tunknown%u.m01 ", instr->mul_op);
+      print_dest(instr, unit_mul_0, cur_dest_index);
+      printf(" ");
       print_src(instr->mul0_src0, unit_mul_0, 0, instr, prev_instr,
-                cur_dest_index, fp);
-      fprintf(fp, " ");
+                cur_dest_index);
+      printf(" ");
       print_src(instr->mul0_src1, unit_mul_0, 1, instr, prev_instr,
-                cur_dest_index, fp);
-      fprintf(fp, " ");
+                cur_dest_index);
+      printf(" ");
       print_src(instr->mul1_src0, unit_mul_1, 0, instr, prev_instr,
-                cur_dest_index, fp);
-      fprintf(fp, " ");
+                cur_dest_index);
+      printf(" ");
       print_src(instr->mul1_src1, unit_mul_1, 1, instr, prev_instr,
-                cur_dest_index, fp);
-      fprintf(fp, "\n");
+                cur_dest_index);
+      printf("\n");
       break;
    }
 
@@ -393,14 +393,14 @@ static const acc_op_info acc_op_infos[8] = {
 
 static bool
 print_acc(gpir_codegen_instr *instr, gpir_codegen_instr *prev_instr,
-          unsigned cur_dest_index, FILE *fp)
+          unsigned cur_dest_index)
 {
    bool printed = false;
    const acc_op_info op = acc_op_infos[instr->acc_op];
 
    if (instr->acc0_src0 != gpir_codegen_src_unused) {
       printed = true;
-      fprintf(fp, "\t");
+      printf("\t");
       acc_op_info acc0_op = op;
       if (instr->acc0_src1 == gpir_codegen_src_ident &&
           instr->acc0_src1_neg) {
@@ -410,30 +410,30 @@ print_acc(gpir_codegen_instr *instr, gpir_codegen_instr *prev_instr,
       }
 
       if (acc0_op.name)
-         fprintf(fp, "%s.a0 ", acc0_op.name);
+         printf("%s.a0 ", acc0_op.name);
       else
-         fprintf(fp, "op%u.a0 ", instr->acc_op);
+         printf("op%u.a0 ", instr->acc_op);
 
-      print_dest(instr, unit_acc_0, cur_dest_index, fp);
-      fprintf(fp, " ");
+      print_dest(instr, unit_acc_0, cur_dest_index);
+      printf(" ");
       if (instr->acc0_src0_neg)
-         fprintf(fp, "-");
+         printf("-");
       print_src(instr->acc0_src0, unit_acc_0, 0, instr, prev_instr,
-                cur_dest_index, fp);
+                cur_dest_index);
       if (acc0_op.srcs > 1) {
-         fprintf(fp, " ");
+         printf(" ");
          if (instr->acc0_src1_neg)
-            fprintf(fp, "-");
+            printf("-");
          print_src(instr->acc0_src1, unit_acc_0, 1, instr, prev_instr,
-                   cur_dest_index, fp);
+                   cur_dest_index);
       }
 
-      fprintf(fp, "\n");
+      printf("\n");
    }
 
    if (instr->acc1_src0 != gpir_codegen_src_unused) {
       printed = true;
-      fprintf(fp, "\t");
+      printf("\t");
       acc_op_info acc1_op = op;
       if (instr->acc1_src1 == gpir_codegen_src_ident &&
           instr->acc1_src1_neg) {
@@ -443,25 +443,25 @@ print_acc(gpir_codegen_instr *instr, gpir_codegen_instr *prev_instr,
       }
 
       if (acc1_op.name)
-         fprintf(fp, "%s.a1 ", acc1_op.name);
+         printf("%s.a1 ", acc1_op.name);
       else
-         fprintf(fp, "op%u.a1 ", instr->acc_op);
+         printf("op%u.a1 ", instr->acc_op);
 
-      print_dest(instr, unit_acc_1, cur_dest_index, fp);
-      fprintf(fp, " ");
+      print_dest(instr, unit_acc_1, cur_dest_index);
+      printf(" ");
       if (instr->acc1_src0_neg)
-         fprintf(fp, "-");
+         printf("-");
       print_src(instr->acc1_src0, unit_acc_1, 0, instr, prev_instr,
-                cur_dest_index, fp);
+                cur_dest_index);
       if (acc1_op.srcs > 1) {
-         fprintf(fp, " ");
+         printf(" ");
          if (instr->acc1_src1_neg)
-            fprintf(fp, "-");
+            printf("-");
          print_src(instr->acc1_src1, unit_acc_1, 1, instr, prev_instr,
-                   cur_dest_index, fp);
+                   cur_dest_index);
       }
 
-      fprintf(fp, "\n");
+      printf("\n");
    }
 
    return printed;
@@ -469,129 +469,131 @@ print_acc(gpir_codegen_instr *instr, gpir_codegen_instr *prev_instr,
 
 static bool
 print_pass(gpir_codegen_instr *instr, gpir_codegen_instr *prev_instr,
-           unsigned cur_dest_index, FILE *fp)
+           unsigned cur_dest_index)
 {
    if (instr->pass_src == gpir_codegen_src_unused)
       return false;
 
-   fprintf(fp, "\t");
+   printf("\t");
 
    switch (instr->pass_op) {
    case gpir_codegen_pass_op_pass:
-      fprintf(fp, "mov.p ");
+      printf("mov.p ");
       break;
    case gpir_codegen_pass_op_preexp2:
-      fprintf(fp, "preexp2.p ");
+      printf("preexp2.p ");
       break;
    case gpir_codegen_pass_op_postlog2:
-      fprintf(fp, "postlog2.p ");
+      printf("postlog2.p ");
       break;
    case gpir_codegen_pass_op_clamp:
-      fprintf(fp, "clamp.p ");
+      printf("clamp.p ");
       break;
    default:
-      fprintf(fp, "unk%u.p ", instr->pass_op);
+      printf("unk%u.p ", instr->pass_op);
    }
 
-   print_dest(instr, unit_pass, cur_dest_index, fp);
-   fprintf(fp, " ");
+   print_dest(instr, unit_pass, cur_dest_index);
+   printf(" ");
    print_src(instr->pass_src, unit_pass, 0, instr, prev_instr,
-             cur_dest_index, fp);
+             cur_dest_index);
 
    if (instr->pass_op == gpir_codegen_pass_op_clamp) {
-      fprintf(fp, " ");
+      printf(" ");
       print_src(gpir_codegen_src_load_x, unit_pass, 1, instr, prev_instr,
-                cur_dest_index, fp);
-      fprintf(fp, " ");
+                cur_dest_index);
+      printf(" ");
       print_src(gpir_codegen_src_load_y, unit_pass, 2, instr, prev_instr,
-                cur_dest_index, fp);
+                cur_dest_index);
    }
 
-   fprintf(fp, "\n");
+   printf("\n");
 
    return true;
 }
 
 static bool
 print_complex(gpir_codegen_instr *instr, gpir_codegen_instr *prev_instr,
-              unsigned cur_dest_index, FILE *fp)
+              unsigned cur_dest_index)
 {
    if (instr->complex_src == gpir_codegen_src_unused)
       return false;
 
-   fprintf(fp, "\t");
+   printf("\t");
 
    switch (instr->complex_op) {
    case gpir_codegen_complex_op_nop:
       return false;
 
    case gpir_codegen_complex_op_exp2:
-      fprintf(fp, "exp2.c ");
+      printf("exp2.c ");
       break;
    case gpir_codegen_complex_op_log2:
-      fprintf(fp, "log2.c ");
+      printf("log2.c ");
       break;
    case gpir_codegen_complex_op_rsqrt:
-      fprintf(fp, "rsqrt.c ");
+      printf("rsqrt.c ");
       break;
    case gpir_codegen_complex_op_rcp:
-      fprintf(fp, "rcp.c ");
+      printf("rcp.c ");
       break;
    case gpir_codegen_complex_op_pass:
    case gpir_codegen_complex_op_temp_store_addr:
    case gpir_codegen_complex_op_temp_load_addr_0:
    case gpir_codegen_complex_op_temp_load_addr_1:
    case gpir_codegen_complex_op_temp_load_addr_2:
-      fprintf(fp, "mov.c ");
+      printf("mov.c ");
       break;
    default:
-      fprintf(fp, "unk%u.c ", instr->complex_op);
+      printf("unk%u.c ", instr->complex_op);
    }
 
-   print_dest(instr, unit_complex, cur_dest_index, fp);
-   fprintf(fp, " ");
+   print_dest(instr, unit_complex, cur_dest_index);
+   printf(" ");
    print_src(instr->complex_src, unit_complex, 0, instr, prev_instr,
-             cur_dest_index, fp);
-   fprintf(fp, "\n");
+             cur_dest_index);
+   printf("\n");
 
    return true;
 }
 
 static void
 print_instr(gpir_codegen_instr *instr, gpir_codegen_instr *prev_instr,
-            unsigned instr_number, unsigned cur_dest_index, FILE *fp)
+            unsigned instr_number, unsigned cur_dest_index)
 {
    bool printed = false;
-   fprintf(fp, "%03d:", instr_number);
-   printed |= print_acc(instr, prev_instr, cur_dest_index, fp);
-   printed |= print_mul(instr, prev_instr, cur_dest_index, fp);
-   printed |= print_complex(instr, prev_instr, cur_dest_index, fp);
-   printed |= print_pass(instr, prev_instr, cur_dest_index, fp);
+   printf("%03d:", instr_number);
+   printed |= print_acc(instr, prev_instr, cur_dest_index);
+   printed |= print_mul(instr, prev_instr, cur_dest_index);
+   printed |= print_complex(instr, prev_instr, cur_dest_index);
+   printed |= print_pass(instr, prev_instr, cur_dest_index);
 
    if (instr->branch) {
       printed = true;
       /* The branch condition is taken from the current pass unit result */
-      fprintf(fp, "\tbranch ^%d %03d\n", cur_dest_index + unit_pass,
+      printf("\tbranch ^%d %03d\n", cur_dest_index + unit_pass,
              instr->branch_target + (instr->branch_target_lo ? 0 : 0x100));
    }
 
    if (instr->unknown_1 != 0) {
       printed = true;
-      fprintf(fp, "\tunknown_1 %u\n", instr->unknown_1);
+      printf("\tunknown_1 %u\n", instr->unknown_1);
    }
 
    if (!printed)
-      fprintf(fp, "\tnop\n");
+      printf("\tnop\n");
 }
 
 void
-gpir_disassemble_program(gpir_codegen_instr *code, unsigned num_instr, FILE *fp)
+gpir_disassemble_program(gpir_codegen_instr *code, unsigned num_instr)
 {
+   printf("=======disassembly:=======\n");
+
    unsigned cur_dest_index = 0;
    unsigned cur_instr = 0;
    for (gpir_codegen_instr *instr = code; cur_instr < num_instr;
         instr++, cur_instr++, cur_dest_index += num_units) {
-      print_instr(instr, instr - 1, cur_instr, cur_dest_index, fp);
+      print_instr(instr, instr - 1, cur_instr, cur_dest_index);
    }
 }
 

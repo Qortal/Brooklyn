@@ -28,8 +28,8 @@
 #include <stdio.h>
 #include "util/u_memory.h"
 #include "gallium/auxiliary/util/u_blend.h"
-#include "pan_context.h"
-#include "pan_blend_cso.h"
+#include "pan_blend_shaders.h"
+#include "pan_blending.h"
 #include "pan_bo.h"
 #include "panfrost-quirks.h"
 
@@ -49,14 +49,63 @@
  * However, that same blend configuration will compile to many different blend
  * shaders, depending on the framebuffer formats active. The rationale is that
  * blend shaders override not just fixed-function blending but also
- * fixed-function format conversion, so blend shaders are keyed to a particular
- * framebuffer format. As an example, the tilebuffer format is identical for
- * RG16F and RG16UI -- both are simply 32-bit raw pixels -- so both require
- * blend shaders.
+ * fixed-function format conversion. As such, each blend shader must be
+ * hardcoded to a particular framebuffer format to correctly pack/unpack it. As
+ * a concrete example, to the hardware there is no difference (!) between RG16F
+ * and RG16UI -- both are simply 4-byte-per-pixel chunks. Thus both formats
+ * require a blend shader (even with blending is totally disabled!), required
+ * to do conversion as necessary (if necessary).
  *
  * All of this state is encapsulated in the panfrost_blend_state struct
  * (our subclass of pipe_blend_state).
  */
+
+/* Given an initialized CSO and a particular framebuffer format, grab a
+ * blend shader, generating and compiling it if it doesn't exist
+ * (lazy-loading in a way). This routine, when the cache hits, should
+ * befast, suitable for calling every draw to avoid wacky dirty
+ * tracking paths. If the cache hits, boom, done. */
+
+struct panfrost_blend_shader *
+panfrost_get_blend_shader(struct panfrost_context *ctx,
+                          struct panfrost_blend_state *blend,
+                          enum pipe_format fmt,
+                          unsigned rt,
+                          const float *constants)
+{
+        /* Prevent NULL collision issues.. */
+        assert(fmt != 0);
+
+        /* Check the cache. Key by the RT and format */
+        struct hash_table *shaders = ctx->blend_shaders;
+        struct panfrost_blend_shader_key key = {
+                .rt = rt,
+                .format = fmt,
+                .has_constants = constants != NULL,
+                .logicop_enable = blend->base.logicop_enable,
+        };
+
+        if (blend->base.logicop_enable) {
+                key.logicop_func = blend->base.logicop_func;
+        } else {
+                unsigned idx = blend->base.independent_blend_enable ? rt : 0;
+
+                if (blend->base.rt[idx].blend_enable)
+                        key.equation = blend->base.rt[idx];
+        }
+
+        struct hash_entry *he = _mesa_hash_table_search(shaders, &key);
+        struct panfrost_blend_shader *shader = he ? he->data : NULL;
+
+        if (!shader) {
+                /* Cache miss. Build one instead, cache it, and go */
+                shader = panfrost_create_blend_shader(ctx, blend, &key);
+                _mesa_hash_table_insert(shaders, &shader->key, shader);
+        }
+
+        panfrost_compile_blend_shader(shader, constants);
+        return shader;
+}
 
 /* Create a blend CSO. Essentially, try to compile a fixed-function
  * expression and initialize blend shaders */
@@ -65,84 +114,70 @@ static void *
 panfrost_create_blend_state(struct pipe_context *pipe,
                             const struct pipe_blend_state *blend)
 {
-        struct panfrost_context *ctx = pan_context(pipe);
         struct panfrost_device *dev = pan_device(pipe->screen);
+        struct panfrost_context *ctx = pan_context(pipe);
         struct panfrost_blend_state *so = rzalloc(ctx, struct panfrost_blend_state);
+        unsigned version = dev->gpu_id >> 12;
         so->base = *blend;
 
-        so->pan.logicop_enable = blend->logicop_enable;
-        so->pan.logicop_func = blend->logicop_func;
-        so->pan.rt_count = blend->max_rt + 1;
+        /* TODO: The following features are not yet implemented */
+        assert(!blend->alpha_to_one);
 
-        for (unsigned c = 0; c < so->pan.rt_count; ++c) {
+        for (unsigned c = 0; c < PIPE_MAX_COLOR_BUFS; ++c) {
                 unsigned g = blend->independent_blend_enable ? c : 0;
-                const struct pipe_rt_blend_state pipe = blend->rt[g];
-                struct pan_blend_equation equation;
+                struct pipe_rt_blend_state pipe = blend->rt[g];
 
-                equation.color_mask = pipe.colormask;
-                equation.blend_enable = pipe.blend_enable;
+                struct panfrost_blend_rt *rt = &so->rt[c];
 
-                if (pipe.blend_enable) {
-                        equation.rgb_func = util_blend_func_to_shader(pipe.rgb_func);
-                        equation.rgb_src_factor = util_blend_factor_to_shader(pipe.rgb_src_factor);
-                        equation.rgb_invert_src_factor = util_blend_factor_is_inverted(pipe.rgb_src_factor);
-                        equation.rgb_dst_factor = util_blend_factor_to_shader(pipe.rgb_dst_factor);
-                        equation.rgb_invert_dst_factor = util_blend_factor_is_inverted(pipe.rgb_dst_factor);
-                        equation.alpha_func = util_blend_func_to_shader(pipe.alpha_func);
-                        equation.alpha_src_factor = util_blend_factor_to_shader(pipe.alpha_src_factor);
-                        equation.alpha_invert_src_factor = util_blend_factor_is_inverted(pipe.alpha_src_factor);
-                        equation.alpha_dst_factor = util_blend_factor_to_shader(pipe.alpha_dst_factor);
-                        equation.alpha_invert_dst_factor = util_blend_factor_is_inverted(pipe.alpha_dst_factor);
+                /* Logic ops are always shader */
+                if (blend->logicop_enable) {
+                        rt->load_dest = true;
+                        continue;
                 }
 
-                /* Determine some common properties */
-                unsigned constant_mask = pan_blend_constant_mask(equation);
-                so->info[c] = (struct pan_blend_info) {
-                        .no_colour = (equation.color_mask == 0),
-                        .opaque = pan_blend_is_opaque(equation),
-                        .constant_mask = constant_mask,
+                rt->constant_mask = panfrost_blend_constant_mask(&pipe);
+                rt->has_fixed_function =
+                        panfrost_make_fixed_blend_mode(pipe, &rt->equation);
 
-                        /* TODO: check the dest for the logicop */
-                        .load_dest = blend->logicop_enable ||
-                                pan_blend_reads_dest(equation),
+                /* v6 doesn't support blend constants in FF blend equations. */
+                if (rt->has_fixed_function && version == 6 && rt->constant_mask)
+                        rt->has_fixed_function = false;
 
-                        /* Could this possibly be fixed-function? */
-                        .fixed_function = !blend->logicop_enable &&
-                                pan_blend_can_fixed_function(equation) &&
-                                (!constant_mask ||
-                                 pan_blend_supports_constant(dev->arch, c))
-                };
-
-                so->pan.rts[c].equation = equation;
-
-                /* Bifrost needs to know if any render target loads its
-                 * destination in the hot draw path, so precompute this */
-                if (so->info[c].load_dest)
-                        so->load_dest_mask |= BITFIELD_BIT(c);
-
-                /* Converting equations to Mali style is expensive, do it at
-                 * CSO create time instead of draw-time */
-                if (so->info[c].fixed_function) {
-                        pan_pack(&so->equation[c], BLEND_EQUATION, cfg)
-                                pan_blend_to_fixed_function_equation(equation, &cfg);
+                if (rt->has_fixed_function) {
+                        rt->opaque = pipe.rgb_src_factor == PIPE_BLENDFACTOR_ONE &&
+                                     pipe.rgb_dst_factor == PIPE_BLENDFACTOR_ZERO &&
+                                     (pipe.rgb_func == PIPE_BLEND_ADD ||
+                                      pipe.rgb_func == PIPE_BLEND_SUBTRACT) &&
+                                     pipe.alpha_src_factor == PIPE_BLENDFACTOR_ONE &&
+                                     pipe.alpha_dst_factor == PIPE_BLENDFACTOR_ZERO &&
+                                     (pipe.alpha_func == PIPE_BLEND_ADD ||
+                                      pipe.alpha_func == PIPE_BLEND_SUBTRACT) &&
+                                     pipe.colormask == 0xf;
                 }
+
+                rt->load_dest = util_blend_uses_dest(pipe)
+                        || pipe.colormask != 0xF;
+
+                rt->no_colour = pipe.colormask == 0x0;
         }
 
         return so;
 }
 
 static void
-panfrost_bind_blend_state(struct pipe_context *pipe, void *cso)
+panfrost_bind_blend_state(struct pipe_context *pipe,
+                          void *cso)
 {
         struct panfrost_context *ctx = pan_context(pipe);
-        ctx->blend = cso;
-        ctx->dirty_shader[PIPE_SHADER_FRAGMENT] |= PAN_DIRTY_STAGE_RENDERER;
+        ctx->blend = (struct panfrost_blend_state *) cso;
 }
 
 static void
-panfrost_delete_blend_state(struct pipe_context *pipe, void *cso)
+panfrost_delete_blend_state(struct pipe_context *pipe,
+                            void *cso)
 {
-        ralloc_free(cso);
+        struct panfrost_blend_state *blend = (struct panfrost_blend_state *) cso;
+        ralloc_free(blend);
 }
 
 static void
@@ -150,40 +185,80 @@ panfrost_set_blend_color(struct pipe_context *pipe,
                          const struct pipe_blend_color *blend_color)
 {
         struct panfrost_context *ctx = pan_context(pipe);
-        ctx->dirty_shader[PIPE_SHADER_FRAGMENT] |= PAN_DIRTY_STAGE_RENDERER;
 
         if (blend_color)
                 ctx->blend_color = *blend_color;
 }
 
+/* Given a vec4 of constants, reduce it to just a single constant according to
+ * the mask (if we can) */
+
+static bool
+panfrost_blend_constant(float *out, float *in, unsigned mask)
+{
+        /* If there is no components used, it automatically works */
+
+        if (!mask)
+                return true;
+
+        /* Find some starter mask */
+        unsigned first = ffs(mask) - 1;
+        float cons = in[first];
+        mask ^= (1 << first);
+
+        /* Ensure the rest are equal */
+        while (mask) {
+                unsigned i = u_bit_scan(&mask);
+
+                if (in[i] != cons)
+                        return false;
+        }
+
+        /* Otherwise, we're good to go */
+        *out = cons;
+        return true;
+}
+
 /* Create a final blend given the context */
 
-mali_ptr
-panfrost_get_blend(struct panfrost_batch *batch, unsigned rti, struct panfrost_bo **bo, unsigned *shader_offset)
+struct panfrost_blend_final
+panfrost_get_blend_for_context(struct panfrost_context *ctx, unsigned rti, struct panfrost_bo **bo, unsigned *shader_offset)
 {
-        struct panfrost_context *ctx = batch->ctx;
-        struct panfrost_device *dev = pan_device(ctx->base.screen);
-        struct panfrost_blend_state *blend = ctx->blend;
-        struct pan_blend_info info = blend->info[rti];
-        struct pipe_surface *surf = batch->key.cbufs[rti];
-        enum pipe_format fmt = surf->format;
+        struct panfrost_batch *batch = panfrost_get_batch_for_fbo(ctx);
+        struct pipe_framebuffer_state *fb = &ctx->pipe_framebuffer;
+        enum pipe_format fmt = fb->cbufs[rti]->format;
 
-        /* Use fixed-function if the equation permits, the format is blendable,
-         * and no more than one unique constant is accessed */
-        if (info.fixed_function && panfrost_blendable_formats[fmt].internal &&
-                        pan_blend_is_homogenous_constant(info.constant_mask,
-                                ctx->blend_color.color)) {
-                return 0;
+        /* Grab the blend state */
+        struct panfrost_blend_state *blend = ctx->blend;
+        struct panfrost_blend_rt *rt = &blend->rt[rti];
+
+        /* First, we'll try fixed function, matching equationn and constant */
+        if (rt->has_fixed_function && panfrost_can_fixed_blend(fmt)) {
+                float constant = 0.0;
+
+                if (panfrost_blend_constant(
+                            &constant,
+                            ctx->blend_color.color,
+                            rt->constant_mask)) {
+                        struct panfrost_blend_final final = {
+                                .equation = {
+                                        .equation = rt->equation,
+                                        .constant = constant
+                                },
+                                .load_dest = rt->load_dest,
+                                .opaque = rt->opaque,
+                                .no_colour = rt->no_colour
+                        };
+
+                        return final;
+                }
         }
 
         /* Otherwise, we need to grab a shader */
-        struct pan_blend_state pan_blend = blend->pan;
-        unsigned nr_samples = surf->nr_samples ? : surf->texture->nr_samples;
-
-        pan_blend.rts[rti].format = fmt;
-        pan_blend.rts[rti].nr_samples = nr_samples;
-        memcpy(pan_blend.constants, ctx->blend_color.color,
-               sizeof(pan_blend.constants));
+        struct panfrost_blend_shader *shader =
+                panfrost_get_blend_shader(ctx, blend, fmt, rti,
+                                          rt->constant_mask ?
+                                          ctx->blend_color.color : NULL);
 
         /* Upload the shader, sharing a BO */
         if (!(*bo)) {
@@ -191,34 +266,27 @@ panfrost_get_blend(struct panfrost_batch *batch, unsigned rti, struct panfrost_b
                    PAN_BO_EXECUTE,
                    PAN_BO_ACCESS_PRIVATE |
                    PAN_BO_ACCESS_READ |
-                   PAN_BO_ACCESS_FRAGMENT, "Blend shader");
+                   PAN_BO_ACCESS_FRAGMENT);
         }
 
-        struct panfrost_shader_state *ss = panfrost_get_shader_state(ctx, PIPE_SHADER_FRAGMENT);
+        /* Size check */
+        assert((*shader_offset + shader->size) < 4096);
 
-        /* Default for Midgard */
-        nir_alu_type col0_type = nir_type_float32;
-        nir_alu_type col1_type = nir_type_float32;
+        memcpy((*bo)->ptr.cpu + *shader_offset, shader->buffer, shader->size);
 
-        /* Bifrost has per-output types, respect them */
-        if (pan_is_bifrost(dev)) {
-                col0_type = ss->info.bifrost.blend[rti].type;
-                col1_type = ss->info.bifrost.blend_src1_type;
-        }
+        struct panfrost_blend_final final = {
+                .is_shader = true,
+                .shader = {
+                        .work_count = shader->work_count,
+                        .first_tag = shader->first_tag,
+                        .gpu = (*bo)->ptr.gpu + *shader_offset,
+                },
+                .load_dest = rt->load_dest,
+        };
 
-        pthread_mutex_lock(&dev->blend_shaders.lock);
-        struct pan_blend_shader_variant *shader =
-                pan_blend_get_shader_locked(dev, &pan_blend,
-                                col0_type, col1_type, rti);
+        *shader_offset += shader->size;
 
-        /* Size check and upload */
-        unsigned offset = *shader_offset;
-        assert((offset + shader->binary.size) < 4096);
-        memcpy((*bo)->ptr.cpu + offset, shader->binary.data, shader->binary.size);
-        *shader_offset += shader->binary.size;
-        pthread_mutex_unlock(&dev->blend_shaders.lock);
-
-        return ((*bo)->ptr.gpu + offset) | shader->first_tag;
+        return final;
 }
 
 void

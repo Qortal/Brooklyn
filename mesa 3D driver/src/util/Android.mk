@@ -47,10 +47,7 @@ LOCAL_C_INCLUDES := \
 	$(MESA_TOP)/src/gallium/include \
 	$(MESA_TOP)/src/gallium/auxiliary \
 	$(MESA_TOP)/src/util/format \
-	$(intermediates)/util/format \
-	$(intermediates)
-
-LOCAL_CFLAGS := -DNO_FORMAT_ASM
+	$(intermediates)/format
 
 # If Android version >=8 MESA should static link libexpat else should dynamic link
 ifeq ($(shell test $(PLATFORM_SDK_VERSION) -ge 27; echo $$?), 0)
@@ -61,22 +58,14 @@ LOCAL_SHARED_LIBRARIES := \
 	libexpat
 endif
 
-LOCAL_SHARED_LIBRARIES += liblog libsync libcutils
+LOCAL_SHARED_LIBRARIES += liblog libsync
 
 # Generated sources
 
 LOCAL_EXPORT_C_INCLUDE_DIRS := $(intermediates)
 
-# Some sources do require "util/format/u_format_pack.h" generated header
-UTIL_GENERATED_SOURCES := $(addprefix $(intermediates)/,$(subst format/u_format_pack.h,util/format/u_format_pack.h,$(MESA_UTIL_GENERATED_FILES)))
+UTIL_GENERATED_SOURCES := $(addprefix $(intermediates)/,$(MESA_UTIL_GENERATED_FILES))
 LOCAL_GENERATED_SOURCES := $(UTIL_GENERATED_SOURCES)
-
-driconf_static_gen := $(LOCAL_PATH)/driconf_static.py
-driconf_static_deps := $(LOCAL_PATH)/00-mesa-defaults.conf
-
-$(intermediates)/driconf_static.h: $(driconf_static_deps)
-	@mkdir -p $(dir $@)
-	$(hide) $(MESA_PYTHON2) $(driconf_static_gen) $^ $@
 
 format_srgb_gen := $(LOCAL_PATH)/format_srgb.py
 
@@ -89,7 +78,7 @@ u_format_deps := $(LOCAL_PATH)/format/u_format.csv \
 	$(LOCAL_PATH)/format/u_format_pack.py \
 	$(LOCAL_PATH)/format/u_format_parse.py
 
-$(intermediates)/util/format/u_format_pack.h: $(u_format_deps)
+$(intermediates)/format/u_format_pack.h: $(u_format_deps)
 	@mkdir -p $(dir $@)
 	$(hide) $(MESA_PYTHON2) $(u_format_gen) --header $< > $@
 

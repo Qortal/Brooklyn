@@ -28,7 +28,6 @@ libintel_compiler_files = files(
   'brw_clip_unfilled.c',
   'brw_clip_util.c',
   'brw_compile_clip.c',
-  'brw_compile_ff_gs.c',
   'brw_compile_sf.c',
   'brw_compiler.c',
   'brw_compiler.h',
@@ -84,16 +83,10 @@ libintel_compiler_files = files(
   'brw_nir_lower_conversions.c',
   'brw_nir_lower_cs_intrinsics.c',
   'brw_nir_lower_alpha_to_coverage.c',
-  'brw_nir_lower_intersection_shader.c',
+  'brw_nir_lower_image_load_store.c',
   'brw_nir_lower_mem_access_bit_sizes.c',
-  'brw_nir_lower_rt_intrinsics.c',
   'brw_nir_lower_scoped_barriers.c',
-  'brw_nir_lower_shader_calls.c',
-  'brw_nir_lower_storage_image.c',
   'brw_nir_opt_peephole_ffma.c',
-  'brw_nir_rt.h',
-  'brw_nir_rt.c',
-  'brw_nir_rt_builder.h',
   'brw_nir_tcs_workarounds.c',
   'brw_nir_clamp_image_1d_2d_array_sizes.c',
   'brw_packed_float.c',
@@ -101,7 +94,6 @@ libintel_compiler_files = files(
   'brw_reg.h',
   'brw_reg_type.c',
   'brw_reg_type.h',
-  'brw_rt.h',
   'brw_schedule_instructions.cpp',
   'brw_shader.cpp',
   'brw_shader.h',
@@ -131,8 +123,8 @@ libintel_compiler_files = files(
   'brw_vec4_vs.h',
   'brw_vue_map.c',
   'brw_wm_iz.cpp',
-  'gfx6_gs_visitor.cpp',
-  'gfx6_gs_visitor.h',
+  'gen6_gs_visitor.cpp',
+  'gen6_gs_visitor.h',
 )
 
 brw_nir_trig = custom_target(
@@ -153,7 +145,7 @@ libintel_compiler = static_library(
   include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_intel],
   c_args : [no_override_init_args],
   gnu_symbol_visibility : 'hidden',
-  dependencies : [idep_nir_headers, idep_mesautil],
+  dependencies : idep_nir_headers,
   build_by_default : false,
 )
 

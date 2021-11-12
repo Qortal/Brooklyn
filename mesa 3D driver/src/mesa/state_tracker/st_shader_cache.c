@@ -100,7 +100,10 @@ st_serialise_ir_program(struct gl_context *ctx, struct gl_program *prog,
       struct st_vertex_program *stvp = (struct st_vertex_program *)stp;
 
       blob_write_uint32(&blob, stvp->num_inputs);
-      blob_write_uint32(&blob, stvp->vert_attrib_mask);
+      blob_write_bytes(&blob, stvp->index_to_input,
+                       sizeof(stvp->index_to_input));
+      blob_write_bytes(&blob, stvp->input_to_index,
+                       sizeof(stvp->input_to_index));
       blob_write_bytes(&blob, stvp->result_to_output,
                        sizeof(stvp->result_to_output));
    }
@@ -177,12 +180,7 @@ st_deserialise_ir_program(struct gl_context *ctx,
    uint8_t *buffer = (uint8_t *) prog->driver_cache_blob;
 
    st_set_prog_affected_state_flags(prog);
-
-   /* Avoid reallocation of the program parameter list, because the uniform
-    * storage is only associated with the original parameter list.
-    * This should be enough for Bitmap and DrawPixels constants.
-    */
-   _mesa_ensure_and_associate_uniform_storage(ctx, shProg, prog, 16);
+   _mesa_associate_uniform_storage(ctx, shProg, prog);
 
    assert(prog->driver_cache_blob && prog->driver_cache_blob_size > 0);
 
@@ -195,7 +193,10 @@ st_deserialise_ir_program(struct gl_context *ctx,
    if (prog->info.stage == MESA_SHADER_VERTEX) {
       struct st_vertex_program *stvp = (struct st_vertex_program *)stp;
       stvp->num_inputs = blob_read_uint32(&blob_reader);
-      stvp->vert_attrib_mask = blob_read_uint32(&blob_reader);
+      blob_copy_bytes(&blob_reader, (uint8_t *) stvp->index_to_input,
+                      sizeof(stvp->index_to_input));
+      blob_copy_bytes(&blob_reader, (uint8_t *) stvp->input_to_index,
+                      sizeof(stvp->input_to_index));
       blob_copy_bytes(&blob_reader, (uint8_t *) stvp->result_to_output,
                       sizeof(stvp->result_to_output));
    }

@@ -30,6 +30,8 @@ This script is included for reference -- we should be able to remove this in
 the future.
 """
 
+from __future__ import absolute_import, division, print_function, unicode_literals
+
 import json
 import math
 import re

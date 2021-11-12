@@ -63,7 +63,6 @@ struct gbm_dri_device {
 
    void *driver;
    char *driver_name; /* Name of the DRI module, without the _dri suffix */
-   bool software; /* A software driver was loaded */
 
    __DRIscreen *screen;
    __DRIcontext *context;
@@ -170,12 +169,12 @@ gbm_dri_bo_map_dumb(struct gbm_dri_bo *bo)
    memset(&map_arg, 0, sizeof(map_arg));
    map_arg.handle = bo->handle;
 
-   ret = drmIoctl(bo->base.gbm->v0.fd, DRM_IOCTL_MODE_MAP_DUMB, &map_arg);
+   ret = drmIoctl(bo->base.gbm->fd, DRM_IOCTL_MODE_MAP_DUMB, &map_arg);
    if (ret)
       return NULL;
 
    bo->map = mmap(0, bo->size, PROT_WRITE,
-                  MAP_SHARED, bo->base.gbm->v0.fd, map_arg.offset);
+                  MAP_SHARED, bo->base.gbm->fd, map_arg.offset);
    if (bo->map == MAP_FAILED) {
       bo->map = NULL;
       return NULL;

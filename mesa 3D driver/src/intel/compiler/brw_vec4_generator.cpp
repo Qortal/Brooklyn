@@ -23,18 +23,18 @@
 #include "brw_vec4.h"
 #include "brw_cfg.h"
 #include "brw_eu.h"
-#include "dev/intel_debug.h"
+#include "dev/gen_debug.h"
 #include "util/mesa-sha1.h"
 
 using namespace brw;
 
 static void
-generate_math1_gfx4(struct brw_codegen *p,
+generate_math1_gen4(struct brw_codegen *p,
                     vec4_instruction *inst,
                     struct brw_reg dst,
                     struct brw_reg src)
 {
-   gfx4_math(p,
+   gen4_math(p,
 	     dst,
 	     brw_math_function(inst->opcode),
 	     inst->base_mrf,
@@ -43,7 +43,7 @@ generate_math1_gfx4(struct brw_codegen *p,
 }
 
 static void
-check_gfx6_math_src_arg(struct brw_reg src)
+check_gen6_math_src_arg(struct brw_reg src)
 {
    /* Source swizzles are ignored. */
    assert(!src.abs);
@@ -52,7 +52,7 @@ check_gfx6_math_src_arg(struct brw_reg src)
 }
 
 static void
-generate_math_gfx6(struct brw_codegen *p,
+generate_math_gen6(struct brw_codegen *p,
                    vec4_instruction *inst,
                    struct brw_reg dst,
                    struct brw_reg src0,
@@ -61,17 +61,17 @@ generate_math_gfx6(struct brw_codegen *p,
    /* Can't do writemask because math can't be align16. */
    assert(dst.writemask == WRITEMASK_XYZW);
    /* Source swizzles are ignored. */
-   check_gfx6_math_src_arg(src0);
+   check_gen6_math_src_arg(src0);
    if (src1.file == BRW_GENERAL_REGISTER_FILE)
-      check_gfx6_math_src_arg(src1);
+      check_gen6_math_src_arg(src1);
 
    brw_set_default_access_mode(p, BRW_ALIGN_1);
-   gfx6_math(p, dst, brw_math_function(inst->opcode), src0, src1);
+   gen6_math(p, dst, brw_math_function(inst->opcode), src0, src1);
    brw_set_default_access_mode(p, BRW_ALIGN_16);
 }
 
 static void
-generate_math2_gfx4(struct brw_codegen *p,
+generate_math2_gen4(struct brw_codegen *p,
                     vec4_instruction *inst,
                     struct brw_reg dst,
                     struct brw_reg src0,
@@ -96,7 +96,7 @@ generate_math2_gfx4(struct brw_codegen *p,
    brw_MOV(p, retype(brw_message_reg(inst->base_mrf + 1), op1.type), op1);
    brw_pop_insn_state(p);
 
-   gfx4_math(p,
+   gen4_math(p,
 	     dst,
 	     brw_math_function(inst->opcode),
 	     inst->base_mrf,
@@ -114,60 +114,60 @@ generate_tex(struct brw_codegen *p,
              struct brw_reg surface_index,
              struct brw_reg sampler_index)
 {
-   const struct intel_device_info *devinfo = p->devinfo;
+   const struct gen_device_info *devinfo = p->devinfo;
    int msg_type = -1;
 
-   if (devinfo->ver >= 5) {
+   if (devinfo->gen >= 5) {
       switch (inst->opcode) {
       case SHADER_OPCODE_TEX:
       case SHADER_OPCODE_TXL:
 	 if (inst->shadow_compare) {
-	    msg_type = GFX5_SAMPLER_MESSAGE_SAMPLE_LOD_COMPARE;
+	    msg_type = GEN5_SAMPLER_MESSAGE_SAMPLE_LOD_COMPARE;
 	 } else {
-	    msg_type = GFX5_SAMPLER_MESSAGE_SAMPLE_LOD;
+	    msg_type = GEN5_SAMPLER_MESSAGE_SAMPLE_LOD;
 	 }
 	 break;
       case SHADER_OPCODE_TXD:
          if (inst->shadow_compare) {
-            /* Gfx7.5+.  Otherwise, lowered by brw_lower_texture_gradients(). */
+            /* Gen7.5+.  Otherwise, lowered by brw_lower_texture_gradients(). */
             assert(devinfo->is_haswell);
             msg_type = HSW_SAMPLER_MESSAGE_SAMPLE_DERIV_COMPARE;
          } else {
-            msg_type = GFX5_SAMPLER_MESSAGE_SAMPLE_DERIVS;
+            msg_type = GEN5_SAMPLER_MESSAGE_SAMPLE_DERIVS;
          }
 	 break;
       case SHADER_OPCODE_TXF:
-	 msg_type = GFX5_SAMPLER_MESSAGE_SAMPLE_LD;
+	 msg_type = GEN5_SAMPLER_MESSAGE_SAMPLE_LD;
 	 break;
       case SHADER_OPCODE_TXF_CMS:
-         if (devinfo->ver >= 7)
-            msg_type = GFX7_SAMPLER_MESSAGE_SAMPLE_LD2DMS;
+         if (devinfo->gen >= 7)
+            msg_type = GEN7_SAMPLER_MESSAGE_SAMPLE_LD2DMS;
          else
-            msg_type = GFX5_SAMPLER_MESSAGE_SAMPLE_LD;
+            msg_type = GEN5_SAMPLER_MESSAGE_SAMPLE_LD;
          break;
       case SHADER_OPCODE_TXF_MCS:
-         assert(devinfo->ver >= 7);
-         msg_type = GFX7_SAMPLER_MESSAGE_SAMPLE_LD_MCS;
+         assert(devinfo->gen >= 7);
+         msg_type = GEN7_SAMPLER_MESSAGE_SAMPLE_LD_MCS;
          break;
       case SHADER_OPCODE_TXS:
-	 msg_type = GFX5_SAMPLER_MESSAGE_SAMPLE_RESINFO;
+	 msg_type = GEN5_SAMPLER_MESSAGE_SAMPLE_RESINFO;
 	 break;
       case SHADER_OPCODE_TG4:
          if (inst->shadow_compare) {
-            msg_type = GFX7_SAMPLER_MESSAGE_SAMPLE_GATHER4_C;
+            msg_type = GEN7_SAMPLER_MESSAGE_SAMPLE_GATHER4_C;
          } else {
-            msg_type = GFX7_SAMPLER_MESSAGE_SAMPLE_GATHER4;
+            msg_type = GEN7_SAMPLER_MESSAGE_SAMPLE_GATHER4;
          }
          break;
       case SHADER_OPCODE_TG4_OFFSET:
          if (inst->shadow_compare) {
-            msg_type = GFX7_SAMPLER_MESSAGE_SAMPLE_GATHER4_PO_C;
+            msg_type = GEN7_SAMPLER_MESSAGE_SAMPLE_GATHER4_PO_C;
          } else {
-            msg_type = GFX7_SAMPLER_MESSAGE_SAMPLE_GATHER4_PO;
+            msg_type = GEN7_SAMPLER_MESSAGE_SAMPLE_GATHER4_PO;
          }
          break;
       case SHADER_OPCODE_SAMPLEINFO:
-         msg_type = GFX6_SAMPLER_MESSAGE_SAMPLE_SAMPLEINFO;
+         msg_type = GEN6_SAMPLER_MESSAGE_SAMPLE_SAMPLEINFO;
          break;
       default:
 	 unreachable("should not get here: invalid vec4 texture opcode");
@@ -211,7 +211,7 @@ generate_tex(struct brw_codegen *p,
     * use an implied move from g0 to the first message register.
     */
    if (inst->header_size != 0) {
-      if (devinfo->ver < 6 && !inst->offset) {
+      if (devinfo->gen < 6 && !inst->offset) {
          /* Set up an implied move from g0 to the MRF. */
          src = brw_vec8_grf(0, 0);
       } else {
@@ -261,11 +261,11 @@ generate_tex(struct brw_codegen *p,
    }
 
    /* Stomp the resinfo output type to UINT32.  On gens 4-5, the output type
-    * is set as part of the message descriptor.  On gfx4, the PRM seems to
+    * is set as part of the message descriptor.  On gen4, the PRM seems to
     * allow UINT32 and FLOAT32 (i965 PRM, Vol. 4 Section 4.8.1.1), but on
     * later gens UINT32 is required.  Once you hit Sandy Bridge, the bit is
     * gone from the message descriptor entirely and you just get UINT32 all
-    * the time regasrdless.  Since we can really only do non-UINT32 on gfx4,
+    * the time regasrdless.  Since we can really only do non-UINT32 on gen4,
     * just stomp it to UINT32 all the time.
     */
    if (inst->opcode == SHADER_OPCODE_TXS)
@@ -321,7 +321,7 @@ generate_tex(struct brw_codegen *p,
       brw_pop_insn_state(p);
 
       if (inst->base_mrf != -1)
-         gfx6_resolve_implied_move(p, &src, inst->base_mrf);
+         gen6_resolve_implied_move(p, &src, inst->base_mrf);
 
       /* dst = send(offset, a0.0 | <descriptor>) */
       brw_send_indirect_message(
@@ -437,7 +437,7 @@ generate_gs_set_write_offset(struct brw_codegen *p,
    brw_push_insn_state(p);
    brw_set_default_access_mode(p, BRW_ALIGN_1);
    brw_set_default_mask_control(p, BRW_MASK_DISABLE);
-   assert(p->devinfo->ver >= 7 &&
+   assert(p->devinfo->gen >= 7 &&
           src1.file == BRW_IMMEDIATE_VALUE &&
           src1.type == BRW_REGISTER_TYPE_UD &&
           src1.ud <= USHRT_MAX);
@@ -506,7 +506,7 @@ generate_gs_svb_write(struct brw_codegen *p,
                  final_write ? src1 : brw_null_reg(), /* dest == src1 */
                  1, /* msg_reg_nr */
                  dst, /* src0 == previous dst */
-                 BRW_GFX6_SOL_BINDING_START + binding, /* binding_table_index */
+                 BRW_GEN6_SOL_BINDING_START + binding, /* binding_table_index */
                  final_write); /* send_commit_msg */
 
    /* Finally, wait for the write commit to occur so that we can proceed to
@@ -637,17 +637,17 @@ static void
 generate_gs_get_instance_id(struct brw_codegen *p,
                             struct brw_reg dst)
 {
-   /* We want to right shift R0.0 & R0.1 by GFX7_GS_PAYLOAD_INSTANCE_ID_SHIFT
+   /* We want to right shift R0.0 & R0.1 by GEN7_GS_PAYLOAD_INSTANCE_ID_SHIFT
     * and store into dst.0 & dst.4. So generate the instruction:
     *
-    *     shr(8) dst<1> R0<1,4,0> GFX7_GS_PAYLOAD_INSTANCE_ID_SHIFT { align1 WE_normal 1Q }
+    *     shr(8) dst<1> R0<1,4,0> GEN7_GS_PAYLOAD_INSTANCE_ID_SHIFT { align1 WE_normal 1Q }
     */
    brw_push_insn_state(p);
    brw_set_default_access_mode(p, BRW_ALIGN_1);
    dst = retype(dst, BRW_REGISTER_TYPE_UD);
    struct brw_reg r0(retype(brw_vec8_grf(0, 0), BRW_REGISTER_TYPE_UD));
    brw_SHR(p, dst, stride(r0, 1, 4, 0),
-           brw_imm_ud(GFX7_GS_PAYLOAD_INSTANCE_ID_SHIFT));
+           brw_imm_ud(GEN7_GS_PAYLOAD_INSTANCE_ID_SHIFT));
    brw_pop_insn_state(p);
 }
 
@@ -725,7 +725,7 @@ generate_gs_ff_sync(struct brw_codegen *p,
 static void
 generate_gs_set_primitive_id(struct brw_codegen *p, struct brw_reg dst)
 {
-   /* In gfx6, PrimitiveID is delivered in R0.1 of the payload */
+   /* In gen6, PrimitiveID is delivered in R0.1 of the payload */
    struct brw_reg src = brw_vec8_grf(0, 0);
    brw_push_insn_state(p);
    brw_set_default_mask_control(p, BRW_MASK_DISABLE);
@@ -737,7 +737,7 @@ generate_gs_set_primitive_id(struct brw_codegen *p, struct brw_reg dst)
 static void
 generate_tcs_get_instance_id(struct brw_codegen *p, struct brw_reg dst)
 {
-   const struct intel_device_info *devinfo = p->devinfo;
+   const struct gen_device_info *devinfo = p->devinfo;
    const bool ivb = devinfo->is_ivybridge || devinfo->is_baytrail;
 
    /* "Instance Count" comes as part of the payload in r0.2 bits 23:17.
@@ -768,7 +768,7 @@ generate_tcs_urb_write(struct brw_codegen *p,
                        vec4_instruction *inst,
                        struct brw_reg urb_header)
 {
-   const struct intel_device_info *devinfo = p->devinfo;
+   const struct gen_device_info *devinfo = p->devinfo;
 
    brw_inst *send = brw_next_insn(p, BRW_OPCODE_SEND);
    brw_set_dest(p, send, brw_null_reg());
@@ -952,7 +952,7 @@ generate_vec4_urb_read(struct brw_codegen *p,
                        struct brw_reg dst,
                        struct brw_reg header)
 {
-   const struct intel_device_info *devinfo = p->devinfo;
+   const struct gen_device_info *devinfo = p->devinfo;
 
    assert(header.file == BRW_GENERAL_REGISTER_FILE);
    assert(header.type == BRW_REGISTER_TYPE_UD);
@@ -977,7 +977,7 @@ generate_tcs_release_input(struct brw_codegen *p,
                            struct brw_reg vertex,
                            struct brw_reg is_unpaired)
 {
-   const struct intel_device_info *devinfo = p->devinfo;
+   const struct gen_device_info *devinfo = p->devinfo;
 
    assert(vertex.file == BRW_IMMEDIATE_VALUE);
    assert(vertex.type == BRW_REGISTER_TYPE_UD);
@@ -1057,7 +1057,7 @@ generate_tcs_create_barrier_header(struct brw_codegen *p,
                                    struct brw_vue_prog_data *prog_data,
                                    struct brw_reg dst)
 {
-   const struct intel_device_info *devinfo = p->devinfo;
+   const struct gen_device_info *devinfo = p->devinfo;
    const bool ivb = devinfo->is_ivybridge || devinfo->is_baytrail;
    struct brw_reg m0_2 = get_element_ud(dst, 2);
    unsigned instances = ((struct brw_tcs_prog_data *) prog_data)->instances;
@@ -1069,7 +1069,7 @@ generate_tcs_create_barrier_header(struct brw_codegen *p,
    /* Zero the message header */
    brw_MOV(p, retype(dst, BRW_REGISTER_TYPE_UD), brw_imm_ud(0u));
 
-   /* Copy "Barrier ID" from r0.2, bits 16:13 (Gfx7.5+) or 15:12 (Gfx7) */
+   /* Copy "Barrier ID" from r0.2, bits 16:13 (Gen7.5+) or 15:12 (Gen7) */
    brw_AND(p, m0_2,
            retype(brw_vec1_grf(0, 2), BRW_REGISTER_TYPE_UD),
            brw_imm_ud(ivb ? INTEL_MASK(15, 12) : INTEL_MASK(16, 13)));
@@ -1090,7 +1090,7 @@ generate_oword_dual_block_offsets(struct brw_codegen *p,
 {
    int second_vertex_offset;
 
-   if (p->devinfo->ver >= 6)
+   if (p->devinfo->gen >= 6)
       second_vertex_offset = 1;
    else
       second_vertex_offset = 16;
@@ -1146,26 +1146,26 @@ generate_scratch_read(struct brw_codegen *p,
                       struct brw_reg dst,
                       struct brw_reg index)
 {
-   const struct intel_device_info *devinfo = p->devinfo;
+   const struct gen_device_info *devinfo = p->devinfo;
    struct brw_reg header = brw_vec8_grf(0, 0);
 
-   gfx6_resolve_implied_move(p, &header, inst->base_mrf);
+   gen6_resolve_implied_move(p, &header, inst->base_mrf);
 
    generate_oword_dual_block_offsets(p, brw_message_reg(inst->base_mrf + 1),
 				     index);
 
    uint32_t msg_type;
 
-   if (devinfo->ver >= 6)
-      msg_type = GFX6_DATAPORT_READ_MESSAGE_OWORD_DUAL_BLOCK_READ;
-   else if (devinfo->ver == 5 || devinfo->is_g4x)
+   if (devinfo->gen >= 6)
+      msg_type = GEN6_DATAPORT_READ_MESSAGE_OWORD_DUAL_BLOCK_READ;
+   else if (devinfo->gen == 5 || devinfo->is_g4x)
       msg_type = G45_DATAPORT_READ_MESSAGE_OWORD_DUAL_BLOCK_READ;
    else
       msg_type = BRW_DATAPORT_READ_MESSAGE_OWORD_DUAL_BLOCK_READ;
 
    const unsigned target_cache =
-      devinfo->ver >= 7 ? GFX7_SFID_DATAPORT_DATA_CACHE :
-      devinfo->ver >= 6 ? GFX6_SFID_DATAPORT_RENDER_CACHE :
+      devinfo->gen >= 7 ? GEN7_SFID_DATAPORT_DATA_CACHE :
+      devinfo->gen >= 6 ? GEN6_SFID_DATAPORT_RENDER_CACHE :
       BRW_SFID_DATAPORT_READ;
 
    /* Each of the 8 channel enables is considered for whether each
@@ -1175,7 +1175,7 @@ generate_scratch_read(struct brw_codegen *p,
    brw_inst_set_sfid(devinfo, send, target_cache);
    brw_set_dest(p, send, dst);
    brw_set_src0(p, send, header);
-   if (devinfo->ver < 6)
+   if (devinfo->gen < 6)
       brw_inst_set_cond_modifier(devinfo, send, inst->base_mrf);
    brw_set_desc(p, send,
                 brw_message_desc(devinfo, 2, 1, true) |
@@ -1192,10 +1192,10 @@ generate_scratch_write(struct brw_codegen *p,
                        struct brw_reg src,
                        struct brw_reg index)
 {
-   const struct intel_device_info *devinfo = p->devinfo;
+   const struct gen_device_info *devinfo = p->devinfo;
    const unsigned target_cache =
-      (devinfo->ver >= 7 ? GFX7_SFID_DATAPORT_DATA_CACHE :
-       devinfo->ver >= 6 ? GFX6_SFID_DATAPORT_RENDER_CACHE :
+      (devinfo->gen >= 7 ? GEN7_SFID_DATAPORT_DATA_CACHE :
+       devinfo->gen >= 6 ? GEN6_SFID_DATAPORT_RENDER_CACHE :
        BRW_SFID_DATAPORT_WRITE);
    struct brw_reg header = brw_vec8_grf(0, 0);
    bool write_commit;
@@ -1205,7 +1205,7 @@ generate_scratch_write(struct brw_codegen *p,
     */
    brw_set_default_predicate_control(p, BRW_PREDICATE_NONE);
 
-   gfx6_resolve_implied_move(p, &header, inst->base_mrf);
+   gen6_resolve_implied_move(p, &header, inst->base_mrf);
 
    generate_oword_dual_block_offsets(p, brw_message_reg(inst->base_mrf + 1),
 				     index);
@@ -1216,21 +1216,21 @@ generate_scratch_write(struct brw_codegen *p,
 
    uint32_t msg_type;
 
-   if (devinfo->ver >= 7)
-      msg_type = GFX7_DATAPORT_DC_OWORD_DUAL_BLOCK_WRITE;
-   else if (devinfo->ver == 6)
-      msg_type = GFX6_DATAPORT_WRITE_MESSAGE_OWORD_DUAL_BLOCK_WRITE;
+   if (devinfo->gen >= 7)
+      msg_type = GEN7_DATAPORT_DC_OWORD_DUAL_BLOCK_WRITE;
+   else if (devinfo->gen == 6)
+      msg_type = GEN6_DATAPORT_WRITE_MESSAGE_OWORD_DUAL_BLOCK_WRITE;
    else
       msg_type = BRW_DATAPORT_WRITE_MESSAGE_OWORD_DUAL_BLOCK_WRITE;
 
    brw_set_default_predicate_control(p, inst->predicate);
 
-   /* Pre-gfx6, we have to specify write commits to ensure ordering
+   /* Pre-gen6, we have to specify write commits to ensure ordering
     * between reads and writes within a thread.  Afterwards, that's
     * guaranteed and write commits only matter for inter-thread
     * synchronization.
     */
-   if (devinfo->ver >= 6) {
+   if (devinfo->gen >= 6) {
       write_commit = false;
    } else {
       /* The visitor set up our destination register to be g0.  This
@@ -1251,7 +1251,7 @@ generate_scratch_write(struct brw_codegen *p,
    brw_inst_set_sfid(p->devinfo, send, target_cache);
    brw_set_dest(p, send, dst);
    brw_set_src0(p, send, header);
-   if (devinfo->ver < 6)
+   if (devinfo->gen < 6)
       brw_inst_set_cond_modifier(p->devinfo, send, inst->base_mrf);
    brw_set_desc(p, send,
                 brw_message_desc(devinfo, 3, write_commit, true) |
@@ -1259,6 +1259,7 @@ generate_scratch_write(struct brw_codegen *p,
                                   brw_scratch_surface_idx(p),
                                   BRW_DATAPORT_OWORD_DUAL_BLOCK_1OWORD,
                                   msg_type,
+                                  false, /* not a render target write */
                                   write_commit));
 }
 
@@ -1269,9 +1270,9 @@ generate_pull_constant_load(struct brw_codegen *p,
                             struct brw_reg index,
                             struct brw_reg offset)
 {
-   const struct intel_device_info *devinfo = p->devinfo;
+   const struct gen_device_info *devinfo = p->devinfo;
    const unsigned target_cache =
-      (devinfo->ver >= 6 ? GFX6_SFID_DATAPORT_SAMPLER_CACHE :
+      (devinfo->gen >= 6 ? GEN6_SFID_DATAPORT_SAMPLER_CACHE :
        BRW_SFID_DATAPORT_READ);
    assert(index.file == BRW_IMMEDIATE_VALUE &&
 	  index.type == BRW_REGISTER_TYPE_UD);
@@ -1279,9 +1280,9 @@ generate_pull_constant_load(struct brw_codegen *p,
 
    struct brw_reg header = brw_vec8_grf(0, 0);
 
-   gfx6_resolve_implied_move(p, &header, inst->base_mrf);
+   gen6_resolve_implied_move(p, &header, inst->base_mrf);
 
-   if (devinfo->ver >= 6) {
+   if (devinfo->gen >= 6) {
       if (offset.file == BRW_IMMEDIATE_VALUE) {
          brw_MOV(p, retype(brw_message_reg(inst->base_mrf + 1),
                            BRW_REGISTER_TYPE_D),
@@ -1299,9 +1300,9 @@ generate_pull_constant_load(struct brw_codegen *p,
 
    uint32_t msg_type;
 
-   if (devinfo->ver >= 6)
-      msg_type = GFX6_DATAPORT_READ_MESSAGE_OWORD_DUAL_BLOCK_READ;
-   else if (devinfo->ver == 5 || devinfo->is_g4x)
+   if (devinfo->gen >= 6)
+      msg_type = GEN6_DATAPORT_READ_MESSAGE_OWORD_DUAL_BLOCK_READ;
+   else if (devinfo->gen == 5 || devinfo->is_g4x)
       msg_type = G45_DATAPORT_READ_MESSAGE_OWORD_DUAL_BLOCK_READ;
    else
       msg_type = BRW_DATAPORT_READ_MESSAGE_OWORD_DUAL_BLOCK_READ;
@@ -1313,7 +1314,7 @@ generate_pull_constant_load(struct brw_codegen *p,
    brw_inst_set_sfid(devinfo, send, target_cache);
    brw_set_dest(p, send, dst);
    brw_set_src0(p, send, header);
-   if (devinfo->ver < 6)
+   if (devinfo->gen < 6)
       brw_inst_set_cond_modifier(p->devinfo, send, inst->base_mrf);
    brw_set_desc(p, send,
                 brw_message_desc(devinfo, 2, 1, true) |
@@ -1330,7 +1331,7 @@ generate_get_buffer_size(struct brw_codegen *p,
                          struct brw_reg src,
                          struct brw_reg surf_index)
 {
-   assert(p->devinfo->ver >= 7);
+   assert(p->devinfo->gen >= 7);
    assert(surf_index.type == BRW_REGISTER_TYPE_UD &&
           surf_index.file == BRW_IMMEDIATE_VALUE);
 
@@ -1340,7 +1341,7 @@ generate_get_buffer_size(struct brw_codegen *p,
               src,
               surf_index.ud,
               0,
-              GFX5_SAMPLER_MESSAGE_SAMPLE_RESINFO,
+              GEN5_SAMPLER_MESSAGE_SAMPLE_RESINFO,
               1, /* response length */
               inst->mlen,
               inst->header_size > 0,
@@ -1349,13 +1350,13 @@ generate_get_buffer_size(struct brw_codegen *p,
 }
 
 static void
-generate_pull_constant_load_gfx7(struct brw_codegen *p,
+generate_pull_constant_load_gen7(struct brw_codegen *p,
                                  vec4_instruction *inst,
                                  struct brw_reg dst,
                                  struct brw_reg surf_index,
                                  struct brw_reg offset)
 {
-   const struct intel_device_info *devinfo = p->devinfo;
+   const struct gen_device_info *devinfo = p->devinfo;
    assert(surf_index.type == BRW_REGISTER_TYPE_UD);
 
    if (surf_index.file == BRW_IMMEDIATE_VALUE) {
@@ -1368,7 +1369,7 @@ generate_pull_constant_load_gfx7(struct brw_codegen *p,
                    brw_message_desc(devinfo, inst->mlen, 1, inst->header_size) |
                    brw_sampler_desc(devinfo, surf_index.ud,
                                     0, /* LD message ignores sampler unit */
-                                    GFX5_SAMPLER_MESSAGE_SAMPLE_LD,
+                                    GEN5_SAMPLER_MESSAGE_SAMPLE_LD,
                                     BRW_SAMPLER_SIMD_MODE_SIMD4X2, 0));
    } else {
 
@@ -1394,7 +1395,7 @@ generate_pull_constant_load_gfx7(struct brw_codegen *p,
          brw_sampler_desc(devinfo,
                           0 /* surface */,
                           0 /* sampler */,
-                          GFX5_SAMPLER_MESSAGE_SAMPLE_LD,
+                          GEN5_SAMPLER_MESSAGE_SAMPLE_LD,
                           BRW_SAMPLER_SIMD_MODE_SIMD4X2,
                           0),
          false /* EOT */);
@@ -1408,7 +1409,7 @@ generate_mov_indirect(struct brw_codegen *p,
                       struct brw_reg indirect)
 {
    assert(indirect.type == BRW_REGISTER_TYPE_UD);
-   assert(p->devinfo->ver >= 6);
+   assert(p->devinfo->gen >= 6);
 
    unsigned imm_byte_offset = reg.nr * REG_SIZE + reg.subnr * (REG_SIZE / 2);
 
@@ -1465,57 +1466,6 @@ generate_mov_indirect(struct brw_codegen *p,
 }
 
 static void
-generate_zero_oob_push_regs(struct brw_codegen *p,
-                            struct brw_stage_prog_data *prog_data,
-                            struct brw_reg scratch,
-                            struct brw_reg bit_mask_in)
-{
-   const uint64_t want_zero = prog_data->zero_push_reg;
-   assert(want_zero);
-
-   assert(bit_mask_in.file == BRW_GENERAL_REGISTER_FILE);
-   assert(BRW_GET_SWZ(bit_mask_in.swizzle, 1) ==
-          BRW_GET_SWZ(bit_mask_in.swizzle, 0) + 1);
-   bit_mask_in.subnr += BRW_GET_SWZ(bit_mask_in.swizzle, 0) * 4;
-   bit_mask_in.type = BRW_REGISTER_TYPE_W;
-
-   /* Scratch should be 3 registers in the GRF */
-   assert(scratch.file == BRW_GENERAL_REGISTER_FILE);
-   scratch = vec8(scratch);
-   struct brw_reg mask_w16 = retype(scratch, BRW_REGISTER_TYPE_W);
-   struct brw_reg mask_d16 = retype(byte_offset(scratch, REG_SIZE),
-                                    BRW_REGISTER_TYPE_D);
-
-   brw_push_insn_state(p);
-   brw_set_default_access_mode(p, BRW_ALIGN_1);
-   brw_set_default_mask_control(p, BRW_MASK_DISABLE);
-
-   for (unsigned i = 0; i < 64; i++) {
-      if (i % 16 == 0 && (want_zero & BITFIELD64_RANGE(i, 16))) {
-         brw_set_default_exec_size(p, BRW_EXECUTE_8);
-         brw_SHL(p, suboffset(mask_w16, 8),
-                    vec1(byte_offset(bit_mask_in, i / 8)),
-                    brw_imm_v(0x01234567));
-         brw_SHL(p, mask_w16, suboffset(mask_w16, 8), brw_imm_w(8));
-
-         brw_set_default_exec_size(p, BRW_EXECUTE_16);
-         brw_ASR(p, mask_d16, mask_w16, brw_imm_w(15));
-      }
-
-      if (want_zero & BITFIELD64_BIT(i)) {
-         unsigned push_start = prog_data->dispatch_grf_start_reg;
-         struct brw_reg push_reg =
-            retype(brw_vec8_grf(push_start + i, 0), BRW_REGISTER_TYPE_D);
-
-         brw_set_default_exec_size(p, BRW_EXECUTE_8);
-         brw_AND(p, push_reg, push_reg, vec1(suboffset(mask_d16, i)));
-      }
-   }
-
-   brw_pop_insn_state(p);
-}
-
-static void
 generate_code(struct brw_codegen *p,
               const struct brw_compiler *compiler,
               void *log_data,
@@ -1523,11 +1473,12 @@ generate_code(struct brw_codegen *p,
               struct brw_vue_prog_data *prog_data,
               const struct cfg_t *cfg,
               const performance &perf,
-              struct brw_compile_stats *stats,
-              bool debug_enabled)
+              struct brw_compile_stats *stats)
 {
-   const struct intel_device_info *devinfo = p->devinfo;
+   const struct gen_device_info *devinfo = p->devinfo;
    const char *stage_abbrev = _mesa_shader_stage_to_abbrev(nir->info.stage);
+   bool debug_flag = INTEL_DEBUG &
+      intel_debug_flag_for_shader_stage(nir->info.stage);
    struct disasm_info *disasm_info = disasm_initialize(devinfo, cfg);
 
    /* `send_count` explicitly does not include spills or fills, as we'd
@@ -1542,7 +1493,7 @@ generate_code(struct brw_codegen *p,
    foreach_block_and_inst (block, vec4_instruction, inst, cfg) {
       struct brw_reg src[3], dst;
 
-      if (unlikely(debug_enabled))
+      if (unlikely(debug_flag))
          disasm_annotate(disasm_info, inst, p->next_insn_offset);
 
       for (unsigned int i = 0; i < 3; i++) {
@@ -1572,7 +1523,7 @@ generate_code(struct brw_codegen *p,
                          inst->opcode != VEC4_OPCODE_SET_HIGH_32BIT;
 
       unsigned exec_size = inst->exec_size;
-      if (devinfo->verx10 == 70 && is_df)
+      if (devinfo->gen == 7 && !devinfo->is_haswell && is_df)
          exec_size *= 2;
 
       brw_set_default_exec_size(p, cvt(exec_size) - 1);
@@ -1580,7 +1531,7 @@ generate_code(struct brw_codegen *p,
       if (!inst->force_writemask_all)
          brw_set_default_group(p, inst->group);
 
-      assert(inst->base_mrf + inst->mlen <= BRW_MAX_MRF(devinfo->ver));
+      assert(inst->base_mrf + inst->mlen <= BRW_MAX_MRF(devinfo->gen));
       assert(inst->mlen <= BRW_MAX_MSG_LENGTH);
 
       unsigned pre_emit_nr_insn = p->nr_insn;
@@ -1588,7 +1539,6 @@ generate_code(struct brw_codegen *p,
       switch (inst->opcode) {
       case VEC4_OPCODE_UNPACK_UNIFORM:
       case BRW_OPCODE_MOV:
-      case VEC4_OPCODE_MOV_FOR_SCRATCH:
          brw_MOV(p, dst, src[0]);
          break;
       case BRW_OPCODE_ADD:
@@ -1602,7 +1552,7 @@ generate_code(struct brw_codegen *p,
          break;
 
       case BRW_OPCODE_MAD:
-         assert(devinfo->ver >= 6);
+         assert(devinfo->gen >= 6);
          brw_MAD(p, dst, src[0], src[1], src[2]);
          break;
 
@@ -1644,9 +1594,6 @@ generate_code(struct brw_codegen *p,
       case BRW_OPCODE_CMP:
          brw_CMP(p, dst, inst->conditional_mod, src[0], src[1]);
          break;
-      case BRW_OPCODE_CMPN:
-         brw_CMPN(p, dst, inst->conditional_mod, src[0], src[1]);
-         break;
       case BRW_OPCODE_SEL:
          brw_SEL(p, dst, src[0], src[1]);
          break;
@@ -1668,31 +1615,31 @@ generate_code(struct brw_codegen *p,
          break;
 
       case BRW_OPCODE_F32TO16:
-         assert(devinfo->ver >= 7);
+         assert(devinfo->gen >= 7);
          brw_F32TO16(p, dst, src[0]);
          break;
 
       case BRW_OPCODE_F16TO32:
-         assert(devinfo->ver >= 7);
+         assert(devinfo->gen >= 7);
          brw_F16TO32(p, dst, src[0]);
          break;
 
       case BRW_OPCODE_LRP:
-         assert(devinfo->ver >= 6);
+         assert(devinfo->gen >= 6);
          brw_LRP(p, dst, src[0], src[1], src[2]);
          break;
 
       case BRW_OPCODE_BFREV:
-         assert(devinfo->ver >= 7);
+         assert(devinfo->gen >= 7);
          brw_BFREV(p, retype(dst, BRW_REGISTER_TYPE_UD),
                    retype(src[0], BRW_REGISTER_TYPE_UD));
          break;
       case BRW_OPCODE_FBH:
-         assert(devinfo->ver >= 7);
+         assert(devinfo->gen >= 7);
          brw_FBH(p, retype(dst, src[0].type), src[0]);
          break;
       case BRW_OPCODE_FBL:
-         assert(devinfo->ver >= 7);
+         assert(devinfo->gen >= 7);
          brw_FBL(p, retype(dst, BRW_REGISTER_TYPE_UD),
                  retype(src[0], BRW_REGISTER_TYPE_UD));
          break;
@@ -1700,16 +1647,16 @@ generate_code(struct brw_codegen *p,
          brw_LZD(p, dst, src[0]);
          break;
       case BRW_OPCODE_CBIT:
-         assert(devinfo->ver >= 7);
+         assert(devinfo->gen >= 7);
          brw_CBIT(p, retype(dst, BRW_REGISTER_TYPE_UD),
                   retype(src[0], BRW_REGISTER_TYPE_UD));
          break;
       case BRW_OPCODE_ADDC:
-         assert(devinfo->ver >= 7);
+         assert(devinfo->gen >= 7);
          brw_ADDC(p, dst, src[0], src[1]);
          break;
       case BRW_OPCODE_SUBB:
-         assert(devinfo->ver >= 7);
+         assert(devinfo->gen >= 7);
          brw_SUBB(p, dst, src[0], src[1]);
          break;
       case BRW_OPCODE_MAC:
@@ -1717,24 +1664,24 @@ generate_code(struct brw_codegen *p,
          break;
 
       case BRW_OPCODE_BFE:
-         assert(devinfo->ver >= 7);
+         assert(devinfo->gen >= 7);
          brw_BFE(p, dst, src[0], src[1], src[2]);
          break;
 
       case BRW_OPCODE_BFI1:
-         assert(devinfo->ver >= 7);
+         assert(devinfo->gen >= 7);
          brw_BFI1(p, dst, src[0], src[1]);
          break;
       case BRW_OPCODE_BFI2:
-         assert(devinfo->ver >= 7);
+         assert(devinfo->gen >= 7);
          brw_BFI2(p, dst, src[0], src[1], src[2]);
          break;
 
       case BRW_OPCODE_IF:
          if (!inst->src[0].is_null()) {
-            /* The instruction has an embedded compare (only allowed on gfx6) */
-            assert(devinfo->ver == 6);
-            gfx6_IF(p, inst->conditional_mod, src[0], src[1]);
+            /* The instruction has an embedded compare (only allowed on gen6) */
+            assert(devinfo->gen == 6);
+            gen6_IF(p, inst->conditional_mod, src[0], src[1]);
          } else {
             brw_inst *if_inst = brw_IF(p, BRW_EXECUTE_8);
             brw_inst_set_pred_control(p->devinfo, if_inst, inst->predicate);
@@ -1774,13 +1721,13 @@ generate_code(struct brw_codegen *p,
       case SHADER_OPCODE_SIN:
       case SHADER_OPCODE_COS:
          assert(inst->conditional_mod == BRW_CONDITIONAL_NONE);
-         if (devinfo->ver >= 7) {
-            gfx6_math(p, dst, brw_math_function(inst->opcode), src[0],
+         if (devinfo->gen >= 7) {
+            gen6_math(p, dst, brw_math_function(inst->opcode), src[0],
                       brw_null_reg());
-         } else if (devinfo->ver == 6) {
-            generate_math_gfx6(p, inst, dst, src[0], brw_null_reg());
+         } else if (devinfo->gen == 6) {
+            generate_math_gen6(p, inst, dst, src[0], brw_null_reg());
          } else {
-            generate_math1_gfx4(p, inst, dst, src[0]);
+            generate_math1_gen4(p, inst, dst, src[0]);
             send_count++;
          }
          break;
@@ -1789,12 +1736,12 @@ generate_code(struct brw_codegen *p,
       case SHADER_OPCODE_INT_QUOTIENT:
       case SHADER_OPCODE_INT_REMAINDER:
          assert(inst->conditional_mod == BRW_CONDITIONAL_NONE);
-         if (devinfo->ver >= 7) {
-            gfx6_math(p, dst, brw_math_function(inst->opcode), src[0], src[1]);
-         } else if (devinfo->ver == 6) {
-            generate_math_gfx6(p, inst, dst, src[0], src[1]);
+         if (devinfo->gen >= 7) {
+            gen6_math(p, dst, brw_math_function(inst->opcode), src[0], src[1]);
+         } else if (devinfo->gen == 6) {
+            generate_math_gen6(p, inst, dst, src[0], src[1]);
          } else {
-            generate_math2_gfx4(p, inst, dst, src[0], src[1]);
+            generate_math2_gen4(p, inst, dst, src[0], src[1]);
             send_count++;
          }
          break;
@@ -1825,12 +1772,12 @@ generate_code(struct brw_codegen *p,
          send_count++;
          break;
 
-      case SHADER_OPCODE_GFX4_SCRATCH_READ:
+      case SHADER_OPCODE_GEN4_SCRATCH_READ:
          generate_scratch_read(p, inst, dst, src[0]);
          fill_count++;
          break;
 
-      case SHADER_OPCODE_GFX4_SCRATCH_WRITE:
+      case SHADER_OPCODE_GEN4_SCRATCH_WRITE:
          generate_scratch_write(p, inst, dst, src[0], src[1]);
          spill_count++;
          break;
@@ -1840,8 +1787,8 @@ generate_code(struct brw_codegen *p,
          send_count++;
          break;
 
-      case VS_OPCODE_PULL_CONSTANT_LOAD_GFX7:
-         generate_pull_constant_load_gfx7(p, inst, dst, src[0], src[1]);
+      case VS_OPCODE_PULL_CONSTANT_LOAD_GEN7:
+         generate_pull_constant_load_gen7(p, inst, dst, src[0], src[1]);
          send_count++;
          break;
 
@@ -2007,7 +1954,7 @@ generate_code(struct brw_codegen *p,
           * need to explicitly set stride 2, but 1.
           */
          struct brw_reg spread_dst;
-         if (devinfo->verx10 == 70)
+         if (devinfo->gen == 7 && !devinfo->is_haswell)
             spread_dst = stride(dst, 8, 4, 1);
          else
             spread_dst = stride(dst, 8, 4, 2);
@@ -2116,10 +2063,6 @@ generate_code(struct brw_codegen *p,
          break;
       }
 
-      case VEC4_OPCODE_ZERO_OOB_PUSH_REGS:
-         generate_zero_oob_push_regs(p, &prog_data->base, dst, src[0]);
-         break;
-
       case TCS_OPCODE_URB_WRITE:
          generate_tcs_urb_write(p, inst, src[0]);
          send_count++;
@@ -2224,7 +2167,7 @@ generate_code(struct brw_codegen *p,
 #ifndef NDEBUG
    bool validated =
 #else
-   if (unlikely(debug_enabled))
+   if (unlikely(debug_flag))
 #endif
       brw_validate_instructions(devinfo, p->store,
                                 0, p->next_insn_offset,
@@ -2234,7 +2177,7 @@ generate_code(struct brw_codegen *p,
    brw_compact_instructions(p, 0, disasm_info);
    int after_size = p->next_insn_offset;
 
-   if (unlikely(debug_enabled)) {
+   if (unlikely(debug_flag)) {
       unsigned char sha1[21];
       char sha1buf[41];
 
@@ -2263,13 +2206,13 @@ generate_code(struct brw_codegen *p,
    ralloc_free(disasm_info);
    assert(validated);
 
-   brw_shader_debug_log(compiler, log_data,
-                        "%s vec4 shader: %d inst, %d loops, %u cycles, "
-                        "%d:%d spills:fills, %u sends, "
-                        "compacted %d to %d bytes.",
-                        stage_abbrev, before_size / 16,
-                        loop_count, perf.latency, spill_count,
-                        fill_count, send_count, before_size, after_size);
+   compiler->shader_debug_log(log_data,
+                              "%s vec4 shader: %d inst, %d loops, %u cycles, "
+                              "%d:%d spills:fills, %u sends, "
+                              "compacted %d to %d bytes.",
+                              stage_abbrev, before_size / 16,
+                              loop_count, perf.latency, spill_count,
+                              fill_count, send_count, before_size, after_size);
    if (stats) {
       stats->dispatch_width = 0;
       stats->instructions = before_size / 16;
@@ -2289,15 +2232,13 @@ brw_vec4_generate_assembly(const struct brw_compiler *compiler,
                            struct brw_vue_prog_data *prog_data,
                            const struct cfg_t *cfg,
                            const performance &perf,
-                           struct brw_compile_stats *stats,
-                           bool debug_enabled)
+                           struct brw_compile_stats *stats)
 {
    struct brw_codegen *p = rzalloc(mem_ctx, struct brw_codegen);
    brw_init_codegen(compiler->devinfo, p, mem_ctx);
    brw_set_default_access_mode(p, BRW_ALIGN_16);
 
-   generate_code(p, compiler, log_data, nir, prog_data, cfg, perf, stats,
-                 debug_enabled);
+   generate_code(p, compiler, log_data, nir, prog_data, cfg, perf, stats);
 
    assert(prog_data->base.const_data_size == 0);
    if (nir->constant_data_size > 0) {

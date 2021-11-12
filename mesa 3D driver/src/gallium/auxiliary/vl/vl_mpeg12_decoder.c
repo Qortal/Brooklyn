@@ -628,7 +628,7 @@ vl_mpeg12_begin_frame(struct pipe_video_codec *decoder,
    rect.height = tex->height0;
 
    buf->texels =
-      dec->context->texture_map(dec->context, tex, 0,
+      dec->context->transfer_map(dec->context, tex, 0,
                                  PIPE_MAP_WRITE |
                                  PIPE_MAP_DISCARD_RANGE,
                                  &rect, &buf->tex_transfer);
@@ -770,7 +770,7 @@ vl_mpeg12_end_frame(struct pipe_video_codec *decoder,
    vl_vb_unmap(&buf->vertex_stream, dec->context);
 
    if (buf->tex_transfer)
-      dec->context->texture_unmap(dec->context, buf->tex_transfer);
+      dec->context->transfer_unmap(dec->context, buf->tex_transfer);
 
    vb[0] = dec->quads;
    vb[1] = dec->pos;
@@ -794,7 +794,7 @@ vl_mpeg12_end_frame(struct pipe_video_codec *decoder,
          if (!ref_frames[j] || !ref_frames[j][i]) continue;
 
          vb[2] = vl_vb_get_mv(&buf->vertex_stream, j);
-         dec->context->set_vertex_buffers(dec->context, 0, 3, 0, false, vb);
+         dec->context->set_vertex_buffers(dec->context, 0, 3, vb);
 
          vl_mc_render_ref(i ? &dec->mc_c : &dec->mc_y, &buf->mc[i], ref_frames[j][i]);
       }
@@ -805,7 +805,7 @@ vl_mpeg12_end_frame(struct pipe_video_codec *decoder,
       if (!buf->num_ycbcr_blocks[i]) continue;
 
       vb[1] = vl_vb_get_ycbcr(&buf->vertex_stream, i);
-      dec->context->set_vertex_buffers(dec->context, 0, 2, 0, false, vb);
+      dec->context->set_vertex_buffers(dec->context, 0, 2, vb);
 
       vl_zscan_render(i ? &dec->zscan_c : & dec->zscan_y, &buf->zscan[i] , buf->num_ycbcr_blocks[i]);
 
@@ -824,13 +824,13 @@ vl_mpeg12_end_frame(struct pipe_video_codec *decoder,
          if (!buf->num_ycbcr_blocks[plane]) continue;
 
          vb[1] = vl_vb_get_ycbcr(&buf->vertex_stream, plane);
-         dec->context->set_vertex_buffers(dec->context, 0, 2, 0, false, vb);
+         dec->context->set_vertex_buffers(dec->context, 0, 2, vb);
 
          if (dec->base.entrypoint <= PIPE_VIDEO_ENTRYPOINT_IDCT)
             vl_idct_prepare_stage2(i ? &dec->idct_c : &dec->idct_y, &buf->idct[plane]);
          else {
             dec->context->set_sampler_views(dec->context,
-                                            PIPE_SHADER_FRAGMENT, 0, 1, 0, false,
+                                            PIPE_SHADER_FRAGMENT, 0, 1,
                                             &mc_source_sv[plane]);
             dec->context->bind_sampler_states(dec->context,
                                               PIPE_SHADER_FRAGMENT,
@@ -862,9 +862,9 @@ init_pipe_state(struct vl_mpeg12_decoder *dec)
    assert(dec);
 
    memset(&dsa, 0, sizeof dsa);
-   dsa.depth_enabled = 0;
-   dsa.depth_writemask = 0;
-   dsa.depth_func = PIPE_FUNC_ALWAYS;
+   dsa.depth.enabled = 0;
+   dsa.depth.writemask = 0;
+   dsa.depth.func = PIPE_FUNC_ALWAYS;
    for (i = 0; i < 2; ++i) {
       dsa.stencil[i].enabled = 0;
       dsa.stencil[i].func = PIPE_FUNC_ALWAYS;
@@ -874,9 +874,9 @@ init_pipe_state(struct vl_mpeg12_decoder *dec)
       dsa.stencil[i].valuemask = 0;
       dsa.stencil[i].writemask = 0;
    }
-   dsa.alpha_enabled = 0;
-   dsa.alpha_func = PIPE_FUNC_ALWAYS;
-   dsa.alpha_ref_value = 0;
+   dsa.alpha.enabled = 0;
+   dsa.alpha.func = PIPE_FUNC_ALWAYS;
+   dsa.alpha.ref_value = 0;
    dec->dsa = dec->context->create_depth_stencil_alpha_state(dec->context, &dsa);
    dec->context->bind_depth_stencil_alpha_state(dec->context, dec->dsa);
 

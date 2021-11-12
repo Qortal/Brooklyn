@@ -123,6 +123,7 @@ gl_vert_attrib_name(gl_vert_attrib attrib)
       ENUM(VERT_ATTRIB_COLOR1),
       ENUM(VERT_ATTRIB_FOG),
       ENUM(VERT_ATTRIB_COLOR_INDEX),
+      ENUM(VERT_ATTRIB_EDGEFLAG),
       ENUM(VERT_ATTRIB_TEX0),
       ENUM(VERT_ATTRIB_TEX1),
       ENUM(VERT_ATTRIB_TEX2),
@@ -148,42 +149,14 @@ gl_vert_attrib_name(gl_vert_attrib attrib)
       ENUM(VERT_ATTRIB_GENERIC13),
       ENUM(VERT_ATTRIB_GENERIC14),
       ENUM(VERT_ATTRIB_GENERIC15),
-      ENUM(VERT_ATTRIB_EDGEFLAG),
    };
    STATIC_ASSERT(ARRAY_SIZE(names) == VERT_ATTRIB_MAX);
    return NAME(attrib);
 }
 
 const char *
-gl_varying_slot_name_for_stage(gl_varying_slot slot, gl_shader_stage stage)
+gl_varying_slot_name(gl_varying_slot slot)
 {
-   if (stage != MESA_SHADER_FRAGMENT && slot == VARYING_SLOT_PRIMITIVE_SHADING_RATE)
-      return "VARYING_SLOT_PRIMITIVE_SHADING_RATE";
-
-   switch (stage) {
-   case MESA_SHADER_MESH:
-      switch (slot) {
-      case VARYING_SLOT_PRIMITIVE_COUNT: return "VARYING_SLOT_PRIMITIVE_COUNT";
-      case VARYING_SLOT_PRIMITIVE_INDICES: return "VARYING_SLOT_PRIMITIVE_INDICES";
-      default:
-         /* Not an overlapping value. */
-         break;
-      }
-      break;
-
-   case MESA_SHADER_TASK:
-      switch (slot) {
-      case VARYING_SLOT_TASK_COUNT: return "VARYING_SLOT_TASK_COUNT";
-      default:
-         /* Not an overlapping value. */
-         break;
-      }
-      break;
-
-   default:
-      break;
-   }
-
    static const char *names[] = {
       ENUM(VARYING_SLOT_POS),
       ENUM(VARYING_SLOT_COL0),
@@ -299,9 +272,9 @@ gl_system_value_name(gl_system_value sysval)
      ENUM(SYSTEM_VALUE_GLOBAL_INVOCATION_ID),
      ENUM(SYSTEM_VALUE_BASE_GLOBAL_INVOCATION_ID),
      ENUM(SYSTEM_VALUE_GLOBAL_INVOCATION_INDEX),
-     ENUM(SYSTEM_VALUE_WORKGROUP_ID),
-     ENUM(SYSTEM_VALUE_NUM_WORKGROUPS),
-     ENUM(SYSTEM_VALUE_WORKGROUP_SIZE),
+     ENUM(SYSTEM_VALUE_WORK_GROUP_ID),
+     ENUM(SYSTEM_VALUE_NUM_WORK_GROUPS),
+     ENUM(SYSTEM_VALUE_LOCAL_GROUP_SIZE),
      ENUM(SYSTEM_VALUE_GLOBAL_GROUP_SIZE),
      ENUM(SYSTEM_VALUE_USER_DATA_AMD),
      ENUM(SYSTEM_VALUE_WORK_DIM),
@@ -331,8 +304,6 @@ gl_system_value_name(gl_system_value sysval)
      ENUM(SYSTEM_VALUE_RAY_GEOMETRY_INDEX),
      ENUM(SYSTEM_VALUE_GS_HEADER_IR3),
      ENUM(SYSTEM_VALUE_TCS_HEADER_IR3),
-     ENUM(SYSTEM_VALUE_REL_PATCH_ID_IR3),
-     ENUM(SYSTEM_VALUE_FRAG_SHADING_RATE),
    };
    STATIC_ASSERT(ARRAY_SIZE(names) == SYSTEM_VALUE_MAX);
    return NAME(sysval);

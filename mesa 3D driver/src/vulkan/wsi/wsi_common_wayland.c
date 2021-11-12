@@ -31,26 +31,39 @@
 #include <string.h>
 #include <pthread.h>
 #include <poll.h>
-#include <sys/mman.h>
 
 #include "drm-uapi/drm_fourcc.h"
 
 #include "vk_util.h"
 #include "wsi_common_private.h"
 #include "wsi_common_wayland.h"
+#include "wayland-drm-client-protocol.h"
 #include "linux-dmabuf-unstable-v1-client-protocol.h"
 
-#include <util/compiler.h>
 #include <util/hash_table.h>
 #include <util/timespec.h>
 #include <util/u_vector.h>
-#include <util/anon_file.h>
+
+#define typed_memcpy(dest, src, count) ({ \
+   STATIC_ASSERT(sizeof(*src) == sizeof(*dest)); \
+   memcpy((dest), (src), (count) * sizeof(*(src))); \
+})
 
 struct wsi_wayland;
 
-struct wsi_wl_format {
-   VkFormat vk_format;
-   struct u_vector modifiers;
+struct wsi_wl_display_drm {
+   struct wl_drm *                              wl_drm;
+   struct u_vector                              formats;
+   uint32_t                                     capabilities;
+};
+
+struct wsi_wl_display_dmabuf {
+   struct zwp_linux_dmabuf_v1 *                 wl_dmabuf;
+   struct u_vector                              formats;
+   struct {
+      struct u_vector                           argb8888;
+      struct u_vector                           xrgb8888;
+   } modifiers;
 };
 
 struct wsi_wl_display {
@@ -60,18 +73,16 @@ struct wsi_wl_display {
    struct wl_display *                          wl_display_wrapper;
    struct wl_event_queue *                      queue;
 
-   struct wl_shm *                              wl_shm;
-   struct zwp_linux_dmabuf_v1 *                 wl_dmabuf;
+   struct wsi_wl_display_drm                    drm;
+   struct wsi_wl_display_dmabuf                 dmabuf;
 
    struct wsi_wayland *wsi_wl;
 
-   /* Formats populated by zwp_linux_dmabuf_v1 or wl_shm interfaces */
-   struct u_vector                              formats;
+   /* Points to formats in wsi_wl_display_drm or wsi_wl_display_dmabuf */
+   struct u_vector *                            formats;
 
    /* Only used for displays created by wsi_wl_display_create */
    uint32_t                                     refcount;
-
-   bool sw;
 };
 
 struct wsi_wayland {
@@ -83,26 +94,15 @@ struct wsi_wayland {
    VkPhysicalDevice physical_device;
 };
 
-static struct wsi_wl_format *
-find_format(struct u_vector *formats, VkFormat format)
-{
-   struct wsi_wl_format *f;
-
-   u_vector_foreach(f, formats)
-      if (f->vk_format == format)
-         return f;
-
-   return NULL;
-}
-
-static struct wsi_wl_format *
+static void
 wsi_wl_display_add_vk_format(struct wsi_wl_display *display,
                              struct u_vector *formats, VkFormat format)
 {
    /* Don't add a format that's already in the list */
-   struct wsi_wl_format *f = find_format(formats, format);
-   if (f)
-      return f;
+   VkFormat *f;
+   u_vector_foreach(f, formats)
+      if (*f == format)
+         return;
 
    /* Don't add formats that aren't renderable. */
    VkFormatProperties props;
@@ -110,229 +110,125 @@ wsi_wl_display_add_vk_format(struct wsi_wl_display *display,
    display->wsi_wl->wsi->GetPhysicalDeviceFormatProperties(display->wsi_wl->physical_device,
                                                            format, &props);
    if (!(props.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT))
-      return NULL;
-
-   struct u_vector modifiers;
-   if (!u_vector_init(&modifiers, sizeof(uint64_t), 32))
-      return NULL;
-
-   f = u_vector_add(formats);
-   if (!f) {
-      u_vector_finish(&modifiers);
-      return NULL;
-   }
-
-   f->vk_format = format;
-   f->modifiers = modifiers;
-
-   return f;
-}
-
-static void
-wsi_wl_format_add_modifier(struct wsi_wl_format *format, uint64_t modifier)
-{
-   uint64_t *mod;
-
-   if (modifier == DRM_FORMAT_MOD_INVALID)
       return;
 
-   u_vector_foreach(mod, &format->modifiers)
-      if (*mod == modifier)
-         return;
-
-   mod = u_vector_add(&format->modifiers);
-   if (mod)
-      *mod = modifier;
+   f = u_vector_add(formats);
+   if (f)
+      *f = format;
 }
 
 static void
-wsi_wl_display_add_drm_format_modifier(struct wsi_wl_display *display,
-                                       struct u_vector *formats,
-                                       uint32_t drm_format, uint64_t modifier)
+wsi_wl_display_add_wl_format(struct wsi_wl_display *display,
+                             struct u_vector *formats, uint32_t wl_format)
 {
-   struct wsi_wl_format *format = NULL, *srgb_format = NULL;
-
-   switch (drm_format) {
+   switch (wl_format) {
 #if 0
-   /* TODO: These are only available when VK_EXT_4444_formats is enabled, so
-    * we probably need to make their use conditional on this extension. */
-   case DRM_FORMAT_ARGB4444:
-   case DRM_FORMAT_XRGB4444:
-      format = wsi_wl_display_add_vk_format(display, formats,
-                                            VK_FORMAT_A4R4G4B4_UNORM_PACK16_EXT);
-      break;
-   case DRM_FORMAT_ABGR4444:
-   case DRM_FORMAT_XBGR4444:
-      format = wsi_wl_display_add_vk_format(display, formats,
-                                            VK_FORMAT_A4B4G4R4_UNORM_PACK16_EXT);
-      break;
-#endif
-
-   /* Vulkan _PACKN formats have the same component order as DRM formats
-    * on little endian systems, on big endian there exists no analog. */
-#if MESA_LITTLE_ENDIAN
-   case DRM_FORMAT_RGBA4444:
-   case DRM_FORMAT_RGBX4444:
-      format = wsi_wl_display_add_vk_format(display, formats,
-                                            VK_FORMAT_R4G4B4A4_UNORM_PACK16);
-      break;
-   case DRM_FORMAT_BGRA4444:
-   case DRM_FORMAT_BGRX4444:
-      format = wsi_wl_display_add_vk_format(display, formats,
-                                            VK_FORMAT_B4G4R4A4_UNORM_PACK16);
-      break;
-   case DRM_FORMAT_RGB565:
-      format = wsi_wl_display_add_vk_format(display, formats,
-                                            VK_FORMAT_R5G6B5_UNORM_PACK16);
-      break;
-   case DRM_FORMAT_BGR565:
-      format = wsi_wl_display_add_vk_format(display, formats,
-                                            VK_FORMAT_B5G6R5_UNORM_PACK16);
-      break;
-   case DRM_FORMAT_ARGB1555:
-   case DRM_FORMAT_XRGB1555:
-      format = wsi_wl_display_add_vk_format(display, formats,
-                                            VK_FORMAT_A1R5G5B5_UNORM_PACK16);
-      break;
-   case DRM_FORMAT_RGBA5551:
-   case DRM_FORMAT_RGBX5551:
-      format = wsi_wl_display_add_vk_format(display, formats,
-                                            VK_FORMAT_R5G5B5A1_UNORM_PACK16);
-      break;
-   case DRM_FORMAT_BGRA5551:
-   case DRM_FORMAT_BGRX5551:
-      format = wsi_wl_display_add_vk_format(display, formats,
-                                            VK_FORMAT_B5G5R5A1_UNORM_PACK16);
-      break;
-   case DRM_FORMAT_ARGB2101010:
-   case DRM_FORMAT_XRGB2101010:
-      format = wsi_wl_display_add_vk_format(display, formats,
-                                            VK_FORMAT_A2R10G10B10_UNORM_PACK32);
-      break;
-   case DRM_FORMAT_ABGR2101010:
-   case DRM_FORMAT_XBGR2101010:
-      format = wsi_wl_display_add_vk_format(display, formats,
-                                            VK_FORMAT_A2B10G10R10_UNORM_PACK32);
-      break;
-#endif
-
-   /* Non-packed 8-bit formats have an inverted channel order compared to the
-    * little endian DRM formats, because the DRM channel ordering is high->low
-    * but the vulkan channel ordering is in memory byte order
-    *
-    * For all UNORM formats which have a SRGB variant, we must support both if
-    * we can. SRGB in this context means that rendering to it will result in a
-    * linear -> nonlinear SRGB colorspace conversion before the data is stored.
-    * The inverse function is applied when sampling from SRGB images.
-    * From Wayland's perspective nothing changes, the difference is just how
-    * Vulkan interprets the pixel data. */
-   case DRM_FORMAT_XBGR8888:
-      srgb_format = wsi_wl_display_add_vk_format(display, formats,
-                                                 VK_FORMAT_R8G8B8_SRGB);
-      format = wsi_wl_display_add_vk_format(display, formats,
-                                            VK_FORMAT_R8G8B8_UNORM);
-      FALLTHROUGH;
-   case DRM_FORMAT_ABGR8888:
-      srgb_format = wsi_wl_display_add_vk_format(display, formats,
-                                                 VK_FORMAT_R8G8B8A8_SRGB);
-      format = wsi_wl_display_add_vk_format(display, formats,
-                                            VK_FORMAT_R8G8B8A8_UNORM);
-      break;
-   case DRM_FORMAT_XRGB8888:
-      srgb_format = wsi_wl_display_add_vk_format(display, formats,
-                                                 VK_FORMAT_B8G8R8_SRGB);
-      format = wsi_wl_display_add_vk_format(display, formats,
-                                            VK_FORMAT_B8G8R8_UNORM);
-      FALLTHROUGH;
-   case DRM_FORMAT_ARGB8888:
-      srgb_format = wsi_wl_display_add_vk_format(display, formats,
-                                                 VK_FORMAT_B8G8R8A8_SRGB);
-      format = wsi_wl_display_add_vk_format(display, formats,
-                                            VK_FORMAT_B8G8R8A8_UNORM);
-      break;
-   }
-
-   if (format)
-      wsi_wl_format_add_modifier(format, modifier);
-   if (srgb_format)
-      wsi_wl_format_add_modifier(srgb_format, modifier);
-}
-
-static void
-wsi_wl_display_add_wl_shm_format(struct wsi_wl_display *display,
-                                 struct u_vector *formats,
-                                 uint32_t wl_shm_format)
-{
-   switch (wl_shm_format) {
-   case WL_SHM_FORMAT_XBGR8888:
+   case WL_DRM_FORMAT_ABGR4444:
+   case WL_DRM_FORMAT_XBGR4444:
       wsi_wl_display_add_vk_format(display, formats,
-                                   VK_FORMAT_R8G8B8_SRGB);
+                                   VK_FORMAT_R4G4B4A4_UNORM);
+      break;
+   case WL_DRM_FORMAT_BGR565:
+      wsi_wl_display_add_vk_format(display, formats,
+                                   VK_FORMAT_R5G6B5_UNORM);
+      break;
+   case WL_DRM_FORMAT_ABGR1555:
+   case WL_DRM_FORMAT_XBGR1555:
+      wsi_wl_display_add_vk_format(display, formats,
+                                   VK_FORMAT_R5G5B5A1_UNORM);
+      break;
+   case WL_DRM_FORMAT_XBGR8888:
       wsi_wl_display_add_vk_format(display, formats,
                                    VK_FORMAT_R8G8B8_UNORM);
-      FALLTHROUGH;
-   case WL_SHM_FORMAT_ABGR8888:
-      wsi_wl_display_add_vk_format(display, formats,
-                                   VK_FORMAT_R8G8B8A8_SRGB);
+      /* fallthrough */
+   case WL_DRM_FORMAT_ABGR8888:
       wsi_wl_display_add_vk_format(display, formats,
                                    VK_FORMAT_R8G8B8A8_UNORM);
       break;
-   case WL_SHM_FORMAT_XRGB8888:
+   case WL_DRM_FORMAT_ABGR2101010:
+   case WL_DRM_FORMAT_XBGR2101010:
+      wsi_wl_display_add_vk_format(display, formats,
+                                   VK_FORMAT_R10G10B10A2_UNORM);
+      break;
+   case WL_DRM_FORMAT_ARGB4444:
+   case WL_DRM_FORMAT_XRGB4444:
+      wsi_wl_display_add_vk_format(display, formats,
+                                   VK_FORMAT_B4G4R4A4_UNORM);
+      break;
+   case WL_DRM_FORMAT_RGB565:
+      wsi_wl_display_add_vk_format(display, formats,
+                                   VK_FORMAT_B5G6R5_UNORM);
+      break;
+   case WL_DRM_FORMAT_ARGB1555:
+   case WL_DRM_FORMAT_XRGB1555:
+      wsi_wl_display_add_vk_format(display, formats,
+                                   VK_FORMAT_B5G5R5A1_UNORM);
+      break;
+#endif
+   case WL_DRM_FORMAT_XRGB8888:
       wsi_wl_display_add_vk_format(display, formats,
                                    VK_FORMAT_B8G8R8_SRGB);
       wsi_wl_display_add_vk_format(display, formats,
                                    VK_FORMAT_B8G8R8_UNORM);
-      FALLTHROUGH;
-   case WL_SHM_FORMAT_ARGB8888:
+      /* fallthrough */
+   case WL_DRM_FORMAT_ARGB8888:
       wsi_wl_display_add_vk_format(display, formats,
                                    VK_FORMAT_B8G8R8A8_SRGB);
       wsi_wl_display_add_vk_format(display, formats,
                                    VK_FORMAT_B8G8R8A8_UNORM);
       break;
+#if 0
+   case WL_DRM_FORMAT_ARGB2101010:
+   case WL_DRM_FORMAT_XRGB2101010:
+      wsi_wl_display_add_vk_format(display, formats,
+                                   VK_FORMAT_B10G10R10A2_UNORM);
+      break;
+#endif
    }
+}
+
+static void
+drm_handle_device(void *data, struct wl_drm *drm, const char *name)
+{
 }
 
 static uint32_t
 wl_drm_format_for_vk_format(VkFormat vk_format, bool alpha)
 {
    switch (vk_format) {
+   /* TODO: Figure out what all the formats mean and make this table
+    * correct.
+    */
 #if 0
-   case VK_FORMAT_A4R4G4B4_UNORM_PACK16_EXT:
-      return alpha ? DRM_FORMAT_ARGB4444 : DRM_FORMAT_XRGB4444;
-   case VK_FORMAT_A4B4G4R4_UNORM_PACK16_EXT:
-      return alpha ? DRM_FORMAT_ABGR4444 : DRM_FORMAT_XBGR4444;
-#endif
-#if MESA_LITTLE_ENDIAN
-   case VK_FORMAT_R4G4B4A4_UNORM_PACK16:
-      return alpha ? DRM_FORMAT_RGBA4444 : DRM_FORMAT_RGBX4444;
-   case VK_FORMAT_B4G4R4A4_UNORM_PACK16:
-      return alpha ? DRM_FORMAT_BGRA4444 : DRM_FORMAT_BGRX4444;
-   case VK_FORMAT_R5G6B5_UNORM_PACK16:
-      return DRM_FORMAT_RGB565;
-   case VK_FORMAT_B5G6R5_UNORM_PACK16:
-      return DRM_FORMAT_BGR565;
-   case VK_FORMAT_A1R5G5B5_UNORM_PACK16:
-      return alpha ? DRM_FORMAT_ARGB1555 : DRM_FORMAT_XRGB1555;
-   case VK_FORMAT_R5G5B5A1_UNORM_PACK16:
-      return alpha ? DRM_FORMAT_RGBA5551 : DRM_FORMAT_RGBX5551;
-   case VK_FORMAT_B5G5R5A1_UNORM_PACK16:
-      return alpha ? DRM_FORMAT_BGRA5551 : DRM_FORMAT_BGRX5551;
-   case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
-      return alpha ? DRM_FORMAT_ARGB2101010 : DRM_FORMAT_XRGB2101010;
-   case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
-      return alpha ? DRM_FORMAT_ABGR2101010 : DRM_FORMAT_XBGR2101010;
-#endif
+   case VK_FORMAT_R4G4B4A4_UNORM:
+      return alpha ? WL_DRM_FORMAT_ABGR4444 : WL_DRM_FORMAT_XBGR4444;
+   case VK_FORMAT_R5G6B5_UNORM:
+      return WL_DRM_FORMAT_BGR565;
+   case VK_FORMAT_R5G5B5A1_UNORM:
+      return alpha ? WL_DRM_FORMAT_ABGR1555 : WL_DRM_FORMAT_XBGR1555;
    case VK_FORMAT_R8G8B8_UNORM:
-   case VK_FORMAT_R8G8B8_SRGB:
-      return DRM_FORMAT_XBGR8888;
+      return WL_DRM_FORMAT_XBGR8888;
    case VK_FORMAT_R8G8B8A8_UNORM:
-   case VK_FORMAT_R8G8B8A8_SRGB:
-      return alpha ? DRM_FORMAT_ABGR8888 : DRM_FORMAT_XBGR8888;
+      return alpha ? WL_DRM_FORMAT_ABGR8888 : WL_DRM_FORMAT_XBGR8888;
+   case VK_FORMAT_R10G10B10A2_UNORM:
+      return alpha ? WL_DRM_FORMAT_ABGR2101010 : WL_DRM_FORMAT_XBGR2101010;
+   case VK_FORMAT_B4G4R4A4_UNORM:
+      return alpha ? WL_DRM_FORMAT_ARGB4444 : WL_DRM_FORMAT_XRGB4444;
+   case VK_FORMAT_B5G6R5_UNORM:
+      return WL_DRM_FORMAT_RGB565;
+   case VK_FORMAT_B5G5R5A1_UNORM:
+      return alpha ? WL_DRM_FORMAT_XRGB1555 : WL_DRM_FORMAT_XRGB1555;
+#endif
    case VK_FORMAT_B8G8R8_UNORM:
    case VK_FORMAT_B8G8R8_SRGB:
-      return DRM_FORMAT_BGRX8888;
+      return WL_DRM_FORMAT_BGRX8888;
    case VK_FORMAT_B8G8R8A8_UNORM:
    case VK_FORMAT_B8G8R8A8_SRGB:
-      return alpha ? DRM_FORMAT_ARGB8888 : DRM_FORMAT_XRGB8888;
+      return alpha ? WL_DRM_FORMAT_ARGB8888 : WL_DRM_FORMAT_XRGB8888;
+#if 0
+   case VK_FORMAT_B10G10R10A2_UNORM:
+      return alpha ? WL_DRM_FORMAT_ARGB2101010 : WL_DRM_FORMAT_XRGB2101010;
+#endif
 
    default:
       assert(!"Unsupported Vulkan format");
@@ -340,22 +236,35 @@ wl_drm_format_for_vk_format(VkFormat vk_format, bool alpha)
    }
 }
 
-static uint32_t
-wl_shm_format_for_vk_format(VkFormat vk_format, bool alpha)
+static void
+drm_handle_format(void *data, struct wl_drm *drm, uint32_t wl_format)
 {
-   switch (vk_format) {
-   case VK_FORMAT_R8G8B8A8_UNORM:
-   case VK_FORMAT_R8G8B8A8_SRGB:
-      return alpha ? WL_SHM_FORMAT_ABGR8888 : WL_SHM_FORMAT_XBGR8888;
-   case VK_FORMAT_B8G8R8A8_UNORM:
-   case VK_FORMAT_B8G8R8A8_SRGB:
-      return alpha ? WL_SHM_FORMAT_ARGB8888 : WL_SHM_FORMAT_XRGB8888;
+   struct wsi_wl_display *display = data;
+   if (display->drm.formats.element_size == 0)
+      return;
 
-   default:
-      assert(!"Unsupported Vulkan format");
-      return 0;
-   }
+   wsi_wl_display_add_wl_format(display, &display->drm.formats, wl_format);
 }
+
+static void
+drm_handle_authenticated(void *data, struct wl_drm *drm)
+{
+}
+
+static void
+drm_handle_capabilities(void *data, struct wl_drm *drm, uint32_t capabilities)
+{
+   struct wsi_wl_display *display = data;
+
+   display->drm.capabilities = capabilities;
+}
+
+static const struct wl_drm_listener drm_listener = {
+   drm_handle_device,
+   drm_handle_format,
+   drm_handle_authenticated,
+   drm_handle_capabilities,
+};
 
 static void
 dmabuf_handle_format(void *data, struct zwp_linux_dmabuf_v1 *dmabuf,
@@ -371,11 +280,34 @@ dmabuf_handle_modifier(void *data, struct zwp_linux_dmabuf_v1 *dmabuf,
                        uint32_t modifier_lo)
 {
    struct wsi_wl_display *display = data;
-   uint64_t modifier;
+   uint64_t *mod = NULL;
 
-   modifier = ((uint64_t) modifier_hi << 32) | modifier_lo;
-   wsi_wl_display_add_drm_format_modifier(display, &display->formats,
-                                          format, modifier);
+   /* If we're not fetching formats, don't fetch modifiers either. */
+   if (display->dmabuf.formats.element_size == 0)
+      return;
+
+   if (modifier_hi == (DRM_FORMAT_MOD_INVALID >> 32) &&
+       modifier_lo == (DRM_FORMAT_MOD_INVALID & 0xffffffff))
+      return;
+
+   switch (format) {
+   case WL_DRM_FORMAT_ARGB8888:
+      wsi_wl_display_add_wl_format(display, &display->dmabuf.formats, format);
+      mod = u_vector_add(&display->dmabuf.modifiers.argb8888);
+      break;
+   case WL_DRM_FORMAT_XRGB8888:
+      wsi_wl_display_add_wl_format(display, &display->dmabuf.formats, format);
+      mod = u_vector_add(&display->dmabuf.modifiers.xrgb8888);
+      break;
+   default:
+      break;
+   }
+
+   if (!mod)
+      return;
+
+   *mod = (uint64_t) modifier_hi << 32;
+   *mod |= (uint64_t) (modifier_lo & 0xffffffff);
 }
 
 static const struct zwp_linux_dmabuf_v1_listener dmabuf_listener = {
@@ -384,35 +316,23 @@ static const struct zwp_linux_dmabuf_v1_listener dmabuf_listener = {
 };
 
 static void
-shm_handle_format(void *data, struct wl_shm *shm, uint32_t format)
-{
-   struct wsi_wl_display *display = data;
-
-   wsi_wl_display_add_wl_shm_format(display, &display->formats, format);
-}
-
-static const struct wl_shm_listener shm_listener = {
-   .format = shm_handle_format
-};
-
-static void
 registry_handle_global(void *data, struct wl_registry *registry,
                        uint32_t name, const char *interface, uint32_t version)
 {
    struct wsi_wl_display *display = data;
 
-   if (display->sw) {
-      if (strcmp(interface, "wl_shm") == 0) {
-         display->wl_shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
-         wl_shm_add_listener(display->wl_shm, &shm_listener, display);
-      }
-      return;
-   }
+   if (strcmp(interface, "wl_drm") == 0) {
+      assert(display->drm.wl_drm == NULL);
 
-   if (strcmp(interface, "zwp_linux_dmabuf_v1") == 0 && version >= 3) {
-      display->wl_dmabuf =
+      assert(version >= 2);
+      display->drm.wl_drm =
+         wl_registry_bind(registry, name, &wl_drm_interface, 2);
+      wl_drm_add_listener(display->drm.wl_drm, &drm_listener, display);
+   } else if (strcmp(interface, "zwp_linux_dmabuf_v1") == 0 && version >= 3 &&
+              display->wsi_wl->wsi->supports_modifiers) {
+      display->dmabuf.wl_dmabuf =
          wl_registry_bind(registry, name, &zwp_linux_dmabuf_v1_interface, 3);
-      zwp_linux_dmabuf_v1_add_listener(display->wl_dmabuf,
+      zwp_linux_dmabuf_v1_add_listener(display->dmabuf.wl_dmabuf,
                                        &dmabuf_listener, display);
    }
 }
@@ -432,14 +352,14 @@ wsi_wl_display_finish(struct wsi_wl_display *display)
 {
    assert(display->refcount == 0);
 
-   struct wsi_wl_format *f;
-   u_vector_foreach(f, &display->formats)
-      u_vector_finish(&f->modifiers);
-   u_vector_finish(&display->formats);
-   if (display->wl_shm)
-      wl_shm_destroy(display->wl_shm);
-   if (display->wl_dmabuf)
-      zwp_linux_dmabuf_v1_destroy(display->wl_dmabuf);
+   u_vector_finish(&display->drm.formats);
+   u_vector_finish(&display->dmabuf.formats);
+   u_vector_finish(&display->dmabuf.modifiers.argb8888);
+   u_vector_finish(&display->dmabuf.modifiers.xrgb8888);
+   if (display->drm.wl_drm)
+      wl_drm_destroy(display->drm.wl_drm);
+   if (display->dmabuf.wl_dmabuf)
+      zwp_linux_dmabuf_v1_destroy(display->dmabuf.wl_dmabuf);
    if (display->wl_display_wrapper)
       wl_proxy_wrapper_destroy(display->wl_display_wrapper);
    if (display->queue)
@@ -450,18 +370,25 @@ static VkResult
 wsi_wl_display_init(struct wsi_wayland *wsi_wl,
                     struct wsi_wl_display *display,
                     struct wl_display *wl_display,
-                    bool get_format_list, bool sw)
+                    bool get_format_list)
 {
    VkResult result = VK_SUCCESS;
    memset(display, 0, sizeof(*display));
 
-   if (!u_vector_init(&display->formats, sizeof(struct wsi_wl_format),
-                      8 * sizeof(struct wsi_wl_format)))
-      return VK_ERROR_OUT_OF_HOST_MEMORY;
-
    display->wsi_wl = wsi_wl;
    display->wl_display = wl_display;
-   display->sw = sw;
+
+   if (get_format_list) {
+      if (!u_vector_init(&display->drm.formats, sizeof(VkFormat), 8) ||
+          !u_vector_init(&display->dmabuf.formats, sizeof(VkFormat), 8) ||
+          !u_vector_init(&display->dmabuf.modifiers.argb8888,
+                         sizeof(uint64_t), 32) ||
+          !u_vector_init(&display->dmabuf.modifiers.xrgb8888,
+                         sizeof(uint64_t), 32)) {
+         result = VK_ERROR_OUT_OF_HOST_MEMORY;
+         goto fail;
+      }
+   }
 
    display->queue = wl_display_create_queue(wl_display);
    if (!display->queue) {
@@ -487,35 +414,41 @@ wsi_wl_display_init(struct wsi_wayland *wsi_wl,
 
    wl_registry_add_listener(registry, &registry_listener, display);
 
-   /* Round-trip to get wl_shm and zwp_linux_dmabuf_v1 globals */
+   /* Round-trip to get wl_drms and zwp_linux_dmabuf_v1 globals */
    wl_display_roundtrip_queue(display->wl_display, display->queue);
-   if (!display->wl_dmabuf && !display->wl_shm) {
-      result = VK_ERROR_SURFACE_LOST_KHR;
-      goto fail_registry;
-   }
 
-   /* Caller doesn't expect us to query formats/modifiers, so return */
-   if (!get_format_list)
-      goto out;
-
-   /* Round-trip again to get formats and modifiers */
-   wl_display_roundtrip_queue(display->wl_display, display->queue);
+   /* Round-trip again to get formats, modifiers and capabilities */
+   if (display->drm.wl_drm || display->dmabuf.wl_dmabuf)
+      wl_display_roundtrip_queue(display->wl_display, display->queue);
 
    if (wsi_wl->wsi->force_bgra8_unorm_first) {
       /* Find BGRA8_UNORM in the list and swap it to the first position if we
        * can find it.  Some apps get confused if SRGB is first in the list.
        */
-      struct wsi_wl_format *first_fmt = u_vector_head(&display->formats);
-      struct wsi_wl_format *f, tmp_fmt;
-      f = find_format(&display->formats, VK_FORMAT_B8G8R8A8_UNORM);
-      if (f) {
-         tmp_fmt = *f;
-         *f = *first_fmt;
-         *first_fmt = tmp_fmt;
+      VkFormat *first_fmt = u_vector_head(display->formats);
+      VkFormat *iter_fmt;
+      u_vector_foreach(iter_fmt, display->formats) {
+         if (*iter_fmt == VK_FORMAT_B8G8R8A8_UNORM) {
+            *iter_fmt = *first_fmt;
+            *first_fmt = VK_FORMAT_B8G8R8A8_UNORM;
+            break;
+         }
       }
    }
 
-out:
+   /* We need prime support for wl_drm */
+   if (display->drm.wl_drm &&
+       (display->drm.capabilities & WL_DRM_CAPABILITY_PRIME)) {
+      display->formats = &display->drm.formats;
+   } else if (display->dmabuf.wl_dmabuf) {
+      display->formats = &display->dmabuf.formats;
+   }
+
+   if (!display->formats) {
+      result = VK_ERROR_SURFACE_LOST_KHR;
+      goto fail_registry;
+   }
+
    /* We don't need this anymore */
    wl_registry_destroy(registry);
 
@@ -534,7 +467,6 @@ fail:
 
 static VkResult
 wsi_wl_display_create(struct wsi_wayland *wsi, struct wl_display *wl_display,
-                      bool sw,
                       struct wsi_wl_display **display_out)
 {
    struct wsi_wl_display *display =
@@ -543,8 +475,7 @@ wsi_wl_display_create(struct wsi_wayland *wsi, struct wl_display *wl_display,
    if (!display)
       return VK_ERROR_OUT_OF_HOST_MEMORY;
 
-   VkResult result = wsi_wl_display_init(wsi, display, wl_display, true,
-                                         sw);
+   VkResult result = wsi_wl_display_init(wsi, display, wl_display, true);
    if (result != VK_SUCCESS) {
       vk_free(wsi->alloc, display);
       return result;
@@ -582,8 +513,7 @@ wsi_wl_get_presentation_support(struct wsi_device *wsi_device,
       (struct wsi_wayland *)wsi_device->wsi[VK_ICD_WSI_PLATFORM_WAYLAND];
 
    struct wsi_wl_display display;
-   VkResult ret = wsi_wl_display_init(wsi, &display, wl_display, false,
-                                      wsi_device->sw);
+   VkResult ret = wsi_wl_display_init(wsi, &display, wl_display, false);
    if (ret == VK_SUCCESS)
       wsi_wl_display_finish(&display);
 
@@ -686,16 +616,15 @@ wsi_wl_surface_get_formats(VkIcdSurfaceBase *icd_surface,
       (struct wsi_wayland *)wsi_device->wsi[VK_ICD_WSI_PLATFORM_WAYLAND];
 
    struct wsi_wl_display display;
-   if (wsi_wl_display_init(wsi, &display, surface->display, true,
-                           wsi_device->sw))
+   if (wsi_wl_display_init(wsi, &display, surface->display, true))
       return VK_ERROR_SURFACE_LOST_KHR;
 
    VK_OUTARRAY_MAKE(out, pSurfaceFormats, pSurfaceFormatCount);
 
-   struct wsi_wl_format *disp_fmt;
-   u_vector_foreach(disp_fmt, &display.formats) {
+   VkFormat *disp_fmt;
+   u_vector_foreach(disp_fmt, display.formats) {
       vk_outarray_append(&out, out_fmt) {
-         out_fmt->format = disp_fmt->vk_format;
+         out_fmt->format = *disp_fmt;
          out_fmt->colorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR;
       }
    }
@@ -717,16 +646,15 @@ wsi_wl_surface_get_formats2(VkIcdSurfaceBase *icd_surface,
       (struct wsi_wayland *)wsi_device->wsi[VK_ICD_WSI_PLATFORM_WAYLAND];
 
    struct wsi_wl_display display;
-   if (wsi_wl_display_init(wsi, &display, surface->display, true,
-                           wsi_device->sw))
+   if (wsi_wl_display_init(wsi, &display, surface->display, true))
       return VK_ERROR_SURFACE_LOST_KHR;
 
    VK_OUTARRAY_MAKE(out, pSurfaceFormats, pSurfaceFormatCount);
 
-   struct wsi_wl_format *disp_fmt;
-   u_vector_foreach(disp_fmt, &display.formats) {
+   VkFormat *disp_fmt;
+   u_vector_foreach(disp_fmt, display.formats) {
       vk_outarray_append(&out, out_fmt) {
-         out_fmt->surfaceFormat.format = disp_fmt->vk_format;
+         out_fmt->surfaceFormat.format = *disp_fmt;
          out_fmt->surfaceFormat.colorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR;
       }
    }
@@ -798,23 +726,26 @@ struct wsi_wl_image {
    struct wsi_image                             base;
    struct wl_buffer *                           buffer;
    bool                                         busy;
-   void *                                       data_ptr;
-   uint32_t                                     data_size;
 };
 
 struct wsi_wl_swapchain {
-   struct wsi_swapchain                         base;
+   struct wsi_swapchain                        base;
 
    struct wsi_wl_display                        *display;
 
    struct wl_surface *                          surface;
+   uint32_t                                     surface_version;
+
+   /* non-NULL when wl_drm should be used for wl_buffer creation; otherwise,
+    * zwp_linux_dmabuf_v1 should be used.
+    */
+   struct wl_drm *                              drm_wrapper;
 
    struct wl_callback *                         frame;
 
    VkExtent2D                                   extent;
    VkFormat                                     vk_format;
    uint32_t                                     drm_format;
-   uint32_t                                     shm_format;
 
    uint32_t                                     num_drm_modifiers;
    const uint64_t *                             drm_modifiers;
@@ -932,23 +863,6 @@ wsi_wl_swapchain_queue_present(struct wsi_swapchain *wsi_chain,
 {
    struct wsi_wl_swapchain *chain = (struct wsi_wl_swapchain *)wsi_chain;
 
-   if (chain->display->sw) {
-      struct wsi_wl_image *image = &chain->images[image_index];
-      void *dptr = image->data_ptr;
-      void *sptr;
-      chain->base.wsi->MapMemory(chain->base.device,
-                                 image->base.memory,
-                                 0, 0, 0, &sptr);
-
-      for (unsigned r = 0; r < chain->extent.height; r++) {
-         memcpy(dptr, sptr, image->base.row_pitches[0]);
-         dptr += image->base.row_pitches[0];
-         sptr += image->base.row_pitches[0];
-      }
-      chain->base.wsi->UnmapMemory(chain->base.device,
-                                   image->base.memory);
-
-   }
    if (chain->base.present_mode == VK_PRESENT_MODE_FIFO_KHR) {
       while (!chain->fifo_ready) {
          int ret = wl_display_dispatch_queue(chain->display->wl_display,
@@ -961,7 +875,7 @@ wsi_wl_swapchain_queue_present(struct wsi_swapchain *wsi_chain,
    assert(image_index < chain->base.image_count);
    wl_surface_attach(chain->surface, chain->images[image_index].buffer, 0, 0);
 
-   if (wl_surface_get_version(chain->surface) >= 4 && damage &&
+   if (chain->surface_version >= 4 && damage &&
        damage->pRectangles && damage->rectangleCount > 0) {
       for (unsigned i = 0; i < damage->rectangleCount; i++) {
          const VkRectLayerKHR *rect = &damage->pRectangles[i];
@@ -1018,37 +932,14 @@ wsi_wl_image_init(struct wsi_wl_swapchain *chain,
    if (result != VK_SUCCESS)
       return result;
 
-   if (display->sw) {
-      int fd, stride;
-
-      stride = image->base.row_pitches[0];
-      image->data_size = stride * chain->extent.height;
-
-      /* Create a shareable buffer */
-      fd = os_create_anonymous_file(image->data_size, NULL);
-      if (fd < 0)
-         goto fail_image;
-
-      image->data_ptr = mmap(NULL, image->data_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-      if (image->data_ptr == MAP_FAILED) {
-         close(fd);
-         goto fail_image;
-      }
-      /* Share it in a wl_buffer */
-      struct wl_shm_pool *pool = wl_shm_create_pool(display->wl_shm, fd, image->data_size);
-      wl_proxy_set_queue((struct wl_proxy *)pool, display->queue);
-      image->buffer = wl_shm_pool_create_buffer(pool, 0, chain->extent.width,
-                                                chain->extent.height, stride,
-                                                chain->shm_format);
-      wl_shm_pool_destroy(pool);
-      close(fd);
-   } else {
-      assert(display->wl_dmabuf);
+   if (!chain->drm_wrapper) {
+      /* Only request modifiers if we have dmabuf, else it must be implicit. */
+      assert(display->dmabuf.wl_dmabuf);
+      assert(image->base.drm_modifier != DRM_FORMAT_MOD_INVALID);
 
       struct zwp_linux_buffer_params_v1 *params =
-         zwp_linux_dmabuf_v1_create_params(display->wl_dmabuf);
-      if (!params)
-         goto fail_image;
+         zwp_linux_dmabuf_v1_create_params(display->dmabuf.wl_dmabuf);
+      wl_proxy_set_queue((struct wl_proxy *) params, chain->display->queue);
 
       for (int i = 0; i < image->base.num_planes; i++) {
          zwp_linux_buffer_params_v1_add(params,
@@ -1068,6 +959,21 @@ wsi_wl_image_init(struct wsi_wl_swapchain *chain,
                                                  chain->drm_format,
                                                  0);
       zwp_linux_buffer_params_v1_destroy(params);
+   } else {
+      /* Without passing modifiers, we can't have multi-plane RGB images. */
+      assert(image->base.num_planes == 1);
+      assert(image->base.drm_modifier == DRM_FORMAT_MOD_INVALID);
+
+      image->buffer =
+         wl_drm_create_prime_buffer(chain->drm_wrapper,
+                                    image->base.fds[0], /* name */
+                                    chain->extent.width,
+                                    chain->extent.height,
+                                    chain->drm_format,
+                                    image->base.offsets[0],
+                                    image->base.row_pitches[0],
+                                    0, 0, 0, 0 /* unused */);
+      close(image->base.fds[0]);
    }
 
    if (!image->buffer)
@@ -1080,7 +986,7 @@ wsi_wl_image_init(struct wsi_wl_swapchain *chain,
 fail_image:
    wsi_destroy_image(&chain->base, &image->base);
 
-   return VK_ERROR_OUT_OF_HOST_MEMORY;
+   return result;
 }
 
 static VkResult
@@ -1093,8 +999,6 @@ wsi_wl_swapchain_destroy(struct wsi_swapchain *wsi_chain,
       if (chain->images[i].buffer) {
          wl_buffer_destroy(chain->images[i].buffer);
          wsi_destroy_image(&chain->base, &chain->images[i].base);
-         if (chain->images[i].data_ptr)
-            munmap(chain->images[i].data_ptr, chain->images[i].data_size);
       }
    }
 
@@ -1102,6 +1006,8 @@ wsi_wl_swapchain_destroy(struct wsi_swapchain *wsi_chain,
       wl_callback_destroy(chain->frame);
    if (chain->surface)
       wl_proxy_wrapper_destroy(chain->surface);
+   if (chain->drm_wrapper)
+      wl_proxy_wrapper_destroy(chain->drm_wrapper);
 
    if (chain->display)
       wsi_wl_display_unref(chain->display);
@@ -1147,11 +1053,10 @@ wsi_wl_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
    /* Mark a bunch of stuff as NULL.  This way we can just call
     * destroy_swapchain for cleanup.
     */
-   for (uint32_t i = 0; i < num_images; i++) {
+   for (uint32_t i = 0; i < num_images; i++)
       chain->images[i].buffer = NULL;
-      chain->images[i].data_ptr = NULL;
-   }
    chain->surface = NULL;
+   chain->drm_wrapper = NULL;
    chain->frame = NULL;
 
    bool alpha = pCreateInfo->compositeAlpha ==
@@ -1165,10 +1070,7 @@ wsi_wl_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
    chain->base.image_count = num_images;
    chain->extent = pCreateInfo->imageExtent;
    chain->vk_format = pCreateInfo->imageFormat;
-   if (wsi_device->sw)
-      chain->shm_format = wl_shm_format_for_vk_format(chain->vk_format, alpha);
-   else
-      chain->drm_format = wl_drm_format_for_vk_format(chain->vk_format, alpha);
+   chain->drm_format = wl_drm_format_for_vk_format(chain->vk_format, alpha);
 
    if (pCreateInfo->oldSwapchain) {
       /* If we have an oldSwapchain parameter, copy the display struct over
@@ -1178,8 +1080,7 @@ wsi_wl_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
       chain->display = wsi_wl_display_ref(old_chain->display);
    } else {
       chain->display = NULL;
-      result = wsi_wl_display_create(wsi, surface->display,
-                                     wsi_device->sw, &chain->display);
+      result = wsi_wl_display_create(wsi, surface->display, &chain->display);
       if (result != VK_SUCCESS)
          goto fail;
    }
@@ -1191,6 +1092,7 @@ wsi_wl_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
    }
    wl_proxy_set_queue((struct wl_proxy *) chain->surface,
                       chain->display->queue);
+   chain->surface_version = wl_proxy_get_version((void *)surface->surface);
 
    chain->num_drm_modifiers = 0;
    chain->drm_modifiers = 0;
@@ -1198,12 +1100,42 @@ wsi_wl_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
    /* Use explicit DRM format modifiers when both the server and the driver
     * support them.
     */
-   if (chain->display->wl_dmabuf && chain->base.wsi->supports_modifiers) {
-      struct wsi_wl_format *f = find_format(&chain->display->formats, chain->vk_format);
-      if (f) {
-         chain->drm_modifiers = u_vector_tail(&f->modifiers);
-         chain->num_drm_modifiers = u_vector_length(&f->modifiers);
+   if (chain->display->dmabuf.wl_dmabuf &&
+       chain->base.wsi->supports_modifiers) {
+      struct u_vector *modifiers;
+      switch (chain->drm_format) {
+      case WL_DRM_FORMAT_ARGB8888:
+         modifiers = &chain->display->dmabuf.modifiers.argb8888;
+         break;
+      case WL_DRM_FORMAT_XRGB8888:
+         modifiers = &chain->display->dmabuf.modifiers.xrgb8888;
+         break;
+      default:
+         modifiers = NULL;
+         break;
       }
+
+      if (modifiers) {
+         chain->drm_modifiers = u_vector_tail(modifiers);
+         chain->num_drm_modifiers = u_vector_length(modifiers);
+      }
+   }
+
+   /* When there are explicit DRM format modifiers, we must use
+    * zwp_linux_dmabuf_v1 for wl_buffer creation.  Otherwise, we must use
+    * wl_drm.
+    */
+   if (!chain->num_drm_modifiers) {
+      assert(chain->display->drm.wl_drm);
+
+      chain->drm_wrapper =
+         wl_proxy_create_wrapper(chain->display->drm.wl_drm);
+      if (!chain->drm_wrapper) {
+         result = VK_ERROR_OUT_OF_HOST_MEMORY;
+         goto fail;
+      }
+      wl_proxy_set_queue((struct wl_proxy *) chain->drm_wrapper,
+                         chain->display->queue);
    }
 
    chain->fifo_ready = true;

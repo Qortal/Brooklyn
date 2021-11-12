@@ -36,33 +36,11 @@
 
 namespace r600 {
 
-class NirLowerInstruction {
-public:
-	NirLowerInstruction();
-
-	bool run(nir_shader *shader);
-
-private:
-	static bool filter_instr(const nir_instr *instr, const void *data);
-        static nir_ssa_def *lower_instr(nir_builder *b, nir_instr *instr,  void *data);
-
-        void set_builder(nir_builder *_b) { b = _b;}
-
-	virtual bool filter(const nir_instr *instr) const = 0;
-	virtual nir_ssa_def *lower(nir_instr *instr) = 0;
-protected:
-	nir_builder *b;
-};
+bool r600_nir_lower_pack_unpack_2x16(nir_shader *shader);
 
 bool r600_lower_scratch_addresses(nir_shader *shader);
 
 bool r600_lower_ubo_to_align16(nir_shader *shader);
-
-bool r600_nir_split_64bit_io(nir_shader *sh);
-
-bool r600_nir_64_to_vec2(nir_shader *sh);
-
-bool r600_merge_vec2_stores(nir_shader *shader);
 
 class Shader {
 public:
@@ -118,6 +96,8 @@ private:
 
 }
 
+#endif
+
 static inline nir_ssa_def *
 r600_imm_ivec3(nir_builder *build, int x, int y, int z)
 {
@@ -132,15 +112,6 @@ r600_imm_ivec3(nir_builder *build, int x, int y, int z)
 
 bool r600_lower_tess_io(nir_shader *shader, enum pipe_prim_type prim_type);
 bool r600_append_tcs_TF_emission(nir_shader *shader, enum pipe_prim_type prim_type);
-bool r600_lower_tess_coord(nir_shader *sh, enum pipe_prim_type prim_type);
-
-bool
-r600_legalize_image_load_store(nir_shader *shader);
-
-
-#else
-#include "gallium/drivers/r600/r600_shader.h"
-#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -148,11 +119,11 @@ extern "C" {
 
 bool r600_vectorize_vs_inputs(nir_shader *shader);
 
-bool r600_lower_to_scalar_instr_filter(const nir_instr *instr, const void *);
 
 int r600_shader_from_nir(struct r600_context *rctx,
                          struct r600_pipe_shader *pipeshader,
                          union r600_shader_key *key);
+
 
 #ifdef __cplusplus
 }

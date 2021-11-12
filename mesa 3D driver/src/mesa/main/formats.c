@@ -430,22 +430,16 @@ _mesa_array_format_flip_channels(mesa_array_format format)
    unreachable("Invalid array format");
 }
 
-static uint32_t
-_mesa_format_info_to_array_format(const struct mesa_format_info *info)
+uint32_t
+_mesa_format_to_array_format(mesa_format format)
 {
+   const struct mesa_format_info *info = _mesa_get_format_info(format);
 #if UTIL_ARCH_BIG_ENDIAN
    if (info->ArrayFormat && info->Layout == MESA_FORMAT_LAYOUT_PACKED)
       return _mesa_array_format_flip_channels(info->ArrayFormat);
    else
 #endif
       return info->ArrayFormat;
-}
-
-uint32_t
-_mesa_format_to_array_format(mesa_format format)
-{
-   const struct mesa_format_info *info = _mesa_get_format_info(format);
-   return _mesa_format_info_to_array_format(info);
 }
 
 static struct hash_table *format_array_format_table;
@@ -489,7 +483,12 @@ format_array_format_table_init(void)
       if (_mesa_is_format_srgb(f))
          continue;
 
-      array_format = _mesa_format_info_to_array_format(info);
+#if UTIL_ARCH_LITTLE_ENDIAN
+         array_format = info->ArrayFormat;
+#else
+         array_format = _mesa_array_format_flip_channels(info->ArrayFormat);
+#endif
+
       _mesa_hash_table_insert_pre_hashed(format_array_format_table,
                                          array_format,
                                          (void *)(intptr_t)array_format,
@@ -1024,8 +1023,6 @@ _mesa_uncompressed_format_to_type_and_comps(mesa_format format,
 
    case MESA_FORMAT_YCBCR:
    case MESA_FORMAT_YCBCR_REV:
-   case MESA_FORMAT_RG_RB_UNORM8:
-   case MESA_FORMAT_GR_BR_UNORM8:
       *datatype = GL_UNSIGNED_SHORT;
       *comps = 2;
       return;
@@ -1132,7 +1129,6 @@ _mesa_uncompressed_format_to_type_and_comps(mesa_format format,
       *comps = 1;
       return;
    case MESA_FORMAT_LA_SRGB8:
-   case MESA_FORMAT_RG_SRGB8:
       *datatype = GL_UNSIGNED_BYTE;
       *comps = 2;
       return;

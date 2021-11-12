@@ -130,8 +130,7 @@ struct swr_derived_state {
 };
 
 void swr_update_derived(struct pipe_context *,
-                        const struct pipe_draw_info * = nullptr,
-                        const struct pipe_draw_start_count_bias *draw = nullptr);
+                        const struct pipe_draw_info * = nullptr);
 
 /*
  * Conversion functions: Convert mesa state defines to SWR.
