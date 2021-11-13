@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * INET		An implementation of the TCP/IP protocol suite for the LINUX
  *		operating system.  INET is implemented using the  BSD Socket
@@ -10,6 +9,11 @@
  *		Arnt Gulbrandsen, <agulbra@nvg.unit.no>
  *		Borrows very liberally from tcp.c and ip.c, see those
  *		files for more names.
+ *
+ *		This program is free software; you can redistribute it and/or
+ *		modify it under the terms of the GNU General Public License
+ *		as published by the Free Software Foundation; either version
+ *		2 of the License, or (at your option) any later version.
  */
 
 #ifndef _CHECKSUM_H
@@ -18,38 +22,38 @@
 #include <linux/errno.h>
 #include <asm/types.h>
 #include <asm/byteorder.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 #include <asm/checksum.h>
 
 #ifndef _HAVE_ARCH_COPY_AND_CSUM_FROM_USER
 static inline
 __wsum csum_and_copy_from_user (const void __user *src, void *dst,
-				      int len)
+				      int len, __wsum sum, int *err_ptr)
 {
-	if (copy_from_user(dst, src, len))
-		return 0;
-	return csum_partial(dst, len, ~0U);
+	if (access_ok(VERIFY_READ, src, len))
+		return csum_partial_copy_from_user(src, dst, len, sum, err_ptr);
+
+	if (len)
+		*err_ptr = -EFAULT;
+
+	return sum;
 }
 #endif
 
 #ifndef HAVE_CSUM_COPY_USER
 static __inline__ __wsum csum_and_copy_to_user
-(const void *src, void __user *dst, int len)
+(const void *src, void __user *dst, int len, __wsum sum, int *err_ptr)
 {
-	__wsum sum = csum_partial(src, len, ~0U);
+	sum = csum_partial(src, len, sum);
 
-	if (copy_to_user(dst, src, len) == 0)
-		return sum;
-	return 0;
-}
-#endif
+	if (access_ok(VERIFY_WRITE, dst, len)) {
+		if (copy_to_user(dst, src, len) == 0)
+			return sum;
+	}
+	if (len)
+		*err_ptr = -EFAULT;
 
-#ifndef _HAVE_ARCH_CSUM_AND_COPY
-static inline __wsum
-csum_partial_copy_nocheck(const void *src, void *dst, int len)
-{
-	memcpy(dst, src, len);
-	return csum_partial(dst, len, 0);
+	return (__force __wsum)-1; /* invalid checksum */
 }
 #endif
 
@@ -80,18 +84,16 @@ static inline __sum16 csum16_sub(__sum16 csum, __be16 addend)
 	return csum16_add(csum, ~addend);
 }
 
-static inline __wsum csum_shift(__wsum sum, int offset)
-{
-	/* rotate sum to align it with a 16b boundary */
-	if (offset & 1)
-		return (__force __wsum)ror32((__force u32)sum, 8);
-	return sum;
-}
-
 static inline __wsum
 csum_block_add(__wsum csum, __wsum csum2, int offset)
 {
-	return csum_add(csum, csum_shift(csum2, offset));
+	u32 sum = (__force u32)csum2;
+
+	/* rotate sum to align it with a 16b boundary */
+	if (offset & 1)
+		sum = ror32(sum, 8);
+
+	return csum_add(csum, (__force __wsum)sum);
 }
 
 static inline __wsum
@@ -177,7 +179,7 @@ static inline __wsum remcsum_adjust(void *ptr, __wsum csum,
 
 static inline void remcsum_unadjust(__sum16 *psum, __wsum delta)
 {
-	*psum = csum_fold(csum_sub(delta, (__force __wsum)*psum));
+	*psum = csum_fold(csum_sub(delta, *psum));
 }
 
 #endif

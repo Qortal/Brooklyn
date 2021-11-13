@@ -1,9 +1,10 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Memory mapped I/O tracing
  *
  * Copyright (C) 2008 Pekka Paalanen <pq@iki.fi>
  */
+
+#define DEBUG 1
 
 #include <linux/kernel.h>
 #include <linux/mmiotrace.h>
@@ -23,14 +24,14 @@ struct header_iter {
 static struct trace_array *mmio_trace_array;
 static bool overrun_detected;
 static unsigned long prev_overruns;
-static atomic_t dropped_count;
+static atomic_unchecked_t dropped_count;
 
 static void mmio_reset_data(struct trace_array *tr)
 {
 	overrun_detected = false;
 	prev_overruns = 0;
 
-	tracing_reset_online_cpus(&tr->array_buffer);
+	tracing_reset_online_cpus(&tr->trace_buffer);
 }
 
 static int mmio_trace_init(struct trace_array *tr)
@@ -119,8 +120,8 @@ static void mmio_close(struct trace_iterator *iter)
 
 static unsigned long count_overruns(struct trace_iterator *iter)
 {
-	unsigned long cnt = atomic_xchg(&dropped_count, 0);
-	unsigned long over = ring_buffer_overruns(iter->array_buffer->buffer);
+	unsigned long cnt = atomic_xchg_unchecked(&dropped_count, 0);
+	unsigned long over = ring_buffer_overruns(iter->trace_buffer->buffer);
 
 	if (over > prev_overruns)
 		cnt += over - prev_overruns;
@@ -281,7 +282,6 @@ static struct tracer mmio_tracer __read_mostly =
 	.close		= mmio_close,
 	.read		= mmio_read,
 	.print_line	= mmio_print_line,
-	.noboot		= true,
 };
 
 __init static int init_mmio_trace(void)
@@ -295,29 +295,28 @@ static void __trace_mmiotrace_rw(struct trace_array *tr,
 				struct mmiotrace_rw *rw)
 {
 	struct trace_event_call *call = &event_mmiotrace_rw;
-	struct trace_buffer *buffer = tr->array_buffer.buffer;
+	struct ring_buffer *buffer = tr->trace_buffer.buffer;
 	struct ring_buffer_event *event;
 	struct trace_mmiotrace_rw *entry;
-	unsigned int trace_ctx;
+	int pc = preempt_count();
 
-	trace_ctx = tracing_gen_ctx_flags(0);
 	event = trace_buffer_lock_reserve(buffer, TRACE_MMIO_RW,
-					  sizeof(*entry), trace_ctx);
+					  sizeof(*entry), 0, pc);
 	if (!event) {
-		atomic_inc(&dropped_count);
+		atomic_inc_unchecked(&dropped_count);
 		return;
 	}
 	entry	= ring_buffer_event_data(event);
 	entry->rw			= *rw;
 
 	if (!call_filter_check_discard(call, entry, buffer, event))
-		trace_buffer_unlock_commit(tr, buffer, event, trace_ctx);
+		trace_buffer_unlock_commit(tr, buffer, event, 0, pc);
 }
 
 void mmio_trace_rw(struct mmiotrace_rw *rw)
 {
 	struct trace_array *tr = mmio_trace_array;
-	struct trace_array_cpu *data = per_cpu_ptr(tr->array_buffer.data, smp_processor_id());
+	struct trace_array_cpu *data = per_cpu_ptr(tr->trace_buffer.data, smp_processor_id());
 	__trace_mmiotrace_rw(tr, data, rw);
 }
 
@@ -326,23 +325,22 @@ static void __trace_mmiotrace_map(struct trace_array *tr,
 				struct mmiotrace_map *map)
 {
 	struct trace_event_call *call = &event_mmiotrace_map;
-	struct trace_buffer *buffer = tr->array_buffer.buffer;
+	struct ring_buffer *buffer = tr->trace_buffer.buffer;
 	struct ring_buffer_event *event;
 	struct trace_mmiotrace_map *entry;
-	unsigned int trace_ctx;
+	int pc = preempt_count();
 
-	trace_ctx = tracing_gen_ctx_flags(0);
 	event = trace_buffer_lock_reserve(buffer, TRACE_MMIO_MAP,
-					  sizeof(*entry), trace_ctx);
+					  sizeof(*entry), 0, pc);
 	if (!event) {
-		atomic_inc(&dropped_count);
+		atomic_inc_unchecked(&dropped_count);
 		return;
 	}
 	entry	= ring_buffer_event_data(event);
 	entry->map			= *map;
 
 	if (!call_filter_check_discard(call, entry, buffer, event))
-		trace_buffer_unlock_commit(tr, buffer, event, trace_ctx);
+		trace_buffer_unlock_commit(tr, buffer, event, 0, pc);
 }
 
 void mmio_trace_mapping(struct mmiotrace_map *map)
@@ -351,7 +349,7 @@ void mmio_trace_mapping(struct mmiotrace_map *map)
 	struct trace_array_cpu *data;
 
 	preempt_disable();
-	data = per_cpu_ptr(tr->array_buffer.data, smp_processor_id());
+	data = per_cpu_ptr(tr->trace_buffer.data, smp_processor_id());
 	__trace_mmiotrace_map(tr, data, map);
 	preempt_enable();
 }

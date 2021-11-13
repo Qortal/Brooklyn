@@ -1,8 +1,11 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * ppp-comp.h - Definitions for doing PPP packet compression.
  *
  * Copyright 1994-1998 Paul Mackerras.
+ *
+ *  This program is free software; you can redistribute it and/or
+ *  modify it under the terms of the GNU General Public License
+ *  version 2 as published by the Free Software Foundation.
  */
 #ifndef _NET_PPP_COMP_H
 #define _NET_PPP_COMP_H
@@ -81,7 +84,7 @@ struct compressor {
 	struct module *owner;
 	/* Extra skb space needed by the compressor algorithm */
 	unsigned int comp_extra;
-};
+} __do_const;
 
 /*
  * The return value from decompress routine is the length of the

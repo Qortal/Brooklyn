@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0+
 /* Copyright (C) 2007,2008 Freescale Semiconductor, Inc.
  *
  * This program is free software; you can redistribute  it and/or modify it
@@ -21,6 +20,21 @@
 
 #include <linux/mutex.h>
 #include <linux/errno.h>
+
+#undef VERBOSE
+
+#ifdef VERBOSE
+#define VDBG(fmt, args...) pr_debug("[%s]  " fmt , \
+				 __func__, ## args)
+#else
+#define VDBG(stuff...)	do {} while (0)
+#endif
+
+#ifdef VERBOSE
+#define MPC_LOC printk("Current Location [%s]:[%d]\n", __FILE__, __LINE__)
+#else
+#define MPC_LOC do {} while (0)
+#endif
 
 #define PROTO_UNDEF	(0)
 #define PROTO_HOST	(1)
@@ -98,7 +112,7 @@ enum otg_fsm_timer {
  * @b_bus_req:	TRUE during the time that the Application running on the
  *		B-device wants to use the bus
  *
- *	Auxiliary inputs (OTG v1.3 only. Obsolete now.)
+ *	Auxilary inputs (OTG v1.3 only. Obsolete now.)
  * @a_sess_vld:	TRUE if the A-device detects that VBUS is above VA_SESS_VLD
  * @b_bus_suspend: TRUE when the A-device detects that the B-device has put
  *		the bus into suspend
@@ -153,7 +167,7 @@ struct otg_fsm {
 	int a_bus_req;
 	int b_bus_req;
 
-	/* Auxiliary inputs */
+	/* Auxilary inputs */
 	int a_sess_vld;
 	int b_bus_resume;
 	int b_bus_suspend;
@@ -177,7 +191,7 @@ struct otg_fsm {
 	int a_bus_req_inf;
 	int a_clr_err_inf;
 	int b_bus_req_inf;
-	/* Auxiliary informative variables */
+	/* Auxilary informative variables */
 	int a_suspend_req_inf;
 
 	/* Timeout indicator for timers */
@@ -196,7 +210,6 @@ struct otg_fsm {
 	struct mutex lock;
 	u8 *host_req_flag;
 	struct delayed_work hnp_polling_work;
-	bool hnp_work_inited;
 	bool state_changed;
 };
 

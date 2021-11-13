@@ -1,8 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_CTYPE_H
 #define _LINUX_CTYPE_H
-
-#include <linux/compiler.h>
 
 /*
  * NOTE! This ctype does not handle EOF like the standard C
@@ -25,6 +22,10 @@ extern const unsigned char _ctype[];
 #define isalnum(c)	((__ismask(c)&(_U|_L|_D)) != 0)
 #define isalpha(c)	((__ismask(c)&(_U|_L)) != 0)
 #define iscntrl(c)	((__ismask(c)&(_C)) != 0)
+static inline int isdigit(int c)
+{
+	return '0' <= c && c <= '9';
+}
 #define isgraph(c)	((__ismask(c)&(_P|_U|_L|_D)) != 0)
 #define islower(c)	((__ismask(c)&(_L)) != 0)
 #define isprint(c)	((__ismask(c)&(_P|_U|_L|_D|_SP)) != 0)
@@ -36,15 +37,6 @@ extern const unsigned char _ctype[];
 
 #define isascii(c) (((unsigned char)(c))<=0x7f)
 #define toascii(c) (((unsigned char)(c))&0x7f)
-
-#if __has_builtin(__builtin_isdigit)
-#define  isdigit(c) __builtin_isdigit(c)
-#else
-static inline int isdigit(int c)
-{
-	return '0' <= c && c <= '9';
-}
-#endif
 
 static inline unsigned char __tolower(unsigned char c)
 {
@@ -67,7 +59,7 @@ static inline unsigned char __toupper(unsigned char c)
  * Fast implementation of tolower() for internal usage. Do not use in your
  * code.
  */
-static inline char _tolower(const char c)
+static inline unsigned char _tolower(const unsigned char c)
 {
 	return c | 0x20;
 }

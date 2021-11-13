@@ -1,9 +1,6 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /******************************************************************************
  * Xen balloon functionality
  */
-#ifndef _XEN_BALLOON_H
-#define _XEN_BALLOON_H
 
 #define RETRY_UNLIMITED	0
 
@@ -29,12 +26,12 @@ void balloon_set_new_target(unsigned long target);
 int alloc_xenballooned_pages(int nr_pages, struct page **pages);
 void free_xenballooned_pages(int nr_pages, struct page **pages);
 
-#ifdef CONFIG_XEN_BALLOON
-void xen_balloon_init(void);
+struct device;
+#ifdef CONFIG_XEN_SELFBALLOONING
+extern int register_xen_selfballooning(struct device *dev);
 #else
-static inline void xen_balloon_init(void)
+static inline int register_xen_selfballooning(struct device *dev)
 {
+	return -ENOSYS;
 }
 #endif
-
-#endif	/* _XEN_BALLOON_H */

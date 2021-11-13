@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
  * -- <linux/cdrom.h>
  * General header file for linux CD-ROM drivers 
@@ -289,10 +288,7 @@ struct cdrom_generic_command
 	unsigned char		data_direction;
 	int			quiet;
 	int			timeout;
-	union {
-		void		__user *reserved[1];	/* unused, actually */
-		void            __user *unused;
-	};
+	void			__user *reserved[1];	/* unused, actually */
 };
 
 /*

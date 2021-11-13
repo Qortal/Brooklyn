@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 /*
  * FS_IOC_FIEMAP ioctl infrastructure.
  *
@@ -9,8 +8,8 @@
  *          Andreas Dilger <adilger@sun.com>
  */
 
-#ifndef _UAPI_LINUX_FIEMAP_H
-#define _UAPI_LINUX_FIEMAP_H
+#ifndef _LINUX_FIEMAP_H
+#define _LINUX_FIEMAP_H
 
 #include <linux/types.h>
 
@@ -67,4 +66,4 @@ struct fiemap {
 #define FIEMAP_EXTENT_SHARED		0x00002000 /* Space shared with other
 						    * files. */
 
-#endif /* _UAPI_LINUX_FIEMAP_H */
+#endif /* _LINUX_FIEMAP_H */

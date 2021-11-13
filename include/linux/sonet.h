@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /* sonet.h - SONET/SHD physical layer control */
 #ifndef LINUX_SONET_H
 #define LINUX_SONET_H
@@ -8,7 +7,7 @@
 #include <uapi/linux/sonet.h>
 
 struct k_sonet_stats {
-#define __HANDLE_ITEM(i) atomic_t i
+#define __HANDLE_ITEM(i) atomic_unchecked_t i
 	__SONET_ITEMS
 #undef __HANDLE_ITEM
 };

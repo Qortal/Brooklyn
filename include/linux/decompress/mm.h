@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * linux/compr_mm.h
  *
@@ -78,7 +77,7 @@ static void free(void *where)
  * warnings when not needed (indeed large_malloc / large_free are not
  * needed by inflate */
 
-#define malloc(a) kmalloc(a, GFP_KERNEL)
+#define malloc(a) kmalloc((a), GFP_KERNEL)
 #define free(a) kfree(a)
 
 #define large_malloc(a) vmalloc(a)

@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_MODULELOADER_H
 #define _LINUX_MODULELOADER_H
 /* The stuff needed for archs to support modules. */
@@ -26,18 +25,20 @@ unsigned int arch_mod_section_prepend(struct module *mod, unsigned int section);
    sections.  Returns NULL on failure. */
 void *module_alloc(unsigned long size);
 
+#ifdef CONFIG_PAX_KERNEXEC
+void *module_alloc_exec(unsigned long size);
+#else
+#define module_alloc_exec(x) module_alloc(x)
+#endif
+
 /* Free memory returned from module_alloc. */
 void module_memfree(void *module_region);
 
-/* Determines if the section name is an init section (that is only used during
- * module loading).
- */
-bool module_init_section(const char *name);
-
-/* Determines if the section name is an exit section (that is only used during
- * module unloading)
- */
-bool module_exit_section(const char *name);
+#ifdef CONFIG_PAX_KERNEXEC
+void module_memfree_exec(void *module_region);
+#else
+#define module_memfree_exec(x) module_memfree((x))
+#endif
 
 /*
  * Apply the given relocation to the (simplified) ELF.  Return -error
@@ -56,8 +57,10 @@ static inline int apply_relocate(Elf_Shdr *sechdrs,
 				 unsigned int relsec,
 				 struct module *me)
 {
+#ifdef CONFIG_MODULES
 	printk(KERN_ERR "module %s: REL relocation unsupported\n",
 	       module_name(me));
+#endif
 	return -ENOEXEC;
 }
 #endif
@@ -79,8 +82,10 @@ static inline int apply_relocate_add(Elf_Shdr *sechdrs,
 				     unsigned int relsec,
 				     struct module *me)
 {
+#ifdef CONFIG_MODULES
 	printk(KERN_ERR "module %s: REL relocation unsupported\n",
 	       module_name(me));
+#endif
 	return -ENOEXEC;
 }
 #endif
@@ -96,8 +101,7 @@ void module_arch_cleanup(struct module *mod);
 /* Any cleanup before freeing mod->module_init */
 void module_arch_freeing_init(struct module *mod);
 
-#if (defined(CONFIG_KASAN_GENERIC) || defined(CONFIG_KASAN_SW_TAGS)) && \
-		!defined(CONFIG_KASAN_VMALLOC)
+#ifdef CONFIG_KASAN
 #include <linux/kasan.h>
 #define MODULE_ALIGN (PAGE_SIZE << KASAN_SHADOW_SCALE_SHIFT)
 #else

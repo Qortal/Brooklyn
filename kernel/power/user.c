@@ -1,13 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * linux/kernel/power/user.c
  *
  * This file provides the user space interface for software suspend/resume.
  *
  * Copyright (C) 2006 Rafael J. Wysocki <rjw@sisk.pl>
+ *
+ * This file is released under the GPLv2.
+ *
  */
 
 #include <linux/suspend.h>
+#include <linux/syscalls.h>
 #include <linux/reboot.h>
 #include <linux/string.h>
 #include <linux/device.h>
@@ -22,10 +25,12 @@
 #include <linux/cpu.h>
 #include <linux/freezer.h>
 
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 #include "power.h"
 
+
+#define SNAPSHOT_MINOR	231
 
 static struct snapshot_data {
 	struct snapshot_handle handle;
@@ -35,31 +40,27 @@ static struct snapshot_data {
 	bool ready;
 	bool platform_support;
 	bool free_bitmaps;
-	dev_t dev;
 } snapshot_state;
 
-int is_hibernate_resume_dev(dev_t dev)
-{
-	return hibernation_available() && snapshot_state.dev == dev;
-}
+atomic_t snapshot_device_available = ATOMIC_INIT(1);
 
 static int snapshot_open(struct inode *inode, struct file *filp)
 {
 	struct snapshot_data *data;
-	int error;
+	int error, nr_calls = 0;
 
 	if (!hibernation_available())
 		return -EPERM;
 
 	lock_system_sleep();
 
-	if (!hibernate_acquire()) {
+	if (!atomic_add_unless(&snapshot_device_available, -1, 0)) {
 		error = -EBUSY;
 		goto Unlock;
 	}
 
 	if ((filp->f_flags & O_ACCMODE) == O_RDWR) {
-		hibernate_release();
+		atomic_inc(&snapshot_device_available);
 		error = -ENOSYS;
 		goto Unlock;
 	}
@@ -69,10 +70,13 @@ static int snapshot_open(struct inode *inode, struct file *filp)
 	memset(&data->handle, 0, sizeof(struct snapshot_handle));
 	if ((filp->f_flags & O_ACCMODE) == O_RDONLY) {
 		/* Hibernating.  The image device should be accessible. */
-		data->swap = swap_type_of(swsusp_resume_device, 0);
+		data->swap = swsusp_resume_device ?
+			swap_type_of(swsusp_resume_device, 0, NULL) : -1;
 		data->mode = O_RDONLY;
 		data->free_bitmaps = false;
-		error = pm_notifier_call_chain_robust(PM_HIBERNATION_PREPARE, PM_POST_HIBERNATION);
+		error = __pm_notifier_call_chain(PM_HIBERNATION_PREPARE, -1, &nr_calls);
+		if (error)
+			__pm_notifier_call_chain(PM_POST_HIBERNATION, --nr_calls, NULL);
 	} else {
 		/*
 		 * Resuming.  We may need to wait for the image device to
@@ -82,19 +86,22 @@ static int snapshot_open(struct inode *inode, struct file *filp)
 
 		data->swap = -1;
 		data->mode = O_WRONLY;
-		error = pm_notifier_call_chain_robust(PM_RESTORE_PREPARE, PM_POST_RESTORE);
+		error = __pm_notifier_call_chain(PM_RESTORE_PREPARE, -1, &nr_calls);
 		if (!error) {
 			error = create_basic_memory_bitmaps();
 			data->free_bitmaps = !error;
-		}
+		} else
+			nr_calls--;
+
+		if (error)
+			__pm_notifier_call_chain(PM_POST_RESTORE, nr_calls, NULL);
 	}
 	if (error)
-		hibernate_release();
+		atomic_inc(&snapshot_device_available);
 
 	data->frozen = false;
 	data->ready = false;
 	data->platform_support = false;
-	data->dev = 0;
 
  Unlock:
 	unlock_system_sleep();
@@ -110,7 +117,6 @@ static int snapshot_release(struct inode *inode, struct file *filp)
 
 	swsusp_free();
 	data = filp->private_data;
-	data->dev = 0;
 	free_all_swap_pages(data->swap);
 	if (data->frozen) {
 		pm_restore_gfp_mask();
@@ -121,7 +127,7 @@ static int snapshot_release(struct inode *inode, struct file *filp)
 	}
 	pm_notifier_call_chain(data->mode == O_RDONLY ?
 			PM_POST_HIBERNATION : PM_POST_RESTORE);
-	hibernate_release();
+	atomic_inc(&snapshot_device_available);
 
 	unlock_system_sleep();
 
@@ -180,11 +186,6 @@ static ssize_t snapshot_write(struct file *filp, const char __user *buf,
 		res = PAGE_SIZE - pg_offp;
 	}
 
-	if (!data_of(data->handle)) {
-		res = -EINVAL;
-		goto unlock;
-	}
-
 	res = simple_write_to_buffer(data_of(data->handle), res, &pg_offp,
 			buf, count);
 	if (res > 0)
@@ -193,47 +194,6 @@ unlock:
 	unlock_system_sleep();
 
 	return res;
-}
-
-struct compat_resume_swap_area {
-	compat_loff_t offset;
-	u32 dev;
-} __packed;
-
-static int snapshot_set_swap_area(struct snapshot_data *data,
-		void __user *argp)
-{
-	sector_t offset;
-	dev_t swdev;
-
-	if (swsusp_swap_in_use())
-		return -EPERM;
-
-	if (in_compat_syscall()) {
-		struct compat_resume_swap_area swap_area;
-
-		if (copy_from_user(&swap_area, argp, sizeof(swap_area)))
-			return -EFAULT;
-		swdev = new_decode_dev(swap_area.dev);
-		offset = swap_area.offset;
-	} else {
-		struct resume_swap_area swap_area;
-
-		if (copy_from_user(&swap_area, argp, sizeof(swap_area)))
-			return -EFAULT;
-		swdev = new_decode_dev(swap_area.dev);
-		offset = swap_area.offset;
-	}
-
-	/*
-	 * User space encodes device types as two-byte values,
-	 * so we need to recode them
-	 */
-	data->swap = swap_type_of(swdev, offset);
-	if (data->swap < 0)
-		return swdev ? -ENODEV : -EINVAL;
-	data->dev = swdev;
-	return 0;
 }
 
 static long snapshot_ioctl(struct file *filp, unsigned int cmd,
@@ -251,7 +211,7 @@ static long snapshot_ioctl(struct file *filp, unsigned int cmd,
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-	if (!mutex_trylock(&system_transition_mutex))
+	if (!mutex_trylock(&pm_mutex))
 		return -EBUSY;
 
 	lock_device_hotplug();
@@ -263,7 +223,9 @@ static long snapshot_ioctl(struct file *filp, unsigned int cmd,
 		if (data->frozen)
 			break;
 
-		ksys_sync_helper();
+		printk("Syncing filesystems ... ");
+		sys_sync();
+		printk("done.\n");
 
 		error = freeze_processes();
 		if (error)
@@ -391,7 +353,34 @@ static long snapshot_ioctl(struct file *filp, unsigned int cmd,
 		break;
 
 	case SNAPSHOT_SET_SWAP_AREA:
-		error = snapshot_set_swap_area(data, (void __user *)arg);
+		if (swsusp_swap_in_use()) {
+			error = -EPERM;
+		} else {
+			struct resume_swap_area swap_area;
+			dev_t swdev;
+
+			error = copy_from_user(&swap_area, (void __user *)arg,
+					sizeof(struct resume_swap_area));
+			if (error) {
+				error = -EFAULT;
+				break;
+			}
+
+			/*
+			 * User space encodes device types as two-byte values,
+			 * so we need to recode them
+			 */
+			swdev = new_decode_dev(swap_area.dev);
+			if (swdev) {
+				offset = swap_area.offset;
+				data->swap = swap_type_of(swdev, offset, NULL);
+				if (data->swap < 0)
+					error = -ENODEV;
+			} else {
+				data->swap = -1;
+				error = -EINVAL;
+			}
+		}
 		break;
 
 	default:
@@ -400,12 +389,18 @@ static long snapshot_ioctl(struct file *filp, unsigned int cmd,
 	}
 
 	unlock_device_hotplug();
-	mutex_unlock(&system_transition_mutex);
+	mutex_unlock(&pm_mutex);
 
 	return error;
 }
 
 #ifdef CONFIG_COMPAT
+
+struct compat_resume_swap_area {
+	compat_loff_t offset;
+	u32 dev;
+} __packed;
+
 static long
 snapshot_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
@@ -414,15 +409,49 @@ snapshot_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	switch (cmd) {
 	case SNAPSHOT_GET_IMAGE_SIZE:
 	case SNAPSHOT_AVAIL_SWAP_SIZE:
-	case SNAPSHOT_ALLOC_SWAP_PAGE:
+	case SNAPSHOT_ALLOC_SWAP_PAGE: {
+		compat_loff_t __user *uoffset = compat_ptr(arg);
+		loff_t offset;
+		mm_segment_t old_fs;
+		int err;
+
+		old_fs = get_fs();
+		set_fs(KERNEL_DS);
+		err = snapshot_ioctl(file, cmd, (unsigned long) &offset);
+		set_fs(old_fs);
+		if (!err && put_user(offset, uoffset))
+			err = -EFAULT;
+		return err;
+	}
+
 	case SNAPSHOT_CREATE_IMAGE:
-	case SNAPSHOT_SET_SWAP_AREA:
 		return snapshot_ioctl(file, cmd,
 				      (unsigned long) compat_ptr(arg));
+
+	case SNAPSHOT_SET_SWAP_AREA: {
+		struct compat_resume_swap_area __user *u_swap_area =
+			compat_ptr(arg);
+		struct resume_swap_area swap_area;
+		mm_segment_t old_fs;
+		int err;
+
+		err = get_user(swap_area.offset, &u_swap_area->offset);
+		err |= get_user(swap_area.dev, &u_swap_area->dev);
+		if (err)
+			return -EFAULT;
+		old_fs = get_fs();
+		set_fs(KERNEL_DS);
+		err = snapshot_ioctl(file, SNAPSHOT_SET_SWAP_AREA,
+				     (unsigned long) &swap_area);
+		set_fs(old_fs);
+		return err;
+	}
+
 	default:
 		return snapshot_ioctl(file, cmd, arg);
 	}
 }
+
 #endif /* CONFIG_COMPAT */
 
 static const struct file_operations snapshot_fops = {

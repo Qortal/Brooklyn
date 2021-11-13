@@ -1,20 +1,18 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _SCSI_SCSI_CMND_H
 #define _SCSI_SCSI_CMND_H
 
 #include <linux/dma-mapping.h>
 #include <linux/blkdev.h>
-#include <linux/t10-pi.h>
 #include <linux/list.h>
 #include <linux/types.h>
 #include <linux/timer.h>
 #include <linux/scatterlist.h>
 #include <scsi/scsi_device.h>
-#include <scsi/scsi_host.h>
-#include <scsi/scsi_request.h>
 
 struct Scsi_Host;
 struct scsi_driver;
+
+#include <scsi/scsi_device.h>
 
 /*
  * MAX_COMMAND_SIZE is:
@@ -36,6 +34,7 @@ struct scsi_driver;
 struct scsi_data_buffer {
 	struct sg_table table;
 	unsigned length;
+	int resid;
 };
 
 /* embedded in scsi_cmnd */
@@ -56,26 +55,23 @@ struct scsi_pointer {
 
 /* for scmd->flags */
 #define SCMD_TAGGED		(1 << 0)
-#define SCMD_INITIALIZED	(1 << 1)
-#define SCMD_LAST		(1 << 2)
-/* flags preserved across unprep / reprep */
-#define SCMD_PRESERVED_FLAGS	(SCMD_INITIALIZED)
-
-/* for scmd->state */
-#define SCMD_STATE_COMPLETE	0
-#define SCMD_STATE_INFLIGHT	1
 
 struct scsi_cmnd {
-	struct scsi_request req;
 	struct scsi_device *device;
+	struct list_head list;  /* scsi_cmnd participates in queue lists */
 	struct list_head eh_entry; /* entry for the host eh_cmd_q */
 	struct delayed_work abort_work;
-
-	struct rcu_head rcu;
-
 	int eh_eflags;		/* Used by error handlr */
 
-	int budget_token;
+	/*
+	 * A SCSI Command is assigned a nonzero serial_number before passed
+	 * to the driver's queue command function.  The serial_number is
+	 * cleared when scsi_done is entered indicating that the command
+	 * has been completed.  It is a bug for LLDDs to use this number
+	 * for purposes other than printk (and even that is only useful
+	 * for debugging).
+	 */
+	unsigned long serial_number;
 
 	/*
 	 * This is set to jiffies as it was when the command was first
@@ -111,11 +107,14 @@ struct scsi_cmnd {
 				   reconnects.   Probably == sector
 				   size */
 
+	struct request *request;	/* The command we are
+				   	   working on */
+
+#define SCSI_SENSE_BUFFERSIZE 	96
 	unsigned char *sense_buffer;
 				/* obtained by REQUEST SENSE when
 				 * CHECK CONDITION is received on original
-				 * command (auto-sense). Length must be
-				 * SCSI_SENSE_BUFFERSIZE bytes. */
+				 * command (auto-sense) */
 
 	/* Low-level done function - can be used by low-level driver to point
 	 *        to completion function.  Not used by mid/upper level code. */
@@ -137,16 +136,9 @@ struct scsi_cmnd {
 
 	int result;		/* Status code from lower level driver */
 	int flags;		/* Command flags */
-	unsigned long state;	/* Command completion state */
 
-	unsigned int extra_len;	/* length of alignment and padding */
+	unsigned char tag;	/* SCSI-II queued command tag */
 };
-
-/* Variant of blk_mq_rq_from_pdu() that verifies the type of its argument. */
-static inline struct request *scsi_cmd_to_rq(struct scsi_cmnd *scmd)
-{
-	return blk_mq_rq_from_pdu(scmd);
-}
 
 /*
  * Return the driver private allocation behind the command.
@@ -157,30 +149,24 @@ static inline void *scsi_cmd_priv(struct scsi_cmnd *cmd)
 	return cmd + 1;
 }
 
-/* make sure not to use it with passthrough commands */
+/* make sure not to use it with REQ_TYPE_BLOCK_PC commands */
 static inline struct scsi_driver *scsi_cmd_to_driver(struct scsi_cmnd *cmd)
 {
-	struct request *rq = scsi_cmd_to_rq(cmd);
-
-	return *(struct scsi_driver **)rq->rq_disk->private_data;
+	return *(struct scsi_driver **)cmd->request->rq_disk->private_data;
 }
 
+extern struct scsi_cmnd *scsi_get_command(struct scsi_device *, gfp_t);
+extern void scsi_put_command(struct scsi_cmnd *);
 extern void scsi_finish_command(struct scsi_cmnd *cmd);
 
 extern void *scsi_kmap_atomic_sg(struct scatterlist *sg, int sg_count,
 				 size_t *offset, size_t *len);
 extern void scsi_kunmap_atomic_sg(void *virt);
 
-blk_status_t scsi_alloc_sgtables(struct scsi_cmnd *cmd);
-void scsi_free_sgtables(struct scsi_cmnd *cmd);
+extern int scsi_init_io(struct scsi_cmnd *cmd);
 
-#ifdef CONFIG_SCSI_DMA
 extern int scsi_dma_map(struct scsi_cmnd *cmd);
 extern void scsi_dma_unmap(struct scsi_cmnd *cmd);
-#else /* !CONFIG_SCSI_DMA */
-static inline int scsi_dma_map(struct scsi_cmnd *cmd) { return -ENOSYS; }
-static inline void scsi_dma_unmap(struct scsi_cmnd *cmd) { }
-#endif /* !CONFIG_SCSI_DMA */
 
 static inline unsigned scsi_sg_count(struct scsi_cmnd *cmd)
 {
@@ -197,18 +183,35 @@ static inline unsigned scsi_bufflen(struct scsi_cmnd *cmd)
 	return cmd->sdb.length;
 }
 
-static inline void scsi_set_resid(struct scsi_cmnd *cmd, unsigned int resid)
+static inline void scsi_set_resid(struct scsi_cmnd *cmd, int resid)
 {
-	cmd->req.resid_len = resid;
+	cmd->sdb.resid = resid;
 }
 
-static inline unsigned int scsi_get_resid(struct scsi_cmnd *cmd)
+static inline int scsi_get_resid(struct scsi_cmnd *cmd)
 {
-	return cmd->req.resid_len;
+	return cmd->sdb.resid;
 }
 
 #define scsi_for_each_sg(cmd, sg, nseg, __i)			\
 	for_each_sg(scsi_sglist(cmd), sg, nseg, __i)
+
+static inline int scsi_bidi_cmnd(struct scsi_cmnd *cmd)
+{
+	return blk_bidi_rq(cmd->request) &&
+		(cmd->request->next_rq->special != NULL);
+}
+
+static inline struct scsi_data_buffer *scsi_in(struct scsi_cmnd *cmd)
+{
+	return scsi_bidi_cmnd(cmd) ?
+		cmd->request->next_rq->special : &cmd->sdb;
+}
+
+static inline struct scsi_data_buffer *scsi_out(struct scsi_cmnd *cmd)
+{
+	return &cmd->sdb;
+}
 
 static inline int scsi_sg_copy_from_buffer(struct scsi_cmnd *cmd,
 					   void *buf, int buflen)
@@ -222,25 +225,6 @@ static inline int scsi_sg_copy_to_buffer(struct scsi_cmnd *cmd,
 {
 	return sg_copy_to_buffer(scsi_sglist(cmd), scsi_sg_count(cmd),
 				 buf, buflen);
-}
-
-static inline sector_t scsi_get_sector(struct scsi_cmnd *scmd)
-{
-	return blk_rq_pos(scsi_cmd_to_rq(scmd));
-}
-
-static inline sector_t scsi_get_lba(struct scsi_cmnd *scmd)
-{
-	unsigned int shift = ilog2(scmd->device->sector_size) - SECTOR_SHIFT;
-
-	return blk_rq_pos(scsi_cmd_to_rq(scmd)) >> shift;
-}
-
-static inline unsigned int scsi_logical_block_count(struct scsi_cmnd *scmd)
-{
-	unsigned int shift = ilog2(scmd->device->sector_size) - SECTOR_SHIFT;
-
-	return blk_rq_bytes(scsi_cmd_to_rq(scmd)) >> shift;
 }
 
 /*
@@ -305,16 +289,20 @@ static inline unsigned char scsi_get_prot_type(struct scsi_cmnd *scmd)
 	return scmd->prot_type;
 }
 
-static inline u32 scsi_prot_ref_tag(struct scsi_cmnd *scmd)
+static inline sector_t scsi_get_lba(struct scsi_cmnd *scmd)
 {
-	struct request *rq = blk_mq_rq_from_pdu(scmd);
-
-	return t10_pi_ref_tag(rq);
+	return blk_rq_pos(scmd->request);
 }
 
 static inline unsigned int scsi_prot_interval(struct scsi_cmnd *scmd)
 {
 	return scmd->device->sector_size;
+}
+
+static inline u32 scsi_prot_ref_tag(struct scsi_cmnd *scmd)
+{
+	return blk_rq_pos(scmd->request) >>
+		(ilog2(scsi_prot_interval(scmd)) - 9) & 0xffffffff;
 }
 
 static inline unsigned scsi_prot_sg_count(struct scsi_cmnd *cmd)
@@ -335,14 +323,9 @@ static inline struct scsi_data_buffer *scsi_prot(struct scsi_cmnd *cmd)
 #define scsi_for_each_prot_sg(cmd, sg, nseg, __i)		\
 	for_each_sg(scsi_prot_sglist(cmd), sg, nseg, __i)
 
-static inline void set_status_byte(struct scsi_cmnd *cmd, char status)
+static inline void set_msg_byte(struct scsi_cmnd *cmd, char status)
 {
-	cmd->result = (cmd->result & 0xffffff00) | status;
-}
-
-static inline u8 get_status_byte(struct scsi_cmnd *cmd)
-{
-	return cmd->result & 0xff;
+	cmd->result = (cmd->result & 0xffff00ff) | (status << 8);
 }
 
 static inline void set_host_byte(struct scsi_cmnd *cmd, char status)
@@ -350,41 +333,14 @@ static inline void set_host_byte(struct scsi_cmnd *cmd, char status)
 	cmd->result = (cmd->result & 0xff00ffff) | (status << 16);
 }
 
-static inline u8 get_host_byte(struct scsi_cmnd *cmd)
+static inline void set_driver_byte(struct scsi_cmnd *cmd, char status)
 {
-	return (cmd->result >> 16) & 0xff;
-}
-
-/**
- * scsi_msg_to_host_byte() - translate message byte
- *
- * Translate the SCSI parallel message byte to a matching
- * host byte setting. A message of COMMAND_COMPLETE indicates
- * a successful command execution, any other message indicate
- * an error. As the messages themselves only have a meaning
- * for the SCSI parallel protocol this function translates
- * them into a matching host byte value for SCSI EH.
- */
-static inline void scsi_msg_to_host_byte(struct scsi_cmnd *cmd, u8 msg)
-{
-	switch (msg) {
-	case COMMAND_COMPLETE:
-		break;
-	case ABORT_TASK_SET:
-		set_host_byte(cmd, DID_ABORT);
-		break;
-	case TARGET_RESET:
-		set_host_byte(cmd, DID_RESET);
-		break;
-	default:
-		set_host_byte(cmd, DID_ERROR);
-		break;
-	}
+	cmd->result = (cmd->result & 0x00ffffff) | (status << 24);
 }
 
 static inline unsigned scsi_transfer_length(struct scsi_cmnd *scmd)
 {
-	unsigned int xfer_len = scmd->sdb.length;
+	unsigned int xfer_len = scsi_out(scmd)->length;
 	unsigned int prot_interval = scsi_prot_interval(scmd);
 
 	if (scmd->prot_flags & SCSI_PROT_TRANSFER_PI)
@@ -392,8 +348,5 @@ static inline unsigned scsi_transfer_length(struct scsi_cmnd *scmd)
 
 	return xfer_len;
 }
-
-extern void scsi_build_sense(struct scsi_cmnd *scmd, int desc,
-			     u8 key, u8 asc, u8 ascq);
 
 #endif /* _SCSI_SCSI_CMND_H */

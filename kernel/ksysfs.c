@@ -1,9 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0-only
 /*
  * kernel/ksysfs.c - sysfs attributes in /sys/kernel, which
  * 		     are not related to any other subsystem
  *
  * Copyright (C) 2004 Kay Sievers <kay.sievers@vrfy.org>
+ * 
+ * This file is release under the GPLv2
+ *
  */
 
 #include <linux/kobject.h>
@@ -48,6 +50,8 @@ static ssize_t uevent_helper_store(struct kobject *kobj,
 {
 	if (count+1 > UEVENT_HELPER_PATH_LEN)
 		return -ENOENT;
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
 	memcpy(uevent_helper, buf, count);
 	uevent_helper[count] = '\0';
 	if (count && uevent_helper[count-1] == '\n')
@@ -123,20 +127,16 @@ static ssize_t kexec_crash_size_store(struct kobject *kobj,
 }
 KERNEL_ATTR_RW(kexec_crash_size);
 
-#endif /* CONFIG_KEXEC_CORE */
-
-#ifdef CONFIG_CRASH_CORE
-
 static ssize_t vmcoreinfo_show(struct kobject *kobj,
 			       struct kobj_attribute *attr, char *buf)
 {
 	phys_addr_t vmcore_base = paddr_vmcoreinfo_note();
 	return sprintf(buf, "%pa %x\n", &vmcore_base,
-			(unsigned int)VMCOREINFO_NOTE_SIZE);
+		       (unsigned int)sizeof(vmcoreinfo_note));
 }
 KERNEL_ATTR_RO(vmcoreinfo);
 
-#endif /* CONFIG_CRASH_CORE */
+#endif /* CONFIG_KEXEC_CORE */
 
 /* whether file capabilities are enabled */
 static ssize_t fscaps_show(struct kobject *kobj,
@@ -197,7 +197,7 @@ static ssize_t notes_read(struct file *filp, struct kobject *kobj,
 	return count;
 }
 
-static struct bin_attribute notes_attr __ro_after_init  = {
+static bin_attribute_no_const notes_attr __read_only = {
 	.attr = {
 		.name = "notes",
 		.mode = S_IRUGO,
@@ -221,8 +221,6 @@ static struct attribute * kernel_attrs[] = {
 	&kexec_loaded_attr.attr,
 	&kexec_crash_loaded_attr.attr,
 	&kexec_crash_size_attr.attr,
-#endif
-#ifdef CONFIG_CRASH_CORE
 	&vmcoreinfo_attr.attr,
 #endif
 #ifndef CONFIG_TINY_RCU
@@ -232,7 +230,7 @@ static struct attribute * kernel_attrs[] = {
 	NULL
 };
 
-static const struct attribute_group kernel_attr_group = {
+static struct attribute_group kernel_attr_group = {
 	.attrs = kernel_attrs,
 };
 

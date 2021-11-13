@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_SEQ_BUF_H
 #define _LINUX_SEQ_BUF_H
 
@@ -17,7 +16,7 @@
  * @readpos:	The next position to read in the buffer.
  */
 struct seq_buf {
-	char			*buffer;
+	unsigned char		*buffer;
 	size_t			size;
 	size_t			len;
 	loff_t			readpos;
@@ -30,7 +29,7 @@ static inline void seq_buf_clear(struct seq_buf *s)
 }
 
 static inline void
-seq_buf_init(struct seq_buf *s, char *buf, unsigned int size)
+seq_buf_init(struct seq_buf *s, unsigned char *buf, unsigned int size)
 {
 	s->buffer = buf;
 	s->size = size;
@@ -72,31 +71,6 @@ static inline unsigned int seq_buf_used(struct seq_buf *s)
 }
 
 /**
- * seq_buf_terminate - Make sure buffer is nul terminated
- * @s: the seq_buf descriptor to terminate.
- *
- * This makes sure that the buffer in @s is nul terminated and
- * safe to read as a string.
- *
- * Note, if this is called when the buffer has overflowed, then
- * the last byte of the buffer is zeroed, and the len will still
- * point passed it.
- *
- * After this function is called, s->buffer is safe to use
- * in string operations.
- */
-static inline void seq_buf_terminate(struct seq_buf *s)
-{
-	if (WARN_ON(s->size == 0))
-		return;
-
-	if (seq_buf_buffer_left(s))
-		s->buffer[s->len] = 0;
-	else
-		s->buffer[s->size - 1] = 0;
-}
-
-/**
  * seq_buf_get_buf - get buffer to write arbitrary data to
  * @s: the seq_buf handle
  * @bufp: the beginning of the buffer is stored here
@@ -104,7 +78,7 @@ static inline void seq_buf_terminate(struct seq_buf *s)
  * Return the number of bytes available in the buffer, or zero if
  * there's no space.
  */
-static inline size_t seq_buf_get_buf(struct seq_buf *s, char **bufp)
+static inline size_t seq_buf_get_buf(struct seq_buf *s, unsigned char **bufp)
 {
 	WARN_ON(s->len > s->size + 1);
 
@@ -150,9 +124,6 @@ extern int seq_buf_putmem(struct seq_buf *s, const void *mem, unsigned int len);
 extern int seq_buf_putmem_hex(struct seq_buf *s, const void *mem,
 			      unsigned int len);
 extern int seq_buf_path(struct seq_buf *s, const struct path *path, const char *esc);
-extern int seq_buf_hex_dump(struct seq_buf *s, const char *prefix_str,
-			    int prefix_type, int rowsize, int groupsize,
-			    const void *buf, size_t len, bool ascii);
 
 #ifdef CONFIG_BINARY_PRINTF
 extern int

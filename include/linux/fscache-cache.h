@@ -1,12 +1,16 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* General filesystem caching backing cache interface
  *
  * Copyright (C) 2004-2007 Red Hat, Inc. All Rights Reserved.
  * Written by David Howells (dhowells@redhat.com)
  *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version
+ * 2 of the License, or (at your option) any later version.
+ *
  * NOTE!!! See:
  *
- *	Documentation/filesystems/caching/backend-api.rst
+ *	Documentation/filesystems/caching/backend-api.txt
  *
  * for a description of the cache backend interface declared here.
  */
@@ -25,18 +29,6 @@ struct fscache_cache_ops;
 struct fscache_object;
 struct fscache_operation;
 
-enum fscache_obj_ref_trace {
-	fscache_obj_get_add_to_deps,
-	fscache_obj_get_queue,
-	fscache_obj_put_alloc_fail,
-	fscache_obj_put_attach_fail,
-	fscache_obj_put_drop_obj,
-	fscache_obj_put_enq_dep,
-	fscache_obj_put_queue,
-	fscache_obj_put_work,
-	fscache_obj_ref__nr_traces
-};
-
 /*
  * cache tag definition
  */
@@ -46,7 +38,7 @@ struct fscache_cache_tag {
 	unsigned long		flags;
 #define FSCACHE_TAG_RESERVED	0		/* T if tag is reserved for a cache */
 	atomic_t		usage;
-	char			name[];	/* tag name */
+	char			name[0];	/* tag name */
 };
 
 /*
@@ -125,14 +117,13 @@ struct fscache_operation {
 	fscache_operation_release_t release;
 };
 
-extern atomic_t fscache_op_debug_id;
+extern atomic_unchecked_t fscache_op_debug_id;
 extern void fscache_op_work_func(struct work_struct *work);
 
 extern void fscache_enqueue_operation(struct fscache_operation *);
 extern void fscache_op_complete(struct fscache_operation *, bool);
 extern void fscache_put_operation(struct fscache_operation *);
-extern void fscache_operation_init(struct fscache_cookie *,
-				   struct fscache_operation *,
+extern void fscache_operation_init(struct fscache_operation *,
 				   fscache_operation_processor_t,
 				   fscache_operation_cancel_t,
 				   fscache_operation_release_t);
@@ -147,6 +138,7 @@ struct fscache_retrieval {
 	fscache_rw_complete_t	end_io_func;	/* function to call on I/O completion */
 	void			*context;	/* netfs read context (pinned) */
 	struct list_head	to_do;		/* list of things to be done by the backend */
+	unsigned long		start_time;	/* time at which retrieval started */
 	atomic_t		n_pages;	/* number of pages to be retrieved */
 };
 
@@ -191,8 +183,9 @@ static inline void fscache_enqueue_retrieval(struct fscache_retrieval *op)
 static inline void fscache_retrieval_complete(struct fscache_retrieval *op,
 					      int n_pages)
 {
-	if (atomic_sub_return_relaxed(n_pages, &op->n_pages) <= 0)
-		fscache_op_complete(&op->op, false);
+	atomic_sub(n_pages, &op->n_pages);
+	if (atomic_read(&op->n_pages) <= 0)
+		fscache_op_complete(&op->op, true);
 }
 
 /**
@@ -238,8 +231,7 @@ struct fscache_cache_ops {
 	void (*lookup_complete)(struct fscache_object *object);
 
 	/* increment the usage count on this object (may fail if unmounting) */
-	struct fscache_object *(*grab_object)(struct fscache_object *object,
-					      enum fscache_obj_ref_trace why);
+	struct fscache_object *(*grab_object)(struct fscache_object *object);
 
 	/* pin an object in the cache */
 	int (*pin_object)(struct fscache_object *object);
@@ -262,8 +254,7 @@ struct fscache_cache_ops {
 	void (*drop_object)(struct fscache_object *object);
 
 	/* dispose of a reference to an object */
-	void (*put_object)(struct fscache_object *object,
-			   enum fscache_obj_ref_trace why);
+	void (*put_object)(struct fscache_object *object);
 
 	/* sync a cache */
 	void (*sync_cache)(struct fscache_cache *cache);
@@ -303,10 +294,6 @@ struct fscache_cache_ops {
 
 	/* dissociate a cache from all the pages it was backing */
 	void (*dissociate_pages)(struct fscache_cache *cache);
-
-	/* Begin a read operation for the netfs lib */
-	int (*begin_read_operation)(struct netfs_read_request *rreq,
-				    struct fscache_retrieval *op);
 };
 
 extern struct fscache_cookie fscache_fsdef_index;
@@ -373,7 +360,6 @@ struct fscache_object {
 #define FSCACHE_OBJECT_IS_AVAILABLE	5	/* T if object has become active */
 #define FSCACHE_OBJECT_RETIRED		6	/* T if object was retired on relinquishment */
 #define FSCACHE_OBJECT_KILLED_BY_CACHE	7	/* T if object was killed by the cache */
-#define FSCACHE_OBJECT_RUN_AFTER_DEAD	8	/* T if object has been dispatched after death */
 
 	struct list_head	cache_link;	/* link in cache->object_list */
 	struct hlist_node	cookie_link;	/* link in cookie->backing_objects */
@@ -384,6 +370,9 @@ struct fscache_object {
 	struct list_head	dependents;	/* FIFO of dependent objects */
 	struct list_head	dep_link;	/* link in parent's dependents list */
 	struct list_head	pending_ops;	/* unstarted operations on this object */
+#ifdef CONFIG_FSCACHE_OBJECT_LIST
+	struct rb_node		objlist_link;	/* link in global object list */
+#endif
 	pgoff_t			store_limit;	/* current storage limit */
 	loff_t			store_limit_l;	/* current storage limit */
 };
@@ -454,7 +443,7 @@ static inline void fscache_object_lookup_error(struct fscache_object *object)
  * Set the maximum size an object is permitted to reach, implying the highest
  * byte that may be written.  Intended to be called by the attr_changed() op.
  *
- * See Documentation/filesystems/caching/backend-api.rst for a complete
+ * See Documentation/filesystems/caching/backend-api.txt for a complete
  * description.
  */
 static inline
@@ -506,7 +495,7 @@ static inline bool __fscache_unuse_cookie(struct fscache_cookie *cookie)
 
 static inline void __fscache_wake_unused_cookie(struct fscache_cookie *cookie)
 {
-	wake_up_var(&cookie->n_active);
+	wake_up_atomic_t(&cookie->n_active);
 }
 
 /**
@@ -548,8 +537,7 @@ extern bool fscache_object_sleep_till_congested(signed long *timeoutp);
 
 extern enum fscache_checkaux fscache_check_aux(struct fscache_object *object,
 					       const void *data,
-					       uint16_t datalen,
-					       loff_t object_size);
+					       uint16_t datalen);
 
 extern void fscache_object_retrying_stale(struct fscache_object *object);
 

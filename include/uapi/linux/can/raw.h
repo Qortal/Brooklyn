@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: ((GPL-2.0-only WITH Linux-syscall-note) OR BSD-3-Clause) */
 /*
  * linux/can/raw.h
  *
@@ -49,9 +48,6 @@
 #include <linux/can.h>
 
 #define SOL_CAN_RAW (SOL_CAN_BASE + CAN_RAW)
-enum {
-	SCM_CAN_RAW_ERRQUEUE = 1,
-};
 
 /* for socket options affecting the socket (not the global system) */
 

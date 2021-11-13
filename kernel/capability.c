@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * linux/kernel/capability.c
  *
@@ -18,7 +17,7 @@
 #include <linux/syscalls.h>
 #include <linux/pid_namespace.h>
 #include <linux/user_namespace.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 /*
  * Leveraged for setting/resetting capabilities
@@ -93,7 +92,9 @@ static int cap_validate_magic(cap_user_header_t header, unsigned *tocopy)
 		break;
 	case _LINUX_CAPABILITY_VERSION_2:
 		warn_deprecated_v2();
-		fallthrough;	/* v3 is otherwise equivalent to v2 */
+		/*
+		 * fall through - v3 is otherwise equivalent to v2.
+		 */
 	case _LINUX_CAPABILITY_VERSION_3:
 		*tocopy = _LINUX_CAPABILITY_U32S_3;
 		break;
@@ -192,6 +193,9 @@ SYSCALL_DEFINE2(capget, cap_user_header_t, header, cap_user_data_t, dataptr)
 		 * before modification is attempted and the application
 		 * fails.
 		 */
+		if (tocopy > ARRAY_SIZE(kdata))
+			return -EFAULT;
+
 		if (copy_to_user(dataptr, kdata, tocopy
 				 * sizeof(struct __user_cap_data_struct))) {
 			return -EFAULT;
@@ -297,10 +301,11 @@ bool has_ns_capability(struct task_struct *t,
 	int ret;
 
 	rcu_read_lock();
-	ret = security_capable(__task_cred(t), ns, cap, CAP_OPT_NONE);
+	ret = security_capable(__task_cred(t), ns, cap) == 0 &&
+		gr_task_is_capable(t, __task_cred(t), cap);
 	rcu_read_unlock();
 
-	return (ret == 0);
+	return ret;
 }
 
 /**
@@ -317,7 +322,6 @@ bool has_capability(struct task_struct *t, int cap)
 {
 	return has_ns_capability(t, &init_user_ns, cap);
 }
-EXPORT_SYMBOL(has_capability);
 
 /**
  * has_ns_capability_noaudit - Does a task have a capability (unaudited)
@@ -338,10 +342,10 @@ bool has_ns_capability_noaudit(struct task_struct *t,
 	int ret;
 
 	rcu_read_lock();
-	ret = security_capable(__task_cred(t), ns, cap, CAP_OPT_NOAUDIT);
+	ret = security_capable_noaudit(__task_cred(t), ns, cap) == 0 && gr_task_is_capable_nolog(t, __task_cred(t), cap);
 	rcu_read_unlock();
 
-	return (ret == 0);
+	return ret;
 }
 
 /**
@@ -361,9 +365,7 @@ bool has_capability_noaudit(struct task_struct *t, int cap)
 	return has_ns_capability_noaudit(t, &init_user_ns, cap);
 }
 
-static bool ns_capable_common(struct user_namespace *ns,
-			      int cap,
-			      unsigned int opts)
+static bool ns_capable_common(struct user_namespace *ns, int cap, bool audit)
 {
 	int capable;
 
@@ -372,8 +374,9 @@ static bool ns_capable_common(struct user_namespace *ns,
 		BUG();
 	}
 
-	capable = security_capable(current_cred(), ns, cap, opts);
-	if (capable == 0) {
+	capable = audit ? (security_capable(current_cred(), ns, cap) == 0 && gr_is_capable(cap)) :
+			  (security_capable_noaudit(current_cred(), ns, cap) == 0 && gr_is_capable_nolog(cap)) ;
+	if (capable) {
 		current->flags |= PF_SUPERPRIV;
 		return true;
 	}
@@ -393,7 +396,7 @@ static bool ns_capable_common(struct user_namespace *ns,
  */
 bool ns_capable(struct user_namespace *ns, int cap)
 {
-	return ns_capable_common(ns, cap, CAP_OPT_NONE);
+	return ns_capable_common(ns, cap, true);
 }
 EXPORT_SYMBOL(ns_capable);
 
@@ -411,28 +414,9 @@ EXPORT_SYMBOL(ns_capable);
  */
 bool ns_capable_noaudit(struct user_namespace *ns, int cap)
 {
-	return ns_capable_common(ns, cap, CAP_OPT_NOAUDIT);
+	return ns_capable_common(ns, cap, false);
 }
 EXPORT_SYMBOL(ns_capable_noaudit);
-
-/**
- * ns_capable_setid - Determine if the current task has a superior capability
- * in effect, while signalling that this check is being done from within a
- * setid or setgroups syscall.
- * @ns:  The usernamespace we want the capability in
- * @cap: The capability to be tested for
- *
- * Return true if the current task has the given superior capability currently
- * available for use, false if not.
- *
- * This sets PF_SUPERPRIV on the task if the capability is available on the
- * assumption that it's about to be used.
- */
-bool ns_capable_setid(struct user_namespace *ns, int cap)
-{
-	return ns_capable_common(ns, cap, CAP_OPT_INSETID);
-}
-EXPORT_SYMBOL(ns_capable_setid);
 
 /**
  * capable - Determine if the current task has a superior capability in effect
@@ -449,6 +433,13 @@ bool capable(int cap)
 	return ns_capable(&init_user_ns, cap);
 }
 EXPORT_SYMBOL(capable);
+
+bool capable_nolog(int cap)
+{
+	return ns_capable_noaudit(&init_user_ns, cap);
+}
+EXPORT_SYMBOL(capable_nolog);
+
 #endif /* CONFIG_MULTIUSER */
 
 /**
@@ -466,11 +457,10 @@ EXPORT_SYMBOL(capable);
 bool file_ns_capable(const struct file *file, struct user_namespace *ns,
 		     int cap)
 {
-
 	if (WARN_ON_ONCE(!cap_valid(cap)))
 		return false;
 
-	if (security_capable(file->f_cred, ns, cap, CAP_OPT_NONE) == 0)
+	if (security_capable(file->f_cred, ns, cap) == 0)
 		return true;
 
 	return false;
@@ -484,12 +474,10 @@ EXPORT_SYMBOL(file_ns_capable);
  *
  * Return true if the inode uid and gid are within the namespace.
  */
-bool privileged_wrt_inode_uidgid(struct user_namespace *ns,
-				 struct user_namespace *mnt_userns,
-				 const struct inode *inode)
+bool privileged_wrt_inode_uidgid(struct user_namespace *ns, const struct inode *inode)
 {
-	return kuid_has_mapping(ns, i_uid_into_mnt(mnt_userns, inode)) &&
-	       kgid_has_mapping(ns, i_gid_into_mnt(mnt_userns, inode));
+	return kuid_has_mapping(ns, inode->i_uid) &&
+		kgid_has_mapping(ns, inode->i_gid);
 }
 
 /**
@@ -501,15 +489,21 @@ bool privileged_wrt_inode_uidgid(struct user_namespace *ns,
  * its own user namespace and that the given inode's uid and gid are
  * mapped into the current user namespace.
  */
-bool capable_wrt_inode_uidgid(struct user_namespace *mnt_userns,
-			      const struct inode *inode, int cap)
+bool capable_wrt_inode_uidgid(const struct inode *inode, int cap)
 {
 	struct user_namespace *ns = current_user_ns();
 
-	return ns_capable(ns, cap) &&
-	       privileged_wrt_inode_uidgid(ns, mnt_userns, inode);
+	return ns_capable(ns, cap) && privileged_wrt_inode_uidgid(ns, inode);
 }
 EXPORT_SYMBOL(capable_wrt_inode_uidgid);
+
+bool capable_wrt_inode_uidgid_nolog(const struct inode *inode, int cap)
+{
+	struct user_namespace *ns = current_user_ns();
+
+	return ns_capable_noaudit(ns, cap) && privileged_wrt_inode_uidgid(ns, inode);
+}
+EXPORT_SYMBOL(capable_wrt_inode_uidgid_nolog);
 
 /**
  * ptracer_capable - Determine if the ptracer holds CAP_SYS_PTRACE in the namespace
@@ -523,12 +517,10 @@ bool ptracer_capable(struct task_struct *tsk, struct user_namespace *ns)
 {
 	int ret = 0;  /* An absent tracer adds no restrictions */
 	const struct cred *cred;
-
 	rcu_read_lock();
 	cred = rcu_dereference(tsk->ptracer_cred);
 	if (cred)
-		ret = security_capable(cred, ns, CAP_SYS_PTRACE,
-				       CAP_OPT_NOAUDIT);
+		ret = security_capable_noaudit(cred, ns, CAP_SYS_PTRACE);
 	rcu_read_unlock();
 	return (ret == 0);
 }

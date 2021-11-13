@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _LINUX_XFRM_H
 #define _LINUX_XFRM_H
 
@@ -215,11 +214,6 @@ enum {
 
 	XFRM_MSG_MAPPING,
 #define XFRM_MSG_MAPPING XFRM_MSG_MAPPING
-
-	XFRM_MSG_SETDEFAULT,
-#define XFRM_MSG_SETDEFAULT XFRM_MSG_SETDEFAULT
-	XFRM_MSG_GETDEFAULT,
-#define XFRM_MSG_GETDEFAULT XFRM_MSG_GETDEFAULT
 	__XFRM_MSG_MAX
 };
 #define XFRM_MSG_MAX (__XFRM_MSG_MAX - 1)
@@ -309,13 +303,8 @@ enum xfrm_attr_type_t {
 	XFRMA_PROTO,		/* __u8 */
 	XFRMA_ADDRESS_FILTER,	/* struct xfrm_address_filter */
 	XFRMA_PAD,
-	XFRMA_OFFLOAD_DEV,	/* struct xfrm_user_offload */
-	XFRMA_SET_MARK,		/* __u32 */
-	XFRMA_SET_MARK_MASK,	/* __u32 */
-	XFRMA_IF_ID,		/* __u32 */
 	__XFRMA_MAX
 
-#define XFRMA_OUTPUT_MARK XFRMA_SET_MARK	/* Compatibility */
 #define XFRMA_MAX (__XFRMA_MAX - 1)
 };
 
@@ -392,7 +381,6 @@ struct xfrm_usersa_info {
 };
 
 #define XFRM_SA_XFLAG_DONT_ENCAP_DSCP	1
-#define XFRM_SA_XFLAG_OSEQ_MAY_WRAP	2
 
 struct xfrm_usersa_id {
 	xfrm_address_t			daddr;
@@ -504,22 +492,6 @@ struct xfrm_address_filter {
 	__u16				family;
 	__u8				splen;
 	__u8				dplen;
-};
-
-struct xfrm_user_offload {
-	int				ifindex;
-	__u8				flags;
-};
-#define XFRM_OFFLOAD_IPV6	1
-#define XFRM_OFFLOAD_INBOUND	2
-
-struct xfrm_userpolicy_default {
-#define XFRM_USERPOLICY_UNSPEC	0
-#define XFRM_USERPOLICY_BLOCK	1
-#define XFRM_USERPOLICY_ACCEPT	2
-	__u8				in;
-	__u8				fwd;
-	__u8				out;
 };
 
 #ifndef __KERNEL__

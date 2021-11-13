@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_SEQ_FILE_H
 #define _LINUX_SEQ_FILE_H
 
@@ -21,10 +20,14 @@ struct seq_file {
 	size_t pad_until;
 	loff_t index;
 	loff_t read_pos;
+	u64 version;
 	struct mutex lock;
 	const struct seq_operations *op;
 	int poll_event;
 	const struct file *file;
+#ifdef CONFIG_GRKERNSEC_PROC_MEMMAP
+	u64 exec_id;
+#endif
 	void *private;
 };
 
@@ -34,6 +37,7 @@ struct seq_operations {
 	void * (*next) (struct seq_file *m, void *v, loff_t *pos);
 	int (*show) (struct seq_file *m, void *v);
 };
+typedef struct seq_operations __no_const seq_operations_no_const;
 
 #define SEQ_SKIP 1
 
@@ -106,8 +110,8 @@ void seq_pad(struct seq_file *m, char c);
 
 char *mangle_path(char *s, const char *p, const char *esc);
 int seq_open(struct file *, const struct seq_operations *);
+int seq_open_restrict(struct file *, const struct seq_operations *);
 ssize_t seq_read(struct file *, char __user *, size_t, loff_t *);
-ssize_t seq_read_iter(struct kiocb *iocb, struct iov_iter *iter);
 loff_t seq_lseek(struct file *, loff_t, int);
 int seq_release(struct inode *, struct file *);
 int seq_write(struct seq_file *seq, const void *data, size_t len);
@@ -118,23 +122,9 @@ __printf(2, 3)
 void seq_printf(struct seq_file *m, const char *fmt, ...);
 void seq_putc(struct seq_file *m, char c);
 void seq_puts(struct seq_file *m, const char *s);
-void seq_put_decimal_ull_width(struct seq_file *m, const char *delimiter,
-			       unsigned long long num, unsigned int width);
 void seq_put_decimal_ull(struct seq_file *m, const char *delimiter,
 			 unsigned long long num);
 void seq_put_decimal_ll(struct seq_file *m, const char *delimiter, long long num);
-void seq_put_hex_ll(struct seq_file *m, const char *delimiter,
-		    unsigned long long v, unsigned int width);
-
-void seq_escape_mem(struct seq_file *m, const char *src, size_t len,
-		    unsigned int flags, const char *esc);
-
-static inline void seq_escape_str(struct seq_file *m, const char *src,
-				  unsigned int flags, const char *esc)
-{
-	seq_escape_mem(m, src, strlen(src), flags, esc);
-}
-
 void seq_escape(struct seq_file *m, const char *s, const char *esc);
 
 void seq_hex_dump(struct seq_file *m, const char *prefix_str, int prefix_type,
@@ -148,61 +138,12 @@ int seq_path_root(struct seq_file *m, const struct path *path,
 		  const struct path *root, const char *esc);
 
 int single_open(struct file *, int (*)(struct seq_file *, void *), void *);
+int single_open_restrict(struct file *, int (*)(struct seq_file *, void *), void *);
 int single_open_size(struct file *, int (*)(struct seq_file *, void *), void *, size_t);
 int single_release(struct inode *, struct file *);
 void *__seq_open_private(struct file *, const struct seq_operations *, int);
 int seq_open_private(struct file *, const struct seq_operations *, int);
 int seq_release_private(struct inode *, struct file *);
-
-#ifdef CONFIG_BINARY_PRINTF
-void seq_bprintf(struct seq_file *m, const char *f, const u32 *binary);
-#endif
-
-#define DEFINE_SEQ_ATTRIBUTE(__name)					\
-static int __name ## _open(struct inode *inode, struct file *file)	\
-{									\
-	int ret = seq_open(file, &__name ## _sops);			\
-	if (!ret && inode->i_private) {					\
-		struct seq_file *seq_f = file->private_data;		\
-		seq_f->private = inode->i_private;			\
-	}								\
-	return ret;							\
-}									\
-									\
-static const struct file_operations __name ## _fops = {			\
-	.owner		= THIS_MODULE,					\
-	.open		= __name ## _open,				\
-	.read		= seq_read,					\
-	.llseek		= seq_lseek,					\
-	.release	= seq_release,					\
-}
-
-#define DEFINE_SHOW_ATTRIBUTE(__name)					\
-static int __name ## _open(struct inode *inode, struct file *file)	\
-{									\
-	return single_open(file, __name ## _show, inode->i_private);	\
-}									\
-									\
-static const struct file_operations __name ## _fops = {			\
-	.owner		= THIS_MODULE,					\
-	.open		= __name ## _open,				\
-	.read		= seq_read,					\
-	.llseek		= seq_lseek,					\
-	.release	= single_release,				\
-}
-
-#define DEFINE_PROC_SHOW_ATTRIBUTE(__name)				\
-static int __name ## _open(struct inode *inode, struct file *file)	\
-{									\
-	return single_open(file, __name ## _show, inode->i_private);	\
-}									\
-									\
-static const struct proc_ops __name ## _proc_ops = {			\
-	.proc_open	= __name ## _open,				\
-	.proc_read	= seq_read,					\
-	.proc_lseek	= seq_lseek,					\
-	.proc_release	= single_release,				\
-}
 
 static inline struct user_namespace *seq_user_ns(struct seq_file *seq)
 {
@@ -285,5 +226,4 @@ extern struct hlist_node *seq_hlist_start_percpu(struct hlist_head __percpu *hea
 
 extern struct hlist_node *seq_hlist_next_percpu(void *v, struct hlist_head __percpu *head, int *cpu, loff_t *pos);
 
-void seq_file_init(void);
 #endif

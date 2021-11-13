@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * INET		An implementation of the TCP/IP protocol suite for the LINUX
  *		operating system.  INET is implemented using the  BSD Socket
@@ -10,6 +9,11 @@
  *		Arnt Gulbrandsen, <agulbra@nvg.unit.no>
  *		Borrows very liberally from tcp.c and ip.c, see those
  *		files for more names.
+ *
+ *		This program is free software; you can redistribute it and/or
+ *		modify it under the terms of the GNU General Public License
+ *		as published by the Free Software Foundation; either version
+ *		2 of the License, or (at your option) any later version.
  */
 
 /*
@@ -76,14 +80,14 @@ static inline void __tcp_v6_send_check(struct sk_buff *skb,
 	}
 }
 
-static inline void tcp_v6_gso_csum_prep(struct sk_buff *skb)
+#if IS_ENABLED(CONFIG_IPV6)
+static inline void tcp_v6_send_check(struct sock *sk, struct sk_buff *skb)
 {
-	struct ipv6hdr *ipv6h = ipv6_hdr(skb);
-	struct tcphdr *th = tcp_hdr(skb);
+	struct ipv6_pinfo *np = inet6_sk(sk);
 
-	ipv6h->payload_len = 0;
-	th->check = ~tcp_v6_check(0, &ipv6h->saddr, &ipv6h->daddr, 0);
+	__tcp_v6_send_check(skb, &np->saddr, &sk->sk_v6_daddr);
 }
+#endif
 
 static inline __sum16 udp_v6_check(int len,
 				   const struct in6_addr *saddr,

@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __LINUX_COMPLETION_H
 #define __LINUX_COMPLETION_H
 
@@ -9,7 +8,7 @@
  * See kernel/sched/completion.c for details.
  */
 
-#include <linux/swait.h>
+#include <linux/wait.h>
 
 /*
  * struct completion - structure used to maintain state for a "completion"
@@ -25,21 +24,14 @@
  */
 struct completion {
 	unsigned int done;
-	struct swait_queue_head wait;
+	wait_queue_head_t wait;
 };
 
-#define init_completion_map(x, m) init_completion(x)
-static inline void complete_acquire(struct completion *x) {}
-static inline void complete_release(struct completion *x) {}
-
 #define COMPLETION_INITIALIZER(work) \
-	{ 0, __SWAIT_QUEUE_HEAD_INITIALIZER((work).wait) }
-
-#define COMPLETION_INITIALIZER_ONSTACK_MAP(work, map) \
-	(*({ init_completion_map(&(work), &(map)); &(work); }))
+	{ 0, __WAIT_QUEUE_HEAD_INITIALIZER((work).wait) }
 
 #define COMPLETION_INITIALIZER_ONSTACK(work) \
-	(*({ init_completion(&work); &work; }))
+	({ init_completion(&work); work; })
 
 /**
  * DECLARE_COMPLETION - declare and initialize a completion structure
@@ -67,11 +59,8 @@ static inline void complete_release(struct completion *x) {}
 #ifdef CONFIG_LOCKDEP
 # define DECLARE_COMPLETION_ONSTACK(work) \
 	struct completion work = COMPLETION_INITIALIZER_ONSTACK(work)
-# define DECLARE_COMPLETION_ONSTACK_MAP(work, map) \
-	struct completion work = COMPLETION_INITIALIZER_ONSTACK_MAP(work, map)
 #else
 # define DECLARE_COMPLETION_ONSTACK(work) DECLARE_COMPLETION(work)
-# define DECLARE_COMPLETION_ONSTACK_MAP(work, map) DECLARE_COMPLETION(work)
 #endif
 
 /**
@@ -84,7 +73,7 @@ static inline void complete_release(struct completion *x) {}
 static inline void init_completion(struct completion *x)
 {
 	x->done = 0;
-	init_swait_queue_head(&x->wait);
+	init_waitqueue_head(&x->wait);
 }
 
 /**

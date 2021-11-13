@@ -1,6 +1,7 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_SUNRPC_RPC_PIPE_FS_H
 #define _LINUX_SUNRPC_RPC_PIPE_FS_H
+
+#ifdef __KERNEL__
 
 #include <linux/workqueue.h>
 
@@ -120,6 +121,8 @@ extern struct dentry *rpc_create_cache_dir(struct dentry *,
 					   struct cache_detail *);
 extern void rpc_remove_cache_dir(struct dentry *);
 
+extern int rpc_rmdir(struct dentry *dentry);
+
 struct rpc_pipe *rpc_mkpipe_data(const struct rpc_pipe_ops *ops, int flags);
 void rpc_destroy_pipe_data(struct rpc_pipe *pipe);
 extern struct dentry *rpc_mkpipe_dentry(struct dentry *, const char *, void *,
@@ -130,4 +133,5 @@ extern void unregister_rpc_pipefs(void);
 
 extern bool gssd_running(struct net *net);
 
+#endif
 #endif

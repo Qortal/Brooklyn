@@ -1,6 +1,18 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright (C) 2015 Microchip Technology
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifndef _MICROCHIPPHY_H
@@ -57,24 +69,5 @@
 /* MMD 3 Registers */
 #define	LAN88XX_MMD3_CHIP_ID			(32877)
 #define	LAN88XX_MMD3_CHIP_REV			(32878)
-
-/* Registers specific to the LAN7800/LAN7850 embedded phy */
-#define LAN78XX_PHY_LED_MODE_SELECT		(0x1D)
-
-#define LAN78XX_PHY_CTRL3			(0x14)
-#define LAN78XX_PHY_CTRL3_AUTO_DOWNSHIFT	(0x0010)
-#define LAN78XX_PHY_CTRL3_DOWNSHIFT_CTRL_MASK	(0x000c)
-#define LAN78XX_PHY_CTRL3_DOWNSHIFT_CTRL_2	(0x0000)
-#define LAN78XX_PHY_CTRL3_DOWNSHIFT_CTRL_3	(0x0004)
-#define LAN78XX_PHY_CTRL3_DOWNSHIFT_CTRL_4	(0x0008)
-#define LAN78XX_PHY_CTRL3_DOWNSHIFT_CTRL_5	(0x000c)
-
-/* DSP registers */
-#define PHY_ARDENNES_MMD_DEV_3_PHY_CFG		(0x806A)
-#define PHY_ARDENNES_MMD_DEV_3_PHY_CFG_ZD_DLY_EN_	(0x2000)
-#define LAN88XX_EXT_PAGE_ACCESS_TR		(0x52B5)
-#define LAN88XX_EXT_PAGE_TR_CR			16
-#define LAN88XX_EXT_PAGE_TR_LOW_DATA		17
-#define LAN88XX_EXT_PAGE_TR_HIGH_DATA		18
 
 #endif /* _MICROCHIPPHY_H */

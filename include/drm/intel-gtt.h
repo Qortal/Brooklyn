@@ -1,16 +1,10 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /* Common header for intel-gtt.ko and i915.ko */
 
 #ifndef _DRM_INTEL_GTT_H
 #define	_DRM_INTEL_GTT_H
 
-#include <linux/agp_backend.h>
-#include <linux/intel-iommu.h>
-#include <linux/kernel.h>
-
-void intel_gtt_get(u64 *gtt_total,
-		   phys_addr_t *mappable_base,
-		   resource_size_t *mappable_end);
+void intel_gtt_get(u64 *gtt_total, u64 *stolen_size,
+		   u64 *mappable_base, u64 *mappable_end);
 
 int intel_gmch_probe(struct pci_dev *bridge_pdev, struct pci_dev *gpu_pdev,
 		     struct agp_bridge_data *bridge);
@@ -33,5 +27,9 @@ void intel_gtt_clear_range(unsigned int first_entry, unsigned int num_entries);
 
 /* flag for GFDT type */
 #define AGP_USER_CACHED_MEMORY_GFDT (1 << 3)
+
+#ifdef CONFIG_INTEL_IOMMU
+extern int intel_iommu_gfx_mapped;
+#endif
 
 #endif
