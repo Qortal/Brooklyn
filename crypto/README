@@ -1,0 +1,1 @@
+TLS, AES, UI's Ripemd 128/160/320 NEON accelerated crypto functions are built inside kernel and not as loadable modules seperately. 
