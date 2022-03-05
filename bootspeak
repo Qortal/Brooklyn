@@ -1,7 +1,7 @@
 _IP=$(hostname -I) || true
 if [ "$_IP" ]; then
   printf "My IP address is %s\n" "$_IP"
-  espeak "Welcome to Brooklyn NXT. My I.P. is $_IP. I repeat: $_IP."
+  espeak "Welcome to Brooklyn Titan NXT. My I.P. is $_IP. I repeat: $_IP."
 else
   espeak "Welcome to Brooklyn. No I.P. found."
 fi
