@@ -31,14 +31,14 @@ LLVMValueRef si_is_es_thread(struct si_shader_context *ctx)
 {
    /* Return true if the current thread should execute an ES thread. */
    return LLVMBuildICmp(ctx->ac.builder, LLVMIntULT, ac_get_thread_id(&ctx->ac),
-                        si_unpack_param(ctx, ctx->merged_wave_info, 0, 8), "");
+                        si_unpack_param(ctx, ctx->args.merged_wave_info, 0, 8), "");
 }
 
 LLVMValueRef si_is_gs_thread(struct si_shader_context *ctx)
 {
    /* Return true if the current thread should execute a GS thread. */
    return LLVMBuildICmp(ctx->ac.builder, LLVMIntULT, ac_get_thread_id(&ctx->ac),
-                        si_unpack_param(ctx, ctx->merged_wave_info, 8, 8), "");
+                        si_unpack_param(ctx, ctx->args.merged_wave_info, 8, 8), "");
 }
 
 static LLVMValueRef si_llvm_load_input_gs(struct ac_shader_abi *abi, unsigned input_index,
@@ -52,30 +52,14 @@ static LLVMValueRef si_llvm_load_input_gs(struct ac_shader_abi *abi, unsigned in
    unsigned param;
    LLVMValueRef value;
 
-   param = si_shader_io_get_unique_index(info->input_semantic[input_index], false);
+   param = si_shader_io_get_unique_index(info->input[input_index].semantic, false);
 
    /* GFX9 has the ESGS ring in LDS. */
    if (ctx->screen->info.chip_class >= GFX9) {
-      unsigned index = vtx_offset_param;
-
-      switch (index / 2) {
-      case 0:
-         vtx_offset = si_unpack_param(ctx, ctx->gs_vtx01_offset, index % 2 ? 16 : 0, 16);
-         break;
-      case 1:
-         vtx_offset = si_unpack_param(ctx, ctx->gs_vtx23_offset, index % 2 ? 16 : 0, 16);
-         break;
-      case 2:
-         vtx_offset = si_unpack_param(ctx, ctx->gs_vtx45_offset, index % 2 ? 16 : 0, 16);
-         break;
-      default:
-         assert(0);
-         return NULL;
-      }
-
       unsigned offset = param * 4 + swizzle;
-      vtx_offset =
-         LLVMBuildAdd(ctx->ac.builder, vtx_offset, LLVMConstInt(ctx->ac.i32, offset, false), "");
+
+      vtx_offset = LLVMBuildAdd(ctx->ac.builder, ctx->gs_vtx_offset[vtx_offset_param],
+                                LLVMConstInt(ctx->ac.i32, offset, false), "");
 
       LLVMValueRef ptr = ac_build_gep0(&ctx->ac, ctx->esgs_ring, vtx_offset);
       LLVMValueRef value = LLVMBuildLoad(ctx->ac.builder, ptr, "");
@@ -84,14 +68,13 @@ static LLVMValueRef si_llvm_load_input_gs(struct ac_shader_abi *abi, unsigned in
 
    /* GFX6: input load from the ESGS ring in memory. */
    /* Get the vertex offset parameter on GFX6. */
-   LLVMValueRef gs_vtx_offset = ac_get_arg(&ctx->ac, ctx->gs_vtx_offset[vtx_offset_param]);
-
-   vtx_offset = LLVMBuildMul(ctx->ac.builder, gs_vtx_offset, LLVMConstInt(ctx->ac.i32, 4, 0), "");
+   vtx_offset = LLVMBuildMul(ctx->ac.builder, ctx->gs_vtx_offset[vtx_offset_param],
+                             LLVMConstInt(ctx->ac.i32, 4, 0), "");
 
    soffset = LLVMConstInt(ctx->ac.i32, (param * 4 + swizzle) * 256, 0);
 
    value = ac_build_buffer_load(&ctx->ac, ctx->esgs_ring, 1, ctx->ac.i32_0, vtx_offset, soffset, 0,
-                                ac_glc, true, false);
+                                ctx->ac.f32, ac_glc, true, false);
    return LLVMBuildBitCast(ctx->ac.builder, value, type, "");
 }
 
@@ -114,43 +97,44 @@ static LLVMValueRef si_nir_load_input_gs(struct ac_shader_abi *abi,
 /* Pass GS inputs from ES to GS on GFX9. */
 static void si_set_es_return_value_for_gs(struct si_shader_context *ctx)
 {
+   if (!ctx->shader->is_monolithic)
+      ac_build_endif(&ctx->ac, ctx->merged_wrap_if_label);
+
    LLVMValueRef ret = ctx->return_value;
 
    ret = si_insert_input_ptr(ctx, ret, ctx->other_const_and_shader_buffers, 0);
    ret = si_insert_input_ptr(ctx, ret, ctx->other_samplers_and_images, 1);
-   if (ctx->shader->key.as_ngg)
-      ret = si_insert_input_ptr(ctx, ret, ctx->gs_tg_info, 2);
+   if (ctx->shader->key.ge.as_ngg)
+      ret = si_insert_input_ptr(ctx, ret, ctx->args.gs_tg_info, 2);
    else
-      ret = si_insert_input_ret(ctx, ret, ctx->gs2vs_offset, 2);
-   ret = si_insert_input_ret(ctx, ret, ctx->merged_wave_info, 3);
-   ret = si_insert_input_ret(ctx, ret, ctx->merged_scratch_offset, 5);
+      ret = si_insert_input_ret(ctx, ret, ctx->args.gs2vs_offset, 2);
+   ret = si_insert_input_ret(ctx, ret, ctx->args.merged_wave_info, 3);
+   ret = si_insert_input_ret(ctx, ret, ctx->args.scratch_offset, 5);
 
-   ret = si_insert_input_ptr(ctx, ret, ctx->rw_buffers, 8 + SI_SGPR_RW_BUFFERS);
+   ret = si_insert_input_ptr(ctx, ret, ctx->internal_bindings, 8 + SI_SGPR_INTERNAL_BINDINGS);
    ret = si_insert_input_ptr(ctx, ret, ctx->bindless_samplers_and_images,
                              8 + SI_SGPR_BINDLESS_SAMPLERS_AND_IMAGES);
    if (ctx->screen->use_ngg) {
       ret = si_insert_input_ptr(ctx, ret, ctx->vs_state_bits, 8 + SI_SGPR_VS_STATE_BITS);
+      ret = si_insert_input_ptr(ctx, ret, ctx->small_prim_cull_info, 8 + GFX9_SGPR_SMALL_PRIM_CULL_INFO);
    }
 
-   unsigned vgpr;
-   if (ctx->stage == MESA_SHADER_VERTEX)
-      vgpr = 8 + GFX9_VSGS_NUM_USER_SGPR;
-   else
-      vgpr = 8 + GFX9_TESGS_NUM_USER_SGPR;
+   unsigned vgpr = 8 + GFX9_GS_NUM_USER_SGPR;
 
-   ret = si_insert_input_ret_float(ctx, ret, ctx->gs_vtx01_offset, vgpr++);
-   ret = si_insert_input_ret_float(ctx, ret, ctx->gs_vtx23_offset, vgpr++);
+   ret = si_insert_input_ret_float(ctx, ret, ctx->args.gs_vtx_offset[0], vgpr++);
+   ret = si_insert_input_ret_float(ctx, ret, ctx->args.gs_vtx_offset[1], vgpr++);
    ret = si_insert_input_ret_float(ctx, ret, ctx->args.gs_prim_id, vgpr++);
    ret = si_insert_input_ret_float(ctx, ret, ctx->args.gs_invocation_id, vgpr++);
-   ret = si_insert_input_ret_float(ctx, ret, ctx->gs_vtx45_offset, vgpr++);
+   ret = si_insert_input_ret_float(ctx, ret, ctx->args.gs_vtx_offset[2], vgpr++);
    ctx->return_value = ret;
 }
 
-void si_llvm_emit_es_epilogue(struct ac_shader_abi *abi, unsigned max_outputs, LLVMValueRef *addrs)
+void si_llvm_emit_es_epilogue(struct ac_shader_abi *abi)
 {
    struct si_shader_context *ctx = si_shader_context_from_abi(abi);
    struct si_shader *es = ctx->shader;
    struct si_shader_info *info = &es->selector->info;
+   LLVMValueRef *addrs = abi->outputs;
    LLVMValueRef lds_base = NULL;
    unsigned chan;
    int i;
@@ -158,7 +142,7 @@ void si_llvm_emit_es_epilogue(struct ac_shader_abi *abi, unsigned max_outputs, L
    if (ctx->screen->info.chip_class >= GFX9 && info->num_outputs) {
       unsigned itemsize_dw = es->selector->esgs_itemsize / 4;
       LLVMValueRef vertex_idx = ac_get_thread_id(&ctx->ac);
-      LLVMValueRef wave_idx = si_unpack_param(ctx, ctx->merged_wave_info, 24, 4);
+      LLVMValueRef wave_idx = si_unpack_param(ctx, ctx->args.merged_wave_info, 24, 4);
       vertex_idx =
          LLVMBuildOr(ctx->ac.builder, vertex_idx,
                      LLVMBuildMul(ctx->ac.builder, wave_idx,
@@ -192,8 +176,8 @@ void si_llvm_emit_es_epilogue(struct ac_shader_abi *abi, unsigned max_outputs, L
             continue;
          }
 
-         ac_build_buffer_store_dword(&ctx->ac, ctx->esgs_ring, out_val, 1, NULL,
-                                     ac_get_arg(&ctx->ac, ctx->es2gs_offset),
+         ac_build_buffer_store_dword(&ctx->ac, ctx->esgs_ring, out_val, NULL, NULL,
+                                     ac_get_arg(&ctx->ac, ctx->args.es2gs_offset),
                                      (4 * param + chan) * 4, ac_glc | ac_slc | ac_swizzled);
       }
    }
@@ -205,14 +189,14 @@ void si_llvm_emit_es_epilogue(struct ac_shader_abi *abi, unsigned max_outputs, L
 static LLVMValueRef si_get_gs_wave_id(struct si_shader_context *ctx)
 {
    if (ctx->screen->info.chip_class >= GFX9)
-      return si_unpack_param(ctx, ctx->merged_wave_info, 16, 8);
+      return si_unpack_param(ctx, ctx->args.merged_wave_info, 16, 8);
    else
-      return ac_get_arg(&ctx->ac, ctx->gs_wave_id);
+      return ac_get_arg(&ctx->ac, ctx->args.gs_wave_id);
 }
 
 static void emit_gs_epilogue(struct si_shader_context *ctx)
 {
-   if (ctx->shader->key.as_ngg) {
+   if (ctx->shader->key.ge.as_ngg) {
       gfx10_ngg_gs_emit_epilogue(ctx);
       return;
    }
@@ -226,13 +210,12 @@ static void emit_gs_epilogue(struct si_shader_context *ctx)
       ac_build_endif(&ctx->ac, ctx->merged_wrap_if_label);
 }
 
-static void si_llvm_emit_gs_epilogue(struct ac_shader_abi *abi, unsigned max_outputs,
-                                     LLVMValueRef *addrs)
+static void si_llvm_emit_gs_epilogue(struct ac_shader_abi *abi)
 {
    struct si_shader_context *ctx = si_shader_context_from_abi(abi);
    struct si_shader_info UNUSED *info = &ctx->shader->selector->info;
 
-   assert(info->num_outputs <= max_outputs);
+   assert(info->num_outputs <= AC_LLVM_MAX_OUTPUTS);
 
    emit_gs_epilogue(ctx);
 }
@@ -242,14 +225,14 @@ static void si_llvm_emit_vertex(struct ac_shader_abi *abi, unsigned stream, LLVM
 {
    struct si_shader_context *ctx = si_shader_context_from_abi(abi);
 
-   if (ctx->shader->key.as_ngg) {
+   if (ctx->shader->key.ge.as_ngg) {
       gfx10_ngg_gs_emit_vertex(ctx, stream, addrs);
       return;
    }
 
    struct si_shader_info *info = &ctx->shader->selector->info;
    struct si_shader *shader = ctx->shader;
-   LLVMValueRef soffset = ac_get_arg(&ctx->ac, ctx->gs2vs_offset);
+   LLVMValueRef soffset = ac_get_arg(&ctx->ac, ctx->args.gs2vs_offset);
    LLVMValueRef gs_next_vertex;
    LLVMValueRef can_emit;
    unsigned chan, offset;
@@ -294,8 +277,8 @@ static void si_llvm_emit_vertex(struct ac_shader_abi *abi, unsigned stream, LLVM
 
          out_val = ac_to_integer(&ctx->ac, out_val);
 
-         ac_build_buffer_store_dword(&ctx->ac, ctx->gsvs_ring[stream], out_val, 1, voffset, soffset,
-                                     0, ac_glc | ac_slc | ac_swizzled);
+         ac_build_buffer_store_dword(&ctx->ac, ctx->gsvs_ring[stream], out_val, NULL,
+                                     voffset, soffset, 0, ac_glc | ac_slc | ac_swizzled);
       }
    }
 
@@ -317,7 +300,7 @@ static void si_llvm_emit_primitive(struct ac_shader_abi *abi, unsigned stream)
 {
    struct si_shader_context *ctx = si_shader_context_from_abi(abi);
 
-   if (ctx->shader->key.as_ngg) {
+   if (ctx->shader->key.ge.as_ngg) {
       LLVMBuildStore(ctx->ac.builder, ctx->ac.i32_0, ctx->gs_curprim_verts[stream]);
       return;
    }
@@ -329,14 +312,30 @@ static void si_llvm_emit_primitive(struct ac_shader_abi *abi, unsigned stream)
 
 void si_preload_esgs_ring(struct si_shader_context *ctx)
 {
+   LLVMBuilderRef builder = ctx->ac.builder;
+
    if (ctx->screen->info.chip_class <= GFX8) {
-      unsigned ring = ctx->stage == MESA_SHADER_GEOMETRY ? SI_GS_RING_ESGS : SI_ES_RING_ESGS;
-      LLVMValueRef offset = LLVMConstInt(ctx->ac.i32, ring, 0);
-      LLVMValueRef buf_ptr = ac_get_arg(&ctx->ac, ctx->rw_buffers);
+      LLVMValueRef offset = LLVMConstInt(ctx->ac.i32, SI_RING_ESGS, 0);
+      LLVMValueRef buf_ptr = ac_get_arg(&ctx->ac, ctx->internal_bindings);
 
       ctx->esgs_ring = ac_build_load_to_sgpr(&ctx->ac, buf_ptr, offset);
+
+      if (ctx->stage != MESA_SHADER_GEOMETRY) {
+         LLVMValueRef desc1 = LLVMBuildExtractElement(builder, ctx->esgs_ring, ctx->ac.i32_1, "");
+         LLVMValueRef desc3 = LLVMBuildExtractElement(builder, ctx->esgs_ring,
+                                                      LLVMConstInt(ctx->ac.i32, 3, 0), "");
+         desc1 = LLVMBuildOr(builder, desc1, LLVMConstInt(ctx->ac.i32,
+                                                          S_008F04_SWIZZLE_ENABLE(1), 0), "");
+         desc3 = LLVMBuildOr(builder, desc3, LLVMConstInt(ctx->ac.i32,
+                                                          S_008F0C_ELEMENT_SIZE(1) |
+                                                          S_008F0C_INDEX_STRIDE(3) |
+                                                          S_008F0C_ADD_TID_ENABLE(1), 0), "");
+         ctx->esgs_ring = LLVMBuildInsertElement(builder, ctx->esgs_ring, desc1, ctx->ac.i32_1, "");
+         ctx->esgs_ring = LLVMBuildInsertElement(builder, ctx->esgs_ring, desc3,
+                                                 LLVMConstInt(ctx->ac.i32, 3, 0), "");
+      }
    } else {
-      if (USE_LDS_SYMBOLS && LLVM_VERSION_MAJOR >= 9) {
+      if (USE_LDS_SYMBOLS) {
          /* Declare the ESGS ring as an explicit LDS symbol. */
          si_llvm_declare_esgs_ring(ctx);
       } else {
@@ -351,7 +350,7 @@ void si_preload_gs_rings(struct si_shader_context *ctx)
    const struct si_shader_selector *sel = ctx->shader->selector;
    LLVMBuilderRef builder = ctx->ac.builder;
    LLVMValueRef offset = LLVMConstInt(ctx->ac.i32, SI_RING_GSVS, 0);
-   LLVMValueRef buf_ptr = ac_get_arg(&ctx->ac, ctx->rw_buffers);
+   LLVMValueRef buf_ptr = ac_get_arg(&ctx->ac, ctx->internal_bindings);
    LLVMValueRef base_ring = ac_build_load_to_sgpr(&ctx->ac, buf_ptr, offset);
 
    /* The conceptual layout of the GSVS ring is
@@ -404,7 +403,7 @@ void si_preload_gs_rings(struct si_shader_context *ctx)
          S_008F0C_ADD_TID_ENABLE(1);
 
       if (ctx->ac.chip_class >= GFX10) {
-         rsrc3 |= S_008F0C_FORMAT(V_008F0C_IMG_FORMAT_32_FLOAT) |
+         rsrc3 |= S_008F0C_FORMAT(V_008F0C_GFX10_FORMAT_32_FLOAT) |
                   S_008F0C_OOB_SELECT(V_008F0C_OOB_SELECT_DISABLED) | S_008F0C_RESOURCE_LEVEL(1);
       } else {
          rsrc3 |= S_008F0C_NUM_FORMAT(V_008F0C_BUF_NUM_FORMAT_FLOAT) |
@@ -442,18 +441,17 @@ struct si_shader *si_generate_gs_copy_shader(struct si_screen *sscreen,
 
    shader->selector = gs_selector;
    shader->is_gs_copy_shader = true;
+   shader->wave_size = si_determine_wave_size(sscreen, shader);
 
-   si_llvm_context_init(&ctx, sscreen, compiler,
-                        si_get_wave_size(sscreen, MESA_SHADER_VERTEX,
-                                         false, false, false, false));
+   si_llvm_context_init(&ctx, sscreen, compiler, shader->wave_size);
    ctx.shader = shader;
    ctx.stage = MESA_SHADER_VERTEX;
 
    builder = ctx.ac.builder;
 
-   si_create_function(&ctx, false);
+   si_llvm_create_main_func(&ctx, false);
 
-   LLVMValueRef buf_ptr = ac_get_arg(&ctx.ac, ctx.rw_buffers);
+   LLVMValueRef buf_ptr = ac_get_arg(&ctx.ac, ctx.internal_bindings);
    ctx.gsvs_ring[0] =
       ac_build_load_to_sgpr(&ctx.ac, buf_ptr, LLVMConstInt(ctx.ac.i32, SI_RING_GSVS, 0));
 
@@ -464,17 +462,14 @@ struct si_shader *si_generate_gs_copy_shader(struct si_screen *sscreen,
    LLVMValueRef stream_id;
 
    if (!sscreen->use_ngg_streamout && gs_selector->so.num_outputs)
-      stream_id = si_unpack_param(&ctx, ctx.streamout_config, 24, 2);
+      stream_id = si_unpack_param(&ctx, ctx.args.streamout_config, 24, 2);
    else
       stream_id = ctx.ac.i32_0;
 
    /* Fill in output information. */
    for (i = 0; i < gsinfo->num_outputs; ++i) {
       outputs[i].semantic = gsinfo->output_semantic[i];
-
-      for (int chan = 0; chan < 4; chan++) {
-         outputs[i].vertex_stream[chan] = (gsinfo->output_streams[i] >> (2 * chan)) & 3;
-      }
+      outputs[i].vertex_streams = gsinfo->output_streams[i];
    }
 
    LLVMBasicBlockRef end_bb;
@@ -502,7 +497,7 @@ struct si_shader *si_generate_gs_copy_shader(struct si_screen *sscreen,
       for (i = 0; i < gsinfo->num_outputs; ++i) {
          for (unsigned chan = 0; chan < 4; chan++) {
             if (!(gsinfo->output_usagemask[i] & (1 << chan)) ||
-                outputs[i].vertex_stream[chan] != stream) {
+                ((outputs[i].vertex_streams >> (chan * 2)) & 0x3) != stream) {
                outputs[i].values[chan] = LLVMGetUndef(ctx.ac.f32);
                continue;
             }
@@ -513,7 +508,7 @@ struct si_shader *si_generate_gs_copy_shader(struct si_screen *sscreen,
 
             outputs[i].values[chan] =
                ac_build_buffer_load(&ctx.ac, ctx.gsvs_ring[0], 1, ctx.ac.i32_0, voffset, soffset, 0,
-                                    ac_glc | ac_slc, true, false);
+                                    ctx.ac.f32, ac_glc | ac_slc, true, false);
          }
       }
 
@@ -557,122 +552,6 @@ struct si_shader *si_generate_gs_copy_shader(struct si_screen *sscreen,
       si_fix_resource_usage(sscreen, shader);
    }
    return shader;
-}
-
-/**
- * Build the GS prolog function. Rotate the input vertices for triangle strips
- * with adjacency.
- */
-void si_llvm_build_gs_prolog(struct si_shader_context *ctx, union si_shader_part_key *key)
-{
-   unsigned num_sgprs, num_vgprs;
-   LLVMBuilderRef builder = ctx->ac.builder;
-   LLVMTypeRef returns[AC_MAX_ARGS];
-   LLVMValueRef func, ret;
-
-   memset(&ctx->args, 0, sizeof(ctx->args));
-
-   if (ctx->screen->info.chip_class >= GFX9) {
-      if (key->gs_prolog.states.gfx9_prev_is_vs)
-         num_sgprs = 8 + GFX9_VSGS_NUM_USER_SGPR;
-      else
-         num_sgprs = 8 + GFX9_TESGS_NUM_USER_SGPR;
-      num_vgprs = 5; /* ES inputs are not needed by GS */
-   } else {
-      num_sgprs = GFX6_GS_NUM_USER_SGPR + 2;
-      num_vgprs = 8;
-   }
-
-   for (unsigned i = 0; i < num_sgprs; ++i) {
-      ac_add_arg(&ctx->args, AC_ARG_SGPR, 1, AC_ARG_INT, NULL);
-      returns[i] = ctx->ac.i32;
-   }
-
-   for (unsigned i = 0; i < num_vgprs; ++i) {
-      ac_add_arg(&ctx->args, AC_ARG_VGPR, 1, AC_ARG_INT, NULL);
-      returns[num_sgprs + i] = ctx->ac.f32;
-   }
-
-   /* Create the function. */
-   si_llvm_create_func(ctx, "gs_prolog", returns, num_sgprs + num_vgprs, 0);
-   func = ctx->main_fn;
-
-   /* Set the full EXEC mask for the prolog, because we are only fiddling
-    * with registers here. The main shader part will set the correct EXEC
-    * mask.
-    */
-   if (ctx->screen->info.chip_class >= GFX9 && !key->gs_prolog.is_monolithic)
-      ac_init_exec_full_mask(&ctx->ac);
-
-   /* Copy inputs to outputs. This should be no-op, as the registers match,
-    * but it will prevent the compiler from overwriting them unintentionally.
-    */
-   ret = ctx->return_value;
-   for (unsigned i = 0; i < num_sgprs; i++) {
-      LLVMValueRef p = LLVMGetParam(func, i);
-      ret = LLVMBuildInsertValue(builder, ret, p, i, "");
-   }
-   for (unsigned i = 0; i < num_vgprs; i++) {
-      LLVMValueRef p = LLVMGetParam(func, num_sgprs + i);
-      p = ac_to_float(&ctx->ac, p);
-      ret = LLVMBuildInsertValue(builder, ret, p, num_sgprs + i, "");
-   }
-
-   if (key->gs_prolog.states.tri_strip_adj_fix) {
-      /* Remap the input vertices for every other primitive. */
-      const struct ac_arg gfx6_vtx_params[6] = {
-         {.used = true, .arg_index = num_sgprs},     {.used = true, .arg_index = num_sgprs + 1},
-         {.used = true, .arg_index = num_sgprs + 3}, {.used = true, .arg_index = num_sgprs + 4},
-         {.used = true, .arg_index = num_sgprs + 5}, {.used = true, .arg_index = num_sgprs + 6},
-      };
-      const struct ac_arg gfx9_vtx_params[3] = {
-         {.used = true, .arg_index = num_sgprs},
-         {.used = true, .arg_index = num_sgprs + 1},
-         {.used = true, .arg_index = num_sgprs + 4},
-      };
-      LLVMValueRef vtx_in[6], vtx_out[6];
-      LLVMValueRef prim_id, rotate;
-
-      if (ctx->screen->info.chip_class >= GFX9) {
-         for (unsigned i = 0; i < 3; i++) {
-            vtx_in[i * 2] = si_unpack_param(ctx, gfx9_vtx_params[i], 0, 16);
-            vtx_in[i * 2 + 1] = si_unpack_param(ctx, gfx9_vtx_params[i], 16, 16);
-         }
-      } else {
-         for (unsigned i = 0; i < 6; i++)
-            vtx_in[i] = ac_get_arg(&ctx->ac, gfx6_vtx_params[i]);
-      }
-
-      prim_id = LLVMGetParam(func, num_sgprs + 2);
-      rotate = LLVMBuildTrunc(builder, prim_id, ctx->ac.i1, "");
-
-      for (unsigned i = 0; i < 6; ++i) {
-         LLVMValueRef base, rotated;
-         base = vtx_in[i];
-         rotated = vtx_in[(i + 4) % 6];
-         vtx_out[i] = LLVMBuildSelect(builder, rotate, rotated, base, "");
-      }
-
-      if (ctx->screen->info.chip_class >= GFX9) {
-         for (unsigned i = 0; i < 3; i++) {
-            LLVMValueRef hi, out;
-
-            hi = LLVMBuildShl(builder, vtx_out[i * 2 + 1], LLVMConstInt(ctx->ac.i32, 16, 0), "");
-            out = LLVMBuildOr(builder, vtx_out[i * 2], hi, "");
-            out = ac_to_float(&ctx->ac, out);
-            ret = LLVMBuildInsertValue(builder, ret, out, gfx9_vtx_params[i].arg_index, "");
-         }
-      } else {
-         for (unsigned i = 0; i < 6; i++) {
-            LLVMValueRef out;
-
-            out = ac_to_float(&ctx->ac, vtx_out[i]);
-            ret = LLVMBuildInsertValue(builder, ret, out, gfx6_vtx_params[i].arg_index, "");
-         }
-      }
-   }
-
-   LLVMBuildRet(builder, ret);
 }
 
 void si_llvm_init_gs_callbacks(struct si_shader_context *ctx)

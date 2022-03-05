@@ -51,7 +51,6 @@ struct tgsi_shader_info
    ubyte input_interpolate[PIPE_MAX_SHADER_INPUTS];
    ubyte input_interpolate_loc[PIPE_MAX_SHADER_INPUTS];
    ubyte input_usage_mask[PIPE_MAX_SHADER_INPUTS];
-   ubyte input_cylindrical_wrap[PIPE_MAX_SHADER_INPUTS];
    ubyte output_semantic_name[PIPE_MAX_SHADER_OUTPUTS]; /**< TGSI_SEMANTIC_x */
    ubyte output_semantic_index[PIPE_MAX_SHADER_OUTPUTS];
    ubyte output_usagemask[PIPE_MAX_SHADER_OUTPUTS];
@@ -165,6 +164,7 @@ struct tgsi_shader_info
    bool uses_bindless_image_store;
    bool uses_bindless_image_atomic;
 
+   unsigned hw_atomic_declared; /**< bitmask of declared atomic_counter */
    /**
     * Bitmask indicating which register files are accessed with
     * indirect addressing.  The bits are (1 << TGSI_FILE_x), etc.

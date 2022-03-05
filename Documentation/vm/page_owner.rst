@@ -47,7 +47,7 @@ size change due to this facility.
 
    text    data     bss     dec     hex filename
    48800   2445     644   51889    cab1 mm/page_alloc.o
-   6574     108      29    6711    1a37 mm/page_owner.o
+   6662     108      29    6799    1a8f mm/page_owner.o
    1025       8       8    1041     411 mm/page_ext.o
 
 Although, roughly, 8 KB code is added in total, page_alloc.o increase by
@@ -85,5 +85,26 @@ Usage
 	cat /sys/kernel/debug/page_owner > page_owner_full.txt
 	./page_owner_sort page_owner_full.txt sorted_page_owner.txt
 
+   The general output of ``page_owner_full.txt`` is as follows:
+
+	Page allocated via order XXX, ...
+	PFN XXX ...
+	 // Detailed stack
+
+	Page allocated via order XXX, ...
+	PFN XXX ...
+	 // Detailed stack
+
+   The ``page_owner_sort`` tool ignores ``PFN`` rows, puts the remaining rows
+   in buf, uses regexp to extract the page order value, counts the times
+   and pages of buf, and finally sorts them according to the times.
+
    See the result about who allocated each page
-   in the ``sorted_page_owner.txt``.
+   in the ``sorted_page_owner.txt``. General output:
+
+	XXX times, XXX pages:
+	Page allocated via order XXX, ...
+	 // Detailed stack
+
+   By default, ``page_owner_sort`` is sorted according to the times of buf.
+   If you want to sort by the pages nums of buf, use the ``-m`` parameter.

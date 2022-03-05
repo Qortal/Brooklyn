@@ -47,14 +47,10 @@ private:
    bool emit_intrinsic_instruction_override(nir_intrinsic_instr* instr) override;
 
    bool do_allocate_reserved_registers() override;
-   bool do_process_inputs(nir_variable *input) override;
-   bool do_process_outputs(nir_variable *output) override;
-   bool do_emit_load_deref(const nir_variable *in_var, nir_intrinsic_instr* instr) override;
-   bool do_emit_store_deref(const nir_variable *out_var, nir_intrinsic_instr* instr) override;
    void do_finalize() override;
 
    bool emit_load_3vec(nir_intrinsic_instr* instr, const std::array<PValue,3>& src);
-   bool emit_load_num_work_groups(nir_intrinsic_instr* instr);
+   bool emit_load_num_workgroups(nir_intrinsic_instr* instr);
 
    int m_reserved_registers;
    std::array<PValue,3> m_workgroup_id;

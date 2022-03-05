@@ -173,6 +173,74 @@ compute_vertex_info(struct llvmpipe_context *llvmpipe)
 }
 
 
+static void
+check_linear_rasterizer( struct llvmpipe_context *lp )
+{
+   boolean bgr8;
+   boolean permit_linear;
+   boolean single_vp;
+   boolean clipping_changed = FALSE;
+
+   bgr8 = (lp->framebuffer.nr_cbufs == 1 && lp->framebuffer.cbufs[0] &&
+           util_res_sample_count(lp->framebuffer.cbufs[0]->texture) == 1 &&
+           lp->framebuffer.cbufs[0]->texture->target == PIPE_TEXTURE_2D &&
+           (lp->framebuffer.cbufs[0]->format == PIPE_FORMAT_B8G8R8A8_UNORM ||
+            lp->framebuffer.cbufs[0]->format == PIPE_FORMAT_B8G8R8X8_UNORM));
+
+   /* permit_linear means guardband, hence fake scissor, which we can only
+    * handle if there's just one vp. */
+   single_vp = lp->viewport_index_slot < 0;
+   permit_linear = (!lp->framebuffer.zsbuf &&
+                    bgr8 &&
+                    single_vp);
+
+   /* Tell draw that we're happy doing our own x/y clipping.
+    */
+   if (lp->permit_linear_rasterizer != permit_linear) {
+      lp->permit_linear_rasterizer = permit_linear;
+      lp_setup_set_linear_mode(lp->setup, permit_linear);
+      clipping_changed = TRUE;
+   }
+
+   if (lp->single_vp != single_vp) {
+      lp->single_vp = single_vp;
+      clipping_changed = TRUE;
+   }
+
+   /* Disable xy clipping in linear mode.
+    *
+    * Use a guard band if we don't have zsbuf.  Could enable
+    * guardband always - this just to be conservative.
+    *
+    * Because we have a layering violation where the draw module emits
+    * state changes to the driver while we're already inside a draw
+    * call, need to be careful about when we make calls back to the
+    * draw module.  Hence the clipping_changed flag which is as much
+    * to prevent flush recursion as it is to short-circuit noop state
+    * changes.
+    */
+   if (clipping_changed) {
+      draw_set_driver_clipping(lp->draw,
+                               FALSE,
+                               FALSE,
+                               permit_linear,
+                               single_vp);
+   }
+}
+
+
+/**
+ * Handle state changes before clears.
+ * Called just prior to clearing (pipe::clear()).
+ */
+void llvmpipe_update_derived_clear( struct llvmpipe_context *llvmpipe )
+{
+   if (llvmpipe->dirty & (LP_NEW_FS |
+                          LP_NEW_FRAMEBUFFER))
+      check_linear_rasterizer(llvmpipe);
+}
+
+
 /**
  * Handle state changes.
  * Called just prior to drawing anything (pipe::draw_arrays(), etc).
@@ -229,7 +297,7 @@ void llvmpipe_update_derived( struct llvmpipe_context *llvmpipe )
          (llvmpipe->sample_mask) == 0 ||
          (llvmpipe->rasterizer ? llvmpipe->rasterizer->rasterizer_discard : FALSE) ||
          (null_fs &&
-          !llvmpipe->depth_stencil->depth.enabled &&
+          !llvmpipe->depth_stencil->depth_enabled &&
           !llvmpipe->depth_stencil->stencil[0].enabled);
       lp_setup_set_rasterizer_discard(llvmpipe->setup, discard);
    }
@@ -251,7 +319,7 @@ void llvmpipe_update_derived( struct llvmpipe_context *llvmpipe )
 
    if (llvmpipe->dirty & LP_NEW_DEPTH_STENCIL_ALPHA) {
       lp_setup_set_alpha_ref_value(llvmpipe->setup, 
-                                   llvmpipe->depth_stencil->alpha.ref_value);
+                                   llvmpipe->depth_stencil->alpha_ref_value);
       lp_setup_set_stencil_ref_values(llvmpipe->setup,
                                       llvmpipe->stencil_ref.ref_value);
    }
@@ -264,7 +332,7 @@ void llvmpipe_update_derived( struct llvmpipe_context *llvmpipe )
    if (llvmpipe->dirty & LP_NEW_FS_SSBOS)
       lp_setup_set_fs_ssbos(llvmpipe->setup,
                             ARRAY_SIZE(llvmpipe->ssbos[PIPE_SHADER_FRAGMENT]),
-                            llvmpipe->ssbos[PIPE_SHADER_FRAGMENT]);
+                            llvmpipe->ssbos[PIPE_SHADER_FRAGMENT], llvmpipe->fs_ssbo_write_mask);
 
    if (llvmpipe->dirty & LP_NEW_FS_IMAGES)
       lp_setup_set_fs_images(llvmpipe->setup,
@@ -292,6 +360,8 @@ void llvmpipe_update_derived( struct llvmpipe_context *llvmpipe )
                              PIPE_MAX_VIEWPORTS,
                              llvmpipe->viewports);
    }
+
+   llvmpipe_update_derived_clear(llvmpipe);
 
    llvmpipe->dirty = 0;
 }

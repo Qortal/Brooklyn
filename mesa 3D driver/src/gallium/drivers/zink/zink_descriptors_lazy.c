@@ -161,18 +161,19 @@ zink_descriptor_program_init_lazy(struct zink_context *ctx, struct zink_program 
    struct zink_shader **stages;
    if (pg->is_compute)
       stages = &((struct zink_compute_program*)pg)->shader;
-   else {
+   else
       stages = ((struct zink_gfx_program*)pg)->shaders;
-      if (stages[PIPE_SHADER_FRAGMENT]->nir->info.fs.uses_fbfetch_output) {
-         zink_descriptor_util_init_fbfetch(ctx);
-         push_count = 1;
-      }
-   }
 
    if (!pg->dd)
       pg->dd = (void*)rzalloc(pg, struct zink_program_descriptor_data);
    if (!pg->dd)
       return false;
+
+   if (!pg->is_compute && stages[PIPE_SHADER_FRAGMENT]->nir->info.fs.uses_fbfetch_output) {
+      zink_descriptor_util_init_fbfetch(ctx);
+      push_count = 1;
+      pg->dd->fbfetch = true;
+   }
 
    unsigned entry_idx[ZINK_DESCRIPTOR_TYPES] = {0};
 
@@ -414,6 +415,7 @@ check_push_pool_alloc(struct zink_context *ctx, struct zink_descriptor_pool *poo
          /* overflowed pool: queue for deletion on next reset */
          util_dynarray_append(&bdd->overflowed_pools, struct zink_descriptor_pool*, pool);
          bdd->push_pool[is_compute] = create_push_pool(screen, bdd, is_compute, ctx->dd->has_fbfetch);
+         bdd->has_fbfetch = ctx->dd->has_fbfetch;
          return check_push_pool_alloc(ctx, bdd->push_pool[is_compute], bdd, is_compute);
       }
       if (!zink_descriptor_util_alloc_sets(screen, ctx->dd->push_dsl[is_compute]->layout,
@@ -466,10 +468,10 @@ populate_sets(struct zink_context *ctx, struct zink_batch_descriptor_data_lazy *
       if (pg->dd->pool_key[type]) {
          struct zink_descriptor_pool *pool = get_descriptor_pool_lazy(ctx, pg, type, bdd, pg->is_compute);
          sets[type] = get_descriptor_set_lazy(pool);
+         if (!sets[type])
+            return false;
       } else
-         sets[type] = ctx->dd->dummy_set;
-      if (!sets[type])
-         return false;
+         sets[type] = VK_NULL_HANDLE;
    }
    return true;
 }
@@ -513,7 +515,7 @@ zink_descriptors_update_lazy_masked(struct zink_context *ctx, bool is_compute, u
    }
    u_foreach_bit(type, bind_sets & ~changed_sets) {
       if (!pg->dd->pool_key[type])
-         bdd->sets[is_compute][type + 1] = ctx->dd->dummy_set;
+         continue;
       assert(bdd->sets[is_compute][type + 1]);
       VKSCR(CmdBindDescriptorSets)(bs->cmdbuf,
                               is_compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -521,6 +523,25 @@ zink_descriptors_update_lazy_masked(struct zink_context *ctx, bool is_compute, u
                               pg->layout, type + 1, 1, &bdd->sets[is_compute][type + 1],
                               0, NULL);
    }
+}
+
+/* only called by cached manager for fbfetch handling */
+VkDescriptorSet
+zink_descriptors_alloc_lazy_push(struct zink_context *ctx)
+{
+   struct zink_batch_state *bs = ctx->batch.state;
+   struct zink_batch_descriptor_data_lazy *bdd = bdd_lazy(bs);
+   struct zink_screen *screen = zink_screen(ctx->base.screen);
+   VkDescriptorSet push_set = VK_NULL_HANDLE;
+   if (!bdd->push_pool[0]) {
+      bdd->push_pool[0] = create_push_pool(screen, bdd, false, true);
+      bdd->has_fbfetch = true;
+   }
+   struct zink_descriptor_pool *pool = check_push_pool_alloc(ctx, bdd->push_pool[0], bdd, false);
+   push_set = get_descriptor_set_lazy(pool);
+   if (!push_set)
+      mesa_loge("ZINK: failed to get push descriptor set!");
+   return push_set;
 }
 
 void
@@ -590,14 +611,8 @@ zink_descriptors_update_lazy(struct zink_context *ctx, bool is_compute)
                                  pg->layout, 0, 1, push_set ? &push_set : &bdd->sets[is_compute][0],
                                  0, NULL);
       }
-      dd_lazy(ctx)->push_state_changed[is_compute] = false;
-   } else if (dd_lazy(ctx)->push_state_changed[is_compute] || bind_sets) {
-      VKCTX(CmdBindDescriptorSets)(bs->cmdbuf,
-                              is_compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              pg->layout, 0, 1, &ctx->dd->dummy_set,
-                              0, NULL);
-      dd_lazy(ctx)->push_state_changed[is_compute] = false;
    }
+   dd_lazy(ctx)->push_state_changed[is_compute] = false;
    zink_descriptors_update_lazy_masked(ctx, is_compute, changed_sets, bind_sets);
    if (pg->dd->bindless && unlikely(!ctx->dd->bindless_bound)) {
       VKCTX(CmdBindDescriptorSets)(ctx->batch.state->cmdbuf, is_compute ? VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -740,11 +755,6 @@ zink_descriptors_init_lazy(struct zink_context *ctx)
    ctx->dd->dummy_dsl = zink_descriptor_util_layout_get(ctx, 0, NULL, 0, &layout_key);
    if (!ctx->dd->dummy_dsl)
       return false;
-   VkDescriptorPoolSize null_size = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
-   ctx->dd->dummy_pool = create_pool(screen, 1, &null_size, 0);
-   zink_descriptor_util_alloc_sets(screen, ctx->dd->dummy_dsl->layout,
-                                   ctx->dd->dummy_pool, &ctx->dd->dummy_set, 1);
-   zink_descriptor_util_init_null_set(ctx, ctx->dd->dummy_set);
 
    return true;
 }

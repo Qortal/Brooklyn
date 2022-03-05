@@ -35,6 +35,7 @@
 #include "blend.h"
 #include "buffers.h"
 #include "context.h"
+#include "draw_validate.h"
 #include "enums.h"
 #include "formats.h"
 #include "macros.h"
@@ -47,7 +48,7 @@
 #include "state.h"
 #include "util/u_memory.h"
 
-
+#include "state_tracker/st_manager.h"
 
 /**
  * Compute/set the _DepthMax field for the given framebuffer.
@@ -79,30 +80,10 @@ compute_depth_max(struct gl_framebuffer *fb)
 }
 
 /**
- * Create and initialize a gl_framebuffer object.
- * This is intended for creating _window_system_ framebuffers, not generic
- * framebuffer objects ala GL_EXT_framebuffer_object.
- *
- * \sa _mesa_new_framebuffer
- */
-struct gl_framebuffer *
-_mesa_create_framebuffer(const struct gl_config *visual)
-{
-   struct gl_framebuffer *fb = CALLOC_STRUCT(gl_framebuffer);
-   assert(visual);
-   if (fb) {
-      _mesa_initialize_window_framebuffer(fb, visual);
-   }
-   return fb;
-}
-
-
-/**
  * Allocate a new gl_framebuffer object.
  * This is the default function for ctx->Driver.NewFramebuffer().
  * This is for allocating user-created framebuffers, not window-system
  * framebuffers!
- * \sa _mesa_create_framebuffer
  */
 struct gl_framebuffer *
 _mesa_new_framebuffer(struct gl_context *ctx, GLuint name)
@@ -207,7 +188,7 @@ _mesa_destroy_framebuffer(struct gl_framebuffer *fb)
    if (fb) {
       _mesa_free_framebuffer_data(fb);
       free(fb->Label);
-      free(fb);
+      FREE(fb);
    }
 }
 
@@ -449,15 +430,14 @@ _mesa_update_framebuffer_visual(struct gl_context *ctx,
           * attachments).
           */
          fb->Visual.samples = rb->NumSamples;
-         fb->Visual.sampleBuffers = rb->NumSamples > 0 ? 1 : 0;
 
          if (_mesa_is_legal_color_format(ctx, baseFormat)) {
             fb->Visual.redBits = _mesa_get_format_bits(fmt, GL_RED_BITS);
             fb->Visual.greenBits = _mesa_get_format_bits(fmt, GL_GREEN_BITS);
             fb->Visual.blueBits = _mesa_get_format_bits(fmt, GL_BLUE_BITS);
             fb->Visual.alphaBits = _mesa_get_format_bits(fmt, GL_ALPHA_BITS);
-            fb->Visual.rgbBits = fb->Visual.redBits
-               + fb->Visual.greenBits + fb->Visual.blueBits;
+            fb->Visual.rgbBits = fb->Visual.redBits + fb->Visual.greenBits +
+                                 fb->Visual.blueBits + fb->Visual.alphaBits;
             if (_mesa_is_format_srgb(fmt))
                 fb->Visual.sRGBCapable = ctx->Extensions.EXT_sRGB;
             break;
@@ -467,6 +447,8 @@ _mesa_update_framebuffer_visual(struct gl_context *ctx,
 
    fb->Visual.floatMode = GL_FALSE;
    for (unsigned i = 0; i < BUFFER_COUNT; i++) {
+      if (i == BUFFER_DEPTH)
+         continue;
       if (fb->Attachment[i].Renderbuffer) {
          const struct gl_renderbuffer *rb = fb->Attachment[i].Renderbuffer;
          const mesa_format fmt = rb->Format;
@@ -504,6 +486,7 @@ _mesa_update_framebuffer_visual(struct gl_context *ctx,
 
    compute_depth_max(fb);
    _mesa_update_allow_draw_out_of_order(ctx);
+   _mesa_update_valid_to_render_state(ctx);
 }
 
 
@@ -598,6 +581,29 @@ update_color_read_buffer(struct gl_framebuffer *fb)
    }
 }
 
+/**
+ * Called via glDrawBuffer.  We only provide this driver function so that we
+ * can check if we need to allocate a new renderbuffer.  Specifically, we
+ * don't usually allocate a front color buffer when using a double-buffered
+ * visual.  But if the app calls glDrawBuffer(GL_FRONT) we need to allocate
+ * that buffer.  Note, this is only for window system buffers, not user-
+ * created FBOs.
+ */
+void
+_mesa_draw_buffer_allocate(struct gl_context *ctx)
+{
+   struct gl_framebuffer *fb = ctx->DrawBuffer;
+   assert(_mesa_is_winsys_fbo(fb));
+   GLuint i;
+   /* add the renderbuffers on demand */
+   for (i = 0; i < fb->_NumColorDrawBuffers; i++) {
+      gl_buffer_index idx = fb->_ColorDrawBufferIndexes[i];
+
+      if (idx != BUFFER_NONE) {
+         st_manager_add_color_renderbuffer(ctx, fb, idx);
+      }
+   }
+}
 
 /**
  * Update a gl_framebuffer's derived state.
@@ -628,8 +634,7 @@ update_framebuffer(struct gl_context *ctx, struct gl_framebuffer *fb)
 
       /* Call device driver function if fb is the bound draw buffer. */
       if (fb == ctx->DrawBuffer) {
-         if (ctx->Driver.DrawBufferAllocate)
-            ctx->Driver.DrawBufferAllocate(ctx);
+         _mesa_draw_buffer_allocate(ctx);
       }
    }
    else {
@@ -991,25 +996,6 @@ _mesa_print_framebuffer(const struct gl_framebuffer *fb)
    }
 }
 
-bool
-_mesa_is_front_buffer_reading(const struct gl_framebuffer *fb)
-{
-   if (!fb || _mesa_is_user_fbo(fb))
-      return false;
-
-   return fb->_ColorReadBufferIndex == BUFFER_FRONT_LEFT;
-}
-
-bool
-_mesa_is_front_buffer_drawing(const struct gl_framebuffer *fb)
-{
-   if (!fb || _mesa_is_user_fbo(fb))
-      return false;
-
-   return (fb->_NumColorDrawBuffers >= 1 &&
-           fb->_ColorDrawBufferIndexes[0] == BUFFER_FRONT_LEFT);
-}
-
 static inline GLuint
 _mesa_geometric_nonvalidated_samples(const struct gl_framebuffer *buffer)
 {
@@ -1039,17 +1025,4 @@ _mesa_is_alpha_test_enabled(const struct gl_context *ctx)
 {
    bool buffer0_is_integer = ctx->DrawBuffer->_IntegerBuffers & 0x1;
    return (ctx->Color.AlphaEnabled && !buffer0_is_integer);
-}
-
-/**
- * Is alpha to coverage enabled and applicable to the currently bound
- * framebuffer?
- */
-bool
-_mesa_is_alpha_to_coverage_enabled(const struct gl_context *ctx)
-{
-   bool buffer0_is_integer = ctx->DrawBuffer->_IntegerBuffers & 0x1;
-   return (ctx->Multisample.SampleAlphaToCoverage &&
-           _mesa_is_multisample_enabled(ctx) &&
-           !buffer0_is_integer);
 }

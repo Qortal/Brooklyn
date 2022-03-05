@@ -25,6 +25,8 @@
 
 #include "pipe/p_compiler.h"
 
+#include "util/compiler.h"
+
 /**
  * Determine the semantic index that is used when the given varying is mapped
  * to TGSI_SEMANTIC_GENERIC.
@@ -157,7 +159,7 @@ tgsi_get_gl_varying_semantic(gl_varying_slot attr,
          *semantic_index = attr - VARYING_SLOT_TEX0;
          break;
       }
-      /* fall through */
+      FALLTHROUGH;
    case VARYING_SLOT_VAR0:
    default:
       assert(attr >= VARYING_SLOT_VAR0 ||
@@ -263,11 +265,11 @@ tgsi_get_sysval_semantic(unsigned sysval)
    /* Compute shader */
    case SYSTEM_VALUE_LOCAL_INVOCATION_ID:
       return TGSI_SEMANTIC_THREAD_ID;
-   case SYSTEM_VALUE_WORK_GROUP_ID:
+   case SYSTEM_VALUE_WORKGROUP_ID:
       return TGSI_SEMANTIC_BLOCK_ID;
-   case SYSTEM_VALUE_NUM_WORK_GROUPS:
+   case SYSTEM_VALUE_NUM_WORKGROUPS:
       return TGSI_SEMANTIC_GRID_SIZE;
-   case SYSTEM_VALUE_LOCAL_GROUP_SIZE:
+   case SYSTEM_VALUE_WORKGROUP_SIZE:
       return TGSI_SEMANTIC_BLOCK_SIZE;
 
    /* ARB_shader_ballot */

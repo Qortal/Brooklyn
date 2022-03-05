@@ -193,9 +193,9 @@ init_pipe_state(struct vl_compositor *c)
            c->rast = c->pipe->create_rasterizer_state(c->pipe, &rast);
 
            memset(&dsa, 0, sizeof dsa);
-           dsa.depth.enabled = 0;
-           dsa.depth.writemask = 0;
-           dsa.depth.func = PIPE_FUNC_ALWAYS;
+           dsa.depth_enabled = 0;
+           dsa.depth_writemask = 0;
+           dsa.depth_func = PIPE_FUNC_ALWAYS;
            for (i = 0; i < 2; ++i) {
                    dsa.stencil[i].enabled = 0;
                    dsa.stencil[i].func = PIPE_FUNC_ALWAYS;
@@ -205,9 +205,9 @@ init_pipe_state(struct vl_compositor *c)
                    dsa.stencil[i].valuemask = 0;
                    dsa.stencil[i].writemask = 0;
            }
-           dsa.alpha.enabled = 0;
-           dsa.alpha.func = PIPE_FUNC_ALWAYS;
-           dsa.alpha.ref_value = 0;
+           dsa.alpha_enabled = 0;
+           dsa.alpha_func = PIPE_FUNC_ALWAYS;
+           dsa.alpha_ref_value = 0;
            c->dsa = c->pipe->create_depth_stencil_alpha_state(c->pipe, &dsa);
            c->pipe->bind_depth_stencil_alpha_state(c->pipe, c->dsa);
    }
@@ -237,6 +237,7 @@ static bool
 init_buffers(struct vl_compositor *c)
 {
    struct pipe_vertex_element vertex_elems[3];
+   memset(vertex_elems, 0, sizeof(vertex_elems));
 
    assert(c);
 
@@ -446,6 +447,10 @@ vl_compositor_clear_layers(struct vl_compositor_state *s)
       s->layers[i].cs = NULL;
       s->layers[i].viewport.scale[2] = 1;
       s->layers[i].viewport.translate[2] = 0;
+      s->layers[i].viewport.swizzle_x = PIPE_VIEWPORT_SWIZZLE_POSITIVE_X;
+      s->layers[i].viewport.swizzle_y = PIPE_VIEWPORT_SWIZZLE_POSITIVE_Y;
+      s->layers[i].viewport.swizzle_z = PIPE_VIEWPORT_SWIZZLE_POSITIVE_Z;
+      s->layers[i].viewport.swizzle_w = PIPE_VIEWPORT_SWIZZLE_POSITIVE_W;
       s->layers[i].rotate = VL_COMPOSITOR_ROTATE_0;
 
       for ( j = 0; j < 3; j++)
@@ -567,6 +572,8 @@ vl_compositor_set_buffer_layer(struct vl_compositor_state *s,
    if (buffer->interlaced) {
       float half_a_line = 0.5f / s->layers[layer].zw.y;
       switch(deinterlace) {
+      case VL_COMPOSITOR_NONE:
+      case VL_COMPOSITOR_MOTION_ADAPTIVE:
       case VL_COMPOSITOR_WEAVE:
          if (c->pipe_cs_composit_supported)
             s->layers[layer].cs = c->cs_weave_rgb;
@@ -772,6 +779,8 @@ vl_compositor_init(struct vl_compositor *c, struct pipe_context *pipe)
 
    c->pipe_gfx_supported = pipe->screen->get_param(pipe->screen, PIPE_CAP_GRAPHICS);
    c->pipe = pipe;
+
+   c->deinterlace = VL_COMPOSITOR_NONE;
 
    if (!init_pipe_state(c)) {
       return false;

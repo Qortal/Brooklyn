@@ -1,4 +1,4 @@
-This is now deprecated as Sinclar uses auto adaptive over clocking. 
+No need for this shit anymore. Titan has auto boost clock now.
 
 Check what is your actual stable stock clock 
 vcgencmd measure_clock arm 

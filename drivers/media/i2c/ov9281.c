@@ -52,7 +52,11 @@
 #define OV9281_REG_EXPOSURE		0x3500
 #define	OV9281_EXPOSURE_MIN		4
 #define	OV9281_EXPOSURE_STEP		1
-#define OV9281_VTS_MAX			0x7fff
+/*
+ * Number of lines less than frame length (VTS) that exposure must be.
+ * Datasheet states 25, although empirically 5 appears to work.
+ */
+#define OV9281_EXPOSURE_OFFSET		25
 
 #define OV9281_REG_GAIN_H		0x3508
 #define OV9281_REG_GAIN_L		0x3509
@@ -69,6 +73,7 @@
 #define OV9281_TEST_PATTERN_DISABLE	0x0
 
 #define OV9281_REG_VTS			0x380e
+#define OV9281_VTS_MAX			0x7fff
 
 /*
  * OV9281 native and active pixel array size.
@@ -967,7 +972,7 @@ static int ov9281_set_ctrl(struct v4l2_ctrl *ctrl)
 	switch (ctrl->id) {
 	case V4L2_CID_VBLANK:
 		/* Update max exposure while meeting expected vblanking */
-		max = ov9281->cur_mode->height + ctrl->val - 4;
+		max = ov9281->cur_mode->height + ctrl->val - OV9281_EXPOSURE_OFFSET;
 		__v4l2_ctrl_modify_range(ov9281->exposure,
 					 ov9281->exposure->minimum, max,
 					 ov9281->exposure->step,
@@ -1062,7 +1067,7 @@ static int ov9281_initialize_controls(struct ov9281 *ov9281)
 					   OV9281_VTS_MAX - mode->height, 1,
 					   vblank_def);
 
-	exposure_max = mode->vts_def - 4;
+	exposure_max = mode->vts_def - OV9281_EXPOSURE_OFFSET;
 	ov9281->exposure = v4l2_ctrl_new_std(handler, &ov9281_ctrl_ops,
 					     V4L2_CID_EXPOSURE,
 					     OV9281_EXPOSURE_MIN, exposure_max,
@@ -1119,7 +1124,7 @@ static int ov9281_check_sensor_id(struct ov9281 *ov9281,
 				  struct i2c_client *client)
 {
 	struct device *dev = &ov9281->client->dev;
-	u32 id = 0, id_msb;
+	u32 id = 0, id_msb = 0;
 	int ret;
 
 	ret = ov9281_read_reg(client, OV9281_REG_CHIP_ID + 1,

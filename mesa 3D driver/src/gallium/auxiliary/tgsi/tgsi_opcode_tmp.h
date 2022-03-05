@@ -204,12 +204,15 @@ OP11(INTERP_CENTROID)
 OP12(INTERP_SAMPLE)
 OP12(INTERP_OFFSET)
 
+OP11(FBFETCH)
+
 #undef OP00
 #undef OP01
 #undef OP10
 #undef OP11
 #undef OP12
 #undef OP13
+#undef OP14
 
 #undef OP00_LBL
 #undef OP01_LBL

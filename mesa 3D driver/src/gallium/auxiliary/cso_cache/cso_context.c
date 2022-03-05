@@ -38,6 +38,7 @@
 #include "pipe/p_state.h"
 #include "util/u_draw.h"
 #include "util/u_framebuffer.h"
+#include "util/u_helpers.h"
 #include "util/u_inlines.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
@@ -63,7 +64,6 @@ struct sampler_info
 
 struct cso_context {
    struct pipe_context *pipe;
-   struct cso_cache *cache;
 
    struct u_vbuf *vbuf;
    struct u_vbuf *vbuf_current;
@@ -74,30 +74,19 @@ struct cso_context {
    boolean has_compute_shader;
    boolean has_streamout;
 
+   uint32_t max_fs_samplerviews : 16;
+
    unsigned saved_state;  /**< bitmask of CSO_BIT_x flags */
-
-   struct pipe_sampler_view *fragment_views[PIPE_MAX_SHADER_SAMPLER_VIEWS];
-   unsigned nr_fragment_views;
-
-   struct pipe_sampler_view *fragment_views_saved[PIPE_MAX_SHADER_SAMPLER_VIEWS];
-   unsigned nr_fragment_views_saved;
+   unsigned saved_compute_state;  /**< bitmask of CSO_BIT_COMPUTE_x flags */
 
    struct sampler_info fragment_samplers_saved;
+   struct sampler_info compute_samplers_saved;
    struct sampler_info samplers[PIPE_SHADER_TYPES];
 
    /* Temporary number until cso_single_sampler_done is called.
     * It tracks the highest sampler seen in cso_single_sampler.
     */
    int max_sampler_seen;
-
-   struct pipe_vertex_buffer vertex_buffer0_current;
-   struct pipe_vertex_buffer vertex_buffer0_saved;
-
-   struct pipe_constant_buffer aux_constbuf_current[PIPE_SHADER_TYPES];
-   struct pipe_constant_buffer aux_constbuf_saved[PIPE_SHADER_TYPES];
-
-   struct pipe_image_view fragment_image0_current;
-   struct pipe_image_view fragment_image0_saved;
 
    unsigned nr_so_targets;
    struct pipe_stream_output_target *so_targets[PIPE_MAX_SO_BUFFERS];
@@ -116,18 +105,21 @@ struct cso_context {
    void *geometry_shader, *geometry_shader_saved;
    void *tessctrl_shader, *tessctrl_shader_saved;
    void *tesseval_shader, *tesseval_shader_saved;
-   void *compute_shader;
+   void *compute_shader, *compute_shader_saved;
    void *velements, *velements_saved;
    struct pipe_query *render_condition, *render_condition_saved;
    uint render_condition_mode, render_condition_mode_saved;
    boolean render_condition_cond, render_condition_cond_saved;
+   bool flatshade_first, flatshade_first_saved;
 
    struct pipe_framebuffer_state fb, fb_saved;
    struct pipe_viewport_state vp, vp_saved;
-   struct pipe_blend_color blend_color;
    unsigned sample_mask, sample_mask_saved;
    unsigned min_samples, min_samples_saved;
    struct pipe_stencil_ref stencil_ref, stencil_ref_saved;
+
+   /* This should be last to keep all of the above together in memory. */
+   struct cso_cache cache;
 };
 
 struct pipe_context *cso_get_pipe_context(struct cso_context *cso)
@@ -135,89 +127,35 @@ struct pipe_context *cso_get_pipe_context(struct cso_context *cso)
    return cso->pipe;
 }
 
-static boolean delete_blend_state(struct cso_context *ctx, void *state)
-{
-   struct cso_blend *cso = (struct cso_blend *)state;
-
-   if (ctx->blend == cso->data)
-      return FALSE;
-
-   if (cso->delete_state)
-      cso->delete_state(cso->context, cso->data);
-   FREE(state);
-   return TRUE;
-}
-
-static boolean delete_depth_stencil_state(struct cso_context *ctx, void *state)
-{
-   struct cso_depth_stencil_alpha *cso =
-      (struct cso_depth_stencil_alpha *)state;
-
-   if (ctx->depth_stencil == cso->data)
-      return FALSE;
-
-   if (cso->delete_state)
-      cso->delete_state(cso->context, cso->data);
-   FREE(state);
-
-   return TRUE;
-}
-
-static boolean delete_sampler_state(UNUSED struct cso_context *ctx, void *state)
-{
-   struct cso_sampler *cso = (struct cso_sampler *)state;
-   if (cso->delete_state)
-      cso->delete_state(cso->context, cso->data);
-   FREE(state);
-   return TRUE;
-}
-
-static boolean delete_rasterizer_state(struct cso_context *ctx, void *state)
-{
-   struct cso_rasterizer *cso = (struct cso_rasterizer *)state;
-
-   if (ctx->rasterizer == cso->data)
-      return FALSE;
-   if (cso->delete_state)
-      cso->delete_state(cso->context, cso->data);
-   FREE(state);
-   return TRUE;
-}
-
-static boolean delete_vertex_elements(struct cso_context *ctx,
-                                      void *state)
-{
-   struct cso_velements *cso = (struct cso_velements *)state;
-
-   if (ctx->velements == cso->data)
-      return FALSE;
-
-   if (cso->delete_state)
-      cso->delete_state(cso->context, cso->data);
-   FREE(state);
-   return TRUE;
-}
-
-
 static inline boolean delete_cso(struct cso_context *ctx,
                                  void *state, enum cso_cache_type type)
 {
    switch (type) {
    case CSO_BLEND:
-      return delete_blend_state(ctx, state);
-   case CSO_SAMPLER:
-      return delete_sampler_state(ctx, state);
+      if (ctx->blend == ((struct cso_blend*)state)->data)
+         return false;
+      break;
    case CSO_DEPTH_STENCIL_ALPHA:
-      return delete_depth_stencil_state(ctx, state);
+      if (ctx->depth_stencil == ((struct cso_depth_stencil_alpha*)state)->data)
+         return false;
+      break;
    case CSO_RASTERIZER:
-      return delete_rasterizer_state(ctx, state);
+      if (ctx->rasterizer == ((struct cso_rasterizer*)state)->data)
+         return false;
+      break;
    case CSO_VELEMENTS:
-      return delete_vertex_elements(ctx, state);
+      if (ctx->velements == ((struct cso_velements*)state)->data)
+         return false;
+      break;
+   case CSO_SAMPLER:
+      /* nothing to do for samplers */
+      break;
    default:
       assert(0);
-      FREE(state);
    }
-   return FALSE;
+
+   cso_delete_state(ctx->pipe, state, type);
+   return true;
 }
 
 static inline void
@@ -312,20 +250,17 @@ cso_create_context(struct pipe_context *pipe, unsigned flags)
    if (!ctx)
       return NULL;
 
-   ctx->cache = cso_cache_create();
-   if (ctx->cache == NULL)
-      goto out;
-   cso_cache_set_sanitize_callback(ctx->cache,
-                                   sanitize_hash,
-                                   ctx);
+   cso_cache_init(&ctx->cache, pipe);
+   cso_cache_set_sanitize_callback(&ctx->cache, sanitize_hash, ctx);
 
    ctx->pipe = pipe;
    ctx->sample_mask = ~0;
 
-   cso_init_vbuf(ctx, flags);
+   if (!(flags & CSO_NO_VBUF))
+      cso_init_vbuf(ctx, flags);
 
    /* Enable for testing: */
-   if (0) cso_set_maximum_cache_size( ctx->cache, 4 );
+   if (0) cso_set_maximum_cache_size(&ctx->cache, 4);
 
    if (pipe->screen->get_shader_param(pipe->screen, PIPE_SHADER_GEOMETRY,
                                 PIPE_SHADER_CAP_MAX_INSTRUCTIONS) > 0) {
@@ -350,18 +285,14 @@ cso_create_context(struct pipe_context *pipe, unsigned flags)
       ctx->has_streamout = TRUE;
    }
 
+   ctx->max_fs_samplerviews = pipe->screen->get_shader_param(pipe->screen, PIPE_SHADER_FRAGMENT,
+                                                             PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS);
+
    ctx->max_sampler_seen = -1;
    return ctx;
-
-out:
-   cso_destroy_context( ctx );
-   return NULL;
 }
 
-/**
- * Free the CSO context.
- */
-void cso_destroy_context( struct cso_context *ctx )
+void cso_unbind_context(struct cso_context *ctx)
 {
    unsigned i;
 
@@ -376,6 +307,24 @@ void cso_destroy_context( struct cso_context *ctx )
          struct pipe_screen *scr = ctx->pipe->screen;
          enum pipe_shader_type sh;
          for (sh = 0; sh < PIPE_SHADER_TYPES; sh++) {
+            switch (sh) {
+            case PIPE_SHADER_GEOMETRY:
+               if (!ctx->has_geometry_shader)
+                  continue;
+               break;
+            case PIPE_SHADER_TESS_CTRL:
+            case PIPE_SHADER_TESS_EVAL:
+               if (!ctx->has_tessellation)
+                  continue;
+               break;
+            case PIPE_SHADER_COMPUTE:
+               if (!ctx->has_compute_shader)
+                  continue;
+               break;
+            default:
+               break;
+            }
+
             int maxsam = scr->get_shader_param(scr, sh,
                                                PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS);
             int maxview = scr->get_shader_param(scr, sh,
@@ -384,29 +333,38 @@ void cso_destroy_context( struct cso_context *ctx )
                                                 PIPE_SHADER_CAP_MAX_SHADER_BUFFERS);
             int maxcb = scr->get_shader_param(scr, sh,
                                               PIPE_SHADER_CAP_MAX_CONST_BUFFERS);
+            int maximg = scr->get_shader_param(scr, sh,
+                                              PIPE_SHADER_CAP_MAX_SHADER_IMAGES);
             assert(maxsam <= PIPE_MAX_SAMPLERS);
             assert(maxview <= PIPE_MAX_SHADER_SAMPLER_VIEWS);
             assert(maxssbo <= PIPE_MAX_SHADER_BUFFERS);
+            assert(maxcb <= PIPE_MAX_CONSTANT_BUFFERS);
+            assert(maximg <= PIPE_MAX_SHADER_IMAGES);
             if (maxsam > 0) {
                ctx->pipe->bind_sampler_states(ctx->pipe, sh, 0, maxsam, zeros);
             }
             if (maxview > 0) {
-               ctx->pipe->set_sampler_views(ctx->pipe, sh, 0, maxview, views);
+               ctx->pipe->set_sampler_views(ctx->pipe, sh, 0, maxview, 0, false, views);
             }
             if (maxssbo > 0) {
                ctx->pipe->set_shader_buffers(ctx->pipe, sh, 0, maxssbo, ssbos, 0);
             }
+            if (maximg > 0) {
+               ctx->pipe->set_shader_images(ctx->pipe, sh, 0, 0, maximg, NULL);
+            }
             for (int i = 0; i < maxcb; i++) {
-               ctx->pipe->set_constant_buffer(ctx->pipe, sh, i, NULL);
+               ctx->pipe->set_constant_buffer(ctx->pipe, sh, i, false, NULL);
             }
          }
       }
 
       ctx->pipe->bind_depth_stencil_alpha_state( ctx->pipe, NULL );
+      struct pipe_stencil_ref sr = {0};
+      ctx->pipe->set_stencil_ref(ctx->pipe, sr);
       ctx->pipe->bind_fs_state( ctx->pipe, NULL );
-      ctx->pipe->set_constant_buffer(ctx->pipe, PIPE_SHADER_FRAGMENT, 0, NULL);
+      ctx->pipe->set_constant_buffer(ctx->pipe, PIPE_SHADER_FRAGMENT, 0, false, NULL);
       ctx->pipe->bind_vs_state( ctx->pipe, NULL );
-      ctx->pipe->set_constant_buffer(ctx->pipe, PIPE_SHADER_VERTEX, 0, NULL);
+      ctx->pipe->set_constant_buffer(ctx->pipe, PIPE_SHADER_VERTEX, 0, false, NULL);
       if (ctx->has_geometry_shader) {
          ctx->pipe->bind_gs_state(ctx->pipe, NULL);
       }
@@ -423,36 +381,33 @@ void cso_destroy_context( struct cso_context *ctx )
          ctx->pipe->set_stream_output_targets(ctx->pipe, 0, NULL, NULL);
    }
 
-   for (i = 0; i < ctx->nr_fragment_views; i++) {
-      pipe_sampler_view_reference(&ctx->fragment_views[i], NULL);
-   }
-   for (i = 0; i < ctx->nr_fragment_views_saved; i++) {
-      pipe_sampler_view_reference(&ctx->fragment_views_saved[i], NULL);
-   }
-
    util_unreference_framebuffer_state(&ctx->fb);
    util_unreference_framebuffer_state(&ctx->fb_saved);
-
-   pipe_vertex_buffer_unreference(&ctx->vertex_buffer0_current);
-   pipe_vertex_buffer_unreference(&ctx->vertex_buffer0_saved);
-
-   for (i = 0; i < PIPE_SHADER_TYPES; i++) {
-      pipe_resource_reference(&ctx->aux_constbuf_current[i].buffer, NULL);
-      pipe_resource_reference(&ctx->aux_constbuf_saved[i].buffer, NULL);
-   }
-
-   pipe_resource_reference(&ctx->fragment_image0_current.resource, NULL);
-   pipe_resource_reference(&ctx->fragment_image0_saved.resource, NULL);
 
    for (i = 0; i < PIPE_MAX_SO_BUFFERS; i++) {
       pipe_so_target_reference(&ctx->so_targets[i], NULL);
       pipe_so_target_reference(&ctx->so_targets_saved[i], NULL);
    }
 
-   if (ctx->cache) {
-      cso_cache_delete( ctx->cache );
-      ctx->cache = NULL;
-   }
+   memset(&ctx->samplers, 0, sizeof(ctx->samplers));
+   memset(&ctx->nr_so_targets, 0, offsetof(struct cso_context, cache) - offsetof(struct cso_context, nr_so_targets));
+   ctx->sample_mask = ~0;
+   /*
+    * If the cso context is reused (with the same pipe context),
+    * need to really make sure the context state doesn't get out of sync.
+    */
+   ctx->pipe->set_sample_mask(ctx->pipe, ctx->sample_mask);
+   if (ctx->pipe->set_min_samples)
+      ctx->pipe->set_min_samples(ctx->pipe, ctx->min_samples);
+}
+
+/**
+ * Free the CSO context.
+ */
+void cso_destroy_context( struct cso_context *ctx )
+{
+   cso_unbind_context(ctx);
+   cso_cache_delete(&ctx->cache);
 
    if (ctx->vbuf)
       u_vbuf_destroy(ctx->vbuf);
@@ -481,7 +436,7 @@ enum pipe_error cso_set_blend(struct cso_context *ctx,
       sizeof(struct pipe_blend_state) :
       (char *)&(templ->rt[1]) - (char *)templ;
    hash_key = cso_construct_key((void*)templ, key_size);
-   iter = cso_find_state_template(ctx->cache, hash_key, CSO_BLEND,
+   iter = cso_find_state_template(&ctx->cache, hash_key, CSO_BLEND,
                                   (void*)templ, key_size);
 
    if (cso_hash_iter_is_null(iter)) {
@@ -492,10 +447,8 @@ enum pipe_error cso_set_blend(struct cso_context *ctx,
       memset(&cso->state, 0, sizeof cso->state);
       memcpy(&cso->state, templ, key_size);
       cso->data = ctx->pipe->create_blend_state(ctx->pipe, &cso->state);
-      cso->delete_state = (cso_state_callback)ctx->pipe->delete_blend_state;
-      cso->context = ctx->pipe;
 
-      iter = cso_insert_state(ctx->cache, hash_key, CSO_BLEND, cso);
+      iter = cso_insert_state(&ctx->cache, hash_key, CSO_BLEND, cso);
       if (cso_hash_iter_is_null(iter)) {
          FREE(cso);
          return PIPE_ERROR_OUT_OF_MEMORY;
@@ -539,7 +492,7 @@ cso_set_depth_stencil_alpha(struct cso_context *ctx,
 {
    unsigned key_size = sizeof(struct pipe_depth_stencil_alpha_state);
    unsigned hash_key = cso_construct_key((void*)templ, key_size);
-   struct cso_hash_iter iter = cso_find_state_template(ctx->cache,
+   struct cso_hash_iter iter = cso_find_state_template(&ctx->cache,
                                                        hash_key,
                                                        CSO_DEPTH_STENCIL_ALPHA,
                                                        (void*)templ, key_size);
@@ -554,11 +507,8 @@ cso_set_depth_stencil_alpha(struct cso_context *ctx,
       memcpy(&cso->state, templ, sizeof(*templ));
       cso->data = ctx->pipe->create_depth_stencil_alpha_state(ctx->pipe,
                                                               &cso->state);
-      cso->delete_state =
-         (cso_state_callback)ctx->pipe->delete_depth_stencil_alpha_state;
-      cso->context = ctx->pipe;
 
-      iter = cso_insert_state(ctx->cache, hash_key,
+      iter = cso_insert_state(&ctx->cache, hash_key,
                               CSO_DEPTH_STENCIL_ALPHA, cso);
       if (cso_hash_iter_is_null(iter)) {
          FREE(cso);
@@ -604,7 +554,7 @@ enum pipe_error cso_set_rasterizer(struct cso_context *ctx,
 {
    unsigned key_size = sizeof(struct pipe_rasterizer_state);
    unsigned hash_key = cso_construct_key((void*)templ, key_size);
-   struct cso_hash_iter iter = cso_find_state_template(ctx->cache,
+   struct cso_hash_iter iter = cso_find_state_template(&ctx->cache,
                                                        hash_key,
                                                        CSO_RASTERIZER,
                                                        (void*)templ, key_size);
@@ -622,11 +572,8 @@ enum pipe_error cso_set_rasterizer(struct cso_context *ctx,
 
       memcpy(&cso->state, templ, sizeof(*templ));
       cso->data = ctx->pipe->create_rasterizer_state(ctx->pipe, &cso->state);
-      cso->delete_state =
-         (cso_state_callback)ctx->pipe->delete_rasterizer_state;
-      cso->context = ctx->pipe;
 
-      iter = cso_insert_state(ctx->cache, hash_key, CSO_RASTERIZER, cso);
+      iter = cso_insert_state(&ctx->cache, hash_key, CSO_RASTERIZER, cso);
       if (cso_hash_iter_is_null(iter)) {
          FREE(cso);
          return PIPE_ERROR_OUT_OF_MEMORY;
@@ -640,6 +587,9 @@ enum pipe_error cso_set_rasterizer(struct cso_context *ctx,
 
    if (ctx->rasterizer != handle) {
       ctx->rasterizer = handle;
+      ctx->flatshade_first = templ->flatshade_first;
+      if (ctx->vbuf)
+         u_vbuf_set_flatshade_first(ctx->vbuf, ctx->flatshade_first);
       ctx->pipe->bind_rasterizer_state(ctx->pipe, handle);
    }
    return PIPE_OK;
@@ -650,6 +600,7 @@ cso_save_rasterizer(struct cso_context *ctx)
 {
    assert(!ctx->rasterizer_saved);
    ctx->rasterizer_saved = ctx->rasterizer;
+   ctx->flatshade_first_saved = ctx->flatshade_first;
 }
 
 static void
@@ -657,6 +608,9 @@ cso_restore_rasterizer(struct cso_context *ctx)
 {
    if (ctx->rasterizer != ctx->rasterizer_saved) {
       ctx->rasterizer = ctx->rasterizer_saved;
+      ctx->flatshade_first = ctx->flatshade_first_saved;
+      if (ctx->vbuf)
+         u_vbuf_set_flatshade_first(ctx->vbuf, ctx->flatshade_first);
       ctx->pipe->bind_rasterizer_state(ctx->pipe, ctx->rasterizer_saved);
    }
    ctx->rasterizer_saved = NULL;
@@ -788,16 +742,6 @@ cso_restore_viewport(struct cso_context *ctx)
    }
 }
 
-
-void cso_set_blend_color(struct cso_context *ctx,
-                         const struct pipe_blend_color *bc)
-{
-   if (memcmp(&ctx->blend_color, bc, sizeof(ctx->blend_color))) {
-      ctx->blend_color = *bc;
-      ctx->pipe->set_blend_color(ctx->pipe, bc);
-   }
-}
-
 void cso_set_sample_mask(struct cso_context *ctx, unsigned sample_mask)
 {
    if (ctx->sample_mask != sample_mask) {
@@ -839,10 +783,10 @@ cso_restore_min_samples(struct cso_context *ctx)
 }
 
 void cso_set_stencil_ref(struct cso_context *ctx,
-                         const struct pipe_stencil_ref *sr)
+                         const struct pipe_stencil_ref sr)
 {
-   if (memcmp(&ctx->stencil_ref, sr, sizeof(ctx->stencil_ref))) {
-      ctx->stencil_ref = *sr;
+   if (memcmp(&ctx->stencil_ref, &sr, sizeof(ctx->stencil_ref))) {
+      ctx->stencil_ref = sr;
       ctx->pipe->set_stencil_ref(ctx->pipe, sr);
    }
 }
@@ -860,7 +804,7 @@ cso_restore_stencil_ref(struct cso_context *ctx)
    if (memcmp(&ctx->stencil_ref, &ctx->stencil_ref_saved,
               sizeof(ctx->stencil_ref))) {
       ctx->stencil_ref = ctx->stencil_ref_saved;
-      ctx->pipe->set_stencil_ref(ctx->pipe, &ctx->stencil_ref);
+      ctx->pipe->set_stencil_ref(ctx->pipe, ctx->stencil_ref);
    }
 }
 
@@ -1013,6 +957,65 @@ void cso_set_compute_shader_handle(struct cso_context *ctx, void *handle)
 }
 
 static void
+cso_save_compute_shader(struct cso_context *ctx)
+{
+   if (!ctx->has_compute_shader) {
+      return;
+   }
+
+   assert(!ctx->compute_shader_saved);
+   ctx->compute_shader_saved = ctx->compute_shader;
+}
+
+static void
+cso_restore_compute_shader(struct cso_context *ctx)
+{
+   if (!ctx->has_compute_shader) {
+      return;
+   }
+
+   if (ctx->compute_shader_saved != ctx->compute_shader) {
+      ctx->pipe->bind_compute_state(ctx->pipe, ctx->compute_shader_saved);
+      ctx->compute_shader = ctx->compute_shader_saved;
+   }
+   ctx->compute_shader_saved = NULL;
+}
+
+
+static void
+cso_save_compute_samplers(struct cso_context *ctx)
+{
+   struct sampler_info *info = &ctx->samplers[PIPE_SHADER_COMPUTE];
+   struct sampler_info *saved = &ctx->compute_samplers_saved;
+
+   memcpy(saved->cso_samplers, info->cso_samplers,
+          sizeof(info->cso_samplers));
+   memcpy(saved->samplers, info->samplers, sizeof(info->samplers));
+}
+
+
+static void
+cso_restore_compute_samplers(struct cso_context *ctx)
+{
+   struct sampler_info *info = &ctx->samplers[PIPE_SHADER_COMPUTE];
+   struct sampler_info *saved = &ctx->compute_samplers_saved;
+
+   memcpy(info->cso_samplers, saved->cso_samplers,
+          sizeof(info->cso_samplers));
+   memcpy(info->samplers, saved->samplers, sizeof(info->samplers));
+
+   for (int i = PIPE_MAX_SAMPLERS - 1; i >= 0; i--) {
+      if (info->samplers[i]) {
+         ctx->max_sampler_seen = i;
+         break;
+      }
+   }
+
+   cso_single_sampler_done(ctx, PIPE_SHADER_COMPUTE);
+}
+
+
+static void
 cso_set_vertex_elements_direct(struct cso_context *ctx,
                                const struct cso_velems_state *velems)
 {
@@ -1028,7 +1031,7 @@ cso_set_vertex_elements_direct(struct cso_context *ctx,
    key_size = sizeof(struct pipe_vertex_element) * velems->count +
               sizeof(unsigned);
    hash_key = cso_construct_key((void*)velems, key_size);
-   iter = cso_find_state_template(ctx->cache, hash_key, CSO_VELEMENTS,
+   iter = cso_find_state_template(&ctx->cache, hash_key, CSO_VELEMENTS,
                                   (void*)velems, key_size);
 
    if (cso_hash_iter_is_null(iter)) {
@@ -1037,14 +1040,17 @@ cso_set_vertex_elements_direct(struct cso_context *ctx,
          return;
 
       memcpy(&cso->state, velems, key_size);
-      cso->data = ctx->pipe->create_vertex_elements_state(ctx->pipe,
-                                                          velems->count,
-                                                      &cso->state.velems[0]);
-      cso->delete_state =
-         (cso_state_callback) ctx->pipe->delete_vertex_elements_state;
-      cso->context = ctx->pipe;
 
-      iter = cso_insert_state(ctx->cache, hash_key, CSO_VELEMENTS, cso);
+      /* Lower 64-bit vertex attributes. */
+      unsigned new_count = velems->count;
+      const struct pipe_vertex_element *new_elems = velems->velems;
+      struct pipe_vertex_element tmp[PIPE_MAX_ATTRIBS];
+      util_lower_uint64_vertex_elements(&new_elems, &new_count, tmp);
+
+      cso->data = ctx->pipe->create_vertex_elements_state(ctx->pipe, new_count,
+                                                          new_elems);
+
+      iter = cso_insert_state(&ctx->cache, hash_key, CSO_VELEMENTS, cso);
       if (cso_hash_iter_is_null(iter)) {
          FREE(cso);
          return;
@@ -1110,70 +1116,26 @@ cso_restore_vertex_elements(struct cso_context *ctx)
 
 /* vertex buffers */
 
-static void
-cso_set_vertex_buffers_direct(struct cso_context *ctx,
-                              unsigned start_slot, unsigned count,
-                              const struct pipe_vertex_buffer *buffers)
-{
-   /* Save what's in the auxiliary slot, so that we can save and restore it
-    * for meta ops.
-    */
-   if (start_slot == 0) {
-      if (buffers) {
-         pipe_vertex_buffer_reference(&ctx->vertex_buffer0_current,
-                                      buffers);
-      } else {
-         pipe_vertex_buffer_unreference(&ctx->vertex_buffer0_current);
-      }
-   }
-
-   ctx->pipe->set_vertex_buffers(ctx->pipe, start_slot, count, buffers);
-}
-
-
 void cso_set_vertex_buffers(struct cso_context *ctx,
                             unsigned start_slot, unsigned count,
+                            unsigned unbind_trailing_count,
+                            bool take_ownership,
                             const struct pipe_vertex_buffer *buffers)
 {
    struct u_vbuf *vbuf = ctx->vbuf_current;
 
-   if (!count)
+   if (!count && !unbind_trailing_count)
       return;
 
    if (vbuf) {
-      u_vbuf_set_vertex_buffers(vbuf, start_slot, count, buffers);
+      u_vbuf_set_vertex_buffers(vbuf, start_slot, count, unbind_trailing_count,
+                                take_ownership, buffers);
       return;
    }
 
-   cso_set_vertex_buffers_direct(ctx, start_slot, count, buffers);
-}
-
-static void
-cso_save_vertex_buffer0(struct cso_context *ctx)
-{
-   struct u_vbuf *vbuf = ctx->vbuf_current;
-
-   if (vbuf) {
-      u_vbuf_save_vertex_buffer0(vbuf);
-      return;
-   }
-
-   pipe_vertex_buffer_reference(&ctx->vertex_buffer0_saved,
-                                &ctx->vertex_buffer0_current);
-}
-
-static void
-cso_restore_vertex_buffer0(struct cso_context *ctx)
-{
-   struct u_vbuf *vbuf = ctx->vbuf_current;
-
-   if (vbuf) {
-      u_vbuf_restore_vertex_buffer0(vbuf);
-      return;
-   }
-
-   cso_set_vertex_buffers(ctx, 0, 1, &ctx->vertex_buffer0_saved);
-   pipe_vertex_buffer_unreference(&ctx->vertex_buffer0_saved);
+   struct pipe_context *pipe = ctx->pipe;
+   pipe->set_vertex_buffers(pipe, start_slot, count, unbind_trailing_count,
+                            take_ownership, buffers);
 }
 
 /**
@@ -1193,28 +1155,31 @@ cso_set_vertex_buffers_and_elements(struct cso_context *ctx,
                                     const struct cso_velems_state *velems,
                                     unsigned vb_count,
                                     unsigned unbind_trailing_vb_count,
-                                    const struct pipe_vertex_buffer *vbuffers,
-                                    bool uses_user_vertex_buffers)
+                                    bool take_ownership,
+                                    bool uses_user_vertex_buffers,
+                                    const struct pipe_vertex_buffer *vbuffers)
 {
    struct u_vbuf *vbuf = ctx->vbuf;
+   struct pipe_context *pipe = ctx->pipe;
 
    if (vbuf && (ctx->always_use_vbuf || uses_user_vertex_buffers)) {
       if (!ctx->vbuf_current) {
          /* Unbind all buffers in cso_context, because we'll use u_vbuf. */
          unsigned unbind_vb_count = vb_count + unbind_trailing_vb_count;
          if (unbind_vb_count)
-            cso_set_vertex_buffers_direct(ctx, 0, unbind_vb_count, NULL);
+            pipe->set_vertex_buffers(pipe, 0, 0, unbind_vb_count, false, NULL);
 
          /* Unset this to make sure the CSO is re-bound on the next use. */
          ctx->velements = NULL;
          ctx->vbuf_current = vbuf;
-      } else if (unbind_trailing_vb_count) {
-         u_vbuf_set_vertex_buffers(vbuf, vb_count, unbind_trailing_vb_count,
-                                   NULL);
+         unbind_trailing_vb_count = 0;
       }
 
-      if (vb_count)
-         u_vbuf_set_vertex_buffers(vbuf, 0, vb_count, vbuffers);
+      if (vb_count || unbind_trailing_vb_count) {
+         u_vbuf_set_vertex_buffers(vbuf, 0, vb_count,
+                                   unbind_trailing_vb_count,
+                                   take_ownership, vbuffers);
+      }
       u_vbuf_set_vertex_elements(vbuf, velems);
       return;
    }
@@ -1223,62 +1188,63 @@ cso_set_vertex_buffers_and_elements(struct cso_context *ctx,
       /* Unbind all buffers in u_vbuf, because we'll use cso_context. */
       unsigned unbind_vb_count = vb_count + unbind_trailing_vb_count;
       if (unbind_vb_count)
-         u_vbuf_set_vertex_buffers(vbuf, 0, unbind_vb_count, NULL);
+         u_vbuf_set_vertex_buffers(vbuf, 0, 0, unbind_vb_count, false, NULL);
 
       /* Unset this to make sure the CSO is re-bound on the next use. */
       u_vbuf_unset_vertex_elements(vbuf);
       ctx->vbuf_current = NULL;
-   } else if (unbind_trailing_vb_count) {
-      cso_set_vertex_buffers_direct(ctx, vb_count, unbind_trailing_vb_count,
-                                    NULL);
+      unbind_trailing_vb_count = 0;
    }
 
-   if (vb_count)
-      cso_set_vertex_buffers_direct(ctx, 0, vb_count, vbuffers);
+   if (vb_count || unbind_trailing_vb_count) {
+      pipe->set_vertex_buffers(pipe, 0, vb_count, unbind_trailing_vb_count,
+                               take_ownership, vbuffers);
+   }
    cso_set_vertex_elements_direct(ctx, velems);
+}
+
+static bool
+cso_set_sampler(struct cso_context *ctx, enum pipe_shader_type shader_stage,
+                unsigned idx, const struct pipe_sampler_state *templ)
+{
+   unsigned key_size = sizeof(struct pipe_sampler_state);
+   unsigned hash_key = cso_construct_key((void*)templ, key_size);
+   struct cso_sampler *cso;
+   struct cso_hash_iter iter =
+      cso_find_state_template(&ctx->cache,
+                              hash_key, CSO_SAMPLER,
+                              (void *) templ, key_size);
+
+   if (cso_hash_iter_is_null(iter)) {
+      cso = MALLOC(sizeof(struct cso_sampler));
+      if (!cso)
+         return false;
+
+      memcpy(&cso->state, templ, sizeof(*templ));
+      cso->data = ctx->pipe->create_sampler_state(ctx->pipe, &cso->state);
+      cso->hash_key = hash_key;
+
+      iter = cso_insert_state(&ctx->cache, hash_key, CSO_SAMPLER, cso);
+      if (cso_hash_iter_is_null(iter)) {
+         FREE(cso);
+         return false;
+      }
+   } else {
+      cso = cso_hash_iter_data(iter);
+   }
+
+   ctx->samplers[shader_stage].cso_samplers[idx] = cso;
+   ctx->samplers[shader_stage].samplers[idx] = cso->data;
+   return true;
 }
 
 void
 cso_single_sampler(struct cso_context *ctx, enum pipe_shader_type shader_stage,
                    unsigned idx, const struct pipe_sampler_state *templ)
 {
-   if (templ) {
-      unsigned key_size = sizeof(struct pipe_sampler_state);
-      unsigned hash_key = cso_construct_key((void*)templ, key_size);
-      struct cso_sampler *cso;
-      struct cso_hash_iter iter =
-         cso_find_state_template(ctx->cache,
-                                 hash_key, CSO_SAMPLER,
-                                 (void *) templ, key_size);
-
-      if (cso_hash_iter_is_null(iter)) {
-         cso = MALLOC(sizeof(struct cso_sampler));
-         if (!cso)
-            return;
-
-         memcpy(&cso->state, templ, sizeof(*templ));
-         cso->data = ctx->pipe->create_sampler_state(ctx->pipe, &cso->state);
-         cso->delete_state =
-            (cso_state_callback) ctx->pipe->delete_sampler_state;
-         cso->context = ctx->pipe;
-         cso->hash_key = hash_key;
-
-         iter = cso_insert_state(ctx->cache, hash_key, CSO_SAMPLER, cso);
-         if (cso_hash_iter_is_null(iter)) {
-            FREE(cso);
-            return;
-         }
-      }
-      else {
-         cso = cso_hash_iter_data(iter);
-      }
-
-      ctx->samplers[shader_stage].cso_samplers[idx] = cso;
-      ctx->samplers[shader_stage].samplers[idx] = cso->data;
+   if (cso_set_sampler(ctx, shader_stage, idx, templ))
       ctx->max_sampler_seen = MAX2(ctx->max_sampler_seen, (int)idx);
-   }
 }
-
 
 /**
  * Send staged sampler state to the driver.
@@ -1310,9 +1276,41 @@ cso_set_samplers(struct cso_context *ctx,
                  unsigned nr,
                  const struct pipe_sampler_state **templates)
 {
-   for (unsigned i = 0; i < nr; i++)
-      cso_single_sampler(ctx, shader_stage, i, templates[i]);
+   int last = -1;
 
+   for (unsigned i = 0; i < nr; i++) {
+      if (!templates[i])
+         continue;
+
+      /* Reuse the same sampler state CSO if 2 consecutive sampler states
+       * are identical.
+       *
+       * The trivial case where both pointers are equal doesn't occur in
+       * frequented codepaths.
+       *
+       * Reuse rate:
+       * - Borderlands 2: 55%
+       * - Hitman: 65%
+       * - Rocket League: 75%
+       * - Tomb Raider: 50-65%
+       * - XCOM 2: 55%
+       */
+      if (last >= 0 &&
+          !memcmp(templates[i], templates[last],
+                  sizeof(struct pipe_sampler_state))) {
+         ctx->samplers[shader_stage].cso_samplers[i] =
+            ctx->samplers[shader_stage].cso_samplers[last];
+         ctx->samplers[shader_stage].samplers[i] =
+            ctx->samplers[shader_stage].samplers[last];
+      } else {
+         /* Look up the sampler state CSO. */
+         cso_set_sampler(ctx, shader_stage, i, templates[i]);
+      }
+
+      last = i;
+   }
+
+   ctx->max_sampler_seen = MAX2(ctx->max_sampler_seen, last);
    cso_single_sampler_done(ctx, shader_stage);
 }
 
@@ -1346,113 +1344,6 @@ cso_restore_fragment_samplers(struct cso_context *ctx)
    }
 
    cso_single_sampler_done(ctx, PIPE_SHADER_FRAGMENT);
-}
-
-
-void
-cso_set_sampler_views(struct cso_context *ctx,
-                      enum pipe_shader_type shader_stage,
-                      unsigned count,
-                      struct pipe_sampler_view **views)
-{
-   if (shader_stage == PIPE_SHADER_FRAGMENT) {
-      unsigned i;
-      boolean any_change = FALSE;
-
-      /* reference new views */
-      for (i = 0; i < count; i++) {
-         any_change |= ctx->fragment_views[i] != views[i];
-         pipe_sampler_view_reference(&ctx->fragment_views[i], views[i]);
-      }
-      /* unref extra old views, if any */
-      for (; i < ctx->nr_fragment_views; i++) {
-         any_change |= ctx->fragment_views[i] != NULL;
-         pipe_sampler_view_reference(&ctx->fragment_views[i], NULL);
-      }
-
-      /* bind the new sampler views */
-      if (any_change) {
-         ctx->pipe->set_sampler_views(ctx->pipe, shader_stage, 0,
-                                      MAX2(ctx->nr_fragment_views, count),
-                                      ctx->fragment_views);
-      }
-
-      ctx->nr_fragment_views = count;
-   }
-   else
-      ctx->pipe->set_sampler_views(ctx->pipe, shader_stage, 0, count, views);
-}
-
-
-static void
-cso_save_fragment_sampler_views(struct cso_context *ctx)
-{
-   unsigned i;
-
-   ctx->nr_fragment_views_saved = ctx->nr_fragment_views;
-
-   for (i = 0; i < ctx->nr_fragment_views; i++) {
-      assert(!ctx->fragment_views_saved[i]);
-      pipe_sampler_view_reference(&ctx->fragment_views_saved[i],
-                                  ctx->fragment_views[i]);
-   }
-}
-
-
-static void
-cso_restore_fragment_sampler_views(struct cso_context *ctx)
-{
-   unsigned i, nr_saved = ctx->nr_fragment_views_saved;
-   unsigned num;
-
-   for (i = 0; i < nr_saved; i++) {
-      pipe_sampler_view_reference(&ctx->fragment_views[i], NULL);
-      /* move the reference from one pointer to another */
-      ctx->fragment_views[i] = ctx->fragment_views_saved[i];
-      ctx->fragment_views_saved[i] = NULL;
-   }
-   for (; i < ctx->nr_fragment_views; i++) {
-      pipe_sampler_view_reference(&ctx->fragment_views[i], NULL);
-   }
-
-   num = MAX2(ctx->nr_fragment_views, nr_saved);
-
-   /* bind the old/saved sampler views */
-   ctx->pipe->set_sampler_views(ctx->pipe, PIPE_SHADER_FRAGMENT, 0, num,
-                                ctx->fragment_views);
-
-   ctx->nr_fragment_views = nr_saved;
-   ctx->nr_fragment_views_saved = 0;
-}
-
-
-void
-cso_set_shader_images(struct cso_context *ctx,
-                      enum pipe_shader_type shader_stage,
-                      unsigned start, unsigned count,
-                      struct pipe_image_view *images)
-{
-   if (shader_stage == PIPE_SHADER_FRAGMENT && start == 0 && count >= 1) {
-      util_copy_image_view(&ctx->fragment_image0_current, &images[0]);
-   }
-
-   ctx->pipe->set_shader_images(ctx->pipe, shader_stage, start, count, images);
-}
-
-
-static void
-cso_save_fragment_image0(struct cso_context *ctx)
-{
-   util_copy_image_view(&ctx->fragment_image0_saved,
-                        &ctx->fragment_image0_current);
-}
-
-
-static void
-cso_restore_fragment_image0(struct cso_context *ctx)
-{
-   cso_set_shader_images(ctx, PIPE_SHADER_FRAGMENT, 0, 1,
-                         &ctx->fragment_image0_saved);
 }
 
 
@@ -1542,75 +1433,6 @@ cso_restore_stream_outputs(struct cso_context *ctx)
    ctx->nr_so_targets_saved = 0;
 }
 
-/* constant buffers */
-
-void
-cso_set_constant_buffer(struct cso_context *cso,
-                        enum pipe_shader_type shader_stage,
-                        unsigned index, struct pipe_constant_buffer *cb)
-{
-   struct pipe_context *pipe = cso->pipe;
-
-   pipe->set_constant_buffer(pipe, shader_stage, index, cb);
-
-   if (index == 0) {
-      util_copy_constant_buffer(&cso->aux_constbuf_current[shader_stage], cb);
-   }
-}
-
-void
-cso_set_constant_buffer_resource(struct cso_context *cso,
-                                 enum pipe_shader_type shader_stage,
-                                 unsigned index,
-                                 struct pipe_resource *buffer)
-{
-   if (buffer) {
-      struct pipe_constant_buffer cb;
-      cb.buffer = buffer;
-      cb.buffer_offset = 0;
-      cb.buffer_size = buffer->width0;
-      cb.user_buffer = NULL;
-      cso_set_constant_buffer(cso, shader_stage, index, &cb);
-   } else {
-      cso_set_constant_buffer(cso, shader_stage, index, NULL);
-   }
-}
-
-void
-cso_set_constant_user_buffer(struct cso_context *cso,
-                             enum pipe_shader_type shader_stage,
-                             unsigned index, void *ptr, unsigned size)
-{
-   if (ptr) {
-      struct pipe_constant_buffer cb;
-      cb.buffer = NULL;
-      cb.buffer_offset = 0;
-      cb.buffer_size = size;
-      cb.user_buffer = ptr;
-      cso_set_constant_buffer(cso, shader_stage, index, &cb);
-   } else {
-      cso_set_constant_buffer(cso, shader_stage, index, NULL);
-   }
-}
-
-void
-cso_save_constant_buffer_slot0(struct cso_context *cso,
-                               enum pipe_shader_type shader_stage)
-{
-   util_copy_constant_buffer(&cso->aux_constbuf_saved[shader_stage],
-                             &cso->aux_constbuf_current[shader_stage]);
-}
-
-void
-cso_restore_constant_buffer_slot0(struct cso_context *cso,
-                                  enum pipe_shader_type shader_stage)
-{
-   cso_set_constant_buffer(cso, shader_stage, 0,
-                           &cso->aux_constbuf_saved[shader_stage]);
-   pipe_resource_reference(&cso->aux_constbuf_saved[shader_stage].buffer,
-                           NULL);
-}
-
 
 /**
  * Save all the CSO state items specified by the state_mask bitmask
@@ -1623,16 +1445,12 @@ cso_save_state(struct cso_context *cso, unsigned state_mask)
 
    cso->saved_state = state_mask;
 
-   if (state_mask & CSO_BIT_AUX_VERTEX_BUFFER_SLOT)
-      cso_save_vertex_buffer0(cso);
    if (state_mask & CSO_BIT_BLEND)
       cso_save_blend(cso);
    if (state_mask & CSO_BIT_DEPTH_STENCIL_ALPHA)
       cso_save_depth_stencil_alpha(cso);
    if (state_mask & CSO_BIT_FRAGMENT_SAMPLERS)
       cso_save_fragment_samplers(cso);
-   if (state_mask & CSO_BIT_FRAGMENT_SAMPLER_VIEWS)
-      cso_save_fragment_sampler_views(cso);
    if (state_mask & CSO_BIT_FRAGMENT_SHADER)
       cso_save_fragment_shader(cso);
    if (state_mask & CSO_BIT_FRAMEBUFFER)
@@ -1663,8 +1481,6 @@ cso_save_state(struct cso_context *cso, unsigned state_mask)
       cso_save_viewport(cso);
    if (state_mask & CSO_BIT_PAUSE_QUERIES)
       cso->pipe->set_active_query_state(cso->pipe, false);
-   if (state_mask & CSO_BIT_FRAGMENT_IMAGE0)
-      cso_save_fragment_image0(cso);
 }
 
 
@@ -1672,56 +1488,102 @@ cso_save_state(struct cso_context *cso, unsigned state_mask)
  * Restore the state which was saved by cso_save_state().
  */
 void
-cso_restore_state(struct cso_context *cso)
+cso_restore_state(struct cso_context *cso, unsigned unbind)
 {
    unsigned state_mask = cso->saved_state;
 
    assert(state_mask);
 
-   if (state_mask & CSO_BIT_AUX_VERTEX_BUFFER_SLOT)
-      cso_restore_vertex_buffer0(cso);
-   if (state_mask & CSO_BIT_BLEND)
-      cso_restore_blend(cso);
    if (state_mask & CSO_BIT_DEPTH_STENCIL_ALPHA)
       cso_restore_depth_stencil_alpha(cso);
-   if (state_mask & CSO_BIT_FRAGMENT_SAMPLERS)
-      cso_restore_fragment_samplers(cso);
-   if (state_mask & CSO_BIT_FRAGMENT_SAMPLER_VIEWS)
-      cso_restore_fragment_sampler_views(cso);
+   if (state_mask & CSO_BIT_STENCIL_REF)
+      cso_restore_stencil_ref(cso);
    if (state_mask & CSO_BIT_FRAGMENT_SHADER)
       cso_restore_fragment_shader(cso);
-   if (state_mask & CSO_BIT_FRAMEBUFFER)
-      cso_restore_framebuffer(cso);
    if (state_mask & CSO_BIT_GEOMETRY_SHADER)
       cso_restore_geometry_shader(cso);
-   if (state_mask & CSO_BIT_MIN_SAMPLES)
-      cso_restore_min_samples(cso);
+   if (state_mask & CSO_BIT_TESSEVAL_SHADER)
+      cso_restore_tesseval_shader(cso);
+   if (state_mask & CSO_BIT_TESSCTRL_SHADER)
+      cso_restore_tessctrl_shader(cso);
+   if (state_mask & CSO_BIT_VERTEX_SHADER)
+      cso_restore_vertex_shader(cso);
+   if (unbind & CSO_UNBIND_FS_SAMPLERVIEWS)
+      cso->pipe->set_sampler_views(cso->pipe, PIPE_SHADER_FRAGMENT, 0, 0,
+                                   cso->max_fs_samplerviews, false, NULL);
+   if (unbind & CSO_UNBIND_FS_SAMPLERVIEW0)
+      cso->pipe->set_sampler_views(cso->pipe, PIPE_SHADER_FRAGMENT, 0, 0,
+                                   1, false, NULL);
+   if (state_mask & CSO_BIT_FRAGMENT_SAMPLERS)
+      cso_restore_fragment_samplers(cso);
+   if (unbind & CSO_UNBIND_FS_IMAGE0)
+      cso->pipe->set_shader_images(cso->pipe, PIPE_SHADER_FRAGMENT, 0, 0, 1, NULL);
+   if (state_mask & CSO_BIT_FRAMEBUFFER)
+      cso_restore_framebuffer(cso);
+   if (state_mask & CSO_BIT_BLEND)
+      cso_restore_blend(cso);
    if (state_mask & CSO_BIT_RASTERIZER)
       cso_restore_rasterizer(cso);
+   if (state_mask & CSO_BIT_MIN_SAMPLES)
+      cso_restore_min_samples(cso);
    if (state_mask & CSO_BIT_RENDER_CONDITION)
       cso_restore_render_condition(cso);
    if (state_mask & CSO_BIT_SAMPLE_MASK)
       cso_restore_sample_mask(cso);
-   if (state_mask & CSO_BIT_STENCIL_REF)
-      cso_restore_stencil_ref(cso);
-   if (state_mask & CSO_BIT_STREAM_OUTPUTS)
-      cso_restore_stream_outputs(cso);
-   if (state_mask & CSO_BIT_TESSCTRL_SHADER)
-      cso_restore_tessctrl_shader(cso);
-   if (state_mask & CSO_BIT_TESSEVAL_SHADER)
-      cso_restore_tesseval_shader(cso);
-   if (state_mask & CSO_BIT_VERTEX_ELEMENTS)
-      cso_restore_vertex_elements(cso);
-   if (state_mask & CSO_BIT_VERTEX_SHADER)
-      cso_restore_vertex_shader(cso);
    if (state_mask & CSO_BIT_VIEWPORT)
       cso_restore_viewport(cso);
+   if (unbind & CSO_UNBIND_VS_CONSTANTS)
+      cso->pipe->set_constant_buffer(cso->pipe, PIPE_SHADER_VERTEX, 0, false, NULL);
+   if (unbind & CSO_UNBIND_FS_CONSTANTS)
+      cso->pipe->set_constant_buffer(cso->pipe, PIPE_SHADER_FRAGMENT, 0, false, NULL);
+   if (state_mask & CSO_BIT_VERTEX_ELEMENTS)
+      cso_restore_vertex_elements(cso);
+   if (unbind & CSO_UNBIND_VERTEX_BUFFER0)
+      cso->pipe->set_vertex_buffers(cso->pipe, 0, 0, 1, false, NULL);
+   if (state_mask & CSO_BIT_STREAM_OUTPUTS)
+      cso_restore_stream_outputs(cso);
    if (state_mask & CSO_BIT_PAUSE_QUERIES)
       cso->pipe->set_active_query_state(cso->pipe, true);
-   if (state_mask & CSO_BIT_FRAGMENT_IMAGE0)
-      cso_restore_fragment_image0(cso);
 
    cso->saved_state = 0;
+}
+
+/**
+ * Save all the CSO state items specified by the state_mask bitmask
+ * of CSO_BIT_COMPUTE_x flags.
+ */
+void
+cso_save_compute_state(struct cso_context *cso, unsigned state_mask)
+{
+   assert(cso->saved_compute_state == 0);
+
+   cso->saved_compute_state = state_mask;
+
+   if (state_mask & CSO_BIT_COMPUTE_SHADER)
+      cso_save_compute_shader(cso);
+
+   if (state_mask & CSO_BIT_COMPUTE_SAMPLERS)
+      cso_save_compute_samplers(cso);
+}
+
+
+/**
+ * Restore the state which was saved by cso_save_compute_state().
+ */
+void
+cso_restore_compute_state(struct cso_context *cso)
+{
+   unsigned state_mask = cso->saved_compute_state;
+
+   assert(state_mask);
+
+   if (state_mask & CSO_BIT_COMPUTE_SHADER)
+      cso_restore_compute_shader(cso);
+
+   if (state_mask & CSO_BIT_COMPUTE_SAMPLERS)
+      cso_restore_compute_samplers(cso);
+
+   cso->saved_compute_state = 0;
 }
 
 
@@ -1730,21 +1592,59 @@ cso_restore_state(struct cso_context *cso)
 
 void
 cso_draw_vbo(struct cso_context *cso,
-             const struct pipe_draw_info *info)
+             const struct pipe_draw_info *info,
+             unsigned drawid_offset,
+             const struct pipe_draw_indirect_info *indirect,
+             const struct pipe_draw_start_count_bias draw)
 {
    struct u_vbuf *vbuf = cso->vbuf_current;
 
    /* We can't have both indirect drawing and SO-vertex-count drawing */
-   assert(info->indirect == NULL || info->count_from_stream_output == NULL);
+   assert(!indirect ||
+          indirect->buffer == NULL ||
+          indirect->count_from_stream_output == NULL);
 
    /* We can't have SO-vertex-count drawing with an index buffer */
-   assert(info->count_from_stream_output == NULL || info->index_size == 0);
+   assert(info->index_size == 0 ||
+          !indirect ||
+          indirect->count_from_stream_output == NULL);
 
    if (vbuf) {
-      u_vbuf_draw_vbo(vbuf, info);
+      u_vbuf_draw_vbo(vbuf, info, drawid_offset, indirect, draw);
    } else {
       struct pipe_context *pipe = cso->pipe;
-      pipe->draw_vbo(pipe, info);
+      pipe->draw_vbo(pipe, info, drawid_offset, indirect, &draw, 1);
+   }
+}
+
+/* info->draw_id can be changed by the callee if increment_draw_id is true. */
+void
+cso_multi_draw(struct cso_context *cso,
+               struct pipe_draw_info *info,
+               unsigned drawid_offset,
+               const struct pipe_draw_start_count_bias *draws,
+               unsigned num_draws)
+{
+   struct u_vbuf *vbuf = cso->vbuf_current;
+
+   if (vbuf) {
+      /* Increase refcount to be able to use take_index_buffer_ownership with
+       * all draws.
+       */
+      if (num_draws > 1 && info->take_index_buffer_ownership)
+         p_atomic_add(&info->index.resource->reference.count, num_draws - 1);
+
+      unsigned drawid = drawid_offset;
+      for (unsigned i = 0; i < num_draws; i++) {
+         u_vbuf_draw_vbo(vbuf, info, drawid, NULL, draws[i]);
+
+         if (info->increment_draw_id)
+            drawid++;
+      }
+   } else {
+      struct pipe_context *pipe = cso->pipe;
+
+      pipe->draw_vbo(pipe, info, drawid_offset, NULL, draws, num_draws);
    }
 }
 
@@ -1752,16 +1652,20 @@ void
 cso_draw_arrays(struct cso_context *cso, uint mode, uint start, uint count)
 {
    struct pipe_draw_info info;
+   struct pipe_draw_start_count_bias draw;
 
    util_draw_init_info(&info);
 
    info.mode = mode;
-   info.start = start;
-   info.count = count;
+   info.index_bounds_valid = true;
    info.min_index = start;
    info.max_index = start + count - 1;
 
-   cso_draw_vbo(cso, &info);
+   draw.start = start;
+   draw.count = count;
+   draw.index_bias = 0;
+
+   cso_draw_vbo(cso, &info, 0, NULL, draw);
 }
 
 void
@@ -1770,16 +1674,20 @@ cso_draw_arrays_instanced(struct cso_context *cso, uint mode,
                           uint start_instance, uint instance_count)
 {
    struct pipe_draw_info info;
+   struct pipe_draw_start_count_bias draw;
 
    util_draw_init_info(&info);
 
    info.mode = mode;
-   info.start = start;
-   info.count = count;
+   info.index_bounds_valid = true;
    info.min_index = start;
    info.max_index = start + count - 1;
    info.start_instance = start_instance;
    info.instance_count = instance_count;
 
-   cso_draw_vbo(cso, &info);
+   draw.start = start;
+   draw.count = count;
+   draw.index_bias = 0;
+
+   cso_draw_vbo(cso, &info, 0, NULL, draw);
 }

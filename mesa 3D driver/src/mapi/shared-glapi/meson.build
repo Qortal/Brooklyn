@@ -60,6 +60,7 @@ libglapi = shared_library(
   name_prefix : 'lib',
   install : true,
 )
+libglapi_build_dir = meson.current_build_dir()
 
 if with_any_opengl and with_tests
   test(
@@ -73,6 +74,7 @@ if with_any_opengl and with_tests
       dependencies : [dep_thread, idep_gtest],
     ),
     suite : ['mapi'],
+    protocol : gtest_test_protocol,
   )
   if with_symbols_check
     test(

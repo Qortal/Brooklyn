@@ -236,6 +236,11 @@ bool r600_is_format_supported(struct pipe_screen *screen,
 		retval |= PIPE_BIND_VERTEX_BUFFER;
 	}
 
+	if (usage & PIPE_BIND_INDEX_BUFFER &&
+	    r600_is_index_format_supported(format)) {
+		retval |= PIPE_BIND_INDEX_BUFFER;
+	}
+
 	if ((usage & PIPE_BIND_LINEAR) &&
 	    !util_format_is_compressed(format) &&
 	    !(usage & PIPE_BIND_DEPTH_STENCIL))
@@ -246,7 +251,7 @@ bool r600_is_format_supported(struct pipe_screen *screen,
 
 static void r600_emit_polygon_offset(struct r600_context *rctx, struct r600_atom *a)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	struct r600_poly_offset_state *state = (struct r600_poly_offset_state*)a;
 	float offset_units = state->offset_units;
 	float offset_scale = state->offset_scale;
@@ -415,11 +420,11 @@ static void *r600_create_dsa_state(struct pipe_context *ctx,
 	dsa->valuemask[1] = state->stencil[1].valuemask;
 	dsa->writemask[0] = state->stencil[0].writemask;
 	dsa->writemask[1] = state->stencil[1].writemask;
-	dsa->zwritemask = state->depth.writemask;
+	dsa->zwritemask = state->depth_writemask;
 
-	db_depth_control = S_028800_Z_ENABLE(state->depth.enabled) |
-		S_028800_Z_WRITE_ENABLE(state->depth.writemask) |
-		S_028800_ZFUNC(state->depth.func);
+	db_depth_control = S_028800_Z_ENABLE(state->depth_enabled) |
+		S_028800_Z_WRITE_ENABLE(state->depth_writemask) |
+		S_028800_ZFUNC(state->depth_func);
 
 	/* stencil */
 	if (state->stencil[0].enabled) {
@@ -441,10 +446,10 @@ static void *r600_create_dsa_state(struct pipe_context *ctx,
 	/* alpha */
 	alpha_test_control = 0;
 	alpha_ref = 0;
-	if (state->alpha.enabled) {
-		alpha_test_control = S_028410_ALPHA_FUNC(state->alpha.func);
+	if (state->alpha_enabled) {
+		alpha_test_control = S_028410_ALPHA_FUNC(state->alpha_func);
 		alpha_test_control |= S_028410_ALPHA_TEST_ENABLE(1);
-		alpha_ref = fui(state->alpha.ref_value);
+		alpha_ref = fui(state->alpha_ref_value);
 	}
 	dsa->sx_alpha_test_control = alpha_test_control & 0xff;
 	dsa->alpha_ref = alpha_ref;
@@ -755,11 +760,11 @@ r600_create_sampler_view_custom(struct pipe_context *ctx,
 	view->tex_resource_words[1] = (S_038004_TEX_HEIGHT(height - 1) |
 				       S_038004_TEX_DEPTH(depth - 1) |
 				       S_038004_DATA_FORMAT(format));
-	view->tex_resource_words[2] = tmp->surface.u.legacy.level[offset_level].offset >> 8;
+	view->tex_resource_words[2] = tmp->surface.u.legacy.level[offset_level].offset_256B;
 	if (offset_level >= tmp->resource.b.b.last_level) {
-		view->tex_resource_words[3] = tmp->surface.u.legacy.level[offset_level].offset >> 8;
+		view->tex_resource_words[3] = tmp->surface.u.legacy.level[offset_level].offset_256B;
 	} else {
-		view->tex_resource_words[3] = tmp->surface.u.legacy.level[offset_level + 1].offset >> 8;
+		view->tex_resource_words[3] = tmp->surface.u.legacy.level[offset_level + 1].offset_256B;
 	}
 	view->tex_resource_words[4] = (word4 |
 				       S_038010_REQUEST_SIZE(1) |
@@ -790,7 +795,7 @@ r600_create_sampler_view(struct pipe_context *ctx,
 
 static void r600_emit_clip_state(struct r600_context *rctx, struct r600_atom *atom)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	struct pipe_clip_state *state = &rctx->clip_state.state;
 
 	radeon_set_context_reg_seq(cs, R_028E20_PA_CL_UCP0_X, 6*4);
@@ -824,7 +829,7 @@ static void r600_init_color_surface(struct r600_context *rctx,
 		assert(rtex);
 	}
 
-	offset = rtex->surface.u.legacy.level[level].offset;
+	offset = (uint64_t)rtex->surface.u.legacy.level[level].offset_256B * 256;
 	color_view = S_028080_SLICE_START(surf->base.u.tex.first_layer) |
 		     S_028080_SLICE_MAX(surf->base.u.tex.last_layer);
 
@@ -908,7 +913,7 @@ static void r600_init_color_surface(struct r600_context *rctx,
 		S_0280A0_NUMBER_TYPE(ntype) |
 		S_0280A0_ENDIAN(endian);
 
-	/* EXPORT_NORM is an optimzation that can be enabled for better
+	/* EXPORT_NORM is an optimization that can be enabled for better
 	 * performance in certain cases
 	 */
 	if (rctx->b.chip_class == R600) {
@@ -982,7 +987,7 @@ static void r600_init_color_surface(struct r600_context *rctx,
 		/* CMASK. */
 		if (!rctx->dummy_cmask ||
 		    rctx->dummy_cmask->b.b.width0 < cmask.size ||
-		    rctx->dummy_cmask->buf->alignment % cmask.alignment != 0) {
+		    (1 << rctx->dummy_cmask->buf->alignment_log2) % cmask.alignment != 0) {
 			struct pipe_transfer *transfer;
 			void *ptr;
 
@@ -1007,7 +1012,7 @@ static void r600_init_color_surface(struct r600_context *rctx,
 		/* FMASK. */
 		if (!rctx->dummy_fmask ||
 		    rctx->dummy_fmask->b.b.width0 < fmask.size ||
-		    rctx->dummy_fmask->buf->alignment % fmask.alignment != 0) {
+		    (1 << rctx->dummy_fmask->buf->alignment_log2) % fmask.alignment != 0) {
 			r600_resource_reference(&rctx->dummy_fmask, NULL);
 			rctx->dummy_fmask = (struct r600_resource*)
 				r600_aligned_buffer_create(&rscreen->b.b, 0,
@@ -1041,7 +1046,7 @@ static void r600_init_depth_surface(struct r600_context *rctx,
 	unsigned level, pitch, slice, format, offset, array_mode;
 
 	level = surf->base.u.tex.level;
-	offset = rtex->surface.u.legacy.level[level].offset;
+	offset = (uint64_t)rtex->surface.u.legacy.level[level].offset_256B * 256;
 	pitch = rtex->surface.u.legacy.level[level].nblk_x / 8 - 1;
 	slice = (rtex->surface.u.legacy.level[level].nblk_x * rtex->surface.u.legacy.level[level].nblk_y) / 64;
 	if (slice) {
@@ -1282,7 +1287,7 @@ static void r600_get_sample_position(struct pipe_context *ctx,
 
 static void r600_emit_msaa_state(struct r600_context *rctx, int nr_samples)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	unsigned max_dist = 0;
 
 	if (rctx->b.family == CHIP_R600) {
@@ -1349,7 +1354,7 @@ static void r600_emit_msaa_state(struct r600_context *rctx, int nr_samples)
 
 static void r600_emit_framebuffer_state(struct r600_context *rctx, struct r600_atom *atom)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	struct pipe_framebuffer_state *state = &rctx->framebuffer.state;
 	unsigned nr_cbufs = state->nr_cbufs;
 	struct r600_surface **cb = (struct r600_surface**)&state->cbufs[0];
@@ -1382,10 +1387,10 @@ static void r600_emit_framebuffer_state(struct r600_context *rctx, struct r600_a
 			reloc = radeon_add_to_buffer_list(&rctx->b,
 						      &rctx->b.gfx,
 						      (struct r600_resource*)cb[i]->base.texture,
-						      RADEON_USAGE_READWRITE,
-						      cb[i]->base.texture->nr_samples > 1 ?
+						      RADEON_USAGE_READWRITE |
+						      (cb[i]->base.texture->nr_samples > 1 ?
 							      RADEON_PRIO_COLOR_BUFFER_MSAA :
-							      RADEON_PRIO_COLOR_BUFFER);
+							      RADEON_PRIO_COLOR_BUFFER));
 			radeon_emit(cs, PKT3(PKT3_NOP, 0, 0));
 			radeon_emit(cs, reloc);
 
@@ -1395,10 +1400,10 @@ static void r600_emit_framebuffer_state(struct r600_context *rctx, struct r600_a
 			reloc = radeon_add_to_buffer_list(&rctx->b,
 						      &rctx->b.gfx,
 						      cb[i]->cb_buffer_fmask,
-						      RADEON_USAGE_READWRITE,
-						      cb[i]->base.texture->nr_samples > 1 ?
+						      RADEON_USAGE_READWRITE |
+						      (cb[i]->base.texture->nr_samples > 1 ?
 							      RADEON_PRIO_COLOR_BUFFER_MSAA :
-							      RADEON_PRIO_COLOR_BUFFER);
+							      RADEON_PRIO_COLOR_BUFFER));
 			radeon_emit(cs, PKT3(PKT3_NOP, 0, 0));
 			radeon_emit(cs, reloc);
 
@@ -1408,10 +1413,10 @@ static void r600_emit_framebuffer_state(struct r600_context *rctx, struct r600_a
 			reloc = radeon_add_to_buffer_list(&rctx->b,
 						      &rctx->b.gfx,
 						      cb[i]->cb_buffer_cmask,
-						      RADEON_USAGE_READWRITE,
-						      cb[i]->base.texture->nr_samples > 1 ?
+						      RADEON_USAGE_READWRITE |
+						      (cb[i]->base.texture->nr_samples > 1 ?
 							      RADEON_PRIO_COLOR_BUFFER_MSAA :
-							      RADEON_PRIO_COLOR_BUFFER);
+							      RADEON_PRIO_COLOR_BUFFER));
 			radeon_emit(cs, PKT3(PKT3_NOP, 0, 0));
 			radeon_emit(cs, reloc);
 		}
@@ -1447,10 +1452,10 @@ static void r600_emit_framebuffer_state(struct r600_context *rctx, struct r600_a
 		unsigned reloc = radeon_add_to_buffer_list(&rctx->b,
 						       &rctx->b.gfx,
 						       (struct r600_resource*)state->zsbuf->texture,
-						       RADEON_USAGE_READWRITE,
-						       surf->base.texture->nr_samples > 1 ?
+						       RADEON_USAGE_READWRITE |
+						       (surf->base.texture->nr_samples > 1 ?
 							       RADEON_PRIO_DEPTH_BUFFER_MSAA :
-							       RADEON_PRIO_DEPTH_BUFFER);
+							       RADEON_PRIO_DEPTH_BUFFER));
 
 		radeon_set_context_reg_seq(cs, R_028000_DB_DEPTH_SIZE, 2);
 		radeon_emit(cs, surf->db_depth_size); /* R_028000_DB_DEPTH_SIZE */
@@ -1515,7 +1520,7 @@ static void r600_set_min_samples(struct pipe_context *ctx, unsigned min_samples)
 
 static void r600_emit_cb_misc_state(struct r600_context *rctx, struct r600_atom *atom)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	struct r600_cb_misc_state *a = (struct r600_cb_misc_state*)atom;
 
 	if (G_028808_SPECIAL_OP(a->cb_color_control) == V_028808_SPECIAL_RESOLVE_BOX) {
@@ -1545,7 +1550,7 @@ static void r600_emit_cb_misc_state(struct r600_context *rctx, struct r600_atom 
 
 static void r600_emit_db_state(struct r600_context *rctx, struct r600_atom *atom)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	struct r600_db_state *a = (struct r600_db_state*)atom;
 
 	if (a->rsurf && a->rsurf->db_htile_surface) {
@@ -1556,7 +1561,7 @@ static void r600_emit_db_state(struct r600_context *rctx, struct r600_atom *atom
 		radeon_set_context_reg(cs, R_028D24_DB_HTILE_SURFACE, a->rsurf->db_htile_surface);
 		radeon_set_context_reg(cs, R_028014_DB_HTILE_DATA_BASE, a->rsurf->db_htile_data_base);
 		reloc_idx = radeon_add_to_buffer_list(&rctx->b, &rctx->b.gfx, &rtex->resource,
-						  RADEON_USAGE_READWRITE, RADEON_PRIO_SEPARATE_META);
+						  RADEON_USAGE_READWRITE | RADEON_PRIO_SEPARATE_META);
 		radeon_emit(cs, PKT3(PKT3_NOP, 0, 0));
 		radeon_emit(cs, reloc_idx);
 	} else {
@@ -1566,7 +1571,7 @@ static void r600_emit_db_state(struct r600_context *rctx, struct r600_atom *atom
 
 static void r600_emit_db_misc_state(struct r600_context *rctx, struct r600_atom *atom)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	struct r600_db_misc_state *a = (struct r600_db_misc_state*)atom;
 	unsigned db_render_control = 0;
 	unsigned db_render_override =
@@ -1651,7 +1656,7 @@ static void r600_emit_db_misc_state(struct r600_context *rctx, struct r600_atom 
 
 static void r600_emit_config_state(struct r600_context *rctx, struct r600_atom *atom)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	struct r600_config_state *a = (struct r600_config_state*)atom;
 
 	radeon_set_config_reg(cs, R_008C04_SQ_GPR_RESOURCE_MGMT_1, a->sq_gpr_resource_mgmt_1);
@@ -1660,7 +1665,7 @@ static void r600_emit_config_state(struct r600_context *rctx, struct r600_atom *
 
 static void r600_emit_vertex_buffers(struct r600_context *rctx, struct r600_atom *atom)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	uint32_t dirty_mask = rctx->vertex_buffer_state.dirty_mask;
 
 	while (dirty_mask) {
@@ -1690,7 +1695,7 @@ static void r600_emit_vertex_buffers(struct r600_context *rctx, struct r600_atom
 
 		radeon_emit(cs, PKT3(PKT3_NOP, 0, 0));
 		radeon_emit(cs, radeon_add_to_buffer_list(&rctx->b, &rctx->b.gfx, rbuffer,
-						      RADEON_USAGE_READ, RADEON_PRIO_VERTEX_BUFFER));
+						      RADEON_USAGE_READ | RADEON_PRIO_VERTEX_BUFFER));
 	}
 }
 
@@ -1700,7 +1705,7 @@ static void r600_emit_constant_buffers(struct r600_context *rctx,
 				       unsigned reg_alu_constbuf_size,
 				       unsigned reg_alu_const_cache)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	uint32_t dirty_mask = state->dirty_mask;
 
 	while (dirty_mask) {
@@ -1722,7 +1727,7 @@ static void r600_emit_constant_buffers(struct r600_context *rctx,
 			radeon_set_context_reg(cs, reg_alu_const_cache + buffer_index * 4, offset >> 8);
 			radeon_emit(cs, PKT3(PKT3_NOP, 0, 0));
 			radeon_emit(cs, radeon_add_to_buffer_list(&rctx->b, &rctx->b.gfx, rbuffer,
-								  RADEON_USAGE_READ, RADEON_PRIO_CONST_BUFFER));
+								  RADEON_USAGE_READ | RADEON_PRIO_CONST_BUFFER));
 		}
 
 		radeon_emit(cs, PKT3(PKT3_SET_RESOURCE, 7, 0));
@@ -1739,7 +1744,7 @@ static void r600_emit_constant_buffers(struct r600_context *rctx,
 
 		radeon_emit(cs, PKT3(PKT3_NOP, 0, 0));
 		radeon_emit(cs, radeon_add_to_buffer_list(&rctx->b, &rctx->b.gfx, rbuffer,
-						      RADEON_USAGE_READ, RADEON_PRIO_CONST_BUFFER));
+						      RADEON_USAGE_READ | RADEON_PRIO_CONST_BUFFER));
 
 		dirty_mask &= ~(1 << buffer_index);
 	}
@@ -1774,7 +1779,7 @@ static void r600_emit_sampler_views(struct r600_context *rctx,
 				    struct r600_samplerview_state *state,
 				    unsigned resource_id_base)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	uint32_t dirty_mask = state->dirty_mask;
 
 	while (dirty_mask) {
@@ -1790,7 +1795,7 @@ static void r600_emit_sampler_views(struct r600_context *rctx,
 		radeon_emit_array(cs, rview->tex_resource_words, 7);
 
 		reloc = radeon_add_to_buffer_list(&rctx->b, &rctx->b.gfx, rview->tex_resource,
-					      RADEON_USAGE_READ,
+					      RADEON_USAGE_READ |
 					      r600_get_sampler_view_priority(rview->tex_resource));
 		radeon_emit(cs, PKT3(PKT3_NOP, 0, 0));
 		radeon_emit(cs, reloc);
@@ -1821,7 +1826,7 @@ static void r600_emit_sampler_states(struct r600_context *rctx,
 				unsigned resource_id_base,
 				unsigned border_color_reg)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	uint32_t dirty_mask = texinfo->states.dirty_mask;
 
 	while (dirty_mask) {
@@ -1881,7 +1886,7 @@ static void r600_emit_ps_sampler_states(struct r600_context *rctx, struct r600_a
 
 static void r600_emit_seamless_cube_map(struct r600_context *rctx, struct r600_atom *atom)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	unsigned tmp;
 
 	tmp = S_009508_DISABLE_CUBE_ANISO(1) |
@@ -1899,13 +1904,13 @@ static void r600_emit_sample_mask(struct r600_context *rctx, struct r600_atom *a
 	struct r600_sample_mask *s = (struct r600_sample_mask*)a;
 	uint8_t mask = s->sample_mask;
 
-	radeon_set_context_reg(rctx->b.gfx.cs, R_028C48_PA_SC_AA_MASK,
+	radeon_set_context_reg(&rctx->b.gfx.cs, R_028C48_PA_SC_AA_MASK,
 			       mask | (mask << 8) | (mask << 16) | (mask << 24));
 }
 
 static void r600_emit_vertex_fetch_shader(struct r600_context *rctx, struct r600_atom *a)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	struct r600_cso_state *state = (struct r600_cso_state*)a;
 	struct r600_fetch_shader *shader = (struct r600_fetch_shader*)state->cso;
 
@@ -1915,13 +1920,13 @@ static void r600_emit_vertex_fetch_shader(struct r600_context *rctx, struct r600
 	radeon_set_context_reg(cs, R_028894_SQ_PGM_START_FS, shader->offset >> 8);
 	radeon_emit(cs, PKT3(PKT3_NOP, 0, 0));
 	radeon_emit(cs, radeon_add_to_buffer_list(&rctx->b, &rctx->b.gfx, shader->buffer,
-                                                  RADEON_USAGE_READ,
+                                                  RADEON_USAGE_READ |
                                                   RADEON_PRIO_SHADER_BINARY));
 }
 
 static void r600_emit_shader_stages(struct r600_context *rctx, struct r600_atom *a)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	struct r600_shader_stages_state *state = (struct r600_shader_stages_state*)a;
 
 	uint32_t v2 = 0, primid = 0;
@@ -1956,7 +1961,7 @@ static void r600_emit_shader_stages(struct r600_context *rctx, struct r600_atom 
 
 static void r600_emit_gs_rings(struct r600_context *rctx, struct r600_atom *a)
 {
-	struct radeon_cmdbuf *cs = rctx->b.gfx.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.gfx.cs;
 	struct r600_gs_rings_state *state = (struct r600_gs_rings_state*)a;
 	struct r600_resource *rbuffer;
 
@@ -1969,7 +1974,7 @@ static void r600_emit_gs_rings(struct r600_context *rctx, struct r600_atom *a)
 		radeon_set_config_reg(cs, R_008C40_SQ_ESGS_RING_BASE, 0);
 		radeon_emit(cs, PKT3(PKT3_NOP, 0, 0));
 		radeon_emit(cs, radeon_add_to_buffer_list(&rctx->b, &rctx->b.gfx, rbuffer,
-						      RADEON_USAGE_READWRITE,
+						      RADEON_USAGE_READWRITE |
 						      RADEON_PRIO_SHADER_RINGS));
 		radeon_set_config_reg(cs, R_008C44_SQ_ESGS_RING_SIZE,
 				state->esgs_ring.buffer_size >> 8);
@@ -1978,7 +1983,7 @@ static void r600_emit_gs_rings(struct r600_context *rctx, struct r600_atom *a)
 		radeon_set_config_reg(cs, R_008C48_SQ_GSVS_RING_BASE, 0);
 		radeon_emit(cs, PKT3(PKT3_NOP, 0, 0));
 		radeon_emit(cs, radeon_add_to_buffer_list(&rctx->b, &rctx->b.gfx, rbuffer,
-						      RADEON_USAGE_READWRITE,
+						      RADEON_USAGE_READWRITE |
 						      RADEON_PRIO_SHADER_RINGS));
 		radeon_set_config_reg(cs, R_008C4C_SQ_GSVS_RING_SIZE,
 				state->gsvs_ring.buffer_size >> 8);
@@ -2776,8 +2781,8 @@ void *r600_create_db_flush_dsa(struct r600_context *rctx)
 	memset(&dsa, 0, sizeof(dsa));
 
 	if (quirk) {
-		dsa.depth.enabled = 1;
-		dsa.depth.func = PIPE_FUNC_LEQUAL;
+		dsa.depth_enabled = 1;
+		dsa.depth_func = PIPE_FUNC_LEQUAL;
 		dsa.stencil[0].enabled = 1;
 		dsa.stencil[0].func = PIPE_FUNC_ALWAYS;
 		dsa.stencil[0].zpass_op = PIPE_STENCIL_OP_KEEP;
@@ -2854,7 +2859,7 @@ static boolean r600_dma_copy_tile(struct r600_context *rctx,
 				unsigned pitch,
 				unsigned bpp)
 {
-	struct radeon_cmdbuf *cs = rctx->b.dma.cs;
+	struct radeon_cmdbuf *cs = &rctx->b.dma.cs;
 	struct r600_texture *rsrc = (struct r600_texture*)src;
 	struct r600_texture *rdst = (struct r600_texture*)dst;
 	unsigned array_mode, lbpp, pitch_tile_max, slice_tile_max, size;
@@ -2884,8 +2889,8 @@ static boolean r600_dma_copy_tile(struct r600_context *rctx,
 		x = src_x;
 		y = src_y;
 		z = src_z;
-		base = rsrc->surface.u.legacy.level[src_level].offset;
-		addr = rdst->surface.u.legacy.level[dst_level].offset;
+		base = (uint64_t)rsrc->surface.u.legacy.level[src_level].offset_256B * 256;
+		addr = (uint64_t)rdst->surface.u.legacy.level[dst_level].offset_256B * 256;
 		addr += (uint64_t)rdst->surface.u.legacy.level[dst_level].slice_size_dw * 4 * dst_z;
 		addr += dst_y * pitch + dst_x * bpp;
 	} else {
@@ -2903,8 +2908,8 @@ static boolean r600_dma_copy_tile(struct r600_context *rctx,
 		x = dst_x;
 		y = dst_y;
 		z = dst_z;
-		base = rdst->surface.u.legacy.level[dst_level].offset;
-		addr = rsrc->surface.u.legacy.level[src_level].offset;
+		base = (uint64_t)rdst->surface.u.legacy.level[dst_level].offset_256B * 256;
+		addr = (uint64_t)rsrc->surface.u.legacy.level[src_level].offset_256B * 256;
 		addr += (uint64_t)rsrc->surface.u.legacy.level[src_level].slice_size_dw * 4 * src_z;
 		addr += src_y * pitch + src_x * bpp;
 	}
@@ -2924,8 +2929,8 @@ static boolean r600_dma_copy_tile(struct r600_context *rctx,
 		cheight = cheight > copy_height ? copy_height : cheight;
 		size = (cheight * pitch) / 4;
 		/* emit reloc before writing cs so that cs is always in consistent state */
-		radeon_add_to_buffer_list(&rctx->b, &rctx->b.dma, &rsrc->resource, RADEON_USAGE_READ, 0);
-		radeon_add_to_buffer_list(&rctx->b, &rctx->b.dma, &rdst->resource, RADEON_USAGE_WRITE, 0);
+		radeon_add_to_buffer_list(&rctx->b, &rctx->b.dma, &rsrc->resource, RADEON_USAGE_READ);
+		radeon_add_to_buffer_list(&rctx->b, &rctx->b.dma, &rdst->resource, RADEON_USAGE_WRITE);
 		radeon_emit(cs, DMA_PACKET(DMA_PACKET_COPY, 1, 0, size));
 		radeon_emit(cs, base >> 8);
 		radeon_emit(cs, (detile << 31) | (array_mode << 27) |
@@ -2958,7 +2963,7 @@ static void r600_dma_copy(struct pipe_context *ctx,
 	unsigned src_x, src_y;
 	unsigned dst_x = dstx, dst_y = dsty, dst_z = dstz;
 
-	if (rctx->b.dma.cs == NULL) {
+	if (rctx->b.dma.cs.priv == NULL) {
 		goto fallback;
 	}
 
@@ -3007,10 +3012,10 @@ static void r600_dma_copy(struct pipe_context *ctx,
 		 *   dst_x/y == 0
 		 *   dst_pitch == src_pitch
 		 */
-		src_offset= rsrc->surface.u.legacy.level[src_level].offset;
+		src_offset= (uint64_t)rsrc->surface.u.legacy.level[src_level].offset_256B * 256;
 		src_offset += (uint64_t)rsrc->surface.u.legacy.level[src_level].slice_size_dw * 4 * src_box->z;
 		src_offset += src_y * src_pitch + src_x * bpp;
-		dst_offset = rdst->surface.u.legacy.level[dst_level].offset;
+		dst_offset = (uint64_t)rdst->surface.u.legacy.level[dst_level].offset_256B * 256;
 		dst_offset += (uint64_t)rdst->surface.u.legacy.level[dst_level].slice_size_dw * 4 * dst_z;
 		dst_offset += dst_y * dst_pitch + dst_x * bpp;
 		size = src_box->height * src_pitch;

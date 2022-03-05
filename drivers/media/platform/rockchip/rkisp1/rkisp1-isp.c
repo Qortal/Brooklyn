@@ -426,6 +426,10 @@ static int rkisp1_config_mipi(struct rkisp1_device *rkisp1)
 
 	rkisp1_write(rkisp1, mipi_ctrl, RKISP1_CIF_MIPI_CTRL);
 
+	/* V12 could also use a newer csi2-host, but we don't want that yet */
+	if (rkisp1->media_dev.hw_revision == RKISP1_V12)
+		rkisp1_write(rkisp1, 0, RKISP1_CIF_ISP_CSI0_CTRL0);
+
 	/* Configure Data Type and Virtual Channel */
 	rkisp1_write(rkisp1,
 		     RKISP1_CIF_MIPI_DATA_SEL_DT(sink_fmt->mipi_dt) |
@@ -545,6 +549,15 @@ static void rkisp1_config_clk(struct rkisp1_device *rkisp1)
 		  RKISP1_CIF_ICCL_DCROP_CLK;
 
 	rkisp1_write(rkisp1, val, RKISP1_CIF_ICCL);
+
+	/* ensure sp and mp can run at the same time in V12 */
+	if (rkisp1->media_dev.hw_revision == RKISP1_V12) {
+		val = RKISP1_CIF_CLK_CTRL_MI_Y12 | RKISP1_CIF_CLK_CTRL_MI_SP |
+		      RKISP1_CIF_CLK_CTRL_MI_RAW0 | RKISP1_CIF_CLK_CTRL_MI_RAW1 |
+		      RKISP1_CIF_CLK_CTRL_MI_READ | RKISP1_CIF_CLK_CTRL_MI_RAWRD |
+		      RKISP1_CIF_CLK_CTRL_CP | RKISP1_CIF_CLK_CTRL_IE;
+		rkisp1_write(rkisp1, val, RKISP1_CIF_VI_ISP_CLK_CTRL_V12);
+	}
 }
 
 static void rkisp1_isp_start(struct rkisp1_device *rkisp1)
@@ -1124,13 +1137,15 @@ void rkisp1_isp_unregister(struct rkisp1_device *rkisp1)
  * Interrupt handlers
  */
 
-void rkisp1_mipi_isr(struct rkisp1_device *rkisp1)
+irqreturn_t rkisp1_mipi_isr(int irq, void *ctx)
 {
+	struct device *dev = ctx;
+	struct rkisp1_device *rkisp1 = dev_get_drvdata(dev);
 	u32 val, status;
 
 	status = rkisp1_read(rkisp1, RKISP1_CIF_MIPI_MIS);
 	if (!status)
-		return;
+		return IRQ_NONE;
 
 	rkisp1_write(rkisp1, status, RKISP1_CIF_MIPI_ICR);
 
@@ -1165,6 +1180,8 @@ void rkisp1_mipi_isr(struct rkisp1_device *rkisp1)
 	} else {
 		rkisp1->debug.mipi_error++;
 	}
+
+	return IRQ_HANDLED;
 }
 
 static void rkisp1_isp_queue_event_sof(struct rkisp1_isp *isp)
@@ -1177,13 +1194,15 @@ static void rkisp1_isp_queue_event_sof(struct rkisp1_isp *isp)
 	v4l2_event_queue(isp->sd.devnode, &event);
 }
 
-void rkisp1_isp_isr(struct rkisp1_device *rkisp1)
+irqreturn_t rkisp1_isp_isr(int irq, void *ctx)
 {
+	struct device *dev = ctx;
+	struct rkisp1_device *rkisp1 = dev_get_drvdata(dev);
 	u32 status, isp_err;
 
 	status = rkisp1_read(rkisp1, RKISP1_CIF_ISP_MIS);
 	if (!status)
-		return;
+		return IRQ_NONE;
 
 	rkisp1_write(rkisp1, status, RKISP1_CIF_ISP_ICR);
 
@@ -1225,4 +1244,6 @@ void rkisp1_isp_isr(struct rkisp1_device *rkisp1)
 		 */
 		rkisp1_params_isr(rkisp1);
 	}
+
+	return IRQ_HANDLED;
 }

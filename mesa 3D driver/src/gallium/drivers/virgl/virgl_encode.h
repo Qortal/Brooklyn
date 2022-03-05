@@ -135,7 +135,10 @@ int virgl_encoder_set_viewport_states(struct virgl_context *ctx,
                                       const struct pipe_viewport_state *states);
 
 int virgl_encoder_draw_vbo(struct virgl_context *ctx,
-                          const struct pipe_draw_info *info);
+                           const struct pipe_draw_info *info,
+                           unsigned drawid_offset,
+                           const struct pipe_draw_indirect_info *indirect,
+                           const struct pipe_draw_start_count_bias *draw);
 
 
 int virgl_encoder_create_surface(struct virgl_context *ctx,
@@ -261,6 +264,8 @@ int virgl_encoder_set_sub_ctx(struct virgl_context *ctx, uint32_t sub_ctx_id);
 int virgl_encoder_create_sub_ctx(struct virgl_context *ctx, uint32_t sub_ctx_id);
 int virgl_encoder_destroy_sub_ctx(struct virgl_context *ctx, uint32_t sub_ctx_id);
 
+int virgl_encode_link_shader(struct virgl_context *ctx, uint32_t *handles);
+
 int virgl_encode_bind_shader(struct virgl_context *ctx,
                              uint32_t handle, uint32_t type);
 
@@ -305,6 +310,11 @@ void virgl_encode_copy_transfer(struct virgl_context *ctx,
 void virgl_encode_end_transfers(struct virgl_cmd_buf *buf);
 
 int virgl_encode_tweak(struct virgl_context *ctx, enum vrend_tweak_type tweak, uint32_t value);
+
+void virgl_encode_get_memory_info(struct virgl_context *ctx, struct virgl_resource *res);
+
+void virgl_encode_emit_string_marker(struct virgl_context *ctx, const char *message,
+                                       int len);
 
 enum virgl_formats pipe_to_virgl_format(enum pipe_format format);
 #endif

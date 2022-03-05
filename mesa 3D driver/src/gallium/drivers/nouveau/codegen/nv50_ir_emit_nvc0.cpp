@@ -29,13 +29,11 @@ namespace nv50_ir {
 class CodeEmitterNVC0 : public CodeEmitter
 {
 public:
-   CodeEmitterNVC0(const TargetNVC0 *);
+   CodeEmitterNVC0(const TargetNVC0 *, Program::Type);
 
    virtual bool emitInstruction(Instruction *);
    virtual uint32_t getMinEncodingSize(const Instruction *) const;
    virtual void prepareEmission(Function *);
-
-   inline void setProgramType(Program::Type pType) { progType = pType; }
 
 private:
    const TargetNVC0 *targNVC0;
@@ -1259,7 +1257,16 @@ void
 nvc0_selpFlip(const FixupEntry *entry, uint32_t *code, const FixupData& data)
 {
    int loc = entry->loc;
-   if (data.force_persample_interp)
+   bool val = false;
+   switch (entry->ipa) {
+   case 0:
+      val = data.force_persample_interp;
+      break;
+   case 1:
+      val = data.msaa;
+      break;
+   }
+   if (val)
       code[loc + 1] |= 1 << 20;
    else
       code[loc + 1] &= ~(1 << 20);
@@ -1272,8 +1279,8 @@ void CodeEmitterNVC0::emitSELP(const Instruction *i)
    if (i->src(2).mod & Modifier(NV50_IR_MOD_NOT))
       code[1] |= 1 << 20;
 
-   if (i->subOp == 1) {
-      addInterp(0, 0, nvc0_selpFlip);
+   if (i->subOp >= 1) {
+      addInterp(i->subOp - 1, 0, nvc0_selpFlip);
    }
 }
 
@@ -2955,7 +2962,7 @@ CodeEmitterNVC0::getMinEncodingSize(const Instruction *i) const
 {
    const Target::OpInfo &info = targ->getOpInfo(i);
 
-   if (writeIssueDelays || info.minEncSize == 8 || 1)
+   if (writeIssueDelays || info.minEncSize == 8 || true)
       return 8;
 
    if (i->ftz || i->saturate || i->join)
@@ -2966,7 +2973,7 @@ CodeEmitterNVC0::getMinEncodingSize(const Instruction *i) const
       return 8;
 
    if (i->op == OP_PINTERP) {
-      if (i->getSampleMode() || 1) // XXX: grr, short op doesn't work
+      if (i->getSampleMode() || true) // XXX: grr, short op doesn't work
          return 8;
    } else
    if (i->op == OP_MOV && i->lanes != 0xf) {
@@ -3013,7 +3020,8 @@ CodeEmitterNVC0::getMinEncodingSize(const Instruction *i) const
 class SchedDataCalculator : public Pass
 {
 public:
-   SchedDataCalculator(const Target *targ) : targ(targ) { }
+   SchedDataCalculator(const Target *targ) : score(NULL), prevData(0),
+      prevOp(OP_NOP), targ(targ) { }
 
 private:
    struct RegScores
@@ -3509,9 +3517,10 @@ CodeEmitterNVC0::prepareEmission(Function *func)
       calculateSchedDataNVC0(targ, func);
 }
 
-CodeEmitterNVC0::CodeEmitterNVC0(const TargetNVC0 *target)
+CodeEmitterNVC0::CodeEmitterNVC0(const TargetNVC0 *target, Program::Type type)
    : CodeEmitter(target),
      targNVC0(target),
+     progType(type),
      writeIssueDelays(target->hasSWSched)
 {
    code = NULL;
@@ -3522,8 +3531,7 @@ CodeEmitterNVC0::CodeEmitterNVC0(const TargetNVC0 *target)
 CodeEmitter *
 TargetNVC0::createCodeEmitterNVC0(Program::Type type)
 {
-   CodeEmitterNVC0 *emit = new CodeEmitterNVC0(this);
-   emit->setProgramType(type);
+   CodeEmitterNVC0 *emit = new CodeEmitterNVC0(this, type);
    return emit;
 }
 

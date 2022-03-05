@@ -26,6 +26,7 @@
  */
 
 #include "nir_types.h"
+#include "nir_gl_types.h"
 #include "compiler/glsl/ir.h"
 
 const char *
@@ -108,6 +109,24 @@ const glsl_function_param *
 glsl_get_function_param(const glsl_type *type, unsigned index)
 {
    return &type->fields.parameters[index + 1];
+}
+
+const glsl_type *
+glsl_texture_type_to_sampler(const glsl_type *type, bool is_shadow)
+{
+   assert(glsl_type_is_texture(type));
+   return glsl_sampler_type((glsl_sampler_dim)type->sampler_dimensionality,
+                            is_shadow, type->sampler_array,
+                            (glsl_base_type)type->sampled_type);
+}
+
+const glsl_type *
+glsl_sampler_type_to_texture(const glsl_type *type)
+{
+   assert(glsl_type_is_sampler(type) && !glsl_type_is_bare_sampler(type));
+   return glsl_texture_type((glsl_sampler_dim)type->sampler_dimensionality,
+                            type->sampler_array,
+                            (glsl_base_type)type->sampled_type);
 }
 
 const struct glsl_type *
@@ -199,14 +218,18 @@ glsl_get_struct_elem_name(const struct glsl_type *type, unsigned index)
 glsl_sampler_dim
 glsl_get_sampler_dim(const struct glsl_type *type)
 {
-   assert(glsl_type_is_sampler(type) || glsl_type_is_image(type));
+   assert(glsl_type_is_sampler(type) ||
+          glsl_type_is_texture(type) ||
+          glsl_type_is_image(type));
    return (glsl_sampler_dim)type->sampler_dimensionality;
 }
 
 glsl_base_type
 glsl_get_sampler_result_type(const struct glsl_type *type)
 {
-   assert(glsl_type_is_sampler(type) || glsl_type_is_image(type));
+   assert(glsl_type_is_sampler(type) ||
+          glsl_type_is_texture(type) ||
+          glsl_type_is_image(type));
    return (glsl_base_type)type->sampled_type;
 }
 
@@ -220,7 +243,9 @@ glsl_get_sampler_target(const struct glsl_type *type)
 int
 glsl_get_sampler_coordinate_components(const struct glsl_type *type)
 {
-   assert(glsl_type_is_sampler(type) || glsl_type_is_image(type));
+   assert(glsl_type_is_sampler(type) ||
+          glsl_type_is_texture(type) ||
+          glsl_type_is_image(type));
    return type->coordinate_components();
 }
 
@@ -341,6 +366,18 @@ glsl_type_is_sampler(const struct glsl_type *type)
 }
 
 bool
+glsl_type_is_bare_sampler(const struct glsl_type *type)
+{
+   return type->is_sampler() && type->sampled_type == GLSL_TYPE_VOID;
+}
+
+bool
+glsl_type_is_texture(const struct glsl_type *type)
+{
+   return type->is_texture();
+}
+
+bool
 glsl_type_is_image(const struct glsl_type *type)
 {
    return type->is_image();
@@ -356,7 +393,9 @@ glsl_sampler_type_is_shadow(const struct glsl_type *type)
 bool
 glsl_sampler_type_is_array(const struct glsl_type *type)
 {
-   assert(glsl_type_is_sampler(type) || glsl_type_is_image(type));
+   assert(glsl_type_is_sampler(type) ||
+          glsl_type_is_texture(type) ||
+          glsl_type_is_image(type));
    return type->sampler_array;
 }
 
@@ -394,6 +433,12 @@ bool
 glsl_type_contains_64bit(const struct glsl_type *type)
 {
    return type->contains_64bit();
+}
+
+bool
+glsl_type_contains_image(const struct glsl_type *type)
+{
+   return type->contains_image();
 }
 
 const glsl_type *
@@ -637,6 +682,13 @@ glsl_bare_shadow_sampler_type()
 }
 
 const struct glsl_type *
+glsl_texture_type(enum glsl_sampler_dim dim, bool is_array,
+                  enum glsl_base_type base_type)
+{
+   return glsl_type::get_texture_instance(dim, is_array, base_type);
+}
+
+const struct glsl_type *
 glsl_image_type(enum glsl_sampler_dim dim, bool is_array,
                 enum glsl_base_type base_type)
 {
@@ -701,6 +753,31 @@ glsl_uint16_type(const struct glsl_type *type)
    return type->get_uint16_type();
 }
 
+static void
+glsl_size_align_handle_array_and_structs(const struct glsl_type *type,
+                                         glsl_type_size_align_func size_align,
+                                         unsigned *size, unsigned *align)
+{
+   if (type->base_type == GLSL_TYPE_ARRAY) {
+      unsigned elem_size = 0, elem_align = 0;
+      size_align(type->fields.array, &elem_size, &elem_align);
+      *align = elem_align;
+      *size = type->length * ALIGN_POT(elem_size, elem_align);
+   } else {
+      assert(type->base_type == GLSL_TYPE_STRUCT ||
+             type->base_type == GLSL_TYPE_INTERFACE);
+
+      *size = 0;
+      *align = 0;
+      for (unsigned i = 0; i < type->length; i++) {
+         unsigned elem_size = 0, elem_align = 0;
+         size_align(type->fields.structure[i].type, &elem_size, &elem_align);
+         *align = MAX2(*align, elem_align);
+         *size = ALIGN_POT(*size, elem_align) + elem_size;
+      }
+   }
+}
+
 void
 glsl_get_natural_size_align_bytes(const struct glsl_type *type,
                                   unsigned *size, unsigned *align)
@@ -731,29 +808,16 @@ glsl_get_natural_size_align_bytes(const struct glsl_type *type,
       break;
    }
 
-   case GLSL_TYPE_ARRAY: {
-      unsigned elem_size = 0, elem_align = 0;
-      glsl_get_natural_size_align_bytes(type->fields.array,
-                                        &elem_size, &elem_align);
-      *align = elem_align;
-      *size = type->length * ALIGN_POT(elem_size, elem_align);
-      break;
-   }
-
+   case GLSL_TYPE_ARRAY:
    case GLSL_TYPE_INTERFACE:
    case GLSL_TYPE_STRUCT:
-      *size = 0;
-      *align = 0;
-      for (unsigned i = 0; i < type->length; i++) {
-         unsigned elem_size = 0, elem_align = 0;
-         glsl_get_natural_size_align_bytes(type->fields.structure[i].type,
-                                           &elem_size, &elem_align);
-         *align = MAX2(*align, elem_align);
-         *size = ALIGN_POT(*size, elem_align) + elem_size;
-      }
+      glsl_size_align_handle_array_and_structs(type,
+                                               glsl_get_natural_size_align_bytes,
+                                               size, align);
       break;
 
    case GLSL_TYPE_SAMPLER:
+   case GLSL_TYPE_TEXTURE:
    case GLSL_TYPE_IMAGE:
       /* Bindless samplers and images. */
       *size = 8;
@@ -766,6 +830,60 @@ glsl_get_natural_size_align_bytes(const struct glsl_type *type,
    case GLSL_TYPE_ERROR:
    case GLSL_TYPE_FUNCTION:
       unreachable("type does not have a natural size");
+   }
+}
+
+/**
+ * Returns a byte size/alignment for a type where each array element or struct
+ * field is aligned to 16 bytes.
+ */
+void
+glsl_get_vec4_size_align_bytes(const struct glsl_type *type,
+                               unsigned *size, unsigned *align)
+{
+   switch (type->base_type) {
+   case GLSL_TYPE_BOOL:
+      /* We special-case Booleans to 32 bits to not cause heartburn for
+       * drivers that suddenly get an 8-bit load.
+       */
+      *size = 4 * type->components();
+      *align = 16;
+      break;
+
+   case GLSL_TYPE_UINT8:
+   case GLSL_TYPE_INT8:
+   case GLSL_TYPE_UINT16:
+   case GLSL_TYPE_INT16:
+   case GLSL_TYPE_FLOAT16:
+   case GLSL_TYPE_UINT:
+   case GLSL_TYPE_INT:
+   case GLSL_TYPE_FLOAT:
+   case GLSL_TYPE_DOUBLE:
+   case GLSL_TYPE_UINT64:
+   case GLSL_TYPE_INT64: {
+      unsigned N = glsl_get_bit_size(type) / 8;
+      *size = 16 * (type->matrix_columns - 1) + N * type->vector_elements;
+      *align = 16;
+      break;
+   }
+
+   case GLSL_TYPE_ARRAY:
+   case GLSL_TYPE_INTERFACE:
+   case GLSL_TYPE_STRUCT:
+      glsl_size_align_handle_array_and_structs(type,
+                                               glsl_get_vec4_size_align_bytes,
+                                               size, align);
+      break;
+
+   case GLSL_TYPE_SAMPLER:
+   case GLSL_TYPE_TEXTURE:
+   case GLSL_TYPE_IMAGE:
+   case GLSL_TYPE_ATOMIC_UINT:
+   case GLSL_TYPE_SUBROUTINE:
+   case GLSL_TYPE_VOID:
+   case GLSL_TYPE_ERROR:
+   case GLSL_TYPE_FUNCTION:
+      unreachable("type does not make sense for glsl_get_vec4_size_align_bytes()");
    }
 }
 
@@ -813,12 +931,12 @@ glsl_get_cl_type_size_align(const struct glsl_type *type,
    *align = glsl_get_cl_alignment(type);
 }
 
-unsigned
-glsl_type_get_sampler_count(const struct glsl_type *type)
+static unsigned
+glsl_type_count(const glsl_type *type, glsl_base_type base_type)
 {
    if (glsl_type_is_array(type)) {
-      return (glsl_get_aoa_size(type) *
-              glsl_type_get_sampler_count(glsl_without_array(type)));
+      return glsl_get_length(type) *
+             glsl_type_count(glsl_get_array_element(type), base_type);
    }
 
    /* Ignore interface blocks - they can only contain bindless samplers,
@@ -827,38 +945,32 @@ glsl_type_get_sampler_count(const struct glsl_type *type)
    if (glsl_type_is_struct(type)) {
       unsigned count = 0;
       for (unsigned i = 0; i < glsl_get_length(type); i++)
-         count += glsl_type_get_sampler_count(glsl_get_struct_field(type, i));
+         count += glsl_type_count(glsl_get_struct_field(type, i), base_type);
       return count;
    }
 
-   if (glsl_type_is_sampler(type))
+   if (glsl_get_base_type(type) == base_type)
       return 1;
 
    return 0;
 }
 
 unsigned
+glsl_type_get_sampler_count(const struct glsl_type *type)
+{
+   return glsl_type_count(type, GLSL_TYPE_SAMPLER);
+}
+
+unsigned
+glsl_type_get_texture_count(const struct glsl_type *type)
+{
+   return glsl_type_count(type, GLSL_TYPE_TEXTURE);
+}
+
+unsigned
 glsl_type_get_image_count(const struct glsl_type *type)
 {
-   if (glsl_type_is_array(type)) {
-      return (glsl_get_aoa_size(type) *
-              glsl_type_get_image_count(glsl_without_array(type)));
-   }
-
-   /* Ignore interface blocks - they can only contain bindless images,
-    * which we shouldn't count.
-    */
-   if (glsl_type_is_struct(type)) {
-      unsigned count = 0;
-      for (unsigned i = 0; i < glsl_get_length(type); i++)
-         count += glsl_type_get_image_count(glsl_get_struct_field(type, i));
-      return count;
-   }
-
-   if (glsl_type_is_image(type))
-      return 1;
-
-   return 0;
+   return glsl_type_count(type, GLSL_TYPE_IMAGE);
 }
 
 enum glsl_interface_packing
@@ -935,6 +1047,19 @@ glsl_get_explicit_type_for_size_align(const struct glsl_type *type,
                                       unsigned *size, unsigned *align)
 {
    return type->get_explicit_type_for_size_align(type_info, size, align);
+}
+
+const struct glsl_type *
+glsl_type_wrap_in_arrays(const struct glsl_type *type,
+                         const struct glsl_type *arrays)
+{
+   if (!glsl_type_is_array(arrays))
+      return type;
+
+   const glsl_type *elem_type =
+      glsl_type_wrap_in_arrays(type, glsl_get_array_element(arrays));
+   return glsl_array_type(elem_type, glsl_get_length(arrays),
+                          glsl_get_explicit_stride(arrays));
 }
 
 const struct glsl_type *

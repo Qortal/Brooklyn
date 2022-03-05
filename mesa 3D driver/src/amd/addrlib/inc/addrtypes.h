@@ -1,28 +1,27 @@
 /*
- * Copyright © 2007-2019 Advanced Micro Devices, Inc.
- * All Rights Reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining
- * a copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sub license, and/or sell copies of the Software, and to
- * permit persons to whom the Software is furnished to do so, subject to
- * the following conditions:
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
- * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDERS, AUTHORS
- * AND/OR ITS SUPPLIERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
- * USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
- * The above copyright notice and this permission notice (including the
- * next paragraph) shall be included in all copies or substantial portions
- * of the Software.
- */
+************************************************************************************************************************
+*
+*  Copyright (C) 2007-2022 Advanced Micro Devices, Inc.  All rights reserved.
+*
+* Permission is hereby granted, free of charge, to any person obtaining a
+* copy of this software and associated documentation files (the "Software"),
+* to deal in the Software without restriction, including without limitation
+* the rights to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, and to permit persons to whom the
+* Software is furnished to do so, subject to the following conditions:
+*
+* The above copyright notice and this permission notice shall be included in
+* all copies or substantial portions of the Software.
+*
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+* THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
+* OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+* ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+* OTHER DEALINGS IN THE SOFTWARE
+*
+***********************************************************************************************************************/
 
 /**
 ****************************************************************************************************
@@ -49,6 +48,10 @@ typedef void           VOID;
 typedef float          FLOAT;
 #endif
 
+#if !defined(DOUBLE)
+typedef double         DOUBLE;
+#endif
+
 #if !defined(CHAR)
 typedef char           CHAR;
 #endif
@@ -68,7 +71,11 @@ typedef int            INT;
 */
 #ifndef ADDR_CDECL
     #if defined(__GNUC__)
-        #define ADDR_CDECL __attribute__((cdecl))
+        #if defined(__i386__)
+            #define ADDR_CDECL __attribute__((cdecl))
+        #else
+            #define ADDR_CDECL
+        #endif
     #else
         #define ADDR_CDECL __cdecl
     #endif
@@ -76,10 +83,10 @@ typedef int            INT;
 
 #ifndef ADDR_STDCALL
     #if defined(__GNUC__)
-        #if defined(__amd64__) || defined(__x86_64__)
-            #define ADDR_STDCALL
-        #else
+        #if defined(__i386__)
             #define ADDR_STDCALL __attribute__((stdcall))
+        #else
+            #define ADDR_STDCALL
         #endif
     #else
         #define ADDR_STDCALL __stdcall
@@ -88,8 +95,11 @@ typedef int            INT;
 
 #ifndef ADDR_FASTCALL
     #if defined(__GNUC__)
-        // We don't care about the performance of call instructions in addrlib
-        #define ADDR_FASTCALL
+        #if defined(__i386__) || defined(__amd64__) || defined(__x86_64__)
+            #define ADDR_FASTCALL __attribute__((regparm(0)))
+        #else
+            #define ADDR_FASTCALL
+        #endif
     #else
         #define ADDR_FASTCALL __fastcall
     #endif
@@ -649,7 +659,7 @@ typedef enum _AddrTileType
 #endif
 
 #ifndef INT_8
-#define INT_8   char
+#define INT_8   signed char // signed must be used because of aarch64
 #endif
 
 #ifndef UINT_8

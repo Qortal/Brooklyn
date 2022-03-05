@@ -297,7 +297,7 @@ v3d_uncompiled_shader_create(struct pipe_context *pctx,
         } else {
                 assert(type == PIPE_SHADER_IR_TGSI);
 
-                if (V3D_DEBUG & V3D_DEBUG_TGSI) {
+                if (unlikely(V3D_DEBUG & V3D_DEBUG_TGSI)) {
                         fprintf(stderr, "prog %d TGSI:\n",
                                 so->program_id);
                         tgsi_dump(ir, 0);
@@ -318,7 +318,7 @@ v3d_uncompiled_shader_create(struct pipe_context *pctx,
 
         NIR_PASS_V(s, nir_lower_load_const_to_scalar);
 
-        v3d_optimize_nir(s);
+        v3d_optimize_nir(NULL, s);
 
         NIR_PASS_V(s, nir_remove_dead_variables, nir_var_function_temp, NULL);
 
@@ -328,8 +328,8 @@ v3d_uncompiled_shader_create(struct pipe_context *pctx,
         so->base.type = PIPE_SHADER_IR_NIR;
         so->base.ir.nir = s;
 
-        if (V3D_DEBUG & (V3D_DEBUG_NIR |
-                         v3d_debug_flag_for_shader_stage(s->info.stage))) {
+        if (unlikely(V3D_DEBUG & (V3D_DEBUG_NIR |
+                                  v3d_debug_flag_for_shader_stage(s->info.stage)))) {
                 fprintf(stderr, "%s prog %d NIR:\n",
                         gl_shader_stage_name(s->info.stage),
                         so->program_id);
@@ -337,7 +337,7 @@ v3d_uncompiled_shader_create(struct pipe_context *pctx,
                 fprintf(stderr, "\n");
         }
 
-        if (V3D_DEBUG & V3D_DEBUG_PRECOMPILE)
+        if (unlikely(V3D_DEBUG & V3D_DEBUG_PRECOMPILE))
                 v3d_shader_precompile(v3d, so);
 
         return so;
@@ -446,6 +446,8 @@ v3d_setup_shared_key(struct v3d_context *v3d, struct v3d_key *key,
         const struct v3d_device_info *devinfo = &v3d->screen->devinfo;
 
         key->num_tex_used = texstate->num_textures;
+        key->num_samplers_used = texstate->num_textures;
+        assert(key->num_tex_used == key->num_samplers_used);
         for (int i = 0; i < texstate->num_textures; i++) {
                 struct pipe_sampler_view *sampler = texstate->textures[i];
                 struct v3d_sampler_view *v3d_sampler = v3d_sampler_view(sampler);
@@ -455,26 +457,32 @@ v3d_setup_shared_key(struct v3d_context *v3d, struct v3d_key *key,
                 if (!sampler)
                         continue;
 
-                key->tex[i].return_size =
+                assert(sampler->target == PIPE_BUFFER || sampler_state);
+
+                unsigned compare_mode = sampler_state ?
+                        sampler_state->compare_mode :
+                        PIPE_TEX_COMPARE_NONE;
+
+                key->sampler[i].return_size =
                         v3d_get_tex_return_size(devinfo,
                                                 sampler->format,
-                                                sampler_state->compare_mode);
+                                                compare_mode);
 
                 /* For 16-bit, we set up the sampler to always return 2
                  * channels (meaning no recompiles for most statechanges),
                  * while for 32 we actually scale the returns with channels.
                  */
-                if (key->tex[i].return_size == 16) {
-                        key->tex[i].return_channels = 2;
+                if (key->sampler[i].return_size == 16) {
+                        key->sampler[i].return_channels = 2;
                 } else if (devinfo->ver > 40) {
-                        key->tex[i].return_channels = 4;
+                        key->sampler[i].return_channels = 4;
                 } else {
-                        key->tex[i].return_channels =
+                        key->sampler[i].return_channels =
                                 v3d_get_tex_return_channels(devinfo,
                                                             sampler->format);
                 }
 
-                if (key->tex[i].return_size == 32 && devinfo->ver < 40) {
+                if (key->sampler[i].return_size == 32 && devinfo->ver < 40) {
                         memcpy(key->tex[i].swizzle,
                                v3d_sampler->swizzle,
                                sizeof(v3d_sampler->swizzle));
@@ -487,15 +495,6 @@ v3d_setup_shared_key(struct v3d_context *v3d, struct v3d_key *key,
                         key->tex[i].swizzle[2] = PIPE_SWIZZLE_Z;
                         key->tex[i].swizzle[3] = PIPE_SWIZZLE_W;
                 }
-
-                if (sampler) {
-                        key->tex[i].clamp_s =
-                                sampler_state->wrap_s == PIPE_TEX_WRAP_CLAMP;
-                        key->tex[i].clamp_t =
-                                sampler_state->wrap_t == PIPE_TEX_WRAP_CLAMP;
-                        key->tex[i].clamp_r =
-                                sampler_state->wrap_r == PIPE_TEX_WRAP_CLAMP;
-                }
         }
 }
 
@@ -505,10 +504,15 @@ v3d_setup_shared_precompile_key(struct v3d_uncompiled_shader *uncompiled,
 {
         nir_shader *s = uncompiled->base.ir.nir;
 
+        /* Note that below we access they key's texture and sampler fields
+         * using the same index. On OpenGL they are the same (they are
+         * combined)
+         */
         key->num_tex_used = s->info.num_textures;
+        key->num_samplers_used = s->info.num_textures;
         for (int i = 0; i < s->info.num_textures; i++) {
-                key->tex[i].return_size = 16;
-                key->tex[i].return_channels = 2;
+                key->sampler[i].return_size = 16;
+                key->sampler[i].return_channels = 2;
 
                 key->tex[i].swizzle[0] = PIPE_SWIZZLE_X;
                 key->tex[i].swizzle[1] = PIPE_SWIZZLE_Y;
@@ -525,14 +529,14 @@ v3d_update_compiled_fs(struct v3d_context *v3d, uint8_t prim_mode)
         struct v3d_fs_key *key = &local_key;
         nir_shader *s = v3d->prog.bind_fs->base.ir.nir;
 
-        if (!(v3d->dirty & (VC5_DIRTY_PRIM_MODE |
-                            VC5_DIRTY_BLEND |
-                            VC5_DIRTY_FRAMEBUFFER |
-                            VC5_DIRTY_ZSA |
-                            VC5_DIRTY_RASTERIZER |
-                            VC5_DIRTY_SAMPLE_STATE |
-                            VC5_DIRTY_FRAGTEX |
-                            VC5_DIRTY_UNCOMPILED_FS))) {
+        if (!(v3d->dirty & (V3D_DIRTY_PRIM_MODE |
+                            V3D_DIRTY_BLEND |
+                            V3D_DIRTY_FRAMEBUFFER |
+                            V3D_DIRTY_ZSA |
+                            V3D_DIRTY_RASTERIZER |
+                            V3D_DIRTY_SAMPLE_STATE |
+                            V3D_DIRTY_FRAGTEX |
+                            V3D_DIRTY_UNCOMPILED_FS))) {
                 return;
         }
 
@@ -545,7 +549,7 @@ v3d_update_compiled_fs(struct v3d_context *v3d, uint8_t prim_mode)
                          prim_mode <= PIPE_PRIM_LINE_STRIP);
         key->line_smoothing = (key->is_lines &&
                                v3d_line_smoothing_enabled(v3d));
-        key->clamp_color = v3d->rasterizer->base.clamp_fragment_color;
+        key->has_gs = v3d->prog.bind_gs != NULL;
         if (v3d->blend->base.logicop_enable) {
                 key->logicop_func = v3d->blend->base.logicop_func;
         } else {
@@ -557,11 +561,6 @@ v3d_update_compiled_fs(struct v3d_context *v3d, uint8_t prim_mode)
                                         v3d->sample_mask != (1 << V3D_MAX_SAMPLES) - 1);
                 key->sample_alpha_to_coverage = v3d->blend->base.alpha_to_coverage;
                 key->sample_alpha_to_one = v3d->blend->base.alpha_to_one;
-        }
-
-        if (v3d->zsa->base.alpha.enabled) {
-                key->alpha_test = true;
-                key->alpha_test_func = v3d->zsa->base.alpha.func;
         }
 
         key->swap_color_rb = v3d->swap_color_rb;
@@ -583,9 +582,10 @@ v3d_update_compiled_fs(struct v3d_context *v3d, uint8_t prim_mode)
                  */
                 if (key->logicop_func != PIPE_LOGICOP_COPY) {
                         key->color_fmt[i].format = cbuf->format;
-                        key->color_fmt[i].swizzle =
-                                v3d_get_format_swizzle(&v3d->screen->devinfo,
-                                                       cbuf->format);
+                        memcpy(key->color_fmt[i].swizzle,
+                               v3d_get_format_swizzle(&v3d->screen->devinfo,
+                                                       cbuf->format),
+                               sizeof(key->color_fmt[i].swizzle));
                 }
 
                 const struct util_format_description *desc =
@@ -607,42 +607,38 @@ v3d_update_compiled_fs(struct v3d_context *v3d, uint8_t prim_mode)
         if (key->is_points) {
                 key->point_sprite_mask =
                         v3d->rasterizer->base.sprite_coord_enable;
-                key->point_coord_upper_left =
-                        (v3d->rasterizer->base.sprite_coord_mode ==
-                         PIPE_SPRITE_COORD_UPPER_LEFT);
+                /* this is handled by lower_wpos_pntc */
+                key->point_coord_upper_left = false;
         }
-
-        key->light_twoside = v3d->rasterizer->base.light_twoside;
-        key->shade_model_flat = v3d->rasterizer->base.flatshade;
 
         struct v3d_compiled_shader *old_fs = v3d->prog.fs;
         v3d->prog.fs = v3d_get_compiled_shader(v3d, &key->base, sizeof(*key));
         if (v3d->prog.fs == old_fs)
                 return;
 
-        v3d->dirty |= VC5_DIRTY_COMPILED_FS;
+        v3d->dirty |= V3D_DIRTY_COMPILED_FS;
 
         if (old_fs) {
                 if (v3d->prog.fs->prog_data.fs->flat_shade_flags !=
                     old_fs->prog_data.fs->flat_shade_flags) {
-                        v3d->dirty |= VC5_DIRTY_FLAT_SHADE_FLAGS;
+                        v3d->dirty |= V3D_DIRTY_FLAT_SHADE_FLAGS;
                 }
 
                 if (v3d->prog.fs->prog_data.fs->noperspective_flags !=
                     old_fs->prog_data.fs->noperspective_flags) {
-                        v3d->dirty |= VC5_DIRTY_NOPERSPECTIVE_FLAGS;
+                        v3d->dirty |= V3D_DIRTY_NOPERSPECTIVE_FLAGS;
                 }
 
                 if (v3d->prog.fs->prog_data.fs->centroid_flags !=
                     old_fs->prog_data.fs->centroid_flags) {
-                        v3d->dirty |= VC5_DIRTY_CENTROID_FLAGS;
+                        v3d->dirty |= V3D_DIRTY_CENTROID_FLAGS;
                 }
         }
 
         if (old_fs && memcmp(v3d->prog.fs->prog_data.fs->input_slots,
                              old_fs->prog_data.fs->input_slots,
                              sizeof(v3d->prog.fs->prog_data.fs->input_slots))) {
-                v3d->dirty |= VC5_DIRTY_FS_INPUTS;
+                v3d->dirty |= V3D_DIRTY_FS_INPUTS;
         }
 }
 
@@ -652,11 +648,11 @@ v3d_update_compiled_gs(struct v3d_context *v3d, uint8_t prim_mode)
         struct v3d_gs_key local_key;
         struct v3d_gs_key *key = &local_key;
 
-        if (!(v3d->dirty & (VC5_DIRTY_GEOMTEX |
-                            VC5_DIRTY_RASTERIZER |
-                            VC5_DIRTY_UNCOMPILED_GS |
-                            VC5_DIRTY_PRIM_MODE |
-                            VC5_DIRTY_FS_INPUTS))) {
+        if (!(v3d->dirty & (V3D_DIRTY_GEOMTEX |
+                            V3D_DIRTY_RASTERIZER |
+                            V3D_DIRTY_UNCOMPILED_GS |
+                            V3D_DIRTY_PRIM_MODE |
+                            V3D_DIRTY_FS_INPUTS))) {
                 return;
         }
 
@@ -685,7 +681,7 @@ v3d_update_compiled_gs(struct v3d_context *v3d, uint8_t prim_mode)
                 v3d_get_compiled_shader(v3d, &key->base, sizeof(*key));
         if (gs != v3d->prog.gs) {
                 v3d->prog.gs = gs;
-                v3d->dirty |= VC5_DIRTY_COMPILED_GS;
+                v3d->dirty |= V3D_DIRTY_COMPILED_GS;
         }
 
         key->is_coord = true;
@@ -710,13 +706,13 @@ v3d_update_compiled_gs(struct v3d_context *v3d, uint8_t prim_mode)
                 v3d_get_compiled_shader(v3d, &key->base, sizeof(*key));
         if (gs_bin != old_gs) {
                 v3d->prog.gs_bin = gs_bin;
-                v3d->dirty |= VC5_DIRTY_COMPILED_GS_BIN;
+                v3d->dirty |= V3D_DIRTY_COMPILED_GS_BIN;
         }
 
         if (old_gs && memcmp(v3d->prog.gs->prog_data.gs->input_slots,
                              old_gs->prog_data.gs->input_slots,
                              sizeof(v3d->prog.gs->prog_data.gs->input_slots))) {
-                v3d->dirty |= VC5_DIRTY_GS_INPUTS;
+                v3d->dirty |= V3D_DIRTY_GS_INPUTS;
         }
 }
 
@@ -726,13 +722,13 @@ v3d_update_compiled_vs(struct v3d_context *v3d, uint8_t prim_mode)
         struct v3d_vs_key local_key;
         struct v3d_vs_key *key = &local_key;
 
-        if (!(v3d->dirty & (VC5_DIRTY_VERTTEX |
-                            VC5_DIRTY_VTXSTATE |
-                            VC5_DIRTY_UNCOMPILED_VS |
-                            (v3d->prog.bind_gs ? 0 : VC5_DIRTY_RASTERIZER) |
-                            (v3d->prog.bind_gs ? 0 : VC5_DIRTY_PRIM_MODE) |
-                            (v3d->prog.bind_gs ? VC5_DIRTY_GS_INPUTS :
-                                                 VC5_DIRTY_FS_INPUTS)))) {
+        if (!(v3d->dirty & (V3D_DIRTY_VERTTEX |
+                            V3D_DIRTY_VTXSTATE |
+                            V3D_DIRTY_UNCOMPILED_VS |
+                            (v3d->prog.bind_gs ? 0 : V3D_DIRTY_RASTERIZER) |
+                            (v3d->prog.bind_gs ? 0 : V3D_DIRTY_PRIM_MODE) |
+                            (v3d->prog.bind_gs ? V3D_DIRTY_GS_INPUTS :
+                                                 V3D_DIRTY_FS_INPUTS)))) {
                 return;
         }
 
@@ -755,8 +751,6 @@ v3d_update_compiled_vs(struct v3d_context *v3d, uint8_t prim_mode)
             memcpy(key->used_outputs, v3d->prog.gs->prog_data.gs->input_slots,
                    sizeof(key->used_outputs));
         }
-
-        key->clamp_color = v3d->rasterizer->base.clamp_vertex_color;
 
         key->per_vertex_point_size =
                 (prim_mode == PIPE_PRIM_POINTS &&
@@ -789,7 +783,7 @@ v3d_update_compiled_vs(struct v3d_context *v3d, uint8_t prim_mode)
                 v3d_get_compiled_shader(v3d, &key->base, sizeof(*key));
         if (vs != v3d->prog.vs) {
                 v3d->prog.vs = vs;
-                v3d->dirty |= VC5_DIRTY_COMPILED_VS;
+                v3d->dirty |= V3D_DIRTY_COMPILED_VS;
         }
 
         key->is_coord = true;
@@ -815,13 +809,19 @@ v3d_update_compiled_vs(struct v3d_context *v3d, uint8_t prim_mode)
                                0, tail_bytes);
                 }
                 key->num_used_outputs = shader_state->num_tf_outputs;
+        } else {
+                key->num_used_outputs = v3d->prog.gs_bin->prog_data.gs->num_inputs;
+                STATIC_ASSERT(sizeof(key->used_outputs) ==
+                              sizeof(v3d->prog.gs_bin->prog_data.gs->input_slots));
+                memcpy(key->used_outputs, v3d->prog.gs_bin->prog_data.gs->input_slots,
+                       sizeof(key->used_outputs));
         }
 
         struct v3d_compiled_shader *cs =
                 v3d_get_compiled_shader(v3d, &key->base, sizeof(*key));
         if (cs != v3d->prog.cs) {
                 v3d->prog.cs = cs;
-                v3d->dirty |= VC5_DIRTY_COMPILED_CS;
+                v3d->dirty |= V3D_DIRTY_COMPILED_CS;
         }
 }
 
@@ -839,8 +839,8 @@ v3d_update_compiled_cs(struct v3d_context *v3d)
         struct v3d_key local_key;
         struct v3d_key *key = &local_key;
 
-        if (!(v3d->dirty & (VC5_DIRTY_UNCOMPILED_CS |
-                            VC5_DIRTY_COMPTEX))) {
+        if (!(v3d->dirty & (V3D_DIRTY_UNCOMPILED_CS |
+                            V3D_DIRTY_COMPTEX))) {
                 return;
         }
 
@@ -852,7 +852,7 @@ v3d_update_compiled_cs(struct v3d_context *v3d)
                 v3d_get_compiled_shader(v3d, key, sizeof(*key));
         if (cs != v3d->prog.compute) {
                 v3d->prog.compute = cs;
-                v3d->dirty |= VC5_DIRTY_COMPILED_CS; /* XXX */
+                v3d->dirty |= V3D_DIRTY_COMPILED_CS; /* XXX */
         }
 }
 
@@ -940,7 +940,7 @@ v3d_fp_state_bind(struct pipe_context *pctx, void *hwcso)
 {
         struct v3d_context *v3d = v3d_context(pctx);
         v3d->prog.bind_fs = hwcso;
-        v3d->dirty |= VC5_DIRTY_UNCOMPILED_FS;
+        v3d->dirty |= V3D_DIRTY_UNCOMPILED_FS;
 }
 
 static void
@@ -948,7 +948,7 @@ v3d_gp_state_bind(struct pipe_context *pctx, void *hwcso)
 {
         struct v3d_context *v3d = v3d_context(pctx);
         v3d->prog.bind_gs = hwcso;
-        v3d->dirty |= VC5_DIRTY_UNCOMPILED_GS;
+        v3d->dirty |= V3D_DIRTY_UNCOMPILED_GS;
 }
 
 static void
@@ -956,7 +956,7 @@ v3d_vp_state_bind(struct pipe_context *pctx, void *hwcso)
 {
         struct v3d_context *v3d = v3d_context(pctx);
         v3d->prog.bind_vs = hwcso;
-        v3d->dirty |= VC5_DIRTY_UNCOMPILED_VS;
+        v3d->dirty |= V3D_DIRTY_UNCOMPILED_VS;
 }
 
 static void
@@ -965,7 +965,7 @@ v3d_compute_state_bind(struct pipe_context *pctx, void *state)
         struct v3d_context *v3d = v3d_context(pctx);
 
         v3d->prog.bind_compute = state;
-        v3d->dirty |= VC5_DIRTY_UNCOMPILED_CS;
+        v3d->dirty |= V3D_DIRTY_UNCOMPILED_CS;
 }
 
 static void *

@@ -92,7 +92,7 @@ static const struct aux_usage_info info[] = {
    AUX(         COMPRESS, Y, Y, Y, x, MCS)
    AUX(         COMPRESS, Y, Y, Y, x, MCS_CCS)
    AUX(         COMPRESS, Y, Y, Y, Y, CCS_E)
-   AUX(   COMPRESS_CLEAR, Y, Y, Y, Y, GEN12_CCS_E)
+   AUX(   COMPRESS_CLEAR, Y, Y, Y, Y, GFX12_CCS_E)
    AUX(RESOLVE_AMBIGUATE, x, Y, x, Y, CCS_D)
    AUX(RESOLVE_AMBIGUATE, Y, x, x, Y, MC)
    AUX(         COMPRESS, Y, x, x, Y, STC_CCS)
@@ -142,7 +142,7 @@ isl_aux_prepare_access(enum isl_aux_state initial_state,
    case ISL_AUX_STATE_COMPRESSED_CLEAR:
       if (!info[usage].compressed)
          return ISL_AUX_OP_FULL_RESOLVE;
-      /* Fall-through */
+      FALLTHROUGH;
    case ISL_AUX_STATE_CLEAR:
    case ISL_AUX_STATE_PARTIAL_CLEAR:
       return fast_clear_supported ?
@@ -257,4 +257,10 @@ bool
 isl_aux_usage_has_fast_clears(enum isl_aux_usage usage)
 {
    return info[usage].fast_clear;
+}
+
+bool
+isl_aux_usage_has_compression(enum isl_aux_usage usage)
+{
+   return info[usage].compressed;
 }

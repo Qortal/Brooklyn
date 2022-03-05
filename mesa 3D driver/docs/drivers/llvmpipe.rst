@@ -27,8 +27,7 @@ Requirements
 
    See ``/proc/cpuinfo`` to know what your CPU supports.
 
--  Unless otherwise stated, LLVM version 3.4 is recommended; 3.3 or
-   later is required.
+-  Unless otherwise stated, LLVM version 3.9 or later is required.
 
    For Linux, on a recent Debian based distribution do:
 
@@ -68,18 +67,10 @@ Requirements
    You can build only the x86 target by passing
    ``-DLLVM_TARGETS_TO_BUILD=X86`` to cmake.
 
--  scons (optional)
-
 Building
 --------
 
-To build everything on Linux invoke scons as:
-
-.. code-block:: console
-
-   scons build=debug libgl-xlib
-
-Alternatively, you can build it with meson with:
+To build everything on Linux invoke meson as:
 
 .. code-block:: console
 
@@ -88,12 +79,6 @@ Alternatively, you can build it with meson with:
    meson -D glx=gallium-xlib -D gallium-drivers=swrast
    ninja
 
-but the rest of these instructions assume that scons is used. For
-Windows the procedure is similar except the target:
-
-.. code-block:: console
-
-   scons platform=windows build=debug libgl-gdi
 
 Using
 -----
@@ -116,17 +101,15 @@ or
 
 To use it set the ``LD_LIBRARY_PATH`` environment variable accordingly.
 
-For performance evaluation pass ``build=release`` to scons, and use the
-corresponding lib directory without the ``-debug`` suffix.
-
 Windows
 ~~~~~~~
 
 On Windows, building will create
 ``build/windows-x86-debug/gallium/targets/libgl-gdi/opengl32.dll`` which
-is a drop-in alternative for system's ``opengl32.dll``. To use it put it
-in the same directory as your application. It can also be used by
-replacing the native ICD driver, but it's quite an advanced usage, so if
+is a drop-in alternative for system's ``opengl32.dll``, which will use
+the Mesa ICD, ``build/windows-x86-debug/gallium/targets/wgl/libgallium_wgl.dll``.
+To use it put both dlls in the same directory as your application. It can also
+be used by replacing the native ICD driver, but it's quite an advanced usage, so if
 you need to ask, don't even try it.
 
 There is however an easy way to replace the OpenGL software renderer
@@ -134,7 +117,7 @@ that comes with Microsoft Windows 7 (or later) with llvmpipe (that is,
 on systems without any OpenGL drivers):
 
 -  copy
-   ``build/windows-x86-debug/gallium/targets/libgl-gdi/opengl32.dll`` to
+   ``build/windows-x86-debug/gallium/targets/wgl/libgallium_wgl.dll`` to
    ``C:\Windows\SysWOW64\mesadrv.dll``
 
 -  load this registry settings:
@@ -155,15 +138,6 @@ on systems without any OpenGL drivers):
 
 Profiling
 ---------
-
-To profile llvmpipe you should build as
-
-::
-
-   scons build=profile <same-as-before>
-
-This will ensure that frame pointers are used both in C and JIT
-functions, and that no tail call optimizations are done by gcc.
 
 Linux perf integration
 ~~~~~~~~~~~~~~~~~~~~~~

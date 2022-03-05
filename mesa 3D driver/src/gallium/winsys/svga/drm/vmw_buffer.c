@@ -101,7 +101,7 @@ vmw_gmr_bufmgr(struct pb_manager *mgr)
 
 
 static void
-vmw_gmr_buffer_destroy(struct pb_buffer *_buf)
+vmw_gmr_buffer_destroy(void *winsys, struct pb_buffer *_buf)
 {
    struct vmw_gmr_buffer *buf = vmw_gmr_buffer(_buf);
 
@@ -222,7 +222,7 @@ vmw_gmr_bufmgr_create_buffer(struct pb_manager *_mgr,
       goto error1;
 
    pipe_reference_init(&buf->base.reference, 1);
-   buf->base.alignment = pb_desc->alignment;
+   buf->base.alignment_log2 = util_logbase2(pb_desc->alignment);
    buf->base.usage = pb_desc->usage & ~VMW_BUFFER_USAGE_SHARED;
    buf->base.vtbl = &vmw_gmr_buffer_vtbl;
    buf->mgr = mgr;
@@ -357,32 +357,30 @@ vmw_svga_winsys_buffer_map(struct svga_winsys_screen *sws,
                            enum pipe_map_flags flags)
 {
    void *map;
+   enum pb_usage_flags pb_flags = 0;
 
    (void)sws;
    if (flags & PIPE_MAP_UNSYNCHRONIZED)
       flags &= ~PIPE_MAP_DONTBLOCK;
 
-   /* NOTE: we're passing PIPE_MAP_x flags instead of
-    * PB_USAGE_x flags here.  We should probably fix that.
-    */
-   STATIC_ASSERT((unsigned) PB_USAGE_CPU_READ ==
-                 (unsigned) PIPE_MAP_READ);
-   STATIC_ASSERT((unsigned) PB_USAGE_CPU_WRITE ==
-                 (unsigned) PIPE_MAP_WRITE);
-   STATIC_ASSERT((unsigned) PB_USAGE_GPU_READ ==
-                 (unsigned) PIPE_MAP_DIRECTLY);
-   STATIC_ASSERT((unsigned) PB_USAGE_DONTBLOCK ==
-                 (unsigned) PIPE_MAP_DONTBLOCK);
-   STATIC_ASSERT((unsigned) PB_USAGE_UNSYNCHRONIZED ==
-                 (unsigned) PIPE_MAP_UNSYNCHRONIZED);
-   STATIC_ASSERT((unsigned) PB_USAGE_PERSISTENT ==
-                 (unsigned) PIPE_MAP_PERSISTENT);
+   if (flags & PIPE_MAP_READ)
+      pb_flags |= PB_USAGE_CPU_READ;
+   if (flags & PIPE_MAP_WRITE)
+      pb_flags |= PB_USAGE_CPU_WRITE;
+   if (flags & PIPE_MAP_DIRECTLY)
+      pb_flags |= PB_USAGE_GPU_READ;
+   if (flags & PIPE_MAP_DONTBLOCK)
+      pb_flags |= PB_USAGE_DONTBLOCK;
+   if (flags & PIPE_MAP_UNSYNCHRONIZED)
+      pb_flags |= PB_USAGE_UNSYNCHRONIZED;
+   if (flags & PIPE_MAP_PERSISTENT)
+      pb_flags |= PB_USAGE_PERSISTENT;
 
-   map = pb_map(vmw_pb_buffer(buf), flags & PB_USAGE_ALL, NULL);
+   map = pb_map(vmw_pb_buffer(buf), pb_flags, NULL);
 
 #ifdef DEBUG
    if (map != NULL)
-      debug_flush_map(buf->fbuf, flags);
+      debug_flush_map(buf->fbuf, pb_flags);
 #endif
 
    return map;

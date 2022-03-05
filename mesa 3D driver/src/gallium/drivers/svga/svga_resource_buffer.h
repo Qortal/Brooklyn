@@ -47,9 +47,6 @@ struct svga_context;
 struct svga_winsys_buffer;
 struct svga_winsys_surface;
 
-
-extern struct u_resource_vtbl svga_buffer_vtbl;
-
 struct svga_buffer_range
 {
    unsigned start;
@@ -68,6 +65,7 @@ struct svga_buffer_surface
    unsigned bind_flags;
    struct svga_host_surface_cache_key key;
    struct svga_winsys_surface *handle;
+   enum svga_surface_state surface_state;
 };
 
 /**
@@ -75,7 +73,7 @@ struct svga_buffer_surface
  */
 struct svga_buffer
 {
-   struct u_resource b;
+   struct pipe_resource b;
 
    /** This is a superset of b.b.bind */
    unsigned bind_flags;
@@ -122,6 +120,9 @@ struct svga_buffer
     * incompatible bind flags.
     */
    struct list_head surfaces;
+
+   /* Current surface structure */
+   struct svga_buffer_surface *bufsurf;
 
    /**
     * Information about ongoing and past map operations.
@@ -215,6 +216,7 @@ struct svga_buffer
    unsigned size;  /**< Approximate size in bytes */
 
    boolean dirty;  /**< Need to do a readback before mapping? */
+   boolean uav;    /* Set if the buffer is bound to a uav */
 
    /** In some cases we try to keep the results of the translate_indices()
     * function from svga_draw_elements.c
@@ -233,7 +235,7 @@ static inline struct svga_buffer *
 svga_buffer(struct pipe_resource *resource)
 {
    struct svga_buffer *buf = (struct svga_buffer *) resource;
-   assert(buf == NULL || buf->b.vtbl == &svga_buffer_vtbl);
+   assert(buf == NULL || buf->b.target == PIPE_BUFFER);
    return buf;
 }
 
@@ -259,7 +261,7 @@ svga_buffer_is_user_buffer(struct pipe_resource *buffer)
 static inline struct svga_winsys_screen *
 svga_buffer_winsys_screen(struct svga_buffer *sbuf)
 {
-   return svga_screen(sbuf->b.b.screen)->sws;
+   return svga_screen(sbuf->b.screen)->sws;
 }
 
 
@@ -335,6 +337,24 @@ svga_buffer_hw_storage_unmap(struct svga_context *svga,
       }
    } else
       sws->buffer_unmap(sws, sbuf->hwbuf);
+
+   /* Mark the buffer surface as UPDATED */
+   assert(sbuf->bufsurf);
+   sbuf->bufsurf->surface_state = SVGA_SURFACE_STATE_UPDATED;
+}
+
+
+static inline void
+svga_set_buffer_rendered_to(struct svga_buffer_surface *bufsurf)
+{
+   bufsurf->surface_state = SVGA_SURFACE_STATE_RENDERED;
+}
+
+
+static inline boolean
+svga_was_buffer_rendered_to(const struct svga_buffer_surface *bufsurf)
+{
+   return (bufsurf->surface_state == SVGA_SURFACE_STATE_RENDERED);
 }
 
 
@@ -372,5 +392,26 @@ svga_winsys_buffer_create(struct svga_context *svga,
                           unsigned alignment,
                           unsigned usage,
                           unsigned size);
+
+void
+svga_buffer_transfer_flush_region(struct pipe_context *pipe,
+                                  struct pipe_transfer *transfer,
+                                  const struct pipe_box *box);
+
+void
+svga_resource_destroy(struct pipe_screen *screen,
+                      struct pipe_resource *buf);
+
+void *
+svga_buffer_transfer_map(struct pipe_context *pipe,
+                         struct pipe_resource *resource,
+                         unsigned level,
+                         unsigned usage,
+                         const struct pipe_box *box,
+                         struct pipe_transfer **ptransfer);
+
+void
+svga_buffer_transfer_unmap(struct pipe_context *pipe,
+                           struct pipe_transfer *transfer);
 
 #endif /* SVGA_BUFFER_H */

@@ -23,7 +23,7 @@
 
 
   The data format used by the zlib library is described by RFCs (Request for
-  Comments) 1950 to 1952 in the files http://www.ietf.org/rfc/rfc1950.txt
+  Comments) 1950 to 1952 in the files https://www.ietf.org/rfc/rfc1950.txt
   (zlib format), rfc1951.txt (deflate format) and rfc1952.txt (gzip format).
 */
 
@@ -31,7 +31,6 @@
 #define _ZLIB_H
 
 #include <linux/zconf.h>
-#include <linux/compiler.h>
 
 /* zlib deflate based on ZLIB_VERSION "1.1.3" */
 /* zlib inflate based on ZLIB_VERSION "1.2.3" */
@@ -180,7 +179,7 @@ typedef z_stream *z_streamp;
 
                         /* basic functions */
 
-extern int zlib_deflate_workspacesize (int windowBits, int memLevel) __intentional_overflow(0);
+extern int zlib_deflate_workspacesize (int windowBits, int memLevel);
 /*
    Returns the number of bytes that needs to be allocated for a per-
    stream workspace with the specified parameters.  A pointer to this
@@ -190,6 +189,12 @@ extern int zlib_deflate_workspacesize (int windowBits, int memLevel) __intention
    MAX_MEM_LEVEL here.  If you call zlib_deflateInit2(), the windowBits
    and memLevel parameters passed to zlib_deflateInit2() must not
    exceed those passed here.
+*/
+
+extern int zlib_deflate_dfltcc_enabled (void);
+/*
+   Returns 1 if Deflate-Conversion facility is installed and enabled,
+   otherwise 0.
 */
 
 /* 

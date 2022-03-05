@@ -32,7 +32,6 @@
 
 #include "etnaviv_resource.h"
 #include "etnaviv_tiling.h"
-#include "indices/u_primconvert.h"
 #include "pipe/p_context.h"
 #include "pipe/p_defines.h"
 #include "pipe/p_format.h"
@@ -90,20 +89,20 @@ struct etna_shader_state {
    struct etna_shader_variant *vs, *fs;
 };
 
-enum etna_immediate_contents {
-   ETNA_IMMEDIATE_UNUSED = 0,
-   ETNA_IMMEDIATE_CONSTANT,
-   ETNA_IMMEDIATE_UNIFORM,
-   ETNA_IMMEDIATE_TEXRECT_SCALE_X,
-   ETNA_IMMEDIATE_TEXRECT_SCALE_Y,
-   ETNA_IMMEDIATE_UBO0_ADDR,
-   ETNA_IMMEDIATE_UBOMAX_ADDR = ETNA_IMMEDIATE_UBO0_ADDR + ETNA_MAX_CONST_BUF - 1,
+enum etna_uniform_contents {
+   ETNA_UNIFORM_UNUSED = 0,
+   ETNA_UNIFORM_CONSTANT,
+   ETNA_UNIFORM_UNIFORM,
+   ETNA_UNIFORM_TEXRECT_SCALE_X,
+   ETNA_UNIFORM_TEXRECT_SCALE_Y,
+   ETNA_UNIFORM_UBO0_ADDR,
+   ETNA_UNIFORM_UBOMAX_ADDR = ETNA_UNIFORM_UBO0_ADDR + ETNA_MAX_CONST_BUF - 1,
 };
 
 struct etna_shader_uniform_info {
-   enum etna_immediate_contents *imm_contents;
-   uint32_t *imm_data;
-   uint32_t imm_count;
+   enum etna_uniform_contents *contents;
+   uint32_t *data;
+   uint32_t count;
 };
 
 struct etna_context {
@@ -142,9 +141,6 @@ struct etna_context {
       ETNA_DIRTY_DERIVE_TS       = (1 << 19),
       ETNA_DIRTY_SCISSOR_CLIP    = (1 << 20),
    } dirty;
-
-   uint32_t prim_hwsupport;
-   struct primconvert_context *primconvert;
 
    struct slab_child_pool transfer_pool;
    struct blitter_context *blitter;
@@ -205,6 +201,11 @@ struct etna_context {
    /* set of resources used by currently-unsubmitted renders */
    struct set *used_resources_read;
    struct set *used_resources_write;
+
+   /* resources that must be flushed implicitly at the context flush time */
+   struct set *flush_resources;
+
+   bool is_noop;
 
    mtx_t lock;
 };

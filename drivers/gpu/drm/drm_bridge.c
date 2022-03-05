@@ -28,6 +28,7 @@
 #include <drm/drm_atomic_state_helper.h>
 #include <drm/drm_bridge.h>
 #include <drm/drm_encoder.h>
+#include <drm/drm_of.h>
 #include <drm/drm_print.h>
 
 #include "drm_crtc_internal.h"
@@ -49,12 +50,19 @@
  * Chaining multiple bridges to the output of a bridge, or the same bridge to
  * the output of different bridges, is not supported.
  *
+ * &drm_bridge, like &drm_panel, aren't &drm_mode_object entities like planes,
+ * CRTCs, encoders or connectors and hence are not visible to userspace. They
+ * just provide additional hooks to get the desired output at the end of the
+ * encoder chain.
+ */
+
+/**
+ * DOC:	display driver integration
+ *
  * Display drivers are responsible for linking encoders with the first bridge
  * in the chains. This is done by acquiring the appropriate bridge with
- * of_drm_find_bridge() or drm_of_find_panel_or_bridge(), or creating it for a
- * panel with drm_panel_bridge_add_typed() (or the managed version
- * devm_drm_panel_bridge_add_typed()). Once acquired, the bridge shall be
- * attached to the encoder with a call to drm_bridge_attach().
+ * devm_drm_of_get_bridge(). Once acquired, the bridge shall be attached to the
+ * encoder with a call to drm_bridge_attach().
  *
  * Bridges are responsible for linking themselves with the next bridge in the
  * chain, if any. This is done the same way as for encoders, with the call to
@@ -85,11 +93,63 @@
  * helper to create the &drm_connector, or implement it manually on top of the
  * connector-related operations exposed by the bridge (see the overview
  * documentation of bridge operations for more details).
+ */
+
+/**
+ * DOC: special care dsi
  *
- * &drm_bridge, like &drm_panel, aren't &drm_mode_object entities like planes,
- * CRTCs, encoders or connectors and hence are not visible to userspace. They
- * just provide additional hooks to get the desired output at the end of the
- * encoder chain.
+ * The interaction between the bridges and other frameworks involved in
+ * the probing of the upstream driver and the bridge driver can be
+ * challenging. Indeed, there's multiple cases that needs to be
+ * considered:
+ *
+ * - The upstream driver doesn't use the component framework and isn't a
+ *   MIPI-DSI host. In this case, the bridge driver will probe at some
+ *   point and the upstream driver should try to probe again by returning
+ *   EPROBE_DEFER as long as the bridge driver hasn't probed.
+ *
+ * - The upstream driver doesn't use the component framework, but is a
+ *   MIPI-DSI host. The bridge device uses the MIPI-DCS commands to be
+ *   controlled. In this case, the bridge device is a child of the
+ *   display device and when it will probe it's assured that the display
+ *   device (and MIPI-DSI host) is present. The upstream driver will be
+ *   assured that the bridge driver is connected between the
+ *   &mipi_dsi_host_ops.attach and &mipi_dsi_host_ops.detach operations.
+ *   Therefore, it must run mipi_dsi_host_register() in its probe
+ *   function, and then run drm_bridge_attach() in its
+ *   &mipi_dsi_host_ops.attach hook.
+ *
+ * - The upstream driver uses the component framework and is a MIPI-DSI
+ *   host. The bridge device uses the MIPI-DCS commands to be
+ *   controlled. This is the same situation than above, and can run
+ *   mipi_dsi_host_register() in either its probe or bind hooks.
+ *
+ * - The upstream driver uses the component framework and is a MIPI-DSI
+ *   host. The bridge device uses a separate bus (such as I2C) to be
+ *   controlled. In this case, there's no correlation between the probe
+ *   of the bridge and upstream drivers, so care must be taken to avoid
+ *   an endless EPROBE_DEFER loop, with each driver waiting for the
+ *   other to probe.
+ *
+ * The ideal pattern to cover the last item (and all the others in the
+ * MIPI-DSI host driver case) is to split the operations like this:
+ *
+ * - The MIPI-DSI host driver must run mipi_dsi_host_register() in its
+ *   probe hook. It will make sure that the MIPI-DSI host sticks around,
+ *   and that the driver's bind can be called.
+ *
+ * - In its probe hook, the bridge driver must try to find its MIPI-DSI
+ *   host, register as a MIPI-DSI device and attach the MIPI-DSI device
+ *   to its host. The bridge driver is now functional.
+ *
+ * - In its &struct mipi_dsi_host_ops.attach hook, the MIPI-DSI host can
+ *   now add its component. Its bind hook will now be called and since
+ *   the bridge driver is attached and registered, we can now look for
+ *   and attach it.
+ *
+ * At this point, we're now certain that both the upstream driver and
+ * the bridge driver are functional and we can't have a deadlock-like
+ * situation when probing.
  */
 
 static DEFINE_MUTEX(bridge_lock);
@@ -462,21 +522,58 @@ EXPORT_SYMBOL(drm_bridge_chain_disable);
  * Calls &drm_bridge_funcs.post_disable op for all the bridges in the
  * encoder chain, starting from the first bridge to the last. These are called
  * after completing the encoder's prepare op.
+ * If a bridge sets the DRM_BRIDGE_OP_UPSTREAM_FIRST, then the post_disable for
+ * that bridge will be called before the previous one to reverse the pre_enable
+ * calling direction.
  *
  * Note: the bridge passed should be the one closest to the encoder
  */
 void drm_bridge_chain_post_disable(struct drm_bridge *bridge)
 {
 	struct drm_encoder *encoder;
+	struct drm_bridge *next, *limit;
 
 	if (!bridge)
 		return;
 
 	encoder = bridge->encoder;
 	list_for_each_entry_from(bridge, &encoder->bridge_chain, chain_node) {
+		limit = NULL;
+
+		if (!list_is_last(&bridge->chain_node, &encoder->bridge_chain)) {
+			next = list_next_entry(bridge, chain_node);
+
+			if (next->ops & DRM_BRIDGE_OP_UPSTREAM_FIRST) {
+				limit = next;
+
+				list_for_each_entry_from(next, &encoder->bridge_chain,
+							 chain_node) {
+					if (!(next->ops &
+						DRM_BRIDGE_OP_UPSTREAM_FIRST)) {
+						next = list_prev_entry(next, chain_node);
+						limit = next;
+						break;
+					}
+				}
+
+				list_for_each_entry_from_reverse(next, &encoder->bridge_chain,
+								 chain_node) {
+					if (next == bridge)
+						break;
+
+					if (next->funcs->post_disable)
+						next->funcs->post_disable(next);
+				}
+			}
+		}
+
 		if (bridge->funcs->post_disable)
 			bridge->funcs->post_disable(bridge);
+
+		if (limit)
+			bridge = limit;
 	}
+
 }
 EXPORT_SYMBOL(drm_bridge_chain_post_disable);
 
@@ -517,21 +614,52 @@ EXPORT_SYMBOL(drm_bridge_chain_mode_set);
  * Calls &drm_bridge_funcs.pre_enable op for all the bridges in the encoder
  * chain, starting from the last bridge to the first. These are called
  * before calling the encoder's commit op.
+ * If a bridge sets the DRM_BRIDGE_OP_UPSTREAM_FIRST, then the pre_enable for
+ * the previous bridge will be called before pre_enable of this bridge.
  *
  * Note: the bridge passed should be the one closest to the encoder
  */
 void drm_bridge_chain_pre_enable(struct drm_bridge *bridge)
 {
 	struct drm_encoder *encoder;
-	struct drm_bridge *iter;
+	struct drm_bridge *iter, *next, *limit;
 
 	if (!bridge)
 		return;
 
 	encoder = bridge->encoder;
+
 	list_for_each_entry_reverse(iter, &encoder->bridge_chain, chain_node) {
+		if (iter->ops & DRM_BRIDGE_OP_UPSTREAM_FIRST) {
+			next = iter;
+			limit = bridge;
+			list_for_each_entry_from_reverse(next,
+							 &encoder->bridge_chain,
+							 chain_node) {
+				if (next == bridge)
+					break;
+
+				if (!(next->ops &
+					DRM_BRIDGE_OP_UPSTREAM_FIRST)) {
+					limit = list_prev_entry(next, chain_node);
+					break;
+				}
+			}
+
+			list_for_each_entry_from(next, &encoder->bridge_chain, chain_node) {
+				if (next == iter)
+					break;
+
+				if (next->funcs->pre_enable)
+					next->funcs->pre_enable(next);
+			}
+		}
+
 		if (iter->funcs->pre_enable)
 			iter->funcs->pre_enable(iter);
+
+		if (iter->ops & DRM_BRIDGE_OP_UPSTREAM_FIRST)
+			iter = limit;
 
 		if (iter == bridge)
 			break;
@@ -607,6 +735,25 @@ void drm_atomic_bridge_chain_disable(struct drm_bridge *bridge,
 }
 EXPORT_SYMBOL(drm_atomic_bridge_chain_disable);
 
+static void drm_atomic_bridge_call_post_disable(struct drm_bridge *bridge,
+						struct drm_atomic_state *old_state)
+{
+	if (bridge->funcs->atomic_post_disable) {
+		struct drm_bridge_state *old_bridge_state;
+
+		old_bridge_state =
+			drm_atomic_get_old_bridge_state(old_state,
+							bridge);
+		if (WARN_ON(!old_bridge_state))
+			return;
+
+		bridge->funcs->atomic_post_disable(bridge,
+						   old_bridge_state);
+	} else if (bridge->funcs->post_disable) {
+		bridge->funcs->post_disable(bridge);
+	}
+}
+
 /**
  * drm_atomic_bridge_chain_post_disable - cleans up after disabling all bridges
  *					  in the encoder chain
@@ -617,6 +764,9 @@ EXPORT_SYMBOL(drm_atomic_bridge_chain_disable);
  * &drm_bridge_funcs.post_disable) op for all the bridges in the encoder chain,
  * starting from the first bridge to the last. These are called after completing
  * &drm_encoder_helper_funcs.atomic_disable
+ * If a bridge sets the DRM_BRIDGE_OP_UPSTREAM_FIRST, then the post_disable for
+ * that bridge will be called before the previous one to reverse the pre_enable
+ * calling direction.
  *
  * Note: the bridge passed should be the one closest to the encoder
  */
@@ -624,29 +774,68 @@ void drm_atomic_bridge_chain_post_disable(struct drm_bridge *bridge,
 					  struct drm_atomic_state *old_state)
 {
 	struct drm_encoder *encoder;
+	struct drm_bridge *next, *limit;
 
 	if (!bridge)
 		return;
 
 	encoder = bridge->encoder;
+
 	list_for_each_entry_from(bridge, &encoder->bridge_chain, chain_node) {
-		if (bridge->funcs->atomic_post_disable) {
-			struct drm_bridge_state *old_bridge_state;
+		limit = NULL;
 
-			old_bridge_state =
-				drm_atomic_get_old_bridge_state(old_state,
-								bridge);
-			if (WARN_ON(!old_bridge_state))
-				return;
+		if (!list_is_last(&bridge->chain_node, &encoder->bridge_chain)) {
+			next = list_next_entry(bridge, chain_node);
 
-			bridge->funcs->atomic_post_disable(bridge,
-							   old_bridge_state);
-		} else if (bridge->funcs->post_disable) {
-			bridge->funcs->post_disable(bridge);
+			if (next->ops & DRM_BRIDGE_OP_UPSTREAM_FIRST) {
+				limit = next;
+
+				list_for_each_entry_from(next, &encoder->bridge_chain,
+							 chain_node) {
+					if (!(next->ops &
+						DRM_BRIDGE_OP_UPSTREAM_FIRST)) {
+						next = list_prev_entry(next, chain_node);
+						limit = next;
+						break;
+					}
+				}
+
+				list_for_each_entry_from_reverse(next, &encoder->bridge_chain,
+								 chain_node) {
+					if (next == bridge)
+						break;
+
+					drm_atomic_bridge_call_post_disable(next,
+									    old_state);
+				}
+			}
 		}
+
+		drm_atomic_bridge_call_post_disable(bridge, old_state);
+
+		if (limit)
+			bridge = limit;
 	}
 }
 EXPORT_SYMBOL(drm_atomic_bridge_chain_post_disable);
+
+static void drm_atomic_bridge_call_pre_enable(struct drm_bridge *bridge,
+					      struct drm_atomic_state *old_state)
+{
+	if (bridge->funcs->atomic_pre_enable) {
+		struct drm_bridge_state *old_bridge_state;
+
+		old_bridge_state =
+			drm_atomic_get_old_bridge_state(old_state,
+							bridge);
+		if (WARN_ON(!old_bridge_state))
+			return;
+
+		bridge->funcs->atomic_pre_enable(bridge, old_bridge_state);
+	} else if (bridge->funcs->pre_enable) {
+		bridge->funcs->pre_enable(bridge);
+	}
+}
 
 /**
  * drm_atomic_bridge_chain_pre_enable - prepares for enabling all bridges in
@@ -658,6 +847,8 @@ EXPORT_SYMBOL(drm_atomic_bridge_chain_post_disable);
  * &drm_bridge_funcs.pre_enable) op for all the bridges in the encoder chain,
  * starting from the last bridge to the first. These are called before calling
  * &drm_encoder_helper_funcs.atomic_enable
+ * If a bridge sets the DRM_BRIDGE_OP_UPSTREAM_FIRST, then the pre_enable for
+ * the previous bridge will be called before pre_enable of this bridge.
  *
  * Note: the bridge passed should be the one closest to the encoder
  */
@@ -665,26 +856,42 @@ void drm_atomic_bridge_chain_pre_enable(struct drm_bridge *bridge,
 					struct drm_atomic_state *old_state)
 {
 	struct drm_encoder *encoder;
-	struct drm_bridge *iter;
+	struct drm_bridge *iter, *next, *limit;
 
 	if (!bridge)
 		return;
 
 	encoder = bridge->encoder;
+
 	list_for_each_entry_reverse(iter, &encoder->bridge_chain, chain_node) {
-		if (iter->funcs->atomic_pre_enable) {
-			struct drm_bridge_state *old_bridge_state;
+		if (iter->ops & DRM_BRIDGE_OP_UPSTREAM_FIRST) {
+			next = iter;
+			limit = bridge;
+			list_for_each_entry_from_reverse(next,
+							 &encoder->bridge_chain,
+							 chain_node) {
+				if (next == bridge)
+					break;
 
-			old_bridge_state =
-				drm_atomic_get_old_bridge_state(old_state,
-								iter);
-			if (WARN_ON(!old_bridge_state))
-				return;
+				if (!(next->ops &
+					DRM_BRIDGE_OP_UPSTREAM_FIRST)) {
+					limit = list_prev_entry(next, chain_node);
+					break;
+				}
+			}
 
-			iter->funcs->atomic_pre_enable(iter, old_bridge_state);
-		} else if (iter->funcs->pre_enable) {
-			iter->funcs->pre_enable(iter);
+			list_for_each_entry_from(next, &encoder->bridge_chain, chain_node) {
+				if (next == iter)
+					break;
+
+				drm_atomic_bridge_call_pre_enable(next, old_state);
+			}
 		}
+
+		drm_atomic_bridge_call_pre_enable(iter, old_state);
+
+		if (iter->ops & DRM_BRIDGE_OP_UPSTREAM_FIRST)
+			iter = limit;
 
 		if (iter == bridge)
 			break;

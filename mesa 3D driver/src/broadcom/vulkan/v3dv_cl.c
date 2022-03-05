@@ -1,5 +1,5 @@
 /*
- * Copyright © 2019 Raspberry Pi
+ * Copyright © 2019 Raspberry Pi Ltd
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -22,6 +22,13 @@
  */
 
 #include "v3dv_private.h"
+
+/* We don't expect that the packets we use in this file change across hw
+ * versions, so we just explicitly set the V3D_VERSION and include v3dx_pack
+ * here
+ */
+#define V3D_VERSION 33
+#include "broadcom/common/v3d_macros.h"
 #include "broadcom/cle/v3dx_pack.h"
 
 void
@@ -72,9 +79,9 @@ cl_alloc_bo(struct v3dv_cl *cl, uint32_t space, bool use_branch)
       cl_emit(cl, BRANCH, branch) {
          branch.address = v3dv_cl_address(bo, 0);
       }
+   } else {
+      v3dv_job_add_bo_unchecked(cl->job, bo);
    }
-
-   v3dv_job_add_bo(cl->job, bo);
 
    cl->bo = bo;
    cl->base = cl->bo->map;
@@ -101,8 +108,26 @@ v3dv_cl_ensure_space(struct v3dv_cl *cl, uint32_t space, uint32_t alignment)
 void
 v3dv_cl_ensure_space_with_branch(struct v3dv_cl *cl, uint32_t space)
 {
-   if (v3dv_cl_offset(cl) + space + cl_packet_length(BRANCH) <= cl->size)
+   /* We do not want to emit branches from secondary command lists, instead,
+    * we will branch to them when we execute them in a primary using
+    * 'branch to sub list' commands, expecting each linked secondary to
+    * end with a 'return from sub list' command.
+    */
+   bool needs_return_from_sub_list = false;
+   if (cl->job->type == V3DV_JOB_TYPE_GPU_CL_SECONDARY) {
+      if (cl->size > 0) {
+         needs_return_from_sub_list = true;
+         space += cl_packet_length(RETURN_FROM_SUB_LIST);
+      }
+   } else {
+      space += cl_packet_length(BRANCH);
+   }
+
+   if (v3dv_cl_offset(cl) + space <= cl->size)
       return;
 
-   cl_alloc_bo(cl, space, true);
+   if (needs_return_from_sub_list)
+      cl_emit(cl, RETURN_FROM_SUB_LIST, ret);
+
+   cl_alloc_bo(cl, space, !needs_return_from_sub_list);
 }

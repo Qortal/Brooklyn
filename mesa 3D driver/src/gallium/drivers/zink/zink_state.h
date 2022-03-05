@@ -27,10 +27,23 @@
 #include <vulkan/vulkan.h>
 
 #include "pipe/p_state.h"
+#include "util/set.h"
 
 struct zink_vertex_elements_hw_state {
-   VkVertexInputAttributeDescription attribs[PIPE_MAX_ATTRIBS];
+   uint32_t hash;
    uint32_t num_bindings, num_attribs;
+   union {
+      VkVertexInputAttributeDescription attribs[PIPE_MAX_ATTRIBS];
+      VkVertexInputAttributeDescription2EXT dynattribs[PIPE_MAX_ATTRIBS];
+   };
+   union {
+      struct {
+         VkVertexInputBindingDivisorDescriptionEXT divisors[PIPE_MAX_ATTRIBS];
+         VkVertexInputBindingDescription bindings[PIPE_MAX_ATTRIBS]; // combination of element_state and stride
+         uint8_t divisors_present;
+      } b;
+      VkVertexInputBindingDescription2EXT dynbindings[PIPE_MAX_ATTRIBS];
+   };
 };
 
 struct zink_vertex_elements_state {
@@ -40,26 +53,44 @@ struct zink_vertex_elements_state {
    } bindings[PIPE_MAX_ATTRIBS];
    uint32_t divisor[PIPE_MAX_ATTRIBS];
    uint8_t binding_map[PIPE_MAX_ATTRIBS];
+   uint32_t decomposed_attrs;
+   unsigned decomposed_attrs_size;
+   uint32_t decomposed_attrs_without_w;
+   unsigned decomposed_attrs_without_w_size;
    struct zink_vertex_elements_hw_state hw_state;
 };
 
-struct zink_rasterizer_hw_state {
-   VkBool32 depth_clamp;
-   VkBool32 rasterizer_discard;
-   VkFrontFace front_face;
-   VkPolygonMode polygon_mode;
-   VkCullModeFlags cull_mode;
+struct zink_vertex_state {
+   struct pipe_vertex_state b;
+   struct zink_vertex_elements_state velems;
+   struct set masks;
 };
+
+struct zink_rasterizer_hw_state {
+   unsigned polygon_mode : 2; //VkPolygonMode
+   unsigned cull_mode : 2; //VkCullModeFlags
+   unsigned line_mode : 2; //VkLineRasterizationModeEXT
+   unsigned depth_clamp:1;
+   unsigned rasterizer_discard:1;
+   unsigned pv_last:1;
+   unsigned line_stipple_enable:1;
+   unsigned force_persample_interp:1;
+   unsigned clip_halfz:1;
+};
+#define ZINK_RAST_HW_STATE_SIZE 12
+
 
 struct zink_rasterizer_state {
    struct pipe_rasterizer_state base;
    bool offset_point, offset_line, offset_tri;
    float offset_units, offset_clamp, offset_scale;
    float line_width;
+   VkFrontFace front_face;
    struct zink_rasterizer_hw_state hw_state;
 };
 
 struct zink_blend_state {
+   uint32_t hash;
    VkPipelineColorBlendAttachmentState attachments[PIPE_MAX_COLOR_BUFS];
 
    VkBool32 logicop_enable;
@@ -69,6 +100,7 @@ struct zink_blend_state {
    VkBool32 alpha_to_one;
 
    bool need_blend_constants;
+   bool dual_src_blend;
 };
 
 struct zink_depth_stencil_alpha_hw_state {
@@ -90,7 +122,38 @@ struct zink_depth_stencil_alpha_state {
    struct zink_depth_stencil_alpha_hw_state hw_state;
 };
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void
 zink_context_state_init(struct pipe_context *pctx);
+
+
+struct pipe_vertex_state *
+zink_create_vertex_state(struct pipe_screen *pscreen,
+                          struct pipe_vertex_buffer *buffer,
+                          const struct pipe_vertex_element *elements,
+                          unsigned num_elements,
+                          struct pipe_resource *indexbuf,
+                          uint32_t full_velem_mask);
+void
+zink_vertex_state_destroy(struct pipe_screen *pscreen, struct pipe_vertex_state *vstate);
+struct pipe_vertex_state *
+zink_cache_create_vertex_state(struct pipe_screen *pscreen,
+                               struct pipe_vertex_buffer *buffer,
+                               const struct pipe_vertex_element *elements,
+                               unsigned num_elements,
+                               struct pipe_resource *indexbuf,
+                               uint32_t full_velem_mask);
+void
+zink_cache_vertex_state_destroy(struct pipe_screen *pscreen, struct pipe_vertex_state *vstate);
+
+const struct zink_vertex_elements_hw_state *
+zink_vertex_state_mask(struct pipe_vertex_state *vstate, uint32_t partial_velem_mask, bool have_EXT_vertex_input_dynamic_state);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -28,13 +28,14 @@
 #include "util/disk_cache.h"
 #include "util/slab.h"
 #include "util/u_screen.h"
-#include "intel/dev/gen_device_info.h"
+#include "intel/dev/intel_device_info.h"
 #include "intel/isl/isl.h"
 #include "iris_bufmgr.h"
 #include "iris_binder.h"
+#include "iris_measure.h"
 #include "iris_resource.h"
 
-struct gen_l3_config;
+struct intel_l3_config;
 struct brw_vue_map;
 struct iris_vs_prog_key;
 struct iris_tcs_prog_key;
@@ -43,6 +44,8 @@ struct iris_gs_prog_key;
 struct iris_fs_prog_key;
 struct iris_cs_prog_key;
 enum iris_program_cache_id;
+
+struct u_trace;
 
 #define READ_ONCE(x) (*(volatile __typeof__(x) *)&(x))
 #define WRITE_ONCE(x, v) *(volatile __typeof__(x) *)&(x) = (v)
@@ -60,7 +63,10 @@ struct iris_vtable {
    void (*init_compute_context)(struct iris_batch *batch);
    void (*upload_render_state)(struct iris_context *ice,
                                struct iris_batch *batch,
-                               const struct pipe_draw_info *draw);
+                               const struct pipe_draw_info *draw,
+                               unsigned drawid_offset,
+                               const struct pipe_draw_indirect_info *indirect,
+                               const struct pipe_draw_start_count_bias *sc);
    void (*update_surface_base_address)(struct iris_batch *batch,
                                        struct iris_binder *binder);
    void (*upload_compute_state)(struct iris_context *ice,
@@ -68,7 +74,6 @@ struct iris_vtable {
                                 const struct pipe_grid_info *grid);
    void (*rebind_buffer)(struct iris_context *ice,
                          struct iris_resource *res);
-   void (*resolve_conditional_render)(struct iris_context *ice);
    void (*load_register_reg32)(struct iris_batch *batch, uint32_t dst,
                                uint32_t src);
    void (*load_register_reg64)(struct iris_batch *batch, uint32_t dst,
@@ -108,7 +113,7 @@ struct iris_vtable {
                                      uint32_t report_id);
 
    unsigned (*derived_program_state_size)(enum iris_program_cache_id id);
-   void (*store_derived_program_state)(struct iris_context *ice,
+   void (*store_derived_program_state)(const struct intel_device_info *devinfo,
                                        enum iris_program_cache_id cache_id,
                                        struct iris_compiled_shader *shader);
    uint32_t *(*create_so_decl_list)(const struct pipe_stream_output_info *sol,
@@ -161,8 +166,6 @@ struct iris_screen {
    /** PCI ID for our GPU device */
    int pci_id;
 
-   bool no_hw;
-
    struct iris_vtable vtbl;
 
    /** Global program_string_id counter (see get_program_string_id()) */
@@ -177,13 +180,12 @@ struct iris_screen {
       bool dual_color_blend_by_location;
       bool disable_throttling;
       bool always_flush_cache;
+      bool sync_compile;
    } driconf;
 
    /** Does the kernel support various features (KERNEL_HAS_* bitfield)? */
    unsigned kernel_features;
 #define KERNEL_HAS_WAIT_FOR_SUBMIT (1<<0)
-
-   unsigned subslice_total;
 
    uint64_t aperture_bytes;
 
@@ -196,14 +198,14 @@ struct iris_screen {
     */
    uint64_t last_seqno;
 
-   struct gen_device_info devinfo;
+   struct intel_device_info devinfo;
    struct isl_device isl_dev;
    struct iris_bufmgr *bufmgr;
    struct brw_compiler *compiler;
-   struct gen_perf_config *perf_cfg;
+   struct intel_perf_config *perf_cfg;
 
-   const struct gen_l3_config *l3_config_3d;
-   const struct gen_l3_config *l3_config_cs;
+   const struct intel_l3_config *l3_config_3d;
+   const struct intel_l3_config *l3_config_cs;
 
    /**
     * A buffer containing a marker + description of the driver. This buffer is
@@ -216,7 +218,14 @@ struct iris_screen {
    struct iris_bo *workaround_bo;
    struct iris_address workaround_address;
 
+   struct util_queue shader_compiler_queue;
+
    struct disk_cache *disk_cache;
+
+   struct intel_measure_device measure;
+
+   /** Every screen on a bufmgr has an unique ID assigned by the bufmgr. */
+   int id;
 };
 
 struct pipe_screen *

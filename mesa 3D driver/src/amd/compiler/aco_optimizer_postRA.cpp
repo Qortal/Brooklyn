@@ -50,18 +50,6 @@ Idx clobbered{UINT32_MAX, 1};
 Idx const_or_undef{UINT32_MAX, 2};
 Idx written_by_multiple_instrs{UINT32_MAX, 3};
 
-bool
-is_instr_after(Idx second, Idx first)
-{
-   if (first == not_written_in_block && second != not_written_in_block)
-      return true;
-
-   if (!first.found() || !second.found())
-      return false;
-
-   return second.block > first.block || (second.block == first.block && second.instr > first.instr);
-}
-
 struct pr_opt_ctx {
    Program* program;
    Block* current_block;
@@ -151,6 +139,44 @@ last_writer_idx(pr_opt_ctx& ctx, const Operand& op)
    return instr_idx;
 }
 
+bool
+is_clobbered_since(pr_opt_ctx& ctx, PhysReg reg, RegClass rc, const Idx& idx)
+{
+   /* If we didn't find an instruction, assume that the register is clobbered. */
+   if (!idx.found())
+      return true;
+
+   /* TODO: We currently can't keep track of subdword registers. */
+   if (rc.is_subdword())
+      return true;
+
+   unsigned begin_reg = reg.reg();
+   unsigned end_reg = begin_reg + rc.size();
+   unsigned current_block_idx = ctx.current_block->index;
+
+   for (unsigned r = begin_reg; r < end_reg; ++r) {
+      Idx& i = ctx.instr_idx_by_regs[current_block_idx][r];
+      if (i == clobbered || i == written_by_multiple_instrs)
+         return true;
+      else if (i == not_written_in_block)
+         continue;
+
+      assert(i.found());
+
+      if (i.block > idx.block || (i.block == idx.block && i.instr > idx.instr))
+         return true;
+   }
+
+   return false;
+}
+
+template <typename T>
+bool
+is_clobbered_since(pr_opt_ctx& ctx, const T& t, const Idx& idx)
+{
+   return is_clobbered_since(ctx, t.physReg(), t.regClass(), idx);
+}
+
 void
 try_apply_branch_vcc(pr_opt_ctx& ctx, aco_ptr<Instruction>& instr)
 {
@@ -177,16 +203,19 @@ try_apply_branch_vcc(pr_opt_ctx& ctx, aco_ptr<Instruction>& instr)
 
    Idx op0_instr_idx = last_writer_idx(ctx, instr->operands[0]);
    Idx last_vcc_wr_idx = last_writer_idx(ctx, vcc, ctx.program->lane_mask);
-   Idx last_exec_wr_idx = last_writer_idx(ctx, exec, ctx.program->lane_mask);
 
    /* We need to make sure:
+    * - the instructions that wrote the operand register and VCC are both found
     * - the operand register used by the branch, and VCC were both written in the current block
-    * - VCC was NOT written after the operand register
-    * - EXEC is sane and was NOT written after the operand register
+    * - EXEC hasn't been clobbered since the last VCC write
+    * - VCC hasn't been clobbered since the operand register was written
+    *   (ie. the last VCC writer precedes the op0 writer)
     */
    if (!op0_instr_idx.found() || !last_vcc_wr_idx.found() ||
-       !is_instr_after(last_vcc_wr_idx, last_exec_wr_idx) ||
-       !is_instr_after(op0_instr_idx, last_vcc_wr_idx))
+       op0_instr_idx.block != ctx.current_block->index ||
+       last_vcc_wr_idx.block != ctx.current_block->index ||
+       is_clobbered_since(ctx, exec, ctx.program->lane_mask, last_vcc_wr_idx) ||
+       is_clobbered_since(ctx, vcc, ctx.program->lane_mask, op0_instr_idx))
       return;
 
    Instruction* op0_instr = ctx.get(op0_instr_idx);
@@ -346,7 +375,18 @@ try_optimize_scc_nocompare(pr_opt_ctx& ctx, aco_ptr<Instruction>& instr)
 void
 try_combine_dpp(pr_opt_ctx& ctx, aco_ptr<Instruction>& instr)
 {
-   if (!instr->isVALU() || instr->isDPP() || !can_use_DPP(instr, false))
+   /* We are looking for the following pattern:
+    *
+    * v_mov_dpp vA, vB, ...      ; move instruction with DPP
+    * v_xxx vC, vA, ...          ; current instr that uses the result from the move
+    *
+    * If possible, the above is optimized into:
+    *
+    * v_xxx_dpp vC, vB, ...      ; current instr modified to use DPP directly
+    *
+    */
+
+   if (!instr->isVALU() || instr->isDPP())
       return;
 
    for (unsigned i = 0; i < MIN2(2, instr->operands.size()); i++) {
@@ -354,9 +394,12 @@ try_combine_dpp(pr_opt_ctx& ctx, aco_ptr<Instruction>& instr)
       if (!op_instr_idx.found())
          continue;
 
-      Instruction* mov = ctx.get(op_instr_idx);
+      const Instruction* mov = ctx.get(op_instr_idx);
       if (mov->opcode != aco_opcode::v_mov_b32 || !mov->isDPP())
          continue;
+      bool dpp8 = mov->isDPP8();
+      if (!can_use_DPP(instr, false, dpp8))
+         return;
 
       /* If we aren't going to remove the v_mov_b32, we have to ensure that it doesn't overwrite
        * it's own operand before we use it.
@@ -365,32 +408,41 @@ try_combine_dpp(pr_opt_ctx& ctx, aco_ptr<Instruction>& instr)
           (!mov->definitions[0].tempId() || ctx.uses[mov->definitions[0].tempId()] > 1))
          continue;
 
-      Idx mov_src_idx = last_writer_idx(ctx, mov->operands[0]);
-      if (is_instr_after(mov_src_idx, op_instr_idx))
+      /* Don't propagate DPP if the source register is overwritten since the move. */
+      if (is_clobbered_since(ctx, mov->operands[0], op_instr_idx))
          continue;
 
       if (i && !can_swap_operands(instr, &instr->opcode))
          continue;
 
-      /* anything else doesn't make sense in SSA */
-      assert(mov->dpp().row_mask == 0xf && mov->dpp().bank_mask == 0xf);
+      if (!dpp8) /* anything else doesn't make sense in SSA */
+         assert(mov->dpp16().row_mask == 0xf && mov->dpp16().bank_mask == 0xf);
 
       if (--ctx.uses[mov->definitions[0].tempId()])
          ctx.uses[mov->operands[0].tempId()]++;
 
-      convert_to_DPP(instr);
+      convert_to_DPP(instr, dpp8);
 
-      DPP_instruction* dpp = &instr->dpp();
-      if (i) {
-         std::swap(dpp->operands[0], dpp->operands[1]);
-         std::swap(dpp->neg[0], dpp->neg[1]);
-         std::swap(dpp->abs[0], dpp->abs[1]);
+      if (dpp8) {
+         DPP8_instruction* dpp = &instr->dpp8();
+         if (i) {
+            std::swap(dpp->operands[0], dpp->operands[1]);
+         }
+         dpp->operands[0] = mov->operands[0];
+         memcpy(dpp->lane_sel, mov->dpp8().lane_sel, sizeof(dpp->lane_sel));
+      } else {
+         DPP16_instruction* dpp = &instr->dpp16();
+         if (i) {
+            std::swap(dpp->operands[0], dpp->operands[1]);
+            std::swap(dpp->neg[0], dpp->neg[1]);
+            std::swap(dpp->abs[0], dpp->abs[1]);
+         }
+         dpp->operands[0] = mov->operands[0];
+         dpp->dpp_ctrl = mov->dpp16().dpp_ctrl;
+         dpp->bound_ctrl = true;
+         dpp->neg[0] ^= mov->dpp16().neg[0] && !dpp->abs[0];
+         dpp->abs[0] |= mov->dpp16().abs[0];
       }
-      dpp->operands[0] = mov->operands[0];
-      dpp->dpp_ctrl = mov->dpp().dpp_ctrl;
-      dpp->bound_ctrl = true;
-      dpp->neg[0] ^= mov->dpp().neg[0] && !dpp->abs[0];
-      dpp->abs[0] |= mov->dpp().abs[0];
       return;
    }
 }

@@ -1,4 +1,5 @@
 /*
+ * Copyright © 2016 Intel Corporation
  * Copyright © 2019 Google LLC
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -27,7 +28,150 @@
 #include <vulkan/vulkan_core.h>
 #include "util/format/u_format.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum pipe_format
 vk_format_to_pipe_format(enum VkFormat vkformat);
+
+VkImageAspectFlags
+vk_format_aspects(VkFormat format);
+
+static inline bool
+vk_format_is_color(VkFormat format)
+{
+   return vk_format_aspects(format) == VK_IMAGE_ASPECT_COLOR_BIT;
+}
+
+static inline bool
+vk_format_is_depth_or_stencil(VkFormat format)
+{
+   const VkImageAspectFlags aspects = vk_format_aspects(format);
+   return aspects & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
+}
+
+static inline bool
+vk_format_has_depth(VkFormat format)
+{
+   const VkImageAspectFlags aspects = vk_format_aspects(format);
+   return aspects & VK_IMAGE_ASPECT_DEPTH_BIT;
+}
+
+static inline bool
+vk_format_has_stencil(VkFormat format)
+{
+   const VkImageAspectFlags aspects = vk_format_aspects(format);
+   return aspects & VK_IMAGE_ASPECT_STENCIL_BIT;
+}
+
+static inline VkFormat
+vk_format_depth_only(VkFormat format)
+{
+   assert(vk_format_has_depth(format));
+   switch (format) {
+   case VK_FORMAT_D16_UNORM_S8_UINT:
+      return VK_FORMAT_D16_UNORM;
+   case VK_FORMAT_D24_UNORM_S8_UINT:
+      return VK_FORMAT_X8_D24_UNORM_PACK32;
+   case VK_FORMAT_D32_SFLOAT_S8_UINT:
+      return VK_FORMAT_D32_SFLOAT;
+   default:
+      return format;
+   }
+}
+
+static inline VkFormat
+vk_format_stencil_only(VkFormat format)
+{
+   assert(vk_format_has_stencil(format));
+   return VK_FORMAT_S8_UINT;
+}
+
+void vk_component_mapping_to_pipe_swizzle(VkComponentMapping mapping,
+                                          unsigned char out_swizzle[4]);
+
+static inline bool
+vk_format_is_int(VkFormat format)
+{
+   return util_format_is_pure_integer(vk_format_to_pipe_format(format));
+}
+
+static inline bool
+vk_format_is_sint(VkFormat format)
+{
+   return util_format_is_pure_sint(vk_format_to_pipe_format(format));
+}
+
+static inline bool
+vk_format_is_uint(VkFormat format)
+{
+   return util_format_is_pure_uint(vk_format_to_pipe_format(format));
+}
+
+static inline bool
+vk_format_is_unorm(VkFormat format)
+{
+   return util_format_is_unorm(vk_format_to_pipe_format(format));
+}
+
+static inline bool
+vk_format_is_snorm(VkFormat format)
+{
+   return util_format_is_snorm(vk_format_to_pipe_format(format));
+}
+
+static inline bool
+vk_format_is_float(VkFormat format)
+{
+   return util_format_is_float(vk_format_to_pipe_format(format));
+}
+
+static inline bool
+vk_format_is_srgb(VkFormat format)
+{
+   return util_format_is_srgb(vk_format_to_pipe_format(format));
+}
+
+static inline unsigned
+vk_format_get_blocksize(VkFormat format)
+{
+   return util_format_get_blocksize(vk_format_to_pipe_format(format));
+}
+
+static inline unsigned
+vk_format_get_blockwidth(VkFormat format)
+{
+   return util_format_get_blockwidth(vk_format_to_pipe_format(format));
+}
+
+static inline unsigned
+vk_format_get_blockheight(VkFormat format)
+{
+   return util_format_get_blockheight(vk_format_to_pipe_format(format));
+}
+
+static inline bool
+vk_format_is_compressed(VkFormat format)
+{
+   /* this includes 4:2:2 formats, which are compressed formats for vulkan */
+   return vk_format_get_blockwidth(format) > 1;
+}
+
+static inline const struct util_format_description *
+vk_format_description(VkFormat format)
+{
+   return util_format_description(vk_format_to_pipe_format(format));
+}
+
+static inline unsigned
+vk_format_get_nr_components(VkFormat format)
+{
+   return util_format_get_nr_components(vk_format_to_pipe_format(format));
+}
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -39,6 +39,7 @@
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
 #include "util/u_pack_color.h"
+#include "util/u_cpu_detect.h"
 #include "util/u_viewport.h"
 #include "draw/draw_pipe.h"
 #include "util/os_time.h"
@@ -53,6 +54,7 @@
 #include "lp_setup_context.h"
 #include "lp_screen.h"
 #include "lp_state.h"
+#include "lp_jit.h"
 #include "frontend/sw_winsys.h"
 
 #include "draw/draw_context.h"
@@ -63,27 +65,55 @@ static boolean set_scene_state( struct lp_setup_context *, enum setup_state,
                              const char *reason);
 static boolean try_update_scene_state( struct lp_setup_context *setup );
 
+static unsigned
+lp_setup_wait_empty_scene(struct lp_setup_context *setup)
+{
+   /* just use the first scene if we run out */
+   if (setup->scenes[0]->fence) {
+      debug_printf("%s: wait for scene %d\n",
+                   __FUNCTION__, setup->scenes[0]->fence->id);
+      lp_fence_wait(setup->scenes[0]->fence);
+      lp_scene_end_rasterization(setup->scenes[0]);
+   }
+   return 0;
+}
 
 static void
 lp_setup_get_empty_scene(struct lp_setup_context *setup)
 {
    assert(setup->scene == NULL);
+   unsigned i;
 
-   setup->scene_idx++;
-   setup->scene_idx %= ARRAY_SIZE(setup->scenes);
-
-   setup->scene = setup->scenes[setup->scene_idx];
-
-   if (setup->scene->fence) {
-      if (LP_DEBUG & DEBUG_SETUP)
-         debug_printf("%s: wait for scene %d\n",
-                      __FUNCTION__, setup->scene->fence->id);
-
-      lp_fence_wait(setup->scene->fence);
+   /* try and find a scene that isn't being used */
+   for (i = 0; i < setup->num_active_scenes; i++) {
+      if (setup->scenes[i]->fence) {
+         if (lp_fence_signalled(setup->scenes[i]->fence)) {
+            lp_scene_end_rasterization(setup->scenes[i]);
+            break;
+         }
+      } else
+         break;
    }
 
-   lp_scene_begin_binning(setup->scene, &setup->fb);
+   if (setup->num_active_scenes + 1 > MAX_SCENES)
+      i = lp_setup_wait_empty_scene(setup);
+   else if (i == setup->num_active_scenes) {
+      /* allocate a new scene */
+      struct lp_scene *scene = lp_scene_create(setup);
+      if (!scene) {
+         /* block and reuse scenes */
+         i = lp_setup_wait_empty_scene(setup);
+      } else {
+         LP_DBG(DEBUG_SETUP, "allocated scene: %d\n", setup->num_active_scenes);
+         setup->scenes[setup->num_active_scenes] = scene;
+         i = setup->num_active_scenes;
+         setup->num_active_scenes++;
+      }
+   }
 
+   setup->scene = setup->scenes[i];
+   setup->scene->permit_linear_rasterizer = setup->permit_linear_rasterizer;
+   lp_scene_begin_binning(setup->scene, &setup->fb);
 }
 
 
@@ -96,6 +126,20 @@ first_triangle( struct lp_setup_context *setup,
    assert(setup->state == SETUP_ACTIVE);
    lp_setup_choose_triangle( setup );
    setup->triangle( setup, v0, v1, v2 );
+}
+
+static boolean
+first_rectangle( struct lp_setup_context *setup,
+                 const float (*v0)[4],
+                 const float (*v1)[4],
+                 const float (*v2)[4],
+                 const float (*v3)[4],
+                 const float (*v4)[4],
+                 const float (*v5)[4])
+{
+   assert(setup->state == SETUP_ACTIVE);
+   lp_setup_choose_rect( setup );
+   return setup->rect( setup, v0, v1, v2, v3, v4, v5 );
 }
 
 static void
@@ -117,7 +161,8 @@ first_point( struct lp_setup_context *setup,
    setup->point( setup, v0 );
 }
 
-void lp_setup_reset( struct lp_setup_context *setup )
+void
+lp_setup_reset( struct lp_setup_context *setup )
 {
    unsigned i;
 
@@ -145,6 +190,7 @@ void lp_setup_reset( struct lp_setup_context *setup )
    setup->line = first_line;
    setup->point = first_point;
    setup->triangle = first_triangle;
+   setup->rect = first_rectangle;
 }
 
 
@@ -167,22 +213,9 @@ lp_setup_rasterize_scene( struct lp_setup_context *setup )
       setup->last_fence->issued = TRUE;
 
    mtx_lock(&screen->rast_mutex);
-
-   /* FIXME: We enqueue the scene then wait on the rasterizer to finish.
-    * This means we never actually run any vertex stuff in parallel to
-    * rasterization (not in the same context at least) which is what the
-    * multiple scenes per setup is about - when we get a new empty scene
-    * any old one is already empty again because we waited here for
-    * raster tasks to be finished. Ideally, we shouldn't need to wait here
-    * and rely on fences elsewhere when waiting is necessary.
-    * Certainly, lp_scene_end_rasterization() would need to be deferred too
-    * and there's probably other bits why this doesn't actually work.
-    */
    lp_rast_queue_scene(screen->rast, scene);
-   lp_rast_finish(screen->rast);
    mtx_unlock(&screen->rast_mutex);
 
-   lp_scene_end_rasterization(setup->scene);
    lp_setup_reset( setup );
 
    LP_DBG(DEBUG_SETUP, "%s done \n", __FUNCTION__);
@@ -576,6 +609,7 @@ lp_setup_set_triangle_state( struct lp_setup_context *setup,
    setup->ccw_is_frontface = ccw_is_frontface;
    setup->cullmode = cull_mode;
    setup->triangle = first_triangle;
+   setup->rect = first_rectangle;
    setup->multisample = multisample;
    setup->pixel_offset = half_pixel_center ? 0.5f : 0.0f;
    setup->bottom_edge_rule = bottom_edge_rule;
@@ -588,26 +622,32 @@ lp_setup_set_triangle_state( struct lp_setup_context *setup,
 
 void 
 lp_setup_set_line_state( struct lp_setup_context *setup,
-			 float line_width)
+                         float line_width,
+                         boolean line_rectangular)
 {
    LP_DBG(DEBUG_SETUP, "%s\n", __FUNCTION__);
 
    setup->line_width = line_width;
+   setup->rectangular_lines = line_rectangular;
 }
 
 void 
 lp_setup_set_point_state( struct lp_setup_context *setup,
                           float point_size,
+                          boolean point_tri_clip,
                           boolean point_size_per_vertex,
                           uint sprite_coord_enable,
-                          uint sprite_coord_origin)
+                          uint sprite_coord_origin,
+                          boolean point_quad_rasterization)
 {
    LP_DBG(DEBUG_SETUP, "%s\n", __FUNCTION__);
 
    setup->point_size = point_size;
    setup->sprite_coord_enable = sprite_coord_enable;
    setup->sprite_coord_origin = sprite_coord_origin;
+   setup->point_tri_clip = point_tri_clip;
    setup->point_size_per_vertex = point_size_per_vertex;
+   setup->legacy_points = !point_quad_rasterization;
 }
 
 void
@@ -642,10 +682,10 @@ lp_setup_set_fs_constants(struct lp_setup_context *setup,
    assert(num <= ARRAY_SIZE(setup->constants));
 
    for (i = 0; i < num; ++i) {
-      util_copy_constant_buffer(&setup->constants[i].current, &buffers[i]);
+      util_copy_constant_buffer(&setup->constants[i].current, &buffers[i], false);
    }
    for (; i < ARRAY_SIZE(setup->constants); i++) {
-      util_copy_constant_buffer(&setup->constants[i].current, NULL);
+      util_copy_constant_buffer(&setup->constants[i].current, NULL, false);
    }
    setup->dirty |= LP_SETUP_NEW_CONSTANTS;
 }
@@ -653,7 +693,8 @@ lp_setup_set_fs_constants(struct lp_setup_context *setup,
 void
 lp_setup_set_fs_ssbos(struct lp_setup_context *setup,
                       unsigned num,
-                      struct pipe_shader_buffer *buffers)
+                      struct pipe_shader_buffer *buffers,
+                      uint32_t ssbo_write_mask)
 {
    unsigned i;
 
@@ -667,6 +708,7 @@ lp_setup_set_fs_ssbos(struct lp_setup_context *setup,
    for (; i < ARRAY_SIZE(setup->ssbos); i++) {
       util_copy_shader_buffer(&setup->ssbos[i].current, NULL);
    }
+   setup->ssbo_write_mask = ssbo_write_mask;
    setup->dirty |= LP_SETUP_NEW_SSBOS;
 }
 
@@ -706,7 +748,11 @@ lp_setup_set_fs_images(struct lp_setup_context *setup,
 
          if (llvmpipe_resource_is_texture(res)) {
             uint32_t mip_offset = lp_res->mip_offsets[image->u.tex.level];
+            const uint32_t bw = util_format_get_blockwidth(image->resource->format);
+            const uint32_t bh = util_format_get_blockheight(image->resource->format);
 
+            jit_image->width = DIV_ROUND_UP(jit_image->width, bw);
+            jit_image->height = DIV_ROUND_UP(jit_image->height, bh);
             jit_image->width = u_minify(jit_image->width, image->u.tex.level);
             jit_image->height = u_minify(jit_image->height, image->u.tex.level);
 
@@ -829,6 +875,7 @@ lp_setup_set_rasterizer_discard(struct lp_setup_context *setup,
       setup->line = first_line;
       setup->point = first_point;
       setup->triangle = first_triangle;
+      setup->rect = first_rectangle;
    }
 }
 
@@ -842,6 +889,24 @@ lp_setup_set_vertex_info(struct lp_setup_context *setup,
 }
 
 
+void 
+lp_setup_set_linear_mode( struct lp_setup_context *setup,
+                          boolean mode )
+{
+   /* The linear rasterizer requires sse2 both at compile and runtime,
+    * in particular for the code in lp_rast_linear_fallback.c.  This
+    * is more than ten-year-old technology, so it's a reasonable
+    * baseline.
+    */
+#if defined(PIPE_ARCH_SSE)
+   setup->permit_linear_rasterizer = (mode &&
+                                      util_get_cpu_caps()->has_sse2);
+#else
+   setup->permit_linear_rasterizer = FALSE;
+#endif
+}
+
+
 /**
  * Called during state validation when LP_NEW_VIEWPORT is set.
  */
@@ -851,12 +916,33 @@ lp_setup_set_viewports(struct lp_setup_context *setup,
                        const struct pipe_viewport_state *viewports)
 {
    struct llvmpipe_context *lp = llvmpipe_context(setup->pipe);
+   float half_height, x0, y0;
    unsigned i;
 
    LP_DBG(DEBUG_SETUP, "%s\n", __FUNCTION__);
 
    assert(num_viewports <= PIPE_MAX_VIEWPORTS);
    assert(viewports);
+
+   /*
+    * Linear rasterizer path for scissor/viewport intersection.
+    *
+    * Calculate "scissor" rect from the (first) viewport.
+    * Just like stored scissor rects need inclusive coords.
+    * For rounding, assume half pixel center (d3d9 should not end up
+    * with fractional viewports) - quite obviously for msaa we'd need
+    * fractional values here (and elsewhere for the point bounding box).
+    *
+    * See: lp_setup.c::try_update_scene_state
+    */
+   half_height = fabsf(viewports[0].scale[1]);
+   x0 = viewports[0].translate[0] - viewports[0].scale[0];
+   y0 = viewports[0].translate[1] - half_height;
+   setup->vpwh.x0 = (int)(x0 + 0.499f);
+   setup->vpwh.x1 = (int)(viewports[0].scale[0] * 2.0f + x0 - 0.501f);
+   setup->vpwh.y0 = (int)(y0 + 0.499f);
+   setup->vpwh.y1 = (int)(half_height * 2.0f + y0 - 0.501f);
+   setup->dirty |= LP_SETUP_NEW_SCISSOR;
 
    /*
     * For use in lp_state_fs.c, propagate the viewport values for all viewports.
@@ -878,7 +964,7 @@ lp_setup_set_viewports(struct lp_setup_context *setup,
 
 
 /**
- * Called during state validation when LP_NEW_SAMPLER_VIEW is set.
+ * Called directly by llvmpipe_set_sampler_views
  */
 void
 lp_setup_set_fragment_sampler_views(struct lp_setup_context *setup,
@@ -895,6 +981,12 @@ lp_setup_set_fragment_sampler_views(struct lp_setup_context *setup,
 
    for (i = 0; i < max_tex_num; i++) {
       struct pipe_sampler_view *view = i < num ? views[i] : NULL;
+
+      /* We are going to overwrite/unref the current texture further below. If
+       * set, make sure to unmap its resource to avoid leaking previous
+       * mapping.  */
+      if (setup->fs.current_tex[i])
+         llvmpipe_resource_unmap(setup->fs.current_tex[i], 0, 0);
 
       if (view) {
          struct pipe_resource *res = view->texture;
@@ -1000,13 +1092,7 @@ lp_setup_set_fragment_sampler_views(struct lp_setup_context *setup,
          }
          else {
             /* display target texture/surface */
-            /*
-             * XXX: Where should this be unmapped?
-             */
-            struct llvmpipe_screen *screen = llvmpipe_screen(res->screen);
-            struct sw_winsys *winsys = screen->winsys;
-            jit_tex->base = winsys->displaytarget_map(winsys, lp_tex->dt,
-                                                         PIPE_MAP_READ);
+            jit_tex->base = llvmpipe_resource_map(res, 0, 0, LP_TEX_USAGE_READ);
             jit_tex->row_stride[0] = lp_tex->row_stride[0];
             jit_tex->img_stride[0] = lp_tex->img_stride[0];
             jit_tex->mip_offsets[0] = 0;
@@ -1027,7 +1113,6 @@ lp_setup_set_fragment_sampler_views(struct lp_setup_context *setup,
 
    setup->dirty |= LP_SETUP_NEW_FS;
 }
-
 
 /**
  * Called during state validation when LP_NEW_SAMPLER is set.
@@ -1053,12 +1138,15 @@ lp_setup_set_fragment_sampler_state(struct lp_setup_context *setup,
          jit_sam->min_lod = sampler->min_lod;
          jit_sam->max_lod = sampler->max_lod;
          jit_sam->lod_bias = sampler->lod_bias;
+         jit_sam->max_aniso = sampler->max_anisotropy;
          COPY_4V(jit_sam->border_color, sampler->border_color.f);
       }
    }
 
    setup->dirty |= LP_SETUP_NEW_FS;
 }
+
+
 
 
 /**
@@ -1070,7 +1158,7 @@ unsigned
 lp_setup_is_resource_referenced( const struct lp_setup_context *setup,
                                 const struct pipe_resource *texture )
 {
-   unsigned i;
+   unsigned i, j;
 
    /* check the render targets */
    for (i = 0; i < setup->fb.nr_cbufs; i++) {
@@ -1081,21 +1169,22 @@ lp_setup_is_resource_referenced( const struct lp_setup_context *setup,
       return LP_REFERENCED_FOR_READ | LP_REFERENCED_FOR_WRITE;
    }
 
-   /* check textures referenced by the scene */
-   for (i = 0; i < ARRAY_SIZE(setup->scenes); i++) {
-      if (lp_scene_is_resource_referenced(setup->scenes[i], texture)) {
-         return LP_REFERENCED_FOR_READ;
+   /* check resources referenced by active scenes */
+   for (i = 0; i < setup->num_active_scenes; i++) {
+      struct lp_scene *scene = setup->scenes[i];
+      /* check the render targets */
+      for (j = 0; j < scene->fb.nr_cbufs; j++) {
+         if (scene->fb.cbufs[j] && scene->fb.cbufs[j]->texture == texture)
+            return LP_REFERENCED_FOR_READ | LP_REFERENCED_FOR_WRITE;
       }
-   }
-
-   for (i = 0; i < ARRAY_SIZE(setup->ssbos); i++) {
-      if (setup->ssbos[i].current.buffer == texture)
+      if (scene->fb.zsbuf && scene->fb.zsbuf->texture == texture) {
          return LP_REFERENCED_FOR_READ | LP_REFERENCED_FOR_WRITE;
-   }
+      }
 
-   for (i = 0; i < ARRAY_SIZE(setup->images); i++) {
-      if (setup->images[i].current.resource == texture)
-         return LP_REFERENCED_FOR_READ | LP_REFERENCED_FOR_WRITE;
+      /* check resources referenced by the scene */
+      unsigned ref = lp_scene_is_resource_referenced(scene, texture);
+      if (ref)
+         return ref;
    }
 
    return LP_UNREFERENCED;
@@ -1181,6 +1270,12 @@ try_update_scene_state( struct lp_setup_context *setup )
       setup->fs.current.jit_context.f_blend_color = fstored;
       setup->dirty |= LP_SETUP_NEW_FS;
    }
+
+   struct llvmpipe_context *llvmpipe = llvmpipe_context(setup->pipe);
+   if (llvmpipe->dirty & LP_NEW_FS_CONSTANTS)
+      lp_setup_set_fs_constants(llvmpipe->setup,
+                                ARRAY_SIZE(llvmpipe->constants[PIPE_SHADER_FRAGMENT]),
+                                llvmpipe->constants[PIPE_SHADER_FRAGMENT]);
 
    if (setup->dirty & LP_SETUP_NEW_CONSTANTS) {
       for (i = 0; i < ARRAY_SIZE(setup->constants); ++i) {
@@ -1283,6 +1378,7 @@ try_update_scene_state( struct lp_setup_context *setup )
          memcpy(&stored->jit_context,
                 &setup->fs.current.jit_context,
                 sizeof setup->fs.current.jit_context);
+         stored->jit_context.aniso_filter_table = lp_build_sample_aniso_filter_table();
          stored->variant = setup->fs.current.variant;
 
          if (!lp_scene_add_frag_shader_reference(scene,
@@ -1297,7 +1393,30 @@ try_update_scene_state( struct lp_setup_context *setup )
             if (setup->fs.current_tex[i]) {
                if (!lp_scene_add_resource_reference(scene,
                                                     setup->fs.current_tex[i],
-                                                    new_scene)) {
+                                                    new_scene, false)) {
+                  assert(!new_scene);
+                  return FALSE;
+               }
+            }
+         }
+
+         for (i = 0; i < ARRAY_SIZE(setup->ssbos); i++) {
+            if (setup->ssbos[i].current.buffer) {
+               if (!lp_scene_add_resource_reference(scene,
+                                                    setup->ssbos[i].current.buffer,
+                                                    new_scene, setup->ssbo_write_mask & (1 << i))) {
+                  assert(!new_scene);
+                  return FALSE;
+               }
+            }
+         }
+
+         for (i = 0; i < ARRAY_SIZE(setup->images); i++) {
+            if (setup->images[i].current.resource) {
+               if (!lp_scene_add_resource_reference(scene,
+                                                    setup->images[i].current.resource,
+                                                    new_scene,
+                                                    setup->images[i].current.shader_access & PIPE_IMAGE_ACCESS_WRITE)) {
                   assert(!new_scene);
                   return FALSE;
                }
@@ -1308,11 +1427,41 @@ try_update_scene_state( struct lp_setup_context *setup )
 
    if (setup->dirty & LP_SETUP_NEW_SCISSOR) {
       unsigned i;
+
       for (i = 0; i < PIPE_MAX_VIEWPORTS; ++i) {
          setup->draw_regions[i] = setup->framebuffer;
          if (setup->scissor_test) {
             u_rect_possible_intersection(&setup->scissors[i],
                                          &setup->draw_regions[i]);
+         }
+      }
+      if (setup->permit_linear_rasterizer) {
+         /* NOTE: this only takes first vp into account. */
+         boolean need_vp_scissoring = !!memcmp(&setup->vpwh, &setup->framebuffer,
+                                               sizeof(setup->framebuffer));
+         assert(setup->viewport_index_slot < 0);
+         if (need_vp_scissoring) {
+            u_rect_possible_intersection(&setup->vpwh,
+                                         &setup->draw_regions[0]);
+         }
+      }
+      else if (setup->point_tri_clip) {
+         /*
+          * for d3d-style point clipping, we're going to need
+          * the fake vp scissor too. Hence do the intersection with vp,
+          * but don't indicate this. As above this will only work for first vp
+          * which should be ok because we instruct draw to only skip point
+          * clipping when there's only one viewport (this works because d3d10
+          * points are always single pixel).
+          * (Also note that if we have permit_linear_rasterizer this will
+          * cause large points to always get vp scissored, regardless the
+          * point_tri_clip setting.)
+          */
+         boolean need_vp_scissoring = !!memcmp(&setup->vpwh, &setup->framebuffer,
+                                               sizeof(setup->framebuffer));
+         if (need_vp_scissoring) {
+            u_rect_possible_intersection(&setup->vpwh,
+                                         &setup->draw_regions[0]);
          }
       }
    }
@@ -1411,7 +1560,10 @@ lp_setup_destroy( struct lp_setup_context *setup )
    util_unreference_framebuffer_state(&setup->fb);
 
    for (i = 0; i < ARRAY_SIZE(setup->fs.current_tex); i++) {
-      pipe_resource_reference(&setup->fs.current_tex[i], NULL);
+      struct pipe_resource **res_ptr = &setup->fs.current_tex[i];
+      if (*res_ptr)
+         llvmpipe_resource_unmap(*res_ptr, 0, 0);
+      pipe_resource_reference(res_ptr, NULL);
    }
 
    for (i = 0; i < ARRAY_SIZE(setup->constants); i++) {
@@ -1423,7 +1575,7 @@ lp_setup_destroy( struct lp_setup_context *setup )
    }
 
    /* free the scenes in the 'empty' queue */
-   for (i = 0; i < ARRAY_SIZE(setup->scenes); i++) {
+   for (i = 0; i < setup->num_active_scenes; i++) {
       struct lp_scene *scene = setup->scenes[i];
 
       if (scene->fence)
@@ -1432,6 +1584,8 @@ lp_setup_destroy( struct lp_setup_context *setup )
       lp_scene_destroy(scene);
    }
 
+   LP_DBG(DEBUG_SETUP, "number of scenes used: %d\n", setup->num_active_scenes);
+   slab_destroy(&setup->scene_slab);
    lp_fence_reference(&setup->last_fence, NULL);
 
    FREE( setup );
@@ -1472,13 +1626,15 @@ lp_setup_create( struct pipe_context *pipe,
    draw_set_rasterize_stage(draw, setup->vbuf);
    draw_set_render(draw, &setup->base);
 
-   /* create some empty scenes */
-   for (i = 0; i < MAX_SCENES; i++) {
-      setup->scenes[i] = lp_scene_create( pipe );
-      if (!setup->scenes[i]) {
-         goto no_scenes;
-      }
+   slab_create(&setup->scene_slab,
+               sizeof(struct lp_scene),
+               INITIAL_SCENES);
+   /* create just one scene for starting point */
+   setup->scenes[0] = lp_scene_create( setup );
+   if (!setup->scenes[0]) {
+      goto no_scenes;
    }
+   setup->num_active_scenes++;
 
    setup->triangle = first_triangle;
    setup->line     = first_line;
@@ -1514,13 +1670,13 @@ void
 lp_setup_begin_query(struct lp_setup_context *setup,
                      struct llvmpipe_query *pq)
 {
-
    set_scene_state(setup, SETUP_ACTIVE, "begin_query");
 
    if (!(pq->type == PIPE_QUERY_OCCLUSION_COUNTER ||
          pq->type == PIPE_QUERY_OCCLUSION_PREDICATE ||
          pq->type == PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE ||
-         pq->type == PIPE_QUERY_PIPELINE_STATISTICS))
+         pq->type == PIPE_QUERY_PIPELINE_STATISTICS ||
+         pq->type == PIPE_QUERY_TIME_ELAPSED))
       return;
 
    /* init the query to its beginning state */
@@ -1572,7 +1728,8 @@ lp_setup_end_query(struct lp_setup_context *setup, struct llvmpipe_query *pq)
           pq->type == PIPE_QUERY_OCCLUSION_PREDICATE ||
           pq->type == PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE ||
           pq->type == PIPE_QUERY_PIPELINE_STATISTICS ||
-          pq->type == PIPE_QUERY_TIMESTAMP) {
+          pq->type == PIPE_QUERY_TIMESTAMP ||
+          pq->type == PIPE_QUERY_TIME_ELAPSED) {
          if (pq->type == PIPE_QUERY_TIMESTAMP &&
                !(setup->scene->tiles_x | setup->scene->tiles_y)) {
             /*
@@ -1608,7 +1765,8 @@ fail:
    if (pq->type == PIPE_QUERY_OCCLUSION_COUNTER ||
       pq->type == PIPE_QUERY_OCCLUSION_PREDICATE ||
       pq->type == PIPE_QUERY_OCCLUSION_PREDICATE_CONSERVATIVE ||
-      pq->type == PIPE_QUERY_PIPELINE_STATISTICS) {
+      pq->type == PIPE_QUERY_PIPELINE_STATISTICS ||
+      pq->type == PIPE_QUERY_TIME_ELAPSED) {
       unsigned i;
 
       /* remove from active binned query list */
@@ -1642,4 +1800,69 @@ lp_setup_flush_and_restart(struct lp_setup_context *setup)
    return TRUE;
 }
 
-
+void
+lp_setup_add_scissor_planes(const struct u_rect *scissor,
+                            struct lp_rast_plane *plane_s,
+                            boolean s_planes[4], bool multisample)
+{
+   /*
+    * When rasterizing scissored tris, use the intersection of the
+    * triangle bounding box and the scissor rect to generate the
+    * scissor planes.
+    *
+    * This permits us to cut off the triangle "tails" that are present
+    * in the intermediate recursive levels caused when two of the
+    * triangles edges don't diverge quickly enough to trivially reject
+    * exterior blocks from the triangle.
+    *
+    * It's not really clear if it's worth worrying about these tails,
+    * but since we generate the planes for each scissored tri, it's
+    * free to trim them in this case.
+    *
+    * Note that otherwise, the scissor planes only vary in 'C' value,
+    * and even then only on state-changes.  Could alternatively store
+    * these planes elsewhere.
+    * (Or only store the c value together with a bit indicating which
+    * scissor edge this is, so rasterization would treat them differently
+    * (easier to evaluate) to ordinary planes.)
+    */
+   int adj = multisample ? 127 : 0;
+   if (s_planes[0]) {
+      int x0 = scissor->x0 - 1;
+      plane_s->dcdx = ~0U << 8;
+      plane_s->dcdy = 0;
+      plane_s->c = x0 << 8;
+      plane_s->c += adj;
+      plane_s->c = -plane_s->c; /* flip sign */
+      plane_s->eo = 1 << 8;
+      plane_s++;
+   }
+   if (s_planes[1]) {
+      int x1 = scissor->x1;
+      plane_s->dcdx = 1 << 8;
+      plane_s->dcdy = 0;
+      plane_s->c = x1 << 8;
+      plane_s->c += 127 + adj;
+      plane_s->eo = 0 << 8;
+      plane_s++;
+   }
+   if (s_planes[2]) {
+      int y0 = scissor->y0 - 1;
+      plane_s->dcdx = 0;
+      plane_s->dcdy = 1 << 8;
+      plane_s->c = y0 << 8;
+      plane_s->c += adj;
+      plane_s->c = -plane_s->c; /* flip sign */
+      plane_s->eo = 1 << 8;
+      plane_s++;
+   }
+   if (s_planes[3]) {
+      int y1 = scissor->y1;
+      plane_s->dcdx = 0;
+      plane_s->dcdy = ~0U << 8;
+      plane_s->c = y1 << 8;
+      plane_s->c += 127 + adj;
+      plane_s->eo = 0;
+      plane_s++;
+   }
+}

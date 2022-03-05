@@ -1,4 +1,4 @@
-lima-mali450-test:arm64:
+.lima-mali450-test:arm64:
   extends:
     - .lava-test:arm64
     - .lima-rules
@@ -10,6 +10,4 @@ lima-mali450-test:arm64:
     FDO_CI_CONCURRENT: 4
     DEQP_EXPECTED_RENDERER: Mali450
     VISIBILITY_GROUP: "mesa-ci"
-
-  tags:
-    - mesa-ci-x86-64-lava-lima
+    RUNNER_TAG: mesa-ci-x86-64-lava-lima

@@ -42,7 +42,7 @@ if typing.TYPE_CHECKING:
         nominated: bool
         nomination_type: typing.Optional[int]
         resolution: typing.Optional[int]
-        master_sha: typing.Optional[str]
+        main_sha: typing.Optional[str]
         because_sha: typing.Optional[str]
 
 IS_FIX = re.compile(r'^\s*fixes:\s*([a-f0-9]{6,40})', flags=re.MULTILINE | re.IGNORECASE)
@@ -118,7 +118,7 @@ class Commit:
     nominated: bool = attr.ib(False)
     nomination_type: typing.Optional[NominationType] = attr.ib(None)
     resolution: Resolution = attr.ib(Resolution.UNRESOLVED)
-    master_sha: typing.Optional[str] = attr.ib(None)
+    main_sha: typing.Optional[str] = attr.ib(None)
     because_sha: typing.Optional[str] = attr.ib(None)
 
     def to_json(self) -> 'CommitDict':
@@ -131,12 +131,20 @@ class Commit:
 
     @classmethod
     def from_json(cls, data: 'CommitDict') -> 'Commit':
-        c = cls(data['sha'], data['description'], data['nominated'], master_sha=data['master_sha'], because_sha=data['because_sha'])
+        c = cls(data['sha'], data['description'], data['nominated'], main_sha=data['main_sha'], because_sha=data['because_sha'])
         if data['nomination_type'] is not None:
             c.nomination_type = NominationType(data['nomination_type'])
         if data['resolution'] is not None:
             c.resolution = Resolution(data['resolution'])
         return c
+
+    def date(self) -> str:
+        # Show commit date, ie. when the commit actually landed
+        # (as opposed to when it was first written)
+        return subprocess.check_output(
+            ['git', 'show', '--no-patch', '--format=%cs', self.sha],
+            stderr=subprocess.DEVNULL
+        ).decode("ascii").strip()
 
     async def apply(self, ui: 'UI') -> typing.Tuple[bool, str]:
         # FIXME: This isn't really enough if we fail to cherry-pick because the
@@ -196,9 +204,9 @@ class Commit:
 
 
 async def get_new_commits(sha: str) -> typing.List[typing.Tuple[str, str]]:
-    # Try to get the authoritative upstream master
+    # Try to get the authoritative upstream main
     p = await asyncio.create_subprocess_exec(
-        'git', 'for-each-ref', '--format=%(upstream)', 'refs/heads/master',
+        'git', 'for-each-ref', '--format=%(upstream)', 'refs/heads/main',
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL)
     out, _ = await p.communicate()

@@ -30,7 +30,8 @@
 
 
 #include "main/errors.h"
-#include "main/mtypes.h"
+#include "main/consts_exts.h"
+#include "main/shader_types.h"
 #include "glsl_symbol_table.h"
 #include "glsl_parser_extras.h"
 #include "ir_optimization.h"
@@ -63,6 +64,13 @@ get_varying_type(const ir_variable *var, gl_shader_stage stage)
    }
 
    return type;
+}
+
+static bool
+varying_has_user_specified_location(const ir_variable *var)
+{
+   return var->data.explicit_location &&
+      var->data.location >= VARYING_SLOT_VAR0;
 }
 
 static void
@@ -193,7 +201,7 @@ process_xfb_layout_qualifiers(void *mem_ctx, const gl_linked_shader *sh,
  * matching input to another stage.
  */
 static void
-cross_validate_types_and_qualifiers(struct gl_context *ctx,
+cross_validate_types_and_qualifiers(const struct gl_constants *consts,
                                     struct gl_shader_program *prog,
                                     const ir_variable *input,
                                     const ir_variable *output,
@@ -312,13 +320,13 @@ cross_validate_types_and_qualifiers(struct gl_context *ctx,
       return;
    }
 
-   /* The GLSL 4.30 and GLSL ES 3.00 specifications say:
+   /* The GLSL 4.20 and GLSL ES 3.00 specifications say:
     *
     *    "As only outputs need be declared with invariant, an output from
     *     one shader stage will still match an input of a subsequent stage
     *     without the input being declared as invariant."
     *
-    * while GLSL 4.20 says:
+    * while GLSL 4.10 says:
     *
     *    "For variables leaving one shader and coming into another shader,
     *     the invariant keyword has to be used in both shaders, or a link
@@ -330,7 +338,7 @@ cross_validate_types_and_qualifiers(struct gl_context *ctx,
     *     and fragment shaders must match."
     */
    if (input->data.explicit_invariant != output->data.explicit_invariant &&
-       prog->data->Version < (prog->IsES ? 300 : 430)) {
+       prog->data->Version < (prog->IsES ? 300 : 420)) {
       linker_error(prog,
                    "%s shader output `%s' %s invariant qualifier, "
                    "but %s shader input %s invariant qualifier\n",
@@ -368,7 +376,7 @@ cross_validate_types_and_qualifiers(struct gl_context *ctx,
    }
    if (input_interpolation != output_interpolation &&
        prog->data->Version < 440) {
-      if (!ctx->Const.AllowGLSLCrossStageInterpolationMismatch) {
+      if (!consts->AllowGLSLCrossStageInterpolationMismatch) {
          linker_error(prog,
                       "%s shader output `%s' specifies %s "
                       "interpolation qualifier, "
@@ -399,7 +407,7 @@ cross_validate_types_and_qualifiers(struct gl_context *ctx,
  * Validate front and back color outputs against single color input
  */
 static void
-cross_validate_front_and_back_color(struct gl_context *ctx,
+cross_validate_front_and_back_color(const struct gl_constants *consts,
                                     struct gl_shader_program *prog,
                                     const ir_variable *input,
                                     const ir_variable *front_color,
@@ -408,11 +416,11 @@ cross_validate_front_and_back_color(struct gl_context *ctx,
                                     gl_shader_stage producer_stage)
 {
    if (front_color != NULL && front_color->data.assigned)
-      cross_validate_types_and_qualifiers(ctx, prog, input, front_color,
+      cross_validate_types_and_qualifiers(consts, prog, input, front_color,
                                           consumer_stage, producer_stage);
 
    if (back_color != NULL && back_color->data.assigned)
-      cross_validate_types_and_qualifiers(ctx, prog, input, back_color,
+      cross_validate_types_and_qualifiers(consts, prog, input, back_color,
                                           consumer_stage, producer_stage);
 }
 
@@ -613,7 +621,7 @@ check_location_aliasing(struct explicit_location_info explicit_locations[][4],
 }
 
 static bool
-validate_explicit_variable_location(struct gl_context *ctx,
+validate_explicit_variable_location(const struct gl_constants *consts,
                                     struct explicit_location_info explicit_locations[][4],
                                     ir_variable *var,
                                     gl_shader_program *prog,
@@ -632,12 +640,12 @@ validate_explicit_variable_location(struct gl_context *ctx,
    if (var->data.mode == ir_var_shader_out) {
       assert(sh->Stage != MESA_SHADER_FRAGMENT);
       slot_max =
-         ctx->Const.Program[sh->Stage].MaxOutputComponents / 4;
+         consts->Program[sh->Stage].MaxOutputComponents / 4;
    } else {
       assert(var->data.mode == ir_var_shader_in);
       assert(sh->Stage != MESA_SHADER_VERTEX);
       slot_max =
-         ctx->Const.Program[sh->Stage].MaxInputComponents / 4;
+         consts->Program[sh->Stage].MaxInputComponents / 4;
    }
 
    if (slot_limit > slot_max) {
@@ -653,9 +661,11 @@ validate_explicit_variable_location(struct gl_context *ctx,
          glsl_struct_field *field = &type_without_array->fields.structure[i];
          unsigned field_location = field->location -
             (field->patch ? VARYING_SLOT_PATCH0 : VARYING_SLOT_VAR0);
+         unsigned field_slots = field->type->count_attribute_slots(false);
          if (!check_location_aliasing(explicit_locations, var,
                                       field_location,
-                                      0, field_location + 1,
+                                      0,
+                                      field_location + field_slots,
                                       field->type,
                                       field->interpolation,
                                       field->centroid,
@@ -685,7 +695,7 @@ validate_explicit_variable_location(struct gl_context *ctx,
  * shaders.
  */
 void
-validate_first_and_last_interface_explicit_locations(struct gl_context *ctx,
+validate_first_and_last_interface_explicit_locations(const struct gl_constants *consts,
                                                      struct gl_shader_program *prog,
                                                      gl_shader_stage first_stage,
                                                      gl_shader_stage last_stage)
@@ -725,7 +735,7 @@ validate_first_and_last_interface_explicit_locations(struct gl_context *ctx,
             continue;
 
          if (!validate_explicit_variable_location(
-               ctx, explicit_locations, var, prog, sh)) {
+               consts, explicit_locations, var, prog, sh)) {
             return;
          }
       }
@@ -733,10 +743,48 @@ validate_first_and_last_interface_explicit_locations(struct gl_context *ctx,
 }
 
 /**
+ * Check if we should force input / output matching between shader
+ * interfaces.
+ *
+ * Section 4.3.4 (Inputs) of the GLSL 4.10 specifications say:
+ *
+ *   "Only the input variables that are actually read need to be
+ *    written by the previous stage; it is allowed to have
+ *    superfluous declarations of input variables."
+ *
+ * However it's not defined anywhere as to how we should handle
+ * inputs that are not written in the previous stage and it's not
+ * clear what "actually read" means.
+ *
+ * The GLSL 4.20 spec however is much clearer:
+ *
+ *    "Only the input variables that are statically read need to
+ *     be written by the previous stage; it is allowed to have
+ *     superfluous declarations of input variables."
+ *
+ * It also has a table that states it is an error to statically
+ * read an input that is not defined in the previous stage. While
+ * it is not an error to not statically write to the output (it
+ * just needs to be defined to not be an error).
+ *
+ * The text in the GLSL 4.20 spec was an attempt to clarify the
+ * previous spec iterations. However given the difference in spec
+ * and that some applications seem to depend on not erroring when
+ * the input is not actually read in control flow we only apply
+ * this rule to GLSL 4.20 and higher. GLSL 4.10 shaders have been
+ * seen in the wild that depend on the less strict interpretation.
+ */
+static bool
+static_input_output_matching(struct gl_shader_program *prog)
+{
+   return prog->data->Version >= (prog->IsES ? 0 : 420);
+}
+
+/**
  * Validate that outputs from one stage match inputs of another
  */
 void
-cross_validate_outputs_to_inputs(struct gl_context *ctx,
+cross_validate_outputs_to_inputs(const struct gl_constants *consts,
                                  struct gl_shader_program *prog,
                                  gl_linked_shader *producer,
                                  gl_linked_shader *consumer)
@@ -760,7 +808,7 @@ cross_validate_outputs_to_inputs(struct gl_context *ctx,
          /* User-defined varyings with explicit locations are handled
           * differently because they do not need to have matching names.
           */
-         if (!validate_explicit_variable_location(ctx,
+         if (!validate_explicit_variable_location(consts,
                                                   output_explicit_locations,
                                                   var, prog, producer)) {
             return;
@@ -790,7 +838,7 @@ cross_validate_outputs_to_inputs(struct gl_context *ctx,
          const ir_variable *const back_color =
             parameters.get_variable("gl_BackColor");
 
-         cross_validate_front_and_back_color(ctx, prog, input,
+         cross_validate_front_and_back_color(consts, prog, input,
                                              front_color, back_color,
                                              consumer->Stage, producer->Stage);
       } else if (strcmp(input->name, "gl_SecondaryColor") == 0 && input->data.used) {
@@ -800,7 +848,7 @@ cross_validate_outputs_to_inputs(struct gl_context *ctx,
          const ir_variable *const back_color =
             parameters.get_variable("gl_BackSecondaryColor");
 
-         cross_validate_front_and_back_color(ctx, prog, input,
+         cross_validate_front_and_back_color(consts, prog, input,
                                              front_color, back_color,
                                              consumer->Stage, producer->Stage);
       } else {
@@ -819,7 +867,7 @@ cross_validate_outputs_to_inputs(struct gl_context *ctx,
                compute_variable_location_slot(input, consumer->Stage);
             unsigned slot_limit = idx + num_elements;
 
-            if (!validate_explicit_variable_location(ctx,
+            if (!validate_explicit_variable_location(consts,
                                                      input_explicit_locations,
                                                      input, prog, consumer)) {
                return;
@@ -840,7 +888,7 @@ cross_validate_outputs_to_inputs(struct gl_context *ctx,
                    * output declaration and there is Static Use of the
                    * declared input.
                    */
-                  if (input->data.used) {
+                  if (input->data.used && static_input_output_matching(prog)) {
                      linker_error(prog,
                                   "%s shader input `%s' with explicit location "
                                   "has no matching output\n",
@@ -868,47 +916,18 @@ cross_validate_outputs_to_inputs(struct gl_context *ctx,
              */
             if (!(input->get_interface_type() &&
                   output->get_interface_type()))
-               cross_validate_types_and_qualifiers(ctx, prog, input, output,
+               cross_validate_types_and_qualifiers(consts, prog, input, output,
                                                    consumer->Stage,
                                                    producer->Stage);
          } else {
             /* Check for input vars with unmatched output vars in prev stage
              * taking into account that interface blocks could have a matching
              * output but with different name, so we ignore them.
-             *
-             * Section 4.3.4 (Inputs) of the GLSL 4.10 specifications say:
-             *
-             *   "Only the input variables that are actually read need to be
-             *    written by the previous stage; it is allowed to have
-             *    superfluous declarations of input variables."
-             *
-             * However it's not defined anywhere as to how we should handle
-             * inputs that are not written in the previous stage and it's not
-             * clear what "actually read" means.
-             *
-             * The GLSL 4.20 spec however is much clearer:
-             *
-             *    "Only the input variables that are statically read need to
-             *     be written by the previous stage; it is allowed to have
-             *     superfluous declarations of input variables."
-             *
-             * It also has a table that states it is an error to statically
-             * read an input that is not defined in the previous stage. While
-             * it is not an error to not statically write to the output (it
-             * just needs to be defined to not be an error).
-             *
-             * The text in the GLSL 4.20 spec was an attempt to clarify the
-             * previous spec iterations. However given the difference in spec
-             * and that some applications seem to depend on not erroring when
-             * the input is not actually read in control flow we only apply
-             * this rule to GLSL 4.00 and higher. GLSL 4.00 was chosen as
-             * a 3.30 shader is the highest version of GLSL we have seen in
-             * the wild dependant on the less strict interpretation.
              */
             assert(!input->data.assigned);
             if (input->data.used && !input->get_interface_type() &&
                 !input->data.explicit_location &&
-                (prog->data->Version >= (prog->IsES ? 0 : 400)))
+                static_input_output_matching(prog))
                linker_error(prog,
                             "%s shader input `%s' "
                             "has no matching output in the previous stage\n",
@@ -969,7 +988,9 @@ remove_unused_shader_inputs_and_outputs(bool is_separate_shader_object,
  * will fail to find any matching variable.
  */
 void
-tfeedback_decl::init(struct gl_context *ctx, const void *mem_ctx,
+tfeedback_decl::init(const struct gl_constants *consts,
+                     const struct gl_extensions *exts,
+                     const void *mem_ctx,
                      const char *input)
 {
    /* We don't have to be pedantic about what is a valid GLSL variable name,
@@ -986,7 +1007,7 @@ tfeedback_decl::init(struct gl_context *ctx, const void *mem_ctx,
    this->buffer = 0;
    this->offset = 0;
 
-   if (ctx->Extensions.ARB_transform_feedback3) {
+   if (exts->ARB_transform_feedback3) {
       /* Parse gl_NextBuffer. */
       if (strcmp(input, "gl_NextBuffer") == 0) {
          this->next_buffer_separator = true;
@@ -1009,7 +1030,8 @@ tfeedback_decl::init(struct gl_context *ctx, const void *mem_ctx,
 
    /* Parse a declaration. */
    const char *base_name_end;
-   long subscript = parse_program_resource_name(input, &base_name_end);
+   long subscript = parse_program_resource_name(input, strlen(input),
+                                                &base_name_end);
    this->var_name = ralloc_strndup(mem_ctx, input, base_name_end - input);
    if (this->var_name == NULL) {
       _mesa_error_no_memory(__func__);
@@ -1027,19 +1049,19 @@ tfeedback_decl::init(struct gl_context *ctx, const void *mem_ctx,
     * class must behave specially to account for the fact that gl_ClipDistance
     * is converted from a float[8] to a vec4[2].
     */
-   if (ctx->Const.ShaderCompilerOptions[MESA_SHADER_VERTEX].LowerCombinedClipCullDistance &&
+   if (consts->ShaderCompilerOptions[MESA_SHADER_VERTEX].LowerCombinedClipCullDistance &&
        strcmp(this->var_name, "gl_ClipDistance") == 0) {
       this->lowered_builtin_array_variable = clip_distance;
    }
-   if (ctx->Const.ShaderCompilerOptions[MESA_SHADER_VERTEX].LowerCombinedClipCullDistance &&
+   if (consts->ShaderCompilerOptions[MESA_SHADER_VERTEX].LowerCombinedClipCullDistance &&
        strcmp(this->var_name, "gl_CullDistance") == 0) {
       this->lowered_builtin_array_variable = cull_distance;
    }
 
-   if (ctx->Const.LowerTessLevel &&
+   if (consts->LowerTessLevel &&
        (strcmp(this->var_name, "gl_TessLevelOuter") == 0))
       this->lowered_builtin_array_variable = tess_level_outer;
-   if (ctx->Const.LowerTessLevel &&
+   if (consts->LowerTessLevel &&
        (strcmp(this->var_name, "gl_TessLevelInner") == 0))
       this->lowered_builtin_array_variable = tess_level_inner;
 }
@@ -1072,7 +1094,7 @@ tfeedback_decl::is_same(const tfeedback_decl &x, const tfeedback_decl &y)
  * is returned.
  */
 bool
-tfeedback_decl::assign_location(struct gl_context *ctx,
+tfeedback_decl::assign_location(const struct gl_constants *consts,
                                 struct gl_shader_program *prog)
 {
    assert(this->is_varying());
@@ -1080,7 +1102,7 @@ tfeedback_decl::assign_location(struct gl_context *ctx,
    unsigned fine_location
       = this->matched_candidate->toplevel_var->data.location * 4
       + this->matched_candidate->toplevel_var->data.location_frac
-      + this->matched_candidate->offset;
+      + this->matched_candidate->struct_offset_floats;
    const unsigned dmul =
       this->matched_candidate->type->without_array()->is_64bit() ? 2 : 1;
 
@@ -1160,7 +1182,7 @@ tfeedback_decl::assign_location(struct gl_context *ctx,
     */
    if (prog->TransformFeedback.BufferMode == GL_SEPARATE_ATTRIBS &&
        this->num_components() >
-       ctx->Const.MaxTransformFeedbackSeparateComponents) {
+       consts->MaxTransformFeedbackSeparateComponents) {
       linker_error(prog, "Transform feedback varying %s exceeds "
                    "MAX_TRANSFORM_FEEDBACK_SEPARATE_COMPONENTS.",
                    this->orig_name);
@@ -1173,7 +1195,7 @@ tfeedback_decl::assign_location(struct gl_context *ctx,
    this->stream_id = this->matched_candidate->toplevel_var->data.stream;
 
    unsigned array_offset = this->array_subscript * 4 * dmul;
-   unsigned struct_offset = this->matched_candidate->offset * 4 * dmul;
+   unsigned struct_offset = this->matched_candidate->xfb_offset_floats * 4;
    this->buffer = this->matched_candidate->toplevel_var->data.xfb_buffer;
    this->offset = this->matched_candidate->toplevel_var->data.offset +
       array_offset + struct_offset;
@@ -1188,7 +1210,14 @@ tfeedback_decl::get_num_outputs() const
    if (!this->is_varying()) {
       return 0;
    }
-   return (this->num_components() + this->location_frac + 3)/4;
+
+   if (varying_has_user_specified_location(this->matched_candidate->toplevel_var)) {
+      unsigned dmul = this->is_64bit() ? 2 : 1;
+      unsigned rows_per_element = DIV_ROUND_UP(this->vector_elements * dmul, 4);
+      return this->size * this->matrix_columns * rows_per_element;
+   } else {
+      return (this->num_components() + this->location_frac + 3) / 4;
+   }
 }
 
 
@@ -1199,13 +1228,14 @@ tfeedback_decl::get_num_outputs() const
  * is returned.
  */
 bool
-tfeedback_decl::store(struct gl_context *ctx, struct gl_shader_program *prog,
+tfeedback_decl::store(const struct gl_constants *consts,
+                      struct gl_shader_program *prog,
                       struct gl_transform_feedback_info *info,
                       unsigned buffer, unsigned buffer_index,
                       const unsigned max_outputs,
                       BITSET_WORD *used_components[MAX_FEEDBACK_BUFFERS],
-                      bool *explicit_stride, bool has_xfb_qualifiers,
-                      const void* mem_ctx) const
+                      bool *explicit_stride, unsigned *max_member_alignment,
+                      bool has_xfb_qualifiers, const void* mem_ctx) const
 {
    unsigned xfb_offset = 0;
    unsigned size = this->size;
@@ -1250,7 +1280,7 @@ tfeedback_decl::store(struct gl_context *ctx, struct gl_shader_program *prog,
       if ((prog->TransformFeedback.BufferMode == GL_INTERLEAVED_ATTRIBS ||
            has_xfb_qualifiers) &&
           xfb_offset + num_components >
-          ctx->Const.MaxTransformFeedbackInterleavedComponents) {
+          consts->MaxTransformFeedbackInterleavedComponents) {
          linker_error(prog,
                       "The MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS "
                       "limit has been exceeded.");
@@ -1265,7 +1295,7 @@ tfeedback_decl::store(struct gl_context *ctx, struct gl_shader_program *prog,
        *     feedback offsets."
        */
       const unsigned max_components =
-         ctx->Const.MaxTransformFeedbackInterleavedComponents;
+         consts->MaxTransformFeedbackInterleavedComponents;
       const unsigned first_component = xfb_offset;
       const unsigned last_component = xfb_offset + num_components - 1;
       const unsigned start_word = BITSET_BITWORD(first_component);
@@ -1298,8 +1328,50 @@ tfeedback_decl::store(struct gl_context *ctx, struct gl_shader_program *prog,
          used[word] |= BITSET_RANGE(start_range, end_range);
       }
 
+      const unsigned type_num_components =
+         this->vector_elements * (this->is_64bit() ? 2 : 1);
+      unsigned current_type_components_left = type_num_components;
+
       while (num_components > 0) {
-         unsigned output_size = MIN2(num_components, 4 - location_frac);
+         unsigned output_size = 0;
+
+         /*  From GL_ARB_enhanced_layouts:
+          *
+          * "When an attribute variable declared using an array type is bound to
+          * generic attribute index <i>, the active array elements are assigned to
+          * consecutive generic attributes beginning with generic attribute <i>.  The
+          * number of attributes and components assigned to each element are
+          * determined according to the data type of array elements and "component"
+          * layout qualifier (if any) specified in the declaration of the array."
+          *
+          * "When an attribute variable declared using a matrix type is bound to a
+          * generic attribute index <i>, its values are taken from consecutive generic
+          * attributes beginning with generic attribute <i>.  Such matrices are
+          * treated as an array of column vectors with values taken from the generic
+          * attributes.
+          * This means there may be gaps in the varyings we are taking values from."
+          *
+          * Examples:
+          *
+          * | layout(location=0) dvec3[2] a; | layout(location=4) vec2[4] b; |
+          * |                                |                               |
+          * |        32b 32b 32b 32b         |        32b 32b 32b 32b        |
+          * |      0  X   X   Y   Y          |      4  X   Y   0   0         |
+          * |      1  Z   Z   0   0          |      5  X   Y   0   0         |
+          * |      2  X   X   Y   Y          |      6  X   Y   0   0         |
+          * |      3  Z   Z   0   0          |      7  X   Y   0   0         |
+          *
+          */
+         if (varying_has_user_specified_location(this->matched_candidate->toplevel_var)) {
+            output_size = MIN3(num_components, current_type_components_left, 4);
+            current_type_components_left -= output_size;
+            if (current_type_components_left == 0) {
+               current_type_components_left = type_num_components;
+            }
+         } else {
+            output_size = MIN2(num_components, 4 - location_frac);
+         }
+
          assert((info->NumOutputs == 0 && max_outputs == 0) ||
                 info->NumOutputs < max_outputs);
 
@@ -1345,12 +1417,20 @@ tfeedback_decl::store(struct gl_context *ctx, struct gl_shader_program *prog,
          return false;
       }
    } else {
-      info->Buffers[buffer].Stride = xfb_offset;
+      if (max_member_alignment && has_xfb_qualifiers) {
+         max_member_alignment[buffer] = MAX2(max_member_alignment[buffer],
+                                             this->is_64bit() ? 2 : 1);
+         info->Buffers[buffer].Stride = ALIGN(xfb_offset,
+                                              max_member_alignment[buffer]);
+      } else {
+         info->Buffers[buffer].Stride = xfb_offset;
+      }
    }
 
  store_varying:
-   info->Varyings[info->NumVarying].Name = ralloc_strdup(prog,
-                                                         this->orig_name);
+   info->Varyings[info->NumVarying].name.string = ralloc_strdup(prog,
+                                                              this->orig_name);
+   resource_name_updated(&info->Varyings[info->NumVarying].name);
    info->Varyings[info->NumVarying].Type = this->type;
    info->Varyings[info->NumVarying].Size = size;
    info->Varyings[info->NumVarying].BufferIndex = buffer_index;
@@ -1427,12 +1507,14 @@ tfeedback_decl::set_lowered_candidate(const tfeedback_candidate *candidate)
  * is returned.
  */
 static bool
-parse_tfeedback_decls(struct gl_context *ctx, struct gl_shader_program *prog,
+parse_tfeedback_decls(const struct gl_constants *consts,
+                      const struct gl_extensions *exts,
+                      struct gl_shader_program *prog,
                       const void *mem_ctx, unsigned num_names,
                       char **varying_names, tfeedback_decl *decls)
 {
    for (unsigned i = 0; i < num_names; ++i) {
-      decls[i].init(ctx, mem_ctx, varying_names[i]);
+      decls[i].init(consts, exts, mem_ctx, varying_names[i]);
 
       if (!decls[i].is_varying())
          continue;
@@ -1481,7 +1563,8 @@ cmp_xfb_offset(const void * x_generic, const void * y_generic)
  * is returned.
  */
 static bool
-store_tfeedback_info(struct gl_context *ctx, struct gl_shader_program *prog,
+store_tfeedback_info(const struct gl_constants *consts,
+                     struct gl_shader_program *prog,
                      unsigned num_tfeedback_decls,
                      tfeedback_decl *tfeedback_decls, bool has_xfb_qualifiers,
                      const void *mem_ctx)
@@ -1492,7 +1575,7 @@ store_tfeedback_info(struct gl_context *ctx, struct gl_shader_program *prog,
    /* Make sure MaxTransformFeedbackBuffers is less than 32 so the bitmask for
     * tracking the number of buffers doesn't overflow.
     */
-   assert(ctx->Const.MaxTransformFeedbackBuffers < 32);
+   assert(consts->MaxTransformFeedbackBuffers < 32);
 
    bool separate_attribs_mode =
       prog->TransformFeedback.BufferMode == GL_SEPARATE_ATTRIBS;
@@ -1531,10 +1614,10 @@ store_tfeedback_info(struct gl_context *ctx, struct gl_shader_program *prog,
    if (!has_xfb_qualifiers && separate_attribs_mode) {
       /* GL_SEPARATE_ATTRIBS */
       for (unsigned i = 0; i < num_tfeedback_decls; ++i) {
-         if (!tfeedback_decls[i].store(ctx, prog,
+         if (!tfeedback_decls[i].store(consts, prog,
                                        xfb_prog->sh.LinkedTransformFeedback,
                                        num_buffers, num_buffers, num_outputs,
-                                       used_components, NULL,
+                                       used_components, NULL, NULL,
                                        has_xfb_qualifiers, mem_ctx))
             return false;
 
@@ -1548,7 +1631,7 @@ store_tfeedback_info(struct gl_context *ctx, struct gl_shader_program *prog,
       unsigned buffer =
          num_tfeedback_decls ? tfeedback_decls[0].get_buffer() : 0;
       bool explicit_stride[MAX_FEEDBACK_BUFFERS] = { false };
-
+      unsigned max_member_alignment[MAX_FEEDBACK_BUFFERS] = { 1, 1, 1, 1 };
       /* Apply any xfb_stride global qualifiers */
       if (has_xfb_qualifiers) {
          for (unsigned j = 0; j < MAX_FEEDBACK_BUFFERS; j++) {
@@ -1569,11 +1652,13 @@ store_tfeedback_info(struct gl_context *ctx, struct gl_shader_program *prog,
          }
 
          if (tfeedback_decls[i].is_next_buffer_separator()) {
-            if (!tfeedback_decls[i].store(ctx, prog,
+            if (!tfeedback_decls[i].store(consts, prog,
                                           xfb_prog->sh.LinkedTransformFeedback,
                                           buffer, num_buffers, num_outputs,
                                           used_components, explicit_stride,
-                                          has_xfb_qualifiers, mem_ctx))
+                                          max_member_alignment,
+                                          has_xfb_qualifiers,
+                                          mem_ctx))
                return false;
             num_buffers++;
             buffer_stream_id = -1;
@@ -1611,11 +1696,13 @@ store_tfeedback_info(struct gl_context *ctx, struct gl_shader_program *prog,
             }
          }
 
-         if (!tfeedback_decls[i].store(ctx, prog,
+         if (!tfeedback_decls[i].store(consts, prog,
                                        xfb_prog->sh.LinkedTransformFeedback,
                                        buffer, num_buffers, num_outputs,
                                        used_components, explicit_stride,
-                                       has_xfb_qualifiers, mem_ctx))
+                                       max_member_alignment,
+                                       has_xfb_qualifiers,
+                                       mem_ctx))
             return false;
       }
    }
@@ -1639,6 +1726,7 @@ public:
                    bool disable_xfb_packing,
                    bool xfb_enabled,
                    bool enhanced_layouts_enabled,
+                   bool prefer_pot_aligned_varyings,
                    gl_shader_stage producer_stage,
                    gl_shader_stage consumer_stage);
    ~varying_matches();
@@ -1681,6 +1769,12 @@ private:
    const bool enhanced_layouts_enabled;
 
    /**
+    * If true, this driver prefers varyings to be aligned to power of two
+    * in a slot.
+    */
+   const bool prefer_pot_aligned_varyings;
+
+   /**
     * Enum representing the order in which varyings are packed within a
     * packing class.
     *
@@ -1716,7 +1810,6 @@ private:
        * Packing order for this varying, computed by compute_packing_order().
        */
       packing_order_enum packing_order;
-      unsigned num_components;
 
       /**
        * The output variable in the producer stage.
@@ -1759,12 +1852,14 @@ varying_matches::varying_matches(bool disable_varying_packing,
                                  bool disable_xfb_packing,
                                  bool xfb_enabled,
                                  bool enhanced_layouts_enabled,
+                                 bool prefer_pot_aligned_varyings,
                                  gl_shader_stage producer_stage,
                                  gl_shader_stage consumer_stage)
    : disable_varying_packing(disable_varying_packing),
      disable_xfb_packing(disable_xfb_packing),
      xfb_enabled(xfb_enabled),
      enhanced_layouts_enabled(enhanced_layouts_enabled),
+     prefer_pot_aligned_varyings(prefer_pot_aligned_varyings),
      producer_stage(producer_stage),
      consumer_stage(consumer_stage)
 {
@@ -1893,9 +1988,6 @@ varying_matches::record(ir_variable *producer_var, ir_variable *consumer_var)
     */
    const ir_variable *const var = (consumer_var != NULL)
       ? consumer_var : producer_var;
-   const gl_shader_stage stage = (consumer_var != NULL)
-      ? consumer_stage : producer_stage;
-   const glsl_type *type = get_varying_type(var, stage);
 
    if (producer_var && consumer_var &&
        consumer_var->data.must_be_shader_input) {
@@ -1906,15 +1998,6 @@ varying_matches::record(ir_variable *producer_var, ir_variable *consumer_var)
       = this->compute_packing_class(var);
    this->matches[this->num_matches].packing_order
       = this->compute_packing_order(var);
-   if ((this->disable_varying_packing && !is_varying_packing_safe(type, var)) ||
-       (this->disable_xfb_packing && var->data.is_xfb) ||
-       var->data.must_be_shader_input) {
-      unsigned slots = type->count_attribute_slots(false);
-      this->matches[this->num_matches].num_components = slots * 4;
-   } else {
-      this->matches[this->num_matches].num_components
-         = type->component_slots();
-   }
 
    this->matches[this->num_matches].producer_var = producer_var;
    this->matches[this->num_matches].consumer_var = consumer_var;
@@ -1979,10 +2062,15 @@ varying_matches::assign_locations(struct gl_shader_program *prog,
     * packing vec3 attributes can cause trouble because splitting a vec3
     * effectively creates an additional transform feedback output.  The
     * extra TFB output may exceed device driver limits.
+    *
+    * Also don't pack vec3 if the driver prefers power of two aligned
+    * varyings. Packing order guarantees that vec4, vec2 and vec1 will be
+    * pot-aligned, we only need to take care of vec3s
     */
    const bool dont_pack_vec3 =
       (prog->TransformFeedback.BufferMode == GL_SEPARATE_ATTRIBS &&
-       prog->TransformFeedback.NumVarying > 0);
+       prog->TransformFeedback.NumVarying > 0) ||
+      this->prefer_pot_aligned_varyings;
 
    for (unsigned i = 0; i < this->num_matches; i++) {
       unsigned *location = &generic_location;
@@ -2036,9 +2124,20 @@ varying_matches::assign_locations(struct gl_shader_program *prog,
        * inputs, we use the number of slots * 4, as they have different
        * counting rules.
        */
-      unsigned num_components = is_vertex_input ?
-         type->count_attribute_slots(is_vertex_input) * 4 :
-         this->matches[i].num_components;
+      unsigned num_components = 0;
+      if (is_vertex_input) {
+         num_components = type->count_attribute_slots(is_vertex_input) * 4;
+      } else {
+         if ((this->disable_varying_packing &&
+              !is_varying_packing_safe(type, var)) ||
+              (this->disable_xfb_packing && var->data.is_xfb &&
+               !(type->is_array() || type->is_struct() || type->is_matrix())) ||
+             var->data.must_be_shader_input) {
+            num_components = type->count_attribute_slots(false) * 4;
+         } else {
+            num_components = type->component_slots_aligned(*location);
+         }
+      }
 
       /* The last slot for this variable, inclusive. */
       unsigned slot_end = *location + num_components - 1;
@@ -2096,7 +2195,7 @@ varying_matches::store_locations() const
    /* Check is location needs to be packed with lower_packed_varyings() or if
     * we can just use ARB_enhanced_layouts packing.
     */
-   bool pack_loc[MAX_VARYINGS_INCL_PATCH] = { 0 };
+   bool pack_loc[MAX_VARYINGS_INCL_PATCH] = {};
    const glsl_type *loc_type[MAX_VARYINGS_INCL_PATCH][4] = { {NULL, NULL} };
 
    for (unsigned i = 0; i < this->num_matches; i++) {
@@ -2313,7 +2412,7 @@ varying_matches::not_xfb_comparator(const void *x_generic, const void *y_generic
 
 /**
  * Is the given variable a varying variable to be counted against the
- * limit in ctx->Const.MaxVarying?
+ * limit in consts->MaxVarying?
  * This includes variables such as texcoords, colors and generic
  * varyings, but excludes variables such as gl_FrontFacing and gl_FragCoord.
  */
@@ -2354,7 +2453,8 @@ public:
         tfeedback_candidates(tfeedback_candidates),
         stage(stage),
         toplevel_var(NULL),
-        varying_floats(0)
+        varying_floats(0),
+        xfb_offset_floats(0)
    {
    }
 
@@ -2366,6 +2466,7 @@ public:
 
       this->toplevel_var = var;
       this->varying_floats = 0;
+      this->xfb_offset_floats = 0;
       const glsl_type *t =
          var->data.from_named_ifc_block ? var->get_interface_type() : var->type;
       if (!var->data.patch && stage == MESA_SHADER_TESS_CTRL) {
@@ -2389,11 +2490,37 @@ private:
          = rzalloc(this->mem_ctx, tfeedback_candidate);
       candidate->toplevel_var = this->toplevel_var;
       candidate->type = type;
-      candidate->offset = this->varying_floats;
-      _mesa_hash_table_insert(this->tfeedback_candidates,
-                              ralloc_strdup(this->mem_ctx, name),
-                              candidate);
-      this->varying_floats += type->component_slots();
+
+      if (type->without_array()->is_64bit()) {
+         /*  From ARB_gpu_shader_fp64:
+          *
+          * If any variable captured in transform feedback has double-precision
+          * components, the practical requirements for defined behavior are:
+          *     ...
+          * (c) each double-precision variable captured must be aligned to a
+          *     multiple of eight bytes relative to the beginning of a vertex.
+          */
+         this->xfb_offset_floats = ALIGN(this->xfb_offset_floats, 2);
+         /* 64-bit members of structs are also aligned. */
+         this->varying_floats = ALIGN(this->varying_floats, 2);
+      }
+
+      candidate->xfb_offset_floats = this->xfb_offset_floats;
+      candidate->struct_offset_floats = this->varying_floats;
+
+       _mesa_hash_table_insert(this->tfeedback_candidates,
+                               ralloc_strdup(this->mem_ctx, name),
+                               candidate);
+
+      const unsigned component_slots = type->component_slots();
+
+      if (varying_has_user_specified_location(this->toplevel_var)) {
+         this->varying_floats += type->count_attribute_slots(false) * 4;
+      } else {
+         this->varying_floats += component_slots;
+      }
+
+      this->xfb_offset_floats += component_slots;
    }
 
    /**
@@ -2419,6 +2546,11 @@ private:
     * variable.
     */
    unsigned varying_floats;
+
+   /**
+    * Offset within the xfb. Counted in floats.
+    */
+   unsigned xfb_offset_floats;
 };
 
 
@@ -2637,7 +2769,8 @@ reserved_varying_slot(struct gl_linked_shader *stage,
  * requirements of transform feedback.
  */
 static bool
-assign_varying_locations(struct gl_context *ctx,
+assign_varying_locations(const struct gl_constants *consts,
+                         const struct gl_extensions *exts,
                          void *mem_ctx,
                          struct gl_shader_program *prog,
                          gl_linked_shader *producer,
@@ -2661,13 +2794,13 @@ assign_varying_locations(struct gl_context *ctx,
     * packing required by transform feedback. See below for exception.
     */
    bool xfb_enabled =
-      ctx->Extensions.EXT_transform_feedback && !unpackable_tess;
+      exts->EXT_transform_feedback && !unpackable_tess;
 
    /* Some drivers actually requires packing to be explicitly disabled
     * for varyings used by transform feedback.
     */
    bool disable_xfb_packing =
-      ctx->Const.DisableTransformFeedbackPacking;
+      consts->DisableTransformFeedbackPacking;
 
    /* Disable packing on outward facing interfaces for SSO because in ES we
     * need to retain the unpacked varying information for draw time
@@ -2679,14 +2812,18 @@ assign_varying_locations(struct gl_context *ctx,
     * transform feedback and its not a SSO.
     */
    bool disable_varying_packing =
-      ctx->Const.DisableVaryingPacking || unpackable_tess;
+      consts->DisableVaryingPacking || unpackable_tess;
    if (prog->SeparateShader && (producer == NULL || consumer == NULL))
       disable_varying_packing = true;
+
+   bool prefer_pot_aligned_varyings =
+      consts->PreferPOTAlignedVaryings;
 
    varying_matches matches(disable_varying_packing,
                            disable_xfb_packing,
                            xfb_enabled,
-                           ctx->Extensions.ARB_enhanced_layouts,
+                           exts->ARB_enhanced_layouts,
+                           prefer_pot_aligned_varyings,
                            producer ? producer->Stage : MESA_SHADER_NONE,
                            consumer ? consumer->Stage : MESA_SHADER_NONE);
    void *hash_table_ctx = ralloc_context(NULL);
@@ -2827,21 +2964,19 @@ assign_varying_locations(struct gl_context *ctx,
       /* There are two situations where a new output varying is needed:
        *
        *  - If varying packing is disabled for xfb and the current declaration
-       *    is not aligned within the top level varying (e.g. vec3_arr[1]).
+       *    is subscripting an array, whether the subscript is aligned or not.
+       *    to preserve the rest of the array for the consumer.
        *
        *  - If a builtin variable needs to be copied to a new variable
        *    before its content is modified by another lowering pass (e.g.
        *    \c gl_Position is transformed by \c nir_lower_viewport_transform).
        */
-      const unsigned dmul =
-         matched_candidate->type->without_array()->is_64bit() ? 2 : 1;
       const bool lowered =
-         (disable_xfb_packing &&
-          !tfeedback_decls[i].is_aligned(dmul, matched_candidate->offset)) ||
+         (disable_xfb_packing && tfeedback_decls[i].subscripted()) ||
          (matched_candidate->toplevel_var->data.explicit_location &&
           matched_candidate->toplevel_var->data.location < VARYING_SLOT_VAR0 &&
           (!consumer || consumer->Stage == MESA_SHADER_FRAGMENT) &&
-          (ctx->Const.ShaderCompilerOptions[producer->Stage].LowerBuiltinVariablesXfb &
+          (consts->ShaderCompilerOptions[producer->Stage].LowerBuiltinVariablesXfb &
               BITFIELD_BIT(matched_candidate->toplevel_var->data.location)));
 
       if (lowered) {
@@ -2859,7 +2994,8 @@ assign_varying_locations(struct gl_context *ctx,
          new_candidate->toplevel_var = new_var;
          new_candidate->toplevel_var->data.is_unmatched_generic_inout = 1;
          new_candidate->type = new_var->type;
-         new_candidate->offset = 0;
+         new_candidate->struct_offset_floats = 0;
+         new_candidate->xfb_offset_floats = 0;
          _mesa_hash_table_insert(tfeedback_candidates,
                                  ralloc_strdup(mem_ctx, new_var->name),
                                  new_candidate);
@@ -2905,7 +3041,7 @@ assign_varying_locations(struct gl_context *ctx,
 
    for (unsigned i = 0; i < num_tfeedback_decls; ++i) {
       if (tfeedback_decls[i].is_varying()) {
-         if (!tfeedback_decls[i].assign_location(ctx, prog)) {
+         if (!tfeedback_decls[i].assign_location(consts, prog)) {
             ralloc_free(hash_table_ctx);
             return false;
          }
@@ -2974,7 +3110,8 @@ assign_varying_locations(struct gl_context *ctx,
 }
 
 static bool
-check_against_output_limit(struct gl_context *ctx,
+check_against_output_limit(const struct gl_constants *consts,
+                           gl_api api,
                            struct gl_shader_program *prog,
                            gl_linked_shader *producer,
                            unsigned num_explicit_locations)
@@ -2994,11 +3131,11 @@ check_against_output_limit(struct gl_context *ctx,
 
    assert(producer->Stage != MESA_SHADER_FRAGMENT);
    unsigned max_output_components =
-      ctx->Const.Program[producer->Stage].MaxOutputComponents;
+      consts->Program[producer->Stage].MaxOutputComponents;
 
    const unsigned output_components = output_vectors * 4;
    if (output_components > max_output_components) {
-      if (ctx->API == API_OPENGLES2 || prog->IsES)
+      if (api == API_OPENGLES2 || prog->IsES)
          linker_error(prog, "%s shader uses too many output vectors "
                       "(%u > %u)\n",
                       _mesa_shader_stage_to_string(producer->Stage),
@@ -3018,7 +3155,8 @@ check_against_output_limit(struct gl_context *ctx,
 }
 
 static bool
-check_against_input_limit(struct gl_context *ctx,
+check_against_input_limit(const struct gl_constants *consts,
+                          gl_api api,
                           struct gl_shader_program *prog,
                           gl_linked_shader *consumer,
                           unsigned num_explicit_locations)
@@ -3038,11 +3176,11 @@ check_against_input_limit(struct gl_context *ctx,
 
    assert(consumer->Stage != MESA_SHADER_VERTEX);
    unsigned max_input_components =
-      ctx->Const.Program[consumer->Stage].MaxInputComponents;
+      consts->Program[consumer->Stage].MaxInputComponents;
 
    const unsigned input_components = input_vectors * 4;
    if (input_components > max_input_components) {
-      if (ctx->API == API_OPENGLES2 || prog->IsES)
+      if (api == API_OPENGLES2 || prog->IsES)
          linker_error(prog, "%s shader uses too many input vectors "
                       "(%u > %u)\n",
                       _mesa_shader_stage_to_string(consumer->Stage),
@@ -3063,7 +3201,9 @@ check_against_input_limit(struct gl_context *ctx,
 
 bool
 link_varyings(struct gl_shader_program *prog, unsigned first, unsigned last,
-              struct gl_context *ctx, void *mem_ctx)
+              const struct gl_constants *consts,
+              const struct gl_extensions *exts,
+              gl_api api, void *mem_ctx)
 {
    bool has_xfb_qualifiers = false;
    unsigned num_tfeedback_decls = 0;
@@ -3111,7 +3251,8 @@ link_varyings(struct gl_shader_program *prog, unsigned first, unsigned last,
 
       tfeedback_decls = rzalloc_array(mem_ctx, tfeedback_decl,
                                       num_tfeedback_decls);
-      if (!parse_tfeedback_decls(ctx, prog, mem_ctx, num_tfeedback_decls,
+      if (!parse_tfeedback_decls(consts, exts,
+                                 prog, mem_ctx, num_tfeedback_decls,
                                  varying_names, tfeedback_decls))
          return false;
    }
@@ -3126,7 +3267,7 @@ link_varyings(struct gl_shader_program *prog, unsigned first, unsigned last,
        (num_tfeedback_decls != 0 || prog->SeparateShader)) {
       const uint64_t reserved_out_slots =
          reserved_varying_slot(prog->_LinkedShaders[last], ir_var_shader_out);
-      if (!assign_varying_locations(ctx, mem_ctx, prog,
+      if (!assign_varying_locations(consts, exts, mem_ctx, prog,
                                     prog->_LinkedShaders[last], NULL,
                                     num_tfeedback_decls, tfeedback_decls,
                                     reserved_out_slots))
@@ -3146,8 +3287,8 @@ link_varyings(struct gl_shader_program *prog, unsigned first, unsigned last,
       if (first == last) {
          gl_linked_shader *const sh = prog->_LinkedShaders[last];
 
-         do_dead_builtin_varyings(ctx, NULL, sh, 0, NULL);
-         do_dead_builtin_varyings(ctx, sh, NULL, num_tfeedback_decls,
+         do_dead_builtin_varyings(consts, api, NULL, sh, 0, NULL);
+         do_dead_builtin_varyings(consts, api, sh, NULL, num_tfeedback_decls,
                                   tfeedback_decls);
 
          if (prog->SeparateShader) {
@@ -3157,7 +3298,8 @@ link_varyings(struct gl_shader_program *prog, unsigned first, unsigned last,
             /* Assign input locations for SSO, output locations are already
              * assigned.
              */
-            if (!assign_varying_locations(ctx, mem_ctx, prog,
+            if (!assign_varying_locations(consts, exts,
+                                          mem_ctx, prog,
                                           NULL /* producer */,
                                           sh /* consumer */,
                                           0 /* num_tfeedback_decls */,
@@ -3184,11 +3326,12 @@ link_varyings(struct gl_shader_program *prog, unsigned first, unsigned last,
             const uint64_t reserved_in_slots =
                reserved_varying_slot(sh_next, ir_var_shader_in);
 
-            do_dead_builtin_varyings(ctx, sh_i, sh_next,
+            do_dead_builtin_varyings(consts, api, sh_i, sh_next,
                       next == MESA_SHADER_FRAGMENT ? num_tfeedback_decls : 0,
                       tfeedback_decls);
 
-            if (!assign_varying_locations(ctx, mem_ctx, prog, sh_i, sh_next,
+            if (!assign_varying_locations(consts, exts,
+                                          mem_ctx, prog, sh_i, sh_next,
                       next == MESA_SHADER_FRAGMENT ? num_tfeedback_decls : 0,
                       tfeedback_decls,
                       reserved_out_slots | reserved_in_slots))
@@ -3197,13 +3340,13 @@ link_varyings(struct gl_shader_program *prog, unsigned first, unsigned last,
             /* This must be done after all dead varyings are eliminated. */
             if (sh_i != NULL) {
                unsigned slots_used = util_bitcount64(reserved_out_slots);
-               if (!check_against_output_limit(ctx, prog, sh_i, slots_used)) {
+               if (!check_against_output_limit(consts, api, prog, sh_i, slots_used)) {
                   return false;
                }
             }
 
             unsigned slots_used = util_bitcount64(reserved_in_slots);
-            if (!check_against_input_limit(ctx, prog, sh_next, slots_used))
+            if (!check_against_input_limit(consts, api, prog, sh_next, slots_used))
                return false;
 
             next = i;
@@ -3211,7 +3354,8 @@ link_varyings(struct gl_shader_program *prog, unsigned first, unsigned last,
       }
    }
 
-   if (!store_tfeedback_info(ctx, prog, num_tfeedback_decls, tfeedback_decls,
+   if (!store_tfeedback_info(consts, prog,
+                             num_tfeedback_decls, tfeedback_decls,
                              has_xfb_qualifiers, mem_ctx))
       return false;
 

@@ -46,7 +46,7 @@
 #endif
 #include <llvm-c/BitWriter.h>
 #if GALLIVM_HAVE_CORO
-#if LLVM_VERSION_MAJOR <= 8 && (defined(PIPE_ARCH_AARCH64) || defined (PIPE_ARCH_ARM) || defined(PIPE_ARCH_S390))
+#if LLVM_VERSION_MAJOR <= 8 && (defined(PIPE_ARCH_AARCH64) || defined (PIPE_ARCH_ARM) || defined(PIPE_ARCH_S390) || defined(PIPE_ARCH_MIPS64))
 #include <llvm-c/Transforms/IPO.h>
 #endif
 #include <llvm-c/Transforms/Coroutines.h>
@@ -55,13 +55,11 @@
 unsigned gallivm_perf = 0;
 
 static const struct debug_named_value lp_bld_perf_flags[] = {
-   { "no_brilinear", GALLIVM_PERF_NO_BRILINEAR, "disable brilinear optimization" },
-   { "no_rho_approx", GALLIVM_PERF_NO_RHO_APPROX, "disable rho_approx optimization" },
+   { "brilinear", GALLIVM_PERF_BRILINEAR, "enable brilinear optimization" },
+   { "rho_approx", GALLIVM_PERF_RHO_APPROX, "enable rho_approx optimization" },
    { "no_quad_lod", GALLIVM_PERF_NO_QUAD_LOD, "disable quad_lod optimization" },
    { "no_aos_sampling", GALLIVM_PERF_NO_AOS_SAMPLING, "disable aos sampling optimization" },
    { "nopt",   GALLIVM_PERF_NO_OPT, "disable optimization passes to speed up shader compilation" },
-   { "no_filter_hacks", GALLIVM_PERF_NO_BRILINEAR | GALLIVM_PERF_NO_RHO_APPROX |
-     GALLIVM_PERF_NO_QUAD_LOD, "disable filter optimization hacks" },
    DEBUG_NAMED_VALUE_END
 };
 
@@ -137,7 +135,7 @@ create_pass_manager(struct gallivm_state *gallivm)
    }
 
 #if GALLIVM_HAVE_CORO
-#if LLVM_VERSION_MAJOR <= 8 && (defined(PIPE_ARCH_AARCH64) || defined (PIPE_ARCH_ARM) || defined(PIPE_ARCH_S390))
+#if LLVM_VERSION_MAJOR <= 8 && (defined(PIPE_ARCH_AARCH64) || defined (PIPE_ARCH_ARM) || defined(PIPE_ARCH_S390) || defined(PIPE_ARCH_MIPS64))
    LLVMAddArgumentPromotionPass(gallivm->cgpassmgr);
    LLVMAddFunctionAttrsPass(gallivm->cgpassmgr);
 #endif
@@ -347,6 +345,10 @@ init_gallivm_state(struct gallivm_state *gallivm, const char *name,
    if (!gallivm->module)
       goto fail;
 
+#if defined(PIPE_ARCH_X86)
+   lp_set_module_stack_alignment_override(gallivm->module, 4);
+#endif
+
    gallivm->builder = LLVMCreateBuilderInContext(gallivm->context);
    if (!gallivm->builder)
       goto fail;
@@ -433,6 +435,7 @@ lp_build_init(void)
    /* For simulating less capable machines */
 #ifdef DEBUG
    if (debug_get_bool_option("LP_FORCE_SSE2", FALSE)) {
+      extern struct util_cpu_caps_t util_cpu_caps;
       assert(util_cpu_caps.has_sse2);
       util_cpu_caps.has_sse3 = 0;
       util_cpu_caps.has_ssse3 = 0;
@@ -445,7 +448,7 @@ lp_build_init(void)
    }
 #endif
 
-   if (util_cpu_caps.has_avx2 || util_cpu_caps.has_avx) {
+   if (util_get_cpu_caps()->has_avx2 || util_get_cpu_caps()->has_avx) {
       lp_native_vector_width = 256;
    } else {
       /* Leave it at 128, even when no SIMD extensions are available.
@@ -460,16 +463,16 @@ lp_build_init(void)
 #if LLVM_VERSION_MAJOR < 4
    if (lp_native_vector_width <= 128) {
       /* Hide AVX support, as often LLVM AVX intrinsics are only guarded by
-       * "util_cpu_caps.has_avx" predicate, and lack the
+       * "util_get_cpu_caps()->has_avx" predicate, and lack the
        * "lp_native_vector_width > 128" predicate. And also to ensure a more
        * consistent behavior, allowing one to test SSE2 on AVX machines.
        * XXX: should not play games with util_cpu_caps directly as it might
        * get used for other things outside llvm too.
        */
-      util_cpu_caps.has_avx = 0;
-      util_cpu_caps.has_avx2 = 0;
-      util_cpu_caps.has_f16c = 0;
-      util_cpu_caps.has_fma = 0;
+      util_get_cpu_caps()->has_avx = 0;
+      util_get_cpu_caps()->has_avx2 = 0;
+      util_get_cpu_caps()->has_f16c = 0;
+      util_get_cpu_caps()->has_fma = 0;
    }
 #endif
 
@@ -482,7 +485,7 @@ lp_build_init(void)
     * Right now denorms get explicitly disabled (but elsewhere) for x86,
     * whereas ppc64 explicitly enables them...
     */
-   if (util_cpu_caps.has_altivec) {
+   if (util_get_cpu_caps()->has_altivec) {
       unsigned short mask[] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
                                 0xFFFF, 0xFFFF, 0xFFFE, 0xFFFF };
       __asm (
@@ -590,10 +593,10 @@ gallivm_compile_module(struct gallivm_state *gallivm)
       LLVMWriteBitcodeToFile(gallivm->module, filename);
       debug_printf("%s written\n", filename);
       debug_printf("Invoke as \"opt %s %s | llc -O%d %s%s\"\n",
-                   gallivm_debug & GALLIVM_PERF_NO_OPT ? "-mem2reg" :
+                   gallivm_perf & GALLIVM_PERF_NO_OPT ? "-mem2reg" :
                    "-sroa -early-cse -simplifycfg -reassociate "
                    "-mem2reg -constprop -instcombine -gvn",
-                   filename, gallivm_debug & GALLIVM_PERF_NO_OPT ? 0 : 2,
+                   filename, gallivm_perf & GALLIVM_PERF_NO_OPT ? 0 : 2,
                    "[-mcpu=<-mcpu option>] ",
                    "[-mattr=<-mattr option(s)>]");
    }

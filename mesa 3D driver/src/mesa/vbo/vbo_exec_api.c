@@ -34,7 +34,6 @@ USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "main/bufferobj.h"
 #include "main/context.h"
 #include "main/macros.h"
-#include "main/vtxfmt.h"
 #include "main/dlist.h"
 #include "main/eval.h"
 #include "main/state.h"
@@ -44,23 +43,12 @@ USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "main/dispatch.h"
 #include "util/bitscan.h"
 #include "util/u_memory.h"
+#include "api_exec_decl.h"
 
-#include "vbo_noop.h"
 #include "vbo_private.h"
-
 
 /** ID/name for immediate-mode VBO */
 #define IMM_BUFFER_NAME 0xaabbccdd
-
-
-static void GLAPIENTRY
-vbo_exec_Materialfv(GLenum face, GLenum pname, const GLfloat *params);
-
-static void GLAPIENTRY
-vbo_exec_EvalCoord1f(GLfloat u);
-
-static void GLAPIENTRY
-vbo_exec_EvalCoord2f(GLfloat u, GLfloat v);
 
 
 static void
@@ -81,29 +69,31 @@ vbo_exec_wrap_buffers(struct vbo_exec_context *exec)
       exec->vtx.buffer_ptr = exec->vtx.buffer_map;
    }
    else {
-      struct _mesa_prim *last_prim = &exec->vtx.prim[exec->vtx.prim_count - 1];
-      const GLuint last_begin = last_prim->begin;
-      GLuint last_count;
+      struct gl_context *ctx = gl_context_from_vbo_exec(exec);
+      unsigned last = exec->vtx.prim_count - 1;
+      struct pipe_draw_start_count_bias *last_draw = &exec->vtx.draw[last];
+      const bool last_begin = exec->vtx.markers[last].begin;
+      GLuint last_count = 0;
 
-      if (_mesa_inside_begin_end(exec->ctx)) {
-         last_prim->count = exec->vtx.vert_count - last_prim->start;
+      if (_mesa_inside_begin_end(ctx)) {
+         last_draw->count = exec->vtx.vert_count - last_draw->start;
+         last_count = last_draw->count;
+         exec->vtx.markers[last].end = 0;
       }
 
-      last_count = last_prim->count;
-
       /* Special handling for wrapping GL_LINE_LOOP */
-      if (last_prim->mode == GL_LINE_LOOP &&
+      if (exec->vtx.mode[last] == GL_LINE_LOOP &&
           last_count > 0 &&
-          !last_prim->end) {
+          !exec->vtx.markers[last].end) {
          /* draw this section of the incomplete line loop as a line strip */
-         last_prim->mode = GL_LINE_STRIP;
-         if (!last_prim->begin) {
+         exec->vtx.mode[last] = GL_LINE_STRIP;
+         if (!last_begin) {
             /* This is not the first section of the line loop, so don't
              * draw the 0th vertex.  We're saving it until we draw the
              * very last section of the loop.
              */
-            last_prim->start++;
-            last_prim->count--;
+            last_draw->start++;
+            last_draw->count--;
          }
       }
 
@@ -120,16 +110,14 @@ vbo_exec_wrap_buffers(struct vbo_exec_context *exec)
        */
       assert(exec->vtx.prim_count == 0);
 
-      if (_mesa_inside_begin_end(exec->ctx)) {
-         exec->vtx.prim[0].mode = exec->ctx->Driver.CurrentExecPrimitive;
-         exec->vtx.prim[0].begin = 0;
-         exec->vtx.prim[0].end = 0;
-         exec->vtx.prim[0].start = 0;
-         exec->vtx.prim[0].count = 0;
+      if (_mesa_inside_begin_end(ctx)) {
+         exec->vtx.mode[0] = ctx->Driver.CurrentExecPrimitive;
+         exec->vtx.draw[0].start = 0;
+         exec->vtx.markers[0].begin = 0;
          exec->vtx.prim_count++;
 
          if (exec->vtx.copied.nr == last_count)
-            exec->vtx.prim[0].begin = last_begin;
+            exec->vtx.markers[0].begin = last_begin;
       }
    }
 }
@@ -175,9 +163,10 @@ vbo_exec_vtx_wrap(struct vbo_exec_context *exec)
 static void
 vbo_exec_copy_to_current(struct vbo_exec_context *exec)
 {
-   struct gl_context *ctx = exec->ctx;
+   struct gl_context *ctx = gl_context_from_vbo_exec(exec);
    struct vbo_context *vbo = vbo_context(ctx);
    GLbitfield64 enabled = exec->vtx.enabled & (~BITFIELD64_BIT(VBO_ATTRIB_POS));
+   bool color0_changed = false;
 
    while (enabled) {
       const int i = u_bit_scan64(&enabled);
@@ -187,11 +176,7 @@ vbo_exec_copy_to_current(struct vbo_exec_context *exec)
        */
       GLfloat *current = (GLfloat *)vbo->current[i].Ptr;
       fi_type tmp[8]; /* space for doubles */
-      int dmul = 1;
-
-      if (exec->vtx.attr[i].type == GL_DOUBLE ||
-          exec->vtx.attr[i].type == GL_UNSIGNED_INT64_ARB)
-         dmul = 2;
+      int dmul_shift = 0;
 
       assert(exec->vtx.attr[i].size);
 
@@ -199,6 +184,7 @@ vbo_exec_copy_to_current(struct vbo_exec_context *exec)
           exec->vtx.attr[i].type == GL_UNSIGNED_INT64_ARB) {
          memset(tmp, 0, sizeof(tmp));
          memcpy(tmp, exec->vtx.attrptr[i], exec->vtx.attr[i].size * sizeof(GLfloat));
+         dmul_shift = 1;
       } else {
          COPY_CLEAN_4V_TYPE_AS_UNION(tmp,
                                      exec->vtx.attr[i].size,
@@ -206,35 +192,41 @@ vbo_exec_copy_to_current(struct vbo_exec_context *exec)
                                      exec->vtx.attr[i].type);
       }
 
+      if (memcmp(current, tmp, 4 * sizeof(GLfloat) << dmul_shift) != 0) {
+         memcpy(current, tmp, 4 * sizeof(GLfloat) << dmul_shift);
+
+         if (i == VBO_ATTRIB_COLOR0)
+            color0_changed = true;
+
+         if (i >= VBO_ATTRIB_MAT_FRONT_AMBIENT) {
+            ctx->NewState |= _NEW_MATERIAL;
+            ctx->PopAttribState |= GL_LIGHTING_BIT;
+
+            /* The fixed-func vertex program uses this. */
+            if (i == VBO_ATTRIB_MAT_FRONT_SHININESS ||
+                i == VBO_ATTRIB_MAT_BACK_SHININESS)
+               ctx->NewState |= _NEW_FF_VERT_PROGRAM;
+         } else {
+            ctx->NewState |= _NEW_CURRENT_ATTRIB;
+            ctx->PopAttribState |= GL_CURRENT_BIT;
+         }
+      }
+
+      /* Given that we explicitly state size here, there is no need
+       * for the COPY_CLEAN above, could just copy 16 bytes and be
+       * done.  The only problem is when Mesa accesses ctx->Current
+       * directly.
+       */
+      /* Size here is in components - not bytes */
       if (exec->vtx.attr[i].type != vbo->current[i].Format.Type ||
-          memcmp(current, tmp, 4 * sizeof(GLfloat) * dmul) != 0) {
-         memcpy(current, tmp, 4 * sizeof(GLfloat) * dmul);
-
-         /* Given that we explicitly state size here, there is no need
-          * for the COPY_CLEAN above, could just copy 16 bytes and be
-          * done.  The only problem is when Mesa accesses ctx->Current
-          * directly.
-          */
-         /* Size here is in components - not bytes */
+          (exec->vtx.attr[i].size >> dmul_shift) != vbo->current[i].Format.Size) {
          vbo_set_vertex_format(&vbo->current[i].Format,
-                               exec->vtx.attr[i].size / dmul,
+                               exec->vtx.attr[i].size >> dmul_shift,
                                exec->vtx.attr[i].type);
-
-         /* This triggers rather too much recalculation of Mesa state
-          * that doesn't get used (eg light positions).
-          */
-         if (i >= VBO_ATTRIB_MAT_FRONT_AMBIENT &&
-             i <= VBO_ATTRIB_MAT_BACK_INDEXES)
-            ctx->NewState |= _NEW_LIGHT;
-
-         ctx->NewState |= _NEW_CURRENT_ATTRIB;
       }
    }
 
-   /* Colormaterial -- this kindof sucks.
-    */
-   if (ctx->Light.ColorMaterialEnabled &&
-       exec->vtx.attr[VBO_ATTRIB_COLOR0].size) {
+   if (color0_changed && ctx->Light.ColorMaterialEnabled) {
       _mesa_update_color_material(ctx,
                                   ctx->Current.Attrib[VBO_ATTRIB_COLOR0]);
    }
@@ -253,7 +245,7 @@ static void
 vbo_exec_wrap_upgrade_vertex(struct vbo_exec_context *exec,
                              GLuint attr, GLuint newSize, GLenum newType)
 {
-   struct gl_context *ctx = exec->ctx;
+   struct gl_context *ctx = gl_context_from_vbo_exec(exec);
    struct vbo_context *vbo = vbo_context(ctx);
    const GLint lastcount = exec->vtx.vert_count;
    fi_type *old_attrptr[VBO_ATTRIB_MAX];
@@ -263,6 +255,13 @@ vbo_exec_wrap_upgrade_vertex(struct vbo_exec_context *exec,
    GLuint i;
 
    assert(attr < VBO_ATTRIB_MAX);
+
+   if (unlikely(!exec->vtx.buffer_ptr)) {
+      /* We should only hit this when use_buffer_objects=true */
+      assert(exec->vtx.bufferobj);
+      vbo_exec_vtx_map(exec);
+      assert(exec->vtx.buffer_ptr);
+   }
 
    /* Run pipeline on current vertices, copy wrapped vertices
     * to exec->vtx.copied.
@@ -484,7 +483,6 @@ do {                                                                    \
    int sz = (sizeof(C) / sizeof(GLfloat));                              \
                                                                         \
    assert(sz == 1 || sz == 2);                                          \
-                                                                        \
    /* store a copy of the attribute in exec except for glVertex */      \
    if ((A) != 0) {                                                      \
       /* Check if attribute size or type is changing. */                \
@@ -562,18 +560,18 @@ do {                                                                    \
 
 #undef ERROR
 #define ERROR(err) _mesa_error(ctx, err, __func__)
-#define TAG(x) vbo_exec_##x
+#define TAG(x) _mesa_##x
+#define SUPPRESS_STATIC
 
 #include "vbo_attrib_tmp.h"
-
 
 
 /**
  * Execute a glMaterial call.  Note that if GL_COLOR_MATERIAL is enabled,
  * this may be a (partial) no-op.
  */
-static void GLAPIENTRY
-vbo_exec_Materialfv(GLenum face, GLenum pname, const GLfloat *params)
+void GLAPIENTRY
+_mesa_Materialfv(GLenum face, GLenum pname, const GLfloat *params)
 {
    GLbitfield updateMats;
    GET_CURRENT_CONTEXT(ctx);
@@ -674,7 +672,7 @@ vbo_exec_Materialfv(GLenum face, GLenum pname, const GLfloat *params)
 static void
 vbo_exec_FlushVertices_internal(struct vbo_exec_context *exec, unsigned flags)
 {
-   struct gl_context *ctx = exec->ctx;
+   struct gl_context *ctx = gl_context_from_vbo_exec(exec);
 
    if (flags & FLUSH_STORED_VERTICES) {
       if (exec->vtx.vert_count) {
@@ -702,8 +700,8 @@ vbo_exec_FlushVertices_internal(struct vbo_exec_context *exec, unsigned flags)
 }
 
 
-static void GLAPIENTRY
-vbo_exec_EvalCoord1f(GLfloat u)
+void GLAPIENTRY
+_mesa_EvalCoord1f(GLfloat u)
 {
    GET_CURRENT_CONTEXT(ctx);
    struct vbo_exec_context *exec = &vbo_context(ctx)->exec;
@@ -730,8 +728,8 @@ vbo_exec_EvalCoord1f(GLfloat u)
 }
 
 
-static void GLAPIENTRY
-vbo_exec_EvalCoord2f(GLfloat u, GLfloat v)
+void GLAPIENTRY
+_mesa_EvalCoord2f(GLfloat u, GLfloat v)
 {
    GET_CURRENT_CONTEXT(ctx);
    struct vbo_exec_context *exec = &vbo_context(ctx)->exec;
@@ -762,34 +760,34 @@ vbo_exec_EvalCoord2f(GLfloat u, GLfloat v)
 }
 
 
-static void GLAPIENTRY
-vbo_exec_EvalCoord1fv(const GLfloat *u)
+void GLAPIENTRY
+_mesa_EvalCoord1fv(const GLfloat *u)
 {
-   vbo_exec_EvalCoord1f(u[0]);
+   _mesa_EvalCoord1f(u[0]);
 }
 
 
-static void GLAPIENTRY
-vbo_exec_EvalCoord2fv(const GLfloat *u)
+void GLAPIENTRY
+_mesa_EvalCoord2fv(const GLfloat *u)
 {
-   vbo_exec_EvalCoord2f(u[0], u[1]);
+   _mesa_EvalCoord2f(u[0], u[1]);
 }
 
 
-static void GLAPIENTRY
-vbo_exec_EvalPoint1(GLint i)
+void GLAPIENTRY
+_mesa_EvalPoint1(GLint i)
 {
    GET_CURRENT_CONTEXT(ctx);
    GLfloat du = ((ctx->Eval.MapGrid1u2 - ctx->Eval.MapGrid1u1) /
                  (GLfloat) ctx->Eval.MapGrid1un);
    GLfloat u = i * du + ctx->Eval.MapGrid1u1;
 
-   vbo_exec_EvalCoord1f(u);
+   _mesa_EvalCoord1f(u);
 }
 
 
-static void GLAPIENTRY
-vbo_exec_EvalPoint2(GLint i, GLint j)
+void GLAPIENTRY
+_mesa_EvalPoint2(GLint i, GLint j)
 {
    GET_CURRENT_CONTEXT(ctx);
    GLfloat du = ((ctx->Eval.MapGrid2u2 - ctx->Eval.MapGrid2u1) /
@@ -799,15 +797,15 @@ vbo_exec_EvalPoint2(GLint i, GLint j)
    GLfloat u = i * du + ctx->Eval.MapGrid2u1;
    GLfloat v = j * dv + ctx->Eval.MapGrid2v1;
 
-   vbo_exec_EvalCoord2f(u, v);
+   _mesa_EvalCoord2f(u, v);
 }
 
 
 /**
  * Called via glBegin.
  */
-static void GLAPIENTRY
-vbo_exec_Begin(GLenum mode)
+void GLAPIENTRY
+_mesa_Begin(GLenum mode)
 {
    GET_CURRENT_CONTEXT(ctx);
    struct vbo_context *vbo = vbo_context(ctx);
@@ -819,11 +817,12 @@ vbo_exec_Begin(GLenum mode)
       return;
    }
 
-   if (!_mesa_valid_prim_mode(ctx, mode, "glBegin")) {
-      return;
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
-   if (!_mesa_valid_to_render(ctx, "glBegin")) {
+   GLenum error = _mesa_valid_prim_mode(ctx, mode);
+   if (error != GL_NO_ERROR) {
+      _mesa_error(ctx, error, "glBegin");
       return;
    }
 
@@ -837,11 +836,9 @@ vbo_exec_Begin(GLenum mode)
       vbo_exec_FlushVertices_internal(exec, FLUSH_STORED_VERTICES);
 
    i = exec->vtx.prim_count++;
-   exec->vtx.prim[i].mode = mode;
-   exec->vtx.prim[i].begin = 1;
-   exec->vtx.prim[i].end = 0;
-   exec->vtx.prim[i].start = exec->vtx.vert_count;
-   exec->vtx.prim[i].count = 0;
+   exec->vtx.mode[i] = mode;
+   exec->vtx.draw[i].start = exec->vtx.vert_count;
+   exec->vtx.markers[i].begin = 1;
 
    ctx->Driver.CurrentExecPrimitive = mode;
 
@@ -850,7 +847,7 @@ vbo_exec_Begin(GLenum mode)
    /* We may have been called from a display list, in which case we should
     * leave dlist.c's dispatch table in place.
     */
-   if (ctx->CurrentClientDispatch == ctx->MarshalExec) {
+   if (ctx->GLThread.enabled) {
       ctx->CurrentServerDispatch = ctx->Exec;
    } else if (ctx->CurrentClientDispatch == ctx->OutsideBeginEnd) {
       ctx->CurrentClientDispatch = ctx->Exec;
@@ -867,17 +864,27 @@ vbo_exec_Begin(GLenum mode)
 static void
 try_vbo_merge(struct vbo_exec_context *exec)
 {
-   struct _mesa_prim *cur =  &exec->vtx.prim[exec->vtx.prim_count - 1];
+   unsigned cur = exec->vtx.prim_count - 1;
 
    assert(exec->vtx.prim_count >= 1);
 
-   vbo_try_prim_conversion(cur);
+   vbo_try_prim_conversion(&exec->vtx.mode[cur], &exec->vtx.draw[cur].count);
 
    if (exec->vtx.prim_count >= 2) {
-      struct _mesa_prim *prev = &exec->vtx.prim[exec->vtx.prim_count - 2];
-      assert(prev == cur - 1);
+      struct gl_context *ctx = gl_context_from_vbo_exec(exec);
+      unsigned prev = cur - 1;
 
-      if (vbo_merge_draws(exec->ctx, false, prev, cur))
+      if (vbo_merge_draws(ctx, false,
+                          exec->vtx.mode[prev],
+                          exec->vtx.mode[cur],
+                          exec->vtx.draw[prev].start,
+                          exec->vtx.draw[cur].start,
+                          &exec->vtx.draw[prev].count,
+                          exec->vtx.draw[cur].count,
+                          0, 0,
+                          &exec->vtx.markers[prev].end,
+                          exec->vtx.markers[cur].begin,
+                          exec->vtx.markers[cur].end))
          exec->vtx.prim_count--;  /* drop the last primitive */
    }
 }
@@ -886,8 +893,8 @@ try_vbo_merge(struct vbo_exec_context *exec)
 /**
  * Called via glEnd.
  */
-static void GLAPIENTRY
-vbo_exec_End(void)
+void GLAPIENTRY
+_mesa_End(void)
 {
    GET_CURRENT_CONTEXT(ctx);
    struct vbo_exec_context *exec = &vbo_context(ctx)->exec;
@@ -899,7 +906,7 @@ vbo_exec_End(void)
 
    ctx->Exec = ctx->OutsideBeginEnd;
 
-   if (ctx->CurrentClientDispatch == ctx->MarshalExec) {
+   if (ctx->GLThread.enabled) {
       ctx->CurrentServerDispatch = ctx->Exec;
    } else if (ctx->CurrentClientDispatch == ctx->BeginEnd) {
       ctx->CurrentClientDispatch = ctx->Exec;
@@ -908,31 +915,33 @@ vbo_exec_End(void)
 
    if (exec->vtx.prim_count > 0) {
       /* close off current primitive */
-      struct _mesa_prim *last_prim = &exec->vtx.prim[exec->vtx.prim_count - 1];
-      unsigned count = exec->vtx.vert_count - last_prim->start;
+      unsigned last = exec->vtx.prim_count - 1;
+      struct pipe_draw_start_count_bias *last_draw = &exec->vtx.draw[last];
+      unsigned count = exec->vtx.vert_count - last_draw->start;
 
-      last_prim->end = 1;
-      last_prim->count = count;
+      last_draw->count = count;
+      exec->vtx.markers[last].end = 1;
 
       if (count)
          ctx->Driver.NeedFlush |= FLUSH_STORED_VERTICES;
 
       /* Special handling for GL_LINE_LOOP */
-      if (last_prim->mode == GL_LINE_LOOP && last_prim->begin == 0) {
+      if (exec->vtx.mode[last] == GL_LINE_LOOP &&
+          exec->vtx.markers[last].begin == 0) {
          /* We're finishing drawing a line loop.  Append 0th vertex onto
           * end of vertex buffer so we can draw it as a line strip.
           */
          const fi_type *src = exec->vtx.buffer_map +
-            last_prim->start * exec->vtx.vertex_size;
+            last_draw->start * exec->vtx.vertex_size;
          fi_type *dst = exec->vtx.buffer_map +
             exec->vtx.vert_count * exec->vtx.vertex_size;
 
          /* copy 0th vertex to end of buffer */
          memcpy(dst, src, exec->vtx.vertex_size * sizeof(fi_type));
 
-         last_prim->start++;  /* skip vertex0 */
-         /* note that last_prim->count stays unchanged */
-         last_prim->mode = GL_LINE_STRIP;
+         last_draw->start++;  /* skip vertex0 */
+         /* note that the count stays unchanged */
+         exec->vtx.mode[last] = GL_LINE_STRIP;
 
          /* Increment the vertex count so the next primitive doesn't
           * overwrite the last vertex which we just added.
@@ -958,8 +967,8 @@ vbo_exec_End(void)
 /**
  * Called via glPrimitiveRestartNV()
  */
-static void GLAPIENTRY
-vbo_exec_PrimitiveRestartNV(void)
+void GLAPIENTRY
+_mesa_PrimitiveRestartNV(void)
 {
    GLenum curPrim;
    GET_CURRENT_CONTEXT(ctx);
@@ -970,24 +979,97 @@ vbo_exec_PrimitiveRestartNV(void)
       _mesa_error(ctx, GL_INVALID_OPERATION, "glPrimitiveRestartNV");
    }
    else {
-      vbo_exec_End();
-      vbo_exec_Begin(curPrim);
+      _mesa_End();
+      _mesa_Begin(curPrim);
    }
 }
 
 
+/**
+ * A special version of glVertexAttrib4f that does not treat index 0 as
+ * VBO_ATTRIB_POS.
+ */
 static void
-vbo_exec_vtxfmt_init(struct vbo_exec_context *exec)
+VertexAttrib4f_nopos(GLuint index, GLfloat x, GLfloat y, GLfloat z, GLfloat w)
 {
-   struct gl_context *ctx = exec->ctx;
-   GLvertexformat *vfmt = &exec->vtxfmt;
+   GET_CURRENT_CONTEXT(ctx);
+   if (index < MAX_VERTEX_GENERIC_ATTRIBS)
+      ATTRF(VBO_ATTRIB_GENERIC0 + index, 4, x, y, z, w);
+   else
+      ERROR(GL_INVALID_VALUE);
+}
 
-#define NAME_AE(x) _ae_##x
+static void GLAPIENTRY
+_es_VertexAttrib4fARB(GLuint index, GLfloat x, GLfloat y, GLfloat z, GLfloat w)
+{
+   VertexAttrib4f_nopos(index, x, y, z, w);
+}
+
+
+static void GLAPIENTRY
+_es_VertexAttrib1fARB(GLuint indx, GLfloat x)
+{
+   VertexAttrib4f_nopos(indx, x, 0.0f, 0.0f, 1.0f);
+}
+
+
+static void GLAPIENTRY
+_es_VertexAttrib1fvARB(GLuint indx, const GLfloat* values)
+{
+   VertexAttrib4f_nopos(indx, values[0], 0.0f, 0.0f, 1.0f);
+}
+
+
+static void GLAPIENTRY
+_es_VertexAttrib2fARB(GLuint indx, GLfloat x, GLfloat y)
+{
+   VertexAttrib4f_nopos(indx, x, y, 0.0f, 1.0f);
+}
+
+
+static void GLAPIENTRY
+_es_VertexAttrib2fvARB(GLuint indx, const GLfloat* values)
+{
+   VertexAttrib4f_nopos(indx, values[0], values[1], 0.0f, 1.0f);
+}
+
+
+static void GLAPIENTRY
+_es_VertexAttrib3fARB(GLuint indx, GLfloat x, GLfloat y, GLfloat z)
+{
+   VertexAttrib4f_nopos(indx, x, y, z, 1.0f);
+}
+
+
+static void GLAPIENTRY
+_es_VertexAttrib3fvARB(GLuint indx, const GLfloat* values)
+{
+   VertexAttrib4f_nopos(indx, values[0], values[1], values[2], 1.0f);
+}
+
+
+static void GLAPIENTRY
+_es_VertexAttrib4fvARB(GLuint indx, const GLfloat* values)
+{
+   VertexAttrib4f_nopos(indx, values[0], values[1], values[2], values[3]);
+}
+
+
+void
+vbo_install_exec_vtxfmt(struct gl_context *ctx)
+{
+#define NAME_AE(x) _mesa_##x
 #define NAME_CALLLIST(x) _mesa_##x
-#define NAME(x) vbo_exec_##x
+#define NAME(x) _mesa_##x
 #define NAME_ES(x) _es_##x
 
-#include "vbo_init_tmp.h"
+   struct _glapi_table *tab = ctx->Exec;
+   #include "api_vtxfmt_init.h"
+
+   if (ctx->BeginEnd) {
+      tab = ctx->BeginEnd;
+      #include "api_vtxfmt_init.h"
+   }
 }
 
 
@@ -1009,32 +1091,17 @@ vbo_reset_all_attr(struct vbo_exec_context *exec)
 
 
 void
-vbo_exec_vtx_init(struct vbo_exec_context *exec, bool use_buffer_objects)
+vbo_exec_vtx_init(struct vbo_exec_context *exec)
 {
-   struct gl_context *ctx = exec->ctx;
+   struct gl_context *ctx = gl_context_from_vbo_exec(exec);
 
-   if (use_buffer_objects) {
-      /* Use buffer objects for immediate mode. */
-      struct vbo_exec_context *exec = &vbo_context(ctx)->exec;
-
-      exec->vtx.bufferobj = ctx->Driver.NewBufferObject(ctx, IMM_BUFFER_NAME);
-
-      /* Map the buffer. */
-      vbo_exec_vtx_map(exec);
-      assert(exec->vtx.buffer_ptr);
-   } else {
-      /* Use allocated memory for immediate mode. */
-      exec->vtx.bufferobj = NULL;
-      exec->vtx.buffer_map =
-         align_malloc(ctx->Const.glBeginEndBufferSize, 64);
-      exec->vtx.buffer_ptr = exec->vtx.buffer_map;
-   }
-
-   vbo_exec_vtxfmt_init(exec);
-   _mesa_noop_vtxfmt_init(ctx, &exec->vtxfmt_noop);
+   exec->vtx.bufferobj = _mesa_bufferobj_alloc(ctx, IMM_BUFFER_NAME);
 
    exec->vtx.enabled = u_bit_consecutive64(0, VBO_ATTRIB_MAX); /* reset all */
    vbo_reset_all_attr(exec);
+
+   exec->vtx.info.instance_count = 1;
+   exec->vtx.info.max_index = ~0;
 }
 
 
@@ -1042,7 +1109,7 @@ void
 vbo_exec_vtx_destroy(struct vbo_exec_context *exec)
 {
    /* using a real VBO for vertex data */
-   struct gl_context *ctx = exec->ctx;
+   struct gl_context *ctx = gl_context_from_vbo_exec(exec);
 
    /* True VBOs should already be unmapped
     */
@@ -1060,7 +1127,7 @@ vbo_exec_vtx_destroy(struct vbo_exec_context *exec)
     */
    if (exec->vtx.bufferobj &&
        _mesa_bufferobj_mapped(exec->vtx.bufferobj, MAP_INTERNAL)) {
-      ctx->Driver.UnmapBuffer(ctx, exec->vtx.bufferobj, MAP_INTERNAL);
+      _mesa_bufferobj_unmap(ctx, exec->vtx.bufferobj, MAP_INTERNAL);
    }
    _mesa_reference_buffer_object(ctx, &exec->vtx.bufferobj, NULL);
 }
@@ -1110,28 +1177,28 @@ vbo_exec_FlushVertices(struct gl_context *ctx, GLuint flags)
 void GLAPIENTRY
 _es_Color4f(GLfloat r, GLfloat g, GLfloat b, GLfloat a)
 {
-   vbo_exec_Color4f(r, g, b, a);
+   _mesa_Color4f(r, g, b, a);
 }
 
 
 void GLAPIENTRY
 _es_Normal3f(GLfloat x, GLfloat y, GLfloat z)
 {
-   vbo_exec_Normal3f(x, y, z);
+   _mesa_Normal3f(x, y, z);
 }
 
 
 void GLAPIENTRY
 _es_MultiTexCoord4f(GLenum target, GLfloat s, GLfloat t, GLfloat r, GLfloat q)
 {
-   vbo_exec_MultiTexCoord4f(target, s, t, r, q);
+   _mesa_MultiTexCoord4fARB(target, s, t, r, q);
 }
 
 
 void GLAPIENTRY
 _es_Materialfv(GLenum face, GLenum pname, const GLfloat *params)
 {
-   vbo_exec_Materialfv(face, pname, params);
+   _mesa_Materialfv(face, pname, params);
 }
 
 
@@ -1141,75 +1208,5 @@ _es_Materialf(GLenum face, GLenum pname, GLfloat param)
    GLfloat p[4];
    p[0] = param;
    p[1] = p[2] = p[3] = 0.0F;
-   vbo_exec_Materialfv(face, pname, p);
-}
-
-
-/**
- * A special version of glVertexAttrib4f that does not treat index 0 as
- * VBO_ATTRIB_POS.
- */
-static void
-VertexAttrib4f_nopos(GLuint index, GLfloat x, GLfloat y, GLfloat z, GLfloat w)
-{
-   GET_CURRENT_CONTEXT(ctx);
-   if (index < MAX_VERTEX_GENERIC_ATTRIBS)
-      ATTRF(VBO_ATTRIB_GENERIC0 + index, 4, x, y, z, w);
-   else
-      ERROR(GL_INVALID_VALUE);
-}
-
-void GLAPIENTRY
-_es_VertexAttrib4f(GLuint index, GLfloat x, GLfloat y, GLfloat z, GLfloat w)
-{
-   VertexAttrib4f_nopos(index, x, y, z, w);
-}
-
-
-void GLAPIENTRY
-_es_VertexAttrib1f(GLuint indx, GLfloat x)
-{
-   VertexAttrib4f_nopos(indx, x, 0.0f, 0.0f, 1.0f);
-}
-
-
-void GLAPIENTRY
-_es_VertexAttrib1fv(GLuint indx, const GLfloat* values)
-{
-   VertexAttrib4f_nopos(indx, values[0], 0.0f, 0.0f, 1.0f);
-}
-
-
-void GLAPIENTRY
-_es_VertexAttrib2f(GLuint indx, GLfloat x, GLfloat y)
-{
-   VertexAttrib4f_nopos(indx, x, y, 0.0f, 1.0f);
-}
-
-
-void GLAPIENTRY
-_es_VertexAttrib2fv(GLuint indx, const GLfloat* values)
-{
-   VertexAttrib4f_nopos(indx, values[0], values[1], 0.0f, 1.0f);
-}
-
-
-void GLAPIENTRY
-_es_VertexAttrib3f(GLuint indx, GLfloat x, GLfloat y, GLfloat z)
-{
-   VertexAttrib4f_nopos(indx, x, y, z, 1.0f);
-}
-
-
-void GLAPIENTRY
-_es_VertexAttrib3fv(GLuint indx, const GLfloat* values)
-{
-   VertexAttrib4f_nopos(indx, values[0], values[1], values[2], 1.0f);
-}
-
-
-void GLAPIENTRY
-_es_VertexAttrib4fv(GLuint indx, const GLfloat* values)
-{
-   VertexAttrib4f_nopos(indx, values[0], values[1], values[2], values[3]);
+   _mesa_Materialfv(face, pname, p);
 }

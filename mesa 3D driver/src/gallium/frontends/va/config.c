@@ -52,11 +52,12 @@ vlVaQueryConfigProfiles(VADriverContextP ctx, VAProfile *profile_list, int *num_
    *num_profiles = 0;
 
    pscreen = VL_VA_PSCREEN(ctx);
-   for (p = PIPE_VIDEO_PROFILE_MPEG2_SIMPLE; p <= PIPE_VIDEO_PROFILE_VP9_PROFILE2; ++p) {
+   for (p = PIPE_VIDEO_PROFILE_MPEG2_SIMPLE; p <= PIPE_VIDEO_PROFILE_AV1_MAIN; ++p) {
       if (u_reduce_video_profile(p) == PIPE_VIDEO_FORMAT_MPEG4 && !debug_get_option_mpeg4())
          continue;
 
-      if (pscreen->get_video_param(pscreen, p, PIPE_VIDEO_ENTRYPOINT_BITSTREAM, PIPE_VIDEO_CAP_SUPPORTED)) {
+      if (pscreen->get_video_param(pscreen, p, PIPE_VIDEO_ENTRYPOINT_BITSTREAM, PIPE_VIDEO_CAP_SUPPORTED) ||
+          pscreen->get_video_param(pscreen, p, PIPE_VIDEO_ENTRYPOINT_ENCODE, PIPE_VIDEO_CAP_SUPPORTED)) {
          vap = PipeToProfile(p);
          if (vap != VAProfileNone)
             profile_list[(*num_profiles)++] = vap;
@@ -87,7 +88,9 @@ vlVaQueryConfigEntrypoints(VADriverContextP ctx, VAProfile profile,
    }
 
    p = ProfileToPipe(profile);
-   if (p == PIPE_VIDEO_PROFILE_UNKNOWN)
+   if (p == PIPE_VIDEO_PROFILE_UNKNOWN ||
+      (u_reduce_video_profile(p) == PIPE_VIDEO_FORMAT_MPEG4 &&
+      !debug_get_option_mpeg4()))
       return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
 
    pscreen = VL_VA_PSCREEN(ctx);
@@ -147,19 +150,27 @@ vlVaGetConfigAttributes(VADriverContextP ctx, VAProfile profile, VAEntrypoint en
             value = VA_RT_FORMAT_YUV420;
             if (pscreen->is_video_format_supported(pscreen, PIPE_FORMAT_P010,
                                                    ProfileToPipe(profile),
-                                                   PIPE_VIDEO_ENTRYPOINT_BITSTREAM) ||
+                                                   PIPE_VIDEO_ENTRYPOINT_ENCODE) ||
                 pscreen->is_video_format_supported(pscreen, PIPE_FORMAT_P016,
                                                    ProfileToPipe(profile),
-                                                   PIPE_VIDEO_ENTRYPOINT_BITSTREAM))
+                                                   PIPE_VIDEO_ENTRYPOINT_ENCODE))
                value |= VA_RT_FORMAT_YUV420_10BPP;
             break;
          case VAConfigAttribRateControl:
             value = VA_RC_CQP | VA_RC_CBR | VA_RC_VBR;
             break;
+         case VAConfigAttribEncRateControlExt:
+            value = pscreen->get_video_param(pscreen, ProfileToPipe(profile),
+                                             PIPE_VIDEO_ENTRYPOINT_ENCODE,
+                                             PIPE_VIDEO_CAP_MAX_TEMPORAL_LAYERS);
+            if (value > 0) {
+               value -= 1;
+               value |= (1 << 8);   /* temporal_layer_bitrate_control_flag */
+            }
+            break;
          case VAConfigAttribEncPackedHeaders:
             value = VA_ENC_PACKED_HEADER_NONE;
-            if (u_reduce_video_profile(ProfileToPipe(profile)) == PIPE_VIDEO_FORMAT_MPEG4_AVC ||
-                u_reduce_video_profile(ProfileToPipe(profile)) == PIPE_VIDEO_FORMAT_HEVC)
+            if (u_reduce_video_profile(ProfileToPipe(profile)) == PIPE_VIDEO_FORMAT_HEVC)
                value |= VA_ENC_PACKED_HEADER_SEQUENCE;
             break;
          case VAConfigAttribEncMaxRefFrames:
@@ -211,7 +222,12 @@ vlVaCreateConfig(VADriverContextP ctx, VAProfile profile, VAEntrypoint entrypoin
    if (!config)
       return VA_STATUS_ERROR_ALLOCATION_FAILED;
 
-   if (profile == VAProfileNone && entrypoint == VAEntrypointVideoProc) {
+   if (profile == VAProfileNone) {
+      if (entrypoint != VAEntrypointVideoProc) {
+         FREE(config);
+         return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
+      }
+
       config->entrypoint = PIPE_VIDEO_ENTRYPOINT_UNKNOWN;
       config->profile = PIPE_VIDEO_PROFILE_UNKNOWN;
       supported_rt_formats = VA_RT_FORMAT_YUV420 |
@@ -225,6 +241,10 @@ vlVaCreateConfig(VADriverContextP ctx, VAProfile profile, VAEntrypoint entrypoin
                FREE(config);
                return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
             }
+         } else {
+            /*other attrib_types are not supported.*/
+            FREE(config);
+            return VA_STATUS_ERROR_INVALID_VALUE;
          }
       }
 
@@ -239,7 +259,9 @@ vlVaCreateConfig(VADriverContextP ctx, VAProfile profile, VAEntrypoint entrypoin
    }
 
    p = ProfileToPipe(profile);
-   if (p == PIPE_VIDEO_PROFILE_UNKNOWN) {
+   if (p == PIPE_VIDEO_PROFILE_UNKNOWN  ||
+      (u_reduce_video_profile(p) == PIPE_VIDEO_FORMAT_MPEG4 &&
+      !debug_get_option_mpeg4())) {
       FREE(config);
       return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
    }
@@ -248,20 +270,22 @@ vlVaCreateConfig(VADriverContextP ctx, VAProfile profile, VAEntrypoint entrypoin
 
    switch (entrypoint) {
    case VAEntrypointVLD:
+      supported_rt_formats = VA_RT_FORMAT_YUV420 | VA_RT_FORMAT_YUV422;
       if (!pscreen->get_video_param(pscreen, p, PIPE_VIDEO_ENTRYPOINT_BITSTREAM,
 				    PIPE_VIDEO_CAP_SUPPORTED)) {
          FREE(config);
-         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
+         return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
       }
 
       config->entrypoint = PIPE_VIDEO_ENTRYPOINT_BITSTREAM;
       break;
 
    case VAEntrypointEncSlice:
+      supported_rt_formats = VA_RT_FORMAT_YUV420;
       if (!pscreen->get_video_param(pscreen, p, PIPE_VIDEO_ENTRYPOINT_ENCODE,
 				    PIPE_VIDEO_CAP_SUPPORTED)) {
          FREE(config);
-         return VA_STATUS_ERROR_UNSUPPORTED_PROFILE;
+         return VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
       }
 
       config->entrypoint = PIPE_VIDEO_ENTRYPOINT_ENCODE;
@@ -273,7 +297,6 @@ vlVaCreateConfig(VADriverContextP ctx, VAProfile profile, VAEntrypoint entrypoin
    }
 
    config->profile = p;
-   supported_rt_formats = VA_RT_FORMAT_YUV420 | VA_RT_FORMAT_YUV422;
    if (pscreen->is_video_format_supported(pscreen, PIPE_FORMAT_P010, p,
          config->entrypoint) ||
        pscreen->is_video_format_supported(pscreen, PIPE_FORMAT_P016, p,
@@ -281,13 +304,22 @@ vlVaCreateConfig(VADriverContextP ctx, VAProfile profile, VAEntrypoint entrypoin
       supported_rt_formats |= VA_RT_FORMAT_YUV420_10BPP;
 
    for (int i = 0; i <num_attribs ; i++) {
+      if (attrib_list[i].type != VAConfigAttribRTFormat &&
+         entrypoint == VAEntrypointVLD ) {
+         FREE(config);
+         return VA_STATUS_ERROR_INVALID_VALUE;
+      }
       if (attrib_list[i].type == VAConfigAttribRateControl) {
          if (attrib_list[i].value == VA_RC_CBR)
-            config->rc = PIPE_H264_ENC_RATE_CONTROL_METHOD_CONSTANT;
+            config->rc = PIPE_H2645_ENC_RATE_CONTROL_METHOD_CONSTANT;
          else if (attrib_list[i].value == VA_RC_VBR)
-            config->rc = PIPE_H264_ENC_RATE_CONTROL_METHOD_VARIABLE;
-         else
-            config->rc = PIPE_H264_ENC_RATE_CONTROL_METHOD_DISABLE;
+            config->rc = PIPE_H2645_ENC_RATE_CONTROL_METHOD_VARIABLE;
+         else if (attrib_list[i].value == VA_RC_CQP)
+            config->rc = PIPE_H2645_ENC_RATE_CONTROL_METHOD_DISABLE;
+         else {
+            FREE(config);
+            return VA_STATUS_ERROR_INVALID_VALUE;
+         }
       }
       if (attrib_list[i].type == VAConfigAttribRTFormat) {
          if (attrib_list[i].value & supported_rt_formats) {
@@ -295,6 +327,16 @@ vlVaCreateConfig(VADriverContextP ctx, VAProfile profile, VAEntrypoint entrypoin
          } else {
             FREE(config);
             return VA_STATUS_ERROR_UNSUPPORTED_RT_FORMAT;
+         }
+      }
+      if (attrib_list[i].type == VAConfigAttribEncPackedHeaders) {
+         if ((attrib_list[i].value > 1) ||
+             (attrib_list[i].value &&
+               u_reduce_video_profile(ProfileToPipe(profile)) !=
+                  PIPE_VIDEO_FORMAT_HEVC) ||
+             (config->entrypoint != PIPE_VIDEO_ENTRYPOINT_ENCODE)) {
+            FREE(config);
+            return VA_STATUS_ERROR_INVALID_VALUE;
          }
       }
    }

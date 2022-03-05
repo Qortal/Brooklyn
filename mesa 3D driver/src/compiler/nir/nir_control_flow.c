@@ -236,19 +236,12 @@ nir_insert_phi_undef(nir_block *block, nir_block *pred)
 
       nir_phi_instr *phi = nir_instr_as_phi(instr);
       nir_ssa_undef_instr *undef =
-         nir_ssa_undef_instr_create(ralloc_parent(phi),
+         nir_ssa_undef_instr_create(impl->function->shader,
                                     phi->dest.ssa.num_components,
                                     phi->dest.ssa.bit_size);
       nir_instr_insert_before_cf_list(&impl->body, &undef->instr);
-      nir_phi_src *src = ralloc(phi, nir_phi_src);
-      src->pred = pred;
-      src->src.parent_instr = &phi->instr;
-      src->src.is_ssa = true;
-      src->src.ssa = &undef->def;
-
+      nir_phi_src *src = nir_phi_instr_add_src(phi, pred, nir_src_for_ssa(&undef->def));
       list_addtail(&src->src.use_link, &undef->def.uses);
-
-      exec_list_push_tail(&phi->srcs, &src->node);
    }
 }
 
@@ -420,7 +413,8 @@ insert_non_block(nir_block *before, nir_cf_node *node, nir_block *after)
 {
    node->parent = before->cf_node.parent;
    exec_node_insert_after(&before->cf_node.node, &node->node);
-   link_block_to_non_block(before, node);
+   if (!nir_block_ends_in_jump(before))
+      link_block_to_non_block(before, node);
    link_non_block_to_block(node, after);
 }
 
@@ -447,6 +441,7 @@ remove_phi_src(nir_block *block, nir_block *pred)
          if (src->pred == pred) {
             list_del(&src->src.use_link);
             exec_node_remove(&src->node);
+            free(src);
          }
       }
    }
@@ -473,6 +468,7 @@ nir_handle_add_jump(nir_block *block)
 
    switch (jump_instr->type) {
    case nir_jump_return:
+   case nir_jump_halt:
       link_blocks(block, impl->end_block, NULL);
       break;
 
@@ -613,13 +609,13 @@ static bool
 replace_ssa_def_uses(nir_ssa_def *def, void *void_impl)
 {
    nir_function_impl *impl = void_impl;
-   void *mem_ctx = ralloc_parent(impl);
 
    nir_ssa_undef_instr *undef =
-      nir_ssa_undef_instr_create(mem_ctx, def->num_components,
+      nir_ssa_undef_instr_create(impl->function->shader,
+                                 def->num_components,
                                  def->bit_size);
    nir_instr_insert_before_cf_list(&impl->body, &undef->instr);
-   nir_ssa_def_rewrite_uses(def, nir_src_for_ssa(&undef->def));
+   nir_ssa_def_rewrite_uses(def, &undef->def);
    return true;
 }
 
@@ -734,6 +730,53 @@ nir_cf_extract(nir_cf_list *extracted, nir_cursor begin, nir_cursor end)
    stitch_blocks(block_before, block_after);
 }
 
+static void
+relink_jump_halt_cf_node(nir_cf_node *node, nir_block *end_block)
+{
+   switch (node->type) {
+   case nir_cf_node_block: {
+      nir_block *block = nir_cf_node_as_block(node);
+      nir_instr *last_instr = nir_block_last_instr(block);
+      if (last_instr == NULL || last_instr->type != nir_instr_type_jump)
+         break;
+
+      nir_jump_instr *jump = nir_instr_as_jump(last_instr);
+      /* We can't move a CF list from one function to another while we still
+       * have returns.
+       */
+      assert(jump->type != nir_jump_return);
+
+      if (jump->type == nir_jump_halt) {
+         unlink_block_successors(block);
+         link_blocks(block, end_block, NULL);
+      }
+      break;
+   }
+
+   case nir_cf_node_if: {
+      nir_if *if_stmt = nir_cf_node_as_if(node);
+      foreach_list_typed(nir_cf_node, child, node, &if_stmt->then_list)
+         relink_jump_halt_cf_node(child, end_block);
+      foreach_list_typed(nir_cf_node, child, node, &if_stmt->else_list)
+         relink_jump_halt_cf_node(child, end_block);
+      break;
+   }
+
+   case nir_cf_node_loop: {
+      nir_loop *loop = nir_cf_node_as_loop(node);
+      foreach_list_typed(nir_cf_node, child, node, &loop->body)
+         relink_jump_halt_cf_node(child, end_block);
+      break;
+   }
+
+   case nir_cf_node_function:
+      unreachable("Cannot insert a function in a function");
+
+   default:
+      unreachable("Invalid CF node type");
+   }
+}
+
 void
 nir_cf_reinsert(nir_cf_list *cf_list, nir_cursor cursor)
 {
@@ -741,6 +784,13 @@ nir_cf_reinsert(nir_cf_list *cf_list, nir_cursor cursor)
 
    if (exec_list_is_empty(&cf_list->list))
       return;
+
+   nir_function_impl *cursor_impl =
+      nir_cf_node_get_function(&nir_cursor_current_block(cursor)->cf_node);
+   if (cf_list->impl != cursor_impl) {
+      foreach_list_typed(nir_cf_node, node, node, &cf_list->list)
+         relink_jump_halt_cf_node(node, cursor_impl->end_block);
+   }
 
    split_block_cursor(cursor, &before, &after);
 

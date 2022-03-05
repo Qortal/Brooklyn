@@ -23,19 +23,7 @@
 #include "a6xx.xml.h"
 
 #include <vulkan/vulkan.h>
-
-static inline gl_shader_stage
-vk_to_mesa_shader_stage(VkShaderStageFlagBits vk_stage)
-{
-   assert(__builtin_popcount(vk_stage) == 1);
-   return util_logbase2(vk_stage);
-}
-
-static inline VkShaderStageFlagBits
-mesa_to_vk_shader_stage(gl_shader_stage mesa_stage)
-{
-   return 1 << mesa_stage;
-}
+#include "vk_util.h"
 
 #define TU_STAGE_MASK ((1 << MESA_SHADER_STAGES) - 1)
 
@@ -95,6 +83,20 @@ tu6_rop(VkLogicOp op)
    };
    assert(op < ARRAY_SIZE(lookup));
    return lookup[op];
+}
+
+static inline bool
+tu6_primtype_line(enum pc_di_primtype type)
+{
+    switch(type) {
+    case DI_PT_LINELIST:
+    case DI_PT_LINESTRIP:
+    case DI_PT_LINE_ADJ:
+    case DI_PT_LINESTRIP_ADJ:
+       return true;
+    default:
+       return false;
+    }
 }
 
 static inline enum pc_di_primtype

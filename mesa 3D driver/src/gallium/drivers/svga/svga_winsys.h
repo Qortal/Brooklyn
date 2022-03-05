@@ -99,6 +99,9 @@ struct svga_winsys_stats_timeframe {
    uint64 startTime;
    uint64 adjustedStartTime;
    struct svga_winsys_stats_timeframe *enclosing;
+
+   struct svga_winsys_screen *sws;
+   int32 slot;
 };
 
 enum svga_stats_count {
@@ -106,6 +109,7 @@ enum svga_stats_count {
    SVGA_STATS_COUNT_BLITBLITTERCOPY,
    SVGA_STATS_COUNT_DEPTHSTENCILSTATE,
    SVGA_STATS_COUNT_RASTERIZERSTATE,
+   SVGA_STATS_COUNT_RAWBUFFERSRVIEW,
    SVGA_STATS_COUNT_SAMPLER,
    SVGA_STATS_COUNT_SAMPLERVIEW,
    SVGA_STATS_COUNT_SURFACEWRITEFLUSH,
@@ -128,6 +132,7 @@ enum svga_stats_time {
    SVGA_STATS_TIME_CREATEBACKEDSURFACEVIEW,
    SVGA_STATS_TIME_CREATEBUFFER,
    SVGA_STATS_TIME_CREATECONTEXT,
+   SVGA_STATS_TIME_CREATECS,
    SVGA_STATS_TIME_CREATEFS,
    SVGA_STATS_TIME_CREATEGS,
    SVGA_STATS_TIME_CREATESURFACE,
@@ -141,8 +146,10 @@ enum svga_stats_time {
    SVGA_STATS_TIME_DRAWVBO,
    SVGA_STATS_TIME_DRAWARRAYS,
    SVGA_STATS_TIME_DRAWELEMENTS,
+   SVGA_STATS_TIME_EMITCS,
    SVGA_STATS_TIME_EMITFS,
    SVGA_STATS_TIME_EMITGS,
+   SVGA_STATS_TIME_EMITRAWBUFFER,
    SVGA_STATS_TIME_EMITTCS,
    SVGA_STATS_TIME_EMITTES,
    SVGA_STATS_TIME_EMITVS,
@@ -153,6 +160,7 @@ enum svga_stats_time {
    SVGA_STATS_TIME_HWTNLDRAWELEMENTS,
    SVGA_STATS_TIME_HWTNLFLUSH,
    SVGA_STATS_TIME_HWTNLPRIM,
+   SVGA_STATS_TIME_LAUNCHGRID,
    SVGA_STATS_TIME_PROPAGATESURFACE,
    SVGA_STATS_TIME_SETSAMPLERVIEWS,
    SVGA_STATS_TIME_SURFACEFLUSH,
@@ -163,7 +171,9 @@ enum svga_stats_time {
    SVGA_STATS_TIME_TEXTRANSFERUNMAP,
    SVGA_STATS_TIME_TGSIVGPU10TRANSLATE,
    SVGA_STATS_TIME_TGSIVGPU9TRANSLATE,
+   SVGA_STATS_TIME_UPDATECSUAV,
    SVGA_STATS_TIME_UPDATESTATE,
+   SVGA_STATS_TIME_UPDATEUAV,
    SVGA_STATS_TIME_VALIDATESURFACEVIEW,
    SVGA_STATS_TIME_VBUFDRAWARRAYS,
    SVGA_STATS_TIME_VBUFDRAWELEMENTS,
@@ -181,6 +191,7 @@ enum svga_stats_time {
    SVGA_STATS_PREFIX "BlitBlitterCopy",       \
    SVGA_STATS_PREFIX "DepthStencilState",     \
    SVGA_STATS_PREFIX "RasterizerState",       \
+   SVGA_STATS_PREFIX "RawBufferSRView",       \
    SVGA_STATS_PREFIX "Sampler",               \
    SVGA_STATS_PREFIX "SamplerView",           \
    SVGA_STATS_PREFIX "SurfaceWriteFlush",     \
@@ -201,6 +212,7 @@ enum svga_stats_time {
    SVGA_STATS_PREFIX "CreateBackedSurfaceView",     \
    SVGA_STATS_PREFIX "CreateBuffer",                \
    SVGA_STATS_PREFIX "CreateContext",               \
+   SVGA_STATS_PREFIX "CreateCS",                    \
    SVGA_STATS_PREFIX "CreateFS",                    \
    SVGA_STATS_PREFIX "CreateGS",                    \
    SVGA_STATS_PREFIX "CreateSurface",               \
@@ -214,8 +226,10 @@ enum svga_stats_time {
    SVGA_STATS_PREFIX "DrawVBO",                     \
    SVGA_STATS_PREFIX "DrawArrays",                  \
    SVGA_STATS_PREFIX "DrawElements",                \
+   SVGA_STATS_PREFIX "EmitCS",                      \
    SVGA_STATS_PREFIX "EmitFS",                      \
    SVGA_STATS_PREFIX "EmitGS",                      \
+   SVGA_STATS_PREFIX "EmitRawBuffer",               \
    SVGA_STATS_PREFIX "EmitTCS",                     \
    SVGA_STATS_PREFIX "EmitTES",                     \
    SVGA_STATS_PREFIX "EmitVS",                      \
@@ -226,6 +240,7 @@ enum svga_stats_time {
    SVGA_STATS_PREFIX "HWtnlDrawElements",           \
    SVGA_STATS_PREFIX "HWtnlFlush",                  \
    SVGA_STATS_PREFIX "HWtnlPrim",                   \
+   SVGA_STATS_PREFIX "LaunchGrid",                  \
    SVGA_STATS_PREFIX "PropagateSurface",            \
    SVGA_STATS_PREFIX "SetSamplerViews",             \
    SVGA_STATS_PREFIX "SurfaceFlush",                \
@@ -236,7 +251,9 @@ enum svga_stats_time {
    SVGA_STATS_PREFIX "TextureTransferUnmap",        \
    SVGA_STATS_PREFIX "TGSIVGPU10Translate",         \
    SVGA_STATS_PREFIX "TGSIVGPU9Translate",          \
+   SVGA_STATS_PREFIX "UpdateCSUAV",                 \
    SVGA_STATS_PREFIX "UpdateState",                 \
+   SVGA_STATS_PREFIX "UpdateUAV",                   \
    SVGA_STATS_PREFIX "ValidateSurfaceView",         \
    SVGA_STATS_PREFIX "VbufDrawArrays",              \
    SVGA_STATS_PREFIX "VbufDrawElements",            \
@@ -400,7 +417,7 @@ struct svga_winsys_context
     * Map a guest-backed surface.
     * \param swc The winsys context
     * \param surface The surface to map
-    * \param flags  bitmaks of PIPE_MAP_x flags
+    * \param flags  bitmask of PIPE_MAP_x flags
     * \param retry Whether to flush and retry the map
     * \param rebind Whether to issue an immediate rebind and flush.
     *
@@ -762,19 +779,19 @@ struct svga_winsys_screen
     * Increment a statistic counter
     */
    void
-   (*stats_inc)(enum svga_stats_count);
+   (*stats_inc)(struct svga_winsys_screen *, enum svga_stats_count);
 
    /**
     * Push a time frame onto the stack
     */
    void
-   (*stats_time_push)(enum svga_stats_time, struct svga_winsys_stats_timeframe *);
+   (*stats_time_push)(struct svga_winsys_screen *, enum svga_stats_time, struct svga_winsys_stats_timeframe *);
 
    /**
     * Pop a time frame.
     */
    void
-   (*stats_time_pop)();
+   (*stats_time_pop)(struct svga_winsys_screen *);
 
    /**
     * Send a host log message
@@ -791,7 +808,7 @@ struct svga_winsys_screen
    /** Have SM5 hardware? */
    boolean have_sm5;
 
-   /** To rebind resources at the beginnning of a new command buffer */
+   /** To rebind resources at the beginning of a new command buffer */
    boolean need_to_rebind_resources;
 
    boolean have_generate_mipmap_cmd;
@@ -800,6 +817,13 @@ struct svga_winsys_screen
    boolean have_fence_fd;
    boolean have_intra_surface_copy;
    boolean have_constant_buffer_offset_cmd;
+   boolean have_index_vertex_buffer_offset_cmd;
+
+   /* Have rasterizer state v2 command support */
+   boolean have_rasterizer_state_v2_cmd;
+
+   /** Have GL43 capable device */
+   boolean have_gl43;
 };
 
 

@@ -62,8 +62,8 @@ static void run_test()
    struct anv_state_pool state_pool;
 
    pthread_mutex_init(&device.mutex, NULL);
-   anv_bo_cache_init(&device.bo_cache);
-   anv_state_pool_init(&state_pool, &device, 4096, 0, 64);
+   anv_bo_cache_init(&device.bo_cache, &device);
+   anv_state_pool_init(&state_pool, &device, "test", 4096, 0, 64);
 
    pthread_barrier_init(&barrier, NULL, NUM_THREADS);
 
@@ -109,6 +109,7 @@ static void run_test()
    }
 
    anv_state_pool_finish(&state_pool);
+   anv_bo_cache_finish(&device.bo_cache);
    pthread_mutex_destroy(&device.mutex);
 }
 

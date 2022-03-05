@@ -4,10 +4,10 @@
 # Main GUI Master Sinclair 5.20.16
 
 VERSION = 5
-PATCHLEVEL = 20
-SUBLEVEL = 16
+PATCHLEVEL = 60
+SUBLEVEL = 12
 EXTRAVERSION = -LTS
-NAME = BrooklynR NXT Sinclair
+NAME = Sinclair Titan
 
 # *DOCUMENTATION*
 # Public Domain Satellite Project removal.

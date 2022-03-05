@@ -50,7 +50,6 @@
 #define SUSPEND_SUSPEND3		(0x08)
 #define SUSPEND_ALLMODES		(SUSPEND_SUSPEND0 | SUSPEND_SUSPEND1 | \
 					 SUSPEND_SUSPEND2 | SUSPEND_SUSPEND3)
-#define MAC_ADDR_LEN                    (6)
 
 struct smsc95xx_priv {
 	u32 mac_cr;
@@ -767,10 +766,10 @@ static int smsc95xx_ioctl(struct net_device *netdev, struct ifreq *rq, int cmd)
 }
 
 /* Check the macaddr module parameter for a MAC address */
-static int smsc95xx_is_macaddr_param(struct usbnet *dev, u8 *dev_mac)
+static int smsc95xx_is_macaddr_param(struct usbnet *dev, struct net_device *nd)
 {
        int i, j, got_num, num;
-       u8 mtbl[MAC_ADDR_LEN];
+       u8 mtbl[ETH_ALEN];
 
        if (macaddr[0] == ':')
                return 0;
@@ -779,7 +778,7 @@ static int smsc95xx_is_macaddr_param(struct usbnet *dev, u8 *dev_mac)
        j = 0;
        num = 0;
        got_num = 0;
-       while (j < MAC_ADDR_LEN) {
+       while (j < ETH_ALEN) {
                if (macaddr[i] && macaddr[i] != ':') {
                        got_num++;
                        if ('0' <= macaddr[i] && macaddr[i] <= '9')
@@ -801,12 +800,11 @@ static int smsc95xx_is_macaddr_param(struct usbnet *dev, u8 *dev_mac)
                }
        }
 
-       if (j == MAC_ADDR_LEN) {
+       if (j == ETH_ALEN) {
                netif_dbg(dev, ifup, dev->net, "Overriding MAC address with: "
                "%02x:%02x:%02x:%02x:%02x:%02x\n", mtbl[0], mtbl[1], mtbl[2],
                                                mtbl[3], mtbl[4], mtbl[5]);
-               for (i = 0; i < MAC_ADDR_LEN; i++)
-                       dev_mac[i] = mtbl[i];
+	       dev_addr_mod(nd, 0, mtbl, ETH_ALEN);
                return 1;
        } else {
                return 0;
@@ -815,9 +813,10 @@ static int smsc95xx_is_macaddr_param(struct usbnet *dev, u8 *dev_mac)
 
 static void smsc95xx_init_mac_address(struct usbnet *dev)
 {
+	u8 addr[ETH_ALEN];
+
 	/* maybe the boot loader passed the MAC address in devicetree */
-	if (!eth_platform_get_mac_address(&dev->udev->dev,
-			dev->net->dev_addr)) {
+	if (!platform_get_ethdev_address(&dev->udev->dev, dev->net)) {
 		if (is_valid_ether_addr(dev->net->dev_addr)) {
 			/* device tree values are valid so use them */
 			netif_dbg(dev, ifup, dev->net, "MAC address read from the device tree\n");
@@ -826,8 +825,8 @@ static void smsc95xx_init_mac_address(struct usbnet *dev)
 	}
 
 	/* try reading mac address from EEPROM */
-	if (smsc95xx_read_eeprom(dev, EEPROM_MAC_OFFSET, ETH_ALEN,
-			dev->net->dev_addr) == 0) {
+	if (smsc95xx_read_eeprom(dev, EEPROM_MAC_OFFSET, ETH_ALEN, addr) == 0) {
+		eth_hw_addr_set(dev->net, addr);
 		if (is_valid_ether_addr(dev->net->dev_addr)) {
 			/* eeprom values are valid so use them */
 			netif_dbg(dev, ifup, dev->net, "MAC address read from EEPROM\n");
@@ -836,7 +835,7 @@ static void smsc95xx_init_mac_address(struct usbnet *dev)
 	}
 
 	/* Check module parameters */
-	if (smsc95xx_is_macaddr_param(dev, dev->net->dev_addr))
+	if (smsc95xx_is_macaddr_param(dev, dev->net))
 		return;
 
 	/* no useful static MAC address found. generate a random one */
@@ -1113,6 +1112,14 @@ static const struct net_device_ops smsc95xx_netdev_ops = {
 	.ndo_set_features	= smsc95xx_set_features,
 };
 
+static void smsc95xx_handle_link_change(struct net_device *net)
+{
+	struct usbnet *dev = netdev_priv(net);
+
+	phy_print_status(net->phydev);
+	usbnet_defer_kevent(dev, EVENT_LINK_CHANGE);
+}
+
 static int smsc95xx_bind(struct usbnet *dev, struct usb_interface *intf)
 {
 	struct smsc95xx_priv *pdata;
@@ -1217,6 +1224,17 @@ static int smsc95xx_bind(struct usbnet *dev, struct usb_interface *intf)
 	dev->net->min_mtu = ETH_MIN_MTU;
 	dev->net->max_mtu = ETH_DATA_LEN;
 	dev->hard_mtu = dev->net->mtu + dev->net->hard_header_len;
+
+	ret = phy_connect_direct(dev->net, pdata->phydev,
+				 &smsc95xx_handle_link_change,
+				 PHY_INTERFACE_MODE_MII);
+	if (ret) {
+		netdev_err(dev->net, "can't attach PHY to %s\n", pdata->mdiobus->id);
+		goto unregister_mdio;
+	}
+
+	phy_attached_info(dev->net->phydev);
+
 	return 0;
 
 unregister_mdio:
@@ -1234,47 +1252,25 @@ static void smsc95xx_unbind(struct usbnet *dev, struct usb_interface *intf)
 {
 	struct smsc95xx_priv *pdata = dev->driver_priv;
 
+	phy_disconnect(dev->net->phydev);
 	mdiobus_unregister(pdata->mdiobus);
 	mdiobus_free(pdata->mdiobus);
 	netif_dbg(dev, ifdown, dev->net, "free pdata\n");
 	kfree(pdata);
 }
 
-static void smsc95xx_handle_link_change(struct net_device *net)
-{
-	struct usbnet *dev = netdev_priv(net);
-
-	phy_print_status(net->phydev);
-	usbnet_defer_kevent(dev, EVENT_LINK_CHANGE);
-}
-
 static int smsc95xx_start_phy(struct usbnet *dev)
 {
-	struct smsc95xx_priv *pdata = dev->driver_priv;
-	struct net_device *net = dev->net;
-	int ret;
+	phy_start(dev->net->phydev);
 
-	ret = smsc95xx_reset(dev);
-	if (ret < 0)
-		return ret;
-
-	ret = phy_connect_direct(net, pdata->phydev,
-				 &smsc95xx_handle_link_change,
-				 PHY_INTERFACE_MODE_MII);
-	if (ret) {
-		netdev_err(net, "can't attach PHY to %s\n", pdata->mdiobus->id);
-		return ret;
-	}
-
-	phy_attached_info(net->phydev);
-	phy_start(net->phydev);
 	return 0;
 }
 
-static int smsc95xx_disconnect_phy(struct usbnet *dev)
+static int smsc95xx_stop(struct usbnet *dev)
 {
-	phy_stop(dev->net->phydev);
-	phy_disconnect(dev->net->phydev);
+	if (dev->net->phydev)
+		phy_stop(dev->net->phydev);
+
 	return 0;
 }
 
@@ -2030,8 +2026,9 @@ static const struct driver_info smsc95xx_info = {
 	.bind		= smsc95xx_bind,
 	.unbind		= smsc95xx_unbind,
 	.link_reset	= smsc95xx_link_reset,
-	.reset		= smsc95xx_start_phy,
-	.stop		= smsc95xx_disconnect_phy,
+	.reset		= smsc95xx_reset,
+	.check_connect	= smsc95xx_start_phy,
+	.stop		= smsc95xx_stop,
 	.rx_fixup	= smsc95xx_rx_fixup,
 	.tx_fixup	= smsc95xx_tx_fixup,
 	.status		= smsc95xx_status,

@@ -28,6 +28,7 @@ libintel_compiler_files = files(
   'brw_clip_unfilled.c',
   'brw_clip_util.c',
   'brw_compile_clip.c',
+  'brw_compile_ff_gs.c',
   'brw_compile_sf.c',
   'brw_compiler.c',
   'brw_compiler.h',
@@ -75,6 +76,7 @@ libintel_compiler_files = files(
   'brw_ir_performance.h',
   'brw_ir_performance.cpp',
   'brw_ir_vec4.h',
+  'brw_mesh.cpp',
   'brw_nir.h',
   'brw_nir.c',
   'brw_nir_analyze_boolean_resolves.c',
@@ -83,20 +85,31 @@ libintel_compiler_files = files(
   'brw_nir_lower_conversions.c',
   'brw_nir_lower_cs_intrinsics.c',
   'brw_nir_lower_alpha_to_coverage.c',
-  'brw_nir_lower_image_load_store.c',
+  'brw_nir_lower_intersection_shader.c',
   'brw_nir_lower_mem_access_bit_sizes.c',
+  'brw_nir_lower_ray_queries.c',
+  'brw_nir_lower_rt_intrinsics.c',
   'brw_nir_lower_scoped_barriers.c',
+  'brw_nir_lower_shader_calls.c',
+  'brw_nir_lower_shading_rate_output.c',
+  'brw_nir_lower_storage_image.c',
   'brw_nir_opt_peephole_ffma.c',
+  'brw_nir_rt.h',
+  'brw_nir_rt.c',
+  'brw_nir_rt_builder.h',
   'brw_nir_tcs_workarounds.c',
   'brw_nir_clamp_image_1d_2d_array_sizes.c',
   'brw_packed_float.c',
   'brw_predicated_break.cpp',
+  'brw_private.h',
   'brw_reg.h',
   'brw_reg_type.c',
   'brw_reg_type.h',
+  'brw_rt.h',
   'brw_schedule_instructions.cpp',
   'brw_shader.cpp',
   'brw_shader.h',
+  'brw_simd_selection.c',
   'brw_vec4_builder.h',
   'brw_vec4_cmod_propagation.cpp',
   'brw_vec4_copy_propagation.cpp',
@@ -123,8 +136,8 @@ libintel_compiler_files = files(
   'brw_vec4_vs.h',
   'brw_vue_map.c',
   'brw_wm_iz.cpp',
-  'gen6_gs_visitor.cpp',
-  'gen6_gs_visitor.h',
+  'gfx6_gs_visitor.cpp',
+  'gfx6_gs_visitor.h',
 )
 
 brw_nir_trig = custom_target(
@@ -135,7 +148,7 @@ brw_nir_trig = custom_target(
     prog_python, '@INPUT@',
     '-p', join_paths(meson.source_root(), 'src/compiler/nir/'),
   ],
-  depend_files : nir_algebraic_py,
+  depend_files : nir_algebraic_depends,
   capture : true,
 )
 
@@ -145,29 +158,37 @@ libintel_compiler = static_library(
   include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_intel],
   c_args : [no_override_init_args],
   gnu_symbol_visibility : 'hidden',
-  dependencies : idep_nir_headers,
+  dependencies : [idep_nir_headers, idep_mesautil],
   build_by_default : false,
 )
 
 if with_tests
-  # The last two tests are not C++ or gtest, pre comment in autotools make
-  foreach t : ['fs_cmod_propagation', 'fs_copy_propagation',
-               'fs_saturate_propagation', 'vf_float_conversions',
-               'vec4_register_coalesce', 'vec4_copy_propagation',
-               'vec4_cmod_propagation', 'vec4_dead_code_eliminate',
-               'eu_compact', 'eu_validate', 'fs_scoreboard']
-    test(
-      t,
-      executable(
-        [t, ir_expression_operation_h],
-        'test_@0@.cpp'.format(t),
-        include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_intel],
-        link_with : [
-          libintel_compiler, libintel_common, libintel_dev, libisl,
-        ],
-        dependencies : [idep_gtest, idep_nir, idep_mesautil],
+  test(
+    'intel_compiler_tests',
+    executable(
+      'intel_compiler_tests',
+      files(
+        'test_eu_compact.cpp',
+        'test_eu_validate.cpp',
+        'test_fs_cmod_propagation.cpp',
+        'test_fs_copy_propagation.cpp',
+        'test_fs_saturate_propagation.cpp',
+        'test_fs_scoreboard.cpp',
+        'test_simd_selection.cpp',
+        'test_vec4_cmod_propagation.cpp',
+        'test_vec4_copy_propagation.cpp',
+        'test_vec4_dead_code_eliminate.cpp',
+        'test_vec4_register_coalesce.cpp',
+        'test_vf_float_conversions.cpp',
       ),
-      suite : ['intel'],
-    )
-  endforeach
+      ir_expression_operation_h,
+      include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_intel],
+      link_with : [
+        libintel_compiler, libintel_common, libintel_dev, libisl,
+      ],
+      dependencies : [idep_gtest, idep_nir, idep_mesautil],
+    ),
+    suite : ['intel'],
+    protocol : gtest_test_protocol,
+  )
 endif

@@ -38,6 +38,7 @@ nine_st_files = files(
   'nine_ff.c',
   'nine_helpers.c',
   'nine_lock.c',
+  'nine_memory_helper.c',
   'nine_pipe.c',
   'nine_quirk.c',
   'nine_queue.c',
@@ -70,6 +71,6 @@ libnine_st = static_library(
     dep_thread, idep_nir, idep_nir_headers
   ],
   link_with : [
-    libmesa_gallium
+    libmesa
   ]
 )

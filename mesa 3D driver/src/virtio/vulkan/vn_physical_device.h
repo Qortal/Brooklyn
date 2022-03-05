@@ -13,7 +13,43 @@
 
 #include "vn_common.h"
 
+#include "util/sparse_array.h"
+
 #include "vn_wsi.h"
+
+struct vn_physical_device_features {
+   VkPhysicalDeviceFeatures vulkan_1_0;
+   VkPhysicalDeviceVulkan11Features vulkan_1_1;
+   VkPhysicalDeviceVulkan12Features vulkan_1_2;
+
+   /* Vulkan 1.3 */
+   VkPhysicalDevice4444FormatsFeaturesEXT argb_4444_formats;
+   VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extended_dynamic_state;
+   VkPhysicalDeviceImageRobustnessFeaturesEXT image_robustness;
+
+   /* EXT */
+   VkPhysicalDeviceCustomBorderColorFeaturesEXT custom_border_color;
+   VkPhysicalDeviceLineRasterizationFeaturesEXT line_rasterization;
+   VkPhysicalDeviceProvokingVertexFeaturesEXT provoking_vertex;
+   VkPhysicalDeviceTransformFeedbackFeaturesEXT transform_feedback;
+};
+
+struct vn_physical_device_properties {
+   VkPhysicalDeviceProperties vulkan_1_0;
+   VkPhysicalDeviceVulkan11Properties vulkan_1_1;
+   VkPhysicalDeviceVulkan12Properties vulkan_1_2;
+
+   /* EXT */
+   VkPhysicalDeviceCustomBorderColorPropertiesEXT custom_border_color;
+   VkPhysicalDeviceLineRasterizationPropertiesEXT line_rasterization;
+   VkPhysicalDeviceProvokingVertexPropertiesEXT provoking_vertex;
+   VkPhysicalDeviceTransformFeedbackPropertiesEXT transform_feedback;
+};
+
+struct vn_format_properties_entry {
+   atomic_bool valid;
+   VkFormatProperties properties;
+};
 
 struct vn_physical_device {
    struct vn_physical_device_base base;
@@ -37,16 +73,8 @@ struct vn_physical_device {
    struct vk_device_extension_table renderer_extensions;
    uint32_t *extension_spec_versions;
 
-   VkPhysicalDeviceFeatures2 features;
-   VkPhysicalDeviceVulkan11Features vulkan_1_1_features;
-   VkPhysicalDeviceVulkan12Features vulkan_1_2_features;
-   VkPhysicalDeviceTransformFeedbackFeaturesEXT transform_feedback_features;
-
-   VkPhysicalDeviceProperties2 properties;
-   VkPhysicalDeviceVulkan11Properties vulkan_1_1_properties;
-   VkPhysicalDeviceVulkan12Properties vulkan_1_2_properties;
-   VkPhysicalDeviceTransformFeedbackPropertiesEXT
-      transform_feedback_properties;
+   struct vn_physical_device_features features;
+   struct vn_physical_device_properties properties;
 
    VkQueueFamilyProperties2 *queue_family_properties;
    uint32_t queue_family_count;
@@ -63,6 +91,9 @@ struct vn_physical_device {
    VkExternalSemaphoreHandleTypeFlags external_timeline_semaphore_handles;
 
    struct wsi_device wsi_device;
+
+   simple_mtx_t format_update_mutex;
+   struct util_sparse_array format_properties;
 };
 VK_DEFINE_HANDLE_CASTS(vn_physical_device,
                        base.base.base,

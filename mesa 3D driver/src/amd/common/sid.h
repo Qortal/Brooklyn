@@ -81,6 +81,7 @@
 #define PREDICATION_OP_ZPASS     0x1
 #define PREDICATION_OP_PRIMCOUNT 0x2
 #define PREDICATION_OP_BOOL64    0x3
+#define PREDICATION_OP_BOOL32    0x4
 
 #define PRED_OP(x) ((x) << 16)
 
@@ -104,6 +105,7 @@
 #define PKT3_INDEX_BUFFER_SIZE              0x13
 #define PKT3_DISPATCH_DIRECT                0x15
 #define PKT3_DISPATCH_INDIRECT              0x16
+#define PKT3_ATOMIC_MEM                     0x1E
 #define PKT3_OCCLUSION_QUERY                0x1F /* new for CIK */
 #define PKT3_SET_PREDICATION                0x20
 #define PKT3_COND_EXEC                      0x22
@@ -184,6 +186,7 @@
 #define PKT3_COND_WRITE                        0x45
 #define PKT3_EVENT_WRITE                       0x46
 #define PKT3_EVENT_WRITE_EOP                   0x47 /* not on GFX9 */
+#define PKT3_EVENT_WRITE_EOS                   0x48 /* not on GFX9 */
 #define EOP_DST_SEL(x)                         ((x) << 16)
 #define EOP_DST_SEL_MEM                        0
 #define EOP_DST_SEL_TC_L2                      1
@@ -197,6 +200,12 @@
 #define EOP_DATA_SEL_TIMESTAMP                 3
 #define EOP_DATA_SEL_GDS                       5
 #define EOP_DATA_GDS(dw_offset, num_dwords)    ((dw_offset) | ((unsigned)(num_dwords) << 16))
+
+#define EOS_DATA_SEL(x)                        ((x) << 29)
+#define EOS_DATA_SEL_APPEND_COUNT              0
+#define EOS_DATA_SEL_GDS                       1
+#define EOS_DATA_SEL_VALUE_32BIT               2
+
 /* CP DMA bug: Any use of CP_DMA.DST_SEL=TC must be avoided when EOS packets
  * are used. Use DST_SEL=MC instead. For prefetch, use SRC_SEL=TC and
  * DST_SEL=MC. Only CIK chips are affected.
@@ -318,6 +327,8 @@
    prevents the HW from copying the last 255 bytes of (1 << 22) - 1 */
 #define CIK_SDMA_COPY_MAX_SIZE    0x3fff00   /* almost 4 MB*/
 #define GFX103_SDMA_COPY_MAX_SIZE 0x3fffff00 /* almost 1 GB */
+
+#define SDMA_NOP_PAD CIK_SDMA_PACKET(CIK_SDMA_OPCODE_NOP, 0, 0) /* header-only version */
 
 enum amd_cmp_class_flags
 {

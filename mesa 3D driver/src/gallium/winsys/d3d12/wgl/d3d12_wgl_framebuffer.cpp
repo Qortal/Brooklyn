@@ -188,6 +188,7 @@ d3d12_wgl_framebuffer_get_resource(struct stw_winsys_framebuffer *pframebuffer,
    struct winsys_handle handle;
    memset(&handle, 0, sizeof(handle));
    handle.type = WINSYS_HANDLE_TYPE_D3D12_RES;
+   handle.format = framebuffer->pformat;
    handle.com_obj = res;
 
    D3D12_RESOURCE_DESC res_desc = res->GetDesc();
@@ -214,7 +215,7 @@ d3d12_wgl_framebuffer_get_resource(struct stw_winsys_framebuffer *pframebuffer,
 
 struct stw_winsys_framebuffer *
 d3d12_wgl_create_framebuffer(struct pipe_screen *screen,
-                             HDC hDC,
+                             HWND hWnd,
                              int iPixelFormat)
 {
    const struct stw_pixelformat_info *pfi =
@@ -229,7 +230,7 @@ d3d12_wgl_create_framebuffer(struct pipe_screen *screen,
 
    new (fb) struct d3d12_wgl_framebuffer();
 
-   fb->window = WindowFromDC(hDC);
+   fb->window = hWnd;
    fb->screen = d3d12_screen(screen);
    fb->base.destroy = d3d12_wgl_framebuffer_destroy;
    fb->base.resize = d3d12_wgl_framebuffer_resize;

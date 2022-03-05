@@ -57,7 +57,8 @@ protected:
       glsl_type_singleton_init_or_ref();
 
       static const nir_shader_compiler_options options = { };
-      nir_builder_init_simple_shader(&bld, NULL, MESA_SHADER_VERTEX, &options);
+      bld = nir_builder_init_simple_shader(MESA_SHADER_VERTEX, &options,
+                                           "negative equal tests");
       memset(c1, 0, sizeof(c1));
       memset(c2, 0, sizeof(c2));
    }
@@ -305,7 +306,8 @@ TEST_F(alu_srcs_negative_equal_test, unused_components_mismatch)
    nir_alu_instr *instr = nir_instr_as_alu(result->parent_instr);
 
    /* Disable the channels that aren't negations of each other. */
-   instr->dest.dest.is_ssa = false;
+   nir_register *reg = nir_local_reg_create(bld.impl);
+   nir_instr_rewrite_dest(&instr->instr, &instr->dest.dest, nir_dest_for_reg(reg));
    instr->dest.write_mask = 8 + 1;
 
    EXPECT_TRUE(nir_alu_srcs_negative_equal(instr, instr, 0, 1));

@@ -38,26 +38,48 @@ lower_impl(nir_function_impl *impl,
 {
    nir_shader *shader = impl->function->shader;
    nir_builder b;
-   nir_variable *in;
+   nir_variable *in, *new_out = NULL;
 
    nir_builder_init(&b, impl);
-   b.cursor = nir_before_cf_list(&impl->body);
 
    in = nir_variable_create(shader, nir_var_uniform,
                             glsl_float_type(), "gl_PointSizeClampedMESA");
    in->num_state_slots = 1;
    in->state_slots = ralloc_array(in, nir_state_slot, 1);
+   in->state_slots[0].swizzle = 0;
    memcpy(in->state_slots[0].tokens,
          pointsize_state_tokens,
          sizeof(in->state_slots[0].tokens));
 
-   if (!out) {
-      out = nir_variable_create(shader, nir_var_shader_out,
-                                glsl_float_type(), "gl_PointSize");
-      out->data.location = VARYING_SLOT_PSIZ;
+   /* the existing output can't be removed in order to avoid breaking xfb.
+    * drivers must check var->data.explicit_location to find the original output
+    * and only emit that one for xfb
+    */
+   if (!out || shader->info.has_transform_feedback_varyings) {
+      new_out = nir_variable_create(shader, nir_var_shader_out,
+                                    glsl_float_type(), "gl_PointSizeMESA");
+      new_out->data.location = VARYING_SLOT_PSIZ;
    }
 
-   nir_copy_var(&b, out, in);
+   if (!out) {
+      b.cursor = nir_before_cf_list(&impl->body);
+      nir_copy_var(&b, new_out, in);
+   } else {
+      nir_foreach_block_safe(block, impl) {
+         nir_foreach_instr_safe(instr, block) {
+            if (instr->type == nir_instr_type_intrinsic) {
+               nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+               if (intr->intrinsic == nir_intrinsic_store_deref) {
+                  nir_variable *var = nir_intrinsic_get_var(intr, 0);
+                  if (var == out) {
+                     b.cursor = nir_after_instr(instr);
+                     nir_copy_var(&b, new_out ? new_out : out, in);
+                  }
+               }
+            }
+         }
+      }
+   }
 
    nir_metadata_preserve(impl, nir_metadata_block_index |
                                nir_metadata_dominance);

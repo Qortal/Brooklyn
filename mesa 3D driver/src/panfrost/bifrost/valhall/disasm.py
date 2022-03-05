@@ -1,3 +1,26 @@
+#encoding=utf-8
+
+# Copyright (C) 2021 Collabora, Ltd.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a
+# copy of this software and associated documentation files (the "Software"),
+# to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense,
+# and/or sell copies of the Software, and to permit persons to whom the
+# Software is furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice (including the next
+# paragraph) shall be included in all copies or substantial portions of the
+# Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+# IN THE SOFTWARE.
+
 from valhall import instructions, immediates, enums, typesize, safe_name
 from mako.template import Template
 from mako import exceptions
@@ -134,11 +157,11 @@ va_disasm_instr(FILE *fp, uint64_t instr)
 % endif
             fputs("${op.name}", fp);
 % for mod in op.modifiers:
-% if mod.name not in ["left", "staging_register_count"]:
-% if mod.size == 1:
-            if (instr & BIT(${mod.start})) fputs(".${mod.name}", fp);
+% if mod.name not in ["left", "staging_register_count", "staging_register_write_count"]:
+% if mod.is_enum:
+            fputs(valhall_${safe_name(mod.enum)}[(instr >> ${mod.start}) & ${hex((1 << mod.size) - 1)}], fp);
 % else:
-            fputs(valhall_${safe_name(mod.name)}[(instr >> ${mod.start}) & ${hex((1 << mod.size) - 1)}], fp);
+            if (instr & BIT(${mod.start})) fputs(".${mod.name}", fp);
 % endif
 % endif
 % endfor
@@ -154,7 +177,15 @@ va_disasm_instr(FILE *fp, uint64_t instr)
 % endif
 <%
     no_comma = False
-    sr_count = "((instr >> 33) & MASK(3))" if sr.count == 0 else sr.count
+
+    if sr.count != 0:
+        sr_count = sr.count
+    elif "staging_register_write_count" in [x.name for x in op.modifiers] and sr.write:
+        sr_count = "(((instr >> 36) & MASK(3)) + 1)"
+    elif "staging_register_count" in [x.name for x in op.modifiers]:
+        sr_count = "((instr >> 33) & MASK(3))"
+    else:
+        assert(0)
 %>
 //            assert(((instr >> ${sr.start}) & 0xC0) == ${sr.encoded_flags});
             for (unsigned i = 0; i < ${sr_count}; ++i) {
@@ -185,8 +216,12 @@ va_disasm_instr(FILE *fp, uint64_t instr)
 % endif
 % if src.lanes:
             fputs(valhall_lanes_8_bit[(instr >> ${src.offset['widen']}) & 0xF], fp);
+% elif src.halfswizzle:
+            fputs(valhall_half_swizzles_8_bit[(instr >> ${src.offset['widen']}) & 0xF], fp);
 % elif src.widen:
 		    fputs(valhall_swizzles_${src.size}_bit[(instr >> ${src.offset['widen']}) & 0xF], fp);
+% elif src.combine:
+            fputs(valhall_combine[(instr >> ${src.offset['combine']}) & 0x7], fp);
 % endif
 % if src.lane:
             fputs(valhall_lane_${src.size}_bit[(instr >> ${src.lane}) & 0x3], fp);

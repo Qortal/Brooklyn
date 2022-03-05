@@ -33,7 +33,7 @@
 #include "util/u_upload_mgr.h"
 
 #include "v3d_context.h"
-#include "v3d_tiling.h"
+#include "broadcom/common/v3d_tiling.h"
 #include "broadcom/common/v3d_macros.h"
 #include "broadcom/compiler/v3d_compiler.h"
 #include "broadcom/cle/v3dx_pack.h"
@@ -54,16 +54,16 @@ v3d_set_blend_color(struct pipe_context *pctx,
                 v3d->blend_color.hf[i] =
                         _mesa_float_to_half(blend_color->color[i]);
         }
-        v3d->dirty |= VC5_DIRTY_BLEND_COLOR;
+        v3d->dirty |= V3D_DIRTY_BLEND_COLOR;
 }
 
 static void
 v3d_set_stencil_ref(struct pipe_context *pctx,
-                    const struct pipe_stencil_ref *stencil_ref)
+                    const struct pipe_stencil_ref stencil_ref)
 {
         struct v3d_context *v3d = v3d_context(pctx);
-        v3d->stencil_ref = *stencil_ref;
-        v3d->dirty |= VC5_DIRTY_STENCIL_REF;
+        v3d->stencil_ref = stencil_ref;
+        v3d->dirty |= V3D_DIRTY_STENCIL_REF;
 }
 
 static void
@@ -72,7 +72,7 @@ v3d_set_clip_state(struct pipe_context *pctx,
 {
         struct v3d_context *v3d = v3d_context(pctx);
         v3d->clip = *clip;
-        v3d->dirty |= VC5_DIRTY_CLIP;
+        v3d->dirty |= V3D_DIRTY_CLIP;
 }
 
 static void
@@ -80,7 +80,7 @@ v3d_set_sample_mask(struct pipe_context *pctx, unsigned sample_mask)
 {
         struct v3d_context *v3d = v3d_context(pctx);
         v3d->sample_mask = sample_mask & ((1 << V3D_MAX_SAMPLES) - 1);
-        v3d->dirty |= VC5_DIRTY_SAMPLE_STATE;
+        v3d->dirty |= V3D_DIRTY_SAMPLE_STATE;
 }
 
 static void *
@@ -175,22 +175,22 @@ v3d_create_depth_stencil_alpha_state(struct pipe_context *pctx,
 
         so->base = *cso;
 
-        if (cso->depth.enabled) {
-                switch (cso->depth.func) {
+        if (cso->depth_enabled) {
+                switch (cso->depth_func) {
                 case PIPE_FUNC_LESS:
                 case PIPE_FUNC_LEQUAL:
-                        so->ez_state = VC5_EZ_LT_LE;
+                        so->ez_state = V3D_EZ_LT_LE;
                         break;
                 case PIPE_FUNC_GREATER:
                 case PIPE_FUNC_GEQUAL:
-                        so->ez_state = VC5_EZ_GT_GE;
+                        so->ez_state = V3D_EZ_GT_GE;
                         break;
                 case PIPE_FUNC_NEVER:
                 case PIPE_FUNC_EQUAL:
-                        so->ez_state = VC5_EZ_UNDECIDED;
+                        so->ez_state = V3D_EZ_UNDECIDED;
                         break;
                 default:
-                        so->ez_state = VC5_EZ_DISABLED;
+                        so->ez_state = V3D_EZ_DISABLED;
                         break;
                 }
 
@@ -203,7 +203,7 @@ v3d_create_depth_stencil_alpha_state(struct pipe_context *pctx,
                      (cso->stencil[1].enabled &&
                       (cso->stencil[1].zfail_op != PIPE_STENCIL_OP_KEEP &&
                        cso->stencil[1].func != PIPE_FUNC_ALWAYS)))) {
-                        so->ez_state = VC5_EZ_DISABLED;
+                        so->ez_state = V3D_EZ_DISABLED;
                 }
         }
 
@@ -261,7 +261,7 @@ v3d_set_polygon_stipple(struct pipe_context *pctx,
 {
         struct v3d_context *v3d = v3d_context(pctx);
         v3d->stipple = *stipple;
-        v3d->dirty |= VC5_DIRTY_STIPPLE;
+        v3d->dirty |= V3D_DIRTY_STIPPLE;
 }
 
 static void
@@ -273,7 +273,7 @@ v3d_set_scissor_states(struct pipe_context *pctx,
         struct v3d_context *v3d = v3d_context(pctx);
 
         v3d->scissor = *scissor;
-        v3d->dirty |= VC5_DIRTY_SCISSOR;
+        v3d->dirty |= V3D_DIRTY_SCISSOR;
 }
 
 static void
@@ -284,22 +284,26 @@ v3d_set_viewport_states(struct pipe_context *pctx,
 {
         struct v3d_context *v3d = v3d_context(pctx);
         v3d->viewport = *viewport;
-        v3d->dirty |= VC5_DIRTY_VIEWPORT;
+        v3d->dirty |= V3D_DIRTY_VIEWPORT;
 }
 
 static void
 v3d_set_vertex_buffers(struct pipe_context *pctx,
                        unsigned start_slot, unsigned count,
+                       unsigned unbind_num_trailing_slots,
+                       bool take_ownership,
                        const struct pipe_vertex_buffer *vb)
 {
         struct v3d_context *v3d = v3d_context(pctx);
         struct v3d_vertexbuf_stateobj *so = &v3d->vertexbuf;
 
         util_set_vertex_buffers_mask(so->vb, &so->enabled_mask, vb,
-                                     start_slot, count);
+                                     start_slot, count,
+                                     unbind_num_trailing_slots,
+                                     take_ownership);
         so->count = util_last_bit(so->enabled_mask);
 
-        v3d->dirty |= VC5_DIRTY_VTXBUF;
+        v3d->dirty |= V3D_DIRTY_VTXBUF;
 }
 
 static void
@@ -307,7 +311,7 @@ v3d_blend_state_bind(struct pipe_context *pctx, void *hwcso)
 {
         struct v3d_context *v3d = v3d_context(pctx);
         v3d->blend = hwcso;
-        v3d->dirty |= VC5_DIRTY_BLEND;
+        v3d->dirty |= V3D_DIRTY_BLEND;
 }
 
 static void
@@ -315,7 +319,7 @@ v3d_rasterizer_state_bind(struct pipe_context *pctx, void *hwcso)
 {
         struct v3d_context *v3d = v3d_context(pctx);
         v3d->rasterizer = hwcso;
-        v3d->dirty |= VC5_DIRTY_RASTERIZER;
+        v3d->dirty |= V3D_DIRTY_RASTERIZER;
 }
 
 static void
@@ -323,7 +327,7 @@ v3d_zsa_state_bind(struct pipe_context *pctx, void *hwcso)
 {
         struct v3d_context *v3d = v3d_context(pctx);
         v3d->zsa = hwcso;
-        v3d->dirty |= VC5_DIRTY_ZSA;
+        v3d->dirty |= V3D_DIRTY_ZSA;
 }
 
 static void *
@@ -441,17 +445,18 @@ v3d_vertex_state_bind(struct pipe_context *pctx, void *hwcso)
 {
         struct v3d_context *v3d = v3d_context(pctx);
         v3d->vtx = hwcso;
-        v3d->dirty |= VC5_DIRTY_VTXSTATE;
+        v3d->dirty |= V3D_DIRTY_VTXSTATE;
 }
 
 static void
 v3d_set_constant_buffer(struct pipe_context *pctx, uint shader, uint index,
+                        bool take_ownership,
                         const struct pipe_constant_buffer *cb)
 {
         struct v3d_context *v3d = v3d_context(pctx);
         struct v3d_constbuf_stateobj *so = &v3d->constbuf[shader];
 
-        util_copy_constant_buffer(&so->cb[index], cb);
+        util_copy_constant_buffer(&so->cb[index], cb, take_ownership);
 
         /* Note that the gallium frontend can unbind constant buffers by
          * passing NULL here.
@@ -464,7 +469,7 @@ v3d_set_constant_buffer(struct pipe_context *pctx, uint shader, uint index,
 
         so->enabled_mask |= 1 << index;
         so->dirty_mask |= 1 << index;
-        v3d->dirty |= VC5_DIRTY_CONSTBUF;
+        v3d->dirty |= V3D_DIRTY_CONSTBUF;
 }
 
 static void
@@ -500,11 +505,11 @@ v3d_set_framebuffer_state(struct pipe_context *pctx,
                         v3d->blend_dst_alpha_one |= 1 << i;
         }
 
-        v3d->dirty |= VC5_DIRTY_FRAMEBUFFER;
+        v3d->dirty |= V3D_DIRTY_FRAMEBUFFER;
 }
 
 static enum V3DX(Wrap_Mode)
-translate_wrap(uint32_t pipe_wrap, bool using_nearest)
+translate_wrap(uint32_t pipe_wrap)
 {
         switch (pipe_wrap) {
         case PIPE_TEX_WRAP_REPEAT:
@@ -515,10 +520,8 @@ translate_wrap(uint32_t pipe_wrap, bool using_nearest)
                 return V3D_WRAP_MODE_MIRROR;
         case PIPE_TEX_WRAP_CLAMP_TO_BORDER:
                 return V3D_WRAP_MODE_BORDER;
-        case PIPE_TEX_WRAP_CLAMP:
-                return (using_nearest ?
-                        V3D_WRAP_MODE_CLAMP :
-                        V3D_WRAP_MODE_BORDER);
+        case PIPE_TEX_WRAP_MIRROR_CLAMP_TO_EDGE:
+                return V3D_WRAP_MODE_MIRROR_ONCE;
         default:
                 unreachable("Unknown wrap mode");
         }
@@ -528,15 +531,14 @@ translate_wrap(uint32_t pipe_wrap, bool using_nearest)
 static void
 v3d_upload_sampler_state_variant(void *map,
                                  const struct pipe_sampler_state *cso,
-                                 enum v3d_sampler_state_variant variant,
-                                 bool either_nearest)
+                                 enum v3d_sampler_state_variant variant)
 {
         v3dx_pack(map, SAMPLER_STATE, sampler) {
                 sampler.wrap_i_border = false;
 
-                sampler.wrap_s = translate_wrap(cso->wrap_s, either_nearest);
-                sampler.wrap_t = translate_wrap(cso->wrap_t, either_nearest);
-                sampler.wrap_r = translate_wrap(cso->wrap_r, either_nearest);
+                sampler.wrap_s = translate_wrap(cso->wrap_s);
+                sampler.wrap_t = translate_wrap(cso->wrap_t);
+                sampler.wrap_r = translate_wrap(cso->wrap_r);
 
                 sampler.fixed_bias = cso->lod_bias;
                 sampler.depth_compare_function = cso->compare_func;
@@ -550,7 +552,8 @@ v3d_upload_sampler_state_variant(void *map,
 
                 sampler.min_level_of_detail = MIN2(MAX2(0, cso->min_lod),
                                                    15);
-                sampler.max_level_of_detail = MIN2(cso->max_lod, 15);
+                sampler.max_level_of_detail = MIN2(MAX2(cso->max_lod,
+                                                        cso->min_lod), 15);
 
                 /* If we're not doing inter-miplevel filtering, we need to
                  * clamp the LOD so that we only sample from baselevel.
@@ -716,16 +719,9 @@ v3d_create_sampler_state(struct pipe_context *pctx,
 
         memcpy(so, cso, sizeof(*cso));
 
-        bool either_nearest =
-                (cso->mag_img_filter == PIPE_TEX_MIPFILTER_NEAREST ||
-                 cso->min_img_filter == PIPE_TEX_MIPFILTER_NEAREST);
-
-        enum V3DX(Wrap_Mode) wrap_s = translate_wrap(cso->wrap_s,
-                                                     either_nearest);
-        enum V3DX(Wrap_Mode) wrap_t = translate_wrap(cso->wrap_t,
-                                                     either_nearest);
-        enum V3DX(Wrap_Mode) wrap_r = translate_wrap(cso->wrap_r,
-                                                     either_nearest);
+        enum V3DX(Wrap_Mode) wrap_s = translate_wrap(cso->wrap_s);
+        enum V3DX(Wrap_Mode) wrap_t = translate_wrap(cso->wrap_t);
+        enum V3DX(Wrap_Mode) wrap_r = translate_wrap(cso->wrap_r);
 
         bool uses_border_color = (wrap_s == V3D_WRAP_MODE_BORDER ||
                                   wrap_t == V3D_WRAP_MODE_BORDER ||
@@ -752,7 +748,7 @@ v3d_create_sampler_state(struct pipe_context *pctx,
                 so->sampler_state_offset[i] =
                         so->sampler_state_offset[0] + i * sampler_size;
                 v3d_upload_sampler_state_variant(map + i * sampler_size,
-                                                 cso, i, either_nearest);
+                                                 cso, i);
         }
 
 #else /* V3D_VERSION < 40 */
@@ -829,6 +825,34 @@ translate_swizzle(unsigned char pipe_swizzle)
 #endif
 
 static void
+v3d_setup_texture_shader_state_from_buffer(struct V3DX(TEXTURE_SHADER_STATE) *tex,
+                                           struct pipe_resource *prsc,
+                                           enum pipe_format format,
+                                           unsigned offset,
+                                           unsigned size)
+{
+        struct v3d_resource *rsc = v3d_resource(prsc);
+
+        tex->image_depth = 1;
+        tex->image_width = size / util_format_get_blocksize(format);
+
+        /* On 4.x, the height of a 1D texture is redefined to be the
+         * upper 14 bits of the width (which is only usable with txf).
+         */
+        tex->image_height = tex->image_width >> 14;
+
+        tex->image_width &= (1 << 14) - 1;
+        tex->image_height &= (1 << 14) - 1;
+
+        /* Note that we don't have a job to reference the texture's sBO
+         * at state create time, so any time this sampler view is used
+         * we need to add the texture to the job.
+         */
+        tex->texture_base_pointer =
+                cl_address(NULL, rsc->bo->offset + offset);
+}
+
+static void
 v3d_setup_texture_shader_state(struct V3DX(TEXTURE_SHADER_STATE) *tex,
                                struct pipe_resource *prsc,
                                int base_level, int last_level,
@@ -879,9 +903,9 @@ v3d_setup_texture_shader_state(struct V3DX(TEXTURE_SHADER_STATE) *tex,
          * that way.
          */
         tex->level_0_is_strictly_uif =
-                (rsc->slices[0].tiling == VC5_TILING_UIF_XOR ||
-                 rsc->slices[0].tiling == VC5_TILING_UIF_NO_XOR);
-        tex->level_0_xor_enable = (rsc->slices[0].tiling == VC5_TILING_UIF_XOR);
+                (rsc->slices[0].tiling == V3D_TILING_UIF_XOR ||
+                 rsc->slices[0].tiling == V3D_TILING_UIF_NO_XOR);
+        tex->level_0_xor_enable = (rsc->slices[0].tiling == V3D_TILING_UIF_XOR);
 
         if (tex->level_0_is_strictly_uif)
                 tex->level_0_ub_pad = rsc->slices[0].ub_pad;
@@ -899,10 +923,13 @@ v3dX(create_texture_shader_state_bo)(struct v3d_context *v3d,
                                      struct v3d_sampler_view *so)
 {
         struct pipe_resource *prsc = so->texture;
+        struct v3d_resource *rsc = v3d_resource(prsc);
         const struct pipe_sampler_view *cso = &so->base;
         struct v3d_screen *screen = v3d->screen;
 
         void *map;
+
+        assert(so->serial_id != rsc->serial_id);
 
 #if V3D_VERSION >= 40
         v3d_bo_unreference(&so->bo);
@@ -916,11 +943,18 @@ v3dX(create_texture_shader_state_bo)(struct v3d_context *v3d,
 #endif
 
         v3dx_pack(map, TEXTURE_SHADER_STATE, tex) {
-                v3d_setup_texture_shader_state(&tex, prsc,
-                                               cso->u.tex.first_level,
-                                               cso->u.tex.last_level,
-                                               cso->u.tex.first_layer,
-                                               cso->u.tex.last_layer);
+                if (prsc->target != PIPE_BUFFER) {
+                        v3d_setup_texture_shader_state(&tex, prsc,
+                                                       cso->u.tex.first_level,
+                                                       cso->u.tex.last_level,
+                                                       cso->u.tex.first_layer,
+                                                       cso->u.tex.last_layer);
+                } else {
+                        v3d_setup_texture_shader_state_from_buffer(&tex, prsc,
+                                                                   cso->format,
+                                                                   cso->u.buf.offset,
+                                                                   cso->u.buf.size);
+                }
 
                 tex.srgb = util_format_is_srgb(cso->format);
 
@@ -979,6 +1013,8 @@ v3dX(create_texture_shader_state_bo)(struct v3d_context *v3d,
                                                               cso->format);
                 }
         };
+
+        so->serial_id = rsc->serial_id;
 }
 
 static struct pipe_sampler_view *
@@ -1097,7 +1133,8 @@ v3d_create_sampler_view(struct pipe_context *pctx, struct pipe_resource *prsc,
          * have to copy to a temporary tiled texture.
          */
         if (!rsc->tiled && !(prsc->target == PIPE_TEXTURE_1D ||
-                             prsc->target == PIPE_TEXTURE_1D_ARRAY)) {
+                             prsc->target == PIPE_TEXTURE_1D_ARRAY ||
+                             prsc->target == PIPE_BUFFER)) {
                 struct v3d_resource *shadow_parent = rsc;
                 struct pipe_resource tmpl = {
                         .target = prsc->target,
@@ -1153,6 +1190,8 @@ static void
 v3d_set_sampler_views(struct pipe_context *pctx,
                       enum pipe_shader_type shader,
                       unsigned start, unsigned nr,
+                      unsigned unbind_num_trailing_slots,
+                      bool take_ownership,
                       struct pipe_sampler_view **views)
 {
         struct v3d_context *v3d = v3d_context(pctx);
@@ -1165,7 +1204,24 @@ v3d_set_sampler_views(struct pipe_context *pctx,
         for (i = 0; i < nr; i++) {
                 if (views[i])
                         new_nr = i + 1;
-                pipe_sampler_view_reference(&stage_tex->textures[i], views[i]);
+                if (take_ownership) {
+                        pipe_sampler_view_reference(&stage_tex->textures[i], NULL);
+                        stage_tex->textures[i] = views[i];
+                } else {
+                        pipe_sampler_view_reference(&stage_tex->textures[i], views[i]);
+                }
+                /* If our sampler serial doesn't match our texture serial it
+                 * means the texture has been updated with a new BO, in which
+                 * case we need to update the sampler state to point to the
+                 * new BO as well
+                 */
+                if (stage_tex->textures[i]) {
+                        struct v3d_sampler_view *so =
+                                v3d_sampler_view(stage_tex->textures[i]);
+                        struct v3d_resource *rsc = v3d_resource(so->texture);
+                        if (so->serial_id != rsc->serial_id)
+                                v3d_create_texture_shader_state_bo(v3d, so);
+                }
         }
 
         for (; i < stage_tex->num_textures; i++) {
@@ -1240,16 +1296,10 @@ v3d_set_stream_output_targets(struct pipe_context *pctx,
         so->num_targets = num_targets;
 
         /* Create primitive counters BO if needed */
-        if (num_targets > 0 && !ctx->prim_counts) {
-                /* Init all 7 counters and 1 padding to 0 */
-                uint32_t zeroes[8] = { 0 };
-                u_upload_data(ctx->uploader,
-                              0, sizeof(zeroes), 32, zeroes,
-                              &ctx->prim_counts_offset,
-                              &ctx->prim_counts);
-        }
+        if (num_targets > 0)
+                v3d_ensure_prim_counts_allocated(ctx);
 
-        ctx->dirty |= VC5_DIRTY_STREAMOUT;
+        ctx->dirty |= V3D_DIRTY_STREAMOUT;
 }
 
 static void
@@ -1297,7 +1347,7 @@ v3d_set_shader_buffers(struct pipe_context *pctx,
                 so->enabled_mask &= ~mask;
         }
 
-        v3d->dirty |= VC5_DIRTY_SSBO;
+        v3d->dirty |= V3D_DIRTY_SSBO;
 }
 
 static void
@@ -1318,11 +1368,18 @@ v3d_create_image_view_texture_shader_state(struct v3d_context *v3d,
         struct pipe_resource *prsc = iview->base.resource;
 
         v3dx_pack(map, TEXTURE_SHADER_STATE, tex) {
-                v3d_setup_texture_shader_state(&tex, prsc,
-                                               iview->base.u.tex.level,
-                                               iview->base.u.tex.level,
-                                               iview->base.u.tex.first_layer,
-                                               iview->base.u.tex.last_layer);
+                if (prsc->target != PIPE_BUFFER) {
+                        v3d_setup_texture_shader_state(&tex, prsc,
+                                                       iview->base.u.tex.level,
+                                                       iview->base.u.tex.level,
+                                                       iview->base.u.tex.first_layer,
+                                                       iview->base.u.tex.last_layer);
+                } else {
+                        v3d_setup_texture_shader_state_from_buffer(&tex, prsc,
+                                                                   iview->base.format,
+                                                                   iview->base.u.buf.offset,
+                                                                   iview->base.u.buf.size);
+                }
 
                 tex.swizzle_r = translate_swizzle(PIPE_SWIZZLE_X);
                 tex.swizzle_g = translate_swizzle(PIPE_SWIZZLE_Y);
@@ -1344,6 +1401,7 @@ static void
 v3d_set_shader_images(struct pipe_context *pctx,
                       enum pipe_shader_type shader,
                       unsigned start, unsigned count,
+                      unsigned unbind_num_trailing_slots,
                       const struct pipe_image_view *images)
 {
         struct v3d_context *v3d = v3d_context(pctx);
@@ -1388,7 +1446,12 @@ v3d_set_shader_images(struct pipe_context *pctx,
                         so->enabled_mask &= ~(((1 << count) - 1) << start);
         }
 
-        v3d->dirty |= VC5_DIRTY_SHADER_IMAGE;
+        v3d->dirty |= V3D_DIRTY_SHADER_IMAGE;
+
+        if (unbind_num_trailing_slots) {
+                v3d_set_shader_images(pctx, shader, start + count,
+                                      unbind_num_trailing_slots, 0, NULL);
+        }
 }
 
 void

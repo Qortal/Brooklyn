@@ -23,31 +23,24 @@
 
 #include "compiler.h"
 
-/* The scheduler packs multiple instructions into a clause (grouped as bundle),
+/* The scheduler packs multiple instructions into a clause (grouped as tuple),
  * and the packing code takes in a clause and emits it to the wire. During
- * scheduling, we need to lay out the instructions (bundles) and constants
+ * scheduling, we need to lay out the instructions (tuples) and constants
  * within the clause so constraints can be resolved during scheduling instead
  * of failing packing. These routines will help building clauses from
  * instructions so the scheduler can focus on the high-level algorithm, and
  * manipulating clause layouts.
  */
 
-/* Helper to see if a bundle can be inserted. We must satisfy the invariant:
- *
- *      constant_count + bundle_count <= 13
- *
- * ...which is equivalent to the clause ending up with 8 or fewer quardwords.
- * Inserting a bundle increases bundle_count by one, and if it reads a unique
- * constant, it increases constant_count by one.
- */
+/* Is embedded constant 0 packed for free in a clause with this many tuples? */
 
 bool
-bi_can_insert_bundle(bi_clause *clause, bool constant)
+bi_ec0_packed(unsigned tuple_count)
 {
-        unsigned constant_count = clause->constant_count + (constant ? 1 : 0);
-        unsigned bundle_count = clause->bundle_count + 1;
-
-        return (constant_count + bundle_count) <= 13;
+        return (tuple_count == 3) ||
+                (tuple_count == 5) ||
+                (tuple_count == 6) ||
+                (tuple_count == 8);
 }
 
 /* Helper to calculate the number of quadwords in a clause. This is a function
@@ -76,10 +69,10 @@ bi_can_insert_bundle(bi_clause *clause, bool constant)
  * constants are packed two-by-two as constant quadwords.
  */
 
-unsigned
+static unsigned
 bi_clause_quadwords(bi_clause *clause)
 {
-        unsigned X = clause->bundle_count;
+        unsigned X = clause->tuple_count;
         unsigned Y = X - ((X >= 7) ? 2 : (X >= 4) ? 1 : 0);
 
         unsigned constants = clause->constant_count;
@@ -102,7 +95,7 @@ bi_block_offset(bi_context *ctx, bi_clause *start, bi_block *target)
 
         /* Determine if the block we're branching to is strictly greater in
          * source order */
-        bool forwards = target->base.name > start->block->base.name;
+        bool forwards = target->name > start->block->name;
 
         if (forwards) {
                 /* We have to jump through this block from the start of this
@@ -113,9 +106,7 @@ bi_block_offset(bi_context *ctx, bi_clause *start, bi_block *target)
 
                 /* We then need to jump through every clause of every following
                  * block until the target */
-                bi_foreach_block_from(ctx, start->block, _blk) {
-                        bi_block *blk = (bi_block *) _blk;
-
+                bi_foreach_block_from(ctx, start->block, blk) {
                         /* Don't double-count the first block */
                         if (blk == start->block)
                                 continue;
@@ -142,9 +133,7 @@ bi_block_offset(bi_context *ctx, bi_clause *start, bi_block *target)
                 /* And jump back every clause of preceding blocks up through
                  * and including the target to get to the beginning of the
                  * target */
-                bi_foreach_block_from_rev(ctx, start->block, _blk) {
-                        bi_block *blk = (bi_block *) _blk;
-
+                bi_foreach_block_from_rev(ctx, start->block, blk) {
                         if (blk == start->block)
                                 continue;
 

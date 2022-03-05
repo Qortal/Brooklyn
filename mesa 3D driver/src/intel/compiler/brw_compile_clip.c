@@ -23,7 +23,7 @@
 
 #include "brw_clip.h"
 
-#include "dev/gen_debug.h"
+#include "dev/intel_debug.h"
 
 const unsigned *
 brw_compile_clip(const struct brw_compiler *compiler,
@@ -63,16 +63,16 @@ brw_compile_clip(const struct brw_compiler *compiler,
     * do all three:
     */
    switch (key->primitive) {
-   case GL_TRIANGLES:
+   case SHADER_PRIM_TRIANGLES:
       if (key->do_unfilled)
 	 brw_emit_unfilled_clip( &c );
       else
 	 brw_emit_tri_clip( &c );
       break;
-   case GL_LINES:
+   case SHADER_PRIM_LINES:
       brw_emit_line_clip( &c );
       break;
-   case GL_POINTS:
+   case SHADER_PRIM_POINTS:
       brw_emit_point_clip( &c );
       break;
    default:
@@ -85,7 +85,7 @@ brw_compile_clip(const struct brw_compiler *compiler,
 
    const unsigned *program = brw_get_program(&c.func, final_assembly_size);
 
-   if (INTEL_DEBUG & DEBUG_CLIP) {
+   if (INTEL_DEBUG(DEBUG_CLIP)) {
       fprintf(stderr, "clip:\n");
       brw_disassemble_with_labels(compiler->devinfo,
                                   program, 0, *final_assembly_size, stderr);

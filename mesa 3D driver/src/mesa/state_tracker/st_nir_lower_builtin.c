@@ -110,10 +110,25 @@ get_variable(lower_builtin_state *state, nir_deref_path *path,
       /* we need to fixup the array index slot: */
       switch (tokens[0]) {
       case STATE_MODELVIEW_MATRIX:
+      case STATE_MODELVIEW_MATRIX_INVERSE:
+      case STATE_MODELVIEW_MATRIX_TRANSPOSE:
+      case STATE_MODELVIEW_MATRIX_INVTRANS:
       case STATE_PROJECTION_MATRIX:
+      case STATE_PROJECTION_MATRIX_INVERSE:
+      case STATE_PROJECTION_MATRIX_TRANSPOSE:
+      case STATE_PROJECTION_MATRIX_INVTRANS:
       case STATE_MVP_MATRIX:
+      case STATE_MVP_MATRIX_INVERSE:
+      case STATE_MVP_MATRIX_TRANSPOSE:
+      case STATE_MVP_MATRIX_INVTRANS:
       case STATE_TEXTURE_MATRIX:
+      case STATE_TEXTURE_MATRIX_INVERSE:
+      case STATE_TEXTURE_MATRIX_TRANSPOSE:
+      case STATE_TEXTURE_MATRIX_INVTRANS:
       case STATE_PROGRAM_MATRIX:
+      case STATE_PROGRAM_MATRIX_INVERSE:
+      case STATE_PROGRAM_MATRIX_TRANSPOSE:
+      case STATE_PROGRAM_MATRIX_INVTRANS:
       case STATE_LIGHT:
       case STATE_LIGHTPROD:
       case STATE_TEXGEN:
@@ -213,7 +228,7 @@ lower_builtin_block(lower_builtin_state *state, nir_block *block)
 
       /* and rewrite uses of original instruction: */
       assert(intrin->dest.is_ssa);
-      nir_ssa_def_rewrite_uses(&intrin->dest.ssa, nir_src_for_ssa(def));
+      nir_ssa_def_rewrite_uses(&intrin->dest.ssa, def);
 
       /* at this point intrin should be unused.  We need to remove it
        * (rather than waiting for DCE pass) to avoid dangling reference

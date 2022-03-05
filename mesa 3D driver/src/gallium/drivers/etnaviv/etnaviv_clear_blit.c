@@ -39,6 +39,7 @@
 
 #include "pipe/p_defines.h"
 #include "pipe/p_state.h"
+#include "util/compiler.h"
 #include "util/u_blitter.h"
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
@@ -60,7 +61,7 @@ etna_blit_save_state(struct etna_context *ctx)
    util_blitter_save_blend(ctx->blitter, ctx->blend);
    util_blitter_save_depth_stencil_alpha(ctx->blitter, ctx->zsa);
    util_blitter_save_stencil_ref(ctx->blitter, &ctx->stencil_ref_s);
-   util_blitter_save_sample_mask(ctx->blitter, ctx->sample_mask);
+   util_blitter_save_sample_mask(ctx->blitter, ctx->sample_mask, 0);
    util_blitter_save_framebuffer(ctx->blitter, &ctx->framebuffer_s);
    util_blitter_save_fragment_sampler_states(ctx->blitter,
          ctx->num_fragment_samplers, (void **)ctx->sampler);
@@ -78,13 +79,13 @@ etna_clear_blit_pack_rgba(enum pipe_format format, const union pipe_color_union 
    switch (util_format_get_blocksize(format)) {
    case 1:
       uc.ui[0] = uc.ui[0] << 8 | (uc.ui[0] & 0xff);
-      /* fallthrough */
+      FALLTHROUGH;
    case 2:
       uc.ui[0] =  uc.ui[0] << 16 | (uc.ui[0] & 0xffff);
-      /* fallthrough */
+      FALLTHROUGH;
    case 4:
       uc.ui[1] = uc.ui[0];
-      /* fallthrough */
+      FALLTHROUGH;
    default:
       return (uint64_t) uc.ui[1] << 32 | uc.ui[0];
    }
@@ -99,7 +100,7 @@ etna_blit(struct pipe_context *pctx, const struct pipe_blit_info *blit_info)
    if (ctx->blit(pctx, &info))
       return;
 
-   if (util_try_blit_via_copy_region(pctx, &info))
+   if (util_try_blit_via_copy_region(pctx, &info, false))
       return;
 
    if (info.mask & PIPE_MASK_S) {
@@ -155,16 +156,8 @@ etna_resource_copy_region(struct pipe_context *pctx, struct pipe_resource *dst,
 {
    struct etna_context *ctx = etna_context(pctx);
 
-   /* XXX we can use the RS as a literal copy engine here
-    * the only complexity is tiling; the size of the boxes needs to be aligned
-    * to the tile size
-    * how to handle the case where a resource is copied from/to a non-aligned
-    * position?
-    * from non-aligned: can fall back to rendering-based copy?
-    * to non-aligned: can fall back to rendering-based copy?
-    * XXX this goes wrong when source surface is supertiled.
-    */
-   if (util_blitter_is_copy_supported(ctx->blitter, dst, src)) {
+   if (src->target != PIPE_BUFFER && dst->target != PIPE_BUFFER &&
+       util_blitter_is_copy_supported(ctx->blitter, dst, src)) {
       etna_blit_save_state(ctx);
       util_blitter_copy_texture(ctx->blitter, dst, dst_level, dstx, dsty, dstz,
                                 src, src_level, src_box);

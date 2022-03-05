@@ -26,6 +26,7 @@
 #include "util/u_sampler.h"
 #include "util/format/u_format.h"
 #include "util/u_inlines.h"
+#include "util/u_resource.h"
 
 using namespace clover;
 
@@ -88,8 +89,8 @@ resource::add_map(command_queue &q, cl_map_flags flags, bool blocking,
 
 void
 resource::del_map(void *p) {
-   erase_if([&](const mapping &m) {
-         return static_cast<void *>(m) == p;
+   erase_if([&](const mapping &b) {
+         return static_cast<void *>(b) == p;
       }, maps);
 }
 
@@ -125,7 +126,10 @@ resource::create_image_view(command_queue &q) {
       view.u.buf.size = obj.size();
    } else {
       view.u.tex.first_layer = 0;
-      view.u.tex.last_layer = 0;
+      if (util_texture_is_array(pipe->target))
+         view.u.tex.last_layer = pipe->array_size - 1;
+      else
+         view.u.tex.last_layer = 0;
       view.u.tex.level = 0;
    }
 
@@ -160,13 +164,14 @@ root_resource::root_resource(clover::device &dev, memory_obj &obj,
       info.width0 = img->width();
       info.height0 = img->height();
       info.depth0 = img->depth();
+      info.array_size = MAX2(1, img->array_size());
    } else {
       info.width0 = obj.size();
       info.height0 = 1;
       info.depth0 = 1;
+      info.array_size = 1;
    }
 
-   info.array_size = 1;
    info.target = translate_target(obj.type());
    info.bind = (PIPE_BIND_SAMPLER_VIEW |
                 PIPE_BIND_COMPUTE_RESOURCE |
@@ -229,7 +234,7 @@ mapping::mapping(command_queue &q, resource &r,
                       PIPE_MAP_DISCARD_RANGE : 0) |
                      (!blocking ? PIPE_MAP_UNSYNCHRONIZED : 0));
 
-   p = pctx->transfer_map(pctx, r.pipe, 0, usage,
+   p = pctx->buffer_map(pctx, r.pipe, 0, usage,
                           box(origin + r.offset, region), &pxfer);
    if (!p) {
       pxfer = NULL;
@@ -248,7 +253,7 @@ mapping::mapping(mapping &&m) :
 
 mapping::~mapping() {
    if (pxfer) {
-      pctx->transfer_unmap(pctx, pxfer);
+      pctx->buffer_unmap(pctx, pxfer);
    }
    pipe_resource_reference(&pres, NULL);
 }

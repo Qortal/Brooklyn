@@ -38,6 +38,10 @@
 #include "pipe/p_format.h"
 #include "frontend/api.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct stw_pixelformat_info
 {
    PIXELFORMATDESCRIPTOR pfd;
@@ -47,16 +51,18 @@ struct stw_pixelformat_info
    /** WGL_ARB_render_texture */
    boolean bindToTextureRGB;
    boolean bindToTextureRGBA;
+
+   int iPixelFormat;
 };
 
 void
 stw_pixelformat_init( void );
 
 uint
-stw_pixelformat_get_count( void );
+stw_pixelformat_get_count( HDC hdc );
 
 uint
-stw_pixelformat_get_extended_count( void );
+stw_pixelformat_get_extended_count( HDC hdc );
 
 const struct stw_pixelformat_info *
 stw_pixelformat_get_info( int iPixelFormat );
@@ -67,5 +73,9 @@ stw_pixelformat_choose( HDC hdc,
 
 int
 stw_pixelformat_get(HDC hdc);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* STW_PIXELFORMAT_H */

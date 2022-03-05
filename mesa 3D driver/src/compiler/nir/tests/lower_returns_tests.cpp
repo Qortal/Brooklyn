@@ -39,7 +39,7 @@ nir_opt_lower_returns_test::nir_opt_lower_returns_test()
    glsl_type_singleton_init_or_ref();
 
    static const nir_shader_compiler_options options = { };
-   nir_builder_init_simple_shader(&bld, NULL, MESA_SHADER_VERTEX, &options);
+   bld = nir_builder_init_simple_shader(MESA_SHADER_VERTEX, &options, "lower returns test");
 
    nir_variable *var = nir_variable_create(bld.shader, nir_var_shader_in, glsl_int_type(), "in");
    in_def = nir_load_var(&bld, var);
@@ -56,11 +56,7 @@ nir_phi_instr *create_one_source_phi(nir_shader *shader, nir_block *pred,
 {
    nir_phi_instr *phi = nir_phi_instr_create(shader);
 
-   nir_phi_src *phi_src;
-   phi_src = ralloc(phi, nir_phi_src);
-   phi_src->pred = pred;
-   phi_src->src = nir_src_for_ssa(def);
-   exec_list_push_tail(&phi->srcs, &phi_src->node);
+   nir_phi_instr_add_src(phi, pred, nir_src_for_ssa(def));
 
    nir_ssa_dest_init(&phi->instr, &phi->dest,
                      def->num_components, def->bit_size, NULL);

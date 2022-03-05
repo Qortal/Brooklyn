@@ -6,7 +6,7 @@ GitLab CI
 
 GitLab provides a convenient framework for running commands in response to Git pushes.
 We use it to test merge requests (MRs) before merging them (pre-merge testing),
-as well as post-merge testing, for everything that hits ``master``
+as well as post-merge testing, for everything that hits ``main``
 (this is necessary because we still allow commits to be pushed outside of MRs,
 and even then the MR CI runs in the forked repository, which might have been
 modified and thus is unreliable).
@@ -14,7 +14,7 @@ modified and thus is unreliable).
 The CI runs a number of tests, from trivial build-testing to complex GPU rendering:
 
 - Build testing for a number of build systems, configurations and platforms
-- Sanity checks (``meson test`` & ``scons check``)
+- Sanity checks (``meson test``)
 - Some drivers (softpipe, llvmpipe, freedreno and panfrost) are also tested
   using `VK-GL-CTS <https://github.com/KhronosGroup/VK-GL-CTS>`__
 - Replay of application traces
@@ -37,7 +37,7 @@ empty (or set to the default ``.gitlab-ci.yml``), and that the
 "Public pipelines" box is checked.
 
 If you're having issues with the GitLab CI, your best bet is to ask
-about it on ``#freedesktop`` on Freenode and tag `Daniel Stone
+about it on ``#freedesktop`` on OFTC and tag `Daniel Stone
 <https://gitlab.freedesktop.org/daniels>`__ (``daniels`` on IRC) or
 `Eric Anholt <https://gitlab.freedesktop.org/anholt>`__ (``anholt`` on
 IRC).
@@ -51,6 +51,41 @@ The three GitLab CI systems currently integrated are:
    bare-metal
    LAVA
    docker
+
+Application traces replay
+-------------------------
+
+The CI replays application traces with various drivers in two different jobs. The first
+job replays traces listed in ``src/<driver>/ci/traces-<driver>.yml`` files and if any
+of those traces fail the pipeline fails as well. The second job replays traces listed in
+``src/<driver>/ci/restricted-traces-<driver>.yml`` and it is allowed to fail. This second
+job is only created when the pipeline is triggered by `marge-bot` or any other user that
+has been granted access to these traces.
+
+A traces YAML file also includes a ``download-url`` pointing to a MinIO
+instance where to download the traces from. While the first job should always work with
+publicly accessible traces, the second job could point to an url with restricted access.
+
+Restricted traces are those that have been made available to Mesa developers without a
+license to redistribute at will, and thus should not be exposed to the public. Failing to
+access that URL would not prevent the pipeline to pass, therefore forks made by
+contributors without permissions to download non-redistributable traces can be merged
+without friction.
+
+As an aside, only maintainers of such non-redistributable traces are responsible for
+ensuring that replays are successful, since other contributors would not be able to
+download and test them by themselves.
+
+Those Mesa contributors that believe they could have permission to access such
+non-redistributable traces can request permission to Daniel Stone <daniels@collabora.com>.
+
+gitlab.freedesktop.org accounts that are to be granted access to these traces will be
+added to the OPA policy for the MinIO repository as per
+https://gitlab.freedesktop.org/freedesktop/helm-gitlab-config/-/commit/a3cd632743019f68ac8a829267deb262d9670958 .
+
+So the jobs are created in personal repositories, the name of the user's account needs
+to be added to the rules attribute of the Gitlab CI job that accesses the restricted
+accounts.
 
 Intel CI
 --------
@@ -79,10 +114,8 @@ and a few other tools.
 A typical run takes between 30 minutes and an hour.
 
 If you're having issues with the Intel CI, your best bet is to ask about
-it on ``#dri-devel`` on Freenode and tag `Clayton Craft
-<https://gitlab.freedesktop.org/craftyguy>`__ (``craftyguy`` on IRC) or
-`Nico Cortes <https://gitlab.freedesktop.org/ngcortes>`__ (``ngcortes``
-on IRC).
+it on ``#dri-devel`` on OFTC and tag `Nico Cortes
+<https://gitlab.freedesktop.org/ngcortes>`__ (``ngcortes`` on IRC).
 
 .. _CI-farm-expectations:
 
@@ -102,17 +135,16 @@ pipeline backing up.  As a result, we require that the test farm be
 able to handle a whole pipeline's worth of jobs in less than 15 minutes
 (to compare, the build stage is about 10 minutes).
 
-If a test farm is short the HW to provide these guarantees, consider
-dropping tests to reduce runtime.
-``VK-GL-CTS/scripts/log/bottleneck_report.py`` can help you find what
-tests were slow in a ``results.qpa`` file.  Or, you can have a job with
-no ``parallel`` field set and:
+If a test farm is short the HW to provide these guarantees, consider dropping
+tests to reduce runtime.  dEQP job logs print the slowest tests at the end of
+the run, and piglit logs the runtime of tests in the results.json.bz2 in the
+artifacts.  Or, you can add the following to your job to only run some fraction
+(in this case, 1/10th) of the deqp tests.
 
 .. code-block:: yaml
 
     variables:
-      CI_NODE_INDEX: 1
-      CI_NODE_TOTAL: 10
+      DEQP_FRACTION: 10
 
 to just run 1/10th of the test list.
 
@@ -161,10 +193,10 @@ apt cache, and other such common pitfalls of building Docker images).
 
 When running a container job, the templates will look for an existing
 build of that image in the container registry under
-``FDO_DISTRIBUTION_TAG``.  If it's found it will be reused, and if
+``MESA_IMAGE_TAG``.  If it's found it will be reused, and if
 not, the associated `.gitlab-ci/containers/<jobname>.sh`` will be run
 to build it.  So, when developing any change to container build
-scripts, you need to update the associated ``FDO_DISTRIBUTION_TAG`` to
+scripts, you need to update the associated ``MESA_IMAGE_TAG`` to
 a new unique string.  We recommend using the current date plus some
 string related to your branch (so that if you rebase on someone else's
 container update from the same day, you will get a Git conflict
@@ -176,7 +208,7 @@ branch, which can get tedious.  Instead, you can navigate to the
 `container registry
 <https://gitlab.freedesktop.org/mesa/mesa/container_registry>`_ for
 your repository and delete the tag to force a rebuild.  When your code
-is eventually merged to master, a full image rebuild will occur again
+is eventually merged to main, a full image rebuild will occur again
 (forks inherit images from the main repo, but MRs don't propagate
 images from the fork into the main repo's registry).
 
@@ -210,3 +242,27 @@ directory.  You can hack on mesa and iterate testing the build with:
 .. code-block:: console
 
     sudo docker run --rm -v `pwd`:/mesa $IMAGE ninja -C /mesa/_build
+
+
+Conformance Tests
+-----------------
+
+Some conformance tests require a special treatment to be maintained on Gitlab CI.
+This section lists their documentation pages.
+
+.. toctree::
+  :maxdepth: 1
+
+  skqp
+
+
+Updating Gitlab CI Linux Kernel
+-------------------------------
+
+Gitlab CI usually runs a bleeding-edge kernel. The following documentation has
+instructions on how to uprev Linux Kernel in the Gitlab Ci ecosystem.
+
+.. toctree::
+  :maxdepth: 1
+
+  kernel

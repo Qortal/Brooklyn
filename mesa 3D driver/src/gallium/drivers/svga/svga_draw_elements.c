@@ -61,6 +61,7 @@
 static enum pipe_error
 translate_indices(struct svga_hwtnl *hwtnl,
                   const struct pipe_draw_info *info,
+                  const struct pipe_draw_start_count_bias *draw,
                   enum pipe_prim_type gen_prim,
                   unsigned orig_nr, unsigned gen_nr,
                   unsigned gen_size,
@@ -74,7 +75,7 @@ translate_indices(struct svga_hwtnl *hwtnl,
    struct pipe_transfer *src_transfer = NULL;
    struct pipe_transfer *dst_transfer = NULL;
    const unsigned size = gen_size * gen_nr;
-   const unsigned offset = info->start * info->index_size;
+   const unsigned offset = draw->start * info->index_size;
    const void *src_map = NULL;
    struct pipe_resource *dst = NULL;
    void *dst_map = NULL;
@@ -215,6 +216,7 @@ svga_hwtnl_simple_draw_range_elements(struct svga_hwtnl *hwtnl,
 enum pipe_error
 svga_hwtnl_draw_range_elements(struct svga_hwtnl *hwtnl,
                                const struct pipe_draw_info *info,
+                               const struct pipe_draw_start_count_bias *draw,
                                unsigned count)
 {
    struct pipe_context *pipe = &hwtnl->svga->pipe;
@@ -257,7 +259,7 @@ svga_hwtnl_draw_range_elements(struct svga_hwtnl *hwtnl,
    if ((gen_type == U_TRANSLATE_MEMCPY) && (info->index_size == gen_size)) {
       /* No need for translation, just pass through to hardware:
        */
-      unsigned start_offset = info->start * info->index_size;
+      unsigned start_offset = draw->start * info->index_size;
       struct pipe_resource *index_buffer = NULL;
       unsigned index_offset;
 
@@ -269,20 +271,20 @@ svga_hwtnl_draw_range_elements(struct svga_hwtnl *hwtnl,
          index_offset /= info->index_size;
       } else {
          pipe_resource_reference(&index_buffer, info->index.resource);
-         index_offset = info->start;
+         index_offset = draw->start;
       }
 
       assert(index_buffer != NULL);
 
       ret = svga_hwtnl_simple_draw_range_elements(hwtnl, index_buffer,
                                                   info->index_size,
-                                                  info->index_bias,
-                                                  info->min_index,
-                                                  info->max_index,
+                                                  draw->index_bias,
+                                                  info->index_bounds_valid ? info->min_index : 0,
+                                                  info->index_bounds_valid ? info->max_index : ~0,
                                                   gen_prim, index_offset, count,
                                                   info->start_instance,
                                                   info->instance_count,
-                                                  info->vertices_per_patch);
+                                                  hwtnl->svga->patch_vertices);
       pipe_resource_reference(&index_buffer, NULL);
    }
    else {
@@ -296,7 +298,7 @@ svga_hwtnl_draw_range_elements(struct svga_hwtnl *hwtnl,
        * GL though, as index buffers are typically used only once
        * there.
        */
-      ret = translate_indices(hwtnl, info, gen_prim,
+      ret = translate_indices(hwtnl, info, draw, gen_prim,
                               count, gen_nr, gen_size,
                               gen_func, &gen_buf, &gen_offset);
       if (ret == PIPE_OK) {
@@ -304,14 +306,14 @@ svga_hwtnl_draw_range_elements(struct svga_hwtnl *hwtnl,
          ret = svga_hwtnl_simple_draw_range_elements(hwtnl,
                                                      gen_buf,
                                                      gen_size,
-                                                     info->index_bias,
-                                                     info->min_index,
-                                                     info->max_index,
+                                                     draw->index_bias,
+                                                     info->index_bounds_valid ? info->min_index : 0,
+                                                     info->index_bounds_valid ? info->max_index : ~0,
                                                      gen_prim, gen_offset,
                                                      gen_nr,
                                                      info->start_instance,
                                                      info->instance_count,
-                                                     info->vertices_per_patch);
+                                                     hwtnl->svga->patch_vertices);
       }
 
       if (gen_buf) {

@@ -1,8 +1,5 @@
 #encoding=utf-8
 
-from __future__ import (
-    absolute_import, division, print_function, unicode_literals
-)
 import argparse
 import ast
 import xml.parsers.expat
@@ -56,8 +53,8 @@ pack_header = """%(license)s
 #define __gen_validate_value(x)
 #endif
 
-#ifndef __gen_field_functions
-#define __gen_field_functions
+#ifndef __intel_field_functions
+#define __intel_field_functions
 
 #ifdef NDEBUG
 #define NDEBUG_UNUSED __attribute__((unused))
@@ -65,7 +62,7 @@ pack_header = """%(license)s
 #define NDEBUG_UNUSED
 #endif
 
-union __gen_value {
+union __intel_value {
    float f;
    uint32_t dw;
 };
@@ -93,6 +90,13 @@ __gen_uint(uint64_t v, uint32_t start, NDEBUG_UNUSED uint32_t end)
 }
 
 static inline __attribute__((always_inline)) uint64_t
+__gen_uint_nonzero(uint64_t v, uint32_t start, uint32_t end)
+{
+   assert(v != 0ull);
+   return __gen_uint(v, start, end);
+}
+
+static inline __attribute__((always_inline)) uint64_t
 __gen_sint(int64_t v, uint32_t start, uint32_t end)
 {
    const int width = end - start + 1;
@@ -113,6 +117,13 @@ __gen_sint(int64_t v, uint32_t start, uint32_t end)
 }
 
 static inline __attribute__((always_inline)) uint64_t
+__gen_sint_nonzero(int64_t v, uint32_t start, uint32_t end)
+{
+   assert(v != 0ll);
+   return __gen_sint(v, start, end);
+}
+
+static inline __attribute__((always_inline)) uint64_t
 __gen_offset(uint64_t v, NDEBUG_UNUSED uint32_t start, NDEBUG_UNUSED uint32_t end)
 {
    __gen_validate_value(v);
@@ -125,11 +136,41 @@ __gen_offset(uint64_t v, NDEBUG_UNUSED uint32_t start, NDEBUG_UNUSED uint32_t en
    return v;
 }
 
+static inline __attribute__((always_inline)) uint64_t
+__gen_offset_nonzero(uint64_t v, uint32_t start, uint32_t end)
+{
+   assert(v != 0ull);
+   return __gen_offset(v, start, end);
+}
+
+static inline __attribute__((always_inline)) uint64_t
+__gen_address(__gen_user_data *data, void *location,
+              __gen_address_type address, uint32_t delta,
+              __attribute__((unused)) uint32_t start, uint32_t end)
+{
+   uint64_t addr_u64 = __gen_combine_address(data, location, address, delta);
+   if (end == 31) {
+      return addr_u64;
+   } else if (end < 63) {
+      const unsigned shift = 63 - end;
+      return (addr_u64 << shift) >> shift;
+   } else {
+      return addr_u64;
+   }
+}
+
 static inline __attribute__((always_inline)) uint32_t
 __gen_float(float v)
 {
    __gen_validate_value(v);
-   return ((union __gen_value) { .f = (v) }).dw;
+   return ((union __intel_value) { .f = (v) }).dw;
+}
+
+static inline __attribute__((always_inline)) uint32_t
+__gen_float_nonzero(float v)
+{
+   assert(v != 0.0f);
+   return __gen_float(v);
 }
 
 static inline __attribute__((always_inline)) uint64_t
@@ -152,6 +193,13 @@ __gen_sfixed(float v, uint32_t start, uint32_t end, uint32_t fract_bits)
 }
 
 static inline __attribute__((always_inline)) uint64_t
+__gen_sfixed_nonzero(float v, uint32_t start, uint32_t end, uint32_t fract_bits)
+{
+   assert(v != 0.0f);
+   return __gen_sfixed(v, start, end, fract_bits);
+}
+
+static inline __attribute__((always_inline)) uint64_t
 __gen_ufixed(float v, uint32_t start, NDEBUG_UNUSED uint32_t end, uint32_t fract_bits)
 {
    __gen_validate_value(v);
@@ -167,6 +215,13 @@ __gen_ufixed(float v, uint32_t start, NDEBUG_UNUSED uint32_t end, uint32_t fract
    const uint64_t uint_val = llroundf(v * factor);
 
    return uint_val << start;
+}
+
+static inline __attribute__((always_inline)) uint64_t
+__gen_ufixed_nonzero(float v, uint32_t start, uint32_t end, uint32_t fract_bits)
+{
+   assert(v != 0.0f);
+   return __gen_ufixed(v, start, end, fract_bits);
 }
 
 #ifndef __gen_address_type
@@ -190,6 +245,10 @@ def num_from_str(num_str):
     assert not num_str.startswith('0'), 'octals numbers not allowed'
     return int(num_str)
 
+def bool_from_str(bool_str):
+    options = { "true": True, "false": False }
+    return options[bool_str];
+
 class Field(object):
     ufixed_pattern = re.compile(r"u(\d+)\.(\d+)")
     sfixed_pattern = re.compile(r"s(\d+)\.(\d+)")
@@ -201,6 +260,7 @@ class Field(object):
         self.start = int(attrs["start"])
         self.end = int(attrs["end"])
         self.type = attrs["type"]
+        self.nonzero = bool_from_str(attrs.get("nonzero", "false"))
 
         assert self.start <= self.end, \
                'field {} has end ({}) < start ({})'.format(self.name, self.end,
@@ -232,7 +292,8 @@ class Field(object):
 
     def is_builtin_type(self):
         builtins =  [ 'address', 'bool', 'float', 'ufixed',
-                      'offset', 'sfixed', 'offset', 'int', 'uint', 'mbo' ]
+                      'offset', 'sfixed', 'offset', 'int', 'uint',
+                      'mbo', 'mbz' ]
         return self.type in builtins
 
     def is_struct_type(self):
@@ -264,7 +325,7 @@ class Field(object):
             type = 'struct ' + self.parser.gen_prefix(safe_name(self.type))
         elif self.is_enum_type():
             type = 'enum ' + self.parser.gen_prefix(safe_name(self.type))
-        elif self.type == 'mbo':
+        elif self.type == 'mbo' or self.type == 'mbz':
             return
         else:
             print("#error unhandled type: %s" % self.type)
@@ -272,13 +333,14 @@ class Field(object):
 
         print("   %-36s %s%s;" % (type, self.name, dim))
 
-        prefix = ""
-        if self.values and self.default is None:
-            if self.prefix:
-                prefix = self.prefix + "_"
+        prefix = self.prefix + '_' if self.prefix else ''
 
         for value in self.values:
-            print("#define %-40s %d" % (prefix + value.name, value.value))
+            name = value.name
+            if self.prefix and value.name[0] == '_':
+                name = name[1:]
+
+            print("#define %-40s %d" % (prefix + name, value.value))
 
 class Group(object):
     def __init__(self, parser, parent, start, count, size):
@@ -329,7 +391,7 @@ class Group(object):
 
             if field.type == "address":
                 # assert dwords[index].address == None
-                dwords[index].address = field
+                dwords[index].address = clone
 
             # Coalesce all the dwords covered by this field. The two cases we
             # handle are where multiple fields are in a 64 bit word (typically
@@ -418,37 +480,41 @@ class Group(object):
             field_index = 0
             non_address_fields = []
             for field in dw.fields:
-                if field.type != "mbo":
+                if field.type != "mbo" and field.type != "mbz":
                     name = field.name + field.dim
+
+                nz = "_nonzero" if field.nonzero else ""
 
                 if field.type == "mbo":
                     non_address_fields.append("__gen_mbo(%d, %d)" % \
                         (field.start - dword_start, field.end - dword_start))
+                elif field.type == "mbz":
+                    assert not field.nonzero
                 elif field.type == "address":
                     pass
                 elif field.type == "uint":
-                    non_address_fields.append("__gen_uint(values->%s, %d, %d)" % \
-                        (name, field.start - dword_start, field.end - dword_start))
+                    non_address_fields.append("__gen_uint%s(values->%s, %d, %d)" % \
+                        (nz, name, field.start - dword_start, field.end - dword_start))
                 elif field.is_enum_type():
-                    non_address_fields.append("__gen_uint(values->%s, %d, %d)" % \
-                        (name, field.start - dword_start, field.end - dword_start))
+                    non_address_fields.append("__gen_uint%s(values->%s, %d, %d)" % \
+                        (nz, name, field.start - dword_start, field.end - dword_start))
                 elif field.type == "int":
-                    non_address_fields.append("__gen_sint(values->%s, %d, %d)" % \
-                        (name, field.start - dword_start, field.end - dword_start))
+                    non_address_fields.append("__gen_sint%s(values->%s, %d, %d)" % \
+                        (nz, name, field.start - dword_start, field.end - dword_start))
                 elif field.type == "bool":
-                    non_address_fields.append("__gen_uint(values->%s, %d, %d)" % \
-                        (name, field.start - dword_start, field.end - dword_start))
+                    non_address_fields.append("__gen_uint%s(values->%s, %d, %d)" % \
+                        (nz, name, field.start - dword_start, field.end - dword_start))
                 elif field.type == "float":
-                    non_address_fields.append("__gen_float(values->%s)" % name)
+                    non_address_fields.append("__gen_float%s(values->%s)" % (nz, name))
                 elif field.type == "offset":
-                    non_address_fields.append("__gen_offset(values->%s, %d, %d)" % \
-                        (name, field.start - dword_start, field.end - dword_start))
+                    non_address_fields.append("__gen_offset%s(values->%s, %d, %d)" % \
+                        (nz, name, field.start - dword_start, field.end - dword_start))
                 elif field.type == 'ufixed':
-                    non_address_fields.append("__gen_ufixed(values->%s, %d, %d, %d)" % \
-                        (name, field.start - dword_start, field.end - dword_start, field.fractional_size))
+                    non_address_fields.append("__gen_ufixed%s(values->%s, %d, %d, %d)" % \
+                        (nz, name, field.start - dword_start, field.end - dword_start, field.fractional_size))
                 elif field.type == 'sfixed':
-                    non_address_fields.append("__gen_sfixed(values->%s, %d, %d, %d)" % \
-                        (name, field.start - dword_start, field.end - dword_start, field.fractional_size))
+                    non_address_fields.append("__gen_sfixed%s(values->%s, %d, %d, %d)" % \
+                        (nz, name, field.start - dword_start, field.end - dword_start, field.fractional_size))
                 elif field.is_struct_type():
                     non_address_fields.append("__gen_uint(v%d_%d, %d, %d)" % \
                         (index, field_index, field.start - dword_start, field.end - dword_start))
@@ -462,13 +528,16 @@ class Group(object):
 
             if dw.size == 32:
                 if dw.address:
-                    print("   dw[%d] = __gen_combine_address(data, &dw[%d], values->%s, %s);" % (index, index, dw.address.name + field.dim, v))
+                    print("   dw[%d] = __gen_address(data, &dw[%d], values->%s, %s, %d, %d);" %
+                    (index, index, dw.address.name + field.dim, v,
+                     dw.address.start - dword_start, dw.address.end - dword_start))
                 continue
 
             if dw.address:
                 v_address = "v%d_address" % index
-                print("   const uint64_t %s =\n      __gen_combine_address(data, &dw[%d], values->%s, %s);" %
-                      (v_address, index, dw.address.name + field.dim, v))
+                print("   const uint64_t %s =\n      __gen_address(data, &dw[%d], values->%s, %s, %d, %d);" %
+                      (v_address, index, dw.address.name + field.dim, v,
+                       dw.address.start - dword_start, dw.address.end - dword_start))
                 if len(dw.fields) > address_count:
                     print("   dw[%d] = %s;" % (index, v_address))
                     print("   dw[%d] = (%s >> 32) | (%s >> 32);" % (index + 1, v_address, v))
@@ -497,8 +566,8 @@ class Parser(object):
 
     def gen_prefix(self, name):
         if name[0] == "_":
-            return 'GEN%s%s' % (self.gen, name)
-        return 'GEN%s_%s' % (self.gen, name)
+            return 'GFX%s%s' % (self.gen, name)
+        return 'GFX%s_%s' % (self.gen, name)
 
     def gen_guard(self):
         return self.gen_prefix("PACK_H")

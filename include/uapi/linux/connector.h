@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ WITH Linux-syscall-note */
 /*
  * 	connector.h
  * 
@@ -69,7 +70,7 @@ struct cb_id {
 struct cn_msg {
 	struct cb_id id;
 
-	__u32 seq __intentional_overflow(-1);
+	__u32 seq;
 	__u32 ack;
 
 	__u16 len;		/* Length of the following data */

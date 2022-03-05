@@ -1,6 +1,4 @@
-#
-# Copyright (C) 2020 Collabora, Ltd.
-# Copyright (C) 2018 Alyssa Rosenzweig
+# Copyright (C) 2021 Collabora, Ltd.
 # Copyright (C) 2016 Intel Corporation
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
@@ -31,72 +29,32 @@ b = 'b'
 c = 'c'
 
 algebraic_late = [
-    # ineg must be lowered late, but only for integers; floats will try to
-    # have modifiers attached... hence why this has to be here rather than
-    # a more standard lower_negate approach
+    # Canonical form. The scheduler will convert back if it makes sense.
+    (('fmul', a, 2.0), ('fadd', a, a)),
 
-    (('ineg', a), ('isub', 0, a)),
+    # Fuse Mali-specific clamps
+    (('fmin', ('fmax', a, -1.0), 1.0), ('fsat_signed_mali', a)),
+    (('fmax', ('fmin', a, 1.0), -1.0), ('fsat_signed_mali', a)),
+    (('fmax', a, 0.0), ('fclamp_pos_mali', a)),
+
+    (('fabs', ('fddx', a)), ('fabs', ('fddx_must_abs_mali', a))),
+    (('fabs', ('fddy', b)), ('fabs', ('fddy_must_abs_mali', b))),
 ]
 
-for isz in ('8', '16', '32'):
-        for osz in ('16', '32', '64'):
-                algebraic_late += [(('b2f' + osz, 'a@' + isz), ('b' + isz + 'csel', a, 1.0, 0.0))]
-
-# There's no native integer min/max instruction, lower those to cmp+bcsel
-for sz in ('8', '16', '32'):
-    for t in ('i', 'u'):
+# Handling all combinations of boolean and float sizes for b2f is nontrivial.
+# bcsel has the same problem in more generality; lower b2f to bcsel in NIR to
+# reuse the efficient implementations of bcsel. This includes special handling
+# to allow vectorization in places the hardware does not directly.
+#
+# Because this lowering must happen late, NIR won't squash inot in
+# automatically. Do so explicitly. (The more specific pattern must be first.)
+for bsz in [8, 16, 32]:
+    for fsz in [16, 32]:
         algebraic_late += [
-            ((t + 'min', 'a@' + sz, 'b@' + sz), ('b' + sz + 'csel', (t + 'lt' + sz, a, b), a, b)),
-            ((t + 'max', 'a@' + sz, 'b@' + sz), ('b' + sz + 'csel', (t + 'lt' + sz, b, a), a, b))
+                ((f'b2f{fsz}', ('inot', f'a@{bsz}')), (f'b{bsz}csel', a, 0.0, 1.0)),
+                ((f'b2f{fsz}', f'a@{bsz}'), (f'b{bsz}csel', a, 1.0, 0.0)),
         ]
 
-# Midgard is able to type convert down by only one "step" per instruction; if
-# NIR wants more than one step, we need to break up into multiple instructions
-
-converts = []
-
-for op in ('u2u', 'i2i', 'f2f', 'i2f', 'u2f', 'f2i', 'f2u'):
-    srcsz_max = 64
-    dstsz_max = 64
-    # 8 bit float doesn't exist
-    srcsz_min = 8 if op[0] != 'f' else 16
-    dstsz_min = 8 if op[2] != 'f' else 16
-    dstsz = dstsz_min
-    # Iterate over all possible destination and source sizes
-    while dstsz <= dstsz_max:
-        srcsz = srcsz_min
-        while srcsz <= srcsz_max:
-            # Size converter lowering is only needed if src and dst sizes are
-            # spaced by a factor > 2.
-            # Type converter lowering is needed as soon as src_size != dst_size
-            if srcsz != dstsz and ((srcsz * 2 != dstsz and srcsz != dstsz * 2) or op[0] != op[2]):
-                cursz = srcsz
-                rule = a
-                # When converting down we first do the type conversion followed
-                # by one or more size conversions. When converting up, we do
-                # the type conversion at the end. This way we don't have to
-                # deal with the fact that f2f8 doesn't exists.
-                sizeconvop = op[0] + '2' + op[0] if srcsz < dstsz else op[2] + '2' + op[2]
-                if srcsz > dstsz and op[0] != op[2]:
-                    rule = (op + str(int(cursz)), rule)
-                while cursz != dstsz:
-                    cursz = cursz / 2 if dstsz < srcsz else cursz * 2
-                    rule = (sizeconvop + str(int(cursz)), rule)
-                if srcsz < dstsz and op[0] != op[2]:
-                    rule = (op + str(int(cursz)), rule)
-                converts += [((op + str(int(dstsz)), 'a@' + str(int(srcsz))), rule)]
-            srcsz *= 2
-        dstsz *= 2
-
-# Bifrost doesn't have fp16 for a lot of special ops
-SPECIAL = ['fexp2', 'flog2', 'fsin', 'fcos']
-
-for op in SPECIAL:
-        converts += [((op + '@16', a), ('f2f16', (op, ('f2f32', a))))]
-
-converts += [(('f2b32', a), ('fneu32', a, 0.0)),
-             (('i2b32', a), ('ine32', a, 0)),
-             (('b2i32', a), ('iand', 'a@32', 1))]
 
 def main():
     parser = argparse.ArgumentParser()
@@ -112,7 +70,8 @@ def run():
     print('#include "bifrost_nir.h"')
 
     print(nir_algebraic.AlgebraicPass("bifrost_nir_lower_algebraic_late",
-                                      algebraic_late + converts).render())
+                                      algebraic_late).render())
+
 
 if __name__ == '__main__':
     main()

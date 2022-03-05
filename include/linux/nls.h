@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_NLS_H
 #define _LINUX_NLS_H
 
@@ -31,7 +32,7 @@ struct nls_table {
 	const unsigned char *charset2upper;
 	struct module *owner;
 	struct nls_table *next;
-} __do_const;
+};
 
 /* this value hold the maximum octet of charset */
 #define NLS_MAX_CHARSET_SIZE 6 /* for UTF-8 */
@@ -46,7 +47,7 @@ enum utf16_endian {
 /* nls_base.c */
 extern int __register_nls(struct nls_table *, struct module *);
 extern int unregister_nls(struct nls_table *);
-extern struct nls_table *load_nls(const char *);
+extern struct nls_table *load_nls(char *);
 extern void unload_nls(struct nls_table *);
 extern struct nls_table *load_nls_default(void);
 #define register_nls(nls) __register_nls((nls), THIS_MODULE)

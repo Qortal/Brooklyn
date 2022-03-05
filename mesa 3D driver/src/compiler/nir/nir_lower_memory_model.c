@@ -36,6 +36,7 @@ get_intrinsic_info(nir_intrinsic_instr *intrin, nir_variable_mode *modes,
 {
    switch (intrin->intrinsic) {
    case nir_intrinsic_image_deref_load:
+   case nir_intrinsic_image_deref_sparse_load:
       *modes = nir_src_as_deref(intrin->src[0])->modes;
       *reads = true;
       break;
@@ -44,10 +45,13 @@ get_intrinsic_info(nir_intrinsic_instr *intrin, nir_variable_mode *modes,
       *writes = true;
       break;
    case nir_intrinsic_image_deref_atomic_add:
+   case nir_intrinsic_image_deref_atomic_fadd:
    case nir_intrinsic_image_deref_atomic_umin:
    case nir_intrinsic_image_deref_atomic_imin:
    case nir_intrinsic_image_deref_atomic_umax:
    case nir_intrinsic_image_deref_atomic_imax:
+   case nir_intrinsic_image_deref_atomic_fmin:
+   case nir_intrinsic_image_deref_atomic_fmax:
    case nir_intrinsic_image_deref_atomic_and:
    case nir_intrinsic_image_deref_atomic_or:
    case nir_intrinsic_image_deref_atomic_xor:
@@ -75,6 +79,10 @@ get_intrinsic_info(nir_intrinsic_instr *intrin, nir_variable_mode *modes,
    case nir_intrinsic_ssbo_atomic_xor:
    case nir_intrinsic_ssbo_atomic_exchange:
    case nir_intrinsic_ssbo_atomic_comp_swap:
+   case nir_intrinsic_ssbo_atomic_fadd:
+   case nir_intrinsic_ssbo_atomic_fcomp_swap:
+   case nir_intrinsic_ssbo_atomic_fmax:
+   case nir_intrinsic_ssbo_atomic_fmin:
       *modes = nir_var_mem_ssbo;
       *reads = true;
       *writes = true;
@@ -97,6 +105,10 @@ get_intrinsic_info(nir_intrinsic_instr *intrin, nir_variable_mode *modes,
    case nir_intrinsic_global_atomic_xor:
    case nir_intrinsic_global_atomic_exchange:
    case nir_intrinsic_global_atomic_comp_swap:
+   case nir_intrinsic_global_atomic_fadd:
+   case nir_intrinsic_global_atomic_fcomp_swap:
+   case nir_intrinsic_global_atomic_fmax:
+   case nir_intrinsic_global_atomic_fmin:
       *modes = nir_var_mem_global;
       *reads = true;
       *writes = true;
@@ -119,6 +131,10 @@ get_intrinsic_info(nir_intrinsic_instr *intrin, nir_variable_mode *modes,
    case nir_intrinsic_deref_atomic_xor:
    case nir_intrinsic_deref_atomic_exchange:
    case nir_intrinsic_deref_atomic_comp_swap:
+   case nir_intrinsic_deref_atomic_fadd:
+   case nir_intrinsic_deref_atomic_fmin:
+   case nir_intrinsic_deref_atomic_fmax:
+   case nir_intrinsic_deref_atomic_fcomp_swap:
       *modes = nir_src_as_deref(intrin->src[0])->modes;
       *reads = true;
       *writes = true;

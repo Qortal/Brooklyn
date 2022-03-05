@@ -73,21 +73,22 @@ def build_enum(el):
     return Enum(el.attrib['name'], values)
 
 class Modifier:
-    def __init__(self, name, start, size, implied = False):
+    def __init__(self, name, start, size, implied = False, force_enum = None):
         self.name = name
         self.start = start
         self.size = size
         self.implied = implied
+        self.is_enum = (force_enum is not None) or size > 1
+        self.enum = force_enum or name
 
-        if size == 1:
+        if not self.is_enum:
             self.bare_values = ['', name]
             self.default = 0
         else:
-            enum = enums[name]
-            self.bare_values = [x.value for x in enum.values]
-            defaults = [x for x in enum.values if x.default]
+            self.bare_values = [x.value for x in enums[self.enum].values]
+            defaults = [x for x in enums[self.enum].values if x.default]
             assert(len(defaults) <= 1)
-            
+
             if len(defaults) > 0:
                 self.default = self.bare_values.index(defaults[0].value)
             else:
@@ -98,15 +99,18 @@ def Flag(name, start):
 
 # Model a single instruction
 class Source:
-    def __init__(self, index, size, is_float = False, swizzle = False, widen = False, lanes = False, lane = None, absneg = False, notted = False, name = ""):
+    def __init__(self, index, size, is_float = False, swizzle = False,
+            halfswizzle = False, widen = False, lanes = False, combine = False, lane = None, absneg = False, notted = False, name = ""):
         self.is_float = is_float or absneg
         self.size = size
         self.absneg = absneg
         self.notted = notted
         self.swizzle = swizzle
+        self.halfswizzle = halfswizzle
         self.widen = widen
         self.lanes = lanes
         self.lane = lane
+        self.combine = combine
         self.name = name
 
         self.offset = {}
@@ -119,7 +123,7 @@ class Source:
         if notted:
             self.offset['not'] = 35
             self.bits['not'] = 1
-        if widen or lanes:
+        if widen or lanes or halfswizzle:
             self.offset['widen'] = 26 if index == 1 else 36
             self.bits['widen'] = 4 # XXX: too much?
         if lane:
@@ -129,18 +133,25 @@ class Source:
             assert(size in [16, 32])
             self.offset['swizzle'] = 24 + ((2 - index) * 2)
             self.bits['swizzle'] = 2
+        if combine:
+            self.offset['combine'] = 37
+            self.bits['combine'] = 3
 
 class Dest:
     def __init__(self, name = ""):
         self.name = name
 
 class Staging:
-    def __init__(self, read = False, write = False, index = 0, count = 0, flags = True, name = ""):
+    def __init__(self, read = False, write = False, count = 0, flags = True, name = ""):
         self.name = name
         self.read = read
         self.write = write
         self.count = count
         self.flags = flags
+        self.start = 40
+
+        if write and not flags:
+            self.start = 16
 
         # For compatibility
         self.absneg = False
@@ -151,13 +162,8 @@ class Staging:
         self.lane = False
         self.size = 32
 
-        assert(index < 2)
-        self.start = 40 if index == 0 else 16
-
         if not flags:
             self.encoded_flags = 0
-        elif index > 0:
-            self.encoded_flags = 0xC0
         else:
             self.encoded_flags = (0x80 if write else 0) | (0x40 if read else 0)
 
@@ -169,7 +175,7 @@ class Immediate:
         self.signed = signed
 
 class Instruction:
-    def __init__(self, name, opcode, opcode2, srcs = [], dests = [], immediates = [], modifiers = [], staging = None):
+    def __init__(self, name, opcode, opcode2, srcs = [], dests = [], immediates = [], modifiers = [], staging = None, unit = None):
         self.name = name
         self.srcs = srcs
         self.dests = dests
@@ -178,6 +184,7 @@ class Instruction:
         self.immediates = immediates
         self.modifiers = modifiers
         self.staging = staging
+        self.unit = unit
 
         self.secondary_shift = max(len(self.srcs) * 8, 16)
         self.secondary_mask = 0xF if opcode2 is not None else 0x0
@@ -188,7 +195,7 @@ class Instruction:
         if opcode == 0x90:
             # XXX: XMLify this, but disambiguates sign of conversions
             self.secondary_mask |= 0x10
-        if name.startswith("LOAD.i") or name.startswith("STORE.i"):
+        if name.startswith("LOAD.i") or name.startswith("STORE.i") or name.startswith("LD_BUFFER.i"):
             self.secondary_shift = 27 # Alias with memory_size
             self.secondary_mask = 0x7
 
@@ -210,8 +217,10 @@ def build_source(el, i, size):
             absneg = el.get('absneg', False),
             is_float = el.get('float', False),
             swizzle = el.get('swizzle', False),
+            halfswizzle = el.get('halfswizzle', False),
             widen = el.get('widen', False),
             lanes = el.get('lanes', False),
+            combine = el.get('combine', False),
             lane = lane,
             notted = el.get('not', False),
             name = el.text or "")
@@ -226,7 +235,7 @@ def build_staging(i, el):
     count = int(el.attrib.get('count', '0'))
     flags = xmlbool(el.attrib.get('flags', 'true'))
 
-    return Staging(r, w, i, count, flags, el.text or '')
+    return Staging(r, w, count, flags, el.text or '')
 
 def build_modifier(el):
     name = el.attrib['name']
@@ -242,6 +251,7 @@ def build_instr(el, overrides = {}):
     name = overrides.get('name') or el.attrib.get('name')
     opcode = overrides.get('opcode') or el.attrib.get('opcode')
     opcode2 = overrides.get('opcode2') or el.attrib.get('opcode2')
+    unit = overrides.get('unit') or el.attrib.get('unit')
     opcode = int(opcode, base=0)
     opcode2 = int(opcode2, base=0) if opcode2 else None
 
@@ -267,7 +277,7 @@ def build_instr(el, overrides = {}):
         elif mod.tag =='mod':
             modifiers.append(build_modifier(mod))
 
-    instr = Instruction(name, opcode, opcode2, srcs = sources, dests = dests, immediates = imms, modifiers = modifiers, staging = staging)
+    instr = Instruction(name, opcode, opcode2, srcs = sources, dests = dests, immediates = imms, modifiers = modifiers, staging = staging, unit = unit)
 
     instructions.append(instr)
 
@@ -279,6 +289,7 @@ def build_group(el):
             'name': ins.attrib['name'],
             'opcode': ins.attrib.get('opcode'),
             'opcode2': ins.attrib.get('opcode2'),
+            'unit': ins.attrib.get('unit'),
         })
 
 def to_alphanum(name):
@@ -333,9 +344,25 @@ for child in root.findall('enum'):
     enums[safe_name(child.attrib['name'])] = build_enum(child)
 
 MODIFIERS = {
+    # Texture instructions share a common encoding
+    "wide_indices": Flag("wide_indices", 8),
+    "array_enable": Flag("array_enable", 10),
+    "texel_offset": Flag("texel_offset", 11),
+    "shadow": Flag("shadow", 12),
+    "integer_coordinates": Flag("integer_coordinates", 13),
+    "fetch_component": Modifier("fetch_component", 14, 2),
+    "lod_mode": Modifier("lod_mode", 13, 3),
+    "write_mask": Modifier("write_mask", 22, 4),
+    "register_type": Modifier("register_type", 26, 2),
+    "dimension": Modifier("dimension", 28, 2),
+    "skip": Flag("skip", 39),
+    "register_width": Modifier("register_width", 46, 1, force_enum = "register_width"),
+    "secondary_register_width": Modifier("secondary_register_width", 47, 1, force_enum = "register_width"),
+
     "inactive_result": Modifier("inactive_result", 22, 4),
-    "store_segment": Modifier("store_segment", 24, 2),
+    "memory_access": Modifier("memory_access", 24, 2),
     "regfmt": Modifier("register_format", 24, 3),
+    "source_format": Modifier("source_format", 24, 4),
     "vecsize": Modifier("vector_size", 28, 2),
 
     "slot": Modifier("slot", 30, 3),
@@ -348,8 +375,12 @@ MODIFIERS = {
     "cmp": Modifier("condition", 32, 3),
     "clamp": Modifier("clamp", 32, 2),
     "sr_count": Modifier("staging_register_count", 33, 3, implied = True),
+    "sr_write_count": Modifier("staging_register_write_count", 36, 3, implied = True),
 
-    "subgroup": Modifier("subgroup_size", 36, 2),
+    "conservative": Flag("conservative", 35),
+    "subgroup": Modifier("subgroup_size", 36, 4),
+    "update": Modifier("update_mode", 36, 2),
+    "sample": Modifier("sample_mode", 38, 2),
 }
 
 # Parse the ISA

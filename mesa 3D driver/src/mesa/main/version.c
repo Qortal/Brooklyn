@@ -25,10 +25,18 @@
 
 #include <stdio.h>
 #include "context.h"
+#include "draw_validate.h"
+
+#include "util/os_misc.h"
+#include "util/simple_mtx.h"
 
 #include "mtypes.h"
 #include "version.h"
 #include "git_sha1.h"
+
+#include "state_tracker/st_context.h"
+
+static simple_mtx_t override_lock = _SIMPLE_MTX_INITIALIZER_NP;
 
 /**
  * Scans 'string' to see if it ends with 'ending'.
@@ -72,13 +80,15 @@ get_gl_override(gl_api api, int *version, bool *fwd_context,
 
    STATIC_ASSERT(ARRAY_SIZE(override) == API_OPENGL_LAST + 1);
 
+   simple_mtx_lock(&override_lock);
+
    if (api == API_OPENGLES)
       goto exit;
 
    if (override[api].version < 0) {
       override[api].version = 0;
 
-      version_str = getenv(env_var);
+      version_str = os_get_option(env_var);
       if (version_str) {
          override[api].fc_suffix = check_for_ending(version_str, "FC");
          override[api].compat_suffix = check_for_ending(version_str, "COMPAT");
@@ -108,6 +118,8 @@ exit:
    *version = override[api].version;
    *fwd_context = override[api].fc_suffix;
    *compat_context = override[api].compat_suffix;
+
+   simple_mtx_unlock(&override_lock);
 }
 
 /**
@@ -239,18 +251,7 @@ compute_version(const struct gl_extensions *extensions,
 {
    GLuint major, minor, version;
 
-   const bool ver_1_3 = (extensions->ARB_texture_border_clamp &&
-                         extensions->ARB_texture_cube_map &&
-                         extensions->ARB_texture_env_combine &&
-                         extensions->ARB_texture_env_dot3);
-   const bool ver_1_4 = (ver_1_3 &&
-                         extensions->ARB_depth_texture &&
-                         extensions->ARB_shadow &&
-                         extensions->ARB_texture_env_crossbar &&
-                         extensions->EXT_blend_color &&
-                         extensions->EXT_blend_func_separate &&
-                         extensions->EXT_blend_minmax &&
-                         extensions->EXT_point_parameters);
+   const bool ver_1_4 = (extensions->ARB_shadow);
    const bool ver_1_5 = (ver_1_4 &&
                          extensions->ARB_occlusion_query);
    const bool ver_2_0 = (ver_1_5 &&
@@ -263,8 +264,14 @@ compute_version(const struct gl_extensions *extensions,
    const bool ver_2_1 = (ver_2_0 &&
                          extensions->EXT_pixel_buffer_object &&
                          extensions->EXT_texture_sRGB);
+   /* We lie about the minimum number of color attachments. Strictly, OpenGL
+    * 3.0 requires 8, whereas OpenGL ES requires 4. OpenGL ES 3.0 class
+    * hardware may only support 4 render targets. Advertise non-conformant
+    * OpenGL 3.0 anyway. Affects freedreno on a3xx
+    */
    const bool ver_3_0 = (ver_2_1 &&
                          consts->GLSLVersion >= 130 &&
+                         consts->MaxColorAttachments >= 4 &&
                          (consts->MaxSamples >= 4 || consts->FakeSWMSAA) &&
                          (api == API_OPENGL_CORE ||
                           extensions->ARB_color_buffer_float) &&
@@ -457,13 +464,9 @@ compute_version(const struct gl_extensions *extensions,
       major = 1;
       minor = 4;
    }
-   else if (ver_1_3) {
-      major = 1;
-      minor = 3;
-   }
    else {
       major = 1;
-      minor = 2;
+      minor = 3;
    }
 
    version = major * 10 + minor;
@@ -475,34 +478,11 @@ compute_version(const struct gl_extensions *extensions,
 }
 
 static GLuint
-compute_version_es1(const struct gl_extensions *extensions)
-{
-   /* OpenGL ES 1.0 is derived from OpenGL 1.3 */
-   const bool ver_1_0 = (extensions->ARB_texture_env_combine &&
-                         extensions->ARB_texture_env_dot3);
-   /* OpenGL ES 1.1 is derived from OpenGL 1.5 */
-   const bool ver_1_1 = (ver_1_0 &&
-                         extensions->EXT_point_parameters);
-
-   if (ver_1_1) {
-      return 11;
-   } else if (ver_1_0) {
-      return 10;
-   } else {
-      return 0;
-   }
-}
-
-static GLuint
 compute_version_es2(const struct gl_extensions *extensions,
                     const struct gl_constants *consts)
 {
    /* OpenGL ES 2.0 is derived from OpenGL 2.0 */
-   const bool ver_2_0 = (extensions->ARB_texture_cube_map &&
-                         extensions->EXT_blend_color &&
-                         extensions->EXT_blend_func_separate &&
-                         extensions->EXT_blend_minmax &&
-                         extensions->ARB_vertex_shader &&
+   const bool ver_2_0 = (extensions->ARB_vertex_shader &&
                          extensions->ARB_fragment_shader &&
                          extensions->ARB_texture_non_power_of_two &&
                          extensions->EXT_blend_equation_separate);
@@ -529,9 +509,13 @@ compute_version_es2(const struct gl_extensions *extensions,
                          (extensions->NV_primitive_restart ||
                           consts->PrimitiveRestartFixedIndex) &&
                          extensions->OES_depth_texture_cube_map &&
-                         extensions->EXT_texture_type_2_10_10_10_REV);
+                         extensions->EXT_texture_type_2_10_10_10_REV &&
+                         consts->MaxColorAttachments >= 4);
    const bool es31_compute_shader =
-      consts->MaxComputeWorkGroupInvocations >= 128;
+      consts->MaxComputeWorkGroupInvocations >= 128 &&
+      consts->Program[MESA_SHADER_COMPUTE].MaxShaderStorageBlocks &&
+      consts->Program[MESA_SHADER_COMPUTE].MaxAtomicBuffers &&
+      consts->Program[MESA_SHADER_COMPUTE].MaxImageUniforms;
    const bool ver_3_1 = (ver_3_0 &&
                          consts->MaxVertexAttribStride >= 2048 &&
                          extensions->ARB_arrays_of_arrays &&
@@ -539,10 +523,6 @@ compute_version_es2(const struct gl_extensions *extensions,
                          extensions->ARB_draw_indirect &&
                          extensions->ARB_explicit_uniform_location &&
                          extensions->ARB_framebuffer_no_attachments &&
-                         extensions->ARB_shader_atomic_counters &&
-                         extensions->ARB_shader_image_load_store &&
-                         extensions->ARB_shader_image_size &&
-                         extensions->ARB_shader_storage_buffer_object &&
                          extensions->ARB_shading_language_packing &&
                          extensions->ARB_stencil_texturing &&
                          extensions->ARB_texture_multisample &&
@@ -550,6 +530,14 @@ compute_version_es2(const struct gl_extensions *extensions,
                          extensions->MESA_shader_integer_functions &&
                          extensions->EXT_shader_integer_mix);
    const bool ver_3_2 = (ver_3_1 &&
+                         /* ES 3.2 requires that images/buffers be accessible
+                          * from fragment shaders as well
+                          */
+                         extensions->ARB_shader_atomic_counters &&
+                         extensions->ARB_shader_image_load_store &&
+                         extensions->ARB_shader_image_size &&
+                         extensions->ARB_shader_storage_buffer_object &&
+
                          extensions->EXT_draw_buffers2 &&
                          extensions->KHR_blend_equation_advanced &&
                          extensions->KHR_robustness &&
@@ -561,7 +549,6 @@ compute_version_es2(const struct gl_extensions *extensions,
                          extensions->OES_primitive_bounding_box &&
                          extensions->OES_sample_variables &&
                          extensions->ARB_tessellation_shader &&
-                         extensions->ARB_texture_border_clamp &&
                          extensions->OES_texture_buffer &&
                          extensions->OES_texture_cube_map_array &&
                          extensions->ARB_texture_stencil8);
@@ -590,11 +577,11 @@ _mesa_get_version(const struct gl_extensions *extensions,
       if (!consts->AllowHigherCompatVersion) {
          consts->GLSLVersion = consts->GLSLVersionCompat;
       }
-      /* fall through */
+      FALLTHROUGH;
    case API_OPENGL_CORE:
       return compute_version(extensions, consts, api);
    case API_OPENGLES:
-      return compute_version_es1(extensions);
+      return 11;
    case API_OPENGLES2:
       return compute_version_es2(extensions, consts);
    }
@@ -621,7 +608,7 @@ _mesa_compute_version(struct gl_context *ctx)
    if (_mesa_is_desktop_gl(ctx)) {
       switch (ctx->Version) {
       case 20:
-         /* fall-through, GLSL 1.20 is the minimum we support */
+         FALLTHROUGH; /* GLSL 1.20 is the minimum we support */
       case 21:
          ctx->Const.GLSLVersion = 120;
          break;
@@ -667,19 +654,54 @@ _mesa_compute_version(struct gl_context *ctx)
 done:
    if (ctx->API == API_OPENGL_COMPAT && ctx->Version >= 31)
       ctx->Extensions.ARB_compatibility = GL_TRUE;
+
+   /* Precompute valid primitive types for faster draw time validation. */
+   /* All primitive type enums are less than 32, so we can use the shift. */
+   ctx->SupportedPrimMask = (1 << GL_POINTS) |
+                           (1 << GL_LINES) |
+                           (1 << GL_LINE_LOOP) |
+                           (1 << GL_LINE_STRIP) |
+                           (1 << GL_TRIANGLES) |
+                           (1 << GL_TRIANGLE_STRIP) |
+                           (1 << GL_TRIANGLE_FAN);
+
+   if (ctx->API == API_OPENGL_COMPAT) {
+      ctx->SupportedPrimMask |= (1 << GL_QUADS) |
+                               (1 << GL_QUAD_STRIP) |
+                               (1 << GL_POLYGON);
+   }
+
+   if (_mesa_has_geometry_shaders(ctx)) {
+      ctx->SupportedPrimMask |= (1 << GL_LINES_ADJACENCY) |
+                               (1 << GL_LINE_STRIP_ADJACENCY) |
+                               (1 << GL_TRIANGLES_ADJACENCY) |
+                               (1 << GL_TRIANGLE_STRIP_ADJACENCY);
+   }
+
+   if (_mesa_has_tessellation(ctx))
+      ctx->SupportedPrimMask |= 1 << GL_PATCHES;
+
+   /* First time initialization. */
+   _mesa_update_valid_to_render_state(ctx);
 }
 
 
 void
 _mesa_get_driver_uuid(struct gl_context *ctx, GLint *uuid)
 {
-   ctx->Driver.GetDriverUuid(ctx, (char*) uuid);
+   struct pipe_screen *screen = ctx->pipe->screen;
+   assert(GL_UUID_SIZE_EXT >= PIPE_UUID_SIZE);
+   memset(uuid, 0, GL_UUID_SIZE_EXT);
+   screen->get_driver_uuid(screen, (char *)uuid);
 }
 
 void
 _mesa_get_device_uuid(struct gl_context *ctx, GLint *uuid)
 {
-   ctx->Driver.GetDeviceUuid(ctx, (char*) uuid);
+   struct pipe_screen *screen = ctx->pipe->screen;
+   assert(GL_UUID_SIZE_EXT >= PIPE_UUID_SIZE);
+   memset(uuid, 0, GL_UUID_SIZE_EXT);
+   screen->get_device_uuid(screen, (char *)uuid);
 }
 
 /**

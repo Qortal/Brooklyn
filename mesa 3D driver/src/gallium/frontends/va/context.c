@@ -179,7 +179,7 @@ VA_DRIVER_INIT_FUNC(VADriverContextP ctx)
    ctx->max_attributes = 1;
    ctx->max_image_formats = VL_VA_MAX_IMAGE_FORMATS;
    ctx->max_subpic_formats = 1;
-   ctx->max_display_attributes = 1;
+   ctx->max_display_attributes = 0;
 
    snprintf(drv->vendor_string, sizeof(drv->vendor_string),
             "Mesa Gallium driver " PACKAGE_VERSION " for %s",
@@ -217,6 +217,7 @@ vlVaCreateContext(VADriverContextP ctx, VAConfigID config_id, int picture_width,
    vlVaContext *context;
    vlVaConfig *config;
    int is_vpp;
+   int max_supported_width,max_supported_height;
 
    if (!ctx)
       return VA_STATUS_ERROR_INVALID_CONTEXT;
@@ -225,6 +226,9 @@ vlVaCreateContext(VADriverContextP ctx, VAConfigID config_id, int picture_width,
    mtx_lock(&drv->mutex);
    config = handle_table_get(drv->htab, config_id);
    mtx_unlock(&drv->mutex);
+
+   if (!config)
+      return VA_STATUS_ERROR_INVALID_CONFIG;
 
    is_vpp = config->profile == PIPE_VIDEO_PROFILE_UNKNOWN && !picture_width &&
             !picture_height && !flag && !render_targets && !num_render_targets;
@@ -239,6 +243,19 @@ vlVaCreateContext(VADriverContextP ctx, VAConfigID config_id, int picture_width,
    if (is_vpp) {
       context->decoder = NULL;
    } else {
+      if (config->entrypoint != PIPE_VIDEO_ENTRYPOINT_UNKNOWN) {
+         max_supported_width = drv->vscreen->pscreen->get_video_param(drv->vscreen->pscreen,
+                        config->profile, config->entrypoint,
+                        PIPE_VIDEO_CAP_MAX_WIDTH);
+         max_supported_height = drv->vscreen->pscreen->get_video_param(drv->vscreen->pscreen,
+                        config->profile, config->entrypoint,
+                        PIPE_VIDEO_CAP_MAX_HEIGHT);
+
+         if (picture_width > max_supported_width || picture_height > max_supported_height) {
+            FREE(context);
+            return VA_STATUS_ERROR_RESOLUTION_NOT_SUPPORTED;
+         }
+      }
       context->templat.profile = config->profile;
       context->templat.entrypoint = config->entrypoint;
       context->templat.chroma_format = PIPE_VIDEO_CHROMA_FORMAT_420;
@@ -271,7 +288,6 @@ vlVaCreateContext(VADriverContextP ctx, VAConfigID config_id, int picture_width,
          break;
 
      case PIPE_VIDEO_FORMAT_HEVC:
-         context->templat.max_references = num_render_targets;
          if (config->entrypoint != PIPE_VIDEO_ENTRYPOINT_ENCODE) {
             context->desc.h265.pps = CALLOC_STRUCT(pipe_h265_pps);
             if (!context->desc.h265.pps) {
@@ -288,7 +304,6 @@ vlVaCreateContext(VADriverContextP ctx, VAConfigID config_id, int picture_width,
          break;
 
       case PIPE_VIDEO_FORMAT_VP9:
-         context->templat.max_references = num_render_targets;
          break;
 
       default:
@@ -301,7 +316,7 @@ vlVaCreateContext(VADriverContextP ctx, VAConfigID config_id, int picture_width,
    if (config->entrypoint == PIPE_VIDEO_ENTRYPOINT_ENCODE) {
       switch (u_reduce_video_profile(context->templat.profile)) {
       case PIPE_VIDEO_FORMAT_MPEG4_AVC:
-         context->desc.h264enc.rate_ctrl.rate_ctrl_method = config->rc;
+         context->desc.h264enc.rate_ctrl[0].rate_ctrl_method = config->rc;
          context->desc.h264enc.frame_idx = util_hash_table_create_ptr_keys();
          break;
       case PIPE_VIDEO_FORMAT_HEVC:

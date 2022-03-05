@@ -40,6 +40,15 @@
 struct vtn_builder;
 struct vtn_decoration;
 
+/* setjmp/longjmp is broken on MinGW: https://sourceforge.net/p/mingw-w64/bugs/406/ */
+#ifdef __MINGW32__
+  #define vtn_setjmp __builtin_setjmp
+  #define vtn_longjmp __builtin_longjmp
+#else
+  #define vtn_setjmp setjmp
+  #define vtn_longjmp longjmp
+#endif
+
 void vtn_log(struct vtn_builder *b, enum nir_spirv_debug_level level,
              size_t spirv_offset, const char *message);
 
@@ -130,7 +139,9 @@ enum vtn_branch_type {
    vtn_branch_type_loop_continue,
    vtn_branch_type_loop_back_edge,
    vtn_branch_type_discard,
-   vtn_branch_type_terminate,
+   vtn_branch_type_terminate_invocation,
+   vtn_branch_type_ignore_intersection,
+   vtn_branch_type_terminate_ray,
    vtn_branch_type_return,
 };
 
@@ -170,14 +181,13 @@ struct vtn_loop {
 struct vtn_if {
    struct vtn_cf_node node;
 
-   uint32_t condition;
-
    enum vtn_branch_type then_type;
    struct list_head then_body;
 
    enum vtn_branch_type else_type;
    struct list_head else_body;
 
+   struct vtn_block *header_block;
    struct vtn_block *merge_block;
 
    SpvSelectionControlMask control;
@@ -257,7 +267,7 @@ struct vtn_function {
    bool referenced;
    bool emitted;
 
-   nir_function_impl *impl;
+   nir_function *nir_func;
    struct vtn_block *start_block;
 
    struct list_head body;
@@ -326,6 +336,7 @@ enum vtn_base_type {
    vtn_base_type_sampler,
    vtn_base_type_sampled_image,
    vtn_base_type_accel_struct,
+   vtn_base_type_ray_query,
    vtn_base_type_function,
    vtn_base_type_event,
 };
@@ -488,6 +499,7 @@ enum vtn_variable_mode {
    vtn_variable_mode_push_constant,
    vtn_variable_mode_workgroup,
    vtn_variable_mode_cross_workgroup,
+   vtn_variable_mode_task_payload,
    vtn_variable_mode_generic,
    vtn_variable_mode_constant,
    vtn_variable_mode_input,
@@ -545,7 +557,6 @@ struct vtn_variable {
    bool explicit_binding;
    unsigned offset;
    unsigned input_attachment_index;
-   bool patch;
 
    nir_variable *var;
 
@@ -592,6 +603,12 @@ struct vtn_value {
     * the existence of a NonUniform decoration on this value.*/
    uint32_t propagated_non_uniform : 1;
 
+   /* Valid for vtn_value_type_constant to indicate the value is OpConstantNull. */
+   bool is_null_constant:1;
+
+   /* Valid when all the members of the value are undef. */
+   bool is_undef_constant:1;
+
    const char *name;
    struct vtn_decoration *decoration;
    struct vtn_type *type;
@@ -609,14 +626,23 @@ struct vtn_value {
 
 #define VTN_DEC_DECORATION -1
 #define VTN_DEC_EXECUTION_MODE -2
+#define VTN_DEC_STRUCT_MEMBER_NAME0 -3
 #define VTN_DEC_STRUCT_MEMBER0 0
 
 struct vtn_decoration {
    struct vtn_decoration *next;
 
-   /* Specifies how to apply this decoration.  Negative values represent a
-    * decoration or execution mode. (See the VTN_DEC_ #defines above.)
-    * Non-negative values specify that it applies to a structure member.
+   /* Different kinds of decorations are stored in a value,
+      the scope defines what decoration it refers to:
+
+      - VTN_DEC_DECORATION:
+            decoration associated with the value
+      - VTN_DEC_EXECUTION_MODE:
+            an execution mode associated with an entrypoint value
+      - VTN_DEC_STRUCT_MEMBER0 + m:
+            decoration associated with member m of a struct value
+      - VTN_DEC_STRUCT_MEMBER_NAME0 - m:
+            name of m'th member of a struct value
     */
    int scope;
 
@@ -626,6 +652,7 @@ struct vtn_decoration {
    union {
       SpvDecoration decoration;
       SpvExecutionMode exec_mode;
+      const char *member_name;
    };
 };
 
@@ -637,6 +664,7 @@ struct vtn_builder {
 
    const uint32_t *spirv;
    size_t spirv_word_count;
+   uint32_t version;
 
    nir_shader *shader;
    struct spirv_to_nir_options *options;
@@ -663,6 +691,13 @@ struct vtn_builder {
     */
    struct hash_table *phi_table;
 
+   /* In Vulkan, when lowering some modes variable access, the derefs of the
+    * variables are replaced with a resource index intrinsics, leaving the
+    * variable hanging.  This set keeps track of them so they can be filtered
+    * (and not removed) in nir_remove_dead_variables.
+    */
+   struct set *vars_used_indirectly;
+
    unsigned num_specializations;
    struct nir_spirv_specialization *specializations;
 
@@ -676,6 +711,9 @@ struct vtn_builder {
    /* True if we need to fix up CS OpControlBarrier */
    bool wa_glslang_cs_barrier;
 
+   /* True if we need to ignore undef initializers */
+   bool wa_llvm_spirv_ignore_workgroup_initializer;
+
    /* Workaround discard bugs in HLSL -> SPIR-V compilers */
    bool uses_demote_to_helper_invocation;
    bool convert_discard_to_demote;
@@ -686,26 +724,14 @@ struct vtn_builder {
    struct vtn_value *workgroup_size_builtin;
    bool variable_pointers;
 
+   uint32_t *interface_ids;
+   size_t interface_ids_count;
+
    struct vtn_function *func;
    struct list_head functions;
 
    /* Current function parameter index */
    unsigned func_param_idx;
-
-   bool has_loop_continue;
-
-   /** True if this shader has any early termination instructions like OpKill
-    *
-    * In the SPIR-V, the following instructions are block terminators:
-    *
-    *  - OpKill
-    *  - OpTerminateInvocation
-    *
-    * However, in NIR, they're represented by regular intrinsics with no
-    * control-flow semantics.  This means that the SSA form from the SPIR-V
-    * may not 100% match NIR and we have to fix it up at the end.
-    */
-   bool has_early_terminate;
 
    /* false by default, set to true by the ContractionOff execution mode */
    bool exact;
@@ -723,12 +749,25 @@ struct vtn_pointer *
 vtn_pointer_from_ssa(struct vtn_builder *b, nir_ssa_def *ssa,
                      struct vtn_type *ptr_type);
 
+struct vtn_ssa_value *
+vtn_const_ssa_value(struct vtn_builder *b, nir_constant *constant,
+                    const struct glsl_type *type);
+
 static inline struct vtn_value *
 vtn_untyped_value(struct vtn_builder *b, uint32_t value_id)
 {
    vtn_fail_if(value_id >= b->value_id_bound,
                "SPIR-V id %u is out-of-bounds", value_id);
    return &b->values[value_id];
+}
+
+static inline uint32_t
+vtn_id_for_value(struct vtn_builder *b, struct vtn_value *value)
+{
+   vtn_fail_if(value <= b->values, "vtn_value pointer outside the range of valid values");
+   uint32_t value_id = value - b->values;
+   vtn_fail_if(value_id >= b->value_id_bound, "vtn_value pointer outside the range of valid values");
+   return value_id;
 }
 
 /* Consider not using this function directly and instead use
@@ -762,6 +801,35 @@ vtn_value(struct vtn_builder *b, uint32_t value_id,
    vtn_fail_if(val->value_type != value_type,
                "SPIR-V id %u is the wrong kind of value", value_id);
    return val;
+}
+
+static inline struct vtn_value *
+vtn_pointer_value(struct vtn_builder *b, uint32_t value_id)
+{
+   struct vtn_value *val = vtn_untyped_value(b, value_id);
+   vtn_fail_if(val->value_type != vtn_value_type_pointer &&
+               !val->is_null_constant,
+               "SPIR-V id %u is the wrong kind of value", value_id);
+   return val;
+}
+
+static inline struct vtn_pointer *
+vtn_value_to_pointer(struct vtn_builder *b, struct vtn_value *value)
+{
+   if (value->is_null_constant) {
+      vtn_assert(glsl_type_is_vector_or_scalar(value->type->type));
+      nir_ssa_def *const_ssa =
+         vtn_const_ssa_value(b, value->constant, value->type->type)->def;
+      return vtn_pointer_from_ssa(b, const_ssa, value->type);
+   }
+   vtn_assert(value->value_type == vtn_value_type_pointer);
+   return value->pointer;
+}
+
+static inline struct vtn_pointer *
+vtn_pointer(struct vtn_builder *b, uint32_t value_id)
+{
+   return vtn_value_to_pointer(b, vtn_pointer_value(b, value_id));
 }
 
 bool
@@ -896,14 +964,19 @@ void vtn_foreach_execution_mode(struct vtn_builder *b, struct vtn_value *value,
                                 vtn_execution_mode_foreach_cb cb, void *data);
 
 nir_op vtn_nir_alu_op_for_spirv_opcode(struct vtn_builder *b,
-                                       SpvOp opcode, bool *swap,
+                                       SpvOp opcode, bool *swap, bool *exact,
                                        unsigned src_bit_size, unsigned dst_bit_size);
 
 void vtn_handle_alu(struct vtn_builder *b, SpvOp opcode,
                     const uint32_t *w, unsigned count);
 
+void vtn_handle_integer_dot(struct vtn_builder *b, SpvOp opcode,
+                            const uint32_t *w, unsigned count);
+
 void vtn_handle_bitcast(struct vtn_builder *b, const uint32_t *w,
                         unsigned count);
+
+void vtn_handle_no_contraction(struct vtn_builder *b, struct vtn_value *val);
 
 void vtn_handle_subgroup(struct vtn_builder *b, SpvOp opcode,
                          const uint32_t *w, unsigned count);
@@ -968,5 +1041,17 @@ SpvMemorySemanticsMask vtn_mode_to_memory_semantics(enum vtn_variable_mode mode)
 
 void vtn_emit_memory_barrier(struct vtn_builder *b, SpvScope scope,
                              SpvMemorySemanticsMask semantics);
+
+static inline int
+cmp_uint32_t(const void *pa, const void *pb)
+{
+   uint32_t a = *((const uint32_t *)pa);
+   uint32_t b = *((const uint32_t *)pb);
+   if (a < b)
+      return -1;
+   if (a > b)
+      return 1;
+   return 0;
+}
 
 #endif /* _VTN_PRIVATE_H_ */

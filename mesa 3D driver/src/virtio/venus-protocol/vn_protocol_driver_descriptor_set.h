@@ -224,12 +224,94 @@ vn_encode_VkDescriptorBufferInfo(struct vn_cs_encoder *enc, const VkDescriptorBu
     vn_encode_VkDeviceSize(enc, &val->range);
 }
 
+/* struct VkWriteDescriptorSetInlineUniformBlock chain */
+
+static inline size_t
+vn_sizeof_VkWriteDescriptorSetInlineUniformBlock_pnext(const void *val)
+{
+    /* no known/supported struct */
+    return vn_sizeof_simple_pointer(NULL);
+}
+
+static inline size_t
+vn_sizeof_VkWriteDescriptorSetInlineUniformBlock_self(const VkWriteDescriptorSetInlineUniformBlock *val)
+{
+    size_t size = 0;
+    /* skip val->{sType,pNext} */
+    size += vn_sizeof_uint32_t(&val->dataSize);
+    if (val->pData) {
+        size += vn_sizeof_array_size(val->dataSize);
+        size += vn_sizeof_blob_array(val->pData, val->dataSize);
+    } else {
+        size += vn_sizeof_array_size(0);
+    }
+    return size;
+}
+
+static inline size_t
+vn_sizeof_VkWriteDescriptorSetInlineUniformBlock(const VkWriteDescriptorSetInlineUniformBlock *val)
+{
+    size_t size = 0;
+
+    size += vn_sizeof_VkStructureType(&val->sType);
+    size += vn_sizeof_VkWriteDescriptorSetInlineUniformBlock_pnext(val->pNext);
+    size += vn_sizeof_VkWriteDescriptorSetInlineUniformBlock_self(val);
+
+    return size;
+}
+
+static inline void
+vn_encode_VkWriteDescriptorSetInlineUniformBlock_pnext(struct vn_cs_encoder *enc, const void *val)
+{
+    /* no known/supported struct */
+    vn_encode_simple_pointer(enc, NULL);
+}
+
+static inline void
+vn_encode_VkWriteDescriptorSetInlineUniformBlock_self(struct vn_cs_encoder *enc, const VkWriteDescriptorSetInlineUniformBlock *val)
+{
+    /* skip val->{sType,pNext} */
+    vn_encode_uint32_t(enc, &val->dataSize);
+    if (val->pData) {
+        vn_encode_array_size(enc, val->dataSize);
+        vn_encode_blob_array(enc, val->pData, val->dataSize);
+    } else {
+        vn_encode_array_size(enc, 0);
+    }
+}
+
+static inline void
+vn_encode_VkWriteDescriptorSetInlineUniformBlock(struct vn_cs_encoder *enc, const VkWriteDescriptorSetInlineUniformBlock *val)
+{
+    assert(val->sType == VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK);
+    vn_encode_VkStructureType(enc, &(VkStructureType){ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK });
+    vn_encode_VkWriteDescriptorSetInlineUniformBlock_pnext(enc, val->pNext);
+    vn_encode_VkWriteDescriptorSetInlineUniformBlock_self(enc, val);
+}
+
 /* struct VkWriteDescriptorSet chain */
 
 static inline size_t
 vn_sizeof_VkWriteDescriptorSet_pnext(const void *val)
 {
-    /* no known/supported struct */
+    const VkBaseInStructure *pnext = val;
+    size_t size = 0;
+
+    while (pnext) {
+        switch ((int32_t)pnext->sType) {
+        case VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK:
+            size += vn_sizeof_simple_pointer(pnext);
+            size += vn_sizeof_VkStructureType(&pnext->sType);
+            size += vn_sizeof_VkWriteDescriptorSet_pnext(pnext->pNext);
+            size += vn_sizeof_VkWriteDescriptorSetInlineUniformBlock_self((const VkWriteDescriptorSetInlineUniformBlock *)pnext);
+            return size;
+        default:
+            /* ignore unknown/unsupported struct */
+            break;
+        }
+        pnext = pnext->pNext;
+    }
+
     return vn_sizeof_simple_pointer(NULL);
 }
 
@@ -282,7 +364,23 @@ vn_sizeof_VkWriteDescriptorSet(const VkWriteDescriptorSet *val)
 static inline void
 vn_encode_VkWriteDescriptorSet_pnext(struct vn_cs_encoder *enc, const void *val)
 {
-    /* no known/supported struct */
+    const VkBaseInStructure *pnext = val;
+
+    while (pnext) {
+        switch ((int32_t)pnext->sType) {
+        case VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK:
+            vn_encode_simple_pointer(enc, pnext);
+            vn_encode_VkStructureType(enc, &pnext->sType);
+            vn_encode_VkWriteDescriptorSet_pnext(enc, pnext->pNext);
+            vn_encode_VkWriteDescriptorSetInlineUniformBlock_self(enc, (const VkWriteDescriptorSetInlineUniformBlock *)pnext);
+            return;
+        default:
+            /* ignore unknown/unsupported struct */
+            break;
+        }
+        pnext = pnext->pNext;
+    }
+
     vn_encode_simple_pointer(enc, NULL);
 }
 
@@ -463,11 +561,11 @@ static inline VkResult vn_decode_vkAllocateDescriptorSets_reply(struct vn_cs_dec
     /* skip device */
     /* skip pAllocateInfo */
     if (vn_peek_array_size(dec)) {
-        vn_decode_array_size(dec, (pAllocateInfo ? pAllocateInfo->descriptorSetCount : 0));
-        for (uint32_t i = 0; i < (pAllocateInfo ? pAllocateInfo->descriptorSetCount : 0); i++)
+        const uint32_t iter_count = vn_decode_array_size(dec, (pAllocateInfo ? pAllocateInfo->descriptorSetCount : 0));
+        for (uint32_t i = 0; i < iter_count; i++)
             vn_decode_VkDescriptorSet(dec, &pDescriptorSets[i]);
     } else {
-        vn_decode_array_size(dec, 0);
+        vn_decode_array_size_unchecked(dec);
         pDescriptorSets = NULL;
     }
 
@@ -689,6 +787,8 @@ static inline void vn_submit_vkUpdateDescriptorSets(struct vn_instance *vn_insta
 
 static inline VkResult vn_call_vkAllocateDescriptorSets(struct vn_instance *vn_instance, VkDevice device, const VkDescriptorSetAllocateInfo* pAllocateInfo, VkDescriptorSet* pDescriptorSets)
 {
+    VN_TRACE_FUNC();
+
     struct vn_instance_submit_command submit;
     vn_submit_vkAllocateDescriptorSets(vn_instance, VK_COMMAND_GENERATE_REPLY_BIT_EXT, device, pAllocateInfo, pDescriptorSets, &submit);
     struct vn_cs_decoder *dec = vn_instance_get_command_reply(vn_instance, &submit);
@@ -709,6 +809,8 @@ static inline void vn_async_vkAllocateDescriptorSets(struct vn_instance *vn_inst
 
 static inline VkResult vn_call_vkFreeDescriptorSets(struct vn_instance *vn_instance, VkDevice device, VkDescriptorPool descriptorPool, uint32_t descriptorSetCount, const VkDescriptorSet* pDescriptorSets)
 {
+    VN_TRACE_FUNC();
+
     struct vn_instance_submit_command submit;
     vn_submit_vkFreeDescriptorSets(vn_instance, VK_COMMAND_GENERATE_REPLY_BIT_EXT, device, descriptorPool, descriptorSetCount, pDescriptorSets, &submit);
     struct vn_cs_decoder *dec = vn_instance_get_command_reply(vn_instance, &submit);
@@ -729,6 +831,8 @@ static inline void vn_async_vkFreeDescriptorSets(struct vn_instance *vn_instance
 
 static inline void vn_call_vkUpdateDescriptorSets(struct vn_instance *vn_instance, VkDevice device, uint32_t descriptorWriteCount, const VkWriteDescriptorSet* pDescriptorWrites, uint32_t descriptorCopyCount, const VkCopyDescriptorSet* pDescriptorCopies)
 {
+    VN_TRACE_FUNC();
+
     struct vn_instance_submit_command submit;
     vn_submit_vkUpdateDescriptorSets(vn_instance, VK_COMMAND_GENERATE_REPLY_BIT_EXT, device, descriptorWriteCount, pDescriptorWrites, descriptorCopyCount, pDescriptorCopies, &submit);
     struct vn_cs_decoder *dec = vn_instance_get_command_reply(vn_instance, &submit);

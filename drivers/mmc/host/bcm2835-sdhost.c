@@ -1921,7 +1921,6 @@ int bcm2835_sdhost_add_host(struct bcm2835_host *host)
 		} else {
 			cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
 			cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-			cfg.slave_id = 13;		/* DREQ channel */
 
 			/* Validate the slave configurations */
 

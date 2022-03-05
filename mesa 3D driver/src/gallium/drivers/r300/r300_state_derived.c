@@ -102,7 +102,7 @@ static void r300_draw_emit_all_attribs(struct r300_context* r300)
     gen_count = 0;
     for (i = 0; i < ATTR_GENERIC_COUNT && gen_count < 8; i++) {
         if (vs_outputs->generic[i] != ATTR_UNUSED &&
-            !(r300->sprite_coord_enable & (1 << i))) {
+            (!(r300->sprite_coord_enable & (1U << i)) || !r300->is_point)) {
             r300_draw_emit_attrib(r300, EMIT_4F, vs_outputs->generic[i]);
             gen_count++;
         }
@@ -168,7 +168,7 @@ static void r300_swtcl_vertex_psc(struct r300_context *r300)
         /* Add the attribute to the PSC table. */
         if (i & 1) {
             vstream->vap_prog_stream_cntl[i >> 1] |= type << 16;
-            vstream->vap_prog_stream_cntl_ext[i >> 1] |= swizzle << 16;
+            vstream->vap_prog_stream_cntl_ext[i >> 1] |= (uint32_t)swizzle << 16;
         } else {
             vstream->vap_prog_stream_cntl[i >> 1] |= type;
             vstream->vap_prog_stream_cntl_ext[i >> 1] |= swizzle;
@@ -441,7 +441,7 @@ static void r300_update_rs_block(struct r300_context *r300)
 	for (i = 0; i < ATTR_GENERIC_COUNT && col_count < 2; i++) {
 	    /* Cannot use color varyings for sprite coords. */
 	    if (fs_inputs->generic[i] != ATTR_UNUSED &&
-		(r300->sprite_coord_enable & (1 << i))) {
+		(r300->sprite_coord_enable & (1U << i)) && r300->is_point) {
 		break;
 	    }
 
@@ -486,7 +486,7 @@ static void r300_update_rs_block(struct r300_context *r300)
 	boolean sprite_coord = false;
 
 	if (fs_inputs->generic[i] != ATTR_UNUSED) {
-	    sprite_coord = !!(r300->sprite_coord_enable & (1 << i));
+	    sprite_coord = !!(r300->sprite_coord_enable & (1 << i)) && r300->is_point;
 	}
 
         if (vs_outputs->generic[i] != ATTR_UNUSED || sprite_coord) {
@@ -625,7 +625,7 @@ static void r300_update_rs_block(struct r300_context *r300)
     rs.inst_count = count - 1;
 
     /* set the GB enable flags */
-    if (r300->sprite_coord_enable)
+    if (r300->sprite_coord_enable && r300->is_point)
 	stuffing_enable |= R300_GB_POINT_STUFF_ENABLE;
 
     rs.gb_enable = stuffing_enable;
@@ -683,7 +683,7 @@ static uint32_t r300_get_border_color(enum pipe_format format,
             border_swizzled[0] = border_swizzled[0] < 0 ?
                                  border_swizzled[0]*0.5+1 :
                                  border_swizzled[0]*0.5;
-            /* fallthrough. */
+            FALLTHROUGH;
 
         case PIPE_FORMAT_RGTC1_UNORM:
         case PIPE_FORMAT_LATC1_UNORM:
@@ -807,7 +807,7 @@ static void r300_merge_textures_and_samplers(struct r300_context* r300)
 
     for (i = 0; i < count; i++) {
         if (state->sampler_views[i] && state->sampler_states[i]) {
-            state->tx_enable |= 1 << i;
+            state->tx_enable |= 1U << i;
 
             view = state->sampler_views[i];
             tex = r300_resource(view->base.texture);
@@ -828,7 +828,7 @@ static void r300_merge_textures_and_samplers(struct r300_context* r300)
             base_level = view->base.u.tex.first_level;
             min_level = sampler->min_lod;
             level_count = MIN3(sampler->max_lod,
-                               tex->b.b.last_level - base_level,
+                               tex->b.last_level - base_level,
                                view->base.u.tex.last_level - base_level);
 
             if (base_level + min_level) {
@@ -881,7 +881,7 @@ static void r300_merge_textures_and_samplers(struct r300_context* r300)
                                                   view->swizzle, FALSE);
                 } else {
                     texstate->format.format1 |=
-                        r300_get_swizzle_combined(depth_swizzle, 0, FALSE);
+                        r300_get_swizzle_combined(depth_swizzle, NULL, FALSE);
                 }
             }
 
@@ -891,14 +891,14 @@ static void r300_merge_textures_and_samplers(struct r300_context* r300)
             }
 
             /* to emulate 1D textures through 2D ones correctly */
-            if (tex->b.b.target == PIPE_TEXTURE_1D) {
+            if (tex->b.target == PIPE_TEXTURE_1D) {
                 texstate->filter0 &= ~R300_TX_WRAP_T_MASK;
                 texstate->filter0 |= R300_TX_WRAP_T(R300_TX_CLAMP_TO_EDGE);
             }
 
             /* The hardware doesn't like CLAMP and CLAMP_TO_BORDER
              * for the 3rd coordinate if the texture isn't 3D. */
-            if (tex->b.b.target != PIPE_TEXTURE_3D) {
+            if (tex->b.target != PIPE_TEXTURE_3D) {
                 texstate->filter0 &= ~R300_TX_WRAP_R_MASK;
             }
 
@@ -973,7 +973,7 @@ static void r300_merge_textures_and_samplers(struct r300_context* r300)
                         (struct pipe_sampler_view**)&state->sampler_views[i],
                         &r300->texkill_sampler->base);
 
-                state->tx_enable |= 1 << i;
+                state->tx_enable |= 1U << i;
 
                 texstate = &state->regs[i];
 
@@ -1034,10 +1034,14 @@ static void r300_validate_fragment_shader(struct r300_context *r300)
     struct pipe_framebuffer_state *fb = r300->fb_state.state;
 
     if (r300->fs.state && r300->fs_status != FRAGMENT_SHADER_VALID) {
+        struct r300_fragment_program_external_state state;
+        memset(&state, 0, sizeof(state));
+        r300_fragment_program_get_external_state(r300, &state);
+
         /* Pick the fragment shader based on external states.
          * Then mark the state dirty if the fragment shader is either dirty
          * or the function r300_pick_fragment_shader changed the shader. */
-        if (r300_pick_fragment_shader(r300) ||
+        if (r300_pick_fragment_shader(r300, r300_fs(r300), &state) ||
             r300->fs_status == FRAGMENT_SHADER_DIRTY) {
             /* Mark the state atom as dirty. */
             r300_mark_fs_code_dirty(r300);

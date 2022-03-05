@@ -29,8 +29,7 @@
 #include "util/u_video.h"
 #include "va_private.h"
 
-#include "vl/vl_vlc.h"
-#include "vl/vl_rbsp.h"
+#include "util/vl_rbsp.h"
 
 enum HEVCNALUnitType {
     HEVC_NAL_VPS        = 32,
@@ -66,12 +65,12 @@ vlVaHandleVAEncPictureParameterBufferTypeHEVC(vlVaDriver *drv, vlVaContext *cont
    switch(h265->pic_fields.bits.coding_type) {
    case 1:
       if (h265->pic_fields.bits.idr_pic_flag)
-         context->desc.h265enc.picture_type = PIPE_H265_ENC_PICTURE_TYPE_IDR;
+         context->desc.h265enc.picture_type = PIPE_H2645_ENC_PICTURE_TYPE_IDR;
       else
-         context->desc.h265enc.picture_type = PIPE_H265_ENC_PICTURE_TYPE_I;
+         context->desc.h265enc.picture_type = PIPE_H2645_ENC_PICTURE_TYPE_I;
       break;
    case 2:
-      context->desc.h265enc.picture_type = PIPE_H265_ENC_PICTURE_TYPE_P;
+      context->desc.h265enc.picture_type = PIPE_H2645_ENC_PICTURE_TYPE_P;
       break;
    case 3:
    case 4:
@@ -83,7 +82,7 @@ vlVaHandleVAEncPictureParameterBufferTypeHEVC(vlVaDriver *drv, vlVaContext *cont
    context->desc.h265enc.pic.constrained_intra_pred_flag = h265->pic_fields.bits.constrained_intra_pred_flag;
 
    _mesa_hash_table_insert(context->desc.h265enc.frame_idx,
-                       UINT_TO_PTR(h265->decoded_curr_pic.picture_id),
+                       UINT_TO_PTR(h265->decoded_curr_pic.picture_id + 1),
                        UINT_TO_PTR(context->desc.h265enc.frame_num));
 
    return VA_STATUS_SUCCESS;
@@ -102,12 +101,12 @@ vlVaHandleVAEncSliceParameterBufferTypeHEVC(vlVaDriver *drv, vlVaContext *contex
       if (h265->ref_pic_list0[i].picture_id != VA_INVALID_ID) {
          if (context->desc.h265enc.ref_idx_l0 == VA_INVALID_ID)
             context->desc.h265enc.ref_idx_l0 = PTR_TO_UINT(util_hash_table_get(context->desc.h265enc.frame_idx,
-                                               UINT_TO_PTR(h265->ref_pic_list0[i].picture_id)));
+                                               UINT_TO_PTR(h265->ref_pic_list0[i].picture_id + 1)));
       }
       if (h265->ref_pic_list1[i].picture_id != VA_INVALID_ID && h265->slice_type == 1) {
          if (context->desc.h265enc.ref_idx_l1 == VA_INVALID_ID)
             context->desc.h265enc.ref_idx_l1 = PTR_TO_UINT(util_hash_table_get(context->desc.h265enc.frame_idx,
-                                               UINT_TO_PTR(h265->ref_pic_list1[i].picture_id)));
+                                               UINT_TO_PTR(h265->ref_pic_list1[i].picture_id + 1)));
       }
    }
 
@@ -129,6 +128,7 @@ vlVaHandleVAEncSequenceParameterBufferTypeHEVC(vlVaDriver *drv, vlVaContext *con
    VAEncSequenceParameterBufferHEVC *h265 = (VAEncSequenceParameterBufferHEVC *)buf->data;
 
    if (!context->decoder) {
+      context->templat.max_references = 1;
       context->templat.level = h265->general_level_idc;
       context->decoder = drv->pipe->create_video_codec(drv->pipe, &context->templat);
 
@@ -168,7 +168,7 @@ vlVaHandleVAEncMiscParameterTypeRateControlHEVC(vlVaContext *context, VAEncMiscP
    VAEncMiscParameterRateControl *rc = (VAEncMiscParameterRateControl *)misc->data;
 
    if (context->desc.h265enc.rc.rate_ctrl_method ==
-         PIPE_H265_ENC_RATE_CONTROL_METHOD_CONSTANT)
+         PIPE_H2645_ENC_RATE_CONTROL_METHOD_CONSTANT)
       context->desc.h265enc.rc.target_bitrate = rc->bits_per_second;
    else
       context->desc.h265enc.rc.target_bitrate = rc->bits_per_second * (rc->target_percentage / 100.0);

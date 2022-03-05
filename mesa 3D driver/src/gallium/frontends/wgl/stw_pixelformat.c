@@ -38,6 +38,7 @@
 #include "stw_device.h"
 #include "stw_pixelformat.h"
 #include "stw_tls.h"
+#include "stw_winsys.h"
 
 
 struct stw_pf_color_info
@@ -112,6 +113,13 @@ stw_pf_doublebuffer[] = {
 };
 
 
+static const stw_pfd_flag
+stw_pf_flag[] = {
+   stw_pfd_double_buffer,
+   stw_pfd_gdi_support,
+};
+
+
 const unsigned
 stw_pf_multisample[] = {
    0,
@@ -128,13 +136,10 @@ stw_pixelformat_add(struct stw_device *stw_dev,
                     const struct stw_pf_depth_info *depth,
                     unsigned accum,
                     boolean doublebuffer,
+                    boolean gdi,
                     unsigned samples)
 {
    struct stw_pixelformat_info *pfi;
-
-   assert(stw_dev->pixelformat_extended_count < STW_MAX_PIXELFORMATS);
-   if (stw_dev->pixelformat_extended_count >= STW_MAX_PIXELFORMATS)
-      return;
 
    assert(util_format_get_component_bits(color->format, UTIL_FORMAT_COLORSPACE_RGB, 0) == color->bits.red);
    assert(util_format_get_component_bits(color->format, UTIL_FORMAT_COLORSPACE_RGB, 1) == color->bits.green);
@@ -143,10 +148,13 @@ stw_pixelformat_add(struct stw_device *stw_dev,
    assert(util_format_get_component_bits(depth->format, UTIL_FORMAT_COLORSPACE_ZS, 0) == depth->bits.depth);
    assert(util_format_get_component_bits(depth->format, UTIL_FORMAT_COLORSPACE_ZS, 1) == depth->bits.stencil);
 
-   pfi = &stw_dev->pixelformats[stw_dev->pixelformat_extended_count];
+   pfi = util_dynarray_grow(&stw_dev->pixelformats,
+                            struct stw_pixelformat_info,
+                            1);
 
    memset(pfi, 0, sizeof *pfi);
 
+   pfi->iPixelFormat = util_dynarray_num_elements(&stw_dev->pixelformats, struct stw_pixelformat_info);
    pfi->pfd.nSize = sizeof pfi->pfd;
    pfi->pfd.nVersion = 1;
 
@@ -162,6 +170,9 @@ stw_pixelformat_add(struct stw_device *stw_dev,
 
    if (doublebuffer)
       pfi->pfd.dwFlags |= PFD_DOUBLEBUFFER | PFD_SWAP_EXCHANGE;
+
+   if (gdi)
+      pfi->pfd.dwFlags |= PFD_SUPPORT_GDI;
 
    pfi->pfd.iPixelType = PFD_TYPE_RGBA;
 
@@ -204,7 +215,6 @@ stw_pixelformat_add(struct stw_device *stw_dev,
       PIPE_FORMAT_R16G16B16A16_SNORM : PIPE_FORMAT_NONE;
 
    pfi->stvis.samples = samples;
-   pfi->stvis.render_buffer = ST_ATTACHMENT_INVALID;
 
    /* WGL_ARB_render_texture */
    if (color->bits.alpha)
@@ -212,11 +222,11 @@ stw_pixelformat_add(struct stw_device *stw_dev,
 
    pfi->bindToTextureRGB = TRUE;
 
-   ++stw_dev->pixelformat_extended_count;
-
    if (!extended) {
       ++stw_dev->pixelformat_count;
-      assert(stw_dev->pixelformat_count == stw_dev->pixelformat_extended_count);
+      assert(stw_dev->pixelformat_count ==
+             util_dynarray_num_elements(&stw_dev->pixelformats,
+                                        struct stw_pixelformat_info));
    }
 }
 
@@ -229,10 +239,14 @@ add_color_format_variants(const struct stw_pf_color_info *color_formats,
                           unsigned num_color_formats, boolean extended)
 {
    struct pipe_screen *screen = stw_dev->screen;
-   unsigned cfmt, ms, db, ds, acc;
+   unsigned cfmt, ms, db, ds, acc, f;
    unsigned bind_flags = PIPE_BIND_RENDER_TARGET;
    unsigned num_added = 0;
    int force_samples = 0;
+
+   unsigned supported_flags = 0;
+   if (stw_dev->stw_winsys && stw_dev->stw_winsys->get_pfd_flags)
+      supported_flags = stw_dev->stw_winsys->get_pfd_flags(screen);
 
    /* Since GLUT for Windows doesn't support MSAA we have an env var
     * to force all pixel formats to have a particular number of samples.
@@ -273,11 +287,16 @@ add_color_format_variants(const struct stw_pf_color_info *color_formats,
                   continue;
                }
 
-               for (acc = 0; acc < 2; acc++) {
-                  stw_pixelformat_add(stw_dev, extended, &color_formats[cfmt],
-                                      depth,
-                                      acc * 16, doublebuffer, samples);
-                  num_added++;
+               for (f = 0; f < ARRAY_SIZE(stw_pf_flag); f++) {
+                  stw_pfd_flag flag = stw_pf_flag[f];
+                  if (!(supported_flags & flag) || (flag == stw_pfd_double_buffer && !doublebuffer))
+                     continue;
+                  for (acc = 0; acc < 2; acc++) {
+                     stw_pixelformat_add(stw_dev, extended, &color_formats[cfmt],
+                                         depth, acc * 16, doublebuffer,
+                                         (flag == stw_pfd_gdi_support), samples);
+                     num_added++;
+                  }
                }
             }
          }
@@ -294,7 +313,8 @@ stw_pixelformat_init(void)
    unsigned num_formats;
 
    assert(!stw_dev->pixelformat_count);
-   assert(!stw_dev->pixelformat_extended_count);
+
+   util_dynarray_init(&stw_dev->pixelformats, NULL);
 
    /* normal, displayable formats */
    num_formats = add_color_format_variants(stw_pf_color,
@@ -305,15 +325,16 @@ stw_pixelformat_init(void)
    add_color_format_variants(stw_pf_color_extended,
                              ARRAY_SIZE(stw_pf_color_extended), TRUE);
 
-   assert(stw_dev->pixelformat_count <= stw_dev->pixelformat_extended_count);
-   assert(stw_dev->pixelformat_extended_count <= STW_MAX_PIXELFORMATS);
+   assert(stw_dev->pixelformat_count <=
+          util_dynarray_num_elements(&stw_dev->pixelformats,
+                                     struct stw_pixelformat_info));
 }
 
 
 uint
-stw_pixelformat_get_count(void)
+stw_pixelformat_get_count(HDC hdc)
 {
-   if (!stw_init_screen())
+   if (!stw_init_screen(hdc))
       return 0;
 
    return stw_dev->pixelformat_count;
@@ -321,12 +342,13 @@ stw_pixelformat_get_count(void)
 
 
 uint
-stw_pixelformat_get_extended_count(void)
+stw_pixelformat_get_extended_count(HDC hdc)
 {
-   if (!stw_init_screen())
+   if (!stw_init_screen(hdc))
       return 0;
 
-   return stw_dev->pixelformat_extended_count;
+   return util_dynarray_num_elements(&stw_dev->pixelformats,
+                                     struct stw_pixelformat_info);
 }
 
 
@@ -340,11 +362,14 @@ stw_pixelformat_get_info(int iPixelFormat)
    }
 
    index = iPixelFormat - 1;
-   if (index >= stw_dev->pixelformat_extended_count) {
+   if (index >= util_dynarray_num_elements(&stw_dev->pixelformats,
+                                           struct stw_pixelformat_info)) {
       return NULL;
    }
 
-   return &stw_dev->pixelformats[index];
+   return util_dynarray_element(&stw_dev->pixelformats,
+                                struct stw_pixelformat_info,
+                                index);
 }
 
 
@@ -355,12 +380,10 @@ DrvDescribePixelFormat(HDC hdc, INT iPixelFormat, ULONG cjpfd,
    uint count;
    const struct stw_pixelformat_info *pfi;
 
-   (void) hdc;
-
    if (!stw_dev)
       return 0;
 
-   count = stw_pixelformat_get_count();
+   count = stw_pixelformat_get_count(hdc);
 
    if (ppfd == NULL)
       return count;
@@ -425,9 +448,7 @@ stw_pixelformat_choose(HDC hdc, CONST PIXELFORMATDESCRIPTOR *ppfd)
    uint bestindex;
    uint bestdelta;
 
-   (void) hdc;
-
-   count = stw_pixelformat_get_extended_count();
+   count = stw_pixelformat_get_extended_count(hdc);
    bestindex = 0;
    bestdelta = ~0U;
 

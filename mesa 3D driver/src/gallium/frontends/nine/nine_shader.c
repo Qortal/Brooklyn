@@ -822,6 +822,26 @@ tx_addr_alloc(struct shader_translator *tx, INT idx)
         tx->regs.a0 = ureg_DECL_temporary(tx->ureg);
 }
 
+static inline bool
+TEX_if_fetch4(struct shader_translator *tx, struct ureg_dst dst,
+              unsigned target, struct ureg_src src0,
+              struct ureg_src src1, INT idx)
+{
+    struct ureg_dst tmp;
+    struct ureg_src src_tg4[3] = {src0, ureg_imm1f(tx->ureg, 0.f), src1};
+
+    if (!(tx->info->fetch4 & (1 << idx)))
+        return false;
+
+    /* TODO: needs more tests, but this feature is not much used at all */
+
+    tmp = tx_scratch(tx);
+    ureg_tex_insn(tx->ureg, TGSI_OPCODE_TG4, &tmp, 1, target, TGSI_RETURN_TYPE_FLOAT,
+                  NULL, 0, src_tg4, 3);
+    ureg_MOV(tx->ureg, dst, ureg_swizzle(ureg_src(tmp), NINE_SWIZZLE4(Z, X, Y, W)));
+    return true;
+}
+
 /* NOTE: It's not very clear on which ps1.1-ps1.3 instructions
  * the projection should be applied on the texture. It doesn't
  * apply on texkill.
@@ -990,7 +1010,7 @@ tx_src_param(struct shader_translator *tx, const struct sm1_src_param *param)
     struct ureg_dst tmp;
 
     assert(!param->rel || (IS_VS && param->file == D3DSPR_CONST) ||
-        (D3DSPR_ADDR && tx->version.major == 3));
+        (param->file == D3DSPR_INPUT && tx->version.major == 3));
 
     switch (param->file)
     {
@@ -1027,9 +1047,9 @@ tx_src_param(struct shader_translator *tx, const struct sm1_src_param *param)
             src = ureg_src_register(TGSI_FILE_INPUT, param->idx);
         } else {
             if (tx->version.major < 3) {
-                src = ureg_DECL_fs_input_cyl_centroid(
+                src = ureg_DECL_fs_input_centroid(
                     ureg, TGSI_SEMANTIC_COLOR, param->idx,
-                    TGSI_INTERPOLATE_COLOR, 0,
+                    TGSI_INTERPOLATE_COLOR,
                     tx->info->force_color_in_centroid ?
                       TGSI_INTERPOLATE_LOC_CENTROID : 0,
                     0, 1);
@@ -1075,7 +1095,7 @@ tx_src_param(struct shader_translator *tx, const struct sm1_src_param *param)
         break;
     case D3DSPR_SAMPLER:
         assert(param->mod == NINED3DSPSM_NONE);
-        assert(param->swizzle == NINED3DSP_NOSWIZZLE);
+        /* assert(param->swizzle == NINED3DSP_NOSWIZZLE); Passed by wine tests */
         src = ureg_DECL_sampler(ureg, param->idx);
         break;
     case D3DSPR_CONST:
@@ -1184,7 +1204,7 @@ tx_src_param(struct shader_translator *tx, const struct sm1_src_param *param)
         break;
     }
 
-    if (param->swizzle != NINED3DSP_NOSWIZZLE)
+    if (param->swizzle != NINED3DSP_NOSWIZZLE && param->file != D3DSPR_SAMPLER)
         src = ureg_swizzle(src,
                            (param->swizzle >> 0) & 0x3,
                            (param->swizzle >> 2) & 0x3,
@@ -1222,7 +1242,7 @@ tx_src_param(struct shader_translator *tx, const struct sm1_src_param *param)
             ureg_ADD(ureg, tmp, ureg_imm1f(ureg, 1.0f), ureg_negate(src));
             src = ureg_src(tmp);
         }
-        /* fall through */
+        FALLTHROUGH;
     case NINED3DSPSM_COMP:
         tmp = tx_scratch(tx);
         ureg_ADD(ureg, tmp, ureg_imm1f(ureg, 1.0f), ureg_negate(src));
@@ -2307,10 +2327,9 @@ DECL_SPECIAL(DCL)
                 (tgsi.Name == TGSI_SEMANTIC_COLOR && tx->info->force_color_in_centroid))
                 interp_location = TGSI_INTERPOLATE_LOC_CENTROID;
 
-            tx->regs.v[sem.reg.idx] = ureg_DECL_fs_input_cyl_centroid(
+            tx->regs.v[sem.reg.idx] = ureg_DECL_fs_input_centroid(
                 ureg, tgsi.Name, tgsi.Index,
                 nine_tgsi_to_interp_mode(&tgsi),
-                0, /* cylwrap */
                 interp_location, 0, 1);
         } else
         if (!is_input && 0) { /* declare in COLOROUT/DEPTHOUT case */
@@ -2933,6 +2952,9 @@ DECL_SPECIAL(TEXLD)
            tx->insn.src[1].idx < ARRAY_SIZE(tx->sampler_targets));
     target = tx->sampler_targets[tx->insn.src[1].idx];
 
+    if (TEX_if_fetch4(tx, dst, target, src[0], src[1], tx->insn.src[1].idx))
+        return D3D_OK;
+
     switch (tx->insn.flags) {
     case 0:
         ureg_TEX(ureg, dst, target, src[0], src[1]);
@@ -2997,6 +3019,9 @@ DECL_SPECIAL(TEXLDD)
            tx->insn.src[1].idx < ARRAY_SIZE(tx->sampler_targets));
     target = tx->sampler_targets[tx->insn.src[1].idx];
 
+    if (TEX_if_fetch4(tx, dst, target, src[0], src[1], tx->insn.src[1].idx))
+        return D3D_OK;
+
     ureg_TXD(tx->ureg, dst, target, src[0], src[2], src[3], src[1]);
     return D3D_OK;
 }
@@ -3012,6 +3037,9 @@ DECL_SPECIAL(TEXLDL)
     assert(tx->insn.src[1].idx >= 0 &&
            tx->insn.src[1].idx < ARRAY_SIZE(tx->sampler_targets));
     target = tx->sampler_targets[tx->insn.src[1].idx];
+
+    if (TEX_if_fetch4(tx, dst, target, src[0], src[1], tx->insn.src[1].idx))
+        return D3D_OK;
 
     ureg_TXL(tx->ureg, dst, target, src[0], src[1]);
     return D3D_OK;
@@ -3620,7 +3648,8 @@ tx_ctor(struct shader_translator *tx, struct pipe_screen *screen, struct nine_sh
         tx->num_constb_allowed = NINE_MAX_CONST_B;
     }
 
-    if (info->swvp_on && tx->version.major >= 2) {
+    if (info->swvp_on) {
+        /* TODO: The values tx->version.major == 1 */
         tx->num_constf_allowed = 8192;
         tx->num_consti_allowed = 2048;
         tx->num_constb_allowed = 2048;
@@ -3836,7 +3865,7 @@ static void
 nine_pipe_nir_shader_state_from_tgsi(struct pipe_shader_state *state, const struct tgsi_token *tgsi_tokens,
                                      struct pipe_screen *screen)
 {
-    struct nir_shader *nir = tgsi_to_nir(tgsi_tokens, screen, true);
+    struct nir_shader *nir = tgsi_to_nir(tgsi_tokens, screen, screen->get_disk_shader_cache != NULL);
 
     if (unlikely(nine_shader_get_debug_flag(NINE_SHADER_DEBUG_OPTION_DUMP_NIR))) {
         nir_print_shader(nir, stdout);

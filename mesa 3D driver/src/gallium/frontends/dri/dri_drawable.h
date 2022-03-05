@@ -31,6 +31,7 @@
 #include "pipe/p_compiler.h"
 #include "pipe/p_format.h"
 #include "frontend/api.h"
+#include "dri_util.h"
 
 struct pipe_surface;
 struct st_framebuffer;
@@ -47,7 +48,7 @@ struct dri_drawable
    __DRIdrawable *dPriv;
    __DRIscreen *sPriv;
 
-   __DRIbuffer old[8];
+   __DRIbuffer old[__DRI_BUFFER_COUNT];
    unsigned old_num;
    unsigned old_w;
    unsigned old_h;
@@ -62,9 +63,6 @@ struct dri_drawable
    struct pipe_fence_handle *throttle_fence;
    bool flushing; /* prevents recursion in dri_flush */
 
-   /* used only by DRISW */
-   struct pipe_surface *drisw_surface;
-
    /* hooks filled in by dri2 & drisw */
    void (*allocate_textures)(struct dri_context *ctx,
                              struct dri_drawable *drawable,
@@ -73,7 +71,7 @@ struct dri_drawable
 
    void (*update_drawable_info)(struct dri_drawable *drawable);
 
-   void (*flush_frontbuffer)(struct dri_context *ctx,
+   bool (*flush_frontbuffer)(struct dri_context *ctx,
                              struct dri_drawable *drawable,
                              enum st_attachment_type statt);
 

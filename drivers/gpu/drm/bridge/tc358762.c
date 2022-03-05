@@ -237,13 +237,14 @@ static int tc358762_probe(struct mipi_dsi_device *dsi)
 	ctx->bridge.funcs = &tc358762_bridge_funcs;
 	ctx->bridge.type = DRM_MODE_CONNECTOR_DPI;
 	ctx->bridge.of_node = dev->of_node;
+	ctx->bridge.ops = DRM_BRIDGE_OP_UPSTREAM_FIRST;
 
 	drm_bridge_add(&ctx->bridge);
 
 	ret = mipi_dsi_attach(dsi);
 	if (ret < 0) {
 		drm_bridge_remove(&ctx->bridge);
-		dev_err(dev, "failed to attach dsi\n");
+		dev_err_probe(dev, ret, "failed to attach dsi\n");
 	}
 
 	return ret;

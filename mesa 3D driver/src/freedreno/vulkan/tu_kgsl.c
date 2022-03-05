@@ -30,6 +30,9 @@
 #include <sys/mman.h>
 
 #include "msm_kgsl.h"
+#include "vk_util.h"
+
+#include "util/debug.h"
 
 struct tu_syncobj {
    struct vk_object_base base;
@@ -80,19 +83,27 @@ tu_drm_submitqueue_close(const struct tu_device *dev, uint32_t queue_id)
 }
 
 VkResult
-tu_bo_init_new(struct tu_device *dev, struct tu_bo *bo, uint64_t size, bool dump)
+tu_bo_init_new(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
+               enum tu_bo_alloc_flags flags)
 {
    struct kgsl_gpumem_alloc_id req = {
       .size = size,
    };
+
+   if (flags & TU_BO_ALLOC_GPU_READ_ONLY)
+      req.flags |= KGSL_MEMFLAGS_GPUREADONLY;
+
    int ret;
 
    ret = safe_ioctl(dev->physical_device->local_fd,
                     IOCTL_KGSL_GPUMEM_ALLOC_ID, &req);
    if (ret) {
-      return vk_errorf(dev->instance, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+      return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
                        "GPUMEM_ALLOC_ID failed (%s)", strerror(errno));
    }
+
+   struct tu_bo* bo = tu_device_lookup_bo(dev, req.id);
+   assert(bo && bo->gem_handle == 0);
 
    *bo = (struct tu_bo) {
       .gem_handle = req.id,
@@ -100,12 +111,14 @@ tu_bo_init_new(struct tu_device *dev, struct tu_bo *bo, uint64_t size, bool dump
       .iova = req.gpuaddr,
    };
 
+   *out_bo = bo;
+
    return VK_SUCCESS;
 }
 
 VkResult
 tu_bo_init_dmabuf(struct tu_device *dev,
-                  struct tu_bo *bo,
+                  struct tu_bo **out_bo,
                   uint64_t size,
                   int fd)
 {
@@ -123,7 +136,7 @@ tu_bo_init_dmabuf(struct tu_device *dev,
    ret = safe_ioctl(dev->physical_device->local_fd,
                     IOCTL_KGSL_GPUOBJ_IMPORT, &req);
    if (ret)
-      return vk_errorf(dev->instance, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+      return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
                        "Failed to import dma-buf (%s)\n", strerror(errno));
 
    struct kgsl_gpuobj_info info_req = {
@@ -133,14 +146,19 @@ tu_bo_init_dmabuf(struct tu_device *dev,
    ret = safe_ioctl(dev->physical_device->local_fd,
                     IOCTL_KGSL_GPUOBJ_INFO, &info_req);
    if (ret)
-      return vk_errorf(dev->instance, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+      return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
                        "Failed to get dma-buf info (%s)\n", strerror(errno));
+
+   struct tu_bo* bo = tu_device_lookup_bo(dev, req.id);
+   assert(bo && bo->gem_handle == 0);
 
    *bo = (struct tu_bo) {
       .gem_handle = req.id,
       .size = info_req.size,
       .iova = info_req.gpuaddr,
    };
+
+   *out_bo = bo;
 
    return VK_SUCCESS;
 }
@@ -163,7 +181,7 @@ tu_bo_map(struct tu_device *dev, struct tu_bo *bo)
    void *map = mmap(0, bo->size, PROT_READ | PROT_WRITE, MAP_SHARED,
                     dev->physical_device->local_fd, offset);
    if (map == MAP_FAILED)
-      return vk_error(dev->instance, VK_ERROR_MEMORY_MAP_FAILED);
+      return vk_error(dev, VK_ERROR_MEMORY_MAP_FAILED);
 
    bo->map = map;
 
@@ -181,6 +199,9 @@ tu_bo_finish(struct tu_device *dev, struct tu_bo *bo)
    struct kgsl_gpumem_free_id req = {
       .id = bo->gem_handle
    };
+
+   /* Tell sparse array that entry is free */
+   memset(bo, 0, sizeof(*bo));
 
    safe_ioctl(dev->physical_device->local_fd, IOCTL_KGSL_GPUMEM_FREE_ID, &req);
 }
@@ -205,7 +226,7 @@ tu_enumerate_devices(struct tu_instance *instance)
 
    struct tu_physical_device *device = &instance->physical_devices[0];
 
-   if (instance->enabled_extensions.KHR_display)
+   if (instance->vk.enabled_extensions.KHR_display)
       return vk_errorf(instance, VK_ERROR_INCOMPATIBLE_DRIVER,
                        "I can't KHR_display");
 
@@ -229,17 +250,21 @@ tu_enumerate_devices(struct tu_instance *instance)
    if (instance->debug_flags & TU_DEBUG_STARTUP)
       mesa_logi("Found compatible device '%s'.", path);
 
-   vk_object_base_init(NULL, &device->base, VK_OBJECT_TYPE_PHYSICAL_DEVICE);
    device->instance = instance;
    device->master_fd = -1;
    device->local_fd = fd;
 
-   device->gpu_id =
+   device->dev_id.gpu_id =
       ((info.chip_id >> 24) & 0xff) * 100 +
       ((info.chip_id >> 16) & 0xff) * 10 +
       ((info.chip_id >>  8) & 0xff);
-   device->gmem_size = info.gmem_sizebytes;
+   device->dev_id.chip_id = info.chip_id;
+   device->gmem_size = env_var_as_unsigned("TU_GMEM", info.gmem_sizebytes);
    device->gmem_base = gmem_iova;
+
+   device->heap.size = tu_get_system_heap_size();
+   device->heap.used = 0u;
+   device->heap.flags = VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
 
    if (tu_physical_device_init(device, instance) != VK_SUCCESS)
       goto fail;
@@ -322,7 +347,7 @@ sync_merge(const VkSemaphore *syncobjs, uint32_t count, bool wait_all, bool rese
    return ret;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_QueueSubmit(VkQueue _queue,
                uint32_t submitCount,
                const VkSubmitInfo *pSubmits,
@@ -336,11 +361,21 @@ tu_QueueSubmit(VkQueue _queue,
    for (uint32_t i = 0; i < submitCount; ++i) {
       const VkSubmitInfo *submit = pSubmits + i;
 
+      const VkPerformanceQuerySubmitInfoKHR *perf_info =
+         vk_find_struct_const(pSubmits[i].pNext,
+                              PERFORMANCE_QUERY_SUBMIT_INFO_KHR);
+
       uint32_t entry_count = 0;
       for (uint32_t j = 0; j < submit->commandBufferCount; ++j) {
          TU_FROM_HANDLE(tu_cmd_buffer, cmdbuf, submit->pCommandBuffers[j]);
          entry_count += cmdbuf->cs.entry_count;
+         if (perf_info)
+            entry_count++;
       }
+
+      struct tu_cmd_buffer **cmd_buffers = (void *)submit->pCommandBuffers;
+      if (tu_autotune_submit_requires_fence(cmd_buffers, submit->commandBufferCount))
+         entry_count++;
 
       max_entry_count = MAX2(max_entry_count, entry_count);
    }
@@ -350,15 +385,33 @@ tu_QueueSubmit(VkQueue _queue,
                sizeof(cmds[0]) * max_entry_count, 8,
                VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
    if (cmds == NULL)
-      return vk_error(queue->device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(queue, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    for (uint32_t i = 0; i < submitCount; ++i) {
       const VkSubmitInfo *submit = pSubmits + i;
       uint32_t entry_idx = 0;
+      const VkPerformanceQuerySubmitInfoKHR *perf_info =
+         vk_find_struct_const(pSubmits[i].pNext,
+                              PERFORMANCE_QUERY_SUBMIT_INFO_KHR);
+
 
       for (uint32_t j = 0; j < submit->commandBufferCount; j++) {
          TU_FROM_HANDLE(tu_cmd_buffer, cmdbuf, submit->pCommandBuffers[j]);
          struct tu_cs *cs = &cmdbuf->cs;
+
+         if (perf_info) {
+            struct tu_cs_entry *perf_cs_entry =
+               &cmdbuf->device->perfcntrs_pass_cs_entries[perf_info->counterPassIndex];
+
+            cmds[entry_idx++] = (struct kgsl_command_object) {
+               .offset = perf_cs_entry->offset,
+               .gpuaddr = perf_cs_entry->bo->iova,
+               .size = perf_cs_entry->size,
+               .flags = KGSL_CMDLIST_IB,
+               .id = perf_cs_entry->bo->gem_handle,
+            };
+         }
+
          for (unsigned k = 0; k < cs->entry_count; k++) {
             cmds[entry_idx++] = (struct kgsl_command_object) {
                .offset = cs->entries[k].offset,
@@ -368,6 +421,22 @@ tu_QueueSubmit(VkQueue _queue,
                .id = cs->entries[k].bo->gem_handle,
             };
          }
+      }
+
+      struct tu_cmd_buffer **cmd_buffers = (void *)submit->pCommandBuffers;
+      if (tu_autotune_submit_requires_fence(cmd_buffers, submit->commandBufferCount)) {
+         struct tu_cs *autotune_cs =
+            tu_autotune_on_submit(queue->device,
+                                  &queue->device->autotune,
+                                  cmd_buffers,
+                                  submit->commandBufferCount);
+         cmds[entry_idx++] = (struct kgsl_command_object) {
+            .offset = autotune_cs->entries[0].offset,
+            .gpuaddr = autotune_cs->entries[0].bo->iova,
+            .size = autotune_cs->entries[0].size,
+            .flags = KGSL_CMDLIST_IB,
+            .id = autotune_cs->entries[0].bo->gem_handle,
+         };
       }
 
       struct tu_syncobj s = sync_merge(submit->pWaitSemaphores,
@@ -398,7 +467,7 @@ tu_QueueSubmit(VkQueue _queue,
       int ret = safe_ioctl(queue->device->physical_device->local_fd,
                            IOCTL_KGSL_GPU_COMMAND, &req);
       if (ret) {
-         result = tu_device_set_lost(queue->device,
+         result = vk_device_set_lost(&queue->device->vk,
                                      "submit failed: %s\n", strerror(errno));
          goto fail;
       }
@@ -413,7 +482,7 @@ tu_QueueSubmit(VkQueue _queue,
       if (i == submitCount - 1) {
          int fd = timestamp_to_fd(queue, req.timestamp);
          if (fd < 0) {
-            result = tu_device_set_lost(queue->device,
+            result = vk_device_set_lost(&queue->device->vk,
                                         "Failed to create sync file for timestamp: %s\n",
                                         strerror(errno));
             goto fail;
@@ -448,7 +517,7 @@ sync_create(VkDevice _device,
          vk_object_alloc(&device->vk, pAllocator, sizeof(*sync),
                          fence ? VK_OBJECT_TYPE_FENCE : VK_OBJECT_TYPE_SEMAPHORE);
    if (!sync)
-      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    if (signaled)
       tu_finishme("CREATE FENCE SIGNALED");
@@ -459,7 +528,7 @@ sync_create(VkDevice _device,
    return VK_SUCCESS;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_ImportSemaphoreFdKHR(VkDevice _device,
                         const VkImportSemaphoreFdInfoKHR *pImportSemaphoreFdInfo)
 {
@@ -467,7 +536,7 @@ tu_ImportSemaphoreFdKHR(VkDevice _device,
    return VK_SUCCESS;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_GetSemaphoreFdKHR(VkDevice _device,
                      const VkSemaphoreGetFdInfoKHR *pGetFdInfo,
                      int *pFd)
@@ -476,7 +545,7 @@ tu_GetSemaphoreFdKHR(VkDevice _device,
    return VK_SUCCESS;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_CreateSemaphore(VkDevice device,
                    const VkSemaphoreCreateInfo *pCreateInfo,
                    const VkAllocationCallbacks *pAllocator,
@@ -485,7 +554,7 @@ tu_CreateSemaphore(VkDevice device,
    return sync_create(device, false, false, pAllocator, (void**) pSemaphore);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_DestroySemaphore(VkDevice _device,
                     VkSemaphore semaphore,
                     const VkAllocationCallbacks *pAllocator)
@@ -499,7 +568,7 @@ tu_DestroySemaphore(VkDevice _device,
    vk_object_free(&device->vk, pAllocator, sync);
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_ImportFenceFdKHR(VkDevice _device,
                     const VkImportFenceFdInfoKHR *pImportFenceFdInfo)
 {
@@ -508,7 +577,7 @@ tu_ImportFenceFdKHR(VkDevice _device,
    return VK_SUCCESS;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_GetFenceFdKHR(VkDevice _device,
                  const VkFenceGetFdInfoKHR *pGetFdInfo,
                  int *pFd)
@@ -518,7 +587,7 @@ tu_GetFenceFdKHR(VkDevice _device,
    return VK_SUCCESS;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_CreateFence(VkDevice device,
                const VkFenceCreateInfo *info,
                const VkAllocationCallbacks *pAllocator,
@@ -528,7 +597,7 @@ tu_CreateFence(VkDevice device,
                       pAllocator, (void**) pFence);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 tu_DestroyFence(VkDevice _device, VkFence fence, const VkAllocationCallbacks *pAllocator)
 {
    TU_FROM_HANDLE(tu_device, device, _device);
@@ -540,7 +609,7 @@ tu_DestroyFence(VkDevice _device, VkFence fence, const VkAllocationCallbacks *pA
    vk_object_free(&device->vk, pAllocator, sync);
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_WaitForFences(VkDevice _device,
                  uint32_t count,
                  const VkFence *pFences,
@@ -567,7 +636,7 @@ tu_WaitForFences(VkDevice _device,
    return VK_SUCCESS;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_ResetFences(VkDevice _device, uint32_t count, const VkFence *pFences)
 {
    for (uint32_t i = 0; i < count; i++) {
@@ -577,7 +646,7 @@ tu_ResetFences(VkDevice _device, uint32_t count, const VkFence *pFences)
    return VK_SUCCESS;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_GetFenceStatus(VkDevice _device, VkFence _fence)
 {
    TU_FROM_HANDLE(tu_device, device, _device);
@@ -601,21 +670,44 @@ tu_GetFenceStatus(VkDevice _device, VkFence _fence)
 }
 
 int
-tu_signal_fences(struct tu_device *device, struct tu_syncobj *fence1, struct tu_syncobj *fence2)
+tu_signal_syncs(struct tu_device *device,
+                struct vk_sync *sync1, struct vk_sync *sync2)
 {
-   tu_finishme("tu_signal_fences");
+   tu_finishme("tu_signal_syncs");
    return 0;
 }
 
 int
-tu_syncobj_to_fd(struct tu_device *device, struct tu_syncobj *sync)
+tu_syncobj_to_fd(struct tu_device *device, struct vk_sync *sync)
 {
    tu_finishme("tu_syncobj_to_fd");
    return -1;
 }
 
-#ifdef ANDROID
 VkResult
+tu_device_wait_u_trace(struct tu_device *dev, struct tu_u_trace_syncobj *syncobj)
+{
+   tu_finishme("tu_device_wait_u_trace");
+   return VK_SUCCESS;
+}
+
+int
+tu_device_get_gpu_timestamp(struct tu_device *dev, uint64_t *ts)
+{
+   tu_finishme("tu_device_get_gpu_timestamp");
+   return 0;
+}
+
+int
+tu_device_get_suspend_count(struct tu_device *dev, uint64_t *suspend_count)
+{
+   /* kgsl doesn't have a way to get it */
+   *suspend_count = 0;
+   return 0;
+}
+
+#ifdef ANDROID
+VKAPI_ATTR VkResult VKAPI_CALL
 tu_QueueSignalReleaseImageANDROID(VkQueue _queue,
                                   uint32_t waitSemaphoreCount,
                                   const VkSemaphore *pWaitSemaphores,

@@ -103,9 +103,9 @@ alloc_shm(struct dri_sw_displaytarget *dri_sw_dt, unsigned size)
    if (dri_sw_dt->shmid < 0)
       return NULL;
 
-   addr = (char *) shmat(dri_sw_dt->shmid, 0, 0);
+   addr = (char *) shmat(dri_sw_dt->shmid, NULL, 0);
    /* mark the segment immediately for deletion to avoid leaks */
-   shmctl(dri_sw_dt->shmid, IPC_RMID, 0);
+   shmctl(dri_sw_dt->shmid, IPC_RMID, NULL);
 
    if (addr == (char *) -1)
       return NULL;
@@ -123,7 +123,7 @@ dri_sw_displaytarget_create(struct sw_winsys *winsys,
                             const void *front_private,
                             unsigned *stride)
 {
-   struct dri_sw_winsys *ws = dri_sw_winsys(winsys);
+   UNUSED struct dri_sw_winsys *ws = dri_sw_winsys(winsys);
    struct dri_sw_displaytarget *dri_sw_dt;
    unsigned nblocksy, size, format_stride;
 
@@ -173,7 +173,7 @@ dri_sw_displaytarget_destroy(struct sw_winsys *ws,
    if (dri_sw_dt->shmid >= 0) {
 #ifdef HAVE_SYS_SHM_H
       shmdt(dri_sw_dt->data);
-      shmctl(dri_sw_dt->shmid, IPC_RMID, 0);
+      shmctl(dri_sw_dt->shmid, IPC_RMID, NULL);
 #endif
    } else {
       align_free(dri_sw_dt->data);

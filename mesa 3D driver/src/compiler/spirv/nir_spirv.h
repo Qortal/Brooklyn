@@ -43,6 +43,7 @@ struct nir_spirv_specialization {
 };
 
 enum nir_spirv_debug_level {
+   NIR_SPIRV_DEBUG_LEVEL_INVALID = -1,
    NIR_SPIRV_DEBUG_LEVEL_INFO,
    NIR_SPIRV_DEBUG_LEVEL_WARNING,
    NIR_SPIRV_DEBUG_LEVEL_ERROR,
@@ -57,17 +58,22 @@ enum nir_spirv_execution_environment {
 struct spirv_to_nir_options {
    enum nir_spirv_execution_environment environment;
 
-   /* Whether to make FragCoord to a system value, the same as
-    * GLSLFragCoordIsSysVal in GLSL.
-    */
-   bool frag_coord_is_sysval;
-
    /* Whether to keep ViewIndex as an input instead of rewriting to a sysval.
     */
    bool view_index_is_input;
 
    /* Create a nir library. */
    bool create_library;
+
+   /* Whether to use nir_intrinsic_deref_buffer_array_length intrinsic instead
+    * of nir_intrinsic_get_ssbo_size to lower OpArrayLength.
+    */
+   bool use_deref_buffer_array_length;
+
+   /* Initial value for shader_info::float_controls_execution_mode,
+    * indicates hardware requirements rather than shader author intent
+    */
+   uint16_t float_controls_execution_mode;
 
    struct spirv_supported_capabilities caps;
 
@@ -77,6 +83,7 @@ struct spirv_to_nir_options {
    nir_address_format phys_ssbo_addr_format;
    nir_address_format push_const_addr_format;
    nir_address_format shared_addr_format;
+   nir_address_format task_payload_addr_format;
    nir_address_format global_addr_format;
    nir_address_format temp_addr_format;
    nir_address_format constant_addr_format;

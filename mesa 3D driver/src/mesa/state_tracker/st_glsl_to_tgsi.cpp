@@ -31,16 +31,18 @@
  */
 
 #include "st_glsl_to_tgsi.h"
+#include "st_program.h"
 
 #include "compiler/glsl/glsl_parser_extras.h"
 #include "compiler/glsl/ir_optimization.h"
+#include "compiler/glsl/linker.h"
 #include "compiler/glsl/program.h"
+#include "compiler/glsl/string_to_uint_map.h"
 
 #include "main/errors.h"
 #include "main/shaderobj.h"
 #include "main/uniforms.h"
 #include "main/shaderapi.h"
-#include "main/shaderimage.h"
 #include "program/prog_instruction.h"
 
 #include "pipe/p_context.h"
@@ -50,7 +52,6 @@
 #include "util/u_math.h"
 #include "util/u_memory.h"
 #include "st_program.h"
-#include "st_mesa_to_tgsi.h"
 #include "st_format.h"
 #include "st_glsl_to_tgsi_temprename.h"
 
@@ -105,6 +106,141 @@ static inline bool print_stats_enabled ()
 #define PRINT_STATS(X)
 #endif
 
+
+namespace {
+
+class add_uniform_to_shader : public program_resource_visitor {
+public:
+   add_uniform_to_shader(struct gl_context *ctx,
+                         struct gl_shader_program *shader_program,
+			 struct gl_program_parameter_list *params)
+      : ctx(ctx), shader_program(shader_program), params(params), idx(-1),
+        var(NULL)
+   {
+      /* empty */
+   }
+
+   void process(ir_variable *var)
+   {
+      this->idx = -1;
+      this->var = var;
+      this->program_resource_visitor::process(var,
+                                         ctx->Const.UseSTD430AsDefaultPacking);
+      var->data.param_index = this->idx;
+   }
+
+private:
+   virtual void visit_field(const glsl_type *type, const char *name,
+                            bool row_major, const glsl_type *record_type,
+                            const enum glsl_interface_packing packing,
+                            bool last_field);
+
+   struct gl_context *ctx;
+   struct gl_shader_program *shader_program;
+   struct gl_program_parameter_list *params;
+   int idx;
+   ir_variable *var;
+};
+
+} /* anonymous namespace */
+
+void
+add_uniform_to_shader::visit_field(const glsl_type *type, const char *name,
+                                   bool /* row_major */,
+                                   const glsl_type * /* record_type */,
+                                   const enum glsl_interface_packing,
+                                   bool /* last_field */)
+{
+   /* opaque types don't use storage in the param list unless they are
+    * bindless samplers or images.
+    */
+   if (type->contains_opaque() && !var->data.bindless)
+      return;
+
+   /* Add the uniform to the param list */
+   assert(_mesa_lookup_parameter_index(params, name) < 0);
+   int index = _mesa_lookup_parameter_index(params, name);
+
+   unsigned num_params = type->arrays_of_arrays_size();
+   num_params = MAX2(num_params, 1);
+   num_params *= type->without_array()->matrix_columns;
+
+   bool is_dual_slot = type->without_array()->is_dual_slot();
+   if (is_dual_slot)
+      num_params *= 2;
+
+   _mesa_reserve_parameter_storage(params, num_params, num_params);
+   index = params->NumParameters;
+
+   if (ctx->Const.PackedDriverUniformStorage) {
+      for (unsigned i = 0; i < num_params; i++) {
+         unsigned dmul = type->without_array()->is_64bit() ? 2 : 1;
+         unsigned comps = type->without_array()->vector_elements * dmul;
+         if (is_dual_slot) {
+            if (i & 0x1)
+               comps -= 4;
+            else
+               comps = 4;
+         }
+
+         _mesa_add_parameter(params, PROGRAM_UNIFORM, name, comps,
+                             type->gl_type, NULL, NULL, false);
+      }
+   } else {
+      for (unsigned i = 0; i < num_params; i++) {
+         _mesa_add_parameter(params, PROGRAM_UNIFORM, name, 4,
+                             type->gl_type, NULL, NULL, true);
+      }
+   }
+
+   /* The first part of the uniform that's processed determines the base
+    * location of the whole uniform (for structures).
+    */
+   if (this->idx < 0)
+      this->idx = index;
+
+   /* Each Parameter will hold the index to the backing uniform storage.
+    * This avoids relying on names to match parameters and uniform
+    * storages later when associating uniform storage.
+    */
+   unsigned location = -1;
+   ASSERTED const bool found =
+      shader_program->UniformHash->get(location, params->Parameters[index].Name);
+   assert(found);
+
+   for (unsigned i = 0; i < num_params; i++) {
+      struct gl_program_parameter *param = &params->Parameters[index + i];
+      param->UniformStorageIndex = location;
+      param->MainUniformStorageIndex = params->Parameters[this->idx].UniformStorageIndex;
+   }
+}
+
+/**
+ * Generate the program parameters list for the user uniforms in a shader
+ *
+ * \param shader_program Linked shader program.  This is only used to
+ *                       emit possible link errors to the info log.
+ * \param sh             Shader whose uniforms are to be processed.
+ * \param params         Parameter list to be filled in.
+ */
+static void
+generate_parameters_list_for_uniforms(struct gl_context *ctx,
+                                      struct gl_shader_program *shader_program,
+                                      struct gl_linked_shader *sh,
+                                      struct gl_program_parameter_list *params)
+{
+   add_uniform_to_shader add(ctx, shader_program, params);
+
+   foreach_in_list(ir_instruction, node, sh->ir) {
+      ir_variable *var = node->as_variable();
+
+      if ((var == NULL) || (var->data.mode != ir_var_uniform)
+	  || var->is_in_buffer_block() || (strncmp(var->name, "gl_", 3) == 0))
+	 continue;
+
+      add.process(var);
+   }
+}
 
 static unsigned is_precise(const ir_variable *ir)
 {
@@ -244,7 +380,6 @@ public:
    bool use_shared_memory;
    bool has_tex_txf_lz;
    bool precise;
-   bool need_uarl;
    bool tg4_component_in_swizzle;
 
    variable_storage *find_variable_storage(ir_variable *var);
@@ -430,6 +565,85 @@ swizzle_for_size(int size)
 
    assert((size >= 1) && (size <= 4));
    return size_swizzles[size - 1];
+}
+
+
+/**
+ * Map mesa texture target to TGSI texture target.
+ */
+static enum tgsi_texture_type
+st_translate_texture_target(gl_texture_index textarget, GLboolean shadow)
+{
+   if (shadow) {
+      switch (textarget) {
+      case TEXTURE_1D_INDEX:
+         return TGSI_TEXTURE_SHADOW1D;
+      case TEXTURE_2D_INDEX:
+         return TGSI_TEXTURE_SHADOW2D;
+      case TEXTURE_RECT_INDEX:
+         return TGSI_TEXTURE_SHADOWRECT;
+      case TEXTURE_1D_ARRAY_INDEX:
+         return TGSI_TEXTURE_SHADOW1D_ARRAY;
+      case TEXTURE_2D_ARRAY_INDEX:
+         return TGSI_TEXTURE_SHADOW2D_ARRAY;
+      case TEXTURE_CUBE_INDEX:
+         return TGSI_TEXTURE_SHADOWCUBE;
+      case TEXTURE_CUBE_ARRAY_INDEX:
+         return TGSI_TEXTURE_SHADOWCUBE_ARRAY;
+      default:
+         break;
+      }
+   }
+
+   switch (textarget) {
+   case TEXTURE_2D_MULTISAMPLE_INDEX:
+      return TGSI_TEXTURE_2D_MSAA;
+   case TEXTURE_2D_MULTISAMPLE_ARRAY_INDEX:
+      return TGSI_TEXTURE_2D_ARRAY_MSAA;
+   case TEXTURE_BUFFER_INDEX:
+      return TGSI_TEXTURE_BUFFER;
+   case TEXTURE_1D_INDEX:
+      return TGSI_TEXTURE_1D;
+   case TEXTURE_2D_INDEX:
+      return TGSI_TEXTURE_2D;
+   case TEXTURE_3D_INDEX:
+      return TGSI_TEXTURE_3D;
+   case TEXTURE_CUBE_INDEX:
+      return TGSI_TEXTURE_CUBE;
+   case TEXTURE_CUBE_ARRAY_INDEX:
+      return TGSI_TEXTURE_CUBE_ARRAY;
+   case TEXTURE_RECT_INDEX:
+      return TGSI_TEXTURE_RECT;
+   case TEXTURE_1D_ARRAY_INDEX:
+      return TGSI_TEXTURE_1D_ARRAY;
+   case TEXTURE_2D_ARRAY_INDEX:
+      return TGSI_TEXTURE_2D_ARRAY;
+   case TEXTURE_EXTERNAL_INDEX:
+      return TGSI_TEXTURE_2D;
+   default:
+      debug_assert(!"unexpected texture target index");
+      return TGSI_TEXTURE_1D;
+   }
+}
+
+
+/**
+ * Map GLSL base type to TGSI return type.
+ */
+static enum tgsi_return_type
+st_translate_texture_type(enum glsl_base_type type)
+{
+   switch (type) {
+   case GLSL_TYPE_INT:
+      return TGSI_RETURN_TYPE_SINT;
+   case GLSL_TYPE_UINT:
+      return TGSI_RETURN_TYPE_UINT;
+   case GLSL_TYPE_FLOAT:
+      return TGSI_RETURN_TYPE_FLOAT;
+   default:
+      assert(!"unexpected texture type");
+      return TGSI_RETURN_TYPE_UNKNOWN;
+   }
 }
 
 
@@ -877,9 +1091,6 @@ glsl_to_tgsi_visitor::emit_arl(ir_instruction *ir,
    enum tgsi_opcode op = TGSI_OPCODE_ARL;
 
    if (src0.type == GLSL_TYPE_INT || src0.type == GLSL_TYPE_UINT) {
-      if (!this->need_uarl && src0.is_legal_tgsi_address_operand())
-         return;
-
       op = TGSI_OPCODE_UARL;
    }
 
@@ -1545,7 +1756,7 @@ glsl_to_tgsi_visitor::visit_expression(ir_expression* ir, st_src_reg *op)
        * It is then multiplied with the source operand of DDY.
        */
       static const gl_state_index16 transform_y_state[STATE_LENGTH]
-         = { STATE_INTERNAL, STATE_FB_WPOS_Y_TRANSFORM };
+         = { STATE_FB_WPOS_Y_TRANSFORM };
 
       unsigned transform_y_index =
          _mesa_add_state_reference(this->prog->Parameters,
@@ -1820,14 +2031,14 @@ glsl_to_tgsi_visitor::visit_expression(ir_expression* ir, st_src_reg *op)
          emit_asm(ir, TGSI_OPCODE_I2F, result_dst, op[0]);
          break;
       }
-      /* fallthrough to next case otherwise */
+      FALLTHROUGH;
    case ir_unop_b2f:
       if (native_integers) {
          emit_asm(ir, TGSI_OPCODE_AND, result_dst, op[0],
                   st_src_reg_for_float(1.0));
          break;
       }
-      /* fallthrough to next case otherwise */
+      FALLTHROUGH;
    case ir_unop_i2u:
    case ir_unop_u2i:
    case ir_unop_i642u64:
@@ -1938,13 +2149,13 @@ glsl_to_tgsi_visitor::visit_expression(ir_expression* ir, st_src_reg *op)
          emit_asm(ir, TGSI_OPCODE_NOT, result_dst, op[0]);
          break;
       }
-      /* fallthrough */
+      FALLTHROUGH;
    case ir_unop_u2f:
       if (native_integers) {
          emit_asm(ir, TGSI_OPCODE_U2F, result_dst, op[0]);
          break;
       }
-      /* fallthrough */
+      FALLTHROUGH;
    case ir_binop_lshift:
    case ir_binop_rshift:
       if (native_integers) {
@@ -1966,19 +2177,19 @@ glsl_to_tgsi_visitor::visit_expression(ir_expression* ir, st_src_reg *op)
          emit_asm(ir, opcode, result_dst, op[0], count);
          break;
       }
-      /* fallthrough */
+      FALLTHROUGH;
    case ir_binop_bit_and:
       if (native_integers) {
          emit_asm(ir, TGSI_OPCODE_AND, result_dst, op[0], op[1]);
          break;
       }
-      /* fallthrough */
+      FALLTHROUGH;
    case ir_binop_bit_xor:
       if (native_integers) {
          emit_asm(ir, TGSI_OPCODE_XOR, result_dst, op[0], op[1]);
          break;
       }
-      /* fallthrough */
+      FALLTHROUGH;
    case ir_binop_bit_or:
       if (native_integers) {
          emit_asm(ir, TGSI_OPCODE_OR, result_dst, op[0], op[1]);
@@ -2157,7 +2368,7 @@ glsl_to_tgsi_visitor::visit_expression(ir_expression* ir, st_src_reg *op)
    case ir_binop_interpolate_at_offset: {
       /* The y coordinate needs to be flipped for the default fb */
       static const gl_state_index16 transform_y_state[STATE_LENGTH]
-         = { STATE_INTERNAL, STATE_FB_WPOS_Y_TRANSFORM };
+         = { STATE_FB_WPOS_Y_TRANSFORM };
 
       unsigned transform_y_index =
          _mesa_add_state_reference(this->prog->Parameters,
@@ -2380,6 +2591,7 @@ glsl_to_tgsi_visitor::visit_expression(ir_expression* ir, st_src_reg *op)
    case ir_binop_carry:
    case ir_binop_borrow:
    case ir_unop_ssbo_unsized_array_length:
+   case ir_unop_implicitly_sized_array_length:
    case ir_unop_atan:
    case ir_binop_atan2:
    case ir_unop_clz:
@@ -3175,17 +3387,13 @@ glsl_to_tgsi_visitor::visit(ir_assignment *ir)
    assert(l.file != PROGRAM_UNDEFINED);
    assert(r.file != PROGRAM_UNDEFINED);
 
-   if (ir->condition) {
-      const bool switch_order = this->process_move_condition(ir->condition);
-      st_src_reg condition = this->result;
-
-      emit_block_mov(ir, ir->lhs->type, &l, &r, &condition, switch_order);
-   } else if (ir->rhs->as_expression() &&
-              this->instructions.get_tail() &&
-              ir->rhs == ((glsl_to_tgsi_instruction *)this->instructions.get_tail())->ir &&
-              !((glsl_to_tgsi_instruction *)this->instructions.get_tail())->is_64bit_expanded &&
-              type_size(ir->lhs->type) == 1 &&
-              l.writemask == ((glsl_to_tgsi_instruction *)this->instructions.get_tail())->dst[0].writemask) {
+   if (ir->rhs->as_expression() &&
+       this->instructions.get_tail() &&
+       ir->rhs == ((glsl_to_tgsi_instruction *)this->instructions.get_tail())->ir &&
+       !((glsl_to_tgsi_instruction *)this->instructions.get_tail())->is_64bit_expanded &&
+       type_size(ir->lhs->type) == 1 &&
+       !ir->lhs->type->is_64bit() &&
+       l.writemask == ((glsl_to_tgsi_instruction *)this->instructions.get_tail())->dst[0].writemask) {
       /* To avoid emitting an extra MOV when assigning an expression to a
        * variable, emit the last instruction of the expression again, but
        * replace the destination register with the target of the assignment.
@@ -3886,9 +4094,9 @@ glsl_to_tgsi_visitor::visit_image_intrinsic(ir_call *ir)
       coord.swizzle = SWIZZLE_XXXX;
       switch (type->coordinate_components()) {
       case 4: assert(!"unexpected coord count");
-      /* fallthrough */
+      FALLTHROUGH;
       case 3: coord.swizzle |= SWIZZLE_Z << 6;
-      /* fallthrough */
+      FALLTHROUGH;
       case 2: coord.swizzle |= SWIZZLE_Y << 3;
       }
 
@@ -4133,6 +4341,8 @@ glsl_to_tgsi_visitor::visit(ir_call *ir)
    case ir_intrinsic_generic_atomic_comp_swap:
    case ir_intrinsic_begin_invocation_interlock:
    case ir_intrinsic_end_invocation_interlock:
+   case ir_intrinsic_image_sparse_load:
+   case ir_intrinsic_is_sparse_texels_resident:
       unreachable("Invalid intrinsic");
    }
 }
@@ -4748,7 +4958,6 @@ glsl_to_tgsi_visitor::glsl_to_tgsi_visitor()
    ctx = NULL;
    prog = NULL;
    precise = 0;
-   need_uarl = false;
    tg4_component_in_swizzle = false;
    shader_program = NULL;
    shader = NULL;
@@ -4789,7 +4998,7 @@ count_resources(glsl_to_tgsi_visitor *v, gl_program *prog)
 {
    v->samplers_used = 0;
    v->images_used = 0;
-   prog->info.textures_used_by_txf = 0;
+   BITSET_ZERO(prog->info.textures_used_by_txf);
 
    foreach_in_list(glsl_to_tgsi_instruction, inst, &v->instructions) {
       if (inst->info->is_tex) {
@@ -4803,7 +5012,7 @@ count_resources(glsl_to_tgsi_visitor *v, gl_program *prog)
                st_translate_texture_target(inst->tex_target, inst->tex_shadow);
 
             if (inst->op == TGSI_OPCODE_TXF || inst->op == TGSI_OPCODE_TXF_LZ) {
-               prog->info.textures_used_by_txf |= 1u << idx;
+               BITSET_SET(prog->info.textures_used_by_txf, idx);
             }
          }
       }
@@ -4861,7 +5070,7 @@ get_src_arg_mask(st_dst_reg dst, st_src_reg src)
  * instruction is the first instruction to write to register T0.  There are
  * several lowering passes done in GLSL IR (e.g. branches and
  * relative addressing) that create a large number of conditional assignments
- * that ir_to_mesa converts to CMP instructions like the one mentioned above.
+ * that glsl_to_tgsi converts to CMP instructions like the one mentioned above.
  *
  * Here is why this conversion is safe:
  * CMP T0, T1 T2 T0 can be expanded to:
@@ -5394,7 +5603,7 @@ glsl_to_tgsi_visitor::eliminate_dead_code(void)
       case TGSI_OPCODE_IF:
       case TGSI_OPCODE_UIF:
          ++level;
-         /* fallthrough to default case to mark the condition as read */
+         FALLTHROUGH; /* to mark the condition as read */
       default:
          /* Continuing the block, clear any channels from the write array that
           * are read by this instruction.
@@ -5806,7 +6015,6 @@ struct st_translate {
    const ubyte *outputMapping;
 
    enum pipe_shader_type procType;  /**< PIPE_SHADER_VERTEX/FRAGMENT */
-   bool need_uarl;
    bool tg4_component_in_swizzle;
 };
 
@@ -5902,9 +6110,9 @@ dst_register(struct st_translate *t, gl_register_file file, unsigned index,
             find_inout_array(t->output_decls,
                              t->num_output_decls, array_id);
          unsigned mesa_index = decl->mesa_index;
-         int slot = t->outputMapping[mesa_index];
+         ubyte slot = t->outputMapping[mesa_index];
 
-         assert(slot != -1 && t->outputs[slot].File == TGSI_FILE_OUTPUT);
+         assert(slot != 0xff && t->outputs[slot].File == TGSI_FILE_OUTPUT);
 
          struct ureg_dst dst = t->outputs[slot];
          dst.ArrayID = array_id;
@@ -5927,10 +6135,7 @@ static struct ureg_src
 translate_addr(struct st_translate *t, const st_src_reg *reladdr,
                unsigned addr_index)
 {
-   if (t->need_uarl || !reladdr->is_legal_tgsi_address_operand())
-      return ureg_src(t->address[addr_index]);
-
-   return translate_src(t, reladdr);
+   return ureg_src(t->address[addr_index]);
 }
 
 /**
@@ -6037,9 +6242,9 @@ translate_src(struct st_translate *t, const st_src_reg *src_reg)
                                                     t->num_input_decls,
                                                     src_reg->array_id);
          unsigned mesa_index = decl->mesa_index;
-         int slot = t->inputMapping[mesa_index];
+         ubyte slot = t->inputMapping[mesa_index];
 
-         assert(slot != -1 && t->inputs[slot].File == TGSI_FILE_INPUT);
+         assert(slot != 0xff && t->inputs[slot].File == TGSI_FILE_INPUT);
 
          src = t->inputs[slot];
          src.ArrayID = src_reg->array_id;
@@ -6399,7 +6604,7 @@ emit_wpos(struct st_context *st,
           struct ureg_program *ureg,
           int wpos_transform_const)
 {
-   struct pipe_screen *pscreen = st->pipe->screen;
+   struct pipe_screen *pscreen = st->screen;
    GLfloat adjX = 0.0f;
    GLfloat adjY[2] = { 0.0f, 0.0f };
    boolean invert = FALSE;
@@ -6570,7 +6775,7 @@ st_translate_program(
    glsl_to_tgsi_visitor *program,
    const struct gl_program *proginfo,
    GLuint numInputs,
-   const ubyte inputMapping[],
+   const ubyte attrToIndex[],
    const ubyte inputSlotToAttr[],
    const ubyte inputSemanticName[],
    const ubyte inputSemanticIndex[],
@@ -6580,12 +6785,13 @@ st_translate_program(
    const ubyte outputSemanticName[],
    const ubyte outputSemanticIndex[])
 {
-   struct pipe_screen *screen = st_context(ctx)->pipe->screen;
+   struct pipe_screen *screen = st_context(ctx)->screen;
    struct st_translate *t;
    unsigned i;
-   struct gl_program_constants *frag_const =
-      &ctx->Const.Program[MESA_SHADER_FRAGMENT];
+   struct gl_program_constants *prog_const =
+      &ctx->Const.Program[program->shader->Stage];
    enum pipe_error ret = PIPE_OK;
+   uint8_t inputMapping[VARYING_SLOT_TESS_MAX] = {0};
 
    assert(numInputs <= ARRAY_SIZE(t->inputs));
    assert(numOutputs <= ARRAY_SIZE(t->outputs));
@@ -6603,6 +6809,29 @@ st_translate_program(
    ASSERT_BITFIELD_SIZE(glsl_to_tgsi_instruction, op,
                         (enum tgsi_opcode) (TGSI_OPCODE_LAST - 1));
 
+   if (proginfo->DualSlotInputs != 0) {
+      /* adjust attrToIndex to include placeholder for second
+       * part of a double attribute.
+       * Following code is basically matching behavior of
+       * util_lower_uint64_vertex_elements
+       */
+      numInputs = 0;
+      for (unsigned attr = 0; attr < VERT_ATTRIB_MAX; attr++) {
+         if ((proginfo->info.inputs_read & BITFIELD64_BIT(attr)) != 0) {
+            inputMapping[attr] = numInputs++;
+
+            if ((proginfo->DualSlotInputs & BITFIELD64_BIT(attr)) != 0) {
+               /* add placeholder for second part of a double attribute */
+               numInputs++;
+            }
+         }
+      }
+      inputMapping[VERT_ATTRIB_EDGEFLAG] = numInputs;
+   }
+   else {
+      memcpy(inputMapping, attrToIndex, sizeof(inputMapping));
+   }
+
    t = CALLOC_STRUCT(st_translate);
    if (!t) {
       ret = PIPE_ERROR_OUT_OF_MEMORY;
@@ -6610,7 +6839,6 @@ st_translate_program(
    }
 
    t->procType = procType;
-   t->need_uarl = !screen->get_param(screen, PIPE_CAP_TGSI_ANY_REG_AS_ADDRESS);
    t->tg4_component_in_swizzle = screen->get_param(screen, PIPE_CAP_TGSI_TG4_COMPONENT_IN_SWIZZLE);
    t->inputMapping = inputMapping;
    t->outputMapping = outputMapping;
@@ -6658,10 +6886,10 @@ st_translate_program(
             interp_location = (enum tgsi_interpolate_loc) decl->interp_loc;
          }
 
-         src = ureg_DECL_fs_input_cyl_centroid_layout(ureg,
+         src = ureg_DECL_fs_input_centroid_layout(ureg,
                   (enum tgsi_semantic) inputSemanticName[slot],
                   inputSemanticIndex[slot],
-                  interp_mode, 0, interp_location, slot, tgsi_usage_mask,
+                  interp_mode, interp_location, slot, tgsi_usage_mask,
                   decl->array_id, decl->size);
 
          for (unsigned j = 0; j < decl->size; ++j) {
@@ -6778,12 +7006,6 @@ st_translate_program(
             goto out;
          }
       }
-
-      if (program->shader->Program->sh.fs.BlendSupport)
-         ureg_property(ureg,
-                       TGSI_PROPERTY_FS_BLEND_EQUATION_ADVANCED,
-                       program->shader->Program->sh.fs.BlendSupport);
-
    }
    else if (procType == PIPE_SHADER_VERTEX) {
       for (i = 0; i < numOutputs; i++) {
@@ -6807,49 +7029,41 @@ st_translate_program(
 
    /* Declare misc input registers
     */
-   {
-      GLbitfield64 sysInputs = proginfo->info.system_values_read;
+   BITSET_FOREACH_SET(i, proginfo->info.system_values_read, SYSTEM_VALUE_MAX) {
+      enum tgsi_semantic semName = tgsi_get_sysval_semantic(i);
 
-      for (i = 0; sysInputs; i++) {
-         if (sysInputs & (1ull << i)) {
-            enum tgsi_semantic semName = tgsi_get_sysval_semantic(i);
+      t->systemValues[i] = ureg_DECL_system_value(ureg, semName, 0);
 
-            t->systemValues[i] = ureg_DECL_system_value(ureg, semName, 0);
-
-            if (semName == TGSI_SEMANTIC_INSTANCEID ||
-                semName == TGSI_SEMANTIC_VERTEXID) {
-               /* From Gallium perspective, these system values are always
-                * integer, and require native integer support.  However, if
-                * native integer is supported on the vertex stage but not the
-                * pixel stage (e.g, i915g + draw), Mesa will generate IR that
-                * assumes these system values are floats. To resolve the
-                * inconsistency, we insert a U2F.
-                */
-               struct st_context *st = st_context(ctx);
-               struct pipe_screen *pscreen = st->pipe->screen;
-               assert(procType == PIPE_SHADER_VERTEX);
-               assert(pscreen->get_shader_param(pscreen, PIPE_SHADER_VERTEX, PIPE_SHADER_CAP_INTEGERS));
-               (void) pscreen;
-               if (!ctx->Const.NativeIntegers) {
-                  struct ureg_dst temp = ureg_DECL_local_temporary(t->ureg);
-                  ureg_U2F(t->ureg, ureg_writemask(temp, TGSI_WRITEMASK_X),
-                           t->systemValues[i]);
-                  t->systemValues[i] = ureg_scalar(ureg_src(temp), 0);
-               }
-            }
-
-            if (procType == PIPE_SHADER_FRAGMENT &&
-                semName == TGSI_SEMANTIC_POSITION)
-               emit_wpos(st_context(ctx), t, proginfo, ureg,
-                         program->wpos_transform_const);
-
-            if (procType == PIPE_SHADER_FRAGMENT &&
-                semName == TGSI_SEMANTIC_SAMPLEPOS)
-               emit_samplepos_adjustment(t, program->wpos_transform_const);
-
-            sysInputs &= ~(1ull << i);
+      if (semName == TGSI_SEMANTIC_INSTANCEID ||
+          semName == TGSI_SEMANTIC_VERTEXID) {
+         /* From Gallium perspective, these system values are always
+          * integer, and require native integer support.  However, if
+          * native integer is supported on the vertex stage but not the
+          * pixel stage (e.g, i915g + draw), Mesa will generate IR that
+          * assumes these system values are floats. To resolve the
+          * inconsistency, we insert a U2F.
+          */
+         struct st_context *st = st_context(ctx);
+         struct pipe_screen *pscreen = st->screen;
+         assert(procType == PIPE_SHADER_VERTEX);
+         assert(pscreen->get_shader_param(pscreen, PIPE_SHADER_VERTEX, PIPE_SHADER_CAP_INTEGERS));
+         (void) pscreen;
+         if (!ctx->Const.NativeIntegers) {
+            struct ureg_dst temp = ureg_DECL_local_temporary(t->ureg);
+            ureg_U2F(t->ureg, ureg_writemask(temp, TGSI_WRITEMASK_X),
+                     t->systemValues[i]);
+            t->systemValues[i] = ureg_scalar(ureg_src(temp), 0);
          }
       }
+
+      if (procType == PIPE_SHADER_FRAGMENT &&
+          semName == TGSI_SEMANTIC_POSITION)
+         emit_wpos(st_context(ctx), t, proginfo, ureg,
+                   program->wpos_transform_const);
+
+      if (procType == PIPE_SHADER_FRAGMENT &&
+          semName == TGSI_SEMANTIC_SAMPLEPOS)
+         emit_samplepos_adjustment(t, program->wpos_transform_const);
    }
 
    t->array_sizes = program->array_sizes;
@@ -6871,7 +7085,7 @@ st_translate_program(
       t->num_constants = proginfo->Parameters->NumParameters;
 
       for (i = 0; i < proginfo->Parameters->NumParameters; i++) {
-         unsigned pvo = proginfo->Parameters->ParameterValueOffset[i];
+         unsigned pvo = proginfo->Parameters->Parameters[i].ValueOffset;
 
          switch (proginfo->Parameters->Parameters[i].Type) {
          case PROGRAM_STATE_VAR:
@@ -6928,7 +7142,7 @@ st_translate_program(
    assert(i == program->num_immediates);
 
    /* texture samplers */
-   for (i = 0; i < frag_const->MaxTextureImageUnits; i++) {
+   for (i = 0; i < prog_const->MaxTextureImageUnits; i++) {
       if (program->samplers_used & (1u << i)) {
          enum tgsi_return_type type =
             st_translate_texture_type(program->sampler_types[i]);
@@ -6949,7 +7163,7 @@ st_translate_program(
             unsigned index = (prog->info.num_ssbos +
                               prog->sh.AtomicBuffers[i]->Binding);
             assert(prog->sh.AtomicBuffers[i]->Binding <
-                   frag_const->MaxAtomicBuffers);
+                   prog_const->MaxAtomicBuffers);
             t->buffers[index] = ureg_DECL_buffer(ureg, index, true);
          }
       } else {
@@ -6962,7 +7176,7 @@ st_translate_program(
          }
       }
 
-      assert(prog->info.num_ssbos <= frag_const->MaxShaderStorageBlocks);
+      assert(prog->info.num_ssbos <= prog_const->MaxShaderStorageBlocks);
       for (i = 0; i < prog->info.num_ssbos; i++) {
          t->buffers[i] = ureg_DECL_buffer(ureg, i, false);
       }
@@ -7015,7 +7229,7 @@ get_mesa_program_tgsi(struct gl_context *ctx,
    struct gl_program *prog;
    struct gl_shader_compiler_options *options =
          &ctx->Const.ShaderCompilerOptions[shader->Stage];
-   struct pipe_screen *pscreen = ctx->st->pipe->screen;
+   struct pipe_screen *pscreen = st_context(ctx)->screen;
    enum pipe_shader_type ptarget = pipe_shader_type_from_mesa(shader->Stage);
    unsigned skip_merge_registers;
 
@@ -7038,7 +7252,6 @@ get_mesa_program_tgsi(struct gl_context *ctx,
                                            PIPE_SHADER_CAP_TGSI_FMA_SUPPORTED);
    v->has_tex_txf_lz = pscreen->get_param(pscreen,
                                           PIPE_CAP_TGSI_TEX_TXF_LZ);
-   v->need_uarl = !pscreen->get_param(pscreen, PIPE_CAP_TGSI_ANY_REG_AS_ADDRESS);
 
    v->tg4_component_in_swizzle = pscreen->get_param(pscreen, PIPE_CAP_TGSI_TG4_COMPONENT_IN_SWIZZLE);
    v->variables = _mesa_hash_table_create(v->mem_ctx, _mesa_hash_pointer,
@@ -7047,8 +7260,8 @@ get_mesa_program_tgsi(struct gl_context *ctx,
       pscreen->get_shader_param(pscreen, ptarget,
                                 PIPE_SHADER_CAP_TGSI_SKIP_MERGE_REGISTERS);
 
-   _mesa_generate_parameters_list_for_uniforms(ctx, shader_program, shader,
-                                               prog->Parameters);
+   generate_parameters_list_for_uniforms(ctx, shader_program, shader,
+                                         prog->Parameters);
 
    /* Remove reads from output registers. */
    if (!pscreen->get_param(pscreen, PIPE_CAP_TGSI_CAN_READ_OUTPUTS))
@@ -7152,10 +7365,10 @@ get_mesa_program_tgsi(struct gl_context *ctx,
    /* This must be done before the uniform storage is associated. */
    if (shader->Stage == MESA_SHADER_FRAGMENT &&
        (prog->info.inputs_read & VARYING_BIT_POS ||
-        prog->info.system_values_read & (1ull << SYSTEM_VALUE_FRAG_COORD) ||
-        prog->info.system_values_read & (1ull << SYSTEM_VALUE_SAMPLE_POS))) {
+        BITSET_TEST(prog->info.system_values_read, SYSTEM_VALUE_FRAG_COORD) ||
+        BITSET_TEST(prog->info.system_values_read, SYSTEM_VALUE_SAMPLE_POS))) {
       static const gl_state_index16 wposTransformState[STATE_LENGTH] = {
-         STATE_INTERNAL, STATE_FB_WPOS_Y_TRANSFORM
+         STATE_FB_WPOS_Y_TRANSFORM
       };
 
       v->wpos_transform_const = _mesa_add_state_reference(prog->Parameters,
@@ -7166,20 +7379,15 @@ get_mesa_program_tgsi(struct gl_context *ctx,
     * storage is only associated with the original parameter list.
     * This should be enough for Bitmap and DrawPixels constants.
     */
-   _mesa_reserve_parameter_storage(prog->Parameters, 8);
-
-   /* This has to be done last.  Any operation the can cause
-    * prog->ParameterValues to get reallocated (e.g., anything that adds a
-    * program constant) has to happen before creating this linkage.
-    */
-   _mesa_associate_uniform_storage(ctx, shader_program, prog);
+   _mesa_ensure_and_associate_uniform_storage(ctx, shader_program, prog, 8);
    if (!shader_program->data->LinkStatus) {
       free_glsl_to_tgsi_visitor(v);
       _mesa_reference_program(ctx, &shader->Program, NULL);
       return NULL;
    }
 
-   st_program(prog)->glsl_to_tgsi = v;
+
+   prog->glsl_to_tgsi = v;
 
    PRINT_STATS(v->print_stats());
 
@@ -7244,7 +7452,7 @@ has_unsupported_control_flow(exec_list *ir,
 GLboolean
 st_link_tgsi(struct gl_context *ctx, struct gl_shader_program *prog)
 {
-   struct pipe_screen *pscreen = ctx->st->pipe->screen;
+   struct pipe_screen *pscreen = st_context(ctx)->screen;
 
    for (unsigned i = 0; i < MESA_SHADER_STAGES; i++) {
       struct gl_linked_shader *shader = prog->_LinkedShaders[i];
@@ -7298,9 +7506,9 @@ st_link_tgsi(struct gl_context *ctx, struct gl_shader_program *prog)
             (linked_prog->sh.LinkedTransformFeedback &&
              linked_prog->sh.LinkedTransformFeedback->NumVarying);
 
-         if (!ctx->Driver.ProgramStringNotify(ctx,
-                                              _mesa_shader_stage_to_program(i),
-                                              linked_prog)) {
+         if (!st_program_string_notify(ctx,
+                                       _mesa_shader_stage_to_program(i),
+                                       linked_prog)) {
             _mesa_reference_program(ctx, &shader->Program, NULL);
             return GL_FALSE;
          }

@@ -45,10 +45,12 @@ tu_cs_init(struct tu_cs *cs,
  * Initialize a command stream as a wrapper to an external buffer.
  */
 void
-tu_cs_init_external(struct tu_cs *cs, uint32_t *start, uint32_t *end)
+tu_cs_init_external(struct tu_cs *cs, struct tu_device *device,
+                    uint32_t *start, uint32_t *end)
 {
    memset(cs, 0, sizeof(*cs));
 
+   cs->device = device;
    cs->mode = TU_CS_MODE_EXTERNAL;
    cs->start = cs->reserved_end = cs->cur = start;
    cs->end = end;
@@ -62,7 +64,6 @@ tu_cs_finish(struct tu_cs *cs)
 {
    for (uint32_t i = 0; i < cs->bo_count; ++i) {
       tu_bo_finish(cs->device, cs->bos[i]);
-      free(cs->bos[i]);
    }
 
    free(cs->entries);
@@ -105,12 +106,11 @@ tu_cs_add_bo(struct tu_cs *cs, uint32_t size)
       cs->bos = new_bos;
    }
 
-   struct tu_bo *new_bo = malloc(sizeof(struct tu_bo));
-   if (!new_bo)
-      return VK_ERROR_OUT_OF_HOST_MEMORY;
+   struct tu_bo *new_bo;
 
    VkResult result =
-      tu_bo_init_new(cs->device, new_bo, size * sizeof(uint32_t), true);
+      tu_bo_init_new(cs->device, &new_bo, size * sizeof(uint32_t),
+                     TU_BO_ALLOC_GPU_READ_ONLY | TU_BO_ALLOC_ALLOW_DUMP);
    if (result != VK_SUCCESS) {
       free(new_bo);
       return result;
@@ -119,7 +119,6 @@ tu_cs_add_bo(struct tu_cs *cs, uint32_t size)
    result = tu_bo_map(cs->device, new_bo);
    if (result != VK_SUCCESS) {
       tu_bo_finish(cs->device, new_bo);
-      free(new_bo);
       return result;
    }
 
@@ -251,7 +250,7 @@ tu_cs_begin_sub_stream(struct tu_cs *cs, uint32_t size, struct tu_cs *sub_cs)
    if (result != VK_SUCCESS)
       return result;
 
-   tu_cs_init_external(sub_cs, cs->cur, cs->reserved_end);
+   tu_cs_init_external(sub_cs, cs->device, cs->cur, cs->reserved_end);
    tu_cs_begin(sub_cs);
    result = tu_cs_reserve_space(sub_cs, size);
    assert(result == VK_SUCCESS);
@@ -371,8 +370,10 @@ tu_cs_reserve_space(struct tu_cs *cs, uint32_t reserved_size)
          tu_cs_emit(cs, CP_COND_REG_EXEC_1_DWORDS(0));
       }
 
-      /* double the size for the next bo */
-      new_size <<= 1;
+      /* double the size for the next bo, also there is an upper
+       * bound on IB size, which appears to be 0x0fffff
+       */
+      new_size = MIN2(new_size << 1, 0x0fffff);
       if (cs->next_bo_size < new_size)
          cs->next_bo_size = new_size;
    }
@@ -403,7 +404,6 @@ tu_cs_reset(struct tu_cs *cs)
 
    for (uint32_t i = 0; i + 1 < cs->bo_count; ++i) {
       tu_bo_finish(cs->device, cs->bos[i]);
-      free(cs->bos[i]);
    }
 
    if (cs->bo_count) {

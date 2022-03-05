@@ -308,22 +308,16 @@ generate_aaline_fs(struct aaline_stage *aaline)
 #endif
 
    aaline->fs->aaline_fs = aaline->driver_create_fs_state(pipe, &aaline_fs);
-   if (aaline->fs->aaline_fs == NULL)
-      goto fail;
+   if (aaline->fs->aaline_fs != NULL)
+      aaline->fs->generic_attrib = transform.maxGeneric + 1;
 
-   aaline->fs->generic_attrib = transform.maxGeneric + 1;
    FREE((void *)aaline_fs.tokens);
-   return TRUE;
-
-fail:
-   FREE((void *)aaline_fs.tokens);
-   return FALSE;
+   return aaline->fs->aaline_fs != NULL;
 }
 
 static boolean
 generate_aaline_fs_nir(struct aaline_stage *aaline)
 {
-#ifdef LLVM_AVAILABLE
    struct pipe_context *pipe = aaline->stage.draw->pipe;
    const struct pipe_shader_state *orig_fs = &aaline->fs->state;
    struct pipe_shader_state aaline_fs;
@@ -336,13 +330,9 @@ generate_aaline_fs_nir(struct aaline_stage *aaline)
    nir_lower_aaline_fs(aaline_fs.ir.nir, &aaline->fs->generic_attrib);
    aaline->fs->aaline_fs = aaline->driver_create_fs_state(pipe, &aaline_fs);
    if (aaline->fs->aaline_fs == NULL)
-      goto fail;
+      return FALSE;
 
    return TRUE;
-
-fail:
-#endif
-   return FALSE;
 }
 
 /**
@@ -606,15 +596,12 @@ draw_aaline_stage(struct draw_context *draw)
    aaline->stage.reset_stipple_counter = aaline_reset_stipple_counter;
    aaline->stage.destroy = aaline_destroy;
 
-   if (!draw_alloc_temp_verts(&aaline->stage, 8))
-      goto fail;
+   if (!draw_alloc_temp_verts(&aaline->stage, 8)) {
+      aaline->stage.destroy(&aaline->stage);
+      return NULL;
+   }
 
    return aaline;
-
- fail:
-   aaline->stage.destroy(&aaline->stage);
-
-   return NULL;
 }
 
 
@@ -653,10 +640,8 @@ aaline_create_fs_state(struct pipe_context *pipe,
    aafs->state.type = fs->type;
    if (fs->type == PIPE_SHADER_IR_TGSI)
       aafs->state.tokens = tgsi_dup_tokens(fs->tokens);
-#ifdef LLVM_AVAILABLE
    else
       aafs->state.ir.nir = nir_shader_clone(NULL, fs->ir.nir);
-#endif
 
    /* pass-through */
    aafs->driver_fs = aaline->driver_create_fs_state(pipe, fs);

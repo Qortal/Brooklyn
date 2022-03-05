@@ -254,6 +254,7 @@ struct nvc0_context {
 
    float default_tess_outer[4];
    float default_tess_inner[2];
+   uint8_t patch_vertices;
 
    bool vbo_push_hint;
 
@@ -382,8 +383,7 @@ struct pipe_sampler_view *
 nvc0_create_texture_view(struct pipe_context *,
                          struct pipe_resource *,
                          const struct pipe_sampler_view *,
-                         uint32_t flags,
-                         enum pipe_texture_target);
+                         uint32_t flags);
 struct pipe_sampler_view *
 nvc0_create_sampler_view(struct pipe_context *,
                          struct pipe_resource *,
@@ -413,7 +413,10 @@ nvc0_cb_bo_push(struct nouveau_context *,
                 unsigned offset, unsigned words, const uint32_t *data);
 
 /* nvc0_vbo.c */
-void nvc0_draw_vbo(struct pipe_context *, const struct pipe_draw_info *);
+void nvc0_draw_vbo(struct pipe_context *, const struct pipe_draw_info *, unsigned,
+                   const struct pipe_draw_indirect_info *indirect,
+                   const struct pipe_draw_start_count_bias *draws,
+                   unsigned num_draws);
 
 void *
 nvc0_vertex_state_create(struct pipe_context *pipe,
@@ -436,8 +439,13 @@ nvc0_video_buffer_create(struct pipe_context *pipe,
                          const struct pipe_video_buffer *templat);
 
 /* nvc0_push.c */
-void nvc0_push_vbo(struct nvc0_context *, const struct pipe_draw_info *);
-void nvc0_push_vbo_indirect(struct nvc0_context *, const struct pipe_draw_info *);
+void nvc0_push_vbo(struct nvc0_context *, const struct pipe_draw_info *,
+                   const struct pipe_draw_indirect_info *indirect,
+                   const struct pipe_draw_start_count_bias *draw);
+void nvc0_push_vbo_indirect(struct nvc0_context *, const struct pipe_draw_info *,
+                            unsigned drawid_offset,
+                            const struct pipe_draw_indirect_info *indirect,
+                            const struct pipe_draw_start_count_bias *draw);
 
 /* nve4_compute.c */
 void nve4_launch_grid(struct pipe_context *, const struct pipe_grid_info *);

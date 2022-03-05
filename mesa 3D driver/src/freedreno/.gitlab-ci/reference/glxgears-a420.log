@@ -1,4 +1,3 @@
-Reading src/freedreno/.gitlab-ci/traces/glxgears-a420.rd.gz...
 gpu_id: 420
 cmd: X/23360: fence=1029603
 cmd: glxgears/23375: fence=1029604
@@ -98,7 +97,7 @@ t0		write TPL1_TP_TEX_COUNT (2381)
 			TPL1_TP_TEX_COUNT: { VS = 16 | HS = 0 | DS = 0 | GS = 0 }
 108ce0f8:		0000: 00002381 00000010
 t0		write TPL1_TP_FS_TEX_COUNT (23a0)
-			TPL1_TP_FS_TEX_COUNT: 0x10
+			TPL1_TP_FS_TEX_COUNT: { FS = 16 | CS = 0 }
 108ce100:		0000: 000023a0 00000010
 t3		opcode: CP_SET_DRAW_STATE (43) (3 dwords)
 			{ COUNT = 0 | DISABLE_ALL_GROUPS | GROUP_ID = 0 }
@@ -270,7 +269,7 @@ t0			write RB_STENCILREFMASK (210b)
 				RB_STENCILREFMASK_BF: { STENCILREF = 0 | STENCILMASK = 0 | STENCILWRITEMASK = 0 }
 109ce024:			0000: 0001210b 00000000 00000000
 t0			write RB_DEPTH_CONTROL (2101)
-				RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_ALWAYS | Z_TEST_ENABLE }
+				RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_ALWAYS | Z_READ_ENABLE }
 109ce030:			0000: 00002101 80000076
 t0			write GRAS_ALPHA_CONTROL (2073)
 				GRAS_ALPHA_CONTROL: { 0 }
@@ -424,18 +423,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (35 dwords)
 				:0:0002:0002[00000000x_00000000x] nop
 				:0:0003:0003[00000000x_00000000x] nop
 				:0:0004:0004[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): (cnt=0, max=0)
-				- input (half): (cnt=0, max=0)
-				- input (full): (cnt=0, max=0)
-				- max const: 0
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): (cnt=0, max=0)  (estimated)
-				- shaderdb: 5 instructions, 4 nops, 1 non-nops, (5 instlen), 0 last-baryf, 0 half, 0 full
+				Stats:
+				- shaderdb: 5 instr, 4 nops, 1 non-nops, 0 mov, 0 cov
+				- shaderdb: 0 last-baryf, 0 half, 0 full, 0 constlen
 				- shaderdb: 5 cat0, 0 cat1, 0 cat2, 0 cat3, 0 cat4, 0 cat5, 0 cat6, 0 cat7
-				- shaderdb: 0 (ss), 0 (sy)
+				- shaderdb: 0 sstall, 0 (ss), 0 (sy)
 109ce1f0:			0000: c0213000 00600000 00000000 00000000 03000000 00000000 00000000 00000000
 *
 t3			opcode: CP_LOAD_STATE4 (30) (35 dwords)
@@ -450,18 +442,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (35 dwords)
 				:0:0006:0006[00000000x_00000000x] nop
 				:0:0007:0007[00000000x_00000000x] nop
 				:0:0008:0008[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-3 (cnt=4, max=3)
-				- input (half): (cnt=0, max=0)
-				- input (full): (cnt=0, max=0)
-				- max const: 3
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): 0-3 (cnt=4, max=3)  (estimated)
-				- shaderdb: 9 instructions, 4 nops, 5 non-nops, (9 instlen), 0 last-baryf, 0 half, 1 full
+				Stats:
+				- shaderdb: 9 instr, 4 nops, 5 non-nops, 4 mov, 0 cov
+				- shaderdb: 0 last-baryf, 0 half, 1 full, 1 constlen
 				- shaderdb: 5 cat0, 4 cat1, 0 cat2, 0 cat3, 0 cat4, 0 cat5, 0 cat6, 0 cat7
-				- shaderdb: 0 (ss), 0 (sy)
+				- shaderdb: 0 sstall, 0 (ss), 0 (sy)
 109ce27c:			0000: c0213000 00700000 00000000 00000000 20244000 00000001 20244001 00000002
 109ce29c:			0020: 20244002 00000003 20244003 00000000 03000000 00000000 00000000 00000000
 *
@@ -700,7 +685,7 @@ t3			opcode: CP_DRAW_INDX_OFFSET (38) (4 dwords)
 !+	ffff0100			RB_FS_OUTPUT: { ENABLE_BLEND = 0 | INDEPENDENT_BLEND | SAMPLE_MASK = 0xffff }
 !+	0000000f			RB_RENDER_COMPONENTS: { RT0 = 0xf | RT1 = 0 | RT2 = 0 | RT3 = 0 | RT4 = 0 | RT5 = 0 | RT6 = 0 | RT7 = 0 }
 !+	00000001			RB_FS_OUTPUT_REG: { MRT = 1 }
-!+	80000076			RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_ALWAYS | Z_TEST_ENABLE }
+!+	80000076			RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_ALWAYS | Z_READ_ENABLE }
 !+	00064002			RB_DEPTH_INFO: { DEPTH_FORMAT = DEPTH4_24_8 | DEPTH_BASE = 0x64000 }
 !+	00000028			RB_DEPTH_PITCH: 1280
 !+	00000028			RB_DEPTH_PITCH2: 1280
@@ -789,7 +774,7 @@ t3			opcode: CP_DRAW_INDX_OFFSET (38) (4 dwords)
 !+	7e420000			SP_GS_OBJ_OFFSET_REG: { CONSTOBJECTOFFSET = 66 | SHADEROBJOFFSET = 63 }
  +	00000000			TPL1_TP_TEX_OFFSET: 0
 !+	00000010			TPL1_TP_TEX_COUNT: { VS = 16 | HS = 0 | DS = 0 | GS = 0 }
-!+	00000010			TPL1_TP_FS_TEX_COUNT: 0x10
+!+	00000010			TPL1_TP_FS_TEX_COUNT: { FS = 16 | CS = 0 }
 !+	28000250			HLSQ_CONTROL_0_REG: { FSTHREADSIZE = FOUR_QUADS | FSSUPERTHREADENABLE | SPSHADERRESTART | CONSTMODE = 1 | SPCONSTFULLUPDATE }
 !+	fcfc0100			HLSQ_CONTROL_1_REG: { VSTHREADSIZE = TWO_QUADS | VSSUPERTHREADENABLE | COORDREGID = r63.x | ZWCOORDREGID = r63.x }
 !+	fff3f3f0			HLSQ_CONTROL_2_REG: { PRIMALLOCTHRESHOLD = 63 | FACEREGID = r63.x | SAMPLEID_REGID = r63.x | SAMPLEMASK_REGID = r63.x }
@@ -822,7 +807,7 @@ t0			write RB_STENCILREFMASK (210b)
 				RB_STENCILREFMASK_BF: { STENCILREF = 0 | STENCILMASK = 0 | STENCILWRITEMASK = 0 }
 109ce490:			0000: 0001210b 00000000 00000000
 t0			write RB_DEPTH_CONTROL (2101)
-				RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+				RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
 109ce49c:			0000: 00002101 80000016
 t0			write GRAS_ALPHA_CONTROL (2073)
 				GRAS_ALPHA_CONTROL: { 0 }
@@ -1038,18 +1023,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (131 dwords)
 				:0:0058:0071[00000000x_00000000x] nop
 				:0:0059:0072[00000000x_00000000x] nop
 				:0:0060:0073[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-13 (cnt=14, max=13)
-				- input (half): (cnt=0, max=0)
-				- input (full): 2-5 (cnt=4, max=5)
-				- max const: 52
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): 6-13 (cnt=8, max=13)  (estimated)
-				- shaderdb: 74 instructions, 27 nops, 47 non-nops, (61 instlen), 0 last-baryf, 0 half, 4 full
+				Stats:
+				- shaderdb: 74 instr, 27 nops, 47 non-nops, 7 mov, 1 cov
+				- shaderdb: 0 last-baryf, 0 half, 4 full, 13 constlen
 				- shaderdb: 28 cat0, 8 cat1, 15 cat2, 22 cat3, 1 cat4, 0 cat5, 0 cat6, 0 cat7
-				- shaderdb: 1 (ss), 0 (sy)
+				- shaderdb: 10 sstall, 1 (ss), 0 (sy)
 109ce66c:			0000: c0813000 01200000 00000000 10000002 40700000 10030002 40700001 00001004
 109ce68c:			0020: 63818000 00011007 63818001 00001008 63820000 0001100b 63820001 0000100c
 109ce6ac:			0040: 63828006 10010002 40700000 0001100f 63828009 00001005 63818000 00000010
@@ -1080,18 +1058,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (35 dwords)
 				:0:0008:0008[00000000x_00000000x] nop
 				:0:0009:0009[00000000x_00000000x] nop
 				:0:0010:0010[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-3 (cnt=4, max=3)
-				- input (half): (cnt=0, max=0)
-				- input (full): 0-3 (cnt=4, max=3)
-				- max const: 0
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): (cnt=0, max=0)  (estimated)
-				- shaderdb: 11 instructions, 5 nops, 6 non-nops, (11 instlen), 5 last-baryf, 0 half, 1 full
+				Stats:
+				- shaderdb: 11 instr, 5 nops, 6 non-nops, 0 mov, 0 cov
+				- shaderdb: 5 last-baryf, 0 half, 1 full, 0 constlen
 				- shaderdb: 6 cat0, 0 cat1, 1 cat2, 0 cat3, 0 cat4, 0 cat5, 4 cat6, 0 cat7
-				- shaderdb: 1 (ss), 0 (sy)
+				- shaderdb: 0 sstall, 1 (ss), 0 (sy)
 109ce878:			0000: c0213000 00700000 00000000 00000000 00000000 01c00000 c7c60000 01c00002
 109ce898:			0020: c7c60001 01c00004 c7c60002 01c00006 c7c60003 00002000 473090fc 00000000
 109ce8b8:			0040: 03000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000
@@ -1257,7 +1228,7 @@ t3			opcode: CP_DRAW_INDX_OFFSET (38) (7 dwords)
  +	00000000			RB_ALPHA_CONTROL: { ALPHA_REF = 0 | ALPHA_TEST_FUNC = FUNC_NEVER }
 !+	ffff0000			RB_FS_OUTPUT: { ENABLE_BLEND = 0 | SAMPLE_MASK = 0xffff }
  +	00000001			RB_FS_OUTPUT_REG: { MRT = 1 }
-!+	80000016			RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+!+	80000016			RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
  +	00000000			RB_STENCIL_CONTROL: { FUNC = FUNC_NEVER | FAIL = STENCIL_KEEP | ZPASS = STENCIL_KEEP | ZFAIL = STENCIL_KEEP | FUNC_BF = FUNC_NEVER | FAIL_BF = STENCIL_KEEP | ZPASS_BF = STENCIL_KEEP | ZFAIL_BF = STENCIL_KEEP }
  +	00000000			RB_STENCIL_CONTROL2: { 0 }
  +	00000000			RB_STENCILREFMASK: { STENCILREF = 0 | STENCILMASK = 0 | STENCILWRITEMASK = 0 }
@@ -1492,7 +1463,7 @@ t0			write CP_SCRATCH[0x5].REG (057d)
 				:0,31,115,27
 109cecc4:			0000: 0000057d 0000001f
 t0			write RB_DEPTH_CONTROL (2101)
-				RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+				RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
 109ceccc:			0000: 00002101 80000016
 t0			write GRAS_ALPHA_CONTROL (2073)
 				GRAS_ALPHA_CONTROL: { 0 }
@@ -1670,18 +1641,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (131 dwords)
 				:0:0053:0064[00000000x_00000000x] nop
 				:0:0054:0065[00000000x_00000000x] nop
 				:0:0055:0066[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-8 10-17 (cnt=17, max=17)
-				- input (half): (cnt=0, max=0)
-				- input (full): 2-8 (cnt=7, max=8)
-				- max const: 52
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): 10-17 (cnt=8, max=17)  (estimated)
-				- shaderdb: 67 instructions, 23 nops, 44 non-nops, (56 instlen), 0 last-baryf, 0 half, 5 full
+				Stats:
+				- shaderdb: 67 instr, 23 nops, 44 non-nops, 4 mov, 1 cov
+				- shaderdb: 0 last-baryf, 0 half, 5 full, 13 constlen
 				- shaderdb: 24 cat0, 5 cat1, 15 cat2, 22 cat3, 1 cat4, 0 cat5, 0 cat6, 0 cat7
-				- shaderdb: 1 (ss), 0 (sy)
+				- shaderdb: 10 sstall, 1 (ss), 0 (sy)
 109cee34:			0000: c0813000 01200000 00000000 10000002 40700000 10030002 40700001 00001004
 109cee54:			0020: 63818000 00011007 63818001 00001008 63820000 0001100b 63820001 0000100c
 109cee74:			0040: 6382800a 10010002 40700000 0001100f 6382800d 00001005 63818000 00000010
@@ -1711,18 +1675,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (35 dwords)
 				:0:0008:0008[00000000x_00000000x] nop
 				:0:0009:0009[00000000x_00000000x] nop
 				:0:0010:0010[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-3 (cnt=4, max=3)
-				- input (half): (cnt=0, max=0)
-				- input (full): 0-3 (cnt=4, max=3)
-				- max const: 0
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): (cnt=0, max=0)  (estimated)
-				- shaderdb: 11 instructions, 5 nops, 6 non-nops, (11 instlen), 5 last-baryf, 0 half, 1 full
+				Stats:
+				- shaderdb: 11 instr, 5 nops, 6 non-nops, 0 mov, 0 cov
+				- shaderdb: 5 last-baryf, 0 half, 1 full, 0 constlen
 				- shaderdb: 6 cat0, 0 cat1, 1 cat2, 0 cat3, 0 cat4, 0 cat5, 4 cat6, 0 cat7
-				- shaderdb: 1 (ss), 0 (sy)
+				- shaderdb: 0 sstall, 1 (ss), 0 (sy)
 109cf040:			0000: c0213000 00700000 00000000 00000000 00000000 01c00000 c7c60000 01c00002
 109cf060:			0020: c7c60001 01c00004 c7c60002 01c00006 c7c60003 00002000 473090fc 00000000
 109cf080:			0040: 03000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000
@@ -1815,7 +1772,7 @@ t3			opcode: CP_DRAW_INDX_OFFSET (38) (7 dwords)
  +	00000000			GRAS_ALPHA_CONTROL: { 0 }
  +	00000000			RB_RENDER_CONTROL2: { COORD_MASK = 0 | MSAA_SAMPLES = 0 }
  +	00000001			RB_FS_OUTPUT_REG: { MRT = 1 }
- +	80000016			RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+ +	80000016			RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
  +	42001004			VPC_ATTR: { TOTALATTR = 4 | THRDASSIGN = 1 | ENABLE | 0x40000000 }
  +	00040400			VPC_PACK: { NUMBYPASSVAR = 0 | NUMFPNONPOSVAR = 4 | NUMNONPOSVSVAR = 4 }
  +	00000055			VPC_VARYING_INTERP[0].MODE: 0x55
@@ -1902,7 +1859,7 @@ t0			write CP_SCRATCH[0x5].REG (057d)
 				:0,37,115,33
 109cf258:			0000: 0000057d 00000025
 t0			write RB_DEPTH_CONTROL (2101)
-				RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+				RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
 109cf260:			0000: 00002101 80000016
 t0			write GRAS_ALPHA_CONTROL (2073)
 				GRAS_ALPHA_CONTROL: { 0 }
@@ -2103,18 +2060,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (131 dwords)
 				:0:0053:0064[00000000x_00000000x] nop
 				:0:0054:0065[00000000x_00000000x] nop
 				:0:0055:0066[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-8 10-17 (cnt=17, max=17)
-				- input (half): (cnt=0, max=0)
-				- input (full): 2-8 (cnt=7, max=8)
-				- max const: 52
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): 10-17 (cnt=8, max=17)  (estimated)
-				- shaderdb: 67 instructions, 23 nops, 44 non-nops, (56 instlen), 0 last-baryf, 0 half, 5 full
+				Stats:
+				- shaderdb: 67 instr, 23 nops, 44 non-nops, 4 mov, 1 cov
+				- shaderdb: 0 last-baryf, 0 half, 5 full, 13 constlen
 				- shaderdb: 24 cat0, 5 cat1, 15 cat2, 22 cat3, 1 cat4, 0 cat5, 0 cat6, 0 cat7
-				- shaderdb: 1 (ss), 0 (sy)
+				- shaderdb: 10 sstall, 1 (ss), 0 (sy)
 109cf40c:			0000: c0813000 01200000 00000000 10000002 40700000 10030002 40700001 00001004
 109cf42c:			0020: 63818000 00011007 63818001 00001008 63820000 0001100b 63820001 0000100c
 109cf44c:			0040: 6382800a 10010002 40700000 0001100f 6382800d 00001005 63818000 00000010
@@ -2142,18 +2092,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (35 dwords)
 				:0:0006:0006[00000000x_00000000x] nop
 				:0:0007:0007[00000000x_00000000x] nop
 				:0:0008:0008[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0 2-5 (cnt=5, max=5)
-				- input (half): (cnt=0, max=0)
-				- input (full): 0 (cnt=1, max=0)
-				- max const: 0
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): 2-5 (cnt=4, max=5)  (estimated)
-				- shaderdb: 9 instructions, 4 nops, 5 non-nops, (9 instlen), 3 last-baryf, 0 half, 2 full
+				Stats:
+				- shaderdb: 9 instr, 4 nops, 5 non-nops, 0 mov, 0 cov
+				- shaderdb: 3 last-baryf, 0 half, 2 full, 0 constlen
 				- shaderdb: 5 cat0, 0 cat1, 4 cat2, 0 cat3, 0 cat4, 0 cat5, 0 cat6, 0 cat7
-				- shaderdb: 0 (ss), 0 (sy)
+				- shaderdb: 0 sstall, 0 (ss), 0 (sy)
 109cf618:			0000: c0213000 00700000 00000000 00002000 47300002 00002001 47300003 00002002
 109cf638:			0020: 47300004 00002003 47308005 00000000 03000000 00000000 00000000 00000000
 *
@@ -2217,7 +2160,7 @@ t3			opcode: CP_DRAW_INDX_OFFSET (38) (7 dwords)
  +	00000000			GRAS_SC_WINDOW_SCISSOR_TL: { X = 0 | Y = 0 }
 !+	00001000			RB_RENDER_CONTROL2: { COORD_MASK = 0 | MSAA_SAMPLES = 0 | IJ_PERSP_PIXEL }
  +	00000001			RB_FS_OUTPUT_REG: { MRT = 1 }
- +	80000016			RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+ +	80000016			RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
  +	00000000			RB_VPORT_Z_CLAMP[0].MIN: 0
  +	00ffffff			RB_VPORT_Z_CLAMP[0].MAX: 0xffffff
  +	42001004			VPC_ATTR: { TOTALATTR = 4 | THRDASSIGN = 1 | ENABLE | 0x40000000 }
@@ -2291,7 +2234,7 @@ t0			write CP_SCRATCH[0x5].REG (057d)
 				:0,43,115,39
 109cf7b8:			0000: 0000057d 0000002b
 t0			write RB_DEPTH_CONTROL (2101)
-				RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+				RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
 109cf7c0:			0000: 00002101 80000016
 t0			write GRAS_ALPHA_CONTROL (2073)
 				GRAS_ALPHA_CONTROL: { 0 }
@@ -2497,18 +2440,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (131 dwords)
 				:0:0058:0071[00000000x_00000000x] nop
 				:0:0059:0072[00000000x_00000000x] nop
 				:0:0060:0073[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-13 (cnt=14, max=13)
-				- input (half): (cnt=0, max=0)
-				- input (full): 2-5 (cnt=4, max=5)
-				- max const: 52
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): 6-13 (cnt=8, max=13)  (estimated)
-				- shaderdb: 74 instructions, 27 nops, 47 non-nops, (61 instlen), 0 last-baryf, 0 half, 4 full
+				Stats:
+				- shaderdb: 74 instr, 27 nops, 47 non-nops, 7 mov, 1 cov
+				- shaderdb: 0 last-baryf, 0 half, 4 full, 13 constlen
 				- shaderdb: 28 cat0, 8 cat1, 15 cat2, 22 cat3, 1 cat4, 0 cat5, 0 cat6, 0 cat7
-				- shaderdb: 1 (ss), 0 (sy)
+				- shaderdb: 10 sstall, 1 (ss), 0 (sy)
 109cf96c:			0000: c0813000 01200000 00000000 10000002 40700000 10030002 40700001 00001004
 109cf98c:			0020: 63818000 00011007 63818001 00001008 63820000 0001100b 63820001 0000100c
 109cf9ac:			0040: 63828006 10010002 40700000 0001100f 63828009 00001005 63818000 00000010
@@ -2539,18 +2475,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (35 dwords)
 				:0:0008:0008[00000000x_00000000x] nop
 				:0:0009:0009[00000000x_00000000x] nop
 				:0:0010:0010[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-3 (cnt=4, max=3)
-				- input (half): (cnt=0, max=0)
-				- input (full): 0-3 (cnt=4, max=3)
-				- max const: 0
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): (cnt=0, max=0)  (estimated)
-				- shaderdb: 11 instructions, 5 nops, 6 non-nops, (11 instlen), 5 last-baryf, 0 half, 1 full
+				Stats:
+				- shaderdb: 11 instr, 5 nops, 6 non-nops, 0 mov, 0 cov
+				- shaderdb: 5 last-baryf, 0 half, 1 full, 0 constlen
 				- shaderdb: 6 cat0, 0 cat1, 1 cat2, 0 cat3, 0 cat4, 0 cat5, 4 cat6, 0 cat7
-				- shaderdb: 1 (ss), 0 (sy)
+				- shaderdb: 0 sstall, 1 (ss), 0 (sy)
 109cfb78:			0000: c0213000 00700000 00000000 00000000 00000000 01c00000 c7c60000 01c00002
 109cfb98:			0020: c7c60001 01c00004 c7c60002 01c00006 c7c60003 00002000 473090fc 00000000
 109cfbb8:			0040: 03000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000
@@ -2643,7 +2572,7 @@ t3			opcode: CP_DRAW_INDX_OFFSET (38) (7 dwords)
  +	00000000			GRAS_SC_WINDOW_SCISSOR_TL: { X = 0 | Y = 0 }
 !+	00000000			RB_RENDER_CONTROL2: { COORD_MASK = 0 | MSAA_SAMPLES = 0 }
  +	00000001			RB_FS_OUTPUT_REG: { MRT = 1 }
- +	80000016			RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+ +	80000016			RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
  +	00000000			RB_VPORT_Z_CLAMP[0].MIN: 0
  +	00ffffff			RB_VPORT_Z_CLAMP[0].MAX: 0xffffff
  +	42001004			VPC_ATTR: { TOTALATTR = 4 | THRDASSIGN = 1 | ENABLE | 0x40000000 }
@@ -2874,7 +2803,7 @@ t0			write CP_SCRATCH[0x5].REG (057d)
 				:0,67,115,63
 109cff44:			0000: 0000057d 00000043
 t0			write RB_DEPTH_CONTROL (2101)
-				RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+				RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
 109cff4c:			0000: 00002101 80000016
 t0			write GRAS_ALPHA_CONTROL (2073)
 				GRAS_ALPHA_CONTROL: { 0 }
@@ -3052,18 +2981,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (131 dwords)
 				:0:0053:0064[00000000x_00000000x] nop
 				:0:0054:0065[00000000x_00000000x] nop
 				:0:0055:0066[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-8 10-17 (cnt=17, max=17)
-				- input (half): (cnt=0, max=0)
-				- input (full): 2-8 (cnt=7, max=8)
-				- max const: 52
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): 10-17 (cnt=8, max=17)  (estimated)
-				- shaderdb: 67 instructions, 23 nops, 44 non-nops, (56 instlen), 0 last-baryf, 0 half, 5 full
+				Stats:
+				- shaderdb: 67 instr, 23 nops, 44 non-nops, 4 mov, 1 cov
+				- shaderdb: 0 last-baryf, 0 half, 5 full, 13 constlen
 				- shaderdb: 24 cat0, 5 cat1, 15 cat2, 22 cat3, 1 cat4, 0 cat5, 0 cat6, 0 cat7
-				- shaderdb: 1 (ss), 0 (sy)
+				- shaderdb: 10 sstall, 1 (ss), 0 (sy)
 109d00b4:			0000: c0813000 01200000 00000000 10000002 40700000 10030002 40700001 00001004
 109d00d4:			0020: 63818000 00011007 63818001 00001008 63820000 0001100b 63820001 0000100c
 109d00f4:			0040: 6382800a 10010002 40700000 0001100f 6382800d 00001005 63818000 00000010
@@ -3093,18 +3015,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (35 dwords)
 				:0:0008:0008[00000000x_00000000x] nop
 				:0:0009:0009[00000000x_00000000x] nop
 				:0:0010:0010[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-3 (cnt=4, max=3)
-				- input (half): (cnt=0, max=0)
-				- input (full): 0-3 (cnt=4, max=3)
-				- max const: 0
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): (cnt=0, max=0)  (estimated)
-				- shaderdb: 11 instructions, 5 nops, 6 non-nops, (11 instlen), 5 last-baryf, 0 half, 1 full
+				Stats:
+				- shaderdb: 11 instr, 5 nops, 6 non-nops, 0 mov, 0 cov
+				- shaderdb: 5 last-baryf, 0 half, 1 full, 0 constlen
 				- shaderdb: 6 cat0, 0 cat1, 1 cat2, 0 cat3, 0 cat4, 0 cat5, 4 cat6, 0 cat7
-				- shaderdb: 1 (ss), 0 (sy)
+				- shaderdb: 0 sstall, 1 (ss), 0 (sy)
 109d02c0:			0000: c0213000 00700000 00000000 00000000 00000000 01c00000 c7c60000 01c00002
 109d02e0:			0020: c7c60001 01c00004 c7c60002 01c00006 c7c60003 00002000 473090fc 00000000
 109d0300:			0040: 03000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000
@@ -3197,7 +3112,7 @@ t3			opcode: CP_DRAW_INDX_OFFSET (38) (7 dwords)
  +	00000000			GRAS_ALPHA_CONTROL: { 0 }
  +	00000000			RB_RENDER_CONTROL2: { COORD_MASK = 0 | MSAA_SAMPLES = 0 }
  +	00000001			RB_FS_OUTPUT_REG: { MRT = 1 }
- +	80000016			RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+ +	80000016			RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
  +	42001004			VPC_ATTR: { TOTALATTR = 4 | THRDASSIGN = 1 | ENABLE | 0x40000000 }
  +	00040400			VPC_PACK: { NUMBYPASSVAR = 0 | NUMFPNONPOSVAR = 4 | NUMNONPOSVSVAR = 4 }
  +	00000055			VPC_VARYING_INTERP[0].MODE: 0x55
@@ -3284,7 +3199,7 @@ t0			write CP_SCRATCH[0x5].REG (057d)
 				:0,73,115,69
 109d04d8:			0000: 0000057d 00000049
 t0			write RB_DEPTH_CONTROL (2101)
-				RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+				RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
 109d04e0:			0000: 00002101 80000016
 t0			write GRAS_ALPHA_CONTROL (2073)
 				GRAS_ALPHA_CONTROL: { 0 }
@@ -3485,18 +3400,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (131 dwords)
 				:0:0053:0064[00000000x_00000000x] nop
 				:0:0054:0065[00000000x_00000000x] nop
 				:0:0055:0066[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-8 10-17 (cnt=17, max=17)
-				- input (half): (cnt=0, max=0)
-				- input (full): 2-8 (cnt=7, max=8)
-				- max const: 52
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): 10-17 (cnt=8, max=17)  (estimated)
-				- shaderdb: 67 instructions, 23 nops, 44 non-nops, (56 instlen), 0 last-baryf, 0 half, 5 full
+				Stats:
+				- shaderdb: 67 instr, 23 nops, 44 non-nops, 4 mov, 1 cov
+				- shaderdb: 0 last-baryf, 0 half, 5 full, 13 constlen
 				- shaderdb: 24 cat0, 5 cat1, 15 cat2, 22 cat3, 1 cat4, 0 cat5, 0 cat6, 0 cat7
-				- shaderdb: 1 (ss), 0 (sy)
+				- shaderdb: 10 sstall, 1 (ss), 0 (sy)
 109d068c:			0000: c0813000 01200000 00000000 10000002 40700000 10030002 40700001 00001004
 109d06ac:			0020: 63818000 00011007 63818001 00001008 63820000 0001100b 63820001 0000100c
 109d06cc:			0040: 6382800a 10010002 40700000 0001100f 6382800d 00001005 63818000 00000010
@@ -3524,18 +3432,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (35 dwords)
 				:0:0006:0006[00000000x_00000000x] nop
 				:0:0007:0007[00000000x_00000000x] nop
 				:0:0008:0008[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0 2-5 (cnt=5, max=5)
-				- input (half): (cnt=0, max=0)
-				- input (full): 0 (cnt=1, max=0)
-				- max const: 0
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): 2-5 (cnt=4, max=5)  (estimated)
-				- shaderdb: 9 instructions, 4 nops, 5 non-nops, (9 instlen), 3 last-baryf, 0 half, 2 full
+				Stats:
+				- shaderdb: 9 instr, 4 nops, 5 non-nops, 0 mov, 0 cov
+				- shaderdb: 3 last-baryf, 0 half, 2 full, 0 constlen
 				- shaderdb: 5 cat0, 0 cat1, 4 cat2, 0 cat3, 0 cat4, 0 cat5, 0 cat6, 0 cat7
-				- shaderdb: 0 (ss), 0 (sy)
+				- shaderdb: 0 sstall, 0 (ss), 0 (sy)
 109d0898:			0000: c0213000 00700000 00000000 00002000 47300002 00002001 47300003 00002002
 109d08b8:			0020: 47300004 00002003 47308005 00000000 03000000 00000000 00000000 00000000
 *
@@ -3599,7 +3500,7 @@ t3			opcode: CP_DRAW_INDX_OFFSET (38) (7 dwords)
  +	00000000			GRAS_SC_WINDOW_SCISSOR_TL: { X = 0 | Y = 0 }
 !+	00001000			RB_RENDER_CONTROL2: { COORD_MASK = 0 | MSAA_SAMPLES = 0 | IJ_PERSP_PIXEL }
  +	00000001			RB_FS_OUTPUT_REG: { MRT = 1 }
- +	80000016			RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+ +	80000016			RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
  +	00000000			RB_VPORT_Z_CLAMP[0].MIN: 0
  +	00ffffff			RB_VPORT_Z_CLAMP[0].MAX: 0xffffff
  +	42001004			VPC_ATTR: { TOTALATTR = 4 | THRDASSIGN = 1 | ENABLE | 0x40000000 }
@@ -3673,7 +3574,7 @@ t0			write CP_SCRATCH[0x5].REG (057d)
 				:0,79,115,75
 109d0a38:			0000: 0000057d 0000004f
 t0			write RB_DEPTH_CONTROL (2101)
-				RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+				RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
 109d0a40:			0000: 00002101 80000016
 t0			write GRAS_ALPHA_CONTROL (2073)
 				GRAS_ALPHA_CONTROL: { 0 }
@@ -3879,18 +3780,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (131 dwords)
 				:0:0058:0071[00000000x_00000000x] nop
 				:0:0059:0072[00000000x_00000000x] nop
 				:0:0060:0073[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-13 (cnt=14, max=13)
-				- input (half): (cnt=0, max=0)
-				- input (full): 2-5 (cnt=4, max=5)
-				- max const: 52
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): 6-13 (cnt=8, max=13)  (estimated)
-				- shaderdb: 74 instructions, 27 nops, 47 non-nops, (61 instlen), 0 last-baryf, 0 half, 4 full
+				Stats:
+				- shaderdb: 74 instr, 27 nops, 47 non-nops, 7 mov, 1 cov
+				- shaderdb: 0 last-baryf, 0 half, 4 full, 13 constlen
 				- shaderdb: 28 cat0, 8 cat1, 15 cat2, 22 cat3, 1 cat4, 0 cat5, 0 cat6, 0 cat7
-				- shaderdb: 1 (ss), 0 (sy)
+				- shaderdb: 10 sstall, 1 (ss), 0 (sy)
 109d0bec:			0000: c0813000 01200000 00000000 10000002 40700000 10030002 40700001 00001004
 109d0c0c:			0020: 63818000 00011007 63818001 00001008 63820000 0001100b 63820001 0000100c
 109d0c2c:			0040: 63828006 10010002 40700000 0001100f 63828009 00001005 63818000 00000010
@@ -3921,18 +3815,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (35 dwords)
 				:0:0008:0008[00000000x_00000000x] nop
 				:0:0009:0009[00000000x_00000000x] nop
 				:0:0010:0010[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-3 (cnt=4, max=3)
-				- input (half): (cnt=0, max=0)
-				- input (full): 0-3 (cnt=4, max=3)
-				- max const: 0
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): (cnt=0, max=0)  (estimated)
-				- shaderdb: 11 instructions, 5 nops, 6 non-nops, (11 instlen), 5 last-baryf, 0 half, 1 full
+				Stats:
+				- shaderdb: 11 instr, 5 nops, 6 non-nops, 0 mov, 0 cov
+				- shaderdb: 5 last-baryf, 0 half, 1 full, 0 constlen
 				- shaderdb: 6 cat0, 0 cat1, 1 cat2, 0 cat3, 0 cat4, 0 cat5, 4 cat6, 0 cat7
-				- shaderdb: 1 (ss), 0 (sy)
+				- shaderdb: 0 sstall, 1 (ss), 0 (sy)
 109d0df8:			0000: c0213000 00700000 00000000 00000000 00000000 01c00000 c7c60000 01c00002
 109d0e18:			0020: c7c60001 01c00004 c7c60002 01c00006 c7c60003 00002000 473090fc 00000000
 109d0e38:			0040: 03000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000
@@ -4025,7 +3912,7 @@ t3			opcode: CP_DRAW_INDX_OFFSET (38) (7 dwords)
  +	00000000			GRAS_SC_WINDOW_SCISSOR_TL: { X = 0 | Y = 0 }
 !+	00000000			RB_RENDER_CONTROL2: { COORD_MASK = 0 | MSAA_SAMPLES = 0 }
  +	00000001			RB_FS_OUTPUT_REG: { MRT = 1 }
- +	80000016			RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+ +	80000016			RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
  +	00000000			RB_VPORT_Z_CLAMP[0].MIN: 0
  +	00ffffff			RB_VPORT_Z_CLAMP[0].MAX: 0xffffff
  +	42001004			VPC_ATTR: { TOTALATTR = 4 | THRDASSIGN = 1 | ENABLE | 0x40000000 }
@@ -4256,7 +4143,7 @@ t0			write CP_SCRATCH[0x5].REG (057d)
 				:0,103,115,99
 109d11c4:			0000: 0000057d 00000067
 t0			write RB_DEPTH_CONTROL (2101)
-				RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+				RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
 109d11cc:			0000: 00002101 80000016
 t0			write GRAS_ALPHA_CONTROL (2073)
 				GRAS_ALPHA_CONTROL: { 0 }
@@ -4434,18 +4321,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (131 dwords)
 				:0:0053:0064[00000000x_00000000x] nop
 				:0:0054:0065[00000000x_00000000x] nop
 				:0:0055:0066[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-8 10-17 (cnt=17, max=17)
-				- input (half): (cnt=0, max=0)
-				- input (full): 2-8 (cnt=7, max=8)
-				- max const: 52
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): 10-17 (cnt=8, max=17)  (estimated)
-				- shaderdb: 67 instructions, 23 nops, 44 non-nops, (56 instlen), 0 last-baryf, 0 half, 5 full
+				Stats:
+				- shaderdb: 67 instr, 23 nops, 44 non-nops, 4 mov, 1 cov
+				- shaderdb: 0 last-baryf, 0 half, 5 full, 13 constlen
 				- shaderdb: 24 cat0, 5 cat1, 15 cat2, 22 cat3, 1 cat4, 0 cat5, 0 cat6, 0 cat7
-				- shaderdb: 1 (ss), 0 (sy)
+				- shaderdb: 10 sstall, 1 (ss), 0 (sy)
 109d1334:			0000: c0813000 01200000 00000000 10000002 40700000 10030002 40700001 00001004
 109d1354:			0020: 63818000 00011007 63818001 00001008 63820000 0001100b 63820001 0000100c
 109d1374:			0040: 6382800a 10010002 40700000 0001100f 6382800d 00001005 63818000 00000010
@@ -4475,18 +4355,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (35 dwords)
 				:0:0008:0008[00000000x_00000000x] nop
 				:0:0009:0009[00000000x_00000000x] nop
 				:0:0010:0010[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-3 (cnt=4, max=3)
-				- input (half): (cnt=0, max=0)
-				- input (full): 0-3 (cnt=4, max=3)
-				- max const: 0
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): (cnt=0, max=0)  (estimated)
-				- shaderdb: 11 instructions, 5 nops, 6 non-nops, (11 instlen), 5 last-baryf, 0 half, 1 full
+				Stats:
+				- shaderdb: 11 instr, 5 nops, 6 non-nops, 0 mov, 0 cov
+				- shaderdb: 5 last-baryf, 0 half, 1 full, 0 constlen
 				- shaderdb: 6 cat0, 0 cat1, 1 cat2, 0 cat3, 0 cat4, 0 cat5, 4 cat6, 0 cat7
-				- shaderdb: 1 (ss), 0 (sy)
+				- shaderdb: 0 sstall, 1 (ss), 0 (sy)
 109d1540:			0000: c0213000 00700000 00000000 00000000 00000000 01c00000 c7c60000 01c00002
 109d1560:			0020: c7c60001 01c00004 c7c60002 01c00006 c7c60003 00002000 473090fc 00000000
 109d1580:			0040: 03000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000
@@ -4579,7 +4452,7 @@ t3			opcode: CP_DRAW_INDX_OFFSET (38) (7 dwords)
  +	00000000			GRAS_ALPHA_CONTROL: { 0 }
  +	00000000			RB_RENDER_CONTROL2: { COORD_MASK = 0 | MSAA_SAMPLES = 0 }
  +	00000001			RB_FS_OUTPUT_REG: { MRT = 1 }
- +	80000016			RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+ +	80000016			RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
  +	42001004			VPC_ATTR: { TOTALATTR = 4 | THRDASSIGN = 1 | ENABLE | 0x40000000 }
  +	00040400			VPC_PACK: { NUMBYPASSVAR = 0 | NUMFPNONPOSVAR = 4 | NUMNONPOSVSVAR = 4 }
  +	00000055			VPC_VARYING_INTERP[0].MODE: 0x55
@@ -4666,7 +4539,7 @@ t0			write CP_SCRATCH[0x5].REG (057d)
 				:0,109,115,105
 109d1758:			0000: 0000057d 0000006d
 t0			write RB_DEPTH_CONTROL (2101)
-				RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+				RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
 109d1760:			0000: 00002101 80000016
 t0			write GRAS_ALPHA_CONTROL (2073)
 				GRAS_ALPHA_CONTROL: { 0 }
@@ -4867,18 +4740,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (131 dwords)
 				:0:0053:0064[00000000x_00000000x] nop
 				:0:0054:0065[00000000x_00000000x] nop
 				:0:0055:0066[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0-8 10-17 (cnt=17, max=17)
-				- input (half): (cnt=0, max=0)
-				- input (full): 2-8 (cnt=7, max=8)
-				- max const: 52
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): 10-17 (cnt=8, max=17)  (estimated)
-				- shaderdb: 67 instructions, 23 nops, 44 non-nops, (56 instlen), 0 last-baryf, 0 half, 5 full
+				Stats:
+				- shaderdb: 67 instr, 23 nops, 44 non-nops, 4 mov, 1 cov
+				- shaderdb: 0 last-baryf, 0 half, 5 full, 13 constlen
 				- shaderdb: 24 cat0, 5 cat1, 15 cat2, 22 cat3, 1 cat4, 0 cat5, 0 cat6, 0 cat7
-				- shaderdb: 1 (ss), 0 (sy)
+				- shaderdb: 10 sstall, 1 (ss), 0 (sy)
 109d190c:			0000: c0813000 01200000 00000000 10000002 40700000 10030002 40700001 00001004
 109d192c:			0020: 63818000 00011007 63818001 00001008 63820000 0001100b 63820001 0000100c
 109d194c:			0040: 6382800a 10010002 40700000 0001100f 6382800d 00001005 63818000 00000010
@@ -4906,18 +4772,11 @@ t3			opcode: CP_LOAD_STATE4 (30) (35 dwords)
 				:0:0006:0006[00000000x_00000000x] nop
 				:0:0007:0007[00000000x_00000000x] nop
 				:0:0008:0008[00000000x_00000000x] nop
-				Register Stats:
-				- used (half): (cnt=0, max=0)
-				- used (full): 0 2-5 (cnt=5, max=5)
-				- input (half): (cnt=0, max=0)
-				- input (full): 0 (cnt=1, max=0)
-				- max const: 0
-
-				- output (half): (cnt=0, max=0)  (estimated)
-				- output (full): 2-5 (cnt=4, max=5)  (estimated)
-				- shaderdb: 9 instructions, 4 nops, 5 non-nops, (9 instlen), 3 last-baryf, 0 half, 2 full
+				Stats:
+				- shaderdb: 9 instr, 4 nops, 5 non-nops, 0 mov, 0 cov
+				- shaderdb: 3 last-baryf, 0 half, 2 full, 0 constlen
 				- shaderdb: 5 cat0, 0 cat1, 4 cat2, 0 cat3, 0 cat4, 0 cat5, 0 cat6, 0 cat7
-				- shaderdb: 0 (ss), 0 (sy)
+				- shaderdb: 0 sstall, 0 (ss), 0 (sy)
 109d1b18:			0000: c0213000 00700000 00000000 00002000 47300002 00002001 47300003 00002002
 109d1b38:			0020: 47300004 00002003 47308005 00000000 03000000 00000000 00000000 00000000
 *
@@ -4981,7 +4840,7 @@ t3			opcode: CP_DRAW_INDX_OFFSET (38) (7 dwords)
  +	00000000			GRAS_SC_WINDOW_SCISSOR_TL: { X = 0 | Y = 0 }
 !+	00001000			RB_RENDER_CONTROL2: { COORD_MASK = 0 | MSAA_SAMPLES = 0 | IJ_PERSP_PIXEL }
  +	00000001			RB_FS_OUTPUT_REG: { MRT = 1 }
- +	80000016			RB_DEPTH_CONTROL: { Z_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_TEST_ENABLE }
+ +	80000016			RB_DEPTH_CONTROL: { Z_TEST_ENABLE | Z_WRITE_ENABLE | ZFUNC = FUNC_LESS | Z_READ_ENABLE }
  +	00000000			RB_VPORT_Z_CLAMP[0].MIN: 0
  +	00ffffff			RB_VPORT_Z_CLAMP[0].MAX: 0xffffff
  +	42001004			VPC_ATTR: { TOTALATTR = 4 | THRDASSIGN = 1 | ENABLE | 0x40000000 }
@@ -5211,18 +5070,11 @@ t3		opcode: CP_LOAD_STATE4 (30) (35 dwords)
 			:0:0002:0002[00000000x_00000000x] nop
 			:0:0003:0003[00000000x_00000000x] nop
 			:0:0004:0004[00000000x_00000000x] nop
-			Register Stats:
-			- used (half): (cnt=0, max=0)
-			- used (full): (cnt=0, max=0)
-			- input (half): (cnt=0, max=0)
-			- input (full): (cnt=0, max=0)
-			- max const: 0
-
-			- output (half): (cnt=0, max=0)  (estimated)
-			- output (full): (cnt=0, max=0)  (estimated)
-			- shaderdb: 5 instructions, 4 nops, 1 non-nops, (5 instlen), 0 last-baryf, 0 half, 0 full
+			Stats:
+			- shaderdb: 5 instr, 4 nops, 1 non-nops, 0 mov, 0 cov
+			- shaderdb: 0 last-baryf, 0 half, 0 full, 0 constlen
 			- shaderdb: 5 cat0, 0 cat1, 0 cat2, 0 cat3, 0 cat4, 0 cat5, 0 cat6, 0 cat7
-			- shaderdb: 0 (ss), 0 (sy)
+			- shaderdb: 0 sstall, 0 (ss), 0 (sy)
 108ce4b0:		0000: c0213000 00600000 00000000 00000000 03000000 00000000 00000000 00000000
 *
 t3		opcode: CP_LOAD_STATE4 (30) (35 dwords)
@@ -5237,18 +5089,11 @@ t3		opcode: CP_LOAD_STATE4 (30) (35 dwords)
 			:0:0006:0006[00000000x_00000000x] nop
 			:0:0007:0007[00000000x_00000000x] nop
 			:0:0008:0008[00000000x_00000000x] nop
-			Register Stats:
-			- used (half): (cnt=0, max=0)
-			- used (full): 0-3 (cnt=4, max=3)
-			- input (half): (cnt=0, max=0)
-			- input (full): (cnt=0, max=0)
-			- max const: 3
-
-			- output (half): (cnt=0, max=0)  (estimated)
-			- output (full): 0-3 (cnt=4, max=3)  (estimated)
-			- shaderdb: 9 instructions, 4 nops, 5 non-nops, (9 instlen), 0 last-baryf, 0 half, 1 full
+			Stats:
+			- shaderdb: 9 instr, 4 nops, 5 non-nops, 4 mov, 0 cov
+			- shaderdb: 0 last-baryf, 0 half, 1 full, 1 constlen
 			- shaderdb: 5 cat0, 4 cat1, 0 cat2, 0 cat3, 0 cat4, 0 cat5, 0 cat6, 0 cat7
-			- shaderdb: 0 (ss), 0 (sy)
+			- shaderdb: 0 sstall, 0 (ss), 0 (sy)
 108ce53c:		0000: c0213000 00700000 00000000 00000000 20244000 00000001 20244001 00000002
 108ce55c:		0020: 20244002 00000003 20244003 00000000 03000000 00000000 00000000 00000000
 *

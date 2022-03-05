@@ -67,6 +67,7 @@
 #include "util/u_string.h"
 #include "util/simple_list.h"
 #include "util/u_dual_blend.h"
+#include "util/u_upload_mgr.h"
 #include "util/os_time.h"
 #include "pipe/p_shader_tokens.h"
 #include "draw/draw_context.h"
@@ -121,10 +122,7 @@ load_unswizzled_block(struct gallivm_state *gallivm,
                       LLVMValueRef* dst,
                       struct lp_type dst_type,
                       unsigned dst_count,
-                      unsigned dst_alignment,
-                      LLVMValueRef x_offset,
-                      LLVMValueRef y_offset,
-                      bool fb_fetch_twiddle);
+                      unsigned dst_alignment);
 /**
  * Checks if a format description is an arithmetic format
  *
@@ -451,10 +449,13 @@ static LLVMValueRef fs_interp(const struct lp_build_fs_iface *iface,
 }
 
 static void fs_fb_fetch(const struct lp_build_fs_iface *iface,
-                                struct lp_build_context *bld,
-                                unsigned cbuf,
-                                LLVMValueRef result[4])
+                        struct lp_build_context *bld,
+                        int location,
+                        LLVMValueRef result[4])
 {
+   assert(location >= FRAG_RESULT_DATA0 && location <= FRAG_RESULT_DATA7);
+   const int cbuf = location - FRAG_RESULT_DATA0;
+
    struct lp_build_fs_llvm_iface *fs_iface = (struct lp_build_fs_llvm_iface *)iface;
    struct gallivm_state *gallivm = bld->gallivm;
    LLVMBuilderRef builder = gallivm->builder;
@@ -463,48 +464,16 @@ static void fs_fb_fetch(const struct lp_build_fs_iface *iface,
    LLVMValueRef color_ptr = LLVMBuildLoad(builder, LLVMBuildGEP(builder, fs_iface->color_ptr_ptr, &index, 1, ""), "");
    LLVMValueRef stride = LLVMBuildLoad(builder, LLVMBuildGEP(builder, fs_iface->color_stride_ptr, &index, 1, ""), "");
 
-   LLVMValueRef dst[4 * 4];
    enum pipe_format cbuf_format = key->cbuf_format[cbuf];
    const struct util_format_description* out_format_desc = util_format_description(cbuf_format);
-   struct lp_type dst_type;
+   if (out_format_desc->format == PIPE_FORMAT_NONE) {
+      result[0] = result[1] = result[2] = result[3] = bld->undef;
+      return;
+   }
+
    unsigned block_size = bld->type.length;
    unsigned block_height = key->resource_1d ? 1 : 2;
    unsigned block_width = block_size / block_height;
-
-   lp_mem_type_from_format_desc(out_format_desc, &dst_type);
-
-   struct lp_type blend_type;
-   memset(&blend_type, 0, sizeof blend_type);
-   blend_type.floating = FALSE; /* values are integers */
-   blend_type.sign = FALSE;     /* values are unsigned */
-   blend_type.norm = TRUE;      /* values are in [0,1] or [-1,1] */
-   blend_type.width = 8;        /* 8-bit ubyte values */
-   blend_type.length = 16;      /* 16 elements per vector */
-
-   uint32_t dst_alignment;
-   /*
-    * Compute the alignment of the destination pointer in bytes
-    * We fetch 1-4 pixels, if the format has pot alignment then those fetches
-    * are always aligned by MIN2(16, fetch_width) except for buffers (not
-    * 1d tex but can't distinguish here) so need to stick with per-pixel
-    * alignment in this case.
-    */
-   if (key->resource_1d) {
-      dst_alignment = (out_format_desc->block.bits + 7)/(out_format_desc->block.width * 8);
-   }
-   else {
-      dst_alignment = dst_type.length * dst_type.width / 8;
-   }
-   /* Force power-of-two alignment by extracting only the least-significant-bit */
-   dst_alignment = 1 << (ffs(dst_alignment) - 1);
-   /*
-    * Resource base and stride pointers are aligned to 16 bytes, so that's
-    * the maximum alignment we can guarantee
-    */
-   dst_alignment = MIN2(16, dst_alignment);
-
-   LLVMTypeRef blend_vec_type = lp_build_vec_type(gallivm, blend_type);
-   color_ptr = LLVMBuildBitCast(builder, color_ptr, LLVMPointerType(blend_vec_type, 0), "");
 
    if (key->multisample) {
       LLVMValueRef sample_stride = LLVMBuildLoad(builder,
@@ -527,12 +496,36 @@ static void fs_fb_fetch(const struct lp_build_fs_iface *iface,
       }
       y_offset = LLVMBuildMul(builder, counter, lp_build_const_int32(gallivm, 2), "");
    }
-   load_unswizzled_block(gallivm, color_ptr, stride, block_width, block_height, dst, dst_type, block_size, dst_alignment, x_offset, y_offset, true);
 
+   LLVMValueRef offsets[4 * 4];
    for (unsigned i = 0; i < block_size; i++) {
-      dst[i] = LLVMBuildBitCast(builder, dst[i], LLVMInt32TypeInContext(gallivm->context), "");
+      unsigned x = i % block_width;
+      unsigned y = i / block_width;
+
+      if (block_size == 8) {
+         /* remap the raw slots into the fragment shader execution mode. */
+         /* this math took me way too long to work out, I'm sure it's overkill. */
+         x = (i & 1) + ((i >> 2) << 1);
+         if (!key->resource_1d)
+            y = (i & 2) >> 1;
+      }
+
+      LLVMValueRef x_val;
+      if (x_offset) {
+         x_val = LLVMBuildAdd(builder, lp_build_const_int32(gallivm, x), x_offset, "");
+         x_val = LLVMBuildMul(builder, x_val, lp_build_const_int32(gallivm, out_format_desc->block.bits / 8), "");
+      } else {
+         x_val = lp_build_const_int32(gallivm, x * (out_format_desc->block.bits / 8));
+      }
+
+      LLVMValueRef y_val = lp_build_const_int32(gallivm, y);
+      if (y_offset)
+         y_val = LLVMBuildAdd(builder, y_val, y_offset, "");
+      y_val = LLVMBuildMul(builder, y_val, stride, "");
+
+      offsets[i] = LLVMBuildAdd(builder, x_val, y_val, "");
    }
-   LLVMValueRef packed = lp_build_gather_values(gallivm, dst, block_size);
+   LLVMValueRef offset = lp_build_gather_values(gallivm, offsets, block_size);
 
    struct lp_type texel_type = bld->type;
    if (out_format_desc->colorspace == UTIL_FORMAT_COLORSPACE_RGB &&
@@ -544,9 +537,10 @@ static void fs_fb_fetch(const struct lp_build_fs_iface *iface,
          texel_type = lp_type_uint_vec(bld->type.width, bld->type.width * bld->type.length);
       }
    }
-   lp_build_unpack_rgba_soa(gallivm, out_format_desc,
-                            texel_type,
-                            packed, result);
+
+   lp_build_fetch_rgba_soa(gallivm, out_format_desc, texel_type,
+                           true, color_ptr, offset,
+                           NULL, NULL, NULL, result);
 }
 
 /**
@@ -589,7 +583,8 @@ generate_fs_loop(struct gallivm_state *gallivm,
    LLVMValueRef stencil_refs[2];
    LLVMValueRef outputs[PIPE_MAX_SHADER_OUTPUTS][TGSI_NUM_CHANNELS];
    LLVMValueRef zs_samples = lp_build_const_int32(gallivm, key->zsbuf_nr_samples);
-   struct lp_build_for_loop_state loop_state, sample_loop_state;
+   LLVMValueRef z_out = NULL, s_out = NULL;
+   struct lp_build_for_loop_state loop_state, sample_loop_state = {0};
    struct lp_build_mask_context mask;
    /*
     * TODO: figure out if simple_shader optimization is really worthwile to
@@ -614,7 +609,8 @@ generate_fs_loop(struct gallivm_state *gallivm,
    /* truncate then sign extend. */
    system_values.front_facing = LLVMBuildTrunc(gallivm->builder, facing, LLVMInt1TypeInContext(gallivm->context), "");
    system_values.front_facing = LLVMBuildSExt(gallivm->builder, system_values.front_facing, LLVMInt32TypeInContext(gallivm->context), "");
-
+   system_values.view_index = lp_jit_thread_data_raster_state_view_index(gallivm,
+                                                                         thread_data_ptr);
    if (key->depth.enabled ||
        key->stencil[0].enabled) {
 
@@ -699,6 +695,17 @@ generate_fs_loop(struct gallivm_state *gallivm,
                                                     color_store_size, "color1");
       }
    }
+   if (shader->info.base.writes_z) {
+      z_out = lp_build_array_alloca(gallivm,
+                                    lp_build_vec_type(gallivm, type),
+                                    color_store_size, "depth");
+   }
+
+   if (shader->info.base.writes_stencil) {
+      s_out = lp_build_array_alloca(gallivm,
+                                    lp_build_vec_type(gallivm, type),
+                                    color_store_size, "depth");
+   }
 
    lp_build_for_loop_begin(&loop_state, gallivm,
                            lp_build_const_int32(gallivm, 0),
@@ -719,7 +726,7 @@ generate_fs_loop(struct gallivm_state *gallivm,
          else
             mask_val = LLVMBuildOr(builder, s_mask, mask_val, "");
 
-         LLVMValueRef mask_in = LLVMBuildAnd(builder, s_mask, lp_build_const_int_vec(gallivm, type, (1 << s)), "");
+         LLVMValueRef mask_in = LLVMBuildAnd(builder, s_mask, lp_build_const_int_vec(gallivm, type, (1ll << s)), "");
          sample_mask_in = LLVMBuildOr(builder, sample_mask_in, mask_in, "");
       }
    } else {
@@ -958,6 +965,7 @@ generate_fs_loop(struct gallivm_state *gallivm,
    params.ssbo_ptr = ssbo_ptr;
    params.ssbo_sizes_ptr = num_ssbo_ptr;
    params.image = image;
+   params.aniso_filter_table = lp_jit_context_aniso_filter_table(gallivm, context_ptr);
 
    /* Build the actual shader */
    if (shader->base.type == PIPE_SHADER_IR_TGSI)
@@ -1047,6 +1055,33 @@ generate_fs_loop(struct gallivm_state *gallivm,
       LLVMBuildStore(builder, output_smask, out_sample_mask_storage);
    }
 
+   if (shader->info.base.writes_z) {
+      int pos0 = find_output_by_semantic(&shader->info.base,
+                                         TGSI_SEMANTIC_POSITION,
+                                         0);
+      LLVMValueRef out = LLVMBuildLoad(builder, outputs[pos0][2], "");
+      LLVMValueRef idx = loop_state.counter;
+      if (key->min_samples > 1)
+         idx = LLVMBuildAdd(builder, idx,
+                            LLVMBuildMul(builder, sample_loop_state.counter, num_loop, ""), "");
+      LLVMValueRef ptr = LLVMBuildGEP(builder, z_out, &idx, 1, "");
+      LLVMBuildStore(builder, out, ptr);
+   }
+
+   if (shader->info.base.writes_stencil) {
+      int sten_out = find_output_by_semantic(&shader->info.base,
+                                             TGSI_SEMANTIC_STENCIL,
+                                             0);
+      LLVMValueRef out = LLVMBuildLoad(builder, outputs[sten_out][1], "output.s");
+      LLVMValueRef idx = loop_state.counter;
+      if (key->min_samples > 1)
+         idx = LLVMBuildAdd(builder, idx,
+                            LLVMBuildMul(builder, sample_loop_state.counter, num_loop, ""), "");
+      LLVMValueRef ptr = LLVMBuildGEP(builder, s_out, &idx, 1, "");
+      LLVMBuildStore(builder, out, ptr);
+   }
+
+   bool has_cbuf0_write = false;
    /* Color write - per fragment sample */
    for (attrib = 0; attrib < shader->info.base.num_outputs; ++attrib)
    {
@@ -1054,6 +1089,21 @@ generate_fs_loop(struct gallivm_state *gallivm,
       if ((shader->info.base.output_semantic_name[attrib] == TGSI_SEMANTIC_COLOR) &&
            ((cbuf < key->nr_cbufs) || (cbuf == 1 && dual_source_blend)))
       {
+         if (cbuf == 0 && shader->info.base.properties[TGSI_PROPERTY_FS_COLOR0_WRITES_ALL_CBUFS]) {
+            /* XXX: there is an edge case with FB fetch where gl_FragColor and gl_LastFragData[0]
+             * are used together. This creates both FRAG_RESULT_COLOR and FRAG_RESULT_DATA* output
+             * variables. This loop then writes to cbuf 0 twice, owerwriting the correct value
+             * from gl_FragColor with some garbage. This case is excercised in one of deqp tests.
+             * A similar bug can happen if gl_SecondaryFragColorEXT and gl_LastFragData[1]
+             * are mixed in the same fashion...
+             * This workaround will break if gl_LastFragData[0] goes in outputs list before
+             * gl_FragColor. This doesn't seem to happen though.
+             */
+            if (has_cbuf0_write)
+               continue;
+            has_cbuf0_write = true;
+         }
+
          for(chan = 0; chan < TGSI_NUM_CHANNELS; ++chan) {
             if(outputs[attrib][chan]) {
                /* XXX: just initialize outputs to point at colors[] and
@@ -1117,32 +1167,43 @@ generate_fs_loop(struct gallivm_state *gallivm,
 
    /* Late Z test */
    if (depth_mode & LATE_DEPTH_TEST) {
-      int pos0 = find_output_by_semantic(&shader->info.base,
-                                         TGSI_SEMANTIC_POSITION,
-                                         0);
-      int s_out = find_output_by_semantic(&shader->info.base,
-                                          TGSI_SEMANTIC_STENCIL,
-                                          0);
-      if (pos0 != -1 && outputs[pos0][2]) {
-         z = LLVMBuildLoad(builder, outputs[pos0][2], "output.z");
+      if (shader->info.base.writes_z) {
+         LLVMValueRef idx = loop_state.counter;
+         if (key->min_samples > 1)
+            idx = LLVMBuildAdd(builder, idx,
+                               LLVMBuildMul(builder, sample_loop_state.counter, num_loop, ""), "");
+         LLVMValueRef ptr = LLVMBuildGEP(builder, z_out, &idx, 1, "");
+         z = LLVMBuildLoad(builder, ptr, "output.z");
       } else {
          if (key->multisample) {
             lp_build_interp_soa_update_pos_dyn(interp, gallivm, loop_state.counter, key->multisample ? sample_loop_state.counter : NULL);
             z = interp->pos[2];
          }
       }
+
       /*
        * Clamp according to ARB_depth_clamp semantics.
        */
       if (key->depth_clamp) {
          z = lp_build_depth_clamp(gallivm, builder, type, context_ptr,
                                   thread_data_ptr, z);
+      } else {
+         struct lp_build_context f32_bld;
+         lp_build_context_init(&f32_bld, gallivm, type);
+         z = lp_build_clamp(&f32_bld, z,
+                            lp_build_const_vec(gallivm, type, 0.0),
+                            lp_build_const_vec(gallivm, type, 1.0));
       }
 
-      if (s_out != -1 && outputs[s_out][1]) {
+      if (shader->info.base.writes_stencil) {
+         LLVMValueRef idx = loop_state.counter;
+         if (key->min_samples > 1)
+            idx = LLVMBuildAdd(builder, idx,
+                               LLVMBuildMul(builder, sample_loop_state.counter, num_loop, ""), "");
+         LLVMValueRef ptr = LLVMBuildGEP(builder, s_out, &idx, 1, "");
+         stencil_refs[0] = LLVMBuildLoad(builder, ptr, "output.s");
          /* there's only one value, and spec says to discard additional bits */
          LLVMValueRef s_max_mask = lp_build_const_int_vec(gallivm, int_type, 255);
-         stencil_refs[0] = LLVMBuildLoad(builder, outputs[s_out][1], "output.s");
          stencil_refs[0] = LLVMBuildBitCast(builder, stencil_refs[0], int_vec_type, "");
          stencil_refs[0] = LLVMBuildAnd(builder, stencil_refs[0], s_max_mask, "");
          stencil_refs[1] = stencil_refs[0];
@@ -1463,10 +1524,7 @@ load_unswizzled_block(struct gallivm_state *gallivm,
                       LLVMValueRef* dst,
                       struct lp_type dst_type,
                       unsigned dst_count,
-                      unsigned dst_alignment,
-                      LLVMValueRef x_offset,
-                      LLVMValueRef y_offset,
-                      bool fb_fetch_twiddle)
+                      unsigned dst_alignment)
 {
    LLVMBuilderRef builder = gallivm->builder;
    unsigned row_size = dst_count / block_height;
@@ -1479,28 +1537,8 @@ load_unswizzled_block(struct gallivm_state *gallivm,
       unsigned x = i % row_size;
       unsigned y = i / row_size;
 
-      if (block_height == 2 && dst_count == 8 && fb_fetch_twiddle) {
-         /* remap the raw slots into the fragment shader execution mode. */
-         /* this math took me way too long to work out, I'm sure it's overkill. */
-         x = (i & 1) + ((i >> 2) << 1);
-         y = (i & 2) >> 1;
-      }
-
-      LLVMValueRef x_val;
-      if (x_offset) {
-         x_val = lp_build_const_int32(gallivm, x);
-         if (x_offset)
-            x_val = LLVMBuildAdd(builder, x_val, x_offset, "");
-         x_val = LLVMBuildMul(builder, x_val, lp_build_const_int32(gallivm, (dst_type.width / 8) * dst_type.length), "");
-      } else
-         x_val = lp_build_const_int32(gallivm, x * (dst_type.width / 8) * dst_type.length);
-
-      LLVMValueRef bx = x_val;
-
-      LLVMValueRef y_val = lp_build_const_int32(gallivm, y);
-      if (y_offset)
-         y_val = LLVMBuildAdd(builder, y_val, y_offset, "");
-      LLVMValueRef by = LLVMBuildMul(builder, y_val, stride, "");
+      LLVMValueRef bx = lp_build_const_int32(gallivm, x * (dst_type.width / 8) * dst_type.length);
+      LLVMValueRef by = LLVMBuildMul(builder, lp_build_const_int32(gallivm, y), stride, "");
 
       LLVMValueRef gep[2];
       LLVMValueRef dst_ptr;
@@ -1656,6 +1694,16 @@ scale_bits(struct gallivm_state *gallivm,
       int delta_bits = src_bits - dst_bits;
 
       if (delta_bits <= dst_bits) {
+
+         if (dst_bits == 4) {
+            struct lp_type flt_type = lp_type_float_vec(32, src_type.length * 32);
+
+            result = lp_build_unsigned_norm_to_float(gallivm, src_bits, flt_type, src);
+            result = lp_build_clamped_float_to_unsigned_norm(gallivm, flt_type, dst_bits, result);
+            result = LLVMBuildTrunc(gallivm->builder, result, lp_build_int_vec_type(gallivm, src_type), "");
+            return result;
+         }
+
          /*
           * Approximate the rescaling with a single shift.
           *
@@ -2355,7 +2403,7 @@ generate_unswizzled_blend(struct gallivm_state *gallivm,
          continue;
       }
 
-      /* Ensure we havn't already found all channels */
+      /* Ensure we haven't already found all channels */
       if (dst_channels >= out_format_desc->nr_channels) {
          continue;
       }
@@ -2781,7 +2829,7 @@ generate_unswizzled_blend(struct gallivm_state *gallivm,
 
    if (is_1d) {
       load_unswizzled_block(gallivm, color_ptr, stride, block_width, 1,
-                            dst, ls_type, dst_count / 4, dst_alignment, NULL, NULL, false);
+                            dst, ls_type, dst_count / 4, dst_alignment);
       for (i = dst_count / 4; i < dst_count; i++) {
          dst[i] = lp_build_undef(gallivm, ls_type);
       }
@@ -2789,7 +2837,7 @@ generate_unswizzled_blend(struct gallivm_state *gallivm,
    }
    else {
       load_unswizzled_block(gallivm, color_ptr, stride, block_width, block_height,
-                            dst, ls_type, dst_count, dst_alignment, NULL, NULL, false);
+                            dst, ls_type, dst_count, dst_alignment);
    }
 
 
@@ -3105,7 +3153,7 @@ generate_fragment(struct llvmpipe_context *lp,
    }
 
    /* code generated texture sampling */
-   sampler = lp_llvm_sampler_soa_create(key->samplers, key->nr_samplers);
+   sampler = lp_llvm_sampler_soa_create(lp_fs_variant_key_samplers(key), key->nr_samplers);
    image = lp_llvm_image_soa_create(lp_fs_variant_key_images(key), key->nr_images);
 
    num_fs = 16 / fs_type.length; /* number of loops per 4x4 stamp */
@@ -3283,7 +3331,7 @@ generate_fragment(struct llvmpipe_context *lp,
                                 LLVMBuildGEP(builder, stride_ptr, &index, 1, ""),
                                 "");
 
-         if (key->multisample)
+         if (key->cbuf_nr_samples[cbuf] > 1)
             sample_stride = LLVMBuildLoad(builder,
                                           LLVMBuildGEP(builder, color_sample_stride_ptr,
                                                        &index, 1, ""), "");
@@ -3293,7 +3341,7 @@ generate_fragment(struct llvmpipe_context *lp,
             unsigned out_idx = key->min_samples == 1 ? 0 : s;
             LLVMValueRef out_ptr = color_ptr;;
 
-            if (key->multisample) {
+            if (sample_stride) {
                LLVMValueRef sample_offset = LLVMBuildMul(builder, sample_stride, lp_build_const_int32(gallivm, s), "");
                out_ptr = LLVMBuildGEP(builder, out_ptr, &sample_offset, 1, "");
             }
@@ -3379,7 +3427,8 @@ dump_fs_variant_key(struct lp_fragment_shader_variant_key *key)
       debug_printf("blend.alpha_to_coverage is enabled\n");
    }
    for (i = 0; i < key->nr_samplers; ++i) {
-      const struct lp_static_sampler_state *sampler = &key->samplers[i].sampler_state;
+      const struct lp_sampler_static_state *samplers = lp_fs_variant_key_samplers(key);
+      const struct lp_static_sampler_state *sampler = &samplers[i].sampler_state;
       debug_printf("sampler[%u] = \n", i);
       debug_printf("  .wrap = %s %s %s\n",
                    util_str_tex_wrap(sampler->wrap_s, TRUE),
@@ -3398,9 +3447,12 @@ dump_fs_variant_key(struct lp_fragment_shader_variant_key *key)
       debug_printf("  .lod_bias_non_zero = %u\n", sampler->lod_bias_non_zero);
       debug_printf("  .apply_min_lod = %u\n", sampler->apply_min_lod);
       debug_printf("  .apply_max_lod = %u\n", sampler->apply_max_lod);
+      debug_printf("  .reduction_mode = %u\n", sampler->reduction_mode);
+      debug_printf("  .aniso = %u\n", sampler->aniso);
    }
    for (i = 0; i < key->nr_sampler_views; ++i) {
-      const struct lp_static_texture_state *texture = &key->samplers[i].texture_state;
+      const struct lp_sampler_static_state *samplers = lp_fs_variant_key_samplers(key);
+      const struct lp_static_texture_state *texture = &samplers[i].texture_state;
       debug_printf("texture[%u] = \n", i);
       debug_printf("  .format = %s\n",
                    util_format_name(texture->format));
@@ -3430,6 +3482,24 @@ dump_fs_variant_key(struct lp_fragment_shader_variant_key *key)
    }
 }
 
+const char *
+lp_debug_fs_kind(enum lp_fs_kind kind)
+{
+   switch(kind) {
+   case LP_FS_KIND_GENERAL:
+      return "GENERAL";
+   case LP_FS_KIND_BLIT_RGBA:
+      return "BLIT_RGBA";
+   case LP_FS_KIND_BLIT_RGB1:
+      return "BLIT_RGB1";
+   case LP_FS_KIND_AERO_MINIFICATION:
+      return "AERO_MINIFICATION";
+   case LP_FS_KIND_LLVM_LINEAR:
+      return "LLVM_LINEAR";
+   default:
+      return "unknown";
+   }
+}
 
 void
 lp_debug_fs_variant(struct lp_fragment_shader_variant *variant)
@@ -3442,6 +3512,9 @@ lp_debug_fs_variant(struct lp_fragment_shader_variant *variant)
       nir_print_shader(variant->shader->base.ir.nir, stderr);
    dump_fs_variant_key(&variant->key);
    debug_printf("variant->opaque = %u\n", variant->opaque);
+   debug_printf("variant->potentially_opaque = %u\n", variant->potentially_opaque);
+   debug_printf("variant->blit = %u\n", variant->blit);
+   debug_printf("shader->kind = %s\n", lp_debug_fs_kind(variant->shader->kind));
    debug_printf("\n");
 }
 
@@ -3480,6 +3553,8 @@ generate_variant(struct llvmpipe_context *lp,
    struct lp_fragment_shader_variant *variant;
    const struct util_format_description *cbuf0_format_desc = NULL;
    boolean fullcolormask;
+   boolean no_kill;
+   boolean linear;
    char module_name[64];
    unsigned char ir_sha1_cache_key[20];
    struct lp_cached_code cached = { 0 };
@@ -3525,9 +3600,9 @@ generate_variant(struct llvmpipe_context *lp,
       fullcolormask = util_format_colormask_full(cbuf0_format_desc, key->blend.rt[0].colormask);
    }
 
-   variant->opaque =
-         !key->blend.logicop_enable &&
-         !key->blend.rt[0].blend_enable &&
+   /* The scissor is ignored here as only tiles inside the scissoring
+    * rectangle will refer to this */
+   no_kill =
          fullcolormask &&
          !key->stencil[0].enabled &&
          !key->alpha.enabled &&
@@ -3535,12 +3610,83 @@ generate_variant(struct llvmpipe_context *lp,
          !key->blend.alpha_to_coverage &&
          !key->depth.enabled &&
          !shader->info.base.uses_kill &&
-         !shader->info.base.writes_samplemask
-      ? TRUE : FALSE;
+         !shader->info.base.writes_samplemask &&
+         !shader->info.base.uses_fbfetch;
+
+   variant->opaque =
+         no_kill &&
+         !key->blend.logicop_enable &&
+         !key->blend.rt[0].blend_enable
+         ? TRUE : FALSE;
+
+   variant->potentially_opaque =
+         no_kill &&
+         !key->blend.logicop_enable &&
+         key->blend.rt[0].blend_enable &&
+         key->blend.rt[0].rgb_func == PIPE_BLEND_ADD &&
+         key->blend.rt[0].rgb_dst_factor == PIPE_BLENDFACTOR_INV_SRC_ALPHA &&
+         key->blend.rt[0].alpha_func == key->blend.rt[0].rgb_func &&
+         key->blend.rt[0].alpha_dst_factor == key->blend.rt[0].rgb_dst_factor &&
+         shader->base.type == PIPE_SHADER_IR_TGSI &&
+         /*
+          * FIXME: for NIR, all of the fields of info.xxx (except info.base)
+          * are zeros, hence shader analysis (here and elsewhere) using these
+          * bits cannot work and will silently fail (cbuf is the only pointer
+          * field, hence causing a crash).
+          */
+         shader->info.cbuf[0][3].file != TGSI_FILE_NULL
+         ? TRUE : FALSE;
+
+   /* We only care about opaque blits for now */
+   if (variant->opaque &&
+       (shader->kind == LP_FS_KIND_BLIT_RGBA ||
+        shader->kind == LP_FS_KIND_BLIT_RGB1)) {
+      unsigned target, min_img_filter, mag_img_filter, min_mip_filter;
+      enum pipe_format texture_format;
+      struct lp_sampler_static_state *samp0 = lp_fs_variant_key_sampler_idx(key, 0);
+      assert(samp0);
+      texture_format = samp0->texture_state.format;
+      target = samp0->texture_state.target;
+      min_img_filter = samp0->sampler_state.min_img_filter;
+      mag_img_filter = samp0->sampler_state.mag_img_filter;
+      if (samp0->texture_state.level_zero_only) {
+         min_mip_filter = PIPE_TEX_MIPFILTER_NONE;
+      } else {
+         min_mip_filter = samp0->sampler_state.min_mip_filter;
+      }
+
+      if (target == PIPE_TEXTURE_2D &&
+          min_img_filter == PIPE_TEX_FILTER_NEAREST &&
+          mag_img_filter == PIPE_TEX_FILTER_NEAREST &&
+          min_mip_filter == PIPE_TEX_MIPFILTER_NONE &&
+          ((texture_format &&
+            util_is_format_compatible(util_format_description(texture_format),
+                                      cbuf0_format_desc)) ||
+           (shader->kind == LP_FS_KIND_BLIT_RGB1 &&
+            (texture_format == PIPE_FORMAT_B8G8R8A8_UNORM ||
+             texture_format == PIPE_FORMAT_B8G8R8X8_UNORM) &&
+            (key->cbuf_format[0] == PIPE_FORMAT_B8G8R8A8_UNORM ||
+             key->cbuf_format[0] == PIPE_FORMAT_B8G8R8X8_UNORM))))
+         variant->blit = 1;
+   }
+
+
+   /* Whether this is a candidate for the linear path */
+   linear =
+         !key->stencil[0].enabled &&
+         !key->depth.enabled &&
+         !shader->info.base.uses_kill &&
+         !key->blend.logicop_enable &&
+         (key->cbuf_format[0] == PIPE_FORMAT_B8G8R8A8_UNORM ||
+          key->cbuf_format[0] == PIPE_FORMAT_B8G8R8X8_UNORM);
+
+   memcpy(&variant->key, key, sizeof *key);
 
    if ((LP_DEBUG & DEBUG_FS) || (gallivm_debug & GALLIVM_DEBUG_IR)) {
       lp_debug_fs_variant(variant);
    }
+
+   llvmpipe_fs_variant_fastpath(variant);
 
    lp_jit_init_types(variant);
    
@@ -3551,6 +3697,36 @@ generate_variant(struct llvmpipe_context *lp,
       if (variant->opaque) {
          /* Specialized shader, which doesn't need to read the color buffer. */
          generate_fragment(lp, shader, variant, RAST_WHOLE);
+      }
+   }
+
+   if (linear) {
+      /* Currently keeping both the old fastpaths and new linear path
+       * active.  The older code is still somewhat faster for the cases
+       * it covers.
+       *
+       * XXX: consider restricting this to aero-mode only.
+       */
+      if (fullcolormask &&
+          !key->alpha.enabled &&
+          !key->blend.alpha_to_coverage) {
+         llvmpipe_fs_variant_linear_fastpath(variant);
+      }
+
+      /* If the original fastpath doesn't cover this variant, try the new
+       * code:
+       */
+      if (variant->jit_linear == NULL) {
+         if (shader->kind == LP_FS_KIND_BLIT_RGBA ||
+             shader->kind == LP_FS_KIND_BLIT_RGB1 ||
+             shader->kind == LP_FS_KIND_LLVM_LINEAR) {
+            llvmpipe_fs_variant_linear_llvm(lp, shader, variant);
+         }
+      }
+   } else {
+      if (LP_DEBUG & DEBUG_LINEAR) {
+         lp_debug_fs_variant(variant);
+         debug_printf("    ----> no linear path for this variant\n");
       }
    }
 
@@ -3574,6 +3750,19 @@ generate_variant(struct llvmpipe_context *lp,
                                     variant->function[RAST_WHOLE]);
    } else if (!variant->jit_function[RAST_WHOLE]) {
       variant->jit_function[RAST_WHOLE] = variant->jit_function[RAST_EDGE_TEST];
+   }
+
+   if (linear) {
+      if (variant->linear_function) {
+         variant->jit_linear_llvm = (lp_jit_linear_llvm_func)
+               gallivm_jit_function(variant->gallivm, variant->linear_function);
+      }
+
+      /*
+       * This must be done after LLVM compilation, as it will call the JIT'ed
+       * code to determine active inputs.
+       */
+      lp_linear_check_variant(variant);
    }
 
    if (needs_caching) {
@@ -3631,7 +3820,6 @@ llvmpipe_create_fs_state(struct pipe_context *pipe,
 
    for (i = 0; i < shader->info.base.num_inputs; i++) {
       shader->inputs[i].usage_mask = shader->info.base.input_usage_mask[i];
-      shader->inputs[i].cyl_wrap = shader->info.base.input_cylindrical_wrap[i];
       shader->inputs[i].location = shader->info.base.input_interpolate_loc[i];
 
       switch (shader->info.base.input_interpolate[i]) {
@@ -3668,7 +3856,7 @@ llvmpipe_create_fs_state(struct pipe_context *pipe,
       shader->inputs[i].src_index = i+1;
    }
 
-   if (LP_DEBUG & DEBUG_TGSI) {
+   if (LP_DEBUG & DEBUG_TGSI && templ->type == PIPE_SHADER_IR_TGSI) {
       unsigned attrib;
       debug_printf("llvmpipe: Create fragment shader #%u %p:\n",
                    shader->no, (void *) shader);
@@ -3685,6 +3873,12 @@ llvmpipe_create_fs_state(struct pipe_context *pipe,
       }
       debug_printf("\n");
    }
+
+   /* This will put a derived copy of the tokens into shader->base.tokens */
+   if (templ->type == PIPE_SHADER_IR_TGSI)
+     llvmpipe_fs_analyse(shader, templ->tokens);
+   else
+     llvmpipe_fs_analyse_nir(shader);
 
    return shader;
 }
@@ -3786,21 +3980,32 @@ llvmpipe_delete_fs_state(struct pipe_context *pipe, void *fs)
 static void
 llvmpipe_set_constant_buffer(struct pipe_context *pipe,
                              enum pipe_shader_type shader, uint index,
+                             bool take_ownership,
                              const struct pipe_constant_buffer *cb)
 {
    struct llvmpipe_context *llvmpipe = llvmpipe_context(pipe);
-   struct pipe_resource *constants = cb ? cb->buffer : NULL;
+   struct pipe_constant_buffer *constants = &llvmpipe->constants[shader][index];
 
    assert(shader < PIPE_SHADER_TYPES);
    assert(index < ARRAY_SIZE(llvmpipe->constants[shader]));
 
    /* note: reference counting */
-   util_copy_constant_buffer(&llvmpipe->constants[shader][index], cb);
+   util_copy_constant_buffer(&llvmpipe->constants[shader][index], cb,
+                             take_ownership);
 
-   if (constants) {
-       if (!(constants->bind & PIPE_BIND_CONSTANT_BUFFER)) {
+   /* user_buffer is only valid until the next set_constant_buffer (at most,
+    * possibly until shader deletion), so we need to upload it now to make sure
+    * it doesn't get updated/freed out from under us.
+    */
+   if (constants->user_buffer) {
+      u_upload_data(llvmpipe->pipe.const_uploader, 0, constants->buffer_size, 16,
+                    constants->user_buffer, &constants->buffer_offset,
+                    &constants->buffer);
+   }
+   if (constants->buffer) {
+       if (!(constants->buffer->bind & PIPE_BIND_CONSTANT_BUFFER)) {
          debug_printf("Illegal set constant without bind flag\n");
-         constants->bind |= PIPE_BIND_CONSTANT_BUFFER;
+         constants->buffer->bind |= PIPE_BIND_CONSTANT_BUFFER;
       }
    }
 
@@ -3810,20 +4015,10 @@ llvmpipe_set_constant_buffer(struct pipe_context *pipe,
        shader == PIPE_SHADER_TESS_EVAL) {
       /* Pass the constants to the 'draw' module */
       const unsigned size = cb ? cb->buffer_size : 0;
-      const ubyte *data;
 
-      if (constants) {
-         data = (ubyte *) llvmpipe_resource_data(constants);
-      }
-      else if (cb && cb->user_buffer) {
-         data = (ubyte *) cb->user_buffer;
-      }
-      else {
-         data = NULL;
-      }
-
-      if (data)
-         data += cb->buffer_offset;
+      const ubyte *data = NULL;
+      if (constants->buffer)
+         data = (ubyte *) llvmpipe_resource_data(constants->buffer) + constants->buffer_offset;
 
       draw_set_mapped_constant_buffer(llvmpipe->draw, shader,
                                       index, data, size);
@@ -3832,10 +4027,6 @@ llvmpipe_set_constant_buffer(struct pipe_context *pipe,
       llvmpipe->cs_dirty |= LP_CSNEW_CONSTANTS;
    else
       llvmpipe->dirty |= LP_NEW_FS_CONSTANTS;
-
-   if (cb && cb->user_buffer) {
-      pipe_resource_reference(&constants, NULL);
-   }
 }
 
 static void
@@ -3850,6 +4041,12 @@ llvmpipe_set_shader_buffers(struct pipe_context *pipe,
       const struct pipe_shader_buffer *buffer = buffers ? &buffers[idx] : NULL;
 
       util_copy_shader_buffer(&llvmpipe->ssbos[shader][i], buffer);
+
+      if (buffer && buffer->buffer) {
+         boolean read_only = !(writable_bitmask & (1 << idx));
+         llvmpipe_flush_resource(pipe, buffer->buffer, 0, read_only, false,
+                                 false, "buffer");
+      }
 
       if (shader == PIPE_SHADER_VERTEX ||
           shader == PIPE_SHADER_GEOMETRY ||
@@ -3866,6 +4063,8 @@ llvmpipe_set_shader_buffers(struct pipe_context *pipe,
       } else if (shader == PIPE_SHADER_COMPUTE) {
 	 llvmpipe->cs_dirty |= LP_CSNEW_SSBOS;
       } else if (shader == PIPE_SHADER_FRAGMENT) {
+         llvmpipe->fs_ssbo_write_mask &= ~(((1 << count) - 1) << start_slot);
+         llvmpipe->fs_ssbo_write_mask |= writable_bitmask << start_slot;
          llvmpipe->dirty |= LP_NEW_FS_SSBOS;
       }
    }
@@ -3874,7 +4073,8 @@ llvmpipe_set_shader_buffers(struct pipe_context *pipe,
 static void
 llvmpipe_set_shader_images(struct pipe_context *pipe,
                             enum pipe_shader_type shader, unsigned start_slot,
-                           unsigned count, const struct pipe_image_view *images)
+                           unsigned count, unsigned unbind_num_trailing_slots,
+                           const struct pipe_image_view *images)
 {
    struct llvmpipe_context *llvmpipe = llvmpipe_context(pipe);
    unsigned i, idx;
@@ -3884,6 +4084,12 @@ llvmpipe_set_shader_images(struct pipe_context *pipe,
       const struct pipe_image_view *image = images ? &images[idx] : NULL;
 
       util_copy_image_view(&llvmpipe->images[shader][i], image);
+
+      if (image && image->resource) {
+         bool read_only = !(image->access & PIPE_IMAGE_ACCESS_WRITE);
+         llvmpipe_flush_resource(pipe, image->resource, 0, read_only, false,
+                                 false, "image");
+      }
    }
 
    llvmpipe->num_images[shader] = start_slot + count;
@@ -3899,6 +4105,11 @@ llvmpipe_set_shader_images(struct pipe_context *pipe,
       llvmpipe->cs_dirty |= LP_CSNEW_IMAGES;
    else
       llvmpipe->dirty |= LP_NEW_FS_IMAGES;
+
+   if (unbind_num_trailing_slots) {
+      llvmpipe_set_shader_images(pipe, shader, start_slot + count,
+                                 unbind_num_trailing_slots, 0, NULL);
+   }
 }
 
 /**
@@ -3940,17 +4151,19 @@ make_variant_key(struct llvmpipe_context *lp,
 
    key = (struct lp_fragment_shader_variant_key *)store;
 
-   memset(key, 0, offsetof(struct lp_fragment_shader_variant_key, samplers[1]));
+   memset(key, 0, sizeof(*key));
 
    if (lp->framebuffer.zsbuf) {
       enum pipe_format zsbuf_format = lp->framebuffer.zsbuf->format;
       const struct util_format_description *zsbuf_desc =
          util_format_description(zsbuf_format);
 
-      if (lp->depth_stencil->depth.enabled &&
+      if (lp->depth_stencil->depth_enabled &&
           util_format_has_depth(zsbuf_desc)) {
          key->zsbuf_format = zsbuf_format;
-         memcpy(&key->depth, &lp->depth_stencil->depth, sizeof key->depth);
+         key->depth.enabled = lp->depth_stencil->depth_enabled;
+         key->depth.writemask = lp->depth_stencil->depth_writemask;
+         key->depth.func = lp->depth_stencil->depth_func;
       }
       if (lp->depth_stencil->stencil[0].enabled &&
           util_format_has_stencil(zsbuf_desc)) {
@@ -3965,31 +4178,17 @@ make_variant_key(struct llvmpipe_context *lp,
 
    /*
     * Propagate the depth clamp setting from the rasterizer state.
-    * depth_clip == 0 implies depth clamping is enabled.
-    *
-    * When clip_halfz is enabled, then always clamp the depth values.
-    *
-    * XXX: This is incorrect for GL, but correct for d3d10 (depth
-    * clamp is always active in d3d10, regardless if depth clip is
-    * enabled or not).
-    * (GL has an always-on [0,1] clamp on fs depth output instead
-    * to ensure the depth values stay in range. Doesn't look like
-    * we do that, though...)
     */
-   if (lp->rasterizer->clip_halfz) {
-      key->depth_clamp = 1;
-   } else {
-      key->depth_clamp = (lp->rasterizer->depth_clip_near == 0) ? 1 : 0;
-   }
+   key->depth_clamp = lp->rasterizer->depth_clamp;
 
    /* alpha test only applies if render buffer 0 is non-integer (or does not exist) */
    if (!lp->framebuffer.nr_cbufs ||
        !lp->framebuffer.cbufs[0] ||
        !util_format_is_pure_integer(lp->framebuffer.cbufs[0]->format)) {
-      key->alpha.enabled = lp->depth_stencil->alpha.enabled;
+      key->alpha.enabled = lp->depth_stencil->alpha_enabled;
    }
    if(key->alpha.enabled)
-      key->alpha.func = lp->depth_stencil->alpha.func;
+      key->alpha.func = lp->depth_stencil->alpha_func;
    /* alpha.ref_value is passed in jit_context */
 
    key->flatshade = lp->rasterizer->flatshade;
@@ -4097,7 +4296,7 @@ make_variant_key(struct llvmpipe_context *lp,
 
    struct lp_sampler_static_state *fs_sampler;
 
-   fs_sampler = key->samplers;
+   fs_sampler = lp_fs_variant_key_samplers(key);
 
    memset(fs_sampler, 0, MAX2(key->nr_samplers, key->nr_sampler_views) * sizeof *fs_sampler);
 
@@ -4146,9 +4345,16 @@ make_variant_key(struct llvmpipe_context *lp,
                                                &lp->images[PIPE_SHADER_FRAGMENT][i]);
       }
    }
+
+   if (shader->kind == LP_FS_KIND_AERO_MINIFICATION) {
+      struct lp_sampler_static_state *samp0 = lp_fs_variant_key_sampler_idx(key, 0);
+      assert(samp0);
+      samp0->sampler_state.min_img_filter = PIPE_TEX_FILTER_NEAREST;
+      samp0->sampler_state.mag_img_filter = PIPE_TEX_FILTER_NEAREST;
+   }
+
    return key;
 }
-
 
 
 /**
@@ -4225,7 +4431,8 @@ llvmpipe_update_fs(struct llvmpipe_context *lp)
             assert(item);
             assert(item->base);
             llvmpipe_remove_shader_variant(lp, item->base);
-            lp_fs_variant_reference(lp, &item->base, NULL);
+            struct lp_fragment_shader_variant *variant = item->base;
+            lp_fs_variant_reference(lp, &variant, NULL);
          }
       }
 

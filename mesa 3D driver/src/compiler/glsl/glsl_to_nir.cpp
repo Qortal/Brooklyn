@@ -54,7 +54,7 @@ namespace {
 class nir_visitor : public ir_visitor
 {
 public:
-   nir_visitor(gl_context *ctx, nir_shader *shader);
+   nir_visitor(const struct gl_constants *consts, nir_shader *shader);
    ~nir_visitor();
 
    virtual void visit(ir_variable *);
@@ -116,6 +116,12 @@ private:
 
    /* map of ir_function_signature -> nir_function_overload */
    struct hash_table *overload_table;
+
+   /* set of nir_variable hold sparse result */
+   struct set *sparse_variable_set;
+
+   void adjust_sparse_variable(nir_deref_instr *var_deref, const glsl_type *type,
+                               nir_ssa_def *dest);
 };
 
 /*
@@ -189,7 +195,7 @@ has_unsupported_function_param(exec_list *ir)
 }
 
 nir_shader *
-glsl_to_nir(struct gl_context *ctx,
+glsl_to_nir(const struct gl_constants *consts,
             const struct gl_shader_program *shader_prog,
             gl_shader_stage stage,
             const nir_shader_compiler_options *options)
@@ -197,7 +203,7 @@ glsl_to_nir(struct gl_context *ctx,
    struct gl_linked_shader *sh = shader_prog->_LinkedShaders[stage];
 
    const struct gl_shader_compiler_options *gl_options =
-      &ctx->Const.ShaderCompilerOptions[stage];
+      &consts->ShaderCompilerOptions[stage];
 
    /* glsl_to_nir can only handle converting certain function paramaters
     * to NIR. If we find something we can't handle then we get the GLSL IR
@@ -207,16 +213,20 @@ glsl_to_nir(struct gl_context *ctx,
     */
    while (has_unsupported_function_param(sh->ir)) {
       do_common_optimization(sh->ir, true, true, gl_options,
-                             ctx->Const.NativeIntegers);
+                             consts->NativeIntegers);
    }
 
    nir_shader *shader = nir_shader_create(NULL, stage, options,
                                           &sh->Program->info);
 
-   nir_visitor v1(ctx, shader);
+   nir_visitor v1(consts, shader);
    nir_function_visitor v2(&v1);
    v2.run(sh->ir);
    visit_exec_list(sh->ir, &v1);
+
+   /* The GLSL IR won't be needed anymore. */
+   ralloc_free(sh->ir);
+   sh->ir = NULL;
 
    nir_validate_shader(shader, "after glsl to nir, before function inline");
 
@@ -256,18 +266,20 @@ glsl_to_nir(struct gl_context *ctx,
    if (shader->info.stage == MESA_SHADER_FRAGMENT) {
       shader->info.fs.pixel_center_integer = sh->Program->info.fs.pixel_center_integer;
       shader->info.fs.origin_upper_left = sh->Program->info.fs.origin_upper_left;
+      shader->info.fs.advanced_blend_modes = sh->Program->info.fs.advanced_blend_modes;
    }
 
    return shader;
 }
 
-nir_visitor::nir_visitor(gl_context *ctx, nir_shader *shader)
+nir_visitor::nir_visitor(const struct gl_constants *consts, nir_shader *shader)
 {
-   this->supports_std430 = ctx->Const.UseSTD430AsDefaultPacking;
+   this->supports_std430 = consts->UseSTD430AsDefaultPacking;
    this->shader = shader;
    this->is_global = true;
    this->var_table = _mesa_pointer_hash_table_create(NULL);
    this->overload_table = _mesa_pointer_hash_table_create(NULL);
+   this->sparse_variable_set = _mesa_pointer_set_create(NULL);
    this->result = NULL;
    this->impl = NULL;
    this->deref = NULL;
@@ -279,6 +291,7 @@ nir_visitor::~nir_visitor()
 {
    _mesa_hash_table_destroy(this->var_table, NULL);
    _mesa_hash_table_destroy(this->overload_table, NULL);
+   _mesa_set_destroy(this->sparse_variable_set, NULL);
 }
 
 nir_deref_instr *
@@ -431,15 +444,27 @@ nir_visitor::constant_copy(ir_constant *ir, void *mem_ctx)
    return ret;
 }
 
-static const glsl_type *
-wrap_type_in_array(const glsl_type *elem_type, const glsl_type *array_type)
+void
+nir_visitor::adjust_sparse_variable(nir_deref_instr *var_deref, const glsl_type *type,
+                                    nir_ssa_def *dest)
 {
-   if (!array_type->is_array())
-      return elem_type;
+   const glsl_type *texel_type = type->field_type("texel");
+   assert(texel_type);
 
-   elem_type = wrap_type_in_array(elem_type, array_type->fields.array);
+   assert(var_deref->deref_type == nir_deref_type_var);
+   nir_variable *var = var_deref->var;
 
-   return glsl_type::get_array_instance(elem_type, array_type->length);
+   /* Adjust nir_variable type to align with sparse nir instructions.
+    * Because the nir_variable is created with struct type from ir_variable,
+    * but sparse nir instructions output with vector dest.
+    */
+   var->type = glsl_type::get_instance(texel_type->get_base_type()->base_type,
+                                       dest->num_components, 1);
+
+   var_deref->type = var->type;
+
+   /* Record the adjusted variable. */
+   _mesa_set_add(this->sparse_variable_set, var);
 }
 
 static unsigned
@@ -544,6 +569,8 @@ nir_visitor::visit(ir_variable *ir)
    case ir_var_uniform:
       if (ir->get_interface_type())
          var->data.mode = nir_var_mem_ubo;
+      else if (ir->type->contains_image() && !ir->data.bindless)
+         var->data.mode = nir_var_image;
       else
          var->data.mode = nir_var_uniform;
       break;
@@ -585,7 +612,7 @@ nir_visitor::visit(ir_variable *ir)
          /* If the type contains the interface, wrap the explicit type in the
           * right number of arrays.
           */
-         var->type = wrap_type_in_array(explicit_ifc_type, ir->type);
+         var->type = glsl_type_wrap_in_arrays(explicit_ifc_type, ir->type);
       } else {
          /* Otherwise, this variable is one entry in the interface */
          UNUSED bool found = false;
@@ -663,7 +690,7 @@ nir_visitor::visit(ir_variable *ir)
 
       ir_state_slot *state_slots = ir->get_state_slots();
       for (unsigned i = 0; i < var->num_state_slots; i++) {
-         for (unsigned j = 0; j < 5; j++)
+         for (unsigned j = 0; j < 4; j++)
             var->state_slots[i].tokens[j] = state_slots[i].tokens[j];
          var->state_slots[i].swizzle = state_slots[i].swizzle;
       }
@@ -811,44 +838,28 @@ nir_visitor::visit(ir_discard *ir)
     * discards will be immediately followed by a return.
     */
 
-   nir_intrinsic_instr *discard;
-   if (ir->condition) {
-      discard = nir_intrinsic_instr_create(this->shader,
-                                           nir_intrinsic_discard_if);
-      discard->src[0] =
-         nir_src_for_ssa(evaluate_rvalue(ir->condition));
-   } else {
-      discard = nir_intrinsic_instr_create(this->shader, nir_intrinsic_discard);
-   }
-
-   nir_builder_instr_insert(&b, &discard->instr);
+   if (ir->condition)
+      nir_discard_if(&b, evaluate_rvalue(ir->condition));
+   else
+      nir_discard(&b);
 }
 
 void
 nir_visitor::visit(ir_demote *ir)
 {
-   nir_intrinsic_instr *demote =
-      nir_intrinsic_instr_create(this->shader, nir_intrinsic_demote);
-
-   nir_builder_instr_insert(&b, &demote->instr);
+   nir_demote(&b);
 }
 
 void
 nir_visitor::visit(ir_emit_vertex *ir)
 {
-   nir_intrinsic_instr *instr =
-      nir_intrinsic_instr_create(this->shader, nir_intrinsic_emit_vertex);
-   nir_intrinsic_set_stream_id(instr, ir->stream_id());
-   nir_builder_instr_insert(&b, &instr->instr);
+   nir_emit_vertex(&b, (unsigned)ir->stream_id());
 }
 
 void
 nir_visitor::visit(ir_end_primitive *ir)
 {
-   nir_intrinsic_instr *instr =
-      nir_intrinsic_instr_create(this->shader, nir_intrinsic_end_primitive);
-   nir_intrinsic_set_stream_id(instr, ir->stream_id());
-   nir_builder_instr_insert(&b, &instr->instr);
+   nir_end_primitive(&b, (unsigned)ir->stream_id());
 }
 
 void
@@ -1077,6 +1088,9 @@ nir_visitor::visit(ir_call *ir)
       case ir_intrinsic_image_samples:
          op = nir_intrinsic_image_deref_samples;
          break;
+      case ir_intrinsic_image_sparse_load:
+         op = nir_intrinsic_image_deref_sparse_load;
+         break;
       case ir_intrinsic_ssbo_store:
       case ir_intrinsic_ssbo_load:
       case ir_intrinsic_ssbo_atomic_add:
@@ -1191,6 +1205,9 @@ nir_visitor::visit(ir_call *ir)
          break;
       case ir_intrinsic_helper_invocation:
          op = nir_intrinsic_is_helper_invocation;
+         break;
+      case ir_intrinsic_is_sparse_texels_resident:
+         op = nir_intrinsic_is_sparse_texels_resident;
          break;
       default:
          unreachable("not reached");
@@ -1319,11 +1336,8 @@ nir_visitor::visit(ir_call *ir)
       case nir_intrinsic_image_deref_samples:
       case nir_intrinsic_image_deref_size:
       case nir_intrinsic_image_deref_atomic_inc_wrap:
-      case nir_intrinsic_image_deref_atomic_dec_wrap: {
-         nir_ssa_undef_instr *instr_undef =
-            nir_ssa_undef_instr_create(shader, 1, 32);
-         nir_builder_instr_insert(&b, &instr_undef->instr);
-
+      case nir_intrinsic_image_deref_atomic_dec_wrap:
+      case nir_intrinsic_image_deref_sparse_load: {
          /* Set the image variable dereference. */
          exec_node *param = ir->actual_parameters.get_head();
          ir_dereference *image = (ir_dereference *)param;
@@ -1334,18 +1348,30 @@ nir_visitor::visit(ir_call *ir)
 
          instr->src[0] = nir_src_for_ssa(&deref->dest.ssa);
          param = param->get_next();
+         nir_intrinsic_set_image_dim(instr,
+            (glsl_sampler_dim)type->sampler_dimensionality);
+         nir_intrinsic_set_image_array(instr, type->sampler_array);
 
          /* Set the intrinsic destination. */
          if (ir->return_deref) {
-            unsigned num_components = ir->return_deref->type->vector_elements;
+            unsigned num_components;
+            if (op == nir_intrinsic_image_deref_sparse_load) {
+               const glsl_type *dest_type =
+                  ir->return_deref->type->field_type("texel");
+               /* One extra component to hold residency code. */
+               num_components = dest_type->vector_elements + 1;
+            } else
+               num_components = ir->return_deref->type->vector_elements;
+
             nir_ssa_dest_init(&instr->instr, &instr->dest,
                               num_components, 32, NULL);
          }
 
          if (op == nir_intrinsic_image_deref_size) {
             instr->num_components = instr->dest.ssa.num_components;
-         } else if (op == nir_intrinsic_image_deref_load) {
-            instr->num_components = 4;
+         } else if (op == nir_intrinsic_image_deref_load ||
+                    op == nir_intrinsic_image_deref_sparse_load) {
+            instr->num_components = instr->dest.ssa.num_components;
             nir_intrinsic_set_dest_type(instr,
                nir_get_nir_type_for_glsl_base_type(type->sampled_type));
          } else if (op == nir_intrinsic_image_deref_store) {
@@ -1376,7 +1402,7 @@ nir_visitor::visit(ir_call *ir)
             if (i < type->coordinate_components())
                srcs[i] = nir_channel(&b, src_addr, i);
             else
-               srcs[i] = &instr_undef->def;
+               srcs[i] = nir_ssa_undef(&b, 1, 32);
          }
 
          instr->src[1] = nir_src_for_ssa(nir_vec(&b, srcs, 4));
@@ -1390,7 +1416,7 @@ nir_visitor::visit(ir_call *ir)
                nir_src_for_ssa(evaluate_rvalue((ir_dereference *)param));
             param = param->get_next();
          } else {
-            instr->src[2] = nir_src_for_ssa(&instr_undef->def);
+            instr->src[2] = nir_src_for_ssa(nir_ssa_undef(&b, 1, 32));
          }
 
          /* Set the intrinsic parameters. */
@@ -1398,7 +1424,8 @@ nir_visitor::visit(ir_call *ir)
             instr->src[3] =
                nir_src_for_ssa(evaluate_rvalue((ir_dereference *)param));
             param = param->get_next();
-         } else if (op == nir_intrinsic_image_deref_load) {
+         } else if (op == nir_intrinsic_image_deref_load ||
+                    op == nir_intrinsic_image_deref_sparse_load) {
             instr->src[3] = nir_src_for_ssa(nir_imm_int(&b, 0)); /* LOD */
          }
 
@@ -1559,7 +1586,7 @@ nir_visitor::visit(ir_call *ir)
       }
       case nir_intrinsic_vote_ieq:
          instr->num_components = 1;
-         /* fall-through */
+         FALLTHROUGH;
       case nir_intrinsic_vote_any:
       case nir_intrinsic_vote_all: {
          nir_ssa_dest_init(&instr->instr, &instr->dest, 1, 1, NULL);
@@ -1612,12 +1639,27 @@ nir_visitor::visit(ir_call *ir)
          nir_builder_instr_insert(&b, &instr->instr);
          break;
       }
+      case nir_intrinsic_is_sparse_texels_resident: {
+         nir_ssa_dest_init(&instr->instr, &instr->dest, 1, 1, NULL);
+
+         ir_rvalue *value = (ir_rvalue *) ir->actual_parameters.get_head();
+         instr->src[0] = nir_src_for_ssa(evaluate_rvalue(value));
+
+         nir_builder_instr_insert(&b, &instr->instr);
+         break;
+      }
       default:
          unreachable("not reached");
       }
 
-      if (ir->return_deref)
-         nir_store_deref(&b, evaluate_deref(ir->return_deref), ret, ~0);
+      if (ir->return_deref) {
+         nir_deref_instr *ret_deref = evaluate_deref(ir->return_deref);
+
+         if (op == nir_intrinsic_image_deref_sparse_load)
+            adjust_sparse_variable(ret_deref, ir->return_deref->type, ret);
+
+         nir_store_deref(&b, ret_deref, ret, ~0);
+      }
 
       return;
    }
@@ -1651,7 +1693,7 @@ nir_visitor::visit(ir_call *ir)
          nir_ssa_def *val = evaluate_rvalue(param_rvalue);
          nir_src src = nir_src_for_ssa(val);
 
-         nir_src_copy(&call->params[i], &src, call);
+         nir_src_copy(&call->params[i], &src);
       } else if (sig_param->data.mode == ir_var_function_inout) {
          unreachable("unimplemented: inout parameters");
       }
@@ -1669,35 +1711,42 @@ void
 nir_visitor::visit(ir_assignment *ir)
 {
    unsigned num_components = ir->lhs->type->vector_elements;
+   unsigned write_mask = ir->write_mask;
 
    b.exact = ir->lhs->variable_referenced()->data.invariant ||
              ir->lhs->variable_referenced()->data.precise;
 
    if ((ir->rhs->as_dereference() || ir->rhs->as_constant()) &&
-       (ir->write_mask == (1 << num_components) - 1 || ir->write_mask == 0)) {
+       (write_mask == BITFIELD_MASK(num_components) || write_mask == 0)) {
       nir_deref_instr *lhs = evaluate_deref(ir->lhs);
       nir_deref_instr *rhs = evaluate_deref(ir->rhs);
       enum gl_access_qualifier lhs_qualifiers = deref_get_qualifier(lhs);
       enum gl_access_qualifier rhs_qualifiers = deref_get_qualifier(rhs);
-      if (ir->condition) {
-         nir_push_if(&b, evaluate_rvalue(ir->condition));
-         nir_copy_deref_with_access(&b, lhs, rhs, lhs_qualifiers,
-                                    rhs_qualifiers);
-         nir_pop_if(&b, NULL);
-      } else {
-         nir_copy_deref_with_access(&b, lhs, rhs, lhs_qualifiers,
-                                    rhs_qualifiers);
-      }
+
+      nir_copy_deref_with_access(&b, lhs, rhs, lhs_qualifiers,
+                                 rhs_qualifiers);
       return;
    }
 
-   assert(ir->rhs->type->is_scalar() || ir->rhs->type->is_vector());
+   ir_texture *tex = ir->rhs->as_texture();
+   bool is_sparse = tex && tex->is_sparse;
+
+   if (!is_sparse)
+      assert(ir->rhs->type->is_scalar() || ir->rhs->type->is_vector());
 
    ir->lhs->accept(this);
    nir_deref_instr *lhs_deref = this->deref;
    nir_ssa_def *src = evaluate_rvalue(ir->rhs);
 
-   if (ir->write_mask != (1 << num_components) - 1 && ir->write_mask != 0) {
+   if (is_sparse) {
+      adjust_sparse_variable(lhs_deref, tex->type, src);
+
+      /* correct component and mask because they are 0 for struct */
+      num_components = src->num_components;
+      write_mask = BITFIELD_MASK(num_components);
+   }
+
+   if (write_mask != BITFIELD_MASK(num_components) && write_mask != 0) {
       /* GLSL IR will give us the input to the write-masked assignment in a
        * single packed vector.  So, for example, if the writemask is xzw, then
        * we have to swizzle x -> x, y -> z, and z -> w and get the y component
@@ -1706,21 +1755,15 @@ nir_visitor::visit(ir_assignment *ir)
       unsigned swiz[4];
       unsigned component = 0;
       for (unsigned i = 0; i < 4; i++) {
-         swiz[i] = ir->write_mask & (1 << i) ? component++ : 0;
+         swiz[i] = write_mask & (1 << i) ? component++ : 0;
       }
       src = nir_swizzle(&b, src, swiz, num_components);
    }
 
    enum gl_access_qualifier qualifiers = deref_get_qualifier(lhs_deref);
-   if (ir->condition) {
-      nir_push_if(&b, evaluate_rvalue(ir->condition));
-      nir_store_deref_with_access(&b, lhs_deref, src, ir->write_mask,
-                                  qualifiers);
-      nir_pop_if(&b, NULL);
-   } else {
-      nir_store_deref_with_access(&b, lhs_deref, src, ir->write_mask,
-                                  qualifiers);
-   }
+
+   nir_store_deref_with_access(&b, lhs_deref, src, write_mask,
+                               qualifiers);
 }
 
 /*
@@ -2290,13 +2333,7 @@ nir_visitor::visit(ir_expression *ir)
       }
       break;
    case ir_binop_dot:
-      switch (ir->operands[0]->type->vector_elements) {
-         case 2: result = nir_fdot2(&b, srcs[0], srcs[1]); break;
-         case 3: result = nir_fdot3(&b, srcs[0], srcs[1]); break;
-         case 4: result = nir_fdot4(&b, srcs[0], srcs[1]); break;
-         default:
-            unreachable("not reached");
-      }
+      result = nir_fdot(&b, srcs[0], srcs[1]);
       break;
    case ir_binop_vector_extract: {
       result = nir_channel(&b, srcs[0], 0);
@@ -2428,6 +2465,8 @@ nir_visitor::visit(ir_texture *ir)
    /* offsets are constants we store inside nir_tex_intrs.offsets */
    if (ir->offset != NULL && !ir->offset->type->is_array())
       num_srcs++;
+   if (ir->clamp != NULL)
+      num_srcs++;
 
    /* Add one for the texture deref */
    num_srcs += 2;
@@ -2441,29 +2480,12 @@ nir_visitor::visit(ir_texture *ir)
    instr->is_shadow = ir->sampler->type->sampler_shadow;
    if (instr->is_shadow)
       instr->is_new_style_shadow = (ir->type->vector_elements == 1);
-   switch (ir->type->base_type) {
-   case GLSL_TYPE_FLOAT:
-      instr->dest_type = nir_type_float;
-      break;
-   case GLSL_TYPE_FLOAT16:
-      instr->dest_type = nir_type_float16;
-      break;
-   case GLSL_TYPE_INT16:
-      instr->dest_type = nir_type_int16;
-      break;
-   case GLSL_TYPE_UINT16:
-      instr->dest_type = nir_type_uint16;
-      break;
-   case GLSL_TYPE_INT:
-      instr->dest_type = nir_type_int;
-      break;
-   case GLSL_TYPE_BOOL:
-   case GLSL_TYPE_UINT:
-      instr->dest_type = nir_type_uint;
-      break;
-   default:
-      unreachable("not reached");
-   }
+
+   const glsl_type *dest_type
+      = ir->is_sparse ? ir->type->field_type("texel") : ir->type;
+   assert(dest_type != glsl_type::error_type);
+   instr->dest_type = nir_get_nir_type_for_glsl_type(dest_type);
+   instr->is_sparse = ir->is_sparse;
 
    nir_deref_instr *sampler_deref = evaluate_deref(ir->sampler);
 
@@ -2528,6 +2550,13 @@ nir_visitor::visit(ir_texture *ir)
       }
    }
 
+   if (ir->clamp) {
+      instr->src[src_number].src =
+         nir_src_for_ssa(evaluate_rvalue(ir->clamp));
+      instr->src[src_number].src_type = nir_tex_src_min_lod;
+      src_number++;
+   }
+
    switch (ir->op) {
    case ir_txb:
       instr->src[src_number].src =
@@ -2575,7 +2604,7 @@ nir_visitor::visit(ir_texture *ir)
 
    assert(src_number == num_srcs);
 
-   unsigned bit_size = glsl_get_bit_size(ir->type);
+   unsigned bit_size = glsl_get_bit_size(dest_type);
    add_instr(&instr->instr, nir_tex_instr_dest_size(instr), bit_size);
 }
 
@@ -2632,7 +2661,33 @@ nir_visitor::visit(ir_dereference_record *ir)
    int field_index = ir->field_idx;
    assert(field_index >= 0);
 
-   this->deref = nir_build_deref_struct(&b, this->deref, field_index);
+   /* sparse texture variable is a struct for ir_variable, but it has been
+    * converted to a vector for nir_variable.
+    */
+   if (this->deref->deref_type == nir_deref_type_var &&
+       _mesa_set_search(this->sparse_variable_set, this->deref->var)) {
+      nir_ssa_def *load = nir_load_deref(&b, this->deref);
+      assert(load->num_components >= 2);
+
+      nir_ssa_def *ssa;
+      const glsl_type *type = ir->record->type;
+      if (field_index == type->field_index("code")) {
+         /* last channel holds residency code */
+         ssa = nir_channel(&b, load, load->num_components - 1);
+      } else {
+         assert(field_index == type->field_index("texel"));
+
+         unsigned mask = BITFIELD_MASK(load->num_components - 1);
+         ssa = nir_channels(&b, load, mask);
+      }
+
+      /* still need to create a deref for return */
+      nir_variable *tmp =
+         nir_local_variable_create(this->impl, ir->type, "deref_tmp");
+      this->deref = nir_build_deref_var(&b, tmp);
+      nir_store_deref(&b, this->deref, ssa, ~0);
+   } else
+      this->deref = nir_build_deref_struct(&b, this->deref, field_index);
 }
 
 void
@@ -2648,21 +2703,12 @@ nir_visitor::visit(ir_dereference_array *ir)
 void
 nir_visitor::visit(ir_barrier *)
 {
-   if (shader->info.stage == MESA_SHADER_COMPUTE) {
-      nir_intrinsic_instr *shared_barrier =
-         nir_intrinsic_instr_create(this->shader,
-                                    nir_intrinsic_memory_barrier_shared);
-      nir_builder_instr_insert(&b, &shared_barrier->instr);
-   } else if (shader->info.stage == MESA_SHADER_TESS_CTRL) {
-      nir_intrinsic_instr *patch_barrier =
-         nir_intrinsic_instr_create(this->shader,
-                                    nir_intrinsic_memory_barrier_tcs_patch);
-      nir_builder_instr_insert(&b, &patch_barrier->instr);
-   }
+   if (shader->info.stage == MESA_SHADER_COMPUTE)
+      nir_memory_barrier_shared(&b);
+   else if (shader->info.stage == MESA_SHADER_TESS_CTRL)
+      nir_memory_barrier_tcs_patch(&b);
 
-   nir_intrinsic_instr *instr =
-      nir_intrinsic_instr_create(this->shader, nir_intrinsic_control_barrier);
-   nir_builder_instr_insert(&b, &instr->instr);
+   nir_control_barrier(&b);
 }
 
 nir_shader *
@@ -2688,7 +2734,7 @@ glsl_float64_funcs_to_nir(struct gl_context *ctx,
 
    nir_shader *nir = nir_shader_create(NULL, MESA_SHADER_VERTEX, options, NULL);
 
-   nir_visitor v1(ctx, nir);
+   nir_visitor v1(&ctx->Const, nir);
    nir_function_visitor v2(&v1);
    v2.run(sh->ir);
    visit_exec_list(sh->ir, &v1);

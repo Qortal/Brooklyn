@@ -78,8 +78,10 @@ nir_lower_to_source_mods_block(nir_block *block,
          case nir_type_float:
             if (!(options & nir_lower_float_source_mods))
                continue;
-            if (parent->op != nir_op_fabs && parent->op != nir_op_fneg)
+            if (!(parent->op == nir_op_fabs && (options & nir_lower_fabs_source_mods)) &&
+                !(parent->op == nir_op_fneg && (options & nir_lower_fneg_source_mods))) {
                continue;
+            }
             break;
          case nir_type_int:
             if (!(options & nir_lower_int_source_mods))
@@ -127,8 +129,7 @@ nir_lower_to_source_mods_block(nir_block *block,
             alu->src[i].swizzle[j] = parent->src[0].swizzle[alu->src[i].swizzle[j]];
          }
 
-         if (list_is_empty(&parent->dest.dest.ssa.uses) &&
-             list_is_empty(&parent->dest.dest.ssa.if_uses))
+         if (nir_ssa_def_is_unused(&parent->dest.dest.ssa))
             nir_instr_remove(&parent->instr);
 
          progress = true;

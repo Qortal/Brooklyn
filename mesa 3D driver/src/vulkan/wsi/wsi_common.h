@@ -27,8 +27,21 @@
 #include <stdbool.h>
 
 #include "vk_alloc.h"
+#include "vk_dispatch_table.h"
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_icd.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#ifndef WSI_ENTRYPOINTS_H
+extern const struct vk_instance_entrypoint_table wsi_instance_entrypoints;
+extern const struct vk_physical_device_entrypoint_table wsi_physical_device_entrypoints;
+extern const struct vk_device_entrypoint_table wsi_device_entrypoints;
+#endif
+
+#include <util/list.h>
 
 /* This is guaranteed to not collide with anything because it's in the
  * VK_KHR_swapchain namespace but not actually used by the extension.
@@ -38,10 +51,17 @@
 #define VK_STRUCTURE_TYPE_WSI_SURFACE_SUPPORTED_COUNTERS_MESA (VkStructureType)1000001005
 #define VK_STRUCTURE_TYPE_WSI_MEMORY_SIGNAL_SUBMIT_INFO_MESA (VkStructureType)1000001006
 
+/* This is always chained to VkImageCreateInfo when a wsi image is created.
+ * It indicates that the image can be transitioned to/from
+ * VK_IMAGE_LAYOUT_PRESENT_SRC_KHR.
+ */
 struct wsi_image_create_info {
     VkStructureType sType;
     const void *pNext;
     bool scanout;
+
+    /* if true, the image is a buffer blit source */
+    bool buffer_blit_src;
 };
 
 struct wsi_memory_allocate_info {
@@ -64,15 +84,6 @@ struct wsi_memory_signal_submit_info {
     VkStructureType sType;
     const void *pNext;
     VkDeviceMemory memory;
-};
-
-struct wsi_fence {
-   VkDevice                     device;
-   const struct wsi_device      *wsi_device;
-   VkDisplayKHR                 display;
-   const VkAllocationCallbacks  *alloc;
-   VkResult                     (*wait)(struct wsi_fence *fence, uint64_t abs_timeout);
-   void                         (*destroy)(struct wsi_fence *fence);
 };
 
 struct wsi_interface;
@@ -100,6 +111,9 @@ struct wsi_device {
     * available. Not all window systems might support this. */
    bool enable_adaptive_sync;
 
+   /* List of fences to signal when hotplug event happens. */
+   struct list_head hotplug_fences;
+
    struct {
       /* Override the minimum number of images on the swapchain.
        * 0 = no override */
@@ -114,25 +128,29 @@ struct wsi_device {
        * driver in VkSurfaceCapabilitiesKHR::minImageCount.
        */
       bool ensure_minImageCount;
+
+      /* Wait for fences before submitting buffers to Xwayland. Defaults to
+       * true.
+       */
+      bool xwaylandWaitReady;
    } x11;
 
    bool sw;
 
    /* Signals the semaphore such that any wait on the semaphore will wait on
     * any reads or writes on the give memory object.  This is used to
-    * implement the semaphore signal operation in vkAcquireNextImage.
+    * implement the semaphore signal operation in vkAcquireNextImage.  This
+    * requires the driver to implement vk_device::create_sync_for_memory.
     */
-   void (*signal_semaphore_for_memory)(VkDevice device,
-                                       VkSemaphore semaphore,
-                                       VkDeviceMemory memory);
+   bool signal_semaphore_with_memory;
 
    /* Signals the fence such that any wait on the fence will wait on any reads
     * or writes on the give memory object.  This is used to implement the
-    * semaphore signal operation in vkAcquireNextImage.
+    * semaphore signal operation in vkAcquireNextImage.  This requires the
+    * driver to implement vk_device::create_sync_for_memory.  The resulting
+    * vk_sync must support CPU waits.
     */
-   void (*signal_fence_for_memory)(VkDevice device,
-                                   VkFence fence,
-                                   VkDeviceMemory memory);
+   bool signal_fence_with_memory;
 
    /*
     * This sets the ownership for a WSI memory object:
@@ -150,21 +168,36 @@ struct wsi_device {
                                 VkDeviceMemory memory,
                                 VkBool32 ownership);
 
+   /*
+    * If this is set, the WSI device will call it to let the driver backend
+    * decide if it can present images directly on the given device fd.
+    */
+   bool (*can_present_on_device)(VkPhysicalDevice pdevice, int fd);
+
+   /*
+    * A driver can implement this callback to return a special queue to execute
+    * buffer blits.
+    */
+   VkQueue (*get_buffer_blit_queue)(VkDevice device);
+
 #define WSI_CB(cb) PFN_vk##cb cb
    WSI_CB(AllocateMemory);
    WSI_CB(AllocateCommandBuffers);
    WSI_CB(BindBufferMemory);
    WSI_CB(BindImageMemory);
    WSI_CB(BeginCommandBuffer);
+   WSI_CB(CmdPipelineBarrier);
    WSI_CB(CmdCopyImageToBuffer);
    WSI_CB(CreateBuffer);
    WSI_CB(CreateCommandPool);
    WSI_CB(CreateFence);
    WSI_CB(CreateImage);
+   WSI_CB(CreateSemaphore);
    WSI_CB(DestroyBuffer);
    WSI_CB(DestroyCommandPool);
    WSI_CB(DestroyFence);
    WSI_CB(DestroyImage);
+   WSI_CB(DestroySemaphore);
    WSI_CB(EndCommandBuffer);
    WSI_CB(FreeMemory);
    WSI_CB(FreeCommandBuffers);
@@ -201,6 +234,11 @@ void
 wsi_device_finish(struct wsi_device *wsi,
                   const VkAllocationCallbacks *alloc);
 
+/* Setup file descriptor to be used with imported sync_fd's in wsi fences. */
+void
+wsi_device_setup_syncobj_fd(struct wsi_device *wsi_device,
+                            int fd);
+
 #define ICD_DEFINE_NONDISP_HANDLE_CASTS(__VkIcdType, __VkType)             \
                                                                            \
    static inline __VkIcdType *                                             \
@@ -221,55 +259,12 @@ wsi_device_finish(struct wsi_device *wsi,
 ICD_DEFINE_NONDISP_HANDLE_CASTS(VkIcdSurfaceBase, VkSurfaceKHR)
 
 VkResult
-wsi_common_get_surface_support(struct wsi_device *wsi_device,
-                               uint32_t queueFamilyIndex,
-                               VkSurfaceKHR surface,
-                               VkBool32* pSupported);
-
-VkResult
-wsi_common_get_surface_capabilities(struct wsi_device *wsi_device,
-                                    VkSurfaceKHR surface,
-                                    VkSurfaceCapabilitiesKHR *pSurfaceCapabilities);
-
-VkResult
-wsi_common_get_surface_capabilities2(struct wsi_device *wsi_device,
-                                     const VkPhysicalDeviceSurfaceInfo2KHR *pSurfaceInfo,
-                                     VkSurfaceCapabilities2KHR *pSurfaceCapabilities);
-
-VkResult
-wsi_common_get_surface_formats(struct wsi_device *wsi_device,
-                               VkSurfaceKHR surface,
-                               uint32_t *pSurfaceFormatCount,
-                               VkSurfaceFormatKHR *pSurfaceFormats);
-
-VkResult
-wsi_common_get_surface_formats2(struct wsi_device *wsi_device,
-                                const VkPhysicalDeviceSurfaceInfo2KHR *pSurfaceInfo,
-                                uint32_t *pSurfaceFormatCount,
-                                VkSurfaceFormat2KHR *pSurfaceFormats);
-
-VkResult
-wsi_common_get_surface_present_modes(struct wsi_device *wsi_device,
-                                     VkSurfaceKHR surface,
-                                     uint32_t *pPresentModeCount,
-                                     VkPresentModeKHR *pPresentModes);
-
-VkResult
-wsi_common_get_present_rectangles(struct wsi_device *wsi,
-                                  VkSurfaceKHR surface,
-                                  uint32_t* pRectCount,
-                                  VkRect2D* pRects);
-
-VkResult
-wsi_common_get_surface_capabilities2ext(
-   struct wsi_device *wsi_device,
-   VkSurfaceKHR surface,
-   VkSurfaceCapabilities2EXT *pSurfaceCapabilities);
-
-VkResult
 wsi_common_get_images(VkSwapchainKHR _swapchain,
                       uint32_t *pSwapchainImageCount,
                       VkImage *pSwapchainImages);
+
+VkImage
+wsi_common_get_image(VkSwapchainKHR _swapchain, uint32_t index);
 
 VkResult
 wsi_common_acquire_next_image2(const struct wsi_device *wsi,
@@ -278,24 +273,25 @@ wsi_common_acquire_next_image2(const struct wsi_device *wsi,
                                uint32_t *pImageIndex);
 
 VkResult
-wsi_common_create_swapchain(struct wsi_device *wsi,
-                            VkDevice device,
-                            const VkSwapchainCreateInfoKHR *pCreateInfo,
-                            const VkAllocationCallbacks *pAllocator,
-                            VkSwapchainKHR *pSwapchain);
-void
-wsi_common_destroy_swapchain(VkDevice device,
-                             VkSwapchainKHR swapchain,
-                             const VkAllocationCallbacks *pAllocator);
-
-VkResult
 wsi_common_queue_present(const struct wsi_device *wsi,
                          VkDevice device_h,
                          VkQueue queue_h,
                          int queue_family_index,
                          const VkPresentInfoKHR *pPresentInfo);
 
-uint64_t
-wsi_common_get_current_time(void);
+VkResult
+wsi_common_create_swapchain_image(const struct wsi_device *wsi,
+                                  const VkImageCreateInfo *pCreateInfo,
+                                  VkSwapchainKHR _swapchain,
+                                  VkImage *pImage);
+VkResult
+wsi_common_bind_swapchain_image(const struct wsi_device *wsi,
+                                VkImage vk_image,
+                                VkSwapchainKHR _swapchain,
+                                uint32_t image_idx);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

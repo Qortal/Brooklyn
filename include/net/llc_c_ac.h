@@ -87,7 +87,7 @@
 #define LLC_CONN_AC_STOP_SENDACK_TMR			70
 #define LLC_CONN_AC_START_SENDACK_TMR_IF_NOT_RUNNING	71
 
-typedef int (* const llc_conn_action_t)(struct sock *sk, struct sk_buff *skb);
+typedef int (*llc_conn_action_t)(struct sock *sk, struct sk_buff *skb);
 
 int llc_conn_ac_clear_remote_busy(struct sock *sk, struct sk_buff *skb);
 int llc_conn_ac_conn_ind(struct sock *sk, struct sk_buff *skb);
@@ -171,10 +171,10 @@ int llc_conn_ac_rst_sendack_flag(struct sock *sk, struct sk_buff *skb);
 int llc_conn_ac_send_i_rsp_as_ack(struct sock *sk, struct sk_buff *skb);
 int llc_conn_ac_send_i_as_ack(struct sock *sk, struct sk_buff *skb);
 
-void llc_conn_busy_tmr_cb(unsigned long timeout_data);
-void llc_conn_pf_cycle_tmr_cb(unsigned long timeout_data);
-void llc_conn_ack_tmr_cb(unsigned long timeout_data);
-void llc_conn_rej_tmr_cb(unsigned long timeout_data);
+void llc_conn_busy_tmr_cb(struct timer_list *t);
+void llc_conn_pf_cycle_tmr_cb(struct timer_list *t);
+void llc_conn_ack_tmr_cb(struct timer_list *t);
+void llc_conn_rej_tmr_cb(struct timer_list *t);
 
 void llc_conn_set_p_flag(struct sock *sk, u8 value);
 #endif /* LLC_C_AC_H */

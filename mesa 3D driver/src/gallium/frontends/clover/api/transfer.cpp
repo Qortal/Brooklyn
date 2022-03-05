@@ -36,6 +36,8 @@ namespace {
 
    vector_t
    vector(const size_t *p) {
+      if (!p)
+         throw error(CL_INVALID_VALUE);
       return range(p, 3);
    }
 
@@ -102,7 +104,9 @@ namespace {
    void
    validate_object(command_queue &q, image &img,
                    const vector_t &orig, const vector_t &region) {
-      vector_t size = { img.width(), img.height(), img.depth() };
+      size_t height = img.type() == CL_MEM_OBJECT_IMAGE1D_ARRAY ? img.array_size() : img.height();
+      size_t depth = img.type() == CL_MEM_OBJECT_IMAGE2D_ARRAY ? img.array_size() : img.depth();
+      vector_t size = { img.width(), height, depth };
       const auto &dev = q.device();
 
       if (!dev.image_support())
@@ -118,14 +122,34 @@ namespace {
          throw error(CL_INVALID_VALUE);
 
       switch (img.type()) {
+      case CL_MEM_OBJECT_IMAGE1D: {
+         const size_t max = dev.max_image_size();
+         if (img.width() > max)
+            throw error(CL_INVALID_IMAGE_SIZE);
+         break;
+      }
+      case CL_MEM_OBJECT_IMAGE1D_ARRAY: {
+         const size_t max_size = dev.max_image_size();
+         const size_t max_array = dev.max_image_array_number();
+         if (img.width() > max_size || img.array_size() > max_array)
+            throw error(CL_INVALID_IMAGE_SIZE);
+         break;
+      }
       case CL_MEM_OBJECT_IMAGE2D: {
-         const size_t max = 1 << dev.max_image_levels_2d();
+         const size_t max = dev.max_image_size();
          if (img.width() > max || img.height() > max)
             throw error(CL_INVALID_IMAGE_SIZE);
          break;
       }
+      case CL_MEM_OBJECT_IMAGE2D_ARRAY: {
+         const size_t max_size = dev.max_image_size();
+         const size_t max_array = dev.max_image_array_number();
+         if (img.width() > max_size || img.height() > max_size || img.array_size() > max_array)
+            throw error(CL_INVALID_IMAGE_SIZE);
+         break;
+      }
       case CL_MEM_OBJECT_IMAGE3D: {
-         const size_t max = 1 << dev.max_image_levels_3d();
+         const size_t max = dev.max_image_size_3d();
          if (img.width() > max || img.height() > max || img.depth() > max)
             throw error(CL_INVALID_IMAGE_SIZE);
          break;
@@ -215,6 +239,19 @@ namespace {
 
       if (flags & (CL_MAP_WRITE | CL_MAP_WRITE_INVALIDATE_REGION))
          validate_object_access(mem, CL_MEM_HOST_WRITE_ONLY);
+   }
+
+   ///
+   /// Checks that the memory migration flags are correct.
+   ///
+   void
+   validate_mem_migration_flags(const cl_mem_migration_flags flags) {
+      const cl_mem_migration_flags valid =
+         CL_MIGRATE_MEM_OBJECT_HOST |
+         CL_MIGRATE_MEM_OBJECT_CONTENT_UNDEFINED;
+
+      if (flags & ~valid)
+         throw error(CL_INVALID_VALUE);
    }
 
    ///
@@ -841,7 +878,7 @@ clEnqueueMapImage(cl_command_queue d_q, cl_mem d_mem, cl_bool blocking,
    if (!row_pitch)
       throw error(CL_INVALID_VALUE);
 
-   if (img.slice_pitch() && !slice_pitch)
+   if ((img.slice_pitch() || img.array_size()) && !slice_pitch)
       throw error(CL_INVALID_VALUE);
 
    auto *map = img.resource_in(q).add_map(q, flags, blocking, origin, region);
@@ -898,15 +935,12 @@ clEnqueueMigrateMemObjects(cl_command_queue d_q,
    auto deps = objs<wait_list_tag>(d_deps, num_deps);
 
    validate_common(q, deps);
+   validate_mem_migration_flags(flags);
 
    if (any_of([&](const memory_obj &m) {
          return m.context() != q.context();
          }, mems))
       throw error(CL_INVALID_CONTEXT);
-
-   if (flags & ~(CL_MIGRATE_MEM_OBJECT_HOST |
-                 CL_MIGRATE_MEM_OBJECT_CONTENT_UNDEFINED))
-      throw error(CL_INVALID_VALUE);
 
    auto hev = create<hard_event>(
       q, CL_COMMAND_MIGRATE_MEM_OBJECTS, deps,
@@ -953,6 +987,10 @@ clover::EnqueueSVMFree(cl_command_queue d_q,
       return CL_INVALID_VALUE;
 
    auto &q = obj(d_q);
+
+   if (!q.device().svm_support())
+      return CL_INVALID_OPERATION;
+
    bool can_emulate = q.device().has_system_svm();
    auto deps = objs<wait_list_tag>(event_wait_list, num_events_in_wait_list);
 
@@ -965,10 +1003,13 @@ clover::EnqueueSVMFree(cl_command_queue d_q,
          CLOVER_NOT_SUPPORTED_UNTIL("2.0");
          return CL_INVALID_VALUE;
       }
-      pfn_free_func = [](cl_command_queue, cl_uint num_svm_pointers,
+      pfn_free_func = [](cl_command_queue d_q, cl_uint num_svm_pointers,
                          void *svm_pointers[], void *) {
-         for (void *p : range(svm_pointers, num_svm_pointers))
+         clover::context &ctx = obj(d_q).context();
+         for (void *p : range(svm_pointers, num_svm_pointers)) {
+            ctx.remove_svm_allocation(p);
             free(p);
+         }
       };
    }
 
@@ -1012,6 +1053,10 @@ clover::EnqueueSVMMemcpy(cl_command_queue d_q,
                          const cl_event *event_wait_list,
                          cl_event *event,
                          cl_int cmd) try {
+   auto &q = obj(d_q);
+
+   if (!q.device().svm_support())
+      return CL_INVALID_OPERATION;
 
    if (dst_ptr == nullptr || src_ptr == nullptr)
       return CL_INVALID_VALUE;
@@ -1020,7 +1065,7 @@ clover::EnqueueSVMMemcpy(cl_command_queue d_q,
                                reinterpret_cast<ptrdiff_t>(src_ptr))) < size)
       return CL_MEM_COPY_OVERLAP;
 
-   auto &q = obj(d_q);
+
    bool can_emulate = q.device().has_system_svm();
    auto deps = objs<wait_list_tag>(event_wait_list, num_events_in_wait_list);
 
@@ -1070,6 +1115,10 @@ clover::EnqueueSVMMemFill(cl_command_queue d_q,
                           const cl_event *event_wait_list,
                           cl_event *event,
                           cl_int cmd) try {
+   auto &q = obj(d_q);
+
+   if (!q.device().svm_support())
+      return CL_INVALID_OPERATION;
 
    if (svm_ptr == nullptr || pattern == nullptr ||
        !util_is_power_of_two_nonzero(pattern_size) ||
@@ -1078,7 +1127,6 @@ clover::EnqueueSVMMemFill(cl_command_queue d_q,
        size % pattern_size)
       return CL_INVALID_VALUE;
 
-   auto &q = obj(d_q);
    bool can_emulate = q.device().has_system_svm();
    auto deps = objs<wait_list_tag>(event_wait_list, num_events_in_wait_list);
 
@@ -1130,11 +1178,14 @@ clover::EnqueueSVMMap(cl_command_queue d_q,
                       const cl_event *event_wait_list,
                       cl_event *event,
                       cl_int cmd) try {
+   auto &q = obj(d_q);
+
+   if (!q.device().svm_support())
+      return CL_INVALID_OPERATION;
 
    if (svm_ptr == nullptr || size == 0)
       return CL_INVALID_VALUE;
 
-   auto &q = obj(d_q);
    bool can_emulate = q.device().has_system_svm();
    auto deps = objs<wait_list_tag>(event_wait_list, num_events_in_wait_list);
 
@@ -1177,11 +1228,14 @@ clover::EnqueueSVMUnmap(cl_command_queue d_q,
                         const cl_event *event_wait_list,
                         cl_event *event,
                         cl_int cmd) try {
+   auto &q = obj(d_q);
+
+   if (!q.device().svm_support())
+      return CL_INVALID_OPERATION;
 
    if (svm_ptr == nullptr)
       return CL_INVALID_VALUE;
 
-   auto &q = obj(d_q);
    bool can_emulate = q.device().has_system_svm();
    auto deps = objs<wait_list_tag>(event_wait_list, num_events_in_wait_list);
 
@@ -1219,9 +1273,51 @@ clEnqueueSVMMigrateMem(cl_command_queue d_q,
                        const void **svm_pointers,
                        const size_t *sizes,
                        const cl_mem_migration_flags flags,
-                       cl_uint  num_events_in_wait_list,
-                       const cl_event *event_wait_list,
-                       cl_event *event) {
-   CLOVER_NOT_SUPPORTED_UNTIL("2.1");
-   return CL_INVALID_VALUE;
+                       cl_uint num_deps,
+                       const cl_event *d_deps,
+                       cl_event *rd_ev) try {
+   auto &q = obj(d_q);
+   auto deps = objs<wait_list_tag>(d_deps, num_deps);
+
+   validate_common(q, deps);
+   validate_mem_migration_flags(flags);
+
+   if (!q.device().svm_support())
+      return CL_INVALID_OPERATION;
+
+   if (!num_svm_pointers || !svm_pointers)
+      return CL_INVALID_VALUE;
+
+   std::vector<size_t> sizes_copy(num_svm_pointers);
+   std::vector<const void*>  ptrs(num_svm_pointers);
+
+   for (unsigned i = 0; i < num_svm_pointers; ++i) {
+      const void *ptr = svm_pointers[i];
+      size_t size = sizes ? sizes[i] : 0;
+      if (!ptr)
+         return CL_INVALID_VALUE;
+
+      auto p = q.context().find_svm_allocation(ptr);
+      if (!p.first)
+         return CL_INVALID_VALUE;
+
+      std::ptrdiff_t pdiff = (uint8_t*)ptr - (uint8_t*)p.first;
+      if (size && size + pdiff > p.second)
+         return CL_INVALID_VALUE;
+
+      sizes_copy[i] = size ? size : p.second;
+      ptrs[i] = size ? svm_pointers[i] : p.first;
+   }
+
+   auto hev = create<hard_event>(
+      q, CL_COMMAND_MIGRATE_MEM_OBJECTS, deps,
+      [=, &q](event &) {
+         q.svm_migrate(ptrs, sizes_copy, flags);
+      });
+
+   ret_object(rd_ev, hev);
+   return CL_SUCCESS;
+
+} catch (error &e) {
+   return e.get();
 }

@@ -167,14 +167,16 @@ dd_screen_can_create_resource(struct pipe_screen *_screen,
 
 static void
 dd_screen_flush_frontbuffer(struct pipe_screen *_screen,
+                            struct pipe_context *_pipe,
                             struct pipe_resource *resource,
                             unsigned level, unsigned layer,
                             void *context_private,
                             struct pipe_box *sub_box)
 {
    struct pipe_screen *screen = dd_screen(_screen)->screen;
+   struct pipe_context *pipe = _pipe ? dd_context(_pipe)->pipe : NULL;
 
-   screen->flush_frontbuffer(screen, resource, level, layer, context_private,
+   screen->flush_frontbuffer(screen, pipe, resource, level, layer, context_private,
                              sub_box);
 }
 
@@ -350,6 +352,19 @@ dd_screen_check_resource_capability(struct pipe_screen *_screen,
    return screen->check_resource_capability(screen, resource, bind);
 }
 
+static int
+dd_screen_get_sparse_texture_virtual_page_size(struct pipe_screen *_screen,
+                                               enum pipe_texture_target target,
+                                               bool multi_sample,
+                                               enum pipe_format format,
+                                               unsigned offset, unsigned size,
+                                               int *x, int *y, int *z)
+{
+   struct pipe_screen *screen = dd_screen(_screen)->screen;
+
+   return screen->get_sparse_texture_virtual_page_size(
+      _screen, target, multi_sample, format, offset, size, x, y, z);
+}
 
 /********************************************************************
  * fence
@@ -412,12 +427,12 @@ dd_screen_memobj_destroy(struct pipe_screen *_screen,
  * screen
  */
 
-static void
-dd_screen_finalize_nir(struct pipe_screen *_screen, void *nir, bool optimize)
+static char *
+dd_screen_finalize_nir(struct pipe_screen *_screen, void *nir)
 {
    struct pipe_screen *screen = dd_screen(_screen)->screen;
 
-   screen->finalize_nir(screen, nir, optimize);
+   return screen->finalize_nir(screen, nir);
 }
 
 static void
@@ -607,6 +622,7 @@ ddebug_screen_create(struct pipe_screen *screen)
    SCR_INIT(get_driver_uuid);
    SCR_INIT(get_device_uuid);
    SCR_INIT(finalize_nir);
+   SCR_INIT(get_sparse_texture_virtual_page_size);
 
 #undef SCR_INIT
 

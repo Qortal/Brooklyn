@@ -43,7 +43,7 @@
 #include "vc4_context.h"
 #include "vc4_resource.h"
 
-static const struct debug_named_value debug_options[] = {
+static const struct debug_named_value vc4_debug_options[] = {
         { "cl",       VC4_DEBUG_CL,
           "Dump command list during creation" },
         { "surf",       VC4_DEBUG_SURFACE,
@@ -73,7 +73,7 @@ static const struct debug_named_value debug_options[] = {
         { NULL }
 };
 
-DEBUG_GET_ONCE_FLAGS_OPTION(vc4_debug, "VC4_DEBUG", debug_options, 0)
+DEBUG_GET_ONCE_FLAGS_OPTION(vc4_debug, "VC4_DEBUG", vc4_debug_options, 0)
 uint32_t vc4_debug;
 
 static const char *
@@ -105,7 +105,8 @@ vc4_screen_destroy(struct pipe_screen *pscreen)
         _mesa_hash_table_destroy(screen->bo_handles, NULL);
         vc4_bufmgr_destroy(pscreen);
         slab_destroy_parent(&screen->transfer_pool);
-        free(screen->ro);
+        if (screen->ro)
+                screen->ro->destroy(screen->ro);
 
 #ifdef USE_VC4_SIMULATOR
         vc4_simulator_destroy(screen);
@@ -138,12 +139,10 @@ vc4_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
 
         switch (param) {
                 /* Supported features (boolean caps). */
-        case PIPE_CAP_VERTEX_COLOR_CLAMPED:
         case PIPE_CAP_VERTEX_COLOR_UNCLAMPED:
         case PIPE_CAP_FRAGMENT_COLOR_CLAMPED:
         case PIPE_CAP_BUFFER_MAP_PERSISTENT_COHERENT:
         case PIPE_CAP_NPOT_TEXTURES:
-        case PIPE_CAP_SHAREABLE_SHADERS:
         case PIPE_CAP_BLEND_EQUATION_SEPARATE:
         case PIPE_CAP_TEXTURE_MULTISAMPLE:
         case PIPE_CAP_TEXTURE_SWIZZLE:
@@ -159,7 +158,6 @@ vc4_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
                                        DRM_VC4_PARAM_SUPPORTS_FIXED_RCL_ORDER);
 
                 /* lying for GL 2.0 */
-        case PIPE_CAP_OCCLUSION_QUERY:
         case PIPE_CAP_POINT_SPRITE:
                 return 1;
 
@@ -200,7 +198,14 @@ vc4_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
                 return 1;
 
         case PIPE_CAP_ALPHA_TEST:
+        case PIPE_CAP_VERTEX_COLOR_CLAMPED:
+        case PIPE_CAP_TWO_SIDED_COLOR:
+        case PIPE_CAP_TEXRECT:
+        case PIPE_CAP_IMAGE_STORE_FORMATTED:
                 return 0;
+
+        case PIPE_CAP_SUPPORTED_PRIM_MODES:
+                return screen->prim_types;
 
         default:
                 return u_pipe_screen_get_param_defaults(pscreen, param);
@@ -211,12 +216,22 @@ static float
 vc4_screen_get_paramf(struct pipe_screen *pscreen, enum pipe_capf param)
 {
         switch (param) {
+        case PIPE_CAPF_MIN_LINE_WIDTH:
+        case PIPE_CAPF_MIN_LINE_WIDTH_AA:
+        case PIPE_CAPF_MIN_POINT_SIZE:
+        case PIPE_CAPF_MIN_POINT_SIZE_AA:
+           return 1;
+
+        case PIPE_CAPF_POINT_SIZE_GRANULARITY:
+        case PIPE_CAPF_LINE_WIDTH_GRANULARITY:
+           return 0.1;
+
         case PIPE_CAPF_MAX_LINE_WIDTH:
         case PIPE_CAPF_MAX_LINE_WIDTH_AA:
                 return 32;
 
-        case PIPE_CAPF_MAX_POINT_WIDTH:
-        case PIPE_CAPF_MAX_POINT_WIDTH_AA:
+        case PIPE_CAPF_MAX_POINT_SIZE:
+        case PIPE_CAPF_MAX_POINT_SIZE_AA:
                 return 512.0f;
 
         case PIPE_CAPF_MAX_TEXTURE_ANISOTROPY:
@@ -282,6 +297,7 @@ vc4_screen_get_shader_param(struct pipe_screen *pscreen,
         case PIPE_SHADER_CAP_INT64_ATOMICS:
         case PIPE_SHADER_CAP_FP16:
         case PIPE_SHADER_CAP_FP16_DERIVATIVES:
+        case PIPE_SHADER_CAP_FP16_CONST_BUFFERS:
         case PIPE_SHADER_CAP_INT16:
         case PIPE_SHADER_CAP_GLSL_16BIT_CONSTS:
         case PIPE_SHADER_CAP_TGSI_DROUND_SUPPORTED:
@@ -296,7 +312,7 @@ vc4_screen_get_shader_param(struct pipe_screen *pscreen,
         case PIPE_SHADER_CAP_PREFERRED_IR:
                 return PIPE_SHADER_IR_NIR;
         case PIPE_SHADER_CAP_SUPPORTED_IRS:
-                return 0;
+                return 1 << PIPE_SHADER_IR_NIR;
         case PIPE_SHADER_CAP_MAX_UNROLL_ITERATIONS_HINT:
                 return 32;
         case PIPE_SHADER_CAP_MAX_SHADER_BUFFERS:
@@ -403,12 +419,36 @@ vc4_screen_is_format_supported(struct pipe_screen *pscreen,
         }
 
         if ((usage & PIPE_BIND_INDEX_BUFFER) &&
-            format != PIPE_FORMAT_I8_UINT &&
-            format != PIPE_FORMAT_I16_UINT) {
+            format != PIPE_FORMAT_R8_UINT &&
+            format != PIPE_FORMAT_R16_UINT) {
                 return false;
         }
 
         return true;
+}
+
+static const uint64_t *vc4_get_modifiers(struct pipe_screen *pscreen, int *num)
+{
+        struct vc4_screen *screen = vc4_screen(pscreen);
+        static const uint64_t all_modifiers[] = {
+                DRM_FORMAT_MOD_BROADCOM_VC4_T_TILED,
+                DRM_FORMAT_MOD_LINEAR,
+        };
+        int m;
+
+        /* We support both modifiers (tiled and linear) for all sampler
+         * formats, but if we don't have the DRM_VC4_GET_TILING ioctl
+         * we shouldn't advertise the tiled formats.
+         */
+        if (screen->has_tiling_ioctl) {
+                m = 0;
+                *num = 2;
+        } else{
+                m = 1;
+                *num = 1;
+        }
+
+        return &all_modifiers[m];
 }
 
 static void
@@ -418,14 +458,12 @@ vc4_screen_query_dmabuf_modifiers(struct pipe_screen *pscreen,
                                   unsigned int *external_only,
                                   int *count)
 {
-        int m, i;
+        const uint64_t *available_modifiers;
+        int i;
         bool tex_will_lower;
-        uint64_t available_modifiers[] = {
-                DRM_FORMAT_MOD_BROADCOM_VC4_T_TILED,
-                DRM_FORMAT_MOD_LINEAR,
-        };
-        struct vc4_screen *screen = vc4_screen(pscreen);
-        int num_modifiers = screen->has_tiling_ioctl ? 2 : 1;
+        int num_modifiers;
+
+        available_modifiers = vc4_get_modifiers(pscreen, &num_modifiers);
 
         if (!modifiers) {
                 *count = num_modifiers;
@@ -433,17 +471,35 @@ vc4_screen_query_dmabuf_modifiers(struct pipe_screen *pscreen,
         }
 
         *count = MIN2(max, num_modifiers);
-        m = screen->has_tiling_ioctl ? 0 : 1;
         tex_will_lower = !vc4_tex_format_supported(format);
-        /* We support both modifiers (tiled and linear) for all sampler
-         * formats, but if we don't have the DRM_VC4_GET_TILING ioctl
-         * we shouldn't advertise the tiled formats.
-         */
         for (i = 0; i < *count; i++) {
-                modifiers[i] = available_modifiers[m++];
+                modifiers[i] = available_modifiers[i];
                 if (external_only)
                         external_only[i] = tex_will_lower;
        }
+}
+
+static bool
+vc4_screen_is_dmabuf_modifier_supported(struct pipe_screen *pscreen,
+                                        uint64_t modifier,
+                                        enum pipe_format format,
+                                        bool *external_only)
+{
+        const uint64_t *available_modifiers;
+        int i, num_modifiers;
+
+        available_modifiers = vc4_get_modifiers(pscreen, &num_modifiers);
+
+        for (i = 0; i < num_modifiers; i++) {
+                if (modifier == available_modifiers[i]) {
+                        if (external_only)
+                                *external_only = !vc4_tex_format_supported(format);
+
+                        return true;
+                }
+        }
+
+        return false;
 }
 
 static bool
@@ -511,14 +567,7 @@ vc4_screen_create(int fd, struct renderonly *ro)
         pscreen->is_format_supported = vc4_screen_is_format_supported;
 
         screen->fd = fd;
-        if (ro) {
-                screen->ro = renderonly_dup(ro);
-                if (!screen->ro) {
-                        fprintf(stderr, "Failed to dup renderonly object\n");
-                        ralloc_free(screen);
-                        return NULL;
-                }
-        }
+        screen->ro = ro;
 
         list_inithead(&screen->bo_cache.time_list);
         (void) mtx_init(&screen->bo_handles_mutex, mtx_plain);
@@ -563,11 +612,22 @@ vc4_screen_create(int fd, struct renderonly *ro)
         pscreen->get_device_vendor = vc4_screen_get_vendor;
         pscreen->get_compiler_options = vc4_screen_get_compiler_options;
         pscreen->query_dmabuf_modifiers = vc4_screen_query_dmabuf_modifiers;
+        pscreen->is_dmabuf_modifier_supported = vc4_screen_is_dmabuf_modifier_supported;
 
         if (screen->has_perfmon_ioctl) {
                 pscreen->get_driver_query_group_info = vc4_get_driver_query_group_info;
                 pscreen->get_driver_query_info = vc4_get_driver_query_info;
         }
+
+        /* Generate the bitmask of supported draw primitives. */
+        screen->prim_types = BITFIELD_BIT(PIPE_PRIM_POINTS) |
+                             BITFIELD_BIT(PIPE_PRIM_LINES) |
+                             BITFIELD_BIT(PIPE_PRIM_LINE_LOOP) |
+                             BITFIELD_BIT(PIPE_PRIM_LINE_STRIP) |
+                             BITFIELD_BIT(PIPE_PRIM_TRIANGLES) |
+                             BITFIELD_BIT(PIPE_PRIM_TRIANGLE_STRIP) |
+                             BITFIELD_BIT(PIPE_PRIM_TRIANGLE_FAN);
+
 
         return pscreen;
 

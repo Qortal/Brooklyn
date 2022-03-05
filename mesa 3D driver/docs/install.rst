@@ -17,11 +17,9 @@ Build system
 ^^^^^^^^^^^^
 
 -  `Meson <https://mesonbuild.com>`__ is required when building on \*nix
-   platforms and is supported on Windows.
--  `SCons <http://www.scons.org/>`__ is an alternative for building on
-   Windows and Linux.
+   platforms and on Windows.
 -  Android Build system when building as native Android component. Meson
-   is used when when building ARC.
+   is used when building ARC.
 
 Compiler
 ^^^^^^^^
@@ -37,18 +35,16 @@ you're willing to maintain support for other compiler get in touch.
 Third party/extra tools.
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
--  `Python <https://www.python.org/>`__ - Python is required. When
-   building with SCons 2.7 is required. When building with meson 3.5 or
-   newer is required.
+-  `Python <https://www.python.org/>`__ - Python 3.5 or newer is required.
 -  `Python Mako module <http://www.makotemplates.org/>`__ - Python Mako
    module is required. Version 0.8.0 or later should work.
--  lex / yacc - for building the Mesa IR and GLSL compiler.
+-  Lex / Yacc - for building the Mesa IR and GLSL compiler.
 
    On Linux systems, Flex and Bison versions 2.5.35 and 2.4.1,
    respectively, (or later) should work. On Windows with MinGW, install
    Flex and Bison with:
 
-   ::
+   .. code-block:: console
 
       mingw-get install msys-flex msys-bison
 
@@ -64,13 +60,13 @@ Third party/extra tools.
 ~~~~~~~~~~~~~~~~
 
 The requirements depends on the features selected at configure stage.
-Check/install the respective -devel package as prompted by the configure
-error message.
+Check/install the respective development package as prompted by the
+configure error message.
 
 Here are some common ways to retrieve most/all of the dependencies based
 on the packaging tool used by your distro.
 
-::
+.. code-block:: console
 
      zypper source-install --build-deps-only Mesa # openSUSE/SLED/SLES
      yum-builddep mesa # yum Fedora, OpenSuse(?)
@@ -88,7 +84,7 @@ for \*nix systems like Linux and BSD, macOS, Haiku, and Windows.
 
 The general approach is:
 
-::
+.. code-block:: console
 
      meson builddir/
      ninja -C builddir/
@@ -96,7 +92,7 @@ The general approach is:
 
 On Windows you can also use the Visual Studio backend
 
-::
+.. code-block:: console
 
      meson builddir --backend=vs
      cd builddir
@@ -105,48 +101,96 @@ On Windows you can also use the Visual Studio backend
 Please read the :doc:`detailed meson instructions <meson>` for more
 information
 
-3. Building with SCons (Windows/Linux)
---------------------------------------
+3. Running against a local build
+--------------------------------
 
-To build Mesa with SCons on Linux or Windows do
+It's often necessary or useful when debugging driver issues or testing new
+branches to run against a local build of Mesa without doing a system-wide
+install.  To do this, choose a temporary location for the install.  A directory
+called ``installdir`` inside your mesa tree is as good as anything.  All of the
+commands below will assume ``$MESA_INSTALLDIR`` is an absolute path to this
+location.
 
-::
+First, configure Mesa and install in the temporary location:
 
-       scons
+.. code-block:: console
 
-The build output will be placed in
-build/\ *platform*-*machine*-*debug*/..., where *platform* is for
-example Linux or Windows, *machine* is x86 or x86_64, optionally
-followed by -debug for debug builds.
+   meson builddir/ -Dprefix="$MESA_INSTALLDIR" OTHER_OPTIONS
+   ninja -C builddir/ install
 
-To build Mesa with SCons for Windows on Linux using the MinGW
-crosscompiler toolchain do
+where ``OTHER_OPTIONS`` is replaced by any meson configuration options you may
+want.  For instance, if you want to build the LLVMpipe drivers, it would look
+like this:
 
-::
+.. code-block:: console
 
-       scons platform=windows toolchain=crossmingw machine=x86 libgl-gdi
+   meson builddir/ -Dprefix="$MESA_INSTALLDIR" -Ddri-drivers= \
+      -Dgallium-drivers=swrast -Dvulkan-drivers=swrast
+   ninja -C builddir/ install
 
-This will create:
+Once Mesa has built and installed to ``$MESA_INSTALLDIR``, you can run any app
+against your temporary install by setting the right environment variables.
+Which variable you have to set depends on the API.
 
--  build/windows-x86-debug/gallium/targets/libgl-gdi/opengl32.dll — Mesa
-   + Gallium + softpipe (or llvmpipe), binary compatible with Windows's
-   opengl32.dll
+OpenGL
+~~~~~~
 
-Put them all in the same directory to test them. Additional information
-is available in `README.WIN32 <README.WIN32>`__.
+.. code-block:: console
+
+   LD_LIBRARY_PATH="$MESA_INSTALLDIR/lib64" glxinfo
+
+You may need to use ``lib`` instead of ``lib64`` on some systems or a full
+library specifier on debian.  Look inside ``installdir`` for the directory that
+contains ``libGL.so`` and use that one.
+
+Vulkan
+~~~~~~
+
+.. code-block:: console
+
+   VK_ICD_FILENAMES="$MESA_INSTALLDIR/share/vulkan/icd/my_icd.json" vulkaninfo
+
+where ``my_icd.json`` is replaced with the actual ICD json file name.  This
+will depend on your driver.  For instance, the 64-bit lavapipe driver ICD file
+is named ``lvp_icd.x86_64.json``.
+
+OpenCL
+~~~~~~
+
+.. code-block:: console
+
+   OCL_ICD_VENDORS="$MESA_INSTALLDIR/etc/OpenCL/vendors" clinfo
+
+Unlike Vulkan, OpenCL takes a path to the whole ``vendors`` folder and will
+enumerate any drivers found there.
+
+Troubleshooting local builds
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If you are trying to run an app against a local build and it's not working,
+here are a few things to check:
+
+ 1. Double-check your paths and try with the simplest app you can.  Before
+    banging your head on a Steam game, make sure your path works with
+    ``glxgears`` first.
+
+ 2. Watch out for wrapper scripts.  Some more complex apps such as games have
+    big start-up scripts.  Sometimes those scripts scrub the environment or set
+    ``LD_LIBRARY_PATH`` to something in the game's install directory.
+
+ 3. Is your Mesa build the same arch as your app?  Lots of games are still
+    32-bit and your Mesa build is probably 64-bit by default.
+
+ 4. 32 and 64-bit builds in the same local install directory doesn't typically
+    work.  Distros go to great lengths to make this work in your system install
+    and it's hard to get it right for a local install.  If you've recently
+    built 64-bit and are now building 32-bit, throw away the install directory
+    first to prevent conflicts.
 
 4. Building with AOSP (Android)
 -------------------------------
 
-Currently one can build Mesa for Android as part of the AOSP project,
-yet your experience might vary.
-
-In order to achieve that one should update their local manifest to point
-to the upstream repo, set the appropriate BOARD_GPU_DRIVERS and build
-the libGLES_mesa library.
-
-FINISHME: Improve on the instructions add references to Rob H
-repos/Jenkins, Android-x86 and/or other resources.
+<TODO>
 
 5. Library Information
 ----------------------
@@ -155,7 +199,7 @@ When compilation has finished, look in the top-level ``lib/`` (or
 ``lib64/``) directory. You'll see a set of library files similar to
 this:
 
-::
+.. code-block:: console
 
    lrwxrwxrwx    1 brian    users          10 Mar 26 07:53 libGL.so -> libGL.so.1*
    lrwxrwxrwx    1 brian    users          19 Mar 26 07:53 libGL.so.1 -> libGL.so.1.5.060100*
@@ -169,7 +213,7 @@ the OSMesa (Off-Screen) interface library.
 
 If you built the DRI hardware drivers, you'll also see the DRI drivers:
 
-::
+.. code-block:: console
 
    -rwxr-xr-x   1 brian users 16895413 Jul 21 12:11 i915_dri.so
    -rwxr-xr-x   1 brian users 16895413 Jul 21 12:11 i965_dri.so
@@ -190,6 +234,6 @@ determine the proper compiler and linker flags.
 
 For example, compiling and linking a GLUT application can be done with:
 
-::
+.. code-block:: console
 
       gcc `pkg-config --cflags --libs glut` mydemo.c -o mydemo

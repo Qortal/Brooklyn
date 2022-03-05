@@ -32,8 +32,6 @@ b = 'b'
 c = 'c'
 
 algebraic = [
-   (('pack_unorm_4x8', a), ('pack_32_4x8', ('f2u8', ('fround_even', ('fmul', ('fsat', a), 255.0))))),
-
    # Allows us to schedule as a multiply by 2
    (('~fadd', ('fadd', a, b), a), ('fadd', ('fadd', a, a), b)),
 ]
@@ -55,11 +53,11 @@ algebraic_late = [
     (('b32csel', a, 0, 'b@32'), ('iand', ('inot', a), b)),
 
     # Fuse sat_signed. This should probably be shared with Bifrost
-    (('~fmin', ('fmax', a, -1.0), 1.0), ('fsat_signed', a)),
-    (('~fmax', ('fmin', a, 1.0), -1.0), ('fsat_signed', a)),
+    (('~fmin', ('fmax', a, -1.0), 1.0), ('fsat_signed_mali', a)),
+    (('~fmax', ('fmin', a, 1.0), -1.0), ('fsat_signed_mali', a)),
 
     # Fuse clamp_positive. This should probably be shared with Utgard/bifrost
-    (('fmax', a, 0.0), ('fclamp_pos', a)),
+    (('fmax', a, 0.0), ('fclamp_pos_mali', a)),
 
     (('ishl', 'a@16', b), ('u2u16', ('ishl', ('u2u32', a), b))),
     (('ishr', 'a@16', b), ('i2i16', ('ishr', ('i2i32', a), b))),
@@ -73,6 +71,12 @@ algebraic_late = [
     (('fmul', a, 2.0), ('fadd', a, a))
 ]
 
+# Size conversion is redundant to Midgard but needed for NIR, and writing this
+# lowering in MIR would be painful without a competent builder, so eat the
+# extra instruction
+for sz in ('8', '16', '32'):
+    converted = ('u2u32', a) if sz != '32' else a
+    algebraic_late += [(('ufind_msb', 'a@' + sz), ('isub', 31, ('uclz', converted)))]
 
 # Midgard is able to type convert down by only one "step" per instruction; if
 # NIR wants more than one step, we need to break up into multiple instructions.

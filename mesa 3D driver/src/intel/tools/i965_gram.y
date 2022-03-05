@@ -28,6 +28,16 @@
 #include <strings.h>
 #include "i965_asm.h"
 
+#undef yyerror
+#ifdef YYBYACC
+struct YYLTYPE;
+void yyerror (struct YYLTYPE *, char *);
+#else
+void yyerror (char *);
+#endif
+
+#undef ALIGN16
+
 #define YYLTYPE YYLTYPE
 typedef struct YYLTYPE
 {
@@ -290,7 +300,7 @@ i965_asm_set_instruction_options(struct brw_codegen *p,
 			         options.no_dd_clear);
 	brw_inst_set_debug_control(p->devinfo, brw_last_inst,
 			           options.debug_control);
-	if (p->devinfo->gen >= 6)
+	if (p->devinfo->ver >= 6)
 		brw_inst_set_acc_wr_control(p->devinfo, brw_last_inst,
 					    options.acc_wr_control);
 	brw_inst_set_cmpt_control(p->devinfo, brw_last_inst,
@@ -302,7 +312,7 @@ i965_asm_set_dst_nr(struct brw_codegen *p,
 	            struct brw_reg *reg,
 	            struct options options)
 {
-	if (p->devinfo->gen <= 6) {
+	if (p->devinfo->ver <= 6) {
 		if (reg->file == BRW_MESSAGE_REGISTER_FILE &&
 		    options.qtr_ctrl == BRW_COMPRESSION_COMPRESSED &&
 		    !options.is_compr)
@@ -465,11 +475,11 @@ add_label(struct brw_codegen *p, const char* label_name, enum instr_label_type t
 %token <llint> LONG
 %token NULL_TOKEN
 
-%precedence SUBREGNUM
+%nonassoc SUBREGNUM
 %left PLUS MINUS
-%precedence DOT
-%precedence EMPTYEXECSIZE
-%precedence LPAREN
+%nonassoc DOT
+%nonassoc EMPTYEXECSIZE
+%nonassoc LPAREN
 
 %type <integer> execsize simple_int exp
 %type <llint> exp2
@@ -677,7 +687,7 @@ unaryinstruction:
 		brw_inst_set_cond_modifier(p->devinfo, brw_last_inst,
 					   $4.cond_modifier);
 
-		if (p->devinfo->gen >= 7) {
+		if (p->devinfo->ver >= 7) {
 			if ($2 != BRW_OPCODE_DIM) {
 				brw_inst_set_flag_reg_nr(p->devinfo,
 							 brw_last_inst,
@@ -698,7 +708,7 @@ unaryinstruction:
 		brw_inst_set_qtr_control(p->devinfo, brw_last_inst,
 				         $8.qtr_ctrl);
 
-		if (p->devinfo->gen >= 7)
+		if (p->devinfo->ver >= 7)
 			brw_inst_set_nib_control(p->devinfo, brw_last_inst,
 					         $8.nib_ctrl);
 	}
@@ -733,7 +743,7 @@ binaryinstruction:
 		brw_inst_set_cond_modifier(p->devinfo, brw_last_inst,
 					   $4.cond_modifier);
 
-		if (p->devinfo->gen >= 7) {
+		if (p->devinfo->ver >= 7) {
 			brw_inst_set_flag_reg_nr(p->devinfo, brw_last_inst,
 					         $4.flag_reg_nr);
 			brw_inst_set_flag_subreg_nr(p->devinfo, brw_last_inst,
@@ -746,7 +756,7 @@ binaryinstruction:
 		brw_inst_set_qtr_control(p->devinfo, brw_last_inst,
 				         $9.qtr_ctrl);
 
-		if (p->devinfo->gen >= 7)
+		if (p->devinfo->ver >= 7)
 			brw_inst_set_nib_control(p->devinfo, brw_last_inst,
 					         $9.nib_ctrl);
 
@@ -785,7 +795,7 @@ binaryaccinstruction:
 		brw_inst_set_cond_modifier(p->devinfo, brw_last_inst,
 					   $4.cond_modifier);
 
-		if (p->devinfo->gen >= 7) {
+		if (p->devinfo->ver >= 7) {
 			if (!brw_inst_flag_reg_nr(p->devinfo, brw_last_inst)) {
 				brw_inst_set_flag_reg_nr(p->devinfo,
 							 brw_last_inst,
@@ -802,7 +812,7 @@ binaryaccinstruction:
 		brw_inst_set_qtr_control(p->devinfo, brw_last_inst,
 				         $9.qtr_ctrl);
 
-		if (p->devinfo->gen >= 7)
+		if (p->devinfo->ver >= 7)
 			brw_inst_set_nib_control(p->devinfo, brw_last_inst,
 					         $9.nib_ctrl);
 	}
@@ -827,7 +837,7 @@ mathinstruction:
 	predicate MATH saturate math_function execsize dst src srcimm instoptions
 	{
 		brw_set_default_access_mode(p, $9.access_mode);
-		gen6_math(p, $6, $4, $7, $8);
+		gfx6_math(p, $6, $4, $7, $8);
 		i965_asm_set_instruction_options(p, $9);
 		brw_inst_set_exec_size(p->devinfo, brw_last_inst, $5);
 		brw_inst_set_saturate(p->devinfo, brw_last_inst, $3);
@@ -835,7 +845,7 @@ mathinstruction:
 		brw_inst_set_qtr_control(p->devinfo, brw_last_inst,
 				         $9.qtr_ctrl);
 
-		if (p->devinfo->gen >= 7)
+		if (p->devinfo->ver >= 7)
 			brw_inst_set_nib_control(p->devinfo, brw_last_inst,
 					         $9.nib_ctrl);
 
@@ -880,7 +890,7 @@ ternaryinstruction:
 		brw_inst_set_cond_modifier(p->devinfo, brw_last_inst,
 					   $4.cond_modifier);
 
-		if (p->devinfo->gen >= 7) {
+		if (p->devinfo->ver >= 7) {
 			brw_inst_set_3src_a16_flag_reg_nr(p->devinfo, brw_last_inst,
 					         $4.flag_reg_nr);
 			brw_inst_set_3src_a16_flag_subreg_nr(p->devinfo, brw_last_inst,
@@ -893,7 +903,7 @@ ternaryinstruction:
 		brw_inst_set_qtr_control(p->devinfo, brw_last_inst,
 				         $10.qtr_ctrl);
 
-		if (p->devinfo->gen >= 7)
+		if (p->devinfo->ver >= 7)
 			brw_inst_set_nib_control(p->devinfo, brw_last_inst,
 					         $10.nib_ctrl);
 	}
@@ -944,7 +954,7 @@ sendinstruction:
 		brw_inst_set_qtr_control(p->devinfo, brw_last_inst,
 				         $8.qtr_ctrl);
 
-		if (p->devinfo->gen >= 7)
+		if (p->devinfo->ver >= 7)
 			brw_inst_set_nib_control(p->devinfo, brw_last_inst,
 					         $8.nib_ctrl);
 
@@ -967,7 +977,7 @@ sendinstruction:
 		brw_inst_set_qtr_control(p->devinfo, brw_last_inst,
 				         $9.qtr_ctrl);
 
-		if (p->devinfo->gen >= 7)
+		if (p->devinfo->ver >= 7)
 			brw_inst_set_nib_control(p->devinfo, brw_last_inst,
 					         $9.nib_ctrl);
 
@@ -986,7 +996,7 @@ sendinstruction:
 		brw_inst_set_qtr_control(p->devinfo, brw_last_inst,
 				         $9.qtr_ctrl);
 
-		if (p->devinfo->gen >= 7)
+		if (p->devinfo->ver >= 7)
 			brw_inst_set_nib_control(p->devinfo, brw_last_inst,
 					         $9.nib_ctrl);
 
@@ -1014,7 +1024,7 @@ sendinstruction:
 		brw_inst_set_qtr_control(p->devinfo, brw_last_inst,
 				         $10.qtr_ctrl);
 
-		if (p->devinfo->gen >= 7)
+		if (p->devinfo->ver >= 7)
 			brw_inst_set_nib_control(p->devinfo, brw_last_inst,
 					         $10.nib_ctrl);
 
@@ -1038,7 +1048,7 @@ sendinstruction:
 		brw_inst_set_qtr_control(p->devinfo, brw_last_inst,
 				         $10.qtr_ctrl);
 
-		if (p->devinfo->gen >= 7)
+		if (p->devinfo->ver >= 7)
 			brw_inst_set_nib_control(p->devinfo, brw_last_inst,
 					         $10.nib_ctrl);
 
@@ -1064,14 +1074,14 @@ sharedfunction:
 	| URB 		        { $$ = BRW_SFID_URB; }
 	| THREAD_SPAWNER 	{ $$ = BRW_SFID_THREAD_SPAWNER; }
 	| VME 		        { $$ = BRW_SFID_VME; }
-	| RENDER 	        { $$ = GEN6_SFID_DATAPORT_RENDER_CACHE; }
-	| CONST 	        { $$ = GEN6_SFID_DATAPORT_CONSTANT_CACHE; }
-	| DATA 		        { $$ = GEN7_SFID_DATAPORT_DATA_CACHE; }
-	| PIXEL_INTERP 	        { $$ = GEN7_SFID_PIXEL_INTERPOLATOR; }
+	| RENDER 	        { $$ = GFX6_SFID_DATAPORT_RENDER_CACHE; }
+	| CONST 	        { $$ = GFX6_SFID_DATAPORT_CONSTANT_CACHE; }
+	| DATA 		        { $$ = GFX7_SFID_DATAPORT_DATA_CACHE; }
+	| PIXEL_INTERP 	        { $$ = GFX7_SFID_PIXEL_INTERPOLATOR; }
 	| DP_DATA_1 	        { $$ = HSW_SFID_DATAPORT_DATA_CACHE_1; }
 	| CRE 		        { $$ = HSW_SFID_CRE; }
 	| SAMPLER	        { $$ = BRW_SFID_SAMPLER; }
-	| DP_SAMPLER	        { $$ = GEN6_SFID_DATAPORT_SAMPLER_CACHE; }
+	| DP_SAMPLER	        { $$ = GFX6_SFID_DATAPORT_SAMPLER_CACHE; }
 	;
 
 exp2:
@@ -1106,13 +1116,13 @@ branchinstruction:
 		i965_asm_set_instruction_options(p, $5);
 		brw_inst_set_exec_size(p->devinfo, brw_last_inst, $3);
 
-		if (p->devinfo->gen == 6) {
+		if (p->devinfo->ver == 6) {
 			brw_set_dest(p, brw_last_inst, brw_imm_w(0x0));
 			brw_set_src0(p, brw_last_inst, retype(brw_null_reg(),
 				     BRW_REGISTER_TYPE_D));
 			brw_set_src1(p, brw_last_inst, retype(brw_null_reg(),
 				     BRW_REGISTER_TYPE_D));
-		} else if (p->devinfo->gen == 7) {
+		} else if (p->devinfo->ver == 7) {
 			brw_set_dest(p, brw_last_inst, retype(brw_null_reg(),
 				     BRW_REGISTER_TYPE_D));
 			brw_set_src0(p, brw_last_inst, retype(brw_null_reg(),
@@ -1135,7 +1145,7 @@ branchinstruction:
 		brw_set_src0(p, brw_last_inst, retype(brw_null_reg(),
 					BRW_REGISTER_TYPE_D));
 		brw_set_src1(p, brw_last_inst, brw_imm_d(0x0));
-		brw_inst_set_gen4_pop_count(p->devinfo, brw_last_inst, $4);
+		brw_inst_set_gfx4_pop_count(p->devinfo, brw_last_inst, $4);
 
 		brw_inst_set_thread_control(p->devinfo, brw_last_inst,
 						BRW_THREAD_SWITCH);
@@ -1151,13 +1161,13 @@ branchinstruction:
 		i965_asm_set_instruction_options(p, $5);
 		brw_inst_set_exec_size(p->devinfo, brw_last_inst, $2);
 
-		if (p->devinfo->gen == 6) {
+		if (p->devinfo->ver == 6) {
 			brw_set_dest(p, brw_last_inst, brw_imm_w(0x0));
 			brw_set_src0(p, brw_last_inst, retype(brw_null_reg(),
 				     BRW_REGISTER_TYPE_D));
 			brw_set_src1(p, brw_last_inst, retype(brw_null_reg(),
 				     BRW_REGISTER_TYPE_D));
-		} else if (p->devinfo->gen == 7) {
+		} else if (p->devinfo->ver == 7) {
 			brw_set_dest(p, brw_last_inst, retype(brw_null_reg(),
 				     BRW_REGISTER_TYPE_D));
 			brw_set_src0(p, brw_last_inst, retype(brw_null_reg(),
@@ -1166,7 +1176,7 @@ branchinstruction:
 		} else {
 			brw_set_dest(p, brw_last_inst, retype(brw_null_reg(),
 				     BRW_REGISTER_TYPE_D));
-			if (p->devinfo->gen < 12)
+			if (p->devinfo->ver < 12)
 				brw_set_src0(p, brw_last_inst, brw_imm_d(0));
 		}
 	}
@@ -1179,8 +1189,8 @@ branchinstruction:
 		brw_set_dest(p, brw_last_inst, brw_ip_reg());
 		brw_set_src0(p, brw_last_inst, brw_ip_reg());
 		brw_set_src1(p, brw_last_inst, brw_imm_d(0x0));
-		brw_inst_set_gen4_jump_count(p->devinfo, brw_last_inst, $3);
-		brw_inst_set_gen4_pop_count(p->devinfo, brw_last_inst, $4);
+		brw_inst_set_gfx4_jump_count(p->devinfo, brw_last_inst, $3);
+		brw_inst_set_gfx4_pop_count(p->devinfo, brw_last_inst, $4);
 
 		if (!p->single_program_flow)
 			brw_inst_set_thread_control(p->devinfo, brw_last_inst,
@@ -1195,7 +1205,7 @@ branchinstruction:
 		i965_asm_set_instruction_options(p, $6);
 		brw_inst_set_exec_size(p->devinfo, brw_last_inst, $3);
 
-		if (p->devinfo->gen == 6) {
+		if (p->devinfo->ver == 6) {
 			brw_set_dest(p, brw_last_inst, brw_imm_w(0x0));
 			brw_set_src0(p, brw_last_inst,
 				     vec1(retype(brw_null_reg(),
@@ -1203,7 +1213,7 @@ branchinstruction:
 			brw_set_src1(p, brw_last_inst,
 				     vec1(retype(brw_null_reg(),
 				     BRW_REGISTER_TYPE_D)));
-		} else if (p->devinfo->gen == 7) {
+		} else if (p->devinfo->ver == 7) {
 			brw_set_dest(p, brw_last_inst,
 				     vec1(retype(brw_null_reg(),
 				     BRW_REGISTER_TYPE_D)));
@@ -1215,7 +1225,7 @@ branchinstruction:
 			brw_set_dest(p, brw_last_inst,
 				     vec1(retype(brw_null_reg(),
 				     BRW_REGISTER_TYPE_D)));
-			if (p->devinfo->gen < 12)
+			if (p->devinfo->ver < 12)
 				brw_set_src0(p, brw_last_inst, brw_imm_d(0x0));
 		}
 
@@ -1230,8 +1240,8 @@ branchinstruction:
 		brw_set_dest(p, brw_last_inst, brw_ip_reg());
 		brw_set_src0(p, brw_last_inst, brw_ip_reg());
 		brw_set_src1(p, brw_last_inst, brw_imm_d(0x0));
-		brw_inst_set_gen4_jump_count(p->devinfo, brw_last_inst, $4);
-		brw_inst_set_gen4_pop_count(p->devinfo, brw_last_inst, $5);
+		brw_inst_set_gfx4_jump_count(p->devinfo, brw_last_inst, $4);
+		brw_inst_set_gfx4_pop_count(p->devinfo, brw_last_inst, $5);
 
 		if (!p->single_program_flow)
 			brw_inst_set_thread_control(p->devinfo, brw_last_inst,
@@ -1247,14 +1257,14 @@ branchinstruction:
 		i965_asm_set_instruction_options(p, $5);
 		brw_inst_set_exec_size(p->devinfo, brw_last_inst, $3);
 
-		if (p->devinfo->gen == 6) {
+		if (p->devinfo->ver == 6) {
 			brw_set_src0(p, brw_last_inst,
 				     vec1(retype(brw_null_reg(),
 				     BRW_REGISTER_TYPE_D)));
 			brw_set_src1(p, brw_last_inst,
 				     vec1(retype(brw_null_reg(),
 				     BRW_REGISTER_TYPE_D)));
-		} else if (p->devinfo->gen == 7) {
+		} else if (p->devinfo->ver == 7) {
 			brw_set_dest(p, brw_last_inst,
 				     vec1(retype(brw_null_reg(),
 				     BRW_REGISTER_TYPE_D)));
@@ -1266,7 +1276,7 @@ branchinstruction:
 			brw_set_dest(p, brw_last_inst,
 				     vec1(retype(brw_null_reg(),
 				     BRW_REGISTER_TYPE_D)));
-			if (p->devinfo->gen < 12)
+			if (p->devinfo->ver < 12)
 				brw_set_src0(p, brw_last_inst, brw_imm_d(0x0));
 		}
 
@@ -1280,7 +1290,7 @@ branchinstruction:
 
 		brw_set_dest(p, brw_last_inst, brw_ip_reg());
 		brw_set_src0(p, brw_last_inst, brw_ip_reg());
-		brw_inst_set_gen4_jump_count(p->devinfo, brw_last_inst, $4);
+		brw_inst_set_gfx4_jump_count(p->devinfo, brw_last_inst, $4);
 		brw_set_src1(p, brw_last_inst, brw_imm_d($4));
 
 		if (!p->single_program_flow)
@@ -1302,7 +1312,7 @@ breakinstruction:
 		i965_asm_set_instruction_options(p, $6);
 		brw_inst_set_exec_size(p->devinfo, brw_last_inst, $3);
 
-		if (p->devinfo->gen >= 8) {
+		if (p->devinfo->ver >= 8) {
 			brw_set_dest(p, brw_last_inst, retype(brw_null_reg(),
 				     BRW_REGISTER_TYPE_D));
 			brw_set_src0(p, brw_last_inst, brw_imm_d(0x0));
@@ -1325,8 +1335,8 @@ breakinstruction:
 		brw_set_dest(p, brw_last_inst, brw_ip_reg());
 		brw_set_src0(p, brw_last_inst, brw_ip_reg());
 		brw_set_src1(p, brw_last_inst, brw_imm_d(0x0));
-		brw_inst_set_gen4_jump_count(p->devinfo, brw_last_inst, $4);
-		brw_inst_set_gen4_pop_count(p->devinfo, brw_last_inst, $5);
+		brw_inst_set_gfx4_jump_count(p->devinfo, brw_last_inst, $4);
+		brw_inst_set_gfx4_pop_count(p->devinfo, brw_last_inst, $5);
 
 		brw_pop_insn_state(p);
 	}
@@ -1342,7 +1352,7 @@ breakinstruction:
 		brw_set_dest(p, brw_last_inst, retype(brw_null_reg(),
 			     BRW_REGISTER_TYPE_D));
 
-		if (p->devinfo->gen >= 8) {
+		if (p->devinfo->ver >= 8) {
 			brw_set_src0(p, brw_last_inst, brw_imm_d(0x0));
 		} else {
 			brw_set_src0(p, brw_last_inst, retype(brw_null_reg(),
@@ -1362,7 +1372,7 @@ breakinstruction:
 		brw_inst_set_exec_size(p->devinfo, brw_last_inst, $3);
 		brw_set_dest(p, brw_last_inst, brw_ip_reg());
 
-		if (p->devinfo->gen >= 8) {
+		if (p->devinfo->ver >= 8) {
 			brw_set_src0(p, brw_last_inst, brw_imm_d(0x0));
 		} else {
 			brw_set_src0(p, brw_last_inst, brw_ip_reg());
@@ -1381,8 +1391,8 @@ breakinstruction:
 		brw_set_src0(p, brw_last_inst, brw_ip_reg());
 		brw_set_src1(p, brw_last_inst, brw_imm_d(0x0));
 
-		brw_inst_set_gen4_jump_count(p->devinfo, brw_last_inst, $4);
-		brw_inst_set_gen4_pop_count(p->devinfo, brw_last_inst, $5);
+		brw_inst_set_gfx4_jump_count(p->devinfo, brw_last_inst, $4);
+		brw_inst_set_gfx4_pop_count(p->devinfo, brw_last_inst, $5);
 
 		brw_pop_insn_state(p);
 	}
@@ -1398,12 +1408,12 @@ loopinstruction:
 		i965_asm_set_instruction_options(p, $5);
 		brw_inst_set_exec_size(p->devinfo, brw_last_inst, $3);
 
-		if (p->devinfo->gen >= 8) {
+		if (p->devinfo->ver >= 8) {
 			brw_set_dest(p, brw_last_inst,
 						retype(brw_null_reg(),
 						BRW_REGISTER_TYPE_D));
 			brw_set_src0(p, brw_last_inst, brw_imm_d(0x0));
-		} else if (p->devinfo->gen == 7) {
+		} else if (p->devinfo->ver == 7) {
 			brw_set_dest(p, brw_last_inst,
 						retype(brw_null_reg(),
 						BRW_REGISTER_TYPE_D));
@@ -1433,15 +1443,15 @@ loopinstruction:
 		brw_set_dest(p, brw_last_inst, brw_ip_reg());
 		brw_set_src0(p, brw_last_inst, brw_ip_reg());
 		brw_set_src1(p, brw_last_inst, brw_imm_d(0x0));
-		brw_inst_set_gen4_jump_count(p->devinfo, brw_last_inst, $4);
-		brw_inst_set_gen4_pop_count(p->devinfo, brw_last_inst, 0);
+		brw_inst_set_gfx4_jump_count(p->devinfo, brw_last_inst, $4);
+		brw_inst_set_gfx4_pop_count(p->devinfo, brw_last_inst, 0);
 
 		brw_pop_insn_state(p);
 	}
 	| DO execsize instoptions
 	{
 		brw_next_insn(p, $1);
-		if (p->devinfo->gen < 6) {
+		if (p->devinfo->ver < 6) {
 			brw_inst_set_exec_size(p->devinfo, brw_last_inst, $2);
 			i965_asm_set_instruction_options(p, $3);
 			brw_set_dest(p, brw_last_inst, brw_null_reg());
@@ -1468,7 +1478,7 @@ simple_int:
 
 rellocation:
 	relativelocation
-	| %empty { $$ = 0; }
+	| /* empty */ { $$ = 0; }
 	;
 
 relativelocation:
@@ -1480,7 +1490,7 @@ relativelocation:
 
 jumplabel:
 	JUMP_LABEL	{ $$ = $1; }
-	| %empty	{ $$ = NULL; }
+	| /* empty */	{ $$ = NULL; }
 	;
 
 jumplabeltarget:
@@ -1776,7 +1786,7 @@ exp:
 
 subregnum:
 	DOT exp 		        { $$ = $2; }
-	| %empty %prec SUBREGNUM 	{ $$ = 0; }
+	| /* empty */ %prec SUBREGNUM 	{ $$ = 0; }
 	;
 
 directgenreg:
@@ -1821,7 +1831,7 @@ indirectmsgreg:
 addrreg:
 	ADDRREG subregnum
 	{
-		int subnr = (p->devinfo->gen >= 8) ? 16 : 8;
+		int subnr = (p->devinfo->ver >= 8) ? 16 : 8;
 
 		if ($2 > subnr)
 			error(&@2, "Address sub register number %d"
@@ -1837,7 +1847,7 @@ accreg:
 	ACCREG subregnum
 	{
 		int nr_reg;
-		if (p->devinfo->gen < 8)
+		if (p->devinfo->ver < 8)
 			nr_reg = 2;
 		else
 			nr_reg = 10;
@@ -1857,7 +1867,7 @@ flagreg:
 	FLAGREG subregnum
 	{
 		// SNB = 1 flag reg and IVB+ = 2 flag reg
-		int nr_reg = (p->devinfo->gen >= 7) ? 2 : 1;
+		int nr_reg = (p->devinfo->ver >= 7) ? 2 : 1;
 		int subnr = nr_reg;
 
 		if ($1 > nr_reg)
@@ -1889,7 +1899,7 @@ maskreg:
 notifyreg:
 	NOTIFYREG subregnum
 	{
-		int subnr = (p->devinfo->gen >= 11) ? 2 : 3;
+		int subnr = (p->devinfo->ver >= 11) ? 2 : 3;
 		if ($2 > subnr)
 			error(&@2, "Notification sub register number %d"
 				   " out of range\n", $2);
@@ -1955,9 +1965,9 @@ performancereg:
 	PERFORMANCEREG subregnum
 	{
 		int subnr;
-		if (p->devinfo->gen >= 10)
+		if (p->devinfo->ver >= 10)
 			subnr = 5;
-		else if (p->devinfo->gen <= 8)
+		else if (p->devinfo->ver <= 8)
 			subnr = 3;
 		else
 			subnr = 4;
@@ -1999,7 +2009,7 @@ immval:
 
 /* Regions */
 dstregion:
-	%empty
+	/* empty */
 	{
 		$$ = BRW_HORIZONTAL_STRIDE_1;
 	}
@@ -2018,7 +2028,7 @@ indirectregion:
 	;
 
 region:
-	%empty
+	/* empty */
 	{
 		$$ = stride($$, 0, 1, 0);
 	}
@@ -2109,7 +2119,7 @@ imm_type:
 	;
 
 writemask:
-	%empty
+	/* empty */
 	{
 		$$ = WRITEMASK_XYZW;
 	}
@@ -2120,27 +2130,27 @@ writemask:
 	;
 
 writemask_x:
-	%empty 	{ $$ = 0; }
+	/* empty */ 	{ $$ = 0; }
 	| X 	{ $$ = 1 << BRW_CHANNEL_X; }
 	;
 
 writemask_y:
-	%empty 	{ $$ = 0; }
+	/* empty */ 	{ $$ = 0; }
 	| Y 	{ $$ = 1 << BRW_CHANNEL_Y; }
 	;
 
 writemask_z:
-	%empty 	{ $$ = 0; }
+	/* empty */ 	{ $$ = 0; }
 	| Z 	{ $$ = 1 << BRW_CHANNEL_Z; }
 	;
 
 writemask_w:
-	%empty 	{ $$ = 0; }
+	/* empty */ 	{ $$ = 0; }
 	| W 	{ $$ = 1 << BRW_CHANNEL_W; }
 	;
 
 swizzle:
-	%empty
+	/* empty */
 	{
 		$$ = BRW_SWIZZLE_NOOP;
 	}
@@ -2163,7 +2173,7 @@ chansel:
 
 /* Instruction prediction and modifiers */
 predicate:
-	%empty
+	/* empty */
 	{
 		brw_push_insn_state(p);
 		brw_set_default_predicate_control(p, BRW_PREDICATE_NONE);
@@ -2180,13 +2190,13 @@ predicate:
 	;
 
 predstate:
-	%empty 	        { $$ = 0; }
+	/* empty */     { $$ = 0; }
 	| PLUS 	        { $$ = 0; }
 	| MINUS 	{ $$ = 1; }
 	;
 
 predctrl:
-	%empty 	        { $$ = BRW_PREDICATE_NORMAL; }
+	/* empty */ 	{ $$ = BRW_PREDICATE_NORMAL; }
 	| DOT X 	{ $$ = BRW_PREDICATE_ALIGN16_REPLICATE_X; }
 	| DOT Y 	{ $$ = BRW_PREDICATE_ALIGN16_REPLICATE_Y; }
 	| DOT Z 	{ $$ = BRW_PREDICATE_ALIGN16_REPLICATE_Z; }
@@ -2207,12 +2217,12 @@ predctrl:
 
 /* Source Modification */
 negate:
-	%empty 	        { $$ = 0; }
+	/* empty */	{ $$ = 0; }
 	| MINUS 	{ $$ = 1; }
 	;
 
 abs:
-	%empty 	{ $$ = 0; }
+	/* empty */ 	{ $$ = 0; }
 	| ABS 	{ $$ = 1; }
 	;
 
@@ -2233,7 +2243,7 @@ cond_mod:
 	;
 
 condModifiers:
-	%empty 	{ $$ = BRW_CONDITIONAL_NONE; }
+	/* empty */ 	{ $$ = BRW_CONDITIONAL_NONE; }
 	| ZERO
 	| EQUAL
 	| NOT_ZERO
@@ -2248,13 +2258,13 @@ condModifiers:
 	;
 
 saturate:
-	%empty 		{ $$ = BRW_INSTRUCTION_NORMAL; }
+	/* empty */ 	{ $$ = BRW_INSTRUCTION_NORMAL; }
 	| SATURATE 	{ $$ = BRW_INSTRUCTION_SATURATE; }
 	;
 
 /* Execution size */
 execsize:
-	%empty %prec EMPTYEXECSIZE
+	/* empty */ %prec EMPTYEXECSIZE
 	{
 		$$ = 0;
 	}
@@ -2269,7 +2279,7 @@ execsize:
 
 /* Instruction options */
 instoptions:
-	%empty
+	/* empty */
 	{
 		memset(&$$, 0, sizeof($$));
 	}
@@ -2293,7 +2303,7 @@ instoption_list:
 		$$ = $1;
 		add_instruction_option(&$$, $2);
 	}
-	| %empty
+	| /* empty */
 	{
 		memset(&$$, 0, sizeof($$));
 	}
@@ -2332,8 +2342,13 @@ instoption:
 
 extern int yylineno;
 
+#ifdef YYBYACC
+void
+yyerror(YYLTYPE *ltype, char *msg)
+#else
 void
 yyerror(char *msg)
+#endif
 {
 	fprintf(stderr, "%s: %d: %s at \"%s\"\n",
 	        input_filename, yylineno, msg, lex_text());

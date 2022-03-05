@@ -30,6 +30,7 @@
 #include "compiler/nir/nir.h"
 #include "etnaviv_asm.h"
 #include "etnaviv_compiler.h"
+#include "util/compiler.h"
 
 struct etna_compile {
    nir_shader *nir;
@@ -144,7 +145,7 @@ real_dest(nir_dest *dest, unsigned *swiz, unsigned *mask)
              nir_instr_as_alu(p_instr)->op == nir_op_mov) {
             break;
          }
-         /* fallthrough */
+         FALLTHROUGH;
       default:
          can_bypass_src = false;
          break;
@@ -214,7 +215,8 @@ dest_for_instr(nir_instr *instr)
       if (intr->intrinsic == nir_intrinsic_load_uniform ||
           intr->intrinsic == nir_intrinsic_load_ubo ||
           intr->intrinsic == nir_intrinsic_load_input ||
-          intr->intrinsic == nir_intrinsic_load_instance_id)
+          intr->intrinsic == nir_intrinsic_load_instance_id ||
+          intr->intrinsic == nir_intrinsic_load_texture_rect_scaling)
          dest = &intr->dest;
    } break;
    case nir_instr_type_deref:

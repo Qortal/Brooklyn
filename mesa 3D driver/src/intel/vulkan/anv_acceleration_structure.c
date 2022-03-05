@@ -34,10 +34,6 @@ anv_GetAccelerationStructureBuildSizesKHR(
    assert(pSizeInfo->sType ==
           VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR);
 
-   uint64_t max_prim_count = 0;
-   for (uint32_t i = 0; i < pBuildInfo->geometryCount; i++)
-      max_prim_count += pMaxPrimitiveCounts[i];
-
    pSizeInfo->accelerationStructureSize = 0; /* TODO */
 
    uint64_t cpu_build_scratch_size = 0; /* TODO */
@@ -83,7 +79,7 @@ anv_CreateAccelerationStructureKHR(
    accel = vk_zalloc2(&device->vk.alloc, pAllocator, sizeof(*accel), 8,
                       VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (accel == NULL)
-      return vk_error(VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    vk_object_base_init(&device->vk, &accel->base,
                        VK_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR);
@@ -121,7 +117,7 @@ anv_GetAccelerationStructureDeviceAddressKHR(
                    pInfo->accelerationStructure);
 
    assert(!anv_address_is_null(accel->address));
-   assert(accel->address.bo->flags & EXEC_OBJECT_PINNED);
+   assert(anv_bo_is_pinned(accel->address.bo));
 
    return anv_address_physical(accel->address);
 }
@@ -137,49 +133,53 @@ anv_GetDeviceAccelerationStructureCompatibilityKHR(
 
 VkResult
 anv_BuildAccelerationStructuresKHR(
-    VkDevice                                    device,
+    VkDevice                                    _device,
     VkDeferredOperationKHR                      deferredOperation,
     uint32_t                                    infoCount,
     const VkAccelerationStructureBuildGeometryInfoKHR* pInfos,
     const VkAccelerationStructureBuildRangeInfoKHR* const* ppBuildRangeInfos)
 {
+   ANV_FROM_HANDLE(anv_device, device, _device);
    unreachable("Unimplemented");
-   return vk_error(VK_ERROR_FEATURE_NOT_PRESENT);
+   return vk_error(device, VK_ERROR_FEATURE_NOT_PRESENT);
 }
 
 VkResult
 anv_CopyAccelerationStructureKHR(
-    VkDevice                                    device,
+    VkDevice                                    _device,
     VkDeferredOperationKHR                      deferredOperation,
     const VkCopyAccelerationStructureInfoKHR*   pInfo)
 {
+   ANV_FROM_HANDLE(anv_device, device, _device);
    unreachable("Unimplemented");
-   return vk_error(VK_ERROR_FEATURE_NOT_PRESENT);
+   return vk_error(device, VK_ERROR_FEATURE_NOT_PRESENT);
 }
 
 VkResult
 anv_CopyAccelerationStructureToMemoryKHR(
-    VkDevice                                    device,
+    VkDevice                                    _device,
     VkDeferredOperationKHR                      deferredOperation,
     const VkCopyAccelerationStructureToMemoryInfoKHR* pInfo)
 {
+   ANV_FROM_HANDLE(anv_device, device, _device);
    unreachable("Unimplemented");
-   return vk_error(VK_ERROR_FEATURE_NOT_PRESENT);
+   return vk_error(device, VK_ERROR_FEATURE_NOT_PRESENT);
 }
 
 VkResult
 anv_CopyMemoryToAccelerationStructureKHR(
-    VkDevice                                    device,
+    VkDevice                                    _device,
     VkDeferredOperationKHR                      deferredOperation,
     const VkCopyMemoryToAccelerationStructureInfoKHR* pInfo)
 {
+   ANV_FROM_HANDLE(anv_device, device, _device);
    unreachable("Unimplemented");
-   return vk_error(VK_ERROR_FEATURE_NOT_PRESENT);
+   return vk_error(device, VK_ERROR_FEATURE_NOT_PRESENT);
 }
 
 VkResult
 anv_WriteAccelerationStructuresPropertiesKHR(
-    VkDevice                                    device,
+    VkDevice                                    _device,
     uint32_t                                    accelerationStructureCount,
     const VkAccelerationStructureKHR*           pAccelerationStructures,
     VkQueryType                                 queryType,
@@ -187,8 +187,9 @@ anv_WriteAccelerationStructuresPropertiesKHR(
     void*                                       pData,
     size_t                                      stride)
 {
+   ANV_FROM_HANDLE(anv_device, device, _device);
    unreachable("Unimplemented");
-   return vk_error(VK_ERROR_FEATURE_NOT_PRESENT);
+   return vk_error(device, VK_ERROR_FEATURE_NOT_PRESENT);
 }
 
 void

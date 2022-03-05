@@ -34,8 +34,8 @@
 #include "util/u_dynarray.h"
 #include "util/set.h"
 #include "util/list.h"
+#include "util/u_math.h"
 
-#include "main/mtypes.h"
 #include "compiler/nir_types.h"
 #include "compiler/nir/nir.h"
 #include "panfrost/util/pan_ir.h"
@@ -183,6 +183,8 @@ typedef struct midgard_instruction {
 
                 midgard_branch branch;
         };
+
+        unsigned bundle_id;
 } midgard_instruction;
 
 typedef struct midgard_block {
@@ -233,27 +235,22 @@ enum midgard_rt_id {
         MIDGARD_NUM_RTS,
 };
 
+#define MIDGARD_MAX_SAMPLE_ITER 16
+
 typedef struct compiler_context {
+        const struct panfrost_compile_inputs *inputs;
         nir_shader *nir;
+        struct pan_shader_info *info;
         gl_shader_stage stage;
 
-        /* Is internally a blend shader? Depends on stage == FRAGMENT */
-        bool is_blend;
-
-        /* Render target number for a keyed blend shader. Depends on is_blend */
-        unsigned blend_rt;
+        /* Number of samples for a keyed blend shader. Depends on is_blend */
+        unsigned blend_sample_iterations;
 
         /* Index to precolour to r0 for an input blend colour */
         unsigned blend_input;
 
         /* Index to precolour to r2 for a dual-source blend colour */
         unsigned blend_src1;
-
-        /* Blend constants */
-        float blend_constants[4];
-
-        /* Number of bytes used for Thread Local Storage */
-        unsigned tls_size;
 
         /* Count of spills and fills for shaderdb */
         unsigned spills;
@@ -294,13 +291,6 @@ typedef struct compiler_context {
         /* Set of NIR indices that were already emitted as outmods */
         BITSET_WORD *already_emitted;
 
-        /* Just the count of the max register used. Higher count => higher
-         * register pressure */
-        int work_registers;
-
-        /* The number of uniforms allowable for the fast path */
-        int uniform_cutoff;
-
         /* Count of instructions emitted from NIR overall, across all blocks */
         int instruction_count;
 
@@ -313,9 +303,12 @@ typedef struct compiler_context {
         uint32_t quirks;
 
         /* Writeout instructions for each render target */
-        midgard_instruction *writeout_branch[MIDGARD_NUM_RTS];
+        midgard_instruction *writeout_branch[MIDGARD_NUM_RTS][MIDGARD_MAX_SAMPLE_ITER];
 
-        struct panfrost_sysvals sysvals;
+        struct hash_table_u64 *sysval_to_id;
+
+        /* Mask of UBOs that need to be uploaded */
+        uint32_t ubo_mask;
 } compiler_context;
 
 /* Per-block live_in/live_out */
@@ -528,7 +521,12 @@ void mir_insert_instruction_after_scheduled(compiler_context *ctx, midgard_block
 void mir_flip(midgard_instruction *ins);
 void mir_compute_temp_count(compiler_context *ctx);
 
-void mir_set_offset(compiler_context *ctx, midgard_instruction *ins, nir_src *offset, bool is_shared);
+#define LDST_GLOBAL (REGISTER_LDST_ZERO << 2)
+#define LDST_SHARED ((REGISTER_LDST_LOCAL_STORAGE_PTR << 2) | COMPONENT_Z)
+#define LDST_SCRATCH ((REGISTER_LDST_PC_SP << 2) | COMPONENT_Z)
+
+void mir_set_offset(compiler_context *ctx, midgard_instruction *ins, nir_src *offset, unsigned seg);
+void mir_set_ubo_offset(midgard_instruction *ins, nir_src *src, unsigned bias);
 
 /* 'Intrinsic' move for aliasing */
 
@@ -544,7 +542,7 @@ v_mov(unsigned src, unsigned dest)
                 .dest = dest,
                 .dest_type = nir_type_uint32,
                 .op = midgard_alu_op_imov,
-                .outmod = midgard_outmod_int_wrap
+                .outmod = midgard_outmod_keeplo
         };
 
         return ins;
@@ -577,11 +575,14 @@ v_load_store_scratch(
                 .dest = ~0,
                 .src = { ~0, ~0, ~0, ~0 },
                 .swizzle = SWIZZLE_IDENTITY_4,
-                .op = is_store ? midgard_op_st_int4 : midgard_op_ld_int4,
+                .op = is_store ? midgard_op_st_128 : midgard_op_ld_128,
                 .load_store = {
                         /* For register spilling - to thread local storage */
-                        .arg_1 = 0xEA,
-                        .arg_2 = 0x1E,
+                        .arg_reg = REGISTER_LDST_LOCAL_STORAGE_PTR,
+                        .arg_comp = COMPONENT_X,
+                        .bitsize_toggle = true,
+                        .index_format = midgard_index_address_u32,
+                        .index_reg = REGISTER_LDST_ZERO,
                 },
 
                 /* If we spill an unspill, RA goes into an infinite loop */

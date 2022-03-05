@@ -313,6 +313,12 @@ CodeEmitterGV100::emitMOV()
          emitField(90,  1, 1);
          emitPRED (87, insn->src(0));
          break;
+      case FILE_BARRIER:
+      case FILE_THREAD_STATE:
+         emitInsn (0x355);
+         emitBTS  (24, insn->src(0));
+         emitGPR  (16, insn->def(0));
+         break;
       default:
          assert(!"bad src file");
          break;
@@ -328,6 +334,31 @@ CodeEmitterGV100::emitMOV()
       emitCond3(76, CC_NE);
       emitGPR  (24, insn->src(0));
       emitGPR  (32);
+      break;
+   case FILE_BARRIER:
+   case FILE_THREAD_STATE:
+      switch (insn->src(0).getFile()) {
+      case FILE_GPR:
+         emitInsn (0x356);
+         emitGPR  (32, insn->src(0));
+         emitBTS  (24, insn->def(0));
+         break;
+      case FILE_BARRIER:
+         emitInsn (0xf56);
+         emitBTS  (24, insn->def(0));
+         emitBTS  (16, insn->src(0));
+         break;
+      case FILE_THREAD_STATE:
+         assert(insn->def(0).getFile() == FILE_BARRIER);
+         emitInsn (0xf55);
+         emitBTS  (24, insn->src(0));
+         emitBTS  (16, insn->def(0));
+         break;
+      default:
+         assert(!"bad src file");
+         break;
+      }
+      emitField(84, 1, insn->getDef(0)->reg.data.ts == TS_PQUAD_MACTIVE ? 1 : 0);
       break;
    default:
       assert(!"bad dst file");
@@ -354,7 +385,16 @@ void
 gv100_selpFlip(const FixupEntry *entry, uint32_t *code, const FixupData& data)
 {
    int loc = entry->loc;
-   if (data.force_persample_interp)
+   bool val = false;
+   switch (entry->ipa) {
+   case 0:
+      val = data.force_persample_interp;
+      break;
+   case 1:
+      val = data.msaa;
+      break;
+   }
+   if (val)
       code[loc + 2] |= 1 << 26;
    else
       code[loc + 2] &= ~(1 << 26);
@@ -366,8 +406,8 @@ CodeEmitterGV100::emitSEL()
    emitFormA(0x007, FA_RRR | FA_RIR | FA_RCR, __(0), __(1), EMPTY);
    emitNOT  (90, insn->src(2));
    emitPRED (87, insn->src(2));
-   if (insn->subOp == 1)
-      addInterp(0, 0, gv100_selpFlip);
+   if (insn->subOp >= 1)
+      addInterp(insn->subOp - 1, 0, gv100_selpFlip);
 }
 
 void
@@ -862,7 +902,8 @@ CodeEmitterGV100::emitATOM()
    }
 
    emitPRED (81);
-   emitField(79, 2, 1);
+   emitField(79, 2, 2); // .INVALID0/./.STRONG/.INVALID3
+   emitField(77, 2, 3); // .CTA/.SM/.GPU/.SYS
    emitField(72, 1, insn->src(0).getIndirect(0)->getSize() == 8);
    emitGPR  (32, insn->src(1));
    emitADDR (24, 40, 24, 0, insn->src(0));
@@ -1100,7 +1141,7 @@ CodeEmitterGV100::emitRED()
    emitField(87, 3, insn->subOp);
    emitField(84, 3, 1); // 0=.EF, 1=, 2=.EL, 3=.LU, 4=.EU, 5=.NA
    emitField(79, 2, 2); // .INVALID0/./.STRONG/.INVALID3
-   emitField(77, 2, 2); // .CTA/.SM/.GPU/.SYS
+   emitField(77, 2, 3); // .CTA/.SM/.GPU/.SYS
    emitField(73, 3, dType);
    emitField(72, 1, insn->src(0).getIndirect(0)->getSize() == 8);
    emitGPR  (32, insn->src(1));
@@ -1743,7 +1784,11 @@ CodeEmitterGV100::emitInstruction(Instruction *i)
    case OP_FLOOR:
    case OP_TRUNC:
       if (insn->op == OP_CVT && (insn->def(0).getFile() == FILE_PREDICATE ||
-                                 insn->src(0).getFile() == FILE_PREDICATE)) {
+                                 insn->def(0).getFile() == FILE_BARRIER ||
+                                 insn->def(0).getFile() == FILE_THREAD_STATE ||
+                                 insn->src(0).getFile() == FILE_PREDICATE ||
+                                 insn->src(0).getFile() == FILE_BARRIER ||
+                                 insn->src(0).getFile() == FILE_THREAD_STATE)) {
          emitMOV();
       } else if (isFloatType(insn->dType)) {
          if (isFloatType(insn->sType)) {
@@ -2043,7 +2088,7 @@ CodeEmitterGV100::prepareEmission(Program *prog)
 }
 
 CodeEmitterGV100::CodeEmitterGV100(TargetGV100 *target)
-   : CodeEmitter(target), targ(target)
+   : CodeEmitter(target), prog(NULL), targ(target), insn(NULL)
 {
    code = NULL;
    codeSize = codeSizeLimit = 0;

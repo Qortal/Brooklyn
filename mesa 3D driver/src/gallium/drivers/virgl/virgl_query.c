@@ -114,7 +114,7 @@ static struct pipe_query *virgl_create_query(struct pipe_context *ctx,
    query->result_size = (query_type == PIPE_QUERY_TIMESTAMP ||
                          query_type == PIPE_QUERY_TIME_ELAPSED) ? 8 : 4;
 
-   util_range_add(&query->buf->u.b, &query->buf->valid_buffer_range, 0,
+   util_range_add(&query->buf->b, &query->buf->valid_buffer_range, 0,
                   sizeof(struct virgl_host_query_state));
    virgl_resource_dirty(query->buf, 0);
 
@@ -194,7 +194,7 @@ static bool virgl_get_query_result(struct pipe_context *ctx,
 
       host_state = vs->vws->resource_map(vs->vws, query->buf->hw_res);
 
-      /* The resouce is idle and the result should be available at this point,
+      /* The resource is idle and the result should be available at this point,
        * unless we are dealing with an older host.  In that case,
        * VIRGL_CCMD_GET_QUERY_RESULT is not fenced, the buffer is not
        * coherent, and transfers are unsynchronized.  We have to repeatedly
@@ -209,7 +209,7 @@ static bool virgl_get_query_result(struct pipe_context *ctx,
                return false;
          }
 
-         host_state = pipe_buffer_map(ctx, &query->buf->u.b,
+         host_state = pipe_buffer_map(ctx, &query->buf->b,
                PIPE_MAP_READ, &transfer);
       }
 
@@ -237,7 +237,7 @@ virgl_set_active_query_state(struct pipe_context *pipe, bool enable)
 static void
 virgl_get_query_result_resource(struct pipe_context *ctx,
                                 struct pipe_query *q,
-                                bool wait,
+                                enum pipe_query_flags flags,
                                 enum pipe_query_value_type result_type,
                                 int index,
                                 struct pipe_resource *resource,
@@ -247,7 +247,7 @@ virgl_get_query_result_resource(struct pipe_context *ctx,
    struct virgl_query *query = virgl_query(q);
    struct virgl_resource *qbo = (struct virgl_resource *)resource;
 
-   virgl_encode_get_query_result_qbo(vctx, query->handle, qbo, wait, result_type, offset, index);
+   virgl_encode_get_query_result_qbo(vctx, query->handle, qbo, (flags & PIPE_QUERY_WAIT), result_type, offset, index);
 }
 
 void virgl_init_query_functions(struct virgl_context *vctx)

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * linux/include/linux/lockd/xdr4.h
  *
@@ -21,27 +22,21 @@
 #define	nlm4_fbig		cpu_to_be32(NLM_FBIG)
 #define	nlm4_failed		cpu_to_be32(NLM_FAILED)
 
+bool	nlm4svc_decode_void(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlm4svc_decode_testargs(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlm4svc_decode_lockargs(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlm4svc_decode_cancargs(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlm4svc_decode_unlockargs(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlm4svc_decode_res(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlm4svc_decode_reboot(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlm4svc_decode_shareargs(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlm4svc_decode_notify(struct svc_rqst *rqstp, struct xdr_stream *xdr);
 
+bool	nlm4svc_encode_testres(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlm4svc_encode_res(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlm4svc_encode_void(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlm4svc_encode_shareres(struct svc_rqst *rqstp, struct xdr_stream *xdr);
 
-int	nlm4svc_decode_testargs(void *, __be32 *, void *);
-int	nlm4svc_encode_testres(void *, __be32 *, void *);
-int	nlm4svc_decode_lockargs(void *, __be32 *, void *);
-int	nlm4svc_decode_cancargs(void *, __be32 *, void *);
-int	nlm4svc_decode_unlockargs(void *, __be32 *, void *);
-int	nlm4svc_encode_res(void *, __be32 *, void *);
-int	nlm4svc_decode_res(void *, __be32 *, void *);
-int	nlm4svc_encode_void(void *, __be32 *, void *);
-int	nlm4svc_decode_void(void *, __be32 *, void *);
-int	nlm4svc_decode_shareargs(void *, __be32 *, void *);
-int	nlm4svc_encode_shareres(void *, __be32 *, void *);
-int	nlm4svc_decode_notify(void *, __be32 *, void *);
-int	nlm4svc_decode_reboot(void *, __be32 *, void *);
-/*
-int	nlmclt_encode_testargs(void *, u32 *, void *);
-int	nlmclt_encode_lockargs(void *, u32 *, void *);
-int	nlmclt_encode_cancargs(void *, u32 *, void *);
-int	nlmclt_encode_unlockargs(void *, u32 *, void *);
- */
 extern const struct rpc_version nlm_version4;
 
 #endif /* LOCKD_XDR4_H */

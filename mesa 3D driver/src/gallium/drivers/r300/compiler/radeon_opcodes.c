@@ -30,7 +30,9 @@
 
 #include "radeon_program_constants.h"
 
-struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
+#include "util/compiler.h"
+
+const struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 	{
 		.Opcode = RC_OPCODE_NOP,
 		.Name = "NOP"
@@ -38,13 +40,6 @@ struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 	{
 		.Opcode = RC_OPCODE_ILLEGAL_OPCODE,
 		.Name = "ILLEGAL OPCODE"
-	},
-	{
-		.Opcode = RC_OPCODE_ABS,
-		.Name = "ABS",
-		.NumSrcRegs = 1,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
 	},
 	{
 		.Opcode = RC_OPCODE_ADD,
@@ -69,13 +64,6 @@ struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 		.Opcode = RC_OPCODE_CEIL,
 		.Name = "CEIL",
 		.NumSrcRegs = 1,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
-	},
-	{
-		.Opcode = RC_OPCODE_CLAMP,
-		.Name = "CLAMP",
-		.NumSrcRegs = 3,
 		.HasDstReg = 1,
 		.IsComponentwise = 1
 	},
@@ -129,12 +117,6 @@ struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 	{
 		.Opcode = RC_OPCODE_DP4,
 		.Name = "DP4",
-		.NumSrcRegs = 2,
-		.HasDstReg = 1
-	},
-	{
-		.Opcode = RC_OPCODE_DPH,
-		.Name = "DPH",
 		.NumSrcRegs = 2,
 		.HasDstReg = 1
 	},
@@ -266,22 +248,9 @@ struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 		.IsStandardScalar = 1
 	},
 	{
-		.Opcode = RC_OPCODE_SCS,
-		.Name = "SCS",
-		.NumSrcRegs = 1,
-		.HasDstReg = 1
-	},
-	{
 		.Opcode = RC_OPCODE_SEQ,
 		.Name = "SEQ",
 		.NumSrcRegs = 2,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
-	},
-	{
-		.Opcode = RC_OPCODE_SFL,
-		.Name = "SFL",
-		.NumSrcRegs = 0,
 		.HasDstReg = 1,
 		.IsComponentwise = 1
 	},
@@ -342,24 +311,11 @@ struct rc_opcode_info rc_opcodes[MAX_RC_OPCODE] = {
 		.IsComponentwise = 1
 	},
 	{
-		.Opcode = RC_OPCODE_SWZ,
-		.Name = "SWZ",
-		.NumSrcRegs = 1,
-		.HasDstReg = 1,
-		.IsComponentwise = 1
-	},
-	{
 		.Opcode = RC_OPCODE_TRUNC,
 		.Name = "TRUNC",
 		.NumSrcRegs = 1,
 		.HasDstReg = 1,
 		.IsComponentwise = 1
-	},
-	{
-		.Opcode = RC_OPCODE_XPD,
-		.Name = "XPD",
-		.NumSrcRegs = 2,
-		.HasDstReg = 1
 	},
 	{
 		.Opcode = RC_OPCODE_TEX,
@@ -560,7 +516,6 @@ void rc_compute_sources_for_writemask(
 			srcmasks[1] |= RC_MASK_XY;
 			break;
 		case RC_OPCODE_DP3:
-		case RC_OPCODE_XPD:
 			srcmasks[0] |= RC_MASK_XYZ;
 			srcmasks[1] |= RC_MASK_XYZ;
 			break;
@@ -568,15 +523,11 @@ void rc_compute_sources_for_writemask(
 			srcmasks[0] |= RC_MASK_XYZW;
 			srcmasks[1] |= RC_MASK_XYZW;
 			break;
-		case RC_OPCODE_DPH:
-			srcmasks[0] |= RC_MASK_XYZ;
-			srcmasks[1] |= RC_MASK_XYZW;
-			break;
 		case RC_OPCODE_TXB:
 		case RC_OPCODE_TXP:
 		case RC_OPCODE_TXL:
 			srcmasks[0] |= RC_MASK_W;
-			/* Fall through */
+			FALLTHROUGH;
 		case RC_OPCODE_TEX:
 			switch (inst->U.I.TexSrcTarget) {
 				case RC_TEXTURE_1D:
@@ -598,7 +549,7 @@ void rc_compute_sources_for_writemask(
 			switch (inst->U.I.TexSrcTarget) {
 				case RC_TEXTURE_1D_ARRAY:
 					srcmasks[0] |= RC_MASK_Y;
-					/* Fall through. */
+					FALLTHROUGH;
 				case RC_TEXTURE_1D:
 					srcmasks[0] |= RC_MASK_X;
 					srcmasks[1] |= RC_MASK_X;
@@ -606,7 +557,7 @@ void rc_compute_sources_for_writemask(
 					break;
 				case RC_TEXTURE_2D_ARRAY:
 					srcmasks[0] |= RC_MASK_Z;
-					/* Fall through. */
+					FALLTHROUGH;
 				case RC_TEXTURE_2D:
 				case RC_TEXTURE_RECT:
 					srcmasks[0] |= RC_MASK_XY;

@@ -389,7 +389,7 @@ struct r300_texture_desc {
 
 struct r300_resource
 {
-    struct u_resource b;
+    struct pipe_resource b;
 
     /* Winsys buffer backing this resource. */
     struct pb_buffer *buf;
@@ -449,7 +449,7 @@ struct r300_context {
     /* The submission context. */
     struct radeon_winsys_ctx *ctx;
     /* The command stream. */
-    struct radeon_cmdbuf *cs;
+    struct radeon_cmdbuf cs;
     /* Screen. */
     struct r300_screen *screen;
 
@@ -547,6 +547,8 @@ struct r300_context {
     /* Occlusion query. */
     struct r300_atom query_start;
 
+    struct pipe_debug_callback debug;
+
     /* The pointers to the first and the last atom. */
     struct r300_atom *first_dirty, *last_dirty;
 
@@ -574,6 +576,8 @@ struct r300_context {
     unsigned char blitter_saved_skip_rendering;
     /* Point sprites texcoord index,  1 bit per texcoord */
     int sprite_coord_enable;
+    /* Whether we are drawing points, to disable sprite coord if not */
+    boolean is_point;
     /* Whether two-sided color selection is enabled (AKA light_twoside). */
     boolean two_sided_color;
     boolean flatshade;

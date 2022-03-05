@@ -46,14 +46,25 @@
 #define MESA_LOG_TAG "TU"
 
 #include "c11/threads.h"
-#include "main/macros.h"
+#include "util/rounding.h"
+#include "util/bitscan.h"
 #include "util/list.h"
 #include "util/log.h"
 #include "util/macros.h"
+#include "util/sparse_array.h"
 #include "util/u_atomic.h"
+#include "util/u_dynarray.h"
+#include "util/xmlconfig.h"
+#include "util/perf/u_trace.h"
 #include "vk_alloc.h"
-#include "vk_object.h"
 #include "vk_debug_report.h"
+#include "vk_device.h"
+#include "vk_dispatch_table.h"
+#include "vk_extensions.h"
+#include "vk_instance.h"
+#include "vk_log.h"
+#include "vk_physical_device.h"
+#include "vk_shader_module.h"
 #include "wsi_common.h"
 
 #include "ir3/ir3_compiler.h"
@@ -64,10 +75,12 @@
 #include "a6xx.xml.h"
 #include "fdl/freedreno_layout.h"
 #include "common/freedreno_dev_info.h"
+#include "perfcntrs/freedreno_perfcntr.h"
 
 #include "tu_descriptor_set.h"
-#include "tu_extensions.h"
+#include "tu_autotune.h"
 #include "tu_util.h"
+#include "tu_perfetto.h"
 
 /* Pre-declarations needed for WSI entrypoints */
 struct wl_surface;
@@ -79,17 +92,27 @@ typedef uint32_t xcb_window_t;
 #include <vulkan/vk_android_native_buffer.h>
 #include <vulkan/vk_icd.h>
 #include <vulkan/vulkan.h>
-#include <vulkan/vulkan_intel.h>
 
 #include "tu_entrypoints.h"
 
 #include "vk_format.h"
+#include "vk_image.h"
+#include "vk_command_buffer.h"
+#include "vk_command_pool.h"
+#include "vk_queue.h"
+#include "vk_object.h"
+#include "vk_sync.h"
+#include "vk_fence.h"
+#include "vk_semaphore.h"
+#include "vk_drm_syncobj.h"
+#include "vk_sync_timeline.h"
 
 #define MAX_VBS 32
 #define MAX_VERTEX_ATTRIBS 32
 #define MAX_RTS 8
 #define MAX_VSC_PIPES 32
 #define MAX_VIEWPORTS 16
+#define MAX_VIEWPORT_SIZE (1 << 14)
 #define MAX_SCISSORS 16
 #define MAX_DISCARD_RECTANGLES 4
 #define MAX_PUSH_CONSTANTS_SIZE 128
@@ -113,10 +136,6 @@ typedef uint32_t xcb_window_t;
 #define A6XX_TEX_CONST_DWORDS 16
 #define A6XX_TEX_SAMP_DWORDS 4
 
-#define for_each_bit(b, dword)                                               \
-   for (uint32_t __dword = (dword);                                          \
-        (b) = __builtin_ffs(__dword) - 1, __dword; __dword &= ~(1 << (b)))
-
 #define COND(bool, val) ((bool) ? (val) : 0)
 #define BIT(bit) (1u << (bit))
 
@@ -128,25 +147,21 @@ typedef uint32_t xcb_window_t;
 struct tu_instance;
 
 VkResult
-__vk_errorf(struct tu_instance *instance,
-            VkResult error,
-            bool force_print,
-            const char *file,
-            int line,
-            const char *format,
-            ...) PRINTFLIKE(6, 7);
-
-#define vk_error(instance, error)                                            \
-   __vk_errorf(instance, error, false, __FILE__, __LINE__, NULL);
-#define vk_errorf(instance, error, format, ...)                              \
-   __vk_errorf(instance, error, false, __FILE__, __LINE__, format, ##__VA_ARGS__);
+__vk_startup_errorf(struct tu_instance *instance,
+                    VkResult error,
+                    bool force_print,
+                    const char *file,
+                    int line,
+                    const char *format,
+                    ...) PRINTFLIKE(6, 7);
 
 /* Prints startup errors if TU_DEBUG=startup is set or on a debug driver
  * build.
  */
 #define vk_startup_errorf(instance, error, format, ...) \
-   __vk_errorf(instance, error, instance->debug_flags & TU_DEBUG_STARTUP, \
-               __FILE__, __LINE__, format, ##__VA_ARGS__)
+   __vk_startup_errorf(instance, error, \
+                       instance->debug_flags & TU_DEBUG_STARTUP, \
+                       __FILE__, __LINE__, format, ##__VA_ARGS__)
 
 void
 __tu_finishme(const char *file, int line, const char *format, ...)
@@ -169,22 +184,30 @@ __tu_finishme(const char *file, int line, const char *format, ...)
       tu_finishme("stub %s", __func__);                                      \
    } while (0)
 
-void *
-tu_lookup_entrypoint_unchecked(const char *name);
-void *
-tu_lookup_entrypoint_checked(
-   const char *name,
-   uint32_t core_version,
-   const struct tu_instance_extension_table *instance,
-   const struct tu_device_extension_table *device);
+struct tu_memory_heap {
+   /* Standard bits passed on to the client */
+   VkDeviceSize      size;
+   VkMemoryHeapFlags flags;
+
+   /** Copied from ANV:
+    *
+    * Driver-internal book-keeping.
+    *
+    * Align it to 64 bits to make atomic operations faster on 32 bit platforms.
+    */
+   VkDeviceSize      used __attribute__ ((aligned (8)));
+};
+
+uint64_t
+tu_get_system_heap_size(void);
 
 struct tu_physical_device
 {
-   struct vk_object_base base;
+   struct vk_physical_device vk;
 
    struct tu_instance *instance;
 
-   char name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
+   const char *name;
    uint8_t driver_uuid[VK_UUID_SIZE];
    uint8_t device_uuid[VK_UUID_SIZE];
    uint8_t cache_uuid[VK_UUID_SIZE];
@@ -192,55 +215,66 @@ struct tu_physical_device
    struct wsi_device wsi_device;
 
    int local_fd;
+   bool has_local;
+   int64_t local_major;
+   int64_t local_minor;
    int master_fd;
+   bool has_master;
+   int64_t master_major;
+   int64_t master_minor;
 
-   unsigned gpu_id;
    uint32_t gmem_size;
    uint64_t gmem_base;
+   uint32_t ccu_offset_gmem;
+   uint32_t ccu_offset_bypass;
 
-   struct freedreno_dev_info info;
+   struct fd_dev_id dev_id;
+   const struct fd_dev_info *info;
 
    int msm_major_version;
    int msm_minor_version;
-
-   bool limited_z24s8;
 
    /* This is the drivers on-disk cache used as a fallback as opposed to
     * the pipeline cache defined by apps.
     */
    struct disk_cache *disk_cache;
 
-   struct tu_device_extension_table supported_extensions;
+   struct tu_memory_heap heap;
+
+   struct vk_sync_type syncobj_type;
+   struct vk_sync_timeline_type timeline_type;
+   const struct vk_sync_type *sync_types[3];
 };
 
 enum tu_debug_flags
 {
    TU_DEBUG_STARTUP = 1 << 0,
    TU_DEBUG_NIR = 1 << 1,
-   TU_DEBUG_IR3 = 1 << 2,
    TU_DEBUG_NOBIN = 1 << 3,
    TU_DEBUG_SYSMEM = 1 << 4,
    TU_DEBUG_FORCEBIN = 1 << 5,
    TU_DEBUG_NOUBWC = 1 << 6,
    TU_DEBUG_NOMULTIPOS = 1 << 7,
    TU_DEBUG_NOLRZ = 1 << 8,
+   TU_DEBUG_PERFC = 1 << 9,
+   TU_DEBUG_FLUSHALL = 1 << 10,
+   TU_DEBUG_SYNCDRAW = 1 << 11,
+   TU_DEBUG_DONT_CARE_AS_LOAD = 1 << 12,
+   TU_DEBUG_GMEM = 1 << 13,
 };
 
 struct tu_instance
 {
-   struct vk_object_base base;
-
-   VkAllocationCallbacks alloc;
+   struct vk_instance vk;
 
    uint32_t api_version;
    int physical_device_count;
    struct tu_physical_device physical_devices[TU_MAX_DRM_DEVICES];
 
+   struct driOptionCache dri_options;
+   struct driOptionCache available_dri_options;
+
    enum tu_debug_flags debug_flags;
-
-   struct vk_debug_report_instance debug_report_callbacks;
-
-   struct tu_instance_extension_table enabled_extensions;
 };
 
 VkResult
@@ -284,16 +318,40 @@ struct tu_pipeline_key
 
 #define TU_MAX_QUEUE_FAMILIES 1
 
+/* Keep tu_syncobj until porting to common code for kgsl too */
+#ifdef TU_USE_KGSL
 struct tu_syncobj;
+#endif
+struct tu_u_trace_syncobj;
+
+/* Define tu_timeline_sync type based on drm syncobj for a point type
+ * for vk_sync_timeline, and the logic to handle is mostly copied from
+ * anv_bo_sync since it seems it can be used by similar way to anv.
+ */
+enum tu_timeline_sync_state {
+   /** Indicates that this is a new (or newly reset fence) */
+   TU_TIMELINE_SYNC_STATE_RESET,
+
+   /** Indicates that this fence has been submitted to the GPU but is still
+    * (as far as we know) in use by the GPU.
+    */
+   TU_TIMELINE_SYNC_STATE_SUBMITTED,
+
+   TU_TIMELINE_SYNC_STATE_SIGNALED,
+};
+
+struct tu_timeline_sync {
+   struct vk_sync base;
+
+   enum tu_timeline_sync_state state;
+   uint32_t syncobj;
+};
 
 struct tu_queue
 {
-   struct vk_object_base base;
+   struct vk_queue vk;
 
    struct tu_device *device;
-   uint32_t queue_family_index;
-   int queue_idx;
-   VkDeviceQueueCreateFlags flags;
 
    uint32_t msm_queue_id;
    int fence;
@@ -305,11 +363,21 @@ struct tu_bo
    uint64_t size;
    uint64_t iova;
    void *map;
+
+#ifndef TU_USE_KGSL
+   int32_t refcnt;
+   uint32_t bo_list_idx;
+#endif
+
+   bool implicit_sync : 1;
 };
 
 enum global_shader {
-   GLOBAL_SH_VS,
+   GLOBAL_SH_VS_BLIT,
+   GLOBAL_SH_VS_CLEAR,
    GLOBAL_SH_FS_BLIT,
+   GLOBAL_SH_FS_BLIT_ZSCALE,
+   GLOBAL_SH_FS_COPY_MS,
    GLOBAL_SH_FS_CLEAR0,
    GLOBAL_SH_FS_CLEAR_MAX = GLOBAL_SH_FS_CLEAR0 + MAX_RTS,
    GLOBAL_SH_COUNT,
@@ -318,11 +386,13 @@ enum global_shader {
 #define TU_BORDER_COLOR_COUNT 4096
 #define TU_BORDER_COLOR_BUILTIN 6
 
+#define TU_BLIT_SHADER_SIZE 1024
+
 /* This struct defines the layout of the global_bo */
 struct tu6_global
 {
-   /* clear/blit shaders, all <= 16 instrs (16 instr = 1 instrlen unit) */
-   instr_t shaders[GLOBAL_SH_COUNT][16];
+   /* clear/blit shaders */
+   uint32_t shaders[TU_BLIT_SHADER_SIZE];
 
    uint32_t seqno_dummy;          /* dummy seqno for CP_EVENT_WRITE */
    uint32_t _pad0;
@@ -338,13 +408,13 @@ struct tu6_global
       uint32_t pad[7];
    } flush_base[4];
 
+   ALIGN16 uint32_t cs_indirect_xyz[3];
+
    /* note: larger global bo will be used for customBorderColors */
    struct bcolor_entry bcolor_builtin[TU_BORDER_COLOR_BUILTIN], bcolor[];
 };
 #define gb_offset(member) offsetof(struct tu6_global, member)
-#define global_iova(cmd, member) ((cmd)->device->global_bo.iova + gb_offset(member))
-
-void tu_init_clear_blit_shaders(struct tu6_global *global);
+#define global_iova(cmd, member) ((cmd)->device->global_bo->iova + gb_offset(member))
 
 /* extra space in vsc draw/prim streams */
 #define VSC_PAD 0x40
@@ -359,7 +429,6 @@ struct tu_device
 
    struct tu_physical_device *physical_device;
    int fd;
-   int _lost;
 
    struct ir3_compiler *compiler;
 
@@ -372,14 +441,24 @@ struct tu_device
     * should be impossible to go beyond 48 bits.
     */
    struct {
-      struct tu_bo bo;
+      struct tu_bo *bo;
       mtx_t construct_mtx;
       bool initialized;
    } scratch_bos[48 - MIN_SCRATCH_BO_SIZE_LOG2];
 
-   struct tu_bo global_bo;
+   struct tu_bo *global_bo;
 
-   struct tu_device_extension_table enabled_extensions;
+   uint32_t implicit_sync_bo_count;
+
+   /* the blob seems to always use 8K factor and 128K param sizes, copy them */
+#define TU_TESS_FACTOR_SIZE (8 * 1024)
+#define TU_TESS_PARAM_SIZE (128 * 1024)
+#define TU_TESS_BO_SIZE (TU_TESS_FACTOR_SIZE + TU_TESS_PARAM_SIZE)
+   /* Lazily allocated, protected by the device mutex. */
+   struct tu_bo *tess_bo;
+
+   struct ir3_shader_variant *global_shaders[GLOBAL_SH_COUNT];
+   uint64_t global_shader_va[GLOBAL_SH_COUNT];
 
    uint32_t vsc_draw_strm_pitch;
    uint32_t vsc_prim_strm_pitch;
@@ -389,27 +468,83 @@ struct tu_device
    /* bo list for submits: */
    struct drm_msm_gem_submit_bo *bo_list;
    /* map bo handles to bo list index: */
-   uint32_t *bo_idx;
-   uint32_t bo_count, bo_list_size, bo_idx_size;
+   uint32_t bo_count, bo_list_size;
    mtx_t bo_mutex;
+   /* protects imported BOs creation/freeing */
+   struct u_rwlock dma_bo_lock;
+
+   /* This array holds all our 'struct tu_bo' allocations. We use this
+    * so we can add a refcount to our BOs and check if a particular BO
+    * was already allocated in this device using its GEM handle. This is
+    * necessary to properly manage BO imports, because the kernel doesn't
+    * refcount the underlying BO memory.
+    *
+    * Specifically, when self-importing (i.e. importing a BO into the same
+    * device that created it), the kernel will give us the same BO handle
+    * for both BOs and we must only free it once when  both references are
+    * freed. Otherwise, if we are not self-importing, we get two different BO
+    * handles, and we want to free each one individually.
+    *
+    * The BOs in this map all have a refcnt with the reference counter and
+    * only self-imported BOs will ever have a refcnt > 1.
+    */
+   struct util_sparse_array bo_map;
+
+   /* Command streams to set pass index to a scratch reg */
+   struct tu_cs *perfcntrs_pass_cs;
+   struct tu_cs_entry *perfcntrs_pass_cs_entries;
+
+   /* Condition variable for timeline semaphore to notify waiters when a
+    * new submit is executed. */
+   pthread_cond_t timeline_cond;
+   pthread_mutex_t submit_mutex;
+
+   struct tu_autotune autotune;
+
+#ifdef ANDROID
+   const void *gralloc;
+   enum {
+      TU_GRALLOC_UNKNOWN,
+      TU_GRALLOC_CROS,
+      TU_GRALLOC_OTHER,
+   } gralloc_type;
+#endif
+
+   uint32_t submit_count;
+
+   struct u_trace_context trace_context;
+
+   #ifdef HAVE_PERFETTO
+   struct tu_perfetto_state perfetto;
+   #endif
 };
 
-VkResult _tu_device_set_lost(struct tu_device *device,
-                             const char *msg, ...) PRINTFLIKE(2, 3);
-#define tu_device_set_lost(dev, ...) \
-   _tu_device_set_lost(dev, __VA_ARGS__)
+void tu_init_clear_blit_shaders(struct tu_device *dev);
 
-static inline bool
-tu_device_is_lost(struct tu_device *device)
-{
-   return unlikely(p_atomic_read(&device->_lost));
-}
+void tu_destroy_clear_blit_shaders(struct tu_device *dev);
 
 VkResult
-tu_bo_init_new(struct tu_device *dev, struct tu_bo *bo, uint64_t size, bool dump);
+tu_device_submit_deferred_locked(struct tu_device *dev);
+
+VkResult
+tu_device_wait_u_trace(struct tu_device *dev, struct tu_u_trace_syncobj *syncobj);
+
+uint64_t
+tu_device_ticks_to_ns(struct tu_device *dev, uint64_t ts);
+
+enum tu_bo_alloc_flags
+{
+   TU_BO_ALLOC_NO_FLAGS = 0,
+   TU_BO_ALLOC_ALLOW_DUMP = 1 << 0,
+   TU_BO_ALLOC_GPU_READ_ONLY = 1 << 1,
+};
+
+VkResult
+tu_bo_init_new(struct tu_device *dev, struct tu_bo **bo, uint64_t size,
+               enum tu_bo_alloc_flags flags);
 VkResult
 tu_bo_init_dmabuf(struct tu_device *dev,
-                  struct tu_bo *bo,
+                  struct tu_bo **bo,
                   uint64_t size,
                   int fd);
 int
@@ -418,6 +553,12 @@ void
 tu_bo_finish(struct tu_device *dev, struct tu_bo *bo);
 VkResult
 tu_bo_map(struct tu_device *dev, struct tu_bo *bo);
+
+static inline struct tu_bo *
+tu_device_lookup_bo(struct tu_device *device, uint32_t handle)
+{
+   return (struct tu_bo *) util_sparse_array_get(&device->bo_map, handle);
+}
 
 /* Get a scratch bo for use inside a command buffer. This will always return
  * the same bo given the same size or similar sizes, so only one scratch bo
@@ -454,34 +595,35 @@ enum tu_dynamic_state
    TU_DYNAMIC_STATE_RB_DEPTH_CNTL,
    TU_DYNAMIC_STATE_RB_STENCIL_CNTL,
    TU_DYNAMIC_STATE_VB_STRIDE,
+   TU_DYNAMIC_STATE_RASTERIZER_DISCARD,
    TU_DYNAMIC_STATE_COUNT,
    /* no associated draw state: */
    TU_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY = TU_DYNAMIC_STATE_COUNT,
+   TU_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE,
    /* re-use the line width enum as it uses GRAS_SU_CNTL: */
    TU_DYNAMIC_STATE_GRAS_SU_CNTL = VK_DYNAMIC_STATE_LINE_WIDTH,
 };
 
 enum tu_draw_state_group_id
 {
+   TU_DRAW_STATE_PROGRAM_CONFIG,
    TU_DRAW_STATE_PROGRAM,
    TU_DRAW_STATE_PROGRAM_BINNING,
-   TU_DRAW_STATE_TESS,
    TU_DRAW_STATE_VB,
    TU_DRAW_STATE_VI,
    TU_DRAW_STATE_VI_BINNING,
    TU_DRAW_STATE_RAST,
    TU_DRAW_STATE_BLEND,
-   TU_DRAW_STATE_VS_CONST,
-   TU_DRAW_STATE_HS_CONST,
-   TU_DRAW_STATE_DS_CONST,
-   TU_DRAW_STATE_GS_CONST,
+   TU_DRAW_STATE_SHADER_GEOM_CONST,
    TU_DRAW_STATE_FS_CONST,
    TU_DRAW_STATE_DESC_SETS,
    TU_DRAW_STATE_DESC_SETS_LOAD,
    TU_DRAW_STATE_VS_PARAMS,
    TU_DRAW_STATE_INPUT_ATTACHMENTS_GMEM,
    TU_DRAW_STATE_INPUT_ATTACHMENTS_SYSMEM,
-   TU_DRAW_STATE_LRZ,
+   TU_DRAW_STATE_LRZ_AND_DEPTH_PLANE,
+   TU_DRAW_STATE_PRIM_MODE_GMEM,
+   TU_DRAW_STATE_PRIM_MODE_SYSMEM,
 
    /* dynamic state related draw states */
    TU_DRAW_STATE_DYNAMIC,
@@ -549,7 +691,7 @@ struct tu_device_memory
 {
    struct vk_object_base base;
 
-   struct tu_bo bo;
+   struct tu_bo *bo;
 };
 
 struct tu_descriptor_range
@@ -562,7 +704,10 @@ struct tu_descriptor_set
 {
    struct vk_object_base base;
 
-   const struct tu_descriptor_set_layout *layout;
+   /* Link to descriptor pool's desc_sets list . */
+   struct list_head pool_link;
+
+   struct tu_descriptor_set_layout *layout;
    struct tu_descriptor_pool *pool;
    uint32_t size;
 
@@ -583,13 +728,16 @@ struct tu_descriptor_pool
 {
    struct vk_object_base base;
 
-   struct tu_bo bo;
+   struct tu_bo *bo;
    uint64_t current_offset;
    uint64_t size;
 
    uint8_t *host_memory_base;
    uint8_t *host_memory_ptr;
    uint8_t *host_memory_end;
+   uint8_t *host_bo;
+
+   struct list_head desc_sets;
 
    uint32_t entry_count;
    uint32_t max_entry_count;
@@ -642,14 +790,8 @@ struct tu_buffer
    VkBufferCreateFlags flags;
 
    struct tu_bo *bo;
-   VkDeviceSize bo_offset;
+   uint64_t iova;
 };
-
-static inline uint64_t
-tu_buffer_iova(struct tu_buffer *buffer)
-{
-   return buffer->bo->iova + buffer->bo_offset;
-}
 
 const char *
 tu_get_debug_option_name(int id);
@@ -675,8 +817,10 @@ enum tu_cmd_dirty_bits
    TU_CMD_DIRTY_COMPUTE_DESC_SETS_LOAD = BIT(6),
    TU_CMD_DIRTY_SHADER_CONSTS = BIT(7),
    TU_CMD_DIRTY_LRZ = BIT(8),
+   TU_CMD_DIRTY_VS_PARAMS = BIT(9),
+   TU_CMD_DIRTY_RASTERIZER_DISCARD = BIT(10),
    /* all draw states were disabled and need to be re-enabled: */
-   TU_CMD_DIRTY_DRAW_STATE = BIT(9)
+   TU_CMD_DIRTY_DRAW_STATE = BIT(11)
 };
 
 /* There are only three cache domains we have to care about: the CCU, or
@@ -711,41 +855,23 @@ enum tu_cmd_access_mask {
     * the location of a cache entry in CCU, to avoid conflicts. We assume that
     * any access in a renderpass after or before an access by a transfer needs
     * a flush/invalidate, and use the _INCOHERENT variants to represent access
-    * by a transfer.
+    * by a renderpass.
     */
    TU_ACCESS_CCU_COLOR_INCOHERENT_READ = 1 << 6,
    TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE = 1 << 7,
    TU_ACCESS_CCU_DEPTH_INCOHERENT_READ = 1 << 8,
    TU_ACCESS_CCU_DEPTH_INCOHERENT_WRITE = 1 << 9,
 
-   /* Accesses by the host */
-   TU_ACCESS_HOST_READ = 1 << 10,
-   TU_ACCESS_HOST_WRITE = 1 << 11,
-
-   /* Accesses by a GPU engine which bypasses any cache. e.g. writes via
-    * CP_EVENT_WRITE::BLIT and the CP are SYSMEM_WRITE.
+   /* Accesses which bypasses any cache. e.g. writes via the host,
+    * CP_EVENT_WRITE::BLIT, and the CP are SYSMEM_WRITE.
     */
-   TU_ACCESS_SYSMEM_READ = 1 << 12,
-   TU_ACCESS_SYSMEM_WRITE = 1 << 13,
-
-   /* Set if a WFI is required. This can be required for:
-    * - 2D engine which (on some models) doesn't wait for flushes to complete
-    *   before starting
-    * - CP draw indirect opcodes, where we need to wait for any flushes to
-    *   complete but the CP implicitly waits for WFI's to complete and
-    *   therefore we only need a WFI after the flushes.
-    */
-   TU_ACCESS_WFI_READ = 1 << 14,
-
-   /* Set if a CP_WAIT_FOR_ME is required due to the data being read by the CP
-    * without it waiting for any WFI.
-    */
-   TU_ACCESS_WFM_READ = 1 << 15,
+   TU_ACCESS_SYSMEM_READ = 1 << 10,
+   TU_ACCESS_SYSMEM_WRITE = 1 << 11,
 
    /* Memory writes from the CP start in-order with draws and event writes,
     * but execute asynchronously and hence need a CP_WAIT_MEM_WRITES if read.
     */
-   TU_ACCESS_CP_WRITE = 1 << 16,
+   TU_ACCESS_CP_WRITE = 1 << 12,
 
    TU_ACCESS_READ =
       TU_ACCESS_UCHE_READ |
@@ -753,10 +879,7 @@ enum tu_cmd_access_mask {
       TU_ACCESS_CCU_DEPTH_READ |
       TU_ACCESS_CCU_COLOR_INCOHERENT_READ |
       TU_ACCESS_CCU_DEPTH_INCOHERENT_READ |
-      TU_ACCESS_HOST_READ |
-      TU_ACCESS_SYSMEM_READ |
-      TU_ACCESS_WFI_READ |
-      TU_ACCESS_WFM_READ,
+      TU_ACCESS_SYSMEM_READ,
 
    TU_ACCESS_WRITE =
       TU_ACCESS_UCHE_WRITE |
@@ -764,13 +887,63 @@ enum tu_cmd_access_mask {
       TU_ACCESS_CCU_COLOR_INCOHERENT_WRITE |
       TU_ACCESS_CCU_DEPTH_WRITE |
       TU_ACCESS_CCU_DEPTH_INCOHERENT_WRITE |
-      TU_ACCESS_HOST_WRITE |
       TU_ACCESS_SYSMEM_WRITE |
       TU_ACCESS_CP_WRITE,
 
    TU_ACCESS_ALL =
       TU_ACCESS_READ |
       TU_ACCESS_WRITE,
+};
+
+/* Starting with a6xx, the pipeline is split into several "clusters" (really
+ * pipeline stages). Each stage has its own pair of register banks and can
+ * switch them independently, so that earlier stages can run ahead of later
+ * ones. e.g. the FS of draw N and the VS of draw N + 1 can be executing at
+ * the same time.
+ *
+ * As a result of this, we need to insert a WFI when an earlier stage depends
+ * on the result of a later stage. CP_DRAW_* and CP_BLIT will wait for any
+ * pending WFI's to complete before starting, and usually before reading
+ * indirect params even, so a WFI also acts as a full "pipeline stall".
+ *
+ * Note, the names of the stages come from CLUSTER_* in devcoredump. We
+ * include all the stages for completeness, even ones which do not read/write
+ * anything.
+ */
+
+enum tu_stage {
+   /* This doesn't correspond to a cluster, but we need it for tracking
+    * indirect draw parameter reads etc.
+    */
+   TU_STAGE_CP,
+
+   /* - Fetch index buffer
+    * - Fetch vertex attributes, dispatch VS
+    */
+   TU_STAGE_FE,
+
+   /* Execute all geometry stages (VS thru GS) */
+   TU_STAGE_SP_VS,
+
+   /* Write to VPC, do primitive assembly. */
+   TU_STAGE_PC_VS,
+
+   /* Rasterization. RB_DEPTH_BUFFER_BASE only exists in CLUSTER_PS according
+    * to devcoredump so presumably this stage stalls for TU_STAGE_PS when
+    * early depth testing is enabled before dispatching fragments? However
+    * GRAS reads and writes LRZ directly.
+    */
+   TU_STAGE_GRAS,
+
+   /* Execute FS */
+   TU_STAGE_SP_PS,
+
+   /* - Fragment tests
+    * - Write color/depth
+    * - Streamout writes (???)
+    * - Varying interpolation (???)
+    */
+   TU_STAGE_PS,
 };
 
 enum tu_cmd_flush_bits {
@@ -793,18 +966,10 @@ enum tu_cmd_flush_bits {
        */
       TU_CMD_FLAG_WAIT_MEM_WRITES,
 
-   TU_CMD_FLAG_GPU_INVALIDATE =
+   TU_CMD_FLAG_ALL_INVALIDATE =
       TU_CMD_FLAG_CCU_INVALIDATE_DEPTH |
       TU_CMD_FLAG_CCU_INVALIDATE_COLOR |
       TU_CMD_FLAG_CACHE_INVALIDATE,
-
-   TU_CMD_FLAG_ALL_INVALIDATE =
-      TU_CMD_FLAG_GPU_INVALIDATE |
-      /* Treat the CP as a sort of "cache" which may need to be "invalidated"
-       * via waiting for UCHE/CCU flushes to land with WFI/WFM.
-       */
-      TU_CMD_FLAG_WAIT_FOR_IDLE |
-      TU_CMD_FLAG_WAIT_FOR_ME,
 };
 
 /* Changing the CCU from sysmem mode to gmem mode or vice-versa is pretty
@@ -828,15 +993,25 @@ struct tu_cache_state {
    enum tu_cmd_flush_bits flush_bits;
 };
 
+enum tu_lrz_force_disable_mask {
+   TU_LRZ_FORCE_DISABLE_LRZ = 1 << 0,
+   TU_LRZ_FORCE_DISABLE_WRITE = 1 << 1,
+};
+
+enum tu_lrz_direction {
+   TU_LRZ_UNKNOWN,
+   /* Depth func less/less-than: */
+   TU_LRZ_LESS,
+   /* Depth func greater/greater-than: */
+   TU_LRZ_GREATER,
+};
+
 struct tu_lrz_pipeline
 {
-   bool write : 1;
-   bool invalidate : 1;
-
-   bool enable : 1;
-   bool greater : 1;
-   bool z_test_enable : 1;
-   bool blend_disable_write : 1;
+   uint32_t force_disable_mask;
+   bool fs_has_kill;
+   bool force_late_z;
+   bool early_fragment_tests;
 };
 
 struct tu_lrz_state
@@ -844,7 +1019,12 @@ struct tu_lrz_state
    /* Depth/Stencil image currently on use to do LRZ */
    struct tu_image *image;
    bool valid : 1;
-   struct tu_draw_state state;
+   enum tu_lrz_direction prev_direction;
+};
+
+struct tu_vs_params {
+   uint32_t vertex_offset;
+   uint32_t first_instance;
 };
 
 struct tu_cmd_state
@@ -873,12 +1053,14 @@ struct tu_cmd_state
    uint32_t dynamic_stencil_ref;
 
    uint32_t gras_su_cntl, rb_depth_cntl, rb_stencil_cntl;
+   uint32_t pc_raster_cntl, vpc_unknown_9107;
    enum pc_di_primtype primtype;
+   bool primitive_restart_enable;
 
    /* saved states to re-emit in TU_CMD_DIRTY_DRAW_STATE case */
    struct tu_draw_state dynamic_state[TU_DYNAMIC_STATE_COUNT];
    struct tu_draw_state vertex_buffers;
-   struct tu_draw_state shader_const[MESA_SHADER_STAGES];
+   struct tu_draw_state shader_const[2];
    struct tu_draw_state desc_sets;
 
    struct tu_draw_state vs_params;
@@ -910,24 +1092,58 @@ struct tu_cmd_state
    const struct tu_framebuffer *framebuffer;
    VkRect2D render_area;
 
-   struct tu_cs_entry tile_store_ib;
+   const struct tu_image_view **attachments;
 
    bool xfb_used;
    bool has_tess;
+   bool tessfactor_addr_set;
    bool has_subpass_predication;
    bool predication_active;
+   bool disable_gmem;
+   enum a5xx_line_mode line_mode;
+
+   uint32_t drawcall_count;
+
+   /* A calculated "draw cost" value for renderpass, which tries to
+    * estimate the bandwidth-per-sample of all the draws according
+    * to:
+    *
+    *    foreach_draw (...) {
+    *      cost += num_frag_outputs;
+    *      if (blend_enabled)
+    *        cost += num_blend_enabled;
+    *      if (depth_test_enabled)
+    *        cost++;
+    *      if (depth_write_enabled)
+    *        cost++;
+    *    }
+    *
+    * The idea is that each sample-passed minimally does one write
+    * per MRT.  If blend is enabled, the hw will additionally do
+    * a framebuffer read per sample-passed (for each MRT with blend
+    * enabled).  If depth-test is enabled, the hw will additionally
+    * a depth buffer read.  If depth-write is enable, the hw will
+    * additionally do a depth buffer write.
+    *
+    * This does ignore depth buffer traffic for samples which do not
+    * pass do to depth-test fail, and some other details.  But it is
+    * just intended to be a rough estimate that is easy to calculate.
+    */
+   uint32_t total_drawcalls_cost;
 
    struct tu_lrz_state lrz;
+
+   struct tu_draw_state lrz_and_depth_plane_state;
+
+   struct tu_vs_params last_vs_params;
 };
 
 struct tu_cmd_pool
 {
-   struct vk_object_base base;
+   struct vk_command_pool vk;
 
-   VkAllocationCallbacks alloc;
    struct list_head cmd_buffers;
    struct list_head free_cmd_buffers;
-   uint32_t queue_family_index;
 };
 
 enum tu_cmd_buffer_status
@@ -941,15 +1157,20 @@ enum tu_cmd_buffer_status
 
 struct tu_cmd_buffer
 {
-   struct vk_object_base base;
+   struct vk_command_buffer vk;
 
    struct tu_device *device;
 
    struct tu_cmd_pool *pool;
    struct list_head pool_link;
 
+   struct u_trace trace;
+   struct u_trace_iterator trace_renderpass_start;
+   struct u_trace_iterator trace_renderpass_end;
+
+   struct list_head renderpass_autotune_results;
+
    VkCommandBufferUsageFlags usage_flags;
-   VkCommandBufferLevel level;
    enum tu_cmd_buffer_status status;
 
    struct tu_cmd_state state;
@@ -965,6 +1186,7 @@ struct tu_cmd_buffer
 
    struct tu_cs cs;
    struct tu_cs draw_cs;
+   struct tu_cs tile_store_cs;
    struct tu_cs draw_epilogue_cs;
    struct tu_cs sub_cs;
 
@@ -1008,15 +1230,7 @@ tu_get_descriptors_state(struct tu_cmd_buffer *cmd_buffer,
 struct tu_event
 {
    struct vk_object_base base;
-   struct tu_bo bo;
-};
-
-struct tu_shader_module
-{
-   struct vk_object_base base;
-
-   uint32_t code_size;
-   uint32_t code[];
+   struct tu_bo *bo;
 };
 
 struct tu_push_constant_range
@@ -1046,6 +1260,7 @@ tu_spirv_to_nir(struct tu_device *dev,
 struct tu_shader *
 tu_shader_create(struct tu_device *dev,
                  nir_shader *nir,
+                 const VkPipelineShaderStageCreateInfo *stage_info,
                  unsigned multiview_mask,
                  struct tu_pipeline_layout *layout,
                  const VkAllocationCallbacks *alloc);
@@ -1064,11 +1279,25 @@ struct tu_program_descriptor_linkage
    struct tu_push_constant_range push_consts;
 };
 
+struct tu_pipeline_executable {
+   gl_shader_stage stage;
+
+   struct ir3_info stats;
+   bool is_binning;
+
+   char *nir_from_spirv;
+   char *nir_final;
+   char *disasm;
+};
+
 struct tu_pipeline
 {
    struct vk_object_base base;
 
    struct tu_cs cs;
+
+   /* Separate BO for private memory since it should GPU writable */
+   struct tu_bo *pvtmem_bo;
 
    struct tu_pipeline_layout *layout;
 
@@ -1086,17 +1315,24 @@ struct tu_pipeline
    uint32_t gras_su_cntl, gras_su_cntl_mask;
    uint32_t rb_depth_cntl, rb_depth_cntl_mask;
    uint32_t rb_stencil_cntl, rb_stencil_cntl_mask;
+   uint32_t pc_raster_cntl, pc_raster_cntl_mask;
+   uint32_t vpc_unknown_9107, vpc_unknown_9107_mask;
+   uint32_t stencil_wrmask;
 
    bool rb_depth_cntl_disable;
 
+   enum a5xx_line_mode line_mode;
+
    /* draw states for the pipeline */
    struct tu_draw_state load_state, rast_state, blend_state;
+   struct tu_draw_state prim_order_state_sysmem, prim_order_state_gmem;
 
    /* for vertex buffers state */
    uint32_t num_vbs;
 
    struct
    {
+      struct tu_draw_state config_state;
       struct tu_draw_state state;
       struct tu_draw_state binning_state;
 
@@ -1119,17 +1355,29 @@ struct tu_pipeline
    {
       uint32_t patch_type;
       uint32_t param_stride;
-      uint32_t hs_bo_regid;
-      uint32_t ds_bo_regid;
       bool upper_left_domain_origin;
    } tess;
 
    struct
    {
       uint32_t local_size[3];
+      uint32_t subgroup_size;
    } compute;
 
+   bool provoking_vertex_last;
+
    struct tu_lrz_pipeline lrz;
+
+   /* In other words - framebuffer fetch support */
+   bool raster_order_attachment_access;
+   bool subpass_feedback_loop_ds;
+
+   /* Base drawcall cost for sysmem vs gmem autotuner */
+   uint8_t drawcall_base_cost;
+
+   void *executables_mem_ctx;
+   /* tu_pipeline_executable */
+   struct util_dynarray executables;
 };
 
 void
@@ -1150,17 +1398,36 @@ tu6_emit_depth_bias(struct tu_cs *cs,
                     float clamp,
                     float slope_factor);
 
-void tu6_emit_msaa(struct tu_cs *cs, VkSampleCountFlagBits samples);
+void tu6_emit_msaa(struct tu_cs *cs, VkSampleCountFlagBits samples,
+                   enum a5xx_line_mode line_mode);
 
 void tu6_emit_window_scissor(struct tu_cs *cs, uint32_t x1, uint32_t y1, uint32_t x2, uint32_t y2);
 
 void tu6_emit_window_offset(struct tu_cs *cs, uint32_t x1, uint32_t y1);
 
+void tu_disable_draw_states(struct tu_cmd_buffer *cmd, struct tu_cs *cs);
+
+void tu6_apply_depth_bounds_workaround(struct tu_device *device,
+                                       uint32_t *rb_depth_cntl);
+
+struct tu_pvtmem_config {
+   uint64_t iova;
+   uint32_t per_fiber_size;
+   uint32_t per_sp_size;
+   bool per_wave;
+};
+
 void
 tu6_emit_xs_config(struct tu_cs *cs,
                    gl_shader_stage stage,
-                   const struct ir3_shader_variant *xs,
-                   uint64_t binary_iova);
+                   const struct ir3_shader_variant *xs);
+
+void
+tu6_emit_xs(struct tu_cs *cs,
+            gl_shader_stage stage,
+            const struct ir3_shader_variant *xs,
+            const struct tu_pvtmem_config *pvtmem,
+            uint64_t binary_iova);
 
 void
 tu6_emit_vpc(struct tu_cs *cs,
@@ -1169,8 +1436,7 @@ tu6_emit_vpc(struct tu_cs *cs,
              const struct ir3_shader_variant *ds,
              const struct ir3_shader_variant *gs,
              const struct ir3_shader_variant *fs,
-             uint32_t patch_control_points,
-             bool vshs_workgroup);
+             uint32_t patch_control_points);
 
 void
 tu6_emit_fs_inputs(struct tu_cs *cs, const struct ir3_shader_variant *fs);
@@ -1180,8 +1446,8 @@ struct tu_image_view;
 void
 tu_resolve_sysmem(struct tu_cmd_buffer *cmd,
                   struct tu_cs *cs,
-                  struct tu_image_view *src,
-                  struct tu_image_view *dst,
+                  const struct tu_image_view *src,
+                  const struct tu_image_view *dst,
                   uint32_t layer_mask,
                   uint32_t layers,
                   const VkRect2D *rect);
@@ -1215,26 +1481,25 @@ tu_store_gmem_attachment(struct tu_cmd_buffer *cmd,
                          uint32_t a,
                          uint32_t gmem_a);
 
-enum tu_supported_formats {
-   FMT_VERTEX = 1,
-   FMT_TEXTURE = 2,
-   FMT_COLOR = 4,
-};
+enum pipe_format tu_vk_format_to_pipe_format(VkFormat vk_format);
 
 struct tu_native_format
 {
    enum a6xx_format fmt : 8;
    enum a3xx_color_swap swap : 8;
    enum a6xx_tile_mode tile_mode : 8;
-   enum tu_supported_formats supported : 8;
 };
 
+enum pipe_format tu_vk_format_to_pipe_format(VkFormat vk_format);
+bool tu6_format_vtx_supported(VkFormat format);
 struct tu_native_format tu6_format_vtx(VkFormat format);
-struct tu_native_format tu6_format_color(VkFormat format, enum a6xx_tile_mode tile_mode);
-struct tu_native_format tu6_format_texture(VkFormat format, enum a6xx_tile_mode tile_mode);
+bool tu6_format_color_supported(enum pipe_format format);
+struct tu_native_format tu6_format_color(enum pipe_format format, enum a6xx_tile_mode tile_mode);
+bool tu6_format_texture_supported(enum pipe_format format);
+struct tu_native_format tu6_format_texture(enum pipe_format format, enum a6xx_tile_mode tile_mode);
 
 static inline enum a6xx_format
-tu6_base_format(VkFormat format)
+tu6_base_format(enum pipe_format format)
 {
    /* note: tu6_format_color doesn't care about tiling for .fmt field */
    return tu6_format_color(format, TILE6_LINEAR).fmt;
@@ -1261,11 +1526,13 @@ struct tu_image
 
    /* Set when bound */
    struct tu_bo *bo;
-   VkDeviceSize bo_offset;
+   uint64_t iova;
 
    uint32_t lrz_height;
    uint32_t lrz_pitch;
    uint32_t lrz_offset;
+
+   bool shareable;
 };
 
 static inline uint32_t
@@ -1286,43 +1553,20 @@ tu_get_levelCount(const struct tu_image *image,
              : range->levelCount;
 }
 
+enum pipe_format tu6_plane_format(VkFormat format, uint32_t plane);
+
+uint32_t tu6_plane_index(VkFormat format, VkImageAspectFlags aspect_mask);
+
+enum pipe_format tu_format_for_aspect(enum pipe_format format,
+                                      VkImageAspectFlags aspect_mask);
+
 struct tu_image_view
 {
    struct vk_object_base base;
 
    struct tu_image *image; /**< VkImageViewCreateInfo::image */
 
-   uint64_t base_addr;
-   uint64_t ubwc_addr;
-   uint32_t layer_size;
-   uint32_t ubwc_layer_size;
-
-   /* used to determine if fast gmem store path can be used */
-   VkExtent2D extent;
-   bool need_y2_align;
-
-   bool ubwc_enabled;
-
-   uint32_t descriptor[A6XX_TEX_CONST_DWORDS];
-
-   /* Descriptor for use as a storage image as opposed to a sampled image.
-    * This has a few differences for cube maps (e.g. type).
-    */
-   uint32_t storage_descriptor[A6XX_TEX_CONST_DWORDS];
-
-   /* pre-filled register values */
-   uint32_t PITCH;
-   uint32_t FLAG_BUFFER_PITCH;
-
-   uint32_t RB_MRT_BUF_INFO;
-   uint32_t SP_FS_MRT_REG;
-
-   uint32_t SP_PS_2D_SRC_INFO;
-   uint32_t SP_PS_2D_SRC_SIZE;
-
-   uint32_t RB_2D_DST_INFO;
-
-   uint32_t RB_BLIT_DST_INFO;
+   struct fdl6_view view;
 
    /* for d32s8 separate stencil */
    uint64_t stencil_base_addr;
@@ -1349,19 +1593,19 @@ struct tu_sampler {
 };
 
 void
-tu_cs_image_ref(struct tu_cs *cs, const struct tu_image_view *iview, uint32_t layer);
+tu_cs_image_ref(struct tu_cs *cs, const struct fdl6_view *iview, uint32_t layer);
 
 void
-tu_cs_image_ref_2d(struct tu_cs *cs, const struct tu_image_view *iview, uint32_t layer, bool src);
+tu_cs_image_ref_2d(struct tu_cs *cs, const struct fdl6_view *iview, uint32_t layer, bool src);
 
 void
-tu_cs_image_flag_ref(struct tu_cs *cs, const struct tu_image_view *iview, uint32_t layer);
+tu_cs_image_flag_ref(struct tu_cs *cs, const struct fdl6_view *iview, uint32_t layer);
 
 void
 tu_cs_image_stencil_ref(struct tu_cs *cs, const struct tu_image_view *iview, uint32_t layer);
 
 #define tu_image_view_stencil(iview, x) \
-   ((iview->x & ~A6XX_##x##_COLOR_FORMAT__MASK) | A6XX_##x##_COLOR_FORMAT(FMT6_8_UINT))
+   ((iview->view.x & ~A6XX_##x##_COLOR_FORMAT__MASK) | A6XX_##x##_COLOR_FORMAT(FMT6_8_UINT))
 
 VkResult
 tu_gralloc_info(struct tu_device *device,
@@ -1381,7 +1625,11 @@ tu_image_view_init(struct tu_image_view *iview,
                    bool limited_z24s8);
 
 bool
-ubwc_possible(VkFormat format, VkImageType type, VkImageUsageFlags usage, bool limited_z24s8);
+tiling_possible(VkFormat format);
+
+bool
+ubwc_possible(VkFormat format, VkImageType type, VkImageUsageFlags usage, VkImageUsageFlags stencil_usage,
+              const struct fd_dev_info *info, VkSampleCountFlagBits samples);
 
 struct tu_buffer_view
 {
@@ -1434,6 +1682,7 @@ tu_framebuffer_tiling_config(struct tu_framebuffer *fb,
 
 struct tu_subpass_barrier {
    VkPipelineStageFlags src_stage_mask;
+   VkPipelineStageFlags dst_stage_mask;
    VkAccessFlags src_access_mask;
    VkAccessFlags dst_access_mask;
    bool incoherent_ccu_color, incoherent_ccu_depth;
@@ -1442,12 +1691,30 @@ struct tu_subpass_barrier {
 struct tu_subpass_attachment
 {
    uint32_t attachment;
+
+   /* For input attachments, true if it needs to be patched to refer to GMEM
+    * in GMEM mode. This is false if it hasn't already been written as an
+    * attachment.
+    */
+   bool patch_input_gmem;
 };
 
 struct tu_subpass
 {
    uint32_t input_count;
    uint32_t color_count;
+   uint32_t resolve_count;
+   bool resolve_depth_stencil;
+
+   bool feedback_loop_color;
+   bool feedback_loop_ds;
+
+   /* True if we must invalidate UCHE thanks to a feedback loop. */
+   bool feedback_invalidate;
+
+   /* In other words - framebuffer fetch support */
+   bool raster_order_attachment_access;
+
    struct tu_subpass_attachment *input_attachments;
    struct tu_subpass_attachment *color_attachments;
    struct tu_subpass_attachment *resolve_attachments;
@@ -1491,6 +1758,17 @@ struct tu_render_pass
    struct tu_subpass subpasses[0];
 };
 
+#define PERF_CNTRS_REG 4
+
+struct tu_perf_query_data
+{
+   uint32_t gid;      /* group-id */
+   uint32_t cid;      /* countable-id within the group */
+   uint32_t cntr_reg; /* counter register within the group */
+   uint32_t pass;     /* pass index that countables can be requested */
+   uint32_t app_idx;  /* index provided by apps */
+};
+
 struct tu_query_pool
 {
    struct vk_object_base base;
@@ -1499,11 +1777,21 @@ struct tu_query_pool
    uint32_t stride;
    uint64_t size;
    uint32_t pipeline_statistics;
-   struct tu_bo bo;
+   struct tu_bo *bo;
+
+   /* For performance query */
+   const struct fd_perfcntr_group *perf_group;
+   uint32_t perf_group_count;
+   uint32_t counter_index_count;
+   struct tu_perf_query_data perf_query_data[0];
 };
 
+uint32_t
+tu_subpass_get_attachment_to_resolve(const struct tu_subpass *subpass, uint32_t index);
+
 void
-tu_update_descriptor_sets(VkDescriptorSet overrideSet,
+tu_update_descriptor_sets(const struct tu_device *device,
+                          VkDescriptorSet overrideSet,
                           uint32_t descriptorWriteCount,
                           const VkWriteDescriptorSet *pDescriptorWrites,
                           uint32_t descriptorCopyCount,
@@ -1511,6 +1799,7 @@ tu_update_descriptor_sets(VkDescriptorSet overrideSet,
 
 void
 tu_update_descriptor_set_with_template(
+   const struct tu_device *device,
    struct tu_descriptor_set *set,
    VkDescriptorUpdateTemplate descriptorUpdateTemplate,
    const void *pData);
@@ -1522,6 +1811,14 @@ VkResult
 tu_enumerate_devices(struct tu_instance *instance);
 
 int
+tu_device_get_gpu_timestamp(struct tu_device *dev,
+                            uint64_t *ts);
+
+int
+tu_device_get_suspend_count(struct tu_device *dev,
+                            uint64_t *suspend_count);
+
+int
 tu_drm_submitqueue_new(const struct tu_device *dev,
                        int priority,
                        uint32_t *queue_id);
@@ -1530,68 +1827,115 @@ void
 tu_drm_submitqueue_close(const struct tu_device *dev, uint32_t queue_id);
 
 int
-tu_signal_fences(struct tu_device *device, struct tu_syncobj *fence1, struct tu_syncobj *fence2);
+tu_signal_syncs(struct tu_device *device, struct vk_sync *sync1, struct vk_sync *sync2);
 
 int
-tu_syncobj_to_fd(struct tu_device *device, struct tu_syncobj *sync);
+tu_syncobj_to_fd(struct tu_device *device, struct vk_sync *sync);
 
-#define TU_DEFINE_HANDLE_CASTS(__tu_type, __VkType)                          \
-                                                                             \
-   static inline struct __tu_type *__tu_type##_from_handle(__VkType _handle) \
-   {                                                                         \
-      return (struct __tu_type *) _handle;                                   \
-   }                                                                         \
-                                                                             \
-   static inline __VkType __tu_type##_to_handle(struct __tu_type *_obj)      \
-   {                                                                         \
-      return (__VkType) _obj;                                                \
-   }
+VkResult
+tu_queue_submit(struct vk_queue *vk_queue, struct vk_queue_submit *submit);
 
-#define TU_DEFINE_NONDISP_HANDLE_CASTS(__tu_type, __VkType)                  \
-                                                                             \
-   static inline struct __tu_type *__tu_type##_from_handle(__VkType _handle) \
-   {                                                                         \
-      return (struct __tu_type *) (uintptr_t) _handle;                       \
-   }                                                                         \
-                                                                             \
-   static inline __VkType __tu_type##_to_handle(struct __tu_type *_obj)      \
-   {                                                                         \
-      return (__VkType)(uintptr_t) _obj;                                     \
-   }
+void
+tu_copy_timestamp_buffer(struct u_trace_context *utctx, void *cmdstream,
+                         void *ts_from, uint32_t from_offset,
+                         void *ts_to, uint32_t to_offset,
+                         uint32_t count);
+
+
+VkResult
+tu_create_copy_timestamp_cs(struct tu_cmd_buffer *cmdbuf, struct tu_cs** cs,
+                            struct u_trace **trace_copy);
+
+/* If we copy trace and timestamps we will have to free them. */
+struct tu_u_trace_cmd_data
+{
+   struct tu_cs *timestamp_copy_cs;
+   struct u_trace *trace;
+};
+
+/* Data necessary to retrieve timestamps and clean all
+ * associated resources afterwards.
+ */
+struct tu_u_trace_submission_data
+{
+   uint32_t submission_id;
+   /* We have to know when timestamps are available,
+    * this sync object indicates it.
+    */
+   struct tu_u_trace_syncobj *syncobj;
+
+   uint32_t cmd_buffer_count;
+   uint32_t last_buffer_with_tracepoints;
+   struct tu_u_trace_cmd_data *cmd_trace_data;
+};
+
+VkResult
+tu_u_trace_submission_data_create(
+   struct tu_device *device,
+   struct tu_cmd_buffer **cmd_buffers,
+   uint32_t cmd_buffer_count,
+   struct tu_u_trace_submission_data **submission_data);
+
+void
+tu_u_trace_submission_data_finish(
+   struct tu_device *device,
+   struct tu_u_trace_submission_data *submission_data);
 
 #define TU_FROM_HANDLE(__tu_type, __name, __handle)                          \
-   struct __tu_type *__name = __tu_type##_from_handle(__handle)
+   VK_FROM_HANDLE(__tu_type, __name, __handle)
 
-TU_DEFINE_HANDLE_CASTS(tu_cmd_buffer, VkCommandBuffer)
-TU_DEFINE_HANDLE_CASTS(tu_device, VkDevice)
-TU_DEFINE_HANDLE_CASTS(tu_instance, VkInstance)
-TU_DEFINE_HANDLE_CASTS(tu_physical_device, VkPhysicalDevice)
-TU_DEFINE_HANDLE_CASTS(tu_queue, VkQueue)
+VK_DEFINE_HANDLE_CASTS(tu_cmd_buffer, vk.base, VkCommandBuffer,
+                       VK_OBJECT_TYPE_COMMAND_BUFFER)
+VK_DEFINE_HANDLE_CASTS(tu_device, vk.base, VkDevice, VK_OBJECT_TYPE_DEVICE)
+VK_DEFINE_HANDLE_CASTS(tu_instance, vk.base, VkInstance,
+                       VK_OBJECT_TYPE_INSTANCE)
+VK_DEFINE_HANDLE_CASTS(tu_physical_device, vk.base, VkPhysicalDevice,
+                       VK_OBJECT_TYPE_PHYSICAL_DEVICE)
+VK_DEFINE_HANDLE_CASTS(tu_queue, vk.base, VkQueue, VK_OBJECT_TYPE_QUEUE)
 
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_cmd_pool, VkCommandPool)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_buffer, VkBuffer)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_buffer_view, VkBufferView)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_descriptor_pool, VkDescriptorPool)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_descriptor_set, VkDescriptorSet)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_descriptor_set_layout,
-                               VkDescriptorSetLayout)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_descriptor_update_template,
-                               VkDescriptorUpdateTemplate)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_device_memory, VkDeviceMemory)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_event, VkEvent)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_framebuffer, VkFramebuffer)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_image, VkImage)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_image_view, VkImageView);
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_pipeline_cache, VkPipelineCache)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_pipeline, VkPipeline)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_pipeline_layout, VkPipelineLayout)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_query_pool, VkQueryPool)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_render_pass, VkRenderPass)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_sampler, VkSampler)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_sampler_ycbcr_conversion, VkSamplerYcbcrConversion)
-TU_DEFINE_NONDISP_HANDLE_CASTS(tu_shader_module, VkShaderModule)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_cmd_pool, vk.base, VkCommandPool,
+                               VK_OBJECT_TYPE_COMMAND_POOL)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_buffer, base, VkBuffer,
+                               VK_OBJECT_TYPE_BUFFER)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_buffer_view, base, VkBufferView,
+                               VK_OBJECT_TYPE_BUFFER_VIEW)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_descriptor_pool, base, VkDescriptorPool,
+                               VK_OBJECT_TYPE_DESCRIPTOR_POOL)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_descriptor_set, base, VkDescriptorSet,
+                               VK_OBJECT_TYPE_DESCRIPTOR_SET)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_descriptor_set_layout, base,
+                               VkDescriptorSetLayout,
+                               VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_descriptor_update_template, base,
+                               VkDescriptorUpdateTemplate,
+                               VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_device_memory, base, VkDeviceMemory,
+                               VK_OBJECT_TYPE_DEVICE_MEMORY)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_event, base, VkEvent, VK_OBJECT_TYPE_EVENT)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_framebuffer, base, VkFramebuffer,
+                               VK_OBJECT_TYPE_FRAMEBUFFER)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_image, base, VkImage, VK_OBJECT_TYPE_IMAGE)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_image_view, base, VkImageView,
+                               VK_OBJECT_TYPE_IMAGE_VIEW);
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_pipeline_cache, base, VkPipelineCache,
+                               VK_OBJECT_TYPE_PIPELINE_CACHE)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_pipeline, base, VkPipeline,
+                               VK_OBJECT_TYPE_PIPELINE)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_pipeline_layout, base, VkPipelineLayout,
+                               VK_OBJECT_TYPE_PIPELINE_LAYOUT)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_query_pool, base, VkQueryPool,
+                               VK_OBJECT_TYPE_QUERY_POOL)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_render_pass, base, VkRenderPass,
+                               VK_OBJECT_TYPE_RENDER_PASS)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_sampler, base, VkSampler,
+                               VK_OBJECT_TYPE_SAMPLER)
+VK_DEFINE_NONDISP_HANDLE_CASTS(tu_sampler_ycbcr_conversion, base, VkSamplerYcbcrConversion,
+                               VK_OBJECT_TYPE_SAMPLER_YCBCR_CONVERSION)
 
 /* for TU_FROM_HANDLE with both VkFence and VkSemaphore: */
 #define tu_syncobj_from_handle(x) ((struct tu_syncobj*) (uintptr_t) (x))
+
+void
+update_stencil_mask(uint32_t *value, VkStencilFaceFlags face, uint32_t mask);
 
 #endif /* TU_PRIVATE_H */

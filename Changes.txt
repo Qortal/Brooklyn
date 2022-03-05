@@ -1,5 +1,7 @@
 Enhancements
 
+So you want to see Titan enhancements? Guess what, i dont have fucking time to please all of you fucks espeically that mother fucker T3Q.
+
 Parallell crypto engine enhancements
 Qortal Crypto Function Library enabled during boot
 Sequentual Number Generator

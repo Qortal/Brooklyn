@@ -47,6 +47,7 @@
 #include "lp_query.h"
 #include "lp_setup.h"
 #include "lp_screen.h"
+#include "lp_fence.h"
 
 /* This is only safe if there's just one concurrent context */
 #ifdef EMBEDDED_DEVICE
@@ -118,6 +119,16 @@ do_flush( struct pipe_context *pipe,
    llvmpipe_flush(pipe, fence, __FUNCTION__);
 }
 
+static void
+llvmpipe_fence_server_sync(struct pipe_context *pipe,
+                           struct pipe_fence_handle *fence)
+{
+   struct lp_fence *f = (struct lp_fence *)fence;
+
+   if (!f->issued)
+      return;
+   lp_fence_wait(f);
+}
 
 static void
 llvmpipe_render_condition(struct pipe_context *pipe,
@@ -133,9 +144,22 @@ llvmpipe_render_condition(struct pipe_context *pipe,
 }
 
 static void
+llvmpipe_render_condition_mem(struct pipe_context *pipe,
+                              struct pipe_resource *buffer,
+                              unsigned offset,
+                              bool condition)
+{
+   struct llvmpipe_context *llvmpipe = llvmpipe_context( pipe );
+
+   llvmpipe->render_cond_buffer = llvmpipe_resource(buffer);
+   llvmpipe->render_cond_offset = offset;
+   llvmpipe->render_cond_cond = condition;
+}
+
+static void
 llvmpipe_texture_barrier(struct pipe_context *pipe, unsigned flags)
 {
-   llvmpipe_flush(pipe, NULL, __FUNCTION__);
+   llvmpipe_finish(pipe, "barrier");
 }
 
 static void lp_draw_disk_cache_find_shader(void *cookie,
@@ -166,11 +190,12 @@ llvmpipe_create_context(struct pipe_screen *screen, void *priv,
 {
    struct llvmpipe_context *llvmpipe;
 
+   if (!llvmpipe_screen_late_init(llvmpipe_screen(screen)))
+      return NULL;
+
    llvmpipe = align_malloc(sizeof(struct llvmpipe_context), 16);
    if (!llvmpipe)
       return NULL;
-
-   util_init_math();
 
    memset(llvmpipe, 0, sizeof *llvmpipe);
 
@@ -191,7 +216,9 @@ llvmpipe_create_context(struct pipe_screen *screen, void *priv,
    llvmpipe->pipe.texture_barrier = llvmpipe_texture_barrier;
 
    llvmpipe->pipe.render_condition = llvmpipe_render_condition;
+   llvmpipe->pipe.render_condition_mem = llvmpipe_render_condition_mem;
 
+   llvmpipe->pipe.fence_server_sync = llvmpipe_fence_server_sync;
    llvmpipe->pipe.get_device_reset_status = llvmpipe_get_device_reset_status;
    llvmpipe_init_blend_funcs(llvmpipe);
    llvmpipe_init_clip_funcs(llvmpipe);
@@ -268,6 +295,9 @@ llvmpipe_create_context(struct pipe_screen *screen, void *priv,
    draw_enable_point_sprites(llvmpipe->draw, FALSE);
    draw_wide_point_threshold(llvmpipe->draw, 10000.0);
    draw_wide_line_threshold(llvmpipe->draw, 10000.0);
+
+   /* initial state for clipping - enabled, with no guardband */
+   draw_set_driver_clipping(llvmpipe->draw, FALSE, FALSE, FALSE, TRUE);
 
    lp_reset_counters();
 

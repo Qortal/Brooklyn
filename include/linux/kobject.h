@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * kobject.h - generic kernel object infrastructure.
  *
@@ -6,9 +7,7 @@
  * Copyright (c) 2006-2008 Greg Kroah-Hartman <greg@kroah.com>
  * Copyright (c) 2006-2008 Novell Inc.
  *
- * This file is released under the GPLv2.
- *
- * Please read Documentation/kobject.txt before using the kobject
+ * Please read Documentation/core-api/kobject.rst before using the kobject
  * interface, ESPECIALLY the parts about reference counts and object
  * destructors.
  */
@@ -20,16 +19,17 @@
 #include <linux/list.h>
 #include <linux/sysfs.h>
 #include <linux/compiler.h>
+#include <linux/container_of.h>
 #include <linux/spinlock.h>
 #include <linux/kref.h>
 #include <linux/kobject_ns.h>
-#include <linux/kernel.h>
 #include <linux/wait.h>
 #include <linux/atomic.h>
 #include <linux/workqueue.h>
+#include <linux/uidgid.h>
 
 #define UEVENT_HELPER_PATH_LEN		256
-#define UEVENT_NUM_ENVP			32	/* number of env pointers */
+#define UEVENT_NUM_ENVP			64	/* number of env pointers */
 #define UEVENT_BUFFER_SIZE		2048	/* buffer for the variables */
 
 #ifdef CONFIG_UEVENT_HELPER
@@ -57,7 +57,8 @@ enum kobject_action {
 	KOBJ_MOVE,
 	KOBJ_ONLINE,
 	KOBJ_OFFLINE,
-	KOBJ_MAX
+	KOBJ_BIND,
+	KOBJ_UNBIND,
 };
 
 struct kobject {
@@ -65,7 +66,7 @@ struct kobject {
 	struct list_head	entry;
 	struct kobject		*parent;
 	struct kset		*kset;
-	struct kobj_type	*ktype;
+	const struct kobj_type	*ktype;
 	struct kernfs_node	*sd; /* sysfs directory entry */
 	struct kref		kref;
 #ifdef CONFIG_DEBUG_KOBJECT_RELEASE
@@ -89,18 +90,17 @@ static inline const char *kobject_name(const struct kobject *kobj)
 	return kobj->name;
 }
 
-extern void kobject_init(struct kobject *kobj, struct kobj_type *ktype);
+extern void kobject_init(struct kobject *kobj, const struct kobj_type *ktype);
 extern __printf(3, 4) __must_check
 int kobject_add(struct kobject *kobj, struct kobject *parent,
 		const char *fmt, ...);
 extern __printf(4, 5) __must_check
 int kobject_init_and_add(struct kobject *kobj,
-			 struct kobj_type *ktype, struct kobject *parent,
+			 const struct kobj_type *ktype, struct kobject *parent,
 			 const char *fmt, ...);
 
 extern void kobject_del(struct kobject *kobj);
 
-extern struct kobject * __must_check kobject_create(void);
 extern struct kobject * __must_check kobject_create_and_add(const char *name,
 						struct kobject *parent);
 
@@ -108,18 +108,24 @@ extern int __must_check kobject_rename(struct kobject *, const char *new_name);
 extern int __must_check kobject_move(struct kobject *, struct kobject *);
 
 extern struct kobject *kobject_get(struct kobject *kobj);
+extern struct kobject * __must_check kobject_get_unless_zero(
+						struct kobject *kobj);
 extern void kobject_put(struct kobject *kobj);
 
 extern const void *kobject_namespace(struct kobject *kobj);
+extern void kobject_get_ownership(struct kobject *kobj,
+				  kuid_t *uid, kgid_t *gid);
 extern char *kobject_get_path(struct kobject *kobj, gfp_t flag);
 
 struct kobj_type {
 	void (*release)(struct kobject *kobj);
 	const struct sysfs_ops *sysfs_ops;
-	struct attribute **default_attrs;
+	struct attribute **default_attrs;	/* use default_groups instead */
+	const struct attribute_group **default_groups;
 	const struct kobj_ns_type_operations *(*child_ns_type)(struct kobject *kobj);
 	const void *(*namespace)(struct kobject *kobj);
-} __do_const;
+	void (*get_ownership)(struct kobject *kobj, kuid_t *uid, kgid_t *gid);
+};
 
 struct kobj_uevent_env {
 	char *argv[3];
@@ -130,10 +136,9 @@ struct kobj_uevent_env {
 };
 
 struct kset_uevent_ops {
-	int (* const filter)(struct kset *kset, struct kobject *kobj);
-	const char *(* const name)(struct kset *kset, struct kobject *kobj);
-	int (* const uevent)(struct kset *kset, struct kobject *kobj,
-		      struct kobj_uevent_env *env);
+	int (* const filter)(struct kobject *kobj);
+	const char *(* const name)(struct kobject *kobj);
+	int (* const uevent)(struct kobject *kobj, struct kobj_uevent_env *env);
 };
 
 struct kobj_attribute {
@@ -143,14 +148,6 @@ struct kobj_attribute {
 	ssize_t (*store)(struct kobject *kobj, struct kobj_attribute *attr,
 			 const char *buf, size_t count);
 };
-typedef struct kobj_attribute __no_const kobj_attribute_no_const;
-
-#define KOBJECT_ATTR(_name, _mode, _show, _store) \
-	struct kobj_attribute dev_attr_##_name = __ATTR(_name, _mode, _show, _store)
-#define KOBJECT_ATTR_RW(_name) \
-	struct kobj_attribute dev_attr_##_name = __ATTR_RW(_name)
-#define KOBJECT_ATTR_RO(_name) \
-	struct kobj_attribute dev_attr_##_name = __ATTR_RO(_name)
 
 extern const struct sysfs_ops kobj_sysfs_ops;
 
@@ -202,7 +199,7 @@ static inline void kset_put(struct kset *k)
 	kobject_put(&k->kobj);
 }
 
-static inline struct kobj_type *get_ktype(struct kobject *kobj)
+static inline const struct kobj_type *get_ktype(struct kobject *kobj)
 {
 	return kobj->ktype;
 }
@@ -223,11 +220,9 @@ extern struct kobject *firmware_kobj;
 int kobject_uevent(struct kobject *kobj, enum kobject_action action);
 int kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
 			char *envp[]);
+int kobject_synth_uevent(struct kobject *kobj, const char *buf, size_t count);
 
 __printf(2, 3)
 int add_uevent_var(struct kobj_uevent_env *env, const char *format, ...);
-
-int kobject_action_type(const char *buf, size_t count,
-			enum kobject_action *type);
 
 #endif /* _KOBJECT_H_ */

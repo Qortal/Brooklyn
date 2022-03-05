@@ -30,6 +30,24 @@ virtio_icd = custom_target(
   install : true,
 )
 
+if meson.version().version_compare('>= 0.58')
+  _dev_icdname = 'virtio_devenv_icd.@0@.json'.format(host_machine.cpu())
+  custom_target(
+    'virtio_devenv_icd',
+    input : [vk_icd_gen, vk_api_xml],
+    output : _dev_icdname,
+    command : [
+      prog_python, '@INPUT0@',
+      '--api-version', '1.2', '--xml', '@INPUT1@',
+      '--lib-path', meson.current_build_dir() / 'libvulkan_virtio.so',
+      '--out', '@OUTPUT@',
+    ],
+    build_by_default : true,
+  )
+
+  devenv.append('VK_ICD_FILENAMES', meson.current_build_dir() / _dev_icdname)
+endif
+
 libvn_files = files(
   'vn_buffer.c',
   'vn_command_buffer.c',
@@ -47,6 +65,8 @@ libvn_files = files(
   'vn_queue.c',
   'vn_render_pass.c',
   'vn_ring.c',
+  'vn_renderer_internal.c',
+  'vn_renderer_util.c',
   'vn_renderer_virtgpu.c',
   'vn_renderer_vtest.c',
 )
@@ -56,6 +76,8 @@ vn_deps = [
   dep_thread,
   idep_mesautil,
   idep_vulkan_util,
+  idep_vulkan_runtime,
+  idep_vulkan_wsi,
   idep_xmlconfig,
 ]
 
@@ -68,35 +90,26 @@ vn_libs = []
 if with_platform_wayland or with_platform_x11
   libvn_files += files('vn_wsi.c')
   vn_flags += '-DVN_USE_WSI_PLATFORM'
-  vn_libs += libvulkan_wsi
 endif
 
 if with_platform_wayland
-  libvn_files += files('vn_wsi_wayland.c')
   vn_deps += dep_wayland_client
-  vn_flags += '-DVK_USE_PLATFORM_WAYLAND_KHR'
 endif
 
 if with_platform_x11
-  libvn_files += files('vn_wsi_x11.c')
   vn_deps += dep_xcb_dri3
-  vn_flags += [
-    '-DVK_USE_PLATFORM_XCB_KHR',
-    '-DVK_USE_PLATFORM_XLIB_KHR',
-  ]
 endif
 
 if with_platform_android
   libvn_files += files('vn_android.c')
   vn_deps += dep_android
-  vn_flags += '-DVK_USE_PLATFORM_ANDROID_KHR'
 endif
 
 libvulkan_virtio = shared_library(
   'vulkan_virtio',
   [libvn_files, vn_entrypoints, sha1_h],
   include_directories : [
-    inc_include, inc_src, inc_vulkan_wsi, inc_virtio,
+    inc_include, inc_src, inc_virtio,
   ],
   link_with : vn_libs,
   dependencies : [vn_deps],

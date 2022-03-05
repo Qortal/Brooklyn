@@ -60,6 +60,15 @@ const struct drm_driver_descriptor descriptor_name = {         \
 
 #endif
 
+#ifdef GALLIUM_KMSRO_ONLY
+#undef GALLIUM_V3D
+#undef GALLIUM_VC4
+#undef GALLIUM_FREEDRENO
+#undef GALLIUM_ETNAVIV
+#undef GALLIUM_PANFROST
+#undef GALLIUM_LIMA
+#endif
+
 #ifdef GALLIUM_I915
 #include "i915/drm/i915_drm_public.h"
 #include "i915/i915_public.h"
@@ -101,6 +110,26 @@ DRM_DRIVER_DESCRIPTOR(iris, iris_driconf, ARRAY_SIZE(iris_driconf))
 
 #else
 DRM_DRIVER_DESCRIPTOR_STUB(iris)
+#endif
+
+#ifdef GALLIUM_CROCUS
+#include "crocus/drm/crocus_drm_public.h"
+
+static struct pipe_screen *
+pipe_crocus_create_screen(int fd, const struct pipe_screen_config *config)
+{
+   struct pipe_screen *screen;
+
+   screen = crocus_drm_screen_create(fd, config);
+   return screen ? debug_screen_wrap(screen) : NULL;
+}
+
+const driOptionDescription crocus_driconf[] = {
+      #include "crocus/driinfo_crocus.h"
+};
+DRM_DRIVER_DESCRIPTOR(crocus, crocus_driconf, ARRAY_SIZE(crocus_driconf))
+#else
+DRM_DRIVER_DESCRIPTOR_STUB(crocus)
 #endif
 
 #ifdef GALLIUM_NOUVEAU
@@ -236,7 +265,7 @@ pipe_msm_create_screen(int fd, const struct pipe_screen_config *config)
 {
    struct pipe_screen *screen;
 
-   screen = fd_drm_screen_create(fd, NULL);
+   screen = fd_drm_screen_create(fd, NULL, config);
    return screen ? debug_screen_wrap(screen) : NULL;
 }
 DRM_DRIVER_DESCRIPTOR(msm, NULL, 0)

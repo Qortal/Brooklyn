@@ -62,8 +62,10 @@ get_io_intrinsic(nir_instr *instr, nir_variable_mode modes,
  * monotonically increasing.
  */
 bool
-nir_recompute_io_bases(nir_function_impl *impl, nir_variable_mode modes)
+nir_recompute_io_bases(nir_shader *nir, nir_variable_mode modes)
 {
+   nir_function_impl *impl = nir_shader_get_entrypoint(nir);
+
    BITSET_DECLARE(inputs, NUM_TOTAL_VARYING_SLOTS);
    BITSET_DECLARE(outputs, NUM_TOTAL_VARYING_SLOTS);
    BITSET_ZERO(inputs);
@@ -231,7 +233,7 @@ nir_lower_mediump_io(nir_shader *nir, nir_variable_mode modes,
    }
 
    if (changed && use_16bit_slots)
-      nir_recompute_io_bases(impl, modes);
+      nir_recompute_io_bases(nir, modes);
 
    if (changed) {
       nir_metadata_preserve(impl, nir_metadata_dominance |
@@ -342,7 +344,7 @@ nir_unpack_16bit_varying_slots(nir_shader *nir, nir_variable_mode modes)
    }
 
    if (changed)
-      nir_recompute_io_bases(impl, modes);
+      nir_recompute_io_bases(nir, modes);
 
    if (changed) {
       nir_metadata_preserve(impl, nir_metadata_dominance |
@@ -393,7 +395,8 @@ is_u16_to_u32_conversion(nir_instr *instr)
 static bool
 is_i32_to_i16_conversion(nir_instr *instr)
 {
-   return is_n_to_m_conversion(instr, 32, nir_op_i2i16);
+   return is_n_to_m_conversion(instr, 32, nir_op_i2i16) ||
+      is_n_to_m_conversion(instr, 32, nir_op_u2u16);
 }
 
 static void
@@ -436,6 +439,10 @@ nir_fold_16bit_sampler_conversions(nir_shader *nir,
          nir_tex_instr *tex = nir_instr_as_tex(instr);
          nir_instr *src;
          nir_alu_instr *src_alu;
+
+         /* Skip sparse residency */
+         if (tex->is_sparse)
+            continue;
 
          /* Skip because AMD doesn't support 16-bit types with these. */
          if ((tex->op == nir_texop_txs ||

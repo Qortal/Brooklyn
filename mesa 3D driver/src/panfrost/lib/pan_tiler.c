@@ -26,6 +26,7 @@
 
 #include "util/u_math.h"
 #include "util/macros.h"
+#include "pan_device.h"
 #include "pan_encoder.h"
 
 /* Mali GPUs are tiled-mode renderers, rather than immediate-mode.

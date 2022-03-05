@@ -22,7 +22,7 @@
  * USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include "ac_exp_param.h"
+#include "ac_nir.h"
 #include "ac_sqtt.h"
 #include "si_build_pm4.h"
 #include "util/u_cpu_detect.h"
@@ -177,7 +177,7 @@ static bool si_update_shaders(struct si_context *sctx)
          return false;
       si_pm4_bind_state(sctx, gs, sctx->shader.gs.current);
       if (!NGG) {
-         si_pm4_bind_state(sctx, vs, sctx->shader.gs.cso->gs_copy_shader);
+         si_pm4_bind_state(sctx, vs, sctx->shader.gs.current->gs_copy_shader);
 
          if (!si_update_gs_ring_buffers(sctx))
             return false;
@@ -229,12 +229,23 @@ static bool si_update_shaders(struct si_context *sctx)
    key.index = 0;
 
    /* Update VGT_SHADER_STAGES_EN. */
-   if (HAS_TESS)
+   if (HAS_TESS) {
       key.u.tess = 1;
+      if (GFX_VERSION >= GFX10)
+         key.u.hs_wave32 = sctx->queued.named.hs->wave_size == 32;
+   }
    if (HAS_GS)
       key.u.gs = 1;
-   if (NGG)
+   if (NGG) {
       key.index |= si_get_vs_inline(sctx, HAS_TESS, HAS_GS)->current->ctx_reg.ngg.vgt_stages.index;
+   } else if (GFX_VERSION >= GFX10) {
+      if (HAS_GS) {
+         key.u.gs_wave32 = sctx->shader.gs.current->wave_size == 32;
+         key.u.vs_wave32 = sctx->shader.gs.current->gs_copy_shader->wave_size == 32;
+      } else {
+         key.u.vs_wave32 = si_get_vs_inline(sctx, HAS_TESS, HAS_GS)->current->wave_size == 32;
+      }
+   }
 
    struct si_pm4_state **pm4 = &sctx->vgt_shader_config[key.index];
    if (unlikely(!*pm4))
@@ -264,8 +275,8 @@ static bool si_update_shaders(struct si_context *sctx)
       si_mark_atom_dirty(sctx, &sctx->atoms.s.cb_render_state);
 
    if (sctx->smoothing_enabled !=
-       sctx->shader.ps.current->key.ps.part.epilog.poly_line_smoothing) {
-      sctx->smoothing_enabled = sctx->shader.ps.current->key.ps.part.epilog.poly_line_smoothing;
+       sctx->shader.ps.current->key.ps.mono.poly_line_smoothing) {
+      sctx->smoothing_enabled = sctx->shader.ps.current->key.ps.mono.poly_line_smoothing;
       si_mark_atom_dirty(sctx, &sctx->atoms.s.msaa_config);
 
       /* NGG cull state uses smoothing_enabled. */
@@ -631,7 +642,7 @@ static void si_emit_derived_tess_state(struct si_context *sctx, unsigned *num_pa
     * if it's only partially filled.
     */
    unsigned temp_verts_per_tg = *num_patches * max_verts_per_patch;
-   unsigned wave_size = sctx->screen->ge_wave_size;
+   unsigned wave_size = ls_current->wave_size;
 
    if (temp_verts_per_tg > wave_size &&
        (wave_size - temp_verts_per_tg % wave_size >= MAX2(max_verts_per_patch, 8)))
@@ -1175,7 +1186,9 @@ static void si_emit_ia_multi_vgt_param(struct si_context *sctx,
           min_vertex_count);
 
    /* Draw state. */
-   if (ia_multi_vgt_param != sctx->last_multi_vgt_param) {
+   if (ia_multi_vgt_param != sctx->last_multi_vgt_param ||
+       /* Workaround for SpecviewPerf13 Catia hang on GFX9. */
+       (GFX_VERSION == GFX9 && prim != sctx->last_prim)) {
       radeon_begin(cs);
 
       if (GFX_VERSION == GFX9)
@@ -1310,10 +1323,9 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
                                  unsigned drawid_base,
                                  const struct pipe_draw_indirect_info *indirect,
                                  const struct pipe_draw_start_count_bias *draws,
-                                 unsigned num_draws, unsigned total_count,
+                                 unsigned num_draws,
                                  struct pipe_resource *indexbuf, unsigned index_size,
-                                 unsigned index_offset, unsigned instance_count,
-                                 unsigned original_index_size)
+                                 unsigned index_offset, unsigned instance_count)
 {
    struct radeon_cmdbuf *cs = &sctx->gfx_cs;
 
@@ -1386,8 +1398,8 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
 
       index_va = si_resource(indexbuf)->gpu_address + index_offset;
 
-      radeon_add_to_buffer_list(sctx, &sctx->gfx_cs, si_resource(indexbuf), RADEON_USAGE_READ,
-                                RADEON_PRIO_INDEX_BUFFER);
+      radeon_add_to_buffer_list(sctx, &sctx->gfx_cs, si_resource(indexbuf),
+                                RADEON_USAGE_READ | RADEON_PRIO_INDEX_BUFFER);
    } else {
       /* On GFX7 and later, non-indexed draws overwrite VGT_INDEX_TYPE,
        * so the state must be re-emitted before the next indexed draw.
@@ -1413,7 +1425,7 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
       radeon_emit(indirect_va >> 32);
 
       radeon_add_to_buffer_list(sctx, &sctx->gfx_cs, si_resource(indirect->buffer),
-                                RADEON_USAGE_READ, RADEON_PRIO_DRAW_INDIRECT);
+                                RADEON_USAGE_READ | RADEON_PRIO_DRAW_INDIRECT);
 
       unsigned di_src_sel = index_size ? V_0287F0_DI_SRC_SEL_DMA : V_0287F0_DI_SRC_SEL_AUTO_INDEX;
 
@@ -1441,8 +1453,8 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
          if (indirect->indirect_draw_count) {
             struct si_resource *params_buf = si_resource(indirect->indirect_draw_count);
 
-            radeon_add_to_buffer_list(sctx, &sctx->gfx_cs, params_buf, RADEON_USAGE_READ,
-                                      RADEON_PRIO_DRAW_INDIRECT);
+            radeon_add_to_buffer_list(sctx, &sctx->gfx_cs, params_buf,
+                                      RADEON_USAGE_READ | RADEON_PRIO_DRAW_INDIRECT);
 
             count_va = params_buf->gpu_address + indirect->indirect_draw_count_offset;
          }
@@ -1472,7 +1484,7 @@ static void si_emit_draw_packets(struct si_context *sctx, const struct pipe_draw
       }
 
       /* Base vertex and start instance. */
-      int base_vertex = original_index_size ? draws[0].index_bias : draws[0].start;
+      int base_vertex = index_size ? draws[0].index_bias : draws[0].start;
 
       bool set_draw_id = !IS_DRAW_VERTEX_STATE && sctx->vs_uses_draw_id;
       bool set_base_instance = sctx->vs_uses_base_instance;
@@ -1729,41 +1741,24 @@ void si_set_vertex_buffer_descriptor(struct si_screen *sscreen, struct si_vertex
 
 #endif
 
-/* util_bitcount has large measurable overhead (~2% difference in viewperf),  so we use
- * the POPCNT x86 instruction via inline assembly if the CPU supports it.
- */
-enum si_has_popcnt {
-   POPCNT_NO,
-   POPCNT_YES,
-};
-
-template<si_has_popcnt POPCNT>
-unsigned bitcount_asm(unsigned n)
-{
-   if (POPCNT == POPCNT_YES)
-      return util_popcnt_inline_asm(n);
-   else
-      return util_bitcount(n);
-}
-
-template<si_has_popcnt POPCNT>
+template<util_popcnt POPCNT>
 static ALWAYS_INLINE unsigned get_next_vertex_state_elem(struct pipe_vertex_state *state,
                                                          uint32_t *partial_velem_mask)
 {
    unsigned semantic_index = u_bit_scan(partial_velem_mask);
    assert(state->input.full_velem_mask & BITFIELD_BIT(semantic_index));
    /* A prefix mask of the full mask gives us the index in pipe_vertex_state. */
-   return bitcount_asm<POPCNT>(state->input.full_velem_mask & BITFIELD_MASK(semantic_index));
+   return util_bitcount_fast<POPCNT>(state->input.full_velem_mask & BITFIELD_MASK(semantic_index));
 }
 
 template <chip_class GFX_VERSION, si_has_tess HAS_TESS, si_has_gs HAS_GS, si_has_ngg NGG,
-          si_is_draw_vertex_state IS_DRAW_VERTEX_STATE, si_has_popcnt POPCNT> ALWAYS_INLINE
+          si_is_draw_vertex_state IS_DRAW_VERTEX_STATE, util_popcnt POPCNT> ALWAYS_INLINE
 static bool si_upload_and_prefetch_VB_descriptors(struct si_context *sctx,
                                                   struct pipe_vertex_state *state,
                                                   uint32_t partial_velem_mask)
 {
    struct si_vertex_state *vstate = (struct si_vertex_state *)state;
-   unsigned count = IS_DRAW_VERTEX_STATE ? bitcount_asm<POPCNT>(partial_velem_mask) :
+   unsigned count = IS_DRAW_VERTEX_STATE ? util_bitcount_fast<POPCNT>(partial_velem_mask) :
                                            sctx->num_vertex_elements;
    unsigned sh_base = si_get_user_data_base(GFX_VERSION, HAS_TESS, HAS_GS, NGG,
                                             PIPE_SHADER_VERTEX);
@@ -1796,7 +1791,7 @@ static bool si_upload_and_prefetch_VB_descriptors(struct si_context *sctx,
 
          sctx->vb_descriptors_gpu_list = ptr;
          radeon_add_to_buffer_list(sctx, &sctx->gfx_cs, sctx->vb_descriptors_buffer,
-                                   RADEON_USAGE_READ, RADEON_PRIO_DESCRIPTORS);
+                                   RADEON_USAGE_READ | RADEON_PRIO_DESCRIPTORS);
          /* GFX6 doesn't support the L2 prefetch. */
          if (GFX_VERSION >= GFX7)
             si_cp_dma_prefetch(sctx, &sctx->vb_descriptors_buffer->b.b, sctx->vb_descriptors_offset,
@@ -1832,7 +1827,7 @@ static bool si_upload_and_prefetch_VB_descriptors(struct si_context *sctx,
          if (vstate->b.input.vbuffer.buffer.resource != vstate->b.input.indexbuf) {
             radeon_add_to_buffer_list(sctx, &sctx->gfx_cs,
                                       si_resource(vstate->b.input.vbuffer.buffer.resource),
-                                      RADEON_USAGE_READ, RADEON_PRIO_VERTEX_BUFFER);
+                                      RADEON_USAGE_READ | RADEON_PRIO_VERTEX_BUFFER);
          }
 
          /* The next draw_vbo should recompute and rebind vertex buffer descriptors. */
@@ -1854,7 +1849,7 @@ static bool si_upload_and_prefetch_VB_descriptors(struct si_context *sctx,
 
             if (first_vb_use_mask & (1 << i)) {
                radeon_add_to_buffer_list(sctx, &sctx->gfx_cs, si_resource(vb->buffer.resource),
-                                         RADEON_USAGE_READ, RADEON_PRIO_VERTEX_BUFFER);
+                                         RADEON_USAGE_READ | RADEON_PRIO_VERTEX_BUFFER);
             }
          }
 
@@ -1880,8 +1875,8 @@ static bool si_upload_and_prefetch_VB_descriptors(struct si_context *sctx,
          if (GFX_VERSION >= GFX9) {
             if (HAS_TESS)
                sh_dw_offset = GFX9_TCS_NUM_USER_SGPR;
-            else if (HAS_GS)
-               sh_dw_offset = GFX9_VSGS_NUM_USER_SGPR;
+            else if (HAS_GS || NGG)
+               sh_dw_offset = GFX9_GS_NUM_USER_SGPR;
          }
 
          radeon_set_sh_reg(sh_base + sh_dw_offset * 4,
@@ -2032,7 +2027,7 @@ static void si_emit_all_states(struct si_context *sctx, const struct pipe_draw_i
    } while (0)
 
 template <chip_class GFX_VERSION, si_has_tess HAS_TESS, si_has_gs HAS_GS, si_has_ngg NGG,
-          si_is_draw_vertex_state IS_DRAW_VERTEX_STATE, si_has_popcnt POPCNT> ALWAYS_INLINE
+          si_is_draw_vertex_state IS_DRAW_VERTEX_STATE, util_popcnt POPCNT> ALWAYS_INLINE
 static void si_draw(struct pipe_context *ctx,
                     const struct pipe_draw_info *info,
                     unsigned drawid_offset,
@@ -2210,6 +2205,7 @@ static void si_draw(struct pipe_context *ctx,
             si_resource(indirect->indirect_draw_count)->TC_L2_dirty = false;
          }
       }
+      total_direct_count = INT_MAX; /* just set something other than 0 to enable shader culling */
    } else {
       total_direct_count = min_direct_count = draws[0].count;
 
@@ -2226,7 +2222,6 @@ static void si_draw(struct pipe_context *ctx,
       info->primitive_restart &&
       (!sctx->screen->options.prim_restart_tri_strips_only ||
        (prim != PIPE_PRIM_TRIANGLE_STRIP && prim != PIPE_PRIM_TRIANGLE_STRIP_ADJACENCY));
-   unsigned original_index_size = index_size;
 
    /* Set the rasterization primitive type.
     *
@@ -2281,14 +2276,14 @@ static void si_draw(struct pipe_context *ctx,
    }
 
    /* Update NGG culling settings. */
-   uint8_t old_ngg_culling = sctx->ngg_culling;
+   uint16_t old_ngg_culling = sctx->ngg_culling;
    if (GFX_VERSION >= GFX10) {
       struct si_shader_selector *hw_vs = si_get_vs_inline(sctx, HAS_TESS, HAS_GS)->cso;
 
-      if (NGG && !HAS_GS &&
-          /* Tessellation sets ngg_cull_vert_threshold to UINT_MAX if the prim type
-           * is not points, so this check is only needed without tessellation. */
-          (HAS_TESS || util_rast_prim_is_lines_or_triangles(sctx->current_rast_prim)) &&
+      if (NGG &&
+          /* Tessellation and GS set ngg_cull_vert_threshold to UINT_MAX if the prim type
+           * is not points, so this check is only needed for VS. */
+          (HAS_TESS || HAS_GS || util_rast_prim_is_lines_or_triangles(sctx->current_rast_prim)) &&
           /* Only the first draw for a shader starts with culling disabled and it's disabled
            * until we pass the total_direct_count check and then it stays enabled until
            * the shader is changed. This eliminates most culling on/off state changes. */
@@ -2296,13 +2291,15 @@ static void si_draw(struct pipe_context *ctx,
          /* Check that the current shader allows culling. */
          assert(hw_vs->ngg_cull_vert_threshold != UINT_MAX);
 
-         uint8_t ngg_culling = sctx->viewport0_y_inverted ? rs->ngg_cull_flags_y_inverted :
-                                                            rs->ngg_cull_flags;
-         assert(ngg_culling); /* rasterizer state should always set this to non-zero */
+         uint16_t ngg_culling;
 
          if (util_prim_is_lines(sctx->current_rast_prim)) {
             /* Overwrite it to mask out face cull flags. */
-            ngg_culling = SI_NGG_CULL_ENABLED | SI_NGG_CULL_LINES;
+            ngg_culling = rs->ngg_cull_flags_lines;
+         } else {
+            ngg_culling = sctx->viewport0_y_inverted ? rs->ngg_cull_flags_tris_y_inverted :
+                                                       rs->ngg_cull_flags_tris;
+            assert(ngg_culling); /* rasterizer state should always set this to non-zero */
          }
 
          if (ngg_culling != old_ngg_culling) {
@@ -2406,8 +2403,8 @@ static void si_draw(struct pipe_context *ctx,
       assert(sctx->dirty_atoms == 0);
 
       si_emit_draw_packets<GFX_VERSION, NGG, IS_DRAW_VERTEX_STATE>
-            (sctx, info, drawid_offset, indirect, draws, num_draws, total_direct_count, indexbuf,
-             index_size, index_offset, instance_count, original_index_size);
+            (sctx, info, drawid_offset, indirect, draws, num_draws, indexbuf,
+             index_size, index_offset, instance_count);
       /* <-- CUs are busy here. */
 
       /* Start prefetches after the draw has been started. Both will run
@@ -2446,8 +2443,8 @@ static void si_draw(struct pipe_context *ctx,
       assert(sctx->dirty_atoms == 0);
 
       si_emit_draw_packets<GFX_VERSION, NGG, IS_DRAW_VERTEX_STATE>
-            (sctx, info, drawid_offset, indirect, draws, num_draws, total_direct_count, indexbuf,
-             index_size, index_offset, instance_count, original_index_size);
+            (sctx, info, drawid_offset, indirect, draws, num_draws, indexbuf,
+             index_size, index_offset, instance_count);
 
       /* Prefetch the remaining shaders after the draw has been
        * started. */
@@ -2481,7 +2478,7 @@ static void si_draw(struct pipe_context *ctx,
          sctx->num_prim_restart_calls += num_draws;
    }
 
-   if (!sctx->blitter_running && sctx->framebuffer.state.zsbuf) {
+   if (sctx->framebuffer.state.zsbuf) {
       struct si_texture *zstex = (struct si_texture *)sctx->framebuffer.state.zsbuf->texture;
       zstex->depth_cleared_level_mask &= ~BITFIELD_BIT(sctx->framebuffer.state.zsbuf->u.tex.level);
    }
@@ -2502,7 +2499,7 @@ static void si_draw_vbo(struct pipe_context *ctx,
 }
 
 template <chip_class GFX_VERSION, si_has_tess HAS_TESS, si_has_gs HAS_GS, si_has_ngg NGG,
-          si_has_popcnt POPCNT>
+          util_popcnt POPCNT>
 static void si_draw_vertex_state(struct pipe_context *ctx,
                                  struct pipe_vertex_state *vstate,
                                  uint32_t partial_velem_mask,

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_FIREWIRE_H
 #define _LINUX_FIREWIRE_H
 
@@ -435,6 +436,12 @@ typedef void (*fw_iso_callback_t)(struct fw_iso_context *context,
 				  void *header, void *data);
 typedef void (*fw_iso_mc_callback_t)(struct fw_iso_context *context,
 				     dma_addr_t completed, void *data);
+
+union fw_iso_callback {
+	fw_iso_callback_t sc;
+	fw_iso_mc_callback_t mc;
+};
+
 struct fw_iso_context {
 	struct fw_card *card;
 	int type;
@@ -442,16 +449,13 @@ struct fw_iso_context {
 	int speed;
 	bool drop_overflow_headers;
 	size_t header_size;
-	union {
-		fw_iso_callback_t sc;
-		fw_iso_mc_callback_t mc;
-	} callback;
+	union fw_iso_callback callback;
 	void *callback_data;
 };
 
 struct fw_iso_context *fw_iso_context_create(struct fw_card *card,
 		int type, int channel, int speed, size_t header_size,
-		void *callback, void *callback_data);
+		fw_iso_callback_t callback, void *callback_data);
 int fw_iso_context_set_channels(struct fw_iso_context *ctx, u64 *channels);
 int fw_iso_context_queue(struct fw_iso_context *ctx,
 			 struct fw_iso_packet *packet,

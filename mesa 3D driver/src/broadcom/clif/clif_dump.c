@@ -52,7 +52,7 @@ clif_dump_add_address_to_worklist(struct clif_dump *clif,
 
 struct clif_dump *
 clif_dump_init(const struct v3d_device_info *devinfo,
-               FILE *out, bool pretty)
+               FILE *out, bool pretty, bool nobin)
 {
         struct clif_dump *clif = rzalloc(NULL, struct clif_dump);
 
@@ -60,6 +60,7 @@ clif_dump_init(const struct v3d_device_info *devinfo,
         clif->out = out;
         clif->spec = v3d_spec_load(devinfo);
         clif->pretty = pretty;
+        clif->nobin = nobin;
 
         list_inithead(&clif->worklist);
 
@@ -159,7 +160,8 @@ clif_dump_cl(struct clif_dump *clif, uint32_t start, uint32_t end,
 static uint32_t
 clif_dump_gl_shader_state_record(struct clif_dump *clif,
                                  struct reloc_worklist_entry *reloc,
-                                 void *vaddr)
+                                 void *vaddr,
+                                 bool including_gs)
 {
         struct v3d_group *state = v3d_spec_find_struct(clif->spec,
                                                        "GL Shader State Record");
@@ -169,6 +171,16 @@ clif_dump_gl_shader_state_record(struct clif_dump *clif,
         assert(attr);
         uint32_t offset = 0;
 
+        if (including_gs) {
+                struct v3d_group *gs_state = v3d_spec_find_struct(clif->spec,
+                                                                  "Geometry Shader State Record");
+                assert(gs_state);
+                out(clif, "@format shadrec_gl_geom\n");
+                v3d_print_group(clif, gs_state, 0, vaddr + offset);
+                offset += v3d_group_get_length(gs_state);
+                /* Extra pad when geometry/tessellation shader is present */
+                offset += 20;
+        }
         out(clif, "@format shadrec_gl_main\n");
         v3d_print_group(clif, state, 0, vaddr + offset);
         offset += v3d_group_get_length(state);
@@ -200,6 +212,7 @@ clif_process_worklist(struct clif_dump *clif)
                         break;
 
                 case reloc_gl_shader_state:
+                case reloc_gl_including_gs_shader_state:
                         break;
                 case reloc_generic_tile_list:
                         clif_dump_cl(clif, reloc->addr,
@@ -238,6 +251,9 @@ static void
 clif_dump_binary(struct clif_dump *clif, struct clif_bo *bo,
                  uint32_t start, uint32_t end)
 {
+        if (clif->pretty && clif->nobin)
+                return;
+
         if (start == end)
                 return;
 
@@ -332,10 +348,12 @@ clif_dump_buffers(struct clif_dump *clif)
                         break;
 
                 case reloc_gl_shader_state:
+                case reloc_gl_including_gs_shader_state:
                         offset += clif_dump_gl_shader_state_record(clif,
                                                                    reloc,
                                                                    bo->vaddr +
-                                                                   offset);
+                                                                   offset,
+                                                                   reloc->type == reloc_gl_including_gs_shader_state);
                         break;
                 case reloc_generic_tile_list:
                         offset = clif_dump_cl(clif, reloc->addr,

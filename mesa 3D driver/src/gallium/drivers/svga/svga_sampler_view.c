@@ -193,7 +193,7 @@ svga_validate_sampler_view(struct svga_context *svga,
 
    age = tex->age;
 
-   if (tex->b.b.target == PIPE_TEXTURE_CUBE)
+   if (tex->b.target == PIPE_TEXTURE_CUBE)
       numFaces = 6;
    else
       numFaces = 1;
@@ -205,9 +205,9 @@ svga_validate_sampler_view(struct svga_context *svga,
             svga_texture_copy_handle(svga,
                                      tex->handle, 0, 0, 0, i, k,
                                      v->handle, 0, 0, 0, i - v->min_lod, k,
-                                     u_minify(tex->b.b.width0, i),
-                                     u_minify(tex->b.b.height0, i),
-                                     u_minify(tex->b.b.depth0, i));
+                                     u_minify(tex->b.width0, i),
+                                     u_minify(tex->b.height0, i),
+                                     u_minify(tex->b.depth0, i));
       }
    }
 
@@ -223,7 +223,9 @@ svga_destroy_sampler_view_priv(struct svga_sampler_view *v)
    if (v->handle != tex->handle) {
       struct svga_screen *ss = svga_screen(v->texture->screen);
       SVGA_DBG(DEBUG_DMA, "unref sid %p (sampler view)\n", v->handle);
-      svga_screen_surface_destroy(ss, &v->key, &v->handle);
+      svga_screen_surface_destroy(ss, &v->key,
+                                  svga_was_texture_rendered_to(tex),
+                                  &v->handle);
    }
 
    /* Note: we're not refcounting the texture resource here to avoid

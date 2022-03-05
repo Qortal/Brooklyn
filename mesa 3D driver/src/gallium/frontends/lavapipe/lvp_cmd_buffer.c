@@ -23,6 +23,7 @@
 
 #include "lvp_private.h"
 #include "pipe/p_context.h"
+#include "vk_util.h"
 
 static VkResult lvp_create_cmd_buffer(
    struct lvp_device *                         device,
@@ -32,16 +33,23 @@ static VkResult lvp_create_cmd_buffer(
 {
    struct lvp_cmd_buffer *cmd_buffer;
 
-   cmd_buffer = vk_alloc(&pool->alloc, sizeof(*cmd_buffer), 8,
+   cmd_buffer = vk_alloc(&pool->vk.alloc, sizeof(*cmd_buffer), 8,
                          VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (cmd_buffer == NULL)
-      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   vk_object_base_init(&device->vk, &cmd_buffer->base,
-                       VK_OBJECT_TYPE_COMMAND_BUFFER);
+   VkResult result = vk_command_buffer_init(&cmd_buffer->vk, &pool->vk, level);
+   if (result != VK_SUCCESS) {
+      vk_free(&pool->vk.alloc, cmd_buffer);
+      return result;
+   }
+
    cmd_buffer->device = device;
    cmd_buffer->pool = pool;
-   list_inithead(&cmd_buffer->cmds);
+
+   cmd_buffer->queue.alloc = &pool->vk.alloc;
+   list_inithead(&cmd_buffer->queue.cmds);
+
    cmd_buffer->status = LVP_CMD_BUFFER_STATUS_INITIAL;
    if (pool) {
       list_addtail(&cmd_buffer->pool_link, &pool->cmd_buffers);
@@ -56,25 +64,17 @@ static VkResult lvp_create_cmd_buffer(
    return VK_SUCCESS;
 }
 
-static void
-lvp_cmd_buffer_free_all_cmds(struct lvp_cmd_buffer *cmd_buffer)
-{
-   struct lvp_cmd_buffer_entry *tmp, *cmd;
-   LIST_FOR_EACH_ENTRY_SAFE(cmd, tmp, &cmd_buffer->cmds, cmd_link) {
-      list_del(&cmd->cmd_link);
-      vk_free(&cmd_buffer->pool->alloc, cmd);
-   }
-}
-
 static VkResult lvp_reset_cmd_buffer(struct lvp_cmd_buffer *cmd_buffer)
 {
-   lvp_cmd_buffer_free_all_cmds(cmd_buffer);
-   list_inithead(&cmd_buffer->cmds);
+   vk_command_buffer_reset(&cmd_buffer->vk);
+
+   vk_free_queue(&cmd_buffer->queue);
+   list_inithead(&cmd_buffer->queue.cmds);
    cmd_buffer->status = LVP_CMD_BUFFER_STATUS_INITIAL;
    return VK_SUCCESS;
 }
 
-VkResult lvp_AllocateCommandBuffers(
+VKAPI_ATTR VkResult VKAPI_CALL lvp_AllocateCommandBuffers(
    VkDevice                                    _device,
    const VkCommandBufferAllocateInfo*          pAllocateInfo,
    VkCommandBuffer*                            pCommandBuffers)
@@ -94,7 +94,12 @@ VkResult lvp_AllocateCommandBuffers(
          list_addtail(&cmd_buffer->pool_link, &pool->cmd_buffers);
 
          result = lvp_reset_cmd_buffer(cmd_buffer);
-         cmd_buffer->level = pAllocateInfo->level;
+         vk_command_buffer_finish(&cmd_buffer->vk);
+         VkResult init_result =
+            vk_command_buffer_init(&cmd_buffer->vk, &pool->vk,
+                                   pAllocateInfo->level);
+         if (init_result != VK_SUCCESS)
+            result = init_result;
 
          pCommandBuffers[i] = lvp_cmd_buffer_to_handle(cmd_buffer);
       } else {
@@ -118,13 +123,13 @@ VkResult lvp_AllocateCommandBuffers(
 static void
 lvp_cmd_buffer_destroy(struct lvp_cmd_buffer *cmd_buffer)
 {
-   lvp_cmd_buffer_free_all_cmds(cmd_buffer);
+   vk_free_queue(&cmd_buffer->queue);
    list_del(&cmd_buffer->pool_link);
-   vk_object_base_finish(&cmd_buffer->base);
-   vk_free(&cmd_buffer->pool->alloc, cmd_buffer);
+   vk_command_buffer_finish(&cmd_buffer->vk);
+   vk_free(&cmd_buffer->pool->vk.alloc, cmd_buffer);
 }
 
-void lvp_FreeCommandBuffers(
+VKAPI_ATTR void VKAPI_CALL lvp_FreeCommandBuffers(
    VkDevice                                    device,
    VkCommandPool                               commandPool,
    uint32_t                                    commandBufferCount,
@@ -143,7 +148,7 @@ void lvp_FreeCommandBuffers(
    }
 }
 
-VkResult lvp_ResetCommandBuffer(
+VKAPI_ATTR VkResult VKAPI_CALL lvp_ResetCommandBuffer(
    VkCommandBuffer                             commandBuffer,
    VkCommandBufferResetFlags                   flags)
 {
@@ -152,7 +157,7 @@ VkResult lvp_ResetCommandBuffer(
    return lvp_reset_cmd_buffer(cmd_buffer);
 }
 
-VkResult lvp_BeginCommandBuffer(
+VKAPI_ATTR VkResult VKAPI_CALL lvp_BeginCommandBuffer(
    VkCommandBuffer                             commandBuffer,
    const VkCommandBufferBeginInfo*             pBeginInfo)
 {
@@ -167,7 +172,7 @@ VkResult lvp_BeginCommandBuffer(
    return VK_SUCCESS;
 }
 
-VkResult lvp_EndCommandBuffer(
+VKAPI_ATTR VkResult VKAPI_CALL lvp_EndCommandBuffer(
    VkCommandBuffer                             commandBuffer)
 {
    LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
@@ -175,7 +180,7 @@ VkResult lvp_EndCommandBuffer(
    return VK_SUCCESS;
 }
 
-VkResult lvp_CreateCommandPool(
+VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateCommandPool(
    VkDevice                                    _device,
    const VkCommandPoolCreateInfo*              pCreateInfo,
    const VkAllocationCallbacks*                pAllocator,
@@ -187,14 +192,14 @@ VkResult lvp_CreateCommandPool(
    pool = vk_alloc2(&device->vk.alloc, pAllocator, sizeof(*pool), 8,
                     VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
    if (pool == NULL)
-      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   vk_object_base_init(&device->vk, &pool->base,
-                       VK_OBJECT_TYPE_COMMAND_POOL);
-   if (pAllocator)
-      pool->alloc = *pAllocator;
-   else
-      pool->alloc = device->vk.alloc;
+   VkResult result = vk_command_pool_init(&pool->vk, &device->vk,
+                                          pCreateInfo, pAllocator);
+   if (result != VK_SUCCESS) {
+      vk_free2(&device->vk.alloc, pAllocator, pool);
+      return result;
+   }
 
    list_inithead(&pool->cmd_buffers);
    list_inithead(&pool->free_cmd_buffers);
@@ -204,7 +209,7 @@ VkResult lvp_CreateCommandPool(
    return VK_SUCCESS;
 }
 
-void lvp_DestroyCommandPool(
+VKAPI_ATTR void VKAPI_CALL lvp_DestroyCommandPool(
    VkDevice                                    _device,
    VkCommandPool                               commandPool,
    const VkAllocationCallbacks*                pAllocator)
@@ -225,11 +230,11 @@ void lvp_DestroyCommandPool(
       lvp_cmd_buffer_destroy(cmd_buffer);
    }
 
-   vk_object_base_finish(&pool->base);
+   vk_command_pool_finish(&pool->vk);
    vk_free2(&device->vk.alloc, pAllocator, pool);
 }
 
-VkResult lvp_ResetCommandPool(
+VKAPI_ATTR VkResult VKAPI_CALL lvp_ResetCommandPool(
    VkDevice                                    device,
    VkCommandPool                               commandPool,
    VkCommandPoolResetFlags                     flags)
@@ -246,7 +251,7 @@ VkResult lvp_ResetCommandPool(
    return VK_SUCCESS;
 }
 
-void lvp_TrimCommandPool(
+VKAPI_ATTR void VKAPI_CALL lvp_TrimCommandPool(
    VkDevice                                    device,
    VkCommandPool                               commandPool,
    VkCommandPoolTrimFlags                      flags)
@@ -262,162 +267,249 @@ void lvp_TrimCommandPool(
    }
 }
 
-static struct lvp_cmd_buffer_entry *cmd_buf_entry_alloc_size(struct lvp_cmd_buffer *cmd_buffer,
-                                                             uint32_t extra_size,
-                                                             enum lvp_cmds type)
+VKAPI_ATTR void VKAPI_CALL lvp_CmdDrawMultiEXT(
+    VkCommandBuffer                             commandBuffer,
+    uint32_t                                    drawCount,
+    const VkMultiDrawInfoEXT                   *pVertexInfo,
+    uint32_t                                    instanceCount,
+    uint32_t                                    firstInstance,
+    uint32_t                                    stride)
 {
-   struct lvp_cmd_buffer_entry *cmd;
-   uint32_t cmd_size = sizeof(*cmd) + extra_size;
-   cmd = vk_alloc(&cmd_buffer->pool->alloc,
-                  cmd_size,
-                  8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
+
+   struct vk_cmd_queue_entry *cmd = vk_zalloc(cmd_buffer->queue.alloc,
+                                              sizeof(*cmd), 8,
+                                              VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
    if (!cmd)
-      return NULL;
+      return;
 
-   cmd->cmd_type = type;
-   return cmd;
+   cmd->type = VK_CMD_DRAW_MULTI_EXT;
+   list_addtail(&cmd->cmd_link, &cmd_buffer->queue.cmds);
+
+   cmd->u.draw_multi_ext.draw_count = drawCount;
+   if (pVertexInfo) {
+      unsigned i = 0;
+      cmd->u.draw_multi_ext.vertex_info = vk_zalloc(cmd_buffer->queue.alloc,
+                                                    sizeof(*cmd->u.draw_multi_ext.vertex_info) * drawCount,
+                                                    8,
+                                                    VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+      vk_foreach_multi_draw(draw, i, pVertexInfo, drawCount, stride)
+         memcpy(&cmd->u.draw_multi_ext.vertex_info[i], draw, sizeof(*cmd->u.draw_multi_ext.vertex_info));
+   }
+   cmd->u.draw_multi_ext.instance_count = instanceCount;
+   cmd->u.draw_multi_ext.first_instance = firstInstance;
+   cmd->u.draw_multi_ext.stride = stride;
 }
 
-static struct lvp_cmd_buffer_entry *cmd_buf_entry_alloc(struct lvp_cmd_buffer *cmd_buffer,
-                                                        enum lvp_cmds type)
+VKAPI_ATTR void VKAPI_CALL lvp_CmdDrawMultiIndexedEXT(
+    VkCommandBuffer                             commandBuffer,
+    uint32_t                                    drawCount,
+    const VkMultiDrawIndexedInfoEXT            *pIndexInfo,
+    uint32_t                                    instanceCount,
+    uint32_t                                    firstInstance,
+    uint32_t                                    stride,
+    const int32_t                              *pVertexOffset)
 {
-   return cmd_buf_entry_alloc_size(cmd_buffer, 0, type);
-}
+   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
 
-static void cmd_buf_queue(struct lvp_cmd_buffer *cmd_buffer,
-                          struct lvp_cmd_buffer_entry *cmd)
-{
-   list_addtail(&cmd->cmd_link, &cmd_buffer->cmds);
-}
+   struct vk_cmd_queue_entry *cmd = vk_zalloc(cmd_buffer->queue.alloc,
+                                              sizeof(*cmd), 8,
+                                              VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+   if (!cmd)
+      return;
 
-static void
-state_setup_attachments(struct lvp_attachment_state *attachments,
-                        struct lvp_render_pass *pass,
-                        const VkClearValue *clear_values)
-{
-   for (uint32_t i = 0; i < pass->attachment_count; ++i) {
-      struct lvp_render_pass_attachment *att = &pass->attachments[i];
-      VkImageAspectFlags att_aspects = vk_format_aspects(att->format);
-      VkImageAspectFlags clear_aspects = 0;
-      if (att_aspects == VK_IMAGE_ASPECT_COLOR_BIT) {
-         /* color attachment */
-         if (att->load_op == VK_ATTACHMENT_LOAD_OP_CLEAR) {
-            clear_aspects |= VK_IMAGE_ASPECT_COLOR_BIT;
-         }
-      } else {
-         /* depthstencil attachment */
-         if ((att_aspects & VK_IMAGE_ASPECT_DEPTH_BIT) &&
-             att->load_op == VK_ATTACHMENT_LOAD_OP_CLEAR) {
-            clear_aspects |= VK_IMAGE_ASPECT_DEPTH_BIT;
-            if ((att_aspects & VK_IMAGE_ASPECT_STENCIL_BIT) &&
-                att->stencil_load_op == VK_ATTACHMENT_LOAD_OP_DONT_CARE)
-               clear_aspects |= VK_IMAGE_ASPECT_STENCIL_BIT;
-         }
-         if ((att_aspects & VK_IMAGE_ASPECT_STENCIL_BIT) &&
-             att->stencil_load_op == VK_ATTACHMENT_LOAD_OP_CLEAR) {
-            clear_aspects |= VK_IMAGE_ASPECT_STENCIL_BIT;
-         }
+   cmd->type = VK_CMD_DRAW_MULTI_INDEXED_EXT;
+   list_addtail(&cmd->cmd_link, &cmd_buffer->queue.cmds);
+
+   cmd->u.draw_multi_indexed_ext.draw_count = drawCount;
+
+   if (pIndexInfo) {
+      unsigned i = 0;
+      cmd->u.draw_multi_indexed_ext.index_info = vk_zalloc(cmd_buffer->queue.alloc,
+                                                           sizeof(*cmd->u.draw_multi_indexed_ext.index_info) * drawCount,
+                                                           8,
+                                                           VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+      vk_foreach_multi_draw_indexed(draw, i, pIndexInfo, drawCount, stride) {
+         cmd->u.draw_multi_indexed_ext.index_info[i].firstIndex = draw->firstIndex;
+         cmd->u.draw_multi_indexed_ext.index_info[i].indexCount = draw->indexCount;
+         if (pVertexOffset == NULL)
+            cmd->u.draw_multi_indexed_ext.index_info[i].vertexOffset = draw->vertexOffset;
       }
-      attachments[i].pending_clear_aspects = clear_aspects;
-      if (clear_values)
-         attachments[i].clear_value = clear_values[i];
+   }
+
+   cmd->u.draw_multi_indexed_ext.instance_count = instanceCount;
+   cmd->u.draw_multi_indexed_ext.first_instance = firstInstance;
+   cmd->u.draw_multi_indexed_ext.stride = stride;
+
+   if (pVertexOffset) {
+      cmd->u.draw_multi_indexed_ext.vertex_offset = vk_zalloc(cmd_buffer->queue.alloc, sizeof(*cmd->u.draw_multi_indexed_ext.vertex_offset), 8, VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+      memcpy(cmd->u.draw_multi_indexed_ext.vertex_offset, pVertexOffset, sizeof(*cmd->u.draw_multi_indexed_ext.vertex_offset));
    }
 }
 
-void lvp_CmdBeginRenderPass(
-   VkCommandBuffer                             commandBuffer,
-   const VkRenderPassBeginInfo*                pRenderPassBegin,
-   VkSubpassContents                           contents)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_render_pass, pass, pRenderPassBegin->renderPass);
-   LVP_FROM_HANDLE(lvp_framebuffer, framebuffer, pRenderPassBegin->framebuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-   uint32_t cmd_size = pass->attachment_count * sizeof(struct lvp_attachment_state);
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, cmd_size, LVP_CMD_BEGIN_RENDER_PASS);
-   if (!cmd)
-      return;
-
-   cmd->u.begin_render_pass.render_pass = pass;
-   cmd->u.begin_render_pass.framebuffer = framebuffer;
-   cmd->u.begin_render_pass.render_area = pRenderPassBegin->renderArea;
-
-   cmd->u.begin_render_pass.attachments = (struct lvp_attachment_state *)(cmd + 1);
-   state_setup_attachments(cmd->u.begin_render_pass.attachments, pass, pRenderPassBegin->pClearValues);
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdNextSubpass(
-   VkCommandBuffer                             commandBuffer,
-   VkSubpassContents                           contents)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_NEXT_SUBPASS);
-   if (!cmd)
-      return;
-
-   cmd->u.next_subpass.contents = contents;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdBindVertexBuffers(
-   VkCommandBuffer                             commandBuffer,
-   uint32_t                                    firstBinding,
-   uint32_t                                    bindingCount,
-   const VkBuffer*                             pBuffers,
-   const VkDeviceSize*                         pOffsets)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-   struct lvp_buffer **buffers;
-   VkDeviceSize *offsets;
-   int i;
-   uint32_t cmd_size = bindingCount * sizeof(struct lvp_buffer *) + bindingCount * sizeof(VkDeviceSize);
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, cmd_size, LVP_CMD_BIND_VERTEX_BUFFERS);
-   if (!cmd)
-      return;
-
-   cmd->u.vertex_buffers.first = firstBinding;
-   cmd->u.vertex_buffers.binding_count = bindingCount;
-
-   buffers = (struct lvp_buffer **)(cmd + 1);
-   offsets = (VkDeviceSize *)(buffers + bindingCount);
-   for (i = 0; i < bindingCount; i++) {
-      buffers[i] = lvp_buffer_from_handle(pBuffers[i]);
-      offsets[i] = pOffsets[i];
-   }
-   cmd->u.vertex_buffers.buffers = buffers;
-   cmd->u.vertex_buffers.offsets = offsets;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdBindPipeline(
+VKAPI_ATTR void VKAPI_CALL lvp_CmdPushDescriptorSetKHR(
    VkCommandBuffer                             commandBuffer,
    VkPipelineBindPoint                         pipelineBindPoint,
-   VkPipeline                                  _pipeline)
+   VkPipelineLayout                            layout,
+   uint32_t                                    set,
+   uint32_t                                    descriptorWriteCount,
+   const VkWriteDescriptorSet*                 pDescriptorWrites)
 {
    LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_pipeline, pipeline, _pipeline);
-   struct lvp_cmd_buffer_entry *cmd;
+   struct vk_cmd_push_descriptor_set_khr *pds;
 
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_BIND_PIPELINE);
+   struct vk_cmd_queue_entry *cmd = vk_zalloc(cmd_buffer->queue.alloc,
+                                              sizeof(*cmd), 8,
+                                              VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
    if (!cmd)
       return;
 
-   cmd->u.pipeline.bind_point = pipelineBindPoint;
-   cmd->u.pipeline.pipeline = pipeline;
+   pds = &cmd->u.push_descriptor_set_khr;
 
-   cmd_buf_queue(cmd_buffer, cmd);
+   cmd->type = VK_CMD_PUSH_DESCRIPTOR_SET_KHR;
+   list_addtail(&cmd->cmd_link, &cmd_buffer->queue.cmds);
+
+   pds->pipeline_bind_point = pipelineBindPoint;
+   pds->layout = layout;
+   pds->set = set;
+   pds->descriptor_write_count = descriptorWriteCount;
+
+   if (pDescriptorWrites) {
+      pds->descriptor_writes = vk_zalloc(cmd_buffer->queue.alloc,
+                                         sizeof(*pds->descriptor_writes) * descriptorWriteCount,
+                                         8,
+                                         VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+      memcpy(pds->descriptor_writes,
+             pDescriptorWrites,
+             sizeof(*pds->descriptor_writes) * descriptorWriteCount);
+
+      for (unsigned i = 0; i < descriptorWriteCount; i++) {
+         switch (pds->descriptor_writes[i].descriptorType) {
+         case VK_DESCRIPTOR_TYPE_SAMPLER:
+         case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+         case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+         case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+         case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+            pds->descriptor_writes[i].pImageInfo = vk_zalloc(cmd_buffer->queue.alloc,
+                                         sizeof(VkDescriptorImageInfo) * pds->descriptor_writes[i].descriptorCount,
+                                         8,
+                                         VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+            memcpy((VkDescriptorImageInfo *)pds->descriptor_writes[i].pImageInfo,
+                   pDescriptorWrites[i].pImageInfo,
+                   sizeof(VkDescriptorImageInfo) * pds->descriptor_writes[i].descriptorCount);
+            break;
+         case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+         case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+            pds->descriptor_writes[i].pTexelBufferView = vk_zalloc(cmd_buffer->queue.alloc,
+                                         sizeof(VkBufferView) * pds->descriptor_writes[i].descriptorCount,
+                                         8,
+                                         VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+            memcpy((VkBufferView *)pds->descriptor_writes[i].pTexelBufferView,
+                   pDescriptorWrites[i].pTexelBufferView,
+                   sizeof(VkBufferView) * pds->descriptor_writes[i].descriptorCount);
+            break;
+         case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+         case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+         case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+         case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+         default:
+            pds->descriptor_writes[i].pBufferInfo = vk_zalloc(cmd_buffer->queue.alloc,
+                                         sizeof(VkDescriptorBufferInfo) * pds->descriptor_writes[i].descriptorCount,
+                                         8,
+                                         VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+            memcpy((VkDescriptorBufferInfo *)pds->descriptor_writes[i].pBufferInfo,
+                   pDescriptorWrites[i].pBufferInfo,
+                   sizeof(VkDescriptorBufferInfo) * pds->descriptor_writes[i].descriptorCount);
+            break;
+         }
+      }
+   }
 }
 
-void lvp_CmdBindDescriptorSets(
+VKAPI_ATTR void VKAPI_CALL lvp_CmdPushDescriptorSetWithTemplateKHR(
+   VkCommandBuffer                             commandBuffer,
+   VkDescriptorUpdateTemplate                  descriptorUpdateTemplate,
+   VkPipelineLayout                            layout,
+   uint32_t                                    set,
+   const void*                                 pData)
+{
+   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
+   LVP_FROM_HANDLE(lvp_descriptor_update_template, templ, descriptorUpdateTemplate);
+   size_t info_size = 0;
+   struct vk_cmd_queue_entry *cmd = vk_zalloc(cmd_buffer->queue.alloc,
+                                              sizeof(*cmd), 8,
+                                              VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+   if (!cmd)
+      return;
+
+   cmd->type = VK_CMD_PUSH_DESCRIPTOR_SET_WITH_TEMPLATE_KHR;
+
+   list_addtail(&cmd->cmd_link, &cmd_buffer->queue.cmds);
+
+   cmd->u.push_descriptor_set_with_template_khr.descriptor_update_template = descriptorUpdateTemplate;
+   cmd->u.push_descriptor_set_with_template_khr.layout = layout;
+   cmd->u.push_descriptor_set_with_template_khr.set = set;
+
+   for (unsigned i = 0; i < templ->entry_count; i++) {
+      VkDescriptorUpdateTemplateEntry *entry = &templ->entry[i];
+
+      switch (entry->descriptorType) {
+      case VK_DESCRIPTOR_TYPE_SAMPLER:
+      case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+      case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+      case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+      case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+         info_size += sizeof(VkDescriptorImageInfo) * entry->descriptorCount;
+         break;
+      case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+      case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+         info_size += sizeof(VkBufferView) * entry->descriptorCount;
+         break;
+      case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+      case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+      case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+      case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+      default:
+         info_size += sizeof(VkDescriptorBufferInfo) * entry->descriptorCount;
+         break;
+      }
+   }
+
+   cmd->u.push_descriptor_set_with_template_khr.data = vk_zalloc(cmd_buffer->queue.alloc, info_size, 8, VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+
+   uint64_t offset = 0;
+   for (unsigned i = 0; i < templ->entry_count; i++) {
+      VkDescriptorUpdateTemplateEntry *entry = &templ->entry[i];
+
+      unsigned size = 0;
+      switch (entry->descriptorType) {
+      case VK_DESCRIPTOR_TYPE_SAMPLER:
+      case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+      case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+      case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+      case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+         size = sizeof(VkDescriptorImageInfo);
+         break;
+      case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+      case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+         size = sizeof(VkBufferView);
+         break;
+      case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+      case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+      case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+      case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+      default:
+         size = sizeof(VkDescriptorBufferInfo);
+         break;
+      }
+      for (unsigned i = 0; i < entry->descriptorCount; i++) {
+         memcpy((uint8_t*)cmd->u.push_descriptor_set_with_template_khr.data + offset, (const uint8_t*)pData + entry->offset + i * entry->stride, size);
+         offset += size;
+      }
+   }
+}
+
+VKAPI_ATTR void VKAPI_CALL lvp_CmdBindDescriptorSets(
    VkCommandBuffer                             commandBuffer,
    VkPipelineBindPoint                         pipelineBindPoint,
    VkPipelineLayout                            _layout,
@@ -429,991 +521,120 @@ void lvp_CmdBindDescriptorSets(
 {
    LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
    LVP_FROM_HANDLE(lvp_pipeline_layout, layout, _layout);
-   struct lvp_cmd_buffer_entry *cmd;
-   struct lvp_descriptor_set **sets;
-   uint32_t *offsets;
-   int i;
-   uint32_t cmd_size = descriptorSetCount * sizeof(struct lvp_descriptor_set *) + dynamicOffsetCount * sizeof(uint32_t);
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, cmd_size, LVP_CMD_BIND_DESCRIPTOR_SETS);
+   struct vk_cmd_queue_entry *cmd = vk_zalloc(cmd_buffer->queue.alloc,
+                                              sizeof(*cmd), 8,
+                                              VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
    if (!cmd)
       return;
 
-   cmd->u.descriptor_sets.bind_point = pipelineBindPoint;
-   cmd->u.descriptor_sets.layout = layout;
-   cmd->u.descriptor_sets.first = firstSet;
-   cmd->u.descriptor_sets.count = descriptorSetCount;
+   cmd->type = VK_CMD_BIND_DESCRIPTOR_SETS;
+   list_addtail(&cmd->cmd_link, &cmd_buffer->queue.cmds);
 
-   sets = (struct lvp_descriptor_set **)(cmd + 1);
-   for (i = 0; i < descriptorSetCount; i++) {
-      sets[i] = lvp_descriptor_set_from_handle(pDescriptorSets[i]);
+   /* _layout could have been destroyed by when this command executes */
+   struct lvp_descriptor_set_layout **set_layout = vk_zalloc(cmd_buffer->queue.alloc, sizeof(*set_layout) * layout->num_sets, 8, VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+   cmd->driver_data = set_layout;
+   for (unsigned i = 0; i < layout->num_sets; i++)
+      set_layout[i] = layout->set[i].layout;
+
+   cmd->u.bind_descriptor_sets.pipeline_bind_point = pipelineBindPoint;
+   cmd->u.bind_descriptor_sets.first_set = firstSet;
+   cmd->u.bind_descriptor_sets.descriptor_set_count = descriptorSetCount;
+   if (pDescriptorSets) {
+      cmd->u.bind_descriptor_sets.descriptor_sets = vk_zalloc(cmd_buffer->queue.alloc, sizeof(*cmd->u.bind_descriptor_sets.descriptor_sets) * descriptorSetCount, 8, VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+      memcpy(( VkDescriptorSet* )cmd->u.bind_descriptor_sets.descriptor_sets, pDescriptorSets, sizeof(*cmd->u.bind_descriptor_sets.descriptor_sets) * descriptorSetCount);
    }
-   cmd->u.descriptor_sets.sets = sets;
-
-   cmd->u.descriptor_sets.dynamic_offset_count = dynamicOffsetCount;
-   offsets = (uint32_t *)(sets + descriptorSetCount);
-   for (i = 0; i < dynamicOffsetCount; i++)
-      offsets[i] = pDynamicOffsets[i];
-   cmd->u.descriptor_sets.dynamic_offsets = offsets;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdDraw(
-   VkCommandBuffer                             commandBuffer,
-   uint32_t                                    vertexCount,
-   uint32_t                                    instanceCount,
-   uint32_t                                    firstVertex,
-   uint32_t                                    firstInstance)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_DRAW);
-   if (!cmd)
-      return;
-
-   cmd->u.draw.vertex_count = vertexCount;
-   cmd->u.draw.instance_count = instanceCount;
-   cmd->u.draw.first_vertex = firstVertex;
-   cmd->u.draw.first_instance = firstInstance;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdEndRenderPass(
-   VkCommandBuffer                             commandBuffer)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_END_RENDER_PASS);
-   if (!cmd)
-      return;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdSetViewport(
-   VkCommandBuffer                             commandBuffer,
-   uint32_t                                    firstViewport,
-   uint32_t                                    viewportCount,
-   const VkViewport*                           pViewports)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-   int i;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_VIEWPORT);
-   if (!cmd)
-      return;
-
-   cmd->u.set_viewport.first_viewport = firstViewport;
-   cmd->u.set_viewport.viewport_count = viewportCount;
-   for (i = 0; i < viewportCount; i++)
-      cmd->u.set_viewport.viewports[i] = pViewports[i];
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdSetScissor(
-   VkCommandBuffer                             commandBuffer,
-   uint32_t                                    firstScissor,
-   uint32_t                                    scissorCount,
-   const VkRect2D*                             pScissors)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-   int i;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_SCISSOR);
-   if (!cmd)
-      return;
-
-   cmd->u.set_scissor.first_scissor = firstScissor;
-   cmd->u.set_scissor.scissor_count = scissorCount;
-   for (i = 0; i < scissorCount; i++)
-      cmd->u.set_scissor.scissors[i] = pScissors[i];
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdSetLineWidth(
-   VkCommandBuffer                             commandBuffer,
-   float                                       lineWidth)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_LINE_WIDTH);
-   if (!cmd)
-      return;
-
-   cmd->u.set_line_width.line_width = lineWidth;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdSetDepthBias(
-   VkCommandBuffer                             commandBuffer,
-   float                                       depthBiasConstantFactor,
-   float                                       depthBiasClamp,
-   float                                       depthBiasSlopeFactor)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_DEPTH_BIAS);
-   if (!cmd)
-      return;
-
-   cmd->u.set_depth_bias.constant_factor = depthBiasConstantFactor;
-   cmd->u.set_depth_bias.clamp = depthBiasClamp;
-   cmd->u.set_depth_bias.slope_factor = depthBiasSlopeFactor;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdSetBlendConstants(
-   VkCommandBuffer                             commandBuffer,
-   const float                                 blendConstants[4])
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_BLEND_CONSTANTS);
-   if (!cmd)
-      return;
-
-   memcpy(cmd->u.set_blend_constants.blend_constants, blendConstants, 4 * sizeof(float));
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdSetDepthBounds(
-   VkCommandBuffer                             commandBuffer,
-   float                                       minDepthBounds,
-   float                                       maxDepthBounds)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_DEPTH_BOUNDS);
-   if (!cmd)
-      return;
-
-   cmd->u.set_depth_bounds.min_depth = minDepthBounds;
-   cmd->u.set_depth_bounds.max_depth = maxDepthBounds;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdSetStencilCompareMask(
-   VkCommandBuffer                             commandBuffer,
-   VkStencilFaceFlags                          faceMask,
-   uint32_t                                    compareMask)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_STENCIL_COMPARE_MASK);
-   if (!cmd)
-      return;
-
-   cmd->u.stencil_vals.face_mask = faceMask;
-   cmd->u.stencil_vals.value = compareMask;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdSetStencilWriteMask(
-   VkCommandBuffer                             commandBuffer,
-   VkStencilFaceFlags                          faceMask,
-   uint32_t                                    writeMask)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_STENCIL_WRITE_MASK);
-   if (!cmd)
-      return;
-
-   cmd->u.stencil_vals.face_mask = faceMask;
-   cmd->u.stencil_vals.value = writeMask;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-
-void lvp_CmdSetStencilReference(
-   VkCommandBuffer                             commandBuffer,
-   VkStencilFaceFlags                          faceMask,
-   uint32_t                                    reference)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_STENCIL_REFERENCE);
-   if (!cmd)
-      return;
-
-   cmd->u.stencil_vals.face_mask = faceMask;
-   cmd->u.stencil_vals.value = reference;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdPushConstants(
-   VkCommandBuffer                             commandBuffer,
-   VkPipelineLayout                            layout,
-   VkShaderStageFlags                          stageFlags,
-   uint32_t                                    offset,
-   uint32_t                                    size,
-   const void*                                 pValues)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, (size - 4), LVP_CMD_PUSH_CONSTANTS);
-   if (!cmd)
-      return;
-
-   cmd->u.push_constants.stage = stageFlags;
-   cmd->u.push_constants.offset = offset;
-   cmd->u.push_constants.size = size;
-   memcpy(cmd->u.push_constants.val, pValues, size);
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdBindIndexBuffer(
-   VkCommandBuffer                             commandBuffer,
-   VkBuffer                                    _buffer,
-   VkDeviceSize                                offset,
-   VkIndexType                                 indexType)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_buffer, buffer, _buffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_BIND_INDEX_BUFFER);
-   if (!cmd)
-      return;
-
-   cmd->u.index_buffer.buffer = buffer;
-   cmd->u.index_buffer.offset = offset;
-   cmd->u.index_buffer.index_type = indexType;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdDrawIndexed(
-   VkCommandBuffer                             commandBuffer,
-   uint32_t                                    indexCount,
-   uint32_t                                    instanceCount,
-   uint32_t                                    firstIndex,
-   int32_t                                     vertexOffset,
-   uint32_t                                    firstInstance)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_DRAW_INDEXED);
-   if (!cmd)
-      return;
-
-   cmd->u.draw_indexed.index_count = indexCount;
-   cmd->u.draw_indexed.instance_count = instanceCount;
-   cmd->u.draw_indexed.first_index = firstIndex;
-   cmd->u.draw_indexed.vertex_offset = vertexOffset;
-   cmd->u.draw_indexed.first_instance = firstInstance;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdDrawIndirect(
-   VkCommandBuffer                             commandBuffer,
-   VkBuffer                                    _buffer,
-   VkDeviceSize                                offset,
-   uint32_t                                    drawCount,
-   uint32_t                                    stride)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_buffer, buf, _buffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_DRAW_INDIRECT);
-   if (!cmd)
-      return;
-
-   cmd->u.draw_indirect.offset = offset;
-   cmd->u.draw_indirect.buffer = buf;
-   cmd->u.draw_indirect.draw_count = drawCount;
-   cmd->u.draw_indirect.stride = stride;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdDrawIndexedIndirect(
-   VkCommandBuffer                             commandBuffer,
-   VkBuffer                                    _buffer,
-   VkDeviceSize                                offset,
-   uint32_t                                    drawCount,
-   uint32_t                                    stride)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_buffer, buf, _buffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_DRAW_INDEXED_INDIRECT);
-   if (!cmd)
-      return;
-
-   cmd->u.draw_indirect.offset = offset;
-   cmd->u.draw_indirect.buffer = buf;
-   cmd->u.draw_indirect.draw_count = drawCount;
-   cmd->u.draw_indirect.stride = stride;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdDispatch(
-   VkCommandBuffer                             commandBuffer,
-   uint32_t                                    x,
-   uint32_t                                    y,
-   uint32_t                                    z)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_DISPATCH);
-   if (!cmd)
-      return;
-
-   cmd->u.dispatch.x = x;
-   cmd->u.dispatch.y = y;
-   cmd->u.dispatch.z = z;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdDispatchIndirect(
-   VkCommandBuffer                             commandBuffer,
-   VkBuffer                                    _buffer,
-   VkDeviceSize                                offset)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_DISPATCH_INDIRECT);
-   if (!cmd)
-      return;
-
-   cmd->u.dispatch_indirect.buffer = lvp_buffer_from_handle(_buffer);
-   cmd->u.dispatch_indirect.offset = offset;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdExecuteCommands(
-   VkCommandBuffer                             commandBuffer,
-   uint32_t                                    commandBufferCount,
-   const VkCommandBuffer*                      pCmdBuffers)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-   uint32_t cmd_size = commandBufferCount * sizeof(struct lvp_cmd_buffer *);
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, cmd_size, LVP_CMD_EXECUTE_COMMANDS);
-   if (!cmd)
-      return;
-
-   cmd->u.execute_commands.command_buffer_count = commandBufferCount;
-   for (unsigned i = 0; i < commandBufferCount; i++)
-      cmd->u.execute_commands.cmd_buffers[i] = lvp_cmd_buffer_from_handle(pCmdBuffers[i]);
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdSetEvent(VkCommandBuffer commandBuffer,
-                     VkEvent _event,
-                     VkPipelineStageFlags stageMask)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_event, event, _event);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_EVENT);
-   if (!cmd)
-      return;
-
-   cmd->u.event_set.event = event;
-   cmd->u.event_set.value = true;
-   cmd->u.event_set.flush = !!(stageMask == VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdResetEvent(VkCommandBuffer commandBuffer,
-                       VkEvent _event,
-                       VkPipelineStageFlags stageMask)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_event, event, _event);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_SET_EVENT);
-   if (!cmd)
-      return;
-
-   cmd->u.event_set.event = event;
-   cmd->u.event_set.value = false;
-   cmd->u.event_set.flush = !!(stageMask == VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
-
-   cmd_buf_queue(cmd_buffer, cmd);
-
-}
-
-void lvp_CmdWaitEvents(VkCommandBuffer commandBuffer,
-                       uint32_t eventCount,
-                       const VkEvent* pEvents,
-                       VkPipelineStageFlags srcStageMask,
-                       VkPipelineStageFlags dstStageMask,
-                       uint32_t memoryBarrierCount,
-                       const VkMemoryBarrier* pMemoryBarriers,
-                       uint32_t bufferMemoryBarrierCount,
-                       const VkBufferMemoryBarrier* pBufferMemoryBarriers,
-                       uint32_t imageMemoryBarrierCount,
-                       const VkImageMemoryBarrier* pImageMemoryBarriers)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-   uint32_t cmd_size = 0;
-
-   cmd_size += eventCount * sizeof(struct lvp_event *);
-   cmd_size += memoryBarrierCount * sizeof(VkMemoryBarrier);
-   cmd_size += bufferMemoryBarrierCount * sizeof(VkBufferMemoryBarrier);
-   cmd_size += imageMemoryBarrierCount * sizeof(VkImageMemoryBarrier);
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, cmd_size, LVP_CMD_WAIT_EVENTS);
-   if (!cmd)
-      return;
-
-   cmd->u.wait_events.src_stage_mask = srcStageMask;
-   cmd->u.wait_events.dst_stage_mask = dstStageMask;
-   cmd->u.wait_events.event_count = eventCount;
-   cmd->u.wait_events.events = (struct lvp_event **)(cmd + 1);
-   for (unsigned i = 0; i < eventCount; i++)
-      cmd->u.wait_events.events[i] = lvp_event_from_handle(pEvents[i]);
-   cmd->u.wait_events.memory_barrier_count = memoryBarrierCount;
-   cmd->u.wait_events.buffer_memory_barrier_count = bufferMemoryBarrierCount;
-   cmd->u.wait_events.image_memory_barrier_count = imageMemoryBarrierCount;
-
-   /* TODO finish off this */
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-
-void lvp_CmdCopyBufferToImage(
-   VkCommandBuffer                             commandBuffer,
-   VkBuffer                                    srcBuffer,
-   VkImage                                     destImage,
-   VkImageLayout                               destImageLayout,
-   uint32_t                                    regionCount,
-   const VkBufferImageCopy*                    pRegions)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_buffer, src_buffer, srcBuffer);
-   LVP_FROM_HANDLE(lvp_image, dst_image, destImage);
-   struct lvp_cmd_buffer_entry *cmd;
-   uint32_t cmd_size = regionCount * sizeof(VkBufferImageCopy);
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, cmd_size, LVP_CMD_COPY_BUFFER_TO_IMAGE);
-   if (!cmd)
-      return;
-
-   cmd->u.buffer_to_img.src = src_buffer;
-   cmd->u.buffer_to_img.dst = dst_image;
-   cmd->u.buffer_to_img.dst_layout = destImageLayout;
-   cmd->u.buffer_to_img.region_count = regionCount;
-
-   {
-      VkBufferImageCopy *regions;
-
-      regions = (VkBufferImageCopy *)(cmd + 1);
-      memcpy(regions, pRegions, regionCount * sizeof(VkBufferImageCopy));
-      cmd->u.buffer_to_img.regions = regions;
+   cmd->u.bind_descriptor_sets.dynamic_offset_count = dynamicOffsetCount;
+   if (pDynamicOffsets) {
+      cmd->u.bind_descriptor_sets.dynamic_offsets = vk_zalloc(cmd_buffer->queue.alloc, sizeof(*cmd->u.bind_descriptor_sets.dynamic_offsets) * dynamicOffsetCount, 8, VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+      memcpy(( uint32_t* )cmd->u.bind_descriptor_sets.dynamic_offsets, pDynamicOffsets, sizeof(*cmd->u.bind_descriptor_sets.dynamic_offsets) * dynamicOffsetCount);
    }
-
-   cmd_buf_queue(cmd_buffer, cmd);
 }
 
-void lvp_CmdCopyImageToBuffer(
-   VkCommandBuffer                             commandBuffer,
-   VkImage                                     srcImage,
-   VkImageLayout                               srcImageLayout,
-   VkBuffer                                    destBuffer,
-   uint32_t                                    regionCount,
-   const VkBufferImageCopy*                    pRegions)
+
+VKAPI_ATTR void VKAPI_CALL lvp_CmdBeginRendering(VkCommandBuffer                             commandBuffer,
+ const VkRenderingInfoKHR*                           pRenderingInfo
+)
 {
    LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_image, src_image, srcImage);
-   LVP_FROM_HANDLE(lvp_buffer, dst_buffer, destBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-   uint32_t cmd_size = regionCount * sizeof(VkBufferImageCopy);
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, cmd_size, LVP_CMD_COPY_IMAGE_TO_BUFFER);
+   struct vk_cmd_queue *queue = &cmd_buffer->queue;
+   struct vk_cmd_queue_entry *cmd = vk_zalloc(queue->alloc,
+                                              sizeof(*cmd), 8,
+                                              VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
    if (!cmd)
       return;
 
-   cmd->u.img_to_buffer.src = src_image;
-   cmd->u.img_to_buffer.dst = dst_buffer;
-   cmd->u.img_to_buffer.src_layout = srcImageLayout;
-   cmd->u.img_to_buffer.region_count = regionCount;
+   cmd->type = VK_CMD_BEGIN_RENDERING;
+   list_addtail(&cmd->cmd_link, &queue->cmds);
 
-   {
-      VkBufferImageCopy *regions;
-
-      regions = (VkBufferImageCopy *)(cmd + 1);
-      memcpy(regions, pRegions, regionCount * sizeof(VkBufferImageCopy));
-      cmd->u.img_to_buffer.regions = regions;
+   if (pRenderingInfo) {
+      cmd->u.begin_rendering.rendering_info = vk_zalloc(queue->alloc, sizeof(VkRenderingInfoKHR), 8, VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+      memcpy((void*)cmd->u.begin_rendering.rendering_info, pRenderingInfo, sizeof(VkRenderingInfoKHR));
+   VkRenderingInfoKHR *tmp_dst1 = (void *) cmd->u.begin_rendering.rendering_info; (void) tmp_dst1;
+   VkRenderingInfoKHR *tmp_src1 = (void *) pRenderingInfo; (void) tmp_src1;   
+   
+      const VkBaseInStructure *pnext = tmp_dst1->pNext;
+      if (pnext) {
+         switch ((int32_t)pnext->sType) {
+         
+      case VK_STRUCTURE_TYPE_DEVICE_GROUP_RENDER_PASS_BEGIN_INFO:
+         if (pnext) {
+      tmp_dst1->pNext = vk_zalloc(queue->alloc, sizeof(VkDeviceGroupRenderPassBeginInfo), 8, VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+      memcpy((void*)tmp_dst1->pNext, pnext, sizeof(VkDeviceGroupRenderPassBeginInfo));
+   VkDeviceGroupRenderPassBeginInfo *tmp_dst2 = (void *) tmp_dst1->pNext; (void) tmp_dst2;
+   VkDeviceGroupRenderPassBeginInfo *tmp_src2 = (void *) pnext; (void) tmp_src2;   
+   tmp_dst2->pDeviceRenderAreas = vk_zalloc(queue->alloc, sizeof(*tmp_dst2->pDeviceRenderAreas) * tmp_dst2->deviceRenderAreaCount, 8, VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+   memcpy(( VkRect2D*  )tmp_dst2->pDeviceRenderAreas, tmp_src2->pDeviceRenderAreas, sizeof(*tmp_dst2->pDeviceRenderAreas) * tmp_dst2->deviceRenderAreaCount);
+   } else {
+      tmp_dst1->pNext = NULL;
    }
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdCopyImage(
-   VkCommandBuffer                             commandBuffer,
-   VkImage                                     srcImage,
-   VkImageLayout                               srcImageLayout,
-   VkImage                                     destImage,
-   VkImageLayout                               destImageLayout,
-   uint32_t                                    regionCount,
-   const VkImageCopy*                          pRegions)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_image, src_image, srcImage);
-   LVP_FROM_HANDLE(lvp_image, dest_image, destImage);
-   struct lvp_cmd_buffer_entry *cmd;
-   uint32_t cmd_size = regionCount * sizeof(VkImageCopy);
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, cmd_size, LVP_CMD_COPY_IMAGE);
-   if (!cmd)
-      return;
-
-   cmd->u.copy_image.src = src_image;
-   cmd->u.copy_image.dst = dest_image;
-   cmd->u.copy_image.src_layout = srcImageLayout;
-   cmd->u.copy_image.dst_layout = destImageLayout;
-   cmd->u.copy_image.region_count = regionCount;
-
-   {
-      VkImageCopy *regions;
-
-      regions = (VkImageCopy *)(cmd + 1);
-      memcpy(regions, pRegions, regionCount * sizeof(VkImageCopy));
-      cmd->u.copy_image.regions = regions;
+         break;
+      
+      case VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_SHADING_RATE_ATTACHMENT_INFO_KHR:
+         if (pnext) {
+      tmp_dst1->pNext = vk_zalloc(queue->alloc, sizeof(VkRenderingFragmentShadingRateAttachmentInfoKHR), 8, VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+      memcpy((void*)tmp_dst1->pNext, pnext, sizeof(VkRenderingFragmentShadingRateAttachmentInfoKHR));
+   VkRenderingFragmentShadingRateAttachmentInfoKHR *tmp_dst2 = (void *) tmp_dst1->pNext; (void) tmp_dst2;
+   VkRenderingFragmentShadingRateAttachmentInfoKHR *tmp_src2 = (void *) pnext; (void) tmp_src2;   
+      } else {
+      tmp_dst1->pNext = NULL;
    }
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-
-void lvp_CmdCopyBuffer(
-   VkCommandBuffer                             commandBuffer,
-   VkBuffer                                    srcBuffer,
-   VkBuffer                                    destBuffer,
-   uint32_t                                    regionCount,
-   const VkBufferCopy*                         pRegions)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_buffer, src_buffer, srcBuffer);
-   LVP_FROM_HANDLE(lvp_buffer, dest_buffer, destBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-   uint32_t cmd_size = regionCount * sizeof(VkBufferCopy);
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, cmd_size, LVP_CMD_COPY_BUFFER);
-   if (!cmd)
-      return;
-
-   cmd->u.copy_buffer.src = src_buffer;
-   cmd->u.copy_buffer.dst = dest_buffer;
-   cmd->u.copy_buffer.region_count = regionCount;
-
-   {
-      VkBufferCopy *regions;
-
-      regions = (VkBufferCopy *)(cmd + 1);
-      memcpy(regions, pRegions, regionCount * sizeof(VkBufferCopy));
-      cmd->u.copy_buffer.regions = regions;
+         break;
+      
+      case VK_STRUCTURE_TYPE_RENDERING_FRAGMENT_DENSITY_MAP_ATTACHMENT_INFO_EXT:
+         if (pnext) {
+      tmp_dst1->pNext = vk_zalloc(queue->alloc, sizeof(VkRenderingFragmentDensityMapAttachmentInfoEXT), 8, VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+      memcpy((void*)tmp_dst1->pNext, pnext, sizeof(VkRenderingFragmentDensityMapAttachmentInfoEXT));
+   VkRenderingFragmentDensityMapAttachmentInfoEXT *tmp_dst2 = (void *) tmp_dst1->pNext; (void) tmp_dst2;
+   VkRenderingFragmentDensityMapAttachmentInfoEXT *tmp_src2 = (void *) pnext; (void) tmp_src2;   
+      } else {
+      tmp_dst1->pNext = NULL;
    }
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdBlitImage(
-   VkCommandBuffer                             commandBuffer,
-   VkImage                                     srcImage,
-   VkImageLayout                               srcImageLayout,
-   VkImage                                     destImage,
-   VkImageLayout                               destImageLayout,
-   uint32_t                                    regionCount,
-   const VkImageBlit*                          pRegions,
-   VkFilter                                    filter)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_image, src_image, srcImage);
-   LVP_FROM_HANDLE(lvp_image, dest_image, destImage);
-   struct lvp_cmd_buffer_entry *cmd;
-   uint32_t cmd_size = regionCount * sizeof(VkImageBlit);
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, cmd_size, LVP_CMD_BLIT_IMAGE);
-   if (!cmd)
-      return;
-
-   cmd->u.blit_image.src = src_image;
-   cmd->u.blit_image.dst = dest_image;
-   cmd->u.blit_image.src_layout = srcImageLayout;
-   cmd->u.blit_image.dst_layout = destImageLayout;
-   cmd->u.blit_image.filter = filter;
-   cmd->u.blit_image.region_count = regionCount;
-
-   {
-      VkImageBlit *regions;
-
-      regions = (VkImageBlit *)(cmd + 1);
-      memcpy(regions, pRegions, regionCount * sizeof(VkImageBlit));
-      cmd->u.blit_image.regions = regions;
+         break;
+      
+      case VK_STRUCTURE_TYPE_MULTIVIEW_PER_VIEW_ATTRIBUTES_INFO_NVX:
+         if (pnext) {
+      tmp_dst1->pNext = vk_zalloc(queue->alloc, sizeof(VkMultiviewPerViewAttributesInfoNVX), 8, VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+      memcpy((void*)tmp_dst1->pNext, pnext, sizeof(VkMultiviewPerViewAttributesInfoNVX));
+   VkMultiviewPerViewAttributesInfoNVX *tmp_dst2 = (void *) tmp_dst1->pNext; (void) tmp_dst2;
+   VkMultiviewPerViewAttributesInfoNVX *tmp_src2 = (void *) pnext; (void) tmp_src2;   
+      } else {
+      tmp_dst1->pNext = NULL;
    }
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdClearAttachments(
-   VkCommandBuffer                             commandBuffer,
-   uint32_t                                    attachmentCount,
-   const VkClearAttachment*                    pAttachments,
-   uint32_t                                    rectCount,
-   const VkClearRect*                          pRects)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-   uint32_t cmd_size = attachmentCount * sizeof(VkClearAttachment) + rectCount * sizeof(VkClearRect);
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, cmd_size, LVP_CMD_CLEAR_ATTACHMENTS);
-   if (!cmd)
-      return;
-
-   cmd->u.clear_attachments.attachment_count = attachmentCount;
-   cmd->u.clear_attachments.attachments = (VkClearAttachment *)(cmd + 1);
-   for (unsigned i = 0; i < attachmentCount; i++)
-      cmd->u.clear_attachments.attachments[i] = pAttachments[i];
-   cmd->u.clear_attachments.rect_count = rectCount;
-   cmd->u.clear_attachments.rects = (VkClearRect *)(cmd->u.clear_attachments.attachments + attachmentCount);
-   for (unsigned i = 0; i < rectCount; i++)
-      cmd->u.clear_attachments.rects[i] = pRects[i];
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdFillBuffer(
-   VkCommandBuffer                             commandBuffer,
-   VkBuffer                                    dstBuffer,
-   VkDeviceSize                                dstOffset,
-   VkDeviceSize                                fillSize,
-   uint32_t                                    data)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_buffer, dst_buffer, dstBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_FILL_BUFFER);
-   if (!cmd)
-      return;
-
-   cmd->u.fill_buffer.buffer = dst_buffer;
-   cmd->u.fill_buffer.offset = dstOffset;
-   cmd->u.fill_buffer.fill_size = fillSize;
-   cmd->u.fill_buffer.data = data;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdUpdateBuffer(
-   VkCommandBuffer                             commandBuffer,
-   VkBuffer                                    dstBuffer,
-   VkDeviceSize                                dstOffset,
-   VkDeviceSize                                dataSize,
-   const void*                                 pData)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_buffer, dst_buffer, dstBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, dataSize, LVP_CMD_UPDATE_BUFFER);
-   if (!cmd)
-      return;
-
-   cmd->u.update_buffer.buffer = dst_buffer;
-   cmd->u.update_buffer.offset = dstOffset;
-   cmd->u.update_buffer.data_size = dataSize;
-   memcpy(cmd->u.update_buffer.data, pData, dataSize);
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdClearColorImage(
-   VkCommandBuffer                             commandBuffer,
-   VkImage                                     image_h,
-   VkImageLayout                               imageLayout,
-   const VkClearColorValue*                    pColor,
-   uint32_t                                    rangeCount,
-   const VkImageSubresourceRange*              pRanges)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_image, image, image_h);
-   struct lvp_cmd_buffer_entry *cmd;
-   uint32_t cmd_size = rangeCount * sizeof(VkImageSubresourceRange);
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, cmd_size, LVP_CMD_CLEAR_COLOR_IMAGE);
-   if (!cmd)
-      return;
-
-   cmd->u.clear_color_image.image = image;
-   cmd->u.clear_color_image.layout = imageLayout;
-   cmd->u.clear_color_image.clear_val = *pColor;
-   cmd->u.clear_color_image.range_count = rangeCount;
-   cmd->u.clear_color_image.ranges = (VkImageSubresourceRange *)(cmd + 1);
-   for (unsigned i = 0; i < rangeCount; i++)
-      cmd->u.clear_color_image.ranges[i] = pRanges[i];
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdClearDepthStencilImage(
-   VkCommandBuffer                             commandBuffer,
-   VkImage                                     image_h,
-   VkImageLayout                               imageLayout,
-   const VkClearDepthStencilValue*             pDepthStencil,
-   uint32_t                                    rangeCount,
-   const VkImageSubresourceRange*              pRanges)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_image, image, image_h);
-   struct lvp_cmd_buffer_entry *cmd;
-   uint32_t cmd_size = rangeCount * sizeof(VkImageSubresourceRange);
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, cmd_size, LVP_CMD_CLEAR_DEPTH_STENCIL_IMAGE);
-   if (!cmd)
-      return;
-
-   cmd->u.clear_ds_image.image = image;
-   cmd->u.clear_ds_image.layout = imageLayout;
-   cmd->u.clear_ds_image.clear_val = *pDepthStencil;
-   cmd->u.clear_ds_image.range_count = rangeCount;
-   cmd->u.clear_ds_image.ranges = (VkImageSubresourceRange *)(cmd + 1);
-   for (unsigned i = 0; i < rangeCount; i++)
-      cmd->u.clear_ds_image.ranges[i] = pRanges[i];
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-
-void lvp_CmdResolveImage(
-   VkCommandBuffer                             commandBuffer,
-   VkImage                                     srcImage,
-   VkImageLayout                               srcImageLayout,
-   VkImage                                     destImage,
-   VkImageLayout                               destImageLayout,
-   uint32_t                                    regionCount,
-   const VkImageResolve*                       regions)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_image, src_image, srcImage);
-   LVP_FROM_HANDLE(lvp_image, dst_image, destImage);
-   struct lvp_cmd_buffer_entry *cmd;
-   uint32_t cmd_size = regionCount * sizeof(VkImageResolve);
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, cmd_size, LVP_CMD_RESOLVE_IMAGE);
-   if (!cmd)
-      return;
-
-   cmd->u.resolve_image.src = src_image;
-   cmd->u.resolve_image.dst = dst_image;
-   cmd->u.resolve_image.src_layout = srcImageLayout;
-   cmd->u.resolve_image.dst_layout = destImageLayout;
-   cmd->u.resolve_image.region_count = regionCount;
-   cmd->u.resolve_image.regions = (VkImageResolve *)(cmd + 1);
-   for (unsigned i = 0; i < regionCount; i++)
-      cmd->u.resolve_image.regions[i] = regions[i];
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdResetQueryPool(
-   VkCommandBuffer                             commandBuffer,
-   VkQueryPool                                 queryPool,
-   uint32_t                                    firstQuery,
-   uint32_t                                    queryCount)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_query_pool, query_pool, queryPool);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_RESET_QUERY_POOL);
-   if (!cmd)
-      return;
-
-   cmd->u.query.pool = query_pool;
-   cmd->u.query.query = firstQuery;
-   cmd->u.query.index = queryCount;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdBeginQueryIndexedEXT(
-   VkCommandBuffer                             commandBuffer,
-   VkQueryPool                                 queryPool,
-   uint32_t                                    query,
-   VkQueryControlFlags                         flags,
-   uint32_t                                    index)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_query_pool, query_pool, queryPool);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_BEGIN_QUERY);
-   if (!cmd)
-      return;
-
-   cmd->u.query.pool = query_pool;
-   cmd->u.query.query = query;
-   cmd->u.query.index = index;
-   cmd->u.query.precise = true;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdBeginQuery(
-   VkCommandBuffer                             commandBuffer,
-   VkQueryPool                                 queryPool,
-   uint32_t                                    query,
-   VkQueryControlFlags                         flags)
-{
-   lvp_CmdBeginQueryIndexedEXT(commandBuffer, queryPool, query, flags, 0);
-}
-
-void lvp_CmdEndQueryIndexedEXT(
-   VkCommandBuffer                             commandBuffer,
-   VkQueryPool                                 queryPool,
-   uint32_t                                    query,
-   uint32_t                                    index)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_query_pool, query_pool, queryPool);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_END_QUERY);
-   if (!cmd)
-      return;
-
-   cmd->u.query.pool = query_pool;
-   cmd->u.query.query = query;
-   cmd->u.query.index = index;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdEndQuery(
-   VkCommandBuffer                             commandBuffer,
-   VkQueryPool                                 queryPool,
-   uint32_t                                    query)
-{
-   lvp_CmdEndQueryIndexedEXT(commandBuffer, queryPool, query, 0);
-}
-
-void lvp_CmdWriteTimestamp(
-   VkCommandBuffer                             commandBuffer,
-   VkPipelineStageFlagBits                     pipelineStage,
-   VkQueryPool                                 queryPool,
-   uint32_t                                    query)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_query_pool, query_pool, queryPool);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_WRITE_TIMESTAMP);
-   if (!cmd)
-      return;
-
-   cmd->u.query.pool = query_pool;
-   cmd->u.query.query = query;
-   cmd->u.query.flush = !(pipelineStage == VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdCopyQueryPoolResults(
-   VkCommandBuffer                             commandBuffer,
-   VkQueryPool                                 queryPool,
-   uint32_t                                    firstQuery,
-   uint32_t                                    queryCount,
-   VkBuffer                                    dstBuffer,
-   VkDeviceSize                                dstOffset,
-   VkDeviceSize                                stride,
-   VkQueryResultFlags                          flags)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   LVP_FROM_HANDLE(lvp_query_pool, query_pool, queryPool);
-   LVP_FROM_HANDLE(lvp_buffer, buffer, dstBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-
-   cmd = cmd_buf_entry_alloc(cmd_buffer, LVP_CMD_COPY_QUERY_POOL_RESULTS);
-   if (!cmd)
-      return;
-
-   cmd->u.copy_query_pool_results.pool = query_pool;
-   cmd->u.copy_query_pool_results.first_query = firstQuery;
-   cmd->u.copy_query_pool_results.query_count = queryCount;
-   cmd->u.copy_query_pool_results.dst = buffer;
-   cmd->u.copy_query_pool_results.dst_offset = dstOffset;
-   cmd->u.copy_query_pool_results.stride = stride;
-   cmd->u.copy_query_pool_results.flags = flags;
-
-   cmd_buf_queue(cmd_buffer, cmd);
-}
-
-void lvp_CmdPipelineBarrier(
-   VkCommandBuffer                             commandBuffer,
-   VkPipelineStageFlags                        srcStageMask,
-   VkPipelineStageFlags                        destStageMask,
-   VkBool32                                    byRegion,
-   uint32_t                                    memoryBarrierCount,
-   const VkMemoryBarrier*                      pMemoryBarriers,
-   uint32_t                                    bufferMemoryBarrierCount,
-   const VkBufferMemoryBarrier*                pBufferMemoryBarriers,
-   uint32_t                                    imageMemoryBarrierCount,
-   const VkImageMemoryBarrier*                 pImageMemoryBarriers)
-{
-   LVP_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-   struct lvp_cmd_buffer_entry *cmd;
-   uint32_t cmd_size = 0;
-
-   cmd_size += memoryBarrierCount * sizeof(VkMemoryBarrier);
-   cmd_size += bufferMemoryBarrierCount * sizeof(VkBufferMemoryBarrier);
-   cmd_size += imageMemoryBarrierCount * sizeof(VkImageMemoryBarrier);
-
-   cmd = cmd_buf_entry_alloc_size(cmd_buffer, cmd_size, LVP_CMD_PIPELINE_BARRIER);
-   if (!cmd)
-      return;
-
-   cmd->u.pipeline_barrier.src_stage_mask = srcStageMask;
-   cmd->u.pipeline_barrier.dst_stage_mask = destStageMask;
-   cmd->u.pipeline_barrier.by_region = byRegion;
-   cmd->u.pipeline_barrier.memory_barrier_count = memoryBarrierCount;
-   cmd->u.pipeline_barrier.buffer_memory_barrier_count = bufferMemoryBarrierCount;
-   cmd->u.pipeline_barrier.image_memory_barrier_count = imageMemoryBarrierCount;
-
-   /* TODO finish off this */
-   cmd_buf_queue(cmd_buffer, cmd);
+         break;
+      
+         }
+      }
+      tmp_dst1->pColorAttachments = vk_zalloc(queue->alloc, sizeof(*tmp_dst1->pColorAttachments) * tmp_dst1->colorAttachmentCount, 8, VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+   memcpy(( VkRenderingAttachmentInfoKHR*             )tmp_dst1->pColorAttachments, tmp_src1->pColorAttachments, sizeof(*tmp_dst1->pColorAttachments) * tmp_dst1->colorAttachmentCount);
+      if (tmp_src1->pDepthAttachment) {
+         tmp_dst1->pDepthAttachment = vk_zalloc(queue->alloc, sizeof(VkRenderingAttachmentInfoKHR), 8, VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+         memcpy((void*)tmp_dst1->pDepthAttachment, tmp_src1->pDepthAttachment, sizeof(VkRenderingAttachmentInfoKHR));
+      }
+      if (tmp_src1->pStencilAttachment) {
+         tmp_dst1->pStencilAttachment = vk_zalloc(queue->alloc, sizeof(VkRenderingAttachmentInfoKHR), 8, VK_SYSTEM_ALLOCATION_SCOPE_COMMAND);
+         memcpy((void*)tmp_dst1->pStencilAttachment, tmp_src1->pStencilAttachment, sizeof(VkRenderingAttachmentInfoKHR));
+      }
+   } else {
+      cmd->u.begin_rendering.rendering_info = NULL;
+   }
 }

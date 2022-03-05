@@ -29,6 +29,7 @@
 
 #include "nir_to_tgsi_info.h"
 #include "util/u_math.h"
+#include "util/u_prim.h"
 #include "nir.h"
 #include "nir_deref.h"
 #include "tgsi/tgsi_scan.h"
@@ -220,21 +221,21 @@ static void scan_instruction(const struct nir_shader *nir,
       case nir_intrinsic_load_invocation_id:
          info->uses_invocationid = true;
          break;
-      case nir_intrinsic_load_num_work_groups:
+      case nir_intrinsic_load_num_workgroups:
          info->uses_grid_size = true;
          break;
-      case nir_intrinsic_load_local_group_size:
+      case nir_intrinsic_load_workgroup_size:
          /* The block size is translated to IMM with a fixed block size. */
          if (info->properties[TGSI_PROPERTY_CS_FIXED_BLOCK_WIDTH] == 0)
             info->uses_block_size = true;
          break;
       case nir_intrinsic_load_local_invocation_id:
-      case nir_intrinsic_load_work_group_id: {
+      case nir_intrinsic_load_workgroup_id: {
          unsigned mask = nir_ssa_def_components_read(&intr->dest.ssa);
          while (mask) {
             unsigned i = u_bit_scan(&mask);
 
-            if (intr->intrinsic == nir_intrinsic_load_work_group_id)
+            if (intr->intrinsic == nir_intrinsic_load_workgroup_id)
                info->uses_block_id[i] = true;
             else
                info->uses_thread_id[i] = true;
@@ -351,7 +352,7 @@ static void scan_instruction(const struct nir_shader *nir,
                if (glsl_base_type_is_integer(base_type))
                   break;
 
-               /* fall-through */
+               FALLTHROUGH;
             case INTERP_MODE_SMOOTH:
                if (var->data.sample)
                   info->uses_persp_sample = true;
@@ -433,10 +434,7 @@ void nir_tgsi_scan_shader(const struct nir_shader *nir,
    }
 
    if (nir->info.stage == MESA_SHADER_TESS_EVAL) {
-      if (nir->info.tess.primitive_mode == GL_ISOLINES)
-         info->properties[TGSI_PROPERTY_TES_PRIM_MODE] = PIPE_PRIM_LINES;
-      else
-         info->properties[TGSI_PROPERTY_TES_PRIM_MODE] = nir->info.tess.primitive_mode;
+      info->properties[TGSI_PROPERTY_TES_PRIM_MODE] = u_tess_prim_from_shader(nir->info.tess._primitive_mode);
 
       STATIC_ASSERT((TESS_SPACING_EQUAL + 1) % 3 == PIPE_TESS_SPACING_EQUAL);
       STATIC_ASSERT((TESS_SPACING_FRACTIONAL_ODD + 1) % 3 ==
@@ -460,6 +458,7 @@ void nir_tgsi_scan_shader(const struct nir_shader *nir,
       info->properties[TGSI_PROPERTY_FS_EARLY_DEPTH_STENCIL] =
          nir->info.fs.early_fragment_tests | nir->info.fs.post_depth_coverage;
       info->properties[TGSI_PROPERTY_FS_POST_DEPTH_COVERAGE] = nir->info.fs.post_depth_coverage;
+      info->uses_fbfetch = nir->info.fs.uses_fbfetch_output;
 
       if (nir->info.fs.pixel_center_integer) {
          info->properties[TGSI_PROPERTY_FS_COORD_PIXEL_CENTER] =
@@ -487,9 +486,9 @@ void nir_tgsi_scan_shader(const struct nir_shader *nir,
    }
 
    if (gl_shader_stage_is_compute(nir->info.stage)) {
-      info->properties[TGSI_PROPERTY_CS_FIXED_BLOCK_WIDTH] = nir->info.cs.local_size[0];
-      info->properties[TGSI_PROPERTY_CS_FIXED_BLOCK_HEIGHT] = nir->info.cs.local_size[1];
-      info->properties[TGSI_PROPERTY_CS_FIXED_BLOCK_DEPTH] = nir->info.cs.local_size[2];
+      info->properties[TGSI_PROPERTY_CS_FIXED_BLOCK_WIDTH] = nir->info.workgroup_size[0];
+      info->properties[TGSI_PROPERTY_CS_FIXED_BLOCK_HEIGHT] = nir->info.workgroup_size[1];
+      info->properties[TGSI_PROPERTY_CS_FIXED_BLOCK_DEPTH] = nir->info.workgroup_size[2];
    }
 
    i = 0;
@@ -498,7 +497,7 @@ void nir_tgsi_scan_shader(const struct nir_shader *nir,
       unsigned semantic_name, semantic_index;
 
       const struct glsl_type *type = variable->type;
-      if (nir_is_per_vertex_io(variable, nir->info.stage)) {
+      if (nir_is_arrayed_io(variable, nir->info.stage)) {
          assert(glsl_type_is_array(type));
          type = glsl_get_array_element(type);
       }
@@ -551,7 +550,7 @@ void nir_tgsi_scan_shader(const struct nir_shader *nir,
                info->input_interpolate[i] = TGSI_INTERPOLATE_COLOR;
                break;
             }
-            /* fall-through */
+            FALLTHROUGH;
 
          case INTERP_MODE_SMOOTH:
             assert(!glsl_base_type_is_integer(base_type));
@@ -579,13 +578,13 @@ void nir_tgsi_scan_shader(const struct nir_shader *nir,
          info->indirect_files |= 1 << TGSI_FILE_INPUT;
       info->file_max[TGSI_FILE_INPUT] = info->num_inputs - 1;
    } else {
-      int max = -1;
+      int max = info->file_max[TGSI_FILE_INPUT] = -1;
       nir_foreach_shader_in_variable(var, nir) {
-	 int slots = glsl_count_attribute_slots(var->type, false);
-	 int tmax = var->data.driver_location + slots - 1;
-	 if (tmax > max)
-	    max = tmax;
-	 info->file_max[TGSI_FILE_INPUT] = max;
+         int slots = glsl_count_attribute_slots(var->type, false);
+         int tmax = var->data.driver_location + slots - 1;
+         if (tmax > max)
+            max = tmax;
+         info->file_max[TGSI_FILE_INPUT] = max;
       }
    }
 
@@ -598,7 +597,7 @@ void nir_tgsi_scan_shader(const struct nir_shader *nir,
       i = variable->data.driver_location;
 
       const struct glsl_type *type = variable->type;
-      if (nir_is_per_vertex_io(variable, nir->info.stage)) {
+      if (nir_is_arrayed_io(variable, nir->info.stage)) {
          assert(glsl_type_is_array(type));
          type = glsl_get_array_element(type);
       }
@@ -784,11 +783,15 @@ void nir_tgsi_scan_shader(const struct nir_shader *nir,
          info->indirect_files |= 1 << TGSI_FILE_OUTPUT;
    }
 
-   uint32_t sampler_mask = 0, image_mask = 0;
+   uint32_t sampler_mask = 0;
    nir_foreach_uniform_variable(var, nir) {
-      uint32_t sampler_count = glsl_type_get_sampler_count(var->type);
-      uint32_t image_count = glsl_type_get_image_count(var->type);
+      uint32_t sampler_count = glsl_type_get_sampler_count(var->type) +
+                               glsl_type_get_texture_count(var->type);
       sampler_mask |= ((1ull << sampler_count) - 1) << var->data.binding;
+   }
+   uint32_t image_mask = 0;
+   nir_foreach_image_variable(var, nir) {
+      uint32_t image_count = glsl_type_get_image_count(var->type);
       image_mask |= ((1ull << image_count) - 1) << var->data.binding;
    }
    info->num_outputs = num_outputs;
@@ -801,9 +804,9 @@ void nir_tgsi_scan_shader(const struct nir_shader *nir,
    info->samplers_declared = sampler_mask;
 
    info->file_max[TGSI_FILE_SAMPLER] = util_last_bit(info->samplers_declared) - 1;
-   info->file_max[TGSI_FILE_SAMPLER_VIEW] = util_last_bit(nir->info.textures_used) - 1;
+   info->file_max[TGSI_FILE_SAMPLER_VIEW] = BITSET_LAST_BIT(nir->info.textures_used) - 1;
    info->file_mask[TGSI_FILE_SAMPLER] = info->samplers_declared;
-   info->file_mask[TGSI_FILE_SAMPLER_VIEW] = nir->info.textures_used;
+   info->file_mask[TGSI_FILE_SAMPLER_VIEW] = nir->info.textures_used[0];
    info->file_max[TGSI_FILE_IMAGE] = util_last_bit(info->images_declared) - 1;
    info->file_mask[TGSI_FILE_IMAGE] = info->images_declared;
 

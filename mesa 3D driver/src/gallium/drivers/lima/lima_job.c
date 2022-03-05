@@ -99,6 +99,7 @@ lima_job_create(struct lima_context *ctx)
 
    s->damage_rect.minx = s->damage_rect.miny = 0xffff;
    s->damage_rect.maxx = s->damage_rect.maxy = 0;
+   s->draws = 0;
 
    s->clear.depth = 0x00ffffff;
 
@@ -301,7 +302,7 @@ lima_job_get_damage(struct lima_job *job)
 static bool
 lima_fb_cbuf_needs_reload(struct lima_job *job)
 {
-   if (!(job->key.cbuf && (job->resolve & PIPE_CLEAR_COLOR0)))
+   if (!job->key.cbuf)
       return false;
 
    struct lima_surface *surf = lima_surface(job->key.cbuf);
@@ -323,7 +324,7 @@ lima_fb_cbuf_needs_reload(struct lima_job *job)
 static bool
 lima_fb_zsbuf_needs_reload(struct lima_job *job)
 {
-   if (!(job->key.zsbuf && (job->resolve & (PIPE_CLEAR_DEPTH | PIPE_CLEAR_STENCIL))))
+   if (!job->key.zsbuf)
       return false;
 
    struct lima_surface *surf = lima_surface(job->key.zsbuf);
@@ -345,10 +346,8 @@ lima_pack_reload_plbu_cmd(struct lima_job *job, struct pipe_surface *psurf)
 
    struct lima_context *ctx = job->ctx;
    struct lima_surface *surf = lima_surface(psurf);
-
-   struct pipe_surface *cbuf = job->key.cbuf;
-   int level = cbuf->u.tex.level;
-   unsigned first_layer = cbuf->u.tex.first_layer;
+   int level = psurf->u.tex.level;
+   unsigned first_layer = psurf->u.tex.first_layer;
 
    uint32_t va;
    void *cpu = lima_job_create_stream_bo(
@@ -376,7 +375,8 @@ lima_pack_reload_plbu_cmd(struct lima_job *job, struct pipe_surface *psurf)
 
    if (util_format_is_depth_or_stencil(psurf->format)) {
       reload_render_state.alpha_blend &= 0x0fffffff;
-      reload_render_state.depth_test |= 0x400;
+      if (psurf->format != PIPE_FORMAT_Z16_UNORM)
+         reload_render_state.depth_test |= 0x400;
       if (surf->reload & PIPE_CLEAR_DEPTH)
          reload_render_state.depth_test |= 0x801;
       if (surf->reload & PIPE_CLEAR_STENCIL) {
@@ -395,12 +395,12 @@ lima_pack_reload_plbu_cmd(struct lima_job *job, struct pipe_surface *psurf)
    lima_texture_desc_set_res(ctx, td, psurf->texture, level, level, first_layer);
    td->format = lima_format_get_texel_reload(psurf->format);
    td->unnorm_coords = 1;
-   td->texture_type = LIMA_TEXTURE_TYPE_2D;
+   td->sampler_dim = LIMA_SAMPLER_DIM_2D;
    td->min_img_filter_nearest = 1;
    td->mag_img_filter_nearest = 1;
-   td->wrap_s_clamp_to_edge = 1;
-   td->wrap_t_clamp_to_edge = 1;
-   td->unknown_2_2 = 0x1;
+   td->wrap_s = LIMA_TEX_WRAP_CLAMP_TO_EDGE;
+   td->wrap_t = LIMA_TEX_WRAP_CLAMP_TO_EDGE;
+   td->wrap_r = LIMA_TEX_WRAP_CLAMP_TO_EDGE;
 
    uint32_t *ta = cpu + lima_reload_tex_array_offset;
    ta[0] = va + lima_reload_tex_desc_offset;
@@ -440,6 +440,9 @@ lima_pack_reload_plbu_cmd(struct lima_job *job, struct pipe_surface *psurf)
    PLBU_CMD_DRAW_ELEMENTS(0xf, 0, 3);
 
    PLBU_CMD_END();
+
+   lima_dump_command_stream_print(job->dump, cpu, lima_reload_buffer_size,
+                                  false, "reload plbu cmd at va %x\n", va);
 }
 
 static void
@@ -540,7 +543,8 @@ lima_generate_pp_stream(struct lima_job *job, int off_x, int off_y,
    struct lima_pp_stream_state *ps = &ctx->pp_stream;
    struct lima_job_fb_info *fb = &job->fb;
    struct lima_screen *screen = lima_screen(ctx->base.screen);
-   int i, num_pp = screen->num_pp;
+   int num_pp = screen->num_pp;
+   assert(num_pp > 0);
 
    /* use hilbert_coords to generates 1D to 2D relationship.
     * 1D for pp stream index and 2D for plb block x/y on framebuffer.
@@ -549,8 +553,8 @@ lima_generate_pp_stream(struct lima_job *job, int off_x, int off_y,
     */
    int max = MAX2(tiled_w, tiled_h);
    int index = 0;
-   uint32_t *stream[4];
-   int si[4] = {0};
+   uint32_t *stream[8];
+   int si[8] = {0};
    int dim = 0;
    int count = 0;
 
@@ -562,10 +566,10 @@ lima_generate_pp_stream(struct lima_job *job, int off_x, int off_y,
       count = 1 << (dim + dim);
    }
 
-   for (i = 0; i < num_pp; i++)
+   for (int i = 0; i < num_pp; i++)
       stream[i] = ps->map + ps->offset[i];
 
-   for (i = 0; i < count; i++) {
+   for (int i = 0; i < count; i++) {
       int x, y;
       hilbert_coords(max, i, &x, &y);
       if (x < tiled_w && y < tiled_h) {
@@ -586,7 +590,7 @@ lima_generate_pp_stream(struct lima_job *job, int off_x, int off_y,
       }
    }
 
-   for (i = 0; i < num_pp; i++) {
+   for (int i = 0; i < num_pp; i++) {
       stream[i][si[i]++] = 0;
       stream[i][si[i]++] = 0xBC000000;
       stream[i][si[i]++] = 0;
@@ -835,18 +839,29 @@ lima_pack_pp_frame_reg(struct lima_job *job, uint32_t *frame_reg,
 {
    struct lima_context *ctx = job->ctx;
    struct lima_job_fb_info *fb = &job->fb;
+   struct pipe_surface *cbuf = job->key.cbuf;
    struct lima_pp_frame_reg *frame = (void *)frame_reg;
    struct lima_screen *screen = lima_screen(ctx->base.screen);
    int wb_idx = 0;
 
    frame->render_address = screen->pp_buffer->va + pp_frame_rsw_offset;
    frame->flags = 0x02;
+   if (cbuf && util_format_is_float(cbuf->format)) {
+      frame->flags |= 0x01; /* enable fp16 */
+      frame->clear_value_color   = (uint32_t)(job->clear.color_16pc & 0xffffffffUL);
+      frame->clear_value_color_1 = (uint32_t)(job->clear.color_16pc >> 32);
+      frame->clear_value_color_2 = 0;
+      frame->clear_value_color_3 = 0;
+   }
+   else {
+      frame->clear_value_color   = job->clear.color_8pc;
+      frame->clear_value_color_1 = job->clear.color_8pc;
+      frame->clear_value_color_2 = job->clear.color_8pc;
+      frame->clear_value_color_3 = job->clear.color_8pc;
+   }
+
    frame->clear_value_depth = job->clear.depth;
    frame->clear_value_stencil = job->clear.stencil;
-   frame->clear_value_color = job->clear.color_8pc;
-   frame->clear_value_color_1 = job->clear.color_8pc;
-   frame->clear_value_color_2 = job->clear.color_8pc;
-   frame->clear_value_color_3 = job->clear.color_8pc;
    frame->one = 1;
 
    frame->width = fb->width - 1;
@@ -870,7 +885,7 @@ lima_pack_pp_frame_reg(struct lima_job *job, uint32_t *frame_reg,
    /* Set default layout to 8888 */
    frame->channel_layout = 0x8888;
 
-   if (job->key.cbuf && (job->resolve & PIPE_CLEAR_COLOR0))
+   if (cbuf && (job->resolve & PIPE_CLEAR_COLOR0))
       lima_pack_wb_cbuf_reg(job, frame_reg, wb_reg, wb_idx++);
 
    if (job->key.zsbuf &&

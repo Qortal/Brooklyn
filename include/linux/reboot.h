@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_REBOOT_H
 #define _LINUX_REBOOT_H
 
@@ -5,12 +6,15 @@
 #include <linux/notifier.h>
 #include <uapi/linux/reboot.h>
 
+struct device;
+
 #define SYS_DOWN	0x0001	/* Notify of system down */
 #define SYS_RESTART	SYS_DOWN
 #define SYS_HALT	0x0002	/* Notify of system halt */
 #define SYS_POWER_OFF	0x0003	/* Notify of system power off */
 
 enum reboot_mode {
+	REBOOT_UNDEFINED = -1,
 	REBOOT_COLD = 0,
 	REBOOT_WARM,
 	REBOOT_HARD,
@@ -18,6 +22,7 @@ enum reboot_mode {
 	REBOOT_GPIO,
 };
 extern enum reboot_mode reboot_mode;
+extern enum reboot_mode panic_reboot_mode;
 
 enum reboot_type {
 	BOOT_TRIPLE	= 't',
@@ -38,6 +43,8 @@ extern int reboot_force;
 extern int register_reboot_notifier(struct notifier_block *);
 extern int unregister_reboot_notifier(struct notifier_block *);
 
+extern int devm_register_reboot_notifier(struct device *, struct notifier_block *);
+
 extern int register_restart_handler(struct notifier_block *);
 extern int unregister_restart_handler(struct notifier_block *);
 extern void do_kernel_restart(char *cmd);
@@ -47,9 +54,9 @@ extern void do_kernel_restart(char *cmd);
  */
 
 extern void migrate_to_reboot_cpu(void);
-extern void machine_restart(char *cmd) __noreturn;
-extern void machine_halt(void) __noreturn;
-extern void machine_power_off(void) __noreturn;
+extern void machine_restart(char *cmd);
+extern void machine_halt(void);
+extern void machine_power_off(void);
 
 extern void machine_shutdown(void);
 struct pt_regs;
@@ -60,9 +67,9 @@ extern void machine_crash_shutdown(struct pt_regs *);
  */
 
 extern void kernel_restart_prepare(char *cmd);
-extern void kernel_restart(char *cmd) __noreturn;
-extern void kernel_halt(void) __noreturn;
-extern void kernel_power_off(void) __noreturn;
+extern void kernel_restart(char *cmd);
+extern void kernel_halt(void);
+extern void kernel_power_off(void);
 
 extern int C_A_D; /* for sysctl */
 void ctrl_alt_del(void);
@@ -72,12 +79,13 @@ extern char poweroff_cmd[POWEROFF_CMD_PATH_LEN];
 
 extern void orderly_poweroff(bool force);
 extern void orderly_reboot(void);
+void hw_protection_shutdown(const char *reason, int ms_until_forced);
 
 /*
  * Emergency restart, callable from an interrupt handler.
  */
 
-extern void emergency_restart(void) __noreturn;
+extern void emergency_restart(void);
 #include <asm/emergency-restart.h>
 
 #endif /* _LINUX_REBOOT_H */

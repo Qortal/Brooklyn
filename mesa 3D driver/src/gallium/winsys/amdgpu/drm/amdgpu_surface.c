@@ -34,7 +34,7 @@ static int amdgpu_surface_sanity(const struct pipe_resource *tex)
    case PIPE_TEXTURE_1D:
       if (tex->height0 > 1)
          return -EINVAL;
-      /* fall through */
+      FALLTHROUGH;
    case PIPE_TEXTURE_2D:
    case PIPE_TEXTURE_RECT:
       if (tex->depth0 > 1 || tex->array_size > 1)
@@ -47,7 +47,7 @@ static int amdgpu_surface_sanity(const struct pipe_resource *tex)
    case PIPE_TEXTURE_1D_ARRAY:
       if (tex->height0 > 1)
          return -EINVAL;
-      /* fall through */
+      FALLTHROUGH;
    case PIPE_TEXTURE_CUBE:
    case PIPE_TEXTURE_2D_ARRAY:
    case PIPE_TEXTURE_CUBE_ARRAY:
@@ -62,7 +62,7 @@ static int amdgpu_surface_sanity(const struct pipe_resource *tex)
 
 static int amdgpu_surface_init(struct radeon_winsys *rws,
                                const struct pipe_resource *tex,
-                               unsigned flags, unsigned bpe,
+                               uint64_t flags, unsigned bpe,
                                enum radeon_surf_mode mode,
                                struct radeon_surf *surf)
 {

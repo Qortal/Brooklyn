@@ -1,5 +1,5 @@
 /*
- * Copyright © 2020 Raspberry Pi
+ * Copyright © 2020 Raspberry Pi Ltd
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -56,7 +56,7 @@ lower_load(struct v3d_compile *c,
            nir_builder *b,
            nir_intrinsic_instr *instr)
 {
-        uint32_t index = nir_src_as_uint(instr->src[0]);
+        uint32_t index = nir_src_comp_as_uint(instr->src[0], 0);
 
         nir_intrinsic_op op;
         if (instr->intrinsic == nir_intrinsic_load_ubo) {
@@ -75,7 +75,7 @@ lower_store(struct v3d_compile *c,
             nir_builder *b,
             nir_intrinsic_instr *instr)
 {
-        uint32_t index = nir_src_as_uint(instr->src[1]);
+        uint32_t index = nir_src_comp_as_uint(instr->src[1], 0);
         rewrite_offset(b, instr, index, 2, nir_intrinsic_get_ssbo_size);
 }
 
@@ -84,7 +84,7 @@ lower_atomic(struct v3d_compile *c,
              nir_builder *b,
              nir_intrinsic_instr *instr)
 {
-        uint32_t index = nir_src_as_uint(instr->src[0]);
+        uint32_t index = nir_src_comp_as_uint(instr->src[0], 0);
         rewrite_offset(b, instr, index, 1, nir_intrinsic_get_ssbo_size);
 }
 
@@ -95,7 +95,7 @@ lower_shared(struct v3d_compile *c,
 {
         b->cursor = nir_before_instr(&instr->instr);
         nir_ssa_def *aligned_size =
-                nir_imm_int(b, c->s->info.cs.shared_size & 0xfffffffc);
+                nir_imm_int(b, c->s->info.shared_size & 0xfffffffc);
         nir_ssa_def *offset = nir_umin(b, instr->src[0].ssa, aligned_size);
         nir_instr_rewrite_src(&instr->instr, &instr->src[0],
                               nir_src_for_ssa(offset));

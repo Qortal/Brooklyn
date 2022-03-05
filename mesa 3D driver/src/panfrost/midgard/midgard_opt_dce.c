@@ -60,7 +60,7 @@ can_dce(midgard_instruction *ins)
                         return false;
 
         if (ins->type == TAG_TEXTURE_4)
-                if (ins->op == TEXTURE_OP_BARRIER)
+                if (ins->op == midgard_tex_op_barrier)
                         return false;
 
         return true;
@@ -80,7 +80,7 @@ midgard_opt_dead_code_eliminate_block(compiler_context *ctx, midgard_block *bloc
                         unsigned oldmask = ins->mask;
 
                         /* Make sure we're packable */
-                        if (type_size == 16 && ins->type == TAG_LOAD_STORE_4)
+                        if (type_size < 32 && ins->type == TAG_LOAD_STORE_4)
                                 round_size = 32;
 
                         unsigned rounded = mir_round_bytemask_up(live[ins->dest], round_size);

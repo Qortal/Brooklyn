@@ -68,13 +68,14 @@ static void si_build_load_reg(struct si_screen *sscreen, struct si_pm4_state *pm
 static struct si_pm4_state *
 si_create_shadowing_ib_preamble(struct si_context *sctx)
 {
-   struct si_pm4_state *pm4 = CALLOC_STRUCT(si_pm4_state);
+   struct si_shadow_preamble {
+      struct si_pm4_state pm4;
+      uint32_t more_pm4[150]; /* Add more space because the command buffer is large. */
+   };
+   struct si_pm4_state *pm4 = (struct si_pm4_state *)CALLOC_STRUCT(si_shadow_preamble);
 
-   if (sctx->chip_class == GFX10) {
-      /* SQ_NON_EVENT must be emitted before GE_PC_ALLOC is written. */
-      si_pm4_cmd_add(pm4, PKT3(PKT3_EVENT_WRITE, 0, 0));
-      si_pm4_cmd_add(pm4, EVENT_TYPE(V_028A90_SQ_NON_EVENT) | EVENT_INDEX(0));
-   }
+   /* Add all the space that we allocated. */
+   pm4->max_dw = sizeof(struct si_shadow_preamble) - offsetof(struct si_shadow_preamble, pm4.pm4);
 
    if (sctx->screen->dpbb_allowed) {
       si_pm4_cmd_add(pm4, PKT3(PKT3_EVENT_WRITE, 0, 0));
@@ -144,13 +145,22 @@ si_create_shadowing_ib_preamble(struct si_context *sctx)
    return pm4;
 }
 
+static void si_set_context_reg_array(struct radeon_cmdbuf *cs, unsigned reg, unsigned num,
+                                     const uint32_t *values)
+{
+   radeon_begin(cs);
+   radeon_set_context_reg_seq(reg, num);
+   radeon_emit_array(values, num);
+   radeon_end();
+}
+
 void si_init_cp_reg_shadowing(struct si_context *sctx)
 {
    if (sctx->screen->info.mid_command_buffer_preemption_enabled ||
        sctx->screen->debug_flags & DBG(SHADOW_REGS)) {
       sctx->shadowed_regs =
             si_aligned_buffer_create(sctx->b.screen,
-                                     SI_RESOURCE_FLAG_UNMAPPABLE | SI_RESOURCE_FLAG_DRIVER_INTERNAL,
+                                     PIPE_RESOURCE_FLAG_UNMAPPABLE | SI_RESOURCE_FLAG_DRIVER_INTERNAL,
                                      PIPE_USAGE_DEFAULT,
                                      SI_SHADOWED_REG_BUFFER_SIZE,
                                      4096);
@@ -162,20 +172,19 @@ void si_init_cp_reg_shadowing(struct si_context *sctx)
 
    if (sctx->shadowed_regs) {
       /* We need to clear the shadowed reg buffer. */
-      si_cp_dma_clear_buffer(sctx, sctx->gfx_cs, &sctx->shadowed_regs->b.b,
-                             0, sctx->shadowed_regs->bo_size, 0, 0, SI_COHERENCY_CP,
-                             L2_BYPASS);
+      si_cp_dma_clear_buffer(sctx, &sctx->gfx_cs, &sctx->shadowed_regs->b.b,
+                             0, sctx->shadowed_regs->bo_size, 0, SI_OP_SYNC_AFTER,
+                             SI_COHERENCY_CP, L2_BYPASS);
 
       /* Create the shadowing preamble. */
       struct si_pm4_state *shadowing_preamble =
             si_create_shadowing_ib_preamble(sctx);
 
       /* Initialize shadowed registers as follows. */
-      radeon_add_to_buffer_list(sctx, sctx->gfx_cs, sctx->shadowed_regs,
-                                RADEON_USAGE_READWRITE, RADEON_PRIO_DESCRIPTORS);
+      radeon_add_to_buffer_list(sctx, &sctx->gfx_cs, sctx->shadowed_regs,
+                                RADEON_USAGE_READWRITE | RADEON_PRIO_DESCRIPTORS);
       si_pm4_emit(sctx, shadowing_preamble);
-      ac_emulate_clear_state(&sctx->screen->info, sctx->gfx_cs,
-                             radeon_set_context_reg_seq_array);
+      ac_emulate_clear_state(&sctx->screen->info, &sctx->gfx_cs, si_set_context_reg_array);
       si_pm4_emit(sctx, sctx->cs_preamble_state);
 
       /* The register values are shadowed, so we won't need to set them again. */
@@ -187,7 +196,7 @@ void si_init_cp_reg_shadowing(struct si_context *sctx)
       /* Setup preemption. The shadowing preamble will be executed as a preamble IB,
        * which will load register values from memory on a context switch.
        */
-      sctx->ws->cs_setup_preemption(sctx->gfx_cs, shadowing_preamble->pm4,
+      sctx->ws->cs_setup_preemption(&sctx->gfx_cs, shadowing_preamble->pm4,
                                     shadowing_preamble->ndw);
       si_pm4_free_state(sctx, shadowing_preamble, ~0);
    }

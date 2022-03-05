@@ -20,21 +20,31 @@
 
 subdir('glcpp')
 
+bison_command = []
+if yacc_is_bison
+  bison_command = [
+    prog_bison, '-o', '@OUTPUT0@', '-p', '_mesa_glsl_', '--defines=@OUTPUT1@',
+    '@INPUT@',
+  ]
+else
+  bison_command = [
+    prog_bison, '-o', '@OUTPUT0@', '-p', '_mesa_glsl_', '-H', '@OUTPUT1@',
+    '@INPUT@',
+  ]
+endif
+
 glsl_parser = custom_target(
   'glsl_parser',
   input : 'glsl_parser.yy',
   output : ['glsl_parser.cpp', 'glsl_parser.h'],
-  command : [
-    prog_bison, '-o', '@OUTPUT0@', '-p', '_mesa_glsl_', '--defines=@OUTPUT1@',
-    '@INPUT@',
-  ],
+  command : bison_command
 )
 
 glsl_lexer_cpp = custom_target(
   'glsl_lexer_cpp',
   input : 'glsl_lexer.ll',
   output : 'glsl_lexer.cpp',
-  command : [prog_flex, '-o', '@OUTPUT@', '@INPUT@'],
+  command : [prog_flex_cpp, '-o', '@OUTPUT@', '@INPUT@'],
 )
 
 ir_expression_operation_constant_h = custom_target(
@@ -165,7 +175,6 @@ files_libglsl = files(
   'lower_precision.cpp',
   'lower_subroutine.cpp',
   'lower_tess_level.cpp',
-  'lower_texture_projection.cpp',
   'lower_variable_index_to_cond_assign.cpp',
   'lower_vec_index_to_cond_assign.cpp',
   'lower_vec_index_to_swizzle.cpp',
@@ -195,11 +204,9 @@ files_libglsl = files(
   'opt_if_simplification.cpp',
   'opt_minmax.cpp',
   'opt_rebalance_tree.cpp',
-  'opt_redundant_jumps.cpp',
   'opt_structure_splitting.cpp',
   'opt_swizzle.cpp',
   'opt_tree_grafting.cpp',
-  'opt_vectorize.cpp',
   'program.h',
   'propagate_invariance.cpp',
   's_expression.cpp',
@@ -254,7 +261,7 @@ glsl_compiler = executable(
   c_args : [c_msvc_compat_args, no_override_init_args],
   cpp_args : [cpp_msvc_compat_args],
   gnu_symbol_visibility : 'hidden',
-  dependencies : [dep_clock, dep_thread, idep_getopt],
+  dependencies : [dep_clock, dep_thread, idep_getopt, idep_mesautil],
   include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux],
   link_with : [libglsl_standalone],
   build_by_default : with_tools.contains('glsl'),
@@ -269,7 +276,7 @@ glsl_test = executable(
   cpp_args : [cpp_msvc_compat_args],
   gnu_symbol_visibility : 'hidden',
   include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux],
-  dependencies : [dep_clock, dep_thread, idep_getopt],
+  dependencies : [dep_clock, dep_thread, idep_getopt, idep_mesautil],
   link_with : [libglsl, libglsl_standalone, libglsl_util],
   build_by_default : with_tools.contains('glsl'),
   install : with_tools.contains('glsl'),

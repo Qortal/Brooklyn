@@ -224,6 +224,7 @@ static void virgl_vtest_resource_reference(struct virgl_winsys *vws,
 static struct virgl_hw_res *
 virgl_vtest_winsys_resource_create(struct virgl_winsys *vws,
                                    enum pipe_texture_target target,
+                                   const void *map_front_private,
                                    uint32_t format,
                                    uint32_t bind,
                                    uint32_t width,
@@ -238,6 +239,17 @@ virgl_vtest_winsys_resource_create(struct virgl_winsys *vws,
    struct virgl_hw_res *res;
    static int handle = 1;
    int fd = -1;
+   struct virgl_resource_params params = { .size = size,
+                                           .bind = bind,
+                                           .format = format,
+                                           .flags = 0,
+                                           .nr_samples = nr_samples,
+                                           .width = width,
+                                           .height = height,
+                                           .depth = depth,
+                                           .array_size = array_size,
+                                           .last_level = last_level,
+                                           .target = target };
 
    res = CALLOC_STRUCT(virgl_hw_res);
    if (!res)
@@ -245,7 +257,7 @@ virgl_vtest_winsys_resource_create(struct virgl_winsys *vws,
 
    if (bind & (VIRGL_BIND_DISPLAY_TARGET | VIRGL_BIND_SCANOUT)) {
       res->dt = vtws->sws->displaytarget_create(vtws->sws, bind, format,
-                                                width, height, 64, NULL,
+                                                width, height, 64, map_front_private,
                                                 &res->stride);
 
    } else if (vtws->protocol_version < 2) {
@@ -268,6 +280,7 @@ virgl_vtest_winsys_resource_create(struct virgl_winsys *vws,
    if (vtws->protocol_version >= 2) {
       if (res->size == 0) {
          res->ptr = NULL;
+         res->res_handle = handle;
          goto out;
       }
 
@@ -290,9 +303,21 @@ virgl_vtest_winsys_resource_create(struct virgl_winsys *vws,
       close(fd);
    }
 
+   res->res_handle = handle;
+   if (map_front_private && res->ptr && res->dt) {
+      void *dt_map = vtws->sws->displaytarget_map(vtws->sws, res->dt, PIPE_MAP_READ_WRITE);
+      uint32_t shm_stride = util_format_get_stride(res->format, res->width);
+      util_copy_rect(res->ptr, res->format, shm_stride, 0, 0,
+                     res->width, res->height, dt_map, res->stride, 0, 0);
+
+      struct pipe_box box;
+      u_box_2d(0, 0, res->width, res->height, &box);
+      virgl_vtest_transfer_put(vws, res, &box, res->stride, 0, 0, 0);
+   }
+
 out:
-   virgl_resource_cache_entry_init(&res->cache_entry, size, bind, format, 0);
-   res->res_handle = handle++;
+   virgl_resource_cache_entry_init(&res->cache_entry, params);
+   handle++;
    pipe_reference_init(&res->reference, 1);
    p_atomic_set(&res->num_cs_references, 0);
    return res;
@@ -339,6 +364,7 @@ static void virgl_vtest_resource_wait(struct virgl_winsys *vws,
 static struct virgl_hw_res *
 virgl_vtest_winsys_resource_cache_create(struct virgl_winsys *vws,
                                          enum pipe_texture_target target,
+                                         const void *map_front_private,
                                          uint32_t format,
                                          uint32_t bind,
                                          uint32_t width,
@@ -353,14 +379,24 @@ virgl_vtest_winsys_resource_cache_create(struct virgl_winsys *vws,
    struct virgl_vtest_winsys *vtws = virgl_vtest_winsys(vws);
    struct virgl_hw_res *res;
    struct virgl_resource_cache_entry *entry;
+   struct virgl_resource_params params = { .size = size,
+                                           .bind = bind,
+                                           .format = format,
+                                           .flags = 0,
+                                           .nr_samples = nr_samples,
+                                           .width = width,
+                                           .height = height,
+                                           .depth = depth,
+                                           .array_size = array_size,
+                                           .last_level = last_level,
+                                           .target = target };
 
    if (!can_cache_resource_with_bind(bind))
       goto alloc;
 
    mtx_lock(&vtws->mutex);
 
-   entry = virgl_resource_cache_remove_compatible(&vtws->cache, size,
-                                                  bind, format, 0);
+   entry = virgl_resource_cache_remove_compatible(&vtws->cache, params);
    if (entry) {
       res = cache_entry_container_res(entry);
       mtx_unlock(&vtws->mutex);
@@ -371,9 +407,10 @@ virgl_vtest_winsys_resource_cache_create(struct virgl_winsys *vws,
    mtx_unlock(&vtws->mutex);
 
 alloc:
-   res = virgl_vtest_winsys_resource_create(vws, target, format, bind,
-                                            width, height, depth, array_size,
-                                            last_level, nr_samples, size);
+   res = virgl_vtest_winsys_resource_create(vws, target, map_front_private,
+                                            format, bind, width, height, depth,
+                                            array_size, last_level, nr_samples,
+                                            size);
    return res;
 }
 
@@ -487,6 +524,7 @@ virgl_vtest_fence_create(struct virgl_winsys *vws)
     */
    res = virgl_vtest_winsys_resource_create(vws,
                                             PIPE_BUFFER,
+                                            NULL,
                                             PIPE_FORMAT_R8_UNORM,
                                             VIRGL_BIND_CUSTOM,
                                             8, 1, 1, 0, 0, 0, 8);
@@ -543,9 +581,14 @@ static int virgl_vtest_get_caps(struct virgl_winsys *vws,
                                 struct virgl_drm_caps *caps)
 {
    struct virgl_vtest_winsys *vtws = virgl_vtest_winsys(vws);
+   int ret;
 
    virgl_ws_fill_new_caps_defaults(caps);
-   return virgl_vtest_send_get_caps(vtws, caps);
+   ret = virgl_vtest_send_get_caps(vtws, caps);
+   // vtest doesn't support that
+   if (caps->caps.v2.capability_bits_v2 & VIRGL_CAP_V2_COPY_TRANSFER_BOTH_DIRECTIONS)
+      caps->caps.v2.capability_bits_v2 &= ~VIRGL_CAP_V2_COPY_TRANSFER_BOTH_DIRECTIONS;
+   return ret;
 }
 
 static struct pipe_fence_handle *
@@ -602,7 +645,8 @@ static void virgl_vtest_flush_frontbuffer(struct virgl_winsys *vws,
 
    if (sub_box) {
       box = *sub_box;
-      offset = box.y / util_format_get_blockheight(res->format) * res->stride +
+      uint32_t shm_stride = util_format_get_stride(res->format, res->width);
+      offset = box.y / util_format_get_blockheight(res->format) * shm_stride +
                box.x / util_format_get_blockwidth(res->format) * util_format_get_blocksize(res->format);
    } else {
       box.z = layer;

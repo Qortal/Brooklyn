@@ -101,8 +101,8 @@ build_view_index(struct lower_multiview_state *state)
              * 16 nibbles, each of which is a value from 0 to 15.
              */
             uint64_t remap = 0;
-            uint32_t bit, i = 0;
-            for_each_bit(bit, state->view_mask) {
+            uint32_t i = 0;
+            u_foreach_bit(bit, state->view_mask) {
                assert(bit < 16);
                remap |= (uint64_t)bit << (i++ * 4);
             }
@@ -150,6 +150,21 @@ build_view_index(struct lower_multiview_state *state)
    return state->view_index;
 }
 
+static bool
+is_load_view_index(const nir_instr *instr, const void *data)
+{
+   return instr->type == nir_instr_type_intrinsic &&
+          nir_instr_as_intrinsic(instr)->intrinsic == nir_intrinsic_load_view_index;
+}
+
+static nir_ssa_def *
+replace_load_view_index_with_zero(struct nir_builder *b,
+                                  nir_instr *instr, void *data)
+{
+   assert(is_load_view_index(instr, data));
+   return nir_imm_zero(b, 1, 32);
+}
+
 bool
 anv_nir_lower_multiview(nir_shader *shader,
                         struct anv_graphics_pipeline *pipeline)
@@ -157,9 +172,11 @@ anv_nir_lower_multiview(nir_shader *shader,
    assert(shader->info.stage != MESA_SHADER_COMPUTE);
    uint32_t view_mask = pipeline->subpass->view_mask;
 
-   /* If multiview isn't enabled, we have nothing to do. */
-   if (view_mask == 0)
-      return false;
+   /* If multiview isn't enabled, just lower the ViewIndex builtin to zero. */
+   if (view_mask == 0) {
+      return nir_shader_lower_instructions(shader, is_load_view_index,
+                                           replace_load_view_index_with_zero, NULL);
+   }
 
    /* This pass assumes a single entrypoint */
    nir_function_impl *entrypoint = nir_shader_get_entrypoint(shader);
@@ -221,7 +238,7 @@ anv_nir_lower_multiview(nir_shader *shader,
             value = build_view_index(&state);
          }
 
-         nir_ssa_def_rewrite_uses(&load->dest.ssa, nir_src_for_ssa(value));
+         nir_ssa_def_rewrite_uses(&load->dest.ssa, value);
 
          nir_instr_remove(&load->instr);
          progress = true;
@@ -262,6 +279,8 @@ anv_nir_lower_multiview(nir_shader *shader,
    if (progress) {
       nir_metadata_preserve(entrypoint, nir_metadata_block_index |
                                         nir_metadata_dominance);
+   } else {
+      nir_metadata_preserve(entrypoint, nir_metadata_all);
    }
 
    return progress;
@@ -271,7 +290,7 @@ bool
 anv_check_for_primitive_replication(nir_shader **shaders,
                                     struct anv_graphics_pipeline *pipeline)
 {
-   assert(pipeline->base.device->info.gen >= 12);
+   assert(pipeline->base.device->info.ver >= 12);
 
    static int primitive_replication_max_views = -1;
    if (primitive_replication_max_views < 0) {

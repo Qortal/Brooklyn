@@ -39,7 +39,7 @@ extern "C" {
 #endif
 
 struct gl_context;
-
+struct gl_vertex_array_object;
 struct _mesa_prim
 {
    GLubyte mode;    /**< GL_POINTS, GL_LINES, GL_QUAD_STRIP, etc */
@@ -78,147 +78,28 @@ struct _mesa_index_buffer
 
 
 void
-_mesa_initialize_exec_dispatch(const struct gl_context *ctx,
-                               struct _glapi_table *exec);
+_mesa_set_varying_vp_inputs(struct gl_context *ctx, GLbitfield varying_inputs);
 
-void GLAPIENTRY
-_mesa_EvalMesh1(GLenum mode, GLint i1, GLint i2);
+/**
+ * Set the _DrawVAO and the net enabled arrays.
+ */
+void
+_mesa_set_draw_vao(struct gl_context *ctx, struct gl_vertex_array_object *vao,
+                   GLbitfield filter);
 
-void GLAPIENTRY
-_mesa_EvalMesh2(GLenum mode, GLint i1, GLint i2, GLint j1, GLint j2);
+void
+_mesa_draw_gallium_fallback(struct gl_context *ctx,
+                            struct pipe_draw_info *info,
+                            unsigned drawid_offset,
+                            const struct pipe_draw_start_count_bias *draws,
+                            unsigned num_draws);
 
-void GLAPIENTRY
-_mesa_DrawElementsInstancedARB(GLenum mode, GLsizei count, GLenum type,
-                               const GLvoid * indices, GLsizei numInstances);
-
-void GLAPIENTRY
-_mesa_DrawArraysInstancedBaseInstance(GLenum mode, GLint first,
-                                      GLsizei count, GLsizei numInstances,
-                                      GLuint baseInstance);
-
-void GLAPIENTRY
-_mesa_DrawElementsInstancedBaseVertex(GLenum mode, GLsizei count,
-                                      GLenum type, const GLvoid * indices,
-                                      GLsizei numInstances,
-                                      GLint basevertex);
-
-void GLAPIENTRY
-_mesa_DrawElementsInstancedBaseInstance(GLenum mode, GLsizei count,
-                                        GLenum type,
-                                        const GLvoid *indices,
-                                        GLsizei numInstances,
-                                        GLuint baseInstance);
-
-void GLAPIENTRY
-_mesa_DrawTransformFeedbackStream(GLenum mode, GLuint name, GLuint stream);
-
-void GLAPIENTRY
-_mesa_DrawTransformFeedbackInstanced(GLenum mode, GLuint name,
-                                     GLsizei primcount);
-
-void GLAPIENTRY
-_mesa_DrawTransformFeedbackStreamInstanced(GLenum mode, GLuint name,
-                                           GLuint stream,
-                                           GLsizei primcount);
-
-void GLAPIENTRY
-_mesa_DrawArraysIndirect(GLenum mode, const GLvoid *indirect);
-
-void GLAPIENTRY
-_mesa_DrawElementsIndirect(GLenum mode, GLenum type, const GLvoid *indirect);
-
-void GLAPIENTRY
-_mesa_MultiDrawArraysIndirect(GLenum mode, const GLvoid *indirect,
-                              GLsizei primcount, GLsizei stride);
-
-void GLAPIENTRY
-_mesa_MultiDrawElementsIndirect(GLenum mode, GLenum type,
-                                const GLvoid *indirect,
-                                GLsizei primcount, GLsizei stride);
-
-void GLAPIENTRY
-_mesa_MultiDrawArraysIndirectCountARB(GLenum mode, GLintptr indirect,
-                                      GLintptr drawcount_offset,
-                                      GLsizei maxdrawcount, GLsizei stride);
-
-void GLAPIENTRY
-_mesa_MultiDrawElementsIndirectCountARB(GLenum mode, GLenum type,
-                                        GLintptr indirect,
-                                        GLintptr drawcount_offset,
-                                        GLsizei maxdrawcount, GLsizei stride);
-
-void GLAPIENTRY
-_mesa_DrawArrays(GLenum mode, GLint first, GLsizei count);
-
-
-void GLAPIENTRY
-_mesa_DrawArraysInstancedARB(GLenum mode, GLint first, GLsizei count,
-                             GLsizei primcount);
-
-void GLAPIENTRY
-_mesa_DrawElementsInstancedBaseVertexBaseInstance(GLenum mode,
-                                                  GLsizei count,
-                                                  GLenum type,
-                                                  const GLvoid *indices,
-                                                  GLsizei numInstances,
-                                                  GLint basevertex,
-                                                  GLuint baseInstance);
-
-void GLAPIENTRY
-_mesa_DrawElements(GLenum mode, GLsizei count, GLenum type,
-                   const GLvoid *indices);
-
-
-void GLAPIENTRY
-_mesa_DrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count,
-                        GLenum type, const GLvoid *indices);
-
-
-void GLAPIENTRY
-_mesa_DrawElementsBaseVertex(GLenum mode, GLsizei count, GLenum type,
-                             const GLvoid *indices, GLint basevertex);
-
-
-void GLAPIENTRY
-_mesa_DrawRangeElementsBaseVertex(GLenum mode, GLuint start, GLuint end,
-                                  GLsizei count, GLenum type,
-                                  const GLvoid *indices,
-                                  GLint basevertex);
-
-
-void GLAPIENTRY
-_mesa_DrawTransformFeedback(GLenum mode, GLuint name);
-
-
-
-void GLAPIENTRY
-_mesa_MultiDrawArrays(GLenum mode, const GLint *first,
-                      const GLsizei *count, GLsizei primcount);
-
-
-void GLAPIENTRY
-_mesa_MultiDrawElements(GLenum mode, const GLsizei *count, GLenum type,
-                        const GLvoid *const *indices, GLsizei primcount);
-
-
-void GLAPIENTRY
-_mesa_MultiDrawElementsBaseVertex(GLenum mode,
-                                  const GLsizei *count, GLenum type,
-                                  const GLvoid * const * indices, GLsizei primcount,
-                                  const GLint *basevertex);
-
-
-void GLAPIENTRY
-_mesa_MultiModeDrawArraysIBM(const GLenum * mode, const GLint * first,
-                             const GLsizei * count,
-                             GLsizei primcount, GLint modestride);
-
-
-void GLAPIENTRY
-_mesa_MultiModeDrawElementsIBM(const GLenum * mode, const GLsizei * count,
-                               GLenum type, const GLvoid * const * indices,
-                               GLsizei primcount, GLint modestride);
-
+void
+_mesa_draw_gallium_multimode_fallback(struct gl_context *ctx,
+                                     struct pipe_draw_info *info,
+                                     const struct pipe_draw_start_count_bias *draws,
+                                     const unsigned char *mode,
+                                     unsigned num_draws);
 
 #ifdef __cplusplus
 } // extern "C"

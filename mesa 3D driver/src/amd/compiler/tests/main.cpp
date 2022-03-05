@@ -34,6 +34,8 @@
 #include "aco_ir.h"
 #include "framework.h"
 
+#include "util/u_cpu_detect.h"
+
 static const char *help_message =
    "Usage: %s [-h] [-l --list] [--no-check] [TEST [TEST ...]]\n"
    "\n"
@@ -173,14 +175,28 @@ int check_output(char **argv)
    int stdin_pipe[2];
    pipe(stdin_pipe);
 
-   write(stdin_pipe[1], checker_stdin_data, checker_stdin_size);
-   close(stdin_pipe[1]);
-   dup2(stdin_pipe[0], STDIN_FILENO);
+   pid_t child_pid = fork();
+   if (child_pid == -1) {
+      fprintf(stderr, "%s: fork() failed: %s\n", argv[0], strerror(errno));
+      return 99;
+   } else if (child_pid != 0) {
+      /* Evaluate test output externally using Python */
+      dup2(stdin_pipe[0], STDIN_FILENO);
+      close(stdin_pipe[0]);
+      close(stdin_pipe[1]);
 
-   execlp(ACO_TEST_PYTHON_BIN, ACO_TEST_PYTHON_BIN, ACO_TEST_SOURCE_DIR "/check_output.py", NULL);
-
-   fprintf(stderr, "%s: execl() failed: %s\n", argv[0], strerror(errno));
-   return 99;
+      execlp(ACO_TEST_PYTHON_BIN, ACO_TEST_PYTHON_BIN, ACO_TEST_SOURCE_DIR "/check_output.py", NULL);
+      fprintf(stderr, "%s: execlp() failed: %s\n", argv[0], strerror(errno));
+      return 99;
+   } else {
+      /* Feed input data to the Python process. Writing large streams to
+       * stdin will block eventually, so this is done in a forked process
+       * to let the test checker process chunks of data as they arrive */
+      write(stdin_pipe[1], checker_stdin_data, checker_stdin_size);
+      close(stdin_pipe[0]);
+      close(stdin_pipe[1]);
+      _exit(0);
+   }
 }
 
 bool match_test(std::string name, std::string pattern)
@@ -226,6 +242,8 @@ int main(int argc, char **argv)
       fprintf(stderr, help_message, argv[0]);
       return 99;
    }
+
+   util_cpu_detect();
 
    if (do_list) {
       for (auto test : tests)

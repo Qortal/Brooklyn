@@ -1,5 +1,5 @@
 /*
- * Copyright © 2019 Raspberry Pi
+ * Copyright © 2019 Raspberry Pi Ltd
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -21,32 +21,10 @@
  * IN THE SOFTWARE.
  */
 
+#include "vk_descriptors.h"
 #include "vk_util.h"
 
 #include "v3dv_private.h"
-
-/*
- * Returns how much space a given descriptor type needs on a bo (GPU
- * memory).
- */
-static uint32_t
-descriptor_bo_size(VkDescriptorType type)
-{
-   switch(type) {
-   case VK_DESCRIPTOR_TYPE_SAMPLER:
-      return sizeof(struct v3dv_sampler_descriptor);
-   case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-      return sizeof(struct v3dv_combined_image_sampler_descriptor);
-   case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
-   case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
-   case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-   case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
-   case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
-      return sizeof(struct v3dv_sampled_image_descriptor);
-   default:
-      return 0;
-   }
-}
 
 /*
  * For a given descriptor defined by the descriptor_set it belongs, its
@@ -54,14 +32,15 @@ descriptor_bo_size(VkDescriptorType type)
  * from the descriptor pool bo.
  */
 static void*
-descriptor_bo_map(struct v3dv_descriptor_set *set,
+descriptor_bo_map(struct v3dv_device *device,
+                  struct v3dv_descriptor_set *set,
                   const struct v3dv_descriptor_set_binding_layout *binding_layout,
                   uint32_t array_index)
 {
-   assert(descriptor_bo_size(binding_layout->type) > 0);
+   assert(v3dv_X(device, descriptor_bo_size)(binding_layout->type) > 0);
    return set->pool->bo->map +
       set->base_offset + binding_layout->descriptor_offset +
-      array_index * descriptor_bo_size(binding_layout->type);
+      array_index * v3dv_X(device, descriptor_bo_size)(binding_layout->type);
 }
 
 static bool
@@ -124,13 +103,14 @@ v3dv_descriptor_map_get_descriptor(struct v3dv_descriptor_state *descriptor_stat
  * validation or adding extra offsets if the bo contains more that one field.
  */
 static struct v3dv_cl_reloc
-v3dv_descriptor_map_get_descriptor_bo(struct v3dv_descriptor_state *descriptor_state,
+v3dv_descriptor_map_get_descriptor_bo(struct v3dv_device *device,
+                                      struct v3dv_descriptor_state *descriptor_state,
                                       struct v3dv_descriptor_map *map,
                                       struct v3dv_pipeline_layout *pipeline_layout,
                                       uint32_t index,
                                       VkDescriptorType *out_type)
 {
-   assert(index >= 0 && index < map->num_desc);
+   assert(index < map->num_desc);
 
    uint32_t set_number = map->set[index];
    assert(descriptor_state->valid & 1 << set_number);
@@ -145,7 +125,7 @@ v3dv_descriptor_map_get_descriptor_bo(struct v3dv_descriptor_state *descriptor_s
    const struct v3dv_descriptor_set_binding_layout *binding_layout =
       &set->layout->binding[binding_number];
 
-   assert(descriptor_bo_size(binding_layout->type) > 0);
+   assert(v3dv_X(device, descriptor_bo_size)(binding_layout->type) > 0);
    *out_type = binding_layout->type;
 
    uint32_t array_index = map->array_index[index];
@@ -154,7 +134,7 @@ v3dv_descriptor_map_get_descriptor_bo(struct v3dv_descriptor_state *descriptor_s
    struct v3dv_cl_reloc reloc = {
       .bo = set->pool->bo,
       .offset = set->base_offset + binding_layout->descriptor_offset +
-      array_index * descriptor_bo_size(binding_layout->type),
+      array_index * v3dv_X(device, descriptor_bo_size)(binding_layout->type),
    };
 
    return reloc;
@@ -172,7 +152,7 @@ v3dv_descriptor_map_get_sampler(struct v3dv_descriptor_state *descriptor_state,
                                 struct v3dv_pipeline_layout *pipeline_layout,
                                 uint32_t index)
 {
-   assert(index >= 0 && index < map->num_desc);
+   assert(index < map->num_desc);
 
    uint32_t set_number = map->set[index];
    assert(descriptor_state->valid & 1 << set_number);
@@ -217,55 +197,25 @@ v3dv_descriptor_map_get_sampler(struct v3dv_descriptor_state *descriptor_state,
 
 
 struct v3dv_cl_reloc
-v3dv_descriptor_map_get_sampler_state(struct v3dv_descriptor_state *descriptor_state,
+v3dv_descriptor_map_get_sampler_state(struct v3dv_device *device,
+                                      struct v3dv_descriptor_state *descriptor_state,
                                       struct v3dv_descriptor_map *map,
                                       struct v3dv_pipeline_layout *pipeline_layout,
                                       uint32_t index)
 {
    VkDescriptorType type;
    struct v3dv_cl_reloc reloc =
-      v3dv_descriptor_map_get_descriptor_bo(descriptor_state, map,
+      v3dv_descriptor_map_get_descriptor_bo(device, descriptor_state, map,
                                             pipeline_layout,
                                             index, &type);
 
    assert(type == VK_DESCRIPTOR_TYPE_SAMPLER ||
           type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 
-   if (type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
-      reloc.offset += offsetof(struct v3dv_combined_image_sampler_descriptor,
-                               sampler_state);
-   }
+   if (type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+      reloc.offset += v3dv_X(device, combined_image_sampler_sampler_state_offset)();
 
    return reloc;
-}
-
-const struct v3dv_format*
-v3dv_descriptor_map_get_texture_format(struct v3dv_descriptor_state *descriptor_state,
-                                       struct v3dv_descriptor_map *map,
-                                       struct v3dv_pipeline_layout *pipeline_layout,
-                                       uint32_t index,
-                                       VkFormat *out_vk_format)
-{
-   struct v3dv_descriptor *descriptor =
-      v3dv_descriptor_map_get_descriptor(descriptor_state, map,
-                                         pipeline_layout, index, NULL);
-
-   switch (descriptor->type) {
-   case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
-   case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
-      assert(descriptor->buffer_view);
-      *out_vk_format = descriptor->buffer_view->vk_format;
-      return descriptor->buffer_view->format;
-   case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
-   case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-   case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
-   case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-      assert(descriptor->image_view);
-      *out_vk_format = descriptor->image_view->vk_format;
-      return descriptor->image_view->format;
-   default:
-      unreachable("descriptor type doesn't has a texture format");
-   }
 }
 
 struct v3dv_bo*
@@ -287,23 +237,28 @@ v3dv_descriptor_map_get_texture_bo(struct v3dv_descriptor_state *descriptor_stat
    case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
    case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
-   case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+   case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: {
       assert(descriptor->image_view);
-      return descriptor->image_view->image->mem->bo;
+      struct v3dv_image *image =
+         (struct v3dv_image *) descriptor->image_view->vk.image;
+      return image->mem->bo;
+   }
    default:
       unreachable("descriptor type doesn't has a texture bo");
    }
 }
 
 struct v3dv_cl_reloc
-v3dv_descriptor_map_get_texture_shader_state(struct v3dv_descriptor_state *descriptor_state,
+v3dv_descriptor_map_get_texture_shader_state(struct v3dv_device *device,
+                                             struct v3dv_descriptor_state *descriptor_state,
                                              struct v3dv_descriptor_map *map,
                                              struct v3dv_pipeline_layout *pipeline_layout,
                                              uint32_t index)
 {
    VkDescriptorType type;
    struct v3dv_cl_reloc reloc =
-      v3dv_descriptor_map_get_descriptor_bo(descriptor_state, map,
+      v3dv_descriptor_map_get_descriptor_bo(device,
+                                            descriptor_state, map,
                                             pipeline_layout,
                                             index, &type);
 
@@ -314,10 +269,8 @@ v3dv_descriptor_map_get_texture_shader_state(struct v3dv_descriptor_state *descr
           type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER ||
           type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER);
 
-   if (type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
-      reloc.offset += offsetof(struct v3dv_combined_image_sampler_descriptor,
-                               texture_state);
-   }
+   if (type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+      reloc.offset += v3dv_X(device, combined_image_sampler_texture_state_offset)();
 
    return reloc;
 }
@@ -329,7 +282,7 @@ v3dv_descriptor_map_get_texture_shader_state(struct v3dv_descriptor_state *descr
  * just multiple descriptor set layouts pasted together."
  */
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 v3dv_CreatePipelineLayout(VkDevice _device,
                          const VkPipelineLayoutCreateInfo *pCreateInfo,
                          const VkAllocationCallbacks *pAllocator,
@@ -341,10 +294,10 @@ v3dv_CreatePipelineLayout(VkDevice _device,
    assert(pCreateInfo->sType ==
           VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
 
-   layout = vk_alloc2(&device->alloc, pAllocator, sizeof(*layout), 8,
-                      VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+   layout = vk_object_zalloc(&device->vk, pAllocator, sizeof(*layout),
+                             VK_OBJECT_TYPE_PIPELINE_LAYOUT);
    if (layout == NULL)
-      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    layout->num_sets = pCreateInfo->setLayoutCount;
 
@@ -359,6 +312,8 @@ v3dv_CreatePipelineLayout(VkDevice _device,
          dynamic_offset_count += set_layout->binding[b].array_size *
             set_layout->binding[b].dynamic_offset_count;
       }
+
+      layout->shader_stages |= set_layout->shader_stages;
    }
 
    layout->push_constant_size = 0;
@@ -377,7 +332,7 @@ v3dv_CreatePipelineLayout(VkDevice _device,
    return VK_SUCCESS;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_DestroyPipelineLayout(VkDevice _device,
                           VkPipelineLayout _pipelineLayout,
                           const VkAllocationCallbacks *pAllocator)
@@ -387,10 +342,10 @@ v3dv_DestroyPipelineLayout(VkDevice _device,
 
    if (!pipeline_layout)
       return;
-   vk_free2(&device->alloc, pAllocator, pipeline_layout);
+   vk_object_free(&device->vk, pAllocator, pipeline_layout);
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 v3dv_CreateDescriptorPool(VkDevice _device,
                           const VkDescriptorPoolCreateInfo *pCreateInfo,
                           const VkAllocationCallbacks *pAllocator,
@@ -409,6 +364,7 @@ v3dv_CreateDescriptorPool(VkDevice _device,
    uint32_t bo_size = 0;
    uint32_t descriptor_count = 0;
 
+   assert(pCreateInfo->poolSizeCount > 0);
    for (unsigned i = 0; i < pCreateInfo->poolSizeCount; ++i) {
       /* Verify supported descriptor type */
       switch(pCreateInfo->pPoolSizes[i].type) {
@@ -429,8 +385,9 @@ v3dv_CreateDescriptorPool(VkDevice _device,
          break;
       }
 
+      assert(pCreateInfo->pPoolSizes[i].descriptorCount > 0);
       descriptor_count += pCreateInfo->pPoolSizes[i].descriptorCount;
-      bo_size += descriptor_bo_size(pCreateInfo->pPoolSizes[i].type) *
+      bo_size += v3dv_X(device, descriptor_bo_size)(pCreateInfo->pPoolSizes[i].type) *
          pCreateInfo->pPoolSizes[i].descriptorCount;
    }
 
@@ -443,13 +400,11 @@ v3dv_CreateDescriptorPool(VkDevice _device,
       size += sizeof(struct v3dv_descriptor_pool_entry) * pCreateInfo->maxSets;
    }
 
-   pool = vk_alloc2(&device->alloc, pAllocator, size, 8,
-                    VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+   pool = vk_object_zalloc(&device->vk, pAllocator, size,
+                           VK_OBJECT_TYPE_DESCRIPTOR_POOL);
 
    if (!pool)
-      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
-
-   memset(pool, 0, sizeof(*pool));
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    if (!(pCreateInfo->flags & VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT)) {
       pool->host_memory_base = (uint8_t*)pool + sizeof(struct v3dv_descriptor_pool);
@@ -478,8 +433,8 @@ v3dv_CreateDescriptorPool(VkDevice _device,
    return VK_SUCCESS;
 
  out_of_device_memory:
-   vk_free2(&device->alloc, pAllocator, pool);
-   return vk_error(device->instance, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+   vk_object_free(&device->vk, pAllocator, pool);
+   return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
 }
 
 static void
@@ -500,10 +455,10 @@ descriptor_set_destroy(struct v3dv_device *device,
          }
       }
    }
-   vk_free2(&device->alloc, NULL, set);
+   vk_object_free(&device->vk, NULL, set);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_DestroyDescriptorPool(VkDevice _device,
                            VkDescriptorPool _pool,
                            const VkAllocationCallbacks *pAllocator)
@@ -525,10 +480,10 @@ v3dv_DestroyDescriptorPool(VkDevice _device,
       pool->bo = NULL;
    }
 
-   vk_free2(&device->alloc, pAllocator, pool);
+   vk_object_free(&device->vk, pAllocator, pool);
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 v3dv_ResetDescriptorPool(VkDevice _device,
                          VkDescriptorPool descriptorPool,
                          VkDescriptorPoolResetFlags flags)
@@ -540,6 +495,12 @@ v3dv_ResetDescriptorPool(VkDevice _device,
       for(int i = 0; i < pool->entry_count; ++i) {
          descriptor_set_destroy(device, pool, pool->entries[i].set, false);
       }
+   } else {
+      /* We clean-up the host memory, so when allocating a new set from the
+       * pool, it is already 0
+       */
+      uint32_t host_size = pool->host_memory_end - pool->host_memory_base;
+      memset(pool->host_memory_base, 0, host_size);
    }
 
    pool->entry_count = 0;
@@ -549,41 +510,7 @@ v3dv_ResetDescriptorPool(VkDevice _device,
    return VK_SUCCESS;
 }
 
-static int
-binding_compare(const void *av, const void *bv)
-{
-   const VkDescriptorSetLayoutBinding *a =
-      (const VkDescriptorSetLayoutBinding *) av;
-   const VkDescriptorSetLayoutBinding *b =
-      (const VkDescriptorSetLayoutBinding *) bv;
-
-   return (a->binding < b->binding) ? -1 : (a->binding > b->binding) ? 1 : 0;
-}
-
-static VkDescriptorSetLayoutBinding *
-create_sorted_bindings(const VkDescriptorSetLayoutBinding *bindings,
-                       unsigned count,
-                       struct v3dv_device *device,
-                       const VkAllocationCallbacks *pAllocator)
-{
-   VkDescriptorSetLayoutBinding *sorted_bindings =
-      vk_alloc2(&device->alloc, pAllocator,
-                count * sizeof(VkDescriptorSetLayoutBinding),
-                8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
-
-   if (!sorted_bindings)
-      return NULL;
-
-   memcpy(sorted_bindings, bindings,
-          count * sizeof(VkDescriptorSetLayoutBinding));
-
-   qsort(sorted_bindings, count, sizeof(VkDescriptorSetLayoutBinding),
-         binding_compare);
-
-   return sorted_bindings;
-}
-
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 v3dv_CreateDescriptorSetLayout(VkDevice _device,
                                const VkDescriptorSetLayoutCreateInfo *pCreateInfo,
                                const VkAllocationCallbacks *pAllocator,
@@ -594,10 +521,10 @@ v3dv_CreateDescriptorSetLayout(VkDevice _device,
 
    assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
 
-   int32_t max_binding = pCreateInfo->bindingCount > 0 ? 0 : -1;
+   uint32_t num_bindings = 0;
    uint32_t immutable_sampler_count = 0;
    for (uint32_t j = 0; j < pCreateInfo->bindingCount; j++) {
-      max_binding = MAX2(max_binding, pCreateInfo->pBindings[j].binding);
+      num_bindings = MAX2(num_bindings, pCreateInfo->pBindings[j].binding + 1);
 
       /* From the Vulkan 1.1.97 spec for VkDescriptorSetLayoutBinding:
        *
@@ -619,35 +546,33 @@ v3dv_CreateDescriptorSetLayout(VkDevice _device,
    }
 
    uint32_t samplers_offset = sizeof(struct v3dv_descriptor_set_layout) +
-      (max_binding + 1) * sizeof(set_layout->binding[0]);
+      num_bindings * sizeof(set_layout->binding[0]);
    uint32_t size = samplers_offset +
       immutable_sampler_count * sizeof(struct v3dv_sampler);
 
-   set_layout = vk_alloc2(&device->alloc, pAllocator, size, 8,
-                          VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+   set_layout = vk_object_zalloc(&device->vk, pAllocator, size,
+                                 VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT);
 
    if (!set_layout)
-      return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
    /* We just allocate all the immutable samplers at the end of the struct */
-   struct v3dv_sampler *samplers = (void*) &set_layout->binding[max_binding + 1];
+   struct v3dv_sampler *samplers = (void*) &set_layout->binding[num_bindings];
+
+   assert(pCreateInfo->bindingCount == 0 || num_bindings > 0);
 
    VkDescriptorSetLayoutBinding *bindings = NULL;
-   if (pCreateInfo->bindingCount > 0) {
-      assert(max_binding >= 0);
-      bindings = create_sorted_bindings(pCreateInfo->pBindings,
-                                        pCreateInfo->bindingCount,
-                                        device, pAllocator);
-      if (!bindings) {
-         vk_free2(&device->alloc, pAllocator, set_layout);
-         return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
-      }
+   VkResult result = vk_create_sorted_bindings(pCreateInfo->pBindings,
+                                               pCreateInfo->bindingCount, &bindings);
+   if (result != VK_SUCCESS) {
+      vk_object_free(&device->vk, pAllocator, set_layout);
+      return vk_error(device, result);
    }
 
    memset(set_layout->binding, 0,
           size - sizeof(struct v3dv_descriptor_set_layout));
 
-   set_layout->binding_count = max_binding + 1;
+   set_layout->binding_count = num_bindings;
    set_layout->flags = pCreateInfo->flags;
    set_layout->shader_stages = 0;
    set_layout->bo_size = 0;
@@ -703,20 +628,15 @@ v3dv_CreateDescriptorSetLayout(VkDevice _device,
       dynamic_offset_count += binding->descriptorCount *
          set_layout->binding[binding_number].dynamic_offset_count;
 
-      /* FIXME: right now we don't use shader_stages. We could explore if we
-       * could use it to add another filter to upload or allocate the
-       * descriptor data.
-       */
       set_layout->shader_stages |= binding->stageFlags;
 
       set_layout->binding[binding_number].descriptor_offset = set_layout->bo_size;
       set_layout->bo_size +=
-         descriptor_bo_size(set_layout->binding[binding_number].type) *
+         v3dv_X(device, descriptor_bo_size)(set_layout->binding[binding_number].type) *
          binding->descriptorCount;
    }
 
-   if (bindings)
-      vk_free2(&device->alloc, pAllocator, bindings);
+   free(bindings);
 
    set_layout->descriptor_count = descriptor_count;
    set_layout->dynamic_offset_count = dynamic_offset_count;
@@ -726,7 +646,7 @@ v3dv_CreateDescriptorSetLayout(VkDevice _device,
    return VK_SUCCESS;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_DestroyDescriptorSetLayout(VkDevice _device,
                                 VkDescriptorSetLayout _set_layout,
                                 const VkAllocationCallbacks *pAllocator)
@@ -737,7 +657,20 @@ v3dv_DestroyDescriptorSetLayout(VkDevice _device,
    if (!set_layout)
       return;
 
-   vk_free2(&device->alloc, pAllocator, set_layout);
+   vk_object_free(&device->vk, pAllocator, set_layout);
+}
+
+static inline VkResult
+out_of_pool_memory(const struct v3dv_device *device,
+                   const struct v3dv_descriptor_pool *pool)
+{
+   /* Don't log OOPM errors for internal driver pools, we handle these properly
+    * by allocating a new pool, so they don't point to real issues.
+    */
+   if (!pool->is_driver_internal)
+      return vk_error(device, VK_ERROR_OUT_OF_POOL_MEMORY);
+   else
+      return VK_ERROR_OUT_OF_POOL_MEMORY;
 }
 
 static VkResult
@@ -753,19 +686,20 @@ descriptor_set_create(struct v3dv_device *device,
 
    if (pool->host_memory_base) {
       if (pool->host_memory_end - pool->host_memory_ptr < mem_size)
-         return vk_error(device->instance, VK_ERROR_OUT_OF_POOL_MEMORY);
+         return out_of_pool_memory(device, pool);
 
       set = (struct v3dv_descriptor_set*)pool->host_memory_ptr;
       pool->host_memory_ptr += mem_size;
+
+      vk_object_base_init(&device->vk, &set->base, VK_OBJECT_TYPE_DESCRIPTOR_SET);
    } else {
-      set = vk_alloc2(&device->alloc, NULL, mem_size, 8,
-                      VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+      set = vk_object_zalloc(&device->vk, NULL, mem_size,
+                             VK_OBJECT_TYPE_DESCRIPTOR_SET);
 
       if (!set)
-         return vk_error(device->instance, VK_ERROR_OUT_OF_HOST_MEMORY);
+         return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
    }
 
-   memset(set, 0, mem_size);
    set->pool = pool;
 
    set->layout = layout;
@@ -780,8 +714,8 @@ descriptor_set_create(struct v3dv_device *device,
 
    if (layout->bo_size) {
       if (!pool->host_memory_base && pool->entry_count == pool->max_entry_count) {
-         vk_free2(&device->alloc, NULL, set);
-         return vk_error(device->instance, VK_ERROR_OUT_OF_POOL_MEMORY);
+         vk_object_free(&device->vk, NULL, set);
+         return out_of_pool_memory(device, pool);
       }
 
       /* We first try to allocate linearly fist, so that we don't spend time
@@ -804,15 +738,14 @@ descriptor_set_create(struct v3dv_device *device,
             offset = pool->entries[index].offset + pool->entries[index].size;
          }
          if (pool->bo->size - offset < layout->bo_size) {
-            vk_free2(&device->alloc, NULL, set);
-            return vk_error(device->instance, VK_ERROR_OUT_OF_POOL_MEMORY);
+            vk_object_free(&device->vk, NULL, set);
+            return out_of_pool_memory(device, pool);
          }
          memmove(&pool->entries[index + 1], &pool->entries[index],
                  sizeof(pool->entries[0]) * (pool->entry_count - index));
       } else {
          assert(pool->host_memory_base);
-         vk_free2(&device->alloc, NULL, set);
-         return vk_error(device->instance, VK_ERROR_OUT_OF_POOL_MEMORY);
+         return out_of_pool_memory(device, pool);
       }
 
       set->base_offset = offset;
@@ -837,15 +770,14 @@ descriptor_set_create(struct v3dv_device *device,
       for (uint32_t i = 0; i < layout->binding[b].array_size; i++) {
          uint32_t combined_offset =
             layout->binding[b].type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ?
-            offsetof(struct v3dv_combined_image_sampler_descriptor, sampler_state) :
-            0;
+            v3dv_X(device, combined_image_sampler_sampler_state_offset)() : 0;
 
-         void *desc_map = descriptor_bo_map(set, &layout->binding[b], i);
+         void *desc_map = descriptor_bo_map(device, set, &layout->binding[b], i);
          desc_map += combined_offset;
 
          memcpy(desc_map,
                 samplers[i].sampler_state,
-                cl_packet_length(SAMPLER_STATE));
+                sizeof(samplers[i].sampler_state));
       }
    }
 
@@ -854,7 +786,7 @@ descriptor_set_create(struct v3dv_device *device,
    return VK_SUCCESS;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 v3dv_AllocateDescriptorSets(VkDevice _device,
                             const VkDescriptorSetAllocateInfo *pAllocateInfo,
                             VkDescriptorSet *pDescriptorSets)
@@ -888,7 +820,7 @@ v3dv_AllocateDescriptorSets(VkDevice _device,
    return result;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 v3dv_FreeDescriptorSets(VkDevice _device,
                         VkDescriptorPool descriptorPool,
                         uint32_t count,
@@ -907,7 +839,8 @@ v3dv_FreeDescriptorSets(VkDevice _device,
 }
 
 static void
-descriptor_bo_copy(struct v3dv_descriptor_set *dst_set,
+descriptor_bo_copy(struct v3dv_device *device,
+                   struct v3dv_descriptor_set *dst_set,
                    const struct v3dv_descriptor_set_binding_layout *dst_binding_layout,
                    uint32_t dst_array_index,
                    struct v3dv_descriptor_set *src_set,
@@ -916,31 +849,55 @@ descriptor_bo_copy(struct v3dv_descriptor_set *dst_set,
 {
    assert(dst_binding_layout->type == src_binding_layout->type);
 
-   void *dst_map = descriptor_bo_map(dst_set, dst_binding_layout, dst_array_index);
-   void *src_map = descriptor_bo_map(src_set, src_binding_layout, src_array_index);
+   void *dst_map = descriptor_bo_map(device, dst_set, dst_binding_layout, dst_array_index);
+   void *src_map = descriptor_bo_map(device, src_set, src_binding_layout, src_array_index);
 
-   memcpy(dst_map, src_map, descriptor_bo_size(src_binding_layout->type));
+   memcpy(dst_map, src_map, v3dv_X(device, descriptor_bo_size)(src_binding_layout->type));
 }
 
 static void
-write_image_descriptor(VkDescriptorType desc_type,
+write_buffer_descriptor(struct v3dv_descriptor *descriptor,
+                        VkDescriptorType desc_type,
+                        const VkDescriptorBufferInfo *buffer_info)
+{
+   V3DV_FROM_HANDLE(v3dv_buffer, buffer, buffer_info->buffer);
+
+   descriptor->type = desc_type;
+   descriptor->buffer = buffer;
+   descriptor->offset = buffer_info->offset;
+   if (buffer_info->range == VK_WHOLE_SIZE) {
+      descriptor->range = buffer->size - buffer_info->offset;
+   } else {
+      assert(descriptor->range <= UINT32_MAX);
+      descriptor->range = buffer_info->range;
+   }
+}
+
+static void
+write_image_descriptor(struct v3dv_device *device,
+                       struct v3dv_descriptor *descriptor,
+                       VkDescriptorType desc_type,
                        struct v3dv_descriptor_set *set,
                        const struct v3dv_descriptor_set_binding_layout *binding_layout,
                        struct v3dv_image_view *iview,
                        struct v3dv_sampler *sampler,
                        uint32_t array_index)
 {
-   void *desc_map = descriptor_bo_map(set, binding_layout, array_index);
+   descriptor->type = desc_type;
+   descriptor->sampler = sampler;
+   descriptor->image_view = iview;
+
+   void *desc_map = descriptor_bo_map(device, set,
+                                      binding_layout, array_index);
 
    if (iview) {
       const uint32_t tex_state_index =
-         iview->type != VK_IMAGE_VIEW_TYPE_CUBE_ARRAY ||
+         iview->vk.view_type != VK_IMAGE_VIEW_TYPE_CUBE_ARRAY ||
          desc_type != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? 0 : 1;
       memcpy(desc_map,
              iview->texture_shader_state[tex_state_index],
              sizeof(iview->texture_shader_state[0]));
-      desc_map += offsetof(struct v3dv_combined_image_sampler_descriptor,
-                           sampler_state);
+      desc_map += v3dv_X(device, combined_image_sampler_sampler_state_offset)();
    }
 
    if (sampler && !binding_layout->immutable_samplers_offset) {
@@ -955,28 +912,33 @@ write_image_descriptor(VkDescriptorType desc_type,
 
 
 static void
-write_buffer_view_descriptor(VkDescriptorType desc_type,
+write_buffer_view_descriptor(struct v3dv_device *device,
+                             struct v3dv_descriptor *descriptor,
+                             VkDescriptorType desc_type,
                              struct v3dv_descriptor_set *set,
                              const struct v3dv_descriptor_set_binding_layout *binding_layout,
                              struct v3dv_buffer_view *bview,
                              uint32_t array_index)
 {
-   void *desc_map = descriptor_bo_map(set, binding_layout, array_index);
-
    assert(bview);
+   descriptor->type = desc_type;
+   descriptor->buffer_view = bview;
+
+   void *desc_map = descriptor_bo_map(device, set, binding_layout, array_index);
 
    memcpy(desc_map,
           bview->texture_shader_state,
           sizeof(bview->texture_shader_state));
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 v3dv_UpdateDescriptorSets(VkDevice  _device,
                           uint32_t descriptorWriteCount,
                           const VkWriteDescriptorSet *pDescriptorWrites,
                           uint32_t descriptorCopyCount,
                           const VkCopyDescriptorSet *pDescriptorCopies)
 {
+   V3DV_FROM_HANDLE(v3dv_device, device, _device);
    for (uint32_t i = 0; i < descriptorWriteCount; i++) {
       const VkWriteDescriptorSet *writeset = &pDescriptorWrites[i];
       V3DV_FROM_HANDLE(v3dv_descriptor_set, set, writeset->dstSet);
@@ -990,8 +952,6 @@ v3dv_UpdateDescriptorSets(VkDevice  _device,
       descriptor += writeset->dstArrayElement;
 
       for (uint32_t j = 0; j < writeset->descriptorCount; ++j) {
-         descriptor->type = writeset->descriptorType;
-
          switch(writeset->descriptorType) {
 
          case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
@@ -999,16 +959,8 @@ v3dv_UpdateDescriptorSets(VkDevice  _device,
          case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
          case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER: {
             const VkDescriptorBufferInfo *buffer_info = writeset->pBufferInfo + j;
-            V3DV_FROM_HANDLE(v3dv_buffer, buffer, buffer_info->buffer);
-
-            descriptor->buffer = buffer;
-            descriptor->offset = buffer_info->offset;
-            if (buffer_info->range == VK_WHOLE_SIZE) {
-               descriptor->range = buffer->size - buffer_info->offset;
-            } else {
-               assert(descriptor->range <= UINT32_MAX);
-               descriptor->range = buffer_info->range;
-            }
+            write_buffer_descriptor(descriptor, writeset->descriptorType,
+                                    buffer_info);
             break;
          }
          case VK_DESCRIPTOR_TYPE_SAMPLER: {
@@ -1018,10 +970,7 @@ v3dv_UpdateDescriptorSets(VkDevice  _device,
              */
             const VkDescriptorImageInfo *image_info = writeset->pImageInfo + j;
             V3DV_FROM_HANDLE(v3dv_sampler, sampler, image_info->sampler);
-
-            descriptor->sampler = sampler;
-
-            write_image_descriptor(writeset->descriptorType,
+            write_image_descriptor(device, descriptor, writeset->descriptorType,
                                    set, binding_layout, NULL, sampler,
                                    writeset->dstArrayElement + j);
 
@@ -1032,10 +981,7 @@ v3dv_UpdateDescriptorSets(VkDevice  _device,
          case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: {
             const VkDescriptorImageInfo *image_info = writeset->pImageInfo + j;
             V3DV_FROM_HANDLE(v3dv_image_view, iview, image_info->imageView);
-
-            descriptor->image_view = iview;
-
-            write_image_descriptor(writeset->descriptorType,
+            write_image_descriptor(device, descriptor, writeset->descriptorType,
                                    set, binding_layout, iview, NULL,
                                    writeset->dstArrayElement + j);
 
@@ -1045,11 +991,7 @@ v3dv_UpdateDescriptorSets(VkDevice  _device,
             const VkDescriptorImageInfo *image_info = writeset->pImageInfo + j;
             V3DV_FROM_HANDLE(v3dv_image_view, iview, image_info->imageView);
             V3DV_FROM_HANDLE(v3dv_sampler, sampler, image_info->sampler);
-
-            descriptor->image_view = iview;
-            descriptor->sampler = sampler;
-
-            write_image_descriptor(writeset->descriptorType,
+            write_image_descriptor(device, descriptor, writeset->descriptorType,
                                    set, binding_layout, iview, sampler,
                                    writeset->dstArrayElement + j);
 
@@ -1059,12 +1001,7 @@ v3dv_UpdateDescriptorSets(VkDevice  _device,
          case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER: {
             V3DV_FROM_HANDLE(v3dv_buffer_view, buffer_view,
                              writeset->pTexelBufferView[j]);
-
-            assert(buffer_view);
-
-            descriptor->buffer_view = buffer_view;
-
-            write_buffer_view_descriptor(writeset->descriptorType,
+            write_buffer_view_descriptor(device, descriptor, writeset->descriptorType,
                                          set, binding_layout, buffer_view,
                                          writeset->dstArrayElement + j);
             break;
@@ -1105,8 +1042,9 @@ v3dv_UpdateDescriptorSets(VkDevice  _device,
          dst_descriptor++;
          src_descriptor++;
 
-         if (descriptor_bo_size(src_binding_layout->type) > 0) {
-            descriptor_bo_copy(dst_set, dst_binding_layout,
+         if (v3dv_X(device, descriptor_bo_size)(src_binding_layout->type) > 0) {
+            descriptor_bo_copy(device,
+                               dst_set, dst_binding_layout,
                                j + copyset->dstArrayElement,
                                src_set, src_binding_layout,
                                j + copyset->srcArrayElement);
@@ -1114,4 +1052,198 @@ v3dv_UpdateDescriptorSets(VkDevice  _device,
 
       }
    }
+}
+
+VKAPI_ATTR void VKAPI_CALL
+v3dv_GetDescriptorSetLayoutSupport(
+   VkDevice _device,
+   const VkDescriptorSetLayoutCreateInfo *pCreateInfo,
+   VkDescriptorSetLayoutSupport *pSupport)
+{
+   V3DV_FROM_HANDLE(v3dv_device, device, _device);
+   VkDescriptorSetLayoutBinding *bindings = NULL;
+   VkResult result = vk_create_sorted_bindings(
+      pCreateInfo->pBindings, pCreateInfo->bindingCount, &bindings);
+   if (result != VK_SUCCESS) {
+      pSupport->supported = false;
+      return;
+   }
+
+   bool supported = true;
+
+   uint32_t desc_host_size = sizeof(struct v3dv_descriptor);
+   uint32_t host_size = sizeof(struct v3dv_descriptor_set);
+   uint32_t bo_size = 0;
+   for (uint32_t i = 0; i < pCreateInfo->bindingCount; i++) {
+      const VkDescriptorSetLayoutBinding *binding = bindings + i;
+
+      if ((UINT32_MAX - host_size) / desc_host_size < binding->descriptorCount) {
+         supported = false;
+         break;
+      }
+
+      uint32_t desc_bo_size = v3dv_X(device, descriptor_bo_size)(binding->descriptorType);
+      if (desc_bo_size > 0 &&
+          (UINT32_MAX - bo_size) / desc_bo_size < binding->descriptorCount) {
+         supported = false;
+         break;
+      }
+
+      host_size += binding->descriptorCount * desc_host_size;
+      bo_size += binding->descriptorCount * desc_bo_size;
+   }
+
+   free(bindings);
+
+   pSupport->supported = supported;
+}
+
+VkResult
+v3dv_CreateDescriptorUpdateTemplate(
+   VkDevice _device,
+   const VkDescriptorUpdateTemplateCreateInfo *pCreateInfo,
+   const VkAllocationCallbacks *pAllocator,
+   VkDescriptorUpdateTemplate *pDescriptorUpdateTemplate)
+{
+   V3DV_FROM_HANDLE(v3dv_device, device, _device);
+   struct v3dv_descriptor_update_template *template;
+
+   size_t size = sizeof(*template) +
+      pCreateInfo->descriptorUpdateEntryCount * sizeof(template->entries[0]);
+   template = vk_object_alloc(&device->vk, pAllocator, size,
+                              VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE);
+   if (template == NULL)
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+
+   template->bind_point = pCreateInfo->pipelineBindPoint;
+
+   assert(pCreateInfo->templateType ==
+          VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET);
+   template->set = pCreateInfo->set;
+
+   template->entry_count = pCreateInfo->descriptorUpdateEntryCount;
+   for (uint32_t i = 0; i < template->entry_count; i++) {
+      const VkDescriptorUpdateTemplateEntry *pEntry =
+         &pCreateInfo->pDescriptorUpdateEntries[i];
+
+      template->entries[i] = (struct v3dv_descriptor_template_entry) {
+         .type = pEntry->descriptorType,
+         .binding = pEntry->dstBinding,
+         .array_element = pEntry->dstArrayElement,
+         .array_count = pEntry->descriptorCount,
+         .offset = pEntry->offset,
+         .stride = pEntry->stride,
+      };
+   }
+
+   *pDescriptorUpdateTemplate =
+      v3dv_descriptor_update_template_to_handle(template);
+
+   return VK_SUCCESS;
+}
+
+void
+v3dv_DestroyDescriptorUpdateTemplate(
+   VkDevice _device,
+   VkDescriptorUpdateTemplate descriptorUpdateTemplate,
+   const VkAllocationCallbacks *pAllocator)
+{
+   V3DV_FROM_HANDLE(v3dv_device, device, _device);
+   V3DV_FROM_HANDLE(v3dv_descriptor_update_template, template,
+                    descriptorUpdateTemplate);
+
+   if (!template)
+      return;
+
+   vk_object_free(&device->vk, pAllocator, template);
+}
+
+void
+v3dv_UpdateDescriptorSetWithTemplate(
+   VkDevice _device,
+   VkDescriptorSet descriptorSet,
+   VkDescriptorUpdateTemplate descriptorUpdateTemplate,
+   const void *pData)
+{
+   V3DV_FROM_HANDLE(v3dv_device, device, _device);
+   V3DV_FROM_HANDLE(v3dv_descriptor_set, set, descriptorSet);
+   V3DV_FROM_HANDLE(v3dv_descriptor_update_template, template,
+                    descriptorUpdateTemplate);
+
+   for (int i = 0; i < template->entry_count; i++) {
+      const struct v3dv_descriptor_template_entry *entry =
+         &template->entries[i];
+
+      const struct v3dv_descriptor_set_binding_layout *binding_layout =
+         set->layout->binding + entry->binding;
+
+      struct v3dv_descriptor *descriptor =
+         set->descriptors +
+         binding_layout->descriptor_index +
+         entry->array_element;
+
+      switch (entry->type) {
+      case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+      case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+      case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+      case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+         for (uint32_t j = 0; j < entry->array_count; j++) {
+            const VkDescriptorBufferInfo *info =
+               pData + entry->offset + j * entry->stride;
+            write_buffer_descriptor(descriptor + j, entry->type, info);
+         }
+         break;
+
+      case VK_DESCRIPTOR_TYPE_SAMPLER:
+      case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+      case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+      case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+      case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+         for (uint32_t j = 0; j < entry->array_count; j++) {
+            const VkDescriptorImageInfo *info =
+               pData + entry->offset + j * entry->stride;
+            V3DV_FROM_HANDLE(v3dv_image_view, iview, info->imageView);
+            V3DV_FROM_HANDLE(v3dv_sampler, sampler, info->sampler);
+            write_image_descriptor(device, descriptor + j, entry->type,
+                                   set, binding_layout, iview, sampler,
+                                   entry->array_element + j);
+         }
+         break;
+
+      case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+      case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+         for (uint32_t j = 0; j < entry->array_count; j++) {
+            const VkBufferView *_bview =
+               pData + entry->offset + j * entry->stride;
+            V3DV_FROM_HANDLE(v3dv_buffer_view, bview, *_bview);
+            write_buffer_view_descriptor(device, descriptor + j, entry->type,
+                                         set, binding_layout, bview,
+                                         entry->array_element + j);
+         }
+         break;
+
+      default:
+         unreachable("Unsupported descriptor type");
+      }
+   }
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+v3dv_CreateSamplerYcbcrConversion(
+    VkDevice _device,
+    const VkSamplerYcbcrConversionCreateInfo *pCreateInfo,
+    const VkAllocationCallbacks *pAllocator,
+    VkSamplerYcbcrConversion *pYcbcrConversion)
+{
+   unreachable("Ycbcr sampler conversion is not supported");
+   return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL
+v3dv_DestroySamplerYcbcrConversion(
+    VkDevice _device,
+    VkSamplerYcbcrConversion YcbcrConversion,
+    const VkAllocationCallbacks *pAllocator)
+{
+   unreachable("Ycbcr sampler conversion is not supported");
 }

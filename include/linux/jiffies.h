@@ -1,11 +1,15 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_JIFFIES_H
 #define _LINUX_JIFFIES_H
 
+#include <linux/cache.h>
+#include <linux/limits.h>
 #include <linux/math64.h>
-#include <linux/kernel.h>
+#include <linux/minmax.h>
 #include <linux/types.h>
 #include <linux/time.h>
 #include <linux/timex.h>
+#include <vdso/jiffies.h>
 #include <asm/param.h>			/* for HZ */
 #include <generated/timeconst.h>
 
@@ -57,25 +61,23 @@
 
 extern int register_refined_jiffies(long clock_tick_rate);
 
-/* TICK_NSEC is the time between ticks in nsec assuming SHIFTED_HZ */
-#define TICK_NSEC ((NSEC_PER_SEC+HZ/2)/HZ)
+/* TICK_USEC is the time between ticks in usec assuming SHIFTED_HZ */
+#define TICK_USEC ((USEC_PER_SEC + HZ/2) / HZ)
 
-/* TICK_USEC is the time between ticks in usec assuming fake USER_HZ */
-#define TICK_USEC ((1000000UL + USER_HZ/2) / USER_HZ)
+/* USER_TICK_USEC is the time between ticks in usec assuming fake USER_HZ */
+#define USER_TICK_USEC ((1000000UL + USER_HZ/2) / USER_HZ)
 
-/* some arch's have a small-data section that can be accessed register-relative
- * but that can only take up to, say, 4-byte variables. jiffies being part of
- * an 8-byte variable may not be correctly accessed unless we force the issue
- */
-#define __jiffy_data  __attribute__((section(".data")))
+#ifndef __jiffy_arch_data
+#define __jiffy_arch_data
+#endif
 
 /*
  * The 64-bit value is not atomic - you MUST NOT read it
  * without sampling the sequence number in jiffies_lock.
  * get_jiffies_64() will do this for you as appropriate.
  */
-extern u64 __jiffy_data jiffies_64;
-extern unsigned long volatile __jiffy_data jiffies;
+extern u64 __cacheline_aligned_in_smp jiffies_64;
+extern unsigned long volatile __cacheline_aligned_in_smp __jiffy_arch_data jiffies;
 
 #if (BITS_PER_LONG < 64)
 u64 get_jiffies_64(void);
@@ -288,19 +290,22 @@ extern unsigned long preset_lpj;
 extern unsigned int jiffies_to_msecs(const unsigned long j);
 extern unsigned int jiffies_to_usecs(const unsigned long j);
 
-static inline u64 __intentional_overflow(-1) jiffies_to_nsecs(const unsigned long j)
+static inline u64 jiffies_to_nsecs(const unsigned long j)
 {
 	return (u64)jiffies_to_usecs(j) * NSEC_PER_USEC;
 }
 
-extern unsigned long __msecs_to_jiffies(const unsigned int m) __intentional_overflow(-1);
+extern u64 jiffies64_to_nsecs(u64 j);
+extern u64 jiffies64_to_msecs(u64 j);
+
+extern unsigned long __msecs_to_jiffies(const unsigned int m);
 #if HZ <= MSEC_PER_SEC && !(MSEC_PER_SEC % HZ)
 /*
  * HZ is equal to or smaller than 1000, and 1000 is a nice round
  * multiple of HZ, divide with the factor between them, but round
  * upwards:
  */
-static inline unsigned long __intentional_overflow(-1) _msecs_to_jiffies(const unsigned int m)
+static inline unsigned long _msecs_to_jiffies(const unsigned int m)
 {
 	return (m + (MSEC_PER_SEC / HZ) - 1) / (MSEC_PER_SEC / HZ);
 }
@@ -311,7 +316,7 @@ static inline unsigned long __intentional_overflow(-1) _msecs_to_jiffies(const u
  *
  * But first make sure the multiplication result cannot overflow:
  */
-static inline unsigned long __intentional_overflow(-1) _msecs_to_jiffies(const unsigned int m)
+static inline unsigned long _msecs_to_jiffies(const unsigned int m)
 {
 	if (m > jiffies_to_msecs(MAX_JIFFY_OFFSET))
 		return MAX_JIFFY_OFFSET;
@@ -322,7 +327,7 @@ static inline unsigned long __intentional_overflow(-1) _msecs_to_jiffies(const u
  * Generic case - multiply, round and divide. But first check that if
  * we are doing a net multiplication, that we wouldn't overflow:
  */
-static inline unsigned long __intentional_overflow(-1) _msecs_to_jiffies(const unsigned int m)
+static inline unsigned long _msecs_to_jiffies(const unsigned int m)
 {
 	if (HZ > MSEC_PER_SEC && m > jiffies_to_msecs(MAX_JIFFY_OFFSET))
 		return MAX_JIFFY_OFFSET;
@@ -366,14 +371,14 @@ static __always_inline unsigned long msecs_to_jiffies(const unsigned int m)
 	}
 }
 
-extern unsigned long __usecs_to_jiffies(const unsigned int u) __intentional_overflow(-1);
+extern unsigned long __usecs_to_jiffies(const unsigned int u);
 #if !(USEC_PER_SEC % HZ)
-static inline unsigned long __intentional_overflow(-1) _usecs_to_jiffies(const unsigned int u)
+static inline unsigned long _usecs_to_jiffies(const unsigned int u)
 {
 	return (u + (USEC_PER_SEC / HZ) - 1) / (USEC_PER_SEC / HZ);
 }
 #else
-static inline unsigned long __intentional_overflow(-1) _usecs_to_jiffies(const unsigned int u)
+static inline unsigned long _usecs_to_jiffies(const unsigned int u)
 {
 	return (USEC_TO_HZ_MUL32 * u + USEC_TO_HZ_ADJ32)
 		>> USEC_TO_HZ_SHR32;
@@ -416,30 +421,15 @@ static __always_inline unsigned long usecs_to_jiffies(const unsigned int u)
 extern unsigned long timespec64_to_jiffies(const struct timespec64 *value);
 extern void jiffies_to_timespec64(const unsigned long jiffies,
 				  struct timespec64 *value);
-static inline unsigned long timespec_to_jiffies(const struct timespec *value)
-{
-	struct timespec64 ts = timespec_to_timespec64(*value);
-
-	return timespec64_to_jiffies(&ts);
-}
-
-static inline void jiffies_to_timespec(const unsigned long jiffies,
-				       struct timespec *value)
-{
-	struct timespec64 ts;
-
-	jiffies_to_timespec64(jiffies, &ts);
-	*value = timespec64_to_timespec(ts);
-}
-
-extern unsigned long timeval_to_jiffies(const struct timeval *value);
-extern void jiffies_to_timeval(const unsigned long jiffies,
-			       struct timeval *value);
-
 extern clock_t jiffies_to_clock_t(unsigned long x);
 static inline clock_t jiffies_delta_to_clock_t(long delta)
 {
 	return jiffies_to_clock_t(max(0L, delta));
+}
+
+static inline unsigned int jiffies_delta_to_msecs(long delta)
+{
+	return jiffies_to_msecs(max(0L, delta));
 }
 
 extern unsigned long clock_t_to_jiffies(unsigned long x);

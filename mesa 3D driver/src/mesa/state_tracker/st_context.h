@@ -46,15 +46,14 @@ extern "C" {
 #endif
 
 
-struct dd_function_table;
 struct draw_context;
 struct draw_stage;
 struct gen_mipmap_state;
 struct st_context;
 struct st_program;
-struct st_perf_monitor_group;
 struct u_upload_mgr;
 
+#define ST_L3_PINNING_DISABLED 0xffffffff
 
 struct st_bitmap_cache
 {
@@ -123,23 +122,29 @@ struct st_context
    struct st_context_iface iface;
 
    struct gl_context *ctx;
-
+   struct pipe_screen *screen;
    struct pipe_context *pipe;
+   struct cso_context *cso_context;
 
    struct draw_context *draw;  /**< For selection/feedback/rastpos only */
    struct draw_stage *feedback_stage;  /**< For GL_FEEDBACK rendermode */
    struct draw_stage *selection_stage;  /**< For GL_SELECT rendermode */
    struct draw_stage *rastpos_stage;  /**< For glRasterPos */
+
+   unsigned pin_thread_counter; /* for L3 thread pinning on AMD Zen */
+
    GLboolean clamp_frag_color_in_shader;
    GLboolean clamp_vert_color_in_shader;
-   boolean clamp_frag_depth_in_shader;
    boolean has_stencil_export; /**< can do shader stencil export? */
    boolean has_time_elapsed;
    boolean has_etc1;
    boolean has_etc2;
+   boolean transcode_etc;
+   boolean transcode_astc;
    boolean has_astc_2d_ldr;
    boolean has_astc_5x5_ldr;
    boolean prefer_blit_based_texture_transfer;
+   boolean allow_compute_based_texture_transfer;
    boolean force_persample_in_shader;
    boolean has_shareable_shaders;
    boolean has_half_float_packing;
@@ -153,6 +158,10 @@ struct st_context
    boolean lower_point_size;
    boolean lower_two_sided_color;
    boolean lower_ucp;
+   boolean prefer_real_buffer_in_constbuf0;
+   boolean has_conditional_render;
+   boolean lower_texcoord_replace;
+   boolean lower_rect_tex;
 
    /* There are consequences for drivers wanting to call st_finalize_nir
     * twice, once before shader caching and once after lowering for shader
@@ -174,11 +183,9 @@ struct st_context
 
    boolean needs_texcoord_semantic;
    boolean apply_texture_swizzle_to_border_color;
+   boolean emulate_gl_clamp;
+   boolean texture_buffer_sampler;
 
-   /* On old libGL's for linux we need to invalidate the drawables
-    * on glViewpport calls, this is set via a option.
-    */
-   boolean invalidate_on_gl_viewport;
    boolean draw_needs_minmax_index;
    boolean has_hw_atomics;
 
@@ -197,14 +204,10 @@ struct st_context
       struct pipe_sampler_state frag_samplers[PIPE_MAX_SAMPLERS];
       GLuint num_vert_samplers;
       GLuint num_frag_samplers;
-      struct pipe_sampler_view *vert_sampler_views[PIPE_MAX_SAMPLERS];
-      struct pipe_sampler_view *frag_sampler_views[PIPE_MAX_SAMPLERS];
       GLuint num_sampler_views[PIPE_SHADER_TYPES];
+      unsigned num_images[PIPE_SHADER_TYPES];
       struct pipe_clip_state clip;
-      struct {
-         void *ptr;
-         unsigned size;
-      } constants[PIPE_SHADER_TYPES];
+      unsigned constbuf0_enabled_shader_mask;
       unsigned fb_width;
       unsigned fb_height;
       unsigned fb_num_samples;
@@ -235,8 +238,6 @@ struct st_context
    /** This masks out unused shader resources. Only valid in draw calls. */
    uint64_t active_states;
 
-   unsigned pin_thread_counter; /* for L3 thread pinning on AMD Zen */
-
    /* If true, further analysis of states is required to know if something
     * has changed. Used mainly for shaders.
     */
@@ -254,12 +255,12 @@ struct st_context
 
    union {
       struct {
-         struct st_program *vp;    /**< Currently bound vertex program */
-         struct st_program *tcp; /**< Currently bound tess control program */
-         struct st_program *tep; /**< Currently bound tess eval program */
-         struct st_program *gp;  /**< Currently bound geometry program */
-         struct st_program *fp;  /**< Currently bound fragment program */
-         struct st_program *cp;   /**< Currently bound compute program */
+         struct gl_program *vp;    /**< Currently bound vertex program */
+         struct gl_program *tcp; /**< Currently bound tess control program */
+         struct gl_program *tep; /**< Currently bound tess eval program */
+         struct gl_program *gp;  /**< Currently bound geometry program */
+         struct gl_program *fp;  /**< Currently bound fragment program */
+         struct gl_program *cp;   /**< Currently bound compute program */
       };
       struct gl_program *current_program[MESA_SHADER_STAGES];
    };
@@ -317,8 +318,16 @@ struct st_context
       struct pipe_blend_state upload_blend;
       void *vs;
       void *gs;
-      void *upload_fs[3];
-      void *download_fs[3][PIPE_MAX_TEXTURE_TYPES];
+      void *upload_fs[5][2];
+      /**
+       * For drivers supporting formatless storing
+       * (PIPE_CAP_IMAGE_STORE_FORMATTED) it is a pointer to the download FS;
+       * for those not supporting it, it is a pointer to an array of
+       * PIPE_FORMAT_COUNT elements, where each element is a pointer to the
+       * download FS using that PIPE_FORMAT as the storing format.
+       */
+      void *download_fs[5][PIPE_MAX_TEXTURE_TYPES][2];
+      struct hash_table *shaders;
       bool upload_enabled;
       bool download_enabled;
       bool rgba_only;
@@ -334,12 +343,11 @@ struct st_context
 
    enum pipe_texture_target internal_target;
 
-   struct cso_context *cso_context;
-
    void *winsys_drawable_handle;
 
    /* The number of vertex buffers from the last call of validate_arrays. */
    unsigned last_num_vbuffers;
+   bool uses_user_vertex_buffers;
 
    unsigned last_used_atomic_bindings[PIPE_SHADER_TYPES];
    unsigned last_num_ssbos[PIPE_SHADER_TYPES];
@@ -348,8 +356,6 @@ struct st_context
    int32_t read_stamp;
 
    struct st_config_options options;
-
-   struct st_perf_monitor_group *perfmon;
 
    enum pipe_reset_status reset_status;
 
@@ -376,7 +382,6 @@ struct st_context
       struct st_zombie_shader_node list;
       simple_mtx_t mutex;
    } zombie_shaders;
-
 };
 
 
@@ -395,7 +400,7 @@ st_create_context(gl_api api, struct pipe_context *pipe,
                   const struct gl_config *visual,
                   struct st_context *share,
                   const struct st_config_options *options,
-                  bool no_error);
+                  bool no_error, bool has_egl_image_validate);
 
 extern void
 st_destroy_context(struct st_context *st);
@@ -422,26 +427,9 @@ const struct nir_shader_compiler_options *
 st_get_nir_compiler_options(struct st_context *st, gl_shader_stage stage);
 
 
-/**
- * Wrapper for struct gl_framebuffer.
- * This is an opaque type to the outside world.
- */
-struct st_framebuffer
-{
-   struct gl_framebuffer Base;
-
-   struct st_framebuffer_iface *iface;
-   enum st_attachment_type statts[ST_ATTACHMENT_COUNT];
-   unsigned num_statts;
-   int32_t stamp;
-   int32_t iface_stamp;
-   uint32_t iface_ID;
-
-   /* list of framebuffer objects */
-   struct list_head head;
-};
-
-
+void st_invalidate_state(struct gl_context *ctx);
+void st_set_background_context(struct gl_context *ctx,
+                               struct util_queue_monitoring *queue_info);
 #ifdef __cplusplus
 }
 #endif

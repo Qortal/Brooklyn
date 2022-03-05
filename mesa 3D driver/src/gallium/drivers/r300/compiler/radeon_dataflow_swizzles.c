@@ -54,7 +54,6 @@ static void rewrite_source(struct radeon_compiler * c,
 
 	for(unsigned int phase = 0; phase < split.NumPhases; ++phase) {
 		struct rc_instruction * mov = rc_insert_new_instruction(c, inst->Prev);
-		unsigned int phase_refmask;
 		unsigned int masked_negate;
 
 		mov->U.I.Opcode = RC_OPCODE_MOV;
@@ -64,15 +63,10 @@ static void rewrite_source(struct radeon_compiler * c,
 		mov->U.I.SrcReg[0] = inst->U.I.SrcReg[src];
 		mov->U.I.PreSub = inst->U.I.PreSub;
 
-		phase_refmask = 0;
 		for(unsigned int chan = 0; chan < 4; ++chan) {
 			if (!GET_BIT(split.Phase[phase], chan))
 				SET_SWZ(mov->U.I.SrcReg[0].Swizzle, chan, RC_SWIZZLE_UNUSED);
-			else
-				phase_refmask |= 1 << GET_SWZ(mov->U.I.SrcReg[0].Swizzle, chan);
 		}
-
-		phase_refmask &= RC_MASK_XYZW;
 
 		masked_negate = split.Phase[phase] & mov->U.I.SrcReg[0].Negate;
 		if (masked_negate == 0)
@@ -382,7 +376,10 @@ static unsigned try_rewrite_constant(struct radeon_compiler *c,
 			continue;
 		}
 
-		assert(new_swz <= RC_SWIZZLE_W);
+		if (new_swz > RC_SWIZZLE_W) {
+			rc_error(c, "Bad swizzle in try_rewrite_constant()");
+			new_swz = RC_SWIZZLE_X;
+		}
 
 		switch (old_swz) {
 		case RC_SWIZZLE_ZERO:

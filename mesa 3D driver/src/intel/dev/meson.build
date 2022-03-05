@@ -21,25 +21,28 @@
 # TODO: android?
 
 files_libintel_dev = files(
-  'gen_debug.c',
-  'gen_debug.h',
-  'gen_device_info.c',
-  'gen_device_info.h',
+  'intel_debug.c',
+  'intel_debug.h',
+  'intel_device_info.c',
+  'intel_device_info.h',
+  'intel_hwconfig.c',
+  'intel_hwconfig.h',
 )
 
 libintel_dev = static_library(
   ['intel_dev'],
   [files_libintel_dev, sha1_h],
   include_directories : [inc_include, inc_src, inc_intel],
+  dependencies : [dep_libdrm, idep_mesautil],
   c_args : [no_override_init_args],
   gnu_symbol_visibility : 'hidden',
 )
 
 if with_tests
-  test('gen_device_info_test',
+  test('intel_device_info_test',
        executable(
-         'gen_device_info_test',
-         'gen_device_info_test.c',
+         'intel_device_info_test',
+         'intel_device_info_test.c',
          include_directories : [inc_include, inc_src],
          link_with : libintel_dev,
        ),
@@ -48,14 +51,14 @@ if with_tests
 endif
 
 if with_intel_tools
-  intel_device_info = executable(
-    'intel_device_info',
-    files('intel_device_info.c'),
+  intel_dev_info = executable(
+    'intel_dev_info',
+    files('intel_dev_info.c'),
     dependencies : [dep_libdrm, dep_dl, dep_thread, dep_m],
     include_directories : [inc_include, inc_src, inc_intel],
     link_with : libintel_dev,
     c_args : [no_override_init_args],
     gnu_symbol_visibility : 'hidden',
-    install : false
+    install : true
   )
 endif

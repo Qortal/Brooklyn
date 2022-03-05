@@ -30,11 +30,12 @@ using namespace brw;
 
 class scoreboard_test : public ::testing::Test {
    virtual void SetUp();
+   virtual void TearDown();
 
 public:
    struct brw_compiler *compiler;
-   struct gen_device_info *devinfo;
-   struct gl_context *ctx;
+   struct intel_device_info *devinfo;
+   void *ctx;
    struct brw_wm_prog_data *prog_data;
    struct gl_shader_program *shader_prog;
    fs_visitor *v;
@@ -42,18 +43,28 @@ public:
 
 void scoreboard_test::SetUp()
 {
-   ctx = (struct gl_context *)calloc(1, sizeof(*ctx));
-   compiler = (struct brw_compiler *)calloc(1, sizeof(*compiler));
-   devinfo = (struct gen_device_info *)calloc(1, sizeof(*devinfo));
+   ctx = ralloc_context(NULL);
+   compiler = rzalloc(ctx, struct brw_compiler);
+   devinfo = rzalloc(ctx, struct intel_device_info);
    compiler->devinfo = devinfo;
 
-   prog_data = ralloc(NULL, struct brw_wm_prog_data);
+   prog_data = ralloc(ctx, struct brw_wm_prog_data);
    nir_shader *shader =
-      nir_shader_create(NULL, MESA_SHADER_FRAGMENT, NULL, NULL);
+      nir_shader_create(ctx, MESA_SHADER_FRAGMENT, NULL, NULL);
 
-   v = new fs_visitor(compiler, NULL, NULL, NULL, &prog_data->base, shader, 8, -1);
+   v = new fs_visitor(compiler, NULL, ctx, NULL, &prog_data->base, shader, 8, false);
 
-   devinfo->gen = 12;
+   devinfo->ver = 12;
+   devinfo->verx10 = devinfo->ver * 10;
+}
+
+void scoreboard_test::TearDown()
+{
+   delete v;
+   v = NULL;
+
+   ralloc_free(ctx);
+   ctx = NULL;
 }
 
 static fs_inst *
@@ -91,6 +102,14 @@ emit_SEND(const fs_builder &bld, const fs_reg &dst,
    fs_inst *inst = bld.emit(SHADER_OPCODE_SEND, dst, desc, desc, payload);
    inst->mlen = 1;
    return inst;
+}
+
+static tgl_swsb
+tgl_swsb_testcase(unsigned regdist, unsigned sbid, enum tgl_sbid_mode mode)
+{
+   tgl_swsb swsb = tgl_swsb_sbid(mode, sbid);
+   swsb.regdist = regdist;
+   return swsb;
 }
 
 bool operator ==(const tgl_swsb &a, const tgl_swsb &b)
@@ -167,8 +186,7 @@ TEST_F(scoreboard_test, RAW_inorder_outoforder)
 
    EXPECT_EQ(instruction(block0, 0)->sched, tgl_swsb_null());
    EXPECT_EQ(instruction(block0, 1)->sched, tgl_swsb_null());
-   EXPECT_EQ(instruction(block0, 2)->sched,
-             (tgl_swsb { .regdist = 2, .sbid = 0, .mode = TGL_SBID_SET }));
+   EXPECT_EQ(instruction(block0, 2)->sched, tgl_swsb_testcase(2, 0, TGL_SBID_SET));
 }
 
 TEST_F(scoreboard_test, RAW_outoforder_inorder)
@@ -195,8 +213,7 @@ TEST_F(scoreboard_test, RAW_outoforder_inorder)
 
    EXPECT_EQ(instruction(block0, 0)->sched, tgl_swsb_sbid(TGL_SBID_SET, 0));
    EXPECT_EQ(instruction(block0, 1)->sched, tgl_swsb_null());
-   EXPECT_EQ(instruction(block0, 2)->sched,
-             (tgl_swsb { .regdist = 1, .sbid = 0, .mode = TGL_SBID_DST }));
+   EXPECT_EQ(instruction(block0, 2)->sched, tgl_swsb_testcase(1, 0, TGL_SBID_DST));
 }
 
 TEST_F(scoreboard_test, RAW_outoforder_outoforder)
@@ -281,8 +298,7 @@ TEST_F(scoreboard_test, WAR_inorder_outoforder)
 
    EXPECT_EQ(instruction(block0, 0)->sched, tgl_swsb_null());
    EXPECT_EQ(instruction(block0, 1)->sched, tgl_swsb_null());
-   EXPECT_EQ(instruction(block0, 2)->sched,
-             (tgl_swsb { .regdist = 2, .sbid = 0, .mode = TGL_SBID_SET }));
+   EXPECT_EQ(instruction(block0, 2)->sched, tgl_swsb_testcase(2, 0, TGL_SBID_SET));
 }
 
 TEST_F(scoreboard_test, WAR_outoforder_inorder)
@@ -394,8 +410,7 @@ TEST_F(scoreboard_test, WAW_inorder_outoforder)
 
    EXPECT_EQ(instruction(block0, 0)->sched, tgl_swsb_null());
    EXPECT_EQ(instruction(block0, 1)->sched, tgl_swsb_null());
-   EXPECT_EQ(instruction(block0, 2)->sched,
-             (tgl_swsb { .regdist = 2, .sbid = 0, .mode = TGL_SBID_SET }));
+   EXPECT_EQ(instruction(block0, 2)->sched, tgl_swsb_testcase(2, 0, TGL_SBID_SET));
 }
 
 TEST_F(scoreboard_test, WAW_outoforder_inorder)
@@ -860,4 +875,33 @@ TEST_F(scoreboard_test, conditional8)
    fs_inst *mul = instruction(last_block, 1);
    EXPECT_EQ(mul->opcode, BRW_OPCODE_MUL);
    EXPECT_EQ(mul->sched, tgl_swsb_regdist(2));
+}
+
+TEST_F(scoreboard_test, gfx125_RaR_over_different_pipes)
+{
+   devinfo->verx10 = 125;
+
+   const fs_builder &bld = v->bld;
+
+   fs_reg a = v->vgrf(glsl_type::int_type);
+   fs_reg b = v->vgrf(glsl_type::int_type);
+   fs_reg f = v->vgrf(glsl_type::float_type);
+   fs_reg x = v->vgrf(glsl_type::int_type);
+
+   bld.ADD(f, x, x);
+   bld.ADD(a, x, x);
+   bld.ADD(x, b, b);
+
+   v->calculate_cfg();
+   bblock_t *block0 = v->cfg->blocks[0];
+   ASSERT_EQ(0, block0->start_ip);
+   ASSERT_EQ(2, block0->end_ip);
+
+   lower_scoreboard(v);
+   ASSERT_EQ(0, block0->start_ip);
+   ASSERT_EQ(2, block0->end_ip);
+
+   EXPECT_EQ(instruction(block0, 0)->sched, tgl_swsb_null());
+   EXPECT_EQ(instruction(block0, 1)->sched, tgl_swsb_null());
+   EXPECT_EQ(instruction(block0, 2)->sched, tgl_swsb_regdist(1));
 }

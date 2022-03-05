@@ -29,6 +29,7 @@
 #include <math.h>
 
 #include "main/context.h"
+#include "main/draw_validate.h"
 #include "main/shaderapi.h"
 #include "main/shaderobj.h"
 #include "main/uniforms.h"
@@ -38,22 +39,34 @@
 #include "compiler/glsl/program.h"
 #include "util/bitscan.h"
 
+#include "state_tracker/st_context.h"
 
-extern "C" void GLAPIENTRY
-_mesa_GetActiveUniform(GLuint program, GLuint index,
-                       GLsizei maxLength, GLsizei *length, GLint *size,
-                       GLenum *type, GLcharARB *nameOut)
+/* This is one of the few glGet that can be called from the app thread safely.
+ * Only these conditions must be met:
+ * - There are no unfinished glLinkProgram and glDeleteProgram calls
+ *   for the program object. This assures that the program object is immutable.
+ * - glthread=true for GL errors to be passed to the driver thread safely
+ *
+ * Program objects can be looked up from any thread because they are part
+ * of the multi-context shared state.
+ */
+extern "C" void
+_mesa_GetActiveUniform_impl(GLuint program, GLuint index,
+                            GLsizei maxLength, GLsizei *length, GLint *size,
+                            GLenum *type, GLcharARB *nameOut, bool glthread)
 {
    GET_CURRENT_CONTEXT(ctx);
    struct gl_shader_program *shProg;
    struct gl_program_resource *res;
 
    if (maxLength < 0) {
-      _mesa_error(ctx, GL_INVALID_VALUE, "glGetActiveUniform(maxLength < 0)");
+      _mesa_error_glthread_safe(ctx, GL_INVALID_VALUE, glthread,
+                                "glGetActiveUniform(maxLength < 0)");
       return;
    }
 
-   shProg = _mesa_lookup_shader_program_err(ctx, program, "glGetActiveUniform");
+   shProg = _mesa_lookup_shader_program_err_glthread(ctx, program, glthread,
+                                                     "glGetActiveUniform");
    if (!shProg)
       return;
 
@@ -61,21 +74,32 @@ _mesa_GetActiveUniform(GLuint program, GLuint index,
                                            GL_UNIFORM, index);
 
    if (!res) {
-      _mesa_error(ctx, GL_INVALID_VALUE, "glGetActiveUniform(index)");
+      _mesa_error_glthread_safe(ctx, GL_INVALID_VALUE, glthread,
+                                "glGetActiveUniform(index)");
       return;
    }
 
    if (nameOut)
       _mesa_get_program_resource_name(shProg, GL_UNIFORM, index, maxLength,
-                                      length, nameOut, "glGetActiveUniform");
+                                      length, nameOut, glthread,
+                                      "glGetActiveUniform");
    if (type)
       _mesa_program_resource_prop((struct gl_shader_program *) shProg,
                                   res, index, GL_TYPE, (GLint*) type,
-                                  "glGetActiveUniform");
+                                  glthread, "glGetActiveUniform");
    if (size)
       _mesa_program_resource_prop((struct gl_shader_program *) shProg,
                                   res, index, GL_ARRAY_SIZE, (GLint*) size,
-                                  "glGetActiveUniform");
+                                  glthread, "glGetActiveUniform");
+}
+
+extern "C" void GLAPIENTRY
+_mesa_GetActiveUniform(GLuint program, GLuint index,
+                       GLsizei maxLength, GLsizei *length, GLint *size,
+                       GLenum *type, GLcharARB *nameOut)
+{
+   _mesa_GetActiveUniform_impl(program, index, maxLength, length, size,
+                               type, nameOut, false);
 }
 
 static GLenum
@@ -151,7 +175,7 @@ _mesa_GetActiveUniformsiv(GLuint program,
                                               uniformIndices[i]);
       if (!_mesa_program_resource_prop(shProg, res, uniformIndices[i],
                                        res_prop, &params[i],
-                                       "glGetActiveUniformsiv"))
+                                       false, "glGetActiveUniformsiv"))
          break;
    }
 }
@@ -248,7 +272,7 @@ validate_uniform_parameters(GLint location, GLsizei count,
       if (count > 1) {
          _mesa_error(ctx, GL_INVALID_OPERATION,
                      "%s(count = %u for non-array \"%s\"@%d)",
-                     caller, count, uni->name, location);
+                     caller, count, uni->name.string, location);
          return NULL;
       }
 
@@ -322,6 +346,8 @@ _mesa_get_uniform(struct gl_context *ctx, GLuint program, GLint location,
 
    {
       unsigned elements = uni->type->components();
+      unsigned components = uni->type->vector_elements;
+
       const int rmul = glsl_base_type_is_64bit(returnType) ? 2 : 1;
       int dmul = (uni->type->is_64bit()) ? 2 : 1;
 
@@ -339,8 +365,16 @@ _mesa_get_uniform(struct gl_context *ctx, GLuint program, GLint location,
       const union gl_constant_value *src;
       if (ctx->Const.PackedDriverUniformStorage &&
           (uni->is_bindless || !uni->type->contains_opaque())) {
+         unsigned dword_elements = elements;
+
+         /* 16-bit uniforms are packed. */
+         if (glsl_base_type_is_16bit(uni->type->base_type)) {
+            dword_elements = DIV_ROUND_UP(components, 2) *
+                             uni->type->matrix_columns;
+         }
+
          src = (gl_constant_value *) uni->driver_storage[0].data +
-            (offset * elements * dmul);
+            (offset * dword_elements * dmul);
       } else {
          src = &uni->storage[offset * elements * dmul];
       }
@@ -378,9 +412,18 @@ _mesa_get_uniform(struct gl_context *ctx, GLuint program, GLint location,
             int sidx = i * dmul;
             int didx = i * rmul;
 
+            if (glsl_base_type_is_16bit(uni->type->base_type)) {
+               unsigned column = i / components;
+               unsigned row = i % components;
+               sidx = column * align(components, 2) + row;
+            }
+
             switch (returnType) {
             case GLSL_TYPE_FLOAT:
                switch (uni->type->base_type) {
+               case GLSL_TYPE_FLOAT16:
+                  dst[didx].f = _mesa_half_to_float(((uint16_t*)src)[sidx]);
+                  break;
                case GLSL_TYPE_UINT:
                   dst[didx].f = (float) src[sidx].u;
                   break;
@@ -418,6 +461,11 @@ _mesa_get_uniform(struct gl_context *ctx, GLuint program, GLint location,
 
             case GLSL_TYPE_DOUBLE:
                switch (uni->type->base_type) {
+               case GLSL_TYPE_FLOAT16: {
+                  double f = _mesa_half_to_float(((uint16_t*)src)[sidx]);
+                  memcpy(&dst[didx].f, &f, sizeof(f));
+                  break;
+               }
                case GLSL_TYPE_UINT: {
                   double tmp = src[sidx].u;
                   memcpy(&dst[didx].f, &tmp, sizeof(tmp));
@@ -484,6 +532,10 @@ _mesa_get_uniform(struct gl_context *ctx, GLuint program, GLint location,
                    */
                   dst[didx].i = (int64_t) roundf(src[sidx].f);
                   break;
+               case GLSL_TYPE_FLOAT16:
+                  dst[didx].i =
+                     (int64_t)roundf(_mesa_half_to_float(((uint16_t*)src)[sidx]));
+                  break;
                case GLSL_TYPE_BOOL:
                   dst[didx].i = src[sidx].i ? 1 : 0;
                   break;
@@ -531,6 +583,11 @@ _mesa_get_uniform(struct gl_context *ctx, GLuint program, GLint location,
                   dst[didx].u = src[sidx].f < 0.0f ?
                      0u : (uint32_t) roundf(src[sidx].f);
                   break;
+               case GLSL_TYPE_FLOAT16: {
+                  float f = _mesa_half_to_float(((uint16_t*)src)[sidx]);
+                  dst[didx].u = f < 0.0f ? 0u : (uint32_t)roundf(f);
+                  break;
+               }
                case GLSL_TYPE_BOOL:
                   dst[didx].i = src[sidx].i ? 1 : 0;
                   break;
@@ -591,6 +648,12 @@ _mesa_get_uniform(struct gl_context *ctx, GLuint program, GLint location,
                   memcpy(&dst[didx].u, &tmp, sizeof(tmp));
                   break;
                }
+               case GLSL_TYPE_FLOAT16: {
+                  float f = _mesa_half_to_float(((uint16_t*)src)[sidx]);
+                  int64_t tmp = (int64_t) roundf(f);
+                  memcpy(&dst[didx].u, &tmp, sizeof(tmp));
+                  break;
+               }
                case GLSL_TYPE_DOUBLE: {
                   double d;
                   memcpy(&d, &src[sidx].f, sizeof(d));
@@ -636,6 +699,12 @@ _mesa_get_uniform(struct gl_context *ctx, GLuint program, GLint location,
                   memcpy(&dst[didx].u, &tmp, sizeof(tmp));
                   break;
                }
+               case GLSL_TYPE_FLOAT16: {
+                  float f = _mesa_half_to_float(((uint16_t*)src)[sidx]);
+                  uint64_t tmp = f < 0.0f ? 0ull : (uint64_t) roundf(f);
+                  memcpy(&dst[didx].u, &tmp, sizeof(tmp));
+                  break;
+               }
                case GLSL_TYPE_DOUBLE: {
                   double d;
                   memcpy(&d, &src[sidx].f, sizeof(d));
@@ -673,7 +742,7 @@ log_uniform(const void *values, enum glsl_base_type basicType,
 
    printf("Mesa: set program %u %s \"%s\" (loc %d, type \"%s\", "
 	  "transpose = %s) to: ",
-	  shProg->Name, extra, uni->name, location, uni->type->name,
+	  shProg->Name, extra, uni->name.string, location, uni->type->name,
 	  transpose ? "true" : "false");
    for (unsigned i = 0; i < elems; i++) {
       if (i != 0 && ((i % rows) == 0))
@@ -854,6 +923,177 @@ _mesa_propagate_uniforms_to_driver_storage(struct gl_uniform_storage *uni,
 }
 
 
+static void
+associate_uniform_storage(struct gl_context *ctx,
+                          struct gl_shader_program *shader_program,
+                          struct gl_program *prog)
+{
+   struct gl_program_parameter_list *params = prog->Parameters;
+   gl_shader_stage shader_type = prog->info.stage;
+
+   _mesa_disallow_parameter_storage_realloc(params);
+
+   /* After adding each uniform to the parameter list, connect the storage for
+    * the parameter with the tracking structure used by the API for the
+    * uniform.
+    */
+   unsigned last_location = unsigned(~0);
+   for (unsigned i = 0; i < params->NumParameters; i++) {
+      if (params->Parameters[i].Type != PROGRAM_UNIFORM)
+         continue;
+
+      unsigned location = params->Parameters[i].UniformStorageIndex;
+
+      struct gl_uniform_storage *storage =
+         &shader_program->data->UniformStorage[location];
+
+      /* Do not associate any uniform storage to built-in uniforms */
+      if (storage->builtin)
+         continue;
+
+      if (location != last_location) {
+         enum gl_uniform_driver_format format = uniform_native;
+         unsigned columns = 0;
+
+         int dmul;
+         if (ctx->Const.PackedDriverUniformStorage && !prog->info.is_arb_asm) {
+            dmul = storage->type->vector_elements * sizeof(float);
+         } else {
+            dmul = 4 * sizeof(float);
+         }
+
+         switch (storage->type->base_type) {
+         case GLSL_TYPE_UINT64:
+            if (storage->type->vector_elements > 2)
+               dmul *= 2;
+            FALLTHROUGH;
+         case GLSL_TYPE_UINT:
+         case GLSL_TYPE_UINT16:
+         case GLSL_TYPE_UINT8:
+            assert(ctx->Const.NativeIntegers);
+            format = uniform_native;
+            columns = 1;
+            break;
+         case GLSL_TYPE_INT64:
+            if (storage->type->vector_elements > 2)
+               dmul *= 2;
+            FALLTHROUGH;
+         case GLSL_TYPE_INT:
+         case GLSL_TYPE_INT16:
+         case GLSL_TYPE_INT8:
+            format =
+               (ctx->Const.NativeIntegers) ? uniform_native : uniform_int_float;
+            columns = 1;
+            break;
+         case GLSL_TYPE_DOUBLE:
+            if (storage->type->vector_elements > 2)
+               dmul *= 2;
+            FALLTHROUGH;
+         case GLSL_TYPE_FLOAT:
+         case GLSL_TYPE_FLOAT16:
+            format = uniform_native;
+            columns = storage->type->matrix_columns;
+            break;
+         case GLSL_TYPE_BOOL:
+            format = uniform_native;
+            columns = 1;
+            break;
+         case GLSL_TYPE_SAMPLER:
+         case GLSL_TYPE_TEXTURE:
+         case GLSL_TYPE_IMAGE:
+         case GLSL_TYPE_SUBROUTINE:
+            format = uniform_native;
+            columns = 1;
+            break;
+         case GLSL_TYPE_ATOMIC_UINT:
+         case GLSL_TYPE_ARRAY:
+         case GLSL_TYPE_VOID:
+         case GLSL_TYPE_STRUCT:
+         case GLSL_TYPE_ERROR:
+         case GLSL_TYPE_INTERFACE:
+         case GLSL_TYPE_FUNCTION:
+            assert(!"Should not get here.");
+            break;
+         }
+
+         unsigned pvo = params->Parameters[i].ValueOffset;
+         _mesa_uniform_attach_driver_storage(storage, dmul * columns, dmul,
+                                             format,
+                                             &params->ParameterValues[pvo]);
+
+         /* When a bindless sampler/image is bound to a texture/image unit, we
+          * have to overwrite the constant value by the resident handle
+          * directly in the constant buffer before the next draw. One solution
+          * is to keep track a pointer to the base of the data.
+          */
+         if (storage->is_bindless && (prog->sh.NumBindlessSamplers ||
+                                      prog->sh.NumBindlessImages)) {
+            unsigned array_elements = MAX2(1, storage->array_elements);
+
+            for (unsigned j = 0; j < array_elements; ++j) {
+               unsigned unit = storage->opaque[shader_type].index + j;
+
+               if (storage->type->without_array()->is_sampler()) {
+                  assert(unit >= 0 && unit < prog->sh.NumBindlessSamplers);
+                  prog->sh.BindlessSamplers[unit].data =
+                     &params->ParameterValues[pvo] + 4 * j;
+               } else if (storage->type->without_array()->is_image()) {
+                  assert(unit >= 0 && unit < prog->sh.NumBindlessImages);
+                  prog->sh.BindlessImages[unit].data =
+                     &params->ParameterValues[pvo] + 4 * j;
+               }
+            }
+         }
+
+         /* After attaching the driver's storage to the uniform, propagate any
+          * data from the linker's backing store.  This will cause values from
+          * initializers in the source code to be copied over.
+          */
+         unsigned array_elements = MAX2(1, storage->array_elements);
+         if (ctx->Const.PackedDriverUniformStorage && !prog->info.is_arb_asm &&
+             (storage->is_bindless || !storage->type->contains_opaque())) {
+            const int dmul = storage->type->is_64bit() ? 2 : 1;
+            const unsigned components =
+               storage->type->vector_elements *
+               storage->type->matrix_columns;
+
+            for (unsigned s = 0; s < storage->num_driver_storage; s++) {
+               gl_constant_value *uni_storage = (gl_constant_value *)
+                  storage->driver_storage[s].data;
+               memcpy(uni_storage, storage->storage,
+                      sizeof(storage->storage[0]) * components *
+                      array_elements * dmul);
+            }
+         } else {
+            _mesa_propagate_uniforms_to_driver_storage(storage, 0,
+                                                       array_elements);
+         }
+
+	      last_location = location;
+      }
+   }
+}
+
+
+void
+_mesa_ensure_and_associate_uniform_storage(struct gl_context *ctx,
+                              struct gl_shader_program *shader_program,
+                              struct gl_program *prog, unsigned required_space)
+{
+   /* Avoid reallocation of the program parameter list, because the uniform
+    * storage is only associated with the original parameter list.
+    */
+   _mesa_reserve_parameter_storage(prog->Parameters, required_space,
+                                   required_space);
+
+   /* This has to be done last.  Any operation the can cause
+    * prog->ParameterValues to get reallocated (e.g., anything that adds a
+    * program constant) has to happen before creating this linkage.
+    */
+   associate_uniform_storage(ctx, shader_program, prog);
+}
+
+
 /**
  * Return printable string for a given GLSL_TYPE_x
  */
@@ -913,7 +1153,7 @@ validate_uniform(GLint location, GLsizei count, const GLvoid *values,
       /* Can't set matrix uniforms (like mat4) with glUniform */
       _mesa_error(ctx, GL_INVALID_OPERATION,
                   "glUniform%u(uniform \"%s\"@%d is matrix)",
-                  src_components, uni->name, location);
+                  src_components, uni->name.string, location);
       return NULL;
    }
 
@@ -924,7 +1164,7 @@ validate_uniform(GLint location, GLsizei count, const GLvoid *values,
       /* glUniformN() must match float/vecN type */
       _mesa_error(ctx, GL_INVALID_OPERATION,
                   "glUniform%u(\"%s\"@%u has %u components, not %u)",
-                  src_components, uni->name, location,
+                  src_components, uni->name.string, location,
                   components, src_components);
       return NULL;
    }
@@ -940,6 +1180,9 @@ validate_uniform(GLint location, GLsizei count, const GLvoid *values,
    case GLSL_TYPE_IMAGE:
       match = (basicType == GLSL_TYPE_INT && _mesa_is_desktop_gl(ctx));
       break;
+   case GLSL_TYPE_FLOAT16:
+      match = basicType == GLSL_TYPE_FLOAT;
+      break;
    default:
       match = (basicType == uni->type->base_type);
       break;
@@ -948,7 +1191,7 @@ validate_uniform(GLint location, GLsizei count, const GLvoid *values,
    if (!match) {
       _mesa_error(ctx, GL_INVALID_OPERATION,
                   "glUniform%u(\"%s\"@%d is %s, not %s)",
-                  src_components, uni->name, location,
+                  src_components, uni->name.string, location,
                   glsl_type_name(uni->type->base_type),
                   glsl_type_name(basicType));
       return NULL;
@@ -991,7 +1234,7 @@ validate_uniform(GLint location, GLsizei count, const GLvoid *values,
       /* We need to reset the validate flag on changes to samplers in case
        * two different sampler types are set to the same texture unit.
        */
-      ctx->_Shader->Validated = GL_FALSE;
+      ctx->_Shader->Validated = ctx->_Shader->UserValidated = GL_FALSE;
    }
 
    if (uni->type->is_image()) {
@@ -1017,7 +1260,9 @@ _mesa_flush_vertices_for_uniforms(struct gl_context *ctx,
 {
    /* Opaque uniforms have no storage unless they are bindless */
    if (!uni->is_bindless && uni->type->contains_opaque()) {
-      FLUSH_VERTICES(ctx, 0);
+      /* Samplers flush on demand and ignore redundant updates. */
+      if (!uni->type->is_sampler())
+         FLUSH_VERTICES(ctx, 0, 0);
       return;
    }
 
@@ -1031,44 +1276,151 @@ _mesa_flush_vertices_for_uniforms(struct gl_context *ctx,
       new_driver_state |= ctx->DriverFlags.NewShaderConstants[index];
    }
 
-   FLUSH_VERTICES(ctx, new_driver_state ? 0 : _NEW_PROGRAM_CONSTANTS);
+   FLUSH_VERTICES(ctx, new_driver_state ? 0 : _NEW_PROGRAM_CONSTANTS, 0);
    ctx->NewDriverState |= new_driver_state;
 }
 
-static void
+static bool
 copy_uniforms_to_storage(gl_constant_value *storage,
                          struct gl_uniform_storage *uni,
                          struct gl_context *ctx, GLsizei count,
                          const GLvoid *values, const int size_mul,
                          const unsigned offset, const unsigned components,
-                         enum glsl_base_type basicType)
+                         enum glsl_base_type basicType, bool flush)
 {
+   const gl_constant_value *src = (const gl_constant_value*)values;
    bool copy_as_uint64 = uni->is_bindless &&
                          (uni->type->is_sampler() || uni->type->is_image());
-   if (!uni->type->is_boolean() && !copy_as_uint64) {
-      memcpy(storage, values,
-             sizeof(storage[0]) * components * count * size_mul);
-   } else if (copy_as_uint64) {
-      const union gl_constant_value *src =
-         (const union gl_constant_value *) values;
-      GLuint64 *dst = (GLuint64 *)&storage->i;
-      const unsigned elems = components * count;
+   bool copy_to_float16 = uni->type->base_type == GLSL_TYPE_FLOAT16;
 
-      for (unsigned i = 0; i < elems; i++) {
-         dst[i] = src[i].i;
-      }
-   } else {
-      const union gl_constant_value *src =
-         (const union gl_constant_value *) values;
-      union gl_constant_value *dst = storage;
-      const unsigned elems = components * count;
+   if (!uni->type->is_boolean() && !copy_as_uint64 && !copy_to_float16) {
+      unsigned size = sizeof(storage[0]) * components * count * size_mul;
 
-      for (unsigned i = 0; i < elems; i++) {
-         if (basicType == GLSL_TYPE_FLOAT) {
-            dst[i].i = src[i].f != 0.0f ? ctx->Const.UniformBooleanTrue : 0;
-         } else {
-            dst[i].i = src[i].i != 0    ? ctx->Const.UniformBooleanTrue : 0;
+      if (!memcmp(storage, values, size))
+         return false;
+
+      if (flush)
+         _mesa_flush_vertices_for_uniforms(ctx, uni);
+
+      memcpy(storage, values, size);
+      return true;
+   } else if (copy_to_float16) {
+      assert(ctx->Const.PackedDriverUniformStorage);
+      const unsigned dst_components = align(components, 2);
+      uint16_t *dst = (uint16_t*)storage;
+
+      int i = 0;
+      unsigned c = 0;
+
+      if (flush) {
+         /* Find the first element that's different. */
+         for (; i < count; i++) {
+            for (; c < components; c++) {
+               if (dst[c] != _mesa_float_to_half(src[c].f)) {
+                  _mesa_flush_vertices_for_uniforms(ctx, uni);
+                  flush = false;
+                  goto break_loops;
+               }
+            }
+            c = 0;
+            dst += dst_components;
+            src += components;
          }
+      break_loops:
+         if (flush)
+            return false; /* No change. */
+      }
+
+      /* Set the remaining elements. We know that at least 1 element is
+       * different and that we have flushed.
+       */
+      for (; i < count; i++) {
+         for (; c < components; c++)
+            dst[c] = _mesa_float_to_half(src[c].f);
+
+         c = 0;
+         dst += dst_components;
+         src += components;
+      }
+
+      return true;
+   } else if (copy_as_uint64) {
+      const unsigned elems = components * count;
+      uint64_t *dst = (uint64_t*)storage;
+      unsigned i = 0;
+
+      if (flush) {
+         /* Find the first element that's different. */
+         for (; i < elems; i++) {
+            if (dst[i] != src[i].u) {
+               _mesa_flush_vertices_for_uniforms(ctx, uni);
+               flush = false;
+               break;
+            }
+         }
+         if (flush)
+            return false; /* No change. */
+      }
+
+      /* Set the remaining elements. We know that at least 1 element is
+       * different and that we have flushed.
+       */
+      for (; i < elems; i++)
+         dst[i] = src[i].u;
+
+      return true;
+   } else {
+      const unsigned elems = components * count;
+      gl_constant_value *dst = storage;
+
+      if (basicType == GLSL_TYPE_FLOAT) {
+         unsigned i = 0;
+
+         if (flush) {
+            /* Find the first element that's different. */
+            for (; i < elems; i++) {
+               if (dst[i].u !=
+                   (src[i].f != 0.0f ? ctx->Const.UniformBooleanTrue : 0)) {
+                  _mesa_flush_vertices_for_uniforms(ctx, uni);
+                  flush = false;
+                  break;
+               }
+            }
+            if (flush)
+               return false; /* No change. */
+         }
+
+         /* Set the remaining elements. We know that at least 1 element is
+          * different and that we have flushed.
+          */
+         for (; i < elems; i++)
+            dst[i].u = src[i].f != 0.0f ? ctx->Const.UniformBooleanTrue : 0;
+
+         return true;
+      } else {
+         unsigned i = 0;
+
+         if (flush) {
+            /* Find the first element that's different. */
+            for (; i < elems; i++) {
+               if (dst[i].u !=
+                   (src[i].u ? ctx->Const.UniformBooleanTrue : 0)) {
+                  _mesa_flush_vertices_for_uniforms(ctx, uni);
+                  flush = false;
+                  break;
+               }
+            }
+            if (flush)
+               return false; /* No change. */
+         }
+
+         /* Set the remaining elements. We know that at least 1 element is
+          * different and that we have flushed.
+          */
+         for (; i < elems; i++)
+            dst[i].u = src[i].u ? ctx->Const.UniformBooleanTrue : 0;
+
+         return true;
       }
    }
 }
@@ -1096,7 +1448,12 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
       if (location == -1)
          return;
 
+      if (location >= (int)shProg->NumUniformRemapTable)
+         return;
+
       uni = shProg->UniformRemapTable[location];
+      if (!uni || uni == INACTIVE_UNIFORM_EXPLICIT_LOCATION)
+         return;
 
       /* The array index specified by the uniform location is just the
        * uniform location minus the base location of of the uniform.
@@ -1127,38 +1484,50 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
       count = MIN2(count, (int) (uni->array_elements - offset));
    }
 
-   /* We check samplers for changes and flush if needed in the sampler
-    * handling code further down, so just skip them here.
-    */
-   if (!uni->type->is_sampler()) {
-       _mesa_flush_vertices_for_uniforms(ctx, uni);
-   }
-
    /* Store the data in the "actual type" backing storage for the uniform.
     */
+   bool ctx_flushed = false;
    gl_constant_value *storage;
    if (ctx->Const.PackedDriverUniformStorage &&
        (uni->is_bindless || !uni->type->contains_opaque())) {
       for (unsigned s = 0; s < uni->num_driver_storage; s++) {
-         storage = (gl_constant_value *)
-            uni->driver_storage[s].data + (size_mul * offset * components);
+         unsigned dword_components = components;
 
-         copy_uniforms_to_storage(storage, uni, ctx, count, values, size_mul,
-                                  offset, components, basicType);
+         /* 16-bit uniforms are packed. */
+         if (glsl_base_type_is_16bit(uni->type->base_type))
+            dword_components = DIV_ROUND_UP(dword_components, 2);
+
+         storage = (gl_constant_value *)
+            uni->driver_storage[s].data + (size_mul * offset * dword_components);
+
+         if (copy_uniforms_to_storage(storage, uni, ctx, count, values, size_mul,
+                                      offset, components, basicType, !ctx_flushed))
+            ctx_flushed = true;
       }
    } else {
       storage = &uni->storage[size_mul * components * offset];
-      copy_uniforms_to_storage(storage, uni, ctx, count, values, size_mul,
-                               offset, components, basicType);
-
-      _mesa_propagate_uniforms_to_driver_storage(uni, offset, count);
+      if (copy_uniforms_to_storage(storage, uni, ctx, count, values, size_mul,
+                                   offset, components, basicType, !ctx_flushed)) {
+         _mesa_propagate_uniforms_to_driver_storage(uni, offset, count);
+         ctx_flushed = true;
+      }
    }
+   /* Return early if possible. Bindless samplers need to be processed
+    * because of the !sampler->bound codepath below.
+    */
+   if (!ctx_flushed && !(uni->type->is_sampler() && uni->is_bindless))
+      return; /* no change in uniform values */
 
    /* If the uniform is a sampler, do the extra magic necessary to propagate
     * the changes through.
     */
    if (uni->type->is_sampler()) {
+      /* Note that samplers are the only uniforms that don't call
+       * FLUSH_VERTICES above.
+       */
       bool flushed = false;
+      bool any_changed = false;
+      bool samplers_validated = shProg->SamplersValidated;
 
       shProg->SamplersValidated = GL_TRUE;
 
@@ -1182,7 +1551,7 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
                 */
                if (sampler->unit != value || !sampler->bound) {
                   if (!flushed) {
-                     FLUSH_VERTICES(ctx, _NEW_TEXTURE_OBJECT | _NEW_PROGRAM);
+                     FLUSH_VERTICES(ctx, _NEW_TEXTURE_OBJECT | _NEW_PROGRAM, 0);
                      flushed = true;
                   }
                   sampler->unit = value;
@@ -1193,7 +1562,7 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
             } else {
                if (sh->Program->SamplerUnits[unit] != value) {
                   if (!flushed) {
-                     FLUSH_VERTICES(ctx, _NEW_TEXTURE_OBJECT | _NEW_PROGRAM);
+                     FLUSH_VERTICES(ctx, _NEW_TEXTURE_OBJECT | _NEW_PROGRAM, 0);
                      flushed = true;
                   }
                   sh->Program->SamplerUnits[unit] = value;
@@ -1205,10 +1574,14 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
          if (changed) {
             struct gl_program *const prog = sh->Program;
             _mesa_update_shader_textures_used(shProg, prog);
-            if (ctx->Driver.SamplerUniformChange)
-               ctx->Driver.SamplerUniformChange(ctx, prog->Target, prog);
+            any_changed = true;
          }
       }
+
+      if (any_changed)
+         _mesa_update_valid_to_render_state(ctx);
+      else
+         shProg->SamplersValidated = samplers_validated;
    }
 
    /* If the uniform is an image, update the mapping from image
@@ -1241,56 +1614,221 @@ _mesa_uniform(GLint location, GLsizei count, const GLvoid *values,
          }
       }
 
-      ctx->NewDriverState |= ctx->DriverFlags.NewImageUnits;
+      ctx->NewDriverState |= ST_NEW_IMAGE_UNITS;
    }
 }
 
 
-static void
-copy_uniform_matrix_to_storage(gl_constant_value *storage,
-                               GLsizei count, const void *values,
+static bool
+copy_uniform_matrix_to_storage(struct gl_context *ctx,
+                               gl_constant_value *storage,
+                               struct gl_uniform_storage *const uni,
+                               unsigned count, const void *values,
                                const unsigned size_mul, const unsigned offset,
                                const unsigned components,
                                const unsigned vectors, bool transpose,
                                unsigned cols, unsigned rows,
-                               enum glsl_base_type basicType)
+                               enum glsl_base_type basicType, bool flush)
 {
    const unsigned elements = components * vectors;
+   const unsigned size = sizeof(storage[0]) * elements * count * size_mul;
 
-   if (!transpose) {
-      memcpy(storage, values,
-             sizeof(storage[0]) * elements * count * size_mul);
-   } else if (basicType == GLSL_TYPE_FLOAT) {
-      /* Copy and transpose the matrix.
-       */
-      const float *src = (const float *)values;
-      float *dst = &storage->f;
+   if (uni->type->base_type == GLSL_TYPE_FLOAT16) {
+      assert(ctx->Const.PackedDriverUniformStorage);
+      const unsigned dst_components = align(components, 2);
+      const unsigned dst_elements = dst_components * vectors;
 
-      for (int i = 0; i < count; i++) {
-         for (unsigned r = 0; r < rows; r++) {
-            for (unsigned c = 0; c < cols; c++) {
-               dst[(c * components) + r] = src[c + (r * vectors)];
+      if (!transpose) {
+         const float *src = (const float *)values;
+         uint16_t *dst = (uint16_t*)storage;
+
+         unsigned i = 0, r = 0, c = 0;
+
+         if (flush) {
+            /* Find the first element that's different. */
+            for (; i < count; i++) {
+               for (; c < cols; c++) {
+                  for (; r < rows; r++) {
+                     if (dst[(c * dst_components) + r] !=
+                         _mesa_float_to_half(src[(c * components) + r])) {
+                        _mesa_flush_vertices_for_uniforms(ctx, uni);
+                        flush = false;
+                        goto break_loops_16bit;
+                     }
+                  }
+                  r = 0;
+               }
+               c = 0;
+               dst += dst_elements;
+               src += elements;
             }
+
+         break_loops_16bit:
+            if (flush)
+               return false; /* No change. */
          }
 
+         /* Set the remaining elements. We know that at least 1 element is
+          * different and that we have flushed.
+          */
+         for (; i < count; i++) {
+            for (; c < cols; c++) {
+               for (; r < rows; r++) {
+                  dst[(c * dst_components) + r] =
+                     _mesa_float_to_half(src[(c * components) + r]);
+               }
+               r = 0;
+            }
+            c = 0;
+            dst += dst_elements;
+            src += elements;
+         }
+         return true;
+      } else {
+         /* Transpose the matrix. */
+         const float *src = (const float *)values;
+         uint16_t *dst = (uint16_t*)storage;
+
+         unsigned i = 0, r = 0, c = 0;
+
+         if (flush) {
+            /* Find the first element that's different. */
+            for (; i < count; i++) {
+               for (; r < rows; r++) {
+                  for (; c < cols; c++) {
+                     if (dst[(c * dst_components) + r] !=
+                         _mesa_float_to_half(src[c + (r * vectors)])) {
+                        _mesa_flush_vertices_for_uniforms(ctx, uni);
+                        flush = false;
+                        goto break_loops_16bit_transpose;
+                     }
+                  }
+                  c = 0;
+               }
+               r = 0;
+               dst += elements;
+               src += elements;
+            }
+
+         break_loops_16bit_transpose:
+            if (flush)
+               return false; /* No change. */
+         }
+
+         /* Set the remaining elements. We know that at least 1 element is
+          * different and that we have flushed.
+          */
+         for (; i < count; i++) {
+            for (; r < rows; r++) {
+               for (; c < cols; c++) {
+                  dst[(c * dst_components) + r] =
+                     _mesa_float_to_half(src[c + (r * vectors)]);
+               }
+               c = 0;
+            }
+            r = 0;
+            dst += elements;
+            src += elements;
+         }
+         return true;
+      }
+   } else if (!transpose) {
+      if (!memcmp(storage, values, size))
+         return false;
+
+      if (flush)
+         _mesa_flush_vertices_for_uniforms(ctx, uni);
+
+      memcpy(storage, values, size);
+      return true;
+   } else if (basicType == GLSL_TYPE_FLOAT) {
+      /* Transpose the matrix. */
+      const float *src = (const float *)values;
+      float *dst = (float*)storage;
+
+      unsigned i = 0, r = 0, c = 0;
+
+      if (flush) {
+         /* Find the first element that's different. */
+         for (; i < count; i++) {
+            for (; r < rows; r++) {
+               for (; c < cols; c++) {
+                  if (dst[(c * components) + r] != src[c + (r * vectors)]) {
+                     _mesa_flush_vertices_for_uniforms(ctx, uni);
+                     flush = false;
+                     goto break_loops;
+                  }
+               }
+               c = 0;
+            }
+            r = 0;
+            dst += elements;
+            src += elements;
+         }
+
+      break_loops:
+         if (flush)
+            return false; /* No change. */
+      }
+
+      /* Set the remaining elements. We know that at least 1 element is
+       * different and that we have flushed.
+       */
+      for (; i < count; i++) {
+         for (; r < rows; r++) {
+            for (; c < cols; c++)
+               dst[(c * components) + r] = src[c + (r * vectors)];
+            c = 0;
+         }
+         r = 0;
          dst += elements;
          src += elements;
       }
+      return true;
    } else {
       assert(basicType == GLSL_TYPE_DOUBLE);
       const double *src = (const double *)values;
-      double *dst = (double *)&storage->f;
+      double *dst = (double*)storage;
 
-      for (int i = 0; i < count; i++) {
-         for (unsigned r = 0; r < rows; r++) {
-            for (unsigned c = 0; c < cols; c++) {
-               dst[(c * components) + r] = src[c + (r * vectors)];
+      unsigned i = 0, r = 0, c = 0;
+
+      if (flush) {
+         /* Find the first element that's different. */
+         for (; i < count; i++) {
+            for (; r < rows; r++) {
+               for (; c < cols; c++) {
+                  if (dst[(c * components) + r] != src[c + (r * vectors)]) {
+                     _mesa_flush_vertices_for_uniforms(ctx, uni);
+                     flush = false;
+                     goto break_loops2;
+                  }
+               }
+               c = 0;
             }
+            r = 0;
+            dst += elements;
+            src += elements;
          }
 
+      break_loops2:
+         if (flush)
+            return false; /* No change. */
+      }
+
+      /* Set the remaining elements. We know that at least 1 element is
+       * different and that we have flushed.
+       */
+      for (; i < count; i++) {
+         for (; r < rows; r++) {
+            for (; c < cols; c++)
+               dst[(c * components) + r] = src[c + (r * vectors)];
+            c = 0;
+         }
+         r = 0;
          dst += elements;
          src += elements;
       }
+      return true;
    }
 }
 
@@ -1311,6 +1849,17 @@ _mesa_uniform_matrix(GLint location, GLsizei count,
                                   ctx, shProg, "glUniformMatrix");
    if (uni == NULL)
       return;
+
+   /* GL_INVALID_VALUE is generated if `transpose' is not GL_FALSE.
+    * http://www.khronos.org/opengles/sdk/docs/man/xhtml/glUniform.xml
+    */
+   if (transpose) {
+      if (ctx->API == API_OPENGLES2 && ctx->Version < 30) {
+         _mesa_error(ctx, GL_INVALID_VALUE,
+                     "glUniformMatrix(matrix transpose is not GL_FALSE)");
+         return;
+      }
+   }
 
    if (!uni->type->is_matrix()) {
       _mesa_error(ctx, GL_INVALID_OPERATION,
@@ -1334,17 +1883,6 @@ _mesa_uniform_matrix(GLint location, GLsizei count,
       return;
    }
 
-   /* GL_INVALID_VALUE is generated if `transpose' is not GL_FALSE.
-    * http://www.khronos.org/opengles/sdk/docs/man/xhtml/glUniform.xml
-    */
-   if (transpose) {
-      if (ctx->API == API_OPENGLES2 && ctx->Version < 30) {
-	 _mesa_error(ctx, GL_INVALID_VALUE,
-		     "glUniformMatrix(matrix transpose is not GL_FALSE)");
-	 return;
-      }
-   }
-
    /* Section 2.11.7 (Uniform Variables) of the OpenGL 4.2 Core Profile spec
     * says:
     *
@@ -1361,10 +1899,12 @@ _mesa_uniform_matrix(GLint location, GLsizei count,
     * There are no Boolean matrix types, so we do not need to allow
     * GLSL_TYPE_BOOL here (as _mesa_uniform does).
     */
-   if (uni->type->base_type != basicType) {
+   if (uni->type->base_type != basicType &&
+       !(uni->type->base_type == GLSL_TYPE_FLOAT16 &&
+         basicType == GLSL_TYPE_FLOAT)) {
       _mesa_error(ctx, GL_INVALID_OPERATION,
                   "glUniformMatrix%ux%u(\"%s\"@%d is %s, not %s)",
-                  cols, rows, uni->name, location,
+                  cols, rows, uni->name.string, location,
                   glsl_type_name(uni->type->base_type),
                   glsl_type_name(basicType));
       return;
@@ -1390,28 +1930,37 @@ _mesa_uniform_matrix(GLint location, GLsizei count,
       count = MIN2(count, (int) (uni->array_elements - offset));
    }
 
-   _mesa_flush_vertices_for_uniforms(ctx, uni);
-
    /* Store the data in the "actual type" backing storage for the uniform.
     */
    gl_constant_value *storage;
    const unsigned elements = components * vectors;
    if (ctx->Const.PackedDriverUniformStorage) {
-      for (unsigned s = 0; s < uni->num_driver_storage; s++) {
-         storage = (gl_constant_value *)
-            uni->driver_storage[s].data + (size_mul * offset * elements);
+      bool flushed = false;
 
-         copy_uniform_matrix_to_storage(storage, count, values, size_mul,
-                                        offset, components, vectors,
-                                        transpose, cols, rows, basicType);
+      for (unsigned s = 0; s < uni->num_driver_storage; s++) {
+         unsigned dword_components = components;
+
+         /* 16-bit uniforms are packed. */
+         if (glsl_base_type_is_16bit(uni->type->base_type))
+            dword_components = DIV_ROUND_UP(dword_components, 2);
+
+         storage = (gl_constant_value *)
+            uni->driver_storage[s].data +
+            (size_mul * offset * dword_components * vectors);
+
+         if (copy_uniform_matrix_to_storage(ctx, storage, uni, count, values,
+                                            size_mul, offset, components,
+                                            vectors, transpose, cols, rows,
+                                            basicType, !flushed))
+            flushed = true;
       }
    } else {
       storage =  &uni->storage[size_mul * elements * offset];
-      copy_uniform_matrix_to_storage(storage, count, values, size_mul, offset,
-                                     components, vectors, transpose, cols,
-                                     rows, basicType);
-
-      _mesa_propagate_uniforms_to_driver_storage(uni, offset, count);
+      if (copy_uniform_matrix_to_storage(ctx, storage, uni, count, values,
+                                         size_mul, offset, components, vectors,
+                                         transpose, cols, rows, basicType,
+                                         true))
+         _mesa_propagate_uniforms_to_driver_storage(uni, offset, count);
    }
 }
 
@@ -1470,6 +2019,8 @@ _mesa_uniform_handle(GLint location, GLsizei count, const GLvoid *values,
          return;
 
       uni = shProg->UniformRemapTable[location];
+      if (!uni || uni == INACTIVE_UNIFORM_EXPLICIT_LOCATION)
+         return;
 
       /* The array index specified by the uniform location is just the
        * uniform location minus the base location of of the uniform.
@@ -1524,22 +2075,37 @@ _mesa_uniform_handle(GLint location, GLsizei count, const GLvoid *values,
       count = MIN2(count, (int) (uni->array_elements - offset));
    }
 
-   _mesa_flush_vertices_for_uniforms(ctx, uni);
 
    /* Store the data in the "actual type" backing storage for the uniform.
     */
-   gl_constant_value *storage;
    if (ctx->Const.PackedDriverUniformStorage) {
-      for (unsigned s = 0; s < uni->num_driver_storage; s++) {
-         storage = (gl_constant_value *)
-            uni->driver_storage[s].data + (size_mul * offset * components);
-         memcpy(storage, values,
-                sizeof(uni->storage[0]) * components * count * size_mul);
-      }
-   } else {
-      memcpy(&uni->storage[size_mul * components * offset], values,
-             sizeof(uni->storage[0]) * components * count * size_mul);
+      bool flushed = false;
 
+      for (unsigned s = 0; s < uni->num_driver_storage; s++) {
+         void *storage = (gl_constant_value *)
+            uni->driver_storage[s].data + (size_mul * offset * components);
+         unsigned size = sizeof(uni->storage[0]) * components * count * size_mul;
+
+         if (!memcmp(storage, values, size))
+            continue;
+
+         if (!flushed) {
+            _mesa_flush_vertices_for_uniforms(ctx, uni);
+            flushed = true;
+         }
+         memcpy(storage, values, size);
+      }
+      if (!flushed)
+         return;
+   } else {
+      void *storage = &uni->storage[size_mul * components * offset];
+      unsigned size = sizeof(uni->storage[0]) * components * count * size_mul;
+
+      if (!memcmp(storage, values, size))
+         return;
+
+      _mesa_flush_vertices_for_uniforms(ctx, uni);
+      memcpy(storage, values, size);
       _mesa_propagate_uniforms_to_driver_storage(uni, offset, count);
    }
 

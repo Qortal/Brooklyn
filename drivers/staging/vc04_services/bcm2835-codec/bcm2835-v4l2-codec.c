@@ -41,6 +41,8 @@
 #include "vchiq-mmal/mmal-parameters.h"
 #include "vchiq-mmal/mmal-vchiq.h"
 
+MODULE_IMPORT_NS(DMA_BUF);
+
 /*
  * Default /dev/videoN node numbers for decode and encode.
  * Deliberately avoid the very low numbers as these are often taken by webcams
@@ -88,6 +90,7 @@ enum bcm2835_codec_role {
 	ENCODE,
 	ISP,
 	DEINTERLACE,
+	NUM_ROLES
 };
 
 static const char * const roles[] = {
@@ -145,7 +148,7 @@ static const char * const components[] = {
 struct bcm2835_codec_fmt {
 	u32	fourcc;
 	int	depth;
-	int	bytesperline_align;
+	u8	bytesperline_align[NUM_ROLES];
 	u32	flags;
 	u32	mmal_fmt;
 	int	size_multiplier_x2;
@@ -157,63 +160,63 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* YUV formats */
 		.fourcc			= V4L2_PIX_FMT_YUV420,
 		.depth			= 8,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 64, 64, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_I420,
 		.size_multiplier_x2	= 3,
 	}, {
 		.fourcc			= V4L2_PIX_FMT_YVU420,
 		.depth			= 8,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 64, 64, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_YV12,
 		.size_multiplier_x2	= 3,
 	}, {
 		.fourcc			= V4L2_PIX_FMT_NV12,
 		.depth			= 8,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_NV12,
 		.size_multiplier_x2	= 3,
 	}, {
 		.fourcc			= V4L2_PIX_FMT_NV21,
 		.depth			= 8,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_NV21,
 		.size_multiplier_x2	= 3,
 	}, {
 		.fourcc			= V4L2_PIX_FMT_RGB565,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_RGB16,
 		.size_multiplier_x2	= 2,
 	}, {
 		.fourcc			= V4L2_PIX_FMT_YUYV,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_YUYV,
 		.size_multiplier_x2	= 2,
 	}, {
 		.fourcc			= V4L2_PIX_FMT_UYVY,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_UYVY,
 		.size_multiplier_x2	= 2,
 	}, {
 		.fourcc			= V4L2_PIX_FMT_YVYU,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_YVYU,
 		.size_multiplier_x2	= 2,
 	}, {
 		.fourcc			= V4L2_PIX_FMT_VYUY,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_VYUY,
 		.size_multiplier_x2	= 2,
@@ -221,21 +224,21 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* RGB formats */
 		.fourcc			= V4L2_PIX_FMT_RGB24,
 		.depth			= 24,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_RGB24,
 		.size_multiplier_x2	= 2,
 	}, {
 		.fourcc			= V4L2_PIX_FMT_BGR24,
 		.depth			= 24,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BGR24,
 		.size_multiplier_x2	= 2,
 	}, {
 		.fourcc			= V4L2_PIX_FMT_BGR32,
 		.depth			= 32,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BGRA,
 		.size_multiplier_x2	= 2,
@@ -244,7 +247,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 8 bit */
 		.fourcc			= V4L2_PIX_FMT_SRGGB8,
 		.depth			= 8,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SRGGB8,
 		.size_multiplier_x2	= 2,
@@ -252,7 +255,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SBGGR8,
 		.depth			= 8,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SBGGR8,
 		.size_multiplier_x2	= 2,
@@ -260,7 +263,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGRBG8,
 		.depth			= 8,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGRBG8,
 		.size_multiplier_x2	= 2,
@@ -268,7 +271,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGBRG8,
 		.depth			= 8,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGBRG8,
 		.size_multiplier_x2	= 2,
@@ -277,7 +280,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 10 bit */
 		.fourcc			= V4L2_PIX_FMT_SRGGB10P,
 		.depth			= 10,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SRGGB10P,
 		.size_multiplier_x2	= 2,
@@ -285,7 +288,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SBGGR10P,
 		.depth			= 10,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SBGGR10P,
 		.size_multiplier_x2	= 2,
@@ -293,7 +296,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGRBG10P,
 		.depth			= 10,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGRBG10P,
 		.size_multiplier_x2	= 2,
@@ -301,7 +304,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGBRG10P,
 		.depth			= 10,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGBRG10P,
 		.size_multiplier_x2	= 2,
@@ -310,7 +313,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 12 bit */
 		.fourcc			= V4L2_PIX_FMT_SRGGB12P,
 		.depth			= 12,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SRGGB12P,
 		.size_multiplier_x2	= 2,
@@ -318,7 +321,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SBGGR12P,
 		.depth			= 12,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SBGGR12P,
 		.size_multiplier_x2	= 2,
@@ -326,7 +329,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGRBG12P,
 		.depth			= 12,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGRBG12P,
 		.size_multiplier_x2	= 2,
@@ -334,7 +337,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGBRG12P,
 		.depth			= 12,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGBRG12P,
 		.size_multiplier_x2	= 2,
@@ -343,7 +346,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 14 bit */
 		.fourcc			= V4L2_PIX_FMT_SRGGB14P,
 		.depth			= 14,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SRGGB14P,
 		.size_multiplier_x2	= 2,
@@ -351,7 +354,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SBGGR14P,
 		.depth			= 14,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SBGGR14P,
 		.size_multiplier_x2	= 2,
@@ -360,7 +363,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGRBG14P,
 		.depth			= 14,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGRBG14P,
 		.size_multiplier_x2	= 2,
@@ -368,7 +371,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGBRG14P,
 		.depth			= 14,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGBRG14P,
 		.size_multiplier_x2	= 2,
@@ -377,7 +380,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 16 bit */
 		.fourcc			= V4L2_PIX_FMT_SRGGB16,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SRGGB16,
 		.size_multiplier_x2	= 2,
@@ -385,7 +388,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SBGGR16,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SBGGR16,
 		.size_multiplier_x2	= 2,
@@ -393,7 +396,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGRBG16,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGRBG16,
 		.size_multiplier_x2	= 2,
@@ -401,7 +404,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGBRG16,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGBRG16,
 		.size_multiplier_x2	= 2,
@@ -411,7 +414,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 10 bit */
 		.fourcc			= V4L2_PIX_FMT_SRGGB10,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SRGGB10,
 		.size_multiplier_x2	= 2,
@@ -419,7 +422,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SBGGR10,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SBGGR10,
 		.size_multiplier_x2	= 2,
@@ -427,7 +430,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGRBG10,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGRBG10,
 		.size_multiplier_x2	= 2,
@@ -435,7 +438,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGBRG10,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGBRG10,
 		.size_multiplier_x2	= 2,
@@ -444,7 +447,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 12 bit */
 		.fourcc			= V4L2_PIX_FMT_SRGGB12,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SRGGB12,
 		.size_multiplier_x2	= 2,
@@ -452,7 +455,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SBGGR12,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SBGGR12,
 		.size_multiplier_x2	= 2,
@@ -460,7 +463,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGRBG12,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGRBG12,
 		.size_multiplier_x2	= 2,
@@ -468,7 +471,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGBRG12,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGBRG12,
 		.size_multiplier_x2	= 2,
@@ -477,7 +480,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 14 bit */
 		.fourcc			= V4L2_PIX_FMT_SRGGB14,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SRGGB14,
 		.size_multiplier_x2	= 2,
@@ -485,7 +488,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SBGGR14,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SBGGR14,
 		.size_multiplier_x2	= 2,
@@ -493,7 +496,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGRBG14,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGRBG14,
 		.size_multiplier_x2	= 2,
@@ -501,7 +504,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 	}, {
 		.fourcc			= V4L2_PIX_FMT_SGBRG14,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BAYER_SGBRG14,
 		.size_multiplier_x2	= 2,
@@ -511,7 +514,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 8 bit */
 		.fourcc			= V4L2_PIX_FMT_GREY,
 		.depth			= 8,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_GREY,
 		.size_multiplier_x2	= 2,
@@ -519,7 +522,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 10 bit */
 		.fourcc			= V4L2_PIX_FMT_Y10P,
 		.depth			= 10,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_Y10P,
 		.size_multiplier_x2	= 2,
@@ -527,7 +530,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 12 bit */
 		.fourcc			= V4L2_PIX_FMT_Y12P,
 		.depth			= 12,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_Y12P,
 		.size_multiplier_x2	= 2,
@@ -535,7 +538,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 14 bit */
 		.fourcc			= V4L2_PIX_FMT_Y14P,
 		.depth			= 14,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_Y14P,
 		.size_multiplier_x2	= 2,
@@ -543,7 +546,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 16 bit */
 		.fourcc			= V4L2_PIX_FMT_Y16,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_Y16,
 		.size_multiplier_x2	= 2,
@@ -551,7 +554,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 10 bit as 16bpp */
 		.fourcc			= V4L2_PIX_FMT_Y10,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_Y10,
 		.size_multiplier_x2	= 2,
@@ -559,7 +562,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 12 bit as 16bpp */
 		.fourcc			= V4L2_PIX_FMT_Y12,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_Y12,
 		.size_multiplier_x2	= 2,
@@ -567,7 +570,7 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		/* 14 bit as 16bpp */
 		.fourcc			= V4L2_PIX_FMT_Y14,
 		.depth			= 16,
-		.bytesperline_align	= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_Y14,
 		.size_multiplier_x2	= 2,
@@ -840,9 +843,10 @@ static inline unsigned int get_sizeimage(int bpl, int width, int height,
 }
 
 static inline unsigned int get_bytesperline(int width,
-					    struct bcm2835_codec_fmt *fmt)
+					    struct bcm2835_codec_fmt *fmt,
+					    enum bcm2835_codec_role role)
 {
-	return ALIGN((width * fmt->depth) >> 3, fmt->bytesperline_align);
+	return ALIGN((width * fmt->depth) >> 3, fmt->bytesperline_align[role]);
 }
 
 static void setup_mmal_port_format(struct bcm2835_codec_ctx *ctx,
@@ -1040,7 +1044,7 @@ static void handle_fmt_changed(struct bcm2835_codec_ctx *ctx,
 	 */
 	q_data->selection_set = true;
 	q_data->bytesperline = get_bytesperline(format->es.video.width,
-						q_data->fmt);
+						q_data->fmt, ctx->dev->role);
 
 	q_data->height = format->es.video.height;
 	q_data->sizeimage = format->buffer_size_min;
@@ -1422,11 +1426,13 @@ static int vidioc_try_fmt(struct bcm2835_codec_ctx *ctx, struct v4l2_format *f,
 			f->fmt.pix_mp.height = ALIGN(f->fmt.pix_mp.height, 16);
 	}
 	f->fmt.pix_mp.num_planes = 1;
-	min_bytesperline = get_bytesperline(f->fmt.pix_mp.width, fmt);
+	min_bytesperline = get_bytesperline(f->fmt.pix_mp.width, fmt,
+					    ctx->dev->role);
 	if (f->fmt.pix_mp.plane_fmt[0].bytesperline < min_bytesperline)
 		f->fmt.pix_mp.plane_fmt[0].bytesperline = min_bytesperline;
 	f->fmt.pix_mp.plane_fmt[0].bytesperline =
-		ALIGN(f->fmt.pix_mp.plane_fmt[0].bytesperline, fmt->bytesperline_align);
+		ALIGN(f->fmt.pix_mp.plane_fmt[0].bytesperline,
+		      fmt->bytesperline_align[ctx->dev->role]);
 
 	sizeimage = get_sizeimage(f->fmt.pix_mp.plane_fmt[0].bytesperline,
 				  f->fmt.pix_mp.width, f->fmt.pix_mp.height,
@@ -1559,7 +1565,7 @@ static int vidioc_s_fmt(struct bcm2835_codec_ctx *ctx, struct v4l2_format *f,
 	q_data->bytesperline = f->fmt.pix_mp.plane_fmt[0].bytesperline;
 	q_data->sizeimage = f->fmt.pix_mp.plane_fmt[0].sizeimage;
 
-	v4l2_dbg(1, debug, &ctx->dev->v4l2_dev,	"Calulated bpl as %u, size %u\n",
+	v4l2_dbg(1, debug, &ctx->dev->v4l2_dev,	"Calculated bpl as %u, size %u\n",
 		 q_data->bytesperline, q_data->sizeimage);
 
 	if (ctx->dev->role == DECODE &&
@@ -1581,7 +1587,8 @@ static int vidioc_s_fmt(struct bcm2835_codec_ctx *ctx, struct v4l2_format *f,
 		q_data_dst->height = ALIGN(q_data->crop_height, 16);
 
 		q_data_dst->bytesperline =
-			get_bytesperline(f->fmt.pix_mp.width, q_data_dst->fmt);
+			get_bytesperline(f->fmt.pix_mp.width, q_data_dst->fmt,
+					 ctx->dev->role);
 		q_data_dst->sizeimage = get_sizeimage(q_data_dst->bytesperline,
 						      q_data_dst->crop_width,
 						      q_data_dst->height,
@@ -1810,6 +1817,8 @@ static int vidioc_g_selection(struct file *file, void *priv,
 			}
 		}
 		break;
+	case NUM_ROLES:
+		break;
 	}
 
 	return 0;
@@ -1920,6 +1929,8 @@ static int vidioc_s_selection(struct file *file, void *priv,
 			}
 			break;
 		}
+	case NUM_ROLES:
+		break;
 	}
 
 	return 0;
@@ -2185,6 +2196,28 @@ static int bcm2835_codec_s_ctrl(struct v4l2_ctrl *ctrl)
 			break;
 
 		ret = bcm2835_codec_set_level_profile(ctx, ctrl);
+		break;
+
+	case V4L2_CID_MPEG_VIDEO_H264_MIN_QP:
+		if (!ctx->component)
+			break;
+
+		ret = vchiq_mmal_port_parameter_set(ctx->dev->instance,
+						    &ctx->component->output[0],
+						    MMAL_PARAMETER_VIDEO_ENCODE_MIN_QUANT,
+						    &ctrl->val,
+						    sizeof(ctrl->val));
+		break;
+
+	case V4L2_CID_MPEG_VIDEO_H264_MAX_QP:
+		if (!ctx->component)
+			break;
+
+		ret = vchiq_mmal_port_parameter_set(ctx->dev->instance,
+						    &ctx->component->output[0],
+						    MMAL_PARAMETER_VIDEO_ENCODE_MAX_QUANT,
+						    &ctrl->val,
+						    sizeof(ctrl->val));
 		break;
 
 	case V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME: {
@@ -2505,14 +2538,6 @@ static int bcm2835_codec_create_component(struct bcm2835_codec_ctx *ctx)
 					      MMAL_PARAMETER_VIDEO_STOP_ON_PAR_COLOUR_CHANGE,
 					      &enable,
 					      sizeof(enable));
-
-		enable = (unsigned int)-5;
-		vchiq_mmal_port_parameter_set(dev->instance,
-					      &ctx->component->control,
-					      MMAL_PARAMETER_VIDEO_MAX_NUM_CALLBACKS,
-					      &enable,
-					      sizeof(enable));
-
 	} else if (dev->role == DEINTERLACE) {
 		/* Select the default deinterlace algorithm. */
 		int half_framerate = 0;
@@ -3073,7 +3098,8 @@ static int bcm2835_codec_open(struct file *file)
 	ctx->q_data[V4L2_M2M_SRC].height = DEFAULT_HEIGHT;
 	ctx->q_data[V4L2_M2M_SRC].bytesperline =
 			get_bytesperline(DEFAULT_WIDTH,
-					 ctx->q_data[V4L2_M2M_SRC].fmt);
+					 ctx->q_data[V4L2_M2M_SRC].fmt,
+					 dev->role);
 	ctx->q_data[V4L2_M2M_SRC].sizeimage =
 		get_sizeimage(ctx->q_data[V4L2_M2M_SRC].bytesperline,
 			      ctx->q_data[V4L2_M2M_SRC].crop_width,
@@ -3086,7 +3112,8 @@ static int bcm2835_codec_open(struct file *file)
 	ctx->q_data[V4L2_M2M_DST].height = DEFAULT_HEIGHT;
 	ctx->q_data[V4L2_M2M_DST].bytesperline =
 			get_bytesperline(DEFAULT_WIDTH,
-					 ctx->q_data[V4L2_M2M_DST].fmt);
+					 ctx->q_data[V4L2_M2M_DST].fmt,
+					 dev->role);
 	ctx->q_data[V4L2_M2M_DST].sizeimage =
 		get_sizeimage(ctx->q_data[V4L2_M2M_DST].bytesperline,
 			      ctx->q_data[V4L2_M2M_DST].crop_width,
@@ -3111,7 +3138,7 @@ static int bcm2835_codec_open(struct file *file)
 	case ENCODE:
 	{
 		/* Encode controls */
-		v4l2_ctrl_handler_init(hdl, 9);
+		v4l2_ctrl_handler_init(hdl, 11);
 
 		v4l2_ctrl_new_std_menu(hdl, &bcm2835_codec_ctrl_ops,
 				       V4L2_CID_MPEG_VIDEO_BITRATE_MODE,
@@ -3160,6 +3187,14 @@ static int bcm2835_codec_open(struct file *file)
 					 BIT(V4L2_MPEG_VIDEO_H264_PROFILE_HIGH)),
 					V4L2_MPEG_VIDEO_H264_PROFILE_HIGH);
 		v4l2_ctrl_new_std(hdl, &bcm2835_codec_ctrl_ops,
+				  V4L2_CID_MPEG_VIDEO_H264_MIN_QP,
+				  0, 51,
+				  1, 20);
+		v4l2_ctrl_new_std(hdl, &bcm2835_codec_ctrl_ops,
+				  V4L2_CID_MPEG_VIDEO_H264_MAX_QP,
+				  0, 51,
+				  1, 51);
+		v4l2_ctrl_new_std(hdl, &bcm2835_codec_ctrl_ops,
 				  V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME,
 				  0, 0, 0, 0);
 		if (hdl->error) {
@@ -3207,6 +3242,8 @@ static int bcm2835_codec_open(struct file *file)
 	{
 		v4l2_ctrl_handler_init(hdl, 0);
 	}
+	break;
+	case NUM_ROLES:
 	break;
 	}
 

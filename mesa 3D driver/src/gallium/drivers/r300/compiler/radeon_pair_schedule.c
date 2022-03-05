@@ -65,7 +65,7 @@ struct schedule_instruction {
 	struct rc_reader_data GlobalReaders;
 
 	/** If the scheduler has paired an RGB and an Alpha instruction together,
-	 * PairedInst references the alpha insturction's dependency information.
+	 * PairedInst references the alpha instruction's dependency information.
 	 */
 	struct schedule_instruction * PairedInst;
 
@@ -107,7 +107,7 @@ struct reg_value {
 	/**
 	 * Number of readers of this value. This is decremented each time
 	 * a reader of the value is committed.
-	 * When the reader cound reaches zero, the dependency count
+	 * When the reader count reaches zero, the dependency count
 	 * of the instruction writing \ref Next is decremented.
 	 */
 	unsigned int NumReaders;
@@ -120,7 +120,7 @@ struct register_state {
 };
 
 struct remap_reg {
-	struct rc_instruciont * Inst;
+	struct rc_instruction * Inst;
 	unsigned int OldIndex:(RC_REGISTER_INDEX_BITS+1);
 	unsigned int OldSwizzle:3;
 	unsigned int NewIndex:(RC_REGISTER_INDEX_BITS+1);
@@ -161,11 +161,11 @@ static struct reg_value ** get_reg_valuep(struct schedule_state * s,
 		rc_register_file file, unsigned int index, unsigned int chan)
 {
 	if (file != RC_FILE_TEMPORARY)
-		return 0;
+		return NULL;
 
 	if (index >= RC_REGISTER_MAX_INDEX) {
 		rc_error(s->C, "%s: index %i out of bounds\n", __FUNCTION__, index);
-		return 0;
+		return NULL;
 	}
 
 	return &s->Temporary[index].Values[chan];
@@ -367,45 +367,41 @@ static void calc_score_readers(struct schedule_instruction * sinst)
  */
 static void commit_update_reads(struct schedule_state * s,
 					struct schedule_instruction * sinst){
-	unsigned int i;
-	for(i = 0; i < sinst->NumReadValues; ++i) {
-		struct reg_value * v = sinst->ReadValues[i];
-		assert(v->NumReaders > 0);
-		v->NumReaders--;
-		if (!v->NumReaders) {
-			if (v->Next) {
-				decrease_dependencies(s, v->Next->Writer);
+	do {
+		for(unsigned int i = 0; i < sinst->NumReadValues; ++i) {
+			struct reg_value * v = sinst->ReadValues[i];
+			assert(v->NumReaders > 0);
+			v->NumReaders--;
+			if (!v->NumReaders) {
+				if (v->Next) {
+					decrease_dependencies(s, v->Next->Writer);
+				}
 			}
 		}
-	}
-	if (sinst->PairedInst) {
-		commit_update_reads(s, sinst->PairedInst);
-	}
+	} while ((sinst = sinst->PairedInst));
 }
 
 static void commit_update_writes(struct schedule_state * s,
 					struct schedule_instruction * sinst){
-	unsigned int i;
-	for(i = 0; i < sinst->NumWriteValues; ++i) {
-		struct reg_value * v = sinst->WriteValues[i];
-		if (v->NumReaders) {
-			for(struct reg_value_reader * r = v->Readers; r; r = r->Next) {
-				decrease_dependencies(s, r->Reader);
+	do {
+		for(unsigned int i = 0; i < sinst->NumWriteValues; ++i) {
+			struct reg_value * v = sinst->WriteValues[i];
+			if (v->NumReaders) {
+				for(struct reg_value_reader * r = v->Readers; r; r = r->Next) {
+					decrease_dependencies(s, r->Reader);
+				}
+			} else {
+				/* This happens in instruction sequences of the type
+				 *  OP r.x, ...;
+				 *  OP r.x, r.x, ...;
+				 * See also the subtlety in how instructions that both
+				 * read and write the same register are scanned.
+				 */
+				if (v->Next)
+					decrease_dependencies(s, v->Next->Writer);
 			}
-		} else {
-			/* This happens in instruction sequences of the type
-			 *  OP r.x, ...;
-			 *  OP r.x, r.x, ...;
-			 * See also the subtlety in how instructions that both
-			 * read and write the same register are scanned.
-			 */
-			if (v->Next)
-				decrease_dependencies(s, v->Next->Writer);
 		}
-	}
-	if (sinst->PairedInst) {
-		commit_update_writes(s, sinst->PairedInst);
-	}
+	} while ((sinst = sinst->PairedInst));
 }
 
 static void notify_sem_wait(struct schedule_state *s)
@@ -477,7 +473,7 @@ static void emit_all_tex(struct schedule_state * s, struct rc_instruction * befo
 		readytex = readytex->NextReady;
 	}
 	readytex = s->ReadyTEX;
-	s->ReadyTEX = 0;
+	s->ReadyTEX = NULL;
 	while(readytex){
 		DBG("%i: commit TEX writes\n", readytex->Instruction->IP);
 		commit_update_writes(s, readytex);
@@ -757,6 +753,7 @@ static void presub_nop(struct rc_instruction * emitted) {
 }
 
 static void rgb_to_alpha_remap (
+	struct schedule_state * s,
 	struct rc_instruction * inst,
 	struct rc_pair_instruction_arg * arg,
 	rc_register_file old_file,
@@ -776,7 +773,7 @@ static void rgb_to_alpha_remap (
 	/* This conversion is not possible, we must have made a mistake in
 	 * is_rgb_to_alpha_possible. */
 	if (new_src_index < 0) {
-		assert(0);
+        rc_error(s->C, "rgb_to_alpha_remap failed to allocate src.\n");
 		return;
 	}
 
@@ -802,7 +799,6 @@ static int can_convert_opcode_to_alpha(unsigned int opcode)
 	case RC_OPCODE_DP2:
 	case RC_OPCODE_DP3:
 	case RC_OPCODE_DP4:
-	case RC_OPCODE_DPH:
 		return 0;
 	default:
 		return 1;
@@ -865,7 +861,7 @@ static void is_rgb_to_alpha_possible(
 	/* Make sure there are enough alpha sources.
 	 * XXX If we know what register all the readers are going
 	 * to be remapped to, then in some situations we can still do
-	 * the subsitution, even if all 3 alpha sources are being used.*/
+	 * the substitution, even if all 3 alpha sources are being used.*/
 	for (i = 0; i < 3; i++) {
 		if (inst->U.P.Alpha.Src[i].Used) {
 			alpha_sources++;
@@ -970,7 +966,7 @@ static int convert_rgb_to_alpha(
 
 	for(i = 0; i < sched_inst->GlobalReaders.ReaderCount; i++) {
 		struct rc_reader reader = sched_inst->GlobalReaders.Readers[i];
-		rgb_to_alpha_remap(reader.Inst, reader.U.P.Arg,
+		rgb_to_alpha_remap(s, reader.Inst, reader.U.P.Arg,
 					RC_FILE_TEMPORARY, old_swz, new_index);
 	}
 	return 1;
@@ -1116,7 +1112,7 @@ static void emit_instruction(
 
 	if (tex_count >= s->max_tex_group || max_score == -1
 		|| (s->TEXCount > 0 && tex_count == s->TEXCount)
-		|| (!s->C->is_r500 && tex_count > 0 && max_score == -1)) {
+		|| (tex_count > 0 && max_score < NO_OUTPUT_SCORE)) {
 		emit_all_tex(s, before);
 	} else {
 

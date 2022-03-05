@@ -49,7 +49,7 @@ static void radeon_vcn_enc_get_param(struct radeon_encoder *enc, struct pipe_pic
       enc->enc_pic.ref_idx_l0 = pic->ref_idx_l0;
       enc->enc_pic.ref_idx_l1 = pic->ref_idx_l1;
       enc->enc_pic.not_referenced = pic->not_referenced;
-      enc->enc_pic.is_idr = (pic->picture_type == PIPE_H264_ENC_PICTURE_TYPE_IDR);
+      enc->enc_pic.is_idr = (pic->picture_type == PIPE_H2645_ENC_PICTURE_TYPE_IDR);
       if (pic->pic_ctrl.enc_frame_cropping_flag) {
          enc->enc_pic.crop_left = pic->pic_ctrl.enc_frame_crop_left_offset;
          enc->enc_pic.crop_right = pic->pic_ctrl.enc_frame_crop_right_offset;
@@ -61,34 +61,40 @@ static void radeon_vcn_enc_get_param(struct radeon_encoder *enc, struct pipe_pic
          enc->enc_pic.crop_top = 0;
          enc->enc_pic.crop_bottom = (align(enc->base.height, 16) - enc->base.height) / 2;
       }
-      enc->enc_pic.rc_layer_init.target_bit_rate = pic->rate_ctrl.target_bitrate;
-      enc->enc_pic.rc_layer_init.peak_bit_rate = pic->rate_ctrl.peak_bitrate;
-      enc->enc_pic.rc_layer_init.frame_rate_num = pic->rate_ctrl.frame_rate_num;
-      enc->enc_pic.rc_layer_init.frame_rate_den = pic->rate_ctrl.frame_rate_den;
-      enc->enc_pic.rc_layer_init.vbv_buffer_size = pic->rate_ctrl.vbv_buffer_size;
-      enc->enc_pic.rc_layer_init.avg_target_bits_per_picture = pic->rate_ctrl.target_bits_picture;
-      enc->enc_pic.rc_layer_init.peak_bits_per_picture_integer =
-         pic->rate_ctrl.peak_bits_picture_integer;
-      enc->enc_pic.rc_layer_init.peak_bits_per_picture_fractional =
-         pic->rate_ctrl.peak_bits_picture_fraction;
-      enc->enc_pic.rc_session_init.vbv_buffer_level = pic->rate_ctrl.vbv_buf_lv;
+      enc->enc_pic.num_temporal_layers = pic->num_temporal_layers ? pic->num_temporal_layers : 1;
+      enc->enc_pic.temporal_id = 0;
+      for (int i = 0; i < enc->enc_pic.num_temporal_layers; i++)
+      {
+         enc->enc_pic.rc_layer_init[i].target_bit_rate = pic->rate_ctrl[i].target_bitrate;
+         enc->enc_pic.rc_layer_init[i].peak_bit_rate = pic->rate_ctrl[i].peak_bitrate;
+         enc->enc_pic.rc_layer_init[i].frame_rate_num = pic->rate_ctrl[i].frame_rate_num;
+         enc->enc_pic.rc_layer_init[i].frame_rate_den = pic->rate_ctrl[i].frame_rate_den;
+         enc->enc_pic.rc_layer_init[i].vbv_buffer_size = pic->rate_ctrl[i].vbv_buffer_size;
+         enc->enc_pic.rc_layer_init[i].avg_target_bits_per_picture = pic->rate_ctrl[i].target_bits_picture;
+         enc->enc_pic.rc_layer_init[i].peak_bits_per_picture_integer =
+            pic->rate_ctrl[i].peak_bits_picture_integer;
+         enc->enc_pic.rc_layer_init[i].peak_bits_per_picture_fractional =
+            pic->rate_ctrl[i].peak_bits_picture_fraction;
+      }
+      enc->enc_pic.rc_session_init.vbv_buffer_level = pic->rate_ctrl[0].vbv_buf_lv;
       enc->enc_pic.rc_per_pic.qp = pic->quant_i_frames;
       enc->enc_pic.rc_per_pic.min_qp_app = 0;
       enc->enc_pic.rc_per_pic.max_qp_app = 51;
       enc->enc_pic.rc_per_pic.max_au_size = 0;
-      enc->enc_pic.rc_per_pic.enabled_filler_data = pic->rate_ctrl.fill_data_enable;
+      enc->enc_pic.rc_per_pic.enabled_filler_data = pic->rate_ctrl[0].fill_data_enable;
       enc->enc_pic.rc_per_pic.skip_frame_enable = false;
-      enc->enc_pic.rc_per_pic.enforce_hrd = pic->rate_ctrl.enforce_hrd;
-      switch (pic->rate_ctrl.rate_ctrl_method) {
-      case PIPE_H264_ENC_RATE_CONTROL_METHOD_DISABLE:
+      enc->enc_pic.rc_per_pic.enforce_hrd = pic->rate_ctrl[0].enforce_hrd;
+
+      switch (pic->rate_ctrl[0].rate_ctrl_method) {
+      case PIPE_H2645_ENC_RATE_CONTROL_METHOD_DISABLE:
          enc->enc_pic.rc_session_init.rate_control_method = RENCODE_RATE_CONTROL_METHOD_NONE;
          break;
-      case PIPE_H264_ENC_RATE_CONTROL_METHOD_CONSTANT_SKIP:
-      case PIPE_H264_ENC_RATE_CONTROL_METHOD_CONSTANT:
+      case PIPE_H2645_ENC_RATE_CONTROL_METHOD_CONSTANT_SKIP:
+      case PIPE_H2645_ENC_RATE_CONTROL_METHOD_CONSTANT:
          enc->enc_pic.rc_session_init.rate_control_method = RENCODE_RATE_CONTROL_METHOD_CBR;
          break;
-      case PIPE_H264_ENC_RATE_CONTROL_METHOD_VARIABLE_SKIP:
-      case PIPE_H264_ENC_RATE_CONTROL_METHOD_VARIABLE:
+      case PIPE_H2645_ENC_RATE_CONTROL_METHOD_VARIABLE_SKIP:
+      case PIPE_H2645_ENC_RATE_CONTROL_METHOD_VARIABLE:
          enc->enc_pic.rc_session_init.rate_control_method =
             RENCODE_RATE_CONTROL_METHOD_PEAK_CONSTRAINED_VBR;
          break;
@@ -104,8 +110,8 @@ static void radeon_vcn_enc_get_param(struct radeon_encoder *enc, struct pipe_pic
       enc->enc_pic.ref_idx_l0 = pic->ref_idx_l0;
       enc->enc_pic.ref_idx_l1 = pic->ref_idx_l1;
       enc->enc_pic.not_referenced = pic->not_referenced;
-      enc->enc_pic.is_idr = (pic->picture_type == PIPE_H265_ENC_PICTURE_TYPE_IDR) ||
-                            (pic->picture_type == PIPE_H265_ENC_PICTURE_TYPE_I);
+      enc->enc_pic.is_idr = (pic->picture_type == PIPE_H2645_ENC_PICTURE_TYPE_IDR) ||
+                            (pic->picture_type == PIPE_H2645_ENC_PICTURE_TYPE_I);
 
       if (pic->seq.conformance_window_flag) {
           enc->enc_pic.crop_left = pic->seq.conf_win_left_offset;
@@ -124,6 +130,7 @@ static void radeon_vcn_enc_get_param(struct radeon_encoder *enc, struct pipe_pic
       enc->enc_pic.general_level_idc = pic->seq.general_level_idc;
       enc->enc_pic.max_poc = MAX2(16, util_next_power_of_two(pic->seq.intra_period));
       enc->enc_pic.log2_max_poc = 0;
+      enc->enc_pic.num_temporal_layers = 1;
       for (int i = enc->enc_pic.max_poc; i != 0; enc->enc_pic.log2_max_poc++)
          i = (i >> 1);
       enc->enc_pic.chroma_format_idc = pic->seq.chroma_format_idc;
@@ -166,14 +173,14 @@ static void radeon_vcn_enc_get_param(struct radeon_encoder *enc, struct pipe_pic
       enc->enc_pic.hevc_spec_misc.cabac_init_flag = pic->slice.cabac_init_flag;
       enc->enc_pic.hevc_spec_misc.half_pel_enabled = 1;
       enc->enc_pic.hevc_spec_misc.quarter_pel_enabled = 1;
-      enc->enc_pic.rc_layer_init.target_bit_rate = pic->rc.target_bitrate;
-      enc->enc_pic.rc_layer_init.peak_bit_rate = pic->rc.peak_bitrate;
-      enc->enc_pic.rc_layer_init.frame_rate_num = pic->rc.frame_rate_num;
-      enc->enc_pic.rc_layer_init.frame_rate_den = pic->rc.frame_rate_den;
-      enc->enc_pic.rc_layer_init.vbv_buffer_size = pic->rc.vbv_buffer_size;
-      enc->enc_pic.rc_layer_init.avg_target_bits_per_picture = pic->rc.target_bits_picture;
-      enc->enc_pic.rc_layer_init.peak_bits_per_picture_integer = pic->rc.peak_bits_picture_integer;
-      enc->enc_pic.rc_layer_init.peak_bits_per_picture_fractional =
+      enc->enc_pic.rc_layer_init[0].target_bit_rate = pic->rc.target_bitrate;
+      enc->enc_pic.rc_layer_init[0].peak_bit_rate = pic->rc.peak_bitrate;
+      enc->enc_pic.rc_layer_init[0].frame_rate_num = pic->rc.frame_rate_num;
+      enc->enc_pic.rc_layer_init[0].frame_rate_den = pic->rc.frame_rate_den;
+      enc->enc_pic.rc_layer_init[0].vbv_buffer_size = pic->rc.vbv_buffer_size;
+      enc->enc_pic.rc_layer_init[0].avg_target_bits_per_picture = pic->rc.target_bits_picture;
+      enc->enc_pic.rc_layer_init[0].peak_bits_per_picture_integer = pic->rc.peak_bits_picture_integer;
+      enc->enc_pic.rc_layer_init[0].peak_bits_per_picture_fractional =
          pic->rc.peak_bits_picture_fraction;
       enc->enc_pic.rc_session_init.vbv_buffer_level = pic->rc.vbv_buf_lv;
       enc->enc_pic.rc_per_pic.qp = pic->rc.quant_i_frames;
@@ -184,15 +191,15 @@ static void radeon_vcn_enc_get_param(struct radeon_encoder *enc, struct pipe_pic
       enc->enc_pic.rc_per_pic.skip_frame_enable = false;
       enc->enc_pic.rc_per_pic.enforce_hrd = pic->rc.enforce_hrd;
       switch (pic->rc.rate_ctrl_method) {
-      case PIPE_H265_ENC_RATE_CONTROL_METHOD_DISABLE:
+      case PIPE_H2645_ENC_RATE_CONTROL_METHOD_DISABLE:
          enc->enc_pic.rc_session_init.rate_control_method = RENCODE_RATE_CONTROL_METHOD_NONE;
          break;
-      case PIPE_H265_ENC_RATE_CONTROL_METHOD_CONSTANT_SKIP:
-      case PIPE_H265_ENC_RATE_CONTROL_METHOD_CONSTANT:
+      case PIPE_H2645_ENC_RATE_CONTROL_METHOD_CONSTANT_SKIP:
+      case PIPE_H2645_ENC_RATE_CONTROL_METHOD_CONSTANT:
          enc->enc_pic.rc_session_init.rate_control_method = RENCODE_RATE_CONTROL_METHOD_CBR;
          break;
-      case PIPE_H265_ENC_RATE_CONTROL_METHOD_VARIABLE_SKIP:
-      case PIPE_H265_ENC_RATE_CONTROL_METHOD_VARIABLE:
+      case PIPE_H2645_ENC_RATE_CONTROL_METHOD_VARIABLE_SKIP:
+      case PIPE_H2645_ENC_RATE_CONTROL_METHOD_VARIABLE:
          enc->enc_pic.rc_session_init.rate_control_method =
             RENCODE_RATE_CONTROL_METHOD_PEAK_CONSTRAINED_VBR;
          break;
@@ -204,7 +211,7 @@ static void radeon_vcn_enc_get_param(struct radeon_encoder *enc, struct pipe_pic
 
 static void flush(struct radeon_encoder *enc)
 {
-   enc->ws->cs_flush(enc->cs, PIPE_FLUSH_ASYNC, NULL);
+   enc->ws->cs_flush(&enc->cs, PIPE_FLUSH_ASYNC, NULL);
 }
 
 static void radeon_enc_flush(struct pipe_video_codec *encoder)
@@ -280,12 +287,12 @@ static void radeon_enc_begin_frame(struct pipe_video_codec *encoder,
    if (u_reduce_video_profile(enc->base.profile) == PIPE_VIDEO_FORMAT_MPEG4_AVC) {
       struct pipe_h264_enc_picture_desc *pic = (struct pipe_h264_enc_picture_desc *)picture;
       need_rate_control =
-         (enc->enc_pic.rc_layer_init.target_bit_rate != pic->rate_ctrl.target_bitrate) ||
-         (enc->enc_pic.rc_layer_init.frame_rate_num != pic->rate_ctrl.frame_rate_num) ||
-         (enc->enc_pic.rc_layer_init.frame_rate_den != pic->rate_ctrl.frame_rate_den);
+         (enc->enc_pic.rc_layer_init[0].target_bit_rate != pic->rate_ctrl[0].target_bitrate) ||
+         (enc->enc_pic.rc_layer_init[0].frame_rate_num != pic->rate_ctrl[0].frame_rate_num) ||
+         (enc->enc_pic.rc_layer_init[0].frame_rate_den != pic->rate_ctrl[0].frame_rate_den);
    } else if (u_reduce_video_profile(picture->profile) == PIPE_VIDEO_FORMAT_HEVC) {
       struct pipe_h265_enc_picture_desc *pic = (struct pipe_h265_enc_picture_desc *)picture;
-      need_rate_control = enc->enc_pic.rc_layer_init.target_bit_rate != pic->rc.target_bitrate;
+      need_rate_control = enc->enc_pic.rc_layer_init[0].target_bit_rate != pic->rc.target_bitrate;
    }
 
    radeon_vcn_enc_get_param(enc, picture);
@@ -349,11 +356,16 @@ static void radeon_enc_destroy(struct pipe_video_codec *encoder)
       enc->fb = &fb;
       enc->destroy(enc);
       flush(enc);
+      if (enc->si) {
+         si_vid_destroy_buffer(enc->si);
+         FREE(enc->si);
+         enc->si = NULL;
+      }
       si_vid_destroy_buffer(&fb);
    }
 
    si_vid_destroy_buffer(&enc->cpb);
-   enc->ws->cs_destroy(enc->cs);
+   enc->ws->cs_destroy(&enc->cs);
    FREE(enc);
 }
 
@@ -364,17 +376,50 @@ static void radeon_enc_get_feedback(struct pipe_video_codec *encoder, void *feed
    struct rvid_buffer *fb = feedback;
 
    if (size) {
-      uint32_t *ptr = enc->ws->buffer_map(fb->res->buf, enc->cs,
+      uint32_t *ptr = enc->ws->buffer_map(enc->ws, fb->res->buf, &enc->cs,
                                           PIPE_MAP_READ_WRITE | RADEON_MAP_TEMPORARY);
       if (ptr[1])
          *size = ptr[6];
       else
          *size = 0;
-      enc->ws->buffer_unmap(fb->res->buf);
+      enc->ws->buffer_unmap(enc->ws, fb->res->buf);
    }
 
    si_vid_destroy_buffer(fb);
    FREE(fb);
+}
+
+static int setup_dpb(struct radeon_encoder *enc, enum pipe_format buffer_format)
+{
+   uint32_t aligned_width = align(enc->base.width, 16);
+   uint32_t aligned_height = align(enc->base.height, 16);
+   uint32_t rec_luma_pitch = align(aligned_width, enc->alignment);
+
+   int luma_size = rec_luma_pitch * align(aligned_height, enc->alignment);
+   if (buffer_format == PIPE_FORMAT_P010)
+      luma_size *= 2;
+   int chroma_size = align(luma_size / 2, enc->alignment);
+   int offset = 0;
+
+   uint32_t num_reconstructed_pictures = enc->base.max_references + 1;
+   assert(num_reconstructed_pictures <= RENCODE_MAX_NUM_RECONSTRUCTED_PICTURES);
+
+   int i;
+   for (i = 0; i < num_reconstructed_pictures; i++) {
+      enc->enc_pic.ctx_buf.reconstructed_pictures[i].luma_offset = offset;
+      offset += luma_size;
+      enc->enc_pic.ctx_buf.reconstructed_pictures[i].chroma_offset = offset;
+      offset += chroma_size;
+   }
+   for (; i < RENCODE_MAX_NUM_RECONSTRUCTED_PICTURES; i++) {
+      enc->enc_pic.ctx_buf.reconstructed_pictures[i].luma_offset = 0;
+      enc->enc_pic.ctx_buf.reconstructed_pictures[i].chroma_offset = 0;
+   }
+
+   enc->enc_pic.ctx_buf.num_reconstructed_pictures = num_reconstructed_pictures;
+   enc->dpb_size = offset;
+
+   return offset;
 }
 
 struct pipe_video_codec *radeon_create_encoder(struct pipe_context *context,
@@ -407,16 +452,11 @@ struct pipe_video_codec *radeon_create_encoder(struct pipe_context *context,
    enc->bits_in_shifter = 0;
    enc->screen = context->screen;
    enc->ws = ws;
-   enc->cs = ws->cs_create(sctx->ctx, RING_VCN_ENC, radeon_enc_cs_flush, enc, false);
 
-   if (!enc->cs) {
+   if (!ws->cs_create(&enc->cs, sctx->ctx, RING_VCN_ENC, radeon_enc_cs_flush, enc, false)) {
       RVID_ERR("Can't get command submission context.\n");
       goto error;
    }
-
-   struct rvid_buffer si;
-   si_vid_create_buffer(enc->screen, &si, 128 * 1024, PIPE_USAGE_STAGING);
-   enc->si = &si;
 
    templat.buffer_format = PIPE_FORMAT_NV12;
    if (enc->base.profile == PIPE_VIDEO_PROFILE_HEVC_MAIN_10)
@@ -447,6 +487,8 @@ struct pipe_video_codec *radeon_create_encoder(struct pipe_context *context,
    cpb_size = cpb_size * enc->cpb_num;
    tmp_buf->destroy(tmp_buf);
 
+   cpb_size += setup_dpb(enc, templat.buffer_format);
+
    if (!si_vid_create_buffer(enc->screen, &enc->cpb, cpb_size, PIPE_USAGE_DEFAULT)) {
       RVID_ERR("Can't create CPB buffer.\n");
       goto error;
@@ -462,8 +504,7 @@ struct pipe_video_codec *radeon_create_encoder(struct pipe_context *context,
    return &enc->base;
 
 error:
-   if (enc->cs)
-      enc->ws->cs_destroy(enc->cs);
+   enc->ws->cs_destroy(&enc->cs);
 
    si_vid_destroy_buffer(&enc->cpb);
 
@@ -472,9 +513,9 @@ error:
 }
 
 void radeon_enc_add_buffer(struct radeon_encoder *enc, struct pb_buffer *buf,
-                           enum radeon_bo_usage usage, enum radeon_bo_domain domain, signed offset)
+                           unsigned usage, enum radeon_bo_domain domain, signed offset)
 {
-   enc->ws->cs_add_buffer(enc->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED, domain, 0);
+   enc->ws->cs_add_buffer(&enc->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED, domain);
    uint64_t addr;
    addr = enc->ws->buffer_get_virtual_address(buf);
    addr = addr + offset;
@@ -493,21 +534,22 @@ void radeon_enc_set_emulation_prevention(struct radeon_encoder *enc, bool set)
 void radeon_enc_output_one_byte(struct radeon_encoder *enc, unsigned char byte)
 {
    if (enc->byte_index == 0)
-      enc->cs->current.buf[enc->cs->current.cdw] = 0;
-   enc->cs->current.buf[enc->cs->current.cdw] |=
+      enc->cs.current.buf[enc->cs.current.cdw] = 0;
+   enc->cs.current.buf[enc->cs.current.cdw] |=
       ((unsigned int)(byte) << index_to_shifts[enc->byte_index]);
    enc->byte_index++;
 
    if (enc->byte_index >= 4) {
       enc->byte_index = 0;
-      enc->cs->current.cdw++;
+      enc->cs.current.cdw++;
    }
 }
 
 void radeon_enc_emulation_prevention(struct radeon_encoder *enc, unsigned char byte)
 {
    if (enc->emulation_prevention) {
-      if ((enc->num_zeros >= 2) && ((byte == 0x00) || (byte == 0x01) || (byte == 0x03))) {
+      if ((enc->num_zeros >= 2) && ((byte == 0x00) || (byte == 0x01) ||
+         (byte == 0x02) || (byte == 0x03))) {
          radeon_enc_output_one_byte(enc, 0x03);
          enc->bits_output += 8;
          enc->num_zeros = 0;
@@ -520,6 +562,7 @@ void radeon_enc_code_fixed_bits(struct radeon_encoder *enc, unsigned int value,
                                 unsigned int num_bits)
 {
    unsigned int bits_to_pack = 0;
+   enc->bits_size += num_bits;
 
    while (num_bits > 0) {
       unsigned int value_to_pack = value & (0xffffffff >> (32 - num_bits));
@@ -552,6 +595,7 @@ void radeon_enc_reset(struct radeon_encoder *enc)
    enc->bits_output = 0;
    enc->num_zeros = 0;
    enc->byte_index = 0;
+   enc->bits_size = 0;
 }
 
 void radeon_enc_byte_align(struct radeon_encoder *enc)
@@ -575,7 +619,7 @@ void radeon_enc_flush_headers(struct radeon_encoder *enc)
    }
 
    if (enc->byte_index > 0) {
-      enc->cs->current.cdw++;
+      enc->cs.current.cdw++;
       enc->byte_index = 0;
    }
 }

@@ -131,7 +131,7 @@ static void vc4_dpi_encoder_enable(struct drm_encoder *encoder)
 	struct vc4_dpi *dpi = vc4_encoder->dpi;
 	struct drm_connector_list_iter conn_iter;
 	struct drm_connector *connector = NULL, *connector_scan;
-	u32 dpi_c = DPI_ENABLE | DPI_OUTPUT_ENABLE_MODE;
+	u32 dpi_c = DPI_ENABLE;
 	int ret;
 
 	/* Look up the connector attached to DPI so we can get the
@@ -148,59 +148,88 @@ static void vc4_dpi_encoder_enable(struct drm_encoder *encoder)
 	}
 	drm_connector_list_iter_end(&conn_iter);
 
-	if (connector && connector->display_info.num_bus_formats) {
-		u32 bus_format = connector->display_info.bus_formats[0];
+	if (connector) {
+		if (connector->display_info.num_bus_formats) {
+			u32 bus_format = connector->display_info.bus_formats[0];
 
-		switch (bus_format) {
-		case MEDIA_BUS_FMT_RGB888_1X24:
-			dpi_c |= VC4_SET_FIELD(DPI_FORMAT_24BIT_888_RGB,
-					       DPI_FORMAT);
-			break;
-		case MEDIA_BUS_FMT_BGR888_1X24:
-			dpi_c |= VC4_SET_FIELD(DPI_FORMAT_24BIT_888_RGB,
-					       DPI_FORMAT);
-			dpi_c |= VC4_SET_FIELD(DPI_ORDER_BGR, DPI_ORDER);
-			break;
-		case MEDIA_BUS_FMT_RGB666_1X24_CPADHI:
-			dpi_c |= VC4_SET_FIELD(DPI_FORMAT_18BIT_666_RGB_2,
-					       DPI_FORMAT);
-			break;
-		case MEDIA_BUS_FMT_BGR666_1X24_CPADHI:
-			dpi_c |= VC4_SET_FIELD(DPI_FORMAT_18BIT_666_RGB_2,
-					       DPI_FORMAT);
-			dpi_c |= VC4_SET_FIELD(DPI_ORDER_BGR, DPI_ORDER);
-			break;
-		case MEDIA_BUS_FMT_RGB666_1X18:
+			switch (bus_format) {
+			case MEDIA_BUS_FMT_RGB888_1X24:
+				dpi_c |= VC4_SET_FIELD(DPI_FORMAT_24BIT_888_RGB,
+						       DPI_FORMAT);
+				break;
+			case MEDIA_BUS_FMT_BGR888_1X24:
+				dpi_c |= VC4_SET_FIELD(DPI_FORMAT_24BIT_888_RGB,
+						       DPI_FORMAT);
+				dpi_c |= VC4_SET_FIELD(DPI_ORDER_BGR,
+						       DPI_ORDER);
+				break;
+			case MEDIA_BUS_FMT_RGB666_1X24_CPADHI:
+				dpi_c |= VC4_SET_FIELD(DPI_FORMAT_18BIT_666_RGB_2,
+						       DPI_FORMAT);
+				break;
+			case MEDIA_BUS_FMT_BGR666_1X24_CPADHI:
+				dpi_c |= VC4_SET_FIELD(DPI_FORMAT_18BIT_666_RGB_2,
+						       DPI_FORMAT);
+				dpi_c |= VC4_SET_FIELD(DPI_ORDER_BGR,
+						       DPI_ORDER);
+				break;
+			default:
+				DRM_ERROR("Unknown media bus format %d\n",
+					  bus_format);
+				fallthrough;
+			case MEDIA_BUS_FMT_RGB666_1X18:
+				dpi_c |= VC4_SET_FIELD(DPI_FORMAT_18BIT_666_RGB_1,
+						       DPI_FORMAT);
+				break;
+			case MEDIA_BUS_FMT_BGR666_1X18:
+				dpi_c |= VC4_SET_FIELD(DPI_FORMAT_18BIT_666_RGB_1,
+						       DPI_FORMAT);
+				dpi_c |= VC4_SET_FIELD(DPI_ORDER_BGR,
+						       DPI_ORDER);
+				break;
+			case MEDIA_BUS_FMT_RGB565_1X16:
+				dpi_c |= VC4_SET_FIELD(DPI_FORMAT_16BIT_565_RGB_1,
+						       DPI_FORMAT);
+				break;
+			case MEDIA_BUS_FMT_RGB565_1X24_CPADHI:
+				dpi_c |= VC4_SET_FIELD(DPI_FORMAT_16BIT_565_RGB_2,
+						       DPI_FORMAT);
+				break;
+			}
+		} else {
+			/* Default to 18bit if no connector found. */
 			dpi_c |= VC4_SET_FIELD(DPI_FORMAT_18BIT_666_RGB_1,
 					       DPI_FORMAT);
-			break;
-		case MEDIA_BUS_FMT_BGR666_1X18:
-			dpi_c |= VC4_SET_FIELD(DPI_FORMAT_18BIT_666_RGB_1,
-					       DPI_FORMAT);
-			dpi_c |= VC4_SET_FIELD(DPI_ORDER_BGR, DPI_ORDER);
-			break;
-		case MEDIA_BUS_FMT_RGB565_1X16:
-			dpi_c |= VC4_SET_FIELD(DPI_FORMAT_16BIT_565_RGB_3,
-					       DPI_FORMAT);
-			break;
-		default:
-			DRM_ERROR("Unknown media bus format %d\n", bus_format);
-			break;
+
 		}
+
+		if (connector->display_info.bus_flags &
+					DRM_BUS_FLAG_PIXDATA_DRIVE_NEGEDGE)
+			dpi_c |= DPI_PIXEL_CLK_INVERT;
+
+		if (connector->display_info.bus_flags & DRM_BUS_FLAG_DE_LOW)
+			dpi_c |= DPI_OUTPUT_ENABLE_INVERT;
 	} else {
 		/* Default to 18bit if no connector found. */
 		dpi_c |= VC4_SET_FIELD(DPI_FORMAT_18BIT_666_RGB_1, DPI_FORMAT);
 	}
 
-	if (mode->flags & DRM_MODE_FLAG_NHSYNC)
-		dpi_c |= DPI_HSYNC_INVERT;
-	else if (!(mode->flags & DRM_MODE_FLAG_PHSYNC))
-		dpi_c |= DPI_HSYNC_DISABLE;
+	if (mode->flags & DRM_MODE_FLAG_CSYNC) {
+		if (mode->flags & DRM_MODE_FLAG_NCSYNC)
+			dpi_c |= DPI_OUTPUT_ENABLE_INVERT;
+	} else {
+		dpi_c |= DPI_OUTPUT_ENABLE_MODE;
 
-	if (mode->flags & DRM_MODE_FLAG_NVSYNC)
-		dpi_c |= DPI_VSYNC_INVERT;
-	else if (!(mode->flags & DRM_MODE_FLAG_PVSYNC))
-		dpi_c |= DPI_VSYNC_DISABLE;
+		if (mode->flags & DRM_MODE_FLAG_NHSYNC)
+			dpi_c |= DPI_HSYNC_INVERT;
+		else if (!(mode->flags & DRM_MODE_FLAG_PHSYNC))
+			dpi_c |= DPI_HSYNC_DISABLE;
+
+		if (mode->flags & DRM_MODE_FLAG_NVSYNC)
+			dpi_c |= DPI_VSYNC_INVERT;
+		else if (!(mode->flags & DRM_MODE_FLAG_PVSYNC))
+			dpi_c |= DPI_VSYNC_DISABLE;
+	}
 
 	DPI_WRITE(DPI_C, dpi_c);
 
@@ -239,25 +268,18 @@ static const struct of_device_id vc4_dpi_dt_match[] = {
 static int vc4_dpi_init_bridge(struct vc4_dpi *dpi)
 {
 	struct device *dev = &dpi->pdev->dev;
-	struct drm_panel *panel;
 	struct drm_bridge *bridge;
-	int ret;
 
-	ret = drm_of_find_panel_or_bridge(dev->of_node, 0, 0,
-					  &panel, &bridge);
-	if (ret) {
+	bridge = devm_drm_of_get_bridge(dev, dev->of_node, 0, 0);
+	if (IS_ERR(bridge)) {
 		/* If nothing was connected in the DT, that's not an
 		 * error.
 		 */
-		if (ret == -ENODEV)
+		if (PTR_ERR(bridge) == -ENODEV)
 			return 0;
 		else
-			return ret;
+			return PTR_ERR(bridge);
 	}
-
-	if (panel)
-		bridge = drm_panel_bridge_add_typed(panel,
-						    DRM_MODE_CONNECTOR_DPI);
 
 	return drm_bridge_attach(dpi->encoder, bridge, NULL, 0);
 }

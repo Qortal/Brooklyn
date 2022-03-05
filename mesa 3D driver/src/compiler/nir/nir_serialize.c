@@ -59,6 +59,7 @@ typedef struct {
    /* For skipping equal ALU headers (typical after scalarization). */
    nir_instr_type last_instr_type;
    uintptr_t last_alu_header_offset;
+   uint32_t last_alu_header;
 
    /* Don't write optional data such as variable names. */
    bool strip;
@@ -442,9 +443,7 @@ write_register(write_ctx *ctx, const nir_register *reg)
    blob_write_uint32(ctx->blob, reg->bit_size);
    blob_write_uint32(ctx->blob, reg->num_array_elems);
    blob_write_uint32(ctx->blob, reg->index);
-   blob_write_uint32(ctx->blob, !ctx->strip && reg->name);
-   if (!ctx->strip && reg->name)
-      blob_write_string(ctx->blob, reg->name);
+   blob_write_uint8(ctx->blob, reg->divergent);
 }
 
 static nir_register *
@@ -456,13 +455,7 @@ read_register(read_ctx *ctx)
    reg->bit_size = blob_read_uint32(ctx->blob);
    reg->num_array_elems = blob_read_uint32(ctx->blob);
    reg->index = blob_read_uint32(ctx->blob);
-   bool has_name = blob_read_uint32(ctx->blob);
-   if (has_name) {
-      const char *name = blob_read_string(ctx->blob);
-      reg->name = ralloc_strdup(reg, name);
-   } else {
-      reg->name = NULL;
-   }
+   reg->divergent = blob_read_uint8(ctx->blob);
 
    list_inithead(&reg->uses);
    list_inithead(&reg->defs);
@@ -560,7 +553,7 @@ read_src(read_ctx *ctx, nir_src *src, void *mem_ctx)
       src->reg.reg = read_lookup_object(ctx, header.any.object_idx);
       src->reg.base_offset = blob_read_uint32(ctx->blob);
       if (header.any.is_indirect) {
-         src->reg.indirect = ralloc(mem_ctx, nir_src);
+         src->reg.indirect = malloc(sizeof(nir_src));
          read_src(ctx, src->reg.indirect, mem_ctx);
       } else {
          src->reg.indirect = NULL;
@@ -573,9 +566,9 @@ union packed_dest {
    uint8_t u8;
    struct {
       uint8_t is_ssa:1;
-      uint8_t has_name:1;
       uint8_t num_components:3;
       uint8_t bit_size:3;
+      uint8_t divergent:1;
    } ssa;
    struct {
       uint8_t is_ssa:1;
@@ -585,14 +578,12 @@ union packed_dest {
 };
 
 enum intrinsic_const_indices_encoding {
-   /* Use the 9 bits of packed_const_indices to store 1-9 indices.
-    * 1 9-bit index, or 2 4-bit indices, or 3 3-bit indices, or
-    * 4 2-bit indices, or 5-9 1-bit indices.
+   /* Use packed_const_indices to store tightly packed indices.
     *
     * The common case for load_ubo is 0, 0, 0, which is trivially represented.
     * The common cases for load_interpolated_input also fit here, e.g.: 7, 3
     */
-   const_indices_9bit_all_combined,
+   const_indices_all_combined,
 
    const_indices_8bit,  /* 8 bits per element */
    const_indices_16bit, /* 16 bits per element */
@@ -637,9 +628,9 @@ union packed_instr {
       unsigned instr_type:4;
       unsigned deref_type:3;
       unsigned cast_type_same_as_last:1;
-      unsigned modes:14; /* deref_var redefines this */
+      unsigned modes:5; /* See (de|en)code_deref_modes() */
+      unsigned _pad:10;
       unsigned packed_src_ssa_16bit:1; /* deref_var redefines this */
-      unsigned _pad:1;  /* deref_var redefines this */
       unsigned dest:8;
    } deref;
    struct {
@@ -651,9 +642,9 @@ union packed_instr {
    } deref_var;
    struct {
       unsigned instr_type:4;
-      unsigned intrinsic:9;
+      unsigned intrinsic:10;
       unsigned const_indices_encoding:2;
-      unsigned packed_const_indices:9;
+      unsigned packed_const_indices:8;
       unsigned dest:8;
    } intrinsic;
    struct {
@@ -699,10 +690,10 @@ write_dest(write_ctx *ctx, const nir_dest *dst, union packed_instr header,
 
    dest.ssa.is_ssa = dst->is_ssa;
    if (dst->is_ssa) {
-      dest.ssa.has_name = !ctx->strip && dst->ssa.name;
       dest.ssa.num_components =
          encode_num_components_in_3bits(dst->ssa.num_components);
       dest.ssa.bit_size = encode_bit_size_3bits(dst->ssa.bit_size);
+      dest.ssa.divergent = dst->ssa.divergent;
    } else {
       dest.reg.is_indirect = !!(dst->reg.indirect);
    }
@@ -718,8 +709,7 @@ write_dest(write_ctx *ctx, const nir_dest *dst, union packed_instr header,
       if (ctx->last_instr_type == nir_instr_type_alu) {
          assert(ctx->last_alu_header_offset);
          union packed_instr last_header;
-         memcpy(&last_header, ctx->blob->data + ctx->last_alu_header_offset,
-                sizeof(last_header));
+         last_header.u32 = ctx->last_alu_header;
 
          /* Clear the field that counts ALUs with equal headers. */
          union packed_instr clean_header;
@@ -732,16 +722,17 @@ write_dest(write_ctx *ctx, const nir_dest *dst, union packed_instr header,
          if (last_header.alu.num_followup_alu_sharing_header < 3 &&
              header.u32 == clean_header.u32) {
             last_header.alu.num_followup_alu_sharing_header++;
-            memcpy(ctx->blob->data + ctx->last_alu_header_offset,
-                   &last_header, sizeof(last_header));
-
+            blob_overwrite_uint32(ctx->blob, ctx->last_alu_header_offset,
+                                  last_header.u32);
+            ctx->last_alu_header = last_header.u32;
             equal_header = true;
          }
       }
 
       if (!equal_header) {
-         ctx->last_alu_header_offset = ctx->blob->size;
-         blob_write_uint32(ctx->blob, header.u32);
+         ctx->last_alu_header_offset = blob_reserve_uint32(ctx->blob);
+         blob_overwrite_uint32(ctx->blob, ctx->last_alu_header_offset, header.u32);
+         ctx->last_alu_header = header.u32;
       }
    } else {
       blob_write_uint32(ctx->blob, header.u32);
@@ -753,8 +744,6 @@ write_dest(write_ctx *ctx, const nir_dest *dst, union packed_instr header,
 
    if (dst->is_ssa) {
       write_add_object(ctx, &dst->ssa);
-      if (dest.ssa.has_name)
-         blob_write_string(ctx->blob, dst->ssa.name);
    } else {
       blob_write_uint32(ctx->blob, write_lookup_object(ctx, dst->reg.reg));
       blob_write_uint32(ctx->blob, dst->reg.base_offset);
@@ -777,14 +766,14 @@ read_dest(read_ctx *ctx, nir_dest *dst, nir_instr *instr,
          num_components = blob_read_uint32(ctx->blob);
       else
          num_components = decode_num_components_in_3bits(dest.ssa.num_components);
-      char *name = dest.ssa.has_name ? blob_read_string(ctx->blob) : NULL;
-      nir_ssa_dest_init(instr, dst, num_components, bit_size, name);
+      nir_ssa_dest_init(instr, dst, num_components, bit_size, NULL);
+      dst->ssa.divergent = dest.ssa.divergent;
       read_add_object(ctx, &dst->ssa);
    } else {
       dst->reg.reg = read_object(ctx);
       dst->reg.base_offset = blob_read_uint32(ctx->blob);
       if (dest.reg.is_indirect) {
-         dst->reg.indirect = ralloc(instr, nir_src);
+         dst->reg.indirect = malloc(sizeof(nir_src));
          read_src(ctx, dst->reg.indirect, instr);
       }
    }
@@ -980,11 +969,51 @@ read_alu(read_ctx *ctx, union packed_instr header)
    return alu;
 }
 
+#define MODE_ENC_GENERIC_BIT (1 << 4)
+
+static nir_variable_mode
+decode_deref_modes(unsigned modes)
+{
+   if (modes & MODE_ENC_GENERIC_BIT) {
+      modes &= ~MODE_ENC_GENERIC_BIT;
+      return modes << (ffs(nir_var_mem_generic) - 1);
+   } else {
+      return 1 << modes;
+   }
+}
+
+static unsigned
+encode_deref_modes(nir_variable_mode modes)
+{
+   /* Mode sets on derefs generally come in two forms.  For certain OpenCL
+    * cases, we can have more than one of the generic modes set.  In this
+    * case, we need the full bitfield.  Fortunately, there are only 4 of
+    * these.  For all other modes, we can only have one mode at a time so we
+    * can compress them by only storing the bit position.  This, plus one bit
+    * to select encoding, lets us pack the entire bitfield in 5 bits.
+    */
+   STATIC_ASSERT((nir_var_all & ~nir_var_mem_generic) <
+                 (1 << MODE_ENC_GENERIC_BIT));
+
+   unsigned enc;
+   if (modes == 0 || (modes & nir_var_mem_generic)) {
+      assert(!(modes & ~nir_var_mem_generic));
+      enc = modes >> (ffs(nir_var_mem_generic) - 1);
+      assert(enc < MODE_ENC_GENERIC_BIT);
+      enc |= MODE_ENC_GENERIC_BIT;
+   } else {
+      assert(util_is_power_of_two_nonzero(modes));
+      enc = ffs(modes) - 1;
+      assert(enc < MODE_ENC_GENERIC_BIT);
+   }
+   assert(modes == decode_deref_modes(enc));
+   return enc;
+}
+
 static void
 write_deref(write_ctx *ctx, const nir_deref_instr *deref)
 {
    assert(deref->deref_type < 8);
-   assert(deref->modes < (1 << 14));
 
    union packed_instr header;
    header.u32 = 0;
@@ -993,7 +1022,7 @@ write_deref(write_ctx *ctx, const nir_deref_instr *deref)
    header.deref.deref_type = deref->deref_type;
 
    if (deref->deref_type == nir_deref_type_cast) {
-      header.deref.modes = deref->modes;
+      header.deref.modes = encode_deref_modes(deref->modes);
       header.deref.cast_type_same_as_last = deref->type == ctx->last_type;
    }
 
@@ -1129,7 +1158,7 @@ read_deref(read_ctx *ctx, union packed_instr header)
    if (deref_type == nir_deref_type_var) {
       deref->modes = deref->var->data.mode;
    } else if (deref->deref_type == nir_deref_type_cast) {
-      deref->modes = header.deref.modes;
+      deref->modes = decode_deref_modes(header.deref.modes);
    } else {
       assert(deref->parent.is_ssa);
       deref->modes = nir_instr_as_deref(deref->parent.ssa->parent_instr)->modes;
@@ -1141,11 +1170,11 @@ read_deref(read_ctx *ctx, union packed_instr header)
 static void
 write_intrinsic(write_ctx *ctx, const nir_intrinsic_instr *intrin)
 {
-   /* 9 bits for nir_intrinsic_op */
-   STATIC_ASSERT(nir_num_intrinsics <= 512);
+   /* 10 bits for nir_intrinsic_op */
+   STATIC_ASSERT(nir_num_intrinsics <= 1024);
    unsigned num_srcs = nir_intrinsic_infos[intrin->intrinsic].num_srcs;
    unsigned num_indices = nir_intrinsic_infos[intrin->intrinsic].num_indices;
-   assert(intrin->intrinsic < 512);
+   assert(intrin->intrinsic < 1024);
 
    union packed_instr header;
    header.u32 = 0;
@@ -1161,11 +1190,11 @@ write_intrinsic(write_ctx *ctx, const nir_intrinsic_instr *intrin)
          max_bits = MAX2(max_bits, max);
       }
 
-      if (max_bits * num_indices <= 9) {
-         header.intrinsic.const_indices_encoding = const_indices_9bit_all_combined;
+      if (max_bits * num_indices <= 8) {
+         header.intrinsic.const_indices_encoding = const_indices_all_combined;
 
-         /* Pack all const indices into 6 bits. */
-         unsigned bit_size = 9 / num_indices;
+         /* Pack all const indices into 8 bits. */
+         unsigned bit_size = 8 / num_indices;
          for (unsigned i = 0; i < num_indices; i++) {
             header.intrinsic.packed_const_indices |=
                intrin->const_index[i] << (i * bit_size);
@@ -1236,8 +1265,8 @@ read_intrinsic(read_ctx *ctx, union packed_instr header)
 
    if (num_indices) {
       switch (header.intrinsic.const_indices_encoding) {
-      case const_indices_9bit_all_combined: {
-         unsigned bit_size = 9 / num_indices;
+      case const_indices_all_combined: {
+         unsigned bit_size = 8 / num_indices;
          unsigned bit_mask = u_bit_consecutive(0, bit_size);
          for (unsigned i = 0; i < num_indices; i++) {
             intrin->const_index[i] =
@@ -1456,10 +1485,12 @@ union packed_tex_data {
       unsigned is_array:1;
       unsigned is_shadow:1;
       unsigned is_new_style_shadow:1;
+      unsigned is_sparse:1;
       unsigned component:2;
       unsigned texture_non_uniform:1;
       unsigned sampler_non_uniform:1;
-      unsigned unused:8; /* Mark unused for valgrind. */
+      unsigned array_is_lowered_cube:1;
+      unsigned unused:6; /* Mark unused for valgrind. */
    } u;
 };
 
@@ -1491,9 +1522,11 @@ write_tex(write_ctx *ctx, const nir_tex_instr *tex)
       .u.is_array = tex->is_array,
       .u.is_shadow = tex->is_shadow,
       .u.is_new_style_shadow = tex->is_new_style_shadow,
+      .u.is_sparse = tex->is_sparse,
       .u.component = tex->component,
       .u.texture_non_uniform = tex->texture_non_uniform,
       .u.sampler_non_uniform = tex->sampler_non_uniform,
+      .u.array_is_lowered_cube = tex->array_is_lowered_cube,
    };
    blob_write_uint32(ctx->blob, packed.u32);
 
@@ -1526,9 +1559,11 @@ read_tex(read_ctx *ctx, union packed_instr header)
    tex->is_array = packed.u.is_array;
    tex->is_shadow = packed.u.is_shadow;
    tex->is_new_style_shadow = packed.u.is_new_style_shadow;
+   tex->is_sparse = packed.u.is_sparse;
    tex->component = packed.u.component;
    tex->texture_non_uniform = packed.u.texture_non_uniform;
    tex->sampler_non_uniform = packed.u.sampler_non_uniform;
+   tex->array_is_lowered_cube = packed.u.array_is_lowered_cube;
 
    for (unsigned i = 0; i < tex->num_srcs; i++) {
       union packed_src src = read_src(ctx, &tex->src[i].src, &tex->instr);
@@ -1572,9 +1607,10 @@ static void
 write_fixup_phis(write_ctx *ctx)
 {
    util_dynarray_foreach(&ctx->phi_fixups, write_phi_fixup, fixup) {
-      uint32_t *blob_ptr = (uint32_t *)(ctx->blob->data + fixup->blob_offset);
-      blob_ptr[0] = write_lookup_object(ctx, fixup->src);
-      blob_ptr[1] = write_lookup_object(ctx, fixup->block);
+      blob_overwrite_uint32(ctx->blob, fixup->blob_offset,
+                            write_lookup_object(ctx, fixup->src));
+      blob_overwrite_uint32(ctx->blob, fixup->blob_offset + sizeof(uint32_t),
+                            write_lookup_object(ctx, fixup->block));
    }
 
    util_dynarray_clear(&ctx->phi_fixups);
@@ -1598,11 +1634,9 @@ read_phi(read_ctx *ctx, nir_block *blk, union packed_instr header)
    nir_instr_insert_after_block(blk, &phi->instr);
 
    for (unsigned i = 0; i < header.phi.num_srcs; i++) {
-      nir_phi_src *src = ralloc(phi, nir_phi_src);
-
-      src->src.is_ssa = true;
-      src->src.ssa = (nir_ssa_def *)(uintptr_t) blob_read_uint32(ctx->blob);
-      src->pred = (nir_block *)(uintptr_t) blob_read_uint32(ctx->blob);
+      nir_ssa_def *def = (nir_ssa_def *)(uintptr_t) blob_read_uint32(ctx->blob);
+      nir_block *pred = (nir_block *)(uintptr_t) blob_read_uint32(ctx->blob);
+      nir_phi_src *src = nir_phi_instr_add_src(phi, pred, nir_src_for_ssa(def));
 
       /* Since we're not letting nir_insert_instr handle use/def stuff for us,
        * we have to set the parent_instr manually.  It doesn't really matter
@@ -1614,8 +1648,6 @@ read_phi(read_ctx *ctx, nir_block *blk, union packed_instr header)
        * sources at the very end of read_function_impl.
        */
       list_add(&src->src.use_link, &ctx->phi_srcs);
-
-      exec_list_push_tail(&phi->srcs, &src->node);
    }
 
    return phi;
@@ -1822,6 +1854,7 @@ static void
 write_if(write_ctx *ctx, nir_if *nif)
 {
    write_src(ctx, &nif->condition);
+   blob_write_uint8(ctx->blob, nif->control);
 
    write_cf_list(ctx, &nif->then_list);
    write_cf_list(ctx, &nif->else_list);
@@ -1833,6 +1866,7 @@ read_if(read_ctx *ctx, struct exec_list *cf_list)
    nir_if *nif = nir_if_create(ctx->nir);
 
    read_src(ctx, &nif->condition, nif);
+   nif->control = blob_read_uint8(ctx->blob);
 
    nir_cf_node_insert_end(cf_list, &nif->cf_node);
 
@@ -1843,6 +1877,8 @@ read_if(read_ctx *ctx, struct exec_list *cf_list)
 static void
 write_loop(write_ctx *ctx, nir_loop *loop)
 {
+   blob_write_uint8(ctx->blob, loop->control);
+   blob_write_uint8(ctx->blob, loop->divergent);
    write_cf_list(ctx, &loop->body);
 }
 
@@ -1853,6 +1889,8 @@ read_loop(read_ctx *ctx, struct exec_list *cf_list)
 
    nir_cf_node_insert_end(cf_list, &loop->cf_node);
 
+   loop->control = blob_read_uint8(ctx->blob);
+   loop->divergent = blob_read_uint8(ctx->blob);
    read_cf_list(ctx, &loop->body);
 }
 
@@ -2037,7 +2075,6 @@ nir_serialize(struct blob *blob, const nir_shader *nir, bool strip)
    blob_write_uint32(blob, nir->num_inputs);
    blob_write_uint32(blob, nir->num_uniforms);
    blob_write_uint32(blob, nir->num_outputs);
-   blob_write_uint32(blob, nir->shared_size);
    blob_write_uint32(blob, nir->scratch_size);
 
    blob_write_uint32(blob, exec_list_length(&nir->functions));
@@ -2054,7 +2091,7 @@ nir_serialize(struct blob *blob, const nir_shader *nir, bool strip)
    if (nir->constant_data_size > 0)
       blob_write_bytes(blob, nir->constant_data, nir->constant_data_size);
 
-   *(uint32_t *)(blob->data + idx_size_offset) = ctx.next_idx;
+   blob_overwrite_uint32(blob, idx_size_offset, ctx.next_idx);
 
    _mesa_hash_table_destroy(ctx.remap_table, NULL);
    util_dynarray_fini(&ctx.phi_fixups);
@@ -2090,7 +2127,6 @@ nir_deserialize(void *mem_ctx,
    ctx.nir->num_inputs = blob_read_uint32(blob);
    ctx.nir->num_uniforms = blob_read_uint32(blob);
    ctx.nir->num_outputs = blob_read_uint32(blob);
-   ctx.nir->shared_size = blob_read_uint32(blob);
    ctx.nir->scratch_size = blob_read_uint32(blob);
 
    unsigned num_functions = blob_read_uint32(blob);
@@ -2111,6 +2147,8 @@ nir_deserialize(void *mem_ctx,
    }
 
    free(ctx.idx_table);
+
+   nir_validate_shader(ctx.nir, "after deserialize");
 
    return ctx.nir;
 }

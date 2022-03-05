@@ -28,31 +28,43 @@
  * may be errata requiring a workaround, or features. We're trying to be
  * quirk-positive here; quirky is the best! */
 
-/* Whether this GPU lacks support for the preload mechanism. New GPUs can have
- * varyings and textures preloaded into the fragment shader to amortize the I/O
- * cost; early Bifrost models lacked this feature. */
+/* Whether this GPU lacks support for fp32 transcendentals, requiring backend
+ * lowering to low-precision lookup tables and polynomial approximation */
 
-#define BIFROST_NO_PRELOAD (1 << 0)
+#define BIFROST_NO_FP32_TRANSCENDENTALS (1 << 0)
 
-/* Whether this GPU lacks support for the _FAST family of opcodes for fast
- * computation of special functions requiring lookup tables. Early GPUs require
- * rather unweildly lowering mechanisms for thesr things. */
+/* Whether this GPU lacks support for the full form of the CLPER instruction.
+ * These GPUs use a simple encoding of CLPER that does not support
+ * inactive_result, subgroup_size, or lane_op. Using those features requires
+ * lowering to additional ALU instructions. The encoding forces inactive_result
+ * = zero, subgroup_size = subgroup4, and lane_op = none. */
 
-#define BIFROST_NO_FAST_OP (1 << 1)
+#define BIFROST_LIMITED_CLPER (1 << 1)
 
 static inline unsigned
 bifrost_get_quirks(unsigned product_id)
 {
-        switch (product_id >> 12) {
-        case 6: /* 1st gen */
-                return BIFROST_NO_PRELOAD;
-
-        case 7: /* 2nd gen */
-        case 8: /* 3rd gen */
-                return 0;
-
+        switch (product_id >> 8) {
+        case 0x60: /* G71 */
+                return BIFROST_NO_FP32_TRANSCENDENTALS | BIFROST_LIMITED_CLPER;
+        case 0x62: /* G72 */
+        case 0x70: /* G31 */
+                return BIFROST_LIMITED_CLPER;
         default:
-                unreachable("Unknown Bifrost GPU ID");
+                return 0;
+        }
+}
+
+/* How many lanes per architectural warp (subgroup)? Used to lower divergent
+ * indirects. */
+
+static inline unsigned
+bifrost_lanes_per_warp(unsigned product_id)
+{
+        switch (product_id >> 12) {
+        case 6: return 4;
+        case 7: return 8;
+        default: return 16;
         }
 }
 

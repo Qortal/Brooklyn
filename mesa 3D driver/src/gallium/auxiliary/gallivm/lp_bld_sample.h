@@ -113,6 +113,7 @@ struct lp_sampler_params
    const LLVMValueRef *offsets;
    LLVMValueRef ms_index;
    LLVMValueRef lod;
+   LLVMValueRef aniso_filter_table;
    const struct lp_derivatives *derivs;
    LLVMValueRef *texel;
 };
@@ -169,7 +170,7 @@ struct lp_static_texture_state
    unsigned swizzle_a:3;
 
    /* pipe_texture's state */
-   unsigned target:4;        /**< PIPE_TEXTURE_* */
+   enum pipe_texture_target target:5;        /**< PIPE_TEXTURE_* */
    unsigned pot_width:1;     /**< is the width a power of two? */
    unsigned pot_height:1;
    unsigned pot_depth:1;
@@ -201,10 +202,8 @@ struct lp_static_sampler_state
    unsigned apply_min_lod:1;  /**< min_lod > 0 ? */
    unsigned apply_max_lod:1;  /**< max_lod < last_level ? */
    unsigned seamless_cube_map:1;
-
-   /* Hacks */
-   unsigned force_nearest_s:1;
-   unsigned force_nearest_t:1;
+   unsigned aniso:1;
+   unsigned reduction_mode:2;
 };
 
 
@@ -329,6 +328,13 @@ struct lp_sampler_dynamic_state
                    LLVMValueRef context_ptr,
                    unsigned sampler_unit);
 
+   /** Obtain maximum anisotropy */
+   LLVMValueRef
+   (*max_aniso)(const struct lp_sampler_dynamic_state *state,
+                struct gallivm_state *gallivm,
+                LLVMValueRef context_ptr,
+                unsigned sampler_unit);
+
    /** 
     * Obtain texture cache (returns ptr to lp_build_format_cache).
     *
@@ -443,6 +449,8 @@ struct lp_build_sample_context
    LLVMValueRef border_color_clamped;
 
    LLVMValueRef context_ptr;
+
+   LLVMValueRef aniso_filter_table;
 };
 
 /*
@@ -576,6 +584,7 @@ lp_build_lod_selector(struct lp_build_sample_context *bld,
                       LLVMValueRef lod_bias, /* optional */
                       LLVMValueRef explicit_lod, /* optional */
                       unsigned mip_filter,
+                      LLVMValueRef max_aniso,
                       LLVMValueRef *out_lod,
                       LLVMValueRef *out_lod_ipart,
                       LLVMValueRef *out_lod_fpart,
@@ -749,6 +758,48 @@ lp_build_image_op_array_case(struct lp_build_img_op_array_switch *switch_info,
 			     struct lp_sampler_dynamic_state *dynamic_state);
 
 void lp_build_image_op_array_fini_soa(struct lp_build_img_op_array_switch *switch_info);
+
+void
+lp_build_reduce_filter(struct lp_build_context *bld,
+                       enum pipe_tex_reduction_mode mode,
+                       unsigned flags,
+                       unsigned num_chan,
+                       LLVMValueRef x,
+                       LLVMValueRef *v00,
+                       LLVMValueRef *v01,
+                       LLVMValueRef *out);
+void
+lp_build_reduce_filter_2d(struct lp_build_context *bld,
+                          enum pipe_tex_reduction_mode mode,
+                          unsigned flags,
+                          unsigned num_chan,
+                          LLVMValueRef x,
+                          LLVMValueRef y,
+                          LLVMValueRef *v00,
+                          LLVMValueRef *v01,
+                          LLVMValueRef *v10,
+                          LLVMValueRef *v11,
+                          LLVMValueRef *out);
+
+void
+lp_build_reduce_filter_3d(struct lp_build_context *bld,
+                          enum pipe_tex_reduction_mode mode,
+                          unsigned flags,
+                          unsigned num_chan,
+                          LLVMValueRef x,
+                          LLVMValueRef y,
+                          LLVMValueRef z,
+                          LLVMValueRef *v000,
+                          LLVMValueRef *v001,
+                          LLVMValueRef *v010,
+                          LLVMValueRef *v011,
+                          LLVMValueRef *v100,
+                          LLVMValueRef *v101,
+                          LLVMValueRef *v110,
+                          LLVMValueRef *v111,
+                          LLVMValueRef *out);
+
+const float *lp_build_sample_aniso_filter_table(void);
 #ifdef __cplusplus
 }
 #endif

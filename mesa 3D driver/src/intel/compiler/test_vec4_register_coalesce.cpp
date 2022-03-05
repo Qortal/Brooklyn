@@ -27,17 +27,16 @@
 
 using namespace brw;
 
-int ret = 0;
-
 #define register_coalesce(v) _register_coalesce(v, __func__)
 
-class register_coalesce_test : public ::testing::Test {
+class register_coalesce_vec4_test : public ::testing::Test {
    virtual void SetUp();
+   virtual void TearDown();
 
 public:
    struct brw_compiler *compiler;
-   struct gen_device_info *devinfo;
-   struct gl_context *ctx;
+   struct intel_device_info *devinfo;
+   void *ctx;
    struct gl_shader_program *shader_prog;
    struct brw_vue_prog_data *prog_data;
    vec4_visitor *v;
@@ -48,10 +47,11 @@ class register_coalesce_vec4_visitor : public vec4_visitor
 {
 public:
    register_coalesce_vec4_visitor(struct brw_compiler *compiler,
+                                  void *mem_ctx,
                                   nir_shader *shader,
                                   struct brw_vue_prog_data *prog_data)
-      : vec4_visitor(compiler, NULL, NULL, prog_data, shader, NULL,
-                     false /* no_spills */, -1)
+      : vec4_visitor(compiler, NULL, NULL, prog_data, shader, mem_ctx,
+                     false /* no_spills */, false)
    {
       prog_data->dispatch_mode = DISPATCH_MODE_4X2_DUAL_OBJECT;
    }
@@ -89,20 +89,31 @@ protected:
 };
 
 
-void register_coalesce_test::SetUp()
+void register_coalesce_vec4_test::SetUp()
 {
-   ctx = (struct gl_context *)calloc(1, sizeof(*ctx));
-   compiler = (struct brw_compiler *)calloc(1, sizeof(*compiler));
-   devinfo = (struct gen_device_info *)calloc(1, sizeof(*devinfo));
-   prog_data = (struct brw_vue_prog_data *)calloc(1, sizeof(*prog_data));
+   ctx = ralloc_context(NULL);
+   compiler = rzalloc(ctx, struct brw_compiler);
+   devinfo = rzalloc(ctx, struct intel_device_info);
    compiler->devinfo = devinfo;
 
+   prog_data = ralloc(ctx, struct brw_vue_prog_data);
+
    nir_shader *shader =
-      nir_shader_create(NULL, MESA_SHADER_VERTEX, NULL, NULL);
+      nir_shader_create(ctx, MESA_SHADER_VERTEX, NULL, NULL);
 
-   v = new register_coalesce_vec4_visitor(compiler, shader, prog_data);
+   v = new register_coalesce_vec4_visitor(compiler, ctx, shader, prog_data);
 
-   devinfo->gen = 4;
+   devinfo->ver = 4;
+   devinfo->verx10 = devinfo->ver * 10;
+}
+
+void register_coalesce_vec4_test::TearDown()
+{
+   delete v;
+   v = NULL;
+
+   ralloc_free(ctx);
+   ctx = NULL;
 }
 
 static void
@@ -124,7 +135,7 @@ _register_coalesce(vec4_visitor *v, const char *func)
    }
 }
 
-TEST_F(register_coalesce_test, test_compute_to_mrf)
+TEST_F(register_coalesce_vec4_test, test_compute_to_mrf)
 {
    src_reg something = src_reg(v, glsl_type::float_type);
    dst_reg temp = dst_reg(v, glsl_type::float_type);
@@ -143,7 +154,7 @@ TEST_F(register_coalesce_test, test_compute_to_mrf)
 }
 
 
-TEST_F(register_coalesce_test, test_multiple_use)
+TEST_F(register_coalesce_vec4_test, test_multiple_use)
 {
    src_reg something = src_reg(v, glsl_type::float_type);
    dst_reg temp = dst_reg(v, glsl_type::vec4_type);
@@ -169,7 +180,7 @@ TEST_F(register_coalesce_test, test_multiple_use)
    EXPECT_NE(mul->dst.file, MRF);
 }
 
-TEST_F(register_coalesce_test, test_dp4_mrf)
+TEST_F(register_coalesce_vec4_test, test_dp4_mrf)
 {
    src_reg some_src_1 = src_reg(v, glsl_type::vec4_type);
    src_reg some_src_2 = src_reg(v, glsl_type::vec4_type);
@@ -190,7 +201,7 @@ TEST_F(register_coalesce_test, test_dp4_mrf)
    EXPECT_EQ(dp4->dst.writemask, WRITEMASK_Y);
 }
 
-TEST_F(register_coalesce_test, test_dp4_grf)
+TEST_F(register_coalesce_vec4_test, test_dp4_grf)
 {
    src_reg some_src_1 = src_reg(v, glsl_type::vec4_type);
    src_reg some_src_2 = src_reg(v, glsl_type::vec4_type);
@@ -216,7 +227,7 @@ TEST_F(register_coalesce_test, test_dp4_grf)
    EXPECT_EQ(dp4->dst.writemask, WRITEMASK_Y);
 }
 
-TEST_F(register_coalesce_test, test_channel_mul_grf)
+TEST_F(register_coalesce_vec4_test, test_channel_mul_grf)
 {
    src_reg some_src_1 = src_reg(v, glsl_type::vec4_type);
    src_reg some_src_2 = src_reg(v, glsl_type::vec4_type);

@@ -454,17 +454,17 @@ static struct rockchip_clk_branch rk3568_clk_branches[] __initdata = {
 	COMPOSITE_NOMUX(CPLL_125M, "cpll_125m", "cpll", CLK_IGNORE_UNUSED,
 			RK3568_CLKSEL_CON(80), 0, 5, DFLAGS,
 			RK3568_CLKGATE_CON(35), 10, GFLAGS),
-	COMPOSITE_NOMUX(CPLL_62P5M, "cpll_62p5", "cpll", CLK_IGNORE_UNUSED,
-			RK3568_CLKSEL_CON(80), 8, 5, DFLAGS,
-			RK3568_CLKGATE_CON(35), 11, GFLAGS),
-	COMPOSITE_NOMUX(CPLL_50M, "cpll_50m", "cpll", CLK_IGNORE_UNUSED,
-			RK3568_CLKSEL_CON(81), 0, 5, DFLAGS,
-			RK3568_CLKGATE_CON(35), 12, GFLAGS),
-	COMPOSITE_NOMUX(CPLL_25M, "cpll_25m", "cpll", CLK_IGNORE_UNUSED,
-			RK3568_CLKSEL_CON(81), 8, 6, DFLAGS,
-			RK3568_CLKGATE_CON(35), 13, GFLAGS),
 	COMPOSITE_NOMUX(CPLL_100M, "cpll_100m", "cpll", CLK_IGNORE_UNUSED,
 			RK3568_CLKSEL_CON(82), 0, 5, DFLAGS,
+			RK3568_CLKGATE_CON(35), 11, GFLAGS),
+	COMPOSITE_NOMUX(CPLL_62P5M, "cpll_62p5", "cpll", CLK_IGNORE_UNUSED,
+			RK3568_CLKSEL_CON(80), 8, 5, DFLAGS,
+			RK3568_CLKGATE_CON(35), 12, GFLAGS),
+	COMPOSITE_NOMUX(CPLL_50M, "cpll_50m", "cpll", CLK_IGNORE_UNUSED,
+			RK3568_CLKSEL_CON(81), 0, 5, DFLAGS,
+			RK3568_CLKGATE_CON(35), 13, GFLAGS),
+	COMPOSITE_NOMUX(CPLL_25M, "cpll_25m", "cpll", CLK_IGNORE_UNUSED,
+			RK3568_CLKSEL_CON(81), 8, 6, DFLAGS,
 			RK3568_CLKGATE_CON(35), 14, GFLAGS),
 	COMPOSITE_NOMUX(0, "clk_osc0_div_750k", "xin24m", CLK_IGNORE_UNUSED,
 			RK3568_CLKSEL_CON(82), 8, 6, DFLAGS,
@@ -1693,7 +1693,6 @@ static const struct of_device_id clk_rk3568_match_table[] = {
 	},
 	{ }
 };
-MODULE_DEVICE_TABLE(of, clk_rk3568_match_table);
 
 static int __init clk_rk3568_probe(struct platform_device *pdev)
 {
@@ -1720,6 +1719,3 @@ static struct platform_driver clk_rk3568_driver = {
 	},
 };
 builtin_platform_driver_probe(clk_rk3568_driver, clk_rk3568_probe);
-
-MODULE_DESCRIPTION("Rockchip RK3568 Clock Driver");
-MODULE_LICENSE("GPL");

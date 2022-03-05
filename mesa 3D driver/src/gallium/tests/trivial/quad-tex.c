@@ -177,12 +177,12 @@ static void init_prog(struct program *p)
 		box.height = 2;
 		box.depth = 1;
 
-		ptr = p->pipe->transfer_map(p->pipe, p->tex, 0, PIPE_MAP_WRITE, &box, &t);
+		ptr = p->pipe->texture_map(p->pipe, p->tex, 0, PIPE_MAP_WRITE, &box, &t);
 		ptr[0] = 0xffff0000;
 		ptr[1] = 0xff0000ff;
 		ptr[2] = 0xff00ff00;
 		ptr[3] = 0xffffff00;
-		p->pipe->transfer_unmap(p->pipe, t);
+		p->pipe->texture_unmap(p->pipe, t);
 
 		u_sampler_view_default_template(&v_tmplt, p->tex, p->tex->format);
 
@@ -250,6 +250,11 @@ static void init_prog(struct program *p)
 		p->viewport.translate[0] = half_width + x;
 		p->viewport.translate[1] = (half_height + y) * scale + bias;
 		p->viewport.translate[2] = half_depth + z;
+
+		p->viewport.swizzle_x = PIPE_VIEWPORT_SWIZZLE_POSITIVE_X;
+		p->viewport.swizzle_y = PIPE_VIEWPORT_SWIZZLE_POSITIVE_Y;
+		p->viewport.swizzle_z = PIPE_VIEWPORT_SWIZZLE_POSITIVE_Z;
+		p->viewport.swizzle_w = PIPE_VIEWPORT_SWIZZLE_POSITIVE_W;
 	}
 
 	/* vertex elements state */
@@ -322,7 +327,7 @@ static void draw(struct program *p)
 	cso_set_samplers(p->cso, PIPE_SHADER_FRAGMENT, 1, samplers);
 
 	/* texture sampler view */
-	cso_set_sampler_views(p->cso, PIPE_SHADER_FRAGMENT, 1, &p->view);
+	p->pipe->set_sampler_views(p->pipe, PIPE_SHADER_FRAGMENT, 0, 1, 0, false, &p->view);
 
 	/* shaders */
 	cso_set_fragment_shader_handle(p->cso, p->fs);

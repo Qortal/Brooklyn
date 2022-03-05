@@ -92,8 +92,6 @@ do_optimization(struct exec_list *ir, const char *optimization,
                      &int_0, &int_1, &int_2, &int_3, &int_4) == 5) {
       return do_lower_jumps(ir, int_0 != 0, int_1 != 0, int_2 != 0,
                             int_3 != 0, int_4 != 0);
-   } else if (strcmp(optimization, "do_lower_texture_projection") == 0) {
-      return do_lower_texture_projection(ir);
    } else if (strcmp(optimization, "do_if_simplification") == 0) {
       return do_if_simplification(ir);
    } else if (sscanf(optimization, "lower_if_to_cond_assign ( %d ) ",
@@ -125,8 +123,6 @@ do_optimization(struct exec_list *ir, const char *optimization,
    } else if (sscanf(optimization, "lower_quadop_vector ( %d ) ",
                      &int_0) == 1) {
       return lower_quadop_vector(ir, int_0 != 0);
-   } else if (strcmp(optimization, "optimize_redundant_jumps") == 0) {
-      return optimize_redundant_jumps(ir);
    } else {
       printf("Unrecognized optimization %s\n", optimization);
       exit(EXIT_FAILURE);

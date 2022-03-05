@@ -49,7 +49,8 @@ brw_vec4_generate_assembly(const struct brw_compiler *compiler,
                            struct brw_vue_prog_data *prog_data,
                            const struct cfg_t *cfg,
                            const brw::performance &perf,
-                           struct brw_compile_stats *stats);
+                           struct brw_compile_stats *stats,
+                           bool debug_enabled);
 
 #ifdef __cplusplus
 } /* extern "C" */
@@ -71,7 +72,7 @@ public:
                 const nir_shader *shader,
 		void *mem_ctx,
                 bool no_spills,
-                int shader_time_index);
+                bool debug_enabled);
 
    dst_reg dst_null_f()
    {
@@ -106,6 +107,8 @@ public:
    const char *current_annotation;
 
    int first_non_payload_grf;
+   unsigned ubo_push_start[4];
+   unsigned push_length;
    unsigned int max_grf;
    brw_analysis<brw::vec4_live_variables, backend_shader> live_analysis;
    brw_analysis<brw::performance, vec4_visitor> performance_analysis;
@@ -134,9 +137,8 @@ public:
    void spill_reg(unsigned spill_reg);
    void move_grf_array_access_to_scratch();
    void move_uniform_array_access_to_pull_constants();
-   void move_push_constants_to_pull_constants();
    void split_uniform_registers();
-   void pack_uniform_registers();
+   void setup_push_ranges();
    virtual void invalidate_analysis(brw::analysis_dependency_class c);
    void split_virtual_grfs();
    bool opt_vector_float();
@@ -252,32 +254,13 @@ public:
    void emit_pack_unorm_4x8(const dst_reg &dst, const src_reg &src0);
    void emit_pack_snorm_4x8(const dst_reg &dst, const src_reg &src0);
 
-   void emit_texture(ir_texture_opcode op,
-                     dst_reg dest,
-                     const glsl_type *dest_type,
-                     src_reg coordinate,
-                     int coord_components,
-                     src_reg shadow_comparator,
-                     src_reg lod, src_reg lod2,
-                     src_reg sample_index,
-                     uint32_t constant_offset,
-                     src_reg offset_value,
-                     src_reg mcs,
-                     uint32_t surface, src_reg surface_reg,
-                     src_reg sampler_reg);
-
    src_reg emit_mcs_fetch(const glsl_type *coordinate_type, src_reg coordinate,
                           src_reg surface);
-   void emit_gen6_gather_wa(uint8_t wa, dst_reg dst);
 
    void emit_ndc_computation();
    void emit_psiz_and_flags(dst_reg reg);
    vec4_instruction *emit_generic_urb_slot(dst_reg reg, int varying, int comp);
    virtual void emit_urb_slot(dst_reg reg, int varying);
-
-   void emit_shader_time_begin();
-   void emit_shader_time_end();
-   void emit_shader_time_write(int shader_time_subindex, src_reg value);
 
    src_reg get_scratch_offset(bblock_t *block, vec4_instruction *inst,
 			      src_reg *reladdr, int reg_offset);
@@ -287,11 +270,6 @@ public:
 			  int base_offset);
    void emit_scratch_write(bblock_t *block, vec4_instruction *inst,
 			   int base_offset);
-   void emit_pull_constant_load(bblock_t *block, vec4_instruction *inst,
-				dst_reg dst,
-				src_reg orig_src,
-                                int base_offset,
-                                src_reg indirect);
    void emit_pull_constant_load_reg(dst_reg dst,
                                     src_reg surf_index,
                                     src_reg offset,
@@ -309,8 +287,6 @@ public:
    void dump_instruction(const backend_instruction *inst) const;
    void dump_instruction(const backend_instruction *inst, FILE *file) const;
 
-   bool is_high_sampler(src_reg sampler);
-
    bool optimize_predicate(nir_alu_instr *instr, enum brw_predicate *predicate);
 
    void emit_conversion_from_double(dst_reg dst, src_reg src);
@@ -318,6 +294,7 @@ public:
 
    vec4_instruction *shuffle_64bit_data(dst_reg dst, src_reg src,
                                         bool for_write,
+                                        bool for_scratch = false,
                                         bblock_t *block = NULL,
                                         vec4_instruction *ref = NULL);
 
@@ -370,8 +347,6 @@ private:
     * If true, then register allocation should fail instead of spilling.
     */
    const bool no_spills;
-
-   int shader_time_index;
 
    unsigned last_scratch; /**< measured in 32-byte (register size) units */
 };

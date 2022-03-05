@@ -27,6 +27,7 @@
 #include "brw_reg.h"
 #include "compiler/nir/nir.h"
 #include "brw_compiler.h"
+#include "nir_builder.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -101,40 +102,38 @@ brw_nir_link_shaders(const struct brw_compiler *compiler,
 
 bool brw_nir_lower_cs_intrinsics(nir_shader *nir);
 bool brw_nir_lower_alpha_to_coverage(nir_shader *shader);
-void brw_nir_lower_legacy_clipping(nir_shader *nir,
-                                   int nr_userclip_plane_consts,
-                                   struct brw_stage_prog_data *prog_data);
 void brw_nir_lower_vs_inputs(nir_shader *nir,
+                             bool edgeflag_is_last,
                              const uint8_t *vs_attrib_wa_flags);
 void brw_nir_lower_vue_inputs(nir_shader *nir,
                               const struct brw_vue_map *vue_map);
 void brw_nir_lower_tes_inputs(nir_shader *nir, const struct brw_vue_map *vue);
 void brw_nir_lower_fs_inputs(nir_shader *nir,
-                             const struct gen_device_info *devinfo,
+                             const struct intel_device_info *devinfo,
                              const struct brw_wm_prog_key *key);
 void brw_nir_lower_vue_outputs(nir_shader *nir);
 void brw_nir_lower_tcs_outputs(nir_shader *nir, const struct brw_vue_map *vue,
-                               GLenum tes_primitive_mode);
+                               enum tess_primitive_mode tes_primitive_mode);
 void brw_nir_lower_fs_outputs(nir_shader *nir);
 
 bool brw_nir_lower_conversions(nir_shader *nir);
 
 bool brw_nir_lower_scoped_barriers(nir_shader *nir);
 
-bool brw_nir_lower_image_load_store(nir_shader *nir,
-                                    const struct gen_device_info *devinfo,
-                                    bool *uses_atomic_load_store);
-void brw_nir_rewrite_image_intrinsic(nir_intrinsic_instr *intrin,
-                                     nir_ssa_def *index);
-void brw_nir_rewrite_bindless_image_intrinsic(nir_intrinsic_instr *intrin,
-                                              nir_ssa_def *handle);
+bool brw_nir_lower_shading_rate_output(nir_shader *nir);
+
+bool brw_nir_lower_storage_image(nir_shader *nir,
+                                 const struct intel_device_info *devinfo);
 
 bool brw_nir_lower_mem_access_bit_sizes(nir_shader *shader,
-                                        const struct gen_device_info *devinfo);
+                                        const struct
+                                        intel_device_info *devinfo);
 
 void brw_postprocess_nir(nir_shader *nir,
                          const struct brw_compiler *compiler,
-                         bool is_scalar);
+                         bool is_scalar,
+                         bool debug_enabled,
+                         bool robust_buffer_access);
 
 bool brw_nir_clamp_image_1d_2d_array_sizes(nir_shader *shader);
 
@@ -153,10 +152,8 @@ void brw_nir_apply_key(nir_shader *nir,
 
 enum brw_conditional_mod brw_cmod_for_nir_comparison(nir_op op);
 uint32_t brw_aop_for_nir_intrinsic(const nir_intrinsic_instr *atomic);
-enum brw_reg_type brw_type_for_nir_type(const struct gen_device_info *devinfo,
+enum brw_reg_type brw_type_for_nir_type(const struct intel_device_info *devinfo,
                                         nir_alu_type type);
-
-enum glsl_base_type brw_glsl_base_type_for_nir_type(nir_alu_type type);
 
 void brw_nir_setup_glsl_uniforms(void *mem_ctx, nir_shader *shader,
                                  const struct gl_program *prog,
@@ -194,10 +191,10 @@ nir_shader *brw_nir_create_passthrough_tcs(void *mem_ctx,
 
 bool brw_nir_move_interpolation_to_top(nir_shader *nir);
 bool brw_nir_demote_sample_qualifiers(nir_shader *nir);
-void brw_nir_populate_wm_prog_data(const nir_shader *shader,
-                                   const struct gen_device_info *devinfo,
-                                   const struct brw_wm_prog_key *key,
-                                   struct brw_wm_prog_data *prog_data);
+nir_ssa_def *brw_nir_load_global_const(nir_builder *b,
+                                       nir_intrinsic_instr *load_uniform,
+                                       nir_ssa_def *base_addr,
+                                       unsigned off);
 
 #ifdef __cplusplus
 }

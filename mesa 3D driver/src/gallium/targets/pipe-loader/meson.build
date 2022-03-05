@@ -58,6 +58,7 @@ endif
 
 pipe_loaders = [
   [with_gallium_i915, 'i915', driver_i915, []],
+  [with_gallium_crocus, 'crocus', [driver_crocus, idep_xmlconfig], []],
   [with_gallium_iris, 'iris', [driver_iris, idep_xmlconfig], []],
   [with_gallium_nouveau, 'nouveau', driver_nouveau, []],
   [with_gallium_r300, 'r300', driver_r300, []],
@@ -66,7 +67,7 @@ pipe_loaders = [
   [with_gallium_freedreno, 'msm', driver_freedreno, []],
   [with_gallium_kmsro, 'kmsro', _kmsro_targets, []],
   [with_gallium_svga, 'vmwgfx', driver_svga, []],
-  [with_gallium_softpipe, 'swrast', [driver_swrast, driver_swr], [libwsw, libws_null]],
+  [with_gallium_softpipe, 'swrast', driver_swrast, [libwsw, libws_null]],
 ]
 
 foreach x : pipe_loaders

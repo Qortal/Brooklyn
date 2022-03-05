@@ -1,5 +1,5 @@
 /*
- * Copyright © 2019 Raspberry Pi
+ * Copyright © 2019 Raspberry Pi Ltd
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -67,8 +67,8 @@ bo_dump_stats(struct v3dv_device *device)
 
       struct timespec time;
       clock_gettime(CLOCK_MONOTONIC, &time);
-      fprintf(stderr, "  now:               %ld\n",
-              time.tv_sec);
+      fprintf(stderr, "  now:               %lld\n",
+              (long long)time.tv_sec);
    }
 
    if (cache->size_list_size) {
@@ -117,8 +117,8 @@ bo_from_cache(struct v3dv_device *device, uint32_t size, const char *name)
       }
 
       bo_remove_from_cache(cache, bo);
-
       bo->name = name;
+      p_atomic_set(&bo->refcnt, 1);
    }
    mtx_unlock(&cache->lock);
    return bo;
@@ -131,13 +131,22 @@ bo_free(struct v3dv_device *device,
    if (!bo)
       return true;
 
+   assert(p_atomic_read(&bo->refcnt) == 0);
+
    if (bo->map)
       v3dv_bo_unmap(device, bo);
 
+   /* Our BO structs are stored in a sparse array in the physical device,
+    * so we don't want to free the BO pointer, instead we want to reset it
+    * to 0, to signal that array entry as being free.
+    */
+   uint32_t handle = bo->handle;
+   memset(bo, 0, sizeof(*bo));
+
    struct drm_gem_close c;
    memset(&c, 0, sizeof(c));
-   c.handle = bo->handle;
-   int ret = v3dv_ioctl(device->render_fd, DRM_IOCTL_GEM_CLOSE, &c);
+   c.handle = handle;
+   int ret = v3dv_ioctl(device->pdevice->render_fd, DRM_IOCTL_GEM_CLOSE, &c);
    if (ret != 0)
       fprintf(stderr, "close object %d: %s\n", bo->handle, strerror(errno));
 
@@ -151,8 +160,6 @@ bo_free(struct v3dv_device *device,
               bo->size / 1024);
       bo_dump_stats(device);
    }
-
-   vk_free(&device->alloc, bo);
 
    return ret == 0;
 }
@@ -183,7 +190,9 @@ v3dv_bo_init(struct v3dv_bo *bo,
              const char *name,
              bool private)
 {
+   p_atomic_set(&bo->refcnt, 1);
    bo->handle = handle;
+   bo->handle_bit = 1ull << (handle % 64);
    bo->size = size;
    bo->offset = offset;
    bo->map = NULL;
@@ -217,14 +226,6 @@ v3dv_bo_alloc(struct v3dv_device *device,
       }
    }
 
-   bo = vk_alloc(&device->alloc, sizeof(struct v3dv_bo), 8,
-                 VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
-
-   if (!bo) {
-      fprintf(stderr, "Failed to allocate host memory for BO\n");
-      return NULL;
-   }
-
  retry:
    ;
 
@@ -233,7 +234,8 @@ v3dv_bo_alloc(struct v3dv_device *device,
       .size = size
    };
 
-   int ret = v3dv_ioctl(device->render_fd, DRM_IOCTL_V3D_CREATE_BO, &create);
+   int ret = v3dv_ioctl(device->pdevice->render_fd,
+                        DRM_IOCTL_V3D_CREATE_BO, &create);
    if (ret != 0) {
       if (!list_is_empty(&device->bo_cache.time_list) &&
           !cleared_and_retried) {
@@ -242,13 +244,15 @@ v3dv_bo_alloc(struct v3dv_device *device,
          goto retry;
       }
 
-      vk_free(&device->alloc, bo);
       fprintf(stderr, "Failed to allocate device memory for BO\n");
       return NULL;
    }
 
    assert(create.offset % page_align == 0);
    assert((create.offset & 0xffffffff) == create.offset);
+
+   bo = v3dv_device_lookup_bo(device->pdevice, create.handle);
+   assert(bo && bo->handle == 0);
 
    v3dv_bo_init(bo, create.handle, size, create.offset, name, private);
 
@@ -275,14 +279,15 @@ v3dv_bo_map_unsynchronized(struct v3dv_device *device,
    struct drm_v3d_mmap_bo map;
    memset(&map, 0, sizeof(map));
    map.handle = bo->handle;
-   int ret = v3dv_ioctl(device->render_fd, DRM_IOCTL_V3D_MMAP_BO, &map);
+   int ret = v3dv_ioctl(device->pdevice->render_fd,
+                        DRM_IOCTL_V3D_MMAP_BO, &map);
    if (ret != 0) {
       fprintf(stderr, "map ioctl failure\n");
       return false;
    }
 
    bo->map = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
-                  device->render_fd, map.offset);
+                  device->pdevice->render_fd, map.offset);
    if (bo->map == MAP_FAILED) {
       fprintf(stderr, "mmap of bo %d (offset 0x%016llx, size %d) failed\n",
               bo->handle, (long long)map.offset, (uint32_t)bo->size);
@@ -304,7 +309,8 @@ v3dv_bo_wait(struct v3dv_device *device,
       .handle = bo->handle,
       .timeout_ns = timeout_ns,
    };
-   return v3dv_ioctl(device->render_fd, DRM_IOCTL_V3D_WAIT_BO, &wait) == 0;
+   return v3dv_ioctl(device->pdevice->render_fd,
+                     DRM_IOCTL_V3D_WAIT_BO, &wait) == 0;
 }
 
 bool
@@ -316,8 +322,7 @@ v3dv_bo_map(struct v3dv_device *device, struct v3dv_bo *bo, uint32_t size)
    if (!ok)
       return false;
 
-   const uint64_t infinite = 0xffffffffffffffffull;
-   ok = v3dv_bo_wait(device, bo, infinite);
+   ok = v3dv_bo_wait(device, bo, PIPE_TIMEOUT_INFINITE);
    if (!ok) {
       fprintf(stderr, "memory wait for map failed\n");
       return false;
@@ -343,7 +348,7 @@ reallocate_size_list(struct v3dv_bo_cache *cache,
                      uint32_t size)
 {
    struct list_head *new_list =
-      vk_alloc(&device->alloc, sizeof(struct list_head) * size, 8,
+      vk_alloc(&device->vk.alloc, sizeof(struct list_head) * size, 8,
                VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
 
    if (!new_list) {
@@ -371,7 +376,7 @@ reallocate_size_list(struct v3dv_bo_cache *cache,
 
    cache->size_list = new_list;
    cache->size_list_size = size;
-   vk_free(&device->alloc, old_list);
+   vk_free(&device->vk.alloc, old_list);
 
    return true;
 }
@@ -406,7 +411,7 @@ void
 v3dv_bo_cache_destroy(struct v3dv_device *device)
 {
    bo_cache_free_all(device, true);
-   vk_free(&device->alloc, device->bo_cache.size_list);
+   vk_free(&device->vk.alloc, device->bo_cache.size_list);
 
    if (dump_stats) {
       fprintf(stderr, "BO stats after screen destroy:\n");
@@ -450,6 +455,9 @@ v3dv_bo_free(struct v3dv_device *device,
              struct v3dv_bo *bo)
 {
    if (!bo)
+      return true;
+
+   if (!p_atomic_dec_zero(&bo->refcnt))
       return true;
 
    struct timespec time;

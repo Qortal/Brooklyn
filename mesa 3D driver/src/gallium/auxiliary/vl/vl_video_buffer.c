@@ -219,6 +219,7 @@ static struct pipe_sampler_view **
 vl_video_buffer_sampler_view_planes(struct pipe_video_buffer *buffer)
 {
    struct vl_video_buffer *buf = (struct vl_video_buffer *)buffer;
+   unsigned num_planes = util_format_get_num_planes(buffer->buffer_format);
    struct pipe_sampler_view sv_templ;
    struct pipe_context *pipe;
    unsigned i;
@@ -227,7 +228,7 @@ vl_video_buffer_sampler_view_planes(struct pipe_video_buffer *buffer)
 
    pipe = buf->base.context;
 
-   for (i = 0; i < buf->num_planes; ++i ) {
+   for (i = 0; i < num_planes; ++i ) {
       if (!buf->sampler_view_planes[i]) {
          memset(&sv_templ, 0, sizeof(sv_templ));
          u_sampler_view_default_template(&sv_templ, buf->resources[i], buf->resources[i]->format);
@@ -244,7 +245,7 @@ vl_video_buffer_sampler_view_planes(struct pipe_video_buffer *buffer)
    return buf->sampler_view_planes;
 
 error:
-   for (i = 0; i < buf->num_planes; ++i )
+   for (i = 0; i < num_planes; ++i )
       pipe_sampler_view_reference(&buf->sampler_view_planes[i], NULL);
 
    return NULL;
@@ -466,7 +467,9 @@ vl_video_buffer_create_ex2(struct pipe_context *pipe,
 /* Create pipe_video_buffer by using resource_create with planar formats. */
 struct pipe_video_buffer *
 vl_video_buffer_create_as_resource(struct pipe_context *pipe,
-                                   const struct pipe_video_buffer *tmpl)
+                                   const struct pipe_video_buffer *tmpl,
+                                   const uint64_t *modifiers,
+                                   int modifiers_count)
 {
    struct pipe_resource templ, *resources[VL_NUM_COMPONENTS] = {0};
    unsigned array_size =  tmpl->interlaced ? 2 : 1;
@@ -487,7 +490,12 @@ vl_video_buffer_create_as_resource(struct pipe_context *pipe,
    else
       templ.format = tmpl->buffer_format;
 
-   resources[0] = pipe->screen->resource_create(pipe->screen, &templ);
+   if (modifiers)
+      resources[0] = pipe->screen->resource_create_with_modifiers(pipe->screen,
+                                                                  &templ, modifiers,
+                                                                  modifiers_count);
+   else
+      resources[0] = pipe->screen->resource_create(pipe->screen, &templ);
    if (!resources[0])
       return NULL;
 

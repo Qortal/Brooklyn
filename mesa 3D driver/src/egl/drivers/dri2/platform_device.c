@@ -193,10 +193,23 @@ device_flush_front_buffer(__DRIdrawable *driDrawable, void *loaderPrivate)
 {
 }
 
+static unsigned
+device_get_capability(void *loaderPrivate, enum dri_loader_cap cap)
+{
+   /* Note: loaderPrivate is _EGLDisplay* */
+   switch (cap) {
+   case DRI_LOADER_CAP_FP16:
+      return 1;
+   default:
+      return 0;
+   }
+}
+
 static const __DRIimageLoaderExtension image_loader_extension = {
-   .base             = { __DRI_IMAGE_LOADER, 1 },
+   .base             = { __DRI_IMAGE_LOADER, 2 },
    .getBuffers       = device_image_get_buffers,
    .flushFrontBuffer = device_flush_front_buffer,
+   .getCapability    = device_get_capability,
 };
 
 static const __DRIextension *image_loader_extensions[] = {
@@ -355,6 +368,10 @@ dri2_initialize_device(_EGLDisplay *disp)
    }
 
    dri2_setup_screen(disp);
+#ifdef HAVE_WAYLAND_PLATFORM
+   dri2_dpy->device_name = loader_get_device_name_for_fd(dri2_dpy->fd);
+#endif
+   dri2_set_WL_bind_wayland_display(disp);
 
    if (!dri2_add_pbuffer_configs_for_visuals(disp)) {
       err = "DRI2: failed to add configs";

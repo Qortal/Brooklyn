@@ -28,11 +28,11 @@
  */
 
 #include "brw_vec4_gs_visitor.h"
-#include "gen6_gs_visitor.h"
+#include "gfx6_gs_visitor.h"
 #include "brw_cfg.h"
 #include "brw_fs.h"
 #include "brw_nir.h"
-#include "dev/gen_debug.h"
+#include "dev/intel_debug.h"
 
 namespace brw {
 
@@ -43,10 +43,10 @@ vec4_gs_visitor::vec4_gs_visitor(const struct brw_compiler *compiler,
                                  const nir_shader *shader,
                                  void *mem_ctx,
                                  bool no_spills,
-                                 int shader_time_index)
+                                 bool debug_enabled)
    : vec4_visitor(compiler, log_data, &c->key.base.tex,
                   &prog_data->base, shader,  mem_ctx,
-                  no_spills, shader_time_index),
+                  no_spills, debug_enabled),
      c(c),
      gs_prog_data(prog_data)
 {
@@ -220,8 +220,6 @@ vec4_gs_visitor::emit_thread_end()
    vec4_instruction *inst = emit(MOV(mrf_reg, r0));
    inst->force_writemask_all = true;
    emit(GS_OPCODE_SET_VERTEX_COUNT, mrf_reg, this->vertex_count);
-   if (INTEL_DEBUG & DEBUG_SHADER_TIME)
-      emit_shader_time_end();
    inst = emit(GS_OPCODE_THREAD_END);
    inst->base_mrf = base_mrf;
    inst->mlen = 1;
@@ -500,7 +498,7 @@ vec4_gs_visitor::gs_emit_vertex(int stream_id)
     */
    if (c->control_data_header_size_bits > 0 &&
        gs_prog_data->control_data_format ==
-          GEN7_GS_CONTROL_DATA_FORMAT_GSCTL_SID) {
+          GFX7_GS_CONTROL_DATA_FORMAT_GSCTL_SID) {
        this->current_annotation = "emit vertex: Stream control data bits";
        set_stream_control_data_bits(stream_id);
    }
@@ -516,7 +514,7 @@ vec4_gs_visitor::gs_end_primitive()
     * output type is points, in which case EndPrimitive() is a no-op.
     */
    if (gs_prog_data->control_data_format !=
-       GEN7_GS_CONTROL_DATA_FORMAT_GSCTL_CUT) {
+       GFX7_GS_CONTROL_DATA_FORMAT_GSCTL_CUT) {
       return;
    }
 
@@ -562,45 +560,48 @@ vec4_gs_visitor::gs_end_primitive()
    emit(OR(dst_reg(this->control_data_bits), this->control_data_bits, mask));
 }
 
-static const GLuint gl_prim_to_hw_prim[GL_TRIANGLE_STRIP_ADJACENCY+1] = {
-   [GL_POINTS] =_3DPRIM_POINTLIST,
-   [GL_LINES] = _3DPRIM_LINELIST,
-   [GL_LINE_LOOP] = _3DPRIM_LINELOOP,
-   [GL_LINE_STRIP] = _3DPRIM_LINESTRIP,
-   [GL_TRIANGLES] = _3DPRIM_TRILIST,
-   [GL_TRIANGLE_STRIP] = _3DPRIM_TRISTRIP,
-   [GL_TRIANGLE_FAN] = _3DPRIM_TRIFAN,
-   [GL_QUADS] = _3DPRIM_QUADLIST,
-   [GL_QUAD_STRIP] = _3DPRIM_QUADSTRIP,
-   [GL_POLYGON] = _3DPRIM_POLYGON,
-   [GL_LINES_ADJACENCY] = _3DPRIM_LINELIST_ADJ,
-   [GL_LINE_STRIP_ADJACENCY] = _3DPRIM_LINESTRIP_ADJ,
-   [GL_TRIANGLES_ADJACENCY] = _3DPRIM_TRILIST_ADJ,
-   [GL_TRIANGLE_STRIP_ADJACENCY] = _3DPRIM_TRISTRIP_ADJ,
+static const GLuint gl_prim_to_hw_prim[SHADER_PRIM_TRIANGLE_STRIP_ADJACENCY+1] = {
+   [SHADER_PRIM_POINTS] =_3DPRIM_POINTLIST,
+   [SHADER_PRIM_LINES] = _3DPRIM_LINELIST,
+   [SHADER_PRIM_LINE_LOOP] = _3DPRIM_LINELOOP,
+   [SHADER_PRIM_LINE_STRIP] = _3DPRIM_LINESTRIP,
+   [SHADER_PRIM_TRIANGLES] = _3DPRIM_TRILIST,
+   [SHADER_PRIM_TRIANGLE_STRIP] = _3DPRIM_TRISTRIP,
+   [SHADER_PRIM_TRIANGLE_FAN] = _3DPRIM_TRIFAN,
+   [SHADER_PRIM_QUADS] = _3DPRIM_QUADLIST,
+   [SHADER_PRIM_QUAD_STRIP] = _3DPRIM_QUADSTRIP,
+   [SHADER_PRIM_POLYGON] = _3DPRIM_POLYGON,
+   [SHADER_PRIM_LINES_ADJACENCY] = _3DPRIM_LINELIST_ADJ,
+   [SHADER_PRIM_LINE_STRIP_ADJACENCY] = _3DPRIM_LINESTRIP_ADJ,
+   [SHADER_PRIM_TRIANGLES_ADJACENCY] = _3DPRIM_TRILIST_ADJ,
+   [SHADER_PRIM_TRIANGLE_STRIP_ADJACENCY] = _3DPRIM_TRISTRIP_ADJ,
 };
 
 } /* namespace brw */
 
 extern "C" const unsigned *
-brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
+brw_compile_gs(const struct brw_compiler *compiler,
                void *mem_ctx,
-               const struct brw_gs_prog_key *key,
-               struct brw_gs_prog_data *prog_data,
-               nir_shader *nir,
-               struct gl_program *prog,
-               int shader_time_index,
-               struct brw_compile_stats *stats,
-               char **error_str)
+               struct brw_compile_gs_params *params)
 {
+   nir_shader *nir = params->nir;
+   const struct brw_gs_prog_key *key = params->key;
+   struct brw_gs_prog_data *prog_data = params->prog_data;
+
    struct brw_gs_compile c;
    memset(&c, 0, sizeof(c));
    c.key = *key;
 
    const bool is_scalar = compiler->scalar_stage[MESA_SHADER_GEOMETRY];
+   const bool debug_enabled = INTEL_DEBUG(DEBUG_GS);
+
+   prog_data->base.base.stage = MESA_SHADER_GEOMETRY;
+   prog_data->base.base.ray_queries = nir->info.ray_queries;
+   prog_data->base.base.total_scratch = 0;
 
    /* The GLSL linker will have already matched up GS inputs and the outputs
     * of prior stages.  The driver does extend VS outputs in some cases, but
-    * only for legacy OpenGL or Gen4-5 hardware, neither of which offer
+    * only for legacy OpenGL or Gfx4-5 hardware, neither of which offer
     * geometry shader support.  So we can safely ignore that.
     *
     * For SSO pipelines, we use a fixed VUE map layout based on variable
@@ -614,7 +615,8 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
    brw_nir_apply_key(nir, compiler, &key->base, 8, is_scalar);
    brw_nir_lower_vue_inputs(nir, &c.input_vue_map);
    brw_nir_lower_vue_outputs(nir);
-   brw_postprocess_nir(nir, compiler, is_scalar);
+   brw_postprocess_nir(nir, compiler, is_scalar, debug_enabled,
+                       key->base.robust_buffer_access);
 
    prog_data->base.clip_distance_mask =
       ((1 << nir->info.clip_distance_array_size) - 1);
@@ -623,21 +625,21 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
       nir->info.clip_distance_array_size;
 
    prog_data->include_primitive_id =
-      (nir->info.system_values_read & (1 << SYSTEM_VALUE_PRIMITIVE_ID)) != 0;
+      BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_PRIMITIVE_ID);
 
    prog_data->invocations = nir->info.gs.invocations;
 
-   if (compiler->devinfo->gen >= 8)
+   if (compiler->devinfo->ver >= 8)
       nir_gs_count_vertices_and_primitives(
          nir, &prog_data->static_vertex_count, nullptr, 1u);
 
-   if (compiler->devinfo->gen >= 7) {
-      if (nir->info.gs.output_primitive == GL_POINTS) {
+   if (compiler->devinfo->ver >= 7) {
+      if (nir->info.gs.output_primitive == SHADER_PRIM_POINTS) {
          /* When the output type is points, the geometry shader may output data
           * to multiple streams, and EndPrimitive() has no effect.  So we
           * configure the hardware to interpret the control data as stream ID.
           */
-         prog_data->control_data_format = GEN7_GS_CONTROL_DATA_FORMAT_GSCTL_SID;
+         prog_data->control_data_format = GFX7_GS_CONTROL_DATA_FORMAT_GSCTL_SID;
 
          /* We only have to emit control bits if we are using non-zero streams */
          if (nir->info.gs.active_stream_mask != (1 << 0))
@@ -651,7 +653,7 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
           * streams is not supported.  So we configure the hardware to interpret
           * the control data as EndPrimitive information (a.k.a. "cut bits").
           */
-         prog_data->control_data_format = GEN7_GS_CONTROL_DATA_FORMAT_GSCTL_CUT;
+         prog_data->control_data_format = GFX7_GS_CONTROL_DATA_FORMAT_GSCTL_CUT;
 
          /* We only need to output control data if the shader actually calls
           * EndPrimitive().
@@ -660,7 +662,7 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
             nir->info.gs.uses_end_primitive ? 1 : 0;
       }
    } else {
-      /* There are no control data bits in gen6. */
+      /* There are no control data bits in gfx6. */
       c.control_data_bits_per_vertex = 0;
    }
    c.control_data_header_size_bits =
@@ -719,8 +721,8 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
     *
     */
    unsigned output_vertex_size_bytes = prog_data->base.vue_map.num_slots * 16;
-   assert(compiler->devinfo->gen == 6 ||
-          output_vertex_size_bytes <= GEN7_MAX_GS_OUTPUT_VERTEX_SIZE_BYTES);
+   assert(compiler->devinfo->ver == 6 ||
+          output_vertex_size_bytes <= GFX7_MAX_GS_OUTPUT_VERTEX_SIZE_BYTES);
    prog_data->output_vertex_size_hwords =
       ALIGN(output_vertex_size_bytes, 32) / 32;
 
@@ -751,13 +753,13 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
     * number of output vertices.  So we'll just calculate the amount of space
     * we need, and if it's too large, fail to compile.
     *
-    * The above is for gen7+ where we have a single URB entry that will hold
-    * all the output. In gen6, we will have to allocate URB entries for every
+    * The above is for gfx7+ where we have a single URB entry that will hold
+    * all the output. In gfx6, we will have to allocate URB entries for every
     * vertex we emit, so our URB entries only need to be large enough to hold
-    * a single vertex. Also, gen6 does not have a control data header.
+    * a single vertex. Also, gfx6 does not have a control data header.
     */
    unsigned output_size_bytes;
-   if (compiler->devinfo->gen >= 7) {
+   if (compiler->devinfo->ver >= 7) {
       output_size_bytes =
          prog_data->output_vertex_size_hwords * 32 * nir->info.gs.vertices_out;
       output_size_bytes += 32 * prog_data->control_data_header_size_hwords;
@@ -768,7 +770,7 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
    /* Broadwell stores "Vertex Count" as a full 8 DWord (32 byte) URB output,
     * which comes before the control header.
     */
-   if (compiler->devinfo->gen >= 8)
+   if (compiler->devinfo->ver >= 8)
       output_size_bytes += 32;
 
    /* Shaders can technically set max_vertices = 0, at which point we
@@ -778,17 +780,17 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
    if (output_size_bytes == 0)
       output_size_bytes = 1;
 
-   unsigned max_output_size_bytes = GEN7_MAX_GS_URB_ENTRY_SIZE_BYTES;
-   if (compiler->devinfo->gen == 6)
-      max_output_size_bytes = GEN6_MAX_GS_URB_ENTRY_SIZE_BYTES;
+   unsigned max_output_size_bytes = GFX7_MAX_GS_URB_ENTRY_SIZE_BYTES;
+   if (compiler->devinfo->ver == 6)
+      max_output_size_bytes = GFX6_MAX_GS_URB_ENTRY_SIZE_BYTES;
    if (output_size_bytes > max_output_size_bytes)
       return NULL;
 
 
-   /* URB entry sizes are stored as a multiple of 64 bytes in gen7+ and
-    * a multiple of 128 bytes in gen6.
+   /* URB entry sizes are stored as a multiple of 64 bytes in gfx7+ and
+    * a multiple of 128 bytes in gfx6.
     */
-   if (compiler->devinfo->gen >= 7) {
+   if (compiler->devinfo->ver >= 7) {
       prog_data->base.urb_entry_size = ALIGN(output_size_bytes, 64) / 64;
    } else {
       prog_data->base.urb_entry_size = ALIGN(output_size_bytes, 128) / 128;
@@ -808,23 +810,23 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
    /* Now that prog_data setup is done, we are ready to actually compile the
     * program.
     */
-   if (INTEL_DEBUG & DEBUG_GS) {
+   if (unlikely(debug_enabled)) {
       fprintf(stderr, "GS Input ");
-      brw_print_vue_map(stderr, &c.input_vue_map);
+      brw_print_vue_map(stderr, &c.input_vue_map, MESA_SHADER_GEOMETRY);
       fprintf(stderr, "GS Output ");
-      brw_print_vue_map(stderr, &prog_data->base.vue_map);
+      brw_print_vue_map(stderr, &prog_data->base.vue_map, MESA_SHADER_GEOMETRY);
    }
 
    if (is_scalar) {
-      fs_visitor v(compiler, log_data, mem_ctx, &c, prog_data, nir,
-                   shader_time_index);
+      fs_visitor v(compiler, params->log_data, mem_ctx, &c, prog_data, nir,
+                   debug_enabled);
       if (v.run_gs()) {
          prog_data->base.dispatch_mode = DISPATCH_MODE_SIMD8;
          prog_data->base.base.dispatch_grf_start_reg = v.payload.num_regs;
 
-         fs_generator g(compiler, log_data, mem_ctx,
+         fs_generator g(compiler, params->log_data, mem_ctx,
                         &prog_data->base.base, false, MESA_SHADER_GEOMETRY);
-         if (INTEL_DEBUG & DEBUG_GS) {
+         if (unlikely(debug_enabled)) {
             const char *label =
                nir->info.label ? nir->info.label : "unnamed";
             char *name = ralloc_asprintf(mem_ctx, "%s geometry shader %s",
@@ -832,28 +834,28 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
             g.enable_debug(name);
          }
          g.generate_code(v.cfg, 8, v.shader_stats,
-                         v.performance_analysis.require(), stats);
+                         v.performance_analysis.require(), params->stats);
          g.add_const_data(nir->constant_data, nir->constant_data_size);
          return g.get_assembly();
       }
 
-      if (error_str)
-         *error_str = ralloc_strdup(mem_ctx, v.fail_msg);
+      params->error_str = ralloc_strdup(mem_ctx, v.fail_msg);
 
       return NULL;
    }
 
-   if (compiler->devinfo->gen >= 7) {
+   if (compiler->devinfo->ver >= 7) {
       /* Compile the geometry shader in DUAL_OBJECT dispatch mode, if we can do
        * so without spilling. If the GS invocations count > 1, then we can't use
        * dual object mode.
        */
       if (prog_data->invocations <= 1 &&
-          !(INTEL_DEBUG & DEBUG_NO_DUAL_OBJECT_GS)) {
+          !INTEL_DEBUG(DEBUG_NO_DUAL_OBJECT_GS)) {
          prog_data->base.dispatch_mode = DISPATCH_MODE_4X2_DUAL_OBJECT;
 
-         brw::vec4_gs_visitor v(compiler, log_data, &c, prog_data, nir,
-                           mem_ctx, true /* no_spills */, shader_time_index);
+         brw::vec4_gs_visitor v(compiler, params->log_data, &c, prog_data, nir,
+                                mem_ctx, true /* no_spills */,
+                                debug_enabled);
 
          /* Backup 'nr_params' and 'param' as they can be modified by the
           * the DUAL_OBJECT visitor. If it fails, we will run the fallback
@@ -868,11 +870,11 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
          if (v.run()) {
             /* Success! Backup is not needed */
             ralloc_free(param);
-            return brw_vec4_generate_assembly(compiler, log_data, mem_ctx,
+            return brw_vec4_generate_assembly(compiler, params->log_data, mem_ctx,
                                               nir, &prog_data->base,
                                               v.cfg,
                                               v.performance_analysis.require(),
-                                              stats);
+                                              params->stats, debug_enabled);
          } else {
             /* These variables could be modified by the execution of the GS
              * visitor if it packed the uniforms in the push constant buffer.
@@ -884,7 +886,6 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
             memcpy(prog_data->base.base.param, param,
                    sizeof(uint32_t) * param_count);
             prog_data->base.base.nr_params = param_count;
-            prog_data->base.base.nr_pull_params = 0;
             ralloc_free(param);
          }
       }
@@ -910,10 +911,10 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
     * the best choice for performance, followed by SINGLE mode."
     *
     * So SINGLE mode is more performant when invocations == 1 and DUAL_INSTANCE
-    * mode is more performant when invocations > 1. Gen6 only supports
+    * mode is more performant when invocations > 1. Gfx6 only supports
     * SINGLE mode.
     */
-   if (prog_data->invocations <= 1 || compiler->devinfo->gen < 7)
+   if (prog_data->invocations <= 1 || compiler->devinfo->ver < 7)
       prog_data->base.dispatch_mode = DISPATCH_MODE_4X1_SINGLE;
    else
       prog_data->base.dispatch_mode = DISPATCH_MODE_4X2_DUAL_INSTANCE;
@@ -921,23 +922,22 @@ brw_compile_gs(const struct brw_compiler *compiler, void *log_data,
    brw::vec4_gs_visitor *gs = NULL;
    const unsigned *ret = NULL;
 
-   if (compiler->devinfo->gen >= 7)
-      gs = new brw::vec4_gs_visitor(compiler, log_data, &c, prog_data,
-                               nir, mem_ctx, false /* no_spills */,
-                               shader_time_index);
+   if (compiler->devinfo->ver >= 7)
+      gs = new brw::vec4_gs_visitor(compiler, params->log_data, &c, prog_data,
+                                    nir, mem_ctx, false /* no_spills */,
+                                    debug_enabled);
    else
-      gs = new brw::gen6_gs_visitor(compiler, log_data, &c, prog_data, prog,
-                               nir, mem_ctx, false /* no_spills */,
-                               shader_time_index);
+      gs = new brw::gfx6_gs_visitor(compiler, params->log_data, &c, prog_data,
+                                    nir, mem_ctx, false /* no_spills */,
+                                    debug_enabled);
 
    if (!gs->run()) {
-      if (error_str)
-         *error_str = ralloc_strdup(mem_ctx, gs->fail_msg);
+      params->error_str = ralloc_strdup(mem_ctx, gs->fail_msg);
    } else {
-      ret = brw_vec4_generate_assembly(compiler, log_data, mem_ctx, nir,
+      ret = brw_vec4_generate_assembly(compiler, params->log_data, mem_ctx, nir,
                                        &prog_data->base, gs->cfg,
                                        gs->performance_analysis.require(),
-                                       stats);
+                                       params->stats, debug_enabled);
    }
 
    delete gs;

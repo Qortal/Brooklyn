@@ -127,8 +127,7 @@ int radeonTransformTEX(
 	struct r300_fragment_program_compiler *compiler =
 		(struct r300_fragment_program_compiler*)data;
 	rc_wrap_mode wrapmode = compiler->state.unit[inst->U.I.TexSrcUnit].wrap_mode;
-	int is_rect = inst->U.I.TexSrcTarget == RC_TEXTURE_RECT ||
-		      compiler->state.unit[inst->U.I.TexSrcUnit].non_normalized_coords;
+	int is_rect = inst->U.I.TexSrcTarget == RC_TEXTURE_RECT;
 
 	if (inst->U.I.Opcode != RC_OPCODE_TEX &&
 		inst->U.I.Opcode != RC_OPCODE_TXB &&
@@ -140,7 +139,7 @@ int radeonTransformTEX(
 
 	/* ARB_shadow & EXT_shadow_funcs */
 	if (inst->U.I.Opcode != RC_OPCODE_KIL &&
-		((c->Program.ShadowSamplers & (1 << inst->U.I.TexSrcUnit)) ||
+		((c->Program.ShadowSamplers & (1U << inst->U.I.TexSrcUnit)) ||
 		 (compiler->state.unit[inst->U.I.TexSrcUnit].compare_mode_enabled))) {
 		rc_compare_func comparefunc = compiler->state.unit[inst->U.I.TexSrcUnit].texture_compare_func;
 

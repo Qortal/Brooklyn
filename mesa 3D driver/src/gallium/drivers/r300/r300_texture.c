@@ -274,7 +274,7 @@ uint32_t r300_translate_texformat(enum pipe_format format,
             case PIPE_FORMAT_RGTC1_SNORM:
             case PIPE_FORMAT_LATC1_SNORM:
                 result |= sign_bit[0];
-                /* fallthrough */
+                FALLTHROUGH;
             case PIPE_FORMAT_LATC1_UNORM:
             case PIPE_FORMAT_RGTC1_UNORM:
                 return R500_TX_FORMAT_ATI1N | result;
@@ -282,7 +282,7 @@ uint32_t r300_translate_texformat(enum pipe_format format,
             case PIPE_FORMAT_RGTC2_SNORM:
             case PIPE_FORMAT_LATC2_SNORM:
                 result |= sign_bit[1] | sign_bit[0];
-                /* fallthrough */
+                FALLTHROUGH;
             case PIPE_FORMAT_RGTC2_UNORM:
             case PIPE_FORMAT_LATC2_UNORM:
                 return R400_TX_FORMAT_ATI2N | result;
@@ -900,7 +900,7 @@ boolean r300_is_zs_format_supported(enum pipe_format format)
 
 boolean r300_is_sampler_format_supported(enum pipe_format format)
 {
-    return r300_translate_texformat(format, 0, TRUE, FALSE) != ~0;
+    return r300_translate_texformat(format, NULL, TRUE, FALSE) != ~0;
 }
 
 void r300_texture_setup_format_state(struct r300_screen *screen,
@@ -911,7 +911,7 @@ void r300_texture_setup_format_state(struct r300_screen *screen,
                                      unsigned height0_override,
                                      struct r300_texture_format_state *out)
 {
-    struct pipe_resource *pt = &tex->b.b;
+    struct pipe_resource *pt = &tex->b;
     struct r300_texture_desc *desc = &tex->tex;
     boolean is_r500 = screen->caps.is_r500;
     unsigned width, height, depth;
@@ -1021,23 +1021,6 @@ static void r300_texture_setup_fb_state(struct r300_surface *surf)
     }
 }
 
-static void r300_texture_destroy(struct pipe_screen *screen,
-                                 struct pipe_resource* texture)
-{
-    struct r300_screen *rscreen = r300_screen(screen);
-    struct r300_resource* tex = (struct r300_resource*)texture;
-
-    if (tex->tex.cmask_dwords) {
-        mtx_lock(&rscreen->cmask_mutex);
-        if (texture == rscreen->cmask_resource) {
-            rscreen->cmask_resource = NULL;
-        }
-        mtx_unlock(&rscreen->cmask_mutex);
-    }
-    pb_reference(&tex->buf, NULL);
-    FREE(tex);
-}
-
 bool r300_resource_get_handle(struct pipe_screen* screen,
                               struct pipe_context *ctx,
                               struct pipe_resource *texture,
@@ -1057,15 +1040,6 @@ bool r300_resource_get_handle(struct pipe_screen* screen,
     return rws->buffer_get_handle(rws, tex->buf, whandle);
 }
 
-static const struct u_resource_vtbl r300_texture_vtbl =
-{
-    NULL,                           /* get_handle */
-    r300_texture_destroy,           /* resource_destroy */
-    r300_texture_transfer_map,      /* transfer_map */
-    NULL,                           /* transfer_flush_region */
-    r300_texture_transfer_unmap,    /* transfer_unmap */
-};
-
 /* The common texture constructor. */
 static struct r300_resource*
 r300_texture_create_object(struct r300_screen *rscreen,
@@ -1084,12 +1058,11 @@ r300_texture_create_object(struct r300_screen *rscreen,
         goto fail;
     }
 
-    pipe_reference_init(&tex->b.b.reference, 1);
-    tex->b.b.screen = &rscreen->screen;
-    tex->b.b.usage = base->usage;
-    tex->b.b.bind = base->bind;
-    tex->b.b.flags = base->flags;
-    tex->b.vtbl = &r300_texture_vtbl;
+    pipe_reference_init(&tex->b.reference, 1);
+    tex->b.screen = &rscreen->screen;
+    tex->b.usage = base->usage;
+    tex->b.bind = base->bind;
+    tex->b.flags = base->flags;
     tex->tex.microtile = microtile;
     tex->tex.macrotile[0] = macrotile;
     tex->tex.stride_in_bytes_override = stride_in_bytes_override;
@@ -1143,7 +1116,7 @@ r300_texture_create_object(struct r300_screen *rscreen,
     tiling.u.legacy.microtile = tex->tex.microtile;
     tiling.u.legacy.macrotile = tex->tex.macrotile[0];
     tiling.u.legacy.stride = tex->tex.stride_in_bytes[0];
-    rws->buffer_set_metadata(tex->buf, &tiling, NULL);
+    rws->buffer_set_metadata(rws, tex->buf, &tiling, NULL);
 
     return tex;
 
@@ -1194,11 +1167,11 @@ struct pipe_resource *r300_texture_from_handle(struct pipe_screen *screen,
         return NULL;
     }
 
-    buffer = rws->buffer_from_handle(rws, whandle, 0);
+    buffer = rws->buffer_from_handle(rws, whandle, 0, false);
     if (!buffer)
         return NULL;
 
-    rws->buffer_get_metadata(buffer, &tiling, NULL);
+    rws->buffer_get_metadata(rws, buffer, &tiling, NULL);
 
     /* Enforce a microtiled zbuffer. */
     if (util_format_is_depth_or_stencil(base->format) &&
@@ -1219,8 +1192,6 @@ struct pipe_resource *r300_texture_from_handle(struct pipe_screen *screen,
                                       whandle->stride, buffer);
 }
 
-/* Not required to implement u_resource_vtbl, consider moving to another file:
- */
 struct pipe_surface* r300_create_surface_custom(struct pipe_context * ctx,
                                          struct pipe_resource* texture,
                                          const struct pipe_surface *surf_tmpl,
@@ -1263,7 +1234,7 @@ struct pipe_surface* r300_create_surface_custom(struct pipe_context * ctx,
 
         /* Height must be aligned to the size of a tile. */
         tile_height = r300_get_pixel_alignment(surface->base.format,
-                                               tex->b.b.nr_samples,
+                                               tex->b.nr_samples,
                                                tex->tex.microtile,
                                                tex->tex.macrotile[level],
                                                DIM_HEIGHT, 0);
@@ -1305,8 +1276,6 @@ struct pipe_surface* r300_create_surface(struct pipe_context * ctx,
                                       texture->height0);
 }
 
-/* Not required to implement u_resource_vtbl, consider moving to another file:
- */
 void r300_surface_destroy(struct pipe_context *ctx, struct pipe_surface* s)
 {
     pipe_resource_reference(&s->texture, NULL);

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * iommu trace points
  *
@@ -11,7 +12,6 @@
 #define _TRACE_IOMMU_H
 
 #include <linux/tracepoint.h>
-#include <linux/pci.h>
 
 struct device;
 
@@ -101,8 +101,9 @@ TRACE_EVENT(map,
 		__entry->size = size;
 	),
 
-	TP_printk("IOMMU: iova=0x%016llx paddr=0x%016llx size=%zu",
-			__entry->iova, __entry->paddr, __entry->size
+	TP_printk("IOMMU: iova=0x%016llx - 0x%016llx paddr=0x%016llx size=%zu",
+		  __entry->iova, __entry->iova + __entry->size, __entry->paddr,
+		  __entry->size
 	)
 );
 
@@ -124,8 +125,9 @@ TRACE_EVENT(unmap,
 		__entry->unmapped_size = unmapped_size;
 	),
 
-	TP_printk("IOMMU: iova=0x%016llx size=%zu unmapped_size=%zu",
-			__entry->iova, __entry->size, __entry->unmapped_size
+	TP_printk("IOMMU: iova=0x%016llx - 0x%016llx size=%zu unmapped_size=%zu",
+		  __entry->iova, __entry->iova + __entry->size,
+		  __entry->size, __entry->unmapped_size
 	)
 );
 

@@ -149,6 +149,10 @@ files_r600 = files(
   'sfn/sfn_liverange.h',
   'sfn/sfn_nir.cpp',
   'sfn/sfn_nir.h',
+  'sfn/sfn_nir_legalize_image_load_store.cpp',
+  'sfn/sfn_nir_lower_64bit.cpp',
+  'sfn/sfn_nir_lower_alu.cpp',
+  'sfn/sfn_nir_lower_alu.h',
   'sfn/sfn_nir_lower_fs_out_to_vector.cpp',
   'sfn/sfn_nir_lower_fs_out_to_vector.h',
   'sfn/sfn_nir_lower_tess_io.cpp',
@@ -206,5 +210,5 @@ libr600 = static_library(
 
 driver_r600 = declare_dependency(
   compile_args : '-DGALLIUM_R600',
-  link_with : [libr600, libmesa_gallium, libradeonwinsys],
+  link_with : [libr600, libmesa, libradeonwinsys],
 )

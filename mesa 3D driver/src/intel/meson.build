@@ -28,8 +28,12 @@ subdir('isl')
 subdir('common')
 subdir('compiler')
 subdir('perf')
+subdir('ds')
 if with_intel_tools
   subdir('tools')
+endif
+if get_option('vulkan-layers').contains('intel-nullhw')
+  subdir('nullhw-layer')
 endif
 if with_intel_vk
   subdir('vulkan')

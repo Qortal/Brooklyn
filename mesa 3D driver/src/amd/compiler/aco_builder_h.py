@@ -29,8 +29,6 @@ template = """\
 #define _ACO_BUILDER_
 
 #include "aco_ir.h"
-#include "util/u_math.h"
-#include "util/bitscan.h"
 
 namespace aco {
 enum dpp_ctrl {
@@ -117,7 +115,7 @@ public:
    struct Result {
       Instruction *instr;
 
-      Result(Instruction *instr) : instr(instr) {}
+      Result(Instruction *instr_) : instr(instr_) {}
 
       operator Instruction *() const {
          return instr;
@@ -352,6 +350,17 @@ public:
    }
 
 % endfor
+
+   Operand set16bit(Operand op) {
+       op.set16bit(true);
+       return op;
+   }
+
+   Operand set24bit(Operand op) {
+       op.set24bit(true);
+       return op;
+   }
+
    /* hand-written helpers */
    Temp as_uniform(Op op)
    {
@@ -365,18 +374,52 @@ public:
    Result v_mul_imm(Definition dst, Temp tmp, uint32_t imm, bool bits24=false)
    {
       assert(tmp.type() == RegType::vgpr);
+      bool has_lshl_add = program->chip_class >= GFX9;
+      /* v_mul_lo_u32 has 1.6x the latency of most VALU on GFX10 (8 vs 5 cycles),
+       * compared to 4x the latency on <GFX10. */
+      unsigned mul_cost = program->chip_class >= GFX10 ? 1 : (4 + Operand::c32(imm).isLiteral());
       if (imm == 0) {
-         return vop1(aco_opcode::v_mov_b32, dst, Operand(0u));
+         return copy(dst, Operand::zero());
       } else if (imm == 1) {
          return copy(dst, Operand(tmp));
       } else if (util_is_power_of_two_or_zero(imm)) {
-         return vop2(aco_opcode::v_lshlrev_b32, dst, Operand((uint32_t)ffs(imm) - 1u), tmp);
+         return vop2(aco_opcode::v_lshlrev_b32, dst, Operand::c32(ffs(imm) - 1u), tmp);
       } else if (bits24) {
-        return vop2(aco_opcode::v_mul_u32_u24, dst, Operand(imm), tmp);
-      } else {
-        Temp imm_tmp = copy(def(v1), Operand(imm));
-        return vop3(aco_opcode::v_mul_lo_u32, dst, imm_tmp, tmp);
+        return vop2(aco_opcode::v_mul_u32_u24, dst, Operand::c32(imm), tmp);
+      } else if (util_is_power_of_two_nonzero(imm - 1u)) {
+         return vadd32(dst, vop2(aco_opcode::v_lshlrev_b32, def(v1), Operand::c32(ffs(imm - 1u) - 1u), tmp), tmp);
+      } else if (mul_cost > 2 && util_is_power_of_two_nonzero(imm + 1u)) {
+         return vsub32(dst, vop2(aco_opcode::v_lshlrev_b32, def(v1), Operand::c32(ffs(imm + 1u) - 1u), tmp), tmp);
       }
+
+      unsigned instrs_required = util_bitcount(imm);
+      if (!has_lshl_add) {
+         instrs_required = util_bitcount(imm) - (imm & 0x1); /* shifts */
+         instrs_required += util_bitcount(imm) - 1; /* additions */
+      }
+      if (instrs_required < mul_cost) {
+         Result res(NULL);
+         Temp cur;
+         while (imm) {
+            unsigned shift = u_bit_scan(&imm);
+            Definition tmp_dst = imm ? def(v1) : dst;
+
+            if (shift && cur.id())
+               res = vadd32(Definition(tmp_dst), vop2(aco_opcode::v_lshlrev_b32, def(v1), Operand::c32(shift), tmp), cur);
+            else if (shift)
+               res = vop2(aco_opcode::v_lshlrev_b32, Definition(tmp_dst), Operand::c32(shift), tmp);
+            else if (cur.id())
+               res = vadd32(Definition(tmp_dst), tmp, cur);
+            else
+               tmp_dst = Definition(tmp);
+
+            cur = tmp_dst.getTemp();
+         }
+         return res;
+      }
+
+      Temp imm_tmp = copy(def(s1), Operand::c32(imm));
+      return vop3(aco_opcode::v_mul_lo_u32, dst, imm_tmp, tmp);
    }
 
    Result v_mul24_imm(Definition dst, Temp tmp, uint32_t imm)
@@ -389,7 +432,7 @@ public:
    }
 
    Result vadd32(Definition dst, Op a, Op b, bool carry_out=false, Op carry_in=Op(Operand(s2)), bool post_ra=false) {
-      if (!b.op.isTemp() || b.op.regClass().type() != RegType::vgpr)
+      if (b.op.isConstant() || b.op.regClass().type() != RegType::vgpr)
          std::swap(a, b);
       if (!post_ra && (!b.op.hasRegClass() || b.op.regClass().type() == RegType::sgpr))
          b = copy(def(v1), b);
@@ -439,7 +482,7 @@ public:
       int num_defs = carry_out ? 2 : 1;
       aco_ptr<Instruction> sub;
       if (vop3)
-        sub.reset(create_instruction<VOP3A_instruction>(op, Format::VOP3B, num_ops, num_defs));
+        sub.reset(create_instruction<VOP3_instruction>(op, Format::VOP3, num_ops, num_defs));
       else
         sub.reset(create_instruction<VOP2_instruction>(op, Format::VOP2, num_ops, num_defs));
       sub->operands[0] = a.op;
@@ -469,7 +512,7 @@ public:
    }
 <%
 import itertools
-formats = [("pseudo", [Format.PSEUDO], 'Pseudo_instruction', list(itertools.product(range(5), range(5))) + [(8, 1), (1, 8)]),
+formats = [("pseudo", [Format.PSEUDO], 'Pseudo_instruction', list(itertools.product(range(5), range(6))) + [(8, 1), (1, 8)]),
            ("sop1", [Format.SOP1], 'SOP1_instruction', [(0, 1), (1, 0), (1, 1), (2, 1), (3, 2)]),
            ("sop2", [Format.SOP2], 'SOP2_instruction', itertools.product([1, 2], [2, 3])),
            ("sopk", [Format.SOPK], 'SOPK_instruction', itertools.product([0, 1, 2], [0, 1])),
@@ -479,7 +522,7 @@ formats = [("pseudo", [Format.PSEUDO], 'Pseudo_instruction', list(itertools.prod
            ("ds", [Format.DS], 'DS_instruction', [(1, 1), (1, 2), (0, 3), (0, 4)]),
            ("mubuf", [Format.MUBUF], 'MUBUF_instruction', [(0, 4), (1, 3)]),
            ("mtbuf", [Format.MTBUF], 'MTBUF_instruction', [(0, 4), (1, 3)]),
-           ("mimg", [Format.MIMG], 'MIMG_instruction', [(0, 3), (1, 3)]),
+           ("mimg", [Format.MIMG], 'MIMG_instruction', itertools.product([0, 1], [3, 4, 5, 6, 7])),
            ("exp", [Format.EXP], 'Export_instruction', [(0, 4)]),
            ("branch", [Format.PSEUDO_BRANCH], 'Pseudo_branch_instruction', itertools.product([1], [0, 1])),
            ("barrier", [Format.PSEUDO_BARRIER], 'Pseudo_barrier_instruction', [(0, 0)]),
@@ -489,14 +532,19 @@ formats = [("pseudo", [Format.PSEUDO], 'Pseudo_instruction', list(itertools.prod
            ("vop2", [Format.VOP2], 'VOP2_instruction', itertools.product([1, 2], [2, 3])),
            ("vop2_sdwa", [Format.VOP2, Format.SDWA], 'SDWA_instruction', itertools.product([1, 2], [2, 3])),
            ("vopc", [Format.VOPC], 'VOPC_instruction', itertools.product([1, 2], [2])),
-           ("vop3", [Format.VOP3A], 'VOP3A_instruction', [(1, 3), (1, 2), (1, 1), (2, 2)]),
+           ("vopc_sdwa", [Format.VOPC, Format.SDWA], 'SDWA_instruction', itertools.product([1, 2], [2])),
+           ("vop3", [Format.VOP3], 'VOP3_instruction', [(1, 3), (1, 2), (1, 1), (2, 2)]),
+           ("vop3p", [Format.VOP3P], 'VOP3P_instruction', [(1, 2), (1, 3)]),
            ("vintrp", [Format.VINTRP], 'Interp_instruction', [(1, 2), (1, 3)]),
-           ("vop1_dpp", [Format.VOP1, Format.DPP], 'DPP_instruction', [(1, 1)]),
-           ("vop2_dpp", [Format.VOP2, Format.DPP], 'DPP_instruction', itertools.product([1, 2], [2, 3])),
-           ("vopc_dpp", [Format.VOPC, Format.DPP], 'DPP_instruction', itertools.product([1, 2], [2])),
-           ("vop1_e64", [Format.VOP1, Format.VOP3A], 'VOP3A_instruction', itertools.product([1], [1])),
-           ("vop2_e64", [Format.VOP2, Format.VOP3A], 'VOP3A_instruction', itertools.product([1, 2], [2, 3])),
-           ("vopc_e64", [Format.VOPC, Format.VOP3A], 'VOP3A_instruction', itertools.product([1, 2], [2])),
+           ("vop1_dpp", [Format.VOP1, Format.DPP16], 'DPP16_instruction', [(1, 1)]),
+           ("vop2_dpp", [Format.VOP2, Format.DPP16], 'DPP16_instruction', itertools.product([1, 2], [2, 3])),
+           ("vopc_dpp", [Format.VOPC, Format.DPP16], 'DPP16_instruction', itertools.product([1, 2], [2])),
+           ("vop1_dpp8", [Format.VOP1, Format.DPP8], 'DPP8_instruction', [(1, 1)]),
+           ("vop2_dpp8", [Format.VOP2, Format.DPP8], 'DPP8_instruction', itertools.product([1, 2], [2, 3])),
+           ("vopc_dpp8", [Format.VOPC, Format.DPP8], 'DPP8_instruction', itertools.product([1, 2], [2])),
+           ("vop1_e64", [Format.VOP1, Format.VOP3], 'VOP3_instruction', itertools.product([1], [1])),
+           ("vop2_e64", [Format.VOP2, Format.VOP3], 'VOP3_instruction', itertools.product([1, 2], [2, 3])),
+           ("vopc_e64", [Format.VOPC, Format.VOP3], 'VOP3_instruction', itertools.product([1, 2], [2])),
            ("flat", [Format.FLAT], 'FLAT_instruction', [(0, 3), (1, 2)]),
            ("global", [Format.GLOBAL], 'FLAT_instruction', [(0, 3), (1, 2)])]
 formats = [(f if len(f) == 5 else f + ('',)) for f in formats]
@@ -554,7 +602,8 @@ formats = [(f if len(f) == 5 else f + ('',)) for f in formats]
 % endfor
 };
 
-}
+} // namespace aco
+
 #endif /* _ACO_BUILDER_ */"""
 
 from aco_opcodes import opcodes, Format

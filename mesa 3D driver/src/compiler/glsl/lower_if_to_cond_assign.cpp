@@ -158,7 +158,7 @@ check_ir_node(ir_instruction *ir, void *data)
 
       if (deref->array_index->ir_type != ir_type_constant)
          v->found_dynamic_arrayref = true;
-   } /* fall-through */
+   } FALLTHROUGH;
    case ir_type_expression:
    case ir_type_dereference_record:
       if (v->is_then)
@@ -193,22 +193,18 @@ move_block_to_cond_assign(void *mem_ctx,
                _mesa_set_search(
                   set, assign->lhs->variable_referenced()) != NULL;
 
-            if (!assign->condition) {
-               if (assign_to_cv) {
-                  assign->rhs =
-                     new(mem_ctx) ir_expression(ir_binop_logic_and,
-                                                glsl_type::bool_type,
-                                                cond_expr->clone(mem_ctx, NULL),
-                                                assign->rhs);
-               } else {
-                  assign->condition = cond_expr->clone(mem_ctx, NULL);
-               }
-            } else {
-               assign->condition =
+            if (assign_to_cv) {
+               assign->rhs =
                   new(mem_ctx) ir_expression(ir_binop_logic_and,
                                              glsl_type::bool_type,
                                              cond_expr->clone(mem_ctx, NULL),
-                                             assign->condition);
+                                             assign->rhs);
+            } else {
+               assign->rhs =
+                  new(mem_ctx) ir_expression(ir_triop_csel,
+                                             cond_expr->clone(mem_ctx, NULL),
+                                             assign->rhs,
+                                             assign->lhs->as_dereference());
             }
          }
       }

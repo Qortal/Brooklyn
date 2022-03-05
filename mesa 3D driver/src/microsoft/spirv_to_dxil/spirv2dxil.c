@@ -29,6 +29,7 @@
  */
 
 #include "nir_to_dxil.h"
+#include "dxil_validation.h"
 #include "spirv/nir_spirv.h"
 #include "spirv_to_dxil.h"
 
@@ -68,16 +69,20 @@ main(int argc, char **argv)
    char *entry_point = "main";
    char *output_file = "";
    int ch;
-
+   bool validate = false;
+   
    static struct option long_options[] = {
       {"stage", required_argument, 0, 's'},
       {"entry", required_argument, 0, 'e'},
       {"output", required_argument, 0, 'o'},
+      {"validate", no_argument, 0, 'v'},
       {0, 0, 0, 0}};
 
-   while ((ch = getopt_long(argc, argv, "s:e:o:", long_options, NULL)) !=
+
+   while ((ch = getopt_long(argc, argv, "s:e:o:v", long_options, NULL)) !=
           -1) {
-      switch (ch) {
+      switch(ch)
+      {
       case 's':
          shader_stage = stage_to_enum(optarg);
          if (shader_stage == MESA_SHADER_NONE) {
@@ -90,6 +95,9 @@ main(int argc, char **argv)
          break;
       case 'o':
          output_file = optarg;
+         break;
+      case 'v':
+         validate = true;
          break;
       default:
          fprintf(stderr, "Unrecognized option.\n");
@@ -121,23 +129,41 @@ main(int argc, char **argv)
 
    size_t word_count = file_size / WORD_SIZE;
 
-   void *data;
-   size_t size;
+   struct dxil_spirv_runtime_conf conf;
+   memset(&conf, 0, sizeof(conf));
+   conf.runtime_data_cbv.base_shader_register = 0;
+   conf.runtime_data_cbv.register_space = 31;
+   conf.zero_based_vertex_instance_id = true;
+
+   struct dxil_spirv_debug_options dbg_opts = {
+      .dump_nir = false,
+   };
+
+   struct dxil_spirv_object obj;
+   memset(&obj, 0, sizeof(obj));
    if (spirv_to_dxil((uint32_t *)file_contents, word_count, NULL, 0,
                      (dxil_spirv_shader_stage)shader_stage, entry_point,
-                     &data, &size)) {
-      FILE *file = fopen(output_file, "wb");
-      if (!file) {
-         fprintf(stderr, "Failed to open %s, %s\n", output_file,
-                 strerror(errno));
-         spirv_to_dxil_free(data);
+                     &dbg_opts, &conf, &obj)) {
+
+      if (validate && !validate_dxil(&obj)) {
+         fprintf(stderr, "Failed to validate DXIL\n");
+         spirv_to_dxil_free(&obj);
          free(file_contents);
          return 1;
       }
 
-      fwrite(data, sizeof(char), size, file);
+      FILE *file = fopen(output_file, "wb");
+      if (!file) {
+         fprintf(stderr, "Failed to open %s, %s\n", output_file,
+                 strerror(errno));
+         spirv_to_dxil_free(&obj);
+         free(file_contents);
+         return 1;
+      }
+
+      fwrite(obj.binary.buffer, sizeof(char), obj.binary.size, file);
       fclose(file);
-      spirv_to_dxil_free(data);
+      spirv_to_dxil_free(&obj);
    } else {
       fprintf(stderr, "Compilation failed\n");
       return 1;

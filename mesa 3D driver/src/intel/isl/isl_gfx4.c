@@ -56,25 +56,10 @@ isl_gfx4_filter_tiling(const struct isl_device *dev,
        *    BWT014   The Depth Buffer Must be Tiled, it cannot be linear. This
        *    field must be set to 1 on DevBW-A.  [DevBW -A,B]
        *
-       * In testing, the linear configuration doesn't seem to work on gfx4.
+       * In testing, the linear configuration doesn't seem to work on I965. We
+       * choose to be consistent and require tiling for gfx4-5.
        */
-      *flags &= (ISL_GFX_VER(dev) == 4 && !ISL_DEV_IS_G4X(dev)) ?
-                ISL_TILING_Y0_BIT : (ISL_TILING_Y0_BIT | ISL_TILING_LINEAR_BIT);
-   }
-
-   if (info->usage & (ISL_SURF_USAGE_DISPLAY_ROTATE_90_BIT |
-                      ISL_SURF_USAGE_DISPLAY_ROTATE_180_BIT |
-                      ISL_SURF_USAGE_DISPLAY_ROTATE_270_BIT)) {
-      assert(*flags & ISL_SURF_USAGE_DISPLAY_BIT);
-      isl_finishme("%s:%s: handle rotated display surfaces",
-                   __FILE__, __func__);
-   }
-
-   if (info->usage & (ISL_SURF_USAGE_DISPLAY_FLIP_X_BIT |
-                      ISL_SURF_USAGE_DISPLAY_FLIP_Y_BIT)) {
-      assert(*flags & ISL_SURF_USAGE_DISPLAY_BIT);
-      isl_finishme("%s:%s: handle flipped display surfaces",
-                   __FILE__, __func__);
+      *flags &= ISL_TILING_Y0_BIT;
    }
 
    if (info->usage & ISL_SURF_USAGE_DISPLAY_BIT) {

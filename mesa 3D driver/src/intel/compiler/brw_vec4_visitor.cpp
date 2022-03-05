@@ -150,7 +150,7 @@ vec4_visitor::emit(enum opcode opcode)
    vec4_visitor::op(const dst_reg &dst, const src_reg &src0,		\
                     const src_reg &src1, const src_reg &src2)		\
    {									\
-      assert(devinfo->gen >= 6);						\
+      assert(devinfo->ver >= 6);						\
       return new(mem_ctx) vec4_instruction(BRW_OPCODE_##op, dst,	\
 					   src0, src1, src2);		\
    }
@@ -189,7 +189,7 @@ ALU2_ACC(SUBB)
 ALU2(MAC)
 ALU1(DIM)
 
-/** Gen4 predicated IF. */
+/** Gfx4 predicated IF. */
 vec4_instruction *
 vec4_visitor::IF(enum brw_predicate predicate)
 {
@@ -201,12 +201,12 @@ vec4_visitor::IF(enum brw_predicate predicate)
    return inst;
 }
 
-/** Gen6 IF with embedded comparison. */
+/** Gfx6 IF with embedded comparison. */
 vec4_instruction *
 vec4_visitor::IF(src_reg src0, src_reg src1,
                  enum brw_conditional_mod condition)
 {
-   assert(devinfo->gen == 6);
+   assert(devinfo->ver == 6);
 
    vec4_instruction *inst;
 
@@ -235,7 +235,7 @@ vec4_visitor::CMP(dst_reg dst, src_reg src0, src_reg src1,
     *
     * CMP null<d> src0<f> src1<f>
     *
-    * Original gen4 does type conversion to the destination type before
+    * Original gfx4 does type conversion to the destination type before
     * comparison, producing garbage results for floating point comparisons.
     *
     * The destination type doesn't matter on newer generations, so we set the
@@ -257,9 +257,9 @@ vec4_visitor::SCRATCH_READ(const dst_reg &dst, const src_reg &index)
 {
    vec4_instruction *inst;
 
-   inst = new(mem_ctx) vec4_instruction(SHADER_OPCODE_GEN4_SCRATCH_READ,
+   inst = new(mem_ctx) vec4_instruction(SHADER_OPCODE_GFX4_SCRATCH_READ,
 					dst, index);
-   inst->base_mrf = FIRST_SPILL_MRF(devinfo->gen) + 1;
+   inst->base_mrf = FIRST_SPILL_MRF(devinfo->ver) + 1;
    inst->mlen = 2;
 
    return inst;
@@ -271,9 +271,9 @@ vec4_visitor::SCRATCH_WRITE(const dst_reg &dst, const src_reg &src,
 {
    vec4_instruction *inst;
 
-   inst = new(mem_ctx) vec4_instruction(SHADER_OPCODE_GEN4_SCRATCH_WRITE,
+   inst = new(mem_ctx) vec4_instruction(SHADER_OPCODE_GFX4_SCRATCH_WRITE,
 					dst, src, index);
-   inst->base_mrf = FIRST_SPILL_MRF(devinfo->gen);
+   inst->base_mrf = FIRST_SPILL_MRF(devinfo->ver);
    inst->mlen = 3;
 
    return inst;
@@ -308,21 +308,21 @@ vec4_visitor::fix_3src_operand(const src_reg &src)
 src_reg
 vec4_visitor::fix_math_operand(const src_reg &src)
 {
-   if (devinfo->gen < 6 || src.file == BAD_FILE)
+   if (devinfo->ver < 6 || src.file == BAD_FILE)
       return src;
 
-   /* The gen6 math instruction ignores the source modifiers --
+   /* The gfx6 math instruction ignores the source modifiers --
     * swizzle, abs, negate, and at least some parts of the register
     * region description.
     *
     * Rather than trying to enumerate all these cases, *always* expand the
-    * operand to a temp GRF for gen6.
+    * operand to a temp GRF for gfx6.
     *
-    * For gen7, keep the operand as-is, except if immediate, which gen7 still
+    * For gfx7, keep the operand as-is, except if immediate, which gfx7 still
     * can't use.
     */
 
-   if (devinfo->gen == 7 && src.file != IMM)
+   if (devinfo->ver == 7 && src.file != IMM)
       return src;
 
    dst_reg expanded = dst_reg(this, glsl_type::vec4_type);
@@ -339,12 +339,12 @@ vec4_visitor::emit_math(enum opcode opcode,
    vec4_instruction *math =
       emit(opcode, dst, fix_math_operand(src0), fix_math_operand(src1));
 
-   if (devinfo->gen == 6 && dst.writemask != WRITEMASK_XYZW) {
-      /* MATH on Gen6 must be align1, so we can't do writemasks. */
+   if (devinfo->ver == 6 && dst.writemask != WRITEMASK_XYZW) {
+      /* MATH on Gfx6 must be align1, so we can't do writemasks. */
       math->dst = dst_reg(this, glsl_type::vec4_type);
       math->dst.type = dst.type;
       math = emit(MOV(dst, src_reg(math->dst)));
-   } else if (devinfo->gen < 6) {
+   } else if (devinfo->ver < 6) {
       math->base_mrf = 1;
       math->mlen = src1.file == BAD_FILE ? 1 : 2;
    }
@@ -355,7 +355,7 @@ vec4_visitor::emit_math(enum opcode opcode,
 void
 vec4_visitor::emit_pack_half_2x16(dst_reg dst, src_reg src0)
 {
-   if (devinfo->gen < 7) {
+   if (devinfo->ver < 7) {
       unreachable("ir_unop_pack_half_2x16 should be lowered");
    }
 
@@ -383,7 +383,7 @@ vec4_visitor::emit_pack_half_2x16(dst_reg dst, src_reg src0)
     * code, I chose instead to remain in align16 mode in defiance of the hw
     * docs).
     *
-    * I've [chadv] experimentally confirmed that, on gen7 hardware and the
+    * I've [chadv] experimentally confirmed that, on gfx7 hardware and the
     * simulator, emitting a f32to16 in align16 mode with UD as destination
     * data type is safe. The behavior differs from that specified in the PRM
     * in that the upper word of each destination channel is cleared to 0.
@@ -432,7 +432,7 @@ vec4_visitor::emit_pack_half_2x16(dst_reg dst, src_reg src0)
 void
 vec4_visitor::emit_unpack_half_2x16(dst_reg dst, src_reg src0)
 {
-   if (devinfo->gen < 7) {
+   if (devinfo->ver < 7) {
       unreachable("ir_unop_unpack_half_2x16 should be lowered");
    }
 
@@ -450,7 +450,7 @@ vec4_visitor::emit_unpack_half_2x16(dst_reg dst, src_reg src0)
     * emitting align1 instructions for unpackHalf2x16 failed to pass the
     * Piglit tests, so I gave up.
     *
-    * I've verified that, on gen7 hardware and the simulator, it is safe to
+    * I've verified that, on gfx7 hardware and the simulator, it is safe to
     * emit f16to32 in align16 mode with UD as source data type.
     */
 
@@ -610,8 +610,9 @@ type_size_xvec4(const struct glsl_type *type, bool as_vec4, bool bindless)
       return 1;
 
    case GLSL_TYPE_SAMPLER:
-      /* Samplers take up no register space, since they're baked in at
-       * link time.
+   case GLSL_TYPE_TEXTURE:
+      /* Samplers and textures take up no register space, since they're baked
+       * in at link time.
        */
       return bindless ? 1 : 0;
    case GLSL_TYPE_ATOMIC_UINT:
@@ -740,7 +741,7 @@ vec4_visitor::emit_pull_constant_load_reg(dst_reg dst,
 
    vec4_instruction *pull;
 
-   if (devinfo->gen >= 7) {
+   if (devinfo->ver >= 7) {
       dst_reg grf_offset = dst_reg(this, glsl_type::uint_type);
 
       grf_offset.type = offset_reg.type;
@@ -752,7 +753,7 @@ vec4_visitor::emit_pull_constant_load_reg(dst_reg dst,
       else
          emit(pull);
 
-      pull = new(mem_ctx) vec4_instruction(VS_OPCODE_PULL_CONSTANT_LOAD_GEN7,
+      pull = new(mem_ctx) vec4_instruction(VS_OPCODE_PULL_CONSTANT_LOAD_GFX7,
                                            dst,
                                            surf_index,
                                            src_reg(grf_offset));
@@ -762,7 +763,7 @@ vec4_visitor::emit_pull_constant_load_reg(dst_reg dst,
                                            dst,
                                            surf_index,
                                            offset_reg);
-      pull->base_mrf = FIRST_PULL_LOAD_MRF(devinfo->gen) + 1;
+      pull->base_mrf = FIRST_PULL_LOAD_MRF(devinfo->ver) + 1;
       pull->mlen = 1;
    }
 
@@ -785,264 +786,6 @@ vec4_visitor::emit_uniformize(const src_reg &src)
       ->force_writemask_all = true;
 
    return src_reg(dst);
-}
-
-src_reg
-vec4_visitor::emit_mcs_fetch(const glsl_type *coordinate_type,
-                             src_reg coordinate, src_reg surface)
-{
-   vec4_instruction *inst =
-      new(mem_ctx) vec4_instruction(SHADER_OPCODE_TXF_MCS,
-                                    dst_reg(this, glsl_type::uvec4_type));
-   inst->base_mrf = 2;
-   inst->src[1] = surface;
-   inst->src[2] = brw_imm_ud(0); /* sampler */
-   inst->mlen = 1;
-
-   const int param_base = inst->base_mrf;
-
-   /* parameters are: u, v, r, lod; lod will always be zero due to api restrictions */
-   int coord_mask = (1 << coordinate_type->vector_elements) - 1;
-   int zero_mask = 0xf & ~coord_mask;
-
-   emit(MOV(dst_reg(MRF, param_base, coordinate_type, coord_mask),
-            coordinate));
-
-   emit(MOV(dst_reg(MRF, param_base, coordinate_type, zero_mask),
-            brw_imm_d(0)));
-
-   emit(inst);
-   return src_reg(inst->dst);
-}
-
-bool
-vec4_visitor::is_high_sampler(src_reg sampler)
-{
-   if (!devinfo->is_haswell)
-      return false;
-
-   return sampler.file != IMM || sampler.ud >= 16;
-}
-
-void
-vec4_visitor::emit_texture(ir_texture_opcode op,
-                           dst_reg dest,
-                           const glsl_type *dest_type,
-                           src_reg coordinate,
-                           int coord_components,
-                           src_reg shadow_comparator,
-                           src_reg lod, src_reg lod2,
-                           src_reg sample_index,
-                           uint32_t constant_offset,
-                           src_reg offset_value,
-                           src_reg mcs,
-                           uint32_t surface,
-                           src_reg surface_reg,
-                           src_reg sampler_reg)
-{
-   enum opcode opcode;
-   switch (op) {
-   case ir_tex: opcode = SHADER_OPCODE_TXL; break;
-   case ir_txl: opcode = SHADER_OPCODE_TXL; break;
-   case ir_txd: opcode = SHADER_OPCODE_TXD; break;
-   case ir_txf: opcode = SHADER_OPCODE_TXF; break;
-   case ir_txf_ms: opcode = SHADER_OPCODE_TXF_CMS; break;
-   case ir_txs: opcode = SHADER_OPCODE_TXS; break;
-   case ir_tg4: opcode = offset_value.file != BAD_FILE
-                         ? SHADER_OPCODE_TG4_OFFSET : SHADER_OPCODE_TG4; break;
-   case ir_query_levels: opcode = SHADER_OPCODE_TXS; break;
-   case ir_texture_samples: opcode = SHADER_OPCODE_SAMPLEINFO; break;
-   case ir_txb:
-      unreachable("TXB is not valid for vertex shaders.");
-   case ir_lod:
-      unreachable("LOD is not valid for vertex shaders.");
-   case ir_samples_identical: {
-      /* There are some challenges implementing this for vec4, and it seems
-       * unlikely to be used anyway.  For now, just return false ways.
-       */
-      emit(MOV(dest, brw_imm_ud(0u)));
-      return;
-   }
-   default:
-      unreachable("Unrecognized tex op");
-   }
-
-   vec4_instruction *inst = new(mem_ctx) vec4_instruction(opcode, dest);
-
-   inst->offset = constant_offset;
-
-   /* The message header is necessary for:
-    * - Gen4 (always)
-    * - Texel offsets
-    * - Gather channel selection
-    * - Sampler indices too large to fit in a 4-bit value.
-    * - Sampleinfo message - takes no parameters, but mlen = 0 is illegal
-    */
-   inst->header_size =
-      (devinfo->gen < 5 ||
-       inst->offset != 0 || op == ir_tg4 ||
-       op == ir_texture_samples ||
-       is_high_sampler(sampler_reg)) ? 1 : 0;
-   inst->base_mrf = 2;
-   inst->mlen = inst->header_size;
-   inst->dst.writemask = WRITEMASK_XYZW;
-   inst->shadow_compare = shadow_comparator.file != BAD_FILE;
-
-   inst->src[1] = surface_reg;
-   inst->src[2] = sampler_reg;
-
-   /* MRF for the first parameter */
-   int param_base = inst->base_mrf + inst->header_size;
-
-   if (op == ir_txs || op == ir_query_levels) {
-      int writemask = devinfo->gen == 4 ? WRITEMASK_W : WRITEMASK_X;
-      emit(MOV(dst_reg(MRF, param_base, lod.type, writemask), lod));
-      inst->mlen++;
-   } else if (op == ir_texture_samples) {
-      inst->dst.writemask = WRITEMASK_X;
-   } else {
-      /* Load the coordinate */
-      /* FINISHME: gl_clamp_mask and saturate */
-      int coord_mask = (1 << coord_components) - 1;
-      int zero_mask = 0xf & ~coord_mask;
-
-      emit(MOV(dst_reg(MRF, param_base, coordinate.type, coord_mask),
-               coordinate));
-      inst->mlen++;
-
-      if (zero_mask != 0) {
-         emit(MOV(dst_reg(MRF, param_base, coordinate.type, zero_mask),
-                  brw_imm_d(0)));
-      }
-      /* Load the shadow comparator */
-      if (shadow_comparator.file != BAD_FILE && op != ir_txd && (op != ir_tg4 || offset_value.file == BAD_FILE)) {
-	 emit(MOV(dst_reg(MRF, param_base + 1, shadow_comparator.type,
-			  WRITEMASK_X),
-		  shadow_comparator));
-	 inst->mlen++;
-      }
-
-      /* Load the LOD info */
-      if (op == ir_tex || op == ir_txl) {
-	 int mrf, writemask;
-	 if (devinfo->gen >= 5) {
-	    mrf = param_base + 1;
-	    if (shadow_comparator.file != BAD_FILE) {
-	       writemask = WRITEMASK_Y;
-	       /* mlen already incremented */
-	    } else {
-	       writemask = WRITEMASK_X;
-	       inst->mlen++;
-	    }
-	 } else /* devinfo->gen == 4 */ {
-	    mrf = param_base;
-	    writemask = WRITEMASK_W;
-	 }
-	 emit(MOV(dst_reg(MRF, mrf, lod.type, writemask), lod));
-      } else if (op == ir_txf) {
-         emit(MOV(dst_reg(MRF, param_base, lod.type, WRITEMASK_W), lod));
-      } else if (op == ir_txf_ms) {
-         emit(MOV(dst_reg(MRF, param_base + 1, sample_index.type, WRITEMASK_X),
-                  sample_index));
-         if (devinfo->gen >= 7) {
-            /* MCS data is in the first channel of `mcs`, but we need to get it into
-             * the .y channel of the second vec4 of params, so replicate .x across
-             * the whole vec4 and then mask off everything except .y
-             */
-            mcs.swizzle = BRW_SWIZZLE_XXXX;
-            emit(MOV(dst_reg(MRF, param_base + 1, glsl_type::uint_type, WRITEMASK_Y),
-                     mcs));
-         }
-         inst->mlen++;
-      } else if (op == ir_txd) {
-         const brw_reg_type type = lod.type;
-
-	 if (devinfo->gen >= 5) {
-	    lod.swizzle = BRW_SWIZZLE4(SWIZZLE_X,SWIZZLE_X,SWIZZLE_Y,SWIZZLE_Y);
-	    lod2.swizzle = BRW_SWIZZLE4(SWIZZLE_X,SWIZZLE_X,SWIZZLE_Y,SWIZZLE_Y);
-	    emit(MOV(dst_reg(MRF, param_base + 1, type, WRITEMASK_XZ), lod));
-	    emit(MOV(dst_reg(MRF, param_base + 1, type, WRITEMASK_YW), lod2));
-	    inst->mlen++;
-
-	    if (dest_type->vector_elements == 3 || shadow_comparator.file != BAD_FILE) {
-	       lod.swizzle = BRW_SWIZZLE_ZZZZ;
-	       lod2.swizzle = BRW_SWIZZLE_ZZZZ;
-	       emit(MOV(dst_reg(MRF, param_base + 2, type, WRITEMASK_X), lod));
-	       emit(MOV(dst_reg(MRF, param_base + 2, type, WRITEMASK_Y), lod2));
-	       inst->mlen++;
-
-               if (shadow_comparator.file != BAD_FILE) {
-                  emit(MOV(dst_reg(MRF, param_base + 2,
-                                   shadow_comparator.type, WRITEMASK_Z),
-                           shadow_comparator));
-               }
-	    }
-	 } else /* devinfo->gen == 4 */ {
-	    emit(MOV(dst_reg(MRF, param_base + 1, type, WRITEMASK_XYZ), lod));
-	    emit(MOV(dst_reg(MRF, param_base + 2, type, WRITEMASK_XYZ), lod2));
-	    inst->mlen += 2;
-	 }
-      } else if (op == ir_tg4 && offset_value.file != BAD_FILE) {
-         if (shadow_comparator.file != BAD_FILE) {
-            emit(MOV(dst_reg(MRF, param_base, shadow_comparator.type, WRITEMASK_W),
-                     shadow_comparator));
-         }
-
-         emit(MOV(dst_reg(MRF, param_base + 1, glsl_type::ivec2_type, WRITEMASK_XY),
-                  offset_value));
-         inst->mlen++;
-      }
-   }
-
-   emit(inst);
-
-   /* fixup num layers (z) for cube arrays: hardware returns faces * layers;
-    * spec requires layers.
-    */
-   if (op == ir_txs && devinfo->gen < 7) {
-      /* Gen4-6 return 0 instead of 1 for single layer surfaces. */
-      emit_minmax(BRW_CONDITIONAL_GE, writemask(inst->dst, WRITEMASK_Z),
-                  src_reg(inst->dst), brw_imm_d(1));
-   }
-
-   if (devinfo->gen == 6 && op == ir_tg4) {
-      emit_gen6_gather_wa(key_tex->gen6_gather_wa[surface], inst->dst);
-   }
-
-   if (op == ir_query_levels) {
-      /* # levels is in .w */
-      src_reg swizzled(dest);
-      swizzled.swizzle = BRW_SWIZZLE4(SWIZZLE_W, SWIZZLE_W,
-                                      SWIZZLE_W, SWIZZLE_W);
-      emit(MOV(dest, swizzled));
-   }
-}
-
-/**
- * Apply workarounds for Gen6 gather with UINT/SINT
- */
-void
-vec4_visitor::emit_gen6_gather_wa(uint8_t wa, dst_reg dst)
-{
-   if (!wa)
-      return;
-
-   int width = (wa & WA_8BIT) ? 8 : 16;
-   dst_reg dst_f = dst;
-   dst_f.type = BRW_REGISTER_TYPE_F;
-
-   /* Convert from UNORM to UINT */
-   emit(MUL(dst_f, src_reg(dst_f), brw_imm_f((float)((1 << width) - 1))));
-   emit(MOV(dst, src_reg(dst_f)));
-
-   if (wa & WA_SIGN) {
-      /* Reinterpret the UINT value as a signed INT value by
-       * shifting the sign bit into place, then shifting back
-       * preserving sign.
-       */
-      emit(SHL(dst, src_reg(dst), brw_imm_d(32 - width)));
-      emit(ASR(dst, src_reg(dst), brw_imm_d(32 - width)));
-   }
 }
 
 void
@@ -1087,7 +830,7 @@ vec4_visitor::emit_ndc_computation()
 void
 vec4_visitor::emit_psiz_and_flags(dst_reg reg)
 {
-   if (devinfo->gen < 6 &&
+   if (devinfo->ver < 6 &&
        ((prog_data->vue_map.slots_valid & VARYING_BIT_PSIZ) ||
         output_reg[VARYING_SLOT_CLIP_DIST0][0].file != BAD_FILE ||
         devinfo->has_negative_rhw_bug)) {
@@ -1145,7 +888,7 @@ vec4_visitor::emit_psiz_and_flags(dst_reg reg)
       }
 
       emit(MOV(retype(reg, BRW_REGISTER_TYPE_UD), src_reg(header1)));
-   } else if (devinfo->gen < 6) {
+   } else if (devinfo->ver < 6) {
       emit(MOV(retype(reg, BRW_REGISTER_TYPE_UD), brw_imm_ud(0u)));
    } else {
       emit(MOV(retype(reg, BRW_REGISTER_TYPE_D), brw_imm_d(0)));
@@ -1219,20 +962,6 @@ vec4_visitor::emit_urb_slot(dst_reg reg, int varying)
       if (output_reg[VARYING_SLOT_POS][0].file != BAD_FILE)
          emit(MOV(reg, src_reg(output_reg[VARYING_SLOT_POS][0])));
       break;
-   case VARYING_SLOT_EDGE: {
-      /* This is present when doing unfilled polygons.  We're supposed to copy
-       * the edge flag from the user-provided vertex array
-       * (glEdgeFlagPointer), or otherwise we'll copy from the current value
-       * of that attribute (starts as 1.0f).  This is then used in clipping to
-       * determine which edges should be drawn as wireframe.
-       */
-      current_annotation = "edge flag";
-      int edge_attr = util_bitcount64(nir->info.inputs_read &
-                                        BITFIELD64_MASK(VERT_ATTRIB_EDGEFLAG));
-      emit(MOV(reg, src_reg(dst_reg(ATTR, edge_attr,
-                                    glsl_type::float_type, WRITEMASK_XYZW))));
-      break;
-   }
    case BRW_VARYING_SLOT_PAD:
       /* No need to write to this slot */
       break;
@@ -1245,9 +974,10 @@ vec4_visitor::emit_urb_slot(dst_reg reg, int varying)
 }
 
 static unsigned
-align_interleaved_urb_mlen(const struct gen_device_info *devinfo, unsigned mlen)
+align_interleaved_urb_mlen(const struct intel_device_info *devinfo,
+                           unsigned mlen)
 {
-   if (devinfo->gen >= 6) {
+   if (devinfo->ver >= 6) {
       /* URB data written (does not include the message header reg) must
        * be a multiple of 256 bits, or 2 VS registers.  See vol5c.5,
        * section 5.4.3.2.2: URB_INTERLEAVED.
@@ -1282,10 +1012,10 @@ vec4_visitor::emit_vertex()
     * may need to unspill a register or load from an array.  Those
     * reads would use MRFs 14-15.
     */
-   int max_usable_mrf = FIRST_SPILL_MRF(devinfo->gen);
+   int max_usable_mrf = FIRST_SPILL_MRF(devinfo->ver);
 
    /* The following assertion verifies that max_usable_mrf causes an
-    * even-numbered amount of URB write data, which will meet gen6's
+    * even-numbered amount of URB write data, which will meet gfx6's
     * requirements for length alignment.
     */
    assert ((max_usable_mrf - base_mrf) % 2 == 0);
@@ -1295,7 +1025,7 @@ vec4_visitor::emit_vertex()
     */
    emit_urb_write_header(mrf++);
 
-   if (devinfo->gen < 6) {
+   if (devinfo->ver < 6) {
       emit_ndc_computation();
    }
 
@@ -1344,10 +1074,10 @@ vec4_visitor::get_scratch_offset(bblock_t *block, vec4_instruction *inst,
     */
    int message_header_scale = 2;
 
-   /* Pre-gen6, the message header uses byte offsets instead of vec4
+   /* Pre-gfx6, the message header uses byte offsets instead of vec4
     * (16-byte) offset units.
     */
-   if (devinfo->gen < 6)
+   if (devinfo->ver < 6)
       message_header_scale *= 16;
 
    if (reladdr) {
@@ -1400,7 +1130,7 @@ vec4_visitor::emit_scratch_read(bblock_t *block, vec4_instruction *inst,
       vec4_instruction *last_read =
          SCRATCH_READ(byte_offset(shuffled_float, REG_SIZE), index);
       emit_before(block, inst, last_read);
-      shuffle_64bit_data(temp, src_reg(shuffled), false, block, last_read);
+      shuffle_64bit_data(temp, src_reg(shuffled), false, true, block, last_read);
    }
 }
 
@@ -1445,7 +1175,7 @@ vec4_visitor::emit_scratch_write(bblock_t *block, vec4_instruction *inst,
    } else {
       dst_reg shuffled = dst_reg(this, alloc_type);
       vec4_instruction *last =
-         shuffle_64bit_data(shuffled, temp, true, block, inst);
+         shuffle_64bit_data(shuffled, temp, true, true, block, inst);
       src_reg shuffled_float = src_reg(retype(shuffled, BRW_REGISTER_TYPE_F));
 
       uint8_t mask = 0;
@@ -1604,146 +1334,6 @@ vec4_visitor::move_grf_array_access_to_scratch()
    }
 }
 
-/**
- * Emits an instruction before @inst to load the value named by @orig_src
- * from the pull constant buffer (surface) at @base_offset to @temp.
- */
-void
-vec4_visitor::emit_pull_constant_load(bblock_t *block, vec4_instruction *inst,
-                                      dst_reg temp, src_reg orig_src,
-                                      int base_offset, src_reg indirect)
-{
-   assert(orig_src.offset % 16 == 0);
-   const unsigned index = prog_data->base.binding_table.pull_constants_start;
-
-   /* For 64bit loads we need to emit two 32-bit load messages and we also
-    * we need to shuffle the 32-bit data result into proper 64-bit data. To do
-    * that we emit the 32-bit loads into a temporary and we shuffle the result
-    * into the original destination.
-    */
-   dst_reg orig_temp = temp;
-   bool is_64bit = type_sz(orig_src.type) == 8;
-   if (is_64bit) {
-      assert(type_sz(temp.type) == 8);
-      dst_reg temp_df = dst_reg(this, glsl_type::dvec4_type);
-      temp = retype(temp_df, BRW_REGISTER_TYPE_F);
-   }
-
-   src_reg src = orig_src;
-   for (int i = 0; i < (is_64bit ? 2 : 1); i++) {
-      int reg_offset = base_offset + src.offset / 16;
-
-      src_reg offset;
-      if (indirect.file != BAD_FILE) {
-         offset = src_reg(this, glsl_type::uint_type);
-         emit_before(block, inst, ADD(dst_reg(offset), indirect,
-                                      brw_imm_ud(reg_offset * 16)));
-      } else {
-         offset = brw_imm_d(reg_offset * 16);
-      }
-
-      emit_pull_constant_load_reg(byte_offset(temp, i * REG_SIZE),
-                                  brw_imm_ud(index),
-                                  offset,
-                                  block, inst);
-
-      src = byte_offset(src, 16);
-   }
-
-   if (is_64bit) {
-      temp = retype(temp, BRW_REGISTER_TYPE_DF);
-      shuffle_64bit_data(orig_temp, src_reg(temp), false, block, inst);
-   }
-}
-
-/**
- * Implements array access of uniforms by inserting a
- * PULL_CONSTANT_LOAD instruction.
- *
- * Unlike temporary GRF array access (where we don't support it due to
- * the difficulty of doing relative addressing on instruction
- * destinations), we could potentially do array access of uniforms
- * that were loaded in GRF space as push constants.  In real-world
- * usage we've seen, though, the arrays being used are always larger
- * than we could load as push constants, so just always move all
- * uniform array access out to a pull constant buffer.
- */
-void
-vec4_visitor::move_uniform_array_access_to_pull_constants()
-{
-   /* The vulkan dirver doesn't support pull constants other than UBOs so
-    * everything has to be pushed regardless.
-    */
-   if (!compiler->supports_pull_constants) {
-      split_uniform_registers();
-      return;
-   }
-
-   /* Allocate the pull_params array */
-   assert(stage_prog_data->nr_pull_params == 0);
-   stage_prog_data->pull_param = ralloc_array(mem_ctx, uint32_t,
-                                              this->uniforms * 4);
-
-   int pull_constant_loc[this->uniforms];
-   memset(pull_constant_loc, -1, sizeof(pull_constant_loc));
-
-   /* First, walk through the instructions and determine which things need to
-    * be pulled.  We mark something as needing to be pulled by setting
-    * pull_constant_loc to 0.
-    */
-   foreach_block_and_inst(block, vec4_instruction, inst, cfg) {
-      /* We only care about MOV_INDIRECT of a uniform */
-      if (inst->opcode != SHADER_OPCODE_MOV_INDIRECT ||
-          inst->src[0].file != UNIFORM)
-         continue;
-
-      int uniform_nr = inst->src[0].nr + inst->src[0].offset / 16;
-
-      for (unsigned j = 0; j < DIV_ROUND_UP(inst->src[2].ud, 16); j++)
-         pull_constant_loc[uniform_nr + j] = 0;
-   }
-
-   /* Next, we walk the list of uniforms and assign real pull constant
-    * locations and set their corresponding entries in pull_param.
-    */
-   for (int j = 0; j < this->uniforms; j++) {
-      if (pull_constant_loc[j] < 0)
-         continue;
-
-      pull_constant_loc[j] = stage_prog_data->nr_pull_params / 4;
-
-      for (int i = 0; i < 4; i++) {
-         stage_prog_data->pull_param[stage_prog_data->nr_pull_params++]
-            = stage_prog_data->param[j * 4 + i];
-      }
-   }
-
-   /* Finally, we can walk through the instructions and lower MOV_INDIRECT
-    * instructions to actual uniform pulls.
-    */
-   foreach_block_and_inst_safe(block, vec4_instruction, inst, cfg) {
-      /* We only care about MOV_INDIRECT of a uniform */
-      if (inst->opcode != SHADER_OPCODE_MOV_INDIRECT ||
-          inst->src[0].file != UNIFORM)
-         continue;
-
-      int uniform_nr = inst->src[0].nr + inst->src[0].offset / 16;
-
-      assert(inst->src[0].swizzle == BRW_SWIZZLE_NOOP);
-
-      emit_pull_constant_load(block, inst, inst->dst, inst->src[0],
-                              pull_constant_loc[uniform_nr], inst->src[1]);
-      inst->remove(block);
-   }
-
-   /* Now there are no accesses of the UNIFORM file with a reladdr, so
-    * no need to track them as larger-than-vec4 objects.  This will be
-    * relied on in cutting out unused uniform vectors from push
-    * constants.
-    */
-   split_uniform_registers();
-}
-
 void
 vec4_visitor::resolve_ud_negate(src_reg *reg)
 {
@@ -1763,16 +1353,18 @@ vec4_visitor::vec4_visitor(const struct brw_compiler *compiler,
                            const nir_shader *shader,
 			   void *mem_ctx,
                            bool no_spills,
-                           int shader_time_index)
-   : backend_shader(compiler, log_data, mem_ctx, shader, &prog_data->base),
+                           bool debug_enabled)
+   : backend_shader(compiler, log_data, mem_ctx, shader, &prog_data->base,
+                    debug_enabled),
      key_tex(key_tex),
      prog_data(prog_data),
      fail_msg(NULL),
      first_non_payload_grf(0),
+     ubo_push_start(),
+     push_length(0),
      live_analysis(this), performance_analysis(this),
      need_all_constants_in_pull_buffer(false),
      no_spills(no_spills),
-     shader_time_index(shader_time_index),
      last_scratch(0)
 {
    this->failed = false;
@@ -1783,7 +1375,7 @@ vec4_visitor::vec4_visitor(const struct brw_compiler *compiler,
 
    memset(this->output_num_components, 0, sizeof(this->output_num_components));
 
-   this->max_grf = devinfo->gen >= 7 ? GEN7_MRF_HACK_START : BRW_MAX_GRF;
+   this->max_grf = devinfo->ver >= 7 ? GFX7_MRF_HACK_START : BRW_MAX_GRF;
 
    this->uniforms = 0;
 
@@ -1810,7 +1402,7 @@ vec4_visitor::fail(const char *format, ...)
 
    this->fail_msg = msg;
 
-   if (debug_enabled) {
+   if (unlikely(debug_enabled)) {
       fprintf(stderr, "%s",  msg);
    }
 }

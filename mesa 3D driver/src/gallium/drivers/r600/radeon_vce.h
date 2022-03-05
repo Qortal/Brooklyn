@@ -36,14 +36,14 @@
 
 #include "util/list.h"
 
-#define RVCE_CS(value) (enc->cs->current.buf[enc->cs->current.cdw++] = (value))
+#define RVCE_CS(value) (enc->cs.current.buf[enc->cs.current.cdw++] = (value))
 #define RVCE_BEGIN(cmd) { \
-	uint32_t *begin = &enc->cs->current.buf[enc->cs->current.cdw++]; \
+	uint32_t *begin = &enc->cs.current.buf[enc->cs.current.cdw++]; \
 	RVCE_CS(cmd)
 #define RVCE_READ(buf, domain, off) rvce_add_buffer(enc, (buf), RADEON_USAGE_READ, (domain), (off))
 #define RVCE_WRITE(buf, domain, off) rvce_add_buffer(enc, (buf), RADEON_USAGE_WRITE, (domain), (off))
 #define RVCE_READWRITE(buf, domain, off) rvce_add_buffer(enc, (buf), RADEON_USAGE_READWRITE, (domain), (off))
-#define RVCE_END() *begin = (&enc->cs->current.buf[enc->cs->current.cdw] - begin) * 4; }
+#define RVCE_END() *begin = (&enc->cs.current.buf[enc->cs.current.cdw] - begin) * 4; }
 
 #define RVCE_MAX_BITSTREAM_OUTPUT_ROW_SIZE (4096 * 16 * 2.5)
 #define RVCE_MAX_AUX_BUFFER_NUM 4
@@ -60,7 +60,7 @@ struct rvce_cpb_slot {
 	struct list_head		list;
 
 	unsigned			index;
-	enum pipe_h264_enc_picture_type	picture_type;
+	enum pipe_h2645_enc_picture_type	picture_type;
 	unsigned			frame_num;
 	unsigned			pic_order_cnt;
 };
@@ -340,7 +340,7 @@ struct rvce_h264_enc_pic {
 	unsigned quant_p_frames;
 	unsigned quant_b_frames;
 
-	enum pipe_h264_enc_picture_type picture_type;
+	enum pipe_h2645_enc_picture_type picture_type;
 	unsigned frame_num;
 	unsigned frame_num_cnt;
 	unsigned p_remain;
@@ -387,7 +387,7 @@ struct rvce_encoder {
 
 	struct pipe_screen		*screen;
 	struct radeon_winsys*		ws;
-	struct radeon_cmdbuf*	cs;
+	struct radeon_cmdbuf	cs;
 
 	rvce_get_buffer			get_buffer;
 
@@ -431,7 +431,7 @@ struct pipe_video_codec *rvce_create_encoder(struct pipe_context *context,
 bool rvce_is_fw_version_supported(struct r600_common_screen *rscreen);
 
 void rvce_add_buffer(struct rvce_encoder *enc, struct pb_buffer *buf,
-		     enum radeon_bo_usage usage, enum radeon_bo_domain domain,
+		     unsigned usage, enum radeon_bo_domain domain,
 		     signed offset);
 
 /* init vce fw 40.2.2 specific callbacks */

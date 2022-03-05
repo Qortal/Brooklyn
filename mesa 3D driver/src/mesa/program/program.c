@@ -35,6 +35,7 @@
 #include "main/hash.h"
 #include "main/macros.h"
 #include "main/shaderobj.h"
+#include "main/state.h"
 #include "program.h"
 #include "prog_cache.h"
 #include "prog_parameter.h"
@@ -43,6 +44,9 @@
 #include "util/ralloc.h"
 #include "util/u_atomic.h"
 
+#include "state_tracker/st_program.h"
+#include "state_tracker/st_glsl_to_tgsi.h"
+#include "state_tracker/st_context.h"
 
 /**
  * A pointer to this dummy program is put into the hash table when
@@ -100,7 +104,7 @@ _mesa_init_program(struct gl_context *ctx)
                            ctx->Shared->DefaultFragmentProgram);
    assert(ctx->FragmentProgram.Current);
    ctx->FragmentProgram.Cache = _mesa_new_program_cache();
-   ctx->VertexProgram._VPMode = VP_MODE_FF;
+   _mesa_reset_vertex_processing_mode(ctx);
 
    /* XXX probably move this stuff */
    ctx->ATIFragmentShader.Enabled = GL_FALSE;
@@ -193,7 +197,7 @@ _mesa_init_gl_program(struct gl_program *prog, gl_shader_stage stage,
    prog->RefCount = 1;
    prog->Format = GL_PROGRAM_FORMAT_ASCII_ARB;
    prog->info.stage = stage;
-   prog->is_arb_asm = is_arb_asm;
+   prog->info.is_arb_asm = is_arb_asm;
 
    /* Uniforms that lack an initializer in the shader code have an initial
     * value of zero.  This includes sampler uniforms.
@@ -215,41 +219,41 @@ _mesa_init_gl_program(struct gl_program *prog, gl_shader_stage stage,
    return prog;
 }
 
-
-/**
- * Allocate and initialize a new fragment/vertex program object but
- * don't put it into the program hash table.  Called via
- * ctx->Driver.NewProgram.  May be overridden (ie. replaced) by a
- * device driver function to implement OO deriviation with additional
- * types not understood by this function.
- *
- * \param ctx  context
- * \param id   program id/number
- * \param stage  shader stage
- * \return  pointer to new program object
- */
 struct gl_program *
 _mesa_new_program(struct gl_context *ctx, gl_shader_stage stage, GLuint id,
                   bool is_arb_asm)
 {
-   struct gl_program *prog = rzalloc(NULL, struct gl_program);
+   struct gl_program *prog;
+
+   switch (stage) {
+   case MESA_SHADER_VERTEX:
+      prog = (struct gl_program*)rzalloc(NULL, struct gl_vertex_program);
+      break;
+   default:
+      prog = rzalloc(NULL, struct gl_program);
+      break;
+   }
 
    return _mesa_init_gl_program(prog, stage, id, is_arb_asm);
 }
 
-
 /**
  * Delete a program and remove it from the hash table, ignoring the
  * reference count.
- * Called via ctx->Driver.DeleteProgram.  May be wrapped (OO deriviation)
- * by a device driver function.
  */
 void
 _mesa_delete_program(struct gl_context *ctx, struct gl_program *prog)
 {
-   (void) ctx;
+   struct st_context *st = st_context(ctx);
    assert(prog);
    assert(prog->RefCount==0);
+
+   st_release_variants(st, prog);
+
+   if (prog->glsl_to_tgsi)
+      free_glsl_to_tgsi_visitor(prog->glsl_to_tgsi);
+
+   free(prog->serialized_nir);
 
    if (prog == &_mesa_DummyProgram)
       return;
@@ -324,8 +328,8 @@ _mesa_reference_program_(struct gl_context *ctx,
 
       if (p_atomic_dec_zero(&oldProg->RefCount)) {
          assert(ctx);
-         _mesa_reference_shader_program_data(ctx, &oldProg->sh.data, NULL);
-         ctx->Driver.DeleteProgram(ctx, oldProg);
+         _mesa_reference_shader_program_data(&oldProg->sh.data, NULL);
+         _mesa_delete_program(ctx, oldProg);
       }
 
       *ptr = NULL;
@@ -524,8 +528,8 @@ _mesa_get_min_invocations_per_fragment(struct gl_context *ctx,
        *  forces per-sample shading"
        */
       if (prog->info.fs.uses_sample_qualifier ||
-          (prog->info.system_values_read & (SYSTEM_BIT_SAMPLE_ID |
-                                            SYSTEM_BIT_SAMPLE_POS)))
+          BITSET_TEST(prog->info.system_values_read, SYSTEM_VALUE_SAMPLE_ID) ||
+          BITSET_TEST(prog->info.system_values_read, SYSTEM_VALUE_SAMPLE_POS))
          return MAX2(_mesa_geometric_samples(ctx->DrawBuffer), 1);
       else if (ctx->Multisample.SampleShading)
          return MAX2(ceilf(ctx->Multisample.MinSampleShadingValue *
@@ -550,4 +554,69 @@ gl_external_samplers(const struct gl_program *prog)
    }
 
    return external_samplers;
+}
+
+static int compare_state_var(const void *a1, const void *a2)
+{
+   const struct gl_program_parameter *p1 =
+      (const struct gl_program_parameter *)a1;
+   const struct gl_program_parameter *p2 =
+      (const struct gl_program_parameter *)a2;
+
+   for (unsigned i = 0; i < STATE_LENGTH; i++) {
+      if (p1->StateIndexes[i] != p2->StateIndexes[i])
+         return p1->StateIndexes[i] - p2->StateIndexes[i];
+   }
+   return 0;
+}
+
+void
+_mesa_add_separate_state_parameters(struct gl_program *prog,
+                                    struct gl_program_parameter_list *state_params)
+{
+   unsigned num_state_params = state_params->NumParameters;
+
+   /* All state parameters should be vec4s. */
+   for (unsigned i = 0; i < num_state_params; i++) {
+      assert(state_params->Parameters[i].Type == PROGRAM_STATE_VAR);
+      assert(state_params->Parameters[i].Size == 4);
+      assert(state_params->Parameters[i].ValueOffset == i * 4);
+   }
+
+   /* Sort state parameters to facilitate better parameter merging. */
+   qsort(state_params->Parameters, num_state_params,
+         sizeof(state_params->Parameters[0]), compare_state_var);
+   unsigned *remap = malloc(num_state_params * sizeof(unsigned));
+
+   /* Add state parameters to the end of the parameter list. */
+   for (unsigned i = 0; i < num_state_params; i++) {
+      unsigned old_index = state_params->Parameters[i].ValueOffset / 4;
+
+      remap[old_index] =
+         _mesa_add_parameter(prog->Parameters, PROGRAM_STATE_VAR,
+                             state_params->Parameters[i].Name,
+                             state_params->Parameters[i].Size,
+                             GL_NONE, NULL,
+                             state_params->Parameters[i].StateIndexes,
+                             state_params->Parameters[i].Padded);
+
+      prog->Parameters->StateFlags |=
+         _mesa_program_state_flags(state_params->Parameters[i].StateIndexes);
+   }
+
+   /* Fix up state parameter offsets in instructions. */
+   int num_instr = prog->arb.NumInstructions;
+   struct prog_instruction *instrs = prog->arb.Instructions;
+
+   /* Fix src indices after sorting. */
+   for (unsigned i = 0; i < num_instr; i++) {
+      struct prog_instruction *inst = instrs + i;
+      unsigned num_src = _mesa_num_inst_src_regs(inst->Opcode);
+
+      for (unsigned j = 0; j < num_src; j++) {
+         if (inst->SrcReg[j].File == PROGRAM_STATE_VAR)
+            inst->SrcReg[j].Index = remap[inst->SrcReg[j].Index];
+      }
+   }
+   free(remap);
 }

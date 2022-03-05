@@ -46,11 +46,16 @@ layer_offset(struct pipe_resource *pt, unsigned level, unsigned layer)
    return lvl->offset + (layer * lvl->zslice_size);
 }
 
-static bool
+bool
 nv30_miptree_get_handle(struct pipe_screen *pscreen,
+                        struct pipe_context *context,
                         struct pipe_resource *pt,
-                        struct winsys_handle *handle)
+                        struct winsys_handle *handle,
+                        unsigned usage)
 {
+   if (pt->target == PIPE_BUFFER)
+      return false;
+
    struct nv30_miptree *mt = nv30_miptree(pt);
    unsigned stride;
 
@@ -62,7 +67,7 @@ nv30_miptree_get_handle(struct pipe_screen *pscreen,
    return nouveau_screen_bo_get_handle(pscreen, mt->base.bo, stride, handle);
 }
 
-static void
+void
 nv30_miptree_destroy(struct pipe_screen *pscreen, struct pipe_resource *pt)
 {
    struct nv30_miptree *mt = nv30_miptree(pt);
@@ -224,7 +229,7 @@ nv30_blit(struct pipe_context *pipe,
       return;
    }
 
-   if (util_try_blit_via_copy_region(pipe, &info)) {
+   if (util_try_blit_via_copy_region(pipe, &info, nv30->render_cond_query != NULL)) {
       return; /* done */
    }
 
@@ -253,7 +258,7 @@ nv30_blit(struct pipe_context *pipe,
    util_blitter_save_depth_stencil_alpha(nv30->blitter,
                                          nv30->zsa);
    util_blitter_save_stencil_ref(nv30->blitter, &nv30->stencil_ref);
-   util_blitter_save_sample_mask(nv30->blitter, nv30->sample_mask);
+   util_blitter_save_sample_mask(nv30->blitter, nv30->sample_mask, 0);
    util_blitter_save_framebuffer(nv30->blitter, &nv30->framebuffer);
    util_blitter_save_fragment_sampler_states(nv30->blitter,
                      nv30->fragprog.num_samplers,
@@ -271,7 +276,7 @@ nv30_flush_resource(struct pipe_context *pipe,
 {
 }
 
-static void *
+void *
 nv30_miptree_transfer_map(struct pipe_context *pipe, struct pipe_resource *pt,
                           unsigned level, unsigned usage,
                           const struct pipe_box *box,
@@ -365,7 +370,7 @@ nv30_miptree_transfer_map(struct pipe_context *pipe, struct pipe_resource *pt,
    return tx->tmp.bo->map;
 }
 
-static void
+void
 nv30_miptree_transfer_unmap(struct pipe_context *pipe,
                             struct pipe_transfer *ptx)
 {
@@ -397,14 +402,6 @@ nv30_miptree_transfer_unmap(struct pipe_context *pipe,
    FREE(tx);
 }
 
-const struct u_resource_vtbl nv30_miptree_vtbl = {
-   nv30_miptree_get_handle,
-   nv30_miptree_destroy,
-   nv30_miptree_transfer_map,
-   u_default_transfer_flush_region,
-   nv30_miptree_transfer_unmap,
-};
-
 struct pipe_resource *
 nv30_miptree_create(struct pipe_screen *pscreen,
                     const struct pipe_resource *tmpl)
@@ -434,7 +431,6 @@ nv30_miptree_create(struct pipe_screen *pscreen,
       break;
    }
 
-   mt->base.vtbl = &nv30_miptree_vtbl;
    *pt = *tmpl;
    pipe_reference_init(&pt->reference, 1);
    pt->screen = pscreen;
@@ -534,7 +530,6 @@ nv30_miptree_from_handle(struct pipe_screen *pscreen,
    }
 
    mt->base.base = *tmpl;
-   mt->base.vtbl = &nv30_miptree_vtbl;
    pipe_reference_init(&mt->base.base.reference, 1);
    mt->base.base.screen = pscreen;
    mt->uniform_pitch = stride;

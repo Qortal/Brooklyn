@@ -1018,7 +1018,24 @@ vn_encode_VkSubpassDescription2(struct vn_cs_encoder *enc, const VkSubpassDescri
 static inline size_t
 vn_sizeof_VkSubpassDependency2_pnext(const void *val)
 {
-    /* no known/supported struct */
+    const VkBaseInStructure *pnext = val;
+    size_t size = 0;
+
+    while (pnext) {
+        switch ((int32_t)pnext->sType) {
+        case VK_STRUCTURE_TYPE_MEMORY_BARRIER_2:
+            size += vn_sizeof_simple_pointer(pnext);
+            size += vn_sizeof_VkStructureType(&pnext->sType);
+            size += vn_sizeof_VkSubpassDependency2_pnext(pnext->pNext);
+            size += vn_sizeof_VkMemoryBarrier2_self((const VkMemoryBarrier2 *)pnext);
+            return size;
+        default:
+            /* ignore unknown/unsupported struct */
+            break;
+        }
+        pnext = pnext->pNext;
+    }
+
     return vn_sizeof_simple_pointer(NULL);
 }
 
@@ -1053,7 +1070,23 @@ vn_sizeof_VkSubpassDependency2(const VkSubpassDependency2 *val)
 static inline void
 vn_encode_VkSubpassDependency2_pnext(struct vn_cs_encoder *enc, const void *val)
 {
-    /* no known/supported struct */
+    const VkBaseInStructure *pnext = val;
+
+    while (pnext) {
+        switch ((int32_t)pnext->sType) {
+        case VK_STRUCTURE_TYPE_MEMORY_BARRIER_2:
+            vn_encode_simple_pointer(enc, pnext);
+            vn_encode_VkStructureType(enc, &pnext->sType);
+            vn_encode_VkSubpassDependency2_pnext(enc, pnext->pNext);
+            vn_encode_VkMemoryBarrier2_self(enc, (const VkMemoryBarrier2 *)pnext);
+            return;
+        default:
+            /* ignore unknown/unsupported struct */
+            break;
+        }
+        pnext = pnext->pNext;
+    }
+
     vn_encode_simple_pointer(enc, NULL);
 }
 
@@ -1535,6 +1568,8 @@ static inline void vn_submit_vkCreateRenderPass2(struct vn_instance *vn_instance
 
 static inline VkResult vn_call_vkCreateRenderPass(struct vn_instance *vn_instance, VkDevice device, const VkRenderPassCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkRenderPass* pRenderPass)
 {
+    VN_TRACE_FUNC();
+
     struct vn_instance_submit_command submit;
     vn_submit_vkCreateRenderPass(vn_instance, VK_COMMAND_GENERATE_REPLY_BIT_EXT, device, pCreateInfo, pAllocator, pRenderPass, &submit);
     struct vn_cs_decoder *dec = vn_instance_get_command_reply(vn_instance, &submit);
@@ -1555,6 +1590,8 @@ static inline void vn_async_vkCreateRenderPass(struct vn_instance *vn_instance, 
 
 static inline void vn_call_vkDestroyRenderPass(struct vn_instance *vn_instance, VkDevice device, VkRenderPass renderPass, const VkAllocationCallbacks* pAllocator)
 {
+    VN_TRACE_FUNC();
+
     struct vn_instance_submit_command submit;
     vn_submit_vkDestroyRenderPass(vn_instance, VK_COMMAND_GENERATE_REPLY_BIT_EXT, device, renderPass, pAllocator, &submit);
     struct vn_cs_decoder *dec = vn_instance_get_command_reply(vn_instance, &submit);
@@ -1572,6 +1609,8 @@ static inline void vn_async_vkDestroyRenderPass(struct vn_instance *vn_instance,
 
 static inline void vn_call_vkGetRenderAreaGranularity(struct vn_instance *vn_instance, VkDevice device, VkRenderPass renderPass, VkExtent2D* pGranularity)
 {
+    VN_TRACE_FUNC();
+
     struct vn_instance_submit_command submit;
     vn_submit_vkGetRenderAreaGranularity(vn_instance, VK_COMMAND_GENERATE_REPLY_BIT_EXT, device, renderPass, pGranularity, &submit);
     struct vn_cs_decoder *dec = vn_instance_get_command_reply(vn_instance, &submit);
@@ -1589,6 +1628,8 @@ static inline void vn_async_vkGetRenderAreaGranularity(struct vn_instance *vn_in
 
 static inline VkResult vn_call_vkCreateRenderPass2(struct vn_instance *vn_instance, VkDevice device, const VkRenderPassCreateInfo2* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkRenderPass* pRenderPass)
 {
+    VN_TRACE_FUNC();
+
     struct vn_instance_submit_command submit;
     vn_submit_vkCreateRenderPass2(vn_instance, VK_COMMAND_GENERATE_REPLY_BIT_EXT, device, pCreateInfo, pAllocator, pRenderPass, &submit);
     struct vn_cs_decoder *dec = vn_instance_get_command_reply(vn_instance, &submit);

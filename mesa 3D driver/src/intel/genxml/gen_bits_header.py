@@ -19,10 +19,6 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from __future__ import (
-    absolute_import, division, print_function, unicode_literals
-)
-
 import argparse
 import os
 import xml.parsers.expat
@@ -67,45 +63,36 @@ from operator import itemgetter
 
 #include <stdint.h>
 
-#include "dev/gen_device_info.h"
+#include "dev/intel_device_info.h"
 #include "util/macros.h"
 
-<%def name="emit_per_gen_prop_func(item, prop)">
+<%def name="emit_per_gen_prop_func(item, prop, protect_defines)">
 %if item.has_prop(prop):
 % for gen, value in sorted(item.iter_prop(prop), reverse=True):
+%  if protect_defines:
+#ifndef ${gen.prefix(item.token_name)}_${prop}
 #define ${gen.prefix(item.token_name)}_${prop}  ${value}
+#endif
+%  else:
+#define ${gen.prefix(item.token_name)}_${prop}  ${value}
+%  endif
 % endfor
 
 static inline uint32_t ATTRIBUTE_PURE
-${item.token_name}_${prop}(const struct gen_device_info *devinfo)
+${item.token_name}_${prop}(const struct intel_device_info *devinfo)
 {
-   switch (devinfo->gen) {
-   case 12: return ${item.get_prop(prop, 12)};
-   case 11: return ${item.get_prop(prop, 11)};
-   case 9: return ${item.get_prop(prop, 9)};
-   case 8: return ${item.get_prop(prop, 8)};
-   case 7:
-%if item.get_prop(prop, 7.5) == item.get_prop(prop, 7):
-      return ${item.get_prop(prop, 7)};
-%else:
-      if (devinfo->is_haswell) {
-         return ${item.get_prop(prop, 7.5)};
-      } else {
-         return ${item.get_prop(prop, 7)};
-      }
-%endif
-   case 6: return ${item.get_prop(prop, 6)};
-   case 5: return ${item.get_prop(prop, 5)};
-   case 4:
-%if item.get_prop(prop, 4.5) == item.get_prop(prop, 4):
-      return ${item.get_prop(prop, 4)};
-%else:
-      if (devinfo->is_g4x) {
-         return ${item.get_prop(prop, 4.5)};
-      } else {
-         return ${item.get_prop(prop, 4)};
-      }
-%endif
+   switch (devinfo->verx10) {
+   case 125: return ${item.get_prop(prop, 12.5)};
+   case 120: return ${item.get_prop(prop, 12)};
+   case 110: return ${item.get_prop(prop, 11)};
+   case 90: return ${item.get_prop(prop, 9)};
+   case 80: return ${item.get_prop(prop, 8)};
+   case 75: return ${item.get_prop(prop, 7.5)};
+   case 70: return ${item.get_prop(prop, 7)};
+   case 60: return ${item.get_prop(prop, 6)};
+   case 50: return ${item.get_prop(prop, 5)};
+   case 45: return ${item.get_prop(prop, 4.5)};
+   case 40: return ${item.get_prop(prop, 4)};
    default:
       unreachable("Invalid hardware generation");
    }
@@ -117,27 +104,30 @@ ${item.token_name}_${prop}(const struct gen_device_info *devinfo)
 extern "C" {
 #endif
 % for _, container in sorted(containers.items(), key=itemgetter(0)):
+%  if container.allowed:
 
 /* ${container.name} */
 
-${emit_per_gen_prop_func(container, 'length')}
+${emit_per_gen_prop_func(container, 'length', True)}
 
-% for _, field in sorted(container.fields.items(), key=itemgetter(0)):
+%   for _, field in sorted(container.fields.items(), key=itemgetter(0)):
+%    if field.allowed:
 
 /* ${container.name}::${field.name} */
 
-${emit_per_gen_prop_func(field, 'bits')}
+${emit_per_gen_prop_func(field, 'bits', False)}
 
-${emit_per_gen_prop_func(field, 'start')}
-
-% endfor
+${emit_per_gen_prop_func(field, 'start', False)}
+%    endif
+%   endfor
+%  endif
 % endfor
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* ${guard} */""", output_encoding='utf-8')
+#endif /* ${guard} */""")
 
 class Gen(object):
 
@@ -163,7 +153,7 @@ class Gen(object):
         if token[0] == '_':
             token = token[1:]
 
-        return 'GEN{}_{}'.format(gen, token)
+        return 'GFX{}_{}'.format(gen, token)
 
 class Container(object):
 
@@ -172,6 +162,7 @@ class Container(object):
         self.token_name = safe_name(name)
         self.length_by_gen = {}
         self.fields = {}
+        self.allowed = False
 
     def add_gen(self, gen, xml_attrs):
         assert isinstance(gen, Gen)
@@ -215,6 +206,7 @@ class Field(object):
         self.token_name = safe_name('_'.join([container.name, self.name]))
         self.bits_by_gen = {}
         self.start_by_gen = {}
+        self.allowed = False
 
     def add_gen(self, gen, xml_attrs):
         assert isinstance(gen, Gen)
@@ -312,6 +304,9 @@ def parse_args():
                    help='If unset, then CPP_GUARD is derived from OUTPUT.')
     p.add_argument('--engines', nargs='?', type=str, default='render',
                    help="Comma-separated list of engines whose instructions should be parsed (default: %(default)s)")
+    p.add_argument('--include-symbols', type=str, action='store',
+                   help='List of instruction/structures to generate',
+                   required=True)
     p.add_argument('xml_sources', metavar='XML_SOURCE', nargs='+')
 
     pargs = p.parse_args()
@@ -343,7 +338,17 @@ def main():
         p.engines = set(engines)
         p.parse(source)
 
-    with open(pargs.output, 'wb') as f:
+    included_symbols_list = pargs.include_symbols.split(',')
+    for _name_field in included_symbols_list:
+        name_field = _name_field.split('::')
+        container = containers[name_field[0]]
+        container.allowed = True
+        if len(name_field) > 1:
+            field = container.get_field(name_field[1])
+            assert field
+            field.allowed = True
+
+    with open(pargs.output, 'w') as f:
         f.write(TEMPLATE.render(containers=containers, guard=pargs.cpp_guard))
 
 if __name__ == '__main__':

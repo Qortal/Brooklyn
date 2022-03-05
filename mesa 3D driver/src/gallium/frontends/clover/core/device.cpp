@@ -21,11 +21,11 @@
 //
 
 #include <algorithm>
-#include <unistd.h>
 #include "core/device.hpp"
 #include "core/platform.hpp"
 #include "pipe/p_screen.h"
 #include "pipe/p_state.h"
+#include "spirv/invocation.hpp"
 #include "util/bitscan.h"
 #include "util/u_debug.h"
 #include "spirv/invocation.hpp"
@@ -45,12 +45,118 @@ namespace {
       pipe->get_compute_param(pipe, ir_format, cap, &v.front());
       return v;
    }
+
+   cl_version
+   get_highest_supported_version(const device &dev) {
+      // All the checks below assume that the device supports FULL_PROFILE
+      // (which is the only profile support by clover) and that a device is
+      // not CUSTOM.
+      assert(dev.type() != CL_DEVICE_TYPE_CUSTOM);
+
+      cl_version version = CL_MAKE_VERSION(0, 0, 0);
+
+      const auto has_extension =
+         [extensions = dev.supported_extensions()](const char *extension_name){
+            return std::find_if(extensions.begin(), extensions.end(),
+                  [extension_name](const cl_name_version &extension){
+                     return strcmp(extension.name, extension_name) == 0;
+               }) != extensions.end();
+      };
+      const bool supports_images = dev.image_support();
+
+      // Check requirements for OpenCL 1.0
+      if (dev.max_compute_units() < 1 ||
+          dev.max_block_size().size() < 3 ||
+          // TODO: Check CL_DEVICE_MAX_WORK_ITEM_SIZES
+          dev.max_threads_per_block() < 1 ||
+          (dev.address_bits() != 32 && dev.address_bits() != 64) ||
+          dev.max_mem_alloc_size() < std::max(dev.max_mem_global() / 4,
+                                              (cl_ulong)128 * 1024 * 1024) ||
+          dev.max_mem_input() < 256 ||
+          dev.max_const_buffer_size() < 64 * 1024 ||
+          dev.max_const_buffers() < 8 ||
+          dev.max_mem_local() < 16 * 1024 ||
+          dev.clc_version < CL_MAKE_VERSION(1, 0, 0)) {
+         return version;
+      }
+      version = CL_MAKE_VERSION(1, 0, 0);
+
+      // Check requirements for OpenCL 1.1
+      if (!has_extension("cl_khr_byte_addressable_store") ||
+          !has_extension("cl_khr_global_int32_base_atomics") ||
+          !has_extension("cl_khr_global_int32_extended_atomics") ||
+          !has_extension("cl_khr_local_int32_base_atomics") ||
+          !has_extension("cl_khr_local_int32_extended_atomics") ||
+          // OpenCL 1.1 increased the minimum value for
+          // CL_DEVICE_MAX_PARAMETER_SIZE to 1024 bytes.
+          dev.max_mem_input() < 1024 ||
+          dev.mem_base_addr_align() < sizeof(cl_long16) ||
+          // OpenCL 1.1 increased the minimum value for
+          // CL_DEVICE_LOCAL_MEM_SIZE to 32 KB.
+          dev.max_mem_local() < 32 * 1024 ||
+          dev.clc_version < CL_MAKE_VERSION(1, 1, 0)) {
+         return version;
+      }
+      version = CL_MAKE_VERSION(1, 1, 0);
+
+      // Check requirements for OpenCL 1.2
+      if ((dev.has_doubles() && !has_extension("cl_khr_fp64")) ||
+          dev.clc_version < CL_MAKE_VERSION(1, 2, 0) ||
+          dev.max_printf_buffer_size() < 1 * 1024 * 1024 ||
+          (supports_images &&
+           (dev.max_image_buffer_size()  < 65536 ||
+            dev.max_image_array_number() < 2048))) {
+         return version;
+      }
+      version = CL_MAKE_VERSION(1, 2, 0);
+
+      // Check requirements for OpenCL 3.0
+      if (dev.max_mem_alloc_size() < std::max(std::min((cl_ulong)1024 * 1024 * 1024,
+                                                       dev.max_mem_global() / 4),
+                                              (cl_ulong)128 * 1024 * 1024) ||
+          // TODO: If pipes are supported, check:
+          //       * CL_DEVICE_MAX_PIPE_ARGS
+          //       * CL_DEVICE_PIPE_MAX_ACTIVE_RESERVATIONS
+          //       * CL_DEVICE_PIPE_MAX_PACKET_SIZE
+          // TODO: If on-device queues are supported, check:
+          //       * CL_DEVICE_QUEUE_ON_DEVICE_PROPERTIES
+          //       * CL_DEVICE_QUEUE_ON_DEVICE_PREFERRED_SIZE
+          //       * CL_DEVICE_QUEUE_ON_DEVICE_MAX_SIZE
+          //       * CL_DEVICE_MAX_ON_DEVICE_QUEUES
+          //       * CL_DEVICE_MAX_ON_DEVICE_EVENTS
+          dev.clc_version < CL_MAKE_VERSION(3, 0, 0) ||
+          (supports_images &&
+           (dev.max_images_write() < 64 ||
+            dev.max_image_size() < 16384))) {
+         return version;
+      }
+      version = CL_MAKE_VERSION(3, 0, 0);
+
+      return version;
+   }
 }
 
 device::device(clover::platform &platform, pipe_loader_device *ldev) :
    platform(platform), clc_cache(NULL), ldev(ldev) {
    pipe = pipe_loader_create_screen(ldev);
    if (pipe && pipe->get_param(pipe, PIPE_CAP_COMPUTE)) {
+      const bool has_supported_ir = supports_ir(PIPE_SHADER_IR_NATIVE) ||
+                                    supports_ir(PIPE_SHADER_IR_NIR_SERIALIZED);
+      if (has_supported_ir) {
+         unsigned major = 1, minor = 1;
+         debug_get_version_option("CLOVER_DEVICE_CLC_VERSION_OVERRIDE",
+                                  &major, &minor);
+         clc_version = CL_MAKE_VERSION(major, minor, 0);
+
+         version = get_highest_supported_version(*this);
+         major = CL_VERSION_MAJOR(version);
+         minor = CL_VERSION_MINOR(version);
+         debug_get_version_option("CLOVER_DEVICE_VERSION_OVERRIDE", &major,
+                                  &minor);
+         version = CL_MAKE_VERSION(major, minor, 0);
+
+      }
+
       if (supports_ir(PIPE_SHADER_IR_NATIVE))
          return;
 #ifdef HAVE_CLOVER_SPIRV
@@ -109,12 +215,14 @@ device::vendor_id() const {
 
 size_t
 device::max_images_read() const {
-   return PIPE_MAX_SHADER_SAMPLER_VIEWS;
+   return pipe->get_shader_param(pipe, PIPE_SHADER_COMPUTE,
+                                 PIPE_SHADER_CAP_MAX_SAMPLER_VIEWS);
 }
 
 size_t
 device::max_images_write() const {
-   return PIPE_MAX_SHADER_IMAGES;
+   return pipe->get_shader_param(pipe, PIPE_SHADER_COMPUTE,
+                                 PIPE_SHADER_CAP_MAX_SHADER_IMAGES);
 }
 
 size_t
@@ -123,13 +231,13 @@ device::max_image_buffer_size() const {
 }
 
 cl_uint
-device::max_image_levels_2d() const {
-   return util_last_bit(pipe->get_param(pipe, PIPE_CAP_MAX_TEXTURE_2D_SIZE));
+device::max_image_size() const {
+   return pipe->get_param(pipe, PIPE_CAP_MAX_TEXTURE_2D_SIZE);
 }
 
 cl_uint
-device::max_image_levels_3d() const {
-   return pipe->get_param(pipe, PIPE_CAP_MAX_TEXTURE_3D_LEVELS);
+device::max_image_size_3d() const {
+   return 1 << (pipe->get_param(pipe, PIPE_CAP_MAX_TEXTURE_3D_LEVELS) - 1);
 }
 
 size_t
@@ -197,10 +305,30 @@ device::max_compute_units() const {
                                       PIPE_COMPUTE_CAP_MAX_COMPUTE_UNITS)[0];
 }
 
+cl_uint
+device::max_printf_buffer_size() const {
+   return 1024 * 1024;
+}
+
 bool
 device::image_support() const {
-   return get_compute_param<uint32_t>(pipe, ir_format(),
-                                      PIPE_COMPUTE_CAP_IMAGES_SUPPORTED)[0];
+   bool supports_images = get_compute_param<uint32_t>(pipe, ir_format(),
+                                                      PIPE_COMPUTE_CAP_IMAGES_SUPPORTED)[0];
+   if (!supports_images)
+      return false;
+
+   /* If the gallium driver supports images, but does not support the
+    * minimum requirements for opencl 1.0 images, then don't claim to
+    * support images.
+    */
+   if (max_images_read() < 128 ||
+       max_images_write() < 8 ||
+       max_image_size() < 8192 ||
+       max_image_size_3d() < 2048 ||
+       max_samplers() < 16)
+      return false;
+
+   return true;
 }
 
 bool
@@ -227,7 +355,9 @@ device::has_unified_memory() const {
 
 size_t
 device::mem_base_addr_align() const {
-   return std::max((size_t)sysconf(_SC_PAGESIZE), sizeof(cl_long) * 16);
+   uint64_t page_size = 0;
+   os_get_page_size(&page_size);
+   return std::max((size_t)page_size, sizeof(cl_long) * 16);
 }
 
 cl_device_svm_capabilities
@@ -312,17 +442,27 @@ device::endianness() const {
 }
 
 std::string
-device::device_version() const {
-   static const std::string device_version =
-         debug_get_option("CLOVER_DEVICE_VERSION_OVERRIDE", "1.1");
-   return device_version;
+device::device_version_as_string() const {
+   static const std::string version_string =
+      std::to_string(CL_VERSION_MAJOR(version)) + "." +
+      std::to_string(CL_VERSION_MINOR(version));
+   return version_string;
 }
 
 std::string
-device::device_clc_version() const {
-   static const std::string device_clc_version =
-         debug_get_option("CLOVER_DEVICE_CLC_VERSION_OVERRIDE", "1.1");
-   return device_clc_version;
+device::device_clc_version_as_string() const {
+   int major = CL_VERSION_MAJOR(clc_version);
+   int minor = CL_VERSION_MINOR(clc_version);
+
+   /* for CL 3.0 we need this to be 1.2 until we support 2.0. */
+   if (major == 3) {
+      major = 1;
+      minor = 2;
+   }
+   static const std::string version_string =
+      std::to_string(major) + "." +
+      std::to_string(minor);
+   return version_string;
 }
 
 bool
@@ -331,22 +471,103 @@ device::supports_ir(enum pipe_shader_ir ir) const {
                                  PIPE_SHADER_CAP_SUPPORTED_IRS) & (1 << ir);
 }
 
-std::string
+std::vector<cl_name_version>
 device::supported_extensions() const {
-   return
-      "cl_khr_byte_addressable_store"
-      " cl_khr_global_int32_base_atomics"
-      " cl_khr_global_int32_extended_atomics"
-      " cl_khr_local_int32_base_atomics"
-      " cl_khr_local_int32_extended_atomics"
-      + std::string(has_int64_atomics() ? " cl_khr_int64_base_atomics" : "")
-      + std::string(has_int64_atomics() ? " cl_khr_int64_extended_atomics" : "")
-      + std::string(has_doubles() ? " cl_khr_fp64" : "")
-      + std::string(has_halves() ? " cl_khr_fp16" : "")
-      + std::string(svm_support() ? " cl_arm_shared_virtual_memory" : "");
+   std::vector<cl_name_version> vec;
+
+   vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_khr_byte_addressable_store" } );
+   vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_khr_global_int32_base_atomics" } );
+   vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_khr_global_int32_extended_atomics" } );
+   vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_khr_local_int32_base_atomics" } );
+   vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_khr_local_int32_extended_atomics" } );
+   if (has_int64_atomics()) {
+      vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_khr_int64_base_atomics" } );
+      vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_khr_int64_extended_atomics" } );
+   }
+   if (has_doubles())
+      vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_khr_fp64" } );
+   if (has_halves())
+      vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_khr_fp16" } );
+   if (svm_support())
+      vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_arm_shared_virtual_memory" } );
+   if (!clover::spirv::supported_versions().empty() &&
+       supports_ir(PIPE_SHADER_IR_NIR_SERIALIZED))
+      vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_khr_il_program" } );
+   vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "cl_khr_extended_versioning" } );
+   return vec;
+}
+
+std::string
+device::supported_extensions_as_string() const {
+   static std::string extensions_string;
+
+   if (!extensions_string.empty())
+      return extensions_string;
+
+   const auto extension_list = supported_extensions();
+   for (const auto &extension : extension_list) {
+      if (!extensions_string.empty())
+         extensions_string += " ";
+      extensions_string += extension.name;
+   }
+   return extensions_string;
+}
+
+std::vector<cl_name_version>
+device::supported_il_versions() const {
+   return clover::spirv::supported_versions();
 }
 
 const void *
 device::get_compiler_options(enum pipe_shader_ir ir) const {
    return pipe->get_compiler_options(pipe, ir, PIPE_SHADER_COMPUTE);
+}
+
+cl_version
+device::device_version() const {
+   return version;
+}
+
+cl_version
+device::device_clc_version(bool api) const {
+   /*
+    * For the API we have to limit this to 1.2,
+    * but internally we want 3.0 if it works.
+    */
+   if (!api)
+      return clc_version;
+
+   int major = CL_VERSION_MAJOR(clc_version);
+   /* for CL 3.0 we need this to be 1.2 until we support 2.0. */
+   if (major == 3) {
+      return CL_MAKE_VERSION(1, 2, 0);
+   }
+   return clc_version;
+}
+
+std::vector<cl_name_version>
+device::opencl_c_all_versions() const {
+   std::vector<cl_name_version> vec;
+   vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 0, 0), "OpenCL C" } );
+   vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 1, 0), "OpenCL C" } );
+
+   if (CL_VERSION_MAJOR(clc_version) == 1 &&
+       CL_VERSION_MINOR(clc_version) == 2)
+      vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 2, 0), "OpenCL C" } );
+   if (CL_VERSION_MAJOR(clc_version) == 3) {
+      vec.push_back( cl_name_version{ CL_MAKE_VERSION(1, 2, 0), "OpenCL C" } );
+      vec.push_back( cl_name_version{ CL_MAKE_VERSION(3, 0, 0), "OpenCL C" } );
+   }
+   return vec;
+}
+
+std::vector<cl_name_version>
+device::opencl_c_features() const {
+   std::vector<cl_name_version> vec;
+
+   vec.push_back( cl_name_version {CL_MAKE_VERSION(3, 0, 0), "__opencl_c_int64" });
+   if (has_doubles())
+      vec.push_back( cl_name_version {CL_MAKE_VERSION(3, 0, 0), "__opencl_c_fp64" });
+
+   return vec;
 }

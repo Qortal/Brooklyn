@@ -34,27 +34,28 @@ new_upload_buffer(struct gl_context *ctx, GLsizeiptr size, uint8_t **ptr)
 {
    assert(ctx->GLThread.SupportsBufferUploads);
 
-   struct gl_buffer_object *obj = ctx->Driver.NewBufferObject(ctx, -1);
+   struct gl_buffer_object *obj =
+      _mesa_bufferobj_alloc(ctx, -1);
    if (!obj)
       return NULL;
 
    obj->Immutable = true;
 
-   if (!ctx->Driver.BufferData(ctx, GL_ARRAY_BUFFER, size, NULL,
-                               GL_WRITE_ONLY,
-                               GL_CLIENT_STORAGE_BIT | GL_MAP_WRITE_BIT,
-                               obj)) {
-      ctx->Driver.DeleteBuffer(ctx, obj);
+   if (!_mesa_bufferobj_data(ctx, GL_ARRAY_BUFFER, size, NULL,
+                          GL_WRITE_ONLY,
+                          GL_CLIENT_STORAGE_BIT | GL_MAP_WRITE_BIT,
+                          obj)) {
+      _mesa_delete_buffer_object(ctx, obj);
       return NULL;
    }
 
-   *ptr = ctx->Driver.MapBufferRange(ctx, 0, size,
-                                     GL_MAP_WRITE_BIT |
-                                     GL_MAP_UNSYNCHRONIZED_BIT |
-                                     MESA_MAP_THREAD_SAFE_BIT,
-                                     obj, MAP_GLTHREAD);
+   *ptr = _mesa_bufferobj_map_range(ctx, 0, size,
+                                 GL_MAP_WRITE_BIT |
+                                 GL_MAP_UNSYNCHRONIZED_BIT |
+                                 MESA_MAP_THREAD_SAFE_BIT,
+                                 obj, MAP_GLTHREAD);
    if (!*ptr) {
-      ctx->Driver.DeleteBuffer(ctx, obj);
+      _mesa_delete_buffer_object(ctx, obj);
       return NULL;
    }
 
@@ -189,6 +190,15 @@ _mesa_glthread_BindBuffer(struct gl_context *ctx, GLenum target, GLuint buffer)
    case GL_DRAW_INDIRECT_BUFFER:
       glthread->CurrentDrawIndirectBufferName = buffer;
       break;
+   case GL_PIXEL_PACK_BUFFER:
+      glthread->CurrentPixelPackBufferName = buffer;
+      break;
+   case GL_PIXEL_UNPACK_BUFFER:
+      glthread->CurrentPixelUnpackBufferName = buffer;
+      break;
+   case GL_QUERY_BUFFER:
+      glthread->CurrentQueryBufferName = buffer;
+      break;
    }
 }
 
@@ -210,6 +220,10 @@ _mesa_glthread_DeleteBuffers(struct gl_context *ctx, GLsizei n,
          _mesa_glthread_BindBuffer(ctx, GL_ELEMENT_ARRAY_BUFFER, 0);
       if (id == glthread->CurrentDrawIndirectBufferName)
          _mesa_glthread_BindBuffer(ctx, GL_DRAW_INDIRECT_BUFFER, 0);
+      if (id == glthread->CurrentPixelPackBufferName)
+         _mesa_glthread_BindBuffer(ctx, GL_PIXEL_PACK_BUFFER, 0);
+      if (id == glthread->CurrentPixelUnpackBufferName)
+         _mesa_glthread_BindBuffer(ctx, GL_PIXEL_UNPACK_BUFFER, 0);
    }
 }
 
@@ -227,9 +241,10 @@ struct marshal_cmd_BufferData
    /* Next size bytes are GLubyte data[size] */
 };
 
-void
+uint32_t
 _mesa_unmarshal_BufferData(struct gl_context *ctx,
-                           const struct marshal_cmd_BufferData *cmd)
+                           const struct marshal_cmd_BufferData *cmd,
+                           const uint64_t *last)
 {
    const GLuint target_or_name = cmd->target_or_name;
    const GLsizei size = cmd->size;
@@ -253,20 +268,25 @@ _mesa_unmarshal_BufferData(struct gl_context *ctx,
       CALL_BufferData(ctx->CurrentServerDispatch,
                       (target_or_name, size, data, usage));
    }
+   return cmd->cmd_base.cmd_size;
 }
 
-void
+uint32_t
 _mesa_unmarshal_NamedBufferData(struct gl_context *ctx,
-                                const struct marshal_cmd_NamedBufferData *cmd)
+                                const struct marshal_cmd_NamedBufferData *cmd,
+                                const uint64_t *last)
 {
    unreachable("never used - all BufferData variants use DISPATCH_CMD_BufferData");
+   return 0;
 }
 
-void
+uint32_t
 _mesa_unmarshal_NamedBufferDataEXT(struct gl_context *ctx,
-                                   const struct marshal_cmd_NamedBufferDataEXT *cmd)
+                                   const struct marshal_cmd_NamedBufferDataEXT *cmd,
+                                   const uint64_t *last)
 {
    unreachable("never used - all BufferData variants use DISPATCH_CMD_BufferData");
+   return 0;
 }
 
 static void
@@ -278,10 +298,9 @@ _mesa_marshal_BufferData_merged(GLuint target_or_name, GLsizeiptr size,
    bool external_mem = !named &&
                        target_or_name == GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD;
    bool copy_data = data && !external_mem;
-   int cmd_size = sizeof(struct marshal_cmd_BufferData) + (copy_data ? size : 0);
+   size_t cmd_size = sizeof(struct marshal_cmd_BufferData) + (copy_data ? size : 0);
 
-   if (unlikely(size < 0 || size > INT_MAX || cmd_size < 0 ||
-                cmd_size > MARSHAL_MAX_CMD_SIZE ||
+   if (unlikely(size < 0 || size > INT_MAX || cmd_size > MARSHAL_MAX_CMD_SIZE ||
                 (named && target_or_name == 0))) {
       _mesa_glthread_finish_before(ctx, func);
       if (named) {
@@ -349,9 +368,10 @@ struct marshal_cmd_BufferSubData
    /* Next size bytes are GLubyte data[size] */
 };
 
-void
+uint32_t
 _mesa_unmarshal_BufferSubData(struct gl_context *ctx,
-                              const struct marshal_cmd_BufferSubData *cmd)
+                              const struct marshal_cmd_BufferSubData *cmd,
+                              const uint64_t *last)
 {
    const GLenum target_or_name = cmd->target_or_name;
    const GLintptr offset = cmd->offset;
@@ -368,20 +388,25 @@ _mesa_unmarshal_BufferSubData(struct gl_context *ctx,
       CALL_BufferSubData(ctx->CurrentServerDispatch,
                          (target_or_name, offset, size, data));
    }
+   return cmd->cmd_base.cmd_size;
 }
 
-void
+uint32_t
 _mesa_unmarshal_NamedBufferSubData(struct gl_context *ctx,
-                                   const struct marshal_cmd_NamedBufferSubData *cmd)
+                                   const struct marshal_cmd_NamedBufferSubData *cmd,
+                                   const uint64_t *last)
 {
    unreachable("never used - all BufferSubData variants use DISPATCH_CMD_BufferSubData");
+   return 0;
 }
 
-void
+uint32_t
 _mesa_unmarshal_NamedBufferSubDataEXT(struct gl_context *ctx,
-                                      const struct marshal_cmd_NamedBufferSubDataEXT *cmd)
+                                      const struct marshal_cmd_NamedBufferSubDataEXT *cmd,
+                                      const uint64_t *last)
 {
    unreachable("never used - all BufferSubData variants use DISPATCH_CMD_BufferSubData");
+   return 0;
 }
 
 static void

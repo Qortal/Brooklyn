@@ -24,6 +24,10 @@
 #ifndef AMD_FAMILY_H
 #define AMD_FAMILY_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum radeon_family
 {
    CHIP_UNKNOWN = 0,
@@ -100,13 +104,17 @@ enum radeon_family
    CHIP_RAVEN2,
    CHIP_RENOIR,
    CHIP_ARCTURUS,
+   CHIP_ALDEBARAN,
    CHIP_NAVI10,
    CHIP_NAVI12,
    CHIP_NAVI14,
    CHIP_SIENNA_CICHLID,
    CHIP_NAVY_FLOUNDER,
-   CHIP_DIMGREY_CAVEFISH,
    CHIP_VANGOGH,
+   CHIP_DIMGREY_CAVEFISH,
+   CHIP_BEIGE_GOBY,
+   CHIP_YELLOW_CARP,
+   CHIP_GFX1036,
    CHIP_LAST,
 };
 
@@ -126,6 +134,8 @@ enum chip_class
    GFX9,
    GFX10,
    GFX10_3,
+
+   NUM_GFX_VERSIONS,
 };
 
 enum ring_type
@@ -141,5 +151,11 @@ enum ring_type
    RING_VCN_JPEG,
    NUM_RING_TYPES,
 };
+
+const char *ac_get_family_name(enum radeon_family family);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

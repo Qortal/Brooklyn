@@ -51,7 +51,7 @@ static const struct glsl_type *
 get_per_vertex_type(const nir_shader *shader, const nir_variable *var,
                     unsigned *num_vertices)
 {
-   if (nir_is_per_vertex_io(var, shader->info.stage)) {
+   if (nir_is_arrayed_io(var, shader->info.stage)) {
       assert(glsl_type_is_array(var->type));
       if (num_vertices)
          *num_vertices = glsl_get_length(var->type);
@@ -90,8 +90,8 @@ variables_can_merge(const nir_shader *shader,
    const struct glsl_type *a_type_tail = a->type;
    const struct glsl_type *b_type_tail = b->type;
 
-   if (nir_is_per_vertex_io(a, shader->info.stage) !=
-       nir_is_per_vertex_io(b, shader->info.stage))
+   if (nir_is_arrayed_io(a, shader->info.stage) !=
+       nir_is_arrayed_io(b, shader->info.stage))
       return false;
 
    /* They must have the same array structure */
@@ -127,7 +127,9 @@ variables_can_merge(const nir_shader *shader,
    assert(a->data.mode == b->data.mode);
    if (shader->info.stage == MESA_SHADER_FRAGMENT &&
        a->data.mode == nir_var_shader_in &&
-       a->data.interpolation != b->data.interpolation)
+       (a->data.interpolation != b->data.interpolation ||
+        a->data.centroid != b->data.centroid ||
+        a->data.sample != b->data.sample))
       return false;
 
    if (shader->info.stage == MESA_SHADER_FRAGMENT &&
@@ -329,7 +331,7 @@ build_array_deref_of_new_var(nir_builder *b, nir_variable *new_var,
 
 static nir_ssa_def *
 build_array_index(nir_builder *b, nir_deref_instr *deref, nir_ssa_def *base,
-                  bool vs_in)
+                  bool vs_in, bool per_vertex)
 {
    switch (deref->deref_type) {
    case nir_deref_type_var:
@@ -337,8 +339,13 @@ build_array_index(nir_builder *b, nir_deref_instr *deref, nir_ssa_def *base,
    case nir_deref_type_array: {
       nir_ssa_def *index = nir_i2i(b, deref->arr.index.ssa,
                                    deref->dest.ssa.bit_size);
+
+      if (nir_deref_instr_parent(deref)->deref_type == nir_deref_type_var &&
+          per_vertex)
+         return base;
+
       return nir_iadd(
-         b, build_array_index(b, nir_deref_instr_parent(deref), base, vs_in),
+         b, build_array_index(b, nir_deref_instr_parent(deref), base, vs_in, per_vertex),
          nir_amul_imm(b, index, glsl_count_attribute_slots(deref->type, vs_in)));
    }
    default:
@@ -353,10 +360,16 @@ build_array_deref_of_new_var_flat(nir_shader *shader,
 {
    nir_deref_instr *deref = nir_build_deref_var(b, new_var);
 
-   if (nir_is_per_vertex_io(new_var, shader->info.stage)) {
-      assert(leader->deref_type == nir_deref_type_array);
-      nir_ssa_def *index = leader->arr.index.ssa;
-      leader = nir_deref_instr_parent(leader);
+   bool per_vertex = nir_is_arrayed_io(new_var, shader->info.stage);
+   if (per_vertex) {
+      nir_deref_path path;
+      nir_deref_path_init(&path, leader, NULL);
+
+      assert(path.path[0]->deref_type == nir_deref_type_var);
+      nir_deref_instr *p = path.path[1];
+      nir_deref_path_finish(&path);
+
+      nir_ssa_def *index = p->arr.index.ssa;
       deref = nir_build_deref_array(b, deref, index);
    }
 
@@ -365,8 +378,26 @@ build_array_deref_of_new_var_flat(nir_shader *shader,
 
    bool vs_in = shader->info.stage == MESA_SHADER_VERTEX &&
                 new_var->data.mode == nir_var_shader_in;
-   return nir_build_deref_array(
-      b, deref, build_array_index(b, leader, nir_imm_int(b, base), vs_in));
+   return nir_build_deref_array(b, deref,
+      build_array_index(b, leader, nir_imm_int(b, base), vs_in, per_vertex));
+}
+
+ASSERTED static bool
+nir_shader_can_read_output(const shader_info *info)
+{
+   switch (info->stage) {
+   case MESA_SHADER_TESS_CTRL:
+   case MESA_SHADER_FRAGMENT:
+      return true;
+
+   case MESA_SHADER_TASK:
+   case MESA_SHADER_MESH:
+      /* TODO(mesh): This will not be allowed on EXT. */
+      return true;
+
+   default:
+      return false;
+   }
 }
 
 static bool
@@ -435,8 +466,7 @@ nir_lower_io_to_vector_impl(nir_function_impl *impl, nir_variable_mode modes)
                break;
 
             if (nir_deref_mode_is(old_deref, nir_var_shader_out))
-               assert(b.shader->info.stage == MESA_SHADER_TESS_CTRL ||
-                      b.shader->info.stage == MESA_SHADER_FRAGMENT);
+               assert(nir_shader_can_read_output(&b.shader->info));
 
             nir_variable *old_var = nir_deref_instr_get_variable(old_deref);
 
@@ -481,7 +511,7 @@ nir_lower_io_to_vector_impl(nir_function_impl *impl, nir_variable_mode modes)
             nir_ssa_def *new_vec = nir_channels(&b, &intrin->dest.ssa,
                                                 vec4_comp_mask >> new_frac);
             nir_ssa_def_rewrite_uses_after(&intrin->dest.ssa,
-                                           nir_src_for_ssa(new_vec),
+                                           new_vec,
                                            new_vec->parent_instr);
 
             progress = true;
@@ -526,18 +556,18 @@ nir_lower_io_to_vector_impl(nir_function_impl *impl, nir_variable_mode modes)
 
             assert(intrin->src[1].is_ssa);
             nir_ssa_def *old_value = intrin->src[1].ssa;
-            nir_ssa_def *comps[4];
+            nir_ssa_scalar comps[4];
             for (unsigned c = 0; c < intrin->num_components; c++) {
                if (new_frac + c >= old_frac &&
                    (old_wrmask & 1 << (new_frac + c - old_frac))) {
-                  comps[c] = nir_channel(&b, old_value,
+                  comps[c] = nir_get_ssa_scalar(old_value,
                                          new_frac + c - old_frac);
                } else {
-                  comps[c] = nir_ssa_undef(&b, old_value->num_components,
-                                               old_value->bit_size);
+                  comps[c] = nir_get_ssa_scalar(nir_ssa_undef(&b, old_value->num_components,
+                                                              old_value->bit_size), 0);
                }
             }
-            nir_ssa_def *new_value = nir_vec(&b, comps, intrin->num_components);
+            nir_ssa_def *new_value = nir_vec_scalars(&b, comps, intrin->num_components);
             nir_instr_rewrite_src(&intrin->instr, &intrin->src[1],
                                   nir_src_for_ssa(new_value));
 
@@ -570,6 +600,89 @@ nir_lower_io_to_vector(nir_shader *shader, nir_variable_mode modes)
    nir_foreach_function(function, shader) {
       if (function->impl)
          progress |= nir_lower_io_to_vector_impl(function->impl, modes);
+   }
+
+   return progress;
+}
+
+static bool
+nir_vectorize_tess_levels_impl(nir_function_impl *impl)
+{
+   bool progress = false;
+   nir_builder b;
+   nir_builder_init(&b, impl);
+
+   nir_foreach_block(block, impl) {
+      nir_foreach_instr(instr, block) {
+         if (instr->type != nir_instr_type_intrinsic)
+            continue;
+
+         nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
+         if (intrin->intrinsic != nir_intrinsic_load_deref &&
+             intrin->intrinsic != nir_intrinsic_store_deref)
+            continue;
+
+         nir_deref_instr *deref = nir_src_as_deref(intrin->src[0]);
+         if (!nir_deref_mode_is(deref, nir_var_shader_out))
+            continue;
+
+         nir_variable *var = nir_deref_instr_get_variable(deref);
+         if (var->data.location != VARYING_SLOT_TESS_LEVEL_OUTER &&
+             var->data.location != VARYING_SLOT_TESS_LEVEL_INNER)
+            continue;
+
+         assert(deref->deref_type == nir_deref_type_array);
+         assert(nir_src_is_const(deref->arr.index));
+         unsigned index = nir_src_as_uint(deref->arr.index);;
+
+         b.cursor = nir_before_instr(instr);
+         nir_ssa_def *new_deref = &nir_build_deref_var(&b, var)->dest.ssa;
+         nir_instr_rewrite_src(instr, &intrin->src[0], nir_src_for_ssa(new_deref));
+
+         nir_deref_instr_remove_if_unused(deref);
+
+         intrin->num_components = glsl_get_vector_elements(var->type);
+
+         if (intrin->intrinsic == nir_intrinsic_store_deref) {
+            nir_intrinsic_set_write_mask(intrin, 1 << index);
+            nir_ssa_def *new_val = nir_ssa_undef(&b, intrin->num_components, 32);
+            new_val = nir_vector_insert_imm(&b, new_val, intrin->src[1].ssa, index);
+            nir_instr_rewrite_src(instr, &intrin->src[1], nir_src_for_ssa(new_val));
+         } else {
+            b.cursor = nir_after_instr(instr);
+            nir_ssa_def *val = &intrin->dest.ssa;
+            val->num_components = intrin->num_components;
+            nir_ssa_def *comp = nir_channel(&b, val, index);
+            nir_ssa_def_rewrite_uses_after(val, comp, comp->parent_instr);
+         }
+
+         progress = true;
+      }
+   }
+
+   return progress;
+}
+
+/* Make the tess factor variables vectors instead of compact arrays, so accesses
+ * can be combined by nir_opt_cse()/nir_opt_combine_stores().
+ */
+bool
+nir_vectorize_tess_levels(nir_shader *shader)
+{
+   bool progress = false;
+
+   nir_foreach_shader_out_variable(var, shader) {
+      if (var->data.location == VARYING_SLOT_TESS_LEVEL_OUTER ||
+          var->data.location == VARYING_SLOT_TESS_LEVEL_INNER) {
+         var->type = glsl_vector_type(GLSL_TYPE_FLOAT, glsl_get_length(var->type));
+         var->data.compact = false;
+         progress = true;
+      }
+   }
+
+   nir_foreach_function(function, shader) {
+      if (function->impl)
+         progress |= nir_vectorize_tess_levels_impl(function->impl);
    }
 
    return progress;

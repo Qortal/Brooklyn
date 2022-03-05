@@ -104,6 +104,9 @@ make_tcs_key(struct svga_context *svga, struct svga_compile_key *key)
 
    /* tcs is always followed by tes */
    key->last_vertex_stage = 0;
+
+   if (svga_have_gl43(svga))
+      key->image_size_used = tcs->base.info.opcode_count[TGSI_OPCODE_RESQ] ? 1 : 0;
 }
 
 
@@ -178,7 +181,8 @@ struct svga_tracked_state svga_hw_tcs =
     SVGA_NEW_TES |
     SVGA_NEW_TEXTURE_BINDING |
     SVGA_NEW_SAMPLER |
-    SVGA_NEW_RAST),
+    SVGA_NEW_RAST |
+    SVGA_NEW_TCS_RAW_BUFFER),
    emit_hw_tcs
 };
 
@@ -276,6 +280,8 @@ make_tes_key(struct svga_context *svga, struct svga_compile_key *key)
       }
    }
 
+   if (svga_have_gl43(svga))
+      key->image_size_used = tes->base.info.opcode_count[TGSI_OPCODE_RESQ] ? 1 : 0;
 }
 
 
@@ -320,7 +326,7 @@ get_passthrough_tcs(struct svga_context *svga)
    cb.user_buffer = (void *) svga->curr.default_tesslevels;
    cb.buffer_offset = 0;
    cb.buffer_size = 2 * 4 * sizeof(float);
-   svga->pipe.set_constant_buffer(&svga->pipe, PIPE_SHADER_TESS_CTRL, 0, &cb);
+   svga->pipe.set_constant_buffer(&svga->pipe, PIPE_SHADER_TESS_CTRL, 0, false, &cb);
 }
 
 
@@ -411,6 +417,7 @@ struct svga_tracked_state svga_hw_tes =
     SVGA_NEW_TES |
     SVGA_NEW_TEXTURE_BINDING |
     SVGA_NEW_SAMPLER |
-    SVGA_NEW_RAST),
+    SVGA_NEW_RAST |
+    SVGA_NEW_TES_RAW_BUFFER),
    emit_hw_tes
 };

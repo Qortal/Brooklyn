@@ -51,7 +51,7 @@ of the context current in the thread, and the second pointer stores the
 address of the *dispatch table* associated with that context. The
 dispatch table stores pointers to functions that actually implement
 specific GL functions. Each time a new context is made current in a
-thread, these pointers a updated.
+thread, these pointers are updated.
 
 The implementation of functions such as ``glVertex3fv`` becomes
 conceptually simple:
@@ -152,10 +152,16 @@ Use of this path is controlled by the preprocessor define
 ``USE_ELF_TLS``. Any platform capable of using ELF TLS should use this
 as the default dispatch method.
 
+Windows has a similar concept, and beginning with Windows Vista, shared
+libraries can take advantage of compiler-assisted TLS. This TLS data
+has no fixed size and does not compete with API-based TLS (``TlsAlloc``)
+for the limited number of slots available there, and so ``USE_ELF_TLS`` can
+be used on Windows too, even though it's not truly ELF.
+
 3.3. Assembly Language Dispatch Stubs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Many platforms has difficulty properly optimizing the tail-call in the
+Many platforms have difficulty properly optimizing the tail-call in the
 dispatch stubs. Platforms like x86 that pass parameters on the stack
 seem to have even more difficulty optimizing these routines. All of the
 dispatch routines are very short, and it is trivial to create optimal

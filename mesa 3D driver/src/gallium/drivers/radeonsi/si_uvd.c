@@ -25,6 +25,7 @@
  *
  **************************************************************************/
 
+#include "drm-uapi/drm_fourcc.h"
 #include "radeon/radeon_uvd.h"
 #include "radeon/radeon_uvd_enc.h"
 #include "radeon/radeon_vce.h"
@@ -41,10 +42,48 @@ struct pipe_video_buffer *si_video_buffer_create(struct pipe_context *pipe,
                                                  const struct pipe_video_buffer *tmpl)
 {
    struct pipe_video_buffer vidbuf = *tmpl;
-   /* TODO: get tiling working */
+   uint64_t *modifiers = NULL;
+   int modifiers_count = 0;
+   uint64_t mod = DRM_FORMAT_MOD_LINEAR;
+
+   /* To get tiled buffers, users need to explicitly provide a list of
+    * modifiers. */
    vidbuf.bind |= PIPE_BIND_LINEAR;
 
-   return vl_video_buffer_create_as_resource(pipe, &vidbuf);
+   if (pipe->screen->resource_create_with_modifiers) {
+      modifiers = &mod;
+      modifiers_count = 1;
+   }
+
+   return vl_video_buffer_create_as_resource(pipe, &vidbuf, modifiers,
+                                             modifiers_count);
+}
+
+struct pipe_video_buffer *si_video_buffer_create_with_modifiers(struct pipe_context *pipe,
+                                                                const struct pipe_video_buffer *tmpl,
+                                                                const uint64_t *modifiers,
+                                                                unsigned int modifiers_count)
+{
+   uint64_t *allowed_modifiers;
+   unsigned int allowed_modifiers_count, i;
+
+   /* Filter out DCC modifiers, because we don't support them for video
+    * for now. */
+   allowed_modifiers = calloc(modifiers_count, sizeof(uint64_t));
+   if (!allowed_modifiers)
+      return NULL;
+
+   allowed_modifiers_count = 0;
+   for (i = 0; i < modifiers_count; i++) {
+      if (ac_modifier_has_dcc(modifiers[i]))
+         continue;
+      allowed_modifiers[allowed_modifiers_count++] = modifiers[i];
+   }
+
+   struct pipe_video_buffer *buf =
+      vl_video_buffer_create_as_resource(pipe, tmpl, allowed_modifiers, allowed_modifiers_count);
+   free(allowed_modifiers);
+   return buf;
 }
 
 /* set the decoding target buffer offsets */

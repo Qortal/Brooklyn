@@ -42,7 +42,7 @@ libfreedreno_rnn = static_library(
     '-DRNN_DEF_PATH="' + rnn_path + '"',
   ],
   gnu_symbol_visibility: 'hidden',
-  dependencies: [ dep_libxml2 ],
+  dependencies: [ dep_libxml2, idep_mesautil ],
   build_by_default: false,
 )
 
@@ -57,3 +57,13 @@ headergen2 = executable(
   build_by_default: with_tools.contains('freedreno'),
   install: false
 )
+
+if with_tests
+  foreach xml : ['adreno.xml', 'msm.xml']
+    test('headergen2-' + xml,
+      headergen2,
+      args: [xml],
+      suite: 'freedreno',
+    )
+  endforeach
+endif

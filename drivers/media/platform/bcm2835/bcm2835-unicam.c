@@ -73,7 +73,6 @@
 #include <media/videobuf2-dma-contig.h>
 
 #include <media/v4l2-async.h>
-#define v4l2_async_notifier_add_subdev __v4l2_async_notifier_add_subdev
 
 #include "vc4-regs-unicam.h"
 
@@ -933,10 +932,14 @@ static irqreturn_t unicam_isr(int irq, void *dev)
 			 * as complete, as the HW will reuse that buffer.
 			 */
 			if (unicam->node[i].cur_frm &&
-			    unicam->node[i].cur_frm != unicam->node[i].next_frm)
+			    unicam->node[i].cur_frm != unicam->node[i].next_frm) {
 				unicam_process_buffer_complete(&unicam->node[i],
 							       sequence);
-			unicam->node[i].cur_frm = unicam->node[i].next_frm;
+				unicam->node[i].cur_frm = unicam->node[i].next_frm;
+				unicam->node[i].next_frm = NULL;
+			} else {
+				unicam->node[i].cur_frm = unicam->node[i].next_frm;
+			}
 		}
 		unicam->sequence++;
 	}
@@ -954,12 +957,30 @@ static irqreturn_t unicam_isr(int irq, void *dev)
 			if (unicam->node[i].cur_frm)
 				unicam->node[i].cur_frm->vb.vb2_buf.timestamp =
 								ts;
+			else
+				unicam_dbg(2, unicam, "ISR: [%d] Dropping frame, buffer not available at FS\n",
+					   i);
 			/*
 			 * Set the next frame output to go to a dummy frame
-			 * if we have not managed to obtain another frame
-			 * from the queue.
+			 * if no buffer currently queued.
 			 */
-			unicam_schedule_dummy_buffer(&unicam->node[i]);
+			if (!unicam->node[i].next_frm ||
+			    unicam->node[i].next_frm == unicam->node[i].cur_frm) {
+				unicam_schedule_dummy_buffer(&unicam->node[i]);
+			} else if (unicam->node[i].cur_frm) {
+				/*
+				 * Repeated FS without FE. Hardware will have
+				 * swapped buffers, but the cur_frm doesn't
+				 * contain valid data. Return cur_frm to the
+				 * queue.
+				 */
+				spin_lock(&unicam->node[i].dma_queue_lock);
+				list_add_tail(&unicam->node[i].cur_frm->list,
+					      &unicam->node[i].dma_queue);
+				spin_unlock(&unicam->node[i].dma_queue_lock);
+				unicam->node[i].cur_frm = unicam->node[i].next_frm;
+				unicam->node[i].next_frm = NULL;
+			}
 		}
 
 		unicam_queue_event_sof(unicam);
@@ -983,11 +1004,6 @@ static irqreturn_t unicam_isr(int irq, void *dev)
 		}
 	}
 
-	if (reg_read(unicam, UNICAM_ICTL) & UNICAM_FCM) {
-		/* Switch out of trigger mode if selected */
-		reg_write_field(unicam, UNICAM_ICTL, 1, UNICAM_TFC);
-		reg_write_field(unicam, UNICAM_ICTL, 0, UNICAM_FCM);
-	}
 	return IRQ_HANDLED;
 }
 
@@ -2297,8 +2313,7 @@ static void unicam_start_rx(struct unicam_device *dev, dma_addr_t *addr)
 
 	reg_write_field(dev, UNICAM_ANA, 0, UNICAM_DDL);
 
-	/* Always start in trigger frame capture mode (UNICAM_FCM set) */
-	val = UNICAM_FSIE | UNICAM_FEIE | UNICAM_FCM | UNICAM_IBOB;
+	val = UNICAM_FSIE | UNICAM_FEIE | UNICAM_IBOB;
 	set_field(&val, line_int_freq, UNICAM_LCIE_MASK);
 	reg_write(dev, UNICAM_ICTL, val);
 	reg_write(dev, UNICAM_STA, UNICAM_STA_MASK_ALL);
@@ -2411,12 +2426,6 @@ static void unicam_start_rx(struct unicam_device *dev, dma_addr_t *addr)
 	/* Load embedded data buffer pointers if needed */
 	if (dev->node[METADATA_PAD].streaming && dev->sensor_embedded_data)
 		reg_write_field(dev, UNICAM_DCS, 1, UNICAM_LDP);
-
-	/*
-	 * Enable trigger only for the first frame to
-	 * sync correctly to the FS from the source.
-	 */
-	reg_write_field(dev, UNICAM_ICTL, 1, UNICAM_TFC);
 }
 
 static void unicam_disable(struct unicam_device *dev)
@@ -3117,6 +3126,7 @@ static int unicam_async_complete(struct v4l2_async_notifier *notifier)
 	}
 	if (!source_pads) {
 		unicam_err(unicam, "No source pads on sensor.\n");
+		ret = -ENODEV;
 		goto unregister;
 	}
 
@@ -3265,18 +3275,18 @@ static int of_unicam_connect_subdevs(struct unicam_device *dev)
 		   dev->max_data_lanes, dev->bus_flags);
 
 	/* Initialize and register the async notifier. */
-	v4l2_async_notifier_init(&dev->notifier);
+	v4l2_async_nf_init(&dev->notifier);
 	dev->notifier.ops = &unicam_async_ops;
 
 	dev->asd.match_type = V4L2_ASYNC_MATCH_FWNODE;
 	dev->asd.match.fwnode = fwnode_graph_get_remote_endpoint(of_fwnode_handle(ep_node));
-	ret = v4l2_async_notifier_add_subdev(&dev->notifier, &dev->asd);
+	ret = __v4l2_async_nf_add_subdev(&dev->notifier, &dev->asd);
 	if (ret) {
 		unicam_err(dev, "Error adding subdevice: %d\n", ret);
 		goto cleanup_exit;
 	}
 
-	ret = v4l2_async_notifier_register(&dev->v4l2_dev, &dev->notifier);
+	ret = v4l2_async_nf_register(&dev->v4l2_dev, &dev->notifier);
 	if (ret) {
 		unicam_err(dev, "Error registering async notifier: %d\n", ret);
 		ret = -EINVAL;
@@ -3413,7 +3423,7 @@ static int unicam_remove(struct platform_device *pdev)
 
 	unicam_dbg(2, unicam, "%s\n", __func__);
 
-	v4l2_async_notifier_unregister(&unicam->notifier);
+	v4l2_async_nf_unregister(&unicam->notifier);
 	v4l2_device_unregister(&unicam->v4l2_dev);
 	media_device_unregister(&unicam->mdev);
 	unregister_nodes(unicam);

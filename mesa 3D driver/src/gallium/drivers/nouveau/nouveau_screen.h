@@ -28,6 +28,8 @@ struct nouveau_screen {
    struct nouveau_client *client;
    struct nouveau_pushbuf *pushbuf;
 
+   char chipset_name[8];
+
    int refcount;
 
    unsigned transfer_pushbuf_threshold;
@@ -58,6 +60,7 @@ struct nouveau_screen {
    int64_t cpu_gpu_time_delta;
 
    bool hint_buf_keep_sysmem_copy;
+   bool tegra_sector_layout;
 
    unsigned vram_domain;
 

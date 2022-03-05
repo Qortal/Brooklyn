@@ -48,6 +48,8 @@ buffers, surfaces) are bound to the driver.
   type. index is used to indicate which buffer to set (some APIs may allow
   multiple ones to be set, and binding a specific one later, though drivers
   are mostly restricted to the first one right now).
+  If take_ownership is true, the buffer reference is passed to the driver, so
+  that the driver doesn't have to increment the reference count.
 
 * ``set_inlinable_constants`` sets inlinable constants for constant buffer 0.
 
@@ -116,6 +118,8 @@ objects. They all follow simple, one-method binding calls, e.g.
     levels. This corresponds to GL's ``PATCH_DEFAULT_OUTER_LEVEL``.
   * ``default_inner_level`` is the default value for the inner tessellation
     levels. This corresponds to GL's ``PATCH_DEFAULT_INNER_LEVEL``.
+* ``set_patch_vertices`` sets the number of vertices per input patch
+  for tessellation.
 
 * ``set_debug_callback`` sets the callback to be used for reporting
   various debug messages, eventually reported via KHR_debug and
@@ -124,9 +128,10 @@ objects. They all follow simple, one-method binding calls, e.g.
 Samplers
 ^^^^^^^^
 
-pipe_sampler_state objects control how textures are sampled (coordinate
-wrap modes, interpolation modes, etc).  Note that samplers are not used
-for texture buffer objects.  That is, pipe_context::bind_sampler_views()
+pipe_sampler_state objects control how textures are sampled
+(coordinate wrap modes, interpolation modes, etc).  Note that unless
+``PIPE_CAP_TEXTURE_BUFFER_SAMPLER`` is enabled, samplers are not used for
+texture buffer objects.  That is, pipe_context::bind_sampler_views()
 will not bind a sampler if the corresponding sampler view refers to a
 PIPE_BUFFER resource.
 
@@ -250,6 +255,10 @@ discussed above.
   draw_auto stage, i.e. it specifies how much data there is in the buffer
   for the purposes of the draw_auto stage. -1 means the buffer should
   be appended to, and everything else sets the internal offset.
+
+* ``stream_output_target_offset`` Retrieve the internal stream offset from
+  an streamout target. This is used to implement Vulkan pause/resume support
+  which needs to pass the internal offset to the API.
 
 NOTE: The currently-bound vertex or geometry shader must be compiled with
 the properly-filled-in structure pipe_stream_output_info describing which
@@ -558,6 +567,9 @@ Normally, if the occlusion query returned a non-zero result subsequent
 drawing happens normally so fragments may be generated, shaded and
 processed even where they're known to be obscured.
 
+The ''render_condition_mem'' function specifies the drawing is dependant
+on a value in memory. A buffer resource and offset denote which 32-bit
+value to use for the query. This is used for Vulkan API.
 
 Flushing
 ^^^^^^^^

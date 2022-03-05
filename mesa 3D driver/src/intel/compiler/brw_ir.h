@@ -90,7 +90,7 @@ struct backend_reg : private brw_reg
 struct bblock_t;
 
 struct backend_instruction : public exec_node {
-   bool is_3src(const struct gen_device_info *devinfo) const;
+   bool is_3src(const struct intel_device_info *devinfo) const;
    bool is_tex() const;
    bool is_math() const;
    bool is_control_flow() const;
@@ -99,9 +99,15 @@ struct backend_instruction : public exec_node {
    bool can_do_saturate() const;
    bool can_do_cmod() const;
    bool reads_accumulator_implicitly() const;
-   bool writes_accumulator_implicitly(const struct gen_device_info *devinfo) const;
+   bool writes_accumulator_implicitly(const struct intel_device_info *devinfo) const;
 
-   void remove(bblock_t *block);
+   /**
+    * Instructions that use indirect addressing have additional register
+    * regioning restrictions.
+    */
+   bool uses_indirect_addressing() const;
+
+   void remove(bblock_t *block, bool defer_later_block_ip_updates = false);
    void insert_after(bblock_t *block, backend_instruction *inst);
    void insert_before(bblock_t *block, backend_instruction *inst);
    void insert_before(bblock_t *block, exec_list *list);
@@ -152,6 +158,7 @@ struct backend_instruction {
    uint8_t target; /**< MRT target. */
    uint8_t sfid; /**< SFID for SEND instructions */
    uint32_t desc; /**< SEND[S] message descriptor immediate */
+   uint32_t ex_desc; /**< SEND[S] extended message descriptor immediate */
    unsigned size_written; /**< Data written to the destination register in bytes. */
 
    enum opcode opcode; /* BRW_OPCODE_* or FS_OPCODE_* */

@@ -101,13 +101,21 @@ Basic formatting guidelines
 -  Function names follow various conventions depending on the type of
    function:
 
-   ::
-
-      glFooBar()       - a public GL entry point (in glapi_dispatch.c)
-      _mesa_FooBar()   - the internal immediate mode function
-      save_FooBar()    - retained mode (display list) function in dlist.c
-      foo_bar()        - a static (private) function
-      _mesa_foo_bar()  - an internal non-static Mesa function
+   +---------------------+------------------------------------------+
+   | Convention          | Explanation                              |
+   +=====================+==========================================+
+   | ``glFooBar()``      | a public GL entry point (in              |
+   |                     | :file:`glapi_dispatch.c`)                |
+   +---------------------+------------------------------------------+
+   | ``_mesa_FooBar()``  | the internal immediate mode function     |
+   +---------------------+------------------------------------------+
+   | ``save_FooBar()``   | retained mode (display list) function in |
+   |                     | :file:`dlist.c`                          |
+   +---------------------+------------------------------------------+
+   | ``foo_bar()``       | a static (private) function              |
+   +---------------------+------------------------------------------+
+   | ``_mesa_foo_bar()`` | an internal non-static Mesa function     |
+   +---------------------+------------------------------------------+
 
 -  Constants, macros and enum names are ``ALL_UPPERCASE``, with \_
    between words.
@@ -120,5 +128,5 @@ Basic formatting guidelines
    prefer the use of ``bool``, ``true``, and ``false`` over
    ``GLboolean``, ``GL_TRUE``, and ``GL_FALSE``. In C code, this may
    mean that ``#include <stdbool.h>`` needs to be added. The
-   ``try_emit_*`` methods in ``src/mesa/program/ir_to_mesa.cpp`` and
-   ``src/mesa/state_tracker/st_glsl_to_tgsi.cpp`` can serve as examples.
+   ``try_emit_*`` method ``src/mesa/state_tracker/st_glsl_to_tgsi.cpp``
+   can serve as an example.

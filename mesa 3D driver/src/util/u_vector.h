@@ -32,6 +32,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include "util/macros.h"
+#include "util/u_math.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -53,9 +54,22 @@ struct u_vector {
    void *data;
 };
 
-int u_vector_init(struct u_vector *queue, uint32_t element_size, uint32_t size);
+int u_vector_init_pow2(struct u_vector *queue,
+                       uint32_t initial_element_count,
+                       uint32_t element_size);
+
 void *u_vector_add(struct u_vector *queue);
 void *u_vector_remove(struct u_vector *queue);
+
+static inline int
+u_vector_init(struct u_vector *queue,
+              uint32_t initial_element_count,
+              uint32_t element_size)
+{
+   initial_element_count = util_next_power_of_two(initial_element_count);
+   element_size = util_next_power_of_two(element_size);
+   return u_vector_init_pow2(queue, initial_element_count, element_size);
+}
 
 static inline int
 u_vector_length(struct u_vector *queue)
@@ -84,14 +98,18 @@ u_vector_finish(struct u_vector *queue)
    free(queue->data);
 }
 
-#if !defined(__GNUC__) || defined(__cplusplus)
-#define __builtin_types_compatible_p(t1, t2) 1
+#ifdef __cplusplus
+#define u_vector_element_cast(elem) (decltype(elem))
+#else
+#define u_vector_element_cast(elem) (void *)
 #endif
 
 #define u_vector_foreach(elem, queue)                                  \
    STATIC_ASSERT(__builtin_types_compatible_p(__typeof__(queue), struct u_vector *)); \
    for (uint32_t __u_vector_offset = (queue)->tail;                                \
-        elem = (void *)((char *)(queue)->data + (__u_vector_offset & ((queue)->size - 1))), __u_vector_offset != (queue)->head; \
+        elem = u_vector_element_cast(elem)((char *)(queue)->data + \
+                                           (__u_vector_offset & ((queue)->size - 1))), \
+           __u_vector_offset != (queue)->head;                          \
         __u_vector_offset += (queue)->element_size)
 
 #ifdef __cplusplus

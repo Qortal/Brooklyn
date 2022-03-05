@@ -35,6 +35,16 @@ struct virgl_host_query_state {
    uint64_t result;
 };
 
+struct virgl_memory_info
+{
+   uint32_t total_device_memory; /**< size of device memory, e.g. VRAM */
+   uint32_t avail_device_memory; /**< free device memory at the moment */
+   uint32_t total_staging_memory; /**< size of staging memory, e.g. GART */
+   uint32_t avail_staging_memory; /**< free staging memory at the moment */
+   uint32_t device_memory_evicted; /**< size of memory evicted (monotonic counter) */
+   uint32_t nr_device_memory_evictions; /**< # of evictions (monotonic counter) */
+};
+
 enum virgl_object_type {
    VIRGL_OBJECT_NULL,
    VIRGL_OBJECT_BLEND,
@@ -47,6 +57,7 @@ enum virgl_object_type {
    VIRGL_OBJECT_SURFACE,
    VIRGL_OBJECT_QUERY,
    VIRGL_OBJECT_STREAMOUT_TARGET,
+   VIRGL_OBJECT_MSAA_SURFACE,
    VIRGL_MAX_OBJECTS,
 };
 
@@ -102,6 +113,10 @@ enum virgl_context_cmd {
    VIRGL_CCMD_SET_TWEAKS,
    VIRGL_CCMD_CLEAR_TEXTURE,
    VIRGL_CCMD_PIPE_RESOURCE_CREATE,
+   VIRGL_CCMD_PIPE_RESOURCE_SET_TYPE,
+   VIRGL_CCMD_GET_MEMORY_INFO,
+   VIRGL_CCMD_EMIT_STRING_MARKER,
+   VIRGL_CCMD_LINK_SHADER,
    VIRGL_MAX_COMMANDS
 };
 
@@ -332,6 +347,10 @@ enum virgl_context_cmd {
 #define VIRGL_OBJ_SURFACE_TEXTURE_LEVEL 4
 #define VIRGL_OBJ_SURFACE_TEXTURE_LAYERS 5
 
+/* create surface with implicit MSAA support (for EXT_multisample_render_to_texture) */
+#define VIRGL_OBJ_MSAA_SURFACE_SIZE (VIRGL_OBJ_SURFACE_SIZE + 1)
+#define VIRGL_OBJ_SURFACE_SAMPLE_COUNT 6
+
 /* create streamout target */
 #define VIRGL_OBJ_STREAMOUT_SIZE 4
 #define VIRGL_OBJ_STREAMOUT_HANDLE 1
@@ -352,6 +371,7 @@ enum virgl_context_cmd {
 #define VIRGL_OBJ_SAMPLE_STATE_S0_COMPARE_MODE(x) (((x) & 0x1) << 15)
 #define VIRGL_OBJ_SAMPLE_STATE_S0_COMPARE_FUNC(x) (((x) & 0x7) << 16)
 #define VIRGL_OBJ_SAMPLE_STATE_S0_SEAMLESS_CUBE_MAP(x) (((x) & 0x1) << 19)
+#define VIRGL_OBJ_SAMPLE_STATE_S0_MAX_ANISOTROPY(x) (((x & 0x3f)) << 20)
 
 #define VIRGL_OBJ_SAMPLER_STATE_LOD_BIAS 3
 #define VIRGL_OBJ_SAMPLER_STATE_MIN_LOD 4
@@ -588,11 +608,14 @@ enum virgl_context_cmd {
 #define VIRGL_TRANSFER3D_DATA_OFFSET 12
 #define VIRGL_TRANSFER3D_DIRECTION 13
 
-/* Copy transfer */
+/* Copy transfer to host and from host*/
 #define VIRGL_COPY_TRANSFER3D_SIZE 14
 /* The first 11 dwords are the same as VIRGL_RESOURCE_IW_*  */
 #define VIRGL_COPY_TRANSFER3D_SRC_RES_HANDLE 12
 #define VIRGL_COPY_TRANSFER3D_SRC_RES_OFFSET 13
+/* Second bit of this dword is used to identify the direction
+ * 1 << 1 means transfer from host. 0 << 1 means transfer to host.
+ */
 #define VIRGL_COPY_TRANSFER3D_SYNCHRONIZED 14
 
 /* set tweak flags */
@@ -635,5 +658,32 @@ enum vrend_tweak_type {
 #define VIRGL_PIPE_RES_CREATE_NR_SAMPLES 9
 #define VIRGL_PIPE_RES_CREATE_FLAGS 10
 #define VIRGL_PIPE_RES_CREATE_BLOB_ID 11
+
+/* VIRGL_CCMD_PIPE_RESOURCE_SET_TYPE */
+#define VIRGL_PIPE_RES_SET_TYPE_SIZE(nplanes) (8 + (nplanes) * 2)
+#define VIRGL_PIPE_RES_SET_TYPE_RES_HANDLE 1
+#define VIRGL_PIPE_RES_SET_TYPE_FORMAT 2
+#define VIRGL_PIPE_RES_SET_TYPE_BIND 3
+#define VIRGL_PIPE_RES_SET_TYPE_WIDTH 4
+#define VIRGL_PIPE_RES_SET_TYPE_HEIGHT 5
+#define VIRGL_PIPE_RES_SET_TYPE_USAGE 6
+#define VIRGL_PIPE_RES_SET_TYPE_MODIFIER_LO 7
+#define VIRGL_PIPE_RES_SET_TYPE_MODIFIER_HI 8
+#define VIRGL_PIPE_RES_SET_TYPE_PLANE_STRIDE(plane) (9 + (plane) * 2)
+#define VIRGL_PIPE_RES_SET_TYPE_PLANE_OFFSET(plane) (10 + (plane) * 2)
+
+/* send string marker */
+#define VIRGL_SEND_STRING_MARKER_MIN_SIZE 2
+#define VIRGL_SEND_STRING_MARKER_STRING_SIZE 1
+#define VIRGL_SEND_STRING_MARKER_OFFSET 2
+
+/* link shader program */
+#define VIRGL_LINK_SHADER_SIZE 6
+#define VIRGL_LINK_SHADER_VERTEX_HANDLE 1
+#define VIRGL_LINK_SHADER_FRAGMENT_HANDLE 2
+#define VIRGL_LINK_SHADER_GEOMETRY_HANDLE 3
+#define VIRGL_LINK_SHADER_TESS_CTRL_HANDLE 4
+#define VIRGL_LINK_SHADER_TESS_EVAL_HANDLE 5
+#define VIRGL_LINK_SHADER_COMPUTE_HANDLE 6
 
 #endif

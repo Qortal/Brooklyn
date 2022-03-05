@@ -48,18 +48,18 @@
 #include "util/u_upload_mgr.h"
 
 static void
-etna_set_stencil_ref(struct pipe_context *pctx, const struct pipe_stencil_ref *sr)
+etna_set_stencil_ref(struct pipe_context *pctx, const struct pipe_stencil_ref sr)
 {
    struct etna_context *ctx = etna_context(pctx);
    struct compiled_stencil_ref *cs = &ctx->stencil_ref;
 
-   ctx->stencil_ref_s = *sr;
+   ctx->stencil_ref_s = sr;
 
    for (unsigned i = 0; i < 2; i++) {
       cs->PE_STENCIL_CONFIG[i] =
-         VIVS_PE_STENCIL_CONFIG_REF_FRONT(sr->ref_value[i]);
+         VIVS_PE_STENCIL_CONFIG_REF_FRONT(sr.ref_value[i]);
       cs->PE_STENCIL_CONFIG_EXT[i] =
-         VIVS_PE_STENCIL_CONFIG_EXT_REF_BACK(sr->ref_value[!i]);
+         VIVS_PE_STENCIL_CONFIG_EXT_REF_BACK(sr.ref_value[!i]);
    }
    ctx->dirty |= ETNA_DIRTY_STENCIL_REF;
 }
@@ -81,7 +81,7 @@ etna_set_sample_mask(struct pipe_context *pctx, unsigned sample_mask)
 
 static void
 etna_set_constant_buffer(struct pipe_context *pctx,
-      enum pipe_shader_type shader, uint index,
+      enum pipe_shader_type shader, uint index, bool take_ownership,
       const struct pipe_constant_buffer *cb)
 {
    struct etna_context *ctx = etna_context(pctx);
@@ -89,7 +89,7 @@ etna_set_constant_buffer(struct pipe_context *pctx,
 
    assert(index < ETNA_MAX_CONST_BUF);
 
-   util_copy_constant_buffer(&so->cb[index], cb);
+   util_copy_constant_buffer(&so->cb[index], cb, take_ownership);
 
    /* Note that the gallium frontends can unbind constant buffers by
     * passing NULL here. */
@@ -426,12 +426,15 @@ etna_set_viewport_states(struct pipe_context *pctx, unsigned start_slot,
 
 static void
 etna_set_vertex_buffers(struct pipe_context *pctx, unsigned start_slot,
-      unsigned num_buffers, const struct pipe_vertex_buffer *vb)
+      unsigned num_buffers, unsigned unbind_num_trailing_slots, bool take_ownership,
+      const struct pipe_vertex_buffer *vb)
 {
    struct etna_context *ctx = etna_context(pctx);
    struct etna_vertexbuf_state *so = &ctx->vertex_buffer;
 
-   util_set_vertex_buffers_mask(so->vb, &so->enabled_mask, vb, start_slot, num_buffers);
+   util_set_vertex_buffers_mask(so->vb, &so->enabled_mask, vb, start_slot,
+                                num_buffers, unbind_num_trailing_slots,
+                                take_ownership);
    so->count = util_last_bit(so->enabled_mask);
 
    for (unsigned idx = start_slot; idx < start_slot + num_buffers; ++idx) {
@@ -518,6 +521,7 @@ etna_vertex_elements_state_create(struct pipe_context *pctx,
    if (num_elements > screen->specs.vertex_max_elements) {
       BUG("number of elements (%u) exceeds chip maximum (%u)", num_elements,
           screen->specs.vertex_max_elements);
+      FREE(cs);
       return NULL;
    }
 
@@ -610,6 +614,14 @@ etna_vertex_elements_state_bind(struct pipe_context *pctx, void *ve)
    ctx->dirty |= ETNA_DIRTY_VERTEX_ELEMENTS;
 }
 
+static void
+etna_set_stream_output_targets(struct pipe_context *pctx,
+      unsigned num_targets, struct pipe_stream_output_target **targets,
+      const unsigned *offsets)
+{
+   /* stub */
+}
+
 static bool
 etna_update_ts_config(struct etna_context *ctx)
 {
@@ -691,7 +703,7 @@ etna_update_zsa(struct etna_context *ctx)
       if (VIV_FEATURE(screen, chipMinorFeatures5, RA_WRITE_DEPTH) &&
           !VIV_FEATURE(screen, chipFeatures, NO_EARLY_Z) &&
           !zsa->stencil_enabled &&
-          !zsa_state->alpha.enabled &&
+          !zsa_state->alpha_enabled &&
           !shader_state->writes_z &&
           !shader_state->uses_discard)
          early_z_write = true;
@@ -710,7 +722,7 @@ etna_update_zsa(struct etna_context *ctx)
 
    new_pe_depth = VIVS_PE_DEPTH_CONFIG_DEPTH_FUNC(zsa->z_test_enabled ?
                      /* compare funcs have 1 to 1 mapping */
-                     zsa_state->depth.func : PIPE_FUNC_ALWAYS) |
+                     zsa_state->depth_func : PIPE_FUNC_ALWAYS) |
                   COND(zsa->z_write_enabled, VIVS_PE_DEPTH_CONFIG_WRITE_ENABLE) |
                   COND(early_z_test, VIVS_PE_DEPTH_CONFIG_EARLY_Z) |
                   COND(!late_z_write && !late_z_test && !zsa->stencil_enabled,
@@ -737,6 +749,21 @@ etna_update_zsa(struct etna_context *ctx)
 
    zsa->PE_DEPTH_CONFIG = new_pe_depth;
    zsa->RA_DEPTH_CONFIG = new_ra_depth;
+
+   return true;
+}
+
+static bool
+etna_record_flush_resources(struct etna_context *ctx)
+{
+   struct pipe_framebuffer_state *fb = &ctx->framebuffer_s;
+
+   if (fb->nr_cbufs > 0) {
+      struct etna_surface *surf = etna_surface(fb->cbufs[0]);
+
+      if (!etna_resource(surf->prsc)->explicit_flush)
+         _mesa_set_add(ctx->flush_resources, surf->prsc);
+   }
 
    return true;
 }
@@ -768,6 +795,9 @@ static const struct etna_state_updater etna_state_updates[] = {
    },
    {
       etna_update_zsa, ETNA_DIRTY_ZSA | ETNA_DIRTY_SHADER,
+   },
+   {
+      etna_record_flush_resources, ETNA_DIRTY_FRAMEBUFFER,
    }
 };
 
@@ -809,4 +839,6 @@ etna_state_init(struct pipe_context *pctx)
    pctx->create_vertex_elements_state = etna_vertex_elements_state_create;
    pctx->delete_vertex_elements_state = etna_vertex_elements_state_delete;
    pctx->bind_vertex_elements_state = etna_vertex_elements_state_bind;
+
+   pctx->set_stream_output_targets = etna_set_stream_output_targets;
 }

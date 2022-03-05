@@ -23,7 +23,6 @@ link_main_test = []
 
 if with_shared_glapi
   files_main_test += files(
-    'dispatch_sanity.cpp',
     'mesa_formats.cpp',
     'mesa_extensions.cpp',
     'program_state_string.cpp',
@@ -38,9 +37,10 @@ test(
   executable(
     'main_test',
     [files_main_test, main_dispatch_h],
-    include_directories : [inc_include, inc_src, inc_mapi, inc_mesa],
-    dependencies : [idep_gtest, dep_clock, dep_dl, dep_thread],
-    link_with : [libmesa_classic, link_main_test],
+    include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium],
+    dependencies : [idep_gtest, dep_clock, dep_dl, dep_thread, idep_mesautil],
+    link_with : [libmesa, libgallium, link_main_test],
   ),
   suite : ['mesa'],
+  protocol : gtest_test_protocol,
 )

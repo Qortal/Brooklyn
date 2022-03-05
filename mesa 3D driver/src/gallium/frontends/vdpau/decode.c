@@ -30,7 +30,7 @@
 #include "util/u_debug.h"
 #include "util/u_video.h"
 
-#include "vl/vl_vlc.h"
+#include "util/vl_vlc.h"
 
 #include "vdpau_private.h"
 
@@ -519,6 +519,7 @@ vlVdpDecoderRenderH265(struct pipe_h265_picture_desc *picture,
    memcpy(picture->RefPicSetStCurrAfter, picture_info->RefPicSetStCurrAfter, 8);
    memcpy(picture->RefPicSetLtCurr, picture_info->RefPicSetLtCurr, 8);
    picture->UseRefPicList = false;
+   picture->UseStRpsBits = false;
 
    return VDP_STATUS_OK;
 }

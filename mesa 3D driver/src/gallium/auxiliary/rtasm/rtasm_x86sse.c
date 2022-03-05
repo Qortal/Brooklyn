@@ -89,7 +89,7 @@ void x86_print_reg( struct x86_reg reg )
       foo++;                                    \
    if  (*foo)                                   \
       foo++;                                    \
-   debug_printf( "\n%4x %14s ", p->csr - p->store, foo );             \
+   debug_printf( "\n%4tx %14s ", p->csr - p->store, foo );             \
 } while (0)
 
 #define DUMP_I( I ) do {                        \
@@ -1508,6 +1508,15 @@ void sse2_rcpss( struct x86_function *p,
    emit_modrm( p, dst, src );
 }
 
+void sse2_pcmpgtd(struct x86_function *p,
+                  struct x86_reg dst,
+                  struct x86_reg src)
+{
+   DUMP_RR(dst, src);
+   emit_3ub(p, 0x66, X86_TWOB, 0x66);
+   emit_modrm(p, dst, src);
+}
+
 /***********************************************************************
  * x87 instructions
  */
@@ -2152,17 +2161,17 @@ static void x86_init_func_common( struct x86_function *p )
 {
    util_cpu_detect();
    p->caps = 0;
-   if(util_cpu_caps.has_mmx)
+   if(util_get_cpu_caps()->has_mmx)
       p->caps |= X86_MMX;
-   if(util_cpu_caps.has_mmx2)
+   if(util_get_cpu_caps()->has_mmx2)
       p->caps |= X86_MMX2;
-   if(util_cpu_caps.has_sse)
+   if(util_get_cpu_caps()->has_sse)
       p->caps |= X86_SSE;
-   if(util_cpu_caps.has_sse2)
+   if(util_get_cpu_caps()->has_sse2)
       p->caps |= X86_SSE2;
-   if(util_cpu_caps.has_sse3)
+   if(util_get_cpu_caps()->has_sse3)
       p->caps |= X86_SSE3;
-   if(util_cpu_caps.has_sse4_1)
+   if(util_get_cpu_caps()->has_sse4_1)
       p->caps |= X86_SSE4_1;
    p->csr = p->store;
 #if defined(PIPE_ARCH_X86)

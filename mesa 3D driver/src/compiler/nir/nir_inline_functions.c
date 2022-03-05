@@ -26,19 +26,18 @@
 #include "nir_control_flow.h"
 #include "nir_vla.h"
 
+static bool function_ends_in_jump(nir_function_impl *impl)
+{
+   nir_block *last_block = nir_impl_last_block(impl);
+   return nir_block_ends_in_jump(last_block);
+}
+
 void nir_inline_function_impl(struct nir_builder *b,
                               const nir_function_impl *impl,
                               nir_ssa_def **params,
                               struct hash_table *shader_var_remap)
 {
    nir_function_impl *copy = nir_function_impl_clone(b->shader, impl);
-
-   /* Insert a nop at the cursor so we can keep track of where things are as
-    * we add/remove stuff from the CFG.
-    */
-   nir_intrinsic_instr *nop =
-      nir_intrinsic_instr_create(b->shader, nir_intrinsic_nop);
-   nir_builder_instr_insert(b, &nop->instr);
 
    exec_list_append(&b->impl->locals, &copy->locals);
    exec_list_append(&b->impl->registers, &copy->registers);
@@ -86,7 +85,7 @@ void nir_inline_function_impl(struct nir_builder *b,
             assert(param_idx < impl->function->num_params);
             assert(load->dest.is_ssa);
             nir_ssa_def_rewrite_uses(&load->dest.ssa,
-                                     nir_src_for_ssa(params[param_idx]));
+                                     params[param_idx]);
 
             /* Remove any left-over load_param intrinsics because they're soon
              * to be in another function and therefore no longer valid.
@@ -106,12 +105,24 @@ void nir_inline_function_impl(struct nir_builder *b,
       }
    }
 
+   bool nest_if = function_ends_in_jump(copy);
+
    /* Pluck the body out of the function and place it here */
    nir_cf_list body;
    nir_cf_list_extract(&body, &copy->body);
-   nir_cf_reinsert(&body, nir_before_instr(&nop->instr));
 
-   b->cursor = nir_instr_remove(&nop->instr);
+   if (nest_if) {
+      nir_if *cf = nir_push_if(b, nir_imm_bool(b, true));
+      nir_cf_reinsert(&body, nir_after_cf_list(&cf->then_list));
+      nir_pop_if(b, cf);
+   } else {
+      /* Insert a nop at the cursor so we can keep track of where things are as
+       * we add/remove stuff from the CFG.
+       */
+      nir_intrinsic_instr *nop = nir_nop(b);
+      nir_cf_reinsert(&body, nir_before_instr(&nop->instr));
+      b->cursor = nir_instr_remove(&nop->instr);
+   }
 }
 
 static bool inline_function_impl(nir_function_impl *impl, struct set *inlined);

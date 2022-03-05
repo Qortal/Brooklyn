@@ -123,7 +123,6 @@ enum st_attachment_type {
    ST_ATTACHMENT_BACK_RIGHT,
    ST_ATTACHMENT_DEPTH_STENCIL,
    ST_ATTACHMENT_ACCUM,
-   ST_ATTACHMENT_SAMPLE,
 
    ST_ATTACHMENT_COUNT,
    ST_ATTACHMENT_INVALID = -1
@@ -136,7 +135,6 @@ enum st_attachment_type {
 #define ST_ATTACHMENT_BACK_RIGHT_MASK     (1 << ST_ATTACHMENT_BACK_RIGHT)
 #define ST_ATTACHMENT_DEPTH_STENCIL_MASK  (1 << ST_ATTACHMENT_DEPTH_STENCIL)
 #define ST_ATTACHMENT_ACCUM_MASK          (1 << ST_ATTACHMENT_ACCUM)
-#define ST_ATTACHMENT_SAMPLE_MASK         (1 << ST_ATTACHMENT_SAMPLE)
 
 /**
  * Flush flags.
@@ -145,6 +143,15 @@ enum st_attachment_type {
 #define ST_FLUSH_END_OF_FRAME             (1 << 1)
 #define ST_FLUSH_WAIT                     (1 << 2)
 #define ST_FLUSH_FENCE_FD                 (1 << 3)
+
+/**
+ * State invalidation flags to notify frontends that states have been changed
+ * behind their back.
+ */
+#define ST_INVALIDATE_FS_SAMPLER_VIEWS    (1 << 0)
+#define ST_INVALIDATE_FS_CONSTBUF0        (1 << 1)
+#define ST_INVALIDATE_VS_CONSTBUF0        (1 << 2)
+#define ST_INVALIDATE_VERTEX_BUFFERS      (1 << 3)
 
 /**
  * Value to st_manager->get_param function.
@@ -187,8 +194,6 @@ struct st_egl_image
  */
 struct st_visual
 {
-   bool no_config;
-
    /**
     * Available buffers.  Bitfield of ST_ATTACHMENT_*_MASK bits.
     */
@@ -202,11 +207,6 @@ struct st_visual
    enum pipe_format depth_stencil_format;
    enum pipe_format accum_format;
    unsigned samples;
-
-   /**
-    * Desired render buffer.
-    */
-   enum st_attachment_type render_buffer;
 };
 
 
@@ -218,6 +218,7 @@ struct st_config_options
    bool disable_blend_func_extended;
    bool disable_glsl_line_continuations;
    bool disable_arb_gpu_shader5;
+   bool force_compat_shaders;
    bool force_glsl_extensions_warn;
    unsigned force_glsl_version;
    bool allow_extra_pp_tokens;
@@ -227,14 +228,24 @@ struct st_config_options
    bool allow_glsl_relaxed_es;
    bool allow_glsl_builtin_variable_redeclaration;
    bool allow_higher_compat_version;
+   bool allow_glsl_compat_shaders;
+   bool glsl_ignore_write_to_readonly_var;
    bool glsl_zero_init;
    bool vs_position_always_invariant;
+   bool vs_position_always_precise;
    bool force_glsl_abs_sqrt;
    bool allow_glsl_cross_stage_interpolation_mismatch;
+   bool do_dce_before_clip_cull_analysis;
    bool allow_draw_out_of_order;
+   bool glthread_nop_check_framebuffer_status;
+   bool ignore_map_unsynchronized;
    bool force_integer_tex_nearest;
    bool force_gl_names_reuse;
+   bool transcode_etc;
+   bool transcode_astc;
    char *force_gl_vendor;
+   char *force_gl_renderer;
+   char *mesa_extension_override;
    unsigned char config_options_sha1[20];
 };
 
@@ -429,6 +440,12 @@ struct st_context_iface
     * Called from the main thread.
     */
    void (*thread_finish)(struct st_context_iface *stctxi);
+
+   /**
+    * Invalidate states to notify the frontend that states have been changed
+    * behind its back.
+    */
+   void (*invalidate_state)(struct st_context_iface *stctxi, unsigned flags);
 };
 
 
@@ -460,6 +477,12 @@ struct st_manager
    bool (*get_egl_image)(struct st_manager *smapi,
                          void *egl_image,
                          struct st_egl_image *out);
+
+   /**
+    * Validate EGLImage passed to get_egl_image.
+    */
+   bool (*validate_egl_image)(struct st_manager *smapi,
+                              void *egl_image);
 
    /**
     * Query an manager param.

@@ -232,6 +232,15 @@ struct v4l2_ctrl_hevc_decode_params {
 	__u64	flags;
 };
 
+struct v4l2_ctrl_hevc_scaling_matrix {
+	__u8	scaling_list_4x4[6][16];
+	__u8	scaling_list_8x8[6][64];
+	__u8	scaling_list_16x16[6][64];
+	__u8	scaling_list_32x32[2][64];
+	__u8	scaling_list_dc_coef_16x16[6];
+	__u8	scaling_list_dc_coef_32x32[2];
+};
+
 /*  MPEG-class control IDs specific to the Hantro driver as defined by V4L2 */
 #define V4L2_CID_CODEC_HANTRO_BASE				(V4L2_CTRL_CLASS_CODEC | 0x1200)
 /*
@@ -244,14 +253,5 @@ struct v4l2_ctrl_hevc_decode_params {
  * (separate_colour_plane_flag is not supported).
  */
 #define V4L2_CID_HANTRO_HEVC_SLICE_HEADER_SKIP	(V4L2_CID_CODEC_HANTRO_BASE + 0)
-
-struct v4l2_ctrl_hevc_scaling_matrix {
-	__u8	scaling_list_4x4[6][16];
-	__u8	scaling_list_8x8[6][64];
-	__u8	scaling_list_16x16[6][64];
-	__u8	scaling_list_32x32[2][64];
-	__u8	scaling_list_dc_coef_16x16[6];
-	__u8	scaling_list_dc_coef_32x32[2];
-};
 
 #endif

@@ -704,6 +704,19 @@ nvc0_clear(struct pipe_context *pipe, unsigned buffers,
    if (!nvc0_state_validate_3d(nvc0, NVC0_NEW_3D_FRAMEBUFFER))
       return;
 
+   if (scissor_state) {
+      uint32_t minx = scissor_state->minx;
+      uint32_t maxx = MIN2(fb->width, scissor_state->maxx);
+      uint32_t miny = scissor_state->miny;
+      uint32_t maxy = MIN2(fb->height, scissor_state->maxy);
+      if (maxx <= minx || maxy <= miny)
+         return;
+
+      BEGIN_NVC0(push, NVC0_3D(SCREEN_SCISSOR_HORIZ), 2);
+      PUSH_DATA (push, minx | (maxx - minx) << 16);
+      PUSH_DATA (push, miny | (maxy - miny) << 16);
+   }
+
    if (buffers & PIPE_CLEAR_COLOR && fb->nr_cbufs) {
       BEGIN_NVC0(push, NVC0_3D(CLEAR_COLOR(0)), 4);
       PUSH_DATAf(push, color->f[0]);
@@ -760,6 +773,13 @@ nvc0_clear(struct pipe_context *pipe, unsigned buffers,
          PUSH_DATA (push, (i << 6) | 0x3c |
                     (j << NVC0_3D_CLEAR_BUFFERS_LAYER__SHIFT));
       }
+   }
+
+   /* restore screen scissor */
+   if (scissor_state) {
+      BEGIN_NVC0(push, NVC0_3D(SCREEN_SCISSOR_HORIZ), 2);
+      PUSH_DATA (push, fb->width << 16);
+      PUSH_DATA (push, fb->height << 16);
    }
 }
 
@@ -947,6 +967,7 @@ nvc0_blit_set_src(struct nvc0_blitctx *ctx,
 
    target = nv50_blit_reinterpret_pipe_texture_target(res->target);
 
+   templ.target = target;
    templ.format = format;
    templ.u.tex.first_layer = templ.u.tex.last_layer = layer;
    templ.u.tex.first_level = templ.u.tex.last_level = level;
@@ -967,7 +988,7 @@ nvc0_blit_set_src(struct nvc0_blitctx *ctx,
       flags |= NV50_TEXVIEW_FILTER_MSAA8;
 
    nvc0->textures[4][0] = nvc0_create_texture_view(
-      pipe, res, &templ, flags, target);
+      pipe, res, &templ, flags);
    nvc0->textures[4][1] = NULL;
 
    for (s = 0; s <= 3; ++s)
@@ -977,7 +998,7 @@ nvc0_blit_set_src(struct nvc0_blitctx *ctx,
    templ.format = nv50_zs_to_s_format(format);
    if (templ.format != format) {
       nvc0->textures[4][1] = nvc0_create_texture_view(
-         pipe, res, &templ, flags, target);
+         pipe, res, &templ, flags);
       nvc0->num_textures[4] = 2;
    }
 }
@@ -1239,9 +1260,19 @@ nvc0_blit_3d(struct nvc0_context *nvc0, const struct pipe_blit_info *info)
       }
    }
 
+   bool serialize = false;
+   struct nv50_miptree *mt = nv50_miptree(dst);
    if (screen->eng3d->oclass >= TU102_3D_CLASS) {
       IMMED_NVC0(push, SUBC_3D(TU102_3D_SET_COLOR_RENDER_TO_ZETA_SURFACE),
                  util_format_is_depth_or_stencil(info->dst.format));
+   } else {
+      /* When flipping a surface from zeta <-> color "mode", we have to wait for
+       * the GPU to flush its current draws.
+       */
+      serialize = util_format_is_depth_or_stencil(info->dst.format);
+      if (serialize && mt->base.status & NOUVEAU_BUFFER_STATUS_GPU_WRITING) {
+         IMMED_NVC0(push, NVC0_3D(SERIALIZE), 0);
+      }
    }
 
    IMMED_NVC0(push, NVC0_3D(VIEWPORT_TRANSFORM_EN), 0);
@@ -1386,6 +1417,11 @@ nvc0_blit_3d(struct nvc0_context *nvc0, const struct pipe_blit_info *info)
    IMMED_NVC0(push, NVC0_3D(VIEWPORT_TRANSFORM_EN), 1);
    if (screen->eng3d->oclass >= TU102_3D_CLASS)
       IMMED_NVC0(push, SUBC_3D(TU102_3D_SET_COLOR_RENDER_TO_ZETA_SURFACE), 0);
+   else if (serialize)
+      /* mark the surface as reading, which will force a serialize next time
+       * it's used for writing.
+       */
+      mt->base.status |= NOUVEAU_BUFFER_STATUS_GPU_READING;
 }
 
 static void

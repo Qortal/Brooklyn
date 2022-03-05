@@ -24,13 +24,12 @@
 #include "brw_compiler.h"
 #include "brw_shader.h"
 #include "brw_eu.h"
-#include "dev/gen_debug.h"
+#include "dev/intel_debug.h"
 #include "compiler/nir/nir.h"
 #include "main/errors.h"
 #include "util/debug.h"
 
 #define COMMON_OPTIONS                                                        \
-   .lower_sub = true,                                                         \
    .lower_fdiv = true,                                                        \
    .lower_scmp = true,                                                        \
    .lower_flrp16 = true,                                                      \
@@ -39,18 +38,20 @@
    .lower_bitfield_insert = true,                                             \
    .lower_uadd_carry = true,                                                  \
    .lower_usub_borrow = true,                                                 \
-   .lower_fdiv = true,                                                        \
    .lower_flrp64 = true,                                                      \
    .lower_isign = true,                                                       \
    .lower_ldexp = true,                                                       \
    .lower_device_index_to_zero = true,                                        \
    .vectorize_io = true,                                                      \
    .use_interpolated_input_intrinsics = true,                                 \
+   .lower_insert_byte = true,                                                 \
+   .lower_insert_word = true,                                                 \
    .vertex_id_zero_based = true,                                              \
    .lower_base_vertex = true,                                                 \
    .use_scoped_barrier = true,                                                \
    .support_16bit_alu = true,                                                 \
-   .lower_uniforms_to_ubo = true
+   .lower_uniforms_to_ubo = true,                                             \
+   .has_txs = true
 
 #define COMMON_SCALAR_OPTIONS                                                 \
    .lower_to_scalar = true,                                                   \
@@ -66,8 +67,10 @@
    .lower_unpack_unorm_4x8 = true,                                            \
    .lower_usub_sat64 = true,                                                  \
    .lower_hadd64 = true,                                                      \
-   .lower_bfe_with_two_constants = true,                                      \
-   .max_unroll_iterations = 32
+   .avoid_ternary_with_two_constants = true,                                  \
+   .has_pack_32_4x8 = true,                                                   \
+   .max_unroll_iterations = 32,                                               \
+   .force_indirect_unrolling = nir_var_function_temp
 
 static const struct nir_shader_compiler_options scalar_nir_options = {
    COMMON_OPTIONS,
@@ -94,7 +97,7 @@ static const struct nir_shader_compiler_options vector_nir_options = {
 };
 
 struct brw_compiler *
-brw_compiler_create(void *mem_ctx, const struct gen_device_info *devinfo)
+brw_compiler_create(void *mem_ctx, const struct intel_device_info *devinfo)
 {
    struct brw_compiler *compiler = rzalloc(mem_ctx, struct brw_compiler);
 
@@ -106,17 +109,20 @@ brw_compiler_create(void *mem_ctx, const struct gen_device_info *devinfo)
    compiler->precise_trig = env_var_as_boolean("INTEL_PRECISE_TRIG", false);
 
    compiler->use_tcs_8_patch =
-      devinfo->gen >= 12 ||
-      (devinfo->gen >= 9 && (INTEL_DEBUG & DEBUG_TCS_EIGHT_PATCH));
+      devinfo->ver >= 12 ||
+      (devinfo->ver >= 9 && INTEL_DEBUG(DEBUG_TCS_EIGHT_PATCH));
 
    /* Default to the sampler since that's what we've done since forever */
    compiler->indirect_ubos_use_sampler = true;
 
-   /* There is no vec4 mode on Gen10+, and we don't use it at all on Gen8+. */
+   /* There is no vec4 mode on Gfx10+, and we don't use it at all on Gfx8+. */
    for (int i = MESA_SHADER_VERTEX; i < MESA_ALL_SHADER_STAGES; i++) {
-      compiler->scalar_stage[i] = devinfo->gen >= 8 ||
+      compiler->scalar_stage[i] = devinfo->ver >= 8 ||
          i == MESA_SHADER_FRAGMENT || i == MESA_SHADER_COMPUTE;
    }
+
+   for (int i = MESA_SHADER_TASK; i < MESA_VULKAN_SHADER_STAGES; i++)
+      compiler->scalar_stage[i] = true;
 
    nir_lower_int64_options int64_options =
       nir_lower_imul64 |
@@ -136,64 +142,55 @@ brw_compiler_create(void *mem_ctx, const struct gen_device_info *devinfo)
       nir_lower_dsub |
       nir_lower_ddiv;
 
-   if (!devinfo->has_64bit_float || (INTEL_DEBUG & DEBUG_SOFT64)) {
+   if (!devinfo->has_64bit_float || INTEL_DEBUG(DEBUG_SOFT64)) {
       int64_options |= (nir_lower_int64_options)~0;
       fp64_options |= nir_lower_fp64_full_software;
    }
 
    /* The Bspec's section tittled "Instruction_multiply[DevBDW+]" claims that
-    * destination type can be Quadword and source type Doubleword for Gen8 and
-    * Gen9. So, lower 64 bit multiply instruction on rest of the platforms.
+    * destination type can be Quadword and source type Doubleword for Gfx8 and
+    * Gfx9. So, lower 64 bit multiply instruction on rest of the platforms.
     */
-   if (devinfo->gen < 8 || devinfo->gen > 9)
+   if (devinfo->ver < 8 || devinfo->ver > 9)
       int64_options |= nir_lower_imul_2x32_64;
 
    /* We want the GLSL compiler to emit code that uses condition codes */
    for (int i = 0; i < MESA_ALL_SHADER_STAGES; i++) {
-      compiler->glsl_compiler_options[i].MaxUnrollIterations = 0;
-      compiler->glsl_compiler_options[i].MaxIfDepth =
-         devinfo->gen < 6 ? 16 : UINT_MAX;
-
-      /* We handle this in NIR */
-      compiler->glsl_compiler_options[i].EmitNoIndirectInput = false;
-      compiler->glsl_compiler_options[i].EmitNoIndirectOutput = false;
-      compiler->glsl_compiler_options[i].EmitNoIndirectUniform = false;
-      compiler->glsl_compiler_options[i].EmitNoIndirectTemp = false;
-
-      bool is_scalar = compiler->scalar_stage[i];
-      compiler->glsl_compiler_options[i].OptimizeForAOS = !is_scalar;
-
       struct nir_shader_compiler_options *nir_options =
          rzalloc(compiler, struct nir_shader_compiler_options);
+      bool is_scalar = compiler->scalar_stage[i];
       if (is_scalar) {
          *nir_options = scalar_nir_options;
       } else {
          *nir_options = vector_nir_options;
       }
 
-      /* Prior to Gen6, there are no three source operations, and Gen11 loses
+      /* Prior to Gfx6, there are no three source operations, and Gfx11 loses
        * LRP.
        */
-      nir_options->lower_ffma16 = devinfo->gen < 6;
-      nir_options->lower_ffma32 = devinfo->gen < 6;
-      nir_options->lower_ffma64 = devinfo->gen < 6;
-      nir_options->lower_flrp32 = devinfo->gen < 6 || devinfo->gen >= 11;
-      nir_options->lower_fpow = devinfo->gen >= 12;
+      nir_options->lower_ffma16 = devinfo->ver < 6;
+      nir_options->lower_ffma32 = devinfo->ver < 6;
+      nir_options->lower_ffma64 = devinfo->ver < 6;
+      nir_options->lower_flrp32 = devinfo->ver < 6 || devinfo->ver >= 11;
+      nir_options->lower_fpow = devinfo->ver >= 12;
 
-      nir_options->lower_rotate = devinfo->gen < 11;
-      nir_options->lower_bitfield_reverse = devinfo->gen < 7;
+      nir_options->lower_rotate = devinfo->ver < 11;
+      nir_options->lower_bitfield_reverse = devinfo->ver < 7;
+      nir_options->has_iadd3 = devinfo->verx10 >= 125;
+
+      nir_options->has_sdot_4x8 = devinfo->ver >= 12;
+      nir_options->has_udot_4x8 = devinfo->ver >= 12;
+      nir_options->has_sudot_4x8 = devinfo->ver >= 12;
 
       nir_options->lower_int64_options = int64_options;
       nir_options->lower_doubles_options = fp64_options;
 
-      /* Starting with Gen11, we lower away 8-bit arithmetic */
-      nir_options->support_8bit_alu = devinfo->gen < 11;
-
       nir_options->unify_interfaces = i < MESA_SHADER_FRAGMENT;
 
-      compiler->glsl_compiler_options[i].NirOptions = nir_options;
+      nir_options->force_indirect_unrolling |=
+         brw_nir_no_indirect_mask(compiler, i);
 
-      compiler->glsl_compiler_options[i].ClampBlockIndicesToArrayBounds = true;
+      compiler->nir_options[i] = nir_options;
    }
 
    return compiler;
@@ -210,17 +207,11 @@ brw_get_compiler_config_value(const struct brw_compiler *compiler)
 {
    uint64_t config = 0;
    insert_u64_bit(&config, compiler->precise_trig);
-   if (compiler->devinfo->gen >= 8 && compiler->devinfo->gen < 10) {
-      insert_u64_bit(&config, compiler->scalar_stage[MESA_SHADER_VERTEX]);
-      insert_u64_bit(&config, compiler->scalar_stage[MESA_SHADER_TESS_CTRL]);
-      insert_u64_bit(&config, compiler->scalar_stage[MESA_SHADER_TESS_EVAL]);
-      insert_u64_bit(&config, compiler->scalar_stage[MESA_SHADER_GEOMETRY]);
-   }
-   uint64_t debug_bits = INTEL_DEBUG;
+
    uint64_t mask = DEBUG_DISK_CACHE_MASK;
    while (mask != 0) {
       const uint64_t bit = 1ULL << (ffsll(mask) - 1);
-      insert_u64_bit(&config, (debug_bits & bit) != 0);
+      insert_u64_bit(&config, INTEL_DEBUG(bit));
       mask &= ~bit;
    }
    return config;
@@ -230,13 +221,21 @@ unsigned
 brw_prog_data_size(gl_shader_stage stage)
 {
    static const size_t stage_sizes[] = {
-      [MESA_SHADER_VERTEX]    = sizeof(struct brw_vs_prog_data),
-      [MESA_SHADER_TESS_CTRL] = sizeof(struct brw_tcs_prog_data),
-      [MESA_SHADER_TESS_EVAL] = sizeof(struct brw_tes_prog_data),
-      [MESA_SHADER_GEOMETRY]  = sizeof(struct brw_gs_prog_data),
-      [MESA_SHADER_FRAGMENT]  = sizeof(struct brw_wm_prog_data),
-      [MESA_SHADER_COMPUTE]   = sizeof(struct brw_cs_prog_data),
-      [MESA_SHADER_KERNEL]    = sizeof(struct brw_cs_prog_data),
+      [MESA_SHADER_VERTEX]       = sizeof(struct brw_vs_prog_data),
+      [MESA_SHADER_TESS_CTRL]    = sizeof(struct brw_tcs_prog_data),
+      [MESA_SHADER_TESS_EVAL]    = sizeof(struct brw_tes_prog_data),
+      [MESA_SHADER_GEOMETRY]     = sizeof(struct brw_gs_prog_data),
+      [MESA_SHADER_FRAGMENT]     = sizeof(struct brw_wm_prog_data),
+      [MESA_SHADER_COMPUTE]      = sizeof(struct brw_cs_prog_data),
+      [MESA_SHADER_TASK]         = sizeof(struct brw_task_prog_data),
+      [MESA_SHADER_MESH]         = sizeof(struct brw_mesh_prog_data),
+      [MESA_SHADER_RAYGEN]       = sizeof(struct brw_bs_prog_data),
+      [MESA_SHADER_ANY_HIT]      = sizeof(struct brw_bs_prog_data),
+      [MESA_SHADER_CLOSEST_HIT]  = sizeof(struct brw_bs_prog_data),
+      [MESA_SHADER_MISS]         = sizeof(struct brw_bs_prog_data),
+      [MESA_SHADER_INTERSECTION] = sizeof(struct brw_bs_prog_data),
+      [MESA_SHADER_CALLABLE]     = sizeof(struct brw_bs_prog_data),
+      [MESA_SHADER_KERNEL]       = sizeof(struct brw_cs_prog_data),
    };
    assert((int)stage >= 0 && stage < ARRAY_SIZE(stage_sizes));
    return stage_sizes[stage];
@@ -246,20 +245,28 @@ unsigned
 brw_prog_key_size(gl_shader_stage stage)
 {
    static const size_t stage_sizes[] = {
-      [MESA_SHADER_VERTEX]    = sizeof(struct brw_vs_prog_key),
-      [MESA_SHADER_TESS_CTRL] = sizeof(struct brw_tcs_prog_key),
-      [MESA_SHADER_TESS_EVAL] = sizeof(struct brw_tes_prog_key),
-      [MESA_SHADER_GEOMETRY]  = sizeof(struct brw_gs_prog_key),
-      [MESA_SHADER_FRAGMENT]  = sizeof(struct brw_wm_prog_key),
-      [MESA_SHADER_COMPUTE]   = sizeof(struct brw_cs_prog_key),
-      [MESA_SHADER_KERNEL]    = sizeof(struct brw_cs_prog_key),
+      [MESA_SHADER_VERTEX]       = sizeof(struct brw_vs_prog_key),
+      [MESA_SHADER_TESS_CTRL]    = sizeof(struct brw_tcs_prog_key),
+      [MESA_SHADER_TESS_EVAL]    = sizeof(struct brw_tes_prog_key),
+      [MESA_SHADER_GEOMETRY]     = sizeof(struct brw_gs_prog_key),
+      [MESA_SHADER_FRAGMENT]     = sizeof(struct brw_wm_prog_key),
+      [MESA_SHADER_COMPUTE]      = sizeof(struct brw_cs_prog_key),
+      [MESA_SHADER_TASK]         = sizeof(struct brw_task_prog_key),
+      [MESA_SHADER_MESH]         = sizeof(struct brw_mesh_prog_key),
+      [MESA_SHADER_RAYGEN]       = sizeof(struct brw_bs_prog_key),
+      [MESA_SHADER_ANY_HIT]      = sizeof(struct brw_bs_prog_key),
+      [MESA_SHADER_CLOSEST_HIT]  = sizeof(struct brw_bs_prog_key),
+      [MESA_SHADER_MISS]         = sizeof(struct brw_bs_prog_key),
+      [MESA_SHADER_INTERSECTION] = sizeof(struct brw_bs_prog_key),
+      [MESA_SHADER_CALLABLE]     = sizeof(struct brw_bs_prog_key),
+      [MESA_SHADER_KERNEL]       = sizeof(struct brw_cs_prog_key),
    };
    assert((int)stage >= 0 && stage < ARRAY_SIZE(stage_sizes));
    return stage_sizes[stage];
 }
 
 void
-brw_write_shader_relocs(const struct gen_device_info *devinfo,
+brw_write_shader_relocs(const struct intel_device_info *devinfo,
                         void *program,
                         const struct brw_stage_prog_data *prog_data,
                         struct brw_shader_reloc_value *values,
@@ -267,10 +274,20 @@ brw_write_shader_relocs(const struct gen_device_info *devinfo,
 {
    for (unsigned i = 0; i < prog_data->num_relocs; i++) {
       assert(prog_data->relocs[i].offset % 8 == 0);
-      brw_inst *inst = (brw_inst *)(program + prog_data->relocs[i].offset);
+      void *dst = program + prog_data->relocs[i].offset;
       for (unsigned j = 0; j < num_values; j++) {
          if (prog_data->relocs[i].id == values[j].id) {
-            brw_update_reloc_imm(devinfo, inst, values[j].value);
+            uint32_t value = values[j].value + prog_data->relocs[i].delta;
+            switch (prog_data->relocs[i].type) {
+            case BRW_SHADER_RELOC_TYPE_U32:
+               *(uint32_t *)dst = value;
+               break;
+            case BRW_SHADER_RELOC_TYPE_MOV_IMM:
+               brw_update_reloc_imm(devinfo, dst, value);
+               break;
+            default:
+               unreachable("Invalid relocation type");
+            }
             break;
          }
       }

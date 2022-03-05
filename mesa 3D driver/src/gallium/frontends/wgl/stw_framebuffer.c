@@ -28,6 +28,7 @@
 #include <windows.h>
 
 #include "pipe/p_screen.h"
+#include "pipe/p_state.h"
 #include "util/u_memory.h"
 #include "hud/hud_context.h"
 #include "util/os_time.h"
@@ -73,13 +74,14 @@ stw_framebuffer_from_hwnd_locked(HWND hwnd)
  * locked.  After this function completes, the fb's mutex will be unlocked.
  */
 void
-stw_framebuffer_release_locked(struct stw_framebuffer *fb)
+stw_framebuffer_release_locked(struct stw_framebuffer *fb,
+                               struct st_context_iface *stctx)
 {
    struct stw_framebuffer **link;
 
    assert(fb);
    assert(stw_own_mutex(&fb->mutex));
-   assert(stw_own_mutex(&stw_dev->fb_mutex));
+   assert(stw_own_mutex(&stw_dev->fb_mutex) || fb->owner == STW_FRAMEBUFFER_EGL_WINDOW);
 
    /* check the reference count */
    fb->refcnt--;
@@ -88,17 +90,22 @@ stw_framebuffer_release_locked(struct stw_framebuffer *fb)
       return;
    }
 
-   /* remove this stw_framebuffer from the device's linked list */
-   link = &stw_dev->fb_head;
-   while (*link != fb)
-      link = &(*link)->next;
-   assert(*link);
-   *link = fb->next;
-   fb->next = NULL;
+   if (fb->owner != STW_FRAMEBUFFER_EGL_WINDOW) {
+      /* remove this stw_framebuffer from the device's linked list */
+      link = &stw_dev->fb_head;
+      while (*link != fb)
+         link = &(*link)->next;
+      assert(*link);
+      *link = fb->next;
+      fb->next = NULL;
+   }
 
    if (fb->shared_surface)
       stw_dev->stw_winsys->shared_surface_close(stw_dev->screen,
                                                 fb->shared_surface);
+
+   if (fb->winsys_framebuffer)
+      fb->winsys_framebuffer->destroy(fb->winsys_framebuffer, stctx ? stctx->pipe : NULL);
 
    stw_st_destroy_framebuffer_locked(fb->stfb);
 
@@ -234,8 +241,12 @@ stw_call_window_proc(int nCode, WPARAM wParam, LPARAM lParam)
       else if (pParams->message == WM_DESTROY) {
          stw_lock_framebuffers(stw_dev);
          fb = stw_framebuffer_from_hwnd_locked( pParams->hwnd );
-         if (fb)
-            stw_framebuffer_release_locked(fb);
+         if (fb) {
+            struct stw_context *current_context = stw_current_context();
+            struct st_context_iface *ctx_iface = current_context &&
+               current_context->current_framebuffer == fb ? current_context->st : NULL;
+            stw_framebuffer_release_locked(fb, ctx_iface);
+         }
          stw_unlock_framebuffers(stw_dev);
       }
    }
@@ -250,16 +261,10 @@ stw_call_window_proc(int nCode, WPARAM wParam, LPARAM lParam)
  * with its mutex locked.
  */
 struct stw_framebuffer *
-stw_framebuffer_create(HDC hdc, int iPixelFormat)
+stw_framebuffer_create(HWND hWnd, int iPixelFormat, enum stw_framebuffer_owner owner)
 {
-   HWND hWnd;
    struct stw_framebuffer *fb;
    const struct stw_pixelformat_info *pfi;
-
-   /* We only support drawing to a window. */
-   hWnd = WindowFromDC( hdc );
-   if (!hWnd)
-      return NULL;
 
    fb = CALLOC_STRUCT( stw_framebuffer );
    if (fb == NULL)
@@ -268,12 +273,17 @@ stw_framebuffer_create(HDC hdc, int iPixelFormat)
    fb->hWnd = hWnd;
    fb->iPixelFormat = iPixelFormat;
 
+   if (stw_dev->stw_winsys->create_framebuffer)
+      fb->winsys_framebuffer =
+         stw_dev->stw_winsys->create_framebuffer(stw_dev->screen, hWnd, iPixelFormat);
+
    /*
     * We often need a displayable pixel format to make GDI happy. Set it
     * here (always 1, i.e., out first pixel format) where appropriate.
     */
    fb->iDisplayablePixelFormat = iPixelFormat <= stw_dev->pixelformat_count
       ? iPixelFormat : 1;
+   fb->owner = owner;
 
    fb->pfi = pfi = stw_pixelformat_get_info( iPixelFormat );
    fb->stfb = stw_st_create_framebuffer( fb );
@@ -307,12 +317,41 @@ stw_framebuffer_create(HDC hdc, int iPixelFormat)
     */
    stw_framebuffer_lock(fb);
 
-   stw_lock_framebuffers(stw_dev);
-   fb->next = stw_dev->fb_head;
-   stw_dev->fb_head = fb;
-   stw_unlock_framebuffers(stw_dev);
+   if (owner != STW_FRAMEBUFFER_EGL_WINDOW) {
+      stw_lock_framebuffers(stw_dev);
+      fb->next = stw_dev->fb_head;
+      stw_dev->fb_head = fb;
+      stw_unlock_framebuffers(stw_dev);
+   }
 
    return fb;
+}
+
+/**
+ * Increase fb reference count.  The referenced framebuffer should be locked.
+ *
+ * It's not necessary to hold stw_dev::fb_mutex global lock.
+ */
+void
+stw_framebuffer_reference_locked(struct stw_framebuffer *fb)
+{
+   if (fb) {
+      assert(stw_own_mutex(&fb->mutex));
+      fb->refcnt++;
+   }
+}
+
+/**
+ * Release stw_framebuffer::mutex lock. This framebuffer must not be accessed
+ * after calling this function, as it may have been deleted by another thread
+ * in the meanwhile.
+ */
+void
+stw_framebuffer_unlock(struct stw_framebuffer *fb)
+{
+   assert(fb);
+   assert(stw_own_mutex(&fb->mutex));
+   LeaveCriticalSection(&fb->mutex);
 }
 
 
@@ -355,7 +394,7 @@ stw_framebuffer_cleanup(void)
       next = fb->next;
 
       stw_framebuffer_lock(fb);
-      stw_framebuffer_release_locked(fb);
+      stw_framebuffer_release_locked(fb, NULL);
 
       fb = next;
    }
@@ -431,7 +470,7 @@ DrvSetPixelFormat(HDC hdc, LONG iPixelFormat)
       return FALSE;
 
    index = (uint) iPixelFormat - 1;
-   count = stw_pixelformat_get_count();
+   count = stw_pixelformat_get_count(hdc);
    if (index >= count)
       return FALSE;
 
@@ -441,14 +480,14 @@ DrvSetPixelFormat(HDC hdc, LONG iPixelFormat)
        * SetPixelFormat must be called only once.  However ignore
        * pbuffers, for which the framebuffer object is created first.
        */
-      boolean bPbuffer = fb->bPbuffer;
+      boolean bPbuffer = fb->owner == STW_FRAMEBUFFER_PBUFFER;
 
       stw_framebuffer_unlock( fb );
 
       return bPbuffer;
    }
 
-   fb = stw_framebuffer_create(hdc, iPixelFormat);
+   fb = stw_framebuffer_create(WindowFromDC(hdc), iPixelFormat, STW_FRAMEBUFFER_WGL_WINDOW);
    if (!fb) {
       return FALSE;
    }
@@ -489,7 +528,9 @@ BOOL APIENTRY
 DrvPresentBuffers(HDC hdc, LPPRESENTBUFFERS data)
 {
    struct stw_framebuffer *fb;
+   struct stw_context *ctx;
    struct pipe_screen *screen;
+   struct pipe_context *pipe;
    struct pipe_resource *res;
 
    if (!stw_dev)
@@ -500,6 +541,8 @@ DrvPresentBuffers(HDC hdc, LPPRESENTBUFFERS data)
       return FALSE;
 
    screen = stw_dev->screen;
+   ctx = stw_current_context();
+   pipe = ctx ? ctx->st->pipe : NULL;
 
    res = (struct pipe_resource *)data->pPrivData;
 
@@ -528,7 +571,7 @@ DrvPresentBuffers(HDC hdc, LPPRESENTBUFFERS data)
                                       data->ullPresentToken);
       }
       else {
-         stw_dev->stw_winsys->present( screen, res, hdc );
+         stw_dev->stw_winsys->present( screen, pipe, res, hdc );
       }
    }
 
@@ -552,8 +595,17 @@ stw_framebuffer_present_locked(HDC hdc,
                                struct stw_framebuffer *fb,
                                struct pipe_resource *res)
 {
-   if (stw_dev->callbacks.pfnPresentBuffers &&
-      stw_dev->stw_winsys->compose) {
+   if (fb->winsys_framebuffer) {
+      BOOL result = fb->winsys_framebuffer->present(fb->winsys_framebuffer);
+
+      stw_framebuffer_update(fb);
+      stw_notify_current_locked(fb);
+      stw_framebuffer_unlock(fb);
+
+      return result;
+   }
+   else if (stw_dev->callbacks.pfnPresentBuffers &&
+            stw_dev->stw_winsys->compose) {
       PRESENTBUFFERSCB data;
 
       memset(&data, 0, sizeof data);
@@ -570,8 +622,10 @@ stw_framebuffer_present_locked(HDC hdc,
    }
    else {
       struct pipe_screen *screen = stw_dev->screen;
+      struct stw_context *ctx = stw_current_context();
+      struct pipe_context *pipe = ctx ? ctx->st->pipe : NULL;
 
-      stw_dev->stw_winsys->present( screen, res, hdc );
+      stw_dev->stw_winsys->present( screen, pipe, res, hdc );
 
       stw_framebuffer_update(fb);
       stw_notify_current_locked(fb);
@@ -616,20 +670,10 @@ wait_swap_interval(struct stw_framebuffer *fb)
    fb->prev_swap_time = cur_time;
 }
 
-
-BOOL APIENTRY
-DrvSwapBuffers(HDC hdc)
+BOOL
+stw_framebuffer_swap_locked(HDC hdc, struct stw_framebuffer *fb)
 {
    struct stw_context *ctx;
-   struct stw_framebuffer *fb;
-
-   if (!stw_dev)
-      return FALSE;
-
-   fb = stw_framebuffer_from_hdc( hdc );
-   if (fb == NULL)
-      return FALSE;
-
    if (!(fb->pfi->pfd.dwFlags & PFD_DOUBLEBUFFER)) {
       stw_framebuffer_unlock(fb);
       return TRUE;
@@ -648,15 +692,30 @@ DrvSwapBuffers(HDC hdc)
 
       if (ctx->current_framebuffer == fb) {
          /* flush current context */
-         ctx->st->flush(ctx->st, ST_FLUSH_END_OF_FRAME, NULL, NULL, NULL);
+         stw_st_flush(ctx->st, fb->stfb, ST_FLUSH_END_OF_FRAME);
       }
    }
 
-   if (stw_dev->swap_interval != 0) {
+   if (stw_dev->swap_interval != 0 && !fb->winsys_framebuffer) {
       wait_swap_interval(fb);
    }
 
    return stw_st_swap_framebuffer_locked(hdc, ctx->st, fb->stfb);
+}
+
+BOOL APIENTRY
+DrvSwapBuffers(HDC hdc)
+{
+   struct stw_framebuffer *fb;
+
+   if (!stw_dev)
+      return FALSE;
+
+   fb = stw_framebuffer_from_hdc( hdc );
+   if (fb == NULL)
+      return FALSE;
+
+   return stw_framebuffer_swap_locked(hdc, fb);
 }
 
 

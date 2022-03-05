@@ -67,14 +67,6 @@ static inline void arch_spin_lock(arch_spinlock_t *lp)
 		arch_spin_lock_wait(lp);
 }
 
-static inline void arch_spin_lock_flags(arch_spinlock_t *lp,
-					unsigned long flags)
-{
-	if (!arch_spin_trylock_once(lp))
-		arch_spin_lock_wait(lp);
-}
-#define arch_spin_lock_flags	arch_spin_lock_flags
-
 static inline int arch_spin_trylock(arch_spinlock_t *lp)
 {
 	if (!arch_spin_trylock_once(lp))
@@ -88,7 +80,7 @@ static inline void arch_spin_unlock(arch_spinlock_t *lp)
 	asm_inline volatile(
 		ALTERNATIVE("", ".long 0xb2fa0070", 49)	/* NIAI 7 */
 		"	sth	%1,%0\n"
-		: "=Q" (((unsigned short *) &lp->lock)[1])
+		: "=R" (((unsigned short *) &lp->lock)[1])
 		: "d" (0) : "cc", "memory");
 }
 

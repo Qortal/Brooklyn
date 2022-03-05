@@ -193,6 +193,7 @@ bool ppir_instr_insert_node(ppir_instr *instr, ppir_node *node)
                if (src->node == node)
                   break;
             }
+            assert(src);
             assert(src->node == node);
 
             instr->constant[i] = ic;
@@ -284,7 +285,7 @@ void ppir_instr_print_list(ppir_compiler *comp)
    list_for_each_entry(ppir_block, block, &comp->block_list, list) {
       printf("-------block %3d-------\n", block->index);
       list_for_each_entry(ppir_instr, instr, &block->instr_list, list) {
-         printf("%c%03d: ", instr->is_end ? '*' : ' ', instr->index);
+         printf("%c%03d: ", instr->stop ? '*' : ' ', instr->index);
          for (int i = 0; i < PPIR_INSTR_SLOT_NUM; i++) {
             ppir_node *node = instr->slots[i];
             if (node)

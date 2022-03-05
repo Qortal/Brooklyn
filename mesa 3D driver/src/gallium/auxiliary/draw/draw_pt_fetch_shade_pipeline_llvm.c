@@ -265,7 +265,7 @@ llvm_middle_end_prepare_tes(struct llvm_middle_end *fpme)
          }
       }
 
-      variant = draw_tes_llvm_create_variant(llvm, tes->info.num_outputs, key);
+      variant = draw_tes_llvm_create_variant(llvm, draw_total_tes_outputs(draw), key);
 
       if (variant) {
          insert_at_head(&shader->variants, &variant->list_item_local);
@@ -316,7 +316,7 @@ llvm_middle_end_prepare( struct draw_pt_middle_end *middle,
                             draw->rasterizer->clip_halfz,
                             (draw->vs.edgeflag_output ? TRUE : FALSE) );
 
-   draw_pt_so_emit_prepare( fpme->so_emit, gs == NULL );
+   draw_pt_so_emit_prepare( fpme->so_emit, (gs == NULL && tes == NULL));
 
    if (!(opt & PT_PIPELINE)) {
       draw_pt_emit_prepare( fpme->emit, out_prim,
@@ -527,6 +527,11 @@ llvm_middle_end_bind_parameters(struct draw_pt_middle_end *middle)
 
    llvm->jit_context.viewports = draw->viewports;
    llvm->gs_jit_context.viewports = draw->viewports;
+
+   llvm->jit_context.aniso_filter_table = lp_build_sample_aniso_filter_table();
+   llvm->gs_jit_context.aniso_filter_table = lp_build_sample_aniso_filter_table();
+   llvm->tcs_jit_context.aniso_filter_table = lp_build_sample_aniso_filter_table();
+   llvm->tes_jit_context.aniso_filter_table = lp_build_sample_aniso_filter_table();
 }
 
 
@@ -595,7 +600,8 @@ llvm_pipeline_generic(struct draw_pt_middle_end *middle,
    llvm_vert_info.stride = fpme->vertex_size;
    llvm_vert_info.verts = (struct vertex_header *)
       MALLOC(fpme->vertex_size *
-             align(fetch_info->count, lp_native_vector_width / 32));
+             align(fetch_info->count, lp_native_vector_width / 32) +
+             DRAW_EXTRA_VERTICES_PADDING);
    if (!llvm_vert_info.verts) {
       assert(0);
       return;
@@ -631,7 +637,8 @@ llvm_pipeline_generic(struct draw_pt_middle_end *middle,
                                              draw->instance_id,
                                              vid_base,
                                              draw->start_instance,
-                                             elts, draw->pt.user.drawid);
+                                             elts, draw->pt.user.drawid,
+                                             draw->pt.user.viewid);
 
    /* Finished with fetch and vs:
     */
@@ -717,12 +724,17 @@ llvm_pipeline_generic(struct draw_pt_middle_end *middle,
          opt |= PT_PIPELINE;
       }
    } else {
-      if (draw_prim_assembler_is_required(draw, prim_info, vert_info)) {
+      if (!tes_shader && draw_prim_assembler_is_required(draw, prim_info, vert_info)) {
          draw_prim_assembler_run(draw, prim_info, vert_info,
                                  &ia_prim_info, &ia_vert_info);
 
          if (ia_vert_info.count) {
             FREE(vert_info->verts);
+            if (free_prim_info) {
+               FREE(prim_info->primitive_lengths);
+               FREE(tes_elts_out);
+               tes_elts_out = NULL;
+            }
             vert_info = &ia_vert_info;
             prim_info = &ia_prim_info;
             free_prim_info = TRUE;

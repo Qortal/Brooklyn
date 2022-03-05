@@ -69,10 +69,10 @@ bool ComputeShaderFromNir::emit_intrinsic_instruction_override(nir_intrinsic_ins
    switch (instr->intrinsic) {
    case nir_intrinsic_load_local_invocation_id:
       return emit_load_3vec(instr, m_local_invocation_id);
-   case nir_intrinsic_load_work_group_id:
+   case nir_intrinsic_load_workgroup_id:
       return emit_load_3vec(instr, m_workgroup_id);
-   case nir_intrinsic_load_num_work_groups:
-      return emit_load_num_work_groups(instr);
+   case nir_intrinsic_load_num_workgroups:
+      return emit_load_num_workgroups(instr);
    default:
       return false;
    }
@@ -86,10 +86,9 @@ bool ComputeShaderFromNir::emit_load_3vec(nir_intrinsic_instr* instr,
    return true;
 }
 
-bool ComputeShaderFromNir::emit_load_num_work_groups(nir_intrinsic_instr* instr)
+bool ComputeShaderFromNir::emit_load_num_workgroups(nir_intrinsic_instr* instr)
 {
-   int temp = allocate_temp_register();
-   PValue a_zero(new GPRValue(temp, 1));
+   PValue a_zero = get_temp_register(1);
    emit_instruction(new AluInstruction(op1_mov, a_zero, Value::zero, EmitInstruction::last_write));
    GPRVector dest;
    for (int i = 0; i < 3; ++i)
@@ -105,27 +104,6 @@ bool ComputeShaderFromNir::emit_load_num_work_groups(nir_intrinsic_instr* instr)
    return true;
 }
 
-bool ComputeShaderFromNir::do_process_inputs(UNUSED nir_variable *input)
-{
-   return true;
-}
-
-bool ComputeShaderFromNir::do_process_outputs(UNUSED nir_variable *output)
-{
-   return true;
-}
-
-bool ComputeShaderFromNir::do_emit_load_deref(UNUSED const nir_variable *in_var,
-                                              UNUSED nir_intrinsic_instr* instr)
-{
-   return true;
-}
-
-bool ComputeShaderFromNir::do_emit_store_deref(UNUSED const nir_variable *out_var,
-                                               UNUSED nir_intrinsic_instr* instr)
-{
-   return true;
-}
 void ComputeShaderFromNir::do_finalize()
 {
 

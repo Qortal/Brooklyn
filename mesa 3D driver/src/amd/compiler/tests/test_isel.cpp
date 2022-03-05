@@ -24,6 +24,8 @@
 #include "helpers.h"
 #include "test_isel-spirv.h"
 
+#include <llvm/Config/llvm-config.h>
+
 using namespace aco;
 
 BEGIN_TEST(isel.interp.simple)
@@ -39,21 +41,21 @@ BEGIN_TEST(isel.interp.simple)
       layout(location = 0) out vec4 out_color;
       void main() {
          //>> v1: %a_tmp = v_interp_p1_f32 %bx, %pm:m0 attr0.w
-         //! v1: %a = v_interp_p2_f32 %by, %pm:m0, %a_tmp attr0.w
-         //! v1: %b_tmp = v_interp_p1_f32 %bx, %pm:m0 attr0.z
-         //! v1: %b = v_interp_p2_f32 %by, %pm:m0, %b_tmp attr0.z
-         //! v1: %g_tmp = v_interp_p1_f32 %bx, %pm:m0 attr0.y
-         //! v1: %g = v_interp_p2_f32 %by, %pm:m0, %g_tmp attr0.y
+         //! v1: %a = v_interp_p2_f32 %by, %pm:m0, (kill)%a_tmp attr0.w
          //! v1: %r_tmp = v_interp_p1_f32 %bx, %pm:m0 attr0.x
-         //! v1: %r = v_interp_p2_f32 %by, %pm:m0, %r_tmp attr0.x
-         //! exp %r, %g, %b, %a mrt0
+         //! v1: %r = v_interp_p2_f32 %by, %pm:m0, (kill)%r_tmp attr0.x
+         //! v1: %g_tmp = v_interp_p1_f32 %bx, %pm:m0 attr0.y
+         //! v1: %g = v_interp_p2_f32 %by, %pm:m0, (kill)%g_tmp attr0.y
+         //! v1: %b_tmp = v_interp_p1_f32 (kill)%bx, %pm:m0 attr0.z
+         //! v1: %b = v_interp_p2_f32 (kill)%by, (kill)%pm:m0, (kill)%b_tmp attr0.z
+         //! exp (kill)%r, (kill)%g, (kill)%b, (kill)%a mrt0
          out_color = in_color;
       }
    );
 
-   PipelineBuilder bld(get_vk_device(GFX9));
-   bld.add_vsfs(vs, fs);
-   bld.print_ir(VK_SHADER_STAGE_FRAGMENT_BIT, "ACO IR");
+   PipelineBuilder pbld(get_vk_device(GFX9));
+   pbld.add_vsfs(vs, fs);
+   pbld.print_ir(VK_SHADER_STAGE_FRAGMENT_BIT, "ACO IR");
 END_TEST
 
 BEGIN_TEST(isel.compute.simple)
@@ -67,16 +69,119 @@ BEGIN_TEST(isel.compute.simple)
             uint res;
          };
          void main() {
-            //~gfx7>> v1: %data = p_parallelcopy 42
-            //~gfx7>> buffer_store_dword %_, v1: undef, 0, %data disable_wqm storage:buffer semantics: scope:invocation
-            //~gfx8>> s1: %data = p_parallelcopy 42
-            //~gfx8>> s_buffer_store_dword %_, 0, %data storage:buffer semantics: scope:invocation
+            //>> v1: %data = p_parallelcopy 42
+            //buffer_store_dword %_, v1: undef, 0, %data disable_wqm storage:buffer semantics: scope:invocation
             res = 42;
          }
       );
 
-      PipelineBuilder bld(get_vk_device((chip_class)i));
-      bld.add_cs(cs);
-      bld.print_ir(VK_SHADER_STAGE_COMPUTE_BIT, "ACO IR", true);
+      PipelineBuilder pbld(get_vk_device((chip_class)i));
+      pbld.add_cs(cs);
+      pbld.print_ir(VK_SHADER_STAGE_COMPUTE_BIT, "ACO IR", true);
+   }
+END_TEST
+
+BEGIN_TEST(isel.gs.no_outputs)
+   for (unsigned i = GFX8; i <= GFX10; i++) {
+      if (!set_variant((chip_class)i))
+         continue;
+
+      QoShaderModuleCreateInfo vs = qoShaderModuleCreateInfoGLSL(VERTEX,
+         void main() {}
+      );
+
+      QoShaderModuleCreateInfo gs = qoShaderModuleCreateInfoGLSL(GEOMETRY,
+         layout(points) in;
+         layout(points, max_vertices = 1) out;
+
+         void main() {
+            EmitVertex();
+            EndPrimitive();
+         }
+      );
+
+      PipelineBuilder pbld(get_vk_device((chip_class)i));
+      pbld.add_stage(VK_SHADER_STAGE_VERTEX_BIT, vs);
+      pbld.add_stage(VK_SHADER_STAGE_GEOMETRY_BIT, gs);
+      pbld.create_pipeline();
+
+      //! success
+      fprintf(output, "success\n");
+   }
+END_TEST
+
+BEGIN_TEST(isel.gs.no_verts)
+   for (unsigned i = GFX8; i <= GFX10; i++) {
+      if (!set_variant((chip_class)i))
+         continue;
+
+      QoShaderModuleCreateInfo vs = qoShaderModuleCreateInfoGLSL(VERTEX,
+         void main() {}
+      );
+
+      QoShaderModuleCreateInfo gs = qoShaderModuleCreateInfoGLSL(GEOMETRY,
+         layout(points) in;
+         layout(points, max_vertices = 0) out;
+
+         void main() {}
+      );
+
+      PipelineBuilder pbld(get_vk_device((chip_class)i));
+      pbld.add_stage(VK_SHADER_STAGE_VERTEX_BIT, vs);
+      pbld.add_stage(VK_SHADER_STAGE_GEOMETRY_BIT, gs);
+      pbld.create_pipeline();
+
+      //! success
+      fprintf(output, "success\n");
+   }
+END_TEST
+
+BEGIN_TEST(isel.sparse.clause)
+   for (unsigned i = GFX10_3; i <= GFX10_3; i++) {
+      if (!set_variant((chip_class)i))
+         continue;
+
+      QoShaderModuleCreateInfo cs = qoShaderModuleCreateInfoGLSL(COMPUTE,
+         QO_EXTENSION GL_ARB_sparse_texture2 : require
+         layout(local_size_x=1) in;
+         layout(binding=0) uniform sampler2D tex;
+         layout(binding=1) buffer Buf {
+            vec4 res[4];
+            uint code[4];
+         };
+         void main() {
+            //! llvm_version: #llvm_ver
+            //; if llvm_ver >= 12:
+            //;    funcs['sample_res'] = lambda _: 'v[#_:#_]'
+            //;    funcs['sample_coords'] = lambda _: '[v#_, v#_, v#_]'
+            //; else:
+            //;    funcs['sample_res'] = lambda _: 'v#_'
+            //;    funcs['sample_coords'] = lambda _: '[v#_, v#_, v#_, v#_]'
+            //>> v5: (noCSE)%zero0 = p_create_vector 0, 0, 0, 0, 0
+            //>> v5: %_ = image_sample_lz_o %_, %_, (kill)%zero0, (kill)%_, %_, %_ dmask:xyzw 2d tfe storage: semantics: scope:invocation
+            //>> v5: (noCSE)%zero1 = p_create_vector 0, 0, 0, 0, 0
+            //>> v5: %_ = image_sample_lz_o %_, %_, (kill)%zero1, (kill)%_, %_, %_ dmask:xyzw 2d tfe storage: semantics: scope:invocation
+            //>> v5: (noCSE)%zero2 = p_create_vector 0, 0, 0, 0, 0
+            //>> v5: %_ = image_sample_lz_o %_, %_, (kill)%zero2, (kill)%_, %_, %_ dmask:xyzw 2d tfe storage: semantics: scope:invocation
+            //>> v5: (noCSE)%zero3 = p_create_vector 0, 0, 0, 0, 0
+            //>> v5: %_ = image_sample_lz_o (kill)%_, (kill)%_, (kill)%zero3, (kill)%_, (kill)%_, (kill)%_ dmask:xyzw 2d tfe storage: semantics: scope:invocation
+            //>> s_clause 0x3
+            //! image_sample_lz_o @sample_res, @sample_coords, @s256(img), @s128(samp) dmask:0xf dim:SQ_RSRC_IMG_2D tfe
+            //! image_sample_lz_o @sample_res, @sample_coords, @s256(img), @s128(samp) dmask:0xf dim:SQ_RSRC_IMG_2D tfe
+            //! image_sample_lz_o @sample_res, @sample_coords, @s256(img), @s128(samp) dmask:0xf dim:SQ_RSRC_IMG_2D tfe
+            //! image_sample_lz_o @sample_res, @sample_coords, @s256(img), @s128(samp) dmask:0xf dim:SQ_RSRC_IMG_2D tfe
+            code[0] = sparseTextureOffsetARB(tex, vec2(0.5), ivec2(1, 0), res[0]);
+            code[1] = sparseTextureOffsetARB(tex, vec2(0.5), ivec2(2, 0), res[1]);
+            code[2] = sparseTextureOffsetARB(tex, vec2(0.5), ivec2(3, 0), res[2]);
+            code[3] = sparseTextureOffsetARB(tex, vec2(0.5), ivec2(4, 0), res[3]);
+         }
+      );
+
+      fprintf(output, "llvm_version: %u\n", LLVM_VERSION_MAJOR);
+
+      PipelineBuilder pbld(get_vk_device((chip_class)i));
+      pbld.add_cs(cs);
+      pbld.print_ir(VK_SHADER_STAGE_COMPUTE_BIT, "ACO IR", true);
+      pbld.print_ir(VK_SHADER_STAGE_COMPUTE_BIT, "Assembly", true);
    }
 END_TEST

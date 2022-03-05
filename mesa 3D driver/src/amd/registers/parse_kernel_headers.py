@@ -51,11 +51,12 @@ gfx_versions = {
 }
 
 # match: static const struct IP_BASE GC_BASE ={ { { { 0x00001260, 0x0000A000, 0x02402C00, 0, 0 } },
-re_base = re.compile(r'^static const struct IP_BASE GC_BASE\s*=\s*{ { { { (\w+), (\w+), (\w+), (\w+), (\w+) } },\n')
+re_base = re.compile(r'^static const struct IP_BASE.*GC_BASE\s*=\s*{ { { { (\w+), (\w+), (\w+), (\w+), (\w+).*} },\n')
 
 # match: #define mmSDMA0_DEC_START                              0x0000
 # match: #define ixSDMA0_DEC_START                              0x0000
-re_offset = re.compile(r'^#define (?P<mm>[mi][mx])(?P<name>\w+)\s+(?P<value>\w+)\n')
+# match: #define regSDMA0_DEC_START                              0x0000
+re_offset = re.compile(r'^#define (?P<mm>(mm|ix|reg))(?P<name>\w+)\s+(?P<value>\w+)\n')
 
 # match: #define SDMA0_DEC_START__START__SHIFT                  0x0
 re_shift = re.compile(r'^#define (?P<name>\w+)__(?P<field>\w+)__SHIFT\s+(?P<value>\w+)\n')
@@ -261,6 +262,7 @@ enum_map = {
     "TOPOLOGY": ["VGT_TESS_TOPOLOGY"],
     "TYPE": ["SQ_RSRC_BUF_TYPE", "SQ_BUF_RSRC_WORD3", "SQ_RSRC_IMG_TYPE", "SQ_IMG_RSRC_WORD3", "VGT_TESS_TYPE", "VGT_TF_PARAM"],
     "UNCERTAINTY_REGION_MODE": ["ScUncertaintyRegionMode"],
+    "VRS_HTILE_ENCODING": ["VRSHtileEncoding"],
     "VS_EN": ["VGT_STAGES_VS_EN"],
     "XY_MAG_FILTER": ["SQ_TEX_XY_FILTER"],
     "XY_MIN_FILTER": ["SQ_TEX_XY_FILTER"],
@@ -271,6 +273,12 @@ enum_map = {
     "ZPCPSD_WR_POLICY": ["WritePolicy"],
     "Z_RD_POLICY": ["ReadPolicy"],
     "Z_WR_POLICY": ["WritePolicy"],
+
+    "VERTEX_RATE_COMBINER_MODE": ["VRSCombinerMode"],
+    "PRIMITIVE_RATE_COMBINER_MODE": ["VRSCombinerMode"],
+    "HTILE_RATE_COMBINER_MODE": ["VRSCombinerMode"],
+    "SAMPLE_ITER_COMBINER_MODE": ["VRSCombinerMode"],
+    "VRS_OVERRIDE_RATE_COMBINER_MODE": ["VRSCombinerMode"],
 }
 
 # Enum definitions that are incomplete or missing in kernel headers
@@ -381,6 +389,24 @@ IMG_DATA_FORMAT_STENCIL = {
  "entries": [
   {"name": "IMG_DATA_FORMAT_S8_16", "value": 59},
   {"name": "IMG_DATA_FORMAT_S8_32", "value": 60},
+ ]
+}
+
+VRSCombinerMode = {
+ "entries": [
+  {"name": "VRS_COMB_MODE_PASSTHRU", "value": 0},
+  {"name": "VRS_COMB_MODE_OVERRIDE", "value": 1},
+  {"name": "VRS_COMB_MODE_MIN", "value": 2},
+  {"name": "VRS_COMB_MODE_MAX", "value": 3},
+  {"name": "VRS_COMB_MODE_SATURATE", "value": 4},
+ ]
+}
+
+VRSHtileEncoding = {
+ "entries": [
+  {"name": "VRS_HTILE_DISABLE", "value": 0},
+  {"name": "VRS_HTILE_2BIT_ENCODING", "value": 1},
+  {"name": "VRS_HTILE_4BIT_ENCODING", "value": 2},
  ]
 }
 
@@ -565,6 +591,8 @@ enums_missing = {
     "DB_DFSM_CONTROL__PUNCHOUT_MODE": DB_DFSM_CONTROL__PUNCHOUT_MODE,
     "ThreadTraceRegInclude": ThreadTraceRegInclude,
     "ThreadTraceTokenExclude": ThreadTraceTokenExclude,
+    "VRSCombinerMode": VRSCombinerMode,
+    "VRSHtileEncoding": VRSHtileEncoding,
   },
 }
 
@@ -601,6 +629,8 @@ fields_missing = {
   },
   'gfx103': {
     "DB_RESERVED_REG_2": [["RESOURCE_LEVEL", 28, 31, None, True]],
+    "VGT_DRAW_PAYLOAD_CNTL": [["EN_VRS_RATE", 6, 6]],
+    "VGT_SHADER_STAGES_EN": [["PRIMGEN_PASSTHRU_NO_MSG", 26, 26]],
   },
 }
 
@@ -646,10 +676,16 @@ def generate_json(gfx_version, amd_headers_path):
             if not old_gen and r.group('mm') == 'mm':
                 continue
         else:
-            assert name == r.group('name')[:-9]
+            if name != r.group('name')[:-9]:
+                print('Warning: "{0}" not preceded by {1} but by {2}'.format(r.group('name'), r.group('name')[:-9], name))
+                continue
             idx = int(r.group('value'))
             assert idx < len(base_offsets)
             offset += int(base_offsets[idx], 0) * 4
+
+        # Remove the _UMD suffix because it was mistakenly added to indicate it's for a User-Mode Driver
+        if name[-4:] == '_UMD':
+            name = name[:-4]
 
         # Only accept writeable registers and debug registers
         if register_filter(gfx_version, name, offset, offset in added_offsets):
@@ -774,7 +810,12 @@ def generate_json(gfx_version, amd_headers_path):
 
         if len(type['fields']) > 0:
             reg_types[name] = type
-            reg['type_ref'] = name
+
+            # Don't define types that have only one field covering all bits
+            field0_bits = type['fields'][0]['bits'];
+            if len(type['fields']) > 1 or field0_bits[0] != 0 or field0_bits[1] != 31:
+                reg['type_ref'] = name
+
             reg_mappings.append(reg)
 
 

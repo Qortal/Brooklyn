@@ -272,6 +272,7 @@ hash_tex(uint32_t hash, const nir_tex_instr *instr)
    hash = HASH(hash, instr->is_array);
    hash = HASH(hash, instr->is_shadow);
    hash = HASH(hash, instr->is_new_style_shadow);
+   hash = HASH(hash, instr->is_sparse);
    unsigned component = instr->component;
    hash = HASH(hash, component);
    for (unsigned i = 0; i < 4; ++i)
@@ -431,7 +432,7 @@ nir_alu_srcs_negative_equal(const nir_alu_instr *alu1,
              nir_alu_instr_channel_used(alu2, src2, i));
    }
 
-   if (nir_op_infos[alu1->op].input_types[src1] == nir_type_float) {
+   if (nir_alu_type_get_base_type(nir_op_infos[alu1->op].input_types[src1]) == nir_type_float) {
       assert(nir_op_infos[alu1->op].input_types[src1] ==
              nir_op_infos[alu2->op].input_types[src2]);
    } else {
@@ -802,14 +803,20 @@ nir_instr_set_destroy(struct set *instr_set)
 }
 
 bool
-nir_instr_set_add_or_rewrite(struct set *instr_set, nir_instr *instr)
+nir_instr_set_add_or_rewrite(struct set *instr_set, nir_instr *instr,
+                             bool (*cond_function) (const nir_instr *a,
+                                                    const nir_instr *b))
 {
    if (!instr_can_rewrite(instr))
       return false;
 
-   struct set_entry *e = _mesa_set_search_or_add(instr_set, instr);
+   struct set_entry *e = _mesa_set_search_or_add(instr_set, instr, NULL);
    nir_instr *match = (nir_instr *) e->key;
-   if (match != instr) {
+   if (match == instr)
+      return false;
+
+   if (!cond_function || cond_function(match, instr)) {
+      /* rewrite instruction if condition is matched */
       nir_ssa_def *def = nir_instr_get_dest_ssa_def(instr);
       nir_ssa_def *new_def = nir_instr_get_dest_ssa_def(match);
 
@@ -821,11 +828,16 @@ nir_instr_set_add_or_rewrite(struct set *instr_set, nir_instr *instr)
       if (instr->type == nir_instr_type_alu && nir_instr_as_alu(instr)->exact)
          nir_instr_as_alu(match)->exact = true;
 
-      nir_ssa_def_rewrite_uses(def, nir_src_for_ssa(new_def));
-      return true;
-   }
+      nir_ssa_def_rewrite_uses(def, new_def);
 
-   return false;
+      nir_instr_remove(instr);
+
+      return true;
+   } else {
+      /* otherwise, replace hashed instruction */
+      e->key = instr;
+      return false;
+   }
 }
 
 void

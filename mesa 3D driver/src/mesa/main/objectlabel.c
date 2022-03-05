@@ -29,7 +29,6 @@
 #include "dlist.h"
 #include "enums.h"
 #include "fbobject.h"
-#include "objectlabel.h"
 #include "pipelineobj.h"
 #include "queryobj.h"
 #include "samplerobj.h"
@@ -37,6 +36,7 @@
 #include "syncobj.h"
 #include "texobj.h"
 #include "transformfeedback.h"
+#include "api_exec_decl.h"
 
 
 /**
@@ -216,7 +216,7 @@ get_label_pointer(struct gl_context *ctx, GLenum identifier, GLuint name,
       break;
    case GL_DISPLAY_LIST:
       if (ctx->API == API_OPENGL_COMPAT) {
-         struct gl_display_list *list = _mesa_lookup_list(ctx, name);
+         struct gl_display_list *list = _mesa_lookup_list(ctx, name, false);
          if (list)
             labelPtr = &list->Label;
       }

@@ -57,13 +57,13 @@ static struct pb_buffer *radeon_jpeg_get_decode_param(struct radeon_decoder *dec
 static void set_reg_jpeg(struct radeon_decoder *dec, unsigned reg, unsigned cond, unsigned type,
                          uint32_t val)
 {
-   radeon_emit(dec->cs, RDECODE_PKTJ(reg, cond, type));
-   radeon_emit(dec->cs, val);
+   radeon_emit(&dec->cs, RDECODE_PKTJ(reg, cond, type));
+   radeon_emit(&dec->cs, val);
 }
 
 /* send a bitstream buffer command */
 static void send_cmd_bitstream(struct radeon_decoder *dec, struct pb_buffer *buf, uint32_t off,
-                               enum radeon_bo_usage usage, enum radeon_bo_domain domain)
+                               unsigned usage, enum radeon_bo_domain domain)
 {
    uint64_t addr;
 
@@ -85,7 +85,7 @@ static void send_cmd_bitstream(struct radeon_decoder *dec, struct pb_buffer *buf
    set_reg_jpeg(dec, SOC15_REG_ADDR(mmUVD_CTX_DATA), COND0, TYPE0, (0 << 9));
    set_reg_jpeg(dec, SOC15_REG_ADDR(mmUVD_SOFT_RESET), COND0, TYPE3, (1 << 9));
 
-   dec->ws->cs_add_buffer(dec->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED, domain, 0);
+   dec->ws->cs_add_buffer(&dec->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED, domain);
    addr = dec->ws->buffer_get_virtual_address(buf);
    addr = addr + off;
 
@@ -106,7 +106,7 @@ static void send_cmd_bitstream(struct radeon_decoder *dec, struct pb_buffer *buf
 
 /* send a target buffer command */
 static void send_cmd_target(struct radeon_decoder *dec, struct pb_buffer *buf, uint32_t off,
-                            enum radeon_bo_usage usage, enum radeon_bo_domain domain)
+                            unsigned usage, enum radeon_bo_domain domain)
 {
    uint64_t addr;
 
@@ -117,7 +117,7 @@ static void send_cmd_target(struct radeon_decoder *dec, struct pb_buffer *buf, u
    set_reg_jpeg(dec, SOC15_REG_ADDR(mmUVD_JPEG_TILING_CTRL), COND0, TYPE0, 0);
    set_reg_jpeg(dec, SOC15_REG_ADDR(mmUVD_JPEG_UV_TILING_CTRL), COND0, TYPE0, 0);
 
-   dec->ws->cs_add_buffer(dec->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED, domain, 0);
+   dec->ws->cs_add_buffer(&dec->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED, domain);
    addr = dec->ws->buffer_get_virtual_address(buf);
    addr = addr + off;
 
@@ -185,7 +185,7 @@ static void send_cmd_target(struct radeon_decoder *dec, struct pb_buffer *buf, u
 
 /* send a bitstream buffer command */
 static void send_cmd_bitstream_direct(struct radeon_decoder *dec, struct pb_buffer *buf,
-                                      uint32_t off, enum radeon_bo_usage usage,
+                                      uint32_t off, unsigned usage,
                                       enum radeon_bo_domain domain)
 {
    uint64_t addr;
@@ -205,7 +205,7 @@ static void send_cmd_bitstream_direct(struct radeon_decoder *dec, struct pb_buff
    set_reg_jpeg(dec, vcnipUVD_JRBC_IB_REF_DATA, COND0, TYPE0, (0 << 0x10));
    set_reg_jpeg(dec, vcnipUVD_JPEG_DEC_SOFT_RST, COND3, TYPE3, (0x1 << 0x10));
 
-   dec->ws->cs_add_buffer(dec->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED, domain, 0);
+   dec->ws->cs_add_buffer(&dec->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED, domain);
    addr = dec->ws->buffer_get_virtual_address(buf);
    addr = addr + off;
 
@@ -225,7 +225,7 @@ static void send_cmd_bitstream_direct(struct radeon_decoder *dec, struct pb_buff
 
 /* send a target buffer command */
 static void send_cmd_target_direct(struct radeon_decoder *dec, struct pb_buffer *buf, uint32_t off,
-                                   enum radeon_bo_usage usage, enum radeon_bo_domain domain)
+                                   unsigned usage, enum radeon_bo_domain domain)
 {
    uint64_t addr;
 
@@ -236,7 +236,7 @@ static void send_cmd_target_direct(struct radeon_decoder *dec, struct pb_buffer 
    set_reg_jpeg(dec, vcnipJPEG_DEC_Y_GFX10_TILING_SURFACE, COND0, TYPE0, 0);
    set_reg_jpeg(dec, vcnipJPEG_DEC_UV_GFX10_TILING_SURFACE, COND0, TYPE0, 0);
 
-   dec->ws->cs_add_buffer(dec->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED, domain, 0);
+   dec->ws->cs_add_buffer(&dec->cs, buf, usage | RADEON_USAGE_SYNCHRONIZED, domain);
    addr = dec->ws->buffer_get_virtual_address(buf);
    addr = addr + off;
 
@@ -287,7 +287,7 @@ void send_cmd_jpeg(struct radeon_decoder *dec, struct pipe_video_buffer *target,
    bs_buf = &dec->bs_buffers[dec->cur_buffer];
 
    memset(dec->bs_ptr, 0, align(dec->bs_size, 128) - dec->bs_size);
-   dec->ws->buffer_unmap(bs_buf->res->buf);
+   dec->ws->buffer_unmap(dec->ws, bs_buf->res->buf);
    dec->bs_ptr = NULL;
 
    dt = radeon_jpeg_get_decode_param(dec, target, picture);

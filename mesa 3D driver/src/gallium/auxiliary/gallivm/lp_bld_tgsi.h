@@ -171,6 +171,7 @@ struct lp_bld_tgsi_system_values {
    LLVMValueRef vertex_id_nobase;
    LLVMValueRef prim_id;
    LLVMValueRef basevertex;
+   LLVMValueRef firstvertex;
    LLVMValueRef invocation_id;
    LLVMValueRef draw_id;
    LLVMValueRef thread_id;
@@ -186,6 +187,9 @@ struct lp_bld_tgsi_system_values {
    LLVMValueRef sample_id;
    LLVMValueRef sample_pos;
    LLVMValueRef sample_mask_in;
+   LLVMValueRef view_index;
+   LLVMValueRef subgroup_id;
+   LLVMValueRef num_subgroups;
 };
 
 
@@ -254,7 +258,7 @@ struct lp_build_fs_iface {
 
    void (*fb_fetch)(const struct lp_build_fs_iface *iface,
                     struct lp_build_context *bld,
-                    unsigned cbuf,
+                    int location,
                     LLVMValueRef result[4]);
 };
 
@@ -285,6 +289,7 @@ struct lp_build_tgsi_params {
    LLVMValueRef kernel_args;
    const struct lp_build_fs_iface *fs_iface;
    unsigned gs_vertex_streams;
+   LLVMValueRef aniso_filter_table;
 };
 
 void

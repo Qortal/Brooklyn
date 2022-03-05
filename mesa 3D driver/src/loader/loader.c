@@ -47,6 +47,7 @@
 #include <GL/gl.h>
 #include <GL/internal/dri_interface.h>
 #include "loader.h"
+#include "util/os_file.h"
 
 #ifdef HAVE_LIBDRM
 #include <xf86drm.h>
@@ -177,6 +178,26 @@ loader_open_render_node(const char *name)
    return fd;
 }
 
+char *
+loader_get_render_node(dev_t device)
+{
+   char *render_node = NULL;
+   drmDevicePtr dev_ptr;
+
+   if (drmGetDeviceFromDevId(device, 0, &dev_ptr) < 0)
+      return NULL;
+
+   if (dev_ptr->available_nodes & (1 << DRM_NODE_RENDER)) {
+      render_node = strdup(dev_ptr->nodes[DRM_NODE_RENDER]);
+      if (!render_node)
+         log_(_LOADER_DEBUG, "MESA-LOADER: failed to allocate memory for render node\n");
+   }
+
+   drmFreeDevice(&dev_ptr);
+
+   return render_node;
+}
+
 #ifdef USE_DRICONF
 static const driOptionDescription __driConfigOptionsLoader[] = {
     DRI_CONF_SECTION_INITIALIZATION
@@ -195,7 +216,7 @@ static char *loader_get_dri_config_driver(int fd)
    driParseOptionInfo(&defaultInitOptions, __driConfigOptionsLoader,
                       ARRAY_SIZE(__driConfigOptionsLoader));
    driParseConfigFiles(&userInitOptions, &defaultInitOptions, 0,
-                       "loader", kernel_driver, NULL, 0, NULL, 0);
+                       "loader", kernel_driver, NULL, NULL, 0, NULL, 0);
    if (driCheckOption(&userInitOptions, "dri_driver", DRI_STRING)) {
       char *opt = driQueryOptionstr(&userInitOptions, "dri_driver");
       /* not an empty string */
@@ -218,7 +239,7 @@ static char *loader_get_dri_config_device_id(void)
    driParseOptionInfo(&defaultInitOptions, __driConfigOptionsLoader,
                       ARRAY_SIZE(__driConfigOptionsLoader));
    driParseConfigFiles(&userInitOptions, &defaultInitOptions, 0,
-                       "loader", NULL, NULL, 0, NULL, 0);
+                       "loader", NULL, NULL, NULL, 0, NULL, 0);
    if (driCheckOption(&userInitOptions, "device_id", DRI_STRING))
       prime = strdup(driQueryOptionstr(&userInitOptions, "device_id"));
    driDestroyOptionCache(&userInitOptions);
@@ -375,6 +396,12 @@ loader_open_render_node(const char *name)
    return -1;
 }
 
+char *
+loader_get_render_node(dev_t device)
+{
+   return NULL;
+}
+
 int loader_get_user_preferred_fd(int default_fd, bool *different_device)
 {
    *different_device = false;
@@ -407,10 +434,52 @@ drm_get_pci_id_for_fd(int fd, int *vendor_id, int *chip_id)
 }
 #endif
 
+#ifdef __linux__
+static int loader_get_linux_pci_field(int maj, int min, const char *field)
+{
+   char path[PATH_MAX + 1];
+   snprintf(path, sizeof(path), "/sys/dev/char/%d:%d/device/%s", maj, min, field);
+
+   char *field_str = os_read_file(path, NULL);
+   if (!field_str) {
+      /* Probably non-PCI device. */
+      return 0;
+   }
+
+   int value = (int)strtoll(field_str, NULL, 16);
+   free(field_str);
+
+   return value;
+}
+
+static bool
+loader_get_linux_pci_id_for_fd(int fd, int *vendor_id, int *chip_id)
+{
+   struct stat sbuf;
+   if (fstat(fd, &sbuf) != 0) {
+      log_(_LOADER_DEBUG, "MESA-LOADER: failed to fstat fd\n");
+      return false;
+   }
+
+   int maj = major(sbuf.st_rdev);
+   int min = minor(sbuf.st_rdev);
+
+   *vendor_id = loader_get_linux_pci_field(maj, min, "vendor");
+   *chip_id = loader_get_linux_pci_field(maj, min, "device");
+
+   return *vendor_id && *chip_id;
+}
+#endif /* __linux__ */
 
 bool
 loader_get_pci_id_for_fd(int fd, int *vendor_id, int *chip_id)
 {
+#ifdef __linux__
+   /* Implementation without causing full enumeration of DRM devices. */
+   if (loader_get_linux_pci_id_for_fd(fd, vendor_id, chip_id))
+      return true;
+#endif
+
 #if HAVE_LIBDRM
    return drm_get_pci_id_for_fd(fd, vendor_id, chip_id);
 #endif
@@ -517,23 +586,25 @@ loader_get_extensions_name(const char *driver_name)
 }
 
 /**
- * Opens a DRI driver using its driver name, returning the __DRIextension
- * entrypoints.
+ * Opens a driver or backend using its name, returning the library handle.
  *
  * \param driverName - a name like "i965", "radeon", "nouveau", etc.
- * \param out_driver - Address where the dlopen() return value will be stored.
+ * \param lib_suffix - a suffix to append to the driver name to generate the
+ * full library name.
  * \param search_path_vars - NULL-terminated list of env vars that can be used
- * to override the DEFAULT_DRIVER_DIR search path.
+ * \param default_search_path - a colon-separted list of directories used if
+ * search_path_vars is NULL or none of the vars are set in the environment.
+ * \param warn_on_fail - Log a warning if the driver is not found.
  */
-const struct __DRIextensionRec **
-loader_open_driver(const char *driver_name,
-                   void **out_driver_handle,
-                   const char **search_path_vars)
+void *
+loader_open_driver_lib(const char *driver_name,
+                       const char *lib_suffix,
+                       const char **search_path_vars,
+                       const char *default_search_path,
+                       bool warn_on_fail)
 {
-   char path[PATH_MAX], *search_paths, *next, *end;
-   char *get_extensions_name;
-   const struct __DRIextensionRec **extensions = NULL;
-   const struct __DRIextensionRec **(*get_extensions)(void);
+   char path[PATH_MAX];
+   const char *search_paths, *next, *end;
 
    search_paths = NULL;
    if (geteuid() == getuid() && search_path_vars) {
@@ -544,12 +615,12 @@ loader_open_driver(const char *driver_name,
       }
    }
    if (search_paths == NULL)
-      search_paths = DEFAULT_DRIVER_DIR;
+      search_paths = default_search_path;
 
    void *driver = NULL;
-   char *dl_error = NULL;
+   const char *dl_error = NULL;
    end = search_paths + strlen(search_paths);
-   for (char *p = search_paths; p < end; p = next + 1) {
+   for (const char *p = search_paths; p < end; p = next + 1) {
       int len;
       next = strchr(p, ':');
       if (next == NULL)
@@ -557,11 +628,13 @@ loader_open_driver(const char *driver_name,
 
       len = next - p;
 #if USE_ELF_TLS
-      snprintf(path, sizeof(path), "%.*s/tls/%s_dri.so", len, p, driver_name);
+      snprintf(path, sizeof(path), "%.*s/tls/%s%s.so", len,
+               p, driver_name, lib_suffix);
       driver = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
 #endif
       if (driver == NULL) {
-         snprintf(path, sizeof(path), "%.*s/%s_dri.so", len, p, driver_name);
+         snprintf(path, sizeof(path), "%.*s/%s%s.so", len,
+                  p, driver_name, lib_suffix);
          driver = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
          if (driver == NULL) {
             dl_error = dlerror();
@@ -575,13 +648,41 @@ loader_open_driver(const char *driver_name,
    }
 
    if (driver == NULL) {
-      log_(_LOADER_WARNING, "MESA-LOADER: failed to open %s: %s (search paths %s)\n",
-           driver_name, dl_error, search_paths);
-      *out_driver_handle = NULL;
+      if (warn_on_fail) {
+         log_(_LOADER_WARNING,
+              "MESA-LOADER: failed to open %s: %s (search paths %s, suffix %s)\n",
+              driver_name, dl_error, search_paths, lib_suffix);
+      }
       return NULL;
    }
 
    log_(_LOADER_DEBUG, "MESA-LOADER: dlopen(%s)\n", path);
+
+   return driver;
+}
+
+/**
+ * Opens a DRI driver using its driver name, returning the __DRIextension
+ * entrypoints.
+ *
+ * \param driverName - a name like "i965", "radeon", "nouveau", etc.
+ * \param out_driver - Address where the dlopen() return value will be stored.
+ * \param search_path_vars - NULL-terminated list of env vars that can be used
+ * to override the DEFAULT_DRIVER_DIR search path.
+ */
+const struct __DRIextensionRec **
+loader_open_driver(const char *driver_name,
+                   void **out_driver_handle,
+                   const char **search_path_vars)
+{
+   char *get_extensions_name;
+   const struct __DRIextensionRec **extensions = NULL;
+   const struct __DRIextensionRec **(*get_extensions)(void);
+   void *driver = loader_open_driver_lib(driver_name, "_dri", search_path_vars,
+                                         DEFAULT_DRIVER_DIR, true);
+
+   if (!driver)
+      goto failed;
 
    get_extensions_name = loader_get_extensions_name(driver_name);
    if (get_extensions_name) {
@@ -601,8 +702,10 @@ loader_open_driver(const char *driver_name,
       log_(_LOADER_WARNING,
            "MESA-LOADER: driver exports no extensions (%s)\n", dlerror());
       dlclose(driver);
+      driver = NULL;
    }
 
+failed:
    *out_driver_handle = driver;
    return extensions;
 }

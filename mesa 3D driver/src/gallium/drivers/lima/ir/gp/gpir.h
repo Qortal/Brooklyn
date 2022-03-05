@@ -32,6 +32,7 @@
 
 /* list of operations that a node can do. */
 typedef enum {
+   gpir_op_unsupported = 0,
    gpir_op_mov,
 
    /* mul ops */
@@ -295,7 +296,7 @@ typedef struct gpir_instr {
     *       alu_num_slot_needed_by_max +
     *       max(alu_num_unscheduled_next_max - alu_max_allowed_next_max, 0)
     * (2) alu_non_cplx_slot_free >= alu_num_slot_needed_by_max +
-    *       alu_num_slot_neede_by_non_cplx_store
+    *       alu_num_slot_needed_by_non_cplx_store
     *
     * alu_max_allowed_next_max is normally 5 (since there can be at most 5 max
     * nodes for the next instruction) but when there is a complex1 node in
@@ -384,7 +385,7 @@ typedef struct {
    gpir_node *cond;
 } gpir_branch_node;
 
-struct lima_vs_shader_state;
+struct lima_vs_compiled_shader;
 
 #define GPIR_VECTOR_SSA_VIEWPORT_SCALE  0
 #define GPIR_VECTOR_SSA_VIEWPORT_OFFSET 1
@@ -419,7 +420,7 @@ typedef struct gpir_compiler {
       gpir_node *nodes[4];
    } vector_ssa[GPIR_VECTOR_SSA_NUM];
 
-   struct lima_vs_shader_state *prog;
+   struct lima_vs_compiled_shader *prog;
    int constant_base;
 
    /* shaderdb */

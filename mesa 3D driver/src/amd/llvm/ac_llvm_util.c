@@ -40,7 +40,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static void ac_init_llvm_target()
+static void ac_init_llvm_target(void)
 {
    LLVMInitializeAMDGPUTargetInfo();
    LLVMInitializeAMDGPUTarget();
@@ -67,12 +67,9 @@ static void ac_init_llvm_target()
       "mesa",
       "-simplifycfg-sink-common=false",
       "-global-isel-abort=2",
-#if LLVM_VERSION_MAJOR >= 10
-      /* Atomic optimizations require LLVM 10.0 for gfx10 support. */
       "-amdgpu-atomic-optimizations=true",
-#endif
-#if LLVM_VERSION_MAJOR >= 11
-      /* This was disabled by default in: https://reviews.llvm.org/D77228 */
+#if LLVM_VERSION_MAJOR == 11
+      /* This fixes variable indexing on LLVM 11. It also breaks atomic.cmpswap on LLVM >= 12. */
       "-structurizecfg-skip-uniform-regions",
 #endif
    };
@@ -168,6 +165,8 @@ const char *ac_get_llvm_processor_name(enum radeon_family family)
       return "gfx909";
    case CHIP_ARCTURUS:
       return "gfx908";
+   case CHIP_ALDEBARAN:
+      return "gfx90a";
    case CHIP_NAVI10:
       return "gfx1010";
    case CHIP_NAVI12:
@@ -175,9 +174,18 @@ const char *ac_get_llvm_processor_name(enum radeon_family family)
    case CHIP_NAVI14:
       return "gfx1012";
    case CHIP_SIENNA_CICHLID:
+      return "gfx1030";
    case CHIP_NAVY_FLOUNDER:
+      return LLVM_VERSION_MAJOR >= 12 ? "gfx1031" : "gfx1030";
    case CHIP_DIMGREY_CAVEFISH:
+      return LLVM_VERSION_MAJOR >= 12 ? "gfx1032" : "gfx1030";
    case CHIP_VANGOGH:
+      return LLVM_VERSION_MAJOR >= 12 ? "gfx1033" : "gfx1030";
+   case CHIP_BEIGE_GOBY:
+      return LLVM_VERSION_MAJOR >= 13 ? "gfx1034" : "gfx1030";
+   case CHIP_YELLOW_CARP:
+      return LLVM_VERSION_MAJOR >= 13 ? "gfx1035" : "gfx1030";
+   case CHIP_GFX1036: /* TODO: LLVM 15 doesn't support this yet */
       return "gfx1030";
    default:
       return "";
@@ -190,21 +198,11 @@ static LLVMTargetMachineRef ac_create_target_machine(enum radeon_family family,
                                                      const char **out_triple)
 {
    assert(family >= CHIP_TAHITI);
-   char features[256];
    const char *triple = (tm_options & AC_TM_SUPPORTS_SPILL) ? "amdgcn-mesa-mesa3d" : "amdgcn--";
    LLVMTargetRef target = ac_get_llvm_target(triple);
 
-   snprintf(features, sizeof(features), "+DumpCode%s%s%s%s%s",
-            LLVM_VERSION_MAJOR >= 11 ? "" : ",-fp32-denormals,+fp64-denormals",
-            family >= CHIP_NAVI10 && !(tm_options & AC_TM_WAVE32)
-               ? ",+wavefrontsize64,-wavefrontsize32"
-               : "",
-            family <= CHIP_NAVI14 && tm_options & AC_TM_FORCE_ENABLE_XNACK ? ",+xnack" : "",
-            family <= CHIP_NAVI14 && tm_options & AC_TM_FORCE_DISABLE_XNACK ? ",-xnack" : "",
-            tm_options & AC_TM_PROMOTE_ALLOCA_TO_SCRATCH ? ",-promote-alloca" : "");
-
    LLVMTargetMachineRef tm =
-      LLVMCreateTargetMachine(target, triple, ac_get_llvm_processor_name(family), features, level,
+      LLVMCreateTargetMachine(target, triple, ac_get_llvm_processor_name(family), "", level,
                               LLVMRelocDefault, LLVMCodeModelDefault);
 
    if (out_triple)
@@ -322,32 +320,18 @@ void ac_llvm_set_workgroup_size(LLVMValueRef F, unsigned size)
    LLVMAddTargetDependentFunctionAttr(F, "amdgpu-flat-work-group-size", str);
 }
 
-unsigned ac_count_scratch_private_memory(LLVMValueRef function)
+void ac_llvm_set_target_features(LLVMValueRef F, struct ac_llvm_context *ctx)
 {
-   unsigned private_mem_vgprs = 0;
+   char features[2048];
 
-   /* Process all LLVM instructions. */
-   LLVMBasicBlockRef bb = LLVMGetFirstBasicBlock(function);
-   while (bb) {
-      LLVMValueRef next = LLVMGetFirstInstruction(bb);
+   snprintf(features, sizeof(features), "+DumpCode%s%s",
+            /* GFX9 has broken VGPR indexing, so always promote alloca to scratch. */
+            ctx->chip_class == GFX9 ? ",-promote-alloca" : "",
+            /* Wave32 is the default. */
+            ctx->chip_class >= GFX10 && ctx->wave_size == 64 ?
+               ",+wavefrontsize64,-wavefrontsize32" : "");
 
-      while (next) {
-         LLVMValueRef inst = next;
-         next = LLVMGetNextInstruction(next);
-
-         if (LLVMGetInstructionOpcode(inst) != LLVMAlloca)
-            continue;
-
-         LLVMTypeRef type = LLVMGetElementType(LLVMTypeOf(inst));
-         /* No idea why LLVM aligns allocas to 4 elements. */
-         unsigned alignment = LLVMGetAlignment(inst);
-         unsigned dw_size = align(ac_get_type_size(type) / 4, alignment);
-         private_mem_vgprs += dw_size;
-      }
-      bb = LLVMGetNextBasicBlock(bb);
-   }
-
-   return private_mem_vgprs;
+   LLVMAddTargetDependentFunctionAttr(F, "target-features", features);
 }
 
 bool ac_init_llvm_compiler(struct ac_llvm_compiler *compiler, enum radeon_family family,
@@ -364,14 +348,6 @@ bool ac_init_llvm_compiler(struct ac_llvm_compiler *compiler, enum radeon_family
       compiler->low_opt_tm =
          ac_create_target_machine(family, tm_options, LLVMCodeGenLevelLess, NULL);
       if (!compiler->low_opt_tm)
-         goto fail;
-   }
-
-   if (family >= CHIP_NAVI10) {
-      assert(!(tm_options & AC_TM_CREATE_LOW_OPT));
-      compiler->tm_wave32 =
-         ac_create_target_machine(family, tm_options | AC_TM_WAVE32, LLVMCodeGenLevelDefault, NULL);
-      if (!compiler->tm_wave32)
          goto fail;
    }
 
@@ -393,7 +369,6 @@ fail:
 void ac_destroy_llvm_compiler(struct ac_llvm_compiler *compiler)
 {
    ac_destroy_llvm_passes(compiler->passes);
-   ac_destroy_llvm_passes(compiler->passes_wave32);
    ac_destroy_llvm_passes(compiler->low_opt_passes);
 
    if (compiler->passmgr)
@@ -404,6 +379,4 @@ void ac_destroy_llvm_compiler(struct ac_llvm_compiler *compiler)
       LLVMDisposeTargetMachine(compiler->low_opt_tm);
    if (compiler->tm)
       LLVMDisposeTargetMachine(compiler->tm);
-   if (compiler->tm_wave32)
-      LLVMDisposeTargetMachine(compiler->tm_wave32);
 }

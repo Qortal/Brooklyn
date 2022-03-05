@@ -350,7 +350,7 @@ DD_SHADER_NOCREATE(COMPUTE, compute)
    }
 
 DD_IMM_STATE(blend_color, const struct pipe_blend_color, *state, state)
-DD_IMM_STATE(stencil_ref, const struct pipe_stencil_ref, *state, state)
+DD_IMM_STATE(stencil_ref, const struct pipe_stencil_ref, state, state)
 DD_IMM_STATE(clip_state, const struct pipe_clip_state, *state, state)
 DD_IMM_STATE(sample_mask, unsigned, sample_mask, sample_mask)
 DD_IMM_STATE(min_samples, unsigned, min_samples, min_samples)
@@ -360,6 +360,7 @@ DD_IMM_STATE(polygon_stipple, const struct pipe_poly_stipple, *state, state)
 static void
 dd_context_set_constant_buffer(struct pipe_context *_pipe,
                                enum pipe_shader_type shader, uint index,
+                               bool take_ownership,
                                const struct pipe_constant_buffer *constant_buffer)
 {
    struct dd_context *dctx = dd_context(_pipe);
@@ -367,7 +368,7 @@ dd_context_set_constant_buffer(struct pipe_context *_pipe,
 
    safe_memcpy(&dctx->draw_state.constant_buffers[shader][index],
                constant_buffer, sizeof(*constant_buffer));
-   pipe->set_constant_buffer(pipe, shader, index, constant_buffer);
+   pipe->set_constant_buffer(pipe, shader, index, take_ownership, constant_buffer);
 }
 
 static void
@@ -408,6 +409,15 @@ static void dd_context_set_tess_state(struct pipe_context *_pipe,
    memcpy(dctx->draw_state.tess_default_levels+4, default_inner_level,
           sizeof(float) * 2);
    pipe->set_tess_state(pipe, default_outer_level, default_inner_level);
+}
+
+static void dd_context_set_patch_vertices(struct pipe_context *_pipe,
+                                          uint8_t patch_vertices)
+{
+   struct dd_context *dctx = dd_context(_pipe);
+   struct pipe_context *pipe = dctx->pipe;
+
+   pipe->set_patch_vertices(pipe, patch_vertices);
 }
 
 static void dd_context_set_window_rectangles(struct pipe_context *_pipe,
@@ -509,6 +519,8 @@ static void
 dd_context_set_sampler_views(struct pipe_context *_pipe,
                              enum pipe_shader_type shader,
                              unsigned start, unsigned num,
+                             unsigned unbind_num_trailing_slots,
+                             bool take_ownership,
                              struct pipe_sampler_view **views)
 {
    struct dd_context *dctx = dd_context(_pipe);
@@ -516,13 +528,17 @@ dd_context_set_sampler_views(struct pipe_context *_pipe,
 
    safe_memcpy(&dctx->draw_state.sampler_views[shader][start], views,
                sizeof(views[0]) * num);
-   pipe->set_sampler_views(pipe, shader, start, num, views);
+   safe_memcpy(&dctx->draw_state.sampler_views[shader][start + num], views,
+               sizeof(views[0]) * unbind_num_trailing_slots);
+   pipe->set_sampler_views(pipe, shader, start, num, take_ownership,
+                           unbind_num_trailing_slots, views);
 }
 
 static void
 dd_context_set_shader_images(struct pipe_context *_pipe,
                              enum pipe_shader_type shader,
                              unsigned start, unsigned num,
+                             unsigned unbind_num_trailing_slots,
                              const struct pipe_image_view *views)
 {
    struct dd_context *dctx = dd_context(_pipe);
@@ -530,7 +546,10 @@ dd_context_set_shader_images(struct pipe_context *_pipe,
 
    safe_memcpy(&dctx->draw_state.shader_images[shader][start], views,
                sizeof(views[0]) * num);
-   pipe->set_shader_images(pipe, shader, start, num, views);
+   safe_memcpy(&dctx->draw_state.shader_images[shader][start + num], NULL,
+               sizeof(views[0]) * unbind_num_trailing_slots);
+   pipe->set_shader_images(pipe, shader, start, num,
+                           unbind_num_trailing_slots, views);
 }
 
 static void
@@ -552,6 +571,8 @@ dd_context_set_shader_buffers(struct pipe_context *_pipe,
 static void
 dd_context_set_vertex_buffers(struct pipe_context *_pipe,
                               unsigned start, unsigned num_buffers,
+                              unsigned unbind_num_trailing_slots,
+                              bool take_ownership,
                               const struct pipe_vertex_buffer *buffers)
 {
    struct dd_context *dctx = dd_context(_pipe);
@@ -559,7 +580,11 @@ dd_context_set_vertex_buffers(struct pipe_context *_pipe,
 
    safe_memcpy(&dctx->draw_state.vertex_buffers[start], buffers,
                sizeof(buffers[0]) * num_buffers);
-   pipe->set_vertex_buffers(pipe, start, num_buffers, buffers);
+   safe_memcpy(&dctx->draw_state.vertex_buffers[start + num_buffers], NULL,
+               sizeof(buffers[0]) * unbind_num_trailing_slots);
+   pipe->set_vertex_buffers(pipe, start, num_buffers,
+                            unbind_num_trailing_slots, take_ownership,
+                            buffers);
 }
 
 static void
@@ -888,6 +913,7 @@ dd_context_create(struct dd_screen *dscreen, struct pipe_context *pipe)
    CTX_INIT(set_viewport_states);
    CTX_INIT(set_sampler_views);
    CTX_INIT(set_tess_state);
+   CTX_INIT(set_patch_vertices);
    CTX_INIT(set_shader_buffers);
    CTX_INIT(set_shader_images);
    CTX_INIT(set_vertex_buffers);

@@ -1,4 +1,4 @@
-OPT_BOOL(inline_uniforms, false, "Optimize shaders by replacing uniforms with literals")
+OPT_BOOL(inline_uniforms, true, "Optimize shaders by replacing uniforms with literals")
 OPT_BOOL(aux_debug, false, "Generate ddebug_dumps for the auxiliary context")
 OPT_BOOL(sync_compile, false, "Always compile synchronously (will cause stalls)")
 OPT_BOOL(dump_shader_binary, false, "Dump shader binary as part of ddebug_dumps")
@@ -10,7 +10,13 @@ OPT_BOOL(vs_fetch_always_opencode, false,
 OPT_BOOL(prim_restart_tri_strips_only, false, "Only enable primitive restart for triangle strips")
 OPT_BOOL(no_infinite_interp, false, "Kill PS with infinite interp coeff")
 OPT_BOOL(clamp_div_by_zero, false, "Clamp div by zero (x / 0 becomes FLT_MAX instead of NaN)")
-OPT_BOOL(no_trunc_coord, false, "Always set TRUNC_COORD=0")
-OPT_BOOL(shader_culling, false, "Cull primitives in shaders when benefical (without tess and GS)")
+OPT_BOOL(vrs2x2, false, "Enable 2x2 coarse shading for non-GUI elements")
+OPT_BOOL(enable_sam, false, "Enable Smart Access Memory with Above 4G Decoding for unvalidated platforms.")
+OPT_BOOL(disable_sam, false, "Disable Smart Access Memory.")
+OPT_BOOL(fp16, false, "Enable FP16 for mediump.")
+OPT_INT(tc_max_cpu_storage_size, 0, "Enable the CPU storage for pipelined buffer uploads in TC.")
+OPT_BOOL(force_use_fma32, false, "Force use fma32 instruction for GPU family newer than gfx9")
+OPT_BOOL(dcc_msaa, false, "Enable DCC for MSAA")
 
 #undef OPT_BOOL
+#undef OPT_INT

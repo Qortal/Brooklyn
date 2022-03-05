@@ -60,7 +60,6 @@ files_libgallium = files(
   'draw/draw_pt_decompose.h',
   'draw/draw_pt_emit.c',
   'draw/draw_pt_fetch.c',
-  'draw/draw_pt_fetch_emit.c',
   'draw/draw_pt_fetch_shade_emit.c',
   'draw/draw_pt_fetch_shade_pipeline.c',
   'draw/draw_pt.h',
@@ -121,10 +120,6 @@ files_libgallium = files(
   'hud/hud_driver_query.c',
   'hud/hud_fps.c',
   'hud/hud_private.h',
-  'indices/u_indices.h',
-  'indices/u_indices_priv.h',
-  'indices/u_primconvert.c',
-  'indices/u_primconvert.h',
   'os/os_mman.h',
   'os/os_process.c',
   'os/os_process.h',
@@ -239,14 +234,10 @@ files_libgallium = files(
   'util/u_cache.h',
   'util/u_compute.c',
   'util/u_compute.h',
-  'util/u_debug_describe.c',
-  'util/u_debug_describe.h',
   'util/u_debug_flush.c',
   'util/u_debug_flush.h',
   'util/u_debug_image.c',
   'util/u_debug_image.h',
-  'util/u_debug_refcnt.c',
-  'util/u_debug_refcnt.h',
   'util/u_dirty_flags.h',
   'util/u_dirty_surfaces.h',
   'util/u_dl.c',
@@ -255,19 +246,18 @@ files_libgallium = files(
   'util/u_draw.h',
   'util/u_draw_quad.c',
   'util/u_draw_quad.h',
+  'util/u_driconf.c',
+  'util/u_driconf.h',
   'util/u_dual_blend.h',
   'util/u_dump_defines.c',
   'util/u_dump.h',
   'util/u_dump_state.c',
-  'util/u_fifo.h',
   'util/u_framebuffer.c',
   'util/u_framebuffer.h',
   'util/u_gen_mipmap.c',
   'util/u_gen_mipmap.h',
   'util/u_handle_table.c',
   'util/u_handle_table.h',
-  'util/u_hash_table.c',
-  'util/u_hash_table.h',
   'util/u_helpers.c',
   'util/u_helpers.h',
   'util/u_index_modify.c',
@@ -321,10 +311,14 @@ files_libgallium = files(
   'util/u_threaded_context.c',
   'util/u_threaded_context.h',
   'util/u_threaded_context_calls.h',
+  'util/u_trace_gallium.c',
+  'util/u_trace_gallium.h',
   'util/u_upload_mgr.c',
   'util/u_upload_mgr.h',
   'util/u_vbuf.c',
   'util/u_vbuf.h',
+  'util/u_vertex_state_cache.c',
+  'util/u_vertex_state_cache.h',
   'util/u_video.h',
   'util/u_viewport.h',
   'nir/tgsi_to_nir.c',
@@ -333,6 +327,8 @@ files_libgallium = files(
   'nir/nir_to_tgsi.h',
   'nir/nir_draw_helpers.c',
   'nir/nir_draw_helpers.h',
+  'nir/nir_helpers.c',
+  'nir/nir_helpers.h',
 )
 
 if dep_libdrm.found()
@@ -342,7 +338,7 @@ if dep_libdrm.found()
   )
 endif
 
-if with_llvm
+if draw_with_llvm
   files_libgallium += files(
     'gallivm/lp_bld_arit.c',
     'gallivm/lp_bld_arit.h',
@@ -387,6 +383,7 @@ if with_llvm
     'gallivm/lp_bld_misc.h',
     'gallivm/lp_bld_nir.h',
     'gallivm/lp_bld_nir.c',
+    'gallivm/lp_bld_nir_aos.c',
     'gallivm/lp_bld_nir_soa.c',
     'gallivm/lp_bld_pack.c',
     'gallivm/lp_bld_pack.h',
@@ -454,13 +451,11 @@ files_libgalliumvl = files(
   'vl/vl_mpeg12_bitstream.h',
   'vl/vl_mpeg12_decoder.c',
   'vl/vl_mpeg12_decoder.h',
-  'vl/vl_rbsp.h',
   'vl/vl_types.h',
   'vl/vl_vertex_buffers.c',
   'vl/vl_vertex_buffers.h',
   'vl/vl_video_buffer.c',
   'vl/vl_video_buffer.h',
-  'vl/vl_vlc.h',
   'vl/vl_zscan.c',
   'vl/vl_zscan.h',
   'vl/vl_probs_table.h',
@@ -480,33 +475,60 @@ if with_dri2 and with_platform_x11
   endif
 endif
 
-u_indices_gen_c = custom_target(
-  'u_indices_gen.c',
-  input : 'indices/u_indices_gen.py',
-  output : 'u_indices_gen.c',
-  command : [prog_python, '@INPUT@'],
-  capture : true,
+prog_enums2names = files('driver_trace/enums2names.py')
+files_libgallium += custom_target(
+  'tr_util.[ch]',
+  input: '../include/pipe/p_defines.h',
+  output: ['tr_util.c', 'tr_util.h'],
+  command: [prog_python, prog_enums2names, '@INPUT@', '-C', '@OUTPUT0@', '-H', '@OUTPUT1@', '-I', 'tr_util.h'],
+  depend_files: prog_enums2names,
 )
 
-u_unfilled_gen_c = custom_target(
-  'u_unfilled_gen.c',
-  input : 'indices/u_unfilled_gen.py',
-  output : 'u_unfilled_gen.c',
-  command : [prog_python, '@INPUT@'],
-  capture : true,
+files_libgallium += custom_target(
+  'u_tracepoints.c',
+  input: 'util/u_tracepoints.py',
+  output: 'u_tracepoints.c',
+  command: [
+    prog_python, '@INPUT@',
+    '-p', join_paths(meson.source_root(), 'src/util/perf/'),
+    '-C', '@OUTPUT@',
+  ],
+  depend_files: u_trace_py,
 )
 
+files_u_tracepoints = custom_target(
+  'u_tracepoints.h',
+  input: 'util/u_tracepoints.py',
+  output: 'u_tracepoints.h',
+  command: [
+    prog_python, '@INPUT@',
+    '-p', join_paths(meson.source_root(), 'src/util/perf/'),
+    '-H', '@OUTPUT@',
+  ],
+  depend_files: u_trace_py,
+)
+
+files_libgallium += files_u_tracepoints
+
+idep_u_tracepoints = declare_dependency(
+  sources: files_u_tracepoints,
+)
+
+libgallium_extra_c_args = []
+if with_swrast_vk and with_gallium_zink
+  libgallium_extra_c_args += '-DZINK_WITH_SWRAST_VK'
+endif
 libgallium = static_library(
   'gallium',
-  [files_libgallium, u_indices_gen_c, u_unfilled_gen_c],
+  [files_libgallium],
   include_directories : [
     inc_loader, inc_gallium, inc_src, inc_include, include_directories('util')
   ],
-  c_args : [c_msvc_compat_args],
+  c_args : [c_msvc_compat_args, libgallium_extra_c_args],
   cpp_args : [cpp_msvc_compat_args],
   gnu_symbol_visibility : 'hidden',
   dependencies : [
-    dep_libdrm, dep_llvm, dep_dl, dep_m, dep_thread, dep_lmsensors,
+    dep_libdrm, dep_llvm, dep_dl, dep_m, dep_thread, dep_lmsensors, dep_ws2_32,
     idep_nir, idep_nir_headers, idep_mesautil,
   ],
   build_by_default : false
@@ -519,6 +541,7 @@ libgalliumvl_stub = static_library(
   cpp_args : [cpp_msvc_compat_args],
   gnu_symbol_visibility : 'hidden',
   include_directories: [inc_gallium, inc_include, inc_src],
+  dependencies : idep_mesautil,
   build_by_default : false,
 )
 
@@ -529,6 +552,7 @@ libgalliumvl = static_library(
   cpp_args : [cpp_msvc_compat_args],
   gnu_symbol_visibility : 'hidden',
   include_directories : [inc_gallium, inc_include, inc_src],
+  dependencies : idep_mesautil,
   build_by_default : false,
 )
 
@@ -537,6 +561,6 @@ libgalliumvlwinsys = static_library(
   'galliumvlwinsys',
   files_libgalliumvlwinsys,
   include_directories : [inc_gallium, inc_include, inc_loader, inc_src],
-  dependencies : [dep_libdrm, vlwinsys_deps],
+  dependencies : [dep_libdrm, vlwinsys_deps, idep_mesautil],
   build_by_default : false,
 )

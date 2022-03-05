@@ -40,6 +40,11 @@
 #include "enums.h"
 #include "macros.h"
 #include "transformfeedback.h"
+#include "pipe/p_state.h"
+#include "api_exec_decl.h"
+
+#include "state_tracker/st_context.h"
+#include "state_tracker/st_draw.h"
 
 typedef struct {
    GLuint count;
@@ -57,6 +62,1037 @@ typedef struct {
 } DrawElementsIndirectCommand;
 
 
+/**
+ * Want to figure out which fragment program inputs are actually
+ * constant/current values from ctx->Current.  These should be
+ * referenced as a tracked state variable rather than a fragment
+ * program input, to save the overhead of putting a constant value in
+ * every submitted vertex, transferring it to hardware, interpolating
+ * it across the triangle, etc...
+ *
+ * When there is a VP bound, just use vp->outputs.  But when we're
+ * generating vp from fixed function state, basically want to
+ * calculate:
+ *
+ * vp_out_2_fp_in( vp_in_2_vp_out( varying_inputs ) |
+ *                 potential_vp_outputs )
+ *
+ * Where potential_vp_outputs is calculated by looking at enabled
+ * texgen, etc.
+ *
+ * The generated fragment program should then only declare inputs that
+ * may vary or otherwise differ from the ctx->Current values.
+ * Otherwise, the fp should track them as state values instead.
+ */
+void
+_mesa_set_varying_vp_inputs(struct gl_context *ctx, GLbitfield varying_inputs)
+{
+   if (ctx->VertexProgram._VPModeOptimizesConstantAttribs &&
+       ctx->VertexProgram._VaryingInputs != varying_inputs) {
+      ctx->VertexProgram._VaryingInputs = varying_inputs;
+      ctx->NewState |= _NEW_FF_VERT_PROGRAM | _NEW_FF_FRAG_PROGRAM;
+   }
+}
+
+
+/**
+ * Set the _DrawVAO and the net enabled arrays.
+ * The vao->_Enabled bitmask is transformed due to position/generic0
+ * as stored in vao->_AttributeMapMode. Then the filter bitmask is applied
+ * to filter out arrays unwanted for the currently executed draw operation.
+ * For example, the generic attributes are masked out form the _DrawVAO's
+ * enabled arrays when a fixed function array draw is executed.
+ */
+void
+_mesa_set_draw_vao(struct gl_context *ctx, struct gl_vertex_array_object *vao,
+                   GLbitfield filter)
+{
+   struct gl_vertex_array_object **ptr = &ctx->Array._DrawVAO;
+   bool new_vertex_buffers = false, new_vertex_elements = false;
+
+   if (*ptr != vao) {
+      _mesa_reference_vao_(ctx, ptr, vao);
+      new_vertex_buffers = true;
+      new_vertex_elements = true;
+   }
+
+   if (vao->NewVertexBuffers || vao->NewVertexElements) {
+      _mesa_update_vao_derived_arrays(ctx, vao);
+      new_vertex_buffers |= vao->NewVertexBuffers;
+      new_vertex_elements |= vao->NewVertexElements;
+      vao->NewVertexBuffers = false;
+      vao->NewVertexElements = false;
+   }
+
+   assert(vao->_EnabledWithMapMode ==
+          _mesa_vao_enable_to_vp_inputs(vao->_AttributeMapMode, vao->Enabled));
+
+   /* Filter out unwanted arrays. */
+   const GLbitfield enabled = filter & vao->_EnabledWithMapMode;
+   if (ctx->Array._DrawVAOEnabledAttribs != enabled) {
+      ctx->Array._DrawVAOEnabledAttribs = enabled;
+      new_vertex_buffers = true;
+      new_vertex_elements = true;
+   }
+
+   if (new_vertex_buffers || new_vertex_elements) {
+      ctx->NewDriverState |= ST_NEW_VERTEX_ARRAYS;
+      ctx->Array.NewVertexElements |= new_vertex_elements;
+   }
+
+   _mesa_set_varying_vp_inputs(ctx, enabled);
+}
+
+
+/**
+ * Is 'mode' a valid value for glBegin(), glDrawArrays(), glDrawElements(),
+ * etc?  Also, do additional checking related to transformation feedback.
+ * Note: this function cannot be called during glNewList(GL_COMPILE) because
+ * this code depends on current transform feedback state.
+ * Also, do additional checking related to tessellation shaders.
+ */
+static GLenum
+valid_prim_mode_custom(struct gl_context *ctx, GLenum mode,
+                       GLbitfield valid_prim_mask)
+{
+#if DEBUG
+   unsigned mask = ctx->ValidPrimMask;
+   unsigned mask_indexed = ctx->ValidPrimMaskIndexed;
+   bool drawpix_valid = ctx->DrawPixValid;
+   _mesa_update_valid_to_render_state(ctx);
+   assert(mask == ctx->ValidPrimMask &&
+          mask_indexed == ctx->ValidPrimMaskIndexed &&
+          drawpix_valid == ctx->DrawPixValid);
+#endif
+
+   /* All primitive type enums are less than 32, so we can use the shift. */
+   if (mode >= 32 || !((1u << mode) & valid_prim_mask)) {
+      /* If the primitive type is not in SupportedPrimMask, set GL_INVALID_ENUM,
+       * else set DrawGLError (e.g. GL_INVALID_OPERATION).
+       */
+      return mode >= 32 || !((1u << mode) & ctx->SupportedPrimMask) ?
+               GL_INVALID_ENUM : ctx->DrawGLError;
+   }
+
+   return GL_NO_ERROR;
+}
+
+GLenum
+_mesa_valid_prim_mode(struct gl_context *ctx, GLenum mode)
+{
+   return valid_prim_mode_custom(ctx, mode, ctx->ValidPrimMask);
+}
+
+static GLenum
+valid_prim_mode_indexed(struct gl_context *ctx, GLenum mode)
+{
+   return valid_prim_mode_custom(ctx, mode, ctx->ValidPrimMaskIndexed);
+}
+
+/**
+ * Verify that the element type is valid.
+ *
+ * Generates \c GL_INVALID_ENUM and returns \c false if it is not.
+ */
+static GLenum
+valid_elements_type(struct gl_context *ctx, GLenum type)
+{
+   /* GL_UNSIGNED_BYTE  = 0x1401
+    * GL_UNSIGNED_SHORT = 0x1403
+    * GL_UNSIGNED_INT   = 0x1405
+    *
+    * The trick is that bit 1 and bit 2 mean USHORT and UINT, respectively.
+    * After clearing those two bits (with ~6), we should get UBYTE.
+    * Both bits can't be set, because the enum would be greater than UINT.
+    */
+   if (!(type <= GL_UNSIGNED_INT && (type & ~6) == GL_UNSIGNED_BYTE))
+      return GL_INVALID_ENUM;
+
+   return GL_NO_ERROR;
+}
+
+static inline bool
+indices_aligned(unsigned index_size_shift, const GLvoid *indices)
+{
+   /* Require that indices are aligned to the element size. GL doesn't specify
+    * an error for this, but the ES 3.0 spec says:
+    *
+    *    "Clients must align data elements consistently with the requirements
+    *     of the client platform, with an additional base-level requirement
+    *     that an offset within a buffer to a datum comprising N basic machine
+    *     units be a multiple of N"
+    *
+    * This is only required by index buffers, not user indices.
+    */
+   return ((uintptr_t)indices & ((1 << index_size_shift) - 1)) == 0;
+}
+
+static GLenum
+validate_DrawElements_common(struct gl_context *ctx, GLenum mode,
+                             GLsizei count, GLsizei numInstances, GLenum type)
+{
+   if (count < 0 || numInstances < 0)
+      return GL_INVALID_VALUE;
+
+   GLenum error = valid_prim_mode_indexed(ctx, mode);
+   if (error)
+      return error;
+
+   return valid_elements_type(ctx, type);
+}
+
+/**
+ * Error checking for glDrawElements().  Includes parameter checking
+ * and VBO bounds checking.
+ * \return GL_TRUE if OK to render, GL_FALSE if error found
+ */
+static GLboolean
+_mesa_validate_DrawElements(struct gl_context *ctx,
+                            GLenum mode, GLsizei count, GLenum type)
+{
+   GLenum error = validate_DrawElements_common(ctx, mode, count, 1, type);
+   if (error)
+      _mesa_error(ctx, error, "glDrawElements");
+
+   return !error;
+}
+
+
+/**
+ * Error checking for glMultiDrawElements().  Includes parameter checking
+ * and VBO bounds checking.
+ * \return GL_TRUE if OK to render, GL_FALSE if error found
+ */
+static GLboolean
+_mesa_validate_MultiDrawElements(struct gl_context *ctx,
+                                 GLenum mode, const GLsizei *count,
+                                 GLenum type, const GLvoid * const *indices,
+                                 GLsizei primcount)
+{
+   GLenum error;
+
+   /*
+    * Section 2.3.1 (Errors) of the OpenGL 4.5 (Core Profile) spec says:
+    *
+    *    "If a negative number is provided where an argument of type sizei or
+    *     sizeiptr is specified, an INVALID_VALUE error is generated."
+    *
+    * and in the same section:
+    *
+    *    "In other cases, there are no side effects unless otherwise noted;
+    *     the command which generates the error is ignored so that it has no
+    *     effect on GL state or framebuffer contents."
+    *
+    * Hence, check both primcount and all the count[i].
+    */
+   if (primcount < 0) {
+      error = GL_INVALID_VALUE;
+   } else {
+      error = valid_prim_mode_indexed(ctx, mode);
+
+      if (!error) {
+         error = valid_elements_type(ctx, type);
+
+         if (!error) {
+            for (int i = 0; i < primcount; i++) {
+               if (count[i] < 0) {
+                  error = GL_INVALID_VALUE;
+                  break;
+               }
+            }
+         }
+      }
+   }
+
+   if (error)
+      _mesa_error(ctx, error, "glMultiDrawElements");
+
+   /* Not using a VBO for indices, so avoid NULL pointer derefs later.
+    */
+   if (!ctx->Array.VAO->IndexBufferObj) {
+      for (int i = 0; i < primcount; i++) {
+         if (!indices[i])
+            return GL_FALSE;
+      }
+   }
+
+   return !error;
+}
+
+
+/**
+ * Error checking for glDrawRangeElements().  Includes parameter checking
+ * and VBO bounds checking.
+ * \return GL_TRUE if OK to render, GL_FALSE if error found
+ */
+static GLboolean
+_mesa_validate_DrawRangeElements(struct gl_context *ctx, GLenum mode,
+                                 GLuint start, GLuint end,
+                                 GLsizei count, GLenum type)
+{
+   GLenum error;
+
+   if (end < start) {
+      error = GL_INVALID_VALUE;
+   } else {
+      error = validate_DrawElements_common(ctx, mode, count, 1, type);
+   }
+
+   if (error)
+      _mesa_error(ctx, error, "glDrawRangeElements");
+
+   return !error;
+}
+
+
+static bool
+need_xfb_remaining_prims_check(const struct gl_context *ctx)
+{
+   /* From the GLES3 specification, section 2.14.2 (Transform Feedback
+    * Primitive Capture):
+    *
+    *   The error INVALID_OPERATION is generated by DrawArrays and
+    *   DrawArraysInstanced if recording the vertices of a primitive to the
+    *   buffer objects being used for transform feedback purposes would result
+    *   in either exceeding the limits of any buffer object’s size, or in
+    *   exceeding the end position offset + size − 1, as set by
+    *   BindBufferRange.
+    *
+    * This is in contrast to the behaviour of desktop GL, where the extra
+    * primitives are silently dropped from the transform feedback buffer.
+    *
+    * This text is removed in ES 3.2, presumably because it's not really
+    * implementable with geometry and tessellation shaders.  In fact,
+    * the OES_geometry_shader spec says:
+    *
+    *    "(13) Does this extension change how transform feedback operates
+    *     compared to unextended OpenGL ES 3.0 or 3.1?
+    *
+    *     RESOLVED: Yes. Because dynamic geometry amplification in a geometry
+    *     shader can make it difficult if not impossible to predict the amount
+    *     of geometry that may be generated in advance of executing the shader,
+    *     the draw-time error for transform feedback buffer overflow conditions
+    *     is removed and replaced with the GL behavior (primitives are not
+    *     written and the corresponding counter is not updated)..."
+    */
+   return _mesa_is_gles3(ctx) && _mesa_is_xfb_active_and_unpaused(ctx) &&
+          !_mesa_has_OES_geometry_shader(ctx) &&
+          !_mesa_has_OES_tessellation_shader(ctx);
+}
+
+
+/**
+ * Figure out the number of transform feedback primitives that will be output
+ * considering the drawing mode, number of vertices, and instance count,
+ * assuming that no geometry shading is done and primitive restart is not
+ * used.
+ *
+ * This is used by driver back-ends in implementing the PRIMITIVES_GENERATED
+ * and TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN queries.  It is also used to
+ * pre-validate draw calls in GLES3 (where draw calls only succeed if there is
+ * enough room in the transform feedback buffer for the result).
+ */
+static size_t
+count_tessellated_primitives(GLenum mode, GLuint count, GLuint num_instances)
+{
+   size_t num_primitives;
+   switch (mode) {
+   case GL_POINTS:
+      num_primitives = count;
+      break;
+   case GL_LINE_STRIP:
+      num_primitives = count >= 2 ? count - 1 : 0;
+      break;
+   case GL_LINE_LOOP:
+      num_primitives = count >= 2 ? count : 0;
+      break;
+   case GL_LINES:
+      num_primitives = count / 2;
+      break;
+   case GL_TRIANGLE_STRIP:
+   case GL_TRIANGLE_FAN:
+   case GL_POLYGON:
+      num_primitives = count >= 3 ? count - 2 : 0;
+      break;
+   case GL_TRIANGLES:
+      num_primitives = count / 3;
+      break;
+   case GL_QUAD_STRIP:
+      num_primitives = count >= 4 ? ((count / 2) - 1) * 2 : 0;
+      break;
+   case GL_QUADS:
+      num_primitives = (count / 4) * 2;
+      break;
+   case GL_LINES_ADJACENCY:
+      num_primitives = count / 4;
+      break;
+   case GL_LINE_STRIP_ADJACENCY:
+      num_primitives = count >= 4 ? count - 3 : 0;
+      break;
+   case GL_TRIANGLES_ADJACENCY:
+      num_primitives = count / 6;
+      break;
+   case GL_TRIANGLE_STRIP_ADJACENCY:
+      num_primitives = count >= 6 ? (count - 4) / 2 : 0;
+      break;
+   default:
+      assert(!"Unexpected primitive type in count_tessellated_primitives");
+      num_primitives = 0;
+      break;
+   }
+   return num_primitives * num_instances;
+}
+
+
+static GLenum
+validate_draw_arrays(struct gl_context *ctx,
+                     GLenum mode, GLsizei count, GLsizei numInstances)
+{
+   if (count < 0 || numInstances < 0)
+      return GL_INVALID_VALUE;
+
+   GLenum error = _mesa_valid_prim_mode(ctx, mode);
+   if (error)
+      return error;
+
+   if (need_xfb_remaining_prims_check(ctx)) {
+      struct gl_transform_feedback_object *xfb_obj
+         = ctx->TransformFeedback.CurrentObject;
+      size_t prim_count = count_tessellated_primitives(mode, count, numInstances);
+      if (xfb_obj->GlesRemainingPrims < prim_count)
+         return GL_INVALID_OPERATION;
+
+      xfb_obj->GlesRemainingPrims -= prim_count;
+   }
+
+   return GL_NO_ERROR;
+}
+
+/**
+ * Called from the tnl module to error check the function parameters and
+ * verify that we really can draw something.
+ * \return GL_TRUE if OK to render, GL_FALSE if error found
+ */
+static GLboolean
+_mesa_validate_DrawArrays(struct gl_context *ctx, GLenum mode, GLsizei count)
+{
+   GLenum error = validate_draw_arrays(ctx, mode, count, 1);
+
+   if (error)
+      _mesa_error(ctx, error, "glDrawArrays");
+
+   return !error;
+}
+
+
+static GLboolean
+_mesa_validate_DrawArraysInstanced(struct gl_context *ctx, GLenum mode, GLint first,
+                                   GLsizei count, GLsizei numInstances)
+{
+   GLenum error;
+
+   if (first < 0) {
+      error = GL_INVALID_VALUE;
+   } else {
+      error = validate_draw_arrays(ctx, mode, count, numInstances);
+   }
+
+   if (error)
+      _mesa_error(ctx, error, "glDrawArraysInstanced");
+
+   return !error;
+}
+
+
+/**
+ * Called to error check the function parameters.
+ *
+ * Note that glMultiDrawArrays is not part of GLES, so there's limited scope
+ * for sharing code with the validation of glDrawArrays.
+ */
+static bool
+_mesa_validate_MultiDrawArrays(struct gl_context *ctx, GLenum mode,
+                               const GLsizei *count, GLsizei primcount)
+{
+   GLenum error;
+
+   if (primcount < 0) {
+      error = GL_INVALID_VALUE;
+   } else {
+      error = _mesa_valid_prim_mode(ctx, mode);
+
+      if (!error) {
+         for (int i = 0; i < primcount; ++i) {
+            if (count[i] < 0) {
+               error = GL_INVALID_VALUE;
+               break;
+            }
+         }
+
+         if (!error) {
+            if (need_xfb_remaining_prims_check(ctx)) {
+               struct gl_transform_feedback_object *xfb_obj
+                  = ctx->TransformFeedback.CurrentObject;
+               size_t xfb_prim_count = 0;
+
+               for (int i = 0; i < primcount; ++i) {
+                  xfb_prim_count +=
+                     count_tessellated_primitives(mode, count[i], 1);
+               }
+
+               if (xfb_obj->GlesRemainingPrims < xfb_prim_count) {
+                  error = GL_INVALID_OPERATION;
+               } else {
+                  xfb_obj->GlesRemainingPrims -= xfb_prim_count;
+               }
+            }
+         }
+      }
+   }
+
+   if (error)
+      _mesa_error(ctx, error, "glMultiDrawArrays");
+
+   return !error;
+}
+
+
+static GLboolean
+_mesa_validate_DrawElementsInstanced(struct gl_context *ctx,
+                                     GLenum mode, GLsizei count, GLenum type,
+                                     GLsizei numInstances)
+{
+   GLenum error =
+      validate_DrawElements_common(ctx, mode, count, numInstances, type);
+
+   if (error)
+      _mesa_error(ctx, error, "glDrawElementsInstanced");
+
+   return !error;
+}
+
+
+static GLboolean
+_mesa_validate_DrawTransformFeedback(struct gl_context *ctx,
+                                     GLenum mode,
+                                     struct gl_transform_feedback_object *obj,
+                                     GLuint stream,
+                                     GLsizei numInstances)
+{
+   GLenum error;
+
+   /* From the GL 4.5 specification, page 429:
+    * "An INVALID_VALUE error is generated if id is not the name of a
+    *  transform feedback object."
+    */
+   if (!obj || !obj->EverBound || stream >= ctx->Const.MaxVertexStreams ||
+       numInstances < 0) {
+      error = GL_INVALID_VALUE;
+   } else {
+      error = _mesa_valid_prim_mode(ctx, mode);
+
+      if (!error) {
+         if (!obj->EndedAnytime)
+            error = GL_INVALID_OPERATION;
+      }
+   }
+
+   if (error)
+      _mesa_error(ctx, error, "glDrawTransformFeedback*");
+
+   return !error;
+}
+
+static GLenum
+valid_draw_indirect(struct gl_context *ctx,
+                    GLenum mode, const GLvoid *indirect,
+                    GLsizei size)
+{
+   const uint64_t end = (uint64_t) (uintptr_t) indirect + size;
+
+   /* OpenGL ES 3.1 spec. section 10.5:
+    *
+    *      "DrawArraysIndirect requires that all data sourced for the
+    *      command, including the DrawArraysIndirectCommand
+    *      structure,  be in buffer objects,  and may not be called when
+    *      the default vertex array object is bound."
+    */
+   if (ctx->API != API_OPENGL_COMPAT &&
+       ctx->Array.VAO == ctx->Array.DefaultVAO)
+      return GL_INVALID_OPERATION;
+
+   /* From OpenGL ES 3.1 spec. section 10.5:
+    *     "An INVALID_OPERATION error is generated if zero is bound to
+    *     VERTEX_ARRAY_BINDING, DRAW_INDIRECT_BUFFER or to any enabled
+    *     vertex array."
+    *
+    * Here we check that for each enabled vertex array we have a vertex
+    * buffer bound.
+    */
+   if (_mesa_is_gles31(ctx) &&
+       ctx->Array.VAO->Enabled & ~ctx->Array.VAO->VertexAttribBufferMask)
+      return GL_INVALID_OPERATION;
+
+   GLenum error = _mesa_valid_prim_mode(ctx, mode);
+   if (error)
+      return error;
+
+   /* OpenGL ES 3.1 specification, section 10.5:
+    *
+    *      "An INVALID_OPERATION error is generated if
+    *      transform feedback is active and not paused."
+    *
+    * The OES_geometry_shader spec says:
+    *
+    *    On p. 250 in the errors section for the DrawArraysIndirect command,
+    *    and on p. 254 in the errors section for the DrawElementsIndirect
+    *    command, delete the errors which state:
+    *
+    *    "An INVALID_OPERATION error is generated if transform feedback is
+    *    active and not paused."
+    *
+    *    (thus allowing transform feedback to work with indirect draw commands).
+    */
+   if (_mesa_is_gles31(ctx) && !ctx->Extensions.OES_geometry_shader &&
+       _mesa_is_xfb_active_and_unpaused(ctx))
+      return GL_INVALID_OPERATION;
+
+   /* From OpenGL version 4.4. section 10.5
+    * and OpenGL ES 3.1, section 10.6:
+    *
+    *      "An INVALID_VALUE error is generated if indirect is not a
+    *       multiple of the size, in basic machine units, of uint."
+    */
+   if ((GLsizeiptr)indirect & (sizeof(GLuint) - 1))
+      return GL_INVALID_VALUE;
+
+   if (!ctx->DrawIndirectBuffer)
+      return GL_INVALID_OPERATION;
+
+   if (_mesa_check_disallowed_mapping(ctx->DrawIndirectBuffer))
+      return GL_INVALID_OPERATION;
+
+   /* From the ARB_draw_indirect specification:
+    * "An INVALID_OPERATION error is generated if the commands source data
+    *  beyond the end of the buffer object [...]"
+    */
+   if (ctx->DrawIndirectBuffer->Size < end)
+      return GL_INVALID_OPERATION;
+
+   return GL_NO_ERROR;
+}
+
+static inline GLenum
+valid_draw_indirect_elements(struct gl_context *ctx,
+                             GLenum mode, GLenum type, const GLvoid *indirect,
+                             GLsizeiptr size)
+{
+   GLenum error = valid_elements_type(ctx, type);
+   if (error)
+      return error;
+
+   /*
+    * Unlike regular DrawElementsInstancedBaseVertex commands, the indices
+    * may not come from a client array and must come from an index buffer.
+    * If no element array buffer is bound, an INVALID_OPERATION error is
+    * generated.
+    */
+   if (!ctx->Array.VAO->IndexBufferObj)
+      return GL_INVALID_OPERATION;
+
+   return valid_draw_indirect(ctx, mode, indirect, size);
+}
+
+static GLboolean
+_mesa_valid_draw_indirect_multi(struct gl_context *ctx,
+                                GLsizei primcount, GLsizei stride,
+                                const char *name)
+{
+
+   /* From the ARB_multi_draw_indirect specification:
+    * "INVALID_VALUE is generated by MultiDrawArraysIndirect or
+    *  MultiDrawElementsIndirect if <primcount> is negative."
+    *
+    * "<primcount> must be positive, otherwise an INVALID_VALUE error will
+    *  be generated."
+    */
+   if (primcount < 0) {
+      _mesa_error(ctx, GL_INVALID_VALUE, "%s(primcount < 0)", name);
+      return GL_FALSE;
+   }
+
+
+   /* From the ARB_multi_draw_indirect specification:
+    * "<stride> must be a multiple of four, otherwise an INVALID_VALUE
+    *  error is generated."
+    */
+   if (stride % 4) {
+      _mesa_error(ctx, GL_INVALID_VALUE, "%s(stride %% 4)", name);
+      return GL_FALSE;
+   }
+
+   return GL_TRUE;
+}
+
+static GLboolean
+_mesa_validate_DrawArraysIndirect(struct gl_context *ctx,
+                                  GLenum mode,
+                                  const GLvoid *indirect)
+{
+   const unsigned drawArraysNumParams = 4;
+   GLenum error =
+      valid_draw_indirect(ctx, mode, indirect,
+                          drawArraysNumParams * sizeof(GLuint));
+
+   if (error)
+      _mesa_error(ctx, error, "glDrawArraysIndirect");
+
+   return !error;
+}
+
+static GLboolean
+_mesa_validate_DrawElementsIndirect(struct gl_context *ctx,
+                                    GLenum mode, GLenum type,
+                                    const GLvoid *indirect)
+{
+   const unsigned drawElementsNumParams = 5;
+   GLenum error = valid_draw_indirect_elements(ctx, mode, type, indirect,
+                                               drawElementsNumParams *
+                                               sizeof(GLuint));
+   if (error)
+      _mesa_error(ctx, error, "glDrawElementsIndirect");
+
+   return !error;
+}
+
+static GLboolean
+_mesa_validate_MultiDrawArraysIndirect(struct gl_context *ctx,
+                                       GLenum mode,
+                                       const GLvoid *indirect,
+                                       GLsizei primcount, GLsizei stride)
+{
+   GLsizeiptr size = 0;
+   const unsigned drawArraysNumParams = 4;
+
+   /* caller has converted stride==0 to drawArraysNumParams * sizeof(GLuint) */
+   assert(stride != 0);
+
+   if (!_mesa_valid_draw_indirect_multi(ctx, primcount, stride,
+                                        "glMultiDrawArraysIndirect"))
+      return GL_FALSE;
+
+   /* number of bytes of the indirect buffer which will be read */
+   size = primcount
+      ? (primcount - 1) * stride + drawArraysNumParams * sizeof(GLuint)
+      : 0;
+
+   GLenum error = valid_draw_indirect(ctx, mode, indirect, size);
+   if (error)
+      _mesa_error(ctx, error, "glMultiDrawArraysIndirect");
+
+   return !error;
+}
+
+static GLboolean
+_mesa_validate_MultiDrawElementsIndirect(struct gl_context *ctx,
+                                         GLenum mode, GLenum type,
+                                         const GLvoid *indirect,
+                                         GLsizei primcount, GLsizei stride)
+{
+   GLsizeiptr size = 0;
+   const unsigned drawElementsNumParams = 5;
+
+   /* caller has converted stride==0 to drawElementsNumParams * sizeof(GLuint) */
+   assert(stride != 0);
+
+   if (!_mesa_valid_draw_indirect_multi(ctx, primcount, stride,
+                                        "glMultiDrawElementsIndirect"))
+      return GL_FALSE;
+
+   /* number of bytes of the indirect buffer which will be read */
+   size = primcount
+      ? (primcount - 1) * stride + drawElementsNumParams * sizeof(GLuint)
+      : 0;
+
+   GLenum error = valid_draw_indirect_elements(ctx, mode, type, indirect,
+                                               size);
+   if (error)
+      _mesa_error(ctx, error, "glMultiDrawElementsIndirect");
+
+   return !error;
+}
+
+static GLenum
+valid_draw_indirect_parameters(struct gl_context *ctx,
+                               GLintptr drawcount)
+{
+   /* From the ARB_indirect_parameters specification:
+    * "INVALID_VALUE is generated by MultiDrawArraysIndirectCountARB or
+    *  MultiDrawElementsIndirectCountARB if <drawcount> is not a multiple of
+    *  four."
+    */
+   if (drawcount & 3)
+      return GL_INVALID_VALUE;
+
+   /* From the ARB_indirect_parameters specification:
+    * "INVALID_OPERATION is generated by MultiDrawArraysIndirectCountARB or
+    *  MultiDrawElementsIndirectCountARB if no buffer is bound to the
+    *  PARAMETER_BUFFER_ARB binding point."
+    */
+   if (!ctx->ParameterBuffer)
+      return GL_INVALID_OPERATION;
+
+   if (_mesa_check_disallowed_mapping(ctx->ParameterBuffer))
+      return GL_INVALID_OPERATION;
+
+   /* From the ARB_indirect_parameters specification:
+    * "INVALID_OPERATION is generated by MultiDrawArraysIndirectCountARB or
+    *  MultiDrawElementsIndirectCountARB if reading a <sizei> typed value
+    *  from the buffer bound to the PARAMETER_BUFFER_ARB target at the offset
+    *  specified by <drawcount> would result in an out-of-bounds access."
+    */
+   if (ctx->ParameterBuffer->Size < drawcount + sizeof(GLsizei))
+      return GL_INVALID_OPERATION;
+
+   return GL_NO_ERROR;
+}
+
+static GLboolean
+_mesa_validate_MultiDrawArraysIndirectCount(struct gl_context *ctx,
+                                            GLenum mode,
+                                            GLintptr indirect,
+                                            GLintptr drawcount,
+                                            GLsizei maxdrawcount,
+                                            GLsizei stride)
+{
+   GLsizeiptr size = 0;
+   const unsigned drawArraysNumParams = 4;
+
+   /* caller has converted stride==0 to drawArraysNumParams * sizeof(GLuint) */
+   assert(stride != 0);
+
+   if (!_mesa_valid_draw_indirect_multi(ctx, maxdrawcount, stride,
+                                        "glMultiDrawArraysIndirectCountARB"))
+      return GL_FALSE;
+
+   /* number of bytes of the indirect buffer which will be read */
+   size = maxdrawcount
+      ? (maxdrawcount - 1) * stride + drawArraysNumParams * sizeof(GLuint)
+      : 0;
+
+   GLenum error = valid_draw_indirect(ctx, mode, (void *)indirect, size);
+   if (!error)
+      error = valid_draw_indirect_parameters(ctx, drawcount);
+
+   if (error)
+      _mesa_error(ctx, error, "glMultiDrawArraysIndirectCountARB");
+
+   return !error;
+}
+
+static GLboolean
+_mesa_validate_MultiDrawElementsIndirectCount(struct gl_context *ctx,
+                                              GLenum mode, GLenum type,
+                                              GLintptr indirect,
+                                              GLintptr drawcount,
+                                              GLsizei maxdrawcount,
+                                              GLsizei stride)
+{
+   GLsizeiptr size = 0;
+   const unsigned drawElementsNumParams = 5;
+
+   /* caller has converted stride==0 to drawElementsNumParams * sizeof(GLuint) */
+   assert(stride != 0);
+
+   if (!_mesa_valid_draw_indirect_multi(ctx, maxdrawcount, stride,
+                                        "glMultiDrawElementsIndirectCountARB"))
+      return GL_FALSE;
+
+   /* number of bytes of the indirect buffer which will be read */
+   size = maxdrawcount
+      ? (maxdrawcount - 1) * stride + drawElementsNumParams * sizeof(GLuint)
+      : 0;
+
+   GLenum error = valid_draw_indirect_elements(ctx, mode, type,
+                                               (void *)indirect, size);
+   if (!error)
+      error = valid_draw_indirect_parameters(ctx, drawcount);
+
+   if (error)
+      _mesa_error(ctx, error, "glMultiDrawElementsIndirectCountARB");
+
+   return !error;
+}
+
+
+#define MAX_ALLOCA_PRIMS(prim) (50000 / sizeof(*prim))
+
+/* Use calloc for large allocations and alloca for small allocations. */
+/* We have to use a macro because alloca is local within the function. */
+#define ALLOC_PRIMS(prim, primcount, func) do { \
+   if (unlikely(primcount > MAX_ALLOCA_PRIMS(prim))) { \
+      prim = calloc(primcount, sizeof(*prim)); \
+      if (!prim) { \
+         _mesa_error(ctx, GL_OUT_OF_MEMORY, func); \
+         return; \
+      } \
+   } else { \
+      prim = alloca(primcount * sizeof(*prim)); \
+   } \
+} while (0)
+
+#define FREE_PRIMS(prim, primcount) do { \
+   if (primcount > MAX_ALLOCA_PRIMS(prim)) \
+      free(prim); \
+} while (0)
+
+
+/**
+ * Called via Driver.DrawGallium. This is a fallback invoking Driver.Draw.
+ */
+void
+_mesa_draw_gallium_fallback(struct gl_context *ctx,
+                            struct pipe_draw_info *info,
+                            unsigned drawid_offset,
+                            const struct pipe_draw_start_count_bias *draws,
+                            unsigned num_draws)
+{
+   struct _mesa_index_buffer ib;
+   unsigned index_size = info->index_size;
+   unsigned min_index = 0, max_index = ~0u;
+   bool index_bounds_valid = false;
+
+   if (!info->instance_count)
+      return;
+
+   if (index_size) {
+      if (info->index_bounds_valid) {
+         min_index = info->min_index;
+         max_index = info->max_index;
+         index_bounds_valid = true;
+      }
+   } else {
+      /* The index_bounds_valid field and min/max_index are not used for
+       * non-indexed draw calls (they are undefined), but classic drivers
+       * need the index bounds. They will be computed manually.
+       */
+      index_bounds_valid = true;
+   }
+
+   ib.index_size_shift = util_logbase2(index_size);
+
+   /* Single draw or a fallback for user indices. */
+   if (num_draws == 1) {
+      if (!draws[0].count)
+         return;
+
+      if (index_size) {
+         ib.count = draws[0].count;
+
+         if (info->has_user_indices) {
+            ib.obj = NULL;
+            ib.ptr = (const char*)info->index.user;
+         } else {
+            ib.obj = info->index.gl_bo;
+            ib.ptr = NULL;
+         }
+      }
+
+      struct _mesa_prim prim;
+      prim.mode = info->mode;
+      prim.begin = 1;
+      prim.end = 1;
+      prim.start = draws[0].start;
+      prim.count = draws[0].count;
+      prim.basevertex = index_size ? draws[0].index_bias : 0;
+      prim.draw_id = drawid_offset;
+
+      if (!index_size) {
+         min_index = draws[0].start;
+         max_index = draws[0].start + draws[0].count - 1;
+      }
+
+      st_feedback_draw_vbo(ctx, &prim, 1, index_size ? &ib : NULL,
+                           index_bounds_valid, info->primitive_restart,
+                           info->restart_index, min_index, max_index,
+                           info->instance_count, info->start_instance);
+      return;
+   }
+
+   struct _mesa_prim *prim;
+   unsigned max_count = 0;
+   unsigned num_prims = 0;
+
+   ALLOC_PRIMS(prim, num_draws, "DrawGallium");
+
+   min_index = ~0u;
+   max_index = 0;
+
+   for (unsigned i = 0; i < num_draws; i++) {
+      if (!draws[i].count)
+         continue;
+
+      prim[num_prims].mode = info->mode;
+      prim[num_prims].begin = 1;
+      prim[num_prims].end = 1;
+      prim[num_prims].start = draws[i].start;
+      prim[num_prims].count = draws[i].count;
+      prim[num_prims].basevertex = info->index_size ? draws[i].index_bias : 0;
+      prim[num_prims].draw_id = drawid_offset + (info->increment_draw_id ? i : 0);
+
+      if (!index_size) {
+         min_index = MIN2(min_index, draws[i].start);
+         max_index = MAX2(max_index, draws[i].start + draws[i].count - 1);
+      }
+
+      max_count = MAX2(max_count, prim[num_prims].count);
+      num_prims++;
+   }
+
+   if (info->index_size) {
+      ib.count = max_count;
+      ib.index_size_shift = util_logbase2(index_size);
+
+      if (info->has_user_indices) {
+         ib.obj = NULL;
+         ib.ptr = (const char*)info->index.user;
+      } else {
+         ib.obj = info->index.gl_bo;
+         ib.ptr = NULL;
+      }
+   }
+
+   if (num_prims)
+      st_feedback_draw_vbo(ctx, prim, num_prims, index_size ? &ib : NULL,
+                           index_bounds_valid, info->primitive_restart,
+                           info->restart_index, min_index, max_index,
+                           info->instance_count, info->start_instance);
+   FREE_PRIMS(prim, num_draws);
+}
+
+
+/**
+ * Called via Driver.DrawGallium. This is a fallback invoking Driver.Draw.
+ */
+void
+_mesa_draw_gallium_multimode_fallback(struct gl_context *ctx,
+                                      struct pipe_draw_info *info,
+                                      const struct pipe_draw_start_count_bias *draws,
+                                      const unsigned char *mode,
+                                      unsigned num_draws)
+{
+   unsigned i, first;
+ 
+   /* Find consecutive draws where mode doesn't vary. */
+   for (i = 0, first = 0; i <= num_draws; i++) {
+      if (i == num_draws || mode[i] != mode[first]) {
+         info->mode = mode[first];
+         ctx->Driver.DrawGallium(ctx, info, 0, &draws[first], i - first);
+         first = i;
+      }
+   }
+}
+ 
 /**
  * Check that element 'j' of the array has reasonable data.
  * Map VBO if needed.
@@ -104,8 +1140,8 @@ check_array_data(struct gl_context *ctx, struct gl_vertex_array_object *vao,
 }
 
 
-static inline void
-get_index_size(GLenum type, struct _mesa_index_buffer *ib)
+static inline unsigned
+get_index_size_shift(GLenum type)
 {
    /* The type is already validated, so use a fast conversion.
     *
@@ -115,7 +1151,7 @@ get_index_size(GLenum type, struct _mesa_index_buffer *ib)
     *
     * Divide by 2 to get 0,1,2.
     */
-   ib->index_size_shift = (type - GL_UNSIGNED_BYTE) >> 1;
+   return (type - GL_UNSIGNED_BYTE) >> 1;
 }
 
 /**
@@ -172,59 +1208,6 @@ static void
 check_draw_arrays_data(struct gl_context *ctx, GLint start, GLsizei count)
 {
    /* TO DO */
-}
-
-
-/**
- * Check if we should skip the draw call even after validation was successful.
- */
-static bool
-skip_validated_draw(struct gl_context *ctx)
-{
-   switch (ctx->API) {
-   case API_OPENGLES2:
-      /* For ES2, we can draw if we have a vertex program/shader). */
-      return ctx->VertexProgram._Current == NULL;
-
-   case API_OPENGLES:
-      /* For OpenGL ES, only draw if we have vertex positions
-       */
-      if (!(ctx->Array.VAO->Enabled & VERT_BIT_POS))
-         return true;
-      break;
-
-   case API_OPENGL_CORE:
-      /* Section 7.3 (Program Objects) of the OpenGL 4.5 Core Profile spec
-       * says:
-       *
-       *     "If there is no active program for the vertex or fragment shader
-       *     stages, the results of vertex and/or fragment processing will be
-       *     undefined. However, this is not an error."
-       *
-       * The fragment shader is not tested here because other state (e.g.,
-       * GL_RASTERIZER_DISCARD) affects whether or not we actually care.
-       */
-      return ctx->VertexProgram._Current == NULL;
-
-   case API_OPENGL_COMPAT:
-      if (ctx->VertexProgram._Current != NULL) {
-         /* Draw regardless of whether or not we have any vertex arrays.
-          * (Ex: could draw a point using a constant vertex pos)
-          */
-         return false;
-      } else {
-         /* Draw if we have vertex positions (GL_VERTEX_ARRAY or generic
-          * array [0]).
-          */
-         return !(ctx->Array.VAO->Enabled & (VERT_BIT_POS|VERT_BIT_GENERIC0));
-      }
-      break;
-
-   default:
-      unreachable("Invalid API value in check_valid_to_render()");
-   }
-
-   return false;
 }
 
 
@@ -297,48 +1280,6 @@ print_draw_arrays(struct gl_context *ctx,
 
 
 /**
- * Return a filter mask for the net enabled vao arrays.
- * This is to mask out arrays that would otherwise supersed required current
- * values for the fixed function shaders for example.
- */
-static GLbitfield
-enabled_filter(const struct gl_context *ctx)
-{
-   switch (ctx->VertexProgram._VPMode) {
-   case VP_MODE_FF:
-      /* When no vertex program is active (or the vertex program is generated
-       * from fixed-function state).  We put the material values into the
-       * generic slots.  Since the vao has no material arrays, mute these
-       * slots from the enabled arrays so that the current material values
-       * are pulled instead of the vao arrays.
-       */
-      return VERT_BIT_FF_ALL;
-
-   case VP_MODE_SHADER:
-      /* There are no shaders in OpenGL ES 1.x, so this code path should be
-       * impossible to reach.  The meta code is careful to not use shaders in
-       * ES1.
-       */
-      assert(ctx->API != API_OPENGLES);
-
-      /* Other parts of the code assume that inputs[VERT_ATTRIB_POS] through
-       * inputs[VERT_ATTRIB_FF_MAX] will be non-NULL.  However, in OpenGL
-       * ES 2.0+ or OpenGL core profile, none of these arrays should ever
-       * be enabled.
-       */
-      if (ctx->API != API_OPENGL_COMPAT)
-         return VERT_BIT_GENERIC_ALL;
-
-      return VERT_BIT_ALL;
-
-   default:
-      assert(0);
-      return 0;
-   }
-}
-
-
-/**
  * Helper function called by the other DrawArrays() functions below.
  * This is where we handle primitive restart for drawing non-indexed
  * arrays.  If primitive restart is enabled, it typically means
@@ -346,27 +1287,40 @@ enabled_filter(const struct gl_context *ctx)
  */
 static void
 _mesa_draw_arrays(struct gl_context *ctx, GLenum mode, GLint start,
-                  GLsizei count, GLuint numInstances, GLuint baseInstance,
-                  GLuint drawID)
+                  GLsizei count, GLuint numInstances, GLuint baseInstance)
 {
-   if (skip_validated_draw(ctx))
+   /* Viewperf has many draws with count=0. Discarding them is faster than
+    * processing them.
+    */
+   if (!count || !numInstances)
       return;
 
    /* OpenGL 4.5 says that primitive restart is ignored with non-indexed
     * draws.
     */
-   struct _mesa_prim prim = {
-      .begin = 1,
-      .end = 1,
-      .mode = mode,
-      .draw_id = drawID,
-      .start = start,
-      .count = count,
-   };
+   struct pipe_draw_info info;
+   struct pipe_draw_start_count_bias draw;
 
-   ctx->Driver.Draw(ctx, &prim, 1, NULL,
-                    GL_TRUE, start, start + count - 1,
-                    numInstances, baseInstance, NULL, 0);
+   info.mode = mode;
+   info.index_size = 0;
+   /* Packed section begin. */
+   info.primitive_restart = false;
+   info.has_user_indices = false;
+   info.index_bounds_valid = true;
+   info.increment_draw_id = false;
+   info.take_index_buffer_ownership = false;
+   info.index_bias_varies = false;
+   /* Packed section end. */
+   info.start_instance = baseInstance;
+   info.instance_count = numInstances;
+   info.view_mask = 0;
+   info.min_index = start;
+   info.max_index = start + count - 1;
+
+   draw.start = start;
+   draw.count = count;
+
+   ctx->Driver.DrawGallium(ctx, &info, 0, &draw, 1);
 
    if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH) {
       _mesa_flush(ctx);
@@ -377,8 +1331,8 @@ _mesa_draw_arrays(struct gl_context *ctx, GLenum mode, GLint start,
 /**
  * Execute a glRectf() function.
  */
-static void GLAPIENTRY
-_mesa_exec_Rectf(GLfloat x1, GLfloat y1, GLfloat x2, GLfloat y2)
+void GLAPIENTRY
+_mesa_Rectf(GLfloat x1, GLfloat y1, GLfloat x2, GLfloat y2)
 {
    GET_CURRENT_CONTEXT(ctx);
    ASSERT_OUTSIDE_BEGIN_END(ctx);
@@ -394,46 +1348,46 @@ _mesa_exec_Rectf(GLfloat x1, GLfloat y1, GLfloat x2, GLfloat y2)
 }
 
 
-static void GLAPIENTRY
-_mesa_exec_Rectd(GLdouble x1, GLdouble y1, GLdouble x2, GLdouble y2)
+void GLAPIENTRY
+_mesa_Rectd(GLdouble x1, GLdouble y1, GLdouble x2, GLdouble y2)
 {
-   _mesa_exec_Rectf((GLfloat) x1, (GLfloat) y1, (GLfloat) x2, (GLfloat) y2);
+   _mesa_Rectf((GLfloat) x1, (GLfloat) y1, (GLfloat) x2, (GLfloat) y2);
 }
 
-static void GLAPIENTRY
-_mesa_exec_Rectdv(const GLdouble *v1, const GLdouble *v2)
+void GLAPIENTRY
+_mesa_Rectdv(const GLdouble *v1, const GLdouble *v2)
 {
-   _mesa_exec_Rectf((GLfloat) v1[0], (GLfloat) v1[1], (GLfloat) v2[0], (GLfloat) v2[1]);
+   _mesa_Rectf((GLfloat) v1[0], (GLfloat) v1[1], (GLfloat) v2[0], (GLfloat) v2[1]);
 }
 
-static void GLAPIENTRY
-_mesa_exec_Rectfv(const GLfloat *v1, const GLfloat *v2)
+void GLAPIENTRY
+_mesa_Rectfv(const GLfloat *v1, const GLfloat *v2)
 {
-   _mesa_exec_Rectf(v1[0], v1[1], v2[0], v2[1]);
+   _mesa_Rectf(v1[0], v1[1], v2[0], v2[1]);
 }
 
-static void GLAPIENTRY
-_mesa_exec_Recti(GLint x1, GLint y1, GLint x2, GLint y2)
+void GLAPIENTRY
+_mesa_Recti(GLint x1, GLint y1, GLint x2, GLint y2)
 {
-   _mesa_exec_Rectf((GLfloat) x1, (GLfloat) y1, (GLfloat) x2, (GLfloat) y2);
+   _mesa_Rectf((GLfloat) x1, (GLfloat) y1, (GLfloat) x2, (GLfloat) y2);
 }
 
-static void GLAPIENTRY
-_mesa_exec_Rectiv(const GLint *v1, const GLint *v2)
+void GLAPIENTRY
+_mesa_Rectiv(const GLint *v1, const GLint *v2)
 {
-   _mesa_exec_Rectf((GLfloat) v1[0], (GLfloat) v1[1], (GLfloat) v2[0], (GLfloat) v2[1]);
+   _mesa_Rectf((GLfloat) v1[0], (GLfloat) v1[1], (GLfloat) v2[0], (GLfloat) v2[1]);
 }
 
-static void GLAPIENTRY
-_mesa_exec_Rects(GLshort x1, GLshort y1, GLshort x2, GLshort y2)
+void GLAPIENTRY
+_mesa_Rects(GLshort x1, GLshort y1, GLshort x2, GLshort y2)
 {
-   _mesa_exec_Rectf((GLfloat) x1, (GLfloat) y1, (GLfloat) x2, (GLfloat) y2);
+   _mesa_Rectf((GLfloat) x1, (GLfloat) y1, (GLfloat) x2, (GLfloat) y2);
 }
 
-static void GLAPIENTRY
-_mesa_exec_Rectsv(const GLshort *v1, const GLshort *v2)
+void GLAPIENTRY
+_mesa_Rectsv(const GLshort *v1, const GLshort *v2)
 {
-   _mesa_exec_Rectf((GLfloat) v1[0], (GLfloat) v1[1], (GLfloat) v2[0], (GLfloat) v2[1]);
+   _mesa_Rectf((GLfloat) v1[0], (GLfloat) v1[1], (GLfloat) v2[0], (GLfloat) v2[1]);
 }
 
 
@@ -560,27 +1514,22 @@ void GLAPIENTRY
 _mesa_DrawArrays(GLenum mode, GLint start, GLsizei count)
 {
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx, "glDrawArrays(%s, %d, %d)\n",
-                  _mesa_enum_to_string(mode), start, count);
-
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_DrawArrays(ctx, mode, count))
-         return;
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
+
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_DrawArrays(ctx, mode, count))
+      return;
 
    if (0)
       check_draw_arrays_data(ctx, start, count);
 
-   _mesa_draw_arrays(ctx, mode, start, count, 1, 0, 0);
+   _mesa_draw_arrays(ctx, mode, start, count, 1, 0);
 
    if (0)
       print_draw_arrays(ctx, mode, start, count);
@@ -596,28 +1545,23 @@ _mesa_DrawArraysInstancedARB(GLenum mode, GLint start, GLsizei count,
                              GLsizei numInstances)
 {
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx, "glDrawArraysInstanced(%s, %d, %d, %d)\n",
-                  _mesa_enum_to_string(mode), start, count, numInstances);
-
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_DrawArraysInstanced(ctx, mode, start, count,
-                                              numInstances))
-         return;
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
+
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_DrawArraysInstanced(ctx, mode, start, count,
+                                           numInstances))
+      return;
 
    if (0)
       check_draw_arrays_data(ctx, start, count);
 
-   _mesa_draw_arrays(ctx, mode, start, count, numInstances, 0, 0);
+   _mesa_draw_arrays(ctx, mode, start, count, numInstances, 0);
 
    if (0)
       print_draw_arrays(ctx, mode, start, count);
@@ -633,109 +1577,82 @@ _mesa_DrawArraysInstancedBaseInstance(GLenum mode, GLint first,
                                       GLuint baseInstance)
 {
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx,
-                  "glDrawArraysInstancedBaseInstance(%s, %d, %d, %d, %d)\n",
-                  _mesa_enum_to_string(mode), first, count,
-                  numInstances, baseInstance);
-
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_DrawArraysInstanced(ctx, mode, first, count,
-                                              numInstances))
-         return;
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
+
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_DrawArraysInstanced(ctx, mode, first, count,
+                                           numInstances))
+      return;
 
    if (0)
       check_draw_arrays_data(ctx, first, count);
 
-   _mesa_draw_arrays(ctx, mode, first, count, numInstances, baseInstance, 0);
+   _mesa_draw_arrays(ctx, mode, first, count, numInstances, baseInstance);
 
    if (0)
       print_draw_arrays(ctx, mode, first, count);
 }
 
 
-#define MAX_ALLOCA_PRIMS (50000 / sizeof(*prim))
-
-/* Use calloc for large allocations and alloca for small allocations. */
-/* We have to use a macro because alloca is local within the function. */
-#define ALLOC_PRIMS(prim, primcount, func) do { \
-   if (unlikely(primcount > MAX_ALLOCA_PRIMS)) { \
-      prim = calloc(primcount, sizeof(*prim)); \
-      if (!prim) { \
-         _mesa_error(ctx, GL_OUT_OF_MEMORY, func); \
-         return; \
-      } \
-   } else { \
-      prim = alloca(primcount * sizeof(*prim)); \
-   } \
-} while (0)
-
-#define FREE_PRIMS(prim, primcount) do { \
-   if (primcount > MAX_ALLOCA_PRIMS) \
-      free(prim); \
-} while (0)
-
-
 /**
  * Called from glMultiDrawArrays when in immediate mode.
  */
-static void GLAPIENTRY
-_mesa_exec_MultiDrawArrays(GLenum mode, const GLint *first,
-                           const GLsizei *count, GLsizei primcount)
+void GLAPIENTRY
+_mesa_MultiDrawArrays(GLenum mode, const GLint *first,
+                      const GLsizei *count, GLsizei primcount)
 {
    GET_CURRENT_CONTEXT(ctx);
-   GLint i;
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx,
-                  "glMultiDrawArrays(%s, %p, %p, %d)\n",
-                  _mesa_enum_to_string(mode), first, count, primcount);
-
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_MultiDrawArrays(ctx, mode, count, primcount))
-         return;
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
-   if (skip_validated_draw(ctx))
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_MultiDrawArrays(ctx, mode, count, primcount))
       return;
 
-   struct _mesa_prim *prim;
+   if (primcount == 0)
+      return;
 
-   ALLOC_PRIMS(prim, primcount, "glMultiDrawElements");
+   struct pipe_draw_info info;
+   struct pipe_draw_start_count_bias *draw;
 
-   for (i = 0; i < primcount; i++) {
-      prim[i].begin = 1;
-      prim[i].end = 1;
-      prim[i].mode = mode;
-      prim[i].draw_id = i;
-      prim[i].start = first[i];
-      prim[i].count = count[i];
-      prim[i].basevertex = 0;
+   ALLOC_PRIMS(draw, primcount, "glMultiDrawElements");
+
+   info.mode = mode;
+   info.index_size = 0;
+   /* Packed section begin. */
+   info.primitive_restart = false;
+   info.has_user_indices = false;
+   info.index_bounds_valid = false;
+   info.increment_draw_id = primcount > 1;
+   info.take_index_buffer_ownership = false;
+   info.index_bias_varies = false;
+   /* Packed section end. */
+   info.start_instance = 0;
+   info.instance_count = 1;
+   info.view_mask = 0;
+
+   for (int i = 0; i < primcount; i++) {
+      draw[i].start = first[i];
+      draw[i].count = count[i];
    }
 
-   ctx->Driver.Draw(ctx, prim, primcount, NULL, GL_FALSE, 0, 0, 1, 0,
-                    NULL, 0);
+   ctx->Driver.DrawGallium(ctx, &info, 0, draw, primcount);
 
    if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH)
       _mesa_flush(ctx);
 
-   FREE_PRIMS(prim, primcount);
+   FREE_PRIMS(draw, primcount);
 }
 
 
@@ -800,25 +1717,6 @@ dump_element_buffer(struct gl_context *ctx, GLenum type)
 #endif
 
 
-static bool
-skip_draw_elements(struct gl_context *ctx, GLsizei count,
-                   const GLvoid *indices)
-{
-   if (count == 0)
-      return true;
-
-   /* Not using a VBO for indices, so avoid NULL pointer derefs later.
-    */
-   if (!ctx->Array.VAO->IndexBufferObj && indices == NULL)
-      return true;
-
-   if (skip_validated_draw(ctx))
-      return true;
-
-   return false;
-}
-
-
 /**
  * Inner support for both _mesa_DrawElements and _mesa_DrawRangeElements.
  * Do the rendering for a glDrawElements or glDrawRangeElements call after
@@ -826,36 +1724,59 @@ skip_draw_elements(struct gl_context *ctx, GLsizei count,
  */
 static void
 _mesa_validated_drawrangeelements(struct gl_context *ctx, GLenum mode,
-                                  GLboolean index_bounds_valid,
+                                  bool index_bounds_valid,
                                   GLuint start, GLuint end,
                                   GLsizei count, GLenum type,
                                   const GLvoid * indices,
                                   GLint basevertex, GLuint numInstances,
                                   GLuint baseInstance)
 {
-   struct _mesa_index_buffer ib;
-   struct _mesa_prim prim;
+   /* Viewperf has many draws with count=0. Discarding them is faster than
+    * processing them.
+    */
+   if (!count || !numInstances)
+      return;
 
    if (!index_bounds_valid) {
       assert(start == 0u);
       assert(end == ~0u);
    }
 
-   if (skip_draw_elements(ctx, count, indices))
+   struct pipe_draw_info info;
+   struct pipe_draw_start_count_bias draw;
+   unsigned index_size_shift = get_index_size_shift(type);
+   struct gl_buffer_object *index_bo = ctx->Array.VAO->IndexBufferObj;
+
+   if (index_bo && !indices_aligned(index_size_shift, indices))
       return;
 
-   ib.count = count;
-   ib.obj = ctx->Array.VAO->IndexBufferObj;
-   ib.ptr = indices;
-   get_index_size(type, &ib);
+   info.mode = mode;
+   info.index_size = 1 << index_size_shift;
+   /* Packed section begin. */
+   info.primitive_restart = ctx->Array._PrimitiveRestart[index_size_shift];
+   info.has_user_indices = index_bo == NULL;
+   info.index_bounds_valid = index_bounds_valid;
+   info.increment_draw_id = false;
+   info.take_index_buffer_ownership = false;
+   info.index_bias_varies = false;
+   /* Packed section end. */
+   info.start_instance = baseInstance;
+   info.instance_count = numInstances;
+   info.view_mask = 0;
+   info.restart_index = ctx->Array._RestartIndex[index_size_shift];
 
-   prim.begin = 1;
-   prim.end = 1;
-   prim.mode = mode;
-   prim.start = 0;
-   prim.count = count;
-   prim.basevertex = basevertex;
-   prim.draw_id = 0;
+   if (info.has_user_indices) {
+      info.index.user = indices;
+      draw.start = 0;
+   } else {
+      info.index.gl_bo = index_bo;
+      draw.start = (uintptr_t)indices >> index_size_shift;
+   }
+   draw.index_bias = basevertex;
+
+   info.min_index = start;
+   info.max_index = end;
+   draw.count = count;
 
    /* Need to give special consideration to rendering a range of
     * indices starting somewhere above zero.  Typically the
@@ -888,9 +1809,7 @@ _mesa_validated_drawrangeelements(struct gl_context *ctx, GLenum mode,
     * for the latter case elsewhere.
     */
 
-   ctx->Driver.Draw(ctx, &prim, 1, &ib,
-                    index_bounds_valid, start, end,
-                    numInstances, baseInstance, NULL, 0);
+   ctx->Driver.DrawGallium(ctx, &info, 0, &draw, 1);
 
    if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH) {
       _mesa_flush(ctx);
@@ -907,7 +1826,7 @@ _mesa_DrawRangeElementsBaseVertex(GLenum mode, GLuint start, GLuint end,
                                   const GLvoid * indices, GLint basevertex)
 {
    static GLuint warnCount = 0;
-   GLboolean index_bounds_valid = GL_TRUE;
+   bool index_bounds_valid = true;
 
    /* This is only useful to catch invalid values in the "end" parameter
     * like ~0.
@@ -915,25 +1834,18 @@ _mesa_DrawRangeElementsBaseVertex(GLenum mode, GLuint start, GLuint end,
    GLuint max_element = 2 * 1000 * 1000 * 1000; /* just a big number */
 
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx,
-                  "glDrawRangeElementsBaseVertex(%s, %u, %u, %d, %s, %p, %d)\n",
-                  _mesa_enum_to_string(mode), start, end, count,
-                  _mesa_enum_to_string(type), indices, basevertex);
-
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_DrawRangeElements(ctx, mode, start, end, count,
-                                            type, indices))
-         return;
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
+
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_DrawRangeElements(ctx, mode, start, end, count,
+                                         type))
+      return;
 
    if ((int) end + basevertex < 0 || start + basevertex >= max_element) {
       /* The application requested we draw using a range of indices that's
@@ -951,7 +1863,7 @@ _mesa_DrawRangeElementsBaseVertex(GLenum mode, GLuint start, GLuint end,
                        start, end, basevertex, count, type, indices,
                        max_element - 1);
       }
-      index_bounds_valid = GL_FALSE;
+      index_bounds_valid = false;
    }
 
    /* NOTE: It's important that 'end' is a reasonable value.
@@ -980,7 +1892,7 @@ _mesa_DrawRangeElementsBaseVertex(GLenum mode, GLuint start, GLuint end,
    }
 
    if ((int) start + basevertex < 0 || end + basevertex >= max_element)
-      index_bounds_valid = GL_FALSE;
+      index_bounds_valid = false;
 
 #if 0
    check_draw_elements_data(ctx, count, type, indices, basevertex);
@@ -1005,14 +1917,6 @@ void GLAPIENTRY
 _mesa_DrawRangeElements(GLenum mode, GLuint start, GLuint end,
                         GLsizei count, GLenum type, const GLvoid * indices)
 {
-   if (MESA_VERBOSE & VERBOSE_DRAW) {
-      GET_CURRENT_CONTEXT(ctx);
-      _mesa_debug(ctx,
-                  "glDrawRangeElements(%s, %u, %u, %d, %s, %p)\n",
-                  _mesa_enum_to_string(mode), start, end, count,
-                  _mesa_enum_to_string(type), indices);
-   }
-
    _mesa_DrawRangeElementsBaseVertex(mode, start, end, count, type,
                                      indices, 0);
 }
@@ -1026,25 +1930,19 @@ _mesa_DrawElements(GLenum mode, GLsizei count, GLenum type,
                    const GLvoid * indices)
 {
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx, "glDrawElements(%s, %u, %s, %p)\n",
-                  _mesa_enum_to_string(mode), count,
-                  _mesa_enum_to_string(type), indices);
-
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_DrawElements(ctx, mode, count, type, indices))
-         return;
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
-   _mesa_validated_drawrangeelements(ctx, mode, GL_FALSE, 0, ~0,
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_DrawElements(ctx, mode, count, type))
+      return;
+
+   _mesa_validated_drawrangeelements(ctx, mode, false, 0, ~0,
                                      count, type, indices, 0, 1, 0);
 }
 
@@ -1057,25 +1955,19 @@ _mesa_DrawElementsBaseVertex(GLenum mode, GLsizei count, GLenum type,
                              const GLvoid * indices, GLint basevertex)
 {
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx, "glDrawElements(%s, %u, %s, %p)\n",
-                  _mesa_enum_to_string(mode), count,
-                  _mesa_enum_to_string(type), indices);
-
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_DrawElements(ctx, mode, count, type, indices))
-         return;
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
-   _mesa_validated_drawrangeelements(ctx, mode, GL_FALSE, 0, ~0,
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_DrawElements(ctx, mode, count, type))
+      return;
+
+   _mesa_validated_drawrangeelements(ctx, mode, false, 0, ~0,
                                      count, type, indices, basevertex, 1, 0);
 }
 
@@ -1088,26 +1980,20 @@ _mesa_DrawElementsInstancedARB(GLenum mode, GLsizei count, GLenum type,
                                const GLvoid * indices, GLsizei numInstances)
 {
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx, "glDrawElements(%s, %u, %s, %p)\n",
-                  _mesa_enum_to_string(mode), count,
-                  _mesa_enum_to_string(type), indices);
-
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_DrawElementsInstanced(ctx, mode, count, type,
-                                                indices, numInstances))
-         return;
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
-   _mesa_validated_drawrangeelements(ctx, mode, GL_FALSE, 0, ~0,
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_DrawElementsInstanced(ctx, mode, count, type,
+                                             numInstances))
+      return;
+
+   _mesa_validated_drawrangeelements(ctx, mode, false, 0, ~0,
                                      count, type, indices, 0, numInstances, 0);
 }
 
@@ -1122,29 +2008,20 @@ _mesa_DrawElementsInstancedBaseVertex(GLenum mode, GLsizei count,
                                       GLint basevertex)
 {
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx,
-                  "glDrawElementsInstancedBaseVertex"
-                  "(%s, %d, %s, %p, %d; %d)\n",
-                  _mesa_enum_to_string(mode), count,
-                  _mesa_enum_to_string(type), indices,
-                  numInstances, basevertex);
-
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_DrawElementsInstanced(ctx, mode, count, type,
-                                                indices, numInstances))
-         return;
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
-   _mesa_validated_drawrangeelements(ctx, mode, GL_FALSE, 0, ~0,
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_DrawElementsInstanced(ctx, mode, count, type,
+                                             numInstances))
+      return;
+
+   _mesa_validated_drawrangeelements(ctx, mode, false, 0, ~0,
                                      count, type, indices,
                                      basevertex, numInstances, 0);
 }
@@ -1161,29 +2038,20 @@ _mesa_DrawElementsInstancedBaseInstance(GLenum mode, GLsizei count,
                                         GLuint baseInstance)
 {
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx,
-                  "glDrawElementsInstancedBaseInstance"
-                  "(%s, %d, %s, %p, %d, %d)\n",
-                  _mesa_enum_to_string(mode), count,
-                  _mesa_enum_to_string(type), indices,
-                  numInstances, baseInstance);
-
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_DrawElementsInstanced(ctx, mode, count, type,
-                                                indices, numInstances))
-         return;
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
-   _mesa_validated_drawrangeelements(ctx, mode, GL_FALSE, 0, ~0,
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_DrawElementsInstanced(ctx, mode, count, type,
+                                             numInstances))
+      return;
+
+   _mesa_validated_drawrangeelements(ctx, mode, false, 0, ~0,
                                      count, type, indices, 0, numInstances,
                                      baseInstance);
 }
@@ -1202,29 +2070,20 @@ _mesa_DrawElementsInstancedBaseVertexBaseInstance(GLenum mode,
                                                   GLuint baseInstance)
 {
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx,
-                  "glDrawElementsInstancedBaseVertexBaseInstance"
-                  "(%s, %d, %s, %p, %d, %d, %d)\n",
-                  _mesa_enum_to_string(mode), count,
-                  _mesa_enum_to_string(type), indices,
-                  numInstances, basevertex, baseInstance);
-
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_DrawElementsInstanced(ctx, mode, count, type,
-                                                indices, numInstances))
-         return;
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
-   _mesa_validated_drawrangeelements(ctx, mode, GL_FALSE, 0, ~0,
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_DrawElementsInstanced(ctx, mode, count, type,
+                                             numInstances))
+      return;
+
+   _mesa_validated_drawrangeelements(ctx, mode, false, 0, ~0,
                                      count, type, indices, basevertex,
                                      numInstances, baseInstance);
 }
@@ -1241,22 +2100,21 @@ _mesa_validated_multidrawelements(struct gl_context *ctx, GLenum mode,
                                   const GLvoid * const *indices,
                                   GLsizei primcount, const GLint *basevertex)
 {
-   struct _mesa_index_buffer ib;
    uintptr_t min_index_ptr, max_index_ptr;
-   GLboolean fallback = GL_FALSE;
+   bool fallback = false;
    int i;
 
    if (primcount == 0)
       return;
 
-   get_index_size(type, &ib);
+   unsigned index_size_shift = get_index_size_shift(type);
 
    min_index_ptr = (uintptr_t) indices[0];
    max_index_ptr = 0;
    for (i = 0; i < primcount; i++) {
       min_index_ptr = MIN2(min_index_ptr, (uintptr_t) indices[i]);
       max_index_ptr = MAX2(max_index_ptr, (uintptr_t) indices[i] +
-                           (count[i] << ib.index_size_shift));
+                           (count[i] << index_size_shift));
    }
 
    /* Check if we can handle this thing as a bunch of index offsets from the
@@ -1265,79 +2123,90 @@ _mesa_validated_multidrawelements(struct gl_context *ctx, GLenum mode,
     * Check that the difference between each prim's indexes is a multiple of
     * the index/element size.
     */
-   if (ib.index_size_shift) {
+   if (index_size_shift) {
       for (i = 0; i < primcount; i++) {
          if ((((uintptr_t) indices[i] - min_index_ptr) &
-              ((1 << ib.index_size_shift) - 1)) != 0) {
-            fallback = GL_TRUE;
+              ((1 << index_size_shift) - 1)) != 0) {
+            fallback = true;
             break;
          }
       }
    }
 
-   if (ctx->Const.MultiDrawWithUserIndices) {
-      /* Check whether prim[i].start would overflow. */
-      if (((max_index_ptr - min_index_ptr) >> ib.index_size_shift) > UINT_MAX)
-         fallback = GL_TRUE;
-   } else {
-      /* If the index buffer isn't in a VBO, then treating the application's
-       * subranges of the index buffer as one large index buffer may lead to
-       * us reading unmapped memory.
-       */
-      if (!ctx->Array.VAO->IndexBufferObj)
-         fallback = GL_TRUE;
-   }
+   struct gl_buffer_object *index_bo = ctx->Array.VAO->IndexBufferObj;
+   struct pipe_draw_info info;
 
-   if (!fallback) {
-      struct _mesa_prim *prim;
+   info.mode = mode;
+   info.index_size = 1 << index_size_shift;
+   /* Packed section begin. */
+   info.primitive_restart = ctx->Array._PrimitiveRestart[index_size_shift];
+   info.has_user_indices = index_bo == NULL;
+   info.index_bounds_valid = false;
+   info.increment_draw_id = primcount > 1;
+   info.take_index_buffer_ownership = false;
+   info.index_bias_varies = !!basevertex;
+   /* Packed section end. */
+   info.start_instance = 0;
+   info.instance_count = 1;
+   info.view_mask = 0;
+   info.restart_index = ctx->Array._RestartIndex[index_size_shift];
 
-      ALLOC_PRIMS(prim, primcount, "glMultiDrawElements");
+   if (info.has_user_indices)
+      info.index.user = (void*)min_index_ptr;
+   else
+      info.index.gl_bo = index_bo;
 
-      ib.count = (max_index_ptr - min_index_ptr) >> ib.index_size_shift;
-      ib.obj = ctx->Array.VAO->IndexBufferObj;
-      ib.ptr = (void *) min_index_ptr;
+   if (!fallback &&
+       (!info.has_user_indices ||
+        /* "max_index_ptr - min_index_ptr >> index_size_shift" is stored
+         * in draw[i].start. The driver will multiply it later by index_size
+         * so make sure the final value won't overflow.
+         *
+         * For real index buffers, gallium doesn't support index buffer offsets
+         * greater than UINT32_MAX bytes.
+         */
+        max_index_ptr - min_index_ptr <= UINT32_MAX)) {
+      struct pipe_draw_start_count_bias *draw;
 
-      for (i = 0; i < primcount; i++) {
-         prim[i].begin = 1;
-         prim[i].end = 1;
-         prim[i].mode = mode;
-         prim[i].start =
-            ((uintptr_t) indices[i] - min_index_ptr) >> ib.index_size_shift;
-         prim[i].count = count[i];
-         prim[i].draw_id = i;
-         if (basevertex != NULL)
-            prim[i].basevertex = basevertex[i];
-         else
-            prim[i].basevertex = 0;
+      ALLOC_PRIMS(draw, primcount, "glMultiDrawElements");
+
+      if (info.has_user_indices) {
+         for (int i = 0; i < primcount; i++) {
+            draw[i].start =
+               ((uintptr_t)indices[i] - min_index_ptr) >> index_size_shift;
+            draw[i].count = count[i];
+            draw[i].index_bias = basevertex ? basevertex[i] : 0;
+         }
+      } else {
+         for (int i = 0; i < primcount; i++) {
+            draw[i].start = (uintptr_t)indices[i] >> index_size_shift;
+            draw[i].count =
+               indices_aligned(index_size_shift, indices[i]) ? count[i] : 0;
+            draw[i].index_bias = basevertex ? basevertex[i] : 0;
+         }
       }
 
-      ctx->Driver.Draw(ctx, prim, primcount, &ib,
-                       false, 0, ~0, 1, 0, NULL, 0);
-      FREE_PRIMS(prim, primcount);
-   }
-   else {
-      /* render one prim at a time */
-      for (i = 0; i < primcount; i++) {
-         if (count[i] == 0)
+      ctx->Driver.DrawGallium(ctx, &info, 0, draw, primcount);
+      FREE_PRIMS(draw, primcount);
+   } else {
+      /* draw[i].start would overflow. Draw one at a time. */
+      assert(info.has_user_indices);
+      info.increment_draw_id = false;
+
+      for (int i = 0; i < primcount; i++) {
+         struct pipe_draw_start_count_bias draw;
+
+         if (!count[i])
             continue;
 
-         ib.count = count[i];
-         ib.obj = ctx->Array.VAO->IndexBufferObj;
-         ib.ptr = indices[i];
+         /* Reset these, because the callee can change them. */
+         info.index_bounds_valid = false;
+         info.index.user = indices[i];
+         draw.start = 0;
+         draw.index_bias = basevertex ? basevertex[i] : 0;
+         draw.count = count[i];
 
-         struct _mesa_prim prim;
-         prim.begin = 1;
-         prim.end = 1;
-         prim.mode = mode;
-         prim.start = 0;
-         prim.count = count[i];
-         prim.draw_id = i;
-         if (basevertex != NULL)
-            prim.basevertex = basevertex[i];
-         else
-            prim.basevertex = 0;
-
-         ctx->Driver.Draw(ctx, &prim, 1, &ib, false, 0, ~0, 1, 0, NULL, 0);
+         ctx->Driver.DrawGallium(ctx, &info, i, &draw, 1);
       }
    }
 
@@ -1348,20 +2217,21 @@ _mesa_validated_multidrawelements(struct gl_context *ctx, GLenum mode,
 
 
 void GLAPIENTRY
-_mesa_MultiDrawElements(GLenum mode, const GLsizei *count, GLenum type,
-                        const GLvoid * const *indices, GLsizei primcount)
+_mesa_MultiDrawElementsEXT(GLenum mode, const GLsizei *count, GLenum type,
+                           const GLvoid * const *indices, GLsizei primcount)
 {
    GET_CURRENT_CONTEXT(ctx);
-
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (!_mesa_validate_MultiDrawElements(ctx, mode, count, type, indices,
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
+
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_MultiDrawElements(ctx, mode, count, type, indices,
                                          primcount))
-      return;
-
-   if (skip_validated_draw(ctx))
       return;
 
    _mesa_validated_multidrawelements(ctx, mode, count, type, indices, primcount,
@@ -1377,21 +2247,17 @@ _mesa_MultiDrawElementsBaseVertex(GLenum mode,
                                   const GLsizei *basevertex)
 {
    GET_CURRENT_CONTEXT(ctx);
-
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_MultiDrawElements(ctx, mode, count, type, indices,
-                                            primcount))
-         return;
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
-   if (skip_validated_draw(ctx))
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_MultiDrawElements(ctx, mode, count, type, indices,
+                                         primcount))
       return;
 
    _mesa_validated_multidrawelements(ctx, mode, count, type, indices, primcount,
@@ -1412,46 +2278,24 @@ _mesa_draw_transform_feedback(struct gl_context *ctx, GLenum mode,
                               struct gl_transform_feedback_object *obj,
                               GLuint stream, GLuint numInstances)
 {
-   struct _mesa_prim prim;
-
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_DrawTransformFeedback(ctx, mode, obj, stream,
-                                                numInstances)) {
-         return;
-      }
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
-   if (ctx->Driver.GetTransformFeedbackVertexCount &&
-       (ctx->Const.AlwaysUseGetTransformFeedbackVertexCount ||
-        !_mesa_all_varyings_in_vbos(ctx->Array.VAO))) {
-      GLsizei n =
-         ctx->Driver.GetTransformFeedbackVertexCount(ctx, obj, stream);
-      _mesa_draw_arrays(ctx, mode, 0, n, numInstances, 0, 0);
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_DrawTransformFeedback(ctx, mode, obj, stream,
+                                             numInstances))
       return;
-   }
-
-   if (skip_validated_draw(ctx))
-      return;
-
-   /* init most fields to zero */
-   memset(&prim, 0, sizeof(prim));
-   prim.begin = 1;
-   prim.end = 1;
-   prim.mode = mode;
 
    /* Maybe we should do some primitive splitting for primitive restart
     * (like in DrawArrays), but we have no way to know how many vertices
     * will be rendered. */
 
-   ctx->Driver.Draw(ctx, &prim, 1, NULL, GL_FALSE, 0, ~0, numInstances, 0,
-                    obj, stream);
+   st_draw_transform_feedback(ctx, mode, numInstances, stream, obj);
 
    if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH) {
       _mesa_flush(ctx);
@@ -1474,10 +2318,6 @@ _mesa_DrawTransformFeedback(GLenum mode, GLuint name)
    struct gl_transform_feedback_object *obj =
       _mesa_lookup_transform_feedback_object(ctx, name);
 
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx, "glDrawTransformFeedback(%s, %d)\n",
-                  _mesa_enum_to_string(mode), name);
-
    _mesa_draw_transform_feedback(ctx, mode, obj, 0, 1);
 }
 
@@ -1488,10 +2328,6 @@ _mesa_DrawTransformFeedbackStream(GLenum mode, GLuint name, GLuint stream)
    GET_CURRENT_CONTEXT(ctx);
    struct gl_transform_feedback_object *obj =
       _mesa_lookup_transform_feedback_object(ctx, name);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx, "glDrawTransformFeedbackStream(%s, %u, %u)\n",
-                  _mesa_enum_to_string(mode), name, stream);
 
    _mesa_draw_transform_feedback(ctx, mode, obj, stream, 1);
 }
@@ -1505,10 +2341,6 @@ _mesa_DrawTransformFeedbackInstanced(GLenum mode, GLuint name,
    struct gl_transform_feedback_object *obj =
       _mesa_lookup_transform_feedback_object(ctx, name);
 
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx, "glDrawTransformFeedbackInstanced(%s, %d)\n",
-                  _mesa_enum_to_string(mode), name);
-
    _mesa_draw_transform_feedback(ctx, mode, obj, 0, primcount);
 }
 
@@ -1521,11 +2353,6 @@ _mesa_DrawTransformFeedbackStreamInstanced(GLenum mode, GLuint name,
    GET_CURRENT_CONTEXT(ctx);
    struct gl_transform_feedback_object *obj =
       _mesa_lookup_transform_feedback_object(ctx, name);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx, "glDrawTransformFeedbackStreamInstanced"
-                  "(%s, %u, %u, %i)\n",
-                  _mesa_enum_to_string(mode), name, stream, primcount);
 
    _mesa_draw_transform_feedback(ctx, mode, obj, stream, primcount);
 }
@@ -1542,9 +2369,9 @@ _mesa_validated_multidrawarraysindirect(struct gl_context *ctx, GLenum mode,
    if (drawcount == 0)
       return;
 
-   ctx->Driver.DrawIndirect(ctx, mode, ctx->DrawIndirectBuffer, indirect,
-                            drawcount, stride, drawcount_buffer,
-                            drawcount_offset, NULL);
+   st_indirect_draw_vbo(ctx, mode, ctx->DrawIndirectBuffer, indirect,
+                        drawcount, stride, drawcount_buffer,
+                        drawcount_offset, NULL, false, 0);
 
    if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH)
       _mesa_flush(ctx);
@@ -1568,11 +2395,13 @@ _mesa_validated_multidrawelementsindirect(struct gl_context *ctx,
    ib.count = 0;                /* unknown */
    ib.obj = ctx->Array.VAO->IndexBufferObj;
    ib.ptr = NULL;
-   get_index_size(type, &ib);
+   ib.index_size_shift = get_index_size_shift(type);
 
-   ctx->Driver.DrawIndirect(ctx, mode, ctx->DrawIndirectBuffer, indirect,
-                            drawcount, stride, drawcount_buffer,
-                            drawcount_offset, &ib);
+   st_indirect_draw_vbo(ctx, mode, ctx->DrawIndirectBuffer, indirect,
+                        drawcount, stride, drawcount_buffer,
+                        drawcount_offset, &ib,
+                        ctx->Array._PrimitiveRestart[ib.index_size_shift],
+                        ctx->Array._RestartIndex[ib.index_size_shift]);
 
    if (MESA_DEBUG_FLAGS & DEBUG_ALWAYS_FLUSH)
       _mesa_flush(ctx);
@@ -1587,10 +2416,6 @@ void GLAPIENTRY
 _mesa_DrawArraysIndirect(GLenum mode, const GLvoid *indirect)
 {
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx, "glDrawArraysIndirect(%s, %p)\n",
-                  _mesa_enum_to_string(mode), indirect);
 
    /* From the ARB_draw_indirect spec:
     *
@@ -1611,17 +2436,14 @@ _mesa_DrawArraysIndirect(GLenum mode, const GLvoid *indirect)
 
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_DrawArraysIndirect(ctx, mode, indirect))
-         return;
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
-   if (skip_validated_draw(ctx))
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_DrawArraysIndirect(ctx, mode, indirect))
       return;
 
    _mesa_validated_multidrawarraysindirect(ctx, mode, (GLintptr)indirect,
@@ -1633,11 +2455,6 @@ void GLAPIENTRY
 _mesa_DrawElementsIndirect(GLenum mode, GLenum type, const GLvoid *indirect)
 {
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx, "glDrawElementsIndirect(%s, %s, %p)\n",
-                  _mesa_enum_to_string(mode),
-                  _mesa_enum_to_string(type), indirect);
 
    /* From the ARB_draw_indirect spec:
     *
@@ -1678,17 +2495,14 @@ _mesa_DrawElementsIndirect(GLenum mode, GLenum type, const GLvoid *indirect)
 
    FLUSH_FOR_DRAW(ctx);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_DrawElementsIndirect(ctx, mode, type, indirect))
-         return;
-   }
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
-   if (skip_validated_draw(ctx))
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_DrawElementsIndirect(ctx, mode, type, indirect))
       return;
 
    _mesa_validated_multidrawelementsindirect(ctx, mode, type,
@@ -1703,13 +2517,17 @@ _mesa_MultiDrawArraysIndirect(GLenum mode, const GLvoid *indirect,
 {
    GET_CURRENT_CONTEXT(ctx);
 
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx, "glMultiDrawArraysIndirect(%s, %p, %i, %i)\n",
-                  _mesa_enum_to_string(mode), indirect, primcount, stride);
-
    /* If <stride> is zero, the array elements are treated as tightly packed. */
    if (stride == 0)
       stride = sizeof(DrawArraysIndirectCommand);
+
+   FLUSH_FOR_DRAW(ctx);
+
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
+
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
    /* From the ARB_draw_indirect spec:
     *
@@ -1721,41 +2539,46 @@ _mesa_MultiDrawArraysIndirect(GLenum mode, const GLvoid *indirect,
    if (ctx->API == API_OPENGL_COMPAT &&
        !ctx->DrawIndirectBuffer) {
 
-      if (!_mesa_valid_draw_indirect_multi(ctx, primcount, stride,
-                                           "glMultiDrawArraysIndirect"))
+      if (!_mesa_is_no_error_enabled(ctx) &&
+          (!_mesa_valid_draw_indirect_multi(ctx, primcount, stride,
+                                           "glMultiDrawArraysIndirect") ||
+           !_mesa_validate_DrawArrays(ctx, mode, 1)))
          return;
+
+      struct pipe_draw_info info;
+      info.mode = mode;
+      info.index_size = 0;
+      info.view_mask = 0;
+      /* Packed section begin. */
+      info.primitive_restart = false;
+      info.has_user_indices = false;
+      info.index_bounds_valid = false;
+      info.increment_draw_id = primcount > 1;
+      info.take_index_buffer_ownership = false;
+      info.index_bias_varies = false;
+      /* Packed section end. */
 
       const uint8_t *ptr = (const uint8_t *) indirect;
       for (unsigned i = 0; i < primcount; i++) {
          DrawArraysIndirectCommand *cmd = (DrawArraysIndirectCommand *) ptr;
-         _mesa_DrawArraysInstancedBaseInstance(mode, cmd->first,
-                                               cmd->count, cmd->primCount,
-                                               cmd->baseInstance);
 
-         if (stride == 0) {
-            ptr += sizeof(DrawArraysIndirectCommand);
-         } else {
-            ptr += stride;
-         }
+         info.start_instance = cmd->baseInstance;
+         info.instance_count = cmd->primCount;
+
+         struct pipe_draw_start_count_bias draw;
+         draw.start = cmd->first;
+         draw.count = cmd->count;
+
+         ctx->Driver.DrawGallium(ctx, &info, i, &draw, 1);
+         ptr += stride;
       }
 
       return;
    }
 
-   FLUSH_FOR_DRAW(ctx);
-
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
-
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_MultiDrawArraysIndirect(ctx, mode, indirect,
-                                                  primcount, stride))
-         return;
-   }
-
-   if (skip_validated_draw(ctx))
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_MultiDrawArraysIndirect(ctx, mode, indirect,
+                                               primcount, stride))
       return;
 
    _mesa_validated_multidrawarraysindirect(ctx, mode, (GLintptr)indirect, 0,
@@ -1770,15 +2593,17 @@ _mesa_MultiDrawElementsIndirect(GLenum mode, GLenum type,
 {
    GET_CURRENT_CONTEXT(ctx);
 
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx, "glMultiDrawElementsIndirect(%s, %s, %p, %i, %i)\n",
-                  _mesa_enum_to_string(mode),
-                  _mesa_enum_to_string(type), indirect, primcount, stride);
+   FLUSH_FOR_DRAW(ctx);
+
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
+
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
    /* If <stride> is zero, the array elements are treated as tightly packed. */
    if (stride == 0)
       stride = sizeof(DrawElementsIndirectCommand);
-
 
    /* From the ARB_draw_indirect spec:
     *
@@ -1803,38 +2628,51 @@ _mesa_MultiDrawElementsIndirect(GLenum mode, GLenum type,
          return;
       }
 
-      if (!_mesa_valid_draw_indirect_multi(ctx, primcount, stride,
-                                           "glMultiDrawArraysIndirect"))
+      if (!_mesa_is_no_error_enabled(ctx) &&
+          (!_mesa_valid_draw_indirect_multi(ctx, primcount, stride,
+                                           "glMultiDrawArraysIndirect") ||
+           !_mesa_validate_DrawElements(ctx, mode, 1, type)))
          return;
+
+      unsigned index_size_shift = get_index_size_shift(type);
+
+      struct pipe_draw_info info;
+      info.mode = mode;
+      info.index_size = 1 << index_size_shift;
+      info.view_mask = 0;
+      /* Packed section begin. */
+      info.primitive_restart = ctx->Array._PrimitiveRestart[index_size_shift];
+      info.has_user_indices = false;
+      info.index_bounds_valid = false;
+      info.increment_draw_id = primcount > 1;
+      info.take_index_buffer_ownership = false;
+      info.index_bias_varies = false;
+      /* Packed section end. */
+      info.restart_index = ctx->Array._RestartIndex[index_size_shift];
 
       const uint8_t *ptr = (const uint8_t *) indirect;
       for (unsigned i = 0; i < primcount; i++) {
-         _mesa_DrawElementsIndirect(mode, type, ptr);
+         DrawElementsIndirectCommand *cmd = (DrawElementsIndirectCommand*)ptr;
 
-         if (stride == 0) {
-            ptr += sizeof(DrawElementsIndirectCommand);
-         } else {
-            ptr += stride;
-         }
+         info.index.gl_bo = ctx->Array.VAO->IndexBufferObj;
+         info.start_instance = cmd->baseInstance;
+         info.instance_count = cmd->primCount;
+
+         struct pipe_draw_start_count_bias draw;
+         draw.start = cmd->firstIndex;
+         draw.count = cmd->count;
+         draw.index_bias = cmd->baseVertex;
+
+         ctx->Driver.DrawGallium(ctx, &info, i, &draw, 1);
+         ptr += stride;
       }
 
       return;
    }
 
-   FLUSH_FOR_DRAW(ctx);
-
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
-
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_MultiDrawElementsIndirect(ctx, mode, type, indirect,
-                                                    primcount, stride))
-         return;
-   }
-
-   if (skip_validated_draw(ctx))
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_MultiDrawElementsIndirect(ctx, mode, type, indirect,
+                                                 primcount, stride))
       return;
 
    _mesa_validated_multidrawelementsindirect(ctx, mode, type,
@@ -1849,34 +2687,22 @@ _mesa_MultiDrawArraysIndirectCountARB(GLenum mode, GLintptr indirect,
                                       GLsizei maxdrawcount, GLsizei stride)
 {
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx, "glMultiDrawArraysIndirectCountARB"
-                  "(%s, %lx, %lx, %i, %i)\n",
-                  _mesa_enum_to_string(mode),
-                  (unsigned long) indirect, (unsigned long) drawcount_offset,
-                  maxdrawcount, stride);
+   FLUSH_FOR_DRAW(ctx);
 
    /* If <stride> is zero, the array elements are treated as tightly packed. */
    if (stride == 0)
       stride = 4 * sizeof(GLuint);      /* sizeof(DrawArraysIndirectCommand) */
 
-   FLUSH_FOR_DRAW(ctx);
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_MultiDrawArraysIndirectCount(ctx, mode,
-                                                       indirect,
-                                                       drawcount_offset,
-                                                       maxdrawcount, stride))
-         return;
-   }
-
-   if (skip_validated_draw(ctx))
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_MultiDrawArraysIndirectCount(ctx, mode, indirect,
+                                                    drawcount_offset,
+                                                    maxdrawcount, stride))
       return;
 
    _mesa_validated_multidrawarraysindirect(ctx, mode, indirect,
@@ -1892,83 +2718,29 @@ _mesa_MultiDrawElementsIndirectCountARB(GLenum mode, GLenum type,
                                         GLsizei maxdrawcount, GLsizei stride)
 {
    GET_CURRENT_CONTEXT(ctx);
-
-   if (MESA_VERBOSE & VERBOSE_DRAW)
-      _mesa_debug(ctx, "glMultiDrawElementsIndirectCountARB"
-                  "(%s, %s, %lx, %lx, %i, %i)\n",
-                  _mesa_enum_to_string(mode), _mesa_enum_to_string(type),
-                  (unsigned long) indirect, (unsigned long) drawcount_offset,
-                  maxdrawcount, stride);
+   FLUSH_FOR_DRAW(ctx);
 
    /* If <stride> is zero, the array elements are treated as tightly packed. */
    if (stride == 0)
       stride = 5 * sizeof(GLuint);      /* sizeof(DrawElementsIndirectCommand) */
 
-   FLUSH_FOR_DRAW(ctx);
+   _mesa_set_draw_vao(ctx, ctx->Array.VAO,
+                      ctx->VertexProgram._VPModeInputFilter);
 
-   _mesa_set_draw_vao(ctx, ctx->Array.VAO, enabled_filter(ctx));
+   if (ctx->NewState)
+      _mesa_update_state(ctx);
 
-   if (_mesa_is_no_error_enabled(ctx)) {
-      if (ctx->NewState)
-         _mesa_update_state(ctx);
-   } else {
-      if (!_mesa_validate_MultiDrawElementsIndirectCount(ctx, mode, type,
-                                                         indirect,
-                                                         drawcount_offset,
-                                                         maxdrawcount, stride))
-         return;
-   }
-
-   if (skip_validated_draw(ctx))
+   if (!_mesa_is_no_error_enabled(ctx) &&
+       !_mesa_validate_MultiDrawElementsIndirectCount(ctx, mode, type,
+                                                      indirect,
+                                                      drawcount_offset,
+                                                      maxdrawcount, stride))
       return;
 
    _mesa_validated_multidrawelementsindirect(ctx, mode, type, indirect,
                                              drawcount_offset, maxdrawcount,
                                              stride, ctx->ParameterBuffer);
 }
-
-
-/**
- * Initialize the dispatch table with the VBO functions for drawing.
- */
-void
-_mesa_initialize_exec_dispatch(const struct gl_context *ctx,
-                               struct _glapi_table *exec)
-{
-   SET_DrawArrays(exec, _mesa_DrawArrays);
-   SET_DrawElements(exec, _mesa_DrawElements);
-
-   if (_mesa_is_desktop_gl(ctx) || _mesa_is_gles3(ctx)) {
-      SET_DrawRangeElements(exec, _mesa_DrawRangeElements);
-   }
-
-   SET_MultiDrawArrays(exec, _mesa_exec_MultiDrawArrays);
-   SET_MultiDrawElementsEXT(exec, _mesa_MultiDrawElements);
-
-   if (ctx->API == API_OPENGL_COMPAT) {
-      SET_Rectf(exec, _mesa_exec_Rectf);
-      SET_Rectd(exec, _mesa_exec_Rectd);
-      SET_Rectdv(exec, _mesa_exec_Rectdv);
-      SET_Rectfv(exec, _mesa_exec_Rectfv);
-      SET_Recti(exec, _mesa_exec_Recti);
-      SET_Rectiv(exec, _mesa_exec_Rectiv);
-      SET_Rects(exec, _mesa_exec_Rects);
-      SET_Rectsv(exec, _mesa_exec_Rectsv);
-   }
-
-   if (ctx->API != API_OPENGLES &&
-       ctx->Extensions.ARB_draw_elements_base_vertex) {
-      SET_DrawElementsBaseVertex(exec, _mesa_DrawElementsBaseVertex);
-      SET_MultiDrawElementsBaseVertex(exec,
-                                      _mesa_MultiDrawElementsBaseVertex);
-
-      if (_mesa_is_desktop_gl(ctx) || _mesa_is_gles3(ctx)) {
-         SET_DrawRangeElementsBaseVertex(exec,
-                                         _mesa_DrawRangeElementsBaseVertex);
-      }
-   }
-}
-
 
 
 /* GL_IBM_multimode_draw_arrays */
@@ -1979,8 +2751,6 @@ _mesa_MultiModeDrawArraysIBM( const GLenum * mode, const GLint * first,
 {
    GET_CURRENT_CONTEXT(ctx);
    GLint i;
-
-   FLUSH_VERTICES(ctx, 0);
 
    for ( i = 0 ; i < primcount ; i++ ) {
       if ( count[i] > 0 ) {
@@ -1999,10 +2769,6 @@ _mesa_MultiModeDrawElementsIBM( const GLenum * mode, const GLsizei * count,
 {
    GET_CURRENT_CONTEXT(ctx);
    GLint i;
-
-   FLUSH_VERTICES(ctx, 0);
-
-   /* XXX not sure about ARB_vertex_buffer_object handling here */
 
    for ( i = 0 ; i < primcount ; i++ ) {
       if ( count[i] > 0 ) {

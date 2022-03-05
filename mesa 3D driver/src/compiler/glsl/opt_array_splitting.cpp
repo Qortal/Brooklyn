@@ -415,11 +415,8 @@ ir_array_splitting_visitor::visit_leave(ir_assignment *ir)
          ir_rvalue *rhs_i =
             new(mem_ctx) ir_dereference_array(ir->rhs->clone(mem_ctx, NULL),
                                               new(mem_ctx) ir_constant(i));
-         ir_rvalue *condition_i =
-            ir->condition ? ir->condition->clone(mem_ctx, NULL) : NULL;
 
-         ir_assignment *assign_i =
-            new(mem_ctx) ir_assignment(lhs_i, rhs_i, condition_i);
+         ir_assignment *assign_i = new(mem_ctx) ir_assignment(lhs_i, rhs_i);
 
          ir->insert_before(assign_i);
          assign_i->accept(this);
@@ -435,11 +432,6 @@ ir_array_splitting_visitor::visit_leave(ir_assignment *ir)
 
    handle_rvalue(&ir->rhs);
    ir->rhs->accept(this);
-
-   if (ir->condition) {
-      handle_rvalue(&ir->condition);
-      ir->condition->accept(this);
-   }
 
    return visit_continue;
 }
@@ -474,6 +466,8 @@ optimize_split_arrays(exec_list *instructions, bool linked)
                                             entry->var->name, i);
          ir_variable *new_var =
             new(entry->mem_ctx) ir_variable(subtype, name, ir_var_temporary);
+         new_var->data.invariant = entry->var->data.invariant;
+         new_var->data.precise = entry->var->data.precise;
 
          /* Do not lose memory/format qualifiers when arrays of images are
           * split.

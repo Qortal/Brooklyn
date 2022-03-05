@@ -87,6 +87,7 @@ const char * const __glXDispatchTableStrings[DI_LAST_INDEX] = {
     __ATTRIB(SelectEventSGIX),
     // glXSwapBuffers implemented by libglvnd
     __ATTRIB(SwapBuffersMscOML),
+    __ATTRIB(SwapIntervalEXT),
     __ATTRIB(SwapIntervalMESA),
     __ATTRIB(SwapIntervalSGI),
     // glXUseXFont implemented by libglvnd
@@ -157,10 +158,22 @@ static GLXContext dispatch_CreateContextAttribsARB(Display *dpy,
                                                    const int *attrib_list)
 {
     PFNGLXCREATECONTEXTATTRIBSARBPROC pCreateContextAttribsARB;
-    __GLXvendorInfo *dd;
+    __GLXvendorInfo *dd = NULL;
     GLXContext ret;
 
-    dd = GetDispatchFromFBConfig(dpy, config);
+    if (config) {
+       dd = GetDispatchFromFBConfig(dpy, config);
+    } else if (attrib_list) {
+       int i, screen;
+
+       for (i = 0; attrib_list[i * 2] != None; i++) {
+          if (attrib_list[i * 2] == GLX_SCREEN) {
+             screen = attrib_list[i * 2 + 1];
+             dd = GetDispatchFromDrawable(dpy, RootWindow(dpy, screen));
+             break;
+          }
+       }
+    }
     if (dd == NULL)
         return None;
 
@@ -893,6 +906,24 @@ static int dispatch_SwapIntervalMESA(unsigned int interval)
 
 
 
+static void dispatch_SwapIntervalEXT(Display *dpy, GLXDrawable drawable, int interval)
+{
+    PFNGLXSWAPINTERVALEXTPROC pSwapIntervalEXT;
+    __GLXvendorInfo *dd;
+
+    dd = GetDispatchFromDrawable(dpy, drawable);
+    if (dd == NULL)
+        return;
+
+    __FETCH_FUNCTION_PTR(SwapIntervalEXT);
+    if (pSwapIntervalEXT == NULL)
+        return;
+
+    pSwapIntervalEXT(dpy, drawable, interval);
+}
+
+
+
 static Bool dispatch_WaitForMscOML(Display *dpy, GLXDrawable drawable,
                                       int64_t target_msc, int64_t divisor,
                                       int64_t remainder, int64_t *ust,
@@ -974,6 +1005,7 @@ const void * const __glXDispatchFunctions[DI_LAST_INDEX + 1] = {
     __ATTRIB(ReleaseTexImageEXT),
     __ATTRIB(SelectEventSGIX),
     __ATTRIB(SwapBuffersMscOML),
+    __ATTRIB(SwapIntervalEXT),
     __ATTRIB(SwapIntervalMESA),
     __ATTRIB(SwapIntervalSGI),
     __ATTRIB(WaitForMscOML),

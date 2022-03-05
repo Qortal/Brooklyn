@@ -214,14 +214,16 @@ void r300_translate_vertex_shader(struct r300_context *r300,
     rc_init(&compiler.Base, NULL);
 
     DBG_ON(r300, DBG_VP) ? compiler.Base.Debug |= RC_DBG_LOG : 0;
-    DBG_ON(r300, DBG_P_STAT) ? compiler.Base.Debug |= RC_DBG_STATS : 0;
     compiler.code = &vs->code;
     compiler.UserData = vs;
+    if (!vs->dummy)
+        compiler.Base.debug = &r300->debug;
     compiler.Base.is_r500 = r300->screen->caps.is_r500;
     compiler.Base.disable_optimizations = DBG_ON(r300, DBG_NO_OPT);
     compiler.Base.has_half_swizzles = FALSE;
     compiler.Base.has_presub = FALSE;
     compiler.Base.has_omod = FALSE;
+    compiler.Base.needs_trig_input_transform = DBG_ON(r300, DBG_USE_TGSI);
     compiler.Base.max_temp_regs = 32;
     compiler.Base.max_constants = 256;
     compiler.Base.max_alu_insts = r300->screen->caps.is_r500 ? 1024 : 256;
@@ -249,7 +251,7 @@ void r300_translate_vertex_shader(struct r300_context *r300,
         compiler.Base.remove_unused_constants = TRUE;
     }
 
-    compiler.RequiredOutputs = ~(~0 << (vs->info.num_outputs + 1));
+    compiler.RequiredOutputs = ~(~0U << (vs->info.num_outputs + 1));
     compiler.SetHwInputOutput = &set_vertex_inputs_outputs;
 
     /* Insert the WPOS output. */

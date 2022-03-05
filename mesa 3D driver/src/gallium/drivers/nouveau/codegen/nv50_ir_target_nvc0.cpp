@@ -54,7 +54,7 @@ TargetNVC0::getBuiltinCode(const uint32_t **code, uint32_t *size) const
          *size = sizeof(gk104_builtin_code);
          break;
       }
-      /* fall-through for GK20A */
+      FALLTHROUGH; /* for GK20A */
    case 0xf0:
    case 0x100:
       *code = (const uint32_t *)&gk110_builtin_code[0];
@@ -76,7 +76,7 @@ TargetNVC0::getBuiltinOffset(int builtin) const
    case 0xe0:
       if (chipset < NVISA_GK20A_CHIPSET)
          return gk104_builtin_offsets[builtin];
-      /* fall-through for GK20A */
+      FALLTHROUGH; /* for GK20A */
    case 0xf0:
    case 0x100:
       return gk110_builtin_offsets[builtin];
@@ -267,12 +267,14 @@ TargetNVC0::getFileSize(DataFile file) const
 {
    const unsigned int gprs = (chipset >= NVISA_GK20A_CHIPSET) ? 255 : 63;
    const unsigned int smregs = (chipset >= NVISA_GK104_CHIPSET) ? 65536 : 32768;
+   const unsigned int bs = (chipset >= NVISA_GV100_CHIPSET) ? 16 : 0;
    switch (file) {
    case FILE_NULL:          return 0;
    case FILE_GPR:           return MIN2(gprs, smregs / threads);
    case FILE_PREDICATE:     return 7;
    case FILE_FLAGS:         return 1;
    case FILE_ADDRESS:       return 0;
+   case FILE_BARRIER:       return bs;
    case FILE_IMMEDIATE:     return 0;
    case FILE_MEMORY_CONST:  return 65536;
    case FILE_SHADER_INPUT:  return 0x400;
@@ -282,6 +284,7 @@ TargetNVC0::getFileSize(DataFile file) const
    case FILE_MEMORY_SHARED: return 16 << 10;
    case FILE_MEMORY_LOCAL:  return 48 << 10;
    case FILE_SYSTEM_VALUE:  return 32;
+   case FILE_THREAD_STATE:  return bs;
    default:
       assert(!"invalid file");
       return 0;
@@ -291,7 +294,8 @@ TargetNVC0::getFileSize(DataFile file) const
 unsigned int
 TargetNVC0::getFileUnit(DataFile file) const
 {
-   if (file == FILE_GPR || file == FILE_ADDRESS || file == FILE_SYSTEM_VALUE)
+   if (file == FILE_GPR || file == FILE_ADDRESS || file == FILE_SYSTEM_VALUE ||
+       file == FILE_BARRIER || file == FILE_THREAD_STATE)
       return 2;
    return 0;
 }
@@ -579,7 +583,7 @@ int TargetNVC0::getLatency(const Instruction *i) const
       case OP_LOAD:
          if (i->src(0).getFile() == FILE_MEMORY_CONST)
             return 9;
-         // fall through
+         FALLTHROUGH;
       case OP_VFETCH:
          return 24;
       default:

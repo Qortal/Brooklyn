@@ -85,6 +85,9 @@ properties:
   dma-names:
     const: audio-rx
 
+  power-domains:
+    maxItems: 1
+
   resets:
     maxItems: 1
 

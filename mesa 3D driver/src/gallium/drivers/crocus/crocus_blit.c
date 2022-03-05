@@ -49,7 +49,7 @@ void crocus_blitter_begin(struct crocus_context *ice, enum crocus_blitter_op op,
       util_blitter_save_depth_stencil_alpha(ice->blitter, ice->state.cso_zsa);
       util_blitter_save_stencil_ref(ice->blitter, &ice->state.stencil_ref);
       util_blitter_save_fragment_shader(ice->blitter, ice->shaders.uncompiled[MESA_SHADER_FRAGMENT]);
-      util_blitter_save_sample_mask(ice->blitter, ice->state.sample_mask);
+      util_blitter_save_sample_mask(ice->blitter, ice->state.sample_mask, 0);
       util_blitter_save_rasterizer(ice->blitter, ice->state.cso_rast);
       util_blitter_save_scissor(ice->blitter, &ice->state.scissors[0]);
       util_blitter_save_viewport(ice->blitter, &ice->state.viewports[0]);
@@ -433,6 +433,7 @@ crocus_blit(struct pipe_context *ctx, const struct pipe_blit_info *info)
                                              info->src.level,
                                              &info->src.box, NULL);
 
+               pipe_surface_release(ctx, &dst_view);
             }
             return;
          }
@@ -708,9 +709,11 @@ crocus_copy_region(struct blorp_context *blorp,
    if (dst->target == PIPE_BUFFER && src->target == PIPE_BUFFER) {
       struct blorp_address src_addr = {
          .buffer = crocus_resource_bo(src), .offset = src_box->x,
+         .mocs = crocus_mocs(src_res->bo, &screen->isl_dev),
       };
       struct blorp_address dst_addr = {
          .buffer = crocus_resource_bo(dst), .offset = dstx,
+         .mocs = crocus_mocs(dst_res->bo, &screen->isl_dev),
          .reloc_flags = EXEC_OBJECT_WRITE,
       };
 

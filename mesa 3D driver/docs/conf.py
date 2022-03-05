@@ -38,7 +38,7 @@ sys.path.append(os.path.abspath('_exts'))
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
-extensions = ['sphinx.ext.graphviz', 'formatting', 'redirects']
+extensions = ['sphinx.ext.graphviz', 'breathe', 'formatting', 'nir', 'redirects']
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -79,7 +79,7 @@ language = None
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This patterns also effect to html_static_path and html_extra_path
-exclude_patterns = [ "contents.rst" ]
+exclude_patterns = []
 
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = 'sphinx'
@@ -114,7 +114,7 @@ html_context = {
   'gitlab_host': 'gitlab.freedesktop.org',
   'gitlab_user': 'mesa',
   'gitlab_repo': 'mesa',
-  'gitlab_version': 'master',
+  'gitlab_version': 'main',
   'conf_py_path': '/docs/',
 }
 
@@ -132,22 +132,9 @@ html_extra_path = [
   'libGL.txt',
   'README.UVD',
   'README.VCE',
-  'README.WIN32',
 ]
 
 html_redirects = [
-  ('gallium/drivers/freedreno', 'drivers/freedreno.html'),
-  ('gallium/drivers/freedreno/ir3-notes', 'drivers/freedreno/ir3-notes.html'),
-  ('gallium/drivers/llvmpipe', 'drivers/llvmpipe.html'),
-  ('gallium/drivers/openswr', 'drivers/openswr.html'),
-  ('gallium/drivers/openswr/faq', 'drivers/openswr/faq.html'),
-  ('gallium/drivers/openswr/knobs', 'drivers/openswr/knobs.html'),
-  ('gallium/drivers/openswr/profiling', 'drivers/openswr/profiling.html'),
-  ('gallium/drivers/openswr/usage', 'drivers/openswr/usage.html'),
-  ('gallium/drivers/zink', 'drivers/zink.html'),
-  ('llvmpipe', 'drivers/llvmpipe.html'),
-  ('postprocess', 'gallium/postprocess.html'),
-  ('vmware-guest', 'drivers/vmware-guest.html'),
   ('webmaster', 'https://www.mesa3d.org/website/'),
 ]
 
@@ -211,3 +198,11 @@ texinfo_documents = [
 # -- Options for Graphviz -------------------------------------------------
 
 graphviz_output_format = 'svg'
+
+# -- Options for breathe --------------------------------------------------
+breathe_projects = {
+    'mesa' : 'doxygen_xml',
+}
+breathe_default_project = 'mesa'
+breathe_show_define_initializer = True
+breathe_show_enumvalue_initializer = True

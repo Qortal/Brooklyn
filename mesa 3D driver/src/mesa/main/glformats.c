@@ -1074,6 +1074,8 @@ _mesa_is_color_format(GLenum format)
       case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
       case GL_COMPRESSED_RGB_FXT1_3DFX:
       case GL_COMPRESSED_RGBA_FXT1_3DFX:
+      case GL_SR8_EXT:
+      case GL_SRG8_EXT:
       case GL_SRGB_EXT:
       case GL_SRGB8_EXT:
       case GL_SRGB_ALPHA_EXT:
@@ -1236,7 +1238,7 @@ _mesa_is_color_format(GLenum format)
       case GL_RGB10_A2UI:
          return GL_TRUE;
       case GL_YCBCR_MESA:  /* not considered to be RGB */
-         /* fall-through */
+         FALLTHROUGH;
       default:
          return GL_FALSE;
    }
@@ -1421,6 +1423,8 @@ GLboolean
 _mesa_is_srgb_format(GLenum format)
 {
    switch (format) {
+   case GL_SR8_EXT:
+   case GL_SRG8_EXT:
    case GL_SRGB:
    case GL_SRGB8:
    case GL_SRGB_ALPHA:
@@ -1895,7 +1899,7 @@ _mesa_error_check_format_and_type(const struct gl_context *ctx,
       case GL_RED:
          if (_mesa_has_rg_textures(ctx))
             return GL_NO_ERROR;
-         /* fallthrough */
+         FALLTHROUGH;
       default:
          return GL_INVALID_OPERATION;
       }
@@ -2190,7 +2194,7 @@ _mesa_es_error_check_format_and_type(const struct gl_context *ctx,
    case GL_RG:
       if (!_mesa_has_rg_textures(ctx))
          return GL_INVALID_VALUE;
-      /* fallthrough */
+      FALLTHROUGH;
    case GL_ALPHA:
    case GL_LUMINANCE:
    case GL_LUMINANCE_ALPHA:
@@ -2341,8 +2345,7 @@ _mesa_base_tex_format(const struct gl_context *ctx, GLint internalFormat)
       }
    }
 
-   if (_mesa_has_ARB_depth_texture(ctx) || _mesa_has_OES_depth_texture(ctx) ||
-       ctx->API == API_OPENGL_CORE) {
+   if (ctx->API != API_OPENGLES) {
       switch (internalFormat) {
       case GL_DEPTH_COMPONENT:
       case GL_DEPTH_COMPONENT16:
@@ -2373,13 +2376,13 @@ _mesa_base_tex_format(const struct gl_context *ctx, GLint internalFormat)
 
    switch (internalFormat) {
    case GL_COMPRESSED_ALPHA:
-      return GL_ALPHA;
+      return (ctx->API != API_OPENGL_CORE) ? GL_ALPHA : -1;
    case GL_COMPRESSED_LUMINANCE:
-      return GL_LUMINANCE;
+      return (ctx->API != API_OPENGL_CORE) ? GL_LUMINANCE : -1;
    case GL_COMPRESSED_LUMINANCE_ALPHA:
-      return GL_LUMINANCE_ALPHA;
+      return (ctx->API != API_OPENGL_CORE) ? GL_LUMINANCE_ALPHA : -1;
    case GL_COMPRESSED_INTENSITY:
-      return GL_INTENSITY;
+      return (ctx->API != API_OPENGL_CORE) ? GL_INTENSITY : -1;
    case GL_COMPRESSED_RGB:
       return GL_RGB;
    case GL_COMPRESSED_RGBA:
@@ -2409,34 +2412,34 @@ _mesa_base_tex_format(const struct gl_context *ctx, GLint internalFormat)
    if (_mesa_has_half_float_textures(ctx)) {
       switch (internalFormat) {
       case GL_ALPHA16F_ARB:
-         return GL_ALPHA;
+         return (ctx->API != API_OPENGL_CORE) ? GL_ALPHA : -1;
       case GL_RGBA16F_ARB:
          return GL_RGBA;
       case GL_RGB16F_ARB:
          return GL_RGB;
       case GL_INTENSITY16F_ARB:
-         return GL_INTENSITY;
+         return (ctx->API != API_OPENGL_CORE) ? GL_INTENSITY : -1;
       case GL_LUMINANCE16F_ARB:
-         return GL_LUMINANCE;
+         return (ctx->API != API_OPENGL_CORE) ? GL_LUMINANCE : -1;
       case GL_LUMINANCE_ALPHA16F_ARB:
-         return GL_LUMINANCE_ALPHA;
+         return (ctx->API != API_OPENGL_CORE) ? GL_LUMINANCE_ALPHA : -1;
       }
    }
 
    if (_mesa_has_float_textures(ctx)) {
       switch (internalFormat) {
       case GL_ALPHA32F_ARB:
-         return GL_ALPHA;
+         return (ctx->API != API_OPENGL_CORE) ? GL_ALPHA : -1;
       case GL_RGBA32F_ARB:
          return GL_RGBA;
       case GL_RGB32F_ARB:
          return GL_RGB;
       case GL_INTENSITY32F_ARB:
-         return GL_INTENSITY;
+         return (ctx->API != API_OPENGL_CORE) ? GL_INTENSITY : -1;
       case GL_LUMINANCE32F_ARB:
-         return GL_LUMINANCE;
+         return (ctx->API != API_OPENGL_CORE) ? GL_LUMINANCE : -1;
       case GL_LUMINANCE_ALPHA32F_ARB:
-         return GL_LUMINANCE_ALPHA;
+         return (ctx->API != API_OPENGL_CORE) ? GL_LUMINANCE_ALPHA : -1;
       }
    }
 
@@ -2461,19 +2464,19 @@ _mesa_base_tex_format(const struct gl_context *ctx, GLint internalFormat)
       case GL_ALPHA_SNORM:
       case GL_ALPHA8_SNORM:
       case GL_ALPHA16_SNORM:
-         return GL_ALPHA;
+         return (ctx->API != API_OPENGL_CORE) ? GL_ALPHA : -1;
       case GL_LUMINANCE_SNORM:
       case GL_LUMINANCE8_SNORM:
       case GL_LUMINANCE16_SNORM:
-         return GL_LUMINANCE;
+         return (ctx->API != API_OPENGL_CORE) ? GL_LUMINANCE : -1;
       case GL_LUMINANCE_ALPHA_SNORM:
       case GL_LUMINANCE8_ALPHA8_SNORM:
       case GL_LUMINANCE16_ALPHA16_SNORM:
-         return GL_LUMINANCE_ALPHA;
+         return (ctx->API != API_OPENGL_CORE) ? GL_LUMINANCE_ALPHA : -1;
       case GL_INTENSITY_SNORM:
       case GL_INTENSITY8_SNORM:
       case GL_INTENSITY16_SNORM:
-         return GL_INTENSITY;
+         return (ctx->API != API_OPENGL_CORE) ? GL_INTENSITY : -1;
       default:
          ; /* fallthrough */
       }
@@ -2492,11 +2495,11 @@ _mesa_base_tex_format(const struct gl_context *ctx, GLint internalFormat)
       case GL_SLUMINANCE_ALPHA_EXT:
       case GL_SLUMINANCE8_ALPHA8_EXT:
       case GL_COMPRESSED_SLUMINANCE_ALPHA_EXT:
-         return GL_LUMINANCE_ALPHA;
+         return (ctx->API != API_OPENGL_CORE) ? GL_LUMINANCE_ALPHA : -1;
       case GL_SLUMINANCE_EXT:
       case GL_SLUMINANCE8_EXT:
       case GL_COMPRESSED_SLUMINANCE_EXT:
-         return GL_LUMINANCE;
+         return (ctx->API != API_OPENGL_CORE) ? GL_LUMINANCE : -1;
       default:
          ; /* fallthrough */
       }
@@ -2506,6 +2509,15 @@ _mesa_base_tex_format(const struct gl_context *ctx, GLint internalFormat)
       switch (internalFormat) {
       case GL_SR8_EXT:
          return GL_RED;
+      default:
+         ; /* fallthrough */
+      }
+   }
+
+   if (_mesa_has_EXT_texture_sRGB_RG8(ctx)) {
+      switch (internalFormat) {
+      case GL_SRG8_EXT:
+         return GL_RG;
       default:
          ; /* fallthrough */
       }
@@ -2545,28 +2557,28 @@ _mesa_base_tex_format(const struct gl_context *ctx, GLint internalFormat)
       case GL_ALPHA8I_EXT:
       case GL_ALPHA16I_EXT:
       case GL_ALPHA32I_EXT:
-         return GL_ALPHA;
+         return (ctx->API != API_OPENGL_CORE) ? GL_ALPHA : -1;
       case GL_INTENSITY8UI_EXT:
       case GL_INTENSITY16UI_EXT:
       case GL_INTENSITY32UI_EXT:
       case GL_INTENSITY8I_EXT:
       case GL_INTENSITY16I_EXT:
       case GL_INTENSITY32I_EXT:
-         return GL_INTENSITY;
+         return (ctx->API != API_OPENGL_CORE) ? GL_INTENSITY : -1;
       case GL_LUMINANCE8UI_EXT:
       case GL_LUMINANCE16UI_EXT:
       case GL_LUMINANCE32UI_EXT:
       case GL_LUMINANCE8I_EXT:
       case GL_LUMINANCE16I_EXT:
       case GL_LUMINANCE32I_EXT:
-         return GL_LUMINANCE;
+         return (ctx->API != API_OPENGL_CORE) ? GL_LUMINANCE : -1;
       case GL_LUMINANCE_ALPHA8UI_EXT:
       case GL_LUMINANCE_ALPHA16UI_EXT:
       case GL_LUMINANCE_ALPHA32UI_EXT:
       case GL_LUMINANCE_ALPHA8I_EXT:
       case GL_LUMINANCE_ALPHA16I_EXT:
       case GL_LUMINANCE_ALPHA32I_EXT:
-         return GL_LUMINANCE_ALPHA;
+         return (ctx->API != API_OPENGL_CORE) ? GL_LUMINANCE_ALPHA : -1;
       default:
          ; /* fallthrough */
       }
@@ -2590,7 +2602,7 @@ _mesa_base_tex_format(const struct gl_context *ctx, GLint internalFormat)
       case GL_R32UI:
          if (!_mesa_has_integer_textures(ctx))
             break;
-         /* FALLTHROUGH */
+         FALLTHROUGH;
       case GL_R8:
       case GL_R16:
       case GL_RED:
@@ -2613,7 +2625,7 @@ _mesa_base_tex_format(const struct gl_context *ctx, GLint internalFormat)
       case GL_RG32UI:
          if (!_mesa_has_integer_textures(ctx))
             break;
-         /* FALLTHROUGH */
+         FALLTHROUGH;
       case GL_RG:
       case GL_RG8:
       case GL_RG16:
@@ -2744,7 +2756,7 @@ gles_effective_internal_format_for_format_and_type(GLenum format,
    case GL_FLOAT:
       if (format == GL_DEPTH_COMPONENT)
          return GL_DEPTH_COMPONENT32F;
-      /* fall through */
+      FALLTHROUGH;
    case GL_HALF_FLOAT_OES:
       switch (format) {
       case GL_RGBA:
@@ -2846,7 +2858,17 @@ _mesa_gles_error_check_format_and_type(const struct gl_context *ctx,
 
    switch (format) {
    case GL_BGRA_EXT:
-      if (type != GL_UNSIGNED_BYTE || internalFormat != GL_BGRA)
+      if (type != GL_UNSIGNED_BYTE ||
+              (internalFormat != GL_BGRA &&
+               internalFormat != GL_RGBA8 &&
+               internalFormat != GL_SRGB8_ALPHA8))
+         return GL_INVALID_OPERATION;
+      break;
+
+   case GL_BGR_EXT:
+      if (type != GL_UNSIGNED_BYTE ||
+              (internalFormat != GL_RGB8 &&
+               internalFormat != GL_SRGB8))
          return GL_INVALID_OPERATION;
       break;
 
@@ -3157,11 +3179,13 @@ _mesa_gles_error_check_format_and_type(const struct gl_context *ctx,
          return GL_INVALID_OPERATION;
       switch (type) {
       case GL_UNSIGNED_BYTE:
-         if (internalFormat != GL_RG8 &&
-             (!_mesa_has_EXT_texture_compression_rgtc(ctx) ||
-              internalFormat != GL_COMPRESSED_RED_GREEN_RGTC2_EXT))
-            return GL_INVALID_OPERATION;
-         break;
+         if (internalFormat == GL_RG8 ||
+             (_mesa_has_EXT_texture_compression_rgtc(ctx) &&
+              internalFormat == GL_COMPRESSED_RED_GREEN_RGTC2_EXT) ||
+             (_mesa_has_EXT_texture_sRGB_RG8(ctx) &&
+              internalFormat == GL_SRG8_EXT))
+            break;
+         return GL_INVALID_OPERATION;
 
       case GL_BYTE:
          if (internalFormat != GL_RG8_SNORM &&

@@ -41,10 +41,11 @@
 #include "linker.h"
 #include "glsl_parser_extras.h"
 #include "glsl_symbol_table.h"
-#include "main/mtypes.h"
+#include "main/consts_exts.h"
 #include "main/uniforms.h"
 #include "program/prog_statevars.h"
 #include "program/prog_instruction.h"
+#include "util/compiler.h"
 #include "builtin_functions.h"
 
 using namespace ir_builder;
@@ -74,19 +75,19 @@ static const struct gl_builtin_uniform_element gl_Point_elements[] = {
 };
 
 static const struct gl_builtin_uniform_element gl_FrontMaterial_elements[] = {
-   {"emission", {STATE_MATERIAL, 0, STATE_EMISSION}, SWIZZLE_XYZW},
-   {"ambient", {STATE_MATERIAL, 0, STATE_AMBIENT}, SWIZZLE_XYZW},
-   {"diffuse", {STATE_MATERIAL, 0, STATE_DIFFUSE}, SWIZZLE_XYZW},
-   {"specular", {STATE_MATERIAL, 0, STATE_SPECULAR}, SWIZZLE_XYZW},
-   {"shininess", {STATE_MATERIAL, 0, STATE_SHININESS}, SWIZZLE_XXXX},
+   {"emission", {STATE_MATERIAL, MAT_ATTRIB_FRONT_EMISSION}, SWIZZLE_XYZW},
+   {"ambient", {STATE_MATERIAL, MAT_ATTRIB_FRONT_AMBIENT}, SWIZZLE_XYZW},
+   {"diffuse", {STATE_MATERIAL, MAT_ATTRIB_FRONT_DIFFUSE}, SWIZZLE_XYZW},
+   {"specular", {STATE_MATERIAL, MAT_ATTRIB_FRONT_SPECULAR}, SWIZZLE_XYZW},
+   {"shininess", {STATE_MATERIAL, MAT_ATTRIB_FRONT_SHININESS}, SWIZZLE_XXXX},
 };
 
 static const struct gl_builtin_uniform_element gl_BackMaterial_elements[] = {
-   {"emission", {STATE_MATERIAL, 1, STATE_EMISSION}, SWIZZLE_XYZW},
-   {"ambient", {STATE_MATERIAL, 1, STATE_AMBIENT}, SWIZZLE_XYZW},
-   {"diffuse", {STATE_MATERIAL, 1, STATE_DIFFUSE}, SWIZZLE_XYZW},
-   {"specular", {STATE_MATERIAL, 1, STATE_SPECULAR}, SWIZZLE_XYZW},
-   {"shininess", {STATE_MATERIAL, 1, STATE_SHININESS}, SWIZZLE_XXXX},
+   {"emission", {STATE_MATERIAL, MAT_ATTRIB_BACK_EMISSION}, SWIZZLE_XYZW},
+   {"ambient", {STATE_MATERIAL, MAT_ATTRIB_BACK_AMBIENT}, SWIZZLE_XYZW},
+   {"diffuse", {STATE_MATERIAL, MAT_ATTRIB_BACK_DIFFUSE}, SWIZZLE_XYZW},
+   {"specular", {STATE_MATERIAL, MAT_ATTRIB_BACK_SPECULAR}, SWIZZLE_XYZW},
+   {"shininess", {STATE_MATERIAL, MAT_ATTRIB_BACK_SHININESS}, SWIZZLE_XXXX},
 };
 
 static const struct gl_builtin_uniform_element gl_LightSource_elements[] = {
@@ -121,15 +122,15 @@ static const struct gl_builtin_uniform_element gl_BackLightModelProduct_elements
 };
 
 static const struct gl_builtin_uniform_element gl_FrontLightProduct_elements[] = {
-   {"ambient", {STATE_LIGHTPROD, 0, 0, STATE_AMBIENT}, SWIZZLE_XYZW},
-   {"diffuse", {STATE_LIGHTPROD, 0, 0, STATE_DIFFUSE}, SWIZZLE_XYZW},
-   {"specular", {STATE_LIGHTPROD, 0, 0, STATE_SPECULAR}, SWIZZLE_XYZW},
+   {"ambient", {STATE_LIGHTPROD, 0, MAT_ATTRIB_FRONT_AMBIENT}, SWIZZLE_XYZW},
+   {"diffuse", {STATE_LIGHTPROD, 0, MAT_ATTRIB_FRONT_DIFFUSE}, SWIZZLE_XYZW},
+   {"specular", {STATE_LIGHTPROD, 0, MAT_ATTRIB_FRONT_SPECULAR}, SWIZZLE_XYZW},
 };
 
 static const struct gl_builtin_uniform_element gl_BackLightProduct_elements[] = {
-   {"ambient", {STATE_LIGHTPROD, 0, 1, STATE_AMBIENT}, SWIZZLE_XYZW},
-   {"diffuse", {STATE_LIGHTPROD, 0, 1, STATE_DIFFUSE}, SWIZZLE_XYZW},
-   {"specular", {STATE_LIGHTPROD, 0, 1, STATE_SPECULAR}, SWIZZLE_XYZW},
+   {"ambient", {STATE_LIGHTPROD, 0, MAT_ATTRIB_BACK_AMBIENT}, SWIZZLE_XYZW},
+   {"diffuse", {STATE_LIGHTPROD, 0, MAT_ATTRIB_BACK_DIFFUSE}, SWIZZLE_XYZW},
+   {"specular", {STATE_LIGHTPROD, 0, MAT_ATTRIB_BACK_SPECULAR}, SWIZZLE_XYZW},
 };
 
 static const struct gl_builtin_uniform_element gl_TextureEnvColor_elements[] = {
@@ -177,71 +178,85 @@ static const struct gl_builtin_uniform_element gl_Fog_elements[] = {
 };
 
 static const struct gl_builtin_uniform_element gl_NormalScale_elements[] = {
-   {NULL, {STATE_NORMAL_SCALE}, SWIZZLE_XXXX},
+   {NULL, {STATE_NORMAL_SCALE_EYESPACE}, SWIZZLE_XXXX},
 };
 
 static const struct gl_builtin_uniform_element gl_FogParamsOptimizedMESA_elements[] = {
-   {NULL, {STATE_INTERNAL, STATE_FOG_PARAMS_OPTIMIZED}, SWIZZLE_XYZW},
+   {NULL, {STATE_FOG_PARAMS_OPTIMIZED}, SWIZZLE_XYZW},
 };
 
-static const struct gl_builtin_uniform_element gl_CurrentAttribVertMESA_elements[] = {
-   {NULL, {STATE_INTERNAL, STATE_CURRENT_ATTRIB, 0}, SWIZZLE_XYZW},
-};
+#define ATTRIB(i) \
+   static const struct gl_builtin_uniform_element gl_CurrentAttribFrag##i##MESA_elements[] = { \
+      {NULL, {STATE_CURRENT_ATTRIB_MAYBE_VP_CLAMPED, i}, SWIZZLE_XYZW}, \
+   };
 
-static const struct gl_builtin_uniform_element gl_CurrentAttribFragMESA_elements[] = {
-   {NULL, {STATE_INTERNAL, STATE_CURRENT_ATTRIB_MAYBE_VP_CLAMPED, 0}, SWIZZLE_XYZW},
-};
+ATTRIB(0)
+ATTRIB(1)
+ATTRIB(2)
+ATTRIB(3)
+ATTRIB(4)
+ATTRIB(5)
+ATTRIB(6)
+ATTRIB(7)
+ATTRIB(8)
+ATTRIB(9)
+ATTRIB(10)
+ATTRIB(11)
+ATTRIB(12)
+ATTRIB(13)
+ATTRIB(14)
+ATTRIB(15)
+ATTRIB(16)
+ATTRIB(17)
+ATTRIB(18)
+ATTRIB(19)
+ATTRIB(20)
+ATTRIB(21)
+ATTRIB(22)
+ATTRIB(23)
+ATTRIB(24)
+ATTRIB(25)
+ATTRIB(26)
+ATTRIB(27)
+ATTRIB(28)
+ATTRIB(29)
+ATTRIB(30)
+ATTRIB(31)
 
-#define MATRIX(name, statevar, modifier)				\
+#define MATRIX(name, statevar)				\
    static const struct gl_builtin_uniform_element name ## _elements[] = { \
-      { NULL, { statevar, 0, 0, 0, modifier}, SWIZZLE_XYZW },		\
-      { NULL, { statevar, 0, 1, 1, modifier}, SWIZZLE_XYZW },		\
-      { NULL, { statevar, 0, 2, 2, modifier}, SWIZZLE_XYZW },		\
-      { NULL, { statevar, 0, 3, 3, modifier}, SWIZZLE_XYZW },		\
+      { NULL, { statevar, 0, 0, 0}, SWIZZLE_XYZW },		\
+      { NULL, { statevar, 0, 1, 1}, SWIZZLE_XYZW },		\
+      { NULL, { statevar, 0, 2, 2}, SWIZZLE_XYZW },		\
+      { NULL, { statevar, 0, 3, 3}, SWIZZLE_XYZW },		\
    }
 
-MATRIX(gl_ModelViewMatrix,
-       STATE_MODELVIEW_MATRIX, STATE_MATRIX_TRANSPOSE);
-MATRIX(gl_ModelViewMatrixInverse,
-       STATE_MODELVIEW_MATRIX, STATE_MATRIX_INVTRANS);
-MATRIX(gl_ModelViewMatrixTranspose,
-       STATE_MODELVIEW_MATRIX, 0);
-MATRIX(gl_ModelViewMatrixInverseTranspose,
-       STATE_MODELVIEW_MATRIX, STATE_MATRIX_INVERSE);
+MATRIX(gl_ModelViewMatrix, STATE_MODELVIEW_MATRIX_TRANSPOSE);
+MATRIX(gl_ModelViewMatrixInverse, STATE_MODELVIEW_MATRIX_INVTRANS);
+MATRIX(gl_ModelViewMatrixTranspose, STATE_MODELVIEW_MATRIX);
+MATRIX(gl_ModelViewMatrixInverseTranspose, STATE_MODELVIEW_MATRIX_INVERSE);
 
-MATRIX(gl_ProjectionMatrix,
-       STATE_PROJECTION_MATRIX, STATE_MATRIX_TRANSPOSE);
-MATRIX(gl_ProjectionMatrixInverse,
-       STATE_PROJECTION_MATRIX, STATE_MATRIX_INVTRANS);
-MATRIX(gl_ProjectionMatrixTranspose,
-       STATE_PROJECTION_MATRIX, 0);
-MATRIX(gl_ProjectionMatrixInverseTranspose,
-       STATE_PROJECTION_MATRIX, STATE_MATRIX_INVERSE);
+MATRIX(gl_ProjectionMatrix, STATE_PROJECTION_MATRIX_TRANSPOSE);
+MATRIX(gl_ProjectionMatrixInverse, STATE_PROJECTION_MATRIX_INVTRANS);
+MATRIX(gl_ProjectionMatrixTranspose, STATE_PROJECTION_MATRIX);
+MATRIX(gl_ProjectionMatrixInverseTranspose, STATE_PROJECTION_MATRIX_INVERSE);
 
-MATRIX(gl_ModelViewProjectionMatrix,
-       STATE_MVP_MATRIX, STATE_MATRIX_TRANSPOSE);
-MATRIX(gl_ModelViewProjectionMatrixInverse,
-       STATE_MVP_MATRIX, STATE_MATRIX_INVTRANS);
-MATRIX(gl_ModelViewProjectionMatrixTranspose,
-       STATE_MVP_MATRIX, 0);
-MATRIX(gl_ModelViewProjectionMatrixInverseTranspose,
-       STATE_MVP_MATRIX, STATE_MATRIX_INVERSE);
+MATRIX(gl_ModelViewProjectionMatrix, STATE_MVP_MATRIX_TRANSPOSE);
+MATRIX(gl_ModelViewProjectionMatrixInverse, STATE_MVP_MATRIX_INVTRANS);
+MATRIX(gl_ModelViewProjectionMatrixTranspose, STATE_MVP_MATRIX);
+MATRIX(gl_ModelViewProjectionMatrixInverseTranspose, STATE_MVP_MATRIX_INVERSE);
 
-MATRIX(gl_TextureMatrix,
-       STATE_TEXTURE_MATRIX, STATE_MATRIX_TRANSPOSE);
-MATRIX(gl_TextureMatrixInverse,
-       STATE_TEXTURE_MATRIX, STATE_MATRIX_INVTRANS);
-MATRIX(gl_TextureMatrixTranspose,
-       STATE_TEXTURE_MATRIX, 0);
-MATRIX(gl_TextureMatrixInverseTranspose,
-       STATE_TEXTURE_MATRIX, STATE_MATRIX_INVERSE);
+MATRIX(gl_TextureMatrix, STATE_TEXTURE_MATRIX_TRANSPOSE);
+MATRIX(gl_TextureMatrixInverse, STATE_TEXTURE_MATRIX_INVTRANS);
+MATRIX(gl_TextureMatrixTranspose, STATE_TEXTURE_MATRIX);
+MATRIX(gl_TextureMatrixInverseTranspose, STATE_TEXTURE_MATRIX_INVERSE);
 
 static const struct gl_builtin_uniform_element gl_NormalMatrix_elements[] = {
-   { NULL, { STATE_MODELVIEW_MATRIX, 0, 0, 0, STATE_MATRIX_INVERSE},
+   { NULL, { STATE_MODELVIEW_MATRIX_INVERSE, 0, 0, 0},
      MAKE_SWIZZLE4(SWIZZLE_X, SWIZZLE_Y, SWIZZLE_Z, SWIZZLE_Z) },
-   { NULL, { STATE_MODELVIEW_MATRIX, 0, 1, 1, STATE_MATRIX_INVERSE},
+   { NULL, { STATE_MODELVIEW_MATRIX_INVERSE, 0, 1, 1},
      MAKE_SWIZZLE4(SWIZZLE_X, SWIZZLE_Y, SWIZZLE_Z, SWIZZLE_Z) },
-   { NULL, { STATE_MODELVIEW_MATRIX, 0, 2, 2, STATE_MATRIX_INVERSE},
+   { NULL, { STATE_MODELVIEW_MATRIX_INVERSE, 0, 2, 2},
      MAKE_SWIZZLE4(SWIZZLE_X, SWIZZLE_Y, SWIZZLE_Z, SWIZZLE_Z) },
 };
 
@@ -297,8 +312,39 @@ static const struct gl_builtin_uniform_desc _mesa_builtin_uniform_desc[] = {
    STATEVAR(gl_NormalScale),
 
    STATEVAR(gl_FogParamsOptimizedMESA),
-   STATEVAR(gl_CurrentAttribVertMESA),
-   STATEVAR(gl_CurrentAttribFragMESA),
+
+   STATEVAR(gl_CurrentAttribFrag0MESA),
+   STATEVAR(gl_CurrentAttribFrag1MESA),
+   STATEVAR(gl_CurrentAttribFrag2MESA),
+   STATEVAR(gl_CurrentAttribFrag3MESA),
+   STATEVAR(gl_CurrentAttribFrag4MESA),
+   STATEVAR(gl_CurrentAttribFrag5MESA),
+   STATEVAR(gl_CurrentAttribFrag6MESA),
+   STATEVAR(gl_CurrentAttribFrag7MESA),
+   STATEVAR(gl_CurrentAttribFrag8MESA),
+   STATEVAR(gl_CurrentAttribFrag9MESA),
+   STATEVAR(gl_CurrentAttribFrag10MESA),
+   STATEVAR(gl_CurrentAttribFrag11MESA),
+   STATEVAR(gl_CurrentAttribFrag12MESA),
+   STATEVAR(gl_CurrentAttribFrag13MESA),
+   STATEVAR(gl_CurrentAttribFrag14MESA),
+   STATEVAR(gl_CurrentAttribFrag15MESA),
+   STATEVAR(gl_CurrentAttribFrag16MESA),
+   STATEVAR(gl_CurrentAttribFrag17MESA),
+   STATEVAR(gl_CurrentAttribFrag18MESA),
+   STATEVAR(gl_CurrentAttribFrag19MESA),
+   STATEVAR(gl_CurrentAttribFrag20MESA),
+   STATEVAR(gl_CurrentAttribFrag21MESA),
+   STATEVAR(gl_CurrentAttribFrag22MESA),
+   STATEVAR(gl_CurrentAttribFrag23MESA),
+   STATEVAR(gl_CurrentAttribFrag24MESA),
+   STATEVAR(gl_CurrentAttribFrag25MESA),
+   STATEVAR(gl_CurrentAttribFrag26MESA),
+   STATEVAR(gl_CurrentAttribFrag27MESA),
+   STATEVAR(gl_CurrentAttribFrag28MESA),
+   STATEVAR(gl_CurrentAttribFrag29MESA),
+   STATEVAR(gl_CurrentAttribFrag30MESA),
+   STATEVAR(gl_CurrentAttribFrag31MESA),
 
    {NULL, NULL, 0}
 };
@@ -634,14 +680,8 @@ builtin_variable_generator::add_uniform(const glsl_type *type,
 	    &statevar->elements[j];
 
 	 memcpy(slots->tokens, element->tokens, sizeof(element->tokens));
-	 if (type->is_array()) {
-	    if (strcmp(name, "gl_CurrentAttribVertMESA") == 0 ||
-		strcmp(name, "gl_CurrentAttribFragMESA") == 0) {
-	       slots->tokens[2] = a;
-	    } else {
-	       slots->tokens[1] = a;
-	    }
-	 }
+	 if (type->is_array())
+            slots->tokens[1] = a;
 
 	 slots->swizzle = element->swizzle;
 	 slots++;
@@ -718,12 +758,12 @@ builtin_variable_generator::generate_constants()
        */
       if (state->is_version(0, 300)) {
          add_const("gl_MaxVertexOutputVectors",
-                   state->ctx->Const.Program[MESA_SHADER_VERTEX].MaxOutputComponents / 4);
+                   state->consts->Program[MESA_SHADER_VERTEX].MaxOutputComponents / 4);
          add_const("gl_MaxFragmentInputVectors",
-                   state->ctx->Const.Program[MESA_SHADER_FRAGMENT].MaxInputComponents / 4);
+                   state->consts->Program[MESA_SHADER_FRAGMENT].MaxInputComponents / 4);
       } else {
          add_const("gl_MaxVaryingVectors",
-                   state->ctx->Const.MaxVarying);
+                   state->consts->MaxVarying);
       }
 
       /* EXT_blend_func_extended brings a built in constant
@@ -733,11 +773,13 @@ builtin_variable_generator::generate_constants()
          add_const("gl_MaxDualSourceDrawBuffersEXT",
                    state->Const.MaxDualSourceDrawBuffers);
       }
-   } else {
-      /* Note: gl_MaxVaryingFloats was deprecated in GLSL 1.30+, but not
-       * removed
-       */
-      add_const("gl_MaxVaryingFloats", state->ctx->Const.MaxVarying * 4);
+   }
+
+   /* gl_MaxVaryingFloats was deprecated in GLSL 1.30+, and was moved to
+    * compat profile in GLSL 4.20. GLSL ES never supported this constant.
+    */
+   if (compatibility || !state->is_version(420, 100))  {
+      add_const("gl_MaxVaryingFloats", state->consts->MaxVarying * 4);
    }
 
    /* Texel offsets were introduced in ARB_shading_language_420pack (which
@@ -757,7 +799,7 @@ builtin_variable_generator::generate_constants()
       add_const("gl_MaxClipDistances", state->Const.MaxClipPlanes);
    }
    if (state->is_version(130, 0)) {
-      add_const("gl_MaxVaryingComponents", state->ctx->Const.MaxVarying * 4);
+      add_const("gl_MaxVaryingComponents", state->consts->MaxVarying * 4);
    }
    if (state->has_cull_distance()) {
       add_const("gl_MaxCullDistances", state->Const.MaxClipPlanes);
@@ -987,8 +1029,13 @@ builtin_variable_generator::generate_uniforms()
        state->OES_sample_variables_enable)
       add_uniform(int_t, GLSL_PRECISION_LOW, "gl_NumSamples");
    add_uniform(type("gl_DepthRangeParameters"), "gl_DepthRange");
-   add_uniform(array(vec4_t, VERT_ATTRIB_MAX), "gl_CurrentAttribVertMESA");
-   add_uniform(array(vec4_t, VARYING_SLOT_MAX), "gl_CurrentAttribFragMESA");
+
+   for (unsigned i = 0; i < VARYING_SLOT_VAR0; i++) {
+      char name[128];
+
+      snprintf(name, sizeof(name), "gl_CurrentAttribFrag%uMESA", i);
+      add_uniform(vec4_t, name);
+   }
 
    if (compatibility) {
       add_uniform(mat4_t, "gl_ModelViewMatrix");
@@ -1142,7 +1189,7 @@ builtin_variable_generator::generate_tcs_special_vars()
    add_output(VARYING_SLOT_TESS_LEVEL_INNER, array(float_t, 2),
               GLSL_PRECISION_HIGH, "gl_TessLevelInner")->data.patch = 1;
    /* XXX What to do if multiple are flipped on? */
-   int bbox_slot = state->ctx->Const.NoPrimitiveBoundingBoxOutput ? -1 :
+   int bbox_slot = state->consts->NoPrimitiveBoundingBoxOutput ? -1 :
       VARYING_SLOT_BOUNDING_BOX0;
    if (state->EXT_primitive_bounding_box_enable)
       add_output(bbox_slot, array(vec4_t, 2), "gl_BoundingBoxEXT")
@@ -1183,7 +1230,7 @@ builtin_variable_generator::generate_tes_special_vars()
                     "gl_PatchVerticesIn");
    add_system_value(SYSTEM_VALUE_TESS_COORD, vec3_t, GLSL_PRECISION_HIGH,
                     "gl_TessCoord");
-   if (this->state->ctx->Const.GLSLTessLevelsAsInputs) {
+   if (this->state->consts->GLSLTessLevelsAsInputs) {
       add_input(VARYING_SLOT_TESS_LEVEL_OUTER, array(float_t, 4),
                 GLSL_PRECISION_HIGH, "gl_TessLevelOuter")->data.patch = 1;
       add_input(VARYING_SLOT_TESS_LEVEL_INNER, array(float_t, 2),
@@ -1267,14 +1314,14 @@ builtin_variable_generator::generate_fs_special_vars()
                                GLSL_PRECISION_HIGH :
                                GLSL_PRECISION_MEDIUM);
 
-   if (this->state->ctx->Const.GLSLFragCoordIsSysVal) {
+   if (this->state->consts->GLSLFragCoordIsSysVal) {
       add_system_value(SYSTEM_VALUE_FRAG_COORD, vec4_t, frag_coord_precision,
                        "gl_FragCoord");
    } else {
       add_input(VARYING_SLOT_POS, vec4_t, frag_coord_precision, "gl_FragCoord");
    }
 
-   if (this->state->ctx->Const.GLSLFrontFacingIsSysVal) {
+   if (this->state->consts->GLSLFrontFacingIsSysVal) {
       var = add_system_value(SYSTEM_VALUE_FRONT_FACE, bool_t, "gl_FrontFacing");
       var->data.interpolation = INTERP_MODE_FLAT;
    } else {
@@ -1283,7 +1330,7 @@ builtin_variable_generator::generate_fs_special_vars()
    }
 
    if (state->is_version(120, 100)) {
-      if (this->state->ctx->Const.GLSLPointCoordIsSysVal)
+      if (this->state->consts->GLSLPointCoordIsSysVal)
          add_system_value(SYSTEM_VALUE_POINT_COORD, vec2_t,
                           GLSL_PRECISION_MEDIUM, "gl_PointCoord");
       else
@@ -1406,11 +1453,11 @@ builtin_variable_generator::generate_cs_special_vars()
 {
    add_system_value(SYSTEM_VALUE_LOCAL_INVOCATION_ID, uvec3_t,
                     "gl_LocalInvocationID");
-   add_system_value(SYSTEM_VALUE_WORK_GROUP_ID, uvec3_t, "gl_WorkGroupID");
-   add_system_value(SYSTEM_VALUE_NUM_WORK_GROUPS, uvec3_t, "gl_NumWorkGroups");
+   add_system_value(SYSTEM_VALUE_WORKGROUP_ID, uvec3_t, "gl_WorkGroupID");
+   add_system_value(SYSTEM_VALUE_NUM_WORKGROUPS, uvec3_t, "gl_NumWorkGroups");
 
    if (state->ARB_compute_variable_group_size_enable) {
-      add_system_value(SYSTEM_VALUE_LOCAL_GROUP_SIZE,
+      add_system_value(SYSTEM_VALUE_WORKGROUP_SIZE,
                        uvec3_t, "gl_LocalGroupSizeARB");
    }
 
@@ -1436,7 +1483,7 @@ builtin_variable_generator::add_varying(int slot, const glsl_type *type,
    case MESA_SHADER_TESS_EVAL:
    case MESA_SHADER_GEOMETRY:
       this->per_vertex_in.add_field(slot, type, precision, name, interp);
-      /* FALLTHROUGH */
+      FALLTHROUGH;
    case MESA_SHADER_VERTEX:
       this->per_vertex_out.add_field(slot, type, precision, name, interp);
       break;
@@ -1459,8 +1506,8 @@ builtin_variable_generator::add_varying(int slot, const glsl_type *type,
 void
 builtin_variable_generator::generate_varyings()
 {
-   struct gl_shader_compiler_options *options =
-      &state->ctx->Const.ShaderCompilerOptions[state->stage];
+   const struct gl_shader_compiler_options *options =
+      &state->consts->ShaderCompilerOptions[state->stage];
 
    /* gl_Position and gl_PointSize are not visible from fragment shaders. */
    if (state->stage != MESA_SHADER_FRAGMENT) {
@@ -1584,6 +1631,9 @@ builtin_variable_generator::generate_varyings()
 
          var->data.invariant = fields[i].location == VARYING_SLOT_POS &&
                                options->PositionAlwaysInvariant;
+
+         var->data.precise = fields[i].location == VARYING_SLOT_POS &&
+                               options->PositionAlwaysPrecise;
       }
    }
 }

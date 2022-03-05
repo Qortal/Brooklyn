@@ -44,6 +44,7 @@ struct svga_constbuf
 static void
 svga_set_constant_buffer(struct pipe_context *pipe,
                          enum pipe_shader_type shader, uint index,
+                         bool take_ownership,
                          const struct pipe_constant_buffer *cb)
 {
    struct svga_screen *svgascreen = svga_screen(pipe->screen);
@@ -53,6 +54,7 @@ svga_set_constant_buffer(struct pipe_context *pipe,
 
    if (cb) {
       buffer_size = cb->buffer_size;
+
       if (cb->user_buffer) {
          buf = svga_user_buffer_create(pipe->screen,
                                        (void *) cb->user_buffer,
@@ -66,7 +68,12 @@ svga_set_constant_buffer(struct pipe_context *pipe,
    assert(index < svgascreen->max_const_buffers);
    (void) svgascreen;
 
-   pipe_resource_reference(&svga->curr.constbufs[shader][index].buffer, buf);
+   if (take_ownership) {
+      pipe_resource_reference(&svga->curr.constbufs[shader][index].buffer, NULL);
+      svga->curr.constbufs[shader][index].buffer = buf;
+   } else {
+      pipe_resource_reference(&svga->curr.constbufs[shader][index].buffer, buf);
+   }
 
    /* Make sure the constant buffer size to be updated is within the
     * limit supported by the device.
@@ -88,6 +95,8 @@ svga_set_constant_buffer(struct pipe_context *pipe,
          svga->dirty |= SVGA_NEW_TCS_CONSTS;
       else if (shader == PIPE_SHADER_TESS_EVAL)
          svga->dirty |= SVGA_NEW_TES_CONSTS;
+      else if (shader == PIPE_SHADER_COMPUTE)
+         svga->dirty |= SVGA_NEW_CS_CONSTS;
    } else {
       if (shader == PIPE_SHADER_FRAGMENT)
          svga->dirty |= SVGA_NEW_FS_CONST_BUFFER;
@@ -99,9 +108,14 @@ svga_set_constant_buffer(struct pipe_context *pipe,
          svga->dirty |= SVGA_NEW_TCS_CONST_BUFFER;
       else if (shader == PIPE_SHADER_TESS_EVAL)
          svga->dirty |= SVGA_NEW_TES_CONST_BUFFER;
+      else if (shader == PIPE_SHADER_COMPUTE)
+         svga->dirty |= SVGA_NEW_CS_CONST_BUFFER;
 
       /* update bitmask of dirty const buffers */
       svga->state.dirty_constbufs[shader] |= (1 << index);
+
+      /* purge any stale rawbuf srv */
+      svga_destroy_rawbuf_srv(svga);
    }
 
    if (cb && cb->user_buffer) {

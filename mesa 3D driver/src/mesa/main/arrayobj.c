@@ -47,6 +47,7 @@
 #include "context.h"
 #include "bufferobj.h"
 #include "arrayobj.h"
+#include "draw_validate.h"
 #include "macros.h"
 #include "mtypes.h"
 #include "state.h"
@@ -55,7 +56,7 @@
 #include "util/u_atomic.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
-
+#include "api_exec_decl.h"
 
 const GLubyte
 _mesa_vao_attribute_map[ATTRIBUTE_MAP_MODE_MAX][VERT_ATTRIB_MAX] =
@@ -74,7 +75,6 @@ _mesa_vao_attribute_map[ATTRIBUTE_MAP_MODE_MAX][VERT_ATTRIB_MAX] =
       VERT_ATTRIB_COLOR1,              /* VERT_ATTRIB_COLOR1 */
       VERT_ATTRIB_FOG,                 /* VERT_ATTRIB_FOG */
       VERT_ATTRIB_COLOR_INDEX,         /* VERT_ATTRIB_COLOR_INDEX */
-      VERT_ATTRIB_EDGEFLAG,            /* VERT_ATTRIB_EDGEFLAG */
       VERT_ATTRIB_TEX0,                /* VERT_ATTRIB_TEX0 */
       VERT_ATTRIB_TEX1,                /* VERT_ATTRIB_TEX1 */
       VERT_ATTRIB_TEX2,                /* VERT_ATTRIB_TEX2 */
@@ -99,7 +99,8 @@ _mesa_vao_attribute_map[ATTRIBUTE_MAP_MODE_MAX][VERT_ATTRIB_MAX] =
       VERT_ATTRIB_GENERIC12,           /* VERT_ATTRIB_GENERIC12 */
       VERT_ATTRIB_GENERIC13,           /* VERT_ATTRIB_GENERIC13 */
       VERT_ATTRIB_GENERIC14,           /* VERT_ATTRIB_GENERIC14 */
-      VERT_ATTRIB_GENERIC15            /* VERT_ATTRIB_GENERIC15 */
+      VERT_ATTRIB_GENERIC15,           /* VERT_ATTRIB_GENERIC15 */
+      VERT_ATTRIB_EDGEFLAG,            /* VERT_ATTRIB_EDGEFLAG */
    },
 
    /* ATTRIBUTE_MAP_MODE_POSITION
@@ -115,7 +116,6 @@ _mesa_vao_attribute_map[ATTRIBUTE_MAP_MODE_MAX][VERT_ATTRIB_MAX] =
       VERT_ATTRIB_COLOR1,              /* VERT_ATTRIB_COLOR1 */
       VERT_ATTRIB_FOG,                 /* VERT_ATTRIB_FOG */
       VERT_ATTRIB_COLOR_INDEX,         /* VERT_ATTRIB_COLOR_INDEX */
-      VERT_ATTRIB_EDGEFLAG,            /* VERT_ATTRIB_EDGEFLAG */
       VERT_ATTRIB_TEX0,                /* VERT_ATTRIB_TEX0 */
       VERT_ATTRIB_TEX1,                /* VERT_ATTRIB_TEX1 */
       VERT_ATTRIB_TEX2,                /* VERT_ATTRIB_TEX2 */
@@ -140,7 +140,8 @@ _mesa_vao_attribute_map[ATTRIBUTE_MAP_MODE_MAX][VERT_ATTRIB_MAX] =
       VERT_ATTRIB_GENERIC12,           /* VERT_ATTRIB_GENERIC12 */
       VERT_ATTRIB_GENERIC13,           /* VERT_ATTRIB_GENERIC13 */
       VERT_ATTRIB_GENERIC14,           /* VERT_ATTRIB_GENERIC14 */
-      VERT_ATTRIB_GENERIC15            /* VERT_ATTRIB_GENERIC15 */
+      VERT_ATTRIB_GENERIC15,           /* VERT_ATTRIB_GENERIC15 */
+      VERT_ATTRIB_EDGEFLAG,            /* VERT_ATTRIB_EDGEFLAG */
    },
 
    /* ATTRIBUTE_MAP_MODE_GENERIC0
@@ -156,7 +157,6 @@ _mesa_vao_attribute_map[ATTRIBUTE_MAP_MODE_MAX][VERT_ATTRIB_MAX] =
       VERT_ATTRIB_COLOR1,              /* VERT_ATTRIB_COLOR1 */
       VERT_ATTRIB_FOG,                 /* VERT_ATTRIB_FOG */
       VERT_ATTRIB_COLOR_INDEX,         /* VERT_ATTRIB_COLOR_INDEX */
-      VERT_ATTRIB_EDGEFLAG,            /* VERT_ATTRIB_EDGEFLAG */
       VERT_ATTRIB_TEX0,                /* VERT_ATTRIB_TEX0 */
       VERT_ATTRIB_TEX1,                /* VERT_ATTRIB_TEX1 */
       VERT_ATTRIB_TEX2,                /* VERT_ATTRIB_TEX2 */
@@ -181,7 +181,8 @@ _mesa_vao_attribute_map[ATTRIBUTE_MAP_MODE_MAX][VERT_ATTRIB_MAX] =
       VERT_ATTRIB_GENERIC12,           /* VERT_ATTRIB_GENERIC12 */
       VERT_ATTRIB_GENERIC13,           /* VERT_ATTRIB_GENERIC13 */
       VERT_ATTRIB_GENERIC14,           /* VERT_ATTRIB_GENERIC14 */
-      VERT_ATTRIB_GENERIC15            /* VERT_ATTRIB_GENERIC15 */
+      VERT_ATTRIB_GENERIC15,           /* VERT_ATTRIB_GENERIC15 */
+      VERT_ATTRIB_EDGEFLAG,            /* VERT_ATTRIB_EDGEFLAG */
    }
 };
 
@@ -517,7 +518,7 @@ _mesa_update_vao_derived_arrays(struct gl_context *ctx,
                                 struct gl_vertex_array_object *vao)
 {
    /* Make sure we do not run into problems with shared objects */
-   assert(!vao->SharedAndImmutable || vao->NewArrays == 0);
+   assert(!vao->SharedAndImmutable || (!vao->NewVertexBuffers && !vao->NewVertexElements));
 
    /* Limit used for common binding scanning below. */
    const GLsizeiptr MaxRelativeOffset =
@@ -554,6 +555,8 @@ _mesa_update_vao_derived_arrays(struct gl_context *ctx,
    /* More than 4 updates turn the VAO to dynamic. */
    if (ctx->Const.AllowDynamicVAOFastPath && ++vao->NumUpdates > 4) {
       vao->IsDynamic = true;
+      /* IsDynamic changes how vertex elements map to vertex buffers. */
+      vao->NewVertexElements = true;
       return;
    }
 
@@ -809,68 +812,9 @@ _mesa_set_vao_immutable(struct gl_context *ctx,
                         struct gl_vertex_array_object *vao)
 {
    _mesa_update_vao_derived_arrays(ctx, vao);
-   vao->NewArrays = 0;
+   vao->NewVertexBuffers = false;
+   vao->NewVertexElements = false;
    vao->SharedAndImmutable = true;
-}
-
-
-bool
-_mesa_all_varyings_in_vbos(const struct gl_vertex_array_object *vao)
-{
-   /* Walk those enabled arrays that have the default vbo attached */
-   GLbitfield mask = vao->Enabled & ~vao->VertexAttribBufferMask;
-
-   while (mask) {
-      /* Do not use u_bit_scan64 as we can walk multiple
-       * attrib arrays at once
-       */
-      const int i = ffs(mask) - 1;
-      const struct gl_array_attributes *attrib_array =
-         &vao->VertexAttrib[i];
-      const struct gl_vertex_buffer_binding *buffer_binding =
-         &vao->BufferBinding[attrib_array->BufferBindingIndex];
-
-      /* We have already masked out vao->VertexAttribBufferMask  */
-      assert(!buffer_binding->BufferObj);
-
-      /* Bail out once we find the first non vbo with a non zero stride */
-      if (buffer_binding->Stride != 0)
-         return false;
-
-      /* Note that we cannot use the xor variant since the _BoundArray mask
-       * may contain array attributes that are bound but not enabled.
-       */
-      mask &= ~buffer_binding->_BoundArrays;
-   }
-
-   return true;
-}
-
-bool
-_mesa_all_buffers_are_unmapped(const struct gl_vertex_array_object *vao)
-{
-   /* Walk the enabled arrays that have a vbo attached */
-   GLbitfield mask = vao->Enabled & vao->VertexAttribBufferMask;
-
-   while (mask) {
-      const int i = ffs(mask) - 1;
-      const struct gl_array_attributes *attrib_array =
-         &vao->VertexAttrib[i];
-      const struct gl_vertex_buffer_binding *buffer_binding =
-         &vao->BufferBinding[attrib_array->BufferBindingIndex];
-
-      /* We have already masked with vao->VertexAttribBufferMask  */
-      assert(buffer_binding->BufferObj);
-
-      /* Bail out once we find the first disallowed mapping */
-      if (_mesa_check_disallowed_mapping(buffer_binding->BufferObj))
-         return false;
-
-      /* We have handled everything that is bound to this buffer_binding. */
-      mask &= ~buffer_binding->_BoundArrays;
-   }
-
-   return true;
 }
 
 
@@ -894,7 +838,7 @@ _mesa_vao_map_arrays(struct gl_context *ctx, struct gl_vertex_array_object *vao,
       if (_mesa_bufferobj_mapped(bo, MAP_INTERNAL))
          continue;
 
-      ctx->Driver.MapBufferRange(ctx, 0, bo->Size, access, bo, MAP_INTERNAL);
+      _mesa_bufferobj_map_range(ctx, 0, bo->Size, access, bo, MAP_INTERNAL);
    }
 }
 
@@ -910,7 +854,7 @@ _mesa_vao_map(struct gl_context *ctx, struct gl_vertex_array_object *vao,
 
    /* map the index buffer, if there is one, and not already mapped */
    if (bo && !_mesa_bufferobj_mapped(bo, MAP_INTERNAL))
-      ctx->Driver.MapBufferRange(ctx, 0, bo->Size, access, bo, MAP_INTERNAL);
+      _mesa_bufferobj_map_range(ctx, 0, bo->Size, access, bo, MAP_INTERNAL);
 
    _mesa_vao_map_arrays(ctx, vao, access);
 }
@@ -936,7 +880,7 @@ _mesa_vao_unmap_arrays(struct gl_context *ctx,
       if (!_mesa_bufferobj_mapped(bo, MAP_INTERNAL))
          continue;
 
-      ctx->Driver.UnmapBuffer(ctx, bo, MAP_INTERNAL);
+      _mesa_bufferobj_unmap(ctx, bo, MAP_INTERNAL);
    }
 }
 
@@ -951,7 +895,7 @@ _mesa_vao_unmap(struct gl_context *ctx, struct gl_vertex_array_object *vao)
 
    /* unmap the index buffer, if there is one, and still mapped */
    if (bo && _mesa_bufferobj_mapped(bo, MAP_INTERNAL))
-      ctx->Driver.UnmapBuffer(ctx, bo, MAP_INTERNAL);
+      _mesa_bufferobj_unmap(ctx, bo, MAP_INTERNAL);
 
    _mesa_vao_unmap_arrays(ctx, vao);
 }
@@ -1010,6 +954,13 @@ bind_vertex_array(struct gl_context *ctx, GLuint id, bool no_error)
    _mesa_set_draw_vao(ctx, ctx->Array._EmptyVAO, 0);
 
    _mesa_reference_vao(ctx, &ctx->Array.VAO, newObj);
+
+   /* Update the valid-to-render state if binding on unbinding default VAO
+    * if drawing with the default VAO is invalid.
+    */
+   if (ctx->API == API_OPENGL_CORE &&
+       (oldObj == ctx->Array.DefaultVAO) != (newObj == ctx->Array.DefaultVAO))
+      _mesa_update_valid_to_render_state(ctx);
 }
 
 
@@ -1252,8 +1203,6 @@ vertex_array_element_buffer(struct gl_context *ctx, GLuint vaobj, GLuint buffer,
 
       if (!bufObj)
          return;
-
-      bufObj->UsageHistory |= USAGE_ELEMENT_ARRAY_BUFFER;
    } else {
       bufObj = NULL;
    }

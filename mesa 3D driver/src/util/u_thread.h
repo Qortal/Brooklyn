@@ -27,6 +27,7 @@
 #ifndef U_THREAD_H_
 #define U_THREAD_H_
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
@@ -63,6 +64,27 @@
 /* For util_set_thread_affinity to size the mask. */
 #define UTIL_MAX_CPUS               1024  /* this should be enough */
 #define UTIL_MAX_L3_CACHES          UTIL_MAX_CPUS
+
+/* Some highly performance-sensitive thread-local variables like the current GL
+ * context are declared with the initial-exec model on Linux.  glibc allocates a
+ * fixed number of extra slots for initial-exec TLS variables at startup, and
+ * Mesa relies on (even if it's dlopen()ed after init) being able to fit into
+ * those.  This model saves the call to look up the address of the TLS variable.
+ *
+ * However, if we don't have this TLS model available on the platform, then we
+ * still want to use normal TLS (which involves a function call, but not the
+ * expensive pthread_getspecific() or its equivalent).
+ */
+#ifdef USE_ELF_TLS
+#ifdef _MSC_VER
+#define __THREAD_INITIAL_EXEC __declspec(thread)
+#elif defined(__GLIBC__)
+#define __THREAD_INITIAL_EXEC __thread __attribute__((tls_model("initial-exec")))
+#define REALLY_INITIAL_EXEC
+#else
+#define __THREAD_INITIAL_EXEC __thread
+#endif
+#endif
 
 static inline int
 util_get_current_cpu(void)
@@ -104,7 +126,14 @@ static inline void u_thread_setname( const char *name )
 {
 #if defined(HAVE_PTHREAD)
 #if DETECT_OS_LINUX || DETECT_OS_CYGWIN || DETECT_OS_SOLARIS
-   pthread_setname_np(pthread_self(), name);
+   int ret = pthread_setname_np(pthread_self(), name);
+   if (ret == ERANGE) {
+      char buf[16];
+      const size_t len = MIN2(strlen(name), ARRAY_SIZE(buf) - 1);
+      memcpy(buf, name, len);
+      buf[len] = '\0';
+      pthread_setname_np(pthread_self(), buf);
+   }
 #elif DETECT_OS_FREEBSD || DETECT_OS_OPENBSD
    pthread_set_name_np(pthread_self(), name);
 #elif DETECT_OS_NETBSD
@@ -142,7 +171,7 @@ util_set_thread_affinity(thrd_t thread,
       if (pthread_getaffinity_np(thread, sizeof(cpuset), &cpuset) != 0)
          return false;
 
-      memset(old_mask, 0, num_mask_bits / 32);
+      memset(old_mask, 0, num_mask_bits / 8);
       for (unsigned i = 0; i < num_mask_bits && i < CPU_SETSIZE; i++) {
          if (CPU_ISSET(i, &cpuset))
             old_mask[i / 32] |= 1u << (i % 32);
@@ -167,11 +196,12 @@ util_set_thread_affinity(thrd_t thread,
       return false;
 
    if (old_mask) {
-      memset(old_mask, 0, num_mask_bits / 32);
+      memset(old_mask, 0, num_mask_bits / 8);
 
       old_mask[0] = m;
-      if (sizeof(m) > 4)
-         old_mask[1] = m >> 32;
+#ifdef _WIN64
+      old_mask[1] = m >> 32;
+#endif
    }
 
    return true;
@@ -248,7 +278,7 @@ static inline bool u_thread_is_self(thrd_t thread)
  * util_barrier
  */
 
-#if defined(HAVE_PTHREAD) && !defined(__APPLE__)
+#if defined(HAVE_PTHREAD) && !defined(__APPLE__) && !defined(__HAIKU__)
 
 typedef pthread_barrier_t util_barrier;
 
@@ -262,9 +292,9 @@ static inline void util_barrier_destroy(util_barrier *barrier)
    pthread_barrier_destroy(barrier);
 }
 
-static inline void util_barrier_wait(util_barrier *barrier)
+static inline bool util_barrier_wait(util_barrier *barrier)
 {
-   pthread_barrier_wait(barrier);
+   return pthread_barrier_wait(barrier) == PTHREAD_BARRIER_SERIAL_THREAD;
 }
 
 
@@ -294,7 +324,7 @@ static inline void util_barrier_destroy(util_barrier *barrier)
    cnd_destroy(&barrier->condvar);
 }
 
-static inline void util_barrier_wait(util_barrier *barrier)
+static inline bool util_barrier_wait(util_barrier *barrier)
 {
    mtx_lock(&barrier->mutex);
 
@@ -314,8 +344,51 @@ static inline void util_barrier_wait(util_barrier *barrier)
    }
 
    mtx_unlock(&barrier->mutex);
+
+   return true;
 }
 
 #endif
+
+/*
+ * Thread-id's.
+ *
+ * thrd_current() is not portable to windows (or at least not in a desirable
+ * way), so thread_id's provide an alternative mechanism
+ */
+
+#ifdef _WIN32
+typedef DWORD thread_id;
+#else
+typedef thrd_t thread_id;
+#endif
+
+static inline thread_id
+util_get_thread_id(void)
+{
+   /*
+    * XXX: Callers of of this function assume it is a lightweight function.
+    * But unfortunately C11's thrd_current() gives no such guarantees.  In
+    * fact, it's pretty hard to have a compliant implementation of
+    * thrd_current() on Windows with such characteristics.  So for now, we
+    * side-step this mess and use Windows thread primitives directly here.
+    */
+#ifdef _WIN32
+   return GetCurrentThreadId();
+#else
+   return thrd_current();
+#endif
+}
+
+
+static inline int
+util_thread_id_equal(thread_id t1, thread_id t2)
+{
+#ifdef _WIN32
+   return t1 == t2;
+#else
+   return thrd_equal(t1, t2);
+#endif
+}
 
 #endif /* U_THREAD_H_ */

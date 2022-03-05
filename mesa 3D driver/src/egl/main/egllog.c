@@ -39,7 +39,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include "c11/threads.h"
 #include "util/macros.h"
 #include "util/u_string.h"
@@ -132,6 +131,15 @@ _eglInitLogger(void)
               "Got \"%s\". Falling back to \"%s\".",
               log_env, level_strings[FALLBACK_LOG_LEVEL]);
    }
+}
+
+/**
+ * Return the log level.
+ */
+EGLint
+_eglGetLogLevel(void)
+{
+   return logging.level;
 }
 
 

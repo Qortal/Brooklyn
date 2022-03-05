@@ -24,7 +24,7 @@
 #include "brw_cfg.h"
 #include "brw_eu.h"
 #include "brw_disasm_info.h"
-#include "dev/gen_debug.h"
+#include "dev/intel_debug.h"
 #include "compiler/nir/nir.h"
 
 __attribute__((weak)) void nir_print_instr(UNUSED const nir_instr *instr,
@@ -34,7 +34,7 @@ void
 dump_assembly(void *assembly, int start_offset, int end_offset,
               struct disasm_info *disasm, const unsigned *block_latency)
 {
-   const struct gen_device_info *devinfo = disasm->devinfo;
+   const struct intel_device_info *devinfo = disasm->devinfo;
    const char *last_annotation_string = NULL;
    const void *last_annotation_ir = NULL;
 
@@ -104,7 +104,7 @@ dump_assembly(void *assembly, int start_offset, int end_offset,
 }
 
 struct disasm_info *
-disasm_initialize(const struct gen_device_info *devinfo,
+disasm_initialize(const struct intel_device_info *devinfo,
                   const struct cfg_t *cfg)
 {
    struct disasm_info *disasm = ralloc(NULL, struct disasm_info);
@@ -129,7 +129,7 @@ void
 disasm_annotate(struct disasm_info *disasm,
                 struct backend_instruction *inst, unsigned offset)
 {
-   const struct gen_device_info *devinfo = disasm->devinfo;
+   const struct intel_device_info *devinfo = disasm->devinfo;
    const struct cfg_t *cfg = disasm->cfg;
 
    struct inst_group *group;
@@ -141,7 +141,7 @@ disasm_annotate(struct disasm_info *disasm,
                              exec_list_get_tail_raw(&disasm->group_list), link);
    }
 
-   if ((INTEL_DEBUG & DEBUG_ANNOTATION) != 0) {
+   if (INTEL_DEBUG(DEBUG_ANNOTATION)) {
       group->ir = inst->ir;
       group->annotation = inst->annotation;
    }
@@ -150,7 +150,7 @@ disasm_annotate(struct disasm_info *disasm,
       group->block_start = cfg->blocks[disasm->cur_block];
    }
 
-   /* There is no hardware DO instruction on Gen6+, so since DO always
+   /* There is no hardware DO instruction on Gfx6+, so since DO always
     * starts a basic block, we need to set the .block_start of the next
     * instruction's annotation with a pointer to the bblock started by
     * the DO.
@@ -158,7 +158,7 @@ disasm_annotate(struct disasm_info *disasm,
     * There's also only complication from emitting an annotation without
     * a corresponding hardware instruction to disassemble.
     */
-   if (devinfo->gen >= 6 && inst->opcode == BRW_OPCODE_DO) {
+   if (devinfo->ver >= 6 && inst->opcode == BRW_OPCODE_DO) {
       disasm->use_tail = true;
    }
 

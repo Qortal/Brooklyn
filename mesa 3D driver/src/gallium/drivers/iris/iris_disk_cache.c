@@ -141,19 +141,20 @@ static const enum iris_program_cache_id cache_id_for_stage[] = {
  * Search for a compiled shader in the disk cache.  If found, upload it
  * to the in-memory program cache so we can use it.
  */
-struct iris_compiled_shader *
-iris_disk_cache_retrieve(struct iris_context *ice,
-                         const struct iris_uncompiled_shader *ish,
+bool
+iris_disk_cache_retrieve(struct iris_screen *screen,
+                         struct u_upload_mgr *uploader,
+                         struct iris_uncompiled_shader *ish,
+                         struct iris_compiled_shader *shader,
                          const void *prog_key,
                          uint32_t key_size)
 {
 #ifdef ENABLE_SHADER_CACHE
-   struct iris_screen *screen = (void *) ice->ctx.screen;
    struct disk_cache *cache = screen->disk_cache;
    gl_shader_stage stage = ish->nir->info.stage;
 
    if (!cache)
-      return NULL;
+      return false;
 
    cache_key cache_key;
    iris_disk_cache_compute_key(cache, ish, prog_key, key_size, cache_key);
@@ -171,7 +172,7 @@ iris_disk_cache_retrieve(struct iris_context *ice,
       fprintf(stderr, "%s\n", buffer ? "found" : "missing");
 
    if (!buffer)
-      return NULL;
+      return false;
 
    const uint32_t prog_data_size = brw_prog_data_size(stage);
 
@@ -206,9 +207,6 @@ iris_disk_cache_retrieve(struct iris_context *ice,
    }
 
    prog_data->param = NULL;
-   prog_data->pull_param = NULL;
-   assert(prog_data->nr_pull_params == 0);
-
    if (prog_data->nr_params) {
       prog_data->param = ralloc_array(NULL, uint32_t, prog_data->nr_params);
       blob_copy_bytes(&blob, prog_data->param,
@@ -238,22 +236,22 @@ iris_disk_cache_retrieve(struct iris_context *ice,
    if (num_system_values || kernel_input_size)
       num_cbufs++;
 
+   iris_finalize_program(shader, prog_data, so_decls, system_values,
+                         num_system_values, kernel_input_size, num_cbufs,
+                         &bt);
+
    assert(stage < ARRAY_SIZE(cache_id_for_stage));
    enum iris_program_cache_id cache_id = cache_id_for_stage[stage];
 
-   /* Upload our newly read shader to the in-memory program cache and
-    * return it to the caller.
-    */
-   struct iris_compiled_shader *shader =
-      iris_upload_shader(ice, cache_id, key_size, prog_key, assembly,
-                         prog_data, so_decls, system_values,
-                         num_system_values, kernel_input_size, num_cbufs, &bt);
+   /* Upload our newly read shader to the in-memory program cache. */
+   iris_upload_shader(screen, ish, shader, NULL, uploader,
+                      cache_id, key_size, prog_key, assembly);
 
    free(buffer);
 
-   return shader;
+   return true;
 #else
-   return NULL;
+   return false;
 #endif
 }
 
@@ -264,7 +262,7 @@ void
 iris_disk_cache_init(struct iris_screen *screen)
 {
 #ifdef ENABLE_SHADER_CACHE
-   if (INTEL_DEBUG & DEBUG_DISK_CACHE_DISABLE_MASK)
+   if (INTEL_DEBUG(DEBUG_DISK_CACHE_DISABLE_MASK))
       return;
 
    /* array length = print length + nul char + 1 extra to verify it's unused */

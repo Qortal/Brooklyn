@@ -48,6 +48,9 @@ struct virgl_hw_res {
    uint32_t flags;
    uint32_t flink_name;
 
+   /* false when the resource is known to be typed */
+   bool maybe_untyped;
+
    /* true when the resource is imported or exported */
    int external;
 
@@ -68,6 +71,9 @@ enum param_id {
    param_capset_fix,
    param_resource_blob,
    param_host_visible,
+   param_cross_device,
+   param_context_init,
+   param_supported_capset_ids,
    param_max,
 };
 
@@ -77,7 +83,9 @@ struct param params[] = { PARAM(VIRTGPU_PARAM_3D_FEATURES),
                           PARAM(VIRTGPU_PARAM_CAPSET_QUERY_FIX),
                           PARAM(VIRTGPU_PARAM_RESOURCE_BLOB),
                           PARAM(VIRTGPU_PARAM_HOST_VISIBLE),
-                          PARAM(VIRTGPU_PARAM_CROSS_DEVICE)
+                          PARAM(VIRTGPU_PARAM_CROSS_DEVICE),
+                          PARAM(VIRTGPU_PARAM_CONTEXT_INIT),
+                          PARAM(VIRTGPU_PARAM_SUPPORTED_CAPSET_IDs)
 };
 
 struct virgl_drm_winsys

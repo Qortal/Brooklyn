@@ -9,14 +9,19 @@
 #include "vn_common.h"
 
 struct vn_renderer_shmem {
-   atomic_int refcount;
+   struct vn_refcount refcount;
+
    uint32_t res_id;
    size_t mmap_size; /* for internal use only (i.e., munmap) */
    void *mmap_ptr;
+
+   struct list_head cache_head;
+   int64_t cache_timestamp;
 };
 
 struct vn_renderer_bo {
-   atomic_int refcount;
+   struct vn_refcount refcount;
+
    uint32_t res_id;
    /* for internal use only */
    size_t mmap_size;
@@ -51,6 +56,7 @@ struct vn_renderer_info {
    bool has_cache_management;
    bool has_external_sync;
    bool has_implicit_fencing;
+   bool has_guest_vram;
 
    uint32_t max_sync_queue_count;
 
@@ -59,6 +65,7 @@ struct vn_renderer_info {
    uint32_t vk_xml_version;
    uint32_t vk_ext_command_serialization_spec_version;
    uint32_t vk_mesa_venus_protocol_spec_version;
+   uint32_t supports_blob_id_0;
 };
 
 struct vn_renderer_submit_batch {
@@ -116,9 +123,6 @@ struct vn_renderer_wait {
 struct vn_renderer_ops {
    void (*destroy)(struct vn_renderer *renderer,
                    const VkAllocationCallbacks *alloc);
-
-   void (*get_info)(struct vn_renderer *renderer,
-                    struct vn_renderer_info *info);
 
    VkResult (*submit)(struct vn_renderer *renderer,
                       const struct vn_renderer_submit *submit);
@@ -210,6 +214,7 @@ struct vn_renderer_sync_ops {
 };
 
 struct vn_renderer {
+   struct vn_renderer_info info;
    struct vn_renderer_ops ops;
    struct vn_renderer_shmem_ops shmem_ops;
    struct vn_renderer_bo_ops bo_ops;
@@ -247,34 +252,11 @@ vn_renderer_destroy(struct vn_renderer *renderer,
    renderer->ops.destroy(renderer, alloc);
 }
 
-static inline void
-vn_renderer_get_info(struct vn_renderer *renderer,
-                     struct vn_renderer_info *info)
-{
-   renderer->ops.get_info(renderer, info);
-}
-
 static inline VkResult
 vn_renderer_submit(struct vn_renderer *renderer,
                    const struct vn_renderer_submit *submit)
 {
    return renderer->ops.submit(renderer, submit);
-}
-
-static inline VkResult
-vn_renderer_submit_simple(struct vn_renderer *renderer,
-                          const void *cs_data,
-                          size_t cs_size)
-{
-   const struct vn_renderer_submit submit = {
-      .batches =
-         &(const struct vn_renderer_submit_batch){
-            .cs_data = cs_data,
-            .cs_size = cs_size,
-         },
-      .batch_count = 1,
-   };
-   return vn_renderer_submit(renderer, &submit);
 }
 
 static inline VkResult
@@ -287,10 +269,11 @@ vn_renderer_wait(struct vn_renderer *renderer,
 static inline struct vn_renderer_shmem *
 vn_renderer_shmem_create(struct vn_renderer *renderer, size_t size)
 {
+   VN_TRACE_FUNC();
    struct vn_renderer_shmem *shmem =
       renderer->shmem_ops.create(renderer, size);
    if (shmem) {
-      assert(atomic_load(&shmem->refcount) == 1);
+      assert(vn_refcount_is_valid(&shmem->refcount));
       assert(shmem->res_id);
       assert(shmem->mmap_size >= size);
       assert(shmem->mmap_ptr);
@@ -303,10 +286,7 @@ static inline struct vn_renderer_shmem *
 vn_renderer_shmem_ref(struct vn_renderer *renderer,
                       struct vn_renderer_shmem *shmem)
 {
-   ASSERTED const int old =
-      atomic_fetch_add_explicit(&shmem->refcount, 1, memory_order_relaxed);
-   assert(old >= 1);
-
+   vn_refcount_inc(&shmem->refcount);
    return shmem;
 }
 
@@ -314,14 +294,8 @@ static inline void
 vn_renderer_shmem_unref(struct vn_renderer *renderer,
                         struct vn_renderer_shmem *shmem)
 {
-   const int old =
-      atomic_fetch_sub_explicit(&shmem->refcount, 1, memory_order_release);
-   assert(old >= 1);
-
-   if (old == 1) {
-      atomic_thread_fence(memory_order_acquire);
+   if (vn_refcount_dec(&shmem->refcount))
       renderer->shmem_ops.destroy(renderer, shmem);
-   }
 }
 
 static inline VkResult
@@ -339,7 +313,7 @@ vn_renderer_bo_create_from_device_memory(
    if (result != VK_SUCCESS)
       return result;
 
-   assert(atomic_load(&bo->refcount) == 1);
+   assert(vn_refcount_is_valid(&bo->refcount));
    assert(bo->res_id);
    assert(!bo->mmap_size || bo->mmap_size >= size);
 
@@ -360,7 +334,7 @@ vn_renderer_bo_create_from_dma_buf(struct vn_renderer *renderer,
    if (result != VK_SUCCESS)
       return result;
 
-   assert(atomic_load(&bo->refcount) >= 1);
+   assert(vn_refcount_is_valid(&bo->refcount));
    assert(bo->res_id);
    assert(!bo->mmap_size || bo->mmap_size >= size);
 
@@ -371,25 +345,15 @@ vn_renderer_bo_create_from_dma_buf(struct vn_renderer *renderer,
 static inline struct vn_renderer_bo *
 vn_renderer_bo_ref(struct vn_renderer *renderer, struct vn_renderer_bo *bo)
 {
-   ASSERTED const int old =
-      atomic_fetch_add_explicit(&bo->refcount, 1, memory_order_relaxed);
-   assert(old >= 1);
-
+   vn_refcount_inc(&bo->refcount);
    return bo;
 }
 
 static inline bool
 vn_renderer_bo_unref(struct vn_renderer *renderer, struct vn_renderer_bo *bo)
 {
-   const int old =
-      atomic_fetch_sub_explicit(&bo->refcount, 1, memory_order_release);
-   assert(old >= 1);
-
-   if (old == 1) {
-      atomic_thread_fence(memory_order_acquire);
+   if (vn_refcount_dec(&bo->refcount))
       return renderer->bo_ops.destroy(renderer, bo);
-   }
-
    return false;
 }
 

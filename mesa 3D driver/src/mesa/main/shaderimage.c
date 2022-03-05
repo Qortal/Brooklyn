@@ -35,6 +35,9 @@
 #include "texobj.h"
 #include "teximage.h"
 #include "enums.h"
+#include "api_exec_decl.h"
+
+#include "state_tracker/st_context.h"
 
 mesa_format
 _mesa_get_shader_image_format(GLenum format)
@@ -468,10 +471,10 @@ _mesa_is_image_unit_valid(struct gl_context *ctx, struct gl_image_unit *u)
    if (!t->_BaseComplete && !t->_MipmapComplete)
        _mesa_test_texobj_completeness(ctx, t);
 
-   if (u->Level < t->BaseLevel ||
+   if (u->Level < t->Attrib.BaseLevel ||
        u->Level > t->_MaxLevel ||
-       (u->Level == t->BaseLevel && !t->_BaseComplete) ||
-       (u->Level != t->BaseLevel && !t->_MipmapComplete))
+       (u->Level == t->Attrib.BaseLevel && !t->_BaseComplete) ||
+       (u->Level != t->Attrib.BaseLevel && !t->_MipmapComplete))
       return GL_FALSE;
 
    if (_mesa_tex_target_is_layered(t->Target) &&
@@ -495,7 +498,7 @@ _mesa_is_image_unit_valid(struct gl_context *ctx, struct gl_image_unit *u)
    if (!tex_format)
       return GL_FALSE;
 
-   switch (t->ImageFormatCompatibilityType) {
+   switch (t->Attrib.ImageFormatCompatibilityType) {
    case GL_IMAGE_FORMAT_COMPATIBILITY_BY_SIZE:
       if (_mesa_get_format_bytes(tex_format) !=
           _mesa_get_format_bytes(u->_ActualFormat))
@@ -588,8 +591,8 @@ bind_image_texture(struct gl_context *ctx, struct gl_texture_object *texObj,
 
    u = &ctx->ImageUnits[unit];
 
-   FLUSH_VERTICES(ctx, 0);
-   ctx->NewDriverState |= ctx->DriverFlags.NewImageUnits;
+   FLUSH_VERTICES(ctx, 0, 0);
+   ctx->NewDriverState |= ST_NEW_IMAGE_UNITS;
 
    set_image_binding(u, texObj, level, layered, layer, access, format);
 }
@@ -641,11 +644,10 @@ _mesa_BindImageTexture(GLuint unit, GLuint texture, GLint level,
        * so those are excluded from this requirement.
        *
        * Additionally, issue 10 of the OES_EGL_image_external_essl3 spec
-       * states that glBindImageTexture must accept external textures.
+       * states that glBindImageTexture must accept external texture objects.
        */
-      if (_mesa_is_gles(ctx) && !texObj->Immutable &&
-          texObj->Target != GL_TEXTURE_BUFFER &&
-          texObj->Target != GL_TEXTURE_EXTERNAL_OES) {
+      if (_mesa_is_gles(ctx) && !texObj->Immutable && !texObj->External &&
+          texObj->Target != GL_TEXTURE_BUFFER) {
          _mesa_error(ctx, GL_INVALID_OPERATION,
                      "glBindImageTexture(!immutable)");
          return;
@@ -687,8 +689,8 @@ bind_image_textures(struct gl_context *ctx, GLuint first, GLuint count,
    int i;
 
    /* Assume that at least one binding will be changed */
-   FLUSH_VERTICES(ctx, 0);
-   ctx->NewDriverState |= ctx->DriverFlags.NewImageUnits;
+   FLUSH_VERTICES(ctx, 0, 0);
+   ctx->NewDriverState |= ST_NEW_IMAGE_UNITS;
 
    /* Note that the error semantics for multi-bind commands differ from
     * those of other GL commands.
@@ -803,7 +805,8 @@ _mesa_BindImageTextures(GLuint first, GLsizei count, const GLuint *textures)
 {
    GET_CURRENT_CONTEXT(ctx);
 
-   if (!ctx->Extensions.ARB_shader_image_load_store) {
+   if (!ctx->Extensions.ARB_shader_image_load_store &&
+       !_mesa_is_gles31(ctx)) {
       _mesa_error(ctx, GL_INVALID_OPERATION, "glBindImageTextures()");
       return;
    }

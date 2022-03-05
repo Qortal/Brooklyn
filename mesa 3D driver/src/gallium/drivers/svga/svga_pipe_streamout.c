@@ -141,7 +141,7 @@ svga_create_stream_output(struct svga_context *svga,
    unsigned i;
    enum pipe_error ret;
    unsigned id;
-   ASSERTED unsigned maxDecls;
+   ASSERTED unsigned maxDecls = 0;
 
    assert(info->num_outputs <= PIPE_MAX_SO_OUTPUTS);
 
@@ -450,6 +450,7 @@ svga_set_stream_output_targets(struct pipe_context *pipe,
    for (i = 0; i < num_targets; i++) {
       struct svga_stream_output_target *sot
          = svga_stream_output_target(targets[i]);
+      struct svga_buffer *sbuf = svga_buffer(sot->base.buffer);
       unsigned size;
 
       svga->so_surfaces[i] = svga_buffer_handle(svga, sot->base.buffer,
@@ -457,6 +458,10 @@ svga_set_stream_output_targets(struct pipe_context *pipe,
 
       assert(svga_buffer(sot->base.buffer)->key.flags
              & SVGA3D_SURFACE_BIND_STREAM_OUTPUT);
+
+      /* Mark the buffer surface as RENDERED */
+      assert(sbuf->bufsurf);
+      sbuf->bufsurf->surface_state = SVGA_SURFACE_STATE_RENDERED;
 
       svga->so_targets[i] = &sot->base;
       if (offsets[i] == -1) {
@@ -490,7 +495,7 @@ svga_set_stream_output_targets(struct pipe_context *pipe,
 
    if (svga_have_sm5(svga) && svga->current_so && begin_so_queries) {
 
-      /* If there are aleady active queries and we need to start a new streamout,
+      /* If there are already active queries and we need to start a new streamout,
        * we need to stop the current active queries first.
        */
       if (svga->in_streamout) {

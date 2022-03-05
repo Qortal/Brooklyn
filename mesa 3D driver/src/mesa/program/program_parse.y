@@ -42,6 +42,13 @@
 #include "util/u_math.h"
 #include "util/u_memory.h"
 
+enum {
+   STATE_MATRIX_NO_MODIFIER,
+   STATE_MATRIX_INVERSE,
+   STATE_MATRIX_TRANSPOSE,
+   STATE_MATRIX_INVTRANS,
+};
+
 extern void *yy_scan_string(char *);
 extern void yy_delete_buffer(void *);
 
@@ -253,7 +260,8 @@ static struct asm_instruction *asm_instruction_copy_ctor(
 %type <integer> stateOptModMatNum stateModMatNum statePaletteMatNum
 %type <integer> stateProgramMatNum
 
-%type <integer> ambDiffSpecProperty
+%type <integer> ambDiffSpecPropertyMaterial
+%type <integer> ambDiffSpecPropertyLight
 
 %type <state> programSingleItem progEnvParam progLocalParam
 %type <state> programMultipleItem progEnvParams progLocalParams
@@ -1233,22 +1241,22 @@ stateMaterialItem: MATERIAL optFaceType stateMatProperty
 	{
 	   memset($$, 0, sizeof($$));
 	   $$[0] = STATE_MATERIAL;
-	   $$[1] = $2;
-	   $$[2] = $3;
+	   $$[1] = $3 + $2;
+	   $$[2] = 0;
 	}
 	;
 
-stateMatProperty: ambDiffSpecProperty
+stateMatProperty: ambDiffSpecPropertyMaterial
 	{
 	   $$ = $1;
 	}
 	| EMISSION
 	{
-	   $$ = STATE_EMISSION;
+	   $$ = MAT_ATTRIB_FRONT_EMISSION;
 	}
 	| SHININESS
 	{
-	   $$ = STATE_SHININESS;
+	   $$ = MAT_ATTRIB_FRONT_SHININESS;
 	}
 	;
 
@@ -1261,7 +1269,7 @@ stateLightItem: LIGHT '[' stateLightNumber ']' stateLightProperty
 	}
 	;
 
-stateLightProperty: ambDiffSpecProperty
+stateLightProperty: ambDiffSpecPropertyLight
 	{
 	   $$ = $1;
 	}
@@ -1271,11 +1279,6 @@ stateLightProperty: ambDiffSpecProperty
 	}
 	| ATTENUATION
 	{
-	   if (!state->ctx->Extensions.EXT_point_parameters) {
-	      yyerror(& @1, state, "GL_ARB_point_parameters not supported");
-	      YYERROR;
-	   }
-
 	   $$ = STATE_ATTENUATION;
 	}
 	| SPOT stateSpotProperty
@@ -1319,12 +1322,12 @@ stateLightProdItem: LIGHTPROD '[' stateLightNumber ']' optFaceType stateLProdPro
 	   memset($$, 0, sizeof($$));
 	   $$[0] = STATE_LIGHTPROD;
 	   $$[1] = $3;
-	   $$[2] = $5;
-	   $$[3] = $6;
+	   $$[2] = $6 + $5;
+	   $$[3] = 0;
 	}
 	;
 
-stateLProdProperty: ambDiffSpecProperty;
+stateLProdProperty: ambDiffSpecPropertyMaterial;
 
 stateTexEnvItem: TEXENV optLegacyTexUnitNum stateTexEnvProperty
 	{
@@ -1340,19 +1343,33 @@ stateTexEnvProperty: COLOR
 	}
 	;
 
-ambDiffSpecProperty: AMBIENT
+ambDiffSpecPropertyMaterial: AMBIENT
 	{
-	   $$ = STATE_AMBIENT;
+	   $$ = MAT_ATTRIB_FRONT_AMBIENT;
 	}
 	| DIFFUSE
 	{
-	   $$ = STATE_DIFFUSE;
+	   $$ = MAT_ATTRIB_FRONT_DIFFUSE;
 	}
 	| SPECULAR
 	{
-	   $$ = STATE_SPECULAR;
+	   $$ = MAT_ATTRIB_FRONT_SPECULAR;
 	}
 	;
+
+ambDiffSpecPropertyLight: AMBIENT
+        {
+           $$ = STATE_AMBIENT;
+        }
+        | DIFFUSE
+        {
+           $$ = STATE_DIFFUSE;
+        }
+        | SPECULAR
+        {
+           $$ = STATE_SPECULAR;
+        }
+        ;
 
 stateLightNumber: INTEGER
 	{
@@ -1456,21 +1473,19 @@ statePointProperty: SIZE_TOK
 
 stateMatrixRow: stateMatrixItem ROW '[' stateMatrixRowNum ']'
 	{
-	   $$[0] = $1[0];
+	   $$[0] = $1[0] + $1[2];
 	   $$[1] = $1[1];
 	   $$[2] = $4;
 	   $$[3] = $4;
-	   $$[4] = $1[2];
 	}
 	;
 
 stateMatrixRows: stateMatrixItem optMatrixRows
 	{
-	   $$[0] = $1[0];
+	   $$[0] = $1[0] + $1[2];
 	   $$[1] = $1[1];
 	   $$[2] = $2[2];
 	   $$[3] = $2[3];
-	   $$[4] = $1[2];
 	}
 	;
 
@@ -1507,7 +1522,7 @@ stateMatrixItem: MATRIX stateMatrixName stateOptMatModifier
 
 stateOptMatModifier:
 	{
-	   $$ = 0;
+	   $$ = STATE_MATRIX_NO_MODIFIER;
 	}
 	| stateMatModifier
 	{
@@ -1628,10 +1643,10 @@ programMultipleItem: progEnvParams | progLocalParams;
 progEnvParams: PROGRAM ENV '[' progEnvParamNums ']'
 	{
 	   memset($$, 0, sizeof($$));
-	   $$[0] = state->state_param_enum;
-	   $$[1] = STATE_ENV;
-	   $$[2] = $4[0];
-	   $$[3] = $4[1];
+	   $$[0] = state->state_param_enum_env;
+	   $$[1] = $4[0];
+	   $$[2] = $4[1];
+           $$[3] = 0;
 	}
 	;
 
@@ -1650,20 +1665,20 @@ progEnvParamNums: progEnvParamNum
 progEnvParam: PROGRAM ENV '[' progEnvParamNum ']'
 	{
 	   memset($$, 0, sizeof($$));
-	   $$[0] = state->state_param_enum;
-	   $$[1] = STATE_ENV;
+	   $$[0] = state->state_param_enum_env;
+	   $$[1] = $4;
 	   $$[2] = $4;
-	   $$[3] = $4;
+           $$[3] = 0;
 	}
 	;
 
 progLocalParams: PROGRAM LOCAL '[' progLocalParamNums ']'
 	{
 	   memset($$, 0, sizeof($$));
-	   $$[0] = state->state_param_enum;
-	   $$[1] = STATE_LOCAL;
-	   $$[2] = $4[0];
-	   $$[3] = $4[1];
+	   $$[0] = state->state_param_enum_local;
+	   $$[1] = $4[0];
+	   $$[2] = $4[1];
+           $$[3] = 0;
 	}
 
 progLocalParamNums: progLocalParamNum
@@ -1681,10 +1696,10 @@ progLocalParamNums: progLocalParamNum
 progLocalParam: PROGRAM LOCAL '[' progLocalParamNum ']'
 	{
 	   memset($$, 0, sizeof($$));
-	   $$[0] = state->state_param_enum;
-	   $$[1] = STATE_LOCAL;
+	   $$[0] = state->state_param_enum_local;
+	   $$[1] = $4;
 	   $$[2] = $4;
-	   $$[3] = $4;
+           $$[3] = 0;
 	}
 	;
 
@@ -2101,7 +2116,7 @@ asm_instruction_ctor(enum prog_opcode op,
 		     const struct asm_src_register *src1,
 		     const struct asm_src_register *src2)
 {
-   struct asm_instruction *inst = CALLOC_STRUCT(asm_instruction);
+   struct asm_instruction *inst = calloc(1, sizeof(struct asm_instruction));
 
    if (inst) {
       _mesa_init_instructions(& inst->Base, 1);
@@ -2338,11 +2353,8 @@ initialize_symbol_from_state(struct gl_program *prog,
    /* If we are adding a STATE_MATRIX that has multiple rows, we need to
     * unroll it and call add_state_reference() for each row
     */
-   if ((state_tokens[0] == STATE_MODELVIEW_MATRIX ||
-	state_tokens[0] == STATE_PROJECTION_MATRIX ||
-	state_tokens[0] == STATE_MVP_MATRIX ||
-	state_tokens[0] == STATE_TEXTURE_MATRIX ||
-	state_tokens[0] == STATE_PROGRAM_MATRIX)
+   if (state_tokens[0] >= STATE_MODELVIEW_MATRIX &&
+       state_tokens[0] <= STATE_PROGRAM_MATRIX_INVTRANS
        && (state_tokens[2] != state_tokens[3])) {
       int row;
       const int first_row = state_tokens[2];
@@ -2384,10 +2396,10 @@ initialize_symbol_from_param(struct gl_program *prog,
 
    memcpy(state_tokens, tokens, sizeof(state_tokens));
 
-   assert((state_tokens[0] == STATE_VERTEX_PROGRAM)
-	  || (state_tokens[0] == STATE_FRAGMENT_PROGRAM));
-   assert((state_tokens[1] == STATE_ENV)
-	  || (state_tokens[1] == STATE_LOCAL));
+   assert(state_tokens[0] == STATE_VERTEX_PROGRAM_ENV ||
+          state_tokens[0] == STATE_VERTEX_PROGRAM_LOCAL ||
+          state_tokens[0] == STATE_FRAGMENT_PROGRAM_ENV ||
+          state_tokens[0] == STATE_FRAGMENT_PROGRAM_LOCAL);
 
    /*
     * The param type is STATE_VAR.  The program parameter entry will
@@ -2399,13 +2411,13 @@ initialize_symbol_from_param(struct gl_program *prog,
    /* If we are adding a STATE_ENV or STATE_LOCAL that has multiple elements,
     * we need to unroll it and call add_state_reference() for each row
     */
-   if (state_tokens[2] != state_tokens[3]) {
+   if (state_tokens[1] != state_tokens[2]) {
       int row;
-      const int first_row = state_tokens[2];
-      const int last_row = state_tokens[3];
+      const int first_row = state_tokens[1];
+      const int last_row = state_tokens[2];
 
       for (row = first_row; row <= last_row; row++) {
-	 state_tokens[2] = state_tokens[3] = row;
+	 state_tokens[1] = state_tokens[2] = row;
 
 	 idx = add_state_reference(prog->Parameters, state_tokens);
 	 if (param_var->param_binding_begin == ~0U) {
@@ -2559,8 +2571,10 @@ _mesa_parse_arb_program(struct gl_context *ctx, GLenum target, const GLubyte *st
    state->MaxProgramMatrices = ctx->Const.MaxProgramMatrices;
    state->MaxDrawBuffers = ctx->Const.MaxDrawBuffers;
 
-   state->state_param_enum = (target == GL_VERTEX_PROGRAM_ARB)
-      ? STATE_VERTEX_PROGRAM : STATE_FRAGMENT_PROGRAM;
+   state->state_param_enum_env = (target == GL_VERTEX_PROGRAM_ARB)
+      ? STATE_VERTEX_PROGRAM_ENV : STATE_FRAGMENT_PROGRAM_ENV;
+   state->state_param_enum_local = (target == GL_VERTEX_PROGRAM_ARB)
+      ? STATE_VERTEX_PROGRAM_LOCAL : STATE_FRAGMENT_PROGRAM_LOCAL;
 
    _mesa_set_program_error(ctx, -1, NULL);
 

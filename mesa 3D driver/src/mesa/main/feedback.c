@@ -35,7 +35,9 @@
 #include "feedback.h"
 #include "macros.h"
 #include "mtypes.h"
+#include "api_exec_decl.h"
 
+#include "state_tracker/st_cb_feedback.h"
 
 #define FB_3D		0x01
 #define FB_4D		0x02
@@ -84,7 +86,7 @@ _mesa_FeedbackBuffer( GLsizei size, GLenum type, GLfloat *buffer )
 	 return;
    }
 
-   FLUSH_VERTICES(ctx, _NEW_RENDERMODE); /* Always flush */
+   FLUSH_VERTICES(ctx, _NEW_RENDERMODE, 0); /* Always flush */
    ctx->Feedback.Type = type;
    ctx->Feedback.BufferSize = size;
    ctx->Feedback.Buffer = buffer;
@@ -98,7 +100,7 @@ _mesa_PassThrough( GLfloat token )
    GET_CURRENT_CONTEXT(ctx);
 
    if (ctx->RenderMode==GL_FEEDBACK) {
-      FLUSH_VERTICES(ctx, 0);
+      FLUSH_VERTICES(ctx, 0, 0);
       _mesa_feedback_token( ctx, (GLfloat) (GLint) GL_PASS_THROUGH_TOKEN );
       _mesa_feedback_token( ctx, token );
    }
@@ -169,7 +171,7 @@ _mesa_SelectBuffer( GLsizei size, GLuint *buffer )
       return;			/* KW: added return */
    }
 
-   FLUSH_VERTICES(ctx, _NEW_RENDERMODE); 
+   FLUSH_VERTICES(ctx, _NEW_RENDERMODE, 0);
    ctx->Select.Buffer = buffer;
    ctx->Select.BufferSize = size;
    ctx->Select.BufferCount = 0;
@@ -269,7 +271,7 @@ void GLAPIENTRY
 _mesa_InitNames( void )
 {
    GET_CURRENT_CONTEXT(ctx);
-   FLUSH_VERTICES(ctx, 0);
+   FLUSH_VERTICES(ctx, 0, 0);
 
    /* Record the hit before the HitFlag is wiped out again. */
    if (ctx->RenderMode == GL_SELECT) {
@@ -309,7 +311,7 @@ _mesa_LoadName( GLuint name )
       return;
    }
 
-   FLUSH_VERTICES(ctx, _NEW_RENDERMODE);
+   FLUSH_VERTICES(ctx, _NEW_RENDERMODE, 0);
 
    if (ctx->Select.HitFlag) {
       write_hit_record( ctx );
@@ -343,7 +345,7 @@ _mesa_PushName( GLuint name )
       return;
    }
 
-   FLUSH_VERTICES(ctx, _NEW_RENDERMODE);
+   FLUSH_VERTICES(ctx, _NEW_RENDERMODE, 0);
    if (ctx->Select.HitFlag) {
       write_hit_record( ctx );
    }
@@ -373,7 +375,7 @@ _mesa_PopName( void )
       return;
    }
 
-   FLUSH_VERTICES(ctx, _NEW_RENDERMODE);
+   FLUSH_VERTICES(ctx, _NEW_RENDERMODE, 0);
    if (ctx->Select.HitFlag) {
       write_hit_record( ctx );
    }
@@ -416,7 +418,8 @@ _mesa_RenderMode( GLenum mode )
    if (MESA_VERBOSE & VERBOSE_API)
       _mesa_debug(ctx, "glRenderMode %s\n", _mesa_enum_to_string(mode));
 
-   FLUSH_VERTICES(ctx, _NEW_RENDERMODE);
+   FLUSH_VERTICES(ctx, _NEW_RENDERMODE | _NEW_FF_VERT_PROGRAM |
+                  _NEW_FF_FRAG_PROGRAM, 0);
 
    switch (ctx->RenderMode) {
       case GL_RENDER:
@@ -476,8 +479,7 @@ _mesa_RenderMode( GLenum mode )
    }
 
    ctx->RenderMode = mode;
-   if (ctx->Driver.RenderMode)
-      ctx->Driver.RenderMode( ctx, mode );
+   st_RenderMode( ctx, mode );
 
    return result;
 }

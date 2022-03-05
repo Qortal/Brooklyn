@@ -42,8 +42,14 @@ enum loader_dri3_buffer_type {
 
 struct loader_dri3_buffer {
    __DRIimage   *image;
-   __DRIimage   *linear_buffer;
    uint32_t     pixmap;
+
+   /* default case: linear buffer allocated in render gpu vram.
+    * p2p case: linear buffer allocated in display gpu vram and imported
+    *           to render gpu. p2p case is enabled when driver name matches
+    *           while creating screen in dri3_create_screen() function.
+    */
+   __DRIimage   *linear_buffer;
 
    /* Synchronization between the client and X server is done using an
     * xshmfence that is mapped into an X server SyncFence. This lets the
@@ -110,27 +116,35 @@ struct loader_dri3_vtable {
 
 #define LOADER_DRI3_NUM_BUFFERS (1 + LOADER_DRI3_MAX_BACK)
 
+enum loader_dri3_drawable_type {
+   LOADER_DRI3_DRAWABLE_UNKNOWN,
+   LOADER_DRI3_DRAWABLE_WINDOW,
+   LOADER_DRI3_DRAWABLE_PIXMAP,
+   LOADER_DRI3_DRAWABLE_PBUFFER,
+};
+
 struct loader_dri3_drawable {
    xcb_connection_t *conn;
    xcb_screen_t *screen;
    __DRIdrawable *dri_drawable;
    xcb_drawable_t drawable;
    xcb_window_t window;
+   xcb_xfixes_region_t region;
    int width;
    int height;
    int depth;
    uint8_t have_back;
    uint8_t have_fake_front;
-   uint8_t is_pixmap;
+   enum loader_dri3_drawable_type type;
 
    /* Information about the GPU owning the buffer */
    __DRIscreen *dri_screen;
    bool is_different_gpu;
    bool multiplanes_available;
+   bool prefer_back_buffer_reuse;
 
-   /* Present extension capabilities
-    */
-   uint32_t present_capabilities;
+   /* DRI screen created for display GPU in case of prime */
+   __DRIscreen *dri_screen_display_gpu;
 
    /* SBC numbers are tracked by using the serial numbers
     * in the present request and complete events
@@ -191,9 +205,11 @@ loader_dri3_drawable_fini(struct loader_dri3_drawable *draw);
 int
 loader_dri3_drawable_init(xcb_connection_t *conn,
                           xcb_drawable_t drawable,
+                          enum loader_dri3_drawable_type type,
                           __DRIscreen *dri_screen,
                           bool is_different_gpu,
                           bool is_multiplanes_available,
+                          bool prefer_back_buffer_reuse,
                           const __DRIconfig *dri_config,
                           struct loader_dri3_extensions *ext,
                           const struct loader_dri3_vtable *vtable,

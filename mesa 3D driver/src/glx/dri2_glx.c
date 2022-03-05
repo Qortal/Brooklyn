@@ -177,57 +177,6 @@ dri2_unbind_context(struct glx_context *context, struct glx_context *new)
 }
 
 static struct glx_context *
-dri2_create_context(struct glx_screen *base,
-		    struct glx_config *config_base,
-		    struct glx_context *shareList, int renderType)
-{
-   struct dri2_context *pcp, *pcp_shared;
-   struct dri2_screen *psc = (struct dri2_screen *) base;
-   __GLXDRIconfigPrivate *config = (__GLXDRIconfigPrivate *) config_base;
-   __DRIcontext *shared = NULL;
-
-   /* Check the renderType value */
-   if (!validate_renderType_against_config(config_base, renderType))
-       return NULL;
-
-   if (shareList) {
-      /* If the shareList context is not a DRI2 context, we cannot possibly
-       * create a DRI2 context that shares it.
-       */
-      if (shareList->vtable->destroy != dri2_destroy_context) {
-	 return NULL;
-      }
-
-      pcp_shared = (struct dri2_context *) shareList;
-      shared = pcp_shared->driContext;
-   }
-
-   pcp = calloc(1, sizeof *pcp);
-   if (pcp == NULL)
-      return NULL;
-
-   if (!glx_context_init(&pcp->base, &psc->base, &config->base)) {
-      free(pcp);
-      return NULL;
-   }
-
-   pcp->base.renderType = renderType;
-
-   pcp->driContext =
-      (*psc->dri2->createNewContext) (psc->driScreen,
-                                      config->driConfig, shared, pcp);
-
-   if (pcp->driContext == NULL) {
-      free(pcp);
-      return NULL;
-   }
-
-   pcp->base.vtable = &dri2_context_vtable;
-
-   return &pcp->base;
-}
-
-static struct glx_context *
 dri2_create_context_attribs(struct glx_screen *base,
 			    struct glx_config *config_base,
 			    struct glx_context *shareList,
@@ -241,37 +190,34 @@ dri2_create_context_attribs(struct glx_screen *base,
    __GLXDRIconfigPrivate *config = (__GLXDRIconfigPrivate *) config_base;
    __DRIcontext *shared = NULL;
 
-   uint32_t minor_ver;
-   uint32_t major_ver;
-   uint32_t renderType;
-   uint32_t flags;
-   unsigned api;
-   int reset;
-   int release;
+   struct dri_ctx_attribs dca;
    uint32_t ctx_attribs[2 * 6];
    unsigned num_ctx_attribs = 0;
 
-   if (psc->dri2->base.version < 3) {
-      *error = __DRI_CTX_ERROR_NO_MEMORY;
+   *error = dri_convert_glx_attribs(num_attribs, attribs, &dca);
+   if (*error != __DRI_CTX_ERROR_SUCCESS)
       goto error_exit;
-   }
-
-   /* Remap the GLX tokens to DRI2 tokens.
-    */
-   if (!dri2_convert_glx_attribs(num_attribs, attribs,
-                                 &major_ver, &minor_ver, &renderType, &flags,
-                                 &api, &reset, &release, error))
-      goto error_exit;
-
-   if (!dri2_check_no_error(flags, shareList, major_ver, error)) {
-      goto error_exit;
-   }
 
    /* Check the renderType value */
-   if (!validate_renderType_against_config(config_base, renderType))
+   if (!validate_renderType_against_config(config_base, dca.render_type))
        goto error_exit;
 
    if (shareList) {
+      /* We can't share with an indirect context */
+      if (!shareList->isDirect)
+         return NULL;
+
+      /* The GLX_ARB_create_context_no_error specs say:
+       *
+       *    BadMatch is generated if the value of GLX_CONTEXT_OPENGL_NO_ERROR_ARB
+       *    used to create <share_context> does not match the value of
+       *    GLX_CONTEXT_OPENGL_NO_ERROR_ARB for the context being created.
+       */
+      if (!!shareList->noError != !!dca.no_error) {
+         *error = __DRI_CTX_ERROR_BAD_FLAG;
+         return NULL;
+      }
+
       pcp_shared = (struct dri2_context *) shareList;
       shared = pcp_shared->driContext;
    }
@@ -286,44 +232,43 @@ dri2_create_context_attribs(struct glx_screen *base,
       goto error_exit;
 
    ctx_attribs[num_ctx_attribs++] = __DRI_CTX_ATTRIB_MAJOR_VERSION;
-   ctx_attribs[num_ctx_attribs++] = major_ver;
+   ctx_attribs[num_ctx_attribs++] = dca.major_ver;
    ctx_attribs[num_ctx_attribs++] = __DRI_CTX_ATTRIB_MINOR_VERSION;
-   ctx_attribs[num_ctx_attribs++] = minor_ver;
+   ctx_attribs[num_ctx_attribs++] = dca.minor_ver;
 
    /* Only send a value when the non-default value is requested.  By doing
     * this we don't have to check the driver's DRI2 version before sending the
     * default value.
     */
-   if (reset != __DRI_CTX_RESET_NO_NOTIFICATION) {
+   if (dca.reset != __DRI_CTX_RESET_NO_NOTIFICATION) {
       ctx_attribs[num_ctx_attribs++] = __DRI_CTX_ATTRIB_RESET_STRATEGY;
-      ctx_attribs[num_ctx_attribs++] = reset;
+      ctx_attribs[num_ctx_attribs++] = dca.reset;
    }
 
-   if (release != __DRI_CTX_RELEASE_BEHAVIOR_FLUSH) {
+   if (dca.release != __DRI_CTX_RELEASE_BEHAVIOR_FLUSH) {
       ctx_attribs[num_ctx_attribs++] = __DRI_CTX_ATTRIB_RELEASE_BEHAVIOR;
-      ctx_attribs[num_ctx_attribs++] = release;
+      ctx_attribs[num_ctx_attribs++] = dca.release;
    }
 
-   if (flags != 0) {
-      ctx_attribs[num_ctx_attribs++] = __DRI_CTX_ATTRIB_FLAGS;
+   if (dca.no_error) {
+      ctx_attribs[num_ctx_attribs++] = __DRI_CTX_ATTRIB_NO_ERROR;
+      ctx_attribs[num_ctx_attribs++] = dca.no_error;
+      pcp->base.noError = GL_TRUE;
+   }
 
-      /* The current __DRI_CTX_FLAG_* values are identical to the
-       * GLX_CONTEXT_*_BIT values.
-       */
-      ctx_attribs[num_ctx_attribs++] = flags;
+   if (dca.flags != 0) {
+      ctx_attribs[num_ctx_attribs++] = __DRI_CTX_ATTRIB_FLAGS;
+      ctx_attribs[num_ctx_attribs++] = dca.flags;
    }
 
    /* The renderType is retrieved from attribs, or set to default
     *  of GLX_RGBA_TYPE.
     */
-   pcp->base.renderType = renderType;
-
-   if (flags & __DRI_CTX_FLAG_NO_ERROR)
-      pcp->base.noError = GL_TRUE;
+   pcp->base.renderType = dca.render_type;
 
    pcp->driContext =
       (*psc->dri2->createContextAttribs) (psc->driScreen,
-					  api,
+					  dca.api,
 					  config ? config->driConfig : NULL,
 					  shared,
 					  num_ctx_attribs / 2,
@@ -334,7 +279,7 @@ dri2_create_context_attribs(struct glx_screen *base,
    if (pcp->driContext == NULL)
       goto error_exit;
 
-   pcp->base.vtable = &dri2_context_vtable;
+   pcp->base.vtable = base->context_vtable;
 
    return &pcp->base;
 
@@ -370,7 +315,8 @@ dri2DestroyDrawable(__GLXDRIdrawable *base)
 
 static __GLXDRIdrawable *
 dri2CreateDrawable(struct glx_screen *base, XID xDrawable,
-		   GLXDrawable drawable, struct glx_config *config_base)
+                   GLXDrawable drawable, int type,
+                   struct glx_config *config_base)
 {
    struct dri2_drawable *pdraw;
    struct dri2_screen *psc = (struct dri2_screen *) base;
@@ -760,7 +706,7 @@ unsigned dri2GetSwapEventType(Display* dpy, XID drawable)
       pdraw = dri2GetGlxDrawableFromXDrawableId(dpy, drawable);
       if (!pdraw || !(pdraw->eventMask & GLX_BUFFER_SWAP_COMPLETE_INTEL_MASK))
          return 0;
-      return glx_dpy->codes->first_event + GLX_BufferSwapComplete;
+      return glx_dpy->codes.first_event + GLX_BufferSwapComplete;
 }
 
 static void show_fps(struct dri2_drawable *draw)
@@ -770,7 +716,7 @@ static void show_fps(struct dri2_drawable *draw)
    struct timeval tv;
    uint64_t current_time;
 
-   gettimeofday(&tv, 0);
+   gettimeofday(&tv, NULL);
    current_time = (uint64_t)tv.tv_sec*1000000 + (uint64_t)tv.tv_usec;
 
    draw->frames++;
@@ -1024,20 +970,15 @@ dri2InvalidateBuffers(Display *dpy, XID drawable)
 }
 
 static void
-dri2_bind_tex_image(Display * dpy,
-		    GLXDrawable drawable,
+dri2_bind_tex_image(__GLXDRIdrawable *base,
 		    int buffer, const int *attrib_list)
 {
    struct glx_context *gc = __glXGetCurrentContext();
    struct dri2_context *pcp = (struct dri2_context *) gc;
-   __GLXDRIdrawable *base = GetGLXDRIDrawable(dpy, drawable);
-   struct glx_display *dpyPriv = __glXInitialize(dpy);
+   struct glx_display *dpyPriv = __glXInitialize(gc->currentDpy);
    struct dri2_drawable *pdraw = (struct dri2_drawable *) base;
    struct dri2_display *pdp;
    struct dri2_screen *psc;
-
-   if (dpyPriv == NULL)
-       return;
 
    pdp = (struct dri2_display *) dpyPriv->dri2Display;
 
@@ -1064,16 +1005,14 @@ dri2_bind_tex_image(Display * dpy,
 }
 
 static void
-dri2_release_tex_image(Display * dpy, GLXDrawable drawable, int buffer)
+dri2_release_tex_image(__GLXDRIdrawable *base, int buffer)
 {
    struct glx_context *gc = __glXGetCurrentContext();
    struct dri2_context *pcp = (struct dri2_context *) gc;
-   __GLXDRIdrawable *base = GetGLXDRIDrawable(dpy, drawable);
-   struct glx_display *dpyPriv = __glXInitialize(dpy);
    struct dri2_drawable *pdraw = (struct dri2_drawable *) base;
    struct dri2_screen *psc;
 
-   if (dpyPriv != NULL && pdraw != NULL) {
+   if (pdraw != NULL) {
       psc = (struct dri2_screen *) base->psc;
 
       if (psc->texBuffer->base.version >= 3 &&
@@ -1091,10 +1030,6 @@ static const struct glx_context_vtable dri2_context_vtable = {
    .unbind              = dri2_unbind_context,
    .wait_gl             = dri2_wait_gl,
    .wait_x              = dri2_wait_x,
-   .use_x_font          = DRI_glXUseXFont,
-   .bind_tex_image      = dri2_bind_tex_image,
-   .release_tex_image   = dri2_release_tex_image,
-   .get_proc_address    = NULL,
    .interop_query_device_info = dri2_interop_query_device_info,
    .interop_export_object = dri2_interop_export_object
 };
@@ -1105,6 +1040,7 @@ dri2BindExtensions(struct dri2_screen *psc, struct glx_display * priv,
 {
    const struct dri2_display *const pdp = (struct dri2_display *)
       priv->dri2Display;
+   const unsigned mask = psc->dri2->getAPIMask(psc->driScreen);
    const __DRIextension **extensions;
    int i;
 
@@ -1132,20 +1068,17 @@ dri2BindExtensions(struct dri2_screen *psc, struct glx_display * priv,
       __glXEnableDirectExtension(&psc->base, "GLX_INTEL_swap_event");
    }
 
-   if (psc->dri2->base.version >= 3) {
-      const unsigned mask = psc->dri2->getAPIMask(psc->driScreen);
+   __glXEnableDirectExtension(&psc->base, "GLX_ARB_create_context");
+   __glXEnableDirectExtension(&psc->base, "GLX_ARB_create_context_profile");
+   __glXEnableDirectExtension(&psc->base, "GLX_EXT_no_config_context");
 
-      __glXEnableDirectExtension(&psc->base, "GLX_ARB_create_context");
-      __glXEnableDirectExtension(&psc->base, "GLX_ARB_create_context_profile");
-
-      if ((mask & ((1 << __DRI_API_GLES) |
-                   (1 << __DRI_API_GLES2) |
-                   (1 << __DRI_API_GLES3))) != 0) {
-         __glXEnableDirectExtension(&psc->base,
-                                    "GLX_EXT_create_context_es_profile");
-         __glXEnableDirectExtension(&psc->base,
-                                    "GLX_EXT_create_context_es2_profile");
-      }
+   if ((mask & ((1 << __DRI_API_GLES) |
+                (1 << __DRI_API_GLES2) |
+                (1 << __DRI_API_GLES3))) != 0) {
+      __glXEnableDirectExtension(&psc->base,
+                                 "GLX_EXT_create_context_es_profile");
+      __glXEnableDirectExtension(&psc->base,
+                                 "GLX_EXT_create_context_es2_profile");
    }
 
    for (i = 0; extensions[i]; i++) {
@@ -1165,39 +1098,25 @@ dri2BindExtensions(struct dri2_screen *psc, struct glx_display * priv,
       if (((strcmp(extensions[i]->name, __DRI2_THROTTLE) == 0)))
 	 psc->throttle = (__DRI2throttleExtension *) extensions[i];
 
-      /* DRI2 version 3 is also required because
-       * GLX_ARB_create_context_robustness requires GLX_ARB_create_context.
-       */
-      if (psc->dri2->base.version >= 3
-          && strcmp(extensions[i]->name, __DRI2_ROBUSTNESS) == 0)
+      if (strcmp(extensions[i]->name, __DRI2_ROBUSTNESS) == 0)
          __glXEnableDirectExtension(&psc->base,
                                     "GLX_ARB_create_context_robustness");
 
-      /* DRI2 version 3 is also required because
-       * GLX_ARB_create_context_no_error requires GLX_ARB_create_context.
-       */
-      if (psc->dri2->base.version >= 3
-          && strcmp(extensions[i]->name, __DRI2_NO_ERROR) == 0)
-         __glXEnableDirectExtension(&psc->base,
-                                    "GLX_ARB_create_context_no_error");
-
-      /* DRI2 version 3 is also required because GLX_MESA_query_renderer
-       * requires GLX_ARB_create_context_profile.
-       */
-      if (psc->dri2->base.version >= 3
-          && strcmp(extensions[i]->name, __DRI2_RENDERER_QUERY) == 0) {
+      if (strcmp(extensions[i]->name, __DRI2_RENDERER_QUERY) == 0) {
          psc->rendererQuery = (__DRI2rendererQueryExtension *) extensions[i];
          __glXEnableDirectExtension(&psc->base, "GLX_MESA_query_renderer");
+         unsigned int no_error = 0;
+         if (psc->rendererQuery->queryInteger(psc->driScreen,
+                                              __DRI2_RENDERER_HAS_NO_ERROR_CONTEXT,
+                                              &no_error) == 0 && no_error)
+             __glXEnableDirectExtension(&psc->base,
+                                        "GLX_ARB_create_context_no_error");
       }
 
       if (strcmp(extensions[i]->name, __DRI2_INTEROP) == 0)
 	 psc->interop = (__DRI2interopExtension*)extensions[i];
 
-      /* DRI2 version 3 is also required because
-       * GLX_ARB_control_flush_control requires GLX_ARB_create_context.
-       */
-      if (psc->dri2->base.version >= 3
-          && strcmp(extensions[i]->name, __DRI2_FLUSH_CONTROL) == 0)
+      if (strcmp(extensions[i]->name, __DRI2_FLUSH_CONTROL) == 0)
          __glXEnableDirectExtension(&psc->base,
                                     "GLX_ARB_context_flush_control");
    }
@@ -1212,7 +1131,7 @@ dri2_get_driver_name(struct glx_screen *glx_screen)
 }
 
 static const struct glx_screen_vtable dri2_screen_vtable = {
-   .create_context         = dri2_create_context,
+   .create_context         = dri_common_create_context,
    .create_context_attribs = dri2_create_context_attribs,
    .query_renderer_integer = dri2_query_renderer_integer,
    .query_renderer_string  = dri2_query_renderer_string,
@@ -1232,7 +1151,6 @@ dri2CreateScreen(int screen, struct glx_display * priv)
    char *driverName = NULL, *loader_driverName, *deviceName, *tmp;
    drm_magic_t magic;
    int i;
-   unsigned char disable;
 
    psc = calloc(1, sizeof *psc);
    if (psc == NULL)
@@ -1290,7 +1208,7 @@ dri2CreateScreen(int screen, struct glx_display * priv)
 	 psc->dri2 = (__DRIdri2Extension *) extensions[i];
    }
 
-   if (psc->core == NULL || psc->dri2 == NULL) {
+   if (psc->core == NULL || psc->dri2 == NULL || psc->dri2->base.version < 3) {
       ErrorMessageF("core dri or dri2 extension not found\n");
       goto handle_error;
    }
@@ -1333,6 +1251,7 @@ dri2CreateScreen(int screen, struct glx_display * priv)
    psc->driver_configs = driver_configs;
 
    psc->base.vtable = &dri2_screen_vtable;
+   psc->base.context_vtable = &dri2_context_vtable;
    psp = &psc->vtable;
    psc->base.driScreen = psp;
    psp->destroyScreen = dri2DestroyScreen;
@@ -1344,6 +1263,8 @@ dri2CreateScreen(int screen, struct glx_display * priv)
    psp->setSwapInterval = NULL;
    psp->getSwapInterval = NULL;
    psp->getBufferAge = NULL;
+   psp->bindTexImage = dri2_bind_tex_image;
+   psp->releaseTexImage = dri2_release_tex_image;
 
    if (pdp->driMinor >= 2) {
       psp->getDrawableMSC = dri2DrawableGetMSC;
@@ -1351,16 +1272,11 @@ dri2CreateScreen(int screen, struct glx_display * priv)
       psp->waitForSBC = dri2WaitForSBC;
       psp->setSwapInterval = dri2SetSwapInterval;
       psp->getSwapInterval = dri2GetSwapInterval;
-      if (psc->config->configQueryb(psc->driScreen,
-                                    "glx_disable_oml_sync_control",
-                                    &disable) || !disable)
-         __glXEnableDirectExtension(&psc->base, "GLX_OML_sync_control");
+
+      __glXEnableDirectExtension(&psc->base, "GLX_OML_sync_control");
    }
 
-   if (psc->config->configQueryb(psc->driScreen,
-                                 "glx_disable_sgi_video_sync",
-                                 &disable) || !disable)
-      __glXEnableDirectExtension(&psc->base, "GLX_SGI_video_sync");
+   __glXEnableDirectExtension(&psc->base, "GLX_SGI_video_sync");
 
    if (psc->config->base.version > 1 &&
           psc->config->configQuerys(psc->driScreen, "glx_extension_override",
@@ -1372,6 +1288,21 @@ dri2CreateScreen(int screen, struct glx_display * priv)
                                     "indirect_gl_extension_override",
                                     &tmp) == 0)
       __IndirectGlParseExtensionOverride(&psc->base, tmp);
+
+   if (psc->config->base.version > 1) {
+      uint8_t force = false;
+      if (psc->config->configQueryb(psc->driScreen, "force_direct_glx_context",
+                                    &force) == 0) {
+         psc->base.force_direct_context = force;
+      }
+
+      uint8_t invalid_glx_destroy_window = false;
+      if (psc->config->configQueryb(psc->driScreen,
+                                    "allow_invalid_glx_destroy_window",
+                                    &invalid_glx_destroy_window) == 0) {
+         psc->base.allow_invalid_glx_destroy_window = invalid_glx_destroy_window;
+      }
+   }
 
    /* DRI2 supports SubBuffer through DRI2CopyRegion, so it's always
     * available.*/

@@ -106,7 +106,7 @@ opt_constant_if(nir_if *if_stmt, bool condition)
 
       assert(def);
       assert(phi->dest.is_ssa);
-      nir_ssa_def_rewrite_uses(&phi->dest.ssa, nir_src_for_ssa(def));
+      nir_ssa_def_rewrite_uses(&phi->dest.ssa, def);
       nir_instr_remove(instr);
    }
 
@@ -174,7 +174,7 @@ def_only_used_in_cf_node(nir_ssa_def *def, void *_node)
 }
 
 /*
- * Test if a loop node is dead. Such nodes are dead if:
+ * Test if a loop or if node is dead. Such nodes are dead if:
  *
  * 1) It has no side effects (i.e. intrinsics which could possibly affect the
  * state of the program aside from producing an SSA value, indicated by a lack
@@ -192,7 +192,7 @@ def_only_used_in_cf_node(nir_ssa_def *def, void *_node)
 static bool
 node_is_dead(nir_cf_node *node)
 {
-   assert(node->type == nir_cf_node_loop);
+   assert(node->type == nir_cf_node_loop || node->type == nir_cf_node_if);
 
    nir_block *after = nir_cf_node_as_block(nir_cf_node_next(node));
 
@@ -218,15 +218,17 @@ node_is_dead(nir_cf_node *node)
          if (instr->type == nir_instr_type_call)
             return false;
 
-         /* Return instructions can cause us to skip over other side-effecting
-          * instructions after the loop, so consider them to have side effects
-          * here.
+         /* Return and halt instructions can cause us to skip over other
+          * side-effecting instructions after the loop, so consider them to
+          * have side effects here.
           *
           * When the block is not inside a loop, break and continue might also
           * cause a skip.
           */
          if (instr->type == nir_instr_type_jump &&
-             (!inside_loop || nir_instr_as_jump(instr)->type == nir_jump_return))
+             (!inside_loop ||
+              nir_instr_as_jump(instr)->type == nir_jump_return ||
+              nir_instr_as_jump(instr)->type == nir_jump_halt))
             return false;
 
          if (instr->type == nir_instr_type_intrinsic) {
@@ -234,6 +236,41 @@ node_is_dead(nir_cf_node *node)
             if (!(nir_intrinsic_infos[intrin->intrinsic].flags &
                 NIR_INTRINSIC_CAN_ELIMINATE))
                return false;
+
+            switch (intrin->intrinsic) {
+            case nir_intrinsic_load_deref:
+            case nir_intrinsic_load_ssbo:
+            case nir_intrinsic_load_global:
+               /* If there's a memory barrier after the loop, a load might be
+                * required to happen before some other instruction after the
+                * barrier, so it is not valid to eliminate it -- unless we
+                * know we can reorder it.
+                *
+                * Consider only loads that the result can be affected by other
+                * invocations.
+                */
+               if (intrin->intrinsic == nir_intrinsic_load_deref) {
+                  nir_deref_instr *deref = nir_src_as_deref(intrin->src[0]);
+                  if (!nir_deref_mode_may_be(deref, nir_var_mem_ssbo |
+                                                    nir_var_mem_shared |
+                                                    nir_var_mem_global |
+                                                    nir_var_shader_out))
+                     break;
+               }
+               if (nir_intrinsic_access(intrin) & ACCESS_CAN_REORDER)
+                  break;
+               return false;
+
+            case nir_intrinsic_load_shared:
+            case nir_intrinsic_load_output:
+            case nir_intrinsic_load_per_vertex_output:
+               /* Same as above loads. */
+               return false;
+
+            default:
+               /* Do nothing. */
+               break;
+            }
          }
 
          if (!nir_foreach_ssa_def(instr, def_only_used_in_cf_node, node))
@@ -249,11 +286,15 @@ dead_cf_block(nir_block *block)
 {
    nir_if *following_if = nir_block_get_following_if(block);
    if (following_if) {
-      if (!nir_src_is_const(following_if->condition))
-         return false;
+      if (nir_src_is_const(following_if->condition)) {
+         opt_constant_if(following_if, nir_src_as_bool(following_if->condition));
+         return true;
+      }
 
-      opt_constant_if(following_if, nir_src_as_bool(following_if->condition));
-      return true;
+      if (node_is_dead(&following_if->cf_node)) {
+         nir_cf_node_remove(&following_if->cf_node);
+         return true;
+      }
    }
 
    nir_loop *following_loop = nir_block_get_following_loop(block);

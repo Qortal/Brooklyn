@@ -114,11 +114,11 @@ vtn_handle_function_call(struct vtn_builder *b, SpvOp opcode,
 {
    struct vtn_function *vtn_callee =
       vtn_value(b, w[3], vtn_value_type_function)->func;
-   struct nir_function *callee = vtn_callee->impl->function;
 
    vtn_callee->referenced = true;
 
-   nir_call_instr *call = nir_call_instr_create(b->nb.shader, callee);
+   nir_call_instr *call = nir_call_instr_create(b->nb.shader,
+                                                vtn_callee->nir_func);
 
    unsigned param_idx = 0;
 
@@ -200,9 +200,14 @@ vtn_cfg_handle_prepass_instruction(struct vtn_builder *b, SpvOp opcode,
          glsl_type_add_to_function_params(func_type->params[i]->type, func, &idx);
       assert(idx == num_params);
 
-      b->func->impl = nir_function_impl_create(func);
-      nir_builder_init(&b->nb, func->impl);
-      b->nb.cursor = nir_before_cf_list(&b->func->impl->body);
+      b->func->nir_func = func;
+
+      /* Set up a nir_function_impl and the builder so we can load arguments
+       * directly in our OpFunctionParameter handler.
+       */
+      nir_function_impl *impl = nir_function_impl_create(func);
+      nir_builder_init(&b->nb, impl);
+      b->nb.cursor = nir_before_cf_list(&impl->body);
       b->nb.exact = b->exact;
 
       b->func_param_idx = 0;
@@ -215,11 +220,17 @@ vtn_cfg_handle_prepass_instruction(struct vtn_builder *b, SpvOp opcode,
 
    case SpvOpFunctionEnd:
       b->func->end = w;
+      if (b->func->start_block == NULL) {
+         /* In this case, the function didn't have any actual blocks.  It's
+          * just a prototype so delete the function_impl.
+          */
+         b->func->nir_func->impl = NULL;
+      }
       b->func = NULL;
       break;
 
    case SpvOpFunctionParameter: {
-      vtn_assert(b->func_param_idx < b->func->impl->function->num_params);
+      vtn_assert(b->func_param_idx < b->func->nir_func->num_params);
       struct vtn_type *type = vtn_get_type(b, w[1]);
       struct vtn_ssa_value *value = vtn_create_ssa_value(b, type->type);
       vtn_ssa_value_load_function_param(b, value, &b->func_param_idx);
@@ -256,6 +267,8 @@ vtn_cfg_handle_prepass_instruction(struct vtn_builder *b, SpvOp opcode,
    case SpvOpSwitch:
    case SpvOpKill:
    case SpvOpTerminateInvocation:
+   case SpvOpIgnoreIntersectionKHR:
+   case SpvOpTerminateRayKHR:
    case SpvOpReturn:
    case SpvOpReturnValue:
    case SpvOpUnreachable:
@@ -687,13 +700,19 @@ vtn_process_block(struct vtn_builder *b,
       return NULL;
 
    case SpvOpKill:
-      b->has_early_terminate = true;
       block->branch_type = vtn_branch_type_discard;
       return NULL;
 
    case SpvOpTerminateInvocation:
-      b->has_early_terminate = true;
-      block->branch_type = vtn_branch_type_terminate;
+      block->branch_type = vtn_branch_type_terminate_invocation;
+      return NULL;
+
+   case SpvOpIgnoreIntersectionKHR:
+      block->branch_type = vtn_branch_type_ignore_intersection;
+      return NULL;
+
+   case SpvOpTerminateRayKHR:
+      block->branch_type = vtn_branch_type_terminate_ray;
       return NULL;
 
    case SpvOpBranchConditional: {
@@ -703,26 +722,11 @@ vtn_process_block(struct vtn_builder *b,
                   cond_val->type->type != glsl_bool_type(),
                   "Condition must be a Boolean type scalar");
 
-      struct vtn_block *then_block = vtn_block(b, block->branch[2]);
-      struct vtn_block *else_block = vtn_block(b, block->branch[3]);
-
-      if (then_block == else_block) {
-         /* This is uncommon but it can happen.  We treat this the same way as
-          * an unconditional branch.
-          */
-         block->branch_type = vtn_handle_branch(b, cf_parent, then_block);
-
-         if (block->branch_type == vtn_branch_type_none)
-            return then_block;
-         else
-            return NULL;
-      }
-
       struct vtn_if *if_stmt = rzalloc(b, struct vtn_if);
 
       if_stmt->node.type = vtn_cf_node_type_if;
       if_stmt->node.parent = cf_parent;
-      if_stmt->condition = block->branch[1];
+      if_stmt->header_block = block;
       list_inithead(&if_stmt->then_body);
       list_inithead(&if_stmt->else_body);
 
@@ -740,16 +744,20 @@ vtn_process_block(struct vtn_builder *b,
          if_stmt->control = block->merge[2];
       }
 
+      struct vtn_block *then_block = vtn_block(b, block->branch[2]);
       if_stmt->then_type = vtn_handle_branch(b, &if_stmt->node, then_block);
       if (if_stmt->then_type == vtn_branch_type_none) {
          vtn_add_cfg_work_item(b, work_list, &if_stmt->node,
                                &if_stmt->then_body, then_block);
       }
 
-      if_stmt->else_type = vtn_handle_branch(b, &if_stmt->node, else_block);
-      if (if_stmt->else_type == vtn_branch_type_none) {
-         vtn_add_cfg_work_item(b, work_list, &if_stmt->node,
-                               &if_stmt->else_body, else_block);
+      struct vtn_block *else_block = vtn_block(b, block->branch[3]);
+      if (then_block != else_block) {
+         if_stmt->else_type = vtn_handle_branch(b, &if_stmt->node, else_block);
+         if (if_stmt->else_type == vtn_branch_type_none) {
+            vtn_add_cfg_work_item(b, work_list, &if_stmt->node,
+                                  &if_stmt->else_body, else_block);
+         }
       }
 
       return if_stmt->merge_block;
@@ -949,20 +957,23 @@ vtn_emit_branch(struct vtn_builder *b, enum vtn_branch_type branch_type,
    case vtn_branch_type_return:
       nir_jump(&b->nb, nir_jump_return);
       break;
-   case vtn_branch_type_discard: {
-      nir_intrinsic_op op =
-         b->convert_discard_to_demote ? nir_intrinsic_demote : nir_intrinsic_discard;
-      nir_intrinsic_instr *discard =
-         nir_intrinsic_instr_create(b->nb.shader, op);
-      nir_builder_instr_insert(&b->nb, &discard->instr);
+   case vtn_branch_type_discard:
+      if (b->convert_discard_to_demote)
+         nir_demote(&b->nb);
+      else
+         nir_discard(&b->nb);
       break;
-   }
-   case vtn_branch_type_terminate: {
-      nir_intrinsic_instr *terminate =
-         nir_intrinsic_instr_create(b->nb.shader, nir_intrinsic_terminate);
-      nir_builder_instr_insert(&b->nb, &terminate->instr);
+   case vtn_branch_type_terminate_invocation:
+      nir_terminate(&b->nb);
       break;
-   }
+   case vtn_branch_type_ignore_intersection:
+      nir_ignore_ray_intersection(&b->nb);
+      nir_jump(&b->nb, nir_jump_halt);
+      break;
+   case vtn_branch_type_terminate_ray:
+      nir_terminate_ray(&b->nb);
+      nir_jump(&b->nb, nir_jump_halt);
+      break;
    default:
       vtn_fail("Invalid branch type");
    }
@@ -1064,9 +1075,7 @@ vtn_emit_cf_list_structured(struct vtn_builder *b, struct list_head *cf_list,
 
          vtn_foreach_instruction(b, block_start, block_end, handler);
 
-         block->end_nop = nir_intrinsic_instr_create(b->nb.shader,
-                                                     nir_intrinsic_nop);
-         nir_builder_instr_insert(&b->nb, &block->end_nop->instr);
+         block->end_nop = nir_nop(&b->nb);
 
          vtn_emit_ret_store(b, block);
 
@@ -1081,10 +1090,22 @@ vtn_emit_cf_list_structured(struct vtn_builder *b, struct list_head *cf_list,
 
       case vtn_cf_node_type_if: {
          struct vtn_if *vtn_if = vtn_cf_node_as_if(node);
+         const uint32_t *branch = vtn_if->header_block->branch;
+         vtn_assert((branch[0] & SpvOpCodeMask) == SpvOpBranchConditional);
+
+         /* If both branches are the same, just emit the first block, which is
+          * the only one we filled when building the CFG.
+          */
+         if (branch[2] == branch[3]) {
+            vtn_emit_cf_list_structured(b, &vtn_if->then_body,
+                                        switch_fall_var, has_switch_break, handler);
+            break;
+         }
+
          bool sw_break = false;
 
          nir_if *nif =
-            nir_push_if(&b->nb, vtn_get_nir_ssa(b, vtn_if->condition));
+            nir_push_if(&b->nb, vtn_get_nir_ssa(b, branch[1]));
 
          nif->control = vtn_selection_control(b, vtn_if);
 
@@ -1148,8 +1169,6 @@ vtn_emit_cf_list_structured(struct vtn_builder *b, struct list_head *cf_list,
             nir_pop_if(&b->nb, cont_if);
 
             nir_store_var(&b->nb, do_cont, nir_imm_true(&b->nb), 1);
-
-            b->has_loop_continue = true;
          }
 
          nir_pop_loop(&b->nb, loop);
@@ -1215,8 +1234,8 @@ static struct nir_block *
 vtn_new_unstructured_block(struct vtn_builder *b, struct vtn_function *func)
 {
    struct nir_block *n = nir_block_create(b->shader);
-   exec_list_push_tail(&func->impl->body, &n->cf_node.node);
-   n->cf_node.parent = &func->impl->cf_node;
+   exec_list_push_tail(&func->nir_func->impl->body, &n->cf_node.node);
+   n->cf_node.parent = &func->nir_func->impl->cf_node;
    return n;
 }
 
@@ -1239,7 +1258,7 @@ vtn_emit_cf_func_unstructured(struct vtn_builder *b, struct vtn_function *func,
    struct list_head work_list;
    list_inithead(&work_list);
 
-   func->start_block->block = nir_start_block(func->impl);
+   func->start_block->block = nir_start_block(func->nir_func->impl);
    list_addtail(&func->start_block->node.link, &work_list);
    while (!list_is_empty(&work_list)) {
       struct vtn_block *block =
@@ -1255,9 +1274,7 @@ vtn_emit_cf_func_unstructured(struct vtn_builder *b, struct vtn_function *func,
       block_start = vtn_foreach_instruction(b, block_start, block_end,
                                             vtn_handle_phis_first_pass);
       vtn_foreach_instruction(b, block_start, block_end, handler);
-      block->end_nop = nir_intrinsic_instr_create(b->nb.shader,
-                                                  nir_intrinsic_nop);
-      nir_builder_instr_insert(&b->nb, &block->end_nop->instr);
+      block->end_nop = nir_nop(&b->nb);
 
       SpvOp op = *block_end & SpvOpCodeMask;
       switch (op) {
@@ -1323,10 +1340,8 @@ vtn_emit_cf_func_unstructured(struct vtn_builder *b, struct vtn_function *func,
       }
 
       case SpvOpKill: {
-         nir_intrinsic_instr *discard =
-            nir_intrinsic_instr_create(b->nb.shader, nir_intrinsic_discard);
-         nir_builder_instr_insert(&b->nb, &discard->instr);
-         nir_goto(&b->nb, b->func->impl->end_block);
+         nir_discard(&b->nb);
+         nir_goto(&b->nb, b->func->nir_func->impl->end_block);
          break;
       }
 
@@ -1334,7 +1349,7 @@ vtn_emit_cf_func_unstructured(struct vtn_builder *b, struct vtn_function *func,
       case SpvOpReturn:
       case SpvOpReturnValue: {
          vtn_emit_ret_store(b, block);
-         nir_goto(&b->nb, b->func->impl->end_block);
+         nir_goto(&b->nb, b->func->nir_func->impl->end_block);
          break;
       }
 
@@ -1354,15 +1369,15 @@ vtn_function_emit(struct vtn_builder *b, struct vtn_function *func,
          env_var_as_boolean("MESA_SPIRV_FORCE_UNSTRUCTURED", false);
    }
 
-   nir_builder_init(&b->nb, func->impl);
+   nir_function_impl *impl = func->nir_func->impl;
+   nir_builder_init(&b->nb, impl);
    b->func = func;
-   b->nb.cursor = nir_after_cf_list(&func->impl->body);
+   b->nb.cursor = nir_after_cf_list(&impl->body);
    b->nb.exact = b->exact;
-   b->has_loop_continue = false;
    b->phi_table = _mesa_pointer_hash_table_create(b);
 
    if (b->shader->info.stage == MESA_SHADER_KERNEL || force_unstructured) {
-      b->func->impl->structured = false;
+      impl->structured = false;
       vtn_emit_cf_func_unstructured(b, func, instruction_handler);
    } else {
       vtn_emit_cf_list_structured(b, &func->body, NULL, NULL,
@@ -1372,15 +1387,27 @@ vtn_function_emit(struct vtn_builder *b, struct vtn_function *func,
    vtn_foreach_instruction(b, func->start_block->label, func->end,
                            vtn_handle_phi_second_pass);
 
-   nir_rematerialize_derefs_in_use_blocks_impl(func->impl);
+   if (func->nir_func->impl->structured)
+      nir_copy_prop_impl(impl);
+   nir_rematerialize_derefs_in_use_blocks_impl(impl);
 
-   /* Continue blocks for loops get inserted before the body of the loop
-    * but instructions in the continue may use SSA defs in the loop body.
-    * Therefore, we need to repair SSA to insert the needed phi nodes.
+   /*
+    * There are some cases where we need to repair SSA to insert
+    * the needed phi nodes:
+    *
+    * - Continue blocks for loops get inserted before the body of the loop
+    *   but instructions in the continue may use SSA defs in the loop body.
+    *
+    * - Early termination instructions `OpKill` and `OpTerminateInvocation`,
+    *   in NIR. They're represented by regular intrinsics with no control-flow
+    *   semantics. This means that the SSA form from the SPIR-V may not
+    *   100% match NIR.
+    *
+    * - Switches with only default case may also define SSA which may
+    *   subsequently be used out of the switch.
     */
-   if (b->func->impl->structured &&
-       (b->has_loop_continue || b->has_early_terminate))
-      nir_repair_ssa_impl(func->impl);
+   if (func->nir_func->impl->structured)
+      nir_repair_ssa_impl(impl);
 
    func->emitted = true;
 }

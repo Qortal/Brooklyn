@@ -27,12 +27,7 @@
  * \author Felix Kuehling
  */
 
-#if defined(ANDROID) || defined(_WIN32)
-#define WITH_XMLCONFIG 0
-#else
-#define WITH_XMLCONFIG 1
-#endif
-
+#include "xmlconfig.h"
 #include <limits.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -47,12 +42,21 @@
 #include <errno.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#endif
+#ifdef NO_REGEX
+typedef int regex_t;
+#define REG_EXTENDED 0
+#define REG_NOSUB 0
+#define REG_NOMATCH 1
+static inline int regcomp(regex_t *r, const char *s, int f) { return 0; }
+static inline int regexec(regex_t *r, const char *s, int n, void *p, int f) { return REG_NOMATCH; }
+static inline void regfree(regex_t* r) {}
+#else
 #include <regex.h>
 #endif
 #include <fcntl.h>
 #include <math.h>
 #include "strndup.h"
-#include "xmlconfig.h"
 #include "u_process.h"
 #include "os_file.h"
 
@@ -268,7 +272,7 @@ findOption(const driOptionCache *cache, const char *name)
    /* this is just the starting point of the linear search for the option */
    for (i = 0; i < size; ++i, hash = (hash+1) & mask) {
       /* if we hit an empty entry then the option is not defined (yet) */
-      if (cache->info[hash].name == 0)
+      if (cache->info[hash].name == NULL)
          break;
       else if (!strcmp(name, cache->info[hash].name))
          break;
@@ -316,9 +320,9 @@ driParseOptionInfo(driOptionCache *info,
    /* Make the hash table big enough to fit more than the maximum number of
     * config options we've ever seen in a driver.
     */
-   info->tableSize = 6;
-   info->info = calloc(1 << info->tableSize, sizeof(driOptionInfo));
-   info->values = calloc(1 << info->tableSize, sizeof(driOptionValue));
+   info->tableSize = 7;
+   info->info = calloc((size_t)1 << info->tableSize, sizeof(driOptionInfo));
+   info->values = calloc((size_t)1 << info->tableSize, sizeof(driOptionValue));
    if (info->info == NULL || info->values == NULL) {
       fprintf(stderr, "%s: %d: out of memory.\n", __FILE__, __LINE__);
       abort();
@@ -526,8 +530,6 @@ driGetOptionsXml(const driOptionDescription *configOptions, unsigned numOptions)
    return output;
 }
 
-#if WITH_XMLCONFIG
-
 /**
  * Print message to \c stderr if the \c LIBGL_DEBUG environment variable
  * is set.
@@ -551,6 +553,12 @@ __driUtilMessage(const char *f, ...)
       fprintf(stderr, "\n");
    }
 }
+
+/* We don't have real line/column # info in static-config case: */
+#if !WITH_XML_CONFIG
+#  define XML_GetCurrentLineNumber(p) -1
+#  define XML_GetCurrentColumnNumber(p) -1
+#endif
 
 /** \brief Output a warning message. */
 #define XML_WARNING1(msg) do {                                          \
@@ -580,11 +588,14 @@ __driUtilMessage(const char *f, ...)
 /** \brief Parser context for configuration files. */
 struct OptConfData {
    const char *name;
+#if WITH_XMLCONFIG
    XML_Parser parser;
+#endif
    driOptionCache *cache;
    int screenNum;
    const char *driverName, *execName;
    const char *kernelDriverName;
+   const char *deviceName;
    const char *engineName;
    const char *applicationName;
    uint32_t engineVersion;
@@ -596,33 +607,6 @@ struct OptConfData {
    uint32_t inApp;
    uint32_t inOption;
 };
-
-/** \brief Elements in configuration files. */
-enum OptConfElem {
-   OC_APPLICATION = 0, OC_DEVICE, OC_DRICONF, OC_ENGINE, OC_OPTION, OC_COUNT
-};
-static const char *OptConfElems[] = {
-   [OC_APPLICATION]  = "application",
-   [OC_DEVICE] = "device",
-   [OC_DRICONF] = "driconf",
-   [OC_ENGINE]  = "engine",
-   [OC_OPTION] = "option",
-};
-
-static int compare(const void *a, const void *b) {
-   return strcmp(*(char *const*)a, *(char *const*)b);
-}
-/** \brief Binary search in a string array. */
-static uint32_t
-bsearchStr(const char *name, const char *elems[], uint32_t count)
-{
-   const char **found;
-   found = bsearch(&name, elems, count, sizeof(char *), compare);
-   if (found)
-      return found - elems;
-   else
-      return count;
-}
 
 /** \brief Parse a list of ranges of type info->type. */
 static unsigned char
@@ -665,17 +649,21 @@ static void
 parseDeviceAttr(struct OptConfData *data, const char **attr)
 {
    uint32_t i;
-   const char *driver = NULL, *screen = NULL, *kernel = NULL;
+   const char *driver = NULL, *screen = NULL, *kernel = NULL, *device = NULL;
    for (i = 0; attr[i]; i += 2) {
       if (!strcmp(attr[i], "driver")) driver = attr[i+1];
       else if (!strcmp(attr[i], "screen")) screen = attr[i+1];
       else if (!strcmp(attr[i], "kernel_driver")) kernel = attr[i+1];
+      else if (!strcmp(attr[i], "device")) device = attr[i+1];
       else XML_WARNING("unknown device attribute: %s.", attr[i]);
    }
    if (driver && strcmp(driver, data->driverName))
       data->ignoringDevice = data->inDevice;
    else if (kernel && (!data->kernelDriverName ||
                        strcmp(kernel, data->kernelDriverName)))
+      data->ignoringDevice = data->inDevice;
+   else if (device && (!data->deviceName ||
+                       strcmp(device, data->deviceName)))
       data->ignoringDevice = data->inDevice;
    else if (screen) {
       driOptionValue screenNum;
@@ -693,6 +681,7 @@ parseAppAttr(struct OptConfData *data, const char **attr)
    uint32_t i;
    const char *exec = NULL;
    const char *sha1 = NULL;
+   const char *exec_regexp = NULL;
    const char *application_name_match = NULL;
    const char *application_versions = NULL;
    driOptionInfo version_range = {
@@ -702,6 +691,7 @@ parseAppAttr(struct OptConfData *data, const char **attr)
    for (i = 0; attr[i]; i += 2) {
       if (!strcmp(attr[i], "name")) /* not needed here */;
       else if (!strcmp(attr[i], "executable")) exec = attr[i+1];
+      else if (!strcmp(attr[i], "executable_regexp")) exec_regexp = attr[i+1];
       else if (!strcmp(attr[i], "sha1")) sha1 = attr[i+1];
       else if (!strcmp(attr[i], "application_name_match"))
          application_name_match = attr[i+1];
@@ -711,6 +701,15 @@ parseAppAttr(struct OptConfData *data, const char **attr)
    }
    if (exec && strcmp(exec, data->execName)) {
       data->ignoringApp = data->inApp;
+   } else if (exec_regexp) {
+      regex_t re;
+
+      if (regcomp(&re, exec_regexp, REG_EXTENDED|REG_NOSUB) == 0) {
+         if (regexec(&re, data->execName, 0, NULL, 0) == REG_NOMATCH)
+            data->ignoringApp = data->inApp;
+         regfree(&re);
+      } else
+         XML_WARNING("Invalid executable_regexp=\"%s\".", exec_regexp);
    } else if (sha1) {
       /* SHA1_DIGEST_STRING_LENGTH includes terminating null byte */
       if (strlen(sha1) != (SHA1_DIGEST_STRING_LENGTH - 1)) {
@@ -747,9 +746,13 @@ parseAppAttr(struct OptConfData *data, const char **attr)
    }
    if (application_versions) {
       driOptionValue v = { ._int = data->applicationVersion };
-      if (parseRange(&version_range, application_versions) &&
-          !checkValue(&v, &version_range))
-         data->ignoringApp = data->inApp;
+      if (parseRange(&version_range, application_versions)) {
+         if (!checkValue(&v, &version_range))
+            data->ignoringApp = data->inApp;
+      } else {
+         XML_WARNING("Failed to parse application_versions range=\"%s\".",
+                     application_versions);
+      }
    }
 }
 
@@ -780,9 +783,13 @@ parseEngineAttr(struct OptConfData *data, const char **attr)
    }
    if (engine_versions) {
       driOptionValue v = { ._int = data->engineVersion };
-      if (parseRange(&version_range, engine_versions) &&
-          !checkValue(&v, &version_range))
-         data->ignoringApp = data->inApp;
+      if (parseRange(&version_range, engine_versions)) {
+         if (!checkValue(&v, &version_range))
+            data->ignoringApp = data->inApp;
+      } else {
+         XML_WARNING("Failed to parse engine_versions range=\"%s\".",
+                     engine_versions);
+      }
    }
 }
 
@@ -816,6 +823,35 @@ parseOptConfAttr(struct OptConfData *data, const char **attr)
       } else if (!parseValue(&cache->values[opt], cache->info[opt].type, value))
          XML_WARNING("illegal option value: %s.", value);
    }
+}
+
+#if WITH_XMLCONFIG
+
+/** \brief Elements in configuration files. */
+enum OptConfElem {
+   OC_APPLICATION = 0, OC_DEVICE, OC_DRICONF, OC_ENGINE, OC_OPTION, OC_COUNT
+};
+static const char *OptConfElems[] = {
+   [OC_APPLICATION]  = "application",
+   [OC_DEVICE] = "device",
+   [OC_DRICONF] = "driconf",
+   [OC_ENGINE]  = "engine",
+   [OC_OPTION] = "option",
+};
+
+static int compare(const void *a, const void *b) {
+   return strcmp(*(char *const*)a, *(char *const*)b);
+}
+/** \brief Binary search in a string array. */
+static uint32_t
+bsearchStr(const char *name, const char *elems[], uint32_t count)
+{
+   const char **found;
+   found = bsearch(&name, elems, count, sizeof(char *), compare);
+   if (found)
+      return found - elems;
+   else
+      return count;
 }
 
 /** \brief Handler for start element events. */
@@ -973,7 +1009,10 @@ scandir_filter(const struct dirent *ent)
        (!S_ISREG(st.st_mode) && !S_ISLNK(st.st_mode)))
       return 0;
 #else
-   if (ent->d_type != DT_REG && ent->d_type != DT_LNK)
+   /* Allow through unknown file types for filesystems that don't support d_type
+    * The full filepath isn't available here to stat the file
+    */
+   if (ent->d_type != DT_REG && ent->d_type != DT_LNK && ent->d_type != DT_UNKNOWN)
       return 0;
 #endif
 
@@ -997,14 +1036,107 @@ parseConfigDir(struct OptConfData *data, const char *dirname)
 
    for (i = 0; i < count; i++) {
       char filename[PATH_MAX];
+#ifdef DT_REG
+      unsigned char d_type = entries[i]->d_type;
+#endif
 
       snprintf(filename, PATH_MAX, "%s/%s", dirname, entries[i]->d_name);
       free(entries[i]);
+
+#ifdef DT_REG
+      /* In the case of unknown d_type, ensure it is a regular file
+       * This can be accomplished with stat on the full filepath
+       */
+      if (d_type == DT_UNKNOWN) {
+         struct stat st;
+         if (stat(filename, &st) != 0 ||
+             !S_ISREG(st.st_mode)) {
+            continue;
+         }
+      }
+#endif
 
       parseOneConfigFile(data, filename);
    }
 
    free(entries);
+}
+#else
+#  include "driconf_static.h"
+
+static void
+parseStaticOptions(struct OptConfData *data, const struct driconf_option *options,
+                   unsigned num_options)
+{
+   if (data->ignoringDevice || data->ignoringApp)
+      return;
+   for (unsigned i = 0; i < num_options; i++) {
+      const char *optattr[] = {
+         "name", options[i].name,
+         "value", options[i].value,
+         NULL
+      };
+      parseOptConfAttr(data, optattr);
+   }
+}
+
+static void
+parseStaticConfig(struct OptConfData *data)
+{
+   data->ignoringDevice = 0;
+   data->ignoringApp = 0;
+   data->inDriConf = 0;
+   data->inDevice = 0;
+   data->inApp = 0;
+   data->inOption = 0;
+
+   for (unsigned i = 0; i < ARRAY_SIZE(driconf); i++) {
+      const struct driconf_device *d = driconf[i];
+      const char *devattr[] = {
+         "driver", d->driver,
+         "device", d->device,
+         NULL
+      };
+
+      data->ignoringDevice = 0;
+      data->inDevice++;
+      parseDeviceAttr(data, devattr);
+      data->inDevice--;
+
+      data->inApp++;
+
+      for (unsigned j = 0; j < d->num_engines; j++) {
+         const struct driconf_engine *e = &d->engines[j];
+         const char *engattr[] = {
+            "engine_name_match", e->engine_name_match,
+            "engine_versions", e->engine_versions,
+            NULL
+         };
+
+         data->ignoringApp = 0;
+         parseEngineAttr(data, engattr);
+         parseStaticOptions(data, e->options, e->num_options);
+      }
+
+      for (unsigned j = 0; j < d->num_applications; j++) {
+         const struct driconf_application *a = &d->applications[j];
+         const char *appattr[] = {
+            "name", a->name,
+            "executable", a->executable,
+            "executable_regexp", a->executable_regexp,
+            "sha1", a->sha1,
+            "application_name_match", a->application_name_match,
+            "application_versions", a->application_versions,
+            NULL
+         };
+
+         data->ignoringApp = 0;
+         parseAppAttr(data, appattr);
+         parseStaticOptions(data, a->options, a->num_options);
+      }
+
+      data->inApp--;
+   }
 }
 #endif /* WITH_XMLCONFIG */
 
@@ -1015,13 +1147,13 @@ initOptionCache(driOptionCache *cache, const driOptionCache *info)
    unsigned i, size = 1 << info->tableSize;
    cache->info = info->info;
    cache->tableSize = info->tableSize;
-   cache->values = malloc((1<<info->tableSize) * sizeof(driOptionValue));
+   cache->values = malloc(((size_t)1 << info->tableSize) * sizeof(driOptionValue));
    if (cache->values == NULL) {
       fprintf(stderr, "%s: %d: out of memory.\n", __FILE__, __LINE__);
       abort();
    }
    memcpy(cache->values, info->values,
-           (1<<info->tableSize) * sizeof(driOptionValue));
+           ((size_t)1 << info->tableSize) * sizeof(driOptionValue));
    for (i = 0; i < size; ++i) {
       if (cache->info[i].type == DRI_STRING)
          XSTRDUP(cache->values[i]._string, info->values[i]._string);
@@ -1036,30 +1168,47 @@ initOptionCache(driOptionCache *cache, const driOptionCache *info)
 #define DATADIR "/usr/share"
 #endif
 
+static const char *datadir = DATADIR "/drirc.d";
+static const char *execname;
+
+void
+driInjectDataDir(const char *dir)
+{
+   datadir = dir;
+}
+
+void
+driInjectExecName(const char *exec)
+{
+   execname = exec;
+}
+
 void
 driParseConfigFiles(driOptionCache *cache, const driOptionCache *info,
                     int screenNum, const char *driverName,
                     const char *kernelDriverName,
+                    const char *deviceName,
                     const char *applicationName, uint32_t applicationVersion,
                     const char *engineName, uint32_t engineVersion)
 {
    initOptionCache(cache, info);
-
-#if WITH_XMLCONFIG
-   char *home;
    struct OptConfData userData;
 
    userData.cache = cache;
    userData.screenNum = screenNum;
    userData.driverName = driverName;
    userData.kernelDriverName = kernelDriverName;
+   userData.deviceName = deviceName;
    userData.applicationName = applicationName ? applicationName : "";
    userData.applicationVersion = applicationVersion;
    userData.engineName = engineName ? engineName : "";
    userData.engineVersion = engineVersion;
-   userData.execName = util_get_process_name();
+   userData.execName = execname ? execname : util_get_process_name();
 
-   parseConfigDir(&userData, DATADIR "/drirc.d");
+#if WITH_XMLCONFIG
+   char *home;
+
+   parseConfigDir(&userData, datadir);
    parseOneConfigFile(&userData, SYSCONFDIR "/drirc");
 
    if ((home = getenv("HOME"))) {
@@ -1068,6 +1217,8 @@ driParseConfigFiles(driOptionCache *cache, const driOptionCache *info,
       snprintf(filename, PATH_MAX, "%s/.drirc", home);
       parseOneConfigFile(&userData, filename);
    }
+#else
+   parseStaticConfig(&userData);
 #endif /* WITH_XMLCONFIG */
 }
 

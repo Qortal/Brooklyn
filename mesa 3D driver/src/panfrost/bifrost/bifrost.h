@@ -28,9 +28,25 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
+#include <assert.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define BIFROST_DBG_MSGS        0x0001
 #define BIFROST_DBG_SHADERS     0x0002
+#define BIFROST_DBG_SHADERDB    0x0004
+#define BIFROST_DBG_VERBOSE     0x0008
+#define BIFROST_DBG_INTERNAL    0x0010
+#define BIFROST_DBG_NOSCHED     0x0020
+#define BIFROST_DBG_INORDER     0x0040
+#define BIFROST_DBG_NOVALIDATE  0x0080
+#define BIFROST_DBG_NOOPT       0x0100
+#define BIFROST_DBG_NOIDVS      0x0200
+#define BIFROST_DBG_NOSB        0x0400
+#define BIFROST_DBG_NOPRELOAD   0x0800
 
 extern int bifrost_debug;
 
@@ -109,6 +125,12 @@ enum bifrost_flow {
         BIFROST_FLOW_WE = 7,
 };
 
+enum bifrost_slot {
+        /* 0-5 are general purpose */
+        BIFROST_SLOT_ELDEST_DEPTH = 6,
+        BIFROST_SLOT_ELDEST_COLOUR = 7,
+};
+
 struct bifrost_header {
         /* Reserved */
         unsigned zero1 : 5;
@@ -179,59 +201,6 @@ struct bifrost_add_inst {
         unsigned op   : 17;
 } __attribute__((packed));
 
-enum bifrost_outmod {
-        BIFROST_NONE = 0x0,
-        BIFROST_POS = 0x1,
-        BIFROST_SAT_SIGNED = 0x2,
-        BIFROST_SAT = 0x3,
-};
-
-enum bifrost_roundmode {
-        BIFROST_RTE = 0x0, /* round to even */
-        BIFROST_RTP = 0x1, /* round to positive */
-        BIFROST_RTN = 0x2, /* round to negative */
-        BIFROST_RTZ = 0x3 /* round to zero */
-};
-
-/* NONE: Same as fmax() and fmin() -- return the other
- * number if any number is NaN.  Also always return +0 if
- * one argument is +0 and the other is -0.
- *
- * NAN_WINS: Instead of never returning a NaN, always return
- * one. The "greater"/"lesser" NaN is always returned, first
- * by checking the sign and then the mantissa bits.
- *
- * SRC1_WINS: For max, implement src0 > src1 ? src0 : src1.
- * For min, implement src0 < src1 ? src0 : src1.  This
- * includes handling NaN's and signedness of 0 differently
- * from above, since +0 and -0 compare equal and comparisons
- * always return false for NaN's. As a result, this mode is
- * *not* commutative.
- *
- * SRC0_WINS: For max, implement src0 < src1 ? src1 : src0
- * For min, implement src0 > src1 ? src1 : src0
- */
-
-
-enum bifrost_minmax_mode {
-        BIFROST_MINMAX_NONE = 0x0,
-        BIFROST_NAN_WINS    = 0x1,
-        BIFROST_SRC1_WINS   = 0x2,
-        BIFROST_SRC0_WINS   = 0x3,
-};
-
-enum bifrost_interp_mode {
-        BIFROST_INTERP_CENTER = 0x0,
-        BIFROST_INTERP_CENTROID = 0x1,
-        BIFROST_INTERP_SAMPLE  = 0x2,
-        BIFROST_INTERP_EXPLICIT = 0x3,
-        BIFROST_INTERP_NONE = 0x4,
-};
-
-/* Fixed location for gl_FragCoord.zw */
-#define BIFROST_FRAGZ (23)
-#define BIFROST_FRAGW (22)
-
 enum branch_bit_size {
         BR_SIZE_32 = 0,
         BR_SIZE_16XX = 1,
@@ -261,57 +230,6 @@ struct bifrost_regs {
         unsigned ctrl : 4;
 } __attribute__((packed));
 
-enum bifrost_branch_cond {
-        BR_COND_LT = 0,
-        BR_COND_LE = 1,
-        BR_COND_GE = 2,
-        BR_COND_GT = 3,
-        // Equal vs. not-equal determined by src0/src1 comparison
-        BR_COND_EQ = 4,
-        // floating-point comparisons
-        // Becomes UNE when you flip the arguments
-        BR_COND_OEQ = 5,
-        // TODO what happens when you flip the arguments?
-        BR_COND_OGT = 6,
-        BR_COND_OLT = 7,
-};
-
-enum bifrost_branch_code {
-        BR_ALWAYS = 63,
-};
-
-#define BIFROST_ADD_OP_BRANCH (0x0d000 >> 12)
-
-struct bifrost_branch {
-        unsigned src0 : 3;
-
-        /* For BR_SIZE_ZERO, upper two bits become ctrl */
-        unsigned src1 : 3;
-
-        /* Offset source -- always uniform/const but
-         * theoretically could support indirect jumps? */
-        unsigned src2 : 3;
-
-        enum bifrost_branch_cond cond : 3;
-        enum branch_bit_size size : 3;
-
-        unsigned op : 5;
-};
-
-/* Clause packing */
-
-struct bifrost_fmt1 {
-        unsigned ins_0 : 3;
-        unsigned tag : 5;
-        uint64_t ins_1 : 64;
-        unsigned ins_2 : 11;
-        uint64_t header : 45;
-} __attribute__((packed));
-
-#define BIFROST_FMT1_INSTRUCTIONS    0b00101
-#define BIFROST_FMT1_FINAL           0b01001
-#define BIFROST_FMT1_CONSTANTS       0b00001
-
 #define BIFROST_FMTC_CONSTANTS       0b0011
 #define BIFROST_FMTC_FINAL           0b0111
 
@@ -321,6 +239,91 @@ struct bifrost_fmt_constant {
         uint64_t imm_1 : 60;
         uint64_t imm_2 : 60;
 } __attribute__((packed));
+
+/* Clause formats, encoded in a table */
+
+enum bi_clause_subword {
+        /* Literal 3-bit values */
+        BI_CLAUSE_SUBWORD_LITERAL_0 = 0,
+        /* etc */
+        BI_CLAUSE_SUBWORD_LITERAL_7 = 7,
+
+        /* The value of the corresponding tuple in the corresponding bits */
+        BI_CLAUSE_SUBWORD_TUPLE_0 = 8,
+        /* etc */
+        BI_CLAUSE_SUBWORD_TUPLE_7 = 15,
+
+        /* Clause header */
+        BI_CLAUSE_SUBWORD_HEADER = 16,
+
+        /* Leave zero, but semantically distinct from literal 0 */
+        BI_CLAUSE_SUBWORD_RESERVED = 17,
+
+        /* Embedded constant 0 */
+        BI_CLAUSE_SUBWORD_CONSTANT = 18,
+
+        /* M bits controlling modifier for the constant */
+        BI_CLAUSE_SUBWORD_M = 19,
+
+        /* Z bit: 1 to begin encoding constants, 0 to terminate the clause */
+        BI_CLAUSE_SUBWORD_Z = 20,
+
+        /* Upper 3-bits of a given tuple and zero extended */
+        BI_CLAUSE_SUBWORD_UPPER_0 = 32,
+        /* etc */
+        BI_CLAUSE_SUBWORD_UPPER_7 = BI_CLAUSE_SUBWORD_UPPER_0 + 7,
+
+        /* Upper 3-bits of two tuples, concatenated and zero-extended */
+        BI_CLAUSE_SUBWORD_UPPER_23 = BI_CLAUSE_SUBWORD_UPPER_0 + 23,
+        BI_CLAUSE_SUBWORD_UPPER_56 = BI_CLAUSE_SUBWORD_UPPER_0 + 56,
+};
+
+#define L(x) ((enum bi_clause_subword)(BI_CLAUSE_SUBWORD_LITERAL_0 + x))
+#define U(x) ((enum bi_clause_subword)(BI_CLAUSE_SUBWORD_UPPER_0 + x))
+#define T(x) ((enum bi_clause_subword)(BI_CLAUSE_SUBWORD_TUPLE_0 + x))
+#define EC   BI_CLAUSE_SUBWORD_CONSTANT
+#define M    BI_CLAUSE_SUBWORD_M
+#define Z    BI_CLAUSE_SUBWORD_Z
+#define H    BI_CLAUSE_SUBWORD_HEADER
+#define R    BI_CLAUSE_SUBWORD_RESERVED
+
+struct bi_clause_format {
+        unsigned format; /* format number */
+        unsigned pos; /* index in the clause */
+        enum bi_clause_subword tag_1; /* 2-bits */
+        enum bi_clause_subword tag_2; /* 3-bits */
+        enum bi_clause_subword tag_3; /* 3-bits */
+        enum bi_clause_subword s0_s3; /* 60 bits */
+        enum bi_clause_subword s4; /* 15 bits */
+        enum bi_clause_subword s5_s6; /* 30 bits */
+        enum bi_clause_subword s7; /* 15 bits */
+};
+
+static const struct bi_clause_format bi_clause_formats[] = {
+        {  0, 0, L(0), L(5), U(0), T(0), T(0), H,    H     },
+        {  0, 0, Z,    L(1), U(0), T(0), T(0), H,    H     },
+        {  1, 1, Z,    L(0), L(3), T(1), T(1), R,    U(1)  },
+        {  2, 1, L(0), L(4), U(1), T(1), T(1), T(2), T(2)  },
+        {  3, 2, Z,    L(0), L(4), EC,   M,    T(2), U(2)  },
+        {  4, 2, L(0), L(0), L(1), T(3), T(3), T(2), U(23) },
+        {  4, 2, Z,    L(0), L(5), T(3), T(3), T(2), U(23) },
+        {  5, 2, L(2), U(3), U(2), T(3), T(3), T(2), EC    },
+        {  6, 3, Z,    L(2), U(4), T(4), T(4), EC,   EC    },
+        {  7, 3, L(1), L(4), U(4), T(4), T(4), T(5), T(5)  },
+        {  8, 4, Z,    L(0), L(6), EC,   M,    T(5), U(5)  },
+        {  9, 4, Z,    L(0), L(7), T(6), T(6), T(5), U(56) },
+        { 10, 4, L(3), U(6), U(5), T(6), T(6), T(5), EC    },
+        { 11, 5, Z,    L(3), U(7), T(7), T(7), EC,   EC    },
+};
+
+#undef L
+#undef U
+#undef T
+#undef EC
+#undef M
+#undef Z
+#undef H
+#undef R
 
 /* 32-bit modes for slots 2/3, as encoded in the register block. Other values
  * are reserved. First part specifies behaviour of slot 2 (Idle, Read, Write
@@ -376,6 +379,7 @@ struct bifrost_reg_ctrl_23 {
         bool slot3_fma;
 };
 
+#ifndef __cplusplus
 static const struct bifrost_reg_ctrl_23 bifrost_reg_ctrl_lut[32] = {
         [BIFROST_R_WL_FMA]  = { BIFROST_OP_READ,     BIFROST_OP_WRITE_LO, true },
         [BIFROST_R_WH_FMA]  = { BIFROST_OP_READ,     BIFROST_OP_WRITE_HI, true },
@@ -404,9 +408,18 @@ static const struct bifrost_reg_ctrl_23 bifrost_reg_ctrl_lut[32] = {
         [BIFROST_WH_WL_MIX] = { BIFROST_OP_WRITE_HI, BIFROST_OP_WRITE_LO, false },
         [BIFROST_IDLE]      = { BIFROST_OP_IDLE,     BIFROST_OP_IDLE,     true },
 };
+#endif
 
 /* Texture operator descriptors in various states. Usually packed in the
  * compiler and stored as a constant */
+
+enum bifrost_texture_operation_mode {
+        /* Dual texturing */
+        BIFROST_TEXTURE_OPERATION_DUAL = 1,
+
+        /* Single texturing */
+        BIFROST_TEXTURE_OPERATION_SINGLE = 3,
+};
 
 enum bifrost_index {
         /* Both texture/sampler index immediate */
@@ -541,6 +554,37 @@ struct bifrost_texture_operation {
         unsigned mask : 4;
 } __attribute__((packed));
 
+struct bifrost_dual_texture_operation {
+        unsigned primary_sampler_index : 2;
+        unsigned mode : 2; /* 0x1 for dual */
+        unsigned primary_texture_index : 2;
+        unsigned secondary_sampler_index : 2;
+        unsigned secondary_texture_index : 2;
+
+        /* Leave zero for dual texturing */
+        unsigned reserved : 1;
+        unsigned index_mode_zero : 1;
+
+        /* Base staging register to write the secondary results to */
+        unsigned secondary_register : 6;
+
+        /* Format/mask for each texture */
+        enum bifrost_texture_format secondary_format : 3;
+        unsigned secondary_mask : 4;
+
+        enum bifrost_texture_format primary_format : 3;
+        unsigned primary_mask : 4;
+} __attribute__((packed));
+
+static inline uint32_t
+bi_dual_tex_as_u32(struct bifrost_dual_texture_operation desc)
+{
+        uint32_t desc_u;
+        memcpy(&desc_u, &desc, sizeof(desc));
+
+        return desc_u;
+}
+
 #define BIFROST_MEGA_SAMPLE 128
 #define BIFROST_ALL_SAMPLES 255
 #define BIFROST_CURRENT_PIXEL 255
@@ -551,5 +595,38 @@ struct bifrost_pixel_indices {
         unsigned x : 8;
         unsigned y : 8;
 } __attribute__((packed));
+
+enum bi_constmod {
+        BI_CONSTMOD_NONE,
+        BI_CONSTMOD_PC_LO,
+        BI_CONSTMOD_PC_HI,
+        BI_CONSTMOD_PC_LO_HI
+};
+
+struct bi_constants {
+        /* Raw constant values */
+        uint64_t raw[6];
+
+        /* Associated modifier derived from M values */
+        enum bi_constmod mods[6];
+};
+
+/* FAU selectors for constants are out-of-order, construct the top bits
+ * here given a embedded constant index in a clause */
+
+static inline unsigned
+bi_constant_field(unsigned idx)
+{
+        const unsigned values[] = {
+                4, 5, 6, 7, 2, 3
+        };
+
+        assert(idx <= 5);
+        return values[idx] << 4;
+}
+
+#ifdef __cplusplus
+} /* extern C */
+#endif
 
 #endif

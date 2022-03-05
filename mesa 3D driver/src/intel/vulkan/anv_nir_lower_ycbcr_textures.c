@@ -50,7 +50,7 @@ get_texture_size(struct ycbcr_state *state, nir_deref_instr *texture)
    tex->sampler_dim = glsl_get_sampler_dim(type);
    tex->is_array = glsl_sampler_type_is_array(type);
    tex->is_shadow = glsl_sampler_type_is_shadow(type);
-   tex->dest_type = nir_type_int;
+   tex->dest_type = nir_type_int32;
 
    tex->src[0].src_type = nir_tex_src_texture_deref;
    tex->src[0].src = nir_src_for_ssa(&texture->dest.ssa);
@@ -133,9 +133,9 @@ create_plane_tex_instr_implicit(struct ycbcr_state *state,
                                                            plane_format));
             break;
          }
-         /* fall through */
+         FALLTHROUGH;
       default:
-         nir_src_copy(&tex->src[i].src, &old_tex->src[i].src, tex);
+         nir_src_copy(&tex->src[i].src, &old_tex->src[i].src);
          break;
       }
    }
@@ -199,10 +199,17 @@ swizzle_channel(struct isl_swizzle swizzle, unsigned channel)
 }
 
 static bool
-try_lower_tex_ycbcr(const struct anv_pipeline_layout *layout,
-                    nir_builder *builder,
-                    nir_tex_instr *tex)
+anv_nir_lower_ycbcr_textures_instr(nir_builder *builder,
+                                   nir_instr *instr,
+                                   void *cb_data)
 {
+   const struct anv_pipeline_layout *layout = cb_data;
+
+   if (instr->type != nir_instr_type_tex)
+      return false;
+
+   nir_tex_instr *tex = nir_instr_as_tex(instr);
+
    int deref_src_idx = nir_tex_instr_src_index(tex, nir_tex_src_texture_deref);
    assert(deref_src_idx >= 0);
    nir_deref_instr *deref = nir_src_as_deref(tex->src[deref_src_idx].src);
@@ -324,7 +331,7 @@ try_lower_tex_ycbcr(const struct anv_pipeline_layout *layout,
                                         swizzled_bpcs);
    }
 
-   nir_ssa_def_rewrite_uses(&tex->dest.ssa, nir_src_for_ssa(result));
+   nir_ssa_def_rewrite_uses(&tex->dest.ssa, result);
    nir_instr_remove(&tex->instr);
 
    return true;
@@ -334,34 +341,9 @@ bool
 anv_nir_lower_ycbcr_textures(nir_shader *shader,
                              const struct anv_pipeline_layout *layout)
 {
-   bool progress = false;
-
-   nir_foreach_function(function, shader) {
-      if (!function->impl)
-         continue;
-
-      bool function_progress = false;
-      nir_builder builder;
-      nir_builder_init(&builder, function->impl);
-
-      nir_foreach_block(block, function->impl) {
-         nir_foreach_instr_safe(instr, block) {
-            if (instr->type != nir_instr_type_tex)
-               continue;
-
-            nir_tex_instr *tex = nir_instr_as_tex(instr);
-            function_progress |= try_lower_tex_ycbcr(layout, &builder, tex);
-         }
-      }
-
-      if (function_progress) {
-         nir_metadata_preserve(function->impl,
-                               nir_metadata_block_index |
-                               nir_metadata_dominance);
-      }
-
-      progress |= function_progress;
-   }
-
-   return progress;
+   return nir_shader_instructions_pass(shader,
+                                       anv_nir_lower_ycbcr_textures_instr,
+                                       nir_metadata_block_index |
+                                       nir_metadata_dominance,
+                                       (void *)layout);
 }

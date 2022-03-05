@@ -18,14 +18,24 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+bison_command = []
+if yacc_is_bison
+  bison_command = [
+    prog_bison, '-o', '@OUTPUT0@', '-p', 'glcpp_parser_',
+    '--defines=@OUTPUT1@', '@INPUT@',
+  ]
+else
+  bison_command = [
+    prog_bison, '-o', '@OUTPUT0@', '-p', 'glcpp_parser_',
+    '-H', '@OUTPUT1@', '@INPUT@',
+  ]
+endif
+
 glcpp_parse = custom_target(
   'glcpp-parse.[ch]',
   input : 'glcpp-parse.y',
   output : ['glcpp-parse.c', 'glcpp-parse.h'],
-  command : [
-    prog_bison, '-o', '@OUTPUT0@', '-p', 'glcpp_parser_',
-    '--defines=@OUTPUT1@', '@INPUT@',
-  ],
+  command : bison_command
 )
 
 glcpp_lex = custom_target(
@@ -60,6 +70,7 @@ libglcpp_standalone = static_library(
   'glcpp_standalone',
   'pp_standalone_scaffolding.c',
   link_with : libglcpp,
+  dependencies : idep_mesautil,
   include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux],
   c_args : [no_override_init_args, c_msvc_compat_args, _extra_args],
   cpp_args : [cpp_msvc_compat_args, _extra_args],
@@ -70,7 +81,7 @@ libglcpp_standalone = static_library(
 glcpp = executable(
   'glcpp',
   'glcpp.c',
-  dependencies : [dep_m, idep_getopt],
+  dependencies : [dep_m, idep_getopt, idep_mesautil],
   include_directories : [inc_include, inc_src, inc_mapi, inc_mesa, inc_gallium, inc_gallium_aux],
   link_with : [libglcpp_standalone, libglsl_util],
   c_args : [no_override_init_args, c_msvc_compat_args],
@@ -78,20 +89,16 @@ glcpp = executable(
   build_by_default : false,
 )
 
+# Meson can't auto-skip these on cross builds because of the python wrapper
+#
+# TODO: has_exe_wrapper() is deprecated and renamed to can_run_host_binaries()
+# starting with Meson 0.55.0
+#
 # FIXME: these fail on windows due to whitespace differences
-if with_any_opengl and with_tests and host_machine.system() != 'windows'
+if with_any_opengl and with_tests and meson.has_exe_wrapper() and \
+   host_machine.system() != 'windows'
   modes = ['unix', 'windows', 'oldmac', 'bizarro']
-  if dep_valgrind.found()
-    modes += ['valgrind']
-  endif
 
-  # For some unfathomable reason, three out of these four tests often time out
-  # when running within CI. On the assumption that there is some
-  # parallelisation badness happening rather than the non-UNIX tests entering
-  # infinite loops, try just marking them as serial-only.
-  #
-  # This should have a negligible impact on runtime since they are quick to
-  # execute.
   foreach m : modes
     test(
       'glcpp test (@0@)'.format(m),
@@ -103,7 +110,6 @@ if with_any_opengl and with_tests and host_machine.system() != 'windows'
       ],
       suite : ['compiler', 'glcpp'],
       timeout: 60,
-      is_parallel: false,
     )
   endforeach
 endif

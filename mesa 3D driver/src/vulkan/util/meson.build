@@ -18,39 +18,98 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+# Mesa-local imports in the Python files must be declared here for correct
+# dependency tracking.
+vk_extensions_depend_files = [
+]
+vk_entrypoints_depend_files = [
+  files('vk_extensions.py'),
+  vk_extensions_depend_files,
+]
+vk_extensions_gen_depend_files = [
+  files('vk_extensions.py'),
+  vk_extensions_depend_files,
+]
+vk_dispatch_table_gen_depend_files = [
+  files('vk_entrypoints.py'),
+  vk_entrypoints_depend_files,
+]
+vk_dispatch_trampolines_gen_depend_files = [
+  files('vk_entrypoints.py'),
+  vk_entrypoints_depend_files,
+]
+vk_entrypoints_gen_depend_files = [
+  files('vk_entrypoints.py'),
+  vk_entrypoints_depend_files,
+]
+vk_cmd_queue_gen_depend_files = [
+  files('vk_entrypoints.py'),
+  vk_entrypoints_depend_files,
+]
+vk_commands_gen_depend_files = [
+  files('vk_entrypoints.py'),
+  vk_entrypoints_depend_files,
+]
+
+vk_entrypoints_gen = files('vk_entrypoints_gen.py')
+vk_extensions_gen = files('vk_extensions_gen.py')
+vk_icd_gen = files('vk_icd_gen.py')
+vk_cmd_queue_gen = files('vk_cmd_queue_gen.py')
+vk_commands_gen = files('vk_commands_gen.py')
+vk_dispatch_trampolines_gen = files('vk_dispatch_trampolines_gen.py')
+
 files_vulkan_util = files(
+  'vk_alloc.c',
   'vk_alloc.h',
-  'vk_debug_report.c',
-  'vk_debug_report.h',
   'vk_format.c',
-  'vk_object.c',
-  'vk_object.h',
   'vk_util.c',
   'vk_util.h',
+)
+
+vk_dispatch_table = custom_target(
+  'vk_dispatch_table',
+  input : ['vk_dispatch_table_gen.py', vk_api_xml],
+  output : ['vk_dispatch_table.c', 'vk_dispatch_table.h'],
+  command : [
+    prog_python, '@INPUT0@', '--xml', '@INPUT1@',
+    '--out-c', '@OUTPUT0@', '--out-h', '@OUTPUT1@'
+  ],
+  depend_files : vk_dispatch_table_gen_depend_files,
 )
 
 vk_enum_to_str = custom_target(
   'vk_enum_to_str',
   input : ['gen_enum_to_str.py', vk_api_xml],
-  output : ['vk_enum_to_str.c', 'vk_enum_to_str.h'],
+  output : ['vk_enum_to_str.c', 'vk_enum_to_str.h', 'vk_enum_defines.h'],
   command : [
     prog_python, '@INPUT0@', '--xml', '@INPUT1@',
     '--outdir', meson.current_build_dir()
   ],
 )
 
+vk_extensions = custom_target(
+  'vk_extensions',
+  input : ['vk_extensions_gen.py', vk_api_xml],
+  output : ['vk_extensions.c', 'vk_extensions.h'],
+  command : [
+    prog_python, '@INPUT0@', '--xml', '@INPUT1@',
+    '--out-c', '@OUTPUT0@', '--out-h', '@OUTPUT1@'
+  ],
+  depend_files : vk_extensions_gen_depend_files,
+)
+
 libvulkan_util = static_library(
   'vulkan_util',
-  [files_vulkan_util, vk_enum_to_str],
+  [files_vulkan_util, vk_dispatch_table, vk_enum_to_str, vk_extensions],
   include_directories : [inc_include, inc_src, inc_gallium],
-  dependencies : vulkan_wsi_deps,
+  dependencies : [vulkan_wsi_deps, idep_mesautil, idep_nir_headers],
   c_args : [vulkan_wsi_args],
   gnu_symbol_visibility : 'hidden',
   build_by_default : false,
 )
 
 idep_vulkan_util_headers = declare_dependency(
-  sources : vk_enum_to_str[1],
+  sources : [vk_dispatch_table[1], vk_enum_to_str[1], vk_extensions[1]],
   include_directories : include_directories('.')
 )
 

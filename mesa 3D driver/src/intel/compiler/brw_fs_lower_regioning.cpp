@@ -120,11 +120,91 @@ namespace {
    }
 
    /*
+    * Return the closest legal execution type for an instruction on
+    * the specified platform.
+    */
+   brw_reg_type
+   required_exec_type(const intel_device_info *devinfo, const fs_inst *inst)
+   {
+      const brw_reg_type t = get_exec_type(inst);
+      const bool has_64bit = brw_reg_type_is_floating_point(t) ?
+         devinfo->has_64bit_float : devinfo->has_64bit_int;
+
+      switch (inst->opcode) {
+      case SHADER_OPCODE_SHUFFLE:
+         /* IVB has an issue (which we found empirically) where it reads
+          * two address register components per channel for indirectly
+          * addressed 64-bit sources.
+          *
+          * From the Cherryview PRM Vol 7. "Register Region Restrictions":
+          *
+          *    "When source or destination datatype is 64b or operation is
+          *    integer DWord multiply, indirect addressing must not be
+          *    used."
+          *
+          * Work around both of the above and handle platforms that
+          * don't support 64-bit types at all.
+          */
+         if ((!has_64bit || devinfo->verx10 == 70 ||
+              devinfo->platform == INTEL_PLATFORM_CHV ||
+              intel_device_info_is_9lp(devinfo)) && type_sz(t) > 4)
+            return BRW_REGISTER_TYPE_UD;
+         else if (has_dst_aligned_region_restriction(devinfo, inst))
+            return brw_int_type(type_sz(t), false);
+         else
+            return t;
+
+      case SHADER_OPCODE_SEL_EXEC:
+         if (!has_64bit && type_sz(t) > 4)
+            return BRW_REGISTER_TYPE_UD;
+         else
+            return t;
+
+      case SHADER_OPCODE_QUAD_SWIZZLE:
+         if (has_dst_aligned_region_restriction(devinfo, inst))
+            return brw_int_type(type_sz(t), false);
+         else
+            return t;
+
+      case SHADER_OPCODE_CLUSTER_BROADCAST:
+         /* From the Cherryview PRM Vol 7. "Register Region Restrictions":
+          *
+          *    "When source or destination datatype is 64b or operation is
+          *    integer DWord multiply, indirect addressing must not be
+          *    used."
+          *
+          * Work around the above and handle platforms that don't
+          * support 64-bit types at all.
+          */
+         if ((!has_64bit || devinfo->platform == INTEL_PLATFORM_CHV ||
+              intel_device_info_is_9lp(devinfo)) && type_sz(t) > 4)
+            return BRW_REGISTER_TYPE_UD;
+         else
+            return brw_int_type(type_sz(t), false);
+
+      case SHADER_OPCODE_BROADCAST:
+      case SHADER_OPCODE_MOV_INDIRECT:
+         if (((devinfo->verx10 == 70 ||
+               devinfo->platform == INTEL_PLATFORM_CHV ||
+               intel_device_info_is_9lp(devinfo) ||
+               devinfo->verx10 >= 125) && type_sz(inst->src[0].type) > 4) ||
+             (devinfo->verx10 >= 125 &&
+              brw_reg_type_is_floating_point(inst->src[0].type)))
+            return brw_int_type(type_sz(t), false);
+         else
+            return t;
+
+      default:
+         return t;
+      }
+   }
+
+   /*
     * Return whether the instruction has an unsupported channel bit layout
     * specified for the i-th source region.
     */
    bool
-   has_invalid_src_region(const gen_device_info *devinfo, const fs_inst *inst,
+   has_invalid_src_region(const intel_device_info *devinfo, const fs_inst *inst,
                           unsigned i)
    {
       if (is_unordered(inst) || inst->is_control_source(i))
@@ -140,7 +220,7 @@ namespace {
        * used to pack components Y and W of a vector at offset 16B of a SIMD
        * register. The problem doesn't occur if the stride of the source is 0.
        */
-      if (devinfo->gen == 8 &&
+      if (devinfo->ver == 8 &&
           inst->opcode == BRW_OPCODE_MAD &&
           inst->src[i].type == BRW_REGISTER_TYPE_HF &&
           reg_offset(inst->src[i]) % REG_SIZE > 0 &&
@@ -165,7 +245,7 @@ namespace {
     * specified for the destination region.
     */
    bool
-   has_invalid_dst_region(const gen_device_info *devinfo,
+   has_invalid_dst_region(const intel_device_info *devinfo,
                           const fs_inst *inst)
    {
       if (is_unordered(inst)) {
@@ -185,16 +265,48 @@ namespace {
       }
    }
 
+   /**
+    * Return a non-zero value if the execution type of the instruction is
+    * unsupported.  The destination and sources matching the returned mask
+    * will be bit-cast to an integer type of appropriate size, lowering any
+    * source or destination modifiers into separate MOV instructions.
+    */
+   unsigned
+   has_invalid_exec_type(const intel_device_info *devinfo, const fs_inst *inst)
+   {
+      if (required_exec_type(devinfo, inst) != get_exec_type(inst)) {
+         switch (inst->opcode) {
+         case SHADER_OPCODE_SHUFFLE:
+         case SHADER_OPCODE_QUAD_SWIZZLE:
+         case SHADER_OPCODE_CLUSTER_BROADCAST:
+         case SHADER_OPCODE_BROADCAST:
+         case SHADER_OPCODE_MOV_INDIRECT:
+            return 0x1;
+
+         case SHADER_OPCODE_SEL_EXEC:
+            return 0x3;
+
+         default:
+            unreachable("Unknown invalid execution type source mask.");
+         }
+      } else {
+         return 0;
+      }
+   }
+
    /*
     * Return whether the instruction has unsupported source modifiers
     * specified for the i-th source region.
     */
    bool
-   has_invalid_src_modifiers(const gen_device_info *devinfo, const fs_inst *inst,
-                             unsigned i)
+   has_invalid_src_modifiers(const intel_device_info *devinfo,
+                             const fs_inst *inst, unsigned i)
    {
-      return !inst->can_do_source_mods(devinfo) &&
-             (inst->src[i].negate || inst->src[i].abs);
+      return (!inst->can_do_source_mods(devinfo) &&
+              (inst->src[i].negate || inst->src[i].abs)) ||
+             ((has_invalid_exec_type(devinfo, inst) & (1u << i)) &&
+              (inst->src[i].negate || inst->src[i].abs ||
+               inst->src[i].type != get_exec_type(inst)));
    }
 
    /*
@@ -202,29 +314,32 @@ namespace {
     * specified for the destination.
     */
    bool
-   has_invalid_conversion(const gen_device_info *devinfo, const fs_inst *inst)
+   has_invalid_conversion(const intel_device_info *devinfo, const fs_inst *inst)
    {
       switch (inst->opcode) {
       case BRW_OPCODE_MOV:
          return false;
       case BRW_OPCODE_SEL:
          return inst->dst.type != get_exec_type(inst);
-      case SHADER_OPCODE_BROADCAST:
-      case SHADER_OPCODE_MOV_INDIRECT:
-         /* The source and destination types of these may be hard-coded to
-          * integer at codegen time due to hardware limitations of 64-bit
-          * types.
-          */
-         return ((devinfo->gen == 7 && !devinfo->is_haswell) ||
-                 devinfo->is_cherryview || gen_device_info_is_9lp(devinfo)) &&
-                type_sz(inst->src[0].type) > 4 &&
-                inst->dst.type != inst->src[0].type;
       default:
-         /* FIXME: We assume the opcodes don't explicitly mentioned before
-          * just work fine with arbitrary conversions.
+         /* FIXME: We assume the opcodes not explicitly mentioned before just
+          * work fine with arbitrary conversions, unless they need to be
+          * bit-cast.
           */
-         return false;
+         return has_invalid_exec_type(devinfo, inst) &&
+                inst->dst.type != get_exec_type(inst);
       }
+   }
+
+   /**
+    * Return whether the instruction has unsupported destination modifiers.
+    */
+   bool
+   has_invalid_dst_modifiers(const intel_device_info *devinfo, const fs_inst *inst)
+   {
+      return (has_invalid_exec_type(devinfo, inst) &&
+              (inst->saturate || inst->conditional_mod)) ||
+             has_invalid_conversion(devinfo, inst);
    }
 
    /**
@@ -320,7 +435,7 @@ namespace {
       if (!has_inconsistent_cmod(inst))
          inst->conditional_mod = BRW_CONDITIONAL_NONE;
 
-      assert(!inst->flags_written() || !mov->predicate);
+      assert(!inst->flags_written(v->devinfo) || !mov->predicate);
       return true;
    }
 
@@ -424,16 +539,65 @@ namespace {
    }
 
    /**
+    * Change sources and destination of the instruction to an
+    * appropriate legal type, splitting the instruction into multiple
+    * ones of smaller execution type if necessary, to be used in cases
+    * where the execution type of an instruction is unsupported.
+    */
+   bool
+   lower_exec_type(fs_visitor *v, bblock_t *block, fs_inst *inst)
+   {
+      assert(inst->dst.type == get_exec_type(inst));
+      const unsigned mask = has_invalid_exec_type(v->devinfo, inst);
+      const brw_reg_type raw_type = required_exec_type(v->devinfo, inst);
+      const unsigned n = get_exec_type_size(inst) / type_sz(raw_type);
+      const fs_builder ibld(v, block, inst);
+
+      fs_reg tmp = ibld.vgrf(inst->dst.type, inst->dst.stride);
+      ibld.UNDEF(tmp);
+      tmp = horiz_stride(tmp, inst->dst.stride);
+
+      for (unsigned j = 0; j < n; j++) {
+         fs_inst sub_inst = *inst;
+
+         for (unsigned i = 0; i < inst->sources; i++) {
+            if (mask & (1u << i)) {
+               assert(inst->src[i].type == inst->dst.type);
+               sub_inst.src[i] = subscript(inst->src[i], raw_type, j);
+            }
+         }
+
+         sub_inst.dst = subscript(tmp, raw_type, j);
+
+         assert(sub_inst.size_written == sub_inst.dst.component_size(sub_inst.exec_size));
+         assert(!sub_inst.flags_written(v->devinfo) && !sub_inst.saturate);
+         ibld.emit(sub_inst);
+
+         fs_inst *mov = ibld.MOV(subscript(inst->dst, raw_type, j),
+                                 subscript(tmp, raw_type, j));
+         if (inst->opcode != BRW_OPCODE_SEL) {
+            mov->predicate = inst->predicate;
+            mov->predicate_inverse = inst->predicate_inverse;
+         }
+         lower_instruction(v, block, mov);
+      }
+
+      inst->remove(block);
+
+      return true;
+   }
+
+   /**
     * Legalize the source and destination regioning controls of the specified
     * instruction.
     */
    bool
    lower_instruction(fs_visitor *v, bblock_t *block, fs_inst *inst)
    {
-      const gen_device_info *devinfo = v->devinfo;
+      const intel_device_info *devinfo = v->devinfo;
       bool progress = false;
 
-      if (has_invalid_conversion(devinfo, inst))
+      if (has_invalid_dst_modifiers(devinfo, inst))
          progress |= lower_dst_modifiers(v, block, inst);
 
       if (has_invalid_dst_region(devinfo, inst))
@@ -446,6 +610,9 @@ namespace {
          if (has_invalid_src_region(devinfo, inst, i))
             progress |= lower_src_region(v, block, inst, i);
       }
+
+      if (has_invalid_exec_type(devinfo, inst))
+         progress |= lower_exec_type(v, block, inst);
 
       return progress;
    }

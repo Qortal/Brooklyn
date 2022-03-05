@@ -34,14 +34,15 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
-#include <pthread.h>
 #include <stdio.h>
 #include <assert.h>
 
 #include <xf86drm.h>
 
 #include "util/list.h"
+#include "util/log.h"
 #include "util/macros.h"
+#include "util/simple_mtx.h"
 #include "util/timespec.h"
 #include "util/u_atomic.h"
 #include "util/u_debug.h"
@@ -50,7 +51,7 @@
 #include "etnaviv_drmif.h"
 #include "drm-uapi/etnaviv_drm.h"
 
-extern pthread_mutex_t etna_drm_table_lock;
+extern simple_mtx_t etna_drm_table_lock;
 
 struct etna_bo_bucket {
 	uint32_t size;
@@ -65,6 +66,7 @@ struct etna_bo_cache {
 
 struct etna_device {
 	int fd;
+	uint32_t drm_version;
 	int refcnt;
 
 	/* tables to keep track of bo's, to avoid "evil-twin" etna_bo objects:
@@ -79,12 +81,16 @@ struct etna_device {
 	void *handle_table, *name_table;
 
 	struct etna_bo_cache bo_cache;
+	struct list_head zombie_list;
 
 	int use_softpin;
 	struct util_vma_heap address_space;
 
 	int closefd;        /* call close(fd) upon destruction */
 };
+
+void etna_bo_free(struct etna_bo *bo);
+void etna_bo_kill_zombies(struct etna_device *dev);
 
 void etna_bo_cache_init(struct etna_bo_cache *cache);
 void etna_bo_cache_cleanup(struct etna_bo_cache *cache, time_t time);
@@ -187,20 +193,27 @@ struct etna_perfmon_signal
 
 #define ALIGN(v,a) (((v) + (a) - 1) & ~((a) - 1))
 
-#define enable_debug 0  /* TODO make dynamic */
+#define ETNA_DRM_MSGS 0x40
+extern int etna_mesa_debug;
 
 #define INFO_MSG(fmt, ...) \
-		do { debug_printf("[I] "fmt " (%s:%d)\n", \
-				##__VA_ARGS__, __FUNCTION__, __LINE__); } while (0)
+		do { mesa_logi("%s:%d: " fmt, \
+				__FUNCTION__, __LINE__, ##__VA_ARGS__); } while (0)
 #define DEBUG_MSG(fmt, ...) \
-		do if (enable_debug) { debug_printf("[D] "fmt " (%s:%d)\n", \
-				##__VA_ARGS__, __FUNCTION__, __LINE__); } while (0)
+		do if (etna_mesa_debug & ETNA_DRM_MSGS) { \
+		     mesa_logd("%s:%d: " fmt, \
+				__FUNCTION__, __LINE__, ##__VA_ARGS__); } while (0)
 #define WARN_MSG(fmt, ...) \
-		do { debug_printf("[W] "fmt " (%s:%d)\n", \
-				##__VA_ARGS__, __FUNCTION__, __LINE__); } while (0)
+		do { mesa_logw("%s:%d: " fmt, \
+				__FUNCTION__, __LINE__, ##__VA_ARGS__); } while (0)
 #define ERROR_MSG(fmt, ...) \
-		do { debug_printf("[E] " fmt " (%s:%d)\n", \
-				##__VA_ARGS__, __FUNCTION__, __LINE__); } while (0)
+		do { mesa_loge("%s:%d: " fmt, \
+				__FUNCTION__, __LINE__, ##__VA_ARGS__); } while (0)
+
+#define DEBUG_BO(msg, bo)						\
+   DEBUG_MSG("%s %p, va: 0x%.8x, size: 0x%.8x, flags: 0x%.8x, "		\
+	     "refcnt: %d, handle: 0x%.8x, name: 0x%.8x",		\
+	     msg, bo, bo->va, bo->size, bo->flags, bo->refcnt, bo->handle, bo->name);
 
 #define VOID2U64(x) ((uint64_t)(unsigned long)(x))
 
@@ -217,7 +230,7 @@ static inline void get_abs_timeout(struct drm_etnaviv_timespec *tv, uint64_t ns)
 }
 
 #if HAVE_VALGRIND
-#  include <valgrind/memcheck.h>
+#  include <memcheck.h>
 
 /*
  * For tracking the backing memory (if valgrind enabled, we force a mmap

@@ -22,7 +22,7 @@
  */
 #include <gtest/gtest.h>
 #include "util/compiler.h"
-#include "main/mtypes.h"
+#include "main/shader_types.h"
 #include "main/macros.h"
 #include "util/ralloc.h"
 #include "string_to_uint_map.h"
@@ -86,6 +86,9 @@ set_uniform_initializer::TearDown()
    ralloc_free(this->mem_ctx);
    this->mem_ctx = NULL;
 
+   if (this->prog->UniformHash)
+      string_to_uint_map_dtor(this->prog->UniformHash);
+
    ralloc_free(this->prog);
    this->prog = NULL;
 
@@ -119,7 +122,7 @@ establish_uniform_storage(struct gl_shader_program *prog, unsigned num_storage,
                                               num_storage);
    prog->data->NumUniformStorage = num_storage;
 
-   prog->data->UniformStorage[index_to_set].name = (char *) name;
+   prog->data->UniformStorage[index_to_set].name.string = (char *) name;
    prog->data->UniformStorage[index_to_set].type = type;
    prog->data->UniformStorage[index_to_set].array_elements = array_size;
    for (int sh = 0; sh < MESA_SHADER_STAGES; sh++) {
@@ -136,13 +139,13 @@ establish_uniform_storage(struct gl_shader_program *prog, unsigned num_storage,
 				     red_zone_components);
 
    prog->UniformHash->put(index_to_set,
-                          prog->data->UniformStorage[index_to_set].name);
+                          prog->data->UniformStorage[index_to_set].name.string);
 
    for (unsigned i = 0; i < num_storage; i++) {
       if (i == index_to_set)
 	 continue;
 
-      prog->data->UniformStorage[i].name = (char *) "invalid slot";
+      prog->data->UniformStorage[i].name.string = (char *) "invalid slot";
       prog->data->UniformStorage[i].type = glsl_type::void_type;
       prog->data->UniformStorage[i].array_elements = 0;
       for (int sh = 0; sh < MESA_SHADER_STAGES; sh++) {

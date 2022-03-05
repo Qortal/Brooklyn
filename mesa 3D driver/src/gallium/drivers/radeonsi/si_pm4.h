@@ -27,7 +27,9 @@
 
 #include "radeon/radeon_winsys.h"
 
-#define SI_PM4_MAX_DW 176
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 // forward defines
 struct si_context;
@@ -41,26 +43,34 @@ struct si_atom {
 
 struct si_pm4_state {
    /* PKT3_SET_*_REG handling */
-   unsigned last_opcode;
-   unsigned last_reg;
-   unsigned last_pm4;
-
-   /* commands for the DE */
-   unsigned ndw;
-   uint32_t pm4[SI_PM4_MAX_DW];
+   uint16_t last_reg;   /* register offset in dwords */
+   uint16_t last_pm4;
+   uint16_t ndw;        /* number of dwords in pm4 */
+   uint8_t last_opcode;
 
    /* For shader states only */
-   struct si_shader *shader;
+   bool is_shader;
    struct si_atom atom;
+
+   /* commands for the DE */
+   uint16_t max_dw;
+
+   /* This must be the last field because the array can continue after the structure. */
+   uint32_t pm4[64];
 };
 
 void si_pm4_cmd_add(struct si_pm4_state *state, uint32_t dw);
 void si_pm4_set_reg(struct si_pm4_state *state, unsigned reg, uint32_t val);
+void si_pm4_set_reg_idx3(struct si_pm4_state *state, unsigned reg, uint32_t val);
 
 void si_pm4_clear_state(struct si_pm4_state *state);
 void si_pm4_free_state(struct si_context *sctx, struct si_pm4_state *state, unsigned idx);
 
 void si_pm4_emit(struct si_context *sctx, struct si_pm4_state *state);
 void si_pm4_reset_emitted(struct si_context *sctx, bool first_cs);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -41,7 +41,7 @@
 
 
 #include "brw_compiler.h"
-#include "dev/gen_debug.h"
+#include "dev/intel_debug.h"
 
 static inline void
 assign_vue_slot(struct brw_vue_map *vue_map, int varying, int slot)
@@ -57,7 +57,7 @@ assign_vue_slot(struct brw_vue_map *vue_map, int varying, int slot)
  * Compute the VUE map for a shader stage.
  */
 void
-brw_compute_vue_map(const struct gen_device_info *devinfo,
+brw_compute_vue_map(const struct intel_device_info *devinfo,
                     struct brw_vue_map *vue_map,
                     uint64_t slots_valid,
                     bool separate,
@@ -67,7 +67,7 @@ brw_compute_vue_map(const struct gen_device_info *devinfo,
     * the SSO layout when using geometry/tessellation shaders or 32 FS input
     * varyings, which only exist on Gen >= 6.  It's also a bit more efficient.
     */
-   if (devinfo->gen < 6)
+   if (devinfo->ver < 6)
       separate = false;
 
    if (separate) {
@@ -86,10 +86,11 @@ brw_compute_vue_map(const struct gen_device_info *devinfo,
    vue_map->slots_valid = slots_valid;
    vue_map->separate = separate;
 
-   /* gl_Layer and gl_ViewportIndex don't get their own varying slots -- they
-    * are stored in the first VUE slot (VARYING_SLOT_PSIZ).
+   /* gl_Layer, gl_ViewportIndex & gl_PrimitiveShadingRateEXT don't get their
+    * own varying slots -- they are stored in the first VUE slot
+    * (VARYING_SLOT_PSIZ).
     */
-   slots_valid &= ~(VARYING_BIT_LAYER | VARYING_BIT_VIEWPORT);
+   slots_valid &= ~(VARYING_BIT_LAYER | VARYING_BIT_VIEWPORT | VARYING_BIT_PRIMITIVE_SHADING_RATE);
 
    /* Make sure that the values we store in vue_map->varying_to_slot and
     * vue_map->slot_to_varying won't overflow the signed chars that are used
@@ -112,21 +113,21 @@ brw_compute_vue_map(const struct gen_device_info *devinfo,
     * See the Sandybridge PRM, Volume 2 Part 1, section 1.5.1 (page 30),
     * "Vertex URB Entry (VUE) Formats" which describes the VUE header layout.
     */
-   if (devinfo->gen < 6) {
+   if (devinfo->ver < 6) {
       /* There are 8 dwords in VUE header pre-Ironlake:
        * dword 0-3 is indices, point width, clip flags.
        * dword 4-7 is ndc position
        * dword 8-11 is the first vertex data.
        *
        * On Ironlake the VUE header is nominally 20 dwords, but the hardware
-       * will accept the same header layout as Gen4 [and should be a bit faster]
+       * will accept the same header layout as Gfx4 [and should be a bit faster]
        */
       assign_vue_slot(vue_map, VARYING_SLOT_PSIZ, slot++);
       assign_vue_slot(vue_map, BRW_VARYING_SLOT_NDC, slot++);
       assign_vue_slot(vue_map, VARYING_SLOT_POS, slot++);
    } else {
       /* There are 8 or 16 DWs (D0-D15) in VUE header on Sandybridge:
-       * dword 0-3 of the header is indices, point width, clip flags.
+       * dword 0-3 of the header is shading rate, indices, point width, clip flags.
        * dword 4-7 is the 4D space position
        * dword 8-15 of the vertex header is the user clip distance if
        * enabled.
@@ -278,12 +279,12 @@ brw_compute_tess_vue_map(struct brw_vue_map *vue_map,
 }
 
 static const char *
-varying_name(brw_varying_slot slot)
+varying_name(brw_varying_slot slot, gl_shader_stage stage)
 {
    assume(slot < BRW_VARYING_SLOT_COUNT);
 
    if (slot < VARYING_SLOT_MAX)
-      return gl_varying_slot_name((gl_varying_slot)slot);
+      return gl_varying_slot_name_for_stage((gl_varying_slot)slot, stage);
 
    static const char *brw_names[] = {
       [BRW_VARYING_SLOT_NDC - VARYING_SLOT_MAX] = "BRW_VARYING_SLOT_NDC",
@@ -295,7 +296,8 @@ varying_name(brw_varying_slot slot)
 }
 
 void
-brw_print_vue_map(FILE *fp, const struct brw_vue_map *vue_map)
+brw_print_vue_map(FILE *fp, const struct brw_vue_map *vue_map,
+                  gl_shader_stage stage)
 {
    if (vue_map->num_per_vertex_slots > 0 || vue_map->num_per_patch_slots > 0) {
       fprintf(fp, "PUE map (%d slots, %d/patch, %d/vertex, %s)\n",
@@ -309,7 +311,7 @@ brw_print_vue_map(FILE *fp, const struct brw_vue_map *vue_map)
                     vue_map->slot_to_varying[i] - VARYING_SLOT_PATCH0);
          } else {
             fprintf(fp, "  [%d] %s\n", i,
-                    varying_name(vue_map->slot_to_varying[i]));
+                    varying_name(vue_map->slot_to_varying[i], stage));
          }
       }
    } else {
@@ -317,7 +319,7 @@ brw_print_vue_map(FILE *fp, const struct brw_vue_map *vue_map)
               vue_map->num_slots, vue_map->separate ? "SSO" : "non-SSO");
       for (int i = 0; i < vue_map->num_slots; i++) {
          fprintf(fp, "  [%d] %s\n", i,
-                 varying_name(vue_map->slot_to_varying[i]));
+                 varying_name(vue_map->slot_to_varying[i], stage));
       }
    }
    fprintf(fp, "\n");

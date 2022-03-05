@@ -90,7 +90,7 @@ v3d_qpu_disasm_waddr(struct disasm_state *disasm, uint32_t waddr, bool magic)
                 return;
         }
 
-        const char *name = v3d_qpu_magic_waddr_name(waddr);
+        const char *name = v3d_qpu_magic_waddr_name(disasm->devinfo, waddr);
         if (name)
                 append(disasm, "%s", name);
         else
@@ -110,7 +110,7 @@ v3d_qpu_disasm_add(struct disasm_state *disasm,
         append(disasm, "%s", v3d_qpu_pf_name(instr->flags.apf));
         append(disasm, "%s", v3d_qpu_uf_name(instr->flags.auf));
 
-        append(disasm, "  ");
+        append(disasm, " ");
 
         if (has_dst) {
                 v3d_qpu_disasm_waddr(disasm, instr->alu.add.waddr,
@@ -141,7 +141,7 @@ v3d_qpu_disasm_mul(struct disasm_state *disasm,
         bool has_dst = v3d_qpu_mul_op_has_dst(instr->alu.mul.op);
         int num_src = v3d_qpu_mul_op_num_src(instr->alu.mul.op);
 
-        pad_to(disasm, 21);
+        pad_to(disasm, 30);
         append(disasm, "; ");
 
         append(disasm, "%s", v3d_qpu_mul_op_name(instr->alu.mul.op));
@@ -153,7 +153,7 @@ v3d_qpu_disasm_mul(struct disasm_state *disasm,
         if (instr->alu.mul.op == V3D_QPU_M_NOP)
                 return;
 
-        append(disasm, "  ");
+        append(disasm, " ");
 
         if (has_dst) {
                 v3d_qpu_disasm_waddr(disasm, instr->alu.mul.waddr,
@@ -187,7 +187,9 @@ v3d_qpu_disasm_sig_addr(struct disasm_state *disasm,
         if (!instr->sig_magic)
                 append(disasm, ".rf%d", instr->sig_addr);
         else {
-                const char *name = v3d_qpu_magic_waddr_name(instr->sig_addr);
+                const char *name =
+                        v3d_qpu_magic_waddr_name(disasm->devinfo,
+                                                 instr->sig_addr);
                 if (name)
                         append(disasm, ".%s", name);
                 else
@@ -215,7 +217,7 @@ v3d_qpu_disasm_sig(struct disasm_state *disasm,
                 return;
         }
 
-        pad_to(disasm, 41);
+        pad_to(disasm, 60);
 
         if (sig->thrsw)
                 append(disasm, "; thrsw");

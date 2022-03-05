@@ -64,65 +64,34 @@ extern "C" {
 struct _glapi_table;
 
 
-/** \name Visual-related functions */
-/*@{*/
-
-extern struct gl_config *
-_mesa_create_visual( GLboolean dbFlag,
-                     GLboolean stereoFlag,
-                     GLint redBits,
-                     GLint greenBits,
-                     GLint blueBits,
-                     GLint alphaBits,
-                     GLint depthBits,
-                     GLint stencilBits,
-                     GLint accumRedBits,
-                     GLint accumGreenBits,
-                     GLint accumBlueBits,
-                     GLint accumAlphaBits,
-                     GLuint numSamples );
-
-extern GLboolean
-_mesa_initialize_visual( struct gl_config *v,
-                         GLboolean dbFlag,
-                         GLboolean stereoFlag,
-                         GLint redBits,
-                         GLint greenBits,
-                         GLint blueBits,
-                         GLint alphaBits,
-                         GLint depthBits,
-                         GLint stencilBits,
-                         GLint accumRedBits,
-                         GLint accumGreenBits,
-                         GLint accumBlueBits,
-                         GLint accumAlphaBits,
-                         GLuint numSamples );
-
-extern void
-_mesa_destroy_visual( struct gl_config *vis );
-
-/*@}*/
-
-
 /** \name Context-related functions */
 /*@{*/
 
 extern void
-_mesa_initialize(void);
+_mesa_initialize(const char *extensions_override);
 
 extern GLboolean
 _mesa_initialize_context( struct gl_context *ctx,
                           gl_api api,
+                          bool no_error,
                           const struct gl_config *visual,
                           struct gl_context *share_list,
                           const struct dd_function_table *driverFunctions);
 
+extern struct _glapi_table *
+_mesa_alloc_dispatch_table(bool glthread);
+
+extern void
+_mesa_initialize_exec_table(struct gl_context *ctx);
+
+extern void
+_mesa_initialize_dispatch_tables(struct gl_context *ctx);
+
+extern struct _glapi_table *
+_mesa_new_nop_table(unsigned numEntries, bool glthread);
+
 extern void
 _mesa_free_context_data(struct gl_context *ctx, bool destroy_debug_output);
-
-extern void
-_mesa_destroy_context( struct gl_context *ctx );
-
 
 extern void
 _mesa_copy_context(const struct gl_context *src, struct gl_context *dst, GLuint mask);
@@ -142,10 +111,6 @@ _mesa_get_current_context(void);
 extern void
 _mesa_init_constants(struct gl_constants *consts, gl_api api);
 
-extern void
-_mesa_notifySwapBuffers(struct gl_context *gc);
-
-
 extern struct _glapi_table *
 _mesa_get_dispatch(struct gl_context *ctx);
 
@@ -159,12 +124,6 @@ _mesa_set_context_lost_dispatch(struct gl_context *ctx);
 
 extern void
 _mesa_flush(struct gl_context *ctx);
-
-extern void GLAPIENTRY
-_mesa_Finish( void );
-
-extern void GLAPIENTRY
-_mesa_Flush( void );
 
 /*@}*/
 
@@ -207,13 +166,14 @@ _mesa_inside_dlist_begin_end(const struct gl_context *ctx)
  * and calls dd_function_table::FlushVertices if so. Marks
  * __struct gl_contextRec::NewState with \p newstate.
  */
-#define FLUSH_VERTICES(ctx, newstate)				\
+#define FLUSH_VERTICES(ctx, newstate, pop_attrib_mask)          \
 do {								\
    if (MESA_VERBOSE & VERBOSE_STATE)				\
       _mesa_debug(ctx, "FLUSH_VERTICES in %s\n", __func__);	\
    if (ctx->Driver.NeedFlush & FLUSH_STORED_VERTICES)		\
       vbo_exec_FlushVertices(ctx, FLUSH_STORED_VERTICES);	\
    ctx->NewState |= newstate;					\
+   ctx->PopAttribState |= pop_attrib_mask;                      \
 } while (0)
 
 /**
@@ -356,7 +316,7 @@ static inline bool
 _mesa_has_half_float_textures(const struct gl_context *ctx)
 {
    return _mesa_has_ARB_texture_float(ctx) ||
-          _mesa_has_OES_texture_half_float(ctx) || _mesa_is_gles3(ctx);
+          _mesa_has_OES_texture_half_float(ctx);
 }
 
 static inline bool

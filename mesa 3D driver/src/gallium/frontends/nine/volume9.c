@@ -119,8 +119,7 @@ NineVolume9_ctor( struct NineVolume9 *This,
                                                          This->info.bind, FALSE,
                                                          TRUE);
     if (This->info.format != This->format_internal ||
-        /* DYNAMIC Textures requires same stride as ram buffers.
-         * Do not use workaround by default as it eats more virtual space */
+        /* See surface9.c */
         (pParams->device->workarounds.dynamic_texture_workaround &&
          pDesc->Pool == D3DPOOL_DEFAULT && pDesc->Usage & D3DUSAGE_DYNAMIC)) {
         This->stride_internal = nine_format_get_stride(This->format_internal,
@@ -149,7 +148,7 @@ NineVolume9_dtor( struct NineVolume9 *This )
 
     if (This->transfer) {
         struct pipe_context *pipe = nine_context_get_pipe_multithread(This->base.device);
-        pipe->transfer_unmap(pipe, This->transfer);
+        pipe->texture_unmap(pipe, This->transfer);
         This->transfer = NULL;
     }
 
@@ -344,7 +343,7 @@ NineVolume9_LockBox( struct NineVolume9 *This,
         else
             pipe = NineDevice9_GetPipe(This->base.device);
         pLockedVolume->pBits =
-            pipe->transfer_map(pipe, resource, This->level, usage,
+            pipe->texture_map(pipe, resource, This->level, usage,
                                &box, &This->transfer);
         if (no_refs)
             nine_context_get_pipe_release(This->base.device);
@@ -375,7 +374,7 @@ NineVolume9_UnlockBox( struct NineVolume9 *This )
     user_assert(This->lock_count, D3DERR_INVALIDCALL);
     if (This->transfer) {
         pipe = nine_context_get_pipe_acquire(This->base.device);
-        pipe->transfer_unmap(pipe, This->transfer);
+        pipe->texture_unmap(pipe, This->transfer);
         This->transfer = NULL;
         nine_context_get_pipe_release(This->base.device);
     }

@@ -65,7 +65,7 @@ lp_resource_copy_ms(struct pipe_context *pipe,
                                                   &dst_box,
                                                   &dst_trans);
       if (!dst_map) {
-         pipe->transfer_unmap(pipe, src_trans);
+         pipe->texture_unmap(pipe, src_trans);
          return;
       }
 
@@ -77,8 +77,8 @@ lp_resource_copy_ms(struct pipe_context *pipe,
                     src_map,
                     src_trans->stride, src_trans->layer_stride,
                     0, 0, 0);
-      pipe->transfer_unmap(pipe, dst_trans);
-      pipe->transfer_unmap(pipe, src_trans);
+      pipe->texture_unmap(pipe, dst_trans);
+      pipe->texture_unmap(pipe, src_trans);
    }
 }
 static void
@@ -122,7 +122,7 @@ static void lp_blit(struct pipe_context *pipe,
    if (blit_info->render_condition_enable && !llvmpipe_check_render_cond(lp))
       return;
 
-   if (util_try_blit_via_copy_region(pipe, &info)) {
+   if (util_try_blit_via_copy_region(pipe, &info, lp->render_cond_query != NULL)) {
       return; /* done */
    }
 
@@ -159,7 +159,7 @@ static void lp_blit(struct pipe_context *pipe,
    util_blitter_save_tesseval_shader(lp->blitter, (void*)lp->tes);
    util_blitter_save_depth_stencil_alpha(lp->blitter, (void*)lp->depth_stencil);
    util_blitter_save_stencil_ref(lp->blitter, &lp->stencil_ref);
-   util_blitter_save_sample_mask(lp->blitter, lp->sample_mask);
+   util_blitter_save_sample_mask(lp->blitter, lp->sample_mask, lp->min_samples);
    util_blitter_save_framebuffer(lp->blitter, &lp->framebuffer);
    util_blitter_save_fragment_sampler_states(lp->blitter,
                      lp->num_samplers[PIPE_SHADER_FRAGMENT],
@@ -295,7 +295,7 @@ lp_clear_color_texture_msaa(struct pipe_context *pipe,
       lp_clear_color_texture_helper(dst_trans, dst_map, format, color,
                                     box->width, box->height, box->depth);
    }
-   pipe->transfer_unmap(pipe, dst_trans);
+   pipe->texture_unmap(pipe, dst_trans);
 }
 
 static void
@@ -361,7 +361,7 @@ lp_clear_depth_stencil_texture_msaa(struct pipe_context *pipe,
 		    dst_trans->stride, dst_trans->layer_stride,
 		    box->width, box->height, box->depth, zstencil);
 
-   pipe->transfer_unmap(pipe, dst_trans);
+   pipe->texture_unmap(pipe, dst_trans);
 }
 
 static void
@@ -456,7 +456,7 @@ llvmpipe_clear_buffer(struct pipe_context *pipe,
    char *dst;
    u_box_1d(offset, size, &box);
 
-   dst = pipe->transfer_map(pipe,
+   dst = pipe->buffer_map(pipe,
                             res,
                             0,
                             PIPE_MAP_WRITE,
@@ -475,7 +475,7 @@ llvmpipe_clear_buffer(struct pipe_context *pipe,
          memcpy(&dst[i], clear_value, clear_value_size);
       break;
    }
-   pipe->transfer_unmap(pipe, dst_t);
+   pipe->buffer_unmap(pipe, dst_t);
 }
 
 void

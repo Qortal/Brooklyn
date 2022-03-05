@@ -67,6 +67,11 @@ static void set_viewport( float x, float y,
    vp.translate[1] = half_height + y;
    vp.translate[2] = half_depth + z;
 
+   vp.swizzle_x = PIPE_VIEWPORT_SWIZZLE_POSITIVE_X;
+   vp.swizzle_y = PIPE_VIEWPORT_SWIZZLE_POSITIVE_Y;
+   vp.swizzle_z = PIPE_VIEWPORT_SWIZZLE_POSITIVE_Z;
+   vp.swizzle_w = PIPE_VIEWPORT_SWIZZLE_POSITIVE_W;
+
    ctx->set_viewport_states( ctx, 0, 1, &vp );
 }
 
@@ -96,7 +101,7 @@ static void set_vertices( void )
                                               sizeof(vertices),
                                               vertices);
 
-   ctx->set_vertex_buffers(ctx, 0, 1, &vbuf);
+   ctx->set_vertex_buffers(ctx, 0, 1, 0, false, &vbuf);
 }
 
 static void set_vertex_shader( void )
@@ -166,7 +171,7 @@ static void draw( void )
    util_draw_arrays(ctx, PIPE_PRIM_TRIANGLES, 0, 3);
    ctx->flush(ctx, NULL, 0);
 
-   screen->flush_frontbuffer(screen, tex, 0, 0, window, NULL);
+   screen->flush_frontbuffer(screen, ctx, tex, 0, 0, window, NULL);
 }
 
 

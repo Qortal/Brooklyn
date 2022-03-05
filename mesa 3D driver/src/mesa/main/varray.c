@@ -42,6 +42,7 @@
 #include "arrayobj.h"
 #include "get.h"
 #include "main/dispatch.h"
+#include "api_exec_decl.h"
 
 
 /** Used to do error checking for GL_EXT_vertex_array_bgra */
@@ -184,7 +185,12 @@ _mesa_vertex_attrib_binding(struct gl_context *ctx,
 
       array->BufferBindingIndex = bindingIndex;
 
-      vao->NewArrays |= vao->Enabled & array_bit;
+      if (vao->Enabled & array_bit) {
+         vao->NewVertexBuffers = true;
+         vao->NewVertexElements = true;
+      }
+
+      vao->NonDefaultStateMask |= array_bit | BITFIELD_BIT(bindingIndex);
    }
 }
 
@@ -240,7 +246,14 @@ _mesa_bind_vertex_buffer(struct gl_context *ctx,
          vbo->UsageHistory |= USAGE_ARRAY_BUFFER;
       }
 
-      vao->NewArrays |= vao->Enabled & binding->_BoundArrays;
+      if (vao->Enabled & binding->_BoundArrays) {
+         vao->NewVertexBuffers = true;
+         /* Non-dynamic VAOs merge vertex buffers, which affects vertex elements. */
+         if (!vao->IsDynamic)
+            vao->NewVertexElements = true;
+      }
+
+      vao->NonDefaultStateMask |= BITFIELD_BIT(index);
    }
 }
 
@@ -267,7 +280,12 @@ vertex_binding_divisor(struct gl_context *ctx,
       else
          vao->NonZeroDivisorMask &= ~binding->_BoundArrays;
 
-      vao->NewArrays |= vao->Enabled & binding->_BoundArrays;
+      if (vao->Enabled & binding->_BoundArrays) {
+         vao->NewVertexBuffers = true;
+         vao->NewVertexElements = true;
+      }
+
+      vao->NonDefaultStateMask |= BITFIELD_BIT(bindingIndex);
    }
 }
 
@@ -464,9 +482,9 @@ vertex_format_to_pipe_format(GLubyte size, GLenum16 type, GLenum16 format,
    assert(size >= 1 && size <= 4);
    assert(format == GL_RGBA || format == GL_BGRA);
 
-   /* 64-bit attributes are translated by drivers. */
+   /* Raw doubles use 64_UINT. */
    if (doubles)
-      return PIPE_FORMAT_NONE;
+      return PIPE_FORMAT_R64_UINT + size - 1;
 
    switch (type) {
    case GL_HALF_FLOAT_OES:
@@ -542,6 +560,8 @@ _mesa_set_vertex_format(struct gl_vertex_format *vertex_format,
    vertex_format->_PipeFormat =
       vertex_format_to_pipe_format(size, type, format, normalized, integer,
                                    doubles);
+   /* pipe_vertex_element::src_format has only 8 bits, assuming a signed enum */
+   assert(vertex_format->_PipeFormat <= 255);
 }
 
 
@@ -647,7 +667,10 @@ _mesa_update_array_format(struct gl_context *ctx,
    array->RelativeOffset = relativeOffset;
    array->Format = new_format;
 
-   vao->NewArrays |= vao->Enabled & VERT_BIT(attrib);
+   if (vao->Enabled & VERT_BIT(attrib))
+      vao->NewVertexElements = true;
+
+   vao->NonDefaultStateMask |= BITFIELD_BIT(attrib);
 }
 
 /**
@@ -906,7 +929,15 @@ update_array(struct gl_context *ctx,
    if ((array->Stride != stride) || (array->Ptr != ptr)) {
       array->Stride = stride;
       array->Ptr = ptr;
-      vao->NewArrays |= vao->Enabled & VERT_BIT(attrib);
+
+      if (vao->Enabled & VERT_BIT(attrib)) {
+         vao->NewVertexBuffers = true;
+         /* Non-dynamic VAOs merge vertex buffers, which affects vertex elements. */
+         if (!vao->IsDynamic)
+            vao->NewVertexElements = true;
+      }
+
+      vao->NonDefaultStateMask |= BITFIELD_BIT(attrib);
    }
 
    /* Update the vertex buffer binding */
@@ -933,7 +964,7 @@ _lookup_vao_and_vbo_dsa(struct gl_context *ctx,
 
    if (buffer != 0) {
       *vbo = _mesa_lookup_bufferobj(ctx, buffer);
-      if (!_mesa_handle_bind_buffer_gen(ctx, buffer, vbo, caller))
+      if (!_mesa_handle_bind_buffer_gen(ctx, buffer, vbo, caller, false))
          return false;
 
       if (offset < 0) {
@@ -1877,11 +1908,16 @@ _mesa_enable_vertex_array_attribs(struct gl_context *ctx,
    if (attrib_bits) {
       /* was disabled, now being enabled */
       vao->Enabled |= attrib_bits;
-      vao->NewArrays |= attrib_bits;
+      vao->NewVertexBuffers = true;
+      vao->NewVertexElements = true;
+      vao->NonDefaultStateMask |= attrib_bits;
 
       /* Update the map mode if needed */
       if (attrib_bits & (VERT_BIT_POS|VERT_BIT_GENERIC0))
          update_attribute_map_mode(ctx, vao);
+
+      vao->_EnabledWithMapMode =
+         _mesa_vao_enable_to_vp_inputs(vao->_AttributeMapMode, vao->Enabled);
    }
 }
 
@@ -1974,11 +2010,15 @@ _mesa_disable_vertex_array_attribs(struct gl_context *ctx,
    if (attrib_bits) {
       /* was enabled, now being disabled */
       vao->Enabled &= ~attrib_bits;
-      vao->NewArrays |= attrib_bits;
+      vao->NewVertexBuffers = true;
+      vao->NewVertexElements = true;
 
       /* Update the map mode if needed */
       if (attrib_bits & (VERT_BIT_POS|VERT_BIT_GENERIC0))
          update_attribute_map_mode(ctx, vao);
+
+      vao->_EnabledWithMapMode =
+         _mesa_vao_enable_to_vp_inputs(vao->_AttributeMapMode, vao->Enabled);
    }
 }
 
@@ -2929,7 +2969,7 @@ vertex_array_vertex_buffer(struct gl_context *ctx,
        * Otherwise, we fall back to the same compat profile behavior as other
        * object references (automatically gen it).
        */
-      if (!_mesa_handle_bind_buffer_gen(ctx, buffer, &vbo, func))
+      if (!_mesa_handle_bind_buffer_gen(ctx, buffer, &vbo, func, no_error))
          return;
    } else {
       /* The ARB_vertex_attrib_binding spec says:
@@ -3130,7 +3170,8 @@ vertex_array_vertex_buffers(struct gl_context *ctx,
     *       their parameters are valid and no other error occurs."
     */
 
-   _mesa_HashLockMutex(ctx->Shared->BufferObjects);
+   _mesa_HashLockMaybeLocked(ctx->Shared->BufferObjects,
+                             ctx->BufferObjectsLocked);
 
    for (i = 0; i < count; i++) {
       struct gl_buffer_object *vbo;
@@ -3187,7 +3228,8 @@ vertex_array_vertex_buffers(struct gl_context *ctx,
                                vbo, offsets[i], strides[i], false, false);
    }
 
-   _mesa_HashUnlockMutex(ctx->Shared->BufferObjects);
+   _mesa_HashUnlockMaybeLocked(ctx->Shared->BufferObjects,
+                               ctx->BufferObjectsLocked);
 }
 
 
@@ -3776,36 +3818,6 @@ _mesa_VertexArrayVertexBindingDivisorEXT(GLuint vaobj, GLuint bindingIndex,
 
    vertex_array_binding_divisor(ctx, vao, bindingIndex, divisor,
                                 "glVertexArrayVertexBindingDivisorEXT");
-}
-
-
-void
-_mesa_copy_vertex_attrib_array(struct gl_context *ctx,
-                               struct gl_array_attributes *dst,
-                               const struct gl_array_attributes *src)
-{
-   dst->Ptr            = src->Ptr;
-   dst->RelativeOffset = src->RelativeOffset;
-   dst->Format         = src->Format;
-   dst->Stride         = src->Stride;
-   dst->BufferBindingIndex = src->BufferBindingIndex;
-   dst->_EffBufferBindingIndex = src->_EffBufferBindingIndex;
-   dst->_EffRelativeOffset = src->_EffRelativeOffset;
-}
-
-void
-_mesa_copy_vertex_buffer_binding(struct gl_context *ctx,
-                                 struct gl_vertex_buffer_binding *dst,
-                                 const struct gl_vertex_buffer_binding *src)
-{
-   dst->Offset          = src->Offset;
-   dst->Stride          = src->Stride;
-   dst->InstanceDivisor = src->InstanceDivisor;
-   dst->_BoundArrays    = src->_BoundArrays;
-   dst->_EffBoundArrays = src->_EffBoundArrays;
-   dst->_EffOffset      = src->_EffOffset;
-
-   _mesa_reference_buffer_object(ctx, &dst->BufferObj, src->BufferObj);
 }
 
 /**

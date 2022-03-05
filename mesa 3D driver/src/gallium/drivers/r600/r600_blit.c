@@ -76,7 +76,7 @@ static void r600_blitter_begin(struct pipe_context *ctx, enum r600_blitter_op op
 		util_blitter_save_blend(rctx->blitter, rctx->blend_state.cso);
 		util_blitter_save_depth_stencil_alpha(rctx->blitter, rctx->dsa_state.cso);
 		util_blitter_save_stencil_ref(rctx->blitter, &rctx->stencil_ref.pipe_state);
-                util_blitter_save_sample_mask(rctx->blitter, rctx->sample_mask.sample_mask);
+                util_blitter_save_sample_mask(rctx->blitter, rctx->sample_mask.sample_mask, rctx->ps_iter_samples);
 	}
 
 	if (op & R600_SAVE_FRAMEBUFFER)
@@ -813,7 +813,7 @@ void r600_resource_copy_region(struct pipe_context *ctx,
 	util_blitter_blit_generic(rctx->blitter, dst_view, &dstbox,
 				  src_view, src_box, src_width0, src_height0,
 				  PIPE_MASK_RGBAZS, PIPE_TEX_FILTER_NEAREST, NULL,
-				  FALSE);
+				  FALSE, FALSE);
 	r600_blitter_end(ctx);
 
 	pipe_surface_reference(&dst_view, NULL);
@@ -933,7 +933,7 @@ static void r600_blit(struct pipe_context *ctx,
 	if (rdst->surface.u.legacy.level[info->dst.level].mode ==
 	    RADEON_SURF_MODE_LINEAR_ALIGNED &&
 	    rctx->b.dma_copy &&
-	    util_can_blit_via_copy_region(info, false)) {
+	    util_can_blit_via_copy_region(info, false, rctx->b.render_cond != NULL)) {
 		rctx->b.dma_copy(ctx, info->dst.resource, info->dst.level,
 				 info->dst.box.x, info->dst.box.y,
 				 info->dst.box.z,
@@ -953,7 +953,7 @@ static void r600_blit(struct pipe_context *ctx,
 	}
 
 	if (rctx->screen->b.debug_flags & DBG_FORCE_DMA &&
-	    util_try_blit_via_copy_region(ctx, info))
+	    util_try_blit_via_copy_region(ctx, info, rctx->b.render_cond != NULL))
 		return;
 
 	r600_blitter_begin(ctx, R600_BLIT |

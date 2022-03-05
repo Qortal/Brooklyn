@@ -7,7 +7,7 @@
  * Provides support for non-platform/non-ACPI SSAM clients via dedicated
  * subsystem.
  *
- * Copyright (C) 2019-2020 Maximilian Luz <luzmaximilian@gmail.com>
+ * Copyright (C) 2019-2021 Maximilian Luz <luzmaximilian@gmail.com>
  */
 
 #ifndef _LINUX_SURFACE_AGGREGATOR_DEVICE_H
@@ -317,6 +317,15 @@ void ssam_device_driver_unregister(struct ssam_device_driver *d);
 #define module_ssam_device_driver(drv)			\
 	module_driver(drv, ssam_device_driver_register,	\
 		      ssam_device_driver_unregister)
+
+
+/* -- Helpers for controller and hub devices. ------------------------------- */
+
+#ifdef CONFIG_SURFACE_AGGREGATOR_BUS
+void ssam_remove_clients(struct device *dev);
+#else /* CONFIG_SURFACE_AGGREGATOR_BUS */
+static inline void ssam_remove_clients(struct device *dev) {}
+#endif /* CONFIG_SURFACE_AGGREGATOR_BUS */
 
 
 /* -- Helpers for client-device requests. ----------------------------------- */

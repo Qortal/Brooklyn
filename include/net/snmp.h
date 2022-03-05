@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  *
  *		SNMP MIB entries for the IP subsystem.
@@ -8,12 +9,6 @@
  *		be silly as SNMP is a pain in the backside in places). We do
  *		however need to collect the MIB statistics and export them
  *		out of /proc (eventually)
- *
- *		This program is free software; you can redistribute it and/or
- *		modify it under the terms of the GNU General Public License
- *		as published by the Free Software Foundation; either version
- *		2 of the License, or (at your option) any later version.
- *
  */
  
 #ifndef _SNMP_H
@@ -67,7 +62,7 @@ struct icmp_mib {
 
 #define ICMPMSG_MIB_MAX	__ICMPMSG_MIB_MAX
 struct icmpmsg_mib {
-	atomic_long_unchecked_t	mibs[ICMPMSG_MIB_MAX];
+	atomic_long_t	mibs[ICMPMSG_MIB_MAX];
 };
 
 /* ICMP6 (IPv6-ICMP) */
@@ -78,17 +73,17 @@ struct icmpv6_mib {
 };
 /* per device counters, (shared on all cpus) */
 struct icmpv6_mib_device {
-	atomic_long_unchecked_t	mibs[ICMP6_MIB_MAX];
+	atomic_long_t	mibs[ICMP6_MIB_MAX];
 };
 
 #define ICMP6MSG_MIB_MAX  __ICMP6MSG_MIB_MAX
 /* per network ns counters */
 struct icmpv6msg_mib {
-	atomic_long_unchecked_t	mibs[ICMP6MSG_MIB_MAX];
+	atomic_long_t	mibs[ICMP6MSG_MIB_MAX];
 };
 /* per device counters, (shared on all cpus) */
 struct icmpv6msg_mib_device {
-	atomic_long_unchecked_t	mibs[ICMP6MSG_MIB_MAX];
+	atomic_long_t	mibs[ICMP6MSG_MIB_MAX];
 };
 
 
@@ -116,6 +111,12 @@ struct linux_xfrm_mib {
 	unsigned long	mibs[LINUX_MIB_XFRMMAX];
 };
 
+/* Linux TLS */
+#define LINUX_MIB_TLSMAX	__LINUX_MIB_TLSMAX
+struct linux_tls_mib {
+	unsigned long	mibs[LINUX_MIB_TLSMAX];
+};
+
 #define DEFINE_SNMP_STAT(type, name)	\
 	__typeof__(type) __percpu *name
 #define DEFINE_SNMP_STAT_ATOMIC(type, name)	\
@@ -127,7 +128,7 @@ struct linux_xfrm_mib {
 			__this_cpu_inc(mib->mibs[field])
 
 #define SNMP_INC_STATS_ATOMIC_LONG(mib, field)	\
-			atomic_long_inc_unchecked(&mib->mibs[field])
+			atomic_long_inc(&mib->mibs[field])
 
 #define SNMP_INC_STATS(mib, field)	\
 			this_cpu_inc(mib->mibs[field])

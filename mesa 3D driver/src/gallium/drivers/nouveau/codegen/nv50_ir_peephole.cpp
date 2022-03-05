@@ -276,6 +276,8 @@ LoadPropagation::visit(BasicBlock *bb)
 
          if (!ld || ld->fixed || (ld->op != OP_LOAD && ld->op != OP_MOV))
             continue;
+         if (ld->op == OP_LOAD && ld->subOp == NV50_IR_SUBOP_LOAD_LOCKED)
+            continue;
          if (!targ->insnCanLoad(i, s, ld))
             continue;
 
@@ -363,6 +365,7 @@ IndirectPropagation::visit(BasicBlock *bb)
 class ConstantFolding : public Pass
 {
 public:
+   ConstantFolding() : foldCount(0) {}
    bool foldAll(Program *);
 
 private:
@@ -590,7 +593,7 @@ ConstantFolding::expr(Instruction *i,
             res.data.s32 = ((int64_t)a->data.s32 * b->data.s32) >> 32;
             break;
          }
-         /* fallthrough */
+         FALLTHROUGH;
       case TYPE_U32:
          if (i->subOp == NV50_IR_SUBOP_MUL_HIGH) {
             res.data.u32 = ((uint64_t)a->data.u32 * b->data.u32) >> 32;
@@ -832,7 +835,7 @@ ConstantFolding::expr(Instruction *i,
             res.data.s32 = ((int64_t)a->data.s32 * b->data.s32 >> 32) + c->data.s32;
             break;
          }
-         /* fallthrough */
+         FALLTHROUGH;
       case TYPE_U32:
          if (i->subOp == NV50_IR_SUBOP_MUL_HIGH) {
             res.data.u32 = ((uint64_t)a->data.u32 * b->data.u32 >> 32) + c->data.u32;
@@ -1108,6 +1111,7 @@ ConstantFolding::opnd(Instruction *i, ImmediateValue &imm0, int s)
          }
       } else
       if (imm0.isInteger(0)) {
+         i->dnz = 0;
          i->op = OP_MOV;
          i->setSrc(0, new_ImmediateValue(prog, 0u));
          i->src(0).mod = Modifier(0);
@@ -1117,6 +1121,7 @@ ConstantFolding::opnd(Instruction *i, ImmediateValue &imm0, int s)
       if (!i->postFactor && (imm0.isInteger(1) || imm0.isInteger(-1))) {
          if (imm0.isNegative())
             i->src(t).mod = i->src(t).mod ^ Modifier(NV50_IR_MOD_NEG);
+         i->dnz = 0;
          i->op = i->src(t).mod.getOp();
          if (s == 0) {
             i->setSrc(0, i->getSrc(1));
@@ -1157,6 +1162,7 @@ ConstantFolding::opnd(Instruction *i, ImmediateValue &imm0, int s)
          i->src(0).mod = i->src(2).mod;
          i->setSrc(1, NULL);
          i->setSrc(2, NULL);
+         i->dnz = 0;
          i->op = i->src(0).mod.getOp();
          if (i->op != OP_CVT)
             i->src(0).mod = 0;
@@ -1188,7 +1194,7 @@ ConstantFolding::opnd(Instruction *i, ImmediateValue &imm0, int s)
       if (imm0.isInteger(0) && s == 0 && typeSizeof(i->dType) == 8 &&
           !isFloatType(i->dType))
          break;
-      /* fallthrough */
+      FALLTHROUGH;
    case OP_ADD:
       if (i->usesFlags())
          break;
@@ -1456,6 +1462,12 @@ ConstantFolding::opnd(Instruction *i, ImmediateValue &imm0, int s)
    {
       if (s != 1 || i->src(0).mod != Modifier(0))
          break;
+
+      if (imm0.reg.data.u32 == 0) {
+         i->op = OP_MOV;
+         i->setSrc(1, NULL);
+         break;
+      }
       // try to concatenate shifts
       Instruction *si = i->getSrc(0)->getInsn();
       if (!si)
@@ -1481,6 +1493,8 @@ ConstantFolding::opnd(Instruction *i, ImmediateValue &imm0, int s)
          int muls;
          if (isFloatType(si->dType))
             return false;
+         if (si->subOp)
+            return false;
          if (si->src(1).getImmediate(imm1))
             muls = 1;
          else if (si->src(0).getImmediate(imm1))
@@ -1490,6 +1504,9 @@ ConstantFolding::opnd(Instruction *i, ImmediateValue &imm0, int s)
 
          bld.setPosition(i, false);
          i->op = OP_MUL;
+         i->subOp = 0;
+         i->dType = si->dType;
+         i->sType = si->sType;
          i->setSrc(0, si->getSrc(!muls));
          i->setSrc(1, bld.loadImm(NULL, imm1.reg.data.u32 << imm0.reg.data.u32));
          break;
@@ -1720,7 +1737,7 @@ ModifierFolding::visit(BasicBlock *bb)
    for (i = bb->getEntry(); i; i = next) {
       next = i->next;
 
-      if (0 && i->op == OP_SUB) {
+      if (false && i->op == OP_SUB) {
          // turn "sub" into "add neg" (do we really want this ?)
          i->op = OP_ADD;
          i->src(0).mod = i->src(0).mod ^ Modifier(NV50_IR_MOD_NEG);
@@ -2164,7 +2181,7 @@ AlgebraicOpt::handleCVT_EXTBF(Instruction *cvt)
    Instruction *insn = cvt->getSrc(0)->getInsn();
    ImmediateValue imm;
    Value *arg = NULL;
-   unsigned width, offset;
+   unsigned width, offset = 0;
    if ((cvt->sType != TYPE_U32 && cvt->sType != TYPE_S32) || !insn)
       return;
    if (insn->op == OP_EXTBF && insn->src(1).getImmediate(imm)) {
@@ -2196,7 +2213,7 @@ AlgebraicOpt::handleCVT_EXTBF(Instruction *cvt)
 
       arg = insn->getSrc(!s);
       Instruction *shift = arg->getInsn();
-      offset = 0;
+
       if (shift && shift->op == OP_SHR &&
           shift->sType == cvt->sType &&
           shift->src(1).getImmediate(imm) &&
@@ -3160,6 +3177,10 @@ MemoryOpt::runOpt(BasicBlock *bb)
       next = ldst->next;
 
       if (ldst->op == OP_LOAD || ldst->op == OP_VFETCH) {
+         if (ldst->subOp == NV50_IR_SUBOP_LOAD_LOCKED) {
+            purgeRecords(ldst, ldst->src(0).getFile());
+            continue;
+         }
          if (ldst->isDead()) {
             // might have been produced by earlier optimization
             delete_Instruction(prog, ldst);
@@ -3167,6 +3188,10 @@ MemoryOpt::runOpt(BasicBlock *bb)
          }
       } else
       if (ldst->op == OP_STORE || ldst->op == OP_EXPORT) {
+         if (ldst->subOp == NV50_IR_SUBOP_STORE_UNLOCKED) {
+            purgeRecords(ldst, ldst->src(0).getFile());
+            continue;
+         }
          if (typeSizeof(ldst->dType) == 4 &&
              ldst->src(1).getFile() == FILE_GPR &&
              ldst->getSrc(1)->getInsn()->op == OP_NOP) {
@@ -3252,6 +3277,9 @@ MemoryOpt::runOpt(BasicBlock *bb)
 // constructs.
 class FlatteningPass : public Pass
 {
+public:
+   FlatteningPass() : gpr_unit(0) {}
+
 private:
    virtual bool visit(Function *);
    virtual bool visit(BasicBlock *);
@@ -3883,6 +3911,7 @@ LocalCSE::visit(BasicBlock *bb)
 class DeadCodeElim : public Pass
 {
 public:
+   DeadCodeElim() : deadCount(0) {}
    bool buryAll(Program *);
 
 private:
@@ -3925,7 +3954,10 @@ DeadCodeElim::visit(BasicBlock *bb)
          if (i->op == OP_ATOM ||
              i->op == OP_SUREDP ||
              i->op == OP_SUREDB) {
-            i->setDef(0, NULL);
+            const Target *targ = prog->getTarget();
+            if (targ->getChipset() >= NVISA_GF100_CHIPSET ||
+                i->subOp != NV50_IR_SUBOP_ATOM_CAS)
+               i->setDef(0, NULL);
             if (i->op == OP_ATOM && i->subOp == NV50_IR_SUBOP_ATOM_EXCH) {
                i->cache = CACHE_CV;
                i->op = OP_STORE;

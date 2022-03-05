@@ -40,6 +40,7 @@ extern "C" {
 #endif
 
 struct gl_context;
+struct st_context;
 struct pipe_screen;
 
 
@@ -58,9 +59,8 @@ st_choose_format(struct st_context *st, GLenum internalFormat,
                  unsigned bindings, bool swap_bytes, bool allow_dxt);
 
 extern enum pipe_format
-st_choose_renderbuffer_format(struct st_context *st,
-                              GLenum internalFormat, unsigned sample_count,
-                              unsigned storage_sample_count);
+st_choose_matching_format_noverify(struct st_context *st,
+                                   GLenum format, GLenum type, GLboolean swapBytes);
 
 extern enum pipe_format
 st_choose_matching_format(struct st_context *st, unsigned bind,
@@ -76,8 +76,7 @@ st_QueryInternalFormat(struct gl_context *ctx, GLenum target,
                        GLenum internalFormat, GLenum pname, GLint *params);
 
 extern void
-st_translate_color(const union gl_color_union *colorIn,
-                   union pipe_color_union *colorOut,
+st_translate_color(union pipe_color_union *color,
                    GLenum baseFormat, GLboolean is_integer);
 
 #ifdef __cplusplus

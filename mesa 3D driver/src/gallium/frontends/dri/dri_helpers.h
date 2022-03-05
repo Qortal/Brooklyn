@@ -38,7 +38,6 @@ struct dri2_format_mapping {
       int width_shift;
       int height_shift;
       uint32_t dri_format; /* plane format */
-      int cpp;
    } planes[3];
 };
 
@@ -62,6 +61,12 @@ dri2_yuv_dma_buf_supported(struct dri_screen *screen,
 
 __DRIimage *
 dri2_lookup_egl_image(struct dri_screen *screen, void *handle);
+
+boolean
+dri2_validate_egl_image(struct dri_screen *screen, void *handle);
+
+__DRIimage *
+dri2_lookup_egl_image_validated(struct dri_screen *screen, void *handle);
 
 __DRIimage *
 dri2_create_image_from_renderbuffer(__DRIcontext *context,

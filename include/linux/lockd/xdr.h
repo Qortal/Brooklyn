@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * linux/include/linux/lockd/xdr.h
  *
@@ -95,24 +96,19 @@ struct nlm_reboot {
  */
 #define NLMSVC_XDRSIZE		sizeof(struct nlm_args)
 
-int	nlmsvc_decode_testargs(void *, __be32 *, void *);
-int	nlmsvc_encode_testres(void *, __be32 *, void *);
-int	nlmsvc_decode_lockargs(void *, __be32 *, void *);
-int	nlmsvc_decode_cancargs(void *, __be32 *, void *);
-int	nlmsvc_decode_unlockargs(void *, __be32 *, void *);
-int	nlmsvc_encode_res(void *, __be32 *, void *);
-int	nlmsvc_decode_res(void *, __be32 *, void *);
-int	nlmsvc_encode_void(void *, __be32 *p, void *);
-int	nlmsvc_decode_void(void *, __be32 *, void *);
-int	nlmsvc_decode_shareargs(void *, __be32 *, void *);
-int	nlmsvc_encode_shareres(void *, __be32 *, void *);
-int	nlmsvc_decode_notify(void *, __be32 *, void *);
-int	nlmsvc_decode_reboot(void *, __be32 *, void *);
-/*
-int	nlmclt_encode_testargs(void *, u32 *, void *);
-int	nlmclt_encode_lockargs(void *, u32 *, void *);
-int	nlmclt_encode_cancargs(void *, u32 *, void *);
-int	nlmclt_encode_unlockargs(void *, u32 *, void *);
- */
+bool	nlmsvc_decode_void(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlmsvc_decode_testargs(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlmsvc_decode_lockargs(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlmsvc_decode_cancargs(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlmsvc_decode_unlockargs(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlmsvc_decode_res(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlmsvc_decode_reboot(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlmsvc_decode_shareargs(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlmsvc_decode_notify(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+
+bool	nlmsvc_encode_testres(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlmsvc_encode_res(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlmsvc_encode_void(struct svc_rqst *rqstp, struct xdr_stream *xdr);
+bool	nlmsvc_encode_shareres(struct svc_rqst *rqstp, struct xdr_stream *xdr);
 
 #endif /* LOCKD_XDR_H */

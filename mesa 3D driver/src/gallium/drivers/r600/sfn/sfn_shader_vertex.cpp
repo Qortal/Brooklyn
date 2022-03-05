@@ -72,19 +72,18 @@ VertexShaderFromNir::VertexShaderFromNir(r600_pipe_shader *sh,
    }
 }
 
-bool VertexShaderFromNir::do_process_inputs(nir_variable *input)
+bool VertexShaderFromNir::scan_inputs_read(const nir_shader *sh)
 {
-   ++sh_info().ninput;
+   uint64_t inputs = sh->info.inputs_read;
 
-   if (input->data.location < VERT_ATTRIB_MAX) {
-      increment_reserved_registers();
-      if (m_max_attrib < input->data.driver_location)
-         m_max_attrib = input->data.driver_location;
-
-      return true;
+   while (inputs) {
+      unsigned i = u_bit_scan64(&inputs);
+      if (i < VERT_ATTRIB_MAX) {
+         ++sh_info().ninput;
+      }
    }
-   fprintf(stderr, "r600-NIR-VS: Unimplemented process_inputs for %d\n", input->data.location);
-   return false;
+   m_max_attrib = sh_info().ninput;
+   return true;
 }
 
 bool VertexShaderFromNir::do_allocate_reserved_registers()
@@ -134,6 +133,7 @@ bool VertexShaderFromNir::do_allocate_reserved_registers()
 
 void VertexShaderFromNir::emit_shader_start()
 {
+   m_export_processor->emit_shader_start();
 }
 
 bool VertexShaderFromNir::scan_sysvalue_access(nir_instr *instr)
@@ -151,6 +151,8 @@ bool VertexShaderFromNir::scan_sysvalue_access(nir_instr *instr)
       case nir_intrinsic_load_tcs_rel_patch_id_r600:
          m_sv_values.set(es_rel_patch_id);
          break;
+      case nir_intrinsic_store_output:
+         m_export_processor->scan_store_output(ii);
       default:
          ;
       }
@@ -172,9 +174,33 @@ bool VertexShaderFromNir::emit_intrinsic_instruction_override(nir_intrinsic_inst
       return load_preloaded_value(instr->dest, 0, m_instance_id);
    case nir_intrinsic_store_local_shared_r600:
       return emit_store_local_shared(instr);
+   case nir_intrinsic_store_output:
+      return m_export_processor->store_output(instr);
+   case nir_intrinsic_load_input:
+      return load_input(instr);
+
    default:
       return false;
    }
+}
+
+bool VertexShaderFromNir::load_input(nir_intrinsic_instr* instr)
+{
+   unsigned location = nir_intrinsic_base(instr);
+
+   if (location < VERT_ATTRIB_MAX) {
+      for (unsigned i = 0; i < nir_dest_num_components(instr->dest); ++i) {
+         auto src = m_attribs[4 * location + i];
+
+         if (i == 0)
+            set_input(location, src);
+
+         load_preloaded_value(instr->dest, i, src, i == (unsigned)(instr->num_components - 1));
+      }
+      return true;
+   }
+   fprintf(stderr, "r600-NIR: Unimplemented load_deref for %d\n", location);
+   return false;
 }
 
 bool VertexShaderFromNir::emit_store_local_shared(nir_intrinsic_instr* instr)
@@ -196,36 +222,9 @@ bool VertexShaderFromNir::emit_store_local_shared(nir_intrinsic_instr* instr)
    return true;
 }
 
-bool VertexShaderFromNir::do_process_outputs(nir_variable *output)
-{
-   return m_export_processor->do_process_outputs(output);
-}
-
-bool VertexShaderFromNir::do_emit_load_deref(const nir_variable *in_var, nir_intrinsic_instr* instr)
-{
-   if (in_var->data.location < VERT_ATTRIB_MAX) {
-      for (unsigned i = 0; i < nir_dest_num_components(instr->dest); ++i) {
-         auto src = m_attribs[4 * in_var->data.driver_location + i];
-
-         if (i == 0)
-            set_input(in_var->data.driver_location, src);
-
-         load_preloaded_value(instr->dest, i, src, i == (unsigned)(instr->num_components - 1));
-      }
-      return true;
-   }
-   fprintf(stderr, "r600-NIR: Unimplemented load_deref for %d\n", in_var->data.location);
-   return false;
-}
-
 void VertexShaderFromNir::do_finalize()
 {
    m_export_processor->finalize_exports();
-}
-
-bool VertexShaderFromNir::do_emit_store_deref(const nir_variable *out_var, nir_intrinsic_instr* instr)
-{
-   return m_export_processor->store_deref(out_var, instr);
 }
 
 }

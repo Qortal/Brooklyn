@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _UAPI_LINUX_PERSONALITY_H
 #define _UAPI_LINUX_PERSONALITY_H
 
@@ -30,7 +31,6 @@ enum {
 #define PER_CLEAR_ON_SETID (READ_IMPLIES_EXEC  | \
 			    ADDR_NO_RANDOMIZE  | \
 			    ADDR_COMPAT_LAYOUT | \
-			    ADDR_LIMIT_3GB     | \
 			    MMAP_PAGE_ZERO)
 
 /*

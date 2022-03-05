@@ -1632,6 +1632,7 @@ struct xhci_ring {
 	unsigned int		num_trbs_free;
 	unsigned int		num_trbs_free_temp;
 	unsigned int		bounce_buf_len;
+	unsigned int		trbs_per_seg;
 	enum xhci_ring_type	type;
 	bool			last_td_was_short;
 	struct radix_tree_root	*trb_address_map;
@@ -1900,6 +1901,9 @@ struct xhci_hcd {
 #define XHCI_NO_SOFT_RETRY	BIT_ULL(40)
 #define XHCI_BROKEN_D3COLD	BIT_ULL(41)
 #define XHCI_EP_CTX_BROKEN_DCS	BIT_ULL(42)
+#define XHCI_AVOID_DQ_ON_LINK	BIT_ULL(43)
+#define XHCI_VLI_TRB_CACHE_BUG	BIT_ULL(44)
+#define XHCI_VLI_SS_BULK_OUT_BUG	BIT_ULL(45)
 
 	unsigned int		num_active_eps;
 	unsigned int		limit_active_eps;
