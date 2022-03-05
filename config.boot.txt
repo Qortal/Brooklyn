@@ -1,9 +1,0 @@
-# Explicit specification of build 
-kernel=vmlinuz-BrooklynR+Version
-# Select either one from below
-# Safe OC Setting 1 with passive cooling
-over_voltage=2
-arm_freq=1750
-# Max Safe OC setting with active cooling
-over_voltage=6
-arm_freq=2000
