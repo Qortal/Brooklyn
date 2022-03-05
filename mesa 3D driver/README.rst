@@ -1,6 +1,6 @@
 `Mesa <https://mesa3d.org>`_ - The 3D Graphics Library
 ======================================================
-
+Optimised for Plasma on Titan with line replication and interpolation. 
 
 Source
 ------
