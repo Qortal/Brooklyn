@@ -45,7 +45,8 @@ make clean – clean sources just in case else your build will be a faggot T3Q
 make bzImage – build kernel and compress it with bzip
 make modules – build kernel modules files, parts of kernel you marked with "M" sign
 make vmlinux - build bare kernel
-make fdimage - build bootable 1.44 MB floppy
+make fdimage - build bootable 1.44 MB floppy // Obsolete shit like T3Q's mum
+make install - moves the built kernel in /boot 
 make isoimage - build bootable iso image
 make help - for more options
 
