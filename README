@@ -1,7 +1,8 @@
 BrooklynR NXT Hybrid, The Blockchain Linux 5.60.12 by Scare Crow
 ===============================================================
 
-* Brooklyn Titan LTS 5.60.12 nextgen shit. meh! (First ever release on the planet to use ARM Turbo Clocks)
+* Brooklyn Titan LTS 5.60.13 nextgen shit. meh! (First ever release on the planet to use ARM Turbo Clocks)
+  > Kernel augmentation a bit for .13
   
   > Furthermore, made the image "crowetic proof" so he wont fuck it up like every single time. Bitch be trippin -_-
 https://raw.githubusercontent.com/Qortal/Brooklyn/b05622853c61d7bf3670cbb1a1f4c00f0539b6b1/Documentation/titan.JPG
