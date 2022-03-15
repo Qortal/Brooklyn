@@ -135,10 +135,11 @@ static int mcu_gpiochip_add(struct mcu *mcu)
 	return gpiochip_add_data(gc, mcu);
 }
 
-static void mcu_gpiochip_remove(struct mcu *mcu)
+static int mcu_gpiochip_remove(struct mcu *mcu)
 {
 	kfree(mcu->gc.label);
 	gpiochip_remove(&mcu->gc);
+	return 0;
 }
 
 static int mcu_probe(struct i2c_client *client)
@@ -186,6 +187,7 @@ err:
 static int mcu_remove(struct i2c_client *client)
 {
 	struct mcu *mcu = i2c_get_clientdata(client);
+	int ret;
 
 	kthread_stop(shutdown_thread);
 
@@ -196,7 +198,9 @@ static int mcu_remove(struct i2c_client *client)
 		glob_mcu = NULL;
 	}
 
-	mcu_gpiochip_remove(mcu);
+	ret = mcu_gpiochip_remove(mcu);
+	if (ret)
+		return ret;
 	kfree(mcu);
 	return 0;
 }

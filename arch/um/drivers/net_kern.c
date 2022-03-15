@@ -276,7 +276,7 @@ static const struct ethtool_ops uml_net_ethtool_ops = {
 
 void uml_net_setup_etheraddr(struct net_device *dev, char *str)
 {
-	u8 addr[ETH_ALEN];
+	unsigned char *addr = dev->dev_addr;
 	char *end;
 	int i;
 
@@ -316,7 +316,6 @@ void uml_net_setup_etheraddr(struct net_device *dev, char *str)
 		       addr[0] | 0x02, addr[1], addr[2], addr[3], addr[4],
 		       addr[5]);
 	}
-	eth_hw_addr_set(dev, addr);
 	return;
 
 random:

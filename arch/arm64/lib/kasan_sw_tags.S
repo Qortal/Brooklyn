@@ -38,7 +38,9 @@
  * incremented by 256 prior to return).
  */
 SYM_CODE_START(__hwasan_tag_mismatch)
-	bti	c
+#ifdef BTI_C
+	BTI_C
+#endif
 	add	x29, sp, #232
 	stp	x2, x3, [sp, #8 * 2]
 	stp	x4, x5, [sp, #8 * 4]

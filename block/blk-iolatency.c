@@ -74,7 +74,6 @@
 #include <linux/sched/signal.h>
 #include <trace/events/block.h>
 #include <linux/blk-mq.h>
-#include <linux/blk-cgroup.h>
 #include "blk-rq-qos.h"
 #include "blk-stat.h"
 #include "blk.h"

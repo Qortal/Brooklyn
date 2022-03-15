@@ -76,9 +76,3 @@
 &pwm {
 	status = "okay";
 };
-
-&pcie {
-	status = "okay";
-	clocks = <&extclk100mhz>, <&clk600mhz>, <&clk25mhz>;
-	clock-names = "ref", "core", "aux";
-};

@@ -409,12 +409,10 @@ long parisc_personality(unsigned long personality)
 
 static int FIX_O_NONBLOCK(int flags)
 {
-	if ((flags & O_NONBLOCK_MASK_OUT) &&
-			!test_thread_flag(TIF_NONBLOCK_WARNING)) {
-		set_thread_flag(TIF_NONBLOCK_WARNING);
-		pr_warn("%s(%d) uses a deprecated O_NONBLOCK value."
-			" Please recompile with newer glibc.\n",
-			current->comm, current->pid);
+	if (flags & O_NONBLOCK_MASK_OUT) {
+		struct task_struct *tsk = current;
+		pr_warn_once("%s(%d) uses a deprecated O_NONBLOCK value.\n",
+			tsk->comm, tsk->pid);
 	}
 	return flags & ~O_NONBLOCK_MASK_OUT;
 }

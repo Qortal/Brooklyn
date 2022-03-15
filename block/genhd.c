@@ -19,16 +19,13 @@
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/kmod.h>
-#include <linux/major.h>
 #include <linux/mutex.h>
 #include <linux/idr.h>
 #include <linux/log2.h>
 #include <linux/pm_runtime.h>
 #include <linux/badblocks.h>
-#include <linux/part_stat.h>
 
 #include "blk.h"
-#include "blk-mq-sched.h"
 #include "blk-rq-qos.h"
 
 static struct kobject *block_depr;
@@ -60,7 +57,6 @@ void set_capacity(struct gendisk *disk, sector_t sectors)
 
 	spin_lock(&bdev->bd_size_lock);
 	i_size_write(bdev->bd_inode, (loff_t)sectors << SECTOR_SHIFT);
-	bdev->bd_nr_sectors = sectors;
 	spin_unlock(&bdev->bd_size_lock);
 }
 EXPORT_SYMBOL(set_capacity);
@@ -215,10 +211,7 @@ void blkdev_show(struct seq_file *seqf, off_t offset)
  * @major: the requested major device number [1..BLKDEV_MAJOR_MAX-1]. If
  *         @major = 0, try to allocate any unused major number.
  * @name: the name of the new block device as a zero terminated string
- * @probe: pre-devtmpfs / pre-udev callback used to create disks when their
- *	   pre-created device node is accessed. When a probe call uses
- *	   add_disk() and it fails the driver must cleanup resources. This
- *	   interface may soon be removed.
+ * @probe: allback that is called on access to any minor number of @major
  *
  * The @name must be unique within the system.
  *
@@ -374,21 +367,17 @@ void disk_uevent(struct gendisk *disk, enum kobject_action action)
 }
 EXPORT_SYMBOL_GPL(disk_uevent);
 
-int disk_scan_partitions(struct gendisk *disk, fmode_t mode)
+static void disk_scan_partitions(struct gendisk *disk)
 {
 	struct block_device *bdev;
 
-	if (disk->flags & (GENHD_FL_NO_PART | GENHD_FL_HIDDEN))
-		return -EINVAL;
-	if (disk->open_partitions)
-		return -EBUSY;
+	if (!get_capacity(disk) || !disk_part_scan_enabled(disk))
+		return;
 
 	set_bit(GD_NEED_PART_SCAN, &disk->state);
-	bdev = blkdev_get_by_dev(disk_devt(disk), mode, NULL);
-	if (IS_ERR(bdev))
-		return PTR_ERR(bdev);
-	blkdev_put(bdev, mode);
-	return 0;
+	bdev = blkdev_get_by_dev(disk_devt(disk), FMODE_READ, NULL);
+	if (!IS_ERR(bdev))
+		blkdev_put(bdev, FMODE_READ);
 }
 
 /**
@@ -400,8 +389,8 @@ int disk_scan_partitions(struct gendisk *disk, fmode_t mode)
  * This function registers the partitioning information in @disk
  * with the kernel.
  */
-int __must_check device_add_disk(struct device *parent, struct gendisk *disk,
-				 const struct attribute_group **groups)
+int device_add_disk(struct device *parent, struct gendisk *disk,
+		     const struct attribute_group **groups)
 
 {
 	struct device *ddev = disk_to_dev(disk);
@@ -442,6 +431,7 @@ int __must_check device_add_disk(struct device *parent, struct gendisk *disk,
 			return ret;
 		disk->major = BLOCK_EXT_MAJOR;
 		disk->first_minor = ret;
+		disk->flags |= GENHD_FL_EXT_DEVT;
 	}
 
 	/* delay uevents, until we scanned partition table */
@@ -498,7 +488,14 @@ int __must_check device_add_disk(struct device *parent, struct gendisk *disk,
 	if (ret)
 		goto out_put_slave_dir;
 
-	if (!(disk->flags & GENHD_FL_HIDDEN)) {
+	if (disk->flags & GENHD_FL_HIDDEN) {
+		/*
+		 * Don't let hidden disks show up in /proc/partitions,
+		 * and don't bother scanning for partitions either.
+		 */
+		disk->flags |= GENHD_FL_SUPPRESS_PARTITION_INFO;
+		disk->flags |= GENHD_FL_NO_PART_SCAN;
+	} else {
 		ret = bdi_register(disk->bdi, "%u:%u",
 				   disk->major, disk->first_minor);
 		if (ret)
@@ -510,8 +507,7 @@ int __must_check device_add_disk(struct device *parent, struct gendisk *disk,
 			goto out_unregister_bdi;
 
 		bdev_add(disk->part0, ddev->devt);
-		if (get_capacity(disk))
-			disk_scan_partitions(disk, FMODE_READ);
+		disk_scan_partitions(disk);
 
 		/*
 		 * Announce the disk and partitions after all partitions are
@@ -544,7 +540,7 @@ out_device_del:
 out_free_ext_minor:
 	if (disk->major == BLOCK_EXT_MAJOR)
 		blk_free_ext_minor(disk->first_minor);
-	return ret;
+	return WARN_ON_ONCE(ret); /* keep until all callers handle errors */
 }
 EXPORT_SYMBOL(device_add_disk);
 
@@ -648,26 +644,6 @@ void del_gendisk(struct gendisk *disk)
 }
 EXPORT_SYMBOL(del_gendisk);
 
-/**
- * invalidate_disk - invalidate the disk
- * @disk: the struct gendisk to invalidate
- *
- * A helper to invalidates the disk. It will clean the disk's associated
- * buffer/page caches and reset its internal states so that the disk
- * can be reused by the drivers.
- *
- * Context: can sleep
- */
-void invalidate_disk(struct gendisk *disk)
-{
-	struct block_device *bdev = disk->part0;
-
-	invalidate_bdev(bdev);
-	bdev->bd_inode->i_mapping->wb_err = 0;
-	set_capacity(disk, 0);
-}
-EXPORT_SYMBOL(invalidate_disk);
-
 /* sysfs access to bad-blocks list. */
 static ssize_t disk_badblocks_show(struct device *dev,
 					struct device_attribute *attr,
@@ -734,7 +710,8 @@ void __init printk_all_partitions(void)
 		 * Don't show empty devices or things that have been
 		 * suppressed
 		 */
-		if (get_capacity(disk) == 0 || (disk->flags & GENHD_FL_HIDDEN))
+		if (get_capacity(disk) == 0 ||
+		    (disk->flags & GENHD_FL_SUPPRESS_PARTITION_INFO))
 			continue;
 
 		/*
@@ -827,7 +804,11 @@ static int show_partition(struct seq_file *seqf, void *v)
 	struct block_device *part;
 	unsigned long idx;
 
-	if (!get_capacity(sgp) || (sgp->flags & GENHD_FL_HIDDEN))
+	/* Don't show non-partitionable removeable devices or empty devices */
+	if (!get_capacity(sgp) || (!disk_max_parts(sgp) &&
+				   (sgp->flags & GENHD_FL_REMOVABLE)))
+		return 0;
+	if (sgp->flags & GENHD_FL_SUPPRESS_PARTITION_INFO)
 		return 0;
 
 	rcu_read_lock();
@@ -883,8 +864,7 @@ static ssize_t disk_ext_range_show(struct device *dev,
 {
 	struct gendisk *disk = dev_to_disk(dev);
 
-	return sprintf(buf, "%d\n",
-		(disk->flags & GENHD_FL_NO_PART) ? 1 : DISK_MAX_PARTS);
+	return sprintf(buf, "%d\n", disk_max_parts(disk));
 }
 
 static ssize_t disk_removable_show(struct device *dev,
@@ -923,7 +903,7 @@ ssize_t part_stat_show(struct device *dev,
 		       struct device_attribute *attr, char *buf)
 {
 	struct block_device *bdev = dev_to_bdev(dev);
-	struct request_queue *q = bdev_get_queue(bdev);
+	struct request_queue *q = bdev->bd_disk->queue;
 	struct disk_stats stat;
 	unsigned int inflight;
 
@@ -967,7 +947,7 @@ ssize_t part_inflight_show(struct device *dev, struct device_attribute *attr,
 			   char *buf)
 {
 	struct block_device *bdev = dev_to_bdev(dev);
-	struct request_queue *q = bdev_get_queue(bdev);
+	struct request_queue *q = bdev->bd_disk->queue;
 	unsigned int inflight[2];
 
 	if (queue_is_mq(q))
@@ -1309,9 +1289,6 @@ struct gendisk *__alloc_disk_node(struct request_queue *q, int node_id,
 	if (!disk->bdi)
 		goto out_free_disk;
 
-	/* bdev_alloc() might need the queue, set before the first call */
-	disk->queue = q;
-
 	disk->part0 = bdev_alloc(disk, 0);
 	if (!disk->part0)
 		goto out_free_bdi;
@@ -1327,6 +1304,7 @@ struct gendisk *__alloc_disk_node(struct request_queue *q, int node_id,
 	disk_to_dev(disk)->type = &disk_type;
 	device_initialize(disk_to_dev(disk));
 	inc_diskseq(disk);
+	disk->queue = q;
 	q->disk = disk;
 	lockdep_init_map(&disk->lockdep_map, "(bio completion)", lkclass, 0);
 #ifdef CONFIG_BLOCK_HOLDER_DEPRECATED
@@ -1353,7 +1331,7 @@ struct gendisk *__blk_alloc_disk(int node, struct lock_class_key *lkclass)
 	struct request_queue *q;
 	struct gendisk *disk;
 
-	q = blk_alloc_queue(node, false);
+	q = blk_alloc_queue(node);
 	if (!q)
 		return NULL;
 
@@ -1430,6 +1408,12 @@ void set_disk_ro(struct gendisk *disk, bool read_only)
 	set_disk_ro_uevent(disk, read_only);
 }
 EXPORT_SYMBOL(set_disk_ro);
+
+int bdev_read_only(struct block_device *bdev)
+{
+	return bdev->bd_read_only || get_disk_ro(bdev->bd_disk);
+}
+EXPORT_SYMBOL(bdev_read_only);
 
 void inc_diskseq(struct gendisk *disk)
 {

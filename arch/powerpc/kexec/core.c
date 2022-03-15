@@ -48,6 +48,19 @@ void machine_crash_shutdown(struct pt_regs *regs)
 	default_machine_crash_shutdown(regs);
 }
 
+/*
+ * Do what every setup is needed on image and the
+ * reboot code buffer to allow us to avoid allocations
+ * later.
+ */
+int machine_kexec_prepare(struct kimage *image)
+{
+	if (ppc_md.machine_kexec_prepare)
+		return ppc_md.machine_kexec_prepare(image);
+	else
+		return default_machine_kexec_prepare(image);
+}
+
 void machine_kexec_cleanup(struct kimage *image)
 {
 }
@@ -185,7 +198,7 @@ void __init reserve_crashkernel(void)
 	}
 }
 
-int __init overlaps_crashkernel(unsigned long start, unsigned long size)
+int overlaps_crashkernel(unsigned long start, unsigned long size)
 {
 	return (start + size) > crashk_res.start && start <= crashk_res.end;
 }

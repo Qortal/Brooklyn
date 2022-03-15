@@ -222,9 +222,6 @@ static bool is_copy_from_user(struct pt_regs *regs)
 	struct insn insn;
 	int ret;
 
-	if (!regs)
-		return false;
-
 	if (copy_from_kernel_nofault(insn_buf, (void *)regs->ip, MAX_INSN_SIZE))
 		return false;
 
@@ -266,44 +263,33 @@ static bool is_copy_from_user(struct pt_regs *regs)
  * distinguish an exception taken in user from from one
  * taken in the kernel.
  */
-static noinstr int error_context(struct mce *m, struct pt_regs *regs)
+static int error_context(struct mce *m, struct pt_regs *regs)
 {
-	int fixup_type;
-	bool copy_user;
+	enum handler_type t;
 
 	if ((m->cs & 3) == 3)
 		return IN_USER;
-
 	if (!mc_recoverable(m->mcgstatus))
 		return IN_KERNEL;
 
-	/* Allow instrumentation around external facilities usage. */
-	instrumentation_begin();
-	fixup_type = ex_get_fixup_type(m->ip);
-	copy_user  = is_copy_from_user(regs);
-	instrumentation_end();
-
-	switch (fixup_type) {
-	case EX_TYPE_UACCESS:
-	case EX_TYPE_COPY:
-		if (!copy_user)
-			return IN_KERNEL;
-		m->kflags |= MCE_IN_KERNEL_COPYIN;
-		fallthrough;
-
-	case EX_TYPE_FAULT_MCE_SAFE:
-	case EX_TYPE_DEFAULT_MCE_SAFE:
+	t = ex_get_fault_handler_type(m->ip);
+	if (t == EX_HANDLER_FAULT) {
 		m->kflags |= MCE_IN_KERNEL_RECOV;
 		return IN_KERNEL_RECOV;
-
-	default:
-		return IN_KERNEL;
 	}
+	if (t == EX_HANDLER_UACCESS && regs && is_copy_from_user(regs)) {
+		m->kflags |= MCE_IN_KERNEL_RECOV;
+		m->kflags |= MCE_IN_KERNEL_COPYIN;
+		return IN_KERNEL_RECOV;
+	}
+
+	return IN_KERNEL;
 }
 
 static int mce_severity_amd_smca(struct mce *m, enum context err_ctx)
 {
-	u64 mcx_cfg;
+	u32 addr = MSR_AMD64_SMCA_MCx_CONFIG(m->bank);
+	u32 low, high;
 
 	/*
 	 * We need to look at the following bits:
@@ -314,10 +300,11 @@ static int mce_severity_amd_smca(struct mce *m, enum context err_ctx)
 	if (!mce_flags.succor)
 		return MCE_PANIC_SEVERITY;
 
-	mcx_cfg = mce_rdmsrl(MSR_AMD64_SMCA_MCx_CONFIG(m->bank));
+	if (rdmsr_safe(addr, &low, &high))
+		return MCE_PANIC_SEVERITY;
 
 	/* TCC (Task context corrupt). If set and if IN_KERNEL, panic. */
-	if ((mcx_cfg & MCI_CONFIG_MCAX) &&
+	if ((low & MCI_CONFIG_MCAX) &&
 	    (m->status & MCI_STATUS_TCC) &&
 	    (err_ctx == IN_KERNEL))
 		return MCE_PANIC_SEVERITY;
@@ -330,8 +317,8 @@ static int mce_severity_amd_smca(struct mce *m, enum context err_ctx)
  * See AMD Error Scope Hierarchy table in a newer BKDG. For example
  * 49125_15h_Models_30h-3Fh_BKDG.pdf, section "RAS Features"
  */
-static noinstr int mce_severity_amd(struct mce *m, struct pt_regs *regs, int tolerant,
-				    char **msg, bool is_excp)
+static int mce_severity_amd(struct mce *m, struct pt_regs *regs, int tolerant,
+			    char **msg, bool is_excp)
 {
 	enum context ctx = error_context(m, regs);
 
@@ -383,8 +370,8 @@ static noinstr int mce_severity_amd(struct mce *m, struct pt_regs *regs, int tol
 	return MCE_KEEP_SEVERITY;
 }
 
-static noinstr int mce_severity_intel(struct mce *m, struct pt_regs *regs,
-				      int tolerant, char **msg, bool is_excp)
+static int mce_severity_intel(struct mce *m, struct pt_regs *regs,
+			      int tolerant, char **msg, bool is_excp)
 {
 	enum exception excp = (is_excp ? EXCP_CONTEXT : NO_EXCP);
 	enum context ctx = error_context(m, regs);
@@ -420,14 +407,15 @@ static noinstr int mce_severity_intel(struct mce *m, struct pt_regs *regs,
 	}
 }
 
-int noinstr mce_severity(struct mce *m, struct pt_regs *regs, int tolerant, char **msg,
-			 bool is_excp)
+/* Default to mce_severity_intel */
+int (*mce_severity)(struct mce *m, struct pt_regs *regs, int tolerant, char **msg, bool is_excp) =
+		    mce_severity_intel;
+
+void __init mcheck_vendor_init_severity(void)
 {
 	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD ||
 	    boot_cpu_data.x86_vendor == X86_VENDOR_HYGON)
-		return mce_severity_amd(m, regs, tolerant, msg, is_excp);
-	else
-		return mce_severity_intel(m, regs, tolerant, msg, is_excp);
+		mce_severity = mce_severity_amd;
 }
 
 #ifdef CONFIG_DEBUG_FS

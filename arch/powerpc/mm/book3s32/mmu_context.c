@@ -69,12 +69,6 @@ EXPORT_SYMBOL_GPL(__init_new_context);
 int init_new_context(struct task_struct *t, struct mm_struct *mm)
 {
 	mm->context.id = __init_new_context();
-	mm->context.sr0 = CTX_TO_VSID(mm->context.id, 0);
-
-	if (!kuep_is_disabled())
-		mm->context.sr0 |= SR_NX;
-	if (!kuap_is_disabled())
-		mm->context.sr0 |= SR_KS;
 
 	return 0;
 }
@@ -114,13 +108,20 @@ void __init mmu_context_init(void)
 void switch_mmu_context(struct mm_struct *prev, struct mm_struct *next, struct task_struct *tsk)
 {
 	long id = next->context.id;
+	unsigned long val;
 
 	if (id < 0)
 		panic("mm_struct %p has no context ID", next);
 
 	isync();
 
-	update_user_segments(next->context.sr0);
+	val = CTX_TO_VSID(id, 0);
+	if (!kuep_is_disabled())
+		val |= SR_NX;
+	if (!kuap_is_disabled())
+		val |= SR_KS;
+
+	update_user_segments(val);
 
 	if (IS_ENABLED(CONFIG_BDI_SWITCH))
 		abatron_pteptrs[1] = next->pgd;

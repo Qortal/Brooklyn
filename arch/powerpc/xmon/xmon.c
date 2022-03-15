@@ -125,7 +125,7 @@ static unsigned bpinstr = 0x7fe00008;	/* trap */
 static int cmds(struct pt_regs *);
 static int mread(unsigned long, void *, int);
 static int mwrite(unsigned long, void *, int);
-static int mread_instr(unsigned long, ppc_inst_t *);
+static int mread_instr(unsigned long, struct ppc_inst *);
 static int handle_fault(struct pt_regs *);
 static void byterev(unsigned char *, int);
 static void memex(void);
@@ -908,7 +908,7 @@ static struct bpt *new_breakpoint(unsigned long a)
 static void insert_bpts(void)
 {
 	int i;
-	ppc_inst_t instr, instr2;
+	struct ppc_inst instr, instr2;
 	struct bpt *bp, *bp2;
 
 	bp = bpts;
@@ -988,7 +988,7 @@ static void remove_bpts(void)
 {
 	int i;
 	struct bpt *bp;
-	ppc_inst_t instr;
+	struct ppc_inst instr;
 
 	bp = bpts;
 	for (i = 0; i < NBPTS; ++i, ++bp) {
@@ -1159,7 +1159,7 @@ cmds(struct pt_regs *excp)
 		case 'P':
 			show_tasks();
 			break;
-#if defined(CONFIG_PPC_BOOK3S_32) || defined(CONFIG_PPC_64S_HASH_MMU)
+#ifdef CONFIG_PPC_BOOK3S
 		case 'u':
 			dump_segments();
 			break;
@@ -1204,7 +1204,7 @@ static int do_step(struct pt_regs *regs)
  */
 static int do_step(struct pt_regs *regs)
 {
-	ppc_inst_t instr;
+	struct ppc_inst instr;
 	int stepped;
 
 	force_enable_xmon();
@@ -1459,7 +1459,7 @@ csum(void)
  */
 static long check_bp_loc(unsigned long addr)
 {
-	ppc_inst_t instr;
+	struct ppc_inst instr;
 
 	addr &= ~3;
 	if (!is_kernel_addr(addr)) {
@@ -2107,14 +2107,8 @@ static void dump_300_sprs(void)
 	if (!cpu_has_feature(CPU_FTR_ARCH_300))
 		return;
 
-	if (cpu_has_feature(CPU_FTR_P9_TIDR)) {
-		printf("pidr   = %.16lx  tidr  = %.16lx\n",
-			mfspr(SPRN_PID), mfspr(SPRN_TIDR));
-	} else {
-		printf("pidr   = %.16lx\n",
-			mfspr(SPRN_PID));
-	}
-
+	printf("pidr   = %.16lx  tidr  = %.16lx\n",
+		mfspr(SPRN_PID), mfspr(SPRN_TIDR));
 	printf("psscr  = %.16lx\n",
 		hv ? mfspr(SPRN_PSSCR) : mfspr(SPRN_PSSCR_PR));
 
@@ -2306,7 +2300,7 @@ mwrite(unsigned long adrs, void *buf, int size)
 }
 
 static int
-mread_instr(unsigned long adrs, ppc_inst_t *instr)
+mread_instr(unsigned long adrs, struct ppc_inst *instr)
 {
 	volatile int n;
 
@@ -2614,7 +2608,7 @@ static void dump_tracing(void)
 static void dump_one_paca(int cpu)
 {
 	struct paca_struct *p;
-#ifdef CONFIG_PPC_64S_HASH_MMU
+#ifdef CONFIG_PPC_BOOK3S_64
 	int i = 0;
 #endif
 
@@ -2656,7 +2650,6 @@ static void dump_one_paca(int cpu)
 	DUMP(p, cpu_start, "%#-*x");
 	DUMP(p, kexec_state, "%#-*x");
 #ifdef CONFIG_PPC_BOOK3S_64
-#ifdef CONFIG_PPC_64S_HASH_MMU
 	if (!early_radix_enabled()) {
 		for (i = 0; i < SLB_NUM_BOLTED; i++) {
 			u64 esid, vsid;
@@ -2684,7 +2677,6 @@ static void dump_one_paca(int cpu)
 				       22, "slb_cache", i, p->slb_cache[i]);
 		}
 	}
-#endif
 
 	DUMP(p, rfi_flush_fallback_area, "%-*px");
 #endif
@@ -2817,12 +2809,12 @@ static void dump_all_xives(void)
 {
 	int cpu;
 
-	if (num_online_cpus() == 0) {
+	if (num_possible_cpus() == 0) {
 		printf("No possible cpus, use 'dx #' to dump individual cpus\n");
 		return;
 	}
 
-	for_each_online_cpu(cpu)
+	for_each_possible_cpu(cpu)
 		dump_one_xive(cpu);
 }
 
@@ -3028,7 +3020,7 @@ generic_inst_dump(unsigned long adr, long count, int praddr,
 {
 	int nr, dotted;
 	unsigned long first_adr;
-	ppc_inst_t inst, last_inst = ppc_inst(0);
+	struct ppc_inst inst, last_inst = ppc_inst(0);
 
 	dotted = 0;
 	for (first_adr = adr; count > 0; --count, adr += ppc_inst_len(inst)) {
@@ -3748,7 +3740,7 @@ static void xmon_print_symbol(unsigned long address, const char *mid,
 	printf("%s", after);
 }
 
-#ifdef CONFIG_PPC_64S_HASH_MMU
+#ifdef CONFIG_PPC_BOOK3S_64
 void dump_segments(void)
 {
 	int i;
@@ -4136,7 +4128,7 @@ struct spu_info {
 
 static struct spu_info spu_info[XMON_NUM_SPUS];
 
-void __init xmon_register_spus(struct list_head *list)
+void xmon_register_spus(struct list_head *list)
 {
 	struct spu *spu;
 

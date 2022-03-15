@@ -399,14 +399,6 @@ out:
 	return ret;
 }
 
-static inline const char *eeh_driver_name(struct pci_dev *pdev)
-{
-	if (pdev)
-		return dev_driver_string(&pdev->dev);
-
-	return "<null>";
-}
-
 /**
  * eeh_dev_check_failure - Check if all 1's data is due to EEH slot freeze
  * @edev: eeh device
@@ -597,7 +589,6 @@ EXPORT_SYMBOL(eeh_check_failure);
 /**
  * eeh_pci_enable - Enable MMIO or DMA transfers for this slot
  * @pe: EEH PE
- * @function: EEH option
  *
  * This routine should be called to reenable frozen MMIO or DMA
  * so that it would work correctly again. It's useful while doing
@@ -770,8 +761,8 @@ int pcibios_set_pcie_reset_state(struct pci_dev *dev, enum pcie_reset_state stat
 }
 
 /**
- * eeh_set_dev_freset - Check the required reset for the indicated device
- * @edev: EEH device
+ * eeh_set_pe_freset - Check the required reset for the indicated device
+ * @data: EEH device
  * @flag: return value
  *
  * Each device might have its preferred reset type: fundamental or
@@ -810,7 +801,6 @@ static void eeh_pe_refreeze_passed(struct eeh_pe *root)
 /**
  * eeh_pe_reset_full - Complete a full reset process on the indicated PE
  * @pe: EEH PE
- * @include_passed: include passed-through devices?
  *
  * This function executes a full reset procedure on a PE, including setting
  * the appropriate flags, performing a fundamental or hot reset, and then
@@ -947,7 +937,6 @@ static struct notifier_block eeh_device_nb = {
 
 /**
  * eeh_init - System wide EEH initialization
- * @ops: struct to trace EEH operation callback functions
  *
  * It's the platform's job to call this from an arch_initcall().
  */
@@ -1453,7 +1442,6 @@ static int eeh_pe_reenable_devices(struct eeh_pe *pe, bool include_passed)
  * eeh_pe_reset - Issue PE reset according to specified type
  * @pe: EEH PE
  * @option: reset type
- * @include_passed: include passed-through devices?
  *
  * The routine is called to reset the specified PE with the
  * indicated type, either fundamental reset or hot reset.
@@ -1525,12 +1513,12 @@ EXPORT_SYMBOL_GPL(eeh_pe_configure);
  * eeh_pe_inject_err - Injecting the specified PCI error to the indicated PE
  * @pe: the indicated PE
  * @type: error type
- * @func: error function
+ * @function: error function
  * @addr: address
  * @mask: address mask
  *
  * The routine is called to inject the specified PCI error, which
- * is determined by @type and @func, to the indicated PE for
+ * is determined by @type and @function, to the indicated PE for
  * testing purpose.
  */
 int eeh_pe_inject_err(struct eeh_pe *pe, int type, int func,

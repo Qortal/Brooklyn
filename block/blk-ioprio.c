@@ -62,7 +62,6 @@ struct ioprio_blkg {
 struct ioprio_blkcg {
 	struct blkcg_policy_data cpd;
 	enum prio_policy	 prio_policy;
-	bool			 prio_set;
 };
 
 static inline struct ioprio_blkg *pd_to_ioprio(struct blkg_policy_data *pd)
@@ -113,7 +112,7 @@ static ssize_t ioprio_set_prio_policy(struct kernfs_open_file *of, char *buf,
 	if (ret < 0)
 		return ret;
 	blkcg->prio_policy = ret;
-	blkcg->prio_set = true;
+
 	return nbytes;
 }
 
@@ -191,10 +190,6 @@ static void blkcg_ioprio_track(struct rq_qos *rqos, struct request *rq,
 			       struct bio *bio)
 {
 	struct ioprio_blkcg *blkcg = ioprio_blkcg_from_bio(bio);
-	u16 prio;
-
-	if (!blkcg->prio_set)
-		return;
 
 	/*
 	 * Except for IOPRIO_CLASS_NONE, higher I/O priority numbers
@@ -204,10 +199,8 @@ static void blkcg_ioprio_track(struct rq_qos *rqos, struct request *rq,
 	 * bio I/O priority is not modified. If the bio I/O priority equals
 	 * IOPRIO_CLASS_NONE, the cgroup I/O priority is assigned to the bio.
 	 */
-	prio = max_t(u16, bio->bi_ioprio,
-			IOPRIO_PRIO_VALUE(blkcg->prio_policy, 0));
-	if (prio > bio->bi_ioprio)
-		bio->bi_ioprio = prio;
+	bio->bi_ioprio = max_t(u16, bio->bi_ioprio,
+			       IOPRIO_PRIO_VALUE(blkcg->prio_policy, 0));
 }
 
 static void blkcg_ioprio_exit(struct rq_qos *rqos)

@@ -107,8 +107,7 @@ static int get_max_afu_index(struct pci_dev *dev, int *afu_idx)
 	int pos;
 	u32 val;
 
-	pos = pci_find_dvsec_capability(dev, PCI_VENDOR_ID_IBM,
-					OCXL_DVSEC_FUNC_ID);
+	pos = find_dvsec_from_pos(dev, OCXL_DVSEC_FUNC_ID, 0);
 	if (!pos)
 		return -ESRCH;
 

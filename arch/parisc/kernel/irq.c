@@ -15,7 +15,6 @@
 #include <linux/kernel_stat.h>
 #include <linux/seq_file.h>
 #include <linux/types.h>
-#include <linux/sched/task_stack.h>
 #include <asm/io.h>
 
 #include <asm/softirq_stack.h>
@@ -400,7 +399,8 @@ static inline void stack_overflow_check(struct pt_regs *regs)
 #ifdef CONFIG_DEBUG_STACKOVERFLOW
 	#define STACK_MARGIN	(256*6)
 
-	unsigned long stack_start = (unsigned long) task_stack_page(current);
+	/* Our stack starts directly behind the thread_info struct. */
+	unsigned long stack_start = (unsigned long) current_thread_info();
 	unsigned long sp = regs->gr[30];
 	unsigned long stack_usage;
 	unsigned int *last_usage;
@@ -476,7 +476,7 @@ static void execute_on_irq_stack(void *func, unsigned long param1)
 	union_ptr = &per_cpu(irq_stack_union, smp_processor_id());
 	irq_stack = (unsigned long) &union_ptr->stack;
 	irq_stack = ALIGN(irq_stack + sizeof(irq_stack_union.slock),
-			FRAME_ALIGN); /* align for stack frame usage */
+			 64); /* align for stack frame usage */
 
 	/* We may be called recursive. If we are already using the irq stack,
 	 * just continue to use it. Use spinlocks to serialize

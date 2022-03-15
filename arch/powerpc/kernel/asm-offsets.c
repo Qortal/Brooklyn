@@ -9,6 +9,8 @@
  * #defines from the assembly-language output.
  */
 
+#define GENERATING_ASM_OFFSETS	/* asm/smp.h */
+
 #include <linux/compat.h>
 #include <linux/signal.h>
 #include <linux/sched.h>
@@ -54,7 +56,7 @@
 #endif
 
 #ifdef CONFIG_PPC32
-#ifdef CONFIG_BOOKE_OR_40x
+#if defined(CONFIG_BOOKE) || defined(CONFIG_40x)
 #include "head_booke.h"
 #endif
 #endif
@@ -91,7 +93,7 @@ int main(void)
 #endif /* CONFIG_PPC64 */
 	OFFSET(TASK_STACK, task_struct, stack);
 #ifdef CONFIG_SMP
-	OFFSET(TASK_CPU, task_struct, thread_info.cpu);
+	OFFSET(TASK_CPU, task_struct, cpu);
 #endif
 
 #ifdef CONFIG_LIVEPATCH
@@ -139,7 +141,6 @@ int main(void)
 	OFFSET(THR11, thread_struct, r11);
 	OFFSET(THLR, thread_struct, lr);
 	OFFSET(THCTR, thread_struct, ctr);
-	OFFSET(THSR0, thread_struct, sr0);
 #endif
 #ifdef CONFIG_SPE
 	OFFSET(THREAD_EVR0, thread_struct, evr[0]);
@@ -219,12 +220,10 @@ int main(void)
 	OFFSET(PACA_EXGEN, paca_struct, exgen);
 	OFFSET(PACA_EXMC, paca_struct, exmc);
 	OFFSET(PACA_EXNMI, paca_struct, exnmi);
-#ifdef CONFIG_PPC_64S_HASH_MMU
 	OFFSET(PACA_SLBSHADOWPTR, paca_struct, slb_shadow_ptr);
 	OFFSET(SLBSHADOW_STACKVSID, slb_shadow, save_area[SLB_NUM_BOLTED - 1].vsid);
 	OFFSET(SLBSHADOW_STACKESID, slb_shadow, save_area[SLB_NUM_BOLTED - 1].esid);
 	OFFSET(SLBSHADOW_SAVEAREA, slb_shadow, save_area);
-#endif
 	OFFSET(LPPACA_PMCINUSE, lppaca, pmcregs_in_use);
 #ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
 	OFFSET(PACA_PMCINUSE, paca_struct, pmcregs_in_use);

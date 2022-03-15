@@ -24,6 +24,7 @@
 #include <linux/syscalls.h>
 #include <asm/ucontext.h>
 #include <linux/uaccess.h>
+#include <asm/fpu/internal.h>
 #include <asm/fpu/signal.h>
 #include <asm/ptrace.h>
 #include <asm/ia32_unistd.h>
@@ -56,8 +57,8 @@ static inline void reload_segments(struct sigcontext_32 *sc)
 /*
  * Do a signal return; undo the signal stack.
  */
-static bool ia32_restore_sigcontext(struct pt_regs *regs,
-				    struct sigcontext_32 __user *usc)
+static int ia32_restore_sigcontext(struct pt_regs *regs,
+				   struct sigcontext_32 __user *usc)
 {
 	struct sigcontext_32 sc;
 
@@ -65,7 +66,7 @@ static bool ia32_restore_sigcontext(struct pt_regs *regs,
 	current->restart_block.fn = do_no_restart_syscall;
 
 	if (unlikely(copy_from_user(&sc, usc, sizeof(sc))))
-		return false;
+		return -EFAULT;
 
 	/* Get only the ia32 registers. */
 	regs->bx = sc.bx;
@@ -110,7 +111,7 @@ COMPAT_SYSCALL_DEFINE0(sigreturn)
 
 	set_current_blocked(&set);
 
-	if (!ia32_restore_sigcontext(regs, &frame->sc))
+	if (ia32_restore_sigcontext(regs, &frame->sc))
 		goto badframe;
 	return regs->ax;
 
@@ -134,7 +135,7 @@ COMPAT_SYSCALL_DEFINE0(rt_sigreturn)
 
 	set_current_blocked(&set);
 
-	if (!ia32_restore_sigcontext(regs, &frame->uc.uc_mcontext))
+	if (ia32_restore_sigcontext(regs, &frame->uc.uc_mcontext))
 		goto badframe;
 
 	if (compat_restore_altstack(&frame->uc.uc_stack))
@@ -219,8 +220,8 @@ static void __user *get_sigframe(struct ksignal *ksig, struct pt_regs *regs,
 
 	sp = fpu__alloc_mathframe(sp, 1, &fx_aligned, &math_size);
 	*fpstate = (struct _fpstate_32 __user *) sp;
-	if (!copy_fpstate_to_sigframe(*fpstate, (void __user *)fx_aligned,
-				      math_size))
+	if (copy_fpstate_to_sigframe(*fpstate, (void __user *)fx_aligned,
+				     math_size) < 0)
 		return (void __user *) -1L;
 
 	sp -= frame_size;

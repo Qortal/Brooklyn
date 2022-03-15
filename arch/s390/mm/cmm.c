@@ -14,8 +14,8 @@
 #include <linux/moduleparam.h>
 #include <linux/gfp.h>
 #include <linux/sched.h>
-#include <linux/string_helpers.h>
 #include <linux/sysctl.h>
+#include <linux/ctype.h>
 #include <linux/swap.h>
 #include <linux/kthread.h>
 #include <linux/oom.h>
@@ -90,7 +90,7 @@ static long cmm_alloc_pages(long nr, long *counter,
 			} else
 				free_page((unsigned long) npa);
 		}
-		diag10_range(virt_to_pfn(addr), 1);
+		diag10_range(addr >> PAGE_SHIFT, 1);
 		pa->pages[pa->index++] = addr;
 		(*counter)++;
 		spin_unlock(&cmm_lock);
@@ -394,10 +394,13 @@ static int __init cmm_init(void)
 		goto out_sysctl;
 #ifdef CONFIG_CMM_IUCV
 	/* convert sender to uppercase characters */
-	if (sender)
-		string_upper(sender, sender);
-	else
+	if (sender) {
+		int len = strlen(sender);
+		while (len--)
+			sender[len] = toupper(sender[len]);
+	} else {
 		sender = cmm_default_sender;
+	}
 
 	rc = smsg_register_callback(SMSG_PREFIX, cmm_smsg_target);
 	if (rc < 0)

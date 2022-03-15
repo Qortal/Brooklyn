@@ -223,7 +223,7 @@ inline void handle_fpu_exception(struct pt_regs *regs)
 		}
 	} else if (fpcsr & FPCSR_mskRIT) {
 		if (!user_mode(regs))
-			make_task_dead(SIGILL);
+			do_exit(SIGILL);
 		si_signo = SIGILL;
 	}
 

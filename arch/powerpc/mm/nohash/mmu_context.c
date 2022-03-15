@@ -33,7 +33,6 @@
 #include <asm/mmu_context.h>
 #include <asm/tlbflush.h>
 #include <asm/smp.h>
-#include <asm/kup.h>
 
 #include <mm/mmu_decl.h>
 
@@ -218,7 +217,7 @@ static void set_context(unsigned long id, pgd_t *pgd)
 
 		/* sync */
 		mb();
-	} else if (kuap_is_disabled()) {
+	} else {
 		if (IS_ENABLED(CONFIG_40x))
 			mb();	/* sync */
 
@@ -306,9 +305,6 @@ void switch_mmu_context(struct mm_struct *prev, struct mm_struct *next,
 	if (IS_ENABLED(CONFIG_BDI_SWITCH))
 		abatron_pteptrs[1] = next->pgd;
 	set_context(id, next->pgd);
-#if defined(CONFIG_BOOKE_OR_40x) && defined(CONFIG_PPC_KUAP)
-	tsk->thread.pid = id;
-#endif
 	raw_spin_unlock(&context_lock);
 }
 

@@ -236,6 +236,11 @@ void arch_ftrace_update_code(int command)
 	command |= FTRACE_MAY_SLEEP;
 	ftrace_modify_all_code(command);
 }
+
+int __init ftrace_dyn_arch_init(void)
+{
+	return 0;
+}
 #endif /* CONFIG_DYNAMIC_FTRACE */
 
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
@@ -244,6 +249,8 @@ void arch_ftrace_update_code(int command)
  * on the way back to parent. For this purpose, this function is called
  * in _mcount() or ftrace_caller() to replace return address (*parent) on
  * the call stack to return_to_handler.
+ *
+ * Note that @frame_pointer is used only for sanity check later.
  */
 void prepare_ftrace_return(unsigned long self_addr, unsigned long *parent,
 			   unsigned long frame_pointer)
@@ -261,10 +268,8 @@ void prepare_ftrace_return(unsigned long self_addr, unsigned long *parent,
 	 */
 	old = *parent;
 
-	if (!function_graph_enter(old, self_addr, frame_pointer,
-	    (void *)frame_pointer)) {
+	if (!function_graph_enter(old, self_addr, frame_pointer, NULL))
 		*parent = return_hooker;
-	}
 }
 
 #ifdef CONFIG_DYNAMIC_FTRACE

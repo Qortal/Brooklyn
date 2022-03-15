@@ -274,6 +274,7 @@
 	bus-width = <4>;
 	non-removable;
 	cap-power-off-card;
+	pm-ignore-notify;
 	keep-power-in-suspend;
 	mmc-pwrseq = <&usdhc1_pwrseq>;
 	status = "okay";

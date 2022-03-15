@@ -15,7 +15,6 @@
 #include <asm/cacheflush.h>
 #include <asm/set_memory.h>
 #include <asm/nospec-branch.h>
-#include <asm/asm-prototypes.h>
 #include <linux/bpf.h>
 
 /*
@@ -1268,21 +1267,6 @@ static void emit_epilogue(u8 **pprog, u32 stack_depth)
 	*pprog = prog;
 }
 
-static int emit_jmp_edx(u8 **pprog, u8 *ip)
-{
-	u8 *prog = *pprog;
-	int cnt = 0;
-
-#ifdef CONFIG_RETPOLINE
-	EMIT1_off32(0xE9, (u8 *)__x86_indirect_thunk_edx - (ip + 5));
-#else
-	EMIT2(0xFF, 0xE2);
-#endif
-	*pprog = prog;
-
-	return cnt;
-}
-
 /*
  * Generate the following code:
  * ... bpf_tail_call(void *ctx, struct bpf_array *array, u64 index) ...
@@ -1296,7 +1280,7 @@ static int emit_jmp_edx(u8 **pprog, u8 *ip)
  *   goto *(prog->bpf_func + prologue_size);
  * out:
  */
-static void emit_bpf_tail_call(u8 **pprog, u8 *ip)
+static void emit_bpf_tail_call(u8 **pprog)
 {
 	u8 *prog = *pprog;
 	int cnt = 0;
@@ -1323,7 +1307,7 @@ static void emit_bpf_tail_call(u8 **pprog, u8 *ip)
 	EMIT2(IA32_JBE, jmp_label(jmp_label1, 2));
 
 	/*
-	 * if (tail_call_cnt++ >= MAX_TAIL_CALL_CNT)
+	 * if (tail_call_cnt > MAX_TAIL_CALL_CNT)
 	 *     goto out;
 	 */
 	lo = (u32)MAX_TAIL_CALL_CNT;
@@ -1337,7 +1321,7 @@ static void emit_bpf_tail_call(u8 **pprog, u8 *ip)
 	/* cmp ecx,lo */
 	EMIT3(0x83, add_1reg(0xF8, IA32_ECX), lo);
 
-	/* jae out */
+	/* ja out */
 	EMIT2(IA32_JAE, jmp_label(jmp_label1, 2));
 
 	/* add eax,0x1 */
@@ -1378,7 +1362,7 @@ static void emit_bpf_tail_call(u8 **pprog, u8 *ip)
 	 * eax == ctx (1st arg)
 	 * edx == prog->bpf_func + prologue_size
 	 */
-	cnt += emit_jmp_edx(&prog, ip + cnt);
+	RETPOLINE_EDX_BPF_JIT();
 
 	if (jmp_label1 == -1)
 		jmp_label1 = cnt;
@@ -2138,7 +2122,7 @@ static int do_jit(struct bpf_prog *bpf_prog, int *addrs, u8 *image,
 			break;
 		}
 		case BPF_JMP | BPF_TAIL_CALL:
-			emit_bpf_tail_call(&prog, image + addrs[i - 1]);
+			emit_bpf_tail_call(&prog);
 			break;
 
 		/* cond jump */

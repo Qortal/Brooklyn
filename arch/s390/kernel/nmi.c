@@ -58,27 +58,27 @@ static inline unsigned long nmi_get_mcesa_size(void)
 
 /*
  * The initial machine check extended save area for the boot CPU.
- * It will be replaced on the boot CPU reinit with an allocated
- * structure. The structure is required for machine check happening
- * early in the boot process.
+ * It will be replaced by nmi_init() with an allocated structure.
+ * The structure is required for machine check happening early in
+ * the boot process.
  */
 static struct mcesa boot_mcesa __initdata __aligned(MCESA_MAX_SIZE);
 
-void __init nmi_alloc_mcesa_early(u64 *mcesad)
+void __init nmi_alloc_boot_cpu(struct lowcore *lc)
 {
 	if (!nmi_needs_mcesa())
 		return;
-	*mcesad = __pa(&boot_mcesa);
+	lc->mcesad = (unsigned long) &boot_mcesa;
 	if (MACHINE_HAS_GS)
-		*mcesad |= ilog2(MCESA_MAX_SIZE);
+		lc->mcesad |= ilog2(MCESA_MAX_SIZE);
 }
 
-static void __init nmi_alloc_cache(void)
+static int __init nmi_init(void)
 {
-	unsigned long size;
+	unsigned long origin, cr0, size;
 
 	if (!nmi_needs_mcesa())
-		return;
+		return 0;
 	size = nmi_get_mcesa_size();
 	if (size > MCESA_MIN_SIZE)
 		mcesa_origin_lc = ilog2(size);
@@ -86,31 +86,40 @@ static void __init nmi_alloc_cache(void)
 	mcesa_cache = kmem_cache_create("nmi_save_areas", size, size, 0, NULL);
 	if (!mcesa_cache)
 		panic("Couldn't create nmi save area cache");
+	origin = (unsigned long) kmem_cache_alloc(mcesa_cache, GFP_KERNEL);
+	if (!origin)
+		panic("Couldn't allocate nmi save area");
+	/* The pointer is stored with mcesa_bits ORed in */
+	kmemleak_not_leak((void *) origin);
+	__ctl_store(cr0, 0, 0);
+	__ctl_clear_bit(0, 28); /* disable lowcore protection */
+	/* Replace boot_mcesa on the boot CPU */
+	S390_lowcore.mcesad = origin | mcesa_origin_lc;
+	__ctl_load(cr0, 0, 0);
+	return 0;
 }
+early_initcall(nmi_init);
 
-int __ref nmi_alloc_mcesa(u64 *mcesad)
+int nmi_alloc_per_cpu(struct lowcore *lc)
 {
 	unsigned long origin;
 
-	*mcesad = 0;
 	if (!nmi_needs_mcesa())
 		return 0;
-	if (!mcesa_cache)
-		nmi_alloc_cache();
 	origin = (unsigned long) kmem_cache_alloc(mcesa_cache, GFP_KERNEL);
 	if (!origin)
 		return -ENOMEM;
 	/* The pointer is stored with mcesa_bits ORed in */
 	kmemleak_not_leak((void *) origin);
-	*mcesad = __pa(origin) | mcesa_origin_lc;
+	lc->mcesad = origin | mcesa_origin_lc;
 	return 0;
 }
 
-void nmi_free_mcesa(u64 *mcesad)
+void nmi_free_per_cpu(struct lowcore *lc)
 {
 	if (!nmi_needs_mcesa())
 		return;
-	kmem_cache_free(mcesa_cache, __va(*mcesad & MCESA_ORIGIN_MASK));
+	kmem_cache_free(mcesa_cache, (void *)(lc->mcesad & MCESA_ORIGIN_MASK));
 }
 
 static notrace void s390_handle_damage(void)
@@ -166,7 +175,7 @@ void __s390_handle_mcck(void)
 		       "malfunction (code 0x%016lx).\n", mcck.mcck_code);
 		printk(KERN_EMERG "mcck: task: %s, pid: %d.\n",
 		       current->comm, current->pid);
-		make_task_dead(SIGSEGV);
+		do_exit(SIGSEGV);
 	}
 }
 
@@ -237,7 +246,7 @@ static int notrace s390_validate_registers(union mci mci, int umode)
 			: "Q" (S390_lowcore.fpt_creg_save_area));
 	}
 
-	mcesa = __va(S390_lowcore.mcesad & MCESA_ORIGIN_MASK);
+	mcesa = (struct mcesa *)(S390_lowcore.mcesad & MCESA_ORIGIN_MASK);
 	if (!MACHINE_HAS_VX) {
 		/* Validate floating point registers */
 		asm volatile(

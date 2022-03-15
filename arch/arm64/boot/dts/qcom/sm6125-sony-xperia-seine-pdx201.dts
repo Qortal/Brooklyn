@@ -17,7 +17,6 @@
 
 	model = "Sony Xperia 10 II";
 	compatible = "sony,pdx201", "qcom,sm6125";
-	chassis-type = "handset";
 
 	chosen {
 		#address-cells = <2>;
@@ -42,6 +41,7 @@
 	gpio-keys {
 		status = "okay";
 		compatible = "gpio-keys";
+		input-name = "gpio-keys";
 		#address-cells = <1>;
 		#size-cells = <0>;
 		autorepeat;

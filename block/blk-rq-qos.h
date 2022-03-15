@@ -189,10 +189,9 @@ static inline void rq_qos_throttle(struct request_queue *q, struct bio *bio)
 	 * BIO_TRACKED lets controllers know that a bio went through the
 	 * normal rq_qos path.
 	 */
-	if (q->rq_qos) {
-		bio_set_flag(bio, BIO_TRACKED);
+	bio_set_flag(bio, BIO_TRACKED);
+	if (q->rq_qos)
 		__rq_qos_throttle(q->rq_qos, bio);
-	}
 }
 
 static inline void rq_qos_track(struct request_queue *q, struct request *rq,

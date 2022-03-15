@@ -127,12 +127,16 @@ static void __init setup_bootmem(void)
 		int j;
 
 		for (j = i; j > 0; j--) {
+			physmem_range_t tmp;
+
 			if (pmem_ranges[j-1].start_pfn <
 			    pmem_ranges[j].start_pfn) {
 
 				break;
 			}
-			swap(pmem_ranges[j-1], pmem_ranges[j]);
+			tmp = pmem_ranges[j-1];
+			pmem_ranges[j-1] = pmem_ranges[j];
+			pmem_ranges[j] = tmp;
 		}
 	}
 

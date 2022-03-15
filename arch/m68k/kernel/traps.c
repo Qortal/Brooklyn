@@ -1131,7 +1131,7 @@ void die_if_kernel (char *str, struct pt_regs *fp, int nr)
 	pr_crit("%s: %08x\n", str, nr);
 	show_registers(fp);
 	add_taint(TAINT_DIE, LOCKDEP_NOW_UNRELIABLE);
-	make_task_dead(SIGSEGV);
+	do_exit(SIGSEGV);
 }
 
 asmlinkage void set_esp0(unsigned long ssp)

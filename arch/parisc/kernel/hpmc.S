@@ -43,8 +43,10 @@
 	 * IODC requires 7K byte stack.  That leaves 1K byte for os_hpmc.
 	 */
 
-	.import toc_stack,data
-#define hpmc_stack	toc_stack	/* re-use the TOC stack */
+	__PAGE_ALIGNED_BSS
+	.align 4096
+hpmc_stack:
+	.block 16384
 
 #define HPMC_IODC_BUF_SIZE 0x8000
 

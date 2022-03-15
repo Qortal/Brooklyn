@@ -929,10 +929,8 @@ static void find_existing_ddw_windows_named(const char *name)
 		}
 
 		window = ddw_list_new_entry(pdn, dma64);
-		if (!window) {
-			of_node_put(pdn);
+		if (!window)
 			break;
-		}
 
 		spin_lock(&dma_win_list_lock);
 		list_add(&window->list, &dma_win_list);
@@ -1152,15 +1150,14 @@ static void reset_dma_window(struct pci_dev *dev, struct device_node *par_dn)
 /* Return largest page shift based on "IO Page Sizes" output of ibm,query-pe-dma-window. */
 static int iommu_get_page_shift(u32 query_page_size)
 {
-	/* Supported IO page-sizes according to LoPAR, note that 2M is out of order */
+	/* Supported IO page-sizes according to LoPAR */
 	const int shift[] = {
 		__builtin_ctzll(SZ_4K),   __builtin_ctzll(SZ_64K), __builtin_ctzll(SZ_16M),
 		__builtin_ctzll(SZ_32M),  __builtin_ctzll(SZ_64M), __builtin_ctzll(SZ_128M),
-		__builtin_ctzll(SZ_256M), __builtin_ctzll(SZ_16G), __builtin_ctzll(SZ_2M)
+		__builtin_ctzll(SZ_256M), __builtin_ctzll(SZ_16G)
 	};
 
 	int i = ARRAY_SIZE(shift) - 1;
-	int ret = 0;
 
 	/*
 	 * On LoPAR, ibm,query-pe-dma-window outputs "IO Page Sizes" using a bit field:
@@ -1170,10 +1167,11 @@ static int iommu_get_page_shift(u32 query_page_size)
 	 */
 	for (; i >= 0 ; i--) {
 		if (query_page_size & (1 << i))
-			ret = max(ret, shift[i]);
+			return shift[i];
 	}
 
-	return ret;
+	/* No valid page size found. */
+	return 0;
 }
 
 static struct property *ddw_property_create(const char *propname, u32 liobn, u64 dma_addr,
@@ -1229,6 +1227,7 @@ static bool enable_ddw(struct pci_dev *dev, struct device_node *pdn)
 	u32 ddw_avail[DDW_APPLICABLE_SIZE];
 	struct dma_win *window;
 	struct property *win64;
+	bool ddw_enabled = false;
 	struct failed_ddw_pdn *fpdn;
 	bool default_win_removed = false, direct_mapping = false;
 	bool pmem_present;
@@ -1243,6 +1242,7 @@ static bool enable_ddw(struct pci_dev *dev, struct device_node *pdn)
 
 	if (find_existing_ddw(pdn, &dev->dev.archdata.dma_offset, &len)) {
 		direct_mapping = (len >= max_ram_len);
+		ddw_enabled = true;
 		goto out_unlock;
 	}
 
@@ -1397,8 +1397,8 @@ static bool enable_ddw(struct pci_dev *dev, struct device_node *pdn)
 			dev_info(&dev->dev, "failed to map DMA window for %pOF: %d\n",
 				 dn, ret);
 
-			/* Make sure to clean DDW if any TCE was set*/
-			clean_dma_window(pdn, win64->value);
+		/* Make sure to clean DDW if any TCE was set*/
+		clean_dma_window(pdn, win64->value);
 			goto out_del_list;
 		}
 	} else {
@@ -1445,6 +1445,7 @@ static bool enable_ddw(struct pci_dev *dev, struct device_node *pdn)
 	spin_unlock(&dma_win_list_lock);
 
 	dev->dev.archdata.dma_offset = win_addr;
+	ddw_enabled = true;
 	goto out_unlock;
 
 out_del_list:
@@ -1480,10 +1481,10 @@ out_unlock:
 	 * as RAM, then we failed to create a window to cover persistent
 	 * memory and need to set the DMA limit.
 	 */
-	if (pmem_present && direct_mapping && len == max_ram_len)
+	if (pmem_present && ddw_enabled && direct_mapping && len == max_ram_len)
 		dev->dev.bus_dma_limit = dev->dev.archdata.dma_offset + (1ULL << len);
 
-	return direct_mapping;
+    return ddw_enabled && direct_mapping;
 }
 
 static void pci_dma_dev_setup_pSeriesLP(struct pci_dev *dev)
@@ -1654,7 +1655,7 @@ static struct notifier_block iommu_reconfig_nb = {
 };
 
 /* These are called very early. */
-void __init iommu_init_early_pSeries(void)
+void iommu_init_early_pSeries(void)
 {
 	if (of_chosen && of_get_property(of_chosen, "linux,iommu-off", NULL))
 		return;

@@ -41,10 +41,10 @@
 #define	NUM_FTRACE_TRAMPS	8
 static unsigned long ftrace_tramps[NUM_FTRACE_TRAMPS];
 
-static ppc_inst_t
+static struct ppc_inst
 ftrace_call_replace(unsigned long ip, unsigned long addr, int link)
 {
-	ppc_inst_t op;
+	struct ppc_inst op;
 
 	addr = ppc_function_entry((void *)addr);
 
@@ -55,9 +55,9 @@ ftrace_call_replace(unsigned long ip, unsigned long addr, int link)
 }
 
 static int
-ftrace_modify_code(unsigned long ip, ppc_inst_t old, ppc_inst_t new)
+ftrace_modify_code(unsigned long ip, struct ppc_inst old, struct ppc_inst new)
 {
-	ppc_inst_t replaced;
+	struct ppc_inst replaced;
 
 	/*
 	 * Note:
@@ -90,24 +90,24 @@ ftrace_modify_code(unsigned long ip, ppc_inst_t old, ppc_inst_t new)
  */
 static int test_24bit_addr(unsigned long ip, unsigned long addr)
 {
-	ppc_inst_t op;
+	struct ppc_inst op;
 	addr = ppc_function_entry((void *)addr);
 
 	/* use the create_branch to verify that this offset can be branched */
 	return create_branch(&op, (u32 *)ip, addr, 0) == 0;
 }
 
-static int is_bl_op(ppc_inst_t op)
+static int is_bl_op(struct ppc_inst op)
 {
 	return (ppc_inst_val(op) & 0xfc000003) == 0x48000001;
 }
 
-static int is_b_op(ppc_inst_t op)
+static int is_b_op(struct ppc_inst op)
 {
 	return (ppc_inst_val(op) & 0xfc000003) == 0x48000000;
 }
 
-static unsigned long find_bl_target(unsigned long ip, ppc_inst_t op)
+static unsigned long find_bl_target(unsigned long ip, struct ppc_inst op)
 {
 	int offset;
 
@@ -127,7 +127,7 @@ __ftrace_make_nop(struct module *mod,
 {
 	unsigned long entry, ptr, tramp;
 	unsigned long ip = rec->ip;
-	ppc_inst_t op, pop;
+	struct ppc_inst op, pop;
 
 	/* read where this goes */
 	if (copy_inst_from_kernel_nofault(&op, (void *)ip)) {
@@ -221,9 +221,10 @@ static int
 __ftrace_make_nop(struct module *mod,
 		  struct dyn_ftrace *rec, unsigned long addr)
 {
-	ppc_inst_t op;
+	struct ppc_inst op;
+	unsigned int jmp[4];
 	unsigned long ip = rec->ip;
-	unsigned long tramp, ptr;
+	unsigned long tramp;
 
 	if (copy_from_kernel_nofault(&op, (void *)ip, MCOUNT_INSN_SIZE))
 		return -EFAULT;
@@ -237,13 +238,41 @@ __ftrace_make_nop(struct module *mod,
 	/* lets find where the pointer goes */
 	tramp = find_bl_target(ip, op);
 
+	/*
+	 * On PPC32 the trampoline looks like:
+	 *  0x3d, 0x80, 0x00, 0x00  lis r12,sym@ha
+	 *  0x39, 0x8c, 0x00, 0x00  addi r12,r12,sym@l
+	 *  0x7d, 0x89, 0x03, 0xa6  mtctr r12
+	 *  0x4e, 0x80, 0x04, 0x20  bctr
+	 */
+
+	pr_devel("ip:%lx jumps to %lx", ip, tramp);
+
 	/* Find where the trampoline jumps to */
-	if (module_trampoline_target(mod, tramp, &ptr)) {
-		pr_err("Failed to get trampoline target\n");
+	if (copy_from_kernel_nofault(jmp, (void *)tramp, sizeof(jmp))) {
+		pr_err("Failed to read %lx\n", tramp);
 		return -EFAULT;
 	}
 
-	if (ptr != addr) {
+	pr_devel(" %08x %08x ", jmp[0], jmp[1]);
+
+	/* verify that this is what we expect it to be */
+	if (((jmp[0] & 0xffff0000) != 0x3d800000) ||
+	    ((jmp[1] & 0xffff0000) != 0x398c0000) ||
+	    (jmp[2] != 0x7d8903a6) ||
+	    (jmp[3] != 0x4e800420)) {
+		pr_err("Not a trampoline\n");
+		return -EINVAL;
+	}
+
+	tramp = (jmp[1] & 0xffff) |
+		((jmp[0] & 0xffff) << 16);
+	if (tramp & 0x8000)
+		tramp -= 0x10000;
+
+	pr_devel(" %lx ", tramp);
+
+	if (tramp != addr) {
 		pr_err("Trampoline location %08lx does not match addr\n",
 		       tramp);
 		return -EINVAL;
@@ -262,7 +291,7 @@ __ftrace_make_nop(struct module *mod,
 static unsigned long find_ftrace_tramp(unsigned long ip)
 {
 	int i;
-	ppc_inst_t instr;
+	struct ppc_inst instr;
 
 	/*
 	 * We have the compiler generated long_branch tramps at the end
@@ -300,9 +329,9 @@ static int add_ftrace_tramp(unsigned long tramp)
 static int setup_mcount_compiler_tramp(unsigned long tramp)
 {
 	int i;
-	ppc_inst_t op;
+	struct ppc_inst op;
 	unsigned long ptr;
-	ppc_inst_t instr;
+	struct ppc_inst instr;
 	static unsigned long ftrace_plt_tramps[NUM_FTRACE_TRAMPS];
 
 	/* Is this a known long jump tramp? */
@@ -367,7 +396,7 @@ static int setup_mcount_compiler_tramp(unsigned long tramp)
 static int __ftrace_make_nop_kernel(struct dyn_ftrace *rec, unsigned long addr)
 {
 	unsigned long tramp, ip = rec->ip;
-	ppc_inst_t op;
+	struct ppc_inst op;
 
 	/* Read where this goes */
 	if (copy_inst_from_kernel_nofault(&op, (void *)ip)) {
@@ -407,7 +436,7 @@ int ftrace_make_nop(struct module *mod,
 		    struct dyn_ftrace *rec, unsigned long addr)
 {
 	unsigned long ip = rec->ip;
-	ppc_inst_t old, new;
+	struct ppc_inst old, new;
 
 	/*
 	 * If the calling address is more that 24 bits away,
@@ -460,7 +489,7 @@ int ftrace_make_nop(struct module *mod,
  */
 #ifndef CONFIG_MPROFILE_KERNEL
 static int
-expected_nop_sequence(void *ip, ppc_inst_t op0, ppc_inst_t op1)
+expected_nop_sequence(void *ip, struct ppc_inst op0, struct ppc_inst op1)
 {
 	/*
 	 * We expect to see:
@@ -478,7 +507,7 @@ expected_nop_sequence(void *ip, ppc_inst_t op0, ppc_inst_t op1)
 }
 #else
 static int
-expected_nop_sequence(void *ip, ppc_inst_t op0, ppc_inst_t op1)
+expected_nop_sequence(void *ip, struct ppc_inst op0, struct ppc_inst op1)
 {
 	/* look for patched "NOP" on ppc64 with -mprofile-kernel */
 	if (!ppc_inst_equal(op0, ppc_inst(PPC_RAW_NOP())))
@@ -490,8 +519,8 @@ expected_nop_sequence(void *ip, ppc_inst_t op0, ppc_inst_t op1)
 static int
 __ftrace_make_call(struct dyn_ftrace *rec, unsigned long addr)
 {
-	ppc_inst_t op[2];
-	ppc_inst_t instr;
+	struct ppc_inst op[2];
+	struct ppc_inst instr;
 	void *ip = (void *)rec->ip;
 	unsigned long entry, ptr, tramp;
 	struct module *mod = rec->arch.mod;
@@ -559,10 +588,8 @@ static int
 __ftrace_make_call(struct dyn_ftrace *rec, unsigned long addr)
 {
 	int err;
-	ppc_inst_t op;
+	struct ppc_inst op;
 	u32 *ip = (u32 *)rec->ip;
-	struct module *mod = rec->arch.mod;
-	unsigned long tramp;
 
 	/* read where this goes */
 	if (copy_inst_from_kernel_nofault(&op, ip))
@@ -575,23 +602,13 @@ __ftrace_make_call(struct dyn_ftrace *rec, unsigned long addr)
 	}
 
 	/* If we never set up a trampoline to ftrace_caller, then bail */
-#ifdef CONFIG_DYNAMIC_FTRACE_WITH_REGS
-	if (!mod->arch.tramp || !mod->arch.tramp_regs) {
-#else
-	if (!mod->arch.tramp) {
-#endif
+	if (!rec->arch.mod->arch.tramp) {
 		pr_err("No ftrace trampoline\n");
 		return -EINVAL;
 	}
 
-#ifdef CONFIG_DYNAMIC_FTRACE_WITH_REGS
-	if (rec->flags & FTRACE_FL_REGS)
-		tramp = mod->arch.tramp_regs;
-	else
-#endif
-		tramp = mod->arch.tramp;
 	/* create the branch to the trampoline */
-	err = create_branch(&op, ip, tramp, BRANCH_SET_LINK);
+	err = create_branch(&op, ip, rec->arch.mod->arch.tramp, BRANCH_SET_LINK);
 	if (err) {
 		pr_err("REL24 out of range!\n");
 		return -EINVAL;
@@ -609,7 +626,7 @@ __ftrace_make_call(struct dyn_ftrace *rec, unsigned long addr)
 
 static int __ftrace_make_call_kernel(struct dyn_ftrace *rec, unsigned long addr)
 {
-	ppc_inst_t op;
+	struct ppc_inst op;
 	void *ip = (void *)rec->ip;
 	unsigned long tramp, entry, ptr;
 
@@ -657,7 +674,7 @@ static int __ftrace_make_call_kernel(struct dyn_ftrace *rec, unsigned long addr)
 int ftrace_make_call(struct dyn_ftrace *rec, unsigned long addr)
 {
 	unsigned long ip = rec->ip;
-	ppc_inst_t old, new;
+	struct ppc_inst old, new;
 
 	/*
 	 * If the calling address is more that 24 bits away,
@@ -696,7 +713,7 @@ static int
 __ftrace_modify_call(struct dyn_ftrace *rec, unsigned long old_addr,
 					unsigned long addr)
 {
-	ppc_inst_t op;
+	struct ppc_inst op;
 	unsigned long ip = rec->ip;
 	unsigned long entry, ptr, tramp;
 	struct module *mod = rec->arch.mod;
@@ -790,7 +807,7 @@ int ftrace_modify_call(struct dyn_ftrace *rec, unsigned long old_addr,
 			unsigned long addr)
 {
 	unsigned long ip = rec->ip;
-	ppc_inst_t old, new;
+	struct ppc_inst old, new;
 
 	/*
 	 * If the calling address is more that 24 bits away,
@@ -830,7 +847,7 @@ int ftrace_modify_call(struct dyn_ftrace *rec, unsigned long old_addr,
 int ftrace_update_ftrace_func(ftrace_func_t func)
 {
 	unsigned long ip = (unsigned long)(&ftrace_call);
-	ppc_inst_t old, new;
+	struct ppc_inst old, new;
 	int ret;
 
 	old = ppc_inst_read((u32 *)&ftrace_call);
@@ -915,7 +932,7 @@ int ftrace_enable_ftrace_graph_caller(void)
 	unsigned long ip = (unsigned long)(&ftrace_graph_call);
 	unsigned long addr = (unsigned long)(&ftrace_graph_caller);
 	unsigned long stub = (unsigned long)(&ftrace_graph_stub);
-	ppc_inst_t old, new;
+	struct ppc_inst old, new;
 
 	old = ftrace_call_replace(ip, stub, 0);
 	new = ftrace_call_replace(ip, addr, 0);
@@ -928,7 +945,7 @@ int ftrace_disable_ftrace_graph_caller(void)
 	unsigned long ip = (unsigned long)(&ftrace_graph_call);
 	unsigned long addr = (unsigned long)(&ftrace_graph_caller);
 	unsigned long stub = (unsigned long)(&ftrace_graph_stub);
-	ppc_inst_t old, new;
+	struct ppc_inst old, new;
 
 	old = ftrace_call_replace(ip, addr, 0);
 	new = ftrace_call_replace(ip, stub, 0);

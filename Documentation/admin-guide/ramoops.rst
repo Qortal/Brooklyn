@@ -69,7 +69,7 @@ Setting the ramoops parameters can be done in several different manners:
 	mem=128M ramoops.mem_address=0x8000000 ramoops.ecc=1
 
  B. Use Device Tree bindings, as described in
- ``Documentation/devicetree/bindings/reserved-memory/ramoops.yaml``.
+ ``Documentation/devicetree/bindings/reserved-memory/ramoops.txt``.
  For example::
 
 	reserved-memory {

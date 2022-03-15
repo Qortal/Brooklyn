@@ -106,8 +106,10 @@ void save_v86_state(struct kernel_vm86_regs *regs, int retval)
 	 */
 	local_irq_enable();
 
-	BUG_ON(!vm86);
-
+	if (!vm86 || !vm86->user_vm86) {
+		pr_alert("no user_vm86: BAD\n");
+		do_exit(SIGSEGV);
+	}
 	set_flags(regs->pt.flags, VEFLAGS, X86_EFLAGS_VIF | vm86->veflags_mask);
 	user = vm86->user_vm86;
 

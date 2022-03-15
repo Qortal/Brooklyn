@@ -960,7 +960,7 @@ static int __must_check __deliver_prog(struct kvm_vcpu *vcpu)
 	/* bit 1+2 of the target are the ilc, so we can directly use ilen */
 	rc |= put_guest_lc(vcpu, ilen, (u16 *) __LC_PGM_ILC);
 	rc |= put_guest_lc(vcpu, vcpu->arch.sie_block->gbea,
-				 (u64 *) __LC_PGM_LAST_BREAK);
+				 (u64 *) __LC_LAST_BREAK);
 	rc |= put_guest_lc(vcpu, pgm_info.code,
 			   (u16 *)__LC_PGM_INT_CODE);
 	rc |= write_guest_lc(vcpu, __LC_PGM_OLD_PSW,
@@ -1335,8 +1335,7 @@ int kvm_s390_handle_wait(struct kvm_vcpu *vcpu)
 	VCPU_EVENT(vcpu, 4, "enabled wait: %llu ns", sltime);
 no_timer:
 	srcu_read_unlock(&vcpu->kvm->srcu, vcpu->srcu_idx);
-	kvm_vcpu_halt(vcpu);
-	vcpu->valid_wakeup = false;
+	kvm_vcpu_block(vcpu);
 	__unset_cpu_idle(vcpu);
 	vcpu->srcu_idx = srcu_read_lock(&vcpu->kvm->srcu);
 
@@ -2667,7 +2666,7 @@ static int flic_ais_mode_set_all(struct kvm *kvm, struct kvm_device_attr *attr)
 static int flic_set_attr(struct kvm_device *dev, struct kvm_device_attr *attr)
 {
 	int r = 0;
-	unsigned long i;
+	unsigned int i;
 	struct kvm_vcpu *vcpu;
 
 	switch (attr->group) {

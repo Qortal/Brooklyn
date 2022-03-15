@@ -33,6 +33,18 @@ const u8 sha256_zero_message_hash[SHA256_DIGEST_SIZE] = {
 };
 EXPORT_SYMBOL_GPL(sha256_zero_message_hash);
 
+static int crypto_sha256_init(struct shash_desc *desc)
+{
+	sha256_init(shash_desc_ctx(desc));
+	return 0;
+}
+
+static int crypto_sha224_init(struct shash_desc *desc)
+{
+	sha224_init(shash_desc_ctx(desc));
+	return 0;
+}
+
 int crypto_sha256_update(struct shash_desc *desc, const u8 *data,
 			  unsigned int len)
 {
@@ -60,7 +72,7 @@ EXPORT_SYMBOL(crypto_sha256_finup);
 
 static struct shash_alg sha256_algs[2] = { {
 	.digestsize	=	SHA256_DIGEST_SIZE,
-	.init		=	sha256_base_init,
+	.init		=	crypto_sha256_init,
 	.update		=	crypto_sha256_update,
 	.final		=	crypto_sha256_final,
 	.finup		=	crypto_sha256_finup,
@@ -74,7 +86,7 @@ static struct shash_alg sha256_algs[2] = { {
 	}
 }, {
 	.digestsize	=	SHA224_DIGEST_SIZE,
-	.init		=	sha224_base_init,
+	.init		=	crypto_sha224_init,
 	.update		=	crypto_sha256_update,
 	.final		=	crypto_sha256_final,
 	.finup		=	crypto_sha256_finup,

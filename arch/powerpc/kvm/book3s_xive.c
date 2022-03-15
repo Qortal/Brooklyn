@@ -368,8 +368,7 @@ static int xive_check_provisioning(struct kvm *kvm, u8 prio)
 {
 	struct kvmppc_xive *xive = kvm->arch.xive;
 	struct kvm_vcpu *vcpu;
-	unsigned long i;
-	int rc;
+	int i, rc;
 
 	lockdep_assert_held(&xive->lock);
 
@@ -440,8 +439,7 @@ static int xive_try_pick_queue(struct kvm_vcpu *vcpu, u8 prio)
 int kvmppc_xive_select_target(struct kvm *kvm, u32 *server, u8 prio)
 {
 	struct kvm_vcpu *vcpu;
-	unsigned long i;
-	int rc;
+	int i, rc;
 
 	/* Locate target server */
 	vcpu = kvmppc_xive_find_server(kvm, *server);
@@ -1521,8 +1519,7 @@ static void xive_pre_save_queue(struct kvmppc_xive *xive, struct xive_q *q)
 static void xive_pre_save_scan(struct kvmppc_xive *xive)
 {
 	struct kvm_vcpu *vcpu = NULL;
-	unsigned long i;
-	int j;
+	int i, j;
 
 	/*
 	 * See comment in xive_get_source() about how this
@@ -1703,7 +1700,7 @@ static bool xive_check_delayed_irq(struct kvmppc_xive *xive, u32 irq)
 {
 	struct kvm *kvm = xive->kvm;
 	struct kvm_vcpu *vcpu = NULL;
-	unsigned long i;
+	int i;
 
 	kvm_for_each_vcpu(i, vcpu, kvm) {
 		struct kvmppc_xive_vcpu *xc = vcpu->arch.xive_vcpu;
@@ -1931,7 +1928,7 @@ int kvmppc_xive_set_nr_servers(struct kvmppc_xive *xive, u64 addr)
 
 	pr_devel("%s nr_servers=%u\n", __func__, nr_servers);
 
-	if (!nr_servers || nr_servers > KVM_MAX_VCPU_IDS)
+	if (!nr_servers || nr_servers > KVM_MAX_VCPU_ID)
 		return -EINVAL;
 
 	mutex_lock(&xive->lock);
@@ -2040,7 +2037,7 @@ static void kvmppc_xive_release(struct kvm_device *dev)
 	struct kvmppc_xive *xive = dev->private;
 	struct kvm *kvm = xive->kvm;
 	struct kvm_vcpu *vcpu;
-	unsigned long i;
+	int i;
 
 	pr_devel("Releasing xive device\n");
 
@@ -2294,7 +2291,7 @@ static int xive_debug_show(struct seq_file *m, void *private)
 	u64 t_vm_h_cppr = 0;
 	u64 t_vm_h_eoi = 0;
 	u64 t_vm_h_ipi = 0;
-	unsigned long i;
+	unsigned int i;
 
 	if (!kvm)
 		return 0;

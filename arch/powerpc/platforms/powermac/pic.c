@@ -18,7 +18,6 @@
 #include <linux/interrupt.h>
 #include <linux/syscore_ops.h>
 #include <linux/adb.h>
-#include <linux/minmax.h>
 #include <linux/pmu.h>
 
 #include <asm/sections.h>
@@ -312,8 +311,11 @@ static void __init pmac_pic_probe_oldstyle(void)
 
 		/* Check ordering of master & slave */
 		if (of_device_is_compatible(master, "gatwick")) {
+			struct device_node *tmp;
 			BUG_ON(slave == NULL);
-			swap(master, slave);
+			tmp = master;
+			master = slave;
+			slave = tmp;
 		}
 
 		/* We found a slave */

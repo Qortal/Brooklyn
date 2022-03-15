@@ -352,22 +352,24 @@ do {									\
 		     "1:	movl %[lowbits],%%eax\n"		\
 		     "2:	movl %[highbits],%%edx\n"		\
 		     "3:\n"						\
-		     _ASM_EXTABLE_TYPE_REG(1b, 3b, EX_TYPE_EFAULT_REG |	\
-					   EX_FLAG_CLEAR_AX_DX,		\
-					   %[errout])			\
-		     _ASM_EXTABLE_TYPE_REG(2b, 3b, EX_TYPE_EFAULT_REG |	\
-					   EX_FLAG_CLEAR_AX_DX,		\
-					   %[errout])			\
+		     ".section .fixup,\"ax\"\n"				\
+		     "4:	mov %[efault],%[errout]\n"		\
+		     "	xorl %%eax,%%eax\n"				\
+		     "	xorl %%edx,%%edx\n"				\
+		     "	jmp 3b\n"					\
+		     ".previous\n"					\
+		     _ASM_EXTABLE_UA(1b, 4b)				\
+		     _ASM_EXTABLE_UA(2b, 4b)				\
 		     : [errout] "=r" (retval),				\
 		       [output] "=&A"(x)				\
 		     : [lowbits] "m" (__m(__ptr)),			\
 		       [highbits] "m" __m(((u32 __user *)(__ptr)) + 1),	\
-		       "0" (retval));					\
+		       [efault] "i" (-EFAULT), "0" (retval));		\
 })
 
 #else
 #define __get_user_asm_u64(x, ptr, retval) \
-	 __get_user_asm(x, ptr, retval, "q")
+	 __get_user_asm(x, ptr, retval, "q", "=r")
 #endif
 
 #define __get_user_size(x, ptr, size, retval)				\
@@ -378,14 +380,14 @@ do {									\
 	__chk_user_ptr(ptr);						\
 	switch (size) {							\
 	case 1:								\
-		__get_user_asm(x_u8__, ptr, retval, "b");		\
+		__get_user_asm(x_u8__, ptr, retval, "b", "=q");		\
 		(x) = x_u8__;						\
 		break;							\
 	case 2:								\
-		__get_user_asm(x, ptr, retval, "w");			\
+		__get_user_asm(x, ptr, retval, "w", "=r");		\
 		break;							\
 	case 4:								\
-		__get_user_asm(x, ptr, retval, "l");			\
+		__get_user_asm(x, ptr, retval, "l", "=r");		\
 		break;							\
 	case 8:								\
 		__get_user_asm_u64(x, ptr, retval);			\
@@ -395,19 +397,22 @@ do {									\
 	}								\
 } while (0)
 
-#define __get_user_asm(x, addr, err, itype)				\
+#define __get_user_asm(x, addr, err, itype, ltype)			\
 	asm volatile("\n"						\
 		     "1:	mov"itype" %[umem],%[output]\n"		\
 		     "2:\n"						\
-		     _ASM_EXTABLE_TYPE_REG(1b, 2b, EX_TYPE_EFAULT_REG | \
-					   EX_FLAG_CLEAR_AX,		\
-					   %[errout])			\
+		     ".section .fixup,\"ax\"\n"				\
+		     "3:	mov %[efault],%[errout]\n"		\
+		     "	xorl %k[output],%k[output]\n"			\
+		     "	jmp 2b\n"					\
+		     ".previous\n"					\
+		     _ASM_EXTABLE_UA(1b, 3b)				\
 		     : [errout] "=r" (err),				\
-		       [output] "=a" (x)				\
+		       [output] ltype(x)				\
 		     : [umem] "m" (__m(addr)),				\
-		       "0" (err))
+		       [efault] "i" (-EFAULT), "0" (err))
 
-#endif // CONFIG_CC_HAS_ASM_GOTO_OUTPUT
+#endif // CONFIG_CC_ASM_GOTO_OUTPUT
 
 /* FIXME: this hack is definitely wrong -AK */
 struct __large_struct { unsigned long buf[100]; };

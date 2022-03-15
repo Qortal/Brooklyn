@@ -413,29 +413,34 @@ int pmu_apic_update(uint32_t val)
 }
 
 /* perf callbacks */
-static unsigned int xen_guest_state(void)
+static int xen_is_in_guest(void)
 {
 	const struct xen_pmu_data *xenpmu_data = get_xenpmu_data();
-	unsigned int state = 0;
 
 	if (!xenpmu_data) {
 		pr_warn_once("%s: pmudata not initialized\n", __func__);
-		return state;
+		return 0;
 	}
 
 	if (!xen_initial_domain() || (xenpmu_data->domain_id >= DOMID_SELF))
-		return state;
+		return 0;
 
-	state |= PERF_GUEST_ACTIVE;
+	return 1;
+}
 
-	if (xenpmu_data->pmu.pmu_flags & PMU_SAMPLE_PV) {
-		if (xenpmu_data->pmu.pmu_flags & PMU_SAMPLE_USER)
-			state |= PERF_GUEST_USER;
-	} else if (xenpmu_data->pmu.r.regs.cpl & 3) {
-		state |= PERF_GUEST_USER;
+static int xen_is_user_mode(void)
+{
+	const struct xen_pmu_data *xenpmu_data = get_xenpmu_data();
+
+	if (!xenpmu_data) {
+		pr_warn_once("%s: pmudata not initialized\n", __func__);
+		return 0;
 	}
 
-	return state;
+	if (xenpmu_data->pmu.pmu_flags & PMU_SAMPLE_PV)
+		return (xenpmu_data->pmu.pmu_flags & PMU_SAMPLE_USER);
+	else
+		return !!(xenpmu_data->pmu.r.regs.cpl & 3);
 }
 
 static unsigned long xen_get_guest_ip(void)
@@ -451,8 +456,9 @@ static unsigned long xen_get_guest_ip(void)
 }
 
 static struct perf_guest_info_callbacks xen_guest_cbs = {
-	.state                  = xen_guest_state,
-	.get_ip			= xen_get_guest_ip,
+	.is_in_guest            = xen_is_in_guest,
+	.is_user_mode           = xen_is_user_mode,
+	.get_guest_ip           = xen_get_guest_ip,
 };
 
 /* Convert registers from Xen's format to Linux' */

@@ -792,23 +792,13 @@ int set_guest_storage_key(struct mm_struct *mm, unsigned long addr,
 	pmd_t *pmdp;
 	pte_t *ptep;
 
-	/*
-	 * If we don't have a PTE table and if there is no huge page mapped,
-	 * we can ignore attempts to set the key to 0, because it already is 0.
-	 */
-	switch (pmd_lookup(mm, addr, &pmdp)) {
-	case -ENOENT:
-		return key ? -EFAULT : 0;
-	case 0:
-		break;
-	default:
+	if (pmd_lookup(mm, addr, &pmdp))
 		return -EFAULT;
-	}
 
 	ptl = pmd_lock(mm, pmdp);
 	if (!pmd_present(*pmdp)) {
 		spin_unlock(ptl);
-		return key ? -EFAULT : 0;
+		return -EFAULT;
 	}
 
 	if (pmd_large(*pmdp)) {
@@ -824,7 +814,10 @@ int set_guest_storage_key(struct mm_struct *mm, unsigned long addr,
 	}
 	spin_unlock(ptl);
 
-	ptep = pte_offset_map_lock(mm, pmdp, addr, &ptl);
+	ptep = pte_alloc_map_lock(mm, pmdp, addr, &ptl);
+	if (unlikely(!ptep))
+		return -EFAULT;
+
 	new = old = pgste_get_lock(ptep);
 	pgste_val(new) &= ~(PGSTE_GR_BIT | PGSTE_GC_BIT |
 			    PGSTE_ACC_BITS | PGSTE_FP_BIT);
@@ -901,23 +894,13 @@ int reset_guest_reference_bit(struct mm_struct *mm, unsigned long addr)
 	pte_t *ptep;
 	int cc = 0;
 
-	/*
-	 * If we don't have a PTE table and if there is no huge page mapped,
-	 * the storage key is 0 and there is nothing for us to do.
-	 */
-	switch (pmd_lookup(mm, addr, &pmdp)) {
-	case -ENOENT:
-		return 0;
-	case 0:
-		break;
-	default:
+	if (pmd_lookup(mm, addr, &pmdp))
 		return -EFAULT;
-	}
 
 	ptl = pmd_lock(mm, pmdp);
 	if (!pmd_present(*pmdp)) {
 		spin_unlock(ptl);
-		return 0;
+		return -EFAULT;
 	}
 
 	if (pmd_large(*pmdp)) {
@@ -929,7 +912,10 @@ int reset_guest_reference_bit(struct mm_struct *mm, unsigned long addr)
 	}
 	spin_unlock(ptl);
 
-	ptep = pte_offset_map_lock(mm, pmdp, addr, &ptl);
+	ptep = pte_alloc_map_lock(mm, pmdp, addr, &ptl);
+	if (unlikely(!ptep))
+		return -EFAULT;
+
 	new = old = pgste_get_lock(ptep);
 	/* Reset guest reference bit only */
 	pgste_val(new) &= ~PGSTE_GR_BIT;
@@ -991,7 +977,10 @@ int get_guest_storage_key(struct mm_struct *mm, unsigned long addr,
 	}
 	spin_unlock(ptl);
 
-	ptep = pte_offset_map_lock(mm, pmdp, addr, &ptl);
+	ptep = pte_alloc_map_lock(mm, pmdp, addr, &ptl);
+	if (unlikely(!ptep))
+		return -EFAULT;
+
 	pgste = pgste_get_lock(ptep);
 	*key = (pgste_val(pgste) & (PGSTE_ACC_BITS | PGSTE_FP_BIT)) >> 56;
 	paddr = pte_val(*ptep) & PAGE_MASK;

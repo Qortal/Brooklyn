@@ -1642,6 +1642,10 @@
 		dvddio-pex-supply = <&avddio_1v05>;
 		hvddio-pex-supply = <&pp1800>;
 		avdd-usb-supply = <&pp3300>;
+		avdd-pll-utmip-supply = <&pp1800>;
+		avdd-pll-uerefe-supply = <&pp1050_avdd>;
+		dvdd-pex-pll-supply = <&avddio_1v05>;
+		hvdd-pex-pll-e-supply = <&pp1800>;
 
 		status = "okay";
 	};
@@ -1722,7 +1726,7 @@
 		};
 	};
 
-	clk32k_in: clock-32k {
+	clk32k_in: clock@0 {
 		compatible = "fixed-clock";
 		clock-frequency = <32768>;
 		#clock-cells = <0>;
@@ -1803,7 +1807,7 @@
 		method = "smc";
 	};
 
-	ppvar_sys: regulator-ppvar-sys {
+	ppvar_sys: regulator@0 {
 		compatible = "regulator-fixed";
 		regulator-name = "PPVAR_SYS";
 		regulator-min-microvolt = <4400000>;
@@ -1811,7 +1815,7 @@
 		regulator-always-on;
 	};
 
-	pplcd_vdd: regulator-pplcd-vdd {
+	pplcd_vdd: regulator@1 {
 		compatible = "regulator-fixed";
 		regulator-name = "PPLCD_VDD";
 		regulator-min-microvolt = <4400000>;
@@ -1821,7 +1825,7 @@
 		regulator-boot-on;
 	};
 
-	pp3000_always: regulator-pp3000-always {
+	pp3000_always: regulator@2 {
 		compatible = "regulator-fixed";
 		regulator-name = "PP3000_ALWAYS";
 		regulator-min-microvolt = <3000000>;
@@ -1829,7 +1833,7 @@
 		regulator-always-on;
 	};
 
-	pp3300: regulator-pp3000 {
+	pp3300: regulator@3 {
 		compatible = "regulator-fixed";
 		regulator-name = "PP3300";
 		regulator-min-microvolt = <3300000>;
@@ -1839,7 +1843,7 @@
 		enable-active-high;
 	};
 
-	pp5000: regulator-pp5000 {
+	pp5000: regulator@4 {
 		compatible = "regulator-fixed";
 		regulator-name = "PP5000";
 		regulator-min-microvolt = <5000000>;
@@ -1847,7 +1851,7 @@
 		regulator-always-on;
 	};
 
-	pp1800_lcdio: regulator-pp1800-lcdio {
+	pp1800_lcdio: regulator@5 {
 		compatible = "regulator-fixed";
 		regulator-name = "PP1800_LCDIO";
 		regulator-min-microvolt = <1800000>;
@@ -1857,7 +1861,7 @@
 		regulator-boot-on;
 	};
 
-	pp1800_cam: regulator-pp1800-cam {
+	pp1800_cam: regulator@6 {
 		compatible = "regulator-fixed";
 		regulator-name = "PP1800_CAM";
 		regulator-min-microvolt = <1800000>;
@@ -1866,7 +1870,7 @@
 		enable-active-high;
 	};
 
-	usbc_vbus: regulator-usbc-vbus {
+	usbc_vbus: regulator@7 {
 		compatible = "regulator-fixed";
 		regulator-name = "USBC_VBUS";
 		regulator-min-microvolt = <5000000>;

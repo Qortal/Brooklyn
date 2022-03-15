@@ -158,7 +158,6 @@ _user_exception:
 	/* Rotate ws so that the current windowbase is at bit0. */
 	/* Assume ws = xxwww1yyyy. Rotate ws right, so that a2 = yyyyxxwww1 */
 
-#if defined(USER_SUPPORT_WINDOWED)
 	rsr	a2, windowbase
 	rsr	a3, windowstart
 	ssr	a2
@@ -168,33 +167,24 @@ _user_exception:
 	src	a2, a3, a2
 	srli	a2, a2, 32-WSBITS
 	s32i	a2, a1, PT_WMASK	# needed for restoring registers
-#else
-	movi	a2, 0
-	movi	a3, 1
-	s32i	a2, a1, PT_WINDOWBASE
-	s32i	a3, a1, PT_WINDOWSTART
-	s32i	a3, a1, PT_WMASK
-#endif
 
 	/* Save only live registers. */
 
-UABI_W	_bbsi.l	a2, 1, 1f
+	_bbsi.l	a2, 1, 1f
 	s32i	a4, a1, PT_AREG4
 	s32i	a5, a1, PT_AREG5
 	s32i	a6, a1, PT_AREG6
 	s32i	a7, a1, PT_AREG7
-UABI_W	_bbsi.l	a2, 2, 1f
+	_bbsi.l	a2, 2, 1f
 	s32i	a8, a1, PT_AREG8
 	s32i	a9, a1, PT_AREG9
 	s32i	a10, a1, PT_AREG10
 	s32i	a11, a1, PT_AREG11
-UABI_W	_bbsi.l	a2, 3, 1f
+	_bbsi.l	a2, 3, 1f
 	s32i	a12, a1, PT_AREG12
 	s32i	a13, a1, PT_AREG13
 	s32i	a14, a1, PT_AREG14
 	s32i	a15, a1, PT_AREG15
-
-#if defined(USER_SUPPORT_WINDOWED)
 	_bnei	a2, 1, 1f		# only one valid frame?
 
 	/* Only one valid frame, skip saving regs. */
@@ -249,7 +239,7 @@ UABI_W	_bbsi.l	a2, 3, 1f
 	rsync
 
 	/* We are back to the original stack pointer (a1) */
-#endif
+
 2:	/* Now, jump to the common exception handler. */
 
 	j	common_exception
@@ -305,7 +295,6 @@ _kernel_exception:
 	s32i	a3, a1, PT_SAR
 	s32i	a2, a1, PT_ICOUNTLEVEL
 
-#if defined(__XTENSA_WINDOWED_ABI__)
 	/* Rotate ws so that the current windowbase is at bit0. */
 	/* Assume ws = xxwww1yyyy. Rotate ws right, so that a2 = yyyyxxwww1 */
 
@@ -316,28 +305,27 @@ _kernel_exception:
 	src	a2, a3, a2
 	srli	a2, a2, 32-WSBITS
 	s32i	a2, a1, PT_WMASK	# needed for kernel_exception_exit
-#endif
 
 	/* Save only the live window-frame */
 
-KABI_W	_bbsi.l	a2, 1, 1f
+	_bbsi.l	a2, 1, 1f
 	s32i	a4, a1, PT_AREG4
 	s32i	a5, a1, PT_AREG5
 	s32i	a6, a1, PT_AREG6
 	s32i	a7, a1, PT_AREG7
-KABI_W	_bbsi.l	a2, 2, 1f
+	_bbsi.l	a2, 2, 1f
 	s32i	a8, a1, PT_AREG8
 	s32i	a9, a1, PT_AREG9
 	s32i	a10, a1, PT_AREG10
 	s32i	a11, a1, PT_AREG11
-KABI_W	_bbsi.l	a2, 3, 1f
+	_bbsi.l	a2, 3, 1f
 	s32i	a12, a1, PT_AREG12
 	s32i	a13, a1, PT_AREG13
 	s32i	a14, a1, PT_AREG14
 	s32i	a15, a1, PT_AREG15
 
-#ifdef __XTENSA_WINDOWED_ABI__
 	_bnei	a2, 1, 1f
+
 	/* Copy spill slots of a0 and a1 to imitate movsp
 	 * in order to keep exception stack continuous
 	 */
@@ -345,7 +333,6 @@ KABI_W	_bbsi.l	a2, 3, 1f
 	l32i	a0, a1, PT_SIZE + 4
 	s32e	a3, a1, -16
 	s32e	a0, a1, -12
-#endif
 1:
 	l32i	a0, a1, PT_AREG0	# restore saved a0
 	wsr	a0, depc
@@ -432,16 +419,16 @@ common_exception:
 	movi	a3, LOCKLEVEL
 
 .Lexception:
-KABI_W	movi	a0, PS_WOE_MASK
-KABI_W	or	a3, a3, a0
+	movi	a0, PS_WOE_MASK
+	or	a3, a3, a0
 #else
 	addi	a2, a2, -EXCCAUSE_LEVEL1_INTERRUPT
 	movi	a0, LOCKLEVEL
 	extui	a3, a3, PS_INTLEVEL_SHIFT, PS_INTLEVEL_WIDTH
 					# a3 = PS.INTLEVEL
 	moveqz	a3, a0, a2		# a3 = LOCKLEVEL iff interrupt
-KABI_W	movi	a2, PS_WOE_MASK
-KABI_W	or	a3, a3, a2
+	movi	a2, PS_WOE_MASK
+	or	a3, a3, a2
 	rsr	a2, exccause
 #endif
 
@@ -474,14 +461,14 @@ KABI_W	or	a3, a3, a2
 	 */
 
 	rsr	a4, excsave1
+	mov	a6, a1			# pass stack frame
+	mov	a7, a2			# pass EXCCAUSE
 	addx4	a4, a2, a4
 	l32i	a4, a4, EXC_TABLE_DEFAULT		# load handler
-	mov	abi_arg1, a2			# pass EXCCAUSE
-	mov	abi_arg0, a1			# pass stack frame
 
 	/* Call the second-level handler */
 
-	abi_callx	a4
+	callx4	a4
 
 	/* Jump here for exception exit */
 	.global common_exception_return
@@ -495,15 +482,15 @@ common_exception_return:
 1:
 	irq_save a2, a3
 #ifdef CONFIG_TRACE_IRQFLAGS
-	abi_call	trace_hardirqs_off
+	call4	trace_hardirqs_off
 #endif
 
 	/* Jump if we are returning from kernel exceptions. */
 
-	l32i	abi_saved1, a1, PT_PS
+	l32i	a3, a1, PT_PS
 	GET_THREAD_INFO(a2, a1)
 	l32i	a4, a2, TI_FLAGS
-	_bbci.l	abi_saved1, PS_UM_BIT, 6f
+	_bbci.l	a3, PS_UM_BIT, 6f
 
 	/* Specific to a user exception exit:
 	 * We need to check some flags for signal handling and rescheduling,
@@ -522,20 +509,20 @@ common_exception_return:
 	/* Call do_signal() */
 
 #ifdef CONFIG_TRACE_IRQFLAGS
-	abi_call	trace_hardirqs_on
+	call4	trace_hardirqs_on
 #endif
 	rsil	a2, 0
-	mov	abi_arg0, a1
-	abi_call	do_notify_resume	# int do_notify_resume(struct pt_regs*)
+	mov	a6, a1
+	call4	do_notify_resume	# int do_notify_resume(struct pt_regs*)
 	j	1b
 
 3:	/* Reschedule */
 
 #ifdef CONFIG_TRACE_IRQFLAGS
-	abi_call	trace_hardirqs_on
+	call4	trace_hardirqs_on
 #endif
 	rsil	a2, 0
-	abi_call	schedule	# void schedule (void)
+	call4	schedule	# void schedule (void)
 	j	1b
 
 #ifdef CONFIG_PREEMPTION
@@ -546,33 +533,33 @@ common_exception_return:
 
 	l32i	a4, a2, TI_PRE_COUNT
 	bnez	a4, 4f
-	abi_call	preempt_schedule_irq
+	call4	preempt_schedule_irq
 	j	4f
 #endif
 
 #if XTENSA_FAKE_NMI
 .LNMIexit:
-	l32i	abi_saved1, a1, PT_PS
-	_bbci.l	abi_saved1, PS_UM_BIT, 4f
+	l32i	a3, a1, PT_PS
+	_bbci.l	a3, PS_UM_BIT, 4f
 #endif
 
 5:
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
 	_bbci.l	a4, TIF_DB_DISABLED, 7f
-	abi_call	restore_dbreak
+	call4	restore_dbreak
 7:
 #endif
 #ifdef CONFIG_DEBUG_TLB_SANITY
 	l32i	a4, a1, PT_DEPC
 	bgeui	a4, VALID_DOUBLE_EXCEPTION_ADDRESS, 4f
-	abi_call	check_tlb_sanity
+	call4	check_tlb_sanity
 #endif
 6:
 4:
 #ifdef CONFIG_TRACE_IRQFLAGS
-	extui	a4, abi_saved1, PS_INTLEVEL_SHIFT, PS_INTLEVEL_WIDTH
+	extui	a4, a3, PS_INTLEVEL_SHIFT, PS_INTLEVEL_WIDTH
 	bgei	a4, LOCKLEVEL, 1f
-	abi_call	trace_hardirqs_on
+	call4	trace_hardirqs_on
 1:
 #endif
 	/* Restore optional registers. */
@@ -585,15 +572,14 @@ common_exception_return:
 	l32i    a2, a1, PT_SCOMPARE1
 	wsr     a2, scompare1
 #endif
-	wsr	abi_saved1, ps		/* disable interrupts */
+	wsr	a3, ps		/* disable interrupts */
 
-	_bbci.l	abi_saved1, PS_UM_BIT, kernel_exception_exit
+	_bbci.l	a3, PS_UM_BIT, kernel_exception_exit
 
 user_exception_exit:
 
 	/* Restore the state of the task and return from the exception. */
 
-#if defined(USER_SUPPORT_WINDOWED)
 	/* Switch to the user thread WINDOWBASE. Save SP temporarily in DEPC */
 
 	l32i	a2, a1, PT_WINDOWBASE
@@ -648,10 +634,8 @@ user_exception_exit:
 	 *	 frame where we had loaded a2), or at least the lower 4 bits
 	 *	 (if we have restored WSBITS-1 frames).
 	 */
+
 2:
-#else
-	movi	a2, 1
-#endif
 #if XCHAL_HAVE_THREADPTR
 	l32i	a3, a1, PT_THREADPTR
 	wur	a3, threadptr
@@ -666,7 +650,6 @@ user_exception_exit:
 
 kernel_exception_exit:
 
-#if defined(__XTENSA_WINDOWED_ABI__)
 	/* Check if we have to do a movsp.
 	 *
 	 * We only have to do a movsp if the previous window-frame has
@@ -719,9 +702,6 @@ kernel_exception_exit:
 	 *
 	 * Note: We expect a2 to hold PT_WMASK
 	 */
-#else
-	movi	a2, 1
-#endif
 
 common_exception_exit:
 
@@ -940,16 +920,14 @@ unrecoverable_text:
 
 ENTRY(unrecoverable_exception)
 
-#if XCHAL_HAVE_WINDOWED
 	movi	a0, 1
 	movi	a1, 0
 
 	wsr	a0, windowstart
 	wsr	a1, windowbase
 	rsync
-#endif
 
-	movi	a1, KERNEL_PS_WOE_MASK | LOCKLEVEL
+	movi	a1, PS_WOE_MASK | LOCKLEVEL
 	wsr	a1, ps
 	rsync
 
@@ -957,8 +935,8 @@ ENTRY(unrecoverable_exception)
 	movi	a0, 0
 	addi	a1, a1, PT_REGS_OFFSET
 
-	movi	abi_arg0, unrecoverable_text
-	abi_call	panic
+	movi	a6, unrecoverable_text
+	call4	panic
 
 1:	j	1b
 
@@ -969,7 +947,6 @@ ENDPROC(unrecoverable_exception)
 	__XTENSA_HANDLER
 	.literal_position
 
-#ifdef SUPPORT_WINDOWED
 /*
  * Fast-handler for alloca exceptions
  *
@@ -1033,7 +1010,6 @@ ENTRY(fast_alloca)
 8:	j	_WindowUnderflow8
 4:	j	_WindowUnderflow4
 ENDPROC(fast_alloca)
-#endif
 
 #ifdef CONFIG_USER_ABI_CALL0_PROBE
 /*
@@ -1230,8 +1206,7 @@ ENDPROC(fast_syscall_xtensa)
  * Note: We assume the stack pointer is EXC_TABLE_KSTK in the fixup handler.
  */
 
-#if defined(CONFIG_FAST_SYSCALL_SPILL_REGISTERS) && \
-		defined(USER_SUPPORT_WINDOWED)
+#ifdef CONFIG_FAST_SYSCALL_SPILL_REGISTERS
 
 ENTRY(fast_syscall_spill_registers)
 
@@ -1428,12 +1403,12 @@ ENTRY(fast_syscall_spill_registers)
 	rsr	a3, excsave1
 	l32i	a1, a3, EXC_TABLE_KSTK
 
-	movi	a4, KERNEL_PS_WOE_MASK | LOCKLEVEL
+	movi	a4, PS_WOE_MASK | LOCKLEVEL
 	wsr	a4, ps
 	rsync
 
-	movi	abi_arg0, SIGSEGV
-	abi_call	make_task_dead
+	movi	a6, SIGSEGV
+	call4	do_exit
 
 	/* shouldn't return, so panic */
 
@@ -1912,77 +1887,57 @@ ENDPROC(fast_store_prohibited)
 
 ENTRY(system_call)
 
-#if defined(__XTENSA_WINDOWED_ABI__)
 	abi_entry_default
-#elif defined(__XTENSA_CALL0_ABI__)
-	abi_entry(12)
-
-	s32i	a0, sp, 0
-	s32i	abi_saved0, sp, 4
-	s32i	abi_saved1, sp, 8
-	mov	abi_saved0, a2
-#else
-#error Unsupported Xtensa ABI
-#endif
 
 	/* regs->syscall = regs->areg[2] */
 
-	l32i	a7, abi_saved0, PT_AREG2
-	s32i	a7, abi_saved0, PT_SYSCALL
+	l32i	a7, a2, PT_AREG2
+	s32i	a7, a2, PT_SYSCALL
 
 	GET_THREAD_INFO(a4, a1)
-	l32i	abi_saved1, a4, TI_FLAGS
+	l32i	a3, a4, TI_FLAGS
 	movi	a4, _TIF_WORK_MASK
-	and	abi_saved1, abi_saved1, a4
-	beqz	abi_saved1, 1f
+	and	a3, a3, a4
+	beqz	a3, 1f
 
-	mov	abi_arg0, abi_saved0
-	abi_call	do_syscall_trace_enter
-	beqz	abi_rv, .Lsyscall_exit
-	l32i	a7, abi_saved0, PT_SYSCALL
+	mov	a6, a2
+	call4	do_syscall_trace_enter
+	beqz	a6, .Lsyscall_exit
+	l32i	a7, a2, PT_SYSCALL
 
 1:
 	/* syscall = sys_call_table[syscall_nr] */
 
 	movi	a4, sys_call_table
 	movi	a5, __NR_syscalls
-	movi	abi_rv, -ENOSYS
+	movi	a6, -ENOSYS
 	bgeu	a7, a5, 1f
 
 	addx4	a4, a7, a4
-	l32i	abi_tmp0, a4, 0
+	l32i	a4, a4, 0
 
 	/* Load args: arg0 - arg5 are passed via regs. */
 
-	l32i	abi_arg0, abi_saved0, PT_AREG6
-	l32i	abi_arg1, abi_saved0, PT_AREG3
-	l32i	abi_arg2, abi_saved0, PT_AREG4
-	l32i	abi_arg3, abi_saved0, PT_AREG5
-	l32i	abi_arg4, abi_saved0, PT_AREG8
-	l32i	abi_arg5, abi_saved0, PT_AREG9
+	l32i	a6, a2, PT_AREG6
+	l32i	a7, a2, PT_AREG3
+	l32i	a8, a2, PT_AREG4
+	l32i	a9, a2, PT_AREG5
+	l32i	a10, a2, PT_AREG8
+	l32i	a11, a2, PT_AREG9
 
-	abi_callx	abi_tmp0
+	callx4	a4
 
 1:	/* regs->areg[2] = return_value */
 
-	s32i	abi_rv, abi_saved0, PT_AREG2
-	bnez	abi_saved1, 1f
+	s32i	a6, a2, PT_AREG2
+	bnez	a3, 1f
 .Lsyscall_exit:
-#if defined(__XTENSA_WINDOWED_ABI__)
 	abi_ret_default
-#elif defined(__XTENSA_CALL0_ABI__)
-	l32i	a0, sp, 0
-	l32i	abi_saved0, sp, 4
-	l32i	abi_saved1, sp, 8
-	abi_ret(12)
-#else
-#error Unsupported Xtensa ABI
-#endif
 
 1:
-	mov	abi_arg0, abi_saved0
-	abi_call	do_syscall_trace_leave
-	j	.Lsyscall_exit
+	mov	a6, a2
+	call4	do_syscall_trace_leave
+	abi_ret_default
 
 ENDPROC(system_call)
 
@@ -2033,18 +1988,8 @@ ENDPROC(system_call)
 
 ENTRY(_switch_to)
 
-#if defined(__XTENSA_WINDOWED_ABI__)
 	abi_entry(XTENSA_SPILL_STACK_RESERVE)
-#elif defined(__XTENSA_CALL0_ABI__)
-	abi_entry(16)
 
-	s32i	a12, sp, 0
-	s32i	a13, sp, 4
-	s32i	a14, sp, 8
-	s32i	a15, sp, 12
-#else
-#error Unsupported Xtensa ABI
-#endif
 	mov	a11, a3			# and 'next' (a3)
 
 	l32i	a4, a2, TASK_THREAD_INFO
@@ -2088,9 +2033,7 @@ ENTRY(_switch_to)
 
 	/* Flush register file. */
 
-#if defined(__XTENSA_WINDOWED_ABI__)
 	spill_registers_kernel
-#endif
 
 	/* Set kernel stack (and leave critical section)
 	 * Note: It's save to set it here. The stack will not be overwritten
@@ -2112,43 +2055,34 @@ ENTRY(_switch_to)
 	wsr	a14, ps
 	rsync
 
-#if defined(__XTENSA_WINDOWED_ABI__)
 	abi_ret(XTENSA_SPILL_STACK_RESERVE)
-#elif defined(__XTENSA_CALL0_ABI__)
-	l32i	a12, sp, 0
-	l32i	a13, sp, 4
-	l32i	a14, sp, 8
-	l32i	a15, sp, 12
-	abi_ret(16)
-#else
-#error Unsupported Xtensa ABI
-#endif
 
 ENDPROC(_switch_to)
 
 ENTRY(ret_from_fork)
 
 	/* void schedule_tail (struct task_struct *prev)
-	 * Note: prev is still in abi_arg0 (return value from fake call frame)
+	 * Note: prev is still in a6 (return value from fake call4 frame)
 	 */
-	abi_call	schedule_tail
+	call4	schedule_tail
 
-	mov		abi_arg0, a1
-	abi_call	do_syscall_trace_leave
-	j		common_exception_return
+	mov	a6, a1
+	call4	do_syscall_trace_leave
+
+	j	common_exception_return
 
 ENDPROC(ret_from_fork)
 
 /*
  * Kernel thread creation helper
- * On entry, set up by copy_thread: abi_saved0 = thread_fn,
- * abi_saved1 = thread_fn arg. Left from _switch_to: abi_arg0 = prev
+ * On entry, set up by copy_thread: a2 = thread_fn, a3 = thread_fn arg
+ *           left from _switch_to: a6 = prev
  */
 ENTRY(ret_from_kernel_thread)
 
-	abi_call	schedule_tail
-	mov		abi_arg0, abi_saved1
-	abi_callx	abi_saved0
-	j		common_exception_return
+	call4	schedule_tail
+	mov	a6, a3
+	callx4	a2
+	j	common_exception_return
 
 ENDPROC(ret_from_kernel_thread)

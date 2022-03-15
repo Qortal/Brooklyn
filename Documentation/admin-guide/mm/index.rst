@@ -37,7 +37,5 @@ the Linux memory management.
    numaperf
    pagemap
    soft-dirty
-   swap_numa
    transhuge
    userfaultfd
-   zswap

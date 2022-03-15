@@ -738,10 +738,14 @@ SYM_FUNC_START(asm_load_gs_index)
 2:	ALTERNATIVE "", "mfence", X86_BUG_SWAPGS_FENCE
 	swapgs
 	FRAME_END
-	RET
+	ret
+SYM_FUNC_END(asm_load_gs_index)
+EXPORT_SYMBOL(asm_load_gs_index)
 
+	_ASM_EXTABLE(.Lgs_change, .Lbad_gs)
+	.section .fixup, "ax"
 	/* running with kernelgs */
-.Lbad_gs:
+SYM_CODE_START_LOCAL_NOALIGN(.Lbad_gs)
 	swapgs					/* switch back to user gs */
 .macro ZAP_GS
 	/* This can't be a string because the preprocessor needs to see it. */
@@ -752,11 +756,8 @@ SYM_FUNC_START(asm_load_gs_index)
 	xorl	%eax, %eax
 	movl	%eax, %gs
 	jmp	2b
-
-	_ASM_EXTABLE(.Lgs_change, .Lbad_gs)
-
-SYM_FUNC_END(asm_load_gs_index)
-EXPORT_SYMBOL(asm_load_gs_index)
+SYM_CODE_END(.Lbad_gs)
+	.previous
 
 #ifdef CONFIG_XEN_PV
 /*
@@ -888,7 +889,7 @@ SYM_CODE_START_LOCAL(paranoid_entry)
 	 * is needed here.
 	 */
 	SAVE_AND_SET_GSBASE scratch_reg=%rax save_reg=%rbx
-	RET
+	ret
 
 .Lparanoid_entry_checkgs:
 	/* EBX = 1 -> kernel GSBASE active, no restore required */
@@ -909,7 +910,7 @@ SYM_CODE_START_LOCAL(paranoid_entry)
 .Lparanoid_kernel_gsbase:
 
 	FENCE_SWAPGS_KERNEL_ENTRY
-	RET
+	ret
 SYM_CODE_END(paranoid_entry)
 
 /*
@@ -988,7 +989,7 @@ SYM_CODE_START_LOCAL(error_entry)
 	movq	%rax, %rsp			/* switch stack */
 	ENCODE_FRAME_POINTER
 	pushq	%r12
-	RET
+	ret
 
 	/*
 	 * There are two places in the kernel that can potentially fault with
@@ -1019,7 +1020,7 @@ SYM_CODE_START_LOCAL(error_entry)
 	 */
 .Lerror_entry_done_lfence:
 	FENCE_SWAPGS_KERNEL_ENTRY
-	RET
+	ret
 
 .Lbstep_iret:
 	/* Fix truncated RIP */
@@ -1427,7 +1428,7 @@ SYM_CODE_END(ignore_sysret)
 #endif
 
 .pushsection .text, "ax"
-SYM_CODE_START(rewind_stack_and_make_dead)
+SYM_CODE_START(rewind_stack_do_exit)
 	UNWIND_HINT_FUNC
 	/* Prevent any naive code from trying to unwind to our caller. */
 	xorl	%ebp, %ebp
@@ -1436,6 +1437,6 @@ SYM_CODE_START(rewind_stack_and_make_dead)
 	leaq	-PTREGS_SIZE(%rax), %rsp
 	UNWIND_HINT_REGS
 
-	call	make_task_dead
-SYM_CODE_END(rewind_stack_and_make_dead)
+	call	do_exit
+SYM_CODE_END(rewind_stack_do_exit)
 .popsection

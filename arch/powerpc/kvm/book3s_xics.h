@@ -116,7 +116,7 @@ static inline struct kvmppc_icp *kvmppc_xics_find_server(struct kvm *kvm,
 							 u32 nr)
 {
 	struct kvm_vcpu *vcpu = NULL;
-	unsigned long i;
+	int i;
 
 	kvm_for_each_vcpu(i, vcpu, kvm) {
 		if (vcpu->arch.icp && nr == vcpu->arch.icp->server_num)

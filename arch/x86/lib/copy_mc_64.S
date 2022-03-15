@@ -77,8 +77,10 @@ SYM_FUNC_START(copy_mc_fragile)
 .L_done_memcpy_trap:
 	xorl %eax, %eax
 .L_done:
-	RET
+	ret
+SYM_FUNC_END(copy_mc_fragile)
 
+	.section .fixup, "ax"
 	/*
 	 * Return number of bytes not copied for any failure. Note that
 	 * there is no "tail" handling since the source buffer is 8-byte
@@ -103,14 +105,14 @@ SYM_FUNC_START(copy_mc_fragile)
 	movl	%ecx, %edx
 	jmp copy_mc_fragile_handle_tail
 
-	_ASM_EXTABLE_TYPE(.L_read_leading_bytes, .E_leading_bytes, EX_TYPE_DEFAULT_MCE_SAFE)
-	_ASM_EXTABLE_TYPE(.L_read_words, .E_read_words, EX_TYPE_DEFAULT_MCE_SAFE)
-	_ASM_EXTABLE_TYPE(.L_read_trailing_bytes, .E_trailing_bytes, EX_TYPE_DEFAULT_MCE_SAFE)
+	.previous
+
+	_ASM_EXTABLE_FAULT(.L_read_leading_bytes, .E_leading_bytes)
+	_ASM_EXTABLE_FAULT(.L_read_words, .E_read_words)
+	_ASM_EXTABLE_FAULT(.L_read_trailing_bytes, .E_trailing_bytes)
 	_ASM_EXTABLE(.L_write_leading_bytes, .E_leading_bytes)
 	_ASM_EXTABLE(.L_write_words, .E_write_words)
 	_ASM_EXTABLE(.L_write_trailing_bytes, .E_trailing_bytes)
-
-SYM_FUNC_END(copy_mc_fragile)
 #endif /* CONFIG_X86_MCE */
 
 /*
@@ -130,8 +132,10 @@ SYM_FUNC_START(copy_mc_enhanced_fast_string)
 	rep movsb
 	/* Copy successful. Return zero */
 	xorl %eax, %eax
-	RET
+	ret
+SYM_FUNC_END(copy_mc_enhanced_fast_string)
 
+	.section .fixup, "ax"
 .E_copy:
 	/*
 	 * On fault %rcx is updated such that the copy instruction could
@@ -141,9 +145,9 @@ SYM_FUNC_START(copy_mc_enhanced_fast_string)
 	 * user-copy routines.
 	 */
 	movq %rcx, %rax
-	RET
+	ret
 
-	_ASM_EXTABLE_TYPE(.L_copy, .E_copy, EX_TYPE_DEFAULT_MCE_SAFE)
+	.previous
 
-SYM_FUNC_END(copy_mc_enhanced_fast_string)
+	_ASM_EXTABLE_FAULT(.L_copy, .E_copy)
 #endif /* !CONFIG_UML */

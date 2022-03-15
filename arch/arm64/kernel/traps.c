@@ -235,7 +235,7 @@ void die(const char *str, struct pt_regs *regs, int err)
 	raw_spin_unlock_irqrestore(&die_lock, flags);
 
 	if (ret != NOTIFY_STOP)
-		make_task_dead(SIGSEGV);
+		do_exit(SIGSEGV);
 }
 
 static void arm64_show_signal(int signo, const char *str)
@@ -400,11 +400,11 @@ static int call_undef_hook(struct pt_regs *regs)
 	unsigned long flags;
 	u32 instr;
 	int (*fn)(struct pt_regs *regs, u32 instr) = NULL;
-	unsigned long pc = instruction_pointer(regs);
+	void __user *pc = (void __user *)instruction_pointer(regs);
 
 	if (!user_mode(regs)) {
 		__le32 instr_le;
-		if (get_kernel_nofault(instr_le, (__le32 *)pc))
+		if (get_kernel_nofault(instr_le, (__force __le32 *)pc))
 			goto exit;
 		instr = le32_to_cpu(instr_le);
 	} else if (compat_thumb_mode(regs)) {
@@ -527,9 +527,14 @@ NOKPROBE_SYMBOL(do_ptrauth_fault);
 			"1:	" insn ", %1\n"			\
 			"	mov	%w0, #0\n"		\
 			"2:\n"					\
-			_ASM_EXTABLE_UACCESS_ERR(1b, 2b, %w0)	\
+			"	.pushsection .fixup,\"ax\"\n"	\
+			"	.align	2\n"			\
+			"3:	mov	%w0, %w2\n"		\
+			"	b	2b\n"			\
+			"	.popsection\n"			\
+			_ASM_EXTABLE(1b, 3b)			\
 			: "=r" (res)				\
-			: "r" (address));			\
+			: "r" (address), "i" (-EFAULT));	\
 		uaccess_ttbr0_disable();			\
 	}
 
@@ -649,12 +654,6 @@ static const struct sys64_hook sys64_hooks[] = {
 		.handler = cntvct_read_handler,
 	},
 	{
-		/* Trap read access to CNTVCTSS_EL0 */
-		.esr_mask = ESR_ELx_SYS64_ISS_SYS_OP_MASK,
-		.esr_val = ESR_ELx_SYS64_ISS_SYS_CNTVCTSS,
-		.handler = cntvct_read_handler,
-	},
-	{
 		/* Trap read access to CNTFRQ_EL0 */
 		.esr_mask = ESR_ELx_SYS64_ISS_SYS_OP_MASK,
 		.esr_val = ESR_ELx_SYS64_ISS_SYS_CNTFRQ,
@@ -728,11 +727,6 @@ static const struct sys64_hook cp15_64_hooks[] = {
 	{
 		.esr_mask = ESR_ELx_CP15_64_ISS_SYS_MASK,
 		.esr_val = ESR_ELx_CP15_64_ISS_SYS_CNTVCT,
-		.handler = compat_cntvct_read_handler,
-	},
-	{
-		.esr_mask = ESR_ELx_CP15_64_ISS_SYS_MASK,
-		.esr_val = ESR_ELx_CP15_64_ISS_SYS_CNTVCTSS,
 		.handler = compat_cntvct_read_handler,
 	},
 	{},

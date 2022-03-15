@@ -140,11 +140,8 @@ void noinstr do_io_irq(struct pt_regs *regs)
 
 	irq_enter_rcu();
 
-	if (user_mode(regs)) {
+	if (user_mode(regs))
 		update_timer_sys();
-		if (static_branch_likely(&cpu_has_bear))
-			current->thread.last_break = regs->last_break;
-	}
 
 	from_idle = !user_mode(regs) && regs->psw.addr == (unsigned long)psw_idle_exit;
 	if (from_idle)
@@ -175,11 +172,8 @@ void noinstr do_ext_irq(struct pt_regs *regs)
 
 	irq_enter_rcu();
 
-	if (user_mode(regs)) {
+	if (user_mode(regs))
 		update_timer_sys();
-		if (static_branch_likely(&cpu_has_bear))
-			current->thread.last_break = regs->last_break;
-	}
 
 	regs->int_code = S390_lowcore.ext_int_code_addr;
 	regs->int_parm = S390_lowcore.ext_params;

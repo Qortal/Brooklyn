@@ -67,7 +67,10 @@ void flush_icache_mm(struct mm_struct *mm, bool local)
 		 */
 		smp_mb();
 	} else if (IS_ENABLED(CONFIG_RISCV_SBI)) {
-		sbi_remote_fence_i(&others);
+		cpumask_t hartid_mask;
+
+		riscv_cpuid_to_hartid_mask(&others, &hartid_mask);
+		sbi_remote_fence_i(cpumask_bits(&hartid_mask));
 	} else {
 		on_each_cpu_mask(&others, ipi_remote_fence_i, NULL, 1);
 	}

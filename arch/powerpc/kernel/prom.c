@@ -231,7 +231,7 @@ static void __init check_cpu_pa_features(unsigned long node)
 		      ibm_pa_features, ARRAY_SIZE(ibm_pa_features));
 }
 
-#ifdef CONFIG_PPC_64S_HASH_MMU
+#ifdef CONFIG_PPC_BOOK3S_64
 static void __init init_mmu_slb_size(unsigned long node)
 {
 	const __be32 *slb_size_ptr;
@@ -402,7 +402,7 @@ static int __init early_init_dt_scan_chosen_ppc(unsigned long node,
 	const unsigned long *lprop; /* All these set by kernel, so no need to convert endian */
 
 	/* Use common scan routine to determine if this is the chosen node */
-	if (early_init_dt_scan_chosen(data) < 0)
+	if (early_init_dt_scan_chosen(node, uname, depth, data) == 0)
 		return 0;
 
 #ifdef CONFIG_PPC64
@@ -447,7 +447,7 @@ static int __init early_init_dt_scan_chosen_ppc(unsigned long node,
  */
 
 #ifdef CONFIG_SPARSEMEM
-static bool __init validate_mem_limit(u64 base, u64 *size)
+static bool validate_mem_limit(u64 base, u64 *size)
 {
 	u64 max_mem = 1UL << (MAX_PHYSMEM_BITS);
 
@@ -458,7 +458,7 @@ static bool __init validate_mem_limit(u64 base, u64 *size)
 	return true;
 }
 #else
-static bool __init validate_mem_limit(u64 base, u64 *size)
+static bool validate_mem_limit(u64 base, u64 *size)
 {
 	return true;
 }
@@ -532,18 +532,19 @@ static int  __init early_init_drmem_lmb(struct drmem_lmb *lmb,
 }
 #endif /* CONFIG_PPC_PSERIES */
 
-static int __init early_init_dt_scan_memory_ppc(void)
+static int __init early_init_dt_scan_memory_ppc(unsigned long node,
+						const char *uname,
+						int depth, void *data)
 {
 #ifdef CONFIG_PPC_PSERIES
-	const void *fdt = initial_boot_params;
-	int node = fdt_path_offset(fdt, "/ibm,dynamic-reconfiguration-memory");
-
-	if (node > 0)
+	if (depth == 1 &&
+	    strcmp(uname, "ibm,dynamic-reconfiguration-memory") == 0) {
 		walk_drmem_lmbs_early(node, NULL, early_init_drmem_lmb);
-
+		return 0;
+	}
 #endif
-
-	return early_init_dt_scan_memory();
+	
+	return early_init_dt_scan_memory(node, uname, depth, data);
 }
 
 /*
@@ -747,8 +748,8 @@ void __init early_init_devtree(void *params)
 	of_scan_flat_dt(early_init_dt_scan_chosen_ppc, boot_command_line);
 
 	/* Scan memory nodes and rebuild MEMBLOCKs */
-	early_init_dt_scan_root();
-	early_init_dt_scan_memory_ppc();
+	of_scan_flat_dt(early_init_dt_scan_root, NULL);
+	of_scan_flat_dt(early_init_dt_scan_memory_ppc, NULL);
 
 	parse_early_param();
 
@@ -856,8 +857,8 @@ void __init early_get_first_memblock_info(void *params, phys_addr_t *size)
 	 * mess the memblock.
 	 */
 	add_mem_to_memblock = 0;
-	early_init_dt_scan_root();
-	early_init_dt_scan_memory_ppc();
+	of_scan_flat_dt(early_init_dt_scan_root, NULL);
+	of_scan_flat_dt(early_init_dt_scan_memory_ppc, NULL);
 	add_mem_to_memblock = 1;
 
 	if (size)

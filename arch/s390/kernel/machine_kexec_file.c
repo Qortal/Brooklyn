@@ -7,8 +7,6 @@
  * Author(s): Philipp Rudo <prudo@linux.vnet.ibm.com>
  */
 
-#define pr_fmt(fmt)	"kexec: " fmt
-
 #include <linux/elf.h>
 #include <linux/errno.h>
 #include <linux/kexec.h>
@@ -226,9 +224,7 @@ void *kexec_file_add_components(struct kimage *image,
 				int (*add_kernel)(struct kimage *image,
 						  struct s390_load_data *data))
 {
-	unsigned long max_command_line_size = LEGACY_COMMAND_LINE_SIZE;
 	struct s390_load_data data = {0};
-	unsigned long minsize;
 	int ret;
 
 	data.report = ipl_report_init(&ipl_block);
@@ -239,23 +235,10 @@ void *kexec_file_add_components(struct kimage *image,
 	if (ret)
 		goto out;
 
-	ret = -EINVAL;
-	minsize = PARMAREA + offsetof(struct parmarea, command_line);
-	if (image->kernel_buf_len < minsize)
+	if (image->cmdline_buf_len >= ARCH_COMMAND_LINE_SIZE) {
+		ret = -EINVAL;
 		goto out;
-
-	if (data.parm->max_command_line_size)
-		max_command_line_size = data.parm->max_command_line_size;
-
-	if (minsize + max_command_line_size < minsize)
-		goto out;
-
-	if (image->kernel_buf_len < minsize + max_command_line_size)
-		goto out;
-
-	if (image->cmdline_buf_len >= max_command_line_size)
-		goto out;
-
+	}
 	memcpy(data.parm->command_line, image->cmdline_buf,
 	       image->cmdline_buf_len);
 
@@ -292,16 +275,9 @@ int arch_kexec_apply_relocations_add(struct purgatory_info *pi,
 				     const Elf_Shdr *relsec,
 				     const Elf_Shdr *symtab)
 {
-	const char *strtab, *name, *shstrtab;
-	const Elf_Shdr *sechdrs;
 	Elf_Rela *relas;
 	int i, r_type;
 	int ret;
-
-	/* String & section header string table */
-	sechdrs = (void *)pi->ehdr + pi->ehdr->e_shoff;
-	strtab = (char *)pi->ehdr + sechdrs[symtab->sh_link].sh_offset;
-	shstrtab = (char *)pi->ehdr + sechdrs[pi->ehdr->e_shstrndx].sh_offset;
 
 	relas = (void *)pi->ehdr + relsec->sh_offset;
 
@@ -314,27 +290,15 @@ int arch_kexec_apply_relocations_add(struct purgatory_info *pi,
 		sym = (void *)pi->ehdr + symtab->sh_offset;
 		sym += ELF64_R_SYM(relas[i].r_info);
 
-		if (sym->st_name)
-			name = strtab + sym->st_name;
-		else
-			name = shstrtab + sechdrs[sym->st_shndx].sh_name;
-
-		if (sym->st_shndx == SHN_UNDEF) {
-			pr_err("Undefined symbol: %s\n", name);
+		if (sym->st_shndx == SHN_UNDEF)
 			return -ENOEXEC;
-		}
 
-		if (sym->st_shndx == SHN_COMMON) {
-			pr_err("symbol '%s' in common section\n", name);
+		if (sym->st_shndx == SHN_COMMON)
 			return -ENOEXEC;
-		}
 
 		if (sym->st_shndx >= pi->ehdr->e_shnum &&
-		    sym->st_shndx != SHN_ABS) {
-			pr_err("Invalid section %d for symbol %s\n",
-			       sym->st_shndx, name);
+		    sym->st_shndx != SHN_ABS)
 			return -ENOEXEC;
-		}
 
 		loc = pi->purgatory_buf;
 		loc += section->sh_offset;
@@ -359,6 +323,20 @@ int arch_kexec_apply_relocations_add(struct purgatory_info *pi,
 		}
 	}
 	return 0;
+}
+
+int arch_kexec_kernel_image_probe(struct kimage *image, void *buf,
+				  unsigned long buf_len)
+{
+	/* A kernel must be at least large enough to contain head.S. During
+	 * load memory in head.S will be accessed, e.g. to register the next
+	 * command line. If the next kernel were smaller the current kernel
+	 * will panic at load.
+	 */
+	if (buf_len < HEAD_END)
+		return -ENOEXEC;
+
+	return kexec_image_probe_default(image, buf, buf_len);
 }
 
 int arch_kimage_file_post_load_cleanup(struct kimage *image)

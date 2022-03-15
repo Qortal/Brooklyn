@@ -24,7 +24,6 @@ struct vmlinux_info {
 	unsigned long dynsym_start;
 	unsigned long rela_dyn_start;
 	unsigned long rela_dyn_end;
-	unsigned long amode31_size;
 };
 
 /* Symbols defined by linker scripts */

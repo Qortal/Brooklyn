@@ -253,43 +253,64 @@ static int hv_unmap_msi_interrupt(struct pci_dev *dev, struct hv_interrupt_entry
 	return hv_unmap_interrupt(hv_build_pci_dev_id(dev).as_uint64, old_entry);
 }
 
-static void hv_teardown_msi_irq(struct pci_dev *dev, struct irq_data *irqd)
+static void hv_teardown_msi_irq_common(struct pci_dev *dev, struct msi_desc *msidesc, int irq)
 {
-	struct hv_interrupt_entry old_entry;
-	struct msi_msg msg;
 	u64 status;
+	struct hv_interrupt_entry old_entry;
+	struct irq_desc *desc;
+	struct irq_data *data;
+	struct msi_msg msg;
 
-	if (!irqd->chip_data) {
+	desc = irq_to_desc(irq);
+	if (!desc) {
+		pr_debug("%s: no irq desc\n", __func__);
+		return;
+	}
+
+	data = &desc->irq_data;
+	if (!data) {
+		pr_debug("%s: no irq data\n", __func__);
+		return;
+	}
+
+	if (!data->chip_data) {
 		pr_debug("%s: no chip data\n!", __func__);
 		return;
 	}
 
-	old_entry = *(struct hv_interrupt_entry *)irqd->chip_data;
+	old_entry = *(struct hv_interrupt_entry *)data->chip_data;
 	entry_to_msi_msg(&old_entry, &msg);
 
-	kfree(irqd->chip_data);
-	irqd->chip_data = NULL;
+	kfree(data->chip_data);
+	data->chip_data = NULL;
 
 	status = hv_unmap_msi_interrupt(dev, &old_entry);
 
-	if (status != HV_STATUS_SUCCESS)
+	if (status != HV_STATUS_SUCCESS) {
 		pr_err("%s: hypercall failed, status %lld\n", __func__, status);
+		return;
+	}
 }
 
-static void hv_msi_free_irq(struct irq_domain *domain,
-			    struct msi_domain_info *info, unsigned int virq)
+static void hv_msi_domain_free_irqs(struct irq_domain *domain, struct device *dev)
 {
-	struct irq_data *irqd = irq_get_irq_data(virq);
-	struct msi_desc *desc;
+	int i;
+	struct msi_desc *entry;
+	struct pci_dev *pdev;
 
-	if (!irqd)
+	if (WARN_ON_ONCE(!dev_is_pci(dev)))
 		return;
 
-	desc = irq_data_get_msi_desc(irqd);
-	if (!desc || !desc->irq || WARN_ON_ONCE(!dev_is_pci(desc->dev)))
-		return;
+	pdev = to_pci_dev(dev);
 
-	hv_teardown_msi_irq(to_pci_dev(desc->dev), irqd);
+	for_each_pci_msi_entry(entry, pdev) {
+		if (entry->irq) {
+			for (i = 0; i < entry->nvec_used; i++) {
+				hv_teardown_msi_irq_common(pdev, entry, entry->irq + i);
+				irq_domain_free_irqs(entry->irq + i, 1);
+			}
+		}
+	}
 }
 
 /*
@@ -308,7 +329,7 @@ static struct irq_chip hv_pci_msi_controller = {
 };
 
 static struct msi_domain_ops pci_msi_domain_ops = {
-	.msi_free		= hv_msi_free_irq,
+	.domain_free_irqs	= hv_msi_domain_free_irqs,
 	.msi_prepare		= pci_msi_prepare,
 };
 

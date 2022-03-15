@@ -936,8 +936,7 @@ out:
 	return tg;
 }
 
-static int __init update_mask_from_threadgroup(cpumask_var_t *mask, struct thread_groups *tg,
-					       int cpu, int cpu_group_start)
+static int update_mask_from_threadgroup(cpumask_var_t *mask, struct thread_groups *tg, int cpu, int cpu_group_start)
 {
 	int first_thread = cpu_first_thread_sibling(cpu);
 	int i;
@@ -1264,7 +1263,7 @@ static void cpu_idle_thread_init(unsigned int cpu, struct task_struct *idle)
 	paca_ptrs[cpu]->kstack = (unsigned long)task_stack_page(idle) +
 				 THREAD_SIZE - STACK_FRAME_OVERHEAD;
 #endif
-	task_thread_info(idle)->cpu = cpu;
+	idle->cpu = cpu;
 	secondary_current = current_set[cpu] = idle;
 }
 
@@ -1354,13 +1353,18 @@ int __cpu_up(unsigned int cpu, struct task_struct *tidle)
 int cpu_to_core_id(int cpu)
 {
 	struct device_node *np;
+	const __be32 *reg;
 	int id = -1;
 
 	np = of_get_cpu_node(cpu, NULL);
 	if (!np)
 		goto out;
 
-	id = of_get_cpu_hwid(np, 0);
+	reg = of_get_property(np, "reg", NULL);
+	if (!reg)
+		goto out;
+
+	id = be32_to_cpup(reg);
 out:
 	of_node_put(np);
 	return id;
@@ -1683,7 +1687,7 @@ int setup_profiling_timer(unsigned int multiplier)
 }
 #endif
 
-static void __init fixup_topology(void)
+static void fixup_topology(void)
 {
 	int i;
 

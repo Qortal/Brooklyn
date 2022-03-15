@@ -199,6 +199,7 @@ out_error:
 static int setup_msi_msg_address(struct pci_dev *dev, struct msi_msg *msg)
 {
 	struct device_node *dn;
+	struct msi_desc *entry;
 	int len;
 	const u32 *prop;
 
@@ -208,8 +209,10 @@ static int setup_msi_msg_address(struct pci_dev *dev, struct msi_msg *msg)
 		return -ENODEV;
 	}
 
+	entry = first_pci_msi_entry(dev);
+
 	for (; dn; dn = of_get_next_parent(dn)) {
-		if (!dev->no_64bit_msi) {
+		if (entry->msi_attrib.is_64) {
 			prop = of_get_property(dn, "msi-address-64", &len);
 			if (prop)
 				break;
@@ -262,7 +265,7 @@ static int axon_msi_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
 	if (rc)
 		return rc;
 
-	msi_for_each_desc(entry, &dev->dev, MSI_DESC_NOTASSOCIATED) {
+	for_each_pci_msi_entry(entry, dev) {
 		virq = irq_create_direct_mapping(msic->irq_domain);
 		if (!virq) {
 			dev_warn(&dev->dev,
@@ -285,7 +288,10 @@ static void axon_msi_teardown_msi_irqs(struct pci_dev *dev)
 
 	dev_dbg(&dev->dev, "axon_msi: tearing down msi irqs\n");
 
-	msi_for_each_desc(entry, &dev->dev, MSI_DESC_ASSOCIATED) {
+	for_each_pci_msi_entry(entry, dev) {
+		if (!entry->irq)
+			continue;
+
 		irq_set_msi_desc(entry->irq, NULL);
 		irq_dispose_mapping(entry->irq);
 	}

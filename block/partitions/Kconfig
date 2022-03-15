@@ -2,8 +2,6 @@
 #
 # Partition configuration
 #
-menu "Partition Types"
-
 config PARTITION_ADVANCED
 	bool "Advanced partition selection"
 	help
@@ -269,5 +267,3 @@ config CMDLINE_PARTITION
 	help
 	  Say Y here if you want to read the partition table from bootargs.
 	  The format for the command line is just like mtdparts.
-
-endmenu

@@ -5,7 +5,6 @@
 #include <asm/page_64_types.h>
 
 #ifndef __ASSEMBLY__
-#include <asm/cpufeatures.h>
 #include <asm/alternative.h>
 
 /* duplicated to the one in bootmem.h */

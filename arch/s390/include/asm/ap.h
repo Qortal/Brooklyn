@@ -12,8 +12,6 @@
 #ifndef _ASM_S390_AP_H_
 #define _ASM_S390_AP_H_
 
-#include <linux/io.h>
-
 /**
  * The ap_qid_t identifier of an ap queue.
  * If the AP facilities test (APFT) facility is available,
@@ -240,7 +238,7 @@ static inline struct ap_queue_status ap_aqic(ap_qid_t qid,
 		struct ap_qirq_ctrl qirqctrl;
 		struct ap_queue_status status;
 	} reg1;
-	unsigned long reg2 = virt_to_phys(ind);
+	void *reg2 = ind;
 
 	reg1.qirqctrl = qirqctrl;
 

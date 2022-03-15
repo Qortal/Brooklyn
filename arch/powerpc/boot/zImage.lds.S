@@ -36,9 +36,12 @@ SECTIONS
   }
 
 #ifdef CONFIG_PPC64_BOOT_WRAPPER
-  .got : ALIGN(256)
+  . = ALIGN(256);
+  .got :
   {
-    *(.got .toc)
+    __toc_start = .;
+    *(.got)
+    *(.toc)
   }
 #endif
 

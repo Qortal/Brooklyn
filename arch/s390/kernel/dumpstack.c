@@ -152,7 +152,7 @@ void show_stack(struct task_struct *task, unsigned long *stack,
 static void show_last_breaking_event(struct pt_regs *regs)
 {
 	printk("Last Breaking-Event-Address:\n");
-	printk(" [<%016lx>] %pSR\n", regs->last_break, (void *)regs->last_break);
+	printk(" [<%016lx>] %pSR\n", regs->args[0], (void *)regs->args[0]);
 }
 
 void show_registers(struct pt_regs *regs)
@@ -192,7 +192,7 @@ void show_regs(struct pt_regs *regs)
 
 static DEFINE_SPINLOCK(die_lock);
 
-void __noreturn die(struct pt_regs *regs, const char *str)
+void die(struct pt_regs *regs, const char *str)
 {
 	static int die_counter;
 
@@ -224,5 +224,5 @@ void __noreturn die(struct pt_regs *regs, const char *str)
 	if (panic_on_oops)
 		panic("Fatal exception: panic_on_oops");
 	oops_exit();
-	make_task_dead(SIGSEGV);
+	do_exit(SIGSEGV);
 }

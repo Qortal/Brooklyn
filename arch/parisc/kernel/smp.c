@@ -228,13 +228,11 @@ static inline void
 send_IPI_allbutself(enum ipi_message_type op)
 {
 	int i;
-
-	preempt_disable();
+	
 	for_each_online_cpu(i) {
 		if (i != smp_processor_id())
 			send_IPI_single(i, op);
 	}
-	preempt_enable();
 }
 
 #ifdef CONFIG_KGDB
@@ -338,6 +336,8 @@ int smp_boot_one_cpu(int cpuid, struct task_struct *idle)
 {
 	const struct cpuinfo_parisc *p = &per_cpu(cpu_data, cpuid);
 	long timeout;
+
+	task_thread_info(idle)->cpu = cpuid;
 
 	/* Let _start know what logical CPU we're booting
 	** (offset into init_tasks[],cpu_data[])

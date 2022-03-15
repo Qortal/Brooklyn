@@ -50,7 +50,7 @@ static void pic_unlock(struct kvm_pic *s)
 {
 	bool wakeup = s->wakeup_needed;
 	struct kvm_vcpu *vcpu;
-	unsigned long i;
+	int i;
 
 	s->wakeup_needed = false;
 
@@ -270,8 +270,7 @@ int kvm_pic_read_irq(struct kvm *kvm)
 
 static void kvm_pic_reset(struct kvm_kpic_state *s)
 {
-	int irq;
-	unsigned long i;
+	int irq, i;
 	struct kvm_vcpu *vcpu;
 	u8 edge_irr = s->irr & ~s->elcr;
 	bool found = false;

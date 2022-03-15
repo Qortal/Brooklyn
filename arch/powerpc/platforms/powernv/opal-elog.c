@@ -144,12 +144,11 @@ static struct attribute *elog_default_attrs[] = {
 	&ack_attribute.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(elog_default);
 
 static struct kobj_type elog_ktype = {
 	.sysfs_ops = &elog_sysfs_ops,
 	.release = &elog_release,
-	.default_groups = elog_default_groups,
+	.default_attrs = elog_default_attrs,
 };
 
 /* Maximum size of a single log on FSP is 16KB */

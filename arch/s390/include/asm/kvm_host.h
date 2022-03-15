@@ -1010,4 +1010,6 @@ static inline void kvm_arch_flush_shadow_memslot(struct kvm *kvm,
 static inline void kvm_arch_vcpu_blocking(struct kvm_vcpu *vcpu) {}
 static inline void kvm_arch_vcpu_unblocking(struct kvm_vcpu *vcpu) {}
 
+void kvm_arch_vcpu_block_finish(struct kvm_vcpu *vcpu);
+
 #endif

@@ -249,7 +249,7 @@ ENTRY(csky_irq)
 
 
 	mov	a0, sp
-	jbsr	generic_handle_arch_irq
+	jbsr	csky_do_IRQ
 
 	jmpi	ret_from_exception
 

@@ -74,6 +74,7 @@
 #include <asm/hvconsole.h>
 
 #include "pseries.h"
+#include "../../../../drivers/pci/pci.h"
 
 DEFINE_STATIC_KEY_FALSE(shared_processor);
 EXPORT_SYMBOL(shared_processor);
@@ -112,7 +113,7 @@ static void __init fwnmi_init(void)
 	u8 *mce_data_buf;
 	unsigned int i;
 	int nr_cpus = num_possible_cpus();
-#ifdef CONFIG_PPC_64S_HASH_MMU
+#ifdef CONFIG_PPC_BOOK3S_64
 	struct slb_entry *slb_ptr;
 	size_t size;
 #endif
@@ -152,7 +153,7 @@ static void __init fwnmi_init(void)
 						(RTAS_ERROR_LOG_MAX * i);
 	}
 
-#ifdef CONFIG_PPC_64S_HASH_MMU
+#ifdef CONFIG_PPC_BOOK3S_64
 	if (!radix_enabled()) {
 		/* Allocate per cpu area to save old slb contents during MCE */
 		size = sizeof(struct slb_entry) * mmu_slb_size * nr_cpus;
@@ -447,7 +448,7 @@ void pseries_big_endian_exceptions(void)
 		panic("Could not enable big endian exceptions");
 }
 
-void __init pseries_little_endian_exceptions(void)
+void pseries_little_endian_exceptions(void)
 {
 	long rc;
 
@@ -749,7 +750,7 @@ static void pseries_pci_fixup_iov_resources(struct pci_dev *pdev)
 	const int *indexes;
 	struct device_node *dn = pci_device_to_OF_node(pdev);
 
-	if (!pdev->is_physfn)
+	if (!pdev->is_physfn || pci_dev_is_added(pdev))
 		return;
 	/*Firmware must support open sriov otherwise dont configure*/
 	indexes = of_get_property(dn, "ibm,open-sriov-vf-bar-info", NULL);
@@ -801,9 +802,7 @@ static void __init pSeries_setup_arch(void)
 	fwnmi_init();
 
 	pseries_setup_security_mitigations();
-#ifdef CONFIG_PPC_64S_HASH_MMU
 	pseries_lpar_read_hblkrm_characteristics();
-#endif
 
 	/* By default, only probe PCI (can be overridden by rtas_pci) */
 	pci_add_flags(PCI_PROBE_ONLY);
@@ -907,7 +906,7 @@ void pSeries_coalesce_init(void)
  * fw_cmo_feature_init - FW_FEATURE_CMO is not stored in ibm,hypertas-functions,
  * handle that here. (Stolen from parse_system_parameter_string)
  */
-static void __init pSeries_cmo_feature_init(void)
+static void pSeries_cmo_feature_init(void)
 {
 	char *ptr, *key, *value, *end;
 	int call_status;
@@ -1090,7 +1089,7 @@ define_machine(pseries) {
 	.machine_kexec          = pSeries_machine_kexec,
 	.kexec_cpu_down         = pseries_kexec_cpu_down,
 #endif
-#ifdef CONFIG_MEMORY_HOTPLUG
+#ifdef CONFIG_MEMORY_HOTPLUG_SPARSE
 	.memory_block_size	= pseries_memory_block_size,
 #endif
 };

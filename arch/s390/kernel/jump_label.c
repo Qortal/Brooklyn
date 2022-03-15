@@ -6,9 +6,8 @@
  * Author(s): Jan Glauber <jang@linux.vnet.ibm.com>
  */
 #include <linux/uaccess.h>
+#include <linux/stop_machine.h>
 #include <linux/jump_label.h>
-#include <linux/module.h>
-#include <asm/text-patching.h>
 #include <asm/ipl.h>
 
 struct insn {
@@ -49,9 +48,9 @@ static struct insn orignop = {
 	.offset = JUMP_LABEL_NOP_OFFSET >> 1,
 };
 
-static void jump_label_transform(struct jump_entry *entry,
-				 enum jump_label_type type,
-				 int init)
+static void __jump_label_transform(struct jump_entry *entry,
+				   enum jump_label_type type,
+				   int init)
 {
 	void *code = (void *)jump_entry_code(entry);
 	struct insn old, new;
@@ -73,28 +72,19 @@ static void jump_label_transform(struct jump_entry *entry,
 	s390_kernel_write(code, &new, sizeof(new));
 }
 
+static void __jump_label_sync(void *dummy)
+{
+}
+
 void arch_jump_label_transform(struct jump_entry *entry,
 			       enum jump_label_type type)
 {
-	jump_label_transform(entry, type, 0);
-	text_poke_sync();
+	__jump_label_transform(entry, type, 0);
+	smp_call_function(__jump_label_sync, NULL, 1);
 }
 
-bool arch_jump_label_transform_queue(struct jump_entry *entry,
-				     enum jump_label_type type)
+void arch_jump_label_transform_static(struct jump_entry *entry,
+				      enum jump_label_type type)
 {
-	jump_label_transform(entry, type, 0);
-	return true;
-}
-
-void arch_jump_label_transform_apply(void)
-{
-	text_poke_sync();
-}
-
-void __init_or_module arch_jump_label_transform_static(struct jump_entry *entry,
-						       enum jump_label_type type)
-{
-	jump_label_transform(entry, type, 1);
-	text_poke_sync();
+	__jump_label_transform(entry, type, 1);
 }

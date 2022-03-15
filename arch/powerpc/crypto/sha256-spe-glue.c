@@ -14,7 +14,6 @@
 #include <linux/mm.h>
 #include <linux/types.h>
 #include <crypto/sha2.h>
-#include <crypto/sha256_base.h>
 #include <asm/byteorder.h>
 #include <asm/switch_to.h>
 #include <linux/hardirq.h>
@@ -55,6 +54,40 @@ static inline void ppc_sha256_clear_context(struct sha256_state *sctx)
 	/* make sure we can clear the fast way */
 	BUILD_BUG_ON(sizeof(struct sha256_state) % 4);
 	do { *ptr++ = 0; } while (--count);
+}
+
+static int ppc_spe_sha256_init(struct shash_desc *desc)
+{
+	struct sha256_state *sctx = shash_desc_ctx(desc);
+
+	sctx->state[0] = SHA256_H0;
+	sctx->state[1] = SHA256_H1;
+	sctx->state[2] = SHA256_H2;
+	sctx->state[3] = SHA256_H3;
+	sctx->state[4] = SHA256_H4;
+	sctx->state[5] = SHA256_H5;
+	sctx->state[6] = SHA256_H6;
+	sctx->state[7] = SHA256_H7;
+	sctx->count = 0;
+
+	return 0;
+}
+
+static int ppc_spe_sha224_init(struct shash_desc *desc)
+{
+	struct sha256_state *sctx = shash_desc_ctx(desc);
+
+	sctx->state[0] = SHA224_H0;
+	sctx->state[1] = SHA224_H1;
+	sctx->state[2] = SHA224_H2;
+	sctx->state[3] = SHA224_H3;
+	sctx->state[4] = SHA224_H4;
+	sctx->state[5] = SHA224_H5;
+	sctx->state[6] = SHA224_H6;
+	sctx->state[7] = SHA224_H7;
+	sctx->count = 0;
+
+	return 0;
 }
 
 static int ppc_spe_sha256_update(struct shash_desc *desc, const u8 *data,
@@ -181,7 +214,7 @@ static int ppc_spe_sha256_import(struct shash_desc *desc, const void *in)
 
 static struct shash_alg algs[2] = { {
 	.digestsize	=	SHA256_DIGEST_SIZE,
-	.init		=	sha256_base_init,
+	.init		=	ppc_spe_sha256_init,
 	.update		=	ppc_spe_sha256_update,
 	.final		=	ppc_spe_sha256_final,
 	.export		=	ppc_spe_sha256_export,
@@ -197,7 +230,7 @@ static struct shash_alg algs[2] = { {
 	}
 }, {
 	.digestsize	=	SHA224_DIGEST_SIZE,
-	.init		=	sha224_base_init,
+	.init		=	ppc_spe_sha224_init,
 	.update		=	ppc_spe_sha256_update,
 	.final		=	ppc_spe_sha224_final,
 	.export		=	ppc_spe_sha256_export,

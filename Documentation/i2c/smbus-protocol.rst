@@ -36,8 +36,6 @@ Key to symbols
 
 =============== =============================================================
 S               Start condition
-Sr              Repeated start condition, used to switch from write to
-                read mode.
 P               Stop condition
 Rd/Wr (1 bit)   Read/Write bit. Rd equals 1, Wr equals 0.
 A, NA (1 bit)   Acknowledge (ACK) and Not Acknowledge (NACK) bit
@@ -102,7 +100,7 @@ Implemented by i2c_smbus_read_byte_data()
 This reads a single byte from a device, from a designated register.
 The register is specified through the Comm byte::
 
-  S Addr Wr [A] Comm [A] Sr Addr Rd [A] [Data] NA P
+  S Addr Wr [A] Comm [A] S Addr Rd [A] [Data] NA P
 
 Functionality flag: I2C_FUNC_SMBUS_READ_BYTE_DATA
 
@@ -116,7 +114,7 @@ This operation is very like Read Byte; again, data is read from a
 device, from a designated register that is specified through the Comm
 byte. But this time, the data is a complete word (16 bits)::
 
-  S Addr Wr [A] Comm [A] Sr Addr Rd [A] [DataLow] A [DataHigh] NA P
+  S Addr Wr [A] Comm [A] S Addr Rd [A] [DataLow] A [DataHigh] NA P
 
 Functionality flag: I2C_FUNC_SMBUS_READ_WORD_DATA
 
@@ -166,7 +164,7 @@ This command selects a device register (through the Comm byte), sends
 16 bits of data to it, and reads 16 bits of data in return::
 
   S Addr Wr [A] Comm [A] DataLow [A] DataHigh [A]
-                              Sr Addr Rd [A] [DataLow] A [DataHigh] NA P
+                               S Addr Rd [A] [DataLow] A [DataHigh] NA P
 
 Functionality flag: I2C_FUNC_SMBUS_PROC_CALL
 
@@ -183,7 +181,7 @@ of data is specified by the device in the Count byte.
 ::
 
   S Addr Wr [A] Comm [A]
-            Sr Addr Rd [A] [Count] A [Data] A [Data] A ... A [Data] NA P
+             S Addr Rd [A] [Count] A [Data] A [Data] A ... A [Data] NA P
 
 Functionality flag: I2C_FUNC_SMBUS_READ_BLOCK_DATA
 
@@ -214,7 +212,7 @@ This command selects a device register (through the Comm byte), sends
 1 to 31 bytes of data to it, and reads 1 to 31 bytes of data in return::
 
   S Addr Wr [A] Comm [A] Count [A] Data [A] ...
-                              Sr Addr Rd [A] [Count] A [Data] ... A P
+                               S Addr Rd [A] [Count] A [Data] ... A P
 
 Functionality flag: I2C_FUNC_SMBUS_BLOCK_PROC_CALL
 
@@ -302,7 +300,7 @@ This command reads a block of bytes from a device, from a
 designated register that is specified through the Comm byte::
 
   S Addr Wr [A] Comm [A]
-            Sr Addr Rd [A] [Data] A [Data] A ... A [Data] NA P
+             S Addr Rd [A] [Data] A [Data] A ... A [Data] NA P
 
 Functionality flag: I2C_FUNC_SMBUS_READ_I2C_BLOCK
 

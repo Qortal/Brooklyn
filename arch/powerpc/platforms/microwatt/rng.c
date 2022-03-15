@@ -14,7 +14,7 @@
 
 #define DARN_ERR 0xFFFFFFFFFFFFFFFFul
 
-static int microwatt_get_random_darn(unsigned long *v)
+int microwatt_get_random_darn(unsigned long *v)
 {
 	unsigned long val;
 

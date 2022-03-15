@@ -527,20 +527,16 @@ static long restore_user_regs(struct pt_regs *regs,
 	regs_set_return_msr(regs, regs->msr & ~(MSR_FP | MSR_FE0 | MSR_FE1));
 
 #ifdef CONFIG_SPE
-	/*
-	 * Force the process to reload the spe registers from
-	 * current->thread when it next does spe instructions.
-	 * Since this is user ABI, we must enforce the sizing.
-	 */
-	BUILD_BUG_ON(sizeof(current->thread.spe) != ELF_NEVRREG * sizeof(u32));
+	/* force the process to reload the spe registers from
+	   current->thread when it next does spe instructions */
 	regs_set_return_msr(regs, regs->msr & ~MSR_SPE);
 	if (msr & MSR_SPE) {
 		/* restore spe registers from the stack */
-		unsafe_copy_from_user(&current->thread.spe, &sr->mc_vregs,
-				      sizeof(current->thread.spe), failed);
+		unsafe_copy_from_user(current->thread.evr, &sr->mc_vregs,
+				      ELF_NEVRREG * sizeof(u32), failed);
 		current->thread.used_spe = true;
 	} else if (current->thread.used_spe)
-		memset(&current->thread.spe, 0, sizeof(current->thread.spe));
+		memset(current->thread.evr, 0, ELF_NEVRREG * sizeof(u32));
 
 	/* Always get SPEFSCR back */
 	unsafe_get_user(current->thread.spefscr, (u32 __user *)&sr->mc_vregs + ELF_NEVRREG, failed);
@@ -1052,7 +1048,7 @@ SYSCALL_DEFINE3(swapcontext, struct ucontext __user *, old_ctx,
 	if (new_ctx == NULL)
 		return 0;
 	if (!access_ok(new_ctx, ctx_size) ||
-	    fault_in_readable((char __user *)new_ctx, ctx_size))
+	    fault_in_pages_readable((u8 __user *)new_ctx, ctx_size))
 		return -EFAULT;
 
 	/*
@@ -1243,7 +1239,7 @@ SYSCALL_DEFINE3(debug_setcontext, struct ucontext __user *, ctx,
 #endif
 
 	if (!access_ok(ctx, sizeof(*ctx)) ||
-	    fault_in_readable((char __user *)ctx, sizeof(*ctx)))
+	    fault_in_pages_readable((u8 __user *)ctx, sizeof(*ctx)))
 		return -EFAULT;
 
 	/*

@@ -35,8 +35,7 @@ END(boot_args)
 	__HEAD
 
 	.align	4
-	.import init_task,data
-	.import init_stack,data
+	.import init_thread_union,data
 	.import fault_vector_20,code    /* IVA parisc 2.0 32 bit */
 #ifndef CONFIG_64BIT
         .import fault_vector_11,code    /* IVA parisc 1.1 32 bit */
@@ -124,12 +123,12 @@ $pgt_fill_loop:
 	load32		start_parisc,%r11
 
 	/* And the initial task pointer */
-	load32		init_task,%r6
+	load32		init_thread_union,%r6
 	mtctl           %r6,%cr30
 
 	/* And the stack pointer too */
-	load32		init_stack,%sp
-	tophys_r1	%sp
+	ldo             THREAD_SZ_ALGN(%r6),%sp
+
 #if defined(CONFIG_64BIT) && defined(CONFIG_FUNCTION_TRACER)
 	.import _mcount,data
 	/* initialize mcount FPTR */
@@ -187,11 +186,12 @@ common_stext:
 #endif /*CONFIG_SMP*/
 
 #ifdef CONFIG_64BIT
-	mfctl		%cr30,%r6		/* PCX-W2 firmware bug */
-	tophys_r1	%r6
+	tophys_r1	%sp
 
 	/* Save the rfi target address */
-	STREG		%r11,  TASK_PT_GR11(%r6)
+	ldd             TI_TASK-THREAD_SZ_ALGN(%sp), %r10
+	tophys_r1       %r10
+	std             %r11,  TASK_PT_GR11(%r10)
 	/* Switch to wide mode Superdome doesn't support narrow PDC
 	** calls.
 	*/
@@ -206,6 +206,7 @@ common_stext:
         ** Someday, palo might not do this for the Monarch either.
         */
 2:
+	mfctl		%cr30,%r6		/* PCX-W2 firmware bug */
 
 	ldo             PDC_PSW(%r0),%arg0              /* 21 */
 	ldo             PDC_PSW_SET_DEFAULTS(%r0),%arg1 /* 2 */
@@ -215,9 +216,13 @@ common_stext:
 	copy            %r0,%arg3
 
 stext_pdc_ret:
-	LDREG		TASK_PT_GR11(%r6), %r11
-	tovirt_r1	%r6
 	mtctl		%r6,%cr30		/* restore task thread info */
+
+	/* restore rfi target address*/
+	ldd             TI_TASK-THREAD_SZ_ALGN(%sp), %r10
+	tophys_r1       %r10
+	ldd             TASK_PT_GR11(%r10), %r11
+	tovirt_r1       %sp
 #endif
 	
 	/* PARANOID: clear user scratch/user space SR's */
@@ -282,9 +287,7 @@ aligned_rfi:
 
 	load32		KERNEL_PSW,%r10
 	mtctl		%r10,%ipsw
-
-	tovirt_r1	%sp
-
+	
 	/* Jump through hyperspace to Virt Mode */
 	rfi
 	nop
@@ -340,13 +343,12 @@ smp_slave_stext:
 #endif
 
 	/*  Initialize the SP - monarch sets up smp_init_current_idle_task */
-	load32		PA(smp_init_current_idle_task),%r6
-	LDREG		0(%r6),%r6
-	mtctl		%r6,%cr30
-	tophys_r1	%r6
-	LDREG           TASK_STACK(%r6),%sp
+	load32		PA(smp_init_current_idle_task),%sp
+	LDREG		0(%sp),%sp	/* load task address */
 	tophys_r1	%sp
-	ldo		FRAME_SIZE(%sp),%sp
+	LDREG		TASK_THREAD_INFO(%sp),%sp
+	mtctl           %sp,%cr30       /* store in cr30 */
+	ldo             THREAD_SZ_ALGN(%sp),%sp
 
 	/* point CPU to kernel page tables */
 	load32		PA(swapper_pg_dir),%r4

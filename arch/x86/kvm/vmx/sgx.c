@@ -53,9 +53,11 @@ static int sgx_get_encls_gva(struct kvm_vcpu *vcpu, unsigned long offset,
 static void sgx_handle_emulation_failure(struct kvm_vcpu *vcpu, u64 addr,
 					 unsigned int size)
 {
-	uint64_t data[2] = { addr, size };
-
-	__kvm_prepare_emulation_failure_exit(vcpu, data, ARRAY_SIZE(data));
+	vcpu->run->exit_reason = KVM_EXIT_INTERNAL_ERROR;
+	vcpu->run->internal.suberror = KVM_INTERNAL_ERROR_EMULATION;
+	vcpu->run->internal.ndata = 2;
+	vcpu->run->internal.data[0] = addr;
+	vcpu->run->internal.data[1] = size;
 }
 
 static int sgx_read_hva(struct kvm_vcpu *vcpu, unsigned long hva, void *data,
@@ -110,7 +112,9 @@ static int sgx_inject_fault(struct kvm_vcpu *vcpu, gva_t gva, int trapnr)
 	 * but the error code isn't (yet) plumbed through the ENCLS helpers.
 	 */
 	if (trapnr == PF_VECTOR && !boot_cpu_has(X86_FEATURE_SGX2)) {
-		kvm_prepare_emulation_failure_exit(vcpu);
+		vcpu->run->exit_reason = KVM_EXIT_INTERNAL_ERROR;
+		vcpu->run->internal.suberror = KVM_INTERNAL_ERROR_EMULATION;
+		vcpu->run->internal.ndata = 0;
 		return 0;
 	}
 
@@ -151,7 +155,9 @@ static int __handle_encls_ecreate(struct kvm_vcpu *vcpu,
 	sgx_12_0 = kvm_find_cpuid_entry(vcpu, 0x12, 0);
 	sgx_12_1 = kvm_find_cpuid_entry(vcpu, 0x12, 1);
 	if (!sgx_12_0 || !sgx_12_1) {
-		kvm_prepare_emulation_failure_exit(vcpu);
+		vcpu->run->exit_reason = KVM_EXIT_INTERNAL_ERROR;
+		vcpu->run->internal.suberror = KVM_INTERNAL_ERROR_EMULATION;
+		vcpu->run->internal.ndata = 0;
 		return 0;
 	}
 

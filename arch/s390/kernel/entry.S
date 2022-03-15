@@ -52,22 +52,6 @@ STACK_INIT = STACK_SIZE - STACK_FRAME_OVERHEAD - __PT_SIZE
 
 _LPP_OFFSET	= __LC_LPP
 
-	.macro STBEAR address
-	ALTERNATIVE "", ".insn	s,0xb2010000,\address", 193
-	.endm
-
-	.macro LBEAR address
-	ALTERNATIVE "", ".insn	s,0xb2000000,\address", 193
-	.endm
-
-	.macro LPSWEY address,lpswe
-	ALTERNATIVE "b \lpswe", ".insn siy,0xeb0000000071,\address,0", 193
-	.endm
-
-	.macro MBEAR reg
-	ALTERNATIVE "", __stringify(mvc __PT_LAST_BREAK(8,\reg),__LC_LAST_BREAK), 193
-	.endm
-
 	.macro	CHECK_STACK savearea
 #ifdef CONFIG_CHECK_STACK
 	tml	%r15,STACK_SIZE - CONFIG_STACK_GUARD
@@ -318,7 +302,6 @@ ENTRY(system_call)
 	BPOFF
 	lghi	%r14,0
 .Lsysc_per:
-	STBEAR	__LC_LAST_BREAK
 	lctlg	%c1,%c1,__LC_KERNEL_ASCE
 	lg	%r12,__LC_CURRENT
 	lg	%r15,__LC_KERNEL_STACK
@@ -338,16 +321,14 @@ ENTRY(system_call)
 	xgr	%r11,%r11
 	la	%r2,STACK_FRAME_OVERHEAD(%r15)	# pointer to pt_regs
 	mvc	__PT_R8(64,%r2),__LC_SAVE_AREA_SYNC
-	MBEAR	%r2
 	lgr	%r3,%r14
 	brasl	%r14,__do_syscall
 	lctlg	%c1,%c1,__LC_USER_ASCE
 	mvc	__LC_RETURN_PSW(16),STACK_FRAME_OVERHEAD+__PT_PSW(%r15)
 	BPEXIT __TI_flags(%r12),_TIF_ISOLATE_BP
-	LBEAR	STACK_FRAME_OVERHEAD+__PT_LAST_BREAK(%r15)
 	lmg	%r0,%r15,STACK_FRAME_OVERHEAD+__PT_R0(%r15)
 	stpt	__LC_EXIT_TIMER
-	LPSWEY	__LC_RETURN_PSW,__LC_RETURN_LPSWE
+	b	__LC_RETURN_LPSWE
 ENDPROC(system_call)
 
 #
@@ -359,10 +340,9 @@ ENTRY(ret_from_fork)
 	lctlg	%c1,%c1,__LC_USER_ASCE
 	mvc	__LC_RETURN_PSW(16),STACK_FRAME_OVERHEAD+__PT_PSW(%r15)
 	BPEXIT __TI_flags(%r12),_TIF_ISOLATE_BP
-	LBEAR	STACK_FRAME_OVERHEAD+__PT_LAST_BREAK(%r15)
 	lmg	%r0,%r15,STACK_FRAME_OVERHEAD+__PT_R0(%r15)
 	stpt	__LC_EXIT_TIMER
-	LPSWEY	__LC_RETURN_PSW,__LC_RETURN_LPSWE
+	b	__LC_RETURN_LPSWE
 ENDPROC(ret_from_fork)
 
 /*
@@ -402,7 +382,6 @@ ENTRY(pgm_check_handler)
 	xc	__SF_BACKCHAIN(8,%r15),__SF_BACKCHAIN(%r15)
 	stmg	%r0,%r7,__PT_R0(%r11)
 	mvc	__PT_R8(64,%r11),__LC_SAVE_AREA_SYNC
-	mvc	__PT_LAST_BREAK(8,%r11),__LC_PGM_LAST_BREAK
 	stmg	%r8,%r9,__PT_PSW(%r11)
 
 	# clear user controlled registers to prevent speculative use
@@ -422,9 +401,8 @@ ENTRY(pgm_check_handler)
 	stpt	__LC_EXIT_TIMER
 .Lpgm_exit_kernel:
 	mvc	__LC_RETURN_PSW(16),STACK_FRAME_OVERHEAD+__PT_PSW(%r15)
-	LBEAR	STACK_FRAME_OVERHEAD+__PT_LAST_BREAK(%r15)
 	lmg	%r0,%r15,STACK_FRAME_OVERHEAD+__PT_R0(%r15)
-	LPSWEY	__LC_RETURN_PSW,__LC_RETURN_LPSWE
+	b	__LC_RETURN_LPSWE
 
 #
 # single stepped system call
@@ -434,8 +412,7 @@ ENTRY(pgm_check_handler)
 	larl	%r14,.Lsysc_per
 	stg	%r14,__LC_RETURN_PSW+8
 	lghi	%r14,1
-	LBEAR	__LC_PGM_LAST_BREAK
-	LPSWEY	__LC_RETURN_PSW,__LC_RETURN_LPSWE # branch to .Lsysc_per
+	lpswe	__LC_RETURN_PSW		# branch to .Lsysc_per
 ENDPROC(pgm_check_handler)
 
 /*
@@ -445,7 +422,6 @@ ENDPROC(pgm_check_handler)
 ENTRY(\name)
 	STCK	__LC_INT_CLOCK
 	stpt	__LC_SYS_ENTER_TIMER
-	STBEAR	__LC_LAST_BREAK
 	BPOFF
 	stmg	%r8,%r15,__LC_SAVE_AREA_ASYNC
 	lg	%r12,__LC_CURRENT
@@ -477,7 +453,6 @@ ENTRY(\name)
 	xgr	%r10,%r10
 	xc	__PT_FLAGS(8,%r11),__PT_FLAGS(%r11)
 	mvc	__PT_R8(64,%r11),__LC_SAVE_AREA_ASYNC
-	MBEAR	%r11
 	stmg	%r8,%r9,__PT_PSW(%r11)
 	tm	%r8,0x0001		# coming from user space?
 	jno	1f
@@ -490,9 +465,8 @@ ENTRY(\name)
 	lctlg	%c1,%c1,__LC_USER_ASCE
 	BPEXIT	__TI_flags(%r12),_TIF_ISOLATE_BP
 	stpt	__LC_EXIT_TIMER
-2:	LBEAR	__PT_LAST_BREAK(%r11)
-	lmg	%r0,%r15,__PT_R0(%r11)
-	LPSWEY	__LC_RETURN_PSW,__LC_RETURN_LPSWE
+2:	lmg	%r0,%r15,__PT_R0(%r11)
+	b	__LC_RETURN_LPSWE
 ENDPROC(\name)
 .endm
 
@@ -531,7 +505,6 @@ ENTRY(mcck_int_handler)
 	BPOFF
 	la	%r1,4095		# validate r1
 	spt	__LC_CPU_TIMER_SAVE_AREA-4095(%r1)	# validate cpu timer
-	LBEAR	__LC_LAST_BREAK_SAVE_AREA-4095(%r1)		# validate bear
 	lmg	%r0,%r15,__LC_GPREGS_SAVE_AREA-4095(%r1)# validate gprs
 	lg	%r12,__LC_CURRENT
 	lmg	%r8,%r9,__LC_MCK_OLD_PSW
@@ -618,10 +591,8 @@ ENTRY(mcck_int_handler)
 	jno	0f
 	BPEXIT	__TI_flags(%r12),_TIF_ISOLATE_BP
 	stpt	__LC_EXIT_TIMER
-0:	ALTERNATIVE "", __stringify(lghi %r12,__LC_LAST_BREAK_SAVE_AREA),193
-	LBEAR	0(%r12)
-	lmg	%r11,%r15,__PT_R11(%r11)
-	LPSWEY	__LC_RETURN_MCCK_PSW,__LC_RETURN_MCCK_LPSWE
+0:	lmg	%r11,%r15,__PT_R11(%r11)
+	b	__LC_RETURN_MCCK_LPSWE
 
 .Lmcck_panic:
 	/*

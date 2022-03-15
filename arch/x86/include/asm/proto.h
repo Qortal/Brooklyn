@@ -40,6 +40,6 @@ void x86_report_nx(void);
 extern int reboot_force;
 
 long do_arch_prctl_common(struct task_struct *task, int option,
-			  unsigned long arg2);
+			  unsigned long cpuid_enabled);
 
 #endif /* _ASM_X86_PROTO_H */

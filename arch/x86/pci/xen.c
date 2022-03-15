@@ -23,7 +23,6 @@
 
 #include <xen/features.h>
 #include <xen/events.h>
-#include <xen/pci.h>
 #include <asm/xen/pci.h>
 #include <asm/xen/cpuid.h>
 #include <asm/apic.h>
@@ -184,7 +183,7 @@ static int xen_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
 	if (ret)
 		goto error;
 	i = 0;
-	msi_for_each_desc(msidesc, &dev->dev, MSI_DESC_NOTASSOCIATED) {
+	for_each_pci_msi_entry(msidesc, dev) {
 		irq = xen_bind_pirq_msi_to_irq(dev, msidesc, v[i],
 					       (type == PCI_CAP_ID_MSI) ? nvec : 1,
 					       (type == PCI_CAP_ID_MSIX) ?
@@ -235,7 +234,7 @@ static int xen_hvm_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
 	if (type == PCI_CAP_ID_MSI && nvec > 1)
 		return 1;
 
-	msi_for_each_desc(msidesc, &dev->dev, MSI_DESC_NOTASSOCIATED) {
+	for_each_pci_msi_entry(msidesc, dev) {
 		pirq = xen_allocate_pirq_msi(dev, msidesc);
 		if (pirq < 0) {
 			irq = -ENODEV;
@@ -270,7 +269,7 @@ static int xen_initdom_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
 	int ret = 0;
 	struct msi_desc *msidesc;
 
-	msi_for_each_desc(msidesc, &dev->dev, MSI_DESC_NOTASSOCIATED) {
+	for_each_pci_msi_entry(msidesc, dev) {
 		struct physdev_map_pirq map_irq;
 		domid_t domid;
 
@@ -306,7 +305,7 @@ static int xen_initdom_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
 				return -EINVAL;
 
 			map_irq.table_base = pci_resource_start(dev, bir);
-			map_irq.entry_nr = msidesc->msi_index;
+			map_irq.entry_nr = msidesc->msi_attrib.entry_nr;
 		}
 
 		ret = -EINVAL;
@@ -351,12 +350,9 @@ out:
 	return ret;
 }
 
-bool xen_initdom_restore_msi(struct pci_dev *dev)
+static void xen_initdom_restore_msi_irqs(struct pci_dev *dev)
 {
 	int ret = 0;
-
-	if (!xen_initial_domain())
-		return true;
 
 	if (pci_seg_supported) {
 		struct physdev_pci_device restore_ext;
@@ -378,10 +374,10 @@ bool xen_initdom_restore_msi(struct pci_dev *dev)
 		ret = HYPERVISOR_physdev_op(PHYSDEVOP_restore_msi, &restore);
 		WARN(ret && ret != -ENOSYS, "restore_msi -> %d\n", ret);
 	}
-	return false;
 }
 #else /* CONFIG_XEN_PV_DOM0 */
 #define xen_initdom_setup_msi_irqs	NULL
+#define xen_initdom_restore_msi_irqs	NULL
 #endif /* !CONFIG_XEN_PV_DOM0 */
 
 static void xen_teardown_msi_irqs(struct pci_dev *dev)
@@ -389,15 +385,19 @@ static void xen_teardown_msi_irqs(struct pci_dev *dev)
 	struct msi_desc *msidesc;
 	int i;
 
-	msi_for_each_desc(msidesc, &dev->dev, MSI_DESC_ASSOCIATED) {
-		for (i = 0; i < msidesc->nvec_used; i++)
-			xen_destroy_irq(msidesc->irq + i);
+	for_each_pci_msi_entry(msidesc, dev) {
+		if (msidesc->irq) {
+			for (i = 0; i < msidesc->nvec_used; i++)
+				xen_destroy_irq(msidesc->irq + i);
+		}
 	}
 }
 
 static void xen_pv_teardown_msi_irqs(struct pci_dev *dev)
 {
-	if (dev->msix_enabled)
+	struct msi_desc *msidesc = first_pci_msi_entry(dev);
+
+	if (msidesc->msi_attrib.is_msix)
 		xen_pci_frontend_disable_msix(dev);
 	else
 		xen_pci_frontend_disable_msi(dev);
@@ -413,7 +413,10 @@ static int xen_msi_domain_alloc_irqs(struct irq_domain *domain,
 	if (WARN_ON_ONCE(!dev_is_pci(dev)))
 		return -EINVAL;
 
-	type = to_pci_dev(dev)->msix_enabled ? PCI_CAP_ID_MSIX : PCI_CAP_ID_MSI;
+	if (first_msi_entry(dev)->msi_attrib.is_msix)
+		type = PCI_CAP_ID_MSIX;
+	else
+		type = PCI_CAP_ID_MSI;
 
 	return xen_msi_ops.setup_msi_irqs(to_pci_dev(dev), nvec, type);
 }
@@ -462,10 +465,12 @@ static __init struct irq_domain *xen_create_pci_msi_domain(void)
 static __init void xen_setup_pci_msi(void)
 {
 	if (xen_pv_domain()) {
-		if (xen_initial_domain())
+		if (xen_initial_domain()) {
 			xen_msi_ops.setup_msi_irqs = xen_initdom_setup_msi_irqs;
-		else
+			x86_msi.restore_msi_irqs = xen_initdom_restore_msi_irqs;
+		} else {
 			xen_msi_ops.setup_msi_irqs = xen_setup_msi_irqs;
+		}
 		xen_msi_ops.teardown_msi_irqs = xen_pv_teardown_msi_irqs;
 		pci_msi_ignore_mask = 1;
 	} else if (xen_hvm_domain()) {
@@ -580,3 +585,78 @@ int __init pci_xen_initial_domain(void)
 }
 #endif
 
+#ifdef CONFIG_XEN_DOM0
+
+struct xen_device_domain_owner {
+	domid_t domain;
+	struct pci_dev *dev;
+	struct list_head list;
+};
+
+static DEFINE_SPINLOCK(dev_domain_list_spinlock);
+static struct list_head dev_domain_list = LIST_HEAD_INIT(dev_domain_list);
+
+static struct xen_device_domain_owner *find_device(struct pci_dev *dev)
+{
+	struct xen_device_domain_owner *owner;
+
+	list_for_each_entry(owner, &dev_domain_list, list) {
+		if (owner->dev == dev)
+			return owner;
+	}
+	return NULL;
+}
+
+int xen_find_device_domain_owner(struct pci_dev *dev)
+{
+	struct xen_device_domain_owner *owner;
+	int domain = -ENODEV;
+
+	spin_lock(&dev_domain_list_spinlock);
+	owner = find_device(dev);
+	if (owner)
+		domain = owner->domain;
+	spin_unlock(&dev_domain_list_spinlock);
+	return domain;
+}
+EXPORT_SYMBOL_GPL(xen_find_device_domain_owner);
+
+int xen_register_device_domain_owner(struct pci_dev *dev, uint16_t domain)
+{
+	struct xen_device_domain_owner *owner;
+
+	owner = kzalloc(sizeof(struct xen_device_domain_owner), GFP_KERNEL);
+	if (!owner)
+		return -ENODEV;
+
+	spin_lock(&dev_domain_list_spinlock);
+	if (find_device(dev)) {
+		spin_unlock(&dev_domain_list_spinlock);
+		kfree(owner);
+		return -EEXIST;
+	}
+	owner->domain = domain;
+	owner->dev = dev;
+	list_add_tail(&owner->list, &dev_domain_list);
+	spin_unlock(&dev_domain_list_spinlock);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(xen_register_device_domain_owner);
+
+int xen_unregister_device_domain_owner(struct pci_dev *dev)
+{
+	struct xen_device_domain_owner *owner;
+
+	spin_lock(&dev_domain_list_spinlock);
+	owner = find_device(dev);
+	if (!owner) {
+		spin_unlock(&dev_domain_list_spinlock);
+		return -ENODEV;
+	}
+	list_del(&owner->list);
+	spin_unlock(&dev_domain_list_spinlock);
+	kfree(owner);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(xen_unregister_device_domain_owner);
+#endif /* CONFIG_XEN_DOM0 */

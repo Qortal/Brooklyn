@@ -7,6 +7,10 @@
  * Ubuntu project, hibernation support for mach-dove
  * Copyright (C) 2010 Nokia Corporation (Hiroshi Doyu)
  * Copyright (C) 2010 Texas Instruments, Inc. (Teerth Reddy et al.)
+ *  https://lkml.org/lkml/2010/6/18/4
+ *  https://lists.linux-foundation.org/pipermail/linux-pm/2010-June/027422.html
+ *  https://patchwork.kernel.org/patch/96442/
+ *
  * Copyright (C) 2006 Rafael J. Wysocki <rjw@sisk.pl>
  */
 #define pr_fmt(x) "hibernate: " x
@@ -45,7 +49,10 @@
 extern int in_suspend;
 
 /* Do we need to reset el2? */
-#define el2_reset_needed() (is_hyp_nvhe())
+#define el2_reset_needed() (is_hyp_mode_available() && !is_kernel_in_hyp_mode())
+
+/* temporary el2 vectors in the __hibernate_exit_text section. */
+extern char hibernate_el2_vectors[];
 
 /* hyp-stub vectors, used to restore el2 during resume from hibernate. */
 extern char __hyp_stub_vectors[];
@@ -208,7 +215,26 @@ static int create_safe_exec_page(void *src_start, size_t length,
 	if (rc)
 		return rc;
 
-	cpu_install_ttbr0(trans_ttbr0, t0sz);
+	/*
+	 * Load our new page tables. A strict BBM approach requires that we
+	 * ensure that TLBs are free of any entries that may overlap with the
+	 * global mappings we are about to install.
+	 *
+	 * For a real hibernate/resume cycle TTBR0 currently points to a zero
+	 * page, but TLBs may contain stale ASID-tagged entries (e.g. for EFI
+	 * runtime services), while for a userspace-driven test_resume cycle it
+	 * points to userspace page tables (and we must point it at a zero page
+	 * ourselves).
+	 *
+	 * We change T0SZ as part of installing the idmap. This is undone by
+	 * cpu_uninstall_idmap() in __cpu_suspend_exit().
+	 */
+	cpu_set_reserved_ttbr0();
+	local_flush_tlb_all();
+	__cpu_set_tcr_t0sz(t0sz);
+	write_sysreg(trans_ttbr0, ttbr0_el1);
+	isb();
+
 	*phys_dst_addr = virt_to_phys(page);
 
 	return 0;
@@ -408,7 +434,6 @@ int swsusp_arch_resume(void)
 	void *zero_page;
 	size_t exit_size;
 	pgd_t *tmp_pg_dir;
-	phys_addr_t el2_vectors;
 	void __noreturn (*hibernate_exit)(phys_addr_t, phys_addr_t, void *,
 					  void *, phys_addr_t, phys_addr_t);
 	struct trans_pgd_info trans_info = {
@@ -436,14 +461,6 @@ int swsusp_arch_resume(void)
 		return -ENOMEM;
 	}
 
-	if (el2_reset_needed()) {
-		rc = trans_pgd_copy_el2_vectors(&trans_info, &el2_vectors);
-		if (rc) {
-			pr_err("Failed to setup el2 vectors\n");
-			return rc;
-		}
-	}
-
 	exit_size = __hibernate_exit_text_end - __hibernate_exit_text_start;
 	/*
 	 * Copy swsusp_arch_suspend_exit() to a safe page. This will generate
@@ -457,13 +474,25 @@ int swsusp_arch_resume(void)
 	}
 
 	/*
+	 * The hibernate exit text contains a set of el2 vectors, that will
+	 * be executed at el2 with the mmu off in order to reload hyp-stub.
+	 */
+	dcache_clean_inval_poc((unsigned long)hibernate_exit,
+			    (unsigned long)hibernate_exit + exit_size);
+
+	/*
 	 * KASLR will cause the el2 vectors to be in a different location in
 	 * the resumed kernel. Load hibernate's temporary copy into el2.
 	 *
 	 * We can skip this step if we booted at EL1, or are running with VHE.
 	 */
-	if (el2_reset_needed())
+	if (el2_reset_needed()) {
+		phys_addr_t el2_vectors = (phys_addr_t)hibernate_exit;
+		el2_vectors += hibernate_el2_vectors -
+			       __hibernate_exit_text_start;     /* offset */
+
 		__hyp_set_vectors(el2_vectors);
+	}
 
 	hibernate_exit(virt_to_phys(tmp_pg_dir), resume_hdr.ttbr1_el1,
 		       resume_hdr.reenter_kernel, restore_pblist,

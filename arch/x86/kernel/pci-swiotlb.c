@@ -6,7 +6,7 @@
 #include <linux/swiotlb.h>
 #include <linux/memblock.h>
 #include <linux/dma-direct.h>
-#include <linux/cc_platform.h>
+#include <linux/mem_encrypt.h>
 
 #include <asm/iommu.h>
 #include <asm/swiotlb.h>
@@ -45,10 +45,11 @@ int __init pci_swiotlb_detect_4gb(void)
 		swiotlb = 1;
 
 	/*
-	 * Set swiotlb to 1 so that bounce buffers are allocated and used for
-	 * devices that can't support DMA to encrypted memory.
+	 * If SME is active then swiotlb will be set to 1 so that bounce
+	 * buffers are allocated and used for devices that do not support
+	 * the addressing range required for the encryption mask.
 	 */
-	if (cc_platform_has(CC_ATTR_HOST_MEM_ENCRYPT))
+	if (sme_active())
 		swiotlb = 1;
 
 	return swiotlb;

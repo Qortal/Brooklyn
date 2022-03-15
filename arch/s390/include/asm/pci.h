@@ -210,11 +210,9 @@ int zpci_deconfigure_device(struct zpci_dev *zdev);
 void zpci_device_reserved(struct zpci_dev *zdev);
 bool zpci_is_device_configured(struct zpci_dev *zdev);
 
-int zpci_hot_reset_device(struct zpci_dev *zdev);
 int zpci_register_ioat(struct zpci_dev *, u8, u64, u64, u64);
 int zpci_unregister_ioat(struct zpci_dev *, u8);
 void zpci_remove_reserved_devices(void);
-void zpci_update_fh(struct zpci_dev *zdev, u32 fh);
 
 /* CLP */
 int clp_setup_writeback_mio(void);
@@ -296,10 +294,8 @@ void zpci_debug_exit(void);
 void zpci_debug_init_device(struct zpci_dev *, const char *);
 void zpci_debug_exit_device(struct zpci_dev *);
 
-/* Error handling */
+/* Error reporting */
 int zpci_report_error(struct pci_dev *, struct zpci_report_error_header *);
-int zpci_clear_error_state(struct zpci_dev *zdev);
-int zpci_reset_load_store_blocked(struct zpci_dev *zdev);
 
 #ifdef CONFIG_NUMA
 

@@ -34,8 +34,7 @@ The Linux kernel supports the following overcommit handling modes
 The overcommit policy is set via the sysctl ``vm.overcommit_memory``.
 
 The overcommit amount can be set via ``vm.overcommit_ratio`` (percentage)
-or ``vm.overcommit_kbytes`` (absolute value). These only have an effect
-when ``vm.overcommit_memory`` is set to 2.
+or ``vm.overcommit_kbytes`` (absolute value).
 
 The current overcommit limit and amount committed are viewable in
 ``/proc/meminfo`` as CommitLimit and Committed_AS respectively.

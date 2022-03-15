@@ -34,6 +34,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	cap1106.dtbo \
 	chipdip-dac.dtbo \
 	cma.dtbo \
+	cutiepi-panel.dtbo \
 	dht11.dtbo \
 	dionaudio-loco.dtbo \
 	dionaudio-loco-v2.dtbo \
@@ -105,6 +106,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	iqaudio-dac.dtbo \
 	iqaudio-dacplus.dtbo \
 	iqaudio-digi-wm8804-audio.dtbo \
+	iqs550.dtbo \
 	irs1125.dtbo \
 	jedec-spi-nor.dtbo \
 	justboom-both.dtbo \
@@ -137,6 +139,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	mmc.dtbo \
 	mpu6050.dtbo \
 	mz61581.dtbo \
+	ov2311.dtbo \
 	ov5647.dtbo \
 	ov7251.dtbo \
 	ov9281.dtbo \
@@ -193,6 +196,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	spi-gpio35-39.dtbo \
 	spi-gpio40-45.dtbo \
 	spi-rtc.dtbo \
+	spi0-0cs.dtbo \
 	spi0-1cs.dtbo \
 	spi0-2cs.dtbo \
 	spi1-1cs.dtbo \
@@ -231,7 +235,11 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	upstream-pi4.dtbo \
 	vc4-fkms-v3d.dtbo \
 	vc4-fkms-v3d-pi4.dtbo \
-	vc4-kms-dpi-at056tn53v1.dtbo \
+	vc4-kms-dpi-generic.dtbo \
+	vc4-kms-dpi-hyperpixel2r.dtbo \
+	vc4-kms-dpi-hyperpixel4.dtbo \
+	vc4-kms-dpi-hyperpixel4sq.dtbo \
+	vc4-kms-dpi-panel.dtbo \
 	vc4-kms-dsi-7inch.dtbo \
 	vc4-kms-dsi-lt070me05000.dtbo \
 	vc4-kms-dsi-lt070me05000-v2.dtbo \
@@ -240,9 +248,12 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	vc4-kms-v3d-pi4.dtbo \
 	vc4-kms-vga666.dtbo \
 	vga666.dtbo \
+	vl805.dtbo \
 	w1-gpio.dtbo \
 	w1-gpio-pullup.dtbo \
 	w5500.dtbo \
+	waveshare-can-fd-hat-mode-a.dtbo \
+	waveshare-can-fd-hat-mode-b.dtbo \
 	wittypi.dtbo \
 	wm8960-soundcard.dtbo
 

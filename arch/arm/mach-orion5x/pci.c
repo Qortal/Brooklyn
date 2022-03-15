@@ -142,7 +142,6 @@ static struct pci_ops pcie_ops = {
 static int __init pcie_setup(struct pci_sys_data *sys)
 {
 	struct resource *res;
-	struct resource realio;
 	int dev;
 
 	/*
@@ -165,9 +164,7 @@ static int __init pcie_setup(struct pci_sys_data *sys)
 		pcie_ops.read = pcie_rd_conf_wa;
 	}
 
-	realio.start = sys->busnr * SZ_64K;
-	realio.end = realio.start + SZ_64K - 1;
-	pci_remap_iospace(&realio, ORION5X_PCIE_IO_PHYS_BASE);
+	pci_ioremap_io(sys->busnr * SZ_64K, ORION5X_PCIE_IO_PHYS_BASE);
 
 	/*
 	 * Request resources.
@@ -469,7 +466,6 @@ static void __init orion5x_setup_pci_wins(void)
 static int __init pci_setup(struct pci_sys_data *sys)
 {
 	struct resource *res;
-	struct resource realio;
 
 	/*
 	 * Point PCI unit MBUS decode windows to DRAM space.
@@ -486,9 +482,7 @@ static int __init pci_setup(struct pci_sys_data *sys)
 	 */
 	orion5x_setbits(PCI_CMD, PCI_CMD_HOST_REORDER);
 
-	realio.start = sys->busnr * SZ_64K;
-	realio.end = realio.start + SZ_64K - 1;
-	pci_remap_iospace(&realio, ORION5X_PCI_IO_PHYS_BASE);
+	pci_ioremap_io(sys->busnr * SZ_64K, ORION5X_PCI_IO_PHYS_BASE);
 
 	/*
 	 * Request resources

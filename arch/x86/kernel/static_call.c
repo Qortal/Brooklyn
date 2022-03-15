@@ -17,8 +17,6 @@ enum insn_type {
  */
 static const u8 xor5rax[] = { 0x66, 0x66, 0x48, 0x31, 0xc0 };
 
-static const u8 retinsn[] = { RET_INSN_OPCODE, 0xcc, 0xcc, 0xcc, 0xcc };
-
 static void __ref __static_call_transform(void *insn, enum insn_type type, void *func)
 {
 	const void *emulate = NULL;
@@ -44,7 +42,8 @@ static void __ref __static_call_transform(void *insn, enum insn_type type, void 
 		break;
 
 	case RET:
-		code = &retinsn;
+		code = text_gen_insn(RET_INSN_OPCODE, insn, func);
+		size = RET_INSN_SIZE;
 		break;
 	}
 
@@ -57,14 +56,9 @@ static void __ref __static_call_transform(void *insn, enum insn_type type, void 
 	text_poke_bp(insn, code, size, emulate);
 }
 
-static void __static_call_validate(void *insn, bool tail, bool tramp)
+static void __static_call_validate(void *insn, bool tail)
 {
 	u8 opcode = *(u8 *)insn;
-
-	if (tramp && memcmp(insn+5, "SCT", 3)) {
-		pr_err("trampoline signature fail");
-		BUG();
-	}
 
 	if (tail) {
 		if (opcode == JMP32_INSN_OPCODE ||
@@ -80,8 +74,7 @@ static void __static_call_validate(void *insn, bool tail, bool tramp)
 	/*
 	 * If we ever trigger this, our text is corrupt, we'll probably not live long.
 	 */
-	pr_err("unexpected static_call insn opcode 0x%x at %pS\n", opcode, insn);
-	BUG();
+	WARN_ONCE(1, "unexpected static_call insn opcode 0x%x at %pS\n", opcode, insn);
 }
 
 static inline enum insn_type __sc_insn(bool null, bool tail)
@@ -104,12 +97,12 @@ void arch_static_call_transform(void *site, void *tramp, void *func, bool tail)
 	mutex_lock(&text_mutex);
 
 	if (tramp) {
-		__static_call_validate(tramp, true, true);
+		__static_call_validate(tramp, true);
 		__static_call_transform(tramp, __sc_insn(!func, true), func);
 	}
 
 	if (IS_ENABLED(CONFIG_HAVE_STATIC_CALL_INLINE) && site) {
-		__static_call_validate(site, tail, false);
+		__static_call_validate(site, tail);
 		__static_call_transform(site, __sc_insn(!func, tail), func);
 	}
 

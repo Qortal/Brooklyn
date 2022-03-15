@@ -2,8 +2,6 @@
 #ifndef _ASM_S390_JUMP_LABEL_H
 #define _ASM_S390_JUMP_LABEL_H
 
-#define HAVE_JUMP_LABEL_BATCH
-
 #ifndef __ASSEMBLY__
 
 #include <linux/types.h>

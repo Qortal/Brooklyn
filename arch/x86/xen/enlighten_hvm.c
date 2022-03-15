@@ -9,7 +9,6 @@
 #include <xen/events.h>
 #include <xen/interface/memory.h>
 
-#include <asm/apic.h>
 #include <asm/cpu.h>
 #include <asm/smp.h>
 #include <asm/io_apic.h>
@@ -164,9 +163,9 @@ static int xen_cpu_up_prepare_hvm(unsigned int cpu)
 		per_cpu(xen_vcpu_id, cpu) = cpu_acpi_id(cpu);
 	else
 		per_cpu(xen_vcpu_id, cpu) = cpu;
-	xen_vcpu_setup(cpu);
-	if (!xen_have_vector_callback)
-		return 0;
+	rc = xen_vcpu_setup(cpu);
+	if (rc || !xen_have_vector_callback)
+		return rc;
 
 	if (xen_feature(XENFEAT_hvm_safe_pvclock))
 		xen_setup_timer(cpu);
@@ -185,7 +184,8 @@ static int xen_cpu_dead_hvm(unsigned int cpu)
 
 	if (xen_have_vector_callback && xen_feature(XENFEAT_hvm_safe_pvclock))
 		xen_teardown_timer(cpu);
-	return 0;
+
+       return 0;
 }
 
 static bool no_vector_callback __initdata;
@@ -242,14 +242,15 @@ static __init int xen_parse_no_vector_callback(char *arg)
 }
 early_param("xen_no_vector_callback", xen_parse_no_vector_callback);
 
-static __init bool xen_x2apic_available(void)
+bool __init xen_hvm_need_lapic(void)
 {
-	return x2apic_supported();
-}
-
-static bool __init msi_ext_dest_id(void)
-{
-       return cpuid_eax(xen_cpuid_base() + 4) & XEN_HVM_CPUID_EXT_DEST_ID;
+	if (xen_pv_domain())
+		return false;
+	if (!xen_hvm_domain())
+		return false;
+	if (xen_feature(XENFEAT_hvm_pirqs) && xen_have_vector_callback)
+		return false;
+	return true;
 }
 
 static __init void xen_hvm_guest_late_init(void)
@@ -311,10 +312,9 @@ struct hypervisor_x86 x86_hyper_xen_hvm __initdata = {
 	.detect                 = xen_platform_hvm,
 	.type			= X86_HYPER_XEN_HVM,
 	.init.init_platform     = xen_hvm_guest_init,
-	.init.x2apic_available  = xen_x2apic_available,
+	.init.x2apic_available  = xen_x2apic_para_available,
 	.init.init_mem_mapping	= xen_hvm_init_mem_mapping,
 	.init.guest_late_init	= xen_hvm_guest_late_init,
-	.init.msi_ext_dest_id   = msi_ext_dest_id,
 	.runtime.pin_vcpu       = xen_pin_vcpu,
 	.ignore_nopv            = true,
 };

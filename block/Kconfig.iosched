@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0
+if BLOCK
+
 menu "IO Schedulers"
 
 config MQ_IOSCHED_DEADLINE
@@ -18,7 +20,6 @@ config MQ_IOSCHED_KYBER
 
 config IOSCHED_BFQ
 	tristate "BFQ I/O scheduler"
-	select BLK_ICQ
 	help
 	BFQ I/O scheduler for BLK-MQ. BFQ distributes the bandwidth of
 	of the device among all processes according to their weights,
@@ -44,3 +45,5 @@ config BFQ_CGROUP_DEBUG
 	files in a cgroup which can be useful for debugging.
 
 endmenu
+
+endif

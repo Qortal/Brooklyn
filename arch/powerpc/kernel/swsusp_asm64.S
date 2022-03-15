@@ -128,6 +128,7 @@ END_FW_FTR_SECTION_IFCLR(FW_FEATURE_LPAR)
 	 * stack pointer on the stack like a real stackframe */
 	addi	r1,r1,-128
 
+	bl _iommu_save
 	bl swsusp_save
 
 	/* restore LR */
@@ -141,7 +142,7 @@ END_FW_FTR_SECTION_IFCLR(FW_FEATURE_LPAR)
 _GLOBAL(swsusp_arch_resume)
 	/* Stop pending alitvec streams and memory accesses */
 BEGIN_FTR_SECTION
-	PPC_DSSALL
+	DSSALL
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 	sync
 

@@ -144,6 +144,16 @@ Params:
                                 See /sys/kernel/debug/raspberrypi_axi_monitor
                                 for the results.
 
+        cam0_reg                Enables CAM 0 regulator. CM1 & 3 only.
+
+        cam0_reg_gpio           Set GPIO for CAM 0 regulator. Default 30.
+                                CM1 & 3 only.
+
+        cam1_reg                Enables CAM 1 regulator. CM1 & 3 only.
+
+        cam1_reg_gpio           Set GPIO for CAM 1 regulator. Default 2.
+                                CM1 & 3 only.
+
         eee                     Enable Energy Efficient Ethernet support for
                                 compatible devices (default "on"). See also
                                 "tx_lpi_timer". Pi3B+ only.
@@ -669,6 +679,12 @@ Params: cma-512                 CMA is 512MB (needs 1GB)
         cma-default             Use upstream's default value
 
 
+Name:   cutiepi-panel
+Info:   8" TFT LCD display and touch panel used by cutiepi.io
+Load:   dtoverlay=cutiepi-panel
+Params: <None>
+
+
 Name:   dht11
 Info:   Overlay for the DHT11/DHT21/DHT22 humidity/temperature sensors
         Also sometimes found with the part number(s) AM230x.
@@ -1155,6 +1171,11 @@ Info:   Drives a GPIO high or low on poweroff (including halt). Using this
         or reboot). This also disables the ability to trigger a boot by driving
         GPIO3 low.
 
+        The GPIO starts in an inactive state. At poweroff time it is driven
+        active for 100ms, then inactive for 100ms, then active again. It is
+        safe to remove the power at any point after the initial activation of
+        the GPIO.
+
         Users of this overlay are required to provide an external mechanism to
         switch off the power supply when signalled - failure to do so results
         in a kernel BUG, increased power consumption and undefined behaviour.
@@ -1170,6 +1191,8 @@ Params: gpiopin                 GPIO for signalling (default 26)
         input                   Set if the gpio pin should be configured as
                                 an input.
         export                  Set to export the configured pin to sysfs
+        active_delay_ms         Initial GPIO active period (default 100)
+        inactive_delay_ms       Subsequent GPIO inactive period (default 100)
         timeout_ms              Specify (in ms) how long the kernel waits for
                                 power-down before issuing a WARN (default 3000).
 
@@ -1702,6 +1725,9 @@ Params: addr                    Set the address for the BH1750, BME280, BME680,
 
         htu21                   Select the HTU21 temperature and humidity sensor
 
+        int_pin                 Set the GPIO to use for interrupts (max30102
+                                only)
+
         lm75                    Select the Maxim LM75 temperature sensor
                                 Valid addresses 0x48-0x4f, default 0x4f
 
@@ -1709,6 +1735,9 @@ Params: addr                    Set the address for the BH1750, BME280, BME680,
 
         max17040                Select the Maxim Integrated MAX17040 battery
                                 monitor
+
+        max30102                Select the Maxim Integrated MAX30102 heart-rate
+                                and blood-oxygen sensor
 
         sht3x                   Select the Sensiron SHT3x temperature and
                                 humidity sensor. Valid addresses 0x44-0x45,
@@ -1838,6 +1867,8 @@ Params: rotation                Mounting rotation of the camera sensor (0 or
                                 2 = external, default external)
         media-controller        Configure use of Media Controller API for
                                 configuring the sensor (default on)
+        cam0                    Adopt the default configuration for CAM0 on a
+                                Compute Module (CSI0, i2c_vc, and cam0_reg).
 
 
 Name:   imx290
@@ -1860,6 +1891,8 @@ Params: 4lane                   Enable 4 CSI2 lanes. This requires a Compute
                                 180, default 0)
         media-controller        Configure use of Media Controller API for
                                 configuring the sensor (default on)
+        cam0                    Adopt the default configuration for CAM0 on a
+                                Compute Module (CSI0, i2c_vc, and cam0_reg).
 
 
 Name:   imx378
@@ -1873,6 +1906,8 @@ Params: rotation                Mounting rotation of the camera sensor (0 or
                                 2 = external, default external)
         media-controller        Configure use of Media Controller API for
                                 configuring the sensor (default on)
+        cam0                    Adopt the default configuration for CAM0 on a
+                                Compute Module (CSI0, i2c_vc, and cam0_reg).
 
 
 Name:   imx477
@@ -1886,6 +1921,8 @@ Params: rotation                Mounting rotation of the camera sensor (0 or
                                 2 = external, default external)
         media-controller        Configure use of Media Controller API for
                                 configuring the sensor (default on)
+        cam0                    Adopt the default configuration for CAM0 on a
+                                Compute Module (CSI0, i2c_vc, and cam0_reg).
 
 
 Name:   imx519
@@ -1899,6 +1936,8 @@ Params: rotation                Mounting rotation of the camera sensor (0 or
                                 2 = external, default external)
         media-controller        Configure use of Media Controller API for
                                 configuring the sensor (default on)
+        cam0                    Adopt the default configuration for CAM0 on a
+                                Compute Module (CSI0, i2c_vc, and cam0_reg).
 
 
 Name:   iqaudio-codec
@@ -1958,6 +1997,19 @@ Params: card_name               Override the default, "IQAudIODigi", card name.
                                 dai stream name.
 
 
+Name:   iqs550
+Info:   Enables I2C connected Azoteq IQS550 trackpad/touchscreen controller
+        using GPIO 4 (pin 7 on GPIO header) for interrupt.
+Load:   dtoverlay=iqs550,<param>=<val>
+Params: interrupt               GPIO used for interrupt (default 4)
+        reset                   GPIO used for reset (optional)
+        sizex                   Touchscreen size x (default 800)
+        sizey                   Touchscreen size y (default 480)
+        invx                    Touchscreen inverted x axis
+        invy                    Touchscreen inverted y axis
+        swapxy                  Touchscreen swapped x y axis
+
+
 Name:   irs1125
 Info:   Infineon irs1125 TOF camera module.
         Uses Unicam 1, which is the standard camera connector on most Pi
@@ -1965,6 +2017,8 @@ Info:   Infineon irs1125 TOF camera module.
 Load:   dtoverlay=irs1125,<param>=<val>
 Params: media-controller        Configure use of Media Controller API for
                                 configuring the sensor (default off)
+        cam0                    Adopt the default configuration for CAM0 on a
+                                Compute Module (CSI0, i2c_vc, and cam0_reg).
 
 
 Name:   jedec-spi-nor
@@ -2367,6 +2421,21 @@ Params: speed                   Display SPI bus speed
         xohms                   Touchpanel sensitivity (X-plate resistance)
 
 
+Name:   ov2311
+Info:   Omnivision OV2311 camera module.
+        Uses Unicam 1, which is the standard camera connector on most Pi
+        variants.
+Load:   dtoverlay=ov2311,<param>=<val>
+Params: rotation                Mounting rotation of the camera sensor (0 or
+                                180, default 0)
+        orientation             Sensor orientation (0 = front, 1 = rear,
+                                2 = external, default external)
+        media-controller        Configure use of Media Controller API for
+                                configuring the sensor (default on)
+        cam0                    Adopt the default configuration for CAM0 on a
+                                Compute Module (CSI0, i2c_vc, and cam0_reg).
+
+
 Name:   ov5647
 Info:   Omnivision OV5647 camera module.
         Uses Unicam 1, which is the standard camera connector on most Pi
@@ -2378,6 +2447,8 @@ Params: rotation                Mounting rotation of the camera sensor (0 or
                                 2 = external, default external)
         media-controller        Configure use of Media Controller API for
                                 configuring the sensor (default on)
+        cam0                    Adopt the default configuration for CAM0 on a
+                                Compute Module (CSI0, i2c_vc, and cam0_reg).
 
 
 Name:   ov7251
@@ -2391,6 +2462,8 @@ Params: rotation                Mounting rotation of the camera sensor (0 or
                                 2 = external, default external)
         media-controller        Configure use of Media Controller API for
                                 configuring the sensor (default off)
+        cam0                    Adopt the default configuration for CAM0 on a
+                                Compute Module (CSI0, i2c_vc, and cam0_reg).
 
 
 Name:   ov9281
@@ -2404,6 +2477,8 @@ Params: rotation                Mounting rotation of the camera sensor (0 or
                                 2 = external, default external)
         media-controller        Configure use of Media Controller API for
                                 configuring the sensor (default on)
+        cam0                    Adopt the default configuration for CAM0 on a
+                                Compute Module (CSI0, i2c_vc, and cam0_reg).
 
 
 Name:   papirus
@@ -2629,6 +2704,10 @@ Params: speed                   Display SPI bus speed
 
         debug                   Debug output level {0-7}
 
+        drm                     Force the use of the hx8357d DRM driver (by
+                                default the fb_hx8357d framebuffer driver will
+                                be used in preference if available)
+
 
 Name:   pps-gpio
 Info:   Configures the pps-gpio (pulse-per-second time signal via GPIO).
@@ -2804,6 +2883,8 @@ Params: poe_fan_temp0           Temperature (in millicelcius) at which the fan
                                 speeds up (default 55000)
         poe_fan_temp3_hyst      Temperature delta (in millicelcius) at which
                                 the fan slows down (default 5000)
+        i2c                     Control the fan via Linux I2C drivers instead of
+                                the firmware.
 
 
 Name:   rpi-poe-plus
@@ -2825,6 +2906,8 @@ Params: poe_fan_temp0           Temperature (in millicelcius) at which the fan
                                 speeds up (default 55000)
         poe_fan_temp3_hyst      Temperature delta (in millicelcius) at which
                                 the fan slows down (default 5000)
+        i2c                     Control the fan via Linux I2C drivers instead of
+                                the firmware.
 
 
 Name:   rpi-proto
@@ -3049,6 +3132,14 @@ Params: ds3232                  Select the DS3232 device
         spi2_0                  Use spi2.0
         spi2_1                  Use spi2.1
         cs_high                 This device requires an active-high CS
+
+
+Name:   spi0-0cs
+Info:   Don't claim any CS pins for SPI0. Requires a device with its chip
+        select permanently enabled, but frees a GPIO for e.g. a DPI display.
+Load:   dtoverlay=spi0-0cs,<param>=<val>
+Params: no_miso                 Don't claim and use the MISO pin (9), freeing
+                                it for other uses.
 
 
 Name:   spi0-1cs
@@ -3386,6 +3477,8 @@ Params: 4lane                   Use 4 lanes (only applicable to Compute Modules
                                 are supported by the driver.
         media-controller        Configure use of Media Controller API for
                                 configuring the sensor (default off)
+        cam0                    Adopt the default configuration for CAM0 on a
+                                Compute Module (CSI0, i2c_vc, and cam0_reg).
 
 
 Name:   tc358743-audio
@@ -3550,10 +3643,124 @@ Params: cma-512                 CMA is 512MB (needs 1GB)
 
 
 Name:   vc4-kms-dpi-at056tn53v1
-Info:   Enable an Innolux 5.6in VGA TFT connected to DPI interface under KMS.
+Info:   This overlay is now deprecated - see vc4-kms-dpi-panel,at056tn53v1
+Load:   <Deprecated>
+
+
+Name:   vc4-kms-dpi-generic
+Info:   Enable a generic DPI display under KMS. Default timings are for the
+        Adafruit Kippah with 800x480 panel and RGB666 (GPIOs 0-21)
         Requires vc4-kms-v3d to be loaded.
-Load:   dtoverlay=vc4-kms-dpi-at056tn53v1
-Params: <None>
+Load:   dtoverlay=vc4-kms-dpi-generic,<param>=<val>
+Params: clock-frequency         Display clock frequency (Hz)
+        hactive                 Horizontal active pixels
+        hfp                     Horizontal front porch
+        hsync                   Horizontal sync pulse width
+        hbp                     Horizontal back porch
+        vactive                 Vertical active lines
+        vfp                     Vertical front porch
+        vsync                   Vertical sync pulse width
+        vbp                     Vertical back porch
+        hsync-invert            Horizontal sync active low
+        vsync-invert            Vertical sync active low
+        de-invert               Data Enable active low
+        pixclk-invert           Negative edge pixel clock
+        width-mm                Define the screen width in mm
+        height-mm               Define the screen height in mm
+        rgb565                  Change to RGB565 output on GPIOs 0-19
+        rgb565-padhi            Change to RGB565 output on GPIOs 0-8, 12-17, and
+                                20-24
+        bgr666                  Change to BGR666 output on GPIOs 0-21.
+        bgr666-padhi            Change to BGR666 output on GPIOs 0-9, 12-17, and
+                                20-25
+        rgb666-padhi            Change to RGB666 output on GPIOs 0-9, 12-17, and
+                                20-25
+        bgr888                  Change to BGR888 output on GPIOs 0-27
+        rgb888                  Change to RGB888 output on GPIOs 0-27
+        bus-format              Override the bus format for a MEDIA_BUS_FMT_*
+                                value. NB also overridden by rgbXXX overrides.
+        backlight-gpio          Defines a GPIO to be used for backlight control
+                                (default of none).
+        backlight-pwm           Defines a PWM channel to be used for backlight
+                                control (default of none). NB Disables audio
+                                headphone output as that also uses PWM.
+        backlight-pwm-chan      Choose channel on &pwm node for backlight
+                                control.
+                                (default 0).
+        backlight-pwm-gpio      GPIO pin to be used for the PWM backlight. See
+                                pwm-2chan for valid options.
+                                (default 18 - note this can only work with
+                                 rgb666-padhi).
+        backlight-pwm-func      Pin function of GPIO used for the PWM
+                                backlight.
+                                See pwm-2chan for valid options.
+                                (default 2).
+        backlight-def-brightness
+                                Set the default brightness. Normal range 1-16.
+                                (default 16).
+        rotate                  Display rotation {0,90,180,270} (default 0)
+
+
+Name:   vc4-kms-dpi-hyperpixel2r
+Info:   Enable the KMS drivers for the Pimoroni HyperPixel2 Round DPI display.
+        Requires vc4-kms-v3d to be loaded.
+Load:   dtoverlay=vc4-kms-dpi-hyperpixel2r,<param>=<val>
+Params: disable-touch           Disables the touch controller
+        touchscreen-inverted-x  Inverts X direction of touch controller
+        touchscreen-inverted-y  Inverts Y direction of touch controller
+        touchscreen-swapped-x-y Swaps X & Y axes of touch controller
+        rotate                  Display rotation {0,90,180,270} (default 0)
+
+
+Name:   vc4-kms-dpi-hyperpixel4
+Info:   Enable the KMS drivers for the Pimoroni HyperPixel4 DPI display.
+        Requires vc4-kms-v3d to be loaded.
+Load:   dtoverlay=vc4-kms-dpi-hyperpixel4,<param>=<val>
+Params: disable-touch           Disables the touch controller
+        touchscreen-inverted-x  Inverts X direction of touch controller
+        touchscreen-inverted-y  Inverts Y direction of touch controller
+        touchscreen-swapped-x-y Swaps X & Y axes of touch controller
+        rotate                  Display rotation {0,90,180,270} (default 0)
+
+
+Name:   vc4-kms-dpi-hyperpixel4sq
+Info:   Enable the KMS drivers for the Pimoroni HyperPixel4 Square DPI display.
+        Requires vc4-kms-v3d to be loaded.
+Load:   dtoverlay=vc4-kms-dpi-hyperpixel4sq,<param>=<val>
+Params: disable-touch           Disables the touch controller
+        touchscreen-inverted-x  Inverts X direction of touch controller
+        touchscreen-inverted-y  Inverts Y direction of touch controller
+        touchscreen-swapped-x-y Swaps X & Y axes of touch controller
+        rotate                  Display rotation {0,90,180,270} (default 0)
+
+
+Name:   vc4-kms-dpi-panel
+Info:   Enable a preconfigured KMS DPI panel.
+        Requires vc4-kms-v3d to be loaded.
+Load:   dtoverlay=vc4-kms-dpi-panel,<param>=<val>
+Params: at056tn53v1             Enable an Innolux 5.6in VGA TFT
+        kippah-7inch            Enable an Adafruit Kippah with 7inch panel.
+        mzp280                  Enable a Geekworm MZP280 panel.
+        backlight-gpio          Defines a GPIO to be used for backlight control
+                                (default of none).
+        backlight-pwm           Defines a PWM channel to be used for backlight
+                                control (default of none). NB Disables audio
+                                headphone output as that also uses PWM.
+        backlight-pwm-chan      Choose channel on &pwm node for backlight
+                                control.
+                                (default 0).
+        backlight-pwm-gpio      GPIO pin to be used for the PWM backlight. See
+                                pwm-2chan for valid options.
+                                (default 18 - note this can only work with
+                                 rgb666-padhi).
+        backlight-pwm-func      Pin function of GPIO used for the PWM
+                                backlight.
+                                See pwm-2chan for valid options.
+                                (default 2).
+        backlight-def-brightness
+                                Set the default brightness. Normal range 1-16.
+                                (default 16).
+        rotate                  Display rotation {0,90,180,270} (default 0)
 
 
 Name:   vc4-kms-dsi-7inch
@@ -3591,10 +3798,8 @@ Params: <None>
 
 
 Name:   vc4-kms-kippah-7inch
-Info:   Enable the Adafruit DPI Kippah with the 7" Ontat panel attached.
-        Requires vc4-kms-v3d to be loaded.
-Load:   dtoverlay=vc4-kms-kippah-7inch
-Params: <None>
+Info:   This overlay is now deprecated - see vc4-kms-dpi-panel,kippah-7inch
+Load:   <Deprecated>
 
 
 Name:   vc4-kms-v3d
@@ -3613,8 +3818,8 @@ Params: cma-512                 CMA is 512MB (needs 1GB)
         cma-default             Use upstream's default value
         audio                   Enable or disable audio over HDMI (default "on")
         noaudio                 Disable all HDMI audio (default "off")
-        nocomposite             Disable the composite video output (default
-                                "off")
+        composite               Enable the composite output (default "off")
+                                N.B. Disables all other outputs on a Pi 4.
 
 
 Name:   vc4-kms-v3d-pi4
@@ -3658,6 +3863,14 @@ Load:   dtoverlay=vga666
 Params: <None>
 
 
+Name:   vl805
+Info:   Overlay to enable a VIA VL805 USB3 controller on CM4 carriers
+        Will be loaded automatically by up-to-date firmware if "VL805=1" is
+        set in the EEPROM config.
+Load:   dtoverlay=vl805
+Params: <None>
+
+
 Name:   w1-gpio
 Info:   Configures the w1-gpio Onewire interface module.
         Use this overlay if you *don't* need a GPIO to drive an external pullup.
@@ -3683,6 +3896,26 @@ Params: int_pin                 GPIO used for INT (default 25)
         speed                   SPI bus speed (default 30000000)
 
         cs                      SPI bus Chip Select (default 0)
+
+
+Name:   waveshare-can-fd-hat-mode-a
+Info:   Overlay for the Waveshare 2-Channel Isolated CAN FD Expansion HAT
+        for Raspberry Pi, Multi Protections. Use this overlay when the
+        HAT is configured in Mode A (Default), with can0 on spi0.0
+        and can1 on spi1.0.
+        https://www.waveshare.com/2-ch-can-fd-hat.htm
+Load:   dtoverlay=waveshare-can-fd-hat-mode-a
+Params: <None>
+
+
+Name:   waveshare-can-fd-hat-mode-b
+Info:   Overlay for the Waveshare 2-Channel Isolated CAN FD Expansion HAT
+        for Raspberry Pi, Multi Protections. Use this overlay when the
+        HAT is configured in Mode B (requires hardware modification), with
+        can0 on spi0.0 and can1 on spi0.1.
+        https://www.waveshare.com/2-ch-can-fd-hat.htm
+Load:   dtoverlay=waveshare-can-fd-hat-mode-b
+Params: <None>
 
 
 Name:   wittypi
