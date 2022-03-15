@@ -298,14 +298,13 @@ bool aq_ring_tx_clean(struct aq_ring_s *self)
 			}
 		}
 
-		if (unlikely(buff->is_eop && buff->skb)) {
+		if (unlikely(buff->is_eop)) {
 			u64_stats_update_begin(&self->stats.tx.syncp);
 			++self->stats.tx.packets;
 			self->stats.tx.bytes += buff->skb->len;
 			u64_stats_update_end(&self->stats.tx.syncp);
 
 			dev_kfree_skb_any(buff->skb);
-			buff->skb = NULL;
 		}
 		buff->pa = 0U;
 		buff->eop_index = 0xffffU;

@@ -18,7 +18,7 @@
  * queue and asynchronously sending message via
  * ice_sq_send_cmd() function
  */
-int
+enum ice_status
 ice_aq_send_msg_to_vf(struct ice_hw *hw, u16 vfid, u32 v_opcode, u32 v_retval,
 		      u8 *msg, u16 msglen, struct ice_sq_cd *cd)
 {
@@ -228,7 +228,7 @@ ice_mbx_traverse(struct ice_hw *hw,
  * sent per VF and marks the VF as malicious if it exceeds
  * the permissible number of messages to send.
  */
-static int
+static enum ice_status
 ice_mbx_detect_malvf(struct ice_hw *hw, u16 vf_id,
 		     enum ice_mbx_snapshot_state *new_state,
 		     bool *is_malvf)
@@ -236,7 +236,7 @@ ice_mbx_detect_malvf(struct ice_hw *hw, u16 vf_id,
 	struct ice_mbx_snapshot *snap = &hw->mbx_snapshot;
 
 	if (vf_id >= snap->mbx_vf.vfcntr_len)
-		return -EIO;
+		return ICE_ERR_OUT_OF_RANGE;
 
 	/* increment the message count in the VF array */
 	snap->mbx_vf.vf_cntr[vf_id]++;
@@ -297,7 +297,7 @@ static void ice_mbx_reset_snapshot(struct ice_mbx_snapshot *snap)
  * Detect: If pending message count exceeds watermark traverse
  * the static snapshot and look for a malicious VF.
  */
-int
+enum ice_status
 ice_mbx_vf_state_handler(struct ice_hw *hw,
 			 struct ice_mbx_data *mbx_data, u16 vf_id,
 			 bool *is_malvf)
@@ -306,10 +306,10 @@ ice_mbx_vf_state_handler(struct ice_hw *hw,
 	struct ice_mbx_snap_buffer_data *snap_buf;
 	struct ice_ctl_q_info *cq = &hw->mailboxq;
 	enum ice_mbx_snapshot_state new_state;
-	int status = 0;
+	enum ice_status status = 0;
 
 	if (!is_malvf || !mbx_data)
-		return -EINVAL;
+		return ICE_ERR_BAD_PTR;
 
 	/* When entering the mailbox state machine assume that the VF
 	 * is not malicious until detected.
@@ -320,7 +320,7 @@ ice_mbx_vf_state_handler(struct ice_hw *hw,
 	  * interrupt is not less than the defined AVF message threshold.
 	  */
 	if (mbx_data->max_num_msgs_mbx <= ICE_ASYNC_VF_MSG_THRESHOLD)
-		return -EINVAL;
+		return ICE_ERR_INVAL_SIZE;
 
 	/* The watermark value should not be lesser than the threshold limit
 	 * set for the number of asynchronous messages a VF can send to mailbox
@@ -329,7 +329,7 @@ ice_mbx_vf_state_handler(struct ice_hw *hw,
 	 */
 	if (mbx_data->async_watermark_val < ICE_ASYNC_VF_MSG_THRESHOLD ||
 	    mbx_data->async_watermark_val > mbx_data->max_num_msgs_mbx)
-		return -EINVAL;
+		return ICE_ERR_PARAM;
 
 	new_state = ICE_MAL_VF_DETECT_STATE_INVALID;
 	snap_buf = &snap->mbx_buf;
@@ -383,7 +383,7 @@ ice_mbx_vf_state_handler(struct ice_hw *hw,
 
 	default:
 		new_state = ICE_MAL_VF_DETECT_STATE_INVALID;
-		status = -EIO;
+		status = ICE_ERR_CFG;
 	}
 
 	snap_buf->state = new_state;
@@ -405,20 +405,20 @@ ice_mbx_vf_state_handler(struct ice_hw *hw,
  * the input vf_id against the bitmap to verify if the VF has been
  * detected in any previous mailbox iterations.
  */
-int
+enum ice_status
 ice_mbx_report_malvf(struct ice_hw *hw, unsigned long *all_malvfs,
 		     u16 bitmap_len, u16 vf_id, bool *report_malvf)
 {
 	if (!all_malvfs || !report_malvf)
-		return -EINVAL;
+		return ICE_ERR_PARAM;
 
 	*report_malvf = false;
 
 	if (bitmap_len < hw->mbx_snapshot.mbx_vf.vfcntr_len)
-		return -EINVAL;
+		return ICE_ERR_INVAL_SIZE;
 
 	if (vf_id >= bitmap_len)
-		return -EIO;
+		return ICE_ERR_OUT_OF_RANGE;
 
 	/* If the vf_id is found in the bitmap set bit and boolean to true */
 	if (!test_and_set_bit(vf_id, all_malvfs))
@@ -441,19 +441,19 @@ ice_mbx_report_malvf(struct ice_hw *hw, unsigned long *all_malvfs,
  * that the new VF loaded is not considered malicious before going
  * through the overflow detection algorithm.
  */
-int
+enum ice_status
 ice_mbx_clear_malvf(struct ice_mbx_snapshot *snap, unsigned long *all_malvfs,
 		    u16 bitmap_len, u16 vf_id)
 {
 	if (!snap || !all_malvfs)
-		return -EINVAL;
+		return ICE_ERR_PARAM;
 
 	if (bitmap_len < snap->mbx_vf.vfcntr_len)
-		return -EINVAL;
+		return ICE_ERR_INVAL_SIZE;
 
 	/* Ensure VF ID value is not larger than bitmap or VF counter length */
 	if (vf_id >= bitmap_len || vf_id >= snap->mbx_vf.vfcntr_len)
-		return -EIO;
+		return ICE_ERR_OUT_OF_RANGE;
 
 	/* Clear VF ID bit in the bitmap tracking malicious VFs attached to PF */
 	clear_bit(vf_id, all_malvfs);
@@ -482,7 +482,7 @@ ice_mbx_clear_malvf(struct ice_mbx_snapshot *snap, unsigned long *all_malvfs,
  * called to ensure that the vf_count can be compared against the number
  * of VFs supported as defined in the functional capabilities of the device.
  */
-int ice_mbx_init_snapshot(struct ice_hw *hw, u16 vf_count)
+enum ice_status ice_mbx_init_snapshot(struct ice_hw *hw, u16 vf_count)
 {
 	struct ice_mbx_snapshot *snap = &hw->mbx_snapshot;
 
@@ -491,13 +491,13 @@ int ice_mbx_init_snapshot(struct ice_hw *hw, u16 vf_count)
 	 * the functional capabilities of the PF.
 	 */
 	if (!vf_count || vf_count > hw->func_caps.num_allocd_vfs)
-		return -EINVAL;
+		return ICE_ERR_INVAL_SIZE;
 
 	snap->mbx_vf.vf_cntr = devm_kcalloc(ice_hw_to_dev(hw), vf_count,
 					    sizeof(*snap->mbx_vf.vf_cntr),
 					    GFP_KERNEL);
 	if (!snap->mbx_vf.vf_cntr)
-		return -ENOMEM;
+		return ICE_ERR_NO_MEMORY;
 
 	/* Setting the VF counter length to the number of allocated
 	 * VFs for given PF's functional capabilities.

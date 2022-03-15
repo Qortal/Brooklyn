@@ -19,9 +19,6 @@ properties:
           - raspberrypi,bootloader-config
       - const: nvmem-rmem
 
-  reg:
-    maxItems: 1
-
   no-map:
     $ref: /schemas/types.yaml#/definitions/flag
     description:

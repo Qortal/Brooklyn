@@ -382,6 +382,9 @@ static int hwtstamp_set(struct net_device *netdev, struct ifreq *ifr)
 	if (copy_from_user(&cfg, ifr->ifr_data, sizeof(cfg)))
 		return -EFAULT;
 
+	if (cfg.flags) /* reserved for future extensions */
+		return -EINVAL;
+
 	ret = ixp46x_ptp_find(&port->timesync_regs, &port->phc_index);
 	if (ret)
 		return ret;
@@ -1100,9 +1103,10 @@ static int init_queues(struct port *port)
 			return -ENOMEM;
 	}
 
-	port->desc_tab = dma_pool_zalloc(dma_pool, GFP_KERNEL, &port->desc_tab_phys);
-	if (!port->desc_tab)
+	if (!(port->desc_tab = dma_pool_alloc(dma_pool, GFP_KERNEL,
+					      &port->desc_tab_phys)))
 		return -ENOMEM;
+	memset(port->desc_tab, 0, POOL_ALLOC_SIZE);
 	memset(port->rx_buff_tab, 0, sizeof(port->rx_buff_tab)); /* tables */
 	memset(port->tx_buff_tab, 0, sizeof(port->tx_buff_tab));
 
@@ -1520,7 +1524,7 @@ static int ixp4xx_eth_probe(struct platform_device *pdev)
 
 	port->plat = plat;
 	npe_port_tab[NPE_ID(port->id)] = port;
-	eth_hw_addr_set(ndev, plat->hwaddr);
+	memcpy(ndev->dev_addr, plat->hwaddr, ETH_ALEN);
 
 	platform_set_drvdata(pdev, ndev);
 

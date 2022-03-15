@@ -4515,8 +4515,6 @@ int rvu_mbox_handler_nix_lf_stop_rx(struct rvu *rvu, struct msg_req *req,
 	return rvu_cgx_start_stop_io(rvu, pcifunc, false);
 }
 
-#define RX_SA_BASE  GENMASK_ULL(52, 7)
-
 void rvu_nix_lf_teardown(struct rvu *rvu, u16 pcifunc, int blkaddr, int nixlf)
 {
 	struct rvu_pfvf *pfvf = rvu_get_pfvf(rvu, pcifunc);
@@ -4524,7 +4522,6 @@ void rvu_nix_lf_teardown(struct rvu *rvu, u16 pcifunc, int blkaddr, int nixlf)
 	int pf = rvu_get_pf(pcifunc);
 	struct mac_ops *mac_ops;
 	u8 cgx_id, lmac_id;
-	u64 sa_base;
 	void *cgxd;
 	int err;
 
@@ -4581,14 +4578,6 @@ void rvu_nix_lf_teardown(struct rvu *rvu, u16 pcifunc, int blkaddr, int nixlf)
 	nix_ctx_free(rvu, pfvf);
 
 	nix_free_all_bandprof(rvu, pcifunc);
-
-	sa_base = rvu_read64(rvu, blkaddr, NIX_AF_LFX_RX_IPSEC_SA_BASE(nixlf));
-	if (FIELD_GET(RX_SA_BASE, sa_base)) {
-		err = rvu_cpt_ctx_flush(rvu, pcifunc);
-		if (err)
-			dev_err(rvu->dev,
-				"CPT ctx flush failed with error: %d\n", err);
-	}
 }
 
 #define NIX_AF_LFX_TX_CFG_PTP_EN	BIT_ULL(32)
@@ -4689,119 +4678,6 @@ int rvu_mbox_handler_nix_lso_format_cfg(struct rvu *rvu,
 	return 0;
 }
 
-#define IPSEC_GEN_CFG_EGRP    GENMASK_ULL(50, 48)
-#define IPSEC_GEN_CFG_OPCODE  GENMASK_ULL(47, 32)
-#define IPSEC_GEN_CFG_PARAM1  GENMASK_ULL(31, 16)
-#define IPSEC_GEN_CFG_PARAM2  GENMASK_ULL(15, 0)
-
-#define CPT_INST_QSEL_BLOCK   GENMASK_ULL(28, 24)
-#define CPT_INST_QSEL_PF_FUNC GENMASK_ULL(23, 8)
-#define CPT_INST_QSEL_SLOT    GENMASK_ULL(7, 0)
-
-static void nix_inline_ipsec_cfg(struct rvu *rvu, struct nix_inline_ipsec_cfg *req,
-				 int blkaddr)
-{
-	u8 cpt_idx, cpt_blkaddr;
-	u64 val;
-
-	cpt_idx = (blkaddr == BLKADDR_NIX0) ? 0 : 1;
-	if (req->enable) {
-		val = 0;
-		/* Enable context prefetching */
-		if (!is_rvu_otx2(rvu))
-			val |= BIT_ULL(51);
-
-		/* Set OPCODE and EGRP */
-		val |= FIELD_PREP(IPSEC_GEN_CFG_EGRP, req->gen_cfg.egrp);
-		val |= FIELD_PREP(IPSEC_GEN_CFG_OPCODE, req->gen_cfg.opcode);
-		val |= FIELD_PREP(IPSEC_GEN_CFG_PARAM1, req->gen_cfg.param1);
-		val |= FIELD_PREP(IPSEC_GEN_CFG_PARAM2, req->gen_cfg.param2);
-
-		rvu_write64(rvu, blkaddr, NIX_AF_RX_IPSEC_GEN_CFG, val);
-
-		/* Set CPT queue for inline IPSec */
-		val = FIELD_PREP(CPT_INST_QSEL_SLOT, req->inst_qsel.cpt_slot);
-		val |= FIELD_PREP(CPT_INST_QSEL_PF_FUNC,
-				  req->inst_qsel.cpt_pf_func);
-
-		if (!is_rvu_otx2(rvu)) {
-			cpt_blkaddr = (cpt_idx == 0) ? BLKADDR_CPT0 :
-						       BLKADDR_CPT1;
-			val |= FIELD_PREP(CPT_INST_QSEL_BLOCK, cpt_blkaddr);
-		}
-
-		rvu_write64(rvu, blkaddr, NIX_AF_RX_CPTX_INST_QSEL(cpt_idx),
-			    val);
-
-		/* Set CPT credit */
-		rvu_write64(rvu, blkaddr, NIX_AF_RX_CPTX_CREDIT(cpt_idx),
-			    req->cpt_credit);
-	} else {
-		rvu_write64(rvu, blkaddr, NIX_AF_RX_IPSEC_GEN_CFG, 0x0);
-		rvu_write64(rvu, blkaddr, NIX_AF_RX_CPTX_INST_QSEL(cpt_idx),
-			    0x0);
-		rvu_write64(rvu, blkaddr, NIX_AF_RX_CPTX_CREDIT(cpt_idx),
-			    0x3FFFFF);
-	}
-}
-
-int rvu_mbox_handler_nix_inline_ipsec_cfg(struct rvu *rvu,
-					  struct nix_inline_ipsec_cfg *req,
-					  struct msg_rsp *rsp)
-{
-	if (!is_block_implemented(rvu->hw, BLKADDR_CPT0))
-		return 0;
-
-	nix_inline_ipsec_cfg(rvu, req, BLKADDR_NIX0);
-	if (is_block_implemented(rvu->hw, BLKADDR_CPT1))
-		nix_inline_ipsec_cfg(rvu, req, BLKADDR_NIX1);
-
-	return 0;
-}
-
-int rvu_mbox_handler_nix_inline_ipsec_lf_cfg(struct rvu *rvu,
-					     struct nix_inline_ipsec_lf_cfg *req,
-					     struct msg_rsp *rsp)
-{
-	int lf, blkaddr, err;
-	u64 val;
-
-	if (!is_block_implemented(rvu->hw, BLKADDR_CPT0))
-		return 0;
-
-	err = nix_get_nixlf(rvu, req->hdr.pcifunc, &lf, &blkaddr);
-	if (err)
-		return err;
-
-	if (req->enable) {
-		/* Set TT, TAG_CONST, SA_POW2_SIZE and LENM1_MAX */
-		val = (u64)req->ipsec_cfg0.tt << 44 |
-		      (u64)req->ipsec_cfg0.tag_const << 20 |
-		      (u64)req->ipsec_cfg0.sa_pow2_size << 16 |
-		      req->ipsec_cfg0.lenm1_max;
-
-		if (blkaddr == BLKADDR_NIX1)
-			val |= BIT_ULL(46);
-
-		rvu_write64(rvu, blkaddr, NIX_AF_LFX_RX_IPSEC_CFG0(lf), val);
-
-		/* Set SA_IDX_W and SA_IDX_MAX */
-		val = (u64)req->ipsec_cfg1.sa_idx_w << 32 |
-		      req->ipsec_cfg1.sa_idx_max;
-		rvu_write64(rvu, blkaddr, NIX_AF_LFX_RX_IPSEC_CFG1(lf), val);
-
-		/* Set SA base address */
-		rvu_write64(rvu, blkaddr, NIX_AF_LFX_RX_IPSEC_SA_BASE(lf),
-			    req->sa_base_addr);
-	} else {
-		rvu_write64(rvu, blkaddr, NIX_AF_LFX_RX_IPSEC_CFG0(lf), 0x0);
-		rvu_write64(rvu, blkaddr, NIX_AF_LFX_RX_IPSEC_CFG1(lf), 0x0);
-		rvu_write64(rvu, blkaddr, NIX_AF_LFX_RX_IPSEC_SA_BASE(lf),
-			    0x0);
-	}
-
-	return 0;
-}
 void rvu_nix_reset_mac(struct rvu_pfvf *pfvf, int pcifunc)
 {
 	bool from_vf = !!(pcifunc & RVU_PFVF_FUNC_MASK);

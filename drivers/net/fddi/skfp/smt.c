@@ -1846,10 +1846,10 @@ void smt_swap_para(struct smt_header *sm, int len, int direction)
 	}
 }
 
-
 static void smt_string_swap(char *data, const char *format, int len)
 {
 	const char	*open_paren = NULL ;
+	int	x ;
 
 	while (len > 0  && *format) {
 		switch (*format) {
@@ -1876,13 +1876,19 @@ static void smt_string_swap(char *data, const char *format, int len)
 			len-- ;
 			break ;
 		case 's' :
-			swap(data[0], data[1]) ;
+			x = data[0] ;
+			data[0] = data[1] ;
+			data[1] = x ;
 			data += 2 ;
 			len -= 2 ;
 			break ;
 		case 'l' :
-			swap(data[0], data[3]) ;
-			swap(data[1], data[2]) ;
+			x = data[0] ;
+			data[0] = data[3] ;
+			data[3] = x ;
+			x = data[1] ;
+			data[1] = data[2] ;
+			data[2] = x ;
 			data += 4 ;
 			len -= 4 ;
 			break ;

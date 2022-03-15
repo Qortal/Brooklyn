@@ -27,7 +27,7 @@
 #include <linux/bitops.h>
 #endif
 
-#include <linux/comedi.h>
+#include "../comedi.h"
 
 /**
  * struct ni_route_set - Set of destinations with a common source.

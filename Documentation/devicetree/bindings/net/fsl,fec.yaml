@@ -165,8 +165,7 @@ properties:
       req_bit is the gpr bit offset for ENET stop request.
 
   mdio:
-    $ref: mdio.yaml#
-    unevaluatedProperties: false
+    type: object
     description:
       Specifies the mdio bus in the FEC, used as a container for phy nodes.
 

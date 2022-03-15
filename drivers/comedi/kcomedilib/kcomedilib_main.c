@@ -16,9 +16,9 @@
 #include <linux/mm.h>
 #include <linux/io.h>
 
-#include <linux/comedi.h>
-#include <linux/comedi/comedidev.h>
-#include <linux/comedi/comedilib.h>
+#include "../comedi.h"
+#include "../comedilib.h"
+#include "../comedidev.h"
 
 MODULE_AUTHOR("David Schleef <ds@schleef.org>");
 MODULE_DESCRIPTION("Comedi kernel library");

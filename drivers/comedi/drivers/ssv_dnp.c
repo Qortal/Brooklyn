@@ -19,7 +19,7 @@
 /* include files ----------------------------------------------------------- */
 
 #include <linux/module.h>
-#include <linux/comedi/comedidev.h>
+#include "../comedidev.h"
 
 /* Some global definitions: the registers of the DNP ----------------------- */
 /*                                                                           */

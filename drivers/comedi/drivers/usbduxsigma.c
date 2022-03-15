@@ -40,7 +40,8 @@
 #include <linux/fcntl.h>
 #include <linux/compiler.h>
 #include <asm/unaligned.h>
-#include <linux/comedi/comedi_usb.h>
+
+#include "../comedi_usb.h"
 
 /* timeout for the USB-transfer in ms*/
 #define BULK_TIMEOUT 1000

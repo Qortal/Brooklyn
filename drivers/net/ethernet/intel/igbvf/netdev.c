@@ -1520,14 +1520,15 @@ static void igbvf_reset(struct igbvf_adapter *adapter)
 
 	/* Allow time for pending master requests to run */
 	if (mac->ops.reset_hw(hw))
-		dev_info(&adapter->pdev->dev, "PF still resetting\n");
+		dev_warn(&adapter->pdev->dev, "PF still resetting\n");
 
 	mac->ops.init_hw(hw);
 
 	spin_unlock_bh(&hw->mbx_lock);
 
 	if (is_valid_ether_addr(adapter->hw.mac.addr)) {
-		eth_hw_addr_set(netdev, adapter->hw.mac.addr);
+		memcpy(netdev->dev_addr, adapter->hw.mac.addr,
+		       netdev->addr_len);
 		memcpy(netdev->perm_addr, adapter->hw.mac.addr,
 		       netdev->addr_len);
 	}
@@ -1812,7 +1813,7 @@ static int igbvf_set_mac(struct net_device *netdev, void *p)
 	if (!ether_addr_equal(addr->sa_data, hw->mac.addr))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(netdev, addr->sa_data);
+	memcpy(netdev->dev_addr, addr->sa_data, netdev->addr_len);
 
 	return 0;
 }
@@ -2815,7 +2816,8 @@ static int igbvf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		else if (is_zero_ether_addr(adapter->hw.mac.addr))
 			dev_info(&pdev->dev,
 				 "MAC address not assigned by administrator.\n");
-		eth_hw_addr_set(netdev, adapter->hw.mac.addr);
+		memcpy(netdev->dev_addr, adapter->hw.mac.addr,
+		       netdev->addr_len);
 	}
 
 	spin_unlock_bh(&hw->mbx_lock);

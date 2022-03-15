@@ -7944,7 +7944,7 @@ The following table lists existing HSV/HSL formats.
 
 .. raw:: latex
 
-    \endgroup
+    \normalsize
 
 
 JPEG Compressed Formats

@@ -141,6 +141,7 @@ struct regval_list {
 };
 
 struct ov2680_resolution {
+	u8 *desc;
 	const struct ov2680_reg *regs;
 	int res;
 	int width;
@@ -153,6 +154,7 @@ struct ov2680_resolution {
 	u8 bin_factor_x;
 	u8 bin_factor_y;
 	u8 bin_mode;
+	bool used;
 };
 
 struct ov2680_format {
@@ -167,14 +169,15 @@ struct ov2680_format {
 struct ov2680_device {
 	struct v4l2_subdev sd;
 	struct media_pad pad;
+	struct v4l2_mbus_framefmt format;
 	struct mutex input_lock;
 	struct v4l2_ctrl_handler ctrl_handler;
-	struct ov2680_resolution *res;
 	struct camera_sensor_platform_data *platform_data;
-	bool power_on;
-	u16 exposure;
-	u16 gain;
-	u16 digitgain;
+	int vt_pix_clk_freq_mhz;
+	int fmt_idx;
+	int run_mode;
+	u8 res;
+	u8 type;
 };
 
 /**
@@ -280,6 +283,7 @@ static struct ov2680_reg const ov2680_global_setting[] = {
 	{}
 };
 
+#if 0 /* None of the definitions below are used currently */
 /*
  * 176x144 30fps  VBlanking 1lane 10Bit (binning)
  */
@@ -299,6 +303,8 @@ static struct ov2680_reg const ov2680_QCIF_30fps[] = {
 	{0x380b, 0xa0},
 	{0x380c, 0x06},
 	{0x380d, 0xb0},
+	{0x380e, 0x02},
+	{0x380f, 0x84},
 	{0x3810, 0x00},
 	{0x3811, 0x04},
 	{0x3812, 0x00},
@@ -340,6 +346,8 @@ static struct ov2680_reg const ov2680_CIF_30fps[] = {
 	{0x380b, 0x30},
 	{0x380c, 0x06},
 	{0x380d, 0xb0},
+	{0x380e, 0x02},
+	{0x380f, 0x84},
 	{0x3810, 0x00},
 	{0x3811, 0x04},
 	{0x3812, 0x00},
@@ -379,6 +387,8 @@ static struct ov2680_reg const ov2680_QVGA_30fps[] = {
 	{0x380b, 0x00},
 	{0x380c, 0x06},
 	{0x380d, 0xb0},
+	{0x380e, 0x02},
+	{0x380f, 0x84},
 	{0x3810, 0x00},
 	{0x3811, 0x04},
 	{0x3812, 0x00},
@@ -418,6 +428,8 @@ static struct ov2680_reg const ov2680_656x496_30fps[] = {
 	{0x380b, 0xf0},
 	{0x380c, 0x06},
 	{0x380d, 0xb0},
+	{0x380e, 0x02},
+	{0x380f, 0x84},
 	{0x3810, 0x00},
 	{0x3811, 0x04},
 	{0x3812, 0x00},
@@ -439,7 +451,7 @@ static struct ov2680_reg const ov2680_656x496_30fps[] = {
 };
 
 /*
- * 720x592 30fps  VBlanking 1lane 10Bit (binning)
+ * 800x600 30fps  VBlanking 1lane 10Bit (binning)
  */
 static struct ov2680_reg const ov2680_720x592_30fps[] = {
 	{0x3086, 0x01},
@@ -457,6 +469,8 @@ static struct ov2680_reg const ov2680_720x592_30fps[] = {
 	{0x380b, 0x50}, // Y_OUTPUT_SIZE;
 	{0x380c, 0x06},
 	{0x380d, 0xac}, // HTS;
+	{0x380e, 0x02},
+	{0x380f, 0x84}, // VTS;
 	{0x3810, 0x00},
 	{0x3811, 0x00},
 	{0x3812, 0x00},
@@ -498,6 +512,8 @@ static struct ov2680_reg const ov2680_800x600_30fps[] = {
 	{0x380b, 0x58},
 	{0x380c, 0x06},
 	{0x380d, 0xac},
+	{0x380e, 0x02},
+	{0x380f, 0x84},
 	{0x3810, 0x00},
 	{0x3811, 0x00},
 	{0x3812, 0x00},
@@ -537,6 +553,8 @@ static struct ov2680_reg const ov2680_720p_30fps[] = {
 	{0x380b, 0xe0},
 	{0x380c, 0x06},
 	{0x380d, 0xa8},
+	{0x380e, 0x05},
+	{0x380f, 0x0e},
 	{0x3810, 0x00},
 	{0x3811, 0x08},
 	{0x3812, 0x00},
@@ -576,6 +594,8 @@ static struct ov2680_reg const ov2680_1296x976_30fps[] = {
 	{0x380b, 0xd0},
 	{0x380c, 0x06},
 	{0x380d, 0xa8},
+	{0x380e, 0x05},
+	{0x380f, 0x0e},
 	{0x3810, 0x00},
 	{0x3811, 0x08},
 	{0x3812, 0x00},
@@ -615,6 +635,8 @@ static struct ov2680_reg const ov2680_1456x1096_30fps[] = {
 	{0x380b, 0x48},
 	{0x380c, 0x06},
 	{0x380d, 0xa8},
+	{0x380e, 0x05},
+	{0x380f, 0x0e},
 	{0x3810, 0x00},
 	{0x3811, 0x08},
 	{0x3812, 0x00},
@@ -634,6 +656,7 @@ static struct ov2680_reg const ov2680_1456x1096_30fps[] = {
 	// {0x5090, 0x0c},
 	{}
 };
+#endif
 
 /*
  *1616x916  30fps  VBlanking 1lane 10bit
@@ -655,6 +678,8 @@ static struct ov2680_reg const ov2680_1616x916_30fps[] = {
 	{0x380b, 0x94},
 	{0x380c, 0x06},
 	{0x380d, 0xa8},
+	{0x380e, 0x05},
+	{0x380f, 0x0e},
 	{0x3810, 0x00},
 	{0x3811, 0x00},
 	{0x3812, 0x00},
@@ -676,8 +701,9 @@ static struct ov2680_reg const ov2680_1616x916_30fps[] = {
 };
 
 /*
- * 1616x1082 30fps VBlanking 1lane 10Bit
+ * 1612x1212 30fps VBlanking 1lane 10Bit
  */
+#if 0
 static struct ov2680_reg const ov2680_1616x1082_30fps[] = {
 	{0x3086, 0x00},
 	{0x370a, 0x21},
@@ -694,6 +720,8 @@ static struct ov2680_reg const ov2680_1616x1082_30fps[] = {
 	{0x380b, 0x3a},
 	{0x380c, 0x06},
 	{0x380d, 0xa8},
+	{0x380e, 0x05},
+	{0x380f, 0x0e},
 	{0x3810, 0x00},
 	{0x3811, 0x00},
 	{0x3812, 0x00},
@@ -713,7 +741,7 @@ static struct ov2680_reg const ov2680_1616x1082_30fps[] = {
 	{0x5081, 0x41},
 	{}
 };
-
+#endif
 /*
  * 1616x1216 30fps VBlanking 1lane 10Bit
  */
@@ -733,6 +761,8 @@ static struct ov2680_reg const ov2680_1616x1216_30fps[] = {
 	{0x380b, 0xc0},//c0},
 	{0x380c, 0x06},
 	{0x380d, 0xa8},
+	{0x380e, 0x05},
+	{0x380f, 0x0e},
 	{0x3810, 0x00},
 	{0x3811, 0x00},
 	{0x3812, 0x00},
@@ -755,10 +785,12 @@ static struct ov2680_reg const ov2680_1616x1216_30fps[] = {
 
 static struct ov2680_resolution ov2680_res_preview[] = {
 	{
+		.desc = "ov2680_1616x1216_30fps",
 		.width = 1616,
 		.height = 1216,
 		.pix_clk_freq = 66,
 		.fps = 30,
+		.used = 0,
 		.pixels_per_line = 1698,//1704,
 		.lines_per_frame = 1294,
 		.bin_factor_x = 0,
@@ -768,23 +800,12 @@ static struct ov2680_resolution ov2680_res_preview[] = {
 		.regs = ov2680_1616x1216_30fps,
 	},
 	{
-		.width = 1616,
-		.height = 1082,
-		.pix_clk_freq = 66,
-		.fps = 30,
-		.pixels_per_line = 1698,//1704,
-		.lines_per_frame = 1294,
-		.bin_factor_x = 0,
-		.bin_factor_y = 0,
-		.bin_mode = 0,
-		.skip_frames = 3,
-		.regs = ov2680_1616x1082_30fps,
-	},
-	{
+		.desc = "ov2680_1616x916_30fps",
 		.width = 1616,
 		.height = 916,
 		.fps = 30,
 		.pix_clk_freq = 66,
+		.used = 0,
 		.pixels_per_line = 1698,//1704,
 		.lines_per_frame = 1294,
 		.bin_factor_x = 0,
@@ -793,125 +814,11 @@ static struct ov2680_resolution ov2680_res_preview[] = {
 		.skip_frames = 3,
 		.regs = ov2680_1616x916_30fps,
 	},
-	{
-		.width = 1456,
-		.height = 1096,
-		.fps = 30,
-		.pix_clk_freq = 66,
-		.pixels_per_line = 1698,//1704,
-		.lines_per_frame = 1294,
-		.bin_factor_x = 0,
-		.bin_factor_y = 0,
-		.bin_mode = 0,
-		.skip_frames = 3,
-		.regs = ov2680_1456x1096_30fps,
-	},
-	{
-		.width = 1296,
-		.height = 976,
-		.fps = 30,
-		.pix_clk_freq = 66,
-		.pixels_per_line = 1698,//1704,
-		.lines_per_frame = 1294,
-		.bin_factor_x = 0,
-		.bin_factor_y = 0,
-		.bin_mode = 0,
-		.skip_frames = 3,
-		.regs = ov2680_1296x976_30fps,
-	},
-	{
-		.width = 1280,
-		.height = 720,
-		.fps = 60,
-		.pix_clk_freq = 66,
-		.pixels_per_line = 1698,//1704,
-		.lines_per_frame = 1294,
-		.bin_factor_x = 0,
-		.bin_factor_y = 0,
-		.bin_mode = 0,
-		.skip_frames = 3,
-		.regs = ov2680_720p_30fps,
-	},
-	{
-		.width = 800,
-		.height = 600,
-		.fps = 60,
-		.pix_clk_freq = 66,
-		.pixels_per_line = 1698,//1704,
-		.lines_per_frame = 1294,
-		.bin_factor_x = 0,
-		.bin_factor_y = 0,
-		.bin_mode = 0,
-		.skip_frames = 3,
-		.regs = ov2680_800x600_30fps,
-	},
-	{
-		.width = 720,
-		.height = 592,
-		.fps = 60,
-		.pix_clk_freq = 66,
-		.pixels_per_line = 1698,//1704,
-		.lines_per_frame = 1294,
-		.bin_factor_x = 0,
-		.bin_factor_y = 0,
-		.bin_mode = 0,
-		.skip_frames = 3,
-		.regs = ov2680_720x592_30fps,
-	},
-	{
-		.width = 656,
-		.height = 496,
-		.fps = 60,
-		.pix_clk_freq = 66,
-		.pixels_per_line = 1698,//1704,
-		.lines_per_frame = 1294,
-		.bin_factor_x = 0,
-		.bin_factor_y = 0,
-		.bin_mode = 0,
-		.skip_frames = 3,
-		.regs = ov2680_656x496_30fps,
-	},
-	{
-		.width = 336,
-		.height = 256,
-		.fps = 60,
-		.pix_clk_freq = 66,
-		.pixels_per_line = 1698,//1704,
-		.lines_per_frame = 1294,
-		.bin_factor_x = 0,
-		.bin_factor_y = 0,
-		.bin_mode = 0,
-		.skip_frames = 3,
-		.regs = ov2680_QVGA_30fps,
-	},
-	{
-		.width = 352,
-		.height = 288,
-		.fps = 60,
-		.pix_clk_freq = 66,
-		.pixels_per_line = 1698,//1704,
-		.lines_per_frame = 1294,
-		.bin_factor_x = 0,
-		.bin_factor_y = 0,
-		.bin_mode = 0,
-		.skip_frames = 3,
-		.regs = ov2680_CIF_30fps,
-	},
-	{
-		.width = 176,
-		.height = 144,
-		.fps = 60,
-		.pix_clk_freq = 66,
-		.pixels_per_line = 1698,//1704,
-		.lines_per_frame = 1294,
-		.bin_factor_x = 0,
-		.bin_factor_y = 0,
-		.bin_mode = 0,
-		.skip_frames = 3,
-		.regs = ov2680_QCIF_30fps,
-	},
 };
 
 #define N_RES_PREVIEW (ARRAY_SIZE(ov2680_res_preview))
+
+static struct ov2680_resolution *ov2680_res = ov2680_res_preview;
+static unsigned long N_RES = N_RES_PREVIEW;
 
 #endif

@@ -10,7 +10,6 @@
 #include <linux/iommu.h>
 #include <net/ip.h>
 #include <net/tso.h>
-#include <uapi/linux/bpf.h>
 
 #include "nic_reg.h"
 #include "nic.h"

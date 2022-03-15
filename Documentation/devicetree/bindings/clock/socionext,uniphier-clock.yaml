@@ -23,7 +23,6 @@ properties:
           - socionext,uniphier-ld11-clock
           - socionext,uniphier-ld20-clock
           - socionext,uniphier-pxs3-clock
-          - socionext,uniphier-nx1-clock
       - description: Media I/O (MIO) clock, SD clock
         enum:
           - socionext,uniphier-ld4-mio-clock
@@ -34,7 +33,6 @@ properties:
           - socionext,uniphier-ld11-mio-clock
           - socionext,uniphier-ld20-sd-clock
           - socionext,uniphier-pxs3-sd-clock
-          - socionext,uniphier-nx1-sd-clock
       - description: Peripheral clock
         enum:
           - socionext,uniphier-ld4-peri-clock
@@ -45,10 +43,6 @@ properties:
           - socionext,uniphier-ld11-peri-clock
           - socionext,uniphier-ld20-peri-clock
           - socionext,uniphier-pxs3-peri-clock
-          - socionext,uniphier-nx1-peri-clock
-      - description: SoC-glue clock
-        enum:
-          - socionext,uniphier-pro4-sg-clock
 
   "#clock-cells":
     const: 1

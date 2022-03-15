@@ -655,7 +655,6 @@ etherh_probe(struct expansion_card *ec, const struct ecard_id *id)
 	struct ei_device *ei_local;
 	struct net_device *dev;
 	struct etherh_priv *eh;
-	u8 addr[ETH_ALEN];
 	int ret;
 
 	ret = ecard_request_resources(ec);
@@ -725,13 +724,12 @@ etherh_probe(struct expansion_card *ec, const struct ecard_id *id)
 	spin_lock_init(&ei_local->page_lock);
 
 	if (ec->cid.product == PROD_ANT_ETHERM) {
-		etherm_addr(addr);
+		etherm_addr(dev->dev_addr);
 		ei_local->reg_offset = etherm_regoffsets;
 	} else {
-		etherh_addr(addr, ec);
+		etherh_addr(dev->dev_addr, ec);
 		ei_local->reg_offset = etherh_regoffsets;
 	}
-	eth_hw_addr_set(dev, addr);
 
 	ei_local->name          = dev->name;
 	ei_local->word16        = 1;

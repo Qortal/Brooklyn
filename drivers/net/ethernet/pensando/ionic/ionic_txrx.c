@@ -14,6 +14,8 @@
 static inline void ionic_txq_post(struct ionic_queue *q, bool ring_dbell,
 				  ionic_desc_cb cb_func, void *cb_arg)
 {
+	DEBUG_STATS_TXQ_POST(q, ring_dbell);
+
 	ionic_q_post(q, ring_dbell, cb_func, cb_arg);
 }
 
@@ -21,6 +23,8 @@ static inline void ionic_rxq_post(struct ionic_queue *q, bool ring_dbell,
 				  ionic_desc_cb cb_func, void *cb_arg)
 {
 	ionic_q_post(q, ring_dbell, cb_func, cb_arg);
+
+	DEBUG_STATS_RX_BUFF_CNT(q);
 }
 
 static inline struct netdev_queue *q_to_ndq(struct ionic_queue *q)
@@ -503,6 +507,8 @@ int ionic_tx_napi(struct napi_struct *napi, int budget)
 				   work_done, flags);
 	}
 
+	DEBUG_STATS_NAPI_POLL(qcq, work_done);
+
 	return work_done;
 }
 
@@ -539,6 +545,8 @@ int ionic_rx_napi(struct napi_struct *napi, int budget)
 				   cq->bound_intr->index,
 				   work_done, flags);
 	}
+
+	DEBUG_STATS_NAPI_POLL(qcq, work_done);
 
 	return work_done;
 }
@@ -582,6 +590,9 @@ int ionic_txrx_napi(struct napi_struct *napi, int budget)
 		ionic_intr_credits(idev->intr_ctrl, rxcq->bound_intr->index,
 				   tx_work_done + rx_work_done, flags);
 	}
+
+	DEBUG_STATS_NAPI_POLL(qcq, rx_work_done);
+	DEBUG_STATS_NAPI_POLL(qcq, tx_work_done);
 
 	return rx_work_done;
 }
@@ -724,6 +735,7 @@ static void ionic_tx_clean(struct ionic_queue *q,
 
 	} else if (unlikely(__netif_subqueue_stopped(q->lif->netdev, qi))) {
 		netif_wake_subqueue(q->lif->netdev, qi);
+		q->wake++;
 	}
 
 	desc_info->bytes = skb->len;
@@ -1162,6 +1174,7 @@ static int ionic_maybe_stop_tx(struct ionic_queue *q, int ndescs)
 
 	if (unlikely(!ionic_q_has_space(q, ndescs))) {
 		netif_stop_subqueue(q->lif->netdev, q->index);
+		q->stop++;
 		stopped = 1;
 
 		/* Might race with ionic_tx_clean, check again */
@@ -1256,6 +1269,7 @@ netdev_tx_t ionic_start_xmit(struct sk_buff *skb, struct net_device *netdev)
 	return NETDEV_TX_OK;
 
 err_out_drop:
+	q->stop++;
 	q->drop++;
 	dev_kfree_skb(skb);
 	return NETDEV_TX_OK;

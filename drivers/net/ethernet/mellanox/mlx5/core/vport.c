@@ -421,21 +421,19 @@ int mlx5_query_nic_vport_system_image_guid(struct mlx5_core_dev *mdev,
 {
 	u32 *out;
 	int outlen = MLX5_ST_SZ_BYTES(query_nic_vport_context_out);
-	int err;
 
 	out = kvzalloc(outlen, GFP_KERNEL);
 	if (!out)
 		return -ENOMEM;
 
-	err = mlx5_query_nic_vport_context(mdev, 0, out);
-	if (err)
-		goto out;
+	mlx5_query_nic_vport_context(mdev, 0, out);
 
 	*system_image_guid = MLX5_GET64(query_nic_vport_context_out, out,
 					nic_vport_context.system_image_guid);
-out:
+
 	kvfree(out);
-	return err;
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(mlx5_query_nic_vport_system_image_guid);
 
@@ -1135,20 +1133,19 @@ EXPORT_SYMBOL_GPL(mlx5_nic_vport_unaffiliate_multiport);
 u64 mlx5_query_nic_system_image_guid(struct mlx5_core_dev *mdev)
 {
 	int port_type_cap = MLX5_CAP_GEN(mdev, port_type);
-	u64 tmp;
-	int err;
+	u64 tmp = 0;
 
 	if (mdev->sys_image_guid)
 		return mdev->sys_image_guid;
 
 	if (port_type_cap == MLX5_CAP_PORT_TYPE_ETH)
-		err = mlx5_query_nic_vport_system_image_guid(mdev, &tmp);
+		mlx5_query_nic_vport_system_image_guid(mdev, &tmp);
 	else
-		err = mlx5_query_hca_vport_system_image_guid(mdev, &tmp);
+		mlx5_query_hca_vport_system_image_guid(mdev, &tmp);
 
-	mdev->sys_image_guid = err ? 0 : tmp;
+	mdev->sys_image_guid = tmp;
 
-	return mdev->sys_image_guid;
+	return tmp;
 }
 EXPORT_SYMBOL_GPL(mlx5_query_nic_system_image_guid);
 

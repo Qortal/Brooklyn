@@ -32,8 +32,6 @@
  */
 #define BCM2835_ISP_NUM_INSTANCES 2
 
-MODULE_IMPORT_NS(DMA_BUF);
-
 static unsigned int debug;
 module_param(debug, uint, 0644);
 MODULE_PARM_DESC(debug, "activates debug info");

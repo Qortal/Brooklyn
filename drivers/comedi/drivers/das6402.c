@@ -24,8 +24,10 @@
 
 #include <linux/module.h>
 #include <linux/interrupt.h>
-#include <linux/comedi/comedidev.h>
-#include <linux/comedi/comedi_8254.h>
+
+#include "../comedidev.h"
+
+#include "comedi_8254.h"
 
 /*
  * Register I/O map

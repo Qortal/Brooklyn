@@ -572,7 +572,9 @@ mt76_dma_rx_process(struct mt76_dev *dev, struct mt76_queue *q, int budget)
 		if (data_len < len + q->buf_offset) {
 			dev_kfree_skb(q->rx_head);
 			q->rx_head = NULL;
-			goto free_frag;
+
+			skb_free_frag(data);
+			continue;
 		}
 
 		if (q->rx_head) {
@@ -580,14 +582,11 @@ mt76_dma_rx_process(struct mt76_dev *dev, struct mt76_queue *q, int budget)
 			continue;
 		}
 
-		if (!more && dev->drv->rx_check &&
-		    !(dev->drv->rx_check(dev, data, len)))
-			goto free_frag;
-
 		skb = build_skb(data, q->buf_size);
-		if (!skb)
-			goto free_frag;
-
+		if (!skb) {
+			skb_free_frag(data);
+			continue;
+		}
 		skb_reserve(skb, q->buf_offset);
 
 		if (q == &dev->q_rx[MT_RXQ_MCU]) {
@@ -604,10 +603,6 @@ mt76_dma_rx_process(struct mt76_dev *dev, struct mt76_queue *q, int budget)
 		}
 
 		dev->drv->rx_skb(dev, q - dev->q_rx, skb);
-		continue;
-
-free_frag:
-		skb_free_frag(data);
 	}
 
 	mt76_dma_rx_fill(dev, q);

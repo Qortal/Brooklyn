@@ -374,7 +374,8 @@ static int mcf8390_init(struct net_device *dev)
 	if (ret)
 		return ret;
 
-	eth_hw_addr_set(dev, SA_prom);
+	for (i = 0; i < ETH_ALEN; i++)
+		dev->dev_addr[i] = SA_prom[i];
 
 	netdev_dbg(dev, "Found ethernet address: %pM\n", dev->dev_addr);
 

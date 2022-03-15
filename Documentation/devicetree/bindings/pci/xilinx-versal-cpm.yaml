@@ -55,6 +55,7 @@ required:
   - reg-names
   - "#interrupt-cells"
   - interrupts
+  - interrupt-parent
   - interrupt-map
   - interrupt-map-mask
   - bus-range

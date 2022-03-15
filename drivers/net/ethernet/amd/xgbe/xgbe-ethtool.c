@@ -369,8 +369,9 @@ static int xgbe_set_link_ksettings(struct net_device *netdev,
 		  __ETHTOOL_LINK_MODE_MASK_NBITS, cmd->link_modes.advertising,
 		  __ETHTOOL_LINK_MODE_MASK_NBITS, lks->link_modes.supported);
 
-	linkmode_and(advertising, cmd->link_modes.advertising,
-		     lks->link_modes.supported);
+	bitmap_and(advertising,
+		   cmd->link_modes.advertising, lks->link_modes.supported,
+		   __ETHTOOL_LINK_MODE_MASK_NBITS);
 
 	if ((cmd->base.autoneg == AUTONEG_ENABLE) &&
 	    bitmap_empty(advertising, __ETHTOOL_LINK_MODE_MASK_NBITS)) {
@@ -383,7 +384,8 @@ static int xgbe_set_link_ksettings(struct net_device *netdev,
 	pdata->phy.autoneg = cmd->base.autoneg;
 	pdata->phy.speed = speed;
 	pdata->phy.duplex = cmd->base.duplex;
-	linkmode_copy(lks->link_modes.advertising, advertising);
+	bitmap_copy(lks->link_modes.advertising, advertising,
+		    __ETHTOOL_LINK_MODE_MASK_NBITS);
 
 	if (cmd->base.autoneg == AUTONEG_ENABLE)
 		XGBE_SET_ADV(lks, Autoneg);
@@ -619,11 +621,8 @@ static int xgbe_get_module_eeprom(struct net_device *netdev,
 	return pdata->phy_if.module_eeprom(pdata, eeprom, data);
 }
 
-static void
-xgbe_get_ringparam(struct net_device *netdev,
-		   struct ethtool_ringparam *ringparam,
-		   struct kernel_ethtool_ringparam *kernel_ringparam,
-		   struct netlink_ext_ack *extack)
+static void xgbe_get_ringparam(struct net_device *netdev,
+			       struct ethtool_ringparam *ringparam)
 {
 	struct xgbe_prv_data *pdata = netdev_priv(netdev);
 
@@ -634,9 +633,7 @@ xgbe_get_ringparam(struct net_device *netdev,
 }
 
 static int xgbe_set_ringparam(struct net_device *netdev,
-			      struct ethtool_ringparam *ringparam,
-			      struct kernel_ethtool_ringparam *kernel_ringparam,
-			      struct netlink_ext_ack *extack)
+			      struct ethtool_ringparam *ringparam)
 {
 	struct xgbe_prv_data *pdata = netdev_priv(netdev);
 	unsigned int rx, tx;

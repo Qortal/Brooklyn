@@ -1,6 +1,6 @@
 .. include:: ../../disclaimer-zh_CN.rst
 
-:Original: Documentation/core-api/irq/irq-affinity.rst
+:Original: Documentation/core-api/irq/irq-affinity
 
 :翻译:
 

@@ -63,9 +63,6 @@ I. For patch submitters
      string that is matched by the driver (as in the "nvidia,tegra20-pcie"
      example above).
 
-  9) Bindings are actively used by multiple projects other than the Linux
-     Kernel, extra care and consideration may need to be taken when making changes
-     to existing bindings.
 
 II. For kernel maintainers
 ==========================

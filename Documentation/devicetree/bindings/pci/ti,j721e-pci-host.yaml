@@ -60,8 +60,6 @@ properties:
       - const: fck
       - const: pcie_refclk
 
-  dma-coherent: true
-
   vendor-id:
     const: 0x104c
 

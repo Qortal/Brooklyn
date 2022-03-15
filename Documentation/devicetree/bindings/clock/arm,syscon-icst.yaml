@@ -69,10 +69,6 @@ properties:
       - arm,impd1-vco1
       - arm,impd1-vco2
 
-  reg:
-    maxItems: 1
-    description: The VCO register
-
   clocks:
     description: Parent clock for the ICST VCO
     maxItems: 1
@@ -87,7 +83,6 @@ properties:
   vco-offset:
     $ref: '/schemas/types.yaml#/definitions/uint32'
     description: Offset to the VCO register for the oscillator
-    deprecated: true
 
 required:
   - "#clock-cells"

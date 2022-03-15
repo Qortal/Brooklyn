@@ -476,7 +476,8 @@ static int dmfe_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 
 	/* Set Node address */
-	eth_hw_addr_set(dev, &db->srom[20]);
+	for (i = 0; i < 6; i++)
+		dev->dev_addr[i] = db->srom[20 + i];
 
 	err = register_netdev (dev);
 	if (err)
@@ -1435,9 +1436,9 @@ static void update_cr6(u32 cr6_data, void __iomem *ioaddr)
 
 static void dm9132_id_table(struct net_device *dev)
 {
-	const u16 *addrptr = (const u16 *)dev->dev_addr;
 	struct dmfe_board_info *db = netdev_priv(dev);
 	void __iomem *ioaddr = db->ioaddr + 0xc0;
+	u16 *addrptr = (u16 *)dev->dev_addr;
 	struct netdev_hw_addr *ha;
 	u16 i, hash_table[4];
 
@@ -1476,7 +1477,7 @@ static void send_filter_frame(struct net_device *dev)
 	struct dmfe_board_info *db = netdev_priv(dev);
 	struct netdev_hw_addr *ha;
 	struct tx_desc *txptr;
-	const u16 * addrptr;
+	u16 * addrptr;
 	u32 * suptr;
 	int i;
 
@@ -1486,7 +1487,7 @@ static void send_filter_frame(struct net_device *dev)
 	suptr = (u32 *) txptr->tx_buf_ptr;
 
 	/* Node address */
-	addrptr = (const u16 *) dev->dev_addr;
+	addrptr = (u16 *) dev->dev_addr;
 	*suptr++ = addrptr[0];
 	*suptr++ = addrptr[1];
 	*suptr++ = addrptr[2];

@@ -72,7 +72,6 @@ int mt76x02u_tx_prepare_skb(struct mt76_dev *mdev, void *data,
 	bool ampdu = IEEE80211_SKB_CB(tx_info->skb)->flags & IEEE80211_TX_CTL_AMPDU;
 	enum mt76_qsel qsel;
 	u32 flags;
-	int err;
 
 	mt76_insert_hdr_pad(tx_info->skb);
 
@@ -107,12 +106,7 @@ int mt76x02u_tx_prepare_skb(struct mt76_dev *mdev, void *data,
 		ewma_pktlen_add(&msta->pktlen, tx_info->skb->len);
 	}
 
-	err = mt76x02u_skb_dma_info(tx_info->skb, WLAN_PORT, flags);
-	if (err && wcid)
-		/* Release pktid in case of error. */
-		idr_remove(&wcid->pktid, pid);
-
-	return err;
+	return mt76x02u_skb_dma_info(tx_info->skb, WLAN_PORT, flags);
 }
 EXPORT_SYMBOL_GPL(mt76x02u_tx_prepare_skb);
 

@@ -65,7 +65,7 @@ static int moxart_set_mac_address(struct net_device *ndev, void *addr)
 	if (!is_valid_ether_addr(address->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(ndev, address->sa_data);
+	memcpy(ndev->dev_addr, address->sa_data, ndev->addr_len);
 	moxart_update_mac_address(ndev);
 
 	return 0;

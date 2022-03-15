@@ -1851,7 +1851,6 @@ static int smc_probe(struct net_device *dev, void __iomem *ioaddr,
 	int retval;
 	unsigned int val, revision_register;
 	const char *version_string;
-	u8 addr[ETH_ALEN];
 
 	DBG(2, dev, "%s: %s\n", CARDNAME, __func__);
 
@@ -1923,8 +1922,7 @@ static int smc_probe(struct net_device *dev, void __iomem *ioaddr,
 
 	/* Get the MAC address */
 	SMC_SELECT_BANK(lp, 1);
-	SMC_GET_MAC_ADDR(lp, addr);
-	eth_hw_addr_set(dev, addr);
+	SMC_GET_MAC_ADDR(lp, dev->dev_addr);
 
 	/* now, reset the chip, and put it into a known state */
 	smc_reset(dev);

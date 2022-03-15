@@ -945,7 +945,6 @@ static int rtl8139_init_one(struct pci_dev *pdev,
 {
 	struct net_device *dev = NULL;
 	struct rtl8139_private *tp;
-	__le16 addr[ETH_ALEN / 2];
 	int i, addr_len, option;
 	void __iomem *ioaddr;
 	static int board_idx = -1;
@@ -995,8 +994,8 @@ static int rtl8139_init_one(struct pci_dev *pdev,
 
 	addr_len = read_eeprom (ioaddr, 0, 8) == 0x8129 ? 8 : 6;
 	for (i = 0; i < 3; i++)
-		addr[i] = cpu_to_le16(read_eeprom (ioaddr, i + 7, addr_len));
-	eth_hw_addr_set(dev, (u8 *)addr);
+		((__le16 *) (dev->dev_addr))[i] =
+		    cpu_to_le16(read_eeprom (ioaddr, i + 7, addr_len));
 
 	/* The Rtl8139-specific entries in the device structure. */
 	dev->netdev_ops = &rtl8139_netdev_ops;
@@ -2239,7 +2238,7 @@ static int rtl8139_set_mac_address(struct net_device *dev, void *p)
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(dev, addr->sa_data);
+	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
 
 	spin_lock_irq(&tp->lock);
 

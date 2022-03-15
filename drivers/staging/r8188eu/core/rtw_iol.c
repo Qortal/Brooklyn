@@ -13,14 +13,15 @@ struct xmit_frame	*rtw_IOL_accquire_xmit_frame(struct adapter  *adapter)
 	xmit_frame = rtw_alloc_xmitframe(pxmitpriv);
 	if (!xmit_frame) {
 		DBG_88E("%s rtw_alloc_xmitframe return null\n", __func__);
-		return NULL;
+		goto exit;
 	}
 
 	xmitbuf = rtw_alloc_xmitbuf(pxmitpriv);
 	if (!xmitbuf) {
 		DBG_88E("%s rtw_alloc_xmitbuf return null\n", __func__);
 		rtw_free_xmitframe(pxmitpriv, xmit_frame);
-		return NULL;
+		xmit_frame = NULL;
+		goto exit;
 	}
 
 	xmit_frame->frame_tag = MGNT_FRAMETAG;
@@ -34,7 +35,7 @@ struct xmit_frame	*rtw_IOL_accquire_xmit_frame(struct adapter  *adapter)
 	pattrib->subtype = WIFI_BEACON;
 	pattrib->pktlen = 0;
 	pattrib->last_txcmdsz = 0;
-
+exit:
 	return xmit_frame;
 }
 
@@ -69,6 +70,16 @@ bool rtw_IOL_applied(struct adapter  *adapter)
 	if ((2 == adapter->registrypriv.fw_iol) && (!adapter_to_dvobj(adapter)->ishighspeed))
 		return true;
 	return false;
+}
+
+int rtw_IOL_exec_cmds_sync(struct adapter  *adapter, struct xmit_frame *xmit_frame, u32 max_wating_ms, u32 bndy_cnt)
+{
+	return rtw_hal_iol_cmd(adapter, xmit_frame, max_wating_ms, bndy_cnt);
+}
+
+int rtw_IOL_append_LLT_cmd(struct xmit_frame *xmit_frame, u8 page_boundary)
+{
+	return _SUCCESS;
 }
 
 int _rtw_IOL_append_WB_cmd(struct xmit_frame *xmit_frame, u16 addr, u8 value, u8 mask)
@@ -161,4 +172,21 @@ u8 rtw_IOL_cmd_boundary_handle(struct xmit_frame *pxmit_frame)
 		is_cmd_bndy = true;
 	}
 	return is_cmd_bndy;
+}
+
+void rtw_IOL_cmd_buf_dump(struct adapter  *Adapter, int buf_len, u8 *pbuf)
+{
+	int i;
+	int j = 1;
+
+	pr_info("###### %s ######\n", __func__);
+	for (i = 0; i < buf_len; i++) {
+		printk("%02x-", *(pbuf + i));
+
+		if (j % 32 == 0)
+			printk("\n");
+		j++;
+	}
+	printk("\n");
+	pr_info("=============ioreg_cmd len=%d===============\n", buf_len);
 }

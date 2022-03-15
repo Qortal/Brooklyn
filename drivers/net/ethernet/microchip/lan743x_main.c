@@ -816,7 +816,7 @@ static int lan743x_mac_init(struct lan743x_adapter *adapter)
 			eth_random_addr(adapter->mac_address);
 	}
 	lan743x_mac_set_address(adapter, adapter->mac_address);
-	eth_hw_addr_set(netdev, adapter->mac_address);
+	ether_addr_copy(netdev->dev_addr, adapter->mac_address);
 
 	return 0;
 }
@@ -1739,10 +1739,13 @@ static int lan743x_tx_ring_init(struct lan743x_tx *tx)
 	}
 	if (dma_set_mask_and_coherent(&tx->adapter->pdev->dev,
 				      DMA_BIT_MASK(64))) {
-		dev_warn(&tx->adapter->pdev->dev,
-			 "lan743x_: No suitable DMA available\n");
-		ret = -ENOMEM;
-		goto cleanup;
+		if (dma_set_mask_and_coherent(&tx->adapter->pdev->dev,
+					      DMA_BIT_MASK(32))) {
+			dev_warn(&tx->adapter->pdev->dev,
+				 "lan743x_: No suitable DMA available\n");
+			ret = -ENOMEM;
+			goto cleanup;
+		}
 	}
 	ring_allocation_size = ALIGN(tx->ring_size *
 				     sizeof(struct lan743x_tx_descriptor),
@@ -2281,10 +2284,13 @@ static int lan743x_rx_ring_init(struct lan743x_rx *rx)
 	}
 	if (dma_set_mask_and_coherent(&rx->adapter->pdev->dev,
 				      DMA_BIT_MASK(64))) {
-		dev_warn(&rx->adapter->pdev->dev,
-			 "lan743x_: No suitable DMA available\n");
-		ret = -ENOMEM;
-		goto cleanup;
+		if (dma_set_mask_and_coherent(&rx->adapter->pdev->dev,
+					      DMA_BIT_MASK(32))) {
+			dev_warn(&rx->adapter->pdev->dev,
+				 "lan743x_: No suitable DMA available\n");
+			ret = -ENOMEM;
+			goto cleanup;
+		}
 	}
 	ring_allocation_size = ALIGN(rx->ring_size *
 				     sizeof(struct lan743x_rx_descriptor),
@@ -2658,7 +2664,7 @@ static int lan743x_netdev_set_mac_address(struct net_device *netdev,
 	ret = eth_prepare_mac_addr_change(netdev, sock_addr);
 	if (ret)
 		return ret;
-	eth_hw_addr_set(netdev, sock_addr->sa_data);
+	ether_addr_copy(netdev->dev_addr, sock_addr->sa_data);
 	lan743x_mac_set_address(adapter, sock_addr->sa_data);
 	lan743x_rfe_update_mac_address(adapter);
 	return 0;

@@ -18,20 +18,12 @@ properties:
     const: brcm,ns-usb2-phy
 
   reg:
-    anyOf:
-      - maxItems: 1
-        description: PHY control register
-      - maxItems: 1
-        description: iomem address range of DMU (Device Management Unit)
-        deprecated: true
+    items:
+      - description: iomem address range of DMU (Device Management Unit)
 
   reg-names:
     items:
       - const: dmu
-
-  brcm,syscon-clkset:
-    description: phandle to syscon for clkset register
-    $ref: /schemas/types.yaml#/definitions/phandle
 
   clocks:
     items:
@@ -47,25 +39,20 @@ properties:
 required:
   - compatible
   - reg
+  - reg-names
   - clocks
   - clock-names
   - "#phy-cells"
-
-oneOf:
-  - required:
-      - brcm,syscon-clkset
-  - required:
-      - reg-names
 
 additionalProperties: false
 
 examples:
   - |
     #include <dt-bindings/clock/bcm-nsp.h>
-    phy@1800c164 {
+    phy@1800c000 {
         compatible = "brcm,ns-usb2-phy";
-        reg = <0x1800c164 0x4>;
-        brcm,syscon-clkset = <&clkset>;
+        reg = <0x1800c000 0x1000>;
+        reg-names = "dmu";
         clocks = <&genpll BCM_NSP_GENPLL_USB_PHY_REF_CLK>;
         clock-names = "phy-ref-clk";
         #phy-cells = <0>;

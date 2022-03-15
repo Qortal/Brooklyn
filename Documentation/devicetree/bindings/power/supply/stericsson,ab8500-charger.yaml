@@ -17,13 +17,9 @@ properties:
   compatible:
     const: stericsson,ab8500-charger
 
-  monitored-battery:
-    $ref: /schemas/types.yaml#/definitions/phandle
-    description: phandle to battery node
-
   battery:
     $ref: /schemas/types.yaml#/definitions/phandle
-    deprecated: true
+    description: phandle to battery node
 
   vddadc-supply:
     description: Supply for USB and Main charger
@@ -70,7 +66,7 @@ properties:
 
 required:
   - compatible
-  - monitored-battery
+  - battery
   - vddadc-supply
   - interrupts
   - interrupt-names
@@ -85,7 +81,7 @@ examples:
     pmic {
       charger {
         compatible = "stericsson,ab8500-charger";
-        monitored-battery = <&battery>;
+        battery = <&ab8500_battery>;
         vddadc-supply = <&ab8500_ldo_tvout_reg>;
         interrupts = <10 IRQ_TYPE_LEVEL_HIGH>,
                      <11 IRQ_TYPE_LEVEL_HIGH>,

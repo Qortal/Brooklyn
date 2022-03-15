@@ -49,7 +49,6 @@ struct mlx5_esw_bridge_vlan {
 	struct list_head fdb_list;
 	struct mlx5_pkt_reformat *pkt_reformat_push;
 	struct mlx5_pkt_reformat *pkt_reformat_pop;
-	struct mlx5_modify_hdr *pkt_mod_hdr_push_mark;
 };
 
 struct mlx5_esw_bridge_port {

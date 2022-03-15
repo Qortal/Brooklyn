@@ -8,7 +8,7 @@
 #ifndef _COMEDI_NI_TIO_H
 #define _COMEDI_NI_TIO_H
 
-#include <linux/comedi/comedidev.h>
+#include "../comedidev.h"
 
 enum ni_gpct_register {
 	NITIO_G0_AUTO_INC,

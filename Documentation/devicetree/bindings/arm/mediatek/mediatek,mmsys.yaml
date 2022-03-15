@@ -43,9 +43,6 @@ properties:
   "#clock-cells":
     const: 1
 
-  '#reset-cells':
-    const: 1
-
 required:
   - compatible
   - reg
@@ -59,5 +56,4 @@ examples:
         compatible = "mediatek,mt8173-mmsys", "syscon";
         reg = <0x14000000 0x1000>;
         #clock-cells = <1>;
-        #reset-cells = <1>;
     };

@@ -5,11 +5,8 @@
 #include "ice_base.h"
 #include "ice_lib.h"
 #include "ice_fltr.h"
-#include "ice_dcb_lib.h"
 #include "ice_flow.h"
-#include "ice_eswitch.h"
 #include "ice_virtchnl_allowlist.h"
-#include "ice_flex_pipe.h"
 
 #define FIELD_SELECTOR(proto_hdr_field) \
 		BIT((proto_hdr_field) & PROTO_HDR_FIELD_MASK)
@@ -19,7 +16,18 @@ struct ice_vc_hdr_match_type {
 	u32 ice_hdr;	/* ice headers (ICE_FLOW_SEG_HDR_XXX) */
 };
 
-static const struct ice_vc_hdr_match_type ice_vc_hdr_list[] = {
+static const struct ice_vc_hdr_match_type ice_vc_hdr_list_os[] = {
+	{VIRTCHNL_PROTO_HDR_NONE,	ICE_FLOW_SEG_HDR_NONE},
+	{VIRTCHNL_PROTO_HDR_IPV4,	ICE_FLOW_SEG_HDR_IPV4 |
+					ICE_FLOW_SEG_HDR_IPV_OTHER},
+	{VIRTCHNL_PROTO_HDR_IPV6,	ICE_FLOW_SEG_HDR_IPV6 |
+					ICE_FLOW_SEG_HDR_IPV_OTHER},
+	{VIRTCHNL_PROTO_HDR_TCP,	ICE_FLOW_SEG_HDR_TCP},
+	{VIRTCHNL_PROTO_HDR_UDP,	ICE_FLOW_SEG_HDR_UDP},
+	{VIRTCHNL_PROTO_HDR_SCTP,	ICE_FLOW_SEG_HDR_SCTP},
+};
+
+static const struct ice_vc_hdr_match_type ice_vc_hdr_list_comms[] = {
 	{VIRTCHNL_PROTO_HDR_NONE,	ICE_FLOW_SEG_HDR_NONE},
 	{VIRTCHNL_PROTO_HDR_ETH,	ICE_FLOW_SEG_HDR_ETH},
 	{VIRTCHNL_PROTO_HDR_S_VLAN,	ICE_FLOW_SEG_HDR_VLAN},
@@ -57,7 +65,83 @@ struct ice_vc_hash_field_match_type {
 };
 
 static const struct
-ice_vc_hash_field_match_type ice_vc_hash_field_list[] = {
+ice_vc_hash_field_match_type ice_vc_hash_field_list_os[] = {
+	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_SA)},
+	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_DA)},
+	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC) |
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST),
+		ICE_FLOW_HASH_IPV4},
+	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC) |
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_SA) |
+		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
+	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST) |
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_DA) |
+		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
+	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_SRC) |
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_DST) |
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
+		ICE_FLOW_HASH_IPV4 | BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
+	{VIRTCHNL_PROTO_HDR_IPV4, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV4_PROT),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV4_PROT)},
+	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_SA)},
+	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_DA)},
+	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC) |
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST),
+		ICE_FLOW_HASH_IPV6},
+	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC) |
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_SA) |
+		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
+	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST) |
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_DA) |
+		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
+	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_SRC) |
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_DST) |
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
+		ICE_FLOW_HASH_IPV6 | BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
+	{VIRTCHNL_PROTO_HDR_IPV6, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_IPV6_PROT),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_IPV6_PROT)},
+	{VIRTCHNL_PROTO_HDR_TCP,
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_SRC_PORT),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_TCP_SRC_PORT)},
+	{VIRTCHNL_PROTO_HDR_TCP,
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_DST_PORT),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_TCP_DST_PORT)},
+	{VIRTCHNL_PROTO_HDR_TCP,
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_SRC_PORT) |
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_TCP_DST_PORT),
+		ICE_FLOW_HASH_TCP_PORT},
+	{VIRTCHNL_PROTO_HDR_UDP,
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_SRC_PORT),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_UDP_SRC_PORT)},
+	{VIRTCHNL_PROTO_HDR_UDP,
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_DST_PORT),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_UDP_DST_PORT)},
+	{VIRTCHNL_PROTO_HDR_UDP,
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_SRC_PORT) |
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_UDP_DST_PORT),
+		ICE_FLOW_HASH_UDP_PORT},
+	{VIRTCHNL_PROTO_HDR_SCTP,
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_SRC_PORT),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_SCTP_SRC_PORT)},
+	{VIRTCHNL_PROTO_HDR_SCTP,
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_DST_PORT),
+		BIT_ULL(ICE_FLOW_FIELD_IDX_SCTP_DST_PORT)},
+	{VIRTCHNL_PROTO_HDR_SCTP,
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_SRC_PORT) |
+		FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_SCTP_DST_PORT),
+		ICE_FLOW_HASH_SCTP_PORT},
+};
+
+static const struct
+ice_vc_hash_field_match_type ice_vc_hash_field_list_comms[] = {
 	{VIRTCHNL_PROTO_HDR_ETH, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_SRC),
 		BIT_ULL(ICE_FLOW_FIELD_IDX_ETH_SA)},
 	{VIRTCHNL_PROTO_HDR_ETH, FIELD_SELECTOR(VIRTCHNL_PROTO_HDR_ETH_DST),
@@ -203,6 +287,37 @@ static int ice_check_vf_init(struct ice_pf *pf, struct ice_vf *vf)
 }
 
 /**
+ * ice_err_to_virt_err - translate errors for VF return code
+ * @ice_err: error return code
+ */
+static enum virtchnl_status_code ice_err_to_virt_err(enum ice_status ice_err)
+{
+	switch (ice_err) {
+	case ICE_SUCCESS:
+		return VIRTCHNL_STATUS_SUCCESS;
+	case ICE_ERR_BAD_PTR:
+	case ICE_ERR_INVAL_SIZE:
+	case ICE_ERR_DEVICE_NOT_SUPPORTED:
+	case ICE_ERR_PARAM:
+	case ICE_ERR_CFG:
+		return VIRTCHNL_STATUS_ERR_PARAM;
+	case ICE_ERR_NO_MEMORY:
+		return VIRTCHNL_STATUS_ERR_NO_MEMORY;
+	case ICE_ERR_NOT_READY:
+	case ICE_ERR_RESET_FAILED:
+	case ICE_ERR_FW_API_VER:
+	case ICE_ERR_AQ_ERROR:
+	case ICE_ERR_AQ_TIMEOUT:
+	case ICE_ERR_AQ_FULL:
+	case ICE_ERR_AQ_NO_WORK:
+	case ICE_ERR_AQ_EMPTY:
+		return VIRTCHNL_STATUS_ERR_ADMIN_QUEUE_ERROR;
+	default:
+		return VIRTCHNL_STATUS_ERR_NOT_SUPPORTED;
+	}
+}
+
+/**
  * ice_vc_vf_broadcast - Broadcast a message to all VFs on PF
  * @pf: pointer to the PF structure
  * @v_opcode: operation code
@@ -297,7 +412,7 @@ static bool ice_is_vf_link_up(struct ice_vf *vf)
  *
  * send a link status message to a single VF
  */
-void ice_vc_notify_vf_link_state(struct ice_vf *vf)
+static void ice_vc_notify_vf_link_state(struct ice_vf *vf)
 {
 	struct virtchnl_pf_event pfe = { 0 };
 	struct ice_hw *hw = &vf->pf->hw;
@@ -503,8 +618,6 @@ void ice_free_vfs(struct ice_pf *pf)
 	if (!pf->vf)
 		return;
 
-	ice_eswitch_release(pf);
-
 	while (test_and_set_bit(ICE_VF_DIS, pf->state))
 		usleep_range(1000, 2000);
 
@@ -654,7 +767,8 @@ static int ice_vsi_manage_pvid(struct ice_vsi *vsi, u16 pvid_info, bool enable)
 	struct ice_hw *hw = &vsi->back->hw;
 	struct ice_aqc_vsi_props *info;
 	struct ice_vsi_ctx *ctxt;
-	int ret;
+	enum ice_status status;
+	int ret = 0;
 
 	ctxt = kzalloc(sizeof(*ctxt), GFP_KERNEL);
 	if (!ctxt)
@@ -677,10 +791,12 @@ static int ice_vsi_manage_pvid(struct ice_vsi *vsi, u16 pvid_info, bool enable)
 	info->valid_sections = cpu_to_le16(ICE_AQ_VSI_PROP_VLAN_VALID |
 					   ICE_AQ_VSI_PROP_SW_VALID);
 
-	ret = ice_update_vsi(hw, vsi->idx, ctxt, NULL);
-	if (ret) {
-		dev_info(ice_hw_to_dev(hw), "update VSI for port VLAN failed, err %d aq_err %s\n",
-			 ret, ice_aq_str(hw->adminq.sq_last_status));
+	status = ice_update_vsi(hw, vsi->idx, ctxt, NULL);
+	if (status) {
+		dev_info(ice_hw_to_dev(hw), "update VSI for port VLAN failed, err %s aq_err %s\n",
+			 ice_stat_str(status),
+			 ice_aq_str(hw->adminq.sq_last_status));
+		ret = -EIO;
 		goto out;
 	}
 
@@ -714,7 +830,7 @@ static struct ice_vsi *ice_vf_vsi_setup(struct ice_vf *vf)
 	struct ice_pf *pf = vf->pf;
 	struct ice_vsi *vsi;
 
-	vsi = ice_vsi_setup(pf, pi, ICE_VSI_VF, vf->vf_id, NULL);
+	vsi = ice_vsi_setup(pf, pi, ICE_VSI_VF, vf->vf_id);
 
 	if (!vsi) {
 		dev_err(ice_pf_to_dev(pf), "Failed to create VF VSI\n");
@@ -741,7 +857,7 @@ struct ice_vsi *ice_vf_ctrl_vsi_setup(struct ice_vf *vf)
 	struct ice_pf *pf = vf->pf;
 	struct ice_vsi *vsi;
 
-	vsi = ice_vsi_setup(pf, pi, ICE_VSI_CTRL, vf->vf_id, NULL);
+	vsi = ice_vsi_setup(pf, pi, ICE_VSI_CTRL, vf->vf_id);
 	if (!vsi) {
 		dev_err(ice_pf_to_dev(pf), "Failed to create VF control VSI\n");
 		ice_vf_ctrl_invalidate_vsi(vf);
@@ -765,40 +881,6 @@ struct ice_vsi *ice_vf_ctrl_vsi_setup(struct ice_vf *vf)
 static int ice_calc_vf_first_vector_idx(struct ice_pf *pf, struct ice_vf *vf)
 {
 	return pf->sriov_base_vector + vf->vf_id * pf->num_msix_per_vf;
-}
-
-/**
- * ice_vf_rebuild_host_tx_rate_cfg - re-apply the Tx rate limiting configuration
- * @vf: VF to re-apply the configuration for
- *
- * Called after a VF VSI has been re-added/rebuild during reset. The PF driver
- * needs to re-apply the host configured Tx rate limiting configuration.
- */
-static int ice_vf_rebuild_host_tx_rate_cfg(struct ice_vf *vf)
-{
-	struct device *dev = ice_pf_to_dev(vf->pf);
-	struct ice_vsi *vsi = ice_get_vf_vsi(vf);
-	int err;
-
-	if (vf->min_tx_rate) {
-		err = ice_set_min_bw_limit(vsi, (u64)vf->min_tx_rate * 1000);
-		if (err) {
-			dev_err(dev, "failed to set min Tx rate to %d Mbps for VF %u, error %d\n",
-				vf->min_tx_rate, vf->vf_id, err);
-			return err;
-		}
-	}
-
-	if (vf->max_tx_rate) {
-		err = ice_set_max_bw_limit(vsi, (u64)vf->max_tx_rate * 1000);
-		if (err) {
-			dev_err(dev, "failed to set max Tx rate to %d Mbps for VF %u, error %d\n",
-				vf->max_tx_rate, vf->vf_id, err);
-			return err;
-		}
-	}
-
-	return 0;
 }
 
 /**
@@ -849,18 +931,15 @@ static int ice_vf_rebuild_host_mac_cfg(struct ice_vf *vf)
 {
 	struct device *dev = ice_pf_to_dev(vf->pf);
 	struct ice_vsi *vsi = ice_get_vf_vsi(vf);
+	enum ice_status status;
 	u8 broadcast[ETH_ALEN];
-	int status;
-
-	if (ice_is_eswitch_mode_switchdev(vf->pf))
-		return 0;
 
 	eth_broadcast_addr(broadcast);
 	status = ice_fltr_add_mac(vsi, broadcast, ICE_FWD_TO_VSI);
 	if (status) {
-		dev_err(dev, "failed to add broadcast MAC filter for VF %u, error %d\n",
-			vf->vf_id, status);
-		return status;
+		dev_err(dev, "failed to add broadcast MAC filter for VF %u, error %s\n",
+			vf->vf_id, ice_stat_str(status));
+		return ice_status_to_errno(status);
 	}
 
 	vf->num_mac++;
@@ -869,10 +948,10 @@ static int ice_vf_rebuild_host_mac_cfg(struct ice_vf *vf)
 		status = ice_fltr_add_mac(vsi, vf->hw_lan_addr.addr,
 					  ICE_FWD_TO_VSI);
 		if (status) {
-			dev_err(dev, "failed to add default unicast MAC filter %pM for VF %u, error %d\n",
+			dev_err(dev, "failed to add default unicast MAC filter %pM for VF %u, error %s\n",
 				&vf->hw_lan_addr.addr[0], vf->vf_id,
-				status);
-			return status;
+				ice_stat_str(status));
+			return ice_status_to_errno(status);
 		}
 		vf->num_mac++;
 
@@ -1222,50 +1301,45 @@ static void ice_clear_vf_reset_trigger(struct ice_vf *vf)
 	ice_flush(hw);
 }
 
-static int
-ice_vf_set_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi, u8 promisc_m)
+/**
+ * ice_vf_set_vsi_promisc - set given VF VSI to given promiscuous mode(s)
+ * @vf: pointer to the VF info
+ * @vsi: the VSI being configured
+ * @promisc_m: mask of promiscuous config bits
+ * @rm_promisc: promisc flag request from the VF to remove or add filter
+ *
+ * This function configures VF VSI promiscuous mode, based on the VF requests,
+ * for Unicast, Multicast and VLAN
+ */
+static enum ice_status
+ice_vf_set_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi, u8 promisc_m,
+		       bool rm_promisc)
 {
-	struct ice_hw *hw = &vsi->back->hw;
-	int status;
+	struct ice_pf *pf = vf->pf;
+	enum ice_status status = 0;
+	struct ice_hw *hw;
 
-	if (vf->port_vlan_info)
-		status = ice_fltr_set_vsi_promisc(hw, vsi->idx, promisc_m,
-						  vf->port_vlan_info & VLAN_VID_MASK);
-	else if (vsi->num_vlan > 1)
-		status = ice_fltr_set_vlan_vsi_promisc(hw, vsi, promisc_m);
-	else
-		status = ice_fltr_set_vsi_promisc(hw, vsi->idx, promisc_m, 0);
-
-	if (status && status != -EEXIST) {
-		dev_err(ice_pf_to_dev(vsi->back), "enable Tx/Rx filter promiscuous mode on VF-%u failed, error: %d\n",
-			vf->vf_id, status);
-		return status;
+	hw = &pf->hw;
+	if (vsi->num_vlan) {
+		status = ice_set_vlan_vsi_promisc(hw, vsi->idx, promisc_m,
+						  rm_promisc);
+	} else if (vf->port_vlan_info) {
+		if (rm_promisc)
+			status = ice_clear_vsi_promisc(hw, vsi->idx, promisc_m,
+						       vf->port_vlan_info);
+		else
+			status = ice_set_vsi_promisc(hw, vsi->idx, promisc_m,
+						     vf->port_vlan_info);
+	} else {
+		if (rm_promisc)
+			status = ice_clear_vsi_promisc(hw, vsi->idx, promisc_m,
+						       0);
+		else
+			status = ice_set_vsi_promisc(hw, vsi->idx, promisc_m,
+						     0);
 	}
 
-	return 0;
-}
-
-static int
-ice_vf_clear_vsi_promisc(struct ice_vf *vf, struct ice_vsi *vsi, u8 promisc_m)
-{
-	struct ice_hw *hw = &vsi->back->hw;
-	int status;
-
-	if (vf->port_vlan_info)
-		status = ice_fltr_clear_vsi_promisc(hw, vsi->idx, promisc_m,
-						    vf->port_vlan_info & VLAN_VID_MASK);
-	else if (vsi->num_vlan > 1)
-		status = ice_fltr_clear_vlan_vsi_promisc(hw, vsi, promisc_m);
-	else
-		status = ice_fltr_clear_vsi_promisc(hw, vsi->idx, promisc_m, 0);
-
-	if (status && status != -ENOENT) {
-		dev_err(ice_pf_to_dev(vsi->back), "disable Tx/Rx filter promiscuous mode on VF-%u failed, error: %d\n",
-			vf->vf_id, status);
-		return status;
-	}
-
-	return 0;
+	return status;
 }
 
 static void ice_vf_clear_counters(struct ice_vf *vf)
@@ -1301,8 +1375,8 @@ static void ice_vf_pre_vsi_rebuild(struct ice_vf *vf)
 static void ice_vf_rebuild_aggregator_node_cfg(struct ice_vsi *vsi)
 {
 	struct ice_pf *pf = vsi->back;
+	enum ice_status status;
 	struct device *dev;
-	int status;
 
 	if (!vsi->agg_node)
 		return;
@@ -1342,11 +1416,6 @@ static void ice_vf_rebuild_host_cfg(struct ice_vf *vf)
 	if (ice_vf_rebuild_host_vlan_cfg(vf))
 		dev_err(dev, "failed to rebuild VLAN configuration for VF %u\n",
 			vf->vf_id);
-
-	if (ice_vf_rebuild_host_tx_rate_cfg(vf))
-		dev_err(dev, "failed to rebuild Tx rate limiting configuration for VF %u\n",
-			vf->vf_id);
-
 	/* rebuild aggregator node config for main VF VSI */
 	ice_vf_rebuild_aggregator_node_cfg(vsi);
 }
@@ -1519,10 +1588,6 @@ bool ice_reset_all_vfs(struct ice_pf *pf, bool is_vflr)
 		mutex_unlock(&vf->cfg_lock);
 	}
 
-	if (ice_is_eswitch_mode_switchdev(pf))
-		if (ice_eswitch_rebuild(pf))
-			dev_warn(dev, "eswitch rebuild failed\n");
-
 	ice_flush(hw);
 	clear_bit(ICE_VF_DIS, pf->state);
 
@@ -1535,7 +1600,7 @@ bool ice_reset_all_vfs(struct ice_pf *pf, bool is_vflr)
  *
  * Returns true if the PF or VF is disabled, false otherwise.
  */
-bool ice_is_vf_disabled(struct ice_vf *vf)
+static bool ice_is_vf_disabled(struct ice_vf *vf)
 {
 	struct ice_pf *pf = vf->pf;
 
@@ -1635,11 +1700,9 @@ bool ice_reset_vf(struct ice_vf *vf, bool is_vflr)
 		else
 			promisc_m = ICE_UCAST_PROMISC_BITS;
 
-		if (ice_vf_clear_vsi_promisc(vf, vsi, promisc_m))
+		if (ice_vf_set_vsi_promisc(vf, vsi, promisc_m, true))
 			dev_err(dev, "disabling promiscuous mode failed\n");
 	}
-
-	ice_eswitch_del_vf_mac_rule(vf);
 
 	ice_vf_fdir_exit(vf);
 	ice_vf_fdir_init(vf);
@@ -1657,9 +1720,6 @@ bool ice_reset_vf(struct ice_vf *vf, bool is_vflr)
 	}
 
 	ice_vf_post_vsi_rebuild(vf);
-	vsi = ice_get_vf_vsi(vf);
-	ice_eswitch_update_repr(vsi);
-	ice_eswitch_replay_vf_mac_rule(vf);
 
 	/* if the VF has been reset allow it to come up again */
 	if (ice_mbx_clear_malvf(&hw->mbx_snapshot, pf->malvfs, ICE_MAX_VF_COUNT, vf->vf_id))
@@ -1741,6 +1801,7 @@ static int ice_init_vf_vsi_res(struct ice_vf *vf)
 {
 	struct ice_pf *pf = vf->pf;
 	u8 broadcast[ETH_ALEN];
+	enum ice_status status;
 	struct ice_vsi *vsi;
 	struct device *dev;
 	int err;
@@ -1760,10 +1821,11 @@ static int ice_init_vf_vsi_res(struct ice_vf *vf)
 	}
 
 	eth_broadcast_addr(broadcast);
-	err = ice_fltr_add_mac(vsi, broadcast, ICE_FWD_TO_VSI);
-	if (err) {
-		dev_err(dev, "Failed to add broadcast MAC filter for VF %d, error %d\n",
-			vf->vf_id, err);
+	status = ice_fltr_add_mac(vsi, broadcast, ICE_FWD_TO_VSI);
+	if (status) {
+		dev_err(dev, "Failed to add broadcast MAC filter for VF %d, status %s\n",
+			vf->vf_id, ice_stat_str(status));
+		err = ice_status_to_errno(status);
 		goto release_vsi;
 	}
 
@@ -1842,8 +1904,6 @@ static void ice_set_dflt_settings_vfs(struct ice_pf *pf)
 		ice_vf_ctrl_invalidate_vsi(vf);
 		ice_vf_fdir_init(vf);
 
-		ice_vc_set_dflt_vf_ops(&vf->vc_ops);
-
 		mutex_init(&vf->cfg_lock);
 	}
 }
@@ -1911,15 +1971,6 @@ static int ice_ena_vfs(struct ice_pf *pf, u16 num_vfs)
 	}
 
 	clear_bit(ICE_VF_DIS, pf->state);
-
-	ret = ice_eswitch_configure(pf);
-	if (ret)
-		goto err_unroll_sriov;
-
-	/* rearm global interrupts */
-	if (test_and_clear_bit(ICE_OICR_INTR_DIS, pf->state))
-		ice_irq_dynamic_ena(hw, NULL, NULL);
-
 	return 0;
 
 err_unroll_sriov:
@@ -2009,6 +2060,7 @@ int ice_sriov_configure(struct pci_dev *pdev, int num_vfs)
 {
 	struct ice_pf *pf = pci_get_drvdata(pdev);
 	struct device *dev = ice_pf_to_dev(pf);
+	enum ice_status status;
 	int err;
 
 	err = ice_check_sriov_allowed(pf);
@@ -2028,9 +2080,9 @@ int ice_sriov_configure(struct pci_dev *pdev, int num_vfs)
 		return -EBUSY;
 	}
 
-	err = ice_mbx_init_snapshot(&pf->hw, num_vfs);
-	if (err)
-		return err;
+	status = ice_mbx_init_snapshot(&pf->hw, num_vfs);
+	if (status)
+		return ice_status_to_errno(status);
 
 	err = ice_pci_sriov_ena(pf, num_vfs);
 	if (err) {
@@ -2169,9 +2221,9 @@ int
 ice_vc_send_msg_to_vf(struct ice_vf *vf, u32 v_opcode,
 		      enum virtchnl_status_code v_retval, u8 *msg, u16 msglen)
 {
+	enum ice_status aq_ret;
 	struct device *dev;
 	struct ice_pf *pf;
-	int aq_ret;
 
 	if (!vf)
 		return -EINVAL;
@@ -2203,8 +2255,8 @@ ice_vc_send_msg_to_vf(struct ice_vf *vf, u32 v_opcode,
 	aq_ret = ice_aq_send_msg_to_vf(&pf->hw, vf->vf_id, v_opcode, v_retval,
 				       msg, msglen, NULL);
 	if (aq_ret && pf->hw.mailboxq.sq_last_status != ICE_AQ_RC_ENOSYS) {
-		dev_info(dev, "Unable to send the message to VF %d ret %d aq_err %s\n",
-			 vf->vf_id, aq_ret,
+		dev_info(dev, "Unable to send the message to VF %d ret %s aq_err %s\n",
+			 vf->vf_id, ice_stat_str(aq_ret),
 			 ice_aq_str(pf->hw.mailboxq.sq_last_status));
 		return -EIO;
 	}
@@ -2453,100 +2505,6 @@ static bool ice_vc_isvalid_ring_len(u16 ring_len)
 }
 
 /**
- * ice_vc_validate_pattern
- * @vf: pointer to the VF info
- * @proto: virtchnl protocol headers
- *
- * validate the pattern is supported or not.
- *
- * Return: true on success, false on error.
- */
-bool
-ice_vc_validate_pattern(struct ice_vf *vf, struct virtchnl_proto_hdrs *proto)
-{
-	bool is_ipv4 = false;
-	bool is_ipv6 = false;
-	bool is_udp = false;
-	u16 ptype = -1;
-	int i = 0;
-
-	while (i < proto->count &&
-	       proto->proto_hdr[i].type != VIRTCHNL_PROTO_HDR_NONE) {
-		switch (proto->proto_hdr[i].type) {
-		case VIRTCHNL_PROTO_HDR_ETH:
-			ptype = ICE_PTYPE_MAC_PAY;
-			break;
-		case VIRTCHNL_PROTO_HDR_IPV4:
-			ptype = ICE_PTYPE_IPV4_PAY;
-			is_ipv4 = true;
-			break;
-		case VIRTCHNL_PROTO_HDR_IPV6:
-			ptype = ICE_PTYPE_IPV6_PAY;
-			is_ipv6 = true;
-			break;
-		case VIRTCHNL_PROTO_HDR_UDP:
-			if (is_ipv4)
-				ptype = ICE_PTYPE_IPV4_UDP_PAY;
-			else if (is_ipv6)
-				ptype = ICE_PTYPE_IPV6_UDP_PAY;
-			is_udp = true;
-			break;
-		case VIRTCHNL_PROTO_HDR_TCP:
-			if (is_ipv4)
-				ptype = ICE_PTYPE_IPV4_TCP_PAY;
-			else if (is_ipv6)
-				ptype = ICE_PTYPE_IPV6_TCP_PAY;
-			break;
-		case VIRTCHNL_PROTO_HDR_SCTP:
-			if (is_ipv4)
-				ptype = ICE_PTYPE_IPV4_SCTP_PAY;
-			else if (is_ipv6)
-				ptype = ICE_PTYPE_IPV6_SCTP_PAY;
-			break;
-		case VIRTCHNL_PROTO_HDR_GTPU_IP:
-		case VIRTCHNL_PROTO_HDR_GTPU_EH:
-			if (is_ipv4)
-				ptype = ICE_MAC_IPV4_GTPU;
-			else if (is_ipv6)
-				ptype = ICE_MAC_IPV6_GTPU;
-			goto out;
-		case VIRTCHNL_PROTO_HDR_L2TPV3:
-			if (is_ipv4)
-				ptype = ICE_MAC_IPV4_L2TPV3;
-			else if (is_ipv6)
-				ptype = ICE_MAC_IPV6_L2TPV3;
-			goto out;
-		case VIRTCHNL_PROTO_HDR_ESP:
-			if (is_ipv4)
-				ptype = is_udp ? ICE_MAC_IPV4_NAT_T_ESP :
-						ICE_MAC_IPV4_ESP;
-			else if (is_ipv6)
-				ptype = is_udp ? ICE_MAC_IPV6_NAT_T_ESP :
-						ICE_MAC_IPV6_ESP;
-			goto out;
-		case VIRTCHNL_PROTO_HDR_AH:
-			if (is_ipv4)
-				ptype = ICE_MAC_IPV4_AH;
-			else if (is_ipv6)
-				ptype = ICE_MAC_IPV6_AH;
-			goto out;
-		case VIRTCHNL_PROTO_HDR_PFCP:
-			if (is_ipv4)
-				ptype = ICE_MAC_IPV4_PFCP_SESSION;
-			else if (is_ipv6)
-				ptype = ICE_MAC_IPV6_PFCP_SESSION;
-			goto out;
-		default:
-			break;
-		}
-		i++;
-	}
-
-out:
-	return ice_hw_ptype_ena(&vf->pf->hw, ptype);
-}
-
-/**
  * ice_vc_parse_rss_cfg - parses hash fields and headers from
  * a specific virtchnl RSS cfg
  * @hw: pointer to the hardware
@@ -2569,10 +2527,18 @@ ice_vc_parse_rss_cfg(struct ice_hw *hw, struct virtchnl_rss_cfg *rss_cfg,
 	const struct ice_vc_hdr_match_type *hdr_list;
 	int i, hf_list_len, hdr_list_len;
 
-	hf_list = ice_vc_hash_field_list;
-	hf_list_len = ARRAY_SIZE(ice_vc_hash_field_list);
-	hdr_list = ice_vc_hdr_list;
-	hdr_list_len = ARRAY_SIZE(ice_vc_hdr_list);
+	if (!strncmp(hw->active_pkg_name, "ICE COMMS Package",
+		     sizeof(hw->active_pkg_name))) {
+		hf_list = ice_vc_hash_field_list_comms;
+		hf_list_len = ARRAY_SIZE(ice_vc_hash_field_list_comms);
+		hdr_list = ice_vc_hdr_list_comms;
+		hdr_list_len = ARRAY_SIZE(ice_vc_hdr_list_comms);
+	} else {
+		hf_list = ice_vc_hash_field_list_os;
+		hf_list_len = ARRAY_SIZE(ice_vc_hash_field_list_os);
+		hdr_list = ice_vc_hdr_list_os;
+		hdr_list_len = ARRAY_SIZE(ice_vc_hdr_list_os);
+	}
 
 	for (i = 0; i < rss_cfg->proto_hdrs.count; i++) {
 		struct virtchnl_proto_hdr *proto_hdr =
@@ -2674,15 +2640,10 @@ static int ice_vc_handle_rss_cfg(struct ice_vf *vf, u8 *msg, bool add)
 		goto error_param;
 	}
 
-	if (!ice_vc_validate_pattern(vf, &rss_cfg->proto_hdrs)) {
-		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
-		goto error_param;
-	}
-
 	if (rss_cfg->rss_algorithm == VIRTCHNL_RSS_ALG_R_ASYMMETRIC) {
 		struct ice_vsi_ctx *ctx;
+		enum ice_status status;
 		u8 lut_type, hash_type;
-		int status;
 
 		lut_type = ICE_AQ_VSI_Q_OPT_RSS_LUT_VSI;
 		hash_type = add ? ICE_AQ_VSI_Q_OPT_RSS_XOR :
@@ -2711,8 +2672,9 @@ static int ice_vc_handle_rss_cfg(struct ice_vf *vf, u8 *msg, bool add)
 
 		status = ice_update_vsi(hw, vsi->idx, ctx, NULL);
 		if (status) {
-			dev_err(dev, "update VSI for RSS failed, err %d aq_err %s\n",
-				status, ice_aq_str(hw->adminq.sq_last_status));
+			dev_err(dev, "update VSI for RSS failed, err %s aq_err %s\n",
+				ice_stat_str(status),
+				ice_aq_str(hw->adminq.sq_last_status));
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 		} else {
 			vsi->info.q_opt_rss = ctx->info.q_opt_rss;
@@ -2737,18 +2699,19 @@ static int ice_vc_handle_rss_cfg(struct ice_vf *vf, u8 *msg, bool add)
 					vsi->vsi_num, v_ret);
 			}
 		} else {
-			int status;
+			enum ice_status status;
 
 			status = ice_rem_rss_cfg(hw, vsi->idx, hash_flds,
 						 addl_hdrs);
-			/* We just ignore -ENOENT, because if two configurations
-			 * share the same profile remove one of them actually
-			 * removes both, since the profile is deleted.
+			/* We just ignore ICE_ERR_DOES_NOT_EXIST, because
+			 * if two configurations share the same profile remove
+			 * one of them actually removes both, since the
+			 * profile is deleted.
 			 */
-			if (status && status != -ENOENT) {
+			if (status && status != ICE_ERR_DOES_NOT_EXIST) {
 				v_ret = VIRTCHNL_STATUS_ERR_PARAM;
-				dev_err(dev, "ice_rem_rss_cfg failed for VF ID:%d, error:%d\n",
-					vf->vf_id, status);
+				dev_err(dev, "ice_rem_rss_cfg failed for VF ID:%d, error:%s\n",
+					vf->vf_id, ice_stat_str(status));
 			}
 		}
 	}
@@ -2876,7 +2839,7 @@ static void ice_wait_on_vf_reset(struct ice_vf *vf)
  * disabled, and initialized so it can be configured and/or queried by a host
  * administrator.
  */
-int ice_check_vf_ready_for_cfg(struct ice_vf *vf)
+static int ice_check_vf_ready_for_cfg(struct ice_vf *vf)
 {
 	struct ice_pf *pf;
 
@@ -2906,6 +2869,7 @@ int ice_set_vf_spoofchk(struct net_device *netdev, int vf_id, bool ena)
 	struct ice_pf *pf = np->vsi->back;
 	struct ice_vsi_ctx *ctx;
 	struct ice_vsi *vf_vsi;
+	enum ice_status status;
 	struct device *dev;
 	struct ice_vf *vf;
 	int ret;
@@ -2955,10 +2919,12 @@ int ice_set_vf_spoofchk(struct net_device *netdev, int vf_id, bool ena)
 			   ICE_AQ_VSI_SEC_TX_PRUNE_ENA_S));
 	}
 
-	ret = ice_update_vsi(&pf->hw, vf_vsi->idx, ctx, NULL);
-	if (ret) {
-		dev_err(dev, "Failed to %sable spoofchk on VF %d VSI %d\n error %d\n",
-			ena ? "en" : "dis", vf->vf_id, vf_vsi->vsi_num, ret);
+	status = ice_update_vsi(&pf->hw, vf_vsi->idx, ctx, NULL);
+	if (status) {
+		dev_err(dev, "Failed to %sable spoofchk on VF %d VSI %d\n error %s\n",
+			ena ? "en" : "dis", vf->vf_id, vf_vsi->vsi_num,
+			ice_stat_str(status));
+		ret = -EIO;
 		goto out;
 	}
 
@@ -3004,10 +2970,10 @@ bool ice_is_any_vf_in_promisc(struct ice_pf *pf)
 static int ice_vc_cfg_promiscuous_mode_msg(struct ice_vf *vf, u8 *msg)
 {
 	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
+	enum ice_status mcast_status = 0, ucast_status = 0;
 	bool rm_promisc, alluni = false, allmulti = false;
 	struct virtchnl_promisc_info *info =
 	    (struct virtchnl_promisc_info *)msg;
-	int mcast_err = 0, ucast_err = 0;
 	struct ice_pf *pf = vf->pf;
 	struct ice_vsi *vsi;
 	struct device *dev;
@@ -3046,10 +3012,25 @@ static int ice_vc_cfg_promiscuous_mode_msg(struct ice_vf *vf, u8 *msg)
 	rm_promisc = !allmulti && !alluni;
 
 	if (vsi->num_vlan || vf->port_vlan_info) {
-		if (rm_promisc)
-			ret = ice_cfg_vlan_pruning(vsi, true);
-		else
-			ret = ice_cfg_vlan_pruning(vsi, false);
+		struct ice_vsi *pf_vsi = ice_get_main_vsi(pf);
+		struct net_device *pf_netdev;
+
+		if (!pf_vsi) {
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+			goto error_param;
+		}
+
+		pf_netdev = pf_vsi->netdev;
+
+		ret = ice_set_vf_spoofchk(pf_netdev, vf->vf_id, rm_promisc);
+		if (ret) {
+			dev_err(dev, "Failed to update spoofchk to %s for VF %d VSI %d when setting promiscuous mode\n",
+				rm_promisc ? "ON" : "OFF", vf->vf_id,
+				vsi->vsi_num);
+			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		}
+
+		ret = ice_cfg_vlan_pruning(vsi, true, !rm_promisc);
 		if (ret) {
 			dev_err(dev, "Failed to configure VLAN pruning in promiscuous mode\n");
 			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
@@ -3089,21 +3070,24 @@ static int ice_vc_cfg_promiscuous_mode_msg(struct ice_vf *vf, u8 *msg)
 			ucast_m = ICE_UCAST_PROMISC_BITS;
 		}
 
-		if (alluni)
-			ucast_err = ice_vf_set_vsi_promisc(vf, vsi, ucast_m);
-		else
-			ucast_err = ice_vf_clear_vsi_promisc(vf, vsi, ucast_m);
+		ucast_status = ice_vf_set_vsi_promisc(vf, vsi, ucast_m,
+						      !alluni);
+		if (ucast_status) {
+			dev_err(dev, "%sable Tx/Rx filter promiscuous mode on VF-%d failed\n",
+				alluni ? "en" : "dis", vf->vf_id);
+			v_ret = ice_err_to_virt_err(ucast_status);
+		}
 
-		if (allmulti)
-			mcast_err = ice_vf_set_vsi_promisc(vf, vsi, mcast_m);
-		else
-			mcast_err = ice_vf_clear_vsi_promisc(vf, vsi, mcast_m);
-
-		if (ucast_err || mcast_err)
-			v_ret = VIRTCHNL_STATUS_ERR_PARAM;
+		mcast_status = ice_vf_set_vsi_promisc(vf, vsi, mcast_m,
+						      !allmulti);
+		if (mcast_status) {
+			dev_err(dev, "%sable Tx/Rx filter promiscuous mode on VF-%d failed\n",
+				allmulti ? "en" : "dis", vf->vf_id);
+			v_ret = ice_err_to_virt_err(mcast_status);
+		}
 	}
 
-	if (!mcast_err) {
+	if (!mcast_status) {
 		if (allmulti &&
 		    !test_and_set_bit(ICE_VF_STATE_MC_PROMISC, vf->vf_states))
 			dev_info(dev, "VF %u successfully set multicast promiscuous mode\n",
@@ -3113,7 +3097,7 @@ static int ice_vc_cfg_promiscuous_mode_msg(struct ice_vf *vf, u8 *msg)
 				 vf->vf_id);
 	}
 
-	if (!ucast_err) {
+	if (!ucast_status) {
 		if (alluni && !test_and_set_bit(ICE_VF_STATE_UC_PROMISC, vf->vf_states))
 			dev_info(dev, "VF %u successfully set unicast promiscuous mode\n",
 				 vf->vf_id);
@@ -3361,7 +3345,7 @@ static int ice_vc_dis_qs_msg(struct ice_vf *vf, u8 *msg)
 		q_map = vqs->tx_queues;
 
 		for_each_set_bit(vf_q_id, &q_map, ICE_MAX_RSS_QS_PER_VF) {
-			struct ice_tx_ring *ring = vsi->tx_rings[vf_q_id];
+			struct ice_ring *ring = vsi->tx_rings[vf_q_id];
 			struct ice_txq_meta txq_meta = { 0 };
 
 			if (!ice_vc_isvalid_q_id(vf, vqs->vsi_id, vf_q_id)) {
@@ -3793,7 +3777,8 @@ ice_vc_add_mac_addr(struct ice_vf *vf, struct ice_vsi *vsi,
 {
 	struct device *dev = ice_pf_to_dev(vf->pf);
 	u8 *mac_addr = vc_ether_addr->addr;
-	int ret;
+	enum ice_status status;
+	int ret = 0;
 
 	/* device MAC already added */
 	if (ether_addr_equal(mac_addr, vf->dev_lan_addr.addr))
@@ -3804,17 +3789,18 @@ ice_vc_add_mac_addr(struct ice_vf *vf, struct ice_vsi *vsi,
 		return -EPERM;
 	}
 
-	ret = ice_fltr_add_mac(vsi, mac_addr, ICE_FWD_TO_VSI);
-	if (ret == -EEXIST) {
+	status = ice_fltr_add_mac(vsi, mac_addr, ICE_FWD_TO_VSI);
+	if (status == ICE_ERR_ALREADY_EXISTS) {
 		dev_dbg(dev, "MAC %pM already exists for VF %d\n", mac_addr,
 			vf->vf_id);
 		/* don't return since we might need to update
 		 * the primary MAC in ice_vfhw_mac_add() below
 		 */
-	} else if (ret) {
-		dev_err(dev, "Failed to add MAC %pM for VF %d\n, error %d\n",
-			mac_addr, vf->vf_id, ret);
-		return ret;
+		ret = -EEXIST;
+	} else if (status) {
+		dev_err(dev, "Failed to add MAC %pM for VF %d\n, error %s\n",
+			mac_addr, vf->vf_id, ice_stat_str(status));
+		return -EIO;
 	} else {
 		vf->num_mac++;
 	}
@@ -3833,26 +3819,6 @@ static bool ice_is_legacy_umac_expired(struct ice_time_mac *last_added_umac)
 #define ICE_LEGACY_VF_MAC_CHANGE_EXPIRE_TIME	msecs_to_jiffies(3000)
 	return time_is_before_jiffies(last_added_umac->time_modified +
 				      ICE_LEGACY_VF_MAC_CHANGE_EXPIRE_TIME);
-}
-
-/**
- * ice_update_legacy_cached_mac - update cached hardware MAC for legacy VF
- * @vf: VF to update
- * @vc_ether_addr: structure from VIRTCHNL with MAC to check
- *
- * only update cached hardware MAC for legacy VF drivers on delete
- * because we cannot guarantee order/type of MAC from the VF driver
- */
-static void
-ice_update_legacy_cached_mac(struct ice_vf *vf,
-			     struct virtchnl_ether_addr *vc_ether_addr)
-{
-	if (!ice_is_vc_addr_legacy(vc_ether_addr) ||
-	    ice_is_legacy_umac_expired(&vf->legacy_last_added_umac))
-		return;
-
-	ether_addr_copy(vf->dev_lan_addr.addr, vf->legacy_last_added_umac.addr);
-	ether_addr_copy(vf->hw_lan_addr.addr, vf->legacy_last_added_umac.addr);
 }
 
 /**
@@ -3876,7 +3842,16 @@ ice_vfhw_mac_del(struct ice_vf *vf, struct virtchnl_ether_addr *vc_ether_addr)
 	 */
 	eth_zero_addr(vf->dev_lan_addr.addr);
 
-	ice_update_legacy_cached_mac(vf, vc_ether_addr);
+	/* only update cached hardware MAC for legacy VF drivers on delete
+	 * because we cannot guarantee order/type of MAC from the VF driver
+	 */
+	if (ice_is_vc_addr_legacy(vc_ether_addr) &&
+	    !ice_is_legacy_umac_expired(&vf->legacy_last_added_umac)) {
+		ether_addr_copy(vf->dev_lan_addr.addr,
+				vf->legacy_last_added_umac.addr);
+		ether_addr_copy(vf->hw_lan_addr.addr,
+				vf->legacy_last_added_umac.addr);
+	}
 }
 
 /**
@@ -3891,20 +3866,20 @@ ice_vc_del_mac_addr(struct ice_vf *vf, struct ice_vsi *vsi,
 {
 	struct device *dev = ice_pf_to_dev(vf->pf);
 	u8 *mac_addr = vc_ether_addr->addr;
-	int status;
+	enum ice_status status;
 
 	if (!ice_can_vf_change_mac(vf) &&
 	    ether_addr_equal(vf->dev_lan_addr.addr, mac_addr))
 		return 0;
 
 	status = ice_fltr_remove_mac(vsi, mac_addr, ICE_FWD_TO_VSI);
-	if (status == -ENOENT) {
+	if (status == ICE_ERR_DOES_NOT_EXIST) {
 		dev_err(dev, "MAC %pM does not exist for VF %d\n", mac_addr,
 			vf->vf_id);
 		return -ENOENT;
 	} else if (status) {
-		dev_err(dev, "Failed to delete MAC %pM for VF %d, error %d\n",
-			mac_addr, vf->vf_id, status);
+		dev_err(dev, "Failed to delete MAC %pM for VF %d, error %s\n",
+			mac_addr, vf->vf_id, ice_stat_str(status));
 		return -EIO;
 	}
 
@@ -4255,7 +4230,7 @@ static int ice_vc_process_vlan_msg(struct ice_vf *vf, u8 *msg, bool add_v)
 			/* Enable VLAN pruning when non-zero VLAN is added */
 			if (!vlan_promisc && vid &&
 			    !ice_vsi_is_vlan_pruning_ena(vsi)) {
-				status = ice_cfg_vlan_pruning(vsi, true);
+				status = ice_cfg_vlan_pruning(vsi, true, false);
 				if (status) {
 					v_ret = VIRTCHNL_STATUS_ERR_PARAM;
 					dev_err(dev, "Enable VLAN pruning on VLAN ID: %d failed error-%d\n",
@@ -4309,7 +4284,7 @@ static int ice_vc_process_vlan_msg(struct ice_vf *vf, u8 *msg, bool add_v)
 			/* Disable VLAN pruning when only VLAN 0 is left */
 			if (vsi->num_vlan == 1 &&
 			    ice_vsi_is_vlan_pruning_ena(vsi))
-				ice_cfg_vlan_pruning(vsi, false);
+				ice_cfg_vlan_pruning(vsi, false, false);
 
 			/* Disable Unicast/Multicast VLAN promiscuous mode */
 			if (vlan_promisc) {
@@ -4448,176 +4423,6 @@ static int ice_vf_init_vlan_stripping(struct ice_vf *vf)
 		return ice_vsi_manage_vlan_stripping(vsi, false);
 }
 
-static struct ice_vc_vf_ops ice_vc_vf_dflt_ops = {
-	.get_ver_msg = ice_vc_get_ver_msg,
-	.get_vf_res_msg = ice_vc_get_vf_res_msg,
-	.reset_vf = ice_vc_reset_vf_msg,
-	.add_mac_addr_msg = ice_vc_add_mac_addr_msg,
-	.del_mac_addr_msg = ice_vc_del_mac_addr_msg,
-	.cfg_qs_msg = ice_vc_cfg_qs_msg,
-	.ena_qs_msg = ice_vc_ena_qs_msg,
-	.dis_qs_msg = ice_vc_dis_qs_msg,
-	.request_qs_msg = ice_vc_request_qs_msg,
-	.cfg_irq_map_msg = ice_vc_cfg_irq_map_msg,
-	.config_rss_key = ice_vc_config_rss_key,
-	.config_rss_lut = ice_vc_config_rss_lut,
-	.get_stats_msg = ice_vc_get_stats_msg,
-	.cfg_promiscuous_mode_msg = ice_vc_cfg_promiscuous_mode_msg,
-	.add_vlan_msg = ice_vc_add_vlan_msg,
-	.remove_vlan_msg = ice_vc_remove_vlan_msg,
-	.ena_vlan_stripping = ice_vc_ena_vlan_stripping,
-	.dis_vlan_stripping = ice_vc_dis_vlan_stripping,
-	.handle_rss_cfg_msg = ice_vc_handle_rss_cfg,
-	.add_fdir_fltr_msg = ice_vc_add_fdir_fltr,
-	.del_fdir_fltr_msg = ice_vc_del_fdir_fltr,
-};
-
-void ice_vc_set_dflt_vf_ops(struct ice_vc_vf_ops *ops)
-{
-	*ops = ice_vc_vf_dflt_ops;
-}
-
-/**
- * ice_vc_repr_add_mac
- * @vf: pointer to VF
- * @msg: virtchannel message
- *
- * When port representors are created, we do not add MAC rule
- * to firmware, we store it so that PF could report same
- * MAC as VF.
- */
-static int ice_vc_repr_add_mac(struct ice_vf *vf, u8 *msg)
-{
-	enum virtchnl_status_code v_ret = VIRTCHNL_STATUS_SUCCESS;
-	struct virtchnl_ether_addr_list *al =
-	    (struct virtchnl_ether_addr_list *)msg;
-	struct ice_vsi *vsi;
-	struct ice_pf *pf;
-	int i;
-
-	if (!test_bit(ICE_VF_STATE_ACTIVE, vf->vf_states) ||
-	    !ice_vc_isvalid_vsi_id(vf, al->vsi_id)) {
-		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
-		goto handle_mac_exit;
-	}
-
-	pf = vf->pf;
-
-	vsi = ice_get_vf_vsi(vf);
-	if (!vsi) {
-		v_ret = VIRTCHNL_STATUS_ERR_PARAM;
-		goto handle_mac_exit;
-	}
-
-	for (i = 0; i < al->num_elements; i++) {
-		u8 *mac_addr = al->list[i].addr;
-		int result;
-
-		if (!is_unicast_ether_addr(mac_addr) ||
-		    ether_addr_equal(mac_addr, vf->hw_lan_addr.addr))
-			continue;
-
-		if (vf->pf_set_mac) {
-			dev_err(ice_pf_to_dev(pf), "VF attempting to override administratively set MAC address\n");
-			v_ret = VIRTCHNL_STATUS_ERR_NOT_SUPPORTED;
-			goto handle_mac_exit;
-		}
-
-		result = ice_eswitch_add_vf_mac_rule(pf, vf, mac_addr);
-		if (result) {
-			dev_err(ice_pf_to_dev(pf), "Failed to add MAC %pM for VF %d\n, error %d\n",
-				mac_addr, vf->vf_id, result);
-			goto handle_mac_exit;
-		}
-
-		ice_vfhw_mac_add(vf, &al->list[i]);
-		vf->num_mac++;
-		break;
-	}
-
-handle_mac_exit:
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ADD_ETH_ADDR,
-				     v_ret, NULL, 0);
-}
-
-/**
- * ice_vc_repr_del_mac - response with success for deleting MAC
- * @vf: pointer to VF
- * @msg: virtchannel message
- *
- * Respond with success to not break normal VF flow.
- * For legacy VF driver try to update cached MAC address.
- */
-static int
-ice_vc_repr_del_mac(struct ice_vf __always_unused *vf, u8 __always_unused *msg)
-{
-	struct virtchnl_ether_addr_list *al =
-		(struct virtchnl_ether_addr_list *)msg;
-
-	ice_update_legacy_cached_mac(vf, &al->list[0]);
-
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DEL_ETH_ADDR,
-				     VIRTCHNL_STATUS_SUCCESS, NULL, 0);
-}
-
-static int ice_vc_repr_add_vlan(struct ice_vf *vf, u8 __always_unused *msg)
-{
-	dev_dbg(ice_pf_to_dev(vf->pf),
-		"Can't add VLAN in switchdev mode for VF %d\n", vf->vf_id);
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ADD_VLAN,
-				     VIRTCHNL_STATUS_SUCCESS, NULL, 0);
-}
-
-static int ice_vc_repr_del_vlan(struct ice_vf *vf, u8 __always_unused *msg)
-{
-	dev_dbg(ice_pf_to_dev(vf->pf),
-		"Can't delete VLAN in switchdev mode for VF %d\n", vf->vf_id);
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DEL_VLAN,
-				     VIRTCHNL_STATUS_SUCCESS, NULL, 0);
-}
-
-static int ice_vc_repr_ena_vlan_stripping(struct ice_vf *vf)
-{
-	dev_dbg(ice_pf_to_dev(vf->pf),
-		"Can't enable VLAN stripping in switchdev mode for VF %d\n",
-		vf->vf_id);
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_ENABLE_VLAN_STRIPPING,
-				     VIRTCHNL_STATUS_ERR_NOT_SUPPORTED,
-				     NULL, 0);
-}
-
-static int ice_vc_repr_dis_vlan_stripping(struct ice_vf *vf)
-{
-	dev_dbg(ice_pf_to_dev(vf->pf),
-		"Can't disable VLAN stripping in switchdev mode for VF %d\n",
-		vf->vf_id);
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_DISABLE_VLAN_STRIPPING,
-				     VIRTCHNL_STATUS_ERR_NOT_SUPPORTED,
-				     NULL, 0);
-}
-
-static int
-ice_vc_repr_cfg_promiscuous_mode(struct ice_vf *vf, u8 __always_unused *msg)
-{
-	dev_dbg(ice_pf_to_dev(vf->pf),
-		"Can't config promiscuous mode in switchdev mode for VF %d\n",
-		vf->vf_id);
-	return ice_vc_send_msg_to_vf(vf, VIRTCHNL_OP_CONFIG_PROMISCUOUS_MODE,
-				     VIRTCHNL_STATUS_ERR_NOT_SUPPORTED,
-				     NULL, 0);
-}
-
-void ice_vc_change_ops_to_repr(struct ice_vc_vf_ops *ops)
-{
-	ops->add_mac_addr_msg = ice_vc_repr_add_mac;
-	ops->del_mac_addr_msg = ice_vc_repr_del_mac;
-	ops->add_vlan_msg = ice_vc_repr_add_vlan;
-	ops->remove_vlan_msg = ice_vc_repr_del_vlan;
-	ops->ena_vlan_stripping = ice_vc_repr_ena_vlan_stripping;
-	ops->dis_vlan_stripping = ice_vc_repr_dis_vlan_stripping;
-	ops->cfg_promiscuous_mode_msg = ice_vc_repr_cfg_promiscuous_mode;
-}
-
 /**
  * ice_vc_process_vf_msg - Process request from VF
  * @pf: pointer to the PF structure
@@ -4631,7 +4436,6 @@ void ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event)
 	u32 v_opcode = le32_to_cpu(event->desc.cookie_high);
 	s16 vf_id = le16_to_cpu(event->desc.retval);
 	u16 msglen = event->msg_len;
-	struct ice_vc_vf_ops *ops;
 	u8 *msg = event->msg_buf;
 	struct ice_vf *vf = NULL;
 	struct device *dev;
@@ -4650,8 +4454,6 @@ void ice_vc_process_vf_msg(struct ice_pf *pf, struct ice_rq_event_info *event)
 		err = -EPERM;
 		goto error_handler;
 	}
-
-	ops = &vf->vc_ops;
 
 	/* Perform basic checks on the msg */
 	err = virtchnl_vc_validate_vf_msg(&vf->vf_ver, v_opcode, msg, msglen);
@@ -4689,75 +4491,75 @@ error_handler:
 
 	switch (v_opcode) {
 	case VIRTCHNL_OP_VERSION:
-		err = ops->get_ver_msg(vf, msg);
+		err = ice_vc_get_ver_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_GET_VF_RESOURCES:
-		err = ops->get_vf_res_msg(vf, msg);
+		err = ice_vc_get_vf_res_msg(vf, msg);
 		if (ice_vf_init_vlan_stripping(vf))
 			dev_err(dev, "Failed to initialize VLAN stripping for VF %d\n",
 				vf->vf_id);
 		ice_vc_notify_vf_link_state(vf);
 		break;
 	case VIRTCHNL_OP_RESET_VF:
-		ops->reset_vf(vf);
+		ice_vc_reset_vf_msg(vf);
 		break;
 	case VIRTCHNL_OP_ADD_ETH_ADDR:
-		err = ops->add_mac_addr_msg(vf, msg);
+		err = ice_vc_add_mac_addr_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_DEL_ETH_ADDR:
-		err = ops->del_mac_addr_msg(vf, msg);
+		err = ice_vc_del_mac_addr_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_CONFIG_VSI_QUEUES:
-		err = ops->cfg_qs_msg(vf, msg);
+		err = ice_vc_cfg_qs_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_ENABLE_QUEUES:
-		err = ops->ena_qs_msg(vf, msg);
+		err = ice_vc_ena_qs_msg(vf, msg);
 		ice_vc_notify_vf_link_state(vf);
 		break;
 	case VIRTCHNL_OP_DISABLE_QUEUES:
-		err = ops->dis_qs_msg(vf, msg);
+		err = ice_vc_dis_qs_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_REQUEST_QUEUES:
-		err = ops->request_qs_msg(vf, msg);
+		err = ice_vc_request_qs_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_CONFIG_IRQ_MAP:
-		err = ops->cfg_irq_map_msg(vf, msg);
+		err = ice_vc_cfg_irq_map_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_CONFIG_RSS_KEY:
-		err = ops->config_rss_key(vf, msg);
+		err = ice_vc_config_rss_key(vf, msg);
 		break;
 	case VIRTCHNL_OP_CONFIG_RSS_LUT:
-		err = ops->config_rss_lut(vf, msg);
+		err = ice_vc_config_rss_lut(vf, msg);
 		break;
 	case VIRTCHNL_OP_GET_STATS:
-		err = ops->get_stats_msg(vf, msg);
+		err = ice_vc_get_stats_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_CONFIG_PROMISCUOUS_MODE:
-		err = ops->cfg_promiscuous_mode_msg(vf, msg);
+		err = ice_vc_cfg_promiscuous_mode_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_ADD_VLAN:
-		err = ops->add_vlan_msg(vf, msg);
+		err = ice_vc_add_vlan_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_DEL_VLAN:
-		err = ops->remove_vlan_msg(vf, msg);
+		err = ice_vc_remove_vlan_msg(vf, msg);
 		break;
 	case VIRTCHNL_OP_ENABLE_VLAN_STRIPPING:
-		err = ops->ena_vlan_stripping(vf);
+		err = ice_vc_ena_vlan_stripping(vf);
 		break;
 	case VIRTCHNL_OP_DISABLE_VLAN_STRIPPING:
-		err = ops->dis_vlan_stripping(vf);
+		err = ice_vc_dis_vlan_stripping(vf);
 		break;
 	case VIRTCHNL_OP_ADD_FDIR_FILTER:
-		err = ops->add_fdir_fltr_msg(vf, msg);
+		err = ice_vc_add_fdir_fltr(vf, msg);
 		break;
 	case VIRTCHNL_OP_DEL_FDIR_FILTER:
-		err = ops->del_fdir_fltr_msg(vf, msg);
+		err = ice_vc_del_fdir_fltr(vf, msg);
 		break;
 	case VIRTCHNL_OP_ADD_RSS_CFG:
-		err = ops->handle_rss_cfg_msg(vf, msg, true);
+		err = ice_vc_handle_rss_cfg(vf, msg, true);
 		break;
 	case VIRTCHNL_OP_DEL_RSS_CFG:
-		err = ops->handle_rss_cfg_msg(vf, msg, false);
+		err = ice_vc_handle_rss_cfg(vf, msg, false);
 		break;
 	case VIRTCHNL_OP_UNKNOWN:
 	default:
@@ -4816,8 +4618,8 @@ ice_get_vf_cfg(struct net_device *netdev, int vf_id, struct ifla_vf_info *ivi)
 		ivi->linkstate = IFLA_VF_LINK_STATE_ENABLE;
 	else
 		ivi->linkstate = IFLA_VF_LINK_STATE_DISABLE;
-	ivi->max_tx_rate = vf->max_tx_rate;
-	ivi->min_tx_rate = vf->min_tx_rate;
+	ivi->max_tx_rate = vf->tx_rate;
+	ivi->min_tx_rate = 0;
 	return 0;
 }
 
@@ -4930,11 +4732,6 @@ int ice_set_vf_trust(struct net_device *netdev, int vf_id, bool trusted)
 	struct ice_vf *vf;
 	int ret;
 
-	if (ice_is_eswitch_mode_switchdev(pf)) {
-		dev_info(ice_pf_to_dev(pf), "Trusted VF is forbidden in switchdev mode\n");
-		return -EOPNOTSUPP;
-	}
-
 	if (ice_validate_vf_id(pf, vf_id))
 		return -EINVAL;
 
@@ -4998,122 +4795,6 @@ int ice_set_vf_link_state(struct net_device *netdev, int vf_id, int link_state)
 	}
 
 	ice_vc_notify_vf_link_state(vf);
-
-	return 0;
-}
-
-/**
- * ice_calc_all_vfs_min_tx_rate - calculate cumulative min Tx rate on all VFs
- * @pf: PF associated with VFs
- */
-static int ice_calc_all_vfs_min_tx_rate(struct ice_pf *pf)
-{
-	int rate = 0, i;
-
-	ice_for_each_vf(pf, i)
-		rate += pf->vf[i].min_tx_rate;
-
-	return rate;
-}
-
-/**
- * ice_min_tx_rate_oversubscribed - check if min Tx rate causes oversubscription
- * @vf: VF trying to configure min_tx_rate
- * @min_tx_rate: min Tx rate in Mbps
- *
- * Check if the min_tx_rate being passed in will cause oversubscription of total
- * min_tx_rate based on the current link speed and all other VFs configured
- * min_tx_rate
- *
- * Return true if the passed min_tx_rate would cause oversubscription, else
- * return false
- */
-static bool
-ice_min_tx_rate_oversubscribed(struct ice_vf *vf, int min_tx_rate)
-{
-	int link_speed_mbps = ice_get_link_speed_mbps(ice_get_vf_vsi(vf));
-	int all_vfs_min_tx_rate = ice_calc_all_vfs_min_tx_rate(vf->pf);
-
-	/* this VF's previous rate is being overwritten */
-	all_vfs_min_tx_rate -= vf->min_tx_rate;
-
-	if (all_vfs_min_tx_rate + min_tx_rate > link_speed_mbps) {
-		dev_err(ice_pf_to_dev(vf->pf), "min_tx_rate of %d Mbps on VF %u would cause oversubscription of %d Mbps based on the current link speed %d Mbps\n",
-			min_tx_rate, vf->vf_id,
-			all_vfs_min_tx_rate + min_tx_rate - link_speed_mbps,
-			link_speed_mbps);
-		return true;
-	}
-
-	return false;
-}
-
-/**
- * ice_set_vf_bw - set min/max VF bandwidth
- * @netdev: network interface device structure
- * @vf_id: VF identifier
- * @min_tx_rate: Minimum Tx rate in Mbps
- * @max_tx_rate: Maximum Tx rate in Mbps
- */
-int
-ice_set_vf_bw(struct net_device *netdev, int vf_id, int min_tx_rate,
-	      int max_tx_rate)
-{
-	struct ice_pf *pf = ice_netdev_to_pf(netdev);
-	struct ice_vsi *vsi;
-	struct device *dev;
-	struct ice_vf *vf;
-	int ret;
-
-	dev = ice_pf_to_dev(pf);
-	if (ice_validate_vf_id(pf, vf_id))
-		return -EINVAL;
-
-	vf = &pf->vf[vf_id];
-	ret = ice_check_vf_ready_for_cfg(vf);
-	if (ret)
-		return ret;
-
-	vsi = ice_get_vf_vsi(vf);
-
-	/* when max_tx_rate is zero that means no max Tx rate limiting, so only
-	 * check if max_tx_rate is non-zero
-	 */
-	if (max_tx_rate && min_tx_rate > max_tx_rate) {
-		dev_err(dev, "Cannot set min Tx rate %d Mbps greater than max Tx rate %d Mbps\n",
-			min_tx_rate, max_tx_rate);
-		return -EINVAL;
-	}
-
-	if (min_tx_rate && ice_is_dcb_active(pf)) {
-		dev_err(dev, "DCB on PF is currently enabled. VF min Tx rate limiting not allowed on this PF.\n");
-		return -EOPNOTSUPP;
-	}
-
-	if (ice_min_tx_rate_oversubscribed(vf, min_tx_rate))
-		return -EINVAL;
-
-	if (vf->min_tx_rate != (unsigned int)min_tx_rate) {
-		ret = ice_set_min_bw_limit(vsi, (u64)min_tx_rate * 1000);
-		if (ret) {
-			dev_err(dev, "Unable to set min-tx-rate for VF %d\n",
-				vf->vf_id);
-			return ret;
-		}
-
-		vf->min_tx_rate = min_tx_rate;
-	}
-
-	if (vf->max_tx_rate != (unsigned int)max_tx_rate) {
-		ret = ice_set_max_bw_limit(vsi, (u64)max_tx_rate * 1000);
-		if (ret) {
-			dev_err(dev, "Unable to set max-tx-rate for VF %d\n",
-				vf->vf_id);
-			return ret;
-		}
-
-		vf->max_tx_rate = max_tx_rate;
-	}
 
 	return 0;
 }
@@ -5271,9 +4952,9 @@ ice_is_malicious_vf(struct ice_pf *pf, struct ice_rq_event_info *event,
 	s16 vf_id = le16_to_cpu(event->desc.retval);
 	struct device *dev = ice_pf_to_dev(pf);
 	struct ice_mbx_data mbxdata;
+	enum ice_status status;
 	bool malvf = false;
 	struct ice_vf *vf;
-	int status;
 
 	if (ice_validate_vf_id(pf, vf_id))
 		return false;

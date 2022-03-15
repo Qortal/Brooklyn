@@ -70,9 +70,6 @@ properties:
   power-domains:
     maxItems: 1
 
-allOf:
-  - $ref: "pinctrl.yaml#"
-
 required:
   - compatible
   - reg

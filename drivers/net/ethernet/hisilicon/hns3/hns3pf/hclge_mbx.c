@@ -4,7 +4,6 @@
 #include "hclge_main.h"
 #include "hclge_mbx.h"
 #include "hnae3.h"
-#include "hclge_comm_rss.h"
 
 #define CREATE_TRACE_POINTS
 #include "hclge_trace.h"
@@ -34,7 +33,7 @@ static int hclge_gen_resp_to_vf(struct hclge_vport *vport,
 {
 	struct hclge_mbx_pf_to_vf_cmd *resp_pf_to_vf;
 	struct hclge_dev *hdev = vport->back;
-	enum hclge_comm_cmd_status status;
+	enum hclge_cmd_status status;
 	struct hclge_desc desc;
 	u16 resp;
 
@@ -91,7 +90,7 @@ static int hclge_send_mbx_msg(struct hclge_vport *vport, u8 *msg, u16 msg_len,
 {
 	struct hclge_mbx_pf_to_vf_cmd *resp_pf_to_vf;
 	struct hclge_dev *hdev = vport->back;
-	enum hclge_comm_cmd_status status;
+	enum hclge_cmd_status status;
 	struct hclge_desc desc;
 
 	resp_pf_to_vf = (struct hclge_mbx_pf_to_vf_cmd *)desc.data;
@@ -182,7 +181,7 @@ static int hclge_get_ring_chain_from_mbx(
 		if (req->msg.param[i].tqp_index >= vport->nic.kinfo.rss_size) {
 			dev_err(&hdev->pdev->dev, "tqp index(%u) is out of range(0-%u)\n",
 				req->msg.param[i].tqp_index,
-				vport->nic.kinfo.rss_size - 1U);
+				vport->nic.kinfo.rss_size - 1);
 			return -EINVAL;
 		}
 	}
@@ -613,17 +612,15 @@ static void hclge_get_rss_key(struct hclge_vport *vport,
 {
 #define HCLGE_RSS_MBX_RESP_LEN	8
 	struct hclge_dev *hdev = vport->back;
-	struct hclge_comm_rss_cfg *rss_cfg;
 	u8 index;
 
 	index = mbx_req->msg.data[0];
-	rss_cfg = &hdev->rss_cfg;
 
 	/* Check the query index of rss_hash_key from VF, make sure no
 	 * more than the size of rss_hash_key.
 	 */
 	if (((index + 1) * HCLGE_RSS_MBX_RESP_LEN) >
-	      sizeof(rss_cfg->rss_hash_key)) {
+	      sizeof(vport[0].rss_hash_key)) {
 		dev_warn(&hdev->pdev->dev,
 			 "failed to get the rss hash key, the index(%u) invalid !\n",
 			 index);
@@ -631,7 +628,7 @@ static void hclge_get_rss_key(struct hclge_vport *vport,
 	}
 
 	memcpy(resp_msg->data,
-	       &rss_cfg->rss_hash_key[index * HCLGE_RSS_MBX_RESP_LEN],
+	       &hdev->vport[0].rss_hash_key[index * HCLGE_RSS_MBX_RESP_LEN],
 	       HCLGE_RSS_MBX_RESP_LEN);
 	resp_msg->len = HCLGE_RSS_MBX_RESP_LEN;
 }
@@ -664,9 +661,9 @@ static void hclge_handle_link_change_event(struct hclge_dev *hdev,
 
 static bool hclge_cmd_crq_empty(struct hclge_hw *hw)
 {
-	u32 tail = hclge_read_dev(hw, HCLGE_COMM_NIC_CRQ_TAIL_REG);
+	u32 tail = hclge_read_dev(hw, HCLGE_NIC_CRQ_TAIL_REG);
 
-	return tail == hw->hw.cmq.crq.next_to_use;
+	return tail == hw->cmq.crq.next_to_use;
 }
 
 static void hclge_handle_ncsi_error(struct hclge_dev *hdev)
@@ -697,7 +694,7 @@ static void hclge_handle_vf_tbl(struct hclge_vport *vport,
 
 void hclge_mbx_handler(struct hclge_dev *hdev)
 {
-	struct hclge_comm_cmq_ring *crq = &hdev->hw.hw.cmq.crq;
+	struct hclge_cmq_ring *crq = &hdev->hw.cmq.crq;
 	struct hclge_respond_to_vf_msg resp_msg;
 	struct hclge_mbx_vf_to_pf_cmd *req;
 	struct hclge_vport *vport;
@@ -708,8 +705,7 @@ void hclge_mbx_handler(struct hclge_dev *hdev)
 
 	/* handle all the mailbox requests in the queue */
 	while (!hclge_cmd_crq_empty(&hdev->hw)) {
-		if (test_bit(HCLGE_COMM_STATE_CMD_DISABLE,
-			     &hdev->hw.hw.comm_state)) {
+		if (test_bit(HCLGE_STATE_CMD_DISABLE, &hdev->state)) {
 			dev_warn(&hdev->pdev->dev,
 				 "command queue needs re-initializing\n");
 			return;
@@ -852,14 +848,6 @@ void hclge_mbx_handler(struct hclge_dev *hdev)
 		if (hnae3_get_bit(req->mbx_need_resp, HCLGE_MBX_NEED_RESP_B) &&
 		    req->msg.code < HCLGE_MBX_GET_VF_FLR_STATUS) {
 			resp_msg.status = ret;
-			if (time_is_before_jiffies(hdev->last_mbx_scheduled +
-						   HCLGE_MBX_SCHED_TIMEOUT))
-				dev_warn(&hdev->pdev->dev,
-					 "resp vport%u mbx(%u,%u) late\n",
-					 req->mbx_src_vfid,
-					 req->msg.code,
-					 req->msg.subcode);
-
 			hclge_gen_resp_to_vf(vport, req, &resp_msg);
 		}
 
@@ -871,6 +859,5 @@ void hclge_mbx_handler(struct hclge_dev *hdev)
 	}
 
 	/* Write back CMDQ_RQ header pointer, M7 need this pointer */
-	hclge_write_dev(&hdev->hw, HCLGE_COMM_NIC_CRQ_HEAD_REG,
-			crq->next_to_use);
+	hclge_write_dev(&hdev->hw, HCLGE_NIC_CRQ_HEAD_REG, crq->next_to_use);
 }

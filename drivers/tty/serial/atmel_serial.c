@@ -2098,7 +2098,7 @@ static void atmel_serial_pm(struct uart_port *port, unsigned int state,
 	struct atmel_uart_port *atmel_port = to_atmel_uart_port(port);
 
 	switch (state) {
-	case UART_PM_STATE_ON:
+	case 0:
 		/*
 		 * Enable the peripheral clock for this serial port.
 		 * This is called on uart_open() or a resume event.
@@ -2108,7 +2108,7 @@ static void atmel_serial_pm(struct uart_port *port, unsigned int state,
 		/* re-enable interrupts if we disabled some on suspend */
 		atmel_uart_writel(port, ATMEL_US_IER, atmel_port->backup_imr);
 		break;
-	case UART_PM_STATE_OFF:
+	case 3:
 		/* Back up the interrupt mask and disable all interrupts */
 		atmel_port->backup_imr = atmel_uart_readl(port, ATMEL_US_IMR);
 		atmel_uart_writel(port, ATMEL_US_IDR, -1);
@@ -2493,7 +2493,7 @@ static int atmel_init_port(struct atmel_uart_port *atmel_port,
 	port->fifosize		= 1;
 	port->dev		= &pdev->dev;
 	port->mapbase		= mpdev->resource[0].start;
-	port->irq		= platform_get_irq(mpdev, 0);
+	port->irq		= mpdev->resource[1].start;
 	port->rs485_config	= atmel_config_rs485;
 	port->iso7816_config	= atmel_config_iso7816;
 	port->membase		= NULL;

@@ -133,9 +133,7 @@ static int emac_nway_reset(struct net_device *netdev)
 }
 
 static void emac_get_ringparam(struct net_device *netdev,
-			       struct ethtool_ringparam *ring,
-			       struct kernel_ethtool_ringparam *kernel_ring,
-			       struct netlink_ext_ack *extack)
+			       struct ethtool_ringparam *ring)
 {
 	struct emac_adapter *adpt = netdev_priv(netdev);
 
@@ -146,9 +144,7 @@ static void emac_get_ringparam(struct net_device *netdev,
 }
 
 static int emac_set_ringparam(struct net_device *netdev,
-			      struct ethtool_ringparam *ring,
-			      struct kernel_ethtool_ringparam *kernel_ring,
-			      struct netlink_ext_ack *extack)
+			      struct ethtool_ringparam *ring)
 {
 	struct emac_adapter *adpt = netdev_priv(netdev);
 

@@ -17,13 +17,9 @@ properties:
   compatible:
     const: stericsson,ab8500-fg
 
-  monitored-battery:
-    $ref: /schemas/types.yaml#/definitions/phandle
-    description: phandle to battery node
-
   battery:
     $ref: /schemas/types.yaml#/definitions/phandle
-    deprecated: true
+    description: phandle to battery node
 
   interrupts:
     maxItems: 5
@@ -45,7 +41,7 @@ properties:
 
 required:
   - compatible
-  - monitored-battery
+  - battery
   - interrupts
   - interrupt-names
   - io-channels
@@ -59,7 +55,7 @@ examples:
     pmic {
       fuel-gauge {
         compatible = "stericsson,ab8500-fg";
-        monitored-battery = <&battery>;
+        battery = <&ab8500_battery>;
         interrupts = <24 IRQ_TYPE_LEVEL_HIGH>,
                      <8 IRQ_TYPE_LEVEL_HIGH>,
                      <28 IRQ_TYPE_LEVEL_HIGH>,

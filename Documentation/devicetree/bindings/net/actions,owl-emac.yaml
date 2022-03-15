@@ -51,10 +51,6 @@ properties:
     description:
       Phandle to the device containing custom config.
 
-  mdio:
-    $ref: mdio.yaml#
-    unevaluatedProperties: false
-
 required:
   - compatible
   - reg

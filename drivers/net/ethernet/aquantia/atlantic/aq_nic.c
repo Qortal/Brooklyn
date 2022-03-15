@@ -300,7 +300,6 @@ static bool aq_nic_is_valid_ether_addr(const u8 *addr)
 
 int aq_nic_ndev_register(struct aq_nic_s *self)
 {
-	u8 addr[ETH_ALEN];
 	int err = 0;
 
 	if (!self->ndev) {
@@ -316,29 +315,24 @@ int aq_nic_ndev_register(struct aq_nic_s *self)
 	aq_macsec_init(self);
 #endif
 
-	if (platform_get_ethdev_address(&self->pdev->dev, self->ndev) != 0) {
-		// If DT has none or an invalid one, ask device for MAC address
-		mutex_lock(&self->fwreq_mutex);
-		err = self->aq_fw_ops->get_mac_permanent(self->aq_hw, addr);
-		mutex_unlock(&self->fwreq_mutex);
+	mutex_lock(&self->fwreq_mutex);
+	err = self->aq_fw_ops->get_mac_permanent(self->aq_hw,
+			    self->ndev->dev_addr);
+	mutex_unlock(&self->fwreq_mutex);
+	if (err)
+		goto err_exit;
 
-		if (err)
-			goto err_exit;
-
-		if (is_valid_ether_addr(addr) &&
-		    aq_nic_is_valid_ether_addr(addr)) {
-			eth_hw_addr_set(self->ndev, addr);
-		} else {
-			netdev_warn(self->ndev, "MAC is invalid, will use random.");
-			eth_hw_addr_random(self->ndev);
-		}
+	if (!is_valid_ether_addr(self->ndev->dev_addr) ||
+	    !aq_nic_is_valid_ether_addr(self->ndev->dev_addr)) {
+		netdev_warn(self->ndev, "MAC is invalid, will use random.");
+		eth_hw_addr_random(self->ndev);
 	}
 
 #if defined(AQ_CFG_MAC_ADDR_PERMANENT)
 	{
 		static u8 mac_addr_permanent[] = AQ_CFG_MAC_ADDR_PERMANENT;
 
-		eth_hw_addr_set(self->ndev, mac_addr_permanent);
+		ether_addr_copy(self->ndev->dev_addr, mac_addr_permanent);
 	}
 #endif
 

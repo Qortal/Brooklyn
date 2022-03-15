@@ -319,6 +319,7 @@ struct atomisp_sub_device {
 
 	/* ISP2401 */
 	struct v4l2_ctrl *ion_dev_fd;
+	struct v4l2_ctrl *select_isp_version;
 
 	struct v4l2_ctrl *disable_dz;
 

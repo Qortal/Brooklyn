@@ -585,14 +585,16 @@ static void msgdma_chan_desc_cleanup(struct msgdma_device *mdev)
 	struct msgdma_sw_desc *desc, *next;
 
 	list_for_each_entry_safe(desc, next, &mdev->done_list, node) {
-		struct dmaengine_desc_callback cb;
+		dma_async_tx_callback callback;
+		void *callback_param;
 
 		list_del(&desc->node);
 
-		dmaengine_desc_get_callback(&desc->async_tx, &cb);
-		if (dmaengine_desc_callback_valid(&cb)) {
+		callback = desc->async_tx.callback;
+		callback_param = desc->async_tx.callback_param;
+		if (callback) {
 			spin_unlock(&mdev->lock);
-			dmaengine_desc_callback_invoke(&cb, NULL);
+			callback(callback_param);
 			spin_lock(&mdev->lock);
 		}
 

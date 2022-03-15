@@ -34,7 +34,6 @@
 #include <net/addrconf.h>
 #include <net/l3mdev.h>
 #include <net/fib_rules.h>
-#include <net/sch_generic.h>
 #include <net/netns/generic.h>
 #include <net/netfilter/nf_conntrack.h>
 
@@ -815,9 +814,9 @@ static void vrf_rt6_release(struct net_device *dev, struct net_vrf *vrf)
 	 */
 	if (rt6) {
 		dst = &rt6->dst;
-		dev_replace_track(dst->dev, net->loopback_dev,
-				  &dst->dev_tracker, GFP_KERNEL);
+		dev_put(dst->dev);
 		dst->dev = net->loopback_dev;
+		dev_hold(dst->dev);
 		dst_release(dst);
 	}
 }
@@ -1062,9 +1061,9 @@ static void vrf_rtable_release(struct net_device *dev, struct net_vrf *vrf)
 	 */
 	if (rth) {
 		dst = &rth->dst;
-		dev_replace_track(dst->dev, net->loopback_dev,
-				  &dst->dev_tracker, GFP_KERNEL);
+		dev_put(dst->dev);
 		dst->dev = net->loopback_dev;
+		dev_hold(dst->dev);
 		dst_release(dst);
 	}
 }

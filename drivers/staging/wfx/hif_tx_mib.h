@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Implementation of the host-to-chip MIBs of the hardware API.
+ * Implementation of host-to-chip MIBs of WFxxx Split Mac (WSM) API.
  *
  * Copyright (c) 2017-2020, Silicon Laboratories, Inc.
  * Copyright (c) 2010, ST-Ericsson

@@ -305,6 +305,7 @@ static int __init lance_probe( struct net_device *dev)
 	unsigned long ioaddr;
 
 	struct lance_private	*lp;
+	int 			i;
 	static int 		did_version;
 	volatile unsigned short *ioaddr_probe;
 	unsigned short tmp1, tmp2;
@@ -372,7 +373,8 @@ static int __init lance_probe( struct net_device *dev)
 		   dev->irq);
 
 	/* copy in the ethernet address from the prom */
-	eth_hw_addr_set(dev, idprom->id_ethaddr);
+	for(i = 0; i < 6 ; i++)
+	     dev->dev_addr[i] = idprom->id_ethaddr[i];
 
 	/* tell the card it's ether address, bytes swapped */
 	MEM->init.hwaddr[0] = dev->dev_addr[1];

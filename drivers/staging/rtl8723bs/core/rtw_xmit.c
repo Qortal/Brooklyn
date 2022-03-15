@@ -13,8 +13,7 @@ static u8 RFC1042_OUI[P80211_OUI_LEN] = { 0x00, 0x00, 0x00 };
 static void _init_txservq(struct tx_servq *ptxservq)
 {
 	INIT_LIST_HEAD(&ptxservq->tx_pending);
-	INIT_LIST_HEAD(&ptxservq->sta_pending.queue);
-	spin_lock_init(&ptxservq->sta_pending.lock);
+	_rtw_init_queue(&ptxservq->sta_pending);
 	ptxservq->qcnt = 0;
 }
 
@@ -50,19 +49,13 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 
 	pxmitpriv->adapter = padapter;
 
-	INIT_LIST_HEAD(&pxmitpriv->be_pending.queue);
-	spin_lock_init(&pxmitpriv->be_pending.lock);
-	INIT_LIST_HEAD(&pxmitpriv->bk_pending.queue);
-	spin_lock_init(&pxmitpriv->bk_pending.lock);
-	INIT_LIST_HEAD(&pxmitpriv->vi_pending.queue);
-	spin_lock_init(&pxmitpriv->vi_pending.lock);
-	INIT_LIST_HEAD(&pxmitpriv->vo_pending.queue);
-	spin_lock_init(&pxmitpriv->vo_pending.lock);
-	INIT_LIST_HEAD(&pxmitpriv->bm_pending.queue);
-	spin_lock_init(&pxmitpriv->bm_pending.lock);
+	_rtw_init_queue(&pxmitpriv->be_pending);
+	_rtw_init_queue(&pxmitpriv->bk_pending);
+	_rtw_init_queue(&pxmitpriv->vi_pending);
+	_rtw_init_queue(&pxmitpriv->vo_pending);
+	_rtw_init_queue(&pxmitpriv->bm_pending);
 
-	INIT_LIST_HEAD(&pxmitpriv->free_xmit_queue.queue);
-	spin_lock_init(&pxmitpriv->free_xmit_queue.lock);
+	_rtw_init_queue(&pxmitpriv->free_xmit_queue);
 
 	/*
 	 * Please allocate memory with the sz = (struct xmit_frame) * NR_XMITFRAME,
@@ -103,10 +96,8 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 	pxmitpriv->frag_len = MAX_FRAG_THRESHOLD;
 
 	/* init xmit_buf */
-	INIT_LIST_HEAD(&pxmitpriv->free_xmitbuf_queue.queue);
-	spin_lock_init(&pxmitpriv->free_xmitbuf_queue.lock);
-	INIT_LIST_HEAD(&pxmitpriv->pending_xmitbuf_queue.queue);
-	spin_lock_init(&pxmitpriv->pending_xmitbuf_queue.lock);
+	_rtw_init_queue(&pxmitpriv->free_xmitbuf_queue);
+	_rtw_init_queue(&pxmitpriv->pending_xmitbuf_queue);
 
 	pxmitpriv->pallocated_xmitbuf = vzalloc(NR_XMITBUFF * sizeof(struct xmit_buf) + 4);
 
@@ -154,8 +145,7 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 	pxmitpriv->free_xmitbuf_cnt = NR_XMITBUFF;
 
 	/* init xframe_ext queue,  the same count as extbuf  */
-	INIT_LIST_HEAD(&pxmitpriv->free_xframe_ext_queue.queue);
-	spin_lock_init(&pxmitpriv->free_xframe_ext_queue.lock);
+	_rtw_init_queue(&pxmitpriv->free_xframe_ext_queue);
 
 	pxmitpriv->xframe_ext_alloc_addr = vzalloc(NR_XMIT_EXTBUFF * sizeof(struct xmit_frame) + 4);
 
@@ -188,8 +178,7 @@ s32 _rtw_init_xmit_priv(struct xmit_priv *pxmitpriv, struct adapter *padapter)
 	pxmitpriv->free_xframe_ext_cnt = NR_XMIT_EXTBUFF;
 
 	/*  Init xmit extension buff */
-	INIT_LIST_HEAD(&pxmitpriv->free_xmit_extbuf_queue.queue);
-	spin_lock_init(&pxmitpriv->free_xmit_extbuf_queue.lock);
+	_rtw_init_queue(&pxmitpriv->free_xmit_extbuf_queue);
 
 	pxmitpriv->pallocated_xmit_extbuf = vzalloc(NR_XMIT_EXTBUFF * sizeof(struct xmit_buf) + 4);
 
@@ -2500,7 +2489,7 @@ int rtw_xmit_thread(void *context)
 
 	complete(&padapter->xmitpriv.terminate_xmitthread_comp);
 
-	return 0;
+	thread_exit();
 }
 
 void rtw_sctx_init(struct submit_ctx *sctx, int timeout_ms)

@@ -44,7 +44,8 @@
  */
 
 #include <linux/module.h>
-#include <linux/comedi/comedidev.h>
+#include "../comedidev.h"
+
 #include <linux/delay.h>
 
 /* Offsets of different ports */

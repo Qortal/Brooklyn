@@ -41,8 +41,6 @@
 #include "vchiq-mmal/mmal-parameters.h"
 #include "vchiq-mmal/mmal-vchiq.h"
 
-MODULE_IMPORT_NS(DMA_BUF);
-
 /*
  * Default /dev/videoN node numbers for decode and encode.
  * Deliberately avoid the very low numbers as these are often taken by webcams
@@ -241,6 +239,13 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		.bytesperline_align	= { 32, 32, 32, 32 },
 		.flags			= 0,
 		.mmal_fmt		= MMAL_ENCODING_BGRA,
+		.size_multiplier_x2	= 2,
+	}, {
+		.fourcc			= V4L2_PIX_FMT_RGBA32,
+		.depth			= 32,
+		.bytesperline_align	= { 32, 32, 32, 32 },
+		.flags			= 0,
+		.mmal_fmt		= MMAL_ENCODING_RGBA,
 		.size_multiplier_x2	= 2,
 	}, {
 		/* Bayer formats */
@@ -605,13 +610,6 @@ static const struct bcm2835_codec_fmt supported_formats[] = {
 		.depth			= 0,
 		.flags			= V4L2_FMT_FLAG_COMPRESSED,
 		.mmal_fmt		= MMAL_ENCODING_WVC1,
-	}, {
-		.fourcc			= V4L2_PIX_FMT_RGBA32,
-		.depth			= 32,
-		.bytesperline_align	= { 32, 32, 32, 32 },
-		.flags			= 0,
-		.mmal_fmt		= MMAL_ENCODING_RGBA,
-		.size_multiplier_x2	= 2,
 	}
 };
 

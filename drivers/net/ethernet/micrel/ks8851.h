@@ -427,7 +427,7 @@ struct ks8851_net {
 
 int ks8851_probe_common(struct net_device *netdev, struct device *dev,
 			int msg_en);
-void ks8851_remove_common(struct device *dev);
+int ks8851_remove_common(struct device *dev);
 int ks8851_suspend(struct device *dev);
 int ks8851_resume(struct device *dev);
 

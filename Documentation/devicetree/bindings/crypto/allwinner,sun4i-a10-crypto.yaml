@@ -44,16 +44,6 @@ properties:
       - const: ahb
       - const: mod
 
-  dmas:
-    items:
-      - description: RX DMA Channel
-      - description: TX DMA Channel
-
-  dma-names:
-    items:
-      - const: rx
-      - const: tx
-
   resets:
     maxItems: 1
 

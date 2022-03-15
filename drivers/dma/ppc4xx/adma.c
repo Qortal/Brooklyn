@@ -3240,6 +3240,7 @@ static int ppc440spe_adma_dma2rxor_prep_src(
 		struct ppc440spe_rxor *cursor, int index,
 		int src_cnt, u32 addr)
 {
+	int rval = 0;
 	u32 sign;
 	struct ppc440spe_adma_desc_slot *desc = hdesc;
 	int i;
@@ -3347,7 +3348,7 @@ static int ppc440spe_adma_dma2rxor_prep_src(
 		break;
 	}
 
-	return 0;
+	return rval;
 }
 
 /**

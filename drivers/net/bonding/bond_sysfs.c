@@ -303,18 +303,6 @@ static ssize_t bonding_show_arp_targets(struct device *d,
 static DEVICE_ATTR(arp_ip_target, 0644,
 		   bonding_show_arp_targets, bonding_sysfs_store_option);
 
-/* Show the arp missed max. */
-static ssize_t bonding_show_missed_max(struct device *d,
-				       struct device_attribute *attr,
-				       char *buf)
-{
-	struct bonding *bond = to_bond(d);
-
-	return sprintf(buf, "%u\n", bond->params.missed_max);
-}
-static DEVICE_ATTR(arp_missed_max, 0644,
-		   bonding_show_missed_max, bonding_sysfs_store_option);
-
 /* Show the up and down delays. */
 static ssize_t bonding_show_downdelay(struct device *d,
 				      struct device_attribute *attr,
@@ -791,7 +779,6 @@ static struct attribute *per_bond_attrs[] = {
 	&dev_attr_ad_actor_sys_prio.attr,
 	&dev_attr_ad_actor_system.attr,
 	&dev_attr_ad_user_port_key.attr,
-	&dev_attr_arp_missed_max.attr,
 	NULL,
 };
 
@@ -824,8 +811,8 @@ int bond_create_sysfs(struct bond_net *bn)
 	 */
 	if (ret == -EEXIST) {
 		/* Is someone being kinky and naming a device bonding_master? */
-		if (netdev_name_in_use(bn->net,
-				       class_attr_bonding_masters.attr.name))
+		if (__dev_get_by_name(bn->net,
+				      class_attr_bonding_masters.attr.name))
 			pr_err("network device named %s already exists in sysfs\n",
 			       class_attr_bonding_masters.attr.name);
 		ret = 0;

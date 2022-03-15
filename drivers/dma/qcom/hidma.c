@@ -666,7 +666,7 @@ static void hidma_write_msi_msg(struct msi_desc *desc, struct msi_msg *msg)
 	struct device *dev = msi_desc_to_dev(desc);
 	struct hidma_dev *dmadev = dev_get_drvdata(dev);
 
-	if (!desc->msi_index) {
+	if (!desc->platform.msi_index) {
 		writel(msg->address_lo, dmadev->dev_evca + 0x118);
 		writel(msg->address_hi, dmadev->dev_evca + 0x11C);
 		writel(msg->data, dmadev->dev_evca + 0x120);
@@ -678,13 +678,11 @@ static void hidma_free_msis(struct hidma_dev *dmadev)
 {
 #ifdef CONFIG_GENERIC_MSI_IRQ_DOMAIN
 	struct device *dev = dmadev->ddev.dev;
-	int i, virq;
+	struct msi_desc *desc;
 
-	for (i = 0; i < HIDMA_MSI_INTS; i++) {
-		virq = msi_get_virq(dev, i);
-		if (virq)
-			devm_free_irq(dev, virq, &dmadev->lldev);
-	}
+	/* free allocated MSI interrupts above */
+	for_each_msi_entry(desc, dev)
+		devm_free_irq(dev, desc->irq, &dmadev->lldev);
 
 	platform_msi_domain_free_irqs(dev);
 #endif
@@ -694,37 +692,45 @@ static int hidma_request_msi(struct hidma_dev *dmadev,
 			     struct platform_device *pdev)
 {
 #ifdef CONFIG_GENERIC_MSI_IRQ_DOMAIN
-	int rc, i, virq;
+	int rc;
+	struct msi_desc *desc;
+	struct msi_desc *failed_desc = NULL;
 
 	rc = platform_msi_domain_alloc_irqs(&pdev->dev, HIDMA_MSI_INTS,
 					    hidma_write_msi_msg);
 	if (rc)
 		return rc;
 
-	for (i = 0; i < HIDMA_MSI_INTS; i++) {
-		virq = msi_get_virq(&pdev->dev, i);
-		rc = devm_request_irq(&pdev->dev, virq,
+	for_each_msi_entry(desc, &pdev->dev) {
+		if (!desc->platform.msi_index)
+			dmadev->msi_virqbase = desc->irq;
+
+		rc = devm_request_irq(&pdev->dev, desc->irq,
 				       hidma_chirq_handler_msi,
 				       0, "qcom-hidma-msi",
 				       &dmadev->lldev);
-		if (rc)
+		if (rc) {
+			failed_desc = desc;
 			break;
-		if (!i)
-			dmadev->msi_virqbase = virq;
+		}
 	}
 
 	if (rc) {
 		/* free allocated MSI interrupts above */
-		for (--i; i >= 0; i--) {
-			virq = msi_get_virq(&pdev->dev, i);
-			devm_free_irq(&pdev->dev, virq, &dmadev->lldev);
+		for_each_msi_entry(desc, &pdev->dev) {
+			if (desc == failed_desc)
+				break;
+			devm_free_irq(&pdev->dev, desc->irq,
+				      &dmadev->lldev);
 		}
-		dev_warn(&pdev->dev,
-			 "failed to request MSI irq, falling back to wired IRQ\n");
 	} else {
 		/* Add callback to free MSIs on teardown */
 		hidma_ll_setup_irq(dmadev->lldev, true);
+
 	}
+	if (rc)
+		dev_warn(&pdev->dev,
+			 "failed to request MSI irq, falling back to wired IRQ\n");
 	return rc;
 #else
 	return -EINVAL;

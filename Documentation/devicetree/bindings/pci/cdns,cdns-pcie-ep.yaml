@@ -11,6 +11,7 @@ maintainers:
 
 allOf:
   - $ref: "cdns-pcie-ep.yaml#"
+  - $ref: "pci-ep.yaml#"
 
 properties:
   compatible:

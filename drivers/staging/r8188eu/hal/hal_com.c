@@ -15,7 +15,18 @@ void dump_chip_info(struct HAL_VERSION	chip_vers)
 	uint cnt = 0;
 	char buf[128];
 
-	cnt += sprintf((buf + cnt), "Chip Version Info: CHIP_8188E_");
+	if (IS_81XXC(chip_vers)) {
+		cnt += sprintf((buf + cnt), "Chip Version Info: %s_",
+			       IS_92C_SERIAL(chip_vers) ?
+			       "CHIP_8192C" : "CHIP_8188C");
+	} else if (IS_92D(chip_vers)) {
+		cnt += sprintf((buf + cnt), "Chip Version Info: CHIP_8192D_");
+	} else if (IS_8723_SERIES(chip_vers)) {
+		cnt += sprintf((buf + cnt), "Chip Version Info: CHIP_8723A_");
+	} else if (IS_8188E(chip_vers)) {
+		cnt += sprintf((buf + cnt), "Chip Version Info: CHIP_8188E_");
+	}
+
 	cnt += sprintf((buf + cnt), "%s_", IS_NORMAL_CHIP(chip_vers) ?
 		       "Normal_Chip" : "Test_Chip");
 	cnt += sprintf((buf + cnt), "%s_", IS_CHIP_VENDOR_TSMC(chip_vers) ?
@@ -34,7 +45,15 @@ void dump_chip_info(struct HAL_VERSION	chip_vers)
 		cnt += sprintf((buf + cnt), "UNKNOWN_CUT(%d)_",
 			       chip_vers.CUTVersion);
 
-	cnt += sprintf((buf + cnt), "1T1R_");
+	if (IS_1T1R(chip_vers))
+		cnt += sprintf((buf + cnt), "1T1R_");
+	else if (IS_1T2R(chip_vers))
+		cnt += sprintf((buf + cnt), "1T2R_");
+	else if (IS_2T2R(chip_vers))
+		cnt += sprintf((buf + cnt), "2T2R_");
+	else
+		cnt += sprintf((buf + cnt), "UNKNOWN_RFTYPE(%d)_",
+			       chip_vers.RFType);
 
 	cnt += sprintf((buf + cnt), "RomVer(%d)\n", chip_vers.ROMVer);
 
@@ -281,7 +300,8 @@ bool Hal_MappingOutPipe(struct adapter *adapter, u8 numoutpipe)
 
 void hal_init_macaddr(struct adapter *adapter)
 {
-	SetHwReg8188EU(adapter, HW_VAR_MAC_ADDR, adapter->eeprompriv.mac_addr);
+	rtw_hal_set_hwreg(adapter, HW_VAR_MAC_ADDR,
+			  adapter->eeprompriv.mac_addr);
 }
 
 /*

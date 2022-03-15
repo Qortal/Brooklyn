@@ -220,6 +220,9 @@ struct ionic_queue {
 	unsigned int num_descs;
 	unsigned int max_sg_elems;
 	u64 features;
+	u64 dbell_count;
+	u64 stop;
+	u64 wake;
 	u64 drop;
 	struct ionic_dev *idev;
 	unsigned int type;
@@ -266,6 +269,7 @@ struct ionic_cq {
 	bool done_color;
 	unsigned int num_descs;
 	unsigned int desc_size;
+	u64 compl_count;
 	void *base;
 	dma_addr_t base_pa;
 } ____cacheline_aligned_in_smp;

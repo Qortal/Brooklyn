@@ -246,9 +246,7 @@ qcaspi_get_regs(struct net_device *dev, struct ethtool_regs *regs, void *p)
 }
 
 static void
-qcaspi_get_ringparam(struct net_device *dev, struct ethtool_ringparam *ring,
-		     struct kernel_ethtool_ringparam *kernel_ring,
-		     struct netlink_ext_ack *extack)
+qcaspi_get_ringparam(struct net_device *dev, struct ethtool_ringparam *ring)
 {
 	struct qcaspi *qca = netdev_priv(dev);
 
@@ -259,9 +257,7 @@ qcaspi_get_ringparam(struct net_device *dev, struct ethtool_ringparam *ring,
 }
 
 static int
-qcaspi_set_ringparam(struct net_device *dev, struct ethtool_ringparam *ring,
-		     struct kernel_ethtool_ringparam *kernel_ring,
-		     struct netlink_ext_ack *extack)
+qcaspi_set_ringparam(struct net_device *dev, struct ethtool_ringparam *ring)
 {
 	const struct net_device_ops *ops = dev->netdev_ops;
 	struct qcaspi *qca = netdev_priv(dev);

@@ -1285,7 +1285,7 @@ static unsigned int ican3_get_echo_skb(struct ican3_dev *mod)
 {
 	struct sk_buff *skb = skb_dequeue(&mod->echoq);
 	struct can_frame *cf;
-	u8 dlc = 0;
+	u8 dlc;
 
 	/* this should never trigger unless there is a driver bug */
 	if (!skb) {
@@ -1294,8 +1294,7 @@ static unsigned int ican3_get_echo_skb(struct ican3_dev *mod)
 	}
 
 	cf = (struct can_frame *)skb->data;
-	if (!(cf->can_id & CAN_RTR_FLAG))
-		dlc = cf->len;
+	dlc = cf->len;
 
 	/* check flag whether this packet has to be looped back */
 	if (skb->pkt_type != PACKET_LOOPBACK) {
@@ -1422,8 +1421,7 @@ static int ican3_recv_skb(struct ican3_dev *mod)
 
 	/* update statistics, receive the skb */
 	stats->rx_packets++;
-	if (!(cf->can_id & CAN_RTR_FLAG))
-		stats->rx_bytes += cf->len;
+	stats->rx_bytes += cf->len;
 	netif_receive_skb(skb);
 
 err_noalloc:
@@ -1833,7 +1831,7 @@ static ssize_t termination_show(struct device *dev,
 		return -ETIMEDOUT;
 	}
 
-	return sysfs_emit(buf, "%u\n", mod->termination_enabled);
+	return snprintf(buf, PAGE_SIZE, "%u\n", mod->termination_enabled);
 }
 
 static ssize_t termination_store(struct device *dev,

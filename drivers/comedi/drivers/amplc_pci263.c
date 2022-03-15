@@ -24,7 +24,8 @@
  */
 
 #include <linux/module.h>
-#include <linux/comedi/comedi_pci.h>
+
+#include "../comedi_pci.h"
 
 /* PCI263 registers */
 #define PCI263_DO_0_7_REG	0x00

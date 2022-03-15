@@ -82,9 +82,9 @@
  * struct mvebu_cp110_utmi - PHY driver data
  *
  * @regs: PHY registers
- * @syscon: Regmap with system controller registers
+ * @syscom: Regmap with system controller registers
  * @dev: device driver handle
- * @ops: phy ops
+ * @caps: PHY capabilities
  */
 struct mvebu_cp110_utmi {
 	void __iomem *regs;

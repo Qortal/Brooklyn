@@ -167,20 +167,19 @@ static int dsa_loop_phy_write(struct dsa_switch *ds, int port,
 }
 
 static int dsa_loop_port_bridge_join(struct dsa_switch *ds, int port,
-				     struct dsa_bridge bridge,
-				     bool *tx_fwd_offload)
+				     struct net_device *bridge)
 {
 	dev_dbg(ds->dev, "%s: port: %d, bridge: %s\n",
-		__func__, port, bridge.dev->name);
+		__func__, port, bridge->name);
 
 	return 0;
 }
 
 static void dsa_loop_port_bridge_leave(struct dsa_switch *ds, int port,
-				       struct dsa_bridge bridge)
+				       struct net_device *bridge)
 {
 	dev_dbg(ds->dev, "%s: port: %d, bridge: %s\n",
-		__func__, port, bridge.dev->name);
+		__func__, port, bridge->name);
 }
 
 static void dsa_loop_port_stp_state_set(struct dsa_switch *ds, int port,

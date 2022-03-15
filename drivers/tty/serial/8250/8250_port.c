@@ -1338,7 +1338,7 @@ static void autoconfig(struct uart_8250_port *up)
 	up->tx_loadsz = uart_config[port->type].tx_loadsz;
 
 	if (port->type == PORT_UNKNOWN)
-		goto out_unlock;
+		goto out_lock;
 
 	/*
 	 * Reset the UART.
@@ -1355,7 +1355,7 @@ static void autoconfig(struct uart_8250_port *up)
 	else
 		serial_out(up, UART_IER, 0);
 
-out_unlock:
+out_lock:
 	spin_unlock_irqrestore(&port->lock, flags);
 
 	/*
@@ -2026,7 +2026,7 @@ void serial8250_do_set_mctrl(struct uart_port *port, unsigned int mctrl)
 
 	mcr = serial8250_TIOCM_to_MCR(mctrl);
 
-	mcr |= up->mcr;
+	mcr = (mcr & up->mcr_mask) | up->mcr_force | up->mcr;
 
 	serial8250_out_MCR(up, mcr);
 }
@@ -2707,12 +2707,12 @@ void serial8250_update_uartclk(struct uart_port *port, unsigned int uartclk)
 	mutex_lock(&tport->mutex);
 
 	if (port->uartclk == uartclk)
-		goto out_unlock;
+		goto out_lock;
 
 	port->uartclk = uartclk;
 
 	if (!tty_port_initialized(tport))
-		goto out_unlock;
+		goto out_lock;
 
 	termios = &tty->termios;
 
@@ -2730,7 +2730,7 @@ void serial8250_update_uartclk(struct uart_port *port, unsigned int uartclk)
 	spin_unlock_irqrestore(&port->lock, flags);
 	serial8250_rpm_put(up);
 
-out_unlock:
+out_lock:
 	mutex_unlock(&tport->mutex);
 	up_write(&tty->termios_rwsem);
 	tty_kref_put(tty);
@@ -3092,7 +3092,7 @@ static ssize_t rx_trig_bytes_show(struct device *dev,
 	if (rxtrig_bytes < 0)
 		return rxtrig_bytes;
 
-	return sysfs_emit(buf, "%d\n", rxtrig_bytes);
+	return snprintf(buf, PAGE_SIZE, "%d\n", rxtrig_bytes);
 }
 
 static int do_set_rxtrig(struct tty_port *port, unsigned char bytes)

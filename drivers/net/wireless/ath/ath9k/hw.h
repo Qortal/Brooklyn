@@ -977,8 +977,6 @@ struct ath_hw {
 	bool disable_5ghz;
 
 	const struct firmware *eeprom_blob;
-	u16 *nvmem_blob;	/* devres managed */
-	size_t nvmem_blob_len;
 
 	struct ath_dynack dynack;
 

@@ -370,7 +370,7 @@ u8 rtw_set_802_11_bssid_list_scan(struct adapter *padapter, struct ndis_802_11_s
 	struct	mlme_priv 	*pmlmepriv = &padapter->mlmepriv;
 	u8 res = true;
 
-	if (!padapter) {
+	if (padapter == NULL) {
 		res = false;
 		goto exit;
 	}
@@ -481,7 +481,7 @@ u16 rtw_get_cur_max_rate(struct adapter *adapter)
 		return 0;
 
 	psta = rtw_get_stainfo(&adapter->stapriv, get_bssid(pmlmepriv));
-	if (!psta)
+	if (psta == NULL)
 		return 0;
 
 	short_GI = query_ra_short_GI(psta);

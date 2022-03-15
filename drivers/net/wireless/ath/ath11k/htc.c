@@ -81,8 +81,6 @@ int ath11k_htc_send(struct ath11k_htc *htc,
 	struct ath11k_base *ab = htc->ab;
 	int credits = 0;
 	int ret;
-	bool credit_flow_enabled = (ab->hw_params.credit_flow &&
-				    ep->tx_credit_flow_enabled);
 
 	if (eid >= ATH11K_HTC_EP_COUNT) {
 		ath11k_warn(ab, "Invalid endpoint id: %d\n", eid);
@@ -91,7 +89,7 @@ int ath11k_htc_send(struct ath11k_htc *htc,
 
 	skb_push(skb, sizeof(struct ath11k_htc_hdr));
 
-	if (credit_flow_enabled) {
+	if (ep->tx_credit_flow_enabled) {
 		credits = DIV_ROUND_UP(skb->len, htc->target_credit_size);
 		spin_lock_bh(&htc->tx_lock);
 		if (ep->tx_credits < credits) {
@@ -128,7 +126,7 @@ int ath11k_htc_send(struct ath11k_htc *htc,
 err_unmap:
 	dma_unmap_single(dev, skb_cb->paddr, skb->len, DMA_TO_DEVICE);
 err_credits:
-	if (credit_flow_enabled) {
+	if (ep->tx_credit_flow_enabled) {
 		spin_lock_bh(&htc->tx_lock);
 		ep->tx_credits += credits;
 		ath11k_dbg(ab, ATH11K_DBG_HTC,
@@ -205,25 +203,23 @@ static int ath11k_htc_process_trailer(struct ath11k_htc *htc,
 			break;
 		}
 
-		if (ab->hw_params.credit_flow) {
-			switch (record->hdr.id) {
-			case ATH11K_HTC_RECORD_CREDITS:
-				len = sizeof(struct ath11k_htc_credit_report);
-				if (record->hdr.len < len) {
-					ath11k_warn(ab, "Credit report too long\n");
-					status = -EINVAL;
-					break;
-				}
-				ath11k_htc_process_credit_report(htc,
-								 record->credit_report,
-								 record->hdr.len,
-								 src_eid);
-				break;
-			default:
-				ath11k_warn(ab, "Unhandled record: id:%d length:%d\n",
-					    record->hdr.id, record->hdr.len);
+		switch (record->hdr.id) {
+		case ATH11K_HTC_RECORD_CREDITS:
+			len = sizeof(struct ath11k_htc_credit_report);
+			if (record->hdr.len < len) {
+				ath11k_warn(ab, "Credit report too long\n");
+				status = -EINVAL;
 				break;
 			}
+			ath11k_htc_process_credit_report(htc,
+							 record->credit_report,
+							 record->hdr.len,
+							 src_eid);
+			break;
+		default:
+			ath11k_warn(ab, "Unhandled record: id:%d length:%d\n",
+				    record->hdr.id, record->hdr.len);
+			break;
 		}
 
 		if (status)
@@ -247,29 +243,6 @@ static void ath11k_htc_suspend_complete(struct ath11k_base *ab, bool ack)
 		clear_bit(ATH11K_FLAG_HTC_SUSPEND_COMPLETE, &ab->dev_flags);
 
 	complete(&ab->htc_suspend);
-}
-
-void ath11k_htc_tx_completion_handler(struct ath11k_base *ab,
-				      struct sk_buff *skb)
-{
-	struct ath11k_htc *htc = &ab->htc;
-	struct ath11k_htc_ep *ep;
-	void (*ep_tx_complete)(struct ath11k_base *, struct sk_buff *);
-	u8 eid;
-
-	eid = ATH11K_SKB_CB(skb)->eid;
-	if (eid >= ATH11K_HTC_EP_COUNT)
-		return;
-
-	ep = &htc->endpoint[eid];
-	spin_lock_bh(&htc->tx_lock);
-	ep_tx_complete = ep->ep_ops.ep_tx_complete;
-	spin_unlock_bh(&htc->tx_lock);
-	if (!ep_tx_complete) {
-		dev_kfree_skb_any(skb);
-		return;
-	}
-	ep_tx_complete(htc->ab, skb);
 }
 
 void ath11k_htc_rx_completion_handler(struct ath11k_base *ab,
@@ -634,11 +607,6 @@ int ath11k_htc_connect_service(struct ath11k_htc *htc,
 		disable_credit_flow_ctrl = true;
 	}
 
-	if (!ab->hw_params.credit_flow) {
-		flags |= ATH11K_HTC_CONN_FLAGS_DISABLE_CREDIT_FLOW_CTRL;
-		disable_credit_flow_ctrl = true;
-	}
-
 	req_msg->flags_len = FIELD_PREP(HTC_SVC_MSG_CONNECTIONFLAGS, flags);
 	req_msg->msg_svc_id |= FIELD_PREP(HTC_SVC_MSG_SERVICE_ID,
 					  conn_req->service_id);
@@ -764,10 +732,7 @@ int ath11k_htc_start(struct ath11k_htc *htc)
 	msg->msg_id = FIELD_PREP(HTC_MSG_MESSAGEID,
 				 ATH11K_HTC_MSG_SETUP_COMPLETE_EX_ID);
 
-	if (ab->hw_params.credit_flow)
-		ath11k_dbg(ab, ATH11K_DBG_HTC, "HTC is using TX credit flow control\n");
-	else
-		msg->flags |= ATH11K_GLOBAL_DISABLE_CREDIT_FLOW;
+	ath11k_dbg(ab, ATH11K_DBG_HTC, "HTC is using TX credit flow control\n");
 
 	status = ath11k_htc_send(htc, ATH11K_HTC_EP_0, skb);
 	if (status) {

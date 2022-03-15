@@ -1649,11 +1649,9 @@ failed:
 	return ret;
 }
 
-static void ns83820_getmac(struct ns83820 *dev, struct net_device *ndev)
+static void ns83820_getmac(struct ns83820 *dev, u8 *mac)
 {
-	u8 mac[ETH_ALEN];
 	unsigned i;
-
 	for (i=0; i<3; i++) {
 		u32 data;
 
@@ -1663,10 +1661,9 @@ static void ns83820_getmac(struct ns83820 *dev, struct net_device *ndev)
 		writel(i*2, dev->base + RFCR);
 		data = readl(dev->base + RFDR);
 
-		mac[i * 2] = data;
-		mac[i * 2 + 1] = data >> 8;
+		*mac++ = data;
+		*mac++ = data >> 8;
 	}
-	eth_hw_addr_set(ndev, mac);
 }
 
 static void ns83820_set_multicast(struct net_device *ndev)
@@ -2139,7 +2136,7 @@ static int ns83820_init_one(struct pci_dev *pci_dev,
 	/* Disable Wake On Lan */
 	writel(0, dev->base + WCSR);
 
-	ns83820_getmac(dev, ndev);
+	ns83820_getmac(dev, ndev->dev_addr);
 
 	/* Yes, we support dumb IP checksum on transmit */
 	ndev->features |= NETIF_F_SG;

@@ -15,7 +15,6 @@ int mt76_get_of_eeprom(struct mt76_dev *dev, void *eep, int offset, int len)
 	struct device_node *np = dev->dev->of_node;
 	struct mtd_info *mtd;
 	const __be32 *list;
-	const void *data;
 	const char *part;
 	phandle phandle;
 	int size;
@@ -24,16 +23,6 @@ int mt76_get_of_eeprom(struct mt76_dev *dev, void *eep, int offset, int len)
 
 	if (!np)
 		return -ENOENT;
-
-	data = of_get_property(np, "mediatek,eeprom-data", &size);
-	if (data) {
-		if (size > len)
-			return -EINVAL;
-
-		memcpy(eep, data, size);
-
-		return 0;
-	}
 
 	list = of_get_property(np, "mediatek,mtd-eeprom", &size);
 	if (!list)
@@ -65,13 +54,8 @@ int mt76_get_of_eeprom(struct mt76_dev *dev, void *eep, int offset, int len)
 	offset = be32_to_cpup(list);
 	ret = mtd_read(mtd, offset, len, &retlen, eep);
 	put_mtd_device(mtd);
-	if (mtd_is_bitflip(ret))
-		ret = 0;
-	if (ret) {
-		dev_err(dev->dev, "reading EEPROM from mtd %s failed: %i\n",
-			part, ret);
+	if (ret)
 		goto out_put_node;
-	}
 
 	if (retlen < len) {
 		ret = -EINVAL;
@@ -300,9 +284,6 @@ s8 mt76_get_rate_power_limits(struct mt76_phy *phy,
 		break;
 	case NL80211_BAND_5GHZ:
 		band = '5';
-		break;
-	case NL80211_BAND_6GHZ:
-		band = '6';
 		break;
 	default:
 		return target_power;

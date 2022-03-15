@@ -1186,33 +1186,29 @@ mt7530_port_bridge_flags(struct dsa_switch *ds, int port,
 
 static int
 mt7530_port_bridge_join(struct dsa_switch *ds, int port,
-			struct dsa_bridge bridge, bool *tx_fwd_offload)
+			struct net_device *bridge)
 {
-	struct dsa_port *dp = dsa_to_port(ds, port), *other_dp;
-	u32 port_bitmap = BIT(MT7530_CPU_PORT);
 	struct mt7530_priv *priv = ds->priv;
+	u32 port_bitmap = BIT(MT7530_CPU_PORT);
+	int i;
 
 	mutex_lock(&priv->reg_mutex);
 
-	dsa_switch_for_each_user_port(other_dp, ds) {
-		int other_port = other_dp->index;
-
-		if (dp == other_dp)
-			continue;
-
+	for (i = 0; i < MT7530_NUM_PORTS; i++) {
 		/* Add this port to the port matrix of the other ports in the
 		 * same bridge. If the port is disabled, port matrix is kept
 		 * and not being setup until the port becomes enabled.
 		 */
-		if (!dsa_port_offloads_bridge(other_dp, &bridge))
-			continue;
+		if (dsa_is_user_port(ds, i) && i != port) {
+			if (dsa_to_port(ds, i)->bridge_dev != bridge)
+				continue;
+			if (priv->ports[i].enable)
+				mt7530_set(priv, MT7530_PCR_P(i),
+					   PCR_MATRIX(BIT(port)));
+			priv->ports[i].pm |= PCR_MATRIX(BIT(port));
 
-		if (priv->ports[other_port].enable)
-			mt7530_set(priv, MT7530_PCR_P(other_port),
-				   PCR_MATRIX(BIT(port)));
-		priv->ports[other_port].pm |= PCR_MATRIX(BIT(port));
-
-		port_bitmap |= BIT(other_port);
+			port_bitmap |= BIT(i);
+		}
 	}
 
 	/* Add the all other ports to this port matrix. */
@@ -1240,7 +1236,7 @@ mt7530_port_set_vlan_unaware(struct dsa_switch *ds, int port)
 	/* This is called after .port_bridge_leave when leaving a VLAN-aware
 	 * bridge. Don't set standalone ports to fallback mode.
 	 */
-	if (dsa_port_bridge_dev_get(dsa_to_port(ds, port)))
+	if (dsa_to_port(ds, port)->bridge_dev)
 		mt7530_rmw(priv, MT7530_PCR_P(port), PCR_PORT_VLAN_MASK,
 			   MT7530_PORT_FALLBACK_MODE);
 
@@ -1303,30 +1299,26 @@ mt7530_port_set_vlan_aware(struct dsa_switch *ds, int port)
 
 static void
 mt7530_port_bridge_leave(struct dsa_switch *ds, int port,
-			 struct dsa_bridge bridge)
+			 struct net_device *bridge)
 {
-	struct dsa_port *dp = dsa_to_port(ds, port), *other_dp;
 	struct mt7530_priv *priv = ds->priv;
+	int i;
 
 	mutex_lock(&priv->reg_mutex);
 
-	dsa_switch_for_each_user_port(other_dp, ds) {
-		int other_port = other_dp->index;
-
-		if (dp == other_dp)
-			continue;
-
+	for (i = 0; i < MT7530_NUM_PORTS; i++) {
 		/* Remove this port from the port matrix of the other ports
 		 * in the same bridge. If the port is disabled, port matrix
 		 * is kept and not being setup until the port becomes enabled.
 		 */
-		if (!dsa_port_offloads_bridge(other_dp, &bridge))
-			continue;
-
-		if (priv->ports[other_port].enable)
-			mt7530_clear(priv, MT7530_PCR_P(other_port),
-				     PCR_MATRIX(BIT(port)));
-		priv->ports[other_port].pm &= ~PCR_MATRIX(BIT(port));
+		if (dsa_is_user_port(ds, i) && i != port) {
+			if (dsa_to_port(ds, i)->bridge_dev != bridge)
+				continue;
+			if (priv->ports[i].enable)
+				mt7530_clear(priv, MT7530_PCR_P(i),
+					     PCR_MATRIX(BIT(port)));
+			priv->ports[i].pm &= ~PCR_MATRIX(BIT(port));
+		}
 	}
 
 	/* Set the cpu port to be the only one in the port matrix of

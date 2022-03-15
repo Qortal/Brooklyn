@@ -1820,7 +1820,7 @@ static inline void umac_reset(struct bcm_sysport_priv *priv)
 }
 
 static void umac_set_hw_addr(struct bcm_sysport_priv *priv,
-			     const unsigned char *addr)
+			     unsigned char *addr)
 {
 	u32 mac0 = (addr[0] << 24) | (addr[1] << 16) | (addr[2] << 8) |
 		    addr[3];
@@ -1852,7 +1852,7 @@ static int bcm_sysport_change_mac(struct net_device *dev, void *p)
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EINVAL;
 
-	eth_hw_addr_set(dev, addr->sa_data);
+	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
 
 	/* interface is disabled, changes to MAC will be reflected on next
 	 * open call
@@ -2558,7 +2558,7 @@ static int bcm_sysport_probe(struct platform_device *pdev)
 	}
 
 	/* Initialize netdevice members */
-	ret = of_get_ethdev_address(dn, dev);
+	ret = of_get_mac_address(dn, dev->dev_addr);
 	if (ret) {
 		dev_warn(&pdev->dev, "using random Ethernet MAC\n");
 		eth_hw_addr_random(dev);

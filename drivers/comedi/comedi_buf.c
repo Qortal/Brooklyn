@@ -9,7 +9,8 @@
 
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
-#include <linux/comedi/comedidev.h>
+
+#include "comedidev.h"
 #include "comedi_internal.h"
 
 #ifdef PAGE_KERNEL_NOCACHE

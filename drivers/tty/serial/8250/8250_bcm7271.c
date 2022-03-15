@@ -941,7 +941,7 @@ static int brcmuart_probe(struct platform_device *pdev)
 	struct brcmuart_priv *priv;
 	struct clk *baud_mux_clk;
 	struct uart_8250_port up;
-	int irq;
+	struct resource *irq;
 	void __iomem *membase = NULL;
 	resource_size_t mapbase = 0;
 	u32 clk_rate = 0;
@@ -952,9 +952,11 @@ static int brcmuart_probe(struct platform_device *pdev)
 		"uart", "dma_rx", "dma_tx", "dma_intr2", "dma_arb"
 	};
 
-	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
-		return irq;
+	irq = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
+	if (!irq) {
+		dev_err(dev, "missing irq\n");
+		return -EINVAL;
+	}
 	priv = devm_kzalloc(dev, sizeof(struct brcmuart_priv),
 			GFP_KERNEL);
 	if (!priv)
@@ -1042,7 +1044,7 @@ static int brcmuart_probe(struct platform_device *pdev)
 	up.port.dev = dev;
 	up.port.mapbase = mapbase;
 	up.port.membase = membase;
-	up.port.irq = irq;
+	up.port.irq = irq->start;
 	up.port.handle_irq = brcmuart_handle_irq;
 	up.port.regshift = 2;
 	up.port.iotype = of_device_is_big_endian(np) ?
@@ -1075,7 +1077,7 @@ static int brcmuart_probe(struct platform_device *pdev)
 						   priv->rx_size,
 						   &priv->rx_addr, GFP_KERNEL);
 		if (!priv->rx_bufs) {
-			ret = -ENOMEM;
+			ret = -EINVAL;
 			goto err;
 		}
 		priv->tx_size = UART_XMIT_SIZE;
@@ -1083,7 +1085,7 @@ static int brcmuart_probe(struct platform_device *pdev)
 						  priv->tx_size,
 						  &priv->tx_addr, GFP_KERNEL);
 		if (!priv->tx_buf) {
-			ret = -ENOMEM;
+			ret = -EINVAL;
 			goto err;
 		}
 	}

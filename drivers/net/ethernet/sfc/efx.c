@@ -5,7 +5,6 @@
  * Copyright 2005-2013 Solarflare Communications Inc.
  */
 
-#include <linux/filter.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/netdevice.h>
@@ -137,7 +136,7 @@ static int efx_probe_port(struct efx_nic *efx)
 		return rc;
 
 	/* Initialise MAC address to permanent address */
-	eth_hw_addr_set(efx->net_dev, efx->net_dev->perm_addr);
+	ether_addr_copy(efx->net_dev->dev_addr, efx->net_dev->perm_addr);
 
 	return 0;
 }
@@ -710,7 +709,7 @@ static int efx_register_netdev(struct efx_nic *efx)
 	if (efx_nic_rev(efx) >= EFX_REV_HUNT_A0)
 		net_dev->priv_flags |= IFF_UNICAST_FLT;
 	net_dev->ethtool_ops = &efx_ethtool_ops;
-	netif_set_gso_max_segs(net_dev, EFX_TSO_MAX_SEGS);
+	net_dev->gso_max_segs = EFX_TSO_MAX_SEGS;
 	net_dev->min_mtu = EFX_MIN_MTU;
 	net_dev->max_mtu = EFX_MAX_MTU;
 

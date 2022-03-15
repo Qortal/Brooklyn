@@ -30,7 +30,6 @@
 /*****************************************************************************/
 
 #include <linux/capability.h>
-#include <linux/compat.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/net.h>
@@ -416,7 +415,7 @@ static int hdlcdrv_set_mac_address(struct net_device *dev, void *addr)
 	struct sockaddr *sa = (struct sockaddr *)addr;
 
 	/* addr is an AX.25 shifted ASCII mac address */
-	dev_addr_set(dev, sa->sa_data);
+	memcpy(dev->dev_addr, sa->sa_data, dev->addr_len); 
 	return 0;                                         
 }
 
@@ -676,7 +675,7 @@ static void hdlcdrv_setup(struct net_device *dev)
 	dev->mtu = AX25_DEF_PACLEN;        /* eth_mtu is the default */
 	dev->addr_len = AX25_ADDR_LEN;     /* sizeof an ax.25 address */
 	memcpy(dev->broadcast, &ax25_bcast, AX25_ADDR_LEN);
-	dev_addr_set(dev, (u8 *)&ax25_defaddr);
+	memcpy(dev->dev_addr, &ax25_defaddr, AX25_ADDR_LEN);
 	dev->tx_queue_len = 16;
 }
 

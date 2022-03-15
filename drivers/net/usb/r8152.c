@@ -1571,7 +1571,7 @@ static int __rtl8152_set_mac_address(struct net_device *netdev, void *p,
 
 	mutex_lock(&tp->control);
 
-	eth_hw_addr_set(netdev, addr->sa_data);
+	memcpy(netdev->dev_addr, addr->sa_data, netdev->addr_len);
 
 	ocp_write_byte(tp, MCU_TYPE_PLA, PLA_CRWECR, CRWECR_CONFIG);
 	pla_ocp_write(tp, PLA_IDR, BYTE_EN_SIX_BYTES, 8, addr->sa_data);
@@ -1719,7 +1719,7 @@ static int set_ethernet_addr(struct r8152 *tp, bool in_resume)
 		return ret;
 
 	if (tp->version == RTL_VER_01)
-		eth_hw_addr_set(dev, sa.sa_data);
+		ether_addr_copy(dev->dev_addr, sa.sa_data);
 	else
 		ret = __rtl8152_set_mac_address(dev, &sa, in_resume);
 
@@ -9018,9 +9018,7 @@ static int rtl8152_set_tunable(struct net_device *netdev,
 }
 
 static void rtl8152_get_ringparam(struct net_device *netdev,
-				  struct ethtool_ringparam *ring,
-				  struct kernel_ethtool_ringparam *kernel_ring,
-				  struct netlink_ext_ack *extack)
+				  struct ethtool_ringparam *ring)
 {
 	struct r8152 *tp = netdev_priv(netdev);
 
@@ -9029,9 +9027,7 @@ static void rtl8152_get_ringparam(struct net_device *netdev,
 }
 
 static int rtl8152_set_ringparam(struct net_device *netdev,
-				 struct ethtool_ringparam *ring,
-				 struct kernel_ethtool_ringparam *kernel_ring,
-				 struct netlink_ext_ack *extack)
+				 struct ethtool_ringparam *ring)
 {
 	struct r8152 *tp = netdev_priv(netdev);
 

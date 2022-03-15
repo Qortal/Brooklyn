@@ -2704,7 +2704,7 @@ bnx2_alloc_bad_rbuf(struct bnx2 *bp)
 }
 
 static void
-bnx2_set_mac_addr(struct bnx2 *bp, const u8 *mac_addr, u32 pos)
+bnx2_set_mac_addr(struct bnx2 *bp, u8 *mac_addr, u32 pos)
 {
 	u32 val;
 
@@ -7318,9 +7318,7 @@ static int bnx2_set_coalesce(struct net_device *dev,
 }
 
 static void
-bnx2_get_ringparam(struct net_device *dev, struct ethtool_ringparam *ering,
-		   struct kernel_ethtool_ringparam *kernel_ering,
-		   struct netlink_ext_ack *extack)
+bnx2_get_ringparam(struct net_device *dev, struct ethtool_ringparam *ering)
 {
 	struct bnx2 *bp = netdev_priv(dev);
 
@@ -7391,9 +7389,7 @@ bnx2_change_ring_size(struct bnx2 *bp, u32 rx, u32 tx, bool reset_irq)
 }
 
 static int
-bnx2_set_ringparam(struct net_device *dev, struct ethtool_ringparam *ering,
-		   struct kernel_ethtool_ringparam *kernel_ering,
-		   struct netlink_ext_ack *extack)
+bnx2_set_ringparam(struct net_device *dev, struct ethtool_ringparam *ering)
 {
 	struct bnx2 *bp = netdev_priv(dev);
 	int rc;
@@ -7914,7 +7910,7 @@ bnx2_change_mac_addr(struct net_device *dev, void *p)
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(dev, addr->sa_data);
+	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
 	if (netif_running(dev))
 		bnx2_set_mac_addr(bp, bp->dev->dev_addr, 0);
 
@@ -8578,7 +8574,7 @@ bnx2_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (is_kdump_kernel())
 		bnx2_wait_dma_complete(bp);
 
-	eth_hw_addr_set(dev, bp->mac_addr);
+	memcpy(dev->dev_addr, bp->mac_addr, ETH_ALEN);
 
 	dev->hw_features = NETIF_F_IP_CSUM | NETIF_F_SG |
 		NETIF_F_TSO | NETIF_F_TSO_ECN |

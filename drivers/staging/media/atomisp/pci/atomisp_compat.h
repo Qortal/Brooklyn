@@ -133,6 +133,8 @@ void atomisp_css_get_dis_statistics(struct atomisp_sub_device *asd,
 				    struct atomisp_css_buffer *isp_css_buffer,
 				    struct ia_css_isp_dvs_statistics_map *dvs_map);
 
+int atomisp_css_dequeue_event(struct atomisp_css_event *current_event);
+
 void atomisp_css_temp_pipe_to_pipe_id(struct atomisp_sub_device *asd,
 				      struct atomisp_css_event *current_event);
 

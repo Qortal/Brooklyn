@@ -65,6 +65,7 @@ enum s3c24xx_port_type {
 struct s3c24xx_uart_info {
 	char			*name;
 	enum s3c24xx_port_type	type;
+	unsigned int		has_usi;
 	unsigned int		port_type;
 	unsigned int		fifosize;
 	unsigned long		rx_fifomask;
@@ -1356,6 +1357,28 @@ static int apple_s5l_serial_startup(struct uart_port *port)
 	return ret;
 }
 
+static void exynos_usi_init(struct uart_port *port)
+{
+	struct s3c24xx_uart_port *ourport = to_ourport(port);
+	struct s3c24xx_uart_info *info = ourport->info;
+	unsigned int val;
+
+	if (!info->has_usi)
+		return;
+
+	/* Clear the software reset of USI block (it's set at startup) */
+	val = rd_regl(port, USI_CON);
+	val &= ~USI_CON_RESET_MASK;
+	wr_regl(port, USI_CON, val);
+	udelay(1);
+
+	/* Continuously provide the clock to USI IP w/o gating (for Rx mode) */
+	val = rd_regl(port, USI_OPTION);
+	val &= ~USI_OPTION_HWACG_MASK;
+	val |= USI_OPTION_HWACG_CLKREQ_ON;
+	wr_regl(port, USI_OPTION, val);
+}
+
 /* power power management control */
 
 static void s3c24xx_serial_pm(struct uart_port *port, unsigned int level,
@@ -1382,6 +1405,8 @@ static void s3c24xx_serial_pm(struct uart_port *port, unsigned int level,
 
 		if (!IS_ERR(ourport->baudclk))
 			clk_prepare_enable(ourport->baudclk);
+
+		exynos_usi_init(port);
 		break;
 	default:
 		dev_err(port->dev, "s3c24xx_serial: unknown pm %d\n", level);
@@ -1715,21 +1740,15 @@ s3c24xx_serial_verify_port(struct uart_port *port, struct serial_struct *ser)
 
 static struct console s3c24xx_serial_console;
 
-static void __init s3c24xx_serial_register_console(void)
+static int __init s3c24xx_serial_console_init(void)
 {
 	register_console(&s3c24xx_serial_console);
+	return 0;
 }
-
-static void s3c24xx_serial_unregister_console(void)
-{
-	if (s3c24xx_serial_console.flags & CON_ENABLED)
-		unregister_console(&s3c24xx_serial_console);
-}
+console_initcall(s3c24xx_serial_console_init);
 
 #define S3C24XX_SERIAL_CONSOLE &s3c24xx_serial_console
 #else
-static inline void s3c24xx_serial_register_console(void) { }
-static inline void s3c24xx_serial_unregister_console(void) { }
 #define S3C24XX_SERIAL_CONSOLE NULL
 #endif
 
@@ -2110,6 +2129,8 @@ static int s3c24xx_serial_init_port(struct s3c24xx_uart_port *ourport,
 	ret = s3c24xx_serial_enable_baudclk(ourport);
 	if (ret)
 		pr_warn("uart: failed to enable baudclk\n");
+
+	exynos_usi_init(port);
 
 	/* Keep all interrupts masked and cleared */
 	switch (ourport->info->type) {
@@ -2500,8 +2521,7 @@ s3c24xx_serial_console_write(struct console *co, const char *s,
 	uart_console_write(cons_uart, s, count, s3c24xx_serial_console_putchar);
 }
 
-/* Shouldn't be __init, as it can be instantiated from other module */
-static void
+static void __init
 s3c24xx_serial_get_options(struct uart_port *port, int *baud,
 			   int *parity, int *bits)
 {
@@ -2564,8 +2584,7 @@ s3c24xx_serial_get_options(struct uart_port *port, int *baud,
 	}
 }
 
-/* Shouldn't be __init, as it can be instantiated from other module */
-static int
+static int __init
 s3c24xx_serial_console_setup(struct console *co, char *options)
 {
 	struct uart_port *port;
@@ -2761,10 +2780,11 @@ static struct s3c24xx_serial_drv_data s5pv210_serial_drv_data = {
 #endif
 
 #if defined(CONFIG_ARCH_EXYNOS)
-#define EXYNOS_COMMON_SERIAL_DRV_DATA()				\
+#define EXYNOS_COMMON_SERIAL_DRV_DATA_USI(_has_usi)		\
 	.info = &(struct s3c24xx_uart_info) {			\
 		.name		= "Samsung Exynos UART",	\
 		.type		= TYPE_S3C6400,			\
+		.has_usi	= _has_usi,			\
 		.port_type	= PORT_S3C6400,			\
 		.has_divslot	= 1,				\
 		.rx_fifomask	= S5PV210_UFSTAT_RXMASK,	\
@@ -2784,18 +2804,21 @@ static struct s3c24xx_serial_drv_data s5pv210_serial_drv_data = {
 		.has_fracval	= 1,				\
 	}							\
 
+#define EXYNOS_COMMON_SERIAL_DRV_DATA				\
+	EXYNOS_COMMON_SERIAL_DRV_DATA_USI(0)
+
 static struct s3c24xx_serial_drv_data exynos4210_serial_drv_data = {
-	EXYNOS_COMMON_SERIAL_DRV_DATA(),
+	EXYNOS_COMMON_SERIAL_DRV_DATA,
 	.fifosize = { 256, 64, 16, 16 },
 };
 
 static struct s3c24xx_serial_drv_data exynos5433_serial_drv_data = {
-	EXYNOS_COMMON_SERIAL_DRV_DATA(),
+	EXYNOS_COMMON_SERIAL_DRV_DATA,
 	.fifosize = { 64, 256, 16, 256 },
 };
 
 static struct s3c24xx_serial_drv_data exynos850_serial_drv_data = {
-	EXYNOS_COMMON_SERIAL_DRV_DATA(),
+	EXYNOS_COMMON_SERIAL_DRV_DATA_USI(1),
 	.fifosize = { 256, 64, 64, 64 },
 };
 
@@ -2906,29 +2929,7 @@ static struct platform_driver samsung_serial_driver = {
 	},
 };
 
-static int __init samsung_serial_init(void)
-{
-	int ret;
-
-	s3c24xx_serial_register_console();
-
-	ret = platform_driver_register(&samsung_serial_driver);
-	if (ret) {
-		s3c24xx_serial_unregister_console();
-		return ret;
-	}
-
-	return 0;
-}
-
-static void __exit samsung_serial_exit(void)
-{
-	platform_driver_unregister(&samsung_serial_driver);
-	s3c24xx_serial_unregister_console();
-}
-
-module_init(samsung_serial_init);
-module_exit(samsung_serial_exit);
+module_platform_driver(samsung_serial_driver);
 
 #ifdef CONFIG_SERIAL_SAMSUNG_CONSOLE
 /*

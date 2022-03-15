@@ -307,7 +307,8 @@ static void carl9170_zap_queues(struct ar9170 *ar)
 	for (i = 0; i < ar->hw->queues; i++)
 		ar->tx_stats[i].limit = CARL9170_NUM_TX_LIMIT_HARD;
 
-	bitmap_zero(ar->mem_bitmap, ar->fw.mem_blocks);
+	for (i = 0; i < DIV_ROUND_UP(ar->fw.mem_blocks, BITS_PER_LONG); i++)
+		ar->mem_bitmap[i] = 0;
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(cvif, &ar->vif_list, list) {
@@ -1967,7 +1968,9 @@ int carl9170_register(struct ar9170 *ar)
 	if (WARN_ON(ar->mem_bitmap))
 		return -EINVAL;
 
-	ar->mem_bitmap = bitmap_zalloc(ar->fw.mem_blocks, GFP_KERNEL);
+	ar->mem_bitmap = kcalloc(roundup(ar->fw.mem_blocks, BITS_PER_LONG),
+				 sizeof(unsigned long),
+				 GFP_KERNEL);
 
 	if (!ar->mem_bitmap)
 		return -ENOMEM;
@@ -2082,7 +2085,7 @@ void carl9170_free(struct ar9170 *ar)
 	kfree_skb(ar->rx_failover);
 	ar->rx_failover = NULL;
 
-	bitmap_free(ar->mem_bitmap);
+	kfree(ar->mem_bitmap);
 	ar->mem_bitmap = NULL;
 
 	kfree(ar->survey);

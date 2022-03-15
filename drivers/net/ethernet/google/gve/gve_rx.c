@@ -16,23 +16,19 @@ static void gve_rx_free_buffer(struct device *dev,
 	dma_addr_t dma = (dma_addr_t)(be64_to_cpu(data_slot->addr) &
 				      GVE_DATA_SLOT_ADDR_PAGE_MASK);
 
-	page_ref_sub(page_info->page, page_info->pagecnt_bias - 1);
 	gve_free_page(dev, page_info->page, dma, DMA_FROM_DEVICE);
 }
 
 static void gve_rx_unfill_pages(struct gve_priv *priv, struct gve_rx_ring *rx)
 {
-	u32 slots = rx->mask + 1;
-	int i;
-
 	if (rx->data.raw_addressing) {
+		u32 slots = rx->mask + 1;
+		int i;
+
 		for (i = 0; i < slots; i++)
 			gve_rx_free_buffer(&priv->pdev->dev, &rx->data.page_info[i],
 					   &rx->data.data_ring[i]);
 	} else {
-		for (i = 0; i < slots; i++)
-			page_ref_sub(rx->data.page_info[i].page,
-				     rx->data.page_info[i].pagecnt_bias - 1);
 		gve_unassign_qpl(priv, rx->data.qpl->id);
 		rx->data.qpl = NULL;
 	}
@@ -73,9 +69,6 @@ static void gve_setup_rx_buffer(struct gve_rx_slot_page_info *page_info,
 	page_info->page_offset = 0;
 	page_info->page_address = page_address(page);
 	*slot_addr = cpu_to_be64(addr);
-	/* The page already has 1 ref */
-	page_ref_add(page, INT_MAX - 1);
-	page_info->pagecnt_bias = INT_MAX;
 }
 
 static int gve_rx_alloc_buffer(struct gve_priv *priv, struct device *dev,
@@ -144,16 +137,6 @@ alloc_err:
 	return err;
 }
 
-static void gve_rx_ctx_clear(struct gve_rx_ctx *ctx)
-{
-	ctx->curr_frag_cnt = 0;
-	ctx->total_expected_size = 0;
-	ctx->expected_frag_cnt = 0;
-	ctx->skb_head = NULL;
-	ctx->skb_tail = NULL;
-	ctx->reuse_frags = false;
-}
-
 static int gve_rx_alloc_ring(struct gve_priv *priv, int idx)
 {
 	struct gve_rx_ring *rx = &priv->rx[idx];
@@ -220,12 +203,6 @@ static int gve_rx_alloc_ring(struct gve_priv *priv, int idx)
 	rx->cnt = 0;
 	rx->db_threshold = priv->rx_desc_cnt / 2;
 	rx->desc.seqno = 1;
-
-	/* Allocating half-page buffers allows page-flipping which is faster
-	 * than copying or allocating new pages.
-	 */
-	rx->packet_buffer_size = PAGE_SIZE / 2;
-	gve_rx_ctx_clear(&rx->ctx);
 	gve_rx_add_to_block(priv, idx);
 
 	return 0;
@@ -292,28 +269,18 @@ static enum pkt_hash_types gve_rss_type(__be16 pkt_flags)
 	return PKT_HASH_TYPE_L2;
 }
 
-static u16 gve_rx_ctx_padding(struct gve_rx_ctx *ctx)
-{
-	return (ctx->curr_frag_cnt == 0) ? GVE_RX_PAD : 0;
-}
-
 static struct sk_buff *gve_rx_add_frags(struct napi_struct *napi,
 					struct gve_rx_slot_page_info *page_info,
-					u16 packet_buffer_size, u16 len,
-					struct gve_rx_ctx *ctx)
+					u16 len)
 {
-	u32 offset = page_info->page_offset +  gve_rx_ctx_padding(ctx);
-	struct sk_buff *skb;
+	struct sk_buff *skb = napi_get_frags(napi);
 
-	if (!ctx->skb_head)
-		ctx->skb_head = napi_get_frags(napi);
-
-	if (unlikely(!ctx->skb_head))
+	if (unlikely(!skb))
 		return NULL;
 
-	skb = ctx->skb_head;
-	skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags, page_info->page,
-			offset, len, packet_buffer_size);
+	skb_add_rx_frag(skb, 0, page_info->page,
+			page_info->page_offset +
+			GVE_RX_PAD, len, PAGE_SIZE / 2);
 
 	return skb;
 }
@@ -327,18 +294,23 @@ static void gve_rx_flip_buff(struct gve_rx_slot_page_info *page_info, __be64 *sl
 	*(slot_addr) ^= offset;
 }
 
-static int gve_rx_can_recycle_buffer(struct gve_rx_slot_page_info *page_info)
+static bool gve_rx_can_flip_buffers(struct net_device *netdev)
 {
-	int pagecount = page_count(page_info->page);
+	return PAGE_SIZE == 4096
+		? netdev->mtu + GVE_RX_PAD + ETH_HLEN <= PAGE_SIZE / 2 : false;
+}
+
+static int gve_rx_can_recycle_buffer(struct page *page)
+{
+	int pagecount = page_count(page);
 
 	/* This page is not being used by any SKBs - reuse */
-	if (pagecount == page_info->pagecnt_bias)
+	if (pagecount == 1)
 		return 1;
 	/* This page is still being used by an SKB - we can't reuse */
-	else if (pagecount > page_info->pagecnt_bias)
+	else if (pagecount >= 2)
 		return 0;
-	WARN(pagecount < page_info->pagecnt_bias,
-	     "Pagecount should never be less than the bias.");
+	WARN(pagecount < 1, "Pagecount should never be < 1");
 	return -1;
 }
 
@@ -346,19 +318,19 @@ static struct sk_buff *
 gve_rx_raw_addressing(struct device *dev, struct net_device *netdev,
 		      struct gve_rx_slot_page_info *page_info, u16 len,
 		      struct napi_struct *napi,
-		      union gve_rx_data_slot *data_slot,
-		      u16 packet_buffer_size, struct gve_rx_ctx *ctx)
+		      union gve_rx_data_slot *data_slot)
 {
-	struct sk_buff *skb = gve_rx_add_frags(napi, page_info, packet_buffer_size, len, ctx);
+	struct sk_buff *skb;
 
+	skb = gve_rx_add_frags(napi, page_info, len);
 	if (!skb)
 		return NULL;
 
-	/* Optimistically stop the kernel from freeing the page.
-	 * We will check again in refill to determine if we need to alloc a
-	 * new page.
+	/* Optimistically stop the kernel from freeing the page by increasing
+	 * the page bias. We will check the refcount in refill to determine if
+	 * we need to alloc a new page.
 	 */
-	gve_dec_pagecnt_bias(page_info);
+	get_page(page_info->page);
 
 	return skb;
 }
@@ -369,7 +341,6 @@ gve_rx_qpl(struct device *dev, struct net_device *netdev,
 	   u16 len, struct napi_struct *napi,
 	   union gve_rx_data_slot *data_slot)
 {
-	struct gve_rx_ctx *ctx = &rx->ctx;
 	struct sk_buff *skb;
 
 	/* if raw_addressing mode is not enabled gvnic can only receive into
@@ -377,261 +348,117 @@ gve_rx_qpl(struct device *dev, struct net_device *netdev,
 	 * choice is to copy the data out of it so that we can return it to the
 	 * device.
 	 */
-	if (ctx->reuse_frags) {
-		skb = gve_rx_add_frags(napi, page_info, rx->packet_buffer_size, len, ctx);
+	if (page_info->can_flip) {
+		skb = gve_rx_add_frags(napi, page_info, len);
 		/* No point in recycling if we didn't get the skb */
 		if (skb) {
 			/* Make sure that the page isn't freed. */
-			gve_dec_pagecnt_bias(page_info);
+			get_page(page_info->page);
 			gve_rx_flip_buff(page_info, &data_slot->qpl_offset);
 		}
 	} else {
-		const u16 padding = gve_rx_ctx_padding(ctx);
-
-		skb = gve_rx_copy(netdev, napi, page_info, len, padding, ctx);
+		skb = gve_rx_copy(netdev, napi, page_info, len, GVE_RX_PAD);
 		if (skb) {
 			u64_stats_update_begin(&rx->statss);
-			rx->rx_frag_copy_cnt++;
+			rx->rx_copied_pkt++;
 			u64_stats_update_end(&rx->statss);
 		}
 	}
 	return skb;
 }
 
-#define GVE_PKTCONT_BIT_IS_SET(x) (GVE_RXF_PKT_CONT & (x))
-static u16 gve_rx_get_fragment_size(struct gve_rx_ctx *ctx, struct gve_rx_desc *desc)
+static bool gve_rx(struct gve_rx_ring *rx, struct gve_rx_desc *rx_desc,
+		   netdev_features_t feat, u32 idx)
 {
-	return be16_to_cpu(desc->len) - gve_rx_ctx_padding(ctx);
-}
-
-static bool gve_rx_ctx_init(struct gve_rx_ctx *ctx, struct gve_rx_ring *rx)
-{
-	bool qpl_mode = !rx->data.raw_addressing, packet_size_error = false;
-	bool buffer_error = false, desc_error = false, seqno_error = false;
 	struct gve_rx_slot_page_info *page_info;
 	struct gve_priv *priv = rx->gve;
-	u32 idx = rx->cnt & rx->mask;
-	bool reuse_frags, can_flip;
-	struct gve_rx_desc *desc;
-	u16 packet_size = 0;
-	u16 n_frags = 0;
-	int recycle;
+	struct napi_struct *napi = &priv->ntfy_blocks[rx->ntfy_id].napi;
+	struct net_device *dev = priv->dev;
+	union gve_rx_data_slot *data_slot;
+	struct sk_buff *skb = NULL;
+	dma_addr_t page_bus;
+	u16 len;
 
-	/** In QPL mode, we only flip buffers when all buffers containing the packet
-	 * can be flipped. RDA can_flip decisions will be made later, per frag.
-	 */
-	can_flip = qpl_mode;
-	reuse_frags = can_flip;
-	do {
-		u16 frag_size;
-
-		n_frags++;
-		desc = &rx->desc.desc_ring[idx];
-		desc_error = unlikely(desc->flags_seq & GVE_RXF_ERR) || desc_error;
-		if (GVE_SEQNO(desc->flags_seq) != rx->desc.seqno) {
-			seqno_error = true;
-			netdev_warn(priv->dev,
-				    "RX seqno error: want=%d, got=%d, dropping packet and scheduling reset.",
-				    rx->desc.seqno, GVE_SEQNO(desc->flags_seq));
-		}
-		frag_size = be16_to_cpu(desc->len);
-		packet_size += frag_size;
-		if (frag_size > rx->packet_buffer_size) {
-			packet_size_error = true;
-			netdev_warn(priv->dev,
-				    "RX fragment error: packet_buffer_size=%d, frag_size=%d, droping packet.",
-				    rx->packet_buffer_size, be16_to_cpu(desc->len));
-		}
-		page_info = &rx->data.page_info[idx];
-		if (can_flip) {
-			recycle = gve_rx_can_recycle_buffer(page_info);
-			reuse_frags = reuse_frags && recycle > 0;
-			buffer_error = buffer_error || unlikely(recycle < 0);
-		}
-		idx = (idx + 1) & rx->mask;
-		rx->desc.seqno = gve_next_seqno(rx->desc.seqno);
-	} while (GVE_PKTCONT_BIT_IS_SET(desc->flags_seq));
-
-	prefetch(rx->desc.desc_ring + idx);
-
-	ctx->curr_frag_cnt = 0;
-	ctx->total_expected_size = packet_size - GVE_RX_PAD;
-	ctx->expected_frag_cnt = n_frags;
-	ctx->skb_head = NULL;
-	ctx->reuse_frags = reuse_frags;
-
-	if (ctx->expected_frag_cnt > 1) {
-		u64_stats_update_begin(&rx->statss);
-		rx->rx_cont_packet_cnt++;
-		u64_stats_update_end(&rx->statss);
-	}
-	if (ctx->total_expected_size > priv->rx_copybreak && !ctx->reuse_frags && qpl_mode) {
-		u64_stats_update_begin(&rx->statss);
-		rx->rx_copied_pkt++;
-		u64_stats_update_end(&rx->statss);
-	}
-
-	if (unlikely(buffer_error || seqno_error || packet_size_error)) {
-		gve_schedule_reset(priv);
-		return false;
-	}
-
-	if (unlikely(desc_error)) {
+	/* drop this packet */
+	if (unlikely(rx_desc->flags_seq & GVE_RXF_ERR)) {
 		u64_stats_update_begin(&rx->statss);
 		rx->rx_desc_err_dropped_pkt++;
 		u64_stats_update_end(&rx->statss);
 		return false;
 	}
-	return true;
-}
 
-static struct sk_buff *gve_rx_skb(struct gve_priv *priv, struct gve_rx_ring *rx,
-				  struct gve_rx_slot_page_info *page_info, struct napi_struct *napi,
-				  u16 len, union gve_rx_data_slot *data_slot)
-{
-	struct net_device *netdev = priv->dev;
-	struct gve_rx_ctx *ctx = &rx->ctx;
-	struct sk_buff *skb = NULL;
+	len = be16_to_cpu(rx_desc->len) - GVE_RX_PAD;
+	page_info = &rx->data.page_info[idx];
 
-	if (len <= priv->rx_copybreak && ctx->expected_frag_cnt == 1) {
+	data_slot = &rx->data.data_ring[idx];
+	page_bus = (rx->data.raw_addressing) ?
+			be64_to_cpu(data_slot->addr) & GVE_DATA_SLOT_ADDR_PAGE_MASK :
+			rx->data.qpl->page_buses[idx];
+	dma_sync_single_for_cpu(&priv->pdev->dev, page_bus,
+				PAGE_SIZE, DMA_FROM_DEVICE);
+
+	if (len <= priv->rx_copybreak) {
 		/* Just copy small packets */
-		skb = gve_rx_copy(netdev, napi, page_info, len, GVE_RX_PAD, ctx);
-		if (skb) {
-			u64_stats_update_begin(&rx->statss);
-			rx->rx_copied_pkt++;
-			rx->rx_frag_copy_cnt++;
-			rx->rx_copybreak_pkt++;
-			u64_stats_update_end(&rx->statss);
-		}
+		skb = gve_rx_copy(dev, napi, page_info, len, GVE_RX_PAD);
+		u64_stats_update_begin(&rx->statss);
+		rx->rx_copied_pkt++;
+		rx->rx_copybreak_pkt++;
+		u64_stats_update_end(&rx->statss);
 	} else {
-		if (rx->data.raw_addressing) {
-			int recycle = gve_rx_can_recycle_buffer(page_info);
+		u8 can_flip = gve_rx_can_flip_buffers(dev);
+		int recycle = 0;
 
-			if (unlikely(recycle < 0)) {
-				gve_schedule_reset(priv);
-				return NULL;
+		if (can_flip) {
+			recycle = gve_rx_can_recycle_buffer(page_info->page);
+			if (recycle < 0) {
+				if (!rx->data.raw_addressing)
+					gve_schedule_reset(priv);
+				return false;
 			}
-			page_info->can_flip = recycle;
-			if (page_info->can_flip) {
-				u64_stats_update_begin(&rx->statss);
-				rx->rx_frag_flip_cnt++;
-				u64_stats_update_end(&rx->statss);
-			}
-			skb = gve_rx_raw_addressing(&priv->pdev->dev, netdev,
+		}
+
+		page_info->can_flip = can_flip && recycle;
+		if (rx->data.raw_addressing) {
+			skb = gve_rx_raw_addressing(&priv->pdev->dev, dev,
 						    page_info, len, napi,
-						    data_slot,
-						    rx->packet_buffer_size, ctx);
+						    data_slot);
 		} else {
-			if (ctx->reuse_frags) {
-				u64_stats_update_begin(&rx->statss);
-				rx->rx_frag_flip_cnt++;
-				u64_stats_update_end(&rx->statss);
-			}
-			skb = gve_rx_qpl(&priv->pdev->dev, netdev, rx,
+			skb = gve_rx_qpl(&priv->pdev->dev, dev, rx,
 					 page_info, len, napi, data_slot);
 		}
 	}
-	return skb;
-}
 
-static bool gve_rx(struct gve_rx_ring *rx, netdev_features_t feat,
-		   u64 *packet_size_bytes, u32 *work_done)
-{
-	struct gve_rx_slot_page_info *page_info;
-	struct gve_rx_ctx *ctx = &rx->ctx;
-	union gve_rx_data_slot *data_slot;
-	struct gve_priv *priv = rx->gve;
-	struct gve_rx_desc *first_desc;
-	struct sk_buff *skb = NULL;
-	struct gve_rx_desc *desc;
-	struct napi_struct *napi;
-	dma_addr_t page_bus;
-	u32 work_cnt = 0;
-	void *va;
-	u32 idx;
-	u16 len;
-
-	idx = rx->cnt & rx->mask;
-	first_desc = &rx->desc.desc_ring[idx];
-	desc = first_desc;
-	napi = &priv->ntfy_blocks[rx->ntfy_id].napi;
-
-	if (unlikely(!gve_rx_ctx_init(ctx, rx)))
-		goto skb_alloc_fail;
-
-	while (ctx->curr_frag_cnt < ctx->expected_frag_cnt) {
-		/* Prefetch two packet buffers ahead, we will need it soon. */
-		page_info = &rx->data.page_info[(idx + 2) & rx->mask];
-		va = page_info->page_address + page_info->page_offset;
-
-		prefetch(page_info->page); /* Kernel page struct. */
-		prefetch(va);              /* Packet header. */
-		prefetch(va + 64);         /* Next cacheline too. */
-
-		len = gve_rx_get_fragment_size(ctx, desc);
-
-		page_info = &rx->data.page_info[idx];
-		data_slot = &rx->data.data_ring[idx];
-		page_bus = rx->data.raw_addressing ?
-			   be64_to_cpu(data_slot->addr) - page_info->page_offset :
-			   rx->data.qpl->page_buses[idx];
-		dma_sync_single_for_cpu(&priv->pdev->dev, page_bus, PAGE_SIZE, DMA_FROM_DEVICE);
-
-		skb = gve_rx_skb(priv, rx, page_info, napi, len, data_slot);
-		if (!skb) {
-			u64_stats_update_begin(&rx->statss);
-			rx->rx_skb_alloc_fail++;
-			u64_stats_update_end(&rx->statss);
-			goto skb_alloc_fail;
-		}
-
-		ctx->curr_frag_cnt++;
-		rx->cnt++;
-		idx = rx->cnt & rx->mask;
-		work_cnt++;
-		desc = &rx->desc.desc_ring[idx];
+	if (!skb) {
+		u64_stats_update_begin(&rx->statss);
+		rx->rx_skb_alloc_fail++;
+		u64_stats_update_end(&rx->statss);
+		return false;
 	}
 
 	if (likely(feat & NETIF_F_RXCSUM)) {
 		/* NIC passes up the partial sum */
-		if (first_desc->csum)
+		if (rx_desc->csum)
 			skb->ip_summed = CHECKSUM_COMPLETE;
 		else
 			skb->ip_summed = CHECKSUM_NONE;
-		skb->csum = csum_unfold(first_desc->csum);
+		skb->csum = csum_unfold(rx_desc->csum);
 	}
 
 	/* parse flags & pass relevant info up */
 	if (likely(feat & NETIF_F_RXHASH) &&
-	    gve_needs_rss(first_desc->flags_seq))
-		skb_set_hash(skb, be32_to_cpu(first_desc->rss_hash),
-			     gve_rss_type(first_desc->flags_seq));
+	    gve_needs_rss(rx_desc->flags_seq))
+		skb_set_hash(skb, be32_to_cpu(rx_desc->rss_hash),
+			     gve_rss_type(rx_desc->flags_seq));
 
-	*packet_size_bytes = skb->len + (skb->protocol ? ETH_HLEN : 0);
-	*work_done = work_cnt;
 	skb_record_rx_queue(skb, rx->q_num);
 	if (skb_is_nonlinear(skb))
 		napi_gro_frags(napi);
 	else
 		napi_gro_receive(napi, skb);
-
-	gve_rx_ctx_clear(ctx);
 	return true;
-
-skb_alloc_fail:
-	if (napi->skb)
-		napi_free_frags(napi);
-	*packet_size_bytes = 0;
-	*work_done = ctx->expected_frag_cnt;
-	while (ctx->curr_frag_cnt < ctx->expected_frag_cnt) {
-		rx->cnt++;
-		ctx->curr_frag_cnt++;
-	}
-	gve_rx_ctx_clear(ctx);
-	return false;
 }
 
-bool gve_rx_work_pending(struct gve_rx_ring *rx)
+static bool gve_rx_work_pending(struct gve_rx_ring *rx)
 {
 	struct gve_rx_desc *desc;
 	__be16 flags_seq;
@@ -641,6 +468,8 @@ bool gve_rx_work_pending(struct gve_rx_ring *rx)
 	desc = rx->desc.desc_ring + next_idx;
 
 	flags_seq = desc->flags_seq;
+	/* Make sure we have synchronized the seq no with the device */
+	smp_rmb();
 
 	return (GVE_SEQNO(flags_seq) == rx->desc.seqno);
 }
@@ -672,7 +501,7 @@ static bool gve_rx_refill_buffers(struct gve_priv *priv, struct gve_rx_ring *rx)
 			 * owns half the page it is impossible to tell which half. Either
 			 * the whole page is free or it needs to be replaced.
 			 */
-			int recycle = gve_rx_can_recycle_buffer(page_info);
+			int recycle = gve_rx_can_recycle_buffer(page_info->page);
 
 			if (recycle < 0) {
 				if (!rx->data.raw_addressing)
@@ -684,6 +513,7 @@ static bool gve_rx_refill_buffers(struct gve_priv *priv, struct gve_rx_ring *rx)
 				union gve_rx_data_slot *data_slot =
 						&rx->data.data_ring[idx];
 				struct device *dev = &priv->pdev->dev;
+
 				gve_rx_free_buffer(dev, page_info, data_slot);
 				page_info->page = NULL;
 				if (gve_rx_alloc_buffer(priv, dev, page_info,
@@ -701,20 +531,19 @@ static bool gve_rx_refill_buffers(struct gve_priv *priv, struct gve_rx_ring *rx)
 	return true;
 }
 
-static int gve_clean_rx_done(struct gve_rx_ring *rx, int budget,
-			     netdev_features_t feat)
+bool gve_clean_rx_done(struct gve_rx_ring *rx, int budget,
+		       netdev_features_t feat)
 {
-	u32 work_done = 0, total_packet_cnt = 0, ok_packet_cnt = 0;
 	struct gve_priv *priv = rx->gve;
-	u32 idx = rx->cnt & rx->mask;
+	u32 work_done = 0, packets = 0;
 	struct gve_rx_desc *desc;
+	u32 cnt = rx->cnt;
+	u32 idx = cnt & rx->mask;
 	u64 bytes = 0;
 
-	desc = &rx->desc.desc_ring[idx];
+	desc = rx->desc.desc_ring + idx;
 	while ((GVE_SEQNO(desc->flags_seq) == rx->desc.seqno) &&
 	       work_done < budget) {
-		u64 packet_size_bytes = 0;
-		u32 work_cnt = 0;
 		bool dropped;
 
 		netif_info(priv, rx_status, priv->dev,
@@ -724,57 +553,56 @@ static int gve_clean_rx_done(struct gve_rx_ring *rx, int budget,
 			   "[%d] seqno=%d rx->desc.seqno=%d\n",
 			   rx->q_num, GVE_SEQNO(desc->flags_seq),
 			   rx->desc.seqno);
-
-		dropped = !gve_rx(rx, feat, &packet_size_bytes, &work_cnt);
+		dropped = !gve_rx(rx, desc, feat, idx);
 		if (!dropped) {
-			bytes += packet_size_bytes;
-			ok_packet_cnt++;
+			bytes += be16_to_cpu(desc->len) - GVE_RX_PAD;
+			packets++;
 		}
-		total_packet_cnt++;
-		idx = rx->cnt & rx->mask;
-		desc = &rx->desc.desc_ring[idx];
-		work_done += work_cnt;
+		cnt++;
+		idx = cnt & rx->mask;
+		desc = rx->desc.desc_ring + idx;
+		rx->desc.seqno = gve_next_seqno(rx->desc.seqno);
+		work_done++;
 	}
 
-	if (!work_done && rx->fill_cnt - rx->cnt > rx->db_threshold)
-		return 0;
+	if (!work_done && rx->fill_cnt - cnt > rx->db_threshold)
+		return false;
 
-	if (work_done) {
-		u64_stats_update_begin(&rx->statss);
-		rx->rpackets += ok_packet_cnt;
-		rx->rbytes += bytes;
-		u64_stats_update_end(&rx->statss);
-	}
+	u64_stats_update_begin(&rx->statss);
+	rx->rpackets += packets;
+	rx->rbytes += bytes;
+	u64_stats_update_end(&rx->statss);
+	rx->cnt = cnt;
 
 	/* restock ring slots */
 	if (!rx->data.raw_addressing) {
 		/* In QPL mode buffs are refilled as the desc are processed */
 		rx->fill_cnt += work_done;
-	} else if (rx->fill_cnt - rx->cnt <= rx->db_threshold) {
+	} else if (rx->fill_cnt - cnt <= rx->db_threshold) {
 		/* In raw addressing mode buffs are only refilled if the avail
 		 * falls below a threshold.
 		 */
 		if (!gve_rx_refill_buffers(priv, rx))
-			return 0;
+			return false;
 
 		/* If we were not able to completely refill buffers, we'll want
 		 * to schedule this queue for work again to refill buffers.
 		 */
-		if (rx->fill_cnt - rx->cnt <= rx->db_threshold) {
+		if (rx->fill_cnt - cnt <= rx->db_threshold) {
 			gve_rx_write_doorbell(priv, rx);
-			return budget;
+			return true;
 		}
 	}
 
 	gve_rx_write_doorbell(priv, rx);
-	return total_packet_cnt;
+	return gve_rx_work_pending(rx);
 }
 
-int gve_rx_poll(struct gve_notify_block *block, int budget)
+bool gve_rx_poll(struct gve_notify_block *block, int budget)
 {
 	struct gve_rx_ring *rx = block->rx;
 	netdev_features_t feat;
-	int work_done = 0;
+	bool repoll = false;
 
 	feat = block->napi.dev->features;
 
@@ -783,7 +611,8 @@ int gve_rx_poll(struct gve_notify_block *block, int budget)
 		budget = INT_MAX;
 
 	if (budget > 0)
-		work_done = gve_clean_rx_done(rx, budget, feat);
-
-	return work_done;
+		repoll |= gve_clean_rx_done(rx, budget, feat);
+	else
+		repoll |= gve_rx_work_pending(rx);
+	return repoll;
 }

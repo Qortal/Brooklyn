@@ -508,7 +508,6 @@ static int sundance_probe1(struct pci_dev *pdev,
 	int bar = 1;
 #endif
 	int phy, phy_end, phy_idx = 0;
-	__le16 addr[ETH_ALEN / 2];
 
 	if (pci_enable_device(pdev))
 		return -EIO;
@@ -529,9 +528,8 @@ static int sundance_probe1(struct pci_dev *pdev,
 		goto err_out_res;
 
 	for (i = 0; i < 3; i++)
-		addr[i] =
+		((__le16 *)dev->dev_addr)[i] =
 			cpu_to_le16(eeprom_read(ioaddr, i + EEPROM_SA_OFFSET));
-	eth_hw_addr_set(dev, (u8 *)addr);
 
 	np = netdev_priv(dev);
 	np->ndev = dev;
@@ -1613,7 +1611,7 @@ static int sundance_set_mac_addr(struct net_device *dev, void *data)
 
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EADDRNOTAVAIL;
-	eth_hw_addr_set(dev, addr->sa_data);
+	memcpy(dev->dev_addr, addr->sa_data, ETH_ALEN);
 	__set_mac_addr(dev);
 
 	return 0;

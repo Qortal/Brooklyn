@@ -1,8 +1,8 @@
 .. SPDX-License-Identifier: GPL-2.0
 
-===================================
-Cache on Already Mounted Filesystem
-===================================
+===============================================
+CacheFiles: CACHE ON ALREADY MOUNTED FILESYSTEM
+===============================================
 
 .. Contents:
 

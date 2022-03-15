@@ -54,11 +54,8 @@ static int can_rx_offload_napi_poll(struct napi_struct *napi, int quota)
 		struct can_frame *cf = (struct can_frame *)skb->data;
 
 		work_done++;
-		if (!(cf->can_id & CAN_ERR_FLAG)) {
-			stats->rx_packets++;
-			if (!(cf->can_id & CAN_RTR_FLAG))
-				stats->rx_bytes += cf->len;
-		}
+		stats->rx_packets++;
+		stats->rx_bytes += cf->len;
 		netif_receive_skb(skb);
 	}
 

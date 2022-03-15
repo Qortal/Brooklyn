@@ -14,9 +14,7 @@ properties:
     pattern: "^gpio@[0-9a-f]+$"
 
   compatible:
-    enum:
-      - mstar,msc313-gpio
-      - sstar,ssd20xd-gpio
+    const: mstar,msc313-gpio
 
   reg:
     maxItems: 1

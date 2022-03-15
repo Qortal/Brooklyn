@@ -38,7 +38,6 @@
 #include <linux/xarray.h>
 #include "mlx5_core.h"
 #include "lib/eq.h"
-#include "lib/tout.h"
 
 enum {
 	MLX5_PAGES_CANT_GIVE	= 0,
@@ -63,6 +62,11 @@ struct fw_page {
 	unsigned long		bitmask;
 	struct list_head	list;
 	unsigned int free_count;
+};
+
+enum {
+	MAX_RECLAIM_TIME_MSECS	= 5000,
+	MAX_RECLAIM_VFS_PAGES_TIME_MSECS = 2 * 1000 * 60,
 };
 
 enum {
@@ -637,8 +641,7 @@ static int optimal_reclaimed_pages(void)
 static int mlx5_reclaim_root_pages(struct mlx5_core_dev *dev,
 				   struct rb_root *root, u16 func_id)
 {
-	u64 recl_pages_to_jiffies = msecs_to_jiffies(mlx5_tout_ms(dev, RECLAIM_PAGES));
-	unsigned long end = jiffies + recl_pages_to_jiffies;
+	unsigned long end = jiffies + msecs_to_jiffies(MAX_RECLAIM_TIME_MSECS);
 
 	while (!RB_EMPTY_ROOT(root)) {
 		int nclaimed;
@@ -653,7 +656,7 @@ static int mlx5_reclaim_root_pages(struct mlx5_core_dev *dev,
 		}
 
 		if (nclaimed)
-			end = jiffies + recl_pages_to_jiffies;
+			end = jiffies + msecs_to_jiffies(MAX_RECLAIM_TIME_MSECS);
 
 		if (time_after(jiffies, end)) {
 			mlx5_core_warn(dev, "FW did not return all pages. giving up...\n");
@@ -724,8 +727,7 @@ void mlx5_pagealloc_stop(struct mlx5_core_dev *dev)
 
 int mlx5_wait_for_pages(struct mlx5_core_dev *dev, int *pages)
 {
-	u64 recl_vf_pages_to_jiffies = msecs_to_jiffies(mlx5_tout_ms(dev, RECLAIM_VFS_PAGES));
-	unsigned long end = jiffies + recl_vf_pages_to_jiffies;
+	unsigned long end = jiffies + msecs_to_jiffies(MAX_RECLAIM_VFS_PAGES_TIME_MSECS);
 	int prev_pages = *pages;
 
 	/* In case of internal error we will free the pages manually later */
@@ -741,7 +743,7 @@ int mlx5_wait_for_pages(struct mlx5_core_dev *dev, int *pages)
 			return -ETIMEDOUT;
 		}
 		if (*pages < prev_pages) {
-			end = jiffies + recl_vf_pages_to_jiffies;
+			end = jiffies + msecs_to_jiffies(MAX_RECLAIM_VFS_PAGES_TIME_MSECS);
 			prev_pages = *pages;
 		}
 		msleep(50);

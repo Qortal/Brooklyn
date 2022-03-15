@@ -110,9 +110,7 @@ spider_net_ethtool_nway_reset(struct net_device *netdev)
 
 static void
 spider_net_ethtool_get_ringparam(struct net_device *netdev,
-				 struct ethtool_ringparam *ering,
-				 struct kernel_ethtool_ringparam *kernel_ering,
-				 struct netlink_ext_ack *extack)
+				 struct ethtool_ringparam *ering)
 {
 	struct spider_net_card *card = netdev_priv(netdev);
 

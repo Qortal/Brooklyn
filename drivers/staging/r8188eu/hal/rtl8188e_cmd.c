@@ -49,18 +49,23 @@ static s32 FillH2CCmd_88E(struct adapter *adapt, u8 ElementID, u32 CmdLen, u8 *p
 	u8 h2c_box_num;
 	u32 msgbox_addr;
 	u32 msgbox_ex_addr;
-	struct hal_data_8188e *haldata = &adapt->haldata;
+	struct hal_data_8188e *haldata = GET_HAL_DATA(adapt);
 	u8 cmd_idx, ext_cmd_len;
 	u32 h2c_cmd = 0;
 	u32 h2c_cmd_ex = 0;
+	s32 ret = _FAIL;
 
 	if (!adapt->bFWReady) {
 		DBG_88E("FillH2CCmd_88E(): return H2C cmd because fw is not ready\n");
-		return _FAIL;
+		return ret;
 	}
 
-	if (!pCmdBuffer || CmdLen > RTL88E_MAX_CMD_LEN || adapt->bSurpriseRemoved)
-		return _FAIL;
+	if (!pCmdBuffer)
+		goto exit;
+	if (CmdLen > RTL88E_MAX_CMD_LEN)
+		goto exit;
+	if (adapt->bSurpriseRemoved)
+		goto exit;
 
 	/* pay attention to if  race condition happened in  H2C cmd setting. */
 	do {
@@ -68,7 +73,7 @@ static s32 FillH2CCmd_88E(struct adapter *adapt, u8 ElementID, u32 CmdLen, u8 *p
 
 		if (!_is_fw_read_cmd_down(adapt, h2c_box_num)) {
 			DBG_88E(" fw read cmd failed...\n");
-			return _FAIL;
+			goto exit;
 		}
 
 		*(u8 *)(&h2c_cmd) = ElementID;
@@ -97,14 +102,33 @@ static s32 FillH2CCmd_88E(struct adapter *adapt, u8 ElementID, u32 CmdLen, u8 *p
 
 	} while ((!bcmd_down) && (retry_cnts--));
 
-	return _SUCCESS;
+	ret = _SUCCESS;
+
+exit:
+
+	return ret;
+}
+
+u8 rtl8188e_set_rssi_cmd(struct adapter *adapt, u8 *param)
+{
+	u8 res = _SUCCESS;
+	struct hal_data_8188e *haldata = GET_HAL_DATA(adapt);
+
+	if (haldata->fw_ractrl) {
+		;
+	} else {
+		DBG_88E("==>%s fw dont support RA\n", __func__);
+		res = _FAIL;
+	}
+
+	return res;
 }
 
 u8 rtl8188e_set_raid_cmd(struct adapter *adapt, u32 mask)
 {
 	u8 buf[3];
 	u8 res = _SUCCESS;
-	struct hal_data_8188e *haldata = &adapt->haldata;
+	struct hal_data_8188e *haldata = GET_HAL_DATA(adapt);
 
 	if (haldata->fw_ractrl) {
 		__le32 lmask;
@@ -128,7 +152,7 @@ u8 rtl8188e_set_raid_cmd(struct adapter *adapt, u32 mask)
 /* arg[5] = Short GI */
 void rtl8188e_Add_RateATid(struct adapter *pAdapter, u32 bitmap, u8 arg, u8 rssi_level)
 {
-	struct hal_data_8188e *haldata = &pAdapter->haldata;
+	struct hal_data_8188e *haldata = GET_HAL_DATA(pAdapter);
 
 	u8 macid, raid, short_gi_rate = false;
 
@@ -217,13 +241,14 @@ static void ConstructBeacon(struct adapter *adapt, u8 *pframe, u32 *pLength)
 	struct mlme_ext_priv *pmlmeext = &adapt->mlmeextpriv;
 	struct mlme_ext_info	*pmlmeinfo = &pmlmeext->mlmext_info;
 	struct wlan_bssid_ex		*cur_network = &pmlmeinfo->network;
+	u8 bc_addr[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 
 	pwlanhdr = (struct rtw_ieee80211_hdr *)pframe;
 
 	fctrl = &pwlanhdr->frame_ctl;
 	*(fctrl) = 0;
 
-	eth_broadcast_addr(pwlanhdr->addr1);
+	memcpy(pwlanhdr->addr1, bc_addr, ETH_ALEN);
 	memcpy(pwlanhdr->addr2, myid(&adapt->eeprompriv), ETH_ALEN);
 	memcpy(pwlanhdr->addr3, get_my_bssid(cur_network), ETH_ALEN);
 
@@ -440,6 +465,7 @@ void CheckFwRsvdPageContent(struct adapter *Adapter)
 /*  2009.10.15 by tynli. */
 static void SetFwRsvdPagePkt(struct adapter *adapt, bool bDLFinished)
 {
+	struct hal_data_8188e *haldata;
 	struct xmit_frame	*pmgntframe;
 	struct pkt_attrib	*pattrib;
 	struct xmit_priv *pxmitpriv;
@@ -460,6 +486,7 @@ static void SetFwRsvdPagePkt(struct adapter *adapt, bool bDLFinished)
 		return;
 	}
 
+	haldata = GET_HAL_DATA(adapt);
 	pxmitpriv = &adapt->xmitpriv;
 	pmlmeext = &adapt->mlmeextpriv;
 	pmlmeinfo = &pmlmeext->mlmext_info;
@@ -478,6 +505,7 @@ static void SetFwRsvdPagePkt(struct adapter *adapt, bool bDLFinished)
 	if (PageNeed == 1)
 		PageNeed += 1;
 	PageNum += PageNeed;
+	haldata->FwRsvdPageStartOffset = PageNum;
 
 	BufIndex += PageNeed * 128;
 
@@ -533,7 +561,7 @@ static void SetFwRsvdPagePkt(struct adapter *adapt, bool bDLFinished)
 	pattrib->pktlen = pattrib->last_txcmdsz;
 	memcpy(pmgntframe->buf_addr, ReservedPagePacket, TotalPacketLen);
 
-	rtl8188eu_mgnt_xmit(adapt, pmgntframe);
+	rtw_hal_mgnt_xmit(adapt, pmgntframe);
 
 	DBG_88E("%s: Set RSVD page location to Fw\n", __func__);
 	FillH2CCmd_88E(adapt, H2C_COM_RSVD_PAGE, sizeof(RsvdPageLoc), (u8 *)&RsvdPageLoc);
@@ -544,7 +572,7 @@ exit:
 
 void rtl8188e_set_FwJoinBssReport_cmd(struct adapter *adapt, u8 mstatus)
 {
-	struct hal_data_8188e *haldata = &adapt->haldata;
+	struct hal_data_8188e *haldata = GET_HAL_DATA(adapt);
 	struct mlme_ext_priv *pmlmeext = &adapt->mlmeextpriv;
 	struct mlme_ext_info	*pmlmeinfo = &pmlmeext->mlmext_info;
 	bool	bSendBeacon = false;
@@ -580,7 +608,7 @@ void rtl8188e_set_FwJoinBssReport_cmd(struct adapter *adapt, u8 mstatus)
 		haldata->RegFwHwTxQCtrl &= (~BIT(6));
 
 		/*  Clear beacon valid check bit. */
-		SetHwReg8188EU(adapt, HW_VAR_BCN_VALID, NULL);
+		rtw_hal_set_hwreg(adapt, HW_VAR_BCN_VALID, NULL);
 		DLBcnCount = 0;
 		poll = 0;
 		do {
@@ -591,7 +619,7 @@ void rtl8188e_set_FwJoinBssReport_cmd(struct adapter *adapt, u8 mstatus)
 				yield();
 				/* mdelay(10); */
 				/*  check rsvd page download OK. */
-				GetHwReg8188EU(adapt, HW_VAR_BCN_VALID, (u8 *)(&bcn_valid));
+				rtw_hal_get_hwreg(adapt, HW_VAR_BCN_VALID, (u8 *)(&bcn_valid));
 				poll++;
 			} while (!bcn_valid && (poll % 10) != 0 && !adapt->bSurpriseRemoved && !adapt->bDriverStopped);
 		} while (!bcn_valid && DLBcnCount <= 100 && !adapt->bSurpriseRemoved && !adapt->bDriverStopped);
@@ -625,7 +653,7 @@ void rtl8188e_set_FwJoinBssReport_cmd(struct adapter *adapt, u8 mstatus)
 
 		/*  Update RSVD page location H2C to Fw. */
 		if (bcn_valid) {
-			SetHwReg8188EU(adapt, HW_VAR_BCN_VALID, NULL);
+			rtw_hal_set_hwreg(adapt, HW_VAR_BCN_VALID, NULL);
 			DBG_88E("Set RSVD page location to Fw.\n");
 		}
 
@@ -639,7 +667,8 @@ void rtl8188e_set_FwJoinBssReport_cmd(struct adapter *adapt, u8 mstatus)
 
 void rtl8188e_set_p2p_ps_offload_cmd(struct adapter *adapt, u8 p2p_ps_state)
 {
-	struct hal_data_8188e *haldata = &adapt->haldata;
+#ifdef CONFIG_88EU_P2P
+	struct hal_data_8188e *haldata = GET_HAL_DATA(adapt);
 	struct wifidirect_info	*pwdinfo = &adapt->wdinfo;
 	struct P2P_PS_Offload_t	*p2p_ps_offload = &haldata->p2p_ps_offload;
 	u8 i;
@@ -703,4 +732,6 @@ void rtl8188e_set_p2p_ps_offload_cmd(struct adapter *adapt, u8 p2p_ps_state)
 	}
 
 	FillH2CCmd_88E(adapt, H2C_PS_P2P_OFFLOAD, 1, (u8 *)p2p_ps_offload);
+#endif
+
 }

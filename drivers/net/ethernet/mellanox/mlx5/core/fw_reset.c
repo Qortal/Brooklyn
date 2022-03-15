@@ -3,7 +3,6 @@
 
 #include "fw_reset.h"
 #include "diag/fw_tracer.h"
-#include "lib/tout.h"
 
 enum {
 	MLX5_FW_RESET_FLAGS_RESET_REQUESTED,
@@ -229,6 +228,8 @@ static void mlx5_sync_reset_request_event(struct work_struct *work)
 		mlx5_core_warn(dev, "PCI Sync FW Update Reset Ack. Device reset is expected.\n");
 }
 
+#define MLX5_PCI_LINK_UP_TIMEOUT 2000
+
 static int mlx5_pci_link_toggle(struct mlx5_core_dev *dev)
 {
 	struct pci_bus *bridge_bus = dev->pdev->bus;
@@ -285,7 +286,7 @@ static int mlx5_pci_link_toggle(struct mlx5_core_dev *dev)
 		goto restore;
 	}
 
-	timeout = jiffies + msecs_to_jiffies(mlx5_tout_ms(dev, PCI_TOGGLE));
+	timeout = jiffies + msecs_to_jiffies(MLX5_PCI_LINK_UP_TIMEOUT);
 	do {
 		err = pci_read_config_word(bridge, cap + PCI_EXP_LNKSTA, &reg16);
 		if (err)
@@ -298,8 +299,8 @@ static int mlx5_pci_link_toggle(struct mlx5_core_dev *dev)
 	if (reg16 & PCI_EXP_LNKSTA_DLLLA) {
 		mlx5_core_info(dev, "PCI Link up\n");
 	} else {
-		mlx5_core_err(dev, "PCI link not ready (0x%04x) after %llu ms\n",
-			      reg16, mlx5_tout_ms(dev, PCI_TOGGLE));
+		mlx5_core_err(dev, "PCI link not ready (0x%04x) after %d ms\n",
+			      reg16, MLX5_PCI_LINK_UP_TIMEOUT);
 		err = -ETIMEDOUT;
 	}
 
@@ -394,16 +395,16 @@ static int fw_reset_event_notifier(struct notifier_block *nb, unsigned long acti
 	return NOTIFY_OK;
 }
 
+#define MLX5_FW_RESET_TIMEOUT_MSEC 5000
 int mlx5_fw_reset_wait_reset_done(struct mlx5_core_dev *dev)
 {
-	unsigned long pci_sync_update_timeout = mlx5_tout_ms(dev, PCI_SYNC_UPDATE);
-	unsigned long timeout = msecs_to_jiffies(pci_sync_update_timeout);
+	unsigned long timeout = msecs_to_jiffies(MLX5_FW_RESET_TIMEOUT_MSEC);
 	struct mlx5_fw_reset *fw_reset = dev->priv.fw_reset;
 	int err;
 
 	if (!wait_for_completion_timeout(&fw_reset->done, timeout)) {
-		mlx5_core_warn(dev, "FW sync reset timeout after %lu seconds\n",
-			       pci_sync_update_timeout / 1000);
+		mlx5_core_warn(dev, "FW sync reset timeout after %d seconds\n",
+			       MLX5_FW_RESET_TIMEOUT_MSEC / 1000);
 		err = -ETIMEDOUT;
 		goto out;
 	}

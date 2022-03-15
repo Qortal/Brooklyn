@@ -3478,9 +3478,7 @@ struct wmi_phyerr_event {
 	__le32 num_phyerrs;
 	__le32 tsf_l32;
 	__le32 tsf_u32;
-
-	/* array of struct wmi_phyerr */
-	u8 phyerrs[];
+	struct wmi_phyerr phyerrs[];
 } __packed;
 
 struct wmi_10_4_phyerr_event {

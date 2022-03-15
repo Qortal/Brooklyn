@@ -58,7 +58,6 @@ struct mlx5e_neigh_update_table {
 };
 
 struct mlx5_tc_ct_priv;
-struct mlx5_tc_int_port_priv;
 struct mlx5e_rep_bond;
 struct mlx5e_tc_tun_encap;
 struct mlx5e_post_act;
@@ -99,9 +98,6 @@ struct mlx5_rep_uplink_priv {
 
 	/* tc tunneling encapsulation private data */
 	struct mlx5e_tc_tun_encap *encap;
-
-	/* OVS internal port support */
-	struct mlx5e_tc_int_port_priv *int_port_priv;
 };
 
 struct mlx5e_rep_priv {
@@ -183,13 +179,6 @@ struct mlx5e_decap_entry {
 	struct rcu_head rcu;
 };
 
-struct mlx5e_mpls_info {
-	u32             label;
-	u8              tc;
-	u8              bos;
-	u8              ttl;
-};
-
 struct mlx5e_encap_entry {
 	/* attached neigh hash entry */
 	struct mlx5e_neigh_hash_entry *nhe;
@@ -203,7 +192,6 @@ struct mlx5e_encap_entry {
 	struct list_head route_list;
 	struct mlx5_pkt_reformat *pkt_reformat;
 	const struct ip_tunnel_info *tun_info;
-	struct mlx5e_mpls_info mpls_info;
 	unsigned char h_dest[ETH_ALEN];	/* destination eth addr	*/
 
 	struct net_device *out_dev;

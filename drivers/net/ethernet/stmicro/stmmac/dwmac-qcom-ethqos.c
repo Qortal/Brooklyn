@@ -449,24 +449,6 @@ static void ethqos_fix_mac_speed(void *priv, unsigned int speed)
 	ethqos_configure(ethqos);
 }
 
-static int ethqos_clks_config(void *priv, bool enabled)
-{
-	struct qcom_ethqos *ethqos = priv;
-	int ret = 0;
-
-	if (enabled) {
-		ret = clk_prepare_enable(ethqos->rgmii_clk);
-		if (ret) {
-			dev_err(&ethqos->pdev->dev, "rgmii_clk enable failed\n");
-			return ret;
-		}
-	} else {
-		clk_disable_unprepare(ethqos->rgmii_clk);
-	}
-
-	return ret;
-}
-
 static int qcom_ethqos_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
@@ -485,8 +467,6 @@ static int qcom_ethqos_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "dt configuration failed\n");
 		return PTR_ERR(plat_dat);
 	}
-
-	plat_dat->clks_config = ethqos_clks_config;
 
 	ethqos = devm_kzalloc(&pdev->dev, sizeof(*ethqos), GFP_KERNEL);
 	if (!ethqos) {
@@ -511,7 +491,7 @@ static int qcom_ethqos_probe(struct platform_device *pdev)
 		goto err_mem;
 	}
 
-	ret = ethqos_clks_config(ethqos, true);
+	ret = clk_prepare_enable(ethqos->rgmii_clk);
 	if (ret)
 		goto err_mem;
 
@@ -533,7 +513,7 @@ static int qcom_ethqos_probe(struct platform_device *pdev)
 	return ret;
 
 err_clk:
-	ethqos_clks_config(ethqos, false);
+	clk_disable_unprepare(ethqos->rgmii_clk);
 
 err_mem:
 	stmmac_remove_config_dt(pdev, plat_dat);
@@ -551,7 +531,7 @@ static int qcom_ethqos_remove(struct platform_device *pdev)
 		return -ENODEV;
 
 	ret = stmmac_pltfr_remove(pdev);
-	ethqos_clks_config(ethqos, false);
+	clk_disable_unprepare(ethqos->rgmii_clk);
 
 	return ret;
 }

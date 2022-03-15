@@ -20,7 +20,7 @@
 #include <linux/amd-iommu.h>
 #include <linux/export.h>
 #include <linux/kmemleak.h>
-#include <linux/cc_platform.h>
+#include <linux/mem_encrypt.h>
 #include <linux/iopoll.h>
 #include <asm/pci-direct.h>
 #include <asm/iommu.h>
@@ -122,10 +122,8 @@ struct ivhd_entry {
 	u8 type;
 	u16 devid;
 	u8 flags;
-	struct_group(ext_hid,
-		u32 ext;
-		u32 hidh;
-	);
+	u32 ext;
+	u32 hidh;
 	u64 cid;
 	u8 uidf;
 	u8 uidl;
@@ -658,6 +656,16 @@ static int __init alloc_command_buffer(struct amd_iommu *iommu)
 }
 
 /*
+ * This function restarts event logging in case the IOMMU experienced
+ * an event log buffer overflow.
+ */
+void amd_iommu_restart_event_logging(struct amd_iommu *iommu)
+{
+	iommu_feature_disable(iommu, CONTROL_EVT_LOG_EN);
+	iommu_feature_enable(iommu, CONTROL_EVT_LOG_EN);
+}
+
+/*
  * This function resets the command buffer if the IOMMU stopped fetching
  * commands from it.
  */
@@ -967,7 +975,7 @@ static bool copy_device_table(void)
 		pr_err("The address of old device table is above 4G, not trustworthy!\n");
 		return false;
 	}
-	old_devtb = (cc_platform_has(CC_ATTR_HOST_MEM_ENCRYPT) && is_kdump_kernel())
+	old_devtb = (sme_active() && is_kdump_kernel())
 		    ? (__force void *)ioremap_encrypted(old_devtb_phys,
 							dev_table_size)
 		    : memremap(old_devtb_phys, dev_table_size, MEMREMAP_WB);
@@ -1380,8 +1388,7 @@ static int __init init_iommu_from_acpi(struct amd_iommu *iommu,
 				break;
 			}
 
-			BUILD_BUG_ON(sizeof(e->ext_hid) != ACPIHID_HID_LEN - 1);
-			memcpy(hid, &e->ext_hid, ACPIHID_HID_LEN - 1);
+			memcpy(hid, (u8 *)(&e->ext), ACPIHID_HID_LEN - 1);
 			hid[ACPIHID_HID_LEN - 1] = '\0';
 
 			if (!(*hid)) {
@@ -1524,7 +1531,7 @@ static void amd_iommu_ats_write_check_workaround(struct amd_iommu *iommu)
 }
 
 /*
- * This function glues the initialization function for one IOMMU
+ * This function clues the initialization function for one IOMMU
  * together and also allocates the command buffer and programs the
  * hardware. It does NOT enable the IOMMU. This is done afterwards.
  */
@@ -3046,8 +3053,7 @@ static int __init amd_iommu_init(void)
 
 static bool amd_iommu_sme_check(void)
 {
-	if (!cc_platform_has(CC_ATTR_HOST_MEM_ENCRYPT) ||
-	    (boot_cpu_data.x86 != 0x17))
+	if (!sme_active() || (boot_cpu_data.x86 != 0x17))
 		return true;
 
 	/* For Fam17h, a specific level of support is required */

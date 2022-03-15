@@ -54,10 +54,9 @@ static int meson_rng_probe(struct platform_device *pdev)
 	if (IS_ERR(data->base))
 		return PTR_ERR(data->base);
 
-	data->core_clk = devm_clk_get_optional(dev, "core");
+	data->core_clk = devm_clk_get(dev, "core");
 	if (IS_ERR(data->core_clk))
-		return dev_err_probe(dev, PTR_ERR(data->core_clk),
-				     "Failed to get core clock\n");
+		data->core_clk = NULL;
 
 	if (data->core_clk) {
 		ret = clk_prepare_enable(data->core_clk);

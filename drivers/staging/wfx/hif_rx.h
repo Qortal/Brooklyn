@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Handling of the chip-to-host events (aka indications) of the hardware API.
+ * Implementation of chip-to-host event (aka indications) of WFxxx Split Mac
+ * (WSM) API.
  *
  * Copyright (c) 2017-2019, Silicon Laboratories, Inc.
  * Copyright (c) 2010, ST-Ericsson

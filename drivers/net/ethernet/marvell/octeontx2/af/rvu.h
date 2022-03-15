@@ -101,7 +101,6 @@ struct rvu_block {
 	u64  msixcfg_reg;
 	u64  lfreset_reg;
 	unsigned char name[NAME_SIZE];
-	struct rvu *rvu;
 };
 
 struct nix_mcast {
@@ -397,9 +396,7 @@ struct rvu_fwdata {
 	u64 mcam_addr;
 	u64 mcam_sz;
 	u64 msixtr_base;
-	u32 ptp_ext_clk_rate;
-	u32 ptp_ext_tstamp;
-#define FWDATA_RESERVED_MEM 1022
+#define FWDATA_RESERVED_MEM 1023
 	u64 reserved[FWDATA_RESERVED_MEM];
 #define CGX_MAX         5
 #define CGX_LMACS_MAX   4
@@ -661,8 +658,6 @@ int rvu_lf_reset(struct rvu *rvu, struct rvu_block *block, int lf);
 int rvu_get_blkaddr(struct rvu *rvu, int blktype, u16 pcifunc);
 int rvu_poll_reg(struct rvu *rvu, u64 block, u64 offset, u64 mask, bool zero);
 int rvu_get_num_lbk_chans(void);
-int rvu_get_blkaddr_from_slot(struct rvu *rvu, int blktype, u16 pcifunc,
-			      u16 global_slot, u16 *slot_in_block);
 
 /* RVU HW reg validation */
 enum regmap_block {
@@ -814,11 +809,7 @@ bool is_mcam_entry_enabled(struct rvu *rvu, struct npc_mcam *mcam, int blkaddr,
 			   int index);
 
 /* CPT APIs */
-int rvu_cpt_register_interrupts(struct rvu *rvu);
-void rvu_cpt_unregister_interrupts(struct rvu *rvu);
-int rvu_cpt_lf_teardown(struct rvu *rvu, u16 pcifunc, int blkaddr, int lf,
-			int slot);
-int rvu_cpt_ctx_flush(struct rvu *rvu, u16 pcifunc);
+int rvu_cpt_lf_teardown(struct rvu *rvu, u16 pcifunc, int lf, int slot);
 
 /* CN10K RVU */
 int rvu_set_channels_base(struct rvu *rvu);

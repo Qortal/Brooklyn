@@ -54,7 +54,7 @@ struct mlx5_fpga_device {
 	/* QP Connection resources */
 	struct {
 		u32 pdn;
-		u32 mkey;
+		struct mlx5_core_mkey mkey;
 		struct mlx5_uars_page *uar;
 	} conn_res;
 

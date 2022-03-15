@@ -230,6 +230,7 @@ static struct net_device *vsw_alloc_netdev(u8 hwaddr[],
 {
 	struct net_device *dev;
 	struct vnet_port *port;
+	int i;
 
 	dev = alloc_etherdev_mqs(sizeof(*port), VNET_MAX_TXQS, 1);
 	if (!dev)
@@ -237,8 +238,10 @@ static struct net_device *vsw_alloc_netdev(u8 hwaddr[],
 	dev->needed_headroom = VNET_PACKET_SKIP + 8;
 	dev->needed_tailroom = 8;
 
-	eth_hw_addr_set(dev, hwaddr);
-	ether_addr_copy(dev->perm_addr, dev->dev_addr);
+	for (i = 0; i < ETH_ALEN; i++) {
+		dev->dev_addr[i] = hwaddr[i];
+		dev->perm_addr[i] = dev->dev_addr[i];
+	}
 
 	sprintf(dev->name, "vif%d.%d", (int)handle, (int)port_id);
 

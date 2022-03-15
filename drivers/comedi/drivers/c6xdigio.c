@@ -30,7 +30,8 @@
 #include <linux/timer.h>
 #include <linux/io.h>
 #include <linux/pnp.h>
-#include <linux/comedi/comedidev.h>
+
+#include "../comedidev.h"
 
 /*
  * Register I/O map

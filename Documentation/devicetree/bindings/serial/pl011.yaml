@@ -91,9 +91,6 @@ properties:
       3000ms.
     default: 3000
 
-  resets:
-    maxItems: 1
-
   cts-event-workaround:
     description:
       Enables the (otherwise vendor-specific) workaround for the

@@ -50,7 +50,6 @@ program using kcov:
     #include <sys/mman.h>
     #include <unistd.h>
     #include <fcntl.h>
-    #include <linux/types.h>
 
     #define KCOV_INIT_TRACE			_IOR('c', 1, unsigned long)
     #define KCOV_ENABLE			_IO('c', 100)
@@ -178,8 +177,6 @@ Comparison operands collection is similar to coverage collection:
 	/* Read number of comparisons collected. */
 	n = __atomic_load_n(&cover[0], __ATOMIC_RELAXED);
 	for (i = 0; i < n; i++) {
-		uint64_t ip;
-
 		type = cover[i * KCOV_WORDS_PER_CMP + 1];
 		/* arg1 and arg2 - operands of the comparison. */
 		arg1 = cover[i * KCOV_WORDS_PER_CMP + 2];
@@ -253,8 +250,6 @@ task_struct. However non common handles allow to collect coverage
 selectively from different subsystems.
 
 .. code-block:: c
-
-    /* Same includes and defines as above. */
 
     struct kcov_remote_arg {
 	__u32		trace_mode;

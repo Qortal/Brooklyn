@@ -522,7 +522,7 @@ static void ar9331_sw_phylink_validate(struct dsa_switch *ds, int port,
 			goto unsupported;
 		break;
 	default:
-		linkmode_zero(supported);
+		bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
 		dev_err(ds->dev, "Unsupported port: %i\n", port);
 		return;
 	}
@@ -536,13 +536,15 @@ static void ar9331_sw_phylink_validate(struct dsa_switch *ds, int port,
 	phylink_set(mask, 100baseT_Half);
 	phylink_set(mask, 100baseT_Full);
 
-	linkmode_and(supported, supported, mask);
-	linkmode_and(state->advertising, state->advertising, mask);
+	bitmap_and(supported, supported, mask,
+		   __ETHTOOL_LINK_MODE_MASK_NBITS);
+	bitmap_and(state->advertising, state->advertising, mask,
+		   __ETHTOOL_LINK_MODE_MASK_NBITS);
 
 	return;
 
 unsupported:
-	linkmode_zero(supported);
+	bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
 	dev_err(ds->dev, "Unsupported interface: %d, port: %d\n",
 		state->interface, port);
 }

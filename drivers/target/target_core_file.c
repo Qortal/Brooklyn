@@ -20,7 +20,6 @@
 #include <linux/vmalloc.h>
 #include <linux/falloc.h>
 #include <linux/uio.h>
-#include <linux/scatterlist.h>
 #include <scsi/scsi_proto.h>
 #include <asm/unaligned.h>
 
@@ -245,7 +244,7 @@ struct target_core_file_cmd {
 	struct bio_vec	bvecs[];
 };
 
-static void cmd_rw_aio_complete(struct kiocb *iocb, long ret)
+static void cmd_rw_aio_complete(struct kiocb *iocb, long ret, long ret2)
 {
 	struct target_core_file_cmd *cmd;
 
@@ -303,7 +302,7 @@ fd_execute_rw_aio(struct se_cmd *cmd, struct scatterlist *sgl, u32 sgl_nents,
 		ret = call_read_iter(file, &aio_cmd->iocb, &iter);
 
 	if (ret != -EIOCBQUEUED)
-		cmd_rw_aio_complete(&aio_cmd->iocb, ret);
+		cmd_rw_aio_complete(&aio_cmd->iocb, ret, 0);
 
 	return 0;
 }

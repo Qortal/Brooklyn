@@ -42,11 +42,9 @@ struct mlx4_en_port_stats {
 
 struct mlx4_en_xdp_stats {
 	unsigned long rx_xdp_drop;
-	unsigned long rx_xdp_redirect;
-	unsigned long rx_xdp_redirect_fail;
 	unsigned long rx_xdp_tx;
 	unsigned long rx_xdp_tx_full;
-#define NUM_XDP_STATS		5
+#define NUM_XDP_STATS		3
 };
 
 struct mlx4_en_phy_stats {

@@ -127,13 +127,12 @@ struct phy_drvdata {
 };
 
 /**
- * usb_phy_write_readback() - Write register and read back masked value to
- * confirm it is written
+ * Write register and read back masked value to confirm it is written
  *
- * @phy_dwc3: QCOM DWC3 phy context
- * @offset: register offset.
- * @mask: register bitmask specifying what should be updated
- * @val: value to write.
+ * @base - QCOM DWC3 PHY base virtual address.
+ * @offset - register offset.
+ * @mask - register bitmask specifying what should be updated
+ * @val - value to write.
  */
 static inline void usb_phy_write_readback(struct usb_phy *phy_dwc3,
 					  u32 offset,
@@ -172,11 +171,11 @@ static int wait_for_latch(void __iomem *addr)
 }
 
 /**
- * usb_ss_write_phycreg() - Write SSPHY register
+ * Write SSPHY register
  *
- * @phy_dwc3: QCOM DWC3 phy context
- * @addr: SSPHY address to write.
- * @val: value to write.
+ * @base - QCOM DWC3 PHY base virtual address.
+ * @addr - SSPHY address to write.
+ * @val - value to write.
  */
 static int usb_ss_write_phycreg(struct usb_phy *phy_dwc3,
 				u32 addr, u32 val)
@@ -210,11 +209,10 @@ err_wait:
 }
 
 /**
- * usb_ss_read_phycreg() - Read SSPHY register.
+ * Read SSPHY register.
  *
- * @phy_dwc3: QCOM DWC3 phy context
- * @addr: SSPHY address to read.
- * @val: pointer in which read is store.
+ * @base - QCOM DWC3 PHY base virtual address.
+ * @addr - SSPHY address to read.
  */
 static int usb_ss_read_phycreg(struct usb_phy *phy_dwc3,
 			       u32 addr, u32 *val)

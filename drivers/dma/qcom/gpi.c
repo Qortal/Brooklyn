@@ -2206,8 +2206,10 @@ static int gpi_probe(struct platform_device *pdev)
 
 		/* set up irq */
 		ret = platform_get_irq(pdev, i);
-		if (ret < 0)
+		if (ret < 0) {
+			dev_err(gpi_dev->dev, "platform_get_irq failed for %d:%d\n", i, ret);
 			return ret;
+		}
 		gpii->irq = ret;
 
 		/* set up channel specific register info */

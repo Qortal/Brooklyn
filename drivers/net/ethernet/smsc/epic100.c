@@ -325,7 +325,6 @@ static int epic_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	struct net_device *dev;
 	struct epic_private *ep;
 	int i, ret, option = 0, duplex = 0;
-	__le16 addr[ETH_ALEN / 2];
 	void *ring_space;
 	dma_addr_t ring_dma;
 
@@ -417,8 +416,7 @@ static int epic_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	/* Note: the '175 does not have a serial EEPROM. */
 	for (i = 0; i < 3; i++)
-		addr[i] = cpu_to_le16(er16(LAN0 + i*4));
-	eth_hw_addr_set(dev, (u8 *)addr);
+		((__le16 *)dev->dev_addr)[i] = cpu_to_le16(er16(LAN0 + i*4));
 
 	if (debug > 2) {
 		dev_dbg(&pdev->dev, "EEPROM contents:\n");

@@ -22,11 +22,6 @@
 #define IF_MODE_SPEED_MSK		GENMASK(3, 2)
 #define IF_MODE_HALF_DUPLEX		BIT(4)
 
-struct lynx_pcs {
-	struct phylink_pcs pcs;
-	struct mdio_device *mdio;
-};
-
 enum sgmii_speed {
 	SGMII_SPEED_10		= 0,
 	SGMII_SPEED_100		= 1,
@@ -35,15 +30,6 @@ enum sgmii_speed {
 };
 
 #define phylink_pcs_to_lynx(pl_pcs) container_of((pl_pcs), struct lynx_pcs, pcs)
-#define lynx_to_phylink_pcs(lynx) (&(lynx)->pcs)
-
-struct mdio_device *lynx_get_mdio_device(struct phylink_pcs *pcs)
-{
-	struct lynx_pcs *lynx = phylink_pcs_to_lynx(pcs);
-
-	return lynx->mdio;
-}
-EXPORT_SYMBOL(lynx_get_mdio_device);
 
 static void lynx_pcs_get_state_usxgmii(struct mdio_device *pcs,
 				       struct phylink_link_state *state)
@@ -343,27 +329,25 @@ static const struct phylink_pcs_ops lynx_pcs_phylink_ops = {
 	.pcs_link_up = lynx_pcs_link_up,
 };
 
-struct phylink_pcs *lynx_pcs_create(struct mdio_device *mdio)
+struct lynx_pcs *lynx_pcs_create(struct mdio_device *mdio)
 {
-	struct lynx_pcs *lynx;
+	struct lynx_pcs *lynx_pcs;
 
-	lynx = kzalloc(sizeof(*lynx), GFP_KERNEL);
-	if (!lynx)
+	lynx_pcs = kzalloc(sizeof(*lynx_pcs), GFP_KERNEL);
+	if (!lynx_pcs)
 		return NULL;
 
-	lynx->mdio = mdio;
-	lynx->pcs.ops = &lynx_pcs_phylink_ops;
-	lynx->pcs.poll = true;
+	lynx_pcs->mdio = mdio;
+	lynx_pcs->pcs.ops = &lynx_pcs_phylink_ops;
+	lynx_pcs->pcs.poll = true;
 
-	return lynx_to_phylink_pcs(lynx);
+	return lynx_pcs;
 }
 EXPORT_SYMBOL(lynx_pcs_create);
 
-void lynx_pcs_destroy(struct phylink_pcs *pcs)
+void lynx_pcs_destroy(struct lynx_pcs *pcs)
 {
-	struct lynx_pcs *lynx = phylink_pcs_to_lynx(pcs);
-
-	kfree(lynx);
+	kfree(pcs);
 }
 EXPORT_SYMBOL(lynx_pcs_destroy);
 

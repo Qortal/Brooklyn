@@ -24,9 +24,6 @@ properties:
   compatible:
     const: brcm,nvram
 
-  reg:
-    maxItems: 1
-
 unevaluatedProperties: false
 
 examples:

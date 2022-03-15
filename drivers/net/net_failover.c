@@ -748,7 +748,8 @@ struct failover *net_failover_create(struct net_device *standby_dev)
 	failover_dev->hw_features |= NETIF_F_GSO_ENCAP_ALL;
 	failover_dev->features |= failover_dev->hw_features;
 
-	dev_addr_set(failover_dev, standby_dev->dev_addr);
+	memcpy(failover_dev->dev_addr, standby_dev->dev_addr,
+	       failover_dev->addr_len);
 
 	failover_dev->min_mtu = standby_dev->min_mtu;
 	failover_dev->max_mtu = standby_dev->max_mtu;

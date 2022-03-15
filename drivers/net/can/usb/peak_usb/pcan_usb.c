@@ -8,7 +8,6 @@
  *
  * Many thanks to Klaus Hitschler <klaus.hitschler@gmx.de>
  */
-#include <asm/unaligned.h>
 #include <linux/netdevice.h>
 #include <linux/usb.h>
 #include <linux/module.h>
@@ -521,6 +520,8 @@ static int pcan_usb_decode_error(struct pcan_usb_msg_context *mc, u8 n,
 				     &hwts->hwtstamp);
 	}
 
+	mc->netdev->stats.rx_packets++;
+	mc->netdev->stats.rx_bytes += cf->len;
 	netif_rx(skb);
 
 	return 0;
@@ -677,16 +678,15 @@ static int pcan_usb_decode_data(struct pcan_usb_msg_context *mc, u8 status_len)
 		/* Ignore next byte (client private id) if SRR bit is set */
 		if (can_id_flags & PCAN_USB_TX_SRR)
 			mc->ptr++;
-
-		/* update statistics */
-		mc->netdev->stats.rx_bytes += cf->len;
 	}
-	mc->netdev->stats.rx_packets++;
 
 	/* convert timestamp into kernel time */
 	hwts = skb_hwtstamps(skb);
 	peak_usb_get_ts_time(&mc->pdev->time_ref, mc->ts16, &hwts->hwtstamp);
 
+	/* update statistics */
+	mc->netdev->stats.rx_packets++;
+	mc->netdev->stats.rx_bytes += cf->len;
 	/* push the skb */
 	netif_rx(skb);
 
@@ -883,11 +883,6 @@ static int pcan_usb_init(struct peak_usb_device *dev)
 		return err;
 	}
 
-	dev_info(dev->netdev->dev.parent,
-		 "PEAK-System %s adapter hwrev %u serial %08X (%u channel)\n",
-		 pcan_usb.name, dev->device_rev, serial_number,
-		 pcan_usb.ctrl_count);
-
 	/* Since rev 4.1, PCAN-USB is able to make single-shot as well as
 	 * looped back frames.
 	 */
@@ -900,6 +895,11 @@ static int pcan_usb_init(struct peak_usb_device *dev)
 		dev_info(dev->netdev->dev.parent,
 			 "Firmware update available. Please contact support@peak-system.com\n");
 	}
+
+	dev_info(dev->netdev->dev.parent,
+		 "PEAK-System %s adapter hwrev %u serial %08X (%u channel)\n",
+		 pcan_usb.name, dev->device_rev, serial_number,
+		 pcan_usb.ctrl_count);
 
 	return 0;
 }

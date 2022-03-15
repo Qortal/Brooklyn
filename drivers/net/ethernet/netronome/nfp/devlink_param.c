@@ -233,8 +233,13 @@ int nfp_devlink_params_register(struct nfp_pf *pf)
 	if (err <= 0)
 		return err;
 
-	return devlink_params_register(devlink, nfp_devlink_params,
-				       ARRAY_SIZE(nfp_devlink_params));
+	err = devlink_params_register(devlink, nfp_devlink_params,
+				      ARRAY_SIZE(nfp_devlink_params));
+	if (err)
+		return err;
+
+	devlink_params_publish(devlink);
+	return 0;
 }
 
 void nfp_devlink_params_unregister(struct nfp_pf *pf)

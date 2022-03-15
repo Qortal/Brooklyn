@@ -129,6 +129,7 @@ static irqreturn_t dpaa2_ptp_irq_handler_thread(int irq, void *priv)
 static int dpaa2_ptp_probe(struct fsl_mc_device *mc_dev)
 {
 	struct device *dev = &mc_dev->dev;
+	struct fsl_mc_device_irq *irq;
 	struct ptp_qoriq *ptp_qoriq;
 	struct device_node *node;
 	void __iomem *base;
@@ -176,7 +177,8 @@ static int dpaa2_ptp_probe(struct fsl_mc_device *mc_dev)
 		goto err_unmap;
 	}
 
-	ptp_qoriq->irq = mc_dev->irqs[0]->virq;
+	irq = mc_dev->irqs[0];
+	ptp_qoriq->irq = irq->msi_desc->irq;
 
 	err = request_threaded_irq(ptp_qoriq->irq, NULL,
 				   dpaa2_ptp_irq_handler_thread,

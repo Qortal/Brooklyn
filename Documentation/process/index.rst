@@ -27,7 +27,6 @@ Below are the essential guides that every developer should read.
    submitting-patches
    programming-language
    coding-style
-   maintainer-handbooks
    maintainer-pgp-guide
    email-clients
    kernel-enforcement-statement

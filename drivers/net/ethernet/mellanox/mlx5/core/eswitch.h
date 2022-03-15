@@ -51,7 +51,6 @@
 enum mlx5_mapped_obj_type {
 	MLX5_MAPPED_OBJ_CHAIN,
 	MLX5_MAPPED_OBJ_SAMPLE,
-	MLX5_MAPPED_OBJ_INT_PORT_METADATA,
 };
 
 struct mlx5_mapped_obj {
@@ -64,7 +63,6 @@ struct mlx5_mapped_obj {
 			u32 trunc_size;
 			u32 tunnel_id;
 		} sample;
-		u32 int_port_metadata;
 	};
 };
 
@@ -90,7 +88,6 @@ enum {
 	MAPPING_TYPE_TUNNEL_ENC_OPTS,
 	MAPPING_TYPE_LABELS,
 	MAPPING_TYPE_ZONE,
-	MAPPING_TYPE_INT_PORT,
 };
 
 struct vport_ingress {
@@ -308,14 +305,10 @@ struct mlx5_eswitch {
 	atomic64_t user_count;
 
 	struct {
+		bool            enabled;
 		u32             root_tsar_ix;
 		struct mlx5_esw_rate_group *group0;
 		struct list_head groups; /* Protected by esw->state_lock */
-
-		/* Protected by esw->state_lock.
-		 * Initially 0, meaning no QoS users and QoS is disabled.
-		 */
-		refcount_t refcnt;
 	} qos;
 
 	struct mlx5_esw_bridge_offloads *br_offloads;
@@ -440,7 +433,7 @@ enum mlx5_flow_match_level {
 };
 
 /* current maximum for flow based vport multicasting */
-#define MLX5_MAX_FLOW_FWD_VPORTS 32
+#define MLX5_MAX_FLOW_FWD_VPORTS 2
 
 enum {
 	MLX5_ESW_DEST_ENCAP         = BIT(0),
@@ -454,22 +447,12 @@ enum {
 	MLX5_ESW_ATTR_FLAG_NO_IN_PORT    = BIT(2),
 	MLX5_ESW_ATTR_FLAG_SRC_REWRITE   = BIT(3),
 	MLX5_ESW_ATTR_FLAG_SAMPLE        = BIT(4),
-	MLX5_ESW_ATTR_FLAG_ACCEPT        = BIT(5),
 };
-
-/* Returns true if any of the flags that require skipping further TC/NF processing are set. */
-static inline bool
-mlx5_esw_attr_flags_skip(u32 attr_flags)
-{
-	return attr_flags & (MLX5_ESW_ATTR_FLAG_SLOW_PATH | MLX5_ESW_ATTR_FLAG_ACCEPT);
-}
 
 struct mlx5_esw_flow_attr {
 	struct mlx5_eswitch_rep *in_rep;
 	struct mlx5_core_dev	*in_mdev;
 	struct mlx5_core_dev    *counter_dev;
-	struct mlx5e_tc_int_port *dest_int_port;
-	struct mlx5e_tc_int_port *int_port;
 
 	int split_count;
 	int out_count;
@@ -516,6 +499,11 @@ int mlx5_eswitch_del_vlan_action(struct mlx5_eswitch *esw,
 				 struct mlx5_flow_attr *attr);
 int __mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw,
 				  u16 vport, u16 vlan, u8 qos, u8 set_flags);
+
+static inline bool mlx5_esw_qos_enabled(struct mlx5_eswitch *esw)
+{
+	return esw->qos.enabled;
+}
 
 static inline bool mlx5_eswitch_vlan_actions_supported(struct mlx5_core_dev *dev,
 						       u8 vlan_depth)

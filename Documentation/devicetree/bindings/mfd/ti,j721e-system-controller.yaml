@@ -20,7 +20,7 @@ description: |
 
 maintainers:
   - Kishon Vijay Abraham I <kishon@ti.com>
-  - Roger Quadros <rogerq@kernel.org>
+  - Roger Quadros <rogerq@ti.com
 
 properties:
   compatible:

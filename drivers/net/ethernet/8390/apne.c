@@ -320,7 +320,8 @@ static int __init apne_probe1(struct net_device *dev, int ioaddr)
     i = request_irq(dev->irq, apne_interrupt, IRQF_SHARED, DRV_NAME, dev);
     if (i) return i;
 
-    eth_hw_addr_set(dev, SA_prom);
+    for (i = 0; i < ETH_ALEN; i++)
+	dev->dev_addr[i] = SA_prom[i];
 
     pr_cont(" %pM\n", dev->dev_addr);
 

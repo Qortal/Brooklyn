@@ -9706,7 +9706,7 @@ int t4_port_init(struct adapter *adap, int mbox, int pf, int vf)
 		if (ret)
 			return ret;
 
-		eth_hw_addr_set(adap->port[i], addr);
+		memcpy(adap->port[i]->dev_addr, addr, ETH_ALEN);
 		j++;
 	}
 	return 0;

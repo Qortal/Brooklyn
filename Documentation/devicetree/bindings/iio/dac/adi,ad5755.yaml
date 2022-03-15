@@ -125,6 +125,7 @@ oneOf:
 
 examples:
   - |
+    #include <dt-bindings/iio/adi,ad5592r.h>
     spi {
         #address-cells = <1>;
         #size-cells = <0>;

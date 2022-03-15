@@ -266,7 +266,9 @@ static bool ipa_mem_valid(struct ipa *ipa, const struct ipa_mem_data *mem_data)
 	}
 
 	/* Now see if any required regions are not defined */
-	for_each_clear_bit(mem_id, regions, IPA_MEM_COUNT) {
+	for (mem_id = find_first_zero_bit(regions, IPA_MEM_COUNT);
+	     mem_id < IPA_MEM_COUNT;
+	     mem_id = find_next_zero_bit(regions, IPA_MEM_COUNT, mem_id + 1)) {
 		if (ipa_mem_id_required(ipa, mem_id))
 			dev_err(dev, "required memory region %u missing\n",
 				mem_id);

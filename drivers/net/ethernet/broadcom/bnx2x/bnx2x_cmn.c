@@ -25,7 +25,6 @@
 #include <linux/ip.h>
 #include <linux/crash_dump.h>
 #include <net/tcp.h>
-#include <net/gro.h>
 #include <net/ipv6.h>
 #include <net/ip6_checksum.h>
 #include <linux/prefetch.h>
@@ -4335,7 +4334,7 @@ int bnx2x_change_mac_addr(struct net_device *dev, void *p)
 			return rc;
 	}
 
-	eth_hw_addr_set(dev, addr->sa_data);
+	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
 
 	if (netif_running(dev))
 		rc = bnx2x_set_eth_mac(bp, true);

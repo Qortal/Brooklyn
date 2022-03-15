@@ -508,12 +508,10 @@ static void eeprom_readword(struct ql3_adapter *qdev,
 
 static void ql_set_mac_addr(struct net_device *ndev, u16 *addr)
 {
-	__le16 buf[ETH_ALEN / 2];
-
-	buf[0] = cpu_to_le16(addr[0]);
-	buf[1] = cpu_to_le16(addr[1]);
-	buf[2] = cpu_to_le16(addr[2]);
-	eth_hw_addr_set(ndev, (u8 *)buf);
+	__le16 *p = (__le16 *)ndev->dev_addr;
+	p[0] = cpu_to_le16(addr[0]);
+	p[1] = cpu_to_le16(addr[1]);
+	p[2] = cpu_to_le16(addr[2]);
 }
 
 static int ql_get_nvram_params(struct ql3_adapter *qdev)
@@ -3565,7 +3563,7 @@ static int ql3xxx_set_mac_address(struct net_device *ndev, void *p)
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(ndev, addr->sa_data);
+	memcpy(ndev->dev_addr, addr->sa_data, ndev->addr_len);
 
 	spin_lock_irqsave(&qdev->hw_lock, hw_flags);
 	/* Program lower 32 bits of the MAC address */
@@ -3750,7 +3748,7 @@ static int ql3xxx_probe(struct pci_dev *pdev,
 	struct net_device *ndev = NULL;
 	struct ql3_adapter *qdev = NULL;
 	static int cards_found;
-	int err;
+	int pci_using_dac, err;
 
 	err = pci_enable_device(pdev);
 	if (err) {
@@ -3766,7 +3764,11 @@ static int ql3xxx_probe(struct pci_dev *pdev,
 
 	pci_set_master(pdev);
 
-	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+	if (!dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64)))
+		pci_using_dac = 1;
+	else if (!(err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32))))
+		pci_using_dac = 0;
+
 	if (err) {
 		pr_err("%s no usable DMA configuration\n", pci_name(pdev));
 		goto err_out_free_regions;
@@ -3793,7 +3795,8 @@ static int ql3xxx_probe(struct pci_dev *pdev,
 
 	qdev->msg_enable = netif_msg_init(debug, default_msg);
 
-	ndev->features |= NETIF_F_HIGHDMA;
+	if (pci_using_dac)
+		ndev->features |= NETIF_F_HIGHDMA;
 	if (qdev->device_id == QL3032_DEVICE_ID)
 		ndev->features |= NETIF_F_IP_CSUM | NETIF_F_SG;
 

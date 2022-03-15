@@ -25,7 +25,7 @@
  */
 
 #include <linux/module.h>
-#include <linux/comedi/comedidev.h>
+#include "../comedidev.h"
 
 #define DT2817_CR 0
 #define DT2817_DATA 1

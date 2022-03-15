@@ -15,10 +15,7 @@ maintainers:
 # Everything else is described in the common file
 properties:
   compatible:
-    enum:
-      - altr,socfpga-dw-mshc
-      - img,pistachio-dw-mshc
-      - snps,dw-mshc
+    const: snps,dw-mshc
 
   reg:
     maxItems: 1

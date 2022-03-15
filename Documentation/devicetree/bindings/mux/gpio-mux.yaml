@@ -26,10 +26,7 @@ properties:
       List of gpios used to control the multiplexer, least significant bit first.
 
   '#mux-control-cells':
-    enum: [ 0, 1 ]
-
-  '#mux-state-cells':
-    enum: [ 1, 2 ]
+    const: 0
 
   idle-state:
     default: -1
@@ -37,11 +34,7 @@ properties:
 required:
   - compatible
   - mux-gpios
-anyOf:
-  - required:
-      - "#mux-control-cells"
-  - required:
-      - "#mux-state-cells"
+  - "#mux-control-cells"
 
 additionalProperties: false
 

@@ -57,9 +57,7 @@ properties:
     const: ipg
 
   clock-frequency:
-    minimum: 1
-    default: 100000
-    maximum: 400000
+    enum: [ 100000, 400000 ]
 
   dmas:
     items:

@@ -21,7 +21,6 @@
 #include <linux/ptp_classify.h>
 #include <linux/mii.h>
 #include <linux/mdio.h>
-#include <linux/mutex.h>
 #include <linux/pm_qos.h>
 #include "hw.h"
 

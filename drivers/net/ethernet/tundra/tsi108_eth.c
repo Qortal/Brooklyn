@@ -1091,22 +1091,20 @@ static int tsi108_get_mac(struct net_device *dev)
 	struct tsi108_prv_data *data = netdev_priv(dev);
 	u32 word1 = TSI_READ(TSI108_MAC_ADDR1);
 	u32 word2 = TSI_READ(TSI108_MAC_ADDR2);
-	u8 addr[ETH_ALEN];
 
 	/* Note that the octets are reversed from what the manual says,
 	 * producing an even weirder ordering...
 	 */
 	if (word2 == 0 && word1 == 0) {
-		addr[0] = 0x00;
-		addr[1] = 0x06;
-		addr[2] = 0xd2;
-		addr[3] = 0x00;
-		addr[4] = 0x00;
+		dev->dev_addr[0] = 0x00;
+		dev->dev_addr[1] = 0x06;
+		dev->dev_addr[2] = 0xd2;
+		dev->dev_addr[3] = 0x00;
+		dev->dev_addr[4] = 0x00;
 		if (0x8 == data->phy)
-			addr[5] = 0x01;
+			dev->dev_addr[5] = 0x01;
 		else
-			addr[5] = 0x02;
-		eth_hw_addr_set(dev, addr);
+			dev->dev_addr[5] = 0x02;
 
 		word2 = (dev->dev_addr[0] << 16) | (dev->dev_addr[1] << 24);
 
@@ -1116,13 +1114,12 @@ static int tsi108_get_mac(struct net_device *dev)
 		TSI_WRITE(TSI108_MAC_ADDR1, word1);
 		TSI_WRITE(TSI108_MAC_ADDR2, word2);
 	} else {
-		addr[0] = (word2 >> 16) & 0xff;
-		addr[1] = (word2 >> 24) & 0xff;
-		addr[2] = (word1 >> 0) & 0xff;
-		addr[3] = (word1 >> 8) & 0xff;
-		addr[4] = (word1 >> 16) & 0xff;
-		addr[5] = (word1 >> 24) & 0xff;
-		eth_hw_addr_set(dev, addr);
+		dev->dev_addr[0] = (word2 >> 16) & 0xff;
+		dev->dev_addr[1] = (word2 >> 24) & 0xff;
+		dev->dev_addr[2] = (word1 >> 0) & 0xff;
+		dev->dev_addr[3] = (word1 >> 8) & 0xff;
+		dev->dev_addr[4] = (word1 >> 16) & 0xff;
+		dev->dev_addr[5] = (word1 >> 24) & 0xff;
 	}
 
 	if (!is_valid_ether_addr(dev->dev_addr)) {
@@ -1139,12 +1136,14 @@ static int tsi108_set_mac(struct net_device *dev, void *addr)
 {
 	struct tsi108_prv_data *data = netdev_priv(dev);
 	u32 word1, word2;
+	int i;
 
 	if (!is_valid_ether_addr(addr))
 		return -EADDRNOTAVAIL;
 
-	/* +2 is for the offset of the HW addr type */
-	eth_hw_addr_set(dev, ((unsigned char *)addr) + 2);
+	for (i = 0; i < 6; i++)
+		/* +2 is for the offset of the HW addr type */
+		dev->dev_addr[i] = ((unsigned char *)addr)[i + 2];
 
 	word2 = (dev->dev_addr[0] << 16) | (dev->dev_addr[1] << 24);
 

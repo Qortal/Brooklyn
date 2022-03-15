@@ -10,7 +10,8 @@
 #include "rtllib.h"
 #include "rtl819x_BA.h"
 
-static void ActivateBAEntry(struct ba_record *pBA, u16 Time)
+static void ActivateBAEntry(struct rtllib_device *ieee, struct ba_record *pBA,
+			    u16 Time)
 {
 	pBA->b_valid = true;
 	if (Time != 0)
@@ -287,7 +288,7 @@ int rtllib_rx_ADDBAReq(struct rtllib_device *ieee, struct sk_buff *skb)
 	else
 		pBA->ba_param_set.field.buffer_size = 32;
 
-	ActivateBAEntry(pBA, 0);
+	ActivateBAEntry(ieee, pBA, 0);
 	rtllib_send_ADDBARsp(ieee, dst, pBA, ADDBA_STATUS_SUCCESS);
 
 	return 0;
@@ -389,7 +390,7 @@ int rtllib_rx_ADDBARsp(struct rtllib_device *ieee, struct sk_buff *skb)
 		pAdmittedBA->ba_start_seq_ctrl = pPendingBA->ba_start_seq_ctrl;
 		pAdmittedBA->ba_param_set = *pBaParamSet;
 		DeActivateBAEntry(ieee, pAdmittedBA);
-		ActivateBAEntry(pAdmittedBA, *pBaTimeoutVal);
+		ActivateBAEntry(ieee, pAdmittedBA, *pBaTimeoutVal);
 	} else {
 		pTS->bAddBaReqDelayed = true;
 		pTS->bDisable_AddBa = true;
@@ -489,7 +490,7 @@ void TsInitAddBA(struct rtllib_device *ieee, struct tx_ts_record *pTS,
 	pBA->ba_timeout_value = 0;
 	pBA->ba_start_seq_ctrl.field.seq_num = (pTS->TxCurSeq + 3) % 4096;
 
-	ActivateBAEntry(pBA, BA_SETUP_TIMEOUT);
+	ActivateBAEntry(ieee, pBA, BA_SETUP_TIMEOUT);
 
 	rtllib_send_ADDBAReq(ieee, pTS->TsCommonInfo.Addr, pBA);
 }

@@ -272,7 +272,6 @@ static int uli526x_init_one(struct pci_dev *pdev,
 	struct uli526x_board_info *db;	/* board information structure */
 	struct net_device *dev;
 	void __iomem *ioaddr;
-	u8 addr[ETH_ALEN];
 	int i, err;
 
 	ULI526X_DBUG(0, "uli526x_init_one()", 0);
@@ -380,7 +379,7 @@ static int uli526x_init_one(struct pci_dev *pdev,
 		uw32(DCR13, 0x1b0);	//Select ID Table access port
 		//Read MAC address from CR14
 		for (i = 0; i < 6; i++)
-			addr[i] = ur32(DCR14);
+			dev->dev_addr[i] = ur32(DCR14);
 		//Read end
 		uw32(DCR13, 0);		//Clear CR13
 		uw32(DCR0, 0);		//Clear CR0
@@ -389,10 +388,8 @@ static int uli526x_init_one(struct pci_dev *pdev,
 	else		/*Exist SROM*/
 	{
 		for (i = 0; i < 6; i++)
-			addr[i] = db->srom[20 + i];
+			dev->dev_addr[i] = db->srom[20 + i];
 	}
-	eth_hw_addr_set(dev, addr);
-
 	err = register_netdev (dev);
 	if (err)
 		goto err_out_unmap;
@@ -1346,7 +1343,7 @@ static void send_filter_frame(struct net_device *dev, int mc_cnt)
 	void __iomem *ioaddr = db->ioaddr;
 	struct netdev_hw_addr *ha;
 	struct tx_desc *txptr;
-	const u16 * addrptr;
+	u16 * addrptr;
 	u32 * suptr;
 	int i;
 
@@ -1356,7 +1353,7 @@ static void send_filter_frame(struct net_device *dev, int mc_cnt)
 	suptr = (u32 *) txptr->tx_buf_ptr;
 
 	/* Node address */
-	addrptr = (const u16 *) dev->dev_addr;
+	addrptr = (u16 *) dev->dev_addr;
 	*suptr++ = addrptr[0] << FLT_SHIFT;
 	*suptr++ = addrptr[1] << FLT_SHIFT;
 	*suptr++ = addrptr[2] << FLT_SHIFT;

@@ -37,6 +37,7 @@ struct mlx5e_rx_res {
 /* API for rx_res_rss_* */
 
 static int mlx5e_rx_res_rss_init_def(struct mlx5e_rx_res *res,
+				     const struct mlx5e_packet_merge_param *init_pkt_merge_param,
 				     unsigned int init_nch)
 {
 	bool inner_ft_support = res->features & MLX5E_RX_RES_FEATURE_INNER_FT;
@@ -51,7 +52,7 @@ static int mlx5e_rx_res_rss_init_def(struct mlx5e_rx_res *res,
 		return -ENOMEM;
 
 	err = mlx5e_rss_init(rss, res->mdev, inner_ft_support, res->drop_rqn,
-			     &res->pkt_merge_param);
+			     init_pkt_merge_param);
 	if (err)
 		goto err_rss_free;
 
@@ -276,7 +277,8 @@ struct mlx5e_rx_res *mlx5e_rx_res_alloc(void)
 	return kvzalloc(sizeof(struct mlx5e_rx_res), GFP_KERNEL);
 }
 
-static int mlx5e_rx_res_channels_init(struct mlx5e_rx_res *res)
+static int mlx5e_rx_res_channels_init(struct mlx5e_rx_res *res,
+				      const struct mlx5e_packet_merge_param *init_pkt_merge_param)
 {
 	bool inner_ft_support = res->features & MLX5E_RX_RES_FEATURE_INNER_FT;
 	struct mlx5e_tir_builder *builder;
@@ -307,7 +309,7 @@ static int mlx5e_rx_res_channels_init(struct mlx5e_rx_res *res)
 		mlx5e_tir_builder_build_rqt(builder, res->mdev->mlx5e_res.hw_objs.td.tdn,
 					    mlx5e_rqt_get_rqtn(&res->channels[ix].direct_rqt),
 					    inner_ft_support);
-		mlx5e_tir_builder_build_packet_merge(builder, &res->pkt_merge_param);
+		mlx5e_tir_builder_build_packet_merge(builder, init_pkt_merge_param);
 		mlx5e_tir_builder_build_direct(builder);
 
 		err = mlx5e_tir_init(&res->channels[ix].direct_tir, builder, res->mdev, true);
@@ -337,7 +339,7 @@ static int mlx5e_rx_res_channels_init(struct mlx5e_rx_res *res)
 		mlx5e_tir_builder_build_rqt(builder, res->mdev->mlx5e_res.hw_objs.td.tdn,
 					    mlx5e_rqt_get_rqtn(&res->channels[ix].xsk_rqt),
 					    inner_ft_support);
-		mlx5e_tir_builder_build_packet_merge(builder, &res->pkt_merge_param);
+		mlx5e_tir_builder_build_packet_merge(builder, init_pkt_merge_param);
 		mlx5e_tir_builder_build_direct(builder);
 
 		err = mlx5e_tir_init(&res->channels[ix].xsk_tir, builder, res->mdev, true);
@@ -452,11 +454,11 @@ int mlx5e_rx_res_init(struct mlx5e_rx_res *res, struct mlx5_core_dev *mdev,
 	res->pkt_merge_param = *init_pkt_merge_param;
 	init_rwsem(&res->pkt_merge_param_sem);
 
-	err = mlx5e_rx_res_rss_init_def(res, init_nch);
+	err = mlx5e_rx_res_rss_init_def(res, init_pkt_merge_param, init_nch);
 	if (err)
 		goto err_out;
 
-	err = mlx5e_rx_res_channels_init(res);
+	err = mlx5e_rx_res_channels_init(res, init_pkt_merge_param);
 	if (err)
 		goto err_rss_destroy;
 

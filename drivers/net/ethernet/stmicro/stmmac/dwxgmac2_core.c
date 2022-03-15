@@ -335,8 +335,7 @@ static void dwxgmac2_pmt(struct mac_device_info *hw, unsigned long mode)
 }
 
 static void dwxgmac2_set_umac_addr(struct mac_device_info *hw,
-				   const unsigned char *addr,
-				   unsigned int reg_n)
+				   unsigned char *addr, unsigned int reg_n)
 {
 	void __iomem *ioaddr = hw->pcsr;
 	u32 value;

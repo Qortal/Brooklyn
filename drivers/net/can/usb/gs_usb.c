@@ -191,8 +191,8 @@ struct gs_can {
 struct gs_usb {
 	struct gs_can *canch[GS_MAX_INTF];
 	struct usb_anchor rx_submitted;
-	atomic_t active_channels;
 	struct usb_device *udev;
+	u8 active_channels;
 };
 
 /* 'allocate' a tx context.
@@ -352,24 +352,25 @@ static void gs_usb_receive_bulk_callback(struct urb *urb)
 	} else { /* echo_id == hf->echo_id */
 		if (hf->echo_id >= GS_MAX_TX_URBS) {
 			netdev_err(netdev,
-				   "Unexpected out of range echo id %u\n",
+				   "Unexpected out of range echo id %d\n",
 				   hf->echo_id);
 			goto resubmit_urb;
 		}
+
+		netdev->stats.tx_packets++;
+		netdev->stats.tx_bytes += hf->can_dlc;
 
 		txc = gs_get_tx_context(dev, hf->echo_id);
 
 		/* bad devices send bad echo_ids. */
 		if (!txc) {
 			netdev_err(netdev,
-				   "Unexpected unused echo id %u\n",
+				   "Unexpected unused echo id %d\n",
 				   hf->echo_id);
 			goto resubmit_urb;
 		}
 
-		netdev->stats.tx_packets++;
-		netdev->stats.tx_bytes += can_get_echo_skb(netdev, hf->echo_id,
-							   NULL);
+		can_get_echo_skb(netdev, hf->echo_id, NULL);
 
 		gs_free_tx_context(txc);
 
@@ -458,7 +459,7 @@ static void gs_usb_xmit_callback(struct urb *urb)
 	struct net_device *netdev = dev->netdev;
 
 	if (urb->status)
-		netdev_info(netdev, "usb xmit fail %u\n", txc->echo_id);
+		netdev_info(netdev, "usb xmit fail %d\n", txc->echo_id);
 
 	usb_free_coherent(urb->dev,
 			  urb->transfer_buffer_length,
@@ -501,7 +502,7 @@ static netdev_tx_t gs_can_start_xmit(struct sk_buff *skb,
 	idx = txc->echo_id;
 
 	if (idx >= GS_MAX_TX_URBS) {
-		netdev_err(netdev, "Invalid tx context %u\n", idx);
+		netdev_err(netdev, "Invalid tx context %d\n", idx);
 		goto badidx;
 	}
 
@@ -589,7 +590,7 @@ static int gs_can_open(struct net_device *netdev)
 	if (rc)
 		return rc;
 
-	if (atomic_add_return(1, &parent->active_channels) == 1) {
+	if (!parent->active_channels) {
 		for (i = 0; i < GS_MAX_RX_URBS; i++) {
 			struct urb *urb;
 			u8 *buf;
@@ -690,6 +691,7 @@ static int gs_can_open(struct net_device *netdev)
 
 	dev->can.state = CAN_STATE_ERROR_ACTIVE;
 
+	parent->active_channels++;
 	if (!(dev->can.ctrlmode & CAN_CTRLMODE_LISTENONLY))
 		netif_start_queue(netdev);
 
@@ -705,7 +707,8 @@ static int gs_can_close(struct net_device *netdev)
 	netif_stop_queue(netdev);
 
 	/* Stop polling */
-	if (atomic_dec_and_test(&parent->active_channels))
+	parent->active_channels--;
+	if (!parent->active_channels)
 		usb_kill_anchored_urbs(&parent->rx_submitted);
 
 	/* Stop sending URBs */
@@ -966,11 +969,11 @@ static int gs_usb_probe(struct usb_interface *intf,
 	}
 
 	icount = dconf->icount + 1;
-	dev_info(&intf->dev, "Configuring for %u interfaces\n", icount);
+	dev_info(&intf->dev, "Configuring for %d interfaces\n", icount);
 
 	if (icount > GS_MAX_INTF) {
 		dev_err(&intf->dev,
-			"Driver cannot handle more that %u CAN interfaces\n",
+			"Driver cannot handle more that %d CAN interfaces\n",
 			GS_MAX_INTF);
 		kfree(dconf);
 		return -EINVAL;
@@ -983,8 +986,6 @@ static int gs_usb_probe(struct usb_interface *intf,
 	}
 
 	init_usb_anchor(&dev->rx_submitted);
-
-	atomic_set(&dev->active_channels, 0);
 
 	usb_set_intfdata(intf, dev);
 	dev->udev = interface_to_usbdev(intf);

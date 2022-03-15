@@ -40,11 +40,7 @@ properties:
 
 patternProperties:
   "^port@[0-9]$":
-    description: |
-      Port number of DT node is specified by the following DAI channels.
-        0: line1
-        1: hp
-        2: line2
+    description: FIXME, Need to define what each port is.
     $ref: audio-graph-port.yaml#
     unevaluatedProperties: false
 

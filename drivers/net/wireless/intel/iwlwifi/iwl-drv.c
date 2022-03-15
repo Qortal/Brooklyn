@@ -31,6 +31,7 @@
 
 #define DRV_DESCRIPTION	"Intel(R) Wireless WiFi driver for Linux"
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
+MODULE_AUTHOR(DRV_AUTHOR);
 MODULE_LICENSE("GPL");
 
 #ifdef CONFIG_IWLWIFI_DEBUGFS
@@ -166,8 +167,8 @@ static int iwl_request_firmware(struct iwl_drv *drv, bool first)
 	char tag[8];
 
 	if (drv->trans->trans_cfg->device_family == IWL_DEVICE_FAMILY_9000 &&
-	    (drv->trans->hw_rev_step != SILICON_B_STEP &&
-	     drv->trans->hw_rev_step != SILICON_C_STEP)) {
+	    (CSR_HW_REV_STEP(drv->trans->hw_rev) != SILICON_B_STEP &&
+	     CSR_HW_REV_STEP(drv->trans->hw_rev) != SILICON_C_STEP)) {
 		IWL_ERR(drv,
 			"Only HW steps B and C are currently supported (0x%0x)\n",
 			drv->trans->hw_rev);
@@ -550,103 +551,6 @@ static int iwl_parse_v1_v2_firmware(struct iwl_drv *drv,
 	set_sec_offset(pieces, IWL_UCODE_INIT, IWL_UCODE_SECTION_DATA,
 		       IWLAGN_RTC_DATA_LOWER_BOUND);
 	return 0;
-}
-
-static void iwl_drv_set_dump_exclude(struct iwl_drv *drv,
-				     enum iwl_ucode_tlv_type tlv_type,
-				     const void *tlv_data, u32 tlv_len)
-{
-	const struct iwl_fw_dump_exclude *fw = tlv_data;
-	struct iwl_dump_exclude *excl;
-
-	if (tlv_len < sizeof(*fw))
-		return;
-
-	if (tlv_type == IWL_UCODE_TLV_SEC_TABLE_ADDR) {
-		excl = &drv->fw.dump_excl[0];
-
-		/* second time we find this, it's for WoWLAN */
-		if (excl->addr)
-			excl = &drv->fw.dump_excl_wowlan[0];
-	} else if (fw_has_capa(&drv->fw.ucode_capa,
-			       IWL_UCODE_TLV_CAPA_CNSLDTD_D3_D0_IMG)) {
-		/* IWL_UCODE_TLV_D3_KEK_KCK_ADDR is regular image */
-		excl = &drv->fw.dump_excl[0];
-	} else {
-		/* IWL_UCODE_TLV_D3_KEK_KCK_ADDR is WoWLAN image */
-		excl = &drv->fw.dump_excl_wowlan[0];
-	}
-
-	if (excl->addr)
-		excl++;
-
-	if (excl->addr) {
-		IWL_DEBUG_FW_INFO(drv, "found too many excludes in fw file\n");
-		return;
-	}
-
-	excl->addr = le32_to_cpu(fw->addr) & ~FW_ADDR_CACHE_CONTROL;
-	excl->size = le32_to_cpu(fw->size);
-}
-
-static void iwl_parse_dbg_tlv_assert_tables(struct iwl_drv *drv,
-					    const struct iwl_ucode_tlv *tlv)
-{
-	const struct iwl_fw_ini_region_tlv *region;
-	u32 length = le32_to_cpu(tlv->length);
-	u32 addr;
-
-	if (length < offsetof(typeof(*region), special_mem) +
-		     sizeof(region->special_mem))
-		return;
-
-	region = (void *)tlv->data;
-	addr = le32_to_cpu(region->special_mem.base_addr);
-	addr += le32_to_cpu(region->special_mem.offset);
-	addr &= ~FW_ADDR_CACHE_CONTROL;
-
-	if (region->type != IWL_FW_INI_REGION_SPECIAL_DEVICE_MEMORY)
-		return;
-
-	switch (region->sub_type) {
-	case IWL_FW_INI_REGION_DEVICE_MEMORY_SUBTYPE_UMAC_ERROR_TABLE:
-		drv->trans->dbg.umac_error_event_table = addr;
-		drv->trans->dbg.error_event_table_tlv_status |=
-			IWL_ERROR_EVENT_TABLE_UMAC;
-		break;
-	case IWL_FW_INI_REGION_DEVICE_MEMORY_SUBTYPE_LMAC_1_ERROR_TABLE:
-		drv->trans->dbg.lmac_error_event_table[0] = addr;
-		drv->trans->dbg.error_event_table_tlv_status |=
-			IWL_ERROR_EVENT_TABLE_LMAC1;
-		break;
-	case IWL_FW_INI_REGION_DEVICE_MEMORY_SUBTYPE_LMAC_2_ERROR_TABLE:
-		drv->trans->dbg.lmac_error_event_table[1] = addr;
-		drv->trans->dbg.error_event_table_tlv_status |=
-			IWL_ERROR_EVENT_TABLE_LMAC2;
-		break;
-	case IWL_FW_INI_REGION_DEVICE_MEMORY_SUBTYPE_TCM_1_ERROR_TABLE:
-		drv->trans->dbg.tcm_error_event_table[0] = addr;
-		drv->trans->dbg.error_event_table_tlv_status |=
-			IWL_ERROR_EVENT_TABLE_TCM1;
-		break;
-	case IWL_FW_INI_REGION_DEVICE_MEMORY_SUBTYPE_TCM_2_ERROR_TABLE:
-		drv->trans->dbg.tcm_error_event_table[1] = addr;
-		drv->trans->dbg.error_event_table_tlv_status |=
-			IWL_ERROR_EVENT_TABLE_TCM2;
-		break;
-	case IWL_FW_INI_REGION_DEVICE_MEMORY_SUBTYPE_RCM_1_ERROR_TABLE:
-		drv->trans->dbg.rcm_error_event_table[0] = addr;
-		drv->trans->dbg.error_event_table_tlv_status |=
-			IWL_ERROR_EVENT_TABLE_RCM1;
-		break;
-	case IWL_FW_INI_REGION_DEVICE_MEMORY_SUBTYPE_RCM_2_ERROR_TABLE:
-		drv->trans->dbg.rcm_error_event_table[1] = addr;
-		drv->trans->dbg.error_event_table_tlv_status |=
-			IWL_ERROR_EVENT_TABLE_RCM2;
-		break;
-	default:
-		break;
-	}
 }
 
 static int iwl_parse_tlv_firmware(struct iwl_drv *drv,
@@ -1216,14 +1120,22 @@ static int iwl_parse_tlv_firmware(struct iwl_drv *drv,
 				IWL_ERROR_EVENT_TABLE_LMAC1;
 			break;
 			}
-		case IWL_UCODE_TLV_TYPE_REGIONS:
-			iwl_parse_dbg_tlv_assert_tables(drv, tlv);
-			fallthrough;
+		case IWL_UCODE_TLV_TCM_DEBUG_ADDRS: {
+			struct iwl_fw_tcm_error_addr *ptr = (void *)tlv_data;
+
+			if (tlv_len != sizeof(*ptr))
+				goto invalid_tlv_len;
+			drv->trans->dbg.tcm_error_event_table =
+				le32_to_cpu(ptr->addr) & ~FW_ADDR_CACHE_CONTROL;
+			drv->trans->dbg.error_event_table_tlv_status |=
+				IWL_ERROR_EVENT_TABLE_TCM;
+			break;
+			}
 		case IWL_UCODE_TLV_TYPE_DEBUG_INFO:
 		case IWL_UCODE_TLV_TYPE_BUFFER_ALLOCATION:
 		case IWL_UCODE_TLV_TYPE_HCMD:
+		case IWL_UCODE_TLV_TYPE_REGIONS:
 		case IWL_UCODE_TLV_TYPE_TRIGGERS:
-		case IWL_UCODE_TLV_TYPE_CONF_SET:
 			if (iwlwifi_mod_params.enable_ini)
 				iwl_dbg_tlv_alloc(drv->trans, tlv, false);
 			break;
@@ -1256,11 +1168,6 @@ static int iwl_parse_tlv_firmware(struct iwl_drv *drv,
 			if (!drv->fw.phy_integration_ver)
 				return -ENOMEM;
 			drv->fw.phy_integration_ver_len = tlv_len;
-			break;
-		case IWL_UCODE_TLV_SEC_TABLE_ADDR:
-		case IWL_UCODE_TLV_D3_KEK_KCK_ADDR:
-			iwl_drv_set_dump_exclude(drv, tlv_type,
-						 tlv_data, tlv_len);
 			break;
 		default:
 			IWL_DEBUG_INFO(drv, "unknown TLV: %d\n", tlv_type);

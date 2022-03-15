@@ -68,7 +68,6 @@ enum ath11k_pci_flags {
 	ATH11K_PCI_FLAG_INIT_DONE,
 	ATH11K_PCI_FLAG_IS_MSI_64,
 	ATH11K_PCI_ASPM_RESTORE,
-	ATH11K_PCI_FLAG_MULTI_MSI_VECTORS,
 };
 
 struct ath11k_pci {
@@ -88,8 +87,6 @@ struct ath11k_pci {
 	/* enum ath11k_pci_flags */
 	unsigned long flags;
 	u16 link_ctl;
-
-	unsigned long irq_flags;
 };
 
 static inline struct ath11k_pci *ath11k_pci_priv(struct ath11k_base *ab)

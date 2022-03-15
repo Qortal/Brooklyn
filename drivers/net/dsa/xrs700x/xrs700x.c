@@ -5,7 +5,6 @@
  */
 
 #include <net/dsa.h>
-#include <linux/etherdevice.h>
 #include <linux/if_bridge.h>
 #include <linux/of_device.h>
 #include <linux/netdev_features.h>
@@ -457,7 +456,7 @@ static void xrs700x_phylink_validate(struct dsa_switch *ds, int port,
 		phylink_set(mask, 1000baseT_Full);
 		break;
 	default:
-		linkmode_zero(supported);
+		bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
 		dev_err(ds->dev, "Unsupported port: %i\n", port);
 		return;
 	}
@@ -468,8 +467,10 @@ static void xrs700x_phylink_validate(struct dsa_switch *ds, int port,
 	phylink_set(mask, 10baseT_Full);
 	phylink_set(mask, 100baseT_Full);
 
-	linkmode_and(supported, supported, mask);
-	linkmode_and(state->advertising, state->advertising, mask);
+	bitmap_and(supported, supported, mask,
+		   __ETHTOOL_LINK_MODE_MASK_NBITS);
+	bitmap_and(state->advertising, state->advertising, mask,
+		   __ETHTOOL_LINK_MODE_MASK_NBITS);
 }
 
 static void xrs700x_mac_link_up(struct dsa_switch *ds, int port,
@@ -502,7 +503,7 @@ static void xrs700x_mac_link_up(struct dsa_switch *ds, int port,
 }
 
 static int xrs700x_bridge_common(struct dsa_switch *ds, int port,
-				 struct dsa_bridge bridge, bool join)
+				 struct net_device *bridge, bool join)
 {
 	unsigned int i, cpu_mask = 0, mask = 0;
 	struct xrs700x *priv = ds->priv;
@@ -514,14 +515,14 @@ static int xrs700x_bridge_common(struct dsa_switch *ds, int port,
 
 		cpu_mask |= BIT(i);
 
-		if (dsa_port_offloads_bridge(dsa_to_port(ds, i), &bridge))
+		if (dsa_to_port(ds, i)->bridge_dev == bridge)
 			continue;
 
 		mask |= BIT(i);
 	}
 
 	for (i = 0; i < ds->num_ports; i++) {
-		if (!dsa_port_offloads_bridge(dsa_to_port(ds, i), &bridge))
+		if (dsa_to_port(ds, i)->bridge_dev != bridge)
 			continue;
 
 		/* 1 = Disable forwarding to the port */
@@ -541,13 +542,13 @@ static int xrs700x_bridge_common(struct dsa_switch *ds, int port,
 }
 
 static int xrs700x_bridge_join(struct dsa_switch *ds, int port,
-			       struct dsa_bridge bridge, bool *tx_fwd_offload)
+			       struct net_device *bridge)
 {
 	return xrs700x_bridge_common(ds, port, bridge, true);
 }
 
 static void xrs700x_bridge_leave(struct dsa_switch *ds, int port,
-				 struct dsa_bridge bridge)
+				 struct net_device *bridge)
 {
 	xrs700x_bridge_common(ds, port, bridge, false);
 }

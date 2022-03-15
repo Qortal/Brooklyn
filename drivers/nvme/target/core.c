@@ -1140,7 +1140,7 @@ static void nvmet_start_ctrl(struct nvmet_ctrl *ctrl)
 	 * should verify iosqes,iocqes are zeroed, however that
 	 * would break backwards compatibility, so don't enforce it.
 	 */
-	if (!nvmet_is_disc_subsys(ctrl->subsys) &&
+	if (ctrl->subsys->type != NVME_NQN_DISC &&
 	    (nvmet_cc_iosqes(ctrl->cc) != NVME_NVM_IOSQES ||
 	     nvmet_cc_iocqes(ctrl->cc) != NVME_NVM_IOCQES)) {
 		ctrl->csts = NVME_CSTS_CFS;
@@ -1205,10 +1205,7 @@ static void nvmet_init_cap(struct nvmet_ctrl *ctrl)
 	/* CC.EN timeout in 500msec units: */
 	ctrl->cap |= (15ULL << 24);
 	/* maximum queue entries supported: */
-	if (ctrl->ops->get_max_queue_size)
-		ctrl->cap |= ctrl->ops->get_max_queue_size(ctrl) - 1;
-	else
-		ctrl->cap |= NVMET_QUEUE_SIZE - 1;
+	ctrl->cap |= NVMET_QUEUE_SIZE - 1;
 
 	if (nvmet_is_passthru_subsys(ctrl->subsys))
 		nvmet_passthrough_override_cap(ctrl);
@@ -1281,7 +1278,7 @@ bool nvmet_host_allowed(struct nvmet_subsys *subsys, const char *hostnqn)
 	if (subsys->allow_any_host)
 		return true;
 
-	if (nvmet_is_disc_subsys(subsys)) /* allow all access to disc subsys */
+	if (subsys->type == NVME_NQN_DISC) /* allow all access to disc subsys */
 		return true;
 
 	list_for_each_entry(p, &subsys->hosts, entry) {
@@ -1370,7 +1367,6 @@ u16 nvmet_alloc_ctrl(const char *subsysnqn, const char *hostnqn,
 	mutex_init(&ctrl->lock);
 
 	ctrl->port = req->port;
-	ctrl->ops = req->ops;
 
 	INIT_WORK(&ctrl->async_event_work, nvmet_async_event_work);
 	INIT_LIST_HEAD(&ctrl->async_events);
@@ -1409,11 +1405,13 @@ u16 nvmet_alloc_ctrl(const char *subsysnqn, const char *hostnqn,
 	}
 	ctrl->cntlid = ret;
 
+	ctrl->ops = req->ops;
+
 	/*
 	 * Discovery controllers may use some arbitrary high value
 	 * in order to cleanup stale discovery sessions
 	 */
-	if (nvmet_is_disc_subsys(ctrl->subsys) && !kato)
+	if ((ctrl->subsys->type == NVME_NQN_DISC) && !kato)
 		kato = NVMET_DISC_KATO_MS;
 
 	/* keep-alive timeout in seconds */
@@ -1493,8 +1491,7 @@ static struct nvmet_subsys *nvmet_find_get_subsys(struct nvmet_port *port,
 	if (!port)
 		return NULL;
 
-	if (!strcmp(NVME_DISC_SUBSYS_NAME, subsysnqn) ||
-	    !strcmp(nvmet_disc_subsys->subsysnqn, subsysnqn)) {
+	if (!strcmp(NVME_DISC_SUBSYS_NAME, subsysnqn)) {
 		if (!kref_get_unless_zero(&nvmet_disc_subsys->ref))
 			return NULL;
 		return nvmet_disc_subsys;
@@ -1541,7 +1538,6 @@ struct nvmet_subsys *nvmet_subsys_alloc(const char *subsysnqn,
 		subsys->max_qid = NVMET_NR_QUEUES;
 		break;
 	case NVME_NQN_DISC:
-	case NVME_NQN_CURR:
 		subsys->max_qid = 0;
 		break;
 	default:

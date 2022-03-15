@@ -295,7 +295,8 @@ out:
 	return -EINVAL;
 }
 
-static int target_xcopy_parse_segdesc_02(struct xcopy_op *xop, unsigned char *p)
+static int target_xcopy_parse_segdesc_02(struct se_cmd *se_cmd, struct xcopy_op *xop,
+					unsigned char *p)
 {
 	unsigned char *desc = p;
 	int dc = (desc[1] & 0x02);
@@ -331,9 +332,9 @@ static int target_xcopy_parse_segdesc_02(struct xcopy_op *xop, unsigned char *p)
 	return 0;
 }
 
-static int target_xcopy_parse_segment_descriptors(struct xcopy_op *xop,
-				unsigned char *p, unsigned int sdll,
-				sense_reason_t *sense_ret)
+static int target_xcopy_parse_segment_descriptors(struct se_cmd *se_cmd,
+				struct xcopy_op *xop, unsigned char *p,
+				unsigned int sdll, sense_reason_t *sense_ret)
 {
 	unsigned char *desc = p;
 	unsigned int start = 0;
@@ -361,7 +362,7 @@ static int target_xcopy_parse_segment_descriptors(struct xcopy_op *xop,
 		 */
 		switch (desc[0]) {
 		case 0x02:
-			rc = target_xcopy_parse_segdesc_02(xop, desc);
+			rc = target_xcopy_parse_segdesc_02(se_cmd, xop, desc);
 			if (rc < 0)
 				goto out;
 
@@ -839,7 +840,8 @@ static sense_reason_t target_parse_xcopy_cmd(struct xcopy_op *xop)
 	 */
 	seg_desc = &p[16] + tdll;
 
-	rc = target_xcopy_parse_segment_descriptors(xop, seg_desc, sdll, &ret);
+	rc = target_xcopy_parse_segment_descriptors(se_cmd, xop, seg_desc,
+						    sdll, &ret);
 	if (rc <= 0)
 		goto out;
 

@@ -494,9 +494,6 @@ static const struct net_device_ops xenvif_netdev_ops = {
 struct xenvif *xenvif_alloc(struct device *parent, domid_t domid,
 			    unsigned int handle)
 {
-	static const u8 dummy_addr[ETH_ALEN] = {
-		0xfe, 0xff, 0xff, 0xff, 0xff, 0xff,
-	};
 	int err;
 	struct net_device *dev;
 	struct xenvif *vif;
@@ -554,7 +551,8 @@ struct xenvif *xenvif_alloc(struct device *parent, domid_t domid,
 	 * stolen by an Ethernet bridge for STP purposes.
 	 * (FE:FF:FF:FF:FF:FF)
 	 */
-	eth_hw_addr_set(dev, dummy_addr);
+	eth_broadcast_addr(dev->dev_addr);
+	dev->dev_addr[0] &= ~0x01;
 
 	netif_carrier_off(dev);
 

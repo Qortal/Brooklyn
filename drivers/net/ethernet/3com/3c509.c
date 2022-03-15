@@ -270,7 +270,7 @@ static void el3_dev_fill(struct net_device *dev, __be16 *phys_addr, int ioaddr,
 {
 	struct el3_private *lp = netdev_priv(dev);
 
-	eth_hw_addr_set(dev, (u8 *)phys_addr);
+	memcpy(dev->dev_addr, phys_addr, ETH_ALEN);
 	dev->base_addr = ioaddr;
 	dev->irq = irq;
 	dev->if_port = if_port;

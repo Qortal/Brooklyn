@@ -1753,11 +1753,8 @@ static int iwl_trans_txq_send_hcmd_sync(struct iwl_trans *trans,
 	}
 
 	if (test_bit(STATUS_FW_ERROR, &trans->status)) {
-		if (!test_and_clear_bit(STATUS_SUPPRESS_CMD_ERROR_ONCE,
-					&trans->status)) {
-			IWL_ERR(trans, "FW error in SYNC CMD %s\n", cmd_str);
-			dump_stack();
-		}
+		IWL_ERR(trans, "FW error in SYNC CMD %s\n", cmd_str);
+		dump_stack();
 		ret = -EIO;
 		goto cancel;
 	}

@@ -12,4 +12,5 @@ following sections:
 
 Documentation/dev-tools/kunit/api/test.rst
 
- - documents all of the standard testing API
+ - documents all of the standard testing API excluding mocking
+   or mocking related features.

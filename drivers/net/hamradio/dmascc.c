@@ -426,7 +426,7 @@ static void __init dev_setup(struct net_device *dev)
 	dev->addr_len = AX25_ADDR_LEN;
 	dev->tx_queue_len = 64;
 	memcpy(dev->broadcast, &ax25_bcast, AX25_ADDR_LEN);
-	dev_addr_set(dev, (u8 *)&ax25_defaddr);
+	memcpy(dev->dev_addr, &ax25_defaddr, AX25_ADDR_LEN);
 }
 
 static const struct net_device_ops scc_netdev_ops = {
@@ -956,7 +956,8 @@ static int scc_send_packet(struct sk_buff *skb, struct net_device *dev)
 
 static int scc_set_mac_address(struct net_device *dev, void *sa)
 {
-	dev_addr_set(dev, ((struct sockaddr *)sa)->sa_data);
+	memcpy(dev->dev_addr, ((struct sockaddr *) sa)->sa_data,
+	       dev->addr_len);
 	return 0;
 }
 

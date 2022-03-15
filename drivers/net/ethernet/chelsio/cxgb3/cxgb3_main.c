@@ -1948,9 +1948,7 @@ static int set_pauseparam(struct net_device *dev,
 	return 0;
 }
 
-static void get_sge_param(struct net_device *dev, struct ethtool_ringparam *e,
-			  struct kernel_ethtool_ringparam *kernel_e,
-			  struct netlink_ext_ack *extack)
+static void get_sge_param(struct net_device *dev, struct ethtool_ringparam *e)
 {
 	struct port_info *pi = netdev_priv(dev);
 	struct adapter *adapter = pi->adapter;
@@ -1966,9 +1964,7 @@ static void get_sge_param(struct net_device *dev, struct ethtool_ringparam *e,
 	e->tx_pending = q->txq_size[0];
 }
 
-static int set_sge_param(struct net_device *dev, struct ethtool_ringparam *e,
-			 struct kernel_ethtool_ringparam *kernel_e,
-			 struct netlink_ext_ack *extack)
+static int set_sge_param(struct net_device *dev, struct ethtool_ringparam *e)
 {
 	struct port_info *pi = netdev_priv(dev);
 	struct adapter *adapter = pi->adapter;
@@ -2040,16 +2036,20 @@ static int get_eeprom(struct net_device *dev, struct ethtool_eeprom *e,
 {
 	struct port_info *pi = netdev_priv(dev);
 	struct adapter *adapter = pi->adapter;
-	int cnt;
+	int i, err = 0;
+
+	u8 *buf = kmalloc(EEPROMSIZE, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
 
 	e->magic = EEPROM_MAGIC;
-	cnt = pci_read_vpd(adapter->pdev, e->offset, e->len, data);
-	if (cnt < 0)
-		return cnt;
+	for (i = e->offset & ~3; !err && i < e->offset + e->len; i += 4)
+		err = t3_seeprom_read(adapter, i, (__le32 *) & buf[i]);
 
-	e->len = cnt;
-
-	return 0;
+	if (!err)
+		memcpy(data, buf + e->offset, e->len);
+	kfree(buf);
+	return err;
 }
 
 static int set_eeprom(struct net_device *dev, struct ethtool_eeprom *eeprom,
@@ -2058,6 +2058,7 @@ static int set_eeprom(struct net_device *dev, struct ethtool_eeprom *eeprom,
 	struct port_info *pi = netdev_priv(dev);
 	struct adapter *adapter = pi->adapter;
 	u32 aligned_offset, aligned_len;
+	__le32 *p;
 	u8 *buf;
 	int err;
 
@@ -2071,9 +2072,12 @@ static int set_eeprom(struct net_device *dev, struct ethtool_eeprom *eeprom,
 		buf = kmalloc(aligned_len, GFP_KERNEL);
 		if (!buf)
 			return -ENOMEM;
-		err = pci_read_vpd(adapter->pdev, aligned_offset, aligned_len,
-				   buf);
-		if (err < 0)
+		err = t3_seeprom_read(adapter, aligned_offset, (__le32 *) buf);
+		if (!err && aligned_len > 4)
+			err = t3_seeprom_read(adapter,
+					      aligned_offset + aligned_len - 4,
+					      (__le32 *) & buf[aligned_len - 4]);
+		if (err)
 			goto out;
 		memcpy(buf + (eeprom->offset & 3), data, eeprom->len);
 	} else
@@ -2083,13 +2087,17 @@ static int set_eeprom(struct net_device *dev, struct ethtool_eeprom *eeprom,
 	if (err)
 		goto out;
 
-	err = pci_write_vpd(adapter->pdev, aligned_offset, aligned_len, buf);
-	if (err >= 0)
+	for (p = (__le32 *) buf; !err && aligned_len; aligned_len -= 4, p++) {
+		err = t3_seeprom_write(adapter, aligned_offset, *p);
+		aligned_offset += 4;
+	}
+
+	if (!err)
 		err = t3_seeprom_wp(adapter, 1);
 out:
 	if (buf != data)
 		kfree(buf);
-	return err < 0 ? err : 0;
+	return err;
 }
 
 static void get_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
@@ -2578,7 +2586,7 @@ static int cxgb_set_mac_addr(struct net_device *dev, void *p)
 	if (!is_valid_ether_addr(addr->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(dev, addr->sa_data);
+	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
 	t3_mac_set_address(&pi->mac, LAN_MAC_IDX, dev->dev_addr);
 	if (offload_running(adapter))
 		write_smt_entry(adapter, pi->port_id);
@@ -3204,7 +3212,7 @@ static void cxgb3_init_iscsi_mac(struct net_device *dev)
 			NETIF_F_IPV6_CSUM | NETIF_F_HIGHDMA)
 static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
-	int i, err;
+	int i, err, pci_using_dac = 0;
 	resource_size_t mmio_start, mmio_len;
 	const struct adapter_info *ai;
 	struct adapter *adapter = NULL;
@@ -3231,8 +3239,9 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto out_disable_device;
 	}
 
-	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
-	if (err) {
+	if (!dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64))) {
+		pci_using_dac = 1;
+	} else if ((err = dma_set_mask(&pdev->dev, DMA_BIT_MASK(32))) != 0) {
 		dev_err(&pdev->dev, "no usable DMA configuration\n");
 		goto out_release_regions;
 	}
@@ -3308,8 +3317,8 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 		netdev->features |= netdev->hw_features |
 				    NETIF_F_HW_VLAN_CTAG_TX;
 		netdev->vlan_features |= netdev->features & VLAN_FEAT;
-
-		netdev->features |= NETIF_F_HIGHDMA;
+		if (pci_using_dac)
+			netdev->features |= NETIF_F_HIGHDMA;
 
 		netdev->netdev_ops = &cxgb_netdev_ops;
 		netdev->ethtool_ops = &cxgb_ethtool_ops;

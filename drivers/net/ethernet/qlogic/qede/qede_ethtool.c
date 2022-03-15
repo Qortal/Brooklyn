@@ -168,8 +168,6 @@ enum {
 	QEDE_PRI_FLAG_CMT,
 	QEDE_PRI_FLAG_SMART_AN_SUPPORT, /* MFW supports SmartAN */
 	QEDE_PRI_FLAG_RECOVER_ON_ERROR,
-	QEDE_PRI_FLAG_ESL_SUPPORT, /* MFW supports Enhanced System Lockdown */
-	QEDE_PRI_FLAG_ESL_ACTIVE, /* Enhanced System Lockdown Active status */
 	QEDE_PRI_FLAG_LEN,
 };
 
@@ -177,8 +175,6 @@ static const char qede_private_arr[QEDE_PRI_FLAG_LEN][ETH_GSTRING_LEN] = {
 	"Coupled-Function",
 	"SmartAN capable",
 	"Recover on error",
-	"ESL capable",
-	"ESL active",
 };
 
 enum qede_ethtool_tests {
@@ -482,7 +478,6 @@ static int qede_get_sset_count(struct net_device *dev, int stringset)
 static u32 qede_get_priv_flags(struct net_device *dev)
 {
 	struct qede_dev *edev = netdev_priv(dev);
-	bool esl_active;
 	u32 flags = 0;
 
 	if (edev->dev_info.common.num_hwfns > 1)
@@ -493,14 +488,6 @@ static u32 qede_get_priv_flags(struct net_device *dev)
 
 	if (edev->err_flags & BIT(QEDE_ERR_IS_RECOVERABLE))
 		flags |= BIT(QEDE_PRI_FLAG_RECOVER_ON_ERROR);
-
-	if (edev->dev_info.common.esl)
-		flags |= BIT(QEDE_PRI_FLAG_ESL_SUPPORT);
-
-	edev->ops->common->get_esl_status(edev->cdev, &esl_active);
-
-	if (esl_active)
-		flags |= BIT(QEDE_PRI_FLAG_ESL_ACTIVE);
 
 	return flags;
 }
@@ -901,9 +888,7 @@ int qede_set_coalesce(struct net_device *dev, struct ethtool_coalesce *coal,
 }
 
 static void qede_get_ringparam(struct net_device *dev,
-			       struct ethtool_ringparam *ering,
-			       struct kernel_ethtool_ringparam *kernel_ering,
-			       struct netlink_ext_ack *extack)
+			       struct ethtool_ringparam *ering)
 {
 	struct qede_dev *edev = netdev_priv(dev);
 
@@ -914,9 +899,7 @@ static void qede_get_ringparam(struct net_device *dev,
 }
 
 static int qede_set_ringparam(struct net_device *dev,
-			      struct ethtool_ringparam *ering,
-			      struct kernel_ethtool_ringparam *kernel_ering,
-			      struct netlink_ext_ack *extack)
+			      struct ethtool_ringparam *ering)
 {
 	struct qede_dev *edev = netdev_priv(dev);
 

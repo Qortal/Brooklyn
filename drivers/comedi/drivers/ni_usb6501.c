@@ -87,7 +87,8 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
-#include <linux/comedi/comedi_usb.h>
+
+#include "../comedi_usb.h"
 
 #define	NI6501_TIMEOUT	1000
 

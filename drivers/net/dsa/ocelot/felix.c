@@ -21,6 +21,7 @@
 #include <linux/of_net.h>
 #include <linux/pci.h>
 #include <linux/of.h>
+#include <linux/pcs-lynx.h>
 #include <net/pkt_sched.h>
 #include <net/dsa.h>
 #include "felix.h"
@@ -239,32 +240,24 @@ static int felix_tag_8021q_vlan_del(struct dsa_switch *ds, int port, u16 vid)
  */
 static void felix_8021q_cpu_port_init(struct ocelot *ocelot, int port)
 {
-	mutex_lock(&ocelot->fwd_domain_lock);
-
 	ocelot->ports[port]->is_dsa_8021q_cpu = true;
 	ocelot->npi = -1;
 
 	/* Overwrite PGID_CPU with the non-tagging port */
 	ocelot_write_rix(ocelot, BIT(port), ANA_PGID_PGID, PGID_CPU);
 
-	ocelot_apply_bridge_fwd_mask(ocelot, true);
-
-	mutex_unlock(&ocelot->fwd_domain_lock);
+	ocelot_apply_bridge_fwd_mask(ocelot);
 }
 
 static void felix_8021q_cpu_port_deinit(struct ocelot *ocelot, int port)
 {
-	mutex_lock(&ocelot->fwd_domain_lock);
-
 	ocelot->ports[port]->is_dsa_8021q_cpu = false;
 
 	/* Restore PGID_CPU */
 	ocelot_write_rix(ocelot, BIT(ocelot->num_phys_ports), ANA_PGID_PGID,
 			 PGID_CPU);
 
-	ocelot_apply_bridge_fwd_mask(ocelot, true);
-
-	mutex_unlock(&ocelot->fwd_domain_lock);
+	ocelot_apply_bridge_fwd_mask(ocelot);
 }
 
 /* Set up a VCAP IS2 rule for delivering PTP frames to the CPU port module.
@@ -639,17 +632,6 @@ static int felix_set_ageing_time(struct dsa_switch *ds,
 	return 0;
 }
 
-static void felix_port_fast_age(struct dsa_switch *ds, int port)
-{
-	struct ocelot *ocelot = ds->priv;
-	int err;
-
-	err = ocelot_mact_flush(ocelot, port);
-	if (err)
-		dev_err(ds->dev, "Flushing MAC table on port %d returned %pe\n",
-			port, ERR_PTR(err));
-}
-
 static int felix_fdb_dump(struct dsa_switch *ds, int port,
 			  dsa_fdb_dump_cb_t *cb, void *data)
 {
@@ -719,21 +701,21 @@ static int felix_bridge_flags(struct dsa_switch *ds, int port,
 }
 
 static int felix_bridge_join(struct dsa_switch *ds, int port,
-			     struct dsa_bridge bridge, bool *tx_fwd_offload)
+			     struct net_device *br)
 {
 	struct ocelot *ocelot = ds->priv;
 
-	ocelot_port_bridge_join(ocelot, port, bridge.dev);
+	ocelot_port_bridge_join(ocelot, port, br);
 
 	return 0;
 }
 
 static void felix_bridge_leave(struct dsa_switch *ds, int port,
-			       struct dsa_bridge bridge)
+			       struct net_device *br)
 {
 	struct ocelot *ocelot = ds->priv;
 
-	ocelot_port_bridge_leave(ocelot, port, bridge.dev);
+	ocelot_port_bridge_leave(ocelot, port, br);
 }
 
 static int felix_lag_join(struct dsa_switch *ds, int port,
@@ -841,8 +823,8 @@ static void felix_phylink_mac_config(struct dsa_switch *ds, int port,
 	struct felix *felix = ocelot_to_felix(ocelot);
 	struct dsa_port *dp = dsa_to_port(ds, port);
 
-	if (felix->pcs && felix->pcs[port])
-		phylink_set_pcs(dp->pl, felix->pcs[port]);
+	if (felix->pcs[port])
+		phylink_set_pcs(dp->pl, &felix->pcs[port]->pcs);
 }
 
 static void felix_phylink_mac_link_down(struct dsa_switch *ds, int port,
@@ -979,10 +961,8 @@ static int felix_parse_dt(struct felix *felix, phy_interface_t *port_phy_modes)
 	switch_node = dev->of_node;
 
 	ports_node = of_get_child_by_name(switch_node, "ports");
-	if (!ports_node)
-		ports_node = of_get_child_by_name(switch_node, "ethernet-ports");
 	if (!ports_node) {
-		dev_err(dev, "Incorrect bindings: absent \"ports\" or \"ethernet-ports\" node\n");
+		dev_err(dev, "Incorrect bindings: absent \"ports\" node\n");
 		return -ENODEV;
 	}
 
@@ -1010,10 +990,6 @@ static int felix_init_structs(struct felix *felix, int num_phys_ports)
 	ocelot->num_stats	= felix->info->num_stats;
 	ocelot->num_mact_rows	= felix->info->num_mact_rows;
 	ocelot->vcap		= felix->info->vcap;
-	ocelot->vcap_pol.base	= felix->info->vcap_pol_base;
-	ocelot->vcap_pol.max	= felix->info->vcap_pol_max;
-	ocelot->vcap_pol.base2	= felix->info->vcap_pol_base2;
-	ocelot->vcap_pol.max2	= felix->info->vcap_pol_max2;
 	ocelot->ops		= felix->info->ops;
 	ocelot->npi_inj_prefix	= OCELOT_TAG_PREFIX_SHORT;
 	ocelot->npi_xtr_prefix	= OCELOT_TAG_PREFIX_SHORT;
@@ -1041,7 +1017,7 @@ static int felix_init_structs(struct felix *felix, int num_phys_ports)
 		res.start += felix->switch_base;
 		res.end += felix->switch_base;
 
-		target = felix->info->init_regmap(ocelot, &res);
+		target = ocelot_regmap_init(ocelot, &res);
 		if (IS_ERR(target)) {
 			dev_err(ocelot->dev,
 				"Failed to map device memory space\n");
@@ -1078,7 +1054,7 @@ static int felix_init_structs(struct felix *felix, int num_phys_ports)
 		res.start += felix->switch_base;
 		res.end += felix->switch_base;
 
-		target = felix->info->init_regmap(ocelot, &res);
+		target = ocelot_regmap_init(ocelot, &res);
 		if (IS_ERR(target)) {
 			dev_err(ocelot->dev,
 				"Failed to map memory space for port %d\n",
@@ -1165,22 +1141,38 @@ static void felix_port_deferred_xmit(struct kthread_work *work)
 	kfree(xmit_work);
 }
 
-static int felix_connect_tag_protocol(struct dsa_switch *ds,
-				      enum dsa_tag_protocol proto)
+static int felix_port_setup_tagger_data(struct dsa_switch *ds, int port)
 {
-	struct ocelot_8021q_tagger_data *tagger_data;
+	struct dsa_port *dp = dsa_to_port(ds, port);
+	struct ocelot *ocelot = ds->priv;
+	struct felix *felix = ocelot_to_felix(ocelot);
+	struct felix_port *felix_port;
 
-	switch (proto) {
-	case DSA_TAG_PROTO_OCELOT_8021Q:
-		tagger_data = ocelot_8021q_tagger_data(ds);
-		tagger_data->xmit_work_fn = felix_port_deferred_xmit;
+	if (!dsa_port_is_user(dp))
 		return 0;
-	case DSA_TAG_PROTO_OCELOT:
-	case DSA_TAG_PROTO_SEVILLE:
-		return 0;
-	default:
-		return -EPROTONOSUPPORT;
-	}
+
+	felix_port = kzalloc(sizeof(*felix_port), GFP_KERNEL);
+	if (!felix_port)
+		return -ENOMEM;
+
+	felix_port->xmit_worker = felix->xmit_worker;
+	felix_port->xmit_work_fn = felix_port_deferred_xmit;
+
+	dp->priv = felix_port;
+
+	return 0;
+}
+
+static void felix_port_teardown_tagger_data(struct dsa_switch *ds, int port)
+{
+	struct dsa_port *dp = dsa_to_port(ds, port);
+	struct felix_port *felix_port = dp->priv;
+
+	if (!felix_port)
+		return;
+
+	dp->priv = NULL;
+	kfree(felix_port);
 }
 
 /* Hardware initialization done here so that we can allocate structures with
@@ -1211,6 +1203,12 @@ static int felix_setup(struct dsa_switch *ds)
 		}
 	}
 
+	felix->xmit_worker = kthread_create_worker(0, "felix_xmit");
+	if (IS_ERR(felix->xmit_worker)) {
+		err = PTR_ERR(felix->xmit_worker);
+		goto out_deinit_timestamp;
+	}
+
 	for (port = 0; port < ds->num_ports; port++) {
 		if (dsa_is_unused_port(ds, port))
 			continue;
@@ -1221,6 +1219,14 @@ static int felix_setup(struct dsa_switch *ds)
 		 * bits of vlan tag.
 		 */
 		felix_port_qos_map_init(ocelot, port);
+
+		err = felix_port_setup_tagger_data(ds, port);
+		if (err) {
+			dev_err(ds->dev,
+				"port %d failed to set up tagger data: %pe\n",
+				port, ERR_PTR(err));
+			goto out_deinit_ports;
+		}
 	}
 
 	err = ocelot_devlink_sb_register(ocelot);
@@ -1248,9 +1254,13 @@ out_deinit_ports:
 		if (dsa_is_unused_port(ds, port))
 			continue;
 
+		felix_port_teardown_tagger_data(ds, port);
 		ocelot_deinit_port(ocelot, port);
 	}
 
+	kthread_destroy_worker(felix->xmit_worker);
+
+out_deinit_timestamp:
 	ocelot_deinit_timestamp(ocelot);
 	ocelot_deinit(ocelot);
 
@@ -1279,8 +1289,11 @@ static void felix_teardown(struct dsa_switch *ds)
 		if (dsa_is_unused_port(ds, port))
 			continue;
 
+		felix_port_teardown_tagger_data(ds, port);
 		ocelot_deinit_port(ocelot, port);
 	}
+
+	kthread_destroy_worker(felix->xmit_worker);
 
 	ocelot_devlink_sb_unregister(ocelot);
 	ocelot_deinit_timestamp(ocelot);
@@ -1621,7 +1634,6 @@ felix_mrp_del_ring_role(struct dsa_switch *ds, int port,
 const struct dsa_switch_ops felix_switch_ops = {
 	.get_tag_protocol		= felix_get_tag_protocol,
 	.change_tag_protocol		= felix_change_tag_protocol,
-	.connect_tag_protocol		= felix_connect_tag_protocol,
 	.setup				= felix_setup,
 	.teardown			= felix_teardown,
 	.set_ageing_time		= felix_set_ageing_time,
@@ -1633,7 +1645,6 @@ const struct dsa_switch_ops felix_switch_ops = {
 	.phylink_mac_config		= felix_phylink_mac_config,
 	.phylink_mac_link_down		= felix_phylink_mac_link_down,
 	.phylink_mac_link_up		= felix_phylink_mac_link_up,
-	.port_fast_age			= felix_port_fast_age,
 	.port_fdb_dump			= felix_fdb_dump,
 	.port_fdb_add			= felix_fdb_add,
 	.port_fdb_del			= felix_fdb_del,

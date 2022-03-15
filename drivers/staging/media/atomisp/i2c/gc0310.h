@@ -150,7 +150,8 @@ struct gc0310_device {
 
 	struct camera_sensor_platform_data *platform_data;
 	int vt_pix_clk_freq_mhz;
-	struct gc0310_resolution *res;
+	int fmt_idx;
+	u8 res;
 	u8 type;
 };
 

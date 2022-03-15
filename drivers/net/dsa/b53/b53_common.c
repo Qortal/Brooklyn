@@ -1222,7 +1222,7 @@ static void b53_adjust_link(struct dsa_switch *ds, int port,
 		return;
 
 	/* Enable flow control on BCM5301x's CPU port */
-	if (is5301x(dev) && dsa_is_cpu_port(ds, port))
+	if (is5301x(dev) && port == dev->cpu_port)
 		tx_pause = rx_pause = true;
 
 	if (phydev->pause) {
@@ -1291,6 +1291,12 @@ static void b53_adjust_link(struct dsa_switch *ds, int port,
 				return;
 			}
 		}
+	} else if (is5301x(dev)) {
+		if (port != dev->cpu_port) {
+			b53_force_port_config(dev, dev->cpu_port, 2000,
+					      DUPLEX_FULL, true, true);
+			b53_force_link(dev, dev->cpu_port, 1);
+		}
 	}
 
 	/* Re-negotiate EEE if it was enabled already */
@@ -1343,8 +1349,10 @@ void b53_phylink_validate(struct dsa_switch *ds, int port,
 		phylink_set(mask, 100baseT_Full);
 	}
 
-	linkmode_and(supported, supported, mask);
-	linkmode_and(state->advertising, state->advertising, mask);
+	bitmap_and(supported, supported, mask,
+		   __ETHTOOL_LINK_MODE_MASK_NBITS);
+	bitmap_and(state->advertising, state->advertising, mask,
+		   __ETHTOOL_LINK_MODE_MASK_NBITS);
 
 	phylink_helper_basex_speed(state);
 }
@@ -1542,7 +1550,7 @@ int b53_vlan_del(struct dsa_switch *ds, int port,
 }
 EXPORT_SYMBOL(b53_vlan_del);
 
-/* Address Resolution Logic routines. Caller must hold &dev->arl_mutex. */
+/* Address Resolution Logic routines */
 static int b53_arl_op_wait(struct b53_device *dev)
 {
 	unsigned int timeout = 10;
@@ -1707,7 +1715,6 @@ int b53_fdb_add(struct dsa_switch *ds, int port,
 		const unsigned char *addr, u16 vid)
 {
 	struct b53_device *priv = ds->priv;
-	int ret;
 
 	/* 5325 and 5365 require some more massaging, but could
 	 * be supported eventually
@@ -1715,11 +1722,7 @@ int b53_fdb_add(struct dsa_switch *ds, int port,
 	if (is5325(priv) || is5365(priv))
 		return -EOPNOTSUPP;
 
-	mutex_lock(&priv->arl_mutex);
-	ret = b53_arl_op(priv, 0, port, addr, vid, true);
-	mutex_unlock(&priv->arl_mutex);
-
-	return ret;
+	return b53_arl_op(priv, 0, port, addr, vid, true);
 }
 EXPORT_SYMBOL(b53_fdb_add);
 
@@ -1727,13 +1730,8 @@ int b53_fdb_del(struct dsa_switch *ds, int port,
 		const unsigned char *addr, u16 vid)
 {
 	struct b53_device *priv = ds->priv;
-	int ret;
 
-	mutex_lock(&priv->arl_mutex);
-	ret = b53_arl_op(priv, 0, port, addr, vid, false);
-	mutex_unlock(&priv->arl_mutex);
-
-	return ret;
+	return b53_arl_op(priv, 0, port, addr, vid, false);
 }
 EXPORT_SYMBOL(b53_fdb_del);
 
@@ -1790,8 +1788,6 @@ int b53_fdb_dump(struct dsa_switch *ds, int port,
 	int ret;
 	u8 reg;
 
-	mutex_lock(&priv->arl_mutex);
-
 	/* Start search operation */
 	reg = ARL_SRCH_STDN;
 	b53_write8(priv, B53_ARLIO_PAGE, B53_ARL_SRCH_CTL, reg);
@@ -1799,26 +1795,24 @@ int b53_fdb_dump(struct dsa_switch *ds, int port,
 	do {
 		ret = b53_arl_search_wait(priv);
 		if (ret)
-			break;
+			return ret;
 
 		b53_arl_search_rd(priv, 0, &results[0]);
 		ret = b53_fdb_copy(port, &results[0], cb, data);
 		if (ret)
-			break;
+			return ret;
 
 		if (priv->num_arl_bins > 2) {
 			b53_arl_search_rd(priv, 1, &results[1]);
 			ret = b53_fdb_copy(port, &results[1], cb, data);
 			if (ret)
-				break;
+				return ret;
 
 			if (!results[0].is_valid && !results[1].is_valid)
 				break;
 		}
 
 	} while (count++ < b53_max_arl_entries(priv) / 2);
-
-	mutex_unlock(&priv->arl_mutex);
 
 	return 0;
 }
@@ -1828,7 +1822,6 @@ int b53_mdb_add(struct dsa_switch *ds, int port,
 		const struct switchdev_obj_port_mdb *mdb)
 {
 	struct b53_device *priv = ds->priv;
-	int ret;
 
 	/* 5325 and 5365 require some more massaging, but could
 	 * be supported eventually
@@ -1836,11 +1829,7 @@ int b53_mdb_add(struct dsa_switch *ds, int port,
 	if (is5325(priv) || is5365(priv))
 		return -EOPNOTSUPP;
 
-	mutex_lock(&priv->arl_mutex);
-	ret = b53_arl_op(priv, 0, port, mdb->addr, mdb->vid, true);
-	mutex_unlock(&priv->arl_mutex);
-
-	return ret;
+	return b53_arl_op(priv, 0, port, mdb->addr, mdb->vid, true);
 }
 EXPORT_SYMBOL(b53_mdb_add);
 
@@ -1850,9 +1839,7 @@ int b53_mdb_del(struct dsa_switch *ds, int port,
 	struct b53_device *priv = ds->priv;
 	int ret;
 
-	mutex_lock(&priv->arl_mutex);
 	ret = b53_arl_op(priv, 0, port, mdb->addr, mdb->vid, false);
-	mutex_unlock(&priv->arl_mutex);
 	if (ret)
 		dev_err(ds->dev, "failed to delete MDB entry\n");
 
@@ -1860,8 +1847,7 @@ int b53_mdb_del(struct dsa_switch *ds, int port,
 }
 EXPORT_SYMBOL(b53_mdb_del);
 
-int b53_br_join(struct dsa_switch *ds, int port, struct dsa_bridge bridge,
-		bool *tx_fwd_offload)
+int b53_br_join(struct dsa_switch *ds, int port, struct net_device *br)
 {
 	struct b53_device *dev = ds->priv;
 	s8 cpu_port = dsa_to_port(ds, port)->cpu_dp->index;
@@ -1888,7 +1874,7 @@ int b53_br_join(struct dsa_switch *ds, int port, struct dsa_bridge bridge,
 	b53_read16(dev, B53_PVLAN_PAGE, B53_PVLAN_PORT_MASK(port), &pvlan);
 
 	b53_for_each_port(dev, i) {
-		if (!dsa_port_offloads_bridge(dsa_to_port(ds, i), &bridge))
+		if (dsa_to_port(ds, i)->bridge_dev != br)
 			continue;
 
 		/* Add this local port to the remote port VLAN control
@@ -1912,7 +1898,7 @@ int b53_br_join(struct dsa_switch *ds, int port, struct dsa_bridge bridge,
 }
 EXPORT_SYMBOL(b53_br_join);
 
-void b53_br_leave(struct dsa_switch *ds, int port, struct dsa_bridge bridge)
+void b53_br_leave(struct dsa_switch *ds, int port, struct net_device *br)
 {
 	struct b53_device *dev = ds->priv;
 	struct b53_vlan *vl = &dev->vlans[0];
@@ -1924,7 +1910,7 @@ void b53_br_leave(struct dsa_switch *ds, int port, struct dsa_bridge bridge)
 
 	b53_for_each_port(dev, i) {
 		/* Don't touch the remaining ports */
-		if (!dsa_port_offloads_bridge(dsa_to_port(ds, i), &bridge))
+		if (dsa_to_port(ds, i)->bridge_dev != br)
 			continue;
 
 		b53_read16(dev, B53_PVLAN_PAGE, B53_PVLAN_PORT_MASK(i), &reg);
@@ -2316,30 +2302,33 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.chip_id = BCM5325_DEVICE_ID,
 		.dev_name = "BCM5325",
 		.vlans = 16,
-		.enabled_ports = 0x3f,
+		.enabled_ports = 0x1f,
 		.arl_bins = 2,
 		.arl_buckets = 1024,
 		.imp_port = 5,
+		.cpu_port = B53_CPU_PORT_25,
 		.duplex_reg = B53_DUPLEX_STAT_FE,
 	},
 	{
 		.chip_id = BCM5365_DEVICE_ID,
 		.dev_name = "BCM5365",
 		.vlans = 256,
-		.enabled_ports = 0x3f,
+		.enabled_ports = 0x1f,
 		.arl_bins = 2,
 		.arl_buckets = 1024,
 		.imp_port = 5,
+		.cpu_port = B53_CPU_PORT_25,
 		.duplex_reg = B53_DUPLEX_STAT_FE,
 	},
 	{
 		.chip_id = BCM5389_DEVICE_ID,
 		.dev_name = "BCM5389",
 		.vlans = 4096,
-		.enabled_ports = 0x11f,
+		.enabled_ports = 0x1f,
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT,
 		.vta_regs = B53_VTA_REGS,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2349,10 +2338,11 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.chip_id = BCM5395_DEVICE_ID,
 		.dev_name = "BCM5395",
 		.vlans = 4096,
-		.enabled_ports = 0x11f,
+		.enabled_ports = 0x1f,
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT,
 		.vta_regs = B53_VTA_REGS,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2362,10 +2352,11 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.chip_id = BCM5397_DEVICE_ID,
 		.dev_name = "BCM5397",
 		.vlans = 4096,
-		.enabled_ports = 0x11f,
+		.enabled_ports = 0x1f,
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT,
 		.vta_regs = B53_VTA_REGS_9798,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2375,10 +2366,11 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.chip_id = BCM5398_DEVICE_ID,
 		.dev_name = "BCM5398",
 		.vlans = 4096,
-		.enabled_ports = 0x17f,
+		.enabled_ports = 0x7f,
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT,
 		.vta_regs = B53_VTA_REGS_9798,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2388,11 +2380,12 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.chip_id = BCM53115_DEVICE_ID,
 		.dev_name = "BCM53115",
 		.vlans = 4096,
-		.enabled_ports = 0x11f,
+		.enabled_ports = 0x1f,
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.vta_regs = B53_VTA_REGS,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
 		.jumbo_size_reg = B53_JUMBO_MAX_SIZE,
@@ -2401,10 +2394,11 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.chip_id = BCM53125_DEVICE_ID,
 		.dev_name = "BCM53125",
 		.vlans = 4096,
-		.enabled_ports = 0x1ff,
+		.enabled_ports = 0xff,
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT,
 		.vta_regs = B53_VTA_REGS,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2418,6 +2412,7 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT,
 		.vta_regs = B53_VTA_REGS,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2431,6 +2426,7 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT,
 		.vta_regs = B53_VTA_REGS_63XX,
 		.duplex_reg = B53_DUPLEX_STAT_63XX,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK_63XX,
@@ -2440,10 +2436,11 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.chip_id = BCM53010_DEVICE_ID,
 		.dev_name = "BCM53010",
 		.vlans = 4096,
-		.enabled_ports = 0x1bf,
+		.enabled_ports = 0x1f,
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT_25, /* TODO: auto detect */
 		.vta_regs = B53_VTA_REGS,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2457,6 +2454,7 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT_25, /* TODO: auto detect */
 		.vta_regs = B53_VTA_REGS,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2470,6 +2468,7 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT_25, /* TODO: auto detect */
 		.vta_regs = B53_VTA_REGS,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2479,10 +2478,11 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.chip_id = BCM53018_DEVICE_ID,
 		.dev_name = "BCM53018",
 		.vlans = 4096,
-		.enabled_ports = 0x1bf,
+		.enabled_ports = 0x1f,
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT_25, /* TODO: auto detect */
 		.vta_regs = B53_VTA_REGS,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2492,10 +2492,11 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.chip_id = BCM53019_DEVICE_ID,
 		.dev_name = "BCM53019",
 		.vlans = 4096,
-		.enabled_ports = 0x1bf,
+		.enabled_ports = 0x1f,
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT_25, /* TODO: auto detect */
 		.vta_regs = B53_VTA_REGS,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2509,6 +2510,7 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT,
 		.vta_regs = B53_VTA_REGS,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2522,6 +2524,7 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT,
 		.vta_regs = B53_VTA_REGS,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2536,6 +2539,7 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.arl_bins = 4,
 		.arl_buckets = 256,
 		.imp_port = 8,
+		.cpu_port = 8, /* TODO: ports 4, 5, 8 */
 		.vta_regs = B53_VTA_REGS,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2549,6 +2553,7 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.arl_bins = 4,
 		.arl_buckets = 1024,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT,
 		.vta_regs = B53_VTA_REGS,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2562,6 +2567,7 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.arl_bins = 4,
 		.arl_buckets = 256,
 		.imp_port = 8,
+		.cpu_port = B53_CPU_PORT,
 		.vta_regs = B53_VTA_REGS,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,
@@ -2587,6 +2593,7 @@ static int b53_switch_init(struct b53_device *dev)
 			dev->vta_regs[2] = chip->vta_regs[2];
 			dev->jumbo_pm_reg = chip->jumbo_pm_reg;
 			dev->imp_port = chip->imp_port;
+			dev->cpu_port = chip->cpu_port;
 			dev->num_vlans = chip->vlans;
 			dev->num_arl_bins = chip->arl_bins;
 			dev->num_arl_buckets = chip->arl_buckets;
@@ -2618,8 +2625,16 @@ static int b53_switch_init(struct b53_device *dev)
 			break;
 #endif
 		}
+	} else if (dev->chip_id == BCM53115_DEVICE_ID) {
+		u64 strap_value;
+
+		b53_read48(dev, B53_STAT_PAGE, B53_STRAP_VALUE, &strap_value);
+		/* use second IMP port if GMII is enabled */
+		if (strap_value & SV_GMII_CTRL_115)
+			dev->cpu_port = 5;
 	}
 
+	dev->enabled_ports |= BIT(dev->cpu_port);
 	dev->num_ports = fls(dev->enabled_ports);
 
 	dev->ds->num_ports = min_t(unsigned int, dev->num_ports, DSA_MAX_PORTS);
@@ -2690,7 +2705,6 @@ struct b53_device *b53_switch_alloc(struct device *base,
 
 	mutex_init(&dev->reg_mutex);
 	mutex_init(&dev->stats_mutex);
-	mutex_init(&dev->arl_mutex);
 
 	return dev;
 }

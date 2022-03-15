@@ -96,10 +96,4 @@ enum {
 	RF_OPER_WIFI_SPECTRUM,
 };
 
-enum {
-	TAM_ARB_OP_MODE_NORMAL = 1,
-	TAM_ARB_OP_MODE_TEST,
-	TAM_ARB_OP_MODE_FORCE_SU = 5,
-};
-
 #endif

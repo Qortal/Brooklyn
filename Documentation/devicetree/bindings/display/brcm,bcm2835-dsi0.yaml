@@ -48,9 +48,6 @@ properties:
   interrupts:
     maxItems: 1
 
-  power-domains:
-    maxItems: 1
-
 required:
   - "#clock-cells"
   - compatible

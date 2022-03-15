@@ -79,7 +79,7 @@ required:
   - resets
   - reset-names
 
-unevaluatedProperties: false
+additionalProperties: false
 
 examples:
   - |

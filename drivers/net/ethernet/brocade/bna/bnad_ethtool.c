@@ -235,18 +235,13 @@ static int
 bnad_get_link_ksettings(struct net_device *netdev,
 			struct ethtool_link_ksettings *cmd)
 {
-	ethtool_link_ksettings_zero_link_mode(cmd, supported);
-	ethtool_link_ksettings_zero_link_mode(cmd, advertising);
+	u32 supported, advertising;
 
-	ethtool_link_ksettings_add_link_mode(cmd, supported, 10000baseCR_Full);
-	ethtool_link_ksettings_add_link_mode(cmd, supported, 10000baseSR_Full);
-	ethtool_link_ksettings_add_link_mode(cmd, supported, 10000baseLR_Full);
-	ethtool_link_ksettings_add_link_mode(cmd, advertising, 10000baseCR_Full);
-	ethtool_link_ksettings_add_link_mode(cmd, advertising, 10000baseSR_Full);
-	ethtool_link_ksettings_add_link_mode(cmd, advertising, 10000baseLR_Full);
+	supported = SUPPORTED_10000baseT_Full;
+	advertising = ADVERTISED_10000baseT_Full;
 	cmd->base.autoneg = AUTONEG_DISABLE;
-	ethtool_link_ksettings_add_link_mode(cmd, supported, FIBRE);
-	ethtool_link_ksettings_add_link_mode(cmd, advertising, FIBRE);
+	supported |= SUPPORTED_FIBRE;
+	advertising |= ADVERTISED_FIBRE;
 	cmd->base.port = PORT_FIBRE;
 	cmd->base.phy_address = 0;
 
@@ -257,6 +252,11 @@ bnad_get_link_ksettings(struct net_device *netdev,
 		cmd->base.speed = SPEED_UNKNOWN;
 		cmd->base.duplex = DUPLEX_UNKNOWN;
 	}
+
+	ethtool_convert_legacy_u32_to_link_mode(cmd->link_modes.supported,
+						supported);
+	ethtool_convert_legacy_u32_to_link_mode(cmd->link_modes.advertising,
+						advertising);
 
 	return 0;
 }
@@ -405,9 +405,7 @@ static int bnad_set_coalesce(struct net_device *netdev,
 
 static void
 bnad_get_ringparam(struct net_device *netdev,
-		   struct ethtool_ringparam *ringparam,
-		   struct kernel_ethtool_ringparam *kernel_ringparam,
-		   struct netlink_ext_ack *extack)
+		   struct ethtool_ringparam *ringparam)
 {
 	struct bnad *bnad = netdev_priv(netdev);
 
@@ -420,9 +418,7 @@ bnad_get_ringparam(struct net_device *netdev,
 
 static int
 bnad_set_ringparam(struct net_device *netdev,
-		   struct ethtool_ringparam *ringparam,
-		   struct kernel_ethtool_ringparam *kernel_ringparam,
-		   struct netlink_ext_ack *extack)
+		   struct ethtool_ringparam *ringparam)
 {
 	int i, current_err, err = 0;
 	struct bnad *bnad = netdev_priv(netdev);

@@ -71,7 +71,7 @@ media maintainers do the review.
 
 The media maintainers that work on specific areas of the subsystem are:
 
-- Remote Controllers (infrared):
+- Digital TV and remote controllers:
     Sean Young <sean@mess.org>
 
 - HDMI CEC:

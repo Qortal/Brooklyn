@@ -17,7 +17,8 @@
 #include <linux/dma-direction.h>
 #include <linux/interrupt.h>
 #include <linux/firmware.h>
-#include <linux/comedi/comedidev.h>
+
+#include "comedidev.h"
 #include "comedi_internal.h"
 
 struct comedi_driver *comedi_drivers;

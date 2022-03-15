@@ -6,18 +6,19 @@
 #include <soc/mscc/ocelot_vcap.h>
 #include <soc/mscc/ocelot_sys.h>
 #include <soc/mscc/ocelot.h>
-#include <linux/mdio/mdio-mscc-miim.h>
-#include <linux/of_mdio.h>
 #include <linux/of_platform.h>
 #include <linux/pcs-lynx.h>
 #include <linux/dsa/ocelot.h>
 #include <linux/iopoll.h>
+#include <linux/of_mdio.h>
 #include "felix.h"
 
-#define VSC9953_VCAP_POLICER_BASE		11
-#define VSC9953_VCAP_POLICER_MAX		31
-#define VSC9953_VCAP_POLICER_BASE2		120
-#define VSC9953_VCAP_POLICER_MAX2		161
+#define MSCC_MIIM_CMD_OPR_WRITE			BIT(1)
+#define MSCC_MIIM_CMD_OPR_READ			BIT(2)
+#define MSCC_MIIM_CMD_WRDATA_SHIFT		4
+#define MSCC_MIIM_CMD_REGAD_SHIFT		20
+#define MSCC_MIIM_CMD_PHYAD_SHIFT		25
+#define MSCC_MIIM_CMD_VLD			BIT(31)
 
 static const u32 vsc9953_ana_regmap[] = {
 	REG(ANA_ADVLEARN,			0x00b500),
@@ -857,6 +858,7 @@ static struct vcap_props vsc9953_vcap_props[] = {
 #define VSC9953_INIT_TIMEOUT			50000
 #define VSC9953_GCB_RST_SLEEP			100
 #define VSC9953_SYS_RAMINIT_SLEEP		80
+#define VCS9953_MII_TIMEOUT			10000
 
 static int vsc9953_gcb_soft_rst_status(struct ocelot *ocelot)
 {
@@ -876,6 +878,82 @@ static int vsc9953_sys_ram_init_status(struct ocelot *ocelot)
 	return val;
 }
 
+static int vsc9953_gcb_miim_pending_status(struct ocelot *ocelot)
+{
+	int val;
+
+	ocelot_field_read(ocelot, GCB_MIIM_MII_STATUS_PENDING, &val);
+
+	return val;
+}
+
+static int vsc9953_gcb_miim_busy_status(struct ocelot *ocelot)
+{
+	int val;
+
+	ocelot_field_read(ocelot, GCB_MIIM_MII_STATUS_BUSY, &val);
+
+	return val;
+}
+
+static int vsc9953_mdio_write(struct mii_bus *bus, int phy_id, int regnum,
+			      u16 value)
+{
+	struct ocelot *ocelot = bus->priv;
+	int err, cmd, val;
+
+	/* Wait while MIIM controller becomes idle */
+	err = readx_poll_timeout(vsc9953_gcb_miim_pending_status, ocelot,
+				 val, !val, 10, VCS9953_MII_TIMEOUT);
+	if (err) {
+		dev_err(ocelot->dev, "MDIO write: pending timeout\n");
+		goto out;
+	}
+
+	cmd = MSCC_MIIM_CMD_VLD | (phy_id << MSCC_MIIM_CMD_PHYAD_SHIFT) |
+	      (regnum << MSCC_MIIM_CMD_REGAD_SHIFT) |
+	      (value << MSCC_MIIM_CMD_WRDATA_SHIFT) |
+	      MSCC_MIIM_CMD_OPR_WRITE;
+
+	ocelot_write(ocelot, cmd, GCB_MIIM_MII_CMD);
+
+out:
+	return err;
+}
+
+static int vsc9953_mdio_read(struct mii_bus *bus, int phy_id, int regnum)
+{
+	struct ocelot *ocelot = bus->priv;
+	int err, cmd, val;
+
+	/* Wait until MIIM controller becomes idle */
+	err = readx_poll_timeout(vsc9953_gcb_miim_pending_status, ocelot,
+				 val, !val, 10, VCS9953_MII_TIMEOUT);
+	if (err) {
+		dev_err(ocelot->dev, "MDIO read: pending timeout\n");
+		goto out;
+	}
+
+	/* Write the MIIM COMMAND register */
+	cmd = MSCC_MIIM_CMD_VLD | (phy_id << MSCC_MIIM_CMD_PHYAD_SHIFT) |
+	      (regnum << MSCC_MIIM_CMD_REGAD_SHIFT) | MSCC_MIIM_CMD_OPR_READ;
+
+	ocelot_write(ocelot, cmd, GCB_MIIM_MII_CMD);
+
+	/* Wait while read operation via the MIIM controller is in progress */
+	err = readx_poll_timeout(vsc9953_gcb_miim_busy_status, ocelot,
+				 val, !val, 10, VCS9953_MII_TIMEOUT);
+	if (err) {
+		dev_err(ocelot->dev, "MDIO read: busy timeout\n");
+		goto out;
+	}
+
+	val = ocelot_read(ocelot, GCB_MIIM_MII_DATA);
+
+	err = val & 0xFFFF;
+out:
+	return err;
+}
 
 /* CORE_ENA is in SYS:SYSTEM:RESET_CFG
  * MEM_INIT is in SYS:SYSTEM:RESET_CFG
@@ -922,7 +1000,7 @@ static void vsc9953_phylink_validate(struct ocelot *ocelot, int port,
 
 	if (state->interface != PHY_INTERFACE_MODE_NA &&
 	    state->interface != ocelot_port->phy_mode) {
-		linkmode_zero(supported);
+		bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
 		return;
 	}
 
@@ -941,8 +1019,10 @@ static void vsc9953_phylink_validate(struct ocelot *ocelot, int port,
 		phylink_set(mask, 2500baseX_Full);
 	}
 
-	linkmode_and(supported, supported, mask);
-	linkmode_and(state->advertising, state->advertising, mask);
+	bitmap_and(supported, supported, mask,
+		   __ETHTOOL_LINK_MODE_MASK_NBITS);
+	bitmap_and(state->advertising, state->advertising, mask,
+		   __ETHTOOL_LINK_MODE_MASK_NBITS);
 }
 
 static int vsc9953_prevalidate_phy_mode(struct ocelot *ocelot, int port,
@@ -1012,21 +1092,23 @@ static int vsc9953_mdio_bus_alloc(struct ocelot *ocelot)
 	int rc;
 
 	felix->pcs = devm_kcalloc(dev, felix->info->num_ports,
-				  sizeof(struct phylink_pcs *),
+				  sizeof(struct phy_device *),
 				  GFP_KERNEL);
 	if (!felix->pcs) {
 		dev_err(dev, "failed to allocate array for PCS PHYs\n");
 		return -ENOMEM;
 	}
 
-	rc = mscc_miim_setup(dev, &bus, "VSC9953 internal MDIO bus",
-			     ocelot->targets[GCB],
-			     ocelot->map[GCB][GCB_MIIM_MII_STATUS & REG_MASK]);
+	bus = devm_mdiobus_alloc(dev);
+	if (!bus)
+		return -ENOMEM;
 
-	if (rc) {
-		dev_err(dev, "failed to setup MDIO bus\n");
-		return rc;
-	}
+	bus->name = "VSC9953 internal MDIO bus";
+	bus->read = vsc9953_mdio_read;
+	bus->write = vsc9953_mdio_write;
+	bus->parent = dev;
+	bus->priv = ocelot;
+	snprintf(bus->id, MII_BUS_ID_SIZE, "%s-imdio", dev_name(dev));
 
 	/* Needed in order to initialize the bus mutex lock */
 	rc = devm_of_mdiobus_register(dev, bus, NULL);
@@ -1039,9 +1121,9 @@ static int vsc9953_mdio_bus_alloc(struct ocelot *ocelot)
 
 	for (port = 0; port < felix->info->num_ports; port++) {
 		struct ocelot_port *ocelot_port = ocelot->ports[port];
-		struct phylink_pcs *phylink_pcs;
-		struct mdio_device *mdio_device;
 		int addr = port + 4;
+		struct mdio_device *pcs;
+		struct lynx_pcs *lynx;
 
 		if (dsa_is_unused_port(felix->ds, port))
 			continue;
@@ -1049,17 +1131,17 @@ static int vsc9953_mdio_bus_alloc(struct ocelot *ocelot)
 		if (ocelot_port->phy_mode == PHY_INTERFACE_MODE_INTERNAL)
 			continue;
 
-		mdio_device = mdio_device_create(felix->imdio, addr);
-		if (IS_ERR(mdio_device))
+		pcs = mdio_device_create(felix->imdio, addr);
+		if (IS_ERR(pcs))
 			continue;
 
-		phylink_pcs = lynx_pcs_create(mdio_device);
-		if (!phylink_pcs) {
-			mdio_device_free(mdio_device);
+		lynx = lynx_pcs_create(pcs);
+		if (!lynx) {
+			mdio_device_free(pcs);
 			continue;
 		}
 
-		felix->pcs[port] = phylink_pcs;
+		felix->pcs[port] = lynx;
 
 		dev_info(dev, "Found PCS at internal MDIO address %d\n", addr);
 	}
@@ -1073,15 +1155,13 @@ static void vsc9953_mdio_bus_free(struct ocelot *ocelot)
 	int port;
 
 	for (port = 0; port < ocelot->num_phys_ports; port++) {
-		struct phylink_pcs *phylink_pcs = felix->pcs[port];
-		struct mdio_device *mdio_device;
+		struct lynx_pcs *pcs = felix->pcs[port];
 
-		if (!phylink_pcs)
+		if (!pcs)
 			continue;
 
-		mdio_device = lynx_get_mdio_device(phylink_pcs);
-		mdio_device_free(mdio_device);
-		lynx_pcs_destroy(phylink_pcs);
+		mdio_device_free(pcs->mdio);
+		lynx_pcs_destroy(pcs);
 	}
 
 	/* mdiobus_unregister and mdiobus_free handled by devres */
@@ -1096,10 +1176,6 @@ static const struct felix_info seville_info_vsc9953 = {
 	.stats_layout		= vsc9953_stats_layout,
 	.num_stats		= ARRAY_SIZE(vsc9953_stats_layout),
 	.vcap			= vsc9953_vcap_props,
-	.vcap_pol_base		= VSC9953_VCAP_POLICER_BASE,
-	.vcap_pol_max		= VSC9953_VCAP_POLICER_MAX,
-	.vcap_pol_base2		= VSC9953_VCAP_POLICER_BASE2,
-	.vcap_pol_max2		= VSC9953_VCAP_POLICER_MAX2,
 	.num_mact_rows		= 2048,
 	.num_ports		= 10,
 	.num_tx_queues		= OCELOT_NUM_TC,
@@ -1107,7 +1183,6 @@ static const struct felix_info seville_info_vsc9953 = {
 	.mdio_bus_free		= vsc9953_mdio_bus_free,
 	.phylink_validate	= vsc9953_phylink_validate,
 	.prevalidate_phy_mode	= vsc9953_prevalidate_phy_mode,
-	.init_regmap		= ocelot_regmap_init,
 };
 
 static int seville_probe(struct platform_device *pdev)

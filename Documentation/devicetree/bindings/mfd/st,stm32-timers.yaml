@@ -17,7 +17,8 @@ description: |
       programmable prescaler.
 
 maintainers:
-  - Fabrice Gasnier <fabrice.gasnier@foss.st.com>
+  - Benjamin Gaignard <benjamin.gaignard@st.com>
+  - Fabrice Gasnier <fabrice.gasnier@st.com>
 
 properties:
   compatible:

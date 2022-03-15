@@ -95,10 +95,6 @@ properties:
   phys:
     maxItems: 1
 
-  phy-names:
-    items:
-      - const: pcie-phy
-
   '#interrupt-cells':
     const: 1
 

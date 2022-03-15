@@ -11,9 +11,7 @@ maintainers:
 
 properties:
   compatible:
-    enum:
-      - qcom,sc7280-lpass-rx-macro
-      - qcom,sm8250-lpass-rx-macro
+    const: qcom,sm8250-lpass-rx-macro
 
   reg:
     maxItems: 1

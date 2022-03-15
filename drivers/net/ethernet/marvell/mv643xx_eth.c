@@ -1638,9 +1638,7 @@ static int mv643xx_eth_set_coalesce(struct net_device *dev,
 }
 
 static void
-mv643xx_eth_get_ringparam(struct net_device *dev, struct ethtool_ringparam *er,
-			  struct kernel_ethtool_ringparam *kernel_er,
-			  struct netlink_ext_ack *extack)
+mv643xx_eth_get_ringparam(struct net_device *dev, struct ethtool_ringparam *er)
 {
 	struct mv643xx_eth_private *mp = netdev_priv(dev);
 
@@ -1652,9 +1650,7 @@ mv643xx_eth_get_ringparam(struct net_device *dev, struct ethtool_ringparam *er,
 }
 
 static int
-mv643xx_eth_set_ringparam(struct net_device *dev, struct ethtool_ringparam *er,
-			  struct kernel_ethtool_ringparam *kernel_er,
-			  struct netlink_ext_ack *extack)
+mv643xx_eth_set_ringparam(struct net_device *dev, struct ethtool_ringparam *er)
 {
 	struct mv643xx_eth_private *mp = netdev_priv(dev);
 
@@ -1774,7 +1770,7 @@ static void uc_addr_get(struct mv643xx_eth_private *mp, unsigned char *addr)
 	addr[5] = mac_l & 0xff;
 }
 
-static void uc_addr_set(struct mv643xx_eth_private *mp, const u8 *addr)
+static void uc_addr_set(struct mv643xx_eth_private *mp, unsigned char *addr)
 {
 	wrlp(mp, MAC_ADDR_HIGH,
 		(addr[0] << 24) | (addr[1] << 16) | (addr[2] << 8) | addr[3]);
@@ -1923,7 +1919,7 @@ static int mv643xx_eth_set_mac_address(struct net_device *dev, void *addr)
 	if (!is_valid_ether_addr(sa->sa_data))
 		return -EADDRNOTAVAIL;
 
-	eth_hw_addr_set(dev, sa->sa_data);
+	memcpy(dev->dev_addr, sa->sa_data, ETH_ALEN);
 
 	netif_addr_lock_bh(dev);
 	mv643xx_eth_program_unicast_filter(dev);
@@ -2933,14 +2929,10 @@ static void set_params(struct mv643xx_eth_private *mp,
 	struct net_device *dev = mp->dev;
 	unsigned int tx_ring_size;
 
-	if (is_valid_ether_addr(pd->mac_addr)) {
-		eth_hw_addr_set(dev, pd->mac_addr);
-	} else {
-		u8 addr[ETH_ALEN];
-
-		uc_addr_get(mp, addr);
-		eth_hw_addr_set(dev, addr);
-	}
+	if (is_valid_ether_addr(pd->mac_addr))
+		memcpy(dev->dev_addr, pd->mac_addr, ETH_ALEN);
+	else
+		uc_addr_get(mp, dev->dev_addr);
 
 	mp->rx_ring_size = DEFAULT_RX_QUEUE_SIZE;
 	if (pd->rx_queue_size)
@@ -3205,7 +3197,7 @@ static int mv643xx_eth_probe(struct platform_device *pdev)
 	dev->hw_features = dev->features;
 
 	dev->priv_flags |= IFF_UNICAST_FLT;
-	netif_set_gso_max_segs(dev, MV643XX_MAX_TSO_SEGS);
+	dev->gso_max_segs = MV643XX_MAX_TSO_SEGS;
 
 	/* MTU range: 64 - 9500 */
 	dev->min_mtu = 64;

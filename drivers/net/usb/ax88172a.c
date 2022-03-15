@@ -176,7 +176,7 @@ static int ax88172a_bind(struct usbnet *dev, struct usb_interface *intf)
 		ret = -EIO;
 		goto free;
 	}
-	eth_hw_addr_set(dev->net, buf);
+	memcpy(dev->net->dev_addr, buf, ETH_ALEN);
 
 	dev->net->netdev_ops = &ax88172a_netdev_ops;
 	dev->net->ethtool_ops = &ax88172a_ethtool_ops;

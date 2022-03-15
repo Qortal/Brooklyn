@@ -34,7 +34,8 @@
 
 #include <linux/module.h>
 #include <linux/interrupt.h>
-#include <linux/comedi/comedi_pci.h>
+
+#include "../comedi_pci.h"
 
 #include "amplc_pc236.h"
 #include "plx9052.h"

@@ -1103,7 +1103,7 @@ static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 			e_err(probe, "EEPROM Read Error\n");
 	}
 	/* don't block initialization here due to bad MAC address */
-	eth_hw_addr_set(netdev, hw->mac_addr);
+	memcpy(netdev->dev_addr, hw->mac_addr, netdev->addr_len);
 
 	if (!is_valid_ether_addr(netdev->dev_addr))
 		e_err(probe, "Invalid MAC Address\n");
@@ -1953,8 +1953,7 @@ void e1000_free_all_tx_resources(struct e1000_adapter *adapter)
 
 static void
 e1000_unmap_and_free_tx_resource(struct e1000_adapter *adapter,
-				 struct e1000_tx_buffer *buffer_info,
-				 int budget)
+				 struct e1000_tx_buffer *buffer_info)
 {
 	if (buffer_info->dma) {
 		if (buffer_info->mapped_as_page)
@@ -1967,7 +1966,7 @@ e1000_unmap_and_free_tx_resource(struct e1000_adapter *adapter,
 		buffer_info->dma = 0;
 	}
 	if (buffer_info->skb) {
-		napi_consume_skb(buffer_info->skb, budget);
+		dev_kfree_skb_any(buffer_info->skb);
 		buffer_info->skb = NULL;
 	}
 	buffer_info->time_stamp = 0;
@@ -1991,7 +1990,7 @@ static void e1000_clean_tx_ring(struct e1000_adapter *adapter,
 
 	for (i = 0; i < tx_ring->count; i++) {
 		buffer_info = &tx_ring->buffer_info[i];
-		e1000_unmap_and_free_tx_resource(adapter, buffer_info, 0);
+		e1000_unmap_and_free_tx_resource(adapter, buffer_info);
 	}
 
 	netdev_reset_queue(adapter->netdev);
@@ -2210,7 +2209,7 @@ static int e1000_set_mac(struct net_device *netdev, void *p)
 	if (hw->mac_type == e1000_82542_rev2_0)
 		e1000_enter_82542_rst(adapter);
 
-	eth_hw_addr_set(netdev, addr->sa_data);
+	memcpy(netdev->dev_addr, addr->sa_data, netdev->addr_len);
 	memcpy(hw->mac_addr, addr->sa_data, netdev->addr_len);
 
 	e1000_rar_set(hw, hw->mac_addr, 0);
@@ -2959,7 +2958,7 @@ dma_error:
 			i += tx_ring->count;
 		i--;
 		buffer_info = &tx_ring->buffer_info[i];
-		e1000_unmap_and_free_tx_resource(adapter, buffer_info, 0);
+		e1000_unmap_and_free_tx_resource(adapter, buffer_info);
 	}
 
 	return 0;
@@ -3857,8 +3856,7 @@ static bool e1000_clean_tx_irq(struct e1000_adapter *adapter,
 				}
 
 			}
-			e1000_unmap_and_free_tx_resource(adapter, buffer_info,
-							 64);
+			e1000_unmap_and_free_tx_resource(adapter, buffer_info);
 			tx_desc->upper.data = 0;
 
 			if (unlikely(++i == tx_ring->count))
@@ -4384,7 +4382,7 @@ static bool e1000_clean_rx_irq(struct e1000_adapter *adapter,
 		if (!skb) {
 			unsigned int frag_len = e1000_frag_len(adapter);
 
-			skb = napi_build_skb(data - E1000_HEADROOM, frag_len);
+			skb = build_skb(data - E1000_HEADROOM, frag_len);
 			if (!skb) {
 				adapter->alloc_rx_buff_failed++;
 				break;

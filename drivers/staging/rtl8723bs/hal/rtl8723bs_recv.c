@@ -378,10 +378,8 @@ s32 rtl8723bs_init_recv_priv(struct adapter *padapter)
 	precvpriv = &padapter->recvpriv;
 
 	/* 3 1. init recv buffer */
-	INIT_LIST_HEAD(&precvpriv->free_recv_buf_queue.queue);
-	spin_lock_init(&precvpriv->free_recv_buf_queue.lock);
-	INIT_LIST_HEAD(&precvpriv->recv_buf_pending_queue.queue);
-	spin_lock_init(&precvpriv->recv_buf_pending_queue.lock);
+	_rtw_init_queue(&precvpriv->free_recv_buf_queue);
+	_rtw_init_queue(&precvpriv->recv_buf_pending_queue);
 
 	n = NR_RECVBUFF * sizeof(struct recv_buf) + 4;
 	precvpriv->pallocated_recv_buf = rtw_zmalloc(n);

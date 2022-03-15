@@ -116,9 +116,8 @@ struct cm4000_dev {
 	wait_queue_head_t atrq;		/* wait for ATR valid */
 	wait_queue_head_t readq;	/* used by write to wake blk.read */
 
-	/* warning: do not move this struct group.
+	/* warning: do not move this fields.
 	 * initialising to zero depends on it - see ZERO_DEV below.  */
-	struct_group(init,
 	unsigned char atr_csum;
 	unsigned char atr_len_retry;
 	unsigned short atr_len;
@@ -141,10 +140,12 @@ struct cm4000_dev {
 
 	struct timer_list timer;	/* used to keep monitor running */
 	int monitor_running;
-	);
 };
 
-#define	ZERO_DEV(dev)	memset(&((dev)->init), 0, sizeof((dev)->init))
+#define	ZERO_DEV(dev)  						\
+	memset(&dev->atr_csum,0,				\
+		sizeof(struct cm4000_dev) - 			\
+		offsetof(struct cm4000_dev, atr_csum))
 
 static struct pcmcia_device *dev_table[CM4000_MAX_DEV];
 static struct class *cmm_class;

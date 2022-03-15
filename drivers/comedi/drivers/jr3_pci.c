@@ -35,7 +35,8 @@
 #include <linux/jiffies.h>
 #include <linux/slab.h>
 #include <linux/timer.h>
-#include <linux/comedi/comedi_pci.h>
+
+#include "../comedi_pci.h"
 
 #include "jr3_pci.h"
 

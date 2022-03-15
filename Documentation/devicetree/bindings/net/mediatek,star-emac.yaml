@@ -48,8 +48,9 @@ properties:
       to control the MII mode.
 
   mdio:
-    $ref: mdio.yaml#
-    unevaluatedProperties: false
+    type: object
+    description:
+      Creates and registers an MDIO bus.
 
 required:
   - compatible

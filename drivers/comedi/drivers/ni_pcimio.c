@@ -94,7 +94,9 @@
 
 #include <linux/module.h>
 #include <linux/delay.h>
-#include <linux/comedi/comedi_pci.h>
+
+#include "../comedi_pci.h"
+
 #include <asm/byteorder.h>
 
 #include "ni_stc.h"

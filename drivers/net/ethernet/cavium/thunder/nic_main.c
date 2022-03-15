@@ -1311,8 +1311,9 @@ static int nic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	err = pci_enable_device(pdev);
 	if (err) {
+		dev_err(dev, "Failed to enable PCI device\n");
 		pci_set_drvdata(pdev, NULL);
-		return dev_err_probe(dev, err, "Failed to enable PCI device\n");
+		return err;
 	}
 
 	err = pci_request_regions(pdev, DRV_NAME);

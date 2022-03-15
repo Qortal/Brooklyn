@@ -202,7 +202,7 @@ static void macvlan_hash_change_addr(struct macvlan_dev *vlan,
 	/* Now that we are unhashed it is safe to change the device
 	 * address without confusing packet delivery.
 	 */
-	eth_hw_addr_set(vlan->dev, addr);
+	memcpy(vlan->dev->dev_addr, addr, ETH_ALEN);
 	macvlan_hash_add(vlan);
 }
 
@@ -698,8 +698,7 @@ hash_del:
 	return 0;
 }
 
-static int macvlan_sync_address(struct net_device *dev,
-				const unsigned char *addr)
+static int macvlan_sync_address(struct net_device *dev, unsigned char *addr)
 {
 	struct macvlan_dev *vlan = netdev_priv(dev);
 	struct net_device *lowerdev = vlan->lowerdev;
@@ -708,7 +707,7 @@ static int macvlan_sync_address(struct net_device *dev,
 
 	if (!(dev->flags & IFF_UP)) {
 		/* Just copy in the new address */
-		eth_hw_addr_set(dev, addr);
+		ether_addr_copy(dev->dev_addr, addr);
 	} else {
 		/* Rehash and update the device filters */
 		if (macvlan_addr_busy(vlan->port, addr))
@@ -900,8 +899,8 @@ static int macvlan_init(struct net_device *dev)
 	dev->vlan_features	= lowerdev->vlan_features & MACVLAN_FEATURES;
 	dev->vlan_features	|= ALWAYS_ON_OFFLOADS;
 	dev->hw_enc_features    |= dev->features;
-	netif_set_gso_max_size(dev, lowerdev->gso_max_size);
-	netif_set_gso_max_segs(dev, lowerdev->gso_max_segs);
+	dev->gso_max_size	= lowerdev->gso_max_size;
+	dev->gso_max_segs	= lowerdev->gso_max_segs;
 	dev->hard_header_len	= lowerdev->hard_header_len;
 	macvlan_set_lockdep_class(dev);
 
@@ -1171,6 +1170,7 @@ static const struct net_device_ops macvlan_netdev_ops = {
 #endif
 	.ndo_get_iflink		= macvlan_dev_get_iflink,
 	.ndo_features_check	= passthru_features_check,
+	.ndo_change_proto_down  = dev_change_proto_down_generic,
 };
 
 void macvlan_common_setup(struct net_device *dev)
@@ -1181,7 +1181,7 @@ void macvlan_common_setup(struct net_device *dev)
 	dev->max_mtu		= ETH_MAX_MTU;
 	dev->priv_flags	       &= ~IFF_TX_SKB_SHARING;
 	netif_keep_dst(dev);
-	dev->priv_flags	       |= IFF_UNICAST_FLT | IFF_CHANGE_PROTO_DOWN;
+	dev->priv_flags	       |= IFF_UNICAST_FLT;
 	dev->netdev_ops		= &macvlan_netdev_ops;
 	dev->needs_free_netdev	= true;
 	dev->header_ops		= &macvlan_hard_header_ops;
@@ -1747,8 +1747,8 @@ static int macvlan_device_event(struct notifier_block *unused,
 		break;
 	case NETDEV_FEAT_CHANGE:
 		list_for_each_entry(vlan, &port->vlans, list) {
-			netif_set_gso_max_size(vlan->dev, dev->gso_max_size);
-			netif_set_gso_max_segs(vlan->dev, dev->gso_max_segs);
+			vlan->dev->gso_max_size = dev->gso_max_size;
+			vlan->dev->gso_max_segs = dev->gso_max_segs;
 			netdev_update_features(vlan->dev);
 		}
 		break;

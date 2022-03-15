@@ -2466,7 +2466,9 @@ alloc:
 		bmap = mcam->bmap_reverse;
 		start = mcam->bmap_entries - start;
 		end = mcam->bmap_entries - end;
-		swap(start, end);
+		index = start;
+		start = end;
+		end = index;
 	} else {
 		bmap = mcam->bmap;
 	}

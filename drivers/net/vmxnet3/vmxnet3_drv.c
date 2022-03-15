@@ -46,7 +46,7 @@ MODULE_DEVICE_TABLE(pci, vmxnet3_pciid_table);
 static int enable_mq = 1;
 
 static void
-vmxnet3_write_mac_addr(struct vmxnet3_adapter *adapter, const u8 *mac);
+vmxnet3_write_mac_addr(struct vmxnet3_adapter *adapter, u8 *mac);
 
 /*
  *    Enable/Disable the given intr
@@ -2806,7 +2806,7 @@ vmxnet3_quiesce_dev(struct vmxnet3_adapter *adapter)
 
 
 static void
-vmxnet3_write_mac_addr(struct vmxnet3_adapter *adapter, const u8 *mac)
+vmxnet3_write_mac_addr(struct vmxnet3_adapter *adapter, u8 *mac)
 {
 	u32 tmp;
 
@@ -2824,7 +2824,7 @@ vmxnet3_set_mac_addr(struct net_device *netdev, void *p)
 	struct sockaddr *addr = p;
 	struct vmxnet3_adapter *adapter = netdev_priv(netdev);
 
-	dev_addr_set(netdev, addr->sa_data);
+	memcpy(netdev->dev_addr, addr->sa_data, netdev->addr_len);
 	vmxnet3_write_mac_addr(adapter, addr->sa_data);
 
 	return 0;
@@ -3159,14 +3159,14 @@ out:
 
 
 static void
-vmxnet3_declare_features(struct vmxnet3_adapter *adapter)
+vmxnet3_declare_features(struct vmxnet3_adapter *adapter, bool dma64)
 {
 	struct net_device *netdev = adapter->netdev;
 
 	netdev->hw_features = NETIF_F_SG | NETIF_F_RXCSUM |
 		NETIF_F_HW_CSUM | NETIF_F_HW_VLAN_CTAG_TX |
 		NETIF_F_HW_VLAN_CTAG_RX | NETIF_F_TSO | NETIF_F_TSO6 |
-		NETIF_F_LRO | NETIF_F_HIGHDMA;
+		NETIF_F_LRO;
 
 	if (VMXNET3_VERSION_GE_4(adapter)) {
 		netdev->hw_features |= NETIF_F_GSO_UDP_TUNNEL |
@@ -3179,6 +3179,8 @@ vmxnet3_declare_features(struct vmxnet3_adapter *adapter)
 			NETIF_F_GSO_UDP_TUNNEL_CSUM;
 	}
 
+	if (dma64)
+		netdev->hw_features |= NETIF_F_HIGHDMA;
 	netdev->vlan_features = netdev->hw_features &
 				~(NETIF_F_HW_VLAN_CTAG_TX |
 				  NETIF_F_HW_VLAN_CTAG_RX);
@@ -3395,6 +3397,7 @@ vmxnet3_probe_device(struct pci_dev *pdev,
 #endif
 	};
 	int err;
+	bool dma64;
 	u32 ver;
 	struct net_device *netdev;
 	struct vmxnet3_adapter *adapter;
@@ -3436,10 +3439,15 @@ vmxnet3_probe_device(struct pci_dev *pdev,
 	adapter->rx_ring_size = VMXNET3_DEF_RX_RING_SIZE;
 	adapter->rx_ring2_size = VMXNET3_DEF_RX_RING2_SIZE;
 
-	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
-	if (err) {
-		dev_err(&pdev->dev, "dma_set_mask failed\n");
-		goto err_set_mask;
+	if (dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64)) == 0) {
+		dma64 = true;
+	} else {
+		err = dma_set_mask(&pdev->dev, DMA_BIT_MASK(32));
+		if (err) {
+			dev_err(&pdev->dev, "dma_set_mask failed\n");
+			goto err_set_mask;
+		}
+		dma64 = false;
 	}
 
 	spin_lock_init(&adapter->cmd_lock);
@@ -3606,7 +3614,7 @@ vmxnet3_probe_device(struct pci_dev *pdev,
 	}
 
 	SET_NETDEV_DEV(netdev, &pdev->dev);
-	vmxnet3_declare_features(adapter);
+	vmxnet3_declare_features(adapter, dma64);
 
 	adapter->rxdata_desc_size = VMXNET3_VERSION_GE_3(adapter) ?
 		VMXNET3_DEF_RXDATA_DESC_SIZE : 0;
@@ -3631,7 +3639,7 @@ vmxnet3_probe_device(struct pci_dev *pdev,
 #endif
 
 	vmxnet3_read_mac_addr(adapter, mac);
-	dev_addr_set(netdev, mac);
+	memcpy(netdev->dev_addr,  mac, netdev->addr_len);
 
 	netdev->netdev_ops = &vmxnet3_netdev_ops;
 	vmxnet3_set_ethtool_ops(netdev);

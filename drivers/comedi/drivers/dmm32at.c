@@ -29,8 +29,9 @@
 #include <linux/module.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
-#include <linux/comedi/comedidev.h>
-#include <linux/comedi/comedi_8255.h>
+#include "../comedidev.h"
+
+#include "8255.h"
 
 /* Board register addresses */
 #define DMM32AT_AI_START_CONV_REG	0x00

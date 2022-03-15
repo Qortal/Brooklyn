@@ -20,7 +20,6 @@
 #include <linux/kernel.h>
 #include <linux/pagemap.h>
 #include <linux/agp_backend.h>
-#include <linux/intel-iommu.h>
 #include <linux/delay.h>
 #include <asm/smp.h>
 #include "agp.h"

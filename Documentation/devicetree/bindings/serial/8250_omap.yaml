@@ -86,7 +86,7 @@ required:
   - reg
   - interrupts
 
-unevaluatedProperties: false
+additionalProperties: false
 
 if:
   properties:

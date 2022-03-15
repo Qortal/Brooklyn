@@ -3027,7 +3027,7 @@ static int atl1_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		/* mark random mac */
 		netdev->addr_assign_type = NET_ADDR_RANDOM;
 	}
-	eth_hw_addr_set(netdev, adapter->hw.mac_addr);
+	memcpy(netdev->dev_addr, adapter->hw.mac_addr, netdev->addr_len);
 
 	if (!is_valid_ether_addr(netdev->dev_addr)) {
 		err = -EIO;
@@ -3438,9 +3438,7 @@ static void atl1_get_regs(struct net_device *netdev, struct ethtool_regs *regs,
 }
 
 static void atl1_get_ringparam(struct net_device *netdev,
-			       struct ethtool_ringparam *ring,
-			       struct kernel_ethtool_ringparam *kernel_ring,
-			       struct netlink_ext_ack *extack)
+	struct ethtool_ringparam *ring)
 {
 	struct atl1_adapter *adapter = netdev_priv(netdev);
 	struct atl1_tpd_ring *txdr = &adapter->tpd_ring;
@@ -3453,9 +3451,7 @@ static void atl1_get_ringparam(struct net_device *netdev,
 }
 
 static int atl1_set_ringparam(struct net_device *netdev,
-			      struct ethtool_ringparam *ring,
-			      struct kernel_ethtool_ringparam *kernel_ring,
-			      struct netlink_ext_ack *extack)
+	struct ethtool_ringparam *ring)
 {
 	struct atl1_adapter *adapter = netdev_priv(netdev);
 	struct atl1_tpd_ring *tpdr = &adapter->tpd_ring;

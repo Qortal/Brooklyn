@@ -30,7 +30,7 @@
 
 #include <linux/module.h>
 #include <linux/io.h>
-#include <linux/comedi/comedidev.h>
+#include "../comedidev.h"
 
 /*
  * Register I/O map

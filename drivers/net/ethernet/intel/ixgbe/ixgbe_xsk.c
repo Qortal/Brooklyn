@@ -100,7 +100,6 @@ static int ixgbe_run_xdp_zc(struct ixgbe_adapter *adapter,
 {
 	int err, result = IXGBE_XDP_PASS;
 	struct bpf_prog *xdp_prog;
-	struct ixgbe_ring *ring;
 	struct xdp_frame *xdpf;
 	u32 act;
 
@@ -121,17 +120,12 @@ static int ixgbe_run_xdp_zc(struct ixgbe_adapter *adapter,
 		xdpf = xdp_convert_buff_to_frame(xdp);
 		if (unlikely(!xdpf))
 			goto out_failure;
-		ring = ixgbe_determine_xdp_ring(adapter);
-		if (static_branch_unlikely(&ixgbe_xdp_locking_key))
-			spin_lock(&ring->tx_lock);
-		result = ixgbe_xmit_xdp_ring(ring, xdpf);
-		if (static_branch_unlikely(&ixgbe_xdp_locking_key))
-			spin_unlock(&ring->tx_lock);
+		result = ixgbe_xmit_xdp_ring(adapter, xdpf);
 		if (result == IXGBE_XDP_CONSUMED)
 			goto out_failure;
 		break;
 	default:
-		bpf_warn_invalid_xdp_action(rx_ring->netdev, xdp_prog, act);
+		bpf_warn_invalid_xdp_action(act);
 		fallthrough;
 	case XDP_ABORTED:
 out_failure:
@@ -340,9 +334,13 @@ int ixgbe_clean_rx_irq_zc(struct ixgbe_q_vector *q_vector,
 		xdp_do_flush_map();
 
 	if (xdp_xmit & IXGBE_XDP_TX) {
-		struct ixgbe_ring *ring = ixgbe_determine_xdp_ring(adapter);
+		struct ixgbe_ring *ring = adapter->xdp_ring[smp_processor_id()];
 
-		ixgbe_xdp_ring_update_tail_locked(ring);
+		/* Force memory writes to complete before letting h/w
+		 * know there are new descriptors to fetch.
+		 */
+		wmb();
+		writel(ring->next_to_use, ring->tail);
 	}
 
 	u64_stats_update_begin(&rx_ring->syncp);
@@ -390,11 +388,13 @@ static bool ixgbe_xmit_zc(struct ixgbe_ring *xdp_ring, unsigned int budget)
 	u32 cmd_type;
 
 	while (budget-- > 0) {
-		if (unlikely(!ixgbe_desc_unused(xdp_ring)) ||
-		    !netif_carrier_ok(xdp_ring->netdev)) {
+		if (unlikely(!ixgbe_desc_unused(xdp_ring))) {
 			work_done = false;
 			break;
 		}
+
+		if (!netif_carrier_ok(xdp_ring->netdev))
+			break;
 
 		if (!xsk_tx_peek_desc(pool, &desc))
 			break;

@@ -144,7 +144,6 @@ static int cap_audit_static(struct intel_iommu *iommu, enum cap_audit_type type)
 {
 	struct dmar_drhd_unit *d;
 	struct intel_iommu *i;
-	int rc = 0;
 
 	rcu_read_lock();
 	if (list_empty(&dmar_drhd_units))
@@ -164,17 +163,9 @@ static int cap_audit_static(struct intel_iommu *iommu, enum cap_audit_type type)
 			check_irq_capabilities(iommu, i);
 	}
 
-	/*
-	 * If the system is sane to support scalable mode, either SL or FL
-	 * should be sane.
-	 */
-	if (intel_cap_smts_sanity() &&
-	    !intel_cap_flts_sanity() && !intel_cap_slts_sanity())
-		rc = -EOPNOTSUPP;
-
 out:
 	rcu_read_unlock();
-	return rc;
+	return 0;
 }
 
 int intel_cap_audit(enum cap_audit_type type, struct intel_iommu *iommu)
@@ -211,9 +202,4 @@ bool intel_cap_nest_sanity(void)
 bool intel_cap_flts_sanity(void)
 {
 	return ecap_flts(intel_iommu_ecap_sanity);
-}
-
-bool intel_cap_slts_sanity(void)
-{
-	return ecap_slts(intel_iommu_ecap_sanity);
 }

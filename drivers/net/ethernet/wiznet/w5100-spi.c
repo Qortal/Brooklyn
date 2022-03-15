@@ -463,9 +463,7 @@ static int w5100_spi_probe(struct spi_device *spi)
 
 static int w5100_spi_remove(struct spi_device *spi)
 {
-	w5100_remove(&spi->dev);
-
-	return 0;
+	return w5100_remove(&spi->dev);
 }
 
 static const struct spi_device_id w5100_spi_ids[] = {

@@ -30,7 +30,6 @@
 #include <linux/types.h>
 #include <linux/uaccess.h>
 #include <linux/jiffies.h>
-#include <linux/miscdevice.h>
 
 #include <linux/of_address.h>
 #include <linux/of_device.h>
@@ -103,6 +102,9 @@
  *           globals
  * ----------------------------
  */
+
+static struct class *axis_fifo_driver_class; /* char device class */
+
 static int read_timeout = 1000; /* ms to wait before read() times out */
 static int write_timeout = 1000; /* ms to wait before write() times out */
 
@@ -138,7 +140,9 @@ struct axis_fifo {
 	unsigned int read_flags; /* read file flags */
 
 	struct device *dt_device; /* device created from the device tree */
-	struct miscdevice miscdev;
+	struct device *device; /* device associated with char_device */
+	dev_t devt; /* our char device number */
+	struct cdev char_device; /* our char device */
 };
 
 /* ----------------------------
@@ -313,11 +317,6 @@ static struct attribute *axis_fifo_attrs[] = {
 static const struct attribute_group axis_fifo_attrs_group = {
 	.name = "ip_registers",
 	.attrs = axis_fifo_attrs,
-};
-
-static const struct attribute_group *axis_fifo_attrs_groups[] = {
-	&axis_fifo_attrs_group,
-	NULL,
 };
 
 /* ----------------------------
@@ -685,8 +684,8 @@ static irqreturn_t axis_fifo_irq(int irq, void *dw)
 
 static int axis_fifo_open(struct inode *inod, struct file *f)
 {
-	struct axis_fifo *fifo = container_of(f->private_data,
-					      struct axis_fifo, miscdev);
+	struct axis_fifo *fifo = (struct axis_fifo *)container_of(inod->i_cdev,
+					struct axis_fifo, char_device);
 	f->private_data = fifo;
 
 	if (((f->f_flags & O_ACCMODE) == O_WRONLY) ||
@@ -809,10 +808,13 @@ end:
 
 static int axis_fifo_probe(struct platform_device *pdev)
 {
+	struct resource *r_irq; /* interrupt resources */
 	struct resource *r_mem; /* IO mem resources */
 	struct device *dev = &pdev->dev; /* OS device (from device tree) */
 	struct axis_fifo *fifo = NULL;
-	char *device_name;
+
+	char device_name[32];
+
 	int rc = 0; /* error return value */
 
 	/* ----------------------------
@@ -820,12 +822,8 @@ static int axis_fifo_probe(struct platform_device *pdev)
 	 * ----------------------------
 	 */
 
-	device_name = devm_kzalloc(dev, 32, GFP_KERNEL);
-	if (!device_name)
-		return -ENOMEM;
-
 	/* allocate device wrapper memory */
-	fifo = devm_kzalloc(dev, sizeof(*fifo), GFP_KERNEL);
+	fifo = devm_kmalloc(dev, sizeof(*fifo), GFP_KERNEL);
 	if (!fifo)
 		return -ENOMEM;
 
@@ -861,7 +859,9 @@ static int axis_fifo_probe(struct platform_device *pdev)
 	dev_dbg(fifo->dt_device, "remapped memory to 0x%p\n", fifo->base_addr);
 
 	/* create unique device name */
-	snprintf(device_name, 32, "%s_%pa", DRIVER_NAME, &r_mem->start);
+	snprintf(device_name, sizeof(device_name), "%s_%pa",
+		 DRIVER_NAME, &r_mem->start);
+
 	dev_dbg(fifo->dt_device, "device name [%s]\n", device_name);
 
 	/* ----------------------------
@@ -881,12 +881,16 @@ static int axis_fifo_probe(struct platform_device *pdev)
 	 */
 
 	/* get IRQ resource */
-	rc = platform_get_irq(pdev, 0);
-	if (rc < 0)
+	r_irq = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
+	if (!r_irq) {
+		dev_err(fifo->dt_device, "no IRQ found for 0x%pa\n",
+			&r_mem->start);
+		rc = -EIO;
 		goto err_initial;
+	}
 
 	/* request IRQ */
-	fifo->irq = rc;
+	fifo->irq = r_irq->start;
 	rc = devm_request_irq(fifo->dt_device, fifo->irq, &axis_fifo_irq, 0,
 			      DRIVER_NAME, fifo);
 	if (rc) {
@@ -900,21 +904,51 @@ static int axis_fifo_probe(struct platform_device *pdev)
 	 * ----------------------------
 	 */
 
-	/* create character device */
-	fifo->miscdev.fops = &fops;
-	fifo->miscdev.minor = MISC_DYNAMIC_MINOR;
-	fifo->miscdev.name = device_name;
-	fifo->miscdev.groups = axis_fifo_attrs_groups;
-	fifo->miscdev.parent = dev;
-	rc = misc_register(&fifo->miscdev);
+	/* allocate device number */
+	rc = alloc_chrdev_region(&fifo->devt, 0, 1, DRIVER_NAME);
 	if (rc < 0)
 		goto err_initial;
+	dev_dbg(fifo->dt_device, "allocated device number major %i minor %i\n",
+		MAJOR(fifo->devt), MINOR(fifo->devt));
 
-	dev_info(fifo->dt_device, "axis-fifo created at %pa mapped to 0x%pa, irq=%i\n",
-		 &r_mem->start, &fifo->base_addr, fifo->irq);
+	/* create driver file */
+	fifo->device = device_create(axis_fifo_driver_class, NULL, fifo->devt,
+				     NULL, device_name);
+	if (IS_ERR(fifo->device)) {
+		dev_err(fifo->dt_device,
+			"couldn't create driver file\n");
+		rc = PTR_ERR(fifo->device);
+		goto err_chrdev_region;
+	}
+	dev_set_drvdata(fifo->device, fifo);
+
+	/* create character device */
+	cdev_init(&fifo->char_device, &fops);
+	rc = cdev_add(&fifo->char_device, fifo->devt, 1);
+	if (rc < 0) {
+		dev_err(fifo->dt_device, "couldn't create character device\n");
+		goto err_dev;
+	}
+
+	/* create sysfs entries */
+	rc = devm_device_add_group(fifo->device, &axis_fifo_attrs_group);
+	if (rc < 0) {
+		dev_err(fifo->dt_device, "couldn't register sysfs group\n");
+		goto err_cdev;
+	}
+
+	dev_info(fifo->dt_device, "axis-fifo created at %pa mapped to 0x%pa, irq=%i, major=%i, minor=%i\n",
+		 &r_mem->start, &fifo->base_addr, fifo->irq,
+		 MAJOR(fifo->devt), MINOR(fifo->devt));
 
 	return 0;
 
+err_cdev:
+	cdev_del(&fifo->char_device);
+err_dev:
+	device_destroy(axis_fifo_driver_class, fifo->devt);
+err_chrdev_region:
+	unregister_chrdev_region(fifo->devt, 1);
 err_initial:
 	dev_set_drvdata(dev, NULL);
 	return rc;
@@ -925,7 +959,10 @@ static int axis_fifo_remove(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct axis_fifo *fifo = dev_get_drvdata(dev);
 
-	misc_deregister(&fifo->miscdev);
+	cdev_del(&fifo->char_device);
+	dev_set_drvdata(fifo->device, NULL);
+	device_destroy(axis_fifo_driver_class, fifo->devt);
+	unregister_chrdev_region(fifo->devt, 1);
 	dev_set_drvdata(dev, NULL);
 
 	return 0;
@@ -950,6 +987,9 @@ static int __init axis_fifo_init(void)
 {
 	pr_info("axis-fifo driver loaded with parameters read_timeout = %i, write_timeout = %i\n",
 		read_timeout, write_timeout);
+	axis_fifo_driver_class = class_create(THIS_MODULE, DRIVER_NAME);
+	if (IS_ERR(axis_fifo_driver_class))
+		return PTR_ERR(axis_fifo_driver_class);
 	return platform_driver_register(&axis_fifo_driver);
 }
 
@@ -958,6 +998,7 @@ module_init(axis_fifo_init);
 static void __exit axis_fifo_exit(void)
 {
 	platform_driver_unregister(&axis_fifo_driver);
+	class_destroy(axis_fifo_driver_class);
 }
 
 module_exit(axis_fifo_exit);

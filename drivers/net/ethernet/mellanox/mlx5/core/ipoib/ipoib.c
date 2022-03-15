@@ -110,14 +110,14 @@ void mlx5i_cleanup(struct mlx5e_priv *priv)
 
 static void mlx5i_grp_sw_update_stats(struct mlx5e_priv *priv)
 {
-	struct rtnl_link_stats64 s = {};
+	struct mlx5e_sw_stats s = { 0 };
 	int i, j;
 
 	for (i = 0; i < priv->stats_nch; i++) {
 		struct mlx5e_channel_stats *channel_stats;
 		struct mlx5e_rq_stats *rq_stats;
 
-		channel_stats = priv->channel_stats[i];
+		channel_stats = &priv->channel_stats[i];
 		rq_stats = &channel_stats->rq;
 
 		s.rx_packets += rq_stats->packets;
@@ -128,17 +128,11 @@ static void mlx5i_grp_sw_update_stats(struct mlx5e_priv *priv)
 
 			s.tx_packets           += sq_stats->packets;
 			s.tx_bytes             += sq_stats->bytes;
-			s.tx_dropped           += sq_stats->dropped;
+			s.tx_queue_dropped     += sq_stats->dropped;
 		}
 	}
 
-	memset(&priv->stats.sw, 0, sizeof(s));
-
-	priv->stats.sw.rx_packets = s.rx_packets;
-	priv->stats.sw.rx_bytes = s.rx_bytes;
-	priv->stats.sw.tx_packets = s.tx_packets;
-	priv->stats.sw.tx_bytes = s.tx_bytes;
-	priv->stats.sw.tx_queue_dropped = s.tx_dropped;
+	memcpy(&priv->stats.sw, &s, sizeof(s));
 }
 
 void mlx5i_get_stats(struct net_device *dev, struct rtnl_link_stats64 *stats)
@@ -225,7 +219,7 @@ void mlx5i_uninit_underlay_qp(struct mlx5e_priv *priv)
 
 int mlx5i_create_underlay_qp(struct mlx5e_priv *priv)
 {
-	const unsigned char *dev_addr = priv->netdev->dev_addr;
+	unsigned char *dev_addr = priv->netdev->dev_addr;
 	u32 out[MLX5_ST_SZ_DW(create_qp_out)] = {};
 	u32 in[MLX5_ST_SZ_DW(create_qp_in)] = {};
 	struct mlx5i_priv *ipriv = priv->ppriv;
@@ -342,8 +336,6 @@ static int mlx5i_create_flow_steering(struct mlx5e_priv *priv)
 		goto err_destroy_arfs_tables;
 	}
 
-	mlx5e_ethtool_init_steering(priv);
-
 	return 0;
 
 err_destroy_arfs_tables:
@@ -356,7 +348,6 @@ static void mlx5i_destroy_flow_steering(struct mlx5e_priv *priv)
 {
 	mlx5e_destroy_ttc_table(priv);
 	mlx5e_arfs_destroy_tables(priv);
-	mlx5e_ethtool_cleanup_steering(priv);
 }
 
 static int mlx5i_init_rx(struct mlx5e_priv *priv)
@@ -449,6 +440,7 @@ static const struct mlx5e_profile mlx5i_nic_profile = {
 	.rq_groups	   = MLX5E_NUM_RQ_GROUPS(REGULAR),
 	.stats_grps        = mlx5i_stats_grps,
 	.stats_grps_num    = mlx5i_stats_grps_num,
+	.rx_ptp_support    = false,
 };
 
 /* mlx5i netdev NDos */
@@ -479,13 +471,11 @@ int mlx5i_dev_init(struct net_device *dev)
 {
 	struct mlx5e_priv    *priv   = mlx5i_epriv(dev);
 	struct mlx5i_priv    *ipriv  = priv->ppriv;
-	u8 addr_mod[3];
 
 	/* Set dev address using underlay QP */
-	addr_mod[0] = (ipriv->qpn >> 16) & 0xff;
-	addr_mod[1] = (ipriv->qpn >>  8) & 0xff;
-	addr_mod[2] = (ipriv->qpn) & 0xff;
-	dev_addr_mod(dev, 1, addr_mod, sizeof(addr_mod));
+	dev->dev_addr[1] = (ipriv->qpn >> 16) & 0xff;
+	dev->dev_addr[2] = (ipriv->qpn >>  8) & 0xff;
+	dev->dev_addr[3] = (ipriv->qpn) & 0xff;
 
 	/* Add QPN to net-device mapping to HT */
 	mlx5i_pkey_add_qpn(dev, ipriv->qpn);

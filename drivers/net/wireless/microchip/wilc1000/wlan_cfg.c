@@ -22,7 +22,6 @@ static const struct wilc_cfg_byte g_cfg_byte[] = {
 	{WID_STATUS, 0},
 	{WID_RSSI, 0},
 	{WID_LINKSPEED, 0},
-	{WID_WOWLAN_TRIGGER, 0},
 	{WID_NIL, 0}
 };
 

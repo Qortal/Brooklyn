@@ -55,7 +55,8 @@
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
-#include <linux/comedi/comedi_pci.h>
+
+#include "../comedi_pci.h"
 
 #include "s626.h"
 

@@ -83,11 +83,9 @@ static unsigned int generic_powersave_bias_target(struct cpufreq_policy *policy,
 	freq_avg = freq_req - freq_reduc;
 
 	/* Find freq bounds for freq_avg in freq_table */
-	index = cpufreq_table_find_index_h(policy, freq_avg,
-					   relation & CPUFREQ_RELATION_E);
+	index = cpufreq_table_find_index_h(policy, freq_avg);
 	freq_lo = freq_table[index].frequency;
-	index = cpufreq_table_find_index_l(policy, freq_avg,
-					   relation & CPUFREQ_RELATION_E);
+	index = cpufreq_table_find_index_l(policy, freq_avg);
 	freq_hi = freq_table[index].frequency;
 
 	/* Find out how long we have to be in hi and lo freqs */
@@ -120,12 +118,12 @@ static void dbs_freq_increase(struct cpufreq_policy *policy, unsigned int freq)
 
 	if (od_tuners->powersave_bias)
 		freq = od_ops.powersave_bias_target(policy, freq,
-						    CPUFREQ_RELATION_HE);
+				CPUFREQ_RELATION_H);
 	else if (policy->cur == policy->max)
 		return;
 
 	__cpufreq_driver_target(policy, freq, od_tuners->powersave_bias ?
-			CPUFREQ_RELATION_LE : CPUFREQ_RELATION_HE);
+			CPUFREQ_RELATION_L : CPUFREQ_RELATION_H);
 }
 
 /*
@@ -163,9 +161,9 @@ static void od_update(struct cpufreq_policy *policy)
 		if (od_tuners->powersave_bias)
 			freq_next = od_ops.powersave_bias_target(policy,
 								 freq_next,
-								 CPUFREQ_RELATION_LE);
+								 CPUFREQ_RELATION_L);
 
-		__cpufreq_driver_target(policy, freq_next, CPUFREQ_RELATION_CE);
+		__cpufreq_driver_target(policy, freq_next, CPUFREQ_RELATION_C);
 	}
 }
 
@@ -184,7 +182,7 @@ static unsigned int od_dbs_update(struct cpufreq_policy *policy)
 	 */
 	if (sample_type == OD_SUB_SAMPLE && policy_dbs->sample_delay_ns > 0) {
 		__cpufreq_driver_target(policy, dbs_info->freq_lo,
-					CPUFREQ_RELATION_HE);
+					CPUFREQ_RELATION_H);
 		return dbs_info->freq_lo_delay_us;
 	}
 
@@ -328,7 +326,7 @@ gov_attr_rw(sampling_down_factor);
 gov_attr_rw(ignore_nice_load);
 gov_attr_rw(powersave_bias);
 
-static struct attribute *od_attrs[] = {
+static struct attribute *od_attributes[] = {
 	&sampling_rate.attr,
 	&up_threshold.attr,
 	&sampling_down_factor.attr,
@@ -337,7 +335,6 @@ static struct attribute *od_attrs[] = {
 	&io_is_busy.attr,
 	NULL
 };
-ATTRIBUTE_GROUPS(od);
 
 /************************** sysfs end ************************/
 
@@ -402,7 +399,7 @@ static struct od_ops od_ops = {
 
 static struct dbs_governor od_dbs_gov = {
 	.gov = CPUFREQ_DBS_GOVERNOR_INITIALIZER("ondemand"),
-	.kobj_type = { .default_groups = od_groups },
+	.kobj_type = { .default_attrs = od_attributes },
 	.gov_dbs_update = od_dbs_update,
 	.alloc = od_alloc,
 	.free = od_free,

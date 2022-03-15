@@ -48,7 +48,8 @@
 
 #include <linux/module.h>
 #include <linux/delay.h>
-#include <linux/comedi/comedidev.h>
+
+#include "../comedidev.h"
 
 /* address scheme (page 2.17 of the manual) */
 #define ADQ12B_CTREG		0x00

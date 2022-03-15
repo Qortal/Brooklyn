@@ -516,7 +516,8 @@ static int xcan_chip_start(struct net_device *ndev)
  * @ndev:	Pointer to net_device structure
  * @mode:	Tells the mode of the driver
  *
- * This check the drivers state and calls the corresponding modes to set.
+ * This check the drivers state and calls the
+ * the corresponding modes to set.
  *
  * Return: 0 on success and failure value on error
  */
@@ -787,11 +788,10 @@ static int xcan_rx(struct net_device *ndev, int frame_base)
 			*(__be32 *)(cf->data) = cpu_to_be32(data[0]);
 		if (cf->len > 4)
 			*(__be32 *)(cf->data + 4) = cpu_to_be32(data[1]);
-
-		stats->rx_bytes += cf->len;
 	}
-	stats->rx_packets++;
 
+	stats->rx_bytes += cf->len;
+	stats->rx_packets++;
 	netif_receive_skb(skb);
 
 	return 1;
@@ -872,11 +872,8 @@ static int xcanfd_rx(struct net_device *ndev, int frame_base)
 			*(__be32 *)(cf->data + i) = cpu_to_be32(data[0]);
 		}
 	}
-
-	if (!(cf->can_id & CAN_RTR_FLAG))
-		stats->rx_bytes += cf->len;
+	stats->rx_bytes += cf->len;
 	stats->rx_packets++;
-
 	netif_receive_skb(skb);
 
 	return 1;
@@ -969,8 +966,13 @@ static void xcan_update_error_state_after_rxtx(struct net_device *ndev)
 
 		xcan_set_error_state(ndev, new_state, skb ? cf : NULL);
 
-		if (skb)
+		if (skb) {
+			struct net_device_stats *stats = &ndev->stats;
+
+			stats->rx_packets++;
+			stats->rx_bytes += cf->len;
 			netif_rx(skb);
+		}
 	}
 }
 
@@ -980,7 +982,7 @@ static void xcan_update_error_state_after_rxtx(struct net_device *ndev)
  * @isr:	interrupt status register value
  *
  * This is the CAN error interrupt and it will
- * check the type of error and forward the error
+ * check the the type of error and forward the error
  * frame to upper layers.
  */
 static void xcan_err_interrupt(struct net_device *ndev, u32 isr)
@@ -1094,6 +1096,8 @@ static void xcan_err_interrupt(struct net_device *ndev, u32 isr)
 		if (skb) {
 			skb_cf->can_id |= cf.can_id;
 			memcpy(skb_cf->data, cf.data, CAN_ERR_DLC);
+			stats->rx_packets++;
+			stats->rx_bytes += CAN_ERR_DLC;
 			netif_rx(skb);
 		}
 	}
@@ -1845,9 +1849,11 @@ err:
 static int xcan_remove(struct platform_device *pdev)
 {
 	struct net_device *ndev = platform_get_drvdata(pdev);
+	struct xcan_priv *priv = netdev_priv(ndev);
 
 	unregister_candev(ndev);
 	pm_runtime_disable(&pdev->dev);
+	netif_napi_del(&priv->napi);
 	free_candev(ndev);
 
 	return 0;

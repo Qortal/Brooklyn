@@ -64,6 +64,7 @@
 struct mcba_usb_ctx {
 	struct mcba_priv *priv;
 	u32 ndx;
+	u8 dlc;
 	bool can;
 };
 
@@ -183,10 +184,13 @@ static inline struct mcba_usb_ctx *mcba_usb_get_free_ctx(struct mcba_priv *priv,
 			ctx = &priv->tx_context[i];
 			ctx->ndx = i;
 
-			if (cf)
+			if (cf) {
 				ctx->can = true;
-			else
+				ctx->dlc = cf->len;
+			} else {
 				ctx->can = false;
+				ctx->dlc = 0;
+			}
 
 			atomic_dec(&priv->free_ctx_cnt);
 			break;
@@ -232,10 +236,10 @@ static void mcba_usb_write_bulk_callback(struct urb *urb)
 			return;
 
 		netdev->stats.tx_packets++;
-		netdev->stats.tx_bytes += can_get_echo_skb(netdev, ctx->ndx,
-							   NULL);
+		netdev->stats.tx_bytes += ctx->dlc;
 
 		can_led_event(netdev, CAN_LED_EVENT_TX);
+		can_get_echo_skb(netdev, ctx->ndx, NULL);
 	}
 
 	if (urb->status)
@@ -446,16 +450,15 @@ static void mcba_usb_process_can(struct mcba_priv *priv,
 		cf->can_id = (sid & 0xffe0) >> 5;
 	}
 
+	if (msg->dlc & MCBA_DLC_RTR_MASK)
+		cf->can_id |= CAN_RTR_FLAG;
+
 	cf->len = can_cc_dlc2len(msg->dlc & MCBA_DLC_MASK);
 
-	if (msg->dlc & MCBA_DLC_RTR_MASK) {
-		cf->can_id |= CAN_RTR_FLAG;
-	} else {
-		memcpy(cf->data, msg->data, cf->len);
+	memcpy(cf->data, msg->data, cf->len);
 
-		stats->rx_bytes += cf->len;
-	}
 	stats->rx_packets++;
+	stats->rx_bytes += cf->len;
 
 	can_led_event(priv->netdev, CAN_LED_EVENT_RX);
 	netif_rx(skb);

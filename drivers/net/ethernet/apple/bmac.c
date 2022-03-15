@@ -308,7 +308,7 @@ bmac_init_registers(struct net_device *dev)
 {
 	struct bmac_data *bp = netdev_priv(dev);
 	volatile unsigned short regValue;
-	const unsigned short *pWord16;
+	unsigned short *pWord16;
 	int i;
 
 	/* XXDEBUG(("bmac: enter init_registers\n")); */
@@ -371,7 +371,7 @@ bmac_init_registers(struct net_device *dev)
 	bmwrite(dev, BHASH1, bp->hash_table_mask[2]); 	/* bits 47 - 32 */
 	bmwrite(dev, BHASH0, bp->hash_table_mask[3]); 	/* bits 63 - 48 */
 
-	pWord16 = (const unsigned short *)dev->dev_addr;
+	pWord16 = (unsigned short *)dev->dev_addr;
 	bmwrite(dev, MADD0, *pWord16++);
 	bmwrite(dev, MADD1, *pWord16++);
 	bmwrite(dev, MADD2, *pWord16);
@@ -521,16 +521,19 @@ static int bmac_resume(struct macio_dev *mdev)
 static int bmac_set_address(struct net_device *dev, void *addr)
 {
 	struct bmac_data *bp = netdev_priv(dev);
-	const unsigned short *pWord16;
+	unsigned char *p = addr;
+	unsigned short *pWord16;
 	unsigned long flags;
+	int i;
 
 	XXDEBUG(("bmac: enter set_address\n"));
 	spin_lock_irqsave(&bp->lock, flags);
 
-	eth_hw_addr_set(dev, addr);
-
+	for (i = 0; i < 6; ++i) {
+		dev->dev_addr[i] = p[i];
+	}
 	/* load up the hardware address */
-	pWord16  = (const unsigned short *)dev->dev_addr;
+	pWord16  = (unsigned short *)dev->dev_addr;
 	bmwrite(dev, MADD0, *pWord16++);
 	bmwrite(dev, MADD1, *pWord16++);
 	bmwrite(dev, MADD2, *pWord16);
@@ -1237,7 +1240,6 @@ static int bmac_probe(struct macio_dev *mdev, const struct of_device_id *match)
 	struct bmac_data *bp;
 	const unsigned char *prop_addr;
 	unsigned char addr[6];
-	u8 macaddr[6];
 	struct net_device *dev;
 	int is_bmac_plus = ((int)match->data) != 0;
 
@@ -1285,9 +1287,7 @@ static int bmac_probe(struct macio_dev *mdev, const struct of_device_id *match)
 
 	rev = addr[0] == 0 && addr[1] == 0xA0;
 	for (j = 0; j < 6; ++j)
-		macaddr[j] = rev ? bitrev8(addr[j]): addr[j];
-
-	eth_hw_addr_set(dev, macaddr);
+		dev->dev_addr[j] = rev ? bitrev8(addr[j]): addr[j];
 
 	/* Enable chip without interrupts for now */
 	bmac_enable_and_reset_chip(dev);

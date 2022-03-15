@@ -771,6 +771,7 @@ static int imgu_css_osys_calc_frame_and_stripe_params(
 		 */
 		{
 			unsigned int i;
+			int pin_scale = 0;
 			/*Input resolution */
 
 			stripe_params[s].input_width = stripe_input_width_y;
@@ -790,6 +791,8 @@ static int imgu_css_osys_calc_frame_and_stripe_params(
 						reso.pin_height[i];
 					stripe_params[s].output_offset[i] =
 						stripe_offset_out_y;
+
+					pin_scale += frame_params[i].scaled;
 				} else {
 					/* Unscaled pin */
 					stripe_params[s].output_width[i] =

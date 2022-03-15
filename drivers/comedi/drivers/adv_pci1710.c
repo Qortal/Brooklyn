@@ -30,9 +30,10 @@
 
 #include <linux/module.h>
 #include <linux/interrupt.h>
-#include <linux/comedi/comedi_pci.h>
-#include <linux/comedi/comedi_8254.h>
 
+#include "../comedi_pci.h"
+
+#include "comedi_8254.h"
 #include "amcc_s5933.h"
 
 /*

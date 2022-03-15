@@ -349,7 +349,6 @@ EXPORT_SYMBOL_GPL(ioasid_alloc);
 
 /**
  * ioasid_get - obtain a reference to the IOASID
- * @ioasid: the ID to get
  */
 void ioasid_get(ioasid_t ioasid)
 {
