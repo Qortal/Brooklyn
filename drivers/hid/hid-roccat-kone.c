@@ -860,7 +860,7 @@ static int kone_raw_event(struct hid_device *hdev, struct hid_report *report,
 		memcpy(&kone->last_mouse_event, event,
 				sizeof(struct kone_mouse_event));
 	else
-		memset(&event->wipe, 0, sizeof(event->wipe));
+		memset(&event->tilt, 0, 5);
 
 	kone_keep_values_up_to_date(kone, event);
 

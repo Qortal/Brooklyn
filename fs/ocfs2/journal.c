@@ -810,34 +810,19 @@ void ocfs2_set_journal_params(struct ocfs2_super *osb)
 	write_unlock(&journal->j_state_lock);
 }
 
-int ocfs2_journal_init(struct ocfs2_super *osb, int *dirty)
+int ocfs2_journal_init(struct ocfs2_journal *journal, int *dirty)
 {
 	int status = -1;
 	struct inode *inode = NULL; /* the journal inode */
 	journal_t *j_journal = NULL;
-	struct ocfs2_journal *journal = NULL;
 	struct ocfs2_dinode *di = NULL;
 	struct buffer_head *bh = NULL;
+	struct ocfs2_super *osb;
 	int inode_lock = 0;
 
-	/* initialize our journal structure */
-	journal = kzalloc(sizeof(struct ocfs2_journal), GFP_KERNEL);
-	if (!journal) {
-		mlog(ML_ERROR, "unable to alloc journal\n");
-		status = -ENOMEM;
-		goto done;
-	}
-	osb->journal = journal;
-	journal->j_osb = osb;
+	BUG_ON(!journal);
 
-	atomic_set(&journal->j_num_trans, 0);
-	init_rwsem(&journal->j_trans_barrier);
-	init_waitqueue_head(&journal->j_checkpointed);
-	spin_lock_init(&journal->j_lock);
-	journal->j_trans_id = 1UL;
-	INIT_LIST_HEAD(&journal->j_la_cleanups);
-	INIT_WORK(&journal->j_recovery_work, ocfs2_complete_recovery);
-	journal->j_state = OCFS2_JOURNAL_FREE;
+	osb = journal->j_osb;
 
 	/* already have the inode for our journal */
 	inode = ocfs2_get_system_file_inode(osb, JOURNAL_SYSTEM_INODE,
@@ -1043,10 +1028,9 @@ void ocfs2_journal_shutdown(struct ocfs2_super *osb)
 
 	journal->j_state = OCFS2_JOURNAL_FREE;
 
+//	up_write(&journal->j_trans_barrier);
 done:
 	iput(inode);
-	kfree(journal);
-	osb->journal = NULL;
 }
 
 static void ocfs2_clear_journal_error(struct super_block *sb,
@@ -1513,7 +1497,10 @@ bail:
 	if (quota_enabled)
 		kfree(rm_quota);
 
-	return status;
+	/* no one is callint kthread_stop() for us so the kthread() api
+	 * requires that we call do_exit().  And it isn't exported, but
+	 * complete_and_exit() seems to be a minimal wrapper around it. */
+	complete_and_exit(NULL, status);
 }
 
 void ocfs2_recovery_thread(struct ocfs2_super *osb, int node_num)
@@ -1669,7 +1656,8 @@ static int ocfs2_replay_journal(struct ocfs2_super *osb,
 	status = jbd2_journal_load(journal);
 	if (status < 0) {
 		mlog_errno(status);
-		BUG_ON(!igrab(inode));
+		if (!igrab(inode))
+			BUG();
 		jbd2_journal_destroy(journal);
 		goto done;
 	}
@@ -1698,7 +1686,8 @@ static int ocfs2_replay_journal(struct ocfs2_super *osb,
 	if (status < 0)
 		mlog_errno(status);
 
-	BUG_ON(!igrab(inode));
+	if (!igrab(inode))
+		BUG();
 
 	jbd2_journal_destroy(journal);
 

@@ -395,12 +395,12 @@ static ssize_t write_filehandle(struct file *file, char *buf, size_t size)
 	auth_domain_put(dom);
 	if (len)
 		return len;
-
+	
 	mesg = buf;
 	len = SIMPLE_TRANSACTION_LIMIT;
-	qword_addhex(&mesg, &len, fh.fh_raw, fh.fh_size);
+	qword_addhex(&mesg, &len, (char*)&fh.fh_base, fh.fh_size);
 	mesg[-1] = '\n';
-	return mesg - buf;
+	return mesg - buf;	
 }
 
 /*
@@ -742,12 +742,13 @@ static ssize_t __write_ports_addfd(char *buf, struct net *net, const struct cred
 		return err;
 
 	err = svc_addsock(nn->nfsd_serv, fd, buf, SIMPLE_TRANSACTION_LIMIT, cred);
+	if (err < 0) {
+		nfsd_destroy(net);
+		return err;
+	}
 
-	if (err >= 0 &&
-	    !nn->nfsd_serv->sv_nrthreads && !xchg(&nn->keep_active, 1))
-		svc_get(nn->nfsd_serv);
-
-	nfsd_put(net);
+	/* Decrease the count, but don't shut down the service */
+	nn->nfsd_serv->sv_nrthreads--;
 	return err;
 }
 
@@ -782,10 +783,8 @@ static ssize_t __write_ports_addxprt(char *buf, struct net *net, const struct cr
 	if (err < 0 && err != -EAFNOSUPPORT)
 		goto out_close;
 
-	if (!nn->nfsd_serv->sv_nrthreads && !xchg(&nn->keep_active, 1))
-		svc_get(nn->nfsd_serv);
-
-	nfsd_put(net);
+	/* Decrease the count, but don't shut down the service */
+	nn->nfsd_serv->sv_nrthreads--;
 	return 0;
 out_close:
 	xprt = svc_find_xprt(nn->nfsd_serv, transport, net, PF_INET, port);
@@ -794,7 +793,10 @@ out_close:
 		svc_xprt_put(xprt);
 	}
 out_err:
-	nfsd_put(net);
+	if (!list_empty(&nn->nfsd_serv->sv_permsocks))
+		nn->nfsd_serv->sv_nrthreads--;
+	 else
+		nfsd_destroy(net);
 	return err;
 }
 
@@ -1484,8 +1486,9 @@ static __net_init int nfsd_init_net(struct net *net)
 	nn->clientid_counter = nn->clientid_base + 1;
 	nn->s2s_cp_cl_id = nn->clientid_counter++;
 
-	get_random_bytes(&nn->siphash_key, sizeof(nn->siphash_key));
-	seqlock_init(&nn->writeverf_lock);
+	atomic_set(&nn->ntf_refcnt, 0);
+	init_waitqueue_head(&nn->ntf_wq);
+	seqlock_init(&nn->boot_lock);
 
 	return 0;
 

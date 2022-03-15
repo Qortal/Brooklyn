@@ -37,8 +37,7 @@
 static void sas_end_task(struct scsi_cmnd *sc, struct sas_task *task)
 {
 	struct task_status_struct *ts = &task->task_status;
-	enum scsi_host_status hs = DID_OK;
-	enum exec_status stat = SAS_SAM_STAT_GOOD;
+	int hs = 0, stat = 0;
 
 	if (ts->resp == SAS_TASK_UNDELIVERED) {
 		/* transport error */
@@ -83,10 +82,10 @@ static void sas_end_task(struct scsi_cmnd *sc, struct sas_task *task)
 		case SAS_ABORTED_TASK:
 			hs = DID_ABORT;
 			break;
-		case SAS_SAM_STAT_CHECK_CONDITION:
+		case SAM_STAT_CHECK_CONDITION:
 			memcpy(sc->sense_buffer, ts->buf,
 			       min(SCSI_SENSE_BUFFERSIZE, ts->buf_valid_size));
-			stat = SAS_SAM_STAT_CHECK_CONDITION;
+			stat = SAM_STAT_CHECK_CONDITION;
 			break;
 		default:
 			stat = ts->stat;
@@ -126,7 +125,7 @@ static void sas_scsi_task_done(struct sas_task *task)
 	}
 
 	sas_end_task(sc, task);
-	scsi_done(sc);
+	sc->scsi_done(sc);
 }
 
 static struct sas_task *sas_create_task(struct scsi_cmnd *cmd,
@@ -199,10 +198,9 @@ out_free_task:
 	else
 		cmd->result = DID_ERROR << 16;
 out_done:
-	scsi_done(cmd);
+	cmd->scsi_done(cmd);
 	return 0;
 }
-EXPORT_SYMBOL_GPL(sas_queuecommand);
 
 static void sas_eh_finish_cmd(struct scsi_cmnd *cmd)
 {
@@ -513,7 +511,6 @@ int sas_eh_device_reset_handler(struct scsi_cmnd *cmd)
 
 	return FAILED;
 }
-EXPORT_SYMBOL_GPL(sas_eh_device_reset_handler);
 
 int sas_eh_target_reset_handler(struct scsi_cmnd *cmd)
 {
@@ -535,7 +532,6 @@ int sas_eh_target_reset_handler(struct scsi_cmnd *cmd)
 
 	return FAILED;
 }
-EXPORT_SYMBOL_GPL(sas_eh_target_reset_handler);
 
 /* Try to reset a device */
 static int try_to_reset_cmd_device(struct scsi_cmnd *cmd)
@@ -794,7 +790,6 @@ int sas_ioctl(struct scsi_device *sdev, unsigned int cmd, void __user *arg)
 
 	return -EINVAL;
 }
-EXPORT_SYMBOL_GPL(sas_ioctl);
 
 struct domain_device *sas_find_dev_by_rphy(struct sas_rphy *rphy)
 {
@@ -837,7 +832,6 @@ int sas_target_alloc(struct scsi_target *starget)
 	starget->hostdata = found_dev;
 	return 0;
 }
-EXPORT_SYMBOL_GPL(sas_target_alloc);
 
 #define SAS_DEF_QD 256
 
@@ -866,7 +860,6 @@ int sas_slave_configure(struct scsi_device *scsi_dev)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(sas_slave_configure);
 
 int sas_change_queue_depth(struct scsi_device *sdev, int depth)
 {
@@ -879,7 +872,6 @@ int sas_change_queue_depth(struct scsi_device *sdev, int depth)
 		depth = 1;
 	return scsi_change_queue_depth(sdev, depth);
 }
-EXPORT_SYMBOL_GPL(sas_change_queue_depth);
 
 int sas_bios_param(struct scsi_device *scsi_dev,
 			  struct block_device *bdev,
@@ -892,7 +884,6 @@ int sas_bios_param(struct scsi_device *scsi_dev,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(sas_bios_param);
 
 /*
  * Tell an upper layer that it needs to initiate an abort for a given task.
@@ -919,7 +910,6 @@ void sas_task_abort(struct sas_task *task)
 	else
 		blk_abort_request(scsi_cmd_to_rq(sc));
 }
-EXPORT_SYMBOL_GPL(sas_task_abort);
 
 int sas_slave_alloc(struct scsi_device *sdev)
 {
@@ -928,7 +918,6 @@ int sas_slave_alloc(struct scsi_device *sdev)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(sas_slave_alloc);
 
 void sas_target_destroy(struct scsi_target *starget)
 {
@@ -940,7 +929,6 @@ void sas_target_destroy(struct scsi_target *starget)
 	starget->hostdata = NULL;
 	sas_put_device(found_dev);
 }
-EXPORT_SYMBOL_GPL(sas_target_destroy);
 
 #define SAS_STRING_ADDR_SIZE	16
 
@@ -968,3 +956,15 @@ out:
 }
 EXPORT_SYMBOL_GPL(sas_request_addr);
 
+EXPORT_SYMBOL_GPL(sas_queuecommand);
+EXPORT_SYMBOL_GPL(sas_target_alloc);
+EXPORT_SYMBOL_GPL(sas_slave_configure);
+EXPORT_SYMBOL_GPL(sas_change_queue_depth);
+EXPORT_SYMBOL_GPL(sas_bios_param);
+EXPORT_SYMBOL_GPL(sas_task_abort);
+EXPORT_SYMBOL_GPL(sas_phy_reset);
+EXPORT_SYMBOL_GPL(sas_eh_device_reset_handler);
+EXPORT_SYMBOL_GPL(sas_eh_target_reset_handler);
+EXPORT_SYMBOL_GPL(sas_slave_alloc);
+EXPORT_SYMBOL_GPL(sas_target_destroy);
+EXPORT_SYMBOL_GPL(sas_ioctl);

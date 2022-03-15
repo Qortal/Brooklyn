@@ -595,7 +595,7 @@ static void ti_sci_inta_msi_set_desc(msi_alloc_info_t *arg,
 	struct platform_device *pdev = to_platform_device(desc->dev);
 
 	arg->desc = desc;
-	arg->hwirq = TO_HWIRQ(pdev->id, desc->msi_index);
+	arg->hwirq = TO_HWIRQ(pdev->id, desc->inta.dev_index);
 }
 
 static struct msi_domain_ops ti_sci_inta_msi_ops = {
@@ -650,6 +650,7 @@ static int ti_sci_inta_irq_domain_probe(struct platform_device *pdev)
 	struct device_node *parent_node, *node;
 	struct ti_sci_inta_irq_domain *inta;
 	struct device *dev = &pdev->dev;
+	struct resource *res;
 	int ret;
 
 	node = dev_of_node(dev);
@@ -693,7 +694,8 @@ static int ti_sci_inta_irq_domain_probe(struct platform_device *pdev)
 		return PTR_ERR(inta->global_event);
 	}
 
-	inta->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	inta->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(inta->base))
 		return PTR_ERR(inta->base);
 

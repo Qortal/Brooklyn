@@ -79,7 +79,7 @@ enum temp_index {
 struct max1619_data {
 	struct i2c_client *client;
 	struct mutex update_lock;
-	bool valid; /* false until following fields are valid */
+	char valid; /* zero until following fields are valid */
 	unsigned long last_updated; /* in jiffies */
 
 	/* registers values */
@@ -124,7 +124,7 @@ static struct max1619_data *max1619_update_device(struct device *dev)
 			data->alarms ^= 0x02;
 
 		data->last_updated = jiffies;
-		data->valid = true;
+		data->valid = 1;
 	}
 
 	mutex_unlock(&data->update_lock);

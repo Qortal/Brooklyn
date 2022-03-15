@@ -171,7 +171,11 @@ static int adf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 	pci_set_master(pdev);
 	/* Completion for VF2PF request/response message exchange */
-	init_completion(&accel_dev->vf.msg_received);
+	init_completion(&accel_dev->vf.iov_msg_completion);
+
+	ret = qat_crypto_dev_config(accel_dev);
+	if (ret)
+		goto out_err_free_reg;
 
 	ret = adf_dev_init(accel_dev);
 	if (ret)

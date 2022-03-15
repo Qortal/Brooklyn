@@ -121,42 +121,32 @@ struct i915_vma *intel_dpt_pin(struct i915_address_space *vm)
 	intel_wakeref_t wakeref;
 	struct i915_vma *vma;
 	void __iomem *iomem;
-	struct i915_gem_ww_ctx ww;
-	int err;
 
 	wakeref = intel_runtime_pm_get(&i915->runtime_pm);
 	atomic_inc(&i915->gpu_error.pending_fb_pin);
 
-	for_i915_gem_ww(&ww, err, true) {
-		err = i915_gem_object_lock(dpt->obj, &ww);
-		if (err)
-			continue;
+	vma = i915_gem_object_ggtt_pin(dpt->obj, NULL, 0, 4096,
+				       HAS_LMEM(i915) ? 0 : PIN_MAPPABLE);
+	if (IS_ERR(vma))
+		goto err;
 
-		vma = i915_gem_object_ggtt_pin_ww(dpt->obj, &ww, NULL, 0, 4096,
-						  HAS_LMEM(i915) ? 0 : PIN_MAPPABLE);
-		if (IS_ERR(vma)) {
-			err = PTR_ERR(vma);
-			continue;
-		}
-
-		iomem = i915_vma_pin_iomap(vma);
-		i915_vma_unpin(vma);
-
-		if (IS_ERR(iomem)) {
-			err = PTR_ERR(iomem);
-			continue;
-		}
-
-		dpt->vma = vma;
-		dpt->iomem = iomem;
-
-		i915_vma_get(vma);
+	iomem = i915_vma_pin_iomap(vma);
+	i915_vma_unpin(vma);
+	if (IS_ERR(iomem)) {
+		vma = iomem;
+		goto err;
 	}
 
+	dpt->vma = vma;
+	dpt->iomem = iomem;
+
+	i915_vma_get(vma);
+
+err:
 	atomic_dec(&i915->gpu_error.pending_fb_pin);
 	intel_runtime_pm_put(&i915->runtime_pm, wakeref);
 
-	return err ? ERR_PTR(err) : vma;
+	return vma;
 }
 
 void intel_dpt_unpin(struct i915_address_space *vm)
@@ -165,64 +155,6 @@ void intel_dpt_unpin(struct i915_address_space *vm)
 
 	i915_vma_unpin_iomap(dpt->vma);
 	i915_vma_put(dpt->vma);
-}
-
-/**
- * intel_dpt_resume - restore the memory mapping for all DPT FBs during system resume
- * @i915: device instance
- *
- * Restore the memory mapping during system resume for all framebuffers which
- * are mapped to HW via a GGTT->DPT page table. The content of these page
- * tables are not stored in the hibernation image during S4 and S3RST->S4
- * transitions, so here we reprogram the PTE entries in those tables.
- *
- * This function must be called after the mappings in GGTT have been restored calling
- * i915_ggtt_resume().
- */
-void intel_dpt_resume(struct drm_i915_private *i915)
-{
-	struct drm_framebuffer *drm_fb;
-
-	if (!HAS_DISPLAY(i915))
-		return;
-
-	mutex_lock(&i915->drm.mode_config.fb_lock);
-	drm_for_each_fb(drm_fb, &i915->drm) {
-		struct intel_framebuffer *fb = to_intel_framebuffer(drm_fb);
-
-		if (fb->dpt_vm)
-			i915_ggtt_resume_vm(fb->dpt_vm);
-	}
-	mutex_unlock(&i915->drm.mode_config.fb_lock);
-}
-
-/**
- * intel_dpt_suspend - suspend the memory mapping for all DPT FBs during system suspend
- * @i915: device instance
- *
- * Suspend the memory mapping during system suspend for all framebuffers which
- * are mapped to HW via a GGTT->DPT page table.
- *
- * This function must be called before the mappings in GGTT are suspended calling
- * i915_ggtt_suspend().
- */
-void intel_dpt_suspend(struct drm_i915_private *i915)
-{
-	struct drm_framebuffer *drm_fb;
-
-	if (!HAS_DISPLAY(i915))
-		return;
-
-	mutex_lock(&i915->drm.mode_config.fb_lock);
-
-	drm_for_each_fb(drm_fb, &i915->drm) {
-		struct intel_framebuffer *fb = to_intel_framebuffer(drm_fb);
-
-		if (fb->dpt_vm)
-			i915_ggtt_suspend_vm(fb->dpt_vm);
-	}
-
-	mutex_unlock(&i915->drm.mode_config.fb_lock);
 }
 
 struct i915_address_space *
@@ -264,7 +196,7 @@ intel_dpt_create(struct intel_framebuffer *fb)
 
 	vm = &dpt->vm;
 
-	vm->gt = to_gt(i915);
+	vm->gt = &i915->gt;
 	vm->i915 = i915;
 	vm->dma = i915->drm.dev;
 	vm->total = (size / sizeof(gen8_pte_t)) * I915_GTT_PAGE_SIZE;
@@ -279,6 +211,8 @@ intel_dpt_create(struct intel_framebuffer *fb)
 
 	vm->vma_ops.bind_vma    = dpt_bind_vma;
 	vm->vma_ops.unbind_vma  = dpt_unbind_vma;
+	vm->vma_ops.set_pages   = ggtt_set_pages;
+	vm->vma_ops.clear_pages = clear_pages;
 
 	vm->pte_encode = gen8_ggtt_pte_encode;
 

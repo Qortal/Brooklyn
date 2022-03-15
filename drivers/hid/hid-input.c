@@ -52,7 +52,6 @@ static const struct {
 #define map_rel(c)	hid_map_usage(hidinput, usage, &bit, &max, EV_REL, (c))
 #define map_key(c)	hid_map_usage(hidinput, usage, &bit, &max, EV_KEY, (c))
 #define map_led(c)	hid_map_usage(hidinput, usage, &bit, &max, EV_LED, (c))
-#define map_msc(c)	hid_map_usage(hidinput, usage, &bit, &max, EV_MSC, (c))
 
 #define map_abs_clear(c)	hid_map_usage_clear(hidinput, usage, &bit, \
 		&max, EV_ABS, (c))
@@ -327,8 +326,6 @@ static const struct hid_device_id hid_battery_quirks[] = {
 	{ HID_USB_DEVICE(USB_VENDOR_ID_ELAN, USB_DEVICE_ID_ASUS_UX550_TOUCHSCREEN),
 	  HID_BATTERY_QUIRK_IGNORE },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_ELAN, USB_DEVICE_ID_ASUS_UX550VE_TOUCHSCREEN),
-	  HID_BATTERY_QUIRK_IGNORE },
-	{ HID_I2C_DEVICE(USB_VENDOR_ID_ELAN, I2C_DEVICE_ID_HP_ENVY_X360_15),
 	  HID_BATTERY_QUIRK_IGNORE },
 	{ HID_I2C_DEVICE(USB_VENDOR_ID_ELAN, I2C_DEVICE_ID_HP_ENVY_X360_15T_DR100),
 	  HID_BATTERY_QUIRK_IGNORE },
@@ -878,8 +875,10 @@ static void hidinput_configure_usage(struct hid_input *hidinput, struct hid_fiel
 			break;
 
 		case 0x5b: /* TransducerSerialNumber */
-		case 0x6e: /* TransducerSerialNumber2 */
-			map_msc(MSC_SERIAL);
+			usage->type = EV_MSC;
+			usage->code = MSC_SERIAL;
+			bit = input->mscbit;
+			max = MSC_MAX;
 			break;
 
 		default:  goto unknown;
@@ -992,6 +991,7 @@ static void hidinput_configure_usage(struct hid_input *hidinput, struct hid_fiel
 		case 0x0cd: map_key_clear(KEY_PLAYPAUSE);	break;
 		case 0x0cf: map_key_clear(KEY_VOICECOMMAND);	break;
 
+		case 0x0d8: map_key_clear(KEY_DICTATE);		break;
 		case 0x0d9: map_key_clear(KEY_EMOJI_PICKER);	break;
 
 		case 0x0e0: map_abs_clear(ABS_VOLUME);		break;
@@ -1082,6 +1082,8 @@ static void hidinput_configure_usage(struct hid_input *hidinput, struct hid_fiel
 		case 0x28c: map_key_clear(KEY_SEND);		break;
 
 		case 0x29d: map_key_clear(KEY_KBD_LAYOUT_NEXT);	break;
+
+		case 0x2a2: map_key_clear(KEY_ALL_APPLICATIONS);	break;
 
 		case 0x2c7: map_key_clear(KEY_KBDINPUTASSIST_PREV);		break;
 		case 0x2c8: map_key_clear(KEY_KBDINPUTASSIST_NEXT);		break;
@@ -1471,8 +1473,7 @@ void hidinput_report_event(struct hid_device *hid, struct hid_report *report)
 }
 EXPORT_SYMBOL_GPL(hidinput_report_event);
 
-static int hidinput_find_field(struct hid_device *hid, unsigned int type,
-			       unsigned int code, struct hid_field **field)
+int hidinput_find_field(struct hid_device *hid, unsigned int type, unsigned int code, struct hid_field **field)
 {
 	struct hid_report *report;
 	int i, j;
@@ -1487,6 +1488,7 @@ static int hidinput_find_field(struct hid_device *hid, unsigned int type,
 	}
 	return -1;
 }
+EXPORT_SYMBOL_GPL(hidinput_find_field);
 
 struct hid_field *hidinput_get_led_field(struct hid_device *hid)
 {
@@ -1748,16 +1750,6 @@ static struct hid_input *hidinput_allocate(struct hid_device *hid,
 			break;
 		case HID_GD_MOUSE:
 			suffix = "Mouse";
-			break;
-		case HID_DG_PEN:
-			/*
-			 * yes, there is an issue here:
-			 *  DG_PEN -> "Stylus"
-			 *  DG_STYLUS -> "Pen"
-			 * But changing this now means users with config snippets
-			 * will have to change it and the test suite will not be happy.
-			 */
-			suffix = "Stylus";
 			break;
 		case HID_DG_STYLUS:
 			suffix = "Pen";

@@ -71,8 +71,7 @@ static u64 notrace
 pistachio_clocksource_read_cycles(struct clocksource *cs)
 {
 	struct pistachio_clocksource *pcs = to_pistachio_clocksource(cs);
-	__maybe_unused u32 overflow;
-	u32 counter;
+	u32 counter, overflow;
 	unsigned long flags;
 
 	/*

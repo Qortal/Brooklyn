@@ -305,22 +305,19 @@ static struct pci_driver megaraid_pci_driver = {
 static DEVICE_ATTR_ADMIN_RO(megaraid_mbox_app_hndl);
 
 // Host template initializer for megaraid mbox sysfs device attributes
-static struct attribute *megaraid_shost_attrs[] = {
-	&dev_attr_megaraid_mbox_app_hndl.attr,
+static struct device_attribute *megaraid_shost_attrs[] = {
+	&dev_attr_megaraid_mbox_app_hndl,
 	NULL,
 };
 
-ATTRIBUTE_GROUPS(megaraid_shost);
 
 static DEVICE_ATTR_ADMIN_RO(megaraid_mbox_ld);
 
 // Host template initializer for megaraid mbox sysfs device attributes
-static struct attribute *megaraid_sdev_attrs[] = {
-	&dev_attr_megaraid_mbox_ld.attr,
+static struct device_attribute *megaraid_sdev_attrs[] = {
+	&dev_attr_megaraid_mbox_ld,
 	NULL,
 };
-
-ATTRIBUTE_GROUPS(megaraid_sdev);
 
 /*
  * Scsi host template for megaraid unified driver
@@ -334,8 +331,8 @@ static struct scsi_host_template megaraid_template_g = {
 	.eh_host_reset_handler		= megaraid_reset_handler,
 	.change_queue_depth		= scsi_change_queue_depth,
 	.no_write_same			= 1,
-	.sdev_groups			= megaraid_sdev_groups,
-	.shost_groups			= megaraid_shost_groups,
+	.sdev_attrs			= megaraid_sdev_attrs,
+	.shost_attrs			= megaraid_shost_attrs,
 };
 
 
@@ -1431,17 +1428,19 @@ mbox_post_cmd(adapter_t *adapter, scb_t *scb)
 /**
  * megaraid_queue_command_lck - generic queue entry point for all LLDs
  * @scp		: pointer to the scsi command to be executed
+ * @done	: callback routine to be called after the cmd has be completed
  *
  * Queue entry point for mailbox based controllers.
  */
-static int megaraid_queue_command_lck(struct scsi_cmnd *scp)
+static int
+megaraid_queue_command_lck(struct scsi_cmnd *scp, void (*done)(struct scsi_cmnd *))
 {
-	void (*done)(struct scsi_cmnd *) = scsi_done;
 	adapter_t	*adapter;
 	scb_t		*scb;
 	int		if_busy;
 
 	adapter		= SCP2ADAPTER(scp);
+	scp->scsi_done	= done;
 	scp->result	= 0;
 
 	/*
@@ -2359,7 +2358,7 @@ megaraid_mbox_dpc(unsigned long devp)
 		megaraid_dealloc_scb(adapter, scb);
 
 		// send the scsi packet back to kernel
-		scsi_done(scp);
+		scp->scsi_done(scp);
 	}
 
 	return;
@@ -2417,7 +2416,7 @@ megaraid_abort_handler(struct scsi_cmnd *scp)
 				scb->sno, scb->dev_channel, scb->dev_target));
 
 			scp->result = (DID_ABORT << 16);
-			scsi_done(scp);
+			scp->scsi_done(scp);
 
 			megaraid_dealloc_scb(adapter, scb);
 
@@ -2447,7 +2446,7 @@ megaraid_abort_handler(struct scsi_cmnd *scp)
 				scb->dev_channel, scb->dev_target));
 
 			scp->result = (DID_ABORT << 16);
-			scsi_done(scp);
+			scp->scsi_done(scp);
 
 			megaraid_dealloc_scb(adapter, scb);
 
@@ -2567,7 +2566,7 @@ megaraid_reset_handler(struct scsi_cmnd *scp)
 			}
 
 			scb->scp->result = (DID_RESET << 16);
-			scsi_done(scb->scp);
+			scb->scp->scsi_done(scb->scp);
 
 			megaraid_dealloc_scb(adapter, scb);
 		}

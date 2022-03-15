@@ -57,7 +57,7 @@ static int inv_icm42600_probe(struct spi_device *spi)
 	match = device_get_match_data(&spi->dev);
 	if (!match)
 		return -EINVAL;
-	chip = (uintptr_t)match;
+	chip = (enum inv_icm42600_chip)match;
 
 	regmap = devm_regmap_init_spi(spi, &inv_icm42600_regmap_config);
 	if (IS_ERR(regmap))

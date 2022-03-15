@@ -685,17 +685,12 @@ static void rkisp1_handle_buffer(struct rkisp1_capture *cap)
 	spin_unlock(&cap->buf.lock);
 }
 
-irqreturn_t rkisp1_capture_isr(int irq, void *ctx)
+void rkisp1_capture_isr(struct rkisp1_device *rkisp1)
 {
-	struct device *dev = ctx;
-	struct rkisp1_device *rkisp1 = dev_get_drvdata(dev);
 	unsigned int i;
 	u32 status;
 
 	status = rkisp1_read(rkisp1, RKISP1_CIF_MI_MIS);
-	if (!status)
-		return IRQ_NONE;
-
 	rkisp1_write(rkisp1, status, RKISP1_CIF_MI_ICR);
 
 	for (i = 0; i < ARRAY_SIZE(rkisp1->capture_devs); ++i) {
@@ -723,8 +718,6 @@ irqreturn_t rkisp1_capture_isr(int irq, void *ctx)
 		cap->is_streaming = false;
 		wake_up(&cap->done);
 	}
-
-	return IRQ_HANDLED;
 }
 
 /* ----------------------------------------------------------------------------

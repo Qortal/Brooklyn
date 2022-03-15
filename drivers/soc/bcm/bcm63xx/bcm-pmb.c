@@ -276,6 +276,7 @@ static int bcm_pmb_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	const struct bcm_pmb_pd_data *table;
 	const struct bcm_pmb_pd_data *e;
+	struct resource *res;
 	struct bcm_pmb *pmb;
 	int max_id;
 	int err;
@@ -286,7 +287,8 @@ static int bcm_pmb_probe(struct platform_device *pdev)
 
 	pmb->dev = dev;
 
-	pmb->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	pmb->base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(pmb->base))
 		return PTR_ERR(pmb->base);
 

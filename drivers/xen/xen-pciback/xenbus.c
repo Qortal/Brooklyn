@@ -14,7 +14,7 @@
 #include <linux/workqueue.h>
 #include <xen/xenbus.h>
 #include <xen/events.h>
-#include <xen/pci.h>
+#include <asm/xen/pci.h>
 #include "pciback.h"
 
 #define INVALID_EVTCHN_IRQ  (-1)
@@ -743,9 +743,6 @@ const struct xen_pcibk_backend *__read_mostly xen_pcibk_backend;
 
 int __init xen_pcibk_xenbus_register(void)
 {
-	if (!xen_pcibk_pv_support())
-		return 0;
-
 	xen_pcibk_backend = &xen_pcibk_vpci_backend;
 	if (passthrough)
 		xen_pcibk_backend = &xen_pcibk_passthrough_backend;
@@ -755,6 +752,5 @@ int __init xen_pcibk_xenbus_register(void)
 
 void __exit xen_pcibk_xenbus_unregister(void)
 {
-	if (xen_pcibk_pv_support())
-		xenbus_unregister_driver(&xen_pcibk_driver);
+	xenbus_unregister_driver(&xen_pcibk_driver);
 }

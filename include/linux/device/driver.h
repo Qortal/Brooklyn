@@ -18,7 +18,6 @@
 #include <linux/klist.h>
 #include <linux/pm.h>
 #include <linux/device/bus.h>
-#include <linux/module.h>
 
 /**
  * enum probe_type - device driver probe type to try

@@ -581,9 +581,6 @@ static const struct attribute_group node_dev_group = {
 
 static const struct attribute_group *node_dev_groups[] = {
 	&node_dev_group,
-#ifdef CONFIG_HAVE_ARCH_NODE_DEV_GROUP
-	&arch_node_dev_group,
-#endif
 	NULL
 };
 
@@ -632,7 +629,7 @@ static void node_device_release(struct device *dev)
 {
 	struct node *node = to_node(dev);
 
-#if defined(CONFIG_MEMORY_HOTPLUG) && defined(CONFIG_HUGETLBFS)
+#if defined(CONFIG_MEMORY_HOTPLUG_SPARSE) && defined(CONFIG_HUGETLBFS)
 	/*
 	 * We schedule the work only when a memory section is
 	 * onlined/offlined on this node. When we come here,
@@ -785,7 +782,7 @@ int unregister_cpu_under_node(unsigned int cpu, unsigned int nid)
 	return 0;
 }
 
-#ifdef CONFIG_MEMORY_HOTPLUG
+#ifdef CONFIG_MEMORY_HOTPLUG_SPARSE
 static int __ref get_nid_for_pfn(unsigned long pfn)
 {
 #ifdef CONFIG_DEFERRED_STRUCT_PAGE_INIT
@@ -961,9 +958,10 @@ static int node_memory_callback(struct notifier_block *self,
 	return NOTIFY_OK;
 }
 #endif	/* CONFIG_HUGETLBFS */
-#endif /* CONFIG_MEMORY_HOTPLUG */
+#endif /* CONFIG_MEMORY_HOTPLUG_SPARSE */
 
-#if !defined(CONFIG_MEMORY_HOTPLUG) || !defined(CONFIG_HUGETLBFS)
+#if !defined(CONFIG_MEMORY_HOTPLUG_SPARSE) || \
+    !defined(CONFIG_HUGETLBFS)
 static inline int node_memory_callback(struct notifier_block *self,
 				unsigned long action, void *arg)
 {

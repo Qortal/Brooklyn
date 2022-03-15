@@ -929,10 +929,8 @@ static void lower_barrier(struct r1conf *conf, sector_t sector_nr)
 	wake_up(&conf->wait_barrier);
 }
 
-static bool _wait_barrier(struct r1conf *conf, int idx, bool nowait)
+static void _wait_barrier(struct r1conf *conf, int idx)
 {
-	bool ret = true;
-
 	/*
 	 * We need to increase conf->nr_pending[idx] very early here,
 	 * then raise_barrier() can be blocked when it waits for
@@ -963,7 +961,7 @@ static bool _wait_barrier(struct r1conf *conf, int idx, bool nowait)
 	 */
 	if (!READ_ONCE(conf->array_frozen) &&
 	    !atomic_read(&conf->barrier[idx]))
-		return ret;
+		return;
 
 	/*
 	 * After holding conf->resync_lock, conf->nr_pending[idx]
@@ -981,27 +979,18 @@ static bool _wait_barrier(struct r1conf *conf, int idx, bool nowait)
 	 */
 	wake_up(&conf->wait_barrier);
 	/* Wait for the barrier in same barrier unit bucket to drop. */
-
-	/* Return false when nowait flag is set */
-	if (nowait) {
-		ret = false;
-	} else {
-		wait_event_lock_irq(conf->wait_barrier,
-				!conf->array_frozen &&
-				!atomic_read(&conf->barrier[idx]),
-				conf->resync_lock);
-		atomic_inc(&conf->nr_pending[idx]);
-	}
-
+	wait_event_lock_irq(conf->wait_barrier,
+			    !conf->array_frozen &&
+			     !atomic_read(&conf->barrier[idx]),
+			    conf->resync_lock);
+	atomic_inc(&conf->nr_pending[idx]);
 	atomic_dec(&conf->nr_waiting[idx]);
 	spin_unlock_irq(&conf->resync_lock);
-	return ret;
 }
 
-static bool wait_read_barrier(struct r1conf *conf, sector_t sector_nr, bool nowait)
+static void wait_read_barrier(struct r1conf *conf, sector_t sector_nr)
 {
 	int idx = sector_to_idx(sector_nr);
-	bool ret = true;
 
 	/*
 	 * Very similar to _wait_barrier(). The difference is, for read
@@ -1013,7 +1002,7 @@ static bool wait_read_barrier(struct r1conf *conf, sector_t sector_nr, bool nowa
 	atomic_inc(&conf->nr_pending[idx]);
 
 	if (!READ_ONCE(conf->array_frozen))
-		return ret;
+		return;
 
 	spin_lock_irq(&conf->resync_lock);
 	atomic_inc(&conf->nr_waiting[idx]);
@@ -1024,28 +1013,19 @@ static bool wait_read_barrier(struct r1conf *conf, sector_t sector_nr, bool nowa
 	 */
 	wake_up(&conf->wait_barrier);
 	/* Wait for array to be unfrozen */
-
-	/* Return false when nowait flag is set */
-	if (nowait) {
-		/* Return false when nowait flag is set */
-		ret = false;
-	} else {
-		wait_event_lock_irq(conf->wait_barrier,
-				!conf->array_frozen,
-				conf->resync_lock);
-		atomic_inc(&conf->nr_pending[idx]);
-	}
-
+	wait_event_lock_irq(conf->wait_barrier,
+			    !conf->array_frozen,
+			    conf->resync_lock);
+	atomic_inc(&conf->nr_pending[idx]);
 	atomic_dec(&conf->nr_waiting[idx]);
 	spin_unlock_irq(&conf->resync_lock);
-	return ret;
 }
 
-static bool wait_barrier(struct r1conf *conf, sector_t sector_nr, bool nowait)
+static void wait_barrier(struct r1conf *conf, sector_t sector_nr)
 {
 	int idx = sector_to_idx(sector_nr);
 
-	return _wait_barrier(conf, idx, nowait);
+	_wait_barrier(conf, idx);
 }
 
 static void _allow_barrier(struct r1conf *conf, int idx)
@@ -1256,11 +1236,7 @@ static void raid1_read_request(struct mddev *mddev, struct bio *bio,
 	 * Still need barrier for READ in case that whole
 	 * array is frozen.
 	 */
-	if (!wait_read_barrier(conf, bio->bi_iter.bi_sector,
-				bio->bi_opf & REQ_NOWAIT)) {
-		bio_wouldblock_error(bio);
-		return;
-	}
+	wait_read_barrier(conf, bio->bi_iter.bi_sector);
 
 	if (!r1_bio)
 		r1_bio = alloc_r1bio(mddev, bio);
@@ -1360,10 +1336,6 @@ static void raid1_write_request(struct mddev *mddev, struct bio *bio,
 		     bio->bi_iter.bi_sector, bio_end_sector(bio))) {
 
 		DEFINE_WAIT(w);
-		if (bio->bi_opf & REQ_NOWAIT) {
-			bio_wouldblock_error(bio);
-			return;
-		}
 		for (;;) {
 			prepare_to_wait(&conf->wait_barrier,
 					&w, TASK_IDLE);
@@ -1381,15 +1353,17 @@ static void raid1_write_request(struct mddev *mddev, struct bio *bio,
 	 * thread has put up a bar for new requests.
 	 * Continue immediately if no resync is active currently.
 	 */
-	if (!wait_barrier(conf, bio->bi_iter.bi_sector,
-				bio->bi_opf & REQ_NOWAIT)) {
-		bio_wouldblock_error(bio);
-		return;
-	}
+	wait_barrier(conf, bio->bi_iter.bi_sector);
 
 	r1_bio = alloc_r1bio(mddev, bio);
 	r1_bio->sectors = max_write_sectors;
 
+	if (conf->pending_count >= max_queued_requests) {
+		md_wakeup_thread(mddev->thread);
+		raid1_log(mddev, "wait queued");
+		wait_event(conf->wait_barrier,
+			   conf->pending_count < max_queued_requests);
+	}
 	/* first select target devices under rcu_lock and
 	 * inc refcount on their rdev.  Record them by setting
 	 * bios[x] to bio
@@ -1484,14 +1458,9 @@ static void raid1_write_request(struct mddev *mddev, struct bio *bio,
 				rdev_dec_pending(conf->mirrors[j].rdev, mddev);
 		r1_bio->state = 0;
 		allow_barrier(conf, bio->bi_iter.bi_sector);
-
-		if (bio->bi_opf & REQ_NOWAIT) {
-			bio_wouldblock_error(bio);
-			return;
-		}
 		raid1_log(mddev, "wait rdev %d blocked", blocked_rdev->raid_disk);
 		md_wait_for_blocked_rdev(blocked_rdev, mddev);
-		wait_barrier(conf, bio->bi_iter.bi_sector, false);
+		wait_barrier(conf, bio->bi_iter.bi_sector);
 		goto retry_write;
 	}
 
@@ -1561,12 +1530,13 @@ static void raid1_write_request(struct mddev *mddev, struct bio *bio,
 
 		r1_bio->bios[i] = mbio;
 
-		mbio->bi_iter.bi_sector	= (r1_bio->sector + rdev->data_offset);
-		bio_set_dev(mbio, rdev->bdev);
+		mbio->bi_iter.bi_sector	= (r1_bio->sector +
+				   conf->mirrors[i].rdev->data_offset);
+		bio_set_dev(mbio, conf->mirrors[i].rdev->bdev);
 		mbio->bi_end_io	= raid1_end_write_request;
 		mbio->bi_opf = bio_op(bio) | (bio->bi_opf & (REQ_SYNC | REQ_FUA));
-		if (test_bit(FailFast, &rdev->flags) &&
-		    !test_bit(WriteMostly, &rdev->flags) &&
+		if (test_bit(FailFast, &conf->mirrors[i].rdev->flags) &&
+		    !test_bit(WriteMostly, &conf->mirrors[i].rdev->flags) &&
 		    conf->raid_disks - mddev->degraded > 1)
 			mbio->bi_opf |= MD_FAILFAST;
 		mbio->bi_private = r1_bio;
@@ -1577,7 +1547,7 @@ static void raid1_write_request(struct mddev *mddev, struct bio *bio,
 			trace_block_bio_remap(mbio, disk_devt(mddev->gendisk),
 					      r1_bio->sector);
 		/* flush_pending_writes() needs access to the rdev so...*/
-		mbio->bi_bdev = (void *)rdev;
+		mbio->bi_bdev = (void *)conf->mirrors[i].rdev;
 
 		cb = blk_check_plugged(raid1_unplug, mddev, sizeof(*plug));
 		if (cb)
@@ -1719,7 +1689,7 @@ static void close_sync(struct r1conf *conf)
 	int idx;
 
 	for (idx = 0; idx < BARRIER_BUCKETS_NR; idx++) {
-		_wait_barrier(conf, idx, false);
+		_wait_barrier(conf, idx);
 		_allow_barrier(conf, idx);
 	}
 
@@ -3441,3 +3411,5 @@ MODULE_DESCRIPTION("RAID1 (mirroring) personality for MD");
 MODULE_ALIAS("md-personality-3"); /* RAID1 */
 MODULE_ALIAS("md-raid1");
 MODULE_ALIAS("md-level-1");
+
+module_param(max_queued_requests, int, S_IRUGO|S_IWUSR);

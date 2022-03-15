@@ -232,11 +232,6 @@ static inline int stm32_cryp_wait_busy(struct stm32_cryp *cryp)
 			!(status & SR_BUSY), 10, 100000);
 }
 
-static inline void stm32_cryp_enable(struct stm32_cryp *cryp)
-{
-	writel_relaxed(readl_relaxed(cryp->regs + CRYP_CR) | CR_CRYPEN, cryp->regs + CRYP_CR);
-}
-
 static inline int stm32_cryp_wait_enable(struct stm32_cryp *cryp)
 {
 	u32 status;
@@ -540,6 +535,9 @@ static int stm32_cryp_hw_init(struct stm32_cryp *cryp)
 	/* Disable interrupt */
 	stm32_cryp_write(cryp, CRYP_IMSCR, 0);
 
+	/* Set key */
+	stm32_cryp_hw_write_key(cryp);
+
 	/* Set configuration */
 	cfg = CR_DATA8 | CR_FFLUSH;
 
@@ -565,36 +563,23 @@ static int stm32_cryp_hw_init(struct stm32_cryp *cryp)
 	/* AES ECB/CBC decrypt: run key preparation first */
 	if (is_decrypt(cryp) &&
 	    ((hw_mode == CR_AES_ECB) || (hw_mode == CR_AES_CBC))) {
-		/* Configure in key preparation mode */
-		stm32_cryp_write(cryp, CRYP_CR, cfg | CR_AES_KP);
+		stm32_cryp_write(cryp, CRYP_CR, cfg | CR_AES_KP | CR_CRYPEN);
 
-		/* Set key only after full configuration done */
-		stm32_cryp_hw_write_key(cryp);
-
-		/* Start prepare key */
-		stm32_cryp_enable(cryp);
 		/* Wait for end of processing */
 		ret = stm32_cryp_wait_busy(cryp);
 		if (ret) {
 			dev_err(cryp->dev, "Timeout (key preparation)\n");
 			return ret;
 		}
-
-		cfg |= hw_mode | CR_DEC_NOT_ENC;
-
-		/* Apply updated config (Decrypt + algo) and flush */
-		stm32_cryp_write(cryp, CRYP_CR, cfg);
-	} else {
-		cfg |= hw_mode;
-		if (is_decrypt(cryp))
-			cfg |= CR_DEC_NOT_ENC;
-
-		/* Apply config and flush */
-		stm32_cryp_write(cryp, CRYP_CR, cfg);
-
-		/* Set key only after configuration done */
-		stm32_cryp_hw_write_key(cryp);
 	}
+
+	cfg |= hw_mode;
+
+	if (is_decrypt(cryp))
+		cfg |= CR_DEC_NOT_ENC;
+
+	/* Apply config and flush (valid when CRYPEN = 0) */
+	stm32_cryp_write(cryp, CRYP_CR, cfg);
 
 	switch (hw_mode) {
 	case CR_AES_GCM:
@@ -622,7 +607,9 @@ static int stm32_cryp_hw_init(struct stm32_cryp *cryp)
 	}
 
 	/* Enable now */
-	stm32_cryp_enable(cryp);
+	cfg |= CR_CRYPEN;
+
+	stm32_cryp_write(cryp, CRYP_CR, cfg);
 
 	return 0;
 }
@@ -1774,8 +1761,7 @@ static int stm32_cryp_probe(struct platform_device *pdev)
 
 	cryp->clk = devm_clk_get(dev, NULL);
 	if (IS_ERR(cryp->clk)) {
-		dev_err_probe(dev, PTR_ERR(cryp->clk), "Could not get clock\n");
-
+		dev_err(dev, "Could not get clock\n");
 		return PTR_ERR(cryp->clk);
 	}
 
@@ -1793,11 +1779,7 @@ static int stm32_cryp_probe(struct platform_device *pdev)
 	pm_runtime_enable(dev);
 
 	rst = devm_reset_control_get(dev, NULL);
-	if (IS_ERR(rst)) {
-		ret = PTR_ERR(rst);
-		if (ret == -EPROBE_DEFER)
-			goto err_rst;
-	} else {
+	if (!IS_ERR(rst)) {
 		reset_control_assert(rst);
 		udelay(2);
 		reset_control_deassert(rst);
@@ -1848,7 +1830,7 @@ err_engine1:
 	spin_lock(&cryp_list.lock);
 	list_del(&cryp->list);
 	spin_unlock(&cryp_list.lock);
-err_rst:
+
 	pm_runtime_disable(dev);
 	pm_runtime_put_noidle(dev);
 

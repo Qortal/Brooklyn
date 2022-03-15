@@ -47,7 +47,8 @@ unsigned int udf_get_last_session(struct super_block *sb)
 
 unsigned long udf_get_last_block(struct super_block *sb)
 {
-	struct cdrom_device_info *cdi = disk_to_cdi(sb->s_bdev->bd_disk);
+	struct block_device *bdev = sb->s_bdev;
+	struct cdrom_device_info *cdi = disk_to_cdi(bdev->bd_disk);
 	unsigned long lblock = 0;
 
 	/*
@@ -55,7 +56,7 @@ unsigned long udf_get_last_block(struct super_block *sb)
 	 * Try using the device size...
 	 */
 	if (!cdi || cdrom_get_last_written(cdi, &lblock) || lblock == 0)
-		lblock = sb_bdev_nr_blocks(sb);
+		lblock = i_size_read(bdev->bd_inode) >> sb->s_blocksize_bits;
 
 	if (lblock)
 		return lblock - 1;

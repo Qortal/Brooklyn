@@ -677,8 +677,7 @@ EXPORT_SYMBOL(st_press_get_settings);
 int st_press_common_probe(struct iio_dev *indio_dev)
 {
 	struct st_sensor_data *press_data = iio_priv(indio_dev);
-	struct device *parent = indio_dev->dev.parent;
-	struct st_sensors_platform_data *pdata = dev_get_platdata(parent);
+	struct st_sensors_platform_data *pdata = dev_get_platdata(press_data->dev);
 	int err;
 
 	indio_dev->modes = INDIO_DIRECT_MODE;
@@ -722,9 +721,31 @@ int st_press_common_probe(struct iio_dev *indio_dev)
 			return err;
 	}
 
-	return devm_iio_device_register(parent, indio_dev);
+	err = iio_device_register(indio_dev);
+	if (err)
+		goto st_press_device_register_error;
+
+	dev_info(&indio_dev->dev, "registered pressure sensor %s\n",
+		 indio_dev->name);
+
+	return err;
+
+st_press_device_register_error:
+	if (press_data->irq > 0)
+		st_sensors_deallocate_trigger(indio_dev);
+	return err;
 }
 EXPORT_SYMBOL(st_press_common_probe);
+
+void st_press_common_remove(struct iio_dev *indio_dev)
+{
+	struct st_sensor_data *press_data = iio_priv(indio_dev);
+
+	iio_device_unregister(indio_dev);
+	if (press_data->irq > 0)
+		st_sensors_deallocate_trigger(indio_dev);
+}
+EXPORT_SYMBOL(st_press_common_remove);
 
 MODULE_AUTHOR("Denis Ciocca <denis.ciocca@st.com>");
 MODULE_DESCRIPTION("STMicroelectronics pressures driver");

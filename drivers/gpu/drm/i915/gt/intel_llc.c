@@ -3,13 +3,12 @@
  * Copyright © 2019 Intel Corporation
  */
 
-#include <asm/tsc.h>
 #include <linux/cpufreq.h>
 
 #include "i915_drv.h"
 #include "intel_gt.h"
 #include "intel_llc.h"
-#include "intel_pcode.h"
+#include "intel_sideband.h"
 
 struct ia_constants {
 	unsigned int min_gpu_freq;

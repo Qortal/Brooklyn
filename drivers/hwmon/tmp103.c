@@ -51,92 +51,51 @@ static inline u8 tmp103_mc_to_reg(int val)
 	return DIV_ROUND_CLOSEST(val, 1000);
 }
 
-static int tmp103_read(struct device *dev, enum hwmon_sensor_types type,
-		       u32 attr, int channel, long *temp)
+static ssize_t tmp103_temp_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
 {
+	struct sensor_device_attribute *sda = to_sensor_dev_attr(attr);
 	struct regmap *regmap = dev_get_drvdata(dev);
 	unsigned int regval;
-	int err, reg;
+	int ret;
 
-	switch (attr) {
-	case hwmon_temp_input:
-		reg = TMP103_TEMP_REG;
-		break;
-	case hwmon_temp_min:
-		reg = TMP103_TLOW_REG;
-		break;
-	case hwmon_temp_max:
-		reg = TMP103_THIGH_REG;
-		break;
-	default:
-		return -EOPNOTSUPP;
-	}
+	ret = regmap_read(regmap, sda->index, &regval);
+	if (ret < 0)
+		return ret;
 
-	err = regmap_read(regmap, reg, &regval);
-	if (err < 0)
-		return err;
-
-	*temp = tmp103_reg_to_mc(regval);
-
-	return 0;
+	return sprintf(buf, "%d\n", tmp103_reg_to_mc(regval));
 }
 
-static int tmp103_write(struct device *dev, enum hwmon_sensor_types type,
-			u32 attr, int channel, long temp)
+static ssize_t tmp103_temp_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buf, size_t count)
 {
+	struct sensor_device_attribute *sda = to_sensor_dev_attr(attr);
 	struct regmap *regmap = dev_get_drvdata(dev);
-	int reg;
+	long val;
+	int ret;
 
-	switch (attr) {
-	case hwmon_temp_min:
-		reg = TMP103_TLOW_REG;
-		break;
-	case hwmon_temp_max:
-		reg = TMP103_THIGH_REG;
-		break;
-	default:
-		return -EOPNOTSUPP;
-	}
+	if (kstrtol(buf, 10, &val) < 0)
+		return -EINVAL;
 
-	temp = clamp_val(temp, -55000, 127000);
-	return regmap_write(regmap, reg, tmp103_mc_to_reg(temp));
+	val = clamp_val(val, -55000, 127000);
+	ret = regmap_write(regmap, sda->index, tmp103_mc_to_reg(val));
+	return ret ? ret : count;
 }
 
-static umode_t tmp103_is_visible(const void *data, enum hwmon_sensor_types type,
-				 u32 attr, int channel)
-{
-	if (type != hwmon_temp)
-		return 0;
+static SENSOR_DEVICE_ATTR_RO(temp1_input, tmp103_temp, TMP103_TEMP_REG);
 
-	switch (attr) {
-	case hwmon_temp_input:
-		return 0444;
-	case hwmon_temp_min:
-	case hwmon_temp_max:
-		return 0644;
-	default:
-		return 0;
-	}
-}
+static SENSOR_DEVICE_ATTR_RW(temp1_min, tmp103_temp, TMP103_TLOW_REG);
 
-static const struct hwmon_channel_info *tmp103_info[] = {
-	HWMON_CHANNEL_INFO(chip,
-			   HWMON_C_REGISTER_TZ),
-	HWMON_CHANNEL_INFO(temp,
-			   HWMON_T_INPUT | HWMON_T_MAX | HWMON_T_MIN),
+static SENSOR_DEVICE_ATTR_RW(temp1_max, tmp103_temp, TMP103_THIGH_REG);
+
+static struct attribute *tmp103_attrs[] = {
+	&sensor_dev_attr_temp1_input.dev_attr.attr,
+	&sensor_dev_attr_temp1_min.dev_attr.attr,
+	&sensor_dev_attr_temp1_max.dev_attr.attr,
 	NULL
 };
-
-static const struct hwmon_ops tmp103_hwmon_ops = {
-	.is_visible = tmp103_is_visible,
-	.read = tmp103_read,
-	.write = tmp103_write,
-};
-
-static const struct hwmon_chip_info tmp103_chip_info = {
-	.ops = &tmp103_hwmon_ops,
-	.info = tmp103_info,
-};
+ATTRIBUTE_GROUPS(tmp103);
 
 static bool tmp103_regmap_is_volatile(struct device *dev, unsigned int reg)
 {
@@ -171,10 +130,8 @@ static int tmp103_probe(struct i2c_client *client)
 	}
 
 	i2c_set_clientdata(client, regmap);
-	hwmon_dev = devm_hwmon_device_register_with_info(dev, client->name,
-							 regmap,
-							 &tmp103_chip_info,
-							 NULL);
+	hwmon_dev = devm_hwmon_device_register_with_groups(dev, client->name,
+						      regmap, tmp103_groups);
 	return PTR_ERR_OR_ZERO(hwmon_dev);
 }
 

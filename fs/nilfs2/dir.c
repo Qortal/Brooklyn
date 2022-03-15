@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * NILFS directory entry operations
+ * dir.c - NILFS directory entry operations
  *
  * Copyright (C) 2005-2008 Nippon Telegraph and Telephone Corporation.
  *

@@ -538,6 +538,7 @@ static int sun4i_tv_bind(struct device *dev, struct device *master,
 	struct drm_device *drm = data;
 	struct sun4i_drv *drv = drm->dev_private;
 	struct sun4i_tv *tv;
+	struct resource *res;
 	void __iomem *regs;
 	int ret;
 
@@ -547,7 +548,8 @@ static int sun4i_tv_bind(struct device *dev, struct device *master,
 	tv->drv = drv;
 	dev_set_drvdata(dev, tv);
 
-	regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	regs = devm_ioremap_resource(dev, res);
 	if (IS_ERR(regs)) {
 		dev_err(dev, "Couldn't map the TV encoder registers\n");
 		return PTR_ERR(regs);

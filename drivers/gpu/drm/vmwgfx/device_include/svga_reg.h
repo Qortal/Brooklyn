@@ -1,6 +1,6 @@
-/* SPDX-License-Identifier: GPL-2.0 OR MIT */
-/*
+/**********************************************************
  * Copyright 1998-2021 VMware, Inc.
+ * SPDX-License-Identifier: GPL-2.0 OR MIT
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -22,7 +22,7 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  *
- */
+ **********************************************************/
 
 /*
  * svga_reg.h --
@@ -442,7 +442,6 @@ typedef struct {
 #define SVGA_CAP2_TRACE_FULL_FB 0x00002000
 #define SVGA_CAP2_EXTRA_REGS 0x00004000
 #define SVGA_CAP2_LO_STAGING 0x00008000
-#define SVGA_CAP2_VIDEO_BLT 0x00010000
 #define SVGA_CAP2_RESERVED 0x80000000
 
 typedef enum {
@@ -451,10 +450,9 @@ typedef enum {
 	SVGABackdoorCap3dHWVersion = 2,
 	SVGABackdoorCapDeviceCaps2 = 3,
 	SVGABackdoorCapDevelCaps = 4,
-	SVGABackdoorCapDevCaps = 5,
-	SVGABackdoorDevelRenderer = 6,
-	SVGABackdoorDevelUsingISB = 7,
-	SVGABackdoorCapMax = 8,
+	SVGABackdoorDevelRenderer = 5,
+	SVGABackdoorDevelUsingISB = 6,
+	SVGABackdoorCapMax = 7,
 } SVGABackdoorCapType;
 
 enum {

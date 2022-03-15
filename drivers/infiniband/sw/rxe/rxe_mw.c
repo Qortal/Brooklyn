@@ -21,7 +21,7 @@ int rxe_alloc_mw(struct ib_mw *ibmw, struct ib_udata *udata)
 	}
 
 	rxe_add_index(mw);
-	mw->rkey = ibmw->rkey = (mw->elem.index << 8) | rxe_get_next_key(-1);
+	mw->rkey = ibmw->rkey = (mw->pelem.index << 8) | rxe_get_next_key(-1);
 	mw->state = (mw->ibmw.type == IB_MW_TYPE_2) ?
 			RXE_MW_STATE_FREE : RXE_MW_STATE_VALID;
 	spin_lock_init(&mw->lock);
@@ -56,10 +56,11 @@ int rxe_dealloc_mw(struct ib_mw *ibmw)
 {
 	struct rxe_mw *mw = to_rmw(ibmw);
 	struct rxe_pd *pd = to_rpd(ibmw->pd);
+	unsigned long flags;
 
-	spin_lock_bh(&mw->lock);
+	spin_lock_irqsave(&mw->lock, flags);
 	rxe_do_dealloc_mw(mw);
-	spin_unlock_bh(&mw->lock);
+	spin_unlock_irqrestore(&mw->lock, flags);
 
 	rxe_drop_ref(mw);
 	rxe_drop_ref(pd);
@@ -141,15 +142,15 @@ static int rxe_check_bind_mw(struct rxe_qp *qp, struct rxe_send_wqe *wqe,
 
 	/* C10-75 */
 	if (mw->access & IB_ZERO_BASED) {
-		if (unlikely(wqe->wr.wr.mw.length > mr->cur_map_set->length)) {
+		if (unlikely(wqe->wr.wr.mw.length > mr->length)) {
 			pr_err_once(
 				"attempt to bind a ZB MW outside of the MR\n");
 			return -EINVAL;
 		}
 	} else {
-		if (unlikely((wqe->wr.wr.mw.addr < mr->cur_map_set->iova) ||
+		if (unlikely((wqe->wr.wr.mw.addr < mr->iova) ||
 			     ((wqe->wr.wr.mw.addr + wqe->wr.wr.mw.length) >
-			      (mr->cur_map_set->iova + mr->cur_map_set->length)))) {
+			      (mr->iova + mr->length)))) {
 			pr_err_once(
 				"attempt to bind a VA MW outside of the MR\n");
 			return -EINVAL;
@@ -196,6 +197,7 @@ int rxe_bind_mw(struct rxe_qp *qp, struct rxe_send_wqe *wqe)
 	struct rxe_dev *rxe = to_rdev(qp->ibqp.device);
 	u32 mw_rkey = wqe->wr.wr.mw.mw_rkey;
 	u32 mr_lkey = wqe->wr.wr.mw.mr_lkey;
+	unsigned long flags;
 
 	mw = rxe_pool_get_index(&rxe->mw_pool, mw_rkey >> 8);
 	if (unlikely(!mw)) {
@@ -223,7 +225,7 @@ int rxe_bind_mw(struct rxe_qp *qp, struct rxe_send_wqe *wqe)
 		mr = NULL;
 	}
 
-	spin_lock_bh(&mw->lock);
+	spin_lock_irqsave(&mw->lock, flags);
 
 	ret = rxe_check_bind_mw(qp, wqe, mw, mr);
 	if (ret)
@@ -231,7 +233,7 @@ int rxe_bind_mw(struct rxe_qp *qp, struct rxe_send_wqe *wqe)
 
 	rxe_do_bind_mw(qp, wqe, mw, mr);
 err_unlock:
-	spin_unlock_bh(&mw->lock);
+	spin_unlock_irqrestore(&mw->lock, flags);
 err_drop_mr:
 	if (mr)
 		rxe_drop_ref(mr);
@@ -278,6 +280,7 @@ static void rxe_do_invalidate_mw(struct rxe_mw *mw)
 int rxe_invalidate_mw(struct rxe_qp *qp, u32 rkey)
 {
 	struct rxe_dev *rxe = to_rdev(qp->ibqp.device);
+	unsigned long flags;
 	struct rxe_mw *mw;
 	int ret;
 
@@ -292,7 +295,7 @@ int rxe_invalidate_mw(struct rxe_qp *qp, u32 rkey)
 		goto err_drop_ref;
 	}
 
-	spin_lock_bh(&mw->lock);
+	spin_lock_irqsave(&mw->lock, flags);
 
 	ret = rxe_check_invalidate_mw(qp, mw);
 	if (ret)
@@ -300,7 +303,7 @@ int rxe_invalidate_mw(struct rxe_qp *qp, u32 rkey)
 
 	rxe_do_invalidate_mw(mw);
 err_unlock:
-	spin_unlock_bh(&mw->lock);
+	spin_unlock_irqrestore(&mw->lock, flags);
 err_drop_ref:
 	rxe_drop_ref(mw);
 err:
@@ -330,9 +333,9 @@ struct rxe_mw *rxe_lookup_mw(struct rxe_qp *qp, int access, u32 rkey)
 	return mw;
 }
 
-void rxe_mw_cleanup(struct rxe_pool_elem *elem)
+void rxe_mw_cleanup(struct rxe_pool_entry *elem)
 {
-	struct rxe_mw *mw = container_of(elem, typeof(*mw), elem);
+	struct rxe_mw *mw = container_of(elem, typeof(*mw), pelem);
 
 	rxe_drop_index(mw);
 }

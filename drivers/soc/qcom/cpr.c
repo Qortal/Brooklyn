@@ -1614,6 +1614,7 @@ static void cpr_debugfs_init(struct cpr_drv *drv)
 
 static int cpr_probe(struct platform_device *pdev)
 {
+	struct resource *res;
 	struct device *dev = &pdev->dev;
 	struct cpr_drv *drv;
 	int irq, ret;
@@ -1647,7 +1648,8 @@ static int cpr_probe(struct platform_device *pdev)
 	if (IS_ERR(drv->tcsr))
 		return PTR_ERR(drv->tcsr);
 
-	drv->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	drv->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(drv->base))
 		return PTR_ERR(drv->base);
 

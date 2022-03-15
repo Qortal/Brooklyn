@@ -493,8 +493,8 @@ void
 lpfc_sli4_io_xri_aborted(struct lpfc_hba *phba,
 			 struct sli4_wcqe_xri_aborted *axri, int idx)
 {
-	u16 xri = 0;
-	u16 rxid = 0;
+	uint16_t xri = bf_get(lpfc_wcqe_xa_xri, axri);
+	uint16_t rxid = bf_get(lpfc_wcqe_xa_remote_xid, axri);
 	struct lpfc_io_buf *psb, *next_psb;
 	struct lpfc_sli4_hdw_queue *qp;
 	unsigned long iflag = 0;
@@ -504,22 +504,15 @@ lpfc_sli4_io_xri_aborted(struct lpfc_hba *phba,
 	int rrq_empty = 0;
 	struct lpfc_sli_ring *pring = phba->sli4_hba.els_wq->pring;
 	struct scsi_cmnd *cmd;
-	int offline = 0;
 
 	if (!(phba->cfg_enable_fc4_type & LPFC_ENABLE_FCP))
 		return;
-	offline = pci_channel_offline(phba->pcidev);
-	if (!offline) {
-		xri = bf_get(lpfc_wcqe_xa_xri, axri);
-		rxid = bf_get(lpfc_wcqe_xa_remote_xid, axri);
-	}
+
 	qp = &phba->sli4_hba.hdwq[idx];
 	spin_lock_irqsave(&phba->hbalock, iflag);
 	spin_lock(&qp->abts_io_buf_list_lock);
 	list_for_each_entry_safe(psb, next_psb,
 		&qp->lpfc_abts_io_buf_list, list) {
-		if (offline)
-			xri = psb->cur_iocbq.sli4_xritag;
 		if (psb->cur_iocbq.sli4_xritag == xri) {
 			list_del_init(&psb->list);
 			psb->flags &= ~LPFC_SBUF_XBUSY;
@@ -528,15 +521,8 @@ lpfc_sli4_io_xri_aborted(struct lpfc_hba *phba,
 				qp->abts_nvme_io_bufs--;
 				spin_unlock(&qp->abts_io_buf_list_lock);
 				spin_unlock_irqrestore(&phba->hbalock, iflag);
-				if (!offline) {
-					lpfc_sli4_nvme_xri_aborted(phba, axri,
-								   psb);
-					return;
-				}
-				lpfc_sli4_nvme_pci_offline_aborted(phba, psb);
-				spin_lock_irqsave(&phba->hbalock, iflag);
-				spin_lock(&qp->abts_io_buf_list_lock);
-				continue;
+				lpfc_sli4_nvme_xri_aborted(phba, axri, psb);
+				return;
 			}
 			qp->abts_scsi_io_bufs--;
 			spin_unlock(&qp->abts_io_buf_list_lock);
@@ -548,13 +534,13 @@ lpfc_sli4_io_xri_aborted(struct lpfc_hba *phba,
 
 			rrq_empty = list_empty(&phba->active_rrq_list);
 			spin_unlock_irqrestore(&phba->hbalock, iflag);
-			if (ndlp && !offline) {
+			if (ndlp) {
 				lpfc_set_rrq_active(phba, ndlp,
 					psb->cur_iocbq.sli4_lxritag, rxid, 1);
 				lpfc_sli4_abts_err_handler(phba, ndlp, axri);
 			}
 
-			if (phba->cfg_fcp_wait_abts_rsp || offline) {
+			if (phba->cfg_fcp_wait_abts_rsp) {
 				spin_lock_irqsave(&psb->buf_lock, iflag);
 				cmd = psb->pCmd;
 				psb->pCmd = NULL;
@@ -564,7 +550,7 @@ lpfc_sli4_io_xri_aborted(struct lpfc_hba *phba,
 				 * scsi_done upcall.
 				 */
 				if (cmd)
-					scsi_done(cmd);
+					cmd->scsi_done(cmd);
 
 				/*
 				 * We expect there is an abort thread waiting
@@ -581,30 +567,25 @@ lpfc_sli4_io_xri_aborted(struct lpfc_hba *phba,
 			lpfc_release_scsi_buf_s4(phba, psb);
 			if (rrq_empty)
 				lpfc_worker_wake_up(phba);
-			if (!offline)
-				return;
-			spin_lock_irqsave(&phba->hbalock, iflag);
-			spin_lock(&qp->abts_io_buf_list_lock);
-			continue;
+			return;
 		}
 	}
 	spin_unlock(&qp->abts_io_buf_list_lock);
-	if (!offline) {
-		for (i = 1; i <= phba->sli.last_iotag; i++) {
-			iocbq = phba->sli.iocbq_lookup[i];
+	for (i = 1; i <= phba->sli.last_iotag; i++) {
+		iocbq = phba->sli.iocbq_lookup[i];
 
-			if (!(iocbq->iocb_flag & LPFC_IO_FCP) ||
-			    (iocbq->iocb_flag & LPFC_IO_LIBDFC))
-				continue;
-			if (iocbq->sli4_xritag != xri)
-				continue;
-			psb = container_of(iocbq, struct lpfc_io_buf, cur_iocbq);
-			psb->flags &= ~LPFC_SBUF_XBUSY;
-			spin_unlock_irqrestore(&phba->hbalock, iflag);
-			if (!list_empty(&pring->txq))
-				lpfc_worker_wake_up(phba);
-			return;
-		}
+		if (!(iocbq->iocb_flag & LPFC_IO_FCP) ||
+		    (iocbq->iocb_flag & LPFC_IO_LIBDFC))
+			continue;
+		if (iocbq->sli4_xritag != xri)
+			continue;
+		psb = container_of(iocbq, struct lpfc_io_buf, cur_iocbq);
+		psb->flags &= ~LPFC_SBUF_XBUSY;
+		spin_unlock_irqrestore(&phba->hbalock, iflag);
+		if (!list_empty(&pring->txq))
+			lpfc_worker_wake_up(phba);
+		return;
+
 	}
 	spin_unlock_irqrestore(&phba->hbalock, iflag);
 }
@@ -894,7 +875,7 @@ lpfc_scsi_prep_dma_buf_s3(struct lpfc_hba *phba, struct lpfc_io_buf *lpfc_cmd)
 	bpl += 2;
 	if (scsi_sg_count(scsi_cmnd)) {
 		/*
-		 * The driver stores the segment count returned from dma_map_sg
+		 * The driver stores the segment count returned from pci_map_sg
 		 * because this a count of dma-mappings used to map the use_sg
 		 * pages.  They are not guaranteed to be the same for those
 		 * architectures that implement an IOMMU.
@@ -2589,7 +2570,7 @@ lpfc_bg_scsi_prep_dma_buf_s3(struct lpfc_hba *phba,
 	bpl += 2;
 	if (scsi_sg_count(scsi_cmnd)) {
 		/*
-		 * The driver stores the segment count returned from dma_map_sg
+		 * The driver stores the segment count returned from pci_map_sg
 		 * because this a count of dma-mappings used to map the use_sg
 		 * pages.  They are not guaranteed to be the same for those
 		 * architectures that implement an IOMMU.
@@ -3234,6 +3215,7 @@ lpfc_scsi_prep_dma_buf_s4(struct lpfc_hba *phba, struct lpfc_io_buf *lpfc_cmd)
 	struct lpfc_vport *vport = phba->pport;
 	union lpfc_wqe128 *wqe = &pwqeq->wqe;
 	dma_addr_t physaddr;
+	uint32_t num_bde = 0;
 	uint32_t dma_len;
 	uint32_t dma_offset = 0;
 	int nseg, i, j;
@@ -3249,7 +3231,7 @@ lpfc_scsi_prep_dma_buf_s4(struct lpfc_hba *phba, struct lpfc_io_buf *lpfc_cmd)
 	 */
 	if (scsi_sg_count(scsi_cmnd)) {
 		/*
-		 * The driver stores the segment count returned from dma_map_sg
+		 * The driver stores the segment count returned from pci_map_sg
 		 * because this a count of dma-mappings used to map the use_sg
 		 * pages.  They are not guaranteed to be the same for those
 		 * architectures that implement an IOMMU.
@@ -3295,7 +3277,7 @@ lpfc_scsi_prep_dma_buf_s4(struct lpfc_hba *phba, struct lpfc_io_buf *lpfc_cmd)
 		j = 2;
 		for (i = 0; i < nseg; i++) {
 			sgl->word2 = 0;
-			if (nseg == 1) {
+			if ((num_bde + 1) == nseg) {
 				bf_set(lpfc_sli4_sge_last, sgl, 1);
 				bf_set(lpfc_sli4_sge_type, sgl,
 				       LPFC_SGE_TYPE_DATA);
@@ -3364,15 +3346,13 @@ lpfc_scsi_prep_dma_buf_s4(struct lpfc_hba *phba, struct lpfc_io_buf *lpfc_cmd)
 
 			j++;
 		}
-
-		/* PBDE support for first data SGE only.
-		 * For FCoE, we key off Performance Hints.
-		 * For FC, we key off lpfc_enable_pbde.
+		/*
+		 * Setup the first Payload BDE. For FCoE we just key off
+		 * Performance Hints, for FC we use lpfc_enable_pbde.
+		 * We populate words 13-15 of IOCB/WQE.
 		 */
-		if (nseg == 1 &&
-		    ((phba->sli3_options & LPFC_SLI4_PERFH_ENABLED) ||
-		     phba->cfg_enable_pbde)) {
-			/* Words 13-15 */
+		if ((phba->sli3_options & LPFC_SLI4_PERFH_ENABLED) ||
+		    phba->cfg_enable_pbde) {
 			bde = (struct ulp_bde64 *)
 				&wqe->words[13];
 			bde->addrLow = first_data_sgl->addr_lo;
@@ -3382,15 +3362,12 @@ lpfc_scsi_prep_dma_buf_s4(struct lpfc_hba *phba, struct lpfc_io_buf *lpfc_cmd)
 			bde->tus.f.bdeFlags = BUFF_TYPE_BDE_64;
 			bde->tus.w = cpu_to_le32(bde->tus.w);
 
-			/* Word 11 - set PBDE bit */
-			bf_set(wqe_pbde, &wqe->generic.wqe_com, 1);
 		} else {
 			memset(&wqe->words[13], 0, (sizeof(uint32_t) * 3));
-			/* Word 11 - PBDE bit disabled by default template */
 		}
 	} else {
 		sgl += 1;
-		/* set the last flag in the fcp_rsp map entry */
+		/* clear the last flag in the fcp_rsp map entry */
 		sgl->word2 = le32_to_cpu(sgl->word2);
 		bf_set(lpfc_sli4_sge_last, sgl, 1);
 		sgl->word2 = cpu_to_le32(sgl->word2);
@@ -3402,6 +3379,10 @@ lpfc_scsi_prep_dma_buf_s4(struct lpfc_hba *phba, struct lpfc_io_buf *lpfc_cmd)
 			memset(bde, 0, (sizeof(uint32_t) * 3));
 		}
 	}
+
+	/* Word 11 */
+	if (phba->cfg_enable_pbde)
+		bf_set(wqe_pbde, &wqe->generic.wqe_com, 1);
 
 	/*
 	 * Finish initializing those IOCB fields that are dependent on the
@@ -3488,7 +3469,7 @@ lpfc_bg_scsi_prep_dma_buf_s4(struct lpfc_hba *phba,
 	 */
 	if (scsi_sg_count(scsi_cmnd)) {
 		/*
-		 * The driver stores the segment count returned from dma_map_sg
+		 * The driver stores the segment count returned from pci_map_sg
 		 * because this a count of dma-mappings used to map the use_sg
 		 * pages.  They are not guaranteed to be the same for those
 		 * architectures that implement an IOMMU.
@@ -3960,8 +3941,7 @@ lpfc_update_cmf_cmd(struct lpfc_hba *phba, uint32_t size)
 	int cpu;
 
 	/* At this point we are either LPFC_CFG_MANAGED or LPFC_CFG_MONITOR */
-	if (phba->cmf_active_mode == LPFC_CFG_MANAGED &&
-	    phba->cmf_max_bytes_per_interval) {
+	if (phba->cmf_active_mode == LPFC_CFG_MANAGED) {
 		total = 0;
 		for_each_present_cpu(cpu) {
 			cgs = per_cpu_ptr(phba->cmf_stat, cpu);
@@ -4393,7 +4373,6 @@ lpfc_fcp_io_cmd_wqe_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pwqeIn,
 		if (lpfc_cmd->result == IOERR_INVALID_RPI ||
 		    lpfc_cmd->result == IOERR_NO_RESOURCES ||
 		    lpfc_cmd->result == IOERR_ABORT_REQUESTED ||
-		    lpfc_cmd->result == IOERR_RPI_SUSPENDED ||
 		    lpfc_cmd->result == IOERR_SLER_CMD_RCV_FAILURE) {
 			cmd->result = DID_REQUEUE << 16;
 			break;
@@ -4449,11 +4428,10 @@ lpfc_fcp_io_cmd_wqe_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pwqeIn,
 
 		lpfc_printf_vlog(vport, KERN_INFO, LOG_FCP,
 				 "9039 Iodone <%d/%llu> cmd x%px, error "
-				 "x%x SNS x%x x%x LBA x%llx Data: x%x x%x\n",
+				 "x%x SNS x%x x%x Data: x%x x%x\n",
 				 cmd->device->id, cmd->device->lun, cmd,
-				 cmd->result, *lp, *(lp + 3),
-				 (u64)scsi_get_lba(cmd),
-				 cmd->retries, scsi_get_resid(cmd));
+				 cmd->result, *lp, *(lp + 3), cmd->retries,
+				 scsi_get_resid(cmd));
 	}
 
 	lpfc_update_stats(vport, lpfc_cmd);
@@ -4503,7 +4481,7 @@ lpfc_fcp_io_cmd_wqe_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pwqeIn,
 		goto out;
 
 	/* The sdev is not guaranteed to be valid post scsi_done upcall. */
-	scsi_done(cmd);
+	cmd->scsi_done(cmd);
 
 	/*
 	 * If there is an abort thread waiting for command completion
@@ -4772,7 +4750,7 @@ lpfc_scsi_cmd_iocb_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pIocbIn,
 #endif
 
 	/* The sdev is not guaranteed to be valid post scsi_done upcall. */
-	scsi_done(cmd);
+	cmd->scsi_done(cmd);
 
 	/*
 	 * If there is an abort thread waiting for command completion
@@ -5117,7 +5095,7 @@ lpfc_scsi_api_table_setup(struct lpfc_hba *phba, uint8_t dev_grp)
 		phba->lpfc_scsi_prep_cmnd_buf = lpfc_scsi_prep_cmnd_buf_s4;
 		break;
 	default:
-		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
 				"1418 Invalid HBA PCI-device group: 0x%x\n",
 				dev_grp);
 		return -ENODEV;
@@ -5844,7 +5822,7 @@ lpfc_queuecommand(struct Scsi_Host *shost, struct scsi_cmnd *cmnd)
 			     shost);
 
  out_fail_command:
-	scsi_done(cmnd);
+	cmnd->scsi_done(cmnd);
 	return 0;
 }
 
@@ -7211,7 +7189,7 @@ struct scsi_host_template lpfc_template_nvme = {
 	.this_id		= -1,
 	.sg_tablesize		= 1,
 	.cmd_per_lun		= 1,
-	.shost_groups		= lpfc_hba_groups,
+	.shost_attrs		= lpfc_hba_attrs,
 	.max_sectors		= 0xFFFFFFFF,
 	.vendor_id		= LPFC_NL_VENDOR_ID,
 	.track_queue_depth	= 0,
@@ -7237,7 +7215,7 @@ struct scsi_host_template lpfc_template = {
 	.this_id		= -1,
 	.sg_tablesize		= LPFC_DEFAULT_SG_SEG_CNT,
 	.cmd_per_lun		= LPFC_CMD_PER_LUN,
-	.shost_groups		= lpfc_hba_groups,
+	.shost_attrs		= lpfc_hba_attrs,
 	.max_sectors		= 0xFFFFFFFF,
 	.vendor_id		= LPFC_NL_VENDOR_ID,
 	.change_queue_depth	= scsi_change_queue_depth,

@@ -14,7 +14,6 @@
 #include <scsi/scsi_transport_sas.h>
 #include <scsi/libsas.h>
 #include <scsi/sas_ata.h>
-#include <linux/pm_runtime.h>
 
 #ifdef pr_fmt
 #undef pr_fmt
@@ -57,7 +56,6 @@ void sas_unregister_ports(struct sas_ha_struct *sas_ha);
 
 void sas_disable_revalidation(struct sas_ha_struct *ha);
 void sas_enable_revalidation(struct sas_ha_struct *ha);
-void sas_queue_deferred_work(struct sas_ha_struct *ha);
 void __sas_drain_work(struct sas_ha_struct *ha);
 
 void sas_deform_port(struct asd_sas_phy *phy, int gone);

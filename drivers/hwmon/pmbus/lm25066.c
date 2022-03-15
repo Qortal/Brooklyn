@@ -14,7 +14,6 @@
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/log2.h>
-#include <linux/of_device.h>
 #include "pmbus.h"
 
 enum chips { lm25056, lm25066, lm5064, lm5066, lm5066i };
@@ -52,7 +51,7 @@ struct __coeff {
 #define PSC_CURRENT_IN_L	(PSC_NUM_CLASSES)
 #define PSC_POWER_L		(PSC_NUM_CLASSES + 1)
 
-static const struct __coeff lm25066_coeff[][PSC_NUM_CLASSES + 2] = {
+static struct __coeff lm25066_coeff[][PSC_NUM_CLASSES + 2] = {
 	[lm25056] = {
 		[PSC_VOLTAGE_IN] = {
 			.m = 16296,
@@ -102,7 +101,7 @@ static const struct __coeff lm25066_coeff[][PSC_NUM_CLASSES + 2] = {
 			.R = -2,
 		},
 		[PSC_CURRENT_IN_L] = {
-			.m = 6854,
+			.m = 6852,
 			.b = -3100,
 			.R = -2,
 		},
@@ -234,6 +233,8 @@ struct lm25066_data {
 };
 
 #define to_lm25066_data(x)  container_of(x, struct lm25066_data, info)
+
+static const struct i2c_device_id lm25066_id[];
 
 static int lm25066_read_word_data(struct i2c_client *client, int page,
 				  int phase, int reg)
@@ -435,35 +436,12 @@ static int lm25066_write_word_data(struct i2c_client *client, int page, int reg,
 	return ret;
 }
 
-static const struct i2c_device_id lm25066_id[] = {
-	{"lm25056", lm25056},
-	{"lm25066", lm25066},
-	{"lm5064", lm5064},
-	{"lm5066", lm5066},
-	{"lm5066i", lm5066i},
-	{ }
-};
-MODULE_DEVICE_TABLE(i2c, lm25066_id);
-
-static const struct of_device_id __maybe_unused lm25066_of_match[] = {
-	{ .compatible = "ti,lm25056", .data = (void *)lm25056, },
-	{ .compatible = "ti,lm25066", .data = (void *)lm25066, },
-	{ .compatible = "ti,lm5064",  .data = (void *)lm5064,  },
-	{ .compatible = "ti,lm5066",  .data = (void *)lm5066,  },
-	{ .compatible = "ti,lm5066i", .data = (void *)lm5066i, },
-	{ },
-};
-MODULE_DEVICE_TABLE(of, lm25066_of_match);
-
 static int lm25066_probe(struct i2c_client *client)
 {
 	int config;
-	u32 shunt;
 	struct lm25066_data *data;
 	struct pmbus_driver_info *info;
-	const struct __coeff *coeff;
-	const struct of_device_id *of_id;
-	const struct i2c_device_id *i2c_id;
+	struct __coeff *coeff;
 
 	if (!i2c_check_functionality(client->adapter,
 				     I2C_FUNC_SMBUS_READ_BYTE_DATA))
@@ -478,14 +456,7 @@ static int lm25066_probe(struct i2c_client *client)
 	if (config < 0)
 		return config;
 
-	i2c_id = i2c_match_id(lm25066_id, client);
-
-	of_id = of_match_device(lm25066_of_match, &client->dev);
-	if (of_id && (unsigned long)of_id->data != i2c_id->driver_data)
-		dev_notice(&client->dev, "Device mismatch: %s in device tree, %s detected\n",
-			   of_id->name, i2c_id->name);
-
-	data->id = i2c_id->driver_data;
+	data->id = i2c_match_id(lm25066_id, client)->driver_data;
 	info = &data->info;
 
 	info->pages = 1;
@@ -535,25 +506,25 @@ static int lm25066_probe(struct i2c_client *client)
 		info->b[PSC_POWER] = coeff[PSC_POWER].b;
 	}
 
-	/*
-	 * Values in the TI datasheets are normalized for a 1mOhm sense
-	 * resistor; assume that unless DT specifies a value explicitly.
-	 */
-	if (of_property_read_u32(client->dev.of_node, "shunt-resistor-micro-ohms", &shunt))
-		shunt = 1000;
-
-	info->m[PSC_CURRENT_IN] = info->m[PSC_CURRENT_IN] * shunt / 1000;
-	info->m[PSC_POWER] = info->m[PSC_POWER] * shunt / 1000;
-
 	return pmbus_do_probe(client, info);
 }
+
+static const struct i2c_device_id lm25066_id[] = {
+	{"lm25056", lm25056},
+	{"lm25066", lm25066},
+	{"lm5064", lm5064},
+	{"lm5066", lm5066},
+	{"lm5066i", lm5066i},
+	{ }
+};
+
+MODULE_DEVICE_TABLE(i2c, lm25066_id);
 
 /* This is the driver that will be inserted */
 static struct i2c_driver lm25066_driver = {
 	.driver = {
 		   .name = "lm25066",
-		   .of_match_table = of_match_ptr(lm25066_of_match),
-	},
+		   },
 	.probe_new = lm25066_probe,
 	.id_table = lm25066_id,
 };

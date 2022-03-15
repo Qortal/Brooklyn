@@ -102,9 +102,7 @@ static int lis302dl_spi_remove(struct spi_device *spi)
 	lis3lv02d_joystick_disable(lis3);
 	lis3lv02d_poweroff(lis3);
 
-	lis3lv02d_remove_fs(&lis3_dev);
-
-	return 0;
+	return lis3lv02d_remove_fs(&lis3_dev);
 }
 
 #ifdef CONFIG_PM_SLEEP

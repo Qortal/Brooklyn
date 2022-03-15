@@ -73,7 +73,7 @@ davinci_aintc_handle_irq(struct pt_regs *regs)
 	irqnr >>= 2;
 	irqnr -= 1;
 
-	generic_handle_domain_irq(davinci_aintc_irq_domain, irqnr);
+	handle_domain_irq(davinci_aintc_irq_domain, irqnr, regs);
 }
 
 /* ARM Interrupt Controller Initialization */

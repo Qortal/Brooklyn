@@ -234,7 +234,7 @@ static blk_status_t mmc_mq_queue_rq(struct blk_mq_hw_ctx *hctx,
 	enum mmc_issue_type issue_type;
 	enum mmc_issued issued;
 	bool get_card, cqe_retune_ok;
-	blk_status_t ret;
+	int ret;
 
 	if (mmc_card_removed(mq->card)) {
 		req->rq_flags |= RQF_QUIET;

@@ -49,7 +49,6 @@ static int copy(struct intel_migrate *migrate,
 	if (IS_ERR(src))
 		return 0;
 
-	sz = src->base.size;
 	dst = i915_gem_object_create_internal(i915, sz);
 	if (IS_ERR(dst))
 		goto err_free_src;
@@ -442,7 +441,7 @@ int intel_migrate_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(thread_global_copy),
 		SUBTEST(thread_global_clear),
 	};
-	struct intel_gt *gt = to_gt(i915);
+	struct intel_gt *gt = &i915->gt;
 
 	if (!gt->migrate.context)
 		return 0;
@@ -465,7 +464,7 @@ create_init_lmem_internal(struct intel_gt *gt, size_t sz, bool try_lmem)
 			return obj;
 	}
 
-	i915_gem_object_trylock(obj, NULL);
+	i915_gem_object_trylock(obj);
 	err = i915_gem_object_pin_pages(obj);
 	if (err) {
 		i915_gem_object_unlock(obj);
@@ -658,7 +657,7 @@ int intel_migrate_perf_selftests(struct drm_i915_private *i915)
 		SUBTEST(perf_clear_blt),
 		SUBTEST(perf_copy_blt),
 	};
-	struct intel_gt *gt = to_gt(i915);
+	struct intel_gt *gt = &i915->gt;
 
 	if (intel_gt_is_wedged(gt))
 		return 0;

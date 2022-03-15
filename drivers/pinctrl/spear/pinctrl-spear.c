@@ -14,7 +14,6 @@
  */
 
 #include <linux/err.h>
-#include <linux/mfd/syscon.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
@@ -368,12 +367,9 @@ int spear_pinctrl_probe(struct platform_device *pdev,
 	if (!pmx)
 		return -ENOMEM;
 
-	pmx->regmap = device_node_to_regmap(np);
-	if (IS_ERR(pmx->regmap)) {
-		dev_err(&pdev->dev, "Init regmap failed (%pe).\n",
-			pmx->regmap);
-		return PTR_ERR(pmx->regmap);
-	}
+	pmx->vbase = devm_platform_ioremap_resource(pdev, 0);
+	if (IS_ERR(pmx->vbase))
+		return PTR_ERR(pmx->vbase);
 
 	pmx->dev = &pdev->dev;
 	pmx->machdata = machdata;

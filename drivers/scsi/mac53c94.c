@@ -66,7 +66,8 @@ static irqreturn_t do_mac53c94_interrupt(int, void *);
 static void cmd_done(struct fsc_state *, int result);
 static void set_dma_cmds(struct fsc_state *, struct scsi_cmnd *);
 
-static int mac53c94_queue_lck(struct scsi_cmnd *cmd)
+
+static int mac53c94_queue_lck(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 {
 	struct fsc_state *state;
 
@@ -82,6 +83,7 @@ static int mac53c94_queue_lck(struct scsi_cmnd *cmd)
 	}
 #endif
 
+	cmd->scsi_done = done;
 	cmd->host_scribble = NULL;
 
 	state = (struct fsc_state *) cmd->device->host->hostdata;
@@ -346,7 +348,7 @@ static void cmd_done(struct fsc_state *state, int result)
 	cmd = state->current_req;
 	if (cmd) {
 		cmd->result = result;
-		scsi_done(cmd);
+		(*cmd->scsi_done)(cmd);
 		state->current_req = NULL;
 	}
 	state->phase = idle;

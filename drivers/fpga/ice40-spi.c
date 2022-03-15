@@ -178,9 +178,12 @@ static int ice40_fpga_probe(struct spi_device *spi)
 		return ret;
 	}
 
-	mgr = devm_fpga_mgr_register(dev, "Lattice iCE40 FPGA Manager",
-				     &ice40_fpga_ops, priv);
-	return PTR_ERR_OR_ZERO(mgr);
+	mgr = devm_fpga_mgr_create(dev, "Lattice iCE40 FPGA Manager",
+				   &ice40_fpga_ops, priv);
+	if (!mgr)
+		return -ENOMEM;
+
+	return devm_fpga_mgr_register(dev, mgr);
 }
 
 static const struct of_device_id ice40_fpga_of_match[] = {

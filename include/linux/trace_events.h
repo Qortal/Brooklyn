@@ -172,7 +172,6 @@ enum trace_flag_type {
 	TRACE_FLAG_SOFTIRQ		= 0x10,
 	TRACE_FLAG_PREEMPT_RESCHED	= 0x20,
 	TRACE_FLAG_NMI			= 0x40,
-	TRACE_FLAG_BH_OFF		= 0x80,
 };
 
 #ifdef CONFIG_TRACE_IRQFLAGS_SUPPORT
@@ -672,7 +671,7 @@ struct trace_event_file {
 	}								\
 	early_initcall(trace_init_perf_perm_##name);
 
-#define PERF_MAX_TRACE_SIZE	8192
+#define PERF_MAX_TRACE_SIZE	2048
 
 #define MAX_FILTER_STR_VAL	256U	/* Should handle KSYM_SYMBOL_LEN */
 
@@ -699,8 +698,6 @@ event_triggers_post_call(struct trace_event_file *file,
 
 bool trace_event_ignore_this_pid(struct trace_event_file *trace_file);
 
-bool __trace_trigger_soft_disabled(struct trace_event_file *file);
-
 /**
  * trace_trigger_soft_disabled - do triggers and test if soft disabled
  * @file: The file pointer of the event to test
@@ -710,20 +707,20 @@ bool __trace_trigger_soft_disabled(struct trace_event_file *file);
  * triggers that require testing the fields, it will return true,
  * otherwise false.
  */
-static __always_inline bool
+static inline bool
 trace_trigger_soft_disabled(struct trace_event_file *file)
 {
 	unsigned long eflags = file->flags;
 
-	if (likely(!(eflags & (EVENT_FILE_FL_TRIGGER_MODE |
-			       EVENT_FILE_FL_SOFT_DISABLED |
-			       EVENT_FILE_FL_PID_FILTER))))
-		return false;
-
-	if (likely(eflags & EVENT_FILE_FL_TRIGGER_COND))
-		return false;
-
-	return __trace_trigger_soft_disabled(file);
+	if (!(eflags & EVENT_FILE_FL_TRIGGER_COND)) {
+		if (eflags & EVENT_FILE_FL_TRIGGER_MODE)
+			event_triggers_call(file, NULL, NULL, NULL);
+		if (eflags & EVENT_FILE_FL_SOFT_DISABLED)
+			return true;
+		if (eflags & EVENT_FILE_FL_PID_FILTER)
+			return trace_event_ignore_this_pid(file);
+	}
+	return false;
 }
 
 #ifdef CONFIG_BPF_EVENTS
@@ -785,7 +782,6 @@ enum {
 	FILTER_OTHER = 0,
 	FILTER_STATIC_STRING,
 	FILTER_DYN_STRING,
-	FILTER_RDYN_STRING,
 	FILTER_PTR_STRING,
 	FILTER_TRACE_FN,
 	FILTER_COMM,

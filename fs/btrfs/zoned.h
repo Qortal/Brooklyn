@@ -8,7 +8,6 @@
 #include "volumes.h"
 #include "disk-io.h"
 #include "block-group.h"
-#include "btrfs_inode.h"
 
 /*
  * Block groups with more than this value (percents) of unusable space will be
@@ -24,11 +23,8 @@ struct btrfs_zoned_device_info {
 	u64 zone_size;
 	u8  zone_size_shift;
 	u32 nr_zones;
-	unsigned int max_active_zones;
-	atomic_t active_zones_left;
 	unsigned long *seq_zones;
 	unsigned long *empty_zones;
-	unsigned long *active_zones;
 	struct blk_zone *zone_cache;
 	struct blk_zone sb_zones[2 * BTRFS_SUPER_MIRROR_MAX];
 };
@@ -45,7 +41,7 @@ int btrfs_sb_log_location_bdev(struct block_device *bdev, int mirror, int rw,
 			       u64 *bytenr_ret);
 int btrfs_sb_log_location(struct btrfs_device *device, int mirror, int rw,
 			  u64 *bytenr_ret);
-int btrfs_advance_sb_log(struct btrfs_device *device, int mirror);
+void btrfs_advance_sb_log(struct btrfs_device *device, int mirror);
 int btrfs_reset_sb_log_zones(struct block_device *bdev, int mirror);
 u64 btrfs_find_allocatable_zones(struct btrfs_device *device, u64 hole_start,
 				 u64 hole_end, u64 num_bytes);
@@ -71,11 +67,6 @@ int btrfs_sync_zone_write_pointer(struct btrfs_device *tgt_dev, u64 logical,
 				  u64 physical_start, u64 physical_pos);
 struct btrfs_device *btrfs_zoned_get_device(struct btrfs_fs_info *fs_info,
 					    u64 logical, u64 length);
-bool btrfs_zone_activate(struct btrfs_block_group *block_group);
-int btrfs_zone_finish(struct btrfs_block_group *block_group);
-bool btrfs_can_activate_zone(struct btrfs_fs_devices *fs_devices, u64 flags);
-void btrfs_zone_finish_endio(struct btrfs_fs_info *fs_info, u64 logical,
-			     u64 length);
 void btrfs_clear_data_reloc_bg(struct btrfs_block_group *bg);
 void btrfs_free_zone_cache(struct btrfs_fs_info *fs_info);
 #else /* CONFIG_BLK_DEV_ZONED */
@@ -126,10 +117,8 @@ static inline int btrfs_sb_log_location(struct btrfs_device *device, int mirror,
 	return 0;
 }
 
-static inline int btrfs_advance_sb_log(struct btrfs_device *device, int mirror)
-{
-	return 0;
-}
+static inline void btrfs_advance_sb_log(struct btrfs_device *device, int mirror)
+{ }
 
 static inline int btrfs_reset_sb_log_zones(struct block_device *bdev, int mirror)
 {
@@ -213,25 +202,6 @@ static inline struct btrfs_device *btrfs_zoned_get_device(
 {
 	return ERR_PTR(-EOPNOTSUPP);
 }
-
-static inline bool btrfs_zone_activate(struct btrfs_block_group *block_group)
-{
-	return true;
-}
-
-static inline int btrfs_zone_finish(struct btrfs_block_group *block_group)
-{
-	return 0;
-}
-
-static inline bool btrfs_can_activate_zone(struct btrfs_fs_devices *fs_devices,
-					   u64 flags)
-{
-	return true;
-}
-
-static inline void btrfs_zone_finish_endio(struct btrfs_fs_info *fs_info,
-					   u64 logical, u64 length) { }
 
 static inline void btrfs_clear_data_reloc_bg(struct btrfs_block_group *bg) { }
 
@@ -352,22 +322,6 @@ static inline void btrfs_clear_treelog_bg(struct btrfs_block_group *bg)
 	if (fs_info->treelog_bg == bg->start)
 		fs_info->treelog_bg = 0;
 	spin_unlock(&fs_info->treelog_bg_lock);
-}
-
-static inline void btrfs_zoned_data_reloc_lock(struct btrfs_inode *inode)
-{
-	struct btrfs_root *root = inode->root;
-
-	if (btrfs_is_data_reloc_root(root) && btrfs_is_zoned(root->fs_info))
-		btrfs_inode_lock(&inode->vfs_inode, 0);
-}
-
-static inline void btrfs_zoned_data_reloc_unlock(struct btrfs_inode *inode)
-{
-	struct btrfs_root *root = inode->root;
-
-	if (btrfs_is_data_reloc_root(root) && btrfs_is_zoned(root->fs_info))
-		btrfs_inode_unlock(&inode->vfs_inode, 0);
 }
 
 #endif

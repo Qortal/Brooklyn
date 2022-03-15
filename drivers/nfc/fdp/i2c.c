@@ -205,7 +205,9 @@ static irqreturn_t fdp_nci_i2c_irq_thread_fn(int irq, void *phy_id)
 
 	r = fdp_nci_i2c_read(phy, &skb);
 
-	if (r == -EREMOTEIO || r == -ENOMEM || r == -EBADMSG)
+	if (r == -EREMOTEIO)
+		return IRQ_HANDLED;
+	else if (r == -ENOMEM || r == -EBADMSG)
 		return IRQ_HANDLED;
 
 	if (skb != NULL)
@@ -333,6 +335,7 @@ static int fdp_nci_i2c_probe(struct i2c_client *client)
 		return r;
 	}
 
+	dev_dbg(dev, "I2C driver loaded\n");
 	return 0;
 }
 

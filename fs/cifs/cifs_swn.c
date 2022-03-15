@@ -393,14 +393,26 @@ static void cifs_put_swn_reg(struct cifs_swn_reg *swnreg)
 
 static int cifs_swn_resource_state_changed(struct cifs_swn_reg *swnreg, const char *name, int state)
 {
+	int i;
+
 	switch (state) {
 	case CIFS_SWN_RESOURCE_STATE_UNAVAILABLE:
 		cifs_dbg(FYI, "%s: resource name '%s' become unavailable\n", __func__, name);
-		cifs_mark_tcp_ses_conns_for_reconnect(swnreg->tcon->ses->server, true);
+		for (i = 0; i < swnreg->tcon->ses->chan_count; i++) {
+			spin_lock(&GlobalMid_Lock);
+			if (swnreg->tcon->ses->chans[i].server->tcpStatus != CifsExiting)
+				swnreg->tcon->ses->chans[i].server->tcpStatus = CifsNeedReconnect;
+			spin_unlock(&GlobalMid_Lock);
+		}
 		break;
 	case CIFS_SWN_RESOURCE_STATE_AVAILABLE:
 		cifs_dbg(FYI, "%s: resource name '%s' become available\n", __func__, name);
-		cifs_mark_tcp_ses_conns_for_reconnect(swnreg->tcon->ses->server, true);
+		for (i = 0; i < swnreg->tcon->ses->chan_count; i++) {
+			spin_lock(&GlobalMid_Lock);
+			if (swnreg->tcon->ses->chans[i].server->tcpStatus != CifsExiting)
+				swnreg->tcon->ses->chans[i].server->tcpStatus = CifsNeedReconnect;
+			spin_unlock(&GlobalMid_Lock);
+		}
 		break;
 	case CIFS_SWN_RESOURCE_STATE_UNKNOWN:
 		cifs_dbg(FYI, "%s: resource name '%s' changed to unknown state\n", __func__, name);
@@ -498,7 +510,10 @@ static int cifs_swn_reconnect(struct cifs_tcon *tcon, struct sockaddr_storage *a
 		goto unlock;
 	}
 
-	cifs_mark_tcp_ses_conns_for_reconnect(tcon->ses->server, false);
+	spin_lock(&GlobalMid_Lock);
+	if (tcon->ses->server->tcpStatus != CifsExiting)
+		tcon->ses->server->tcpStatus = CifsNeedReconnect;
+	spin_unlock(&GlobalMid_Lock);
 
 unlock:
 	mutex_unlock(&tcon->ses->server->srv_mutex);

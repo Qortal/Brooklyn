@@ -11,6 +11,7 @@
 #include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
+#include <linux/version.h>
 
 #include <dt-bindings/media/c8sectpfe.h>
 

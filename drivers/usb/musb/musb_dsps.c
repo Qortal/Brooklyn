@@ -15,7 +15,6 @@
  */
 
 #include <linux/io.h>
-#include <linux/irq.h>
 #include <linux/err.h>
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
@@ -740,14 +739,12 @@ static int dsps_create_musb_pdev(struct dsps_glue *glue,
 	}
 	resources[0] = *res;
 
-	ret = platform_get_irq_byname(parent, "mc");
-	if (ret < 0)
-		return ret;
-
-	resources[1].start = ret;
-	resources[1].end = ret;
-	resources[1].flags = IORESOURCE_IRQ | irq_get_trigger_type(ret);
-	resources[1].name = "mc";
+	res = platform_get_resource_byname(parent, IORESOURCE_IRQ, "mc");
+	if (!res) {
+		dev_err(dev, "failed to get irq.\n");
+		return -EINVAL;
+	}
+	resources[1] = *res;
 
 	/* allocate the child platform device */
 	musb = platform_device_alloc("musb-hdrc",

@@ -971,9 +971,11 @@ static int acquire_register_block(struct gpmi_nand_data *this,
 {
 	struct platform_device *pdev = this->pdev;
 	struct resources *res = &this->resources;
+	struct resource *r;
 	void __iomem *p;
 
-	p = devm_platform_ioremap_resource_byname(pdev, res_name);
+	r = platform_get_resource_byname(pdev, IORESOURCE_MEM, res_name);
+	p = devm_ioremap_resource(&pdev->dev, r);
 	if (IS_ERR(p))
 		return PTR_ERR(p);
 
@@ -991,13 +993,16 @@ static int acquire_bch_irq(struct gpmi_nand_data *this, irq_handler_t irq_h)
 {
 	struct platform_device *pdev = this->pdev;
 	const char *res_name = GPMI_NAND_BCH_INTERRUPT_RES_NAME;
+	struct resource *r;
 	int err;
 
-	err = platform_get_irq_byname(pdev, res_name);
-	if (err < 0)
-		return err;
+	r = platform_get_resource_byname(pdev, IORESOURCE_IRQ, res_name);
+	if (!r) {
+		dev_err(this->dev, "Can't get resource for %s\n", res_name);
+		return -ENODEV;
+	}
 
-	err = devm_request_irq(this->dev, err, irq_h, 0, res_name, this);
+	err = devm_request_irq(this->dev, r->start, irq_h, 0, res_name, this);
 	if (err)
 		dev_err(this->dev, "error requesting BCH IRQ\n");
 
@@ -1433,6 +1438,7 @@ static int gpmi_ecc_write_page(struct nand_chip *chip, const uint8_t *buf,
 	struct mtd_info *mtd = nand_to_mtd(chip);
 	struct gpmi_nand_data *this = nand_get_controller_data(chip);
 	struct bch_geometry *nfc_geo = &this->bch_geometry;
+	int ret;
 
 	dev_dbg(this->dev, "ecc write page.\n");
 
@@ -1452,7 +1458,9 @@ static int gpmi_ecc_write_page(struct nand_chip *chip, const uint8_t *buf,
 				    this->auxiliary_virt);
 	}
 
-	return nand_prog_page_op(chip, page, 0, buf, nfc_geo->page_size);
+	ret = nand_prog_page_op(chip, page, 0, buf, nfc_geo->page_size);
+
+	return ret;
 }
 
 /*

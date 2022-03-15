@@ -308,7 +308,8 @@ int nfs_submount(struct fs_context *fc, struct nfs_server *server)
 
 	/* Look it up again to get its attributes */
 	err = server->nfs_client->rpc_ops->lookup(d_inode(parent), dentry,
-						  ctx->mntfh, ctx->clone_data.fattr);
+						  ctx->mntfh, ctx->clone_data.fattr,
+						  NULL);
 	dput(parent);
 	if (err != 0)
 		return err;

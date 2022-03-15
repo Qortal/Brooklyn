@@ -83,7 +83,6 @@ static void cifs_set_ops(struct inode *inode)
 static void
 cifs_revalidate_cache(struct inode *inode, struct cifs_fattr *fattr)
 {
-	struct cifs_fscache_inode_coherency_data cd;
 	struct cifsInodeInfo *cifs_i = CIFS_I(inode);
 
 	cifs_dbg(FYI, "%s: revalidating inode %llu\n",
@@ -114,9 +113,6 @@ cifs_revalidate_cache(struct inode *inode, struct cifs_fattr *fattr)
 	cifs_dbg(FYI, "%s: invalidating inode %llu mapping\n",
 		 __func__, cifs_i->uniqueid);
 	set_bit(CIFS_INO_INVALID_MAPPING, &cifs_i->flags);
-	/* Invalidate fscache cookie */
-	cifs_fscache_fill_coherency(&cifs_i->vfs_inode, &cd);
-	fscache_invalidate(cifs_inode_cookie(inode), &cd, i_size_read(inode), 0);
 }
 
 /*
@@ -956,12 +952,6 @@ cifs_get_inode_info(struct inode **inode,
 		rc = server->ops->query_path_info(xid, tcon, cifs_sb,
 						 full_path, tmp_data,
 						 &adjust_tz, &is_reparse_point);
-#ifdef CONFIG_CIFS_DFS_UPCALL
-		if (rc == -ENOENT && is_tcon_dfs(tcon))
-			rc = cifs_dfs_query_info_nonascii_quirk(xid, tcon,
-								cifs_sb,
-								full_path);
-#endif
 		data = tmp_data;
 	}
 
@@ -1308,7 +1298,10 @@ retry_iget5_locked:
 			inode->i_flags |= S_NOATIME | S_NOCMTIME;
 		if (inode->i_state & I_NEW) {
 			inode->i_ino = hash;
-			cifs_fscache_get_inode_cookie(inode);
+#ifdef CONFIG_CIFS_FSCACHE
+			/* initialize per-inode cache cookie pointer */
+			CIFS_I(inode)->fscache = NULL;
+#endif
 			unlock_new_inode(inode);
 		}
 	}
@@ -1362,6 +1355,11 @@ iget_no_retry:
 		inode = ERR_PTR(rc);
 		goto out;
 	}
+
+#ifdef CONFIG_CIFS_FSCACHE
+	/* populate tcon->resource_id */
+	tcon->resource_id = CIFS_I(inode)->uniqueid;
+#endif
 
 	if (rc && tcon->pipe) {
 		cifs_dbg(FYI, "ipc connection - fake read inode\n");
@@ -2274,6 +2272,7 @@ cifs_invalidate_mapping(struct inode *inode)
 				 __func__, inode);
 	}
 
+	cifs_fscache_reset_inode_cookie(inode);
 	return rc;
 }
 
@@ -2778,10 +2777,8 @@ cifs_setattr_unix(struct dentry *direntry, struct iattr *attrs)
 		goto out;
 
 	if ((attrs->ia_valid & ATTR_SIZE) &&
-	    attrs->ia_size != i_size_read(inode)) {
+	    attrs->ia_size != i_size_read(inode))
 		truncate_setsize(inode, attrs->ia_size);
-		fscache_resize_cookie(cifs_inode_cookie(inode), attrs->ia_size);
-	}
 
 	setattr_copy(&init_user_ns, inode, attrs);
 	mark_inode_dirty(inode);
@@ -2976,10 +2973,8 @@ cifs_setattr_nounix(struct dentry *direntry, struct iattr *attrs)
 		goto cifs_setattr_exit;
 
 	if ((attrs->ia_valid & ATTR_SIZE) &&
-	    attrs->ia_size != i_size_read(inode)) {
+	    attrs->ia_size != i_size_read(inode))
 		truncate_setsize(inode, attrs->ia_size);
-		fscache_resize_cookie(cifs_inode_cookie(inode), attrs->ia_size);
-	}
 
 	setattr_copy(&init_user_ns, inode, attrs);
 	mark_inode_dirty(inode);

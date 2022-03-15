@@ -21,13 +21,12 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#include "intel_ddi.h"
-#include "intel_ddi_buf_trans.h"
+#include "display/intel_dp.h"
+
 #include "intel_de.h"
 #include "intel_display_types.h"
-#include "intel_dp.h"
 #include "intel_dpio_phy.h"
-#include "vlv_sideband.h"
+#include "intel_sideband.h"
 
 /**
  * DOC: DPIO
@@ -267,22 +266,15 @@ void bxt_port_to_phy_channel(struct drm_i915_private *dev_priv, enum port port,
 	*ch = DPIO_CH0;
 }
 
-void bxt_ddi_phy_set_signal_levels(struct intel_encoder *encoder,
-				   const struct intel_crtc_state *crtc_state)
+void bxt_ddi_phy_set_signal_level(struct drm_i915_private *dev_priv,
+				  enum port port, u32 margin, u32 scale,
+				  u32 enable, u32 deemphasis)
 {
-	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
-	int level = intel_ddi_level(encoder, crtc_state, 0);
-	const struct intel_ddi_buf_trans *trans;
-	enum dpio_channel ch;
-	enum dpio_phy phy;
-	int n_entries;
 	u32 val;
+	enum dpio_phy phy;
+	enum dpio_channel ch;
 
-	trans = encoder->get_buf_trans(encoder, crtc_state, &n_entries);
-	if (drm_WARN_ON_ONCE(&dev_priv->drm, !trans))
-		return;
-
-	bxt_port_to_phy_channel(dev_priv, encoder->port, &phy, &ch);
+	bxt_port_to_phy_channel(dev_priv, port, &phy, &ch);
 
 	/*
 	 * While we write to the group register to program all lanes at once we
@@ -294,13 +286,12 @@ void bxt_ddi_phy_set_signal_levels(struct intel_encoder *encoder,
 
 	val = intel_de_read(dev_priv, BXT_PORT_TX_DW2_LN0(phy, ch));
 	val &= ~(MARGIN_000 | UNIQ_TRANS_SCALE);
-	val |= trans->entries[level].bxt.margin << MARGIN_000_SHIFT |
-		trans->entries[level].bxt.scale << UNIQ_TRANS_SCALE_SHIFT;
+	val |= margin << MARGIN_000_SHIFT | scale << UNIQ_TRANS_SCALE_SHIFT;
 	intel_de_write(dev_priv, BXT_PORT_TX_DW2_GRP(phy, ch), val);
 
 	val = intel_de_read(dev_priv, BXT_PORT_TX_DW3_LN0(phy, ch));
 	val &= ~SCALE_DCOMP_METHOD;
-	if (trans->entries[level].bxt.enable)
+	if (enable)
 		val |= SCALE_DCOMP_METHOD;
 
 	if ((val & UNIQUE_TRANGE_EN_METHOD) && !(val & SCALE_DCOMP_METHOD))
@@ -311,7 +302,7 @@ void bxt_ddi_phy_set_signal_levels(struct intel_encoder *encoder,
 
 	val = intel_de_read(dev_priv, BXT_PORT_TX_DW4_LN0(phy, ch));
 	val &= ~DE_EMPHASIS;
-	val |= trans->entries[level].bxt.deemphasis << DEEMPH_SHIFT;
+	val |= deemphasis << DEEMPH_SHIFT;
 	intel_de_write(dev_priv, BXT_PORT_TX_DW4_GRP(phy, ch), val);
 
 	val = intel_de_read(dev_priv, BXT_PORT_PCS_DW10_LN01(phy, ch));

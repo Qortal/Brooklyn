@@ -37,7 +37,7 @@ struct charlcd_priv {
 	bool must_clear;
 
 	/* contains the LCD config state */
-	unsigned long flags;
+	unsigned long int flags;
 
 	/* Current escape sequence and it's length or -1 if outside */
 	struct {

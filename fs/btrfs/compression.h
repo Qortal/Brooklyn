@@ -28,8 +28,8 @@ struct btrfs_inode;
 #define	BTRFS_ZLIB_DEFAULT_LEVEL		3
 
 struct compressed_bio {
-	/* Number of sectors with unfinished IO (unsubmitted or unfinished) */
-	refcount_t pending_sectors;
+	/* number of bios pending for this compressed extent */
+	refcount_t pending_bios;
 
 	/* Number of compressed pages in the array */
 	unsigned int nr_pages;

@@ -1185,8 +1185,6 @@ static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
 		ret = fbcon_set_con2fb_map_ioctl(argp);
 		break;
 	case FBIOBLANK:
-		if (arg > FB_BLANK_POWERDOWN)
-			return -EINVAL;
 		console_lock();
 		lock_fb_info(info);
 		ret = fb_blank(info, arg);
@@ -1739,11 +1737,8 @@ static void do_unregister_framebuffer(struct fb_info *fb_info)
 {
 	unlink_framebuffer(fb_info);
 	if (fb_info->pixmap.addr &&
-	    (fb_info->pixmap.flags & FB_PIXMAP_DEFAULT)) {
+	    (fb_info->pixmap.flags & FB_PIXMAP_DEFAULT))
 		kfree(fb_info->pixmap.addr);
-		fb_info->pixmap.addr = NULL;
-	}
-
 	fb_destroy_modelist(&fb_info->modelist);
 	registered_fb[fb_info->node] = NULL;
 	num_registered_fb--;

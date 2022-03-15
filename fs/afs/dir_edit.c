@@ -105,25 +105,6 @@ static void afs_clear_contig_bits(union afs_xdr_dir_block *block,
 }
 
 /*
- * Get a new directory folio.
- */
-static struct folio *afs_dir_get_folio(struct afs_vnode *vnode, pgoff_t index)
-{
-	struct address_space *mapping = vnode->vfs_inode.i_mapping;
-	struct folio *folio;
-
-	folio = __filemap_get_folio(mapping, index,
-				    FGP_LOCK | FGP_ACCESSED | FGP_CREAT,
-				    mapping->gfp_mask);
-	if (!folio)
-		clear_bit(AFS_VNODE_DIR_VALID, &vnode->flags);
-	else if (folio && !folio_test_private(folio))
-		folio_attach_private(folio, (void *)1);
-
-	return folio;
-}
-
-/*
  * Scan a directory block looking for a dirent of the right name.
  */
 static int afs_dir_scan_block(union afs_xdr_dir_block *block, struct qstr *name,
@@ -207,11 +188,13 @@ void afs_edit_dir_add(struct afs_vnode *vnode,
 		      enum afs_edit_dir_reason why)
 {
 	union afs_xdr_dir_block *meta, *block;
+	struct afs_xdr_dir_page *meta_page, *dir_page;
 	union afs_xdr_dirent *de;
-	struct folio *folio0, *folio;
+	struct page *page0, *page;
 	unsigned int need_slots, nr_blocks, b;
 	pgoff_t index;
 	loff_t i_size;
+	gfp_t gfp;
 	int slot;
 
 	_enter(",,{%d,%s},", name->len, name->name);
@@ -223,8 +206,10 @@ void afs_edit_dir_add(struct afs_vnode *vnode,
 		return;
 	}
 
-	folio0 = afs_dir_get_folio(vnode, 0);
-	if (!folio0) {
+	gfp = vnode->vfs_inode.i_mapping->gfp_mask;
+	page0 = find_or_create_page(vnode->vfs_inode.i_mapping, 0, gfp);
+	if (!page0) {
+		clear_bit(AFS_VNODE_DIR_VALID, &vnode->flags);
 		_leave(" [fgp]");
 		return;
 	}
@@ -232,34 +217,41 @@ void afs_edit_dir_add(struct afs_vnode *vnode,
 	/* Work out how many slots we're going to need. */
 	need_slots = afs_dir_calc_slots(name->len);
 
-	meta = kmap_local_folio(folio0, 0);
+	meta_page = kmap(page0);
+	meta = &meta_page->blocks[0];
 	if (i_size == 0)
 		goto new_directory;
 	nr_blocks = i_size / AFS_DIR_BLOCK_SIZE;
 
-	/* Find a block that has sufficient slots available.  Each folio
+	/* Find a block that has sufficient slots available.  Each VM page
 	 * contains two or more directory blocks.
 	 */
 	for (b = 0; b < nr_blocks + 1; b++) {
-		/* If the directory extended into a new folio, then we need to
-		 * tack a new folio on the end.
+		/* If the directory extended into a new page, then we need to
+		 * tack a new page on the end.
 		 */
 		index = b / AFS_DIR_BLOCKS_PER_PAGE;
-		if (nr_blocks >= AFS_DIR_MAX_BLOCKS)
-			goto error;
-		if (index >= folio_nr_pages(folio0)) {
-			folio = afs_dir_get_folio(vnode, index);
-			if (!folio)
-				goto error;
+		if (index == 0) {
+			page = page0;
+			dir_page = meta_page;
 		} else {
-			folio = folio0;
+			if (nr_blocks >= AFS_DIR_MAX_BLOCKS)
+				goto error;
+			gfp = vnode->vfs_inode.i_mapping->gfp_mask;
+			page = find_or_create_page(vnode->vfs_inode.i_mapping,
+						   index, gfp);
+			if (!page)
+				goto error;
+			if (!PagePrivate(page))
+				attach_page_private(page, (void *)1);
+			dir_page = kmap(page);
 		}
-
-		block = kmap_local_folio(folio, b * AFS_DIR_BLOCK_SIZE - folio_file_pos(folio));
 
 		/* Abandon the edit if we got a callback break. */
 		if (!test_bit(AFS_VNODE_DIR_VALID, &vnode->flags))
 			goto invalidated;
+
+		block = &dir_page->blocks[b % AFS_DIR_BLOCKS_PER_PAGE];
 
 		_debug("block %u: %2u %3u %u",
 		       b,
@@ -274,7 +266,7 @@ void afs_edit_dir_add(struct afs_vnode *vnode,
 			afs_set_i_size(vnode, (b + 1) * AFS_DIR_BLOCK_SIZE);
 		}
 
-		/* Only lower dir blocks have a counter in the header. */
+		/* Only lower dir pages have a counter in the header. */
 		if (b >= AFS_DIR_BLOCKS_WITH_CTR ||
 		    meta->meta.alloc_ctrs[b] >= need_slots) {
 			/* We need to try and find one or more consecutive
@@ -287,10 +279,10 @@ void afs_edit_dir_add(struct afs_vnode *vnode,
 			}
 		}
 
-		kunmap_local(block);
-		if (folio != folio0) {
-			folio_unlock(folio);
-			folio_put(folio);
+		if (page != page0) {
+			unlock_page(page);
+			kunmap(page);
+			put_page(page);
 		}
 	}
 
@@ -306,8 +298,8 @@ new_directory:
 	i_size = AFS_DIR_BLOCK_SIZE;
 	afs_set_i_size(vnode, i_size);
 	slot = AFS_DIR_RESV_BLOCKS0;
-	folio = folio0;
-	block = kmap_local_folio(folio, 0);
+	page = page0;
+	block = meta;
 	nr_blocks = 1;
 	b = 0;
 
@@ -326,10 +318,10 @@ found_space:
 
 	/* Adjust the bitmap. */
 	afs_set_contig_bits(block, slot, need_slots);
-	kunmap_local(block);
-	if (folio != folio0) {
-		folio_unlock(folio);
-		folio_put(folio);
+	if (page != page0) {
+		unlock_page(page);
+		kunmap(page);
+		put_page(page);
 	}
 
 	/* Adjust the allocation counter. */
@@ -341,19 +333,18 @@ found_space:
 	_debug("Insert %s in %u[%u]", name->name, b, slot);
 
 out_unmap:
-	kunmap_local(meta);
-	folio_unlock(folio0);
-	folio_put(folio0);
+	unlock_page(page0);
+	kunmap(page0);
+	put_page(page0);
 	_leave("");
 	return;
 
 invalidated:
 	trace_afs_edit_dir(vnode, why, afs_edit_dir_create_inval, 0, 0, 0, 0, name->name);
 	clear_bit(AFS_VNODE_DIR_VALID, &vnode->flags);
-	kunmap_local(block);
-	if (folio != folio0) {
-		folio_unlock(folio);
-		folio_put(folio);
+	if (page != page0) {
+		kunmap(page);
+		put_page(page);
 	}
 	goto out_unmap;
 
@@ -373,9 +364,10 @@ error:
 void afs_edit_dir_remove(struct afs_vnode *vnode,
 			 struct qstr *name, enum afs_edit_dir_reason why)
 {
+	struct afs_xdr_dir_page *meta_page, *dir_page;
 	union afs_xdr_dir_block *meta, *block;
 	union afs_xdr_dirent *de;
-	struct folio *folio0, *folio;
+	struct page *page0, *page;
 	unsigned int need_slots, nr_blocks, b;
 	pgoff_t index;
 	loff_t i_size;
@@ -392,8 +384,9 @@ void afs_edit_dir_remove(struct afs_vnode *vnode,
 	}
 	nr_blocks = i_size / AFS_DIR_BLOCK_SIZE;
 
-	folio0 = afs_dir_get_folio(vnode, 0);
-	if (!folio0) {
+	page0 = find_lock_page(vnode->vfs_inode.i_mapping, 0);
+	if (!page0) {
+		clear_bit(AFS_VNODE_DIR_VALID, &vnode->flags);
 		_leave(" [fgp]");
 		return;
 	}
@@ -401,26 +394,29 @@ void afs_edit_dir_remove(struct afs_vnode *vnode,
 	/* Work out how many slots we're going to discard. */
 	need_slots = afs_dir_calc_slots(name->len);
 
-	meta = kmap_local_folio(folio0, 0);
+	meta_page = kmap(page0);
+	meta = &meta_page->blocks[0];
 
-	/* Find a block that has sufficient slots available.  Each folio
+	/* Find a page that has sufficient slots available.  Each VM page
 	 * contains two or more directory blocks.
 	 */
 	for (b = 0; b < nr_blocks; b++) {
 		index = b / AFS_DIR_BLOCKS_PER_PAGE;
-		if (index >= folio_nr_pages(folio0)) {
-			folio = afs_dir_get_folio(vnode, index);
-			if (!folio)
+		if (index != 0) {
+			page = find_lock_page(vnode->vfs_inode.i_mapping, index);
+			if (!page)
 				goto error;
+			dir_page = kmap(page);
 		} else {
-			folio = folio0;
+			page = page0;
+			dir_page = meta_page;
 		}
-
-		block = kmap_local_folio(folio, b * AFS_DIR_BLOCK_SIZE - folio_file_pos(folio));
 
 		/* Abandon the edit if we got a callback break. */
 		if (!test_bit(AFS_VNODE_DIR_VALID, &vnode->flags))
 			goto invalidated;
+
+		block = &dir_page->blocks[b % AFS_DIR_BLOCKS_PER_PAGE];
 
 		if (b > AFS_DIR_BLOCKS_WITH_CTR ||
 		    meta->meta.alloc_ctrs[b] <= AFS_DIR_SLOTS_PER_BLOCK - 1 - need_slots) {
@@ -429,10 +425,10 @@ void afs_edit_dir_remove(struct afs_vnode *vnode,
 				goto found_dirent;
 		}
 
-		kunmap_local(block);
-		if (folio != folio0) {
-			folio_unlock(folio);
-			folio_put(folio);
+		if (page != page0) {
+			unlock_page(page);
+			kunmap(page);
+			put_page(page);
 		}
 	}
 
@@ -453,10 +449,10 @@ found_dirent:
 
 	/* Adjust the bitmap. */
 	afs_clear_contig_bits(block, slot, need_slots);
-	kunmap_local(block);
-	if (folio != folio0) {
-		folio_unlock(folio);
-		folio_put(folio);
+	if (page != page0) {
+		unlock_page(page);
+		kunmap(page);
+		put_page(page);
 	}
 
 	/* Adjust the allocation counter. */
@@ -468,9 +464,9 @@ found_dirent:
 	_debug("Remove %s from %u[%u]", name->name, b, slot);
 
 out_unmap:
-	kunmap_local(meta);
-	folio_unlock(folio0);
-	folio_put(folio0);
+	unlock_page(page0);
+	kunmap(page0);
+	put_page(page0);
 	_leave("");
 	return;
 
@@ -478,10 +474,10 @@ invalidated:
 	trace_afs_edit_dir(vnode, why, afs_edit_dir_delete_inval,
 			   0, 0, 0, 0, name->name);
 	clear_bit(AFS_VNODE_DIR_VALID, &vnode->flags);
-	kunmap_local(block);
-	if (folio != folio0) {
-		folio_unlock(folio);
-		folio_put(folio);
+	if (page != page0) {
+		unlock_page(page);
+		kunmap(page);
+		put_page(page);
 	}
 	goto out_unmap;
 

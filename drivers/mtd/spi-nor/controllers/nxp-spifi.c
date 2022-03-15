@@ -381,17 +381,20 @@ static int nxp_spifi_probe(struct platform_device *pdev)
 {
 	struct device_node *flash_np;
 	struct nxp_spifi *spifi;
+	struct resource *res;
 	int ret;
 
 	spifi = devm_kzalloc(&pdev->dev, sizeof(*spifi), GFP_KERNEL);
 	if (!spifi)
 		return -ENOMEM;
 
-	spifi->io_base = devm_platform_ioremap_resource_byname(pdev, "spifi");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "spifi");
+	spifi->io_base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(spifi->io_base))
 		return PTR_ERR(spifi->io_base);
 
-	spifi->flash_base = devm_platform_ioremap_resource_byname(pdev, "flash");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "flash");
+	spifi->flash_base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(spifi->flash_base))
 		return PTR_ERR(spifi->flash_base);
 

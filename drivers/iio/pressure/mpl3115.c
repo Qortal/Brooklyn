@@ -74,6 +74,7 @@ static int mpl3115_read_raw(struct iio_dev *indio_dev,
 			    int *val, int *val2, long mask)
 {
 	struct mpl3115_data *data = iio_priv(indio_dev);
+	__be32 tmp = 0;
 	int ret;
 
 	switch (mask) {
@@ -83,9 +84,7 @@ static int mpl3115_read_raw(struct iio_dev *indio_dev,
 			return ret;
 
 		switch (chan->type) {
-		case IIO_PRESSURE: { /* in 0.25 pascal / LSB */
-			__be32 tmp = 0;
-
+		case IIO_PRESSURE: /* in 0.25 pascal / LSB */
 			mutex_lock(&data->lock);
 			ret = mpl3115_request(data);
 			if (ret < 0) {
@@ -97,13 +96,10 @@ static int mpl3115_read_raw(struct iio_dev *indio_dev,
 			mutex_unlock(&data->lock);
 			if (ret < 0)
 				break;
-			*val = be32_to_cpu(tmp) >> chan->scan_type.shift;
+			*val = be32_to_cpu(tmp) >> 12;
 			ret = IIO_VAL_INT;
 			break;
-		}
-		case IIO_TEMP: { /* in 0.0625 celsius / LSB */
-			__be16 tmp;
-
+		case IIO_TEMP: /* in 0.0625 celsius / LSB */
 			mutex_lock(&data->lock);
 			ret = mpl3115_request(data);
 			if (ret < 0) {
@@ -115,11 +111,9 @@ static int mpl3115_read_raw(struct iio_dev *indio_dev,
 			mutex_unlock(&data->lock);
 			if (ret < 0)
 				break;
-			*val = sign_extend32(be16_to_cpu(tmp) >> chan->scan_type.shift,
-					     chan->scan_type.realbits - 1);
+			*val = sign_extend32(be32_to_cpu(tmp) >> 20, 11);
 			ret = IIO_VAL_INT;
 			break;
-		}
 		default:
 			ret = -EINVAL;
 			break;

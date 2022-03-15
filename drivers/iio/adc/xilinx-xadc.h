@@ -67,6 +67,7 @@ struct xadc {
 	spinlock_t lock;
 
 	struct completion completion;
+	int irq;
 };
 
 enum xadc_type {

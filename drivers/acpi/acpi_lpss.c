@@ -712,13 +712,14 @@ static void __lpss_reg_write(u32 val, struct lpss_private_data *pdata,
 
 static int lpss_reg_read(struct device *dev, unsigned int reg, u32 *val)
 {
-	struct acpi_device *adev = ACPI_COMPANION(dev);
+	struct acpi_device *adev;
 	struct lpss_private_data *pdata;
 	unsigned long flags;
 	int ret;
 
-	if (WARN_ON(!adev))
-		return -ENODEV;
+	ret = acpi_bus_get_device(ACPI_HANDLE(dev), &adev);
+	if (WARN_ON(ret))
+		return ret;
 
 	spin_lock_irqsave(&dev->power.lock, flags);
 	if (pm_runtime_suspended(dev)) {
@@ -731,7 +732,6 @@ static int lpss_reg_read(struct device *dev, unsigned int reg, u32 *val)
 		goto out;
 	}
 	*val = __lpss_reg_read(pdata, reg);
-	ret = 0;
 
  out:
 	spin_unlock_irqrestore(&dev->power.lock, flags);
@@ -750,7 +750,7 @@ static ssize_t lpss_ltr_show(struct device *dev, struct device_attribute *attr,
 	if (ret)
 		return ret;
 
-	return sysfs_emit(buf, "%08x\n", ltr_value);
+	return snprintf(buf, PAGE_SIZE, "%08x\n", ltr_value);
 }
 
 static ssize_t lpss_ltr_mode_show(struct device *dev,
@@ -1266,8 +1266,7 @@ static int acpi_lpss_platform_notify(struct notifier_block *nb,
 	if (!id || !id->driver_data)
 		return 0;
 
-	adev = ACPI_COMPANION(&pdev->dev);
-	if (!adev)
+	if (acpi_bus_get_device(ACPI_HANDLE(&pdev->dev), &adev))
 		return 0;
 
 	pdata = acpi_driver_data(adev);

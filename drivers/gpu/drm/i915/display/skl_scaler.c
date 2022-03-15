@@ -4,7 +4,6 @@
  */
 #include "intel_de.h"
 #include "intel_display_types.h"
-#include "intel_fb.h"
 #include "skl_scaler.h"
 #include "skl_universal_plane.h"
 

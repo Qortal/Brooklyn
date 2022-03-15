@@ -8,6 +8,8 @@
 #ifndef GAUDI_FW_IF_H
 #define GAUDI_FW_IF_H
 
+#include <linux/types.h>
+
 #define GAUDI_EVENT_QUEUE_MSI_IDX	8
 #define GAUDI_NIC_PORT1_MSI_IDX		10
 #define GAUDI_NIC_PORT3_MSI_IDX		12
@@ -76,13 +78,13 @@ struct gaudi_nic_status {
 	__u32 high_ber_cnt;
 };
 
-struct gaudi_cold_rst_data {
+struct gaudi_flops_2_data {
 	union {
 		struct {
-			u32 spsram_init_done : 1;
-			u32 reserved : 31;
+			__u32 spsram_init_done : 1;
+			__u32 reserved : 31;
 		};
-		__le32 data;
+		__u32 data;
 	};
 };
 

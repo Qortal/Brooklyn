@@ -214,12 +214,16 @@ static inline void tb_xdp_fill_header(struct tb_xdp_header *hdr, u64 route,
 	memcpy(&hdr->uuid, &tb_xdp_uuid, sizeof(tb_xdp_uuid));
 }
 
-static int tb_xdp_handle_error(const struct tb_xdp_error_response *res)
+static int tb_xdp_handle_error(const struct tb_xdp_header *hdr)
 {
-	if (res->hdr.type != ERROR_RESPONSE)
+	const struct tb_xdp_error_response *error;
+
+	if (hdr->type != ERROR_RESPONSE)
 		return 0;
 
-	switch (res->error) {
+	error = (const struct tb_xdp_error_response *)hdr;
+
+	switch (error->error) {
 	case ERROR_UNKNOWN_PACKET:
 	case ERROR_UNKNOWN_DOMAIN:
 		return -EIO;
@@ -253,7 +257,7 @@ static int tb_xdp_uuid_request(struct tb_ctl *ctl, u64 route, int retry,
 	if (ret)
 		return ret;
 
-	ret = tb_xdp_handle_error(&res.err);
+	ret = tb_xdp_handle_error(&res.hdr);
 	if (ret)
 		return ret;
 
@@ -325,7 +329,7 @@ static int tb_xdp_properties_request(struct tb_ctl *ctl, u64 route,
 		if (ret)
 			goto err;
 
-		ret = tb_xdp_handle_error(&res->err);
+		ret = tb_xdp_handle_error(&res->hdr);
 		if (ret)
 			goto err;
 
@@ -458,7 +462,7 @@ static int tb_xdp_properties_changed_request(struct tb_ctl *ctl, u64 route,
 	if (ret)
 		return ret;
 
-	return tb_xdp_handle_error(&res.err);
+	return tb_xdp_handle_error(&res.hdr);
 }
 
 static int
@@ -726,7 +730,7 @@ static ssize_t modalias_show(struct device *dev, struct device_attribute *attr,
 
 	/* Full buffer size except new line and null termination */
 	get_modalias(svc, buf, PAGE_SIZE - 2);
-	return strlen(strcat(buf, "\n"));
+	return sprintf(buf, "%s\n", buf);
 }
 static DEVICE_ATTR_RO(modalias);
 

@@ -36,11 +36,6 @@ enum hugetlb_memory_event {
 	HUGETLB_NR_MEMORY_EVENTS,
 };
 
-struct hugetlb_cgroup_per_node {
-	/* hugetlb usage in pages over all hstates. */
-	unsigned long usage[HUGE_MAX_HSTATE];
-};
-
 struct hugetlb_cgroup {
 	struct cgroup_subsys_state css;
 
@@ -62,8 +57,6 @@ struct hugetlb_cgroup {
 
 	/* Handle for "hugetlb.events.local" */
 	struct cgroup_file events_local_file[HUGE_MAX_HSTATE];
-
-	struct hugetlb_cgroup_per_node *nodeinfo[];
 };
 
 static inline struct hugetlb_cgroup *
@@ -133,13 +126,6 @@ static inline void resv_map_dup_hugetlb_cgroup_uncharge_info(
 {
 	if (resv_map->css)
 		css_get(resv_map->css);
-}
-
-static inline void resv_map_put_hugetlb_cgroup_uncharge_info(
-						struct resv_map *resv_map)
-{
-	if (resv_map->css)
-		css_put(resv_map->css);
 }
 
 extern int hugetlb_cgroup_charge_cgroup(int idx, unsigned long nr_pages,
@@ -221,11 +207,6 @@ static inline void hugetlb_cgroup_put_rsvd_cgroup(struct hugetlb_cgroup *h_cg)
 }
 
 static inline void resv_map_dup_hugetlb_cgroup_uncharge_info(
-						struct resv_map *resv_map)
-{
-}
-
-static inline void resv_map_put_hugetlb_cgroup_uncharge_info(
 						struct resv_map *resv_map)
 {
 }

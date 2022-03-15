@@ -22,6 +22,7 @@
  * Authors: Ben Skeggs
  */
 
+#include <linux/console.h>
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/pci.h>
@@ -31,7 +32,6 @@
 
 #include <drm/drm_aperture.h>
 #include <drm/drm_crtc_helper.h>
-#include <drm/drm_drv.h>
 #include <drm/drm_gem_ttm_helper.h>
 #include <drm/drm_ioctl.h>
 #include <drm/drm_vblank.h>
@@ -1358,7 +1358,7 @@ nouveau_drm_init(void)
 	nouveau_display_options();
 
 	if (nouveau_modeset == -1) {
-		if (drm_firmware_drivers_only())
+		if (vgacon_text_force())
 			nouveau_modeset = 0;
 	}
 

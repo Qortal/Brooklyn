@@ -577,13 +577,15 @@ disable_regulator:
 }
 EXPORT_SYMBOL_GPL(tsc200x_probe);
 
-void tsc200x_remove(struct device *dev)
+int tsc200x_remove(struct device *dev)
 {
 	struct tsc200x *ts = dev_get_drvdata(dev);
 
 	sysfs_remove_group(&dev->kobj, &tsc200x_attr_group);
 
 	regulator_disable(ts->vio);
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(tsc200x_remove);
 

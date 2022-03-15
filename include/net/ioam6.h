@@ -56,8 +56,7 @@ static inline struct ioam6_pernet_data *ioam6_pernet(struct net *net)
 struct ioam6_namespace *ioam6_namespace(struct net *net, __be16 id);
 void ioam6_fill_trace_data(struct sk_buff *skb,
 			   struct ioam6_namespace *ns,
-			   struct ioam6_trace_hdr *trace,
-			   bool is_input);
+			   struct ioam6_trace_hdr *trace);
 
 int ioam6_init(void);
 void ioam6_exit(void);

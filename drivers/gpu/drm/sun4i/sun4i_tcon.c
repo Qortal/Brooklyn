@@ -841,9 +841,11 @@ static int sun4i_tcon_init_regmap(struct device *dev,
 				  struct sun4i_tcon *tcon)
 {
 	struct platform_device *pdev = to_platform_device(dev);
+	struct resource *res;
 	void __iomem *regs;
 
-	regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	regs = devm_ioremap_resource(dev, res);
 	if (IS_ERR(regs))
 		return PTR_ERR(regs);
 

@@ -2156,14 +2156,10 @@ static int msb_init_disk(struct memstick_dev *card)
 		set_disk_ro(msb->disk, 1);
 
 	msb_start(card);
-	rc = device_add_disk(&card->dev, msb->disk, NULL);
-	if (rc)
-		goto out_cleanup_disk;
+	device_add_disk(&card->dev, msb->disk, NULL);
 	dbg("Disk added");
 	return 0;
 
-out_cleanup_disk:
-	blk_cleanup_disk(msb->disk);
 out_free_tag_set:
 	blk_mq_free_tag_set(&msb->tag_set);
 out_release_id:

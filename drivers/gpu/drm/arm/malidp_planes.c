@@ -165,7 +165,7 @@ bool malidp_format_mod_supported(struct drm_device *drm,
 		return !malidp_hw_format_is_afbc_only(format);
 	}
 
-	if (!fourcc_mod_is_vendor(modifier, ARM)) {
+	if ((modifier >> 56) != DRM_FORMAT_MOD_VENDOR_ARM) {
 		DRM_ERROR("Unknown modifier (not Arm)\n");
 		return false;
 	}

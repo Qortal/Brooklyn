@@ -615,7 +615,7 @@ struct rdists {
 		void __iomem	*rd_base;
 		struct page	*pend_page;
 		phys_addr_t	phys_base;
-		u64             flags;
+		bool		lpi_enabled;
 		cpumask_t	*vpe_table_mask;
 		void		*vpe_l1_base;
 	} __percpu		*rdist;
@@ -624,7 +624,6 @@ struct rdists {
 	u64			flags;
 	u32			gicd_typer;
 	u32			gicd_typer2;
-	int                     cpuhp_memreserve_state;
 	bool			has_vlpis;
 	bool			has_rvpeid;
 	bool			has_direct_lpi;
@@ -633,7 +632,6 @@ struct rdists {
 
 struct irq_domain;
 struct fwnode_handle;
-int __init its_lpi_memreserve_init(void);
 int its_cpu_init(void);
 int its_init(struct fwnode_handle *handle, struct rdists *rdists,
 	     struct irq_domain *domain);

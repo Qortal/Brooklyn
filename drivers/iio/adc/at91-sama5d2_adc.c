@@ -4,8 +4,6 @@
  *
  * Copyright (C) 2015 Atmel,
  *               2015 Ludovic Desroches <ludovic.desroches@atmel.com>
- *		 2021 Microchip Technology, Inc. and its subsidiaries
- *		 2021 Eugen Hristev <eugen.hristev@microchip.com>
  */
 
 #include <linux/bitops.h>
@@ -29,9 +27,8 @@
 #include <linux/pinctrl/consumer.h>
 #include <linux/regulator/consumer.h>
 
-struct at91_adc_reg_layout {
 /* Control Register */
-	u16				CR;
+#define AT91_SAMA5D2_CR		0x00
 /* Software Reset */
 #define	AT91_SAMA5D2_CR_SWRST		BIT(0)
 /* Start Conversion */
@@ -42,7 +39,7 @@ struct at91_adc_reg_layout {
 #define	AT91_SAMA5D2_CR_CMPRST		BIT(4)
 
 /* Mode Register */
-	u16				MR;
+#define AT91_SAMA5D2_MR		0x04
 /* Trigger Selection */
 #define	AT91_SAMA5D2_MR_TRGSEL(v)	((v) << 1)
 /* ADTRG */
@@ -85,19 +82,19 @@ struct at91_adc_reg_layout {
 #define	AT91_SAMA5D2_MR_USEQ		BIT(31)
 
 /* Channel Sequence Register 1 */
-	u16				SEQR1;
+#define AT91_SAMA5D2_SEQR1	0x08
 /* Channel Sequence Register 2 */
-	u16				SEQR2;
+#define AT91_SAMA5D2_SEQR2	0x0c
 /* Channel Enable Register */
-	u16				CHER;
+#define AT91_SAMA5D2_CHER	0x10
 /* Channel Disable Register */
-	u16				CHDR;
+#define AT91_SAMA5D2_CHDR	0x14
 /* Channel Status Register */
-	u16				CHSR;
+#define AT91_SAMA5D2_CHSR	0x18
 /* Last Converted Data Register */
-	u16				LCDR;
+#define AT91_SAMA5D2_LCDR	0x20
 /* Interrupt Enable Register */
-	u16				IER;
+#define AT91_SAMA5D2_IER	0x24
 /* Interrupt Enable Register - TS X measurement ready */
 #define AT91_SAMA5D2_IER_XRDY   BIT(20)
 /* Interrupt Enable Register - TS Y measurement ready */
@@ -112,31 +109,22 @@ struct at91_adc_reg_layout {
 #define AT91_SAMA5D2_IER_PEN    BIT(29)
 /* Interrupt Enable Register - No pen detect */
 #define AT91_SAMA5D2_IER_NOPEN  BIT(30)
-
 /* Interrupt Disable Register */
-	u16				IDR;
+#define AT91_SAMA5D2_IDR	0x28
 /* Interrupt Mask Register */
-	u16				IMR;
+#define AT91_SAMA5D2_IMR	0x2c
 /* Interrupt Status Register */
-	u16				ISR;
-/* End of Conversion Interrupt Enable Register */
-	u16				EOC_IER;
-/* End of Conversion Interrupt Disable Register */
-	u16				EOC_IDR;
-/* End of Conversion Interrupt Mask Register */
-	u16				EOC_IMR;
-/* End of Conversion Interrupt Status Register */
-	u16				EOC_ISR;
+#define AT91_SAMA5D2_ISR	0x30
 /* Interrupt Status Register - Pen touching sense status */
 #define AT91_SAMA5D2_ISR_PENS   BIT(31)
 /* Last Channel Trigger Mode Register */
-	u16				LCTMR;
+#define AT91_SAMA5D2_LCTMR	0x34
 /* Last Channel Compare Window Register */
-	u16				LCCWR;
+#define AT91_SAMA5D2_LCCWR	0x38
 /* Overrun Status Register */
-	u16				OVER;
+#define AT91_SAMA5D2_OVER	0x3c
 /* Extended Mode Register */
-	u16				EMR;
+#define AT91_SAMA5D2_EMR	0x40
 /* Extended Mode Register - Oversampling rate */
 #define AT91_SAMA5D2_EMR_OSR(V)			((V) << 16)
 #define AT91_SAMA5D2_EMR_OSR_MASK		GENMASK(17, 16)
@@ -146,22 +134,24 @@ struct at91_adc_reg_layout {
 
 /* Extended Mode Register - Averaging on single trigger event */
 #define AT91_SAMA5D2_EMR_ASTE(V)		((V) << 20)
-
 /* Compare Window Register */
-	u16				CWR;
+#define AT91_SAMA5D2_CWR	0x44
 /* Channel Gain Register */
-	u16				CGR;
+#define AT91_SAMA5D2_CGR	0x48
+
 /* Channel Offset Register */
-	u16				COR;
-/* Channel Offset Register differential offset - constant, not a register */
-	u16				COR_diff_offset;
+#define AT91_SAMA5D2_COR	0x4c
+#define AT91_SAMA5D2_COR_DIFF_OFFSET	16
+
+/* Channel Data Register 0 */
+#define AT91_SAMA5D2_CDR0	0x50
 /* Analog Control Register */
-	u16				ACR;
+#define AT91_SAMA5D2_ACR	0x94
 /* Analog Control Register - Pen detect sensitivity mask */
 #define AT91_SAMA5D2_ACR_PENDETSENS_MASK        GENMASK(1, 0)
 
 /* Touchscreen Mode Register */
-	u16				TSMR;
+#define AT91_SAMA5D2_TSMR	0xb0
 /* Touchscreen Mode Register - No touch mode */
 #define AT91_SAMA5D2_TSMR_TSMODE_NONE           0
 /* Touchscreen Mode Register - 4 wire screen, no pressure measurement */
@@ -190,13 +180,13 @@ struct at91_adc_reg_layout {
 #define AT91_SAMA5D2_TSMR_PENDET_ENA            BIT(24)
 
 /* Touchscreen X Position Register */
-	u16				XPOSR;
+#define AT91_SAMA5D2_XPOSR	0xb4
 /* Touchscreen Y Position Register */
-	u16				YPOSR;
+#define AT91_SAMA5D2_YPOSR	0xb8
 /* Touchscreen Pressure Register */
-	u16				PRESSR;
+#define AT91_SAMA5D2_PRESSR	0xbc
 /* Trigger Register */
-	u16				TRGR;
+#define AT91_SAMA5D2_TRGR	0xc0
 /* Mask for TRGMOD field of TRGR register */
 #define AT91_SAMA5D2_TRGR_TRGMOD_MASK GENMASK(2, 0)
 /* No trigger, only software trigger can start conversions */
@@ -215,85 +205,30 @@ struct at91_adc_reg_layout {
 #define AT91_SAMA5D2_TRGR_TRGPER(x)             ((x) << 16)
 
 /* Correction Select Register */
-	u16				COSR;
+#define AT91_SAMA5D2_COSR	0xd0
 /* Correction Value Register */
-	u16				CVR;
+#define AT91_SAMA5D2_CVR	0xd4
 /* Channel Error Correction Register */
-	u16				CECR;
+#define AT91_SAMA5D2_CECR	0xd8
 /* Write Protection Mode Register */
-	u16				WPMR;
+#define AT91_SAMA5D2_WPMR	0xe4
 /* Write Protection Status Register */
-	u16				WPSR;
+#define AT91_SAMA5D2_WPSR	0xe8
 /* Version Register */
-	u16				VERSION;
-};
+#define AT91_SAMA5D2_VERSION	0xfc
 
-static const struct at91_adc_reg_layout sama5d2_layout = {
-	.CR =			0x00,
-	.MR =			0x04,
-	.SEQR1 =		0x08,
-	.SEQR2 =		0x0c,
-	.CHER =			0x10,
-	.CHDR =			0x14,
-	.CHSR =			0x18,
-	.LCDR =			0x20,
-	.IER =			0x24,
-	.IDR =			0x28,
-	.IMR =			0x2c,
-	.ISR =			0x30,
-	.LCTMR =		0x34,
-	.LCCWR =		0x38,
-	.OVER =			0x3c,
-	.EMR =			0x40,
-	.CWR =			0x44,
-	.CGR =			0x48,
-	.COR =			0x4c,
-	.COR_diff_offset =	16,
-	.ACR =			0x94,
-	.TSMR =			0xb0,
-	.XPOSR =		0xb4,
-	.YPOSR =		0xb8,
-	.PRESSR =		0xbc,
-	.TRGR =			0xc0,
-	.COSR =			0xd0,
-	.CVR =			0xd4,
-	.CECR =			0xd8,
-	.WPMR =			0xe4,
-	.WPSR =			0xe8,
-	.VERSION =		0xfc,
-};
+#define AT91_SAMA5D2_HW_TRIG_CNT 3
+#define AT91_SAMA5D2_SINGLE_CHAN_CNT 12
+#define AT91_SAMA5D2_DIFF_CHAN_CNT 6
 
-static const struct at91_adc_reg_layout sama7g5_layout = {
-	.CR =			0x00,
-	.MR =			0x04,
-	.SEQR1 =		0x08,
-	.SEQR2 =		0x0c,
-	.CHER =			0x10,
-	.CHDR =			0x14,
-	.CHSR =			0x18,
-	.LCDR =			0x20,
-	.IER =			0x24,
-	.IDR =			0x28,
-	.IMR =			0x2c,
-	.ISR =			0x30,
-	.EOC_IER =		0x34,
-	.EOC_IDR =		0x38,
-	.EOC_IMR =		0x3c,
-	.EOC_ISR =		0x40,
-	.OVER =			0x4c,
-	.EMR =			0x50,
-	.CWR =			0x54,
-	.COR =			0x5c,
-	.COR_diff_offset =	0,
-	.ACR =			0xe0,
-	.TRGR =			0x100,
-	.COSR =			0x104,
-	.CVR =			0x108,
-	.CECR =			0x10c,
-	.WPMR =			0x118,
-	.WPSR =			0x11c,
-	.VERSION =		0x130,
-};
+#define AT91_SAMA5D2_TIMESTAMP_CHAN_IDX (AT91_SAMA5D2_SINGLE_CHAN_CNT + \
+					 AT91_SAMA5D2_DIFF_CHAN_CNT + 1)
+
+#define AT91_SAMA5D2_TOUCH_X_CHAN_IDX (AT91_SAMA5D2_SINGLE_CHAN_CNT + \
+					 AT91_SAMA5D2_DIFF_CHAN_CNT * 2)
+#define AT91_SAMA5D2_TOUCH_Y_CHAN_IDX   (AT91_SAMA5D2_TOUCH_X_CHAN_IDX + 1)
+#define AT91_SAMA5D2_TOUCH_P_CHAN_IDX   (AT91_SAMA5D2_TOUCH_Y_CHAN_IDX + 1)
+#define AT91_SAMA5D2_MAX_CHAN_IDX	AT91_SAMA5D2_TOUCH_P_CHAN_IDX
 
 #define AT91_SAMA5D2_TOUCH_SAMPLE_PERIOD_US          2000    /* 2ms */
 #define AT91_SAMA5D2_TOUCH_PEN_DETECT_DEBOUNCE_US    200
@@ -301,6 +236,18 @@ static const struct at91_adc_reg_layout sama7g5_layout = {
 #define AT91_SAMA5D2_XYZ_MASK		GENMASK(11, 0)
 
 #define AT91_SAMA5D2_MAX_POS_BITS			12
+
+/*
+ * Maximum number of bytes to hold conversion from all channels
+ * without the timestamp.
+ */
+#define AT91_BUFFER_MAX_CONVERSION_BYTES ((AT91_SAMA5D2_SINGLE_CHAN_CNT + \
+					 AT91_SAMA5D2_DIFF_CHAN_CNT) * 2)
+
+/* This total must also include the timestamp */
+#define AT91_BUFFER_MAX_BYTES (AT91_BUFFER_MAX_CONVERSION_BYTES + 8)
+
+#define AT91_BUFFER_MAX_HWORDS (AT91_BUFFER_MAX_BYTES / 2)
 
 #define AT91_HWFIFO_MAX_SIZE_STR	"128"
 #define AT91_HWFIFO_MAX_SIZE		128
@@ -310,12 +257,12 @@ static const struct at91_adc_reg_layout sama7g5_layout = {
 #define AT91_OSR_4SAMPLES		4
 #define AT91_OSR_16SAMPLES		16
 
-#define AT91_SAMA5D2_CHAN_SINGLE(index, num, addr)			\
+#define AT91_SAMA5D2_CHAN_SINGLE(num, addr)				\
 	{								\
 		.type = IIO_VOLTAGE,					\
 		.channel = num,						\
 		.address = addr,					\
-		.scan_index = index,					\
+		.scan_index = num,					\
 		.scan_type = {						\
 			.sign = 'u',					\
 			.realbits = 14,					\
@@ -329,14 +276,14 @@ static const struct at91_adc_reg_layout sama7g5_layout = {
 		.indexed = 1,						\
 	}
 
-#define AT91_SAMA5D2_CHAN_DIFF(index, num, num2, addr)			\
+#define AT91_SAMA5D2_CHAN_DIFF(num, num2, addr)				\
 	{								\
 		.type = IIO_VOLTAGE,					\
 		.differential = 1,					\
 		.channel = num,						\
 		.channel2 = num2,					\
 		.address = addr,					\
-		.scan_index = index,					\
+		.scan_index = num + AT91_SAMA5D2_SINGLE_CHAN_CNT,	\
 		.scan_type = {						\
 			.sign = 's',					\
 			.realbits = 14,					\
@@ -383,51 +330,13 @@ static const struct at91_adc_reg_layout sama7g5_layout = {
 		.datasheet_name = name,					\
 	}
 
-#define at91_adc_readl(st, reg)						\
-	readl_relaxed((st)->base + (st)->soc_info.platform->layout->reg)
-#define at91_adc_read_chan(st, reg)					\
-	readl_relaxed((st)->base + reg)
-#define at91_adc_writel(st, reg, val)					\
-	writel_relaxed(val, (st)->base + (st)->soc_info.platform->layout->reg)
+#define at91_adc_readl(st, reg)		readl_relaxed(st->base + reg)
+#define at91_adc_writel(st, reg, val)	writel_relaxed(val, st->base + reg)
 
-/**
- * struct at91_adc_platform - at91-sama5d2 platform information struct
- * @layout:		pointer to the reg layout struct
- * @adc_channels:	pointer to an array of channels for registering in
- *			the iio subsystem
- * @nr_channels:	number of physical channels available
- * @touch_chan_x:	index of the touchscreen X channel
- * @touch_chan_y:	index of the touchscreen Y channel
- * @touch_chan_p:	index of the touchscreen P channel
- * @max_channels:	number of total channels
- * @max_index:		highest channel index (highest index may be higher
- *			than the total channel number)
- * @hw_trig_cnt:	number of possible hardware triggers
- */
-struct at91_adc_platform {
-	const struct at91_adc_reg_layout	*layout;
-	const struct iio_chan_spec		(*adc_channels)[];
-	unsigned int				nr_channels;
-	unsigned int				touch_chan_x;
-	unsigned int				touch_chan_y;
-	unsigned int				touch_chan_p;
-	unsigned int				max_channels;
-	unsigned int				max_index;
-	unsigned int				hw_trig_cnt;
-};
-
-/**
- * struct at91_adc_soc_info - at91-sama5d2 soc information struct
- * @startup_time:	device startup time
- * @min_sample_rate:	minimum sample rate in Hz
- * @max_sample_rate:	maximum sample rate in Hz
- * @platform:		pointer to the platform structure
- */
 struct at91_adc_soc_info {
 	unsigned			startup_time;
 	unsigned			min_sample_rate;
 	unsigned			max_sample_rate;
-	const struct at91_adc_platform	*platform;
 };
 
 struct at91_adc_trigger {
@@ -474,15 +383,6 @@ struct at91_adc_touch {
 	unsigned long			channels_bitmask;
 	struct work_struct		workq;
 };
-
-/*
- * Buffer size requirements:
- * No channels * bytes_per_channel(2) + timestamp bytes (8)
- * Divided by 2 because we need half words.
- * We assume 32 channels for now, has to be increased if needed.
- * Nobody minds a buffer being too big.
- */
-#define AT91_BUFFER_MAX_HWORDS ((32 * 2 + 8) / 2)
 
 struct at91_adc_state {
 	void __iomem			*base;
@@ -539,94 +439,29 @@ static const struct at91_adc_trigger at91_adc_trigger_list[] = {
 	},
 };
 
-static const struct iio_chan_spec at91_sama5d2_adc_channels[] = {
-	AT91_SAMA5D2_CHAN_SINGLE(0, 0, 0x50),
-	AT91_SAMA5D2_CHAN_SINGLE(1, 1, 0x54),
-	AT91_SAMA5D2_CHAN_SINGLE(2, 2, 0x58),
-	AT91_SAMA5D2_CHAN_SINGLE(3, 3, 0x5c),
-	AT91_SAMA5D2_CHAN_SINGLE(4, 4, 0x60),
-	AT91_SAMA5D2_CHAN_SINGLE(5, 5, 0x64),
-	AT91_SAMA5D2_CHAN_SINGLE(6, 6, 0x68),
-	AT91_SAMA5D2_CHAN_SINGLE(7, 7, 0x6c),
-	AT91_SAMA5D2_CHAN_SINGLE(8, 8, 0x70),
-	AT91_SAMA5D2_CHAN_SINGLE(9, 9, 0x74),
-	AT91_SAMA5D2_CHAN_SINGLE(10, 10, 0x78),
-	AT91_SAMA5D2_CHAN_SINGLE(11, 11, 0x7c),
-	/* original ABI has the differential channels with a gap in between */
-	AT91_SAMA5D2_CHAN_DIFF(12, 0, 1, 0x50),
-	AT91_SAMA5D2_CHAN_DIFF(14, 2, 3, 0x58),
-	AT91_SAMA5D2_CHAN_DIFF(16, 4, 5, 0x60),
-	AT91_SAMA5D2_CHAN_DIFF(18, 6, 7, 0x68),
-	AT91_SAMA5D2_CHAN_DIFF(20, 8, 9, 0x70),
-	AT91_SAMA5D2_CHAN_DIFF(22, 10, 11, 0x78),
-	IIO_CHAN_SOFT_TIMESTAMP(23),
-	AT91_SAMA5D2_CHAN_TOUCH(24, "x", IIO_MOD_X),
-	AT91_SAMA5D2_CHAN_TOUCH(25, "y", IIO_MOD_Y),
-	AT91_SAMA5D2_CHAN_PRESSURE(26, "pressure"),
-};
-
-static const struct iio_chan_spec at91_sama7g5_adc_channels[] = {
-	AT91_SAMA5D2_CHAN_SINGLE(0, 0, 0x60),
-	AT91_SAMA5D2_CHAN_SINGLE(1, 1, 0x64),
-	AT91_SAMA5D2_CHAN_SINGLE(2, 2, 0x68),
-	AT91_SAMA5D2_CHAN_SINGLE(3, 3, 0x6c),
-	AT91_SAMA5D2_CHAN_SINGLE(4, 4, 0x70),
-	AT91_SAMA5D2_CHAN_SINGLE(5, 5, 0x74),
-	AT91_SAMA5D2_CHAN_SINGLE(6, 6, 0x78),
-	AT91_SAMA5D2_CHAN_SINGLE(7, 7, 0x7c),
-	AT91_SAMA5D2_CHAN_SINGLE(8, 8, 0x80),
-	AT91_SAMA5D2_CHAN_SINGLE(9, 9, 0x84),
-	AT91_SAMA5D2_CHAN_SINGLE(10, 10, 0x88),
-	AT91_SAMA5D2_CHAN_SINGLE(11, 11, 0x8c),
-	AT91_SAMA5D2_CHAN_SINGLE(12, 12, 0x90),
-	AT91_SAMA5D2_CHAN_SINGLE(13, 13, 0x94),
-	AT91_SAMA5D2_CHAN_SINGLE(14, 14, 0x98),
-	AT91_SAMA5D2_CHAN_SINGLE(15, 15, 0x9c),
-	AT91_SAMA5D2_CHAN_DIFF(16, 0, 1, 0x60),
-	AT91_SAMA5D2_CHAN_DIFF(17, 2, 3, 0x68),
-	AT91_SAMA5D2_CHAN_DIFF(18, 4, 5, 0x70),
-	AT91_SAMA5D2_CHAN_DIFF(19, 6, 7, 0x78),
-	AT91_SAMA5D2_CHAN_DIFF(20, 8, 9, 0x80),
-	AT91_SAMA5D2_CHAN_DIFF(21, 10, 11, 0x88),
-	AT91_SAMA5D2_CHAN_DIFF(22, 12, 13, 0x90),
-	AT91_SAMA5D2_CHAN_DIFF(23, 14, 15, 0x98),
-	IIO_CHAN_SOFT_TIMESTAMP(24),
-};
-
-static const struct at91_adc_platform sama5d2_platform = {
-	.layout = &sama5d2_layout,
-	.adc_channels = &at91_sama5d2_adc_channels,
-#define AT91_SAMA5D2_SINGLE_CHAN_CNT 12
-#define AT91_SAMA5D2_DIFF_CHAN_CNT 6
-	.nr_channels = AT91_SAMA5D2_SINGLE_CHAN_CNT +
-		       AT91_SAMA5D2_DIFF_CHAN_CNT,
-#define AT91_SAMA5D2_TOUCH_X_CHAN_IDX	(AT91_SAMA5D2_SINGLE_CHAN_CNT + \
-					AT91_SAMA5D2_DIFF_CHAN_CNT * 2)
-	.touch_chan_x = AT91_SAMA5D2_TOUCH_X_CHAN_IDX,
-#define AT91_SAMA5D2_TOUCH_Y_CHAN_IDX	(AT91_SAMA5D2_TOUCH_X_CHAN_IDX + 1)
-	.touch_chan_y = AT91_SAMA5D2_TOUCH_Y_CHAN_IDX,
-#define AT91_SAMA5D2_TOUCH_P_CHAN_IDX	(AT91_SAMA5D2_TOUCH_Y_CHAN_IDX + 1)
-	.touch_chan_p = AT91_SAMA5D2_TOUCH_P_CHAN_IDX,
-#define AT91_SAMA5D2_MAX_CHAN_IDX	AT91_SAMA5D2_TOUCH_P_CHAN_IDX
-	.max_channels = ARRAY_SIZE(at91_sama5d2_adc_channels),
-	.max_index = AT91_SAMA5D2_MAX_CHAN_IDX,
-#define AT91_SAMA5D2_HW_TRIG_CNT	3
-	.hw_trig_cnt = AT91_SAMA5D2_HW_TRIG_CNT,
-};
-
-static const struct at91_adc_platform sama7g5_platform = {
-	.layout = &sama7g5_layout,
-	.adc_channels = &at91_sama7g5_adc_channels,
-#define AT91_SAMA7G5_SINGLE_CHAN_CNT	16
-#define AT91_SAMA7G5_DIFF_CHAN_CNT	8
-	.nr_channels = AT91_SAMA7G5_SINGLE_CHAN_CNT +
-		       AT91_SAMA7G5_DIFF_CHAN_CNT,
-#define AT91_SAMA7G5_MAX_CHAN_IDX	(AT91_SAMA7G5_SINGLE_CHAN_CNT + \
-					AT91_SAMA7G5_DIFF_CHAN_CNT)
-	.max_channels = ARRAY_SIZE(at91_sama7g5_adc_channels),
-	.max_index = AT91_SAMA7G5_MAX_CHAN_IDX,
-#define AT91_SAMA7G5_HW_TRIG_CNT	3
-	.hw_trig_cnt = AT91_SAMA7G5_HW_TRIG_CNT,
+static const struct iio_chan_spec at91_adc_channels[] = {
+	AT91_SAMA5D2_CHAN_SINGLE(0, 0x50),
+	AT91_SAMA5D2_CHAN_SINGLE(1, 0x54),
+	AT91_SAMA5D2_CHAN_SINGLE(2, 0x58),
+	AT91_SAMA5D2_CHAN_SINGLE(3, 0x5c),
+	AT91_SAMA5D2_CHAN_SINGLE(4, 0x60),
+	AT91_SAMA5D2_CHAN_SINGLE(5, 0x64),
+	AT91_SAMA5D2_CHAN_SINGLE(6, 0x68),
+	AT91_SAMA5D2_CHAN_SINGLE(7, 0x6c),
+	AT91_SAMA5D2_CHAN_SINGLE(8, 0x70),
+	AT91_SAMA5D2_CHAN_SINGLE(9, 0x74),
+	AT91_SAMA5D2_CHAN_SINGLE(10, 0x78),
+	AT91_SAMA5D2_CHAN_SINGLE(11, 0x7c),
+	AT91_SAMA5D2_CHAN_DIFF(0, 1, 0x50),
+	AT91_SAMA5D2_CHAN_DIFF(2, 3, 0x58),
+	AT91_SAMA5D2_CHAN_DIFF(4, 5, 0x60),
+	AT91_SAMA5D2_CHAN_DIFF(6, 7, 0x68),
+	AT91_SAMA5D2_CHAN_DIFF(8, 9, 0x70),
+	AT91_SAMA5D2_CHAN_DIFF(10, 11, 0x78),
+	IIO_CHAN_SOFT_TIMESTAMP(AT91_SAMA5D2_TIMESTAMP_CHAN_IDX),
+	AT91_SAMA5D2_CHAN_TOUCH(AT91_SAMA5D2_TOUCH_X_CHAN_IDX, "x", IIO_MOD_X),
+	AT91_SAMA5D2_CHAN_TOUCH(AT91_SAMA5D2_TOUCH_Y_CHAN_IDX, "y", IIO_MOD_Y),
+	AT91_SAMA5D2_CHAN_PRESSURE(AT91_SAMA5D2_TOUCH_P_CHAN_IDX, "pressure"),
 };
 
 static int at91_adc_chan_xlate(struct iio_dev *indio_dev, int chan)
@@ -660,7 +495,6 @@ static unsigned int at91_adc_active_scan_mask_to_reg(struct iio_dev *indio_dev)
 {
 	u32 mask = 0;
 	u8 bit;
-	struct at91_adc_state *st = iio_priv(indio_dev);
 
 	for_each_set_bit(bit, indio_dev->active_scan_mask,
 			 indio_dev->num_channels) {
@@ -669,66 +503,13 @@ static unsigned int at91_adc_active_scan_mask_to_reg(struct iio_dev *indio_dev)
 		mask |= BIT(chan->channel);
 	}
 
-	return mask & GENMASK(st->soc_info.platform->nr_channels, 0);
-}
-
-static void at91_adc_cor(struct at91_adc_state *st,
-			 struct iio_chan_spec const *chan)
-{
-	u32 cor, cur_cor;
-
-	cor = BIT(chan->channel) | BIT(chan->channel2);
-
-	cur_cor = at91_adc_readl(st, COR);
-	cor <<= st->soc_info.platform->layout->COR_diff_offset;
-	if (chan->differential)
-		at91_adc_writel(st, COR, cur_cor | cor);
-	else
-		at91_adc_writel(st, COR, cur_cor & ~cor);
-}
-
-static void at91_adc_irq_status(struct at91_adc_state *st, u32 *status,
-				u32 *eoc)
-{
-	*status = at91_adc_readl(st, ISR);
-	if (st->soc_info.platform->layout->EOC_ISR)
-		*eoc = at91_adc_readl(st, EOC_ISR);
-	else
-		*eoc = *status;
-}
-
-static void at91_adc_irq_mask(struct at91_adc_state *st, u32 *status, u32 *eoc)
-{
-	*status = at91_adc_readl(st, IMR);
-	if (st->soc_info.platform->layout->EOC_IMR)
-		*eoc = at91_adc_readl(st, EOC_IMR);
-	else
-		*eoc = *status;
-}
-
-static void at91_adc_eoc_dis(struct at91_adc_state *st, unsigned int channel)
-{
-	/*
-	 * On some products having the EOC bits in a separate register,
-	 * errata recommends not writing this register (EOC_IDR).
-	 * On products having the EOC bits in the IDR register, it's fine to write it.
-	 */
-	if (!st->soc_info.platform->layout->EOC_IDR)
-		at91_adc_writel(st, IDR, BIT(channel));
-}
-
-static void at91_adc_eoc_ena(struct at91_adc_state *st, unsigned int channel)
-{
-	if (!st->soc_info.platform->layout->EOC_IDR)
-		at91_adc_writel(st, IER, BIT(channel));
-	else
-		at91_adc_writel(st, EOC_IER, BIT(channel));
+	return mask & GENMASK(11, 0);
 }
 
 static void at91_adc_config_emr(struct at91_adc_state *st)
 {
 	/* configure the extended mode register */
-	unsigned int emr = at91_adc_readl(st, EMR);
+	unsigned int emr = at91_adc_readl(st, AT91_SAMA5D2_EMR);
 
 	/* select oversampling per single trigger event */
 	emr |= AT91_SAMA5D2_EMR_ASTE(1);
@@ -752,7 +533,7 @@ static void at91_adc_config_emr(struct at91_adc_state *st)
 		break;
 	}
 
-	at91_adc_writel(st, EMR, emr);
+	at91_adc_writel(st, AT91_SAMA5D2_EMR, emr);
 }
 
 static int at91_adc_adjust_val_osr(struct at91_adc_state *st, int *val)
@@ -805,9 +586,9 @@ static int at91_adc_configure_touch(struct at91_adc_state *st, bool state)
 
 	if (!state) {
 		/* disabling touch IRQs and setting mode to no touch enabled */
-		at91_adc_writel(st, IDR,
+		at91_adc_writel(st, AT91_SAMA5D2_IDR,
 				AT91_SAMA5D2_IER_PEN | AT91_SAMA5D2_IER_NOPEN);
-		at91_adc_writel(st, TSMR, 0);
+		at91_adc_writel(st, AT91_SAMA5D2_TSMR, 0);
 		return 0;
 	}
 	/*
@@ -833,26 +614,26 @@ static int at91_adc_configure_touch(struct at91_adc_state *st, bool state)
 	tsmr |= AT91_SAMA5D2_TSMR_PENDET_ENA;
 	tsmr |= AT91_SAMA5D2_TSMR_TSFREQ(2) & AT91_SAMA5D2_TSMR_TSFREQ_MASK;
 
-	at91_adc_writel(st, TSMR, tsmr);
+	at91_adc_writel(st, AT91_SAMA5D2_TSMR, tsmr);
 
-	acr =  at91_adc_readl(st, ACR);
+	acr =  at91_adc_readl(st, AT91_SAMA5D2_ACR);
 	acr &= ~AT91_SAMA5D2_ACR_PENDETSENS_MASK;
 	acr |= 0x02 & AT91_SAMA5D2_ACR_PENDETSENS_MASK;
-	at91_adc_writel(st, ACR, acr);
+	at91_adc_writel(st, AT91_SAMA5D2_ACR, acr);
 
 	/* Sample Period Time = (TRGPER + 1) / ADCClock */
 	st->touch_st.sample_period_val =
 				 round_up((AT91_SAMA5D2_TOUCH_SAMPLE_PERIOD_US *
 				 clk_khz / 1000) - 1, 1);
 	/* enable pen detect IRQ */
-	at91_adc_writel(st, IER, AT91_SAMA5D2_IER_PEN);
+	at91_adc_writel(st, AT91_SAMA5D2_IER, AT91_SAMA5D2_IER_PEN);
 
 	return 0;
 }
 
 static u16 at91_adc_touch_pos(struct at91_adc_state *st, int reg)
 {
-	u32 val = 0;
+	u32 val;
 	u32 scale, result, pos;
 
 	/*
@@ -861,11 +642,7 @@ static u16 at91_adc_touch_pos(struct at91_adc_state *st, int reg)
 	 * max = 2^AT91_SAMA5D2_MAX_POS_BITS - 1
 	 */
 	/* first half of register is the x or y, second half is the scale */
-	if (reg == st->soc_info.platform->layout->XPOSR)
-		val = at91_adc_readl(st, XPOSR);
-	else if (reg == st->soc_info.platform->layout->YPOSR)
-		val = at91_adc_readl(st, YPOSR);
-
+	val = at91_adc_readl(st, reg);
 	if (!val)
 		dev_dbg(&st->indio_dev->dev, "pos is 0\n");
 
@@ -883,13 +660,13 @@ static u16 at91_adc_touch_pos(struct at91_adc_state *st, int reg)
 
 static u16 at91_adc_touch_x_pos(struct at91_adc_state *st)
 {
-	st->touch_st.x_pos = at91_adc_touch_pos(st, st->soc_info.platform->layout->XPOSR);
+	st->touch_st.x_pos = at91_adc_touch_pos(st, AT91_SAMA5D2_XPOSR);
 	return st->touch_st.x_pos;
 }
 
 static u16 at91_adc_touch_y_pos(struct at91_adc_state *st)
 {
-	return at91_adc_touch_pos(st, st->soc_info.platform->layout->YPOSR);
+	return at91_adc_touch_pos(st, AT91_SAMA5D2_YPOSR);
 }
 
 static u16 at91_adc_touch_pressure(struct at91_adc_state *st)
@@ -901,7 +678,7 @@ static u16 at91_adc_touch_pressure(struct at91_adc_state *st)
 	u32 factor = 1000;
 
 	/* calculate the pressure */
-	val = at91_adc_readl(st, PRESSR);
+	val = at91_adc_readl(st, AT91_SAMA5D2_PRESSR);
 	z1 = val & AT91_SAMA5D2_XYZ_MASK;
 	z2 = (val >> 16) & AT91_SAMA5D2_XYZ_MASK;
 
@@ -925,9 +702,9 @@ static int at91_adc_read_position(struct at91_adc_state *st, int chan, u16 *val)
 	*val = 0;
 	if (!st->touch_st.touching)
 		return -ENODATA;
-	if (chan == st->soc_info.platform->touch_chan_x)
+	if (chan == AT91_SAMA5D2_TOUCH_X_CHAN_IDX)
 		*val = at91_adc_touch_x_pos(st);
-	else if (chan == st->soc_info.platform->touch_chan_y)
+	else if (chan == AT91_SAMA5D2_TOUCH_Y_CHAN_IDX)
 		*val = at91_adc_touch_y_pos(st);
 	else
 		return -ENODATA;
@@ -940,7 +717,7 @@ static int at91_adc_read_pressure(struct at91_adc_state *st, int chan, u16 *val)
 	*val = 0;
 	if (!st->touch_st.touching)
 		return -ENODATA;
-	if (chan == st->soc_info.platform->touch_chan_p)
+	if (chan == AT91_SAMA5D2_TOUCH_P_CHAN_IDX)
 		*val = at91_adc_touch_pressure(st);
 	else
 		return -ENODATA;
@@ -952,7 +729,7 @@ static int at91_adc_configure_trigger(struct iio_trigger *trig, bool state)
 {
 	struct iio_dev *indio = iio_trigger_get_drvdata(trig);
 	struct at91_adc_state *st = iio_priv(indio);
-	u32 status = at91_adc_readl(st, TRGR);
+	u32 status = at91_adc_readl(st, AT91_SAMA5D2_TRGR);
 
 	/* clear TRGMOD */
 	status &= ~AT91_SAMA5D2_TRGR_TRGMOD_MASK;
@@ -961,7 +738,7 @@ static int at91_adc_configure_trigger(struct iio_trigger *trig, bool state)
 		status |= st->selected_trig->trgmod_value;
 
 	/* set/unset hw trigger */
-	at91_adc_writel(st, TRGR, status);
+	at91_adc_writel(st, AT91_SAMA5D2_TRGR, status);
 
 	return 0;
 }
@@ -978,7 +755,7 @@ static void at91_adc_reenable_trigger(struct iio_trigger *trig)
 	enable_irq(st->irq);
 
 	/* Needed to ACK the DRDY interruption */
-	at91_adc_readl(st, LCDR);
+	at91_adc_readl(st, AT91_SAMA5D2_LCDR);
 }
 
 static const struct iio_trigger_ops at91_adc_trigger_ops = {
@@ -1073,7 +850,7 @@ static int at91_adc_dma_start(struct iio_dev *indio_dev)
 	}
 
 	/* enable general overrun error signaling */
-	at91_adc_writel(st, IER, AT91_SAMA5D2_IER_GOVRE);
+	at91_adc_writel(st, AT91_SAMA5D2_IER, AT91_SAMA5D2_IER_GOVRE);
 	/* Issue pending DMA requests */
 	dma_async_issue_pending(st->dma_st.dma_chan);
 
@@ -1103,7 +880,7 @@ static bool at91_adc_current_chan_is_touch(struct iio_dev *indio_dev)
 
 	return !!bitmap_subset(indio_dev->active_scan_mask,
 			       &st->touch_st.channels_bitmask,
-			       st->soc_info.platform->max_index + 1);
+			       AT91_SAMA5D2_MAX_CHAN_IDX + 1);
 }
 
 static int at91_adc_buffer_prepare(struct iio_dev *indio_dev)
@@ -1131,6 +908,8 @@ static int at91_adc_buffer_prepare(struct iio_dev *indio_dev)
 			 indio_dev->num_channels) {
 		struct iio_chan_spec const *chan =
 					at91_adc_chan_get(indio_dev, bit);
+		u32 cor;
+
 		if (!chan)
 			continue;
 		/* these channel types cannot be handled by this trigger */
@@ -1138,13 +917,22 @@ static int at91_adc_buffer_prepare(struct iio_dev *indio_dev)
 		    chan->type == IIO_PRESSURE)
 			continue;
 
-		at91_adc_cor(st, chan);
+		cor = at91_adc_readl(st, AT91_SAMA5D2_COR);
 
-		at91_adc_writel(st, CHER, BIT(chan->channel));
+		if (chan->differential)
+			cor |= (BIT(chan->channel) | BIT(chan->channel2)) <<
+				AT91_SAMA5D2_COR_DIFF_OFFSET;
+		else
+			cor &= ~(BIT(chan->channel) <<
+			       AT91_SAMA5D2_COR_DIFF_OFFSET);
+
+		at91_adc_writel(st, AT91_SAMA5D2_COR, cor);
+
+		at91_adc_writel(st, AT91_SAMA5D2_CHER, BIT(chan->channel));
 	}
 
 	if (at91_adc_buffer_check_use_irq(indio_dev, st))
-		at91_adc_writel(st, IER, AT91_SAMA5D2_IER_DRDY);
+		at91_adc_writel(st, AT91_SAMA5D2_IER, AT91_SAMA5D2_IER_DRDY);
 
 	return 0;
 }
@@ -1180,17 +968,17 @@ static int at91_adc_buffer_postdisable(struct iio_dev *indio_dev)
 		    chan->type == IIO_PRESSURE)
 			continue;
 
-		at91_adc_writel(st, CHDR, BIT(chan->channel));
+		at91_adc_writel(st, AT91_SAMA5D2_CHDR, BIT(chan->channel));
 
 		if (st->dma_st.dma_chan)
-			at91_adc_read_chan(st, chan->address);
+			at91_adc_readl(st, chan->address);
 	}
 
 	if (at91_adc_buffer_check_use_irq(indio_dev, st))
-		at91_adc_writel(st, IDR, AT91_SAMA5D2_IER_DRDY);
+		at91_adc_writel(st, AT91_SAMA5D2_IDR, AT91_SAMA5D2_IER_DRDY);
 
 	/* read overflow register to clear possible overflow status */
-	at91_adc_readl(st, OVER);
+	at91_adc_readl(st, AT91_SAMA5D2_OVER);
 
 	/* if we are using DMA we must clear registers and end DMA */
 	if (st->dma_st.dma_chan)
@@ -1233,15 +1021,13 @@ static void at91_adc_trigger_handler_nodma(struct iio_dev *indio_dev,
 	u8 bit;
 	u32 mask = at91_adc_active_scan_mask_to_reg(indio_dev);
 	unsigned int timeout = 50;
-	u32 status, imr, eoc = 0, eoc_imr;
 
 	/*
 	 * Check if the conversion is ready. If not, wait a little bit, and
 	 * in case of timeout exit with an error.
 	 */
-	while (((eoc & mask) != mask) && timeout) {
-		at91_adc_irq_status(st, &status, &eoc);
-		at91_adc_irq_mask(st, &imr, &eoc_imr);
+	while ((at91_adc_readl(st, AT91_SAMA5D2_ISR) & mask) != mask &&
+	       timeout) {
 		usleep_range(50, 100);
 		timeout--;
 	}
@@ -1268,7 +1054,7 @@ static void at91_adc_trigger_handler_nodma(struct iio_dev *indio_dev,
 		 * Thus, emit a warning.
 		 */
 		if (chan->type == IIO_VOLTAGE) {
-			val = at91_adc_read_chan(st, chan->address);
+			val = at91_adc_readl(st, chan->address);
 			at91_adc_adjust_val_osr(st, &val);
 			st->buffer[i] = val;
 		} else {
@@ -1289,7 +1075,7 @@ static void at91_adc_trigger_handler_dma(struct iio_dev *indio_dev)
 	s64 interval;
 	int sample_index = 0, sample_count, sample_size;
 
-	u32 status = at91_adc_readl(st, ISR);
+	u32 status = at91_adc_readl(st, AT91_SAMA5D2_ISR);
 	/* if we reached this point, we cannot sample faster */
 	if (status & AT91_SAMA5D2_IER_GOVRE)
 		pr_info_ratelimited("%s: conversion overrun detected\n",
@@ -1341,7 +1127,7 @@ static irqreturn_t at91_adc_trigger_handler(int irq, void *p)
 	 * actually polling the trigger now.
 	 */
 	if (iio_trigger_validate_own_device(indio_dev->trig, indio_dev))
-		at91_adc_writel(st, CR, AT91_SAMA5D2_CR_START);
+		at91_adc_writel(st, AT91_SAMA5D2_CR, AT91_SAMA5D2_CR_START);
 
 	if (st->dma_st.dma_chan)
 		at91_adc_trigger_handler_dma(indio_dev);
@@ -1388,11 +1174,11 @@ static void at91_adc_setup_samp_freq(struct iio_dev *indio_dev, unsigned freq)
 	startup = at91_adc_startup_time(st->soc_info.startup_time,
 					freq / 1000);
 
-	mr = at91_adc_readl(st, MR);
+	mr = at91_adc_readl(st, AT91_SAMA5D2_MR);
 	mr &= ~(AT91_SAMA5D2_MR_STARTUP_MASK | AT91_SAMA5D2_MR_PRESCAL_MASK);
 	mr |= AT91_SAMA5D2_MR_STARTUP(startup);
 	mr |= AT91_SAMA5D2_MR_PRESCAL(prescal);
-	at91_adc_writel(st, MR, mr);
+	at91_adc_writel(st, AT91_SAMA5D2_MR, mr);
 
 	dev_dbg(&indio_dev->dev, "freq: %u, startup: %u, prescal: %u\n",
 		freq, startup, prescal);
@@ -1412,7 +1198,7 @@ static void at91_adc_touch_data_handler(struct iio_dev *indio_dev)
 	int i = 0;
 
 	for_each_set_bit(bit, indio_dev->active_scan_mask,
-			 st->soc_info.platform->max_index + 1) {
+			 AT91_SAMA5D2_MAX_CHAN_IDX + 1) {
 		struct iio_chan_spec const *chan =
 					 at91_adc_chan_get(indio_dev, bit);
 
@@ -1438,11 +1224,12 @@ static void at91_adc_touch_data_handler(struct iio_dev *indio_dev)
 
 static void at91_adc_pen_detect_interrupt(struct at91_adc_state *st)
 {
-	at91_adc_writel(st, IDR, AT91_SAMA5D2_IER_PEN);
-	at91_adc_writel(st, IER, AT91_SAMA5D2_IER_NOPEN |
+	at91_adc_writel(st, AT91_SAMA5D2_IDR, AT91_SAMA5D2_IER_PEN);
+	at91_adc_writel(st, AT91_SAMA5D2_IER, AT91_SAMA5D2_IER_NOPEN |
 			AT91_SAMA5D2_IER_XRDY | AT91_SAMA5D2_IER_YRDY |
 			AT91_SAMA5D2_IER_PRDY);
-	at91_adc_writel(st, TRGR, AT91_SAMA5D2_TRGR_TRGMOD_PERIODIC |
+	at91_adc_writel(st, AT91_SAMA5D2_TRGR,
+			AT91_SAMA5D2_TRGR_TRGMOD_PERIODIC |
 			AT91_SAMA5D2_TRGR_TRGPER(st->touch_st.sample_period_val));
 	st->touch_st.touching = true;
 }
@@ -1451,15 +1238,16 @@ static void at91_adc_no_pen_detect_interrupt(struct iio_dev *indio_dev)
 {
 	struct at91_adc_state *st = iio_priv(indio_dev);
 
-	at91_adc_writel(st, TRGR, AT91_SAMA5D2_TRGR_TRGMOD_NO_TRIGGER);
-	at91_adc_writel(st, IDR, AT91_SAMA5D2_IER_NOPEN |
+	at91_adc_writel(st, AT91_SAMA5D2_TRGR,
+			AT91_SAMA5D2_TRGR_TRGMOD_NO_TRIGGER);
+	at91_adc_writel(st, AT91_SAMA5D2_IDR, AT91_SAMA5D2_IER_NOPEN |
 			AT91_SAMA5D2_IER_XRDY | AT91_SAMA5D2_IER_YRDY |
 			AT91_SAMA5D2_IER_PRDY);
 	st->touch_st.touching = false;
 
 	at91_adc_touch_data_handler(indio_dev);
 
-	at91_adc_writel(st, IER, AT91_SAMA5D2_IER_PEN);
+	at91_adc_writel(st, AT91_SAMA5D2_IER, AT91_SAMA5D2_IER_PEN);
 }
 
 static void at91_adc_workq_handler(struct work_struct *workq)
@@ -1477,14 +1265,12 @@ static irqreturn_t at91_adc_interrupt(int irq, void *private)
 {
 	struct iio_dev *indio = private;
 	struct at91_adc_state *st = iio_priv(indio);
-	u32 status, eoc, imr, eoc_imr;
+	u32 status = at91_adc_readl(st, AT91_SAMA5D2_ISR);
+	u32 imr = at91_adc_readl(st, AT91_SAMA5D2_IMR);
 	u32 rdy_mask = AT91_SAMA5D2_IER_XRDY | AT91_SAMA5D2_IER_YRDY |
 			AT91_SAMA5D2_IER_PRDY;
 
-	at91_adc_irq_status(st, &status, &eoc);
-	at91_adc_irq_mask(st, &imr, &eoc_imr);
-
-	if (!(status & imr) && !(eoc & eoc_imr))
+	if (!(status & imr))
 		return IRQ_NONE;
 	if (status & AT91_SAMA5D2_IER_PEN) {
 		/* pen detected IRQ */
@@ -1501,9 +1287,9 @@ static irqreturn_t at91_adc_interrupt(int irq, void *private)
 		 * touching, but the measurements are not ready yet.
 		 * read and ignore.
 		 */
-		status = at91_adc_readl(st, XPOSR);
-		status = at91_adc_readl(st, YPOSR);
-		status = at91_adc_readl(st, PRESSR);
+		status = at91_adc_readl(st, AT91_SAMA5D2_XPOSR);
+		status = at91_adc_readl(st, AT91_SAMA5D2_YPOSR);
+		status = at91_adc_readl(st, AT91_SAMA5D2_PRESSR);
 	} else if (iio_buffer_enabled(indio) &&
 		   (status & AT91_SAMA5D2_IER_DRDY)) {
 		/* triggered buffer without DMA */
@@ -1515,7 +1301,7 @@ static irqreturn_t at91_adc_interrupt(int irq, void *private)
 		WARN(true, "Unexpected irq occurred\n");
 	} else if (!iio_buffer_enabled(indio)) {
 		/* software requested conversion */
-		st->conversion_value = at91_adc_read_chan(st, st->chan->address);
+		st->conversion_value = at91_adc_readl(st, st->chan->address);
 		st->conversion_done = true;
 		wake_up_interruptible(&st->wq_data_available);
 	}
@@ -1526,6 +1312,7 @@ static int at91_adc_read_info_raw(struct iio_dev *indio_dev,
 				  struct iio_chan_spec const *chan, int *val)
 {
 	struct at91_adc_state *st = iio_priv(indio_dev);
+	u32 cor = 0;
 	u16 tmp_val;
 	int ret;
 
@@ -1571,10 +1358,14 @@ static int at91_adc_read_info_raw(struct iio_dev *indio_dev,
 
 	st->chan = chan;
 
-	at91_adc_cor(st, chan);
-	at91_adc_writel(st, CHER, BIT(chan->channel));
-	at91_adc_eoc_ena(st, chan->channel);
-	at91_adc_writel(st, CR, AT91_SAMA5D2_CR_START);
+	if (chan->differential)
+		cor = (BIT(chan->channel) | BIT(chan->channel2)) <<
+		      AT91_SAMA5D2_COR_DIFF_OFFSET;
+
+	at91_adc_writel(st, AT91_SAMA5D2_COR, cor);
+	at91_adc_writel(st, AT91_SAMA5D2_CHER, BIT(chan->channel));
+	at91_adc_writel(st, AT91_SAMA5D2_IER, BIT(chan->channel));
+	at91_adc_writel(st, AT91_SAMA5D2_CR, AT91_SAMA5D2_CR_START);
 
 	ret = wait_event_interruptible_timeout(st->wq_data_available,
 					       st->conversion_done,
@@ -1591,11 +1382,11 @@ static int at91_adc_read_info_raw(struct iio_dev *indio_dev,
 		st->conversion_done = false;
 	}
 
-	at91_adc_eoc_dis(st, st->chan->channel);
-	at91_adc_writel(st, CHDR, BIT(chan->channel));
+	at91_adc_writel(st, AT91_SAMA5D2_IDR, BIT(chan->channel));
+	at91_adc_writel(st, AT91_SAMA5D2_CHDR, BIT(chan->channel));
 
 	/* Needed to ACK the DRDY interruption */
-	at91_adc_readl(st, LCDR);
+	at91_adc_readl(st, AT91_SAMA5D2_LCDR);
 
 	mutex_unlock(&st->lock);
 
@@ -1662,26 +1453,26 @@ static int at91_adc_write_raw(struct iio_dev *indio_dev,
 	}
 }
 
-static void at91_adc_dma_init(struct at91_adc_state *st)
+static void at91_adc_dma_init(struct platform_device *pdev)
 {
-	struct device *dev = &st->indio_dev->dev;
+	struct iio_dev *indio_dev = platform_get_drvdata(pdev);
+	struct at91_adc_state *st = iio_priv(indio_dev);
 	struct dma_slave_config config = {0};
-	/* we have 2 bytes for each channel */
-	unsigned int sample_size = st->soc_info.platform->nr_channels * 2;
 	/*
 	 * We make the buffer double the size of the fifo,
 	 * such that DMA uses one half of the buffer (full fifo size)
 	 * and the software uses the other half to read/write.
 	 */
 	unsigned int pages = DIV_ROUND_UP(AT91_HWFIFO_MAX_SIZE *
-					  sample_size * 2, PAGE_SIZE);
+					  AT91_BUFFER_MAX_CONVERSION_BYTES * 2,
+					  PAGE_SIZE);
 
 	if (st->dma_st.dma_chan)
 		return;
 
-	st->dma_st.dma_chan = dma_request_chan(dev, "rx");
+	st->dma_st.dma_chan = dma_request_chan(&pdev->dev, "rx");
 	if (IS_ERR(st->dma_st.dma_chan))  {
-		dev_info(dev, "can't get DMA channel\n");
+		dev_info(&pdev->dev, "can't get DMA channel\n");
 		st->dma_st.dma_chan = NULL;
 		goto dma_exit;
 	}
@@ -1691,24 +1482,24 @@ static void at91_adc_dma_init(struct at91_adc_state *st)
 					       &st->dma_st.rx_dma_buf,
 					       GFP_KERNEL);
 	if (!st->dma_st.rx_buf) {
-		dev_info(dev, "can't allocate coherent DMA area\n");
+		dev_info(&pdev->dev, "can't allocate coherent DMA area\n");
 		goto dma_chan_disable;
 	}
 
 	/* Configure DMA channel to read data register */
 	config.direction = DMA_DEV_TO_MEM;
 	config.src_addr = (phys_addr_t)(st->dma_st.phys_addr
-			  + st->soc_info.platform->layout->LCDR);
+			  + AT91_SAMA5D2_LCDR);
 	config.src_addr_width = DMA_SLAVE_BUSWIDTH_2_BYTES;
 	config.src_maxburst = 1;
 	config.dst_maxburst = 1;
 
 	if (dmaengine_slave_config(st->dma_st.dma_chan, &config)) {
-		dev_info(dev, "can't configure DMA slave\n");
+		dev_info(&pdev->dev, "can't configure DMA slave\n");
 		goto dma_free_area;
 	}
 
-	dev_info(dev, "using %s for rx DMA transfers\n",
+	dev_info(&pdev->dev, "using %s for rx DMA transfers\n",
 		 dma_chan_name(st->dma_st.dma_chan));
 
 	return;
@@ -1720,16 +1511,16 @@ dma_chan_disable:
 	dma_release_channel(st->dma_st.dma_chan);
 	st->dma_st.dma_chan = NULL;
 dma_exit:
-	dev_info(dev, "continuing without DMA support\n");
+	dev_info(&pdev->dev, "continuing without DMA support\n");
 }
 
-static void at91_adc_dma_disable(struct at91_adc_state *st)
+static void at91_adc_dma_disable(struct platform_device *pdev)
 {
-	struct device *dev = &st->indio_dev->dev;
-	/* we have 2 bytes for each channel */
-	unsigned int sample_size = st->soc_info.platform->nr_channels * 2;
+	struct iio_dev *indio_dev = platform_get_drvdata(pdev);
+	struct at91_adc_state *st = iio_priv(indio_dev);
 	unsigned int pages = DIV_ROUND_UP(AT91_HWFIFO_MAX_SIZE *
-					  sample_size * 2, PAGE_SIZE);
+					  AT91_BUFFER_MAX_CONVERSION_BYTES * 2,
+					  PAGE_SIZE);
 
 	/* if we are not using DMA, just return */
 	if (!st->dma_st.dma_chan)
@@ -1743,7 +1534,7 @@ static void at91_adc_dma_disable(struct at91_adc_state *st)
 	dma_release_channel(st->dma_st.dma_chan);
 	st->dma_st.dma_chan = NULL;
 
-	dev_info(dev, "continuing without DMA support\n");
+	dev_info(&pdev->dev, "continuing without DMA support\n");
 }
 
 static int at91_adc_set_watermark(struct iio_dev *indio_dev, unsigned int val)
@@ -1769,9 +1560,9 @@ static int at91_adc_set_watermark(struct iio_dev *indio_dev, unsigned int val)
 	 */
 
 	if (val == 1)
-		at91_adc_dma_disable(st);
+		at91_adc_dma_disable(to_platform_device(&indio_dev->dev));
 	else if (val > 1)
-		at91_adc_dma_init(st);
+		at91_adc_dma_init(to_platform_device(&indio_dev->dev));
 
 	/*
 	 * We can start the DMA only after setting the watermark and
@@ -1779,7 +1570,7 @@ static int at91_adc_set_watermark(struct iio_dev *indio_dev, unsigned int val)
 	 */
 	ret = at91_adc_buffer_prepare(indio_dev);
 	if (ret)
-		at91_adc_dma_disable(st);
+		at91_adc_dma_disable(to_platform_device(&indio_dev->dev));
 
 	return ret;
 }
@@ -1790,14 +1581,14 @@ static int at91_adc_update_scan_mode(struct iio_dev *indio_dev,
 	struct at91_adc_state *st = iio_priv(indio_dev);
 
 	if (bitmap_subset(scan_mask, &st->touch_st.channels_bitmask,
-			  st->soc_info.platform->max_index + 1))
+			  AT91_SAMA5D2_MAX_CHAN_IDX + 1))
 		return 0;
 	/*
 	 * if the new bitmap is a combination of touchscreen and regular
 	 * channels, then we are not fine
 	 */
 	if (bitmap_intersects(&st->touch_st.channels_bitmask, scan_mask,
-			      st->soc_info.platform->max_index + 1))
+			      AT91_SAMA5D2_MAX_CHAN_IDX + 1))
 		return -EINVAL;
 	return 0;
 }
@@ -1806,15 +1597,13 @@ static void at91_adc_hw_init(struct iio_dev *indio_dev)
 {
 	struct at91_adc_state *st = iio_priv(indio_dev);
 
-	at91_adc_writel(st, CR, AT91_SAMA5D2_CR_SWRST);
-	if (st->soc_info.platform->layout->EOC_IDR)
-		at91_adc_writel(st, EOC_IDR, 0xffffffff);
-	at91_adc_writel(st, IDR, 0xffffffff);
+	at91_adc_writel(st, AT91_SAMA5D2_CR, AT91_SAMA5D2_CR_SWRST);
+	at91_adc_writel(st, AT91_SAMA5D2_IDR, 0xffffffff);
 	/*
 	 * Transfer field must be set to 2 according to the datasheet and
 	 * allows different analog settings for each channel.
 	 */
-	at91_adc_writel(st, MR,
+	at91_adc_writel(st, AT91_SAMA5D2_MR,
 			AT91_SAMA5D2_MR_TRANSFER(2) | AT91_SAMA5D2_MR_ANACH);
 
 	at91_adc_setup_samp_freq(indio_dev, st->soc_info.min_sample_rate);
@@ -1826,7 +1615,7 @@ static void at91_adc_hw_init(struct iio_dev *indio_dev)
 static ssize_t at91_adc_get_fifo_state(struct device *dev,
 				       struct device_attribute *attr, char *buf)
 {
-	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct at91_adc_state *st = iio_priv(indio_dev);
 
 	return scnprintf(buf, PAGE_SIZE, "%d\n", !!st->dma_st.dma_chan);
@@ -1835,7 +1624,7 @@ static ssize_t at91_adc_get_fifo_state(struct device *dev,
 static ssize_t at91_adc_get_watermark(struct device *dev,
 				      struct device_attribute *attr, char *buf)
 {
-	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct iio_dev *indio_dev = dev_get_drvdata(dev);
 	struct at91_adc_state *st = iio_priv(indio_dev);
 
 	return scnprintf(buf, PAGE_SIZE, "%d\n", st->dma_st.watermark);
@@ -1893,8 +1682,8 @@ static int at91_adc_buffer_and_trigger_init(struct device *dev,
 		fifo_attrs = NULL;
 
 	ret = devm_iio_triggered_buffer_setup_ext(&indio->dev, indio,
-		&iio_pollfunc_store_time, &at91_adc_trigger_handler,
-		IIO_BUFFER_DIRECTION_IN, &at91_buffer_setup_ops, fifo_attrs);
+		&iio_pollfunc_store_time,
+		&at91_adc_trigger_handler, &at91_buffer_setup_ops, fifo_attrs);
 	if (ret < 0) {
 		dev_err(dev, "couldn't initialize the buffer.\n");
 		return ret;
@@ -1930,23 +1719,21 @@ static int at91_adc_probe(struct platform_device *pdev)
 	if (!indio_dev)
 		return -ENOMEM;
 
-	st = iio_priv(indio_dev);
-	st->indio_dev = indio_dev;
-
-	st->soc_info.platform = of_device_get_match_data(&pdev->dev);
-
 	indio_dev->name = dev_name(&pdev->dev);
 	indio_dev->modes = INDIO_DIRECT_MODE | INDIO_BUFFER_SOFTWARE;
 	indio_dev->info = &at91_adc_info;
-	indio_dev->channels = *st->soc_info.platform->adc_channels;
-	indio_dev->num_channels = st->soc_info.platform->max_channels;
+	indio_dev->channels = at91_adc_channels;
+	indio_dev->num_channels = ARRAY_SIZE(at91_adc_channels);
+
+	st = iio_priv(indio_dev);
+	st->indio_dev = indio_dev;
 
 	bitmap_set(&st->touch_st.channels_bitmask,
-		   st->soc_info.platform->touch_chan_x, 1);
+		   AT91_SAMA5D2_TOUCH_X_CHAN_IDX, 1);
 	bitmap_set(&st->touch_st.channels_bitmask,
-		   st->soc_info.platform->touch_chan_y, 1);
+		   AT91_SAMA5D2_TOUCH_Y_CHAN_IDX, 1);
 	bitmap_set(&st->touch_st.channels_bitmask,
-		   st->soc_info.platform->touch_chan_p, 1);
+		   AT91_SAMA5D2_TOUCH_P_CHAN_IDX, 1);
 
 	st->oversampling_ratio = AT91_OSR_1SAMPLES;
 
@@ -1986,7 +1773,7 @@ static int at91_adc_probe(struct platform_device *pdev)
 	st->selected_trig = NULL;
 
 	/* find the right trigger, or no trigger at all */
-	for (i = 0; i < st->soc_info.platform->hw_trig_cnt + 1; i++)
+	for (i = 0; i < AT91_SAMA5D2_HW_TRIG_CNT + 1; i++)
 		if (at91_adc_trigger_list[i].edge_type == edge_type) {
 			st->selected_trig = &at91_adc_trigger_list[i];
 			break;
@@ -2047,11 +1834,11 @@ static int at91_adc_probe(struct platform_device *pdev)
 		goto vref_disable;
 	}
 
+	at91_adc_hw_init(indio_dev);
+
 	ret = clk_prepare_enable(st->per_clk);
 	if (ret)
 		goto vref_disable;
-
-	at91_adc_hw_init(indio_dev);
 
 	platform_set_drvdata(pdev, indio_dev);
 
@@ -2071,12 +1858,12 @@ static int at91_adc_probe(struct platform_device *pdev)
 			 st->selected_trig->name);
 
 	dev_info(&pdev->dev, "version: %x\n",
-		 readl_relaxed(st->base + st->soc_info.platform->layout->VERSION));
+		 readl_relaxed(st->base + AT91_SAMA5D2_VERSION));
 
 	return 0;
 
 dma_disable:
-	at91_adc_dma_disable(st);
+	at91_adc_dma_disable(pdev);
 per_clk_disable_unprepare:
 	clk_disable_unprepare(st->per_clk);
 vref_disable:
@@ -2093,7 +1880,7 @@ static int at91_adc_remove(struct platform_device *pdev)
 
 	iio_device_unregister(indio_dev);
 
-	at91_adc_dma_disable(st);
+	at91_adc_dma_disable(pdev);
 
 	clk_disable_unprepare(st->per_clk);
 
@@ -2114,7 +1901,7 @@ static __maybe_unused int at91_adc_suspend(struct device *dev)
 	 * and can be used by for other devices.
 	 * Otherwise, ADC will hog them and we can't go to suspend mode.
 	 */
-	at91_adc_writel(st, CR, AT91_SAMA5D2_CR_SWRST);
+	at91_adc_writel(st, AT91_SAMA5D2_CR, AT91_SAMA5D2_CR_SWRST);
 
 	clk_disable_unprepare(st->per_clk);
 	regulator_disable(st->vref);
@@ -2174,10 +1961,6 @@ static SIMPLE_DEV_PM_OPS(at91_adc_pm_ops, at91_adc_suspend, at91_adc_resume);
 static const struct of_device_id at91_adc_dt_match[] = {
 	{
 		.compatible = "atmel,sama5d2-adc",
-		.data = (const void *)&sama5d2_platform,
-	}, {
-		.compatible = "microchip,sama7g5-adc",
-		.data = (const void *)&sama7g5_platform,
 	}, {
 		/* sentinel */
 	}
@@ -2195,7 +1978,6 @@ static struct platform_driver at91_adc_driver = {
 };
 module_platform_driver(at91_adc_driver)
 
-MODULE_AUTHOR("Ludovic Desroches <ludovic.desroches@microchip.com>");
-MODULE_AUTHOR("Eugen Hristev <eugen.hristev@microchip.com");
+MODULE_AUTHOR("Ludovic Desroches <ludovic.desroches@atmel.com>");
 MODULE_DESCRIPTION("Atmel AT91 SAMA5D2 ADC");
 MODULE_LICENSE("GPL v2");

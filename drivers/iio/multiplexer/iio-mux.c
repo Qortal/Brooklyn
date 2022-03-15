@@ -33,7 +33,6 @@ struct mux {
 	struct iio_chan_spec *chan;
 	struct iio_chan_spec_ext_info *ext_info;
 	struct mux_child *child;
-	u32 delay_us;
 };
 
 static int iio_mux_select(struct mux *mux, int idx)
@@ -43,8 +42,7 @@ static int iio_mux_select(struct mux *mux, int idx)
 	int ret;
 	int i;
 
-	ret = mux_control_select_delay(mux->control, chan->channel,
-				       mux->delay_us);
+	ret = mux_control_select(mux->control, chan->channel);
 	if (ret < 0) {
 		mux->cached_state = -1;
 		return ret;
@@ -393,9 +391,6 @@ static int mux_probe(struct platform_device *pdev)
 
 	mux->parent = parent;
 	mux->cached_state = -1;
-
-	mux->delay_us = 0;
-	of_property_read_u32(np, "settle-time-us", &mux->delay_us);
 
 	indio_dev->name = dev_name(dev);
 	indio_dev->info = &mux_info;

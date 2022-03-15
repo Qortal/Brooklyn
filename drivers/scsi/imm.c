@@ -769,7 +769,7 @@ static void imm_interrupt(struct work_struct *work)
 
 	spin_lock_irqsave(host->host_lock, flags);
 	dev->cur_cmd = NULL;
-	scsi_done(cmd);
+	cmd->scsi_done(cmd);
 	spin_unlock_irqrestore(host->host_lock, flags);
 	return;
 }
@@ -910,7 +910,8 @@ static int imm_engine(imm_struct *dev, struct scsi_cmnd *cmd)
 	return 0;
 }
 
-static int imm_queuecommand_lck(struct scsi_cmnd *cmd)
+static int imm_queuecommand_lck(struct scsi_cmnd *cmd,
+		void (*done)(struct scsi_cmnd *))
 {
 	imm_struct *dev = imm_dev(cmd->device->host);
 
@@ -921,6 +922,7 @@ static int imm_queuecommand_lck(struct scsi_cmnd *cmd)
 	dev->failed = 0;
 	dev->jstart = jiffies;
 	dev->cur_cmd = cmd;
+	cmd->scsi_done = done;
 	cmd->result = DID_ERROR << 16;	/* default return code */
 	cmd->SCp.phase = 0;	/* bus free */
 

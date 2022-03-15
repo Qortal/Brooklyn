@@ -197,11 +197,7 @@ int tee_session_calc_client_uuid(uuid_t *uuid, u32 connection_method,
  * @num_pages:	number of locked pages
  * @refcount:	reference counter
  * @flags:	defined by TEE_SHM_* in tee_drv.h
- * @id:		unique id of a shared memory object on this device, shared
- *		with user space
- * @sec_world_id:
- *		secure world assigned id of this shared memory object, not
- *		used by all drivers
+ * @id:		unique id of a shared memory object on this device
  *
  * This pool is only supposed to be accessed directly from the TEE
  * subsystem and from drivers that implements their own shm pool manager.
@@ -217,7 +213,6 @@ struct tee_shm {
 	refcount_t refcount;
 	u32 flags;
 	int id;
-	u64 sec_world_id;
 };
 
 /**

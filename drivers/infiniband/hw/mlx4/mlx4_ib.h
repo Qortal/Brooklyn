@@ -601,7 +601,7 @@ struct mlx4_ib_counters {
 #define MLX4_DIAG_COUNTERS_TYPES 2
 
 struct mlx4_ib_diag_counters {
-	struct rdma_stat_desc *descs;
+	const char **name;
 	u32 *offset;
 	u32 num_counters;
 };

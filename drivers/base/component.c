@@ -9,6 +9,7 @@
  */
 #include <linux/component.h>
 #include <linux/device.h>
+#include <linux/kref.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>

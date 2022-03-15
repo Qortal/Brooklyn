@@ -250,9 +250,8 @@ static int fill_art(char __user *ubuf)
 		get_single_name(arts[i].source, art_user[i].source_device);
 		get_single_name(arts[i].target, art_user[i].target_device);
 		/* copy the rest int data in addition to source and target */
-		BUILD_BUG_ON(sizeof(art_user[i].data) !=
-			     sizeof(u64) * (ACPI_NR_ART_ELEMENTS - 2));
-		memcpy(&art_user[i].data, &arts[i].data, sizeof(art_user[i].data));
+		memcpy(&art_user[i].weight, &arts[i].weight,
+			sizeof(u64) * (ACPI_NR_ART_ELEMENTS - 2));
 	}
 
 	if (copy_to_user(ubuf, art_user, art_len))

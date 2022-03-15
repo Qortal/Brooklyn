@@ -5,7 +5,7 @@
 
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
-#include <linux/module.h>
+#include <linux/of_address.h>
 #include <linux/platform_device.h>
 #include <linux/reset.h>
 
@@ -203,12 +203,14 @@ static const struct sunxi_ccu_desc sun9i_a80_de_clk_desc = {
 
 static int sun9i_a80_de_clk_probe(struct platform_device *pdev)
 {
+	struct resource *res;
 	struct clk *bus_clk;
 	struct reset_control *rstc;
 	void __iomem *reg;
 	int ret;
 
-	reg = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	reg = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(reg))
 		return PTR_ERR(reg);
 
@@ -266,11 +268,7 @@ static struct platform_driver sun9i_a80_de_clk_driver = {
 	.probe	= sun9i_a80_de_clk_probe,
 	.driver	= {
 		.name	= "sun9i-a80-de-clks",
-		.suppress_bind_attrs = true,
 		.of_match_table	= sun9i_a80_de_clk_ids,
 	},
 };
-module_platform_driver(sun9i_a80_de_clk_driver);
-
-MODULE_IMPORT_NS(SUNXI_CCU);
-MODULE_LICENSE("GPL");
+builtin_platform_driver(sun9i_a80_de_clk_driver);

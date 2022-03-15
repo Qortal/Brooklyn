@@ -969,7 +969,7 @@ static int usbatm_do_heavy_init(void *arg)
 	instance->thread = NULL;
 	mutex_unlock(&instance->serialize);
 
-	kthread_complete_and_exit(&instance->thread_exited, ret);
+	complete_and_exit(&instance->thread_exited, ret);
 }
 
 static int usbatm_heavy_init(struct usbatm_data *instance)
@@ -1015,11 +1015,9 @@ int usbatm_usb_probe(struct usb_interface *intf, const struct usb_device_id *id,
 	int error = -ENOMEM;
 	int i, length;
 	unsigned int maxpacket, num_packets;
-	size_t size;
 
 	/* instance init */
-	size = struct_size(instance, urbs, num_rcv_urbs + num_snd_urbs);
-	instance = kzalloc(size, GFP_KERNEL);
+	instance = kzalloc(sizeof(*instance) + sizeof(struct urb *) * (num_rcv_urbs + num_snd_urbs), GFP_KERNEL);
 	if (!instance)
 		return -ENOMEM;
 

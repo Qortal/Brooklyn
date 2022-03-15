@@ -54,9 +54,7 @@ static int tps65912_spi_remove(struct spi_device *spi)
 {
 	struct tps65912 *tps = spi_get_drvdata(spi);
 
-	tps65912_device_exit(tps);
-
-	return 0;
+	return tps65912_device_exit(tps);
 }
 
 static const struct spi_device_id tps65912_spi_id_table[] = {

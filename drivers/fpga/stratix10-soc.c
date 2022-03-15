@@ -419,16 +419,23 @@ static int s10_probe(struct platform_device *pdev)
 
 	init_completion(&priv->status_return_completion);
 
-	mgr = fpga_mgr_register(dev, "Stratix10 SOC FPGA Manager",
-				&s10_ops, priv);
-	if (IS_ERR(mgr)) {
+	mgr = fpga_mgr_create(dev, "Stratix10 SOC FPGA Manager",
+			      &s10_ops, priv);
+	if (!mgr) {
+		dev_err(dev, "unable to create FPGA manager\n");
+		ret = -ENOMEM;
+		goto probe_err;
+	}
+
+	ret = fpga_mgr_register(mgr);
+	if (ret) {
 		dev_err(dev, "unable to register FPGA manager\n");
-		ret = PTR_ERR(mgr);
+		fpga_mgr_free(mgr);
 		goto probe_err;
 	}
 
 	platform_set_drvdata(pdev, mgr);
-	return 0;
+	return ret;
 
 probe_err:
 	stratix10_svc_free_channel(priv->chan);
@@ -441,6 +448,7 @@ static int s10_remove(struct platform_device *pdev)
 	struct s10_priv *priv = mgr->priv;
 
 	fpga_mgr_unregister(mgr);
+	fpga_mgr_free(mgr);
 	stratix10_svc_free_channel(priv->chan);
 
 	return 0;

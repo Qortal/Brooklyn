@@ -73,13 +73,13 @@ static struct ltc4261_data *ltc4261_update_device(struct device *dev)
 					"Failed to read ADC value: error %d\n",
 					val);
 				ret = ERR_PTR(val);
-				data->valid = false;
+				data->valid = 0;
 				goto abort;
 			}
 			data->regs[i] = val;
 		}
 		data->last_updated = jiffies;
-		data->valid = true;
+		data->valid = 1;
 	}
 abort:
 	mutex_unlock(&data->update_lock);

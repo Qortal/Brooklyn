@@ -13,7 +13,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/irq.h>
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
@@ -66,14 +65,13 @@ static int cdns3_plat_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, cdns);
 
-	ret = platform_get_irq_byname(pdev, "host");
-	if (ret < 0)
-		return ret;
+	res = platform_get_resource_byname(pdev, IORESOURCE_IRQ, "host");
+	if (!res) {
+		dev_err(dev, "missing host IRQ\n");
+		return -ENODEV;
+	}
 
-	cdns->xhci_res[0].start = ret;
-	cdns->xhci_res[0].end = ret;
-	cdns->xhci_res[0].flags = IORESOURCE_IRQ | irq_get_trigger_type(ret);
-	cdns->xhci_res[0].name = "host";
+	cdns->xhci_res[0] = *res;
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "xhci");
 	if (!res) {

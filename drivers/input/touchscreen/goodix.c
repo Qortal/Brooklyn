@@ -14,15 +14,20 @@
 #include <linux/kernel.h>
 #include <linux/dmi.h>
 #include <linux/firmware.h>
+#include <linux/gpio/consumer.h>
+#include <linux/i2c.h>
+#include <linux/input.h>
+#include <linux/input/mt.h>
+#include <linux/input/touchscreen.h>
 #include <linux/module.h>
 #include <linux/delay.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
+#include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
 #include <linux/of.h>
 #include <asm/unaligned.h>
-#include "goodix.h"
 
 #define GOODIX_GPIO_INT_NAME		"irq"
 #define GOODIX_GPIO_RST_NAME		"reset"
@@ -33,11 +38,22 @@
 #define GOODIX_CONTACT_SIZE		8
 #define GOODIX_MAX_CONTACT_SIZE		9
 #define GOODIX_MAX_CONTACTS		10
+#define GOODIX_MAX_KEYS			7
 
 #define GOODIX_CONFIG_MIN_LENGTH	186
 #define GOODIX_CONFIG_911_LENGTH	186
 #define GOODIX_CONFIG_967_LENGTH	228
 #define GOODIX_CONFIG_GT9X_LENGTH	240
+#define GOODIX_CONFIG_MAX_LENGTH	240
+
+/* Register defines */
+#define GOODIX_REG_COMMAND		0x8040
+#define GOODIX_CMD_SCREEN_OFF		0x05
+
+#define GOODIX_READ_COOR_ADDR		0x814E
+#define GOODIX_GT1X_REG_CONFIG_DATA	0x8050
+#define GOODIX_GT9X_REG_CONFIG_DATA	0x8047
+#define GOODIX_REG_ID			0x8140
 
 #define GOODIX_BUFFER_STATUS_READY	BIT(7)
 #define GOODIX_HAVE_KEY			BIT(4)
@@ -52,9 +68,53 @@
 #define ACPI_GPIO_SUPPORT
 #endif
 
+struct goodix_ts_data;
+
+enum goodix_irq_pin_access_method {
+	IRQ_PIN_ACCESS_NONE,
+	IRQ_PIN_ACCESS_GPIO,
+	IRQ_PIN_ACCESS_ACPI_GPIO,
+	IRQ_PIN_ACCESS_ACPI_METHOD,
+};
+
+struct goodix_chip_data {
+	u16 config_addr;
+	int config_len;
+	int (*check_config)(struct goodix_ts_data *ts, const u8 *cfg, int len);
+	void (*calc_config_checksum)(struct goodix_ts_data *ts);
+};
+
 struct goodix_chip_id {
 	const char *id;
 	const struct goodix_chip_data *data;
+};
+
+#define GOODIX_ID_MAX_LEN	4
+
+struct goodix_ts_data {
+	struct i2c_client *client;
+	struct input_dev *input_dev;
+	const struct goodix_chip_data *chip;
+	struct touchscreen_properties prop;
+	unsigned int max_touch_num;
+	unsigned int int_trigger_type;
+	struct regulator *avdd28;
+	struct regulator *vddio;
+	struct gpio_desc *gpiod_int;
+	struct gpio_desc *gpiod_rst;
+	int gpio_count;
+	int gpio_int_idx;
+	char id[GOODIX_ID_MAX_LEN + 1];
+	u16 version;
+	const char *cfg_name;
+	bool reset_controller_at_probe;
+	bool load_cfg_from_disk;
+	struct completion firmware_loading_complete;
+	unsigned long irq_flags;
+	enum goodix_irq_pin_access_method irq_pin_access_method;
+	unsigned int contact_size;
+	u8 config[GOODIX_CONFIG_MAX_LENGTH];
+	unsigned short keymap[GOODIX_MAX_KEYS];
 };
 
 static int goodix_check_cfg_8(struct goodix_ts_data *ts,
@@ -156,7 +216,8 @@ static const struct dmi_system_id inverted_x_screen[] = {
  * @buf: raw write data buffer.
  * @len: length of the buffer to write
  */
-int goodix_i2c_read(struct i2c_client *client, u16 reg, u8 *buf, int len)
+static int goodix_i2c_read(struct i2c_client *client,
+			   u16 reg, u8 *buf, int len)
 {
 	struct i2c_msg msgs[2];
 	__be16 wbuf = cpu_to_be16(reg);
@@ -173,13 +234,7 @@ int goodix_i2c_read(struct i2c_client *client, u16 reg, u8 *buf, int len)
 	msgs[1].buf   = buf;
 
 	ret = i2c_transfer(client->adapter, msgs, 2);
-	if (ret >= 0)
-		ret = (ret == ARRAY_SIZE(msgs) ? 0 : -EIO);
-
-	if (ret)
-		dev_err(&client->dev, "Error reading %d bytes from 0x%04x: %d\n",
-			len, reg, ret);
-	return ret;
+	return ret < 0 ? ret : (ret != ARRAY_SIZE(msgs) ? -EIO : 0);
 }
 
 /**
@@ -190,7 +245,8 @@ int goodix_i2c_read(struct i2c_client *client, u16 reg, u8 *buf, int len)
  * @buf: raw data buffer to write.
  * @len: length of the buffer to write
  */
-int goodix_i2c_write(struct i2c_client *client, u16 reg, const u8 *buf, int len)
+static int goodix_i2c_write(struct i2c_client *client, u16 reg, const u8 *buf,
+			    unsigned len)
 {
 	u8 *addr_buf;
 	struct i2c_msg msg;
@@ -210,18 +266,11 @@ int goodix_i2c_write(struct i2c_client *client, u16 reg, const u8 *buf, int len)
 	msg.len = len + 2;
 
 	ret = i2c_transfer(client->adapter, &msg, 1);
-	if (ret >= 0)
-		ret = (ret == 1 ? 0 : -EIO);
-
 	kfree(addr_buf);
-
-	if (ret)
-		dev_err(&client->dev, "Error writing %d bytes to 0x%04x: %d\n",
-			len, reg, ret);
-	return ret;
+	return ret < 0 ? ret : (ret != 1 ? -EIO : 0);
 }
 
-int goodix_i2c_write_u8(struct i2c_client *client, u16 reg, u8 value)
+static int goodix_i2c_write_u8(struct i2c_client *client, u16 reg, u8 value)
 {
 	return goodix_i2c_write(client, reg, &value, sizeof(value));
 }
@@ -260,8 +309,11 @@ static int goodix_ts_read_input_report(struct goodix_ts_data *ts, u8 *data)
 	do {
 		error = goodix_i2c_read(ts->client, addr, data,
 					header_contact_keycode_size);
-		if (error)
+		if (error) {
+			dev_err(&ts->client->dev, "I2C transfer error: %d\n",
+					error);
 			return error;
+		}
 
 		if (data[0] & GOODIX_BUFFER_STATUS_READY) {
 			touch_num = data[0] & 0x0f;
@@ -282,11 +334,6 @@ static int goodix_ts_read_input_report(struct goodix_ts_data *ts, u8 *data)
 			return touch_num;
 		}
 
-		if (data[0] == 0 && ts->firmware_name) {
-			if (goodix_handle_fw_request(ts))
-				return 0;
-		}
-
 		usleep_range(1000, 2000); /* Poll every 1 - 2 ms */
 	} while (time_before(jiffies, max_timeout));
 
@@ -295,108 +342,6 @@ static int goodix_ts_read_input_report(struct goodix_ts_data *ts, u8 *data)
 	 * 'finger up' event, which will always cause a timeout.
 	 */
 	return -ENOMSG;
-}
-
-static struct input_dev *goodix_create_pen_input(struct goodix_ts_data *ts)
-{
-	struct device *dev = &ts->client->dev;
-	struct input_dev *input;
-
-	input = devm_input_allocate_device(dev);
-	if (!input)
-		return NULL;
-
-	input_alloc_absinfo(input);
-	if (!input->absinfo) {
-		input_free_device(input);
-		return NULL;
-	}
-
-	input->absinfo[ABS_X] = ts->input_dev->absinfo[ABS_MT_POSITION_X];
-	input->absinfo[ABS_Y] = ts->input_dev->absinfo[ABS_MT_POSITION_Y];
-	__set_bit(ABS_X, input->absbit);
-	__set_bit(ABS_Y, input->absbit);
-	input_set_abs_params(input, ABS_PRESSURE, 0, 255, 0, 0);
-
-	input_set_capability(input, EV_KEY, BTN_TOUCH);
-	input_set_capability(input, EV_KEY, BTN_TOOL_PEN);
-	input_set_capability(input, EV_KEY, BTN_STYLUS);
-	input_set_capability(input, EV_KEY, BTN_STYLUS2);
-	__set_bit(INPUT_PROP_DIRECT, input->propbit);
-	/*
-	 * The resolution of these touchscreens is about 10 units/mm, the actual
-	 * resolution does not matter much since we set INPUT_PROP_DIRECT.
-	 * Userspace wants something here though, so just set it to 10 units/mm.
-	 */
-	input_abs_set_res(input, ABS_X, 10);
-	input_abs_set_res(input, ABS_Y, 10);
-
-	input->name = "Goodix Active Pen";
-	input->phys = "input/pen";
-	input->id.bustype = BUS_I2C;
-	input->id.vendor = 0x0416;
-	if (kstrtou16(ts->id, 10, &input->id.product))
-		input->id.product = 0x1001;
-	input->id.version = ts->version;
-
-	if (input_register_device(input) != 0) {
-		input_free_device(input);
-		return NULL;
-	}
-
-	return input;
-}
-
-static void goodix_ts_report_pen_down(struct goodix_ts_data *ts, u8 *data)
-{
-	int input_x, input_y, input_w;
-	u8 key_value;
-
-	if (!ts->input_pen) {
-		ts->input_pen = goodix_create_pen_input(ts);
-		if (!ts->input_pen)
-			return;
-	}
-
-	if (ts->contact_size == 9) {
-		input_x = get_unaligned_le16(&data[4]);
-		input_y = get_unaligned_le16(&data[6]);
-		input_w = get_unaligned_le16(&data[8]);
-	} else {
-		input_x = get_unaligned_le16(&data[2]);
-		input_y = get_unaligned_le16(&data[4]);
-		input_w = get_unaligned_le16(&data[6]);
-	}
-
-	touchscreen_report_pos(ts->input_pen, &ts->prop, input_x, input_y, false);
-	input_report_abs(ts->input_pen, ABS_PRESSURE, input_w);
-
-	input_report_key(ts->input_pen, BTN_TOUCH, 1);
-	input_report_key(ts->input_pen, BTN_TOOL_PEN, 1);
-
-	if (data[0] & GOODIX_HAVE_KEY) {
-		key_value = data[1 + ts->contact_size];
-		input_report_key(ts->input_pen, BTN_STYLUS, key_value & 0x10);
-		input_report_key(ts->input_pen, BTN_STYLUS2, key_value & 0x20);
-	} else {
-		input_report_key(ts->input_pen, BTN_STYLUS, 0);
-		input_report_key(ts->input_pen, BTN_STYLUS2, 0);
-	}
-
-	input_sync(ts->input_pen);
-}
-
-static void goodix_ts_report_pen_up(struct goodix_ts_data *ts)
-{
-	if (!ts->input_pen)
-		return;
-
-	input_report_key(ts->input_pen, BTN_TOUCH, 0);
-	input_report_key(ts->input_pen, BTN_TOOL_PEN, 0);
-	input_report_key(ts->input_pen, BTN_STYLUS, 0);
-	input_report_key(ts->input_pen, BTN_STYLUS2, 0);
-
-	input_sync(ts->input_pen);
 }
 
 static void goodix_ts_report_touch_8b(struct goodix_ts_data *ts, u8 *coor_data)
@@ -429,14 +374,6 @@ static void goodix_ts_report_touch_9b(struct goodix_ts_data *ts, u8 *coor_data)
 	input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR, input_w);
 }
 
-static void goodix_ts_release_keys(struct goodix_ts_data *ts)
-{
-	int i;
-
-	for (i = 0; i < GOODIX_MAX_KEYS; i++)
-		input_report_key(ts->input_dev, ts->keymap[i], 0);
-}
-
 static void goodix_ts_report_key(struct goodix_ts_data *ts, u8 *data)
 {
 	int touch_num;
@@ -451,7 +388,8 @@ static void goodix_ts_report_key(struct goodix_ts_data *ts, u8 *data)
 				input_report_key(ts->input_dev,
 						 ts->keymap[i], 1);
 	} else {
-		goodix_ts_release_keys(ts);
+		for (i = 0; i < GOODIX_MAX_KEYS; i++)
+			input_report_key(ts->input_dev, ts->keymap[i], 0);
 	}
 }
 
@@ -473,15 +411,6 @@ static void goodix_process_events(struct goodix_ts_data *ts)
 	if (touch_num < 0)
 		return;
 
-	/* The pen being down is always reported as a single touch */
-	if (touch_num == 1 && (point_data[1] & 0x80)) {
-		goodix_ts_report_pen_down(ts, point_data);
-		goodix_ts_release_keys(ts);
-		goto sync; /* Release any previously registered touches */
-	} else {
-		goodix_ts_report_pen_up(ts);
-	}
-
 	goodix_ts_report_key(ts, point_data);
 
 	for (i = 0; i < touch_num; i++)
@@ -492,7 +421,6 @@ static void goodix_process_events(struct goodix_ts_data *ts)
 			goodix_ts_report_touch_8b(ts,
 				&point_data[1 + ts->contact_size * i]);
 
-sync:
 	input_mt_sync_frame(ts->input_dev);
 	input_sync(ts->input_dev);
 }
@@ -508,7 +436,9 @@ static irqreturn_t goodix_ts_irq_handler(int irq, void *dev_id)
 	struct goodix_ts_data *ts = dev_id;
 
 	goodix_process_events(ts);
-	goodix_i2c_write_u8(ts->client, GOODIX_READ_COOR_ADDR, 0);
+
+	if (goodix_i2c_write_u8(ts->client, GOODIX_READ_COOR_ADDR, 0) < 0)
+		dev_err(&ts->client->dev, "I2C write end_cmd error\n");
 
 	return IRQ_HANDLED;
 }
@@ -624,7 +554,7 @@ static int goodix_check_cfg(struct goodix_ts_data *ts, const u8 *cfg, int len)
  * @cfg: config firmware to write to device
  * @len: config data length
  */
-int goodix_send_cfg(struct goodix_ts_data *ts, const u8 *cfg, int len)
+static int goodix_send_cfg(struct goodix_ts_data *ts, const u8 *cfg, int len)
 {
 	int error;
 
@@ -633,9 +563,11 @@ int goodix_send_cfg(struct goodix_ts_data *ts, const u8 *cfg, int len)
 		return error;
 
 	error = goodix_i2c_write(ts->client, ts->chip->config_addr, cfg, len);
-	if (error)
+	if (error) {
+		dev_err(&ts->client->dev, "Failed to write config data: %d",
+			error);
 		return error;
-
+	}
 	dev_dbg(&ts->client->dev, "Config sent successfully.");
 
 	/* Let the firmware reconfigure itself, so sleep for 10ms */
@@ -720,72 +652,21 @@ static int goodix_irq_direction_input(struct goodix_ts_data *ts)
 	return -EINVAL; /* Never reached */
 }
 
-int goodix_int_sync(struct goodix_ts_data *ts)
+static int goodix_int_sync(struct goodix_ts_data *ts)
 {
 	int error;
 
 	error = goodix_irq_direction_output(ts, 0);
 	if (error)
-		goto error;
+		return error;
 
 	msleep(50);				/* T5: 50ms */
 
 	error = goodix_irq_direction_input(ts);
 	if (error)
-		goto error;
+		return error;
 
 	return 0;
-
-error:
-	dev_err(&ts->client->dev, "Controller irq sync failed.\n");
-	return error;
-}
-
-/**
- * goodix_reset_no_int_sync - Reset device, leaving interrupt line in output mode
- *
- * @ts: goodix_ts_data pointer
- */
-int goodix_reset_no_int_sync(struct goodix_ts_data *ts)
-{
-	int error;
-
-	/* begin select I2C slave addr */
-	error = gpiod_direction_output(ts->gpiod_rst, 0);
-	if (error)
-		goto error;
-
-	msleep(20);				/* T2: > 10ms */
-
-	/* HIGH: 0x28/0x29, LOW: 0xBA/0xBB */
-	error = goodix_irq_direction_output(ts, ts->client->addr == 0x14);
-	if (error)
-		goto error;
-
-	usleep_range(100, 2000);		/* T3: > 100us */
-
-	error = gpiod_direction_output(ts->gpiod_rst, 1);
-	if (error)
-		goto error;
-
-	usleep_range(6000, 10000);		/* T4: > 5ms */
-
-	/*
-	 * Put the reset pin back in to input / high-impedance mode to save
-	 * power. Only do this in the non ACPI case since some ACPI boards
-	 * don't have a pull-up, so there the reset pin must stay active-high.
-	 */
-	if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_GPIO) {
-		error = gpiod_direction_input(ts->gpiod_rst);
-		if (error)
-			goto error;
-	}
-
-	return 0;
-
-error:
-	dev_err(&ts->client->dev, "Controller reset failed.\n");
-	return error;
 }
 
 /**
@@ -797,11 +678,36 @@ static int goodix_reset(struct goodix_ts_data *ts)
 {
 	int error;
 
-	error = goodix_reset_no_int_sync(ts);
+	/* begin select I2C slave addr */
+	error = gpiod_direction_output(ts->gpiod_rst, 0);
 	if (error)
 		return error;
 
-	return goodix_int_sync(ts);
+	msleep(20);				/* T2: > 10ms */
+
+	/* HIGH: 0x28/0x29, LOW: 0xBA/0xBB */
+	error = goodix_irq_direction_output(ts, ts->client->addr == 0x14);
+	if (error)
+		return error;
+
+	usleep_range(100, 2000);		/* T3: > 100us */
+
+	error = gpiod_direction_output(ts->gpiod_rst, 1);
+	if (error)
+		return error;
+
+	usleep_range(6000, 10000);		/* T4: > 5ms */
+
+	/* end select I2C slave addr */
+	error = gpiod_direction_input(ts->gpiod_rst);
+	if (error)
+		return error;
+
+	error = goodix_int_sync(ts);
+	if (error)
+		return error;
+
+	return 0;
 }
 
 #ifdef ACPI_GPIO_SUPPORT
@@ -913,14 +819,6 @@ static int goodix_add_acpi_gpio_mappings(struct goodix_ts_data *ts)
 		return -EINVAL;
 	}
 
-	/*
-	 * Normally we put the reset pin in input / high-impedance mode to save
-	 * power. But some x86/ACPI boards don't have a pull-up, so for the ACPI
-	 * case, leave the pin as is. This results in the pin not being touched
-	 * at all on x86/ACPI boards, except when needed for error-recover.
-	 */
-	ts->gpiod_rst_flags = GPIOD_ASIS;
-
 	return devm_acpi_dev_add_driver_gpios(dev, gpio_mapping);
 }
 #else
@@ -946,12 +844,6 @@ static int goodix_get_gpio_config(struct goodix_ts_data *ts)
 		return -EINVAL;
 	dev = &ts->client->dev;
 
-	/*
-	 * By default we request the reset pin as input, leaving it in
-	 * high-impedance when not resetting the controller to save power.
-	 */
-	ts->gpiod_rst_flags = GPIOD_IN;
-
 	ts->avdd28 = devm_regulator_get(dev, "AVDD28");
 	if (IS_ERR(ts->avdd28)) {
 		error = PTR_ERR(ts->avdd28);
@@ -976,7 +868,7 @@ retry_get_irq_gpio:
 	if (IS_ERR(gpiod)) {
 		error = PTR_ERR(gpiod);
 		if (error != -EPROBE_DEFER)
-			dev_err(dev, "Failed to get %s GPIO: %d\n",
+			dev_dbg(dev, "Failed to get %s GPIO: %d\n",
 				GOODIX_GPIO_INT_NAME, error);
 		return error;
 	}
@@ -989,11 +881,11 @@ retry_get_irq_gpio:
 	ts->gpiod_int = gpiod;
 
 	/* Get the reset line GPIO pin number */
-	gpiod = devm_gpiod_get_optional(dev, GOODIX_GPIO_RST_NAME, ts->gpiod_rst_flags);
+	gpiod = devm_gpiod_get_optional(dev, GOODIX_GPIO_RST_NAME, GPIOD_IN);
 	if (IS_ERR(gpiod)) {
 		error = PTR_ERR(gpiod);
 		if (error != -EPROBE_DEFER)
-			dev_err(dev, "Failed to get %s GPIO: %d\n",
+			dev_dbg(dev, "Failed to get %s GPIO: %d\n",
 				GOODIX_GPIO_RST_NAME, error);
 		return error;
 	}
@@ -1040,19 +932,14 @@ static void goodix_read_config(struct goodix_ts_data *ts)
 	int x_max, y_max;
 	int error;
 
-	/*
-	 * On controllers where we need to upload the firmware
-	 * (controllers without flash) ts->config already has the config
-	 * at this point and the controller itself does not have it yet!
-	 */
-	if (!ts->firmware_name) {
-		error = goodix_i2c_read(ts->client, ts->chip->config_addr,
-					ts->config, ts->chip->config_len);
-		if (error) {
-			ts->int_trigger_type = GOODIX_INT_TRIGGER;
-			ts->max_touch_num = GOODIX_MAX_CONTACTS;
-			return;
-		}
+	error = goodix_i2c_read(ts->client, ts->chip->config_addr,
+				ts->config, ts->chip->config_len);
+	if (error) {
+		dev_warn(&ts->client->dev, "Error reading config: %d\n",
+			 error);
+		ts->int_trigger_type = GOODIX_INT_TRIGGER;
+		ts->max_touch_num = GOODIX_MAX_CONTACTS;
+		return;
 	}
 
 	ts->int_trigger_type = ts->config[TRIGGER_LOC] & 0x03;
@@ -1080,8 +967,10 @@ static int goodix_read_version(struct goodix_ts_data *ts)
 	char id_str[GOODIX_ID_MAX_LEN + 1];
 
 	error = goodix_i2c_read(ts->client, GOODIX_REG_ID, buf, sizeof(buf));
-	if (error)
+	if (error) {
+		dev_err(&ts->client->dev, "read version failed: %d\n", error);
 		return error;
+	}
 
 	memcpy(id_str, buf, GOODIX_ID_MAX_LEN);
 	id_str[GOODIX_ID_MAX_LEN] = 0;
@@ -1107,10 +996,13 @@ static int goodix_i2c_test(struct i2c_client *client)
 	u8 test;
 
 	while (retry++ < 2) {
-		error = goodix_i2c_read(client, GOODIX_REG_ID, &test, 1);
+		error = goodix_i2c_read(client, GOODIX_REG_ID,
+					&test, 1);
 		if (!error)
 			return 0;
 
+		dev_err(&client->dev, "i2c test failed attempt %d: %d\n",
+			retry, error);
 		msleep(20);
 	}
 
@@ -1239,16 +1131,7 @@ static void goodix_config_cb(const struct firmware *cfg, void *ctx)
 	struct goodix_ts_data *ts = ctx;
 	int error;
 
-	if (ts->firmware_name) {
-		if (!cfg)
-			goto err_release_cfg;
-
-		error = goodix_check_cfg(ts, cfg->data, cfg->size);
-		if (error)
-			goto err_release_cfg;
-
-		memcpy(ts->config, cfg->data, cfg->size);
-	} else if (cfg) {
+	if (cfg) {
 		/* send device configuration to the firmware */
 		error = goodix_send_cfg(ts, cfg->data, cfg->size);
 		if (error)
@@ -1274,7 +1157,6 @@ static int goodix_ts_probe(struct i2c_client *client,
 			   const struct i2c_device_id *id)
 {
 	struct goodix_ts_data *ts;
-	const char *cfg_name;
 	int error;
 
 	dev_dbg(&client->dev, "I2C Address: 0x%02x\n", client->addr);
@@ -1324,8 +1206,10 @@ reset:
 	if (ts->reset_controller_at_probe) {
 		/* reset the controller */
 		error = goodix_reset(ts);
-		if (error)
+		if (error) {
+			dev_err(&client->dev, "Controller reset failed.\n");
 			return error;
+		}
 	}
 
 	error = goodix_i2c_test(client);
@@ -1340,27 +1224,20 @@ reset:
 		return error;
 	}
 
-	error = goodix_firmware_check(ts);
-	if (error)
-		return error;
-
 	error = goodix_read_version(ts);
-	if (error)
+	if (error) {
+		dev_err(&client->dev, "Read version failed.\n");
 		return error;
+	}
 
 	ts->chip = goodix_get_chip_data(ts->id);
 
 	if (ts->load_cfg_from_disk) {
 		/* update device config */
-		error = device_property_read_string(&client->dev,
-						    "goodix,config-name",
-						    &cfg_name);
-		if (!error)
-			snprintf(ts->cfg_name, sizeof(ts->cfg_name),
-				 "goodix/%s", cfg_name);
-		else
-			snprintf(ts->cfg_name, sizeof(ts->cfg_name),
-				 "goodix_%s_cfg.bin", ts->id);
+		ts->cfg_name = devm_kasprintf(&client->dev, GFP_KERNEL,
+					      "goodix_%s_cfg.bin", ts->id);
+		if (!ts->cfg_name)
+			return -ENOMEM;
 
 		error = request_firmware_nowait(THIS_MODULE, true, ts->cfg_name,
 						&client->dev, GFP_KERNEL, ts,
@@ -1410,9 +1287,6 @@ static int __maybe_unused goodix_suspend(struct device *dev)
 	/* Free IRQ as IRQ pin is used as output in the suspend sequence */
 	goodix_free_irq(ts);
 
-	/* Save reference (calibration) info if necessary */
-	goodix_save_bak_ref(ts);
-
 	/* Output LOW on the INT pin for 5 ms */
 	error = goodix_irq_direction_output(ts, 0);
 	if (error) {
@@ -1425,6 +1299,7 @@ static int __maybe_unused goodix_suspend(struct device *dev)
 	error = goodix_i2c_write_u8(ts->client, GOODIX_REG_COMMAND,
 				    GOODIX_CMD_SCREEN_OFF);
 	if (error) {
+		dev_err(&ts->client->dev, "Screen off command failed\n");
 		goodix_irq_direction_input(ts);
 		goodix_request_irq(ts);
 		return -EAGAIN;
@@ -1467,14 +1342,19 @@ static int __maybe_unused goodix_resume(struct device *dev)
 
 	error = goodix_i2c_read(ts->client, ts->chip->config_addr,
 				&config_ver, 1);
-	if (!error && config_ver != ts->config[0])
+	if (error)
+		dev_warn(dev, "Error reading config version: %d, resetting controller\n",
+			 error);
+	else if (config_ver != ts->config[0])
 		dev_info(dev, "Config version mismatch %d != %d, resetting controller\n",
 			 config_ver, ts->config[0]);
 
 	if (error != 0 || config_ver != ts->config[0]) {
 		error = goodix_reset(ts);
-		if (error)
+		if (error) {
+			dev_err(dev, "Controller reset failed.\n");
 			return error;
+		}
 
 		error = goodix_send_cfg(ts, ts->config, ts->chip->config_len);
 		if (error)

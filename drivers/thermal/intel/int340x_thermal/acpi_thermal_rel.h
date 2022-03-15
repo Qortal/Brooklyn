@@ -17,19 +17,17 @@
 struct art {
 	acpi_handle source;
 	acpi_handle target;
-	struct_group(data,
-		u64 weight;
-		u64 ac0_max;
-		u64 ac1_max;
-		u64 ac2_max;
-		u64 ac3_max;
-		u64 ac4_max;
-		u64 ac5_max;
-		u64 ac6_max;
-		u64 ac7_max;
-		u64 ac8_max;
-		u64 ac9_max;
-	);
+	u64 weight;
+	u64 ac0_max;
+	u64 ac1_max;
+	u64 ac2_max;
+	u64 ac3_max;
+	u64 ac4_max;
+	u64 ac5_max;
+	u64 ac6_max;
+	u64 ac7_max;
+	u64 ac8_max;
+	u64 ac9_max;
 } __packed;
 
 struct trt {
@@ -49,19 +47,17 @@ union art_object {
 	struct {
 		char source_device[8]; /* ACPI single name */
 		char target_device[8]; /* ACPI single name */
-		struct_group(data,
-			u64 weight;
-			u64 ac0_max_level;
-			u64 ac1_max_level;
-			u64 ac2_max_level;
-			u64 ac3_max_level;
-			u64 ac4_max_level;
-			u64 ac5_max_level;
-			u64 ac6_max_level;
-			u64 ac7_max_level;
-			u64 ac8_max_level;
-			u64 ac9_max_level;
-		);
+		u64 weight;
+		u64 ac0_max_level;
+		u64 ac1_max_level;
+		u64 ac2_max_level;
+		u64 ac3_max_level;
+		u64 ac4_max_level;
+		u64 ac5_max_level;
+		u64 ac6_max_level;
+		u64 ac7_max_level;
+		u64 ac8_max_level;
+		u64 ac9_max_level;
 	};
 	u64 __data[ACPI_NR_ART_ELEMENTS];
 };

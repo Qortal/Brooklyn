@@ -295,12 +295,15 @@ static int mdp5_disable(struct mdp5_kms *mdp5_kms)
 	mdp5_kms->enable_count--;
 	WARN_ON(mdp5_kms->enable_count < 0);
 
-	clk_disable_unprepare(mdp5_kms->tbu_rt_clk);
-	clk_disable_unprepare(mdp5_kms->tbu_clk);
+	if (mdp5_kms->tbu_rt_clk)
+		clk_disable_unprepare(mdp5_kms->tbu_rt_clk);
+	if (mdp5_kms->tbu_clk)
+		clk_disable_unprepare(mdp5_kms->tbu_clk);
 	clk_disable_unprepare(mdp5_kms->ahb_clk);
 	clk_disable_unprepare(mdp5_kms->axi_clk);
 	clk_disable_unprepare(mdp5_kms->core_clk);
-	clk_disable_unprepare(mdp5_kms->lut_clk);
+	if (mdp5_kms->lut_clk)
+		clk_disable_unprepare(mdp5_kms->lut_clk);
 
 	return 0;
 }
@@ -314,9 +317,12 @@ static int mdp5_enable(struct mdp5_kms *mdp5_kms)
 	clk_prepare_enable(mdp5_kms->ahb_clk);
 	clk_prepare_enable(mdp5_kms->axi_clk);
 	clk_prepare_enable(mdp5_kms->core_clk);
-	clk_prepare_enable(mdp5_kms->lut_clk);
-	clk_prepare_enable(mdp5_kms->tbu_clk);
-	clk_prepare_enable(mdp5_kms->tbu_rt_clk);
+	if (mdp5_kms->lut_clk)
+		clk_prepare_enable(mdp5_kms->lut_clk);
+	if (mdp5_kms->tbu_clk)
+		clk_prepare_enable(mdp5_kms->tbu_clk);
+	if (mdp5_kms->tbu_rt_clk)
+		clk_prepare_enable(mdp5_kms->tbu_rt_clk);
 
 	return 0;
 }
@@ -370,7 +376,22 @@ static int modeset_init_intf(struct mdp5_kms *mdp5_kms,
 
 	switch (intf->type) {
 	case INTF_eDP:
-		DRM_DEV_INFO(dev->dev, "Skipping eDP interface %d\n", intf->num);
+		if (!priv->edp)
+			break;
+
+		ctl = mdp5_ctlm_request(ctlm, intf->num);
+		if (!ctl) {
+			ret = -EINVAL;
+			break;
+		}
+
+		encoder = construct_encoder(mdp5_kms, intf, ctl);
+		if (IS_ERR(encoder)) {
+			ret = PTR_ERR(encoder);
+			break;
+		}
+
+		ret = msm_edp_modeset_init(priv->edp, dev, encoder);
 		break;
 	case INTF_HDMI:
 		if (!priv->hdmi)
@@ -921,8 +942,7 @@ fail:
 
 static int mdp5_bind(struct device *dev, struct device *master, void *data)
 {
-	struct msm_drm_private *priv = dev_get_drvdata(master);
-	struct drm_device *ddev = priv->dev;
+	struct drm_device *ddev = dev_get_drvdata(master);
 	struct platform_device *pdev = to_platform_device(dev);
 
 	DBG("");
@@ -1017,7 +1037,7 @@ static const struct dev_pm_ops mdp5_pm_ops = {
 	SET_RUNTIME_PM_OPS(mdp5_runtime_suspend, mdp5_runtime_resume, NULL)
 };
 
-const struct of_device_id mdp5_dt_match[] = {
+static const struct of_device_id mdp5_dt_match[] = {
 	{ .compatible = "qcom,mdp5", },
 	/* to support downstream DT files */
 	{ .compatible = "qcom,mdss_mdp", },

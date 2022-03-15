@@ -75,8 +75,7 @@ static int parse_qcomsmem_part(struct mtd_info *mtd,
 	pr_debug("Parsing partition table info from SMEM\n");
 	ptable = qcom_smem_get(SMEM_APPS, SMEM_AARM_PARTITION_TABLE, &len);
 	if (IS_ERR(ptable)) {
-		if (PTR_ERR(ptable) != -EPROBE_DEFER)
-			pr_err("Error reading partition table header\n");
+		pr_err("Error reading partition table header\n");
 		return PTR_ERR(ptable);
 	}
 

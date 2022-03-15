@@ -233,12 +233,11 @@ static void scsifront_gnttab_done(struct vscsifrnt_info *info,
 		return;
 
 	for (i = 0; i < shadow->nr_grants; i++) {
-		if (unlikely(gnttab_query_foreign_access(shadow->gref[i]))) {
+		if (unlikely(!gnttab_try_end_foreign_access(shadow->gref[i]))) {
 			shost_printk(KERN_ALERT, info->host, KBUILD_MODNAME
 				     "grant still in use by backend\n");
 			BUG();
 		}
-		gnttab_end_foreign_access(shadow->gref[i], 0, 0UL);
 	}
 
 	kfree(shadow->sg);
@@ -276,7 +275,7 @@ static void scsifront_cdb_cmd_done(struct vscsifrnt_info *info,
 	if (sense_len)
 		memcpy(sc->sense_buffer, ring_rsp->sense_buffer, sense_len);
 
-	scsi_done(sc);
+	sc->scsi_done(sc);
 }
 
 static void scsifront_sync_cmd_done(struct vscsifrnt_info *info,
@@ -558,7 +557,7 @@ static int scsifront_queuecommand(struct Scsi_Host *shost,
 		if (err == -ENOMEM)
 			return SCSI_MLQUEUE_HOST_BUSY;
 		sc->result = DID_ERROR << 16;
-		scsi_done(sc);
+		sc->scsi_done(sc);
 		return 0;
 	}
 

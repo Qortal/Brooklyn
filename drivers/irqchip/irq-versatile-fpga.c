@@ -105,7 +105,7 @@ static int handle_one_fpga(struct fpga_irq_data *f, struct pt_regs *regs)
 
 	while ((status  = readl(f->base + IRQ_STATUS))) {
 		irq = ffs(status) - 1;
-		generic_handle_domain_irq(f->domain, irq);
+		handle_domain_irq(f->domain, irq, regs);
 		handled = 1;
 	}
 

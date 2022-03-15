@@ -138,14 +138,7 @@ struct vpg_funcs {
 	void (*update_generic_info_packet)(
 		struct vpg *vpg,
 		uint32_t packet_index,
-		const struct dc_info_packet *info_packet,
-		bool immediate_update);
-
-	void (*vpg_poweron)(
-		struct vpg *vpg);
-
-	void (*vpg_powerdown)(
-		struct vpg *vpg);
+		const struct dc_info_packet *info_packet);
 };
 
 struct vpg {
@@ -160,12 +153,6 @@ struct dcn30_vpg {
 	const struct dcn30_vpg_shift *vpg_shift;
 	const struct dcn30_vpg_mask *vpg_mask;
 };
-
-void vpg3_update_generic_info_packet(
-	struct vpg *vpg,
-	uint32_t packet_index,
-	const struct dc_info_packet *info_packet,
-	bool immediate_update);
 
 void vpg3_construct(struct dcn30_vpg *vpg3,
 	struct dc_context *ctx,

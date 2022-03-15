@@ -807,6 +807,7 @@ static const struct nand_controller_ops vf610_nfc_controller_ops = {
 static int vf610_nfc_probe(struct platform_device *pdev)
 {
 	struct vf610_nfc *nfc;
+	struct resource *res;
 	struct mtd_info *mtd;
 	struct nand_chip *chip;
 	struct device_node *child;
@@ -830,7 +831,8 @@ static int vf610_nfc_probe(struct platform_device *pdev)
 	if (irq <= 0)
 		return -EINVAL;
 
-	nfc->regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	nfc->regs = devm_ioremap_resource(nfc->dev, res);
 	if (IS_ERR(nfc->regs))
 		return PTR_ERR(nfc->regs);
 

@@ -726,9 +726,7 @@ static void vop_crtc_atomic_disable(struct drm_crtc *crtc,
 
 	spin_unlock(&vop->reg_lock);
 
-	if (!wait_for_completion_timeout(&vop->dsp_hold_completion,
-					 msecs_to_jiffies(200)))
-		WARN(1, "%s: timed out waiting for DSP hold", crtc->name);
+	wait_for_completion(&vop->dsp_hold_completion);
 
 	vop_dsp_hold_valid_irq_disable(vop);
 

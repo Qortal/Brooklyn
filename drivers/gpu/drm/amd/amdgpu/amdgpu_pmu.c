@@ -233,10 +233,6 @@ static void amdgpu_perf_start(struct perf_event *event, int flags)
 	if (WARN_ON_ONCE(!(hwc->state & PERF_HES_STOPPED)))
 		return;
 
-	if ((!pe->adev->df.funcs) ||
-	    (!pe->adev->df.funcs->pmc_start))
-		return;
-
 	WARN_ON_ONCE(!(hwc->state & PERF_HES_UPTODATE));
 	hwc->state = 0;
 
@@ -272,10 +268,6 @@ static void amdgpu_perf_read(struct perf_event *event)
 						  pmu);
 	u64 count, prev;
 
-	if ((!pe->adev->df.funcs) ||
-	    (!pe->adev->df.funcs->pmc_get_count))
-		return;
-
 	do {
 		prev = local64_read(&hwc->prev_count);
 
@@ -303,10 +295,6 @@ static void amdgpu_perf_stop(struct perf_event *event, int flags)
 						  pmu);
 
 	if (hwc->state & PERF_HES_UPTODATE)
-		return;
-
-	if ((!pe->adev->df.funcs) ||
-	    (!pe->adev->df.funcs->pmc_stop))
 		return;
 
 	switch (hwc->config_base) {
@@ -337,10 +325,6 @@ static int amdgpu_perf_add(struct perf_event *event, int flags)
 	struct amdgpu_pmu_entry *pe = container_of(event->pmu,
 						  struct amdgpu_pmu_entry,
 						  pmu);
-
-	if ((!pe->adev->df.funcs) ||
-	    (!pe->adev->df.funcs->pmc_start))
-		return -EINVAL;
 
 	switch (pe->pmu_perf_type) {
 	case AMDGPU_PMU_PERF_TYPE_DF:
@@ -387,9 +371,6 @@ static void amdgpu_perf_del(struct perf_event *event, int flags)
 	struct amdgpu_pmu_entry *pe = container_of(event->pmu,
 						  struct amdgpu_pmu_entry,
 						  pmu);
-	if ((!pe->adev->df.funcs) ||
-	    (!pe->adev->df.funcs->pmc_stop))
-		return;
 
 	amdgpu_perf_stop(event, PERF_EF_UPDATE);
 

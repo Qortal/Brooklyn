@@ -165,11 +165,8 @@ alloc_table:
 		goto err;
 	}
 
-	WARN_ON_ONCE(!(obj->cache_coherent & I915_BO_CACHE_COHERENT_FOR_WRITE));
-	if (i915_gem_object_can_bypass_llc(obj))
-		obj->cache_dirty = true;
-
 	sg_page_sizes = i915_sg_dma_sizes(st->sgl);
+
 	__i915_gem_object_set_pages(obj, st, sg_page_sizes);
 
 	return 0;
@@ -529,7 +526,7 @@ i915_gem_userptr_ioctl(struct drm_device *dev,
 		 * On almost all of the older hw, we cannot tell the GPU that
 		 * a page is readonly.
 		 */
-		if (!to_gt(dev_priv)->vm->has_read_only)
+		if (!dev_priv->gt.vm->has_read_only)
 			return -ENODEV;
 	}
 
@@ -549,8 +546,7 @@ i915_gem_userptr_ioctl(struct drm_device *dev,
 		return -ENOMEM;
 
 	drm_gem_private_object_init(dev, &obj->base, args->user_size);
-	i915_gem_object_init(obj, &i915_gem_userptr_ops, &lock_class,
-			     I915_BO_ALLOC_USER);
+	i915_gem_object_init(obj, &i915_gem_userptr_ops, &lock_class, 0);
 	obj->mem_flags = I915_BO_FLAG_STRUCT_PAGE;
 	obj->read_domains = I915_GEM_DOMAIN_CPU;
 	obj->write_domain = I915_GEM_DOMAIN_CPU;

@@ -25,16 +25,9 @@ enum dp_pm_type {
 	DP_MAX_PM
 };
 
-struct dss_io_region {
-	size_t len;
-	void __iomem *base;
-};
-
 struct dss_io_data {
-	struct dss_io_region ahb;
-	struct dss_io_region aux;
-	struct dss_io_region link;
-	struct dss_io_region p0;
+	u32 len;
+	void __iomem *base;
 };
 
 static inline const char *dp_parser_pm_name(enum dp_pm_type module)
@@ -123,9 +116,8 @@ struct dp_parser {
 	struct dp_display_data disp_data;
 	const struct dp_regulator_cfg *regulator_cfg;
 	u32 max_dp_lanes;
-	struct drm_bridge *panel_bridge;
 
-	int (*parse)(struct dp_parser *parser, int connector_type);
+	int (*parse)(struct dp_parser *parser);
 };
 
 /**

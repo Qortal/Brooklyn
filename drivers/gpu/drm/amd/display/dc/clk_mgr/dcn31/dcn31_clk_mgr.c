@@ -66,7 +66,7 @@
 #define TO_CLK_MGR_DCN31(clk_mgr)\
 	container_of(clk_mgr, struct clk_mgr_dcn31, base)
 
-static int dcn31_get_active_display_cnt_wa(
+int dcn31_get_active_display_cnt_wa(
 		struct dc *dc,
 		struct dc_state *context)
 {
@@ -87,7 +87,7 @@ static int dcn31_get_active_display_cnt_wa(
 		const struct dc_link *link = dc->links[i];
 
 		/* abusing the fact that the dig and phy are coupled to see if the phy is enabled */
-		if (link->link_enc && link->link_enc->funcs->is_dig_enabled &&
+		if (link->link_enc->funcs->is_dig_enabled &&
 				link->link_enc->funcs->is_dig_enabled(link->link_enc))
 			display_count++;
 	}
@@ -118,7 +118,7 @@ static void dcn31_disable_otg_wa(struct clk_mgr *clk_mgr_base, bool disable)
 	}
 }
 
-void dcn31_update_clocks(struct clk_mgr *clk_mgr_base,
+static void dcn31_update_clocks(struct clk_mgr *clk_mgr_base,
 			struct dc_state *context,
 			bool safe_to_lower)
 {
@@ -142,7 +142,6 @@ void dcn31_update_clocks(struct clk_mgr *clk_mgr_base,
 		if (new_clocks->zstate_support == DCN_ZSTATE_SUPPORT_ALLOW &&
 				new_clocks->zstate_support != clk_mgr_base->clks.zstate_support) {
 			dcn31_smu_set_Z9_support(clk_mgr, true);
-			dm_helpers_enable_periodic_detection(clk_mgr_base->ctx, true);
 			clk_mgr_base->clks.zstate_support = new_clocks->zstate_support;
 		}
 
@@ -168,7 +167,6 @@ void dcn31_update_clocks(struct clk_mgr *clk_mgr_base,
 		if (new_clocks->zstate_support == DCN_ZSTATE_SUPPORT_DISALLOW &&
 				new_clocks->zstate_support != clk_mgr_base->clks.zstate_support) {
 			dcn31_smu_set_Z9_support(clk_mgr, false);
-			dm_helpers_enable_periodic_detection(clk_mgr_base->ctx, false);
 			clk_mgr_base->clks.zstate_support = new_clocks->zstate_support;
 		}
 
@@ -220,17 +218,14 @@ void dcn31_update_clocks(struct clk_mgr *clk_mgr_base,
 		update_dispclk = true;
 	}
 
+	/* TODO: add back DTO programming when DPPCLK restore is fixed in FSDL*/
 	if (dpp_clock_lowered) {
 		// increase per DPP DTO before lowering global dppclk
-		dcn20_update_clocks_update_dpp_dto(clk_mgr, context, safe_to_lower);
 		dcn31_smu_set_dppclk(clk_mgr, clk_mgr_base->clks.dppclk_khz);
 	} else {
 		// increase global DPPCLK before lowering per DPP DTO
 		if (update_dppclk || update_dispclk)
 			dcn31_smu_set_dppclk(clk_mgr, clk_mgr_base->clks.dppclk_khz);
-		// always update dtos unless clock is lowered and not safe to lower
-		if (new_clocks->dppclk_khz >= dc->current_state->bw_ctx.bw.dcn.clk.dppclk_khz)
-			dcn20_update_clocks_update_dpp_dto(clk_mgr, context, safe_to_lower);
 	}
 
 	// notify DMCUB of latest clocks
@@ -285,7 +280,7 @@ static void dcn31_enable_pme_wa(struct clk_mgr *clk_mgr_base)
 	dcn31_smu_enable_pme_wa(clk_mgr);
 }
 
-void dcn31_init_clocks(struct clk_mgr *clk_mgr)
+static void dcn31_init_clocks(struct clk_mgr *clk_mgr)
 {
 	memset(&(clk_mgr->clks), 0, sizeof(struct dc_clocks));
 	// Assumption is that boot state always supports pstate
@@ -295,7 +290,7 @@ void dcn31_init_clocks(struct clk_mgr *clk_mgr)
 	clk_mgr->clks.zstate_support = DCN_ZSTATE_SUPPORT_UNKNOWN;
 }
 
-bool dcn31_are_clock_states_equal(struct dc_clocks *a,
+static bool dcn31_are_clock_states_equal(struct dc_clocks *a,
 		struct dc_clocks *b)
 {
 	if (a->dispclk_khz != b->dispclk_khz)
@@ -541,9 +536,10 @@ static unsigned int find_clk_for_voltage(
 	return clock;
 }
 
-static void dcn31_clk_mgr_helper_populate_bw_params(struct clk_mgr_internal *clk_mgr,
-						    struct integrated_info *bios_info,
-						    const DpmClocks_t *clock_table)
+void dcn31_clk_mgr_helper_populate_bw_params(
+		struct clk_mgr_internal *clk_mgr,
+		struct integrated_info *bios_info,
+		const DpmClocks_t *clock_table)
 {
 	int i, j;
 	struct clk_bw_params *bw_params = clk_mgr->base.bw_params;
@@ -652,7 +648,7 @@ void dcn31_clk_mgr_construct(
 				sizeof(struct dcn31_watermarks),
 				&clk_mgr->smu_wm_set.mc_address.quad_part);
 
-	if (!clk_mgr->smu_wm_set.wm_set) {
+	if (clk_mgr->smu_wm_set.wm_set == 0) {
 		clk_mgr->smu_wm_set.wm_set = &dummy_wms;
 		clk_mgr->smu_wm_set.mc_address.quad_part = 0;
 	}

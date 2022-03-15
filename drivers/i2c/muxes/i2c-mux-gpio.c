@@ -7,7 +7,6 @@
 
 #include <linux/i2c.h>
 #include <linux/i2c-mux.h>
-#include <linux/overflow.h>
 #include <linux/platform_data/i2c-mux-gpio.h>
 #include <linux/platform_device.h>
 #include <linux/module.h>
@@ -50,11 +49,49 @@ static int i2c_mux_gpio_deselect(struct i2c_mux_core *muxc, u32 chan)
 	return 0;
 }
 
+#ifdef CONFIG_ACPI
+
+static int i2c_mux_gpio_get_acpi_adr(struct device *dev,
+				     struct fwnode_handle *fwdev,
+				     unsigned int *adr)
+
+{
+	unsigned long long adr64;
+	acpi_status status;
+
+	status = acpi_evaluate_integer(ACPI_HANDLE_FWNODE(fwdev),
+				       METHOD_NAME__ADR,
+				       NULL, &adr64);
+
+	if (!ACPI_SUCCESS(status)) {
+		dev_err(dev, "Cannot get address\n");
+		return -EINVAL;
+	}
+
+	*adr = adr64;
+	if (*adr != adr64) {
+		dev_err(dev, "Address out of range\n");
+		return -ERANGE;
+	}
+
+	return 0;
+}
+
+#else
+
+static int i2c_mux_gpio_get_acpi_adr(struct device *dev,
+				     struct fwnode_handle *fwdev,
+				     unsigned int *adr)
+{
+	return -EINVAL;
+}
+
+#endif
+
 static int i2c_mux_gpio_probe_fw(struct gpiomux *mux,
 				 struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct fwnode_handle *fwnode = dev_fwnode(dev);
 	struct device_node *np = dev->of_node;
 	struct device_node *adapter_np;
 	struct i2c_adapter *adapter = NULL;
@@ -62,7 +99,7 @@ static int i2c_mux_gpio_probe_fw(struct gpiomux *mux,
 	unsigned *values;
 	int rc, i = 0;
 
-	if (is_of_node(fwnode)) {
+	if (is_of_node(dev->fwnode)) {
 		if (!np)
 			return -ENODEV;
 
@@ -74,7 +111,7 @@ static int i2c_mux_gpio_probe_fw(struct gpiomux *mux,
 		adapter = of_find_i2c_adapter_by_node(adapter_np);
 		of_node_put(adapter_np);
 
-	} else if (is_acpi_node(fwnode)) {
+	} else if (is_acpi_node(dev->fwnode)) {
 		/*
 		 * In ACPI land the mux should be a direct child of the i2c
 		 * bus it muxes.
@@ -104,16 +141,16 @@ static int i2c_mux_gpio_probe_fw(struct gpiomux *mux,
 			fwnode_property_read_u32(child, "reg", values + i);
 
 		} else if (is_acpi_node(child)) {
-			rc = acpi_get_local_address(ACPI_HANDLE_FWNODE(child), values + i);
+			rc = i2c_mux_gpio_get_acpi_adr(dev, child, values + i);
 			if (rc)
-				return dev_err_probe(dev, rc, "Cannot get address\n");
+				return rc;
 		}
 
 		i++;
 	}
 	mux->data.values = values;
 
-	if (device_property_read_u32(dev, "idle-state", &mux->data.idle))
+	if (fwnode_property_read_u32(dev->fwnode, "idle-state", &mux->data.idle))
 		mux->data.idle = I2C_MUX_GPIO_NO_IDLE;
 
 	return 0;
@@ -153,7 +190,7 @@ static int i2c_mux_gpio_probe(struct platform_device *pdev)
 		return -EPROBE_DEFER;
 
 	muxc = i2c_mux_alloc(parent, &pdev->dev, mux->data.n_values,
-			     array_size(ngpios, sizeof(*mux->gpios)), 0,
+			     ngpios * sizeof(*mux->gpios), 0,
 			     i2c_mux_gpio_select, NULL);
 	if (!muxc) {
 		ret = -ENOMEM;

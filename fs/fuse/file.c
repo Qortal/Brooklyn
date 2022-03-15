@@ -211,8 +211,9 @@ void fuse_finish_open(struct inode *inode, struct file *file)
 		i_size_write(inode, 0);
 		spin_unlock(&fi->lock);
 		truncate_pagecache(inode, 0);
-		file_update_time(file);
-		fuse_invalidate_attr_mask(inode, FUSE_STATX_MODSIZE);
+		fuse_invalidate_attr(inode);
+		if (fc->writeback_cache)
+			file_update_time(file);
 	} else if (!(ff->open_flags & FOPEN_KEEP_CACHE)) {
 		invalidate_inode_pages2(inode->i_mapping);
 	}
@@ -338,6 +339,12 @@ static int fuse_open(struct inode *inode, struct file *file)
 
 static int fuse_release(struct inode *inode, struct file *file)
 {
+	struct fuse_conn *fc = get_fuse_conn(inode);
+
+	/* see fuse_vma_close() for !writeback_cache case */
+	if (fc->writeback_cache)
+		write_inode_now(inode, 1);
+
 	fuse_release_common(file, false);
 
 	/* return value is ignored by VFS */
@@ -476,9 +483,6 @@ static int fuse_flush(struct file *file, fl_owner_t id)
 	if (fuse_is_bad(inode))
 		return -EIO;
 
-	if (ff->open_flags & FOPEN_NOFLUSH && !fm->fc->writeback_cache)
-		return 0;
-
 	err = write_inode_now(inode, 1);
 	if (err)
 		return err;
@@ -517,7 +521,7 @@ inval_attr_out:
 	 * enabled, i_blocks from cached attr may not be accurate.
 	 */
 	if (!err && fm->fc->writeback_cache)
-		fuse_invalidate_attr_mask(inode, STATX_BLOCKS);
+		fuse_invalidate_attr(inode);
 	return err;
 }
 
@@ -683,7 +687,7 @@ static void fuse_aio_complete(struct fuse_io_priv *io, int err, ssize_t pos)
 			spin_unlock(&fi->lock);
 		}
 
-		io->iocb->ki_complete(io->iocb, res);
+		io->iocb->ki_complete(io->iocb, res, 0);
 	}
 
 	kref_put(&io->refcnt, fuse_io_release);
@@ -789,7 +793,7 @@ static void fuse_read_update_size(struct inode *inode, loff_t size,
 	struct fuse_inode *fi = get_fuse_inode(inode);
 
 	spin_lock(&fi->lock);
-	if (attr_ver >= fi->attr_version && size < inode->i_size &&
+	if (attr_ver == fi->attr_version && size < inode->i_size &&
 	    !test_bit(FUSE_I_SIZE_UNSTABLE, &fi->state)) {
 		fi->attr_version = atomic64_inc_return(&fc->attr_version);
 		i_size_write(inode, size);
@@ -999,7 +1003,7 @@ static ssize_t fuse_cache_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	if (fc->auto_inval_data ||
 	    (iocb->ki_pos + iov_iter_count(to) > i_size_read(inode))) {
 		int err;
-		err = fuse_update_attributes(inode, iocb->ki_filp, STATX_SIZE);
+		err = fuse_update_attributes(inode, iocb->ki_filp);
 		if (err)
 			return err;
 	}
@@ -1068,7 +1072,7 @@ static ssize_t fuse_send_write(struct fuse_io_args *ia, loff_t pos,
 	return err ?: ia->write.out.size;
 }
 
-bool fuse_write_update_attr(struct inode *inode, loff_t pos, ssize_t written)
+bool fuse_write_update_size(struct inode *inode, loff_t pos)
 {
 	struct fuse_conn *fc = get_fuse_conn(inode);
 	struct fuse_inode *fi = get_fuse_inode(inode);
@@ -1076,13 +1080,11 @@ bool fuse_write_update_attr(struct inode *inode, loff_t pos, ssize_t written)
 
 	spin_lock(&fi->lock);
 	fi->attr_version = atomic64_inc_return(&fc->attr_version);
-	if (written > 0 && pos > inode->i_size) {
+	if (pos > inode->i_size) {
 		i_size_write(inode, pos);
 		ret = true;
 	}
 	spin_unlock(&fi->lock);
-
-	fuse_invalidate_attr_mask(inode, FUSE_STATX_MODSIZE);
 
 	return ret;
 }
@@ -1162,7 +1164,7 @@ static ssize_t fuse_fill_write_pages(struct fuse_io_args *ia,
 
  again:
 		err = -EFAULT;
-		if (fault_in_iov_iter_readable(ii, bytes))
+		if (iov_iter_fault_in_readable(ii, bytes))
 			break;
 
 		err = -ENOMEM;
@@ -1266,8 +1268,11 @@ static ssize_t fuse_perform_write(struct kiocb *iocb,
 		kfree(ap->pages);
 	} while (!err && iov_iter_count(ii));
 
-	fuse_write_update_attr(inode, pos, res);
+	if (res > 0)
+		fuse_write_update_size(inode, pos);
+
 	clear_bit(FUSE_I_SIZE_UNSTABLE, &fi->state);
+	fuse_invalidate_attr(inode);
 
 	return res > 0 ? res : err;
 }
@@ -1285,8 +1290,7 @@ static ssize_t fuse_cache_write_iter(struct kiocb *iocb, struct iov_iter *from)
 
 	if (fc->writeback_cache) {
 		/* Update size (EOF optimization) and mode (SUID clearing) */
-		err = fuse_update_attributes(mapping->host, file,
-					     STATX_SIZE | STATX_MODE);
+		err = fuse_update_attributes(mapping->host, file);
 		if (err)
 			return err;
 
@@ -1447,6 +1451,7 @@ ssize_t fuse_direct_io(struct fuse_io_priv *io, struct iov_iter *iter,
 	if (!ia)
 		return -ENOMEM;
 
+	ia->io = io;
 	if (!cuse && fuse_range_is_writeback(inode, idx_from, idx_to)) {
 		if (!write)
 			inode_lock(inode);
@@ -1556,9 +1561,11 @@ static ssize_t fuse_direct_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		} else {
 			res = fuse_direct_io(&io, from, &iocb->ki_pos,
 					     FUSE_DIO_WRITE);
-			fuse_write_update_attr(inode, iocb->ki_pos, res);
 		}
 	}
+	fuse_invalidate_attr(inode);
+	if (res > 0)
+		fuse_write_update_size(inode, iocb->ki_pos);
 	inode_unlock(inode);
 
 	return res;
@@ -1769,7 +1776,7 @@ static void fuse_writepage_end(struct fuse_mount *fm, struct fuse_args *args,
 	 * is enabled, we trust local ctime/mtime.
 	 */
 	if (!fc->writeback_cache)
-		fuse_invalidate_attr_mask(inode, FUSE_STATX_MODIFY);
+		fuse_invalidate_attr(inode);
 	spin_lock(&fi->lock);
 	rb_erase(&wpa->writepages_entry, &fi->writepages);
 	while (wpa->next) {
@@ -1815,13 +1822,14 @@ static void fuse_writepage_end(struct fuse_mount *fm, struct fuse_args *args,
 
 static struct fuse_file *__fuse_write_file_get(struct fuse_inode *fi)
 {
-	struct fuse_file *ff;
+	struct fuse_file *ff = NULL;
 
 	spin_lock(&fi->lock);
-	ff = list_first_entry_or_null(&fi->write_files, struct fuse_file,
-				      write_entry);
-	if (ff)
+	if (!list_empty(&fi->write_files)) {
+		ff = list_entry(fi->write_files.next, struct fuse_file,
+				write_entry);
 		fuse_file_get(ff);
+	}
 	spin_unlock(&fi->lock);
 
 	return ff;
@@ -2309,18 +2317,15 @@ static int fuse_write_end(struct file *file, struct address_space *mapping,
 	if (!copied)
 		goto unlock;
 
-	pos += copied;
 	if (!PageUptodate(page)) {
 		/* Zero any unwritten bytes at the end of the page */
-		size_t endoff = pos & ~PAGE_MASK;
+		size_t endoff = (pos + copied) & ~PAGE_MASK;
 		if (endoff)
 			zero_user_segment(page, endoff, PAGE_SIZE);
 		SetPageUptodate(page);
 	}
 
-	if (pos > inode->i_size)
-		i_size_write(inode, pos);
-
+	fuse_write_update_size(inode, pos + copied);
 	set_page_dirty(page);
 
 unlock:
@@ -2346,15 +2351,12 @@ static int fuse_launder_page(struct page *page)
 }
 
 /*
- * Write back dirty data/metadata now (there may not be any suitable
- * open files later for data)
+ * Write back dirty pages now, because there may not be any suitable
+ * open files later
  */
 static void fuse_vma_close(struct vm_area_struct *vma)
 {
-	int err;
-
-	err = write_inode_now(vma->vm_file->f_mapping->host, 1);
-	mapping_set_error(vma->vm_file->f_mapping, err);
+	filemap_write_and_wait(vma->vm_file->f_mapping);
 }
 
 /*
@@ -2637,7 +2639,7 @@ static loff_t fuse_lseek(struct file *file, loff_t offset, int whence)
 	return vfs_setpos(file, outarg.offset, inode->i_sb->s_maxbytes);
 
 fallback:
-	err = fuse_update_attributes(inode, file, STATX_SIZE);
+	err = fuse_update_attributes(inode, file);
 	if (!err)
 		return generic_file_llseek(file, offset, whence);
 	else
@@ -2657,7 +2659,7 @@ static loff_t fuse_file_llseek(struct file *file, loff_t offset, int whence)
 		break;
 	case SEEK_END:
 		inode_lock(inode);
-		retval = fuse_update_attributes(inode, file, STATX_SIZE);
+		retval = fuse_update_attributes(inode, file);
 		if (!retval)
 			retval = generic_file_llseek(file, offset, whence);
 		inode_unlock(inode);
@@ -2878,7 +2880,7 @@ fuse_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 
 	if (iov_iter_rw(iter) == WRITE) {
 		ret = fuse_direct_io(io, iter, &pos, FUSE_DIO_WRITE);
-		fuse_invalidate_attr_mask(inode, FUSE_STATX_MODSIZE);
+		fuse_invalidate_attr(inode);
 	} else {
 		ret = __fuse_direct_read(io, iter, &pos);
 	}
@@ -2900,8 +2902,9 @@ fuse_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 	kref_put(&io->refcnt, fuse_io_release);
 
 	if (iov_iter_rw(iter) == WRITE) {
-		fuse_write_update_attr(inode, pos, ret);
-		if (ret < 0 && offset + count > i_size)
+		if (ret > 0)
+			fuse_write_update_size(inode, pos);
+		else if (ret < 0 && offset + count > i_size)
 			fuse_do_truncate(file);
 	}
 
@@ -2989,14 +2992,16 @@ static long fuse_file_fallocate(struct file *file, int mode, loff_t offset,
 
 	/* we could have extended the file */
 	if (!(mode & FALLOC_FL_KEEP_SIZE)) {
-		if (fuse_write_update_attr(inode, offset + length, length))
+		bool changed = fuse_write_update_size(inode, offset + length);
+
+		if (changed && fm->fc->writeback_cache)
 			file_update_time(file);
 	}
 
 	if (mode & (FALLOC_FL_PUNCH_HOLE | FALLOC_FL_ZERO_RANGE))
 		truncate_pagecache_range(inode, offset, offset + length - 1);
 
-	fuse_invalidate_attr_mask(inode, FUSE_STATX_MODSIZE);
+	fuse_invalidate_attr(inode);
 
 out:
 	if (!(mode & FALLOC_FL_KEEP_SIZE))
@@ -3104,8 +3109,12 @@ static ssize_t __fuse_copy_file_range(struct file *file_in, loff_t pos_in,
 				   ALIGN_DOWN(pos_out, PAGE_SIZE),
 				   ALIGN(pos_out + outarg.size, PAGE_SIZE) - 1);
 
-	file_update_time(file_out);
-	fuse_write_update_attr(inode_out, pos_out + outarg.size, outarg.size);
+	if (fc->writeback_cache) {
+		fuse_write_update_size(inode_out, pos_out + outarg.size);
+		file_update_time(file_out);
+	}
+
+	fuse_invalidate_attr(inode_out);
 
 	err = outarg.size;
 out:
@@ -3169,7 +3178,7 @@ static const struct address_space_operations fuse_file_aops  = {
 	.write_end	= fuse_write_end,
 };
 
-void fuse_init_file_inode(struct inode *inode, unsigned int flags)
+void fuse_init_file_inode(struct inode *inode)
 {
 	struct fuse_inode *fi = get_fuse_inode(inode);
 
@@ -3183,5 +3192,5 @@ void fuse_init_file_inode(struct inode *inode, unsigned int flags)
 	fi->writepages = RB_ROOT;
 
 	if (IS_ENABLED(CONFIG_FUSE_DAX))
-		fuse_dax_inode_init(inode, flags);
+		fuse_dax_inode_init(inode);
 }

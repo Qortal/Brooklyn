@@ -994,7 +994,11 @@ static bool mei_txe_check_and_ack_intrs(struct mei_device *dev, bool do_ack)
 		hhisr &= ~IPC_HHIER_SEC;
 	}
 
-	if (do_ack) {
+	generated = generated ||
+		(hisr & HISR_INT_STS_MSK) ||
+		(ipc_isr & SEC_IPC_HOST_INT_STATUS_PENDING);
+
+	if (generated && do_ack) {
 		/* Save the interrupt causes */
 		hw->intr_cause |= hisr & HISR_INT_STS_MSK;
 		if (ipc_isr & SEC_IPC_HOST_INT_STATUS_IN_RDY)

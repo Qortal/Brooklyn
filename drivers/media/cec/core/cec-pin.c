@@ -957,7 +957,7 @@ static enum hrtimer_restart cec_pin_timer(struct hrtimer *timer)
 			 * so we can kick off the pending transmit.
 			 */
 			delta = ktime_us_delta(ts, pin->ts);
-			if (delta / CEC_TIM_DATA_BIT_TOTAL >=
+			if (delta / CEC_TIM_DATA_BIT_TOTAL >
 			    pin->tx_signal_free_time) {
 				pin->tx_nacked = false;
 				if (tx_custom_start(pin))
@@ -968,7 +968,7 @@ static enum hrtimer_restart cec_pin_timer(struct hrtimer *timer)
 				cec_pin_low(pin);
 				break;
 			}
-			if (delta / CEC_TIM_DATA_BIT_TOTAL >=
+			if (delta / CEC_TIM_DATA_BIT_TOTAL >
 			    pin->tx_signal_free_time - 1)
 				pin->state = CEC_ST_TX_WAIT;
 			break;
@@ -1125,6 +1125,7 @@ static int cec_pin_adap_enable(struct cec_adapter *adap, bool enable)
 {
 	struct cec_pin *pin = adap->pin;
 
+	pin->enabled = enable;
 	if (enable) {
 		atomic_set(&pin->work_pin_num_events, 0);
 		pin->work_pin_events_rd = pin->work_pin_events_wr = 0;

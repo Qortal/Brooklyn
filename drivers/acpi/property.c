@@ -687,9 +687,9 @@ int __acpi_node_get_property_reference(const struct fwnode_handle *fwnode,
 		if (index)
 			return -EINVAL;
 
-		device = acpi_fetch_acpi_dev(obj->reference.handle);
-		if (!device)
-			return -EINVAL;
+		ret = acpi_bus_get_device(obj->reference.handle, &device);
+		if (ret)
+			return ret == -ENODEV ? -EINVAL : ret;
 
 		args->fwnode = acpi_fwnode_handle(device);
 		args->nargs = 0;
@@ -719,8 +719,9 @@ int __acpi_node_get_property_reference(const struct fwnode_handle *fwnode,
 		if (element->type == ACPI_TYPE_LOCAL_REFERENCE) {
 			struct fwnode_handle *ref_fwnode;
 
-			device = acpi_fetch_acpi_dev(element->reference.handle);
-			if (!device)
+			ret = acpi_bus_get_device(element->reference.handle,
+						  &device);
+			if (ret)
 				return -EINVAL;
 
 			nargs = 0;
@@ -1083,8 +1084,7 @@ struct fwnode_handle *acpi_get_next_subnode(const struct fwnode_handle *fwnode,
  * Returns parent node of an ACPI device or data firmware node or %NULL if
  * not available.
  */
-static struct fwnode_handle *
-acpi_node_get_parent(const struct fwnode_handle *fwnode)
+struct fwnode_handle *acpi_node_get_parent(const struct fwnode_handle *fwnode)
 {
 	if (is_acpi_data_node(fwnode)) {
 		/* All data nodes have parent pointer so just return that */

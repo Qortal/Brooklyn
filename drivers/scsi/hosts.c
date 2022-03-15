@@ -61,7 +61,6 @@ static void scsi_host_cls_release(struct device *dev)
 static struct class shost_class = {
 	.name		= "scsi_host",
 	.dev_release	= scsi_host_cls_release,
-	.dev_groups	= scsi_shost_groups,
 };
 
 /**
@@ -478,13 +477,12 @@ struct Scsi_Host *scsi_host_alloc(struct scsi_host_template *sht, int privsize)
 	dev_set_name(&shost->shost_gendev, "host%d", shost->host_no);
 	shost->shost_gendev.bus = &scsi_bus_type;
 	shost->shost_gendev.type = &scsi_host_type;
-	scsi_enable_async_suspend(&shost->shost_gendev);
 
 	device_initialize(&shost->shost_dev);
 	shost->shost_dev.parent = &shost->shost_gendev;
 	shost->shost_dev.class = &shost_class;
 	dev_set_name(&shost->shost_dev, "host%d", shost->host_no);
-	shost->shost_dev.groups = sht->shost_groups;
+	shost->shost_dev.groups = scsi_sysfs_shost_attr_groups;
 
 	shost->ehandler = kthread_run(scsi_error_handler, shost,
 			"scsi_eh_%d", shost->host_no);
@@ -670,7 +668,7 @@ static bool complete_all_cmds_iter(struct request *rq, void *data, bool rsvd)
 	scsi_dma_unmap(scmd);
 	scmd->result = 0;
 	set_host_byte(scmd, status);
-	scsi_done(scmd);
+	scmd->scsi_done(scmd);
 	return true;
 }
 

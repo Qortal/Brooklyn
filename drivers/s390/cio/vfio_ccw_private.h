@@ -17,7 +17,6 @@
 #include <linux/eventfd.h>
 #include <linux/workqueue.h>
 #include <linux/vfio_ccw.h>
-#include <linux/vfio.h>
 #include <asm/crw.h>
 #include <asm/debug.h>
 
@@ -68,7 +67,6 @@ struct vfio_ccw_crw {
 
 /**
  * struct vfio_ccw_private
- * @vdev: Embedded VFIO device
  * @sch: pointer to the subchannel
  * @state: internal state of the device
  * @completion: synchronization helper of the I/O completion
@@ -92,7 +90,6 @@ struct vfio_ccw_crw {
  * @crw_work: work for deferral process of CRW handling
  */
 struct vfio_ccw_private {
-	struct vfio_device vdev;
 	struct subchannel	*sch;
 	int			state;
 	struct completion	*completion;
@@ -123,8 +120,6 @@ extern int vfio_ccw_mdev_reg(struct subchannel *sch);
 extern void vfio_ccw_mdev_unreg(struct subchannel *sch);
 
 extern int vfio_ccw_sch_quiesce(struct subchannel *sch);
-
-extern struct mdev_driver vfio_ccw_mdev_driver;
 
 /*
  * States of the device statemachine.

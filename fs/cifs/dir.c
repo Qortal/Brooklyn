@@ -22,7 +22,6 @@
 #include "cifs_unicode.h"
 #include "fs_context.h"
 #include "cifs_ioctl.h"
-#include "fscache.h"
 
 static void
 renew_parental_timestamps(struct dentry *direntry)
@@ -508,11 +507,7 @@ cifs_atomic_open(struct inode *inode, struct dentry *direntry,
 			server->ops->close(xid, tcon, &fid);
 		cifs_del_pending_open(&open);
 		rc = -ENOMEM;
-		goto out;
 	}
-
-	fscache_use_cookie(cifs_inode_cookie(file_inode(file)),
-			   file->f_mode & FMODE_WRITE);
 
 out:
 	cifs_put_tlink(tlink);

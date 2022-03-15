@@ -28,7 +28,6 @@
 struct clk_main_osc {
 	struct clk_hw hw;
 	struct regmap *regmap;
-	struct at91_clk_pms pms;
 };
 
 #define to_clk_main_osc(hw) container_of(hw, struct clk_main_osc, hw)
@@ -38,7 +37,6 @@ struct clk_main_rc_osc {
 	struct regmap *regmap;
 	unsigned long frequency;
 	unsigned long accuracy;
-	struct at91_clk_pms pms;
 };
 
 #define to_clk_main_rc_osc(hw) container_of(hw, struct clk_main_rc_osc, hw)
@@ -53,7 +51,6 @@ struct clk_rm9200_main {
 struct clk_sam9x5_main {
 	struct clk_hw hw;
 	struct regmap *regmap;
-	struct at91_clk_pms pms;
 	u8 parent;
 };
 
@@ -123,29 +120,10 @@ static int clk_main_osc_is_prepared(struct clk_hw *hw)
 	return (status & AT91_PMC_MOSCS) && clk_main_parent_select(tmp);
 }
 
-static int clk_main_osc_save_context(struct clk_hw *hw)
-{
-	struct clk_main_osc *osc = to_clk_main_osc(hw);
-
-	osc->pms.status = clk_main_osc_is_prepared(hw);
-
-	return 0;
-}
-
-static void clk_main_osc_restore_context(struct clk_hw *hw)
-{
-	struct clk_main_osc *osc = to_clk_main_osc(hw);
-
-	if (osc->pms.status)
-		clk_main_osc_prepare(hw);
-}
-
 static const struct clk_ops main_osc_ops = {
 	.prepare = clk_main_osc_prepare,
 	.unprepare = clk_main_osc_unprepare,
 	.is_prepared = clk_main_osc_is_prepared,
-	.save_context = clk_main_osc_save_context,
-	.restore_context = clk_main_osc_restore_context,
 };
 
 struct clk_hw * __init
@@ -262,31 +240,12 @@ static unsigned long clk_main_rc_osc_recalc_accuracy(struct clk_hw *hw,
 	return osc->accuracy;
 }
 
-static int clk_main_rc_osc_save_context(struct clk_hw *hw)
-{
-	struct clk_main_rc_osc *osc = to_clk_main_rc_osc(hw);
-
-	osc->pms.status = clk_main_rc_osc_is_prepared(hw);
-
-	return 0;
-}
-
-static void clk_main_rc_osc_restore_context(struct clk_hw *hw)
-{
-	struct clk_main_rc_osc *osc = to_clk_main_rc_osc(hw);
-
-	if (osc->pms.status)
-		clk_main_rc_osc_prepare(hw);
-}
-
 static const struct clk_ops main_rc_osc_ops = {
 	.prepare = clk_main_rc_osc_prepare,
 	.unprepare = clk_main_rc_osc_unprepare,
 	.is_prepared = clk_main_rc_osc_is_prepared,
 	.recalc_rate = clk_main_rc_osc_recalc_rate,
 	.recalc_accuracy = clk_main_rc_osc_recalc_accuracy,
-	.save_context = clk_main_rc_osc_save_context,
-	.restore_context = clk_main_rc_osc_restore_context,
 };
 
 struct clk_hw * __init
@@ -506,37 +465,12 @@ static u8 clk_sam9x5_main_get_parent(struct clk_hw *hw)
 	return clk_main_parent_select(status);
 }
 
-static int clk_sam9x5_main_save_context(struct clk_hw *hw)
-{
-	struct clk_sam9x5_main *clkmain = to_clk_sam9x5_main(hw);
-
-	clkmain->pms.status = clk_main_rc_osc_is_prepared(&clkmain->hw);
-	clkmain->pms.parent = clk_sam9x5_main_get_parent(&clkmain->hw);
-
-	return 0;
-}
-
-static void clk_sam9x5_main_restore_context(struct clk_hw *hw)
-{
-	struct clk_sam9x5_main *clkmain = to_clk_sam9x5_main(hw);
-	int ret;
-
-	ret = clk_sam9x5_main_set_parent(hw, clkmain->pms.parent);
-	if (ret)
-		return;
-
-	if (clkmain->pms.status)
-		clk_sam9x5_main_prepare(hw);
-}
-
 static const struct clk_ops sam9x5_main_ops = {
 	.prepare = clk_sam9x5_main_prepare,
 	.is_prepared = clk_sam9x5_main_is_prepared,
 	.recalc_rate = clk_sam9x5_main_recalc_rate,
 	.set_parent = clk_sam9x5_main_set_parent,
 	.get_parent = clk_sam9x5_main_get_parent,
-	.save_context = clk_sam9x5_main_save_context,
-	.restore_context = clk_sam9x5_main_restore_context,
 };
 
 struct clk_hw * __init

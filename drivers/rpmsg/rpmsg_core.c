@@ -26,7 +26,7 @@
  * @rpdev: rpmsg device
  * @chinfo: channel_info to bind
  *
- * Return: a pointer to the new rpmsg device on success, or NULL on error.
+ * Returns a pointer to the new rpmsg device on success, or NULL on error.
  */
 struct rpmsg_device *rpmsg_create_channel(struct rpmsg_device *rpdev,
 					  struct rpmsg_channel_info *chinfo)
@@ -48,7 +48,7 @@ EXPORT_SYMBOL(rpmsg_create_channel);
  * @rpdev: rpmsg device
  * @chinfo: channel_info to bind
  *
- * Return: 0 on success or an appropriate error value.
+ * Returns 0 on success or an appropriate error value.
  */
 int rpmsg_release_channel(struct rpmsg_device *rpdev,
 			  struct rpmsg_channel_info *chinfo)
@@ -102,7 +102,7 @@ EXPORT_SYMBOL(rpmsg_release_channel);
  * dynamically assign them an available rpmsg address (drivers should have
  * a very good reason why not to always use RPMSG_ADDR_ANY here).
  *
- * Return: a pointer to the endpoint on success, or NULL on error.
+ * Returns a pointer to the endpoint on success, or NULL on error.
  */
 struct rpmsg_endpoint *rpmsg_create_ept(struct rpmsg_device *rpdev,
 					rpmsg_rx_cb_t cb, void *priv,
@@ -146,7 +146,7 @@ EXPORT_SYMBOL(rpmsg_destroy_ept);
  *
  * Can only be called from process context (for now).
  *
- * Return: 0 on success and an appropriate error value on failure.
+ * Returns 0 on success and an appropriate error value on failure.
  */
 int rpmsg_send(struct rpmsg_endpoint *ept, void *data, int len)
 {
@@ -175,7 +175,7 @@ EXPORT_SYMBOL(rpmsg_send);
  *
  * Can only be called from process context (for now).
  *
- * Return: 0 on success and an appropriate error value on failure.
+ * Returns 0 on success and an appropriate error value on failure.
  */
 int rpmsg_sendto(struct rpmsg_endpoint *ept, void *data, int len, u32 dst)
 {
@@ -206,7 +206,7 @@ EXPORT_SYMBOL(rpmsg_sendto);
  *
  * Can only be called from process context (for now).
  *
- * Return: 0 on success and an appropriate error value on failure.
+ * Returns 0 on success and an appropriate error value on failure.
  */
 int rpmsg_send_offchannel(struct rpmsg_endpoint *ept, u32 src, u32 dst,
 			  void *data, int len)
@@ -235,7 +235,7 @@ EXPORT_SYMBOL(rpmsg_send_offchannel);
  *
  * Can only be called from process context (for now).
  *
- * Return: 0 on success and an appropriate error value on failure.
+ * Returns 0 on success and an appropriate error value on failure.
  */
 int rpmsg_trysend(struct rpmsg_endpoint *ept, void *data, int len)
 {
@@ -263,7 +263,7 @@ EXPORT_SYMBOL(rpmsg_trysend);
  *
  * Can only be called from process context (for now).
  *
- * Return: 0 on success and an appropriate error value on failure.
+ * Returns 0 on success and an appropriate error value on failure.
  */
 int rpmsg_trysendto(struct rpmsg_endpoint *ept, void *data, int len, u32 dst)
 {
@@ -282,7 +282,7 @@ EXPORT_SYMBOL(rpmsg_trysendto);
  * @filp:	file for poll_wait()
  * @wait:	poll_table for poll_wait()
  *
- * Return: mask representing the current state of the endpoint's send buffers
+ * Returns mask representing the current state of the endpoint's send buffers
  */
 __poll_t rpmsg_poll(struct rpmsg_endpoint *ept, struct file *filp,
 			poll_table *wait)
@@ -313,7 +313,7 @@ EXPORT_SYMBOL(rpmsg_poll);
  *
  * Can only be called from process context (for now).
  *
- * Return: 0 on success and an appropriate error value on failure.
+ * Returns 0 on success and an appropriate error value on failure.
  */
 int rpmsg_trysend_offchannel(struct rpmsg_endpoint *ept, u32 src, u32 dst,
 			     void *data, int len)
@@ -326,27 +326,6 @@ int rpmsg_trysend_offchannel(struct rpmsg_endpoint *ept, u32 src, u32 dst,
 	return ept->ops->trysend_offchannel(ept, src, dst, data, len);
 }
 EXPORT_SYMBOL(rpmsg_trysend_offchannel);
-
-/**
- * rpmsg_get_mtu() - get maximum transmission buffer size for sending message.
- * @ept: the rpmsg endpoint
- *
- * This function returns maximum buffer size available for a single outgoing message.
- *
- * Return: the maximum transmission size on success and an appropriate error
- * value on failure.
- */
-
-ssize_t rpmsg_get_mtu(struct rpmsg_endpoint *ept)
-{
-	if (WARN_ON(!ept))
-		return -EINVAL;
-	if (!ept->ops->get_mtu)
-		return -ENOTSUPP;
-
-	return ept->ops->get_mtu(ept);
-}
-EXPORT_SYMBOL(rpmsg_get_mtu);
 
 /*
  * match a rpmsg channel with a channel info struct.
@@ -635,7 +614,7 @@ EXPORT_SYMBOL(rpmsg_unregister_device);
  * @rpdrv: pointer to a struct rpmsg_driver
  * @owner: owning module/driver
  *
- * Return: 0 on success, and an appropriate error value on failure.
+ * Returns 0 on success, and an appropriate error value on failure.
  */
 int __register_rpmsg_driver(struct rpmsg_driver *rpdrv, struct module *owner)
 {
@@ -649,7 +628,7 @@ EXPORT_SYMBOL(__register_rpmsg_driver);
  * unregister_rpmsg_driver() - unregister an rpmsg driver from the rpmsg bus
  * @rpdrv: pointer to a struct rpmsg_driver
  *
- * Return: 0 on success, and an appropriate error value on failure.
+ * Returns 0 on success, and an appropriate error value on failure.
  */
 void unregister_rpmsg_driver(struct rpmsg_driver *rpdrv)
 {

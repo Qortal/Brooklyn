@@ -2256,6 +2256,7 @@ static int fdp1_probe(struct platform_device *pdev)
 	struct fdp1_dev *fdp1;
 	struct video_device *vfd;
 	struct device_node *fcp_node;
+	struct resource *res;
 	struct clk *clk;
 	unsigned int i;
 
@@ -2282,15 +2283,17 @@ static int fdp1_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, fdp1);
 
 	/* Memory-mapped registers */
-	fdp1->regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	fdp1->regs = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(fdp1->regs))
 		return PTR_ERR(fdp1->regs);
 
 	/* Interrupt service routine registration */
-	ret = platform_get_irq(pdev, 0);
-	if (ret < 0)
+	fdp1->irq = ret = platform_get_irq(pdev, 0);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "cannot find IRQ\n");
 		return ret;
-	fdp1->irq = ret;
+	}
 
 	ret = devm_request_irq(&pdev->dev, fdp1->irq, fdp1_irq_handler, 0,
 			       dev_name(&pdev->dev), fdp1);

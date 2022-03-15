@@ -87,8 +87,7 @@ static int mc13xxx_i2c_probe(struct i2c_client *client,
 
 static int mc13xxx_i2c_remove(struct i2c_client *client)
 {
-	mc13xxx_common_exit(&client->dev);
-	return 0;
+	return mc13xxx_common_exit(&client->dev);
 }
 
 static struct i2c_driver mc13xxx_i2c_driver = {

@@ -535,7 +535,7 @@ static void remove_domain_devices(struct acpi_power_meter_resource *resource)
 
 		sysfs_remove_link(resource->holders_dir,
 				  kobject_name(&obj->dev.kobj));
-		acpi_dev_put(obj);
+		put_device(&obj->dev);
 	}
 
 	kfree(resource->domain_devices);
@@ -597,15 +597,18 @@ static int read_domain_devices(struct acpi_power_meter_resource *resource)
 			continue;
 
 		/* Create a symlink to domain objects */
-		obj = acpi_bus_get_acpi_device(element->reference.handle);
-		resource->domain_devices[i] = obj;
-		if (!obj)
+		resource->domain_devices[i] = NULL;
+		if (acpi_bus_get_device(element->reference.handle,
+					&resource->domain_devices[i]))
 			continue;
+
+		obj = resource->domain_devices[i];
+		get_device(&obj->dev);
 
 		res = sysfs_create_link(resource->holders_dir, &obj->dev.kobj,
 				      kobject_name(&obj->dev.kobj));
 		if (res) {
-			acpi_dev_put(obj);
+			put_device(&obj->dev);
 			resource->domain_devices[i] = NULL;
 		}
 	}

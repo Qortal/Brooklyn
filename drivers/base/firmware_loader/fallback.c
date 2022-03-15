@@ -199,16 +199,11 @@ static struct class firmware_class = {
 
 int register_sysfs_loader(void)
 {
-	int ret = class_register(&firmware_class);
-
-	if (ret != 0)
-		return ret;
-	return register_firmware_config_sysctl();
+	return class_register(&firmware_class);
 }
 
 void unregister_sysfs_loader(void)
 {
-	unregister_firmware_config_sysctl();
 	class_unregister(&firmware_class);
 }
 

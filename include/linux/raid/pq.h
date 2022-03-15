@@ -81,7 +81,7 @@ struct raid6_calls {
 	void (*xor_syndrome)(int, int, int, size_t, void **);
 	int  (*valid)(void);	/* Returns 1 if this routine set is usable */
 	const char *name;	/* Name of this routine set */
-	int priority;		/* Relative priority ranking if non-zero */
+	int prefer;		/* Has special performance attribute */
 };
 
 /* Selected algorithm */

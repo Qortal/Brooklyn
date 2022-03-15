@@ -108,10 +108,8 @@ int ntb_msi_setup_mws(struct ntb_dev *ntb)
 	if (!ntb->msi)
 		return -EINVAL;
 
-	msi_lock_descs(&ntb->pdev->dev);
-	desc = msi_first_desc(&ntb->pdev->dev, MSI_DESC_ASSOCIATED);
+	desc = first_msi_entry(&ntb->pdev->dev);
 	addr = desc->msg.address_lo + ((uint64_t)desc->msg.address_hi << 32);
-	msi_unlock_descs(&ntb->pdev->dev);
 
 	for (peer = 0; peer < ntb_peer_port_count(ntb); peer++) {
 		peer_widx = ntb_peer_highest_mw_idx(ntb, peer);
@@ -262,9 +260,8 @@ static int ntbm_msi_setup_callback(struct ntb_dev *ntb, struct msi_desc *entry,
  * @handler:	Function to be called when the IRQ occurs
  * @thread_fn:  Function to be called in a threaded interrupt context. NULL
  *              for clients which handle everything in @handler
- * @name:    An ascii name for the claiming device, dev_name(dev) if NULL
+ * @devname:    An ascii name for the claiming device, dev_name(dev) if NULL
  * @dev_id:     A cookie passed back to the handler function
- * @msi_desc:	MSI descriptor data which triggers the interrupt
  *
  * This function assigns an interrupt handler to an unused
  * MSI interrupt and returns the descriptor used to trigger
@@ -284,15 +281,13 @@ int ntbm_msi_request_threaded_irq(struct ntb_dev *ntb, irq_handler_t handler,
 				  const char *name, void *dev_id,
 				  struct ntb_msi_desc *msi_desc)
 {
-	struct device *dev = &ntb->pdev->dev;
 	struct msi_desc *entry;
 	int ret;
 
 	if (!ntb->msi)
 		return -EINVAL;
 
-	msi_lock_descs(dev);
-	msi_for_each_desc(entry, dev, MSI_DESC_ASSOCIATED) {
+	for_each_pci_msi_entry(entry, ntb->pdev) {
 		if (irq_has_action(entry->irq))
 			continue;
 
@@ -309,17 +304,14 @@ int ntbm_msi_request_threaded_irq(struct ntb_dev *ntb, irq_handler_t handler,
 		ret = ntbm_msi_setup_callback(ntb, entry, msi_desc);
 		if (ret) {
 			devm_free_irq(&ntb->dev, entry->irq, dev_id);
-			goto unlock;
+			return ret;
 		}
 
-		ret = entry->irq;
-		goto unlock;
-	}
-	ret = -ENODEV;
 
-unlock:
-	msi_unlock_descs(dev);
-	return ret;
+		return entry->irq;
+	}
+
+	return -ENODEV;
 }
 EXPORT_SYMBOL(ntbm_msi_request_threaded_irq);
 

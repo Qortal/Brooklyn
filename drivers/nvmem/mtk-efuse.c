@@ -19,12 +19,11 @@ static int mtk_reg_read(void *context,
 			unsigned int reg, void *_val, size_t bytes)
 {
 	struct mtk_efuse_priv *priv = context;
-	void __iomem *addr = priv->base + reg;
-	u8 *val = _val;
-	int i;
+	u32 *val = _val;
+	int i = 0, words = bytes / 4;
 
-	for (i = 0; i < bytes; i++, val++)
-		*val = readb(addr + i);
+	while (words--)
+		*val++ = readl(priv->base + reg + (i++ * 4));
 
 	return 0;
 }
@@ -46,8 +45,8 @@ static int mtk_efuse_probe(struct platform_device *pdev)
 	if (IS_ERR(priv->base))
 		return PTR_ERR(priv->base);
 
-	econfig.stride = 1;
-	econfig.word_size = 1;
+	econfig.stride = 4;
+	econfig.word_size = 4;
 	econfig.reg_read = mtk_reg_read;
 	econfig.size = resource_size(res);
 	econfig.priv = priv;

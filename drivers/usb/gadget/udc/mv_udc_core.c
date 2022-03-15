@@ -2084,8 +2084,10 @@ static int mv_udc_remove(struct platform_device *pdev)
 
 	usb_del_gadget_udc(&udc->gadget);
 
-	if (udc->qwork)
+	if (udc->qwork) {
+		flush_workqueue(udc->qwork);
 		destroy_workqueue(udc->qwork);
+	}
 
 	/* free memory allocated in probe */
 	dma_pool_destroy(udc->dtd_pool);

@@ -103,7 +103,6 @@ struct slimpro_i2c_dev {
 	struct i2c_adapter adapter;
 	struct device *dev;
 	struct mbox_chan *mbox_chan;
-	struct pcc_mbox_chan *pcc_chan;
 	struct mbox_client mbox_client;
 	int mbox_idx;
 	struct completion rd_complete;
@@ -467,7 +466,7 @@ static int xgene_slimpro_i2c_probe(struct platform_device *pdev)
 			return PTR_ERR(ctx->mbox_chan);
 		}
 	} else {
-		struct pcc_mbox_chan *pcc_chan;
+		struct acpi_pcct_hw_reduced *cppc_ss;
 		const struct acpi_device_id *acpi_id;
 		int version = XGENE_SLIMPRO_I2C_V1;
 
@@ -484,14 +483,24 @@ static int xgene_slimpro_i2c_probe(struct platform_device *pdev)
 
 		cl->tx_block = false;
 		cl->rx_callback = slimpro_i2c_pcc_rx_cb;
-		pcc_chan = pcc_mbox_request_channel(cl, ctx->mbox_idx);
-		if (IS_ERR(pcc_chan)) {
+		ctx->mbox_chan = pcc_mbox_request_channel(cl, ctx->mbox_idx);
+		if (IS_ERR(ctx->mbox_chan)) {
 			dev_err(&pdev->dev, "PCC mailbox channel request failed\n");
-			return PTR_ERR(pcc_chan);
+			return PTR_ERR(ctx->mbox_chan);
 		}
 
-		ctx->pcc_chan = pcc_chan;
-		ctx->mbox_chan = pcc_chan->mchan;
+		/*
+		 * The PCC mailbox controller driver should
+		 * have parsed the PCCT (global table of all
+		 * PCC channels) and stored pointers to the
+		 * subspace communication region in con_priv.
+		 */
+		cppc_ss = ctx->mbox_chan->con_priv;
+		if (!cppc_ss) {
+			dev_err(&pdev->dev, "PPC subspace not found\n");
+			rc = -ENOENT;
+			goto mbox_err;
+		}
 
 		if (!ctx->mbox_chan->mbox->txdone_irq) {
 			dev_err(&pdev->dev, "PCC IRQ not supported\n");
@@ -503,17 +512,17 @@ static int xgene_slimpro_i2c_probe(struct platform_device *pdev)
 		 * This is the shared communication region
 		 * for the OS and Platform to communicate over.
 		 */
-		ctx->comm_base_addr = pcc_chan->shmem_base_addr;
+		ctx->comm_base_addr = cppc_ss->base_address;
 		if (ctx->comm_base_addr) {
 			if (version == XGENE_SLIMPRO_I2C_V2)
 				ctx->pcc_comm_addr = memremap(
 							ctx->comm_base_addr,
-							pcc_chan->shmem_size,
+							cppc_ss->length,
 							MEMREMAP_WT);
 			else
 				ctx->pcc_comm_addr = memremap(
 							ctx->comm_base_addr,
-							pcc_chan->shmem_size,
+							cppc_ss->length,
 							MEMREMAP_WB);
 		} else {
 			dev_err(&pdev->dev, "Failed to get PCC comm region\n");
@@ -552,7 +561,7 @@ mbox_err:
 	if (acpi_disabled)
 		mbox_free_channel(ctx->mbox_chan);
 	else
-		pcc_mbox_free_channel(ctx->pcc_chan);
+		pcc_mbox_free_channel(ctx->mbox_chan);
 
 	return rc;
 }
@@ -566,7 +575,7 @@ static int xgene_slimpro_i2c_remove(struct platform_device *pdev)
 	if (acpi_disabled)
 		mbox_free_channel(ctx->mbox_chan);
 	else
-		pcc_mbox_free_channel(ctx->pcc_chan);
+		pcc_mbox_free_channel(ctx->mbox_chan);
 
 	return 0;
 }

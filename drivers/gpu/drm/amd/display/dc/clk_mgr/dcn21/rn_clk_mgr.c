@@ -55,7 +55,9 @@
 
 
 /* TODO: evaluate how to lower or disable all dcn clocks in screen off case */
-static int rn_get_active_display_cnt_wa(struct dc *dc, struct dc_state *context)
+int rn_get_active_display_cnt_wa(
+		struct dc *dc,
+		struct dc_state *context)
 {
 	int i, display_count;
 	bool tmds_present = false;
@@ -64,9 +66,11 @@ static int rn_get_active_display_cnt_wa(struct dc *dc, struct dc_state *context)
 	for (i = 0; i < context->stream_count; i++) {
 		const struct dc_stream_state *stream = context->streams[i];
 
+		/* Extend the WA to DP for Linux*/
 		if (stream->signal == SIGNAL_TYPE_HDMI_TYPE_A ||
 				stream->signal == SIGNAL_TYPE_DVI_SINGLE_LINK ||
-				stream->signal == SIGNAL_TYPE_DVI_DUAL_LINK)
+				stream->signal == SIGNAL_TYPE_DVI_DUAL_LINK ||
+				stream->signal == SIGNAL_TYPE_DISPLAY_PORT)
 			tmds_present = true;
 	}
 
@@ -74,8 +78,7 @@ static int rn_get_active_display_cnt_wa(struct dc *dc, struct dc_state *context)
 		const struct dc_link *link = dc->links[i];
 
 		/* abusing the fact that the dig and phy are coupled to see if the phy is enabled */
-		if (link->link_enc->funcs->is_dig_enabled &&
-		    link->link_enc->funcs->is_dig_enabled(link->link_enc))
+		if (link->link_enc->funcs->is_dig_enabled(link->link_enc))
 			display_count++;
 	}
 
@@ -86,7 +89,7 @@ static int rn_get_active_display_cnt_wa(struct dc *dc, struct dc_state *context)
 	return display_count;
 }
 
-static void rn_set_low_power_state(struct clk_mgr *clk_mgr_base)
+void rn_set_low_power_state(struct clk_mgr *clk_mgr_base)
 {
 	struct clk_mgr_internal *clk_mgr = TO_CLK_MGR_INTERNAL(clk_mgr_base);
 
@@ -120,7 +123,7 @@ static void rn_update_clocks_update_dpp_dto(struct clk_mgr_internal *clk_mgr,
 }
 
 
-static void rn_update_clocks(struct clk_mgr *clk_mgr_base,
+void rn_update_clocks(struct clk_mgr *clk_mgr_base,
 			struct dc_state *context,
 			bool safe_to_lower)
 {
@@ -146,7 +149,6 @@ static void rn_update_clocks(struct clk_mgr *clk_mgr_base,
 		if (clk_mgr_base->clks.pwr_state != DCN_PWR_STATE_LOW_POWER) {
 
 			display_count = rn_get_active_display_cnt_wa(dc, context);
-
 			/* if we can go lower, go lower */
 			if (display_count == 0) {
 				rn_vbios_smu_set_dcn_low_power_state(clk_mgr, DCN_PWR_STATE_LOW_POWER);
@@ -427,14 +429,25 @@ static void rn_dump_clk_registers(struct clk_state_registers_and_bypass *regs_an
 	}
 }
 
-static void rn_enable_pme_wa(struct clk_mgr *clk_mgr_base)
+/* This function produce translated logical clk state values*/
+void rn_get_clk_states(struct clk_mgr *clk_mgr_base, struct clk_states *s)
+{
+	struct clk_state_registers_and_bypass sb = { 0 };
+	struct clk_log_info log_info = { 0 };
+
+	rn_dump_clk_registers(&sb, clk_mgr_base, &log_info);
+
+	s->dprefclk_khz = sb.dprefclk * 1000;
+}
+
+void rn_enable_pme_wa(struct clk_mgr *clk_mgr_base)
 {
 	struct clk_mgr_internal *clk_mgr = TO_CLK_MGR_INTERNAL(clk_mgr_base);
 
 	rn_vbios_smu_enable_pme_wa(clk_mgr);
 }
 
-static void rn_init_clocks(struct clk_mgr *clk_mgr)
+void rn_init_clocks(struct clk_mgr *clk_mgr)
 {
 	memset(&(clk_mgr->clks), 0, sizeof(struct dc_clocks));
 	// Assumption is that boot state always supports pstate

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_CLEANCACHE_H
 #define _LINUX_CLEANCACHE_H
 
@@ -27,7 +28,7 @@ struct cleancache_filekey {
 
 struct cleancache_ops {
 	int (*init_fs)(size_t);
-	int (*init_shared_fs)(char *uuid, size_t);
+	int (*init_shared_fs)(uuid_t *uuid, size_t);
 	int (*get_page)(int, struct cleancache_filekey,
 			pgoff_t, struct page *);
 	void (*put_page)(int, struct cleancache_filekey,
@@ -35,7 +36,7 @@ struct cleancache_ops {
 	void (*invalidate_page)(int, struct cleancache_filekey, pgoff_t);
 	void (*invalidate_inode)(int, struct cleancache_filekey);
 	void (*invalidate_fs)(int);
-} __no_const;
+};
 
 extern int cleancache_register_ops(const struct cleancache_ops *ops);
 extern void __cleancache_init_fs(struct super_block *);

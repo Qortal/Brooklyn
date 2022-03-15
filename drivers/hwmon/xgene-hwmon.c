@@ -93,7 +93,6 @@ struct slimpro_resp_msg {
 struct xgene_hwmon_dev {
 	struct device		*dev;
 	struct mbox_chan	*mbox_chan;
-	struct pcc_mbox_chan	*pcc_chan;
 	struct mbox_client	mbox_client;
 	int			mbox_idx;
 
@@ -653,16 +652,14 @@ static int xgene_hwmon_probe(struct platform_device *pdev)
 			goto out_mbox_free;
 		}
 	} else {
-		struct pcc_mbox_chan *pcc_chan;
+		struct acpi_pcct_hw_reduced *cppc_ss;
 		const struct acpi_device_id *acpi_id;
 		int version;
 
 		acpi_id = acpi_match_device(pdev->dev.driver->acpi_match_table,
 					    &pdev->dev);
-		if (!acpi_id) {
-			rc = -EINVAL;
-			goto out_mbox_free;
-		}
+		if (!acpi_id)
+			return -EINVAL;
 
 		version = (int)acpi_id->driver_data;
 
@@ -674,16 +671,26 @@ static int xgene_hwmon_probe(struct platform_device *pdev)
 		}
 
 		cl->rx_callback = xgene_hwmon_pcc_rx_cb;
-		pcc_chan = pcc_mbox_request_channel(cl, ctx->mbox_idx);
-		if (IS_ERR(pcc_chan)) {
+		ctx->mbox_chan = pcc_mbox_request_channel(cl, ctx->mbox_idx);
+		if (IS_ERR(ctx->mbox_chan)) {
 			dev_err(&pdev->dev,
 				"PPC channel request failed\n");
 			rc = -ENODEV;
 			goto out_mbox_free;
 		}
 
-		ctx->pcc_chan = pcc_chan;
-		ctx->mbox_chan = pcc_chan->mchan;
+		/*
+		 * The PCC mailbox controller driver should
+		 * have parsed the PCCT (global table of all
+		 * PCC channels) and stored pointers to the
+		 * subspace communication region in con_priv.
+		 */
+		cppc_ss = ctx->mbox_chan->con_priv;
+		if (!cppc_ss) {
+			dev_err(&pdev->dev, "PPC subspace not found\n");
+			rc = -ENODEV;
+			goto out;
+		}
 
 		if (!ctx->mbox_chan->mbox->txdone_irq) {
 			dev_err(&pdev->dev, "PCC IRQ not supported\n");
@@ -695,16 +702,16 @@ static int xgene_hwmon_probe(struct platform_device *pdev)
 		 * This is the shared communication region
 		 * for the OS and Platform to communicate over.
 		 */
-		ctx->comm_base_addr = pcc_chan->shmem_base_addr;
+		ctx->comm_base_addr = cppc_ss->base_address;
 		if (ctx->comm_base_addr) {
 			if (version == XGENE_HWMON_V2)
 				ctx->pcc_comm_addr = (void __force *)ioremap(
 							ctx->comm_base_addr,
-							pcc_chan->shmem_size);
+							cppc_ss->length);
 			else
 				ctx->pcc_comm_addr = memremap(
 							ctx->comm_base_addr,
-							pcc_chan->shmem_size,
+							cppc_ss->length,
 							MEMREMAP_WB);
 		} else {
 			dev_err(&pdev->dev, "Failed to get PCC comm region\n");
@@ -720,11 +727,11 @@ static int xgene_hwmon_probe(struct platform_device *pdev)
 		}
 
 		/*
-		 * pcc_chan->latency is just a Nominal value. In reality
+		 * cppc_ss->latency is just a Nominal value. In reality
 		 * the remote processor could be much slower to reply.
 		 * So add an arbitrary amount of wait on top of Nominal.
 		 */
-		ctx->usecs_lat = PCC_NUM_RETRIES * pcc_chan->latency;
+		ctx->usecs_lat = PCC_NUM_RETRIES * cppc_ss->latency;
 	}
 
 	ctx->hwmon_dev = hwmon_device_register_with_groups(ctx->dev,
@@ -750,7 +757,7 @@ out:
 	if (acpi_disabled)
 		mbox_free_channel(ctx->mbox_chan);
 	else
-		pcc_mbox_free_channel(ctx->pcc_chan);
+		pcc_mbox_free_channel(ctx->mbox_chan);
 out_mbox_free:
 	kfifo_free(&ctx->async_msg_fifo);
 
@@ -766,7 +773,7 @@ static int xgene_hwmon_remove(struct platform_device *pdev)
 	if (acpi_disabled)
 		mbox_free_channel(ctx->mbox_chan);
 	else
-		pcc_mbox_free_channel(ctx->pcc_chan);
+		pcc_mbox_free_channel(ctx->mbox_chan);
 
 	return 0;
 }

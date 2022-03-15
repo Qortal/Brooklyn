@@ -510,8 +510,10 @@ static int altera_pcie_cfg_read(struct pci_bus *bus, unsigned int devfn,
 	if (altera_pcie_hide_rc_bar(bus, devfn, where))
 		return PCIBIOS_BAD_REGISTER_NUMBER;
 
-	if (!altera_pcie_valid_device(pcie, bus, PCI_SLOT(devfn)))
+	if (!altera_pcie_valid_device(pcie, bus, PCI_SLOT(devfn))) {
+		*value = 0xffffffff;
 		return PCIBIOS_DEVICE_NOT_FOUND;
+	}
 
 	return _altera_pcie_cfg_read(pcie, bus->number, devfn, where, size,
 				     value);
@@ -765,7 +767,7 @@ static int altera_pcie_probe(struct platform_device *pdev)
 	struct altera_pcie *pcie;
 	struct pci_host_bridge *bridge;
 	int ret;
-	const struct altera_pcie_data *data;
+	const struct of_device_id *match;
 
 	bridge = devm_pci_alloc_host_bridge(dev, sizeof(*pcie));
 	if (!bridge)
@@ -775,11 +777,11 @@ static int altera_pcie_probe(struct platform_device *pdev)
 	pcie->pdev = pdev;
 	platform_set_drvdata(pdev, pcie);
 
-	data = of_device_get_match_data(&pdev->dev);
-	if (!data)
+	match = of_match_device(altera_pcie_of_match, &pdev->dev);
+	if (!match)
 		return -ENODEV;
 
-	pcie->pcie_data = data;
+	pcie->pcie_data = match->data;
 
 	ret = altera_pcie_parse_dt(pcie);
 	if (ret) {

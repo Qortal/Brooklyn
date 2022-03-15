@@ -29,6 +29,7 @@
 
 #include "qxl_drv.h"
 
+#include <linux/console.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/vgaarb.h>
@@ -294,7 +295,7 @@ static struct drm_driver qxl_driver = {
 
 static int __init qxl_init(void)
 {
-	if (drm_firmware_drivers_only() && qxl_modeset == -1)
+	if (vgacon_text_force() && qxl_modeset == -1)
 		return -EINVAL;
 
 	if (qxl_modeset == 0)

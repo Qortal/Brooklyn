@@ -6,6 +6,7 @@
 #include <linux/preempt.h>
 #include <linux/smp.h>
 #include <linux/cpumask.h>
+#include <linux/printk.h>
 #include <linux/pfn.h>
 #include <linux/init.h>
 
@@ -94,7 +95,10 @@ extern const char * const pcpu_fc_names[PCPU_FC_NR];
 
 extern enum pcpu_fc pcpu_chosen_fc;
 
-typedef int (pcpu_fc_cpu_to_node_fn_t)(int cpu);
+typedef void * (*pcpu_fc_alloc_fn_t)(unsigned int cpu, size_t size,
+				     size_t align);
+typedef void (*pcpu_fc_free_fn_t)(void *ptr, size_t size);
+typedef void (*pcpu_fc_populate_pte_fn_t)(unsigned long addr);
 typedef int (pcpu_fc_cpu_distance_fn_t)(unsigned int from, unsigned int to);
 
 extern struct pcpu_alloc_info * __init pcpu_alloc_alloc_info(int nr_groups,
@@ -108,16 +112,18 @@ extern void __init pcpu_setup_first_chunk(const struct pcpu_alloc_info *ai,
 extern int __init pcpu_embed_first_chunk(size_t reserved_size, size_t dyn_size,
 				size_t atom_size,
 				pcpu_fc_cpu_distance_fn_t cpu_distance_fn,
-				pcpu_fc_cpu_to_node_fn_t cpu_to_nd_fn);
+				pcpu_fc_alloc_fn_t alloc_fn,
+				pcpu_fc_free_fn_t free_fn);
 #endif
 
 #ifdef CONFIG_NEED_PER_CPU_PAGE_FIRST_CHUNK
-void __init pcpu_populate_pte(unsigned long addr);
 extern int __init pcpu_page_first_chunk(size_t reserved_size,
-				pcpu_fc_cpu_to_node_fn_t cpu_to_nd_fn);
+				pcpu_fc_alloc_fn_t alloc_fn,
+				pcpu_fc_free_fn_t free_fn,
+				pcpu_fc_populate_pte_fn_t populate_pte_fn);
 #endif
 
-extern void __percpu *__alloc_reserved_percpu(size_t size, size_t align) __alloc_size(1);
+extern void __percpu *__alloc_reserved_percpu(size_t size, size_t align);
 extern bool __is_kernel_percpu_address(unsigned long addr, unsigned long *can_addr);
 extern bool is_kernel_percpu_address(unsigned long addr);
 
@@ -125,8 +131,8 @@ extern bool is_kernel_percpu_address(unsigned long addr);
 extern void __init setup_per_cpu_areas(void);
 #endif
 
-extern void __percpu *__alloc_percpu_gfp(size_t size, size_t align, gfp_t gfp) __alloc_size(1);
-extern void __percpu *__alloc_percpu(size_t size, size_t align) __alloc_size(1);
+extern void __percpu *__alloc_percpu_gfp(size_t size, size_t align, gfp_t gfp);
+extern void __percpu *__alloc_percpu(size_t size, size_t align);
 extern void free_percpu(void __percpu *__pdata);
 extern phys_addr_t per_cpu_ptr_to_phys(void *addr);
 

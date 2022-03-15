@@ -85,7 +85,7 @@ struct f75375_data {
 	const char *name;
 	int kind;
 	struct mutex update_lock; /* protect register access */
-	bool valid;
+	char valid;
 	unsigned long last_updated;	/* In jiffies */
 	unsigned long last_limits;	/* In jiffies */
 
@@ -228,7 +228,7 @@ static struct f75375_data *f75375_update_device(struct device *dev)
 				f75375_read8(client, F75375_REG_VOLT(nr));
 
 		data->last_updated = jiffies;
-		data->valid = true;
+		data->valid = 1;
 	}
 
 	mutex_unlock(&data->update_lock);

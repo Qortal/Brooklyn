@@ -3493,43 +3493,8 @@ megasas_complete_r1_command(struct megasas_instance *instance,
 		megasas_return_cmd_fusion(instance, cmd);
 		scsi_dma_unmap(scmd_local);
 		megasas_sdev_busy_dec(instance, scmd_local);
-		scsi_done(scmd_local);
+		scmd_local->scsi_done(scmd_local);
 	}
-}
-
-/**
- * access_irq_context:		Access to reply processing
- * @irq_context:		IRQ context
- *
- * Synchronize access to reply processing.
- *
- * Return:  true on success, false on failure.
- */
-static inline
-bool access_irq_context(struct megasas_irq_context  *irq_context)
-{
-	if (!irq_context)
-		return true;
-
-	if (atomic_add_unless(&irq_context->in_used, 1, 1))
-		return true;
-
-	return false;
-}
-
-/**
- * release_irq_context:		Release reply processing
- * @irq_context:		IRQ context
- *
- * Release access of reply processing.
- *
- * Return: Nothing.
- */
-static inline
-void release_irq_context(struct megasas_irq_context  *irq_context)
-{
-	if (irq_context)
-		atomic_dec(&irq_context->in_used);
 }
 
 /**
@@ -3565,7 +3530,7 @@ complete_cmd_fusion(struct megasas_instance *instance, u32 MSIxIndex,
 	if (atomic_read(&instance->adprecovery) == MEGASAS_HW_CRITICAL_ERROR)
 		return IRQ_HANDLED;
 
-	if (!access_irq_context(irq_context))
+	if (irq_context && !atomic_add_unless(&irq_context->in_used, 1, 1))
 		return 0;
 
 	desc = fusion->reply_frames_desc[MSIxIndex] +
@@ -3579,7 +3544,8 @@ complete_cmd_fusion(struct megasas_instance *instance, u32 MSIxIndex,
 		MPI2_RPY_DESCRIPT_FLAGS_TYPE_MASK;
 
 	if (reply_descript_type == MPI2_RPY_DESCRIPT_FLAGS_UNUSED) {
-		release_irq_context(irq_context);
+		if (irq_context)
+			atomic_dec(&irq_context->in_used);
 		return IRQ_NONE;
 	}
 
@@ -3634,7 +3600,7 @@ complete_cmd_fusion(struct megasas_instance *instance, u32 MSIxIndex,
 				megasas_return_cmd_fusion(instance, cmd_fusion);
 				scsi_dma_unmap(scmd_local);
 				megasas_sdev_busy_dec(instance, scmd_local);
-				scsi_done(scmd_local);
+				scmd_local->scsi_done(scmd_local);
 			} else	/* Optimal VD - R1 FP command completion. */
 				megasas_complete_r1_command(instance, cmd_fusion);
 			break;
@@ -3697,7 +3663,7 @@ complete_cmd_fusion(struct megasas_instance *instance, u32 MSIxIndex,
 					irq_context->irq_line_enable = true;
 					irq_poll_sched(&irq_context->irqpoll);
 				}
-				release_irq_context(irq_context);
+				atomic_dec(&irq_context->in_used);
 				return num_completed;
 			}
 		}
@@ -3716,7 +3682,8 @@ complete_cmd_fusion(struct megasas_instance *instance, u32 MSIxIndex,
 		megasas_check_and_restore_queue_depth(instance);
 	}
 
-	release_irq_context(irq_context);
+	if (irq_context)
+		atomic_dec(&irq_context->in_used);
 
 	return num_completed;
 }
@@ -5013,7 +4980,7 @@ int megasas_reset_fusion(struct Scsi_Host *shost, int reason)
 					atomic_dec(&instance->ldio_outstanding);
 				megasas_return_cmd_fusion(instance, cmd_fusion);
 				scsi_dma_unmap(scmd_local);
-				scsi_done(scmd_local);
+				scmd_local->scsi_done(scmd_local);
 			}
 		}
 

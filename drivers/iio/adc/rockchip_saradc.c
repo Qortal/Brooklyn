@@ -319,6 +319,7 @@ static int rockchip_saradc_probe(struct platform_device *pdev)
 	struct rockchip_saradc *info = NULL;
 	struct device_node *np = pdev->dev.of_node;
 	struct iio_dev *indio_dev = NULL;
+	struct resource	*mem;
 	const struct of_device_id *match;
 	int ret;
 	int irq;
@@ -347,7 +348,8 @@ static int rockchip_saradc_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	info->regs = devm_platform_ioremap_resource(pdev, 0);
+	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	info->regs = devm_ioremap_resource(&pdev->dev, mem);
 	if (IS_ERR(info->regs))
 		return PTR_ERR(info->regs);
 
@@ -360,8 +362,7 @@ static int rockchip_saradc_probe(struct platform_device *pdev)
 	if (IS_ERR(info->reset)) {
 		ret = PTR_ERR(info->reset);
 		if (ret != -ENOENT)
-			return dev_err_probe(&pdev->dev, ret,
-					     "failed to get saradc-apb\n");
+			return ret;
 
 		dev_dbg(&pdev->dev, "no reset control found\n");
 		info->reset = NULL;
@@ -371,7 +372,7 @@ static int rockchip_saradc_probe(struct platform_device *pdev)
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
-		return dev_err_probe(&pdev->dev, irq, "failed to get irq\n");
+		return irq;
 
 	ret = devm_request_irq(&pdev->dev, irq, rockchip_saradc_isr,
 			       0, dev_name(&pdev->dev), info);
@@ -381,19 +382,23 @@ static int rockchip_saradc_probe(struct platform_device *pdev)
 	}
 
 	info->pclk = devm_clk_get(&pdev->dev, "apb_pclk");
-	if (IS_ERR(info->pclk))
-		return dev_err_probe(&pdev->dev, PTR_ERR(info->pclk),
-				     "failed to get pclk\n");
+	if (IS_ERR(info->pclk)) {
+		dev_err(&pdev->dev, "failed to get pclk\n");
+		return PTR_ERR(info->pclk);
+	}
 
 	info->clk = devm_clk_get(&pdev->dev, "saradc");
-	if (IS_ERR(info->clk))
-		return dev_err_probe(&pdev->dev, PTR_ERR(info->clk),
-				     "failed to get adc clock\n");
+	if (IS_ERR(info->clk)) {
+		dev_err(&pdev->dev, "failed to get adc clock\n");
+		return PTR_ERR(info->clk);
+	}
 
 	info->vref = devm_regulator_get(&pdev->dev, "vref");
-	if (IS_ERR(info->vref))
-		return dev_err_probe(&pdev->dev, PTR_ERR(info->vref),
-				     "failed to get regulator\n");
+	if (IS_ERR(info->vref)) {
+		dev_err(&pdev->dev, "failed to get regulator, %ld\n",
+			PTR_ERR(info->vref));
+		return PTR_ERR(info->vref);
+	}
 
 	if (info->reset)
 		rockchip_saradc_reset_controller(info->reset);

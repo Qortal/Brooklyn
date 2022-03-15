@@ -670,10 +670,10 @@ static int proc_pid_syscall(struct seq_file *m, struct pid_namespace *ns,
 /************************************************************************/
 
 /* permission checks */
-static bool proc_fd_access_allowed(struct inode *inode)
+static int proc_fd_access_allowed(struct inode *inode)
 {
 	struct task_struct *task;
-	bool allowed = false;
+	int allowed = 0;
 	/* Allow access to a task's file descriptors if it is us or we
 	 * may use ptrace attach to the process and find out that
 	 * information.
@@ -1982,21 +1982,19 @@ static int pid_revalidate(struct dentry *dentry, unsigned int flags)
 {
 	struct inode *inode;
 	struct task_struct *task;
-	int ret = 0;
 
-	rcu_read_lock();
-	inode = d_inode_rcu(dentry);
-	if (!inode)
-		goto out;
-	task = pid_task(proc_pid(inode), PIDTYPE_PID);
+	if (flags & LOOKUP_RCU)
+		return -ECHILD;
+
+	inode = d_inode(dentry);
+	task = get_proc_task(inode);
 
 	if (task) {
 		pid_update_inode(task, inode);
-		ret = 1;
+		put_task_struct(task);
+		return 1;
 	}
-out:
-	rcu_read_unlock();
-	return ret;
+	return 0;
 }
 
 static inline bool proc_inode_is_dead(struct inode *inode)
@@ -3804,10 +3802,7 @@ static int proc_task_readdir(struct file *file, struct dir_context *ctx)
 	     task = next_tid(task), ctx->pos++) {
 		char name[10 + 1];
 		unsigned int len;
-
 		tid = task_pid_nr_ns(task, ns);
-		if (!tid)
-			continue;	/* The task has just exited. */
 		len = snprintf(name, sizeof(name), "%u", tid);
 		if (!proc_fill_cache(file, ctx, name, len,
 				proc_task_instantiate, task, NULL)) {

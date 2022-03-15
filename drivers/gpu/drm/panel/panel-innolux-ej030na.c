@@ -198,14 +198,16 @@ static int ej030na_probe(struct spi_device *spi)
 		return -EINVAL;
 
 	priv->supply = devm_regulator_get(dev, "power");
-	if (IS_ERR(priv->supply))
-		return dev_err_probe(dev, PTR_ERR(priv->supply),
-				     "Failed to get power supply\n");
+	if (IS_ERR(priv->supply)) {
+		dev_err(dev, "Failed to get power supply\n");
+		return PTR_ERR(priv->supply);
+	}
 
 	priv->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
-	if (IS_ERR(priv->reset_gpio))
-		return dev_err_probe(dev, PTR_ERR(priv->reset_gpio),
-				     "Failed to get reset GPIO\n");
+	if (IS_ERR(priv->reset_gpio)) {
+		dev_err(dev, "Failed to get reset GPIO\n");
+		return PTR_ERR(priv->reset_gpio);
+	}
 
 	drm_panel_init(&priv->panel, dev, &ej030na_funcs,
 		       DRM_MODE_CONNECTOR_DPI);

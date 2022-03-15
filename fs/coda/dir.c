@@ -317,10 +317,13 @@ static int coda_rename(struct user_namespace *mnt_userns, struct inode *old_dir,
 				coda_dir_drop_nlink(old_dir);
 				coda_dir_inc_nlink(new_dir);
 			}
+			coda_dir_update_mtime(old_dir);
+			coda_dir_update_mtime(new_dir);
 			coda_flag_inode(d_inode(new_dentry), C_VATTR);
+		} else {
+			coda_flag_inode(old_dir, C_VATTR);
+			coda_flag_inode(new_dir, C_VATTR);
 		}
-		coda_dir_update_mtime(old_dir);
-		coda_dir_update_mtime(new_dir);
 	}
 	return error;
 }
@@ -496,20 +499,15 @@ out:
  */
 static int coda_dentry_delete(const struct dentry * dentry)
 {
-	struct inode *inode;
-	struct coda_inode_info *cii;
+	int flags;
 
 	if (d_really_is_negative(dentry)) 
 		return 0;
 
-	inode = d_inode(dentry);
-	if (!inode || is_bad_inode(inode))
+	flags = (ITOC(d_inode(dentry))->c_flags) & C_PURGE;
+	if (is_bad_inode(d_inode(dentry)) || flags) {
 		return 1;
-
-	cii = ITOC(inode);
-	if (cii->c_flags & C_PURGE)
-		return 1;
-
+	}
 	return 0;
 }
 

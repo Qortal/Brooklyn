@@ -162,17 +162,7 @@ static noinline void switch_commit_roots(struct btrfs_trans_handle *trans)
 	struct btrfs_root *root, *tmp;
 	struct btrfs_caching_control *caching_ctl, *next;
 
-	/*
-	 * At this point no one can be using this transaction to modify any tree
-	 * and no one can start another transaction to modify any tree either.
-	 */
-	ASSERT(cur_trans->state == TRANS_STATE_COMMIT_DOING);
-
 	down_write(&fs_info->commit_root_sem);
-
-	if (test_bit(BTRFS_FS_RELOC_RUNNING, &fs_info->flags))
-		fs_info->last_reloc_trans = trans->transid;
-
 	list_for_each_entry_safe(root, tmp, &cur_trans->switch_commits,
 				 dirty_list) {
 		list_del_init(&root->dirty_list);
@@ -293,7 +283,7 @@ static noinline int join_transaction(struct btrfs_fs_info *fs_info,
 	spin_lock(&fs_info->trans_lock);
 loop:
 	/* The file system has been taken offline. No new transactions. */
-	if (BTRFS_FS_ERROR(fs_info)) {
+	if (test_bit(BTRFS_FS_STATE_ERROR, &fs_info->fs_state)) {
 		spin_unlock(&fs_info->trans_lock);
 		return -EROFS;
 	}
@@ -341,7 +331,7 @@ loop:
 		 */
 		kfree(cur_trans);
 		goto loop;
-	} else if (BTRFS_FS_ERROR(fs_info)) {
+	} else if (test_bit(BTRFS_FS_STATE_ERROR, &fs_info->fs_state)) {
 		spin_unlock(&fs_info->trans_lock);
 		kfree(cur_trans);
 		return -EROFS;
@@ -423,6 +413,7 @@ static int record_root_in_trans(struct btrfs_trans_handle *trans,
 
 	if ((test_bit(BTRFS_ROOT_SHAREABLE, &root->state) &&
 	    root->last_trans < trans->transid) || force) {
+		WARN_ON(root == fs_info->extent_root);
 		WARN_ON(!force && root->commit_root != root->node);
 
 		/*
@@ -588,7 +579,7 @@ start_transaction(struct btrfs_root *root, unsigned int num_items,
 	bool do_chunk_alloc = false;
 	int ret;
 
-	if (BTRFS_FS_ERROR(fs_info))
+	if (test_bit(BTRFS_FS_STATE_ERROR, &fs_info->fs_state))
 		return ERR_PTR(-EROFS);
 
 	if (current->journal_info) {
@@ -637,7 +628,7 @@ start_transaction(struct btrfs_root *root, unsigned int num_items,
 			reloc_reserved = true;
 		}
 
-		ret = btrfs_block_rsv_add(fs_info, rsv, num_bytes, flush);
+		ret = btrfs_block_rsv_add(root, rsv, num_bytes, flush);
 		if (ret)
 			goto reserve_fail;
 		if (delayed_refs_bytes) {
@@ -701,6 +692,7 @@ again:
 
 	h->transid = cur_trans->transid;
 	h->transaction = cur_trans;
+	h->root = root;
 	refcount_set(&h->use_count, 1);
 	h->fs_info = root->fs_info;
 
@@ -854,7 +846,37 @@ btrfs_attach_transaction_barrier(struct btrfs_root *root)
 static noinline void wait_for_commit(struct btrfs_transaction *commit,
 				     const enum btrfs_trans_state min_state)
 {
-	wait_event(commit->commit_wait, commit->state >= min_state);
+	struct btrfs_fs_info *fs_info = commit->fs_info;
+	u64 transid = commit->transid;
+	bool put = false;
+
+	while (1) {
+		wait_event(commit->commit_wait, commit->state >= min_state);
+		if (put)
+			btrfs_put_transaction(commit);
+
+		if (min_state < TRANS_STATE_COMPLETED)
+			break;
+
+		/*
+		 * A transaction isn't really completed until all of the
+		 * previous transactions are completed, but with fsync we can
+		 * end up with SUPER_COMMITTED transactions before a COMPLETED
+		 * transaction. Wait for those.
+		 */
+
+		spin_lock(&fs_info->trans_lock);
+		commit = list_first_entry_or_null(&fs_info->trans_list,
+						  struct btrfs_transaction,
+						  list);
+		if (!commit || commit->transid > transid) {
+			spin_unlock(&fs_info->trans_lock);
+			break;
+		}
+		refcount_inc(&commit->use_count);
+		put = true;
+		spin_unlock(&fs_info->trans_lock);
+	}
 }
 
 int btrfs_wait_for_commit(struct btrfs_fs_info *fs_info, u64 transid)
@@ -999,7 +1021,8 @@ static int __btrfs_end_transaction(struct btrfs_trans_handle *trans,
 	if (throttle)
 		btrfs_run_delayed_iputs(info);
 
-	if (TRANS_ABORTED(trans) || BTRFS_FS_ERROR(info)) {
+	if (TRANS_ABORTED(trans) ||
+	    test_bit(BTRFS_FS_STATE_ERROR, &info->fs_state)) {
 		wake_up_process(info->transaction_kthread);
 		if (TRANS_ABORTED(trans))
 			err = trans->aborted;
@@ -1244,12 +1267,6 @@ static noinline int commit_cowonly_roots(struct btrfs_trans_handle *trans)
 	struct extent_buffer *eb;
 	int ret;
 
-	/*
-	 * At this point no one can be using this transaction to modify any tree
-	 * and no one can start another transaction to modify any tree either.
-	 */
-	ASSERT(trans->transaction->state == TRANS_STATE_COMMIT_DOING);
-
 	eb = btrfs_lock_root_node(fs_info->tree_root);
 	ret = btrfs_cow_block(trans, fs_info->tree_root, eb, NULL,
 			      0, &eb, BTRFS_NESTING_COW);
@@ -1281,8 +1298,9 @@ again:
 		root = list_entry(next, struct btrfs_root, dirty_list);
 		clear_bit(BTRFS_ROOT_DIRTY, &root->state);
 
-		list_add_tail(&root->dirty_list,
-			      &trans->transaction->switch_commits);
+		if (root != fs_info->extent_root)
+			list_add_tail(&root->dirty_list,
+				      &trans->transaction->switch_commits);
 		ret = update_cowonly_root(trans, root);
 		if (ret)
 			return ret;
@@ -1312,11 +1330,40 @@ again:
 	if (!list_empty(&fs_info->dirty_cowonly_roots))
 		goto again;
 
+	list_add_tail(&fs_info->extent_root->dirty_list,
+		      &trans->transaction->switch_commits);
+
 	/* Update dev-replace pointer once everything is committed */
 	fs_info->dev_replace.committed_cursor_left =
 		fs_info->dev_replace.cursor_left_last_write_of_item;
 
 	return 0;
+}
+
+/*
+ * If we had a pending drop we need to see if there are any others left in our
+ * dead roots list, and if not clear our bit and wake any waiters.
+ */
+void btrfs_maybe_wake_unfinished_drop(struct btrfs_fs_info *fs_info)
+{
+	/*
+	 * We put the drop in progress roots at the front of the list, so if the
+	 * first entry doesn't have UNFINISHED_DROP set we can wake everybody
+	 * up.
+	 */
+	spin_lock(&fs_info->trans_lock);
+	if (!list_empty(&fs_info->dead_roots)) {
+		struct btrfs_root *root = list_first_entry(&fs_info->dead_roots,
+							   struct btrfs_root,
+							   root_list);
+		if (test_bit(BTRFS_ROOT_UNFINISHED_DROP, &root->state)) {
+			spin_unlock(&fs_info->trans_lock);
+			return;
+		}
+	}
+	spin_unlock(&fs_info->trans_lock);
+
+	btrfs_wake_unfinished_drop(fs_info);
 }
 
 /*
@@ -1331,14 +1378,18 @@ void btrfs_add_dead_root(struct btrfs_root *root)
 	spin_lock(&fs_info->trans_lock);
 	if (list_empty(&root->root_list)) {
 		btrfs_grab_root(root);
-		list_add_tail(&root->root_list, &fs_info->dead_roots);
+
+		/* We want to process the partially complete drops first. */
+		if (test_bit(BTRFS_ROOT_UNFINISHED_DROP, &root->state))
+			list_add(&root->root_list, &fs_info->dead_roots);
+		else
+			list_add_tail(&root->root_list, &fs_info->dead_roots);
 	}
 	spin_unlock(&fs_info->trans_lock);
 }
 
 /*
- * Update each subvolume root and its relocation root, if it exists, in the tree
- * of tree roots. Also free log roots if they exist.
+ * update all the cowonly tree roots on disk
  */
 static noinline int commit_fs_roots(struct btrfs_trans_handle *trans)
 {
@@ -1346,12 +1397,6 @@ static noinline int commit_fs_roots(struct btrfs_trans_handle *trans)
 	struct btrfs_root *gang[8];
 	int i;
 	int ret;
-
-	/*
-	 * At this point no one can be using this transaction to modify any tree
-	 * and no one can start another transaction to modify any tree either.
-	 */
-	ASSERT(trans->transaction->state == TRANS_STATE_COMMIT_DOING);
 
 	spin_lock(&fs_info->fs_roots_radix_lock);
 	while (1) {
@@ -1364,14 +1409,6 @@ static noinline int commit_fs_roots(struct btrfs_trans_handle *trans)
 		for (i = 0; i < ret; i++) {
 			struct btrfs_root *root = gang[i];
 			int ret2;
-
-			/*
-			 * At this point we can neither have tasks logging inodes
-			 * from a root nor trying to commit a log tree.
-			 */
-			ASSERT(atomic_read(&root->log_writers) == 0);
-			ASSERT(atomic_read(&root->log_commit[0]) == 0);
-			ASSERT(atomic_read(&root->log_commit[1]) == 0);
 
 			radix_tree_tag_clear(&fs_info->fs_roots_radix,
 					(unsigned long)root->root_key.objectid,
@@ -1497,6 +1534,12 @@ static int qgroup_account_snapshot(struct btrfs_trans_handle *trans,
 		return ret;
 	}
 
+	/*
+	 * We are going to commit transaction, see btrfs_commit_transaction()
+	 * comment for reason locking tree_log_mutex
+	 */
+	mutex_lock(&fs_info->tree_log_mutex);
+
 	ret = commit_fs_roots(trans);
 	if (ret)
 		goto out;
@@ -1532,6 +1575,8 @@ static int qgroup_account_snapshot(struct btrfs_trans_handle *trans,
 			"Error while writing out transaction for qgroup");
 
 out:
+	mutex_unlock(&fs_info->tree_log_mutex);
+
 	/*
 	 * Force parent root to be updated, as we recorded it before so its
 	 * last_trans == cur_transid.
@@ -1595,7 +1640,7 @@ static noinline int create_pending_snapshot(struct btrfs_trans_handle *trans,
 	btrfs_reloc_pre_snapshot(pending, &to_reserve);
 
 	if (to_reserve > 0) {
-		pending->error = btrfs_block_rsv_add(fs_info,
+		pending->error = btrfs_block_rsv_add(root,
 						     &pending->block_rsv,
 						     to_reserve,
 						     BTRFS_RESERVE_NO_FLUSH);
@@ -1878,14 +1923,50 @@ int btrfs_transaction_blocked(struct btrfs_fs_info *info)
 	return ret;
 }
 
-void btrfs_commit_transaction_async(struct btrfs_trans_handle *trans)
+/*
+ * commit transactions asynchronously. once btrfs_commit_transaction_async
+ * returns, any subsequent transaction will not be allowed to join.
+ */
+struct btrfs_async_commit {
+	struct btrfs_trans_handle *newtrans;
+	struct work_struct work;
+};
+
+static void do_async_commit(struct work_struct *work)
+{
+	struct btrfs_async_commit *ac =
+		container_of(work, struct btrfs_async_commit, work);
+
+	/*
+	 * We've got freeze protection passed with the transaction.
+	 * Tell lockdep about it.
+	 */
+	if (ac->newtrans->type & __TRANS_FREEZABLE)
+		__sb_writers_acquired(ac->newtrans->fs_info->sb, SB_FREEZE_FS);
+
+	current->journal_info = ac->newtrans;
+
+	btrfs_commit_transaction(ac->newtrans);
+	kfree(ac);
+}
+
+int btrfs_commit_transaction_async(struct btrfs_trans_handle *trans)
 {
 	struct btrfs_fs_info *fs_info = trans->fs_info;
+	struct btrfs_async_commit *ac;
 	struct btrfs_transaction *cur_trans;
 
-	/* Kick the transaction kthread. */
-	set_bit(BTRFS_FS_COMMIT_TRANS, &fs_info->flags);
-	wake_up_process(fs_info->transaction_kthread);
+	ac = kmalloc(sizeof(*ac), GFP_NOFS);
+	if (!ac)
+		return -ENOMEM;
+
+	INIT_WORK(&ac->work, do_async_commit);
+	ac->newtrans = btrfs_join_transaction(trans->root);
+	if (IS_ERR(ac->newtrans)) {
+		int err = PTR_ERR(ac->newtrans);
+		kfree(ac);
+		return err;
+	}
 
 	/* take transaction reference */
 	cur_trans = trans->transaction;
@@ -1894,14 +1975,27 @@ void btrfs_commit_transaction_async(struct btrfs_trans_handle *trans)
 	btrfs_end_transaction(trans);
 
 	/*
+	 * Tell lockdep we've released the freeze rwsem, since the
+	 * async commit thread will be the one to unlock it.
+	 */
+	if (ac->newtrans->type & __TRANS_FREEZABLE)
+		__sb_writers_release(fs_info->sb, SB_FREEZE_FS);
+
+	schedule_work(&ac->work);
+	/*
 	 * Wait for the current transaction commit to start and block
 	 * subsequent transaction joins
 	 */
 	wait_event(fs_info->transaction_blocked_wait,
 		   cur_trans->state >= TRANS_STATE_COMMIT_START ||
 		   TRANS_ABORTED(cur_trans));
+	if (current->journal_info == trans)
+		current->journal_info = NULL;
+
 	btrfs_put_transaction(cur_trans);
+	return 0;
 }
+
 
 static void cleanup_transaction(struct btrfs_trans_handle *trans, int err)
 {
@@ -1954,7 +2048,7 @@ static void cleanup_transaction(struct btrfs_trans_handle *trans, int err)
 	btrfs_put_transaction(cur_trans);
 	btrfs_put_transaction(cur_trans);
 
-	trace_btrfs_transaction_commit(fs_info);
+	trace_btrfs_transaction_commit(trans->root);
 
 	if (current->journal_info == trans)
 		current->journal_info = NULL;
@@ -2153,7 +2247,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 		 * abort to prevent writing a new superblock that reflects a
 		 * corrupt state (pointing to trees with unwritten nodes/leafs).
 		 */
-		if (BTRFS_FS_ERROR(fs_info)) {
+		if (test_bit(BTRFS_FS_STATE_TRANS_ABORTED, &fs_info->fs_state)) {
 			ret = -EROFS;
 			goto cleanup_transaction;
 		}
@@ -2199,13 +2293,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	spin_unlock(&fs_info->trans_lock);
 	wait_event(cur_trans->writer_wait,
 		   atomic_read(&cur_trans->num_writers) == 1);
-
-	/*
-	 * We've started the commit, clear the flag in case we were triggered to
-	 * do an async commit but somebody else started before the transaction
-	 * kthread could do the work.
-	 */
-	clear_bit(BTRFS_FS_COMMIT_TRANS, &fs_info->flags);
 
 	if (TRANS_ABORTED(cur_trans)) {
 		ret = cur_trans->aborted;
@@ -2253,9 +2340,24 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 
 	WARN_ON(cur_trans != trans->transaction);
 
+	/* btrfs_commit_tree_roots is responsible for getting the
+	 * various roots consistent with each other.  Every pointer
+	 * in the tree of tree roots has to point to the most up to date
+	 * root for every subvolume and other tree.  So, we have to keep
+	 * the tree logging code from jumping in and changing any
+	 * of the trees.
+	 *
+	 * At this point in the commit, there can't be any tree-log
+	 * writers, but a little lower down we drop the trans mutex
+	 * and let new people in.  By holding the tree_log_mutex
+	 * from now until after the super is written, we avoid races
+	 * with the tree-log code.
+	 */
+	mutex_lock(&fs_info->tree_log_mutex);
+
 	ret = commit_fs_roots(trans);
 	if (ret)
-		goto unlock_reloc;
+		goto unlock_tree_log;
 
 	/*
 	 * Since the transaction is done, we can apply the pending changes
@@ -2274,11 +2376,11 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	 */
 	ret = btrfs_qgroup_account_extents(trans);
 	if (ret < 0)
-		goto unlock_reloc;
+		goto unlock_tree_log;
 
 	ret = commit_cowonly_roots(trans);
 	if (ret)
-		goto unlock_reloc;
+		goto unlock_tree_log;
 
 	/*
 	 * The tasks which save the space cache and inode cache may also
@@ -2286,7 +2388,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	 */
 	if (TRANS_ABORTED(cur_trans)) {
 		ret = cur_trans->aborted;
-		goto unlock_reloc;
+		goto unlock_tree_log;
 	}
 
 	cur_trans = fs_info->running_transaction;
@@ -2319,16 +2421,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 
 	btrfs_trans_release_chunk_metadata(trans);
 
-	/*
-	 * Before changing the transaction state to TRANS_STATE_UNBLOCKED and
-	 * setting fs_info->running_transaction to NULL, lock tree_log_mutex to
-	 * make sure that before we commit our superblock, no other task can
-	 * start a new transaction and commit a log tree before we commit our
-	 * superblock. Anyone trying to commit a log tree locks this mutex before
-	 * writing its superblock.
-	 */
-	mutex_lock(&fs_info->tree_log_mutex);
-
 	spin_lock(&fs_info->trans_lock);
 	cur_trans->state = TRANS_STATE_UNBLOCKED;
 	fs_info->running_transaction = NULL;
@@ -2341,6 +2433,10 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	if (ret) {
 		btrfs_handle_fs_error(fs_info, ret,
 				      "Error while writing out transaction");
+		/*
+		 * reloc_mutex has been unlocked, tree_log_mutex is still held
+		 * but we can't jump to unlock_tree_log causing double unlock
+		 */
 		mutex_unlock(&fs_info->tree_log_mutex);
 		goto scrub_continue;
 	}
@@ -2391,7 +2487,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	if (trans->type & __TRANS_FREEZABLE)
 		sb_end_intwrite(fs_info->sb);
 
-	trace_btrfs_transaction_commit(fs_info);
+	trace_btrfs_transaction_commit(trans->root);
 
 	btrfs_scrub_continue(fs_info);
 
@@ -2402,6 +2498,8 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 
 	return ret;
 
+unlock_tree_log:
+	mutex_unlock(&fs_info->tree_log_mutex);
 unlock_reloc:
 	mutex_unlock(&fs_info->reloc_mutex);
 scrub_continue:

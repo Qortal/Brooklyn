@@ -424,24 +424,45 @@ int etnaviv_gem_wait_bo(struct etnaviv_gpu *gpu, struct drm_gem_object *obj,
 }
 
 #ifdef CONFIG_DEBUG_FS
+static void etnaviv_gem_describe_fence(struct dma_fence *fence,
+	const char *type, struct seq_file *m)
+{
+	if (!test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags))
+		seq_printf(m, "\t%9s: %s %s seq %llu\n",
+			   type,
+			   fence->ops->get_driver_name(fence),
+			   fence->ops->get_timeline_name(fence),
+			   fence->seqno);
+}
+
 static void etnaviv_gem_describe(struct drm_gem_object *obj, struct seq_file *m)
 {
 	struct etnaviv_gem_object *etnaviv_obj = to_etnaviv_bo(obj);
 	struct dma_resv *robj = obj->resv;
+	struct dma_resv_list *fobj;
+	struct dma_fence *fence;
 	unsigned long off = drm_vma_node_start(&obj->vma_node);
-	int r;
 
 	seq_printf(m, "%08x: %c %2d (%2d) %08lx %p %zd\n",
 			etnaviv_obj->flags, is_active(etnaviv_obj) ? 'A' : 'I',
 			obj->name, kref_read(&obj->refcount),
 			off, etnaviv_obj->vaddr, obj->size);
 
-	r = dma_resv_lock(robj, NULL);
-	if (r)
-		return;
+	rcu_read_lock();
+	fobj = dma_resv_shared_list(robj);
+	if (fobj) {
+		unsigned int i, shared_count = fobj->shared_count;
 
-	dma_resv_describe(robj, m);
-	dma_resv_unlock(robj);
+		for (i = 0; i < shared_count; i++) {
+			fence = rcu_dereference(fobj->shared[i]);
+			etnaviv_gem_describe_fence(fence, "Shared", m);
+		}
+	}
+
+	fence = dma_resv_excl_fence(robj);
+	if (fence)
+		etnaviv_gem_describe_fence(fence, "Exclusive", m);
+	rcu_read_unlock();
 }
 
 void etnaviv_gem_describe_objects(struct etnaviv_drm_private *priv,

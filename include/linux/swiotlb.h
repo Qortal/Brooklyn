@@ -45,8 +45,7 @@ extern void __init swiotlb_update_mem_attributes(void);
 
 phys_addr_t swiotlb_tbl_map_single(struct device *hwdev, phys_addr_t phys,
 		size_t mapping_size, size_t alloc_size,
-		unsigned int alloc_aligned_mask, enum dma_data_direction dir,
-		unsigned long attrs);
+		enum dma_data_direction dir, unsigned long attrs);
 
 extern void swiotlb_tbl_unmap_single(struct device *hwdev,
 				     phys_addr_t tlb_addr,
@@ -73,9 +72,6 @@ extern enum swiotlb_force swiotlb_force;
  * @end:	The end address of the swiotlb memory pool. Used to do a quick
  *		range check to see if the memory was in fact allocated by this
  *		API.
- * @vaddr:	The vaddr of the swiotlb memory pool. The swiotlb memory pool
- *		may be remapped in the memory encrypted case and store virtual
- *		address for bounce buffer operation.
  * @nslabs:	The number of IO TLB blocks (in groups of 64) between @start and
  *		@end. For default swiotlb, this is command line adjustable via
  *		setup_io_tlb_npages.
@@ -95,7 +91,6 @@ extern enum swiotlb_force swiotlb_force;
 struct io_tlb_mem {
 	phys_addr_t start;
 	phys_addr_t end;
-	void *vaddr;
 	unsigned long nslabs;
 	unsigned long used;
 	unsigned int index;
@@ -189,7 +184,5 @@ static inline bool is_swiotlb_for_alloc(struct device *dev)
 	return false;
 }
 #endif /* CONFIG_DMA_RESTRICTED_POOL */
-
-extern phys_addr_t swiotlb_unencrypted_base;
 
 #endif /* __LINUX_SWIOTLB_H */

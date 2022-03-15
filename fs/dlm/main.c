@@ -19,9 +19,6 @@
 #include "config.h"
 #include "lowcomms.h"
 
-#define CREATE_TRACE_POINTS
-#include <trace/events/dlm.h>
-
 static int __init init_dlm(void)
 {
 	int error;

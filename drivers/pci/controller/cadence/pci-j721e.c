@@ -51,10 +51,11 @@ enum link_status {
 #define MAX_LANES			2
 
 struct j721e_pcie {
-	struct cdns_pcie	*cdns_pcie;
+	struct device		*dev;
 	struct clk		*refclk;
 	u32			mode;
 	u32			num_lanes;
+	struct cdns_pcie	*cdns_pcie;
 	void __iomem		*user_cfg_base;
 	void __iomem		*intd_cfg_base;
 	u32			linkdown_irq_regfield;
@@ -98,7 +99,7 @@ static inline void j721e_pcie_intd_writel(struct j721e_pcie *pcie, u32 offset,
 static irqreturn_t j721e_pcie_link_irq_handler(int irq, void *priv)
 {
 	struct j721e_pcie *pcie = priv;
-	struct device *dev = pcie->cdns_pcie->dev;
+	struct device *dev = pcie->dev;
 	u32 reg;
 
 	reg = j721e_pcie_intd_readl(pcie, STATUS_REG_SYS_2);
@@ -164,7 +165,7 @@ static const struct cdns_pcie_ops j721e_pcie_ops = {
 static int j721e_pcie_set_mode(struct j721e_pcie *pcie, struct regmap *syscon,
 			       unsigned int offset)
 {
-	struct device *dev = pcie->cdns_pcie->dev;
+	struct device *dev = pcie->dev;
 	u32 mask = J721E_MODE_RC;
 	u32 mode = pcie->mode;
 	u32 val = 0;
@@ -183,7 +184,7 @@ static int j721e_pcie_set_mode(struct j721e_pcie *pcie, struct regmap *syscon,
 static int j721e_pcie_set_link_speed(struct j721e_pcie *pcie,
 				     struct regmap *syscon, unsigned int offset)
 {
-	struct device *dev = pcie->cdns_pcie->dev;
+	struct device *dev = pcie->dev;
 	struct device_node *np = dev->of_node;
 	int link_speed;
 	u32 val = 0;
@@ -204,7 +205,7 @@ static int j721e_pcie_set_link_speed(struct j721e_pcie *pcie,
 static int j721e_pcie_set_lane_count(struct j721e_pcie *pcie,
 				     struct regmap *syscon, unsigned int offset)
 {
-	struct device *dev = pcie->cdns_pcie->dev;
+	struct device *dev = pcie->dev;
 	u32 lanes = pcie->num_lanes;
 	u32 val = 0;
 	int ret;
@@ -219,7 +220,7 @@ static int j721e_pcie_set_lane_count(struct j721e_pcie *pcie,
 
 static int j721e_pcie_ctrl_init(struct j721e_pcie *pcie)
 {
-	struct device *dev = pcie->cdns_pcie->dev;
+	struct device *dev = pcie->dev;
 	struct device_node *node = dev->of_node;
 	struct of_phandle_args args;
 	unsigned int offset = 0;
@@ -353,11 +354,11 @@ static int j721e_pcie_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct device_node *node = dev->of_node;
 	struct pci_host_bridge *bridge;
-	const struct j721e_pcie_data *data;
+	struct j721e_pcie_data *data;
 	struct cdns_pcie *cdns_pcie;
 	struct j721e_pcie *pcie;
-	struct cdns_pcie_rc *rc = NULL;
-	struct cdns_pcie_ep *ep = NULL;
+	struct cdns_pcie_rc *rc;
+	struct cdns_pcie_ep *ep;
 	struct gpio_desc *gpiod;
 	void __iomem *base;
 	struct clk *clk;
@@ -366,7 +367,7 @@ static int j721e_pcie_probe(struct platform_device *pdev)
 	int ret;
 	int irq;
 
-	data = of_device_get_match_data(dev);
+	data = (struct j721e_pcie_data *)of_device_get_match_data(dev);
 	if (!data)
 		return -EINVAL;
 
@@ -376,46 +377,7 @@ static int j721e_pcie_probe(struct platform_device *pdev)
 	if (!pcie)
 		return -ENOMEM;
 
-	switch (mode) {
-	case PCI_MODE_RC:
-		if (!IS_ENABLED(CONFIG_PCIE_CADENCE_HOST))
-			return -ENODEV;
-
-		bridge = devm_pci_alloc_host_bridge(dev, sizeof(*rc));
-		if (!bridge)
-			return -ENOMEM;
-
-		if (!data->byte_access_allowed)
-			bridge->ops = &cdns_ti_pcie_host_ops;
-		rc = pci_host_bridge_priv(bridge);
-		rc->quirk_retrain_flag = data->quirk_retrain_flag;
-		rc->quirk_detect_quiet_flag = data->quirk_detect_quiet_flag;
-
-		cdns_pcie = &rc->pcie;
-		cdns_pcie->dev = dev;
-		cdns_pcie->ops = &j721e_pcie_ops;
-		pcie->cdns_pcie = cdns_pcie;
-		break;
-	case PCI_MODE_EP:
-		if (!IS_ENABLED(CONFIG_PCIE_CADENCE_EP))
-			return -ENODEV;
-
-		ep = devm_kzalloc(dev, sizeof(*ep), GFP_KERNEL);
-		if (!ep)
-			return -ENOMEM;
-
-		ep->quirk_detect_quiet_flag = data->quirk_detect_quiet_flag;
-
-		cdns_pcie = &ep->pcie;
-		cdns_pcie->dev = dev;
-		cdns_pcie->ops = &j721e_pcie_ops;
-		pcie->cdns_pcie = cdns_pcie;
-		break;
-	default:
-		dev_err(dev, "INVALID device type %d\n", mode);
-		return 0;
-	}
-
+	pcie->dev = dev;
 	pcie->mode = mode;
 	pcie->linkdown_irq_regfield = data->linkdown_irq_regfield;
 
@@ -466,6 +428,28 @@ static int j721e_pcie_probe(struct platform_device *pdev)
 
 	switch (mode) {
 	case PCI_MODE_RC:
+		if (!IS_ENABLED(CONFIG_PCIE_CADENCE_HOST)) {
+			ret = -ENODEV;
+			goto err_get_sync;
+		}
+
+		bridge = devm_pci_alloc_host_bridge(dev, sizeof(*rc));
+		if (!bridge) {
+			ret = -ENOMEM;
+			goto err_get_sync;
+		}
+
+		if (!data->byte_access_allowed)
+			bridge->ops = &cdns_ti_pcie_host_ops;
+		rc = pci_host_bridge_priv(bridge);
+		rc->quirk_retrain_flag = data->quirk_retrain_flag;
+		rc->quirk_detect_quiet_flag = data->quirk_detect_quiet_flag;
+
+		cdns_pcie = &rc->pcie;
+		cdns_pcie->dev = dev;
+		cdns_pcie->ops = &j721e_pcie_ops;
+		pcie->cdns_pcie = cdns_pcie;
+
 		gpiod = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW);
 		if (IS_ERR(gpiod)) {
 			ret = PTR_ERR(gpiod);
@@ -515,6 +499,23 @@ static int j721e_pcie_probe(struct platform_device *pdev)
 
 		break;
 	case PCI_MODE_EP:
+		if (!IS_ENABLED(CONFIG_PCIE_CADENCE_EP)) {
+			ret = -ENODEV;
+			goto err_get_sync;
+		}
+
+		ep = devm_kzalloc(dev, sizeof(*ep), GFP_KERNEL);
+		if (!ep) {
+			ret = -ENOMEM;
+			goto err_get_sync;
+		}
+		ep->quirk_detect_quiet_flag = data->quirk_detect_quiet_flag;
+
+		cdns_pcie = &ep->pcie;
+		cdns_pcie->dev = dev;
+		cdns_pcie->ops = &j721e_pcie_ops;
+		pcie->cdns_pcie = cdns_pcie;
+
 		ret = cdns_pcie_init_phy(dev, cdns_pcie);
 		if (ret) {
 			dev_err(dev, "Failed to init phy\n");
@@ -526,6 +527,8 @@ static int j721e_pcie_probe(struct platform_device *pdev)
 			goto err_pcie_setup;
 
 		break;
+	default:
+		dev_err(dev, "INVALID device type %d\n", mode);
 	}
 
 	return 0;

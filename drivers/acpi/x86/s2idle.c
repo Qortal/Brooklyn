@@ -293,9 +293,9 @@ static void lpi_check_constraints(void)
 
 	for (i = 0; i < lpi_constraints_table_size; ++i) {
 		acpi_handle handle = lpi_constraints_table[i].handle;
-		struct acpi_device *adev = acpi_fetch_acpi_dev(handle);
+		struct acpi_device *adev;
 
-		if (!adev)
+		if (!handle || acpi_bus_get_device(handle, &adev))
 			continue;
 
 		acpi_handle_debug(handle,

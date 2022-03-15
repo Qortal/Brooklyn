@@ -127,8 +127,6 @@ static int bnxt_re_setup_chip_ctx(struct bnxt_re_dev *rdev, u8 wqe_mode)
 
 	rdev->qplib_res.cctx = rdev->chip_ctx;
 	rdev->rcfw.res = &rdev->qplib_res;
-	rdev->qplib_res.dattr = &rdev->dev_attr;
-	rdev->qplib_res.is_vf = BNXT_VF(bp);
 
 	bnxt_re_set_drv_mode(rdev, wqe_mode);
 	if (bnxt_qplib_determine_atomics(en_dev->pdev))
@@ -525,8 +523,7 @@ static int bnxt_re_net_stats_ctx_free(struct bnxt_re_dev *rdev,
 				      u32 fw_stats_ctx_id)
 {
 	struct bnxt_en_dev *en_dev = rdev->en_dev;
-	struct hwrm_stat_ctx_free_input req = {};
-	struct hwrm_stat_ctx_free_output resp = {};
+	struct hwrm_stat_ctx_free_input req = {0};
 	struct bnxt_fw_msg fw_msg;
 	int rc = -EINVAL;
 
@@ -540,8 +537,8 @@ static int bnxt_re_net_stats_ctx_free(struct bnxt_re_dev *rdev,
 
 	bnxt_re_init_hwrm_hdr(rdev, (void *)&req, HWRM_STAT_CTX_FREE, -1, -1);
 	req.stat_ctx_id = cpu_to_le32(fw_stats_ctx_id);
-	bnxt_re_fill_fw_msg(&fw_msg, (void *)&req, sizeof(req), (void *)&resp,
-			    sizeof(resp), DFLT_HWRM_CMD_TIMEOUT);
+	bnxt_re_fill_fw_msg(&fw_msg, (void *)&req, sizeof(req), (void *)&req,
+			    sizeof(req), DFLT_HWRM_CMD_TIMEOUT);
 	rc = en_dev->en_ops->bnxt_send_fw_msg(en_dev, BNXT_ROCE_ULP, &fw_msg);
 	if (rc)
 		ibdev_err(&rdev->ibdev, "Failed to free HW stats context %#x",
@@ -696,6 +693,7 @@ static const struct ib_device_ops bnxt_re_dev_ops = {
 	.get_port_immutable = bnxt_re_get_port_immutable,
 	.map_mr_sg = bnxt_re_map_mr_sg,
 	.mmap = bnxt_re_mmap,
+	.modify_ah = bnxt_re_modify_ah,
 	.modify_qp = bnxt_re_modify_qp,
 	.modify_srq = bnxt_re_modify_srq,
 	.poll_cq = bnxt_re_poll_cq,
@@ -729,7 +727,7 @@ static int bnxt_re_register_ib(struct bnxt_re_dev *rdev)
 		strlen(BNXT_RE_DESC) + 5);
 	ibdev->phys_port_cnt = 1;
 
-	addrconf_addr_eui48((u8 *)&ibdev->node_guid, rdev->netdev->dev_addr);
+	bnxt_qplib_get_guid(rdev->netdev->dev_addr, (u8 *)&ibdev->node_guid);
 
 	ibdev->num_comp_vectors	= rdev->num_msix - 1;
 	ibdev->dev.parent = &rdev->en_dev->pdev->dev;
@@ -779,8 +777,6 @@ static struct bnxt_re_dev *bnxt_re_dev_add(struct net_device *netdev,
 	atomic_set(&rdev->srq_count, 0);
 	atomic_set(&rdev->mr_count, 0);
 	atomic_set(&rdev->mw_count, 0);
-	atomic_set(&rdev->ah_count, 0);
-	atomic_set(&rdev->pd_count, 0);
 	rdev->cosq[0] = 0xFFFF;
 	rdev->cosq[1] = 0xFFFF;
 
@@ -893,6 +889,7 @@ static int bnxt_re_srqn_handler(struct bnxt_qplib_nq *nq,
 	struct bnxt_re_srq *srq = container_of(handle, struct bnxt_re_srq,
 					       qplib_srq);
 	struct ib_event ib_event;
+	int rc = 0;
 
 	ib_event.device = &srq->rdev->ibdev;
 	ib_event.element.srq = &srq->ib_srq;
@@ -906,7 +903,7 @@ static int bnxt_re_srqn_handler(struct bnxt_qplib_nq *nq,
 		(*srq->ib_srq.event_handler)(&ib_event,
 					     srq->ib_srq.srq_context);
 	}
-	return 0;
+	return rc;
 }
 
 static int bnxt_re_cqn_handler(struct bnxt_qplib_nq *nq,
@@ -1728,7 +1725,7 @@ static int bnxt_re_netdev_event(struct notifier_block *notifier,
 	}
 	if (sch_work) {
 		/* Allocate for the deferred task */
-		re_work = kzalloc(sizeof(*re_work), GFP_KERNEL);
+		re_work = kzalloc(sizeof(*re_work), GFP_ATOMIC);
 		if (re_work) {
 			get_device(&rdev->ibdev.dev);
 			re_work->rdev = rdev;

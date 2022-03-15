@@ -213,9 +213,7 @@ static int mchp23k256_remove(struct spi_device *spi)
 {
 	struct mchp23k256_flash *flash = spi_get_drvdata(spi);
 
-	WARN_ON(mtd_device_unregister(&flash->mtd));
-
-	return 0;
+	return mtd_device_unregister(&flash->mtd);
 }
 
 static const struct of_device_id mchp23k256_of_table[] = {

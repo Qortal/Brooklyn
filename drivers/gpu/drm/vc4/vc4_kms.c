@@ -286,13 +286,17 @@ static void vc5_hvs_pv_muxing_commit(struct vc4_dev *vc4,
 	for_each_new_crtc_in_state(state, crtc, crtc_state, i) {
 		struct vc4_crtc_state *vc4_state = to_vc4_crtc_state(crtc_state);
 		struct vc4_crtc *vc4_crtc = to_vc4_crtc(crtc);
+		unsigned int channel = vc4_state->assigned_channel;
 
 		if (!vc4_state->update_muxing)
 			continue;
 
 		switch (vc4_crtc->data->hvs_output) {
 		case 2:
-			mux = (vc4_state->assigned_channel == 2) ? 0 : 1;
+			WARN_ON(VC4_GET_FIELD(HVS_READ(SCALER_DISPCTRL),
+					      SCALER_DISPCTRL_DSP3_MUX) == channel);
+
+			mux = (channel == 2) ? 0 : 1;
 			reg = HVS_READ(SCALER_DISPECTRL);
 			HVS_WRITE(SCALER_DISPECTRL,
 				  (reg & ~SCALER_DISPECTRL_DSP2_MUX_MASK) |
@@ -300,10 +304,10 @@ static void vc5_hvs_pv_muxing_commit(struct vc4_dev *vc4,
 			break;
 
 		case 3:
-			if (vc4_state->assigned_channel == VC4_HVS_CHANNEL_DISABLED)
+			if (channel == VC4_HVS_CHANNEL_DISABLED)
 				mux = 3;
 			else
-				mux = vc4_state->assigned_channel;
+				mux = channel;
 
 			reg = HVS_READ(SCALER_DISPCTRL);
 			HVS_WRITE(SCALER_DISPCTRL,
@@ -312,10 +316,10 @@ static void vc5_hvs_pv_muxing_commit(struct vc4_dev *vc4,
 			break;
 
 		case 4:
-			if (vc4_state->assigned_channel == VC4_HVS_CHANNEL_DISABLED)
+			if (channel == VC4_HVS_CHANNEL_DISABLED)
 				mux = 3;
 			else
-				mux = vc4_state->assigned_channel;
+				mux = channel;
 
 			reg = HVS_READ(SCALER_DISPEOLN);
 			HVS_WRITE(SCALER_DISPEOLN,
@@ -325,10 +329,10 @@ static void vc5_hvs_pv_muxing_commit(struct vc4_dev *vc4,
 			break;
 
 		case 5:
-			if (vc4_state->assigned_channel == VC4_HVS_CHANNEL_DISABLED)
+			if (channel == VC4_HVS_CHANNEL_DISABLED)
 				mux = 3;
 			else
-				mux = vc4_state->assigned_channel;
+				mux = channel;
 
 			reg = HVS_READ(SCALER_DISPDITHER);
 			HVS_WRITE(SCALER_DISPDITHER,
@@ -406,6 +410,7 @@ static void vc4_atomic_commit_tail(struct drm_atomic_state *state)
 		clk_request_done(old_hvs_state->core_req);
 		old_hvs_state->core_req = NULL;
 	}
+
 	drm_atomic_helper_commit_modeset_disables(dev, state);
 
 	vc4_ctm_commit(vc4, state);
@@ -442,6 +447,9 @@ static void vc4_atomic_commit_tail(struct drm_atomic_state *state)
 
 		/* And drop the temporary request */
 		clk_request_done(core_req);
+
+		drm_dbg(dev, "Core clock actual rate: %lu Hz\n",
+			clk_get_rate(hvs->core_clk));
 	}
 }
 
@@ -822,9 +830,18 @@ static int vc4_pv_muxing_atomic_check(struct drm_device *dev,
 		if (vc4->firmware_kms)
 			continue;
 
+		drm_dbg(dev, "%s: Trying to find a channel.\n", crtc->name);
+
 		/* Nothing to do here, let's skip it */
-		if (old_crtc_state->enable == new_crtc_state->enable)
+		if (old_crtc_state->enable == new_crtc_state->enable) {
+			if (new_crtc_state->enable)
+				drm_dbg(dev, "%s: Already enabled, reusing channel %d.\n",
+					crtc->name, new_vc4_crtc_state->assigned_channel);
+			else
+				drm_dbg(dev, "%s: Disabled, ignoring.\n", crtc->name);
+
 			continue;
+		}
 
 		/* Muxing will need to be modified, mark it as such */
 		new_vc4_crtc_state->update_muxing = true;
@@ -832,6 +849,10 @@ static int vc4_pv_muxing_atomic_check(struct drm_device *dev,
 		/* If we're disabling our CRTC, we put back our channel */
 		if (!new_crtc_state->enable) {
 			channel = old_vc4_crtc_state->assigned_channel;
+
+			drm_dbg(dev, "%s: Disabling, Freeing channel %d\n",
+				crtc->name, channel);
+
 			hvs_new_state->fifo_state[channel].in_use = false;
 			new_vc4_crtc_state->assigned_channel = VC4_HVS_CHANNEL_DISABLED;
 			continue;
@@ -866,6 +887,8 @@ static int vc4_pv_muxing_atomic_check(struct drm_device *dev,
 			return -EINVAL;
 
 		channel = ffs(matching_channels) - 1;
+
+		drm_dbg(dev, "Assigned HVS channel %d to CRTC %s\n", channel, crtc->name);
 		new_vc4_crtc_state->assigned_channel = channel;
 		unassigned_channels &= ~BIT(channel);
 		hvs_new_state->fifo_state[channel].in_use = true;

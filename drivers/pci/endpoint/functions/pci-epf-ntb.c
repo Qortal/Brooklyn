@@ -1262,7 +1262,7 @@ static void epf_ntb_db_mw_bar_cleanup(struct epf_ntb *ntb,
 }
 
 /**
- * epf_ntb_configure_interrupt() - Configure MSI/MSI-X capability
+ * epf_ntb_configure_interrupt() - Configure MSI/MSI-X capaiblity
  * @ntb: NTB device that facilitates communication between HOST1 and HOST2
  * @type: PRIMARY interface or SECONDARY interface
  *
@@ -1937,7 +1937,7 @@ static ssize_t epf_ntb_##_name##_show(struct config_item *item,		\
 	struct config_group *group = to_config_group(item);		\
 	struct epf_ntb *ntb = to_epf_ntb(group);			\
 									\
-	return sysfs_emit(page, "%d\n", ntb->_name);			\
+	return sprintf(page, "%d\n", ntb->_name);			\
 }
 
 #define EPF_NTB_W(_name)						\
@@ -1947,9 +1947,11 @@ static ssize_t epf_ntb_##_name##_store(struct config_item *item,	\
 	struct config_group *group = to_config_group(item);		\
 	struct epf_ntb *ntb = to_epf_ntb(group);			\
 	u32 val;							\
+	int ret;							\
 									\
-	if (kstrtou32(page, 0, &val) < 0)				\
-		return -EINVAL;						\
+	ret = kstrtou32(page, 0, &val);					\
+	if (ret)							\
+		return ret;						\
 									\
 	ntb->_name = val;						\
 									\
@@ -1966,7 +1968,7 @@ static ssize_t epf_ntb_##_name##_show(struct config_item *item,		\
 									\
 	sscanf(#_name, "mw%d", &win_no);				\
 									\
-	return sysfs_emit(page, "%lld\n", ntb->mws_size[win_no - 1]);	\
+	return sprintf(page, "%lld\n", ntb->mws_size[win_no - 1]);	\
 }
 
 #define EPF_NTB_MW_W(_name)						\
@@ -1978,9 +1980,11 @@ static ssize_t epf_ntb_##_name##_store(struct config_item *item,	\
 	struct device *dev = &ntb->epf->dev;				\
 	int win_no;							\
 	u64 val;							\
+	int ret;							\
 									\
-	if (kstrtou64(page, 0, &val) < 0)				\
-		return -EINVAL;						\
+	ret = kstrtou64(page, 0, &val);					\
+	if (ret)							\
+		return ret;						\
 									\
 	if (sscanf(#_name, "mw%d", &win_no) != 1)			\
 		return -EINVAL;						\
@@ -2001,9 +2005,11 @@ static ssize_t epf_ntb_num_mws_store(struct config_item *item,
 	struct config_group *group = to_config_group(item);
 	struct epf_ntb *ntb = to_epf_ntb(group);
 	u32 val;
+	int ret;
 
-	if (kstrtou32(page, 0, &val) < 0)
-		return -EINVAL;
+	ret = kstrtou32(page, 0, &val);
+	if (ret)
+		return ret;
 
 	if (val > MAX_MW)
 		return -EINVAL;

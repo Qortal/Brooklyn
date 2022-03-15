@@ -2471,8 +2471,7 @@ static int accept_cr(struct c4iw_ep *ep, struct sk_buff *skb,
 	skb_get(skb);
 	rpl = cplhdr(skb);
 	if (!is_t4(adapter_type)) {
-		BUILD_BUG_ON(sizeof(*rpl5) != roundup(sizeof(*rpl5), 16));
-		skb_trim(skb, sizeof(*rpl5));
+		skb_trim(skb, roundup(sizeof(*rpl5), 16));
 		rpl5 = (void *)rpl;
 		INIT_TP_WR(rpl5, ep->hwtid);
 	} else {
@@ -2488,7 +2487,7 @@ static int accept_cr(struct c4iw_ep *ep, struct sk_buff *skb,
 		opt2 |= CONG_CNTRL_V(CONG_ALG_TAHOE);
 		opt2 |= T5_ISS_F;
 		rpl5 = (void *)rpl;
-		memset_after(rpl5, 0, iss);
+		memset(&rpl5->iss, 0, roundup(sizeof(*rpl5)-sizeof(*rpl), 16));
 		if (peer2peer)
 			isn += 4;
 		rpl5->iss = cpu_to_be32(isn);
@@ -4465,5 +4464,6 @@ int __init c4iw_cm_init(void)
 void c4iw_cm_term(void)
 {
 	WARN_ON(!list_empty(&timeout_list));
+	flush_workqueue(workq);
 	destroy_workqueue(workq);
 }

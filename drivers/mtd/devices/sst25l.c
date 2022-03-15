@@ -402,9 +402,7 @@ static int sst25l_remove(struct spi_device *spi)
 {
 	struct sst25l_flash *flash = spi_get_drvdata(spi);
 
-	WARN_ON(mtd_device_unregister(&flash->mtd));
-
-	return 0;
+	return mtd_device_unregister(&flash->mtd);
 }
 
 static struct spi_driver sst25l_driver = {

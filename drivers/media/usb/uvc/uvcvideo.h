@@ -241,7 +241,7 @@ struct uvc_control_mapping {
 	struct list_head ev_subs;
 
 	u32 id;
-	char *name;
+	u8 name[32];
 	u8 entity[16];
 	u8 selector;
 
@@ -476,7 +476,6 @@ struct uvc_video_chain {
 
 	struct v4l2_prio_state prio;		/* V4L2 priority state */
 	u32 caps;				/* V4L2 chain-wide caps */
-	u8 ctrl_class_bitmap;			/* Bitmap of valid classes */
 };
 
 struct uvc_stats_frame {
@@ -524,7 +523,7 @@ struct uvc_stats_stream {
 	unsigned int max_sof;		/* Maximum STC.SOF value */
 };
 
-#define UVC_METADATA_BUF_SIZE 10240
+#define UVC_METADATA_BUF_SIZE 1024
 
 /**
  * struct uvc_copy_op: Context structure to schedule asynchronous memcpy
@@ -886,21 +885,21 @@ void uvc_ctrl_status_event(struct uvc_video_chain *chain,
 
 int uvc_ctrl_begin(struct uvc_video_chain *chain);
 int __uvc_ctrl_commit(struct uvc_fh *handle, int rollback,
-		      struct v4l2_ext_controls *ctrls);
+		      const struct v4l2_ext_control *xctrls,
+		      unsigned int xctrls_count);
 static inline int uvc_ctrl_commit(struct uvc_fh *handle,
-				  struct v4l2_ext_controls *ctrls)
+				  const struct v4l2_ext_control *xctrls,
+				  unsigned int xctrls_count)
 {
-	return __uvc_ctrl_commit(handle, 0, ctrls);
+	return __uvc_ctrl_commit(handle, 0, xctrls, xctrls_count);
 }
 static inline int uvc_ctrl_rollback(struct uvc_fh *handle)
 {
-	return __uvc_ctrl_commit(handle, 1, NULL);
+	return __uvc_ctrl_commit(handle, 1, NULL, 0);
 }
 
 int uvc_ctrl_get(struct uvc_video_chain *chain, struct v4l2_ext_control *xctrl);
 int uvc_ctrl_set(struct uvc_fh *handle, struct v4l2_ext_control *xctrl);
-int uvc_ctrl_is_accessible(struct uvc_video_chain *chain, u32 v4l2_id,
-			   bool read);
 
 int uvc_xu_ctrl_query(struct uvc_video_chain *chain,
 		      struct uvc_xu_control_query *xqry);

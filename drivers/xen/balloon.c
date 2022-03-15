@@ -80,8 +80,9 @@
 static uint __read_mostly balloon_boot_timeout = 180;
 module_param(balloon_boot_timeout, uint, 0444);
 
-#ifdef CONFIG_XEN_BALLOON_MEMORY_HOTPLUG
 static int xen_hotplug_unpopulated;
+
+#ifdef CONFIG_XEN_BALLOON_MEMORY_HOTPLUG
 
 static struct ctl_table balloon_table[] = {
 	{
@@ -114,8 +115,6 @@ static struct ctl_table xen_root[] = {
 	{ }
 };
 
-#else
-#define xen_hotplug_unpopulated 0
 #endif
 
 /*
@@ -581,7 +580,7 @@ void balloon_set_new_target(unsigned long target)
 }
 EXPORT_SYMBOL_GPL(balloon_set_new_target);
 
-static int add_ballooned_pages(unsigned int nr_pages)
+static int add_ballooned_pages(int nr_pages)
 {
 	enum bp_state st;
 
@@ -609,14 +608,14 @@ static int add_ballooned_pages(unsigned int nr_pages)
 }
 
 /**
- * xen_alloc_ballooned_pages - get pages that have been ballooned out
+ * alloc_xenballooned_pages - get pages that have been ballooned out
  * @nr_pages: Number of pages to get
  * @pages: pages returned
  * @return 0 on success, error otherwise
  */
-int xen_alloc_ballooned_pages(unsigned int nr_pages, struct page **pages)
+int alloc_xenballooned_pages(int nr_pages, struct page **pages)
 {
-	unsigned int pgno = 0;
+	int pgno = 0;
 	struct page *page;
 	int ret;
 
@@ -651,25 +650,25 @@ int xen_alloc_ballooned_pages(unsigned int nr_pages, struct page **pages)
 	return 0;
  out_undo:
 	mutex_unlock(&balloon_mutex);
-	xen_free_ballooned_pages(pgno, pages);
+	free_xenballooned_pages(pgno, pages);
 	/*
-	 * NB: xen_free_ballooned_pages will only subtract pgno pages, but since
+	 * NB: free_xenballooned_pages will only subtract pgno pages, but since
 	 * target_unpopulated is incremented with nr_pages at the start we need
 	 * to remove the remaining ones also, or accounting will be screwed.
 	 */
 	balloon_stats.target_unpopulated -= nr_pages - pgno;
 	return ret;
 }
-EXPORT_SYMBOL(xen_alloc_ballooned_pages);
+EXPORT_SYMBOL(alloc_xenballooned_pages);
 
 /**
- * xen_free_ballooned_pages - return pages retrieved with get_ballooned_pages
+ * free_xenballooned_pages - return pages retrieved with get_ballooned_pages
  * @nr_pages: Number of pages
  * @pages: pages to return
  */
-void xen_free_ballooned_pages(unsigned int nr_pages, struct page **pages)
+void free_xenballooned_pages(int nr_pages, struct page **pages)
 {
-	unsigned int i;
+	int i;
 
 	mutex_lock(&balloon_mutex);
 
@@ -686,7 +685,7 @@ void xen_free_ballooned_pages(unsigned int nr_pages, struct page **pages)
 
 	mutex_unlock(&balloon_mutex);
 }
-EXPORT_SYMBOL(xen_free_ballooned_pages);
+EXPORT_SYMBOL(free_xenballooned_pages);
 
 #if defined(CONFIG_XEN_PV) && !defined(CONFIG_XEN_UNPOPULATED_ALLOC)
 static void __init balloon_add_region(unsigned long start_pfn,

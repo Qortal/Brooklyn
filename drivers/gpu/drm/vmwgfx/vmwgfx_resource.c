@@ -320,12 +320,11 @@ vmw_user_resource_noref_lookup_handle(struct vmw_private *dev_priv,
  * The pointer this pointed at by out_surf and out_buf needs to be null.
  */
 int vmw_user_lookup_handle(struct vmw_private *dev_priv,
-			   struct drm_file *filp,
+			   struct ttm_object_file *tfile,
 			   uint32_t handle,
 			   struct vmw_surface **out_surf,
 			   struct vmw_buffer_object **out_buf)
 {
-	struct ttm_object_file *tfile = vmw_fpriv(filp)->tfile;
 	struct vmw_resource *res;
 	int ret;
 
@@ -340,7 +339,7 @@ int vmw_user_lookup_handle(struct vmw_private *dev_priv,
 	}
 
 	*out_surf = NULL;
-	ret = vmw_user_bo_lookup(filp, handle, out_buf);
+	ret = vmw_user_bo_lookup(tfile, handle, out_buf, NULL);
 	return ret;
 }
 
@@ -363,10 +362,14 @@ static int vmw_resource_buf_alloc(struct vmw_resource *res,
 		return 0;
 	}
 
-	ret = vmw_bo_create(res->dev_priv, res->backup_size,
-			    res->func->backup_placement,
-			    interruptible, false,
-			    &vmw_bo_bo_free, &backup);
+	backup = kzalloc(sizeof(*backup), GFP_KERNEL);
+	if (unlikely(!backup))
+		return -ENOMEM;
+
+	ret = vmw_bo_init(res->dev_priv, backup, res->backup_size,
+			      res->func->backup_placement,
+			      interruptible, false,
+			      &vmw_bo_bo_free);
 	if (unlikely(ret != 0))
 		goto out_no_bo;
 

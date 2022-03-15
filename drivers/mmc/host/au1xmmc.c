@@ -969,10 +969,8 @@ static int au1xmmc_probe(struct platform_device *pdev)
 	}
 
 	host->irq = platform_get_irq(pdev, 0);
-	if (host->irq < 0) {
-		ret = host->irq;
+	if (host->irq < 0)
 		goto out3;
-	}
 
 	mmc->ops = &au1xmmc_ops;
 

@@ -152,13 +152,9 @@ static int vic_init(struct host1x_client *client)
 		goto free_channel;
 	}
 
-	pm_runtime_enable(client->dev);
-	pm_runtime_use_autosuspend(client->dev);
-	pm_runtime_set_autosuspend_delay(client->dev, 500);
-
 	err = tegra_drm_register_client(tegra, drm);
 	if (err < 0)
-		goto disable_rpm;
+		goto free_syncpt;
 
 	/*
 	 * Inherit the DMA parameters (such as maximum segment size) from the
@@ -168,10 +164,7 @@ static int vic_init(struct host1x_client *client)
 
 	return 0;
 
-disable_rpm:
-	pm_runtime_dont_use_autosuspend(client->dev);
-	pm_runtime_force_suspend(client->dev);
-
+free_syncpt:
 	host1x_syncpt_put(client->syncpts[0]);
 free_channel:
 	host1x_channel_put(vic->channel);
@@ -196,14 +189,9 @@ static int vic_exit(struct host1x_client *client)
 	if (err < 0)
 		return err;
 
-	pm_runtime_dont_use_autosuspend(client->dev);
-	pm_runtime_force_suspend(client->dev);
-
 	host1x_syncpt_put(client->syncpts[0]);
 	host1x_channel_put(vic->channel);
 	host1x_client_iommu_detach(client);
-
-	vic->channel = NULL;
 
 	if (client->group) {
 		dma_unmap_single(vic->dev, vic->falcon.firmware.phys,
@@ -249,8 +237,6 @@ static int vic_load_firmware(struct vic *vic)
 			return -ENOMEM;
 	} else {
 		virt = tegra_drm_alloc(tegra, size, &iova);
-		if (IS_ERR(virt))
-			return PTR_ERR(virt);
 	}
 
 	vic->falcon.firmware.virt = virt;
@@ -328,8 +314,6 @@ static int vic_runtime_suspend(struct device *dev)
 	struct vic *vic = dev_get_drvdata(dev);
 	int err;
 
-	host1x_channel_stop(vic->channel);
-
 	err = reset_control_assert(vic->rst);
 	if (err < 0)
 		return err;
@@ -345,17 +329,27 @@ static int vic_open_channel(struct tegra_drm_client *client,
 			    struct tegra_drm_context *context)
 {
 	struct vic *vic = to_vic(client);
+	int err;
+
+	err = pm_runtime_resume_and_get(vic->dev);
+	if (err < 0)
+		return err;
 
 	context->channel = host1x_channel_get(vic->channel);
-	if (!context->channel)
+	if (!context->channel) {
+		pm_runtime_put(vic->dev);
 		return -ENOMEM;
+	}
 
 	return 0;
 }
 
 static void vic_close_channel(struct tegra_drm_context *context)
 {
+	struct vic *vic = to_vic(context->client);
+
 	host1x_channel_put(context->channel);
+	pm_runtime_put(vic->dev);
 }
 
 static const struct tegra_drm_client_ops vic_ops = {
@@ -446,12 +440,6 @@ static int vic_probe(struct platform_device *pdev)
 		return PTR_ERR(vic->clk);
 	}
 
-	err = clk_set_rate(vic->clk, ULONG_MAX);
-	if (err < 0) {
-		dev_err(&pdev->dev, "failed to set clock rate\n");
-		return err;
-	}
-
 	if (!dev->pm_domain) {
 		vic->rst = devm_reset_control_get(dev, "vic");
 		if (IS_ERR(vic->rst)) {
@@ -487,8 +475,17 @@ static int vic_probe(struct platform_device *pdev)
 		goto exit_falcon;
 	}
 
+	pm_runtime_enable(&pdev->dev);
+	if (!pm_runtime_enabled(&pdev->dev)) {
+		err = vic_runtime_resume(&pdev->dev);
+		if (err < 0)
+			goto unregister_client;
+	}
+
 	return 0;
 
+unregister_client:
+	host1x_client_unregister(&vic->client.base);
 exit_falcon:
 	falcon_exit(&vic->falcon);
 
@@ -507,6 +504,11 @@ static int vic_remove(struct platform_device *pdev)
 		return err;
 	}
 
+	if (pm_runtime_enabled(&pdev->dev))
+		pm_runtime_disable(&pdev->dev);
+	else
+		vic_runtime_suspend(&pdev->dev);
+
 	falcon_exit(&vic->falcon);
 
 	return 0;
@@ -514,8 +516,6 @@ static int vic_remove(struct platform_device *pdev)
 
 static const struct dev_pm_ops vic_pm_ops = {
 	SET_RUNTIME_PM_OPS(vic_runtime_suspend, vic_runtime_resume, NULL)
-	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
-				pm_runtime_force_resume)
 };
 
 struct platform_driver tegra_vic_driver = {

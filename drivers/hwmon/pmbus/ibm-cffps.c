@@ -18,7 +18,6 @@
 
 #include "pmbus.h"
 
-#define CFFPS_MFG_ID_CMD                        0x99
 #define CFFPS_FRU_CMD				0x9A
 #define CFFPS_PN_CMD				0x9B
 #define CFFPS_HEADER_CMD			0x9C
@@ -35,7 +34,7 @@
 #define CFFPS_INPUT_HISTORY_SIZE		100
 
 #define CFFPS_CCIN_REVISION			GENMASK(7, 0)
-#define CFFPS_CCIN_REVISION_LEGACY		 0xde
+#define  CFFPS_CCIN_REVISION_LEGACY		 0xde
 #define CFFPS_CCIN_VERSION			GENMASK(15, 8)
 #define CFFPS_CCIN_VERSION_1			 0x2b
 #define CFFPS_CCIN_VERSION_2			 0x2e
@@ -58,7 +57,6 @@
 
 enum {
 	CFFPS_DEBUGFS_INPUT_HISTORY = 0,
-	CFFPS_DEBUGFS_MFG_ID,
 	CFFPS_DEBUGFS_FRU,
 	CFFPS_DEBUGFS_PN,
 	CFFPS_DEBUGFS_HEADER,
@@ -160,9 +158,6 @@ static ssize_t ibm_cffps_debugfs_read(struct file *file, char __user *buf,
 	switch (idx) {
 	case CFFPS_DEBUGFS_INPUT_HISTORY:
 		return ibm_cffps_read_input_history(psu, buf, count, ppos);
-	case CFFPS_DEBUGFS_MFG_ID:
-		cmd = CFFPS_MFG_ID_CMD;
-		break;
 	case CFFPS_DEBUGFS_FRU:
 		cmd = CFFPS_FRU_CMD;
 		break;
@@ -508,27 +503,16 @@ static int ibm_cffps_probe(struct i2c_client *client)
 		u16 ccin_revision = 0;
 		u16 ccin_version = CFFPS_CCIN_VERSION_1;
 		int ccin = i2c_smbus_read_word_swapped(client, CFFPS_CCIN_CMD);
-		char mfg_id[I2C_SMBUS_BLOCK_MAX + 2] = { 0 };
 
 		if (ccin > 0) {
 			ccin_revision = FIELD_GET(CFFPS_CCIN_REVISION, ccin);
 			ccin_version = FIELD_GET(CFFPS_CCIN_VERSION, ccin);
 		}
 
-		rc = i2c_smbus_read_block_data(client, PMBUS_MFR_ID, mfg_id);
-		if (rc < 0) {
-			dev_err(&client->dev, "Failed to read Manufacturer ID\n");
-			return rc;
-		}
-
 		switch (ccin_version) {
 		default:
 		case CFFPS_CCIN_VERSION_1:
-			if ((strncmp(mfg_id, "ACBE", 4) == 0) ||
-				     (strncmp(mfg_id, "ARTE", 4) == 0))
-				vs = cffps1;
-			else
-				vs = cffps2;
+			vs = cffps1;
 			break;
 		case CFFPS_CCIN_VERSION_2:
 			vs = cffps2;
@@ -579,9 +563,6 @@ static int ibm_cffps_probe(struct i2c_client *client)
 
 	debugfs_create_file("input_history", 0444, ibm_cffps_dir,
 			    &psu->debugfs_entries[CFFPS_DEBUGFS_INPUT_HISTORY],
-			    &ibm_cffps_fops);
-	debugfs_create_file("mfg_id", 0444, ibm_cffps_dir,
-			    &psu->debugfs_entries[CFFPS_DEBUGFS_MFG_ID],
 			    &ibm_cffps_fops);
 	debugfs_create_file("fru", 0444, ibm_cffps_dir,
 			    &psu->debugfs_entries[CFFPS_DEBUGFS_FRU],

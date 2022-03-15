@@ -397,7 +397,7 @@ static int __pci_device_probe(struct pci_driver *drv, struct pci_dev *pci_dev)
 	const struct pci_device_id *id;
 	int error = 0;
 
-	if (drv->probe) {
+	if (!pci_dev->driver && drv->probe) {
 		error = -ENODEV;
 
 		id = pci_match_device(drv, pci_dev);
@@ -459,14 +459,16 @@ static void pci_device_remove(struct device *dev)
 	struct pci_dev *pci_dev = to_pci_dev(dev);
 	struct pci_driver *drv = pci_dev->driver;
 
-	if (drv->remove) {
-		pm_runtime_get_sync(dev);
-		drv->remove(pci_dev);
-		pm_runtime_put_noidle(dev);
+	if (drv) {
+		if (drv->remove) {
+			pm_runtime_get_sync(dev);
+			drv->remove(pci_dev);
+			pm_runtime_put_noidle(dev);
+		}
+		pcibios_free_irq(pci_dev);
+		pci_dev->driver = NULL;
+		pci_iov_remove(pci_dev);
 	}
-	pcibios_free_irq(pci_dev);
-	pci_dev->driver = NULL;
-	pci_iov_remove(pci_dev);
 
 	/* Undo the runtime PM settings in local_pci_probe() */
 	pm_runtime_put_sync(dev);
@@ -574,7 +576,7 @@ static int pci_pm_reenable_device(struct pci_dev *pci_dev)
 {
 	int retval;
 
-	/* if the device was enabled before suspend, re-enable */
+	/* if the device was enabled before suspend, reenable */
 	retval = pci_reenable_device(pci_dev);
 	/*
 	 * if the device was busmaster before the suspend, make it busmaster
@@ -1540,7 +1542,7 @@ static int pci_uevent(struct device *dev, struct kobj_uevent_env *env)
 	return 0;
 }
 
-#if defined(CONFIG_PCIEAER) || defined(CONFIG_EEH)
+#if defined(CONFIG_PCIEPORTBUS) || defined(CONFIG_EEH)
 /**
  * pci_uevent_ers - emit a uevent during recovery path of PCI device
  * @pdev: PCI device undergoing error recovery

@@ -137,7 +137,6 @@
 #include "dlm_internal.h"
 #include "lowcomms.h"
 #include "config.h"
-#include "memory.h"
 #include "lock.h"
 #include "util.h"
 #include "midcomms.h"
@@ -221,12 +220,6 @@ DEFINE_STATIC_SRCU(nodes_srcu);
  */
 static DEFINE_MUTEX(close_lock);
 
-struct kmem_cache *dlm_midcomms_cache_create(void)
-{
-	return kmem_cache_create("dlm_mhandle", sizeof(struct dlm_mhandle),
-				 0, 0, NULL);
-}
-
 static inline const char *dlm_state_str(int state)
 {
 	switch (state) {
@@ -286,7 +279,7 @@ static void dlm_mhandle_release(struct rcu_head *rcu)
 	struct dlm_mhandle *mh = container_of(rcu, struct dlm_mhandle, rcu);
 
 	dlm_lowcomms_put_msg(mh->msg);
-	dlm_free_mhandle(mh);
+	kfree(mh);
 }
 
 static void dlm_mhandle_delete(struct midcomms_node *node,
@@ -916,11 +909,11 @@ int dlm_process_incoming_buffer(int nodeid, unsigned char *buf, int len)
 		if (msglen > len)
 			break;
 
-		switch (hd->h_version) {
-		case cpu_to_le32(DLM_VERSION_3_1):
+		switch (le32_to_cpu(hd->h_version)) {
+		case DLM_VERSION_3_1:
 			dlm_midcomms_receive_buffer_3_1((union dlm_packet *)ptr, nodeid);
 			break;
-		case cpu_to_le32(DLM_VERSION_3_2):
+		case DLM_VERSION_3_2:
 			dlm_midcomms_receive_buffer_3_2((union dlm_packet *)ptr, nodeid);
 			break;
 		default:
@@ -976,7 +969,7 @@ void dlm_midcomms_receive_done(int nodeid)
 		spin_unlock(&node->state_lock);
 		/* do nothing FIN has it's own ack send */
 		break;
-	}
+	};
 	srcu_read_unlock(&nodes_srcu, idx);
 }
 
@@ -1027,10 +1020,8 @@ static void dlm_fill_opts_header(struct dlm_opts *opts, uint16_t inner_len,
 	header_out(&opts->o_header);
 }
 
-static void midcomms_new_msg_cb(void *data)
+static void midcomms_new_msg_cb(struct dlm_mhandle *mh)
 {
-	struct dlm_mhandle *mh = data;
-
 	atomic_inc(&mh->node->send_queue_cnt);
 
 	spin_lock(&mh->node->send_queue_lock);
@@ -1080,12 +1071,10 @@ struct dlm_mhandle *dlm_midcomms_get_mhandle(int nodeid, int len,
 	/* this is a bug, however we going on and hope it will be resolved */
 	WARN_ON(test_bit(DLM_NODE_FLAG_STOP_TX, &node->flags));
 
-	mh = dlm_allocate_mhandle();
+	mh = kzalloc(sizeof(*mh), GFP_NOFS);
 	if (!mh)
 		goto err;
 
-	mh->committed = false;
-	mh->ack_rcv = NULL;
 	mh->idx = idx;
 	mh->node = node;
 
@@ -1094,7 +1083,7 @@ struct dlm_mhandle *dlm_midcomms_get_mhandle(int nodeid, int len,
 		msg = dlm_lowcomms_new_msg(nodeid, len, allocation, ppc,
 					   NULL, NULL);
 		if (!msg) {
-			dlm_free_mhandle(mh);
+			kfree(mh);
 			goto err;
 		}
 
@@ -1103,13 +1092,13 @@ struct dlm_mhandle *dlm_midcomms_get_mhandle(int nodeid, int len,
 		msg = dlm_midcomms_get_msg_3_2(mh, nodeid, len, allocation,
 					       ppc);
 		if (!msg) {
-			dlm_free_mhandle(mh);
+			kfree(mh);
 			goto err;
 		}
 
 		break;
 	default:
-		dlm_free_mhandle(mh);
+		kfree(mh);
 		WARN_ON(1);
 		goto err;
 	}
@@ -1145,7 +1134,7 @@ void dlm_midcomms_commit_mhandle(struct dlm_mhandle *mh)
 		dlm_lowcomms_commit_msg(mh->msg);
 		dlm_lowcomms_put_msg(mh->msg);
 		/* mh is not part of rcu list in this case */
-		dlm_free_mhandle(mh);
+		kfree(mh);
 		break;
 	case DLM_VERSION_3_2:
 		dlm_midcomms_commit_msg_3_2(mh);
@@ -1242,7 +1231,7 @@ void dlm_midcomms_add_member(int nodeid)
 	}
 
 	node->users++;
-	pr_debug("node %d users inc count %d\n", nodeid, node->users);
+	pr_debug("users inc count %d\n", node->users);
 	spin_unlock(&node->state_lock);
 
 	srcu_read_unlock(&nodes_srcu, idx);
@@ -1265,7 +1254,7 @@ void dlm_midcomms_remove_member(int nodeid)
 
 	spin_lock(&node->state_lock);
 	node->users--;
-	pr_debug("node %d users dec count %d\n", nodeid, node->users);
+	pr_debug("users dec count %d\n", node->users);
 
 	/* hitting users count to zero means the
 	 * other side is running dlm_midcomms_stop()
@@ -1436,51 +1425,3 @@ int dlm_midcomms_close(int nodeid)
 
 	return ret;
 }
-
-/* debug functionality to send raw dlm msg from user space */
-struct dlm_rawmsg_data {
-	struct midcomms_node *node;
-	void *buf;
-};
-
-static void midcomms_new_rawmsg_cb(void *data)
-{
-	struct dlm_rawmsg_data *rd = data;
-	struct dlm_header *h = rd->buf;
-
-	switch (h->h_version) {
-	case cpu_to_le32(DLM_VERSION_3_1):
-		break;
-	default:
-		switch (h->h_cmd) {
-		case DLM_OPTS:
-			if (!h->u.h_seq)
-				h->u.h_seq = rd->node->seq_send++;
-			break;
-		default:
-			break;
-		}
-		break;
-	}
-}
-
-int dlm_midcomms_rawmsg_send(struct midcomms_node *node, void *buf,
-			     int buflen)
-{
-	struct dlm_rawmsg_data rd;
-	struct dlm_msg *msg;
-	char *msgbuf;
-
-	rd.node = node;
-	rd.buf = buf;
-
-	msg = dlm_lowcomms_new_msg(node->nodeid, buflen, GFP_NOFS,
-				   &msgbuf, midcomms_new_rawmsg_cb, &rd);
-	if (!msg)
-		return -ENOMEM;
-
-	memcpy(msgbuf, buf, buflen);
-	dlm_lowcomms_commit_msg(msg);
-	return 0;
-}
-

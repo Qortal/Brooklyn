@@ -592,49 +592,49 @@ void fpga_mgr_unlock(struct fpga_manager *mgr)
 EXPORT_SYMBOL_GPL(fpga_mgr_unlock);
 
 /**
- * fpga_mgr_register_full - create and register an FPGA Manager device
+ * fpga_mgr_create - create and initialize an FPGA manager struct
  * @parent:	fpga manager device from pdev
- * @info:	parameters for fpga manager
+ * @name:	fpga manager name
+ * @mops:	pointer to structure of fpga manager ops
+ * @priv:	fpga manager private data
  *
- * The caller of this function is responsible for calling fpga_mgr_unregister().
- * Using devm_fpga_mgr_register_full() instead is recommended.
+ * The caller of this function is responsible for freeing the struct with
+ * fpga_mgr_free().  Using devm_fpga_mgr_create() instead is recommended.
  *
- * Return: pointer to struct fpga_manager pointer or ERR_PTR()
+ * Return: pointer to struct fpga_manager or NULL
  */
-struct fpga_manager *
-fpga_mgr_register_full(struct device *parent, const struct fpga_manager_info *info)
+struct fpga_manager *fpga_mgr_create(struct device *parent, const char *name,
+				     const struct fpga_manager_ops *mops,
+				     void *priv)
 {
-	const struct fpga_manager_ops *mops = info->mops;
 	struct fpga_manager *mgr;
 	int id, ret;
 
 	if (!mops) {
 		dev_err(parent, "Attempt to register without fpga_manager_ops\n");
-		return ERR_PTR(-EINVAL);
+		return NULL;
 	}
 
-	if (!info->name || !strlen(info->name)) {
+	if (!name || !strlen(name)) {
 		dev_err(parent, "Attempt to register with no name!\n");
-		return ERR_PTR(-EINVAL);
+		return NULL;
 	}
 
 	mgr = kzalloc(sizeof(*mgr), GFP_KERNEL);
 	if (!mgr)
-		return ERR_PTR(-ENOMEM);
+		return NULL;
 
 	id = ida_simple_get(&fpga_mgr_ida, 0, 0, GFP_KERNEL);
-	if (id < 0) {
-		ret = id;
+	if (id < 0)
 		goto error_kfree;
-	}
 
 	mutex_init(&mgr->ref_mutex);
 
-	mgr->name = info->name;
-	mgr->mops = info->mops;
-	mgr->priv = info->priv;
-	mgr->compat_id = info->compat_id;
+	mgr->name = name;
+	mgr->mops = mops;
+	mgr->priv = priv;
 
+	device_initialize(&mgr->dev);
 	mgr->dev.class = fpga_mgr_class;
 	mgr->dev.groups = mops->groups;
 	mgr->dev.parent = parent;
@@ -645,19 +645,6 @@ fpga_mgr_register_full(struct device *parent, const struct fpga_manager_info *in
 	if (ret)
 		goto error_device;
 
-	/*
-	 * Initialize framework state by requesting low level driver read state
-	 * from device.  FPGA may be in reset mode or may have been programmed
-	 * by bootloader or EEPROM.
-	 */
-	mgr->state = fpga_mgr_state(mgr);
-
-	ret = device_register(&mgr->dev);
-	if (ret) {
-		put_device(&mgr->dev);
-		return ERR_PTR(ret);
-	}
-
 	return mgr;
 
 error_device:
@@ -665,36 +652,96 @@ error_device:
 error_kfree:
 	kfree(mgr);
 
-	return ERR_PTR(ret);
+	return NULL;
 }
-EXPORT_SYMBOL_GPL(fpga_mgr_register_full);
+EXPORT_SYMBOL_GPL(fpga_mgr_create);
 
 /**
- * fpga_mgr_register - create and register an FPGA Manager device
+ * fpga_mgr_free - free an FPGA manager created with fpga_mgr_create()
+ * @mgr:	fpga manager struct
+ */
+void fpga_mgr_free(struct fpga_manager *mgr)
+{
+	ida_simple_remove(&fpga_mgr_ida, mgr->dev.id);
+	kfree(mgr);
+}
+EXPORT_SYMBOL_GPL(fpga_mgr_free);
+
+static void devm_fpga_mgr_release(struct device *dev, void *res)
+{
+	struct fpga_mgr_devres *dr = res;
+
+	fpga_mgr_free(dr->mgr);
+}
+
+/**
+ * devm_fpga_mgr_create - create and initialize a managed FPGA manager struct
  * @parent:	fpga manager device from pdev
  * @name:	fpga manager name
  * @mops:	pointer to structure of fpga manager ops
  * @priv:	fpga manager private data
  *
- * The caller of this function is responsible for calling fpga_mgr_unregister().
- * Using devm_fpga_mgr_register() instead is recommended. This simple
- * version of the register function should be sufficient for most users. The
- * fpga_mgr_register_full() function is available for users that need to pass
- * additional, optional parameters.
+ * This function is intended for use in an FPGA manager driver's probe function.
+ * After the manager driver creates the manager struct with
+ * devm_fpga_mgr_create(), it should register it with fpga_mgr_register().  The
+ * manager driver's remove function should call fpga_mgr_unregister().  The
+ * manager struct allocated with this function will be freed automatically on
+ * driver detach.  This includes the case of a probe function returning error
+ * before calling fpga_mgr_register(), the struct will still get cleaned up.
  *
- * Return: pointer to struct fpga_manager pointer or ERR_PTR()
+ * Return: pointer to struct fpga_manager or NULL
  */
-struct fpga_manager *
-fpga_mgr_register(struct device *parent, const char *name,
-		  const struct fpga_manager_ops *mops, void *priv)
+struct fpga_manager *devm_fpga_mgr_create(struct device *parent, const char *name,
+					  const struct fpga_manager_ops *mops,
+					  void *priv)
 {
-	struct fpga_manager_info info = { 0 };
+	struct fpga_mgr_devres *dr;
 
-	info.name = name;
-	info.mops = mops;
-	info.priv = priv;
+	dr = devres_alloc(devm_fpga_mgr_release, sizeof(*dr), GFP_KERNEL);
+	if (!dr)
+		return NULL;
 
-	return fpga_mgr_register_full(parent, &info);
+	dr->mgr = fpga_mgr_create(parent, name, mops, priv);
+	if (!dr->mgr) {
+		devres_free(dr);
+		return NULL;
+	}
+
+	devres_add(parent, dr);
+
+	return dr->mgr;
+}
+EXPORT_SYMBOL_GPL(devm_fpga_mgr_create);
+
+/**
+ * fpga_mgr_register - register an FPGA manager
+ * @mgr: fpga manager struct
+ *
+ * Return: 0 on success, negative error code otherwise.
+ */
+int fpga_mgr_register(struct fpga_manager *mgr)
+{
+	int ret;
+
+	/*
+	 * Initialize framework state by requesting low level driver read state
+	 * from device.  FPGA may be in reset mode or may have been programmed
+	 * by bootloader or EEPROM.
+	 */
+	mgr->state = fpga_mgr_state(mgr);
+
+	ret = device_add(&mgr->dev);
+	if (ret)
+		goto error_device;
+
+	dev_info(&mgr->dev, "%s registered\n", mgr->name);
+
+	return 0;
+
+error_device:
+	ida_simple_remove(&fpga_mgr_ida, mgr->dev.id);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(fpga_mgr_register);
 
@@ -718,6 +765,14 @@ void fpga_mgr_unregister(struct fpga_manager *mgr)
 }
 EXPORT_SYMBOL_GPL(fpga_mgr_unregister);
 
+static int fpga_mgr_devres_match(struct device *dev, void *res,
+				 void *match_data)
+{
+	struct fpga_mgr_devres *dr = res;
+
+	return match_data == dr->mgr;
+}
+
 static void devm_fpga_mgr_unregister(struct device *dev, void *res)
 {
 	struct fpga_mgr_devres *dr = res;
@@ -726,67 +781,45 @@ static void devm_fpga_mgr_unregister(struct device *dev, void *res)
 }
 
 /**
- * devm_fpga_mgr_register_full - resource managed variant of fpga_mgr_register()
- * @parent:	fpga manager device from pdev
- * @info:	parameters for fpga manager
+ * devm_fpga_mgr_register - resource managed variant of fpga_mgr_register()
+ * @dev: managing device for this FPGA manager
+ * @mgr: fpga manager struct
  *
- * This is the devres variant of fpga_mgr_register_full() for which the unregister
+ * This is the devres variant of fpga_mgr_register() for which the unregister
  * function will be called automatically when the managing device is detached.
  */
-struct fpga_manager *
-devm_fpga_mgr_register_full(struct device *parent, const struct fpga_manager_info *info)
+int devm_fpga_mgr_register(struct device *dev, struct fpga_manager *mgr)
 {
 	struct fpga_mgr_devres *dr;
-	struct fpga_manager *mgr;
+	int ret;
+
+	/*
+	 * Make sure that the struct fpga_manager * that is passed in is
+	 * managed itself.
+	 */
+	if (WARN_ON(!devres_find(dev, devm_fpga_mgr_release,
+				 fpga_mgr_devres_match, mgr)))
+		return -EINVAL;
 
 	dr = devres_alloc(devm_fpga_mgr_unregister, sizeof(*dr), GFP_KERNEL);
 	if (!dr)
-		return ERR_PTR(-ENOMEM);
+		return -ENOMEM;
 
-	mgr = fpga_mgr_register_full(parent, info);
-	if (IS_ERR(mgr)) {
+	ret = fpga_mgr_register(mgr);
+	if (ret) {
 		devres_free(dr);
-		return mgr;
+		return ret;
 	}
 
 	dr->mgr = mgr;
-	devres_add(parent, dr);
+	devres_add(dev, dr);
 
-	return mgr;
-}
-EXPORT_SYMBOL_GPL(devm_fpga_mgr_register_full);
-
-/**
- * devm_fpga_mgr_register - resource managed variant of fpga_mgr_register()
- * @parent:	fpga manager device from pdev
- * @name:	fpga manager name
- * @mops:	pointer to structure of fpga manager ops
- * @priv:	fpga manager private data
- *
- * This is the devres variant of fpga_mgr_register() for which the
- * unregister function will be called automatically when the managing
- * device is detached.
- */
-struct fpga_manager *
-devm_fpga_mgr_register(struct device *parent, const char *name,
-		       const struct fpga_manager_ops *mops, void *priv)
-{
-	struct fpga_manager_info info = { 0 };
-
-	info.name = name;
-	info.mops = mops;
-	info.priv = priv;
-
-	return devm_fpga_mgr_register_full(parent, &info);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(devm_fpga_mgr_register);
 
 static void fpga_mgr_dev_release(struct device *dev)
 {
-	struct fpga_manager *mgr = to_fpga_manager(dev);
-
-	ida_simple_remove(&fpga_mgr_ida, mgr->dev.id);
-	kfree(mgr);
 }
 
 static int __init fpga_mgr_class_init(void)

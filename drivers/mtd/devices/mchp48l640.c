@@ -345,9 +345,7 @@ static int mchp48l640_remove(struct spi_device *spi)
 {
 	struct mchp48l640_flash *flash = spi_get_drvdata(spi);
 
-	WARN_ON(mtd_device_unregister(&flash->mtd));
-
-	return 0;
+	return mtd_device_unregister(&flash->mtd);
 }
 
 static const struct of_device_id mchp48l640_of_table[] = {

@@ -1288,7 +1288,7 @@ static int hcd_alloc_coherent(struct usb_bus *bus,
 		return -EFAULT;
 	}
 
-	vaddr = hcd_buffer_alloc(bus, size + sizeof(unsigned long),
+	vaddr = hcd_buffer_alloc(bus, size + sizeof(vaddr),
 				 mem_flags, dma_handle);
 	if (!vaddr)
 		return -ENOMEM;
@@ -2763,14 +2763,14 @@ static int usb_hcd_request_irqs(struct usb_hcd *hcd,
 		hcd->irq = irqnum;
 		dev_info(hcd->self.controller, "irq %d, %s 0x%08llx\n", irqnum,
 				(hcd->driver->flags & HCD_MEMORY) ?
-					"io mem" : "io port",
-				(unsigned long long)hcd->rsrc_start);
+					"io mem" : "io base",
+					(unsigned long long)hcd->rsrc_start);
 	} else {
 		hcd->irq = 0;
 		if (hcd->rsrc_start)
 			dev_info(hcd->self.controller, "%s 0x%08llx\n",
 					(hcd->driver->flags & HCD_MEMORY) ?
-						"io mem" : "io port",
+					"io mem" : "io base",
 					(unsigned long long)hcd->rsrc_start);
 	}
 	return 0;

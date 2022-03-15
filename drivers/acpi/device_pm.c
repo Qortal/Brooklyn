@@ -285,12 +285,14 @@ EXPORT_SYMBOL(acpi_device_set_power);
 
 int acpi_bus_set_power(acpi_handle handle, int state)
 {
-	struct acpi_device *device = acpi_fetch_acpi_dev(handle);
+	struct acpi_device *device;
+	int result;
 
-	if (device)
-		return acpi_device_set_power(device, state);
+	result = acpi_bus_get_device(handle, &device);
+	if (result)
+		return result;
 
-	return -ENODEV;
+	return acpi_device_set_power(device, state);
 }
 EXPORT_SYMBOL(acpi_bus_set_power);
 
@@ -408,20 +410,21 @@ EXPORT_SYMBOL_GPL(acpi_device_update_power);
 
 int acpi_bus_update_power(acpi_handle handle, int *state_p)
 {
-	struct acpi_device *device = acpi_fetch_acpi_dev(handle);
+	struct acpi_device *device;
+	int result;
 
-	if (device)
-		return acpi_device_update_power(device, state_p);
-
-	return -ENODEV;
+	result = acpi_bus_get_device(handle, &device);
+	return result ? result : acpi_device_update_power(device, state_p);
 }
 EXPORT_SYMBOL_GPL(acpi_bus_update_power);
 
 bool acpi_bus_power_manageable(acpi_handle handle)
 {
-	struct acpi_device *device = acpi_fetch_acpi_dev(handle);
+	struct acpi_device *device;
+	int result;
 
-	return device && device->flags.power_manageable;
+	result = acpi_bus_get_device(handle, &device);
+	return result ? false : device->flags.power_manageable;
 }
 EXPORT_SYMBOL(acpi_bus_power_manageable);
 
@@ -540,9 +543,11 @@ acpi_status acpi_remove_pm_notifier(struct acpi_device *adev)
 
 bool acpi_bus_can_wakeup(acpi_handle handle)
 {
-	struct acpi_device *device = acpi_fetch_acpi_dev(handle);
+	struct acpi_device *device;
+	int result;
 
-	return device && device->wakeup.flags.valid;
+	result = acpi_bus_get_device(handle, &device);
+	return result ? false : device->wakeup.flags.valid;
 }
 EXPORT_SYMBOL(acpi_bus_can_wakeup);
 
@@ -1394,31 +1399,5 @@ bool acpi_storage_d3(struct device *dev)
 	return val == 1;
 }
 EXPORT_SYMBOL_GPL(acpi_storage_d3);
-
-/**
- * acpi_dev_state_d0 - Tell if the device is in D0 power state
- * @dev: Physical device the ACPI power state of which to check
- *
- * On a system without ACPI, return true. On a system with ACPI, return true if
- * the current ACPI power state of the device is D0, or false otherwise.
- *
- * Note that the power state of a device is not well-defined after it has been
- * passed to acpi_device_set_power() and before that function returns, so it is
- * not valid to ask for the ACPI power state of the device in that time frame.
- *
- * This function is intended to be used in a driver's probe or remove
- * function. See Documentation/firmware-guide/acpi/low-power-probe.rst for
- * more information.
- */
-bool acpi_dev_state_d0(struct device *dev)
-{
-	struct acpi_device *adev = ACPI_COMPANION(dev);
-
-	if (!adev)
-		return true;
-
-	return adev->power.state == ACPI_STATE_D0;
-}
-EXPORT_SYMBOL_GPL(acpi_dev_state_d0);
 
 #endif /* CONFIG_PM */

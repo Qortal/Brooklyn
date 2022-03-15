@@ -91,17 +91,33 @@ int radeon_sync_resv(struct radeon_device *rdev,
 		     struct dma_resv *resv,
 		     bool shared)
 {
-	struct dma_resv_iter cursor;
-	struct radeon_fence *fence;
+	struct dma_resv_list *flist;
 	struct dma_fence *f;
+	struct radeon_fence *fence;
+	unsigned i;
 	int r = 0;
 
-	dma_resv_for_each_fence(&cursor, resv, shared, f) {
+	/* always sync to the exclusive fence */
+	f = dma_resv_excl_fence(resv);
+	fence = f ? to_radeon_fence(f) : NULL;
+	if (fence && fence->rdev == rdev)
+		radeon_sync_fence(sync, fence);
+	else if (f)
+		r = dma_fence_wait(f, true);
+
+	flist = dma_resv_shared_list(resv);
+	if (shared || !flist || r)
+		return r;
+
+	for (i = 0; i < flist->shared_count; ++i) {
+		f = rcu_dereference_protected(flist->shared[i],
+					      dma_resv_held(resv));
 		fence = to_radeon_fence(f);
 		if (fence && fence->rdev == rdev)
 			radeon_sync_fence(sync, fence);
 		else
 			r = dma_fence_wait(f, true);
+
 		if (r)
 			break;
 	}

@@ -137,7 +137,7 @@ struct ndisc_options *ndisc_parse_options(const struct net_device *dev,
 					  u8 *opt, int opt_len,
 					  struct ndisc_options *ndopts);
 
-void __ndisc_fill_addr_option(struct sk_buff *skb, int type, const void *data,
+void __ndisc_fill_addr_option(struct sk_buff *skb, int type, void *data,
 			      int data_len, int pad);
 
 #define NDISC_OPS_REDIRECT_DATA_SPACE	2
@@ -411,7 +411,13 @@ static inline void __ipv6_confirm_neigh(struct net_device *dev,
 
 	rcu_read_lock_bh();
 	n = __ipv6_neigh_lookup_noref(dev, pkey);
-	neigh_confirm(n);
+	if (n) {
+		unsigned long now = jiffies;
+
+		/* avoid dirtying neighbour */
+		if (READ_ONCE(n->confirmed) != now)
+			WRITE_ONCE(n->confirmed, now);
+	}
 	rcu_read_unlock_bh();
 }
 
@@ -422,7 +428,13 @@ static inline void __ipv6_confirm_neigh_stub(struct net_device *dev,
 
 	rcu_read_lock_bh();
 	n = __ipv6_neigh_lookup_noref_stub(dev, pkey);
-	neigh_confirm(n);
+	if (n) {
+		unsigned long now = jiffies;
+
+		/* avoid dirtying neighbour */
+		if (READ_ONCE(n->confirmed) != now)
+			WRITE_ONCE(n->confirmed, now);
+	}
 	rcu_read_unlock_bh();
 }
 
@@ -475,9 +487,9 @@ int igmp6_late_init(void);
 void igmp6_cleanup(void);
 void igmp6_late_cleanup(void);
 
-int igmp6_event_query(struct sk_buff *skb);
+void igmp6_event_query(struct sk_buff *skb);
 
-int igmp6_event_report(struct sk_buff *skb);
+void igmp6_event_report(struct sk_buff *skb);
 
 
 #ifdef CONFIG_SYSCTL

@@ -7,7 +7,7 @@
 #include <linux/iomap.h>
 #include <linux/fiemap.h>
 #include <linux/iversion.h>
-#include <linux/sched/mm.h>
+#include <linux/backing-dev.h>
 
 #include "ext4_jbd2.h"
 #include "ext4.h"
@@ -911,7 +911,7 @@ int ext4_da_write_inline_data_begin(struct address_space *mapping,
 				    struct page **pagep,
 				    void **fsdata)
 {
-	int ret;
+	int ret, inline_size;
 	handle_t *handle;
 	struct page *page;
 	struct ext4_iloc iloc;
@@ -928,9 +928,14 @@ retry_journal:
 		goto out;
 	}
 
-	ret = ext4_prepare_inline_data(handle, inode, pos + len);
-	if (ret && ret != -ENOSPC)
-		goto out_journal;
+	inline_size = ext4_get_max_inline_size(inode);
+
+	ret = -ENOSPC;
+	if (inline_size >= pos + len) {
+		ret = ext4_prepare_inline_data(handle, inode, pos + len);
+		if (ret && ret != -ENOSPC)
+			goto out_journal;
+	}
 
 	/*
 	 * We cannot recurse into the filesystem as the transaction
@@ -1932,7 +1937,8 @@ int ext4_inline_data_truncate(struct inode *inode, int *has_inline)
 retry:
 			err = ext4_es_remove_extent(inode, 0, EXT_MAX_BLOCKS);
 			if (err == -ENOMEM) {
-				memalloc_retry_wait(GFP_ATOMIC);
+				cond_resched();
+				congestion_wait(BLK_RW_ASYNC, HZ/50);
 				goto retry;
 			}
 			if (err)

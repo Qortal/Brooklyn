@@ -261,7 +261,7 @@ struct w83792d_data {
 	struct device *hwmon_dev;
 
 	struct mutex update_lock;
-	bool valid;		/* true if following fields are valid */
+	char valid;		/* !=0 if following fields are valid */
 	unsigned long last_updated;	/* In jiffies */
 
 	u8 in[9];		/* Register value */
@@ -740,7 +740,7 @@ intrusion0_alarm_store(struct device *dev, struct device_attribute *attr,
 	mutex_lock(&data->update_lock);
 	reg = w83792d_read_value(client, W83792D_REG_CHASSIS_CLR);
 	w83792d_write_value(client, W83792D_REG_CHASSIS_CLR, reg | 0x80);
-	data->valid = false;		/* Force cache refresh */
+	data->valid = 0;		/* Force cache refresh */
 	mutex_unlock(&data->update_lock);
 
 	return count;
@@ -1589,7 +1589,7 @@ static struct w83792d_data *w83792d_update_device(struct device *dev)
 		}
 
 		data->last_updated = jiffies;
-		data->valid = true;
+		data->valid = 1;
 	}
 
 	mutex_unlock(&data->update_lock);

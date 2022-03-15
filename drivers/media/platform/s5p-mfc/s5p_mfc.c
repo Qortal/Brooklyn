@@ -1185,6 +1185,7 @@ static int s5p_mfc_configure_common_memory(struct s5p_mfc_dev *mfc_dev)
 {
 	struct device *dev = &mfc_dev->plat_dev->dev;
 	unsigned long mem_size = SZ_4M;
+	unsigned int bitmap_size;
 
 	if (IS_ENABLED(CONFIG_DMA_CMA) || exynos_is_iommu_available(dev))
 		mem_size = SZ_8M;
@@ -1192,14 +1193,16 @@ static int s5p_mfc_configure_common_memory(struct s5p_mfc_dev *mfc_dev)
 	if (mfc_mem_size)
 		mem_size = memparse(mfc_mem_size, NULL);
 
-	mfc_dev->mem_bitmap = bitmap_zalloc(mem_size >> PAGE_SHIFT, GFP_KERNEL);
+	bitmap_size = BITS_TO_LONGS(mem_size >> PAGE_SHIFT) * sizeof(long);
+
+	mfc_dev->mem_bitmap = kzalloc(bitmap_size, GFP_KERNEL);
 	if (!mfc_dev->mem_bitmap)
 		return -ENOMEM;
 
 	mfc_dev->mem_virt = dma_alloc_coherent(dev, mem_size,
 					       &mfc_dev->mem_base, GFP_KERNEL);
 	if (!mfc_dev->mem_virt) {
-		bitmap_free(mfc_dev->mem_bitmap);
+		kfree(mfc_dev->mem_bitmap);
 		dev_err(dev, "failed to preallocate %ld MiB for the firmware and context buffers\n",
 			(mem_size / SZ_1M));
 		return -ENOMEM;
@@ -1238,7 +1241,7 @@ static void s5p_mfc_unconfigure_common_memory(struct s5p_mfc_dev *mfc_dev)
 
 	dma_free_coherent(dev, mfc_dev->mem_size, mfc_dev->mem_virt,
 			  mfc_dev->mem_base);
-	bitmap_free(mfc_dev->mem_bitmap);
+	kfree(mfc_dev->mem_bitmap);
 	vb2_dma_contig_clear_max_seg_size(dev);
 }
 
@@ -1290,7 +1293,8 @@ static int s5p_mfc_probe(struct platform_device *pdev)
 		return -ENOENT;
 	}
 
-	dev->regs_base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	dev->regs_base = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(dev->regs_base))
 		return PTR_ERR(dev->regs_base);
 

@@ -492,7 +492,7 @@ out:
 
 idle_out:
 	curSC->SCp.phase = idle;
-	scsi_done(curSC);
+	curSC->scsi_done(curSC);
 	goto out;
 }
 
@@ -537,7 +537,8 @@ SYM53C500_info(struct Scsi_Host *SChost)
 	return (info_msg);
 }
 
-static int SYM53C500_queue_lck(struct scsi_cmnd *SCpnt)
+static int 
+SYM53C500_queue_lck(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
 {
 	int i;
 	int port_base = SCpnt->device->host->io_port;
@@ -555,6 +556,7 @@ static int SYM53C500_queue_lck(struct scsi_cmnd *SCpnt)
 	VDEB(printk("\n"));
 
 	data->current_SC = SCpnt;
+	data->current_SC->scsi_done = done;
 	data->current_SC->SCp.phase = command_ph;
 	data->current_SC->SCp.Status = 0;
 	data->current_SC->SCp.Message = 0;
@@ -650,12 +652,10 @@ static struct device_attribute SYM53C500_pio_attr = {
 	.store = SYM53C500_store_pio,
 };
 
-static struct attribute *SYM53C500_shost_attrs[] = {
-	&SYM53C500_pio_attr.attr,
+static struct device_attribute *SYM53C500_shost_attrs[] = {
+	&SYM53C500_pio_attr,
 	NULL,
 };
-
-ATTRIBUTE_GROUPS(SYM53C500_shost);
 
 /*
 *  scsi_host_template initializer
@@ -671,7 +671,7 @@ static struct scsi_host_template sym53c500_driver_template = {
      .can_queue			= 1,
      .this_id			= 7,
      .sg_tablesize		= 32,
-     .shost_groups		= SYM53C500_shost_groups
+     .shost_attrs		= SYM53C500_shost_attrs
 };
 
 static int SYM53C500_config_check(struct pcmcia_device *p_dev, void *priv_data)

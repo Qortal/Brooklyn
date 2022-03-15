@@ -20,7 +20,6 @@
 #include <net/inetpeer.h>
 #include <net/fib_notifier.h>
 #include <linux/indirect_call_wrapper.h>
-#include <uapi/linux/bpf.h>
 
 #ifdef CONFIG_IPV6_MULTIPLE_TABLES
 #define FIB6_TABLE_HASHSZ 256

@@ -79,7 +79,7 @@ static void zfcp_qdio_request_tasklet(struct tasklet_struct *tasklet)
 	unsigned int start, error;
 	int completed;
 
-	completed = qdio_inspect_output_queue(cdev, 0, &start, &error);
+	completed = qdio_inspect_queue(cdev, 0, false, &start, &error);
 	if (completed > 0) {
 		if (error) {
 			zfcp_qdio_handler_error(qdio, "qdreqt1", error);
@@ -154,7 +154,7 @@ static void zfcp_qdio_int_resp(struct ccw_device *cdev, unsigned int qdio_err,
 	/*
 	 * put SBALs back to response queue
 	 */
-	if (qdio_add_bufs_to_input_queue(cdev, 0, idx, count))
+	if (do_QDIO(cdev, QDIO_FLAG_SYNC_INPUT, 0, idx, count, NULL))
 		zfcp_erp_adapter_reopen(qdio->adapter, 0, "qdires2");
 }
 
@@ -169,7 +169,7 @@ static void zfcp_qdio_irq_tasklet(struct tasklet_struct *tasklet)
 		tasklet_schedule(&qdio->request_tasklet);
 
 	/* Check the Response Queue: */
-	completed = qdio_inspect_input_queue(cdev, 0, &start, &error);
+	completed = qdio_inspect_queue(cdev, 0, true, &start, &error);
 	if (completed < 0)
 		return;
 	if (completed > 0)
@@ -326,9 +326,8 @@ int zfcp_qdio_send(struct zfcp_qdio *qdio, struct zfcp_qdio_req *q_req)
 
 	atomic_sub(sbal_number, &qdio->req_q_free);
 
-	retval = qdio_add_bufs_to_output_queue(qdio->adapter->ccw_device, 0,
-					       q_req->sbal_first, sbal_number,
-					       NULL);
+	retval = do_QDIO(qdio->adapter->ccw_device, QDIO_FLAG_SYNC_OUTPUT, 0,
+			 q_req->sbal_first, sbal_number, NULL);
 
 	if (unlikely(retval)) {
 		/* Failed to submit the IO, roll back our modifications. */
@@ -396,10 +395,7 @@ void zfcp_qdio_close(struct zfcp_qdio *qdio)
 	if (!(atomic_read(&adapter->status) & ZFCP_STATUS_ADAPTER_QDIOUP))
 		return;
 
-	/*
-	 * Clear QDIOUP flag, thus qdio_add_bufs_to_output_queue() is not called
-	 * during qdio_shutdown().
-	 */
+	/* clear QDIOUP flag, thus do_QDIO is not called during qdio_shutdown */
 	spin_lock_irq(&qdio->req_q_lock);
 	atomic_andnot(ZFCP_STATUS_ADAPTER_QDIOUP, &adapter->status);
 	spin_unlock_irq(&qdio->req_q_lock);
@@ -502,7 +498,8 @@ int zfcp_qdio_open(struct zfcp_qdio *qdio)
 		sbale->addr = 0;
 	}
 
-	if (qdio_add_bufs_to_input_queue(cdev, 0, 0, QDIO_MAX_BUFFERS_PER_Q))
+	if (do_QDIO(cdev, QDIO_FLAG_SYNC_INPUT, 0, 0, QDIO_MAX_BUFFERS_PER_Q,
+		    NULL))
 		goto failed_qdio;
 
 	/* set index of first available SBALS / number of available SBALS */

@@ -433,7 +433,6 @@ static struct attribute *port_default_attrs[] = {
 	&ib_port_attr_link_layer.attr,
 	NULL
 };
-ATTRIBUTE_GROUPS(port_default);
 
 static ssize_t print_ndev(const struct ib_gid_attr *gid_attr, char *buf)
 {
@@ -756,7 +755,7 @@ static void ib_port_release(struct kobject *kobj)
 	for (i = 0; i != ARRAY_SIZE(port->groups); i++)
 		kfree(port->groups[i].attrs);
 	if (port->hw_stats_data)
-		rdma_free_hw_stats_struct(port->hw_stats_data->stats);
+		kfree(port->hw_stats_data->stats);
 	kfree(port->hw_stats_data);
 	kvfree(port);
 }
@@ -775,7 +774,7 @@ static void ib_port_gid_attr_release(struct kobject *kobj)
 static struct kobj_type port_type = {
 	.release       = ib_port_release,
 	.sysfs_ops     = &port_sysfs_ops,
-	.default_groups = port_default_groups,
+	.default_attrs = port_default_attrs
 };
 
 static struct kobj_type gid_attr_type = {
@@ -896,7 +895,7 @@ alloc_hw_stats_device(struct ib_device *ibdev)
 	stats = ibdev->ops.alloc_hw_device_stats(ibdev);
 	if (!stats)
 		return ERR_PTR(-ENOMEM);
-	if (!stats->descs || stats->num_counters <= 0)
+	if (!stats->names || stats->num_counters <= 0)
 		goto err_free_stats;
 
 	/*
@@ -912,6 +911,7 @@ alloc_hw_stats_device(struct ib_device *ibdev)
 	if (!data->group.attrs)
 		goto err_free_data;
 
+	mutex_init(&stats->lock);
 	data->group.name = "hw_counters";
 	data->stats = stats;
 	return data;
@@ -919,14 +919,14 @@ alloc_hw_stats_device(struct ib_device *ibdev)
 err_free_data:
 	kfree(data);
 err_free_stats:
-	rdma_free_hw_stats_struct(stats);
+	kfree(stats);
 	return ERR_PTR(-ENOMEM);
 }
 
 void ib_device_release_hw_stats(struct hw_stats_device_data *data)
 {
 	kfree(data->group.attrs);
-	rdma_free_hw_stats_struct(data->stats);
+	kfree(data->stats);
 	kfree(data);
 }
 
@@ -934,8 +934,7 @@ int ib_setup_device_attrs(struct ib_device *ibdev)
 {
 	struct hw_stats_device_attribute *attr;
 	struct hw_stats_device_data *data;
-	bool opstat_skipped = false;
-	int i, ret, pos = 0;
+	int i, ret;
 
 	data = alloc_hw_stats_device(ibdev);
 	if (IS_ERR(data)) {
@@ -956,23 +955,16 @@ int ib_setup_device_attrs(struct ib_device *ibdev)
 	data->stats->timestamp = jiffies;
 
 	for (i = 0; i < data->stats->num_counters; i++) {
-		if (data->stats->descs[i].flags & IB_STAT_FLAG_OPTIONAL) {
-			opstat_skipped = true;
-			continue;
-		}
-
-		WARN_ON(opstat_skipped);
-		attr = &data->attrs[pos];
+		attr = &data->attrs[i];
 		sysfs_attr_init(&attr->attr.attr);
-		attr->attr.attr.name = data->stats->descs[i].name;
+		attr->attr.attr.name = data->stats->names[i];
 		attr->attr.attr.mode = 0444;
 		attr->attr.show = hw_stat_device_show;
 		attr->show = show_hw_stats;
-		data->group.attrs[pos] = &attr->attr.attr;
-		pos++;
+		data->group.attrs[i] = &attr->attr.attr;
 	}
 
-	attr = &data->attrs[pos];
+	attr = &data->attrs[i];
 	sysfs_attr_init(&attr->attr.attr);
 	attr->attr.attr.name = "lifespan";
 	attr->attr.attr.mode = 0644;
@@ -980,7 +972,7 @@ int ib_setup_device_attrs(struct ib_device *ibdev)
 	attr->show = show_stats_lifespan;
 	attr->attr.store = hw_stat_device_store;
 	attr->store = set_stats_lifespan;
-	data->group.attrs[pos] = &attr->attr.attr;
+	data->group.attrs[i] = &attr->attr.attr;
 	for (i = 0; i != ARRAY_SIZE(ibdev->groups); i++)
 		if (!ibdev->groups[i]) {
 			ibdev->groups[i] = &data->group;
@@ -1002,7 +994,7 @@ alloc_hw_stats_port(struct ib_port *port, struct attribute_group *group)
 	stats = ibdev->ops.alloc_hw_port_stats(port->ibdev, port->port_num);
 	if (!stats)
 		return ERR_PTR(-ENOMEM);
-	if (!stats->descs || stats->num_counters <= 0)
+	if (!stats->names || stats->num_counters <= 0)
 		goto err_free_stats;
 
 	/*
@@ -1018,6 +1010,7 @@ alloc_hw_stats_port(struct ib_port *port, struct attribute_group *group)
 	if (!group->attrs)
 		goto err_free_data;
 
+	mutex_init(&stats->lock);
 	group->name = "hw_counters";
 	data->stats = stats;
 	return data;
@@ -1025,7 +1018,7 @@ alloc_hw_stats_port(struct ib_port *port, struct attribute_group *group)
 err_free_data:
 	kfree(data);
 err_free_stats:
-	rdma_free_hw_stats_struct(stats);
+	kfree(stats);
 	return ERR_PTR(-ENOMEM);
 }
 
@@ -1034,8 +1027,7 @@ static int setup_hw_port_stats(struct ib_port *port,
 {
 	struct hw_stats_port_attribute *attr;
 	struct hw_stats_port_data *data;
-	bool opstat_skipped = false;
-	int i, ret, pos = 0;
+	int i, ret;
 
 	data = alloc_hw_stats_port(port, group);
 	if (IS_ERR(data))
@@ -1053,23 +1045,16 @@ static int setup_hw_port_stats(struct ib_port *port,
 	data->stats->timestamp = jiffies;
 
 	for (i = 0; i < data->stats->num_counters; i++) {
-		if (data->stats->descs[i].flags & IB_STAT_FLAG_OPTIONAL) {
-			opstat_skipped = true;
-			continue;
-		}
-
-		WARN_ON(opstat_skipped);
-		attr = &data->attrs[pos];
+		attr = &data->attrs[i];
 		sysfs_attr_init(&attr->attr.attr);
-		attr->attr.attr.name = data->stats->descs[i].name;
+		attr->attr.attr.name = data->stats->names[i];
 		attr->attr.attr.mode = 0444;
 		attr->attr.show = hw_stat_port_show;
 		attr->show = show_hw_stats;
-		group->attrs[pos] = &attr->attr.attr;
-		pos++;
+		group->attrs[i] = &attr->attr.attr;
 	}
 
-	attr = &data->attrs[pos];
+	attr = &data->attrs[i];
 	sysfs_attr_init(&attr->attr.attr);
 	attr->attr.attr.name = "lifespan";
 	attr->attr.attr.mode = 0644;
@@ -1077,7 +1062,7 @@ static int setup_hw_port_stats(struct ib_port *port,
 	attr->show = show_stats_lifespan;
 	attr->attr.store = hw_stat_port_store;
 	attr->store = set_stats_lifespan;
-	group->attrs[pos] = &attr->attr.attr;
+	group->attrs[i] = &attr->attr.attr;
 
 	port->hw_stats_data = data;
 	return 0;

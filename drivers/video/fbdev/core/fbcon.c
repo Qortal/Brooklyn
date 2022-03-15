@@ -1414,7 +1414,7 @@ static __inline__ void ywrap_up(struct vc_data *vc, int count)
 	struct fb_info *info = registered_fb[con2fb_map[vc->vc_num]];
 	struct fbcon_ops *ops = info->fbcon_par;
 	struct fbcon_display *p = &fb_display[vc->vc_num];
-
+	
 	p->yscroll += count;
 	if (p->yscroll >= p->vrows)	/* Deal with wrap */
 		p->yscroll -= p->vrows;
@@ -1433,7 +1433,7 @@ static __inline__ void ywrap_down(struct vc_data *vc, int count)
 	struct fb_info *info = registered_fb[con2fb_map[vc->vc_num]];
 	struct fbcon_ops *ops = info->fbcon_par;
 	struct fbcon_display *p = &fb_display[vc->vc_num];
-
+	
 	p->yscroll -= count;
 	if (p->yscroll < 0)	/* Deal with wrap */
 		p->yscroll += p->vrows;
@@ -1500,7 +1500,7 @@ static __inline__ void ypan_down(struct vc_data *vc, int count)
 	struct fb_info *info = registered_fb[con2fb_map[vc->vc_num]];
 	struct fbcon_display *p = &fb_display[vc->vc_num];
 	struct fbcon_ops *ops = info->fbcon_par;
-
+	
 	p->yscroll -= count;
 	if (p->yscroll < 0) {
 		ops->bmove(vc, info, 0, 0, p->vrows - vc->vc_rows,
@@ -1887,7 +1887,7 @@ static void fbcon_bmove(struct vc_data *vc, int sy, int sx, int dy, int dx,
 {
 	struct fb_info *info = registered_fb[con2fb_map[vc->vc_num]];
 	struct fbcon_display *p = &fb_display[vc->vc_num];
-
+	
 	if (fbcon_is_inactive(vc, info))
 		return;
 

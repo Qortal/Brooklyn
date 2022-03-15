@@ -61,6 +61,7 @@ extern "C" {
 # endif
 # include <linux/spinlock.h>
 # include <linux/errno.h>
+# include <stdarg.h>
 #endif
 
 #if defined(DWC_FREEBSD) || defined(DWC_NETBSD)

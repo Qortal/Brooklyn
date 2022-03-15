@@ -648,8 +648,7 @@ static int imx_pinctrl_parse_functions(struct device_node *np,
 	struct device_node *child;
 	struct function_desc *func;
 	struct group_desc *grp;
-	const char **group_names;
-	u32 i;
+	u32 i = 0;
 
 	dev_dbg(pctl->dev, "parse function(%d): %pOFn\n", index, np);
 
@@ -664,18 +663,14 @@ static int imx_pinctrl_parse_functions(struct device_node *np,
 		dev_err(ipctl->dev, "no groups defined in %pOF\n", np);
 		return -EINVAL;
 	}
-
-	group_names = devm_kcalloc(ipctl->dev, func->num_group_names,
-				   sizeof(char *), GFP_KERNEL);
-	if (!group_names)
+	func->group_names = devm_kcalloc(ipctl->dev, func->num_group_names,
+					 sizeof(char *), GFP_KERNEL);
+	if (!func->group_names)
 		return -ENOMEM;
-	i = 0;
-	for_each_child_of_node(np, child)
-		group_names[i++] = child->name;
-	func->group_names = group_names;
 
-	i = 0;
 	for_each_child_of_node(np, child) {
+		func->group_names[i] = child->name;
+
 		grp = devm_kzalloc(ipctl->dev, sizeof(struct group_desc),
 				   GFP_KERNEL);
 		if (!grp) {

@@ -21,6 +21,7 @@
  */
 #include "priv.h"
 
+#include "priv.h"
 #include <core/firmware.h>
 
 static void *

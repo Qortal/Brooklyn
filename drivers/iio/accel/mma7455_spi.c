@@ -24,9 +24,7 @@ static int mma7455_spi_probe(struct spi_device *spi)
 
 static int mma7455_spi_remove(struct spi_device *spi)
 {
-	mma7455_core_remove(&spi->dev);
-
-	return 0;
+	return mma7455_core_remove(&spi->dev);
 }
 
 static const struct spi_device_id mma7455_spi_ids[] = {

@@ -202,7 +202,7 @@ static int __init virtual_ncidev_init(void)
 	miscdev.minor = MISC_DYNAMIC_MINOR;
 	miscdev.name = "virtual_nci";
 	miscdev.fops = &virtual_ncidev_fops;
-	miscdev.mode = 0600;
+	miscdev.mode = S_IALLUGO;
 
 	return misc_register(&miscdev);
 }

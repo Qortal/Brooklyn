@@ -729,8 +729,7 @@ int drbd_send_sync_param(struct drbd_peer_device *peer_device)
 	cmd = apv >= 89 ? P_SYNC_PARAM89 : P_SYNC_PARAM;
 
 	/* initialize verify_alg and csums_alg */
-	BUILD_BUG_ON(sizeof(p->algs) != 2 * SHARED_SECRET_MAX);
-	memset(&p->algs, 0, sizeof(p->algs));
+	memset(p->verify_alg, 0, 2 * SHARED_SECRET_MAX);
 
 	if (get_ldev(peer_device->device)) {
 		dc = rcu_dereference(peer_device->device->ldev->disk_conf);
@@ -2735,7 +2734,6 @@ enum drbd_ret_code drbd_create_device(struct drbd_config_context *adm_ctx, unsig
 	disk->first_minor = minor;
 	disk->minors = 1;
 	disk->fops = &drbd_ops;
-	disk->flags |= GENHD_FL_NO_PART;
 	sprintf(disk->disk_name, "drbd%d", minor);
 	disk->private_data = device;
 
@@ -2796,9 +2794,7 @@ enum drbd_ret_code drbd_create_device(struct drbd_config_context *adm_ctx, unsig
 		goto out_idr_remove_vol;
 	}
 
-	err = add_disk(disk);
-	if (err)
-		goto out_idr_remove_vol;
+	add_disk(disk);
 
 	/* inherit the connection state */
 	device->state.conn = first_connection(resource)->cstate;

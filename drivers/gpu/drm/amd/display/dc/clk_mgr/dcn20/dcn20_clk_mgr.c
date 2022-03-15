@@ -38,7 +38,6 @@
 #include "clk/clk_11_0_0_offset.h"
 #include "clk/clk_11_0_0_sh_mask.h"
 
-
 #undef FN
 #define FN(reg_name, field_name) \
 	clk_mgr->clk_mgr_shift->field_name, clk_mgr->clk_mgr_mask->field_name
@@ -400,7 +399,7 @@ void dcn2_init_clocks(struct clk_mgr *clk_mgr)
 	clk_mgr->clks.prev_p_state_change_support = true;
 }
 
-static void dcn2_enable_pme_wa(struct clk_mgr *clk_mgr_base)
+void dcn2_enable_pme_wa(struct clk_mgr *clk_mgr_base)
 {
 	struct clk_mgr_internal *clk_mgr = TO_CLK_MGR_INTERNAL(clk_mgr_base);
 	struct pp_smu_funcs_nv *pp_smu = NULL;

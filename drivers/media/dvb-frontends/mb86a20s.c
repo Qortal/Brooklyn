@@ -444,11 +444,11 @@ static int mb86a20s_get_interleaving(struct mb86a20s_state *state,
 				     unsigned layer)
 {
 	int rc;
-	static const int interleaving[] = {
+	int interleaving[] = {
 		0, 1, 2, 4, 8
 	};
 
-	static const unsigned char reg[] = {
+	static unsigned char reg[] = {
 		[0] = 0x88,	/* Layer A */
 		[1] = 0x8c,	/* Layer B */
 		[2] = 0x90,	/* Layer C */

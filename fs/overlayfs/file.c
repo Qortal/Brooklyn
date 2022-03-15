@@ -280,14 +280,14 @@ static void ovl_aio_cleanup_handler(struct ovl_aio_req *aio_req)
 	ovl_aio_put(aio_req);
 }
 
-static void ovl_aio_rw_complete(struct kiocb *iocb, long res)
+static void ovl_aio_rw_complete(struct kiocb *iocb, long res, long res2)
 {
 	struct ovl_aio_req *aio_req = container_of(iocb,
 						   struct ovl_aio_req, iocb);
 	struct kiocb *orig_iocb = aio_req->orig_iocb;
 
 	ovl_aio_cleanup_handler(aio_req);
-	orig_iocb->ki_complete(orig_iocb, res);
+	orig_iocb->ki_complete(orig_iocb, res, res2);
 }
 
 static ssize_t ovl_read_iter(struct kiocb *iocb, struct iov_iter *iter)

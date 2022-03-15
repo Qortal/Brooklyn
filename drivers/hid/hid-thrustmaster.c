@@ -205,7 +205,7 @@ static void thrustmaster_model_handler(struct urb *urb)
 	struct tm_wheel *tm_wheel = hid_get_drvdata(hdev);
 	uint16_t model = 0;
 	int i, ret;
-	const struct tm_wheel_info *twi = NULL;
+	const struct tm_wheel_info *twi = 0;
 
 	if (urb->status) {
 		hid_err(hdev, "URB to get model id failed with error %d\n", urb->status);
@@ -238,7 +238,7 @@ static void thrustmaster_model_handler(struct urb *urb)
 		tm_wheel->usb_dev,
 		usb_sndctrlpipe(tm_wheel->usb_dev, 0),
 		(char *)tm_wheel->change_request,
-		NULL, 0, // We do not expect any response from the wheel
+		0, 0, // We do not expect any response from the wheel
 		thrustmaster_change_handler,
 		hdev
 	);
@@ -272,7 +272,7 @@ static void thrustmaster_remove(struct hid_device *hdev)
 static int thrustmaster_probe(struct hid_device *hdev, const struct hid_device_id *id)
 {
 	int ret = 0;
-	struct tm_wheel *tm_wheel = NULL;
+	struct tm_wheel *tm_wheel = 0;
 
 	if (!hid_is_usb(hdev))
 		return -EINVAL;

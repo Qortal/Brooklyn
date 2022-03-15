@@ -3921,8 +3921,7 @@ static int receive_SyncParam(struct drbd_connection *connection, struct packet_i
 
 	/* initialize verify_alg and csums_alg */
 	p = pi->data;
-	BUILD_BUG_ON(sizeof(p->algs) != 2 * SHARED_SECRET_MAX);
-	memset(&p->algs, 0, sizeof(p->algs));
+	memset(p->verify_alg, 0, 2 * SHARED_SECRET_MAX);
 
 	err = drbd_recv_all(peer_device->connection, p, header_size);
 	if (err)

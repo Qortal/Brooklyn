@@ -1029,5 +1029,6 @@ static struct platform_driver omap_rtc_driver = {
 
 module_platform_driver(omap_rtc_driver);
 
+MODULE_ALIAS("platform:omap_rtc");
 MODULE_AUTHOR("George G. Davis (and others)");
 MODULE_LICENSE("GPL");

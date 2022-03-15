@@ -511,7 +511,8 @@ static int rcar_gyroadc_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	priv->model = (uintptr_t)of_device_get_match_data(&pdev->dev);
+	priv->model = (enum rcar_gyroadc_model)
+		of_device_get_match_data(&pdev->dev);
 
 	platform_set_drvdata(pdev, indio_dev);
 

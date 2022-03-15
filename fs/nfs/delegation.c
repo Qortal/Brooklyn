@@ -755,13 +755,11 @@ int nfs4_inode_return_delegation(struct inode *inode)
 	struct nfs_delegation *delegation;
 
 	delegation = nfs_start_delegation_return(nfsi);
-	if (delegation != NULL) {
-		/* Synchronous recall of any application leases */
-		break_lease(inode, O_WRONLY | O_RDWR);
-		if (S_ISREG(inode->i_mode))
-			nfs_wb_all(inode);
+	/* Synchronous recall of any application leases */
+	break_lease(inode, O_WRONLY | O_RDWR);
+	nfs_wb_all(inode);
+	if (delegation != NULL)
 		return nfs_end_delegation_return(inode, delegation, 1);
-	}
 	return 0;
 }
 

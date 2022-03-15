@@ -335,7 +335,6 @@ static struct attribute *cpuidle_state_default_attrs[] = {
 	&attr_default_status.attr,
 	NULL
 };
-ATTRIBUTE_GROUPS(cpuidle_state_default);
 
 struct cpuidle_state_kobj {
 	struct cpuidle_state *state;
@@ -449,7 +448,7 @@ static void cpuidle_state_sysfs_release(struct kobject *kobj)
 
 static struct kobj_type ktype_state_cpuidle = {
 	.sysfs_ops = &cpuidle_state_sysfs_ops,
-	.default_groups = cpuidle_state_default_groups,
+	.default_attrs = cpuidle_state_default_attrs,
 	.release = cpuidle_state_sysfs_release,
 };
 
@@ -506,7 +505,7 @@ error_state:
 }
 
 /**
- * cpuidle_remove_state_sysfs - removes the cpuidle states sysfs attributes
+ * cpuidle_remove_driver_sysfs - removes the cpuidle states sysfs attributes
  * @device: the target device
  */
 static void cpuidle_remove_state_sysfs(struct cpuidle_device *device)
@@ -592,11 +591,10 @@ static struct attribute *cpuidle_driver_default_attrs[] = {
 	&attr_driver_name.attr,
 	NULL
 };
-ATTRIBUTE_GROUPS(cpuidle_driver_default);
 
 static struct kobj_type ktype_driver_cpuidle = {
 	.sysfs_ops = &cpuidle_driver_sysfs_ops,
-	.default_groups = cpuidle_driver_default_groups,
+	.default_attrs = cpuidle_driver_default_attrs,
 	.release = cpuidle_driver_sysfs_release,
 };
 

@@ -1404,8 +1404,7 @@ __lpfc_sli_release_iocbq_s4(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq)
 		}
 
 		if ((iocbq->iocb_flag & LPFC_EXCHANGE_BUSY) &&
-		    (!(unlikely(pci_channel_offline(phba->pcidev)))) &&
-		    sglq->state != SGL_XRI_ABORTED) {
+			(sglq->state != SGL_XRI_ABORTED)) {
 			spin_lock_irqsave(&phba->sli4_hba.sgl_list_lock,
 					  iflag);
 
@@ -4584,12 +4583,10 @@ lpfc_sli_flush_io_rings(struct lpfc_hba *phba)
 			lpfc_sli_cancel_iocbs(phba, &txq,
 					      IOSTAT_LOCAL_REJECT,
 					      IOERR_SLI_DOWN);
-			/* Flush the txcmplq */
+			/* Flush the txcmpq */
 			lpfc_sli_cancel_iocbs(phba, &txcmplq,
 					      IOSTAT_LOCAL_REJECT,
 					      IOERR_SLI_DOWN);
-			if (unlikely(pci_channel_offline(phba->pcidev)))
-				lpfc_sli4_io_xri_aborted(phba, NULL, 0);
 		}
 	} else {
 		pring = &psli->sli3_ring[LPFC_FCP_RING];
@@ -4749,7 +4746,7 @@ void lpfc_reset_barrier(struct lpfc_hba *phba)
 {
 	uint32_t __iomem *resp_buf;
 	uint32_t __iomem *mbox_buf;
-	volatile struct MAILBOX_word0 mbox;
+	volatile uint32_t mbox;
 	uint32_t hc_copy, ha_copy, resp_data;
 	int  i;
 	uint8_t hdrtype;
@@ -4783,13 +4780,13 @@ void lpfc_reset_barrier(struct lpfc_hba *phba)
 		phba->pport->stopped = 1;
 	}
 
-	mbox.word0 = 0;
-	mbox.mbxCommand = MBX_KILL_BOARD;
-	mbox.mbxOwner = OWN_CHIP;
+	mbox = 0;
+	((MAILBOX_t *)&mbox)->mbxCommand = MBX_KILL_BOARD;
+	((MAILBOX_t *)&mbox)->mbxOwner = OWN_CHIP;
 
 	writel(BARRIER_TEST_PATTERN, (resp_buf + 1));
 	mbox_buf = phba->MBslimaddr;
-	writel(mbox.word0, mbox_buf);
+	writel(mbox, mbox_buf);
 
 	for (i = 0; i < 50; i++) {
 		if (lpfc_readl((resp_buf + 1), &resp_data))
@@ -4810,12 +4807,12 @@ void lpfc_reset_barrier(struct lpfc_hba *phba)
 			goto clear_errat;
 	}
 
-	mbox.mbxOwner = OWN_HOST;
+	((MAILBOX_t *)&mbox)->mbxOwner = OWN_HOST;
 	resp_data = 0;
 	for (i = 0; i < 500; i++) {
 		if (lpfc_readl(resp_buf, &resp_data))
 			return;
-		if (resp_data != mbox.word0)
+		if (resp_data != mbox)
 			mdelay(1);
 		else
 			break;
@@ -5085,8 +5082,9 @@ lpfc_sli4_brdreset(struct lpfc_hba *phba)
 static int
 lpfc_sli_brdrestart_s3(struct lpfc_hba *phba)
 {
-	volatile struct MAILBOX_word0 mb;
+	MAILBOX_t *mb;
 	struct lpfc_sli *psli;
+	volatile uint32_t word0;
 	void __iomem *to_slim;
 	uint32_t hba_aer_enabled;
 
@@ -5103,23 +5101,24 @@ lpfc_sli_brdrestart_s3(struct lpfc_hba *phba)
 			(phba->pport) ? phba->pport->port_state : 0,
 			psli->sli_flag);
 
-	mb.word0 = 0;
-	mb.mbxCommand = MBX_RESTART;
-	mb.mbxHc = 1;
+	word0 = 0;
+	mb = (MAILBOX_t *) &word0;
+	mb->mbxCommand = MBX_RESTART;
+	mb->mbxHc = 1;
 
 	lpfc_reset_barrier(phba);
 
 	to_slim = phba->MBslimaddr;
-	writel(mb.word0, to_slim);
+	writel(*(uint32_t *) mb, to_slim);
 	readl(to_slim); /* flush */
 
 	/* Only skip post after fc_ffinit is completed */
 	if (phba->pport && phba->pport->port_state)
-		mb.word0 = 1;	/* This is really setting up word1 */
+		word0 = 1;	/* This is really setting up word1 */
 	else
-		mb.word0 = 0;	/* This is really setting up word1 */
+		word0 = 0;	/* This is really setting up word1 */
 	to_slim = phba->MBslimaddr + sizeof (uint32_t);
-	writel(mb.word0, to_slim);
+	writel(*(uint32_t *) mb, to_slim);
 	readl(to_slim); /* flush */
 
 	lpfc_sli_brdreset(phba);
@@ -7756,6 +7755,8 @@ lpfc_mbx_cmpl_cgn_set_ftrs(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 
 	/* Zero out Congestion Signal ACQE counter */
 	phba->cgn_acqe_cnt = 0;
+	atomic64_set(&phba->cgn_acqe_stat.warn, 0);
+	atomic64_set(&phba->cgn_acqe_stat.alarm, 0);
 
 	acqe = bf_get(lpfc_mbx_set_feature_CGN_acqe_freq,
 		      &pmb->u.mqe.un.set_feature);
@@ -7883,19 +7884,36 @@ static int
 lpfc_cmf_setup(struct lpfc_hba *phba)
 {
 	LPFC_MBOXQ_t *mboxq;
+	struct lpfc_mqe *mqe;
 	struct lpfc_dmabuf *mp;
 	struct lpfc_pc_sli4_params *sli4_params;
+	struct lpfc_sli4_parameters *mbx_sli4_parameters;
+	int length;
 	int rc, cmf, mi_ver;
-
-	rc = lpfc_sli4_refresh_params(phba);
-	if (unlikely(rc))
-		return rc;
 
 	mboxq = (LPFC_MBOXQ_t *)mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
 	if (!mboxq)
 		return -ENOMEM;
+	mqe = &mboxq->u.mqe;
 
+	/* Read the port's SLI4 Config Parameters */
+	length = (sizeof(struct lpfc_mbx_get_sli4_parameters) -
+		  sizeof(struct lpfc_sli4_cfg_mhdr));
+	lpfc_sli4_config(phba, mboxq, LPFC_MBOX_SUBSYSTEM_COMMON,
+			 LPFC_MBOX_OPCODE_GET_SLI4_PARAMETERS,
+			 length, LPFC_SLI4_MBX_EMBED);
+
+	rc = lpfc_sli_issue_mbox(phba, mboxq, MBX_POLL);
+	if (unlikely(rc)) {
+		mempool_free(mboxq, phba->mbox_mem_pool);
+		return rc;
+	}
+
+	/* Gather info on CMF and MI support */
 	sli4_params = &phba->sli4_hba.pc_sli4_params;
+	mbx_sli4_parameters = &mqe->un.get_sli4_parameters.sli4_parameters;
+	sli4_params->mi_ver = bf_get(cfg_mi_ver, mbx_sli4_parameters);
+	sli4_params->cmf = bf_get(cfg_cmf, mbx_sli4_parameters);
 
 	/* Are we forcing MI off via module parameter? */
 	if (!phba->cfg_enable_mi)
@@ -7990,10 +8008,6 @@ lpfc_cmf_setup(struct lpfc_hba *phba)
 			/* initialize congestion buffer info */
 			lpfc_init_congestion_buf(phba);
 			lpfc_init_congestion_stat(phba);
-
-			/* Zero out Congestion Signal counters */
-			atomic64_set(&phba->cgn_acqe_stat.alarm, 0);
-			atomic64_set(&phba->cgn_acqe_stat.warn, 0);
 		}
 
 		rc = lpfc_sli4_cgn_params_read(phba);
@@ -10001,7 +10015,7 @@ lpfc_mbox_api_table_setup(struct lpfc_hba *phba, uint8_t dev_grp)
 		phba->lpfc_sli_brdready = lpfc_sli_brdready_s4;
 		break;
 	default:
-		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
 				"1420 Invalid HBA PCI-device group: 0x%x\n",
 				dev_grp);
 		return -ENODEV;
@@ -11169,7 +11183,7 @@ lpfc_sli_api_table_setup(struct lpfc_hba *phba, uint8_t dev_grp)
 		phba->__lpfc_sli_issue_fcp_io = __lpfc_sli_issue_fcp_io_s4;
 		break;
 	default:
-		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+		lpfc_printf_log(phba, KERN_ERR, LOG_TRACE_EVENT,
 				"1419 Invalid HBA PCI-device group: 0x%x\n",
 				dev_grp);
 		return -ENODEV;
@@ -17988,8 +18002,8 @@ lpfc_sli4_alloc_xri(struct lpfc_hba *phba)
 	 * the driver starts at 0 each time.
 	 */
 	spin_lock_irq(&phba->hbalock);
-	xri = find_first_zero_bit(phba->sli4_hba.xri_bmask,
-				 phba->sli4_hba.max_cfg_param.max_xri);
+	xri = find_next_zero_bit(phba->sli4_hba.xri_bmask,
+				 phba->sli4_hba.max_cfg_param.max_xri, 0);
 	if (xri >= phba->sli4_hba.max_cfg_param.max_xri) {
 		spin_unlock_irq(&phba->hbalock);
 		return NO_XRI;
@@ -19666,7 +19680,7 @@ lpfc_sli4_alloc_rpi(struct lpfc_hba *phba)
 	max_rpi = phba->sli4_hba.max_cfg_param.max_rpi;
 	rpi_limit = phba->sli4_hba.next_rpi;
 
-	rpi = find_first_zero_bit(phba->sli4_hba.rpi_bmask, rpi_limit);
+	rpi = find_next_zero_bit(phba->sli4_hba.rpi_bmask, rpi_limit, 0);
 	if (rpi >= rpi_limit)
 		rpi = LPFC_RPI_ALLOC_ERROR;
 	else {
@@ -20309,8 +20323,8 @@ next_priority:
 		 * have been tested so that we can detect when we should
 		 * change the priority level.
 		 */
-		next_fcf_index = find_first_bit(phba->fcf.fcf_rr_bmask,
-					       LPFC_SLI4_FCF_TBL_INDX_MAX);
+		next_fcf_index = find_next_bit(phba->fcf.fcf_rr_bmask,
+					       LPFC_SLI4_FCF_TBL_INDX_MAX, 0);
 	}
 
 
@@ -22019,26 +22033,8 @@ lpfc_get_io_buf_from_multixri_pools(struct lpfc_hba *phba,
 
 	qp = &phba->sli4_hba.hdwq[hwqid];
 	lpfc_ncmd = NULL;
-	if (!qp) {
-		lpfc_printf_log(phba, KERN_INFO,
-				LOG_SLI | LOG_NVME_ABTS | LOG_FCP,
-				"5556 NULL qp for hwqid  x%x\n", hwqid);
-		return lpfc_ncmd;
-	}
 	multixri_pool = qp->p_multixri_pool;
-	if (!multixri_pool) {
-		lpfc_printf_log(phba, KERN_INFO,
-				LOG_SLI | LOG_NVME_ABTS | LOG_FCP,
-				"5557 NULL multixri for hwqid  x%x\n", hwqid);
-		return lpfc_ncmd;
-	}
 	pvt_pool = &multixri_pool->pvt_pool;
-	if (!pvt_pool) {
-		lpfc_printf_log(phba, KERN_INFO,
-				LOG_SLI | LOG_NVME_ABTS | LOG_FCP,
-				"5558 NULL pvt_pool for hwqid  x%x\n", hwqid);
-		return lpfc_ncmd;
-	}
 	multixri_pool->io_req_count++;
 
 	/* If pvt_pool is empty, move some XRIs from public to private pool */
@@ -22114,12 +22110,6 @@ struct lpfc_io_buf *lpfc_get_io_buf(struct lpfc_hba *phba,
 
 	qp = &phba->sli4_hba.hdwq[hwqid];
 	lpfc_cmd = NULL;
-	if (!qp) {
-		lpfc_printf_log(phba, KERN_WARNING,
-				LOG_SLI | LOG_NVME_ABTS | LOG_FCP,
-				"5555 NULL qp for hwqid  x%x\n", hwqid);
-		return lpfc_cmd;
-	}
 
 	if (phba->cfg_xri_rebalancing)
 		lpfc_cmd = lpfc_get_io_buf_from_multixri_pools(

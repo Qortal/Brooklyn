@@ -14,7 +14,6 @@
 #define KMSG_COMPONENT "dasd"
 
 #include <linux/interrupt.h>
-#include <linux/major.h>
 #include <linux/fs.h>
 #include <linux/blkpg.h>
 
@@ -34,7 +33,7 @@ int dasd_gendisk_alloc(struct dasd_block *block)
 {
 	struct gendisk *gdp;
 	struct dasd_device *base;
-	int len, rc;
+	int len;
 
 	/* Make sure the minor for this device exists. */
 	base = block->base;
@@ -80,13 +79,7 @@ int dasd_gendisk_alloc(struct dasd_block *block)
 	dasd_add_link_to_gendisk(gdp, base);
 	block->gdp = gdp;
 	set_capacity(block->gdp, 0);
-
-	rc = device_add_disk(&base->cdev->dev, block->gdp, NULL);
-	if (rc) {
-		dasd_gendisk_free(block);
-		return rc;
-	}
-
+	device_add_disk(&base->cdev->dev, block->gdp, NULL);
 	return 0;
 }
 

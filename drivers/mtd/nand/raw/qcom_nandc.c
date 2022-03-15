@@ -5,7 +5,6 @@
 #include <linux/clk.h>
 #include <linux/slab.h>
 #include <linux/bitops.h>
-#include <linux/dma/qcom_adm.h>
 #include <linux/dma-mapping.h>
 #include <linux/dmaengine.h>
 #include <linux/module.h>
@@ -952,7 +951,6 @@ static int prep_adm_dma_desc(struct qcom_nand_controller *nandc, bool read,
 	struct dma_async_tx_descriptor *dma_desc;
 	struct scatterlist *sgl;
 	struct dma_slave_config slave_conf;
-	struct qcom_adm_peripheral_config periph_conf = {};
 	enum dma_transfer_direction dir_eng;
 	int ret;
 
@@ -984,19 +982,11 @@ static int prep_adm_dma_desc(struct qcom_nand_controller *nandc, bool read,
 	if (read) {
 		slave_conf.src_maxburst = 16;
 		slave_conf.src_addr = nandc->base_dma + reg_off;
-		if (nandc->data_crci) {
-			periph_conf.crci = nandc->data_crci;
-			slave_conf.peripheral_config = &periph_conf;
-			slave_conf.peripheral_size = sizeof(periph_conf);
-		}
+		slave_conf.slave_id = nandc->data_crci;
 	} else {
 		slave_conf.dst_maxburst = 16;
 		slave_conf.dst_addr = nandc->base_dma + reg_off;
-		if (nandc->cmd_crci) {
-			periph_conf.crci = nandc->cmd_crci;
-			slave_conf.peripheral_config = &periph_conf;
-			slave_conf.peripheral_size = sizeof(periph_conf);
-		}
+		slave_conf.slave_id = nandc->cmd_crci;
 	}
 
 	ret = dmaengine_slave_config(nandc->chan, &slave_conf);

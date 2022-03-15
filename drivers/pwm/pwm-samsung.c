@@ -117,20 +117,6 @@ static inline unsigned int to_tcon_channel(unsigned int channel)
 	return (channel == 0) ? 0 : (channel + 1);
 }
 
-static void __pwm_samsung_manual_update(struct samsung_pwm_chip *chip,
-				      struct pwm_device *pwm)
-{
-	unsigned int tcon_chan = to_tcon_channel(pwm->hwpwm);
-	u32 tcon;
-
-	tcon = readl(chip->base + REG_TCON);
-	tcon |= TCON_MANUALUPDATE(tcon_chan);
-	writel(tcon, chip->base + REG_TCON);
-
-	tcon &= ~TCON_MANUALUPDATE(tcon_chan);
-	writel(tcon, chip->base + REG_TCON);
-}
-
 static void pwm_samsung_set_divisor(struct samsung_pwm_chip *pwm,
 				    unsigned int channel, u8 divisor)
 {
@@ -290,13 +276,6 @@ static void pwm_samsung_disable(struct pwm_chip *chip, struct pwm_device *pwm)
 	tcon &= ~TCON_AUTORELOAD(tcon_chan);
 	writel(tcon, our_chip->base + REG_TCON);
 
-	/*
-	 * In case the PWM is at 100% duty cycle, force a manual
-	 * update to prevent the signal from staying high.
-	 */
-	if (readl(our_chip->base + REG_TCMPB(pwm->hwpwm)) == (u32)-1U)
-		__pwm_samsung_manual_update(our_chip, pwm);
-
 	our_chip->disabled_mask |= BIT(pwm->hwpwm);
 
 	spin_unlock_irqrestore(&samsung_pwm_lock, flags);
@@ -305,11 +284,18 @@ static void pwm_samsung_disable(struct pwm_chip *chip, struct pwm_device *pwm)
 static void pwm_samsung_manual_update(struct samsung_pwm_chip *chip,
 				      struct pwm_device *pwm)
 {
+	unsigned int tcon_chan = to_tcon_channel(pwm->hwpwm);
+	u32 tcon;
 	unsigned long flags;
 
 	spin_lock_irqsave(&samsung_pwm_lock, flags);
 
-	__pwm_samsung_manual_update(chip, pwm);
+	tcon = readl(chip->base + REG_TCON);
+	tcon |= TCON_MANUALUPDATE(tcon_chan);
+	writel(tcon, chip->base + REG_TCON);
+
+	tcon &= ~TCON_MANUALUPDATE(tcon_chan);
+	writel(tcon, chip->base + REG_TCON);
 
 	spin_unlock_irqrestore(&samsung_pwm_lock, flags);
 }

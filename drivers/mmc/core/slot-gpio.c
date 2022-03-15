@@ -39,24 +39,24 @@ static irqreturn_t mmc_gpio_cd_irqt(int irq, void *dev_id)
 
 int mmc_gpio_alloc(struct mmc_host *host)
 {
-	const char *devname = dev_name(host->parent);
-	struct mmc_gpio *ctx;
+	struct mmc_gpio *ctx = devm_kzalloc(host->parent,
+					    sizeof(*ctx), GFP_KERNEL);
 
-	ctx = devm_kzalloc(host->parent, sizeof(*ctx), GFP_KERNEL);
-	if (!ctx)
-		return -ENOMEM;
+	if (ctx) {
+		ctx->cd_debounce_delay_ms = 200;
+		ctx->cd_label = devm_kasprintf(host->parent, GFP_KERNEL,
+				"%s cd", dev_name(host->parent));
+		if (!ctx->cd_label)
+			return -ENOMEM;
+		ctx->ro_label = devm_kasprintf(host->parent, GFP_KERNEL,
+				"%s ro", dev_name(host->parent));
+		if (!ctx->ro_label)
+			return -ENOMEM;
+		host->slot.handler_priv = ctx;
+		host->slot.cd_irq = -EINVAL;
+	}
 
-	ctx->cd_debounce_delay_ms = 200;
-	ctx->cd_label = devm_kasprintf(host->parent, GFP_KERNEL, "%s cd", devname);
-	if (!ctx->cd_label)
-		return -ENOMEM;
-	ctx->ro_label = devm_kasprintf(host->parent, GFP_KERNEL, "%s ro", devname);
-	if (!ctx->ro_label)
-		return -ENOMEM;
-	host->slot.handler_priv = ctx;
-	host->slot.cd_irq = -EINVAL;
-
-	return 0;
+	return ctx ? 0 : -ENOMEM;
 }
 
 int mmc_gpio_get_ro(struct mmc_host *host)
@@ -178,10 +178,6 @@ int mmc_gpiod_request_cd(struct mmc_host *host, const char *con_id,
 	if (IS_ERR(desc))
 		return PTR_ERR(desc);
 
-	/* Update default label if no con_id provided */
-	if (!con_id)
-		gpiod_set_consumer_name(desc, ctx->cd_label);
-
 	if (debounce) {
 		ret = gpiod_set_debounce(desc, debounce);
 		if (ret < 0)
@@ -229,10 +225,6 @@ int mmc_gpiod_request_ro(struct mmc_host *host, const char *con_id,
 	desc = devm_gpiod_get_index(host->parent, con_id, idx, GPIOD_IN);
 	if (IS_ERR(desc))
 		return PTR_ERR(desc);
-
-	/* Update default label if no con_id provided */
-	if (!con_id)
-		gpiod_set_consumer_name(desc, ctx->ro_label);
 
 	if (debounce) {
 		ret = gpiod_set_debounce(desc, debounce);

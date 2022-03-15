@@ -31,13 +31,13 @@
 #include "amdgpu_drv.h"
 
 #include <drm/drm_pciids.h>
+#include <linux/console.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
 #include <linux/vga_switcheroo.h>
 #include <drm/drm_probe_helper.h>
 #include <linux/mmu_notifier.h>
 #include <linux/suspend.h>
-#include <linux/cc_platform.h>
 #include <linux/fb.h>
 
 #include "amdgpu.h"
@@ -97,11 +97,9 @@
  * - 3.40.0 - Add AMDGPU_IDS_FLAGS_TMZ
  * - 3.41.0 - Add video codec query
  * - 3.42.0 - Add 16bpc fixed point display support
- * - 3.43.0 - Add device hot plug/unplug support
- * - 3.44.0 - DCN3 supports DCC independent block settings: !64B && 128B, 64B && 128B
  */
 #define KMS_DRIVER_MAJOR	3
-#define KMS_DRIVER_MINOR	44
+#define KMS_DRIVER_MINOR	42
 #define KMS_DRIVER_PATCHLEVEL	0
 
 int amdgpu_vram_limit;
@@ -314,12 +312,9 @@ module_param_named(dpm, amdgpu_dpm, int, 0444);
 
 /**
  * DOC: fw_load_type (int)
- * Set different firmware loading type for debugging, if supported.
- * Set to 0 to force direct loading if supported by the ASIC.  Set
- * to -1 to select the default loading mode for the ASIC, as defined
- * by the driver.  The default is -1 (auto).
+ * Set different firmware loading type for debugging (0 = direct, 1 = SMU, 2 = PSP). The default is -1 (auto).
  */
-MODULE_PARM_DESC(fw_load_type, "firmware loading type (0 = force direct if supported, -1 = auto)");
+MODULE_PARM_DESC(fw_load_type, "firmware loading type (0 = direct, 1 = SMU, 2 = PSP, -1 = auto)");
 module_param_named(fw_load_type, amdgpu_fw_load_type, int, 0444);
 
 /**
@@ -331,11 +326,10 @@ module_param_named(aspm, amdgpu_aspm, int, 0444);
 
 /**
  * DOC: runpm (int)
- * Override for runtime power management control for dGPUs. The amdgpu driver can dynamically power down
- * the dGPUs when they are idle if supported. The default is -1 (auto enable).
- * Setting the value to 0 disables this functionality.
+ * Override for runtime power management control for dGPUs in PX/HG laptops. The amdgpu driver can dynamically power down
+ * the dGPU on PX/HG laptops when it is idle. The default is -1 (auto enable). Setting the value to 0 disables this functionality.
  */
-MODULE_PARM_DESC(runpm, "PX runtime pm (2 = force enable with BAMACO, 1 = force enable with BACO, 0 = disable, -1 = auto)");
+MODULE_PARM_DESC(runpm, "PX runtime pm (2 = force enable with BAMACO, 1 = force enable with BACO, 0 = disable, -1 = PX only default)");
 module_param_named(runpm, amdgpu_runtime_pm, int, 0444);
 
 /**
@@ -634,7 +628,7 @@ module_param_named(mcbp, amdgpu_mcbp, int, 0444);
 /**
  * DOC: discovery (int)
  * Allow driver to discover hardware IP information from IP Discovery table at the top of VRAM.
- * (-1 = auto (default), 0 = disabled, 1 = enabled, 2 = use ip_discovery table from file)
+ * (-1 = auto (default), 0 = disabled, 1 = enabled)
  */
 MODULE_PARM_DESC(discovery,
 	"Allow driver to discover hardware IPs from IP Discovery table at the top of VRAM");
@@ -882,7 +876,7 @@ module_param_named(reset_method, amdgpu_reset_method, int, 0444);
  * result in the GPU entering bad status when the number of total
  * faulty pages by ECC exceeds the threshold value.
  */
-MODULE_PARM_DESC(bad_page_threshold, "Bad page threshold(-1 = auto(default value), 0 = disable bad page retirement, -2 = ignore bad page threshold)");
+MODULE_PARM_DESC(bad_page_threshold, "Bad page threshold(-1 = auto(default value), 0 = disable bad page retirement)");
 module_param_named(bad_page_threshold, amdgpu_bad_page_threshold, int, 0444);
 
 MODULE_PARM_DESC(num_kcq, "number of kernel compute queue user want to setup (8 if set to greater than 8 or less than 0, only affect gfx 8+)");
@@ -1957,16 +1951,6 @@ static const struct pci_device_id pciidlist[] = {
 	{0x1002, 0x7423, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_BEIGE_GOBY},
 	{0x1002, 0x743F, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_BEIGE_GOBY},
 
-	{ PCI_DEVICE(0x1002, PCI_ANY_ID),
-	  .class = PCI_CLASS_DISPLAY_VGA << 8,
-	  .class_mask = 0xffffff,
-	  .driver_data = CHIP_IP_DISCOVERY },
-
-	{ PCI_DEVICE(0x1002, PCI_ANY_ID),
-	  .class = PCI_CLASS_DISPLAY_OTHER << 8,
-	  .class_mask = 0xffffff,
-	  .driver_data = CHIP_IP_DISCOVERY },
-
 	{0, 0, 0}
 };
 
@@ -2005,14 +1989,14 @@ static int amdgpu_pci_probe(struct pci_dev *pdev,
 	bool is_fw_fb;
 	resource_size_t base, size;
 
+	if (amdgpu_aspm == -1 && !pcie_aspm_enabled(pdev))
+		amdgpu_aspm = 0;
+
 	/* skip devices which are owned by radeon */
 	for (i = 0; i < ARRAY_SIZE(amdgpu_unsupported_pciidlist); i++) {
 		if (amdgpu_unsupported_pciidlist[i] == pdev->device)
 			return -ENODEV;
 	}
-
-	if (amdgpu_aspm == -1 && !pcie_aspm_enabled(pdev))
-		amdgpu_aspm = 0;
 
 	if (amdgpu_virtual_display ||
 	    amdgpu_device_asic_has_dc_support(flags & AMD_ASIC_MASK))
@@ -2028,8 +2012,7 @@ static int amdgpu_pci_probe(struct pci_dev *pdev,
 	 * however, SME requires an indirect IOMMU mapping because the encryption
 	 * bit is beyond the DMA mask of the chip.
 	 */
-	if (cc_platform_has(CC_ATTR_MEM_ENCRYPT) &&
-	    ((flags & AMD_ASIC_MASK) == CHIP_RAVEN)) {
+	if (mem_encrypt_active() && ((flags & AMD_ASIC_MASK) == CHIP_RAVEN)) {
 		dev_info(&pdev->dev,
 			 "SME is not compatible with RAVEN\n");
 		return -ENOTSUPP;
@@ -2110,19 +2093,6 @@ retry_init:
 		goto retry_init;
 	} else if (ret) {
 		goto err_pci;
-	}
-
-	/*
-	 * 1. don't init fbdev on hw without DCE
-	 * 2. don't init fbdev if there are no connectors
-	 */
-	if (adev->mode_info.mode_config_initialized &&
-	    !list_empty(&adev_to_drm(adev)->mode_config.connector_list)) {
-		/* select 8 bpp console on low vram cards */
-		if (adev->gmc.real_vram_size <= (32*1024*1024))
-			drm_fbdev_generic_setup(adev_to_drm(adev), 8);
-		else
-			drm_fbdev_generic_setup(adev_to_drm(adev), 32);
 	}
 
 	ret = amdgpu_debugfs_init(adev);
@@ -2280,9 +2250,9 @@ static int amdgpu_pmops_suspend(struct device *dev)
 
 	if (amdgpu_acpi_is_s0ix_active(adev))
 		adev->in_s0ix = true;
-	else
-		adev->in_s3 = true;
+	adev->in_s3 = true;
 	r = amdgpu_device_suspend(drm_dev, true);
+	adev->in_s3 = false;
 	if (r)
 		return r;
 	if (!adev->in_s0ix)
@@ -2296,15 +2266,9 @@ static int amdgpu_pmops_resume(struct device *dev)
 	struct amdgpu_device *adev = drm_to_adev(drm_dev);
 	int r;
 
-	/* Avoids registers access if device is physically gone */
-	if (!pci_device_is_present(adev->pdev))
-		adev->no_hw_access = true;
-
 	r = amdgpu_device_resume(drm_dev, true);
 	if (amdgpu_acpi_is_s0ix_active(adev))
 		adev->in_s0ix = false;
-	else
-		adev->in_s3 = false;
 	return r;
 }
 
@@ -2666,8 +2630,10 @@ static int __init amdgpu_init(void)
 {
 	int r;
 
-	if (drm_firmware_drivers_only())
+	if (vgacon_text_force()) {
+		DRM_ERROR("VGACON disables amdgpu kernel modesetting.\n");
 		return -EINVAL;
+	}
 
 	r = amdgpu_sync_init();
 	if (r)

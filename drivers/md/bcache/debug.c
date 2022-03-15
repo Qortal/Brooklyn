@@ -127,20 +127,21 @@ void bch_data_verify(struct cached_dev *dc, struct bio *bio)
 
 	citer.bi_size = UINT_MAX;
 	bio_for_each_segment(bv, bio, iter) {
-		void *p1 = bvec_kmap_local(&bv);
+		void *p1 = kmap_atomic(bv.bv_page);
 		void *p2;
 
 		cbv = bio_iter_iovec(check, citer);
-		p2 = bvec_kmap_local(&cbv);
+		p2 = page_address(cbv.bv_page);
 
-		cache_set_err_on(memcmp(p1, p2, bv.bv_len),
+		cache_set_err_on(memcmp(p1 + bv.bv_offset,
+					p2 + bv.bv_offset,
+					bv.bv_len),
 				 dc->disk.c,
-				 "verify failed at dev %pg sector %llu",
-				 dc->bdev,
+				 "verify failed at dev %s sector %llu",
+				 dc->backing_dev_name,
 				 (uint64_t) bio->bi_iter.bi_sector);
 
-		kunmap_local(p2);
-		kunmap_local(p1);
+		kunmap_atomic(p1);
 		bio_advance_iter(check, &citer, bv.bv_len);
 	}
 

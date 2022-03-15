@@ -19,10 +19,16 @@
 #define PCI_DEVICE_ID_REDHAT_PVPANIC     0x0011
 
 MODULE_AUTHOR("Mihai Carabas <mihai.carabas@oracle.com>");
-MODULE_DESCRIPTION("pvpanic device driver");
+MODULE_DESCRIPTION("pvpanic device driver ");
 MODULE_LICENSE("GPL");
 
-static ssize_t capability_show(struct device *dev, struct device_attribute *attr, char *buf)
+static const struct pci_device_id pvpanic_pci_id_tbl[]  = {
+	{ PCI_DEVICE(PCI_VENDOR_ID_REDHAT, PCI_DEVICE_ID_REDHAT_PVPANIC)},
+	{}
+};
+
+static ssize_t capability_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
 {
 	struct pvpanic_instance *pi = dev_get_drvdata(dev);
 
@@ -30,14 +36,14 @@ static ssize_t capability_show(struct device *dev, struct device_attribute *attr
 }
 static DEVICE_ATTR_RO(capability);
 
-static ssize_t events_show(struct device *dev, struct device_attribute *attr, char *buf)
+static ssize_t events_show(struct device *dev,  struct device_attribute *attr, char *buf)
 {
 	struct pvpanic_instance *pi = dev_get_drvdata(dev);
 
 	return sysfs_emit(buf, "%x\n", pi->events);
 }
 
-static ssize_t events_store(struct device *dev, struct device_attribute *attr,
+static ssize_t events_store(struct device *dev,  struct device_attribute *attr,
 			    const char *buf, size_t count)
 {
 	struct pvpanic_instance *pi = dev_get_drvdata(dev);
@@ -64,7 +70,8 @@ static struct attribute *pvpanic_pci_dev_attrs[] = {
 };
 ATTRIBUTE_GROUPS(pvpanic_pci_dev);
 
-static int pvpanic_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
+static int pvpanic_pci_probe(struct pci_dev *pdev,
+			     const struct pci_device_id *ent)
 {
 	struct pvpanic_instance *pi;
 	void __iomem *base;
@@ -92,12 +99,6 @@ static int pvpanic_pci_probe(struct pci_dev *pdev, const struct pci_device_id *e
 	return devm_pvpanic_probe(&pdev->dev, pi);
 }
 
-static const struct pci_device_id pvpanic_pci_id_tbl[]  = {
-	{ PCI_DEVICE(PCI_VENDOR_ID_REDHAT, PCI_DEVICE_ID_REDHAT_PVPANIC)},
-	{}
-};
-MODULE_DEVICE_TABLE(pci, pvpanic_pci_id_tbl);
-
 static struct pci_driver pvpanic_pci_driver = {
 	.name =         "pvpanic-pci",
 	.id_table =     pvpanic_pci_id_tbl,
@@ -106,4 +107,7 @@ static struct pci_driver pvpanic_pci_driver = {
 		.dev_groups = pvpanic_pci_dev_groups,
 	},
 };
+
+MODULE_DEVICE_TABLE(pci, pvpanic_pci_id_tbl);
+
 module_pci_driver(pvpanic_pci_driver);

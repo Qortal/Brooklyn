@@ -105,7 +105,7 @@ int exfat_load_bitmap(struct super_block *sb)
 			struct exfat_dentry *ep;
 			struct buffer_head *bh;
 
-			ep = exfat_get_dentry(sb, &clu, i, &bh);
+			ep = exfat_get_dentry(sb, &clu, i, &bh, NULL);
 			if (!ep)
 				return -EIO;
 

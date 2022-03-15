@@ -257,7 +257,7 @@ typedef enum {
 } MPT_DRIVER_CLASS;
 
 struct mpt_pci_driver{
-	int  (*probe) (struct pci_dev *dev);
+	int  (*probe) (struct pci_dev *dev, const struct pci_device_id *id);
 	void (*remove) (struct pci_dev *dev);
 };
 

@@ -163,19 +163,16 @@ DEVICE_ATTR(beiscsi_active_session_count, S_IRUGO,
 	     beiscsi_active_session_disp, NULL);
 DEVICE_ATTR(beiscsi_free_session_count, S_IRUGO,
 	     beiscsi_free_session_disp, NULL);
-
-static struct attribute *beiscsi_attrs[] = {
-	&dev_attr_beiscsi_log_enable.attr,
-	&dev_attr_beiscsi_drvr_ver.attr,
-	&dev_attr_beiscsi_adapter_family.attr,
-	&dev_attr_beiscsi_fw_ver.attr,
-	&dev_attr_beiscsi_active_session_count.attr,
-	&dev_attr_beiscsi_free_session_count.attr,
-	&dev_attr_beiscsi_phys_port.attr,
+static struct device_attribute *beiscsi_attrs[] = {
+	&dev_attr_beiscsi_log_enable,
+	&dev_attr_beiscsi_drvr_ver,
+	&dev_attr_beiscsi_adapter_family,
+	&dev_attr_beiscsi_fw_ver,
+	&dev_attr_beiscsi_active_session_count,
+	&dev_attr_beiscsi_free_session_count,
+	&dev_attr_beiscsi_phys_port,
 	NULL,
 };
-
-ATTRIBUTE_GROUPS(beiscsi);
 
 static char const *cqe_desc[] = {
 	"RESERVED_DESC",
@@ -394,7 +391,7 @@ static struct scsi_host_template beiscsi_sht = {
 	.eh_abort_handler = beiscsi_eh_abort,
 	.eh_device_reset_handler = beiscsi_eh_device_reset,
 	.eh_target_reset_handler = iscsi_eh_session_reset,
-	.shost_groups = beiscsi_groups,
+	.shost_attrs = beiscsi_attrs,
 	.sg_tablesize = BEISCSI_SGLIST_ELEMENTS,
 	.can_queue = BE2_IO_DEPTH,
 	.this_id = -1,

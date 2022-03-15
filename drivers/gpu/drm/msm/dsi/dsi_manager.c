@@ -3,8 +3,6 @@
  * Copyright (c) 2015, The Linux Foundation. All rights reserved.
  */
 
-#include "drm/drm_bridge_connector.h"
-
 #include "msm_kms.h"
 #include "dsi.h"
 
@@ -74,13 +72,15 @@ static int dsi_mgr_setup_components(int id)
 	int ret;
 
 	if (!IS_BONDED_DSI()) {
-		ret = msm_dsi_host_register(msm_dsi->host);
+		ret = msm_dsi_host_register(msm_dsi->host, true);
 		if (ret)
 			return ret;
 
 		msm_dsi_phy_set_usecase(msm_dsi->phy, MSM_DSI_PHY_STANDALONE);
-		msm_dsi_host_set_phy_mode(msm_dsi->host, msm_dsi->phy);
-	} else if (other_dsi) {
+		ret = msm_dsi_host_set_src_pll(msm_dsi->host, msm_dsi->phy);
+	} else if (!other_dsi) {
+		ret = 0;
+	} else {
 		struct msm_dsi *master_link_dsi = IS_MASTER_DSI_LINK(id) ?
 							msm_dsi : other_dsi;
 		struct msm_dsi *slave_link_dsi = IS_MASTER_DSI_LINK(id) ?
@@ -92,10 +92,10 @@ static int dsi_mgr_setup_components(int id)
 		 * because only master DSI device adds the panel to global
 		 * panel list. The panel's device is the master DSI device.
 		 */
-		ret = msm_dsi_host_register(slave_link_dsi->host);
+		ret = msm_dsi_host_register(slave_link_dsi->host, false);
 		if (ret)
 			return ret;
-		ret = msm_dsi_host_register(master_link_dsi->host);
+		ret = msm_dsi_host_register(master_link_dsi->host, true);
 		if (ret)
 			return ret;
 
@@ -104,11 +104,13 @@ static int dsi_mgr_setup_components(int id)
 					MSM_DSI_PHY_MASTER);
 		msm_dsi_phy_set_usecase(clk_slave_dsi->phy,
 					MSM_DSI_PHY_SLAVE);
-		msm_dsi_host_set_phy_mode(msm_dsi->host, msm_dsi->phy);
-		msm_dsi_host_set_phy_mode(other_dsi->host, other_dsi->phy);
+		ret = msm_dsi_host_set_src_pll(msm_dsi->host, clk_master_dsi->phy);
+		if (ret)
+			return ret;
+		ret = msm_dsi_host_set_src_pll(other_dsi->host, clk_master_dsi->phy);
 	}
 
-	return 0;
+	return ret;
 }
 
 static int enable_phy(struct msm_dsi *msm_dsi,
@@ -685,10 +687,10 @@ struct drm_connector *msm_dsi_manager_ext_bridge_init(u8 id)
 {
 	struct msm_dsi *msm_dsi = dsi_mgr_get_dsi(id);
 	struct drm_device *dev = msm_dsi->dev;
-	struct drm_connector *connector;
 	struct drm_encoder *encoder;
 	struct drm_bridge *int_bridge, *ext_bridge;
-	int ret;
+	struct drm_connector *connector;
+	struct list_head *connector_list;
 
 	int_bridge = msm_dsi->bridge;
 	ext_bridge = msm_dsi->external_bridge =
@@ -696,44 +698,22 @@ struct drm_connector *msm_dsi_manager_ext_bridge_init(u8 id)
 
 	encoder = msm_dsi->encoder;
 
+	/* link the internal dsi bridge to the external bridge */
+	drm_bridge_attach(encoder, ext_bridge, int_bridge, 0);
+
 	/*
-	 * Try first to create the bridge without it creating its own
-	 * connector.. currently some bridges support this, and others
-	 * do not (and some support both modes)
+	 * we need the drm_connector created by the external bridge
+	 * driver (or someone else) to feed it to our driver's
+	 * priv->connector[] list, mainly for msm_fbdev_init()
 	 */
-	ret = drm_bridge_attach(encoder, ext_bridge, int_bridge,
-			DRM_BRIDGE_ATTACH_NO_CONNECTOR);
-	if (ret == -EINVAL) {
-		struct drm_connector *connector;
-		struct list_head *connector_list;
+	connector_list = &dev->mode_config.connector_list;
 
-		/* link the internal dsi bridge to the external bridge */
-		drm_bridge_attach(encoder, ext_bridge, int_bridge, 0);
-
-		/*
-		 * we need the drm_connector created by the external bridge
-		 * driver (or someone else) to feed it to our driver's
-		 * priv->connector[] list, mainly for msm_fbdev_init()
-		 */
-		connector_list = &dev->mode_config.connector_list;
-
-		list_for_each_entry(connector, connector_list, head) {
-			if (drm_connector_has_possible_encoder(connector, encoder))
-				return connector;
-		}
-
-		return ERR_PTR(-ENODEV);
+	list_for_each_entry(connector, connector_list, head) {
+		if (drm_connector_has_possible_encoder(connector, encoder))
+			return connector;
 	}
 
-	connector = drm_bridge_connector_init(dev, encoder);
-	if (IS_ERR(connector)) {
-		DRM_ERROR("Unable to create bridge connector\n");
-		return ERR_CAST(connector);
-	}
-
-	drm_connector_attach_encoder(connector, encoder);
-
-	return connector;
+	return ERR_PTR(-ENODEV);
 }
 
 void msm_dsi_manager_bridge_destroy(struct drm_bridge *bridge)

@@ -2772,12 +2772,13 @@ static int ntfs_fill_super(struct super_block *sb, void *opt, const int silent)
 	ntfs_debug("Set device block size to %i bytes (block size bits %i).",
 			blocksize, sb->s_blocksize_bits);
 	/* Determine the size of the device in units of block_size bytes. */
-	vol->nr_blocks = sb_bdev_nr_blocks(sb);
-	if (!vol->nr_blocks) {
+	if (!i_size_read(sb->s_bdev->bd_inode)) {
 		if (!silent)
 			ntfs_error(sb, "Unable to determine device size.");
 		goto err_out_now;
 	}
+	vol->nr_blocks = i_size_read(sb->s_bdev->bd_inode) >>
+			sb->s_blocksize_bits;
 	/* Read the boot sector and return unlocked buffer head to it. */
 	if (!(bh = read_ntfs_boot_sector(sb, silent))) {
 		if (!silent)
@@ -2815,7 +2816,8 @@ static int ntfs_fill_super(struct super_block *sb, void *opt, const int silent)
 			goto err_out_now;
 		}
 		BUG_ON(blocksize != sb->s_blocksize);
-		vol->nr_blocks = sb_bdev_nr_blocks(sb);
+		vol->nr_blocks = i_size_read(sb->s_bdev->bd_inode) >>
+				sb->s_blocksize_bits;
 		ntfs_debug("Changed device block size to %i bytes (block size "
 				"bits %i) to match volume sector size.",
 				blocksize, sb->s_blocksize_bits);

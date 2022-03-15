@@ -4,6 +4,7 @@
  * All Rights Reserved.
  */
 #include "xfs.h"
+#include <linux/backing-dev.h>
 #include "xfs_message.h"
 #include "xfs_trace.h"
 
@@ -25,6 +26,6 @@ kmem_alloc(size_t size, xfs_km_flags_t flags)
 	"%s(%u) possible memory allocation deadlock size %u in %s (mode:0x%x)",
 				current->comm, current->pid,
 				(unsigned int)size, __func__, lflags);
-		memalloc_retry_wait(lflags);
+		congestion_wait(BLK_RW_ASYNC, HZ/50);
 	} while (1);
 }

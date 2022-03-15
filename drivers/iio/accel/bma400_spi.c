@@ -89,9 +89,7 @@ static int bma400_spi_probe(struct spi_device *spi)
 
 static int bma400_spi_remove(struct spi_device *spi)
 {
-	bma400_remove(&spi->dev);
-
-	return 0;
+	return bma400_remove(&spi->dev);
 }
 
 static const struct spi_device_id bma400_spi_ids[] = {

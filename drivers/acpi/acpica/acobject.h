@@ -138,7 +138,6 @@ struct acpi_object_region {
 	union acpi_operand_object *next;
 	acpi_physical_address address;
 	u32 length;
-	void *pointer;		/* Only for data table regions */
 };
 
 struct acpi_object_method {

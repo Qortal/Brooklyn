@@ -1177,10 +1177,13 @@ static void hpre_rsa_exit_tfm(struct crypto_akcipher *tfm)
 static void hpre_key_to_big_end(u8 *data, int len)
 {
 	int i, j;
+	u8 tmp;
 
 	for (i = 0; i < len / 2; i++) {
 		j = len - i - 1;
-		swap(data[j], data[i]);
+		tmp = data[j];
+		data[j] = data[i];
+		data[i] = tmp;
 	}
 }
 

@@ -150,7 +150,7 @@ int msm_gpu_hw_init(struct msm_gpu *gpu)
 {
 	int ret;
 
-	WARN_ON(!mutex_is_locked(&gpu->lock));
+	WARN_ON(!mutex_is_locked(&gpu->dev->struct_mutex));
 
 	if (!gpu->needs_hw_init)
 		return 0;
@@ -172,7 +172,7 @@ static void update_fences(struct msm_gpu *gpu, struct msm_ringbuffer *ring,
 
 	spin_lock_irqsave(&ring->submit_lock, flags);
 	list_for_each_entry(submit, &ring->submits, node) {
-		if (fence_after(submit->seqno, fence))
+		if (submit->seqno > fence)
 			break;
 
 		msm_update_fence(submit->ring->fctx,
@@ -361,7 +361,7 @@ static void recover_worker(struct kthread_work *work)
 	char *comm = NULL, *cmd = NULL;
 	int i;
 
-	mutex_lock(&gpu->lock);
+	mutex_lock(&dev->struct_mutex);
 
 	DRM_DEV_ERROR(dev->dev, "%s: hangcheck recover!\n", gpu->name);
 
@@ -442,7 +442,7 @@ static void recover_worker(struct kthread_work *work)
 		}
 	}
 
-	mutex_unlock(&gpu->lock);
+	mutex_unlock(&dev->struct_mutex);
 
 	msm_gpu_retire(gpu);
 }
@@ -450,11 +450,12 @@ static void recover_worker(struct kthread_work *work)
 static void fault_worker(struct kthread_work *work)
 {
 	struct msm_gpu *gpu = container_of(work, struct msm_gpu, fault_work);
+	struct drm_device *dev = gpu->dev;
 	struct msm_gem_submit *submit;
 	struct msm_ringbuffer *cur_ring = gpu->funcs->active_ring(gpu);
 	char *comm = NULL, *cmd = NULL;
 
-	mutex_lock(&gpu->lock);
+	mutex_lock(&dev->struct_mutex);
 
 	submit = find_submit(cur_ring, cur_ring->memptrs->fence + 1);
 	if (submit && submit->fault_dumped)
@@ -489,7 +490,7 @@ resume_smmu:
 	memset(&gpu->fault_info, 0, sizeof(gpu->fault_info));
 	gpu->aspace->mmu->funcs->resume_translation(gpu->aspace->mmu);
 
-	mutex_unlock(&gpu->lock);
+	mutex_unlock(&dev->struct_mutex);
 }
 
 static void hangcheck_timer_reset(struct msm_gpu *gpu)
@@ -509,7 +510,7 @@ static void hangcheck_handler(struct timer_list *t)
 	if (fence != ring->hangcheck_fence) {
 		/* some progress has been made.. ya! */
 		ring->hangcheck_fence = fence;
-	} else if (fence_before(fence, ring->seqno)) {
+	} else if (fence < ring->seqno) {
 		/* no progress and not done.. hung! */
 		ring->hangcheck_fence = fence;
 		DRM_DEV_ERROR(dev->dev, "%s: hangcheck detected gpu lockup rb %d!\n",
@@ -523,7 +524,7 @@ static void hangcheck_handler(struct timer_list *t)
 	}
 
 	/* if still more pending work, reset the hangcheck timer: */
-	if (fence_after(ring->seqno, ring->hangcheck_fence))
+	if (ring->seqno > ring->hangcheck_fence)
 		hangcheck_timer_reset(gpu);
 
 	/* workaround for missing irq: */
@@ -703,8 +704,6 @@ static void retire_submits(struct msm_gpu *gpu)
 			}
 		}
 	}
-
-	wake_up_all(&gpu->retire_event);
 }
 
 static void retire_worker(struct kthread_work *work)
@@ -734,7 +733,7 @@ void msm_gpu_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit)
 	struct msm_ringbuffer *ring = submit->ring;
 	unsigned long flags;
 
-	WARN_ON(!mutex_is_locked(&gpu->lock));
+	WARN_ON(!mutex_is_locked(&dev->struct_mutex));
 
 	pm_runtime_get_sync(&gpu->pdev->dev);
 
@@ -764,7 +763,7 @@ void msm_gpu_submit(struct msm_gpu *gpu, struct msm_gem_submit *submit)
 	mutex_unlock(&gpu->active_lock);
 
 	gpu->funcs->submit(gpu, submit);
-	gpu->cur_ctx_seqno = submit->queue->ctx->seqno;
+	priv->lastctx = submit->queue->ctx;
 
 	hangcheck_timer_reset(gpu);
 }
@@ -849,8 +848,6 @@ int msm_gpu_init(struct drm_device *drm, struct platform_device *pdev,
 
 	INIT_LIST_HEAD(&gpu->active_list);
 	mutex_init(&gpu->active_lock);
-	mutex_init(&gpu->lock);
-	init_waitqueue_head(&gpu->retire_event);
 	kthread_init_work(&gpu->retire_work, retire_worker);
 	kthread_init_work(&gpu->recover_work, recover_worker);
 	kthread_init_work(&gpu->fault_work, fault_worker);

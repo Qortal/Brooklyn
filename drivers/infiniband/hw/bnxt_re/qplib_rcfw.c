@@ -78,7 +78,7 @@ static int __block_for_resp(struct bnxt_qplib_rcfw *rcfw, u16 cookie)
 	if (!test_bit(cbit, cmdq->cmdq_bitmap))
 		goto done;
 	do {
-		udelay(1);
+		mdelay(1); /* 1m sec */
 		bnxt_qplib_service_creq(&rcfw->creq.creq_tasklet);
 	} while (test_bit(cbit, cmdq->cmdq_bitmap) && --count);
 done:
@@ -555,7 +555,7 @@ skip_ctx_setup:
 
 void bnxt_qplib_free_rcfw_channel(struct bnxt_qplib_rcfw *rcfw)
 {
-	bitmap_free(rcfw->cmdq.cmdq_bitmap);
+	kfree(rcfw->cmdq.cmdq_bitmap);
 	kfree(rcfw->qp_tbl);
 	kfree(rcfw->crsqe_tbl);
 	bnxt_qplib_free_hwq(rcfw->res, &rcfw->cmdq.hwq);
@@ -572,6 +572,7 @@ int bnxt_qplib_alloc_rcfw_channel(struct bnxt_qplib_res *res,
 	struct bnxt_qplib_sg_info sginfo = {};
 	struct bnxt_qplib_cmdq_ctx *cmdq;
 	struct bnxt_qplib_creq_ctx *creq;
+	u32 bmap_size = 0;
 
 	rcfw->pdev = res->pdev;
 	cmdq = &rcfw->cmdq;
@@ -612,7 +613,8 @@ int bnxt_qplib_alloc_rcfw_channel(struct bnxt_qplib_res *res,
 	if (!rcfw->crsqe_tbl)
 		goto fail;
 
-	cmdq->cmdq_bitmap = bitmap_zalloc(rcfw->cmdq_depth, GFP_KERNEL);
+	bmap_size = BITS_TO_LONGS(rcfw->cmdq_depth) * sizeof(unsigned long);
+	cmdq->cmdq_bitmap = kzalloc(bmap_size, GFP_KERNEL);
 	if (!cmdq->cmdq_bitmap)
 		goto fail;
 
@@ -844,13 +846,13 @@ struct bnxt_qplib_rcfw_sbuf *bnxt_qplib_rcfw_alloc_sbuf(
 {
 	struct bnxt_qplib_rcfw_sbuf *sbuf;
 
-	sbuf = kzalloc(sizeof(*sbuf), GFP_KERNEL);
+	sbuf = kzalloc(sizeof(*sbuf), GFP_ATOMIC);
 	if (!sbuf)
 		return NULL;
 
 	sbuf->size = size;
 	sbuf->sb = dma_alloc_coherent(&rcfw->pdev->dev, sbuf->size,
-				      &sbuf->dma_addr, GFP_KERNEL);
+				      &sbuf->dma_addr, GFP_ATOMIC);
 	if (!sbuf->sb)
 		goto bail;
 

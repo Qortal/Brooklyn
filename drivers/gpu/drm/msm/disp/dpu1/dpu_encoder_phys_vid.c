@@ -698,17 +698,17 @@ struct dpu_encoder_phys *dpu_encoder_phys_vid_init(
 {
 	struct dpu_encoder_phys *phys_enc = NULL;
 	struct dpu_encoder_irq *irq;
-	int i;
+	int i, ret = 0;
 
 	if (!p) {
-		DPU_ERROR("failed to create encoder due to invalid parameter\n");
-		return ERR_PTR(-EINVAL);
+		ret = -EINVAL;
+		goto fail;
 	}
 
 	phys_enc = kzalloc(sizeof(*phys_enc), GFP_KERNEL);
 	if (!phys_enc) {
-		DPU_ERROR("failed to create encoder due to memory allocation error\n");
-		return ERR_PTR(-ENOMEM);
+		ret = -ENOMEM;
+		goto fail;
 	}
 
 	phys_enc->hw_mdptop = p->dpu_kms->hw_mdp;
@@ -748,4 +748,11 @@ struct dpu_encoder_phys *dpu_encoder_phys_vid_init(
 	DPU_DEBUG_VIDENC(phys_enc, "created intf idx:%d\n", p->intf_idx);
 
 	return phys_enc;
+
+fail:
+	DPU_ERROR("failed to create encoder\n");
+	if (phys_enc)
+		dpu_encoder_phys_vid_destroy(phys_enc);
+
+	return ERR_PTR(ret);
 }

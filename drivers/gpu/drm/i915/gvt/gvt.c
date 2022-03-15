@@ -205,7 +205,7 @@ int intel_gvt_init_device(struct drm_i915_private *i915)
 	spin_lock_init(&gvt->scheduler.mmio_context_lock);
 	mutex_init(&gvt->lock);
 	mutex_init(&gvt->sched_lock);
-	gvt->gt = to_gt(i915);
+	gvt->gt = &i915->gt;
 	i915->gvt = gvt;
 
 	init_device_info(gvt);

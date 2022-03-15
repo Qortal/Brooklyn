@@ -28,7 +28,6 @@
 
 #undef r2
 #undef w2
-#undef PC
 
 #define PC			pi->private
 #define r2()			(PC=(in_p(2) & 0xff))

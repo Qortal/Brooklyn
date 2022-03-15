@@ -107,7 +107,3 @@ endif
 ifeq ($(CONFIG_DM_VERITY_VERIFY_ROOTHASH_SIG),y)
 dm-verity-objs			+= dm-verity-verify-sig.o
 endif
-
-ifeq ($(CONFIG_DM_AUDIT),y)
-dm-mod-objs			+= dm-audit.o
-endif

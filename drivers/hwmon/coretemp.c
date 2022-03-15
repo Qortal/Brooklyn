@@ -167,7 +167,7 @@ static ssize_t show_temp(struct device *dev,
 		 * really help at all.
 		 */
 		tdata->temp = tdata->tjmax - ((eax >> 16) & 0x7f) * 1000;
-		tdata->valid = true;
+		tdata->valid = 1;
 		tdata->last_updated = jiffies;
 	}
 

@@ -244,7 +244,7 @@ static struct sdw_intel_ctx
 			goto err;
 
 		link = &ldev->link_res;
-		link->cdns = auxiliary_get_drvdata(&ldev->auxdev);
+		link->cdns = dev_get_drvdata(&ldev->auxdev.dev);
 
 		if (!link->cdns) {
 			dev_err(&adev->dev, "failed to get link->cdns\n");

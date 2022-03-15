@@ -277,10 +277,21 @@ nfsd4_decode_verifier4(struct nfsd4_compoundargs *argp, nfs4_verifier *verf)
 static __be32
 nfsd4_decode_bitmap4(struct nfsd4_compoundargs *argp, u32 *bmval, u32 bmlen)
 {
-	ssize_t status;
+	u32 i, count;
+	__be32 *p;
 
-	status = xdr_stream_decode_uint32_array(argp->xdr, bmval, bmlen);
-	return status == -EBADMSG ? nfserr_bad_xdr : nfs_ok;
+	if (xdr_stream_decode_u32(argp->xdr, &count) < 0)
+		return nfserr_bad_xdr;
+	/* request sanity */
+	if (count > 1000)
+		return nfserr_bad_xdr;
+	p = xdr_inline_decode(argp->xdr, count << 2);
+	if (!p)
+		return nfserr_bad_xdr;
+	for (i = 0; i < bmlen; i++)
+		bmval[i] = (i < count) ? be32_to_cpup(p++) : 0;
+
+	return nfs_ok;
 }
 
 static __be32
@@ -2308,7 +2319,7 @@ nfsd4_opnum_in_range(struct nfsd4_compoundargs *argp, struct nfsd4_op *op)
 	return true;
 }
 
-static bool
+static int
 nfsd4_decode_compound(struct nfsd4_compoundargs *argp)
 {
 	struct nfsd4_op *op;
@@ -2321,25 +2332,25 @@ nfsd4_decode_compound(struct nfsd4_compoundargs *argp)
 	int i;
 
 	if (xdr_stream_decode_u32(argp->xdr, &argp->taglen) < 0)
-		return false;
+		return 0;
 	max_reply += XDR_UNIT;
 	argp->tag = NULL;
 	if (unlikely(argp->taglen)) {
 		if (argp->taglen > NFSD4_MAX_TAGLEN)
-			return false;
+			return 0;
 		p = xdr_inline_decode(argp->xdr, argp->taglen);
 		if (!p)
-			return false;
+			return 0;
 		argp->tag = svcxdr_savemem(argp, p, argp->taglen);
 		if (!argp->tag)
-			return false;
+			return 0;
 		max_reply += xdr_align_size(argp->taglen);
 	}
 
 	if (xdr_stream_decode_u32(argp->xdr, &argp->minorversion) < 0)
-		return false;
+		return 0;
 	if (xdr_stream_decode_u32(argp->xdr, &argp->opcnt) < 0)
-		return false;
+		return 0;
 
 	/*
 	 * NFS4ERR_RESOURCE is a more helpful error than GARBAGE_ARGS
@@ -2347,14 +2358,14 @@ nfsd4_decode_compound(struct nfsd4_compoundargs *argp)
 	 * nfsd4_proc can handle this is an NFS-level error.
 	 */
 	if (argp->opcnt > NFSD_MAX_OPS_PER_COMPOUND)
-		return true;
+		return 1;
 
 	if (argp->opcnt > ARRAY_SIZE(argp->iops)) {
 		argp->ops = kzalloc(argp->opcnt * sizeof(*argp->ops), GFP_KERNEL);
 		if (!argp->ops) {
 			argp->ops = argp->iops;
 			dprintk("nfsd: couldn't allocate room for COMPOUND\n");
-			return false;
+			return 0;
 		}
 	}
 
@@ -2366,7 +2377,7 @@ nfsd4_decode_compound(struct nfsd4_compoundargs *argp)
 		op->replay = NULL;
 
 		if (xdr_stream_decode_u32(argp->xdr, &op->opnum) < 0)
-			return false;
+			return 0;
 		if (nfsd4_opnum_in_range(argp, op)) {
 			op->status = nfsd4_dec_ops[op->opnum](argp, &op->u);
 			if (op->status != nfs_ok)
@@ -2413,7 +2424,7 @@ nfsd4_decode_compound(struct nfsd4_compoundargs *argp)
 	if (readcount > 1 || max_reply > PAGE_SIZE - auth_slack)
 		clear_bit(RQ_SPLICE_OK, &argp->rqstp->rq_flags);
 
-	return true;
+	return 1;
 }
 
 static __be32 *encode_change(__be32 *p, struct kstat *stat, struct inode *inode,
@@ -3096,7 +3107,7 @@ out_acl:
 		p = xdr_reserve_space(xdr, fhp->fh_handle.fh_size + 4);
 		if (!p)
 			goto out_resource;
-		p = xdr_encode_opaque(p, &fhp->fh_handle.fh_raw,
+		p = xdr_encode_opaque(p, &fhp->fh_handle.fh_base,
 					fhp->fh_handle.fh_size);
 	}
 	if (bmval0 & FATTR4_WORD0_FILEID) {
@@ -3495,7 +3506,7 @@ nfsd4_encode_dirent(void *ccdv, const char *name, int namlen,
 	p = xdr_reserve_space(xdr, 3*4 + namlen);
 	if (!p)
 		goto fail;
-	p = xdr_encode_hyper(p, OFFSET_MAX);        /* offset of next entry */
+	p = xdr_encode_hyper(p, NFS_OFFSET_MAX);    /* offset of next entry */
 	p = xdr_encode_array(p, name, namlen);      /* name length & name */
 
 	nfserr = nfsd4_encode_dirent_fattr(xdr, cd, name, namlen);
@@ -3656,7 +3667,7 @@ nfsd4_encode_getfh(struct nfsd4_compoundres *resp, __be32 nfserr, struct svc_fh 
 	p = xdr_reserve_space(xdr, len + 4);
 	if (!p)
 		return nfserr_resource;
-	p = xdr_encode_opaque(p, &fhp->fh_handle.fh_raw, len);
+	p = xdr_encode_opaque(p, &fhp->fh_handle.fh_base, len);
 	return 0;
 }
 
@@ -4791,8 +4802,8 @@ nfsd4_encode_read_plus_hole(struct nfsd4_compoundres *resp,
 		return nfserr_resource;
 
 	*p++ = htonl(NFS4_CONTENT_HOLE);
-	p = xdr_encode_hyper(p, read->rd_offset);
-	p = xdr_encode_hyper(p, count);
+	 p   = xdr_encode_hyper(p, read->rd_offset);
+	 p   = xdr_encode_hyper(p, count);
 
 	*eof = (read->rd_offset + count) >= f_size;
 	*maxcount = min_t(unsigned long, count, *maxcount);
@@ -5396,46 +5407,40 @@ void nfsd4_release_compoundargs(struct svc_rqst *rqstp)
 	}
 }
 
-bool
-nfs4svc_decode_compoundargs(struct svc_rqst *rqstp, struct xdr_stream *xdr)
+int
+nfs4svc_decode_compoundargs(struct svc_rqst *rqstp, __be32 *p)
 {
 	struct nfsd4_compoundargs *args = rqstp->rq_argp;
 
 	/* svcxdr_tmp_alloc */
 	args->to_free = NULL;
 
-	args->xdr = xdr;
+	args->xdr = &rqstp->rq_arg_stream;
 	args->ops = args->iops;
 	args->rqstp = rqstp;
 
 	return nfsd4_decode_compound(args);
 }
 
-bool
-nfs4svc_encode_compoundres(struct svc_rqst *rqstp, struct xdr_stream *xdr)
+int
+nfs4svc_encode_compoundres(struct svc_rqst *rqstp, __be32 *p)
 {
 	struct nfsd4_compoundres *resp = rqstp->rq_resp;
-	struct xdr_buf *buf = xdr->buf;
-	__be32 *p;
+	struct xdr_buf *buf = resp->xdr->buf;
 
 	WARN_ON_ONCE(buf->len != buf->head[0].iov_len + buf->page_len +
 				 buf->tail[0].iov_len);
 
-	/*
-	 * Send buffer space for the following items is reserved
-	 * at the top of nfsd4_proc_compound().
-	 */
-	p = resp->statusp;
+	*p = resp->cstate.status;
 
-	*p++ = resp->cstate.status;
+	rqstp->rq_next_page = resp->xdr->page_ptr + 1;
 
-	rqstp->rq_next_page = xdr->page_ptr + 1;
-
+	p = resp->tagp;
 	*p++ = htonl(resp->taglen);
 	memcpy(p, resp->tag, resp->taglen);
 	p += XDR_QUADLEN(resp->taglen);
 	*p++ = htonl(resp->opcnt);
 
 	nfsd4_sequence_done(resp);
-	return true;
+	return 1;
 }

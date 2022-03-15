@@ -226,7 +226,7 @@ struct clk *tegra_clk_register_super_mux(const char *name,
 	/* Data in .init is copied by clk_register(), so stack variable OK */
 	super->hw.init = &init;
 
-	clk = tegra_clk_dev_register(&super->hw);
+	clk = clk_register(NULL, &super->hw);
 	if (IS_ERR(clk))
 		kfree(super);
 

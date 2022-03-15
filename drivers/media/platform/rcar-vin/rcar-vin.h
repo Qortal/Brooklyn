@@ -29,7 +29,7 @@
 #define HW_BUFFER_MASK 0x7f
 
 /* Max number on VIN instances that can be in a system */
-#define RCAR_VIN_NUM 32
+#define RCAR_VIN_NUM 8
 
 struct rvin_group;
 
@@ -47,18 +47,6 @@ enum rvin_csi_id {
 	RVIN_CSI41,
 	RVIN_CSI_MAX,
 };
-
-enum rvin_isp_id {
-	RVIN_ISP0,
-	RVIN_ISP1,
-	RVIN_ISP2,
-	RVIN_ISP4,
-	RVIN_ISP_MAX,
-};
-
-#define RVIN_REMOTES_MAX \
-	(((unsigned int)RVIN_CSI_MAX) > ((unsigned int)RVIN_ISP_MAX) ? \
-	 RVIN_CSI_MAX : RVIN_ISP_MAX)
 
 /**
  * enum rvin_dma_state - DMA states
@@ -159,7 +147,6 @@ struct rvin_group_route {
  * struct rvin_info - Information about the particular VIN implementation
  * @model:		VIN model
  * @use_mc:		use media controller instead of controlling subdevice
- * @use_isp:		the VIN is connected to the ISP and not to the CSI-2
  * @nv12:		support outputing NV12 pixel format
  * @max_width:		max input width the VIN supports
  * @max_height:		max input height the VIN supports
@@ -169,7 +156,6 @@ struct rvin_group_route {
 struct rvin_info {
 	enum model_id model;
 	bool use_mc;
-	bool use_isp;
 	bool nv12;
 
 	unsigned int max_width;
@@ -281,9 +267,8 @@ struct rvin_dev {
  * @count:		number of enabled VIN instances found in DT
  * @notifier:		group notifier for CSI-2 async subdevices
  * @vin:		VIN instances which are part of the group
- * @link_setup:		Callback to create all links for the media graph
- * @remotes:		array of pairs of fwnode and subdev pointers
- *			to all remote subdevices.
+ * @csi:		array of pairs of fwnode and subdev pointers
+ *			to all CSI-2 subdevices.
  */
 struct rvin_group {
 	struct kref refcount;
@@ -295,12 +280,10 @@ struct rvin_group {
 	struct v4l2_async_notifier notifier;
 	struct rvin_dev *vin[RCAR_VIN_NUM];
 
-	int (*link_setup)(struct rvin_dev *vin);
-
 	struct {
 		struct v4l2_async_subdev *asd;
 		struct v4l2_subdev *subdev;
-	} remotes[RVIN_REMOTES_MAX];
+	} csi[RVIN_CSI_MAX];
 };
 
 int rvin_dma_register(struct rvin_dev *vin, int irq);

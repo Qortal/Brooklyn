@@ -10,8 +10,6 @@
 #include <linux/err.h>
 #include <linux/iio/iio.h>
 #include <linux/module.h>
-#include <linux/mod_devicetable.h>
-#include <linux/property.h>
 #include <linux/regulator/consumer.h>
 #include <linux/spi/spi.h>
 
@@ -202,13 +200,12 @@ static const struct iio_info mcp3911_info = {
 	.write_raw = mcp3911_write_raw,
 };
 
-static int mcp3911_config(struct mcp3911 *adc)
+static int mcp3911_config(struct mcp3911 *adc, struct device_node *of_node)
 {
-	struct device *dev = &adc->spi->dev;
 	u32 configreg;
 	int ret;
 
-	device_property_read_u32(dev, "device-addr", &adc->dev_addr);
+	of_property_read_u32(of_node, "device-addr", &adc->dev_addr);
 	if (adc->dev_addr > 3) {
 		dev_err(&adc->spi->dev,
 			"invalid device address (%i). Must be in range 0-3.\n",
@@ -292,7 +289,7 @@ static int mcp3911_probe(struct spi_device *spi)
 		}
 	}
 
-	ret = mcp3911_config(adc);
+	ret = mcp3911_config(adc, spi->dev.of_node);
 	if (ret)
 		goto clk_disable;
 

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0+ */
 /*
- * NILFS B-tree node cache
+ * btnode.h - NILFS B-tree node cache
  *
  * Copyright (C) 2005-2008 Nippon Telegraph and Telephone Corporation.
  *

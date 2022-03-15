@@ -10,7 +10,6 @@
 #include <net/nexthop.h>
 
 #define IANA_VXLAN_UDP_PORT     4789
-#define IANA_VXLAN_GPE_UDP_PORT 4790
 
 /* VXLAN protocol (RFC 7348) header:
  * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+

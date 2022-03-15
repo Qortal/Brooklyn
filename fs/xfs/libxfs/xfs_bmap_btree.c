@@ -22,8 +22,6 @@
 #include "xfs_trace.h"
 #include "xfs_rmap.h"
 
-static struct kmem_cache	*xfs_bmbt_cur_cache;
-
 /*
  * Convert on-disk form of btree root to in-memory form.
  */
@@ -288,7 +286,7 @@ xfs_bmbt_free_block(
 	struct xfs_owner_info	oinfo;
 
 	xfs_rmap_ino_bmbt_owner(&oinfo, ip->i_ino, cur->bc_ino.whichfork);
-	xfs_free_extent_later(cur->bc_tp, fsbno, 1, &oinfo);
+	xfs_bmap_add_free(cur->bc_tp, fsbno, 1, &oinfo);
 	ip->i_nblocks--;
 
 	xfs_trans_log_inode(tp, ip, XFS_ILOG_CORE);
@@ -554,9 +552,13 @@ xfs_bmbt_init_cursor(
 	struct xfs_btree_cur	*cur;
 	ASSERT(whichfork != XFS_COW_FORK);
 
-	cur = xfs_btree_alloc_cursor(mp, tp, XFS_BTNUM_BMAP,
-			mp->m_bm_maxlevels[whichfork], xfs_bmbt_cur_cache);
+	cur = kmem_cache_zalloc(xfs_btree_cur_zone, GFP_NOFS | __GFP_NOFAIL);
+
+	cur->bc_tp = tp;
+	cur->bc_mp = mp;
 	cur->bc_nlevels = be16_to_cpu(ifp->if_broot->bb_level) + 1;
+	cur->bc_btnum = XFS_BTNUM_BMAP;
+	cur->bc_blocklog = mp->m_sb.sb_blocklog;
 	cur->bc_statoff = XFS_STATS_CALC_INDEX(xs_bmbt_2);
 
 	cur->bc_ops = &xfs_bmbt_ops;
@@ -573,17 +575,6 @@ xfs_bmbt_init_cursor(
 	return cur;
 }
 
-/* Calculate number of records in a block mapping btree block. */
-static inline unsigned int
-xfs_bmbt_block_maxrecs(
-	unsigned int		blocklen,
-	bool			leaf)
-{
-	if (leaf)
-		return blocklen / sizeof(xfs_bmbt_rec_t);
-	return blocklen / (sizeof(xfs_bmbt_key_t) + sizeof(xfs_bmbt_ptr_t));
-}
-
 /*
  * Calculate number of records in a bmap btree block.
  */
@@ -594,24 +585,10 @@ xfs_bmbt_maxrecs(
 	int			leaf)
 {
 	blocklen -= XFS_BMBT_BLOCK_LEN(mp);
-	return xfs_bmbt_block_maxrecs(blocklen, leaf);
-}
 
-/* Compute the max possible height for block mapping btrees. */
-unsigned int
-xfs_bmbt_maxlevels_ondisk(void)
-{
-	unsigned int		minrecs[2];
-	unsigned int		blocklen;
-
-	blocklen = min(XFS_MIN_BLOCKSIZE - XFS_BTREE_SBLOCK_LEN,
-		       XFS_MIN_CRC_BLOCKSIZE - XFS_BTREE_SBLOCK_CRC_LEN);
-
-	minrecs[0] = xfs_bmbt_block_maxrecs(blocklen, true) / 2;
-	minrecs[1] = xfs_bmbt_block_maxrecs(blocklen, false) / 2;
-
-	/* One extra level for the inode root. */
-	return xfs_btree_compute_maxlevels(minrecs, MAXEXTNUM) + 1;
+	if (leaf)
+		return blocklen / sizeof(xfs_bmbt_rec_t);
+	return blocklen / (sizeof(xfs_bmbt_key_t) + sizeof(xfs_bmbt_ptr_t));
 }
 
 /*
@@ -676,23 +653,4 @@ xfs_bmbt_calc_size(
 	unsigned long long	len)
 {
 	return xfs_btree_calc_size(mp->m_bmap_dmnr, len);
-}
-
-int __init
-xfs_bmbt_init_cur_cache(void)
-{
-	xfs_bmbt_cur_cache = kmem_cache_create("xfs_bmbt_cur",
-			xfs_btree_cur_sizeof(xfs_bmbt_maxlevels_ondisk()),
-			0, 0, NULL);
-
-	if (!xfs_bmbt_cur_cache)
-		return -ENOMEM;
-	return 0;
-}
-
-void
-xfs_bmbt_destroy_cur_cache(void)
-{
-	kmem_cache_destroy(xfs_bmbt_cur_cache);
-	xfs_bmbt_cur_cache = NULL;
 }

@@ -106,9 +106,7 @@ static int stmpe_spi_remove(struct spi_device *spi)
 {
 	struct stmpe *stmpe = spi_get_drvdata(spi);
 
-	stmpe_remove(stmpe);
-
-	return 0;
+	return stmpe_remove(stmpe);
 }
 
 static const struct of_device_id stmpe_spi_of_match[] = {

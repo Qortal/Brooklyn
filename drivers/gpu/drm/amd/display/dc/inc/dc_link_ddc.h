@@ -69,7 +69,6 @@ struct ddc_service_init_data {
 	struct graphics_object_id id;
 	struct dc_context *ctx;
 	struct dc_link *link;
-	bool is_dpia_link;
 };
 
 struct ddc_service *dal_ddc_service_create(

@@ -4,9 +4,12 @@
 #ifndef __WWAN_H
 #define __WWAN_H
 
+#include <linux/device.h>
+#include <linux/kernel.h>
 #include <linux/poll.h>
+#include <linux/skbuff.h>
+#include <linux/netlink.h>
 #include <linux/netdevice.h>
-#include <linux/types.h>
 
 /**
  * enum wwan_port_type - WWAN port types
@@ -34,10 +37,6 @@ enum wwan_port_type {
 	WWAN_PORT_UNKNOWN,
 };
 
-struct device;
-struct file;
-struct netlink_ext_ack;
-struct sk_buff;
 struct wwan_port;
 
 /** struct wwan_port_ops - The WWAN port operations
@@ -171,14 +170,5 @@ int wwan_register_ops(struct device *parent, const struct wwan_ops *ops,
 		      void *ctxt, u32 def_link_id);
 
 void wwan_unregister_ops(struct device *parent);
-
-#ifdef CONFIG_WWAN_DEBUGFS
-struct dentry *wwan_get_debugfs_dir(struct device *parent);
-#else
-static inline struct dentry *wwan_get_debugfs_dir(struct device *parent)
-{
-	return ERR_PTR(-ENODEV);
-}
-#endif
 
 #endif /* __WWAN_H */

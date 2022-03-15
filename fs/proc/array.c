@@ -92,7 +92,6 @@
 #include <linux/string_helpers.h>
 #include <linux/user_namespace.h>
 #include <linux/fs_struct.h>
-#include <linux/kthread.h>
 
 #include <asm/processor.h>
 #include "internal.h"
@@ -103,8 +102,6 @@ void proc_task_name(struct seq_file *m, struct task_struct *p, bool escape)
 
 	if (p->flags & PF_WQ_WORKER)
 		wq_worker_comm(tcomm, sizeof(tcomm), p);
-	else if (p->flags & PF_KTHREAD)
-		get_kthread_comm(tcomm, sizeof(tcomm), p);
 	else
 		__get_task_comm(tcomm, sizeof(tcomm), p);
 
@@ -411,9 +408,9 @@ static void task_cpus_allowed(struct seq_file *m, struct task_struct *task)
 		   cpumask_pr_args(&task->cpus_mask));
 }
 
-static inline void task_core_dumping(struct seq_file *m, struct task_struct *task)
+static inline void task_core_dumping(struct seq_file *m, struct mm_struct *mm)
 {
-	seq_put_decimal_ull(m, "CoreDumping:\t", !!task->signal->core_state);
+	seq_put_decimal_ull(m, "CoreDumping:\t", !!mm->core_state);
 	seq_putc(m, '\n');
 }
 
@@ -439,7 +436,7 @@ int proc_pid_status(struct seq_file *m, struct pid_namespace *ns,
 
 	if (mm) {
 		task_mem(m, mm);
-		task_core_dumping(m, task);
+		task_core_dumping(m, mm);
 		task_thp_status(m, mm);
 		mmput(mm);
 	}
@@ -471,7 +468,6 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	u64 cgtime, gtime;
 	unsigned long rsslim = 0;
 	unsigned long flags;
-	int exit_code = task->exit_code;
 
 	state = *get_task_state(task);
 	vsize = eip = esp = 0;
@@ -535,9 +531,6 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 			maj_flt += sig->maj_flt;
 			thread_group_cputime_adjusted(task, &utime, &stime);
 			gtime += sig->gtime;
-
-			if (sig->flags & (SIGNAL_GROUP_EXIT | SIGNAL_STOP_STOPPED))
-				exit_code = sig->group_exit_code;
 		}
 
 		sid = task_session_nr_ns(task, ns);
@@ -548,7 +541,7 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	}
 
 	if (permitted && (!whole || num_threads < 2))
-		wchan = !task_is_running(task);
+		wchan = get_wchan(task);
 	if (!whole) {
 		min_flt = task->min_flt;
 		maj_flt = task->maj_flt;
@@ -613,7 +606,10 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	 *
 	 * This works with older implementations of procps as well.
 	 */
-	seq_put_decimal_ull(m, " ", wchan);
+	if (wchan)
+		seq_puts(m, " 1");
+	else
+		seq_puts(m, " 0");
 
 	seq_put_decimal_ull(m, " ", 0);
 	seq_put_decimal_ull(m, " ", 0);
@@ -637,7 +633,7 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 		seq_puts(m, " 0 0 0 0 0 0 0");
 
 	if (permitted)
-		seq_put_decimal_ll(m, " ", exit_code);
+		seq_put_decimal_ll(m, " ", task->exit_code);
 	else
 		seq_puts(m, " 0");
 

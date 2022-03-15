@@ -307,7 +307,7 @@ static int fcoe_interface_setup(struct fcoe_interface *fcoe,
 	}
 
 	/* Do not support for bonding device */
-	if (netif_is_bond_master(netdev)) {
+	if (netdev->priv_flags & IFF_BONDING && netdev->flags & IFF_MASTER) {
 		FCOE_NETDEV_DBG(netdev, "Bonded interfaces not supported\n");
 		return -EOPNOTSUPP;
 	}

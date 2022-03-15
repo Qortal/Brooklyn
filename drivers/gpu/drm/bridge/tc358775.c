@@ -594,26 +594,11 @@ static int tc_bridge_attach(struct drm_bridge *bridge,
 			    enum drm_bridge_attach_flags flags)
 {
 	struct tc_data *tc = bridge_to_tc(bridge);
-
-	/* Attach the panel-bridge to the dsi bridge */
-	return drm_bridge_attach(bridge->encoder, tc->panel_bridge,
-				 &tc->bridge, flags);
-}
-
-static const struct drm_bridge_funcs tc_bridge_funcs = {
-	.attach = tc_bridge_attach,
-	.pre_enable = tc_bridge_pre_enable,
-	.enable = tc_bridge_enable,
-	.mode_valid = tc_mode_valid,
-	.post_disable = tc_bridge_post_disable,
-};
-
-static int tc_attach_host(struct tc_data *tc)
-{
 	struct device *dev = &tc->i2c->dev;
 	struct mipi_dsi_host *host;
 	struct mipi_dsi_device *dsi;
 	int ret;
+
 	const struct mipi_dsi_device_info info = { .type = "tc358775",
 							.channel = 0,
 							.node = NULL,
@@ -625,10 +610,11 @@ static int tc_attach_host(struct tc_data *tc)
 		return -EPROBE_DEFER;
 	}
 
-	dsi = devm_mipi_dsi_device_register_full(dev, host, &info);
+	dsi = mipi_dsi_device_register_full(host, &info);
 	if (IS_ERR(dsi)) {
 		dev_err(dev, "failed to create dsi device\n");
-		return PTR_ERR(dsi);
+		ret = PTR_ERR(dsi);
+		goto err_dsi_device;
 	}
 
 	tc->dsi = dsi;
@@ -637,14 +623,28 @@ static int tc_attach_host(struct tc_data *tc)
 	dsi->format = MIPI_DSI_FMT_RGB888;
 	dsi->mode_flags = MIPI_DSI_MODE_VIDEO;
 
-	ret = devm_mipi_dsi_attach(dev, dsi);
+	ret = mipi_dsi_attach(dsi);
 	if (ret < 0) {
 		dev_err(dev, "failed to attach dsi to host\n");
-		return ret;
+		goto err_dsi_attach;
 	}
 
-	return 0;
+	/* Attach the panel-bridge to the dsi bridge */
+	return drm_bridge_attach(bridge->encoder, tc->panel_bridge,
+				 &tc->bridge, flags);
+err_dsi_attach:
+	mipi_dsi_device_unregister(dsi);
+err_dsi_device:
+	return ret;
 }
+
+static const struct drm_bridge_funcs tc_bridge_funcs = {
+	.attach = tc_bridge_attach,
+	.pre_enable = tc_bridge_pre_enable,
+	.enable = tc_bridge_enable,
+	.mode_valid = tc_mode_valid,
+	.post_disable = tc_bridge_post_disable,
+};
 
 static int tc_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
@@ -709,15 +709,7 @@ static int tc_probe(struct i2c_client *client, const struct i2c_device_id *id)
 
 	i2c_set_clientdata(client, tc);
 
-	ret = tc_attach_host(tc);
-	if (ret)
-		goto err_bridge_remove;
-
 	return 0;
-
-err_bridge_remove:
-	drm_bridge_remove(&tc->bridge);
-	return ret;
 }
 
 static int tc_remove(struct i2c_client *client)

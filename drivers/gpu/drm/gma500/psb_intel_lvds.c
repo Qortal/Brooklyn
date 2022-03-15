@@ -59,7 +59,7 @@ struct psb_intel_lvds_priv {
  */
 static u32 psb_intel_lvds_get_max_backlight(struct drm_device *dev)
 {
-	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
+	struct drm_psb_private *dev_priv = dev->dev_private;
 	u32 ret;
 
 	if (gma_power_begin(dev, false)) {
@@ -88,7 +88,8 @@ static u32 psb_intel_lvds_get_max_backlight(struct drm_device *dev)
 static int psb_lvds_i2c_set_brightness(struct drm_device *dev,
 					unsigned int level)
 {
-	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
+	struct drm_psb_private *dev_priv =
+		(struct drm_psb_private *)dev->dev_private;
 
 	struct psb_intel_i2c_chan *lvds_i2c_bus = dev_priv->lvds_i2c_bus;
 	u8 out_buf[2];
@@ -127,7 +128,8 @@ static int psb_lvds_i2c_set_brightness(struct drm_device *dev,
 
 static int psb_lvds_pwm_set_brightness(struct drm_device *dev, int level)
 {
-	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
+	struct drm_psb_private *dev_priv =
+			(struct drm_psb_private *)dev->dev_private;
 
 	u32 max_pwm_blc;
 	u32 blc_pwm_duty_cycle;
@@ -159,7 +161,7 @@ static int psb_lvds_pwm_set_brightness(struct drm_device *dev, int level)
  */
 void psb_intel_lvds_set_brightness(struct drm_device *dev, int level)
 {
-	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
+	struct drm_psb_private *dev_priv = dev->dev_private;
 
 	dev_dbg(dev->dev, "backlight level is %d\n", level);
 
@@ -181,7 +183,7 @@ void psb_intel_lvds_set_brightness(struct drm_device *dev, int level)
  */
 static void psb_intel_lvds_set_backlight(struct drm_device *dev, int level)
 {
-	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
+	struct drm_psb_private *dev_priv = dev->dev_private;
 	u32 blc_pwm_ctl;
 
 	if (gma_power_begin(dev, false)) {
@@ -206,7 +208,7 @@ static void psb_intel_lvds_set_backlight(struct drm_device *dev, int level)
  */
 static void psb_intel_lvds_set_power(struct drm_device *dev, bool on)
 {
-	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
+	struct drm_psb_private *dev_priv = dev->dev_private;
 	struct psb_intel_mode_device *mode_dev = &dev_priv->mode_dev;
 	u32 pp_status;
 
@@ -252,7 +254,8 @@ static void psb_intel_lvds_encoder_dpms(struct drm_encoder *encoder, int mode)
 static void psb_intel_lvds_save(struct drm_connector *connector)
 {
 	struct drm_device *dev = connector->dev;
-	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
+	struct drm_psb_private *dev_priv =
+		(struct drm_psb_private *)dev->dev_private;
 	struct gma_encoder *gma_encoder = gma_attached_encoder(connector);
 	struct psb_intel_lvds_priv *lvds_priv =
 		(struct psb_intel_lvds_priv *)gma_encoder->dev_priv;
@@ -332,7 +335,7 @@ static void psb_intel_lvds_restore(struct drm_connector *connector)
 enum drm_mode_status psb_intel_lvds_mode_valid(struct drm_connector *connector,
 				 struct drm_display_mode *mode)
 {
-	struct drm_psb_private *dev_priv = to_drm_psb_private(connector->dev);
+	struct drm_psb_private *dev_priv = connector->dev->dev_private;
 	struct gma_encoder *gma_encoder = gma_attached_encoder(connector);
 	struct drm_display_mode *fixed_mode =
 					dev_priv->mode_dev.panel_fixed_mode;
@@ -362,7 +365,7 @@ bool psb_intel_lvds_mode_fixup(struct drm_encoder *encoder,
 				  struct drm_display_mode *adjusted_mode)
 {
 	struct drm_device *dev = encoder->dev;
-	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
+	struct drm_psb_private *dev_priv = dev->dev_private;
 	struct psb_intel_mode_device *mode_dev = &dev_priv->mode_dev;
 	struct gma_crtc *gma_crtc = to_gma_crtc(encoder->crtc);
 	struct drm_encoder *tmp_encoder;
@@ -423,7 +426,7 @@ bool psb_intel_lvds_mode_fixup(struct drm_encoder *encoder,
 static void psb_intel_lvds_prepare(struct drm_encoder *encoder)
 {
 	struct drm_device *dev = encoder->dev;
-	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
+	struct drm_psb_private *dev_priv = dev->dev_private;
 	struct psb_intel_mode_device *mode_dev = &dev_priv->mode_dev;
 
 	if (!gma_power_begin(dev, true))
@@ -441,7 +444,7 @@ static void psb_intel_lvds_prepare(struct drm_encoder *encoder)
 static void psb_intel_lvds_commit(struct drm_encoder *encoder)
 {
 	struct drm_device *dev = encoder->dev;
-	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
+	struct drm_psb_private *dev_priv = dev->dev_private;
 	struct psb_intel_mode_device *mode_dev = &dev_priv->mode_dev;
 
 	if (mode_dev->backlight_duty_cycle == 0)
@@ -456,7 +459,7 @@ static void psb_intel_lvds_mode_set(struct drm_encoder *encoder,
 				struct drm_display_mode *adjusted_mode)
 {
 	struct drm_device *dev = encoder->dev;
-	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
+	struct drm_psb_private *dev_priv = dev->dev_private;
 	u32 pfit_control;
 
 	/*
@@ -490,7 +493,7 @@ static void psb_intel_lvds_mode_set(struct drm_encoder *encoder,
 static int psb_intel_lvds_get_modes(struct drm_connector *connector)
 {
 	struct drm_device *dev = connector->dev;
-	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
+	struct drm_psb_private *dev_priv = dev->dev_private;
 	struct psb_intel_mode_device *mode_dev = &dev_priv->mode_dev;
 	struct gma_encoder *gma_encoder = gma_attached_encoder(connector);
 	struct psb_intel_lvds_priv *lvds_priv = gma_encoder->dev_priv;
@@ -638,7 +641,7 @@ void psb_intel_lvds_init(struct drm_device *dev,
 	struct drm_encoder *encoder;
 	struct drm_display_mode *scan;	/* *modes, *bios_mode; */
 	struct drm_crtc *crtc;
-	struct drm_psb_private *dev_priv = to_drm_psb_private(dev);
+	struct drm_psb_private *dev_priv = dev->dev_private;
 	u32 lvds;
 	int pipe;
 

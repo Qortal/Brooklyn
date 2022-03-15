@@ -12,24 +12,24 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <linux/capability.h>
 #include <linux/cpu.h>
-#include <linux/ctype.h>
 #include <linux/delay.h>
-#include <linux/dmi.h>
 #include <linux/err.h>
-#include <linux/errno.h>
-#include <linux/hwmon.h>
-#include <linux/init.h>
 #include <linux/module.h>
-#include <linux/mutex.h>
 #include <linux/platform_device.h>
+#include <linux/types.h>
+#include <linux/init.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <linux/string.h>
-#include <linux/smp.h>
-#include <linux/types.h>
+#include <linux/dmi.h>
+#include <linux/capability.h>
+#include <linux/mutex.h>
+#include <linux/hwmon.h>
 #include <linux/uaccess.h>
+#include <linux/io.h>
+#include <linux/sched.h>
+#include <linux/ctype.h>
+#include <linux/smp.h>
 
 #include <linux/i8k.h>
 
@@ -76,7 +76,6 @@ struct dell_smm_data {
 	int temp_type[DELL_SMM_NO_TEMP];
 	bool fan[DELL_SMM_NO_FANS];
 	int fan_type[DELL_SMM_NO_FANS];
-	int *fan_nominal_speed[DELL_SMM_NO_FANS];
 };
 
 MODULE_AUTHOR("Massimo Dal Zotto (dz@debian.org)");
@@ -113,12 +112,12 @@ MODULE_PARM_DESC(fan_max, "Maximum configurable fan speed (default: autodetect)"
 
 struct smm_regs {
 	unsigned int eax;
-	unsigned int ebx;
-	unsigned int ecx;
-	unsigned int edx;
-	unsigned int esi;
-	unsigned int edi;
-} __packed;
+	unsigned int ebx __packed;
+	unsigned int ecx __packed;
+	unsigned int edx __packed;
+	unsigned int esi __packed;
+	unsigned int edi __packed;
+};
 
 static const char * const temp_labels[] = {
 	"CPU",
@@ -449,12 +448,13 @@ static int i8k_get_power_status(void)
  * Procfs interface
  */
 
-static long i8k_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
+static int
+i8k_ioctl_unlocked(struct file *fp, struct dell_smm_data *data, unsigned int cmd, unsigned long arg)
 {
-	struct dell_smm_data *data = pde_data(file_inode(fp));
-	int __user *argp = (int __user *)arg;
-	int speed, err;
 	int val = 0;
+	int speed, err;
+	unsigned char buff[16];
+	int __user *argp = (int __user *)arg;
 
 	if (!argp)
 		return -EINVAL;
@@ -467,19 +467,16 @@ static long i8k_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 
 		val = (data->bios_version[0] << 16) |
 				(data->bios_version[1] << 8) | data->bios_version[2];
+		break;
 
-		if (copy_to_user(argp, &val, sizeof(val)))
-			return -EFAULT;
-
-		return 0;
 	case I8K_MACHINE_ID:
 		if (restricted && !capable(CAP_SYS_ADMIN))
 			return -EPERM;
 
-		if (copy_to_user(argp, data->bios_machineid, sizeof(data->bios_machineid)))
-			return -EFAULT;
+		memset(buff, 0, sizeof(buff));
+		strscpy(buff, data->bios_machineid, sizeof(buff));
+		break;
 
-		return 0;
 	case I8K_FN_STATUS:
 		val = i8k_get_fn_status();
 		break;
@@ -516,26 +513,51 @@ static long i8k_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 		if (copy_from_user(&speed, argp + 1, sizeof(int)))
 			return -EFAULT;
 
-		mutex_lock(&data->i8k_mutex);
 		err = i8k_set_fan(data, val, speed);
 		if (err < 0)
-			val = err;
-		else
-			val = i8k_get_fan_status(data, val);
-		mutex_unlock(&data->i8k_mutex);
+			return err;
+
+		val = i8k_get_fan_status(data, val);
 		break;
 
 	default:
-		return -ENOIOCTLCMD;
+		return -EINVAL;
 	}
 
 	if (val < 0)
 		return val;
 
-	if (copy_to_user(argp, &val, sizeof(int)))
-		return -EFAULT;
+	switch (cmd) {
+	case I8K_BIOS_VERSION:
+		if (copy_to_user(argp, &val, 4))
+			return -EFAULT;
+
+		break;
+	case I8K_MACHINE_ID:
+		if (copy_to_user(argp, buff, 16))
+			return -EFAULT;
+
+		break;
+	default:
+		if (copy_to_user(argp, &val, sizeof(int)))
+			return -EFAULT;
+
+		break;
+	}
 
 	return 0;
+}
+
+static long i8k_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
+{
+	struct dell_smm_data *data = PDE_DATA(file_inode(fp));
+	long ret;
+
+	mutex_lock(&data->i8k_mutex);
+	ret = i8k_ioctl_unlocked(fp, data, cmd, arg);
+	mutex_unlock(&data->i8k_mutex);
+
+	return ret;
 }
 
 /*
@@ -585,7 +607,7 @@ static int i8k_proc_show(struct seq_file *seq, void *offset)
 
 static int i8k_open_fs(struct inode *inode, struct file *file)
 {
-	return single_open(file, i8k_proc_show, pde_data(inode));
+	return single_open(file, i8k_proc_show, PDE_DATA(inode));
 }
 
 static const struct proc_ops i8k_proc_ops = {
@@ -655,13 +677,6 @@ static umode_t dell_smm_is_visible(const void *drvdata, enum hwmon_sensor_types 
 				return 0444;
 
 			break;
-		case hwmon_fan_min:
-		case hwmon_fan_max:
-		case hwmon_fan_target:
-			if (data->fan_nominal_speed[channel])
-				return 0444;
-
-			break;
 		default:
 			break;
 		}
@@ -727,25 +742,6 @@ static int dell_smm_read(struct device *dev, enum hwmon_sensor_types type, u32 a
 				return ret;
 
 			*val = ret;
-
-			return 0;
-		case hwmon_fan_min:
-			*val = data->fan_nominal_speed[channel][0];
-
-			return 0;
-		case hwmon_fan_max:
-			*val = data->fan_nominal_speed[channel][data->i8k_fan_max];
-
-			return 0;
-		case hwmon_fan_target:
-			ret = i8k_get_fan_status(data, channel);
-			if (ret < 0)
-				return ret;
-
-			if (ret > data->i8k_fan_max)
-				ret = data->i8k_fan_max;
-
-			*val = data->fan_nominal_speed[channel][ret];
 
 			return 0;
 		default:
@@ -896,12 +892,9 @@ static const struct hwmon_channel_info *dell_smm_info[] = {
 			   HWMON_T_INPUT | HWMON_T_LABEL
 			   ),
 	HWMON_CHANNEL_INFO(fan,
-			   HWMON_F_INPUT | HWMON_F_LABEL | HWMON_F_MIN | HWMON_F_MAX |
-			   HWMON_F_TARGET,
-			   HWMON_F_INPUT | HWMON_F_LABEL | HWMON_F_MIN | HWMON_F_MAX |
-			   HWMON_F_TARGET,
-			   HWMON_F_INPUT | HWMON_F_LABEL | HWMON_F_MIN | HWMON_F_MAX |
-			   HWMON_F_TARGET
+			   HWMON_F_INPUT | HWMON_F_LABEL,
+			   HWMON_F_INPUT | HWMON_F_LABEL,
+			   HWMON_F_INPUT | HWMON_F_LABEL
 			   ),
 	HWMON_CHANNEL_INFO(pwm,
 			   HWMON_PWM_INPUT | HWMON_PWM_ENABLE,
@@ -920,7 +913,7 @@ static int __init dell_smm_init_hwmon(struct device *dev)
 {
 	struct dell_smm_data *data = dev_get_drvdata(dev);
 	struct device *dell_smm_hwmon_dev;
-	int i, state, err;
+	int i, err;
 
 	for (i = 0; i < DELL_SMM_NO_TEMP; i++) {
 		data->temp_type[i] = i8k_get_temp_type(i);
@@ -936,27 +929,8 @@ static int __init dell_smm_init_hwmon(struct device *dev)
 		err = i8k_get_fan_status(data, i);
 		if (err < 0)
 			err = i8k_get_fan_type(data, i);
-
-		if (err < 0)
-			continue;
-
-		data->fan[i] = true;
-		data->fan_nominal_speed[i] = devm_kmalloc_array(dev, data->i8k_fan_max + 1,
-								sizeof(*data->fan_nominal_speed[i]),
-								GFP_KERNEL);
-		if (!data->fan_nominal_speed[i])
-			continue;
-
-		for (state = 0; state <= data->i8k_fan_max; state++) {
-			err = i8k_get_fan_nominal_speed(data, i, state);
-			if (err < 0) {
-				/* Mark nominal speed table as invalid in case of error */
-				devm_kfree(dev, data->fan_nominal_speed[i]);
-				data->fan_nominal_speed[i] = NULL;
-				break;
-			}
-			data->fan_nominal_speed[i][state] = err;
-		}
+		if (err >= 0)
+			data->fan[i] = true;
 	}
 
 	dell_smm_hwmon_dev = devm_hwmon_device_register_with_info(dev, "dell_smm", data,
@@ -976,11 +950,6 @@ enum i8k_configs {
 	DELL_STUDIO,
 	DELL_XPS,
 };
-
-/*
- * Only use for machines which need some special configuration
- * in order to work correctly (e.g. if autoconfig fails on this machines).
- */
 
 static const struct i8k_config_data i8k_config_data[] __initconst = {
 	[DELL_LATITUDE_D520] = {

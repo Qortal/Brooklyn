@@ -290,8 +290,7 @@ extern typeof(name) __mod_##type##__##name##_device_table		\
  * files require multiple MODULE_FIRMWARE() specifiers */
 #define MODULE_FIRMWARE(_firmware) MODULE_INFO(firmware, _firmware)
 
-#define _MODULE_IMPORT_NS(ns)	MODULE_INFO(import_ns, #ns)
-#define MODULE_IMPORT_NS(ns)	_MODULE_IMPORT_NS(ns)
+#define MODULE_IMPORT_NS(ns) MODULE_INFO(import_ns, #ns)
 
 struct notifier_block;
 
@@ -596,9 +595,9 @@ int module_get_kallsym(unsigned int symnum, unsigned long *value, char *type,
 /* Look for this name: can be of form module:name. */
 unsigned long module_kallsyms_lookup_name(const char *name);
 
-extern void __noreturn __module_put_and_kthread_exit(struct module *mod,
+extern void __noreturn __module_put_and_exit(struct module *mod,
 			long code);
-#define module_put_and_kthread_exit(code) __module_put_and_kthread_exit(THIS_MODULE, code)
+#define module_put_and_exit(code) __module_put_and_exit(THIS_MODULE, code)
 
 #ifdef CONFIG_MODULE_UNLOAD
 int module_refcount(struct module *mod);
@@ -791,7 +790,7 @@ static inline int unregister_module_notifier(struct notifier_block *nb)
 	return 0;
 }
 
-#define module_put_and_kthread_exit(code) kthread_exit(code)
+#define module_put_and_exit(code) do_exit(code)
 
 static inline void print_modules(void)
 {

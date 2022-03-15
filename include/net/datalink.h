@@ -12,7 +12,7 @@ struct datalink_proto {
         int     (*rcvfunc)(struct sk_buff *, struct net_device *,
                                 struct packet_type *, struct net_device *);
 	int     (*request)(struct datalink_proto *, struct sk_buff *,
-			   const unsigned char *);
+                                        unsigned char *);
 	struct list_head node;
 };
 

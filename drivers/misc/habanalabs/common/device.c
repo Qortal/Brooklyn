@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 /*
- * Copyright 2016-2021 HabanaLabs, Ltd.
+ * Copyright 2016-2019 HabanaLabs, Ltd.
  * All Rights Reserved.
  */
 
@@ -17,9 +17,9 @@ enum hl_device_status hl_device_status(struct hl_device *hdev)
 {
 	enum hl_device_status status;
 
-	if (hdev->reset_info.in_reset)
+	if (atomic_read(&hdev->in_reset))
 		status = HL_DEVICE_STATUS_IN_RESET;
-	else if (hdev->reset_info.needs_reset)
+	else if (hdev->needs_reset)
 		status = HL_DEVICE_STATUS_NEEDS_RESET;
 	else if (hdev->disabled)
 		status = HL_DEVICE_STATUS_MALFUNCTION;
@@ -69,6 +69,13 @@ static void hpriv_release(struct kref *ref)
 
 	mutex_destroy(&hpriv->restore_phase_mutex);
 
+	mutex_lock(&hdev->fpriv_list_lock);
+	list_del(&hpriv->dev_node);
+	hdev->compute_ctx = NULL;
+	mutex_unlock(&hdev->fpriv_list_lock);
+
+	kfree(hpriv);
+
 	if ((!hdev->pldm) && (hdev->pdev) &&
 			(!hdev->asic_funcs->is_device_idle(hdev,
 				idle_mask,
@@ -80,32 +87,9 @@ static void hpriv_release(struct kref *ref)
 		device_is_idle = false;
 	}
 
-	/* We need to remove the user from the list to make sure the reset process won't
-	 * try to kill the user process. Because, if we got here, it means there are no
-	 * more driver/device resources that the user process is occupying so there is
-	 * no need to kill it
-	 *
-	 * However, we can't set the compute_ctx to NULL at this stage. This is to prevent
-	 * a race between the release and opening the device again. We don't want to let
-	 * a user open the device while there a reset is about to happen.
-	 */
-	mutex_lock(&hdev->fpriv_list_lock);
-	list_del(&hpriv->dev_node);
-	mutex_unlock(&hdev->fpriv_list_lock);
-
 	if ((hdev->reset_if_device_not_idle && !device_is_idle)
 			|| hdev->reset_upon_device_release)
-		hl_device_reset(hdev, HL_DRV_RESET_DEV_RELEASE);
-
-	/* Now we can mark the compute_ctx as not active. Even if a reset is running in a different
-	 * thread, we don't care because the in_reset is marked so if a user will try to open
-	 * the device it will fail on that, even if compute_ctx is false.
-	 */
-	mutex_lock(&hdev->fpriv_list_lock);
-	hdev->is_compute_ctx_active = false;
-	mutex_unlock(&hdev->fpriv_list_lock);
-
-	kfree(hpriv);
+		hl_device_reset(hdev, HL_RESET_DEVICE_RELEASE);
 }
 
 void hl_hpriv_get(struct hl_fpriv *hpriv)
@@ -169,9 +153,9 @@ static int hl_device_release_ctrl(struct inode *inode, struct file *filp)
 		goto out;
 	}
 
-	mutex_lock(&hdev->fpriv_ctrl_list_lock);
+	mutex_lock(&hdev->fpriv_list_lock);
 	list_del(&hpriv->dev_node);
-	mutex_unlock(&hdev->fpriv_ctrl_list_lock);
+	mutex_unlock(&hdev->fpriv_list_lock);
 out:
 	put_pid(hpriv->taskpid);
 
@@ -324,12 +308,16 @@ put_devices:
 static void device_hard_reset_pending(struct work_struct *work)
 {
 	struct hl_device_reset_work *device_reset_work =
-		container_of(work, struct hl_device_reset_work, reset_work.work);
+		container_of(work, struct hl_device_reset_work,
+				reset_work.work);
 	struct hl_device *hdev = device_reset_work->hdev;
 	u32 flags;
 	int rc;
 
-	flags = device_reset_work->flags | HL_DRV_RESET_FROM_RESET_THR;
+	flags = HL_RESET_HARD | HL_RESET_FROM_RESET_THREAD;
+
+	if (device_reset_work->fw_reset)
+		flags |= HL_RESET_FW;
 
 	rc = hl_device_reset(hdev, flags);
 	if ((rc == -EBUSY) && !hdev->device_fini_pending) {
@@ -448,12 +436,9 @@ static int device_early_init(struct hl_device *hdev)
 	mutex_init(&hdev->debug_lock);
 	INIT_LIST_HEAD(&hdev->cs_mirror_list);
 	spin_lock_init(&hdev->cs_mirror_lock);
-	spin_lock_init(&hdev->reset_info.lock);
 	INIT_LIST_HEAD(&hdev->fpriv_list);
-	INIT_LIST_HEAD(&hdev->fpriv_ctrl_list);
 	mutex_init(&hdev->fpriv_list_lock);
-	mutex_init(&hdev->fpriv_ctrl_list_lock);
-	mutex_init(&hdev->clk_throttling.lock);
+	atomic_set(&hdev->in_reset, 0);
 
 	return 0;
 
@@ -493,9 +478,6 @@ static void device_early_fini(struct hl_device *hdev)
 	mutex_destroy(&hdev->send_cpu_message_lock);
 
 	mutex_destroy(&hdev->fpriv_list_lock);
-	mutex_destroy(&hdev->fpriv_ctrl_list_lock);
-
-	mutex_destroy(&hdev->clk_throttling.lock);
 
 	hl_cb_mgr_fini(hdev, &hdev->kernel_cb_mgr);
 
@@ -515,6 +497,22 @@ static void device_early_fini(struct hl_device *hdev)
 		hdev->asic_funcs->early_fini(hdev);
 }
 
+static void set_freq_to_low_job(struct work_struct *work)
+{
+	struct hl_device *hdev = container_of(work, struct hl_device,
+						work_freq.work);
+
+	mutex_lock(&hdev->fpriv_list_lock);
+
+	if (!hdev->compute_ctx)
+		hl_device_set_frequency(hdev, PLL_LOW);
+
+	mutex_unlock(&hdev->fpriv_list_lock);
+
+	schedule_delayed_work(&hdev->work_freq,
+			usecs_to_jiffies(HL_PLL_LOW_JOB_FREQ_USEC));
+}
+
 static void hl_device_heartbeat(struct work_struct *work)
 {
 	struct hl_device *hdev = container_of(work, struct hl_device,
@@ -526,27 +524,12 @@ static void hl_device_heartbeat(struct work_struct *work)
 	if (!hdev->asic_funcs->send_heartbeat(hdev))
 		goto reschedule;
 
-	if (hl_device_operational(hdev, NULL))
-		dev_err(hdev->dev, "Device heartbeat failed!\n");
-
-	hl_device_reset(hdev, HL_DRV_RESET_HARD | HL_DRV_RESET_HEARTBEAT);
+	dev_err(hdev->dev, "Device heartbeat failed!\n");
+	hl_device_reset(hdev, HL_RESET_HARD | HL_RESET_HEARTBEAT);
 
 	return;
 
 reschedule:
-	/*
-	 * prev_reset_trigger tracks consecutive fatal h/w errors until first
-	 * heartbeat immediately post reset.
-	 * If control reached here, then at least one heartbeat work has been
-	 * scheduled since last reset/init cycle.
-	 * So if the device is not already in reset cycle, reset the flag
-	 * prev_reset_trigger as no reset occurred with HL_DRV_RESET_FW_FATAL_ERR
-	 * status for at least one heartbeat. From this point driver restarts
-	 * tracking future consecutive fatal errors.
-	 */
-	if (!hdev->reset_info.in_reset)
-		hdev->reset_info.prev_reset_trigger = HL_RESET_TRIGGER_DEFAULT;
-
 	schedule_delayed_work(&hdev->work_heartbeat,
 			usecs_to_jiffies(HL_HEARTBEAT_PER_USEC));
 }
@@ -574,6 +557,18 @@ static int device_late_init(struct hl_device *hdev)
 
 	hdev->high_pll = hdev->asic_prop.high_pll;
 
+	/* force setting to low frequency */
+	hdev->curr_pll_profile = PLL_LOW;
+
+	if (hdev->pm_mng_profile == PM_AUTO)
+		hdev->asic_funcs->set_pll_profile(hdev, PLL_LOW);
+	else
+		hdev->asic_funcs->set_pll_profile(hdev, PLL_LAST);
+
+	INIT_DELAYED_WORK(&hdev->work_freq, set_freq_to_low_job);
+	schedule_delayed_work(&hdev->work_freq,
+	usecs_to_jiffies(HL_PLL_LOW_JOB_FREQ_USEC));
+
 	if (hdev->heartbeat) {
 		INIT_DELAYED_WORK(&hdev->work_heartbeat, hl_device_heartbeat);
 		schedule_delayed_work(&hdev->work_heartbeat,
@@ -596,6 +591,7 @@ static void device_late_fini(struct hl_device *hdev)
 	if (!hdev->late_init_done)
 		return;
 
+	cancel_delayed_work_sync(&hdev->work_freq);
 	if (hdev->heartbeat)
 		cancel_delayed_work_sync(&hdev->work_heartbeat);
 
@@ -625,7 +621,36 @@ int hl_device_utilization(struct hl_device *hdev, u32 *utilization)
 	return 0;
 }
 
-int hl_device_set_debug_mode(struct hl_device *hdev, struct hl_ctx *ctx, bool enable)
+/*
+ * hl_device_set_frequency - set the frequency of the device
+ *
+ * @hdev: pointer to habanalabs device structure
+ * @freq: the new frequency value
+ *
+ * Change the frequency if needed. This function has no protection against
+ * concurrency, therefore it is assumed that the calling function has protected
+ * itself against the case of calling this function from multiple threads with
+ * different values
+ *
+ * Returns 0 if no change was done, otherwise returns 1
+ */
+int hl_device_set_frequency(struct hl_device *hdev, enum hl_pll_frequency freq)
+{
+	if ((hdev->pm_mng_profile == PM_MANUAL) ||
+			(hdev->curr_pll_profile == freq))
+		return 0;
+
+	dev_dbg(hdev->dev, "Changing device frequency to %s\n",
+		freq == PLL_HIGH ? "high" : "low");
+
+	hdev->asic_funcs->set_pll_profile(hdev, freq);
+
+	hdev->curr_pll_profile = freq;
+
+	return 1;
+}
+
+int hl_device_set_debug_mode(struct hl_device *hdev, bool enable)
 {
 	int rc = 0;
 
@@ -639,12 +664,12 @@ int hl_device_set_debug_mode(struct hl_device *hdev, struct hl_ctx *ctx, bool en
 			goto out;
 		}
 
-		if (!hdev->reset_info.hard_reset_pending)
-			hdev->asic_funcs->halt_coresight(hdev, ctx);
+		if (!hdev->hard_reset_pending)
+			hdev->asic_funcs->halt_coresight(hdev);
 
 		hdev->in_debug = 0;
 
-		if (!hdev->reset_info.hard_reset_pending)
+		if (!hdev->hard_reset_pending)
 			hdev->asic_funcs->set_clock_gating(hdev);
 
 		goto out;
@@ -681,8 +706,6 @@ static void take_release_locks(struct hl_device *hdev)
 	/* Flush anyone that is inside device open */
 	mutex_lock(&hdev->fpriv_list_lock);
 	mutex_unlock(&hdev->fpriv_list_lock);
-	mutex_lock(&hdev->fpriv_ctrl_list_lock);
-	mutex_unlock(&hdev->fpriv_ctrl_list_lock);
 }
 
 static void cleanup_resources(struct hl_device *hdev, bool hard_reset, bool fw_reset)
@@ -722,14 +745,11 @@ int hl_device_suspend(struct hl_device *hdev)
 	pci_save_state(hdev->pdev);
 
 	/* Block future CS/VM/JOB completion operations */
-	spin_lock(&hdev->reset_info.lock);
-	if (hdev->reset_info.in_reset) {
-		spin_unlock(&hdev->reset_info.lock);
+	rc = atomic_cmpxchg(&hdev->in_reset, 0, 1);
+	if (rc) {
 		dev_err(hdev->dev, "Can't suspend while in reset\n");
 		return -EIO;
 	}
-	hdev->reset_info.in_reset = 1;
-	spin_unlock(&hdev->reset_info.lock);
 
 	/* This blocks all other stuff that is not blocked by in_reset */
 	hdev->disabled = true;
@@ -779,12 +799,10 @@ int hl_device_resume(struct hl_device *hdev)
 	}
 
 
-	/* 'in_reset' was set to true during suspend, now we must clear it in order
-	 * for hard reset to be performed
-	 */
-	hdev->reset_info.in_reset = 0;
+	hdev->disabled = false;
+	atomic_set(&hdev->in_reset, 0);
 
-	rc = hl_device_reset(hdev, HL_DRV_RESET_HARD);
+	rc = hl_device_reset(hdev, HL_RESET_HARD);
 	if (rc) {
 		dev_err(hdev->dev, "Failed to reset device during resume\n");
 		goto disable_device;
@@ -799,21 +817,17 @@ disable_device:
 	return rc;
 }
 
-static int device_kill_open_processes(struct hl_device *hdev, u32 timeout, bool control_dev)
+static int device_kill_open_processes(struct hl_device *hdev, u32 timeout)
 {
-	struct task_struct *task = NULL;
-	struct list_head *fd_list;
 	struct hl_fpriv	*hpriv;
-	struct mutex *fd_lock;
+	struct task_struct *task = NULL;
 	u32 pending_cnt;
 
-	fd_lock = control_dev ? &hdev->fpriv_ctrl_list_lock : &hdev->fpriv_list_lock;
-	fd_list = control_dev ? &hdev->fpriv_ctrl_list : &hdev->fpriv_list;
 
 	/* Giving time for user to close FD, and for processes that are inside
 	 * hl_device_open to finish
 	 */
-	if (!list_empty(fd_list))
+	if (!list_empty(&hdev->fpriv_list))
 		ssleep(1);
 
 	if (timeout) {
@@ -829,12 +843,12 @@ static int device_kill_open_processes(struct hl_device *hdev, u32 timeout, bool 
 		}
 	}
 
-	mutex_lock(fd_lock);
+	mutex_lock(&hdev->fpriv_list_lock);
 
 	/* This section must be protected because we are dereferencing
 	 * pointers that are freed if the process exits
 	 */
-	list_for_each_entry(hpriv, fd_list, dev_node) {
+	list_for_each_entry(hpriv, &hdev->fpriv_list, dev_node) {
 		task = get_pid_task(hpriv->taskpid, PIDTYPE_PID);
 		if (task) {
 			dev_info(hdev->dev, "Killing user process pid=%d\n",
@@ -846,12 +860,12 @@ static int device_kill_open_processes(struct hl_device *hdev, u32 timeout, bool 
 		} else {
 			dev_warn(hdev->dev,
 				"Can't get task struct for PID so giving up on killing process\n");
-			mutex_unlock(fd_lock);
+			mutex_unlock(&hdev->fpriv_list_lock);
 			return -ETIME;
 		}
 	}
 
-	mutex_unlock(fd_lock);
+	mutex_unlock(&hdev->fpriv_list_lock);
 
 	/*
 	 * We killed the open users, but that doesn't mean they are closed.
@@ -863,7 +877,7 @@ static int device_kill_open_processes(struct hl_device *hdev, u32 timeout, bool 
 	 */
 
 wait_for_processes:
-	while ((!list_empty(fd_list)) && (pending_cnt)) {
+	while ((!list_empty(&hdev->fpriv_list)) && (pending_cnt)) {
 		dev_dbg(hdev->dev,
 			"Waiting for all unmap operations to finish before hard reset\n");
 
@@ -873,7 +887,7 @@ wait_for_processes:
 	}
 
 	/* All processes exited successfully */
-	if (list_empty(fd_list))
+	if (list_empty(&hdev->fpriv_list))
 		return 0;
 
 	/* Give up waiting for processes to exit */
@@ -885,78 +899,14 @@ wait_for_processes:
 	return -EBUSY;
 }
 
-static void device_disable_open_processes(struct hl_device *hdev, bool control_dev)
+static void device_disable_open_processes(struct hl_device *hdev)
 {
-	struct list_head *fd_list;
 	struct hl_fpriv *hpriv;
-	struct mutex *fd_lock;
 
-	fd_lock = control_dev ? &hdev->fpriv_ctrl_list_lock : &hdev->fpriv_list_lock;
-	fd_list = control_dev ? &hdev->fpriv_ctrl_list : &hdev->fpriv_list;
-
-	mutex_lock(fd_lock);
-	list_for_each_entry(hpriv, fd_list, dev_node)
+	mutex_lock(&hdev->fpriv_list_lock);
+	list_for_each_entry(hpriv, &hdev->fpriv_list, dev_node)
 		hpriv->hdev = NULL;
-	mutex_unlock(fd_lock);
-}
-
-static void handle_reset_trigger(struct hl_device *hdev, u32 flags)
-{
-	u32 cur_reset_trigger = HL_RESET_TRIGGER_DEFAULT;
-
-	/*
-	 * 'reset cause' is being updated here, because getting here
-	 * means that it's the 1st time and the last time we're here
-	 * ('in_reset' makes sure of it). This makes sure that
-	 * 'reset_cause' will continue holding its 1st recorded reason!
-	 */
-	if (flags & HL_DRV_RESET_HEARTBEAT) {
-		hdev->reset_info.curr_reset_cause = HL_RESET_CAUSE_HEARTBEAT;
-		cur_reset_trigger = HL_DRV_RESET_HEARTBEAT;
-	} else if (flags & HL_DRV_RESET_TDR) {
-		hdev->reset_info.curr_reset_cause = HL_RESET_CAUSE_TDR;
-		cur_reset_trigger = HL_DRV_RESET_TDR;
-	} else if (flags & HL_DRV_RESET_FW_FATAL_ERR) {
-		hdev->reset_info.curr_reset_cause = HL_RESET_CAUSE_UNKNOWN;
-		cur_reset_trigger = HL_DRV_RESET_FW_FATAL_ERR;
-	} else {
-		hdev->reset_info.curr_reset_cause = HL_RESET_CAUSE_UNKNOWN;
-	}
-
-	/*
-	 * If reset cause is same twice, then reset_trigger_repeated
-	 * is set and if this reset is due to a fatal FW error
-	 * device is set to an unstable state.
-	 */
-	if (hdev->reset_info.prev_reset_trigger != cur_reset_trigger) {
-		hdev->reset_info.prev_reset_trigger = cur_reset_trigger;
-		hdev->reset_info.reset_trigger_repeated = 0;
-	} else {
-		hdev->reset_info.reset_trigger_repeated = 1;
-	}
-
-	/* If reset is due to heartbeat, device CPU is no responsive in
-	 * which case no point sending PCI disable message to it.
-	 *
-	 * If F/W is performing the reset, no need to send it a message to disable
-	 * PCI access
-	 */
-	if ((flags & HL_DRV_RESET_HARD) &&
-			!(flags & (HL_DRV_RESET_HEARTBEAT | HL_DRV_RESET_BYPASS_REQ_TO_FW))) {
-		/* Disable PCI access from device F/W so he won't send
-		 * us additional interrupts. We disable MSI/MSI-X at
-		 * the halt_engines function and we can't have the F/W
-		 * sending us interrupts after that. We need to disable
-		 * the access here because if the device is marked
-		 * disable, the message won't be send. Also, in case
-		 * of heartbeat, the device CPU is marked as disable
-		 * so this message won't be sent
-		 */
-		if (hl_fw_send_pci_access_msg(hdev,
-				CPUCP_PACKET_DISABLE_PCI_ACCESS))
-			dev_warn(hdev->dev,
-				"Failed to disable PCI access by F/W\n");
-	}
+	mutex_unlock(&hdev->fpriv_list_lock);
 }
 
 /*
@@ -977,39 +927,34 @@ static void handle_reset_trigger(struct hl_device *hdev, u32 flags)
  */
 int hl_device_reset(struct hl_device *hdev, u32 flags)
 {
-	bool hard_reset, from_hard_reset_thread, fw_reset, hard_instead_soft = false,
-			reset_upon_device_release = false, schedule_hard_reset = false;
 	u64 idle_mask[HL_BUSY_ENGINES_MASK_EXT_SIZE] = {0};
-	struct hl_ctx *ctx;
+	bool hard_reset, from_hard_reset_thread, fw_reset, hard_instead_soft = false;
 	int i, rc;
 
 	if (!hdev->init_done) {
-		dev_err(hdev->dev, "Can't reset before initialization is done\n");
+		dev_err(hdev->dev,
+			"Can't reset before initialization is done\n");
 		return 0;
 	}
 
-	hard_reset = !!(flags & HL_DRV_RESET_HARD);
-	from_hard_reset_thread = !!(flags & HL_DRV_RESET_FROM_RESET_THR);
-	fw_reset = !!(flags & HL_DRV_RESET_BYPASS_REQ_TO_FW);
+	hard_reset = !!(flags & HL_RESET_HARD);
+	from_hard_reset_thread = !!(flags & HL_RESET_FROM_RESET_THREAD);
+	fw_reset = !!(flags & HL_RESET_FW);
 
-	if (!hard_reset && !hdev->asic_prop.supports_soft_reset) {
+	if (!hard_reset && !hdev->supports_soft_reset) {
 		hard_instead_soft = true;
 		hard_reset = true;
 	}
 
-	if (hdev->reset_upon_device_release && (flags & HL_DRV_RESET_DEV_RELEASE)) {
-		if (hard_reset) {
-			dev_crit(hdev->dev,
-				"Aborting reset because hard-reset is mutually exclusive with reset-on-device-release\n");
-			return -EINVAL;
-		}
-
-		reset_upon_device_release = true;
-
+	if (hdev->reset_upon_device_release &&
+			(flags & HL_RESET_DEVICE_RELEASE)) {
+		dev_dbg(hdev->dev,
+			"Perform %s-reset upon device release\n",
+			hard_reset ? "hard" : "soft");
 		goto do_reset;
 	}
 
-	if (!hard_reset && !hdev->asic_prop.allow_inference_soft_reset) {
+	if (!hard_reset && !hdev->allow_external_soft_reset) {
 		hard_instead_soft = true;
 		hard_reset = true;
 	}
@@ -1029,42 +974,60 @@ do_reset:
 	 */
 	if (!from_hard_reset_thread) {
 		/* Block future CS/VM/JOB completion operations */
-		spin_lock(&hdev->reset_info.lock);
-		if (hdev->reset_info.in_reset) {
-			/* We only allow scheduling of a hard reset during soft reset */
-			if (hard_reset && hdev->reset_info.is_in_soft_reset)
-				hdev->reset_info.hard_reset_schedule_flags = flags;
-			spin_unlock(&hdev->reset_info.lock);
+		rc = atomic_cmpxchg(&hdev->in_reset, 0, 1);
+		if (rc)
 			return 0;
+
+		/*
+		 * 'reset cause' is being updated here, because getting here
+		 * means that it's the 1st time and the last time we're here
+		 * ('in_reset' makes sure of it). This makes sure that
+		 * 'reset_cause' will continue holding its 1st recorded reason!
+		 */
+		if (flags & HL_RESET_HEARTBEAT)
+			hdev->curr_reset_cause = HL_RESET_CAUSE_HEARTBEAT;
+		else if (flags & HL_RESET_TDR)
+			hdev->curr_reset_cause = HL_RESET_CAUSE_TDR;
+		else
+			hdev->curr_reset_cause = HL_RESET_CAUSE_UNKNOWN;
+
+		/* If reset is due to heartbeat, device CPU is no responsive in
+		 * which case no point sending PCI disable message to it.
+		 *
+		 * If F/W is performing the reset, no need to send it a message to disable
+		 * PCI access
+		 */
+		if (hard_reset && !(flags & (HL_RESET_HEARTBEAT | HL_RESET_FW))) {
+			/* Disable PCI access from device F/W so he won't send
+			 * us additional interrupts. We disable MSI/MSI-X at
+			 * the halt_engines function and we can't have the F/W
+			 * sending us interrupts after that. We need to disable
+			 * the access here because if the device is marked
+			 * disable, the message won't be send. Also, in case
+			 * of heartbeat, the device CPU is marked as disable
+			 * so this message won't be sent
+			 */
+			if (hl_fw_send_pci_access_msg(hdev,
+					CPUCP_PACKET_DISABLE_PCI_ACCESS))
+				dev_warn(hdev->dev,
+					"Failed to disable PCI access by F/W\n");
 		}
-		hdev->reset_info.in_reset = 1;
-		spin_unlock(&hdev->reset_info.lock);
-
-		handle_reset_trigger(hdev, flags);
-
-		/* This still allows the completion of some KDMA ops */
-		hdev->reset_info.is_in_soft_reset = !hard_reset;
 
 		/* This also blocks future CS/VM/JOB completion operations */
 		hdev->disabled = true;
 
 		take_release_locks(hdev);
 
-		if (hard_reset)
-			dev_info(hdev->dev, "Going to reset device\n");
-		else if (reset_upon_device_release)
-			dev_info(hdev->dev, "Going to reset device after release by user\n");
-		else
-			dev_info(hdev->dev, "Going to reset engines of inference device\n");
+		dev_err(hdev->dev, "Going to RESET device!\n");
 	}
 
 again:
 	if ((hard_reset) && (!from_hard_reset_thread)) {
-		hdev->reset_info.hard_reset_pending = true;
+		hdev->hard_reset_pending = true;
 
 		hdev->process_kill_trial_cnt = 0;
 
-		hdev->device_reset_work.flags = flags;
+		hdev->device_reset_work.fw_reset = fw_reset;
 
 		/*
 		 * Because the reset function can't run from heartbeat work,
@@ -1084,7 +1047,7 @@ kill_processes:
 		 * process can't really exit until all its CSs are done, which
 		 * is what we do in cs rollback
 		 */
-		rc = device_kill_open_processes(hdev, 0, false);
+		rc = device_kill_open_processes(hdev, 0);
 
 		if (rc == -EBUSY) {
 			if (hdev->device_fini_pending) {
@@ -1113,7 +1076,7 @@ kill_processes:
 	hdev->asic_funcs->hw_fini(hdev, hard_reset, fw_reset);
 
 	if (hard_reset) {
-		hdev->fw_loader.fw_comp_loaded = FW_TYPE_NONE;
+		hdev->fw_loader.linux_loaded = false;
 
 		/* Release kernel context */
 		if (hdev->kernel_ctx && hl_ctx_put(hdev->kernel_ctx) == 1)
@@ -1129,31 +1092,21 @@ kill_processes:
 	for (i = 0 ; i < hdev->asic_prop.completion_queues_count ; i++)
 		hl_cq_reset(hdev, &hdev->completion_queue[i]);
 
+	mutex_lock(&hdev->fpriv_list_lock);
+
 	/* Make sure the context switch phase will run again */
-	ctx = hl_get_compute_ctx(hdev);
-	if (ctx) {
-		atomic_set(&ctx->thread_ctx_switch_token, 1);
-		ctx->thread_ctx_switch_wait_token = 0;
-		hl_ctx_put(ctx);
+	if (hdev->compute_ctx) {
+		atomic_set(&hdev->compute_ctx->thread_ctx_switch_token, 1);
+		hdev->compute_ctx->thread_ctx_switch_wait_token = 0;
 	}
+
+	mutex_unlock(&hdev->fpriv_list_lock);
 
 	/* Finished tear-down, starting to re-initialize */
 
 	if (hard_reset) {
 		hdev->device_cpu_disabled = false;
-		hdev->reset_info.hard_reset_pending = false;
-
-		if (hdev->reset_info.reset_trigger_repeated &&
-				(hdev->reset_info.prev_reset_trigger ==
-						HL_DRV_RESET_FW_FATAL_ERR)) {
-			/* if there 2 back to back resets from FW,
-			 * ensure driver puts the driver in a unusable state
-			 */
-			dev_crit(hdev->dev,
-				"Consecutive FW fatal errors received, stopping hard reset\n");
-			rc = -EIO;
-			goto out_err;
-		}
+		hdev->hard_reset_pending = false;
 
 		if (hdev->kernel_ctx) {
 			dev_crit(hdev->dev,
@@ -1178,7 +1131,7 @@ kill_processes:
 			goto out_err;
 		}
 
-		hdev->is_compute_ctx_active = false;
+		hdev->compute_ctx = NULL;
 
 		rc = hl_ctx_init(hdev, hdev->kernel_ctx, true);
 		if (rc) {
@@ -1199,14 +1152,16 @@ kill_processes:
 
 	rc = hdev->asic_funcs->hw_init(hdev);
 	if (rc) {
-		dev_err(hdev->dev, "failed to initialize the H/W after reset\n");
+		dev_err(hdev->dev,
+			"failed to initialize the H/W after reset\n");
 		goto out_err;
 	}
 
 	/* If device is not idle fail the reset process */
 	if (!hdev->asic_funcs->is_device_idle(hdev, idle_mask,
 			HL_BUSY_ENGINES_MASK_EXT_SIZE, NULL)) {
-		dev_err(hdev->dev, "device is not idle (mask 0x%llx_%llx) after reset\n",
+		dev_err(hdev->dev,
+			"device is not idle (mask 0x%llx_%llx) after reset\n",
 			idle_mask[1], idle_mask[0]);
 		rc = -EIO;
 		goto out_err;
@@ -1215,56 +1170,43 @@ kill_processes:
 	/* Check that the communication with the device is working */
 	rc = hdev->asic_funcs->test_queues(hdev);
 	if (rc) {
-		dev_err(hdev->dev, "Failed to detect if device is alive after reset\n");
+		dev_err(hdev->dev,
+			"Failed to detect if device is alive after reset\n");
 		goto out_err;
 	}
 
 	if (hard_reset) {
 		rc = device_late_init(hdev);
 		if (rc) {
-			dev_err(hdev->dev, "Failed late init after hard reset\n");
+			dev_err(hdev->dev,
+				"Failed late init after hard reset\n");
 			goto out_err;
 		}
 
 		rc = hl_vm_init(hdev);
 		if (rc) {
-			dev_err(hdev->dev, "Failed to init memory module after hard reset\n");
+			dev_err(hdev->dev,
+				"Failed to init memory module after hard reset\n");
 			goto out_err;
 		}
 
 		hl_set_max_power(hdev);
 	} else {
-		rc = hdev->asic_funcs->non_hard_reset_late_init(hdev);
+		rc = hdev->asic_funcs->soft_reset_late_init(hdev);
 		if (rc) {
-			if (reset_upon_device_release)
-				dev_err(hdev->dev,
-					"Failed late init in reset after device release\n");
-			else
-				dev_err(hdev->dev, "Failed late init after soft reset\n");
+			dev_err(hdev->dev,
+				"Failed late init after soft reset\n");
 			goto out_err;
 		}
 	}
 
-	spin_lock(&hdev->reset_info.lock);
-	hdev->reset_info.is_in_soft_reset = false;
-
-	/* Schedule hard reset only if requested and if not already in hard reset.
-	 * We keep 'in_reset' enabled, so no other reset can go in during the hard
-	 * reset schedule
-	 */
-	if (!hard_reset && hdev->reset_info.hard_reset_schedule_flags)
-		schedule_hard_reset = true;
-	else
-		hdev->reset_info.in_reset = 0;
-
-	spin_unlock(&hdev->reset_info.lock);
-
-	hdev->reset_info.needs_reset = false;
+	atomic_set(&hdev->in_reset, 0);
+	hdev->needs_reset = false;
 
 	dev_notice(hdev->dev, "Successfully finished resetting the device\n");
 
 	if (hard_reset) {
-		hdev->reset_info.hard_reset_cnt++;
+		hdev->hard_reset_cnt++;
 
 		/* After reset is done, we are ready to receive events from
 		 * the F/W. We can't do it before because we will ignore events
@@ -1272,41 +1214,28 @@ kill_processes:
 		 * the device will be operational although it shouldn't be
 		 */
 		hdev->asic_funcs->enable_events_from_fw(hdev);
-	} else if (!reset_upon_device_release) {
-		hdev->reset_info.soft_reset_cnt++;
-	}
-
-	if (schedule_hard_reset) {
-		dev_info(hdev->dev, "Performing hard reset scheduled during soft reset\n");
-		flags = hdev->reset_info.hard_reset_schedule_flags;
-		hdev->reset_info.hard_reset_schedule_flags = 0;
-		hdev->disabled = true;
-		hard_reset = true;
-		handle_reset_trigger(hdev, flags);
-		goto again;
+	} else {
+		hdev->soft_reset_cnt++;
 	}
 
 	return 0;
 
 out_err:
 	hdev->disabled = true;
-	hdev->reset_info.is_in_soft_reset = false;
 
 	if (hard_reset) {
-		dev_err(hdev->dev, "Failed to reset! Device is NOT usable\n");
-		hdev->reset_info.hard_reset_cnt++;
-	} else if (reset_upon_device_release) {
-		dev_err(hdev->dev, "Failed to reset device after user release\n");
-		hard_reset = true;
-		goto again;
+		dev_err(hdev->dev,
+			"Failed to reset! Device is NOT usable\n");
+		hdev->hard_reset_cnt++;
 	} else {
-		dev_err(hdev->dev, "Failed to do soft-reset\n");
-		hdev->reset_info.soft_reset_cnt++;
+		dev_err(hdev->dev,
+			"Failed to do soft-reset, trying hard reset\n");
+		hdev->soft_reset_cnt++;
 		hard_reset = true;
 		goto again;
 	}
 
-	hdev->reset_info.in_reset = 0;
+	atomic_set(&hdev->in_reset, 0);
 
 	return rc;
 }
@@ -1453,7 +1382,7 @@ int hl_device_init(struct hl_device *hdev, struct class *hclass)
 		goto mmu_fini;
 	}
 
-	hdev->is_compute_ctx_active = false;
+	hdev->compute_ctx = NULL;
 
 	hdev->asic_funcs->state_dump_init(hdev);
 
@@ -1617,7 +1546,6 @@ out_disabled:
  */
 void hl_device_fini(struct hl_device *hdev)
 {
-	bool device_in_reset;
 	ktime_t timeout;
 	u64 reset_sec;
 	int i, rc;
@@ -1641,22 +1569,10 @@ void hl_device_fini(struct hl_device *hdev)
 	 */
 
 	timeout = ktime_add_us(ktime_get(), reset_sec * 1000 * 1000);
-
-	spin_lock(&hdev->reset_info.lock);
-	device_in_reset = !!hdev->reset_info.in_reset;
-	if (!device_in_reset)
-		hdev->reset_info.in_reset = 1;
-	spin_unlock(&hdev->reset_info.lock);
-
-	while (device_in_reset) {
+	rc = atomic_cmpxchg(&hdev->in_reset, 0, 1);
+	while (rc) {
 		usleep_range(50, 200);
-
-		spin_lock(&hdev->reset_info.lock);
-		device_in_reset = !!hdev->reset_info.in_reset;
-		if (!device_in_reset)
-			hdev->reset_info.in_reset = 1;
-		spin_unlock(&hdev->reset_info.lock);
-
+		rc = atomic_cmpxchg(&hdev->in_reset, 0, 1);
 		if (ktime_compare(ktime_get(), timeout) > 0) {
 			dev_crit(hdev->dev,
 				"Failed to remove device because reset function did not finish\n");
@@ -1678,7 +1594,7 @@ void hl_device_fini(struct hl_device *hdev)
 
 	take_release_locks(hdev);
 
-	hdev->reset_info.hard_reset_pending = true;
+	hdev->hard_reset_pending = true;
 
 	hl_hwmon_fini(hdev);
 
@@ -1692,16 +1608,10 @@ void hl_device_fini(struct hl_device *hdev)
 		"Waiting for all processes to exit (timeout of %u seconds)",
 		HL_PENDING_RESET_LONG_SEC);
 
-	rc = device_kill_open_processes(hdev, HL_PENDING_RESET_LONG_SEC, false);
+	rc = device_kill_open_processes(hdev, HL_PENDING_RESET_LONG_SEC);
 	if (rc) {
 		dev_crit(hdev->dev, "Failed to kill all open processes\n");
-		device_disable_open_processes(hdev, false);
-	}
-
-	rc = device_kill_open_processes(hdev, 0, true);
-	if (rc) {
-		dev_crit(hdev->dev, "Failed to kill all control device open processes\n");
-		device_disable_open_processes(hdev, true);
+		device_disable_open_processes(hdev);
 	}
 
 	hl_cb_pool_fini(hdev);
@@ -1709,7 +1619,7 @@ void hl_device_fini(struct hl_device *hdev)
 	/* Reset the H/W. It will be in idle state after this returns */
 	hdev->asic_funcs->hw_fini(hdev, true, false);
 
-	hdev->fw_loader.fw_comp_loaded = FW_TYPE_NONE;
+	hdev->fw_loader.linux_loaded = false;
 
 	/* Release kernel context */
 	if ((hdev->kernel_ctx) && (hl_ctx_put(hdev->kernel_ctx) != 1))

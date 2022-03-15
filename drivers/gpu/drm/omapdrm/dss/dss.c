@@ -1424,6 +1424,7 @@ static int dss_probe(struct platform_device *pdev)
 	const struct soc_device_attribute *soc;
 	struct dss_component_match_data cmatch;
 	struct component_match *match = NULL;
+	struct resource *dss_mem;
 	struct dss_device *dss;
 	int r;
 
@@ -1451,7 +1452,8 @@ static int dss_probe(struct platform_device *pdev)
 		dss->feat = of_match_device(dss_of_match, &pdev->dev)->data;
 
 	/* Map I/O registers, get and setup clocks. */
-	dss->base = devm_platform_ioremap_resource(pdev, 0);
+	dss_mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	dss->base = devm_ioremap_resource(&pdev->dev, dss_mem);
 	if (IS_ERR(dss->base)) {
 		r = PTR_ERR(dss->base);
 		goto err_free_dss;
@@ -1569,7 +1571,7 @@ static void dss_shutdown(struct platform_device *pdev)
 	DSSDBG("shutdown\n");
 }
 
-static __maybe_unused int dss_runtime_suspend(struct device *dev)
+static int dss_runtime_suspend(struct device *dev)
 {
 	struct dss_device *dss = dev_get_drvdata(dev);
 
@@ -1581,7 +1583,7 @@ static __maybe_unused int dss_runtime_suspend(struct device *dev)
 	return 0;
 }
 
-static __maybe_unused int dss_runtime_resume(struct device *dev)
+static int dss_runtime_resume(struct device *dev)
 {
 	struct dss_device *dss = dev_get_drvdata(dev);
 	int r;
@@ -1604,7 +1606,8 @@ static __maybe_unused int dss_runtime_resume(struct device *dev)
 }
 
 static const struct dev_pm_ops dss_pm_ops = {
-	SET_RUNTIME_PM_OPS(dss_runtime_suspend, dss_runtime_resume, NULL)
+	.runtime_suspend = dss_runtime_suspend,
+	.runtime_resume = dss_runtime_resume,
 	SET_LATE_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
 };
 

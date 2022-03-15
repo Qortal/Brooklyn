@@ -50,8 +50,7 @@ static int adt7410_i2c_probe(struct i2c_client *client)
 
 static int adt7410_i2c_remove(struct i2c_client *client)
 {
-	adt7x10_remove(&client->dev, client->irq);
-	return 0;
+	return adt7x10_remove(&client->dev, client->irq);
 }
 
 static const struct i2c_device_id adt7410_ids[] = {

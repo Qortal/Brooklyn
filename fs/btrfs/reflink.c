@@ -138,7 +138,7 @@ static int copy_inline_to_page(struct btrfs_inode *inode,
 	}
 
 	btrfs_page_set_uptodate(fs_info, page, file_offset, block_size);
-	btrfs_page_clear_checked(fs_info, page, file_offset, block_size);
+	ClearPageChecked(page);
 	btrfs_page_set_dirty(fs_info, page, file_offset, block_size);
 out_unlock:
 	if (page) {
@@ -439,7 +439,7 @@ process_slot:
 			break;
 		}
 		next_key_min_offset = key.offset + datal;
-		size = btrfs_item_size(leaf, slot);
+		size = btrfs_item_size_nr(leaf, slot);
 		read_extent_buffer(leaf, buf, btrfs_item_ptr_offset(leaf, slot),
 				   size);
 

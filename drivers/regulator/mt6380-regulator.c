@@ -183,7 +183,7 @@ static const unsigned int ldo_volt_table4[] = {
 static int mt6380_regulator_set_mode(struct regulator_dev *rdev,
 				     unsigned int mode)
 {
-	int val = 0;
+	int ret, val = 0;
 	struct mt6380_regulator_info *info = rdev_get_drvdata(rdev);
 
 	switch (mode) {
@@ -199,8 +199,10 @@ static int mt6380_regulator_set_mode(struct regulator_dev *rdev,
 
 	val <<= ffs(info->modeset_mask) - 1;
 
-	return regmap_update_bits(rdev->regmap, info->modeset_reg,
+	ret = regmap_update_bits(rdev->regmap, info->modeset_reg,
 				 info->modeset_mask, val);
+
+	return ret;
 }
 
 static unsigned int mt6380_regulator_get_mode(struct regulator_dev *rdev)

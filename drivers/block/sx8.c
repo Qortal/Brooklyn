@@ -297,7 +297,6 @@ struct carm_host {
 
 	struct work_struct		fsm_task;
 
-	int probe_err;
 	struct completion		probe_comp;
 };
 
@@ -540,7 +539,7 @@ static int carm_array_info (struct carm_host *host, unsigned int array_idx)
 	spin_unlock_irq(&host->lock);
 
 	DPRINTK("blk_execute_rq_nowait, tag == %u\n", rq->tag);
-	blk_execute_rq_nowait(rq, true, NULL);
+	blk_execute_rq_nowait(NULL, rq, true, NULL);
 
 	return 0;
 
@@ -579,7 +578,7 @@ static int carm_send_special (struct carm_host *host, carm_sspc_t func)
 	crq->msg_bucket = (u32) rc;
 
 	DPRINTK("blk_execute_rq_nowait, tag == %u\n", rq->tag);
-	blk_execute_rq_nowait(rq, true, NULL);
+	blk_execute_rq_nowait(NULL, rq, true, NULL);
 
 	return 0;
 }
@@ -1182,11 +1181,8 @@ static void carm_fsm_task (struct work_struct *work)
 				struct gendisk *disk = port->disk;
 
 				set_capacity(disk, port->capacity);
-				host->probe_err = add_disk(disk);
-				if (!host->probe_err)
-					activated++;
-				else
-					break;
+				add_disk(disk);
+				activated++;
 			}
 
 		printk(KERN_INFO DRV_NAME "(%s): %d ports activated\n",
@@ -1196,9 +1192,11 @@ static void carm_fsm_task (struct work_struct *work)
 		reschedule = 1;
 		break;
 	}
+
 	case HST_PROBE_FINISHED:
 		complete(&host->probe_comp);
 		break;
+
 	case HST_ERROR:
 		/* FIXME: TODO */
 		break;
@@ -1509,12 +1507,7 @@ static int carm_init_one (struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto err_out_free_irq;
 
 	DPRINTK("waiting for probe_comp\n");
-	host->probe_err = -ENODEV;
 	wait_for_completion(&host->probe_comp);
-	if (host->probe_err) {
-		rc = host->probe_err;
-		goto err_out_free_irq;
-	}
 
 	printk(KERN_INFO "%s: pci %s, ports %d, io %llx, irq %u, major %d\n",
 	       host->name, pci_name(pdev), (int) CARM_MAX_PORTS,

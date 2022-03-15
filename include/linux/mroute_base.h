@@ -12,7 +12,6 @@
 /**
  * struct vif_device - interface representor for multicast routing
  * @dev: network device being used
- * @dev_tracker: refcount tracker for @dev reference
  * @bytes_in: statistic; bytes ingressing
  * @bytes_out: statistic; bytes egresing
  * @pkt_in: statistic; packets ingressing
@@ -27,7 +26,6 @@
  */
 struct vif_device {
 	struct net_device *dev;
-	netdevice_tracker dev_tracker;
 	unsigned long bytes_in, bytes_out;
 	unsigned long pkt_in, pkt_out;
 	unsigned long rate_limit;

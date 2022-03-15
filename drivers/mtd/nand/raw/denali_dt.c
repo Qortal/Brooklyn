@@ -113,6 +113,7 @@ static int denali_dt_chip_init(struct denali_controller *denali,
 static int denali_dt_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
+	struct resource *res;
 	struct denali_dt *dt;
 	const struct denali_dt_data *data;
 	struct denali_controller *denali;
@@ -138,11 +139,13 @@ static int denali_dt_probe(struct platform_device *pdev)
 	if (denali->irq < 0)
 		return denali->irq;
 
-	denali->reg = devm_platform_ioremap_resource_byname(pdev, "denali_reg");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "denali_reg");
+	denali->reg = devm_ioremap_resource(dev, res);
 	if (IS_ERR(denali->reg))
 		return PTR_ERR(denali->reg);
 
-	denali->host = devm_platform_ioremap_resource_byname(pdev, "nand_data");
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "nand_data");
+	denali->host = devm_ioremap_resource(dev, res);
 	if (IS_ERR(denali->host))
 		return PTR_ERR(denali->host);
 

@@ -36,7 +36,6 @@ enum dml_project {
 	DML_PROJECT_RAVEN1,
 	DML_PROJECT_NAVI10,
 	DML_PROJECT_NAVI10v2,
-	DML_PROJECT_DCN201,
 	DML_PROJECT_DCN21,
 	DML_PROJECT_DCN30,
 	DML_PROJECT_DCN31,
@@ -73,7 +72,6 @@ struct display_mode_lib {
 	struct vba_vars_st vba;
 	struct dal_logger *logger;
 	struct dml_funcs funcs;
-	struct _vcs_dpi_display_e2e_pipe_params_st dml_pipe_state[6];
 };
 
 void dml_init_instance(struct display_mode_lib *lib,

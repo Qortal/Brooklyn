@@ -29,8 +29,6 @@
 
 #include "dc.h"
 
-#include "dcn302_init.h"
-
 void dcn302_hw_sequencer_construct(struct dc *dc)
 {
 	dcn30_hw_sequencer_construct(dc);

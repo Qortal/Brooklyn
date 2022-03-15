@@ -159,8 +159,7 @@ static int ad7266_read_raw(struct iio_dev *indio_dev,
 
 		*val = (*val >> 2) & 0xfff;
 		if (chan->scan_type.sign == 's')
-			*val = sign_extend32(*val,
-					     chan->scan_type.realbits - 1);
+			*val = sign_extend32(*val, 11);
 
 		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_SCALE:

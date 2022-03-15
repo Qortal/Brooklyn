@@ -59,16 +59,18 @@ static void acpi_video_parse_cmdline(void)
 static acpi_status
 find_video(acpi_handle handle, u32 lvl, void *context, void **rv)
 {
-	struct acpi_device *acpi_dev = acpi_fetch_acpi_dev(handle);
 	long *cap = context;
 	struct pci_dev *dev;
+	struct acpi_device *acpi_dev;
 
 	static const struct acpi_device_id video_ids[] = {
 		{ACPI_VIDEO_HID, 0},
 		{"", 0},
 	};
+	if (acpi_bus_get_device(handle, &acpi_dev))
+		return AE_OK;
 
-	if (acpi_dev && !acpi_match_device_ids(acpi_dev, video_ids)) {
+	if (!acpi_match_device_ids(acpi_dev, video_ids)) {
 		dev = acpi_get_pci_dev(handle);
 		if (!dev)
 			return AE_OK;
@@ -113,7 +115,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	 */
 	{
 	 .callback = video_detect_force_vendor,
-	 /* X360 */
+	 .ident = "X360",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "SAMSUNG ELECTRONICS CO., LTD."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "X360"),
@@ -122,7 +124,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	.callback = video_detect_force_vendor,
-	/* Asus UL30VT */
+	.ident = "Asus UL30VT",
 	.matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK Computer Inc."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "UL30VT"),
@@ -130,7 +132,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	.callback = video_detect_force_vendor,
-	/* Asus UL30A */
+	.ident = "Asus UL30A",
 	.matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK Computer Inc."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "UL30A"),
@@ -138,7 +140,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	.callback = video_detect_force_vendor,
-	/* GIGABYTE GB-BXBT-2807 */
+	.ident = "GIGABYTE GB-BXBT-2807",
 	.matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "GIGABYTE"),
 		DMI_MATCH(DMI_PRODUCT_NAME, "GB-BXBT-2807"),
@@ -146,18 +148,10 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	.callback = video_detect_force_vendor,
-	/* Sony VPCEH3U1E */
+	.ident = "Sony VPCEH3U1E",
 	.matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "Sony Corporation"),
 		DMI_MATCH(DMI_PRODUCT_NAME, "VPCEH3U1E"),
-		},
-	},
-	{
-	.callback = video_detect_force_vendor,
-	/* Xiaomi Mi Pad 2 */
-	.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Xiaomi Inc"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Mipad2"),
 		},
 	},
 
@@ -170,7 +164,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	 */
 	{
 	 .callback = video_detect_force_video,
-	 /* ThinkPad T420 */
+	 .ident = "ThinkPad T420",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
 		DMI_MATCH(DMI_PRODUCT_VERSION, "ThinkPad T420"),
@@ -178,7 +172,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	 .callback = video_detect_force_video,
-	 /* ThinkPad T520 */
+	 .ident = "ThinkPad T520",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
 		DMI_MATCH(DMI_PRODUCT_VERSION, "ThinkPad T520"),
@@ -186,7 +180,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	 .callback = video_detect_force_video,
-	 /* ThinkPad X201s */
+	 .ident = "ThinkPad X201s",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
 		DMI_MATCH(DMI_PRODUCT_VERSION, "ThinkPad X201s"),
@@ -194,7 +188,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	 .callback = video_detect_force_video,
-	 /* ThinkPad X201T */
+	 .ident = "ThinkPad X201T",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
 		DMI_MATCH(DMI_PRODUCT_VERSION, "ThinkPad X201T"),
@@ -205,7 +199,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	{
 	 /* https://bugs.freedesktop.org/show_bug.cgi?id=81515 */
 	 .callback = video_detect_force_video,
-	 /* HP ENVY 15 Notebook */
+	 .ident = "HP ENVY 15 Notebook",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
 		DMI_MATCH(DMI_PRODUCT_NAME, "HP ENVY 15 Notebook PC"),
@@ -213,7 +207,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	 .callback = video_detect_force_video,
-	 /* SAMSUNG 870Z5E/880Z5E/680Z5E */
+	 .ident = "SAMSUNG 870Z5E/880Z5E/680Z5E",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "SAMSUNG ELECTRONICS CO., LTD."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "870Z5E/880Z5E/680Z5E"),
@@ -221,7 +215,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	 .callback = video_detect_force_video,
-	 /* SAMSUNG 370R4E/370R4V/370R5E/3570RE/370R5V */
+	 .ident = "SAMSUNG 370R4E/370R4V/370R5E/3570RE/370R5V",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "SAMSUNG ELECTRONICS CO., LTD."),
 		DMI_MATCH(DMI_PRODUCT_NAME,
@@ -231,7 +225,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	{
 	 /* https://bugzilla.redhat.com/show_bug.cgi?id=1186097 */
 	 .callback = video_detect_force_video,
-	 /* SAMSUNG 3570R/370R/470R/450R/510R/4450RV */
+	 .ident = "SAMSUNG 3570R/370R/470R/450R/510R/4450RV",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "SAMSUNG ELECTRONICS CO., LTD."),
 		DMI_MATCH(DMI_PRODUCT_NAME,
@@ -241,7 +235,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	{
 	 /* https://bugzilla.redhat.com/show_bug.cgi?id=1557060 */
 	 .callback = video_detect_force_video,
-	 /* SAMSUNG 670Z5E */
+	 .ident = "SAMSUNG 670Z5E",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "SAMSUNG ELECTRONICS CO., LTD."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "670Z5E"),
@@ -250,7 +244,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	{
 	 /* https://bugzilla.redhat.com/show_bug.cgi?id=1094948 */
 	 .callback = video_detect_force_video,
-	 /* SAMSUNG 730U3E/740U3E */
+	 .ident = "SAMSUNG 730U3E/740U3E",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "SAMSUNG ELECTRONICS CO., LTD."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "730U3E/740U3E"),
@@ -259,7 +253,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	{
 	 /* https://bugs.freedesktop.org/show_bug.cgi?id=87286 */
 	 .callback = video_detect_force_video,
-	 /* SAMSUNG 900X3C/900X3D/900X3E/900X4C/900X4D */
+	 .ident = "SAMSUNG 900X3C/900X3D/900X3E/900X4C/900X4D",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "SAMSUNG ELECTRONICS CO., LTD."),
 		DMI_MATCH(DMI_PRODUCT_NAME,
@@ -269,7 +263,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	{
 	 /* https://bugzilla.redhat.com/show_bug.cgi?id=1272633 */
 	 .callback = video_detect_force_video,
-	 /* Dell XPS14 L421X */
+	 .ident = "Dell XPS14 L421X",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "XPS L421X"),
@@ -278,7 +272,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	{
 	 /* https://bugzilla.redhat.com/show_bug.cgi?id=1163574 */
 	 .callback = video_detect_force_video,
-	 /* Dell XPS15 L521X */
+	 .ident = "Dell XPS15 L521X",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "XPS L521X"),
@@ -287,7 +281,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	{
 	 /* https://bugzilla.kernel.org/show_bug.cgi?id=108971 */
 	 .callback = video_detect_force_video,
-	 /* SAMSUNG 530U4E/540U4E */
+	 .ident = "SAMSUNG 530U4E/540U4E",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "SAMSUNG ELECTRONICS CO., LTD."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "530U4E/540U4E"),
@@ -296,7 +290,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	/* https://bugs.launchpad.net/bugs/1894667 */
 	{
 	 .callback = video_detect_force_video,
-	 /* HP 635 Notebook */
+	 .ident = "HP 635 Notebook",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "Hewlett-Packard"),
 		DMI_MATCH(DMI_PRODUCT_NAME, "HP 635 Notebook PC"),
@@ -307,7 +301,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	{
 	 /* https://bugzilla.redhat.com/show_bug.cgi?id=1201530 */
 	 .callback = video_detect_force_native,
-	 /* Lenovo Ideapad S405 */
+	 .ident = "Lenovo Ideapad S405",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
 		DMI_MATCH(DMI_BOARD_NAME, "Lenovo IdeaPad S405"),
@@ -316,7 +310,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	{
 	 /* https://bugzilla.redhat.com/show_bug.cgi?id=1187004 */
 	 .callback = video_detect_force_native,
-	 /* Lenovo Ideapad Z570 */
+	 .ident = "Lenovo Ideapad Z570",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
 		DMI_MATCH(DMI_PRODUCT_NAME, "102434U"),
@@ -324,7 +318,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	 .callback = video_detect_force_native,
-	 /* Lenovo E41-25 */
+	 .ident = "Lenovo E41-25",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
 		DMI_MATCH(DMI_PRODUCT_NAME, "81FS"),
@@ -332,7 +326,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	 .callback = video_detect_force_native,
-	 /* Lenovo E41-45 */
+	 .ident = "Lenovo E41-45",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
 		DMI_MATCH(DMI_PRODUCT_NAME, "82BK"),
@@ -341,7 +335,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	{
 	 /* https://bugzilla.redhat.com/show_bug.cgi?id=1217249 */
 	 .callback = video_detect_force_native,
-	 /* Apple MacBook Pro 12,1 */
+	 .ident = "Apple MacBook Pro 12,1",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "Apple Inc."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "MacBookPro12,1"),
@@ -349,7 +343,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	 .callback = video_detect_force_native,
-	 /* Dell Vostro V131 */
+	 .ident = "Dell Vostro V131",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "Vostro V131"),
@@ -358,7 +352,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	{
 	 /* https://bugzilla.redhat.com/show_bug.cgi?id=1123661 */
 	 .callback = video_detect_force_native,
-	 /* Dell XPS 17 L702X */
+	 .ident = "Dell XPS 17 L702X",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "Dell System XPS L702X"),
@@ -366,7 +360,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	 .callback = video_detect_force_native,
-	 /* Dell Precision 7510 */
+	 .ident = "Dell Precision 7510",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "Precision 7510"),
@@ -374,7 +368,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	 .callback = video_detect_force_native,
-	 /* Acer Aspire 5738z */
+	 .ident = "Acer Aspire 5738z",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "Acer"),
 		DMI_MATCH(DMI_PRODUCT_NAME, "Aspire 5738"),
@@ -384,7 +378,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	{
 	 /* https://bugzilla.kernel.org/show_bug.cgi?id=207835 */
 	 .callback = video_detect_force_native,
-	 /* Acer TravelMate 5735Z */
+	 .ident = "Acer TravelMate 5735Z",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "Acer"),
 		DMI_MATCH(DMI_PRODUCT_NAME, "TravelMate 5735Z"),
@@ -393,7 +387,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	.callback = video_detect_force_native,
-	/* ASUSTeK COMPUTER INC. GA401 */
+	.ident = "ASUSTeK COMPUTER INC. GA401",
 	.matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "GA401"),
@@ -401,7 +395,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	.callback = video_detect_force_native,
-	/* ASUSTeK COMPUTER INC. GA502 */
+	.ident = "ASUSTeK COMPUTER INC. GA502",
 	.matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "GA502"),
@@ -409,7 +403,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	.callback = video_detect_force_native,
-	/* ASUSTeK COMPUTER INC. GA503 */
+	.ident = "ASUSTeK COMPUTER INC. GA503",
 	.matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK COMPUTER INC."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "GA503"),
@@ -422,7 +416,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	 */
 	{
 	 .callback = video_detect_force_none,
-	 /* Dell OptiPlex 9020M */
+	 .ident = "Dell OptiPlex 9020M",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
 		DMI_MATCH(DMI_PRODUCT_NAME, "OptiPlex 9020M"),
@@ -430,7 +424,7 @@ static const struct dmi_system_id video_detect_dmi_table[] = {
 	},
 	{
 	 .callback = video_detect_force_none,
-	 /* MSI MS-7721 */
+	 .ident = "MSI MS-7721",
 	 .matches = {
 		DMI_MATCH(DMI_SYS_VENDOR, "MSI"),
 		DMI_MATCH(DMI_PRODUCT_NAME, "MS-7721"),

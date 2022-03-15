@@ -2,7 +2,6 @@
 /* Copyright(c) 2020 Intel Corporation. */
 #include <linux/device.h>
 #include <linux/slab.h>
-#include <linux/idr.h>
 #include <cxlmem.h>
 #include <cxl.h>
 #include "core.h"
@@ -21,13 +20,10 @@
  * operations, for example, namespace label access commands.
  */
 
-static DEFINE_IDA(cxl_nvdimm_bridge_ida);
-
 static void cxl_nvdimm_bridge_release(struct device *dev)
 {
 	struct cxl_nvdimm_bridge *cxl_nvb = to_cxl_nvdimm_bridge(dev);
 
-	ida_free(&cxl_nvdimm_bridge_ida, cxl_nvb->id);
 	kfree(cxl_nvb);
 }
 
@@ -49,45 +45,17 @@ struct cxl_nvdimm_bridge *to_cxl_nvdimm_bridge(struct device *dev)
 		return NULL;
 	return container_of(dev, struct cxl_nvdimm_bridge, dev);
 }
-EXPORT_SYMBOL_NS_GPL(to_cxl_nvdimm_bridge, CXL);
-
-bool is_cxl_nvdimm_bridge(struct device *dev)
-{
-	return dev->type == &cxl_nvdimm_bridge_type;
-}
-EXPORT_SYMBOL_NS_GPL(is_cxl_nvdimm_bridge, CXL);
-
-__mock int match_nvdimm_bridge(struct device *dev, const void *data)
-{
-	return is_cxl_nvdimm_bridge(dev);
-}
-
-struct cxl_nvdimm_bridge *cxl_find_nvdimm_bridge(struct cxl_nvdimm *cxl_nvd)
-{
-	struct device *dev;
-
-	dev = bus_find_device(&cxl_bus_type, NULL, cxl_nvd, match_nvdimm_bridge);
-	if (!dev)
-		return NULL;
-	return to_cxl_nvdimm_bridge(dev);
-}
-EXPORT_SYMBOL_NS_GPL(cxl_find_nvdimm_bridge, CXL);
+EXPORT_SYMBOL_GPL(to_cxl_nvdimm_bridge);
 
 static struct cxl_nvdimm_bridge *
 cxl_nvdimm_bridge_alloc(struct cxl_port *port)
 {
 	struct cxl_nvdimm_bridge *cxl_nvb;
 	struct device *dev;
-	int rc;
 
 	cxl_nvb = kzalloc(sizeof(*cxl_nvb), GFP_KERNEL);
 	if (!cxl_nvb)
 		return ERR_PTR(-ENOMEM);
-
-	rc = ida_alloc(&cxl_nvdimm_bridge_ida, GFP_KERNEL);
-	if (rc < 0)
-		goto err;
-	cxl_nvb->id = rc;
 
 	dev = &cxl_nvb->dev;
 	cxl_nvb->port = port;
@@ -99,10 +67,6 @@ cxl_nvdimm_bridge_alloc(struct cxl_port *port)
 	dev->type = &cxl_nvdimm_bridge_type;
 
 	return cxl_nvb;
-
-err:
-	kfree(cxl_nvb);
-	return ERR_PTR(rc);
 }
 
 static void unregister_nvb(void *_cxl_nvb)
@@ -155,7 +119,7 @@ struct cxl_nvdimm_bridge *devm_cxl_add_nvdimm_bridge(struct device *host,
 		return cxl_nvb;
 
 	dev = &cxl_nvb->dev;
-	rc = dev_set_name(dev, "nvdimm-bridge%d", cxl_nvb->id);
+	rc = dev_set_name(dev, "nvdimm-bridge");
 	if (rc)
 		goto err;
 
@@ -173,7 +137,7 @@ err:
 	put_device(dev);
 	return ERR_PTR(rc);
 }
-EXPORT_SYMBOL_NS_GPL(devm_cxl_add_nvdimm_bridge, CXL);
+EXPORT_SYMBOL_GPL(devm_cxl_add_nvdimm_bridge);
 
 static void cxl_nvdimm_release(struct device *dev)
 {
@@ -197,7 +161,7 @@ bool is_cxl_nvdimm(struct device *dev)
 {
 	return dev->type == &cxl_nvdimm_type;
 }
-EXPORT_SYMBOL_NS_GPL(is_cxl_nvdimm, CXL);
+EXPORT_SYMBOL_GPL(is_cxl_nvdimm);
 
 struct cxl_nvdimm *to_cxl_nvdimm(struct device *dev)
 {
@@ -206,7 +170,7 @@ struct cxl_nvdimm *to_cxl_nvdimm(struct device *dev)
 		return NULL;
 	return container_of(dev, struct cxl_nvdimm, dev);
 }
-EXPORT_SYMBOL_NS_GPL(to_cxl_nvdimm, CXL);
+EXPORT_SYMBOL_GPL(to_cxl_nvdimm);
 
 static struct cxl_nvdimm *cxl_nvdimm_alloc(struct cxl_memdev *cxlmd)
 {
@@ -226,11 +190,6 @@ static struct cxl_nvdimm *cxl_nvdimm_alloc(struct cxl_memdev *cxlmd)
 	dev->type = &cxl_nvdimm_type;
 
 	return cxl_nvd;
-}
-
-static void cxl_nvd_unregister(void *dev)
-{
-	device_unregister(dev);
 }
 
 /**
@@ -262,10 +221,10 @@ int devm_cxl_add_nvdimm(struct device *host, struct cxl_memdev *cxlmd)
 	dev_dbg(host, "%s: register %s\n", dev_name(dev->parent),
 		dev_name(dev));
 
-	return devm_add_action_or_reset(host, cxl_nvd_unregister, dev);
+	return devm_add_action_or_reset(host, unregister_cxl_dev, dev);
 
 err:
 	put_device(dev);
 	return rc;
 }
-EXPORT_SYMBOL_NS_GPL(devm_cxl_add_nvdimm, CXL);
+EXPORT_SYMBOL_GPL(devm_cxl_add_nvdimm);

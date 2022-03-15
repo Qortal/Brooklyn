@@ -75,12 +75,26 @@ static size_t mgag200_probe_vram(struct mga_device *mdev, void __iomem *mem,
 	return offset - 65536;
 }
 
+static void mgag200_mm_release(struct drm_device *dev, void *ptr)
+{
+	struct mga_device *mdev = to_mga_device(dev);
+	struct pci_dev *pdev = to_pci_dev(dev->dev);
+
+	mdev->vram_fb_available = 0;
+	iounmap(mdev->vram);
+	arch_io_free_memtype_wc(pci_resource_start(pdev, 0),
+				pci_resource_len(pdev, 0));
+	arch_phys_wc_del(mdev->fb_mtrr);
+	mdev->fb_mtrr = 0;
+}
+
 int mgag200_mm_init(struct mga_device *mdev)
 {
 	struct drm_device *dev = &mdev->base;
 	struct pci_dev *pdev = to_pci_dev(dev->dev);
 	u8 misc;
 	resource_size_t start, len;
+	int ret;
 
 	WREG_ECRT(0x04, 0x00);
 
@@ -98,13 +112,15 @@ int mgag200_mm_init(struct mga_device *mdev)
 		return -ENXIO;
 	}
 
-	/* Don't fail on errors, but performance might be reduced. */
-	devm_arch_io_reserve_memtype_wc(dev->dev, start, len);
-	devm_arch_phys_wc_add(dev->dev, start, len);
+	arch_io_reserve_memtype_wc(start, len);
 
-	mdev->vram = devm_ioremap(dev->dev, start, len);
-	if (!mdev->vram)
-		return -ENOMEM;
+	mdev->fb_mtrr = arch_phys_wc_add(start, len);
+
+	mdev->vram = ioremap(start, len);
+	if (!mdev->vram) {
+		ret = -ENOMEM;
+		goto err_arch_phys_wc_del;
+	}
 
 	mdev->mc.vram_size = mgag200_probe_vram(mdev, mdev->vram, len);
 	mdev->mc.vram_base = start;
@@ -112,5 +128,10 @@ int mgag200_mm_init(struct mga_device *mdev)
 
 	mdev->vram_fb_available = mdev->mc.vram_size;
 
-	return 0;
+	return drmm_add_action_or_reset(dev, mgag200_mm_release, NULL);
+
+err_arch_phys_wc_del:
+	arch_phys_wc_del(mdev->fb_mtrr);
+	arch_io_free_memtype_wc(start, len);
+	return ret;
 }

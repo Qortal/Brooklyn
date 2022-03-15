@@ -155,7 +155,7 @@ static int igt_ppgtt_alloc(void *arg)
 	if (!HAS_PPGTT(dev_priv))
 		return 0;
 
-	ppgtt = i915_ppgtt_create(to_gt(dev_priv), 0);
+	ppgtt = i915_ppgtt_create(&dev_priv->gt);
 	if (IS_ERR(ppgtt))
 		return PTR_ERR(ppgtt);
 
@@ -1053,7 +1053,7 @@ static int exercise_ppgtt(struct drm_i915_private *dev_priv,
 	if (IS_ERR(file))
 		return PTR_ERR(file);
 
-	ppgtt = i915_ppgtt_create(to_gt(dev_priv), 0);
+	ppgtt = i915_ppgtt_create(&dev_priv->gt);
 	if (IS_ERR(ppgtt)) {
 		err = PTR_ERR(ppgtt);
 		goto out_free;
@@ -1275,7 +1275,7 @@ static void track_vma_bind(struct i915_vma *vma)
 
 	__i915_gem_object_pin_pages(obj);
 
-	GEM_BUG_ON(atomic_read(&vma->pages_count));
+	GEM_BUG_ON(vma->pages);
 	atomic_set(&vma->pages_count, I915_VMA_PAGES_ACTIVE);
 	__i915_gem_object_pin_pages(obj);
 	vma->pages = obj->mm.pages;
@@ -1300,7 +1300,7 @@ static int exercise_mock(struct drm_i915_private *i915,
 	if (!ctx)
 		return -ENOMEM;
 
-	vm = i915_gem_context_get_eb_vm(ctx);
+	vm = i915_gem_context_get_vm_rcu(ctx);
 	err = func(vm, 0, min(vm->total, limit), end_time);
 	i915_vm_put(vm);
 
@@ -1848,7 +1848,7 @@ static int igt_cs_tlb(void *arg)
 		goto out_unlock;
 	}
 
-	vm = i915_gem_context_get_eb_vm(ctx);
+	vm = i915_gem_context_get_vm_rcu(ctx);
 	if (i915_is_ggtt(vm))
 		goto out_vm;
 
@@ -1953,9 +1953,7 @@ static int igt_cs_tlb(void *arg)
 				goto end;
 			}
 
-			i915_gem_object_lock(bbe, NULL);
-			err = i915_vma_get_pages(vma);
-			i915_gem_object_unlock(bbe);
+			err = vma->ops->set_pages(vma);
 			if (err)
 				goto end;
 
@@ -1996,7 +1994,7 @@ end_ww:
 				i915_request_put(rq);
 			}
 
-			i915_vma_put_pages(vma);
+			vma->ops->clear_pages(vma);
 
 			err = context_sync(ce);
 			if (err) {
@@ -2011,9 +2009,7 @@ end_ww:
 				goto end;
 			}
 
-			i915_gem_object_lock(act, NULL);
-			err = i915_vma_get_pages(vma);
-			i915_gem_object_unlock(act);
+			err = vma->ops->set_pages(vma);
 			if (err)
 				goto end;
 
@@ -2051,7 +2047,7 @@ end_ww:
 			}
 			end_spin(batch, count - 1);
 
-			i915_vma_put_pages(vma);
+			vma->ops->clear_pages(vma);
 
 			err = context_sync(ce);
 			if (err) {

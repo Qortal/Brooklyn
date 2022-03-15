@@ -1026,13 +1026,20 @@ static const struct power_supply_desc cpcap_charger_battery_desc = {
 static int cpcap_battery_probe(struct platform_device *pdev)
 {
 	struct cpcap_battery_ddata *ddata;
+	const struct of_device_id *match;
 	struct power_supply_config psy_cfg = {};
 	int error;
-	const struct cpcap_battery_config *cfg;
 
-	cfg = device_get_match_data(&pdev->dev);
-	if (!cfg)
+	match = of_match_device(of_match_ptr(cpcap_battery_id_table),
+				&pdev->dev);
+	if (!match)
+		return -EINVAL;
+
+	if (!match->data) {
+		dev_err(&pdev->dev, "no configuration data found\n");
+
 		return -ENODEV;
+	}
 
 	ddata = devm_kzalloc(&pdev->dev, sizeof(*ddata), GFP_KERNEL);
 	if (!ddata)
@@ -1040,7 +1047,7 @@ static int cpcap_battery_probe(struct platform_device *pdev)
 
 	INIT_LIST_HEAD(&ddata->irq_list);
 	ddata->dev = &pdev->dev;
-	memcpy(&ddata->config, cfg, sizeof(ddata->config));
+	memcpy(&ddata->config, match->data, sizeof(ddata->config));
 
 	ddata->reg = dev_get_regmap(ddata->dev->parent, NULL);
 	if (!ddata->reg)

@@ -53,7 +53,7 @@ static void rpi_firmware_get_throttled(struct rpi_hwmon_data *data)
 	else
 		dev_info(data->hwmon_dev, "Voltage normalised\n");
 
-	hwmon_notify_event(data->hwmon_dev, hwmon_in, hwmon_in_lcrit_alarm, 0);
+	sysfs_notify(&data->hwmon_dev->kobj, NULL, "in0_lcrit_alarm");
 }
 
 static void get_values_poll(struct work_struct *work)
@@ -120,8 +120,6 @@ static int rpi_hwmon_probe(struct platform_device *pdev)
 							       data,
 							       &rpi_chip_info,
 							       NULL);
-	if (IS_ERR(data->hwmon_dev))
-		return PTR_ERR(data->hwmon_dev);
 
 	ret = devm_delayed_work_autocancel(dev, &data->get_values_poll_work,
 					   get_values_poll);
@@ -129,9 +127,10 @@ static int rpi_hwmon_probe(struct platform_device *pdev)
 		return ret;
 	platform_set_drvdata(pdev, data);
 
-	schedule_delayed_work(&data->get_values_poll_work, 2 * HZ);
+	if (!PTR_ERR_OR_ZERO(data->hwmon_dev))
+		schedule_delayed_work(&data->get_values_poll_work, 2 * HZ);
 
-	return 0;
+	return PTR_ERR_OR_ZERO(data->hwmon_dev);
 }
 
 static struct platform_driver rpi_hwmon_driver = {

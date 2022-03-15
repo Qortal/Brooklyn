@@ -782,6 +782,7 @@ static int sun4i_backend_bind(struct device *dev, struct device *master,
 	struct sun4i_drv *drv = drm->dev_private;
 	struct sun4i_backend *backend;
 	const struct sun4i_backend_quirks *quirks;
+	struct resource *res;
 	void __iomem *regs;
 	int i, ret;
 
@@ -814,7 +815,8 @@ static int sun4i_backend_bind(struct device *dev, struct device *master,
 	if (IS_ERR(backend->frontend))
 		dev_warn(dev, "Couldn't find matching frontend, frontend features disabled\n");
 
-	regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	regs = devm_ioremap_resource(dev, res);
 	if (IS_ERR(regs))
 		return PTR_ERR(regs);
 

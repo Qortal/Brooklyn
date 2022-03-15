@@ -495,14 +495,9 @@ int scm_blk_dev_setup(struct scm_blk_dev *bdev, struct scm_device *scmdev)
 
 	/* 512 byte sectors */
 	set_capacity(bdev->gendisk, scmdev->size >> 9);
-	ret = device_add_disk(&scmdev->dev, bdev->gendisk, NULL);
-	if (ret)
-		goto out_cleanup_disk;
-
+	device_add_disk(&scmdev->dev, bdev->gendisk, NULL);
 	return 0;
 
-out_cleanup_disk:
-	blk_cleanup_disk(bdev->gendisk);
 out_tag:
 	blk_mq_free_tag_set(&bdev->tag_set);
 out:

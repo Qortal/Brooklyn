@@ -15,6 +15,9 @@
  * TODO
  *	Work out best PLL policy
  */
+
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/pci.h>
@@ -417,7 +420,7 @@ static int hpt3x2n_pci_clock(struct pci_dev *pdev)
 		u16 sr;
 		u32 total = 0;
 
-		dev_warn(&pdev->dev, "BIOS clock data not set\n");
+		pr_warn("BIOS clock data not set\n");
 
 		/* This is the process the HPT371 BIOS is reported to use */
 		for (i = 0; i < 128; i++) {
@@ -527,8 +530,7 @@ hpt372n:
 		ppi[0] = &info_hpt372n;
 		break;
 	default:
-		dev_err(&dev->dev,"PCI table is bogus, please report (%d)\n",
-			dev->device);
+		pr_err("PCI table is bogus, please report (%d)\n", dev->device);
 		return -ENODEV;
 	}
 
@@ -577,11 +579,11 @@ hpt372n:
 		pci_write_config_dword(dev, 0x5C, (f_high << 16) | f_low);
 	}
 	if (adjust == 8) {
-		dev_err(&dev->dev, "DPLL did not stabilize!\n");
+		pr_err("DPLL did not stabilize!\n");
 		return -ENODEV;
 	}
 
-	dev_info(&dev->dev, "bus clock %dMHz, using 66MHz DPLL\n", pci_mhz);
+	pr_info("bus clock %dMHz, using 66MHz DPLL\n", pci_mhz);
 
 	/*
 	 * Set our private data up. We only need a few flags

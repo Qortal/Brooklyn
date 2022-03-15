@@ -118,15 +118,6 @@ static inline int test_ti_thread_flag(struct thread_info *ti, int flag)
 	return test_bit(flag, (unsigned long *)&ti->flags);
 }
 
-/*
- * This may be used in noinstr code, and needs to be __always_inline to prevent
- * inadvertent instrumentation.
- */
-static __always_inline unsigned long read_ti_thread_flags(struct thread_info *ti)
-{
-	return READ_ONCE(ti->flags);
-}
-
 #define set_thread_flag(flag) \
 	set_ti_thread_flag(current_thread_info(), flag)
 #define clear_thread_flag(flag) \
@@ -139,11 +130,6 @@ static __always_inline unsigned long read_ti_thread_flags(struct thread_info *ti
 	test_and_clear_ti_thread_flag(current_thread_info(), flag)
 #define test_thread_flag(flag) \
 	test_ti_thread_flag(current_thread_info(), flag)
-#define read_thread_flags() \
-	read_ti_thread_flags(current_thread_info())
-
-#define read_task_thread_flags(t) \
-	read_ti_thread_flags(task_thread_info(t))
 
 #ifdef CONFIG_GENERIC_ENTRY
 #define set_syscall_work(fl) \
@@ -217,7 +203,7 @@ static inline void copy_overflow(int size, unsigned long count)
 static __always_inline __must_check bool
 check_copy_size(const void *addr, size_t bytes, bool is_source)
 {
-	int sz = __builtin_object_size(addr, 0);
+	int sz = __compiletime_object_size(addr);
 	if (unlikely(sz >= 0 && sz < bytes)) {
 		if (!__builtin_constant_p(bytes))
 			copy_overflow(sz, bytes);

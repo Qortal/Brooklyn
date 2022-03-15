@@ -302,12 +302,12 @@ static struct attribute *dmi_sysfs_sel_attrs[] = {
 	&dmi_sysfs_attr_sel_per_log_type_descriptor_length.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(dmi_sysfs_sel);
+
 
 static struct kobj_type dmi_system_event_log_ktype = {
 	.release = dmi_entry_free,
 	.sysfs_ops = &dmi_sysfs_specialize_attr_ops,
-	.default_groups = dmi_sysfs_sel_groups,
+	.default_attrs = dmi_sysfs_sel_attrs,
 };
 
 typedef u8 (*sel_io_reader)(const struct dmi_system_event_log *sel,
@@ -518,7 +518,6 @@ static struct attribute *dmi_sysfs_entry_attrs[] = {
 	&dmi_sysfs_attr_entry_position.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(dmi_sysfs_entry);
 
 static ssize_t dmi_entry_raw_read_helper(struct dmi_sysfs_entry *entry,
 					 const struct dmi_header *dh,
@@ -566,7 +565,7 @@ static void dmi_sysfs_entry_release(struct kobject *kobj)
 static struct kobj_type dmi_sysfs_entry_ktype = {
 	.release = dmi_sysfs_entry_release,
 	.sysfs_ops = &dmi_sysfs_attr_ops,
-	.default_groups = dmi_sysfs_entry_groups,
+	.default_attrs = dmi_sysfs_entry_attrs,
 };
 
 static struct kset *dmi_kset;

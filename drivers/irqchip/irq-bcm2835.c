@@ -336,7 +336,7 @@ static void __exception_irq_entry bcm2835_handle_irq(
 	u32 hwirq;
 
 	while ((hwirq = get_next_armctrl_hwirq()) != ~0)
-		generic_handle_domain_irq(intc.domain, hwirq);
+		handle_domain_irq(intc.domain, hwirq, regs);
 }
 
 static void bcm2836_chained_handle_irq(struct irq_desc *desc)

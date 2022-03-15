@@ -5,13 +5,10 @@
 #include <linux/of.h>
 #include <linux/of_irq.h>
 #include <linux/of_address.h>
-#include <linux/hardirq.h>
 #include <linux/interrupt.h>
 #include <linux/irqdomain.h>
 #include <linux/irqchip.h>
 #include <nds32_intrinsic.h>
-
-#include <asm/irq_regs.h>
 
 unsigned long wake_mask;
 
@@ -106,25 +103,10 @@ static irq_hw_number_t get_intr_src(void)
 		- NDS32_VECTOR_offINTERRUPT;
 }
 
-static void ativic32_handle_irq(struct pt_regs *regs)
-{
-	irq_hw_number_t hwirq = get_intr_src();
-	generic_handle_domain_irq(root_domain, hwirq);
-}
-
-/*
- * TODO: convert nds32 to GENERIC_IRQ_MULTI_HANDLER so that this entry logic
- * can live in arch code.
- */
 asmlinkage void asm_do_IRQ(struct pt_regs *regs)
 {
-	struct pt_regs *old_regs;
-
-	irq_enter();
-	old_regs = set_irq_regs(regs);
-	ativic32_handle_irq(regs);
-	set_irq_regs(old_regs);
-	irq_exit();
+	irq_hw_number_t hwirq = get_intr_src();
+	handle_domain_irq(root_domain, hwirq, regs);
 }
 
 int __init ativic32_init_irq(struct device_node *node, struct device_node *parent)

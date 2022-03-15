@@ -290,8 +290,7 @@ static void nop_irq_handler(struct intel_engine_cs *engine, u16 iir)
 	GEM_DEBUG_WARN_ON(iir);
 }
 
-static int intel_engine_setup(struct intel_gt *gt, enum intel_engine_id id,
-			      u8 logical_instance)
+static int intel_engine_setup(struct intel_gt *gt, enum intel_engine_id id)
 {
 	const struct engine_info *info = &intel_engines[id];
 	struct drm_i915_private *i915 = gt->i915;
@@ -321,42 +320,9 @@ static int intel_engine_setup(struct intel_gt *gt, enum intel_engine_id id,
 
 	BUILD_BUG_ON(BITS_PER_TYPE(engine->mask) < I915_NUM_ENGINES);
 
-	INIT_LIST_HEAD(&engine->pinned_contexts_list);
 	engine->id = id;
 	engine->legacy_idx = INVALID_ENGINE;
 	engine->mask = BIT(id);
-	if (GRAPHICS_VER(gt->i915) >= 11) {
-		static const u32 engine_reset_domains[] = {
-			[RCS0]  = GEN11_GRDOM_RENDER,
-			[BCS0]  = GEN11_GRDOM_BLT,
-			[VCS0]  = GEN11_GRDOM_MEDIA,
-			[VCS1]  = GEN11_GRDOM_MEDIA2,
-			[VCS2]  = GEN11_GRDOM_MEDIA3,
-			[VCS3]  = GEN11_GRDOM_MEDIA4,
-			[VCS4]  = GEN11_GRDOM_MEDIA5,
-			[VCS5]  = GEN11_GRDOM_MEDIA6,
-			[VCS6]  = GEN11_GRDOM_MEDIA7,
-			[VCS7]  = GEN11_GRDOM_MEDIA8,
-			[VECS0] = GEN11_GRDOM_VECS,
-			[VECS1] = GEN11_GRDOM_VECS2,
-			[VECS2] = GEN11_GRDOM_VECS3,
-			[VECS3] = GEN11_GRDOM_VECS4,
-		};
-		GEM_BUG_ON(id >= ARRAY_SIZE(engine_reset_domains) ||
-			   !engine_reset_domains[id]);
-		engine->reset_domain = engine_reset_domains[id];
-	} else {
-		static const u32 engine_reset_domains[] = {
-			[RCS0]  = GEN6_GRDOM_RENDER,
-			[BCS0]  = GEN6_GRDOM_BLT,
-			[VCS0]  = GEN6_GRDOM_MEDIA,
-			[VCS1]  = GEN8_GRDOM_MEDIA2,
-			[VECS0] = GEN6_GRDOM_VECS,
-		};
-		GEM_BUG_ON(id >= ARRAY_SIZE(engine_reset_domains) ||
-			   !engine_reset_domains[id]);
-		engine->reset_domain = engine_reset_domains[id];
-	}
 	engine->i915 = i915;
 	engine->gt = gt;
 	engine->uncore = gt->uncore;
@@ -368,7 +334,6 @@ static int intel_engine_setup(struct intel_gt *gt, enum intel_engine_id id,
 
 	engine->class = info->class;
 	engine->instance = info->instance;
-	engine->logical_mask = BIT(logical_instance);
 	__sprint_engine_name(engine);
 
 	engine->props.heartbeat_interval_ms =
@@ -395,7 +360,7 @@ static int intel_engine_setup(struct intel_gt *gt, enum intel_engine_id id,
 		DRIVER_CAPS(i915)->has_logical_contexts = true;
 
 	ewma__engine_latency_init(&engine->latency);
-	seqcount_init(&engine->stats.execlists.lock);
+	seqcount_init(&engine->stats.lock);
 
 	ATOMIC_INIT_NOTIFIER_HEAD(&engine->context_status_notifier);
 
@@ -433,8 +398,7 @@ static void __setup_engine_capabilities(struct intel_engine_cs *engine)
 			engine->uabi_capabilities |=
 				I915_VIDEO_AND_ENHANCE_CLASS_CAPABILITY_SFC;
 	} else if (engine->class == VIDEO_ENHANCEMENT_CLASS) {
-		if (GRAPHICS_VER(i915) >= 9 &&
-		    engine->gt->info.sfc_mask & BIT(engine->instance))
+		if (GRAPHICS_VER(i915) >= 9)
 			engine->uabi_capabilities |=
 				I915_VIDEO_AND_ENHANCE_CLASS_CAPABILITY_SFC;
 	}
@@ -510,25 +474,18 @@ void intel_engines_free(struct intel_gt *gt)
 }
 
 static
-bool gen11_vdbox_has_sfc(struct intel_gt *gt,
+bool gen11_vdbox_has_sfc(struct drm_i915_private *i915,
 			 unsigned int physical_vdbox,
 			 unsigned int logical_vdbox, u16 vdbox_mask)
 {
-	struct drm_i915_private *i915 = gt->i915;
-
 	/*
 	 * In Gen11, only even numbered logical VDBOXes are hooked
 	 * up to an SFC (Scaler & Format Converter) unit.
 	 * In Gen12, Even numbered physical instance always are connected
 	 * to an SFC. Odd numbered physical instances have SFC only if
 	 * previous even instance is fused off.
-	 *
-	 * Starting with Xe_HP, there's also a dedicated SFC_ENABLE field
-	 * in the fuse register that tells us whether a specific SFC is present.
 	 */
-	if ((gt->info.sfc_mask & BIT(physical_vdbox / 2)) == 0)
-		return false;
-	else if (GRAPHICS_VER(i915) == 12)
+	if (GRAPHICS_VER(i915) == 12)
 		return (physical_vdbox % 2 == 0) ||
 			!(BIT(physical_vdbox - 1) & vdbox_mask);
 	else if (GRAPHICS_VER(i915) == 11)
@@ -555,7 +512,7 @@ static intel_engine_mask_t init_engine_mask(struct intel_gt *gt)
 	struct intel_uncore *uncore = gt->uncore;
 	unsigned int logical_vdbox = 0;
 	unsigned int i;
-	u32 media_fuse, fuse1;
+	u32 media_fuse;
 	u16 vdbox_mask;
 	u16 vebox_mask;
 
@@ -577,13 +534,6 @@ static intel_engine_mask_t init_engine_mask(struct intel_gt *gt)
 	vebox_mask = (media_fuse & GEN11_GT_VEBOX_DISABLE_MASK) >>
 		      GEN11_GT_VEBOX_DISABLE_SHIFT;
 
-	if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50)) {
-		fuse1 = intel_uncore_read(uncore, HSW_PAVP_FUSE1);
-		gt->info.sfc_mask = REG_FIELD_GET(XEHP_SFC_ENABLE_MASK, fuse1);
-	} else {
-		gt->info.sfc_mask = ~0;
-	}
-
 	for (i = 0; i < I915_MAX_VCS; i++) {
 		if (!HAS_ENGINE(gt, _VCS(i))) {
 			vdbox_mask &= ~BIT(i);
@@ -596,7 +546,7 @@ static intel_engine_mask_t init_engine_mask(struct intel_gt *gt)
 			continue;
 		}
 
-		if (gen11_vdbox_has_sfc(gt, i, logical_vdbox, vdbox_mask))
+		if (gen11_vdbox_has_sfc(i915, i, logical_vdbox, vdbox_mask))
 			gt->info.vdbox_sfc_access |= BIT(i);
 		logical_vdbox++;
 	}
@@ -622,37 +572,6 @@ static intel_engine_mask_t init_engine_mask(struct intel_gt *gt)
 	return info->engine_mask;
 }
 
-static void populate_logical_ids(struct intel_gt *gt, u8 *logical_ids,
-				 u8 class, const u8 *map, u8 num_instances)
-{
-	int i, j;
-	u8 current_logical_id = 0;
-
-	for (j = 0; j < num_instances; ++j) {
-		for (i = 0; i < ARRAY_SIZE(intel_engines); ++i) {
-			if (!HAS_ENGINE(gt, i) ||
-			    intel_engines[i].class != class)
-				continue;
-
-			if (intel_engines[i].instance == map[j]) {
-				logical_ids[intel_engines[i].instance] =
-					current_logical_id++;
-				break;
-			}
-		}
-	}
-}
-
-static void setup_logical_ids(struct intel_gt *gt, u8 *logical_ids, u8 class)
-{
-	int i;
-	u8 map[MAX_ENGINE_INSTANCE + 1];
-
-	for (i = 0; i < MAX_ENGINE_INSTANCE + 1; ++i)
-		map[i] = i;
-	populate_logical_ids(gt, logical_ids, class, map, ARRAY_SIZE(map));
-}
-
 /**
  * intel_engines_init_mmio() - allocate and prepare the Engine Command Streamers
  * @gt: pointer to struct intel_gt
@@ -664,8 +583,7 @@ int intel_engines_init_mmio(struct intel_gt *gt)
 	struct drm_i915_private *i915 = gt->i915;
 	const unsigned int engine_mask = init_engine_mask(gt);
 	unsigned int mask = 0;
-	unsigned int i, class;
-	u8 logical_ids[MAX_ENGINE_INSTANCE + 1];
+	unsigned int i;
 	int err;
 
 	drm_WARN_ON(&i915->drm, engine_mask == 0);
@@ -675,23 +593,15 @@ int intel_engines_init_mmio(struct intel_gt *gt)
 	if (i915_inject_probe_failure(i915))
 		return -ENODEV;
 
-	for (class = 0; class < MAX_ENGINE_CLASS + 1; ++class) {
-		setup_logical_ids(gt, logical_ids, class);
+	for (i = 0; i < ARRAY_SIZE(intel_engines); i++) {
+		if (!HAS_ENGINE(gt, i))
+			continue;
 
-		for (i = 0; i < ARRAY_SIZE(intel_engines); ++i) {
-			u8 instance = intel_engines[i].instance;
+		err = intel_engine_setup(gt, i);
+		if (err)
+			goto cleanup;
 
-			if (intel_engines[i].class != class ||
-			    !HAS_ENGINE(gt, i))
-				continue;
-
-			err = intel_engine_setup(gt, i,
-						 logical_ids[instance]);
-			if (err)
-				goto cleanup;
-
-			mask |= BIT(i);
-		}
+		mask |= BIT(i);
 	}
 
 	/*
@@ -965,8 +875,6 @@ intel_engine_create_pinned_context(struct intel_engine_cs *engine,
 		return ERR_PTR(err);
 	}
 
-	list_add_tail(&ce->pinned_contexts_link, &engine->pinned_contexts_list);
-
 	/*
 	 * Give our perma-pinned kernel timelines a separate lockdep class,
 	 * so that we can use them from within the normal user timelines
@@ -989,7 +897,6 @@ void intel_engine_destroy_pinned_context(struct intel_context *ce)
 	list_del(&ce->timeline->engine_link);
 	mutex_unlock(&hwsp->vm->mutex);
 
-	list_del(&ce->pinned_contexts_link);
 	intel_context_unpin(ce);
 	intel_context_put(ce);
 }
@@ -1256,16 +1163,16 @@ void intel_engine_get_instdone(const struct intel_engine_cs *engine,
 	u32 mmio_base = engine->mmio_base;
 	int slice;
 	int subslice;
-	int iter;
 
 	memset(instdone, 0, sizeof(*instdone));
 
-	if (GRAPHICS_VER(i915) >= 8) {
+	switch (GRAPHICS_VER(i915)) {
+	default:
 		instdone->instdone =
 			intel_uncore_read(uncore, RING_INSTDONE(mmio_base));
 
 		if (engine->id != RCS0)
-			return;
+			break;
 
 		instdone->slice_common =
 			intel_uncore_read(uncore, GEN7_SC_INSTDONE);
@@ -1275,39 +1182,21 @@ void intel_engine_get_instdone(const struct intel_engine_cs *engine,
 			instdone->slice_common_extra[1] =
 				intel_uncore_read(uncore, GEN12_SC_INSTDONE_EXTRA2);
 		}
-
-		if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 50)) {
-			for_each_instdone_gslice_dss_xehp(i915, sseu, iter, slice, subslice) {
-				instdone->sampler[slice][subslice] =
-					read_subslice_reg(engine, slice, subslice,
-							  GEN7_SAMPLER_INSTDONE);
-				instdone->row[slice][subslice] =
-					read_subslice_reg(engine, slice, subslice,
-							  GEN7_ROW_INSTDONE);
-			}
-		} else {
-			for_each_instdone_slice_subslice(i915, sseu, slice, subslice) {
-				instdone->sampler[slice][subslice] =
-					read_subslice_reg(engine, slice, subslice,
-							  GEN7_SAMPLER_INSTDONE);
-				instdone->row[slice][subslice] =
-					read_subslice_reg(engine, slice, subslice,
-							  GEN7_ROW_INSTDONE);
-			}
+		for_each_instdone_slice_subslice(i915, sseu, slice, subslice) {
+			instdone->sampler[slice][subslice] =
+				read_subslice_reg(engine, slice, subslice,
+						  GEN7_SAMPLER_INSTDONE);
+			instdone->row[slice][subslice] =
+				read_subslice_reg(engine, slice, subslice,
+						  GEN7_ROW_INSTDONE);
 		}
-
-		if (GRAPHICS_VER_FULL(i915) >= IP_VER(12, 55)) {
-			for_each_instdone_gslice_dss_xehp(i915, sseu, iter, slice, subslice)
-				instdone->geom_svg[slice][subslice] =
-					read_subslice_reg(engine, slice, subslice,
-							  XEHPG_INSTDONE_GEOM_SVG);
-		}
-	} else if (GRAPHICS_VER(i915) >= 7) {
+		break;
+	case 7:
 		instdone->instdone =
 			intel_uncore_read(uncore, RING_INSTDONE(mmio_base));
 
 		if (engine->id != RCS0)
-			return;
+			break;
 
 		instdone->slice_common =
 			intel_uncore_read(uncore, GEN7_SC_INSTDONE);
@@ -1315,15 +1204,22 @@ void intel_engine_get_instdone(const struct intel_engine_cs *engine,
 			intel_uncore_read(uncore, GEN7_SAMPLER_INSTDONE);
 		instdone->row[0][0] =
 			intel_uncore_read(uncore, GEN7_ROW_INSTDONE);
-	} else if (GRAPHICS_VER(i915) >= 4) {
+
+		break;
+	case 6:
+	case 5:
+	case 4:
 		instdone->instdone =
 			intel_uncore_read(uncore, RING_INSTDONE(mmio_base));
 		if (engine->id == RCS0)
 			/* HACK: Using the wrong struct member */
 			instdone->slice_common =
 				intel_uncore_read(uncore, GEN4_INSTDONE1);
-	} else {
+		break;
+	case 3:
+	case 2:
 		instdone->instdone = intel_uncore_read(uncore, GEN2_INSTDONE);
+		break;
 	}
 }
 
@@ -1708,18 +1604,14 @@ static void intel_engine_print_registers(struct intel_engine_cs *engine,
 
 static void print_request_ring(struct drm_printer *m, struct i915_request *rq)
 {
-	struct i915_vma_snapshot *vsnap = &rq->batch_snapshot;
 	void *ring;
 	int size;
-
-	if (!i915_vma_snapshot_present(vsnap))
-		vsnap = NULL;
 
 	drm_printf(m,
 		   "[head %04x, postfix %04x, tail %04x, batch 0x%08x_%08x]:\n",
 		   rq->head, rq->postfix, rq->tail,
-		   vsnap ? upper_32_bits(vsnap->gtt_offset) : ~0u,
-		   vsnap ? lower_32_bits(vsnap->gtt_offset) : ~0u);
+		   rq->batch ? upper_32_bits(rq->batch->node.start) : ~0u,
+		   rq->batch ? lower_32_bits(rq->batch->node.start) : ~0u);
 
 	size = rq->tail - rq->head;
 	if (rq->tail < rq->head)
@@ -1951,6 +1843,22 @@ void intel_engine_dump(struct intel_engine_cs *engine,
 	intel_engine_print_breadcrumbs(engine, m);
 }
 
+static ktime_t __intel_engine_get_busy_time(struct intel_engine_cs *engine,
+					    ktime_t *now)
+{
+	ktime_t total = engine->stats.total;
+
+	/*
+	 * If the engine is executing something at the moment
+	 * add it to the total.
+	 */
+	*now = ktime_get();
+	if (READ_ONCE(engine->stats.active))
+		total = ktime_add(total, ktime_sub(*now, engine->stats.start));
+
+	return total;
+}
+
 /**
  * intel_engine_get_busy_time() - Return current accumulated engine busyness
  * @engine: engine to report on
@@ -1960,21 +1868,29 @@ void intel_engine_dump(struct intel_engine_cs *engine,
  */
 ktime_t intel_engine_get_busy_time(struct intel_engine_cs *engine, ktime_t *now)
 {
-	return engine->busyness(engine, now);
+	unsigned int seq;
+	ktime_t total;
+
+	do {
+		seq = read_seqcount_begin(&engine->stats.lock);
+		total = __intel_engine_get_busy_time(engine, now);
+	} while (read_seqcount_retry(&engine->stats.lock, seq));
+
+	return total;
 }
 
 struct intel_context *
 intel_engine_create_virtual(struct intel_engine_cs **siblings,
-			    unsigned int count, unsigned long flags)
+			    unsigned int count)
 {
 	if (count == 0)
 		return ERR_PTR(-EINVAL);
 
-	if (count == 1 && !(flags & FORCE_VIRTUAL))
+	if (count == 1)
 		return intel_context_create(siblings[0]);
 
 	GEM_BUG_ON(!siblings[0]->cops->create_virtual);
-	return siblings[0]->cops->create_virtual(siblings, count, flags);
+	return siblings[0]->cops->create_virtual(siblings, count);
 }
 
 struct i915_request *

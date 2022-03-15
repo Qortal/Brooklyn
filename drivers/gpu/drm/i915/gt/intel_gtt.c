@@ -6,9 +6,6 @@
 #include <linux/slab.h> /* fault-inject.h is not standalone! */
 
 #include <linux/fault-inject.h>
-#include <linux/sched/mm.h>
-
-#include <drm/drm_cache.h>
 
 #include "gem/i915_gem_lmem.h"
 #include "i915_trace.h"
@@ -31,8 +28,7 @@ struct drm_i915_gem_object *alloc_pt_lmem(struct i915_address_space *vm, int sz)
 	 * used the passed in size for the page size, which should ensure it
 	 * also has the same alignment.
 	 */
-	obj = __i915_gem_object_create_lmem_with_ps(vm->i915, sz, sz,
-						    vm->lmem_pt_obj_flags);
+	obj = __i915_gem_object_create_lmem_with_ps(vm->i915, sz, sz, 0);
 	/*
 	 * Ensure all paging structures for this vm share the same dma-resv
 	 * object underneath, with the idea that one object_lock() will lock
@@ -159,7 +155,7 @@ void i915_vm_resv_release(struct kref *kref)
 static void __i915_vm_release(struct work_struct *work)
 {
 	struct i915_address_space *vm =
-		container_of(work, struct i915_address_space, release_work);
+		container_of(work, struct i915_address_space, rcu.work);
 
 	vm->cleanup(vm);
 	i915_address_space_fini(vm);
@@ -175,7 +171,7 @@ void i915_vm_release(struct kref *kref)
 	GEM_BUG_ON(i915_is_ggtt(vm));
 	trace_i915_ppgtt_release(vm);
 
-	queue_work(vm->i915->wq, &vm->release_work);
+	queue_rcu_work(vm->i915->wq, &vm->rcu);
 }
 
 void i915_address_space_init(struct i915_address_space *vm, int subclass)
@@ -189,7 +185,7 @@ void i915_address_space_init(struct i915_address_space *vm, int subclass)
 	if (!kref_read(&vm->resv_ref))
 		kref_init(&vm->resv_ref);
 
-	INIT_WORK(&vm->release_work, __i915_vm_release);
+	INIT_RCU_WORK(&vm->rcu, __i915_vm_release);
 	atomic_set(&vm->open, 1);
 
 	/*
@@ -222,6 +218,19 @@ void i915_address_space_init(struct i915_address_space *vm, int subclass)
 	vm->mm.head_node.color = I915_COLOR_UNEVICTABLE;
 
 	INIT_LIST_HEAD(&vm->bound_list);
+}
+
+void clear_pages(struct i915_vma *vma)
+{
+	GEM_BUG_ON(!vma->pages);
+
+	if (vma->pages != vma->obj->mm.pages) {
+		sg_free_table(vma->pages);
+		kfree(vma->pages);
+	}
+	vma->pages = NULL;
+
+	memset(&vma->page_sizes, 0, sizeof(vma->page_sizes));
 }
 
 void *__px_vaddr(struct drm_i915_gem_object *p)
@@ -263,7 +272,6 @@ static void poison_scratch_page(struct drm_i915_gem_object *scratch)
 		val = POISON_FREE;
 
 	memset(vaddr, val, scratch->base.size);
-	drm_clflush_virt_range(vaddr, scratch->base.size);
 }
 
 int setup_scratch_page(struct i915_address_space *vm)
@@ -289,7 +297,7 @@ int setup_scratch_page(struct i915_address_space *vm)
 	do {
 		struct drm_i915_gem_object *obj;
 
-		obj = vm->alloc_scratch_dma(vm, size);
+		obj = vm->alloc_pt_dma(vm, size);
 		if (IS_ERR(obj))
 			goto skip;
 
@@ -323,18 +331,6 @@ skip_obj:
 		i915_gem_object_put(obj);
 skip:
 		if (size == I915_GTT_PAGE_SIZE_4K)
-			return -ENOMEM;
-
-		/*
-		 * If we need 64K minimum GTT pages for device local-memory,
-		 * like on XEHPSDV, then we need to fail the allocation here,
-		 * otherwise we can't safely support the insertion of
-		 * local-memory pages for this vm, since the HW expects the
-		 * correct physical alignment and size when the page-table is
-		 * operating in 64K GTT mode, which includes any scratch PTEs,
-		 * since userspace can still touch them.
-		 */
-		if (HAS_64K_PAGES(vm->i915))
 			return -ENOMEM;
 
 		size = I915_GTT_PAGE_SIZE_4K;

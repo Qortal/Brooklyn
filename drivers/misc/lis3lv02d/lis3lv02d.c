@@ -878,7 +878,7 @@ static int lis3lv02d_add_fs(struct lis3lv02d *lis3)
 	return sysfs_create_group(&lis3->pdev->dev.kobj, &lis3lv02d_attribute_group);
 }
 
-void lis3lv02d_remove_fs(struct lis3lv02d *lis3)
+int lis3lv02d_remove_fs(struct lis3lv02d *lis3)
 {
 	sysfs_remove_group(&lis3->pdev->dev.kobj, &lis3lv02d_attribute_group);
 	platform_device_unregister(lis3->pdev);
@@ -894,6 +894,7 @@ void lis3lv02d_remove_fs(struct lis3lv02d *lis3)
 		pm_runtime_set_suspended(lis3->pm_dev);
 	}
 	kfree(lis3->reg_cache);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(lis3lv02d_remove_fs);
 

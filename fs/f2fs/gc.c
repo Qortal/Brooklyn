@@ -7,14 +7,13 @@
  */
 #include <linux/fs.h>
 #include <linux/module.h>
+#include <linux/backing-dev.h>
 #include <linux/init.h>
 #include <linux/f2fs_fs.h>
 #include <linux/kthread.h>
 #include <linux/delay.h>
 #include <linux/freezer.h>
 #include <linux/sched/signal.h>
-#include <linux/random.h>
-#include <linux/sched/mm.h>
 
 #include "f2fs.h"
 #include "node.h"
@@ -92,18 +91,6 @@ static int gc_thread_func(void *data)
 		 * So, I'd like to wait some time to collect dirty segments.
 		 */
 		if (sbi->gc_mode == GC_URGENT_HIGH) {
-			spin_lock(&sbi->gc_urgent_high_lock);
-			if (sbi->gc_urgent_high_limited) {
-				if (!sbi->gc_urgent_high_remaining) {
-					sbi->gc_urgent_high_limited = false;
-					spin_unlock(&sbi->gc_urgent_high_lock);
-					sbi->gc_mode = GC_NORMAL;
-					continue;
-				}
-				sbi->gc_urgent_high_remaining--;
-			}
-			spin_unlock(&sbi->gc_urgent_high_lock);
-
 			wait_ms = gc_th->urgent_sleep_time;
 			down_write(&sbi->gc_lock);
 			goto do_gc;
@@ -270,9 +257,7 @@ static void select_policy(struct f2fs_sb_info *sbi, int gc_type,
 		p->max_search = sbi->max_victim_search;
 
 	/* let's select beginning hot/small space first in no_heap mode*/
-	if (f2fs_need_rand_seg(sbi))
-		p->offset = prandom_u32() % (MAIN_SECS(sbi) * sbi->segs_per_sec);
-	else if (test_opt(sbi, NOHEAP) &&
+	if (test_opt(sbi, NOHEAP) &&
 		(type == CURSEG_HOT_DATA || IS_NODESEG(type)))
 		p->offset = 0;
 	else
@@ -959,7 +944,7 @@ next_step:
 			continue;
 		}
 
-		if (f2fs_get_node_info(sbi, nid, &ni, false)) {
+		if (f2fs_get_node_info(sbi, nid, &ni)) {
 			f2fs_put_page(node_page, 1);
 			continue;
 		}
@@ -1027,7 +1012,7 @@ static bool is_alive(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 	if (IS_ERR(node_page))
 		return false;
 
-	if (f2fs_get_node_info(sbi, nid, dni, false)) {
+	if (f2fs_get_node_info(sbi, nid, dni)) {
 		f2fs_put_page(node_page, 1);
 		return false;
 	}
@@ -1221,7 +1206,7 @@ static int move_data_block(struct inode *inode, block_t bidx,
 
 	f2fs_wait_on_block_writeback(inode, dn.data_blkaddr);
 
-	err = f2fs_get_node_info(fio.sbi, dn.nid, &ni, false);
+	err = f2fs_get_node_info(fio.sbi, dn.nid, &ni);
 	if (err)
 		goto put_out;
 
@@ -1390,7 +1375,8 @@ retry:
 		if (err) {
 			clear_page_private_gcing(page);
 			if (err == -ENOMEM) {
-				memalloc_retry_wait(GFP_NOFS);
+				congestion_wait(BLK_RW_ASYNC,
+						DEFAULT_IO_TIMEOUT);
 				goto retry;
 			}
 			if (is_dirty)

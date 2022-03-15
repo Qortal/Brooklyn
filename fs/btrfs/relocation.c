@@ -25,8 +25,6 @@
 #include "backref.h"
 #include "misc.h"
 #include "subpage.h"
-#include "zoned.h"
-#include "inode-item.h"
 
 /*
  * Relocation overview
@@ -1147,9 +1145,9 @@ int replace_file_extents(struct btrfs_trans_handle *trans,
 		key.offset -= btrfs_file_extent_offset(leaf, fi);
 		btrfs_init_generic_ref(&ref, BTRFS_ADD_DELAYED_REF, new_bytenr,
 				       num_bytes, parent);
+		ref.real_root = root->root_key.objectid;
 		btrfs_init_data_ref(&ref, btrfs_header_owner(leaf),
-				    key.objectid, key.offset,
-				    root->root_key.objectid, false);
+				    key.objectid, key.offset);
 		ret = btrfs_inc_extent_ref(trans, &ref);
 		if (ret) {
 			btrfs_abort_transaction(trans, ret);
@@ -1158,9 +1156,9 @@ int replace_file_extents(struct btrfs_trans_handle *trans,
 
 		btrfs_init_generic_ref(&ref, BTRFS_DROP_DELAYED_REF, bytenr,
 				       num_bytes, parent);
+		ref.real_root = root->root_key.objectid;
 		btrfs_init_data_ref(&ref, btrfs_header_owner(leaf),
-				    key.objectid, key.offset,
-				    root->root_key.objectid, false);
+				    key.objectid, key.offset);
 		ret = btrfs_free_extent(trans, &ref);
 		if (ret) {
 			btrfs_abort_transaction(trans, ret);
@@ -1369,8 +1367,8 @@ again:
 
 		btrfs_init_generic_ref(&ref, BTRFS_ADD_DELAYED_REF, old_bytenr,
 				       blocksize, path->nodes[level]->start);
-		btrfs_init_tree_ref(&ref, level - 1, src->root_key.objectid,
-				    0, true);
+		ref.skip_qgroup = true;
+		btrfs_init_tree_ref(&ref, level - 1, src->root_key.objectid);
 		ret = btrfs_inc_extent_ref(trans, &ref);
 		if (ret) {
 			btrfs_abort_transaction(trans, ret);
@@ -1378,8 +1376,8 @@ again:
 		}
 		btrfs_init_generic_ref(&ref, BTRFS_ADD_DELAYED_REF, new_bytenr,
 				       blocksize, 0);
-		btrfs_init_tree_ref(&ref, level - 1, dest->root_key.objectid, 0,
-				    true);
+		ref.skip_qgroup = true;
+		btrfs_init_tree_ref(&ref, level - 1, dest->root_key.objectid);
 		ret = btrfs_inc_extent_ref(trans, &ref);
 		if (ret) {
 			btrfs_abort_transaction(trans, ret);
@@ -1388,8 +1386,8 @@ again:
 
 		btrfs_init_generic_ref(&ref, BTRFS_DROP_DELAYED_REF, new_bytenr,
 				       blocksize, path->nodes[level]->start);
-		btrfs_init_tree_ref(&ref, level - 1, src->root_key.objectid,
-				    0, true);
+		btrfs_init_tree_ref(&ref, level - 1, src->root_key.objectid);
+		ref.skip_qgroup = true;
 		ret = btrfs_free_extent(trans, &ref);
 		if (ret) {
 			btrfs_abort_transaction(trans, ret);
@@ -1398,8 +1396,8 @@ again:
 
 		btrfs_init_generic_ref(&ref, BTRFS_DROP_DELAYED_REF, old_bytenr,
 				       blocksize, 0);
-		btrfs_init_tree_ref(&ref, level - 1, dest->root_key.objectid,
-				    0, true);
+		btrfs_init_tree_ref(&ref, level - 1, dest->root_key.objectid);
+		ref.skip_qgroup = true;
 		ret = btrfs_free_extent(trans, &ref);
 		if (ret) {
 			btrfs_abort_transaction(trans, ret);
@@ -1737,8 +1735,7 @@ static noinline_for_stack int merge_reloc_root(struct reloc_control *rc,
 	memset(&next_key, 0, sizeof(next_key));
 
 	while (1) {
-		ret = btrfs_block_rsv_refill(fs_info, rc->block_rsv,
-					     min_reserved,
+		ret = btrfs_block_rsv_refill(root, rc->block_rsv, min_reserved,
 					     BTRFS_RESERVE_FLUSH_LIMIT);
 		if (ret)
 			goto out;
@@ -1857,7 +1854,7 @@ int prepare_to_merge(struct reloc_control *rc, int err)
 again:
 	if (!err) {
 		num_bytes = rc->merging_rsv_size;
-		ret = btrfs_block_rsv_add(fs_info, rc->block_rsv, num_bytes,
+		ret = btrfs_block_rsv_add(root, rc->block_rsv, num_bytes,
 					  BTRFS_RESERVE_FLUSH_ALL);
 		if (ret)
 			err = ret;
@@ -2325,8 +2322,8 @@ static int reserve_metadata_space(struct btrfs_trans_handle *trans,
 	 * If we get an enospc just kick back -EAGAIN so we know to drop the
 	 * transaction and try to refill when we can flush all the things.
 	 */
-	ret = btrfs_block_rsv_refill(fs_info, rc->block_rsv, num_bytes,
-				     BTRFS_RESERVE_FLUSH_LIMIT);
+	ret = btrfs_block_rsv_refill(root, rc->block_rsv, num_bytes,
+				BTRFS_RESERVE_FLUSH_LIMIT);
 	if (ret) {
 		tmp = fs_info->nodesize * RELOCATION_RESERVED_NODES;
 		while (tmp <= rc->reserved_bytes)
@@ -2476,9 +2473,9 @@ static int do_relocation(struct btrfs_trans_handle *trans,
 			btrfs_init_generic_ref(&ref, BTRFS_ADD_DELAYED_REF,
 					       node->eb->start, blocksize,
 					       upper->eb->start);
+			ref.real_root = root->root_key.objectid;
 			btrfs_init_tree_ref(&ref, node->level,
-					    btrfs_header_owner(upper->eb),
-					    root->root_key.objectid, false);
+					    btrfs_header_owner(upper->eb));
 			ret = btrfs_inc_extent_ref(trans, &ref);
 			if (!ret)
 				ret = btrfs_drop_subtree(trans, root, eb,
@@ -2694,12 +2691,8 @@ static int relocate_tree_block(struct btrfs_trans_handle *trans,
 			list_add_tail(&node->list, &rc->backref_cache.changed);
 		} else {
 			path->lowest_level = node->level;
-			if (root == root->fs_info->chunk_root)
-				btrfs_reserve_chunk_metadata(trans, false);
 			ret = btrfs_search_slot(trans, root, key, path, 0, 1);
 			btrfs_release_path(path);
-			if (root == root->fs_info->chunk_root)
-				btrfs_trans_release_chunk_metadata(trans);
 			if (ret > 0)
 				ret = 0;
 		}
@@ -2885,8 +2878,9 @@ static noinline_for_stack int prealloc_file_extent_cluster(
 	return ret;
 }
 
-static noinline_for_stack int setup_relocation_extent_mapping(struct inode *inode,
-				u64 start, u64 end, u64 block_start)
+static noinline_for_stack
+int setup_extent_mapping(struct inode *inode, u64 start, u64 end,
+			 u64 block_start)
 {
 	struct extent_map_tree *em_tree = &BTRFS_I(inode)->extent_tree;
 	struct extent_map *em;
@@ -3085,7 +3079,7 @@ static int relocate_file_extent_cluster(struct inode *inode,
 
 	file_ra_state_init(ra, inode->i_mapping);
 
-	ret = setup_relocation_extent_mapping(inode, cluster->start - offset,
+	ret = setup_extent_mapping(inode, cluster->start - offset,
 				   cluster->end - offset, cluster->start);
 	if (ret)
 		goto out;
@@ -3151,7 +3145,7 @@ static int add_tree_block(struct reloc_control *rc,
 	u64 owner = 0;
 
 	eb =  path->nodes[0];
-	item_size = btrfs_item_size(eb, path->slots[0]);
+	item_size = btrfs_item_size_nr(eb, path->slots[0]);
 
 	if (extent_key->type == BTRFS_METADATA_ITEM_KEY ||
 	    item_size >= sizeof(*ei) + sizeof(*bi)) {
@@ -3552,7 +3546,7 @@ int prepare_to_relocate(struct reloc_control *rc)
 	rc->reserved_bytes = 0;
 	rc->block_rsv->size = rc->extent_root->fs_info->nodesize *
 			      RELOCATION_RESERVED_NODES;
-	ret = btrfs_block_rsv_refill(rc->extent_root->fs_info,
+	ret = btrfs_block_rsv_refill(rc->extent_root,
 				     rc->block_rsv, rc->block_rsv->size,
 				     BTRFS_RESERVE_FLUSH_ALL);
 	if (ret)
@@ -3600,9 +3594,9 @@ static noinline_for_stack int relocate_block_group(struct reloc_control *rc)
 
 	while (1) {
 		rc->reserved_bytes = 0;
-		ret = btrfs_block_rsv_refill(fs_info, rc->block_rsv,
-					     rc->block_rsv->size,
-					     BTRFS_RESERVE_FLUSH_ALL);
+		ret = btrfs_block_rsv_refill(rc->extent_root,
+					rc->block_rsv, rc->block_rsv->size,
+					BTRFS_RESERVE_FLUSH_ALL);
 		if (ret) {
 			err = ret;
 			break;
@@ -3860,14 +3854,25 @@ out:
  *   0             success
  *   -EINPROGRESS  operation is already in progress, that's probably a bug
  *   -ECANCELED    cancellation request was set before the operation started
+ *   -EAGAIN       can not start because there are ongoing send operations
  */
 static int reloc_chunk_start(struct btrfs_fs_info *fs_info)
 {
+	spin_lock(&fs_info->send_reloc_lock);
+	if (fs_info->send_in_progress) {
+		btrfs_warn_rl(fs_info,
+"cannot run relocation while send operations are in progress (%d in progress)",
+			      fs_info->send_in_progress);
+		spin_unlock(&fs_info->send_reloc_lock);
+		return -EAGAIN;
+	}
 	if (test_and_set_bit(BTRFS_FS_RELOC_RUNNING, &fs_info->flags)) {
 		/* This should not happen */
+		spin_unlock(&fs_info->send_reloc_lock);
 		btrfs_err(fs_info, "reloc already running, cannot start");
 		return -EINPROGRESS;
 	}
+	spin_unlock(&fs_info->send_reloc_lock);
 
 	if (atomic_read(&fs_info->reloc_cancel_req) > 0) {
 		btrfs_info(fs_info, "chunk relocation canceled on start");
@@ -3889,7 +3894,9 @@ static void reloc_chunk_end(struct btrfs_fs_info *fs_info)
 	/* Requested after start, clear bit first so any waiters can continue */
 	if (atomic_read(&fs_info->reloc_cancel_req) > 0)
 		btrfs_info(fs_info, "chunk relocation canceled during operation");
+	spin_lock(&fs_info->send_reloc_lock);
 	clear_and_wake_up_bit(BTRFS_FS_RELOC_RUNNING, &fs_info->flags);
+	spin_unlock(&fs_info->send_reloc_lock);
 	atomic_set(&fs_info->reloc_cancel_req, 0);
 }
 
@@ -3952,13 +3959,26 @@ static const char *stage_to_string(int stage)
 int btrfs_relocate_block_group(struct btrfs_fs_info *fs_info, u64 group_start)
 {
 	struct btrfs_block_group *bg;
-	struct btrfs_root *extent_root = btrfs_extent_root(fs_info, group_start);
+	struct btrfs_root *extent_root = fs_info->extent_root;
 	struct reloc_control *rc;
 	struct inode *inode;
 	struct btrfs_path *path;
 	int ret;
 	int rw = 0;
 	int err = 0;
+
+	/*
+	 * This only gets set if we had a half-deleted snapshot on mount.  We
+	 * cannot allow relocation to start while we're still trying to clean up
+	 * these pending deletions.
+	 */
+	ret = wait_on_bit(&fs_info->flags, BTRFS_FS_UNFINISHED_DROPS, TASK_INTERRUPTIBLE);
+	if (ret)
+		return ret;
+
+	/* We may have been woken up by close_ctree, so bail if we're closing. */
+	if (btrfs_fs_closing(fs_info))
+		return -EINTR;
 
 	bg = btrfs_lookup_block_group(fs_info, group_start);
 	if (!bg)
@@ -4024,9 +4044,6 @@ int btrfs_relocate_block_group(struct btrfs_fs_info *fs_info, u64 group_start)
 	btrfs_wait_ordered_roots(fs_info, U64_MAX,
 				 rc->block_group->start,
 				 rc->block_group->length);
-
-	ret = btrfs_zone_finish(rc->block_group);
-	WARN_ON(ret && ret != -EAGAIN);
 
 	while (1) {
 		int finishes_stage;
@@ -4203,7 +4220,7 @@ int btrfs_recover_relocation(struct btrfs_root *root)
 		goto out_end;
 	}
 
-	rc->extent_root = btrfs_extent_root(fs_info, 0);
+	rc->extent_root = fs_info->extent_root;
 
 	set_reloc_control(rc);
 
@@ -4294,7 +4311,6 @@ out:
 int btrfs_reloc_clone_csums(struct btrfs_inode *inode, u64 file_pos, u64 len)
 {
 	struct btrfs_fs_info *fs_info = inode->root->fs_info;
-	struct btrfs_root *csum_root;
 	struct btrfs_ordered_sum *sums;
 	struct btrfs_ordered_extent *ordered;
 	int ret;
@@ -4306,8 +4322,7 @@ int btrfs_reloc_clone_csums(struct btrfs_inode *inode, u64 file_pos, u64 len)
 	BUG_ON(ordered->file_offset != file_pos || ordered->num_bytes != len);
 
 	disk_bytenr = file_pos + inode->index_cnt;
-	csum_root = btrfs_csum_root(fs_info, disk_bytenr);
-	ret = btrfs_lookup_csums_range(csum_root, disk_bytenr,
+	ret = btrfs_lookup_csums_range(fs_info->csum_root, disk_bytenr,
 				       disk_bytenr + len - 1, &list, 0);
 	if (ret)
 		goto out;

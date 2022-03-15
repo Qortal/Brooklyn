@@ -67,7 +67,7 @@ static int vfio_set_trigger(struct vfio_fsl_mc_device *vdev,
 	int hwirq;
 	int ret;
 
-	hwirq = vdev->mc_dev->irqs[index]->virq;
+	hwirq = vdev->mc_dev->irqs[index]->msi_desc->irq;
 	if (irq->trigger) {
 		free_irq(hwirq, irq);
 		kfree(irq->name);
@@ -137,7 +137,7 @@ static int vfio_fsl_mc_set_irq_trigger(struct vfio_fsl_mc_device *vdev,
 		return vfio_set_trigger(vdev, index, fd);
 	}
 
-	hwirq = vdev->mc_dev->irqs[index]->virq;
+	hwirq = vdev->mc_dev->irqs[index]->msi_desc->irq;
 
 	irq = &vdev->mc_irqs[index];
 

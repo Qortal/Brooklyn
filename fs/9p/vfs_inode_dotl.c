@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
+ *  linux/fs/9p/vfs_inode_dotl.c
+ *
  * This file contains vfs inode ops for the 9P2000.L protocol.
  *
  *  Copyright (C) 2004 by Eric Van Hensbergen <ericvh@gmail.com>
@@ -105,7 +107,7 @@ static struct inode *v9fs_qid_iget_dotl(struct super_block *sb,
 	unsigned long i_ino;
 	struct inode *inode;
 	struct v9fs_session_info *v9ses = sb->s_fs_info;
-	int (*test)(struct inode *inode, void *data);
+	int (*test)(struct inode *, void *);
 
 	if (new)
 		test = v9fs_test_new_inode_dotl;
@@ -228,7 +230,7 @@ v9fs_vfs_create_dotl(struct user_namespace *mnt_userns, struct inode *dir,
 
 static int
 v9fs_vfs_atomic_open_dotl(struct inode *dir, struct dentry *dentry,
-			  struct file *file, unsigned int flags, umode_t omode)
+			  struct file *file, unsigned flags, umode_t omode)
 {
 	int err = 0;
 	kgid_t gid;
@@ -259,7 +261,7 @@ v9fs_vfs_atomic_open_dotl(struct inode *dir, struct dentry *dentry,
 	v9ses = v9fs_inode2v9ses(dir);
 
 	name = dentry->d_name.name;
-	p9_debug(P9_DEBUG_VFS, "name:%s flags:0x%x mode:0x%x\n",
+	p9_debug(P9_DEBUG_VFS, "name:%s flags:0x%x mode:0x%hx\n",
 		 name, flags, omode);
 
 	dfid = v9fs_parent_fid(dentry);
@@ -344,8 +346,7 @@ v9fs_vfs_atomic_open_dotl(struct inode *dir, struct dentry *dentry,
 		goto err_clunk_old_fid;
 	file->private_data = ofid;
 	if (v9ses->cache == CACHE_LOOSE || v9ses->cache == CACHE_FSCACHE)
-		fscache_use_cookie(v9fs_inode_cookie(v9inode),
-				   file->f_mode & FMODE_WRITE);
+		v9fs_cache_inode_set_cookie(inode, file);
 	v9fs_open_fid_add(inode, ofid);
 	file->f_mode |= FMODE_CREATED;
 out:
@@ -817,7 +818,6 @@ v9fs_vfs_link_dotl(struct dentry *old_dentry, struct inode *dir,
 	if (v9ses->cache == CACHE_LOOSE || v9ses->cache == CACHE_FSCACHE) {
 		/* Get the latest stat info from server. */
 		struct p9_fid *fid;
-
 		fid = v9fs_fid_lookup(old_dentry);
 		if (IS_ERR(fid))
 			return PTR_ERR(fid);
@@ -854,7 +854,7 @@ v9fs_vfs_mknod_dotl(struct user_namespace *mnt_userns, struct inode *dir,
 	struct p9_qid qid;
 	struct posix_acl *dacl = NULL, *pacl = NULL;
 
-	p9_debug(P9_DEBUG_VFS, " %lu,%pd mode: %x MAJOR: %u MINOR: %u\n",
+	p9_debug(P9_DEBUG_VFS, " %lu,%pd mode: %hx MAJOR: %u MINOR: %u\n",
 		 dir->i_ino, dentry, omode,
 		 MAJOR(rdev), MINOR(rdev));
 

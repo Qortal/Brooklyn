@@ -112,7 +112,6 @@ static struct attribute *dm_attrs[] = {
 	&dm_attr_rq_based_seq_io_merge_deadline.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(dm);
 
 static const struct sysfs_ops dm_sysfs_ops = {
 	.show	= dm_attr_show,
@@ -121,7 +120,7 @@ static const struct sysfs_ops dm_sysfs_ops = {
 
 static struct kobj_type dm_ktype = {
 	.sysfs_ops	= &dm_sysfs_ops,
-	.default_groups	= dm_groups,
+	.default_attrs	= dm_attrs,
 	.release	= dm_kobject_release,
 };
 

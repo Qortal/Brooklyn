@@ -413,9 +413,8 @@ void wkup_m3_ipc_put(struct wkup_m3_ipc *m3_ipc)
 }
 EXPORT_SYMBOL_GPL(wkup_m3_ipc_put);
 
-static int wkup_m3_rproc_boot_thread(void *arg)
+static void wkup_m3_rproc_boot_thread(struct wkup_m3_ipc *m3_ipc)
 {
-	struct wkup_m3_ipc *m3_ipc = arg;
 	struct device *dev = m3_ipc->dev;
 	int ret;
 
@@ -427,7 +426,7 @@ static int wkup_m3_rproc_boot_thread(void *arg)
 	else
 		m3_ipc_state = m3_ipc;
 
-	return 0;
+	do_exit(0);
 }
 
 static int wkup_m3_ipc_probe(struct platform_device *pdev)
@@ -501,7 +500,7 @@ static int wkup_m3_ipc_probe(struct platform_device *pdev)
 	 * can boot the wkup_m3 as soon as it's ready without holding
 	 * up kernel boot
 	 */
-	task = kthread_run(wkup_m3_rproc_boot_thread, m3_ipc,
+	task = kthread_run((void *)wkup_m3_rproc_boot_thread, m3_ipc,
 			   "wkup_m3_rproc_loader");
 
 	if (IS_ERR(task)) {

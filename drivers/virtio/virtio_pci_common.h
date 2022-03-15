@@ -25,7 +25,6 @@
 #include <linux/virtio_config.h>
 #include <linux/virtio_ring.h>
 #include <linux/virtio_pci.h>
-#include <linux/virtio_pci_legacy.h>
 #include <linux/virtio_pci_modern.h>
 #include <linux/highmem.h>
 #include <linux/spinlock.h>
@@ -45,13 +44,15 @@ struct virtio_pci_vq_info {
 struct virtio_pci_device {
 	struct virtio_device vdev;
 	struct pci_dev *pci_dev;
-	struct virtio_pci_legacy_device ldev;
 	struct virtio_pci_modern_device mdev;
 
-	bool is_legacy;
-
+	/* In legacy mode, these two point to within ->legacy. */
 	/* Where to read and clear interrupt */
 	u8 __iomem *isr;
+
+	/* Legacy only field */
+	/* the IO mapping for the PCI config space */
+	void __iomem *ioaddr;
 
 	/* a list of queues so we can dispatch IRQs */
 	spinlock_t lock;
@@ -63,7 +64,6 @@ struct virtio_pci_device {
 	/* MSI-X support */
 	int msix_enabled;
 	int intx_enabled;
-	bool intx_soft_enabled;
 	cpumask_var_t *msix_affinity_masks;
 	/* Name strings for interrupts. This size should be enough,
 	 * and I'm too lazy to allocate each name separately. */
@@ -102,10 +102,8 @@ static struct virtio_pci_device *to_vp_device(struct virtio_device *vdev)
 	return container_of(vdev, struct virtio_pci_device, vdev);
 }
 
-/* disable irq handlers */
-void vp_disable_cbs(struct virtio_device *vdev);
-/* enable irq handlers */
-void vp_enable_cbs(struct virtio_device *vdev);
+/* wait for pending irq handlers */
+void vp_synchronize_vectors(struct virtio_device *vdev);
 /* the notify function used when creating a virt queue */
 bool vp_notify(struct virtqueue *vq);
 /* the config->del_vqs() implementation */

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/pagewalk.h>
 #include <linux/vmacache.h>
-#include <linux/mm_inline.h>
 #include <linux/hugetlb.h>
 #include <linux/huge_mm.h>
 #include <linux/mount.h>
@@ -309,8 +308,6 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
 
 	name = arch_vma_name(vma);
 	if (!name) {
-		const char *anon_name;
-
 		if (!mm) {
 			name = "[vdso]";
 			goto done;
@@ -322,16 +319,8 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
 			goto done;
 		}
 
-		if (is_stack(vma)) {
+		if (is_stack(vma))
 			name = "[stack]";
-			goto done;
-		}
-
-		anon_name = vma_anon_name(vma);
-		if (anon_name) {
-			seq_pad(m, ' ');
-			seq_printf(m, "[anon:%s]", anon_name);
-		}
 	}
 
 done:
@@ -408,6 +397,7 @@ struct mem_size_stats {
 	u64 pss_shmem;
 	u64 pss_locked;
 	u64 swap_pss;
+	bool check_shmem_swap;
 };
 
 static void smaps_page_accumulate(struct mem_size_stats *mss,
@@ -496,27 +486,15 @@ static int smaps_pte_hole(unsigned long addr, unsigned long end,
 			  __always_unused int depth, struct mm_walk *walk)
 {
 	struct mem_size_stats *mss = walk->private;
-	struct vm_area_struct *vma = walk->vma;
 
-	mss->swap += shmem_partial_swap_usage(walk->vma->vm_file->f_mapping,
-					      linear_page_index(vma, addr),
-					      linear_page_index(vma, end));
+	mss->swap += shmem_partial_swap_usage(
+			walk->vma->vm_file->f_mapping, addr, end);
 
 	return 0;
 }
 #else
 #define smaps_pte_hole		NULL
 #endif /* CONFIG_SHMEM */
-
-static void smaps_pte_hole_lookup(unsigned long addr, struct mm_walk *walk)
-{
-#ifdef CONFIG_SHMEM
-	if (walk->ops->pte_hole) {
-		/* depth is not used */
-		smaps_pte_hole(addr, addr + PAGE_SIZE, 0, walk);
-	}
-#endif
-}
 
 static void smaps_pte_entry(pte_t *pte, unsigned long addr,
 		struct mm_walk *walk)
@@ -550,8 +528,12 @@ static void smaps_pte_entry(pte_t *pte, unsigned long addr,
 				migration = true;
 			page = pfn_swap_entry_to_page(swpent);
 		}
-	} else {
-		smaps_pte_hole_lookup(addr, walk);
+	} else if (unlikely(IS_ENABLED(CONFIG_SHMEM) && mss->check_shmem_swap
+							&& pte_none(*pte))) {
+		page = xa_load(&vma->vm_file->f_mapping->i_pages,
+						linear_page_index(vma, addr));
+		if (xa_is_value(page))
+			mss->swap += PAGE_SIZE;
 		return;
 	}
 
@@ -771,6 +753,8 @@ static void smap_gather_stats(struct vm_area_struct *vma,
 		return;
 
 #ifdef CONFIG_SHMEM
+	/* In case of smaps_rollup, reset the value from previous vma */
+	mss->check_shmem_swap = false;
 	if (vma->vm_file && shmem_mapping(vma->vm_file->f_mapping)) {
 		/*
 		 * For shared or readonly shmem mappings we know that all
@@ -788,6 +772,7 @@ static void smap_gather_stats(struct vm_area_struct *vma,
 					!(vma->vm_flags & VM_WRITE))) {
 			mss->swap += shmem_swapped;
 		} else {
+			mss->check_shmem_swap = true;
 			ops = &smaps_shmem_walk_ops;
 		}
 	}
@@ -1597,7 +1582,8 @@ static const struct mm_walk_ops pagemap_ops = {
  * Bits 5-54  swap offset if swapped
  * Bit  55    pte is soft-dirty (see Documentation/admin-guide/mm/soft-dirty.rst)
  * Bit  56    page exclusively mapped
- * Bits 57-60 zero
+ * Bit  57    pte is uffd-wp write-protected
+ * Bits 58-60 zero
  * Bit  61    page is file-page or shared-anon
  * Bit  62    page swapped
  * Bit  63    page present

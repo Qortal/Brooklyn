@@ -32,7 +32,7 @@
 #include <linux/mutex.h>
 #include <linux/rcupdate.h>
 
-static int showcapimsgs;
+static int showcapimsgs = 0;
 static struct workqueue_struct *kcapi_wq;
 
 module_param(showcapimsgs, uint, 0);

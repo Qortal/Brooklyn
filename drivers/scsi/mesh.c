@@ -342,6 +342,15 @@ static inline void mesh_flush_io(volatile struct mesh_regs __iomem *mr)
 }
 
 
+/*
+ * Complete a SCSI command
+ */
+static void mesh_completed(struct mesh_state *ms, struct scsi_cmnd *cmd)
+{
+	(*cmd->scsi_done)(cmd);
+}
+
+
 /* Called with  meshinterrupt disabled, initialize the chipset
  * and eventually do the initial bus reset. The lock must not be
  * held since we can schedule.
@@ -604,7 +613,7 @@ static void mesh_done(struct mesh_state *ms, int start_next)
 #endif
 		}
 		cmd->SCp.this_residual -= ms->data_ptr;
-		scsi_done(cmd);
+		mesh_completed(ms, cmd);
 	}
 	if (start_next) {
 		out_8(&ms->mesh->sequence, SEQ_ENBRESEL);
@@ -987,7 +996,7 @@ static void handle_reset(struct mesh_state *ms)
 		if ((cmd = tp->current_req) != NULL) {
 			set_host_byte(cmd, DID_RESET);
 			tp->current_req = NULL;
-			scsi_done(cmd);
+			mesh_completed(ms, cmd);
 		}
 		ms->tgts[tgt].sdtr_state = do_sdtr;
 		ms->tgts[tgt].sync_params = ASYNC_PARAMS;
@@ -996,7 +1005,7 @@ static void handle_reset(struct mesh_state *ms)
 	while ((cmd = ms->request_q) != NULL) {
 		ms->request_q = (struct scsi_cmnd *) cmd->host_scribble;
 		set_host_byte(cmd, DID_RESET);
-		scsi_done(cmd);
+		mesh_completed(ms, cmd);
 	}
 	ms->phase = idle;
 	ms->msgphase = msg_none;
@@ -1621,10 +1630,11 @@ static void cmd_complete(struct mesh_state *ms)
  * Called by midlayer with host locked to queue a new
  * request
  */
-static int mesh_queue_lck(struct scsi_cmnd *cmd)
+static int mesh_queue_lck(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 {
 	struct mesh_state *ms;
 
+	cmd->scsi_done = done;
 	cmd->host_scribble = NULL;
 
 	ms = (struct mesh_state *) cmd->device->host->hostdata;

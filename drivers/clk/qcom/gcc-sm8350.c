@@ -4,7 +4,6 @@
  * Copyright (c) 2020-2021, Linaro Limited
  */
 
-#include <linux/clk-provider.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>

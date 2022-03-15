@@ -11,14 +11,11 @@
 #include <linux/errno.h>
 #include <linux/io.h>
 #include <linux/ioport.h>
-#include <linux/interrupt.h>
 #include <linux/isa.h>
 #include <linux/kernel.h>
-#include <linux/list.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/types.h>
-#include <linux/spinlock.h>
 
 #define QUAD8_EXTENT 32
 
@@ -26,10 +23,6 @@ static unsigned int base[max_num_isa_dev(QUAD8_EXTENT)];
 static unsigned int num_quad8;
 module_param_hw_array(base, uint, ioport, &num_quad8, 0);
 MODULE_PARM_DESC(base, "ACCES 104-QUAD-8 base addresses");
-
-static unsigned int irq[max_num_isa_dev(QUAD8_EXTENT)];
-module_param_hw_array(irq, uint, irq, NULL, 0);
-MODULE_PARM_DESC(irq, "ACCES 104-QUAD-8 interrupt line numbers");
 
 #define QUAD8_NUM_COUNTERS 8
 
@@ -44,14 +37,14 @@ MODULE_PARM_DESC(irq, "ACCES 104-QUAD-8 interrupt line numbers");
  * @quadrature_scale:	array of quadrature mode scale configurations
  * @ab_enable:		array of A and B inputs enable configurations
  * @preset_enable:	array of set_to_preset_on_index attribute configurations
- * @irq_trigger:	array of current IRQ trigger function configurations
  * @synchronous_mode:	array of index function synchronous mode configurations
  * @index_polarity:	array of index function polarity configurations
  * @cable_fault_enable:	differential encoder cable status enable configurations
  * @base:		base port address of the device
  */
 struct quad8 {
-	spinlock_t lock;
+	struct mutex lock;
+	struct counter_device counter;
 	unsigned int fck_prescaler[QUAD8_NUM_COUNTERS];
 	unsigned int preset[QUAD8_NUM_COUNTERS];
 	unsigned int count_mode[QUAD8_NUM_COUNTERS];
@@ -59,16 +52,13 @@ struct quad8 {
 	unsigned int quadrature_scale[QUAD8_NUM_COUNTERS];
 	unsigned int ab_enable[QUAD8_NUM_COUNTERS];
 	unsigned int preset_enable[QUAD8_NUM_COUNTERS];
-	unsigned int irq_trigger[QUAD8_NUM_COUNTERS];
 	unsigned int synchronous_mode[QUAD8_NUM_COUNTERS];
 	unsigned int index_polarity[QUAD8_NUM_COUNTERS];
 	unsigned int cable_fault_enable;
 	unsigned int base;
 };
 
-#define QUAD8_REG_INTERRUPT_STATUS 0x10
 #define QUAD8_REG_CHAN_OP 0x11
-#define QUAD8_REG_INDEX_INTERRUPT 0x12
 #define QUAD8_REG_INDEX_INPUT_LEVELS 0x16
 #define QUAD8_DIFF_ENCODER_CABLE_STATUS 0x17
 /* Borrow Toggle flip-flop */
@@ -101,8 +91,8 @@ struct quad8 {
 #define QUAD8_RLD_CNTR_OUT 0x10
 /* Transfer Preset Register LSB to FCK Prescaler */
 #define QUAD8_RLD_PRESET_PSC 0x18
+#define QUAD8_CHAN_OP_ENABLE_COUNTERS 0x00
 #define QUAD8_CHAN_OP_RESET_COUNTERS 0x01
-#define QUAD8_CHAN_OP_ENABLE_INTERRUPT_FUNC 0x04
 #define QUAD8_CMR_QUADRATURE_X1 0x08
 #define QUAD8_CMR_QUADRATURE_X2 0x10
 #define QUAD8_CMR_QUADRATURE_X4 0x18
@@ -111,7 +101,7 @@ static int quad8_signal_read(struct counter_device *counter,
 			     struct counter_signal *signal,
 			     enum counter_signal_level *level)
 {
-	const struct quad8 *const priv = counter_priv(counter);
+	const struct quad8 *const priv = counter->priv;
 	unsigned int state;
 
 	/* Only Index signal levels can be read */
@@ -127,14 +117,13 @@ static int quad8_signal_read(struct counter_device *counter,
 }
 
 static int quad8_count_read(struct counter_device *counter,
-			    struct counter_count *count, u64 *val)
+	struct counter_count *count, unsigned long *val)
 {
-	struct quad8 *const priv = counter_priv(counter);
+	struct quad8 *const priv = counter->priv;
 	const int base_offset = priv->base + 2 * count->id;
 	unsigned int flags;
 	unsigned int borrow;
 	unsigned int carry;
-	unsigned long irqflags;
 	int i;
 
 	flags = inb(base_offset + 1);
@@ -144,7 +133,7 @@ static int quad8_count_read(struct counter_device *counter,
 	/* Borrow XOR Carry effectively doubles count range */
 	*val = (unsigned long)(borrow ^ carry) << 24;
 
-	spin_lock_irqsave(&priv->lock, irqflags);
+	mutex_lock(&priv->lock);
 
 	/* Reset Byte Pointer; transfer Counter to Output Latch */
 	outb(QUAD8_CTR_RLD | QUAD8_RLD_RESET_BP | QUAD8_RLD_CNTR_OUT,
@@ -153,24 +142,23 @@ static int quad8_count_read(struct counter_device *counter,
 	for (i = 0; i < 3; i++)
 		*val |= (unsigned long)inb(base_offset) << (8 * i);
 
-	spin_unlock_irqrestore(&priv->lock, irqflags);
+	mutex_unlock(&priv->lock);
 
 	return 0;
 }
 
 static int quad8_count_write(struct counter_device *counter,
-			     struct counter_count *count, u64 val)
+	struct counter_count *count, unsigned long val)
 {
-	struct quad8 *const priv = counter_priv(counter);
+	struct quad8 *const priv = counter->priv;
 	const int base_offset = priv->base + 2 * count->id;
-	unsigned long irqflags;
 	int i;
 
 	/* Only 24-bit values are supported */
 	if (val > 0xFFFFFF)
 		return -ERANGE;
 
-	spin_lock_irqsave(&priv->lock, irqflags);
+	mutex_lock(&priv->lock);
 
 	/* Reset Byte Pointer */
 	outb(QUAD8_CTR_RLD | QUAD8_RLD_RESET_BP, base_offset + 1);
@@ -195,68 +183,71 @@ static int quad8_count_write(struct counter_device *counter,
 	/* Reset Error flag */
 	outb(QUAD8_CTR_RLD | QUAD8_RLD_RESET_E, base_offset + 1);
 
-	spin_unlock_irqrestore(&priv->lock, irqflags);
+	mutex_unlock(&priv->lock);
 
 	return 0;
 }
 
-static const enum counter_function quad8_count_functions_list[] = {
-	COUNTER_FUNCTION_PULSE_DIRECTION,
-	COUNTER_FUNCTION_QUADRATURE_X1_A,
-	COUNTER_FUNCTION_QUADRATURE_X2_A,
-	COUNTER_FUNCTION_QUADRATURE_X4,
+enum quad8_count_function {
+	QUAD8_COUNT_FUNCTION_PULSE_DIRECTION = 0,
+	QUAD8_COUNT_FUNCTION_QUADRATURE_X1,
+	QUAD8_COUNT_FUNCTION_QUADRATURE_X2,
+	QUAD8_COUNT_FUNCTION_QUADRATURE_X4
 };
 
-static int quad8_function_read(struct counter_device *counter,
-			       struct counter_count *count,
-			       enum counter_function *function)
-{
-	struct quad8 *const priv = counter_priv(counter);
-	const int id = count->id;
-	unsigned long irqflags;
+static const enum counter_function quad8_count_functions_list[] = {
+	[QUAD8_COUNT_FUNCTION_PULSE_DIRECTION] = COUNTER_FUNCTION_PULSE_DIRECTION,
+	[QUAD8_COUNT_FUNCTION_QUADRATURE_X1] = COUNTER_FUNCTION_QUADRATURE_X1_A,
+	[QUAD8_COUNT_FUNCTION_QUADRATURE_X2] = COUNTER_FUNCTION_QUADRATURE_X2_A,
+	[QUAD8_COUNT_FUNCTION_QUADRATURE_X4] = COUNTER_FUNCTION_QUADRATURE_X4
+};
 
-	spin_lock_irqsave(&priv->lock, irqflags);
+static int quad8_function_get(struct counter_device *counter,
+	struct counter_count *count, size_t *function)
+{
+	struct quad8 *const priv = counter->priv;
+	const int id = count->id;
+
+	mutex_lock(&priv->lock);
 
 	if (priv->quadrature_mode[id])
 		switch (priv->quadrature_scale[id]) {
 		case 0:
-			*function = COUNTER_FUNCTION_QUADRATURE_X1_A;
+			*function = QUAD8_COUNT_FUNCTION_QUADRATURE_X1;
 			break;
 		case 1:
-			*function = COUNTER_FUNCTION_QUADRATURE_X2_A;
+			*function = QUAD8_COUNT_FUNCTION_QUADRATURE_X2;
 			break;
 		case 2:
-			*function = COUNTER_FUNCTION_QUADRATURE_X4;
+			*function = QUAD8_COUNT_FUNCTION_QUADRATURE_X4;
 			break;
 		}
 	else
-		*function = COUNTER_FUNCTION_PULSE_DIRECTION;
+		*function = QUAD8_COUNT_FUNCTION_PULSE_DIRECTION;
 
-	spin_unlock_irqrestore(&priv->lock, irqflags);
+	mutex_unlock(&priv->lock);
 
 	return 0;
 }
 
-static int quad8_function_write(struct counter_device *counter,
-				struct counter_count *count,
-				enum counter_function function)
+static int quad8_function_set(struct counter_device *counter,
+	struct counter_count *count, size_t function)
 {
-	struct quad8 *const priv = counter_priv(counter);
+	struct quad8 *const priv = counter->priv;
 	const int id = count->id;
 	unsigned int *const quadrature_mode = priv->quadrature_mode + id;
 	unsigned int *const scale = priv->quadrature_scale + id;
 	unsigned int *const synchronous_mode = priv->synchronous_mode + id;
 	const int base_offset = priv->base + 2 * id + 1;
-	unsigned long irqflags;
 	unsigned int mode_cfg;
 	unsigned int idr_cfg;
 
-	spin_lock_irqsave(&priv->lock, irqflags);
+	mutex_lock(&priv->lock);
 
 	mode_cfg = priv->count_mode[id] << 1;
 	idr_cfg = priv->index_polarity[id] << 1;
 
-	if (function == COUNTER_FUNCTION_PULSE_DIRECTION) {
+	if (function == QUAD8_COUNT_FUNCTION_PULSE_DIRECTION) {
 		*quadrature_mode = 0;
 
 		/* Quadrature scaling only available in quadrature mode */
@@ -272,21 +263,21 @@ static int quad8_function_write(struct counter_device *counter,
 		*quadrature_mode = 1;
 
 		switch (function) {
-		case COUNTER_FUNCTION_QUADRATURE_X1_A:
+		case QUAD8_COUNT_FUNCTION_QUADRATURE_X1:
 			*scale = 0;
 			mode_cfg |= QUAD8_CMR_QUADRATURE_X1;
 			break;
-		case COUNTER_FUNCTION_QUADRATURE_X2_A:
+		case QUAD8_COUNT_FUNCTION_QUADRATURE_X2:
 			*scale = 1;
 			mode_cfg |= QUAD8_CMR_QUADRATURE_X2;
 			break;
-		case COUNTER_FUNCTION_QUADRATURE_X4:
+		case QUAD8_COUNT_FUNCTION_QUADRATURE_X4:
 			*scale = 2;
 			mode_cfg |= QUAD8_CMR_QUADRATURE_X4;
 			break;
 		default:
 			/* should never reach this path */
-			spin_unlock_irqrestore(&priv->lock, irqflags);
+			mutex_unlock(&priv->lock);
 			return -EINVAL;
 		}
 	}
@@ -294,16 +285,15 @@ static int quad8_function_write(struct counter_device *counter,
 	/* Load mode configuration to Counter Mode Register */
 	outb(QUAD8_CTR_CMR | mode_cfg, base_offset);
 
-	spin_unlock_irqrestore(&priv->lock, irqflags);
+	mutex_unlock(&priv->lock);
 
 	return 0;
 }
 
-static int quad8_direction_read(struct counter_device *counter,
-				struct counter_count *count,
-				enum counter_count_direction *direction)
+static void quad8_direction_get(struct counter_device *counter,
+	struct counter_count *count, enum counter_count_direction *direction)
 {
-	const struct quad8 *const priv = counter_priv(counter);
+	const struct quad8 *const priv = counter->priv;
 	unsigned int ud_flag;
 	const unsigned int flag_addr = priv->base + 2 * count->id + 1;
 
@@ -312,164 +302,79 @@ static int quad8_direction_read(struct counter_device *counter,
 
 	*direction = (ud_flag) ? COUNTER_COUNT_DIRECTION_FORWARD :
 		COUNTER_COUNT_DIRECTION_BACKWARD;
-
-	return 0;
 }
 
+enum quad8_synapse_action {
+	QUAD8_SYNAPSE_ACTION_NONE = 0,
+	QUAD8_SYNAPSE_ACTION_RISING_EDGE,
+	QUAD8_SYNAPSE_ACTION_FALLING_EDGE,
+	QUAD8_SYNAPSE_ACTION_BOTH_EDGES
+};
+
 static const enum counter_synapse_action quad8_index_actions_list[] = {
-	COUNTER_SYNAPSE_ACTION_NONE,
-	COUNTER_SYNAPSE_ACTION_RISING_EDGE,
+	[QUAD8_SYNAPSE_ACTION_NONE] = COUNTER_SYNAPSE_ACTION_NONE,
+	[QUAD8_SYNAPSE_ACTION_RISING_EDGE] = COUNTER_SYNAPSE_ACTION_RISING_EDGE
 };
 
 static const enum counter_synapse_action quad8_synapse_actions_list[] = {
-	COUNTER_SYNAPSE_ACTION_NONE,
-	COUNTER_SYNAPSE_ACTION_RISING_EDGE,
-	COUNTER_SYNAPSE_ACTION_FALLING_EDGE,
-	COUNTER_SYNAPSE_ACTION_BOTH_EDGES,
+	[QUAD8_SYNAPSE_ACTION_NONE] = COUNTER_SYNAPSE_ACTION_NONE,
+	[QUAD8_SYNAPSE_ACTION_RISING_EDGE] = COUNTER_SYNAPSE_ACTION_RISING_EDGE,
+	[QUAD8_SYNAPSE_ACTION_FALLING_EDGE] = COUNTER_SYNAPSE_ACTION_FALLING_EDGE,
+	[QUAD8_SYNAPSE_ACTION_BOTH_EDGES] = COUNTER_SYNAPSE_ACTION_BOTH_EDGES
 };
 
-static int quad8_action_read(struct counter_device *counter,
-			     struct counter_count *count,
-			     struct counter_synapse *synapse,
-			     enum counter_synapse_action *action)
+static int quad8_action_get(struct counter_device *counter,
+	struct counter_count *count, struct counter_synapse *synapse,
+	size_t *action)
 {
-	struct quad8 *const priv = counter_priv(counter);
+	struct quad8 *const priv = counter->priv;
 	int err;
-	enum counter_function function;
+	size_t function = 0;
 	const size_t signal_a_id = count->synapses[0].signal->id;
 	enum counter_count_direction direction;
 
 	/* Handle Index signals */
 	if (synapse->signal->id >= 16) {
 		if (priv->preset_enable[count->id])
-			*action = COUNTER_SYNAPSE_ACTION_RISING_EDGE;
+			*action = QUAD8_SYNAPSE_ACTION_RISING_EDGE;
 		else
-			*action = COUNTER_SYNAPSE_ACTION_NONE;
+			*action = QUAD8_SYNAPSE_ACTION_NONE;
 
 		return 0;
 	}
 
-	err = quad8_function_read(counter, count, &function);
+	err = quad8_function_get(counter, count, &function);
 	if (err)
 		return err;
 
 	/* Default action mode */
-	*action = COUNTER_SYNAPSE_ACTION_NONE;
+	*action = QUAD8_SYNAPSE_ACTION_NONE;
 
 	/* Determine action mode based on current count function mode */
 	switch (function) {
-	case COUNTER_FUNCTION_PULSE_DIRECTION:
+	case QUAD8_COUNT_FUNCTION_PULSE_DIRECTION:
 		if (synapse->signal->id == signal_a_id)
-			*action = COUNTER_SYNAPSE_ACTION_RISING_EDGE;
+			*action = QUAD8_SYNAPSE_ACTION_RISING_EDGE;
 		return 0;
-	case COUNTER_FUNCTION_QUADRATURE_X1_A:
+	case QUAD8_COUNT_FUNCTION_QUADRATURE_X1:
 		if (synapse->signal->id == signal_a_id) {
-			err = quad8_direction_read(counter, count, &direction);
-			if (err)
-				return err;
+			quad8_direction_get(counter, count, &direction);
 
 			if (direction == COUNTER_COUNT_DIRECTION_FORWARD)
-				*action = COUNTER_SYNAPSE_ACTION_RISING_EDGE;
+				*action = QUAD8_SYNAPSE_ACTION_RISING_EDGE;
 			else
-				*action = COUNTER_SYNAPSE_ACTION_FALLING_EDGE;
+				*action = QUAD8_SYNAPSE_ACTION_FALLING_EDGE;
 		}
 		return 0;
-	case COUNTER_FUNCTION_QUADRATURE_X2_A:
+	case QUAD8_COUNT_FUNCTION_QUADRATURE_X2:
 		if (synapse->signal->id == signal_a_id)
-			*action = COUNTER_SYNAPSE_ACTION_BOTH_EDGES;
+			*action = QUAD8_SYNAPSE_ACTION_BOTH_EDGES;
 		return 0;
-	case COUNTER_FUNCTION_QUADRATURE_X4:
-		*action = COUNTER_SYNAPSE_ACTION_BOTH_EDGES;
+	case QUAD8_COUNT_FUNCTION_QUADRATURE_X4:
+		*action = QUAD8_SYNAPSE_ACTION_BOTH_EDGES;
 		return 0;
 	default:
 		/* should never reach this path */
-		return -EINVAL;
-	}
-}
-
-enum {
-	QUAD8_EVENT_CARRY = 0,
-	QUAD8_EVENT_COMPARE = 1,
-	QUAD8_EVENT_CARRY_BORROW = 2,
-	QUAD8_EVENT_INDEX = 3,
-};
-
-static int quad8_events_configure(struct counter_device *counter)
-{
-	struct quad8 *const priv = counter_priv(counter);
-	unsigned long irq_enabled = 0;
-	unsigned long irqflags;
-	struct counter_event_node *event_node;
-	unsigned int next_irq_trigger;
-	unsigned long ior_cfg;
-	unsigned long base_offset;
-
-	spin_lock_irqsave(&priv->lock, irqflags);
-
-	list_for_each_entry(event_node, &counter->events_list, l) {
-		switch (event_node->event) {
-		case COUNTER_EVENT_OVERFLOW:
-			next_irq_trigger = QUAD8_EVENT_CARRY;
-			break;
-		case COUNTER_EVENT_THRESHOLD:
-			next_irq_trigger = QUAD8_EVENT_COMPARE;
-			break;
-		case COUNTER_EVENT_OVERFLOW_UNDERFLOW:
-			next_irq_trigger = QUAD8_EVENT_CARRY_BORROW;
-			break;
-		case COUNTER_EVENT_INDEX:
-			next_irq_trigger = QUAD8_EVENT_INDEX;
-			break;
-		default:
-			/* should never reach this path */
-			spin_unlock_irqrestore(&priv->lock, irqflags);
-			return -EINVAL;
-		}
-
-		/* Skip configuration if it is the same as previously set */
-		if (priv->irq_trigger[event_node->channel] == next_irq_trigger)
-			continue;
-
-		/* Save new IRQ function configuration */
-		priv->irq_trigger[event_node->channel] = next_irq_trigger;
-
-		/* Load configuration to I/O Control Register */
-		ior_cfg = priv->ab_enable[event_node->channel] |
-			  priv->preset_enable[event_node->channel] << 1 |
-			  priv->irq_trigger[event_node->channel] << 3;
-		base_offset = priv->base + 2 * event_node->channel + 1;
-		outb(QUAD8_CTR_IOR | ior_cfg, base_offset);
-
-		/* Enable IRQ line */
-		irq_enabled |= BIT(event_node->channel);
-	}
-
-	outb(irq_enabled, priv->base + QUAD8_REG_INDEX_INTERRUPT);
-
-	spin_unlock_irqrestore(&priv->lock, irqflags);
-
-	return 0;
-}
-
-static int quad8_watch_validate(struct counter_device *counter,
-				const struct counter_watch *watch)
-{
-	struct counter_event_node *event_node;
-
-	if (watch->channel > QUAD8_NUM_COUNTERS - 1)
-		return -EINVAL;
-
-	switch (watch->event) {
-	case COUNTER_EVENT_OVERFLOW:
-	case COUNTER_EVENT_THRESHOLD:
-	case COUNTER_EVENT_OVERFLOW_UNDERFLOW:
-	case COUNTER_EVENT_INDEX:
-		list_for_each_entry(event_node, &counter->next_events_list, l)
-			if (watch->channel == event_node->channel &&
-				watch->event != event_node->event)
-				return -EINVAL;
-		return 0;
-	default:
 		return -EINVAL;
 	}
 }
@@ -478,11 +383,9 @@ static const struct counter_ops quad8_ops = {
 	.signal_read = quad8_signal_read,
 	.count_read = quad8_count_read,
 	.count_write = quad8_count_write,
-	.function_read = quad8_function_read,
-	.function_write = quad8_function_write,
-	.action_read = quad8_action_read,
-	.events_configure = quad8_events_configure,
-	.watch_validate = quad8_watch_validate,
+	.function_get = quad8_function_get,
+	.function_set = quad8_function_set,
+	.action_get = quad8_action_get
 };
 
 static const char *const quad8_index_polarity_modes[] = {
@@ -491,10 +394,9 @@ static const char *const quad8_index_polarity_modes[] = {
 };
 
 static int quad8_index_polarity_get(struct counter_device *counter,
-				    struct counter_signal *signal,
-				    u32 *index_polarity)
+	struct counter_signal *signal, size_t *index_polarity)
 {
-	const struct quad8 *const priv = counter_priv(counter);
+	const struct quad8 *const priv = counter->priv;
 	const size_t channel_id = signal->id - 16;
 
 	*index_polarity = priv->index_polarity[channel_id];
@@ -503,16 +405,14 @@ static int quad8_index_polarity_get(struct counter_device *counter,
 }
 
 static int quad8_index_polarity_set(struct counter_device *counter,
-				    struct counter_signal *signal,
-				    u32 index_polarity)
+	struct counter_signal *signal, size_t index_polarity)
 {
-	struct quad8 *const priv = counter_priv(counter);
+	struct quad8 *const priv = counter->priv;
 	const size_t channel_id = signal->id - 16;
 	const int base_offset = priv->base + 2 * channel_id + 1;
-	unsigned long irqflags;
 	unsigned int idr_cfg = index_polarity << 1;
 
-	spin_lock_irqsave(&priv->lock, irqflags);
+	mutex_lock(&priv->lock);
 
 	idr_cfg |= priv->synchronous_mode[channel_id];
 
@@ -521,10 +421,17 @@ static int quad8_index_polarity_set(struct counter_device *counter,
 	/* Load Index Control configuration to Index Control Register */
 	outb(QUAD8_CTR_IDR | idr_cfg, base_offset);
 
-	spin_unlock_irqrestore(&priv->lock, irqflags);
+	mutex_unlock(&priv->lock);
 
 	return 0;
 }
+
+static struct counter_signal_enum_ext quad8_index_pol_enum = {
+	.items = quad8_index_polarity_modes,
+	.num_items = ARRAY_SIZE(quad8_index_polarity_modes),
+	.get = quad8_index_polarity_get,
+	.set = quad8_index_polarity_set
+};
 
 static const char *const quad8_synchronous_modes[] = {
 	"non-synchronous",
@@ -532,10 +439,9 @@ static const char *const quad8_synchronous_modes[] = {
 };
 
 static int quad8_synchronous_mode_get(struct counter_device *counter,
-				      struct counter_signal *signal,
-				      u32 *synchronous_mode)
+	struct counter_signal *signal, size_t *synchronous_mode)
 {
-	const struct quad8 *const priv = counter_priv(counter);
+	const struct quad8 *const priv = counter->priv;
 	const size_t channel_id = signal->id - 16;
 
 	*synchronous_mode = priv->synchronous_mode[channel_id];
@@ -544,22 +450,20 @@ static int quad8_synchronous_mode_get(struct counter_device *counter,
 }
 
 static int quad8_synchronous_mode_set(struct counter_device *counter,
-				      struct counter_signal *signal,
-				      u32 synchronous_mode)
+	struct counter_signal *signal, size_t synchronous_mode)
 {
-	struct quad8 *const priv = counter_priv(counter);
+	struct quad8 *const priv = counter->priv;
 	const size_t channel_id = signal->id - 16;
 	const int base_offset = priv->base + 2 * channel_id + 1;
-	unsigned long irqflags;
 	unsigned int idr_cfg = synchronous_mode;
 
-	spin_lock_irqsave(&priv->lock, irqflags);
+	mutex_lock(&priv->lock);
 
 	idr_cfg |= priv->index_polarity[channel_id] << 1;
 
 	/* Index function must be non-synchronous in non-quadrature mode */
 	if (synchronous_mode && !priv->quadrature_mode[channel_id]) {
-		spin_unlock_irqrestore(&priv->lock, irqflags);
+		mutex_unlock(&priv->lock);
 		return -EINVAL;
 	}
 
@@ -568,25 +472,29 @@ static int quad8_synchronous_mode_set(struct counter_device *counter,
 	/* Load Index Control configuration to Index Control Register */
 	outb(QUAD8_CTR_IDR | idr_cfg, base_offset);
 
-	spin_unlock_irqrestore(&priv->lock, irqflags);
+	mutex_unlock(&priv->lock);
 
 	return 0;
 }
 
-static int quad8_count_floor_read(struct counter_device *counter,
-				  struct counter_count *count, u64 *floor)
+static struct counter_signal_enum_ext quad8_syn_mode_enum = {
+	.items = quad8_synchronous_modes,
+	.num_items = ARRAY_SIZE(quad8_synchronous_modes),
+	.get = quad8_synchronous_mode_get,
+	.set = quad8_synchronous_mode_set
+};
+
+static ssize_t quad8_count_floor_read(struct counter_device *counter,
+	struct counter_count *count, void *private, char *buf)
 {
 	/* Only a floor of 0 is supported */
-	*floor = 0;
-
-	return 0;
+	return sprintf(buf, "0\n");
 }
 
-static int quad8_count_mode_read(struct counter_device *counter,
-				 struct counter_count *count,
-				 enum counter_count_mode *cnt_mode)
+static int quad8_count_mode_get(struct counter_device *counter,
+	struct counter_count *count, size_t *cnt_mode)
 {
-	const struct quad8 *const priv = counter_priv(counter);
+	const struct quad8 *const priv = counter->priv;
 
 	/* Map 104-QUAD-8 count mode to Generic Counter count mode */
 	switch (priv->count_mode[count->id]) {
@@ -607,41 +515,38 @@ static int quad8_count_mode_read(struct counter_device *counter,
 	return 0;
 }
 
-static int quad8_count_mode_write(struct counter_device *counter,
-				  struct counter_count *count,
-				  enum counter_count_mode cnt_mode)
+static int quad8_count_mode_set(struct counter_device *counter,
+	struct counter_count *count, size_t cnt_mode)
 {
-	struct quad8 *const priv = counter_priv(counter);
-	unsigned int count_mode;
+	struct quad8 *const priv = counter->priv;
 	unsigned int mode_cfg;
 	const int base_offset = priv->base + 2 * count->id + 1;
-	unsigned long irqflags;
 
 	/* Map Generic Counter count mode to 104-QUAD-8 count mode */
 	switch (cnt_mode) {
 	case COUNTER_COUNT_MODE_NORMAL:
-		count_mode = 0;
+		cnt_mode = 0;
 		break;
 	case COUNTER_COUNT_MODE_RANGE_LIMIT:
-		count_mode = 1;
+		cnt_mode = 1;
 		break;
 	case COUNTER_COUNT_MODE_NON_RECYCLE:
-		count_mode = 2;
+		cnt_mode = 2;
 		break;
 	case COUNTER_COUNT_MODE_MODULO_N:
-		count_mode = 3;
+		cnt_mode = 3;
 		break;
 	default:
 		/* should never reach this path */
 		return -EINVAL;
 	}
 
-	spin_lock_irqsave(&priv->lock, irqflags);
+	mutex_lock(&priv->lock);
 
-	priv->count_mode[count->id] = count_mode;
+	priv->count_mode[count->id] = cnt_mode;
 
 	/* Set count mode configuration value */
-	mode_cfg = count_mode << 1;
+	mode_cfg = cnt_mode << 1;
 
 	/* Add quadrature mode configuration */
 	if (priv->quadrature_mode[count->id])
@@ -650,42 +555,61 @@ static int quad8_count_mode_write(struct counter_device *counter,
 	/* Load mode configuration to Counter Mode Register */
 	outb(QUAD8_CTR_CMR | mode_cfg, base_offset);
 
-	spin_unlock_irqrestore(&priv->lock, irqflags);
+	mutex_unlock(&priv->lock);
 
 	return 0;
 }
 
-static int quad8_count_enable_read(struct counter_device *counter,
-				   struct counter_count *count, u8 *enable)
+static struct counter_count_enum_ext quad8_cnt_mode_enum = {
+	.items = counter_count_mode_str,
+	.num_items = ARRAY_SIZE(counter_count_mode_str),
+	.get = quad8_count_mode_get,
+	.set = quad8_count_mode_set
+};
+
+static ssize_t quad8_count_direction_read(struct counter_device *counter,
+	struct counter_count *count, void *priv, char *buf)
 {
-	const struct quad8 *const priv = counter_priv(counter);
+	enum counter_count_direction dir;
 
-	*enable = priv->ab_enable[count->id];
+	quad8_direction_get(counter, count, &dir);
 
-	return 0;
+	return sprintf(buf, "%s\n", counter_count_direction_str[dir]);
 }
 
-static int quad8_count_enable_write(struct counter_device *counter,
-				    struct counter_count *count, u8 enable)
+static ssize_t quad8_count_enable_read(struct counter_device *counter,
+	struct counter_count *count, void *private, char *buf)
 {
-	struct quad8 *const priv = counter_priv(counter);
+	const struct quad8 *const priv = counter->priv;
+
+	return sprintf(buf, "%u\n", priv->ab_enable[count->id]);
+}
+
+static ssize_t quad8_count_enable_write(struct counter_device *counter,
+	struct counter_count *count, void *private, const char *buf, size_t len)
+{
+	struct quad8 *const priv = counter->priv;
 	const int base_offset = priv->base + 2 * count->id;
-	unsigned long irqflags;
+	int err;
+	bool ab_enable;
 	unsigned int ior_cfg;
 
-	spin_lock_irqsave(&priv->lock, irqflags);
+	err = kstrtobool(buf, &ab_enable);
+	if (err)
+		return err;
 
-	priv->ab_enable[count->id] = enable;
+	mutex_lock(&priv->lock);
 
-	ior_cfg = enable | priv->preset_enable[count->id] << 1 |
-		  priv->irq_trigger[count->id] << 3;
+	priv->ab_enable[count->id] = ab_enable;
+
+	ior_cfg = ab_enable | priv->preset_enable[count->id] << 1;
 
 	/* Load I/O control configuration */
 	outb(QUAD8_CTR_IOR | ior_cfg, base_offset + 1);
 
-	spin_unlock_irqrestore(&priv->lock, irqflags);
+	mutex_unlock(&priv->lock);
 
-	return 0;
+	return len;
 }
 
 static const char *const quad8_noise_error_states[] = {
@@ -694,9 +618,9 @@ static const char *const quad8_noise_error_states[] = {
 };
 
 static int quad8_error_noise_get(struct counter_device *counter,
-				 struct counter_count *count, u32 *noise_error)
+	struct counter_count *count, size_t *noise_error)
 {
-	const struct quad8 *const priv = counter_priv(counter);
+	const struct quad8 *const priv = counter->priv;
 	const int base_offset = priv->base + 2 * count->id + 1;
 
 	*noise_error = !!(inb(base_offset) & QUAD8_FLAG_E);
@@ -704,14 +628,18 @@ static int quad8_error_noise_get(struct counter_device *counter,
 	return 0;
 }
 
-static int quad8_count_preset_read(struct counter_device *counter,
-				   struct counter_count *count, u64 *preset)
+static struct counter_count_enum_ext quad8_error_noise_enum = {
+	.items = quad8_noise_error_states,
+	.num_items = ARRAY_SIZE(quad8_noise_error_states),
+	.get = quad8_error_noise_get
+};
+
+static ssize_t quad8_count_preset_read(struct counter_device *counter,
+	struct counter_count *count, void *private, char *buf)
 {
-	const struct quad8 *const priv = counter_priv(counter);
+	const struct quad8 *const priv = counter->priv;
 
-	*preset = priv->preset[count->id];
-
-	return 0;
+	return sprintf(buf, "%u\n", priv->preset[count->id]);
 }
 
 static void quad8_preset_register_set(struct quad8 *const priv, const int id,
@@ -730,166 +658,176 @@ static void quad8_preset_register_set(struct quad8 *const priv, const int id,
 		outb(preset >> (8 * i), base_offset);
 }
 
-static int quad8_count_preset_write(struct counter_device *counter,
-				    struct counter_count *count, u64 preset)
+static ssize_t quad8_count_preset_write(struct counter_device *counter,
+	struct counter_count *count, void *private, const char *buf, size_t len)
 {
-	struct quad8 *const priv = counter_priv(counter);
-	unsigned long irqflags;
+	struct quad8 *const priv = counter->priv;
+	unsigned int preset;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &preset);
+	if (ret)
+		return ret;
 
 	/* Only 24-bit values are supported */
 	if (preset > 0xFFFFFF)
 		return -ERANGE;
 
-	spin_lock_irqsave(&priv->lock, irqflags);
+	mutex_lock(&priv->lock);
 
 	quad8_preset_register_set(priv, count->id, preset);
 
-	spin_unlock_irqrestore(&priv->lock, irqflags);
+	mutex_unlock(&priv->lock);
 
-	return 0;
+	return len;
 }
 
-static int quad8_count_ceiling_read(struct counter_device *counter,
-				    struct counter_count *count, u64 *ceiling)
+static ssize_t quad8_count_ceiling_read(struct counter_device *counter,
+	struct counter_count *count, void *private, char *buf)
 {
-	struct quad8 *const priv = counter_priv(counter);
-	unsigned long irqflags;
+	struct quad8 *const priv = counter->priv;
 
-	spin_lock_irqsave(&priv->lock, irqflags);
+	mutex_lock(&priv->lock);
 
 	/* Range Limit and Modulo-N count modes use preset value as ceiling */
 	switch (priv->count_mode[count->id]) {
 	case 1:
 	case 3:
-		*ceiling = priv->preset[count->id];
-		break;
-	default:
-		/* By default 0x1FFFFFF (25 bits unsigned) is maximum count */
-		*ceiling = 0x1FFFFFF;
-		break;
+		mutex_unlock(&priv->lock);
+		return sprintf(buf, "%u\n", priv->preset[count->id]);
 	}
 
-	spin_unlock_irqrestore(&priv->lock, irqflags);
+	mutex_unlock(&priv->lock);
 
-	return 0;
+	/* By default 0x1FFFFFF (25 bits unsigned) is maximum count */
+	return sprintf(buf, "33554431\n");
 }
 
-static int quad8_count_ceiling_write(struct counter_device *counter,
-				     struct counter_count *count, u64 ceiling)
+static ssize_t quad8_count_ceiling_write(struct counter_device *counter,
+	struct counter_count *count, void *private, const char *buf, size_t len)
 {
-	struct quad8 *const priv = counter_priv(counter);
-	unsigned long irqflags;
+	struct quad8 *const priv = counter->priv;
+	unsigned int ceiling;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &ceiling);
+	if (ret)
+		return ret;
 
 	/* Only 24-bit values are supported */
 	if (ceiling > 0xFFFFFF)
 		return -ERANGE;
 
-	spin_lock_irqsave(&priv->lock, irqflags);
+	mutex_lock(&priv->lock);
 
 	/* Range Limit and Modulo-N count modes use preset value as ceiling */
 	switch (priv->count_mode[count->id]) {
 	case 1:
 	case 3:
 		quad8_preset_register_set(priv, count->id, ceiling);
-		spin_unlock_irqrestore(&priv->lock, irqflags);
-		return 0;
+		mutex_unlock(&priv->lock);
+		return len;
 	}
 
-	spin_unlock_irqrestore(&priv->lock, irqflags);
+	mutex_unlock(&priv->lock);
 
 	return -EINVAL;
 }
 
-static int quad8_count_preset_enable_read(struct counter_device *counter,
-					  struct counter_count *count,
-					  u8 *preset_enable)
+static ssize_t quad8_count_preset_enable_read(struct counter_device *counter,
+	struct counter_count *count, void *private, char *buf)
 {
-	const struct quad8 *const priv = counter_priv(counter);
+	const struct quad8 *const priv = counter->priv;
 
-	*preset_enable = !priv->preset_enable[count->id];
-
-	return 0;
+	return sprintf(buf, "%u\n", !priv->preset_enable[count->id]);
 }
 
-static int quad8_count_preset_enable_write(struct counter_device *counter,
-					   struct counter_count *count,
-					   u8 preset_enable)
+static ssize_t quad8_count_preset_enable_write(struct counter_device *counter,
+	struct counter_count *count, void *private, const char *buf, size_t len)
 {
-	struct quad8 *const priv = counter_priv(counter);
+	struct quad8 *const priv = counter->priv;
 	const int base_offset = priv->base + 2 * count->id + 1;
-	unsigned long irqflags;
+	bool preset_enable;
+	int ret;
 	unsigned int ior_cfg;
+
+	ret = kstrtobool(buf, &preset_enable);
+	if (ret)
+		return ret;
 
 	/* Preset enable is active low in Input/Output Control register */
 	preset_enable = !preset_enable;
 
-	spin_lock_irqsave(&priv->lock, irqflags);
+	mutex_lock(&priv->lock);
 
 	priv->preset_enable[count->id] = preset_enable;
 
-	ior_cfg = priv->ab_enable[count->id] | preset_enable << 1 |
-		  priv->irq_trigger[count->id] << 3;
+	ior_cfg = priv->ab_enable[count->id] | (unsigned int)preset_enable << 1;
 
 	/* Load I/O control configuration to Input / Output Control Register */
 	outb(QUAD8_CTR_IOR | ior_cfg, base_offset);
 
-	spin_unlock_irqrestore(&priv->lock, irqflags);
+	mutex_unlock(&priv->lock);
 
-	return 0;
+	return len;
 }
 
-static int quad8_signal_cable_fault_read(struct counter_device *counter,
-					 struct counter_signal *signal,
-					 u8 *cable_fault)
+static ssize_t quad8_signal_cable_fault_read(struct counter_device *counter,
+					     struct counter_signal *signal,
+					     void *private, char *buf)
 {
-	struct quad8 *const priv = counter_priv(counter);
+	struct quad8 *const priv = counter->priv;
 	const size_t channel_id = signal->id / 2;
-	unsigned long irqflags;
 	bool disabled;
 	unsigned int status;
+	unsigned int fault;
 
-	spin_lock_irqsave(&priv->lock, irqflags);
+	mutex_lock(&priv->lock);
 
 	disabled = !(priv->cable_fault_enable & BIT(channel_id));
 
 	if (disabled) {
-		spin_unlock_irqrestore(&priv->lock, irqflags);
+		mutex_unlock(&priv->lock);
 		return -EINVAL;
 	}
 
 	/* Logic 0 = cable fault */
 	status = inb(priv->base + QUAD8_DIFF_ENCODER_CABLE_STATUS);
 
-	spin_unlock_irqrestore(&priv->lock, irqflags);
+	mutex_unlock(&priv->lock);
 
 	/* Mask respective channel and invert logic */
-	*cable_fault = !(status & BIT(channel_id));
+	fault = !(status & BIT(channel_id));
 
-	return 0;
+	return sprintf(buf, "%u\n", fault);
 }
 
-static int quad8_signal_cable_fault_enable_read(struct counter_device *counter,
-						struct counter_signal *signal,
-						u8 *enable)
+static ssize_t quad8_signal_cable_fault_enable_read(
+	struct counter_device *counter, struct counter_signal *signal,
+	void *private, char *buf)
 {
-	const struct quad8 *const priv = counter_priv(counter);
+	const struct quad8 *const priv = counter->priv;
 	const size_t channel_id = signal->id / 2;
+	const unsigned int enb = !!(priv->cable_fault_enable & BIT(channel_id));
 
-	*enable = !!(priv->cable_fault_enable & BIT(channel_id));
-
-	return 0;
+	return sprintf(buf, "%u\n", enb);
 }
 
-static int quad8_signal_cable_fault_enable_write(struct counter_device *counter,
-						 struct counter_signal *signal,
-						 u8 enable)
+static ssize_t quad8_signal_cable_fault_enable_write(
+	struct counter_device *counter, struct counter_signal *signal,
+	void *private, const char *buf, size_t len)
 {
-	struct quad8 *const priv = counter_priv(counter);
+	struct quad8 *const priv = counter->priv;
 	const size_t channel_id = signal->id / 2;
-	unsigned long irqflags;
+	bool enable;
+	int ret;
 	unsigned int cable_fault_enable;
 
-	spin_lock_irqsave(&priv->lock, irqflags);
+	ret = kstrtobool(buf, &enable);
+	if (ret)
+		return ret;
+
+	mutex_lock(&priv->lock);
 
 	if (enable)
 		priv->cable_fault_enable |= BIT(channel_id);
@@ -901,32 +839,35 @@ static int quad8_signal_cable_fault_enable_write(struct counter_device *counter,
 
 	outb(cable_fault_enable, priv->base + QUAD8_DIFF_ENCODER_CABLE_STATUS);
 
-	spin_unlock_irqrestore(&priv->lock, irqflags);
+	mutex_unlock(&priv->lock);
 
-	return 0;
+	return len;
 }
 
-static int quad8_signal_fck_prescaler_read(struct counter_device *counter,
-					   struct counter_signal *signal,
-					   u8 *prescaler)
+static ssize_t quad8_signal_fck_prescaler_read(struct counter_device *counter,
+	struct counter_signal *signal, void *private, char *buf)
 {
-	const struct quad8 *const priv = counter_priv(counter);
+	const struct quad8 *const priv = counter->priv;
+	const size_t channel_id = signal->id / 2;
 
-	*prescaler = priv->fck_prescaler[signal->id / 2];
-
-	return 0;
+	return sprintf(buf, "%u\n", priv->fck_prescaler[channel_id]);
 }
 
-static int quad8_signal_fck_prescaler_write(struct counter_device *counter,
-					    struct counter_signal *signal,
-					    u8 prescaler)
+static ssize_t quad8_signal_fck_prescaler_write(struct counter_device *counter,
+	struct counter_signal *signal, void *private, const char *buf,
+	size_t len)
 {
-	struct quad8 *const priv = counter_priv(counter);
+	struct quad8 *const priv = counter->priv;
 	const size_t channel_id = signal->id / 2;
 	const int base_offset = priv->base + 2 * channel_id;
-	unsigned long irqflags;
+	u8 prescaler;
+	int ret;
 
-	spin_lock_irqsave(&priv->lock, irqflags);
+	ret = kstrtou8(buf, 0, &prescaler);
+	if (ret)
+		return ret;
+
+	mutex_lock(&priv->lock);
 
 	priv->fck_prescaler[channel_id] = prescaler;
 
@@ -938,32 +879,33 @@ static int quad8_signal_fck_prescaler_write(struct counter_device *counter,
 	outb(QUAD8_CTR_RLD | QUAD8_RLD_RESET_BP | QUAD8_RLD_PRESET_PSC,
 	     base_offset + 1);
 
-	spin_unlock_irqrestore(&priv->lock, irqflags);
+	mutex_unlock(&priv->lock);
 
-	return 0;
+	return len;
 }
 
-static struct counter_comp quad8_signal_ext[] = {
-	COUNTER_COMP_SIGNAL_BOOL("cable_fault", quad8_signal_cable_fault_read,
-				 NULL),
-	COUNTER_COMP_SIGNAL_BOOL("cable_fault_enable",
-				 quad8_signal_cable_fault_enable_read,
-				 quad8_signal_cable_fault_enable_write),
-	COUNTER_COMP_SIGNAL_U8("filter_clock_prescaler",
-			       quad8_signal_fck_prescaler_read,
-			       quad8_signal_fck_prescaler_write)
+static const struct counter_signal_ext quad8_signal_ext[] = {
+	{
+		.name = "cable_fault",
+		.read = quad8_signal_cable_fault_read
+	},
+	{
+		.name = "cable_fault_enable",
+		.read = quad8_signal_cable_fault_enable_read,
+		.write = quad8_signal_cable_fault_enable_write
+	},
+	{
+		.name = "filter_clock_prescaler",
+		.read = quad8_signal_fck_prescaler_read,
+		.write = quad8_signal_fck_prescaler_write
+	}
 };
 
-static DEFINE_COUNTER_ENUM(quad8_index_pol_enum, quad8_index_polarity_modes);
-static DEFINE_COUNTER_ENUM(quad8_synch_mode_enum, quad8_synchronous_modes);
-
-static struct counter_comp quad8_index_ext[] = {
-	COUNTER_COMP_SIGNAL_ENUM("index_polarity", quad8_index_polarity_get,
-				 quad8_index_polarity_set,
-				 quad8_index_pol_enum),
-	COUNTER_COMP_SIGNAL_ENUM("synchronous_mode", quad8_synchronous_mode_get,
-				 quad8_synchronous_mode_set,
-				 quad8_synch_mode_enum),
+static const struct counter_signal_ext quad8_index_ext[] = {
+	COUNTER_SIGNAL_ENUM("index_polarity", &quad8_index_pol_enum),
+	COUNTER_SIGNAL_ENUM_AVAILABLE("index_polarity",	&quad8_index_pol_enum),
+	COUNTER_SIGNAL_ENUM("synchronous_mode", &quad8_syn_mode_enum),
+	COUNTER_SIGNAL_ENUM_AVAILABLE("synchronous_mode", &quad8_syn_mode_enum)
 };
 
 #define QUAD8_QUAD_SIGNAL(_id, _name) {		\
@@ -1032,30 +974,39 @@ static struct counter_synapse quad8_count_synapses[][3] = {
 	QUAD8_COUNT_SYNAPSES(6), QUAD8_COUNT_SYNAPSES(7)
 };
 
-static const enum counter_count_mode quad8_cnt_modes[] = {
-	COUNTER_COUNT_MODE_NORMAL,
-	COUNTER_COUNT_MODE_RANGE_LIMIT,
-	COUNTER_COUNT_MODE_NON_RECYCLE,
-	COUNTER_COUNT_MODE_MODULO_N,
-};
-
-static DEFINE_COUNTER_AVAILABLE(quad8_count_mode_available, quad8_cnt_modes);
-
-static DEFINE_COUNTER_ENUM(quad8_error_noise_enum, quad8_noise_error_states);
-
-static struct counter_comp quad8_count_ext[] = {
-	COUNTER_COMP_CEILING(quad8_count_ceiling_read,
-			     quad8_count_ceiling_write),
-	COUNTER_COMP_FLOOR(quad8_count_floor_read, NULL),
-	COUNTER_COMP_COUNT_MODE(quad8_count_mode_read, quad8_count_mode_write,
-				quad8_count_mode_available),
-	COUNTER_COMP_DIRECTION(quad8_direction_read),
-	COUNTER_COMP_ENABLE(quad8_count_enable_read, quad8_count_enable_write),
-	COUNTER_COMP_COUNT_ENUM("error_noise", quad8_error_noise_get, NULL,
-				quad8_error_noise_enum),
-	COUNTER_COMP_PRESET(quad8_count_preset_read, quad8_count_preset_write),
-	COUNTER_COMP_PRESET_ENABLE(quad8_count_preset_enable_read,
-				   quad8_count_preset_enable_write),
+static const struct counter_count_ext quad8_count_ext[] = {
+	{
+		.name = "ceiling",
+		.read = quad8_count_ceiling_read,
+		.write = quad8_count_ceiling_write
+	},
+	{
+		.name = "floor",
+		.read = quad8_count_floor_read
+	},
+	COUNTER_COUNT_ENUM("count_mode", &quad8_cnt_mode_enum),
+	COUNTER_COUNT_ENUM_AVAILABLE("count_mode", &quad8_cnt_mode_enum),
+	{
+		.name = "direction",
+		.read = quad8_count_direction_read
+	},
+	{
+		.name = "enable",
+		.read = quad8_count_enable_read,
+		.write = quad8_count_enable_write
+	},
+	COUNTER_COUNT_ENUM("error_noise", &quad8_error_noise_enum),
+	COUNTER_COUNT_ENUM_AVAILABLE("error_noise", &quad8_error_noise_enum),
+	{
+		.name = "preset",
+		.read = quad8_count_preset_read,
+		.write = quad8_count_preset_write
+	},
+	{
+		.name = "preset_enable",
+		.read = quad8_count_preset_enable_read,
+		.write = quad8_count_preset_enable_write
+	}
 };
 
 #define QUAD8_COUNT(_id, _cntname) {					\
@@ -1080,56 +1031,11 @@ static struct counter_count quad8_counts[] = {
 	QUAD8_COUNT(7, "Channel 8 Count")
 };
 
-static irqreturn_t quad8_irq_handler(int irq, void *private)
-{
-	struct counter_device *counter = private;
-	struct quad8 *const priv = counter_priv(counter);
-	const unsigned long base = priv->base;
-	unsigned long irq_status;
-	unsigned long channel;
-	u8 event;
-
-	irq_status = inb(base + QUAD8_REG_INTERRUPT_STATUS);
-	if (!irq_status)
-		return IRQ_NONE;
-
-	for_each_set_bit(channel, &irq_status, QUAD8_NUM_COUNTERS) {
-		switch (priv->irq_trigger[channel]) {
-		case QUAD8_EVENT_CARRY:
-			event = COUNTER_EVENT_OVERFLOW;
-				break;
-		case QUAD8_EVENT_COMPARE:
-			event = COUNTER_EVENT_THRESHOLD;
-				break;
-		case QUAD8_EVENT_CARRY_BORROW:
-			event = COUNTER_EVENT_OVERFLOW_UNDERFLOW;
-				break;
-		case QUAD8_EVENT_INDEX:
-			event = COUNTER_EVENT_INDEX;
-				break;
-		default:
-			/* should never reach this path */
-			WARN_ONCE(true, "invalid interrupt trigger function %u configured for channel %lu\n",
-				  priv->irq_trigger[channel], channel);
-			continue;
-		}
-
-		counter_push_event(counter, event, channel);
-	}
-
-	/* Clear pending interrupts on device */
-	outb(QUAD8_CHAN_OP_ENABLE_INTERRUPT_FUNC, base + QUAD8_REG_CHAN_OP);
-
-	return IRQ_HANDLED;
-}
-
 static int quad8_probe(struct device *dev, unsigned int id)
 {
-	struct counter_device *counter;
 	struct quad8 *priv;
 	int i, j;
 	unsigned int base_offset;
-	int err;
 
 	if (!devm_request_region(dev, base[id], QUAD8_EXTENT, dev_name(dev))) {
 		dev_err(dev, "Unable to lock port addresses (0x%X-0x%X)\n",
@@ -1137,25 +1043,24 @@ static int quad8_probe(struct device *dev, unsigned int id)
 		return -EBUSY;
 	}
 
-	counter = devm_counter_alloc(dev, sizeof(*priv));
-	if (!counter)
+	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+	if (!priv)
 		return -ENOMEM;
-	priv = counter_priv(counter);
 
 	/* Initialize Counter device and driver data */
-	counter->name = dev_name(dev);
-	counter->parent = dev;
-	counter->ops = &quad8_ops;
-	counter->counts = quad8_counts;
-	counter->num_counts = ARRAY_SIZE(quad8_counts);
-	counter->signals = quad8_signals;
-	counter->num_signals = ARRAY_SIZE(quad8_signals);
+	priv->counter.name = dev_name(dev);
+	priv->counter.parent = dev;
+	priv->counter.ops = &quad8_ops;
+	priv->counter.counts = quad8_counts;
+	priv->counter.num_counts = ARRAY_SIZE(quad8_counts);
+	priv->counter.signals = quad8_signals;
+	priv->counter.num_signals = ARRAY_SIZE(quad8_signals);
+	priv->counter.priv = priv;
 	priv->base = base[id];
 
-	spin_lock_init(&priv->lock);
+	/* Initialize mutex */
+	mutex_init(&priv->lock);
 
-	/* Reset Index/Interrupt Register */
-	outb(0x00, base[id] + QUAD8_REG_INDEX_INTERRUPT);
 	/* Reset all counters and disable interrupt function */
 	outb(QUAD8_CHAN_OP_RESET_COUNTERS, base[id] + QUAD8_REG_CHAN_OP);
 	/* Set initial configuration for all counters */
@@ -1185,19 +1090,10 @@ static int quad8_probe(struct device *dev, unsigned int id)
 	}
 	/* Disable Differential Encoder Cable Status for all channels */
 	outb(0xFF, base[id] + QUAD8_DIFF_ENCODER_CABLE_STATUS);
-	/* Enable all counters and enable interrupt function */
-	outb(QUAD8_CHAN_OP_ENABLE_INTERRUPT_FUNC, base[id] + QUAD8_REG_CHAN_OP);
+	/* Enable all counters */
+	outb(QUAD8_CHAN_OP_ENABLE_COUNTERS, base[id] + QUAD8_REG_CHAN_OP);
 
-	err = devm_request_irq(&counter->dev, irq[id], quad8_irq_handler,
-			       IRQF_SHARED, counter->name, counter);
-	if (err)
-		return err;
-
-	err = devm_counter_add(dev, counter);
-	if (err < 0)
-		return dev_err_probe(dev, err, "Failed to add counter\n");
-
-	return 0;
+	return devm_counter_register(dev, &priv->counter);
 }
 
 static struct isa_driver quad8_driver = {

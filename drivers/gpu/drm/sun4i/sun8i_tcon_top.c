@@ -128,6 +128,7 @@ static int sun8i_tcon_top_bind(struct device *dev, struct device *master,
 	struct clk_hw_onecell_data *clk_data;
 	struct sun8i_tcon_top *tcon_top;
 	const struct sun8i_tcon_top_quirks *quirks;
+	struct resource *res;
 	void __iomem *regs;
 	int ret, i;
 
@@ -157,7 +158,8 @@ static int sun8i_tcon_top_bind(struct device *dev, struct device *master,
 		return PTR_ERR(tcon_top->bus);
 	}
 
-	regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	regs = devm_ioremap_resource(dev, res);
 	tcon_top->regs = regs;
 	if (IS_ERR(regs))
 		return PTR_ERR(regs);

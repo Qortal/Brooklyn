@@ -106,7 +106,7 @@ int drm_getmagic(struct drm_device *dev, void *data, struct drm_file *file_priv)
 	auth->magic = file_priv->magic;
 	mutex_unlock(&dev->master_mutex);
 
-	drm_dbg_core(dev, "%u\n", auth->magic);
+	DRM_DEBUG("%u\n", auth->magic);
 
 	return ret < 0 ? ret : 0;
 }
@@ -117,7 +117,7 @@ int drm_authmagic(struct drm_device *dev, void *data,
 	struct drm_auth *auth = data;
 	struct drm_file *file;
 
-	drm_dbg_core(dev, "%u\n", auth->magic);
+	DRM_DEBUG("%u\n", auth->magic);
 
 	mutex_lock(&dev->master_mutex);
 	file = idr_find(&file_priv->master->magic_map, auth->magic);
@@ -274,9 +274,7 @@ int drm_setmaster_ioctl(struct drm_device *dev, void *data,
 	}
 
 	if (file_priv->master->lessor != NULL) {
-		drm_dbg_lease(dev,
-			      "Attempt to set lessee %d as master\n",
-			      file_priv->master->lessee_id);
+		DRM_DEBUG_LEASE("Attempt to set lessee %d as master\n", file_priv->master->lessee_id);
 		ret = -EINVAL;
 		goto out_unlock;
 	}
@@ -317,9 +315,7 @@ int drm_dropmaster_ioctl(struct drm_device *dev, void *data,
 	}
 
 	if (file_priv->master->lessor != NULL) {
-		drm_dbg_lease(dev,
-			      "Attempt to drop lessee %d as master\n",
-			      file_priv->master->lessee_id);
+		DRM_DEBUG_LEASE("Attempt to drop lessee %d as master\n", file_priv->master->lessee_id);
 		ret = -EINVAL;
 		goto out_unlock;
 	}

@@ -57,6 +57,7 @@ int st_sensors_i2c_configure(struct iio_dev *indio_dev,
 
 	indio_dev->name = client->name;
 
+	sdata->dev = &client->dev;
 	sdata->irq = client->irq;
 
 	return 0;

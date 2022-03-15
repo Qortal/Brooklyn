@@ -362,7 +362,9 @@ calc_sync_msg(unsigned int period, unsigned int offset, unsigned int fast,
 	msg[1] = offset;
 }
 
-static int wd33c93_queuecommand_lck(struct scsi_cmnd *cmd)
+static int
+wd33c93_queuecommand_lck(struct scsi_cmnd *cmd,
+		void (*done)(struct scsi_cmnd *))
 {
 	struct WD33C93_hostdata *hostdata;
 	struct scsi_cmnd *tmp;
@@ -374,9 +376,11 @@ static int wd33c93_queuecommand_lck(struct scsi_cmnd *cmd)
 
 /* Set up a few fields in the scsi_cmnd structure for our own use:
  *  - host_scribble is the pointer to the next cmd in the input queue
+ *  - scsi_done points to the routine we call when a cmd is finished
  *  - result is what you'd expect
  */
 	cmd->host_scribble = NULL;
+	cmd->scsi_done = done;
 	cmd->result = 0;
 
 /* We use the Scsi_Pointer structure that's included with each command
@@ -852,7 +856,7 @@ wd33c93_intr(struct Scsi_Host *instance)
 		cmd->result = DID_NO_CONNECT << 16;
 		hostdata->busy[cmd->device->id] &= ~(1 << (cmd->device->lun & 0xff));
 		hostdata->state = S_UNCONNECTED;
-		scsi_done(cmd);
+		cmd->scsi_done(cmd);
 
 		/* From esp.c:
 		 * There is a window of time within the scsi_done() path
@@ -1179,7 +1183,7 @@ wd33c93_intr(struct Scsi_Host *instance)
 				scsi_msg_to_host_byte(cmd, cmd->SCp.Message);
 				set_status_byte(cmd, cmd->SCp.Status);
 			}
-			scsi_done(cmd);
+			cmd->scsi_done(cmd);
 
 /* We are no longer  connected to a target - check to see if
  * there are commands waiting to be executed.
@@ -1266,7 +1270,7 @@ wd33c93_intr(struct Scsi_Host *instance)
 			scsi_msg_to_host_byte(cmd, cmd->SCp.Message);
 			set_status_byte(cmd, cmd->SCp.Status);
 		}
-		scsi_done(cmd);
+		cmd->scsi_done(cmd);
 
 /* We are no longer connected to a target - check to see if
  * there are commands waiting to be executed.
@@ -1302,7 +1306,7 @@ wd33c93_intr(struct Scsi_Host *instance)
 				scsi_msg_to_host_byte(cmd, cmd->SCp.Message);
 				set_status_byte(cmd, cmd->SCp.Status);
 			}
-			scsi_done(cmd);
+			cmd->scsi_done(cmd);
 			break;
 		case S_PRE_TMP_DISC:
 		case S_RUNNING_LEVEL2:
@@ -1632,7 +1636,7 @@ wd33c93_abort(struct scsi_cmnd * cmd)
 			    ("scsi%d: Abort - removing command from input_Q. ",
 			     instance->host_no);
 			enable_irq(cmd->device->host->irq);
-			scsi_done(cmd);
+			cmd->scsi_done(cmd);
 			return SUCCESS;
 		}
 		prev = tmp;
@@ -1707,7 +1711,7 @@ wd33c93_abort(struct scsi_cmnd * cmd)
 		wd33c93_execute(instance);
 
 		enable_irq(cmd->device->host->irq);
-		scsi_done(cmd);
+		cmd->scsi_done(cmd);
 		return SUCCESS;
 	}
 

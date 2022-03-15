@@ -10,12 +10,12 @@
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/types.h>
 
 #define INTERRUPT_CNT_NAME "interrupt-cnt"
 
 struct interrupt_cnt_priv {
 	atomic_t count;
+	struct counter_device counter;
 	struct gpio_desc *gpio;
 	int irq;
 	bool enabled;
@@ -33,23 +33,30 @@ static irqreturn_t interrupt_cnt_isr(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int interrupt_cnt_enable_read(struct counter_device *counter,
-				     struct counter_count *count, u8 *enable)
+static ssize_t interrupt_cnt_enable_read(struct counter_device *counter,
+					 struct counter_count *count,
+					 void *private, char *buf)
 {
-	struct interrupt_cnt_priv *priv = counter_priv(counter);
+	struct interrupt_cnt_priv *priv = counter->priv;
 
-	*enable = priv->enabled;
-
-	return 0;
+	return sysfs_emit(buf, "%d\n", priv->enabled);
 }
 
-static int interrupt_cnt_enable_write(struct counter_device *counter,
-				      struct counter_count *count, u8 enable)
+static ssize_t interrupt_cnt_enable_write(struct counter_device *counter,
+					  struct counter_count *count,
+					  void *private, const char *buf,
+					  size_t len)
 {
-	struct interrupt_cnt_priv *priv = counter_priv(counter);
+	struct interrupt_cnt_priv *priv = counter->priv;
+	bool enable;
+	ssize_t ret;
+
+	ret = kstrtobool(buf, &enable);
+	if (ret)
+		return ret;
 
 	if (priv->enabled == enable)
-		return 0;
+		return len;
 
 	if (enable) {
 		priv->enabled = true;
@@ -59,32 +66,35 @@ static int interrupt_cnt_enable_write(struct counter_device *counter,
 		priv->enabled = false;
 	}
 
-	return 0;
+	return len;
 }
 
-static struct counter_comp interrupt_cnt_ext[] = {
-	COUNTER_COMP_ENABLE(interrupt_cnt_enable_read,
-			    interrupt_cnt_enable_write),
+static const struct counter_count_ext interrupt_cnt_ext[] = {
+	{
+		.name = "enable",
+		.read = interrupt_cnt_enable_read,
+		.write = interrupt_cnt_enable_write,
+	},
 };
 
 static const enum counter_synapse_action interrupt_cnt_synapse_actions[] = {
 	COUNTER_SYNAPSE_ACTION_RISING_EDGE,
 };
 
-static int interrupt_cnt_action_read(struct counter_device *counter,
-				     struct counter_count *count,
-				     struct counter_synapse *synapse,
-				     enum counter_synapse_action *action)
+static int interrupt_cnt_action_get(struct counter_device *counter,
+				    struct counter_count *count,
+				    struct counter_synapse *synapse,
+				    size_t *action)
 {
-	*action = COUNTER_SYNAPSE_ACTION_RISING_EDGE;
+	*action = 0;
 
 	return 0;
 }
 
 static int interrupt_cnt_read(struct counter_device *counter,
-			      struct counter_count *count, u64 *val)
+			      struct counter_count *count, unsigned long *val)
 {
-	struct interrupt_cnt_priv *priv = counter_priv(counter);
+	struct interrupt_cnt_priv *priv = counter->priv;
 
 	*val = atomic_read(&priv->count);
 
@@ -92,9 +102,10 @@ static int interrupt_cnt_read(struct counter_device *counter,
 }
 
 static int interrupt_cnt_write(struct counter_device *counter,
-			       struct counter_count *count, const u64 val)
+			       struct counter_count *count,
+			       const unsigned long val)
 {
-	struct interrupt_cnt_priv *priv = counter_priv(counter);
+	struct interrupt_cnt_priv *priv = counter->priv;
 
 	if (val != (typeof(priv->count.counter))val)
 		return -ERANGE;
@@ -108,11 +119,11 @@ static const enum counter_function interrupt_cnt_functions[] = {
 	COUNTER_FUNCTION_INCREASE,
 };
 
-static int interrupt_cnt_function_read(struct counter_device *counter,
-				       struct counter_count *count,
-				       enum counter_function *function)
+static int interrupt_cnt_function_get(struct counter_device *counter,
+				      struct counter_count *count,
+				      size_t *function)
 {
-	*function = COUNTER_FUNCTION_INCREASE;
+	*function = 0;
 
 	return 0;
 }
@@ -121,7 +132,7 @@ static int interrupt_cnt_signal_read(struct counter_device *counter,
 				     struct counter_signal *signal,
 				     enum counter_signal_level *level)
 {
-	struct interrupt_cnt_priv *priv = counter_priv(counter);
+	struct interrupt_cnt_priv *priv = counter->priv;
 	int ret;
 
 	if (!priv->gpio)
@@ -137,24 +148,22 @@ static int interrupt_cnt_signal_read(struct counter_device *counter,
 }
 
 static const struct counter_ops interrupt_cnt_ops = {
-	.action_read = interrupt_cnt_action_read,
+	.action_get = interrupt_cnt_action_get,
 	.count_read = interrupt_cnt_read,
 	.count_write = interrupt_cnt_write,
-	.function_read = interrupt_cnt_function_read,
+	.function_get = interrupt_cnt_function_get,
 	.signal_read  = interrupt_cnt_signal_read,
 };
 
 static int interrupt_cnt_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct counter_device *counter;
 	struct interrupt_cnt_priv *priv;
 	int ret;
 
-	counter = devm_counter_alloc(dev, sizeof(*priv));
-	if (!counter)
+	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
+	if (!priv)
 		return -ENOMEM;
-	priv = counter_priv(counter);
 
 	priv->irq = platform_get_irq_optional(pdev,  0);
 	if (priv->irq == -ENXIO)
@@ -185,8 +194,8 @@ static int interrupt_cnt_probe(struct platform_device *pdev)
 	if (!priv->signals.name)
 		return -ENOMEM;
 
-	counter->signals = &priv->signals;
-	counter->num_signals = 1;
+	priv->counter.signals = &priv->signals;
+	priv->counter.num_signals = 1;
 
 	priv->synapses.actions_list = interrupt_cnt_synapse_actions;
 	priv->synapses.num_actions = ARRAY_SIZE(interrupt_cnt_synapse_actions);
@@ -200,11 +209,12 @@ static int interrupt_cnt_probe(struct platform_device *pdev)
 	priv->cnts.ext = interrupt_cnt_ext;
 	priv->cnts.num_ext = ARRAY_SIZE(interrupt_cnt_ext);
 
-	counter->name = dev_name(dev);
-	counter->parent = dev;
-	counter->ops = &interrupt_cnt_ops;
-	counter->counts = &priv->cnts;
-	counter->num_counts = 1;
+	priv->counter.priv = priv;
+	priv->counter.name = dev_name(dev);
+	priv->counter.parent = dev;
+	priv->counter.ops = &interrupt_cnt_ops;
+	priv->counter.counts = &priv->cnts;
+	priv->counter.num_counts = 1;
 
 	irq_set_status_flags(priv->irq, IRQ_NOAUTOEN);
 	ret = devm_request_irq(dev, priv->irq, interrupt_cnt_isr,
@@ -213,11 +223,7 @@ static int interrupt_cnt_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	ret = devm_counter_add(dev, counter);
-	if (ret < 0)
-		return dev_err_probe(dev, ret, "Failed to add counter\n");
-
-	return 0;
+	return devm_counter_register(dev, &priv->counter);
 }
 
 static const struct of_device_id interrupt_cnt_of_match[] = {

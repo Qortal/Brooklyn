@@ -185,6 +185,12 @@ struct bnxt_qplib_sgid_tbl {
 	u8				*vlan;
 };
 
+struct bnxt_qplib_pkey_tbl {
+	u16				*tbl;
+	u16				max;
+	u16				active;
+};
+
 struct bnxt_qplib_dpi {
 	u32				dpi;
 	void __iomem			*dbr;
@@ -247,14 +253,14 @@ struct bnxt_qplib_ctx {
 struct bnxt_qplib_res {
 	struct pci_dev			*pdev;
 	struct bnxt_qplib_chip_ctx	*cctx;
-	struct bnxt_qplib_dev_attr      *dattr;
 	struct net_device		*netdev;
+
 	struct bnxt_qplib_rcfw		*rcfw;
 	struct bnxt_qplib_pd_tbl	pd_tbl;
 	struct bnxt_qplib_sgid_tbl	sgid_tbl;
+	struct bnxt_qplib_pkey_tbl	pkey_tbl;
 	struct bnxt_qplib_dpi_tbl	dpi_tbl;
 	bool				prio;
-	bool                            is_vf;
 };
 
 static inline bool bnxt_qplib_is_chip_gen_p5(struct bnxt_qplib_chip_ctx *cctx)
@@ -339,6 +345,7 @@ void bnxt_qplib_free_hwq(struct bnxt_qplib_res *res,
 			 struct bnxt_qplib_hwq *hwq);
 int bnxt_qplib_alloc_init_hwq(struct bnxt_qplib_hwq *hwq,
 			      struct bnxt_qplib_hwq_attr *hwq_attr);
+void bnxt_qplib_get_guid(u8 *dev_addr, u8 *guid);
 int bnxt_qplib_alloc_pd(struct bnxt_qplib_pd_tbl *pd_tbl,
 			struct bnxt_qplib_pd *pd);
 int bnxt_qplib_dealloc_pd(struct bnxt_qplib_res *res,
@@ -442,11 +449,5 @@ static inline void bnxt_qplib_ring_nq_db(struct bnxt_qplib_db_info *info,
 		bnxt_qplib_ring_db(info, type);
 	else
 		bnxt_qplib_ring_db32(info, arm);
-}
-
-static inline bool _is_ext_stats_supported(u16 dev_cap_flags)
-{
-	return dev_cap_flags &
-		CREQ_QUERY_FUNC_RESP_SB_EXT_STATS;
 }
 #endif /* __BNXT_QPLIB_RES_H__ */

@@ -395,6 +395,7 @@ static struct platform_driver meson_irtx_pd = {
 	.remove = meson_irtx_remove,
 	.driver = {
 		.name = DRIVER_NAME,
+		.owner  = THIS_MODULE,
 		.of_match_table = meson_irtx_dt_match,
 	},
 };

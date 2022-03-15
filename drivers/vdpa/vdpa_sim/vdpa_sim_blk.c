@@ -248,8 +248,7 @@ static struct device vdpasim_blk_mgmtdev = {
 	.release = vdpasim_blk_mgmtdev_release,
 };
 
-static int vdpasim_blk_dev_add(struct vdpa_mgmt_dev *mdev, const char *name,
-			       const struct vdpa_dev_set_config *config)
+static int vdpasim_blk_dev_add(struct vdpa_mgmt_dev *mdev, const char *name)
 {
 	struct vdpasim_dev_attr dev_attr = {};
 	struct vdpasim *simdev;

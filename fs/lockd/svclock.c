@@ -470,10 +470,8 @@ nlmsvc_lock(struct svc_rqst *rqstp, struct nlm_file *file,
 	    struct nlm_host *host, struct nlm_lock *lock, int wait,
 	    struct nlm_cookie *cookie, int reclaim)
 {
-#if IS_ENABLED(CONFIG_SUNRPC_DEBUG)
-	struct inode		*inode = nlmsvc_file_inode(file);
-#endif
 	struct nlm_block	*block = NULL;
+	struct inode		*inode = nlmsvc_file_inode(file);
 	int			error;
 	int			mode;
 	int			async_block = 0;
@@ -486,7 +484,7 @@ nlmsvc_lock(struct svc_rqst *rqstp, struct nlm_file *file,
 				(long long)lock->fl.fl_end,
 				wait);
 
-	if (nlmsvc_file_file(file)->f_op->lock) {
+	if (inode->i_sb->s_export_op->flags & EXPORT_OP_SYNC_LOCKS) {
 		async_block = wait;
 		wait = 0;
 	}

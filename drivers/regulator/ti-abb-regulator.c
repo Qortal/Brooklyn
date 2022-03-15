@@ -725,7 +725,9 @@ static int ti_abb_probe(struct platform_device *pdev)
 
 	/* Map ABB resources */
 	if (abb->regs->setup_off || abb->regs->control_off) {
-		abb->base = devm_platform_ioremap_resource_byname(pdev, "base-address");
+		pname = "base-address";
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, pname);
+		abb->base = devm_ioremap_resource(dev, res);
 		if (IS_ERR(abb->base))
 			return PTR_ERR(abb->base);
 
@@ -733,18 +735,35 @@ static int ti_abb_probe(struct platform_device *pdev)
 		abb->control_reg = abb->base + abb->regs->control_off;
 
 	} else {
-		abb->control_reg = devm_platform_ioremap_resource_byname(pdev, "control-address");
+		pname = "control-address";
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, pname);
+		abb->control_reg = devm_ioremap_resource(dev, res);
 		if (IS_ERR(abb->control_reg))
 			return PTR_ERR(abb->control_reg);
 
-		abb->setup_reg = devm_platform_ioremap_resource_byname(pdev, "setup-address");
+		pname = "setup-address";
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, pname);
+		abb->setup_reg = devm_ioremap_resource(dev, res);
 		if (IS_ERR(abb->setup_reg))
 			return PTR_ERR(abb->setup_reg);
 	}
 
-	abb->int_base = devm_platform_ioremap_resource_byname(pdev, "int-address");
-	if (IS_ERR(abb->int_base))
-		return PTR_ERR(abb->int_base);
+	pname = "int-address";
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, pname);
+	if (!res) {
+		dev_err(dev, "Missing '%s' IO resource\n", pname);
+		return -ENODEV;
+	}
+	/*
+	 * We may have shared interrupt register offsets which are
+	 * write-1-to-clear between domains ensuring exclusivity.
+	 */
+	abb->int_base = devm_ioremap(dev, res->start,
+					     resource_size(res));
+	if (!abb->int_base) {
+		dev_err(dev, "Unable to map '%s'\n", pname);
+		return -ENOMEM;
+	}
 
 	/* Map Optional resources */
 	pname = "efuse-address";

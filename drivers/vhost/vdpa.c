@@ -170,7 +170,7 @@ static long vhost_vdpa_set_status(struct vhost_vdpa *v, u8 __user *statusp)
 	 * Userspace shouldn't remove status bits unless reset the
 	 * status to 0.
 	 */
-	if (status != 0 && (status_old & ~status) != 0)
+	if (status != 0 && (ops->get_status(vdpa) & ~status) != 0)
 		return -EINVAL;
 
 	if ((status_old & VIRTIO_CONFIG_S_DRIVER_OK) && !(status & VIRTIO_CONFIG_S_DRIVER_OK))
@@ -178,11 +178,11 @@ static long vhost_vdpa_set_status(struct vhost_vdpa *v, u8 __user *statusp)
 			vhost_vdpa_unsetup_vq_irq(v, i);
 
 	if (status == 0) {
-		ret = vdpa_reset(vdpa);
+		ret = ops->reset(vdpa);
 		if (ret)
 			return ret;
 	} else
-		vdpa_set_status(vdpa, status);
+		ops->set_status(vdpa, status);
 
 	if ((status & VIRTIO_CONFIG_S_DRIVER_OK) && !(status_old & VIRTIO_CONFIG_S_DRIVER_OK))
 		for (i = 0; i < nvqs; i++)
@@ -195,7 +195,7 @@ static int vhost_vdpa_config_validate(struct vhost_vdpa *v,
 				      struct vhost_vdpa_config *c)
 {
 	struct vdpa_device *vdpa = v->vdpa;
-	size_t size = vdpa->config->get_config_size(vdpa);
+	long size = vdpa->config->get_config_size(vdpa);
 
 	if (c->len == 0 || c->off > size)
 		return -EINVAL;
@@ -237,6 +237,7 @@ static long vhost_vdpa_set_config(struct vhost_vdpa *v,
 				  struct vhost_vdpa_config __user *c)
 {
 	struct vdpa_device *vdpa = v->vdpa;
+	const struct vdpa_config_ops *ops = vdpa->config;
 	struct vhost_vdpa_config config;
 	unsigned long size = offsetof(struct vhost_vdpa_config, buf);
 	u8 *buf;
@@ -250,7 +251,7 @@ static long vhost_vdpa_set_config(struct vhost_vdpa *v,
 	if (IS_ERR(buf))
 		return PTR_ERR(buf);
 
-	vdpa_set_config(vdpa, config.off, buf, config.len);
+	ops->set_config(vdpa, config.off, buf, config.len);
 
 	kvfree(buf);
 	return 0;
@@ -262,7 +263,7 @@ static long vhost_vdpa_get_features(struct vhost_vdpa *v, u64 __user *featurep)
 	const struct vdpa_config_ops *ops = vdpa->config;
 	u64 features;
 
-	features = ops->get_device_features(vdpa);
+	features = ops->get_features(vdpa);
 
 	if (copy_to_user(featurep, &features, sizeof(features)))
 		return -EFAULT;
@@ -286,7 +287,7 @@ static long vhost_vdpa_set_features(struct vhost_vdpa *v, u64 __user *featurep)
 	if (copy_from_user(&features, featurep, sizeof(features)))
 		return -EFAULT;
 
-	if (vdpa_set_features(vdpa, features, false))
+	if (vdpa_set_features(vdpa, features))
 		return -EINVAL;
 
 	return 0;
@@ -1014,12 +1015,12 @@ static int vhost_vdpa_release(struct inode *inode, struct file *filep)
 
 	mutex_lock(&d->mutex);
 	filep->private_data = NULL;
-	vhost_vdpa_clean_irq(v);
 	vhost_vdpa_reset(v);
 	vhost_dev_stop(&v->vdev);
 	vhost_vdpa_iotlb_free(v);
 	vhost_vdpa_free_domain(v);
 	vhost_vdpa_config_put(v);
+	vhost_vdpa_clean_irq(v);
 	vhost_dev_cleanup(&v->vdev);
 	kfree(v->vdev.vqs);
 	mutex_unlock(&d->mutex);

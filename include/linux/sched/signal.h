@@ -72,17 +72,6 @@ struct multiprocess_signals {
 	struct hlist_node node;
 };
 
-struct core_thread {
-	struct task_struct *task;
-	struct core_thread *next;
-};
-
-struct core_state {
-	atomic_t nr_threads;
-	struct core_thread dumper;
-	struct completion startup;
-};
-
 /*
  * NOTE! "signal_struct" does not have its own
  * locking, because a shared signal_struct always
@@ -109,15 +98,17 @@ struct signal_struct {
 
 	/* thread group exit support */
 	int			group_exit_code;
-	/* notify group_exec_task when notify_count is less or equal to 0 */
+	/* overloaded:
+	 * - notify group_exit_task when ->count is equal to notify_count
+	 * - everyone except group_exit_task is stopped during signal delivery
+	 *   of fatal signals, group_exit_task processes the signal.
+	 */
 	int			notify_count;
-	struct task_struct	*group_exec_task;
+	struct task_struct	*group_exit_task;
 
 	/* thread group stop support, overloads group_exit_code too */
 	int			group_stop_count;
 	unsigned int		flags; /* see SIGNAL_* flags below */
-
-	struct core_state *core_state; /* coredumping support */
 
 	/*
 	 * PR_SET_CHILD_SUBREAPER marks a process, like a service
@@ -252,6 +243,7 @@ struct signal_struct {
 #define SIGNAL_STOP_STOPPED	0x00000001 /* job control stop in effect */
 #define SIGNAL_STOP_CONTINUED	0x00000002 /* SIGCONT since WCONTINUED reap */
 #define SIGNAL_GROUP_EXIT	0x00000004 /* group exit in progress */
+#define SIGNAL_GROUP_COREDUMP	0x00000008 /* coredump in progress */
 /*
  * Pending notifications to parent.
  */
@@ -267,25 +259,31 @@ struct signal_struct {
 static inline void signal_set_stop_flags(struct signal_struct *sig,
 					 unsigned int flags)
 {
-	WARN_ON(sig->flags & SIGNAL_GROUP_EXIT);
+	WARN_ON(sig->flags & (SIGNAL_GROUP_EXIT|SIGNAL_GROUP_COREDUMP));
 	sig->flags = (sig->flags & ~SIGNAL_STOP_MASK) | flags;
+}
+
+/* If true, all threads except ->group_exit_task have pending SIGKILL */
+static inline int signal_group_exit(const struct signal_struct *sig)
+{
+	return	(sig->flags & SIGNAL_GROUP_EXIT) ||
+		(sig->group_exit_task != NULL);
 }
 
 extern void flush_signals(struct task_struct *);
 extern void ignore_signals(struct task_struct *);
 extern void flush_signal_handlers(struct task_struct *, int force_default);
-extern int dequeue_signal(struct task_struct *task, sigset_t *mask,
-			  kernel_siginfo_t *info, enum pid_type *type);
+extern int dequeue_signal(struct task_struct *task,
+			  sigset_t *mask, kernel_siginfo_t *info);
 
 static inline int kernel_dequeue_signal(void)
 {
 	struct task_struct *task = current;
 	kernel_siginfo_t __info;
-	enum pid_type __type;
 	int ret;
 
 	spin_lock_irq(&task->sighand->siglock);
-	ret = dequeue_signal(task, &task->blocked, &__info, &__type);
+	ret = dequeue_signal(task, &task->blocked, &__info);
 	spin_unlock_irq(&task->sighand->siglock);
 
 	return ret;

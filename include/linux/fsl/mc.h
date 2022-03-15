@@ -91,13 +91,13 @@ struct fsl_mc_resource {
 
 /**
  * struct fsl_mc_device_irq - MC object device message-based interrupt
- * @virq: Linux virtual interrupt number
+ * @msi_desc: pointer to MSI descriptor allocated by fsl_mc_msi_alloc_descs()
  * @mc_dev: MC object device that owns this interrupt
  * @dev_irq_index: device-relative IRQ index
  * @resource: MC generic resource associated with the interrupt
  */
 struct fsl_mc_device_irq {
-	unsigned int virq;
+	struct msi_desc *msi_desc;
 	struct fsl_mc_device *mc_dev;
 	u8 dev_irq_index;
 	struct fsl_mc_resource resource;
@@ -619,20 +619,6 @@ int dpcon_disable(struct fsl_mc_io *mc_io,
 int dpcon_reset(struct fsl_mc_io *mc_io,
 		u32 cmd_flags,
 		u16 token);
-
-int fsl_mc_obj_open(struct fsl_mc_io *mc_io,
-		    u32 cmd_flags,
-		    int obj_id,
-		    char *obj_type,
-		    u16 *token);
-
-int fsl_mc_obj_close(struct fsl_mc_io *mc_io,
-		     u32 cmd_flags,
-		     u16 token);
-
-int fsl_mc_obj_reset(struct fsl_mc_io *mc_io,
-		     u32 cmd_flags,
-		     u16 token);
 
 /**
  * struct dpcon_attr - Structure representing DPCON attributes

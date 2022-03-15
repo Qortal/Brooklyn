@@ -2045,6 +2045,7 @@ nouveau_run_vbios_init(struct drm_device *dev)
 {
 	struct nouveau_drm *drm = nouveau_drm(dev);
 	struct nvbios *bios = &drm->vbios;
+	int ret = 0;
 
 	/* Reset the BIOS head to 0. */
 	bios->state.crtchead = 0;
@@ -2057,7 +2058,7 @@ nouveau_run_vbios_init(struct drm_device *dev)
 		bios->fp.lvds_init_run = false;
 	}
 
-	return 0;
+	return ret;
 }
 
 static bool

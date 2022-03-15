@@ -127,7 +127,8 @@ struct drm_property *drm_property_create(struct drm_device *dev,
 	property->num_values = num_values;
 	INIT_LIST_HEAD(&property->enum_list);
 
-	strscpy_pad(property->name, name, DRM_PROP_NAME_LEN);
+	strncpy(property->name, name, DRM_PROP_NAME_LEN);
+	property->name[DRM_PROP_NAME_LEN-1] = '\0';
 
 	list_add_tail(&property->head, &dev->mode_config.property_list);
 
@@ -420,7 +421,8 @@ int drm_property_add_enum(struct drm_property *property,
 	if (!prop_enum)
 		return -ENOMEM;
 
-	strscpy_pad(prop_enum->name, name, DRM_PROP_NAME_LEN);
+	strncpy(prop_enum->name, name, DRM_PROP_NAME_LEN);
+	prop_enum->name[DRM_PROP_NAME_LEN-1] = '\0';
 	prop_enum->value = value;
 
 	property->values[index] = value;
@@ -473,7 +475,8 @@ int drm_mode_getproperty_ioctl(struct drm_device *dev,
 	if (!property)
 		return -ENOENT;
 
-	strscpy_pad(out_resp->name, property->name, DRM_PROP_NAME_LEN);
+	strncpy(out_resp->name, property->name, DRM_PROP_NAME_LEN);
+	out_resp->name[DRM_PROP_NAME_LEN-1] = 0;
 	out_resp->flags = property->flags;
 
 	value_count = property->num_values;

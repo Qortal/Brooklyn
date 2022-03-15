@@ -369,7 +369,7 @@ static void __exception_irq_entry gic_handle_irq(struct pt_regs *regs)
 			this_cpu_write(sgi_intid, irqstat);
 		}
 
-		generic_handle_domain_irq(gic->domain, irqnr);
+		handle_domain_irq(gic->domain, irqnr, regs);
 	} while (1);
 }
 

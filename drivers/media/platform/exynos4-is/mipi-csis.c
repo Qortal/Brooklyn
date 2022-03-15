@@ -766,6 +766,7 @@ static int s5pcsis_probe(struct platform_device *pdev)
 	const struct of_device_id *of_id;
 	const struct csis_drvdata *drv_data;
 	struct device *dev = &pdev->dev;
+	struct resource *mem_res;
 	struct csis_state *state;
 	int ret = -ENOMEM;
 	int i;
@@ -799,7 +800,8 @@ static int s5pcsis_probe(struct platform_device *pdev)
 	if (IS_ERR(state->phy))
 		return PTR_ERR(state->phy);
 
-	state->regs = devm_platform_ioremap_resource(pdev, 0);
+	mem_res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	state->regs = devm_ioremap_resource(dev, mem_res);
 	if (IS_ERR(state->regs))
 		return PTR_ERR(state->regs);
 

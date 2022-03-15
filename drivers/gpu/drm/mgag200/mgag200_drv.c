@@ -6,6 +6,7 @@
  *          Dave Airlie
  */
 
+#include <linux/console.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/vmalloc.h>
@@ -377,7 +378,7 @@ static struct pci_driver mgag200_pci_driver = {
 
 static int __init mgag200_init(void)
 {
-	if (drm_firmware_drivers_only() && mgag200_modeset == -1)
+	if (vgacon_text_force() && mgag200_modeset == -1)
 		return -EINVAL;
 
 	if (mgag200_modeset == 0)

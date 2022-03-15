@@ -906,7 +906,7 @@ acpi_status pci_acpi_add_pm_notifier(struct acpi_device *dev,
  *	choose highest power _SxD or any lower power
  */
 
-pci_power_t acpi_pci_choose_state(struct pci_dev *pdev)
+static pci_power_t acpi_pci_choose_state(struct pci_dev *pdev)
 {
 	int acpi_state, d_max;
 
@@ -965,20 +965,22 @@ int pci_dev_acpi_reset(struct pci_dev *dev, bool probe)
 	return 0;
 }
 
-bool acpi_pci_power_manageable(struct pci_dev *dev)
+static bool acpi_pci_power_manageable(struct pci_dev *dev)
 {
 	struct acpi_device *adev = ACPI_COMPANION(&dev->dev);
 
-	return adev && acpi_device_power_manageable(adev);
+	if (!adev)
+		return false;
+	return acpi_device_power_manageable(adev);
 }
 
-bool acpi_pci_bridge_d3(struct pci_dev *dev)
+static bool acpi_pci_bridge_d3(struct pci_dev *dev)
 {
 	const union acpi_object *obj;
 	struct acpi_device *adev;
 	struct pci_dev *rpdev;
 
-	if (acpi_pci_disabled || !dev->is_hotplug_bridge)
+	if (!dev->is_hotplug_bridge)
 		return false;
 
 	/* Assume D3 support if the bridge is power-manageable by ACPI. */
@@ -1006,7 +1008,7 @@ bool acpi_pci_bridge_d3(struct pci_dev *dev)
 	return obj->integer.value == 1;
 }
 
-int acpi_pci_set_power_state(struct pci_dev *dev, pci_power_t state)
+static int acpi_pci_set_power_state(struct pci_dev *dev, pci_power_t state)
 {
 	struct acpi_device *adev = ACPI_COMPANION(&dev->dev);
 	static const u8 state_conv[] = {
@@ -1044,7 +1046,7 @@ int acpi_pci_set_power_state(struct pci_dev *dev, pci_power_t state)
 	return error;
 }
 
-pci_power_t acpi_pci_get_power_state(struct pci_dev *dev)
+static pci_power_t acpi_pci_get_power_state(struct pci_dev *dev)
 {
 	struct acpi_device *adev = ACPI_COMPANION(&dev->dev);
 	static const pci_power_t state_conv[] = {
@@ -1066,7 +1068,7 @@ pci_power_t acpi_pci_get_power_state(struct pci_dev *dev)
 	return state_conv[state];
 }
 
-void acpi_pci_refresh_power_state(struct pci_dev *dev)
+static void acpi_pci_refresh_power_state(struct pci_dev *dev)
 {
 	struct acpi_device *adev = ACPI_COMPANION(&dev->dev);
 
@@ -1091,23 +1093,17 @@ static int acpi_pci_propagate_wakeup(struct pci_bus *bus, bool enable)
 	return 0;
 }
 
-int acpi_pci_wakeup(struct pci_dev *dev, bool enable)
+static int acpi_pci_wakeup(struct pci_dev *dev, bool enable)
 {
-	if (acpi_pci_disabled)
-		return 0;
-
 	if (acpi_pm_device_can_wakeup(&dev->dev))
 		return acpi_pm_set_device_wakeup(&dev->dev, enable);
 
 	return acpi_pci_propagate_wakeup(dev->bus, enable);
 }
 
-bool acpi_pci_need_resume(struct pci_dev *dev)
+static bool acpi_pci_need_resume(struct pci_dev *dev)
 {
-	struct acpi_device *adev;
-
-	if (acpi_pci_disabled)
-		return false;
+	struct acpi_device *adev = ACPI_COMPANION(&dev->dev);
 
 	/*
 	 * In some cases (eg. Samsung 305V4A) leaving a bridge in suspend over
@@ -1119,7 +1115,6 @@ bool acpi_pci_need_resume(struct pci_dev *dev)
 	if (pci_is_bridge(dev) && acpi_target_system_state() != ACPI_STATE_S0)
 		return true;
 
-	adev = ACPI_COMPANION(&dev->dev);
 	if (!adev || !acpi_device_power_manageable(adev))
 		return false;
 
@@ -1132,6 +1127,17 @@ bool acpi_pci_need_resume(struct pci_dev *dev)
 
 	return !!adev->power.flags.dsw_present;
 }
+
+static const struct pci_platform_pm_ops acpi_pci_platform_pm = {
+	.bridge_d3 = acpi_pci_bridge_d3,
+	.is_manageable = acpi_pci_power_manageable,
+	.set_state = acpi_pci_set_power_state,
+	.get_state = acpi_pci_get_power_state,
+	.refresh_state = acpi_pci_refresh_power_state,
+	.choose_state = acpi_pci_choose_state,
+	.set_wakeup = acpi_pci_wakeup,
+	.need_resume = acpi_pci_need_resume,
+};
 
 void acpi_pci_add_bus(struct pci_bus *bus)
 {
@@ -1350,9 +1356,13 @@ static void pci_acpi_set_external_facing(struct pci_dev *dev)
 		dev->external_facing = 1;
 }
 
-void pci_acpi_setup(struct device *dev, struct acpi_device *adev)
+static void pci_acpi_setup(struct device *dev)
 {
 	struct pci_dev *pci_dev = to_pci_dev(dev);
+	struct acpi_device *adev = ACPI_COMPANION(dev);
+
+	if (!adev)
+		return;
 
 	pci_acpi_optimize_delay(pci_dev, adev->handle);
 	pci_acpi_set_external_facing(pci_dev);
@@ -1376,9 +1386,13 @@ void pci_acpi_setup(struct device *dev, struct acpi_device *adev)
 	acpi_device_power_add_dependent(adev, dev);
 }
 
-void pci_acpi_cleanup(struct device *dev, struct acpi_device *adev)
+static void pci_acpi_cleanup(struct device *dev)
 {
+	struct acpi_device *adev = ACPI_COMPANION(dev);
 	struct pci_dev *pci_dev = to_pci_dev(dev);
+
+	if (!adev)
+		return;
 
 	pci_acpi_remove_edr_notifier(pci_dev);
 	pci_acpi_remove_pm_notifier(adev);
@@ -1390,6 +1404,20 @@ void pci_acpi_cleanup(struct device *dev, struct acpi_device *adev)
 		device_set_wakeup_capable(dev, false);
 	}
 }
+
+static bool pci_acpi_bus_match(struct device *dev)
+{
+	return dev_is_pci(dev);
+}
+
+static struct acpi_bus_type acpi_pci_bus = {
+	.name = "PCI",
+	.match = pci_acpi_bus_match,
+	.find_companion = acpi_pci_find_companion,
+	.setup = pci_acpi_setup,
+	.cleanup = pci_acpi_cleanup,
+};
+
 
 static struct fwnode_handle *(*pci_msi_get_fwnode_cb)(struct device *dev);
 
@@ -1432,6 +1460,8 @@ struct irq_domain *pci_host_bridge_acpi_msi_domain(struct pci_bus *bus)
 
 static int __init acpi_pci_init(void)
 {
+	int ret;
+
 	if (acpi_gbl_FADT.boot_flags & ACPI_FADT_NO_MSI) {
 		pr_info("ACPI FADT declares the system doesn't support MSI, so disable it\n");
 		pci_no_msi();
@@ -1442,9 +1472,11 @@ static int __init acpi_pci_init(void)
 		pcie_no_aspm();
 	}
 
-	if (acpi_pci_disabled)
+	ret = register_acpi_bus_type(&acpi_pci_bus);
+	if (ret)
 		return 0;
 
+	pci_set_platform_pm(&acpi_pci_platform_pm);
 	acpi_pci_slot_init();
 	acpiphp_init();
 

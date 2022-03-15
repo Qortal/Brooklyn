@@ -464,7 +464,9 @@ static int ads1015_read_raw(struct iio_dev *indio_dev,
 
 	mutex_lock(&data->lock);
 	switch (mask) {
-	case IIO_CHAN_INFO_RAW:
+	case IIO_CHAN_INFO_RAW: {
+		int shift = chan->scan_type.shift;
+
 		ret = iio_device_claim_direct_mode(indio_dev);
 		if (ret)
 			break;
@@ -485,8 +487,7 @@ static int ads1015_read_raw(struct iio_dev *indio_dev,
 			goto release_direct;
 		}
 
-		*val = sign_extend32(*val >> chan->scan_type.shift,
-				     chan->scan_type.realbits - 1);
+		*val = sign_extend32(*val >> shift, 15 - shift);
 
 		ret = ads1015_set_power_state(data, false);
 		if (ret < 0)
@@ -496,6 +497,7 @@ static int ads1015_read_raw(struct iio_dev *indio_dev,
 release_direct:
 		iio_device_release_direct_mode(indio_dev);
 		break;
+	}
 	case IIO_CHAN_INFO_SCALE:
 		idx = data->channel_data[chan->address].pga;
 		*val = ads1015_fullscale_range[idx];
@@ -950,7 +952,7 @@ static int ads1015_probe(struct i2c_client *client,
 	indio_dev->name = ADS1015_DRV_NAME;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 
-	chip = (uintptr_t)device_get_match_data(&client->dev);
+	chip = (enum chip_ids)device_get_match_data(&client->dev);
 	if (chip == ADSXXXX)
 		chip = id->driver_data;
 	switch (chip) {

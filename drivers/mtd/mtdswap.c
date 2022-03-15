@@ -716,6 +716,7 @@ retry:
 		return ret;
 	}
 
+	eb = d->eb_data + *newblock / d->pages_per_eblk;
 	d->page_data[page] = *newblock;
 	d->revmap[oldblock] = PAGE_UNDEF;
 	eb = d->eb_data + oldblock / d->pages_per_eblk;

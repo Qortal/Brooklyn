@@ -390,7 +390,7 @@ enum {
 };
 
 /* Overall command status values */
-enum utp_ocs {
+enum {
 	OCS_SUCCESS			= 0x0,
 	OCS_INVALID_CMD_TABLE_ATTR	= 0x1,
 	OCS_INVALID_PRDT_ATTR		= 0x2,
@@ -403,9 +403,6 @@ enum utp_ocs {
 	OCS_INVALID_CRYPTO_CONFIG	= 0x9,
 	OCS_GENERAL_CRYPTO_ERROR	= 0xA,
 	OCS_INVALID_COMMAND_STATUS	= 0x0F,
-};
-
-enum {
 	MASK_OCS			= 0x0F,
 };
 
@@ -416,18 +413,20 @@ enum {
 
 /**
  * struct ufshcd_sg_entry - UFSHCI PRD Entry
- * @addr: Physical address; DW-0 and DW-1.
+ * @base_addr: Lower 32bit physical address DW-0
+ * @upper_addr: Upper 32bit physical address DW-1
  * @reserved: Reserved for future use DW-2
  * @size: size of physical segment DW-3
  */
 struct ufshcd_sg_entry {
-	__le64    addr;
+	__le32    base_addr;
+	__le32    upper_addr;
 	__le32    reserved;
 	__le32    size;
 };
 
 /**
- * struct utp_transfer_cmd_desc - UTP Command Descriptor (UCD)
+ * struct utp_transfer_cmd_desc - UFS Command Descriptor structure
  * @command_upiu: Command UPIU Frame address
  * @response_upiu: Response UPIU Frame address
  * @prd_table: Physical Region Descriptor
@@ -453,7 +452,7 @@ struct request_desc_header {
 };
 
 /**
- * struct utp_transfer_req_desc - UTP Transfer Request Descriptor (UTRD)
+ * struct utp_transfer_req_desc - UTRD structure
  * @header: UTRD header DW-0 to DW-3
  * @command_desc_base_addr_lo: UCD base address low DW-4
  * @command_desc_base_addr_hi: UCD base address high DW-5

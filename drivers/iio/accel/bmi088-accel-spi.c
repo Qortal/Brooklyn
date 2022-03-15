@@ -58,9 +58,7 @@ static int bmi088_accel_probe(struct spi_device *spi)
 
 static int bmi088_accel_remove(struct spi_device *spi)
 {
-	bmi088_accel_core_remove(&spi->dev);
-
-	return 0;
+	return bmi088_accel_core_remove(&spi->dev);
 }
 
 static const struct spi_device_id bmi088_accel_id[] = {

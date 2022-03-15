@@ -446,4 +446,3 @@ EXPORT_SYMBOL_GPL(vb2_vmalloc_memops);
 MODULE_DESCRIPTION("vmalloc memory handling routines for videobuf2");
 MODULE_AUTHOR("Pawel Osciak <pawel@osciak.com>");
 MODULE_LICENSE("GPL");
-MODULE_IMPORT_NS(DMA_BUF);

@@ -116,8 +116,7 @@ static int s6e63m0_dsi_probe(struct mipi_dsi_device *dsi)
 static int s6e63m0_dsi_remove(struct mipi_dsi_device *dsi)
 {
 	mipi_dsi_detach(dsi);
-	s6e63m0_remove(&dsi->dev);
-	return 0;
+	return s6e63m0_remove(&dsi->dev);
 }
 
 static const struct of_device_id s6e63m0_dsi_of_match[] = {

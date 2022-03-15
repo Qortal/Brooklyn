@@ -93,7 +93,7 @@ static unsigned int dcn301_get_16_bit_backlight_from_pwm(struct panel_cntl *pane
 	return (uint32_t)(current_backlight);
 }
 
-static uint32_t dcn301_panel_cntl_hw_init(struct panel_cntl *panel_cntl)
+uint32_t dcn301_panel_cntl_hw_init(struct panel_cntl *panel_cntl)
 {
 	struct dcn301_panel_cntl *dcn301_panel_cntl = TO_DCN301_PANEL_CNTL(panel_cntl);
 	uint32_t value;
@@ -147,7 +147,7 @@ static uint32_t dcn301_panel_cntl_hw_init(struct panel_cntl *panel_cntl)
 	return current_backlight;
 }
 
-static void dcn301_panel_cntl_destroy(struct panel_cntl **panel_cntl)
+void dcn301_panel_cntl_destroy(struct panel_cntl **panel_cntl)
 {
 	struct dcn301_panel_cntl *dcn301_panel_cntl = TO_DCN301_PANEL_CNTL(*panel_cntl);
 
@@ -155,7 +155,7 @@ static void dcn301_panel_cntl_destroy(struct panel_cntl **panel_cntl)
 	*panel_cntl = NULL;
 }
 
-static bool dcn301_is_panel_backlight_on(struct panel_cntl *panel_cntl)
+bool dcn301_is_panel_backlight_on(struct panel_cntl *panel_cntl)
 {
 	struct dcn301_panel_cntl *dcn301_panel_cntl = TO_DCN301_PANEL_CNTL(panel_cntl);
 	uint32_t value;
@@ -165,7 +165,7 @@ static bool dcn301_is_panel_backlight_on(struct panel_cntl *panel_cntl)
 	return value;
 }
 
-static bool dcn301_is_panel_powered_on(struct panel_cntl *panel_cntl)
+bool dcn301_is_panel_powered_on(struct panel_cntl *panel_cntl)
 {
 	struct dcn301_panel_cntl *dcn301_panel_cntl = TO_DCN301_PANEL_CNTL(panel_cntl);
 	uint32_t pwr_seq_state, dig_on, dig_on_ovrd;
@@ -177,7 +177,7 @@ static bool dcn301_is_panel_powered_on(struct panel_cntl *panel_cntl)
 	return (pwr_seq_state == 1) || (dig_on == 1 && dig_on_ovrd == 1);
 }
 
-static void dcn301_store_backlight_level(struct panel_cntl *panel_cntl)
+void dcn301_store_backlight_level(struct panel_cntl *panel_cntl)
 {
 	struct dcn301_panel_cntl *dcn301_panel_cntl = TO_DCN301_PANEL_CNTL(panel_cntl);
 

@@ -45,9 +45,7 @@
 #include "i915_drv.h"
 #include "intel_atomic.h"
 #include "intel_audio.h"
-#include "intel_backlight.h"
 #include "intel_connector.h"
-#include "intel_crtc.h"
 #include "intel_ddi.h"
 #include "intel_de.h"
 #include "intel_display_types.h"
@@ -68,6 +66,7 @@
 #include "intel_panel.h"
 #include "intel_pps.h"
 #include "intel_psr.h"
+#include "intel_sideband.h"
 #include "intel_tc.h"
 #include "intel_vdsc.h"
 #include "intel_vrr.h"
@@ -103,8 +102,6 @@ static const u8 valid_dsc_slicecount[] = {1, 2, 4};
  *
  * If a CPU or PCH DP output is attached to an eDP panel, this function
  * will return true, and false otherwise.
- *
- * This function is not safe to use prior to encoder type being set.
  */
 bool intel_dp_is_edp(struct intel_dp *intel_dp)
 {
@@ -116,12 +113,6 @@ bool intel_dp_is_edp(struct intel_dp *intel_dp)
 static void intel_dp_unset_edid(struct intel_dp *intel_dp);
 static int intel_dp_dsc_compute_bpp(struct intel_dp *intel_dp, u8 dsc_max_bpc);
 
-/* Is link rate UHBR and thus 128b/132b? */
-bool intel_dp_is_uhbr(const struct intel_crtc_state *crtc_state)
-{
-	return crtc_state->port_clock >= 1000000;
-}
-
 static void intel_dp_set_default_sink_rates(struct intel_dp *intel_dp)
 {
 	intel_dp->sink_rates[0] = 162000;
@@ -129,7 +120,7 @@ static void intel_dp_set_default_sink_rates(struct intel_dp *intel_dp)
 }
 
 /* update sink rates from dpcd */
-static void intel_dp_set_dpcd_sink_rates(struct intel_dp *intel_dp)
+static void intel_dp_set_sink_rates(struct intel_dp *intel_dp)
 {
 	static const int dp_rates[] = {
 		162000, 270000, 540000, 810000
@@ -147,9 +138,6 @@ static void intel_dp_set_dpcd_sink_rates(struct intel_dp *intel_dp)
 		return;
 	}
 
-	/*
-	 * Sink rates for 8b/10b.
-	 */
 	max_rate = drm_dp_bw_code_to_link_rate(intel_dp->dpcd[DP_MAX_LINK_RATE]);
 	max_lttpr_rate = drm_dp_lttpr_max_link_rate(intel_dp->lttpr_common_caps);
 	if (max_lttpr_rate)
@@ -161,90 +149,7 @@ static void intel_dp_set_dpcd_sink_rates(struct intel_dp *intel_dp)
 		intel_dp->sink_rates[i] = dp_rates[i];
 	}
 
-	/*
-	 * Sink rates for 128b/132b. If set, sink should support all 8b/10b
-	 * rates and 10 Gbps.
-	 */
-	if (intel_dp->dpcd[DP_MAIN_LINK_CHANNEL_CODING] & DP_CAP_ANSI_128B132B) {
-		u8 uhbr_rates = 0;
-
-		BUILD_BUG_ON(ARRAY_SIZE(intel_dp->sink_rates) < ARRAY_SIZE(dp_rates) + 3);
-
-		drm_dp_dpcd_readb(&intel_dp->aux,
-				  DP_128B132B_SUPPORTED_LINK_RATES, &uhbr_rates);
-
-		if (drm_dp_lttpr_count(intel_dp->lttpr_common_caps)) {
-			/* We have a repeater */
-			if (intel_dp->lttpr_common_caps[0] >= 0x20 &&
-			    intel_dp->lttpr_common_caps[DP_MAIN_LINK_CHANNEL_CODING_PHY_REPEATER -
-							DP_LT_TUNABLE_PHY_REPEATER_FIELD_DATA_STRUCTURE_REV] &
-			    DP_PHY_REPEATER_128B132B_SUPPORTED) {
-				/* Repeater supports 128b/132b, valid UHBR rates */
-				uhbr_rates &= intel_dp->lttpr_common_caps[DP_PHY_REPEATER_128B132B_RATES -
-									  DP_LT_TUNABLE_PHY_REPEATER_FIELD_DATA_STRUCTURE_REV];
-			} else {
-				/* Does not support 128b/132b */
-				uhbr_rates = 0;
-			}
-		}
-
-		if (uhbr_rates & DP_UHBR10)
-			intel_dp->sink_rates[i++] = 1000000;
-		if (uhbr_rates & DP_UHBR13_5)
-			intel_dp->sink_rates[i++] = 1350000;
-		if (uhbr_rates & DP_UHBR20)
-			intel_dp->sink_rates[i++] = 2000000;
-	}
-
 	intel_dp->num_sink_rates = i;
-}
-
-static void intel_dp_set_sink_rates(struct intel_dp *intel_dp)
-{
-	struct intel_connector *connector = intel_dp->attached_connector;
-	struct intel_digital_port *intel_dig_port = dp_to_dig_port(intel_dp);
-	struct intel_encoder *encoder = &intel_dig_port->base;
-
-	intel_dp_set_dpcd_sink_rates(intel_dp);
-
-	if (intel_dp->num_sink_rates)
-		return;
-
-	drm_err(&dp_to_i915(intel_dp)->drm,
-		"[CONNECTOR:%d:%s][ENCODER:%d:%s] Invalid DPCD with no link rates, using defaults\n",
-		connector->base.base.id, connector->base.name,
-		encoder->base.base.id, encoder->base.name);
-
-	intel_dp_set_default_sink_rates(intel_dp);
-}
-
-static void intel_dp_set_default_max_sink_lane_count(struct intel_dp *intel_dp)
-{
-	intel_dp->max_sink_lane_count = 1;
-}
-
-static void intel_dp_set_max_sink_lane_count(struct intel_dp *intel_dp)
-{
-	struct intel_connector *connector = intel_dp->attached_connector;
-	struct intel_digital_port *intel_dig_port = dp_to_dig_port(intel_dp);
-	struct intel_encoder *encoder = &intel_dig_port->base;
-
-	intel_dp->max_sink_lane_count = drm_dp_max_lane_count(intel_dp->dpcd);
-
-	switch (intel_dp->max_sink_lane_count) {
-	case 1:
-	case 2:
-	case 4:
-		return;
-	}
-
-	drm_err(&dp_to_i915(intel_dp)->drm,
-		"[CONNECTOR:%d:%s][ENCODER:%d:%s] Invalid DPCD max lane count (%d), using default\n",
-		connector->base.base.id, connector->base.name,
-		encoder->base.base.id, encoder->base.name,
-		intel_dp->max_sink_lane_count);
-
-	intel_dp_set_default_max_sink_lane_count(intel_dp);
 }
 
 /* Get length of rates array potentially limited by max_rate. */
@@ -269,19 +174,10 @@ static int intel_dp_common_len_rate_limit(const struct intel_dp *intel_dp,
 				       intel_dp->num_common_rates, max_rate);
 }
 
-static int intel_dp_common_rate(struct intel_dp *intel_dp, int index)
-{
-	if (drm_WARN_ON(&dp_to_i915(intel_dp)->drm,
-			index < 0 || index >= intel_dp->num_common_rates))
-		return 162000;
-
-	return intel_dp->common_rates[index];
-}
-
 /* Theoretical max between source and sink */
 static int intel_dp_max_common_rate(struct intel_dp *intel_dp)
 {
-	return intel_dp_common_rate(intel_dp, intel_dp->num_common_rates - 1);
+	return intel_dp->common_rates[intel_dp->num_common_rates - 1];
 }
 
 /* Theoretical max between source and sink */
@@ -289,7 +185,7 @@ static int intel_dp_max_common_lane_count(struct intel_dp *intel_dp)
 {
 	struct intel_digital_port *dig_port = dp_to_dig_port(intel_dp);
 	int source_max = dig_port->max_lanes;
-	int sink_max = intel_dp->max_sink_lane_count;
+	int sink_max = drm_dp_max_lane_count(intel_dp->dpcd);
 	int fia_max = intel_tc_port_fia_max_lane_count(dig_port);
 	int lttpr_max = drm_dp_lttpr_max_lane_count(intel_dp->lttpr_common_caps);
 
@@ -301,21 +197,9 @@ static int intel_dp_max_common_lane_count(struct intel_dp *intel_dp)
 
 int intel_dp_max_lane_count(struct intel_dp *intel_dp)
 {
-	switch (intel_dp->max_link_lane_count) {
-	case 1:
-	case 2:
-	case 4:
-		return intel_dp->max_link_lane_count;
-	default:
-		MISSING_CASE(intel_dp->max_link_lane_count);
-		return 1;
-	}
+	return intel_dp->max_link_lane_count;
 }
 
-/*
- * The required data bandwidth for a mode with given pixel clock and bpp. This
- * is the required net bandwidth independent of the data bandwidth efficiency.
- */
 int
 intel_dp_link_required(int pixel_clock, int bpp)
 {
@@ -323,52 +207,16 @@ intel_dp_link_required(int pixel_clock, int bpp)
 	return DIV_ROUND_UP(pixel_clock * bpp, 8);
 }
 
-/*
- * Given a link rate and lanes, get the data bandwidth.
- *
- * Data bandwidth is the actual payload rate, which depends on the data
- * bandwidth efficiency and the link rate.
- *
- * For 8b/10b channel encoding, SST and non-FEC, the data bandwidth efficiency
- * is 80%. For example, for a 1.62 Gbps link, 1.62*10^9 bps * 0.80 * (1/8) =
- * 162000 kBps. With 8-bit symbols, we have 162000 kHz symbol clock. Just by
- * coincidence, the port clock in kHz matches the data bandwidth in kBps, and
- * they equal the link bit rate in Gbps multiplied by 100000. (Note that this no
- * longer holds for data bandwidth as soon as FEC or MST is taken into account!)
- *
- * For 128b/132b channel encoding, the data bandwidth efficiency is 96.71%. For
- * example, for a 10 Gbps link, 10*10^9 bps * 0.9671 * (1/8) = 1208875
- * kBps. With 32-bit symbols, we have 312500 kHz symbol clock. The value 1000000
- * does not match the symbol clock, the port clock (not even if you think in
- * terms of a byte clock), nor the data bandwidth. It only matches the link bit
- * rate in units of 10000 bps.
- */
 int
-intel_dp_max_data_rate(int max_link_rate, int max_lanes)
+intel_dp_max_data_rate(int max_link_clock, int max_lanes)
 {
-	if (max_link_rate >= 1000000) {
-		/*
-		 * UHBR rates always use 128b/132b channel encoding, and have
-		 * 97.71% data bandwidth efficiency. Consider max_link_rate the
-		 * link bit rate in units of 10000 bps.
-		 */
-		int max_link_rate_kbps = max_link_rate * 10;
-
-		max_link_rate_kbps = DIV_ROUND_CLOSEST_ULL(mul_u32_u32(max_link_rate_kbps, 9671), 10000);
-		max_link_rate = max_link_rate_kbps / 8;
-	}
-
-	/*
-	 * Lower than UHBR rates always use 8b/10b channel encoding, and have
-	 * 80% data bandwidth efficiency for SST non-FEC. However, this turns
-	 * out to be a nop by coincidence, and can be skipped:
-	 *
-	 *	int max_link_rate_kbps = max_link_rate * 10;
-	 *	max_link_rate_kbps = DIV_ROUND_CLOSEST_ULL(max_link_rate_kbps * 8, 10);
-	 *	max_link_rate = max_link_rate_kbps / 8;
+	/* max_link_clock is the link symbol clock (LS_Clk) in kHz and not the
+	 * link rate that is generally expressed in Gbps. Since, 8 bits of data
+	 * is transmitted every LS_Clk per lane, there is no need to account for
+	 * the channel encoding that is done in the PHY layer here.
 	 */
 
-	return max_link_rate * max_lanes;
+	return max_link_clock * max_lanes;
 }
 
 bool intel_dp_can_bigjoiner(struct intel_dp *intel_dp)
@@ -382,20 +230,6 @@ bool intel_dp_can_bigjoiner(struct intel_dp *intel_dp)
 		 encoder->port != PORT_A);
 }
 
-static int dg2_max_source_rate(struct intel_dp *intel_dp)
-{
-	return intel_dp_is_edp(intel_dp) ? 810000 : 1350000;
-}
-
-static bool is_low_voltage_sku(struct drm_i915_private *i915, enum phy phy)
-{
-	u32 voltage;
-
-	voltage = intel_de_read(i915, ICL_PORT_COMP_DW3(phy)) & VOLTAGE_INFO_MASK;
-
-	return voltage == VOLTAGE_INFO_0_85V;
-}
-
 static int icl_max_source_rate(struct intel_dp *intel_dp)
 {
 	struct intel_digital_port *dig_port = dp_to_dig_port(intel_dp);
@@ -403,7 +237,7 @@ static int icl_max_source_rate(struct intel_dp *intel_dp)
 	enum phy phy = intel_port_to_phy(dev_priv, dig_port->base.port);
 
 	if (intel_phy_is_combo(dev_priv, phy) &&
-	    (is_low_voltage_sku(dev_priv, phy) || !intel_dp_is_edp(intel_dp)))
+	    !intel_dp_is_edp(intel_dp))
 		return 540000;
 
 	return 810000;
@@ -411,23 +245,7 @@ static int icl_max_source_rate(struct intel_dp *intel_dp)
 
 static int ehl_max_source_rate(struct intel_dp *intel_dp)
 {
-	struct intel_digital_port *dig_port = dp_to_dig_port(intel_dp);
-	struct drm_i915_private *dev_priv = to_i915(dig_port->base.base.dev);
-	enum phy phy = intel_port_to_phy(dev_priv, dig_port->base.port);
-
-	if (intel_dp_is_edp(intel_dp) || is_low_voltage_sku(dev_priv, phy))
-		return 540000;
-
-	return 810000;
-}
-
-static int dg1_max_source_rate(struct intel_dp *intel_dp)
-{
-	struct intel_digital_port *dig_port = dp_to_dig_port(intel_dp);
-	struct drm_i915_private *i915 = to_i915(dig_port->base.base.dev);
-	enum phy phy = intel_port_to_phy(i915, dig_port->base.port);
-
-	if (intel_phy_is_combo(i915, phy) && is_low_voltage_sku(i915, phy))
+	if (intel_dp_is_edp(intel_dp))
 		return 540000;
 
 	return 810000;
@@ -438,8 +256,7 @@ intel_dp_set_source_rates(struct intel_dp *intel_dp)
 {
 	/* The values must be in increasing order */
 	static const int icl_rates[] = {
-		162000, 216000, 270000, 324000, 432000, 540000, 648000, 810000,
-		1000000, 1350000,
+		162000, 216000, 270000, 324000, 432000, 540000, 648000, 810000
 	};
 	static const int bxt_rates[] = {
 		162000, 216000, 243000, 270000, 324000, 432000, 540000
@@ -466,12 +283,7 @@ intel_dp_set_source_rates(struct intel_dp *intel_dp)
 	if (DISPLAY_VER(dev_priv) >= 11) {
 		source_rates = icl_rates;
 		size = ARRAY_SIZE(icl_rates);
-		if (IS_DG2(dev_priv))
-			max_rate = dg2_max_source_rate(intel_dp);
-		else if (IS_ALDERLAKE_P(dev_priv) || IS_ALDERLAKE_S(dev_priv) ||
-			 IS_DG1(dev_priv) || IS_ROCKETLAKE(dev_priv))
-			max_rate = dg1_max_source_rate(intel_dp);
-		else if (IS_JSL_EHL(dev_priv))
+		if (IS_JSL_EHL(dev_priv))
 			max_rate = ehl_max_source_rate(intel_dp);
 		else
 			max_rate = icl_max_source_rate(intel_dp);
@@ -621,13 +433,13 @@ int intel_dp_get_link_train_fallback_values(struct intel_dp *intel_dp,
 	if (index > 0) {
 		if (intel_dp_is_edp(intel_dp) &&
 		    !intel_dp_can_link_train_fallback_for_edp(intel_dp,
-							      intel_dp_common_rate(intel_dp, index - 1),
+							      intel_dp->common_rates[index - 1],
 							      lane_count)) {
 			drm_dbg_kms(&i915->drm,
 				    "Retrying Link training for eDP with same parameters\n");
 			return 0;
 		}
-		intel_dp->max_link_rate = intel_dp_common_rate(intel_dp, index - 1);
+		intel_dp->max_link_rate = intel_dp->common_rates[index - 1];
 		intel_dp->max_link_lane_count = lane_count;
 	} else if (lane_count > 1) {
 		if (intel_dp_is_edp(intel_dp) &&
@@ -657,9 +469,7 @@ u32 intel_dp_mode_to_fec_clock(u32 mode_clock)
 static int
 small_joiner_ram_size_bits(struct drm_i915_private *i915)
 {
-	if (DISPLAY_VER(i915) >= 13)
-		return 17280 * 8;
-	else if (DISPLAY_VER(i915) >= 11)
+	if (DISPLAY_VER(i915) >= 11)
 		return 7680 * 8;
 	else
 		return 6144 * 8;
@@ -901,17 +711,6 @@ intel_dp_mode_valid_downstream(struct intel_connector *connector,
 	return MODE_OK;
 }
 
-static bool intel_dp_need_bigjoiner(struct intel_dp *intel_dp,
-				    int hdisplay, int clock)
-{
-	struct drm_i915_private *i915 = dp_to_i915(intel_dp);
-
-	if (!intel_dp_can_bigjoiner(intel_dp))
-		return false;
-
-	return clock > i915->max_dotclk_freq || hdisplay > 5120;
-}
-
 static enum drm_mode_status
 intel_dp_mode_valid(struct drm_connector *connector,
 		    struct drm_display_mode *mode)
@@ -935,9 +734,11 @@ intel_dp_mode_valid(struct drm_connector *connector,
 		return MODE_H_ILLEGAL;
 
 	if (intel_dp_is_edp(intel_dp) && fixed_mode) {
-		status = intel_panel_mode_valid(intel_connector, mode);
-		if (status != MODE_OK)
-			return status;
+		if (mode->hdisplay != fixed_mode->hdisplay)
+			return MODE_PANEL;
+
+		if (mode->vdisplay != fixed_mode->vdisplay)
+			return MODE_PANEL;
 
 		target_clock = fixed_mode->clock;
 	}
@@ -945,7 +746,8 @@ intel_dp_mode_valid(struct drm_connector *connector,
 	if (mode->clock < 10000)
 		return MODE_CLOCK_LOW;
 
-	if (intel_dp_need_bigjoiner(intel_dp, mode->hdisplay, target_clock)) {
+	if ((target_clock > max_dotclk || mode->hdisplay > 5120) &&
+	    intel_dp_can_bigjoiner(intel_dp)) {
 		bigjoiner = true;
 		max_dotclk *= 2;
 	}
@@ -1017,14 +819,18 @@ intel_dp_mode_valid(struct drm_connector *connector,
 	return intel_mode_valid_max_plane_size(dev_priv, mode, bigjoiner);
 }
 
-bool intel_dp_source_supports_tps3(struct drm_i915_private *i915)
+bool intel_dp_source_supports_hbr2(struct intel_dp *intel_dp)
 {
-	return DISPLAY_VER(i915) >= 9 || IS_BROADWELL(i915) || IS_HASWELL(i915);
+	int max_rate = intel_dp->source_rates[intel_dp->num_source_rates - 1];
+
+	return max_rate >= 540000;
 }
 
-bool intel_dp_source_supports_tps4(struct drm_i915_private *i915)
+bool intel_dp_source_supports_hbr3(struct intel_dp *intel_dp)
 {
-	return DISPLAY_VER(i915) >= 10;
+	int max_rate = intel_dp->source_rates[intel_dp->num_source_rates - 1];
+
+	return max_rate >= 810000;
 }
 
 static void snprintf_int_array(char *str, size_t len,
@@ -1067,11 +873,14 @@ static void intel_dp_print_rates(struct intel_dp *intel_dp)
 int
 intel_dp_max_link_rate(struct intel_dp *intel_dp)
 {
+	struct drm_i915_private *i915 = dp_to_i915(intel_dp);
 	int len;
 
 	len = intel_dp_common_len_rate_limit(intel_dp, intel_dp->max_link_rate);
+	if (drm_WARN_ON(&i915->drm, len <= 0))
+		return 162000;
 
-	return intel_dp_common_rate(intel_dp, len - 1);
+	return intel_dp->common_rates[len - 1];
 }
 
 int intel_dp_rate_select(struct intel_dp *intel_dp, int rate)
@@ -1243,8 +1052,7 @@ intel_dp_adjust_compliance_config(struct intel_dp *intel_dp,
 						    intel_dp->num_common_rates,
 						    intel_dp->compliance.test_link_rate);
 			if (index >= 0)
-				limits->min_rate = limits->max_rate =
-					intel_dp->compliance.test_link_rate;
+				limits->min_clock = limits->max_clock = index;
 			limits->min_lane_count = limits->max_lane_count =
 				intel_dp->compliance.test_lane_count;
 		}
@@ -1258,8 +1066,8 @@ intel_dp_compute_link_config_wide(struct intel_dp *intel_dp,
 				  const struct link_config_limits *limits)
 {
 	struct drm_display_mode *adjusted_mode = &pipe_config->hw.adjusted_mode;
-	int bpp, i, lane_count;
-	int mode_rate, link_rate, link_avail;
+	int bpp, clock, lane_count;
+	int mode_rate, link_clock, link_avail;
 
 	for (bpp = limits->max_bpp; bpp >= limits->min_bpp; bpp -= 2 * 3) {
 		int output_bpp = intel_dp_output_bpp(pipe_config->output_format, bpp);
@@ -1267,22 +1075,18 @@ intel_dp_compute_link_config_wide(struct intel_dp *intel_dp,
 		mode_rate = intel_dp_link_required(adjusted_mode->crtc_clock,
 						   output_bpp);
 
-		for (i = 0; i < intel_dp->num_common_rates; i++) {
-			link_rate = intel_dp_common_rate(intel_dp, i);
-			if (link_rate < limits->min_rate ||
-			    link_rate > limits->max_rate)
-				continue;
-
+		for (clock = limits->min_clock; clock <= limits->max_clock; clock++) {
 			for (lane_count = limits->min_lane_count;
 			     lane_count <= limits->max_lane_count;
 			     lane_count <<= 1) {
-				link_avail = intel_dp_max_data_rate(link_rate,
+				link_clock = intel_dp->common_rates[clock];
+				link_avail = intel_dp_max_data_rate(link_clock,
 								    lane_count);
 
 				if (mode_rate <= link_avail) {
 					pipe_config->lane_count = lane_count;
 					pipe_config->pipe_bpp = bpp;
-					pipe_config->port_clock = link_rate;
+					pipe_config->port_clock = link_clock;
 
 					return 0;
 				}
@@ -1347,7 +1151,7 @@ static int intel_dp_dsc_compute_params(struct intel_encoder *encoder,
 	else
 		vdsc_cfg->slice_height = 2;
 
-	ret = intel_dsc_compute_params(crtc_state);
+	ret = intel_dsc_compute_params(encoder, crtc_state);
 	if (ret)
 		return ret;
 
@@ -1416,7 +1220,7 @@ static int intel_dp_dsc_compute_config(struct intel_dp *intel_dp,
 	 * with DSC enabled for the requested mode.
 	 */
 	pipe_config->pipe_bpp = pipe_bpp;
-	pipe_config->port_clock = limits->max_rate;
+	pipe_config->port_clock = intel_dp->common_rates[limits->max_clock];
 	pipe_config->lane_count = limits->max_lane_count;
 
 	if (intel_dp_is_edp(intel_dp)) {
@@ -1516,10 +1320,17 @@ intel_dp_compute_link_config(struct intel_encoder *encoder,
 		&pipe_config->hw.adjusted_mode;
 	struct intel_dp *intel_dp = enc_to_intel_dp(encoder);
 	struct link_config_limits limits;
+	int common_len;
 	int ret;
 
-	limits.min_rate = intel_dp_common_rate(intel_dp, 0);
-	limits.max_rate = intel_dp_max_link_rate(intel_dp);
+	common_len = intel_dp_common_len_rate_limit(intel_dp,
+						    intel_dp->max_link_rate);
+
+	/* No common link rates between source and sink */
+	drm_WARN_ON(encoder->base.dev, common_len <= 0);
+
+	limits.min_clock = 0;
+	limits.max_clock = common_len - 1;
 
 	limits.min_lane_count = 1;
 	limits.max_lane_count = intel_dp_max_lane_count(intel_dp);
@@ -1537,18 +1348,20 @@ intel_dp_compute_link_config(struct intel_encoder *encoder,
 		 * values correspond to the native resolution of the panel.
 		 */
 		limits.min_lane_count = limits.max_lane_count;
-		limits.min_rate = limits.max_rate;
+		limits.min_clock = limits.max_clock;
 	}
 
 	intel_dp_adjust_compliance_config(intel_dp, pipe_config, &limits);
 
 	drm_dbg_kms(&i915->drm, "DP link computation with max lane count %i "
 		    "max rate %d max bpp %d pixel clock %iKHz\n",
-		    limits.max_lane_count, limits.max_rate,
+		    limits.max_lane_count,
+		    intel_dp->common_rates[limits.max_clock],
 		    limits.max_bpp, adjusted_mode->crtc_clock);
 
-	if (intel_dp_need_bigjoiner(intel_dp, adjusted_mode->crtc_hdisplay,
-				    adjusted_mode->crtc_clock))
+	if ((adjusted_mode->crtc_clock > i915->max_dotclk_freq ||
+	     adjusted_mode->crtc_hdisplay > 5120) &&
+	    intel_dp_can_bigjoiner(intel_dp))
 		pipe_config->bigjoiner = true;
 
 	/*
@@ -1748,7 +1561,7 @@ void intel_dp_compute_psr_vsc_sdp(struct intel_dp *intel_dp,
 {
 	vsc->sdp_type = DP_SDP_VSC;
 
-	if (crtc_state->has_psr2) {
+	if (intel_dp->psr.psr2_enabled) {
 		if (intel_dp->psr.colorimetry_support &&
 		    intel_dp_needs_vsc_sdp(crtc_state, conn_state)) {
 			/* [PSR2, +Colorimetry] */
@@ -1820,7 +1633,7 @@ intel_dp_compute_config(struct intel_encoder *encoder,
 							    adjusted_mode);
 
 	if (pipe_config->output_format == INTEL_OUTPUT_FORMAT_YCBCR420) {
-		ret = intel_panel_fitting(pipe_config, conn_state);
+		ret = intel_pch_panel_fitting(pipe_config, conn_state);
 		if (ret)
 			return ret;
 	}
@@ -1833,11 +1646,13 @@ intel_dp_compute_config(struct intel_encoder *encoder,
 		pipe_config->has_audio = intel_conn_state->force_audio == HDMI_AUDIO_ON;
 
 	if (intel_dp_is_edp(intel_dp) && intel_connector->panel.fixed_mode) {
-		ret = intel_panel_compute_config(intel_connector, adjusted_mode);
-		if (ret)
-			return ret;
+		intel_fixed_panel_mode(intel_connector->panel.fixed_mode,
+				       adjusted_mode);
 
-		ret = intel_panel_fitting(pipe_config, conn_state);
+		if (HAS_GMCH(dev_priv))
+			ret = intel_gmch_panel_fitting(pipe_config, conn_state);
+		else
+			ret = intel_pch_panel_fitting(pipe_config, conn_state);
 		if (ret)
 			return ret;
 	}
@@ -1903,9 +1718,9 @@ intel_dp_compute_config(struct intel_encoder *encoder,
 		g4x_dp_set_clock(encoder, pipe_config);
 
 	intel_vrr_compute_config(pipe_config, conn_state);
-	intel_psr_compute_config(intel_dp, pipe_config, conn_state);
-	intel_drrs_compute_config(intel_dp, pipe_config, output_bpp,
-				  constant_n);
+	intel_psr_compute_config(intel_dp, pipe_config);
+	intel_dp_drrs_compute_config(intel_dp, pipe_config, output_bpp,
+				     constant_n);
 	intel_dp_compute_vsc_sdp(intel_dp, pipe_config, conn_state);
 	intel_dp_compute_hdr_metadata_infoframe_sdp(intel_dp, pipe_config, conn_state);
 
@@ -1915,7 +1730,6 @@ intel_dp_compute_config(struct intel_encoder *encoder,
 void intel_dp_set_link_params(struct intel_dp *intel_dp,
 			      int link_rate, int lane_count)
 {
-	memset(intel_dp->train_set, 0, sizeof(intel_dp->train_set));
 	intel_dp->link_trained = false;
 	intel_dp->link_rate = link_rate;
 	intel_dp->lane_count = lane_count;
@@ -1939,7 +1753,7 @@ void intel_edp_backlight_on(const struct intel_crtc_state *crtc_state,
 
 	drm_dbg_kms(&i915->drm, "\n");
 
-	intel_backlight_enable(crtc_state, conn_state);
+	intel_panel_enable_backlight(crtc_state, conn_state);
 	intel_pps_backlight_on(intel_dp);
 }
 
@@ -1955,7 +1769,7 @@ void intel_edp_backlight_off(const struct drm_connector_state *old_conn_state)
 	drm_dbg_kms(&i915->drm, "\n");
 
 	intel_pps_backlight_off(intel_dp);
-	intel_backlight_disable(old_conn_state);
+	intel_panel_disable_backlight(old_conn_state);
 }
 
 static bool downstream_hpd_needs_d0(struct intel_dp *intel_dp)
@@ -2210,18 +2024,6 @@ static int intel_dp_hdmi_sink_max_frl(struct intel_dp *intel_dp)
 	return max_frl_rate;
 }
 
-static bool
-intel_dp_pcon_is_frl_trained(struct intel_dp *intel_dp,
-			     u8 max_frl_bw_mask, u8 *frl_trained_mask)
-{
-	if (drm_dp_pcon_hdmi_link_active(&intel_dp->aux) &&
-	    drm_dp_pcon_hdmi_link_mode(&intel_dp->aux, frl_trained_mask) == DP_PCON_HDMI_MODE_FRL &&
-	    *frl_trained_mask >= max_frl_bw_mask)
-		return true;
-
-	return false;
-}
-
 static int intel_dp_pcon_start_frl_training(struct intel_dp *intel_dp)
 {
 #define TIMEOUT_FRL_READY_MS 500
@@ -2231,6 +2033,10 @@ static int intel_dp_pcon_start_frl_training(struct intel_dp *intel_dp)
 	int max_frl_bw, max_pcon_frl_bw, max_edid_frl_bw, ret;
 	u8 max_frl_bw_mask = 0, frl_trained_mask;
 	bool is_active;
+
+	ret = drm_dp_pcon_reset_frl_config(&intel_dp->aux);
+	if (ret < 0)
+		return ret;
 
 	max_pcon_frl_bw = intel_dp->dfp.pcon_max_frl_bw;
 	drm_dbg(&i915->drm, "PCON max rate = %d Gbps\n", max_pcon_frl_bw);
@@ -2243,12 +2049,6 @@ static int intel_dp_pcon_start_frl_training(struct intel_dp *intel_dp)
 	if (max_frl_bw <= 0)
 		return -EINVAL;
 
-	max_frl_bw_mask = intel_dp_pcon_set_frl_mask(max_frl_bw);
-	drm_dbg(&i915->drm, "MAX_FRL_BW_MASK = %u\n", max_frl_bw_mask);
-
-	if (intel_dp_pcon_is_frl_trained(intel_dp, max_frl_bw_mask, &frl_trained_mask))
-		goto frl_trained;
-
 	ret = drm_dp_pcon_frl_prepare(&intel_dp->aux, false);
 	if (ret < 0)
 		return ret;
@@ -2258,6 +2058,7 @@ static int intel_dp_pcon_start_frl_training(struct intel_dp *intel_dp)
 	if (!is_active)
 		return -ETIMEDOUT;
 
+	max_frl_bw_mask = intel_dp_pcon_set_frl_mask(max_frl_bw);
 	ret = drm_dp_pcon_frl_configure_1(&intel_dp->aux, max_frl_bw,
 					  DP_PCON_ENABLE_SEQUENTIAL_LINK);
 	if (ret < 0)
@@ -2273,15 +2074,19 @@ static int intel_dp_pcon_start_frl_training(struct intel_dp *intel_dp)
 	 * Wait for FRL to be completed
 	 * Check if the HDMI Link is up and active.
 	 */
-	wait_for(is_active =
-		 intel_dp_pcon_is_frl_trained(intel_dp, max_frl_bw_mask, &frl_trained_mask),
-		 TIMEOUT_HDMI_LINK_ACTIVE_MS);
+	wait_for(is_active = drm_dp_pcon_hdmi_link_active(&intel_dp->aux) == true, TIMEOUT_HDMI_LINK_ACTIVE_MS);
 
 	if (!is_active)
 		return -ETIMEDOUT;
 
-frl_trained:
-	drm_dbg(&i915->drm, "FRL_TRAINED_MASK = %u\n", frl_trained_mask);
+	/* Verify HDMI Link configuration shows FRL Mode */
+	if (drm_dp_pcon_hdmi_link_mode(&intel_dp->aux, &frl_trained_mask) !=
+	    DP_PCON_HDMI_MODE_FRL) {
+		drm_dbg(&i915->drm, "HDMI couldn't be trained in FRL Mode\n");
+		return -EINVAL;
+	}
+	drm_dbg(&i915->drm, "MAX_FRL_MASK = %u, FRL_TRAINED_MASK = %u\n", max_frl_bw_mask, frl_trained_mask);
+
 	intel_dp->frl.trained_rate_gbps = intel_dp_pcon_get_frl_mask(frl_trained_mask);
 	intel_dp->frl.is_trained = true;
 	drm_dbg(&i915->drm, "FRL trained with : %d Gbps\n", intel_dp->frl.trained_rate_gbps);
@@ -2297,28 +2102,6 @@ static bool intel_dp_is_hdmi_2_1_sink(struct intel_dp *intel_dp)
 		return true;
 
 	return false;
-}
-
-static
-int intel_dp_pcon_set_tmds_mode(struct intel_dp *intel_dp)
-{
-	int ret;
-	u8 buf = 0;
-
-	/* Set PCON source control mode */
-	buf |= DP_PCON_ENABLE_SOURCE_CTL_MODE;
-
-	ret = drm_dp_dpcd_writeb(&intel_dp->aux, DP_PCON_HDMI_LINK_CONFIG_1, buf);
-	if (ret < 0)
-		return ret;
-
-	/* Set HDMI LINK ENABLE */
-	buf |= DP_PCON_ENABLE_HDMI_LINK;
-	ret = drm_dp_dpcd_writeb(&intel_dp->aux, DP_PCON_HDMI_LINK_CONFIG_1, buf);
-	if (ret < 0)
-		return ret;
-
-	return 0;
 }
 
 void intel_dp_check_frl_training(struct intel_dp *intel_dp)
@@ -2339,7 +2122,7 @@ void intel_dp_check_frl_training(struct intel_dp *intel_dp)
 		int ret, mode;
 
 		drm_dbg(&dev_priv->drm, "Couldn't set FRL mode, continuing with TMDS mode\n");
-		ret = intel_dp_pcon_set_tmds_mode(intel_dp);
+		ret = drm_dp_pcon_reset_frl_config(&intel_dp->aux);
 		mode = drm_dp_pcon_hdmi_link_mode(&intel_dp->aux, NULL);
 
 		if (ret < 0 || mode != DP_PCON_HDMI_MODE_TMDS)
@@ -2592,8 +2375,6 @@ static void intel_edp_mso_mode_fixup(struct intel_connector *connector,
 static void intel_edp_mso_init(struct intel_dp *intel_dp)
 {
 	struct drm_i915_private *i915 = dp_to_i915(intel_dp);
-	struct intel_connector *connector = intel_dp->attached_connector;
-	struct drm_display_info *info = &connector->base.display_info;
 	u8 mso;
 
 	if (intel_dp->edp_dpcd[0] < DP_EDP_14)
@@ -2612,9 +2393,8 @@ static void intel_edp_mso_init(struct intel_dp *intel_dp)
 	}
 
 	if (mso) {
-		drm_dbg_kms(&i915->drm, "Sink MSO %ux%u configuration, pixel overlap %u\n",
-			    mso, drm_dp_max_lane_count(intel_dp->dpcd) / mso,
-			    info->mso_pixel_overlap);
+		drm_dbg_kms(&i915->drm, "Sink MSO %ux%u configuration\n",
+			    mso, drm_dp_max_lane_count(intel_dp->dpcd) / mso);
 		if (!HAS_MSO(i915)) {
 			drm_err(&i915->drm, "No source MSO support, disabling\n");
 			mso = 0;
@@ -2622,7 +2402,7 @@ static void intel_edp_mso_init(struct intel_dp *intel_dp)
 	}
 
 	intel_dp->mso_link_count = mso;
-	intel_dp->mso_pixel_overlap = mso ? info->mso_pixel_overlap : 0;
+	intel_dp->mso_pixel_overlap = 0; /* FIXME: read from DisplayID v2.0 */
 }
 
 static bool
@@ -2701,7 +2481,6 @@ intel_edp_init_dpcd(struct intel_dp *intel_dp)
 		intel_dp->use_rate_select = true;
 	else
 		intel_dp_set_sink_rates(intel_dp);
-	intel_dp_set_max_sink_lane_count(intel_dp);
 
 	intel_dp_set_common_rates(intel_dp);
 	intel_dp_reset_max_link_params(intel_dp);
@@ -2715,6 +2494,8 @@ intel_edp_init_dpcd(struct intel_dp *intel_dp)
 	 * available (such as HDR backlight controls)
 	 */
 	intel_edp_init_source_oui(intel_dp, true);
+
+	intel_edp_mso_init(intel_dp);
 
 	return true;
 }
@@ -2747,7 +2528,6 @@ intel_dp_get_dpcd(struct intel_dp *intel_dp)
 				 drm_dp_is_branch(intel_dp->dpcd));
 
 		intel_dp_set_sink_rates(intel_dp);
-		intel_dp_set_max_sink_lane_count(intel_dp);
 		intel_dp_set_common_rates(intel_dp);
 	}
 
@@ -2784,7 +2564,7 @@ intel_dp_can_mst(struct intel_dp *intel_dp)
 	struct drm_i915_private *i915 = dp_to_i915(intel_dp);
 
 	return i915->params.enable_dp_mst &&
-		intel_dp_mst_source_support(intel_dp) &&
+		intel_dp->can_mst &&
 		drm_dp_read_mst_cap(&intel_dp->aux, intel_dp->dpcd);
 }
 
@@ -2799,10 +2579,10 @@ intel_dp_configure_mst(struct intel_dp *intel_dp)
 	drm_dbg_kms(&i915->drm,
 		    "[ENCODER:%d:%s] MST support: port: %s, sink: %s, modparam: %s\n",
 		    encoder->base.base.id, encoder->base.name,
-		    yesno(intel_dp_mst_source_support(intel_dp)), yesno(sink_can_mst),
+		    yesno(intel_dp->can_mst), yesno(sink_can_mst),
 		    yesno(i915->params.enable_dp_mst));
 
-	if (!intel_dp_mst_source_support(intel_dp))
+	if (!intel_dp->can_mst)
 		return;
 
 	intel_dp->is_mst = sink_can_mst &&
@@ -3019,7 +2799,7 @@ static void intel_write_dp_sdp(struct intel_encoder *encoder,
 
 void intel_write_dp_vsc_sdp(struct intel_encoder *encoder,
 			    const struct intel_crtc_state *crtc_state,
-			    const struct drm_dp_vsc_sdp *vsc)
+			    struct drm_dp_vsc_sdp *vsc)
 {
 	struct intel_digital_port *dig_port = enc_to_dig_port(encoder);
 	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
@@ -3906,7 +3686,7 @@ int intel_dp_retrain_link(struct intel_encoder *encoder,
 			to_intel_crtc_state(crtc->base.state);
 
 		/* Keep underrun reporting disabled until things are stable */
-		intel_crtc_wait_for_next_vblank(crtc);
+		intel_wait_for_vblank(dev_priv, crtc->pipe);
 
 		intel_set_cpu_fifo_underrun_reporting(dev_priv, crtc->pipe, true);
 		if (crtc_state->has_pch_encoder)
@@ -4793,17 +4573,6 @@ static int intel_dp_connector_atomic_check(struct drm_connector *conn,
 	return intel_modeset_synced_crtcs(state, conn);
 }
 
-static void intel_dp_oob_hotplug_event(struct drm_connector *connector)
-{
-	struct intel_encoder *encoder = intel_attached_encoder(to_intel_connector(connector));
-	struct drm_i915_private *i915 = to_i915(connector->dev);
-
-	spin_lock_irq(&i915->irq_lock);
-	i915->hotplug.event_bits |= BIT(encoder->hpd_pin);
-	spin_unlock_irq(&i915->irq_lock);
-	queue_delayed_work(system_wq, &i915->hotplug.hotplug_work, 0);
-}
-
 static const struct drm_connector_funcs intel_dp_connector_funcs = {
 	.force = intel_dp_force,
 	.fill_modes = drm_helper_probe_single_connector_modes,
@@ -4814,7 +4583,6 @@ static const struct drm_connector_funcs intel_dp_connector_funcs = {
 	.destroy = intel_connector_destroy,
 	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
 	.atomic_duplicate_state = intel_digital_connector_duplicate_state,
-	.oob_hotplug_event = intel_dp_oob_hotplug_event,
 };
 
 static const struct drm_connector_helper_funcs intel_dp_connector_helper_funcs = {
@@ -4988,10 +4756,7 @@ static bool intel_edp_init_connector(struct intel_dp *intel_dp,
 
 	fixed_mode = intel_panel_edid_fixed_mode(intel_connector);
 	if (fixed_mode)
-		downclock_mode = intel_drrs_init(intel_connector, fixed_mode);
-
-	/* MSO requires information from the EDID */
-	intel_edp_mso_init(intel_dp);
+		downclock_mode = intel_dp_drrs_init(intel_connector, fixed_mode);
 
 	/* multiply the mode clock and horizontal timings for MSO */
 	intel_edp_mso_mode_fixup(intel_connector, fixed_mode);
@@ -5024,7 +4789,7 @@ static bool intel_edp_init_connector(struct intel_dp *intel_dp,
 	intel_panel_init(&intel_connector->panel, fixed_mode, downclock_mode);
 	if (!(dev_priv->quirks & QUIRK_NO_PPS_BACKLIGHT_POWER_HOOK))
 		intel_connector->panel.backlight.power = intel_pps_backlight_power;
-	intel_backlight_setup(intel_connector, pipe);
+	intel_panel_setup_backlight(connector, pipe);
 
 	if (fixed_mode) {
 		drm_connector_set_panel_orientation_with_quirk(connector,
@@ -5060,7 +4825,7 @@ static void intel_dp_modeset_retry_work_fn(struct work_struct *work)
 					       DRM_MODE_LINK_STATUS_BAD);
 	mutex_unlock(&connector->dev->mode_config.mutex);
 	/* Send Hotplug uevent so userspace can reprobe */
-	drm_kms_helper_connector_hotplug_event(connector);
+	drm_kms_helper_hotplug_event(connector->dev);
 }
 
 bool
@@ -5086,6 +4851,11 @@ intel_dp_init_connector(struct intel_digital_port *dig_port,
 		     intel_encoder->base.name))
 		return false;
 
+	intel_dp_set_source_rates(intel_dp);
+	intel_dp_set_default_sink_rates(intel_dp);
+	intel_dp_set_common_rates(intel_dp);
+	intel_dp_reset_max_link_params(intel_dp);
+
 	intel_dp->reset_link_params = true;
 	intel_dp->pps.pps_pipe = INVALID_PIPE;
 	intel_dp->pps.active_pipe = INVALID_PIPE;
@@ -5101,25 +4871,27 @@ intel_dp_init_connector(struct intel_digital_port *dig_port,
 		 */
 		drm_WARN_ON(dev, intel_phy_is_tc(dev_priv, phy));
 		type = DRM_MODE_CONNECTOR_eDP;
-		intel_encoder->type = INTEL_OUTPUT_EDP;
-
-		/* eDP only on port B and/or C on vlv/chv */
-		if (drm_WARN_ON(dev, (IS_VALLEYVIEW(dev_priv) ||
-				      IS_CHERRYVIEW(dev_priv)) &&
-				port != PORT_B && port != PORT_C))
-			return false;
 	} else {
 		type = DRM_MODE_CONNECTOR_DisplayPort;
 	}
 
-	intel_dp_set_source_rates(intel_dp);
-	intel_dp_set_default_sink_rates(intel_dp);
-	intel_dp_set_default_max_sink_lane_count(intel_dp);
-	intel_dp_set_common_rates(intel_dp);
-	intel_dp_reset_max_link_params(intel_dp);
-
 	if (IS_VALLEYVIEW(dev_priv) || IS_CHERRYVIEW(dev_priv))
 		intel_dp->pps.active_pipe = vlv_active_pipe(intel_dp);
+
+	/*
+	 * For eDP we always set the encoder type to INTEL_OUTPUT_EDP, but
+	 * for DP the encoder type can be set by the caller to
+	 * INTEL_OUTPUT_UNKNOWN for DDI, so don't rewrite it.
+	 */
+	if (type == DRM_MODE_CONNECTOR_eDP)
+		intel_encoder->type = INTEL_OUTPUT_EDP;
+
+	/* eDP only on port B and/or C on vlv/chv */
+	if (drm_WARN_ON(dev, (IS_VALLEYVIEW(dev_priv) ||
+			      IS_CHERRYVIEW(dev_priv)) &&
+			intel_dp_is_edp(intel_dp) &&
+			port != PORT_B && port != PORT_C))
+		return false;
 
 	drm_dbg_kms(&dev_priv->drm,
 		    "Adding %s connector on [ENCODER:%d:%s]\n",
@@ -5201,7 +4973,7 @@ void intel_dp_mst_suspend(struct drm_i915_private *dev_priv)
 
 		intel_dp = enc_to_intel_dp(encoder);
 
-		if (!intel_dp_mst_source_support(intel_dp))
+		if (!intel_dp->can_mst)
 			continue;
 
 		if (intel_dp->is_mst)
@@ -5225,7 +4997,7 @@ void intel_dp_mst_resume(struct drm_i915_private *dev_priv)
 
 		intel_dp = enc_to_intel_dp(encoder);
 
-		if (!intel_dp_mst_source_support(intel_dp))
+		if (!intel_dp->can_mst)
 			continue;
 
 		ret = drm_dp_mst_topology_mgr_resume(&intel_dp->mst_mgr,

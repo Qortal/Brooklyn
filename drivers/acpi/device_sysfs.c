@@ -53,7 +53,6 @@ static struct attribute *acpi_data_node_default_attrs[] = {
 	&data_node_path.attr,
 	NULL
 };
-ATTRIBUTE_GROUPS(acpi_data_node_default);
 
 #define to_data_node(k) container_of(k, struct acpi_data_node, kobj)
 #define to_attr(a) container_of(a, struct acpi_data_node_attr, attr)
@@ -80,7 +79,7 @@ static void acpi_data_node_release(struct kobject *kobj)
 
 static struct kobj_type acpi_data_node_ktype = {
 	.sysfs_ops = &acpi_data_node_sysfs_ops,
-	.default_groups = acpi_data_node_default_groups,
+	.default_attrs = acpi_data_node_default_attrs,
 	.release = acpi_data_node_release,
 };
 

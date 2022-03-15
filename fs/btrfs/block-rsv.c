@@ -6,7 +6,6 @@
 #include "space-info.h"
 #include "transaction.h"
 #include "block-group.h"
-#include "disk-io.h"
 
 /*
  * HOW DO BLOCK RESERVES WORK
@@ -209,7 +208,7 @@ void btrfs_free_block_rsv(struct btrfs_fs_info *fs_info,
 	kfree(rsv);
 }
 
-int btrfs_block_rsv_add(struct btrfs_fs_info *fs_info,
+int btrfs_block_rsv_add(struct btrfs_root *root,
 			struct btrfs_block_rsv *block_rsv, u64 num_bytes,
 			enum btrfs_reserve_flush_enum flush)
 {
@@ -218,7 +217,7 @@ int btrfs_block_rsv_add(struct btrfs_fs_info *fs_info,
 	if (num_bytes == 0)
 		return 0;
 
-	ret = btrfs_reserve_metadata_bytes(fs_info, block_rsv, num_bytes, flush);
+	ret = btrfs_reserve_metadata_bytes(root, block_rsv, num_bytes, flush);
 	if (!ret)
 		btrfs_block_rsv_add_bytes(block_rsv, num_bytes, true);
 
@@ -242,7 +241,7 @@ int btrfs_block_rsv_check(struct btrfs_block_rsv *block_rsv, int min_factor)
 	return ret;
 }
 
-int btrfs_block_rsv_refill(struct btrfs_fs_info *fs_info,
+int btrfs_block_rsv_refill(struct btrfs_root *root,
 			   struct btrfs_block_rsv *block_rsv, u64 min_reserved,
 			   enum btrfs_reserve_flush_enum flush)
 {
@@ -263,7 +262,7 @@ int btrfs_block_rsv_refill(struct btrfs_fs_info *fs_info,
 	if (!ret)
 		return 0;
 
-	ret = btrfs_reserve_metadata_bytes(fs_info, block_rsv, num_bytes, flush);
+	ret = btrfs_reserve_metadata_bytes(root, block_rsv, num_bytes, flush);
 	if (!ret) {
 		btrfs_block_rsv_add_bytes(block_rsv, num_bytes, false);
 		return 0;
@@ -352,29 +351,23 @@ void btrfs_update_global_block_rsv(struct btrfs_fs_info *fs_info)
 {
 	struct btrfs_block_rsv *block_rsv = &fs_info->global_block_rsv;
 	struct btrfs_space_info *sinfo = block_rsv->space_info;
-	struct btrfs_root *root, *tmp;
-	u64 num_bytes = btrfs_root_used(&fs_info->tree_root->root_item);
-	unsigned int min_items = 1;
+	u64 num_bytes;
+	unsigned min_items;
 
 	/*
 	 * The global block rsv is based on the size of the extent tree, the
 	 * checksum tree and the root tree.  If the fs is empty we want to set
 	 * it to a minimal amount for safety.
-	 *
-	 * We also are going to need to modify the minimum of the tree root and
-	 * any global roots we could touch.
 	 */
-	read_lock(&fs_info->global_root_lock);
-	rbtree_postorder_for_each_entry_safe(root, tmp, &fs_info->global_root_tree,
-					     rb_node) {
-		if (root->root_key.objectid == BTRFS_EXTENT_TREE_OBJECTID ||
-		    root->root_key.objectid == BTRFS_CSUM_TREE_OBJECTID ||
-		    root->root_key.objectid == BTRFS_FREE_SPACE_TREE_OBJECTID) {
-			num_bytes += btrfs_root_used(&root->root_item);
-			min_items++;
-		}
-	}
-	read_unlock(&fs_info->global_root_lock);
+	num_bytes = btrfs_root_used(&fs_info->extent_root->root_item) +
+		btrfs_root_used(&fs_info->csum_root->root_item) +
+		btrfs_root_used(&fs_info->tree_root->root_item);
+
+	/*
+	 * We at a minimum are going to modify the csum root, the tree root, and
+	 * the extent root.
+	 */
+	min_items = 3;
 
 	/*
 	 * But we also want to reserve enough space so we can do the fallback
@@ -419,30 +412,6 @@ void btrfs_update_global_block_rsv(struct btrfs_fs_info *fs_info)
 	spin_unlock(&sinfo->lock);
 }
 
-void btrfs_init_root_block_rsv(struct btrfs_root *root)
-{
-	struct btrfs_fs_info *fs_info = root->fs_info;
-
-	switch (root->root_key.objectid) {
-	case BTRFS_CSUM_TREE_OBJECTID:
-	case BTRFS_EXTENT_TREE_OBJECTID:
-	case BTRFS_FREE_SPACE_TREE_OBJECTID:
-		root->block_rsv = &fs_info->delayed_refs_rsv;
-		break;
-	case BTRFS_ROOT_TREE_OBJECTID:
-	case BTRFS_DEV_TREE_OBJECTID:
-	case BTRFS_QUOTA_TREE_OBJECTID:
-		root->block_rsv = &fs_info->global_block_rsv;
-		break;
-	case BTRFS_CHUNK_TREE_OBJECTID:
-		root->block_rsv = &fs_info->chunk_block_rsv;
-		break;
-	default:
-		root->block_rsv = NULL;
-		break;
-	}
-}
-
 void btrfs_init_global_block_rsv(struct btrfs_fs_info *fs_info)
 {
 	struct btrfs_space_info *space_info;
@@ -456,6 +425,22 @@ void btrfs_init_global_block_rsv(struct btrfs_fs_info *fs_info)
 	fs_info->empty_block_rsv.space_info = space_info;
 	fs_info->delayed_block_rsv.space_info = space_info;
 	fs_info->delayed_refs_rsv.space_info = space_info;
+
+	/*
+	 * Our various recovery options can leave us with NULL roots, so check
+	 * here and just bail before we go dereferencing NULLs everywhere.
+	 */
+	if (!fs_info->extent_root || !fs_info->csum_root ||
+	    !fs_info->dev_root || !fs_info->chunk_root || !fs_info->tree_root)
+		return;
+
+	fs_info->extent_root->block_rsv = &fs_info->delayed_refs_rsv;
+	fs_info->csum_root->block_rsv = &fs_info->delayed_refs_rsv;
+	fs_info->dev_root->block_rsv = &fs_info->global_block_rsv;
+	fs_info->tree_root->block_rsv = &fs_info->global_block_rsv;
+	if (fs_info->quota_root)
+		fs_info->quota_root->block_rsv = &fs_info->global_block_rsv;
+	fs_info->chunk_root->block_rsv = &fs_info->chunk_block_rsv;
 
 	btrfs_update_global_block_rsv(fs_info);
 }
@@ -482,9 +467,8 @@ static struct btrfs_block_rsv *get_block_rsv(
 	struct btrfs_block_rsv *block_rsv = NULL;
 
 	if (test_bit(BTRFS_ROOT_SHAREABLE, &root->state) ||
-	    (root == fs_info->uuid_root) ||
-	    (trans->adding_csums &&
-	     root->root_key.objectid == BTRFS_CSUM_TREE_OBJECTID))
+	    (root == fs_info->csum_root && trans->adding_csums) ||
+	    (root == fs_info->uuid_root))
 		block_rsv = trans->block_rsv;
 
 	if (!block_rsv)
@@ -539,7 +523,7 @@ again:
 				block_rsv->type, ret);
 	}
 try_reserve:
-	ret = btrfs_reserve_metadata_bytes(fs_info, block_rsv, blocksize,
+	ret = btrfs_reserve_metadata_bytes(root, block_rsv, blocksize,
 					   BTRFS_RESERVE_NO_FLUSH);
 	if (!ret)
 		return block_rsv;

@@ -10,6 +10,7 @@
 #include <linux/bitops.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
+#include <linux/mfd/hi6421-spmi-pmic.h>
 #include <linux/module.h>
 #include <linux/of_gpio.h>
 #include <linux/platform_device.h>
@@ -219,7 +220,7 @@ static int hi6421v600_irq_probe(struct platform_device *pdev)
 	struct platform_device *pmic_pdev;
 	struct device *dev = &pdev->dev;
 	struct hi6421v600_irq *priv;
-	struct regmap *regmap;
+	struct hi6421_spmi_pmic *pmic;
 	unsigned int virq;
 	int i, ret;
 
@@ -228,8 +229,8 @@ static int hi6421v600_irq_probe(struct platform_device *pdev)
 	 * which should first set drvdata. If this doesn't happen, hit
 	 * a warn on and return.
 	 */
-	regmap = dev_get_drvdata(pmic_dev);
-	if (WARN_ON(!regmap))
+	pmic = dev_get_drvdata(pmic_dev);
+	if (WARN_ON(!pmic))
 		return -ENODEV;
 
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
@@ -237,7 +238,7 @@ static int hi6421v600_irq_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	priv->dev = dev;
-	priv->regmap = regmap;
+	priv->regmap = pmic->regmap;
 
 	spin_lock_init(&priv->lock);
 

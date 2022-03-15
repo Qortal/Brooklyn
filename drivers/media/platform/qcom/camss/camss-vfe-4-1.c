@@ -210,13 +210,11 @@
 #define MSM_VFE_VFE0_UB_SIZE 1023
 #define MSM_VFE_VFE0_UB_SIZE_RDI (MSM_VFE_VFE0_UB_SIZE / 3)
 
-static u32 vfe_hw_version(struct vfe_device *vfe)
+static void vfe_hw_version_read(struct vfe_device *vfe, struct device *dev)
 {
 	u32 hw_version = readl_relaxed(vfe->base + VFE_0_HW_VERSION);
 
-	dev_dbg(vfe->camss->dev, "VFE HW Version = 0x%08x\n", hw_version);
-
-	return hw_version;
+	dev_dbg(dev, "VFE HW Version = 0x%08x\n", hw_version);
 }
 
 static u16 vfe_get_ub_size(u8 vfe_id)
@@ -290,14 +288,22 @@ static void vfe_wm_frame_based(struct vfe_device *vfe, u8 wm, u8 enable)
 static void vfe_get_wm_sizes(struct v4l2_pix_format_mplane *pix, u8 plane,
 			     u16 *width, u16 *height, u16 *bytesperline)
 {
-	*width = pix->width;
-	*height = pix->height;
-	*bytesperline = pix->plane_fmt[0].bytesperline;
-
-	if (pix->pixelformat == V4L2_PIX_FMT_NV12 ||
-	    pix->pixelformat == V4L2_PIX_FMT_NV21)
+	switch (pix->pixelformat) {
+	case V4L2_PIX_FMT_NV12:
+	case V4L2_PIX_FMT_NV21:
+		*width = pix->width;
+		*height = pix->height;
+		*bytesperline = pix->plane_fmt[0].bytesperline;
 		if (plane == 1)
 			*height /= 2;
+		break;
+	case V4L2_PIX_FMT_NV16:
+	case V4L2_PIX_FMT_NV61:
+		*width = pix->width;
+		*height = pix->height;
+		*bytesperline = pix->plane_fmt[0].bytesperline;
+		break;
+	}
 }
 
 static void vfe_wm_line_based(struct vfe_device *vfe, u32 wm,
@@ -998,7 +1004,7 @@ static void vfe_subdev_init(struct device *dev, struct vfe_device *vfe)
 
 const struct vfe_hw_ops vfe_ops_4_1 = {
 	.global_reset = vfe_global_reset,
-	.hw_version = vfe_hw_version,
+	.hw_version_read = vfe_hw_version_read,
 	.isr_read = vfe_isr_read,
 	.isr = vfe_isr,
 	.pm_domain_off = vfe_pm_domain_off,

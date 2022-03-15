@@ -23,7 +23,6 @@
 #include <linux/export.h>
 #include <linux/user_namespace.h>
 #include <linux/namei.h>
-#include <linux/mnt_idmapping.h>
 
 static struct posix_acl **acl_by_type(struct inode *inode, int type)
 {
@@ -135,7 +134,8 @@ struct posix_acl *get_acl(struct inode *inode, int type)
 	 * to just call ->get_acl to fetch the ACL ourself.  (This is going to
 	 * be an unlikely race.)
 	 */
-	cmpxchg(p, ACL_NOT_CACHED, sentinel);
+	if (cmpxchg(p, ACL_NOT_CACHED, sentinel) != ACL_NOT_CACHED)
+		/* fall through */ ;
 
 	/*
 	 * Normally, the ACL returned by ->get_acl will be cached.
@@ -375,9 +375,7 @@ posix_acl_permission(struct user_namespace *mnt_userns, struct inode *inode,
                                         goto check_perm;
                                 break;
                         case ACL_USER:
-				uid = mapped_kuid_fs(mnt_userns,
-						     i_user_ns(inode),
-						     pa->e_uid);
+				uid = kuid_into_mnt(mnt_userns, pa->e_uid);
 				if (uid_eq(uid, current_fsuid()))
                                         goto mask;
 				break;
@@ -390,9 +388,7 @@ posix_acl_permission(struct user_namespace *mnt_userns, struct inode *inode,
                                 }
 				break;
                         case ACL_GROUP:
-				gid = mapped_kgid_fs(mnt_userns,
-						     i_user_ns(inode),
-						     pa->e_gid);
+				gid = kgid_into_mnt(mnt_userns, pa->e_gid);
 				if (in_group_p(gid)) {
 					found = 1;
 					if ((pa->e_perm & want) == want)
@@ -739,17 +735,17 @@ static void posix_acl_fix_xattr_userns(
 		case ACL_USER:
 			uid = make_kuid(from, le32_to_cpu(entry->e_id));
 			if (from_user)
-				uid = mapped_kuid_user(mnt_userns, &init_user_ns, uid);
+				uid = kuid_from_mnt(mnt_userns, uid);
 			else
-				uid = mapped_kuid_fs(mnt_userns, &init_user_ns, uid);
+				uid = kuid_into_mnt(mnt_userns, uid);
 			entry->e_id = cpu_to_le32(from_kuid(to, uid));
 			break;
 		case ACL_GROUP:
 			gid = make_kgid(from, le32_to_cpu(entry->e_id));
 			if (from_user)
-				gid = mapped_kgid_user(mnt_userns, &init_user_ns, gid);
+				gid = kgid_from_mnt(mnt_userns, gid);
 			else
-				gid = mapped_kgid_fs(mnt_userns, &init_user_ns, gid);
+				gid = kgid_into_mnt(mnt_userns, gid);
 			entry->e_id = cpu_to_le32(from_kgid(to, gid));
 			break;
 		default:

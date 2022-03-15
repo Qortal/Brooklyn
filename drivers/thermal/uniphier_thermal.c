@@ -358,10 +358,6 @@ static const struct of_device_id uniphier_tm_dt_ids[] = {
 		.compatible = "socionext,uniphier-pxs3-thermal",
 		.data       = &uniphier_ld20_tm_data,
 	},
-	{
-		.compatible = "socionext,uniphier-nx1-thermal",
-		.data       = &uniphier_ld20_tm_data,
-	},
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, uniphier_tm_dt_ids);

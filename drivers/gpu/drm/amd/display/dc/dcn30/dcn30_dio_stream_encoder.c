@@ -50,6 +50,22 @@
 	enc1->base.ctx
 
 
+void convert_dc_info_packet_to_128(
+	const struct dc_info_packet *info_packet,
+	struct dc_info_packet_128 *info_packet_128)
+{
+	unsigned int i;
+
+	info_packet_128->hb0 = info_packet->hb0;
+	info_packet_128->hb1 = info_packet->hb1;
+	info_packet_128->hb2 = info_packet->hb2;
+	info_packet_128->hb3 = info_packet->hb3;
+
+	for (i = 0; i < 32; i++) {
+		info_packet_128->sb[i] = info_packet->sb[i];
+	}
+
+}
 static void enc3_update_hdmi_info_packet(
 	struct dcn10_stream_encoder *enc1,
 	uint32_t packet_index,
@@ -61,8 +77,7 @@ static void enc3_update_hdmi_info_packet(
 		enc1->base.vpg->funcs->update_generic_info_packet(
 				enc1->base.vpg,
 				packet_index,
-				info_packet,
-				true);
+				info_packet);
 
 		/* enable transmission of packet(s) -
 		 * packet transmission begins on the next frame */
@@ -320,8 +335,7 @@ static void enc3_dp_set_dsc_config(struct stream_encoder *enc,
 
 static void enc3_dp_set_dsc_pps_info_packet(struct stream_encoder *enc,
 					bool enable,
-					uint8_t *dsc_packed_pps,
-					bool immediate_update)
+					uint8_t *dsc_packed_pps)
 {
 	struct dcn10_stream_encoder *enc1 = DCN10STRENC_FROM_STRENC(enc);
 
@@ -351,8 +365,7 @@ static void enc3_dp_set_dsc_pps_info_packet(struct stream_encoder *enc,
 			enc1->base.vpg->funcs->update_generic_info_packet(
 							enc1->base.vpg,
 							11 + i,
-							&pps_sdp,
-							immediate_update);
+							&pps_sdp);
 		}
 
 		/* SW should make sure VBID[6] update line number is bigger
@@ -416,22 +429,19 @@ static void enc3_stream_encoder_update_dp_info_packets(
 		enc->vpg->funcs->update_generic_info_packet(
 				enc->vpg,
 				0,  /* packetIndex */
-				&info_frame->vsc,
-				true);
+				&info_frame->vsc);
 	}
 	if (info_frame->spd.valid) {
 		enc->vpg->funcs->update_generic_info_packet(
 				enc->vpg,
 				2,  /* packetIndex */
-				&info_frame->spd,
-				true);
+				&info_frame->spd);
 	}
 	if (info_frame->hdrsmd.valid) {
 		enc->vpg->funcs->update_generic_info_packet(
 				enc->vpg,
 				3,  /* packetIndex */
-				&info_frame->hdrsmd,
-				true);
+				&info_frame->hdrsmd);
 	}
 	/* packetIndex 4 is used for send immediate sdp message, and please
 	 * use other packetIndex (such as 5,6) for other info packet
@@ -473,7 +483,7 @@ static void enc3_dp_set_odm_combine(
 }
 
 /* setup stream encoder in dvi mode */
-static void enc3_stream_encoder_dvi_set_stream_attribute(
+void enc3_stream_encoder_dvi_set_stream_attribute(
 	struct stream_encoder *enc,
 	struct dc_crtc_timing *crtc_timing,
 	bool is_dual_link)

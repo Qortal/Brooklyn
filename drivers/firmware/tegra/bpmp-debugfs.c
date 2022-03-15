@@ -74,37 +74,28 @@ static void seqbuf_seek(struct seqbuf *seqbuf, ssize_t offset)
 static const char *get_filename(struct tegra_bpmp *bpmp,
 				const struct file *file, char *buf, int size)
 {
-	const char *root_path, *filename = NULL;
-	char *root_path_buf;
+	char root_path_buf[512];
+	const char *root_path;
+	const char *filename;
 	size_t root_len;
-	size_t root_path_buf_len = 512;
-
-	root_path_buf = kzalloc(root_path_buf_len, GFP_KERNEL);
-	if (!root_path_buf)
-		goto out;
 
 	root_path = dentry_path(bpmp->debugfs_mirror, root_path_buf,
-				root_path_buf_len);
+				sizeof(root_path_buf));
 	if (IS_ERR(root_path))
-		goto out;
+		return NULL;
 
 	root_len = strlen(root_path);
 
 	filename = dentry_path(file->f_path.dentry, buf, size);
-	if (IS_ERR(filename)) {
-		filename = NULL;
-		goto out;
-	}
+	if (IS_ERR(filename))
+		return NULL;
 
-	if (strlen(filename) < root_len || strncmp(filename, root_path, root_len)) {
-		filename = NULL;
-		goto out;
-	}
+	if (strlen(filename) < root_len ||
+			strncmp(filename, root_path, root_len))
+		return NULL;
 
 	filename += root_len;
 
-out:
-	kfree(root_path_buf);
 	return filename;
 }
 

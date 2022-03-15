@@ -132,24 +132,6 @@ static const struct adreno_info gpulist[] = {
 		.inactive_period = DRM_MSM_INACTIVE_PERIOD,
 		.init  = a4xx_gpu_init,
 	}, {
-		.rev   = ADRENO_REV(5, 0, 6, ANY_ID),
-		.revn = 506,
-		.name = "A506",
-		.fw = {
-			[ADRENO_FW_PM4] = "a530_pm4.fw",
-			[ADRENO_FW_PFP] = "a530_pfp.fw",
-		},
-		.gmem = (SZ_128K + SZ_8K),
-		/*
-		 * Increase inactive period to 250 to avoid bouncing
-		 * the GDSC which appears to make it grumpy
-		 */
-		.inactive_period = 250,
-		.quirks = ADRENO_QUIRK_TWO_PASS_USE_WFI |
-			  ADRENO_QUIRK_LMLOADKILL_DISABLE,
-		.init = a5xx_gpu_init,
-		.zapfw = "a506_zap.mdt",
-	}, {
 		.rev   = ADRENO_REV(5, 0, 8, ANY_ID),
 		.revn = 508,
 		.name = "A508",
@@ -426,9 +408,9 @@ struct msm_gpu *adreno_load_gpu(struct drm_device *dev)
 		return NULL;
 	}
 
-	mutex_lock(&gpu->lock);
+	mutex_lock(&dev->struct_mutex);
 	ret = msm_gpu_hw_init(gpu);
-	mutex_unlock(&gpu->lock);
+	mutex_unlock(&dev->struct_mutex);
 	pm_runtime_put_autosuspend(&pdev->dev);
 	if (ret) {
 		DRM_DEV_ERROR(dev->dev, "gpu hw init failed: %d\n", ret);
@@ -443,6 +425,13 @@ struct msm_gpu *adreno_load_gpu(struct drm_device *dev)
 #endif
 
 	return gpu;
+}
+
+static void set_gpu_pdev(struct drm_device *dev,
+		struct platform_device *pdev)
+{
+	struct msm_drm_private *priv = dev->dev_private;
+	priv->gpu_pdev = pdev;
 }
 
 static int find_chipid(struct device *dev, struct adreno_rev *rev)
@@ -493,8 +482,8 @@ static int adreno_bind(struct device *dev, struct device *master, void *data)
 {
 	static struct adreno_platform_config config = {};
 	const struct adreno_info *info;
-	struct msm_drm_private *priv = dev_get_drvdata(master);
-	struct drm_device *drm = priv->dev;
+	struct drm_device *drm = dev_get_drvdata(master);
+	struct msm_drm_private *priv = drm->dev_private;
 	struct msm_gpu *gpu;
 	int ret;
 
@@ -503,7 +492,7 @@ static int adreno_bind(struct device *dev, struct device *master, void *data)
 		return ret;
 
 	dev->platform_data = &config;
-	priv->gpu_pdev = to_platform_device(dev);
+	set_gpu_pdev(drm, to_platform_device(dev));
 
 	info = adreno_info(config.rev);
 
@@ -532,13 +521,12 @@ static int adreno_bind(struct device *dev, struct device *master, void *data)
 static void adreno_unbind(struct device *dev, struct device *master,
 		void *data)
 {
-	struct msm_drm_private *priv = dev_get_drvdata(master);
 	struct msm_gpu *gpu = dev_to_gpu(dev);
 
 	pm_runtime_force_suspend(dev);
 	gpu->funcs->destroy(gpu);
 
-	priv->gpu_pdev = NULL;
+	set_gpu_pdev(dev_get_drvdata(master), NULL);
 }
 
 static const struct component_ops a3xx_ops = {
@@ -608,27 +596,9 @@ static int adreno_resume(struct device *dev)
 	return gpu->funcs->pm_resume(gpu);
 }
 
-static int active_submits(struct msm_gpu *gpu)
-{
-	int active_submits;
-	mutex_lock(&gpu->active_lock);
-	active_submits = gpu->active_submits;
-	mutex_unlock(&gpu->active_lock);
-	return active_submits;
-}
-
 static int adreno_suspend(struct device *dev)
 {
 	struct msm_gpu *gpu = dev_to_gpu(dev);
-	int remaining;
-
-	remaining = wait_event_timeout(gpu->retire_event,
-				       active_submits(gpu) == 0,
-				       msecs_to_jiffies(1000));
-	if (remaining == 0) {
-		dev_err(dev, "Timeout waiting for GPU to suspend\n");
-		return -EBUSY;
-	}
 
 	return gpu->funcs->pm_suspend(gpu);
 }

@@ -246,7 +246,6 @@ find_blocked_lock(struct nfs4_lockowner *lo, struct knfsd_fh *fh,
 	list_for_each_entry(cur, &lo->lo_blocked, nbl_list) {
 		if (fh_match(fh, &cur->nbl_fh)) {
 			list_del_init(&cur->nbl_list);
-			WARN_ON(list_empty(&cur->nbl_lru));
 			list_del_init(&cur->nbl_lru);
 			found = cur;
 			break;
@@ -272,7 +271,6 @@ find_or_allocate_block(struct nfs4_lockowner *lo, struct knfsd_fh *fh,
 			INIT_LIST_HEAD(&nbl->nbl_lru);
 			fh_copy_shallow(&nbl->nbl_fh, fh);
 			locks_init_lock(&nbl->nbl_lock);
-			kref_init(&nbl->nbl_kref);
 			nfsd4_init_cb(&nbl->nbl_cb, lo->lo_owner.so_client,
 					&nfsd4_cb_notify_lock_ops,
 					NFSPROC4_CLNT_CB_NOTIFY_LOCK);
@@ -282,20 +280,11 @@ find_or_allocate_block(struct nfs4_lockowner *lo, struct knfsd_fh *fh,
 }
 
 static void
-free_nbl(struct kref *kref)
-{
-	struct nfsd4_blocked_lock *nbl;
-
-	nbl = container_of(kref, struct nfsd4_blocked_lock, nbl_kref);
-	kfree(nbl);
-}
-
-static void
 free_blocked_lock(struct nfsd4_blocked_lock *nbl)
 {
 	locks_delete_block(&nbl->nbl_lock);
 	locks_release_private(&nbl->nbl_lock);
-	kref_put(&nbl->nbl_kref, free_nbl);
+	kfree(nbl);
 }
 
 static void
@@ -313,7 +302,6 @@ remove_blocked_locks(struct nfs4_lockowner *lo)
 					struct nfsd4_blocked_lock,
 					nbl_list);
 		list_del_init(&nbl->nbl_list);
-		WARN_ON(list_empty(&nbl->nbl_lru));
 		list_move(&nbl->nbl_lru, &reaplist);
 	}
 	spin_unlock(&nn->blocked_locks_lock);
@@ -372,13 +360,11 @@ static const struct nfsd4_callback_ops nfsd4_cb_notify_lock_ops = {
  * st_{access,deny}_bmap field of the stateid, in order to track not
  * only what share bits are currently in force, but also what
  * combinations of share bits previous opens have used.  This allows us
- * to enforce the recommendation in
- * https://datatracker.ietf.org/doc/html/rfc7530#section-16.19.4 that
- * the server return an error if the client attempt to downgrade to a
- * combination of share bits not explicable by closing some of its
- * previous opens.
+ * to enforce the recommendation of rfc 3530 14.2.19 that the server
+ * return an error if the client attempt to downgrade to a combination
+ * of share bits not explicable by closing some of its previous opens.
  *
- * This enforcement is arguably incomplete, since we don't keep
+ * XXX: This enforcement is actually incomplete, since we don't keep
  * track of access/deny bit combinations; so, e.g., we allow:
  *
  *	OPEN allow read, deny write
@@ -386,10 +372,6 @@ static const struct nfsd4_callback_ops nfsd4_cb_notify_lock_ops = {
  *	DOWNGRADE allow read, deny none
  *
  * which we should reject.
- *
- * But you could also argue that our current code is already overkill,
- * since it only exists to return NFS4ERR_INVAL on incorrect client
- * behavior.
  */
 static unsigned int
 bmap_to_share_mode(unsigned long bmap)
@@ -1028,7 +1010,7 @@ static int delegation_blocked(struct knfsd_fh *fh)
 		}
 		spin_unlock(&blocked_delegations_lock);
 	}
-	hash = jhash(&fh->fh_raw, fh->fh_size, 0);
+	hash = jhash(&fh->fh_base, fh->fh_size, 0);
 	if (test_bit(hash&255, bd->set[0]) &&
 	    test_bit((hash>>8)&255, bd->set[0]) &&
 	    test_bit((hash>>16)&255, bd->set[0]))
@@ -1047,7 +1029,7 @@ static void block_delegations(struct knfsd_fh *fh)
 	u32 hash;
 	struct bloom_pair *bd = &blocked_delegations;
 
-	hash = jhash(&fh->fh_raw, fh->fh_size, 0);
+	hash = jhash(&fh->fh_base, fh->fh_size, 0);
 
 	spin_lock(&blocked_delegations_lock);
 	__set_bit(hash&255, bd->set[bd->new]);
@@ -5566,7 +5548,7 @@ static void nfsd4_ssc_shutdown_umount(struct nfsd_net *nn)
 static void nfsd4_ssc_expire_umount(struct nfsd_net *nn)
 {
 	bool do_wakeup = false;
-	struct nfsd4_ssc_umount_item *ni = NULL;
+	struct nfsd4_ssc_umount_item *ni = 0;
 	struct nfsd4_ssc_umount_item *tmp;
 
 	spin_lock(&nn->nfsd_ssc_lock);
@@ -6860,6 +6842,7 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	struct nfsd4_blocked_lock *nbl = NULL;
 	struct file_lock *file_lock = NULL;
 	struct file_lock *conflock = NULL;
+	struct super_block *sb;
 	__be32 status = 0;
 	int lkflg;
 	int err;
@@ -6881,6 +6864,7 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 		dprintk("NFSD: nfsd4_lock: permission denied!\n");
 		return status;
 	}
+	sb = cstate->current_fh.fh_dentry->d_sb;
 
 	if (lock->lk_is_new) {
 		if (nfsd4_has_session(cstate))
@@ -6932,7 +6916,8 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 	fp = lock_stp->st_stid.sc_file;
 	switch (lock->lk_type) {
 		case NFS4_READW_LT:
-			if (nfsd4_has_session(cstate))
+			if (nfsd4_has_session(cstate) &&
+			    !(sb->s_export_op->flags & EXPORT_OP_SYNC_LOCKS))
 				fl_flags |= FL_SLEEP;
 			fallthrough;
 		case NFS4_READ_LT:
@@ -6944,7 +6929,8 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 			fl_type = F_RDLCK;
 			break;
 		case NFS4_WRITEW_LT:
-			if (nfsd4_has_session(cstate))
+			if (nfsd4_has_session(cstate) &&
+			    !(sb->s_export_op->flags & EXPORT_OP_SYNC_LOCKS))
 				fl_flags |= FL_SLEEP;
 			fallthrough;
 		case NFS4_WRITE_LT:
@@ -6964,16 +6950,6 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 		status = nfserr_openmode;
 		goto out;
 	}
-
-	/*
-	 * Most filesystems with their own ->lock operations will block
-	 * the nfsd thread waiting to acquire the lock.  That leads to
-	 * deadlocks (we don't want every nfsd thread tied up waiting
-	 * for file locks), so don't attempt blocking lock notifications
-	 * on those filesystems:
-	 */
-	if (nf->nf_file->f_op->lock)
-		fl_flags &= ~FL_SLEEP;
 
 	nbl = find_or_allocate_block(lock_sop, &fp->fi_fhandle, nn);
 	if (!nbl) {
@@ -7005,7 +6981,6 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 		spin_lock(&nn->blocked_locks_lock);
 		list_add_tail(&nbl->nbl_list, &lock_sop->lo_blocked);
 		list_add_tail(&nbl->nbl_lru, &nn->blocked_locks_lru);
-		kref_get(&nbl->nbl_kref);
 		spin_unlock(&nn->blocked_locks_lock);
 	}
 
@@ -7018,7 +6993,6 @@ nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 			nn->somebody_reclaimed = true;
 		break;
 	case FILE_LOCK_DEFERRED:
-		kref_put(&nbl->nbl_kref, free_nbl);
 		nbl = NULL;
 		fallthrough;
 	case -EAGAIN:		/* conflock holds conflicting lock */
@@ -7039,13 +7013,8 @@ out:
 		/* dequeue it if we queued it before */
 		if (fl_flags & FL_SLEEP) {
 			spin_lock(&nn->blocked_locks_lock);
-			if (!list_empty(&nbl->nbl_list) &&
-			    !list_empty(&nbl->nbl_lru)) {
-				list_del_init(&nbl->nbl_list);
-				list_del_init(&nbl->nbl_lru);
-				kref_put(&nbl->nbl_kref, free_nbl);
-			}
-			/* nbl can use one of lists to be linked to reaplist */
+			list_del_init(&nbl->nbl_list);
+			list_del_init(&nbl->nbl_lru);
 			spin_unlock(&nn->blocked_locks_lock);
 		}
 		free_blocked_lock(nbl);

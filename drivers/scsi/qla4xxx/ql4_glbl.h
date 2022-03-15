@@ -286,6 +286,5 @@ extern int ql4xenablemsix;
 extern int ql4xmdcapmask;
 extern int ql4xenablemd;
 
-extern const struct attribute_group *qla4xxx_host_groups[];
-
+extern struct device_attribute *qla4xxx_host_attrs[];
 #endif /* _QLA4x_GBL_H */

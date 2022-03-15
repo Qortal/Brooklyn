@@ -157,11 +157,6 @@ static struct inode *__lookup_inode(struct super_block *sb, u64 ino)
 		ceph_mdsc_put_request(req);
 		if (!inode)
 			return err < 0 ? ERR_PTR(err) : ERR_PTR(-ESTALE);
-	} else {
-		if (ceph_inode_is_shutdown(inode)) {
-			iput(inode);
-			return ERR_PTR(-ESTALE);
-		}
 	}
 	return inode;
 }
@@ -228,13 +223,8 @@ static struct dentry *__snapfh_to_dentry(struct super_block *sb,
 		return ERR_PTR(-ESTALE);
 
 	inode = ceph_find_inode(sb, vino);
-	if (inode) {
-		if (ceph_inode_is_shutdown(inode)) {
-			iput(inode);
-			return ERR_PTR(-ESTALE);
-		}
+	if (inode)
 		return d_obtain_alias(inode);
-	}
 
 	req = ceph_mdsc_create_request(mdsc, CEPH_MDS_OP_LOOKUPINO,
 				       USE_ANY_MDS);

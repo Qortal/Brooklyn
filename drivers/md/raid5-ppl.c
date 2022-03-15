@@ -1081,7 +1081,7 @@ static int ppl_load_distributed(struct ppl_log *log)
 	struct ppl_conf *ppl_conf = log->ppl_conf;
 	struct md_rdev *rdev = log->rdev;
 	struct mddev *mddev = rdev->mddev;
-	struct page *page, *page2;
+	struct page *page, *page2, *tmp;
 	struct ppl_header *pplhdr = NULL, *prev_pplhdr = NULL;
 	u32 crc, crc_stored;
 	u32 signature;
@@ -1156,7 +1156,9 @@ static int ppl_load_distributed(struct ppl_log *log)
 		prev_pplhdr_offset = pplhdr_offset;
 		prev_pplhdr = pplhdr;
 
-		swap(page, page2);
+		tmp = page;
+		page = page2;
+		page2 = tmp;
 
 		/* calculate next potential ppl offset */
 		for (i = 0; i < le32_to_cpu(pplhdr->entries_count); i++)

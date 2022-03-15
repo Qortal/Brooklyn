@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * AMD MP2 PCIe communication driver
- * Copyright 2020-2021 Advanced Micro Devices, Inc.
+ * Copyright 2020 Advanced Micro Devices, Inc.
  *
  * Authors: Shyam Sundar S K <Shyam-sundar.S-k@amd.com>
  *	    Sandeep Singh <Sandeep.singh@amd.com>
- *	    Basavaraj Natikar <Basavaraj.Natikar@amd.com>
  */
 
 #include <linux/bitops.h>
@@ -53,7 +52,6 @@ static void amd_start_sensor_v2(struct amd_mp2_dev *privdata, struct amd_mp2_sen
 
 	cmd_base.ul = 0;
 	cmd_base.cmd_v2.cmd_id = ENABLE_SENSOR;
-	cmd_base.cmd_v2.intr_disable = 1;
 	cmd_base.cmd_v2.period = info.period;
 	cmd_base.cmd_v2.sensor_id = info.sensor_idx;
 	cmd_base.cmd_v2.length = 16;
@@ -71,7 +69,6 @@ static void amd_stop_sensor_v2(struct amd_mp2_dev *privdata, u16 sensor_idx)
 
 	cmd_base.ul = 0;
 	cmd_base.cmd_v2.cmd_id = DISABLE_SENSOR;
-	cmd_base.cmd_v2.intr_disable = 1;
 	cmd_base.cmd_v2.period = 0;
 	cmd_base.cmd_v2.sensor_id = sensor_idx;
 	cmd_base.cmd_v2.length  = 16;
@@ -85,7 +82,6 @@ static void amd_stop_all_sensor_v2(struct amd_mp2_dev *privdata)
 	union sfh_cmd_base cmd_base;
 
 	cmd_base.cmd_v2.cmd_id = STOP_ALL_SENSORS;
-	cmd_base.cmd_v2.intr_disable = 1;
 	cmd_base.cmd_v2.period = 0;
 	cmd_base.cmd_v2.sensor_id = 0;
 
@@ -288,7 +284,7 @@ static int amd_mp2_pci_probe(struct pci_dev *pdev, const struct pci_device_id *i
 		return -ENOMEM;
 
 	privdata->pdev = pdev;
-	dev_set_drvdata(&pdev->dev, privdata);
+	pci_set_drvdata(pdev, privdata);
 	rc = pcim_enable_device(pdev);
 	if (rc)
 		return rc;
@@ -299,13 +295,10 @@ static int amd_mp2_pci_probe(struct pci_dev *pdev, const struct pci_device_id *i
 
 	privdata->mmio = pcim_iomap_table(pdev)[2];
 	pci_set_master(pdev);
-	rc = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+	rc = pci_set_dma_mask(pdev, DMA_BIT_MASK(64));
 	if (rc) {
-		rc = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
-		if (rc) {
-			dev_err(&pdev->dev, "failed to set DMA mask\n");
-			return rc;
-		}
+		rc = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
+		return rc;
 	}
 
 	privdata->cl_data = devm_kzalloc(&pdev->dev, sizeof(struct amdtp_cl_data), GFP_KERNEL);
@@ -334,7 +327,8 @@ static int amd_mp2_pci_probe(struct pci_dev *pdev, const struct pci_device_id *i
 
 static int __maybe_unused amd_mp2_pci_resume(struct device *dev)
 {
-	struct amd_mp2_dev *mp2 = dev_get_drvdata(dev);
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct amd_mp2_dev *mp2 = pci_get_drvdata(pdev);
 	struct amdtp_cl_data *cl_data = mp2->cl_data;
 	struct amd_mp2_sensor_info info;
 	int i, status;
@@ -362,7 +356,8 @@ static int __maybe_unused amd_mp2_pci_resume(struct device *dev)
 
 static int __maybe_unused amd_mp2_pci_suspend(struct device *dev)
 {
-	struct amd_mp2_dev *mp2 = dev_get_drvdata(dev);
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct amd_mp2_dev *mp2 = pci_get_drvdata(pdev);
 	struct amdtp_cl_data *cl_data = mp2->cl_data;
 	int i, status;
 
@@ -406,4 +401,3 @@ MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Shyam Sundar S K <Shyam-sundar.S-k@amd.com>");
 MODULE_AUTHOR("Sandeep Singh <Sandeep.singh@amd.com>");
-MODULE_AUTHOR("Basavaraj Natikar <Basavaraj.Natikar@amd.com>");

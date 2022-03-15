@@ -37,9 +37,7 @@ static int bmc150_accel_probe(struct spi_device *spi)
 
 static int bmc150_accel_remove(struct spi_device *spi)
 {
-	bmc150_accel_core_remove(&spi->dev);
-
-	return 0;
+	return bmc150_accel_core_remove(&spi->dev);
 }
 
 static const struct acpi_device_id bmc150_accel_acpi_match[] = {

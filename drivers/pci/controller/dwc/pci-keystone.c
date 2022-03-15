@@ -747,9 +747,9 @@ err:
 
 #ifdef CONFIG_ARM
 /*
- * When a PCI device does not exist during config cycles, keystone host
- * gets a bus error instead of returning 0xffffffff (PCI_ERROR_RESPONSE).
- * This handler always returns 0 for this kind of fault.
+ * When a PCI device does not exist during config cycles, keystone host gets a
+ * bus error instead of returning 0xffffffff. This handler always returns 0
+ * for this kind of faults.
  */
 static int ks_pcie_fault(unsigned long addr, unsigned int fsr,
 			 struct pt_regs *regs)
@@ -775,19 +775,12 @@ static int __init ks_pcie_init_id(struct keystone_pcie *ks_pcie)
 	struct dw_pcie *pci = ks_pcie->pci;
 	struct device *dev = pci->dev;
 	struct device_node *np = dev->of_node;
-	struct of_phandle_args args;
-	unsigned int offset = 0;
 
 	devctrl_regs = syscon_regmap_lookup_by_phandle(np, "ti,syscon-pcie-id");
 	if (IS_ERR(devctrl_regs))
 		return PTR_ERR(devctrl_regs);
 
-	/* Do not error out to maintain old DT compatibility */
-	ret = of_parse_phandle_with_fixed_args(np, "ti,syscon-pcie-id", 1, 0, &args);
-	if (!ret)
-		offset = args.args[0];
-
-	ret = regmap_read(devctrl_regs, offset, &id);
+	ret = regmap_read(devctrl_regs, 0, &id);
 	if (ret)
 		return ret;
 
@@ -996,8 +989,6 @@ err_phy:
 static int ks_pcie_set_mode(struct device *dev)
 {
 	struct device_node *np = dev->of_node;
-	struct of_phandle_args args;
-	unsigned int offset = 0;
 	struct regmap *syscon;
 	u32 val;
 	u32 mask;
@@ -1007,15 +998,10 @@ static int ks_pcie_set_mode(struct device *dev)
 	if (IS_ERR(syscon))
 		return 0;
 
-	/* Do not error out to maintain old DT compatibility */
-	ret = of_parse_phandle_with_fixed_args(np, "ti,syscon-pcie-mode", 1, 0, &args);
-	if (!ret)
-		offset = args.args[0];
-
 	mask = KS_PCIE_DEV_TYPE_MASK | KS_PCIE_SYSCLOCKOUTEN;
 	val = KS_PCIE_DEV_TYPE(RC) | KS_PCIE_SYSCLOCKOUTEN;
 
-	ret = regmap_update_bits(syscon, offset, mask, val);
+	ret = regmap_update_bits(syscon, 0, mask, val);
 	if (ret) {
 		dev_err(dev, "failed to set pcie mode\n");
 		return ret;
@@ -1028,8 +1014,6 @@ static int ks_pcie_am654_set_mode(struct device *dev,
 				  enum dw_pcie_device_mode mode)
 {
 	struct device_node *np = dev->of_node;
-	struct of_phandle_args args;
-	unsigned int offset = 0;
 	struct regmap *syscon;
 	u32 val;
 	u32 mask;
@@ -1038,11 +1022,6 @@ static int ks_pcie_am654_set_mode(struct device *dev,
 	syscon = syscon_regmap_lookup_by_phandle(np, "ti,syscon-pcie-mode");
 	if (IS_ERR(syscon))
 		return 0;
-
-	/* Do not error out to maintain old DT compatibility */
-	ret = of_parse_phandle_with_fixed_args(np, "ti,syscon-pcie-mode", 1, 0, &args);
-	if (!ret)
-		offset = args.args[0];
 
 	mask = AM654_PCIE_DEV_TYPE_MASK;
 
@@ -1058,7 +1037,7 @@ static int ks_pcie_am654_set_mode(struct device *dev,
 		return -EINVAL;
 	}
 
-	ret = regmap_update_bits(syscon, offset, mask, val);
+	ret = regmap_update_bits(syscon, 0, mask, val);
 	if (ret) {
 		dev_err(dev, "failed to set pcie mode\n");
 		return ret;
@@ -1108,6 +1087,7 @@ static int __init ks_pcie_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
 	const struct ks_pcie_of_data *data;
+	const struct of_device_id *match;
 	enum dw_pcie_device_mode mode;
 	struct dw_pcie *pci;
 	struct keystone_pcie *ks_pcie;
@@ -1124,7 +1104,8 @@ static int __init ks_pcie_probe(struct platform_device *pdev)
 	int irq;
 	int i;
 
-	data = of_device_get_match_data(dev);
+	match = of_match_device(of_match_ptr(ks_pcie_of_match), dev);
+	data = (struct ks_pcie_of_data *)match->data;
 	if (!data)
 		return -EINVAL;
 

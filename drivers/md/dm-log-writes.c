@@ -446,7 +446,7 @@ static int log_super(struct log_writes_c *lc)
 
 static inline sector_t logdev_last_sector(struct log_writes_c *lc)
 {
-	return bdev_nr_sectors(lc->logdev->bdev);
+	return i_size_read(lc->logdev->bdev->bd_inode) >> SECTOR_SHIFT;
 }
 
 static int log_writes_kthread(void *arg)
@@ -753,7 +753,7 @@ static int log_writes_map(struct dm_target *ti, struct bio *bio)
 	 */
 	bio_for_each_segment(bv, bio, iter) {
 		struct page *page;
-		void *dst;
+		void *src, *dst;
 
 		page = alloc_page(GFP_NOIO);
 		if (!page) {
@@ -765,9 +765,11 @@ static int log_writes_map(struct dm_target *ti, struct bio *bio)
 			return DM_MAPIO_KILL;
 		}
 
+		src = kmap_atomic(bv.bv_page);
 		dst = kmap_atomic(page);
-		memcpy_from_bvec(dst, &bv);
+		memcpy(dst, src + bv.bv_offset, bv.bv_len);
 		kunmap_atomic(dst);
+		kunmap_atomic(src);
 		block->vecs[i].bv_page = page;
 		block->vecs[i].bv_len = bv.bv_len;
 		block->vec_cnt++;
@@ -849,7 +851,7 @@ static int log_writes_prepare_ioctl(struct dm_target *ti,
 	/*
 	 * Only pass ioctls through if the device sizes match exactly.
 	 */
-	if (ti->len != bdev_nr_sectors(dev->bdev))
+	if (ti->len != i_size_read(dev->bdev->bd_inode) >> SECTOR_SHIFT)
 		return 1;
 	return 0;
 }
@@ -901,34 +903,120 @@ static void log_writes_io_hints(struct dm_target *ti, struct queue_limits *limit
 	limits->io_min = limits->physical_block_size;
 }
 
-#if IS_ENABLED(CONFIG_FS_DAX)
-static struct dax_device *log_writes_dax_pgoff(struct dm_target *ti,
-		pgoff_t *pgoff)
+#if IS_ENABLED(CONFIG_DAX_DRIVER)
+static int log_dax(struct log_writes_c *lc, sector_t sector, size_t bytes,
+		   struct iov_iter *i)
 {
-	struct log_writes_c *lc = ti->private;
+	struct pending_block *block;
 
-	*pgoff += (get_start_sect(lc->dev->bdev) >> PAGE_SECTORS_SHIFT);
-	return lc->dev->dax_dev;
+	if (!bytes)
+		return 0;
+
+	block = kzalloc(sizeof(struct pending_block), GFP_KERNEL);
+	if (!block) {
+		DMERR("Error allocating dax pending block");
+		return -ENOMEM;
+	}
+
+	block->data = kzalloc(bytes, GFP_KERNEL);
+	if (!block->data) {
+		DMERR("Error allocating dax data space");
+		kfree(block);
+		return -ENOMEM;
+	}
+
+	/* write data provided via the iterator */
+	if (!copy_from_iter(block->data, bytes, i)) {
+		DMERR("Error copying dax data");
+		kfree(block->data);
+		kfree(block);
+		return -EIO;
+	}
+
+	/* rewind the iterator so that the block driver can use it */
+	iov_iter_revert(i, bytes);
+
+	block->datalen = bytes;
+	block->sector = bio_to_dev_sectors(lc, sector);
+	block->nr_sectors = ALIGN(bytes, lc->sectorsize) >> lc->sectorshift;
+
+	atomic_inc(&lc->pending_blocks);
+	spin_lock_irq(&lc->blocks_lock);
+	list_add_tail(&block->list, &lc->unflushed_blocks);
+	spin_unlock_irq(&lc->blocks_lock);
+	wake_up_process(lc->log_kthread);
+
+	return 0;
 }
 
 static long log_writes_dax_direct_access(struct dm_target *ti, pgoff_t pgoff,
 					 long nr_pages, void **kaddr, pfn_t *pfn)
 {
-	struct dax_device *dax_dev = log_writes_dax_pgoff(ti, &pgoff);
+	struct log_writes_c *lc = ti->private;
+	sector_t sector = pgoff * PAGE_SECTORS;
+	int ret;
 
-	return dax_direct_access(dax_dev, pgoff, nr_pages, kaddr, pfn);
+	ret = bdev_dax_pgoff(lc->dev->bdev, sector, nr_pages * PAGE_SIZE, &pgoff);
+	if (ret)
+		return ret;
+	return dax_direct_access(lc->dev->dax_dev, pgoff, nr_pages, kaddr, pfn);
+}
+
+static size_t log_writes_dax_copy_from_iter(struct dm_target *ti,
+					    pgoff_t pgoff, void *addr, size_t bytes,
+					    struct iov_iter *i)
+{
+	struct log_writes_c *lc = ti->private;
+	sector_t sector = pgoff * PAGE_SECTORS;
+	int err;
+
+	if (bdev_dax_pgoff(lc->dev->bdev, sector, ALIGN(bytes, PAGE_SIZE), &pgoff))
+		return 0;
+
+	/* Don't bother doing anything if logging has been disabled */
+	if (!lc->logging_enabled)
+		goto dax_copy;
+
+	err = log_dax(lc, sector, bytes, i);
+	if (err) {
+		DMWARN("Error %d logging DAX write", err);
+		return 0;
+	}
+dax_copy:
+	return dax_copy_from_iter(lc->dev->dax_dev, pgoff, addr, bytes, i);
+}
+
+static size_t log_writes_dax_copy_to_iter(struct dm_target *ti,
+					  pgoff_t pgoff, void *addr, size_t bytes,
+					  struct iov_iter *i)
+{
+	struct log_writes_c *lc = ti->private;
+	sector_t sector = pgoff * PAGE_SECTORS;
+
+	if (bdev_dax_pgoff(lc->dev->bdev, sector, ALIGN(bytes, PAGE_SIZE), &pgoff))
+		return 0;
+	return dax_copy_to_iter(lc->dev->dax_dev, pgoff, addr, bytes, i);
 }
 
 static int log_writes_dax_zero_page_range(struct dm_target *ti, pgoff_t pgoff,
 					  size_t nr_pages)
 {
-	struct dax_device *dax_dev = log_writes_dax_pgoff(ti, &pgoff);
+	int ret;
+	struct log_writes_c *lc = ti->private;
+	sector_t sector = pgoff * PAGE_SECTORS;
 
-	return dax_zero_page_range(dax_dev, pgoff, nr_pages << PAGE_SHIFT);
+	ret = bdev_dax_pgoff(lc->dev->bdev, sector, nr_pages << PAGE_SHIFT,
+			     &pgoff);
+	if (ret)
+		return ret;
+	return dax_zero_page_range(lc->dev->dax_dev, pgoff,
+				   nr_pages << PAGE_SHIFT);
 }
 
 #else
 #define log_writes_dax_direct_access NULL
+#define log_writes_dax_copy_from_iter NULL
+#define log_writes_dax_copy_to_iter NULL
 #define log_writes_dax_zero_page_range NULL
 #endif
 
@@ -946,6 +1034,8 @@ static struct target_type log_writes_target = {
 	.iterate_devices = log_writes_iterate_devices,
 	.io_hints = log_writes_io_hints,
 	.direct_access = log_writes_dax_direct_access,
+	.dax_copy_from_iter = log_writes_dax_copy_from_iter,
+	.dax_copy_to_iter = log_writes_dax_copy_to_iter,
 	.dax_zero_page_range = log_writes_dax_zero_page_range,
 };
 

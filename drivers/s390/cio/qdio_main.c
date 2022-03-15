@@ -10,7 +10,6 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
-#include <linux/kmemleak.h>
 #include <linux/delay.h>
 #include <linux/gfp.h>
 #include <linux/io.h>
@@ -170,6 +169,8 @@ static int qdio_do_sqbs(struct qdio_q *q, unsigned char state, int start,
 	int tmp_count = count, tmp_start = start;
 	int nr = q->nr;
 
+	if (!count)
+		return 0;
 	qperf_inc(q, sqbs);
 
 	if (!q->is_input_q)
@@ -498,31 +499,6 @@ static int get_inbound_buffer_frontier(struct qdio_q *q, unsigned int start,
 	}
 }
 
-int qdio_inspect_input_queue(struct ccw_device *cdev, unsigned int nr,
-			     unsigned int *bufnr, unsigned int *error)
-{
-	struct qdio_irq *irq = cdev->private->qdio_data;
-	unsigned int start;
-	struct qdio_q *q;
-	int count;
-
-	if (!irq)
-		return -ENODEV;
-
-	q = irq->input_qs[nr];
-	start = q->first_to_check;
-	*error = 0;
-
-	count = get_inbound_buffer_frontier(q, start, error);
-	if (count == 0)
-		return 0;
-
-	*bufnr = start;
-	q->first_to_check = add_buf(start, count);
-	return count;
-}
-EXPORT_SYMBOL_GPL(qdio_inspect_input_queue);
-
 static inline int qdio_inbound_q_done(struct qdio_q *q, unsigned int start)
 {
 	unsigned char state = 0;
@@ -602,31 +578,6 @@ static int get_outbound_buffer_frontier(struct qdio_q *q, unsigned int start,
 	}
 }
 
-int qdio_inspect_output_queue(struct ccw_device *cdev, unsigned int nr,
-			      unsigned int *bufnr, unsigned int *error)
-{
-	struct qdio_irq *irq = cdev->private->qdio_data;
-	unsigned int start;
-	struct qdio_q *q;
-	int count;
-
-	if (!irq)
-		return -ENODEV;
-
-	q = irq->output_qs[nr];
-	start = q->first_to_check;
-	*error = 0;
-
-	count = get_outbound_buffer_frontier(q, start, error);
-	if (count == 0)
-		return 0;
-
-	*bufnr = start;
-	q->first_to_check = add_buf(start, count);
-	return count;
-}
-EXPORT_SYMBOL_GPL(qdio_inspect_output_queue);
-
 static int qdio_kick_outbound_q(struct qdio_q *q, unsigned int count,
 				unsigned long aob)
 {
@@ -702,18 +653,24 @@ static void qdio_handle_activate_check(struct qdio_irq *irq_ptr,
 				       unsigned long intparm, int cstat,
 				       int dstat)
 {
-	unsigned int first_to_check = 0;
+	struct qdio_q *q;
 
 	DBF_ERROR("%4x ACT CHECK", irq_ptr->schid.sch_no);
 	DBF_ERROR("intp :%lx", intparm);
 	DBF_ERROR("ds: %2x cs:%2x", dstat, cstat);
 
-	/* zfcp wants this: */
-	if (irq_ptr->nr_input_qs)
-		first_to_check = irq_ptr->input_qs[0]->first_to_check;
+	if (irq_ptr->nr_input_qs) {
+		q = irq_ptr->input_qs[0];
+	} else if (irq_ptr->nr_output_qs) {
+		q = irq_ptr->output_qs[0];
+	} else {
+		dump_stack();
+		goto no_handler;
+	}
 
-	irq_ptr->error_handler(irq_ptr->cdev, QDIO_ERROR_ACTIVATE, 0,
-			       first_to_check, 0, irq_ptr->int_parm);
+	q->handler(q->irq_ptr->cdev, QDIO_ERROR_ACTIVATE,
+		   q->nr, q->first_to_check, 0, irq_ptr->int_parm);
+no_handler:
 	qdio_set_state(irq_ptr, QDIO_IRQ_STATE_STOPPED);
 	/*
 	 * In case of z/VM LGR (Live Guest Migration) QDIO recovery will happen.
@@ -917,7 +874,6 @@ int qdio_free(struct ccw_device *cdev)
 	qdio_free_queues(irq_ptr);
 	free_page((unsigned long) irq_ptr->qdr);
 	free_page(irq_ptr->chsc_page);
-	kfree(irq_ptr->ccw);
 	free_page((unsigned long) irq_ptr);
 	return 0;
 }
@@ -943,16 +899,10 @@ int qdio_allocate(struct ccw_device *cdev, unsigned int no_input_qs,
 	    no_output_qs > QDIO_MAX_QUEUES_PER_IRQ)
 		return -EINVAL;
 
-	irq_ptr = (void *) get_zeroed_page(GFP_KERNEL);
+	/* irq_ptr must be in GFP_DMA since it contains ccw1.cda */
+	irq_ptr = (void *) get_zeroed_page(GFP_KERNEL | GFP_DMA);
 	if (!irq_ptr)
 		return -ENOMEM;
-
-	irq_ptr->ccw = kmalloc(sizeof(*irq_ptr->ccw), GFP_KERNEL | GFP_DMA);
-	if (!irq_ptr->ccw)
-		goto err_ccw;
-
-	/* kmemleak doesn't scan the page-allocated irq_ptr: */
-	kmemleak_not_leak(irq_ptr->ccw);
 
 	irq_ptr->cdev = cdev;
 	mutex_init(&irq_ptr->setup_mutex);
@@ -991,8 +941,6 @@ err_qdr:
 	free_page(irq_ptr->chsc_page);
 err_chsc:
 err_dbf:
-	kfree(irq_ptr->ccw);
-err_ccw:
 	free_page((unsigned long) irq_ptr);
 	return rc;
 }
@@ -1024,7 +972,6 @@ int qdio_establish(struct ccw_device *cdev,
 {
 	struct qdio_irq *irq_ptr = cdev->private->qdio_data;
 	struct subchannel_id schid;
-	struct ciw *ciw;
 	long timeout;
 	int rc;
 
@@ -1038,11 +985,8 @@ int qdio_establish(struct ccw_device *cdev,
 	    init_data->no_output_qs > irq_ptr->max_output_qs)
 		return -EINVAL;
 
-	/* Needed as error_handler: */
-	if (!init_data->input_handler)
-		return -EINVAL;
-
-	if (init_data->no_output_qs && !init_data->output_handler)
+	if ((init_data->no_input_qs && !init_data->input_handler) ||
+	    (init_data->no_output_qs && !init_data->output_handler))
 		return -EINVAL;
 
 	if (!init_data->input_sbal_addr_array ||
@@ -1051,12 +995,6 @@ int qdio_establish(struct ccw_device *cdev,
 
 	if (!init_data->irq_poll)
 		return -EINVAL;
-
-	ciw = ccw_device_get_ciw(cdev, CIW_TYPE_EQUEUE);
-	if (!ciw) {
-		DBF_ERROR("%4x NO EQ", schid.sch_no);
-		return -EIO;
-	}
 
 	mutex_lock(&irq_ptr->setup_mutex);
 	qdio_trace_init_data(irq_ptr, init_data);
@@ -1067,15 +1005,15 @@ int qdio_establish(struct ccw_device *cdev,
 		goto err_thinint;
 
 	/* establish q */
-	irq_ptr->ccw->cmd_code = ciw->cmd;
-	irq_ptr->ccw->flags = CCW_FLAG_SLI;
-	irq_ptr->ccw->count = ciw->count;
-	irq_ptr->ccw->cda = (u32) virt_to_phys(irq_ptr->qdr);
+	irq_ptr->ccw.cmd_code = irq_ptr->equeue.cmd;
+	irq_ptr->ccw.flags = CCW_FLAG_SLI;
+	irq_ptr->ccw.count = irq_ptr->equeue.count;
+	irq_ptr->ccw.cda = (u32) virt_to_phys(irq_ptr->qdr);
 
 	spin_lock_irq(get_ccwdev_lock(cdev));
 	ccw_device_set_options_mask(cdev, 0);
 
-	rc = ccw_device_start(cdev, irq_ptr->ccw, QDIO_DOING_ESTABLISH, 0, 0);
+	rc = ccw_device_start(cdev, &irq_ptr->ccw, QDIO_DOING_ESTABLISH, 0, 0);
 	spin_unlock_irq(get_ccwdev_lock(cdev));
 	if (rc) {
 		DBF_ERROR("%4x est IO ERR", irq_ptr->schid.sch_no);
@@ -1127,7 +1065,6 @@ int qdio_activate(struct ccw_device *cdev)
 {
 	struct qdio_irq *irq_ptr = cdev->private->qdio_data;
 	struct subchannel_id schid;
-	struct ciw *ciw;
 	int rc;
 
 	ccw_device_get_schid(cdev, &schid);
@@ -1136,27 +1073,21 @@ int qdio_activate(struct ccw_device *cdev)
 	if (!irq_ptr)
 		return -ENODEV;
 
-	ciw = ccw_device_get_ciw(cdev, CIW_TYPE_AQUEUE);
-	if (!ciw) {
-		DBF_ERROR("%4x NO AQ", schid.sch_no);
-		return -EIO;
-	}
-
 	mutex_lock(&irq_ptr->setup_mutex);
 	if (irq_ptr->state == QDIO_IRQ_STATE_INACTIVE) {
 		rc = -EBUSY;
 		goto out;
 	}
 
-	irq_ptr->ccw->cmd_code = ciw->cmd;
-	irq_ptr->ccw->flags = CCW_FLAG_SLI;
-	irq_ptr->ccw->count = ciw->count;
-	irq_ptr->ccw->cda = 0;
+	irq_ptr->ccw.cmd_code = irq_ptr->aqueue.cmd;
+	irq_ptr->ccw.flags = CCW_FLAG_SLI;
+	irq_ptr->ccw.count = irq_ptr->aqueue.count;
+	irq_ptr->ccw.cda = 0;
 
 	spin_lock_irq(get_ccwdev_lock(cdev));
 	ccw_device_set_options(cdev, CCWDEV_REPORT_ALL);
 
-	rc = ccw_device_start(cdev, irq_ptr->ccw, QDIO_DOING_ACTIVATE,
+	rc = ccw_device_start(cdev, &irq_ptr->ccw, QDIO_DOING_ACTIVATE,
 			      0, DOIO_DENY_PREFETCH);
 	spin_unlock_irq(get_ccwdev_lock(cdev));
 	if (rc) {
@@ -1213,35 +1144,6 @@ static int handle_inbound(struct qdio_q *q, int bufnr, int count)
 }
 
 /**
- * qdio_add_bufs_to_input_queue - process buffers on an Input Queue
- * @cdev: associated ccw_device for the qdio subchannel
- * @q_nr: queue number
- * @bufnr: buffer number
- * @count: how many buffers to process
- */
-int qdio_add_bufs_to_input_queue(struct ccw_device *cdev, unsigned int q_nr,
-				 unsigned int bufnr, unsigned int count)
-{
-	struct qdio_irq *irq_ptr = cdev->private->qdio_data;
-
-	if (bufnr >= QDIO_MAX_BUFFERS_PER_Q || count > QDIO_MAX_BUFFERS_PER_Q)
-		return -EINVAL;
-
-	if (!irq_ptr)
-		return -ENODEV;
-
-	DBF_DEV_EVENT(DBF_INFO, irq_ptr, "addi b:%02x c:%02x", bufnr, count);
-
-	if (irq_ptr->state != QDIO_IRQ_STATE_ACTIVE)
-		return -EIO;
-	if (!count)
-		return 0;
-
-	return handle_inbound(irq_ptr->input_qs[q_nr], bufnr, count);
-}
-EXPORT_SYMBOL_GPL(qdio_add_bufs_to_input_queue);
-
-/**
  * handle_outbound - process filled outbound buffers
  * @q: queue containing the buffers
  * @bufnr: first buffer to process
@@ -1282,16 +1184,16 @@ static int handle_outbound(struct qdio_q *q, unsigned int bufnr, unsigned int co
 }
 
 /**
- * qdio_add_bufs_to_output_queue - process buffers on an Output Queue
+ * do_QDIO - process input or output buffers
  * @cdev: associated ccw_device for the qdio subchannel
+ * @callflags: input or output and special flags from the program
  * @q_nr: queue number
  * @bufnr: buffer number
  * @count: how many buffers to process
- * @aob: asynchronous operation block
+ * @aob: asynchronous operation block (outbound only)
  */
-int qdio_add_bufs_to_output_queue(struct ccw_device *cdev, unsigned int q_nr,
-				  unsigned int bufnr, unsigned int count,
-				  struct qaob *aob)
+int do_QDIO(struct ccw_device *cdev, unsigned int callflags,
+	    int q_nr, unsigned int bufnr, unsigned int count, struct qaob *aob)
 {
 	struct qdio_irq *irq_ptr = cdev->private->qdio_data;
 
@@ -1301,16 +1203,20 @@ int qdio_add_bufs_to_output_queue(struct ccw_device *cdev, unsigned int q_nr,
 	if (!irq_ptr)
 		return -ENODEV;
 
-	DBF_DEV_EVENT(DBF_INFO, irq_ptr, "addo b:%02x c:%02x", bufnr, count);
+	DBF_DEV_EVENT(DBF_INFO, irq_ptr,
+		      "do%02x b:%02x c:%02x", callflags, bufnr, count);
 
 	if (irq_ptr->state != QDIO_IRQ_STATE_ACTIVE)
 		return -EIO;
 	if (!count)
 		return 0;
-
-	return handle_outbound(irq_ptr->output_qs[q_nr], bufnr, count, aob);
+	if (callflags & QDIO_FLAG_SYNC_INPUT)
+		return handle_inbound(irq_ptr->input_qs[q_nr], bufnr, count);
+	else if (callflags & QDIO_FLAG_SYNC_OUTPUT)
+		return handle_outbound(irq_ptr->output_qs[q_nr], bufnr, count, aob);
+	return -EINVAL;
 }
-EXPORT_SYMBOL_GPL(qdio_add_bufs_to_output_queue);
+EXPORT_SYMBOL_GPL(do_QDIO);
 
 /**
  * qdio_start_irq - enable interrupt processing for the device
@@ -1356,6 +1262,40 @@ rescan:
 
 }
 EXPORT_SYMBOL(qdio_start_irq);
+
+static int __qdio_inspect_queue(struct qdio_q *q, unsigned int *bufnr,
+				unsigned int *error)
+{
+	unsigned int start = q->first_to_check;
+	int count;
+
+	*error = 0;
+	count = q->is_input_q ? get_inbound_buffer_frontier(q, start, error) :
+				get_outbound_buffer_frontier(q, start, error);
+	if (count == 0)
+		return 0;
+
+	*bufnr = start;
+
+	/* for the next time */
+	q->first_to_check = add_buf(start, count);
+
+	return count;
+}
+
+int qdio_inspect_queue(struct ccw_device *cdev, unsigned int nr, bool is_input,
+		       unsigned int *bufnr, unsigned int *error)
+{
+	struct qdio_irq *irq_ptr = cdev->private->qdio_data;
+	struct qdio_q *q;
+
+	if (!irq_ptr)
+		return -ENODEV;
+	q = is_input ? irq_ptr->input_qs[nr] : irq_ptr->output_qs[nr];
+
+	return __qdio_inspect_queue(q, bufnr, error);
+}
+EXPORT_SYMBOL_GPL(qdio_inspect_queue);
 
 /**
  * qdio_stop_irq - disable interrupt processing for the device

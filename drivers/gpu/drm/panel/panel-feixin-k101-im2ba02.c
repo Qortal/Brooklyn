@@ -456,13 +456,16 @@ static int k101_im2ba02_dsi_probe(struct mipi_dsi_device *dsi)
 
 	ret = devm_regulator_bulk_get(&dsi->dev, ARRAY_SIZE(ctx->supplies),
 				      ctx->supplies);
-	if (ret < 0)
-		return dev_err_probe(&dsi->dev, ret, "Couldn't get regulators\n");
+	if (ret < 0) {
+		dev_err(&dsi->dev, "Couldn't get regulators\n");
+		return ret;
+	}
 
 	ctx->reset = devm_gpiod_get(&dsi->dev, "reset", GPIOD_OUT_LOW);
-	if (IS_ERR(ctx->reset))
-		return dev_err_probe(&dsi->dev, PTR_ERR(ctx->reset),
-				     "Couldn't get our reset GPIO\n");
+	if (IS_ERR(ctx->reset)) {
+		dev_err(&dsi->dev, "Couldn't get our reset GPIO\n");
+		return PTR_ERR(ctx->reset);
+	}
 
 	drm_panel_init(&ctx->panel, &dsi->dev, &k101_im2ba02_funcs,
 		       DRM_MODE_CONNECTOR_DSI);

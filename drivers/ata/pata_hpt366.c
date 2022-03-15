@@ -14,6 +14,9 @@
  * TODO
  *	Look into engine reset on timeout errors. Should not be required.
  */
+
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/pci.h>
@@ -180,7 +183,7 @@ static int hpt_dma_blacklisted(const struct ata_device *dev, char *modestr,
 
 	i = match_string(list, -1, model_num);
 	if (i >= 0) {
-		ata_dev_warn(dev, "%s is not supported for %s\n", modestr, list[i]);
+		pr_warn("%s is not supported for %s\n", modestr, list[i]);
 		return 1;
 	}
 	return 0;

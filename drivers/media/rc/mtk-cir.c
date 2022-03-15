@@ -292,6 +292,7 @@ static int mtk_ir_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct device_node *dn = dev->of_node;
+	struct resource *res;
 	struct mtk_ir *ir;
 	u32 val;
 	int ret = 0;
@@ -319,7 +320,8 @@ static int mtk_ir_probe(struct platform_device *pdev)
 		ir->bus = ir->clk;
 	}
 
-	ir->base = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	ir->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(ir->base))
 		return PTR_ERR(ir->base);
 

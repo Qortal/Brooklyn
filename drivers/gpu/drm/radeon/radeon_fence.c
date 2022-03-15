@@ -176,11 +176,18 @@ static int radeon_fence_check_signaled(wait_queue_entry_t *wait, unsigned mode, 
 	 */
 	seq = atomic64_read(&fence->rdev->fence_drv[fence->ring].last_seq);
 	if (seq >= fence->seq) {
-		dma_fence_signal_locked(&fence->base);
+		int ret = dma_fence_signal_locked(&fence->base);
+
+		if (!ret)
+			DMA_FENCE_TRACE(&fence->base, "signaled from irq context\n");
+		else
+			DMA_FENCE_TRACE(&fence->base, "was already signaled\n");
+
 		radeon_irq_kms_sw_irq_put(fence->rdev, fence->ring);
 		__remove_wait_queue(&fence->rdev->fence_queue, &fence->fence_wake);
 		dma_fence_put(&fence->base);
-	}
+	} else
+		DMA_FENCE_TRACE(&fence->base, "pending\n");
 	return 0;
 }
 
@@ -415,6 +422,8 @@ static bool radeon_fence_enable_signaling(struct dma_fence *f)
 	fence->fence_wake.func = radeon_fence_check_signaled;
 	__add_wait_queue(&rdev->fence_queue, &fence->fence_wake);
 	dma_fence_get(f);
+
+	DMA_FENCE_TRACE(&fence->base, "armed on ring %i!\n", fence->ring);
 	return true;
 }
 
@@ -432,7 +441,11 @@ bool radeon_fence_signaled(struct radeon_fence *fence)
 		return true;
 
 	if (radeon_fence_seq_signaled(fence->rdev, fence->seq, fence->ring)) {
-		dma_fence_signal(&fence->base);
+		int ret;
+
+		ret = dma_fence_signal(&fence->base);
+		if (!ret)
+			DMA_FENCE_TRACE(&fence->base, "signaled from radeon_fence_signaled\n");
 		return true;
 	}
 	return false;
@@ -537,6 +550,7 @@ long radeon_fence_wait_timeout(struct radeon_fence *fence, bool intr, long timeo
 {
 	uint64_t seq[RADEON_NUM_RINGS] = {};
 	long r;
+	int r_sig;
 
 	/*
 	 * This function should not be called on !radeon fences.
@@ -553,7 +567,9 @@ long radeon_fence_wait_timeout(struct radeon_fence *fence, bool intr, long timeo
 		return r;
 	}
 
-	dma_fence_signal(&fence->base);
+	r_sig = dma_fence_signal(&fence->base);
+	if (!r_sig)
+		DMA_FENCE_TRACE(&fence->base, "signaled from fence_wait\n");
 	return r;
 }
 

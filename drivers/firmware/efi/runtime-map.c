@@ -79,7 +79,6 @@ static struct attribute *def_attrs[] = {
 	&map_attribute_attr.attr,
 	NULL
 };
-ATTRIBUTE_GROUPS(def);
 
 static const struct sysfs_ops map_attr_ops = {
 	.show = map_attr_show,
@@ -95,7 +94,7 @@ static void map_release(struct kobject *kobj)
 
 static struct kobj_type __refdata map_ktype = {
 	.sysfs_ops	= &map_attr_ops,
-	.default_groups	= def_groups,
+	.default_attrs	= def_attrs,
 	.release	= map_release,
 };
 

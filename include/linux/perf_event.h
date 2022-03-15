@@ -26,13 +26,11 @@
 # include <asm/local64.h>
 #endif
 
-#define PERF_GUEST_ACTIVE	0x01
-#define PERF_GUEST_USER	0x02
-
 struct perf_guest_info_callbacks {
-	unsigned int			(*state)(void);
-	unsigned long			(*get_ip)(void);
-	unsigned int			(*handle_intel_pt_intr)(void);
+	int				(*is_in_guest)(void);
+	int				(*is_user_mode)(void);
+	unsigned long			(*get_guest_ip)(void);
+	void				(*handle_intel_pt_intr)(void);
 };
 
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
@@ -59,7 +57,6 @@ struct perf_guest_info_callbacks {
 #include <linux/cgroup.h>
 #include <linux/refcount.h>
 #include <linux/security.h>
-#include <linux/static_call.h>
 #include <asm/local.h>
 
 struct perf_callchain_entry {
@@ -130,15 +127,6 @@ struct hw_perf_event_extra {
 	int		alloc;	/* extra register already allocated */
 	int		idx;	/* index in shared_regs->regs[] */
 };
-
-/**
- * hw_perf_event::flag values
- *
- * PERF_EVENT_FLAG_ARCH bits are reserved for architecture-specific
- * usage.
- */
-#define PERF_EVENT_FLAG_ARCH			0x0000ffff
-#define PERF_EVENT_FLAG_USER_READ_CNT		0x80000000
 
 /**
  * struct hw_perf_event - performance event hardware details:
@@ -622,7 +610,6 @@ struct swevent_hlist {
 #define PERF_ATTACH_SCHED_CB	0x20
 #define PERF_ATTACH_CHILD	0x40
 
-struct bpf_prog;
 struct perf_cgroup;
 struct perf_buffer;
 
@@ -822,7 +809,6 @@ struct perf_event_context {
 
 	int				nr_events;
 	int				nr_active;
-	int				nr_user;
 	int				is_active;
 	int				nr_stat;
 	int				nr_freq;
@@ -1244,32 +1230,20 @@ extern void perf_event_bpf_event(struct bpf_prog *prog,
 				 enum perf_bpf_event_type type,
 				 u16 flags);
 
-#ifdef CONFIG_GUEST_PERF_EVENTS
 extern struct perf_guest_info_callbacks __rcu *perf_guest_cbs;
-
-DECLARE_STATIC_CALL(__perf_guest_state, *perf_guest_cbs->state);
-DECLARE_STATIC_CALL(__perf_guest_get_ip, *perf_guest_cbs->get_ip);
-DECLARE_STATIC_CALL(__perf_guest_handle_intel_pt_intr, *perf_guest_cbs->handle_intel_pt_intr);
-
-static inline unsigned int perf_guest_state(void)
+static inline struct perf_guest_info_callbacks *perf_get_guest_cbs(void)
 {
-	return static_call(__perf_guest_state)();
+	/*
+	 * Callbacks are RCU-protected and must be READ_ONCE to avoid reloading
+	 * the callbacks between a !NULL check and dereferences, to ensure
+	 * pending stores/changes to the callback pointers are visible before a
+	 * non-NULL perf_guest_cbs is visible to readers, and to prevent a
+	 * module from unloading callbacks while readers are active.
+	 */
+	return rcu_dereference(perf_guest_cbs);
 }
-static inline unsigned long perf_guest_get_ip(void)
-{
-	return static_call(__perf_guest_get_ip)();
-}
-static inline unsigned int perf_guest_handle_intel_pt_intr(void)
-{
-	return static_call(__perf_guest_handle_intel_pt_intr)();
-}
-extern void perf_register_guest_info_callbacks(struct perf_guest_info_callbacks *cbs);
-extern void perf_unregister_guest_info_callbacks(struct perf_guest_info_callbacks *cbs);
-#else
-static inline unsigned int perf_guest_state(void)		 { return 0; }
-static inline unsigned long perf_guest_get_ip(void)		 { return 0; }
-static inline unsigned int perf_guest_handle_intel_pt_intr(void) { return 0; }
-#endif /* CONFIG_GUEST_PERF_EVENTS */
+extern int perf_register_guest_info_callbacks(struct perf_guest_info_callbacks *callbacks);
+extern int perf_unregister_guest_info_callbacks(struct perf_guest_info_callbacks *callbacks);
 
 extern void perf_event_exec(void);
 extern void perf_event_comm(struct task_struct *tsk, bool exec);
@@ -1428,7 +1402,6 @@ perf_event_addr_filters(struct perf_event *event)
 }
 
 extern void perf_event_addr_filters_sync(struct perf_event *event);
-extern void perf_report_aux_output_id(struct perf_event *event, u64 hw_id);
 
 extern int perf_output_begin(struct perf_output_handle *handle,
 			     struct perf_sample_data *data,
@@ -1512,6 +1485,11 @@ static inline void
 perf_sw_event(u32 event_id, u64 nr, struct pt_regs *regs, u64 addr)	{ }
 static inline void
 perf_bp_event(struct perf_event *event, void *data)			{ }
+
+static inline int perf_register_guest_info_callbacks
+(struct perf_guest_info_callbacks *callbacks)				{ return 0; }
+static inline int perf_unregister_guest_info_callbacks
+(struct perf_guest_info_callbacks *callbacks)				{ return 0; }
 
 static inline void perf_event_mmap(struct vm_area_struct *vma)		{ }
 
@@ -1637,27 +1615,5 @@ extern void __weak arch_perf_update_userpage(struct perf_event *event,
 #ifdef CONFIG_MMU
 extern __weak u64 arch_perf_get_page_size(struct mm_struct *mm, unsigned long addr);
 #endif
-
-/*
- * Snapshot branch stack on software events.
- *
- * Branch stack can be very useful in understanding software events. For
- * example, when a long function, e.g. sys_perf_event_open, returns an
- * errno, it is not obvious why the function failed. Branch stack could
- * provide very helpful information in this type of scenarios.
- *
- * On software event, it is necessary to stop the hardware branch recorder
- * fast. Otherwise, the hardware register/buffer will be flushed with
- * entries of the triggering event. Therefore, static call is used to
- * stop the hardware recorder.
- */
-
-/*
- * cnt is the number of entries allocated for entries.
- * Return number of entries copied to .
- */
-typedef int (perf_snapshot_branch_stack_t)(struct perf_branch_entry *entries,
-					   unsigned int cnt);
-DECLARE_STATIC_CALL(perf_snapshot_branch_stack, perf_snapshot_branch_stack_t);
 
 #endif /* _LINUX_PERF_EVENT_H */

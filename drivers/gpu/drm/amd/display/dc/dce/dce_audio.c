@@ -67,6 +67,9 @@ static void write_indirect_azalia_reg(struct audio *audio,
 	/* AZALIA_F0_CODEC_ENDPOINT_DATA  endpoint data  */
 	REG_SET(AZALIA_F0_CODEC_ENDPOINT_DATA, 0,
 			AZALIA_ENDPOINT_REG_DATA, reg_data);
+
+	DC_LOG_HW_AUDIO("AUDIO:write_indirect_azalia_reg: index: %u  data: %u\n",
+		reg_index, reg_data);
 }
 
 static uint32_t read_indirect_azalia_reg(struct audio *audio, uint32_t reg_index)
@@ -81,6 +84,9 @@ static uint32_t read_indirect_azalia_reg(struct audio *audio, uint32_t reg_index
 
 	/* AZALIA_F0_CODEC_ENDPOINT_DATA  endpoint data  */
 	value = REG_READ(AZALIA_F0_CODEC_ENDPOINT_DATA);
+
+	DC_LOG_HW_AUDIO("AUDIO:read_indirect_azalia_reg: index: %u  data: %u\n",
+		reg_index, value);
 
 	return value;
 }
@@ -508,15 +514,13 @@ void dce_aud_az_configure(
 			union audio_sample_rates sample_rates =
 					audio_mode->sample_rates;
 			uint8_t byte2 = audio_mode->max_bit_rate;
-			uint8_t channel_count = audio_mode->channel_count;
 
 			/* adjust specific properties */
 			switch (audio_format_code) {
 			case AUDIO_FORMAT_CODE_LINEARPCM: {
-
 				check_audio_bandwidth(
 					crtc_info,
-					channel_count,
+					audio_mode->channel_count,
 					signal,
 					&sample_rates);
 
@@ -544,7 +548,7 @@ void dce_aud_az_configure(
 
 			/* fill audio format data */
 			set_reg_field_value(value,
-					channel_count - 1,
+					audio_mode->channel_count - 1,
 					AZALIA_F0_CODEC_PIN_CONTROL_AUDIO_DESCRIPTOR0,
 					MAX_CHANNELS);
 

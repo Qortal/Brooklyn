@@ -364,6 +364,7 @@ void *
 nouveau_acpi_edid(struct drm_device *dev, struct drm_connector *connector)
 {
 	struct acpi_device *acpidev;
+	acpi_handle handle;
 	int type, ret;
 	void *edid;
 
@@ -376,8 +377,12 @@ nouveau_acpi_edid(struct drm_device *dev, struct drm_connector *connector)
 		return NULL;
 	}
 
-	acpidev = ACPI_COMPANION(dev->dev);
-	if (!acpidev)
+	handle = ACPI_HANDLE(dev->dev);
+	if (!handle)
+		return NULL;
+
+	ret = acpi_bus_get_device(handle, &acpidev);
+	if (ret)
 		return NULL;
 
 	ret = acpi_video_get_edid(acpidev, type, -1, &edid);

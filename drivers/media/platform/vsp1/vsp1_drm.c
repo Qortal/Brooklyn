@@ -455,10 +455,6 @@ static int vsp1_du_pipeline_setup_inputs(struct vsp1_device *vsp1,
 		dev_err(vsp1->dev, "%s: failed to setup UIF after %s\n",
 			__func__, BRX_NAME(pipe->brx));
 
-	/* If the DRM pipe does not have a UIF there is nothing we can update. */
-	if (!drm_pipe->uif)
-		return 0;
-
 	/*
 	 * If the UIF is not in use schedule it for removal by setting its pipe
 	 * pointer to NULL, vsp1_du_pipeline_configure() will remove it from the
@@ -466,9 +462,9 @@ static int vsp1_du_pipeline_setup_inputs(struct vsp1_device *vsp1,
 	 * make sure it is present in the pipeline's list of entities if it
 	 * wasn't already.
 	 */
-	if (!use_uif) {
+	if (drm_pipe->uif && !use_uif) {
 		drm_pipe->uif->pipe = NULL;
-	} else if (!drm_pipe->uif->pipe) {
+	} else if (drm_pipe->uif && !drm_pipe->uif->pipe) {
 		drm_pipe->uif->pipe = pipe;
 		list_add_tail(&drm_pipe->uif->list_pipe, &pipe->entities);
 	}

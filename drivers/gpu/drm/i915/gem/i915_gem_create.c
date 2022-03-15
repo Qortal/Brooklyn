@@ -6,7 +6,6 @@
 #include "gem/i915_gem_ioctls.h"
 #include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_region.h"
-#include "pxp/intel_pxp.h"
 
 #include "i915_drv.h"
 #include "i915_trace.h"
@@ -83,11 +82,21 @@ static int i915_gem_publish(struct drm_i915_gem_object *obj,
 	return 0;
 }
 
-static struct drm_i915_gem_object *
-__i915_gem_object_create_user_ext(struct drm_i915_private *i915, u64 size,
-				  struct intel_memory_region **placements,
-				  unsigned int n_placements,
-				  unsigned int ext_flags)
+/**
+ * Creates a new object using the same path as DRM_I915_GEM_CREATE_EXT
+ * @i915: i915 private
+ * @size: size of the buffer, in bytes
+ * @placements: possible placement regions, in priority order
+ * @n_placements: number of possible placement regions
+ *
+ * This function is exposed primarily for selftests and does very little
+ * error checking.  It is assumed that the set of placement regions has
+ * already been verified to be valid.
+ */
+struct drm_i915_gem_object *
+__i915_gem_object_create_user(struct drm_i915_private *i915, u64 size,
+			      struct intel_memory_region **placements,
+			      unsigned int n_placements)
 {
 	struct intel_memory_region *mr = placements[0];
 	struct drm_i915_gem_object *obj;
@@ -126,9 +135,6 @@ __i915_gem_object_create_user_ext(struct drm_i915_private *i915, u64 size,
 
 	GEM_BUG_ON(size != obj->base.size);
 
-	/* Add any flag set by create_ext options */
-	obj->flags |= ext_flags;
-
 	trace_i915_gem_object_create(obj);
 	return obj;
 
@@ -137,26 +143,6 @@ object_free:
 		kfree(obj->mm.placements);
 	i915_gem_object_free(obj);
 	return ERR_PTR(ret);
-}
-
-/**
- * Creates a new object using the same path as DRM_I915_GEM_CREATE_EXT
- * @i915: i915 private
- * @size: size of the buffer, in bytes
- * @placements: possible placement regions, in priority order
- * @n_placements: number of possible placement regions
- *
- * This function is exposed primarily for selftests and does very little
- * error checking.  It is assumed that the set of placement regions has
- * already been verified to be valid.
- */
-struct drm_i915_gem_object *
-__i915_gem_object_create_user(struct drm_i915_private *i915, u64 size,
-			      struct intel_memory_region **placements,
-			      unsigned int n_placements)
-{
-	return __i915_gem_object_create_user_ext(i915, size, placements,
-						 n_placements, 0);
 }
 
 int
@@ -238,7 +224,6 @@ struct create_ext {
 	struct drm_i915_private *i915;
 	struct intel_memory_region *placements[INTEL_REGION_UNKNOWN];
 	unsigned int n_placements;
-	unsigned long flags;
 };
 
 static void repr_placements(char *buf, size_t size,
@@ -362,34 +347,17 @@ static int ext_set_placements(struct i915_user_extension __user *base,
 {
 	struct drm_i915_gem_create_ext_memory_regions ext;
 
+	if (!IS_ENABLED(CONFIG_DRM_I915_UNSTABLE_FAKE_LMEM))
+		return -ENODEV;
+
 	if (copy_from_user(&ext, base, sizeof(ext)))
 		return -EFAULT;
 
 	return set_placements(&ext, data);
 }
 
-static int ext_set_protected(struct i915_user_extension __user *base, void *data)
-{
-	struct drm_i915_gem_create_ext_protected_content ext;
-	struct create_ext *ext_data = data;
-
-	if (copy_from_user(&ext, base, sizeof(ext)))
-		return -EFAULT;
-
-	if (ext.flags)
-		return -EINVAL;
-
-	if (!intel_pxp_is_enabled(&to_gt(ext_data->i915)->pxp))
-		return -ENODEV;
-
-	ext_data->flags |= I915_BO_PROTECTED;
-
-	return 0;
-}
-
 static const i915_user_extension_fn create_extensions[] = {
 	[I915_GEM_CREATE_EXT_MEMORY_REGIONS] = ext_set_placements,
-	[I915_GEM_CREATE_EXT_PROTECTED_CONTENT] = ext_set_protected,
 };
 
 /**
@@ -424,10 +392,9 @@ i915_gem_create_ext_ioctl(struct drm_device *dev, void *data,
 		ext_data.n_placements = 1;
 	}
 
-	obj = __i915_gem_object_create_user_ext(i915, args->size,
-						ext_data.placements,
-						ext_data.n_placements,
-						ext_data.flags);
+	obj = __i915_gem_object_create_user(i915, args->size,
+					    ext_data.placements,
+					    ext_data.n_placements);
 	if (IS_ERR(obj))
 		return PTR_ERR(obj);
 

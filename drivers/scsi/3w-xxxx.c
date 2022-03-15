@@ -532,12 +532,10 @@ static struct device_attribute tw_host_stats_attr = {
 };
 
 /* Host attributes initializer */
-static struct attribute *tw_host_attrs[] = {
-	&tw_host_stats_attr.attr,
+static struct device_attribute *tw_host_attrs[] = {
+	&tw_host_stats_attr,
 	NULL,
 };
-
-ATTRIBUTE_GROUPS(tw_host);
 
 /* This function will read the aen queue from the isr */
 static int tw_aen_read_queue(TW_Device_Extension *tw_dev, int request_id)
@@ -1162,7 +1160,7 @@ static int tw_setfeature(TW_Device_Extension *tw_dev, int parm, int param_size,
 		tw_dev->state[request_id] = TW_S_COMPLETED;
 		tw_state_request_finish(tw_dev, request_id);
 		tw_dev->srb[request_id]->result = (DID_OK << 16);
-		scsi_done(tw_dev->srb[request_id]);
+		tw_dev->srb[request_id]->scsi_done(tw_dev->srb[request_id]);
 	}
 	command_packet->byte8.param.sgl[0].address = param_value;
 	command_packet->byte8.param.sgl[0].length = sizeof(TW_Sector);
@@ -1307,7 +1305,7 @@ static int tw_reset_device_extension(TW_Device_Extension *tw_dev)
 			if (srb != NULL) {
 				srb->result = (DID_RESET << 16);
 				scsi_dma_unmap(srb);
-				scsi_done(srb);
+				srb->scsi_done(srb);
 			}
 		}
 	}
@@ -1507,7 +1505,7 @@ static int tw_scsiop_mode_sense(TW_Device_Extension *tw_dev, int request_id)
 		tw_dev->state[request_id] = TW_S_COMPLETED;
 		tw_state_request_finish(tw_dev, request_id);
 		tw_dev->srb[request_id]->result = (DID_OK << 16);
-		scsi_done(tw_dev->srb[request_id]);
+		tw_dev->srb[request_id]->scsi_done(tw_dev->srb[request_id]);
 		return 0;
 	}
 
@@ -1798,7 +1796,7 @@ static int tw_scsiop_request_sense(TW_Device_Extension *tw_dev, int request_id)
 
 	/* If we got a request_sense, we probably want a reset, return error */
 	tw_dev->srb[request_id]->result = (DID_ERROR << 16);
-	scsi_done(tw_dev->srb[request_id]);
+	tw_dev->srb[request_id]->scsi_done(tw_dev->srb[request_id]);
 
 	return 0;
 } /* End tw_scsiop_request_sense() */
@@ -1920,9 +1918,8 @@ static int tw_scsiop_test_unit_ready_complete(TW_Device_Extension *tw_dev, int r
 } /* End tw_scsiop_test_unit_ready_complete() */
 
 /* This is the main scsi queue function to handle scsi opcodes */
-static int tw_scsi_queue_lck(struct scsi_cmnd *SCpnt)
+static int tw_scsi_queue_lck(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
 {
-	void (*done)(struct scsi_cmnd *) = scsi_done;
 	unsigned char *command = SCpnt->cmnd;
 	int request_id = 0;
 	int retval = 1;
@@ -1931,6 +1928,9 @@ static int tw_scsi_queue_lck(struct scsi_cmnd *SCpnt)
 	/* If we are resetting due to timed out ioctl, report as busy */
 	if (test_bit(TW_IN_RESET, &tw_dev->flags))
 		return SCSI_MLQUEUE_HOST_BUSY;
+
+	/* Save done function into struct scsi_cmnd */
+	SCpnt->scsi_done = done;
 
 	/* Queue the command and get a request id */
 	tw_state_request_start(tw_dev, &request_id);
@@ -2165,7 +2165,7 @@ static irqreturn_t tw_interrupt(int irq, void *dev_instance)
 				/* Now complete the io */
 				if ((error != TW_ISR_DONT_COMPLETE)) {
 					scsi_dma_unmap(tw_dev->srb[request_id]);
-					scsi_done(tw_dev->srb[request_id]);
+					tw_dev->srb[request_id]->scsi_done(tw_dev->srb[request_id]);
 					tw_dev->state[request_id] = TW_S_COMPLETED;
 					tw_state_request_finish(tw_dev, request_id);
 					tw_dev->posted_request_count--;
@@ -2242,7 +2242,7 @@ static struct scsi_host_template driver_template = {
 	.sg_tablesize		= TW_MAX_SGL_LENGTH,
 	.max_sectors		= TW_MAX_SECTORS,
 	.cmd_per_lun		= TW_MAX_CMDS_PER_LUN,
-	.shost_groups		= tw_host_groups,
+	.shost_attrs		= tw_host_attrs,
 	.emulated		= 1,
 	.no_write_same		= 1,
 };
@@ -2252,7 +2252,7 @@ static int tw_probe(struct pci_dev *pdev, const struct pci_device_id *dev_id)
 {
 	struct Scsi_Host *host = NULL;
 	TW_Device_Extension *tw_dev;
-	int retval;
+	int retval = -ENODEV;
 
 	retval = pci_enable_device(pdev);
 	if (retval) {

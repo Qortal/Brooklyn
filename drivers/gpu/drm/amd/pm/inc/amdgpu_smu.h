@@ -324,7 +324,6 @@ enum smu_table_id
 	SMU_TABLE_OVERDRIVE,
 	SMU_TABLE_I2C_COMMANDS,
 	SMU_TABLE_PACE,
-	SMU_TABLE_ECCINFO,
 	SMU_TABLE_COUNT,
 };
 
@@ -341,7 +340,6 @@ struct smu_table_context
 	void				*max_sustainable_clocks;
 	struct smu_bios_boot_up_values	boot_values;
 	void                            *driver_pptable;
-	void                            *ecc_table;
 	struct smu_table		tables[SMU_TABLE_COUNT];
 	/*
 	 * The driver table is just a staging buffer for
@@ -474,14 +472,7 @@ struct cmn2asic_mapping {
 	int	map_to;
 };
 
-struct stb_context {
-	uint32_t stb_buf_size;
-	bool enabled;
-	spinlock_t lock;
-};
-
 #define WORKLOAD_POLICY_MAX 7
-
 struct smu_context
 {
 	struct amdgpu_device            *adev;
@@ -568,8 +559,6 @@ struct smu_context
 	uint16_t cpu_core_num;
 
 	struct smu_user_dpm_profile user_dpm_profile;
-
-	struct stb_context stb_context;
 };
 
 struct i2c_adapter;
@@ -1019,9 +1008,7 @@ struct pptable_funcs {
 	/**
 	 * @set_power_limit: Set power limit in watts.
 	 */
-	int (*set_power_limit)(struct smu_context *smu,
-			       enum smu_ppt_limit_type limit_type,
-			       uint32_t limit);
+	int (*set_power_limit)(struct smu_context *smu, uint32_t n);
 
 	/**
 	 * @init_max_sustainable_clocks: Populate max sustainable clock speed
@@ -1257,9 +1244,9 @@ struct pptable_funcs {
 	int (*set_fine_grain_gfx_freq_parameters)(struct smu_context *smu);
 
 	/**
-	 * @smu_handle_passthrough_sbr:  Send message to SMU about special handling for SBR.
+	 * @set_light_sbr:  Set light sbr mode for the SMU.
 	 */
-	int (*smu_handle_passthrough_sbr)(struct smu_context *smu, bool enable);
+	int (*set_light_sbr)(struct smu_context *smu, bool enable);
 
 	/**
 	 * @wait_for_event:  Wait for events from SMU.
@@ -1272,17 +1259,6 @@ struct pptable_funcs {
 	 *										of SMUBUS table.
 	 */
 	int (*send_hbm_bad_pages_num)(struct smu_context *smu, uint32_t size);
-
-	/**
-	 * @get_ecc_table:  message SMU to get ECC INFO table.
-	 */
-	ssize_t (*get_ecc_info)(struct smu_context *smu, void *table);
-	
-	
-	/**
-	 * @stb_collect_info: Collects Smart Trace Buffers data.
-	 */
-	int (*stb_collect_info)(struct smu_context *smu, void *buf, uint32_t size);
 };
 
 typedef enum {
@@ -1415,13 +1391,10 @@ int smu_allow_xgmi_power_down(struct smu_context *smu, bool en);
 
 int smu_get_status_gfxoff(struct amdgpu_device *adev, uint32_t *value);
 
-int smu_handle_passthrough_sbr(struct smu_context *smu, bool enable);
+int smu_set_light_sbr(struct smu_context *smu, bool enable);
 
 int smu_wait_for_event(struct amdgpu_device *adev, enum smu_event_type event,
 		       uint64_t event_arg);
-int smu_get_ecc_info(struct smu_context *smu, void *umc_ecc);
-int smu_stb_collect_info(struct smu_context *smu, void *buff, uint32_t size);
-void amdgpu_smu_stb_debug_fs_init(struct amdgpu_device *adev);
 
 #endif
 #endif

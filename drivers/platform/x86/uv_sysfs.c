@@ -175,7 +175,6 @@ static struct attribute *uv_hub_attrs[] = {
 	&cnode_attribute.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(uv_hub);
 
 static void hub_release(struct kobject *kobj)
 {
@@ -206,7 +205,7 @@ static const struct sysfs_ops hub_sysfs_ops = {
 static struct kobj_type hub_attr_type = {
 	.release	= hub_release,
 	.sysfs_ops	= &hub_sysfs_ops,
-	.default_groups	= uv_hub_groups,
+	.default_attrs	= uv_hub_attrs,
 };
 
 static int uv_hubs_init(void)
@@ -328,7 +327,6 @@ static struct attribute *uv_port_attrs[] = {
 	&uv_port_conn_port_attribute.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(uv_port);
 
 static void uv_port_release(struct kobject *kobj)
 {
@@ -359,7 +357,7 @@ static const struct sysfs_ops uv_port_sysfs_ops = {
 static struct kobj_type uv_port_attr_type = {
 	.release	= uv_port_release,
 	.sysfs_ops	= &uv_port_sysfs_ops,
-	.default_groups	= uv_port_groups,
+	.default_attrs	= uv_port_attrs,
 };
 
 static int uv_ports_init(void)

@@ -208,7 +208,6 @@ static struct attribute *amdgpu_xgmi_hive_attrs[] = {
 	&amdgpu_xgmi_hive_id,
 	NULL
 };
-ATTRIBUTE_GROUPS(amdgpu_xgmi_hive);
 
 static ssize_t amdgpu_xgmi_show_attrs(struct kobject *kobj,
 	struct attribute *attr, char *buf)
@@ -238,7 +237,7 @@ static const struct sysfs_ops amdgpu_xgmi_hive_ops = {
 struct kobj_type amdgpu_xgmi_hive_type = {
 	.release = amdgpu_xgmi_hive_release,
 	.sysfs_ops = &amdgpu_xgmi_hive_ops,
-	.default_groups = amdgpu_xgmi_hive_groups,
+	.default_attrs = amdgpu_xgmi_hive_attrs,
 };
 
 static ssize_t amdgpu_xgmi_show_device_id(struct device *dev,
@@ -265,11 +264,6 @@ static ssize_t amdgpu_xgmi_show_error(struct device *dev,
 
 	ficaa_pie_ctl_in = AMDGPU_XGMI_SET_FICAA(0x200);
 	ficaa_pie_status_in = AMDGPU_XGMI_SET_FICAA(0x208);
-
-	if ((!adev->df.funcs) ||
-	    (!adev->df.funcs->get_fica) ||
-	    (!adev->df.funcs->set_fica))
-		return -EINVAL;
 
 	fica_out = adev->df.funcs->get_fica(adev, ficaa_pie_ctl_in);
 	if (fica_out != 0x1f)
@@ -813,9 +807,9 @@ static void amdgpu_xgmi_reset_ras_error_count(struct amdgpu_device *adev)
 		for (i = 0; i < ARRAY_SIZE(xgmi23_pcs_err_status_reg_aldebaran); i++)
 			pcs_clear_status(adev,
 					 xgmi23_pcs_err_status_reg_aldebaran[i]);
-		for (i = 0; i < ARRAY_SIZE(xgmi3x16_pcs_err_status_reg_aldebaran); i++)
+		for (i = 0; i < ARRAY_SIZE(xgmi23_pcs_err_status_reg_aldebaran); i++)
 			pcs_clear_status(adev,
-					 xgmi3x16_pcs_err_status_reg_aldebaran[i]);
+					 xgmi23_pcs_err_status_reg_aldebaran[i]);
 		for (i = 0; i < ARRAY_SIZE(walf_pcs_err_status_reg_aldebaran); i++)
 			pcs_clear_status(adev,
 					 walf_pcs_err_status_reg_aldebaran[i]);

@@ -986,7 +986,7 @@ static struct scsi_host_template qedf_host_template = {
 	.cmd_per_lun	= 32,
 	.max_sectors 	= 0xffff,
 	.queuecommand 	= qedf_queuecommand,
-	.shost_groups	= qedf_host_groups,
+	.shost_attrs	= qedf_host_attrs,
 	.eh_abort_handler	= qedf_eh_abort,
 	.eh_device_reset_handler = qedf_eh_device_reset, /* lun reset */
 	.eh_target_reset_handler = qedf_eh_target_reset, /* target reset */
@@ -1415,8 +1415,6 @@ static void qedf_upload_connection(struct qedf_ctx *qedf,
 	 */
 	term_params = dma_alloc_coherent(&qedf->pdev->dev, QEDF_TERM_BUFF_SIZE,
 		&term_params_dma, GFP_KERNEL);
-	if (!term_params)
-		return;
 
 	QEDF_INFO(&(qedf->dbg_ctx), QEDF_LOG_CONN, "Uploading connection "
 		   "port_id=%06x.\n", fcport->rdata->ids.port_id);
@@ -2173,7 +2171,7 @@ static bool qedf_fp_has_work(struct qedf_fastpath *fp)
 	struct qedf_ctx *qedf = fp->qedf;
 	struct global_queue *que;
 	struct qed_sb_info *sb_info = fp->sb_info;
-	struct status_block *sb = sb_info->sb_virt;
+	struct status_block_e4 *sb = sb_info->sb_virt;
 	u16 prod_idx;
 
 	/* Get the pointer to the global CQ this completion is on */
@@ -2200,7 +2198,7 @@ static bool qedf_process_completions(struct qedf_fastpath *fp)
 {
 	struct qedf_ctx *qedf = fp->qedf;
 	struct qed_sb_info *sb_info = fp->sb_info;
-	struct status_block *sb = sb_info->sb_virt;
+	struct status_block_e4 *sb = sb_info->sb_virt;
 	struct global_queue *que;
 	u16 prod_idx;
 	struct fcoe_cqe *cqe;
@@ -2691,12 +2689,12 @@ void qedf_fp_io_handler(struct work_struct *work)
 static int qedf_alloc_and_init_sb(struct qedf_ctx *qedf,
 	struct qed_sb_info *sb_info, u16 sb_id)
 {
-	struct status_block *sb_virt;
+	struct status_block_e4 *sb_virt;
 	dma_addr_t sb_phys;
 	int ret;
 
 	sb_virt = dma_alloc_coherent(&qedf->pdev->dev,
-	    sizeof(struct status_block), &sb_phys, GFP_KERNEL);
+	    sizeof(struct status_block_e4), &sb_phys, GFP_KERNEL);
 
 	if (!sb_virt) {
 		QEDF_ERR(&qedf->dbg_ctx,

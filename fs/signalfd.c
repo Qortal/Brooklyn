@@ -155,12 +155,11 @@ static int signalfd_copyinfo(struct signalfd_siginfo __user *uinfo,
 static ssize_t signalfd_dequeue(struct signalfd_ctx *ctx, kernel_siginfo_t *info,
 				int nonblock)
 {
-	enum pid_type type;
 	ssize_t ret;
 	DECLARE_WAITQUEUE(wait, current);
 
 	spin_lock_irq(&current->sighand->siglock);
-	ret = dequeue_signal(current, &ctx->sigmask, info, &type);
+	ret = dequeue_signal(current, &ctx->sigmask, info);
 	switch (ret) {
 	case 0:
 		if (!nonblock)
@@ -175,7 +174,7 @@ static ssize_t signalfd_dequeue(struct signalfd_ctx *ctx, kernel_siginfo_t *info
 	add_wait_queue(&current->sighand->signalfd_wqh, &wait);
 	for (;;) {
 		set_current_state(TASK_INTERRUPTIBLE);
-		ret = dequeue_signal(current, &ctx->sigmask, info, &type);
+		ret = dequeue_signal(current, &ctx->sigmask, info);
 		if (ret != 0)
 			break;
 		if (signal_pending(current)) {

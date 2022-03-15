@@ -28,9 +28,7 @@ static int mma7455_i2c_probe(struct i2c_client *i2c,
 
 static int mma7455_i2c_remove(struct i2c_client *i2c)
 {
-	mma7455_core_remove(&i2c->dev);
-
-	return 0;
+	return mma7455_core_remove(&i2c->dev);
 }
 
 static const struct i2c_device_id mma7455_i2c_ids[] = {

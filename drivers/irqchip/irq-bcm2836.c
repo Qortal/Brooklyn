@@ -167,7 +167,7 @@ __exception_irq_entry bcm2836_arm_irqchip_handle_irq(struct pt_regs *regs)
 	if (stat) {
 		u32 hwirq = ffs(stat) - 1;
 
-		generic_handle_domain_irq(intc.domain, hwirq);
+		handle_domain_irq(intc.domain, hwirq, regs);
 	}
 }
 

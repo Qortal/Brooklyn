@@ -291,8 +291,7 @@ static int mag3110_read_raw(struct iio_dev *indio_dev,
 			if (ret < 0)
 				goto release;
 			*val = sign_extend32(
-				be16_to_cpu(buffer[chan->scan_index]),
-					    chan->scan_type.realbits - 1);
+				be16_to_cpu(buffer[chan->scan_index]), 15);
 			ret = IIO_VAL_INT;
 			break;
 		case IIO_TEMP: /* in 1 C / LSB */
@@ -307,8 +306,7 @@ static int mag3110_read_raw(struct iio_dev *indio_dev,
 			mutex_unlock(&data->lock);
 			if (ret < 0)
 				goto release;
-			*val = sign_extend32(ret,
-					     chan->scan_type.realbits - 1);
+			*val = sign_extend32(ret, 7);
 			ret = IIO_VAL_INT;
 			break;
 		default:

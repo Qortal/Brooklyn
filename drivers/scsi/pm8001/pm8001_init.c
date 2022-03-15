@@ -107,7 +107,7 @@ static struct scsi_host_template pm8001_sht = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl		= sas_ioctl,
 #endif
-	.shost_groups		= pm8001_host_groups,
+	.shost_attrs		= pm8001_host_attrs,
 	.track_queue_depth	= 1,
 };
 
@@ -128,7 +128,6 @@ static struct sas_domain_function_template pm8001_transport_ops = {
 	.lldd_I_T_nexus_reset   = pm8001_I_T_nexus_reset,
 	.lldd_lu_reset		= pm8001_lu_reset,
 	.lldd_query_task	= pm8001_query_task,
-	.lldd_port_formed	= pm8001_port_formed,
 };
 
 /**
@@ -179,7 +178,7 @@ static void pm8001_free(struct pm8001_hba_info *pm8001_ha)
 	}
 	PM8001_CHIP_DISP->chip_iounmap(pm8001_ha);
 	flush_workqueue(pm8001_wq);
-	bitmap_free(pm8001_ha->tags);
+	kfree(pm8001_ha->tags);
 	kfree(pm8001_ha);
 }
 
@@ -1192,7 +1191,7 @@ pm8001_init_ccb_tag(struct pm8001_hba_info *pm8001_ha, struct Scsi_Host *shost,
 	can_queue = ccb_count - PM8001_RESERVE_SLOT;
 	shost->can_queue = can_queue;
 
-	pm8001_ha->tags = bitmap_zalloc(ccb_count, GFP_KERNEL);
+	pm8001_ha->tags = kzalloc(ccb_count, GFP_KERNEL);
 	if (!pm8001_ha->tags)
 		goto err_out;
 

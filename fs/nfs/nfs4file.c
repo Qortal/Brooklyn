@@ -317,7 +317,7 @@ static int read_name_gen = 1;
 static struct file *__nfs42_ssc_open(struct vfsmount *ss_mnt,
 		struct nfs_fh *src_fh, nfs4_stateid *stateid)
 {
-	struct nfs_fattr *fattr = nfs_alloc_fattr();
+	struct nfs_fattr fattr;
 	struct file *filep, *res;
 	struct nfs_server *server;
 	struct inode *r_ino = NULL;
@@ -328,10 +328,9 @@ static struct file *__nfs42_ssc_open(struct vfsmount *ss_mnt,
 
 	server = NFS_SERVER(ss_mnt->mnt_root->d_inode);
 
-	if (!fattr)
-		return ERR_PTR(-ENOMEM);
+	nfs_fattr_init(&fattr);
 
-	status = nfs4_proc_getattr(server, src_fh, fattr, NULL);
+	status = nfs4_proc_getattr(server, src_fh, &fattr, NULL, NULL);
 	if (status < 0) {
 		res = ERR_PTR(status);
 		goto out;
@@ -344,18 +343,20 @@ static struct file *__nfs42_ssc_open(struct vfsmount *ss_mnt,
 		goto out;
 	snprintf(read_name, len, SSC_READ_NAME_BODY, read_name_gen++);
 
-	r_ino = nfs_fhget(ss_mnt->mnt_root->d_inode->i_sb, src_fh, fattr);
+	r_ino = nfs_fhget(ss_mnt->mnt_root->d_inode->i_sb, src_fh, &fattr,
+			NULL);
 	if (IS_ERR(r_ino)) {
 		res = ERR_CAST(r_ino);
 		goto out_free_name;
 	}
 
-	filep = alloc_file_pseudo(r_ino, ss_mnt, read_name, O_RDONLY,
+	filep = alloc_file_pseudo(r_ino, ss_mnt, read_name, FMODE_READ,
 				     r_ino->i_fop);
 	if (IS_ERR(filep)) {
 		res = ERR_CAST(filep);
 		goto out_free_name;
 	}
+	filep->f_mode |= FMODE_READ;
 
 	ctx = alloc_nfs_open_context(filep->f_path.dentry, filep->f_mode,
 					filep);
@@ -387,7 +388,6 @@ static struct file *__nfs42_ssc_open(struct vfsmount *ss_mnt,
 out_free_name:
 	kfree(read_name);
 out:
-	nfs_free_fattr(fattr);
 	return res;
 out_stateowner:
 	nfs4_put_state_owner(sp);

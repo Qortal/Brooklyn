@@ -3,7 +3,6 @@
  * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
  */
 
-#include <linux/clk-provider.h>
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
 #include <linux/module.h>

@@ -1514,7 +1514,7 @@ error:
 
 static sector_t get_dev_size(struct dm_dev *dev)
 {
-	return bdev_nr_sectors(dev->bdev);
+	return i_size_read(dev->bdev->bd_inode) >> SECTOR_SHIFT;
 }
 
 /*---------------------------------------------------------------------------*/

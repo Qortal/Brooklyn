@@ -65,34 +65,6 @@ static void vfio_fsl_mc_regions_cleanup(struct vfio_fsl_mc_device *vdev)
 	kfree(vdev->regions);
 }
 
-static int vfio_fsl_mc_reset_device(struct vfio_fsl_mc_device *vdev)
-{
-	struct fsl_mc_device *mc_dev = vdev->mc_dev;
-	int ret = 0;
-
-	if (is_fsl_mc_bus_dprc(vdev->mc_dev)) {
-		return dprc_reset_container(mc_dev->mc_io, 0,
-					mc_dev->mc_handle,
-					mc_dev->obj_desc.id,
-					DPRC_RESET_OPTION_NON_RECURSIVE);
-	} else {
-		u16 token;
-
-		ret = fsl_mc_obj_open(mc_dev->mc_io, 0, mc_dev->obj_desc.id,
-				      mc_dev->obj_desc.type,
-				      &token);
-		if (ret)
-			goto out;
-		ret = fsl_mc_obj_reset(mc_dev->mc_io, 0, token);
-		if (ret) {
-			fsl_mc_obj_close(mc_dev->mc_io, 0, token);
-			goto out;
-		}
-		ret = fsl_mc_obj_close(mc_dev->mc_io, 0, token);
-	}
-out:
-	return ret;
-}
 
 static void vfio_fsl_mc_close_device(struct vfio_device *core_vdev)
 {
@@ -106,7 +78,9 @@ static void vfio_fsl_mc_close_device(struct vfio_device *core_vdev)
 	vfio_fsl_mc_regions_cleanup(vdev);
 
 	/* reset the device before cleaning up the interrupts */
-	ret = vfio_fsl_mc_reset_device(vdev);
+	ret = dprc_reset_container(mc_cont->mc_io, 0, mc_cont->mc_handle,
+				   mc_cont->obj_desc.id,
+				   DPRC_RESET_OPTION_NON_RECURSIVE);
 
 	if (WARN_ON(ret))
 		dev_warn(&mc_cont->dev,
@@ -229,7 +203,18 @@ static long vfio_fsl_mc_ioctl(struct vfio_device *core_vdev,
 	}
 	case VFIO_DEVICE_RESET:
 	{
-		return vfio_fsl_mc_reset_device(vdev);
+		int ret;
+		struct fsl_mc_device *mc_dev = vdev->mc_dev;
+
+		/* reset is supported only for the DPRC */
+		if (!is_fsl_mc_bus_dprc(mc_dev))
+			return -ENOTTY;
+
+		ret = dprc_reset_container(mc_dev->mc_io, 0,
+					   mc_dev->mc_handle,
+					   mc_dev->obj_desc.id,
+					   DPRC_RESET_OPTION_NON_RECURSIVE);
+		return ret;
 
 	}
 	default:
@@ -520,13 +505,22 @@ static void vfio_fsl_uninit_device(struct vfio_fsl_mc_device *vdev)
 
 static int vfio_fsl_mc_probe(struct fsl_mc_device *mc_dev)
 {
+	struct iommu_group *group;
 	struct vfio_fsl_mc_device *vdev;
 	struct device *dev = &mc_dev->dev;
 	int ret;
 
+	group = vfio_iommu_group_get(dev);
+	if (!group) {
+		dev_err(dev, "VFIO_FSL_MC: No IOMMU group\n");
+		return -EINVAL;
+	}
+
 	vdev = kzalloc(sizeof(*vdev), GFP_KERNEL);
-	if (!vdev)
-		return -ENOMEM;
+	if (!vdev) {
+		ret = -ENOMEM;
+		goto out_group_put;
+	}
 
 	vfio_init_group_dev(&vdev->vdev, dev, &vfio_fsl_mc_ops);
 	vdev->mc_dev = mc_dev;
@@ -562,6 +556,8 @@ out_device:
 out_uninit:
 	vfio_uninit_group_dev(&vdev->vdev);
 	kfree(vdev);
+out_group_put:
+	vfio_iommu_group_put(group, dev);
 	return ret;
 }
 
@@ -578,6 +574,8 @@ static int vfio_fsl_mc_remove(struct fsl_mc_device *mc_dev)
 
 	vfio_uninit_group_dev(&vdev->vdev);
 	kfree(vdev);
+	vfio_iommu_group_put(mc_dev->dev.iommu_group, dev);
+
 	return 0;
 }
 

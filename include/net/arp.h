@@ -53,7 +53,13 @@ static inline void __ipv4_confirm_neigh(struct net_device *dev, u32 key)
 
 	rcu_read_lock_bh();
 	n = __ipv4_neigh_lookup_noref(dev, key);
-	neigh_confirm(n);
+	if (n) {
+		unsigned long now = jiffies;
+
+		/* avoid dirtying neighbour */
+		if (READ_ONCE(n->confirmed) != now)
+			WRITE_ONCE(n->confirmed, now);
+	}
 	rcu_read_unlock_bh();
 }
 

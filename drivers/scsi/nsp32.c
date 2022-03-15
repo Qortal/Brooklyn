@@ -904,9 +904,9 @@ static int nsp32_setup_sg_table(struct scsi_cmnd *SCpnt)
 	return TRUE;
 }
 
-static int nsp32_queuecommand_lck(struct scsi_cmnd *SCpnt)
+static int nsp32_queuecommand_lck(struct scsi_cmnd *SCpnt,
+				  void (*done)(struct scsi_cmnd *))
 {
-	void (*done)(struct scsi_cmnd *) = scsi_done;
 	nsp32_hw_data *data = (nsp32_hw_data *)SCpnt->device->host->hostdata;
 	nsp32_target *target;
 	nsp32_lunt   *cur_lunt;
@@ -945,6 +945,7 @@ static int nsp32_queuecommand_lck(struct scsi_cmnd *SCpnt)
 
 	show_command(SCpnt);
 
+	SCpnt->scsi_done     = done;
 	data->CurrentSC      = SCpnt;
 	SCpnt->SCp.Status    = SAM_STAT_CHECK_CONDITION;
 	scsi_set_resid(SCpnt, scsi_bufflen(SCpnt));
@@ -1545,7 +1546,7 @@ static void nsp32_scsi_done(struct scsi_cmnd *SCpnt)
 	/*
 	 * call scsi_done
 	 */
-	scsi_done(SCpnt);
+	(*SCpnt->scsi_done)(SCpnt);
 
 	/*
 	 * reset parameters

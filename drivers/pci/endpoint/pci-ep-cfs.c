@@ -175,8 +175,9 @@ static ssize_t pci_epc_start_store(struct config_item *item, const char *page,
 
 	epc = epc_group->epc;
 
-	if (kstrtobool(page, &start) < 0)
-		return -EINVAL;
+	ret = kstrtobool(page, &start);
+	if (ret)
+		return ret;
 
 	if (!start) {
 		pci_epc_stop(epc);
@@ -197,7 +198,8 @@ static ssize_t pci_epc_start_store(struct config_item *item, const char *page,
 
 static ssize_t pci_epc_start_show(struct config_item *item, char *page)
 {
-	return sysfs_emit(page, "%d\n", to_pci_epc_group(item)->start);
+	return sprintf(page, "%d\n",
+		       to_pci_epc_group(item)->start);
 }
 
 CONFIGFS_ATTR(pci_epc_, start);
@@ -319,7 +321,7 @@ static ssize_t pci_epf_##_name##_show(struct config_item *item,	char *page)    \
 	struct pci_epf *epf = to_pci_epf_group(item)->epf;		       \
 	if (WARN_ON_ONCE(!epf->header))					       \
 		return -EINVAL;						       \
-	return sysfs_emit(page, "0x%04x\n", epf->header->_name);	       \
+	return sprintf(page, "0x%04x\n", epf->header->_name);		       \
 }
 
 #define PCI_EPF_HEADER_W_u32(_name)					       \
@@ -327,11 +329,13 @@ static ssize_t pci_epf_##_name##_store(struct config_item *item,	       \
 				       const char *page, size_t len)	       \
 {									       \
 	u32 val;							       \
+	int ret;							       \
 	struct pci_epf *epf = to_pci_epf_group(item)->epf;		       \
 	if (WARN_ON_ONCE(!epf->header))					       \
 		return -EINVAL;						       \
-	if (kstrtou32(page, 0, &val) < 0)				       \
-		return -EINVAL;						       \
+	ret = kstrtou32(page, 0, &val);					       \
+	if (ret)							       \
+		return ret;						       \
 	epf->header->_name = val;					       \
 	return len;							       \
 }
@@ -341,11 +345,13 @@ static ssize_t pci_epf_##_name##_store(struct config_item *item,	       \
 				       const char *page, size_t len)	       \
 {									       \
 	u16 val;							       \
+	int ret;							       \
 	struct pci_epf *epf = to_pci_epf_group(item)->epf;		       \
 	if (WARN_ON_ONCE(!epf->header))					       \
 		return -EINVAL;						       \
-	if (kstrtou16(page, 0, &val) < 0)				       \
-		return -EINVAL;						       \
+	ret = kstrtou16(page, 0, &val);					       \
+	if (ret)							       \
+		return ret;						       \
 	epf->header->_name = val;					       \
 	return len;							       \
 }
@@ -355,11 +361,13 @@ static ssize_t pci_epf_##_name##_store(struct config_item *item,	       \
 				       const char *page, size_t len)	       \
 {									       \
 	u8 val;								       \
+	int ret;							       \
 	struct pci_epf *epf = to_pci_epf_group(item)->epf;		       \
 	if (WARN_ON_ONCE(!epf->header))					       \
 		return -EINVAL;						       \
-	if (kstrtou8(page, 0, &val) < 0)				       \
-		return -EINVAL;						       \
+	ret = kstrtou8(page, 0, &val);					       \
+	if (ret)							       \
+		return ret;						       \
 	epf->header->_name = val;					       \
 	return len;							       \
 }
@@ -368,9 +376,11 @@ static ssize_t pci_epf_msi_interrupts_store(struct config_item *item,
 					    const char *page, size_t len)
 {
 	u8 val;
+	int ret;
 
-	if (kstrtou8(page, 0, &val) < 0)
-		return -EINVAL;
+	ret = kstrtou8(page, 0, &val);
+	if (ret)
+		return ret;
 
 	to_pci_epf_group(item)->epf->msi_interrupts = val;
 
@@ -380,17 +390,19 @@ static ssize_t pci_epf_msi_interrupts_store(struct config_item *item,
 static ssize_t pci_epf_msi_interrupts_show(struct config_item *item,
 					   char *page)
 {
-	return sysfs_emit(page, "%d\n",
-			  to_pci_epf_group(item)->epf->msi_interrupts);
+	return sprintf(page, "%d\n",
+		       to_pci_epf_group(item)->epf->msi_interrupts);
 }
 
 static ssize_t pci_epf_msix_interrupts_store(struct config_item *item,
 					     const char *page, size_t len)
 {
 	u16 val;
+	int ret;
 
-	if (kstrtou16(page, 0, &val) < 0)
-		return -EINVAL;
+	ret = kstrtou16(page, 0, &val);
+	if (ret)
+		return ret;
 
 	to_pci_epf_group(item)->epf->msix_interrupts = val;
 
@@ -400,8 +412,8 @@ static ssize_t pci_epf_msix_interrupts_store(struct config_item *item,
 static ssize_t pci_epf_msix_interrupts_show(struct config_item *item,
 					    char *page)
 {
-	return sysfs_emit(page, "%d\n",
-			  to_pci_epf_group(item)->epf->msix_interrupts);
+	return sprintf(page, "%d\n",
+		       to_pci_epf_group(item)->epf->msix_interrupts);
 }
 
 PCI_EPF_HEADER_R(vendorid)

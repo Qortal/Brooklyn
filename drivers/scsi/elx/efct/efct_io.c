@@ -48,7 +48,7 @@ efct_io_pool_create(struct efct *efct, u32 num_sgl)
 		io->rspbuf.size = SCSI_RSP_BUF_LENGTH;
 		io->rspbuf.virt = dma_alloc_coherent(&efct->pci->dev,
 						     io->rspbuf.size,
-						     &io->rspbuf.phys, GFP_KERNEL);
+						     &io->rspbuf.phys, GFP_DMA);
 		if (!io->rspbuf.virt) {
 			efc_log_err(efct, "dma_alloc rspbuf failed\n");
 			efct_io_pool_free(io_pool);

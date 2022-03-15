@@ -32,6 +32,7 @@ mcp89_devinit_disable(struct nvkm_devinit *init)
 	struct nvkm_device *device = init->subdev.device;
 	u32 r001540 = nvkm_rd32(device, 0x001540);
 	u32 r00154c = nvkm_rd32(device, 0x00154c);
+	u64 disable = 0;
 
 	if (!(r001540 & 0x40000000)) {
 		nvkm_subdev_disable(device, NVKM_ENGINE_MSPDEC, 0);
@@ -47,7 +48,7 @@ mcp89_devinit_disable(struct nvkm_devinit *init)
 	if (!(r00154c & 0x00000200))
 		nvkm_subdev_disable(device, NVKM_ENGINE_CE, 0);
 
-	return 0;
+	return disable;
 }
 
 static const struct nvkm_devinit_func

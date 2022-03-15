@@ -452,7 +452,6 @@ static struct attribute *rnbd_dev_attrs[] = {
 	&rnbd_clt_nr_poll_queues.attr,
 	NULL,
 };
-ATTRIBUTE_GROUPS(rnbd_dev);
 
 void rnbd_clt_remove_dev_symlink(struct rnbd_clt_dev *dev)
 {
@@ -475,7 +474,7 @@ void rnbd_clt_remove_dev_symlink(struct rnbd_clt_dev *dev)
 
 static struct kobj_type rnbd_dev_ktype = {
 	.sysfs_ops      = &kobj_sysfs_ops,
-	.default_groups = rnbd_dev_groups,
+	.default_attrs  = rnbd_dev_attrs,
 };
 
 static int rnbd_clt_add_dev_kobj(struct rnbd_clt_dev *dev)

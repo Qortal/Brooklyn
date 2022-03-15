@@ -270,7 +270,7 @@ struct w83791d_data {
 	struct device *hwmon_dev;
 	struct mutex update_lock;
 
-	bool valid;			/* true if following fields are valid */
+	char valid;			/* !=0 if following fields are valid */
 	unsigned long last_updated;	/* In jiffies */
 
 	/* volts */
@@ -1596,7 +1596,7 @@ static struct w83791d_data *w83791d_update_device(struct device *dev)
 				<< 4;
 
 		data->last_updated = jiffies;
-		data->valid = true;
+		data->valid = 1;
 	}
 
 	mutex_unlock(&data->update_lock);

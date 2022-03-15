@@ -37,6 +37,9 @@ struct vmw_fence_manager {
 	spinlock_t lock;
 	struct list_head fence_list;
 	struct work_struct work;
+	u32 user_fence_size;
+	u32 fence_size;
+	u32 event_fence_action_size;
 	bool fifo_down;
 	struct list_head cleanup_list;
 	uint32_t pending_actions[VMW_ACTION_MAX];
@@ -301,6 +304,11 @@ struct vmw_fence_manager *vmw_fence_manager_init(struct vmw_private *dev_priv)
 	INIT_LIST_HEAD(&fman->cleanup_list);
 	INIT_WORK(&fman->work, &vmw_fence_work_func);
 	fman->fifo_down = true;
+	fman->user_fence_size = ttm_round_pot(sizeof(struct vmw_user_fence)) +
+		TTM_OBJ_EXTRA_SIZE;
+	fman->fence_size = ttm_round_pot(sizeof(struct vmw_fence_obj));
+	fman->event_fence_action_size =
+		ttm_round_pot(sizeof(struct vmw_event_fence_action));
 	mutex_init(&fman->goal_irq_mutex);
 	fman->ctx = dma_fence_context_alloc(1);
 
@@ -552,8 +560,14 @@ static void vmw_user_fence_destroy(struct vmw_fence_obj *fence)
 {
 	struct vmw_user_fence *ufence =
 		container_of(fence, struct vmw_user_fence, fence);
+	struct vmw_fence_manager *fman = fman_from_fence(fence);
 
 	ttm_base_object_kfree(ufence, base);
+	/*
+	 * Free kernel space accounting.
+	 */
+	ttm_mem_global_free(vmw_mem_glob(fman->dev_priv),
+			    fman->user_fence_size);
 }
 
 static void vmw_user_fence_base_release(struct ttm_base_object **p_base)
@@ -576,7 +590,22 @@ int vmw_user_fence_create(struct drm_file *file_priv,
 	struct ttm_object_file *tfile = vmw_fpriv(file_priv)->tfile;
 	struct vmw_user_fence *ufence;
 	struct vmw_fence_obj *tmp;
+	struct ttm_mem_global *mem_glob = vmw_mem_glob(fman->dev_priv);
+	struct ttm_operation_ctx ctx = {
+		.interruptible = false,
+		.no_wait_gpu = false
+	};
 	int ret;
+
+	/*
+	 * Kernel memory space accounting, since this object may
+	 * be created by a user-space request.
+	 */
+
+	ret = ttm_mem_global_alloc(mem_glob, fman->user_fence_size,
+				   &ctx);
+	if (unlikely(ret != 0))
+		return ret;
 
 	ufence = kzalloc(sizeof(*ufence), GFP_KERNEL);
 	if (unlikely(!ufence)) {
@@ -596,10 +625,9 @@ int vmw_user_fence_create(struct drm_file *file_priv,
 	 * vmw_user_fence_base_release.
 	 */
 	tmp = vmw_fence_obj_reference(&ufence->fence);
-
 	ret = ttm_base_object_init(tfile, &ufence->base, false,
 				   VMW_RES_FENCE,
-				   &vmw_user_fence_base_release);
+				   &vmw_user_fence_base_release, NULL);
 
 
 	if (unlikely(ret != 0)) {
@@ -618,6 +646,7 @@ out_err:
 	tmp = &ufence->fence;
 	vmw_fence_obj_unreference(&tmp);
 out_no_object:
+	ttm_mem_global_free(mem_glob, fman->user_fence_size);
 	return ret;
 }
 
@@ -802,7 +831,8 @@ out:
 	 */
 
 	if (ret == 0 && (arg->wait_options & DRM_VMW_WAIT_OPTION_UNREF))
-		return ttm_ref_object_base_unref(tfile, arg->handle);
+		return ttm_ref_object_base_unref(tfile, arg->handle,
+						 TTM_REF_USAGE);
 	return ret;
 }
 
@@ -844,7 +874,8 @@ int vmw_fence_obj_unref_ioctl(struct drm_device *dev, void *data,
 		(struct drm_vmw_fence_arg *) data;
 
 	return ttm_ref_object_base_unref(vmw_fpriv(file_priv)->tfile,
-					 arg->handle);
+					 arg->handle,
+					 TTM_REF_USAGE);
 }
 
 /**
@@ -1090,7 +1121,7 @@ int vmw_fence_event_ioctl(struct drm_device *dev, void *data,
 
 		if (user_fence_rep != NULL) {
 			ret = ttm_ref_object_add(vmw_fp->tfile, base,
-						 NULL, false);
+						 TTM_REF_USAGE, NULL, false);
 			if (unlikely(ret != 0)) {
 				DRM_ERROR("Failed to reference a fence "
 					  "object.\n");
@@ -1133,7 +1164,7 @@ int vmw_fence_event_ioctl(struct drm_device *dev, void *data,
 	return 0;
 out_no_create:
 	if (user_fence_rep != NULL)
-		ttm_ref_object_base_unref(tfile, handle);
+		ttm_ref_object_base_unref(tfile, handle, TTM_REF_USAGE);
 out_no_ref_obj:
 	vmw_fence_obj_unreference(&fence);
 	return ret;

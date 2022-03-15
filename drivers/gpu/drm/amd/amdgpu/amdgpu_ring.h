@@ -36,13 +36,8 @@
 #define AMDGPU_MAX_VCE_RINGS		3
 #define AMDGPU_MAX_UVD_ENC_RINGS	2
 
-enum amdgpu_ring_priority_level {
-	AMDGPU_RING_PRIO_0,
-	AMDGPU_RING_PRIO_1,
-	AMDGPU_RING_PRIO_DEFAULT = 1,
-	AMDGPU_RING_PRIO_2,
-	AMDGPU_RING_PRIO_MAX
-};
+#define AMDGPU_RING_PRIO_DEFAULT	1
+#define AMDGPU_RING_PRIO_MAX		AMDGPU_GFX_PIPE_PRIO_MAX
 
 /* some special values for the owner field */
 #define AMDGPU_FENCE_OWNER_UNDEFINED	((void *)0ul)
@@ -52,6 +47,9 @@ enum amdgpu_ring_priority_level {
 #define AMDGPU_FENCE_FLAG_64BIT         (1 << 0)
 #define AMDGPU_FENCE_FLAG_INT           (1 << 1)
 #define AMDGPU_FENCE_FLAG_TC_WB_ONLY    (1 << 2)
+
+/* fence flag bit to indicate the face is embedded in job*/
+#define AMDGPU_FENCE_FLAG_EMBED_IN_JOB_BIT		(DMA_FENCE_FLAG_USER_BITS + 1)
 
 #define to_amdgpu_ring(s) container_of((s), struct amdgpu_ring, sched)
 
@@ -111,7 +109,6 @@ struct amdgpu_fence_driver {
 	struct dma_fence		**fences;
 };
 
-void amdgpu_fence_driver_clear_job_fences(struct amdgpu_ring *ring);
 void amdgpu_fence_driver_force_completion(struct amdgpu_ring *ring);
 
 int amdgpu_fence_driver_init_ring(struct amdgpu_ring *ring,
@@ -251,6 +248,10 @@ struct amdgpu_ring {
 	bool			has_compute_vm_bug;
 	bool			no_scheduler;
 	int			hw_prio;
+
+#if defined(CONFIG_DEBUG_FS)
+	struct dentry *ent;
+#endif
 };
 
 #define amdgpu_ring_parse_cs(r, p, ib) ((r)->funcs->parse_cs((p), (ib)))
@@ -350,6 +351,8 @@ static inline void amdgpu_ring_write_multiple(struct amdgpu_ring *ring,
 
 int amdgpu_ring_test_helper(struct amdgpu_ring *ring);
 
-void amdgpu_debugfs_ring_init(struct amdgpu_device *adev,
-			      struct amdgpu_ring *ring);
+int amdgpu_debugfs_ring_init(struct amdgpu_device *adev,
+			     struct amdgpu_ring *ring);
+void amdgpu_debugfs_ring_fini(struct amdgpu_ring *ring);
+
 #endif

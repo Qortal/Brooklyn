@@ -436,12 +436,6 @@ typedef void (*fw_iso_callback_t)(struct fw_iso_context *context,
 				  void *header, void *data);
 typedef void (*fw_iso_mc_callback_t)(struct fw_iso_context *context,
 				     dma_addr_t completed, void *data);
-
-union fw_iso_callback {
-	fw_iso_callback_t sc;
-	fw_iso_mc_callback_t mc;
-};
-
 struct fw_iso_context {
 	struct fw_card *card;
 	int type;
@@ -449,7 +443,10 @@ struct fw_iso_context {
 	int speed;
 	bool drop_overflow_headers;
 	size_t header_size;
-	union fw_iso_callback callback;
+	union {
+		fw_iso_callback_t sc;
+		fw_iso_mc_callback_t mc;
+	} callback;
 	void *callback_data;
 };
 

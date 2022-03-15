@@ -572,7 +572,8 @@ ahd_linux_info(struct Scsi_Host *host)
 /*
  * Queue an SCB to the controller.
  */
-static int ahd_linux_queue_lck(struct scsi_cmnd *cmd)
+static int
+ahd_linux_queue_lck(struct scsi_cmnd * cmd, void (*scsi_done) (struct scsi_cmnd *))
 {
 	struct	 ahd_softc *ahd;
 	struct	 ahd_linux_device *dev = scsi_transport_device_data(cmd->device);
@@ -580,6 +581,7 @@ static int ahd_linux_queue_lck(struct scsi_cmnd *cmd)
 
 	ahd = *(struct ahd_softc **)cmd->device->host->hostdata;
 
+	cmd->scsi_done = scsi_done;
 	cmd->result = CAM_REQ_INPROG << 16;
 	rtn = ahd_linux_run_command(ahd, dev, cmd);
 
@@ -755,7 +757,11 @@ ahd_linux_biosparam(struct scsi_device *sdev, struct block_device *bdev,
 static int
 ahd_linux_abort(struct scsi_cmnd *cmd)
 {
-	return ahd_linux_queue_abort_cmd(cmd);
+	int error;
+	
+	error = ahd_linux_queue_abort_cmd(cmd);
+
+	return error;
 }
 
 /*
@@ -2105,7 +2111,7 @@ ahd_linux_queue_cmd_complete(struct ahd_softc *ahd, struct scsi_cmnd *cmd)
 
 	ahd_cmd_set_transaction_status(cmd, new_status);
 
-	scsi_done(cmd);
+	cmd->scsi_done(cmd);
 }
 
 static void

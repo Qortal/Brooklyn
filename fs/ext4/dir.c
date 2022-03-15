@@ -303,6 +303,7 @@ static int ext4_readdir(struct file *file, struct dir_context *ctx)
 			goto done;
 		brelse(bh);
 		bh = NULL;
+		offset = 0;
 	}
 done:
 	err = 0;

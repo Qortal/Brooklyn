@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * drivers/usb/core/driver.c - most of the driver model stuff for usb
+ * drivers/usb/driver.c - most of the driver model stuff for usb
  *
  * (C) Copyright 2005 Greg Kroah-Hartman <gregkh@suse.de>
  *
@@ -834,7 +834,6 @@ const struct usb_device_id *usb_device_match_id(struct usb_device *udev,
 
 	return NULL;
 }
-EXPORT_SYMBOL_GPL(usb_device_match_id);
 
 bool usb_driver_applicable(struct usb_device *udev,
 			   struct usb_device_driver *udrv)

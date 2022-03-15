@@ -256,8 +256,7 @@ static int virtio_gpu_plane_prepare_fb(struct drm_plane *plane,
 		return 0;
 
 	if (bo->dumb && (plane->state->fb != new_state->fb)) {
-		vgfb->fence = virtio_gpu_fence_alloc(vgdev, vgdev->fence_drv.context,
-						     0);
+		vgfb->fence = virtio_gpu_fence_alloc(vgdev);
 		if (!vgfb->fence)
 			return -ENOMEM;
 	}

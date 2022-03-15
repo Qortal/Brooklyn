@@ -503,9 +503,12 @@ static int gp2ap002_probe(struct i2c_client *client,
 	if (!gp2ap002->is_gp2ap002s00f) {
 		gp2ap002->alsout = devm_iio_channel_get(dev, "alsout");
 		if (IS_ERR(gp2ap002->alsout)) {
-			ret = PTR_ERR(gp2ap002->alsout);
-			ret = (ret == -ENODEV) ? -EPROBE_DEFER : ret;
-			return dev_err_probe(dev, ret, "failed to get ALSOUT ADC channel\n");
+			if (PTR_ERR(gp2ap002->alsout) == -ENODEV) {
+				dev_err(dev, "no ADC, deferring...\n");
+				return -EPROBE_DEFER;
+			}
+			dev_err(dev, "failed to get ALSOUT ADC channel\n");
+			return PTR_ERR(gp2ap002->alsout);
 		}
 		ret = iio_get_channel_type(gp2ap002->alsout, &ch_type);
 		if (ret < 0)
@@ -518,14 +521,15 @@ static int gp2ap002_probe(struct i2c_client *client,
 	}
 
 	gp2ap002->vdd = devm_regulator_get(dev, "vdd");
-	if (IS_ERR(gp2ap002->vdd))
-		return dev_err_probe(dev, PTR_ERR(gp2ap002->vdd),
-				     "failed to get VDD regulator\n");
-
+	if (IS_ERR(gp2ap002->vdd)) {
+		dev_err(dev, "failed to get VDD regulator\n");
+		return PTR_ERR(gp2ap002->vdd);
+	}
 	gp2ap002->vio = devm_regulator_get(dev, "vio");
-	if (IS_ERR(gp2ap002->vio))
-		return dev_err_probe(dev, PTR_ERR(gp2ap002->vio),
-				     "failed to get VIO regulator\n");
+	if (IS_ERR(gp2ap002->vio)) {
+		dev_err(dev, "failed to get VIO regulator\n");
+		return PTR_ERR(gp2ap002->vio);
+	}
 
 	/* Operating voltage 2.4V .. 3.6V according to datasheet */
 	ret = regulator_set_voltage(gp2ap002->vdd, 2400000, 3600000);

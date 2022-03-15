@@ -324,9 +324,14 @@ struct device_type tb_retimer_type = {
 
 static int tb_retimer_add(struct tb_port *port, u8 index, u32 auth_status)
 {
+	struct usb4_port *usb4;
 	struct tb_retimer *rt;
 	u32 vendor, device;
 	int ret;
+
+	usb4 = port->usb4;
+	if (!usb4)
+		return -EINVAL;
 
 	ret = usb4_port_retimer_read(port, index, USB4_SB_VENDOR_ID, &vendor,
 				     sizeof(vendor));
@@ -369,7 +374,7 @@ static int tb_retimer_add(struct tb_port *port, u8 index, u32 auth_status)
 	rt->port = port;
 	rt->tb = port->sw->tb;
 
-	rt->dev.parent = &port->usb4->dev;
+	rt->dev.parent = &usb4->dev;
 	rt->dev.bus = &tb_bus_type;
 	rt->dev.type = &tb_retimer_type;
 	dev_set_name(&rt->dev, "%s:%u.%u", dev_name(&port->sw->dev),
@@ -448,13 +453,6 @@ int tb_retimer_scan(struct tb_port *port, bool add)
 {
 	u32 status[TB_MAX_RETIMER_INDEX + 1] = {};
 	int ret, i, last_idx = 0;
-	struct usb4_port *usb4;
-
-	usb4 = port->usb4;
-	if (!usb4)
-		return 0;
-
-	pm_runtime_get_sync(&usb4->dev);
 
 	/*
 	 * Send broadcast RT to make sure retimer indices facing this
@@ -462,7 +460,7 @@ int tb_retimer_scan(struct tb_port *port, bool add)
 	 */
 	ret = usb4_port_enumerate_retimers(port);
 	if (ret)
-		goto out;
+		return ret;
 
 	/*
 	 * Enable sideband channel for each retimer. We can do this
@@ -492,10 +490,8 @@ int tb_retimer_scan(struct tb_port *port, bool add)
 			break;
 	}
 
-	if (!last_idx) {
-		ret = 0;
-		goto out;
-	}
+	if (!last_idx)
+		return 0;
 
 	/* Add on-board retimers if they do not exist already */
 	for (i = 1; i <= last_idx; i++) {
@@ -511,11 +507,7 @@ int tb_retimer_scan(struct tb_port *port, bool add)
 		}
 	}
 
-out:
-	pm_runtime_mark_last_busy(&usb4->dev);
-	pm_runtime_put_autosuspend(&usb4->dev);
-
-	return ret;
+	return 0;
 }
 
 static int remove_retimer(struct device *dev, void *data)

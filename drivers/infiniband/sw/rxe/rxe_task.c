@@ -32,24 +32,25 @@ void rxe_do_task(struct tasklet_struct *t)
 {
 	int cont;
 	int ret;
+	unsigned long flags;
 	struct rxe_task *task = from_tasklet(task, t, tasklet);
 
-	spin_lock_bh(&task->state_lock);
+	spin_lock_irqsave(&task->state_lock, flags);
 	switch (task->state) {
 	case TASK_STATE_START:
 		task->state = TASK_STATE_BUSY;
-		spin_unlock_bh(&task->state_lock);
+		spin_unlock_irqrestore(&task->state_lock, flags);
 		break;
 
 	case TASK_STATE_BUSY:
 		task->state = TASK_STATE_ARMED;
 		fallthrough;
 	case TASK_STATE_ARMED:
-		spin_unlock_bh(&task->state_lock);
+		spin_unlock_irqrestore(&task->state_lock, flags);
 		return;
 
 	default:
-		spin_unlock_bh(&task->state_lock);
+		spin_unlock_irqrestore(&task->state_lock, flags);
 		pr_warn("%s failed with bad state %d\n", __func__, task->state);
 		return;
 	}
@@ -58,7 +59,7 @@ void rxe_do_task(struct tasklet_struct *t)
 		cont = 0;
 		ret = task->func(task->arg);
 
-		spin_lock_bh(&task->state_lock);
+		spin_lock_irqsave(&task->state_lock, flags);
 		switch (task->state) {
 		case TASK_STATE_BUSY:
 			if (ret)
@@ -80,7 +81,7 @@ void rxe_do_task(struct tasklet_struct *t)
 			pr_warn("%s failed with bad state %d\n", __func__,
 				task->state);
 		}
-		spin_unlock_bh(&task->state_lock);
+		spin_unlock_irqrestore(&task->state_lock, flags);
 	} while (cont);
 
 	task->ret = ret;
@@ -105,6 +106,7 @@ int rxe_init_task(void *obj, struct rxe_task *task,
 
 void rxe_cleanup_task(struct rxe_task *task)
 {
+	unsigned long flags;
 	bool idle;
 
 	/*
@@ -114,9 +116,9 @@ void rxe_cleanup_task(struct rxe_task *task)
 	task->destroyed = true;
 
 	do {
-		spin_lock_bh(&task->state_lock);
+		spin_lock_irqsave(&task->state_lock, flags);
 		idle = (task->state == TASK_STATE_START);
-		spin_unlock_bh(&task->state_lock);
+		spin_unlock_irqrestore(&task->state_lock, flags);
 	} while (!idle);
 
 	tasklet_kill(&task->tasklet);

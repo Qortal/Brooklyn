@@ -42,7 +42,6 @@
  #include "pm8001_hwi.h"
  #include "pm8001_chips.h"
  #include "pm8001_ctl.h"
- #include "pm80xx_tracepoints.h"
 
 /**
  * read_main_config_table - read the configure table and save it.
@@ -1325,10 +1324,6 @@ int pm8001_mpi_build_cmd(struct pm8001_hba_info *pm8001_ha,
 	unsigned long flags;
 	int q_index = circularQ - pm8001_ha->inbnd_q_tbl;
 	int rv;
-	u32 htag = le32_to_cpu(*(__le32 *)payload);
-
-	trace_pm80xx_mpi_build_cmd(pm8001_ha->id, opCode, htag, q_index,
-		circularQ->producer_idx, le32_to_cpu(circularQ->consumer_index));
 
 	if (WARN_ON(q_index >= pm8001_ha->max_q_num))
 		return -EINVAL;
@@ -2311,17 +2306,21 @@ mpi_sata_completion(struct pm8001_hba_info *pm8001_ha, void *piomb)
 
 	psataPayload = (struct sata_completion_resp *)(piomb + 4);
 	status = le32_to_cpu(psataPayload->status);
-	param = le32_to_cpu(psataPayload->param);
 	tag = le32_to_cpu(psataPayload->tag);
 
 	if (!tag) {
 		pm8001_dbg(pm8001_ha, FAIL, "tag null\n");
 		return;
 	}
-
 	ccb = &pm8001_ha->ccb_info[tag];
-	t = ccb->task;
-	pm8001_dev = ccb->device;
+	param = le32_to_cpu(psataPayload->param);
+	if (ccb) {
+		t = ccb->task;
+		pm8001_dev = ccb->device;
+	} else {
+		pm8001_dbg(pm8001_ha, FAIL, "ccb null\n");
+		return;
+	}
 
 	if (t) {
 		if (t->dev && (t->dev->lldd_dev))
@@ -2338,6 +2337,10 @@ mpi_sata_completion(struct pm8001_hba_info *pm8001_ha, void *piomb)
 	}
 
 	ts = &t->task_status;
+	if (!ts) {
+		pm8001_dbg(pm8001_ha, FAIL, "ts null\n");
+		return;
+	}
 
 	if (status)
 		pm8001_dbg(pm8001_ha, IOERR,
@@ -2693,6 +2696,14 @@ static void mpi_sata_event(struct pm8001_hba_info *pm8001_ha, void *piomb)
 	u32 port_id = le32_to_cpu(psataPayload->port_id);
 	u32 dev_id = le32_to_cpu(psataPayload->device_id);
 
+	ccb = &pm8001_ha->ccb_info[tag];
+
+	if (ccb) {
+		t = ccb->task;
+		pm8001_dev = ccb->device;
+	} else {
+		pm8001_dbg(pm8001_ha, FAIL, "No CCB !!!. returning\n");
+	}
 	if (event)
 		pm8001_dbg(pm8001_ha, FAIL, "SATA EVENT 0x%x\n", event);
 
@@ -3331,8 +3342,6 @@ hw_event_sas_phy_up(struct pm8001_hba_info *pm8001_ha, void *piomb)
 	struct pm8001_phy *phy = &pm8001_ha->phy[phy_id];
 	unsigned long flags;
 	u8 deviceType = pPayload->sas_identify.dev_type;
-	phy->port = port;
-	port->port_id = port_id;
 	port->port_state =  portstate;
 	phy->phy_state = PHY_STATE_LINK_UP_SPC;
 	pm8001_dbg(pm8001_ha, MSG,
@@ -3409,8 +3418,6 @@ hw_event_sata_phy_up(struct pm8001_hba_info *pm8001_ha, void *piomb)
 	unsigned long flags;
 	pm8001_dbg(pm8001_ha, DEVIO, "HW_EVENT_SATA_PHY_UP port id = %d, phy id = %d\n",
 		   port_id, phy_id);
-	phy->port = port;
-	port->port_id = port_id;
 	port->port_state =  portstate;
 	phy->phy_state = PHY_STATE_LINK_UP_SPC;
 	port->port_attached = 1;
@@ -4437,7 +4444,6 @@ static int pm8001_chip_reg_dev_req(struct pm8001_hba_info *pm8001_ha,
 	u16 ITNT = 2000;
 	struct domain_device *dev = pm8001_dev->sas_device;
 	struct domain_device *parent_dev = dev->parent;
-	struct pm8001_port *port = dev->port->lldd_port;
 	circularQ = &pm8001_ha->inbnd_q_tbl[0];
 
 	memset(&payload, 0, sizeof(payload));
@@ -4454,7 +4460,8 @@ static int pm8001_chip_reg_dev_req(struct pm8001_hba_info *pm8001_ha,
 		if (pm8001_dev->dev_type == SAS_SATA_DEV)
 			stp_sspsmp_sata = 0x00; /* stp*/
 		else if (pm8001_dev->dev_type == SAS_END_DEVICE ||
-			dev_is_expander(pm8001_dev->dev_type))
+			pm8001_dev->dev_type == SAS_EDGE_EXPANDER_DEVICE ||
+			pm8001_dev->dev_type == SAS_FANOUT_EXPANDER_DEVICE)
 			stp_sspsmp_sata = 0x01; /*ssp or smp*/
 	}
 	if (parent_dev && dev_is_expander(parent_dev->dev_type))
@@ -4465,7 +4472,7 @@ static int pm8001_chip_reg_dev_req(struct pm8001_hba_info *pm8001_ha,
 	linkrate = (pm8001_dev->sas_device->linkrate < dev->port->linkrate) ?
 			pm8001_dev->sas_device->linkrate : dev->port->linkrate;
 	payload.phyid_portid =
-		cpu_to_le32(((port->port_id) & 0x0F) |
+		cpu_to_le32(((pm8001_dev->sas_device->port->id) & 0x0F) |
 		((phy_id & 0x0F) << 4));
 	payload.dtype_dlr_retry = cpu_to_le32((retryFlag & 0x01) |
 		((linkrate & 0x0F) * 0x1000000) |

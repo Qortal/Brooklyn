@@ -1602,8 +1602,8 @@ static const char * const driver_cntr_names[] = {
 };
 
 static DEFINE_MUTEX(cntr_names_lock); /* protects the *_cntr_names bufers */
-static struct rdma_stat_desc *dev_cntr_descs;
-static struct rdma_stat_desc *port_cntr_descs;
+static const char **dev_cntr_names;
+static const char **port_cntr_names;
 int num_driver_cntrs = ARRAY_SIZE(driver_cntr_names);
 static int num_dev_cntrs;
 static int num_port_cntrs;
@@ -1614,12 +1614,13 @@ static int cntr_names_initialized;
  * strings. Optionally some entries can be reserved in the array to hold extra
  * external strings.
  */
-static int init_cntr_names(const char *names_in, const size_t names_len,
-			   int num_extra_names, int *num_cntrs,
-			   struct rdma_stat_desc **cntr_descs)
+static int init_cntr_names(const char *names_in,
+			   const size_t names_len,
+			   int num_extra_names,
+			   int *num_cntrs,
+			   const char ***cntr_names)
 {
-	struct rdma_stat_desc *q;
-	char *names_out, *p;
+	char *names_out, *p, **q;
 	int i, n;
 
 	n = 0;
@@ -1627,27 +1628,26 @@ static int init_cntr_names(const char *names_in, const size_t names_len,
 		if (names_in[i] == '\n')
 			n++;
 
-	names_out =
-		kzalloc((n + num_extra_names) * sizeof(*q) + names_len,
-			GFP_KERNEL);
+	names_out = kmalloc((n + num_extra_names) * sizeof(char *) + names_len,
+			    GFP_KERNEL);
 	if (!names_out) {
 		*num_cntrs = 0;
-		*cntr_descs = NULL;
+		*cntr_names = NULL;
 		return -ENOMEM;
 	}
 
-	p = names_out + (n + num_extra_names) * sizeof(*q);
+	p = names_out + (n + num_extra_names) * sizeof(char *);
 	memcpy(p, names_in, names_len);
 
-	q = (struct rdma_stat_desc *)names_out;
+	q = (char **)names_out;
 	for (i = 0; i < n; i++) {
-		q[i].name = p;
+		q[i] = p;
 		p = strchr(p, '\n');
 		*p++ = '\0';
 	}
 
 	*num_cntrs = n;
-	*cntr_descs = (struct rdma_stat_desc *)names_out;
+	*cntr_names = (const char **)names_out;
 	return 0;
 }
 
@@ -1661,18 +1661,18 @@ static int init_counters(struct ib_device *ibdev)
 		goto out_unlock;
 
 	err = init_cntr_names(dd->cntrnames, dd->cntrnameslen, num_driver_cntrs,
-			      &num_dev_cntrs, &dev_cntr_descs);
+			      &num_dev_cntrs, &dev_cntr_names);
 	if (err)
 		goto out_unlock;
 
 	for (i = 0; i < num_driver_cntrs; i++)
-		dev_cntr_descs[num_dev_cntrs + i].name = driver_cntr_names[i];
+		dev_cntr_names[num_dev_cntrs + i] = driver_cntr_names[i];
 
 	err = init_cntr_names(dd->portcntrnames, dd->portcntrnameslen, 0,
-			      &num_port_cntrs, &port_cntr_descs);
+			      &num_port_cntrs, &port_cntr_names);
 	if (err) {
-		kfree(dev_cntr_descs);
-		dev_cntr_descs = NULL;
+		kfree(dev_cntr_names);
+		dev_cntr_names = NULL;
 		goto out_unlock;
 	}
 	cntr_names_initialized = 1;
@@ -1686,7 +1686,7 @@ static struct rdma_hw_stats *hfi1_alloc_hw_device_stats(struct ib_device *ibdev)
 {
 	if (init_counters(ibdev))
 		return NULL;
-	return rdma_alloc_hw_stats_struct(dev_cntr_descs,
+	return rdma_alloc_hw_stats_struct(dev_cntr_names,
 					  num_dev_cntrs + num_driver_cntrs,
 					  RDMA_HW_STATS_DEFAULT_LIFESPAN);
 }
@@ -1696,7 +1696,7 @@ static struct rdma_hw_stats *hfi_alloc_hw_port_stats(struct ib_device *ibdev,
 {
 	if (init_counters(ibdev))
 		return NULL;
-	return rdma_alloc_hw_stats_struct(port_cntr_descs, num_port_cntrs,
+	return rdma_alloc_hw_stats_struct(port_cntr_names, num_port_cntrs,
 					  RDMA_HW_STATS_DEFAULT_LIFESPAN);
 }
 
@@ -1921,10 +1921,10 @@ void hfi1_unregister_ib_device(struct hfi1_devdata *dd)
 	verbs_txreq_exit(dev);
 
 	mutex_lock(&cntr_names_lock);
-	kfree(dev_cntr_descs);
-	kfree(port_cntr_descs);
-	dev_cntr_descs = NULL;
-	port_cntr_descs = NULL;
+	kfree(dev_cntr_names);
+	kfree(port_cntr_names);
+	dev_cntr_names = NULL;
+	port_cntr_names = NULL;
 	cntr_names_initialized = 0;
 	mutex_unlock(&cntr_names_lock);
 }

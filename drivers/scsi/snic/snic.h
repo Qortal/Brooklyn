@@ -374,7 +374,7 @@ int snic_glob_init(void);
 void snic_glob_cleanup(void);
 
 extern struct workqueue_struct *snic_event_queue;
-extern const struct attribute_group *snic_host_groups[];
+extern struct device_attribute *snic_attrs[];
 
 int snic_queuecommand(struct Scsi_Host *, struct scsi_cmnd *);
 int snic_abort_cmd(struct scsi_cmnd *);

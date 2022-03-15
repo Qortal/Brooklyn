@@ -76,9 +76,7 @@ static int hmc5843_spi_probe(struct spi_device *spi)
 
 static int hmc5843_spi_remove(struct spi_device *spi)
 {
-	hmc5843_common_remove(&spi->dev);
-
-	return 0;
+	return hmc5843_common_remove(&spi->dev);
 }
 
 static const struct spi_device_id hmc5843_id[] = {

@@ -28,7 +28,6 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 
 	/* Make the pages coherent with the GPU (flushing any swapin). */
 	if (obj->cache_dirty) {
-		WARN_ON_ONCE(IS_DGFX(i915));
 		obj->write_domain = 0;
 		if (i915_gem_object_has_struct_page(obj))
 			drm_clflush_sg(pages);
@@ -71,7 +70,7 @@ void __i915_gem_object_set_pages(struct drm_i915_gem_object *obj,
 		shrinkable = false;
 	}
 
-	if (shrinkable && !i915_gem_object_has_self_managed_shrink_list(obj)) {
+	if (shrinkable) {
 		struct list_head *list;
 		unsigned long flags;
 
@@ -161,12 +160,10 @@ retry:
 }
 
 /* Immediately discard the backing storage */
-int i915_gem_object_truncate(struct drm_i915_gem_object *obj)
+void i915_gem_object_truncate(struct drm_i915_gem_object *obj)
 {
 	if (obj->ops->truncate)
-		return obj->ops->truncate(obj);
-
-	return 0;
+		obj->ops->truncate(obj);
 }
 
 /* Try to discard unwanted pages */
@@ -212,8 +209,7 @@ __i915_gem_object_unset_pages(struct drm_i915_gem_object *obj)
 	if (i915_gem_object_is_volatile(obj))
 		obj->mm.madv = I915_MADV_WILLNEED;
 
-	if (!i915_gem_object_has_self_managed_shrink_list(obj))
-		i915_gem_object_make_unshrinkable(obj);
+	i915_gem_object_make_unshrinkable(obj);
 
 	if (obj->mm.mapping) {
 		unmap_object(obj, page_mask_bits(obj->mm.mapping));
@@ -228,7 +224,7 @@ __i915_gem_object_unset_pages(struct drm_i915_gem_object *obj)
 		intel_wakeref_t wakeref;
 
 		with_intel_runtime_pm_if_active(&i915->runtime_pm, wakeref)
-			intel_gt_invalidate_tlbs(to_gt(i915));
+			intel_gt_invalidate_tlbs(&i915->gt);
 	}
 
 	return pages;
@@ -427,13 +423,8 @@ void *i915_gem_object_pin_map(struct drm_i915_gem_object *obj,
 	}
 
 	if (!ptr) {
-		err = i915_gem_object_wait_moving_fence(obj, true);
-		if (err) {
-			ptr = ERR_PTR(err);
-			goto err_unpin;
-		}
-
-		if (GEM_WARN_ON(type == I915_MAP_WC && !pat_enabled()))
+		if (GEM_WARN_ON(type == I915_MAP_WC &&
+				!static_cpu_has(X86_FEATURE_PAT)))
 			ptr = ERR_PTR(-ENODEV);
 		else if (i915_gem_object_has_struct_page(obj))
 			ptr = i915_gem_object_map_page(obj, type);

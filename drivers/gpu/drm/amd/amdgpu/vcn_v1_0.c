@@ -66,6 +66,7 @@ static int vcn_v1_0_early_init(void *handle)
 {
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
+	adev->vcn.num_vcn_inst = 1;
 	adev->vcn.num_enc_rings = 2;
 
 	vcn_v1_0_set_dec_ring_funcs(adev);
@@ -111,7 +112,15 @@ static int vcn_v1_0_sw_init(void *handle)
 	/* Override the work func */
 	adev->vcn.idle_work.work.func = vcn_v1_0_idle_work_handler;
 
-	amdgpu_vcn_setup_ucode(adev);
+	if (adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) {
+		const struct common_firmware_header *hdr;
+		hdr = (const struct common_firmware_header *)adev->vcn.fw->data;
+		adev->firmware.ucode[AMDGPU_UCODE_ID_VCN].ucode_id = AMDGPU_UCODE_ID_VCN;
+		adev->firmware.ucode[AMDGPU_UCODE_ID_VCN].fw = adev->vcn.fw;
+		adev->firmware.fw_size +=
+			ALIGN(le32_to_cpu(hdr->ucode_size_bytes), PAGE_SIZE);
+		dev_info(adev->dev, "Will use PSP to load VCN firmware\n");
+	}
 
 	r = amdgpu_vcn_resume(adev);
 	if (r)
@@ -136,12 +145,10 @@ static int vcn_v1_0_sw_init(void *handle)
 		SOC15_REG_OFFSET(UVD, 0, mmUVD_NO_OP);
 
 	for (i = 0; i < adev->vcn.num_enc_rings; ++i) {
-		enum amdgpu_ring_priority_level hw_prio = amdgpu_vcn_get_enc_ring_prio(i);
-
 		ring = &adev->vcn.inst->ring_enc[i];
 		sprintf(ring->name, "vcn_enc%d", i);
 		r = amdgpu_ring_init(adev, ring, 512, &adev->vcn.inst->irq, 0,
-				     hw_prio, NULL);
+				     AMDGPU_RING_PRIO_DEFAULT, NULL);
 		if (r)
 			return r;
 	}

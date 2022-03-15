@@ -15,6 +15,8 @@ struct intel_huc {
 	struct intel_uc_fw fw;
 
 	/* HuC-specific additions */
+	struct i915_vma *rsa_data;
+
 	struct {
 		i915_reg_t reg;
 		u32 mask;

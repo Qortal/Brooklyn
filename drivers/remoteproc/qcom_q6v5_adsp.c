@@ -185,9 +185,7 @@ static int adsp_start(struct rproc *rproc)
 	int ret;
 	unsigned int val;
 
-	ret = qcom_q6v5_prepare(&adsp->q6v5);
-	if (ret)
-		return ret;
+	qcom_q6v5_prepare(&adsp->q6v5);
 
 	ret = clk_prepare_enable(adsp->xo);
 	if (ret)
@@ -467,7 +465,7 @@ static int adsp_probe(struct platform_device *pdev)
 	if (ret)
 		goto disable_pm;
 
-	ret = qcom_q6v5_init(&adsp->q6v5, pdev, rproc, desc->crash_reason_smem, NULL,
+	ret = qcom_q6v5_init(&adsp->q6v5, pdev, rproc, desc->crash_reason_smem,
 			     qcom_adsp_pil_handover);
 	if (ret)
 		goto disable_pm;
@@ -502,7 +500,6 @@ static int adsp_remove(struct platform_device *pdev)
 
 	rproc_del(adsp->rproc);
 
-	qcom_q6v5_deinit(&adsp->q6v5);
 	qcom_remove_glink_subdev(adsp->rproc, &adsp->glink_subdev);
 	qcom_remove_sysmon_subdev(adsp->sysmon);
 	qcom_remove_ssr_subdev(adsp->rproc, &adsp->ssr_subdev);

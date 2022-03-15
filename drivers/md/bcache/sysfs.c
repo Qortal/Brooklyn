@@ -271,7 +271,7 @@ SHOW(__bch_cached_dev)
 	}
 
 	if (attr == &sysfs_backing_dev_name) {
-		snprintf(buf, BDEVNAME_SIZE + 1, "%pg", dc->bdev);
+		snprintf(buf, BDEVNAME_SIZE + 1, "%s", dc->backing_dev_name);
 		strcat(buf, "\n");
 		return strlen(buf);
 	}

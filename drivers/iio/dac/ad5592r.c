@@ -132,9 +132,7 @@ static int ad5592r_spi_probe(struct spi_device *spi)
 
 static int ad5592r_spi_remove(struct spi_device *spi)
 {
-	ad5592r_remove(&spi->dev);
-
-	return 0;
+	return ad5592r_remove(&spi->dev);
 }
 
 static const struct spi_device_id ad5592r_spi_ids[] = {

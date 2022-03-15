@@ -1244,9 +1244,11 @@ static enum dinode_demise evict_should_delete(struct inode *inode,
 	if (ret)
 		return SHOULD_NOT_DELETE_DINODE;
 
-	ret = gfs2_instantiate(gh);
-	if (ret)
-		return SHOULD_NOT_DELETE_DINODE;
+	if (test_bit(GIF_INVALID, &ip->i_flags)) {
+		ret = gfs2_inode_refresh(ip);
+		if (ret)
+			return SHOULD_NOT_DELETE_DINODE;
+	}
 
 	/*
 	 * The inode may have been recreated in the meantime.

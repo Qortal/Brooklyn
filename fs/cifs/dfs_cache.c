@@ -283,7 +283,7 @@ static int dfscache_proc_show(struct seq_file *m, void *v)
 			seq_printf(m,
 				   "cache entry: path=%s,type=%s,ttl=%d,etime=%ld,hdr_flags=0x%x,ref_flags=0x%x,interlink=%s,path_consumed=%d,expired=%s\n",
 				   ce->path, ce->srvtype == DFS_TYPE_ROOT ? "root" : "link",
-				   ce->ttl, ce->etime.tv_nsec, ce->hdr_flags, ce->ref_flags,
+				   ce->ttl, ce->etime.tv_nsec, ce->ref_flags, ce->hdr_flags,
 				   IS_DFS_INTERLINK(ce->hdr_flags) ? "yes" : "no",
 				   ce->path_consumed, cache_entry_expired(ce) ? "yes" : "no");
 
@@ -1355,13 +1355,18 @@ static void mark_for_reconnect_if_needed(struct cifs_tcon *tcon, struct dfs_cach
 	}
 
 	cifs_dbg(FYI, "%s: no cached or matched targets. mark dfs share for reconnect.\n", __func__);
-	cifs_mark_tcp_ses_conns_for_reconnect(tcon->ses->server, true);
+	for (i = 0; i < tcon->ses->chan_count; i++) {
+		spin_lock(&GlobalMid_Lock);
+		if (tcon->ses->chans[i].server->tcpStatus != CifsExiting)
+			tcon->ses->chans[i].server->tcpStatus = CifsNeedReconnect;
+		spin_unlock(&GlobalMid_Lock);
+	}
 }
 
 /* Refresh dfs referral of tcon and mark it for reconnect if needed */
-static int __refresh_tcon(const char *path, struct cifs_ses **sessions, struct cifs_tcon *tcon,
-			  bool force_refresh)
+static int refresh_tcon(struct cifs_ses **sessions, struct cifs_tcon *tcon, bool force_refresh)
 {
+	const char *path = tcon->dfs_path + 1;
 	struct cifs_ses *ses;
 	struct cache_entry *ce;
 	struct dfs_info3_param *refs = NULL;
@@ -1417,20 +1422,6 @@ out:
 	return rc;
 }
 
-static int refresh_tcon(struct cifs_ses **sessions, struct cifs_tcon *tcon, bool force_refresh)
-{
-	struct TCP_Server_Info *server = tcon->ses->server;
-
-	mutex_lock(&server->refpath_lock);
-	if (strcasecmp(server->leaf_fullpath, server->origin_fullpath))
-		__refresh_tcon(server->leaf_fullpath + 1, sessions, tcon, force_refresh);
-	mutex_unlock(&server->refpath_lock);
-
-	__refresh_tcon(server->origin_fullpath + 1, sessions, tcon, force_refresh);
-
-	return 0;
-}
-
 /**
  * dfs_cache_remount_fs - remount a DFS share
  *
@@ -1444,7 +1435,6 @@ static int refresh_tcon(struct cifs_ses **sessions, struct cifs_tcon *tcon, bool
 int dfs_cache_remount_fs(struct cifs_sb_info *cifs_sb)
 {
 	struct cifs_tcon *tcon;
-	struct TCP_Server_Info *server;
 	struct mount_group *mg;
 	struct cifs_ses *sessions[CACHE_MAX_ENTRIES + 1] = {NULL};
 	int rc;
@@ -1453,15 +1443,13 @@ int dfs_cache_remount_fs(struct cifs_sb_info *cifs_sb)
 		return -EINVAL;
 
 	tcon = cifs_sb_master_tcon(cifs_sb);
-	server = tcon->ses->server;
-
-	if (!server->origin_fullpath) {
-		cifs_dbg(FYI, "%s: not a dfs mount\n", __func__);
+	if (!tcon->dfs_path) {
+		cifs_dbg(FYI, "%s: not a dfs tcon\n", __func__);
 		return 0;
 	}
 
 	if (uuid_is_null(&cifs_sb->dfs_mount_id)) {
-		cifs_dbg(FYI, "%s: no dfs mount group id\n", __func__);
+		cifs_dbg(FYI, "%s: tcon has no dfs mount group id\n", __func__);
 		return -EINVAL;
 	}
 
@@ -1469,7 +1457,7 @@ int dfs_cache_remount_fs(struct cifs_sb_info *cifs_sb)
 	mg = find_mount_group_locked(&cifs_sb->dfs_mount_id);
 	if (IS_ERR(mg)) {
 		mutex_unlock(&mount_group_list_lock);
-		cifs_dbg(FYI, "%s: no ipc session for refreshing referral\n", __func__);
+		cifs_dbg(FYI, "%s: tcon has ipc session to refresh referral\n", __func__);
 		return PTR_ERR(mg);
 	}
 	kref_get(&mg->refcount);
@@ -1510,12 +1498,9 @@ static void refresh_mounts(struct cifs_ses **sessions)
 
 	spin_lock(&cifs_tcp_ses_lock);
 	list_for_each_entry(server, &cifs_tcp_ses_list, tcp_ses_list) {
-		if (!server->is_dfs_conn)
-			continue;
-
 		list_for_each_entry(ses, &server->smb_ses_list, smb_ses_list) {
 			list_for_each_entry(tcon, &ses->tcon_list, tcon_list) {
-				if (!tcon->ipc && !tcon->need_reconnect) {
+				if (tcon->dfs_path) {
 					tcon->tc_count++;
 					list_add_tail(&tcon->ulist, &tcons);
 				}
@@ -1525,16 +1510,8 @@ static void refresh_mounts(struct cifs_ses **sessions)
 	spin_unlock(&cifs_tcp_ses_lock);
 
 	list_for_each_entry_safe(tcon, ntcon, &tcons, ulist) {
-		struct TCP_Server_Info *server = tcon->ses->server;
-
 		list_del_init(&tcon->ulist);
-
-		mutex_lock(&server->refpath_lock);
-		if (strcasecmp(server->leaf_fullpath, server->origin_fullpath))
-			__refresh_tcon(server->leaf_fullpath + 1, sessions, tcon, false);
-		mutex_unlock(&server->refpath_lock);
-
-		__refresh_tcon(server->origin_fullpath + 1, sessions, tcon, false);
+		refresh_tcon(sessions, tcon, false);
 		cifs_put_tcon(tcon);
 	}
 }

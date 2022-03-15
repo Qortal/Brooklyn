@@ -178,10 +178,11 @@ static void nsp_scsi_done(struct scsi_cmnd *SCpnt)
 
 	data->CurrentSC = NULL;
 
-	scsi_done(SCpnt);
+	SCpnt->scsi_done(SCpnt);
 }
 
-static int nsp_queuecommand_lck(struct scsi_cmnd *SCpnt)
+static int nsp_queuecommand_lck(struct scsi_cmnd *SCpnt,
+			    void (*done)(struct scsi_cmnd *))
 {
 #ifdef NSP_DEBUG
 	/*unsigned int host_id = SCpnt->device->host->this_id;*/
@@ -195,6 +196,8 @@ static int nsp_queuecommand_lck(struct scsi_cmnd *SCpnt)
 		SCpnt, target, SCpnt->device->lun, scsi_sglist(SCpnt),
 		scsi_bufflen(SCpnt), scsi_sg_count(SCpnt));
 	//nsp_dbg(NSP_DEBUG_QUEUECOMMAND, "before CurrentSC=0x%p", data->CurrentSC);
+
+	SCpnt->scsi_done	= done;
 
 	if (data->CurrentSC != NULL) {
 		nsp_msg(KERN_DEBUG, "CurrentSC!=NULL this can't be happen");
@@ -1557,9 +1560,6 @@ static int nsp_cs_config_check(struct pcmcia_device *p_dev, void *priv_data)
 		data->MmioAddress = (unsigned long)
 			ioremap(p_dev->resource[2]->start,
 					resource_size(p_dev->resource[2]));
-		if (!data->MmioAddress)
-			goto next_entry;
-
 		data->MmioLength  = resource_size(p_dev->resource[2]);
 	}
 	/* If we got this far, we're cool! */

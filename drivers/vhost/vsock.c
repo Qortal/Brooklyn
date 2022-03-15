@@ -511,6 +511,8 @@ static void vhost_vsock_handle_tx_kick(struct vhost_work *work)
 
 	vhost_disable_notify(&vsock->dev, vq);
 	do {
+		u32 len;
+
 		if (!vhost_vsock_more_replies(vsock)) {
 			/* Stop tx until the device processes already
 			 * pending replies.  Leave tx virtqueue
@@ -538,7 +540,7 @@ static void vhost_vsock_handle_tx_kick(struct vhost_work *work)
 			continue;
 		}
 
-		total_len += sizeof(pkt->hdr) + pkt->len;
+		len = pkt->len;
 
 		/* Deliver to monitoring devices all received packets */
 		virtio_transport_deliver_tap_pkt(pkt);
@@ -551,7 +553,9 @@ static void vhost_vsock_handle_tx_kick(struct vhost_work *work)
 		else
 			virtio_transport_free_pkt(pkt);
 
+		len += sizeof(pkt->hdr);
 		vhost_add_used(vq, head, 0);
+		total_len += len;
 		added = true;
 	} while(likely(!vhost_exceeds_weight(vq, ++pkts, total_len)));
 
