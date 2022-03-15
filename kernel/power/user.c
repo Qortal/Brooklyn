@@ -177,7 +177,7 @@ static ssize_t snapshot_write(struct file *filp, const char __user *buf,
 		if (res <= 0)
 			goto unlock;
 	} else {
-		res = PAGE_SIZE;
+		res = PAGE_SIZE - pg_offp;
 	}
 
 	if (!data_of(data->handle)) {

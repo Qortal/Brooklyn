@@ -410,7 +410,7 @@ static int report__setup_sample_type(struct report *rep)
 		}
 	}
 
-	callchain_param_setup(sample_type, perf_env__arch(&rep->session->header.env));
+	callchain_param_setup(sample_type);
 
 	if (rep->stitch_lbr && (callchain_param.record_mode != CALLCHAIN_LBR)) {
 		ui__warning("Can't find LBR callchain. Switch off --stitch-lbr.\n"
@@ -1127,7 +1127,7 @@ static int process_attr(struct perf_tool *tool __maybe_unused,
 	 * on events sample_type.
 	 */
 	sample_type = evlist__combined_sample_type(*pevlist);
-	callchain_param_setup(sample_type, perf_env__arch((*pevlist)->env));
+	callchain_param_setup(sample_type);
 	return 0;
 }
 
@@ -1381,9 +1381,18 @@ int cmd_report(int argc, const char **argv)
 	if (quiet)
 		perf_quiet_option();
 
-	ret = symbol__validate_sym_arguments();
-	if (ret)
+	if (symbol_conf.vmlinux_name &&
+	    access(symbol_conf.vmlinux_name, R_OK)) {
+		pr_err("Invalid file: %s\n", symbol_conf.vmlinux_name);
+		ret = -EINVAL;
 		goto exit;
+	}
+	if (symbol_conf.kallsyms_name &&
+	    access(symbol_conf.kallsyms_name, R_OK)) {
+		pr_err("Invalid file: %s\n", symbol_conf.kallsyms_name);
+		ret = -EINVAL;
+		goto exit;
+	}
 
 	if (report.inverted_callchain)
 		callchain_param.order = ORDER_CALLER;

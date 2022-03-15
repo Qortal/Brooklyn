@@ -715,8 +715,7 @@ static int __event__synthesize_thread(union perf_event *comm_event,
 				      union perf_event *fork_event,
 				      union perf_event *namespaces_event,
 				      pid_t pid, int full, perf_event__handler_t process,
-				      struct perf_tool *tool, struct machine *machine,
-				      bool needs_mmap, bool mmap_data)
+				      struct perf_tool *tool, struct machine *machine, bool mmap_data)
 {
 	char filename[PATH_MAX];
 	struct dirent **dirent;
@@ -740,7 +739,7 @@ static int __event__synthesize_thread(union perf_event *comm_event,
 		 * send mmap only for thread group leader
 		 * see thread__init_maps()
 		 */
-		if (pid == tgid && needs_mmap &&
+		if (pid == tgid &&
 		    perf_event__synthesize_mmap_events(tool, mmap_event, pid, tgid,
 						       process, machine, mmap_data))
 			return -1;
@@ -787,7 +786,7 @@ static int __event__synthesize_thread(union perf_event *comm_event,
 			break;
 
 		rc = 0;
-		if (_pid == pid && !kernel_thread && needs_mmap) {
+		if (_pid == pid && !kernel_thread) {
 			/* process the parent's maps too */
 			rc = perf_event__synthesize_mmap_events(tool, mmap_event, pid, tgid,
 						process, machine, mmap_data);
@@ -807,7 +806,7 @@ int perf_event__synthesize_thread_map(struct perf_tool *tool,
 				      struct perf_thread_map *threads,
 				      perf_event__handler_t process,
 				      struct machine *machine,
-				      bool needs_mmap, bool mmap_data)
+				      bool mmap_data)
 {
 	union perf_event *comm_event, *mmap_event, *fork_event;
 	union perf_event *namespaces_event;
@@ -837,7 +836,7 @@ int perf_event__synthesize_thread_map(struct perf_tool *tool,
 					       fork_event, namespaces_event,
 					       perf_thread_map__pid(threads, thread), 0,
 					       process, tool, machine,
-					       needs_mmap, mmap_data)) {
+					       mmap_data)) {
 			err = -1;
 			break;
 		}
@@ -863,7 +862,7 @@ int perf_event__synthesize_thread_map(struct perf_tool *tool,
 						       fork_event, namespaces_event,
 						       comm_event->comm.pid, 0,
 						       process, tool, machine,
-						       needs_mmap, mmap_data)) {
+						       mmap_data)) {
 				err = -1;
 				break;
 			}
@@ -883,7 +882,6 @@ out:
 static int __perf_event__synthesize_threads(struct perf_tool *tool,
 					    perf_event__handler_t process,
 					    struct machine *machine,
-					    bool needs_mmap,
 					    bool mmap_data,
 					    struct dirent **dirent,
 					    int start,
@@ -928,7 +926,7 @@ static int __perf_event__synthesize_threads(struct perf_tool *tool,
 		 */
 		__event__synthesize_thread(comm_event, mmap_event, fork_event,
 					   namespaces_event, pid, 1, process,
-					   tool, machine, needs_mmap, mmap_data);
+					   tool, machine, mmap_data);
 	}
 	err = 0;
 
@@ -947,7 +945,6 @@ struct synthesize_threads_arg {
 	struct perf_tool *tool;
 	perf_event__handler_t process;
 	struct machine *machine;
-	bool needs_mmap;
 	bool mmap_data;
 	struct dirent **dirent;
 	int num;
@@ -959,8 +956,7 @@ static void *synthesize_threads_worker(void *arg)
 	struct synthesize_threads_arg *args = arg;
 
 	__perf_event__synthesize_threads(args->tool, args->process,
-					 args->machine,
-					 args->needs_mmap, args->mmap_data,
+					 args->machine, args->mmap_data,
 					 args->dirent,
 					 args->start, args->num);
 	return NULL;
@@ -969,7 +965,7 @@ static void *synthesize_threads_worker(void *arg)
 int perf_event__synthesize_threads(struct perf_tool *tool,
 				   perf_event__handler_t process,
 				   struct machine *machine,
-				   bool needs_mmap, bool mmap_data,
+				   bool mmap_data,
 				   unsigned int nr_threads_synthesize)
 {
 	struct synthesize_threads_arg *args = NULL;
@@ -998,8 +994,7 @@ int perf_event__synthesize_threads(struct perf_tool *tool,
 
 	if (thread_nr <= 1) {
 		err = __perf_event__synthesize_threads(tool, process,
-						       machine,
-						       needs_mmap, mmap_data,
+						       machine, mmap_data,
 						       dirent, base, n);
 		goto free_dirent;
 	}
@@ -1020,7 +1015,6 @@ int perf_event__synthesize_threads(struct perf_tool *tool,
 		args[i].tool = tool;
 		args[i].process = process;
 		args[i].machine = machine;
-		args[i].needs_mmap = needs_mmap;
 		args[i].mmap_data = mmap_data;
 		args[i].dirent = dirent;
 	}
@@ -1186,12 +1180,12 @@ int perf_event__synthesize_thread_map2(struct perf_tool *tool,
 static void synthesize_cpus(struct cpu_map_entries *cpus,
 			    struct perf_cpu_map *map)
 {
-	int i, map_nr = perf_cpu_map__nr(map);
+	int i;
 
-	cpus->nr = map_nr;
+	cpus->nr = map->nr;
 
-	for (i = 0; i < map_nr; i++)
-		cpus->cpu[i] = perf_cpu_map__cpu(map, i).cpu;
+	for (i = 0; i < map->nr; i++)
+		cpus->cpu[i] = map->map[i];
 }
 
 static void synthesize_mask(struct perf_record_record_cpu_map *mask,
@@ -1202,13 +1196,13 @@ static void synthesize_mask(struct perf_record_record_cpu_map *mask,
 	mask->nr = BITS_TO_LONGS(max);
 	mask->long_size = sizeof(long);
 
-	for (i = 0; i < perf_cpu_map__nr(map); i++)
-		set_bit(perf_cpu_map__cpu(map, i).cpu, mask->mask);
+	for (i = 0; i < map->nr; i++)
+		set_bit(map->map[i], mask->mask);
 }
 
 static size_t cpus_size(struct perf_cpu_map *map)
 {
-	return sizeof(struct cpu_map_entries) + perf_cpu_map__nr(map) * sizeof(u16);
+	return sizeof(struct cpu_map_entries) + map->nr * sizeof(u16);
 }
 
 static size_t mask_size(struct perf_cpu_map *map, int *max)
@@ -1217,9 +1211,9 @@ static size_t mask_size(struct perf_cpu_map *map, int *max)
 
 	*max = 0;
 
-	for (i = 0; i < perf_cpu_map__nr(map); i++) {
+	for (i = 0; i < map->nr; i++) {
 		/* bit position of the cpu is + 1 */
-		int bit = perf_cpu_map__cpu(map, i).cpu + 1;
+		int bit = map->map[i] + 1;
 
 		if (bit > *max)
 			*max = bit;
@@ -1354,7 +1348,7 @@ int perf_event__synthesize_stat_config(struct perf_tool *tool,
 }
 
 int perf_event__synthesize_stat(struct perf_tool *tool,
-				struct perf_cpu cpu, u32 thread, u64 id,
+				u32 cpu, u32 thread, u64 id,
 				struct perf_counts_values *count,
 				perf_event__handler_t process,
 				struct machine *machine)
@@ -1366,7 +1360,7 @@ int perf_event__synthesize_stat(struct perf_tool *tool,
 	event.header.misc = 0;
 
 	event.id        = id;
-	event.cpu       = cpu.cpu;
+	event.cpu       = cpu;
 	event.thread    = thread;
 	event.val       = count->val;
 	event.ena       = count->ena;
@@ -1763,7 +1757,7 @@ int perf_event__synthesize_id_index(struct perf_tool *tool, perf_event__handler_
 			}
 
 			e->idx = sid->idx;
-			e->cpu = sid->cpu.cpu;
+			e->cpu = sid->cpu;
 			e->tid = sid->tid;
 		}
 	}
@@ -1781,46 +1775,26 @@ out_err:
 
 int __machine__synthesize_threads(struct machine *machine, struct perf_tool *tool,
 				  struct target *target, struct perf_thread_map *threads,
-				  perf_event__handler_t process, bool needs_mmap,
-				  bool data_mmap, unsigned int nr_threads_synthesize)
+				  perf_event__handler_t process, bool data_mmap,
+				  unsigned int nr_threads_synthesize)
 {
-	/*
-	 * When perf runs in non-root PID namespace, and the namespace's proc FS
-	 * is not mounted, nsinfo__is_in_root_namespace() returns false.
-	 * In this case, the proc FS is coming for the parent namespace, thus
-	 * perf tool will wrongly gather process info from its parent PID
-	 * namespace.
-	 *
-	 * To avoid the confusion that the perf tool runs in a child PID
-	 * namespace but it synthesizes thread info from its parent PID
-	 * namespace, returns failure with warning.
-	 */
-	if (!nsinfo__is_in_root_namespace()) {
-		pr_err("Perf runs in non-root PID namespace but it tries to ");
-		pr_err("gather process info from its parent PID namespace.\n");
-		pr_err("Please mount the proc file system properly, e.g. ");
-		pr_err("add the option '--mount-proc' for unshare command.\n");
-		return -EPERM;
-	}
-
 	if (target__has_task(target))
-		return perf_event__synthesize_thread_map(tool, threads, process, machine,
-							 needs_mmap, data_mmap);
+		return perf_event__synthesize_thread_map(tool, threads, process, machine, data_mmap);
 	else if (target__has_cpu(target))
-		return perf_event__synthesize_threads(tool, process, machine,
-						      needs_mmap, data_mmap,
+		return perf_event__synthesize_threads(tool, process,
+						      machine, data_mmap,
 						      nr_threads_synthesize);
 	/* command specified */
 	return 0;
 }
 
 int machine__synthesize_threads(struct machine *machine, struct target *target,
-				struct perf_thread_map *threads, bool needs_mmap,
-				bool data_mmap, unsigned int nr_threads_synthesize)
+				struct perf_thread_map *threads, bool data_mmap,
+				unsigned int nr_threads_synthesize)
 {
 	return __machine__synthesize_threads(machine, NULL, target, threads,
-					     perf_event__process, needs_mmap,
-					     data_mmap, nr_threads_synthesize);
+					     perf_event__process, data_mmap,
+					     nr_threads_synthesize);
 }
 
 static struct perf_record_event_update *event_update_event__new(size_t size, u64 type, u64 id)
@@ -2252,34 +2226,6 @@ int perf_event__synthesize_for_pipe(struct perf_tool *tool,
 			return err;
 		}
 		ret += err;
-	}
-
-	return ret;
-}
-
-int parse_synth_opt(char *synth)
-{
-	char *p, *q;
-	int ret = 0;
-
-	if (synth == NULL)
-		return -1;
-
-	for (q = synth; (p = strsep(&q, ",")); p = q) {
-		if (!strcasecmp(p, "no") || !strcasecmp(p, "none"))
-			return 0;
-
-		if (!strcasecmp(p, "all"))
-			return PERF_SYNTH_ALL;
-
-		if (!strcasecmp(p, "task"))
-			ret |= PERF_SYNTH_TASK;
-		else if (!strcasecmp(p, "mmap"))
-			ret |= PERF_SYNTH_TASK | PERF_SYNTH_MMAP;
-		else if (!strcasecmp(p, "cgroup"))
-			ret |= PERF_SYNTH_CGROUP;
-		else
-			return -1;
 	}
 
 	return ret;

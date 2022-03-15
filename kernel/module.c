@@ -337,12 +337,12 @@ static inline void add_taint_module(struct module *mod, unsigned flag,
  * A thread that wants to hold a reference to a module only while it
  * is running can call this to safely exit.  nfsd and lockd use this.
  */
-void __noreturn __module_put_and_kthread_exit(struct module *mod, long code)
+void __noreturn __module_put_and_exit(struct module *mod, long code)
 {
 	module_put(mod);
-	kthread_exit(code);
+	do_exit(code);
 }
-EXPORT_SYMBOL(__module_put_and_kthread_exit);
+EXPORT_SYMBOL(__module_put_and_exit);
 
 /* Find a module section: 0 means not found. */
 static unsigned int find_sec(const struct load_info *info, const char *name)
@@ -958,6 +958,7 @@ SYSCALL_DEFINE2(delete_module, const char __user *, name_user,
 		}
 	}
 
+	/* Stop the machine so refcounts can't move and disable module. */
 	ret = try_stop_module(mod, flags, &forced);
 	if (ret != 0)
 		goto out;
@@ -2883,13 +2884,12 @@ static int module_sig_check(struct load_info *info, int flags)
 	const unsigned long markerlen = sizeof(MODULE_SIG_STRING) - 1;
 	const char *reason;
 	const void *mod = info->hdr;
-	bool mangled_module = flags & (MODULE_INIT_IGNORE_MODVERSIONS |
-				       MODULE_INIT_IGNORE_VERMAGIC);
+
 	/*
-	 * Do not allow mangled modules as a module with version information
-	 * removed is no longer the module that was signed.
+	 * Require flags == 0, as a module with version information
+	 * removed is no longer the module that was signed
 	 */
-	if (!mangled_module &&
+	if (flags == 0 &&
 	    info->len > markerlen &&
 	    memcmp(mod + info->len - markerlen, MODULE_SIG_STRING, markerlen) == 0) {
 		/* We truncate the module to discard the signature */
@@ -2942,11 +2942,7 @@ static int module_sig_check(struct load_info *info, int flags)
 
 static int validate_section_offset(struct load_info *info, Elf_Shdr *shdr)
 {
-#if defined(CONFIG_64BIT)
-	unsigned long long secend;
-#else
 	unsigned long secend;
-#endif
 
 	/*
 	 * Check for both overflow and offset/size being
@@ -2971,29 +2967,14 @@ static int elf_validity_check(struct load_info *info)
 	Elf_Shdr *shdr, *strhdr;
 	int err;
 
-	if (info->len < sizeof(*(info->hdr))) {
-		pr_err("Invalid ELF header len %lu\n", info->len);
-		goto no_exec;
-	}
+	if (info->len < sizeof(*(info->hdr)))
+		return -ENOEXEC;
 
-	if (memcmp(info->hdr->e_ident, ELFMAG, SELFMAG) != 0) {
-		pr_err("Invalid ELF header magic: != %s\n", ELFMAG);
-		goto no_exec;
-	}
-	if (info->hdr->e_type != ET_REL) {
-		pr_err("Invalid ELF header type: %u != %u\n",
-		       info->hdr->e_type, ET_REL);
-		goto no_exec;
-	}
-	if (!elf_check_arch(info->hdr)) {
-		pr_err("Invalid architecture in ELF header: %u\n",
-		       info->hdr->e_machine);
-		goto no_exec;
-	}
-	if (info->hdr->e_shentsize != sizeof(Elf_Shdr)) {
-		pr_err("Invalid ELF section header size\n");
-		goto no_exec;
-	}
+	if (memcmp(info->hdr->e_ident, ELFMAG, SELFMAG) != 0
+	    || info->hdr->e_type != ET_REL
+	    || !elf_check_arch(info->hdr)
+	    || info->hdr->e_shentsize != sizeof(Elf_Shdr))
+		return -ENOEXEC;
 
 	/*
 	 * e_shnum is 16 bits, and sizeof(Elf_Shdr) is
@@ -3002,10 +2983,8 @@ static int elf_validity_check(struct load_info *info)
 	 */
 	if (info->hdr->e_shoff >= info->len
 	    || (info->hdr->e_shnum * sizeof(Elf_Shdr) >
-		info->len - info->hdr->e_shoff)) {
-		pr_err("Invalid ELF section header overflow\n");
-		goto no_exec;
-	}
+		info->len - info->hdr->e_shoff))
+		return -ENOEXEC;
 
 	info->sechdrs = (void *)info->hdr + info->hdr->e_shoff;
 
@@ -3013,19 +2992,13 @@ static int elf_validity_check(struct load_info *info)
 	 * Verify if the section name table index is valid.
 	 */
 	if (info->hdr->e_shstrndx == SHN_UNDEF
-	    || info->hdr->e_shstrndx >= info->hdr->e_shnum) {
-		pr_err("Invalid ELF section name index: %d || e_shstrndx (%d) >= e_shnum (%d)\n",
-		       info->hdr->e_shstrndx, info->hdr->e_shstrndx,
-		       info->hdr->e_shnum);
-		goto no_exec;
-	}
+	    || info->hdr->e_shstrndx >= info->hdr->e_shnum)
+		return -ENOEXEC;
 
 	strhdr = &info->sechdrs[info->hdr->e_shstrndx];
 	err = validate_section_offset(info, strhdr);
-	if (err < 0) {
-		pr_err("Invalid ELF section hdr(type %u)\n", strhdr->sh_type);
+	if (err < 0)
 		return err;
-	}
 
 	/*
 	 * The section name table must be NUL-terminated, as required
@@ -3033,10 +3006,8 @@ static int elf_validity_check(struct load_info *info)
 	 * strings in the section safe.
 	 */
 	info->secstrings = (void *)info->hdr + strhdr->sh_offset;
-	if (info->secstrings[strhdr->sh_size - 1] != '\0') {
-		pr_err("ELF Spec violation: section name table isn't null terminated\n");
-		goto no_exec;
-	}
+	if (info->secstrings[strhdr->sh_size - 1] != '\0')
+		return -ENOEXEC;
 
 	/*
 	 * The code assumes that section 0 has a length of zero and
@@ -3044,11 +3015,8 @@ static int elf_validity_check(struct load_info *info)
 	 */
 	if (info->sechdrs[0].sh_type != SHT_NULL
 	    || info->sechdrs[0].sh_size != 0
-	    || info->sechdrs[0].sh_addr != 0) {
-		pr_err("ELF Spec violation: section 0 type(%d)!=SH_NULL or non-zero len or addr\n",
-		       info->sechdrs[0].sh_type);
-		goto no_exec;
-	}
+	    || info->sechdrs[0].sh_addr != 0)
+		return -ENOEXEC;
 
 	for (i = 1; i < info->hdr->e_shnum; i++) {
 		shdr = &info->sechdrs[i];
@@ -3058,12 +3026,8 @@ static int elf_validity_check(struct load_info *info)
 			continue;
 		case SHT_SYMTAB:
 			if (shdr->sh_link == SHN_UNDEF
-			    || shdr->sh_link >= info->hdr->e_shnum) {
-				pr_err("Invalid ELF sh_link!=SHN_UNDEF(%d) or (sh_link(%d) >= hdr->e_shnum(%d)\n",
-				       shdr->sh_link, shdr->sh_link,
-				       info->hdr->e_shnum);
-				goto no_exec;
-			}
+			    || shdr->sh_link >= info->hdr->e_shnum)
+				return -ENOEXEC;
 			fallthrough;
 		default:
 			err = validate_section_offset(info, shdr);
@@ -3085,9 +3049,6 @@ static int elf_validity_check(struct load_info *info)
 	}
 
 	return 0;
-
-no_exec:
-	return -ENOEXEC;
 }
 
 #define COPY_CHUNK_SIZE (16*PAGE_SIZE)
@@ -3174,12 +3135,9 @@ out:
 	return err;
 }
 
-static void free_copy(struct load_info *info, int flags)
+static void free_copy(struct load_info *info)
 {
-	if (flags & MODULE_INIT_COMPRESSED_FILE)
-		module_decompress_cleanup(info);
-	else
-		vfree(info->hdr);
+	vfree(info->hdr);
 }
 
 static int rewrite_section_headers(struct load_info *info, int flags)
@@ -3967,8 +3925,10 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	 * sections.
 	 */
 	err = elf_validity_check(info);
-	if (err)
+	if (err) {
+		pr_err("Module has invalid ELF structures\n");
 		goto free_copy;
+	}
 
 	/*
 	 * Everything checks out, so set up the section info
@@ -4113,7 +4073,7 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	}
 
 	/* Get rid of temporary copy. */
-	free_copy(info, flags);
+	free_copy(info);
 
 	/* Done! */
 	trace_module_load(mod);
@@ -4162,7 +4122,7 @@ static int load_module(struct load_info *info, const char __user *uargs,
 
 	module_deallocate(mod, info);
  free_copy:
-	free_copy(info, flags);
+	free_copy(info);
 	return err;
 }
 
@@ -4189,8 +4149,7 @@ SYSCALL_DEFINE3(init_module, void __user *, umod,
 SYSCALL_DEFINE3(finit_module, int, fd, const char __user *, uargs, int, flags)
 {
 	struct load_info info = { };
-	void *buf = NULL;
-	int len;
+	void *hdr = NULL;
 	int err;
 
 	err = may_init_module();
@@ -4200,24 +4159,15 @@ SYSCALL_DEFINE3(finit_module, int, fd, const char __user *, uargs, int, flags)
 	pr_debug("finit_module: fd=%d, uargs=%p, flags=%i\n", fd, uargs, flags);
 
 	if (flags & ~(MODULE_INIT_IGNORE_MODVERSIONS
-		      |MODULE_INIT_IGNORE_VERMAGIC
-		      |MODULE_INIT_COMPRESSED_FILE))
+		      |MODULE_INIT_IGNORE_VERMAGIC))
 		return -EINVAL;
 
-	len = kernel_read_file_from_fd(fd, 0, &buf, INT_MAX, NULL,
+	err = kernel_read_file_from_fd(fd, 0, &hdr, INT_MAX, NULL,
 				       READING_MODULE);
-	if (len < 0)
-		return len;
-
-	if (flags & MODULE_INIT_COMPRESSED_FILE) {
-		err = module_decompress(&info, buf, len);
-		vfree(buf); /* compressed data is no longer needed */
-		if (err)
-			return err;
-	} else {
-		info.hdr = buf;
-		info.len = len;
-	}
+	if (err < 0)
+		return err;
+	info.hdr = hdr;
+	info.len = err;
 
 	return load_module(&info, uargs, flags);
 }
@@ -4497,8 +4447,6 @@ int module_kallsyms_on_each_symbol(int (*fn)(void *, const char *,
 				 mod, kallsyms_symbol_value(sym));
 			if (ret != 0)
 				goto out;
-
-			cond_resched();
 		}
 	}
 out:

@@ -122,7 +122,7 @@ static int sof_resume(struct device *dev, bool runtime_resume)
 	    old_state == SOF_DSP_PM_D0)
 		return 0;
 
-	sof_set_fw_state(sdev, SOF_FW_BOOT_PREPARE);
+	sdev->fw_state = SOF_FW_BOOT_PREPARE;
 
 	/* load the firmware */
 	ret = snd_sof_load_firmware(sdev);
@@ -130,11 +130,10 @@ static int sof_resume(struct device *dev, bool runtime_resume)
 		dev_err(sdev->dev,
 			"error: failed to load DSP firmware after resume %d\n",
 			ret);
-		sof_set_fw_state(sdev, SOF_FW_BOOT_FAILED);
 		return ret;
 	}
 
-	sof_set_fw_state(sdev, SOF_FW_BOOT_IN_PROGRESS);
+	sdev->fw_state = SOF_FW_BOOT_IN_PROGRESS;
 
 	/*
 	 * Boot the firmware. The FW boot status will be modified
@@ -145,7 +144,6 @@ static int sof_resume(struct device *dev, bool runtime_resume)
 		dev_err(sdev->dev,
 			"error: failed to boot DSP firmware after resume %d\n",
 			ret);
-		sof_set_fw_state(sdev, SOF_FW_BOOT_FAILED);
 		return ret;
 	}
 
@@ -159,7 +157,7 @@ static int sof_resume(struct device *dev, bool runtime_resume)
 	}
 
 	/* restore pipelines */
-	ret = sof_set_up_pipelines(sdev, false);
+	ret = sof_restore_pipelines(sdev->dev);
 	if (ret < 0) {
 		dev_err(sdev->dev,
 			"error: failed to restore pipeline after resume %d\n",
@@ -193,7 +191,7 @@ static int sof_suspend(struct device *dev, bool runtime_suspend)
 	if (sdev->fw_state != SOF_FW_BOOT_COMPLETE)
 		goto suspend;
 
-	/* prepare for streams to be resumed properly upon resume */
+	/* set restore_stream for all streams during system suspend */
 	if (!runtime_suspend) {
 		ret = sof_set_hw_params_upon_resume(sdev->dev);
 		if (ret < 0) {
@@ -209,8 +207,6 @@ static int sof_suspend(struct device *dev, bool runtime_suspend)
 	/* Skip to platform-specific suspend if DSP is entering D0 */
 	if (target_state == SOF_DSP_PM_D0)
 		goto suspend;
-
-	sof_tear_down_pipelines(sdev, false);
 
 	/* release trace */
 	snd_sof_release_trace(sdev);
@@ -259,7 +255,7 @@ suspend:
 		return ret;
 
 	/* reset FW state */
-	sof_set_fw_state(sdev, SOF_FW_BOOT_NOT_STARTED);
+	sdev->fw_state = SOF_FW_BOOT_NOT_STARTED;
 	sdev->enabled_cores_mask = 0;
 
 	return ret;
@@ -313,14 +309,6 @@ int snd_sof_prepare(struct device *dev)
 
 	/* will suspend to S3 by default */
 	sdev->system_suspend_target = SOF_SUSPEND_S3;
-
-	/*
-	 * if the firmware is crashed or boot failed then we try to aim for S3
-	 * to reboot the firmware
-	 */
-	if (sdev->fw_state == SOF_FW_CRASHED ||
-	    sdev->fw_state == SOF_FW_BOOT_FAILED)
-		return 0;
 
 	if (!desc->use_acpi_target_states)
 		return 0;

@@ -217,12 +217,11 @@ static void fprop_reflect_period_percpu(struct fprop_global *p,
 }
 
 /* Event of type pl happened */
-void __fprop_add_percpu(struct fprop_global *p, struct fprop_local_percpu *pl,
-		long nr)
+void __fprop_inc_percpu(struct fprop_global *p, struct fprop_local_percpu *pl)
 {
 	fprop_reflect_period_percpu(p, pl);
-	percpu_counter_add_batch(&pl->events, nr, PROP_BATCH);
-	percpu_counter_add(&p->events, nr);
+	percpu_counter_add_batch(&pl->events, 1, PROP_BATCH);
+	percpu_counter_add(&p->events, 1);
 }
 
 void fprop_fraction_percpu(struct fprop_global *p,
@@ -254,29 +253,20 @@ void fprop_fraction_percpu(struct fprop_global *p,
 }
 
 /*
- * Like __fprop_add_percpu() except that event is counted only if the given
+ * Like __fprop_inc_percpu() except that event is counted only if the given
  * type has fraction smaller than @max_frac/FPROP_FRAC_BASE
  */
-void __fprop_add_percpu_max(struct fprop_global *p,
-		struct fprop_local_percpu *pl, int max_frac, long nr)
+void __fprop_inc_percpu_max(struct fprop_global *p,
+			    struct fprop_local_percpu *pl, int max_frac)
 {
 	if (unlikely(max_frac < FPROP_FRAC_BASE)) {
 		unsigned long numerator, denominator;
-		s64 tmp;
 
 		fprop_fraction_percpu(p, pl, &numerator, &denominator);
-		/* Adding 'nr' to fraction exceeds max_frac/FPROP_FRAC_BASE? */
-		tmp = (u64)denominator * max_frac -
-					((u64)numerator << FPROP_FRAC_SHIFT);
-		if (tmp < 0) {
-			/* Maximum fraction already exceeded? */
+		if (numerator >
+		    (((u64)denominator) * max_frac) >> FPROP_FRAC_SHIFT)
 			return;
-		} else if (tmp < nr * (FPROP_FRAC_BASE - max_frac)) {
-			/* Add just enough for the fraction to saturate */
-			nr = div_u64(tmp + FPROP_FRAC_BASE - max_frac - 1,
-					FPROP_FRAC_BASE - max_frac);
-		}
 	}
 
-	__fprop_add_percpu(p, pl, nr);
+	__fprop_inc_percpu(p, pl);
 }

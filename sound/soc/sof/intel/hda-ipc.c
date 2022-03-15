@@ -70,6 +70,7 @@ void hda_dsp_ipc_get_reply(struct snd_sof_dev *sdev)
 	struct snd_sof_ipc_msg *msg = sdev->msg;
 	struct sof_ipc_reply reply;
 	struct sof_ipc_cmd_hdr *hdr;
+	int ret = 0;
 
 	/*
 	 * Sometimes, there is unexpected reply ipc arriving. The reply
@@ -93,11 +94,35 @@ void hda_dsp_ipc_get_reply(struct snd_sof_dev *sdev)
 		reply.hdr.cmd = SOF_IPC_GLB_REPLY;
 		reply.hdr.size = sizeof(reply);
 		memcpy(msg->reply_data, &reply, sizeof(reply));
-
-		msg->reply_error = 0;
-	} else {
-		snd_sof_ipc_get_reply(sdev);
+		goto out;
 	}
+
+	/* get IPC reply from DSP in the mailbox */
+	sof_mailbox_read(sdev, sdev->host_box.offset, &reply,
+			 sizeof(reply));
+
+	if (reply.error < 0) {
+		memcpy(msg->reply_data, &reply, sizeof(reply));
+		ret = reply.error;
+	} else {
+		/* reply correct size ? */
+		if (reply.hdr.size != msg->reply_size &&
+		    /* getter payload is never known upfront */
+		    ((reply.hdr.cmd & SOF_GLB_TYPE_MASK) != SOF_IPC_GLB_PROBE)) {
+			dev_err(sdev->dev, "error: reply expected %zu got %u bytes\n",
+				msg->reply_size, reply.hdr.size);
+			ret = -EINVAL;
+		}
+
+		/* read the message */
+		if (msg->reply_size > 0)
+			sof_mailbox_read(sdev, sdev->host_box.offset,
+					 msg->reply_data, msg->reply_size);
+	}
+
+out:
+	msg->reply_error = ret;
+
 }
 
 /* IPC handler thread */
@@ -173,23 +198,8 @@ irqreturn_t hda_dsp_ipc_irq_thread(int irq, void *context)
 
 		/* handle messages from DSP */
 		if ((hipct & SOF_IPC_PANIC_MAGIC_MASK) == SOF_IPC_PANIC_MAGIC) {
-			struct sof_intel_hda_dev *hda = sdev->pdata->hw_pdata;
-			bool non_recoverable = true;
-
-			/*
-			 * This is a PANIC message!
-			 *
-			 * If it is arriving during firmware boot and it is not
-			 * the last boot attempt then change the non_recoverable
-			 * to false as the DSP might be able to boot in the next
-			 * iteration(s)
-			 */
-			if (sdev->fw_state == SOF_FW_BOOT_IN_PROGRESS &&
-			    hda->boot_iteration < HDA_FW_BOOT_ATTEMPTS)
-				non_recoverable = false;
-
-			snd_sof_dsp_panic(sdev, HDA_DSP_PANIC_OFFSET(msg_ext),
-					  non_recoverable);
+			/* this is a PANIC message !! */
+			snd_sof_dsp_panic(sdev, HDA_DSP_PANIC_OFFSET(msg_ext));
 		} else {
 			/* normal message - process normally */
 			snd_sof_ipc_msgs_rx(sdev);
@@ -243,9 +253,9 @@ int hda_dsp_ipc_get_window_offset(struct snd_sof_dev *sdev, u32 id)
 	return SRAM_WINDOW_OFFSET(id);
 }
 
-int hda_ipc_msg_data(struct snd_sof_dev *sdev,
-		     struct snd_pcm_substream *substream,
-		     void *p, size_t sz)
+void hda_ipc_msg_data(struct snd_sof_dev *sdev,
+		      struct snd_pcm_substream *substream,
+		      void *p, size_t sz)
 {
 	if (!substream || !sdev->stream_box.size) {
 		sof_mailbox_read(sdev, sdev->dsp_box.offset, p, sz);
@@ -258,13 +268,10 @@ int hda_ipc_msg_data(struct snd_sof_dev *sdev,
 					  hda_stream.hstream);
 
 		/* The stream might already be closed */
-		if (!hstream)
-			return -ESTRPIPE;
-
-		sof_mailbox_read(sdev, hda_stream->stream.posn_offset, p, sz);
+		if (hstream)
+			sof_mailbox_read(sdev, hda_stream->stream.posn_offset,
+					 p, sz);
 	}
-
-	return 0;
 }
 
 int hda_ipc_pcm_params(struct snd_sof_dev *sdev,

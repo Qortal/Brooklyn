@@ -4,7 +4,6 @@
 
 #include <linux/types.h>
 #include <linux/rbtree.h>
-#include "cpumap.h"
 #include "rwsem.h"
 
 struct perf_cpu_map;
@@ -171,5 +170,5 @@ struct bpf_prog_info_node *perf_env__find_bpf_prog_info(struct perf_env *env,
 bool perf_env__insert_btf(struct perf_env *env, struct btf_node *btf_node);
 struct btf_node *perf_env__find_btf(struct perf_env *env, __u32 btf_id);
 
-int perf_env__numa_node(struct perf_env *env, struct perf_cpu cpu);
+int perf_env__numa_node(struct perf_env *env, int cpu);
 #endif /* __PERF_ENV_H */

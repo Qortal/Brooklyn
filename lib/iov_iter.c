@@ -69,40 +69,42 @@
 #define iterate_xarray(i, n, base, len, __off, STEP) {		\
 	__label__ __out;					\
 	size_t __off = 0;					\
-	struct folio *folio;					\
+	struct page *head = NULL;				\
 	loff_t start = i->xarray_start + i->iov_offset;		\
+	unsigned offset = start % PAGE_SIZE;			\
 	pgoff_t index = start / PAGE_SIZE;			\
+	int j;							\
+								\
 	XA_STATE(xas, i->xarray, index);			\
 								\
-	len = PAGE_SIZE - offset_in_page(start);		\
 	rcu_read_lock();					\
-	xas_for_each(&xas, folio, ULONG_MAX) {			\
+	xas_for_each(&xas, head, ULONG_MAX) {			\
 		unsigned left;					\
-		size_t offset;					\
-		if (xas_retry(&xas, folio))			\
+		if (xas_retry(&xas, head))			\
 			continue;				\
-		if (WARN_ON(xa_is_value(folio)))		\
+		if (WARN_ON(xa_is_value(head)))			\
 			break;					\
-		if (WARN_ON(folio_test_hugetlb(folio)))		\
+		if (WARN_ON(PageHuge(head)))			\
 			break;					\
-		offset = offset_in_folio(folio, start + __off);	\
-		while (offset < folio_size(folio)) {		\
-			base = kmap_local_folio(folio, offset);	\
+		for (j = (head->index < index) ? index - head->index : 0; \
+		     j < thp_nr_pages(head); j++) {		\
+			void *kaddr = kmap_local_page(head + j);	\
+			base = kaddr + offset;			\
+			len = PAGE_SIZE - offset;		\
 			len = min(n, len);			\
 			left = (STEP);				\
-			kunmap_local(base);			\
+			kunmap_local(kaddr);			\
 			len -= left;				\
 			__off += len;				\
 			n -= len;				\
 			if (left || n == 0)			\
 				goto __out;			\
-			offset += len;				\
-			len = PAGE_SIZE;			\
+			offset = 0;				\
 		}						\
 	}							\
 __out:								\
 	rcu_read_unlock();					\
-	i->iov_offset += __off;					\
+	i->iov_offset += __off;						\
 	n = __off;						\
 }
 
@@ -189,7 +191,7 @@ static size_t copy_page_to_iter_iovec(struct page *page, size_t offset, size_t b
 	buf = iov->iov_base + skip;
 	copy = min(bytes, iov->iov_len - skip);
 
-	if (IS_ENABLED(CONFIG_HIGHMEM) && !fault_in_writeable(buf, copy)) {
+	if (IS_ENABLED(CONFIG_HIGHMEM) && !fault_in_pages_writeable(buf, copy)) {
 		kaddr = kmap_atomic(page);
 		from = kaddr + offset;
 
@@ -273,7 +275,7 @@ static size_t copy_page_from_iter_iovec(struct page *page, size_t offset, size_t
 	buf = iov->iov_base + skip;
 	copy = min(bytes, iov->iov_len - skip);
 
-	if (IS_ENABLED(CONFIG_HIGHMEM) && !fault_in_readable(buf, copy)) {
+	if (IS_ENABLED(CONFIG_HIGHMEM) && !fault_in_pages_readable(buf, copy)) {
 		kaddr = kmap_atomic(page);
 		to = kaddr + offset;
 
@@ -429,81 +431,35 @@ out:
 }
 
 /*
- * fault_in_iov_iter_readable - fault in iov iterator for reading
- * @i: iterator
- * @size: maximum length
- *
  * Fault in one or more iovecs of the given iov_iter, to a maximum length of
- * @size.  For each iovec, fault in each page that constitutes the iovec.
+ * bytes.  For each iovec, fault in each page that constitutes the iovec.
  *
- * Returns the number of bytes not faulted in (like copy_to_user() and
- * copy_from_user()).
- *
- * Always returns 0 for non-userspace iterators.
+ * Return 0 on success, or non-zero if the memory could not be accessed (i.e.
+ * because it is an invalid address).
  */
-size_t fault_in_iov_iter_readable(const struct iov_iter *i, size_t size)
+int iov_iter_fault_in_readable(const struct iov_iter *i, size_t bytes)
 {
 	if (iter_is_iovec(i)) {
-		size_t count = min(size, iov_iter_count(i));
 		const struct iovec *p;
 		size_t skip;
 
-		size -= count;
-		for (p = i->iov, skip = i->iov_offset; count; p++, skip = 0) {
-			size_t len = min(count, p->iov_len - skip);
-			size_t ret;
+		if (bytes > i->count)
+			bytes = i->count;
+		for (p = i->iov, skip = i->iov_offset; bytes; p++, skip = 0) {
+			size_t len = min(bytes, p->iov_len - skip);
+			int err;
 
 			if (unlikely(!len))
 				continue;
-			ret = fault_in_readable(p->iov_base + skip, len);
-			count -= len - ret;
-			if (ret)
-				break;
+			err = fault_in_pages_readable(p->iov_base + skip, len);
+			if (unlikely(err))
+				return err;
+			bytes -= len;
 		}
-		return count + size;
 	}
 	return 0;
 }
-EXPORT_SYMBOL(fault_in_iov_iter_readable);
-
-/*
- * fault_in_iov_iter_writeable - fault in iov iterator for writing
- * @i: iterator
- * @size: maximum length
- *
- * Faults in the iterator using get_user_pages(), i.e., without triggering
- * hardware page faults.  This is primarily useful when we already know that
- * some or all of the pages in @i aren't in memory.
- *
- * Returns the number of bytes not faulted in, like copy_to_user() and
- * copy_from_user().
- *
- * Always returns 0 for non-user-space iterators.
- */
-size_t fault_in_iov_iter_writeable(const struct iov_iter *i, size_t size)
-{
-	if (iter_is_iovec(i)) {
-		size_t count = min(size, iov_iter_count(i));
-		const struct iovec *p;
-		size_t skip;
-
-		size -= count;
-		for (p = i->iov, skip = i->iov_offset; count; p++, skip = 0) {
-			size_t len = min(count, p->iov_len - skip);
-			size_t ret;
-
-			if (unlikely(!len))
-				continue;
-			ret = fault_in_safe_writeable(p->iov_base + skip, len);
-			count -= len - ret;
-			if (ret)
-				break;
-		}
-		return count + size;
-	}
-	return 0;
-}
-EXPORT_SYMBOL(fault_in_iov_iter_writeable);
+EXPORT_SYMBOL(iov_iter_fault_in_readable);
 
 void iov_iter_init(struct iov_iter *i, unsigned int direction,
 			const struct iovec *iov, unsigned long nr_segs,
@@ -512,7 +468,6 @@ void iov_iter_init(struct iov_iter *i, unsigned int direction,
 	WARN_ON(direction & ~(READ | WRITE));
 	*i = (struct iov_iter) {
 		.iter_type = ITER_IOVEC,
-		.nofault = false,
 		.data_source = direction,
 		.iov = iov,
 		.nr_segs = nr_segs,
@@ -1528,17 +1483,13 @@ ssize_t iov_iter_get_pages(struct iov_iter *i,
 		return 0;
 
 	if (likely(iter_is_iovec(i))) {
-		unsigned int gup_flags = 0;
 		unsigned long addr;
-
-		if (iov_iter_rw(i) != WRITE)
-			gup_flags |= FOLL_WRITE;
-		if (i->nofault)
-			gup_flags |= FOLL_NOFAULT;
 
 		addr = first_iovec_segment(i, &len, start, maxsize, maxpages);
 		n = DIV_ROUND_UP(len, PAGE_SIZE);
-		res = get_user_pages_fast(addr, n, gup_flags, pages);
+		res = get_user_pages_fast(addr, n,
+				iov_iter_rw(i) != WRITE ?  FOLL_WRITE : 0,
+				pages);
 		if (unlikely(res <= 0))
 			return res;
 		return (res == n ? len : res * PAGE_SIZE) - *start;
@@ -1654,20 +1605,15 @@ ssize_t iov_iter_get_pages_alloc(struct iov_iter *i,
 		return 0;
 
 	if (likely(iter_is_iovec(i))) {
-		unsigned int gup_flags = 0;
 		unsigned long addr;
-
-		if (iov_iter_rw(i) != WRITE)
-			gup_flags |= FOLL_WRITE;
-		if (i->nofault)
-			gup_flags |= FOLL_NOFAULT;
 
 		addr = first_iovec_segment(i, &len, start, maxsize, ~0U);
 		n = DIV_ROUND_UP(len, PAGE_SIZE);
 		p = get_pages_array(n);
 		if (!p)
 			return -ENOMEM;
-		res = get_user_pages_fast(addr, n, gup_flags, p);
+		res = get_user_pages_fast(addr, n,
+				iov_iter_rw(i) != WRITE ?  FOLL_WRITE : 0, p);
 		if (unlikely(res <= 0)) {
 			kvfree(p);
 			*pages = NULL;

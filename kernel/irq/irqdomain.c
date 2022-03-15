@@ -744,8 +744,9 @@ static int irq_domain_translate(struct irq_domain *d,
 	return 0;
 }
 
-void of_phandle_args_to_fwspec(struct device_node *np, const u32 *args,
-			       unsigned int count, struct irq_fwspec *fwspec)
+static void of_phandle_args_to_fwspec(struct device_node *np, const u32 *args,
+				      unsigned int count,
+				      struct irq_fwspec *fwspec)
 {
 	int i;
 
@@ -755,7 +756,6 @@ void of_phandle_args_to_fwspec(struct device_node *np, const u32 *args,
 	for (i = 0; i < count; i++)
 		fwspec->param[i] = args[i];
 }
-EXPORT_SYMBOL_GPL(of_phandle_args_to_fwspec);
 
 unsigned int irq_create_fwspec_mapping(struct irq_fwspec *fwspec)
 {
@@ -1502,7 +1502,6 @@ out_free_desc:
 	irq_free_descs(virq, nr_irqs);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(__irq_domain_alloc_irqs);
 
 /* The irq_data was moved, fix the revmap to refer to the new location */
 static void irq_domain_fix_revmap(struct irq_data *d)

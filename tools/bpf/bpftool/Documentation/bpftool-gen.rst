@@ -1,5 +1,3 @@
-.. SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
-
 ================
 bpftool-gen
 ================
@@ -9,14 +7,13 @@ tool for BPF code-generation
 
 :Manual section: 8
 
-.. include:: substitutions.rst
-
 SYNOPSIS
 ========
 
 	**bpftool** [*OPTIONS*] **gen** *COMMAND*
 
-	*OPTIONS* := { |COMMON_OPTIONS| | { **-L** | **--use-loader** } }
+	*OPTIONS* := { { **-j** | **--json** } [{ **-p** | **--pretty** }] | { **-d** | **--debug** } |
+	{ **-L** | **--use-loader** } }
 
 	*COMMAND* := { **object** | **skeleton** | **help** }
 

@@ -72,40 +72,32 @@ static const __u16 DST_PORT = 7007; /* Host byte order */
 static const __u32 DST_IP4 = IP4(127, 0, 0, 1);
 static const __u32 DST_IP6[] = IP6(0xfd000000, 0x0, 0x0, 0x00000001);
 
-SEC("sk_lookup")
+SEC("sk_lookup/lookup_pass")
 int lookup_pass(struct bpf_sk_lookup *ctx)
 {
 	return SK_PASS;
 }
 
-SEC("sk_lookup")
+SEC("sk_lookup/lookup_drop")
 int lookup_drop(struct bpf_sk_lookup *ctx)
 {
 	return SK_DROP;
 }
 
-SEC("sk_lookup")
-int check_ifindex(struct bpf_sk_lookup *ctx)
-{
-	if (ctx->ingress_ifindex == 1)
-		return SK_DROP;
-	return SK_PASS;
-}
-
-SEC("sk_reuseport")
+SEC("sk_reuseport/reuse_pass")
 int reuseport_pass(struct sk_reuseport_md *ctx)
 {
 	return SK_PASS;
 }
 
-SEC("sk_reuseport")
+SEC("sk_reuseport/reuse_drop")
 int reuseport_drop(struct sk_reuseport_md *ctx)
 {
 	return SK_DROP;
 }
 
 /* Redirect packets destined for port DST_PORT to socket at redir_map[0]. */
-SEC("sk_lookup")
+SEC("sk_lookup/redir_port")
 int redir_port(struct bpf_sk_lookup *ctx)
 {
 	struct bpf_sock *sk;
@@ -124,7 +116,7 @@ int redir_port(struct bpf_sk_lookup *ctx)
 }
 
 /* Redirect packets destined for DST_IP4 address to socket at redir_map[0]. */
-SEC("sk_lookup")
+SEC("sk_lookup/redir_ip4")
 int redir_ip4(struct bpf_sk_lookup *ctx)
 {
 	struct bpf_sock *sk;
@@ -147,7 +139,7 @@ int redir_ip4(struct bpf_sk_lookup *ctx)
 }
 
 /* Redirect packets destined for DST_IP6 address to socket at redir_map[0]. */
-SEC("sk_lookup")
+SEC("sk_lookup/redir_ip6")
 int redir_ip6(struct bpf_sk_lookup *ctx)
 {
 	struct bpf_sock *sk;
@@ -172,7 +164,7 @@ int redir_ip6(struct bpf_sk_lookup *ctx)
 	return err ? SK_DROP : SK_PASS;
 }
 
-SEC("sk_lookup")
+SEC("sk_lookup/select_sock_a")
 int select_sock_a(struct bpf_sk_lookup *ctx)
 {
 	struct bpf_sock *sk;
@@ -187,7 +179,7 @@ int select_sock_a(struct bpf_sk_lookup *ctx)
 	return err ? SK_DROP : SK_PASS;
 }
 
-SEC("sk_lookup")
+SEC("sk_lookup/select_sock_a_no_reuseport")
 int select_sock_a_no_reuseport(struct bpf_sk_lookup *ctx)
 {
 	struct bpf_sock *sk;
@@ -202,7 +194,7 @@ int select_sock_a_no_reuseport(struct bpf_sk_lookup *ctx)
 	return err ? SK_DROP : SK_PASS;
 }
 
-SEC("sk_reuseport")
+SEC("sk_reuseport/select_sock_b")
 int select_sock_b(struct sk_reuseport_md *ctx)
 {
 	__u32 key = KEY_SERVER_B;
@@ -213,7 +205,7 @@ int select_sock_b(struct sk_reuseport_md *ctx)
 }
 
 /* Check that bpf_sk_assign() returns -EEXIST if socket already selected. */
-SEC("sk_lookup")
+SEC("sk_lookup/sk_assign_eexist")
 int sk_assign_eexist(struct bpf_sk_lookup *ctx)
 {
 	struct bpf_sock *sk;
@@ -246,7 +238,7 @@ out:
 }
 
 /* Check that bpf_sk_assign(BPF_SK_LOOKUP_F_REPLACE) can override selection. */
-SEC("sk_lookup")
+SEC("sk_lookup/sk_assign_replace_flag")
 int sk_assign_replace_flag(struct bpf_sk_lookup *ctx)
 {
 	struct bpf_sock *sk;
@@ -278,7 +270,7 @@ out:
 }
 
 /* Check that bpf_sk_assign(sk=NULL) is accepted. */
-SEC("sk_lookup")
+SEC("sk_lookup/sk_assign_null")
 int sk_assign_null(struct bpf_sk_lookup *ctx)
 {
 	struct bpf_sock *sk = NULL;
@@ -321,7 +313,7 @@ out:
 }
 
 /* Check that selected sk is accessible through context. */
-SEC("sk_lookup")
+SEC("sk_lookup/access_ctx_sk")
 int access_ctx_sk(struct bpf_sk_lookup *ctx)
 {
 	struct bpf_sock *sk1 = NULL, *sk2 = NULL;
@@ -387,7 +379,7 @@ out:
  * are not covered because they give bogus results, that is the
  * verifier ignores the offset.
  */
-SEC("sk_lookup")
+SEC("sk_lookup/ctx_narrow_access")
 int ctx_narrow_access(struct bpf_sk_lookup *ctx)
 {
 	struct bpf_sock *sk;
@@ -561,7 +553,7 @@ int ctx_narrow_access(struct bpf_sk_lookup *ctx)
 }
 
 /* Check that sk_assign rejects SERVER_A socket with -ESOCKNOSUPPORT */
-SEC("sk_lookup")
+SEC("sk_lookup/sk_assign_esocknosupport")
 int sk_assign_esocknosupport(struct bpf_sk_lookup *ctx)
 {
 	struct bpf_sock *sk;
@@ -586,28 +578,28 @@ out:
 	return ret;
 }
 
-SEC("sk_lookup")
+SEC("sk_lookup/multi_prog_pass1")
 int multi_prog_pass1(struct bpf_sk_lookup *ctx)
 {
 	bpf_map_update_elem(&run_map, &KEY_PROG1, &PROG_DONE, BPF_ANY);
 	return SK_PASS;
 }
 
-SEC("sk_lookup")
+SEC("sk_lookup/multi_prog_pass2")
 int multi_prog_pass2(struct bpf_sk_lookup *ctx)
 {
 	bpf_map_update_elem(&run_map, &KEY_PROG2, &PROG_DONE, BPF_ANY);
 	return SK_PASS;
 }
 
-SEC("sk_lookup")
+SEC("sk_lookup/multi_prog_drop1")
 int multi_prog_drop1(struct bpf_sk_lookup *ctx)
 {
 	bpf_map_update_elem(&run_map, &KEY_PROG1, &PROG_DONE, BPF_ANY);
 	return SK_DROP;
 }
 
-SEC("sk_lookup")
+SEC("sk_lookup/multi_prog_drop2")
 int multi_prog_drop2(struct bpf_sk_lookup *ctx)
 {
 	bpf_map_update_elem(&run_map, &KEY_PROG2, &PROG_DONE, BPF_ANY);
@@ -631,7 +623,7 @@ static __always_inline int select_server_a(struct bpf_sk_lookup *ctx)
 	return SK_PASS;
 }
 
-SEC("sk_lookup")
+SEC("sk_lookup/multi_prog_redir1")
 int multi_prog_redir1(struct bpf_sk_lookup *ctx)
 {
 	int ret;
@@ -641,7 +633,7 @@ int multi_prog_redir1(struct bpf_sk_lookup *ctx)
 	return SK_PASS;
 }
 
-SEC("sk_lookup")
+SEC("sk_lookup/multi_prog_redir2")
 int multi_prog_redir2(struct bpf_sk_lookup *ctx)
 {
 	int ret;
@@ -652,3 +644,4 @@ int multi_prog_redir2(struct bpf_sk_lookup *ctx)
 }
 
 char _license[] SEC("license") = "Dual BSD/GPL";
+__u32 _version SEC("version") = 1;

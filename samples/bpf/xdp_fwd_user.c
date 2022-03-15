@@ -79,9 +79,7 @@ int main(int argc, char **argv)
 		.prog_type	= BPF_PROG_TYPE_XDP,
 	};
 	const char *prog_name = "xdp_fwd";
-	struct bpf_program *prog = NULL;
-	struct bpf_program *pos;
-	const char *sec_name;
+	struct bpf_program *prog;
 	int prog_fd, map_fd = -1;
 	char filename[PATH_MAX];
 	struct bpf_object *obj;
@@ -136,13 +134,7 @@ int main(int argc, char **argv)
 			return 1;
 		}
 
-		bpf_object__for_each_program(pos, obj) {
-			sec_name = bpf_program__section_name(pos);
-			if (sec_name && !strcmp(sec_name, prog_name)) {
-				prog = pos;
-				break;
-			}
-		}
+		prog = bpf_object__find_program_by_title(obj, prog_name);
 		prog_fd = bpf_program__fd(prog);
 		if (prog_fd < 0) {
 			printf("program not found: %s\n", strerror(prog_fd));

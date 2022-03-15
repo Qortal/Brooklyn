@@ -148,8 +148,7 @@ lx-symbols command."""
         # drop all current symbols and reload vmlinux
         orig_vmlinux = 'vmlinux'
         for obj in gdb.objfiles():
-            if (obj.filename.endswith('vmlinux') or
-                obj.filename.endswith('vmlinux.debug')):
+            if obj.filename.endswith('vmlinux'):
                 orig_vmlinux = obj.filename
         gdb.execute("symbol-file", to_string=True)
         gdb.execute("symbol-file {0}".format(orig_vmlinux))

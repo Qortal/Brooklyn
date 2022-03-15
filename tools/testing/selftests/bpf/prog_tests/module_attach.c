@@ -2,33 +2,46 @@
 /* Copyright (c) 2020 Facebook */
 
 #include <test_progs.h>
-#include <stdbool.h>
 #include "test_module_attach.skel.h"
 
 static int duration;
 
-static int trigger_module_test_writable(int *val)
+static int trigger_module_test_read(int read_sz)
 {
 	int fd, err;
-	char buf[65];
-	ssize_t rd;
 
-	fd = open(BPF_TESTMOD_TEST_FILE, O_RDONLY);
+	fd = open("/sys/kernel/bpf_testmod", O_RDONLY);
 	err = -errno;
-	if (!ASSERT_GE(fd, 0, "testmode_file_open"))
+	if (CHECK(fd < 0, "testmod_file_open", "failed: %d\n", err))
 		return err;
 
-	rd = read(fd, buf, sizeof(buf) - 1);
+	read(fd, NULL, read_sz);
+	close(fd);
+
+	return 0;
+}
+
+static int trigger_module_test_write(int write_sz)
+{
+	int fd, err;
+	char *buf = malloc(write_sz);
+
+	if (!buf)
+		return -ENOMEM;
+
+	memset(buf, 'a', write_sz);
+	buf[write_sz-1] = '\0';
+
+	fd = open("/sys/kernel/bpf_testmod", O_WRONLY);
 	err = -errno;
-	if (!ASSERT_GT(rd, 0, "testmod_file_rd_val")) {
-		close(fd);
+	if (CHECK(fd < 0, "testmod_file_open", "failed: %d\n", err)) {
+		free(buf);
 		return err;
 	}
 
-	buf[rd] = '\0';
-	*val = strtol(buf, NULL, 0);
+	write(fd, buf, write_sz);
 	close(fd);
-
+	free(buf);
 	return 0;
 }
 
@@ -45,7 +58,6 @@ void test_module_attach(void)
 	struct test_module_attach__bss *bss;
 	struct bpf_link *link;
 	int err;
-	int writable_val = 0;
 
 	skel = test_module_attach__open();
 	if (CHECK(!skel, "skel_open", "failed to open skeleton\n"))
@@ -77,14 +89,6 @@ void test_module_attach(void)
 	ASSERT_EQ(bss->fexit_read_sz, READ_SZ, "fexit");
 	ASSERT_EQ(bss->fexit_ret, -EIO, "fexit_tet");
 	ASSERT_EQ(bss->fmod_ret_read_sz, READ_SZ, "fmod_ret");
-
-	bss->raw_tp_writable_bare_early_ret = true;
-	bss->raw_tp_writable_bare_out_val = 0xf1f2f3f4;
-	ASSERT_OK(trigger_module_test_writable(&writable_val),
-		  "trigger_writable");
-	ASSERT_EQ(bss->raw_tp_writable_bare_in_val, 1024, "writable_test_in");
-	ASSERT_EQ(bss->raw_tp_writable_bare_out_val, writable_val,
-		  "writable_test_out");
 
 	test_module_attach__detach(skel);
 

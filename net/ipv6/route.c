@@ -182,9 +182,8 @@ static void rt6_uncached_list_flush_dev(struct net *net, struct net_device *dev)
 
 			if (rt_dev == dev) {
 				rt->dst.dev = blackhole_netdev;
-				dev_replace_track(rt_dev, blackhole_netdev,
-						  &rt->dst.dev_tracker,
-						  GFP_ATOMIC);
+				dev_hold(rt->dst.dev);
+				dev_put(rt_dev);
 			}
 		}
 		spin_unlock_bh(&ul->lock);
@@ -329,7 +328,9 @@ static const struct rt6_info ip6_blk_hole_entry_template = {
 
 static void rt6_info_init(struct rt6_info *rt)
 {
-	memset_after(rt, 0, dst);
+	struct dst_entry *dst = &rt->dst;
+
+	memset(dst + 1, 0, sizeof(*rt) - sizeof(*dst));
 	INIT_LIST_HEAD(&rt->rt6i_uncached);
 }
 
@@ -593,7 +594,6 @@ struct __rt6_probe_work {
 	struct work_struct work;
 	struct in6_addr target;
 	struct net_device *dev;
-	netdevice_tracker dev_tracker;
 };
 
 static void rt6_probe_deferred(struct work_struct *w)
@@ -604,7 +604,7 @@ static void rt6_probe_deferred(struct work_struct *w)
 
 	addrconf_addr_solict_mult(&work->target, &mcaddr);
 	ndisc_send_ns(work->dev, &work->target, &mcaddr, NULL, 0);
-	dev_put_track(work->dev, &work->dev_tracker);
+	dev_put(work->dev);
 	kfree(work);
 }
 
@@ -658,7 +658,7 @@ static void rt6_probe(struct fib6_nh *fib6_nh)
 	} else {
 		INIT_WORK(&work->work, rt6_probe_deferred);
 		work->target = *nh_gw;
-		dev_hold_track(dev, &work->dev_tracker, GFP_ATOMIC);
+		dev_hold(dev);
 		work->dev = dev;
 		schedule_work(&work->work);
 	}
@@ -1485,7 +1485,7 @@ static void rt6_exception_remove_oldest(struct rt6_exception_bucket *bucket)
 static u32 rt6_exception_hash(const struct in6_addr *dst,
 			      const struct in6_addr *src)
 {
-	static siphash_aligned_key_t rt6_exception_key;
+	static siphash_key_t rt6_exception_key __read_mostly;
 	struct {
 		struct in6_addr dst;
 		struct in6_addr src;
@@ -3628,8 +3628,6 @@ pcpu_alloc:
 	}
 
 	fib6_nh->fib_nh_dev = dev;
-	netdev_tracker_alloc(dev, &fib6_nh->fib_nh_dev_tracker, gfp_flags);
-
 	fib6_nh->fib_nh_oif = dev->ifindex;
 	err = 0;
 out:
@@ -3660,8 +3658,24 @@ void fib6_nh_release(struct fib6_nh *fib6_nh)
 
 	rcu_read_unlock();
 
-	fib6_nh_release_dsts(fib6_nh);
-	free_percpu(fib6_nh->rt6i_pcpu);
+	if (fib6_nh->rt6i_pcpu) {
+		int cpu;
+
+		for_each_possible_cpu(cpu) {
+			struct rt6_info **ppcpu_rt;
+			struct rt6_info *pcpu_rt;
+
+			ppcpu_rt = per_cpu_ptr(fib6_nh->rt6i_pcpu, cpu);
+			pcpu_rt = *ppcpu_rt;
+			if (pcpu_rt) {
+				dst_dev_put(&pcpu_rt->dst);
+				dst_release(&pcpu_rt->dst);
+				*ppcpu_rt = NULL;
+			}
+		}
+
+		free_percpu(fib6_nh->rt6i_pcpu);
+	}
 
 	fib_nh_common_release(&fib6_nh->nh_common);
 }
@@ -6340,11 +6354,11 @@ static int ipv6_sysctl_rtcache_flush(struct ctl_table *ctl, int write,
 
 static struct ctl_table ipv6_route_table_template[] = {
 	{
-		.procname	=	"max_size",
-		.data		=	&init_net.ipv6.sysctl.ip6_rt_max_size,
+		.procname	=	"flush",
+		.data		=	&init_net.ipv6.sysctl.flush_delay,
 		.maxlen		=	sizeof(int),
-		.mode		=	0644,
-		.proc_handler	=	proc_dointvec,
+		.mode		=	0200,
+		.proc_handler	=	ipv6_sysctl_rtcache_flush
 	},
 	{
 		.procname	=	"gc_thresh",
@@ -6354,11 +6368,11 @@ static struct ctl_table ipv6_route_table_template[] = {
 		.proc_handler	=	proc_dointvec,
 	},
 	{
-		.procname	=	"flush",
-		.data		=	&init_net.ipv6.sysctl.flush_delay,
+		.procname	=	"max_size",
+		.data		=	&init_net.ipv6.sysctl.ip6_rt_max_size,
 		.maxlen		=	sizeof(int),
-		.mode		=	0200,
-		.proc_handler	=	ipv6_sysctl_rtcache_flush
+		.mode		=	0644,
+		.proc_handler	=	proc_dointvec,
 	},
 	{
 		.procname	=	"gc_min_interval",
@@ -6430,10 +6444,10 @@ struct ctl_table * __net_init ipv6_route_sysctl_init(struct net *net)
 			GFP_KERNEL);
 
 	if (table) {
-		table[0].data = &net->ipv6.sysctl.ip6_rt_max_size;
+		table[0].data = &net->ipv6.sysctl.flush_delay;
+		table[0].extra1 = net;
 		table[1].data = &net->ipv6.ip6_dst_ops.gc_thresh;
-		table[2].data = &net->ipv6.sysctl.flush_delay;
-		table[2].extra1 = net;
+		table[2].data = &net->ipv6.sysctl.ip6_rt_max_size;
 		table[3].data = &net->ipv6.sysctl.ip6_rt_gc_min_interval;
 		table[4].data = &net->ipv6.sysctl.ip6_rt_gc_timeout;
 		table[5].data = &net->ipv6.sysctl.ip6_rt_gc_interval;
@@ -6445,7 +6459,7 @@ struct ctl_table * __net_init ipv6_route_sysctl_init(struct net *net)
 
 		/* Don't export sysctls to unprivileged users */
 		if (net->user_ns != &init_user_ns)
-			table[1].procname = NULL;
+			table[0].procname = NULL;
 	}
 
 	return table;

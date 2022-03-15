@@ -508,12 +508,9 @@ int tcp_v4_err(struct sk_buff *skb, u32 info)
 	if (sk->sk_state == TCP_CLOSE)
 		goto out;
 
-	if (static_branch_unlikely(&ip4_min_ttl)) {
-		/* min_ttl can be changed concurrently from do_ip_setsockopt() */
-		if (unlikely(iph->ttl < READ_ONCE(inet_sk(sk)->min_ttl))) {
-			__NET_INC_STATS(net, LINUX_MIB_TCPMINTTLDROP);
-			goto out;
-		}
+	if (unlikely(iph->ttl < inet_sk(sk)->min_ttl)) {
+		__NET_INC_STATS(net, LINUX_MIB_TCPMINTTLDROP);
+		goto out;
 	}
 
 	tp = tcp_sk(sk);
@@ -1182,7 +1179,7 @@ int tcp_md5_do_add(struct sock *sk, const union tcp_md5_addr *addr,
 		if (!md5sig)
 			return -ENOMEM;
 
-		sk_gso_disable(sk);
+		sk_nocaps_add(sk, NETIF_F_GSO_MASK);
 		INIT_HLIST_HEAD(&md5sig->head);
 		rcu_assign_pointer(tp->md5sig_info, md5sig);
 	}
@@ -1620,7 +1617,7 @@ struct sock *tcp_v4_syn_recv_sock(const struct sock *sk, struct sk_buff *skb,
 		 */
 		tcp_md5_do_add(newsk, addr, AF_INET, 32, l3index, key->flags,
 			       key->key, key->keylen, GFP_ATOMIC);
-		sk_gso_disable(newsk);
+		sk_nocaps_add(newsk, NETIF_F_GSO_MASK);
 	}
 #endif
 
@@ -1803,7 +1800,8 @@ int tcp_v4_early_demux(struct sk_buff *skb)
 
 bool tcp_add_backlog(struct sock *sk, struct sk_buff *skb)
 {
-	u32 limit, tail_gso_size, tail_gso_segs;
+	u32 limit = READ_ONCE(sk->sk_rcvbuf) + READ_ONCE(sk->sk_sndbuf);
+	u32 tail_gso_size, tail_gso_segs;
 	struct skb_shared_info *shinfo;
 	const struct tcphdr *th;
 	struct tcphdr *thtail;
@@ -1911,7 +1909,7 @@ no_coalesce:
 	 * to reduce memory overhead, so add a little headroom here.
 	 * Few sockets backlog are possibly concurrently non empty.
 	 */
-	limit = READ_ONCE(sk->sk_rcvbuf) + READ_ONCE(sk->sk_sndbuf) + 64*1024;
+	limit += 64*1024;
 
 	if (unlikely(sk_add_backlog(sk, skb, limit))) {
 		bh_unlock_sock(sk);
@@ -1965,16 +1963,15 @@ static void tcp_v4_fill_cb(struct sk_buff *skb, const struct iphdr *iph,
 int tcp_v4_rcv(struct sk_buff *skb)
 {
 	struct net *net = dev_net(skb->dev);
+	struct sk_buff *skb_to_free;
 	int sdif = inet_sdif(skb);
 	int dif = inet_iif(skb);
 	const struct iphdr *iph;
 	const struct tcphdr *th;
 	bool refcounted;
 	struct sock *sk;
-	int drop_reason;
 	int ret;
 
-	drop_reason = SKB_DROP_REASON_NOT_SPECIFIED;
 	if (skb->pkt_type != PACKET_HOST)
 		goto discard_it;
 
@@ -1986,10 +1983,8 @@ int tcp_v4_rcv(struct sk_buff *skb)
 
 	th = (const struct tcphdr *)skb->data;
 
-	if (unlikely(th->doff < sizeof(struct tcphdr) / 4)) {
-		drop_reason = SKB_DROP_REASON_PKT_TOO_SMALL;
+	if (unlikely(th->doff < sizeof(struct tcphdr) / 4))
 		goto bad_packet;
-	}
 	if (!pskb_may_pull(skb, th->doff * 4))
 		goto discard_it;
 
@@ -2077,13 +2072,9 @@ process:
 			return 0;
 		}
 	}
-
-	if (static_branch_unlikely(&ip4_min_ttl)) {
-		/* min_ttl can be changed concurrently from do_ip_setsockopt() */
-		if (unlikely(iph->ttl < READ_ONCE(inet_sk(sk)->min_ttl))) {
-			__NET_INC_STATS(net, LINUX_MIB_TCPMINTTLDROP);
-			goto discard_and_relse;
-		}
+	if (unlikely(iph->ttl < inet_sk(sk)->min_ttl)) {
+		__NET_INC_STATS(net, LINUX_MIB_TCPMINTTLDROP);
+		goto discard_and_relse;
 	}
 
 	if (!xfrm4_policy_check(sk, XFRM_POLICY_IN, skb))
@@ -2094,10 +2085,8 @@ process:
 
 	nf_reset_ct(skb);
 
-	if (tcp_filter(sk, skb)) {
-		drop_reason = SKB_DROP_REASON_SOCKET_FILTER;
+	if (tcp_filter(sk, skb))
 		goto discard_and_relse;
-	}
 	th = (const struct tcphdr *)skb->data;
 	iph = ip_hdr(skb);
 	tcp_v4_fill_cb(skb, iph, th);
@@ -2111,17 +2100,21 @@ process:
 
 	sk_incoming_cpu_update(sk);
 
-	sk_defer_free_flush(sk);
 	bh_lock_sock_nested(sk);
 	tcp_segs_in(tcp_sk(sk), skb);
 	ret = 0;
 	if (!sock_owned_by_user(sk)) {
+		skb_to_free = sk->sk_rx_skb_cache;
+		sk->sk_rx_skb_cache = NULL;
 		ret = tcp_v4_do_rcv(sk, skb);
 	} else {
 		if (tcp_add_backlog(sk, skb))
 			goto discard_and_relse;
+		skb_to_free = NULL;
 	}
 	bh_unlock_sock(sk);
+	if (skb_to_free)
+		__kfree_skb(skb_to_free);
 
 put_and_return:
 	if (refcounted)
@@ -2130,7 +2123,6 @@ put_and_return:
 	return ret;
 
 no_tcp_socket:
-	drop_reason = SKB_DROP_REASON_NO_SOCKET;
 	if (!xfrm4_policy_check(NULL, XFRM_POLICY_IN, skb))
 		goto discard_it;
 
@@ -2138,7 +2130,6 @@ no_tcp_socket:
 
 	if (tcp_checksum_complete(skb)) {
 csum_error:
-		drop_reason = SKB_DROP_REASON_TCP_CSUM;
 		trace_tcp_bad_csum(skb);
 		__TCP_INC_STATS(net, TCP_MIB_CSUMERRORS);
 bad_packet:
@@ -2149,7 +2140,7 @@ bad_packet:
 
 discard_it:
 	/* Discard frame. */
-	kfree_skb_reason(skb, drop_reason);
+	kfree_skb(skb);
 	return 0;
 
 discard_and_relse:
@@ -3002,7 +2993,7 @@ static unsigned short seq_file_family(const struct seq_file *seq)
 #endif
 
 	/* Iterated from proc fs */
-	afinfo = pde_data(file_inode(seq->file));
+	afinfo = PDE_DATA(file_inode(seq->file));
 	return afinfo->family;
 }
 
@@ -3084,7 +3075,6 @@ struct proto tcp_prot = {
 	.hash			= inet_hash,
 	.unhash			= inet_unhash,
 	.get_port		= inet_csk_get_port,
-	.put_port		= inet_put_port,
 #ifdef CONFIG_BPF_SYSCALL
 	.psock_update_sk_prot	= tcp_bpf_update_proto,
 #endif

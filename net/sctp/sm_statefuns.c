@@ -326,6 +326,11 @@ enum sctp_disposition sctp_sf_do_5_1B_init(struct net *net,
 	struct sctp_packet *packet;
 	int len;
 
+	/* Update socket peer label if first association. */
+	if (security_sctp_assoc_request((struct sctp_endpoint *)ep,
+					chunk->skb))
+		return sctp_sf_pdiscard(net, ep, asoc, type, arg, commands);
+
 	/* 6.10 Bundling
 	 * An endpoint MUST NOT bundle INIT, INIT ACK or
 	 * SHUTDOWN COMPLETE with any other chunks.
@@ -409,12 +414,6 @@ enum sctp_disposition sctp_sf_do_5_1B_init(struct net *net,
 	new_asoc = sctp_make_temp_asoc(ep, chunk, GFP_ATOMIC);
 	if (!new_asoc)
 		goto nomem;
-
-	/* Update socket peer label if first association. */
-	if (security_sctp_assoc_request(new_asoc, chunk->skb)) {
-		sctp_association_free(new_asoc);
-		return sctp_sf_pdiscard(net, ep, asoc, type, arg, commands);
-	}
 
 	if (sctp_assoc_set_bind_addr_from_ep(new_asoc,
 					     sctp_scope(sctp_source(chunk)),
@@ -781,10 +780,6 @@ enum sctp_disposition sctp_sf_do_5_1D_ce(struct net *net,
 		}
 	}
 
-	if (security_sctp_assoc_request(new_asoc, chunk->skb)) {
-		sctp_association_free(new_asoc);
-		return sctp_sf_pdiscard(net, ep, asoc, type, arg, commands);
-	}
 
 	/* Delay state machine commands until later.
 	 *
@@ -1124,11 +1119,12 @@ enum sctp_disposition sctp_sf_send_probe(struct net *net,
 	if (!sctp_transport_pl_enabled(transport))
 		return SCTP_DISPOSITION_CONSUME;
 
-	sctp_transport_pl_send(transport);
-	reply = sctp_make_heartbeat(asoc, transport, transport->pl.probe_size);
-	if (!reply)
-		return SCTP_DISPOSITION_NOMEM;
-	sctp_add_cmd_sf(commands, SCTP_CMD_REPLY, SCTP_CHUNK(reply));
+	if (sctp_transport_pl_send(transport)) {
+		reply = sctp_make_heartbeat(asoc, transport, transport->pl.probe_size);
+		if (!reply)
+			return SCTP_DISPOSITION_NOMEM;
+		sctp_add_cmd_sf(commands, SCTP_CMD_REPLY, SCTP_CHUNK(reply));
+	}
 	sctp_add_cmd_sf(commands, SCTP_CMD_PROBE_TIMER_UPDATE,
 			SCTP_TRANSPORT(transport));
 
@@ -1521,6 +1517,11 @@ static enum sctp_disposition sctp_sf_do_unexpected_init(
 	struct sctp_packet *packet;
 	int len;
 
+	/* Update socket peer label if first association. */
+	if (security_sctp_assoc_request((struct sctp_endpoint *)ep,
+					chunk->skb))
+		return sctp_sf_pdiscard(net, ep, asoc, type, arg, commands);
+
 	/* 6.10 Bundling
 	 * An endpoint MUST NOT bundle INIT, INIT ACK or
 	 * SHUTDOWN COMPLETE with any other chunks.
@@ -1592,12 +1593,6 @@ static enum sctp_disposition sctp_sf_do_unexpected_init(
 	new_asoc = sctp_make_temp_asoc(ep, chunk, GFP_ATOMIC);
 	if (!new_asoc)
 		goto nomem;
-
-	/* Update socket peer label if first association. */
-	if (security_sctp_assoc_request(new_asoc, chunk->skb)) {
-		sctp_association_free(new_asoc);
-		return sctp_sf_pdiscard(net, ep, asoc, type, arg, commands);
-	}
 
 	if (sctp_assoc_set_bind_addr_from_ep(new_asoc,
 				sctp_scope(sctp_source(chunk)), GFP_ATOMIC) < 0)
@@ -2260,7 +2255,8 @@ enum sctp_disposition sctp_sf_do_5_2_4_dupcook(
 	}
 
 	/* Update socket peer label if first association. */
-	if (security_sctp_assoc_request(new_asoc, chunk->skb)) {
+	if (security_sctp_assoc_request((struct sctp_endpoint *)ep,
+					chunk->skb)) {
 		sctp_association_free(new_asoc);
 		return sctp_sf_pdiscard(net, ep, asoc, type, arg, commands);
 	}
@@ -4896,6 +4892,9 @@ static enum sctp_disposition sctp_sf_violation_chunk(
 					struct sctp_cmd_seq *commands)
 {
 	static const char err_str[] = "The following chunk violates protocol:";
+
+	if (!asoc)
+		return sctp_sf_violation(net, ep, asoc, type, arg, commands);
 
 	return sctp_sf_abort_violation(net, ep, asoc, arg, commands, err_str,
 				       sizeof(err_str));

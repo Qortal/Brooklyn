@@ -44,9 +44,7 @@ static int aic32x4_i2c_probe(struct i2c_client *i2c,
 
 static int aic32x4_i2c_remove(struct i2c_client *i2c)
 {
-	aic32x4_remove(&i2c->dev);
-
-	return 0;
+	return aic32x4_remove(&i2c->dev);
 }
 
 static const struct i2c_device_id aic32x4_i2c_id[] = {

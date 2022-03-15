@@ -37,6 +37,7 @@
 
 #include <drm/drm.h>
 #include <drm/drm_auth.h>
+#include <drm/drm_hashtab.h>
 
 struct drm_device;
 struct drm_driver;
@@ -49,20 +50,6 @@ struct pci_driver;
  * If you add a new driver and it uses any of these functions or structures,
  * you're doing it terribly wrong.
  */
-
-/*
- * Hash-table Support
- */
-
-struct drm_hash_item {
-	struct hlist_node head;
-	unsigned long key;
-};
-
-struct drm_open_hash {
-	struct hlist_head *table;
-	u8 order;
-};
 
 /**
  * DMA buffer.

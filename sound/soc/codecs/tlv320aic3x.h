@@ -14,7 +14,7 @@ struct regmap_config;
 
 extern const struct regmap_config aic3x_regmap;
 int aic3x_probe(struct device *dev, struct regmap *regmap, kernel_ulong_t driver_data);
-void aic3x_remove(struct device *dev);
+int aic3x_remove(struct device *dev);
 
 #define AIC3X_MODEL_3X 0
 #define AIC3X_MODEL_33 1

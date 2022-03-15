@@ -788,11 +788,9 @@ static int init_adda_priv_data(struct mtk_base_afe *afe)
 {
 	struct mt8195_afe_private *afe_priv = afe->platform_priv;
 	struct mtk_dai_adda_priv *adda_priv;
-	static const int adda_dai_list[] = {
-		MT8195_AFE_IO_DL_SRC,
-		MT8195_AFE_IO_UL_SRC1,
-		MT8195_AFE_IO_UL_SRC2
-	};
+	int adda_dai_list[] = { MT8195_AFE_IO_DL_SRC,
+				MT8195_AFE_IO_UL_SRC1,
+				MT8195_AFE_IO_UL_SRC2};
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(adda_dai_list); i++) {

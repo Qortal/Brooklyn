@@ -12,7 +12,7 @@
 
 	.fill	1, 8, 0			# STATE (set by CPU)
 	.fill	1, 8, 0			# FLAGS
-	.quad	encl_ssa_tcs1		# OSSA
+	.quad	encl_ssa		# OSSA
 	.fill	1, 4, 0			# CSSA (set by CPU)
 	.fill	1, 4, 1			# NSSA
 	.quad	encl_entry		# OENTRY
@@ -23,10 +23,10 @@
 	.fill	1, 4, 0xFFFFFFFF	# GSLIMIT
 	.fill	4024, 1, 0		# Reserved
 
-	# TCS2
+	# Identical to the previous TCS.
 	.fill	1, 8, 0			# STATE (set by CPU)
 	.fill	1, 8, 0			# FLAGS
-	.quad	encl_ssa_tcs2		# OSSA
+	.quad	encl_ssa		# OSSA
 	.fill	1, 4, 0			# CSSA (set by CPU)
 	.fill	1, 4, 1			# NSSA
 	.quad	encl_entry		# OENTRY
@@ -40,9 +40,8 @@
 	.text
 
 encl_entry:
-	# RBX contains the base address for TCS, which is the first address
-	# inside the enclave for TCS #1 and one page into the enclave for
-	# TCS #2. By adding the value of encl_stack to it, we get
+	# RBX contains the base address for TCS, which is also the first address
+	# inside the enclave. By adding the value of le_stack_end to it, we get
 	# the absolute address for the stack.
 	lea	(encl_stack)(%rbx), %rax
 	xchg	%rsp, %rax
@@ -82,15 +81,9 @@ encl_entry:
 
 	.section ".data", "aw"
 
-encl_ssa_tcs1:
-	.space 4096
-encl_ssa_tcs2:
+encl_ssa:
 	.space 4096
 
 	.balign 4096
-	# Stack of TCS #1
-	.space 4096
+	.space 8192
 encl_stack:
-	.balign 4096
-	# Stack of TCS #2
-	.space 4096

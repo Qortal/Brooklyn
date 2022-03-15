@@ -1237,8 +1237,9 @@ static int __create_synth_event(const char *name, const char *raw_fields)
 						  argv + consumed, &consumed,
 						  &field_version);
 			if (IS_ERR(field)) {
+				argv_free(argv);
 				ret = PTR_ERR(field);
-				goto err_free_arg;
+				goto err;
 			}
 
 			/*
@@ -1261,19 +1262,18 @@ static int __create_synth_event(const char *name, const char *raw_fields)
 			if (cmd_version > 1 && n_fields_this_loop >= 1) {
 				synth_err(SYNTH_ERR_INVALID_CMD, errpos(field_str));
 				ret = -EINVAL;
-				goto err_free_arg;
+				goto err;
 			}
 
 			fields[n_fields++] = field;
 			if (n_fields == SYNTH_FIELDS_MAX) {
 				synth_err(SYNTH_ERR_TOO_MANY_FIELDS, 0);
 				ret = -EINVAL;
-				goto err_free_arg;
+				goto err;
 			}
 
 			n_fields_this_loop++;
 		}
-		argv_free(argv);
 
 		if (consumed < argc) {
 			synth_err(SYNTH_ERR_INVALID_CMD, 0);
@@ -1281,6 +1281,7 @@ static int __create_synth_event(const char *name, const char *raw_fields)
 			goto err;
 		}
 
+		argv_free(argv);
 	}
 
 	if (n_fields == 0) {
@@ -1306,8 +1307,6 @@ static int __create_synth_event(const char *name, const char *raw_fields)
 	kfree(saved_fields);
 
 	return ret;
- err_free_arg:
-	argv_free(argv);
  err:
 	for (i = 0; i < n_fields; i++)
 		free_synth_field(fields[i]);
@@ -1979,7 +1978,7 @@ EXPORT_SYMBOL_GPL(synth_event_add_next_val);
 /**
  * synth_event_add_val - Add a named field's value to an open synth trace
  * @field_name: The name of the synthetic event field value to set
- * @val: The value to set the named field to
+ * @val: The value to set the next field to
  * @trace_state: A pointer to object tracking the piecewise trace state
  *
  * Set the value of the named field in an event that's been opened by

@@ -4,7 +4,6 @@
  * modify it under the terms of version 2 of the GNU General Public
  * License as published by the Free Software Foundation.
  */
-#include <linux/sched.h>
 #include <uapi/linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 
@@ -12,8 +11,8 @@
 struct task_rename {
 	__u64 pad;
 	__u32 pid;
-	char oldcomm[TASK_COMM_LEN];
-	char newcomm[TASK_COMM_LEN];
+	char oldcomm[16];
+	char newcomm[16];
 	__u16 oom_score_adj;
 };
 SEC("tracepoint/task/task_rename")

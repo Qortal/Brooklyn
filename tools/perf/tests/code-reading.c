@@ -606,8 +606,7 @@ static int do_test_code_reading(bool try_kcore)
 	}
 
 	ret = perf_event__synthesize_thread_map(NULL, threads,
-						perf_event__process, machine,
-						true, false);
+						perf_event__process, machine, false);
 	if (ret < 0) {
 		pr_debug("perf_event__synthesize_thread_map failed\n");
 		goto out_err;
@@ -716,7 +715,7 @@ out_err:
 	return err;
 }
 
-static int test__code_reading(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__code_reading(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	int ret;
 
@@ -743,5 +742,3 @@ static int test__code_reading(struct test_suite *test __maybe_unused, int subtes
 		return -1;
 	};
 }
-
-DEFINE_SUITE("Object code reading", code_reading);

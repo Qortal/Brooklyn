@@ -109,7 +109,8 @@ int main(int argc, char *argv[])
 		}
 	}
 
-done:
 	kvm_vm_free(vm);
+
+done:
 	return 0;
 }

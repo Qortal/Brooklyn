@@ -3167,9 +3167,14 @@ static __always_inline int
 trace_recursive_lock(struct ring_buffer_per_cpu *cpu_buffer)
 {
 	unsigned int val = cpu_buffer->current_context;
-	int bit = interrupt_context_level();
+	unsigned long pc = preempt_count();
+	int bit;
 
-	bit = RB_CTX_NORMAL - bit;
+	if (!(pc & (NMI_MASK | HARDIRQ_MASK | SOFTIRQ_OFFSET)))
+		bit = RB_CTX_NORMAL;
+	else
+		bit = pc & NMI_MASK ? RB_CTX_NMI :
+			pc & HARDIRQ_MASK ? RB_CTX_IRQ : RB_CTX_SOFTIRQ;
 
 	if (unlikely(val & (1 << (bit + cpu_buffer->nest)))) {
 		/*
@@ -5898,13 +5903,16 @@ static __init int test_ringbuffer(void)
 		rb_data[cpu].buffer = buffer;
 		rb_data[cpu].cpu = cpu;
 		rb_data[cpu].cnt = cpu;
-		rb_threads[cpu] = kthread_run_on_cpu(rb_test, &rb_data[cpu],
-						     cpu, "rbtester/%u");
+		rb_threads[cpu] = kthread_create(rb_test, &rb_data[cpu],
+						 "rbtester/%d", cpu);
 		if (WARN_ON(IS_ERR(rb_threads[cpu]))) {
 			pr_cont("FAILED\n");
 			ret = PTR_ERR(rb_threads[cpu]);
 			goto out_free;
 		}
+
+		kthread_bind(rb_threads[cpu], cpu);
+ 		wake_up_process(rb_threads[cpu]);
 	}
 
 	/* Now create the rb hammer! */

@@ -6,6 +6,7 @@
 
 #include <linux/etherdevice.h>
 #include <linux/list.h>
+#include <linux/slab.h>
 #include <net/dsa.h>
 #include "dsa_priv.h"
 

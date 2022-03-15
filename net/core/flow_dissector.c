@@ -5,7 +5,6 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/if_vlan.h>
-#include <linux/filter.h>
 #include <net/dsa.h>
 #include <net/dst_metadata.h>
 #include <net/ip.h>
@@ -1198,8 +1197,9 @@ proto_again:
 			break;
 		}
 
+		proto = hdr->proto;
 		nhoff += PPPOE_SES_HLEN;
-		switch (hdr->proto) {
+		switch (proto) {
 		case htons(PPP_IP):
 			proto = htons(ETH_P_IP);
 			fdret = FLOW_DISSECT_RET_PROTO_AGAIN;
@@ -1308,11 +1308,6 @@ ip_proto_again:
 
 	switch (ip_proto) {
 	case IPPROTO_GRE:
-		if (flags & FLOW_DISSECTOR_F_STOP_BEFORE_ENCAP) {
-			fdret = FLOW_DISSECT_RET_OUT_GOOD;
-			break;
-		}
-
 		fdret = __skb_flow_dissect_gre(skb, key_control, flow_dissector,
 					       target_container, data,
 					       &proto, &nhoff, &hlen, flags);
@@ -1370,11 +1365,6 @@ ip_proto_again:
 		break;
 	}
 	case IPPROTO_IPIP:
-		if (flags & FLOW_DISSECTOR_F_STOP_BEFORE_ENCAP) {
-			fdret = FLOW_DISSECT_RET_OUT_GOOD;
-			break;
-		}
-
 		proto = htons(ETH_P_IP);
 
 		key_control->flags |= FLOW_DIS_ENCAPSULATION;
@@ -1387,11 +1377,6 @@ ip_proto_again:
 		break;
 
 	case IPPROTO_IPV6:
-		if (flags & FLOW_DISSECTOR_F_STOP_BEFORE_ENCAP) {
-			fdret = FLOW_DISSECT_RET_OUT_GOOD;
-			break;
-		}
-
 		proto = htons(ETH_P_IPV6);
 
 		key_control->flags |= FLOW_DIS_ENCAPSULATION;
@@ -1462,7 +1447,7 @@ out_bad:
 }
 EXPORT_SYMBOL(__skb_flow_dissect);
 
-static siphash_aligned_key_t hashrnd;
+static siphash_key_t hashrnd __read_mostly;
 static __always_inline void __flow_hash_secret_init(void)
 {
 	net_get_random_once(&hashrnd, sizeof(hashrnd));

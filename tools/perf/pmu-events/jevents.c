@@ -45,7 +45,6 @@
 #include <sys/resource.h>		/* getrlimit */
 #include <ftw.h>
 #include <sys/stat.h>
-#include <linux/compiler.h>
 #include <linux/list.h>
 #include "jsmn.h"
 #include "json.h"
@@ -71,7 +70,7 @@ struct json_event {
 	char *metric_constraint;
 };
 
-static enum aggr_mode_class convert(const char *aggr_mode)
+enum aggr_mode_class convert(const char *aggr_mode)
 {
 	if (!strcmp(aggr_mode, "PerCore"))
 		return PerCore;
@@ -81,6 +80,8 @@ static enum aggr_mode_class convert(const char *aggr_mode)
 	pr_err("%s: Wrong AggregationMode value '%s'\n", prog, aggr_mode);
 	return -1;
 }
+
+typedef int (*func)(void *data, struct json_event *je);
 
 static LIST_HEAD(sys_event_tables);
 
@@ -360,7 +361,7 @@ static int close_table;
 
 static void print_events_table_prefix(FILE *fp, const char *tblname)
 {
-	fprintf(fp, "static const struct pmu_event %s[] = {\n", tblname);
+	fprintf(fp, "struct pmu_event %s[] = {\n", tblname);
 	close_table = 1;
 }
 
@@ -368,7 +369,7 @@ static int print_events_table_entry(void *data, struct json_event *je)
 {
 	struct perf_entry_data *pd = data;
 	FILE *outfp = pd->outfp;
-	char *topic_local = pd->topic;
+	char *topic = pd->topic;
 
 	/*
 	 * TODO: Remove formatting chars after debugging to reduce
@@ -383,7 +384,7 @@ static int print_events_table_entry(void *data, struct json_event *je)
 	fprintf(outfp, "\t.desc = \"%s\",\n", je->desc);
 	if (je->compat)
 		fprintf(outfp, "\t.compat = \"%s\",\n", je->compat);
-	fprintf(outfp, "\t.topic = \"%s\",\n", topic_local);
+	fprintf(outfp, "\t.topic = \"%s\",\n", topic);
 	if (je->long_desc && je->long_desc[0])
 		fprintf(outfp, "\t.long_desc = \"%s\",\n", je->long_desc);
 	if (je->pmu)
@@ -469,7 +470,7 @@ static void free_arch_std_events(void)
 	}
 }
 
-static int save_arch_std_events(void *data __maybe_unused, struct json_event *je)
+static int save_arch_std_events(void *data, struct json_event *je)
 {
 	struct event_struct *es;
 
@@ -574,12 +575,10 @@ static int json_events(const char *fn,
 		struct json_event je = {};
 		char *arch_std = NULL;
 		unsigned long long eventcode = 0;
-		unsigned long long configcode = 0;
 		struct msrmap *msr = NULL;
 		jsmntok_t *msrval = NULL;
 		jsmntok_t *precise = NULL;
 		jsmntok_t *obj = tok++;
-		bool configcode_present = false;
 
 		EXPECT(obj->type == JSMN_OBJECT, obj, "expected object");
 		for (j = 0; j < obj->size; j += 2) {
@@ -602,12 +601,6 @@ static int json_events(const char *fn,
 				addfield(map, &code, "", "", val);
 				eventcode |= strtoul(code, NULL, 0);
 				free(code);
-			} else if (json_streq(map, field, "ConfigCode")) {
-				char *code = NULL;
-				addfield(map, &code, "", "", val);
-				configcode |= strtoul(code, NULL, 0);
-				free(code);
-				configcode_present = true;
 			} else if (json_streq(map, field, "ExtSel")) {
 				char *code = NULL;
 				addfield(map, &code, "", "", val);
@@ -672,6 +665,8 @@ static int json_events(const char *fn,
 				addfield(map, &je.metric_constraint, "", "", val);
 			} else if (json_streq(map, field, "MetricExpr")) {
 				addfield(map, &je.metric_expr, "", "", val);
+				for (s = je.metric_expr; *s; s++)
+					*s = tolower(*s);
 			} else if (json_streq(map, field, "ArchStdEvent")) {
 				addfield(map, &arch_std, "", "", val);
 				for (s = arch_std; *s; s++)
@@ -687,10 +682,7 @@ static int json_events(const char *fn,
 				addfield(map, &extra_desc, " ",
 						"(Precise event)", NULL);
 		}
-		if (configcode_present)
-			snprintf(buf, sizeof buf, "config=%#llx", configcode);
-		else
-			snprintf(buf, sizeof buf, "event=%#llx", eventcode);
+		snprintf(buf, sizeof buf, "event=%#llx", eventcode);
 		addfield(map, &event, ",", buf, NULL);
 		if (je.desc && extra_desc)
 			addfield(map, &je.desc, " ", extra_desc, NULL);
@@ -794,7 +786,7 @@ static bool is_sys_dir(char *fname)
 
 static void print_mapping_table_prefix(FILE *outfp)
 {
-	fprintf(outfp, "const struct pmu_events_map pmu_events_map[] = {\n");
+	fprintf(outfp, "struct pmu_events_map pmu_events_map[] = {\n");
 }
 
 static void print_mapping_table_suffix(FILE *outfp)
@@ -828,7 +820,7 @@ static void print_mapping_test_table(FILE *outfp)
 
 static void print_system_event_mapping_table_prefix(FILE *outfp)
 {
-	fprintf(outfp, "\nconst struct pmu_sys_events pmu_sys_event_tables[] = {");
+	fprintf(outfp, "\nstruct pmu_sys_events pmu_sys_event_tables[] = {");
 }
 
 static void print_system_event_mapping_table_suffix(FILE *outfp)
@@ -1204,7 +1196,7 @@ int main(int argc, char *argv[])
 	const char *arch;
 	const char *output_file;
 	const char *start_dirname;
-	const char *err_string_ext = "";
+	char *err_string_ext = "";
 	struct stat stbuf;
 
 	prog = basename(argv[0]);

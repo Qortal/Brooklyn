@@ -465,12 +465,7 @@ ieee80211_add_rx_radiotap_header(struct ieee80211_local *local,
 		unsigned int stbc;
 
 		rthdr->it_present |= cpu_to_le32(BIT(IEEE80211_RADIOTAP_MCS));
-		*pos = local->hw.radiotap_mcs_details;
-		if (status->enc_flags & RX_ENC_FLAG_HT_GF)
-			*pos |= IEEE80211_RADIOTAP_MCS_HAVE_FMT;
-		if (status->enc_flags & RX_ENC_FLAG_LDPC)
-			*pos |= IEEE80211_RADIOTAP_MCS_HAVE_FEC;
-		pos++;
+		*pos++ = local->hw.radiotap_mcs_details;
 		*pos = 0;
 		if (status->enc_flags & RX_ENC_FLAG_SHORT_GI)
 			*pos |= IEEE80211_RADIOTAP_MCS_SGI;
@@ -2607,7 +2602,8 @@ static void ieee80211_deliver_skb_to_local_stack(struct sk_buff *skb,
 		 * address, so that the authenticator (e.g. hostapd) will see
 		 * the frame, but bridge won't forward it anywhere else. Note
 		 * that due to earlier filtering, the only other address can
-		 * be the PAE group address.
+		 * be the PAE group address, unless the hardware allowed them
+		 * through in 802.3 offloaded mode.
 		 */
 		if (unlikely(skb->protocol == sdata->control_port_protocol &&
 			     !ether_addr_equal(ehdr->h_dest, sdata->vif.addr)))
@@ -2922,13 +2918,13 @@ ieee80211_rx_h_mesh_fwding(struct ieee80211_rx_data *rx)
 	    ether_addr_equal(sdata->vif.addr, hdr->addr3))
 		return RX_CONTINUE;
 
-	ac = ieee80211_select_queue_80211(sdata, skb, hdr);
+	ac = ieee802_1d_to_ac[skb->priority];
 	q = sdata->vif.hw_queue[ac];
 	if (ieee80211_queue_stopped(&local->hw, q)) {
 		IEEE80211_IFSTA_MESH_CTR_INC(ifmsh, dropped_frames_congestion);
 		return RX_DROP_MONITOR;
 	}
-	skb_set_queue_mapping(skb, q);
+	skb_set_queue_mapping(skb, ac);
 
 	if (!--mesh_hdr->ttl) {
 		if (!is_multicast_ether_addr(hdr->addr1))
@@ -2949,7 +2945,6 @@ ieee80211_rx_h_mesh_fwding(struct ieee80211_rx_data *rx)
 	if (!fwd_skb)
 		goto out;
 
-	fwd_skb->dev = sdata->dev;
 	fwd_hdr =  (struct ieee80211_hdr *) fwd_skb->data;
 	fwd_hdr->frame_control &= ~cpu_to_le16(IEEE80211_FCTL_RETRY);
 	info = IEEE80211_SKB_CB(fwd_skb);
@@ -3223,7 +3218,10 @@ static bool
 ieee80211_process_rx_twt_action(struct ieee80211_rx_data *rx)
 {
 	struct ieee80211_mgmt *mgmt = (struct ieee80211_mgmt *)rx->skb->data;
+	struct ieee80211_rx_status *status = IEEE80211_SKB_RXCB(rx->skb);
 	struct ieee80211_sub_if_data *sdata = rx->sdata;
+	const struct ieee80211_sta_he_cap *hecap;
+	struct ieee80211_supported_band *sband;
 
 	/* TWT actions are only supported in AP for the moment */
 	if (sdata->vif.type != NL80211_IFTYPE_AP)
@@ -3232,7 +3230,14 @@ ieee80211_process_rx_twt_action(struct ieee80211_rx_data *rx)
 	if (!rx->local->ops->add_twt_setup)
 		return false;
 
-	if (!sdata->vif.bss_conf.twt_responder)
+	sband = rx->local->hw.wiphy->bands[status->band];
+	hecap = ieee80211_get_he_iftype_cap(sband,
+					    ieee80211_vif_type_p2p(&sdata->vif));
+	if (!hecap)
+		return false;
+
+	if (!(hecap->he_cap_elem.mac_cap_info[0] &
+	      IEEE80211_HE_MAC_CAP0_TWT_RES))
 		return false;
 
 	if (!rx->sta)
@@ -4514,12 +4519,7 @@ static void ieee80211_rx_8023(struct ieee80211_rx_data *rx,
 
 	/* deliver to local stack */
 	skb->protocol = eth_type_trans(skb, fast_rx->dev);
-	memset(skb->cb, 0, sizeof(skb->cb));
-	if (rx->list)
-		list_add_tail(&skb->list, rx->list);
-	else
-		netif_receive_skb(skb);
-
+	ieee80211_deliver_skb_to_local_stack(skb, rx);
 }
 
 static bool ieee80211_invoke_fast_rx(struct ieee80211_rx_data *rx,

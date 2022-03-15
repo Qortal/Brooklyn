@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <bpf/btf.h>
+#include <bpf/bpf_gen_internal.h>
 
 #include "json_writer.h"
 #include "main.h"
@@ -31,11 +32,6 @@ static void sanitize_identifier(char *name)
 	for (i = 0; name[i]; i++)
 		if (!isalnum(name[i]) && name[i] != '_')
 			name[i] = '_';
-}
-
-static bool str_has_prefix(const char *str, const char *prefix)
-{
-	return strncmp(str, prefix, strlen(prefix)) == 0;
 }
 
 static bool str_has_suffix(const char *str, const char *suffix)
@@ -72,47 +68,23 @@ static void get_header_guard(char *guard, const char *obj_name)
 		guard[i] = toupper(guard[i]);
 }
 
-static bool get_map_ident(const struct bpf_map *map, char *buf, size_t buf_sz)
+static const char *get_map_ident(const struct bpf_map *map)
 {
-	static const char *sfxs[] = { ".data", ".rodata", ".bss", ".kconfig" };
 	const char *name = bpf_map__name(map);
-	int i, n;
 
-	if (!bpf_map__is_internal(map)) {
-		snprintf(buf, buf_sz, "%s", name);
-		return true;
-	}
+	if (!bpf_map__is_internal(map))
+		return name;
 
-	for  (i = 0, n = ARRAY_SIZE(sfxs); i < n; i++) {
-		const char *sfx = sfxs[i], *p;
-
-		p = strstr(name, sfx);
-		if (p) {
-			snprintf(buf, buf_sz, "%s", p + 1);
-			sanitize_identifier(buf);
-			return true;
-		}
-	}
-
-	return false;
-}
-
-static bool get_datasec_ident(const char *sec_name, char *buf, size_t buf_sz)
-{
-	static const char *pfxs[] = { ".data", ".rodata", ".bss", ".kconfig" };
-	int i, n;
-
-	for  (i = 0, n = ARRAY_SIZE(pfxs); i < n; i++) {
-		const char *pfx = pfxs[i];
-
-		if (str_has_prefix(sec_name, pfx)) {
-			snprintf(buf, buf_sz, "%s", sec_name + 1);
-			sanitize_identifier(buf);
-			return true;
-		}
-	}
-
-	return false;
+	if (str_has_suffix(name, ".data"))
+		return "data";
+	else if (str_has_suffix(name, ".rodata"))
+		return "rodata";
+	else if (str_has_suffix(name, ".bss"))
+		return "bss";
+	else if (str_has_suffix(name, ".kconfig"))
+		return "kconfig";
+	else
+		return NULL;
 }
 
 static void codegen_btf_dump_printf(void *ctx, const char *fmt, va_list args)
@@ -129,14 +101,24 @@ static int codegen_datasec_def(struct bpf_object *obj,
 	const char *sec_name = btf__name_by_offset(btf, sec->name_off);
 	const struct btf_var_secinfo *sec_var = btf_var_secinfos(sec);
 	int i, err, off = 0, pad_cnt = 0, vlen = btf_vlen(sec);
-	char var_ident[256], sec_ident[256];
+	const char *sec_ident;
+	char var_ident[256];
 	bool strip_mods = false;
 
-	if (!get_datasec_ident(sec_name, sec_ident, sizeof(sec_ident)))
-		return 0;
-
-	if (strcmp(sec_name, ".kconfig") != 0)
+	if (strcmp(sec_name, ".data") == 0) {
+		sec_ident = "data";
 		strip_mods = true;
+	} else if (strcmp(sec_name, ".bss") == 0) {
+		sec_ident = "bss";
+		strip_mods = true;
+	} else if (strcmp(sec_name, ".rodata") == 0) {
+		sec_ident = "rodata";
+		strip_mods = true;
+	} else if (strcmp(sec_name, ".kconfig") == 0) {
+		sec_ident = "kconfig";
+	} else {
+		return 0;
+	}
 
 	printf("	struct %s__%s {\n", obj_name, sec_ident);
 	for (i = 0; i < vlen; i++, sec_var++) {
@@ -211,64 +193,24 @@ static int codegen_datasec_def(struct bpf_object *obj,
 static int codegen_datasecs(struct bpf_object *obj, const char *obj_name)
 {
 	struct btf *btf = bpf_object__btf(obj);
-	int n = btf__type_cnt(btf);
+	int n = btf__get_nr_types(btf);
 	struct btf_dump *d;
-	struct bpf_map *map;
-	const struct btf_type *sec;
-	char sec_ident[256], map_ident[256];
 	int i, err = 0;
 
-	d = btf_dump__new(btf, codegen_btf_dump_printf, NULL, NULL);
-	err = libbpf_get_error(d);
-	if (err)
-		return err;
+	d = btf_dump__new(btf, NULL, NULL, codegen_btf_dump_printf);
+	if (IS_ERR(d))
+		return PTR_ERR(d);
 
-	bpf_object__for_each_map(map, obj) {
-		/* only generate definitions for memory-mapped internal maps */
-		if (!bpf_map__is_internal(map))
-			continue;
-		if (!(bpf_map__def(map)->map_flags & BPF_F_MMAPABLE))
+	for (i = 1; i <= n; i++) {
+		const struct btf_type *t = btf__type_by_id(btf, i);
+
+		if (!btf_is_datasec(t))
 			continue;
 
-		if (!get_map_ident(map, map_ident, sizeof(map_ident)))
-			continue;
-
-		sec = NULL;
-		for (i = 1; i < n; i++) {
-			const struct btf_type *t = btf__type_by_id(btf, i);
-			const char *name;
-
-			if (!btf_is_datasec(t))
-				continue;
-
-			name = btf__str_by_offset(btf, t->name_off);
-			if (!get_datasec_ident(name, sec_ident, sizeof(sec_ident)))
-				continue;
-
-			if (strcmp(sec_ident, map_ident) == 0) {
-				sec = t;
-				break;
-			}
-		}
-
-		/* In some cases (e.g., sections like .rodata.cst16 containing
-		 * compiler allocated string constants only) there will be
-		 * special internal maps with no corresponding DATASEC BTF
-		 * type. In such case, generate empty structs for each such
-		 * map. It will still be memory-mapped and its contents
-		 * accessible from user-space through BPF skeleton.
-		 */
-		if (!sec) {
-			printf("	struct %s__%s {\n", obj_name, map_ident);
-			printf("	} *%s;\n", map_ident);
-		} else {
-			err = codegen_datasec_def(obj, btf, d, sec, obj_name);
-			if (err)
-				goto out;
-		}
+		err = codegen_datasec_def(obj, btf, d, t, obj_name);
+		if (err)
+			goto out;
 	}
-
-
 out:
 	btf_dump__free(d);
 	return err;
@@ -296,8 +238,8 @@ static void codegen(const char *template, ...)
 		} else if (c == '\n') {
 			break;
 		} else {
-			p_err("unrecognized character at pos %td in template '%s': '%c'",
-			      src - template - 1, template, c);
+			p_err("unrecognized character at pos %td in template '%s'",
+			      src - template - 1, template);
 			free(s);
 			exit(-1);
 		}
@@ -444,7 +386,6 @@ static void codegen_destroy(struct bpf_object *obj, const char *obj_name)
 {
 	struct bpf_program *prog;
 	struct bpf_map *map;
-	char ident[256];
 
 	codegen("\
 		\n\
@@ -465,7 +406,10 @@ static void codegen_destroy(struct bpf_object *obj, const char *obj_name)
 	}
 
 	bpf_object__for_each_map(map, obj) {
-		if (!get_map_ident(map, ident, sizeof(ident)))
+		const char * ident;
+
+		ident = get_map_ident(map);
+		if (!ident)
 			continue;
 		if (bpf_map__is_internal(map) &&
 		    (bpf_map__def(map)->map_flags & BPF_F_MMAPABLE))
@@ -486,16 +430,21 @@ static void codegen_destroy(struct bpf_object *obj, const char *obj_name)
 
 static int gen_trace(struct bpf_object *obj, const char *obj_name, const char *header_guard)
 {
+	struct bpf_object_load_attr load_attr = {};
 	DECLARE_LIBBPF_OPTS(gen_loader_opts, opts);
 	struct bpf_map *map;
-	char ident[256];
 	int err = 0;
 
 	err = bpf_object__gen_loader(obj, &opts);
 	if (err)
 		return err;
 
-	err = bpf_object__load(obj);
+	load_attr.obj = obj;
+	if (verifier_logs)
+		/* log_level1 + log_level2 + stats, but not stable UAPI */
+		load_attr.log_level = 1 + 2 + 4;
+
+	err = bpf_object__load_xattr(&load_attr);
 	if (err) {
 		p_err("failed to load object file");
 		goto out;
@@ -529,10 +478,12 @@ static int gen_trace(struct bpf_object *obj, const char *obj_name, const char *h
 		",
 		obj_name, opts.data_sz);
 	bpf_object__for_each_map(map, obj) {
+		const char *ident;
 		const void *mmap_data = NULL;
 		size_t mmap_size = 0;
 
-		if (!get_map_ident(map, ident, sizeof(ident)))
+		ident = get_map_ident(map);
+		if (!ident)
 			continue;
 
 		if (!bpf_map__is_internal(map) ||
@@ -594,15 +545,15 @@ static int gen_trace(struct bpf_object *obj, const char *obj_name, const char *h
 				return err;				    \n\
 		", obj_name);
 	bpf_object__for_each_map(map, obj) {
-		const char *mmap_flags;
+		const char *ident, *mmap_flags;
 
-		if (!get_map_ident(map, ident, sizeof(ident)))
+		ident = get_map_ident(map);
+		if (!ident)
 			continue;
 
 		if (!bpf_map__is_internal(map) ||
 		    !(bpf_map__def(map)->map_flags & BPF_F_MMAPABLE))
 			continue;
-
 		if (bpf_map__def(map)->map_flags & BPF_F_RDONLY_PROG)
 			mmap_flags = "PROT_READ";
 		else
@@ -652,8 +603,7 @@ static int do_skeleton(int argc, char **argv)
 	DECLARE_LIBBPF_OPTS(bpf_object_open_opts, opts);
 	char obj_name[MAX_OBJ_NAME_LEN] = "", *obj_data;
 	struct bpf_object *obj = NULL;
-	const char *file;
-	char ident[256];
+	const char *file, *ident;
 	struct bpf_program *prog;
 	int fd, err = -1;
 	struct bpf_map *map;
@@ -713,22 +663,19 @@ static int do_skeleton(int argc, char **argv)
 	if (obj_name[0] == '\0')
 		get_obj_name(obj_name, file);
 	opts.object_name = obj_name;
-	if (verifier_logs)
-		/* log_level1 + log_level2 + stats, but not stable UAPI */
-		opts.kernel_log_level = 1 + 2 + 4;
 	obj = bpf_object__open_mem(obj_data, file_sz, &opts);
-	err = libbpf_get_error(obj);
-	if (err) {
+	if (IS_ERR(obj)) {
 		char err_buf[256];
 
-		libbpf_strerror(err, err_buf, sizeof(err_buf));
+		libbpf_strerror(PTR_ERR(obj), err_buf, sizeof(err_buf));
 		p_err("failed to open BPF object file: %s", err_buf);
 		obj = NULL;
 		goto out;
 	}
 
 	bpf_object__for_each_map(map, obj) {
-		if (!get_map_ident(map, ident, sizeof(ident))) {
+		ident = get_map_ident(map);
+		if (!ident) {
 			p_err("ignoring unrecognized internal map '%s'...",
 			      bpf_map__name(map));
 			continue;
@@ -781,7 +728,8 @@ static int do_skeleton(int argc, char **argv)
 	if (map_cnt) {
 		printf("\tstruct {\n");
 		bpf_object__for_each_map(map, obj) {
-			if (!get_map_ident(map, ident, sizeof(ident)))
+			ident = get_map_ident(map);
+			if (!ident)
 				continue;
 			if (use_loader)
 				printf("\t\tstruct bpf_map_desc %s;\n", ident);
@@ -855,10 +803,7 @@ static int do_skeleton(int argc, char **argv)
 			}						    \n\
 									    \n\
 			err = %1$s__create_skeleton(obj);		    \n\
-			if (err)					    \n\
-				goto err_out;				    \n\
-									    \n\
-			err = bpf_object__open_skeleton(obj->skeleton, opts);\n\
+			err = err ?: bpf_object__open_skeleton(obj->skeleton, opts);\n\
 			if (err)					    \n\
 				goto err_out;				    \n\
 									    \n\
@@ -917,8 +862,6 @@ static int do_skeleton(int argc, char **argv)
 	codegen("\
 		\n\
 									    \n\
-		static inline const void *%1$s__elf_bytes(size_t *sz);	    \n\
-									    \n\
 		static inline int					    \n\
 		%1$s__create_skeleton(struct %1$s *obj)			    \n\
 		{							    \n\
@@ -950,7 +893,9 @@ static int do_skeleton(int argc, char **argv)
 		);
 		i = 0;
 		bpf_object__for_each_map(map, obj) {
-			if (!get_map_ident(map, ident, sizeof(ident)))
+			ident = get_map_ident(map);
+
+			if (!ident)
 				continue;
 
 			codegen("\
@@ -998,20 +943,10 @@ static int do_skeleton(int argc, char **argv)
 	codegen("\
 		\n\
 									    \n\
-			s->data = (void *)%2$s__elf_bytes(&s->data_sz);	    \n\
-									    \n\
-			return 0;					    \n\
-		err:							    \n\
-			bpf_object__destroy_skeleton(s);		    \n\
-			return -ENOMEM;					    \n\
-		}							    \n\
-									    \n\
-		static inline const void *%2$s__elf_bytes(size_t *sz)	    \n\
-		{							    \n\
-			*sz = %1$d;					    \n\
-			return (const void *)\"\\			    \n\
-		"
-		, file_sz, obj_name);
+			s->data_sz = %d;				    \n\
+			s->data = (void *)\"\\				    \n\
+		",
+		file_sz);
 
 	/* embed contents of BPF object file */
 	print_hex(obj_data, file_sz);
@@ -1019,6 +954,11 @@ static int do_skeleton(int argc, char **argv)
 	codegen("\
 		\n\
 		\";							    \n\
+									    \n\
+			return 0;					    \n\
+		err:							    \n\
+			bpf_object__destroy_skeleton(s);		    \n\
+			return -ENOMEM;					    \n\
 		}							    \n\
 									    \n\
 		#endif /* %s */						    \n\

@@ -646,16 +646,13 @@ int handle_irq_desc(struct irq_desc *desc)
 	generic_handle_irq_desc(desc);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(handle_irq_desc);
 
 /**
  * generic_handle_irq - Invoke the handler for a particular irq
  * @irq:	The irq number to handle
  *
- * Returns:	0 on success, or -EINVAL if conversion has failed
- *
- * 		This function must be called from an IRQ context with irq regs
- * 		initialized.
-  */
+ */
 int generic_handle_irq(unsigned int irq)
 {
 	return handle_irq_desc(irq_to_desc(irq));
@@ -665,38 +662,88 @@ EXPORT_SYMBOL_GPL(generic_handle_irq);
 #ifdef CONFIG_IRQ_DOMAIN
 /**
  * generic_handle_domain_irq - Invoke the handler for a HW irq belonging
- *                             to a domain.
+ *                             to a domain, usually for a non-root interrupt
+ *                             controller
  * @domain:	The domain where to perform the lookup
  * @hwirq:	The HW irq number to convert to a logical one
  *
  * Returns:	0 on success, or -EINVAL if conversion has failed
  *
- * 		This function must be called from an IRQ context with irq regs
- * 		initialized.
  */
 int generic_handle_domain_irq(struct irq_domain *domain, unsigned int hwirq)
 {
-	WARN_ON_ONCE(!in_irq());
 	return handle_irq_desc(irq_resolve_mapping(domain, hwirq));
 }
 EXPORT_SYMBOL_GPL(generic_handle_domain_irq);
 
+#ifdef CONFIG_HANDLE_DOMAIN_IRQ
 /**
- * generic_handle_domain_nmi - Invoke the handler for a HW nmi belonging
- *                             to a domain.
+ * handle_domain_irq - Invoke the handler for a HW irq belonging to a domain,
+ *                     usually for a root interrupt controller
  * @domain:	The domain where to perform the lookup
  * @hwirq:	The HW irq number to convert to a logical one
+ * @regs:	Register file coming from the low-level handling code
  *
  * Returns:	0 on success, or -EINVAL if conversion has failed
- *
- * 		This function must be called from an NMI context with irq regs
- * 		initialized.
- **/
-int generic_handle_domain_nmi(struct irq_domain *domain, unsigned int hwirq)
+ */
+int handle_domain_irq(struct irq_domain *domain,
+		      unsigned int hwirq, struct pt_regs *regs)
 {
-	WARN_ON_ONCE(!in_nmi());
-	return handle_irq_desc(irq_resolve_mapping(domain, hwirq));
+	struct pt_regs *old_regs = set_irq_regs(regs);
+	struct irq_desc *desc;
+	int ret = 0;
+
+	irq_enter();
+
+	/* The irqdomain code provides boundary checks */
+	desc = irq_resolve_mapping(domain, hwirq);
+	if (likely(desc))
+		handle_irq_desc(desc);
+	else
+		ret = -EINVAL;
+
+	irq_exit();
+	set_irq_regs(old_regs);
+	return ret;
 }
+
+/**
+ * handle_domain_nmi - Invoke the handler for a HW irq belonging to a domain
+ * @domain:	The domain where to perform the lookup
+ * @hwirq:	The HW irq number to convert to a logical one
+ * @regs:	Register file coming from the low-level handling code
+ *
+ *		This function must be called from an NMI context.
+ *
+ * Returns:	0 on success, or -EINVAL if conversion has failed
+ */
+int handle_domain_nmi(struct irq_domain *domain, unsigned int hwirq,
+		      struct pt_regs *regs)
+{
+	struct pt_regs *old_regs = set_irq_regs(regs);
+	struct irq_desc *desc;
+	int ret = 0;
+
+	/*
+	 * NMI context needs to be setup earlier in order to deal with tracing.
+	 */
+	WARN_ON(!in_nmi());
+
+	desc = irq_resolve_mapping(domain, hwirq);
+
+	/*
+	 * ack_bad_irq is not NMI-safe, just report
+	 * an invalid interrupt.
+	 */
+	if (likely(desc))
+		handle_irq_desc(desc);
+	else
+		ret = -EINVAL;
+
+	set_irq_regs(old_regs);
+	return ret;
+}
+#endif
 #endif
 
 /* Dynamic interrupt handling */

@@ -2,9 +2,6 @@
 # SPDX-License-Identifier: GPL-2.0
 # Author: Jesper Dangaard Brouer <hawk@kernel.org>
 
-# Kselftest framework requirement - SKIP code is 4.
-readonly KSFT_SKIP=4
-
 # Allow wrapper scripts to name test
 if [ -z "$TESTNAME" ]; then
     TESTNAME=xdp_vlan
@@ -97,7 +94,7 @@ while true; do
 	    -h | --help )
 		usage;
 		echo "selftests: $TESTNAME [SKIP] usage help info requested"
-		exit $KSFT_SKIP
+		exit 0
 		;;
 	    * )
 		shift
@@ -120,7 +117,7 @@ fi
 ip link set dev lo xdpgeneric off 2>/dev/null > /dev/null
 if [ $? -ne 0 ]; then
 	echo "selftests: $TESTNAME [SKIP] need ip xdp support"
-	exit $KSFT_SKIP
+	exit 0
 fi
 
 # Interactive mode likely require us to cleanup netns

@@ -13,12 +13,10 @@
 #include <linux/ioam6.h>
 #include <linux/ioam6_genl.h>
 #include <linux/rhashtable.h>
-#include <linux/netdevice.h>
 
 #include <net/addrconf.h>
 #include <net/genetlink.h>
 #include <net/ioam6.h>
-#include <net/sch_generic.h>
 
 static void ioam6_ns_release(struct ioam6_namespace *ns)
 {
@@ -633,7 +631,7 @@ static void __ioam6_fill_trace_data(struct sk_buff *skb,
 				    struct ioam6_namespace *ns,
 				    struct ioam6_trace_hdr *trace,
 				    struct ioam6_schema *sc,
-				    u8 sclen, bool is_input)
+				    u8 sclen)
 {
 	struct __kernel_sock_timeval ts;
 	u64 raw64;
@@ -647,7 +645,7 @@ static void __ioam6_fill_trace_data(struct sk_buff *skb,
 	/* hop_lim and node_id */
 	if (trace->type.bit0) {
 		byte = ipv6_hdr(skb)->hop_limit;
-		if (is_input)
+		if (skb->dev)
 			byte--;
 
 		raw32 = dev_net(skb_dst(skb)->dev)->ipv6.sysctl.ioam6_id;
@@ -719,19 +717,7 @@ static void __ioam6_fill_trace_data(struct sk_buff *skb,
 
 	/* queue depth */
 	if (trace->type.bit6) {
-		struct netdev_queue *queue;
-		struct Qdisc *qdisc;
-		__u32 qlen, backlog;
-
-		if (skb_dst(skb)->dev->flags & IFF_LOOPBACK) {
-			*(__be32 *)data = cpu_to_be32(IOAM6_U32_UNAVAILABLE);
-		} else {
-			queue = skb_get_tx_queue(skb_dst(skb)->dev, skb);
-			qdisc = rcu_dereference(queue->qdisc);
-			qdisc_qstats_qlen_backlog(qdisc, &qlen, &backlog);
-
-			*(__be32 *)data = cpu_to_be32(backlog);
-		}
+		*(__be32 *)data = cpu_to_be32(IOAM6_U32_UNAVAILABLE);
 		data += sizeof(__be32);
 	}
 
@@ -744,7 +730,7 @@ static void __ioam6_fill_trace_data(struct sk_buff *skb,
 	/* hop_lim and node_id (wide) */
 	if (trace->type.bit8) {
 		byte = ipv6_hdr(skb)->hop_limit;
-		if (is_input)
+		if (skb->dev)
 			byte--;
 
 		raw64 = dev_net(skb_dst(skb)->dev)->ipv6.sysctl.ioam6_id_wide;
@@ -860,8 +846,7 @@ static void __ioam6_fill_trace_data(struct sk_buff *skb,
 /* called with rcu_read_lock() */
 void ioam6_fill_trace_data(struct sk_buff *skb,
 			   struct ioam6_namespace *ns,
-			   struct ioam6_trace_hdr *trace,
-			   bool is_input)
+			   struct ioam6_trace_hdr *trace)
 {
 	struct ioam6_schema *sc;
 	u8 sclen = 0;
@@ -891,7 +876,7 @@ void ioam6_fill_trace_data(struct sk_buff *skb,
 		return;
 	}
 
-	__ioam6_fill_trace_data(skb, ns, trace, sc, sclen, is_input);
+	__ioam6_fill_trace_data(skb, ns, trace, sc, sclen);
 	trace->remlen -= trace->nodelen + sclen;
 }
 

@@ -144,12 +144,11 @@ do
 	if test "$ret" -ne 0
 	then
 		echo System $i unreachable, giving up. | tee -a "$oldrun/remote-log"
-		exit 4
+		exit 4 | tee -a "$oldrun/remote-log"
 	fi
 done
 
 # Download and expand the tarball on all systems.
-echo Build-products tarball: `du -h $T/binres.tgz` | tee -a "$oldrun/remote-log"
 for i in $systems
 do
 	echo Downloading tarball to $i `date` | tee -a "$oldrun/remote-log"
@@ -157,15 +156,8 @@ do
 	ret=$?
 	if test "$ret" -ne 0
 	then
-		echo Unable to download $T/binres.tgz to system $i, waiting and then retrying. | tee -a "$oldrun/remote-log"
-		sleep 60
-		cat $T/binres.tgz | ssh $i "cd /tmp; tar -xzf -"
-		ret=$?
-		if test "$ret" -ne 0
-		then
-			echo Unable to download $T/binres.tgz to system $i, giving up. | tee -a "$oldrun/remote-log"
-			exit 10
-		fi
+		echo Unable to download $T/binres.tgz to system $i, giving up. | tee -a "$oldrun/remote-log"
+		exit 10 | tee -a "$oldrun/remote-log"
 	fi
 done
 
@@ -184,16 +176,16 @@ checkremotefile () {
 		ret=$?
 		if test "$ret" -eq 255
 		then
-			echo " ---" ssh failure to $1 checking for file $2, retry after $sleeptime seconds. `date` | tee -a "$oldrun/remote-log"
+			echo " ---" ssh failure to $1 checking for file $2, retry after $sleeptime seconds. `date`
 		elif test "$ret" -eq 0
 		then
 			return 0
 		elif test "$ret" -eq 1
 		then
-			echo " ---" File \"$2\" not found: ssh $1 test -f \"$2\" | tee -a "$oldrun/remote-log"
+			echo " ---" File \"$2\" not found: ssh $1 test -f \"$2\"
 			return 1
 		else
-			echo " ---" Exit code $ret: ssh $1 test -f \"$2\", retry after $sleeptime seconds. `date` | tee -a "$oldrun/remote-log"
+			echo " ---" Exit code $ret: ssh $1 test -f \"$2\", retry after $sleeptime seconds. `date`
 			return $ret
 		fi
 		sleep $sleeptime
@@ -252,7 +244,7 @@ do
 		sleep 30
 	fi
 done
-echo All batches started. `date` | tee -a "$oldrun/remote-log"
+echo All batches started. `date`
 
 # Wait for all remaining scenarios to complete and collect results.
 for i in $systems
@@ -261,7 +253,7 @@ do
 	do
 		sleep 30
 	done
-	echo " ---" Collecting results from $i `date` | tee -a "$oldrun/remote-log"
+	echo " ---" Collecting results from $i `date`
 	( cd "$oldrun"; ssh $i "cd $rundir; tar -czf - kvm-remote-*.sh.out */console.log */kvm-test-1-run*.sh.out */qemu[_-]pid */qemu-retval */qemu-affinity; rm -rf $T > /dev/null 2>&1" | tar -xzf - )
 done
 

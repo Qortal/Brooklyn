@@ -25,7 +25,7 @@ out:
 	return ip;
 }
 
-SEC("tc")
+SEC("classifier/cls")
 int main_prog(struct __sk_buff *skb)
 {
 	struct iphdr *ip = NULL;

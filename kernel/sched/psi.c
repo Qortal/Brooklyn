@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
  * Pressure stall information for CPU, memory and IO
  *
@@ -841,6 +840,7 @@ void psi_task_switch(struct task_struct *prev, struct task_struct *next,
 		psi_flags_change(next, 0, TSK_ONCPU);
 		/*
 		 * When switching between tasks that have an identical
+		 * runtime state, the cgroup that contains both tasks
 		 * runtime state, the cgroup that contains both tasks
 		 * we reach the first common ancestor. Iterate @next's
 		 * ancestors only until we encounter @prev's ONCPU.

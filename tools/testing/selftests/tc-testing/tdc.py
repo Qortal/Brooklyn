@@ -716,7 +716,6 @@ def set_operation_mode(pm, parser, args, remaining):
         list_test_cases(alltests)
         exit(0)
 
-    exit_code = 0 # KSFT_PASS
     if len(alltests):
         req_plugins = pm.get_required_plugins(alltests)
         try:
@@ -725,8 +724,6 @@ def set_operation_mode(pm, parser, args, remaining):
             print('The following plugins were not found:')
             print('{}'.format(pde.missing_pg))
         catresults = test_runner(pm, args, alltests)
-        if catresults.count_failures() != 0:
-            exit_code = 1 # KSFT_FAIL
         if args.format == 'none':
             print('Test results output suppression requested\n')
         else:
@@ -751,8 +748,6 @@ def set_operation_mode(pm, parser, args, remaining):
                         gid=int(os.getenv('SUDO_GID')))
     else:
         print('No tests found\n')
-        exit_code = 4 # KSFT_SKIP
-    exit(exit_code)
 
 def main():
     """
@@ -771,6 +766,9 @@ def main():
         print('args is {}'.format(args))
 
     set_operation_mode(pm, parser, args, remaining)
+
+    exit(0)
+
 
 if __name__ == "__main__":
     main()

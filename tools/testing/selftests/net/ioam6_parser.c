@@ -240,8 +240,11 @@ static int check_ioam6_data(__u8 **p, struct ioam6_trace_hdr *ioam6h,
 		*p += sizeof(__u32);
 	}
 
-	if (ioam6h->type.bit6)
+	if (ioam6h->type.bit6) {
+		if (__be32_to_cpu(*((__u32 *)*p)) != 0xffffffff)
+			return 1;
 		*p += sizeof(__u32);
+	}
 
 	if (ioam6h->type.bit7) {
 		if (__be32_to_cpu(*((__u32 *)*p)) != 0xffffffff)

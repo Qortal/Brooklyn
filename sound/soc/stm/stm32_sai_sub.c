@@ -1294,7 +1294,7 @@ static struct snd_soc_dai_driver stm32_sai_playback_dai = {
 		.id = 1, /* avoid call to fmt_single_name() */
 		.playback = {
 			.channels_min = 1,
-			.channels_max = 16,
+			.channels_max = 2,
 			.rate_min = 8000,
 			.rate_max = 192000,
 			.rates = SNDRV_PCM_RATE_CONTINUOUS,
@@ -1312,7 +1312,7 @@ static struct snd_soc_dai_driver stm32_sai_capture_dai = {
 		.id = 1, /* avoid call to fmt_single_name() */
 		.capture = {
 			.channels_min = 1,
-			.channels_max = 16,
+			.channels_max = 2,
 			.rate_min = 8000,
 			.rate_max = 192000,
 			.rates = SNDRV_PCM_RATE_CONTINUOUS,
@@ -1379,9 +1379,12 @@ static int stm32_sai_sub_parse_of(struct platform_device *pdev,
 	 */
 	sai->regmap = devm_regmap_init_mmio(&pdev->dev, base,
 					    sai->regmap_config);
-	if (IS_ERR(sai->regmap))
-		return dev_err_probe(&pdev->dev, PTR_ERR(sai->regmap),
-				     "Regmap init error\n");
+	if (IS_ERR(sai->regmap)) {
+		if (PTR_ERR(sai->regmap) != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "Regmap init error %ld\n",
+				PTR_ERR(sai->regmap));
+		return PTR_ERR(sai->regmap);
+	}
 
 	/* Get direction property */
 	if (of_property_match_string(np, "dma-names", "tx") >= 0) {
@@ -1469,9 +1472,12 @@ static int stm32_sai_sub_parse_of(struct platform_device *pdev,
 
 	of_node_put(args.np);
 	sai->sai_ck = devm_clk_get(&pdev->dev, "sai_ck");
-	if (IS_ERR(sai->sai_ck))
-		return dev_err_probe(&pdev->dev, PTR_ERR(sai->sai_ck),
-				     "Missing kernel clock sai_ck\n");
+	if (IS_ERR(sai->sai_ck)) {
+		if (PTR_ERR(sai->sai_ck) != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "Missing kernel clock sai_ck: %ld\n",
+				PTR_ERR(sai->sai_ck));
+		return PTR_ERR(sai->sai_ck);
+	}
 
 	ret = clk_prepare(sai->pdata->pclk);
 	if (ret < 0)
@@ -1545,8 +1551,11 @@ static int stm32_sai_sub_probe(struct platform_device *pdev)
 		conf = &stm32_sai_pcm_config_spdif;
 
 	ret = snd_dmaengine_pcm_register(&pdev->dev, conf, 0);
-	if (ret)
-		return dev_err_probe(&pdev->dev, ret, "Could not register pcm dma\n");
+	if (ret) {
+		if (ret != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "Could not register pcm dma\n");
+		return ret;
+	}
 
 	ret = snd_soc_register_component(&pdev->dev, &stm32_component,
 					 &sai->cpu_dai_drv, 1);

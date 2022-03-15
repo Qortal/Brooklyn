@@ -680,9 +680,7 @@ void __cfg80211_connect_result(struct net_device *dev,
 			       bool wextev)
 {
 	struct wireless_dev *wdev = dev->ieee80211_ptr;
-	const struct element *country_elem;
-	const u8 *country_data;
-	u8 country_datalen;
+	const u8 *country_ie;
 #ifdef CONFIG_CFG80211_WEXT
 	union iwreq_data wrqu;
 #endif
@@ -764,22 +762,26 @@ void __cfg80211_connect_result(struct net_device *dev,
 		cfg80211_upload_connect_keys(wdev);
 
 	rcu_read_lock();
-	country_elem = ieee80211_bss_get_elem(cr->bss, WLAN_EID_COUNTRY);
-	if (!country_elem) {
+	country_ie = ieee80211_bss_get_ie(cr->bss, WLAN_EID_COUNTRY);
+	if (!country_ie) {
 		rcu_read_unlock();
 		return;
 	}
 
-	country_datalen = country_elem->datalen;
-	country_data = kmemdup(country_elem->data, country_datalen, GFP_ATOMIC);
+	country_ie = kmemdup(country_ie, 2 + country_ie[1], GFP_ATOMIC);
 	rcu_read_unlock();
 
-	if (!country_data)
+	if (!country_ie)
 		return;
 
+	/*
+	 * ieee80211_bss_get_ie() ensures we can access:
+	 * - country_ie + 2, the start of the country ie data, and
+	 * - and country_ie[1] which is the IE length
+	 */
 	regulatory_hint_country_ie(wdev->wiphy, cr->bss->channel->band,
-				   country_data, country_datalen);
-	kfree(country_data);
+				   country_ie + 2, country_ie[1]);
+	kfree(country_ie);
 }
 
 /* Consumes bss object one way or another */

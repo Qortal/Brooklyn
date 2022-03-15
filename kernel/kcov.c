@@ -88,7 +88,6 @@ static struct list_head kcov_remote_areas = LIST_HEAD_INIT(kcov_remote_areas);
 
 struct kcov_percpu_data {
 	void			*irq_area;
-	local_lock_t		lock;
 
 	unsigned int		saved_mode;
 	unsigned int		saved_size;
@@ -97,9 +96,7 @@ struct kcov_percpu_data {
 	int			saved_sequence;
 };
 
-static DEFINE_PER_CPU(struct kcov_percpu_data, kcov_percpu_data) = {
-	.lock = INIT_LOCAL_LOCK(lock),
-};
+static DEFINE_PER_CPU(struct kcov_percpu_data, kcov_percpu_data);
 
 /* Must be called with kcov_remote_lock locked. */
 static struct kcov_remote *kcov_remote_find(u64 handle)
@@ -827,7 +824,7 @@ void kcov_remote_start(u64 handle)
 	if (!in_task() && !in_serving_softirq())
 		return;
 
-	local_lock_irqsave(&kcov_percpu_data.lock, flags);
+	local_irq_save(flags);
 
 	/*
 	 * Check that kcov_remote_start() is not called twice in background
@@ -835,7 +832,7 @@ void kcov_remote_start(u64 handle)
 	 */
 	mode = READ_ONCE(t->kcov_mode);
 	if (WARN_ON(in_task() && kcov_mode_enabled(mode))) {
-		local_unlock_irqrestore(&kcov_percpu_data.lock, flags);
+		local_irq_restore(flags);
 		return;
 	}
 	/*
@@ -844,15 +841,14 @@ void kcov_remote_start(u64 handle)
 	 * happened while collecting coverage from a background thread.
 	 */
 	if (WARN_ON(in_serving_softirq() && t->kcov_softirq)) {
-		local_unlock_irqrestore(&kcov_percpu_data.lock, flags);
+		local_irq_restore(flags);
 		return;
 	}
 
 	spin_lock(&kcov_remote_lock);
 	remote = kcov_remote_find(handle);
 	if (!remote) {
-		spin_unlock(&kcov_remote_lock);
-		local_unlock_irqrestore(&kcov_percpu_data.lock, flags);
+		spin_unlock_irqrestore(&kcov_remote_lock, flags);
 		return;
 	}
 	kcov_debug("handle = %llx, context: %s\n", handle,
@@ -873,18 +869,18 @@ void kcov_remote_start(u64 handle)
 		size = CONFIG_KCOV_IRQ_AREA_SIZE;
 		area = this_cpu_ptr(&kcov_percpu_data)->irq_area;
 	}
-	spin_unlock(&kcov_remote_lock);
+	spin_unlock_irqrestore(&kcov_remote_lock, flags);
 
 	/* Can only happen when in_task(). */
 	if (!area) {
-		local_unlock_irqrestore(&kcov_percpu_data.lock, flags);
 		area = vmalloc(size * sizeof(unsigned long));
 		if (!area) {
 			kcov_put(kcov);
 			return;
 		}
-		local_lock_irqsave(&kcov_percpu_data.lock, flags);
 	}
+
+	local_irq_save(flags);
 
 	/* Reset coverage size. */
 	*(u64 *)area = 0;
@@ -895,7 +891,7 @@ void kcov_remote_start(u64 handle)
 	}
 	kcov_start(t, kcov, size, area, mode, sequence);
 
-	local_unlock_irqrestore(&kcov_percpu_data.lock, flags);
+	local_irq_restore(flags);
 
 }
 EXPORT_SYMBOL(kcov_remote_start);
@@ -969,12 +965,12 @@ void kcov_remote_stop(void)
 	if (!in_task() && !in_serving_softirq())
 		return;
 
-	local_lock_irqsave(&kcov_percpu_data.lock, flags);
+	local_irq_save(flags);
 
 	mode = READ_ONCE(t->kcov_mode);
 	barrier();
 	if (!kcov_mode_enabled(mode)) {
-		local_unlock_irqrestore(&kcov_percpu_data.lock, flags);
+		local_irq_restore(flags);
 		return;
 	}
 	/*
@@ -982,12 +978,12 @@ void kcov_remote_stop(void)
 	 * actually found the remote handle and started collecting coverage.
 	 */
 	if (in_serving_softirq() && !t->kcov_softirq) {
-		local_unlock_irqrestore(&kcov_percpu_data.lock, flags);
+		local_irq_restore(flags);
 		return;
 	}
 	/* Make sure that kcov_softirq is only set when in softirq. */
 	if (WARN_ON(!in_serving_softirq() && t->kcov_softirq)) {
-		local_unlock_irqrestore(&kcov_percpu_data.lock, flags);
+		local_irq_restore(flags);
 		return;
 	}
 
@@ -1017,7 +1013,7 @@ void kcov_remote_stop(void)
 		spin_unlock(&kcov_remote_lock);
 	}
 
-	local_unlock_irqrestore(&kcov_percpu_data.lock, flags);
+	local_irq_restore(flags);
 
 	/* Get in kcov_remote_start(). */
 	kcov_put(kcov);
@@ -1038,8 +1034,8 @@ static int __init kcov_init(void)
 	int cpu;
 
 	for_each_possible_cpu(cpu) {
-		void *area = vmalloc_node(CONFIG_KCOV_IRQ_AREA_SIZE *
-				sizeof(unsigned long), cpu_to_node(cpu));
+		void *area = vmalloc(CONFIG_KCOV_IRQ_AREA_SIZE *
+				sizeof(unsigned long));
 		if (!area)
 			return -ENOMEM;
 		per_cpu_ptr(&kcov_percpu_data, cpu)->irq_area = area;

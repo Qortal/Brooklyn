@@ -17,7 +17,6 @@
  *      YOSHIFUJI Hideaki @USAGI:	convert /proc/net/udp6 to seq_file.
  */
 
-#include <linux/bpf-cgroup.h>
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/socket.h>
@@ -197,7 +196,7 @@ static inline struct sock *udp6_lookup_run_bpf(struct net *net,
 					       const struct in6_addr *saddr,
 					       __be16 sport,
 					       const struct in6_addr *daddr,
-					       u16 hnum, const int dif)
+					       u16 hnum)
 {
 	struct sock *sk, *reuse_sk;
 	bool no_reuseport;
@@ -205,8 +204,8 @@ static inline struct sock *udp6_lookup_run_bpf(struct net *net,
 	if (udptable != &udp_table)
 		return NULL; /* only UDP is supported */
 
-	no_reuseport = bpf_sk_lookup_run_v6(net, IPPROTO_UDP, saddr, sport,
-					    daddr, hnum, dif, &sk);
+	no_reuseport = bpf_sk_lookup_run_v6(net, IPPROTO_UDP,
+					    saddr, sport, daddr, hnum, &sk);
 	if (no_reuseport || IS_ERR_OR_NULL(sk))
 		return sk;
 
@@ -242,7 +241,7 @@ struct sock *__udp6_lib_lookup(struct net *net,
 	/* Lookup redirect from BPF */
 	if (static_branch_unlikely(&bpf_sk_lookup_enabled)) {
 		sk = udp6_lookup_run_bpf(net, udptable, skb,
-					 saddr, sport, daddr, hnum, dif);
+					 saddr, sport, daddr, hnum);
 		if (sk) {
 			result = sk;
 			goto done;
@@ -702,9 +701,9 @@ static int udpv6_queue_rcv_one_skb(struct sock *sk, struct sk_buff *skb)
 
 			ret = encap_rcv(sk, skb);
 			if (ret <= 0) {
-				__UDP6_INC_STATS(sock_net(sk),
-						 UDP_MIB_INDATAGRAMS,
-						 is_udplite);
+				__UDP_INC_STATS(sock_net(sk),
+						UDP_MIB_INDATAGRAMS,
+						is_udplite);
 				return -ret;
 			}
 		}
@@ -1733,7 +1732,6 @@ struct proto udpv6_prot = {
 	.unhash			= udp_lib_unhash,
 	.rehash			= udp_v6_rehash,
 	.get_port		= udp_v6_get_port,
-	.put_port		= udp_lib_unhash,
 #ifdef CONFIG_BPF_SYSCALL
 	.psock_update_sk_prot	= udp_bpf_update_proto,
 #endif

@@ -77,7 +77,6 @@ struct record_opts {
 	int	      ctl_fd;
 	int	      ctl_fd_ack;
 	bool	      ctl_fd_close;
-	int	      synth;
 };
 
 extern const char * const *record_usage;

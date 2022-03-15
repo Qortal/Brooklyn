@@ -41,19 +41,19 @@ struct pmu_events_map {
 	const char *cpuid;
 	const char *version;
 	const char *type;		/* core, uncore etc */
-	const struct pmu_event *table;
+	struct pmu_event *table;
 };
 
 struct pmu_sys_events {
 	const char *name;
-	const struct pmu_event *table;
+	struct pmu_event *table;
 };
 
 /*
  * Global table mapping each known CPU for the architecture to its
  * table of PMU events.
  */
-extern const struct pmu_events_map pmu_events_map[];
-extern const struct pmu_sys_events pmu_sys_event_tables[];
+extern struct pmu_events_map pmu_events_map[];
+extern struct pmu_sys_events pmu_sys_event_tables[];
 
 #endif

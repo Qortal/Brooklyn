@@ -19,38 +19,13 @@
 #include "../../../../arch/x86/include/uapi/asm/sgx.h"
 
 enum encl_op_type {
-	ENCL_OP_PUT_TO_BUFFER,
-	ENCL_OP_GET_FROM_BUFFER,
-	ENCL_OP_PUT_TO_ADDRESS,
-	ENCL_OP_GET_FROM_ADDRESS,
-	ENCL_OP_NOP,
-	ENCL_OP_MAX,
+	ENCL_OP_PUT,
+	ENCL_OP_GET,
 };
 
-struct encl_op_header {
+struct encl_op {
 	uint64_t type;
-};
-
-struct encl_op_put_to_buf {
-	struct encl_op_header header;
-	uint64_t value;
-};
-
-struct encl_op_get_from_buf {
-	struct encl_op_header header;
-	uint64_t value;
-};
-
-struct encl_op_put_to_addr {
-	struct encl_op_header header;
-	uint64_t value;
-	uint64_t addr;
-};
-
-struct encl_op_get_from_addr {
-	struct encl_op_header header;
-	uint64_t value;
-	uint64_t addr;
+	uint64_t buffer;
 };
 
 #endif /* DEFINES_H */

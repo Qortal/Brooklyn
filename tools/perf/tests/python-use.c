@@ -9,7 +9,7 @@
 #include "tests.h"
 #include "util/debug.h"
 
-static int test__python_use(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__python_use(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	char *cmd;
 	int ret;
@@ -23,5 +23,3 @@ static int test__python_use(struct test_suite *test __maybe_unused, int subtest 
 	free(cmd);
 	return ret;
 }
-
-DEFINE_SUITE("'import perf' in python", python_use);

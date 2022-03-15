@@ -400,8 +400,7 @@ void *perf_trace_buf_alloc(int size, struct pt_regs **regs, int *rctxp)
 	BUILD_BUG_ON(PERF_MAX_TRACE_SIZE % sizeof(unsigned long));
 
 	if (WARN_ONCE(size > PERF_MAX_TRACE_SIZE,
-		      "perf buffer not large enough, wanted %d, have %d",
-		      size, PERF_MAX_TRACE_SIZE))
+		      "perf buffer not large enough"))
 		return NULL;
 
 	*rctxp = rctx = perf_swevent_get_recursion_context();

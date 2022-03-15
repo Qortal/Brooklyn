@@ -14,9 +14,7 @@
 #include "driver-ops.h"
 
 static int ieee80211_set_ringparam(struct net_device *dev,
-				   struct ethtool_ringparam *rp,
-				   struct kernel_ethtool_ringparam *kernel_rp,
-				   struct netlink_ext_ack *extack)
+				   struct ethtool_ringparam *rp)
 {
 	struct ieee80211_local *local = wiphy_priv(dev->ieee80211_ptr->wiphy);
 
@@ -27,9 +25,7 @@ static int ieee80211_set_ringparam(struct net_device *dev,
 }
 
 static void ieee80211_get_ringparam(struct net_device *dev,
-				    struct ethtool_ringparam *rp,
-				    struct kernel_ethtool_ringparam *kernel_rp,
-				    struct netlink_ext_ack *extack)
+				    struct ethtool_ringparam *rp)
 {
 	struct ieee80211_local *local = wiphy_priv(dev->ieee80211_ptr->wiphy);
 

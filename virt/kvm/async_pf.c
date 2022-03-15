@@ -85,7 +85,7 @@ static void async_pf_execute(struct work_struct *work)
 
 	trace_kvm_async_pf_completed(addr, cr2_or_gpa);
 
-	__kvm_vcpu_wake_up(vcpu);
+	rcuwait_wake_up(&vcpu->wait);
 
 	mmput(mm);
 	kvm_put_kvm(vcpu->kvm);

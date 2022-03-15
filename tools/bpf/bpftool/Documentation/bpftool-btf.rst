@@ -1,5 +1,3 @@
-.. SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
-
 ================
 bpftool-btf
 ================
@@ -9,14 +7,13 @@ tool for inspection of BTF data
 
 :Manual section: 8
 
-.. include:: substitutions.rst
-
 SYNOPSIS
 ========
 
 	**bpftool** [*OPTIONS*] **btf** *COMMAND*
 
-	*OPTIONS* := { |COMMON_OPTIONS| | { **-B** | **--base-btf** } }
+	*OPTIONS* := { { **-j** | **--json** } [{ **-p** | **--pretty** }] | {**-d** | **--debug** } |
+	{ **-B** | **--base-btf** } }
 
 	*COMMANDS* := { **dump** | **help** }
 

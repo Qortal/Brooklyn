@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
+ * linux/fs/9p/trans_fd.c
+ *
  * Fd transport layer.  Includes deprecated socket layer.
  *
  *  Copyright (C) 2006 by Russ Cox <rsc@swtch.com>
@@ -1090,7 +1092,6 @@ static struct p9_trans_module p9_tcp_trans = {
 	.show_options = p9_fd_show_options,
 	.owner = THIS_MODULE,
 };
-MODULE_ALIAS_9P("tcp");
 
 static struct p9_trans_module p9_unix_trans = {
 	.name = "unix",
@@ -1104,7 +1105,6 @@ static struct p9_trans_module p9_unix_trans = {
 	.show_options = p9_fd_show_options,
 	.owner = THIS_MODULE,
 };
-MODULE_ALIAS_9P("unix");
 
 static struct p9_trans_module p9_fd_trans = {
 	.name = "fd",
@@ -1118,7 +1118,6 @@ static struct p9_trans_module p9_fd_trans = {
 	.show_options = p9_fd_show_options,
 	.owner = THIS_MODULE,
 };
-MODULE_ALIAS_9P("fd");
 
 /**
  * p9_poll_workfn - poll worker thread
@@ -1152,7 +1151,7 @@ static void p9_poll_workfn(struct work_struct *work)
 	p9_debug(P9_DEBUG_TRANS, "finish\n");
 }
 
-static int __init p9_trans_fd_init(void)
+int p9_trans_fd_init(void)
 {
 	v9fs_register_trans(&p9_tcp_trans);
 	v9fs_register_trans(&p9_unix_trans);
@@ -1161,17 +1160,10 @@ static int __init p9_trans_fd_init(void)
 	return 0;
 }
 
-static void __exit p9_trans_fd_exit(void)
+void p9_trans_fd_exit(void)
 {
 	flush_work(&p9_poll_work);
 	v9fs_unregister_trans(&p9_tcp_trans);
 	v9fs_unregister_trans(&p9_unix_trans);
 	v9fs_unregister_trans(&p9_fd_trans);
 }
-
-module_init(p9_trans_fd_init);
-module_exit(p9_trans_fd_exit);
-
-MODULE_AUTHOR("Eric Van Hensbergen <ericvh@gmail.com>");
-MODULE_DESCRIPTION("Filedescriptor Transport for 9P");
-MODULE_LICENSE("GPL");

@@ -53,7 +53,6 @@ struct perf_tool {
 			lost_samples,
 			aux,
 			itrace_start,
-			aux_output_hw_id,
 			context_switch,
 			throttle,
 			unthrottle,

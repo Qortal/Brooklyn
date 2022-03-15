@@ -8,10 +8,9 @@
 #ifndef _CRYPTO_AEAD_H
 #define _CRYPTO_AEAD_H
 
-#include <linux/container_of.h>
 #include <linux/crypto.h>
+#include <linux/kernel.h>
 #include <linux/slab.h>
-#include <linux/types.h>
 
 /**
  * DOC: Authenticated Encryption With Associated Data (AEAD) Cipher API
@@ -74,7 +73,6 @@
  */
 
 struct crypto_aead;
-struct scatterlist;
 
 /**
  *	struct aead_request - AEAD request

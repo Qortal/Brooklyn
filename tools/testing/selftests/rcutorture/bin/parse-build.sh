@@ -39,8 +39,7 @@ fi
 grep warning: < $F > $T/warnings
 grep "include/linux/*rcu*\.h:" $T/warnings > $T/hwarnings
 grep "kernel/rcu/[^/]*:" $T/warnings > $T/cwarnings
-grep "^ld: .*undefined reference to" $T/warnings | head -1 > $T/ldwarnings
-cat $T/hwarnings $T/cwarnings $T/ldwarnings > $T/rcuwarnings
+cat $T/hwarnings $T/cwarnings > $T/rcuwarnings
 if test -s $T/rcuwarnings
 then
 	print_warning $title build errors:

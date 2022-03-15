@@ -44,10 +44,7 @@
 	pr_alert("%s" SCALE_FLAG s, scale_type, ## x)
 
 #define VERBOSE_SCALEOUT(s, x...) \
-	do { \
-		if (verbose) \
-			pr_alert("%s" SCALE_FLAG s "\n", scale_type, ## x); \
-	} while (0)
+	do { if (verbose) pr_alert("%s" SCALE_FLAG s, scale_type, ## x); } while (0)
 
 static atomic_t verbose_batch_ctr;
 
@@ -57,11 +54,12 @@ do {											\
 	    (verbose_batched <= 0 ||							\
 	     !(atomic_inc_return(&verbose_batch_ctr) % verbose_batched))) {		\
 		schedule_timeout_uninterruptible(1);					\
-		pr_alert("%s" SCALE_FLAG s "\n", scale_type, ## x);			\
+		pr_alert("%s" SCALE_FLAG s, scale_type, ## x);				\
 	}										\
 } while (0)
 
-#define SCALEOUT_ERRSTRING(s, x...) pr_alert("%s" SCALE_FLAG "!!! " s "\n", scale_type, ## x)
+#define VERBOSE_SCALEOUT_ERRSTRING(s, x...) \
+	do { if (verbose) pr_alert("%s" SCALE_FLAG "!!! " s, scale_type, ## x); } while (0)
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Joel Fernandes (Google) <joel@joelfernandes.org>");
@@ -606,7 +604,7 @@ static u64 process_durations(int n)
 	char *buf;
 	u64 sum = 0;
 
-	buf = kmalloc(800 + 64, GFP_KERNEL);
+	buf = kmalloc(128 + nreaders * 32, GFP_KERNEL);
 	if (!buf)
 		return 0;
 	buf[0] = 0;
@@ -619,15 +617,13 @@ static u64 process_durations(int n)
 
 		if (i % 5 == 0)
 			strcat(buf, "\n");
-		if (strlen(buf) >= 800) {
-			pr_alert("%s", buf);
-			buf[0] = 0;
-		}
 		strcat(buf, buf1);
 
 		sum += rt->last_duration_ns;
 	}
-	pr_alert("%s\n", buf);
+	strcat(buf, "\n");
+
+	SCALEOUT("%s\n", buf);
 
 	kfree(buf);
 	return sum;
@@ -641,6 +637,7 @@ static u64 process_durations(int n)
 // point all the timestamps are printed.
 static int main_func(void *arg)
 {
+	bool errexit = false;
 	int exp, r;
 	char buf1[64];
 	char *buf;
@@ -651,10 +648,10 @@ static int main_func(void *arg)
 
 	VERBOSE_SCALEOUT("main_func task started");
 	result_avg = kzalloc(nruns * sizeof(*result_avg), GFP_KERNEL);
-	buf = kzalloc(800 + 64, GFP_KERNEL);
+	buf = kzalloc(64 + nruns * 32, GFP_KERNEL);
 	if (!result_avg || !buf) {
-		SCALEOUT_ERRSTRING("out of memory");
-		goto oom_exit;
+		VERBOSE_SCALEOUT_ERRSTRING("out of memory");
+		errexit = true;
 	}
 	if (holdoff)
 		schedule_timeout_interruptible(holdoff * HZ);
@@ -666,6 +663,8 @@ static int main_func(void *arg)
 
 	// Start exp readers up per experiment
 	for (exp = 0; exp < nruns && !torture_must_stop(); exp++) {
+		if (errexit)
+			break;
 		if (torture_must_stop())
 			goto end;
 
@@ -699,23 +698,26 @@ static int main_func(void *arg)
 	// Print the average of all experiments
 	SCALEOUT("END OF TEST. Calculating average duration per loop (nanoseconds)...\n");
 
-	pr_alert("Runs\tTime(ns)\n");
+	if (!errexit) {
+		buf[0] = 0;
+		strcat(buf, "\n");
+		strcat(buf, "Runs\tTime(ns)\n");
+	}
+
 	for (exp = 0; exp < nruns; exp++) {
 		u64 avg;
 		u32 rem;
 
+		if (errexit)
+			break;
 		avg = div_u64_rem(result_avg[exp], 1000, &rem);
 		sprintf(buf1, "%d\t%llu.%03u\n", exp + 1, avg, rem);
 		strcat(buf, buf1);
-		if (strlen(buf) >= 800) {
-			pr_alert("%s", buf);
-			buf[0] = 0;
-		}
 	}
 
-	pr_alert("%s", buf);
+	if (!errexit)
+		SCALEOUT("%s", buf);
 
-oom_exit:
 	// This will shutdown everything including us.
 	if (shutdown) {
 		shutdown_start = 1;
@@ -822,7 +824,7 @@ ref_scale_init(void)
 		init_waitqueue_head(&shutdown_wq);
 		firsterr = torture_create_kthread(ref_scale_shutdown, NULL,
 						  shutdown_task);
-		if (torture_init_error(firsterr))
+		if (firsterr)
 			goto unwind;
 		schedule_timeout_uninterruptible(1);
 	}
@@ -839,17 +841,17 @@ ref_scale_init(void)
 	reader_tasks = kcalloc(nreaders, sizeof(reader_tasks[0]),
 			       GFP_KERNEL);
 	if (!reader_tasks) {
-		SCALEOUT_ERRSTRING("out of memory");
+		VERBOSE_SCALEOUT_ERRSTRING("out of memory");
 		firsterr = -ENOMEM;
 		goto unwind;
 	}
 
-	VERBOSE_SCALEOUT("Starting %d reader threads", nreaders);
+	VERBOSE_SCALEOUT("Starting %d reader threads\n", nreaders);
 
 	for (i = 0; i < nreaders; i++) {
 		firsterr = torture_create_kthread(ref_scale_reader, (void *)i,
 						  reader_tasks[i].task);
-		if (torture_init_error(firsterr))
+		if (firsterr)
 			goto unwind;
 
 		init_waitqueue_head(&(reader_tasks[i].wq));
@@ -858,7 +860,7 @@ ref_scale_init(void)
 	// Main Task
 	init_waitqueue_head(&main_wq);
 	firsterr = torture_create_kthread(main_func, NULL, main_task);
-	if (torture_init_error(firsterr))
+	if (firsterr)
 		goto unwind;
 
 	torture_init_end();

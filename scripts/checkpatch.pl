@@ -63,7 +63,6 @@ my $min_conf_desc_length = 4;
 my $spelling_file = "$D/spelling.txt";
 my $codespell = 0;
 my $codespellfile = "/usr/share/codespell/dictionary.txt";
-my $user_codespellfile = "";
 my $conststructsfile = "$D/const_structs.checkpatch";
 my $docsfile = "$D/../Documentation/dev-tools/checkpatch.rst";
 my $typedefsfile;
@@ -131,7 +130,7 @@ Options:
   --ignore-perl-version      override checking of perl version.  expect
                              runtime errors.
   --codespell                Use the codespell dictionary for spelling/typos
-                             (default:$codespellfile)
+                             (default:/usr/share/codespell/dictionary.txt)
   --codespellfile            Use this codespell dictionary
   --typedefsfile             Read additional types from this file
   --color[=WHEN]             Use colors 'always', 'never', or only when output
@@ -318,7 +317,7 @@ GetOptions(
 	'debug=s'	=> \%debug,
 	'test-only=s'	=> \$tst_only,
 	'codespell!'	=> \$codespell,
-	'codespellfile=s'	=> \$user_codespellfile,
+	'codespellfile=s'	=> \$codespellfile,
 	'typedefsfile=s'	=> \$typedefsfile,
 	'color=s'	=> \$color,
 	'no-color'	=> \$color,	#keep old behaviors of -nocolor
@@ -326,32 +325,9 @@ GetOptions(
 	'kconfig-prefix=s'	=> \${CONFIG_},
 	'h|help'	=> \$help,
 	'version'	=> \$help
-) or $help = 2;
+) or help(1);
 
-if ($user_codespellfile) {
-	# Use the user provided codespell file unconditionally
-	$codespellfile = $user_codespellfile;
-} elsif (!(-f $codespellfile)) {
-	# If /usr/share/codespell/dictionary.txt is not present, try to find it
-	# under codespell's install directory: <codespell_root>/data/dictionary.txt
-	if (($codespell || $help) && which("codespell") ne "" && which("python") ne "") {
-		my $python_codespell_dict = << "EOF";
-
-import os.path as op
-import codespell_lib
-codespell_dir = op.dirname(codespell_lib.__file__)
-codespell_file = op.join(codespell_dir, 'data', 'dictionary.txt')
-print(codespell_file, end='')
-EOF
-
-		my $codespell_dict = `python -c "$python_codespell_dict" 2> /dev/null`;
-		$codespellfile = $codespell_dict if (-f $codespell_dict);
-	}
-}
-
-# $help is 1 if either -h, --help or --version is passed as option - exitcode: 0
-# $help is 2 if invalid option is passed - exitcode: 1
-help($help - 1) if ($help);
+help(0) if ($help);
 
 die "$P: --git cannot be used with --file or --fix\n" if ($git && ($file || $fix));
 die "$P: --verbose cannot be used with --terse\n" if ($verbose && $terse);
@@ -513,8 +489,7 @@ our $Attribute	= qr{
 			____cacheline_aligned|
 			____cacheline_aligned_in_smp|
 			____cacheline_internodealigned_in_smp|
-			__weak|
-			__alloc_size\s*\(\s*\d+\s*(?:,\s*\d+\s*)?\)
+			__weak
 		  }x;
 our $Modifier;
 our $Inline	= qr{inline|__always_inline|noinline|__inline|__inline__};
@@ -3172,7 +3147,7 @@ sub process {
 		    length($line) > 75 &&
 		    !($line =~ /^\s*[a-zA-Z0-9_\/\.]+\s+\|\s+\d+/ ||
 					# file delta changes
-		      $line =~ /^\s*(?:[\w\.\-\+]*\/)++[\w\.\-\+]+:/ ||
+		      $line =~ /^\s*(?:[\w\.\-]+\/)++[\w\.\-]+:/ ||
 					# filename then :
 		      $line =~ /^\s*(?:Fixes:|Link:|$signature_tags)/i ||
 					# A Fixes: or Link: line or signature tag line
@@ -3479,47 +3454,47 @@ sub process {
 		    # Kconfig supports named choices), so use a word boundary
 		    # (\b) rather than a whitespace character (\s)
 		    $line =~ /^\+\s*(?:config|menuconfig|choice)\b/) {
-			my $ln = $linenr;
-			my $needs_help = 0;
-			my $has_help = 0;
-			my $help_length = 0;
-			while (defined $lines[$ln]) {
-				my $f = $lines[$ln++];
+			my $length = 0;
+			my $cnt = $realcnt;
+			my $ln = $linenr + 1;
+			my $f;
+			my $is_start = 0;
+			my $is_end = 0;
+			for (; $cnt > 0 && defined $lines[$ln - 1]; $ln++) {
+				$f = $lines[$ln - 1];
+				$cnt-- if ($lines[$ln - 1] !~ /^-/);
+				$is_end = $lines[$ln - 1] =~ /^\+/;
 
 				next if ($f =~ /^-/);
-				last if ($f !~ /^[\+ ]/);	# !patch context
+				last if (!$file && $f =~ /^\@\@/);
 
-				if ($f =~ /^\+\s*(?:bool|tristate|prompt)\s*["']/) {
-					$needs_help = 1;
-					next;
-				}
-				if ($f =~ /^\+\s*help\s*$/) {
-					$has_help = 1;
-					next;
+				if ($lines[$ln - 1] =~ /^\+\s*(?:bool|tristate|prompt)\s*["']/) {
+					$is_start = 1;
+				} elsif ($lines[$ln - 1] =~ /^\+\s*(?:---)?help(?:---)?$/) {
+					$length = -1;
 				}
 
-				$f =~ s/^.//;	# strip patch context [+ ]
-				$f =~ s/#.*//;	# strip # directives
-				$f =~ s/^\s+//;	# strip leading blanks
-				next if ($f =~ /^$/);	# skip blank lines
+				$f =~ s/^.//;
+				$f =~ s/#.*//;
+				$f =~ s/^\s+//;
+				next if ($f =~ /^$/);
 
-				# At the end of this Kconfig block:
 				# This only checks context lines in the patch
 				# and so hopefully shouldn't trigger false
 				# positives, even though some of these are
 				# common words in help texts
-				if ($f =~ /^(?:config|menuconfig|choice|endchoice|
-					       if|endif|menu|endmenu|source)\b/x) {
+				if ($f =~ /^\s*(?:config|menuconfig|choice|endchoice|
+						  if|endif|menu|endmenu|source)\b/x) {
+					$is_end = 1;
 					last;
 				}
-				$help_length++ if ($has_help);
+				$length++;
 			}
-			if ($needs_help &&
-			    $help_length < $min_conf_desc_length) {
-				my $stat_real = get_stat_real($linenr, $ln - 1);
+			if ($is_start && $is_end && $length < $min_conf_desc_length) {
 				WARN("CONFIG_DESCRIPTION",
-				     "please write a help paragraph that fully describes the config symbol\n" . "$here\n$stat_real\n");
+				     "please write a paragraph that describes the config symbol fully\n" . $herecurr);
 			}
+			#print "is_start<$is_start> is_end<$is_end> length<$length>\n";
 		}
 
 # check MAINTAINERS entries
@@ -4473,7 +4448,6 @@ sub process {
 			#   XXX(foo);
 			#   EXPORT_SYMBOL(something_foo);
 			my $name = $1;
-			$name =~ s/^\s*($Ident).*/$1/;
 			if ($stat =~ /^(?:.\s*}\s*\n)?.([A-Z_]+)\s*\(\s*($Ident)/ &&
 			    $name =~ /^${Ident}_$2/) {
 #print "FOO C name<$name>\n";

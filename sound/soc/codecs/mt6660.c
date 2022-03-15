@@ -47,12 +47,13 @@ static int mt6660_reg_write(void *context, unsigned int reg, unsigned int val)
 	struct mt6660_chip *chip = context;
 	int size = mt6660_get_reg_size(reg);
 	u8 reg_data[4];
-	int i;
+	int i, ret;
 
 	for (i = 0; i < size; i++)
 		reg_data[size - i - 1] = (val >> (8 * i)) & 0xff;
 
-	return i2c_smbus_write_i2c_block_data(chip->i2c, reg, size, reg_data);
+	ret = i2c_smbus_write_i2c_block_data(chip->i2c, reg, size, reg_data);
+	return ret;
 }
 
 static int mt6660_reg_read(void *context, unsigned int reg, unsigned int *val)

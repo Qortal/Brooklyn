@@ -96,7 +96,7 @@ int ethnl_act_cable_test(struct sk_buff *skb, struct genl_info *info)
 out_rtnl:
 	rtnl_unlock();
 out_dev_put:
-	ethnl_parse_header_dev_put(&req_info);
+	dev_put(dev);
 	return ret;
 }
 
@@ -353,7 +353,7 @@ int ethnl_act_cable_test_tdr(struct sk_buff *skb, struct genl_info *info)
 out_rtnl:
 	rtnl_unlock();
 out_dev_put:
-	ethnl_parse_header_dev_put(&req_info);
+	dev_put(dev);
 	return ret;
 }
  

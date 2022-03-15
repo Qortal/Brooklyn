@@ -160,7 +160,7 @@ struct l2tp_tunnel {
 	unsigned long		dead;
 
 	struct rcu_head rcu;
-	spinlock_t		hlist_lock;	/* write-protection for session_hlist */
+	rwlock_t		hlist_lock;	/* protect session_hlist */
 	bool			acpt_newsess;	/* indicates whether this tunnel accepts
 						 * new sessions. Protected by hlist_lock.
 						 */

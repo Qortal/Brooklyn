@@ -15,7 +15,6 @@
 #include <linux/list.h>
 #include <linux/perf_event.h>
 #include <linux/types.h>
-#include <internal/cpumap.h>
 #include <asm/bitsperlong.h>
 #include <asm/barrier.h>
 
@@ -60,7 +59,6 @@ enum itrace_period_type {
 #define AUXTRACE_ERR_FLG_DATA_LOST	(1 << ('l' - 'a'))
 
 #define AUXTRACE_LOG_FLG_ALL_PERF_EVTS	(1 << ('a' - 'a'))
-#define AUXTRACE_LOG_FLG_USE_STDOUT	(1 << ('o' - 'a'))
 
 /**
  * struct itrace_synth_opts - AUX area tracing synthesis options.
@@ -86,7 +84,6 @@ enum itrace_period_type {
  * @thread_stack: feed branches to the thread_stack
  * @last_branch: add branch context to 'instruction' events
  * @add_last_branch: add branch context to existing event records
- * @approx_ipc: approximate IPC
  * @flc: whether to synthesize first level cache events
  * @llc: whether to synthesize last level cache events
  * @tlb: whether to synthesize TLB events
@@ -130,7 +127,6 @@ struct itrace_synth_opts {
 	bool			thread_stack;
 	bool			last_branch;
 	bool			add_last_branch;
-	bool			approx_ipc;
 	bool			flc;
 	bool			llc;
 	bool			tlb;
@@ -241,7 +237,7 @@ struct auxtrace_buffer {
 	size_t			size;
 	pid_t			pid;
 	pid_t			tid;
-	struct perf_cpu		cpu;
+	int			cpu;
 	void			*data;
 	off_t			data_offset;
 	void			*mmap_addr;
@@ -351,7 +347,7 @@ struct auxtrace_mmap_params {
 	int		prot;
 	int		idx;
 	pid_t		tid;
-	struct perf_cpu	cpu;
+	int		cpu;
 };
 
 /**
@@ -643,7 +639,6 @@ bool auxtrace__evsel_is_auxtrace(struct perf_session *session,
 "				d[flags]:		create a debug log\n" \
 "							each flag must be preceded by + or -\n" \
 "							log flags are: a (all perf events)\n" \
-"							               o (output to stdout)\n" \
 "				f:	    		synthesize first level cache events\n" \
 "				m:	    		synthesize last level cache events\n" \
 "				t:	    		synthesize TLB events\n" \
@@ -654,8 +649,6 @@ bool auxtrace__evsel_is_auxtrace(struct perf_session *session,
 "				L[len]:			synthesize last branch entries on existing event records\n" \
 "				sNUMBER:    		skip initial number of events\n"		\
 "				q:			quicker (less detailed) decoding\n" \
-"				A:			approximate IPC\n" \
-"				Z:			prefer to ignore timestamps (so-called \"timeless\" decoding)\n" \
 "				PERIOD[ns|us|ms|i|t]:   specify period to sample stream\n" \
 "				concatenate multiple options. Default is ibxwpe or cewp\n"
 

@@ -3,8 +3,6 @@
 BPF_SAMPLES_PATH ?= $(abspath $(srctree)/$(src))
 TOOLS_PATH := $(BPF_SAMPLES_PATH)/../../tools
 
-pound := \#
-
 # List of programs to build
 tprogs-y := test_lru_dist
 tprogs-y += sock_example
@@ -234,7 +232,6 @@ CLANG ?= clang
 OPT ?= opt
 LLVM_DIS ?= llvm-dis
 LLVM_OBJCOPY ?= llvm-objcopy
-LLVM_READELF ?= llvm-readelf
 BTF_PAHOLE ?= pahole
 
 # Detect that we're cross compiling and use the cross compiler
@@ -244,7 +241,7 @@ endif
 
 # Don't evaluate probes and warnings if we need to run make recursively
 ifneq ($(src),)
-HDR_PROBE := $(shell printf "$(pound)include <linux/types.h>\n struct list_head { int a; }; int main() { return 0; }" | \
+HDR_PROBE := $(shell printf "\#include <linux/types.h>\n struct list_head { int a; }; int main() { return 0; }" | \
 	$(CC) $(TPROGS_CFLAGS) $(TPROGS_LDFLAGS) -x c - \
 	-o /dev/null 2>/dev/null && echo okay)
 
@@ -258,7 +255,7 @@ BTF_PAHOLE_PROBE := $(shell $(BTF_PAHOLE) --help 2>&1 | grep BTF)
 BTF_OBJCOPY_PROBE := $(shell $(LLVM_OBJCOPY) --help 2>&1 | grep -i 'usage.*llvm')
 BTF_LLVM_PROBE := $(shell echo "int main() { return 0; }" | \
 			  $(CLANG) -target bpf -O2 -g -c -x c - -o ./llvm_btf_verify.o; \
-			  $(LLVM_READELF) -S ./llvm_btf_verify.o | grep BTF; \
+			  readelf -S ./llvm_btf_verify.o | grep BTF; \
 			  /bin/rm -f ./llvm_btf_verify.o)
 
 BPF_EXTRA_CFLAGS += -fno-stack-protector
@@ -282,7 +279,7 @@ clean:
 	@find $(CURDIR) -type f -name '*~' -delete
 	@$(RM) -r $(CURDIR)/libbpf $(CURDIR)/bpftool
 
-$(LIBBPF): $(wildcard $(LIBBPF_SRC)/*.[ch] $(LIBBPF_SRC)/Makefile) | $(LIBBPF_OUTPUT)
+$(LIBBPF): FORCE | $(LIBBPF_OUTPUT)
 # Fix up variables inherited from Kbuild that tools/ build system won't like
 	$(MAKE) -C $(LIBBPF_SRC) RM='rm -rf' EXTRA_CFLAGS="$(TPROGS_CFLAGS)" \
 		LDFLAGS=$(TPROGS_LDFLAGS) srctree=$(BPF_SAMPLES_PATH)/../../ \

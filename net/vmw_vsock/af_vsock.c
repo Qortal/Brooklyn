@@ -85,7 +85,6 @@
  *   TCP_LISTEN - listening
  */
 
-#include <linux/compat.h>
 #include <linux/types.h>
 #include <linux/bitops.h>
 #include <linux/cred.h>
@@ -1618,18 +1617,13 @@ static int vsock_connectible_setsockopt(struct socket *sock,
 		vsock_update_buffer_size(vsk, transport, vsk->buffer_size);
 		break;
 
-	case SO_VM_SOCKETS_CONNECT_TIMEOUT_NEW:
-	case SO_VM_SOCKETS_CONNECT_TIMEOUT_OLD: {
-		struct __kernel_sock_timeval tv;
-
-		err = sock_copy_user_timeval(&tv, optval, optlen,
-					     optname == SO_VM_SOCKETS_CONNECT_TIMEOUT_OLD);
-		if (err)
-			break;
+	case SO_VM_SOCKETS_CONNECT_TIMEOUT: {
+		struct __kernel_old_timeval tv;
+		COPY_IN(tv);
 		if (tv.tv_sec >= 0 && tv.tv_usec < USEC_PER_SEC &&
 		    tv.tv_sec < (MAX_SCHEDULE_TIMEOUT / HZ - 1)) {
 			vsk->connect_timeout = tv.tv_sec * HZ +
-				DIV_ROUND_UP((unsigned long)tv.tv_usec, (USEC_PER_SEC / HZ));
+			    DIV_ROUND_UP(tv.tv_usec, (1000000 / HZ));
 			if (vsk->connect_timeout == 0)
 				vsk->connect_timeout =
 				    VSOCK_DEFAULT_CONNECT_TIMEOUT;
@@ -1657,59 +1651,68 @@ static int vsock_connectible_getsockopt(struct socket *sock,
 					char __user *optval,
 					int __user *optlen)
 {
-	struct sock *sk = sock->sk;
-	struct vsock_sock *vsk = vsock_sk(sk);
-
-	union {
-		u64 val64;
-		struct old_timeval32 tm32;
-		struct __kernel_old_timeval tm;
-		struct  __kernel_sock_timeval stm;
-	} v;
-
-	int lv = sizeof(v.val64);
+	int err;
 	int len;
+	struct sock *sk;
+	struct vsock_sock *vsk;
+	u64 val;
 
 	if (level != AF_VSOCK)
 		return -ENOPROTOOPT;
 
-	if (get_user(len, optlen))
-		return -EFAULT;
+	err = get_user(len, optlen);
+	if (err != 0)
+		return err;
 
-	memset(&v, 0, sizeof(v));
+#define COPY_OUT(_v)                            \
+	do {					\
+		if (len < sizeof(_v))		\
+			return -EINVAL;		\
+						\
+		len = sizeof(_v);		\
+		if (copy_to_user(optval, &_v, len) != 0)	\
+			return -EFAULT;				\
+								\
+	} while (0)
+
+	err = 0;
+	sk = sock->sk;
+	vsk = vsock_sk(sk);
 
 	switch (optname) {
 	case SO_VM_SOCKETS_BUFFER_SIZE:
-		v.val64 = vsk->buffer_size;
+		val = vsk->buffer_size;
+		COPY_OUT(val);
 		break;
 
 	case SO_VM_SOCKETS_BUFFER_MAX_SIZE:
-		v.val64 = vsk->buffer_max_size;
+		val = vsk->buffer_max_size;
+		COPY_OUT(val);
 		break;
 
 	case SO_VM_SOCKETS_BUFFER_MIN_SIZE:
-		v.val64 = vsk->buffer_min_size;
+		val = vsk->buffer_min_size;
+		COPY_OUT(val);
 		break;
 
-	case SO_VM_SOCKETS_CONNECT_TIMEOUT_NEW:
-	case SO_VM_SOCKETS_CONNECT_TIMEOUT_OLD:
-		lv = sock_get_timeout(vsk->connect_timeout, &v,
-				      optname == SO_VM_SOCKETS_CONNECT_TIMEOUT_OLD);
+	case SO_VM_SOCKETS_CONNECT_TIMEOUT: {
+		struct __kernel_old_timeval tv;
+		tv.tv_sec = vsk->connect_timeout / HZ;
+		tv.tv_usec =
+		    (vsk->connect_timeout -
+		     tv.tv_sec * HZ) * (1000000 / HZ);
+		COPY_OUT(tv);
 		break;
-
+	}
 	default:
 		return -ENOPROTOOPT;
 	}
 
-	if (len < lv)
-		return -EINVAL;
-	if (len > lv)
-		len = lv;
-	if (copy_to_user(optval, &v, len))
+	err = put_user(len, optlen);
+	if (err != 0)
 		return -EFAULT;
 
-	if (put_user(len, optlen))
-		return -EFAULT;
+#undef COPY_OUT
 
 	return 0;
 }

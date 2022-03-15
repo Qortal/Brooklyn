@@ -8,7 +8,6 @@
 #include <linux/slab.h>
 #include <linux/errno.h>
 #include "hashtab.h"
-#include "security.h"
 
 static struct kmem_cache *hashtab_node_cachep __ro_after_init;
 

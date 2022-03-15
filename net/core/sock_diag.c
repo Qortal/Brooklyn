@@ -1,6 +1,5 @@
 /* License: GPL */
 
-#include <linux/filter.h>
 #include <linux/mutex.h>
 #include <linux/socket.h>
 #include <linux/skbuff.h>

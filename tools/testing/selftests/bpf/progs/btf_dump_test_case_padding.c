@@ -9,7 +9,7 @@
 /* ----- START-EXPECTED-OUTPUT ----- */
 struct padded_implicitly {
 	int a;
-	long b;
+	long int b;
 	char c;
 };
 

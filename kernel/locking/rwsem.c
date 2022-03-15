@@ -56,6 +56,7 @@
  *
  * A fast path reader optimistic lock stealing is supported when the rwsem
  * is previously owned by a writer and the following conditions are met:
+ *  - OSQ is empty
  *  - rwsem is not currently writer owned
  *  - the handoff isn't set.
  */
@@ -508,7 +509,7 @@ static void rwsem_mark_wake(struct rw_semaphore *sem,
 		/*
 		 * Limit # of readers that can be woken up per wakeup call.
 		 */
-		if (unlikely(woken >= MAX_READERS_WAKEUP))
+		if (woken >= MAX_READERS_WAKEUP)
 			break;
 	}
 
@@ -658,6 +659,15 @@ static inline bool rwsem_try_write_lock_unqueued(struct rw_semaphore *sem)
 	return false;
 }
 
+static inline bool owner_on_cpu(struct task_struct *owner)
+{
+	/*
+	 * As lock holder preemption issue, we both skip spinning if
+	 * task is not on cpu or its cpu is preempted
+	 */
+	return owner->on_cpu && !vcpu_is_preempted(task_cpu(owner));
+}
+
 static inline bool rwsem_can_spin_on_owner(struct rw_semaphore *sem)
 {
 	struct task_struct *owner;
@@ -670,10 +680,7 @@ static inline bool rwsem_can_spin_on_owner(struct rw_semaphore *sem)
 	}
 
 	preempt_disable();
-	/*
-	 * Disable preemption is equal to the RCU read-side crital section,
-	 * thus the task_strcut structure won't go away.
-	 */
+	rcu_read_lock();
 	owner = rwsem_owner_flags(sem, &flags);
 	/*
 	 * Don't check the read-owner as the entry may be stale.
@@ -681,6 +688,7 @@ static inline bool rwsem_can_spin_on_owner(struct rw_semaphore *sem)
 	if ((flags & RWSEM_NONSPINNABLE) ||
 	    (owner && !(flags & RWSEM_READER_OWNED) && !owner_on_cpu(owner)))
 		ret = false;
+	rcu_read_unlock();
 	preempt_enable();
 
 	lockevent_cond_inc(rwsem_opt_fail, !ret);
@@ -708,13 +716,12 @@ rwsem_spin_on_owner(struct rw_semaphore *sem)
 	unsigned long flags, new_flags;
 	enum owner_state state;
 
-	lockdep_assert_preemption_disabled();
-
 	owner = rwsem_owner_flags(sem, &flags);
 	state = rwsem_owner_state(owner, flags);
 	if (state != OWNER_WRITER)
 		return state;
 
+	rcu_read_lock();
 	for (;;) {
 		/*
 		 * When a waiting writer set the handoff flag, it may spin
@@ -732,9 +739,7 @@ rwsem_spin_on_owner(struct rw_semaphore *sem)
 		 * Ensure we emit the owner->on_cpu, dereference _after_
 		 * checking sem->owner still matches owner, if that fails,
 		 * owner might point to free()d memory, if it still matches,
-		 * our spinning context already disabled preemption which is
-		 * equal to RCU read-side crital section ensures the memory
-		 * stays valid.
+		 * the rcu_read_lock() ensures the memory stays valid.
 		 */
 		barrier();
 
@@ -745,6 +750,7 @@ rwsem_spin_on_owner(struct rw_semaphore *sem)
 
 		cpu_relax();
 	}
+	rcu_read_unlock();
 
 	return state;
 }
@@ -1239,14 +1245,17 @@ static inline int __down_read_trylock(struct rw_semaphore *sem)
 
 	DEBUG_RWSEMS_WARN_ON(sem->magic != sem, sem);
 
-	tmp = atomic_long_read(&sem->count);
-	while (!(tmp & RWSEM_READ_FAILED_MASK)) {
+	/*
+	 * Optimize for the case when the rwsem is not locked at all.
+	 */
+	tmp = RWSEM_UNLOCKED_VALUE;
+	do {
 		if (atomic_long_try_cmpxchg_acquire(&sem->count, &tmp,
-						    tmp + RWSEM_READER_BIAS)) {
+					tmp + RWSEM_READER_BIAS)) {
 			rwsem_set_reader_owned(sem);
 			return 1;
 		}
-	}
+	} while (!(tmp & RWSEM_READ_FAILED_MASK));
 	return 0;
 }
 

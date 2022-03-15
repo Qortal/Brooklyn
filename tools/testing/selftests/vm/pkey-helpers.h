@@ -13,8 +13,6 @@
 #include <ucontext.h>
 #include <sys/mman.h>
 
-#include "../kselftest.h"
-
 /* Define some kernel-like types */
 #define  u8 __u8
 #define u16 __u16
@@ -177,6 +175,7 @@ static inline void __pkey_write_allow(int pkey, int do_allow_write)
 	dprintf4("pkey_reg now: %016llx\n", read_pkey_reg());
 }
 
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
 #define ALIGN_UP(x, align_to)	(((x) + ((align_to)-1)) & ~((align_to)-1))
 #define ALIGN_DOWN(x, align_to) ((x) & ~((align_to)-1))
 #define ALIGN_PTR_UP(p, ptr_align_to)	\

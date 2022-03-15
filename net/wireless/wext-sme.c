@@ -212,18 +212,18 @@ int cfg80211_mgd_wext_giwessid(struct net_device *dev,
 
 	wdev_lock(wdev);
 	if (wdev->current_bss) {
-		const struct element *ssid_elem;
+		const u8 *ie;
 
 		rcu_read_lock();
-		ssid_elem = ieee80211_bss_get_elem(&wdev->current_bss->pub,
-						   WLAN_EID_SSID);
-		if (ssid_elem) {
+		ie = ieee80211_bss_get_ie(&wdev->current_bss->pub,
+					  WLAN_EID_SSID);
+		if (ie) {
 			data->flags = 1;
-			data->length = ssid_elem->datalen;
+			data->length = ie[1];
 			if (data->length > IW_ESSID_MAX_SIZE)
 				ret = -EINVAL;
 			else
-				memcpy(ssid, ssid_elem->data, data->length);
+				memcpy(ssid, ie + 2, data->length);
 		}
 		rcu_read_unlock();
 	} else if (wdev->wext.connect.ssid && wdev->wext.connect.ssid_len) {

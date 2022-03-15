@@ -100,6 +100,7 @@ u16 get_dest_port_ipv4_udp(struct xdp_md *ctx, u64 nh_off)
 	void *data     = (void *)(long)ctx->data;
 	struct iphdr *iph = data + nh_off;
 	struct udphdr *udph;
+	u16 dport;
 
 	if (iph + 1 > data_end)
 		return 0;
@@ -110,7 +111,8 @@ u16 get_dest_port_ipv4_udp(struct xdp_md *ctx, u64 nh_off)
 	if (udph + 1 > data_end)
 		return 0;
 
-	return bpf_ntohs(udph->dest);
+	dport = bpf_ntohs(udph->dest);
+	return dport;
 }
 
 static __always_inline

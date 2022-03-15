@@ -54,12 +54,8 @@ struct symbol {
 	unsigned long offset;
 	unsigned int len;
 	struct symbol *pfunc, *cfunc, *alias;
-	u8 uaccess_safe      : 1;
-	u8 static_call_tramp : 1;
-	u8 retpoline_thunk   : 1;
-	u8 fentry            : 1;
-	u8 profiling_func    : 1;
-	struct list_head pv_target;
+	bool uaccess_safe;
+	bool static_call_tramp;
 };
 
 struct reloc {
@@ -144,6 +140,7 @@ int elf_write_insn(struct elf *elf, struct section *sec,
 		   unsigned long offset, unsigned int len,
 		   const char *insn);
 int elf_write_reloc(struct elf *elf, struct reloc *reloc);
+struct symbol *elf_create_undef_symbol(struct elf *elf, const char *name);
 int elf_write(struct elf *elf);
 void elf_close(struct elf *elf);
 

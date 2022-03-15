@@ -3,7 +3,6 @@
 #include <linux/hugetlb.h>
 #include <linux/bitops.h>
 #include <linux/mmu_notifier.h>
-#include <linux/mm_inline.h>
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
 

@@ -120,9 +120,6 @@ static void do_error(char *msg, bool errno_flag)
 
 static int prog_load(char *prog)
 {
-	struct bpf_program *pos;
-	const char *sec_name;
-
 	obj = bpf_object__open_file(prog, NULL);
 	if (libbpf_get_error(obj)) {
 		printf("ERROR: opening BPF object file failed\n");
@@ -135,13 +132,7 @@ static int prog_load(char *prog)
 		goto err;
 	}
 
-	bpf_object__for_each_program(pos, obj) {
-		sec_name = bpf_program__section_name(pos);
-		if (sec_name && !strcmp(sec_name, "cgroup_skb/egress")) {
-			bpf_prog = pos;
-			break;
-		}
-	}
+	bpf_prog = bpf_object__find_program_by_title(obj, "cgroup_skb/egress");
 	if (!bpf_prog) {
 		printf("ERROR: finding a prog in obj file failed\n");
 		goto err;

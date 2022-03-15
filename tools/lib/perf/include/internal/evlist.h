@@ -4,7 +4,6 @@
 
 #include <linux/list.h>
 #include <api/fd/array.h>
-#include <internal/cpumap.h>
 #include <internal/evsel.h>
 
 #define PERF_EVLIST__HLIST_BITS 8
@@ -37,7 +36,7 @@ typedef void
 typedef struct perf_mmap*
 (*perf_evlist_mmap__cb_get_t)(struct perf_evlist*, bool, int);
 typedef int
-(*perf_evlist_mmap__cb_mmap_t)(struct perf_mmap*, struct perf_mmap_param*, int, struct perf_cpu);
+(*perf_evlist_mmap__cb_mmap_t)(struct perf_mmap*, struct perf_mmap_param*, int, int);
 
 struct perf_evlist_mmap_ops {
 	perf_evlist_mmap__cb_idx_t	idx;
@@ -128,5 +127,5 @@ int perf_evlist__id_add_fd(struct perf_evlist *evlist,
 
 void perf_evlist__reset_id_hash(struct perf_evlist *evlist);
 
-void __perf_evlist__set_leader(struct list_head *list, struct perf_evsel *leader);
+void __perf_evlist__set_leader(struct list_head *list);
 #endif /* __LIBPERF_INTERNAL_EVLIST_H */

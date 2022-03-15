@@ -110,8 +110,7 @@ static u32 net_dm_queue_len = 1000;
 
 struct net_dm_alert_ops {
 	void (*kfree_skb_probe)(void *ignore, struct sk_buff *skb,
-				void *location,
-				enum skb_drop_reason reason);
+				void *location);
 	void (*napi_poll_probe)(void *ignore, struct napi_struct *napi,
 				int work, int budget);
 	void (*work_item_func)(struct work_struct *work);
@@ -263,9 +262,7 @@ out:
 	spin_unlock_irqrestore(&data->lock, flags);
 }
 
-static void trace_kfree_skb_hit(void *ignore, struct sk_buff *skb,
-				void *location,
-				enum skb_drop_reason reason)
+static void trace_kfree_skb_hit(void *ignore, struct sk_buff *skb, void *location)
 {
 	trace_drop_common(skb, location);
 }
@@ -497,8 +494,7 @@ static const struct net_dm_alert_ops net_dm_alert_summary_ops = {
 
 static void net_dm_packet_trace_kfree_skb_hit(void *ignore,
 					      struct sk_buff *skb,
-					      void *location,
-					      enum skb_drop_reason reason)
+					      void *location)
 {
 	ktime_t tstamp = ktime_get_real();
 	struct per_cpu_dm_data *data;
@@ -858,7 +854,7 @@ net_dm_hw_metadata_copy(const struct devlink_trap_metadata *metadata)
 	}
 
 	hw_metadata->input_dev = metadata->input_dev;
-	dev_hold_track(hw_metadata->input_dev, &hw_metadata->dev_tracker, GFP_ATOMIC);
+	dev_hold(hw_metadata->input_dev);
 
 	return hw_metadata;
 
@@ -872,9 +868,9 @@ free_hw_metadata:
 }
 
 static void
-net_dm_hw_metadata_free(struct devlink_trap_metadata *hw_metadata)
+net_dm_hw_metadata_free(const struct devlink_trap_metadata *hw_metadata)
 {
-	dev_put_track(hw_metadata->input_dev, &hw_metadata->dev_tracker);
+	dev_put(hw_metadata->input_dev);
 	kfree(hw_metadata->fa_cookie);
 	kfree(hw_metadata->trap_name);
 	kfree(hw_metadata->trap_group_name);

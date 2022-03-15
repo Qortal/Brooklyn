@@ -110,15 +110,20 @@ static void mem_allocator_disconnect(void *allocator)
 	mutex_unlock(&mem_id_lock);
 }
 
-void xdp_unreg_mem_model(struct xdp_mem_info *mem)
+void xdp_rxq_info_unreg_mem_model(struct xdp_rxq_info *xdp_rxq)
 {
 	struct xdp_mem_allocator *xa;
-	int type = mem->type;
-	int id = mem->id;
+	int type = xdp_rxq->mem.type;
+	int id = xdp_rxq->mem.id;
 
 	/* Reset mem info to defaults */
-	mem->id = 0;
-	mem->type = 0;
+	xdp_rxq->mem.id = 0;
+	xdp_rxq->mem.type = 0;
+
+	if (xdp_rxq->reg_state != REG_STATE_REGISTERED) {
+		WARN(1, "Missing register, driver bug");
+		return;
+	}
 
 	if (id == 0)
 		return;
@@ -130,17 +135,6 @@ void xdp_unreg_mem_model(struct xdp_mem_info *mem)
 		rcu_read_unlock();
 	}
 }
-EXPORT_SYMBOL_GPL(xdp_unreg_mem_model);
-
-void xdp_rxq_info_unreg_mem_model(struct xdp_rxq_info *xdp_rxq)
-{
-	if (xdp_rxq->reg_state != REG_STATE_REGISTERED) {
-		WARN(1, "Missing register, driver bug");
-		return;
-	}
-
-	xdp_unreg_mem_model(&xdp_rxq->mem);
-}
 EXPORT_SYMBOL_GPL(xdp_rxq_info_unreg_mem_model);
 
 void xdp_rxq_info_unreg(struct xdp_rxq_info *xdp_rxq)
@@ -148,6 +142,8 @@ void xdp_rxq_info_unreg(struct xdp_rxq_info *xdp_rxq)
 	/* Simplify driver cleanup code paths, allow unreg "unused" */
 	if (xdp_rxq->reg_state == REG_STATE_UNUSED)
 		return;
+
+	WARN(!(xdp_rxq->reg_state == REG_STATE_REGISTERED), "Driver BUG");
 
 	xdp_rxq_info_unreg_mem_model(xdp_rxq);
 
@@ -165,11 +161,6 @@ static void xdp_rxq_info_init(struct xdp_rxq_info *xdp_rxq)
 int xdp_rxq_info_reg(struct xdp_rxq_info *xdp_rxq,
 		     struct net_device *dev, u32 queue_index, unsigned int napi_id)
 {
-	if (!dev) {
-		WARN(1, "Missing net_device from driver");
-		return -ENODEV;
-	}
-
 	if (xdp_rxq->reg_state == REG_STATE_UNUSED) {
 		WARN(1, "Driver promised not to register this");
 		return -EINVAL;
@@ -178,6 +169,11 @@ int xdp_rxq_info_reg(struct xdp_rxq_info *xdp_rxq,
 	if (xdp_rxq->reg_state == REG_STATE_REGISTERED) {
 		WARN(1, "Missing unregister, handled but fix driver");
 		xdp_rxq_info_unreg(xdp_rxq);
+	}
+
+	if (!dev) {
+		WARN(1, "Missing net_device from driver");
+		return -ENODEV;
 	}
 
 	/* State either UNREGISTERED or NEW */
@@ -265,24 +261,28 @@ static bool __is_supported_mem_type(enum xdp_mem_type type)
 	return true;
 }
 
-static struct xdp_mem_allocator *__xdp_reg_mem_model(struct xdp_mem_info *mem,
-						     enum xdp_mem_type type,
-						     void *allocator)
+int xdp_rxq_info_reg_mem_model(struct xdp_rxq_info *xdp_rxq,
+			       enum xdp_mem_type type, void *allocator)
 {
 	struct xdp_mem_allocator *xdp_alloc;
 	gfp_t gfp = GFP_KERNEL;
 	int id, errno, ret;
 	void *ptr;
 
-	if (!__is_supported_mem_type(type))
-		return ERR_PTR(-EOPNOTSUPP);
+	if (xdp_rxq->reg_state != REG_STATE_REGISTERED) {
+		WARN(1, "Missing register, driver bug");
+		return -EFAULT;
+	}
 
-	mem->type = type;
+	if (!__is_supported_mem_type(type))
+		return -EOPNOTSUPP;
+
+	xdp_rxq->mem.type = type;
 
 	if (!allocator) {
 		if (type == MEM_TYPE_PAGE_POOL)
-			return ERR_PTR(-EINVAL); /* Setup time check page_pool req */
-		return NULL;
+			return -EINVAL; /* Setup time check page_pool req */
+		return 0;
 	}
 
 	/* Delay init of rhashtable to save memory if feature isn't used */
@@ -292,13 +292,13 @@ static struct xdp_mem_allocator *__xdp_reg_mem_model(struct xdp_mem_info *mem,
 		mutex_unlock(&mem_id_lock);
 		if (ret < 0) {
 			WARN_ON(1);
-			return ERR_PTR(ret);
+			return ret;
 		}
 	}
 
 	xdp_alloc = kzalloc(sizeof(*xdp_alloc), gfp);
 	if (!xdp_alloc)
-		return ERR_PTR(-ENOMEM);
+		return -ENOMEM;
 
 	mutex_lock(&mem_id_lock);
 	id = __mem_id_cyclic_get(gfp);
@@ -306,61 +306,31 @@ static struct xdp_mem_allocator *__xdp_reg_mem_model(struct xdp_mem_info *mem,
 		errno = id;
 		goto err;
 	}
-	mem->id = id;
-	xdp_alloc->mem = *mem;
+	xdp_rxq->mem.id = id;
+	xdp_alloc->mem  = xdp_rxq->mem;
 	xdp_alloc->allocator = allocator;
 
 	/* Insert allocator into ID lookup table */
 	ptr = rhashtable_insert_slow(mem_id_ht, &id, &xdp_alloc->node);
 	if (IS_ERR(ptr)) {
-		ida_simple_remove(&mem_id_pool, mem->id);
-		mem->id = 0;
+		ida_simple_remove(&mem_id_pool, xdp_rxq->mem.id);
+		xdp_rxq->mem.id = 0;
 		errno = PTR_ERR(ptr);
 		goto err;
 	}
 
 	if (type == MEM_TYPE_PAGE_POOL)
-		page_pool_use_xdp_mem(allocator, mem_allocator_disconnect, mem);
+		page_pool_use_xdp_mem(allocator, mem_allocator_disconnect);
 
 	mutex_unlock(&mem_id_lock);
-
-	return xdp_alloc;
-err:
-	mutex_unlock(&mem_id_lock);
-	kfree(xdp_alloc);
-	return ERR_PTR(errno);
-}
-
-int xdp_reg_mem_model(struct xdp_mem_info *mem,
-		      enum xdp_mem_type type, void *allocator)
-{
-	struct xdp_mem_allocator *xdp_alloc;
-
-	xdp_alloc = __xdp_reg_mem_model(mem, type, allocator);
-	if (IS_ERR(xdp_alloc))
-		return PTR_ERR(xdp_alloc);
-	return 0;
-}
-EXPORT_SYMBOL_GPL(xdp_reg_mem_model);
-
-int xdp_rxq_info_reg_mem_model(struct xdp_rxq_info *xdp_rxq,
-			       enum xdp_mem_type type, void *allocator)
-{
-	struct xdp_mem_allocator *xdp_alloc;
-
-	if (xdp_rxq->reg_state != REG_STATE_REGISTERED) {
-		WARN(1, "Missing register, driver bug");
-		return -EFAULT;
-	}
-
-	xdp_alloc = __xdp_reg_mem_model(&xdp_rxq->mem, type, allocator);
-	if (IS_ERR(xdp_alloc))
-		return PTR_ERR(xdp_alloc);
 
 	trace_mem_connect(xdp_alloc, xdp_rxq);
 	return 0;
+err:
+	mutex_unlock(&mem_id_lock);
+	kfree(xdp_alloc);
+	return errno;
 }
-
 EXPORT_SYMBOL_GPL(xdp_rxq_info_reg_mem_model);
 
 /* XDP RX runs under NAPI protection, and in different delivery error

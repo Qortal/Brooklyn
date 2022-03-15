@@ -812,6 +812,8 @@ struct multi_transaction {
 };
 
 #define MULTI_TRANSACTION_LIMIT (PAGE_SIZE - sizeof(struct multi_transaction))
+/* TODO: replace with per file lock */
+static DEFINE_SPINLOCK(multi_transaction_lock);
 
 static void multi_transaction_kref(struct kref *kref)
 {
@@ -845,10 +847,10 @@ static void multi_transaction_set(struct file *file,
 	AA_BUG(n > MULTI_TRANSACTION_LIMIT);
 
 	new->size = n;
-	spin_lock(&file->f_lock);
+	spin_lock(&multi_transaction_lock);
 	old = (struct multi_transaction *) file->private_data;
 	file->private_data = new;
-	spin_unlock(&file->f_lock);
+	spin_unlock(&multi_transaction_lock);
 	put_multi_transaction(old);
 }
 
@@ -877,10 +879,9 @@ static ssize_t multi_transaction_read(struct file *file, char __user *buf,
 	struct multi_transaction *t;
 	ssize_t ret;
 
-	spin_lock(&file->f_lock);
+	spin_lock(&multi_transaction_lock);
 	t = get_multi_transaction(file->private_data);
-	spin_unlock(&file->f_lock);
-
+	spin_unlock(&multi_transaction_lock);
 	if (!t)
 		return 0;
 
@@ -1357,7 +1358,7 @@ static int rawdata_open(struct inode *inode, struct file *file)
 	struct aa_loaddata *loaddata;
 	struct rawdata_f_data *private;
 
-	if (!aa_current_policy_view_capable(NULL))
+	if (!policy_view_capable(NULL))
 		return -EACCES;
 
 	loaddata = __aa_get_loaddata(inode->i_private);
@@ -2113,7 +2114,7 @@ static struct aa_profile *__first_profile(struct aa_ns *root,
 
 /**
  * __next_profile - step to the next profile in a profile tree
- * @p: current profile in tree (NOT NULL)
+ * @profile: current profile in tree (NOT NULL)
  *
  * Perform a depth first traversal on the profile tree in a namespace
  *
@@ -2264,7 +2265,7 @@ static const struct seq_operations aa_sfs_profiles_op = {
 
 static int profiles_open(struct inode *inode, struct file *file)
 {
-	if (!aa_current_policy_view_capable(NULL))
+	if (!policy_view_capable(NULL))
 		return -EACCES;
 
 	return seq_open(file, &aa_sfs_profiles_op);

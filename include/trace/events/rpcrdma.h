@@ -14,9 +14,7 @@
 #include <linux/sunrpc/rpc_rdma_cid.h>
 #include <linux/tracepoint.h>
 #include <rdma/ib_cm.h>
-
 #include <trace/events/rdma.h>
-#include <trace/events/sunrpc_base.h>
 
 /**
  ** Event classes
@@ -56,74 +54,6 @@ DECLARE_EVENT_CLASS(rpcrdma_completion_class,
 
 #define DEFINE_COMPLETION_EVENT(name)					\
 		DEFINE_EVENT(rpcrdma_completion_class, name,		\
-				TP_PROTO(				\
-					const struct ib_wc *wc,		\
-					const struct rpc_rdma_cid *cid	\
-				),					\
-				TP_ARGS(wc, cid))
-
-DECLARE_EVENT_CLASS(rpcrdma_send_completion_class,
-	TP_PROTO(
-		const struct ib_wc *wc,
-		const struct rpc_rdma_cid *cid
-	),
-
-	TP_ARGS(wc, cid),
-
-	TP_STRUCT__entry(
-		__field(u32, cq_id)
-		__field(int, completion_id)
-	),
-
-	TP_fast_assign(
-		__entry->cq_id = cid->ci_queue_id;
-		__entry->completion_id = cid->ci_completion_id;
-	),
-
-	TP_printk("cq.id=%u cid=%d",
-		__entry->cq_id, __entry->completion_id
-	)
-);
-
-#define DEFINE_SEND_COMPLETION_EVENT(name)				\
-		DEFINE_EVENT(rpcrdma_send_completion_class, name,	\
-				TP_PROTO(				\
-					const struct ib_wc *wc,		\
-					const struct rpc_rdma_cid *cid	\
-				),					\
-				TP_ARGS(wc, cid))
-
-DECLARE_EVENT_CLASS(rpcrdma_send_flush_class,
-	TP_PROTO(
-		const struct ib_wc *wc,
-		const struct rpc_rdma_cid *cid
-	),
-
-	TP_ARGS(wc, cid),
-
-	TP_STRUCT__entry(
-		__field(u32, cq_id)
-		__field(int, completion_id)
-		__field(unsigned long, status)
-		__field(unsigned int, vendor_err)
-	),
-
-	TP_fast_assign(
-		__entry->cq_id = cid->ci_queue_id;
-		__entry->completion_id = cid->ci_completion_id;
-		__entry->status = wc->status;
-		__entry->vendor_err = wc->vendor_err;
-	),
-
-	TP_printk("cq.id=%u cid=%d status=%s (%lu/0x%x)",
-		__entry->cq_id, __entry->completion_id,
-		rdma_show_wc_status(__entry->status),
-		__entry->status, __entry->vendor_err
-	)
-);
-
-#define DEFINE_SEND_FLUSH_EVENT(name)					\
-		DEFINE_EVENT(rpcrdma_send_flush_class, name,		\
 				TP_PROTO(				\
 					const struct ib_wc *wc,		\
 					const struct rpc_rdma_cid *cid	\
@@ -209,77 +139,6 @@ DECLARE_EVENT_CLASS(rpcrdma_receive_completion_class,
 
 #define DEFINE_RECEIVE_COMPLETION_EVENT(name)				\
 		DEFINE_EVENT(rpcrdma_receive_completion_class, name,	\
-				TP_PROTO(				\
-					const struct ib_wc *wc,		\
-					const struct rpc_rdma_cid *cid	\
-				),					\
-				TP_ARGS(wc, cid))
-
-DECLARE_EVENT_CLASS(rpcrdma_receive_success_class,
-	TP_PROTO(
-		const struct ib_wc *wc,
-		const struct rpc_rdma_cid *cid
-	),
-
-	TP_ARGS(wc, cid),
-
-	TP_STRUCT__entry(
-		__field(u32, cq_id)
-		__field(int, completion_id)
-		__field(u32, received)
-	),
-
-	TP_fast_assign(
-		__entry->cq_id = cid->ci_queue_id;
-		__entry->completion_id = cid->ci_completion_id;
-		__entry->received = wc->byte_len;
-	),
-
-	TP_printk("cq.id=%u cid=%d received=%u",
-		__entry->cq_id, __entry->completion_id,
-		__entry->received
-	)
-);
-
-#define DEFINE_RECEIVE_SUCCESS_EVENT(name)				\
-		DEFINE_EVENT(rpcrdma_receive_success_class, name,	\
-				TP_PROTO(				\
-					const struct ib_wc *wc,		\
-					const struct rpc_rdma_cid *cid	\
-				),					\
-				TP_ARGS(wc, cid))
-
-DECLARE_EVENT_CLASS(rpcrdma_receive_flush_class,
-	TP_PROTO(
-		const struct ib_wc *wc,
-		const struct rpc_rdma_cid *cid
-	),
-
-	TP_ARGS(wc, cid),
-
-	TP_STRUCT__entry(
-		__field(u32, cq_id)
-		__field(int, completion_id)
-		__field(unsigned long, status)
-		__field(unsigned int, vendor_err)
-	),
-
-	TP_fast_assign(
-		__entry->cq_id = cid->ci_queue_id;
-		__entry->completion_id = cid->ci_completion_id;
-		__entry->status = wc->status;
-		__entry->vendor_err = wc->vendor_err;
-	),
-
-	TP_printk("cq.id=%u cid=%d status=%s (%lu/0x%x)",
-		__entry->cq_id, __entry->completion_id,
-		rdma_show_wc_status(__entry->status),
-		__entry->status, __entry->vendor_err
-	)
-);
-
-#define DEFINE_RECEIVE_FLUSH_EVENT(name)				\
-		DEFINE_EVENT(rpcrdma_receive_flush_class, name,		\
 				TP_PROTO(				\
 					const struct ib_wc *wc,		\
 					const struct rpc_rdma_cid *cid	\
@@ -420,8 +279,7 @@ DECLARE_EVENT_CLASS(xprtrdma_rdch_event,
 		__entry->nsegs = nsegs;
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER
-		  " pos=%u %u@0x%016llx:0x%08x (%s)",
+	TP_printk("task:%u@%u pos=%u %u@0x%016llx:0x%08x (%s)",
 		__entry->task_id, __entry->client_id,
 		__entry->pos, __entry->length,
 		(unsigned long long)__entry->offset, __entry->handle,
@@ -468,8 +326,7 @@ DECLARE_EVENT_CLASS(xprtrdma_wrch_event,
 		__entry->nsegs = nsegs;
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER
-		  " %u@0x%016llx:0x%08x (%s)",
+	TP_printk("task:%u@%u %u@0x%016llx:0x%08x (%s)",
 		__entry->task_id, __entry->client_id,
 		__entry->length, (unsigned long long)__entry->offset,
 		__entry->handle,
@@ -518,16 +375,10 @@ DECLARE_EVENT_CLASS(xprtrdma_mr_class,
 
 	TP_fast_assign(
 		const struct rpcrdma_req *req = mr->mr_req;
+		const struct rpc_task *task = req->rl_slot.rq_task;
 
-		if (req) {
-			const struct rpc_task *task = req->rl_slot.rq_task;
-
-			__entry->task_id = task->tk_pid;
-			__entry->client_id = task->tk_client->cl_clid;
-		} else {
-			__entry->task_id = 0;
-			__entry->client_id = -1;
-		}
+		__entry->task_id = task->tk_pid;
+		__entry->client_id = task->tk_client->cl_clid;
 		__entry->mr_id  = mr->mr_ibmr->res.id;
 		__entry->nents  = mr->mr_nents;
 		__entry->handle = mr->mr_handle;
@@ -536,8 +387,7 @@ DECLARE_EVENT_CLASS(xprtrdma_mr_class,
 		__entry->dir    = mr->mr_dir;
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER
-		  " mr.id=%u nents=%d %u@0x%016llx:0x%08x (%s)",
+	TP_printk("task:%u@%u mr.id=%u nents=%d %u@0x%016llx:0x%08x (%s)",
 		__entry->task_id, __entry->client_id,
 		__entry->mr_id, __entry->nents, __entry->length,
 		(unsigned long long)__entry->offset, __entry->handle,
@@ -780,16 +630,15 @@ TRACE_EVENT(xprtrdma_nomrs_err,
 		__assign_str(port, rpcrdma_portstr(r_xprt));
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER " peer=[%s]:%s",
-		__entry->task_id, __entry->client_id,
-		__get_str(addr), __get_str(port)
+	TP_printk("peer=[%s]:%s task:%u@%u",
+		__get_str(addr), __get_str(port),
+		__entry->task_id, __entry->client_id
 	)
 );
 
 DEFINE_RDCH_EVENT(read);
 DEFINE_WRCH_EVENT(write);
 DEFINE_WRCH_EVENT(reply);
-DEFINE_WRCH_EVENT(wp);
 
 TRACE_DEFINE_ENUM(rpcrdma_noch);
 TRACE_DEFINE_ENUM(rpcrdma_noch_pullup);
@@ -844,8 +693,7 @@ TRACE_EVENT(xprtrdma_marshal,
 		__entry->wtype = wtype;
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER
-		  " xid=0x%08x hdr=%u xdr=%u/%u/%u %s/%s",
+	TP_printk("task:%u@%u xid=0x%08x: hdr=%u xdr=%u/%u/%u %s/%s",
 		__entry->task_id, __entry->client_id, __entry->xid,
 		__entry->hdrlen,
 		__entry->headlen, __entry->pagelen, __entry->taillen,
@@ -875,7 +723,7 @@ TRACE_EVENT(xprtrdma_marshal_failed,
 		__entry->ret = ret;
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER " xid=0x%08x ret=%d",
+	TP_printk("task:%u@%u xid=0x%08x: ret=%d",
 		__entry->task_id, __entry->client_id, __entry->xid,
 		__entry->ret
 	)
@@ -902,7 +750,7 @@ TRACE_EVENT(xprtrdma_prepsend_failed,
 		__entry->ret = ret;
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER " xid=0x%08x ret=%d",
+	TP_printk("task:%u@%u xid=0x%08x: ret=%d",
 		__entry->task_id, __entry->client_id, __entry->xid,
 		__entry->ret
 	)
@@ -937,7 +785,7 @@ TRACE_EVENT(xprtrdma_post_send,
 		__entry->signaled = req->rl_wr.send_flags & IB_SEND_SIGNALED;
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER " cq.id=%u cid=%d (%d SGE%s) %s",
+	TP_printk("task:%u@%u cq.id=%u cid=%d (%d SGE%s) %s",
 		__entry->task_id, __entry->client_id,
 		__entry->cq_id, __entry->completion_id,
 		__entry->num_sge, (__entry->num_sge == 1 ? "" : "s"),
@@ -972,7 +820,7 @@ TRACE_EVENT(xprtrdma_post_send_err,
 		__entry->rc = rc;
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER " cq.id=%u rc=%d",
+	TP_printk("task:%u@%u cq.id=%u rc=%d",
 		__entry->task_id, __entry->client_id,
 		__entry->cq_id, __entry->rc
 	)
@@ -1084,7 +932,7 @@ TRACE_EVENT(xprtrdma_post_linv_err,
 		__entry->status = status;
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER " status=%d",
+	TP_printk("task:%u@%u status=%d",
 		__entry->task_id, __entry->client_id, __entry->status
 	)
 );
@@ -1272,7 +1120,7 @@ TRACE_EVENT(xprtrdma_reply,
 		__entry->credits = credits;
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER " xid=0x%08x credits=%u",
+	TP_printk("task:%u@%u xid=0x%08x credits=%u",
 		__entry->task_id, __entry->client_id, __entry->xid,
 		__entry->credits
 	)
@@ -1308,7 +1156,7 @@ TRACE_EVENT(xprtrdma_err_vers,
 		__entry->max = be32_to_cpup(max);
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER " xid=0x%08x versions=[%u, %u]",
+	TP_printk("task:%u@%u xid=0x%08x versions=[%u, %u]",
 		__entry->task_id, __entry->client_id, __entry->xid,
 		__entry->min, __entry->max
 	)
@@ -1333,7 +1181,7 @@ TRACE_EVENT(xprtrdma_err_chunk,
 		__entry->xid = be32_to_cpu(rqst->rq_xid);
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER " xid=0x%08x",
+	TP_printk("task:%u@%u xid=0x%08x",
 		__entry->task_id, __entry->client_id, __entry->xid
 	)
 );
@@ -1359,7 +1207,7 @@ TRACE_EVENT(xprtrdma_err_unrecognized,
 		__entry->procedure = be32_to_cpup(procedure);
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER " xid=0x%08x procedure=%u",
+	TP_printk("task:%u@%u xid=0x%08x procedure=%u",
 		__entry->task_id, __entry->client_id, __entry->xid,
 		__entry->procedure
 	)
@@ -1391,7 +1239,7 @@ TRACE_EVENT(xprtrdma_fixup,
 		__entry->taillen = rqst->rq_rcv_buf.tail[0].iov_len;
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER " fixup=%lu xdr=%zu/%u/%zu",
+	TP_printk("task:%u@%u fixup=%lu xdr=%zu/%u/%zu",
 		__entry->task_id, __entry->client_id, __entry->fixup,
 		__entry->headlen, __entry->pagelen, __entry->taillen
 	)
@@ -1441,7 +1289,7 @@ TRACE_EVENT(xprtrdma_mrs_zap,
 		__entry->client_id = task->tk_client->cl_clid;
 	),
 
-	TP_printk(SUNRPC_TRACE_TASK_SPECIFIER,
+	TP_printk("task:%u@%u",
 		__entry->task_id, __entry->client_id
 	)
 );
@@ -2020,9 +1868,7 @@ TRACE_EVENT(svcrdma_post_send,
 	)
 );
 
-DEFINE_SEND_COMPLETION_EVENT(svcrdma_wc_send);
-DEFINE_SEND_FLUSH_EVENT(svcrdma_wc_send_flush);
-DEFINE_SEND_FLUSH_EVENT(svcrdma_wc_send_err);
+DEFINE_COMPLETION_EVENT(svcrdma_wc_send);
 
 TRACE_EVENT(svcrdma_post_recv,
 	TP_PROTO(
@@ -2046,9 +1892,7 @@ TRACE_EVENT(svcrdma_post_recv,
 	)
 );
 
-DEFINE_RECEIVE_SUCCESS_EVENT(svcrdma_wc_recv);
-DEFINE_RECEIVE_FLUSH_EVENT(svcrdma_wc_recv_flush);
-DEFINE_RECEIVE_FLUSH_EVENT(svcrdma_wc_recv_err);
+DEFINE_RECEIVE_COMPLETION_EVENT(svcrdma_wc_receive);
 
 TRACE_EVENT(svcrdma_rq_post_err,
 	TP_PROTO(
@@ -2112,42 +1956,8 @@ DEFINE_POST_CHUNK_EVENT(read);
 DEFINE_POST_CHUNK_EVENT(write);
 DEFINE_POST_CHUNK_EVENT(reply);
 
-TRACE_EVENT(svcrdma_wc_read,
-	TP_PROTO(
-		const struct ib_wc *wc,
-		const struct rpc_rdma_cid *cid,
-		unsigned int totalbytes,
-		const ktime_t posttime
-	),
-
-	TP_ARGS(wc, cid, totalbytes, posttime),
-
-	TP_STRUCT__entry(
-		__field(u32, cq_id)
-		__field(int, completion_id)
-		__field(s64, read_latency)
-		__field(unsigned int, totalbytes)
-	),
-
-	TP_fast_assign(
-		__entry->cq_id = cid->ci_queue_id;
-		__entry->completion_id = cid->ci_completion_id;
-		__entry->totalbytes = totalbytes;
-		__entry->read_latency = ktime_us_delta(ktime_get(), posttime);
-	),
-
-	TP_printk("cq.id=%u cid=%d totalbytes=%u latency-us=%lld",
-		__entry->cq_id, __entry->completion_id,
-		__entry->totalbytes, __entry->read_latency
-	)
-);
-
-DEFINE_SEND_FLUSH_EVENT(svcrdma_wc_read_flush);
-DEFINE_SEND_FLUSH_EVENT(svcrdma_wc_read_err);
-
-DEFINE_SEND_COMPLETION_EVENT(svcrdma_wc_write);
-DEFINE_SEND_FLUSH_EVENT(svcrdma_wc_write_flush);
-DEFINE_SEND_FLUSH_EVENT(svcrdma_wc_write_err);
+DEFINE_COMPLETION_EVENT(svcrdma_wc_read);
+DEFINE_COMPLETION_EVENT(svcrdma_wc_write);
 
 TRACE_EVENT(svcrdma_qp_error,
 	TP_PROTO(

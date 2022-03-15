@@ -46,8 +46,7 @@ static int do_pin(int argc, char **argv)
 	}
 
 	obj = bpf_object__open(objfile);
-	err = libbpf_get_error(obj);
-	if (err) {
+	if (IS_ERR(obj)) {
 		p_err("can't open objfile %s", objfile);
 		goto close_map_fd;
 	}
@@ -58,15 +57,15 @@ static int do_pin(int argc, char **argv)
 		goto close_obj;
 	}
 
-	prog = bpf_object__next_program(obj, NULL);
+	prog = bpf_program__next(NULL, obj);
 	if (!prog) {
 		p_err("can't find bpf program in objfile %s", objfile);
 		goto close_obj;
 	}
 
 	link = bpf_program__attach_iter(prog, &iter_opts);
-	err = libbpf_get_error(link);
-	if (err) {
+	if (IS_ERR(link)) {
+		err = PTR_ERR(link);
 		p_err("attach_iter failed for program %s",
 		      bpf_program__name(prog));
 		goto close_obj;

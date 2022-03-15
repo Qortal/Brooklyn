@@ -129,7 +129,7 @@ static void save_restore_vm(struct kvm_vm *vm)
 	vcpu_set_hv_cpuid(vm, VCPU_ID);
 	vcpu_enable_evmcs(vm, VCPU_ID);
 	vcpu_load_state(vm, VCPU_ID, state);
-	kvm_x86_state_cleanup(state);
+	free(state);
 
 	memset(&regs2, 0, sizeof(regs2));
 	vcpu_regs_get(vm, VCPU_ID, &regs2);

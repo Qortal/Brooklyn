@@ -13,7 +13,6 @@
 #include <net/sock.h>
 #include <uapi/linux/sock_diag.h>
 #include <uapi/linux/btf.h>
-#include <linux/rcupdate_trace.h>
 
 DEFINE_BPF_STORAGE_CACHE(sk_cache);
 
@@ -23,8 +22,7 @@ bpf_sk_storage_lookup(struct sock *sk, struct bpf_map *map, bool cacheit_lockit)
 	struct bpf_local_storage *sk_storage;
 	struct bpf_local_storage_map *smap;
 
-	sk_storage =
-		rcu_dereference_check(sk->sk_bpf_storage, bpf_rcu_lock_held());
+	sk_storage = rcu_dereference(sk->sk_bpf_storage);
 	if (!sk_storage)
 		return NULL;
 
@@ -260,7 +258,6 @@ BPF_CALL_4(bpf_sk_storage_get, struct bpf_map *, map, struct sock *, sk,
 {
 	struct bpf_local_storage_data *sdata;
 
-	WARN_ON_ONCE(!bpf_rcu_lock_held());
 	if (!sk || !sk_fullsock(sk) || flags > BPF_SK_STORAGE_GET_F_CREATE)
 		return (unsigned long)NULL;
 
@@ -291,7 +288,6 @@ BPF_CALL_4(bpf_sk_storage_get, struct bpf_map *, map, struct sock *, sk,
 
 BPF_CALL_2(bpf_sk_storage_delete, struct bpf_map *, map, struct sock *, sk)
 {
-	WARN_ON_ONCE(!bpf_rcu_lock_held());
 	if (!sk || !sk_fullsock(sk))
 		return -EINVAL;
 
@@ -420,7 +416,6 @@ static bool bpf_sk_storage_tracing_allowed(const struct bpf_prog *prog)
 BPF_CALL_4(bpf_sk_storage_get_tracing, struct bpf_map *, map, struct sock *, sk,
 	   void *, value, u64, flags)
 {
-	WARN_ON_ONCE(!bpf_rcu_lock_held());
 	if (in_hardirq() || in_nmi())
 		return (unsigned long)NULL;
 
@@ -430,7 +425,6 @@ BPF_CALL_4(bpf_sk_storage_get_tracing, struct bpf_map *, map, struct sock *, sk,
 BPF_CALL_2(bpf_sk_storage_delete_tracing, struct bpf_map *, map,
 	   struct sock *, sk)
 {
-	WARN_ON_ONCE(!bpf_rcu_lock_held());
 	if (in_hardirq() || in_nmi())
 		return -EPERM;
 
@@ -935,7 +929,7 @@ static struct bpf_iter_reg bpf_sk_storage_map_reg_info = {
 		{ offsetof(struct bpf_iter__bpf_sk_storage_map, sk),
 		  PTR_TO_BTF_ID_OR_NULL },
 		{ offsetof(struct bpf_iter__bpf_sk_storage_map, value),
-		  PTR_TO_BUF | PTR_MAYBE_NULL },
+		  PTR_TO_RDWR_BUF_OR_NULL },
 	},
 	.seq_info		= &iter_seq_info,
 };

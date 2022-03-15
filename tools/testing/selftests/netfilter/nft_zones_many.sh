@@ -9,7 +9,7 @@ ns="ns-$sfx"
 # Kselftest framework requirement - SKIP code is 4.
 ksft_skip=4
 
-zones=2000
+zones=20000
 have_ct_tool=0
 ret=0
 
@@ -18,17 +18,11 @@ cleanup()
 	ip netns del $ns
 }
 
-checktool (){
-	if ! $1 > /dev/null 2>&1; then
-		echo "SKIP: Could not $2"
-		exit $ksft_skip
-	fi
-}
-
-checktool "nft --version" "run test without nft tool"
-checktool "ip -Version" "run test without ip tool"
-checktool "socat -V" "run test without socat tool"
-checktool "ip netns add $ns" "create net namespace"
+ip netns add $ns
+if [ $? -ne 0 ];then
+	echo "SKIP: Could not create net namespace $gw"
+	exit $ksft_skip
+fi
 
 trap cleanup EXIT
 
@@ -75,10 +69,9 @@ EOF
 
 	while [ $i -lt $max_zones ]; do
 		local start=$(date +%s%3N)
-		i=$((i + 1000))
+		i=$((i + 10000))
 		j=$((j + 1))
-		# nft rule in output places each packet in a different zone.
-		dd if=/dev/zero of=/dev/stdout bs=8k count=1000 2>/dev/null | ip netns exec "$ns" socat STDIN UDP:127.0.0.1:12345,sourceport=12345
+		dd if=/dev/zero of=/dev/stdout bs=8k count=10000 2>/dev/null | ip netns exec "$ns" nc -w 1 -q 1 -u -p 12345 127.0.0.1 12345 > /dev/null
 		if [ $? -ne 0 ] ;then
 			ret=1
 			break
@@ -86,7 +79,7 @@ EOF
 
 		stop=$(date +%s%3N)
 		local duration=$((stop-start))
-		echo "PASS: added 1000 entries in $duration ms (now $i total, loop $j)"
+		echo "PASS: added 10000 entries in $duration ms (now $i total, loop $j)"
 	done
 
 	if [ $have_ct_tool -eq 1 ]; then
@@ -128,11 +121,11 @@ test_conntrack_tool() {
 			break
 		fi
 
-		if [ $((i%1000)) -eq 0 ];then
+		if [ $((i%10000)) -eq 0 ];then
 			stop=$(date +%s%3N)
 
 			local duration=$((stop-start))
-			echo "PASS: added 1000 entries in $duration ms (now $i total)"
+			echo "PASS: added 10000 entries in $duration ms (now $i total)"
 			start=$stop
 		fi
 	done

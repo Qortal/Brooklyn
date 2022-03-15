@@ -9,7 +9,7 @@
 #include <sound/soc-acpi.h>
 #include <sound/soc-acpi-intel-match.h>
 
-static const struct snd_soc_acpi_codecs glk_codecs = {
+static struct snd_soc_acpi_codecs glk_codecs = {
 	.num_codecs = 1,
 	.codecs = {"MX98357A"}
 };
@@ -41,14 +41,6 @@ struct snd_soc_acpi_mach snd_soc_acpi_intel_glk_machines[] = {
 		.sof_tplg_filename = "sof-glk-rt5682.tplg",
 	},
 	{
-		.id = "RTL5682",
-		.drv_name = "glk_rt5682_max98357a",
-		.machine_quirk = snd_soc_acpi_codec_list,
-		.quirk_data = &glk_codecs,
-		.sof_fw_filename = "sof-glk.ri",
-		.sof_tplg_filename = "sof-glk-rt5682.tplg",
-	},
-	{
 		.id = "10134242",
 		.drv_name = "glk_cs4242_mx98357a",
 		.fw_filename = "intel/dsp_fw_glk.bin",
@@ -57,12 +49,7 @@ struct snd_soc_acpi_mach snd_soc_acpi_intel_glk_machines[] = {
 		.sof_fw_filename = "sof-glk.ri",
 		.sof_tplg_filename = "sof-glk-cs42l42.tplg",
 	},
-	{
-		.id = "ESSX8336",
-		.drv_name = "sof-essx8336",
-		.sof_fw_filename = "sof-glk.ri",
-		.sof_tplg_filename = "sof-glk-es8336.tplg",
-	},
+
 	{},
 };
 EXPORT_SYMBOL_GPL(snd_soc_acpi_intel_glk_machines);

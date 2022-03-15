@@ -8,7 +8,7 @@
 
 #define IFINDEX_LO 1
 
-static void test_xdp_with_devmap_helpers(void)
+void test_xdp_with_devmap_helpers(void)
 {
 	struct test_xdp_with_devmap_helpers *skel;
 	struct bpf_prog_info info = {};
@@ -60,7 +60,7 @@ out_close:
 	test_xdp_with_devmap_helpers__destroy(skel);
 }
 
-static void test_neg_xdp_devmap_helpers(void)
+void test_neg_xdp_devmap_helpers(void)
 {
 	struct test_xdp_devmap_helpers *skel;
 
@@ -72,7 +72,7 @@ static void test_neg_xdp_devmap_helpers(void)
 }
 
 
-void serial_test_xdp_devmap_attach(void)
+void test_xdp_devmap_attach(void)
 {
 	if (test__start_subtest("DEVMAP with programs in entries"))
 		test_xdp_with_devmap_helpers();

@@ -20,8 +20,6 @@
 #include "../../codecs/hdac_hda.h"
 #endif /* CONFIG_SND_SOC_SOF_HDA_AUDIO_CODEC */
 
-#define CODEC_PROBE_RETRIES	3
-
 #if IS_ENABLED(CONFIG_SND_SOC_SOF_HDA_AUDIO_CODEC)
 #define IDISP_VID_INTEL	0x80860000
 
@@ -123,15 +121,12 @@ static int hda_codec_probe(struct snd_sof_dev *sdev, int address,
 	u32 hda_cmd = (address << 28) | (AC_NODE_ROOT << 20) |
 		(AC_VERB_PARAMETERS << 8) | AC_PAR_VENDOR_ID;
 	u32 resp = -1;
-	int ret, retry = 0;
+	int ret;
 
-	do {
-		mutex_lock(&hbus->core.cmd_mutex);
-		snd_hdac_bus_send_cmd(&hbus->core, hda_cmd);
-		snd_hdac_bus_get_response(&hbus->core, address, &resp);
-		mutex_unlock(&hbus->core.cmd_mutex);
-	} while (resp == -1 && retry++ < CODEC_PROBE_RETRIES);
-
+	mutex_lock(&hbus->core.cmd_mutex);
+	snd_hdac_bus_send_cmd(&hbus->core, hda_cmd);
+	snd_hdac_bus_get_response(&hbus->core, address, &resp);
+	mutex_unlock(&hbus->core.cmd_mutex);
 	if (resp == -1)
 		return -EIO;
 	dev_dbg(sdev->dev, "HDA codec #%d probed OK: response: %x\n",

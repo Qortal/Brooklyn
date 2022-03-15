@@ -17,7 +17,6 @@
 #include "bpf_rlimit.h"
 #include "bpf_util.h"
 #include "cgroup_helpers.h"
-#include "testing_helpers.h"
 
 #define CG_PATH			"/foo"
 #define MAX_INSNS		512
@@ -125,7 +124,7 @@ static struct sysctl_test tests[] = {
 		.descr = "ctx:write sysctl:write read ok narrow",
 		.insns = {
 			/* u64 w = (u16)write & 1; */
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#if __BYTE_ORDER == __LITTLE_ENDIAN
 			BPF_LDX_MEM(BPF_H, BPF_REG_7, BPF_REG_1,
 				    offsetof(struct bpf_sysctl, write)),
 #else
@@ -185,7 +184,7 @@ static struct sysctl_test tests[] = {
 		.descr = "ctx:file_pos sysctl:read read ok narrow",
 		.insns = {
 			/* If (file_pos == X) */
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#if __BYTE_ORDER == __LITTLE_ENDIAN
 			BPF_LDX_MEM(BPF_B, BPF_REG_7, BPF_REG_1,
 				    offsetof(struct bpf_sysctl, file_pos)),
 #else
@@ -1436,10 +1435,14 @@ static int load_sysctl_prog_insns(struct sysctl_test *test,
 				  const char *sysctl_path)
 {
 	struct bpf_insn *prog = test->insns;
-	LIBBPF_OPTS(bpf_prog_load_opts, opts);
-	int ret, insn_cnt;
+	struct bpf_load_program_attr attr;
+	int ret;
 
-	insn_cnt = probe_prog_length(prog);
+	memset(&attr, 0, sizeof(struct bpf_load_program_attr));
+	attr.prog_type = BPF_PROG_TYPE_CGROUP_SYSCTL;
+	attr.insns = prog;
+	attr.insns_cnt = probe_prog_length(attr.insns);
+	attr.license = "GPL";
 
 	if (test->fixup_value_insn) {
 		char buf[128];
@@ -1462,10 +1465,7 @@ static int load_sysctl_prog_insns(struct sysctl_test *test,
 			return -1;
 	}
 
-	opts.log_buf = bpf_log_buf;
-	opts.log_size = BPF_LOG_BUF_SIZE;
-
-	ret = bpf_prog_load(BPF_PROG_TYPE_CGROUP_SYSCTL, NULL, "GPL", prog, insn_cnt, &opts);
+	ret = bpf_load_program_xattr(&attr, bpf_log_buf, BPF_LOG_BUF_SIZE);
 	if (ret < 0 && test->result != LOAD_REJECT) {
 		log_err(">>> Loading program error.\n"
 			">>> Verifier output:\n%s\n-------\n", bpf_log_buf);
@@ -1476,10 +1476,15 @@ static int load_sysctl_prog_insns(struct sysctl_test *test,
 
 static int load_sysctl_prog_file(struct sysctl_test *test)
 {
+	struct bpf_prog_load_attr attr;
 	struct bpf_object *obj;
 	int prog_fd;
 
-	if (bpf_prog_test_load(test->prog_file, BPF_PROG_TYPE_CGROUP_SYSCTL, &obj, &prog_fd)) {
+	memset(&attr, 0, sizeof(struct bpf_prog_load_attr));
+	attr.file = test->prog_file;
+	attr.prog_type = BPF_PROG_TYPE_CGROUP_SYSCTL;
+
+	if (bpf_prog_load_xattr(&attr, &obj, &prog_fd)) {
 		if (test->result != LOAD_REJECT)
 			log_err(">>> Loading program (%s) error.\n",
 				test->prog_file);

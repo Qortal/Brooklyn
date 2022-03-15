@@ -12,7 +12,7 @@
 
 /* Current ACPICA subsystem version in YYYYMMDD format */
 
-#define ACPI_CA_VERSION                 0x20211217
+#define ACPI_CA_VERSION                 0x20210730
 
 #include <acpi/acconfig.h>
 #include <acpi/actypes.h>
@@ -454,11 +454,9 @@ ACPI_EXTERNAL_RETURN_STATUS(acpi_status
  * ACPI table load/unload interfaces
  */
 ACPI_EXTERNAL_RETURN_STATUS(acpi_status ACPI_INIT_FUNCTION
-			    acpi_install_table(struct acpi_table_header *table))
+			    acpi_install_table(acpi_physical_address address,
+					       u8 physical))
 
-ACPI_EXTERNAL_RETURN_STATUS(acpi_status ACPI_INIT_FUNCTION
-			    acpi_install_physical_table(acpi_physical_address
-							address))
 ACPI_EXTERNAL_RETURN_STATUS(acpi_status
 			    acpi_load_table(struct acpi_table_header *table,
 					    u32 *table_idx))

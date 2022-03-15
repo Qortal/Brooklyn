@@ -16,6 +16,7 @@
 #include "test_tcpbpf.h"
 
 struct tcpbpf_globals global = {};
+int _version SEC("version") = 1;
 
 /**
  * SOL_TCP is defined in <netinet/tcp.h> while

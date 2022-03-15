@@ -82,7 +82,7 @@ static int do_test(struct evlist *evlist, int mmap_pages,
 }
 
 
-static int test__backward_ring_buffer(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__backward_ring_buffer(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	int ret = TEST_SKIP, err, sample_count = 0, comm_count = 0;
 	char pid[16], sbuf[STRERR_BUFSIZE];
@@ -115,13 +115,12 @@ static int test__backward_ring_buffer(struct test_suite *test __maybe_unused, in
 		goto out_delete_evlist;
 	}
 
-	parse_events_error__init(&parse_error);
+	bzero(&parse_error, sizeof(parse_error));
 	/*
 	 * Set backward bit, ring buffer should be writing from end. Record
 	 * it in aux evlist
 	 */
 	err = parse_events(evlist, "syscalls:sys_enter_prctl/overwrite/", &parse_error);
-	parse_events_error__exit(&parse_error);
 	if (err) {
 		pr_debug("Failed to parse tracepoint event, try use root\n");
 		ret = TEST_SKIP;
@@ -167,5 +166,3 @@ out_delete_evlist:
 	evlist__delete(evlist);
 	return ret;
 }
-
-DEFINE_SUITE("Read backward ring buffer", backward_ring_buffer);

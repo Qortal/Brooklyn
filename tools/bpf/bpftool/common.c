@@ -22,7 +22,6 @@
 #include <sys/vfs.h>
 
 #include <bpf/bpf.h>
-#include <bpf/hashmap.h>
 #include <bpf/libbpf.h> /* libbpf_num_possible_cpus */
 
 #include "main.h"
@@ -74,7 +73,6 @@ const char * const attach_type_name[__MAX_BPF_ATTACH_TYPE] = {
 	[BPF_XDP]			= "xdp",
 	[BPF_SK_REUSEPORT_SELECT]	= "sk_skb_reuseport_select",
 	[BPF_SK_REUSEPORT_SELECT_OR_MIGRATE]	= "sk_skb_reuseport_select_or_migrate",
-	[BPF_PERF_EVENT]		= "perf_event",
 };
 
 void p_err(const char *fmt, ...)
@@ -395,7 +393,7 @@ void print_hex_data_json(uint8_t *data, size_t len)
 }
 
 /* extra params for nftw cb */
-static struct hashmap *build_fn_table;
+static struct pinned_obj_table *build_fn_table;
 static enum bpf_obj_type build_fn_type;
 
 static int do_build_table_cb(const char *fpath, const struct stat *sb,
@@ -403,9 +401,9 @@ static int do_build_table_cb(const char *fpath, const struct stat *sb,
 {
 	struct bpf_prog_info pinned_info;
 	__u32 len = sizeof(pinned_info);
+	struct pinned_obj *obj_node;
 	enum bpf_obj_type objtype;
 	int fd, err = 0;
-	char *path;
 
 	if (typeflag != FTW_F)
 		goto out_ret;
@@ -422,26 +420,28 @@ static int do_build_table_cb(const char *fpath, const struct stat *sb,
 	if (bpf_obj_get_info_by_fd(fd, &pinned_info, &len))
 		goto out_close;
 
-	path = strdup(fpath);
-	if (!path) {
+	obj_node = calloc(1, sizeof(*obj_node));
+	if (!obj_node) {
 		err = -1;
 		goto out_close;
 	}
 
-	err = hashmap__append(build_fn_table, u32_as_hash_field(pinned_info.id), path);
-	if (err) {
-		p_err("failed to append entry to hashmap for ID %u, path '%s': %s",
-		      pinned_info.id, path, strerror(errno));
+	obj_node->id = pinned_info.id;
+	obj_node->path = strdup(fpath);
+	if (!obj_node->path) {
+		err = -1;
+		free(obj_node);
 		goto out_close;
 	}
 
+	hash_add(build_fn_table->table, &obj_node->hash, obj_node->id);
 out_close:
 	close(fd);
 out_ret:
 	return err;
 }
 
-int build_pinned_obj_table(struct hashmap *tab,
+int build_pinned_obj_table(struct pinned_obj_table *tab,
 			   enum bpf_obj_type type)
 {
 	struct mntent *mntent = NULL;
@@ -470,18 +470,17 @@ int build_pinned_obj_table(struct hashmap *tab,
 	return err;
 }
 
-void delete_pinned_obj_table(struct hashmap *map)
+void delete_pinned_obj_table(struct pinned_obj_table *tab)
 {
-	struct hashmap_entry *entry;
-	size_t bkt;
+	struct pinned_obj *obj;
+	struct hlist_node *tmp;
+	unsigned int bkt;
 
-	if (!map)
-		return;
-
-	hashmap__for_each_entry(map, entry, bkt)
-		free(entry->value);
-
-	hashmap__free(map);
+	hash_for_each_safe(tab->table, bkt, tmp, obj, hash) {
+		hash_del(&obj->hash);
+		free(obj->path);
+		free(obj);
+	}
 }
 
 unsigned int get_page_size(void)
@@ -962,14 +961,4 @@ int map_parse_fd_and_info(int *argc, char ***argv, void *info, __u32 *info_len)
 	}
 
 	return fd;
-}
-
-size_t hash_fn_for_key_as_id(const void *key, void *ctx)
-{
-	return (size_t)key;
-}
-
-bool equal_fn_for_key_as_id(const void *k1, const void *k2, void *ctx)
-{
-	return k1 == k2;
 }

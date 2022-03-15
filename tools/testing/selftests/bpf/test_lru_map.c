@@ -28,14 +28,13 @@ static int nr_cpus;
 
 static int create_map(int map_type, int map_flags, unsigned int size)
 {
-	LIBBPF_OPTS(bpf_map_create_opts, opts, .map_flags = map_flags);
 	int map_fd;
 
-	map_fd = bpf_map_create(map_type, NULL,  sizeof(unsigned long long),
-				sizeof(unsigned long long), size, &opts);
+	map_fd = bpf_create_map(map_type, sizeof(unsigned long long),
+				sizeof(unsigned long long), size, map_flags);
 
 	if (map_fd == -1)
-		perror("bpf_map_create");
+		perror("bpf_create_map");
 
 	return map_fd;
 }
@@ -43,6 +42,8 @@ static int create_map(int map_type, int map_flags, unsigned int size)
 static int bpf_map_lookup_elem_with_ref_bit(int fd, unsigned long long key,
 					    void *value)
 {
+	struct bpf_load_program_attr prog;
+	struct bpf_create_map_attr map;
 	struct bpf_insn insns[] = {
 		BPF_LD_MAP_VALUE(BPF_REG_9, 0, 0),
 		BPF_LD_MAP_FD(BPF_REG_1, fd),
@@ -63,13 +64,25 @@ static int bpf_map_lookup_elem_with_ref_bit(int fd, unsigned long long key,
 	int mfd, pfd, ret, zero = 0;
 	__u32 retval = 0;
 
-	mfd = bpf_map_create(BPF_MAP_TYPE_ARRAY, NULL, sizeof(int), sizeof(__u64), 1, NULL);
+	memset(&map, 0, sizeof(map));
+	map.map_type = BPF_MAP_TYPE_ARRAY;
+	map.key_size = sizeof(int);
+	map.value_size = sizeof(unsigned long long);
+	map.max_entries = 1;
+
+	mfd = bpf_create_map_xattr(&map);
 	if (mfd < 0)
 		return -1;
 
 	insns[0].imm = mfd;
 
-	pfd = bpf_prog_load(BPF_PROG_TYPE_SCHED_CLS, NULL, "GPL", insns, ARRAY_SIZE(insns), NULL);
+	memset(&prog, 0, sizeof(prog));
+	prog.prog_type = BPF_PROG_TYPE_SCHED_CLS;
+	prog.insns = insns;
+	prog.insns_cnt = ARRAY_SIZE(insns);
+	prog.license = "GPL";
+
+	pfd = bpf_load_program_xattr(&prog, NULL, 0);
 	if (pfd < 0) {
 		close(mfd);
 		return -1;

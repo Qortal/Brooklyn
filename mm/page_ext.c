@@ -8,7 +8,6 @@
 #include <linux/kmemleak.h>
 #include <linux/page_owner.h>
 #include <linux/page_idle.h>
-#include <linux/page_table_check.h>
 
 /*
  * struct page extension
@@ -64,20 +63,17 @@ static bool need_page_idle(void)
 {
 	return true;
 }
-static struct page_ext_operations page_idle_ops __initdata = {
+struct page_ext_operations page_idle_ops = {
 	.need = need_page_idle,
 };
 #endif
 
-static struct page_ext_operations *page_ext_ops[] __initdata = {
+static struct page_ext_operations *page_ext_ops[] = {
 #ifdef CONFIG_PAGE_OWNER
 	&page_owner_ops,
 #endif
 #if defined(CONFIG_PAGE_IDLE_FLAG) && !defined(CONFIG_64BIT)
 	&page_idle_ops,
-#endif
-#ifdef CONFIG_PAGE_TABLE_CHECK
-	&page_table_check_ops,
 #endif
 };
 
@@ -205,7 +201,7 @@ fail:
 	panic("Out of memory");
 }
 
-#else /* CONFIG_SPARSEMEM */
+#else /* CONFIG_FLATMEM */
 
 struct page_ext *lookup_page_ext(const struct page *page)
 {

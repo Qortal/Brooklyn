@@ -7,7 +7,6 @@
  */
 #define pr_fmt(fmt)	"trace_uprobe: " fmt
 
-#include <linux/bpf-cgroup.h>
 #include <linux/security.h>
 #include <linux/ctype.h>
 #include <linux/module.h>
@@ -410,10 +409,12 @@ static bool trace_uprobe_has_same_uprobe(struct trace_uprobe *orig,
 					 struct trace_uprobe *comp)
 {
 	struct trace_probe_event *tpe = orig->tp.event;
+	struct trace_probe *pos;
 	struct inode *comp_inode = d_real_inode(comp->path.dentry);
 	int i;
 
-	list_for_each_entry(orig, &tpe->probes, tp.list) {
+	list_for_each_entry(pos, &tpe->probes, list) {
+		orig = container_of(pos, struct trace_uprobe, tp);
 		if (comp_inode != d_real_inode(orig->path.dentry) ||
 		    comp->offset != orig->offset)
 			continue;
@@ -948,7 +949,8 @@ static void __uprobe_trace_func(struct trace_uprobe *tu,
 				struct trace_event_file *trace_file)
 {
 	struct uprobe_trace_entry_head *entry;
-	struct trace_event_buffer fbuffer;
+	struct trace_buffer *buffer;
+	struct ring_buffer_event *event;
 	void *data;
 	int size, esize;
 	struct trace_event_call *call = trace_probe_event_call(&tu->tp);
@@ -963,10 +965,12 @@ static void __uprobe_trace_func(struct trace_uprobe *tu,
 
 	esize = SIZEOF_TRACE_ENTRY(is_ret_probe(tu));
 	size = esize + tu->tp.size + dsize;
-	entry = trace_event_buffer_reserve(&fbuffer, trace_file, size);
-	if (!entry)
+	event = trace_event_buffer_lock_reserve(&buffer, trace_file,
+						call->event.type, size, 0);
+	if (!event)
 		return;
 
+	entry = ring_buffer_event_data(event);
 	if (is_ret_probe(tu)) {
 		entry->vaddr[0] = func;
 		entry->vaddr[1] = instruction_pointer(regs);
@@ -978,7 +982,7 @@ static void __uprobe_trace_func(struct trace_uprobe *tu,
 
 	memcpy(data, ucb->buf, tu->tp.size + dsize);
 
-	trace_event_buffer_commit(&fbuffer);
+	event_trigger_unlock_commit(trace_file, buffer, event, entry, 0);
 }
 
 /* uprobe handler */
@@ -1071,12 +1075,14 @@ static int trace_uprobe_enable(struct trace_uprobe *tu, filter_func_t filter)
 
 static void __probe_event_disable(struct trace_probe *tp)
 {
+	struct trace_probe *pos;
 	struct trace_uprobe *tu;
 
 	tu = container_of(tp, struct trace_uprobe, tp);
 	WARN_ON(!uprobe_filter_is_empty(tu->tp.event->filter));
 
-	list_for_each_entry(tu, trace_probe_probe_list(tp), tp.list) {
+	list_for_each_entry(pos, trace_probe_probe_list(tp), list) {
+		tu = container_of(pos, struct trace_uprobe, tp);
 		if (!tu->inode)
 			continue;
 
@@ -1088,7 +1094,7 @@ static void __probe_event_disable(struct trace_probe *tp)
 static int probe_event_enable(struct trace_event_call *call,
 			struct trace_event_file *file, filter_func_t filter)
 {
-	struct trace_probe *tp;
+	struct trace_probe *pos, *tp;
 	struct trace_uprobe *tu;
 	bool enabled;
 	int ret;
@@ -1123,7 +1129,8 @@ static int probe_event_enable(struct trace_event_call *call,
 	if (ret)
 		goto err_flags;
 
-	list_for_each_entry(tu, trace_probe_probe_list(tp), tp.list) {
+	list_for_each_entry(pos, trace_probe_probe_list(tp), list) {
+		tu = container_of(pos, struct trace_uprobe, tp);
 		ret = trace_uprobe_enable(tu, filter);
 		if (ret) {
 			__probe_event_disable(tp);
@@ -1268,7 +1275,7 @@ static bool trace_uprobe_filter_add(struct trace_uprobe_filter *filter,
 static int uprobe_perf_close(struct trace_event_call *call,
 			     struct perf_event *event)
 {
-	struct trace_probe *tp;
+	struct trace_probe *pos, *tp;
 	struct trace_uprobe *tu;
 	int ret = 0;
 
@@ -1280,7 +1287,8 @@ static int uprobe_perf_close(struct trace_event_call *call,
 	if (trace_uprobe_filter_remove(tu->tp.event->filter, event))
 		return 0;
 
-	list_for_each_entry(tu, trace_probe_probe_list(tp), tp.list) {
+	list_for_each_entry(pos, trace_probe_probe_list(tp), list) {
+		tu = container_of(pos, struct trace_uprobe, tp);
 		ret = uprobe_apply(tu->inode, tu->offset, &tu->consumer, false);
 		if (ret)
 			break;
@@ -1292,7 +1300,7 @@ static int uprobe_perf_close(struct trace_event_call *call,
 static int uprobe_perf_open(struct trace_event_call *call,
 			    struct perf_event *event)
 {
-	struct trace_probe *tp;
+	struct trace_probe *pos, *tp;
 	struct trace_uprobe *tu;
 	int err = 0;
 
@@ -1304,7 +1312,8 @@ static int uprobe_perf_open(struct trace_event_call *call,
 	if (trace_uprobe_filter_add(tu->tp.event->filter, event))
 		return 0;
 
-	list_for_each_entry(tu, trace_probe_probe_list(tp), tp.list) {
+	list_for_each_entry(pos, trace_probe_probe_list(tp), list) {
+		tu = container_of(pos, struct trace_uprobe, tp);
 		err = uprobe_apply(tu->inode, tu->offset, &tu->consumer, true);
 		if (err) {
 			uprobe_perf_close(call, event);

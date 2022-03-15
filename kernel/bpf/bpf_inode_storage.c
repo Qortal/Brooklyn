@@ -17,7 +17,6 @@
 #include <linux/bpf_lsm.h>
 #include <linux/btf_ids.h>
 #include <linux/fdtable.h>
-#include <linux/rcupdate_trace.h>
 
 DEFINE_BPF_STORAGE_CACHE(inode_cache);
 
@@ -45,8 +44,7 @@ static struct bpf_local_storage_data *inode_storage_lookup(struct inode *inode,
 	if (!bsb)
 		return NULL;
 
-	inode_storage =
-		rcu_dereference_check(bsb->storage, bpf_rcu_lock_held());
+	inode_storage = rcu_dereference(bsb->storage);
 	if (!inode_storage)
 		return NULL;
 
@@ -174,7 +172,6 @@ BPF_CALL_4(bpf_inode_storage_get, struct bpf_map *, map, struct inode *, inode,
 {
 	struct bpf_local_storage_data *sdata;
 
-	WARN_ON_ONCE(!bpf_rcu_lock_held());
 	if (flags & ~(BPF_LOCAL_STORAGE_GET_F_CREATE))
 		return (unsigned long)NULL;
 
@@ -207,7 +204,6 @@ BPF_CALL_4(bpf_inode_storage_get, struct bpf_map *, map, struct inode *, inode,
 BPF_CALL_2(bpf_inode_storage_delete,
 	   struct bpf_map *, map, struct inode *, inode)
 {
-	WARN_ON_ONCE(!bpf_rcu_lock_held());
 	if (!inode)
 		return -EINVAL;
 

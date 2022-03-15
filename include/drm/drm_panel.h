@@ -24,6 +24,7 @@
 #ifndef __DRM_PANEL_H__
 #define __DRM_PANEL_H__
 
+#include <drm/drm_connector.h>
 #include <linux/err.h>
 #include <linux/errno.h>
 #include <linux/list.h>
@@ -34,8 +35,6 @@ struct drm_connector;
 struct drm_device;
 struct drm_panel;
 struct display_timing;
-
-enum drm_panel_orientation;
 
 /**
  * struct drm_panel_funcs - perform operations on a given panel
@@ -179,6 +178,16 @@ struct drm_panel {
 	 * Panel entry in registry.
 	 */
 	struct list_head list;
+
+	/**
+	 * @prepare_upstream_first:
+	 *
+	 * The upstream controller should be prepared first, before the prepare
+	 * for the panel is called. This is largely required for DSI panels
+	 * where the DSI host controller should be initialised to LP-11 before
+	 * the panel is powered up.
+	 */
+	bool prepare_upstream_first;
 };
 
 void drm_panel_init(struct drm_panel *panel, struct device *dev,

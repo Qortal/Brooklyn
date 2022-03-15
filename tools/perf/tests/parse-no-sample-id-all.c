@@ -67,8 +67,7 @@ struct test_attr_event {
  *
  * Return: %0 on success, %-1 if the test fails.
  */
-static int test__parse_no_sample_id_all(struct test_suite *test __maybe_unused,
-					int subtest __maybe_unused)
+int test__parse_no_sample_id_all(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	int err;
 
@@ -104,5 +103,3 @@ static int test__parse_no_sample_id_all(struct test_suite *test __maybe_unused,
 
 	return 0;
 }
-
-DEFINE_SUITE("Parse with no sample_id_all bit set", parse_no_sample_id_all);

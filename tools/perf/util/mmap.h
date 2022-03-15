@@ -7,7 +7,6 @@
 #include <linux/types.h>
 #include <linux/ring_buffer.h>
 #include <linux/bitops.h>
-#include <perf/cpumap.h>
 #include <stdbool.h>
 #include <pthread.h> // for cpu_set_t
 #ifdef HAVE_AIO_SUPPORT
@@ -53,7 +52,7 @@ struct mmap_params {
 	struct auxtrace_mmap_params auxtrace_mp;
 };
 
-int mmap__mmap(struct mmap *map, struct mmap_params *mp, int fd, struct perf_cpu cpu);
+int mmap__mmap(struct mmap *map, struct mmap_params *mp, int fd, int cpu);
 void mmap__munmap(struct mmap *map);
 
 union perf_event *perf_mmap__read_forward(struct mmap *map);
@@ -64,8 +63,5 @@ int perf_mmap__push(struct mmap *md, void *to,
 size_t mmap__mmap_len(struct mmap *map);
 
 void mmap_cpu_mask__scnprintf(struct mmap_cpu_mask *mask, const char *tag);
-
-int mmap_cpu_mask__duplicate(struct mmap_cpu_mask *original,
-				struct mmap_cpu_mask *clone);
 
 #endif /*__PERF_MMAP_H */

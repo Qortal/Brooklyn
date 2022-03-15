@@ -220,6 +220,7 @@ SYSCALL_DEFINE3(setpriority, int, which, int, who, int, niceval)
 		niceval = MAX_NICE;
 
 	rcu_read_lock();
+	read_lock(&tasklist_lock);
 	switch (which) {
 	case PRIO_PROCESS:
 		if (who)
@@ -234,11 +235,9 @@ SYSCALL_DEFINE3(setpriority, int, which, int, who, int, niceval)
 			pgrp = find_vpid(who);
 		else
 			pgrp = task_pgrp(current);
-		read_lock(&tasklist_lock);
 		do_each_pid_thread(pgrp, PIDTYPE_PGID, p) {
 			error = set_one_prio(p, niceval, error);
 		} while_each_pid_thread(pgrp, PIDTYPE_PGID, p);
-		read_unlock(&tasklist_lock);
 		break;
 	case PRIO_USER:
 		uid = make_kuid(cred->user_ns, who);
@@ -250,15 +249,16 @@ SYSCALL_DEFINE3(setpriority, int, which, int, who, int, niceval)
 			if (!user)
 				goto out_unlock;	/* No processes for this user */
 		}
-		for_each_process_thread(g, p) {
+		do_each_thread(g, p) {
 			if (uid_eq(task_uid(p), uid) && task_pid_vnr(p))
 				error = set_one_prio(p, niceval, error);
-		}
+		} while_each_thread(g, p);
 		if (!uid_eq(uid, cred->uid))
 			free_uid(user);		/* For find_user() */
 		break;
 	}
 out_unlock:
+	read_unlock(&tasklist_lock);
 	rcu_read_unlock();
 out:
 	return error;
@@ -283,6 +283,7 @@ SYSCALL_DEFINE2(getpriority, int, which, int, who)
 		return -EINVAL;
 
 	rcu_read_lock();
+	read_lock(&tasklist_lock);
 	switch (which) {
 	case PRIO_PROCESS:
 		if (who)
@@ -300,13 +301,11 @@ SYSCALL_DEFINE2(getpriority, int, which, int, who)
 			pgrp = find_vpid(who);
 		else
 			pgrp = task_pgrp(current);
-		read_lock(&tasklist_lock);
 		do_each_pid_thread(pgrp, PIDTYPE_PGID, p) {
 			niceval = nice_to_rlimit(task_nice(p));
 			if (niceval > retval)
 				retval = niceval;
 		} while_each_pid_thread(pgrp, PIDTYPE_PGID, p);
-		read_unlock(&tasklist_lock);
 		break;
 	case PRIO_USER:
 		uid = make_kuid(cred->user_ns, who);
@@ -318,18 +317,19 @@ SYSCALL_DEFINE2(getpriority, int, which, int, who)
 			if (!user)
 				goto out_unlock;	/* No processes for this user */
 		}
-		for_each_process_thread(g, p) {
+		do_each_thread(g, p) {
 			if (uid_eq(task_uid(p), uid) && task_pid_vnr(p)) {
 				niceval = nice_to_rlimit(task_nice(p));
 				if (niceval > retval)
 					retval = niceval;
 			}
-		}
+		} while_each_thread(g, p);
 		if (!uid_eq(uid, cred->uid))
 			free_uid(user);		/* for find_user() */
 		break;
 	}
 out_unlock:
+	read_unlock(&tasklist_lock);
 	rcu_read_unlock();
 
 	return retval;
@@ -2269,66 +2269,6 @@ int __weak arch_prctl_spec_ctrl_set(struct task_struct *t, unsigned long which,
 
 #define PR_IO_FLUSHER (PF_MEMALLOC_NOIO | PF_LOCAL_THROTTLE)
 
-#ifdef CONFIG_ANON_VMA_NAME
-
-#define ANON_VMA_NAME_MAX_LEN		80
-#define ANON_VMA_NAME_INVALID_CHARS	"\\`$[]"
-
-static inline bool is_valid_name_char(char ch)
-{
-	/* printable ascii characters, excluding ANON_VMA_NAME_INVALID_CHARS */
-	return ch > 0x1f && ch < 0x7f &&
-		!strchr(ANON_VMA_NAME_INVALID_CHARS, ch);
-}
-
-static int prctl_set_vma(unsigned long opt, unsigned long addr,
-			 unsigned long size, unsigned long arg)
-{
-	struct mm_struct *mm = current->mm;
-	const char __user *uname;
-	char *name, *pch;
-	int error;
-
-	switch (opt) {
-	case PR_SET_VMA_ANON_NAME:
-		uname = (const char __user *)arg;
-		if (uname) {
-			name = strndup_user(uname, ANON_VMA_NAME_MAX_LEN);
-
-			if (IS_ERR(name))
-				return PTR_ERR(name);
-
-			for (pch = name; *pch != '\0'; pch++) {
-				if (!is_valid_name_char(*pch)) {
-					kfree(name);
-					return -EINVAL;
-				}
-			}
-		} else {
-			/* Reset the name */
-			name = NULL;
-		}
-
-		mmap_write_lock(mm);
-		error = madvise_set_anon_name(mm, addr, size, name);
-		mmap_write_unlock(mm);
-		kfree(name);
-		break;
-	default:
-		error = -EINVAL;
-	}
-
-	return error;
-}
-
-#else /* CONFIG_ANON_VMA_NAME */
-static int prctl_set_vma(unsigned long opt, unsigned long start,
-			 unsigned long size, unsigned long arg)
-{
-	return -EINVAL;
-}
-#endif /* CONFIG_ANON_VMA_NAME */
-
 SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		unsigned long, arg4, unsigned long, arg5)
 {
@@ -2598,9 +2538,6 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		error = sched_core_share_pid(arg2, arg3, arg4, arg5);
 		break;
 #endif
-	case PR_SET_VMA:
-		error = prctl_set_vma(arg2, arg3, arg4, arg5);
-		break;
 	default:
 		error = -EINVAL;
 		break;

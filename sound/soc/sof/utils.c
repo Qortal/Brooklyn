@@ -14,7 +14,6 @@
 #include <sound/soc.h>
 #include <sound/sof.h>
 #include "sof-priv.h"
-#include "ops.h"
 
 /*
  * Register IO
@@ -73,20 +72,14 @@ EXPORT_SYMBOL(sof_mailbox_read);
  * Memory copy.
  */
 
-int sof_block_write(struct snd_sof_dev *sdev, enum snd_sof_fw_blk_type blk_type,
-		    u32 offset, void *src, size_t size)
+void sof_block_write(struct snd_sof_dev *sdev, u32 bar, u32 offset, void *src,
+		     size_t size)
 {
-	int bar = snd_sof_dsp_get_bar_index(sdev, blk_type);
+	void __iomem *dest = sdev->bar[bar] + offset;
 	const u8 *src_byte = src;
-	void __iomem *dest;
 	u32 affected_mask;
 	u32 tmp;
 	int m, n;
-
-	if (bar < 0)
-		return bar;
-
-	dest = sdev->bar[bar] + offset;
 
 	m = size / 4;
 	n = size % 4;
@@ -107,22 +100,15 @@ int sof_block_write(struct snd_sof_dev *sdev, enum snd_sof_fw_blk_type blk_type,
 		tmp |= *(u32 *)(src_byte + m * 4) & affected_mask;
 		iowrite32(tmp, dest + m * 4);
 	}
-
-	return 0;
 }
 EXPORT_SYMBOL(sof_block_write);
 
-int sof_block_read(struct snd_sof_dev *sdev, enum snd_sof_fw_blk_type blk_type,
-		   u32 offset, void *dest, size_t size)
+void sof_block_read(struct snd_sof_dev *sdev, u32 bar, u32 offset, void *dest,
+		    size_t size)
 {
-	int bar = snd_sof_dsp_get_bar_index(sdev, blk_type);
+	void __iomem *src = sdev->bar[bar] + offset;
 
-	if (bar < 0)
-		return bar;
-
-	memcpy_fromio(dest, sdev->bar[bar] + offset, size);
-
-	return 0;
+	memcpy_fromio(dest, src, size);
 }
 EXPORT_SYMBOL(sof_block_read);
 

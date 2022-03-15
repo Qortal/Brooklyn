@@ -23,6 +23,7 @@
 #include <linux/bio.h>
 #include <linux/pagemap.h>
 #include <linux/mempool.h>
+#include <linux/blkdev.h>
 #include <linux/init.h>
 #include <linux/hash.h>
 #include <linux/highmem.h>
@@ -359,6 +360,7 @@ void kunmap_high(struct page *page)
 }
 EXPORT_SYMBOL(kunmap_high);
 
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
 void zero_user_segments(struct page *page, unsigned start1, unsigned end1,
 		unsigned start2, unsigned end2)
 {
@@ -381,7 +383,7 @@ void zero_user_segments(struct page *page, unsigned start1, unsigned end1,
 			unsigned this_end = min_t(unsigned, end1, PAGE_SIZE);
 
 			if (end1 > start1) {
-				kaddr = kmap_local_page(page + i);
+				kaddr = kmap_atomic(page + i);
 				memset(kaddr + start1, 0, this_end - start1);
 			}
 			end1 -= this_end;
@@ -396,7 +398,7 @@ void zero_user_segments(struct page *page, unsigned start1, unsigned end1,
 
 			if (end2 > start2) {
 				if (!kaddr)
-					kaddr = kmap_local_page(page + i);
+					kaddr = kmap_atomic(page + i);
 				memset(kaddr + start2, 0, this_end - start2);
 			}
 			end2 -= this_end;
@@ -404,7 +406,7 @@ void zero_user_segments(struct page *page, unsigned start1, unsigned end1,
 		}
 
 		if (kaddr) {
-			kunmap_local(kaddr);
+			kunmap_atomic(kaddr);
 			flush_dcache_page(page + i);
 		}
 
@@ -415,6 +417,7 @@ void zero_user_segments(struct page *page, unsigned start1, unsigned end1,
 	BUG_ON((start1 | start2 | end1 | end2) != 0);
 }
 EXPORT_SYMBOL(zero_user_segments);
+#endif /* CONFIG_TRANSPARENT_HUGEPAGE */
 #endif /* CONFIG_HIGHMEM */
 
 #ifdef CONFIG_KMAP_LOCAL

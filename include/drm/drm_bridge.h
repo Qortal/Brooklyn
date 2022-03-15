@@ -718,14 +718,6 @@ enum drm_bridge_ops {
 	 * this flag shall implement the &drm_bridge_funcs->get_modes callback.
 	 */
 	DRM_BRIDGE_OP_MODES = BIT(3),
-	/**
-	 * @DRM_BRIDGE_OP_UPSTREAM_FIRST: The bridge can requires
-	 * that the upstream node pre_enable is called before its pre_enable,
-	 * and conversely for post_disables. This is most frequently a
-	 * requirement for DSI devices which need the host to be initialised
-	 * before them.
-	 */
-	DRM_BRIDGE_OP_UPSTREAM_FIRST = BIT(4),
 };
 
 /**
@@ -770,6 +762,14 @@ struct drm_bridge {
 	 */
 	bool interlace_allowed;
 	/**
+	 * @pre_enable_upstream_first: The bridge requires that the upstream
+	 * bridge @pre_enable function is called before its @pre_enable,
+	 * and conversely for post_disable. This is most frequently a
+	 * requirement for DSI devices which need the host to be initialised
+	 * before the peripheral.
+	 */
+	bool pre_enable_upstream_first;
+	/**
 	 * @ddc: Associated I2C adapter for DDC access, if any.
 	 */
 	struct i2c_adapter *ddc;
@@ -798,18 +798,10 @@ drm_priv_to_bridge(struct drm_private_obj *priv)
 
 void drm_bridge_add(struct drm_bridge *bridge);
 void drm_bridge_remove(struct drm_bridge *bridge);
+struct drm_bridge *of_drm_find_bridge(struct device_node *np);
 int drm_bridge_attach(struct drm_encoder *encoder, struct drm_bridge *bridge,
 		      struct drm_bridge *previous,
 		      enum drm_bridge_attach_flags flags);
-
-#ifdef CONFIG_OF
-struct drm_bridge *of_drm_find_bridge(struct device_node *np);
-#else
-static inline struct drm_bridge *of_drm_find_bridge(struct device_node *np)
-{
-	return NULL;
-}
-#endif
 
 /**
  * drm_bridge_get_next_bridge() - Get the next bridge in the chain
@@ -928,19 +920,6 @@ struct drm_bridge *devm_drm_panel_bridge_add_typed(struct device *dev,
 						   struct drm_panel *panel,
 						   u32 connector_type);
 struct drm_connector *drm_panel_bridge_connector(struct drm_bridge *bridge);
-#endif
-
-#if defined(CONFIG_OF) && defined(CONFIG_DRM_PANEL_BRIDGE)
-struct drm_bridge *devm_drm_of_get_bridge(struct device *dev, struct device_node *node,
-					  u32 port, u32 endpoint);
-#else
-static inline struct drm_bridge *devm_drm_of_get_bridge(struct device *dev,
-							struct device_node *node,
-							u32 port,
-							u32 endpoint)
-{
-	return ERR_PTR(-ENODEV);
-}
 #endif
 
 #endif

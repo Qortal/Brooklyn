@@ -133,7 +133,7 @@ out_delete_evlist:
 	return err;
 }
 
-static int test__sw_clock_freq(struct test_suite *test __maybe_unused, int subtest __maybe_unused)
+int test__sw_clock_freq(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	int ret;
 
@@ -143,5 +143,3 @@ static int test__sw_clock_freq(struct test_suite *test __maybe_unused, int subte
 
 	return ret;
 }
-
-DEFINE_SUITE("Software clock events period values", sw_clock_freq);

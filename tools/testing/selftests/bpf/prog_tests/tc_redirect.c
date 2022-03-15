@@ -183,18 +183,6 @@ static int netns_setup_namespaces(const char *verb)
 	return 0;
 }
 
-static void netns_setup_namespaces_nofail(const char *verb)
-{
-	const char * const *ns = namespaces;
-	char cmd[128];
-
-	while (*ns) {
-		snprintf(cmd, sizeof(cmd), "ip netns %s %s > /dev/null 2>&1", verb, *ns);
-		system(cmd);
-		ns++;
-	}
-}
-
 struct netns_setup_result {
 	int ifindex_veth_src_fwd;
 	int ifindex_veth_dst_fwd;
@@ -652,7 +640,7 @@ static void test_tc_redirect_peer_l3(struct netns_setup_result *setup_result)
 	struct nstoken *nstoken = NULL;
 	int err;
 	int tunnel_pid = -1;
-	int src_fd, target_fd = -1;
+	int src_fd, target_fd;
 	int ifindex;
 
 	/* Start a L3 TUN/TAP tunnel between the src and dst namespaces.
@@ -781,8 +769,6 @@ fail:
 
 static void *test_tc_redirect_run_tests(void *arg)
 {
-	netns_setup_namespaces_nofail("delete");
-
 	RUN_TEST(tc_redirect_peer);
 	RUN_TEST(tc_redirect_peer_l3);
 	RUN_TEST(tc_redirect_neigh);
@@ -790,7 +776,7 @@ static void *test_tc_redirect_run_tests(void *arg)
 	return NULL;
 }
 
-void serial_test_tc_redirect(void)
+void test_tc_redirect(void)
 {
 	pthread_t test_thread;
 	int err;

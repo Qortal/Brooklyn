@@ -110,9 +110,12 @@ static void usage(const char *prog)
 
 int main(int argc, char **argv)
 {
+	struct bpf_prog_load_attr prog_load_attr = {
+		.prog_type	= BPF_PROG_TYPE_XDP,
+	};
+	struct perf_buffer_opts pb_opts = {};
 	const char *optstr = "FS";
 	int prog_fd, map_fd, opt;
-	struct bpf_program *prog;
 	struct bpf_object *obj;
 	struct bpf_map *map;
 	char filename[256];
@@ -141,21 +144,17 @@ int main(int argc, char **argv)
 	}
 
 	snprintf(filename, sizeof(filename), "%s_kern.o", argv[0]);
+	prog_load_attr.file = filename;
 
-	obj = bpf_object__open_file(filename, NULL);
-	if (libbpf_get_error(obj))
+	if (bpf_prog_load_xattr(&prog_load_attr, &obj, &prog_fd))
 		return 1;
 
-	prog = bpf_object__next_program(obj, NULL);
-	bpf_program__set_type(prog, BPF_PROG_TYPE_XDP);
-
-	err = bpf_object__load(obj);
-	if (err)
+	if (!prog_fd) {
+		printf("bpf_prog_load_xattr: %s\n", strerror(errno));
 		return 1;
+	}
 
-	prog_fd = bpf_program__fd(prog);
-
-	map = bpf_object__next_map(obj, NULL);
+	map = bpf_map__next(NULL, obj);
 	if (!map) {
 		printf("finding a map in obj file failed\n");
 		return 1;
@@ -182,7 +181,8 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	pb = perf_buffer__new(map_fd, 8, print_bpf_output, NULL, NULL, NULL);
+	pb_opts.sample_cb = print_bpf_output;
+	pb = perf_buffer__new(map_fd, 8, &pb_opts);
 	err = libbpf_get_error(pb);
 	if (err) {
 		perror("perf_buffer setup failed");

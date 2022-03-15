@@ -591,10 +591,6 @@ int cmd_annotate(int argc, const char **argv)
 		return ret;
 	}
 
-	ret = symbol__validate_sym_arguments();
-	if (ret)
-		return ret;
-
 	if (quiet)
 		perf_quiet_option();
 

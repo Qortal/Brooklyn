@@ -509,6 +509,7 @@ typedef u64 acpi_integer;
 #define ACPI_TO_POINTER(i)              ACPI_CAST_PTR (void, (acpi_size) (i))
 #define ACPI_TO_INTEGER(p)              ACPI_PTR_DIFF (p, (void *) 0)
 #define ACPI_OFFSET(d, f)               ACPI_PTR_DIFF (&(((d *) 0)->f), (void *) 0)
+#define ACPI_PHYSADDR_TO_PTR(i)         ACPI_TO_POINTER(i)
 #define ACPI_PTR_TO_PHYSADDR(i)         ACPI_TO_INTEGER(i)
 
 /* Optimizations for 4-character (32-bit) acpi_name manipulation */
@@ -1103,14 +1104,6 @@ struct acpi_connection_info {
 	u8 access_length;
 };
 
-/* Special Context data for PCC Opregion (ACPI 6.3) */
-
-struct acpi_pcc_info {
-	u8 subspace_id;
-	u16 length;
-	u8 *internal_buffer;
-};
-
 typedef
 acpi_status (*acpi_adr_space_setup) (acpi_handle region_handle,
 				     u32 function,
@@ -1228,10 +1221,6 @@ struct acpi_mem_space_context {
 	struct acpi_mem_mapping *first_mm;
 };
 
-struct acpi_data_table_space_context {
-	void *pointer;
-};
-
 /*
  * struct acpi_memory_list is used only if the ACPICA local cache is enabled
  */
@@ -1298,7 +1287,6 @@ typedef enum {
 #define ACPI_OSI_WIN_10_RS4             0x12
 #define ACPI_OSI_WIN_10_RS5             0x13
 #define ACPI_OSI_WIN_10_19H1            0x14
-#define ACPI_OSI_WIN_10_20H1            0x15
 
 /* Definitions of getopt */
 

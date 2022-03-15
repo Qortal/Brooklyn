@@ -3,28 +3,39 @@
 #include "tests/tests.h"
 #include "arch-tests.h"
 
-DEFINE_SUITE("x86 rdpmc", rdpmc);
-#ifdef HAVE_AUXTRACE_SUPPORT
-DEFINE_SUITE("x86 instruction decoder - new instructions", insn_x86);
-DEFINE_SUITE("Intel PT packet decoder", intel_pt_pkt_decoder);
-#endif
-#if defined(__x86_64__)
-DEFINE_SUITE("x86 bp modify", bp_modify);
-#endif
-DEFINE_SUITE("x86 Sample parsing", x86_sample_parsing);
-
-struct test_suite *arch_tests[] = {
-	&suite__rdpmc,
+struct test arch_tests[] = {
+	{
+		.desc = "x86 rdpmc",
+		.func = test__rdpmc,
+	},
 #ifdef HAVE_DWARF_UNWIND_SUPPORT
-	&suite__dwarf_unwind,
+	{
+		.desc = "DWARF unwind",
+		.func = test__dwarf_unwind,
+	},
 #endif
 #ifdef HAVE_AUXTRACE_SUPPORT
-	&suite__insn_x86,
-	&suite__intel_pt_pkt_decoder,
+	{
+		.desc = "x86 instruction decoder - new instructions",
+		.func = test__insn_x86,
+	},
+	{
+		.desc = "Intel PT packet decoder",
+		.func = test__intel_pt_pkt_decoder,
+	},
 #endif
 #if defined(__x86_64__)
-	&suite__bp_modify,
+	{
+		.desc = "x86 bp modify",
+		.func = test__bp_modify,
+	},
 #endif
-	&suite__x86_sample_parsing,
-	NULL,
+	{
+		.desc = "x86 Sample parsing",
+		.func = test__x86_sample_parsing,
+	},
+	{
+		.func = NULL,
+	},
+
 };

@@ -1,5 +1,3 @@
-.. SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
-
 ==================
 bpftool-struct_ops
 ==================
@@ -9,14 +7,12 @@ tool to register/unregister/introspect BPF struct_ops
 
 :Manual section: 8
 
-.. include:: substitutions.rst
-
 SYNOPSIS
 ========
 
 	**bpftool** [*OPTIONS*] **struct_ops** *COMMAND*
 
-	*OPTIONS* := { |COMMON_OPTIONS| }
+	*OPTIONS* := { { **-j** | **--json** } [{ **-p** | **--pretty** }] | { **-d** | **--debug** } }
 
 	*COMMANDS* :=
 	{ **show** | **list** | **dump** | **register** | **unregister** | **help** }

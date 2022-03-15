@@ -289,11 +289,6 @@ struct perf_record_itrace_start {
 	__u32			 tid;
 };
 
-struct perf_record_aux_output_hw_id {
-	struct perf_event_header header;
-	__u64			hw_id;
-};
-
 struct perf_record_thread_map_entry {
 	__u64			 pid;
 	char			 comm[16];
@@ -419,7 +414,6 @@ union perf_event {
 	struct perf_record_auxtrace_error	auxtrace_error;
 	struct perf_record_aux			aux;
 	struct perf_record_itrace_start		itrace_start;
-	struct perf_record_aux_output_hw_id	aux_output_hw_id;
 	struct perf_record_switch		context_switch;
 	struct perf_record_thread_map		thread_map;
 	struct perf_record_cpu_map		cpu_map;

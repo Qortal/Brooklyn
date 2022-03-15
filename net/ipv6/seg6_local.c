@@ -7,7 +7,6 @@
  *  eBPF support: Mathieu Xhonneux <m.xhonneux@gmail.com>
  */
 
-#include <linux/filter.h>
 #include <linux/types.h>
 #include <linux/skbuff.h>
 #include <linux/net.h>

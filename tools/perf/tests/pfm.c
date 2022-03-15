@@ -12,6 +12,27 @@
 #include <linux/kernel.h>
 
 #ifdef HAVE_LIBPFM
+static int test__pfm_events(void);
+static int test__pfm_group(void);
+#endif
+
+static const struct {
+	int (*func)(void);
+	const char *desc;
+} pfm_testcase_table[] = {
+#ifdef HAVE_LIBPFM
+	{
+		.func = test__pfm_events,
+		.desc = "test of individual --pfm-events",
+	},
+	{
+		.func = test__pfm_group,
+		.desc = "test groups of --pfm-events",
+	},
+#endif
+};
+
+#ifdef HAVE_LIBPFM
 static int count_pfm_events(struct perf_evlist *evlist)
 {
 	struct perf_evsel *evsel;
@@ -23,8 +44,7 @@ static int count_pfm_events(struct perf_evlist *evlist)
 	return count;
 }
 
-static int test__pfm_events(struct test_suite *test __maybe_unused,
-			    int subtest __maybe_unused)
+static int test__pfm_events(void)
 {
 	struct evlist *evlist;
 	struct option opt;
@@ -84,8 +104,7 @@ static int test__pfm_events(struct test_suite *test __maybe_unused,
 	return 0;
 }
 
-static int test__pfm_group(struct test_suite *test __maybe_unused,
-			   int subtest __maybe_unused)
+static int test__pfm_group(void)
 {
 	struct evlist *evlist;
 	struct option opt;
@@ -168,27 +187,27 @@ static int test__pfm_group(struct test_suite *test __maybe_unused,
 	}
 	return 0;
 }
-#else
-static int test__pfm_events(struct test_suite *test __maybe_unused,
-			    int subtest __maybe_unused)
-{
-	return TEST_SKIP;
-}
-
-static int test__pfm_group(struct test_suite *test __maybe_unused,
-			   int subtest __maybe_unused)
-{
-	return TEST_SKIP;
-}
 #endif
 
-static struct test_case pfm_tests[] = {
-	TEST_CASE_REASON("test of individual --pfm-events", pfm_events, "not compiled in"),
-	TEST_CASE_REASON("test groups of --pfm-events", pfm_group, "not compiled in"),
-	{ .name = NULL, }
-};
+const char *test__pfm_subtest_get_desc(int i)
+{
+	if (i < 0 || i >= (int)ARRAY_SIZE(pfm_testcase_table))
+		return NULL;
+	return pfm_testcase_table[i].desc;
+}
 
-struct test_suite suite__pfm = {
-	.desc = "Test libpfm4 support",
-	.test_cases = pfm_tests,
-};
+int test__pfm_subtest_get_nr(void)
+{
+	return (int)ARRAY_SIZE(pfm_testcase_table);
+}
+
+int test__pfm(struct test *test __maybe_unused, int i __maybe_unused)
+{
+#ifdef HAVE_LIBPFM
+	if (i < 0 || i >= (int)ARRAY_SIZE(pfm_testcase_table))
+		return TEST_FAIL;
+	return pfm_testcase_table[i].func();
+#else
+	return TEST_SKIP;
+#endif
+}

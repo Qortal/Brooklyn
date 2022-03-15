@@ -3,6 +3,7 @@
 #define __ACPI_NUMA_H
 
 #ifdef CONFIG_ACPI_NUMA
+#include <linux/kernel.h>
 #include <linux/numa.h>
 
 /* Proximity bitmap length */

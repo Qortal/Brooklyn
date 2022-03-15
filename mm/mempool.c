@@ -17,6 +17,7 @@
 #include <linux/kmemleak.h>
 #include <linux/export.h>
 #include <linux/mempool.h>
+#include <linux/blkdev.h>
 #include <linux/writeback.h>
 #include "slab.h"
 

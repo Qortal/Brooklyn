@@ -14,12 +14,10 @@ struct stats_req_info {
 
 struct stats_reply_data {
 	struct ethnl_reply_data		base;
-	struct_group(stats,
-		struct ethtool_eth_phy_stats	phy_stats;
-		struct ethtool_eth_mac_stats	mac_stats;
-		struct ethtool_eth_ctrl_stats	ctrl_stats;
-		struct ethtool_rmon_stats	rmon_stats;
-	);
+	struct ethtool_eth_phy_stats	phy_stats;
+	struct ethtool_eth_mac_stats	mac_stats;
+	struct ethtool_eth_ctrl_stats	ctrl_stats;
+	struct ethtool_rmon_stats	rmon_stats;
 	const struct ethtool_rmon_hist_range	*rmon_ranges;
 };
 
@@ -119,7 +117,10 @@ static int stats_prepare_data(const struct ethnl_req_info *req_base,
 	/* Mark all stats as unset (see ETHTOOL_STAT_NOT_SET) to prevent them
 	 * from being reported to user space in case driver did not set them.
 	 */
-	memset(&data->stats, 0xff, sizeof(data->stats));
+	memset(&data->phy_stats, 0xff, sizeof(data->phy_stats));
+	memset(&data->mac_stats, 0xff, sizeof(data->mac_stats));
+	memset(&data->ctrl_stats, 0xff, sizeof(data->ctrl_stats));
+	memset(&data->rmon_stats, 0xff, sizeof(data->rmon_stats));
 
 	if (test_bit(ETHTOOL_STATS_ETH_PHY, req_info->stat_mask) &&
 	    dev->ethtool_ops->get_eth_phy_stats)

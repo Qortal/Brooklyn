@@ -32,8 +32,10 @@ int snd_oss_info_register(int dev, int num, char *string)
 	mutex_lock(&strings);
 	if (string == NULL) {
 		x = snd_sndstat_strings[num][dev];
-		kfree(x);
-		x = NULL;
+		if (x) {
+			kfree(x);
+			x = NULL;
+		}
 	} else {
 		x = kstrdup(string, GFP_KERNEL);
 		if (x == NULL) {

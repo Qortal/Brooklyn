@@ -885,10 +885,10 @@ static void __ftrace_clear_event_pids(struct trace_array *tr, int type)
 	tracepoint_synchronize_unregister();
 
 	if ((type & TRACE_PIDS) && pid_list)
-		trace_pid_list_free(pid_list);
+		trace_free_pid_list(pid_list);
 
 	if ((type & TRACE_NO_PIDS) && no_pid_list)
-		trace_pid_list_free(no_pid_list);
+		trace_free_pid_list(no_pid_list);
 }
 
 static void ftrace_clear_event_pids(struct trace_array *tr, int type)
@@ -1967,7 +1967,7 @@ event_pid_write(struct file *filp, const char __user *ubuf,
 
 	if (filtered_pids) {
 		tracepoint_synchronize_unregister();
-		trace_pid_list_free(filtered_pids);
+		trace_free_pid_list(filtered_pids);
 	} else if (pid_list && !other_pids) {
 		register_pid_events(tr);
 	}
@@ -2681,7 +2681,6 @@ trace_create_new_event(struct trace_event_call *call,
 	struct trace_pid_list *no_pid_list;
 	struct trace_pid_list *pid_list;
 	struct trace_event_file *file;
-	unsigned int first;
 
 	file = kmem_cache_alloc(file_cachep, GFP_TRACE);
 	if (!file)
@@ -2692,8 +2691,7 @@ trace_create_new_event(struct trace_event_call *call,
 	no_pid_list = rcu_dereference_protected(tr->filtered_no_pids,
 					     lockdep_is_held(&event_mutex));
 
-	if (!trace_pid_list_first(pid_list, &first) ||
-	    !trace_pid_list_first(no_pid_list, &first))
+	if (pid_list || no_pid_list)
 		file->flags |= EVENT_FILE_FL_PID_FILTER;
 
 	file->event_call = call;
@@ -3461,8 +3459,10 @@ create_event_toplevel_files(struct dentry *parent, struct trace_array *tr)
 
 	entry = trace_create_file("enable", TRACE_MODE_WRITE, d_events,
 				  tr, &ftrace_tr_enable_fops);
-	if (!entry)
+	if (!entry) {
+		pr_warn("Could not create tracefs 'enable' entry\n");
 		return -ENOMEM;
+	}
 
 	/* There are not as crucial, just warn if they are not created */
 
@@ -3478,13 +3478,17 @@ create_event_toplevel_files(struct dentry *parent, struct trace_array *tr)
 		pr_warn("Could not create tracefs 'set_event_notrace_pid' entry\n");
 
 	/* ring buffer internal formats */
-	trace_create_file("header_page", TRACE_MODE_READ, d_events,
+	entry = trace_create_file("header_page", TRACE_MODE_READ, d_events,
 				  ring_buffer_print_page_header,
 				  &ftrace_show_header_fops);
+	if (!entry)
+		pr_warn("Could not create tracefs 'header_page' entry\n");
 
-	trace_create_file("header_event", TRACE_MODE_READ, d_events,
+	entry = trace_create_file("header_event", TRACE_MODE_READ, d_events,
 				  ring_buffer_print_entry_header,
 				  &ftrace_show_header_fops);
+	if (!entry)
+		pr_warn("Could not create tracefs 'header_event' entry\n");
 
 	tr->event_dir = d_events;
 

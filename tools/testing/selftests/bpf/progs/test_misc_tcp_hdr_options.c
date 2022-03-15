@@ -293,7 +293,7 @@ static int handle_passive_estab(struct bpf_sock_ops *skops)
 	return check_active_hdr_in(skops);
 }
 
-SEC("sockops")
+SEC("sockops/misc_estab")
 int misc_estab(struct bpf_sock_ops *skops)
 {
 	int true_val = 1;

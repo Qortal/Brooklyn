@@ -39,8 +39,7 @@ static int timer(struct timer *timer_skel)
 	return 0;
 }
 
-/* TODO: use pid filtering */
-void serial_test_timer(void)
+void test_timer(void)
 {
 	struct timer *timer_skel = NULL;
 	int err;

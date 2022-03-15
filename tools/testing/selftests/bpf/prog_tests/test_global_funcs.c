@@ -30,29 +30,17 @@ extern int extra_prog_load_log_flags;
 
 static int check_load(const char *file)
 {
+	struct bpf_prog_load_attr attr;
 	struct bpf_object *obj = NULL;
-	struct bpf_program *prog;
-	int err;
+	int err, prog_fd;
 
+	memset(&attr, 0, sizeof(struct bpf_prog_load_attr));
+	attr.file = file;
+	attr.prog_type = BPF_PROG_TYPE_UNSPEC;
+	attr.log_level = extra_prog_load_log_flags;
+	attr.prog_flags = BPF_F_TEST_RND_HI32;
 	found = false;
-
-	obj = bpf_object__open_file(file, NULL);
-	err = libbpf_get_error(obj);
-	if (err)
-		return err;
-
-	prog = bpf_object__next_program(obj, NULL);
-	if (!prog) {
-		err = -ENOENT;
-		goto err_out;
-	}
-
-	bpf_program__set_flags(prog, BPF_F_TEST_RND_HI32);
-	bpf_program__set_log_level(prog, extra_prog_load_log_flags);
-
-	err = bpf_object__load(obj);
-
-err_out:
+	err = bpf_prog_load_xattr(&attr, &obj, &prog_fd);
 	bpf_object__close(obj);
 	return err;
 }

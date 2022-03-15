@@ -167,7 +167,7 @@ struct trace_sched_handler {
 
 struct perf_sched_map {
 	DECLARE_BITMAP(comp_cpus_mask, MAX_CPUS);
-	struct perf_cpu		*comp_cpus;
+	int			*comp_cpus;
 	bool			 comp;
 	struct perf_thread_map *color_pids;
 	const char		*color_pids_str;
@@ -191,7 +191,7 @@ struct perf_sched {
  * Track the current task - that way we can know whether there's any
  * weird events, such as a task being switched away that is not current.
  */
-	struct perf_cpu	 max_cpu;
+	int		 max_cpu;
 	u32		 curr_pid[MAX_CPUS];
 	struct thread	 *curr_thread[MAX_CPUS];
 	char		 next_shortname1;
@@ -1535,31 +1535,28 @@ static int map_switch_event(struct perf_sched *sched, struct evsel *evsel,
 	int new_shortname;
 	u64 timestamp0, timestamp = sample->time;
 	s64 delta;
-	int i;
-	struct perf_cpu this_cpu = {
-		.cpu = sample->cpu,
-	};
+	int i, this_cpu = sample->cpu;
 	int cpus_nr;
 	bool new_cpu = false;
 	const char *color = PERF_COLOR_NORMAL;
 	char stimestamp[32];
 
-	BUG_ON(this_cpu.cpu >= MAX_CPUS || this_cpu.cpu < 0);
+	BUG_ON(this_cpu >= MAX_CPUS || this_cpu < 0);
 
-	if (this_cpu.cpu > sched->max_cpu.cpu)
+	if (this_cpu > sched->max_cpu)
 		sched->max_cpu = this_cpu;
 
 	if (sched->map.comp) {
 		cpus_nr = bitmap_weight(sched->map.comp_cpus_mask, MAX_CPUS);
-		if (!test_and_set_bit(this_cpu.cpu, sched->map.comp_cpus_mask)) {
+		if (!test_and_set_bit(this_cpu, sched->map.comp_cpus_mask)) {
 			sched->map.comp_cpus[cpus_nr++] = this_cpu;
 			new_cpu = true;
 		}
 	} else
-		cpus_nr = sched->max_cpu.cpu;
+		cpus_nr = sched->max_cpu;
 
-	timestamp0 = sched->cpu_last_switched[this_cpu.cpu];
-	sched->cpu_last_switched[this_cpu.cpu] = timestamp;
+	timestamp0 = sched->cpu_last_switched[this_cpu];
+	sched->cpu_last_switched[this_cpu] = timestamp;
 	if (timestamp0)
 		delta = timestamp - timestamp0;
 	else
@@ -1580,7 +1577,7 @@ static int map_switch_event(struct perf_sched *sched, struct evsel *evsel,
 		return -1;
 	}
 
-	sched->curr_thread[this_cpu.cpu] = thread__get(sched_in);
+	sched->curr_thread[this_cpu] = thread__get(sched_in);
 
 	printf("  ");
 
@@ -1611,10 +1608,8 @@ static int map_switch_event(struct perf_sched *sched, struct evsel *evsel,
 	}
 
 	for (i = 0; i < cpus_nr; i++) {
-		struct perf_cpu cpu = {
-			.cpu = sched->map.comp ? sched->map.comp_cpus[i].cpu : i,
-		};
-		struct thread *curr_thread = sched->curr_thread[cpu.cpu];
+		int cpu = sched->map.comp ? sched->map.comp_cpus[i] : i;
+		struct thread *curr_thread = sched->curr_thread[cpu];
 		struct thread_runtime *curr_tr;
 		const char *pid_color = color;
 		const char *cpu_color = color;
@@ -1622,19 +1617,19 @@ static int map_switch_event(struct perf_sched *sched, struct evsel *evsel,
 		if (curr_thread && thread__has_color(curr_thread))
 			pid_color = COLOR_PIDS;
 
-		if (sched->map.cpus && !perf_cpu_map__has(sched->map.cpus, cpu))
+		if (sched->map.cpus && !cpu_map__has(sched->map.cpus, cpu))
 			continue;
 
-		if (sched->map.color_cpus && perf_cpu_map__has(sched->map.color_cpus, cpu))
+		if (sched->map.color_cpus && cpu_map__has(sched->map.color_cpus, cpu))
 			cpu_color = COLOR_CPUS;
 
-		if (cpu.cpu != this_cpu.cpu)
+		if (cpu != this_cpu)
 			color_fprintf(stdout, color, " ");
 		else
 			color_fprintf(stdout, cpu_color, "*");
 
-		if (sched->curr_thread[cpu.cpu]) {
-			curr_tr = thread__get_runtime(sched->curr_thread[cpu.cpu]);
+		if (sched->curr_thread[cpu]) {
+			curr_tr = thread__get_runtime(sched->curr_thread[cpu]);
 			if (curr_tr == NULL) {
 				thread__put(sched_in);
 				return -1;
@@ -1644,7 +1639,7 @@ static int map_switch_event(struct perf_sched *sched, struct evsel *evsel,
 			color_fprintf(stdout, color, "   ");
 	}
 
-	if (sched->map.cpus && !perf_cpu_map__has(sched->map.cpus, this_cpu))
+	if (sched->map.cpus && !cpu_map__has(sched->map.cpus, this_cpu))
 		goto out;
 
 	timestamp__scnprintf_usec(timestamp, stimestamp, sizeof(stimestamp));
@@ -1934,7 +1929,7 @@ static char *timehist_get_commstr(struct thread *thread)
 
 static void timehist_header(struct perf_sched *sched)
 {
-	u32 ncpus = sched->max_cpu.cpu + 1;
+	u32 ncpus = sched->max_cpu + 1;
 	u32 i, j;
 
 	printf("%15s %6s ", "time", "cpu");
@@ -2013,7 +2008,7 @@ static void timehist_print_sample(struct perf_sched *sched,
 	struct thread_runtime *tr = thread__priv(thread);
 	const char *next_comm = evsel__strval(evsel, sample, "next_comm");
 	const u32 next_pid = evsel__intval(evsel, sample, "next_pid");
-	u32 max_cpus = sched->max_cpu.cpu + 1;
+	u32 max_cpus = sched->max_cpu + 1;
 	char tstr[64];
 	char nstr[30];
 	u64 wait_time;
@@ -2394,7 +2389,7 @@ static void timehist_print_wakeup_event(struct perf_sched *sched,
 	timestamp__scnprintf_usec(sample->time, tstr, sizeof(tstr));
 	printf("%15s [%04d] ", tstr, sample->cpu);
 	if (sched->show_cpu_visual)
-		printf(" %*s ", sched->max_cpu.cpu + 1, "");
+		printf(" %*s ", sched->max_cpu + 1, "");
 
 	printf(" %-*s ", comm_width, timehist_get_commstr(thread));
 
@@ -2454,13 +2449,13 @@ static void timehist_print_migration_event(struct perf_sched *sched,
 {
 	struct thread *thread;
 	char tstr[64];
-	u32 max_cpus;
+	u32 max_cpus = sched->max_cpu + 1;
 	u32 ocpu, dcpu;
 
 	if (sched->summary_only)
 		return;
 
-	max_cpus = sched->max_cpu.cpu + 1;
+	max_cpus = sched->max_cpu + 1;
 	ocpu = evsel__intval(evsel, sample, "orig_cpu");
 	dcpu = evsel__intval(evsel, sample, "dest_cpu");
 
@@ -2923,7 +2918,7 @@ static void timehist_print_summary(struct perf_sched *sched,
 
 	printf("    Total scheduling time (msec): ");
 	print_sched_time(hist_time, 2);
-	printf(" (x %d)\n", sched->max_cpu.cpu);
+	printf(" (x %d)\n", sched->max_cpu);
 }
 
 typedef int (*sched_handler)(struct perf_tool *tool,
@@ -2940,11 +2935,9 @@ static int perf_timehist__process_sample(struct perf_tool *tool,
 {
 	struct perf_sched *sched = container_of(tool, struct perf_sched, tool);
 	int err = 0;
-	struct perf_cpu this_cpu = {
-		.cpu = sample->cpu,
-	};
+	int this_cpu = sample->cpu;
 
-	if (this_cpu.cpu > sched->max_cpu.cpu)
+	if (this_cpu > sched->max_cpu)
 		sched->max_cpu = this_cpu;
 
 	if (evsel->handler != NULL) {
@@ -3061,10 +3054,10 @@ static int perf_sched__timehist(struct perf_sched *sched)
 		goto out;
 
 	/* pre-allocate struct for per-CPU idle stats */
-	sched->max_cpu.cpu = session->header.env.nr_cpus_online;
-	if (sched->max_cpu.cpu == 0)
-		sched->max_cpu.cpu = 4;
-	if (init_idle_threads(sched->max_cpu.cpu))
+	sched->max_cpu = session->header.env.nr_cpus_online;
+	if (sched->max_cpu == 0)
+		sched->max_cpu = 4;
+	if (init_idle_threads(sched->max_cpu))
 		goto out;
 
 	/* summary_only implies summary option, but don't overwrite summary if set */
@@ -3216,10 +3209,10 @@ static int setup_map_cpus(struct perf_sched *sched)
 {
 	struct perf_cpu_map *map;
 
-	sched->max_cpu.cpu  = sysconf(_SC_NPROCESSORS_CONF);
+	sched->max_cpu  = sysconf(_SC_NPROCESSORS_CONF);
 
 	if (sched->map.comp) {
-		sched->map.comp_cpus = zalloc(sched->max_cpu.cpu * sizeof(int));
+		sched->map.comp_cpus = zalloc(sched->max_cpu * sizeof(int));
 		if (!sched->map.comp_cpus)
 			return -1;
 	}
@@ -3545,7 +3538,6 @@ int cmd_sched(int argc, const char **argv)
 		.fork_event	    = replay_fork_event,
 	};
 	unsigned int i;
-	int ret;
 
 	for (i = 0; i < ARRAY_SIZE(sched.curr_pid); i++)
 		sched.curr_pid[i] = -1;
@@ -3606,9 +3598,6 @@ int cmd_sched(int argc, const char **argv)
 				parse_options_usage(NULL, timehist_options, "n", true);
 			return -EINVAL;
 		}
-		ret = symbol__validate_sym_arguments();
-		if (ret)
-			return ret;
 
 		return perf_sched__timehist(&sched);
 	} else {

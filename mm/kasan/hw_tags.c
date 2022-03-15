@@ -29,7 +29,6 @@ enum kasan_arg_mode {
 	KASAN_ARG_MODE_DEFAULT,
 	KASAN_ARG_MODE_SYNC,
 	KASAN_ARG_MODE_ASYNC,
-	KASAN_ARG_MODE_ASYMM,
 };
 
 enum kasan_arg_stacktrace {
@@ -46,9 +45,9 @@ static enum kasan_arg_stacktrace kasan_arg_stacktrace __ro_after_init;
 DEFINE_STATIC_KEY_FALSE(kasan_flag_enabled);
 EXPORT_SYMBOL(kasan_flag_enabled);
 
-/* Whether the selected mode is synchronous/asynchronous/asymmetric.*/
-enum kasan_mode kasan_mode __ro_after_init;
-EXPORT_SYMBOL_GPL(kasan_mode);
+/* Whether the asynchronous mode is enabled. */
+bool kasan_flag_async __ro_after_init;
+EXPORT_SYMBOL_GPL(kasan_flag_async);
 
 /* Whether to collect alloc/free stack traces. */
 DEFINE_STATIC_KEY_FALSE(kasan_flag_stacktrace);
@@ -70,7 +69,7 @@ static int __init early_kasan_flag(char *arg)
 }
 early_param("kasan", early_kasan_flag);
 
-/* kasan.mode=sync/async/asymm */
+/* kasan.mode=sync/async */
 static int __init early_kasan_mode(char *arg)
 {
 	if (!arg)
@@ -80,8 +79,6 @@ static int __init early_kasan_mode(char *arg)
 		kasan_arg_mode = KASAN_ARG_MODE_SYNC;
 	else if (!strcmp(arg, "async"))
 		kasan_arg_mode = KASAN_ARG_MODE_ASYNC;
-	else if (!strcmp(arg, "asymm"))
-		kasan_arg_mode = KASAN_ARG_MODE_ASYMM;
 	else
 		return -EINVAL;
 
@@ -106,16 +103,6 @@ static int __init early_kasan_flag_stacktrace(char *arg)
 }
 early_param("kasan.stacktrace", early_kasan_flag_stacktrace);
 
-static inline const char *kasan_mode_info(void)
-{
-	if (kasan_mode == KASAN_MODE_ASYNC)
-		return "async";
-	else if (kasan_mode == KASAN_MODE_ASYMM)
-		return "asymm";
-	else
-		return "sync";
-}
-
 /* kasan_init_hw_tags_cpu() is called for each CPU. */
 void kasan_init_hw_tags_cpu(void)
 {
@@ -129,13 +116,11 @@ void kasan_init_hw_tags_cpu(void)
 		return;
 
 	/*
-	 * Enable async or asymm modes only when explicitly requested
-	 * through the command line.
+	 * Enable async mode only when explicitly requested through
+	 * the command line.
 	 */
 	if (kasan_arg_mode == KASAN_ARG_MODE_ASYNC)
 		hw_enable_tagging_async();
-	else if (kasan_arg_mode == KASAN_ARG_MODE_ASYMM)
-		hw_enable_tagging_asymm();
 	else
 		hw_enable_tagging_sync();
 }
@@ -158,19 +143,15 @@ void __init kasan_init_hw_tags(void)
 	case KASAN_ARG_MODE_DEFAULT:
 		/*
 		 * Default to sync mode.
+		 * Do nothing, kasan_flag_async keeps its default value.
 		 */
-		fallthrough;
+		break;
 	case KASAN_ARG_MODE_SYNC:
-		/* Sync mode enabled. */
-		kasan_mode = KASAN_MODE_SYNC;
+		/* Do nothing, kasan_flag_async keeps its default value. */
 		break;
 	case KASAN_ARG_MODE_ASYNC:
 		/* Async mode enabled. */
-		kasan_mode = KASAN_MODE_ASYNC;
-		break;
-	case KASAN_ARG_MODE_ASYMM:
-		/* Asymm mode enabled. */
-		kasan_mode = KASAN_MODE_ASYMM;
+		kasan_flag_async = true;
 		break;
 	}
 
@@ -187,9 +168,7 @@ void __init kasan_init_hw_tags(void)
 		break;
 	}
 
-	pr_info("KernelAddressSanitizer initialized (hw-tags, mode=%s, stacktrace=%s)\n",
-		kasan_mode_info(),
-		kasan_stack_collection_enabled() ? "on" : "off");
+	pr_info("KernelAddressSanitizer initialized\n");
 }
 
 void kasan_alloc_pages(struct page *page, unsigned int order, gfp_t flags)

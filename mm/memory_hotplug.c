@@ -21,6 +21,7 @@
 #include <linux/memory.h>
 #include <linux/memremap.h>
 #include <linux/memory_hotplug.h>
+#include <linux/highmem.h>
 #include <linux/vmalloc.h>
 #include <linux/ioport.h>
 #include <linux/delay.h>
@@ -35,7 +36,6 @@
 #include <linux/memblock.h>
 #include <linux/compaction.h>
 #include <linux/rmap.h>
-#include <linux/module.h>
 
 #include <asm/tlbflush.h>
 
@@ -57,7 +57,7 @@ enum {
 	ONLINE_POLICY_AUTO_MOVABLE,
 };
 
-static const char * const online_policy_to_str[] = {
+const char *online_policy_to_str[] = {
 	[ONLINE_POLICY_CONTIG_ZONES] = "contig-zones",
 	[ONLINE_POLICY_AUTO_MOVABLE] = "auto-movable",
 };
@@ -220,6 +220,7 @@ static void release_memory_resource(struct resource *res)
 	kfree(res);
 }
 
+#ifdef CONFIG_MEMORY_HOTPLUG_SPARSE
 static int check_pfn_span(unsigned long pfn, unsigned long nr_pages,
 		const char *reason)
 {
@@ -585,6 +586,10 @@ void generic_online_page(struct page *page, unsigned int order)
 	debug_pagealloc_map_pages(page, 1 << order);
 	__free_pages_core(page, order);
 	totalram_pages_add(1UL << order);
+#ifdef CONFIG_HIGHMEM
+	if (PageHighMem(page))
+		totalhigh_pages_add(1UL << order);
+#endif
 }
 EXPORT_SYMBOL_GPL(generic_online_page);
 
@@ -621,17 +626,25 @@ static void node_states_check_changes_online(unsigned long nr_pages,
 
 	arg->status_change_nid = NUMA_NO_NODE;
 	arg->status_change_nid_normal = NUMA_NO_NODE;
+	arg->status_change_nid_high = NUMA_NO_NODE;
 
 	if (!node_state(nid, N_MEMORY))
 		arg->status_change_nid = nid;
 	if (zone_idx(zone) <= ZONE_NORMAL && !node_state(nid, N_NORMAL_MEMORY))
 		arg->status_change_nid_normal = nid;
+#ifdef CONFIG_HIGHMEM
+	if (zone_idx(zone) <= ZONE_HIGHMEM && !node_state(nid, N_HIGH_MEMORY))
+		arg->status_change_nid_high = nid;
+#endif
 }
 
 static void node_states_set_node(int node, struct memory_notify *arg)
 {
 	if (arg->status_change_nid_normal >= 0)
 		node_set_state(node, N_NORMAL_MEMORY);
+
+	if (arg->status_change_nid_high >= 0)
+		node_set_state(node, N_HIGH_MEMORY);
 
 	if (arg->status_change_nid >= 0)
 		node_set_state(node, N_MEMORY);
@@ -1150,6 +1163,7 @@ failed_addition:
 	mem_hotplug_done();
 	return ret;
 }
+#endif /* CONFIG_MEMORY_HOTPLUG_SPARSE */
 
 static void reset_node_present_pages(pg_data_t *pgdat)
 {
@@ -1343,7 +1357,6 @@ bool mhp_supports_memmap_on_memory(unsigned long size)
 int __ref add_memory_resource(int nid, struct resource *res, mhp_t mhp_flags)
 {
 	struct mhp_params params = { .pgprot = pgprot_mhp(PAGE_KERNEL) };
-	enum memblock_flags memblock_flags = MEMBLOCK_NONE;
 	struct vmem_altmap mhp_altmap = {};
 	struct memory_group *group = NULL;
 	u64 start, size;
@@ -1371,13 +1384,8 @@ int __ref add_memory_resource(int nid, struct resource *res, mhp_t mhp_flags)
 
 	mem_hotplug_begin();
 
-	if (IS_ENABLED(CONFIG_ARCH_KEEP_MEMBLOCK)) {
-		if (res->flags & IORESOURCE_SYSRAM_DRIVER_MANAGED)
-			memblock_flags = MEMBLOCK_DRIVER_MANAGED;
-		ret = memblock_add_node(start, size, nid, memblock_flags);
-		if (ret)
-			goto error_mem_hotplug_end;
-	}
+	if (IS_ENABLED(CONFIG_ARCH_KEEP_MEMBLOCK))
+		memblock_add_node(start, size, nid);
 
 	ret = __try_online_node(nid, false);
 	if (ret < 0)
@@ -1450,7 +1458,6 @@ error:
 		rollback_node_hotadd(nid);
 	if (IS_ENABLED(CONFIG_ARCH_KEEP_MEMBLOCK))
 		memblock_remove(start, size);
-error_mem_hotplug_end:
 	mem_hotplug_done();
 	return ret;
 }
@@ -1796,6 +1803,7 @@ static void node_states_check_changes_offline(unsigned long nr_pages,
 
 	arg->status_change_nid = NUMA_NO_NODE;
 	arg->status_change_nid_normal = NUMA_NO_NODE;
+	arg->status_change_nid_high = NUMA_NO_NODE;
 
 	/*
 	 * Check whether node_states[N_NORMAL_MEMORY] will be changed.
@@ -1810,9 +1818,24 @@ static void node_states_check_changes_offline(unsigned long nr_pages,
 	if (zone_idx(zone) <= ZONE_NORMAL && nr_pages >= present_pages)
 		arg->status_change_nid_normal = zone_to_nid(zone);
 
+#ifdef CONFIG_HIGHMEM
 	/*
-	 * We have accounted the pages from [0..ZONE_NORMAL); ZONE_HIGHMEM
-	 * does not apply as we don't support 32bit.
+	 * node_states[N_HIGH_MEMORY] contains nodes which
+	 * have normal memory or high memory.
+	 * Here we add the present_pages belonging to ZONE_HIGHMEM.
+	 * If the zone is within the range of [0..ZONE_HIGHMEM), and
+	 * we determine that the zones in that range become empty,
+	 * we need to clear the node for N_HIGH_MEMORY.
+	 */
+	present_pages += pgdat->node_zones[ZONE_HIGHMEM].present_pages;
+	if (zone_idx(zone) <= ZONE_HIGHMEM && nr_pages >= present_pages)
+		arg->status_change_nid_high = zone_to_nid(zone);
+#endif
+
+	/*
+	 * We have accounted the pages from [0..ZONE_NORMAL), and
+	 * in case of CONFIG_HIGHMEM the pages from ZONE_HIGHMEM
+	 * as well.
 	 * Here we count the possible pages from ZONE_MOVABLE.
 	 * If after having accounted all the pages, we see that the nr_pages
 	 * to be offlined is over or equal to the accounted pages,
@@ -1829,6 +1852,9 @@ static void node_states_clear_node(int node, struct memory_notify *arg)
 {
 	if (arg->status_change_nid_normal >= 0)
 		node_clear_state(node, N_NORMAL_MEMORY);
+
+	if (arg->status_change_nid_high >= 0)
+		node_clear_state(node, N_HIGH_MEMORY);
 
 	if (arg->status_change_nid >= 0)
 		node_clear_state(node, N_MEMORY);
@@ -2178,7 +2204,7 @@ static int __ref try_remove_memory(u64 start, u64 size)
 	arch_remove_memory(start, size, altmap);
 
 	if (IS_ENABLED(CONFIG_ARCH_KEEP_MEMBLOCK)) {
-		memblock_phys_free(start, size);
+		memblock_free(start, size);
 		memblock_remove(start, size);
 	}
 

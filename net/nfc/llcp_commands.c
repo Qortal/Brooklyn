@@ -337,6 +337,8 @@ int nfc_llcp_send_disconnect(struct nfc_llcp_sock *sock)
 	struct nfc_dev *dev;
 	struct nfc_llcp_local *local;
 
+	pr_debug("Sending DISC\n");
+
 	local = sock->local;
 	if (local == NULL)
 		return -ENODEV;
@@ -359,6 +361,8 @@ int nfc_llcp_send_symm(struct nfc_dev *dev)
 	struct sk_buff *skb;
 	struct nfc_llcp_local *local;
 	u16 size = 0;
+
+	pr_debug("Sending SYMM\n");
 
 	local = nfc_llcp_find_local(dev);
 	if (local == NULL)
@@ -394,6 +398,8 @@ int nfc_llcp_send_connect(struct nfc_llcp_sock *sock)
 	int err;
 	u16 size = 0;
 	__be16 miux;
+
+	pr_debug("Sending CONNECT\n");
 
 	local = sock->local;
 	if (local == NULL)
@@ -468,6 +474,8 @@ int nfc_llcp_send_cc(struct nfc_llcp_sock *sock)
 	int err;
 	u16 size = 0;
 	__be16 miux;
+
+	pr_debug("Sending CC\n");
 
 	local = sock->local;
 	if (local == NULL)

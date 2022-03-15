@@ -14,7 +14,6 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_platform.h>
-#include <linux/of_reserved_mem.h>
 #include <linux/pm_runtime.h>
 #include "mt8195-afe-common.h"
 #include "mt8195-afe-clk.h"
@@ -2233,7 +2232,7 @@ static const struct mtk_base_memif_data memif_data[MT8195_AFE_MEMIF_NUM] = {
 	},
 };
 
-static const struct mtk_base_irq_data irq_data_array[MT8195_AFE_IRQ_NUM] = {
+static const struct mtk_base_irq_data irq_data[MT8195_AFE_IRQ_NUM] = {
 	[MT8195_AFE_IRQ_1] = {
 		.id = MT8195_AFE_IRQ_1,
 		.irq_cnt_reg = -1,
@@ -3058,15 +3057,10 @@ static int mt8195_afe_pcm_dev_probe(struct platform_device *pdev)
 {
 	struct mtk_base_afe *afe;
 	struct mt8195_afe_private *afe_priv;
+	struct resource *res;
 	struct device *dev = &pdev->dev;
 	int i, irq_id, ret;
 	struct snd_soc_component *component;
-
-	ret = of_reserved_mem_device_init(dev);
-	if (ret) {
-		dev_err(dev, "failed to assign memory region: %d\n", ret);
-		return ret;
-	}
 
 	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(33));
 	if (ret)
@@ -3084,7 +3078,8 @@ static int mt8195_afe_pcm_dev_probe(struct platform_device *pdev)
 	afe_priv = afe->platform_priv;
 	afe->dev = &pdev->dev;
 
-	afe->base_addr = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	afe->base_addr = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(afe->base_addr))
 		return PTR_ERR(afe->base_addr);
 
@@ -3107,7 +3102,7 @@ static int mt8195_afe_pcm_dev_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	for (i = 0; i < afe->irqs_size; i++)
-		afe->irqs[i].irq_data = &irq_data_array[i];
+		afe->irqs[i].irq_data = &irq_data[i];
 
 	/* init memif */
 	afe->memif_size = MT8195_AFE_MEMIF_NUM;
@@ -3271,7 +3266,9 @@ static struct platform_driver mt8195_afe_pcm_driver = {
 	.driver = {
 		   .name = "mt8195-audio",
 		   .of_match_table = mt8195_afe_pcm_dt_match,
+#ifdef CONFIG_PM
 		   .pm = &mt8195_afe_pm_ops,
+#endif
 	},
 	.probe = mt8195_afe_pcm_dev_probe,
 	.remove = mt8195_afe_pcm_dev_remove,

@@ -80,14 +80,11 @@ static inline bool rcu_segcblist_is_enabled(struct rcu_segcblist *rsclp)
 	return rcu_segcblist_test_flags(rsclp, SEGCBLIST_ENABLED);
 }
 
-/*
- * Is the specified rcu_segcblist NOCB offloaded (or in the middle of the
- * [de]offloading process)?
- */
+/* Is the specified rcu_segcblist offloaded, or is SEGCBLIST_SOFTIRQ_ONLY set? */
 static inline bool rcu_segcblist_is_offloaded(struct rcu_segcblist *rsclp)
 {
 	if (IS_ENABLED(CONFIG_RCU_NOCB_CPU) &&
-	    rcu_segcblist_test_flags(rsclp, SEGCBLIST_LOCKING))
+	    !rcu_segcblist_test_flags(rsclp, SEGCBLIST_SOFTIRQ_ONLY))
 		return true;
 
 	return false;
@@ -95,8 +92,9 @@ static inline bool rcu_segcblist_is_offloaded(struct rcu_segcblist *rsclp)
 
 static inline bool rcu_segcblist_completely_offloaded(struct rcu_segcblist *rsclp)
 {
-	if (IS_ENABLED(CONFIG_RCU_NOCB_CPU) &&
-	    !rcu_segcblist_test_flags(rsclp, SEGCBLIST_RCU_CORE))
+	int flags = SEGCBLIST_KTHREAD_CB | SEGCBLIST_KTHREAD_GP | SEGCBLIST_OFFLOADED;
+
+	if (IS_ENABLED(CONFIG_RCU_NOCB_CPU) && (rsclp->flags & flags) == flags)
 		return true;
 
 	return false;

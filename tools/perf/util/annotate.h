@@ -299,9 +299,6 @@ struct annotation {
 	struct annotated_source *src;
 };
 
-void annotation__init(struct annotation *notes);
-void annotation__exit(struct annotation *notes);
-
 static inline int annotation__cycles_width(struct annotation *notes)
 {
 	if (notes->have_cycles && notes->options->show_minmax_cycle)

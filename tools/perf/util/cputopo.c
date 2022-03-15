@@ -14,16 +14,14 @@
 #include "env.h"
 #include "pmu-hybrid.h"
 
-#define PACKAGE_CPUS_FMT \
-	"%s/devices/system/cpu/cpu%d/topology/package_cpus_list"
-#define PACKAGE_CPUS_FMT_OLD \
+#define CORE_SIB_FMT \
 	"%s/devices/system/cpu/cpu%d/topology/core_siblings_list"
-#define DIE_CPUS_FMT \
+#define DIE_SIB_FMT \
 	"%s/devices/system/cpu/cpu%d/topology/die_cpus_list"
-#define CORE_CPUS_FMT \
-	"%s/devices/system/cpu/cpu%d/topology/core_cpus_list"
-#define CORE_CPUS_FMT_OLD \
+#define THRD_SIB_FMT \
 	"%s/devices/system/cpu/cpu%d/topology/thread_siblings_list"
+#define THRD_SIB_FMT_NEW \
+	"%s/devices/system/cpu/cpu%d/topology/core_cpus_list"
 #define NODE_ONLINE_FMT \
 	"%s/devices/system/node/online"
 #define NODE_MEMINFO_FMT \
@@ -41,12 +39,8 @@ static int build_cpu_topology(struct cpu_topology *tp, int cpu)
 	u32 i = 0;
 	int ret = -1;
 
-	scnprintf(filename, MAXPATHLEN, PACKAGE_CPUS_FMT,
+	scnprintf(filename, MAXPATHLEN, CORE_SIB_FMT,
 		  sysfs__mountpoint(), cpu);
-	if (access(filename, F_OK) == -1) {
-		scnprintf(filename, MAXPATHLEN, PACKAGE_CPUS_FMT_OLD,
-			sysfs__mountpoint(), cpu);
-	}
 	fp = fopen(filename, "r");
 	if (!fp)
 		goto try_dies;
@@ -60,23 +54,23 @@ static int build_cpu_topology(struct cpu_topology *tp, int cpu)
 	if (p)
 		*p = '\0';
 
-	for (i = 0; i < tp->package_cpus_lists; i++) {
-		if (!strcmp(buf, tp->package_cpus_list[i]))
+	for (i = 0; i < tp->core_sib; i++) {
+		if (!strcmp(buf, tp->core_siblings[i]))
 			break;
 	}
-	if (i == tp->package_cpus_lists) {
-		tp->package_cpus_list[i] = buf;
-		tp->package_cpus_lists++;
+	if (i == tp->core_sib) {
+		tp->core_siblings[i] = buf;
+		tp->core_sib++;
 		buf = NULL;
 		len = 0;
 	}
 	ret = 0;
 
 try_dies:
-	if (!tp->die_cpus_list)
+	if (!tp->die_siblings)
 		goto try_threads;
 
-	scnprintf(filename, MAXPATHLEN, DIE_CPUS_FMT,
+	scnprintf(filename, MAXPATHLEN, DIE_SIB_FMT,
 		  sysfs__mountpoint(), cpu);
 	fp = fopen(filename, "r");
 	if (!fp)
@@ -91,23 +85,23 @@ try_dies:
 	if (p)
 		*p = '\0';
 
-	for (i = 0; i < tp->die_cpus_lists; i++) {
-		if (!strcmp(buf, tp->die_cpus_list[i]))
+	for (i = 0; i < tp->die_sib; i++) {
+		if (!strcmp(buf, tp->die_siblings[i]))
 			break;
 	}
-	if (i == tp->die_cpus_lists) {
-		tp->die_cpus_list[i] = buf;
-		tp->die_cpus_lists++;
+	if (i == tp->die_sib) {
+		tp->die_siblings[i] = buf;
+		tp->die_sib++;
 		buf = NULL;
 		len = 0;
 	}
 	ret = 0;
 
 try_threads:
-	scnprintf(filename, MAXPATHLEN, CORE_CPUS_FMT,
+	scnprintf(filename, MAXPATHLEN, THRD_SIB_FMT_NEW,
 		  sysfs__mountpoint(), cpu);
 	if (access(filename, F_OK) == -1) {
-		scnprintf(filename, MAXPATHLEN, CORE_CPUS_FMT_OLD,
+		scnprintf(filename, MAXPATHLEN, THRD_SIB_FMT,
 			  sysfs__mountpoint(), cpu);
 	}
 	fp = fopen(filename, "r");
@@ -121,13 +115,13 @@ try_threads:
 	if (p)
 		*p = '\0';
 
-	for (i = 0; i < tp->core_cpus_lists; i++) {
-		if (!strcmp(buf, tp->core_cpus_list[i]))
+	for (i = 0; i < tp->thread_sib; i++) {
+		if (!strcmp(buf, tp->thread_siblings[i]))
 			break;
 	}
-	if (i == tp->core_cpus_lists) {
-		tp->core_cpus_list[i] = buf;
-		tp->core_cpus_lists++;
+	if (i == tp->thread_sib) {
+		tp->thread_siblings[i] = buf;
+		tp->thread_sib++;
 		buf = NULL;
 	}
 	ret = 0;
@@ -145,14 +139,16 @@ void cpu_topology__delete(struct cpu_topology *tp)
 	if (!tp)
 		return;
 
-	for (i = 0 ; i < tp->package_cpus_lists; i++)
-		zfree(&tp->package_cpus_list[i]);
+	for (i = 0 ; i < tp->core_sib; i++)
+		zfree(&tp->core_siblings[i]);
 
-	for (i = 0 ; i < tp->die_cpus_lists; i++)
-		zfree(&tp->die_cpus_list[i]);
+	if (tp->die_sib) {
+		for (i = 0 ; i < tp->die_sib; i++)
+			zfree(&tp->die_siblings[i]);
+	}
 
-	for (i = 0 ; i < tp->core_cpus_lists; i++)
-		zfree(&tp->core_cpus_list[i]);
+	for (i = 0 ; i < tp->thread_sib; i++)
+		zfree(&tp->thread_siblings[i]);
 
 	free(tp);
 }
@@ -165,11 +161,10 @@ static bool has_die_topology(void)
 	if (uname(&uts) < 0)
 		return false;
 
-	if (strncmp(uts.machine, "x86_64", 6) &&
-	    strncmp(uts.machine, "s390x", 5))
+	if (strncmp(uts.machine, "x86_64", 6))
 		return false;
 
-	scnprintf(filename, MAXPATHLEN, DIE_CPUS_FMT,
+	scnprintf(filename, MAXPATHLEN, DIE_SIB_FMT,
 		  sysfs__mountpoint(), 0);
 	if (access(filename, F_OK) == -1)
 		return false;
@@ -188,7 +183,7 @@ struct cpu_topology *cpu_topology__new(void)
 	struct perf_cpu_map *map;
 	bool has_die = has_die_topology();
 
-	ncpus = cpu__max_present_cpu().cpu;
+	ncpus = cpu__max_present_cpu();
 
 	/* build online CPU map */
 	map = perf_cpu_map__new(NULL);
@@ -210,16 +205,16 @@ struct cpu_topology *cpu_topology__new(void)
 
 	tp = addr;
 	addr += sizeof(*tp);
-	tp->package_cpus_list = addr;
+	tp->core_siblings = addr;
 	addr += sz;
 	if (has_die) {
-		tp->die_cpus_list = addr;
+		tp->die_siblings = addr;
 		addr += sz;
 	}
-	tp->core_cpus_list = addr;
+	tp->thread_siblings = addr;
 
 	for (i = 0; i < nr; i++) {
-		if (!perf_cpu_map__has(map, (struct perf_cpu){ .cpu = i }))
+		if (!cpu_map__has(map, i))
 			continue;
 
 		ret = build_cpu_topology(tp, i);
@@ -325,7 +320,7 @@ struct numa_topology *numa_topology__new(void)
 	if (!node_map)
 		goto out;
 
-	nr = (u32) perf_cpu_map__nr(node_map);
+	nr = (u32) node_map->nr;
 
 	tp = zalloc(sizeof(*tp) + sizeof(tp->nodes[0])*nr);
 	if (!tp)
@@ -334,7 +329,7 @@ struct numa_topology *numa_topology__new(void)
 	tp->nr = nr;
 
 	for (i = 0; i < nr; i++) {
-		if (load_numa_node(&tp->nodes[i], perf_cpu_map__cpu(node_map, i).cpu)) {
+		if (load_numa_node(&tp->nodes[i], node_map->map[i])) {
 			numa_topology__delete(tp);
 			tp = NULL;
 			break;

@@ -1,5 +1,3 @@
-.. SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
-
 ================
 bpftool-prog
 ================
@@ -9,14 +7,12 @@ tool for inspection and simple manipulation of eBPF progs
 
 :Manual section: 8
 
-.. include:: substitutions.rst
-
 SYNOPSIS
 ========
 
 	**bpftool** [*OPTIONS*] **prog** *COMMAND*
 
-	*OPTIONS* := { |COMMON_OPTIONS| |
+	*OPTIONS* := { { **-j** | **--json** } [{ **-p** | **--pretty** }] | { **-d** | **--debug** } |
 	{ **-f** | **--bpffs** } | { **-m** | **--mapcompat** } | { **-n** | **--nomount** } |
 	{ **-L** | **--use-loader** } }
 

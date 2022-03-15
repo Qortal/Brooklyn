@@ -24,7 +24,7 @@ int ping_and_check(int exp_calls, int exp_alt_calls)
 	return 0;
 }
 
-void serial_test_cgroup_link(void)
+void test_cgroup_link(void)
 {
 	struct {
 		const char *path;

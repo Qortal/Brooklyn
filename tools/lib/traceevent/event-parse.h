@@ -125,7 +125,6 @@ enum tep_format_flags {
 	TEP_FIELD_IS_LONG	= 32,
 	TEP_FIELD_IS_FLAG	= 64,
 	TEP_FIELD_IS_SYMBOLIC	= 128,
-	TEP_FIELD_IS_RELATIVE	= 256,
 };
 
 struct tep_format_field {
@@ -154,12 +153,12 @@ struct tep_print_arg_atom {
 
 struct tep_print_arg_string {
 	char			*string;
-	struct tep_format_field *field;
+	int			offset;
 };
 
 struct tep_print_arg_bitmask {
 	char			*bitmask;
-	struct tep_format_field *field;
+	int			offset;
 };
 
 struct tep_print_arg_field {

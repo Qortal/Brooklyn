@@ -21,7 +21,6 @@
 #include "util/build-id.h"
 #include "util/strlist.h"
 #include "util/strfilter.h"
-#include "util/symbol.h"
 #include "util/symbol_conf.h"
 #include "util/debug.h"
 #include <subcmd/parse-options.h>
@@ -629,10 +628,6 @@ __cmd_probe(int argc, const char **argv)
 		}
 		params.command = 'a';
 	}
-
-	ret = symbol__validate_sym_arguments();
-	if (ret)
-		return ret;
 
 	if (params.quiet) {
 		if (verbose != 0) {

@@ -586,59 +586,70 @@ struct page_flags_test {
 	int width;
 	int shift;
 	int mask;
+	unsigned long value;
 	const char *fmt;
 	const char *name;
 };
 
-static const struct page_flags_test pft[] = {
+static struct page_flags_test pft[] = {
 	{SECTIONS_WIDTH, SECTIONS_PGSHIFT, SECTIONS_MASK,
-	 "%d", "section"},
+	 0, "%d", "section"},
 	{NODES_WIDTH, NODES_PGSHIFT, NODES_MASK,
-	 "%d", "node"},
+	 0, "%d", "node"},
 	{ZONES_WIDTH, ZONES_PGSHIFT, ZONES_MASK,
-	 "%d", "zone"},
+	 0, "%d", "zone"},
 	{LAST_CPUPID_WIDTH, LAST_CPUPID_PGSHIFT, LAST_CPUPID_MASK,
-	 "%#x", "lastcpupid"},
+	 0, "%#x", "lastcpupid"},
 	{KASAN_TAG_WIDTH, KASAN_TAG_PGSHIFT, KASAN_TAG_MASK,
-	 "%#x", "kasantag"},
+	 0, "%#x", "kasantag"},
 };
 
 static void __init
 page_flags_test(int section, int node, int zone, int last_cpupid,
-		int kasan_tag, unsigned long flags, const char *name,
-		char *cmp_buf)
+		int kasan_tag, int flags, const char *name, char *cmp_buf)
 {
 	unsigned long values[] = {section, node, zone, last_cpupid, kasan_tag};
-	unsigned long size;
+	unsigned long page_flags = 0;
+	unsigned long size = 0;
 	bool append = false;
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(values); i++)
-		flags |= (values[i] & pft[i].mask) << pft[i].shift;
-
-	size = scnprintf(cmp_buf, BUF_SIZE, "%#lx(", flags);
-	if (flags & PAGEFLAGS_MASK) {
-		size += scnprintf(cmp_buf + size, BUF_SIZE - size, "%s", name);
-		append = true;
+	flags &= PAGEFLAGS_MASK;
+	if (flags) {
+		page_flags |= flags;
+		snprintf(cmp_buf + size, BUF_SIZE - size, "%s", name);
+		size = strlen(cmp_buf);
+#if SECTIONS_WIDTH || NODES_WIDTH || ZONES_WIDTH || \
+	LAST_CPUPID_WIDTH || KASAN_TAG_WIDTH
+		/* Other information also included in page flags */
+		snprintf(cmp_buf + size, BUF_SIZE - size, "|");
+		size = strlen(cmp_buf);
+#endif
 	}
+
+	/* Set the test value */
+	for (i = 0; i < ARRAY_SIZE(pft); i++)
+		pft[i].value = values[i];
 
 	for (i = 0; i < ARRAY_SIZE(pft); i++) {
 		if (!pft[i].width)
 			continue;
 
-		if (append)
-			size += scnprintf(cmp_buf + size, BUF_SIZE - size, "|");
+		if (append) {
+			snprintf(cmp_buf + size, BUF_SIZE - size, "|");
+			size = strlen(cmp_buf);
+		}
 
-		size += scnprintf(cmp_buf + size, BUF_SIZE - size, "%s=",
-				pft[i].name);
-		size += scnprintf(cmp_buf + size, BUF_SIZE - size, pft[i].fmt,
-				values[i] & pft[i].mask);
+		page_flags |= (pft[i].value & pft[i].mask) << pft[i].shift;
+		snprintf(cmp_buf + size, BUF_SIZE - size, "%s=", pft[i].name);
+		size = strlen(cmp_buf);
+		snprintf(cmp_buf + size, BUF_SIZE - size, pft[i].fmt,
+			 pft[i].value & pft[i].mask);
+		size = strlen(cmp_buf);
 		append = true;
 	}
 
-	snprintf(cmp_buf + size, BUF_SIZE - size, ")");
-
-	test(cmp_buf, "%pGp", &flags);
+	test(cmp_buf, "%pGp", &page_flags);
 }
 
 static void __init

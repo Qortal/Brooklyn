@@ -828,7 +828,8 @@ static bool sg_miter_get_next_page(struct sg_mapping_iter *miter)
  *   stops @miter.
  *
  * Context:
- *   Don't care.
+ *   Don't care if @miter is stopped, or not proceeded yet.
+ *   Otherwise, preemption disabled if the SG_MITER_ATOMIC is set.
  *
  * Returns:
  *   true if @miter contains the valid mapping.  false if end of sg
@@ -864,7 +865,8 @@ EXPORT_SYMBOL(sg_miter_skip);
  *   @miter->addr and @miter->length point to the current mapping.
  *
  * Context:
- *   May sleep if !SG_MITER_ATOMIC.
+ *   Preemption disabled if SG_MITER_ATOMIC.  Preemption must stay disabled
+ *   till @miter is stopped.  May sleep if !SG_MITER_ATOMIC.
  *
  * Returns:
  *   true if @miter contains the next mapping.  false if end of sg
@@ -904,7 +906,8 @@ EXPORT_SYMBOL(sg_miter_next);
  *   need to be released during iteration.
  *
  * Context:
- *   Don't care otherwise.
+ *   Preemption disabled if the SG_MITER_ATOMIC is set.  Don't care
+ *   otherwise.
  */
 void sg_miter_stop(struct sg_mapping_iter *miter)
 {
@@ -919,7 +922,7 @@ void sg_miter_stop(struct sg_mapping_iter *miter)
 			flush_dcache_page(miter->page);
 
 		if (miter->__flags & SG_MITER_ATOMIC) {
-			WARN_ON_ONCE(!pagefault_disabled());
+			WARN_ON_ONCE(preemptible());
 			kunmap_atomic(miter->addr);
 		} else
 			kunmap(miter->page);

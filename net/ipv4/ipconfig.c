@@ -262,11 +262,6 @@ static int __init ic_open_devs(void)
 				 dev->name, able, d->xid);
 		}
 	}
-	/* Devices with a complex topology like SFP ethernet interfaces needs
-	 * the rtnl_lock at init. The carrier wait-loop must therefore run
-	 * without holding it.
-	 */
-	rtnl_unlock();
 
 	/* no point in waiting if we could not bring up at least one device */
 	if (!ic_first_dev)
@@ -279,13 +274,9 @@ static int __init ic_open_devs(void)
 			   msecs_to_jiffies(carrier_timeout * 1000))) {
 		int wait, elapsed;
 
-		rtnl_lock();
 		for_each_netdev(&init_net, dev)
-			if (ic_is_init_dev(dev) && netif_carrier_ok(dev)) {
-				rtnl_unlock();
+			if (ic_is_init_dev(dev) && netif_carrier_ok(dev))
 				goto have_carrier;
-			}
-		rtnl_unlock();
 
 		msleep(1);
 
@@ -298,6 +289,7 @@ static int __init ic_open_devs(void)
 		next_msg = jiffies + msecs_to_jiffies(20000);
 	}
 have_carrier:
+	rtnl_unlock();
 
 	*last = NULL;
 

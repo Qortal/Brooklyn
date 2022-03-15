@@ -9,7 +9,7 @@
 #include <sys/mman.h>
 #include <string.h>
 
-#include "../kselftest.h"
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
 #ifdef __powerpc64__
 #define PAGE_SIZE	(64 << 10)

@@ -18,7 +18,7 @@
 #include <linux/pagemap.h>
 #include <linux/namei.h>
 #include <linux/shmem_fs.h>
-#include <linux/blk-cgroup.h>
+#include <linux/blkdev.h>
 #include <linux/random.h>
 #include <linux/writeback.h>
 #include <linux/proc_fs.h>
@@ -49,7 +49,7 @@ static bool swap_count_continued(struct swap_info_struct *, pgoff_t,
 				 unsigned char);
 static void free_swap_count_continuations(struct swap_info_struct *);
 
-static DEFINE_SPINLOCK(swap_lock);
+DEFINE_SPINLOCK(swap_lock);
 static unsigned int nr_swapfiles;
 atomic_long_t nr_swap_pages;
 /*
@@ -71,7 +71,7 @@ static const char Unused_offset[] = "Unused swap offset entry ";
  * all active swap_info_structs
  * protected with swap_lock, and ordered by priority.
  */
-static PLIST_HEAD(swap_active_head);
+PLIST_HEAD(swap_active_head);
 
 /*
  * all available (active, not full) swap_info_structs
@@ -1601,30 +1601,31 @@ static bool page_swapped(struct page *page)
 	return false;
 }
 
-static int page_trans_huge_map_swapcount(struct page *page,
+static int page_trans_huge_map_swapcount(struct page *page, int *total_mapcount,
 					 int *total_swapcount)
 {
-	int i, map_swapcount, _total_swapcount;
+	int i, map_swapcount, _total_mapcount, _total_swapcount;
 	unsigned long offset = 0;
 	struct swap_info_struct *si;
 	struct swap_cluster_info *ci = NULL;
 	unsigned char *map = NULL;
-	int swapcount = 0;
+	int mapcount, swapcount = 0;
 
 	/* hugetlbfs shouldn't call it */
 	VM_BUG_ON_PAGE(PageHuge(page), page);
 
 	if (!IS_ENABLED(CONFIG_THP_SWAP) || likely(!PageTransCompound(page))) {
+		mapcount = page_trans_huge_mapcount(page, total_mapcount);
 		if (PageSwapCache(page))
 			swapcount = page_swapcount(page);
 		if (total_swapcount)
 			*total_swapcount = swapcount;
-		return swapcount + page_trans_huge_mapcount(page);
+		return mapcount + swapcount;
 	}
 
 	page = compound_head(page);
 
-	_total_swapcount = map_swapcount = 0;
+	_total_mapcount = _total_swapcount = map_swapcount = 0;
 	if (PageSwapCache(page)) {
 		swp_entry_t entry;
 
@@ -1638,7 +1639,8 @@ static int page_trans_huge_map_swapcount(struct page *page,
 	if (map)
 		ci = lock_cluster(si, offset);
 	for (i = 0; i < HPAGE_PMD_NR; i++) {
-		int mapcount = atomic_read(&page[i]._mapcount) + 1;
+		mapcount = atomic_read(&page[i]._mapcount) + 1;
+		_total_mapcount += mapcount;
 		if (map) {
 			swapcount = swap_count(map[offset + i]);
 			_total_swapcount += swapcount;
@@ -1646,14 +1648,19 @@ static int page_trans_huge_map_swapcount(struct page *page,
 		map_swapcount = max(map_swapcount, mapcount + swapcount);
 	}
 	unlock_cluster(ci);
-
-	if (PageDoubleMap(page))
+	if (PageDoubleMap(page)) {
 		map_swapcount -= 1;
-
+		_total_mapcount -= HPAGE_PMD_NR;
+	}
+	mapcount = compound_mapcount(page);
+	map_swapcount += mapcount;
+	_total_mapcount += mapcount;
+	if (total_mapcount)
+		*total_mapcount = _total_mapcount;
 	if (total_swapcount)
 		*total_swapcount = _total_swapcount;
 
-	return map_swapcount + compound_mapcount(page);
+	return map_swapcount;
 }
 
 /*
@@ -1661,15 +1668,22 @@ static int page_trans_huge_map_swapcount(struct page *page,
  * to it.  And as a side-effect, free up its swap: because the old content
  * on disk will never be read, and seeking back there to write new content
  * later would only waste time away from clustering.
+ *
+ * NOTE: total_map_swapcount should not be relied upon by the caller if
+ * reuse_swap_page() returns false, but it may be always overwritten
+ * (see the other implementation for CONFIG_SWAP=n).
  */
-bool reuse_swap_page(struct page *page)
+bool reuse_swap_page(struct page *page, int *total_map_swapcount)
 {
-	int count, total_swapcount;
+	int count, total_mapcount, total_swapcount;
 
 	VM_BUG_ON_PAGE(!PageLocked(page), page);
 	if (unlikely(PageKsm(page)))
 		return false;
-	count = page_trans_huge_map_swapcount(page, &total_swapcount);
+	count = page_trans_huge_map_swapcount(page, &total_mapcount,
+					      &total_swapcount);
+	if (total_map_swapcount)
+		*total_map_swapcount = total_mapcount + total_swapcount;
 	if (count == 1 && PageSwapCache(page) &&
 	    (likely(!PageTransCompound(page)) ||
 	     /* The remaining swap count will be freed soon */
@@ -1903,14 +1917,14 @@ static int unuse_pte(struct vm_area_struct *vma, pmd_t *pmd,
 	dec_mm_counter(vma->vm_mm, MM_SWAPENTS);
 	inc_mm_counter(vma->vm_mm, MM_ANONPAGES);
 	get_page(page);
+	set_pte_at(vma->vm_mm, addr, pte,
+		   pte_mkold(mk_pte(page, vma->vm_page_prot)));
 	if (page == swapcache) {
 		page_add_anon_rmap(page, vma, addr, false);
 	} else { /* ksm created a completely new copy */
 		page_add_new_anon_rmap(page, vma, addr, false);
 		lru_cache_add_inactive_or_unevictable(page, vma);
 	}
-	set_pte_at(vma->vm_mm, addr, pte,
-		   pte_mkold(mk_pte(page, vma->vm_page_prot)));
 	swap_free(entry);
 out:
 	pte_unmap_unlock(pte, ptl);
@@ -1923,7 +1937,8 @@ out:
 
 static int unuse_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 			unsigned long addr, unsigned long end,
-			unsigned int type)
+			unsigned int type, bool frontswap,
+			unsigned long *fs_pages_to_unuse)
 {
 	struct page *page;
 	swp_entry_t entry;
@@ -1944,6 +1959,9 @@ static int unuse_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 			continue;
 
 		offset = swp_offset(entry);
+		if (frontswap && !frontswap_test(si, offset))
+			continue;
+
 		pte_unmap(pte);
 		swap_map = &si->swap_map[offset];
 		page = lookup_swap_cache(entry, vma, addr);
@@ -1975,6 +1993,11 @@ static int unuse_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 		try_to_free_swap(page);
 		unlock_page(page);
 		put_page(page);
+
+		if (*fs_pages_to_unuse && !--(*fs_pages_to_unuse)) {
+			ret = FRONTSWAP_PAGES_UNUSED;
+			goto out;
+		}
 try_next:
 		pte = pte_offset_map(pmd, addr);
 	} while (pte++, addr += PAGE_SIZE, addr != end);
@@ -1987,7 +2010,8 @@ out:
 
 static inline int unuse_pmd_range(struct vm_area_struct *vma, pud_t *pud,
 				unsigned long addr, unsigned long end,
-				unsigned int type)
+				unsigned int type, bool frontswap,
+				unsigned long *fs_pages_to_unuse)
 {
 	pmd_t *pmd;
 	unsigned long next;
@@ -1999,7 +2023,8 @@ static inline int unuse_pmd_range(struct vm_area_struct *vma, pud_t *pud,
 		next = pmd_addr_end(addr, end);
 		if (pmd_none_or_trans_huge_or_clear_bad(pmd))
 			continue;
-		ret = unuse_pte_range(vma, pmd, addr, next, type);
+		ret = unuse_pte_range(vma, pmd, addr, next, type,
+				      frontswap, fs_pages_to_unuse);
 		if (ret)
 			return ret;
 	} while (pmd++, addr = next, addr != end);
@@ -2008,7 +2033,8 @@ static inline int unuse_pmd_range(struct vm_area_struct *vma, pud_t *pud,
 
 static inline int unuse_pud_range(struct vm_area_struct *vma, p4d_t *p4d,
 				unsigned long addr, unsigned long end,
-				unsigned int type)
+				unsigned int type, bool frontswap,
+				unsigned long *fs_pages_to_unuse)
 {
 	pud_t *pud;
 	unsigned long next;
@@ -2019,7 +2045,8 @@ static inline int unuse_pud_range(struct vm_area_struct *vma, p4d_t *p4d,
 		next = pud_addr_end(addr, end);
 		if (pud_none_or_clear_bad(pud))
 			continue;
-		ret = unuse_pmd_range(vma, pud, addr, next, type);
+		ret = unuse_pmd_range(vma, pud, addr, next, type,
+				      frontswap, fs_pages_to_unuse);
 		if (ret)
 			return ret;
 	} while (pud++, addr = next, addr != end);
@@ -2028,7 +2055,8 @@ static inline int unuse_pud_range(struct vm_area_struct *vma, p4d_t *p4d,
 
 static inline int unuse_p4d_range(struct vm_area_struct *vma, pgd_t *pgd,
 				unsigned long addr, unsigned long end,
-				unsigned int type)
+				unsigned int type, bool frontswap,
+				unsigned long *fs_pages_to_unuse)
 {
 	p4d_t *p4d;
 	unsigned long next;
@@ -2039,14 +2067,16 @@ static inline int unuse_p4d_range(struct vm_area_struct *vma, pgd_t *pgd,
 		next = p4d_addr_end(addr, end);
 		if (p4d_none_or_clear_bad(p4d))
 			continue;
-		ret = unuse_pud_range(vma, p4d, addr, next, type);
+		ret = unuse_pud_range(vma, p4d, addr, next, type,
+				      frontswap, fs_pages_to_unuse);
 		if (ret)
 			return ret;
 	} while (p4d++, addr = next, addr != end);
 	return 0;
 }
 
-static int unuse_vma(struct vm_area_struct *vma, unsigned int type)
+static int unuse_vma(struct vm_area_struct *vma, unsigned int type,
+		     bool frontswap, unsigned long *fs_pages_to_unuse)
 {
 	pgd_t *pgd;
 	unsigned long addr, end, next;
@@ -2060,14 +2090,16 @@ static int unuse_vma(struct vm_area_struct *vma, unsigned int type)
 		next = pgd_addr_end(addr, end);
 		if (pgd_none_or_clear_bad(pgd))
 			continue;
-		ret = unuse_p4d_range(vma, pgd, addr, next, type);
+		ret = unuse_p4d_range(vma, pgd, addr, next, type,
+				      frontswap, fs_pages_to_unuse);
 		if (ret)
 			return ret;
 	} while (pgd++, addr = next, addr != end);
 	return 0;
 }
 
-static int unuse_mm(struct mm_struct *mm, unsigned int type)
+static int unuse_mm(struct mm_struct *mm, unsigned int type,
+		    bool frontswap, unsigned long *fs_pages_to_unuse)
 {
 	struct vm_area_struct *vma;
 	int ret = 0;
@@ -2075,7 +2107,8 @@ static int unuse_mm(struct mm_struct *mm, unsigned int type)
 	mmap_read_lock(mm);
 	for (vma = mm->mmap; vma; vma = vma->vm_next) {
 		if (vma->anon_vma) {
-			ret = unuse_vma(vma, type);
+			ret = unuse_vma(vma, type, frontswap,
+					fs_pages_to_unuse);
 			if (ret)
 				break;
 		}
@@ -2091,7 +2124,7 @@ static int unuse_mm(struct mm_struct *mm, unsigned int type)
  * if there are no inuse entries after prev till end of the map.
  */
 static unsigned int find_next_to_unuse(struct swap_info_struct *si,
-					unsigned int prev)
+					unsigned int prev, bool frontswap)
 {
 	unsigned int i;
 	unsigned char count;
@@ -2105,7 +2138,8 @@ static unsigned int find_next_to_unuse(struct swap_info_struct *si,
 	for (i = prev + 1; i < si->max; i++) {
 		count = READ_ONCE(si->swap_map[i]);
 		if (count && swap_count(count) != SWAP_MAP_BAD)
-			break;
+			if (!frontswap || frontswap_test(si, i))
+				break;
 		if ((i % LATENCY_LIMIT) == 0)
 			cond_resched();
 	}
@@ -2116,7 +2150,12 @@ static unsigned int find_next_to_unuse(struct swap_info_struct *si,
 	return i;
 }
 
-static int try_to_unuse(unsigned int type)
+/*
+ * If the boolean frontswap is true, only unuse pages_to_unuse pages;
+ * pages_to_unuse==0 means all pages; ignored if frontswap is false
+ */
+int try_to_unuse(unsigned int type, bool frontswap,
+		 unsigned long pages_to_unuse)
 {
 	struct mm_struct *prev_mm;
 	struct mm_struct *mm;
@@ -2130,10 +2169,13 @@ static int try_to_unuse(unsigned int type)
 	if (!READ_ONCE(si->inuse_pages))
 		return 0;
 
+	if (!frontswap)
+		pages_to_unuse = 0;
+
 retry:
-	retval = shmem_unuse(type);
+	retval = shmem_unuse(type, frontswap, &pages_to_unuse);
 	if (retval)
-		return retval;
+		goto out;
 
 	prev_mm = &init_mm;
 	mmget(prev_mm);
@@ -2150,10 +2192,11 @@ retry:
 		spin_unlock(&mmlist_lock);
 		mmput(prev_mm);
 		prev_mm = mm;
-		retval = unuse_mm(mm, type);
+		retval = unuse_mm(mm, type, frontswap, &pages_to_unuse);
+
 		if (retval) {
 			mmput(prev_mm);
-			return retval;
+			goto out;
 		}
 
 		/*
@@ -2170,7 +2213,7 @@ retry:
 	i = 0;
 	while (READ_ONCE(si->inuse_pages) &&
 	       !signal_pending(current) &&
-	       (i = find_next_to_unuse(si, i)) != 0) {
+	       (i = find_next_to_unuse(si, i, frontswap)) != 0) {
 
 		entry = swp_entry(type, i);
 		page = find_get_page(swap_address_space(entry), i);
@@ -2188,6 +2231,14 @@ retry:
 		try_to_free_swap(page);
 		unlock_page(page);
 		put_page(page);
+
+		/*
+		 * For frontswap, we just need to unuse pages_to_unuse, if
+		 * it was specified. Need not check frontswap again here as
+		 * we already zeroed out pages_to_unuse if not frontswap.
+		 */
+		if (pages_to_unuse && --pages_to_unuse == 0)
+			goto out;
 	}
 
 	/*
@@ -2205,10 +2256,10 @@ retry:
 	if (READ_ONCE(si->inuse_pages)) {
 		if (!signal_pending(current))
 			goto retry;
-		return -EINTR;
+		retval = -EINTR;
 	}
-
-	return 0;
+out:
+	return (retval == FRONTSWAP_PAGES_UNUSED) ? 0 : retval;
 }
 
 /*
@@ -2426,8 +2477,7 @@ static void enable_swap_info(struct swap_info_struct *p, int prio,
 				struct swap_cluster_info *cluster_info,
 				unsigned long *frontswap_map)
 {
-	if (IS_ENABLED(CONFIG_FRONTSWAP))
-		frontswap_init(p->type, frontswap_map);
+	frontswap_init(p->type, frontswap_map);
 	spin_lock(&swap_lock);
 	spin_lock(&p->lock);
 	setup_swap_info(p, prio, swap_map, cluster_info);
@@ -2540,7 +2590,7 @@ SYSCALL_DEFINE1(swapoff, const char __user *, specialfile)
 	disable_swap_slots_cache_lock();
 
 	set_current_oom_origin();
-	err = try_to_unuse(p->type);
+	err = try_to_unuse(p->type, false, 0); /* force unuse all pages */
 	clear_current_oom_origin();
 
 	if (err) {
@@ -2713,7 +2763,7 @@ static int swap_show(struct seq_file *swap, void *v)
 	struct swap_info_struct *si = v;
 	struct file *file;
 	int len;
-	unsigned long bytes, inuse;
+	unsigned int bytes, inuse;
 
 	if (si == SEQ_START_TOKEN) {
 		seq_puts(swap, "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n");
@@ -2725,7 +2775,7 @@ static int swap_show(struct seq_file *swap, void *v)
 
 	file = si->swap_file;
 	len = seq_file_path(swap, file, " \t\n\\");
-	seq_printf(swap, "%*s%s\t%lu\t%s%lu\t%s%d\n",
+	seq_printf(swap, "%*s%s\t%u\t%s%u\t%s%d\n",
 			len < 40 ? 40 - len : 1, " ",
 			S_ISBLK(file_inode(file)->i_mode) ?
 				"partition" : "file\t",
@@ -3068,7 +3118,7 @@ static bool swap_discardable(struct swap_info_struct *si)
 {
 	struct request_queue *q = bdev_get_queue(si->bdev);
 
-	if (!blk_queue_discard(q))
+	if (!q || !blk_queue_discard(q))
 		return false;
 
 	return true;
@@ -3484,13 +3534,13 @@ struct swap_info_struct *page_swap_info(struct page *page)
 }
 
 /*
- * out-of-line methods to avoid include hell.
+ * out-of-line __page_file_ methods to avoid include hell.
  */
-struct address_space *swapcache_mapping(struct folio *folio)
+struct address_space *__page_file_mapping(struct page *page)
 {
-	return page_swap_info(&folio->page)->swap_file->f_mapping;
+	return page_swap_info(page)->swap_file->f_mapping;
 }
-EXPORT_SYMBOL_GPL(swapcache_mapping);
+EXPORT_SYMBOL_GPL(__page_file_mapping);
 
 pgoff_t __page_file_index(struct page *page)
 {

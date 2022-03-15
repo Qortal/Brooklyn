@@ -1612,8 +1612,9 @@ static int sgtl5000_i2c_probe(struct i2c_client *client,
 		if (ret == -ENOENT)
 			ret = -EPROBE_DEFER;
 
-		dev_err_probe(&client->dev, ret, "Failed to get mclock\n");
-
+		if (ret != -EPROBE_DEFER)
+			dev_err(&client->dev, "Failed to get mclock: %d\n",
+				ret);
 		goto disable_regs;
 	}
 

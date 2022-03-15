@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+# SPDX-License-Identifier: GPL-2.0-only
 include ../../../scripts/Makefile.include
 
 INSTALL ?= install
@@ -24,7 +24,7 @@ man: man8
 man8: $(DOC_MAN8)
 
 RST2MAN_DEP := $(shell command -v rst2man 2>/dev/null)
-RST2MAN_OPTS += --verbose --strip-comments
+RST2MAN_OPTS += --verbose
 
 list_pages = $(sort $(basename $(filter-out $(1),$(MAN8_RST))))
 see_also = $(subst " ",, \

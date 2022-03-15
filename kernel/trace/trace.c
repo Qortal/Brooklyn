@@ -235,7 +235,7 @@ static char trace_boot_options_buf[MAX_TRACER_SIZE] __initdata;
 static int __init set_trace_boot_options(char *str)
 {
 	strlcpy(trace_boot_options_buf, str, MAX_TRACER_SIZE);
-	return 0;
+	return 1;
 }
 __setup("trace_options=", set_trace_boot_options);
 
@@ -246,7 +246,7 @@ static int __init set_trace_boot_clock(char *str)
 {
 	strlcpy(trace_boot_clock_buf, str, MAX_TRACER_SIZE);
 	trace_boot_clock = trace_boot_clock_buf;
-	return 0;
+	return 1;
 }
 __setup("trace_clock=", set_trace_boot_clock);
 
@@ -516,6 +516,12 @@ int call_filter_check_discard(struct trace_event_call *call, void *rec,
 	return 0;
 }
 
+void trace_free_pid_list(struct trace_pid_list *pid_list)
+{
+	vfree(pid_list->pids);
+	kfree(pid_list);
+}
+
 /**
  * trace_find_filtered_pid - check if a pid exists in a filtered_pid list
  * @filtered_pids: The list of pids to check
@@ -526,7 +532,14 @@ int call_filter_check_discard(struct trace_event_call *call, void *rec,
 bool
 trace_find_filtered_pid(struct trace_pid_list *filtered_pids, pid_t search_pid)
 {
-	return trace_pid_list_is_set(filtered_pids, search_pid);
+	/*
+	 * If pid_max changed after filtered_pids was created, we
+	 * by default ignore all pids greater than the previous pid_max.
+	 */
+	if (search_pid >= filtered_pids->pid_max)
+		return false;
+
+	return test_bit(search_pid, filtered_pids->pids);
 }
 
 /**
@@ -583,11 +596,15 @@ void trace_filter_add_remove_task(struct trace_pid_list *pid_list,
 			return;
 	}
 
+	/* Sorry, but we don't support pid_max changing after setting */
+	if (task->pid >= pid_list->pid_max)
+		return;
+
 	/* "self" is set for forks, and NULL for exits */
 	if (self)
-		trace_pid_list_set(pid_list, task->pid);
+		set_bit(task->pid, pid_list->pids);
 	else
-		trace_pid_list_clear(pid_list, task->pid);
+		clear_bit(task->pid, pid_list->pids);
 }
 
 /**
@@ -604,19 +621,18 @@ void trace_filter_add_remove_task(struct trace_pid_list *pid_list,
  */
 void *trace_pid_next(struct trace_pid_list *pid_list, void *v, loff_t *pos)
 {
-	long pid = (unsigned long)v;
-	unsigned int next;
+	unsigned long pid = (unsigned long)v;
 
 	(*pos)++;
 
 	/* pid already is +1 of the actual previous bit */
-	if (trace_pid_list_next(pid_list, pid, &next) < 0)
-		return NULL;
-
-	pid = next;
+	pid = find_next_bit(pid_list->pids, pid_list->pid_max, pid);
 
 	/* Return pid + 1 to allow zero to be represented */
-	return (void *)(pid + 1);
+	if (pid < pid_list->pid_max)
+		return (void *)(pid + 1);
+
+	return NULL;
 }
 
 /**
@@ -633,13 +649,11 @@ void *trace_pid_next(struct trace_pid_list *pid_list, void *v, loff_t *pos)
 void *trace_pid_start(struct trace_pid_list *pid_list, loff_t *pos)
 {
 	unsigned long pid;
-	unsigned int first;
 	loff_t l = 0;
 
-	if (trace_pid_list_first(pid_list, &first) < 0)
+	pid = find_first_bit(pid_list->pids, pid_list->pid_max);
+	if (pid >= pid_list->pid_max)
 		return NULL;
-
-	pid = first;
 
 	/* Return pid + 1 so that zero can be the exit value */
 	for (pid++; pid && l < *pos;
@@ -676,7 +690,7 @@ int trace_pid_write(struct trace_pid_list *filtered_pids,
 	unsigned long val;
 	int nr_pids = 0;
 	ssize_t read = 0;
-	ssize_t ret;
+	ssize_t ret = 0;
 	loff_t pos;
 	pid_t pid;
 
@@ -689,23 +703,34 @@ int trace_pid_write(struct trace_pid_list *filtered_pids,
 	 * the user. If the operation fails, then the current list is
 	 * not modified.
 	 */
-	pid_list = trace_pid_list_alloc();
+	pid_list = kmalloc(sizeof(*pid_list), GFP_KERNEL);
 	if (!pid_list) {
 		trace_parser_put(&parser);
 		return -ENOMEM;
 	}
 
+	pid_list->pid_max = READ_ONCE(pid_max);
+
+	/* Only truncating will shrink pid_max */
+	if (filtered_pids && filtered_pids->pid_max > pid_list->pid_max)
+		pid_list->pid_max = filtered_pids->pid_max;
+
+	pid_list->pids = vzalloc((pid_list->pid_max + 7) >> 3);
+	if (!pid_list->pids) {
+		trace_parser_put(&parser);
+		kfree(pid_list);
+		return -ENOMEM;
+	}
+
 	if (filtered_pids) {
 		/* copy the current bits to the new max */
-		ret = trace_pid_list_first(filtered_pids, &pid);
-		while (!ret) {
-			trace_pid_list_set(pid_list, pid);
-			ret = trace_pid_list_next(filtered_pids, pid + 1, &pid);
+		for_each_set_bit(pid, filtered_pids->pids,
+				 filtered_pids->pid_max) {
+			set_bit(pid, pid_list->pids);
 			nr_pids++;
 		}
 	}
 
-	ret = 0;
 	while (cnt > 0) {
 
 		pos = 0;
@@ -721,13 +746,12 @@ int trace_pid_write(struct trace_pid_list *filtered_pids,
 		ret = -EINVAL;
 		if (kstrtoul(parser.buffer, 0, &val))
 			break;
+		if (val >= pid_list->pid_max)
+			break;
 
 		pid = (pid_t)val;
 
-		if (trace_pid_list_set(pid_list, pid) < 0) {
-			ret = -1;
-			break;
-		}
+		set_bit(pid, pid_list->pids);
 		nr_pids++;
 
 		trace_parser_clear(&parser);
@@ -736,13 +760,13 @@ int trace_pid_write(struct trace_pid_list *filtered_pids,
 	trace_parser_put(&parser);
 
 	if (ret < 0) {
-		trace_pid_list_free(pid_list);
+		trace_free_pid_list(pid_list);
 		return ret;
 	}
 
 	if (!nr_pids) {
 		/* Cleared the list of pids */
-		trace_pid_list_free(pid_list);
+		trace_free_pid_list(pid_list);
 		read = ret;
 		pid_list = NULL;
 	}
@@ -984,8 +1008,6 @@ __buffer_unlock_commit(struct trace_buffer *buffer, struct ring_buffer_event *ev
 		ring_buffer_write(buffer, event->array[0], &event->array[1]);
 		/* Release the temp buffer */
 		this_cpu_dec(trace_buffered_event_cnt);
-		/* ring_buffer_unlock_commit() enables preemption */
-		preempt_enable_notrace();
 	} else
 		ring_buffer_unlock_commit(buffer, event);
 }
@@ -1474,12 +1496,10 @@ static int __init set_buf_size(char *str)
 	if (!str)
 		return 0;
 	buf_size = memparse(str, &str);
-	/*
-	 * nr_entries can not be zero and the startup
-	 * tests require some buffer space. Therefore
-	 * ensure we have at least 4096 bytes of buffer.
-	 */
-	trace_buf_size = max(4096UL, buf_size);
+	/* nr_entries can not be zero */
+	if (buf_size == 0)
+		return 0;
+	trace_buf_size = buf_size;
 	return 1;
 }
 __setup("trace_buf_size=", set_buf_size);
@@ -2609,8 +2629,6 @@ unsigned int tracing_gen_ctx_irq_test(unsigned int irqs_status)
 		trace_flags |= TRACE_FLAG_HARDIRQ;
 	if (in_serving_softirq())
 		trace_flags |= TRACE_FLAG_SOFTIRQ;
-	if (softirq_count() >> (SOFTIRQ_SHIFT + 1))
-		trace_flags |= TRACE_FLAG_BH_OFF;
 
 	if (tif_need_resched())
 		trace_flags |= TRACE_FLAG_NEED_RESCHED;
@@ -2755,8 +2773,8 @@ trace_event_buffer_lock_reserve(struct trace_buffer **current_rb,
 	*current_rb = tr->array_buffer.buffer;
 
 	if (!tr->no_filter_buffering_ref &&
-	    (trace_file->flags & (EVENT_FILE_FL_SOFT_DISABLED | EVENT_FILE_FL_FILTERED))) {
-		preempt_disable_notrace();
+	    (trace_file->flags & (EVENT_FILE_FL_SOFT_DISABLED | EVENT_FILE_FL_FILTERED)) &&
+	    (entry = this_cpu_read(trace_buffered_event))) {
 		/*
 		 * Filtering is on, so try to use the per cpu buffer first.
 		 * This buffer will simulate a ring_buffer_event,
@@ -2774,38 +2792,33 @@ trace_event_buffer_lock_reserve(struct trace_buffer **current_rb,
 		 * is still quicker than no copy on match, but having
 		 * to discard out of the ring buffer on a failed match.
 		 */
-		if ((entry = __this_cpu_read(trace_buffered_event))) {
-			int max_len = PAGE_SIZE - struct_size(entry, array, 1);
+		int max_len = PAGE_SIZE - struct_size(entry, array, 1);
 
-			val = this_cpu_inc_return(trace_buffered_event_cnt);
+		val = this_cpu_inc_return(trace_buffered_event_cnt);
 
-			/*
-			 * Preemption is disabled, but interrupts and NMIs
-			 * can still come in now. If that happens after
-			 * the above increment, then it will have to go
-			 * back to the old method of allocating the event
-			 * on the ring buffer, and if the filter fails, it
-			 * will have to call ring_buffer_discard_commit()
-			 * to remove it.
-			 *
-			 * Need to also check the unlikely case that the
-			 * length is bigger than the temp buffer size.
-			 * If that happens, then the reserve is pretty much
-			 * guaranteed to fail, as the ring buffer currently
-			 * only allows events less than a page. But that may
-			 * change in the future, so let the ring buffer reserve
-			 * handle the failure in that case.
-			 */
-			if (val == 1 && likely(len <= max_len)) {
-				trace_event_setup(entry, type, trace_ctx);
-				entry->array[0] = len;
-				/* Return with preemption disabled */
-				return entry;
-			}
-			this_cpu_dec(trace_buffered_event_cnt);
+		/*
+		 * Preemption is disabled, but interrupts and NMIs
+		 * can still come in now. If that happens after
+		 * the above increment, then it will have to go
+		 * back to the old method of allocating the event
+		 * on the ring buffer, and if the filter fails, it
+		 * will have to call ring_buffer_discard_commit()
+		 * to remove it.
+		 *
+		 * Need to also check the unlikely case that the
+		 * length is bigger than the temp buffer size.
+		 * If that happens, then the reserve is pretty much
+		 * guaranteed to fail, as the ring buffer currently
+		 * only allows events less than a page. But that may
+		 * change in the future, so let the ring buffer reserve
+		 * handle the failure in that case.
+		 */
+		if (val == 1 && likely(len <= max_len)) {
+			trace_event_setup(entry, type, trace_ctx);
+			entry->array[0] = len;
+			return entry;
 		}
-		/* __trace_buffer_lock_reserve() disables preemption */
-		preempt_enable_notrace();
+		this_cpu_dec(trace_buffered_event_cnt);
 	}
 
 	entry = __trace_buffer_lock_reserve(*current_rb, type, len,
@@ -4198,7 +4211,7 @@ unsigned long trace_total_entries(struct trace_array *tr)
 static void print_lat_help_header(struct seq_file *m)
 {
 	seq_puts(m, "#                    _------=> CPU#            \n"
-		    "#                   / _-----=> irqs-off/BH-disabled\n"
+		    "#                   / _-----=> irqs-off        \n"
 		    "#                  | / _----=> need-resched    \n"
 		    "#                  || / _---=> hardirq/softirq \n"
 		    "#                  ||| / _--=> preempt-depth   \n"
@@ -4239,7 +4252,7 @@ static void print_func_help_header_irq(struct array_buffer *buf, struct seq_file
 
 	print_event_info(buf, m);
 
-	seq_printf(m, "#                            %.*s  _-----=> irqs-off/BH-disabled\n", prec, space);
+	seq_printf(m, "#                            %.*s  _-----=> irqs-off\n", prec, space);
 	seq_printf(m, "#                            %.*s / _----=> need-resched\n", prec, space);
 	seq_printf(m, "#                            %.*s| / _---=> hardirq/softirq\n", prec, space);
 	seq_printf(m, "#                            %.*s|| / _--=> preempt-depth\n", prec, space);
@@ -4847,12 +4860,6 @@ int tracing_open_generic_tr(struct inode *inode, struct file *filp)
 	filp->private_data = inode->i_private;
 
 	return 0;
-}
-
-static int tracing_mark_open(struct inode *inode, struct file *filp)
-{
-	stream_open(inode, filp);
-	return tracing_open_generic_tr(inode, filp);
 }
 
 static int tracing_release(struct inode *inode, struct file *file)
@@ -5638,7 +5645,6 @@ static const char readme_msg[] =
 #ifdef CONFIG_HIST_TRIGGERS
 	"      hist trigger\t- If set, event hits are aggregated into a hash table\n"
 	"\t    Format: hist:keys=<field1[,field2,...]>\n"
-	"\t            [:<var1>=<field|var_ref|numeric_literal>[,<var2>=...]]\n"
 	"\t            [:values=<field1[,field2,...]>]\n"
 	"\t            [:sort=<field1[,field2,...]>]\n"
 	"\t            [:size=#entries]\n"
@@ -5649,16 +5655,6 @@ static const char readme_msg[] =
 	"\t    Note, special fields can be used as well:\n"
 	"\t            common_timestamp - to record current timestamp\n"
 	"\t            common_cpu - to record the CPU the event happened on\n"
-	"\n"
-	"\t    A hist trigger variable can be:\n"
-	"\t        - a reference to a field e.g. x=current_timestamp,\n"
-	"\t        - a reference to another variable e.g. y=$x,\n"
-	"\t        - a numeric literal: e.g. ms_per_sec=1000,\n"
-	"\t        - an arithmetic expression: e.g. time_secs=current_timestamp/1000\n"
-	"\n"
-	"\t    hist trigger arithmetic expressions support addition(+), subtraction(-),\n"
-	"\t    multiplication(*) and division(/) operators. An operand can be either a\n"
-	"\t    variable reference, field or numeric literal.\n"
 	"\n"
 	"\t    When a matching event is hit, an entry is added to a hash\n"
 	"\t    table using the key(s) and value(s) named, and the value of a\n"
@@ -6739,9 +6735,12 @@ waitagain:
 		cnt = PAGE_SIZE - 1;
 
 	/* reset all but tr, trace, and overruns */
-	trace_iterator_reset(iter);
+	memset(&iter->seq, 0,
+	       sizeof(struct trace_iterator) -
+	       offsetof(struct trace_iterator, seq));
 	cpumask_clear(iter->started);
 	trace_seq_init(&iter->seq);
+	iter->pos = -1;
 
 	trace_event_read_lock();
 	trace_access_lock(iter->cpu_file);
@@ -7130,6 +7129,9 @@ tracing_mark_write(struct file *filp, const char __user *ubuf,
 	if (tt)
 		event_triggers_post_call(tr->trace_marker_file, tt);
 
+	if (written > 0)
+		*fpos += written;
+
 	return written;
 }
 
@@ -7187,6 +7189,9 @@ tracing_mark_raw_write(struct file *filp, const char __user *ubuf,
 		written = cnt;
 
 	__buffer_unlock_commit(buffer, event);
+
+	if (written > 0)
+		*fpos += written;
 
 	return written;
 }
@@ -7587,14 +7592,16 @@ static const struct file_operations tracing_free_buffer_fops = {
 };
 
 static const struct file_operations tracing_mark_fops = {
-	.open		= tracing_mark_open,
+	.open		= tracing_open_generic_tr,
 	.write		= tracing_mark_write,
+	.llseek		= generic_file_llseek,
 	.release	= tracing_release_generic_tr,
 };
 
 static const struct file_operations tracing_mark_raw_fops = {
-	.open		= tracing_mark_open,
+	.open		= tracing_open_generic_tr,
 	.write		= tracing_mark_raw_write,
+	.llseek		= generic_file_llseek,
 	.release	= tracing_release_generic_tr,
 };
 

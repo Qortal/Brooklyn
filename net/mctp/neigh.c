@@ -47,7 +47,7 @@ static int mctp_neigh_add(struct mctp_dev *mdev, mctp_eid_t eid,
 	}
 	INIT_LIST_HEAD(&neigh->list);
 	neigh->dev = mdev;
-	mctp_dev_hold(neigh->dev);
+	dev_hold(neigh->dev->dev);
 	neigh->eid = eid;
 	neigh->source = source;
 	memcpy(neigh->ha, lladdr, lladdr_len);
@@ -63,7 +63,7 @@ static void __mctp_neigh_free(struct rcu_head *rcu)
 {
 	struct mctp_neigh *neigh = container_of(rcu, struct mctp_neigh, rcu);
 
-	mctp_dev_put(neigh->dev);
+	dev_put(neigh->dev->dev);
 	kfree(neigh);
 }
 
@@ -85,8 +85,8 @@ void mctp_neigh_remove_dev(struct mctp_dev *mdev)
 	mutex_unlock(&net->mctp.neigh_lock);
 }
 
-static int mctp_neigh_remove(struct mctp_dev *mdev, mctp_eid_t eid,
-			     enum mctp_neigh_source source)
+// TODO: add a "source" flag so netlink can only delete static neighbours?
+static int mctp_neigh_remove(struct mctp_dev *mdev, mctp_eid_t eid)
 {
 	struct net *net = dev_net(mdev->dev);
 	struct mctp_neigh *neigh, *tmp;
@@ -94,8 +94,7 @@ static int mctp_neigh_remove(struct mctp_dev *mdev, mctp_eid_t eid,
 
 	mutex_lock(&net->mctp.neigh_lock);
 	list_for_each_entry_safe(neigh, tmp, &net->mctp.neighbours, list) {
-		if (neigh->dev == mdev && neigh->eid == eid &&
-		    neigh->source == source) {
+		if (neigh->dev == mdev && neigh->eid == eid) {
 			list_del_rcu(&neigh->list);
 			/* TODO: immediate RTM_DELNEIGH */
 			call_rcu(&neigh->rcu, __mctp_neigh_free);
@@ -203,7 +202,7 @@ static int mctp_rtm_delneigh(struct sk_buff *skb, struct nlmsghdr *nlh,
 	if (!mdev)
 		return -ENODEV;
 
-	return mctp_neigh_remove(mdev, eid, MCTP_NEIGH_STATIC);
+	return mctp_neigh_remove(mdev, eid);
 }
 
 static int mctp_fill_neigh(struct sk_buff *skb, u32 portid, u32 seq, int event,

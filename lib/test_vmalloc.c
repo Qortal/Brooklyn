@@ -393,7 +393,7 @@ static struct test_driver {
 static void shuffle_array(int *arr, int n)
 {
 	unsigned int rnd;
-	int i, j;
+	int i, j, x;
 
 	for (i = n - 1; i > 0; i--)  {
 		get_random_bytes(&rnd, sizeof(rnd));
@@ -402,7 +402,9 @@ static void shuffle_array(int *arr, int n)
 		j = rnd % i;
 
 		/* Swap indexes. */
-		swap(arr[i], arr[j]);
+		x = arr[i];
+		arr[i] = arr[j];
+		arr[j] = x;
 	}
 }
 

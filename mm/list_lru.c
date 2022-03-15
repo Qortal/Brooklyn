@@ -15,29 +15,18 @@
 #include "slab.h"
 
 #ifdef CONFIG_MEMCG_KMEM
-static LIST_HEAD(memcg_list_lrus);
+static LIST_HEAD(list_lrus);
 static DEFINE_MUTEX(list_lrus_mutex);
-
-static inline bool list_lru_memcg_aware(struct list_lru *lru)
-{
-	return lru->memcg_aware;
-}
 
 static void list_lru_register(struct list_lru *lru)
 {
-	if (!list_lru_memcg_aware(lru))
-		return;
-
 	mutex_lock(&list_lrus_mutex);
-	list_add(&lru->list, &memcg_list_lrus);
+	list_add(&lru->list, &list_lrus);
 	mutex_unlock(&list_lrus_mutex);
 }
 
 static void list_lru_unregister(struct list_lru *lru)
 {
-	if (!list_lru_memcg_aware(lru))
-		return;
-
 	mutex_lock(&list_lrus_mutex);
 	list_del(&lru->list);
 	mutex_unlock(&list_lrus_mutex);
@@ -46,6 +35,11 @@ static void list_lru_unregister(struct list_lru *lru)
 static int lru_shrinker_id(struct list_lru *lru)
 {
 	return lru->shrinker_id;
+}
+
+static inline bool list_lru_memcg_aware(struct list_lru *lru)
+{
+	return lru->memcg_aware;
 }
 
 static inline struct list_lru_one *
@@ -182,15 +176,12 @@ unsigned long list_lru_count_one(struct list_lru *lru,
 {
 	struct list_lru_node *nlru = &lru->node[nid];
 	struct list_lru_one *l;
-	long count;
+	unsigned long count;
 
 	rcu_read_lock();
 	l = list_lru_from_memcg_idx(nlru, memcg_cache_id(memcg));
 	count = READ_ONCE(l->nr_items);
 	rcu_read_unlock();
-
-	if (unlikely(count < 0))
-		count = 0;
 
 	return count;
 }
@@ -363,7 +354,8 @@ static int memcg_init_list_lru_node(struct list_lru_node *nlru)
 	struct list_lru_memcg *memcg_lrus;
 	int size = memcg_nr_cache_ids;
 
-	memcg_lrus = kvmalloc(struct_size(memcg_lrus, lru, size), GFP_KERNEL);
+	memcg_lrus = kvmalloc(sizeof(*memcg_lrus) +
+			      size * sizeof(void *), GFP_KERNEL);
 	if (!memcg_lrus)
 		return -ENOMEM;
 
@@ -397,7 +389,7 @@ static int memcg_update_list_lru_node(struct list_lru_node *nlru,
 
 	old = rcu_dereference_protected(nlru->memcg_lrus,
 					lockdep_is_held(&list_lrus_mutex));
-	new = kvmalloc(struct_size(new, lru, new_size), GFP_KERNEL);
+	new = kvmalloc(sizeof(*new) + new_size * sizeof(void *), GFP_KERNEL);
 	if (!new)
 		return -ENOMEM;
 
@@ -406,8 +398,19 @@ static int memcg_update_list_lru_node(struct list_lru_node *nlru,
 		return -ENOMEM;
 	}
 
-	memcpy(&new->lru, &old->lru, flex_array_size(new, lru, old_size));
+	memcpy(&new->lru, &old->lru, old_size * sizeof(void *));
+
+	/*
+	 * The locking below allows readers that hold nlru->lock avoid taking
+	 * rcu_read_lock (see list_lru_from_memcg_idx).
+	 *
+	 * Since list_lru_{add,del} may be called under an IRQ-safe lock,
+	 * we have to use IRQ-safe primitives here to avoid deadlock.
+	 */
+	spin_lock_irq(&nlru->lock);
 	rcu_assign_pointer(nlru->memcg_lrus, new);
+	spin_unlock_irq(&nlru->lock);
+
 	kvfree_rcu(old, rcu);
 	return 0;
 }
@@ -463,6 +466,9 @@ static int memcg_update_list_lru(struct list_lru *lru,
 {
 	int i;
 
+	if (!list_lru_memcg_aware(lru))
+		return 0;
+
 	for_each_node(i) {
 		if (memcg_update_list_lru_node(&lru->node[i],
 					       old_size, new_size))
@@ -485,6 +491,9 @@ static void memcg_cancel_update_list_lru(struct list_lru *lru,
 {
 	int i;
 
+	if (!list_lru_memcg_aware(lru))
+		return;
+
 	for_each_node(i)
 		memcg_cancel_update_list_lru_node(&lru->node[i],
 						  old_size, new_size);
@@ -497,7 +506,7 @@ int memcg_update_all_list_lrus(int new_size)
 	int old_size = memcg_nr_cache_ids;
 
 	mutex_lock(&list_lrus_mutex);
-	list_for_each_entry(lru, &memcg_list_lrus, list) {
+	list_for_each_entry(lru, &list_lrus, list) {
 		ret = memcg_update_list_lru(lru, old_size, new_size);
 		if (ret)
 			goto fail;
@@ -506,7 +515,7 @@ out:
 	mutex_unlock(&list_lrus_mutex);
 	return ret;
 fail:
-	list_for_each_entry_continue_reverse(lru, &memcg_list_lrus, list)
+	list_for_each_entry_continue_reverse(lru, &list_lrus, list)
 		memcg_cancel_update_list_lru(lru, old_size, new_size);
 	goto out;
 }
@@ -543,6 +552,9 @@ static void memcg_drain_list_lru(struct list_lru *lru,
 {
 	int i;
 
+	if (!list_lru_memcg_aware(lru))
+		return;
+
 	for_each_node(i)
 		memcg_drain_list_lru_node(lru, i, src_idx, dst_memcg);
 }
@@ -552,7 +564,7 @@ void memcg_drain_all_list_lrus(int src_idx, struct mem_cgroup *dst_memcg)
 	struct list_lru *lru;
 
 	mutex_lock(&list_lrus_mutex);
-	list_for_each_entry(lru, &memcg_list_lrus, list)
+	list_for_each_entry(lru, &list_lrus, list)
 		memcg_drain_list_lru(lru, src_idx, dst_memcg);
 	mutex_unlock(&list_lrus_mutex);
 }

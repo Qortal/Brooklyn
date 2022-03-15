@@ -50,29 +50,30 @@ int subprog_tail(struct __sk_buff *skb)
 	return skb->len;
 }
 
-SEC("tc")
-int classifier_1(struct __sk_buff *skb)
+SEC("classifier/1")
+int bpf_func_1(struct __sk_buff *skb)
 {
 	return subprog_tail_2(skb);
 }
 
-SEC("tc")
-int classifier_2(struct __sk_buff *skb)
+SEC("classifier/2")
+int bpf_func_2(struct __sk_buff *skb)
 {
 	count++;
 	return subprog_tail_2(skb);
 }
 
-SEC("tc")
-int classifier_0(struct __sk_buff *skb)
+SEC("classifier/0")
+int bpf_func_0(struct __sk_buff *skb)
 {
 	return subprog_tail_1(skb);
 }
 
-SEC("tc")
+SEC("classifier")
 int entry(struct __sk_buff *skb)
 {
 	return subprog_tail(skb);
 }
 
 char __license[] SEC("license") = "GPL";
+int _version SEC("version") = 1;

@@ -3218,6 +3218,7 @@ static int snd_cmipci_probe(struct pci_dev *pci,
 {
 	static int dev;
 	struct snd_card *card;
+	struct cmipci *cm;
 	int err;
 
 	if (dev >= SNDRV_CARDS)
@@ -3228,9 +3229,10 @@ static int snd_cmipci_probe(struct pci_dev *pci,
 	}
 
 	err = snd_devm_card_new(&pci->dev, index[dev], id[dev], THIS_MODULE,
-				sizeof(struct cmipci), &card);
+				sizeof(*cm), &card);
 	if (err < 0)
 		return err;
+	cm = card->private_data;
 	
 	switch (pci->device) {
 	case PCI_DEVICE_ID_CMEDIA_CM8738:

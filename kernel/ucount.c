@@ -150,15 +150,9 @@ static void hlist_add_ucounts(struct ucounts *ucounts)
 	spin_unlock_irq(&ucounts_lock);
 }
 
-static inline bool get_ucounts_or_wrap(struct ucounts *ucounts)
-{
-	/* Returns true on a successful get, false if the count wraps. */
-	return !atomic_add_negative(1, &ucounts->count);
-}
-
 struct ucounts *get_ucounts(struct ucounts *ucounts)
 {
-	if (!get_ucounts_or_wrap(ucounts)) {
+	if (ucounts && atomic_add_negative(1, &ucounts->count)) {
 		put_ucounts(ucounts);
 		ucounts = NULL;
 	}
@@ -169,7 +163,7 @@ struct ucounts *alloc_ucounts(struct user_namespace *ns, kuid_t uid)
 {
 	struct hlist_head *hashent = ucounts_hashentry(ns, uid);
 	struct ucounts *ucounts, *new;
-	bool wrapped;
+	long overflow;
 
 	spin_lock_irq(&ucounts_lock);
 	ucounts = find_ucounts(ns, uid, hashent);
@@ -195,9 +189,9 @@ struct ucounts *alloc_ucounts(struct user_namespace *ns, kuid_t uid)
 			return new;
 		}
 	}
-	wrapped = !get_ucounts_or_wrap(ucounts);
+	overflow = atomic_add_negative(1, &ucounts->count);
 	spin_unlock_irq(&ucounts_lock);
-	if (wrapped) {
+	if (overflow) {
 		put_ucounts(ucounts);
 		return NULL;
 	}
@@ -285,7 +279,7 @@ bool dec_rlimit_ucounts(struct ucounts *ucounts, enum ucount_type type, long v)
 	struct ucounts *iter;
 	long new = -1; /* Silence compiler warning */
 	for (iter = ucounts; iter; iter = iter->ns->ucounts) {
-		long dec = atomic_long_sub_return(v, &iter->ucount[type]);
+		long dec = atomic_long_add_return(-v, &iter->ucount[type]);
 		WARN_ON_ONCE(dec < 0);
 		if (iter == ucounts)
 			new = dec;
@@ -298,7 +292,7 @@ static void do_dec_rlimit_put_ucounts(struct ucounts *ucounts,
 {
 	struct ucounts *iter, *next;
 	for (iter = ucounts; iter != last; iter = next) {
-		long dec = atomic_long_sub_return(1, &iter->ucount[type]);
+		long dec = atomic_long_add_return(-1, &iter->ucount[type]);
 		WARN_ON_ONCE(dec < 0);
 		next = iter->ns->ucounts;
 		if (dec == 0)
@@ -336,7 +330,7 @@ long inc_rlimit_get_ucounts(struct ucounts *ucounts, enum ucount_type type)
 	}
 	return ret;
 dec_unwind:
-	dec = atomic_long_sub_return(1, &iter->ucount[type]);
+	dec = atomic_long_add_return(-1, &iter->ucount[type]);
 	WARN_ON_ONCE(dec < 0);
 unwind:
 	do_dec_rlimit_put_ucounts(ucounts, iter, type);

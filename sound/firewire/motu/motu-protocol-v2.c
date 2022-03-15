@@ -275,8 +275,7 @@ const struct snd_motu_spec snd_motu_spec_828mk2 = {
 	.name = "828mk2",
 	.protocol_version = SND_MOTU_PROTOCOL_V2,
 	.flags = SND_MOTU_SPEC_RX_MIDI_2ND_Q |
-		 SND_MOTU_SPEC_TX_MIDI_2ND_Q |
-		 SND_MOTU_SPEC_REGISTER_DSP,
+		 SND_MOTU_SPEC_TX_MIDI_2ND_Q,
 	.tx_fixed_pcm_chunks = {14, 14, 0},
 	.rx_fixed_pcm_chunks = {14, 14, 0},
 };
@@ -284,7 +283,7 @@ const struct snd_motu_spec snd_motu_spec_828mk2 = {
 const struct snd_motu_spec snd_motu_spec_896hd = {
 	.name = "896HD",
 	.protocol_version = SND_MOTU_PROTOCOL_V2,
-	.flags = SND_MOTU_SPEC_REGISTER_DSP,
+	// No support for MIDI.
 	.tx_fixed_pcm_chunks = {14, 14, 8},
 	.rx_fixed_pcm_chunks = {14, 14, 8},
 };
@@ -293,8 +292,7 @@ const struct snd_motu_spec snd_motu_spec_traveler = {
 	.name = "Traveler",
 	.protocol_version = SND_MOTU_PROTOCOL_V2,
 	.flags = SND_MOTU_SPEC_RX_MIDI_2ND_Q |
-		 SND_MOTU_SPEC_TX_MIDI_2ND_Q |
-		 SND_MOTU_SPEC_REGISTER_DSP,
+		 SND_MOTU_SPEC_TX_MIDI_2ND_Q,
 	.tx_fixed_pcm_chunks = {14, 14, 8},
 	.rx_fixed_pcm_chunks = {14, 14, 8},
 };
@@ -303,8 +301,7 @@ const struct snd_motu_spec snd_motu_spec_ultralite = {
 	.name = "UltraLite",
 	.protocol_version = SND_MOTU_PROTOCOL_V2,
 	.flags = SND_MOTU_SPEC_RX_MIDI_2ND_Q |
-		 SND_MOTU_SPEC_TX_MIDI_2ND_Q |
-		 SND_MOTU_SPEC_REGISTER_DSP,
+		 SND_MOTU_SPEC_TX_MIDI_2ND_Q,
 	.tx_fixed_pcm_chunks = {14, 14, 0},
 	.rx_fixed_pcm_chunks = {14, 14, 0},
 };
@@ -313,8 +310,7 @@ const struct snd_motu_spec snd_motu_spec_8pre = {
 	.name = "8pre",
 	.protocol_version = SND_MOTU_PROTOCOL_V2,
 	.flags = SND_MOTU_SPEC_RX_MIDI_2ND_Q |
-		 SND_MOTU_SPEC_TX_MIDI_2ND_Q |
-		 SND_MOTU_SPEC_REGISTER_DSP,
+		 SND_MOTU_SPEC_TX_MIDI_2ND_Q,
 	// Two dummy chunks always in the end of data block.
 	.tx_fixed_pcm_chunks = {10, 10, 0},
 	.rx_fixed_pcm_chunks = {6, 6, 0},

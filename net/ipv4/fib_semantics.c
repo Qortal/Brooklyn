@@ -52,7 +52,6 @@ static DEFINE_SPINLOCK(fib_info_lock);
 static struct hlist_head *fib_info_hash;
 static struct hlist_head *fib_info_laddrhash;
 static unsigned int fib_info_hash_size;
-static unsigned int fib_info_hash_bits;
 static unsigned int fib_info_cnt;
 
 #define DEVINDEX_HASHBITS 8
@@ -210,7 +209,7 @@ static void rt_fibinfo_free_cpus(struct rtable __rcu * __percpu *rtp)
 
 void fib_nh_common_release(struct fib_nh_common *nhc)
 {
-	dev_put_track(nhc->nhc_dev, &nhc->nhc_dev_tracker);
+	dev_put(nhc->nhc_dev);
 	lwtstate_put(nhc->nhc_lwtstate);
 	rt_fibinfo_free_cpus(nhc->nhc_pcpu_rth_output);
 	rt_fibinfo_free(&nhc->nhc_rth_input);
@@ -1051,7 +1050,7 @@ static int fib_check_nh_v6_gw(struct net *net, struct fib_nh *nh,
 	err = ipv6_stub->fib6_nh_init(net, &fib6_nh, &cfg, GFP_KERNEL, extack);
 	if (!err) {
 		nh->fib_nh_dev = fib6_nh.fib_nh_dev;
-		dev_hold_track(nh->fib_nh_dev, &nh->fib_nh_dev_tracker, GFP_KERNEL);
+		dev_hold(nh->fib_nh_dev);
 		nh->fib_nh_oif = nh->fib_nh_dev->ifindex;
 		nh->fib_nh_scope = RT_SCOPE_LINK;
 
@@ -1135,7 +1134,7 @@ static int fib_check_nh_v4_gw(struct net *net, struct fib_nh *nh, u32 table,
 		if (!netif_carrier_ok(dev))
 			nh->fib_nh_flags |= RTNH_F_LINKDOWN;
 		nh->fib_nh_dev = dev;
-		dev_hold_track(dev, &nh->fib_nh_dev_tracker, GFP_ATOMIC);
+		dev_hold(dev);
 		nh->fib_nh_scope = RT_SCOPE_LINK;
 		return 0;
 	}
@@ -1189,7 +1188,7 @@ static int fib_check_nh_v4_gw(struct net *net, struct fib_nh *nh, u32 table,
 			       "No egress device for nexthop gateway");
 		goto out;
 	}
-	dev_hold_track(dev, &nh->fib_nh_dev_tracker, GFP_ATOMIC);
+	dev_hold(dev);
 	if (!netif_carrier_ok(dev))
 		nh->fib_nh_flags |= RTNH_F_LINKDOWN;
 	err = (dev->flags & IFF_UP) ? 0 : -ENETDOWN;
@@ -1223,7 +1222,7 @@ static int fib_check_nh_nongw(struct net *net, struct fib_nh *nh,
 	}
 
 	nh->fib_nh_dev = in_dev->dev;
-	dev_hold_track(nh->fib_nh_dev, &nh->fib_nh_dev_tracker, GFP_ATOMIC);
+	dev_hold(nh->fib_nh_dev);
 	nh->fib_nh_scope = RT_SCOPE_HOST;
 	if (!netif_carrier_ok(nh->fib_nh_dev))
 		nh->fib_nh_flags |= RTNH_F_LINKDOWN;
@@ -1248,13 +1247,13 @@ int fib_check_nh(struct net *net, struct fib_nh *nh, u32 table, u8 scope,
 	return err;
 }
 
-static struct hlist_head *
-fib_info_laddrhash_bucket(const struct net *net, __be32 val)
+static inline unsigned int fib_laddr_hashfn(__be32 val)
 {
-	u32 slot = hash_32(net_hash_mix(net) ^ (__force u32)val,
-			   fib_info_hash_bits);
+	unsigned int mask = (fib_info_hash_size - 1);
 
-	return &fib_info_laddrhash[slot];
+	return ((__force u32)val ^
+		((__force u32)val >> 7) ^
+		((__force u32)val >> 14)) & mask;
 }
 
 static struct hlist_head *fib_info_hash_alloc(int bytes)
@@ -1290,7 +1289,6 @@ static void fib_info_hash_move(struct hlist_head *new_info_hash,
 	old_info_hash = fib_info_hash;
 	old_laddrhash = fib_info_laddrhash;
 	fib_info_hash_size = new_size;
-	fib_info_hash_bits = ilog2(new_size);
 
 	for (i = 0; i < old_size; i++) {
 		struct hlist_head *head = &fib_info_hash[i];
@@ -1308,20 +1306,21 @@ static void fib_info_hash_move(struct hlist_head *new_info_hash,
 	}
 	fib_info_hash = new_info_hash;
 
-	fib_info_laddrhash = new_laddrhash;
 	for (i = 0; i < old_size; i++) {
-		struct hlist_head *lhead = &old_laddrhash[i];
+		struct hlist_head *lhead = &fib_info_laddrhash[i];
 		struct hlist_node *n;
 		struct fib_info *fi;
 
 		hlist_for_each_entry_safe(fi, n, lhead, fib_lhash) {
 			struct hlist_head *ldest;
+			unsigned int new_hash;
 
-			ldest = fib_info_laddrhash_bucket(fi->fib_net,
-							  fi->fib_prefsrc);
+			new_hash = fib_laddr_hashfn(fi->fib_prefsrc);
+			ldest = &new_laddrhash[new_hash];
 			hlist_add_head(&fi->fib_lhash, ldest);
 		}
 	}
+	fib_info_laddrhash = new_laddrhash;
 
 	spin_unlock_bh(&fib_info_lock);
 
@@ -1554,8 +1553,6 @@ struct fib_info *fib_create_info(struct fib_config *cfg,
 		err = -ENODEV;
 		if (!nh->fib_nh_dev)
 			goto failure;
-		netdev_tracker_alloc(nh->fib_nh_dev, &nh->fib_nh_dev_tracker,
-				     GFP_KERNEL);
 	} else {
 		int linkdown = 0;
 
@@ -1606,7 +1603,7 @@ link_it:
 	if (fi->fib_prefsrc) {
 		struct hlist_head *head;
 
-		head = fib_info_laddrhash_bucket(net, fi->fib_prefsrc);
+		head = &fib_info_laddrhash[fib_laddr_hashfn(fi->fib_prefsrc)];
 		hlist_add_head(&fi->fib_lhash, head);
 	}
 	if (fi->nh) {
@@ -1878,16 +1875,16 @@ nla_put_failure:
  */
 int fib_sync_down_addr(struct net_device *dev, __be32 local)
 {
+	int ret = 0;
+	unsigned int hash = fib_laddr_hashfn(local);
+	struct hlist_head *head = &fib_info_laddrhash[hash];
 	int tb_id = l3mdev_fib_table(dev) ? : RT_TABLE_MAIN;
 	struct net *net = dev_net(dev);
-	struct hlist_head *head;
 	struct fib_info *fi;
-	int ret = 0;
 
 	if (!fib_info_laddrhash || local == 0)
 		return 0;
 
-	head = fib_info_laddrhash_bucket(net, local);
 	hlist_for_each_entry(fi, head, fib_lhash) {
 		if (!net_eq(fi->fib_net, net) ||
 		    fi->fib_tb_id != tb_id)

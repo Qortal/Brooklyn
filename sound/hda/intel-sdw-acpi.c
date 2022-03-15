@@ -50,11 +50,11 @@ static bool is_link_enabled(struct fwnode_handle *fw_node, int i)
 static int
 sdw_intel_scan_controller(struct sdw_intel_acpi_info *info)
 {
-	struct acpi_device *adev = acpi_fetch_acpi_dev(info->handle);
+	struct acpi_device *adev;
 	int ret, i;
 	u8 count;
 
-	if (!adev)
+	if (acpi_bus_get_device(info->handle, &adev))
 		return -EINVAL;
 
 	/* Found controller, find links supported */
@@ -119,6 +119,7 @@ static acpi_status sdw_intel_acpi_cb(acpi_handle handle, u32 level,
 				     void *cdata, void **return_value)
 {
 	struct sdw_intel_acpi_info *info = cdata;
+	struct acpi_device *adev;
 	acpi_status status;
 	u64 adr;
 
@@ -126,7 +127,7 @@ static acpi_status sdw_intel_acpi_cb(acpi_handle handle, u32 level,
 	if (ACPI_FAILURE(status))
 		return AE_OK; /* keep going */
 
-	if (!acpi_fetch_acpi_dev(handle)) {
+	if (acpi_bus_get_device(handle, &adev)) {
 		pr_err("%s: Couldn't find ACPI handle\n", __func__);
 		return AE_NOT_FOUND;
 	}

@@ -310,12 +310,14 @@ int test_setup(struct tdescr *td)
 
 int test_run(struct tdescr *td)
 {
-	if (td->trigger)
-		return td->trigger(td);
-	else if (td->sig_trig)
-		return default_trigger(td);
-	else
+	if (td->sig_trig) {
+		if (td->trigger)
+			return td->trigger(td);
+		else
+			return default_trigger(td);
+	} else {
 		return td->run(td, NULL, NULL);
+	}
 }
 
 void test_result(struct tdescr *td)

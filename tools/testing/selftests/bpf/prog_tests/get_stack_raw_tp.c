@@ -24,18 +24,12 @@ static void get_stack_print_output(void *ctx, int cpu, void *data, __u32 size)
 {
 	bool good_kern_stack = false, good_user_stack = false;
 	const char *nonjit_func = "___bpf_prog_run";
-	/* perfbuf-submitted data is 4-byte aligned, but we need 8-byte
-	 * alignment, so copy data into a local variable, for simplicity
-	 */
-	struct get_stack_trace_t e;
+	struct get_stack_trace_t *e = data;
 	int i, num_stack;
 	static __u64 cnt;
 	struct ksym *ks;
 
 	cnt++;
-
-	memset(&e, 0, sizeof(e));
-	memcpy(&e, data, size <= sizeof(e) ? size : sizeof(e));
 
 	if (size < sizeof(struct get_stack_trace_t)) {
 		__u64 *raw_data = data;
@@ -63,19 +57,19 @@ static void get_stack_print_output(void *ctx, int cpu, void *data, __u32 size)
 			good_user_stack = true;
 		}
 	} else {
-		num_stack = e.kern_stack_size / sizeof(__u64);
+		num_stack = e->kern_stack_size / sizeof(__u64);
 		if (env.jit_enabled) {
 			good_kern_stack = num_stack > 0;
 		} else {
 			for (i = 0; i < num_stack; i++) {
-				ks = ksym_search(e.kern_stack[i]);
+				ks = ksym_search(e->kern_stack[i]);
 				if (ks && (strcmp(ks->name, nonjit_func) == 0)) {
 					good_kern_stack = true;
 					break;
 				}
 			}
 		}
-		if (e.user_stack_size > 0 && e.user_stack_buildid_size > 0)
+		if (e->user_stack_size > 0 && e->user_stack_buildid_size > 0)
 			good_user_stack = true;
 	}
 
@@ -89,8 +83,9 @@ void test_get_stack_raw_tp(void)
 {
 	const char *file = "./test_get_stack_rawtp.o";
 	const char *file_err = "./test_get_stack_rawtp_err.o";
-	const char *prog_name = "bpf_prog1";
+	const char *prog_name = "raw_tracepoint/sys_enter";
 	int i, err, prog_fd, exp_cnt = MAX_CNT_RAWTP;
+	struct perf_buffer_opts pb_opts = {};
 	struct perf_buffer *pb = NULL;
 	struct bpf_link *link = NULL;
 	struct timespec tv = {0, 10};
@@ -99,15 +94,15 @@ void test_get_stack_raw_tp(void)
 	struct bpf_map *map;
 	cpu_set_t cpu_set;
 
-	err = bpf_prog_test_load(file_err, BPF_PROG_TYPE_RAW_TRACEPOINT, &obj, &prog_fd);
+	err = bpf_prog_load(file_err, BPF_PROG_TYPE_RAW_TRACEPOINT, &obj, &prog_fd);
 	if (CHECK(err >= 0, "prog_load raw tp", "err %d errno %d\n", err, errno))
 		return;
 
-	err = bpf_prog_test_load(file, BPF_PROG_TYPE_RAW_TRACEPOINT, &obj, &prog_fd);
+	err = bpf_prog_load(file, BPF_PROG_TYPE_RAW_TRACEPOINT, &obj, &prog_fd);
 	if (CHECK(err, "prog_load raw tp", "err %d errno %d\n", err, errno))
 		return;
 
-	prog = bpf_object__find_program_by_name(obj, prog_name);
+	prog = bpf_object__find_program_by_title(obj, prog_name);
 	if (CHECK(!prog, "find_probe", "prog '%s' not found\n", prog_name))
 		goto close_prog;
 
@@ -129,8 +124,8 @@ void test_get_stack_raw_tp(void)
 	if (!ASSERT_OK_PTR(link, "attach_raw_tp"))
 		goto close_prog;
 
-	pb = perf_buffer__new(bpf_map__fd(map), 8, get_stack_print_output,
-			      NULL, NULL, NULL);
+	pb_opts.sample_cb = get_stack_print_output;
+	pb = perf_buffer__new(bpf_map__fd(map), 8, &pb_opts);
 	if (!ASSERT_OK_PTR(pb, "perf_buf__new"))
 		goto close_prog;
 

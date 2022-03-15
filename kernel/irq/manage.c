@@ -486,8 +486,7 @@ int irq_force_affinity(unsigned int irq, const struct cpumask *cpumask)
 }
 EXPORT_SYMBOL_GPL(irq_force_affinity);
 
-int __irq_apply_affinity_hint(unsigned int irq, const struct cpumask *m,
-			      bool setaffinity)
+int irq_set_affinity_hint(unsigned int irq, const struct cpumask *m)
 {
 	unsigned long flags;
 	struct irq_desc *desc = irq_get_desc_lock(irq, &flags, IRQ_GET_DESC_CHECK_GLOBAL);
@@ -496,11 +495,12 @@ int __irq_apply_affinity_hint(unsigned int irq, const struct cpumask *m,
 		return -EINVAL;
 	desc->affinity_hint = m;
 	irq_put_desc_unlock(desc, flags);
-	if (m && setaffinity)
+	/* set the initial affinity to prevent every interrupt being on CPU0 */
+	if (m)
 		__irq_set_affinity(irq, m, false);
 	return 0;
 }
-EXPORT_SYMBOL_GPL(__irq_apply_affinity_hint);
+EXPORT_SYMBOL_GPL(irq_set_affinity_hint);
 
 static void irq_affinity_notify(struct work_struct *work)
 {
@@ -1259,8 +1259,6 @@ static int irq_thread(void *data)
 	irqreturn_t (*handler_fn)(struct irq_desc *desc,
 			struct irqaction *action);
 
-	sched_set_fifo(current);
-
 	if (force_irqthreads() && test_bit(IRQTF_FORCED_THREAD,
 					   &action->thread_flags))
 		handler_fn = irq_forced_thread_fn;
@@ -1425,6 +1423,8 @@ setup_irq_thread(struct irqaction *new, unsigned int irq, bool secondary)
 
 	if (IS_ERR(t))
 		return PTR_ERR(t);
+
+	sched_set_fifo(t);
 
 	/*
 	 * We keep the reference to the task struct even if
@@ -2827,7 +2827,7 @@ EXPORT_SYMBOL_GPL(irq_get_irqchip_state);
  *	This call sets the internal irqchip state of an interrupt,
  *	depending on the value of @which.
  *
- *	This function should be called with migration disabled if the
+ *	This function should be called with preemption disabled if the
  *	interrupt controller has per-cpu registers.
  */
 int irq_set_irqchip_state(unsigned int irq, enum irqchip_irq_state which,

@@ -60,7 +60,7 @@ end:
 	return ret;
 }
 
-static const struct snd_soc_ops apq8096_ops = {
+static struct snd_soc_ops apq8096_ops = {
 	.hw_params = msm_snd_hw_params,
 };
 

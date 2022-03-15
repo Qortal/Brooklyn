@@ -32,8 +32,7 @@ static int evsel__test_field(struct evsel *evsel, const char *name, int size, bo
 	return ret;
 }
 
-static int test__perf_evsel__tp_sched_test(struct test_suite *test __maybe_unused,
-					   int subtest __maybe_unused)
+int test__perf_evsel__tp_sched_test(struct test *test __maybe_unused, int subtest __maybe_unused)
 {
 	struct evsel *evsel = evsel__newtp("sched", "sched_switch");
 	int ret = 0;
@@ -88,5 +87,3 @@ static int test__perf_evsel__tp_sched_test(struct test_suite *test __maybe_unuse
 	evsel__delete(evsel);
 	return ret;
 }
-
-DEFINE_SUITE("Parse sched tracepoints fields", perf_evsel__tp_sched_test);

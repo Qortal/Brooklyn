@@ -113,18 +113,9 @@ static int byt_acpi_probe(struct snd_sof_dev *sdev)
 	const struct sof_dev_desc *desc = pdata->desc;
 	struct platform_device *pdev =
 		container_of(sdev->dev, struct platform_device, dev);
-	const struct sof_intel_dsp_desc *chip;
 	struct resource *mmio;
 	u32 base, size;
 	int ret;
-
-	chip = get_chip_info(sdev->pdata);
-	if (!chip) {
-		dev_err(sdev->dev, "error: no such device supported\n");
-		return -EIO;
-	}
-
-	sdev->num_cores = chip->cores_num;
 
 	/* DSP DMA can only access low 31 bits of host memory */
 	ret = dma_coerce_mask_and_coherent(sdev->dev, DMA_BIT_MASK(31));
@@ -235,10 +226,6 @@ static const struct snd_sof_dsp_ops sof_byt_ops = {
 	.block_read	= sof_block_read,
 	.block_write	= sof_block_write,
 
-	/* Mailbox IO */
-	.mailbox_read	= sof_mailbox_read,
-	.mailbox_write	= sof_mailbox_write,
-
 	/* doorbell */
 	.irq_handler	= atom_irq_handler,
 	.irq_thread	= atom_irq_thread,
@@ -249,8 +236,8 @@ static const struct snd_sof_dsp_ops sof_byt_ops = {
 	.get_mailbox_offset = atom_get_mailbox_offset,
 	.get_window_offset = atom_get_window_offset,
 
-	.ipc_msg_data	= sof_ipc_msg_data,
-	.ipc_pcm_params	= sof_ipc_pcm_params,
+	.ipc_msg_data	= intel_ipc_msg_data,
+	.ipc_pcm_params	= intel_ipc_pcm_params,
 
 	/* machine driver */
 	.machine_select = atom_machine_select,
@@ -262,11 +249,10 @@ static const struct snd_sof_dsp_ops sof_byt_ops = {
 	.debug_map	= byt_debugfs,
 	.debug_map_count	= ARRAY_SIZE(byt_debugfs),
 	.dbg_dump	= atom_dump,
-	.debugfs_add_region_item = snd_sof_debugfs_add_region_item_iomem,
 
 	/* stream callbacks */
-	.pcm_open	= sof_stream_pcm_open,
-	.pcm_close	= sof_stream_pcm_close,
+	.pcm_open	= intel_pcm_open,
+	.pcm_close	= intel_pcm_close,
 
 	/* module loading */
 	.load_module	= snd_sof_parse_module_memcpy,
@@ -289,7 +275,7 @@ static const struct snd_sof_dsp_ops sof_byt_ops = {
 			SNDRV_PCM_INFO_PAUSE |
 			SNDRV_PCM_INFO_BATCH,
 
-	.dsp_arch_ops = &sof_xtensa_arch_ops,
+	.arch_ops = &sof_xtensa_arch_ops,
 };
 
 static const struct sof_intel_dsp_desc byt_chip_info = {
@@ -317,10 +303,6 @@ static const struct snd_sof_dsp_ops sof_cht_ops = {
 	.block_read	= sof_block_read,
 	.block_write	= sof_block_write,
 
-	/* Mailbox IO */
-	.mailbox_read	= sof_mailbox_read,
-	.mailbox_write	= sof_mailbox_write,
-
 	/* doorbell */
 	.irq_handler	= atom_irq_handler,
 	.irq_thread	= atom_irq_thread,
@@ -331,8 +313,8 @@ static const struct snd_sof_dsp_ops sof_cht_ops = {
 	.get_mailbox_offset = atom_get_mailbox_offset,
 	.get_window_offset = atom_get_window_offset,
 
-	.ipc_msg_data	= sof_ipc_msg_data,
-	.ipc_pcm_params	= sof_ipc_pcm_params,
+	.ipc_msg_data	= intel_ipc_msg_data,
+	.ipc_pcm_params	= intel_ipc_pcm_params,
 
 	/* machine driver */
 	.machine_select = atom_machine_select,
@@ -344,11 +326,10 @@ static const struct snd_sof_dsp_ops sof_cht_ops = {
 	.debug_map	= cht_debugfs,
 	.debug_map_count	= ARRAY_SIZE(cht_debugfs),
 	.dbg_dump	= atom_dump,
-	.debugfs_add_region_item = snd_sof_debugfs_add_region_item_iomem,
 
 	/* stream callbacks */
-	.pcm_open	= sof_stream_pcm_open,
-	.pcm_close	= sof_stream_pcm_close,
+	.pcm_open	= intel_pcm_open,
+	.pcm_close	= intel_pcm_close,
 
 	/* module loading */
 	.load_module	= snd_sof_parse_module_memcpy,
@@ -372,7 +353,7 @@ static const struct snd_sof_dsp_ops sof_cht_ops = {
 			SNDRV_PCM_INFO_PAUSE |
 			SNDRV_PCM_INFO_BATCH,
 
-	.dsp_arch_ops = &sof_xtensa_arch_ops,
+	.arch_ops = &sof_xtensa_arch_ops,
 };
 
 static const struct sof_intel_dsp_desc cht_chip_info = {

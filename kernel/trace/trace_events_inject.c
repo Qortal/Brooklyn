@@ -168,13 +168,9 @@ static void *trace_alloc_entry(struct trace_event_call *call, int *size)
 			continue;
 		if (field->filter_type == FILTER_STATIC_STRING)
 			continue;
-		if (field->filter_type == FILTER_DYN_STRING ||
-		    field->filter_type == FILTER_RDYN_STRING) {
+		if (field->filter_type == FILTER_DYN_STRING) {
 			u32 *str_item;
 			int str_loc = entry_size & 0xffff;
-
-			if (field->filter_type == FILTER_RDYN_STRING)
-				str_loc -= field->offset + field->size;
 
 			str_item = (u32 *)(entry + field->offset);
 			*str_item = str_loc; /* string length is 0. */
@@ -218,8 +214,7 @@ static int parse_entry(char *str, struct trace_event_call *call, void **pentry)
 
 			if (field->filter_type == FILTER_STATIC_STRING) {
 				strlcpy(entry + field->offset, addr, field->size);
-			} else if (field->filter_type == FILTER_DYN_STRING ||
-				   field->filter_type == FILTER_RDYN_STRING) {
+			} else if (field->filter_type == FILTER_DYN_STRING) {
 				int str_len = strlen(addr) + 1;
 				int str_loc = entry_size & 0xffff;
 				u32 *str_item;
@@ -234,8 +229,6 @@ static int parse_entry(char *str, struct trace_event_call *call, void **pentry)
 
 				strlcpy(entry + (entry_size - str_len), addr, str_len);
 				str_item = (u32 *)(entry + field->offset);
-				if (field->filter_type == FILTER_RDYN_STRING)
-					str_loc -= field->offset + field->size;
 				*str_item = (str_len << 16) | str_loc;
 			} else {
 				char **paddr;

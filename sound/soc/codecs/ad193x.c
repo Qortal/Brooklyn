@@ -243,22 +243,22 @@ static int ad193x_set_dai_fmt(struct snd_soc_dai *codec_dai,
 	if (fmt & SND_SOC_DAIFMT_DSP_A)
 		dac_fmt ^= AD193X_DAC_LEFT_HIGH;
 
-	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-	case SND_SOC_DAIFMT_CBP_CFP:
+	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
+	case SND_SOC_DAIFMT_CBM_CFM: /* codec clk & frm master */
 		adc_fmt |= AD193X_ADC_LCR_MASTER;
 		adc_fmt |= AD193X_ADC_BCLK_MASTER;
 		dac_fmt |= AD193X_DAC_LCR_MASTER;
 		dac_fmt |= AD193X_DAC_BCLK_MASTER;
 		break;
-	case SND_SOC_DAIFMT_CBC_CFP:
+	case SND_SOC_DAIFMT_CBS_CFM: /* codec clk slave & frm master */
 		adc_fmt |= AD193X_ADC_LCR_MASTER;
 		dac_fmt |= AD193X_DAC_LCR_MASTER;
 		break;
-	case SND_SOC_DAIFMT_CBP_CFC:
+	case SND_SOC_DAIFMT_CBM_CFS: /* codec clk master & frame slave */
 		adc_fmt |= AD193X_ADC_BCLK_MASTER;
 		dac_fmt |= AD193X_DAC_BCLK_MASTER;
 		break;
-	case SND_SOC_DAIFMT_CBC_CFC:
+	case SND_SOC_DAIFMT_CBS_CFS: /* codec clk & frm slave */
 		break;
 	default:
 		return -EINVAL;

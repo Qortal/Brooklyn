@@ -169,7 +169,11 @@ static __always_inline void bictcp_hystart_reset(struct sock *sk)
 	ca->sample_cnt = 0;
 }
 
-/* "struct_ops/" prefix is a requirement */
+/* "struct_ops/" prefix is not a requirement
+ * It will be recognized as BPF_PROG_TYPE_STRUCT_OPS
+ * as long as it is used in one of the func ptr
+ * under SEC(".struct_ops").
+ */
 SEC("struct_ops/bpf_cubic_init")
 void BPF_PROG(bpf_cubic_init, struct sock *sk)
 {
@@ -184,8 +188,10 @@ void BPF_PROG(bpf_cubic_init, struct sock *sk)
 		tcp_sk(sk)->snd_ssthresh = initial_ssthresh;
 }
 
-/* "struct_ops" prefix is a requirement */
-SEC("struct_ops/bpf_cubic_cwnd_event")
+/* No prefix in SEC will also work.
+ * The remaining tcp-cubic functions have an easier way.
+ */
+SEC("no-sec-prefix-bictcp_cwnd_event")
 void BPF_PROG(bpf_cubic_cwnd_event, struct sock *sk, enum tcp_ca_event event)
 {
 	if (event == CA_EVENT_TX_START) {

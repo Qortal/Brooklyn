@@ -3280,6 +3280,7 @@ int snd_usb_mixer_apply_create_quirk(struct usb_mixer_interface *mixer)
 	return err;
 }
 
+#ifdef CONFIG_PM
 void snd_usb_mixer_resume_quirk(struct usb_mixer_interface *mixer)
 {
 	switch (mixer->chip->usb_id) {
@@ -3288,6 +3289,7 @@ void snd_usb_mixer_resume_quirk(struct usb_mixer_interface *mixer)
 		break;
 	}
 }
+#endif
 
 void snd_usb_mixer_rc_memory_change(struct usb_mixer_interface *mixer,
 				    int unitid)
