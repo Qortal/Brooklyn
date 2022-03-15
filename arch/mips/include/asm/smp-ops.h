@@ -101,9 +101,6 @@ static inline int register_vsmp_smp_ops(void)
 #ifdef CONFIG_MIPS_MT_SMP
 	extern const struct plat_smp_ops vsmp_smp_ops;
 
-	if (!cpu_has_mipsmt)
-		return -ENODEV;
-
 	register_smp_ops(&vsmp_smp_ops);
 
 	return 0;

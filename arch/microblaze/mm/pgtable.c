@@ -34,7 +34,6 @@
 #include <linux/mm_types.h>
 #include <linux/pgtable.h>
 #include <linux/memblock.h>
-#include <linux/kallsyms.h>
 
 #include <asm/pgalloc.h>
 #include <linux/io.h>
@@ -172,7 +171,7 @@ void __init mapin_ram(void)
 	for (s = 0; s < lowmem_size; s += PAGE_SIZE) {
 		f = _PAGE_PRESENT | _PAGE_ACCESSED |
 				_PAGE_SHARED | _PAGE_HWEXEC;
-		if (!is_kernel_text(v))
+		if ((char *) v < _stext || (char *) v >= _etext)
 			f |= _PAGE_WRENABLE;
 		else
 			/* On the MicroBlaze, no user access

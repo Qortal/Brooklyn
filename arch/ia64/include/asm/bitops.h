@@ -441,6 +441,8 @@ static __inline__ unsigned long __arch_hweight64(unsigned long x)
 
 #endif /* __KERNEL__ */
 
+#include <asm-generic/bitops/find.h>
+
 #ifdef __KERNEL__
 
 #include <asm-generic/bitops/le.h>

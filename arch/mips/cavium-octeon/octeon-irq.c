@@ -2609,10 +2609,7 @@ static void octeon_irq_ciu3_ip2(void)
 		else
 			hw = intsn;
 
-		irq_enter();
-		ret = generic_handle_domain_irq(domain, hw);
-		irq_exit();
-
+		ret = handle_domain_irq(domain, hw, NULL);
 		if (ret < 0) {
 			union cvmx_ciu3_iscx_w1c isc_w1c;
 			u64 isc_w1c_addr = ciu3_addr + CIU3_ISC_W1C(intsn);

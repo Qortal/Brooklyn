@@ -156,15 +156,17 @@ retry:
 		BUG();
 	}
 
-	if (fault & VM_FAULT_RETRY) {
-		flags |= FAULT_FLAG_TRIED;
+	if (flags & FAULT_FLAG_ALLOW_RETRY) {
+		if (fault & VM_FAULT_RETRY) {
+			flags |= FAULT_FLAG_TRIED;
 
-		/* No need to mmap_read_unlock(mm) as we would
-		 * have already released it in __lock_page_or_retry
-		 * in mm/filemap.c.
-		 */
+			 /* No need to mmap_read_unlock(mm) as we would
+			 * have already released it in __lock_page_or_retry
+			 * in mm/filemap.c.
+			 */
 
-		goto retry;
+			goto retry;
+		}
 	}
 
 	mmap_read_unlock(mm);
@@ -257,7 +259,7 @@ retry:
 		regs = NULL;
 	bust_spinlocks(0);
 	if (regs)
-		make_task_dead(SIGKILL);
+		do_exit(SIGKILL);
 	return;
 
   out_of_memory:

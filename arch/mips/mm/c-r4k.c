@@ -1410,6 +1410,7 @@ static void probe_pcache(void)
 	case CPU_I6500:
 	case CPU_SB1:
 	case CPU_SB1A:
+	case CPU_XLR:
 		c->dcache.flags |= MIPS_CACHE_PINDEX;
 		break;
 
@@ -1698,6 +1699,7 @@ static void setup_scache(void)
 		return;
 
 	case CPU_CAVIUM_OCTEON3:
+	case CPU_XLP:
 		/* don't need to worry about L2, fully coherent */
 		return;
 

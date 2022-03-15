@@ -103,18 +103,12 @@ extern asmlinkage void handle_reserved(void);
 extern void tlb_do_page_fault_0(void);
 
 void (*board_be_init)(void);
-static int (*board_be_handler)(struct pt_regs *regs, int is_fixup);
+int (*board_be_handler)(struct pt_regs *regs, int is_fixup);
 void (*board_nmi_handler_setup)(void);
 void (*board_ejtag_handler_setup)(void);
 void (*board_bind_eic_interrupt)(int irq, int regset);
 void (*board_ebase_setup)(void);
 void(*board_cache_error_setup)(void);
-
-void mips_set_be_handler(int (*handler)(struct pt_regs *regs, int is_fixup))
-{
-	board_be_handler = handler;
-}
-EXPORT_SYMBOL_GPL(mips_set_be_handler);
 
 static void show_raw_backtrace(unsigned long reg29, const char *loglvl,
 			       bool user)
@@ -422,7 +416,7 @@ void __noreturn die(const char *str, struct pt_regs *regs)
 	if (regs && kexec_should_crash(current))
 		crash_kexec(regs);
 
-	make_task_dead(sig);
+	do_exit(sig);
 }
 
 extern struct exception_table_entry __start___dbe_table[];

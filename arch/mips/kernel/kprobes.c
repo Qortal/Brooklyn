@@ -11,8 +11,6 @@
  *   Copyright (C) IBM Corporation, 2002, 2004
  */
 
-#define pr_fmt(fmt) "kprobes: " fmt
-
 #include <linux/kprobes.h>
 #include <linux/preempt.h>
 #include <linux/uaccess.h>
@@ -82,7 +80,8 @@ int __kprobes arch_prepare_kprobe(struct kprobe *p)
 	insn = p->addr[0];
 
 	if (insn_has_ll_or_sc(insn)) {
-		pr_notice("Kprobes for ll and sc instructions are not supported\n");
+		pr_notice("Kprobes for ll and sc instructions are not"
+			  "supported\n");
 		ret = -EINVAL;
 		goto out;
 	}
@@ -220,7 +219,7 @@ static int evaluate_branch_instruction(struct kprobe *p, struct pt_regs *regs,
 	return 0;
 
 unaligned:
-	pr_notice("Failed to emulate branch instruction because of unaligned epc - sending SIGBUS to %s.\n", current->comm);
+	pr_notice("%s: unaligned epc - sending SIGBUS.\n", current->comm);
 	force_sig(SIGBUS);
 	return -EFAULT;
 
@@ -239,8 +238,10 @@ static void prepare_singlestep(struct kprobe *p, struct pt_regs *regs,
 		regs->cp0_epc = (unsigned long)p->addr;
 	else if (insn_has_delayslot(p->opcode)) {
 		ret = evaluate_branch_instruction(p, regs, kcb);
-		if (ret < 0)
+		if (ret < 0) {
+			pr_notice("Kprobes: Error in evaluating branch\n");
 			return;
+		}
 	}
 	regs->cp0_epc = (unsigned long)&p->ainsn.insn[0];
 }
@@ -460,14 +461,14 @@ static void __used kretprobe_trampoline_holder(void)
 		/* Keep the assembler from reordering and placing JR here. */
 		".set noreorder\n\t"
 		"nop\n\t"
-		".global __kretprobe_trampoline\n"
-		"__kretprobe_trampoline:\n\t"
+		".global kretprobe_trampoline\n"
+		"kretprobe_trampoline:\n\t"
 		"nop\n\t"
 		".set pop"
 		: : : "memory");
 }
 
-void __kretprobe_trampoline(void);
+void kretprobe_trampoline(void);
 
 void __kprobes arch_prepare_kretprobe(struct kretprobe_instance *ri,
 				      struct pt_regs *regs)
@@ -476,7 +477,7 @@ void __kprobes arch_prepare_kretprobe(struct kretprobe_instance *ri,
 	ri->fp = NULL;
 
 	/* Replace the return addr with trampoline addr */
-	regs->regs[31] = (unsigned long)__kretprobe_trampoline;
+	regs->regs[31] = (unsigned long)kretprobe_trampoline;
 }
 
 /*
@@ -485,7 +486,8 @@ void __kprobes arch_prepare_kretprobe(struct kretprobe_instance *ri,
 static int __kprobes trampoline_probe_handler(struct kprobe *p,
 						struct pt_regs *regs)
 {
-	instruction_pointer(regs) = __kretprobe_trampoline_handler(regs, NULL);
+	instruction_pointer(regs) = __kretprobe_trampoline_handler(regs,
+						kretprobe_trampoline, NULL);
 	/*
 	 * By returning a non-zero value, we are telling
 	 * kprobe_handler() that we don't want the post_handler
@@ -496,14 +498,14 @@ static int __kprobes trampoline_probe_handler(struct kprobe *p,
 
 int __kprobes arch_trampoline_kprobe(struct kprobe *p)
 {
-	if (p->addr == (kprobe_opcode_t *)__kretprobe_trampoline)
+	if (p->addr == (kprobe_opcode_t *)kretprobe_trampoline)
 		return 1;
 
 	return 0;
 }
 
 static struct kprobe trampoline_p = {
-	.addr = (kprobe_opcode_t *)__kretprobe_trampoline,
+	.addr = (kprobe_opcode_t *)kretprobe_trampoline,
 	.pre_handler = trampoline_probe_handler
 };
 
