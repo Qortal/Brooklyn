@@ -15,6 +15,8 @@ SESSION  UID USER SEAT TTY
       6 1000 pi        pts/0 (Do not terminate this session as its a term login)
      c4 1000 pi        Safe to terminate.
 
+Use logout from MATE Desktop to prevent locked screen sessions in the first place.
+
 * Brooklyn NXT Sinclair LTS 5.20.16 grSecurity hardened  
 * Sinclair Desktop based on LTS 5.20.14
 * BrooklynR NXT QortalOS Community 5.16.x LTS-LE
