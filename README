@@ -8,6 +8,7 @@ Preview: https://youtu.be/HPk-VhRjNI8
   > Furthermore, made the image "crowetic proof" so he wont fuck it up like every single time. Bitch be trippin -_-
   
 Note for titanMATE: sudo loginctl and check a "c" session if you have problem loggin in on RDP. Kill presistant logged sessions with "sudo loginctl terminate-session cX" where X is the session number.
+
 * Brooklyn NXT Sinclair LTS 5.20.16 grSecurity hardened  
 * Sinclair Desktop based on LTS 5.20.14
 * BrooklynR NXT QortalOS Community 5.16.x LTS-LE
