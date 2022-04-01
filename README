@@ -12,7 +12,7 @@ Example:
 
 [pi@titan:~/qortal]$ sudo loginctl
 SESSION  UID USER SEAT TTY
-      6 1000 pi        pts/0 (Do not terminal this session as its a term login)
+      6 1000 pi        pts/0 (Do not terminate this session as its a term login)
      c4 1000 pi        Safe to terminate.
 
 * Brooklyn NXT Sinclair LTS 5.20.16 grSecurity hardened  
