@@ -2127,12 +2127,24 @@ error_console:
 	return retval;
 }
 
+static int
+imx_uart_console_exit(struct console *co)
+{
+	struct imx_port *sport = imx_uart_ports[co->index];
+
+	clk_disable_unprepare(sport->clk_per);
+	clk_disable_unprepare(sport->clk_ipg);
+
+	return 0;
+}
+
 static struct uart_driver imx_uart_uart_driver;
 static struct console imx_uart_console = {
 	.name		= DEV_NAME,
 	.write		= imx_uart_console_write,
 	.device		= uart_console_device,
 	.setup		= imx_uart_console_setup,
+	.exit		= imx_uart_console_exit,
 	.flags		= CON_PRINTBUFFER,
 	.index		= -1,
 	.data		= &imx_uart_uart_driver,
@@ -2473,10 +2485,12 @@ static void imx_uart_enable_wakeup(struct imx_port *sport, bool on)
 
 	if (sport->have_rtscts) {
 		u32 ucr1 = imx_uart_readl(sport, UCR1);
-		if (on)
+		if (on) {
+			imx_uart_writel(sport, USR1_RTSD, USR1);
 			ucr1 |= UCR1_RTSDEN;
-		else
+		} else {
 			ucr1 &= ~UCR1_RTSDEN;
+		}
 		imx_uart_writel(sport, ucr1, UCR1);
 	}
 }
