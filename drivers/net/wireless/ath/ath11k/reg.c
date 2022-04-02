@@ -2,6 +2,8 @@
 /*
  * Copyright (c) 2018-2019 The Linux Foundation. All rights reserved.
  */
+#include <linux/rtnetlink.h>
+
 #include "core.h"
 #include "debug.h"
 
@@ -86,6 +88,9 @@ ath11k_reg_notifier(struct wiphy *wiphy, struct regulatory_request *request)
 	if (ret)
 		ath11k_warn(ar->ab,
 			    "INIT Country code set to fw failed : %d\n", ret);
+
+	ath11k_mac_11d_scan_stop(ar);
+	ar->regdom_set_by_user = true;
 }
 
 int ath11k_reg_update_chan_list(struct ath11k *ar)
@@ -97,7 +102,6 @@ int ath11k_reg_update_chan_list(struct ath11k *ar)
 	struct channel_param *ch;
 	enum nl80211_band band;
 	int num_channels = 0;
-	int params_len;
 	int i, ret;
 
 	bands = hw->wiphy->bands;
@@ -117,10 +121,8 @@ int ath11k_reg_update_chan_list(struct ath11k *ar)
 	if (WARN_ON(!num_channels))
 		return -EINVAL;
 
-	params_len = sizeof(struct scan_chan_list_params) +
-			num_channels * sizeof(struct channel_param);
-	params = kzalloc(params_len, GFP_KERNEL);
-
+	params = kzalloc(struct_size(params, ch_param, num_channels),
+			 GFP_KERNEL);
 	if (!params)
 		return -ENOMEM;
 
@@ -181,6 +183,11 @@ int ath11k_reg_update_chan_list(struct ath11k *ar)
 
 	ret = ath11k_wmi_send_scan_chan_list_cmd(ar, params);
 	kfree(params);
+
+	if (ar->pending_11d) {
+		complete(&ar->finish_11d_ch_list);
+		ar->pending_11d = false;
+	}
 
 	return ret;
 }
@@ -247,8 +254,15 @@ int ath11k_regd_update(struct ath11k *ar)
 		goto err;
 	}
 
+	if (ar->pending_11d)
+		complete(&ar->finish_11d_scan);
+
 	rtnl_lock();
 	wiphy_lock(ar->hw->wiphy);
+
+	if (ar->pending_11d)
+		reinit_completion(&ar->finish_11d_ch_list);
+
 	ret = regulatory_set_wiphy_regd_sync(ar->hw->wiphy, regd_copy);
 	wiphy_unlock(ar->hw->wiphy);
 	rtnl_unlock();

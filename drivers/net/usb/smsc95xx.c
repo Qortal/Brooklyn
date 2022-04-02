@@ -50,7 +50,6 @@
 #define SUSPEND_SUSPEND3		(0x08)
 #define SUSPEND_ALLMODES		(SUSPEND_SUSPEND0 | SUSPEND_SUSPEND1 | \
 					 SUSPEND_SUSPEND2 | SUSPEND_SUSPEND3)
-#define MAC_ADDR_LEN                    (6)
 
 struct smsc95xx_priv {
 	u32 mac_cr;
@@ -779,10 +778,10 @@ static int smsc95xx_ioctl(struct net_device *netdev, struct ifreq *rq, int cmd)
 }
 
 /* Check the macaddr module parameter for a MAC address */
-static int smsc95xx_is_macaddr_param(struct usbnet *dev, u8 *dev_mac)
+static int smsc95xx_is_macaddr_param(struct usbnet *dev, struct net_device *nd)
 {
        int i, j, got_num, num;
-       u8 mtbl[MAC_ADDR_LEN];
+       u8 mtbl[ETH_ALEN];
 
        if (macaddr[0] == ':')
                return 0;
@@ -791,7 +790,7 @@ static int smsc95xx_is_macaddr_param(struct usbnet *dev, u8 *dev_mac)
        j = 0;
        num = 0;
        got_num = 0;
-       while (j < MAC_ADDR_LEN) {
+       while (j < ETH_ALEN) {
                if (macaddr[i] && macaddr[i] != ':') {
                        got_num++;
                        if ('0' <= macaddr[i] && macaddr[i] <= '9')
@@ -813,12 +812,11 @@ static int smsc95xx_is_macaddr_param(struct usbnet *dev, u8 *dev_mac)
                }
        }
 
-       if (j == MAC_ADDR_LEN) {
+       if (j == ETH_ALEN) {
                netif_dbg(dev, ifup, dev->net, "Overriding MAC address with: "
                "%02x:%02x:%02x:%02x:%02x:%02x\n", mtbl[0], mtbl[1], mtbl[2],
                                                mtbl[3], mtbl[4], mtbl[5]);
-               for (i = 0; i < MAC_ADDR_LEN; i++)
-                       dev_mac[i] = mtbl[i];
+	       dev_addr_mod(nd, 0, mtbl, ETH_ALEN);
                return 1;
        } else {
                return 0;
@@ -827,9 +825,10 @@ static int smsc95xx_is_macaddr_param(struct usbnet *dev, u8 *dev_mac)
 
 static void smsc95xx_init_mac_address(struct usbnet *dev)
 {
+	u8 addr[ETH_ALEN];
+
 	/* maybe the boot loader passed the MAC address in devicetree */
-	if (!eth_platform_get_mac_address(&dev->udev->dev,
-			dev->net->dev_addr)) {
+	if (!platform_get_ethdev_address(&dev->udev->dev, dev->net)) {
 		if (is_valid_ether_addr(dev->net->dev_addr)) {
 			/* device tree values are valid so use them */
 			netif_dbg(dev, ifup, dev->net, "MAC address read from the device tree\n");
@@ -838,8 +837,8 @@ static void smsc95xx_init_mac_address(struct usbnet *dev)
 	}
 
 	/* try reading mac address from EEPROM */
-	if (smsc95xx_read_eeprom(dev, EEPROM_MAC_OFFSET, ETH_ALEN,
-			dev->net->dev_addr) == 0) {
+	if (smsc95xx_read_eeprom(dev, EEPROM_MAC_OFFSET, ETH_ALEN, addr) == 0) {
+		eth_hw_addr_set(dev->net, addr);
 		if (is_valid_ether_addr(dev->net->dev_addr)) {
 			/* eeprom values are valid so use them */
 			netif_dbg(dev, ifup, dev->net, "MAC address read from EEPROM\n");
@@ -848,7 +847,7 @@ static void smsc95xx_init_mac_address(struct usbnet *dev)
 	}
 
 	/* Check module parameters */
-	if (smsc95xx_is_macaddr_param(dev, dev->net->dev_addr))
+	if (smsc95xx_is_macaddr_param(dev, dev->net))
 		return;
 
 	/* no useful static MAC address found. generate a random one */
