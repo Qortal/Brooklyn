@@ -26,7 +26,6 @@
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <linux/blkdev.h>
-#include <linux/elevator.h>
 #include <linux/bio.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -40,6 +39,7 @@
 
 #include <trace/events/block.h>
 
+#include "elevator.h"
 #include "blk.h"
 #include "blk-mq-sched.h"
 #include "blk-pm.h"
@@ -188,8 +188,10 @@ static void elevator_release(struct kobject *kobj)
 	kfree(e);
 }
 
-void __elevator_exit(struct request_queue *q, struct elevator_queue *e)
+void elevator_exit(struct request_queue *q)
 {
+	struct elevator_queue *e = q->elevator;
+
 	mutex_lock(&e->sysfs_lock);
 	blk_mq_exit_sched(q, e);
 	mutex_unlock(&e->sysfs_lock);
@@ -593,7 +595,8 @@ int elevator_switch_mq(struct request_queue *q,
 			elv_unregister_queue(q);
 
 		ioc_clear_queue(q);
-		elevator_exit(q, q->elevator);
+		blk_mq_sched_free_rqs(q);
+		elevator_exit(q);
 	}
 
 	ret = blk_mq_init_sched(q, new_e);
@@ -603,7 +606,8 @@ int elevator_switch_mq(struct request_queue *q,
 	if (new_e) {
 		ret = elv_register_queue(q, true);
 		if (ret) {
-			elevator_exit(q, q->elevator);
+			blk_mq_sched_free_rqs(q);
+			elevator_exit(q);
 			goto out;
 		}
 	}
@@ -635,7 +639,7 @@ static struct elevator_type *elevator_get_default(struct request_queue *q)
 		return NULL;
 
 	if (q->nr_hw_queues != 1 &&
-			!blk_mq_is_sbitmap_shared(q->tag_set->flags))
+	    !blk_mq_is_shared_tags(q->tag_set->flags))
 		return NULL;
 
 	return elevator_get(q, "mq-deadline", false);
