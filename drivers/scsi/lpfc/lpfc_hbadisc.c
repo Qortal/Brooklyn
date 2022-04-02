@@ -1076,8 +1076,20 @@ lpfc_cleanup_rpis(struct lpfc_vport *vport, int remove)
 	struct lpfc_nodelist *ndlp, *next_ndlp;
 
 	list_for_each_entry_safe(ndlp, next_ndlp, &vport->fc_nodes, nlp_listp) {
-		if (ndlp->nlp_state == NLP_STE_UNUSED_NODE)
+		if (ndlp->nlp_state == NLP_STE_UNUSED_NODE) {
+			/* It's possible the FLOGI to the fabric node never
+			 * successfully completed and never registered with the
+			 * transport.  In this case there is no way to clean up
+			 * the node.
+			 */
+			if (ndlp->nlp_DID == Fabric_DID) {
+				if (ndlp->nlp_prev_state ==
+				    NLP_STE_UNUSED_NODE &&
+				    !ndlp->fc4_xpt_flags)
+					lpfc_nlp_put(ndlp);
+			}
 			continue;
+		}
 
 		if ((phba->sli3_options & LPFC_SLI3_VPORT_TEARDOWN) ||
 		    ((vport->port_type == LPFC_NPIV_PORT) &&
@@ -3922,7 +3934,6 @@ lpfc_mbx_cmpl_unreg_vpi(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 	vport->vpi_state &= ~LPFC_VPI_REGISTERED;
 	vport->fc_flag |= FC_VPORT_NEEDS_REG_VPI;
 	spin_unlock_irq(shost->host_lock);
-	vport->unreg_vpi_cmpl = VPORT_OK;
 	mempool_free(pmb, phba->mbox_mem_pool);
 	lpfc_cleanup_vports_rrqs(vport, NULL);
 	/*
@@ -3952,7 +3963,6 @@ lpfc_mbx_unreg_vpi(struct lpfc_vport *vport)
 		lpfc_printf_vlog(vport, KERN_ERR, LOG_TRACE_EVENT,
 				 "1800 Could not issue unreg_vpi\n");
 		mempool_free(mbox, phba->mbox_mem_pool);
-		vport->unreg_vpi_cmpl = VPORT_ERROR;
 		return rc;
 	}
 	return 0;
@@ -4795,8 +4805,11 @@ lpfc_nlp_state_cleanup(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 	/* Reg/Unreg for FCP and NVME Transport interface */
 	if ((old_state == NLP_STE_MAPPED_NODE ||
 	     old_state == NLP_STE_UNMAPPED_NODE)) {
-		/* For nodes marked for ADISC, Handle unreg in ADISC cmpl */
-		if (!(ndlp->nlp_flag & NLP_NPR_ADISC))
+		/* For nodes marked for ADISC, Handle unreg in ADISC cmpl
+		 * if linkup. In linkdown do unreg_node
+		 */
+		if (!(ndlp->nlp_flag & NLP_NPR_ADISC) ||
+		    !lpfc_is_link_up(vport->phba))
 			lpfc_nlp_unreg_node(vport, ndlp);
 	}
 
@@ -5349,6 +5362,7 @@ lpfc_unreg_rpi(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
 
 			rc = lpfc_sli_issue_mbox(phba, mbox, MBX_NOWAIT);
 			if (rc == MBX_NOT_FINISHED) {
+				ndlp->nlp_flag &= ~NLP_UNREG_INP;
 				mempool_free(mbox, phba->mbox_mem_pool);
 				acc_plogi = 1;
 			}

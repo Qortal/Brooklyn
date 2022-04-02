@@ -19,6 +19,7 @@
 #include <linux/remoteproc.h>
 #include <linux/workqueue.h>
 
+#include "imx_rproc.h"
 #include "remoteproc_internal.h"
 
 #define IMX7D_SRC_SCR			0x0C
@@ -33,7 +34,8 @@
 
 #define IMX7D_M4_START			(IMX7D_ENABLE_M4 | IMX7D_SW_M4P_RST \
 					 | IMX7D_SW_M4C_RST)
-#define IMX7D_M4_STOP			IMX7D_SW_M4C_NON_SCLR_RST
+#define IMX7D_M4_STOP			(IMX7D_ENABLE_M4 | IMX7D_SW_M4C_RST | \
+					 IMX7D_SW_M4C_NON_SCLR_RST)
 
 /* Address: 0x020D8000 */
 #define IMX6SX_SRC_SCR			0x00
@@ -44,7 +46,8 @@
 
 #define IMX6SX_M4_START			(IMX6SX_ENABLE_M4 | IMX6SX_SW_M4P_RST \
 					 | IMX6SX_SW_M4C_RST)
-#define IMX6SX_M4_STOP			IMX6SX_SW_M4C_NON_SCLR_RST
+#define IMX6SX_M4_STOP			(IMX6SX_ENABLE_M4 | IMX6SX_SW_M4C_RST | \
+					 IMX6SX_SW_M4C_NON_SCLR_RST)
 #define IMX6SX_M4_RST_MASK		(IMX6SX_ENABLE_M4 | IMX6SX_SW_M4P_RST \
 					 | IMX6SX_SW_M4C_NON_SCLR_RST \
 					 | IMX6SX_SW_M4C_RST)
@@ -72,33 +75,6 @@ struct imx_rproc_mem {
 /* M4 own area. Can be mapped at probe */
 #define ATT_OWN		BIT(1)
 #define ATT_IOMEM	BIT(2)
-
-/* address translation table */
-struct imx_rproc_att {
-	u32 da;	/* device address (From Cortex M4 view)*/
-	u32 sa;	/* system bus address */
-	u32 size; /* size of reg range */
-	int flags;
-};
-
-/* Remote core start/stop method */
-enum imx_rproc_method {
-	IMX_RPROC_NONE,
-	/* Through syscon regmap */
-	IMX_RPROC_MMIO,
-	/* Through ARM SMCCC */
-	IMX_RPROC_SMC,
-};
-
-struct imx_rproc_dcfg {
-	u32				src_reg;
-	u32				src_mask;
-	u32				src_start;
-	u32				src_stop;
-	const struct imx_rproc_att	*att;
-	size_t				att_size;
-	enum imx_rproc_method		method;
-};
 
 struct imx_rproc {
 	struct device			*dev;
@@ -597,7 +573,7 @@ static int imx_rproc_addr_init(struct imx_rproc *priv,
 			break;
 
 		/* Not use resource version, because we might share region */
-		priv->mem[b].cpu_addr = devm_ioremap(&pdev->dev, res.start, resource_size(&res));
+		priv->mem[b].cpu_addr = devm_ioremap_wc(&pdev->dev, res.start, resource_size(&res));
 		if (!priv->mem[b].cpu_addr) {
 			dev_err(dev, "failed to remap %pr\n", &res);
 			return -ENOMEM;
@@ -710,7 +686,7 @@ static int imx_rproc_detect_mode(struct imx_rproc *priv)
 		return ret;
 	}
 
-	if (!(val & dcfg->src_stop))
+	if ((val & dcfg->src_mask) != dcfg->src_stop)
 		priv->rproc->state = RPROC_DETACHED;
 
 	return 0;

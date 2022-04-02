@@ -410,7 +410,6 @@ static void vc4_atomic_commit_tail(struct drm_atomic_state *state)
 		clk_request_done(old_hvs_state->core_req);
 		old_hvs_state->core_req = NULL;
 	}
-
 	drm_atomic_helper_commit_modeset_disables(dev, state);
 
 	vc4_ctm_commit(vc4, state);

@@ -5,7 +5,7 @@
 
 #include <linux/clk-provider.h>
 #include <linux/io.h>
-#include <linux/of_address.h>
+#include <linux/module.h>
 #include <linux/platform_device.h>
 
 #include "ccu_common.h"
@@ -1183,13 +1183,11 @@ static const u32 usb2_clk_regs[] = {
 
 static int sun50i_h6_ccu_probe(struct platform_device *pdev)
 {
-	struct resource *res;
 	void __iomem *reg;
 	u32 val;
 	int i;
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	reg = devm_ioremap_resource(&pdev->dev, res);
+	reg = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(reg))
 		return PTR_ERR(reg);
 
@@ -1252,7 +1250,11 @@ static struct platform_driver sun50i_h6_ccu_driver = {
 	.probe	= sun50i_h6_ccu_probe,
 	.driver	= {
 		.name	= "sun50i-h6-ccu",
+		.suppress_bind_attrs = true,
 		.of_match_table	= sun50i_h6_ccu_ids,
 	},
 };
-builtin_platform_driver(sun50i_h6_ccu_driver);
+module_platform_driver(sun50i_h6_ccu_driver);
+
+MODULE_IMPORT_NS(SUNXI_CCU);
+MODULE_LICENSE("GPL");

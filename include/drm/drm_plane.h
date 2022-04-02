@@ -43,7 +43,7 @@ enum drm_scaling_filter {
 /**
  * struct drm_plane_state - mutable plane state
  *
- * Please not that the destination coordinates @crtc_x, @crtc_y, @crtc_h and
+ * Please note that the destination coordinates @crtc_x, @crtc_y, @crtc_h and
  * @crtc_w and the source coordinates @src_x, @src_y, @src_h and @src_w are the
  * raw coordinates provided by userspace. Drivers should use
  * drm_atomic_helper_check_plane_state() and only use the derived rectangles in
@@ -178,6 +178,24 @@ struct drm_plane_state {
 	 * Color range for non RGB formats
 	 */
 	enum drm_color_range color_range;
+
+	/**
+	 * @chroma_siting_h:
+	 *
+	 * Location of chroma samples horizontally compared to luma
+	 * 0 means chroma is sited with left luma
+	 * 0x8000 is interstitial. 0x10000 is sited with right luma
+	 */
+	int32_t chroma_siting_h;
+
+	/**
+	 * @chroma_siting_v:
+	 *
+	 * Location of chroma samples vertically compared to luma
+	 * 0 means chroma is sited with top luma
+	 * 0x8000 is interstitial. 0x10000 is sited with bottom luma
+	 */
+	int32_t chroma_siting_v;
 
 	/**
 	 * @fb_damage_clips:
@@ -750,6 +768,24 @@ struct drm_plane {
 	 * scaling.
 	 */
 	struct drm_property *scaling_filter_property;
+
+	/**
+	 * @chroma_siting_h_property:
+	 *
+	 * Optional "CHROMA_SITING_H" property for specifying
+	 * chroma siting for YUV formats.
+	 * See drm_plane_create_chroma_siting_properties().
+	 */
+	struct drm_property *chroma_siting_h_property;
+
+	/**
+	 * @chroma_siting_v_property:
+	 *
+	 * Optional "CHROMA_SITING_V" property for specifying
+	 * chroma siting for YUV formats.
+	 * See drm_plane_create_chroma_siting_properties().
+	 */
+	struct drm_property *chroma_siting_v_property;
 };
 
 #define obj_to_plane(x) container_of(x, struct drm_plane, base)

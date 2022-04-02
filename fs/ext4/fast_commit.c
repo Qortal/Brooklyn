@@ -156,15 +156,13 @@
  *    fast commit recovery even if that area is invalidated by later full
  *    commits.
  *
- * 1) Make fast commit atomic updates more fine grained. Today, a fast commit
- *    eligible update must be protected within ext4_fc_start_update() and
- *    ext4_fc_stop_update(). These routines are called at much higher
- *    routines. This can be made more fine grained by combining with
- *    ext4_journal_start().
+ * 1) Fast commit's commit path locks the entire file system during fast
+ *    commit. This has significant performance penalty. Instead of that, we
+ *    should use ext4_fc_start/stop_update functions to start inode level
+ *    updates from ext4_journal_start/stop. Once we do that we can drop file
+ *    system locking during commit path.
  *
- * 2) Same above for ext4_fc_start_ineligible() and ext4_fc_stop_ineligible()
- *
- * 3) Handle more ineligible cases.
+ * 2) Handle more ineligible cases.
  */
 
 #include <trace/events/ext4.h>
@@ -764,7 +762,6 @@ static bool ext4_fc_add_dentry_tlv(struct super_block *sb, u32 *crc,
 	ext4_fc_memcpy(sb, dst, &fcd, sizeof(fcd), crc);
 	dst += sizeof(fcd);
 	ext4_fc_memcpy(sb, dst, fc_dentry->fcd_name.name, dlen, crc);
-	dst += dlen;
 
 	return true;
 }
@@ -787,7 +784,9 @@ static int ext4_fc_write_inode(struct inode *inode, u32 *crc)
 	if (ret)
 		return ret;
 
-	if (EXT4_INODE_SIZE(inode->i_sb) > EXT4_GOOD_OLD_INODE_SIZE)
+	if (ext4_test_inode_flag(inode, EXT4_INODE_INLINE_DATA))
+		inode_len = EXT4_INODE_SIZE(inode->i_sb);
+	else if (EXT4_INODE_SIZE(inode->i_sb) > EXT4_GOOD_OLD_INODE_SIZE)
 		inode_len += ei->i_extra_isize;
 
 	fc_inode.fc_ino = cpu_to_le32(inode->i_ino);
@@ -1505,7 +1504,8 @@ static int ext4_fc_replay_inode(struct super_block *sb, struct ext4_fc_tl *tl,
 	 * crashing. This should be fixed but until then, we calculate
 	 * the number of blocks the inode.
 	 */
-	ext4_ext_replay_set_iblocks(inode);
+	if (!ext4_test_inode_flag(inode, EXT4_INODE_INLINE_DATA))
+		ext4_ext_replay_set_iblocks(inode);
 
 	inode->i_generation = le32_to_cpu(ext4_raw_inode(&iloc)->i_generation);
 	ext4_reset_inode_seed(inode);
@@ -1828,6 +1828,10 @@ static void ext4_fc_set_bitmaps_and_counters(struct super_block *sb)
 		}
 		cur = 0;
 		end = EXT_MAX_BLOCKS;
+		if (ext4_test_inode_flag(inode, EXT4_INODE_INLINE_DATA)) {
+			iput(inode);
+			continue;
+		}
 		while (cur < end) {
 			map.m_lblk = cur;
 			map.m_len = end - cur;

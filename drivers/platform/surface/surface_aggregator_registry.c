@@ -228,6 +228,15 @@ static const struct software_node *ssam_node_group_sp7[] = {
 	NULL,
 };
 
+static const struct software_node *ssam_node_group_sp8[] = {
+	&ssam_node_root,
+	&ssam_node_bat_ac,
+	&ssam_node_bat_main,
+	&ssam_node_tmp_pprof,
+	/* TODO: Add support for keyboard cover. */
+	NULL,
+};
+
 
 /* -- Device registry helper functions. ------------------------------------- */
 
@@ -247,20 +256,6 @@ static int ssam_uid_from_string(const char *str, struct ssam_device_uid *uid)
 	uid->function = fn;
 
 	return 0;
-}
-
-static int ssam_hub_remove_devices_fn(struct device *dev, void *data)
-{
-	if (!is_ssam_device(dev))
-		return 0;
-
-	ssam_device_remove(to_ssam_device(dev));
-	return 0;
-}
-
-static void ssam_hub_remove_devices(struct device *parent)
-{
-	device_for_each_child_reverse(parent, NULL, ssam_hub_remove_devices_fn);
 }
 
 static int ssam_hub_add_device(struct device *parent, struct ssam_controller *ctrl,
@@ -288,8 +283,8 @@ static int ssam_hub_add_device(struct device *parent, struct ssam_controller *ct
 	return status;
 }
 
-static int ssam_hub_add_devices(struct device *parent, struct ssam_controller *ctrl,
-				struct fwnode_handle *node)
+static int ssam_hub_register_clients(struct device *parent, struct ssam_controller *ctrl,
+				     struct fwnode_handle *node)
 {
 	struct fwnode_handle *child;
 	int status;
@@ -308,7 +303,7 @@ static int ssam_hub_add_devices(struct device *parent, struct ssam_controller *c
 
 	return 0;
 err:
-	ssam_hub_remove_devices(parent);
+	ssam_remove_clients(parent);
 	return status;
 }
 
@@ -403,9 +398,9 @@ static void ssam_base_hub_update_workfn(struct work_struct *work)
 	hub->state = state;
 
 	if (hub->state == SSAM_BASE_HUB_CONNECTED)
-		status = ssam_hub_add_devices(&hub->sdev->dev, hub->sdev->ctrl, node);
+		status = ssam_hub_register_clients(&hub->sdev->dev, hub->sdev->ctrl, node);
 	else
-		ssam_hub_remove_devices(&hub->sdev->dev);
+		ssam_remove_clients(&hub->sdev->dev);
 
 	if (status)
 		dev_err(&hub->sdev->dev, "failed to update base-hub devices: %d\n", status);
@@ -487,7 +482,7 @@ static int ssam_base_hub_probe(struct ssam_device *sdev)
 err:
 	ssam_notifier_unregister(sdev->ctrl, &hub->notif);
 	cancel_delayed_work_sync(&hub->update_work);
-	ssam_hub_remove_devices(&sdev->dev);
+	ssam_remove_clients(&sdev->dev);
 	return status;
 }
 
@@ -499,7 +494,7 @@ static void ssam_base_hub_remove(struct ssam_device *sdev)
 
 	ssam_notifier_unregister(sdev->ctrl, &hub->notif);
 	cancel_delayed_work_sync(&hub->update_work);
-	ssam_hub_remove_devices(&sdev->dev);
+	ssam_remove_clients(&sdev->dev);
 }
 
 static const struct ssam_device_id ssam_base_hub_match[] = {
@@ -533,6 +528,9 @@ static const struct acpi_device_id ssam_platform_hub_match[] = {
 
 	/* Surface Pro 7+ */
 	{ "MSHW0119", (unsigned long)ssam_node_group_sp7 },
+
+	/* Surface Pro 8 */
+	{ "MSHW0263", (unsigned long)ssam_node_group_sp8 },
 
 	/* Surface Book 2 */
 	{ "MSHW0107", (unsigned long)ssam_node_group_gen5 },
@@ -599,7 +597,7 @@ static int ssam_platform_hub_probe(struct platform_device *pdev)
 
 	set_secondary_fwnode(&pdev->dev, root);
 
-	status = ssam_hub_add_devices(&pdev->dev, ctrl, root);
+	status = ssam_hub_register_clients(&pdev->dev, ctrl, root);
 	if (status) {
 		set_secondary_fwnode(&pdev->dev, NULL);
 		software_node_unregister_node_group(nodes);
@@ -613,7 +611,7 @@ static int ssam_platform_hub_remove(struct platform_device *pdev)
 {
 	const struct software_node **nodes = platform_get_drvdata(pdev);
 
-	ssam_hub_remove_devices(&pdev->dev);
+	ssam_remove_clients(&pdev->dev);
 	set_secondary_fwnode(&pdev->dev, NULL);
 	software_node_unregister_node_group(nodes);
 	return 0;

@@ -20,6 +20,7 @@
 #include <linux/irqdesc.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
+#include <linux/module.h>
 #include <linux/of_address.h>
 #include <linux/of.h>
 #include <linux/of_irq.h>
@@ -312,7 +313,10 @@ static inline void bcm2835_pinctrl_fsel_set(
 
 static int bcm2835_gpio_direction_input(struct gpio_chip *chip, unsigned offset)
 {
-	return pinctrl_gpio_direction_input(chip->base + offset);
+	struct bcm2835_pinctrl *pc = gpiochip_get_data(chip);
+
+	bcm2835_pinctrl_fsel_set(pc, offset, BCM2835_FSEL_GPIO_IN);
+	return 0;
 }
 
 static int bcm2835_gpio_get(struct gpio_chip *chip, unsigned offset)
@@ -347,8 +351,11 @@ static void bcm2835_gpio_set(struct gpio_chip *chip, unsigned offset, int value)
 static int bcm2835_gpio_direction_output(struct gpio_chip *chip,
 		unsigned offset, int value)
 {
-	bcm2835_gpio_set(chip, offset, value);
-	return pinctrl_gpio_direction_output(chip->base + offset);
+	struct bcm2835_pinctrl *pc = gpiochip_get_data(chip);
+
+	bcm2835_gpio_set_bit(pc, value ? GPSET0 : GPCLR0, offset);
+	bcm2835_pinctrl_fsel_set(pc, offset, BCM2835_FSEL_GPIO_OUT);
+	return 0;
 }
 
 static const struct gpio_chip bcm2835_gpio_chip = {
@@ -406,7 +413,7 @@ static void bcm2835_gpio_irq_handler(struct irq_desc *desc)
 	struct bcm2835_pinctrl *pc = gpiochip_get_data(chip);
 	struct irq_chip *host_chip = irq_desc_get_chip(desc);
 	int irq = irq_desc_get_irq(desc);
-	int group;
+	int group = 0;
 	int i;
 
 	for (i = 0; i < BCM2835_NUM_IRQS; i++) {
@@ -892,9 +899,12 @@ static int bcm2835_pmx_free(struct pinctrl_dev *pctldev,
 		unsigned offset)
 {
 	struct bcm2835_pinctrl *pc = pinctrl_dev_get_drvdata(pctldev);
+	enum bcm2835_fsel fsel = bcm2835_pinctrl_fsel_get(pc, offset);
 
-	/* disable by setting to GPIO_IN */
-	bcm2835_pinctrl_fsel_set(pc, offset, BCM2835_FSEL_GPIO_IN);
+	/* Return non-GPIOs to GPIO_IN */
+	if (fsel != BCM2835_FSEL_GPIO_IN && fsel != BCM2835_FSEL_GPIO_OUT)
+		bcm2835_pinctrl_fsel_set(pc, offset, BCM2835_FSEL_GPIO_IN);
+
 	return 0;
 }
 
@@ -936,10 +946,7 @@ static void bcm2835_pmx_gpio_disable_free(struct pinctrl_dev *pctldev,
 		struct pinctrl_gpio_range *range,
 		unsigned offset)
 {
-	struct bcm2835_pinctrl *pc = pinctrl_dev_get_drvdata(pctldev);
-
-	/* disable by setting to GPIO_IN */
-	bcm2835_pinctrl_fsel_set(pc, offset, BCM2835_FSEL_GPIO_IN);
+	(void)bcm2835_pmx_free(pctldev, offset);
 }
 
 static int bcm2835_pmx_gpio_set_direction(struct pinctrl_dev *pctldev,
@@ -1221,7 +1228,6 @@ static int bcm2835_pinctrl_probe(struct platform_device *pdev)
 
 	pc->gpio_chip = *pdata->gpio_chip;
 	pc->gpio_chip.parent = dev;
-	pc->gpio_chip.of_node = np;
 
 	for (i = 0; i < BCM2835_NUM_BANKS; i++) {
 		unsigned long events;
@@ -1342,4 +1348,10 @@ static struct platform_driver bcm2835_pinctrl_driver = {
 		.suppress_bind_attrs = true,
 	},
 };
-builtin_platform_driver(bcm2835_pinctrl_driver);
+module_platform_driver(bcm2835_pinctrl_driver);
+
+MODULE_AUTHOR("Chris Boot");
+MODULE_AUTHOR("Simon Arlott");
+MODULE_AUTHOR("Stephen Warren");
+MODULE_DESCRIPTION("Broadcom BCM2835/2711 pinctrl and GPIO driver");
+MODULE_LICENSE("GPL");
