@@ -1,0 +1,104 @@
+group "Tiling_Config" struct {
+     group "vdesks" list {
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 0;
+               value "y" int: 0;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 0;
+               value "y" int: 1;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 0;
+               value "y" int: 2;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 0;
+               value "y" int: 3;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 1;
+               value "y" int: 0;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 1;
+               value "y" int: 1;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 1;
+               value "y" int: 2;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 1;
+               value "y" int: 3;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 2;
+               value "y" int: 0;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 2;
+               value "y" int: 1;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 2;
+               value "y" int: 2;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 2;
+               value "y" int: 3;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 3;
+               value "y" int: 0;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 3;
+               value "y" int: 1;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 3;
+               value "y" int: 2;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+          group "Tiling_Config_VDesk" struct {
+               value "x" int: 3;
+               value "y" int: 3;
+               value "zone_num" int: 0;
+               value "nb_stacks" int: 1;
+          }
+     }
+    value "tile_dialogs" int: 1;
+    value "show_titles" int: 1;
+    value "have_floating_mode" int: 1;
+    value "window_padding" int: 0;
+}

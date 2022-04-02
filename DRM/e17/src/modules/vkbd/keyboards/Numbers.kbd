@@ -1,0 +1,120 @@
+##KBDCONF-1.0
+kbd 120 30
+fuzz 20
+
+# keyboard type
+type NUMERIC
+# an icon for the keyboard so you know which one you have
+icon numeric.png
+
+key   0   0  10  10
+  normal   1 1
+  shift    ! exclam
+key  10   0  10  10
+  normal   2 2
+  shift    @ at
+key  20   0  10  10
+  normal   3 3
+  shift    # numbersign
+key  30   0  10  10
+  normal   4 4
+  shift    $ dollar
+key  40   0  10  10
+  normal   5 5
+  shift    % percent
+key  50   0  10  10
+  normal   6 6
+  shift    ^ asciicircum
+key  60   0  10  10
+  normal   7 7
+  shift    & ampersand
+key  70   0  10  10
+  normal   8 8
+  shift    * asterisk
+key  80   0  10  10
+  normal   9 9
+  shift    ( parenleft
+key  90   0  10  10
+  normal   0 0
+  shift    ) parenright
+key 100   0  10  10
+  normal   [ bracketleft
+  shift    { braceleft
+key 110   0  10  10
+  normal   ] bracketright
+  shift    } braceright
+
+
+key   0  10  10  10
+  normal   tab.png Tab
+  shift    tab.png ISO_Left_Tab
+key  10  10  10  10
+  normal   ` grave
+  shift    ~ asciitilde
+key  20  10  10  10
+  normal   - "-"
+  shift    _ underscore
+key  30  10  10  10
+  normal   = equal
+  shift    + plus
+key  40  10  10  10
+  normal   \ backslash
+  shift    | bar
+key  50  10  10  10
+  normal   ; semicolon
+  shift    : colon
+key  60  10  10  10
+  normal   ' apostrophe
+  shift    " quotedbl
+key  70  10  10  10
+  normal   / slash
+  shift    ? question
+key  80  10  10  10
+  normal   , comma
+  shift    < less
+key  90  10  10  10
+  normal   ß "ß"
+  shift    ¢ "¢"
+key 100  10  10  10
+  normal   € "€"
+  shift    £ "£"
+key 110  10  10  10
+  normal   ø "ø"
+  shift    Ø "Ø"
+
+key   0  20  10  10
+  normal   ä "ä"
+  shift    Ä "Ä"
+key  10  20  10  10
+  normal   ö "ö"
+  shift    Ö "Ö"
+key  20  20  10  10
+  normal   ü "ü"
+  shift    Ü "Ü"
+key  30  20  10  10
+  normal   é "é"
+  shift    É "É"
+key  40  20  10  10
+  normal   è "è"
+  shift    È "È"
+key  50  20  10  10
+  normal   ô "ô"
+  shift    Ô "Ô"
+key  60  20  10  10
+  normal   ç "ç"
+  shift    Ç "Ç"
+key  70  20  10  10
+  normal   à "à"
+  shift    À "À"
+key  80  20  10  10
+  normal   ò "ò"
+  shift    Ò "Ò"
+key  90  20  10  10
+  normal   ó "ó"
+  shift    Ó "Ó"
+key 100  20  10  10
+  normal   ñ "ñ"
+  shift    Ñ "Ñ"
+key 110  20  10  10
+  normal   shift.png
+  is_shift

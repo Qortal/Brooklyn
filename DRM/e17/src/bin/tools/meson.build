@@ -1,0 +1,5 @@
+subdir('paledit')
+subdir('filemanager')
+subdir('open')
+subdir('askpass')
+subdir('remote')

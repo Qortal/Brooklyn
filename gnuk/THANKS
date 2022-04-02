@@ -1,0 +1,43 @@
+							-*- coding: utf-8 -*-
+
+We would like to express our gratitudes to Werner Koch for GnuPG, and
+Giovanni Di Sirio for ChibiOS/RT.
+
+Gnuk was originally written by NIIBE Yutaka.  People contributed by
+encouraging the development, testing the implementation, suggesting
+improvements, or fixing bugs.  Here is a list of those people.
+
+Aurelien Jarno		aurelien@aurel32.net
+Achim Pietig		achim@pietig.com
+Aidan Thornton
+Anibal Monsalve Salazar	anibal@debian.org
+Andre Zepezauer		andre.zepezauer@student.uni-halle.de
+Anthony Romano		anthony.romano@coreos.com
+Bertrand Jacquin	bertrand@jacquin.bzh
+Clint Adams		clint@softwarefreedom.org
+Daniel Kahn Gillmor	dkg@fifthhorseman.net
+Elliott Mitchell
+Hironobu SUZUKI		hironobu@h2np.net
+Jan Suhr		jan@suhr.info
+Jeremy Drake		jeremydrake+gnuk@eacceleration.com
+Jonathan McDowell	noodles@earth.li
+Kaz Kojima		kkojima@rr.iij4u.or.jp
+Kenji Rikitake
+Ludovic Rousseau	ludovic.rousseau@free.fr
+Luis Felipe R. Murillo	luisfelipe@ucla.edu
+Mateusz Zalega		mateusz@nitrokey.com
+MATSUU Takuto		matsuu@gentoo.org
+Micah Anderson		micah@debian.org
+NAGAMI Takeshi		nagami-takeshi@aist.go.jp
+Nguyễn Hồng Quân	quannguyen@mbm.vn
+Nico Rikken		nico@nicorikken.eu
+NOKUBI Takatsugu	knok@daionet.gr.jp
+Paul Fertser
+Paul Bakker		polarssl_maintainer@polarssl.org
+Santiago Ruano Rincón	santiago@debian.org
+Shane Coughlan		scoughlan@openinventionnetwork.com
+Stanislas Bach		sbach@0g.re
+Szczepan Zalega		szczepan@nitrokey.com
+Vasily Evseenko
+Werner Koch		wk@gnupg.org
+Yuji Imai		ug@xcast.jp

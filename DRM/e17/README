@@ -1,0 +1,41 @@
+Enlightenment
+-------------
+
+Please report bugs and submit patches at https://phab.enlightenment.org
+
+Requirements
+------------
+
+Must:
+  * efl
+  * libpam (On Linux)
+
+Highly suggested:
+  * libexif (exif metadata display support)
+  * evas_generic_loaders (All loaders)
+  * bluez5 (BT support and l2ping tool)
+  * connman
+  * bc (For everything calculator)
+  * pulseaudio
+  * acpid (Unless your system doesn't have ACPI at all)
+  * packagekit (For packagekit module updates status)
+  * udisks2
+  * gdb (If you want automatic bactraces in ~/.e-crashdump.txt)
+
+NOTE: Users of DR16 will need to rename the $prefix/bin/enlightenment
+file prior to installing this release or it will be overwritten.
+
+Please see the INSTALL file for now to compile and install it.
+
+NOTE: If you do not want security issues make sure sysactions.conf is in
+/etc/enlightenment (not PREFIX/etc/enlightenment) as this is the first place
+it looks at. This file is intended to be customized by packagers and
+system integrators to match your policies and scripts/tools.
+
+NOTE: To enable wayland support (still considered experimental and not for
+regular end users) use the meson -Dwl=true option. To run enlightenment in
+wayland mode, just log on on ant vt and run enlightenment_start. If you
+wish to debug and see all the output try using something like screen then
+attaching to the remote screen session by sshing in etc.
+
+
