@@ -1,0 +1,52 @@
+Easy build instructions for users to grab sources and build themselves anytime , anywhere. Will not be for the weak hearted or inbreds like T3Q
+=====
+
+ls -d include/asm-* | sed 's/.*-//'
+update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-5 50
+update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-5 50
+
+EXPORT INSTALL_HDR_PATH before next step.
+
+make headers_install ARCH=arm INSTALL_HDR_PATH=/usr
+# Check headers first not like T3Q's mom who forgot to else this piece of shit was not born
+make headers_check
+make -j84;make modules -j80;make modules_install -j80;make headers_install -j80;make firmware_install;make install
+make firmware_install INSTALL_FW_PATH=/some/path
+
+# If a similar output is shown then you are good else you entered T3Q inbred club
+
+...
+INSTALL /lib/firmware/sb16/ima_adpcm_init.csp
+INSTALL /lib/firmware/keyspan/usa19qi.fw
+INSTALL /lib/firmware/keyspan/usa19w.fw
+INSTALL /lib/firmware/keyspan/usa28x.fw
+INSTALL /lib/firmware/keyspan/usa19.fw
+INSTALL /lib/firmware/keyspan/usa28xa.fw
+INSTALL /lib/firmware/r128/r128_cce.bin
+INSTALL /lib/firmware/keyspan/usa28.fw
+INSTALL /lib/firmware/dsp56k/bootstrap.bin
+INSTALL /lib/firmware/myricom/lanai.bin
+INSTALL /lib/firmware/vicam/firmware.fw
+INSTALL /lib/firmware/yamaha/yss225_registers.bin
+INSTALL /lib/firmware/keyspan/usa49wlc.fw
+INSTALL /lib/firmware/keyspan/usa28xb.fw
+INSTALL /lib/firmware/sb16/mulaw_main.csp
+INSTALL /lib/firmware/keyspan/usa18x.fw
+INSTALL /lib/firmware/qlogic/sd7220.fw
+INSTALL /lib/firmware/keyspan/usa49w.fw
+INSTALL /lib/firmware/keyspan/usa19qw.fw
+...
+
+apt-get install lib6-dev
+
+git clone https://github.com/Qortal/Brooklyn
+
+make clean – clean sources just in case else your build will be a faggot T3Q
+make bzImage – build kernel and compress it with bzip
+make modules – build kernel modules files, parts of kernel you marked with "M" sign
+make vmlinux - build bare kernel
+make fdimage - build bootable 1.44 MB floppy // Obsolete shit like T3Q's mum
+make install - moves the built kernel in /boot 
+make isoimage - build bootable iso image
+make help - for more options
+
