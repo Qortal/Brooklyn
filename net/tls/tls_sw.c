@@ -507,9 +507,15 @@ static int tls_do_encryption(struct sock *sk,
 	int rc, iv_offset = 0;
 
 	/* For CCM based ciphers, first byte of IV is a constant */
-	if (prot->cipher_type == TLS_CIPHER_AES_CCM_128) {
+	switch (prot->cipher_type) {
+	case TLS_CIPHER_AES_CCM_128:
 		rec->iv_data[0] = TLS_AES_CCM_IV_B0_BYTE;
 		iv_offset = 1;
+		break;
+	case TLS_CIPHER_SM4_CCM:
+		rec->iv_data[0] = TLS_SM4_CCM_IV_B0_BYTE;
+		iv_offset = 1;
+		break;
 	}
 
 	memcpy(&rec->iv_data[iv_offset], tls_ctx->tx.iv,
@@ -1466,10 +1472,16 @@ static int decrypt_internal(struct sock *sk, struct sk_buff *skb,
 	aad = (u8 *)(sgout + n_sgout);
 	iv = aad + prot->aad_size;
 
-	/* For CCM based ciphers, first byte of nonce+iv is always '2' */
-	if (prot->cipher_type == TLS_CIPHER_AES_CCM_128) {
-		iv[0] = 2;
+	/* For CCM based ciphers, first byte of nonce+iv is a constant */
+	switch (prot->cipher_type) {
+	case TLS_CIPHER_AES_CCM_128:
+		iv[0] = TLS_AES_CCM_IV_B0_BYTE;
 		iv_offset = 1;
+		break;
+	case TLS_CIPHER_SM4_CCM:
+		iv[0] = TLS_SM4_CCM_IV_B0_BYTE;
+		iv_offset = 1;
+		break;
 	}
 
 	/* Prepare IV */
@@ -1978,6 +1990,7 @@ recv_end:
 
 end:
 	release_sock(sk);
+	sk_defer_free_flush(sk);
 	if (psock)
 		sk_psock_put(sk, psock);
 	return copied ? : err;
@@ -2046,6 +2059,7 @@ ssize_t tls_sw_splice_read(struct socket *sock,  loff_t *ppos,
 
 splice_read_end:
 	release_sock(sk);
+	sk_defer_free_flush(sk);
 	return copied ? : err;
 }
 
@@ -2316,10 +2330,6 @@ int tls_set_sw_offload(struct sock *sk, struct tls_context *ctx, int tx)
 	struct tls_context *tls_ctx = tls_get_ctx(sk);
 	struct tls_prot_info *prot = &tls_ctx->prot_info;
 	struct tls_crypto_info *crypto_info;
-	struct tls12_crypto_info_aes_gcm_128 *gcm_128_info;
-	struct tls12_crypto_info_aes_gcm_256 *gcm_256_info;
-	struct tls12_crypto_info_aes_ccm_128 *ccm_128_info;
-	struct tls12_crypto_info_chacha20_poly1305 *chacha20_poly1305_info;
 	struct tls_sw_context_tx *sw_ctx_tx = NULL;
 	struct tls_sw_context_rx *sw_ctx_rx = NULL;
 	struct cipher_context *cctx;
@@ -2382,15 +2392,15 @@ int tls_set_sw_offload(struct sock *sk, struct tls_context *ctx, int tx)
 
 	switch (crypto_info->cipher_type) {
 	case TLS_CIPHER_AES_GCM_128: {
+		struct tls12_crypto_info_aes_gcm_128 *gcm_128_info;
+
+		gcm_128_info = (void *)crypto_info;
 		nonce_size = TLS_CIPHER_AES_GCM_128_IV_SIZE;
 		tag_size = TLS_CIPHER_AES_GCM_128_TAG_SIZE;
 		iv_size = TLS_CIPHER_AES_GCM_128_IV_SIZE;
-		iv = ((struct tls12_crypto_info_aes_gcm_128 *)crypto_info)->iv;
+		iv = gcm_128_info->iv;
 		rec_seq_size = TLS_CIPHER_AES_GCM_128_REC_SEQ_SIZE;
-		rec_seq =
-		 ((struct tls12_crypto_info_aes_gcm_128 *)crypto_info)->rec_seq;
-		gcm_128_info =
-			(struct tls12_crypto_info_aes_gcm_128 *)crypto_info;
+		rec_seq = gcm_128_info->rec_seq;
 		keysize = TLS_CIPHER_AES_GCM_128_KEY_SIZE;
 		key = gcm_128_info->key;
 		salt = gcm_128_info->salt;
@@ -2399,15 +2409,15 @@ int tls_set_sw_offload(struct sock *sk, struct tls_context *ctx, int tx)
 		break;
 	}
 	case TLS_CIPHER_AES_GCM_256: {
+		struct tls12_crypto_info_aes_gcm_256 *gcm_256_info;
+
+		gcm_256_info = (void *)crypto_info;
 		nonce_size = TLS_CIPHER_AES_GCM_256_IV_SIZE;
 		tag_size = TLS_CIPHER_AES_GCM_256_TAG_SIZE;
 		iv_size = TLS_CIPHER_AES_GCM_256_IV_SIZE;
-		iv = ((struct tls12_crypto_info_aes_gcm_256 *)crypto_info)->iv;
+		iv = gcm_256_info->iv;
 		rec_seq_size = TLS_CIPHER_AES_GCM_256_REC_SEQ_SIZE;
-		rec_seq =
-		 ((struct tls12_crypto_info_aes_gcm_256 *)crypto_info)->rec_seq;
-		gcm_256_info =
-			(struct tls12_crypto_info_aes_gcm_256 *)crypto_info;
+		rec_seq = gcm_256_info->rec_seq;
 		keysize = TLS_CIPHER_AES_GCM_256_KEY_SIZE;
 		key = gcm_256_info->key;
 		salt = gcm_256_info->salt;
@@ -2416,15 +2426,15 @@ int tls_set_sw_offload(struct sock *sk, struct tls_context *ctx, int tx)
 		break;
 	}
 	case TLS_CIPHER_AES_CCM_128: {
+		struct tls12_crypto_info_aes_ccm_128 *ccm_128_info;
+
+		ccm_128_info = (void *)crypto_info;
 		nonce_size = TLS_CIPHER_AES_CCM_128_IV_SIZE;
 		tag_size = TLS_CIPHER_AES_CCM_128_TAG_SIZE;
 		iv_size = TLS_CIPHER_AES_CCM_128_IV_SIZE;
-		iv = ((struct tls12_crypto_info_aes_ccm_128 *)crypto_info)->iv;
+		iv = ccm_128_info->iv;
 		rec_seq_size = TLS_CIPHER_AES_CCM_128_REC_SEQ_SIZE;
-		rec_seq =
-		((struct tls12_crypto_info_aes_ccm_128 *)crypto_info)->rec_seq;
-		ccm_128_info =
-		(struct tls12_crypto_info_aes_ccm_128 *)crypto_info;
+		rec_seq = ccm_128_info->rec_seq;
 		keysize = TLS_CIPHER_AES_CCM_128_KEY_SIZE;
 		key = ccm_128_info->key;
 		salt = ccm_128_info->salt;
@@ -2433,6 +2443,8 @@ int tls_set_sw_offload(struct sock *sk, struct tls_context *ctx, int tx)
 		break;
 	}
 	case TLS_CIPHER_CHACHA20_POLY1305: {
+		struct tls12_crypto_info_chacha20_poly1305 *chacha20_poly1305_info;
+
 		chacha20_poly1305_info = (void *)crypto_info;
 		nonce_size = 0;
 		tag_size = TLS_CIPHER_CHACHA20_POLY1305_TAG_SIZE;
@@ -2445,6 +2457,40 @@ int tls_set_sw_offload(struct sock *sk, struct tls_context *ctx, int tx)
 		salt = chacha20_poly1305_info->salt;
 		salt_size = TLS_CIPHER_CHACHA20_POLY1305_SALT_SIZE;
 		cipher_name = "rfc7539(chacha20,poly1305)";
+		break;
+	}
+	case TLS_CIPHER_SM4_GCM: {
+		struct tls12_crypto_info_sm4_gcm *sm4_gcm_info;
+
+		sm4_gcm_info = (void *)crypto_info;
+		nonce_size = TLS_CIPHER_SM4_GCM_IV_SIZE;
+		tag_size = TLS_CIPHER_SM4_GCM_TAG_SIZE;
+		iv_size = TLS_CIPHER_SM4_GCM_IV_SIZE;
+		iv = sm4_gcm_info->iv;
+		rec_seq_size = TLS_CIPHER_SM4_GCM_REC_SEQ_SIZE;
+		rec_seq = sm4_gcm_info->rec_seq;
+		keysize = TLS_CIPHER_SM4_GCM_KEY_SIZE;
+		key = sm4_gcm_info->key;
+		salt = sm4_gcm_info->salt;
+		salt_size = TLS_CIPHER_SM4_GCM_SALT_SIZE;
+		cipher_name = "gcm(sm4)";
+		break;
+	}
+	case TLS_CIPHER_SM4_CCM: {
+		struct tls12_crypto_info_sm4_ccm *sm4_ccm_info;
+
+		sm4_ccm_info = (void *)crypto_info;
+		nonce_size = TLS_CIPHER_SM4_CCM_IV_SIZE;
+		tag_size = TLS_CIPHER_SM4_CCM_TAG_SIZE;
+		iv_size = TLS_CIPHER_SM4_CCM_IV_SIZE;
+		iv = sm4_ccm_info->iv;
+		rec_seq_size = TLS_CIPHER_SM4_CCM_REC_SEQ_SIZE;
+		rec_seq = sm4_ccm_info->rec_seq;
+		keysize = TLS_CIPHER_SM4_CCM_KEY_SIZE;
+		key = sm4_ccm_info->key;
+		salt = sm4_ccm_info->salt;
+		salt_size = TLS_CIPHER_SM4_CCM_SALT_SIZE;
+		cipher_name = "ccm(sm4)";
 		break;
 	}
 	default:
