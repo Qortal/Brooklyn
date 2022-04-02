@@ -1,3 +1,0 @@
-cd _build
-rsync -rntpv html/ atom.fsij.org:/home/fsij/gnuk-doc-html/
-rsync -rtpv html/ atom.fsij.org:/home/fsij/gnuk-doc-html/
