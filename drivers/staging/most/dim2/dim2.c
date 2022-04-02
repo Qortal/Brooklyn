@@ -108,6 +108,7 @@ struct dim2_hdm {
 struct dim2_platform_data {
 	int (*enable)(struct platform_device *pdev);
 	void (*disable)(struct platform_device *pdev);
+	u8 fcnt;
 };
 
 #define iface_to_hdm(iface) container_of(iface, struct dim2_hdm, most_iface)
@@ -759,6 +760,7 @@ static int dim2_probe(struct platform_device *pdev)
 	struct resource *res;
 	int ret, i;
 	u8 hal_ret;
+	u8 dev_fcnt = fcnt;
 	int irq;
 
 	enum { MLB_INT_IDX, AHB0_INT_IDX };
@@ -793,14 +795,20 @@ static int dim2_probe(struct platform_device *pdev)
 
 	of_id = of_match_node(dim2_of_match, pdev->dev.of_node);
 	pdata = of_id->data;
-	ret = pdata && pdata->enable ? pdata->enable(pdev) : 0;
-	if (ret)
-		goto err_free_dev;
+	if (pdata) {
+		if (pdata->enable) {
+			ret = pdata->enable(pdev);
+			if (ret)
+				goto err_free_dev;
+		}
+		dev->disable_platform = pdata->disable;
+		if (pdata->fcnt)
+			dev_fcnt = pdata->fcnt;
+	}
 
-	dev->disable_platform = pdata ? pdata->disable : NULL;
-
-	dev_info(&pdev->dev, "sync: num of frames per sub-buffer: %u\n", fcnt);
-	hal_ret = dim_startup(dev->io_base, dev->clk_speed, fcnt);
+	dev_info(&pdev->dev, "sync: num of frames per sub-buffer: %u\n",
+		 dev_fcnt);
+	hal_ret = dim_startup(dev->io_base, dev->clk_speed, dev_fcnt);
 	if (hal_ret != DIM_NO_ERROR) {
 		dev_err(&pdev->dev, "dim_startup failed: %d\n", hal_ret);
 		ret = -ENODEV;
@@ -963,7 +971,7 @@ static void fsl_mx6_disable(struct platform_device *pdev)
 	clk_disable_unprepare(dev->clk);
 }
 
-static int rcar_h2_enable(struct platform_device *pdev)
+static int rcar_gen2_enable(struct platform_device *pdev)
 {
 	struct dim2_hdm *dev = platform_get_drvdata(pdev);
 	int ret;
@@ -998,7 +1006,7 @@ static int rcar_h2_enable(struct platform_device *pdev)
 	return 0;
 }
 
-static void rcar_h2_disable(struct platform_device *pdev)
+static void rcar_gen2_disable(struct platform_device *pdev)
 {
 	struct dim2_hdm *dev = platform_get_drvdata(pdev);
 
@@ -1008,7 +1016,7 @@ static void rcar_h2_disable(struct platform_device *pdev)
 	writel(0x0, dev->io_base + 0x600);
 }
 
-static int rcar_m3_enable(struct platform_device *pdev)
+static int rcar_gen3_enable(struct platform_device *pdev)
 {
 	struct dim2_hdm *dev = platform_get_drvdata(pdev);
 	u32 enable_512fs = dev->clk_speed == CLK_512FS;
@@ -1038,7 +1046,7 @@ static int rcar_m3_enable(struct platform_device *pdev)
 	return 0;
 }
 
-static void rcar_m3_disable(struct platform_device *pdev)
+static void rcar_gen3_disable(struct platform_device *pdev)
 {
 	struct dim2_hdm *dev = platform_get_drvdata(pdev);
 
@@ -1050,12 +1058,22 @@ static void rcar_m3_disable(struct platform_device *pdev)
 
 /* ]] platform specific functions */
 
-enum dim2_platforms { FSL_MX6, RCAR_H2, RCAR_M3 };
+enum dim2_platforms { FSL_MX6, RCAR_GEN2, RCAR_GEN3 };
 
 static struct dim2_platform_data plat_data[] = {
-	[FSL_MX6] = { .enable = fsl_mx6_enable, .disable = fsl_mx6_disable },
-	[RCAR_H2] = { .enable = rcar_h2_enable, .disable = rcar_h2_disable },
-	[RCAR_M3] = { .enable = rcar_m3_enable, .disable = rcar_m3_disable },
+	[FSL_MX6] = {
+		.enable = fsl_mx6_enable,
+		.disable = fsl_mx6_disable,
+	},
+	[RCAR_GEN2] = {
+		.enable = rcar_gen2_enable,
+		.disable = rcar_gen2_disable,
+	},
+	[RCAR_GEN3] = {
+		.enable = rcar_gen3_enable,
+		.disable = rcar_gen3_disable,
+		.fcnt = 3,
+	},
 };
 
 static const struct of_device_id dim2_of_match[] = {
@@ -1065,11 +1083,11 @@ static const struct of_device_id dim2_of_match[] = {
 	},
 	{
 		.compatible = "renesas,mlp",
-		.data = plat_data + RCAR_H2
+		.data = plat_data + RCAR_GEN2
 	},
 	{
-		.compatible = "rcar,medialb-dim2",
-		.data = plat_data + RCAR_M3
+		.compatible = "renesas,rcar-gen3-mlp",
+		.data = plat_data + RCAR_GEN3
 	},
 	{
 		.compatible = "xlnx,axi4-os62420_3pin-1.00.a",

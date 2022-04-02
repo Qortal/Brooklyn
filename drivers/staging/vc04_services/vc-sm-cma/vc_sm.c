@@ -55,6 +55,8 @@
 #include "vc_sm_knl.h"
 #include <linux/broadcom/vc_sm_cma_ioctl.h>
 
+MODULE_IMPORT_NS(DMA_BUF);
+
 /* ---- Private Constants and Types --------------------------------------- */
 
 #define DEVICE_NAME		"vcsm-cma"

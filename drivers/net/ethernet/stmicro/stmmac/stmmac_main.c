@@ -132,6 +132,8 @@ static irqreturn_t stmmac_msi_intr_tx(int irq, void *data);
 static irqreturn_t stmmac_msi_intr_rx(int irq, void *data);
 static void stmmac_tx_timer_arm(struct stmmac_priv *priv, u32 queue);
 static void stmmac_flush_tx_descriptors(struct stmmac_priv *priv, int queue);
+static void stmmac_set_dma_operation_mode(struct stmmac_priv *priv, u32 txmode,
+					  u32 rxmode, u32 chan);
 
 #ifdef CONFIG_DEBUG_FS
 static const struct net_device_ops stmmac_netdev_ops;
@@ -519,14 +521,6 @@ bool stmmac_eee_init(struct stmmac_priv *priv)
 	return true;
 }
 
-static inline u32 stmmac_cdc_adjust(struct stmmac_priv *priv)
-{
-	/* Correct the clk domain crossing(CDC) error */
-	if (priv->plat->has_gmac4 && priv->plat->clk_ptp_rate)
-		return (2 * NSEC_PER_SEC) / priv->plat->clk_ptp_rate;
-	return 0;
-}
-
 /* stmmac_get_tx_hwtstamp - get HW TX timestamps
  * @priv: driver private structure
  * @p : descriptor pointer
@@ -558,7 +552,7 @@ static void stmmac_get_tx_hwtstamp(struct stmmac_priv *priv,
 	}
 
 	if (found) {
-		ns -= stmmac_cdc_adjust(priv);
+		ns -= priv->plat->cdc_error_adj;
 
 		memset(&shhwtstamp, 0, sizeof(struct skb_shared_hwtstamps));
 		shhwtstamp.hwtstamp = ns_to_ktime(ns);
@@ -595,7 +589,7 @@ static void stmmac_get_rx_hwtstamp(struct stmmac_priv *priv, struct dma_desc *p,
 	if (stmmac_get_rx_timestamp_status(priv, p, np, priv->adv_ts)) {
 		stmmac_get_timestamp(priv, desc, priv->adv_ts, &ns);
 
-		ns -= stmmac_cdc_adjust(priv);
+		ns -= priv->plat->cdc_error_adj;
 
 		netdev_dbg(priv->dev, "get valid RX hw timestamp %llu\n", ns);
 		shhwtstamp = skb_hwtstamps(skb);
@@ -644,10 +638,6 @@ static int stmmac_hwtstamp_set(struct net_device *dev, struct ifreq *ifr)
 
 	netdev_dbg(priv->dev, "%s config flags:0x%x, tx_type:0x%x, rx_filter:0x%x\n",
 		   __func__, config.flags, config.tx_type, config.rx_filter);
-
-	/* reserved for future extensions */
-	if (config.flags)
-		return -EINVAL;
 
 	if (config.tx_type != HWTSTAMP_TX_OFF &&
 	    config.tx_type != HWTSTAMP_TX_ON)
@@ -1463,16 +1453,20 @@ static int stmmac_init_rx_buffers(struct stmmac_priv *priv, struct dma_desc *p,
 {
 	struct stmmac_rx_queue *rx_q = &priv->rx_queue[queue];
 	struct stmmac_rx_buffer *buf = &rx_q->buf_pool[i];
+	gfp_t gfp = (GFP_ATOMIC | __GFP_NOWARN);
+
+	if (priv->dma_cap.addr64 <= 32)
+		gfp |= GFP_DMA32;
 
 	if (!buf->page) {
-		buf->page = page_pool_dev_alloc_pages(rx_q->page_pool);
+		buf->page = page_pool_alloc_pages(rx_q->page_pool, gfp);
 		if (!buf->page)
 			return -ENOMEM;
 		buf->page_offset = stmmac_rx_offset(priv);
 	}
 
 	if (priv->sph && !buf->sec_page) {
-		buf->sec_page = page_pool_dev_alloc_pages(rx_q->page_pool);
+		buf->sec_page = page_pool_alloc_pages(rx_q->page_pool, gfp);
 		if (!buf->sec_page)
 			return -ENOMEM;
 
@@ -2409,7 +2403,7 @@ static bool stmmac_xdp_xmit_zc(struct stmmac_priv *priv, u32 queue, u32 budget)
 	bool work_done = true;
 
 	/* Avoids TX time-out as we are sharing with slow path */
-	nq->trans_start = jiffies;
+	txq_trans_cond_update(nq);
 
 	budget = min(budget, stmmac_tx_avail(priv, queue));
 
@@ -2493,6 +2487,21 @@ static bool stmmac_xdp_xmit_zc(struct stmmac_priv *priv, u32 queue, u32 budget)
 	return !!budget && work_done;
 }
 
+static void stmmac_bump_dma_threshold(struct stmmac_priv *priv, u32 chan)
+{
+	if (unlikely(priv->xstats.threshold != SF_DMA_MODE) && tc <= 256) {
+		tc += 64;
+
+		if (priv->plat->force_thresh_dma_mode)
+			stmmac_set_dma_operation_mode(priv, tc, tc, chan);
+		else
+			stmmac_set_dma_operation_mode(priv, tc, SF_DMA_MODE,
+						      chan);
+
+		priv->xstats.threshold = tc;
+	}
+}
+
 /**
  * stmmac_tx_clean - to manage the transmission completion
  * @priv: driver private structure
@@ -2558,6 +2567,8 @@ static int stmmac_tx_clean(struct stmmac_priv *priv, int budget, u32 queue)
 			/* ... verify the status error condition */
 			if (unlikely(status & tx_err)) {
 				priv->dev->stats.tx_errors++;
+				if (unlikely(status & tx_err_bump_tc))
+					stmmac_bump_dma_threshold(priv, queue);
 			} else {
 				priv->dev->stats.tx_packets++;
 				priv->xstats.tx_pkt_n++;
@@ -2808,21 +2819,7 @@ static void stmmac_dma_interrupt(struct stmmac_priv *priv)
 	for (chan = 0; chan < tx_channel_count; chan++) {
 		if (unlikely(status[chan] & tx_hard_error_bump_tc)) {
 			/* Try to bump up the dma threshold on this failure */
-			if (unlikely(priv->xstats.threshold != SF_DMA_MODE) &&
-			    (tc <= 256)) {
-				tc += 64;
-				if (priv->plat->force_thresh_dma_mode)
-					stmmac_set_dma_operation_mode(priv,
-								      tc,
-								      tc,
-								      chan);
-				else
-					stmmac_set_dma_operation_mode(priv,
-								    tc,
-								    SF_DMA_MODE,
-								    chan);
-				priv->xstats.threshold = tc;
-			}
+			stmmac_bump_dma_threshold(priv, chan);
 		} else if (unlikely(status[chan] == tx_hard_error)) {
 			stmmac_tx_err(priv, chan);
 		}
@@ -2871,9 +2868,13 @@ static int stmmac_get_hw_features(struct stmmac_priv *priv)
  */
 static void stmmac_check_ether_addr(struct stmmac_priv *priv)
 {
+	u8 addr[ETH_ALEN];
+
 	if (!is_valid_ether_addr(priv->dev->dev_addr)) {
-		stmmac_get_umac_addr(priv, priv->hw, priv->dev->dev_addr, 0);
-		if (!is_valid_ether_addr(priv->dev->dev_addr))
+		stmmac_get_umac_addr(priv, priv->hw, addr, 0);
+		if (is_valid_ether_addr(addr))
+			eth_hw_addr_set(priv->dev, addr);
+		else
 			eth_hw_addr_random(priv->dev);
 		dev_info(priv->device, "device MAC address %pM\n",
 			 priv->dev->dev_addr);
@@ -3561,6 +3562,8 @@ static int stmmac_request_irq_multi_msi(struct net_device *dev)
 
 	/* Request Rx MSI irq */
 	for (i = 0; i < priv->plat->rx_queues_to_use; i++) {
+		if (i >= MTL_MAX_RX_QUEUES)
+			break;
 		if (priv->rx_irq[i] == 0)
 			continue;
 
@@ -3584,6 +3587,8 @@ static int stmmac_request_irq_multi_msi(struct net_device *dev)
 
 	/* Request Tx MSI irq */
 	for (i = 0; i < priv->plat->tx_queues_to_use; i++) {
+		if (i >= MTL_MAX_TX_QUEUES)
+			break;
 		if (priv->tx_irq[i] == 0)
 			continue;
 
@@ -4496,6 +4501,10 @@ static inline void stmmac_rx_refill(struct stmmac_priv *priv, u32 queue)
 	struct stmmac_rx_queue *rx_q = &priv->rx_queue[queue];
 	int dirty = stmmac_rx_dirty(priv, queue);
 	unsigned int entry = rx_q->dirty_rx;
+	gfp_t gfp = (GFP_ATOMIC | __GFP_NOWARN);
+
+	if (priv->dma_cap.addr64 <= 32)
+		gfp |= GFP_DMA32;
 
 	while (dirty-- > 0) {
 		struct stmmac_rx_buffer *buf = &rx_q->buf_pool[entry];
@@ -4508,13 +4517,13 @@ static inline void stmmac_rx_refill(struct stmmac_priv *priv, u32 queue)
 			p = rx_q->dma_rx + entry;
 
 		if (!buf->page) {
-			buf->page = page_pool_dev_alloc_pages(rx_q->page_pool);
+			buf->page = page_pool_alloc_pages(rx_q->page_pool, gfp);
 			if (!buf->page)
 				break;
 		}
 
 		if (priv->sph && !buf->sec_page) {
-			buf->sec_page = page_pool_dev_alloc_pages(rx_q->page_pool);
+			buf->sec_page = page_pool_alloc_pages(rx_q->page_pool, gfp);
 			if (!buf->sec_page)
 				break;
 
@@ -4703,7 +4712,7 @@ static int stmmac_xdp_xmit_back(struct stmmac_priv *priv,
 
 	__netif_tx_lock(nq, cpu);
 	/* Avoids TX time-out as we are sharing with slow path */
-	nq->trans_start = jiffies;
+	txq_trans_cond_update(nq);
 
 	res = stmmac_xdp_xmit_xdpf(priv, queue, xdpf, false);
 	if (res == STMMAC_XDP_TX)
@@ -4736,7 +4745,7 @@ static int __stmmac_xdp_run_prog(struct stmmac_priv *priv,
 			res = STMMAC_XDP_REDIRECT;
 		break;
 	default:
-		bpf_warn_invalid_xdp_action(act);
+		bpf_warn_invalid_xdp_action(priv->dev, prog, act);
 		fallthrough;
 	case XDP_ABORTED:
 		trace_xdp_exception(priv->dev, prog, act);
@@ -5210,12 +5219,13 @@ read_again:
 		if (likely(!(status & rx_not_ls)) &&
 		    (likely(priv->synopsys_id >= DWMAC_CORE_4_00) ||
 		     unlikely(status != llc_snap))) {
-			if (buf2_len)
+			if (buf2_len) {
 				buf2_len -= ETH_FCS_LEN;
-			else
+				len -= ETH_FCS_LEN;
+			} else if (buf1_len) {
 				buf1_len -= ETH_FCS_LEN;
-
-			len -= ETH_FCS_LEN;
+				len -= ETH_FCS_LEN;
+			}
 		}
 
 		if (!skb) {
@@ -5766,21 +5776,7 @@ static irqreturn_t stmmac_msi_intr_tx(int irq, void *data)
 
 	if (unlikely(status & tx_hard_error_bump_tc)) {
 		/* Try to bump up the dma threshold on this failure */
-		if (unlikely(priv->xstats.threshold != SF_DMA_MODE) &&
-		    tc <= 256) {
-			tc += 64;
-			if (priv->plat->force_thresh_dma_mode)
-				stmmac_set_dma_operation_mode(priv,
-							      tc,
-							      tc,
-							      chan);
-			else
-				stmmac_set_dma_operation_mode(priv,
-							      tc,
-							      SF_DMA_MODE,
-							      chan);
-			priv->xstats.threshold = tc;
-		}
+		stmmac_bump_dma_threshold(priv, chan);
 	} else if (unlikely(status == tx_hard_error)) {
 		stmmac_tx_err(priv, chan);
 	}
@@ -6340,7 +6336,7 @@ static int stmmac_xdp_xmit(struct net_device *dev, int num_frames,
 
 	__netif_tx_lock(nq, cpu);
 	/* Avoids TX time-out as we are sharing with slow path */
-	nq->trans_start = jiffies;
+	txq_trans_cond_update(nq);
 
 	for (i = 0; i < num_frames; i++) {
 		int res;
@@ -7007,7 +7003,7 @@ int stmmac_dvr_probe(struct device *device,
 		priv->tx_irq[i] = res->tx_irq[i];
 
 	if (!is_zero_ether_addr(res->mac))
-		memcpy(priv->dev->dev_addr, res->mac, ETH_ALEN);
+		eth_hw_addr_set(priv->dev, res->mac);
 
 	dev_set_drvdata(device, priv->dev);
 
@@ -7188,7 +7184,8 @@ int stmmac_dvr_probe(struct device *device,
 
 	pm_runtime_get_noresume(device);
 	pm_runtime_set_active(device);
-	pm_runtime_enable(device);
+	if (!pm_runtime_enabled(device))
+		pm_runtime_enable(device);
 
 	if (priv->hw->pcs != STMMAC_PCS_TBI &&
 	    priv->hw->pcs != STMMAC_PCS_RTBI) {
