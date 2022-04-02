@@ -1,0 +1,101 @@
+Enhancements
+
+So you want to see Titan enhancements? Guess what, i dont have fucking time to please all of you fucks espeically that mother fucker T3Q.
+
+Parallell crypto engine enhancements
+Qortal Crypto Function Library enabled during boot
+Sequentual Number Generator
+Polyhash Crypto API added
+RIPMD Now integrated
+HDMI HD enabled at boot
+VideoCore5 vc666 DTBO
+TPM SLB9690 DTBO
+Arch Dynamic Switcher
+Qortal Core Process Accounting Daemon
+
+Kernel Security Updates
+
+New SecureFS added
+seucrityfs enabled
+Copies between kernel memory and userspace are not semi restricted
+Common str/mem against buffer overflows extended
+Second level integrity subsystem created again
+EVM activated
+Auto purge kernel heap mem and free by writing zeroes as default
+
+Security Iusses Resolved
+
+CVE-2021-38205
+CVE-2021-41073
+CVE-2021-42252
+CVE-2021-33034
+CVE-2021-3178
+CVE-2020-36158
+CVE-2021-20194
+CVE-2021-3347
+CVE-2021-20239
+CVE-2020-29569
+CVE-2021-33033
+CVE-2021-32606
+CVE-2021-31440
+
+Changes
+
+Makefile                                                |    2 
+ arch/arm/kernel/asm-offsets.c                           |    3 
+ arch/arm/kernel/smccc-call.S                            |   11 +
+ arch/arm/kernel/suspend.c                               |   19 ++
+ arch/riscv/include/asm/ftrace.h                         |   14 +
+ arch/riscv/kernel/mcount.S                              |   10 -
+ arch/riscv/kernel/vdso/Makefile                         |   12 -
+ arch/um/Kconfig.debug                                   |    1 
+ arch/um/kernel/Makefile                                 |    1 
+ arch/um/kernel/dyn.lds.S                                |    6 
+ arch/um/kernel/gmon_syms.c                              |   16 --
+ arch/um/kernel/uml.lds.S                                |    6 
+ arch/x86/lib/msr-smp.c                                  |    4 
+ drivers/bus/mhi/core/boot.c                             |   51 +++---
+ drivers/bus/mhi/core/internal.h                         |    1 
+ drivers/bus/mhi/core/pm.c                               |    2 
+ drivers/dma/dw-edma/dw-edma-core.c                      |   11 -
+ drivers/gpio/gpiolib-acpi.c                             |   14 +
+ drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c       |   51 ++++++
+ drivers/gpu/drm/amd/pm/swsmu/smu11/navi10_ppt.c         |    5 
+ drivers/gpu/drm/amd/pm/swsmu/smu11/sienna_cichlid_ppt.c |    4 
+ drivers/gpu/drm/i915/display/intel_dp.c                 |   13 +
+ drivers/input/touchscreen/elants_i2c.c                  |   44 +++++-
+ drivers/input/touchscreen/silead.c                      |   44 +++++-
+ drivers/misc/kgdbts.c                                   |   26 +--
+ drivers/net/ethernet/chelsio/cxgb4/sge.c                |   16 +-
+ drivers/net/ethernet/stmicro/stmmac/dwmac4_dma.c        |    7 
+ drivers/net/ethernet/stmicro/stmmac/stmmac_main.c       |   14 -
+ drivers/net/wireless/cisco/airo.c                       |  117 ++++++++--------
+ drivers/nvme/target/admin-cmd.c                         |    6 
+ drivers/pci/controller/dwc/pcie-tegra194.c              |    2 
+ drivers/pci/controller/pci-thunder-ecam.c               |    2 
+ drivers/pci/controller/pci-thunder-pem.c                |   13 -
+ drivers/pci/hotplug/acpiphp_glue.c                      |    1 
+ drivers/pci/pci.h                                       |    6 
+ drivers/platform/chrome/cros_ec_typec.c                 |    5 
+ drivers/scsi/lpfc/lpfc_sli.c                            |   11 +
+ drivers/target/target_core_user.c                       |    4 
+ drivers/usb/host/sl811-hcd.c                            |    9 -
+ fs/block_dev.c                                          |   20 ++
+ fs/ceph/caps.c                                          |    1 
+ fs/ceph/export.c                                        |    8 +
+ fs/ceph/inode.c                                         |   13 +
+ fs/ceph/mds_client.c                                    |    7 
+ fs/ceph/super.h                                         |   24 +++
+ fs/f2fs/segment.c                                       |    5 
+ fs/nfs/inode.c                                          |    7 
+ lib/stackdepot.c                                        |    6 
+ net/bridge/br_netlink.c                                 |    5 
+ net/hsr/hsr_forward.c                                   |    4 
+ net/ipv6/ip6_gre.c                                      |    7 
+ net/ipv6/ip6_tunnel.c                                   |    3 
+ net/ipv6/ip6_vti.c                                      |    1 
+ net/ipv6/sit.c                                          |    5 
+ net/sunrpc/xprtrdma/svc_rdma_sendto.c                   |    8 -
+ scripts/recordmcount.pl                                 |    2 
+ sound/pci/hda/hda_generic.c                             |   16 +-
+ 57 files changed, 499 insertions(+), 227 deletions(-)

@@ -1,0 +1,18 @@
+# Compiled Object files
+*.slo
+*.lo
+*.o
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+/Server/build
+/nbproject/private/
+/nbproject
+/Server/config.h
+/ffmpeg

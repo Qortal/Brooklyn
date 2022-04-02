@@ -1,0 +1,393 @@
+==========
+VULKANINFO
+==========
+
+Vulkan Instance Version: 1.2.131
+
+
+Instance Extensions: count = 18
+====================
+	VK_EXT_acquire_xlib_display            : extension revision 1
+	VK_EXT_debug_report                    : extension revision 8
+	VK_EXT_debug_utils                     : extension revision 1
+	VK_EXT_direct_mode_display             : extension revision 1
+	VK_EXT_display_surface_counter         : extension revision 1
+	VK_KHR_device_group_creation           : extension revision 1
+	VK_KHR_display                         : extension revision 23
+	VK_KHR_external_fence_capabilities     : extension revision 1
+	VK_KHR_external_memory_capabilities    : extension revision 1
+	VK_KHR_external_semaphore_capabilities : extension revision 1
+	VK_KHR_get_display_properties2         : extension revision 1
+	VK_KHR_get_physical_device_properties2 : extension revision 1
+	VK_KHR_get_surface_capabilities2       : extension revision 1
+	VK_KHR_surface                         : extension revision 25
+	VK_KHR_surface_protected_capabilities  : extension revision 1
+	VK_KHR_wayland_surface                 : extension revision 6
+	VK_KHR_xcb_surface                     : extension revision 6
+	VK_KHR_xlib_surface                    : extension revision 6
+
+Layers: count = 2
+=======
+VK_LAYER_LUNARG_standard_validation (LunarG Standard Validation Layer) Vulkan version 1.0.131, layer version 1:
+	Layer Extensions: count = 0
+	Devices: count = 1
+		GPU id 	: 0 (llvmpipe (LLVM 10.0.0, 256 bits))
+		Layer-Device Extensions: count = 0
+
+VK_LAYER_MESA_overlay (Mesa Overlay layer) Vulkan version 1.1.73, layer version 1:
+	Layer Extensions: count = 0
+	Devices: count = 1
+		GPU id 	: 0 (llvmpipe (LLVM 10.0.0, 256 bits))
+		Layer-Device Extensions: count = 0
+
+Presentable Surfaces:
+=====================
+GPU id : 0 (llvmpipe (LLVM 10.0.0, 256 bits)):
+	Surface types: count = 2
+		VK_KHR_xcb_surface
+		VK_KHR_xlib_surface
+	Formats: count = 2
+		SurfaceFormat[0]:
+			format = FORMAT_B8G8R8A8_SRGB
+			colorSpace = COLOR_SPACE_SRGB_NONLINEAR_KHR
+		SurfaceFormat[1]:
+			format = FORMAT_B8G8R8A8_UNORM
+			colorSpace = COLOR_SPACE_SRGB_NONLINEAR_KHR
+	Present Modes: count = 4
+		PRESENT_MODE_IMMEDIATE_KHR
+		PRESENT_MODE_MAILBOX_KHR
+		PRESENT_MODE_FIFO_KHR
+		PRESENT_MODE_FIFO_RELAXED_KHR
+	VkSurfaceCapabilitiesKHR:
+	-------------------------
+		minImageCount       = 3
+		maxImageCount       = 0
+		currentExtent:
+			width  = 256
+			height = 256
+		minImageExtent:
+			width  = 256
+			height = 256
+		maxImageExtent:
+			width  = 256
+			height = 256
+		maxImageArrayLayers = 1
+		supportedTransforms:
+			SURFACE_TRANSFORM_IDENTITY_BIT_KHR
+		currentTransform:
+			SURFACE_TRANSFORM_IDENTITY_BIT_KHR
+		supportedCompositeAlpha:
+			COMPOSITE_ALPHA_OPAQUE_BIT_KHR
+			COMPOSITE_ALPHA_INHERIT_BIT_KHR
+		supportedUsageFlags:
+			IMAGE_USAGE_TRANSFER_SRC_BIT
+			IMAGE_USAGE_TRANSFER_DST_BIT
+			IMAGE_USAGE_SAMPLED_BIT
+			IMAGE_USAGE_STORAGE_BIT
+			IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+	VkSurfaceCapabilities2EXT:
+	--------------------------
+		supportedSurfaceCounters:
+			None
+	VkSurfaceProtectedCapabilitiesKHR:
+	----------------------------------
+		supportsProtected = false
+
+
+
+Groups:
+=======
+	Device Group Properties (Group 0):
+		physicalDeviceCount: count = 1
+			llvmpipe (LLVM 10.0.0, 256 bits) (ID: 0)
+		subsetAllocation = 0
+
+	Device Group Present Capabilities (Group 0):
+		Group does not support VK_KHR_device_group, skipping printing capabilities
+
+
+Device Properties and Extensions:
+=================================
+GPU0:
+VkPhysicalDeviceProperties:
+---------------------------
+	apiVersion     = 4194306 (1.0.2)
+	driverVersion  = 1 (0x0001)
+	vendorID       = 0x10005
+	deviceID       = 0x0000
+	deviceType     = PHYSICAL_DEVICE_TYPE_CPU
+	deviceName     = llvmpipe (LLVM 10.0.0, 256 bits)
+
+VkPhysicalDeviceLimits:
+-----------------------
+	maxImageDimension1D                             = 16384
+	maxImageDimension2D                             = 16384
+	maxImageDimension3D                             = 4096
+	maxImageDimensionCube                           = 32768
+	maxImageArrayLayers                             = 2048
+	maxTexelBufferElements                          = 134217728
+	maxUniformBufferRange                           = 65536
+	maxStorageBufferRange                           = 134217728
+	maxPushConstantsSize                            = 128
+	maxMemoryAllocationCount                        = 4096
+	maxSamplerAllocationCount                       = 32768
+	bufferImageGranularity                          = 0x00000040
+	sparseAddressSpaceSize                          = 0x00000000
+	maxBoundDescriptorSets                          = 8
+	maxPerStageDescriptorSamplers                   = 32
+	maxPerStageDescriptorUniformBuffers             = 16
+	maxPerStageDescriptorStorageBuffers             = 16
+	maxPerStageDescriptorSampledImages              = 128
+	maxPerStageDescriptorStorageImages              = 128
+	maxPerStageDescriptorInputAttachments           = 8
+	maxPerStageResources                            = 128
+	maxDescriptorSetSamplers                        = 32768
+	maxDescriptorSetUniformBuffers                  = 256
+	maxDescriptorSetUniformBuffersDynamic           = 256
+	maxDescriptorSetStorageBuffers                  = 256
+	maxDescriptorSetStorageBuffersDynamic           = 256
+	maxDescriptorSetSampledImages                   = 256
+	maxDescriptorSetStorageImages                   = 256
+	maxDescriptorSetInputAttachments                = 256
+	maxVertexInputAttributes                        = 32
+	maxVertexInputBindings                          = 32
+	maxVertexInputAttributeOffset                   = 2047
+	maxVertexInputBindingStride                     = 2048
+	maxVertexOutputComponents                       = 128
+	maxTessellationGenerationLevel                  = 64
+	maxTessellationPatchSize                        = 32
+	maxTessellationControlPerVertexInputComponents  = 128
+	maxTessellationControlPerVertexOutputComponents = 128
+	maxTessellationControlPerPatchOutputComponents  = 128
+	maxTessellationControlTotalOutputComponents     = 4096
+	maxTessellationEvaluationInputComponents        = 128
+	maxTessellationEvaluationOutputComponents       = 128
+	maxGeometryShaderInvocations                    = 32
+	maxGeometryInputComponents                      = 64
+	maxGeometryOutputComponents                     = 128
+	maxGeometryOutputVertices                       = 1024
+	maxGeometryTotalOutputComponents                = 1024
+	maxFragmentInputComponents                      = 128
+	maxFragmentOutputAttachments                    = 8
+	maxFragmentDualSrcAttachments                   = 2
+	maxFragmentCombinedOutputResources              = 8
+	maxComputeSharedMemorySize                      = 32768
+	maxComputeWorkGroupCount: count = 3
+		65535
+		65535
+		65535
+	maxComputeWorkGroupInvocations                  = 1024
+	maxComputeWorkGroupSize: count = 3
+		1024
+		1024
+		1024
+	subPixelPrecisionBits                           = 8
+	subTexelPrecisionBits                           = 8
+	mipmapPrecisionBits                             = 8
+	maxDrawIndexedIndexValue                        = 4294967295
+	maxDrawIndirectCount                            = 4294967295
+	maxSamplerLodBias                               = 16
+	maxSamplerAnisotropy                            = 16
+	maxViewports                                    = 16
+	maxViewportDimensions: count = 2
+		16384
+		16384
+	viewportBoundsRange: count = 2
+		-32768
+		32768
+	viewportSubPixelBits                            = 0
+	minMemoryMapAlignment                           = 4096
+	minTexelBufferOffsetAlignment                   = 0x00000010
+	minUniformBufferOffsetAlignment                 = 0x00000010
+	minStorageBufferOffsetAlignment                 = 0x00000010
+	minTexelOffset                                  = -32
+	maxTexelOffset                                  = 31
+	minTexelGatherOffset                            = -32
+	maxTexelGatherOffset                            = 31
+	minInterpolationOffset                          = -2
+	maxInterpolationOffset                          = 2
+	subPixelInterpolationOffsetBits                 = 8
+	maxFramebufferWidth                             = 16384
+	maxFramebufferHeight                            = 16384
+	maxFramebufferLayers                            = 2048
+	framebufferColorSampleCounts:
+		SAMPLE_COUNT_1_BIT
+		SAMPLE_COUNT_4_BIT
+	framebufferDepthSampleCounts:
+		SAMPLE_COUNT_1_BIT
+		SAMPLE_COUNT_4_BIT
+	framebufferStencilSampleCounts:
+		SAMPLE_COUNT_1_BIT
+		SAMPLE_COUNT_4_BIT
+	framebufferNoAttachmentsSampleCounts:
+		SAMPLE_COUNT_1_BIT
+		SAMPLE_COUNT_4_BIT
+	maxColorAttachments                             = 8
+	sampledImageColorSampleCounts:
+		SAMPLE_COUNT_1_BIT
+		SAMPLE_COUNT_4_BIT
+	sampledImageIntegerSampleCounts:
+		SAMPLE_COUNT_1_BIT
+		SAMPLE_COUNT_4_BIT
+	sampledImageDepthSampleCounts:
+		SAMPLE_COUNT_1_BIT
+		SAMPLE_COUNT_4_BIT
+	sampledImageStencilSampleCounts:
+		SAMPLE_COUNT_1_BIT
+		SAMPLE_COUNT_4_BIT
+	storageImageSampleCounts:
+		SAMPLE_COUNT_1_BIT
+		SAMPLE_COUNT_4_BIT
+	maxSampleMaskWords                              = 1
+	timestampComputeAndGraphics                     = true
+	timestampPeriod                                 = 1
+	maxClipDistances                                = 8
+	maxCullDistances                                = 8
+	maxCombinedClipAndCullDistances                 = 8
+	discreteQueuePriorities                         = 2
+	pointSizeRange: count = 2
+		0
+		255
+	lineWidthRange: count = 2
+		1
+		1
+	pointSizeGranularity                            = 0.125
+	lineWidthGranularity                            = 0
+	strictLines                                     = false
+	standardSampleLocations                         = true
+	optimalBufferCopyOffsetAlignment                = 0x00000080
+	optimalBufferCopyRowPitchAlignment              = 0x00000080
+	nonCoherentAtomSize                             = 0x00000040
+
+VkPhysicalDeviceSparseProperties:
+---------------------------------
+	residencyStandard2DBlockShape            = false
+	residencyStandard2DMultisampleBlockShape = false
+	residencyStandard3DBlockShape            = false
+	residencyAlignedMipSize                  = false
+	residencyNonResidentStrict               = false
+
+VkPhysicalDeviceDriverPropertiesKHR:
+------------------------------------
+	driverID           = UNKNOWN_VkDriverId
+	driverName         = llvmpipe
+	driverInfo         = Mesa 20.3.0 (git-08169ff176) (LLVM 10.0.0)
+	conformanceVersion = 1.0.0.0
+
+VkPhysicalDeviceIDPropertiesKHR:
+--------------------------------
+	deviceUUID      = 00000000-0000-0000-0000-000000000000
+	driverUUID      = 00000000-0000-0000-0000-000000000000
+	deviceNodeMask  = 0
+	deviceLUIDValid = false
+
+
+Device Extensions: count = 14
+------------------
+	VK_EXT_external_memory_dma_buf      : extension revision 1
+	VK_EXT_private_data                 : extension revision 1
+	VK_GOOGLE_decorate_string           : extension revision 1
+	VK_GOOGLE_hlsl_functionality1       : extension revision 1
+	VK_KHR_bind_memory2                 : extension revision 1
+	VK_KHR_dedicated_allocation         : extension revision 1
+	VK_KHR_driver_properties            : extension revision 1
+	VK_KHR_get_memory_requirements2     : extension revision 1
+	VK_KHR_incremental_present          : extension revision 1
+	VK_KHR_maintenance1                 : extension revision 1
+	VK_KHR_relaxed_block_layout         : extension revision 1
+	VK_KHR_sampler_mirror_clamp_to_edge : extension revision 1
+	VK_KHR_storage_buffer_storage_class : extension revision 1
+	VK_KHR_swapchain                    : extension revision 68
+
+VkQueueFamilyProperties:
+========================
+	queueProperties[0]:
+	------------------
+		minImageTransferGranularity = (1,1,1)
+		queueCount                  = 1
+		queueFlags                  = QUEUE_GRAPHICS | QUEUE_COMPUTE | QUEUE_TRANSFER
+		timestampValidBits          = 64
+		present support:
+			VK_KHR_xcb_surface  = true
+			VK_KHR_xlib_surface = true
+
+VkPhysicalDeviceMemoryProperties:
+=================================
+memoryHeaps: count = 1
+	memoryHeaps[0]:
+		size   = 2147483648 (0x80000000) (2.00 GiB)
+		budget = 0
+		usage  = 0
+		flags:
+			MEMORY_HEAP_DEVICE_LOCAL_BIT
+memoryTypes: count = 1
+	memoryTypes[0]:
+		heapIndex     = 0
+		propertyFlags = 0x000f:
+			MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+			MEMORY_PROPERTY_HOST_VISIBLE_BIT
+			MEMORY_PROPERTY_HOST_COHERENT_BIT
+			MEMORY_PROPERTY_HOST_CACHED_BIT
+		usable for:
+			IMAGE_TILING_OPTIMAL: color images, FORMAT_D16_UNORM, FORMAT_X8_D24_UNORM_PACK32, FORMAT_D32_SFLOAT, FORMAT_S8_UINT, FORMAT_D24_UNORM_S8_UINT, FORMAT_D32_SFLOAT_S8_UINT
+			IMAGE_TILING_LINEAR: color images
+
+VkPhysicalDeviceFeatures:
+=========================
+	robustBufferAccess                      = true
+	fullDrawIndexUint32                     = true
+	imageCubeArray                          = true
+	independentBlend                        = true
+	geometryShader                          = true
+	tessellationShader                      = true
+	sampleRateShading                       = true
+	dualSrcBlend                            = true
+	logicOp                                 = true
+	multiDrawIndirect                       = true
+	drawIndirectFirstInstance               = true
+	depthClamp                              = true
+	depthBiasClamp                          = true
+	fillModeNonSolid                        = true
+	depthBounds                             = false
+	wideLines                               = false
+	largePoints                             = true
+	alphaToOne                              = true
+	multiViewport                           = true
+	samplerAnisotropy                       = false
+	textureCompressionETC2                  = false
+	textureCompressionASTC_LDR              = false
+	textureCompressionBC                    = true
+	occlusionQueryPrecise                   = true
+	pipelineStatisticsQuery                 = true
+	vertexPipelineStoresAndAtomics          = true
+	fragmentStoresAndAtomics                = true
+	shaderTessellationAndGeometryPointSize  = true
+	shaderImageGatherExtended               = true
+	shaderStorageImageExtendedFormats       = false
+	shaderStorageImageMultisample           = true
+	shaderStorageImageReadWithoutFormat     = false
+	shaderStorageImageWriteWithoutFormat    = true
+	shaderUniformBufferArrayDynamicIndexing = false
+	shaderSampledImageArrayDynamicIndexing  = false
+	shaderStorageBufferArrayDynamicIndexing = false
+	shaderStorageImageArrayDynamicIndexing  = false
+	shaderClipDistance                      = true
+	shaderCullDistance                      = true
+	shaderFloat64                           = true
+	shaderInt64                             = true
+	shaderInt16                             = true
+	shaderResourceResidency                 = false
+	shaderResourceMinLod                    = false
+	sparseBinding                           = false
+	sparseResidencyBuffer                   = false
+	sparseResidencyImage2D                  = false
+	sparseResidencyImage3D                  = false
+	sparseResidency2Samples                 = false
+	sparseResidency4Samples                 = false
+	sparseResidency8Samples                 = false
+	sparseResidency16Samples                = false
+	sparseResidencyAliased                  = false
+	variableMultisampleRate                 = false
+	inheritedQueries                        = false
+
+
