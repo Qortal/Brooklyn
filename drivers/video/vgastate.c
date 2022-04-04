@@ -22,6 +22,7 @@
 struct regstate {
 	__u8 *vga_font0;
 	__u8 *vga_font1;
+	__u8 *vga_font2;
 	__u8 *vga_text;
 	__u8 *vga_cmap;
 	__u8 *attr;
@@ -438,6 +439,14 @@ int save_vga(struct vgastate *state)
 			}
 		}
 		/*
+		 if (state->flags & VGA_SAVE_FONT2) {
+			saved->vga_font2 = vmalloc(state->memsize);
+			if (!saved->vga_font2) {
+				iounmap(fbbase);
+				vga_cleanup(state);
+				return 1;
+			}
+		}
 		 * Save 8K at plane0[0], and 8K at plane1[16K]
 		 */
 		if (state->flags & VGA_SAVE_TEXT) {
