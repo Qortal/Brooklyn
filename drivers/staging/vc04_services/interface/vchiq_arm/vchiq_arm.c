@@ -64,6 +64,11 @@
 /* Run time control of log level, based on KERN_XXX level. */
 int vchiq_arm_log_level = VCHIQ_LOG_DEFAULT;
 int vchiq_susp_log_level = VCHIQ_LOG_ERROR;
+module_param_named(arm_log_level, vchiq_arm_log_level, int, 0644);
+module_param_named(susp_log_level, vchiq_susp_log_level, int, 0644);
+module_param_named(core_log_level, vchiq_core_log_level, int, 0644);
+module_param_named(core_msg_log_level, vchiq_core_msg_log_level, int, 0644);
+module_param_named(sync_log_level, vchiq_sync_log_level, int, 0644);
 
 DEFINE_SPINLOCK(msg_queue_spinlock);
 struct vchiq_state g_state;
@@ -209,6 +214,20 @@ cleanup_pagelistinfo(struct vchiq_pagelist_info *pagelistinfo)
 				  pagelistinfo->pagelist,
 				  pagelistinfo->dma_addr);
 	}
+}
+
+static inline bool
+is_adjacent_block(u32 *addrs, u32 addr, unsigned int k)
+{
+	u32 tmp;
+
+	if (!k)
+		return false;
+
+	tmp = (addrs[k - 1] & PAGE_MASK) +
+	      (((addrs[k - 1] & ~PAGE_MASK) + 1) << PAGE_SHIFT);
+
+	return tmp == (addr & PAGE_MASK);
 }
 
 /* There is a potential problem with partial cache lines (pages?)
@@ -386,6 +405,7 @@ create_pagelist(char *buf, char __user *ubuf,
 				(i != (dma_buffers - 1)) && (len & ~PAGE_MASK));
 			WARN_ON(i && (addr & ~PAGE_MASK));
 			WARN_ON(upper_32_bits(addr) > 0xf);
+
 			if (k > 0 &&
 			    ((addrs[k - 1] & ~0xff) +
 			     (((addrs[k - 1] & 0xff) + 1) << 8)
@@ -677,8 +697,7 @@ vchiq_platform_init_state(struct vchiq_state *state)
 	return 0;
 }
 
-struct vchiq_arm_state*
-vchiq_platform_get_arm_state(struct vchiq_state *state)
+static struct vchiq_arm_state *vchiq_platform_get_arm_state(struct vchiq_state *state)
 {
 	struct vchiq_2835_state *platform_state;
 
@@ -1304,6 +1323,9 @@ int vchiq_dump_platform_instances(void *dump_context)
 	int len;
 	int i;
 
+	if (!state)
+		return -ENOTCONN;
+
 	/*
 	 * There is no list of instances, so instead scan all services,
 	 * marking those that have been dumped.
@@ -1385,14 +1407,18 @@ int vchiq_dump_platform_service_state(void *dump_context,
 struct vchiq_state *
 vchiq_get_state(void)
 {
-	if (!g_state.remote)
+	if (!g_state.remote) {
 		pr_err("%s: g_state.remote == NULL\n", __func__);
-	else if (g_state.remote->initialised != 1)
+		return NULL;
+	}
+
+	if (g_state.remote->initialised != 1) {
 		pr_notice("%s: g_state.remote->initialised != 1 (%d)\n",
 			  __func__, g_state.remote->initialised);
+		return NULL;
+	}
 
-	return (g_state.remote &&
-		(g_state.remote->initialised == 1)) ? &g_state : NULL;
+	return &g_state;
 }
 
 /*

@@ -291,6 +291,7 @@ static int vc4_hdmi_connector_get_modes(struct drm_connector *connector)
 {
 	struct vc4_hdmi *vc4_hdmi = connector_to_vc4_hdmi(connector);
 	struct vc4_hdmi_encoder *vc4_encoder = &vc4_hdmi->encoder;
+	struct vc4_dev *vc4 = to_vc4_dev(connector->dev);
 	int ret = 0;
 	struct edid *edid;
 
@@ -309,7 +310,7 @@ static int vc4_hdmi_connector_get_modes(struct drm_connector *connector)
 	ret = drm_add_edid_modes(connector, edid);
 	kfree(edid);
 
-	if (vc4_hdmi->disable_4kp60) {
+	if (!vc4->hvs->vc5_hdmi_enable_scrambling) {
 		struct drm_device *drm = connector->dev;
 		struct drm_display_mode *mode;
 
@@ -1550,9 +1551,6 @@ static void vc4_hdmi_encoder_post_crtc_enable(struct drm_encoder *encoder,
 
 		WARN_ON(!(HDMI_READ(HDMI_SCHEDULER_CONTROL) &
 			  VC4_HDMI_SCHEDULER_CONTROL_HDMI_ACTIVE));
-		HDMI_WRITE(HDMI_SCHEDULER_CONTROL,
-			   HDMI_READ(HDMI_SCHEDULER_CONTROL) |
-			   VC4_HDMI_SCHEDULER_CONTROL_VERT_ALWAYS_KEEPOUT);
 
 		HDMI_WRITE(HDMI_RAM_PACKET_CONFIG,
 			   VC4_HDMI_RAM_PACKET_ENABLE);
@@ -1581,9 +1579,8 @@ static void vc4_hdmi_encoder_atomic_mode_set(struct drm_encoder *encoder,
 	vc4_hdmi->output_bpc = vc4_state->output_bpc;
 	vc4_hdmi->output_format = vc4_state->output_format;
 	vc4_hdmi->broadcast_rgb = vc4_state->broadcast_rgb;
-	memcpy(&vc4_hdmi->saved_adjusted_mode,
-	       &crtc_state->adjusted_mode,
-	       sizeof(vc4_hdmi->saved_adjusted_mode));
+	drm_mode_copy(&vc4_hdmi->saved_adjusted_mode,
+		      &crtc_state->adjusted_mode);
 	mutex_unlock(&vc4_hdmi->mutex);
 }
 
@@ -1611,12 +1608,12 @@ vc4_hdmi_sink_supports_format_bpc(const struct vc4_hdmi *vc4_hdmi,
 	case VC4_HDMI_OUTPUT_RGB:
 		drm_dbg(dev, "RGB Format, checking the constraints.\n");
 
-		if (bpc == 10 && !(info->edid_hdmi_dc_modes & DRM_EDID_HDMI_DC_30)) {
+		if (bpc == 10 && !(info->edid_hdmi_rgb444_dc_modes & DRM_EDID_HDMI_DC_30)) {
 			drm_dbg(dev, "10 BPC but sink doesn't support Deep Color 30.\n");
 			return false;
 		}
 
-		if (bpc == 12 && !(info->edid_hdmi_dc_modes & DRM_EDID_HDMI_DC_36)) {
+		if (bpc == 12 && !(info->edid_hdmi_rgb444_dc_modes & DRM_EDID_HDMI_DC_36)) {
 			drm_dbg(dev, "12 BPC but sink doesn't support Deep Color 36.\n");
 			return false;
 		}
@@ -1628,7 +1625,7 @@ vc4_hdmi_sink_supports_format_bpc(const struct vc4_hdmi *vc4_hdmi,
 	case VC4_HDMI_OUTPUT_YUV422:
 		drm_dbg(dev, "YUV422 format, checking the constraints.\n");
 
-		if (!(info->color_formats & DRM_COLOR_FORMAT_YCRCB422)) {
+		if (!(info->color_formats & DRM_COLOR_FORMAT_YCBCR422)) {
 			drm_dbg(dev, "Sink doesn't support YUV422.\n");
 			return false;
 		}
@@ -1645,17 +1642,17 @@ vc4_hdmi_sink_supports_format_bpc(const struct vc4_hdmi *vc4_hdmi,
 	case VC4_HDMI_OUTPUT_YUV444:
 		drm_dbg(dev, "YUV444 format, checking the constraints.\n");
 
-		if (!(info->color_formats & DRM_COLOR_FORMAT_YCRCB444)) {
+		if (!(info->color_formats & DRM_COLOR_FORMAT_YCBCR444)) {
 			drm_dbg(dev, "Sink doesn't support YUV444.\n");
 			return false;
 		}
 
-		if (bpc == 10 && !(info->edid_hdmi_dc_modes & DRM_EDID_HDMI_DC_30)) {
+		if (bpc == 10 && !(info->edid_hdmi_rgb444_dc_modes & DRM_EDID_HDMI_DC_30)) {
 			drm_dbg(dev, "10 BPC but sink doesn't support Deep Color 30.\n");
 			return false;
 		}
 
-		if (bpc == 12 && !(info->edid_hdmi_dc_modes & DRM_EDID_HDMI_DC_36)) {
+		if (bpc == 12 && !(info->edid_hdmi_rgb444_dc_modes & DRM_EDID_HDMI_DC_36)) {
 			drm_dbg(dev, "12 BPC but sink doesn't support Deep Color 36.\n");
 			return false;
 		}
@@ -1674,11 +1671,12 @@ vc4_hdmi_encoder_clock_valid(const struct vc4_hdmi *vc4_hdmi,
 {
 	const struct drm_connector *connector = &vc4_hdmi->connector;
 	const struct drm_display_info *info = &connector->display_info;
+	struct vc4_dev *vc4 = to_vc4_dev(connector->dev);
 
 	if (clock > vc4_hdmi->variant->max_pixel_clock)
 		return MODE_CLOCK_HIGH;
 
-	if (vc4_hdmi->disable_4kp60 && clock > HDMI_14_MAX_TMDS_CLK)
+	if (!vc4->hvs->vc5_hdmi_enable_scrambling && clock > HDMI_14_MAX_TMDS_CLK)
 		return MODE_CLOCK_HIGH;
 
 	if (info->max_tmds_clock && clock > (info->max_tmds_clock * 1000))
@@ -1808,6 +1806,9 @@ static int vc4_hdmi_encoder_atomic_check(struct drm_encoder *encoder,
 	struct vc4_hdmi_connector_state *vc4_state = conn_state_to_vc4_hdmi_conn_state(conn_state);
 	struct drm_display_mode *mode = &crtc_state->adjusted_mode;
 	struct vc4_hdmi *vc4_hdmi = encoder_to_vc4_hdmi(encoder);
+	struct drm_connector *connector = &vc4_hdmi->connector;
+	struct drm_connector_state *old_conn_state = drm_atomic_get_old_connector_state(conn_state->state, connector);
+	struct vc4_hdmi_connector_state *old_vc4_state = conn_state_to_vc4_hdmi_conn_state(old_conn_state);
 	unsigned long long pixel_rate = mode->clock * 1000;
 	unsigned long long tmds_rate;
 	int ret;
@@ -1835,6 +1836,11 @@ static int vc4_hdmi_encoder_atomic_check(struct drm_encoder *encoder,
 	ret = vc4_hdmi_encoder_compute_config(vc4_hdmi, vc4_state, mode);
 	if (ret)
 		return ret;
+
+	/* vc4_hdmi_encoder_compute_config may have changed output_bpc and/or output_format */
+	if (vc4_state->output_bpc != old_vc4_state->output_bpc ||
+	    vc4_state->output_format != old_vc4_state->output_format)
+		crtc_state->mode_changed = true;
 
 	return 0;
 }
@@ -3151,14 +3157,6 @@ static int vc4_hdmi_bind(struct device *dev, struct device *master, void *data)
 
 	vc4_hdmi->disable_wifi_frequencies =
 		of_property_read_bool(dev->of_node, "wifi-2.4ghz-coexistence");
-
-	if (variant->max_pixel_clock == 600000000) {
-		struct vc4_dev *vc4 = to_vc4_dev(drm);
-		long max_rate = clk_round_rate(vc4->hvs->core_clk, 550000000);
-
-		if (max_rate < 550000000)
-			vc4_hdmi->disable_4kp60 = true;
-	}
 
 	/*
 	 * If we boot without any cable connected to the HDMI connector,

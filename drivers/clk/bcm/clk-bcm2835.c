@@ -945,10 +945,8 @@ static u32 bcm2835_clock_choose_div(struct clk_hw *hw,
 	u32 unused_frac_mask =
 		GENMASK(CM_DIV_FRAC_BITS - data->frac_bits, 0) >> 1;
 	u64 temp = (u64)parent_rate << CM_DIV_FRAC_BITS;
-	u64 rem;
 	u32 div, mindiv, maxdiv;
 
-	rem = do_div(temp, rate);
 	div = temp;
 	div &= ~unused_frac_mask;
 
@@ -2408,7 +2406,11 @@ static int __init __bcm2835_clk_driver_init(void)
 {
 	return platform_driver_register(&bcm2835_clk_driver);
 }
+#ifdef CONFIG_IMA
+subsys_initcall(__bcm2835_clk_driver_init);
+#else
 postcore_initcall(__bcm2835_clk_driver_init);
+#endif
 
 MODULE_AUTHOR("Eric Anholt <eric@anholt.net>");
 MODULE_DESCRIPTION("BCM2835 clock driver");

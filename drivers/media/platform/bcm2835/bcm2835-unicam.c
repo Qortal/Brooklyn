@@ -508,8 +508,6 @@ struct unicam_device {
 	struct clk *clock;
 	/* vpu clock handle */
 	struct clk *vpu_clock;
-	/* vpu clock request */
-	struct clk_request *vpu_req;
 	/* clock status for error handling */
 	bool clocks_enabled;
 	/* V4l2 device */
@@ -2347,7 +2345,7 @@ static void unicam_start_rx(struct unicam_device *dev, dma_addr_t *addr)
 		/* CSI2 */
 		set_field(&val, 1, UNICAM_CLE);
 		set_field(&val, 1, UNICAM_CLLPE);
-		if (dev->bus_flags & V4L2_MBUS_CSI2_CONTINUOUS_CLOCK) {
+		if (!(dev->bus_flags & V4L2_MBUS_CSI2_NONCONTINUOUS_CLOCK)) {
 			set_field(&val, 1, UNICAM_CLTRE);
 			set_field(&val, 1, UNICAM_CLHSE);
 		}
@@ -2369,7 +2367,7 @@ static void unicam_start_rx(struct unicam_device *dev, dma_addr_t *addr)
 		/* CSI2 */
 		set_field(&val, 1, UNICAM_DLE);
 		set_field(&val, 1, UNICAM_DLLPE);
-		if (dev->bus_flags & V4L2_MBUS_CSI2_CONTINUOUS_CLOCK) {
+		if (!(dev->bus_flags & V4L2_MBUS_CSI2_NONCONTINUOUS_CLOCK)) {
 			set_field(&val, 1, UNICAM_DLTRE);
 			set_field(&val, 1, UNICAM_DLHSE);
 		}
@@ -2530,9 +2528,7 @@ static int unicam_start_streaming(struct vb2_queue *vq, unsigned int count)
 			goto error_pipeline;
 		}
 
-		dev->active_data_lanes =
-			(mbus_config.flags & V4L2_MBUS_CSI2_LANE_MASK) >>
-					__ffs(V4L2_MBUS_CSI2_LANE_MASK);
+		dev->active_data_lanes = mbus_config.bus.mipi_csi2.num_data_lanes;
 		if (!dev->active_data_lanes)
 			dev->active_data_lanes = dev->max_data_lanes;
 		if (dev->active_data_lanes > dev->max_data_lanes) {
@@ -2547,8 +2543,8 @@ static int unicam_start_streaming(struct vb2_queue *vq, unsigned int count)
 	unicam_dbg(1, dev, "Running with %u data lanes\n",
 		   dev->active_data_lanes);
 
-	dev->vpu_req = clk_request_start(dev->vpu_clock, MIN_VPU_CLOCK_RATE);
-	if (!dev->vpu_req) {
+	ret = clk_set_min_rate(dev->vpu_clock, MIN_VPU_CLOCK_RATE);
+	if (ret) {
 		unicam_err(dev, "failed to set up VPU clock\n");
 		goto error_pipeline;
 	}
@@ -2604,7 +2600,8 @@ err_disable_unicam:
 	unicam_disable(dev);
 	clk_disable_unprepare(dev->clock);
 err_vpu_clock:
-	clk_request_done(dev->vpu_req);
+	if (clk_set_min_rate(dev->vpu_clock, 0))
+		unicam_err(dev, "failed to reset the VPU clock\n");
 	clk_disable_unprepare(dev->vpu_clock);
 error_pipeline:
 	media_pipeline_stop(&node->video_dev.entity);
@@ -2638,7 +2635,9 @@ static void unicam_stop_streaming(struct vb2_queue *vq)
 		media_pipeline_stop(&node->video_dev.entity);
 
 		if (dev->clocks_enabled) {
-			clk_request_done(dev->vpu_req);
+			if (clk_set_min_rate(dev->vpu_clock, 0))
+				unicam_err(dev, "failed to reset the min VPU clock\n");
+
 			clk_disable_unprepare(dev->vpu_clock);
 			clk_disable_unprepare(dev->clock);
 			dev->clocks_enabled = false;

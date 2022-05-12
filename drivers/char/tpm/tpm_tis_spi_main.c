@@ -254,13 +254,12 @@ static int tpm_tis_spi_driver_probe(struct spi_device *spi)
 
 static SIMPLE_DEV_PM_OPS(tpm_tis_pm, tpm_pm_suspend, tpm_tis_spi_resume);
 
-static int tpm_tis_spi_remove(struct spi_device *dev)
+static void tpm_tis_spi_remove(struct spi_device *dev)
 {
 	struct tpm_chip *chip = spi_get_drvdata(dev);
 
 	tpm_chip_unregister(chip);
 	tpm_tis_remove(chip);
-	return 0;
 }
 
 static const struct spi_device_id tpm_tis_spi_id[] = {
@@ -294,7 +293,11 @@ static struct spi_driver tpm_tis_spi_driver = {
 		.pm = &tpm_tis_pm,
 		.of_match_table = of_match_ptr(of_tis_spi_match),
 		.acpi_match_table = ACPI_PTR(acpi_tis_spi_match),
+#ifdef CONFIG_IMA
+		.probe_type = PROBE_FORCE_SYNCHRONOUS,
+#else
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
+#endif
 	},
 	.probe = tpm_tis_spi_driver_probe,
 	.remove = tpm_tis_spi_remove,

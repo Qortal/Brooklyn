@@ -240,7 +240,7 @@ struct fbtft_par {
 int fbtft_write_buf_dc(struct fbtft_par *par, void *buf, size_t len, int dc);
 __printf(5, 6)
 void fbtft_dbg_hex(const struct device *dev, int groupsize,
-		   void *buf, size_t len, const char *fmt, ...);
+		   const void *buf, size_t len, const char *fmt, ...);
 struct fb_info *fbtft_framebuffer_alloc(struct fbtft_display *display,
 					struct device *dev,
 					struct fbtft_platform_data *pdata);
@@ -282,12 +282,11 @@ static int fbtft_driver_probe_spi(struct spi_device *spi)                  \
 	return fbtft_probe_common(_display, spi, NULL, dt_ids);	           \
 }                                                                          \
 									   \
-static int fbtft_driver_remove_spi(struct spi_device *spi)                 \
+static void fbtft_driver_remove_spi(struct spi_device *spi)                 \
 {                                                                          \
 	struct fb_info *info = spi_get_drvdata(spi);                       \
 									   \
 	fbtft_remove_common(&spi->dev, info);                              \
-	return 0;                                                          \
 }                                                                          \
 									   \
 static int fbtft_driver_probe_pdev(struct platform_device *pdev)           \
@@ -372,12 +371,11 @@ static int fbtft_driver_probe_spi(struct spi_device *spi)			\
 	return fbtft_probe_common(_display, spi, NULL, dt_ids);			\
 }										\
 										\
-static int fbtft_driver_remove_spi(struct spi_device *spi)			\
+static void fbtft_driver_remove_spi(struct spi_device *spi)			\
 {										\
 	struct fb_info *info = spi_get_drvdata(spi);				\
 										\
 	fbtft_remove_common(&spi->dev, info);					\
-	return 0;								\
 }										\
 										\
 MODULE_DEVICE_TABLE(of, dt_ids);						\

@@ -1,1 +1,4 @@
-../../../../arm/boot/dts/bcm283x-rpi-csi1-2lane.dtsi
+// SPDX-License-Identifier: GPL-2.0-only
+&csi1 {
+	brcm,num-data-lanes = <2>;
+};

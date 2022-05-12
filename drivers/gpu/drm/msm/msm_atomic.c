@@ -5,27 +5,12 @@
  */
 
 #include <drm/drm_atomic_uapi.h>
-#include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_vblank.h>
 
 #include "msm_atomic_trace.h"
 #include "msm_drv.h"
 #include "msm_gem.h"
 #include "msm_kms.h"
-
-int msm_atomic_prepare_fb(struct drm_plane *plane,
-			  struct drm_plane_state *new_state)
-{
-	struct msm_drm_private *priv = plane->dev->dev_private;
-	struct msm_kms *kms = priv->kms;
-
-	if (!new_state->fb)
-		return 0;
-
-	drm_gem_plane_helper_prepare_fb(plane, new_state);
-
-	return msm_framebuffer_prepare(new_state->fb, kms->aspace);
-}
 
 /*
  * Helpers to control vblanks while we flush.. basically just to ensure
@@ -236,6 +221,8 @@ void msm_atomic_commit_tail(struct drm_atomic_state *state)
 
 		/* async updates are limited to single-crtc updates: */
 		WARN_ON(crtc_mask != drm_crtc_mask(async_crtc));
+
+		complete_all(&async_crtc->state->commit->flip_done);
 
 		/*
 		 * Start timer if we don't already have an update pending

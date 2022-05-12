@@ -128,7 +128,7 @@ EXPORT_SYMBOL(drm_mode_probed_add);
  * according to the hdisplay, vdisplay, vrefresh.
  * It is based from the VESA(TM) Coordinated Video Timing Generator by
  * Graham Loveridge April 9, 2003 available at
- * http://www.elo.utfsm.cl/~elo212/docs/CVTd6r1.xls 
+ * http://www.elo.utfsm.cl/~elo212/docs/CVTd6r1.xls
  *
  * And it is copied from xf86CVTmode in xserver/hw/xfree86/modes/xf86cvt.c.
  * What I have done is to translate it by using integer calculation.
@@ -929,7 +929,7 @@ EXPORT_SYMBOL(drm_mode_set_crtcinfo);
  * @dst: mode to overwrite
  * @src: mode to copy
  *
- * Copy an existing mode into another mode, preserving the object id and
+ * Copy an existing mode into another mode, preserving the
  * list head of the destination mode.
  */
 void drm_mode_copy(struct drm_display_mode *dst, const struct drm_display_mode *src)
