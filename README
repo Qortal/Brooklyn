@@ -1,9 +1,10 @@
-Brooklyn, The Blockchain Linux 5.80.11 64bit RPI4 by Scare Crow
-================================================================
-
+Brooklyn Torchie The Cat, The Blockchain Linux 5.80.11 64bit RPI4 by Scare Crow
+===============================================================================
+* This build is optimized for the core version 3.3.x and onwards. Welcome abroad Digibyte and Raven
+* You two projects will feel comfortable now on Torchie
 * Brooklyn Torchie The Cat 5.80.11 is here. meh! (First ever release on the planet to use ARM Turbo Clocks & full ARM NEON Crypto Engine)
 
-This release brings more optimizations to QortalOS. Too many to name in a single README. From now on, Crowetic is the sole custodian of all releases and code.
+This release brings more optimizations to QortalOS. Too many to name in a single README.
  
 -Scare Crowe
 
@@ -34,17 +35,10 @@ Use logout from MATE Desktop to prevent locked screen sessions in the first plac
 * V1.1 XFCE is based on  Brooklyn Jackwagon 5.12.10 LTS
 * V1.1 MATE-LXDE is based on Brookltn Plumbus 5.12.10 LTS
 
-==========================================================
-If this has helped you in any way then throw me some
-LTC for R&D or a few Sneaker / Bounty chocolates 
-Personal LTC: nothing needed from you fucks
-Personal QORT: ditto asshats. shove it up your asses
-
--/ Scare Crowe was awaken by the asshat crowetic again. Fuck you jack for fucking things up again.
+-/ Scare Crowe was awaken by the asshat crowetic again.
 
 Forever greets to my moosey Sean , Russell & Gisele who have been around unconditionally unlike the rest of fucking conditional dicks. 
 
-Before I forget, fuck you T3Q. I hope you gargle with your own shit and die you inbred piece of shit.
 
 		  GNUK Token Implementation
 		 Source: http://www.gniibe.org
@@ -69,8 +63,8 @@ You can get a release and flash it directly on your USB 3 hard drive with Balena
 
 Pro Tip: Do not add another Desktop overlay or replace the current with something else. It will make the system unstable and unreliable. What comes pre-shipped with the packaged image is built around the kernel and whatever else was done with it. Be smart, don't be a crowetic. LMAO!
 
-QortalOS Linux Kernel 5.60.14
-=============================
+Legacy QortalOS Linux Kernel 5.60.14
+====================================
 
 This thing is way ahead of kernel.org releases for a reason. Go figure...
 

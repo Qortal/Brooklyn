@@ -1,16 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0
 #
-# Fuck you T3Q.. I hope you drown in your own shit. 
-# This build is optimized for the core version 3.3.x and onwards. Welcome abroad Digibyte and Raven
-# You two projects will feel comfortable now on Sinclair Titan Plus
 #
 # -Scare Crowe
 #
 VERSION = 5
-PATCHLEVEL = 60
-SUBLEVEL = 18
-EXTRAVERSION = -TP
-NAME = Sinclair Titan Plus
+PATCHLEVEL = 80
+SUBLEVEL = 11
+EXTRAVERSION = Titan
+NAME = Torchie The Cat
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
