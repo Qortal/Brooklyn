@@ -5,13 +5,15 @@ Brooklyn Torchie The Cat, The Blockchain Linux 5.80.11 64bit RPI4 by Scare Crow
 * The entire system is now arm64 instead of previous hard float 64 release (kern,userspace) for ARRR chain support.
 * Brooklyn Torchie The Cat 5.80.11 is here. meh! (First ever release on the planet to use ARM Turbo Clocks & full ARM NEON Crypto Engine)
 
+* Upcoming Kernel 6.x updates
+
 This release brings more optimizations to QortalOS. Too many to name in a single README.
  
 -Scare Crowe
 
 QortalOS Preview: https://youtu.be/HPk-VhRjNI8
 
-* Because there is a moose on the loose!! His name is Seany. He is going in da mool buff!
+* Because there is a moose on the loose!! His name is Seany. He is going in da mool buff! There's lot of fun for everyone.
 
   > Furthermore, made the image "crowetic proof" so he wont fuck it up like every single time. Bitch be trippin -_-
   
