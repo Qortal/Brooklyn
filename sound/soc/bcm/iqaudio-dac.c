@@ -197,7 +197,8 @@ static int snd_rpi_iqaudio_dac_remove(struct platform_device *pdev)
 {
 	snd_rpi_iqaudio_gpio_mute(&snd_rpi_iqaudio_dac);
 
-	return snd_soc_unregister_card(&snd_rpi_iqaudio_dac);
+	snd_soc_unregister_card(&snd_rpi_iqaudio_dac);
+	return 0;
 }
 
 static const struct of_device_id iqaudio_of_match[] = {

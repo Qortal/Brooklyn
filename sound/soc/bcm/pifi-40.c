@@ -254,7 +254,8 @@ static int snd_pifi_40_remove(struct platform_device *pdev)
 
 	kfree(&card->drvdata);
 	snd_pifi_40_pdn(&snd_pifi_40, 0);
-	return snd_soc_unregister_card(&snd_pifi_40);
+	snd_soc_unregister_card(&snd_pifi_40);
+	return 0;
 }
 
 static const struct of_device_id snd_pifi_40_of_match[] = {

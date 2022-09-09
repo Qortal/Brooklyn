@@ -1218,7 +1218,8 @@ static int pisnd_remove(struct platform_device *pdev)
 	gpiod_set_value(reset, false);
 	pisnd_uninit_gpio();
 
-	return snd_soc_unregister_card(&pisnd_card);
+	snd_soc_unregister_card(&pisnd_card);
+	return 0;
 }
 
 MODULE_DEVICE_TABLE(of, pisound_of_match);

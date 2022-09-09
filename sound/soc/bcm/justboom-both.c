@@ -240,7 +240,8 @@ static int snd_rpi_justboom_both_probe(struct platform_device *pdev)
 
 static int snd_rpi_justboom_both_remove(struct platform_device *pdev)
 {
-	return snd_soc_unregister_card(&snd_rpi_justboom_both);
+	snd_soc_unregister_card(&snd_rpi_justboom_both);
+	return 0;
 }
 
 static const struct of_device_id snd_rpi_justboom_both_of_match[] = {

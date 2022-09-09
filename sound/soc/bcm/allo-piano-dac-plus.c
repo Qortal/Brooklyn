@@ -1036,7 +1036,8 @@ static int snd_allo_piano_dac_remove(struct platform_device *pdev)
 
 	kfree(&card->drvdata);
 	snd_allo_piano_gpio_mute(&snd_allo_piano_dac);
-	return snd_soc_unregister_card(&snd_allo_piano_dac);
+	snd_soc_unregister_card(&snd_allo_piano_dac);
+	return 0;
 }
 
 static const struct of_device_id snd_allo_piano_dac_of_match[] = {
