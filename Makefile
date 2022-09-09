@@ -5,7 +5,7 @@
 #
 VERSION = 6
 PATCHLEVEL = 0
-SUBLEVEL = 10
+SUBLEVEL = 11
 EXTRAVERSION = Mapoose
 NAME = Torchie The Cat
 
