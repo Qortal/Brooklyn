@@ -1,0 +1,233 @@
+/*
+ * Author: doe300
+ *
+ * See the file "LICENSE" for the full license governing this code.
+ */
+
+#ifndef VC4CL_INTEGER_H
+#define VC4CL_INTEGER_H
+
+#include "_config.h"
+#include "_intrinsics.h"
+
+#define SIMPLE_INTEGER_2(func, argName0, argName1, content) \
+		SIMPLE_2(uchar, func, uchar, argName0, uchar, argName1, content) \
+		SIMPLE_2(char, func, char, argName0, char, argName1, content) \
+		SIMPLE_2(ushort, func, ushort, argName0, ushort, argName1, content) \
+		SIMPLE_2(short, func, short, argName0, short, argName1, content) \
+		SIMPLE_2(uint, func, uint, argName0, uint, argName1, content) \
+		SIMPLE_2(int, func, int, argName0, int, argName1, content) \
+
+#define SIMPLE_INTEGER_3(func, argName0, argName1, argName2, content) \
+		SIMPLE_3(uchar, func, uchar, argName0, uchar, argName1, uchar, argName2, content) \
+		SIMPLE_3(char, func, char, argName0, char, argName1, char, argName2, content) \
+		SIMPLE_3(ushort, func, ushort, argName0, ushort, argName1, ushort, argName2, content) \
+		SIMPLE_3(short, func, short, argName0, short, argName1, short, argName2, content) \
+		SIMPLE_3(uint, func, uint, argName0, uint, argName1, uint, argName2, content) \
+		SIMPLE_3(int, func, int, argName0, int, argName1, int, argName2, content) \
+
+
+SIMPLE_1(uchar, abs, char, val, vc4cl_bitcast_uchar(max(vc4cl_extend(val), -vc4cl_extend(val))))
+SIMPLE_1(uchar, abs, uchar, val, val)
+SIMPLE_1(ushort, abs, short, val, vc4cl_bitcast_ushort(max(vc4cl_extend(val), -vc4cl_extend(val))))
+SIMPLE_1(ushort, abs, ushort, val, val)
+SIMPLE_1(uint, abs, int, val, vc4cl_bitcast_uint(max(val, -val)))
+SIMPLE_1(uint, abs, uint, val, val)
+SIMPLE_1(ulong, abs, long, val, vc4cl_bitcast_ulong(max(val, -val)))
+SIMPLE_1(ulong, abs, ulong, val, val)
+
+//based on pocl (pocl/lib/kernel/abs_diff.cl)
+SIMPLE_2(uchar, abs_diff, uchar, x, uchar, y, (result_t)abs(x > y ? x - y : y - x))
+COMPLEX_2(uchar, abs_diff, char, x, char, y, {
+	// explicitly calculate both variants to prevent clang from converting the ?:-operator to an if-else block
+	result_t noflow = (result_t)abs(x - y);
+	result_t flow = abs(x) + abs(y);
+	return (vc4cl_msb_set(x) == vc4cl_msb_set(y)) ? /* same sign -> no under/overflow */ noflow : /* different signs */ flow;
+})
+SIMPLE_2(ushort, abs_diff, ushort, x, ushort, y, (result_t)abs(x > y ? x - y : y - x))
+COMPLEX_2(ushort, abs_diff, short, x, short, y, {
+	// explicitly calculate both variants to prevent clang from converting the ?:-operator to an if-else block
+	result_t noflow = (result_t)abs(x - y);
+	result_t flow = abs(x) + abs(y);
+	return (vc4cl_msb_set(x) == vc4cl_msb_set(y)) ? /* same sign -> no under/overflow */ noflow : /* different signs */ flow;
+})
+SIMPLE_2(uint, abs_diff, uint, x, uint, y, abs(x > y ? x - y : y - x))
+COMPLEX_2(uint, abs_diff, int, x, int, y, {
+	// explicitly calculate both variants to prevent clang from converting the ?:-operator to an if-else block
+	result_t noflow = abs(x - y);
+	result_t flow = abs(x) + abs(y);
+	return (vc4cl_msb_set(x) == vc4cl_msb_set(y)) ? /* same sign -> no under/overflow */ noflow : /* different signs */ flow;
+})
+SIMPLE_2(ulong, abs_diff, ulong, x, ulong, y, abs(x > y ? x - y : y - x))
+COMPLEX_2(ulong, abs_diff, long, x, long, y, {
+	// explicitly calculate both variants to prevent clang from converting the ?:-operator to an if-else block
+	result_t noflow = abs(x - y);
+	result_t flow = abs(x) + abs(y);
+	return (vc4cl_msb_set(x) == vc4cl_msb_set(y)) ? /* same sign -> no under/overflow */ noflow : /* different signs */ flow;
+})
+
+SIMPLE_2(uchar, add_sat, uchar, x, uchar, y, vc4cl_v8adds(x, y))
+SIMPLE_2(char, add_sat, char, x, char, y, vc4cl_bitcast_char(clamp(vc4cl_extend(x) + vc4cl_extend(y), SCHAR_MIN, SCHAR_MAX)))
+SIMPLE_2(ushort, add_sat, ushort, x, ushort, y, vc4cl_bitcast_ushort(clamp(vc4cl_extend(x) + vc4cl_extend(y), (uint) 0, (uint) USHRT_MAX)))
+SIMPLE_2(short, add_sat, short, x, short, y, vc4cl_bitcast_short(clamp(vc4cl_extend(x) + vc4cl_extend(y), SHRT_MIN, SHRT_MAX)))
+//based on pocl (pocl/lib/kernel/add_sat.cl)
+SIMPLE_2(uint, add_sat, uint, x, uint, y, x > ((result_t)UINT_MAX) - y ? UINT_MAX : x + y)
+SIMPLE_2(int, add_sat, int, x, int, y, vc4cl_saturated_add(x, y))
+
+//"Returns (x + y) >> 1.  The intermediate sum does not modulo overflow."
+SIMPLE_2(uchar, hadd, uchar, x, uchar, y, vc4cl_pack_lsb((vc4cl_extend(x) + vc4cl_extend(y)) >> 1))
+SIMPLE_2(char, hadd, char, x, char, y, vc4cl_bitcast_char(vc4cl_asr(vc4cl_extend(x) + vc4cl_extend(y), 1)))
+SIMPLE_2(ushort, hadd, ushort, x, ushort, y, vc4cl_bitcast_ushort((vc4cl_extend(x) + vc4cl_extend(y)) >> 1))
+SIMPLE_2(short, hadd, short, x, short, y, vc4cl_bitcast_short(vc4cl_asr(vc4cl_extend(x) + vc4cl_extend(y), 1)))
+//based on pocl (pocl/lib/kernel/hadd.cl)
+SIMPLE_2(uint, hadd, uint, x, uint, y, (x >> (arg0_t)1) + (y >> (arg0_t)1) + (x & y & (arg0_t)1))
+SIMPLE_2(int, hadd, int, x, int, y, (x >> (arg0_t)1) + (y >> (arg0_t)1) + (x & y & (arg0_t)1))
+SIMPLE_2(ulong, hadd, ulong, x, ulong, y, (x >> (arg0_t)1) + (y >> (arg0_t)1) + (x & y & (arg0_t)1))
+SIMPLE_2(long, hadd, long, x, long, y, (x >> (arg0_t)1) + (y >> (arg0_t)1) + (x & y & (arg0_t)1))
+
+//"Returns (x + y + 1) >> 1.  The intermediate sum does not modulo overflow."
+SIMPLE_2(uchar, rhadd, uchar, x, uchar, y, vc4cl_pack_lsb((vc4cl_extend(x) + vc4cl_extend(y) + (uint)1) >> 1))
+SIMPLE_2(char, rhadd, char, x, char, y, vc4cl_bitcast_char(vc4cl_asr(vc4cl_extend(x) + vc4cl_extend(y) + (int)1, 1)))
+SIMPLE_2(ushort, rhadd, ushort, x, ushort, y, vc4cl_bitcast_ushort((vc4cl_extend(x) + vc4cl_extend(y) + (uint)1) >> 1))
+SIMPLE_2(short, rhadd, short, x, short, y, vc4cl_bitcast_short(vc4cl_asr(vc4cl_extend(x) + vc4cl_extend(y) + (int)1, 1)))
+//based on pocl (pocl/lib/kernel/rhadd.cl)
+SIMPLE_2(uint, rhadd, uint, x, uint, y, (x >> (arg0_t)1) + (y >> (arg0_t)1) + ((x | y) & (arg0_t)1))
+SIMPLE_2(int, rhadd, int, x, int, y, (x >> (arg0_t)1) + (y >> (arg0_t)1) + ((x | y) & (arg0_t)1))
+SIMPLE_2(ulong, rhadd, ulong, x, ulong, y, (x >> (arg0_t)1) + (y >> (arg0_t)1) + ((x | y) & (arg0_t)1))
+SIMPLE_2(long, rhadd, long, x, long, y, (x >> (arg0_t)1) + (y >> (arg0_t)1) + ((x | y) & (arg0_t)1))
+
+SIMPLE_INTEGER_3(clamp, val, minval, maxval, min(max(val, minval), maxval))
+SIMPLE_3_TWO_SCALAR(uchar, clamp, uchar, val, uchar, minval, uchar, maxval, min(max(val, minval), maxval))
+SIMPLE_3_TWO_SCALAR(char, clamp, char, val, char, minval, char, maxval, min(max(val, minval), maxval))
+SIMPLE_3_TWO_SCALAR(ushort, clamp, ushort, val, ushort, minval, ushort, maxval, min(max(val, minval), maxval))
+SIMPLE_3_TWO_SCALAR(short, clamp, short, val, short, minval, short, maxval, min(max(val, minval), maxval))
+SIMPLE_3_TWO_SCALAR(uint, clamp, uint, val, uint, minval, uint, maxval, min(max(val, minval), maxval))
+SIMPLE_3_TWO_SCALAR(int, clamp, int, val, int, minval, int, maxval, min(max(val, minval), maxval))
+SIMPLE_3(ulong, clamp, ulong, val, ulong, minval, ulong, maxval, min(max(val, minval), maxval))
+SIMPLE_3_TWO_SCALAR(ulong, clamp, ulong, val, ulong, minval, ulong, maxval, min(max(val, minval), maxval))
+SIMPLE_3(long, clamp, long, val, long, minval, long, maxval, min(max(val, minval), maxval))
+SIMPLE_3_TWO_SCALAR(long, clamp, long, val, long, minval, long, maxval, min(max(val, minval), maxval))
+
+SIMPLE_1(uchar, clz, uchar, x, vc4cl_bitcast_uchar(vc4cl_clz((vc4cl_and(x, (arg_t)0xFF) << 24) | 0xFFFFFF)))
+SIMPLE_1(char, clz, char, x, vc4cl_bitcast_char(vc4cl_clz((vc4cl_and(x, (arg_t)0xFF) << 24) | 0xFFFFFF)))
+SIMPLE_1(ushort, clz, ushort, x, vc4cl_bitcast_ushort(vc4cl_clz((vc4cl_and(x, (arg_t)0xFFFF) << 16) | 0xFFFF)))
+SIMPLE_1(short, clz, short, x, vc4cl_bitcast_short(vc4cl_clz((vc4cl_and(x, (arg_t)0xFFFF) << 16) | 0xFFFF)))
+SIMPLE_1(uint, clz, uint, x, vc4cl_bitcast_uint(vc4cl_clz(x)))
+SIMPLE_1(int, clz, int, x, vc4cl_bitcast_int(vc4cl_clz(x)))
+
+SIMPLE_INTEGER_3(mad_hi, x, y, z, mul_hi(x, y) + z)
+
+SIMPLE_3(uchar, mad_sat, uchar, x, uchar, y, uchar, z, vc4cl_bitcast_uchar(clamp(vc4cl_extend(x) * vc4cl_extend(y) + vc4cl_extend(z), (uint) 0, (uint) UCHAR_MAX)))
+SIMPLE_3(char, mad_sat, char, x, char, y, char, z, vc4cl_bitcast_char(clamp(vc4cl_extend(x) * vc4cl_extend(y) + vc4cl_extend(z), (int) CHAR_MIN, (int) CHAR_MAX)))
+SIMPLE_3(ushort, mad_sat, ushort, x, ushort, y, ushort, z, vc4cl_bitcast_ushort(clamp(vc4cl_extend(x) * vc4cl_extend(y) + vc4cl_extend(z), (uint) 0, (uint) USHRT_MAX)))
+SIMPLE_3(short, mad_sat, short, x, short, y, short, z, vc4cl_bitcast_short(clamp(vc4cl_extend(x) * vc4cl_extend(y) + vc4cl_extend(z), (int) SHRT_MIN, (int) SHRT_MAX)))
+SIMPLE_3(uint, mad_sat, uint, x, uint, y, uint, z, vc4cl_long_to_int_sat(vc4cl_mul_full(x, y, VC4CL_UNSIGNED) + vc4cl_int_to_ulong(z), VC4CL_UNSIGNED))
+SIMPLE_3(int, mad_sat, int, x, int, y, int, z, vc4cl_long_to_int_sat(vc4cl_mul_full(x, y, VC4CL_SIGNED) + vc4cl_int_to_long(z), VC4CL_SIGNED))
+
+SIMPLE_2(uchar, max, uchar, x, uchar, y, vc4cl_v8max(x, y))
+SIMPLE_2_SCALAR(uchar, max, uchar, x, uchar, y, vc4cl_v8max(x, y))
+SIMPLE_2(char, max, char, x, char, y, vc4cl_bitcast_char(vc4cl_max(vc4cl_sign_extend(x), vc4cl_sign_extend(y), VC4CL_SIGNED)))
+SIMPLE_2_SCALAR(char, max, char, x, char, y, vc4cl_bitcast_char(vc4cl_max(vc4cl_sign_extend(x), vc4cl_sign_extend(y), VC4CL_SIGNED)))
+SIMPLE_2(ushort, max, ushort, x, ushort, y, vc4cl_bitcast_ushort(vc4cl_max(vc4cl_bitcast_int(vc4cl_zero_extend(x)), vc4cl_bitcast_int(vc4cl_zero_extend(y)), VC4CL_UNSIGNED)))
+SIMPLE_2_SCALAR(ushort, max, ushort, x, ushort, y, vc4cl_bitcast_ushort(vc4cl_max(vc4cl_bitcast_int(vc4cl_zero_extend(x)), vc4cl_bitcast_int(vc4cl_zero_extend(y)), VC4CL_UNSIGNED)))
+SIMPLE_2(short, max, short, x, short, y, vc4cl_bitcast_short(vc4cl_max(vc4cl_sign_extend(x), vc4cl_sign_extend(y), VC4CL_SIGNED)))
+SIMPLE_2_SCALAR(short, max, short, x, short, y, vc4cl_bitcast_short(vc4cl_max(vc4cl_sign_extend(x), vc4cl_sign_extend(y), VC4CL_SIGNED)))
+SIMPLE_2(uint, max, uint, x, uint, y, x > y ? x : y)
+SIMPLE_2_SCALAR(uint, max, uint, x, uint, y, x > y ? x : y)
+SIMPLE_2(int, max, int, x, int, y, vc4cl_max(x, y, VC4CL_SIGNED))
+SIMPLE_2_SCALAR(int, max, int, x, int, y, vc4cl_max(x, y, VC4CL_SIGNED))
+COMPLEX_2(ulong, max, ulong, x, ulong, y,
+{
+	uint_t upX = vc4cl_long_to_int(x >> 32);
+	uint_t upY = vc4cl_long_to_int(y >> 32);
+	uint_t lowX = vc4cl_long_to_int(x);
+	uint_t lowY = vc4cl_long_to_int(y);
+
+	/* can't directly use this condition in return value, since for ?: operator, the condition and return value needs to have the same type */
+	int_t selection = upX > upY ? 0 : (upX < upY ? 1 : (lowX > lowY ? 0 : 1));
+	return vc4cl_int_to_long(selection) == 0 ? x : y;
+})
+SIMPLE_2_SCALAR(ulong, max, ulong, x, ulong, y, max(x, (arg0_t) y))
+SIMPLE_2(long, max, long, x, long, y, vc4cl_max(x, y, VC4CL_SIGNED))
+SIMPLE_2_SCALAR(long, max, long, x, long, y, vc4cl_max(x, y, VC4CL_SIGNED))
+
+SIMPLE_2(uchar, min, uchar, x, uchar, y, vc4cl_v8min(x, y))
+SIMPLE_2_SCALAR(uchar, min, uchar, x, uchar, y, vc4cl_v8min(x, y))
+SIMPLE_2(char, min, char, x, char, y, vc4cl_bitcast_char(vc4cl_min(vc4cl_sign_extend(x), vc4cl_sign_extend(y), VC4CL_SIGNED)))
+SIMPLE_2_SCALAR(char, min, char, x, char, y, vc4cl_bitcast_char(vc4cl_min(vc4cl_sign_extend(x), vc4cl_sign_extend(y), VC4CL_SIGNED)))
+SIMPLE_2(ushort, min, ushort, x, ushort, y, vc4cl_bitcast_ushort(vc4cl_min(vc4cl_bitcast_int(vc4cl_zero_extend(x)), vc4cl_bitcast_int(vc4cl_zero_extend(y)), VC4CL_UNSIGNED)))
+SIMPLE_2_SCALAR(ushort, min, ushort, x, ushort, y, vc4cl_bitcast_ushort(vc4cl_min(vc4cl_bitcast_int(vc4cl_zero_extend(x)), vc4cl_bitcast_int(vc4cl_zero_extend(y)), VC4CL_UNSIGNED)))
+SIMPLE_2(short, min, short, x, short, y, vc4cl_bitcast_short(vc4cl_min(vc4cl_sign_extend(x), vc4cl_sign_extend(y), VC4CL_SIGNED)))
+SIMPLE_2_SCALAR(short, min, short, x, short, y, vc4cl_bitcast_short(vc4cl_min(vc4cl_sign_extend(x), vc4cl_sign_extend(y), VC4CL_SIGNED)))
+SIMPLE_2(uint, min, uint, x, uint, y, x < y ? x : y)
+SIMPLE_2_SCALAR(uint, min, uint, x, uint, y, x < y ? x : y)
+SIMPLE_2(int, min, int, x, int, y, vc4cl_min(x, y, VC4CL_SIGNED))
+SIMPLE_2_SCALAR(int, min, int, x, int, y, vc4cl_min(x, y, VC4CL_SIGNED))
+COMPLEX_2(ulong, min, ulong, x, ulong, y,
+{
+	uint_t upX = vc4cl_long_to_int(x >> 32);
+	uint_t upY = vc4cl_long_to_int(y >> 32);
+	uint_t lowX = vc4cl_long_to_int(x);
+	uint_t lowY = vc4cl_long_to_int(y);
+
+	/* can't directly use this condition in return value, since for ?: operator, the condition and return value needs to have the same type */
+	int_t selection = upX < upY ? 0 : (upX > upY ? 1 : (lowX < lowY ? 0 : 1));
+	return vc4cl_int_to_long(selection) == 0 ? x : y;
+})
+SIMPLE_2_SCALAR(ulong, min, ulong, x, ulong, y, min(x, (arg0_t) y))
+SIMPLE_2(long, min, long, x, long, y, vc4cl_min(x, y, VC4CL_SIGNED))
+SIMPLE_2_SCALAR(long, min, long, x, long, y, vc4cl_min(x, y, VC4CL_SIGNED))
+
+SIMPLE_2(uchar, mul_hi, uchar, x, uchar, y, vc4cl_bitcast_uchar(vc4cl_mul24(x, y, VC4CL_UNSIGNED) >> 8))
+SIMPLE_2(char, mul_hi, char, x, char, y, vc4cl_bitcast_char(vc4cl_asr(vc4cl_mul24(vc4cl_sign_extend(x), vc4cl_sign_extend(y), VC4CL_SIGNED), 8)))
+SIMPLE_2(ushort, mul_hi, ushort, x, ushort, y, vc4cl_bitcast_ushort(vc4cl_mul24(x, y, VC4CL_UNSIGNED) >> 16))
+SIMPLE_2(short, mul_hi, short, x, short, y, vc4cl_bitcast_short(vc4cl_asr(vc4cl_sign_extend(x) * vc4cl_sign_extend(y), 16)))
+SIMPLE_2(uint, mul_hi, uint, x, uint, y, vc4cl_mul_hi(x, y, VC4CL_UNSIGNED))
+SIMPLE_2(int, mul_hi, int, x, int, y, vc4cl_mul_hi(x, y, VC4CL_SIGNED))
+
+//Since the rotation is over all 32-bits, for smaller types we need to replicate the value, rotate it and truncate/sign extend the result afterwards
+SIMPLE_2(uchar, rotate, uchar, x, uchar, y, vc4cl_pack_lsb(vc4cl_ror(vc4cl_replicate_lsb(x), -vc4cl_bitcast_int(vc4cl_zero_extend(y)))))
+SIMPLE_2(char, rotate, char, x, char, y, vc4cl_bitcast_char(vc4cl_asr(vc4cl_ror(vc4cl_replicate_lsb(x), -vc4cl_extend(y)), 24)))
+SIMPLE_2(ushort, rotate, ushort, x, ushort, y, vc4cl_pack_truncate(vc4cl_ror(vc4cl_zero_extend(x) | (vc4cl_zero_extend(x) << 16), -vc4cl_bitcast_int(vc4cl_zero_extend(y)))))
+SIMPLE_2(short, rotate, short, x, short, y, vc4cl_bitcast_short(vc4cl_extend(vc4cl_bitcast_short(vc4cl_ror((vc4cl_sign_extend(x) & (int) 0xFFFF) | (vc4cl_sign_extend(x) << 16), -vc4cl_sign_extend(y))))))
+SIMPLE_2(uint, rotate, uint, x, uint, y, vc4cl_bitcast_uint(vc4cl_ror(x, -vc4cl_bitcast_int(y))))
+SIMPLE_2(int, rotate, int, x, int, y, vc4cl_bitcast_int(vc4cl_ror(x, -y)))
+
+SIMPLE_2(uchar, sub_sat, uchar, x, uchar, y, vc4cl_v8subs(x, y))
+SIMPLE_2(char, sub_sat, char, x, char, y, vc4cl_bitcast_char(clamp(vc4cl_extend(x) - vc4cl_extend(y), SCHAR_MIN, SCHAR_MAX)))
+SIMPLE_2(ushort, sub_sat, ushort, x, ushort, y, x < y ? (result_t)0 : x - y)
+SIMPLE_2(short, sub_sat, short, x, short, y, vc4cl_bitcast_short(clamp(vc4cl_extend(x) - vc4cl_extend(y), SHRT_MIN, SHRT_MAX)))
+//based on pocl (pocl/lib/kernel/sub_sat.cl)
+SIMPLE_2(uint, sub_sat, uint, x, uint, y, x < y ? (result_t)0 : x - y)
+SIMPLE_2(int, sub_sat, int, x, int, y, vc4cl_saturated_sub(x, y))
+
+SIMPLE_2(short, upsample, char, hi, uchar, lo, vc4cl_bitcast_short((vc4cl_sign_extend(hi) << 8) | vc4cl_bitcast_int(vc4cl_zero_extend(lo))))
+SIMPLE_2(ushort, upsample, uchar, hi, uchar, lo, vc4cl_bitcast_ushort((vc4cl_zero_extend(hi) << 8) | vc4cl_zero_extend(lo)))
+SIMPLE_2(int, upsample, short, hi, ushort, lo, (vc4cl_sign_extend(hi) << 16) | vc4cl_bitcast_int(vc4cl_zero_extend(lo)))
+SIMPLE_2(uint, upsample, ushort, hi, ushort, lo, (vc4cl_zero_extend(hi) << 16) | vc4cl_zero_extend(lo))
+SIMPLE_2(long, upsample, int, hi, uint, lo, (vc4cl_int_to_long(hi) << 32) | vc4cl_bitcast_long(vc4cl_int_to_ulong(lo)))
+SIMPLE_2(ulong, upsample, uint, hi, uint, lo, (vc4cl_int_to_ulong(hi) << 32) | vc4cl_int_to_ulong(lo))
+
+//" Returns the number of non-zero bits in x. "
+SIMPLE_1(uchar, popcount, uchar, val, vc4cl_popcount(val))
+SIMPLE_1(char, popcount, char, val, vc4cl_popcount(val))
+SIMPLE_1(ushort, popcount, ushort, val, vc4cl_popcount(val))
+SIMPLE_1(short, popcount, short, val, vc4cl_popcount(val))
+SIMPLE_1(uint, popcount, uint, val, vc4cl_popcount(val))
+SIMPLE_1(int, popcount, int, val, vc4cl_popcount(val))
+SIMPLE_1(ulong, popcount, ulong, val, vc4cl_popcount(val))
+SIMPLE_1(long, popcount, long, val, vc4cl_popcount(val))
+
+SIMPLE_2(uchar, mul24, uchar, x, uchar, y, vc4cl_bitcast_uchar(vc4cl_mul24(x, y, VC4CL_UNSIGNED)))
+SIMPLE_2(char, mul24, char, x, char, y, vc4cl_bitcast_char(vc4cl_mul24(x, y, VC4CL_SIGNED)))
+SIMPLE_2(ushort, mul24, ushort, x, ushort, y, vc4cl_bitcast_ushort(vc4cl_mul24(x, y, VC4CL_UNSIGNED)))
+SIMPLE_2(short, mul24, short, x, short, y, vc4cl_bitcast_short(vc4cl_mul24(x, y, VC4CL_SIGNED)))
+SIMPLE_2(uint, mul24, uint, x, uint, y, vc4cl_mul24(x, y, VC4CL_UNSIGNED))
+SIMPLE_2(int, mul24, int, x, int, y, vc4cl_mul24(x, y, VC4CL_SIGNED))
+SIMPLE_INTEGER_3(mad24, a, b, c, mul24(a, b) + c)
+
+#undef SIMPLE_INTEGER_2
+#undef SIMPLE_INTEGER_3
+
+#endif /* VC4CL_INTEGER_H */
+
