@@ -1,0 +1,8 @@
+
+New Hardware support i.e, third party wifi 7 and bluetooth dongles, 4k monitors, PnP NVME adapters.
+Usual Improvements to various Filesystems, run-time verifications for prefetch data techniqe which was used in previous brooklyn releases.
+Scheduler changes for better java thread migration across logical SoC cores.
+Storage and file systems enhancement enhances memory handling, garbage collection optimization and more.
+VC4 parallel scalar pipeline rendering and complete redo of of qortal-ui optimizations.
+Overall upto 18 % performance gain from previous releases of brooklyn (now also used in Golem Codes system)
+Rust language is now the default second language.
