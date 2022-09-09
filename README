@@ -1,13 +1,10 @@
-Brooklyn Torchie The Cat, The Blockchain Linux 5.80.11 64bit RPI4 by Scare Crow
+Brooklyn Torchie The Cat, The Blockchain Linux 6.00.11 64bit RPI4 by Scare Crow
 ===============================================================================
-* This build is optimized for the core version 3.3.x and onwards. Welcome abroad Digibyte and Raven
-* You two projects will feel comfortable now on Torchie
+* This build is optimized for the core version 3.3.x and onwards. Welcome abroad Digibyte, Raven and pain in the as ARRR
 * The entire system is now arm64 instead of previous hard float 64 release (kern,userspace) for ARRR chain support.
-* Brooklyn Torchie The Cat 5.80.11 is here. meh! (First ever release on the planet to use ARM Turbo Clocks & full ARM NEON Crypto Engine)
+* Brooklyn Torchie The Cat 6.0.11 64 is here. meh! It had to go through a total redo becase ARRR developers didn't want to do a 32bit release.
 
-* Mandatory updates with Kernel 6.0 branch are needed cuz the X windows system is a trainwreck due to arm64 protage. It is being re-written starting now. fml!
-
-Stage-1 complete. Dynamic linking and removing backward compatibility for GPU. 9/9/22
+-/ shit breaks balls
 
 This release brings more optimizations to QortalOS. Too many to name in a single README.
  
