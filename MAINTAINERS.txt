@@ -1,6 +1,7 @@
 Qortal Team
 ===========
-Scare Crowe, moosey Sean, gay jason aka Crowetic
+
+Scare Crowe
 
 List of maintainers and how to submit kernel changes
 ====================================================

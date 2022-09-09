@@ -1,2 +1,0 @@
-KHR-GL46.texture_buffer.texture_buffer_atomic_functions
-KHR-GLES31.core.texture_buffer.texture_buffer_atomic_functions
