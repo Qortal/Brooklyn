@@ -1,8 +1,11 @@
-Brooklyn Torchie The Cat, The Blockchain Linux 6.00.11 64bit RPI4 by Scare Crow
-===============================================================================
-* Kernel 6.0.11 for Qortal with mempow hard crunch (standard kernel will not be able to handle upcoming mempow hence this is released)
-* This build is optimized for the core version 3.3.x and onwards. Welcome abroad Digibyte, Raven and pain in the as ARRR
+Brooklyn Torchie The Cat, Qortal Linux 6.00.11 64bit RPI4 by Scare Crow
+=========================================================================
+* Kernel 6.0.11 for Qortal with mempow hard crunch handling.
+* Standard kernel will not be able to handle upcoming mempow hence this is released.
+* This build is optimized for the core version 3.3.x and onwards. Welcome abroad Digibyte, Raven and ARRR.
 * The entire system is now arm64 instead of previous hard float 64 release (kern,userspace) for ARRR chain support.
+* Re-written DRM with crpyto advantage for Qortal Core.
+* Mass staging tree update starting 6.0.00-rc1.
 
 Important Note: After mempow updates, any other Pi 4 kernel will cease to work. It is highly recommended that Torchie 64 mempow is used for Qortal
 
@@ -14,17 +17,6 @@ QortalOS Preview: https://youtu.be/HPk-VhRjNI8
 
 * Because there is a moose on the loose!! His name is Seany. He is going in da mool buff! There's lot of fun for everyone.
 
-  > Furthermore, made the image "crowetic proof" so he wont fuck it up like every single time. Bitch be trippin -_-
-  
-Note for titanMATE: sudo loginctl and check a "c" session if you have problem loggin in on RDP. Kill presistant logged sessions with "sudo loginctl terminate-session cX" where X is the session number.
-Example: 
-
-[pi@titan:~/qortal]$ sudo loginctl
-SESSION  UID USER SEAT TTY
-      6 1000 pi        pts/0 (Do not terminate this session as its a term login)
-     c4 1000 pi        Safe to terminate.
-
-Use logout from MATE Desktop to prevent locked screen sessions in the first place.
 
 * Brooklyn NXT Sinclair LTS 5.20.16 grSecurity hardened  
 * Sinclair Desktop based on LTS 5.20.14
