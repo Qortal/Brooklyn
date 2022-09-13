@@ -17,17 +17,6 @@ QortalOS Preview: https://youtu.be/HPk-VhRjNI8
 
 * Because there is a moose on the loose!! His name is Seany. He is going in da mool buff! There's lot of fun for everyone.
 
-  > Furthermore, made the image "crowetic proof" so he wont fuck it up like every single time. Bitch be trippin -_-
-  
-Note for titanMATE: sudo loginctl and check a "c" session if you have problem loggin in on RDP. Kill presistant logged sessions with "sudo loginctl terminate-session cX" where X is the session number.
-Example: 
-
-[pi@titan:~/qortal]$ sudo loginctl
-SESSION  UID USER SEAT TTY
-      6 1000 pi        pts/0 (Do not terminate this session as its a term login)
-     c4 1000 pi        Safe to terminate.
-
-Use logout from MATE Desktop to prevent locked screen sessions in the first place.
 
 * Brooklyn NXT Sinclair LTS 5.20.16 grSecurity hardened  
 * Sinclair Desktop based on LTS 5.20.14
