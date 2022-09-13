@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0
 #
+# To handle mempow else everything will shit bricks
 #
 # -Scare Crowe
 #
 VERSION = 6
 PATCHLEVEL = 0
 SUBLEVEL = 11
-EXTRAVERSION = Mapoose
+EXTRAVERSION = -raziel
 NAME = Torchie The Cat
 
 # *DOCUMENTATION*
