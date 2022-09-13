@@ -38,7 +38,6 @@ static int bcm2711_get_temp(void *data, int *temp)
 	int offset = thermal_zone_get_offset(priv->thermal);
 	u32 val;
 	int ret;
-	long t;
 
 	ret = regmap_read(priv->regmap, AVS_RO_TEMP_STATUS, &val);
 	if (ret)
@@ -50,9 +49,7 @@ static int bcm2711_get_temp(void *data, int *temp)
 	val &= AVS_RO_TEMP_STATUS_DATA_MSK;
 
 	/* Convert a HW code to a temperature reading (millidegree celsius) */
-	t = slope * val + offset;
-
-	*temp = t;
+	*temp = slope * val + offset;
 
 	return 0;
 }
@@ -95,7 +92,7 @@ static int bcm2711_thermal_probe(struct platform_device *pdev)
 						       &bcm2711_thermal_of_ops);
 	if (IS_ERR(thermal)) {
 		ret = PTR_ERR(thermal);
-		dev_err(dev, "could not register sensor: %d\n", ret);
+		dev_err_probe(dev, ret, "could not register sensor: %d\n", ret);
 		return ret;
 	}
 

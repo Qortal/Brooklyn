@@ -797,14 +797,6 @@ void xhci_free_stream_info(struct xhci_hcd *xhci,
 
 /***************** Device context manipulation *************************/
 
-static void xhci_init_endpoint_timer(struct xhci_hcd *xhci,
-		struct xhci_virt_ep *ep)
-{
-	timer_setup(&ep->stop_cmd_timer, xhci_stop_endpoint_command_watchdog,
-		    0);
-	ep->xhci = xhci;
-}
-
 static void xhci_free_tt_info(struct xhci_hcd *xhci,
 		struct xhci_virt_device *virt_dev,
 		int slot_id)
@@ -1009,11 +1001,11 @@ int xhci_alloc_virt_device(struct xhci_hcd *xhci, int slot_id,
 	xhci_dbg(xhci, "Slot %d input ctx = 0x%llx (dma)\n", slot_id,
 			(unsigned long long)dev->in_ctx->dma);
 
-	/* Initialize the cancellation list and watchdog timers for each ep */
+	/* Initialize the cancellation and bandwidth list for each ep */
 	for (i = 0; i < 31; i++) {
 		dev->eps[i].ep_index = i;
 		dev->eps[i].vdev = dev;
-		xhci_init_endpoint_timer(xhci, &dev->eps[i]);
+		dev->eps[i].xhci = xhci;
 		INIT_LIST_HEAD(&dev->eps[i].cancelled_td_list);
 		INIT_LIST_HEAD(&dev->eps[i].bw_endpoint_list);
 	}
@@ -1087,7 +1079,7 @@ static u32 xhci_find_real_port_number(struct xhci_hcd *xhci,
 	struct usb_hcd *hcd;
 
 	if (udev->speed >= USB_SPEED_SUPER)
-		hcd = xhci->shared_hcd;
+		hcd = xhci_get_usb3_hcd(xhci);
 	else
 		hcd = xhci->main_hcd;
 
@@ -1436,6 +1428,7 @@ int xhci_endpoint_init(struct xhci_hcd *xhci,
 	unsigned int ep_index;
 	struct xhci_ep_ctx *ep_ctx;
 	struct xhci_ring *ep_ring;
+	struct usb_interface_cache *intfc;
 	unsigned int max_packet;
 	enum xhci_ring_type ring_type;
 	u32 max_esit_payload;
@@ -1445,6 +1438,8 @@ int xhci_endpoint_init(struct xhci_hcd *xhci,
 	unsigned int mult;
 	unsigned int avg_trb_len;
 	unsigned int err_count = 0;
+	unsigned int is_ums_dev = 0;
+	unsigned int i;
 
 	ep_index = xhci_get_endpoint_index(&ep->desc);
 	ep_ctx = xhci_get_ep_ctx(xhci, virt_dev->in_ctx, ep_index);
@@ -1476,8 +1471,34 @@ int xhci_endpoint_init(struct xhci_hcd *xhci,
 
 	mult = xhci_get_endpoint_mult(udev, ep);
 	max_packet = usb_endpoint_maxp(&ep->desc);
-	max_burst = xhci_get_endpoint_max_burst(udev, ep);
 	avg_trb_len = max_esit_payload;
+
+	/*
+	 * VL805 errata - Bulk OUT bursts to superspeed mass-storage
+	 * devices behind hub ports can cause data corruption with
+	 * non-wMaxPacket-multiple transfers.
+	 */
+	for (i = 0; i < udev->config->desc.bNumInterfaces; i++) {
+		intfc = udev->config->intf_cache[i];
+		/*
+		 * Slight hack - look at interface altsetting 0, which
+		 * should be the UMS bulk-only interface. If the class
+		 * matches, then we disable out bursts for all OUT
+		 * endpoints because endpoint assignments may change
+		 * between alternate settings.
+		 */
+		if (intfc->altsetting[0].desc.bInterfaceClass ==
+		    USB_CLASS_MASS_STORAGE) {
+			is_ums_dev = 1;
+			break;
+		}
+	}
+	if (xhci->quirks & XHCI_VLI_SS_BULK_OUT_BUG &&
+	    usb_endpoint_is_bulk_out(&ep->desc) && is_ums_dev &&
+	    udev->route)
+		max_burst = 0;
+	else
+		max_burst = xhci_get_endpoint_max_burst(udev, ep);
 
 	/* FIXME dig Mult and streams info out of ep companion desc */
 
@@ -2377,10 +2398,11 @@ static int xhci_setup_port_arrays(struct xhci_hcd *xhci, gfp_t flags)
 		xhci->usb2_rhub.num_ports = USB_MAXCHILDREN;
 	}
 
-	/*
-	 * Note we could have all USB 3.0 ports, or all USB 2.0 ports.
-	 * Not sure how the USB core will handle a hub with no ports...
-	 */
+	if (!xhci->usb2_rhub.num_ports)
+		xhci_info(xhci, "USB2 root hub has no ports\n");
+
+	if (!xhci->usb3_rhub.num_ports)
+		xhci_info(xhci, "USB3 root hub has no ports\n");
 
 	xhci_create_rhub_port_array(xhci, &xhci->usb2_rhub, flags);
 	xhci_create_rhub_port_array(xhci, &xhci->usb3_rhub, flags);

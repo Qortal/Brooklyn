@@ -774,7 +774,7 @@ speed = "LOW"; break; default:
 				     speed;}
 		   )) ;
 	DWC_PRINTF("  Max packet size: %d\n",
-		   usb_maxpacket(urb->dev, urb->pipe, usb_pipeout(urb->pipe)));
+		   usb_maxpacket(urb->dev, urb->pipe);
 	DWC_PRINTF("  Data buffer length: %d\n", urb->transfer_buffer_length);
 	DWC_PRINTF("  Transfer buffer: %p, Transfer DMA: %p\n",
 		   urb->transfer_buffer, (void *)urb->transfer_dma);
@@ -860,8 +860,7 @@ static int dwc_otg_urb_enqueue(struct usb_hcd *hcd,
 	dwc_otg_hcd_urb_set_pipeinfo(dwc_otg_urb, usb_pipedevice(urb->pipe),
 				     usb_pipeendpoint(urb->pipe), ep_type,
 				     usb_pipein(urb->pipe),
-				     usb_maxpacket(urb->dev, urb->pipe,
-						   !(usb_pipein(urb->pipe))));
+				     usb_maxpacket(urb->dev, urb->pipe));
 
 	buf = urb->transfer_buffer;
 	if (hcd_uses_dma(hcd) && !buf && urb->transfer_buffer_length) {

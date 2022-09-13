@@ -33,7 +33,6 @@ enum {
 enum snd_bcm2835_route {
 	AUDIO_DEST_AUTO = 0,
 	AUDIO_DEST_HEADPHONES = 1,
-	AUDIO_DEST_HDMI = 2,  // for backwards compatibility.
 	AUDIO_DEST_HDMI0 = 2,
 	AUDIO_DEST_HDMI1 = 3,
 	AUDIO_DEST_MAX,
@@ -60,10 +59,11 @@ struct bcm2835_chip {
 	int volume;
 	int dest;
 	int mute;
+	int index;
 
 	unsigned int opened;
 	unsigned int spdif_status;
-	struct mutex audio_mutex;
+	struct mutex audio_mutex; /* Serialize chip data access */
 
 	struct bcm2835_vchi_ctx *vchi_ctx;
 };
@@ -87,7 +87,7 @@ struct bcm2835_alsa_stream {
 
 int snd_bcm2835_new_ctl(struct bcm2835_chip *chip);
 int snd_bcm2835_new_pcm(struct bcm2835_chip *chip, const char *name,
-			int idx, enum snd_bcm2835_route route,
+			enum snd_bcm2835_route route,
 			u32 numchannels, bool spdif);
 
 int snd_bcm2835_new_hdmi_ctl(struct bcm2835_chip *chip);

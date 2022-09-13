@@ -415,8 +415,7 @@ static const struct regmap_config regmap_config = {
         .max_register = 0x13,
 };
 
-static int pcf8523_probe(struct i2c_client *client,
-			 const struct i2c_device_id *id)
+static int pcf8523_probe(struct i2c_client *client)
 {
 	struct pcf8523 *pcf8523;
 	struct rtc_device *rtc;
@@ -510,7 +509,7 @@ static struct i2c_driver pcf8523_driver = {
 		.name = "rtc-pcf8523",
 		.of_match_table = pcf8523_of_match,
 	},
-	.probe = pcf8523_probe,
+	.probe_new = pcf8523_probe,
 	.id_table = pcf8523_id,
 };
 module_i2c_driver(pcf8523_driver);

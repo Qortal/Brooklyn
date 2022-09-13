@@ -22,6 +22,8 @@
 #ifndef MMAL_PARAMETERS_H
 #define MMAL_PARAMETERS_H
 
+#include <linux/math.h>
+
 /** Common parameter ID group, used with many types of component. */
 #define MMAL_PARAMETER_GROUP_COMMON		(0 << 16)
 /** Camera-specific parameter ID group. */
@@ -283,11 +285,6 @@ enum mmal_parameter_camera_type {
 	MMAL_PARAMETER_JPEG_IJG_SCALING,
 };
 
-struct mmal_parameter_rational {
-	s32 num;    /**< Numerator */
-	s32 den;    /**< Denominator */
-};
-
 enum mmal_parameter_camera_config_timestamp_mode {
 	MMAL_PARAM_TIMESTAMP_MODE_ZERO = 0, /* Always timestamp frames as 0 */
 	MMAL_PARAM_TIMESTAMP_MODE_RAW_STC,  /* Use the raw STC value
@@ -303,9 +300,9 @@ enum mmal_parameter_camera_config_timestamp_mode {
 
 struct mmal_parameter_fps_range {
 	/**< Low end of the permitted framerate range */
-	struct mmal_parameter_rational	fps_low;
+	struct s32_fract	fps_low;
 	/**< High end of the permitted framerate range */
-	struct mmal_parameter_rational	fps_high;
+	struct s32_fract	fps_high;
 };
 
 /* camera configuration parameter */
@@ -414,8 +411,8 @@ enum MMAL_PARAM_FLICKERAVOID {
 };
 
 struct mmal_parameter_awbgains {
-	struct mmal_parameter_rational r_gain;	/**< Red gain */
-	struct mmal_parameter_rational b_gain;	/**< Blue gain */
+	struct s32_fract r_gain;	/**< Red gain */
+	struct s32_fract b_gain;	/**< Blue gain */
 };
 
 /** Manner of video rate control */
@@ -896,7 +893,7 @@ struct mmal_parameter_camera_info {
 };
 
 struct mmal_parameter_ccm {
-	struct mmal_parameter_rational ccm[3][3];
+	struct s32_fract ccm[3][3];
 	s32 offsets[3];
 };
 
@@ -950,7 +947,7 @@ struct mmal_parameter_black_level {
 struct mmal_parameter_geq {
 	u32 enabled;
 	u32 offset;
-	struct mmal_parameter_rational slope;
+	struct s32_fract slope;
 };
 
 #define MMAL_NUM_GAMMA_PTS 33
@@ -974,15 +971,15 @@ struct mmal_parameter_colour_denoise {
 struct mmal_parameter_denoise {
 	u32 enabled;
 	u32 constant;
-	struct mmal_parameter_rational slope;
-	struct mmal_parameter_rational strength;
+	struct s32_fract slope;
+	struct s32_fract strength;
 };
 
 struct mmal_parameter_sharpen {
 	u32 enabled;
-	struct mmal_parameter_rational threshold;
-	struct mmal_parameter_rational strength;
-	struct mmal_parameter_rational limit;
+	struct s32_fract threshold;
+	struct s32_fract strength;
+	struct s32_fract limit;
 };
 
 enum mmal_dpc_mode {
