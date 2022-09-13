@@ -108,17 +108,10 @@ struct clk {
 /***           runtime pm          ***/
 static int clk_pm_runtime_get(struct clk_core *core)
 {
-	int ret;
-
 	if (!core->rpm_enabled)
 		return 0;
 
-	ret = pm_runtime_get_sync(core->dev);
-	if (ret < 0) {
-		pm_runtime_put_noidle(core->dev);
-		return ret;
-	}
-	return 0;
+	return pm_runtime_resume_and_get(core->dev);
 }
 
 static void clk_pm_runtime_put(struct clk_core *core)
@@ -571,15 +564,16 @@ static bool clk_core_has_parent(struct clk_core *core, struct clk_core *parent)
 }
 
 static void
-clk_core_forward_rate_req(struct clk_core * const core,
-			  struct clk_core * const parent,
-			  struct clk_rate_request * const old_req,
-			  struct clk_rate_request *req)
+clk_core_forward_rate_req(struct clk_core *core,
+			  const struct clk_rate_request *old_req,
+			  struct clk_core *parent,
+			  struct clk_rate_request *req,
+			  unsigned long parent_rate)
 {
 	if (WARN_ON(!clk_core_has_parent(core, parent)))
 		return;
 
-	clk_core_init_rate_req(parent, req, old_req->rate);
+	clk_core_init_rate_req(parent, req, parent_rate);
 
 	if (req->min_rate < old_req->min_rate)
 		req->min_rate = old_req->min_rate;
@@ -607,7 +601,7 @@ int clk_mux_determine_rate_flags(struct clk_hw *hw,
 				return 0;
 			}
 
-			clk_core_forward_rate_req(core, parent, req, &parent_req);
+			clk_core_forward_rate_req(core, req, parent, &parent_req, req->rate);
 			ret = clk_core_round_rate_nolock(parent, &parent_req);
 			if (ret)
 				return ret;
@@ -634,7 +628,7 @@ int clk_mux_determine_rate_flags(struct clk_hw *hw,
 		if (core->flags & CLK_SET_RATE_PARENT) {
 			struct clk_rate_request parent_req;
 
-			clk_core_forward_rate_req(core, parent, req, &parent_req);
+			clk_core_forward_rate_req(core, req, parent, &parent_req, req->rate);
 			ret = clk_core_round_rate_nolock(parent, &parent_req);
 			if (ret)
 				continue;
@@ -688,6 +682,22 @@ static void clk_core_get_boundaries(struct clk_core *core,
 	hlist_for_each_entry(clk_user, &core->clks, clks_node)
 		*max_rate = min(*max_rate, clk_user->max_rate);
 }
+
+/*
+ * clk_hw_get_rate_range() - returns the clock rate range for a hw clk
+ * @hw: the hw clk we want to get the range from
+ * @min_rate: pointer to the variable that will hold the minimum
+ * @max_rate: pointer to the variable that will hold the maximum
+ *
+ * Fills the @min_rate and @max_rate variables with the minimum and
+ * maximum that clock can reach.
+ */
+void clk_hw_get_rate_range(struct clk_hw *hw, unsigned long *min_rate,
+			   unsigned long *max_rate)
+{
+	clk_core_get_boundaries(hw->core, min_rate, max_rate);
+}
+EXPORT_SYMBOL_GPL(clk_hw_get_rate_range);
 
 static bool clk_core_check_boundaries(struct clk_core *core,
 				      unsigned long min_rate,
@@ -904,10 +914,9 @@ static void clk_core_unprepare(struct clk_core *core)
 	if (core->ops->unprepare)
 		core->ops->unprepare(core->hw);
 
-	clk_pm_runtime_put(core);
-
 	trace_clk_unprepare_complete(core);
 	clk_core_unprepare(core->parent);
+	clk_pm_runtime_put(core);
 }
 
 static void clk_core_unprepare_lock(struct clk_core *core)
@@ -1405,7 +1414,19 @@ static int clk_core_determine_round_nolock(struct clk_core *core,
 	if (!core)
 		return 0;
 
-	req->rate = clamp(req->rate, req->min_rate, req->max_rate);
+	/*
+	 * Some clock providers hand-craft their clk_rate_requests and
+	 * might not fill min_rate and max_rate.
+	 *
+	 * If it's the case, clamping the rate is equivalent to setting
+	 * the rate to 0 which is bad. Skip the clamping but complain so
+	 * that it gets fixed, hopefully.
+	 */
+	if (!req->min_rate && !req->max_rate)
+		pr_warn("%s: %s: clk_rate_request has initialized min or max rate.\n",
+			__func__, core->name);
+	else
+		req->rate = clamp(req->rate, req->min_rate, req->max_rate);
 
 	/*
 	 * At this point, core protection will be disabled
@@ -1461,10 +1482,10 @@ static void clk_core_init_rate_req(struct clk_core * const core,
  * @req: the clk_rate_request structure we want to initialise
  * @rate: the rate which is to be requested
  *
- * Initializes and fills a clk_rate_request structure to submit to
- * __clk_determine_rate or similar functions.
+ * Initializes a clk_rate_request structure to submit to
+ * __clk_determine_rate() or similar functions.
  */
-void clk_hw_init_rate_request(struct clk_hw * const hw,
+void clk_hw_init_rate_request(const struct clk_hw *hw,
 			      struct clk_rate_request *req,
 			      unsigned long rate)
 {
@@ -1474,6 +1495,31 @@ void clk_hw_init_rate_request(struct clk_hw * const hw,
 	clk_core_init_rate_req(hw->core, req, rate);
 }
 EXPORT_SYMBOL_GPL(clk_hw_init_rate_request);
+
+/**
+ * clk_hw_forward_rate_request - Forwards a clk_rate_request to a clock's parent
+ * @hw: the original clock that got the rate request
+ * @old_req: the original clk_rate_request structure we want to forward
+ * @parent: the clk we want to forward @old_req to
+ * @req: the clk_rate_request structure we want to initialise
+ * @parent_rate: The rate which is to be requested to @parent
+ *
+ * Initializes a clk_rate_request structure to submit to a clock parent
+ * in __clk_determine_rate() or similar functions.
+ */
+void clk_hw_forward_rate_request(const struct clk_hw *hw,
+				 const struct clk_rate_request *old_req,
+				 const struct clk_hw *parent,
+				 struct clk_rate_request *req,
+				 unsigned long parent_rate)
+{
+	if (WARN_ON(!hw || !old_req || !parent || !req))
+		return;
+
+	clk_core_forward_rate_req(hw->core, old_req,
+				  parent->core, req,
+				  parent_rate);
+}
 
 static bool clk_core_can_round(struct clk_core * const core)
 {
@@ -1498,7 +1544,7 @@ static int clk_core_round_rate_nolock(struct clk_core *core,
 	if (core->flags & CLK_SET_RATE_PARENT) {
 		struct clk_rate_request parent_req;
 
-		clk_core_forward_rate_req(core, core->parent, req, &parent_req);
+		clk_core_forward_rate_req(core, req, core->parent, &parent_req, req->rate);
 		ret = clk_core_round_rate_nolock(core->parent, &parent_req);
 		if (ret)
 			return ret;
@@ -1760,8 +1806,9 @@ static unsigned long clk_core_get_rate_recalc(struct clk_core *core)
  * @clk: the clk whose rate is being returned
  *
  * Simply returns the cached rate of the clk, unless CLK_GET_RATE_NOCACHE flag
- * is set, which means a recalc_rate will be issued.
- * If clk is NULL then returns 0.
+ * is set, which means a recalc_rate will be issued. Can be called regardless of
+ * the clock enabledness. If clk is NULL, or if an error occurred, then returns
+ * 0.
  */
 unsigned long clk_get_rate(struct clk *clk)
 {
@@ -2477,12 +2524,6 @@ static int clk_set_rate_range_nolock(struct clk *clk,
 	if (clk->core->flags & CLK_GET_RATE_NOCACHE)
 		rate = clk_core_get_rate_recalc(clk->core);
 
-	if (clk->core->orphan && !rate) {
-		pr_warn("%s: clk %s: Clock is orphan and doesn't have a rate!\n",
-			__func__, clk->core->name);
-		goto out;
-	}
-
 	/*
 	 * Since the boundaries have been changed, let's give the
 	 * opportunity to the provider to adjust the clock rate based on
@@ -2590,7 +2631,9 @@ void clk_get_rate_range(struct clk *clk, unsigned long *min, unsigned long *max)
 	if (!clk || !min || !max)
 		return;
 
+	clk_prepare_lock();
 	clk_core_get_boundaries(clk->core, min, max);
+	clk_prepare_unlock();
 }
 EXPORT_SYMBOL_GPL(clk_get_rate_range);
 
@@ -4421,54 +4464,6 @@ int devm_clk_hw_register(struct device *dev, struct clk_hw *hw)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(devm_clk_hw_register);
-
-static int devm_clk_match(struct device *dev, void *res, void *data)
-{
-	struct clk *c = res;
-	if (WARN_ON(!c))
-		return 0;
-	return c == data;
-}
-
-static int devm_clk_hw_match(struct device *dev, void *res, void *data)
-{
-	struct clk_hw *hw = res;
-
-	if (WARN_ON(!hw))
-		return 0;
-	return hw == data;
-}
-
-/**
- * devm_clk_unregister - resource managed clk_unregister()
- * @dev: device that is unregistering the clock data
- * @clk: clock to unregister
- *
- * Deallocate a clock allocated with devm_clk_register(). Normally
- * this function will not need to be called and the resource management
- * code will ensure that the resource is freed.
- */
-void devm_clk_unregister(struct device *dev, struct clk *clk)
-{
-	WARN_ON(devres_release(dev, devm_clk_unregister_cb, devm_clk_match, clk));
-}
-EXPORT_SYMBOL_GPL(devm_clk_unregister);
-
-/**
- * devm_clk_hw_unregister - resource managed clk_hw_unregister()
- * @dev: device that is unregistering the hardware-specific clock data
- * @hw: link to hardware-specific clock data
- *
- * Unregister a clk_hw registered with devm_clk_hw_register(). Normally
- * this function will not need to be called and the resource management
- * code will ensure that the resource is freed.
- */
-void devm_clk_hw_unregister(struct device *dev, struct clk_hw *hw)
-{
-	WARN_ON(devres_release(dev, devm_clk_hw_unregister_cb, devm_clk_hw_match,
-				hw));
-}
-EXPORT_SYMBOL_GPL(devm_clk_hw_unregister);
 
 static void devm_clk_release(struct device *dev, void *res)
 {

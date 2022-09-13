@@ -109,9 +109,9 @@
 	};
 
 	fragment@14 {
-		target = <&audio>;
+		target = <&chosen>;
 		__overlay__  {
-		    brcm,disable-hdmi;
+			bootargs = "snd_bcm2835.enable_hdmi=0";
 		};
 	};
 
@@ -119,5 +119,6 @@
 		audio   = <0>,"!13";
 		noaudio = <0>,"=13";
 		composite = <0>, "=11";
+		nohdmi = <0>, "-1-7";
 	};
 };

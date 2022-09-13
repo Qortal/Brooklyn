@@ -55,7 +55,6 @@
 	 * This is mostly based on the official GPU firmware DT blob.
 	 *
 	 * Legend:
-	 * "NC" = not connected (no rail from the SoC)
 	 * "FOO" = GPIO line named "FOO" on the schematic
 	 * "FOO_N" = GPIO line named "FOO" on schematic, active low
 	 */
@@ -155,9 +154,4 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&uart1_gpio14>;
 	status = "okay";
-};
-
-/* i2c on camera/display connector is gpio 44&45 */
-&i2c0mux {
-	pinctrl-1 = <&i2c0_gpio44>;
 };

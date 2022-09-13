@@ -1,9 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0
 /dts-v1/;
+#define BCM2711
+#define i2c0 i2c0if
 #include "bcm2711.dtsi"
-#include "bcm2711-rpi.dtsi"
-//#include "bcm283x-rpi-usb-peripheral.dtsi"
 #include "bcm283x-rpi-wifi-bt.dtsi"
+#undef i2c0
+#include "bcm270x.dtsi"
+#define i2c0 i2c0mux
+#include "bcm2711-rpi.dtsi"
+#undef i2c0
+//#include "bcm283x-rpi-usb-peripheral.dtsi"
 
 / {
 	compatible = "raspberrypi,4-model-b", "brcm,bcm2711";
@@ -244,9 +250,6 @@
 // =============================================
 // Downstream rpi- changes
 
-#define BCM2711
-
-#include "bcm270x.dtsi"
 #include "bcm271x-rpi-bt.dtsi"
 
 / {
@@ -262,7 +265,7 @@
 
 / {
 	chosen {
-		bootargs = "coherent_pool=1M 8250.nr_uarts=1 snd_bcm2835.enable_compat_alsa=0 snd_bcm2835.enable_hdmi=1";
+		bootargs = "coherent_pool=1M 8250.nr_uarts=1 snd_bcm2835.enable_headphones=0";
 	};
 
 	aliases {
@@ -497,6 +500,7 @@
 	audio_pins: audio_pins {
 		brcm,pins = <40 41>;
 		brcm,function = <4>;
+		brcm,pull = <0>;
 	};
 };
 
@@ -518,7 +522,7 @@
 	status = "disabled";
 };
 
-&audio {
+&vchiq {
 	pinctrl-names = "default";
 	pinctrl-0 = <&audio_pins>;
 };
@@ -532,6 +536,8 @@ cam0_reg: &cam_dummy_reg {
 
 / {
 	__overrides__ {
+		audio = <&chosen>,"bootargs{on='snd_bcm2835.enable_headphones=1 snd_bcm2835.enable_hdmi=1',off='snd_bcm2835.enable_headphones=0 snd_bcm2835.enable_hdmi=0'}";
+
 		act_led_gpio = <&act_led>,"gpios:4";
 		act_led_activelow = <&act_led>,"gpios:8";
 		act_led_trigger = <&act_led>,"linux,default-trigger";

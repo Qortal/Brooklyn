@@ -18,8 +18,10 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_uapi.h>
+#include <drm/drm_blend.h>
 #include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_fourcc.h>
+#include <drm/drm_framebuffer.h>
 #include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_plane_helper.h>
 
@@ -63,105 +65,175 @@ static const struct hvs_format {
 		.drm = DRM_FORMAT_RGB565,
 		.hvs = HVS_PIXEL_FORMAT_RGB565,
 		.pixel_order = HVS_PIXEL_ORDER_XRGB,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_XRGB,
 	},
 	{
 		.drm = DRM_FORMAT_BGR565,
 		.hvs = HVS_PIXEL_FORMAT_RGB565,
 		.pixel_order = HVS_PIXEL_ORDER_XBGR,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_XBGR,
 	},
 	{
 		.drm = DRM_FORMAT_ARGB1555,
 		.hvs = HVS_PIXEL_FORMAT_RGBA5551,
 		.pixel_order = HVS_PIXEL_ORDER_ABGR,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_ARGB,
 	},
 	{
 		.drm = DRM_FORMAT_XRGB1555,
 		.hvs = HVS_PIXEL_FORMAT_RGBA5551,
 		.pixel_order = HVS_PIXEL_ORDER_ABGR,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_ARGB,
 	},
 	{
 		.drm = DRM_FORMAT_RGB888,
 		.hvs = HVS_PIXEL_FORMAT_RGB888,
 		.pixel_order = HVS_PIXEL_ORDER_XRGB,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_XRGB,
 	},
 	{
 		.drm = DRM_FORMAT_BGR888,
 		.hvs = HVS_PIXEL_FORMAT_RGB888,
 		.pixel_order = HVS_PIXEL_ORDER_XBGR,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_XBGR,
 	},
 	{
 		.drm = DRM_FORMAT_YUV422,
 		.hvs = HVS_PIXEL_FORMAT_YCBCR_YUV422_3PLANE,
 		.pixel_order = HVS_PIXEL_ORDER_XYCBCR,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_XYCBCR,
 	},
 	{
 		.drm = DRM_FORMAT_YVU422,
 		.hvs = HVS_PIXEL_FORMAT_YCBCR_YUV422_3PLANE,
 		.pixel_order = HVS_PIXEL_ORDER_XYCRCB,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_XYCRCB,
 	},
 	{
 		.drm = DRM_FORMAT_YUV420,
 		.hvs = HVS_PIXEL_FORMAT_YCBCR_YUV420_3PLANE,
 		.pixel_order = HVS_PIXEL_ORDER_XYCBCR,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_XYCBCR,
 	},
 	{
 		.drm = DRM_FORMAT_YVU420,
 		.hvs = HVS_PIXEL_FORMAT_YCBCR_YUV420_3PLANE,
 		.pixel_order = HVS_PIXEL_ORDER_XYCRCB,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_XYCRCB,
 	},
 	{
 		.drm = DRM_FORMAT_NV12,
 		.hvs = HVS_PIXEL_FORMAT_YCBCR_YUV420_2PLANE,
 		.pixel_order = HVS_PIXEL_ORDER_XYCBCR,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_XYCBCR,
 	},
 	{
 		.drm = DRM_FORMAT_NV21,
 		.hvs = HVS_PIXEL_FORMAT_YCBCR_YUV420_2PLANE,
 		.pixel_order = HVS_PIXEL_ORDER_XYCRCB,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_XYCRCB,
 	},
 	{
 		.drm = DRM_FORMAT_NV16,
 		.hvs = HVS_PIXEL_FORMAT_YCBCR_YUV422_2PLANE,
 		.pixel_order = HVS_PIXEL_ORDER_XYCBCR,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_XYCBCR,
 	},
 	{
 		.drm = DRM_FORMAT_NV61,
 		.hvs = HVS_PIXEL_FORMAT_YCBCR_YUV422_2PLANE,
 		.pixel_order = HVS_PIXEL_ORDER_XYCRCB,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_XYCRCB,
 	},
 	{
 		.drm = DRM_FORMAT_P030,
 		.hvs = HVS_PIXEL_FORMAT_YCBCR_10BIT,
-		.pixel_order = HVS_PIXEL_ORDER_XYCBCR,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_XYCBCR,
 		.hvs5_only = true,
 	},
 	{
 		.drm = DRM_FORMAT_XRGB2101010,
 		.hvs = HVS_PIXEL_FORMAT_RGBA1010102,
-		.pixel_order = HVS_PIXEL_ORDER_ABGR,
 		.pixel_order_hvs5 = HVS_PIXEL_ORDER_ARGB,
 		.hvs5_only = true,
 	},
 	{
 		.drm = DRM_FORMAT_ARGB2101010,
 		.hvs = HVS_PIXEL_FORMAT_RGBA1010102,
-		.pixel_order = HVS_PIXEL_ORDER_ABGR,
 		.pixel_order_hvs5 = HVS_PIXEL_ORDER_ARGB,
 		.hvs5_only = true,
 	},
 	{
 		.drm = DRM_FORMAT_ABGR2101010,
 		.hvs = HVS_PIXEL_FORMAT_RGBA1010102,
-		.pixel_order = HVS_PIXEL_ORDER_ARGB,
 		.pixel_order_hvs5 = HVS_PIXEL_ORDER_ABGR,
 		.hvs5_only = true,
 	},
 	{
 		.drm = DRM_FORMAT_XBGR2101010,
 		.hvs = HVS_PIXEL_FORMAT_RGBA1010102,
-		.pixel_order = HVS_PIXEL_ORDER_ARGB,
 		.pixel_order_hvs5 = HVS_PIXEL_ORDER_ABGR,
 		.hvs5_only = true,
+	},
+	{
+		.drm = DRM_FORMAT_RGB332,
+		.hvs = HVS_PIXEL_FORMAT_RGB332,
+		.pixel_order = HVS_PIXEL_ORDER_ARGB,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_ARGB,
+	},
+	{
+		.drm = DRM_FORMAT_BGR233,
+		.hvs = HVS_PIXEL_FORMAT_RGB332,
+		.pixel_order = HVS_PIXEL_ORDER_ABGR,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_ABGR,
+	},
+	{
+		.drm = DRM_FORMAT_XRGB4444,
+		.hvs = HVS_PIXEL_FORMAT_RGBA4444,
+		.pixel_order = HVS_PIXEL_ORDER_ABGR,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_ARGB,
+	},
+	{
+		.drm = DRM_FORMAT_ARGB4444,
+		.hvs = HVS_PIXEL_FORMAT_RGBA4444,
+		.pixel_order = HVS_PIXEL_ORDER_ABGR,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_ARGB,
+	},
+	{
+		.drm = DRM_FORMAT_XBGR4444,
+		.hvs = HVS_PIXEL_FORMAT_RGBA4444,
+		.pixel_order = HVS_PIXEL_ORDER_ARGB,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_ABGR,
+	},
+	{
+		.drm = DRM_FORMAT_ABGR4444,
+		.hvs = HVS_PIXEL_FORMAT_RGBA4444,
+		.pixel_order = HVS_PIXEL_ORDER_ARGB,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_ABGR,
+	},
+	{
+		.drm = DRM_FORMAT_BGRX4444,
+		.hvs = HVS_PIXEL_FORMAT_RGBA4444,
+		.pixel_order = HVS_PIXEL_ORDER_RGBA,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_BGRA,
+	},
+	{
+		.drm = DRM_FORMAT_BGRA4444,
+		.hvs = HVS_PIXEL_FORMAT_RGBA4444,
+		.pixel_order = HVS_PIXEL_ORDER_RGBA,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_BGRA,
+	},
+	{
+		.drm = DRM_FORMAT_RGBX4444,
+		.hvs = HVS_PIXEL_FORMAT_RGBA4444,
+		.pixel_order = HVS_PIXEL_ORDER_BGRA,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_RGBA,
+	},
+	{
+		.drm = DRM_FORMAT_RGBA4444,
+		.hvs = HVS_PIXEL_FORMAT_RGBA4444,
+		.pixel_order = HVS_PIXEL_ORDER_BGRA,
+		.pixel_order_hvs5 = HVS_PIXEL_ORDER_RGBA,
 	},
 };
 
@@ -542,10 +614,10 @@ static u32 vc4_lbm_size(struct drm_plane_state *state)
 	}
 
 	/* Align it to 64 or 128 (hvs5) bytes */
-	lbm = roundup(lbm, vc4->hvs->hvs5 ? 128 : 64);
+	lbm = roundup(lbm, vc4->is_vc5 ? 128 : 64);
 
 	/* Each "word" of the LBM memory contains 2 or 4 (hvs5) pixels */
-	lbm /= vc4->hvs->hvs5 ? 4 : 2;
+	lbm /= vc4->is_vc5 ? 4 : 2;
 
 	return lbm;
 }
@@ -664,7 +736,7 @@ static int vc4_plane_allocate_lbm(struct drm_plane_state *state)
 		ret = drm_mm_insert_node_generic(&vc4->hvs->lbm_mm,
 						 &vc4_state->lbm,
 						 lbm_size,
-						 vc4->hvs->hvs5 ? 64 : 32,
+						 vc4->is_vc5 ? 64 : 32,
 						 0, 0);
 		spin_unlock_irqrestore(&vc4->hvs->mm_lock, irqflags);
 
@@ -1039,7 +1111,7 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 	mix_plane_alpha = state->alpha != DRM_BLEND_ALPHA_OPAQUE &&
 			  fb->format->has_alpha;
 
-	if (!vc4->hvs->hvs5) {
+	if (!vc4->is_vc5) {
 	/* Control word */
 		vc4_dlist_write(vc4_state,
 				SCALER_CTL0_VALID |
@@ -1081,15 +1153,10 @@ static int vc4_plane_mode_set(struct drm_plane *plane,
 		vc4_dlist_write(vc4_state, 0xc0c0c0c0);
 
 	} else {
-		u32 hvs_pixel_order = format->pixel_order;
-
-		if (format->pixel_order_hvs5)
-			hvs_pixel_order = format->pixel_order_hvs5;
-
 		/* Control word */
 		vc4_dlist_write(vc4_state,
 				SCALER_CTL0_VALID |
-				(hvs_pixel_order << SCALER_CTL0_ORDER_SHIFT) |
+				(format->pixel_order_hvs5 << SCALER_CTL0_ORDER_SHIFT) |
 				(hvs_format << SCALER_CTL0_PIXEL_FORMAT_SHIFT) |
 				VC4_SET_FIELD(tiling, SCALER_CTL0_TILING) |
 				(vc4_state->is_unity ?
@@ -1429,6 +1496,10 @@ static int vc4_plane_atomic_async_check(struct drm_plane *plane,
 
 	old_vc4_state = to_vc4_plane_state(plane->state);
 	new_vc4_state = to_vc4_plane_state(new_plane_state);
+
+	if (!new_vc4_state->hw_dlist)
+		return -EINVAL;
+
 	if (old_vc4_state->dlist_count != new_vc4_state->dlist_count ||
 	    old_vc4_state->pos0_offset != new_vc4_state->pos0_offset ||
 	    old_vc4_state->pos2_offset != new_vc4_state->pos2_offset ||
@@ -1458,7 +1529,6 @@ static int vc4_prepare_fb(struct drm_plane *plane,
 			  struct drm_plane_state *state)
 {
 	struct vc4_bo *bo;
-	int ret;
 
 	if (!state->fb)
 		return 0;
@@ -1470,11 +1540,7 @@ static int vc4_prepare_fb(struct drm_plane *plane,
 	if (plane->state->fb == state->fb)
 		return 0;
 
-	ret = vc4_bo_inc_usecnt(bo);
-	if (ret)
-		return ret;
-
-	return 0;
+	return vc4_bo_inc_usecnt(bo);
 }
 
 static void vc4_cleanup_fb(struct drm_plane *plane,
@@ -1494,6 +1560,13 @@ static const struct drm_plane_helper_funcs vc4_plane_helper_funcs = {
 	.atomic_update = vc4_plane_atomic_update,
 	.prepare_fb = vc4_prepare_fb,
 	.cleanup_fb = vc4_cleanup_fb,
+	.atomic_async_check = vc4_plane_atomic_async_check,
+	.atomic_async_update = vc4_plane_atomic_async_update,
+};
+
+static const struct drm_plane_helper_funcs vc5_plane_helper_funcs = {
+	.atomic_check = vc4_plane_atomic_check,
+	.atomic_update = vc4_plane_atomic_update,
 	.atomic_async_check = vc4_plane_atomic_async_check,
 	.atomic_async_update = vc4_plane_atomic_async_update,
 };
@@ -1541,6 +1614,16 @@ static bool vc4_format_mod_supported(struct drm_plane *plane,
 	case DRM_FORMAT_BGRX1010102:
 	case DRM_FORMAT_RGBA1010102:
 	case DRM_FORMAT_BGRA1010102:
+	case DRM_FORMAT_XRGB4444:
+	case DRM_FORMAT_ARGB4444:
+	case DRM_FORMAT_XBGR4444:
+	case DRM_FORMAT_ABGR4444:
+	case DRM_FORMAT_RGBX4444:
+	case DRM_FORMAT_RGBA4444:
+	case DRM_FORMAT_BGRX4444:
+	case DRM_FORMAT_BGRA4444:
+	case DRM_FORMAT_RGB332:
+	case DRM_FORMAT_BGR233:
 	case DRM_FORMAT_YUV422:
 	case DRM_FORMAT_YVU422:
 	case DRM_FORMAT_YUV420:
@@ -1555,8 +1638,6 @@ static bool vc4_format_mod_supported(struct drm_plane *plane,
 static const struct drm_plane_funcs vc4_plane_funcs = {
 	.update_plane = drm_atomic_helper_update_plane,
 	.disable_plane = drm_atomic_helper_disable_plane,
-	.destroy = drm_plane_cleanup,
-	.set_property = NULL,
 	.reset = vc4_plane_reset,
 	.atomic_duplicate_state = vc4_plane_duplicate_state,
 	.atomic_destroy_state = vc4_plane_destroy_state,
@@ -1564,16 +1645,15 @@ static const struct drm_plane_funcs vc4_plane_funcs = {
 };
 
 struct drm_plane *vc4_plane_init(struct drm_device *dev,
-				 enum drm_plane_type type)
+				 enum drm_plane_type type,
+				 uint32_t possible_crtcs)
 {
-	struct drm_plane *plane = NULL;
+	struct vc4_dev *vc4 = to_vc4_dev(dev);
+	struct drm_plane *plane;
 	struct vc4_plane *vc4_plane;
 	u32 formats[ARRAY_SIZE(hvs_formats)];
 	int num_formats = 0;
-	int ret = 0;
 	unsigned i;
-	bool hvs5 = of_device_is_compatible(dev->dev->of_node,
-					    "brcm,bcm2711-vc5");
 	static const uint64_t modifiers[] = {
 		DRM_FORMAT_MOD_BROADCOM_VC4_T_TILED,
 		DRM_FORMAT_MOD_BROADCOM_SAND128,
@@ -1583,27 +1663,26 @@ struct drm_plane *vc4_plane_init(struct drm_device *dev,
 		DRM_FORMAT_MOD_INVALID
 	};
 
-	vc4_plane = devm_kzalloc(dev->dev, sizeof(*vc4_plane),
-				 GFP_KERNEL);
-	if (!vc4_plane)
-		return ERR_PTR(-ENOMEM);
-
 	for (i = 0; i < ARRAY_SIZE(hvs_formats); i++) {
-		if (!hvs_formats[i].hvs5_only || hvs5) {
+		if (!hvs_formats[i].hvs5_only || vc4->is_vc5) {
 			formats[num_formats] = hvs_formats[i].drm;
 			num_formats++;
 		}
 	}
 
+	vc4_plane = drmm_universal_plane_alloc(dev, struct vc4_plane, base,
+					       possible_crtcs,
+					       &vc4_plane_funcs,
+					       formats, num_formats,
+					       modifiers, type, NULL);
+	if (IS_ERR(vc4_plane))
+		return ERR_CAST(vc4_plane);
 	plane = &vc4_plane->base;
-	ret = drm_universal_plane_init(dev, plane, 0,
-				       &vc4_plane_funcs,
-				       formats, num_formats,
-				       modifiers, type, NULL);
-	if (ret)
-		return ERR_PTR(ret);
 
-	drm_plane_helper_add(plane, &vc4_plane_helper_funcs);
+	if (vc4->is_vc5)
+		drm_plane_helper_add(plane, &vc5_plane_helper_funcs);
+	else
+		drm_plane_helper_add(plane, &vc4_plane_helper_funcs);
 
 	drm_plane_create_alpha_property(plane);
 	drm_plane_create_blend_mode_property(plane,
@@ -1652,13 +1731,11 @@ int vc4_plane_create_additional_planes(struct drm_device *drm)
 	 */
 	for (i = 0; i < VC4_NUM_OVERLAY_PLANES; i++) {
 		struct drm_plane *plane =
-			vc4_plane_init(drm, DRM_PLANE_TYPE_OVERLAY);
+			vc4_plane_init(drm, DRM_PLANE_TYPE_OVERLAY,
+				       GENMASK(drm->mode_config.num_crtc - 1, 0));
 
 		if (IS_ERR(plane))
 			continue;
-
-		plane->possible_crtcs =
-			GENMASK(drm->mode_config.num_crtc - 1, 0);
 
 		/* Create zpos property. Max of all the overlays + 1 primary +
 		 * 1 cursor plane on a crtc.
@@ -1672,9 +1749,9 @@ int vc4_plane_create_additional_planes(struct drm_device *drm)
 		 * since the zpos fallback is that planes are rendered by plane
 		 * ID order, and that then puts the cursor on top.
 		 */
-		cursor_plane = vc4_plane_init(drm, DRM_PLANE_TYPE_CURSOR);
+		cursor_plane = vc4_plane_init(drm, DRM_PLANE_TYPE_CURSOR,
+					      drm_crtc_mask(crtc));
 		if (!IS_ERR(cursor_plane)) {
-			cursor_plane->possible_crtcs = drm_crtc_mask(crtc);
 			crtc->cursor = cursor_plane;
 
 			drm_plane_create_zpos_property(cursor_plane,

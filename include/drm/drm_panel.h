@@ -116,6 +116,15 @@ struct drm_panel_funcs {
 			 struct drm_connector *connector);
 
 	/**
+	 * @get_orientation:
+	 *
+	 * Return the panel orientation set by device tree or EDID.
+	 *
+	 * This function is optional.
+	 */
+	enum drm_panel_orientation (*get_orientation)(struct drm_panel *panel);
+
+	/**
 	 * @get_timings:
 	 *
 	 * Copy display timings into the provided array and return
@@ -186,6 +195,13 @@ struct drm_panel {
 	 * Panel entry in registry.
 	 */
 	struct list_head list;
+
+	/**
+	 * @dsc:
+	 *
+	 * Panel DSC pps payload to be sent
+	 */
+	struct drm_dsc_config *dsc;
 
 	/**
 	 * @prepare_upstream_first:

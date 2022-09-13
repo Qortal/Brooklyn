@@ -54,7 +54,6 @@
 	 * the official GPU firmware DT blob.
 	 *
 	 * Legend:
-	 * "NC" = not connected (no rail from the SoC)
 	 * "FOO" = GPIO line named "FOO" on the schematic
 	 * "FOO_N" = GPIO line named "FOO" on schematic, active low
 	 */
@@ -103,7 +102,7 @@
 			  "SD1_DATA3",
 			  "PWM0_OUT",
 			  "PWM1_OUT",
-			  "ETHCLK",
+			  "ETH_CLK",
 			  "WIFI_CLK",
 			  "SDA0",
 			  "SCL0",
@@ -153,9 +152,4 @@
 
 &wifi_pwrseq {
 	reset-gpios = <&expgpio 1 GPIO_ACTIVE_LOW>;
-};
-
-/* i2c on camera/display connector is gpio 44&45 */
-&i2c0mux {
-	pinctrl-1 = <&i2c0_gpio44>;
 };

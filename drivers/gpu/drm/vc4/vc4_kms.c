@@ -16,10 +16,13 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc.h>
+#include <drm/drm_fourcc.h>
 #include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_plane_helper.h>
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_vblank.h>
+
+#include <soc/bcm2835/raspberrypi-clocks.h>
 
 #include "vc4_drv.h"
 #include "vc4_regs.h"
@@ -32,7 +35,8 @@ struct vc4_ctm_state {
 	int fifo;
 };
 
-static struct vc4_ctm_state *to_vc4_ctm_state(struct drm_private_state *priv)
+static struct vc4_ctm_state *
+to_vc4_ctm_state(const struct drm_private_state *priv)
 {
 	return container_of(priv, struct vc4_ctm_state, base);
 }
@@ -49,7 +53,7 @@ struct vc4_hvs_state {
 };
 
 static struct vc4_hvs_state *
-to_vc4_hvs_state(struct drm_private_state *priv)
+to_vc4_hvs_state(const struct drm_private_state *priv)
 {
 	return container_of(priv, struct vc4_hvs_state, base);
 }
@@ -61,7 +65,7 @@ struct vc4_load_tracker_state {
 };
 
 static struct vc4_load_tracker_state *
-to_vc4_load_tracker_state(struct drm_private_state *priv)
+to_vc4_load_tracker_state(const struct drm_private_state *priv)
 {
 	return container_of(priv, struct vc4_load_tracker_state, base);
 }
@@ -292,8 +296,9 @@ static void vc5_hvs_pv_muxing_commit(struct vc4_dev *vc4,
 
 		switch (vc4_crtc->data->hvs_output) {
 		case 2:
-			WARN_ON(VC4_GET_FIELD(HVS_READ(SCALER_DISPCTRL),
-					      SCALER_DISPCTRL_DSP3_MUX) == channel);
+			drm_WARN_ON(&vc4->base,
+				    VC4_GET_FIELD(HVS_READ(SCALER_DISPCTRL),
+						  SCALER_DISPCTRL_DSP3_MUX) == channel);
 
 			mux = (channel == 2) ? 0 : 1;
 			reg = HVS_READ(SCALER_DISPECTRL);
@@ -354,7 +359,7 @@ static void vc4_atomic_commit_tail(struct drm_atomic_state *state)
 	struct vc4_hvs_state *new_hvs_state;
 	struct drm_crtc *crtc;
 	struct vc4_hvs_state *old_hvs_state;
-	unsigned long max_clock_rate = hvs ? clk_get_max_rate(hvs->core_clk) : 0;
+	unsigned long max_clock_rate = hvs ? rpi_firmware_clk_get_max_rate(hvs->core_clk): 0;
 	unsigned int channel;
 	int i;
 
@@ -395,26 +400,34 @@ static void vc4_atomic_commit_tail(struct drm_atomic_state *state)
 		old_hvs_state->fifo_state[channel].pending_commit = NULL;
 	}
 
-	if (vc4->hvs && vc4->hvs->hvs5) {
+	if (vc4->is_vc5 && !vc4->firmware_kms) {
 		unsigned long state_rate = max(old_hvs_state->core_clock_rate,
 					       new_hvs_state->core_clock_rate);
 		unsigned long core_rate = clamp_t(unsigned long, state_rate,
 						  500000000, max_clock_rate);
 
+		drm_dbg(dev, "Raising the core clock at %lu Hz\n", core_rate);
+
+		/*
+		 * Do a temporary request on the core clock during the
+		 * modeset.
+		 */
 		WARN_ON(clk_set_min_rate(hvs->core_clk, core_rate));
 	}
+
 	drm_atomic_helper_commit_modeset_disables(dev, state);
 
 	vc4_ctm_commit(vc4, state);
 
 	if (!vc4->firmware_kms) {
-		if (vc4->hvs && vc4->hvs->hvs5)
+		if (vc4->is_vc5)
 			vc5_hvs_pv_muxing_commit(vc4, state);
 		else
 			vc4_hvs_pv_muxing_commit(vc4, state);
 	}
 
-	drm_atomic_helper_commit_planes(dev, state, 0);
+	drm_atomic_helper_commit_planes(dev, state,
+					DRM_PLANE_COMMIT_ACTIVE_ONLY);
 
 	drm_atomic_helper_commit_modeset_enables(dev, state);
 
@@ -426,13 +439,17 @@ static void vc4_atomic_commit_tail(struct drm_atomic_state *state)
 
 	drm_atomic_helper_cleanup_planes(dev, state);
 
-	if (vc4->hvs && vc4->hvs->hvs5) {
+	if (vc4->is_vc5 && !vc4->firmware_kms) {
 		unsigned long core_rate = min_t(unsigned long,
 					       max_clock_rate,
 					       new_hvs_state->core_clock_rate);
 
 		drm_dbg(dev, "Running the core clock at %lu Hz\n", core_rate);
 
+		/*
+		 * Request a clock rate based on the current HVS
+		 * requirements.
+		 */
 		WARN_ON(clk_set_min_rate(hvs->core_clk, core_rate));
 
 		drm_dbg(dev, "Core clock actual rate: %lu Hz\n",
@@ -484,7 +501,11 @@ static struct drm_framebuffer *vc4_fb_create(struct drm_device *dev,
 					     struct drm_file *file_priv,
 					     const struct drm_mode_fb_cmd2 *mode_cmd)
 {
+	struct vc4_dev *vc4 = to_vc4_dev(dev);
 	struct drm_mode_fb_cmd2 mode_cmd_local;
+
+	if (WARN_ON_ONCE(vc4->is_vc5))
+		return ERR_PTR(-ENODEV);
 
 	/* If the user didn't specify a modifier, use the
 	 * vc4_set_tiling_ioctl() state for the BO.
@@ -730,9 +751,26 @@ static void vc4_hvs_channels_destroy_state(struct drm_private_obj *obj,
 	kfree(hvs_state);
 }
 
+static void vc4_hvs_channels_print_state(struct drm_printer *p,
+					 const struct drm_private_state *state)
+{
+	struct vc4_hvs_state *hvs_state = to_vc4_hvs_state(state);
+	unsigned int i;
+
+	drm_printf(p, "HVS State\n");
+	drm_printf(p, "\tCore Clock Rate: %lu\n", hvs_state->core_clock_rate);
+
+	for (i = 0; i < HVS_NUM_CHANNELS; i++) {
+		drm_printf(p, "\tChannel %d\n", i);
+		drm_printf(p, "\t\tin use=%d\n", hvs_state->fifo_state[i].in_use);
+		drm_printf(p, "\t\tload=%lu\n", hvs_state->fifo_state[i].fifo_load);
+	}
+}
+
 static const struct drm_private_state_funcs vc4_hvs_state_funcs = {
 	.atomic_duplicate_state = vc4_hvs_channels_duplicate_state,
 	.atomic_destroy_state = vc4_hvs_channels_destroy_state,
+	.atomic_print_state = vc4_hvs_channels_print_state,
 };
 
 static void vc4_hvs_channels_obj_fini(struct drm_device *dev, void *unused)
@@ -991,11 +1029,15 @@ static const struct drm_mode_config_funcs vc4_mode_funcs = {
 	.fb_create = vc4_fb_create,
 };
 
+static const struct drm_mode_config_funcs vc5_mode_funcs = {
+	.atomic_check = vc4_atomic_check,
+	.atomic_commit = drm_atomic_helper_commit,
+	.fb_create = drm_gem_fb_create,
+};
+
 int vc4_kms_load(struct drm_device *dev)
 {
 	struct vc4_dev *vc4 = to_vc4_dev(dev);
-	bool is_vc5 = of_device_is_compatible(dev->dev->of_node,
-					      "brcm,bcm2711-vc5");
 	int ret;
 
 	/*
@@ -1003,7 +1045,7 @@ int vc4_kms_load(struct drm_device *dev)
 	 * the BCM2711, but the load tracker computations are used for
 	 * the core clock rate calculation.
 	 */
-	if (!is_vc5) {
+	if (!vc4->is_vc5) {
 		/* Start with the load tracker enabled. Can be
 		 * disabled through the debugfs load_tracker file.
 		 */
@@ -1019,7 +1061,7 @@ int vc4_kms_load(struct drm_device *dev)
 		return ret;
 	}
 
-	if (is_vc5) {
+	if (vc4->is_vc5) {
 		dev->mode_config.max_width = 7680;
 		dev->mode_config.max_height = 7680;
 	} else {
@@ -1027,7 +1069,7 @@ int vc4_kms_load(struct drm_device *dev)
 		dev->mode_config.max_height = 2048;
 	}
 
-	dev->mode_config.funcs = &vc4_mode_funcs;
+	dev->mode_config.funcs = vc4->is_vc5 ? &vc5_mode_funcs : &vc4_mode_funcs;
 	dev->mode_config.helper_private = &vc4_mode_config_helpers;
 	dev->mode_config.preferred_depth = 24;
 	dev->mode_config.async_page_flip = true;

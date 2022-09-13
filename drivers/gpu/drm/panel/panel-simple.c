@@ -23,6 +23,8 @@
 
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
+#include <linux/i2c.h>
+#include <linux/media-bus-format.h>
 #include <linux/module.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
@@ -35,6 +37,7 @@
 
 #include <drm/drm_crtc.h>
 #include <drm/drm_device.h>
+#include <drm/drm_edid.h>
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_panel.h>
 
@@ -429,12 +432,20 @@ static int panel_simple_get_timings(struct drm_panel *panel,
 	return p->desc->num_timings;
 }
 
+static enum drm_panel_orientation panel_simple_get_orientation(struct drm_panel *panel)
+{
+	//struct panel_simple *p = to_panel_simple(panel);
+
+	return DRM_MODE_PANEL_ORIENTATION_UNKNOWN;
+}
+
 static const struct drm_panel_funcs panel_simple_funcs = {
 	.disable = panel_simple_disable,
 	.unprepare = panel_simple_unprepare,
 	.prepare = panel_simple_prepare,
 	.enable = panel_simple_enable,
 	.get_modes = panel_simple_get_modes,
+	.get_orientation = panel_simple_get_orientation,
 	.get_timings = panel_simple_get_timings,
 };
 
@@ -655,8 +666,10 @@ static int panel_simple_probe(struct device *dev, const struct panel_desc *desc)
 	drm_panel_init(&panel->base, dev, &panel_simple_funcs, connector_type);
 
 	err = drm_panel_of_backlight(&panel->base);
-	if (err)
+	if (err) {
+		dev_err_probe(dev, err, "Could not find backlight\n");
 		goto disable_pm_runtime;
+	}
 
 	drm_panel_add(&panel->base);
 
@@ -712,7 +725,7 @@ static const struct drm_display_mode ampire_am_1280800n3tzqw_t00h_mode = {
 static const struct panel_desc ampire_am_1280800n3tzqw_t00h = {
 	.modes = &ampire_am_1280800n3tzqw_t00h_mode,
 	.num_modes = 1,
-	.bpc = 6,
+	.bpc = 8,
 	.size = {
 		.width = 217,
 		.height = 136,
@@ -768,6 +781,36 @@ static const struct panel_desc ampire_am800480r3tmqwa1h = {
 		.height = 91,
 	},
 	.bus_format = MEDIA_BUS_FMT_RGB666_1X18,
+};
+
+static const struct display_timing ampire_am800600p5tmqw_tb8h_timing = {
+	.pixelclock = { 34500000, 39600000, 50400000 },
+	.hactive = { 800, 800, 800 },
+	.hfront_porch = { 12, 112, 312 },
+	.hback_porch = { 87, 87, 48 },
+	.hsync_len = { 1, 1, 40 },
+	.vactive = { 600, 600, 600 },
+	.vfront_porch = { 1, 21, 61 },
+	.vback_porch = { 38, 38, 19 },
+	.vsync_len = { 1, 1, 20 },
+	.flags = DISPLAY_FLAGS_HSYNC_LOW | DISPLAY_FLAGS_VSYNC_LOW |
+		DISPLAY_FLAGS_DE_HIGH | DISPLAY_FLAGS_PIXDATA_POSEDGE |
+		DISPLAY_FLAGS_SYNC_POSEDGE,
+};
+
+static const struct panel_desc ampire_am800600p5tmqwtb8h = {
+	.timings = &ampire_am800600p5tmqw_tb8h_timing,
+	.num_timings = 1,
+	.bpc = 6,
+	.size = {
+		.width = 162,
+		.height = 122,
+	},
+	.bus_format = MEDIA_BUS_FMT_RGB666_1X18,
+	.bus_flags = DRM_BUS_FLAG_DE_HIGH |
+		DRM_BUS_FLAG_PIXDATA_SAMPLE_NEGEDGE |
+		DRM_BUS_FLAG_SYNC_SAMPLE_NEGEDGE,
+	.connector_type = DRM_MODE_CONNECTOR_DPI,
 };
 
 static const struct display_timing santek_st0700i5y_rbslw_f_timing = {
@@ -1394,6 +1437,55 @@ static const struct panel_desc chunghwa_claa101wb01 = {
 	.connector_type = DRM_MODE_CONNECTOR_LVDS,
 };
 
+static const struct display_timing dataimage_fg040346dsswbg04_timing = {
+	.pixelclock = { 5000000, 9000000, 12000000 },
+	.hactive = { 480, 480, 480 },
+	.hfront_porch = { 12, 12, 12 },
+	.hback_porch = { 12, 12, 12 },
+	.hsync_len = { 21, 21, 21 },
+	.vactive = { 272, 272, 272 },
+	.vfront_porch = { 4, 4, 4 },
+	.vback_porch = { 4, 4, 4 },
+	.vsync_len = { 8, 8, 8 },
+};
+
+static const struct panel_desc dataimage_fg040346dsswbg04 = {
+	.timings = &dataimage_fg040346dsswbg04_timing,
+	.num_timings = 1,
+	.bpc = 8,
+	.size = {
+		.width = 95,
+		.height = 54,
+	},
+	.bus_format = MEDIA_BUS_FMT_RGB888_1X24,
+	.bus_flags = DRM_BUS_FLAG_DE_HIGH | DRM_BUS_FLAG_PIXDATA_DRIVE_POSEDGE,
+	.connector_type = DRM_MODE_CONNECTOR_DPI,
+};
+
+static const struct display_timing dataimage_fg1001l0dsswmg01_timing = {
+	.pixelclock = { 68900000, 71110000, 73400000 },
+	.hactive = { 1280, 1280, 1280 },
+	.vactive = { 800, 800, 800 },
+	.hback_porch = { 100, 100, 100 },
+	.hfront_porch = { 100, 100, 100 },
+	.vback_porch = { 5, 5, 5 },
+	.vfront_porch = { 5, 5, 5 },
+	.hsync_len = { 24, 24, 24 },
+	.vsync_len = { 3, 3, 3 },
+	.flags = DISPLAY_FLAGS_DE_HIGH | DISPLAY_FLAGS_PIXDATA_POSEDGE |
+		 DISPLAY_FLAGS_HSYNC_LOW | DISPLAY_FLAGS_VSYNC_LOW,
+};
+
+static const struct panel_desc dataimage_fg1001l0dsswmg01 = {
+	.timings = &dataimage_fg1001l0dsswmg01_timing,
+	.num_timings = 1,
+	.bpc = 8,
+	.size = {
+		.width = 217,
+		.height = 136,
+	},
+};
+
 static const struct drm_display_mode dataimage_scf0700c48ggu18_mode = {
 	.clock = 33260,
 	.hdisplay = 800,
@@ -1650,6 +1742,32 @@ static const struct panel_desc edt_etm0700g0bdh6 = {
 	.bus_format = MEDIA_BUS_FMT_RGB666_1X18,
 	.bus_flags = DRM_BUS_FLAG_DE_HIGH | DRM_BUS_FLAG_PIXDATA_DRIVE_POSEDGE,
 	.connector_type = DRM_MODE_CONNECTOR_DPI,
+};
+
+static const struct display_timing edt_etml0700y5dha_timing = {
+	.pixelclock = { 40800000, 51200000, 67200000 },
+	.hactive = { 1024, 1024, 1024 },
+	.hfront_porch = { 30, 106, 125 },
+	.hback_porch = { 30, 106, 125 },
+	.hsync_len = { 30, 108, 126 },
+	.vactive = { 600, 600, 600 },
+	.vfront_porch = { 3, 12, 67},
+	.vback_porch = { 3, 12, 67 },
+	.vsync_len = { 4, 11, 66 },
+	.flags = DISPLAY_FLAGS_HSYNC_LOW | DISPLAY_FLAGS_VSYNC_LOW |
+		 DISPLAY_FLAGS_DE_HIGH,
+};
+
+static const struct panel_desc edt_etml0700y5dha = {
+	.timings = &edt_etml0700y5dha_timing,
+	.num_timings = 1,
+	.bpc = 8,
+	.size = {
+		.width = 155,
+		.height = 86,
+	},
+	.bus_format = MEDIA_BUS_FMT_RGB888_1X7X4_SPWG,
+	.connector_type = DRM_MODE_CONNECTOR_LVDS,
 };
 
 static const struct drm_display_mode edt_etmv570g2dhu_mode = {
@@ -1946,6 +2064,31 @@ static const struct panel_desc hannstar_hsd100pxn1 = {
 	.connector_type = DRM_MODE_CONNECTOR_LVDS,
 };
 
+static const struct display_timing hannstar_hsd101pww2_timing = {
+	.pixelclock = { 64300000, 71100000, 82000000 },
+	.hactive = { 1280, 1280, 1280 },
+	.hfront_porch = { 1, 1, 10 },
+	.hback_porch = { 1, 1, 10 },
+	.hsync_len = { 58, 158, 661 },
+	.vactive = { 800, 800, 800 },
+	.vfront_porch = { 1, 1, 10 },
+	.vback_porch = { 1, 1, 10 },
+	.vsync_len = { 1, 21, 203 },
+	.flags = DISPLAY_FLAGS_DE_HIGH,
+};
+
+static const struct panel_desc hannstar_hsd101pww2 = {
+	.timings = &hannstar_hsd101pww2_timing,
+	.num_timings = 1,
+	.bpc = 8,
+	.size = {
+		.width = 217,
+		.height = 136,
+	},
+	.bus_format = MEDIA_BUS_FMT_RGB888_1X7X4_SPWG,
+	.connector_type = DRM_MODE_CONNECTOR_LVDS,
+};
+
 static const struct drm_display_mode hitachi_tx23d38vm0caa_mode = {
 	.clock = 33333,
 	.hdisplay = 800,
@@ -1995,38 +2138,6 @@ static const struct panel_desc innolux_at043tn24 = {
 	},
 	.bus_format = MEDIA_BUS_FMT_RGB888_1X24,
 	.bus_flags = DRM_BUS_FLAG_DE_HIGH | DRM_BUS_FLAG_PIXDATA_DRIVE_POSEDGE,
-};
-
-static const struct display_timing innolux_at056tn53v1_timing = {
-	.pixelclock = { 39700000, 39700000, 39700000},
-	.hactive = { 640, 640, 640 },
-	.hfront_porch = { 16, 16, 16 },
-	.hback_porch = { 134, 134, 134 },
-	.hsync_len = { 10, 10, 10},
-	.vactive = { 480, 480, 480 },
-	.vfront_porch = { 32, 32, 32},
-	.vback_porch = { 11, 11, 11 },
-	.vsync_len = { 2, 2, 2 },
-	.flags = DRM_MODE_FLAG_PVSYNC | DRM_MODE_FLAG_PHSYNC,
-};
-
-static const struct panel_desc innolux_at056tn53v1 = {
-	.timings = &innolux_at056tn53v1_timing,
-	.num_timings = 1,
-	.bpc = 6,
-	.size = {
-		.width = 112,
-		.height = 84,
-	},
-	.delay = {
-		.prepare = 50,
-		.enable = 200,
-		.disable = 110,
-		.unprepare = 200,
-	},
-	.bus_format = MEDIA_BUS_FMT_BGR666_1X24_CPADHI,
-	.bus_flags = DRM_BUS_FLAG_PIXDATA_SAMPLE_POSEDGE,
-	.connector_type = DRM_MODE_CONNECTOR_DPI,
 };
 
 static const struct drm_display_mode innolux_at070tn92_mode = {
@@ -2079,6 +2190,7 @@ static const struct panel_desc innolux_g070y2_l01 = {
 		.unprepare = 800,
 	},
 	.bus_format = MEDIA_BUS_FMT_RGB888_1X7X4_SPWG,
+	.bus_flags = DRM_BUS_FLAG_DE_HIGH,
 	.connector_type = DRM_MODE_CONNECTOR_LVDS,
 };
 
@@ -3359,6 +3471,41 @@ static const struct panel_desc starry_kr070pe2t = {
 	.connector_type = DRM_MODE_CONNECTOR_DPI,
 };
 
+static const struct display_timing startek_kd070wvfpa_mode = {
+	.pixelclock = { 25200000, 27200000, 30500000 },
+	.hactive = { 800, 800, 800 },
+	.hfront_porch = { 19, 44, 115 },
+	.hback_porch = { 5, 16, 101 },
+	.hsync_len = { 1, 2, 100 },
+	.vactive = { 480, 480, 480 },
+	.vfront_porch = { 5, 43, 67 },
+	.vback_porch = { 5, 5, 67 },
+	.vsync_len = { 1, 2, 66 },
+	.flags = DISPLAY_FLAGS_HSYNC_LOW | DISPLAY_FLAGS_VSYNC_LOW |
+		 DISPLAY_FLAGS_DE_HIGH | DISPLAY_FLAGS_PIXDATA_POSEDGE |
+		 DISPLAY_FLAGS_SYNC_POSEDGE,
+};
+
+static const struct panel_desc startek_kd070wvfpa = {
+	.timings = &startek_kd070wvfpa_mode,
+	.num_timings = 1,
+	.bpc = 8,
+	.size = {
+		.width = 152,
+		.height = 91,
+	},
+	.delay = {
+		.prepare = 20,
+		.enable = 200,
+		.disable = 200,
+	},
+	.bus_format = MEDIA_BUS_FMT_RGB888_1X24,
+	.connector_type = DRM_MODE_CONNECTOR_DPI,
+	.bus_flags = DRM_BUS_FLAG_DE_HIGH |
+		     DRM_BUS_FLAG_PIXDATA_SAMPLE_NEGEDGE |
+		     DRM_BUS_FLAG_SYNC_SAMPLE_NEGEDGE,
+};
+
 static const struct display_timing tsd_tst043015cmhx_timing = {
 	.pixelclock = { 5000000, 9000000, 12000000 },
 	.hactive = { 480, 480, 480 },
@@ -3769,6 +3916,9 @@ static const struct of_device_id platform_of_match[] = {
 		.compatible = "ampire,am800480r3tmqwa1h",
 		.data = &ampire_am800480r3tmqwa1h,
 	}, {
+		.compatible = "ampire,am800600p5tmqw-tb8h",
+		.data = &ampire_am800600p5tmqwtb8h,
+	}, {
 		.compatible = "arm,rtsm-display",
 		.data = &arm_rtsm,
 	}, {
@@ -3844,6 +3994,12 @@ static const struct of_device_id platform_of_match[] = {
 		.compatible = "chunghwa,claa101wb01",
 		.data = &chunghwa_claa101wb01
 	}, {
+		.compatible = "dataimage,fg040346dsswbg04",
+		.data = &dataimage_fg040346dsswbg04,
+	}, {
+		.compatible = "dataimage,fg1001l0dsswmg01",
+		.data = &dataimage_fg1001l0dsswmg01,
+	}, {
 		.compatible = "dataimage,scf0700c48ggu18",
 		.data = &dataimage_scf0700c48ggu18,
 	}, {
@@ -3880,6 +4036,9 @@ static const struct of_device_id platform_of_match[] = {
 		.compatible = "edt,etm0700g0edh6",
 		.data = &edt_etm0700g0bdh6,
 	}, {
+		.compatible = "edt,etml0700y5dha",
+		.data = &edt_etml0700y5dha,
+	}, {
 		.compatible = "edt,etmv570g2dhu",
 		.data = &edt_etmv570g2dhu,
 	}, {
@@ -3913,14 +4072,14 @@ static const struct of_device_id platform_of_match[] = {
 		.compatible = "hannstar,hsd100pxn1",
 		.data = &hannstar_hsd100pxn1,
 	}, {
+		.compatible = "hannstar,hsd101pww2",
+		.data = &hannstar_hsd101pww2,
+	}, {
 		.compatible = "hit,tx23d38vm0caa",
 		.data = &hitachi_tx23d38vm0caa
 	}, {
 		.compatible = "innolux,at043tn24",
 		.data = &innolux_at043tn24,
-	}, {
-		.compatible = "innolux,at056tn53v1",
-		.data = &innolux_at056tn53v1,
 	}, {
 		.compatible = "innolux,at070tn92",
 		.data = &innolux_at070tn92,
@@ -4074,6 +4233,9 @@ static const struct of_device_id platform_of_match[] = {
 	}, {
 		.compatible = "starry,kr070pe2t",
 		.data = &starry_kr070pe2t,
+	}, {
+		.compatible = "startek,kd070wvfpa",
+		.data = &startek_kd070wvfpa,
 	}, {
 		.compatible = "team-source-display,tst043015cmhx",
 		.data = &tsd_tst043015cmhx,

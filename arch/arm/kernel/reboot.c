@@ -10,6 +10,7 @@
 #include <asm/cacheflush.h>
 #include <asm/idmap.h>
 #include <asm/virt.h>
+#include <asm/system_misc.h>
 
 #include "reboot.h"
 
@@ -114,9 +115,7 @@ void machine_power_off(void)
 {
 	local_irq_disable();
 	smp_send_stop();
-
-	if (pm_power_off)
-		pm_power_off();
+	do_kernel_power_off();
 }
 
 /*

@@ -1,4 +1,6 @@
+#define i2c0 i2c0if
 #include "bcm2836.dtsi"
+#undef i2c0
 #include "bcm270x.dtsi"
 
 / {

@@ -17,9 +17,12 @@
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc_helper.h>
+#include <drm/drm_blend.h>
 #include <drm/drm_drv.h>
+#include <drm/drm_edid.h>
 #include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_fourcc.h>
+#include <drm/drm_framebuffer.h>
 #include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_plane_helper.h>
 #include <drm/drm_probe_helper.h>
@@ -672,6 +675,50 @@ static int vc4_plane_atomic_check(struct drm_plane *plane,
 	return vc4_plane_to_mb(plane, &vc4_plane->mb, new_plane_state);
 }
 
+static void vc4_plane_atomic_async_update(struct drm_plane *plane,
+					  struct drm_atomic_state *state)
+{
+	struct drm_plane_state *new_plane_state =
+		drm_atomic_get_new_plane_state(state, plane);
+
+	swap(plane->state->fb, new_plane_state->fb);
+	plane->state->crtc_x = new_plane_state->crtc_x;
+	plane->state->crtc_y = new_plane_state->crtc_y;
+	plane->state->crtc_w = new_plane_state->crtc_w;
+	plane->state->crtc_h = new_plane_state->crtc_h;
+	plane->state->src_x = new_plane_state->src_x;
+	plane->state->src_y = new_plane_state->src_y;
+	plane->state->src_w = new_plane_state->src_w;
+	plane->state->src_h = new_plane_state->src_h;
+	plane->state->alpha = new_plane_state->alpha;
+	plane->state->pixel_blend_mode = new_plane_state->pixel_blend_mode;
+	plane->state->rotation = new_plane_state->rotation;
+	plane->state->zpos = new_plane_state->zpos;
+	plane->state->normalized_zpos = new_plane_state->normalized_zpos;
+	plane->state->color_encoding = new_plane_state->color_encoding;
+	plane->state->color_range = new_plane_state->color_range;
+	plane->state->src = new_plane_state->src;
+	plane->state->dst = new_plane_state->dst;
+	plane->state->visible = new_plane_state->visible;
+
+	vc4_plane_set_blank(plane, false);
+}
+
+static int vc4_plane_atomic_async_check(struct drm_plane *plane,
+					struct drm_atomic_state *state)
+{
+	struct drm_plane_state *new_plane_state =
+		drm_atomic_get_new_plane_state(state, plane);
+	int ret = -EINVAL;
+
+	if (plane->type == 2 &&
+	    plane->state->fb &&
+	    new_plane_state->crtc->state->active)
+		ret = 0;
+
+	return ret;
+}
+
 /* Called during init to allocate the plane's atomic state. */
 static void vc4_plane_reset(struct drm_plane *plane)
 {
@@ -766,6 +813,8 @@ static const struct drm_plane_helper_funcs vc4_plane_helper_funcs = {
 	.atomic_check = vc4_plane_atomic_check,
 	.atomic_update = vc4_plane_atomic_update,
 	.atomic_disable = vc4_plane_atomic_disable,
+	.atomic_async_check = vc4_plane_atomic_async_check,
+	.atomic_async_update = vc4_plane_atomic_async_update,
 };
 
 static struct drm_plane *vc4_fkms_plane_init(struct drm_device *dev,

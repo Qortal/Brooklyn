@@ -16,6 +16,7 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 
+#include <soc/bcm2835/raspberrypi-clocks.h>
 #include <soc/bcm2835/raspberrypi-firmware.h>
 
 enum rpi_firmware_clk_id {
@@ -75,6 +76,12 @@ struct raspberrypi_clk_data {
 	struct raspberrypi_clk *rpi;
 };
 
+static inline
+const struct raspberrypi_clk_data *clk_hw_to_data(const struct clk_hw *hw)
+{
+	return container_of(hw, struct raspberrypi_clk_data, hw);
+}
+
 struct raspberrypi_clk_variant {
 	bool		export;
 	char		*clkdev;
@@ -130,18 +137,27 @@ raspberrypi_clk_variants[RPI_FIRMWARE_NUM_CLK_ID] = {
 	},
 	[RPI_FIRMWARE_V3D_CLK_ID] = {
 		.export = true,
+		.minimize = true,
 	},
 	[RPI_FIRMWARE_HEVC_CLK_ID] = {
 		.export = true,
+		.minimize = true,
 	},
 	[RPI_FIRMWARE_ISP_CLK_ID] = {
 		.export = true,
+		.minimize = true,
 	},
 	[RPI_FIRMWARE_PIXEL_BVB_CLK_ID] = {
 		.export = true,
+		.minimize = true,
 	},
 	[RPI_FIRMWARE_VEC_CLK_ID] = {
 		.export = true,
+		.minimize = true,
+	},
+	[RPI_FIRMWARE_PIXEL_CLK_ID] = {
+		.export = true,
+		.minimize = true,
 	},
 };
 
@@ -187,8 +203,7 @@ static int raspberrypi_clock_property(struct rpi_firmware *firmware,
 
 static int raspberrypi_fw_is_prepared(struct clk_hw *hw)
 {
-	struct raspberrypi_clk_data *data =
-		container_of(hw, struct raspberrypi_clk_data, hw);
+	const struct raspberrypi_clk_data *data = clk_hw_to_data(hw);
 	struct raspberrypi_clk *rpi = data->rpi;
 	u32 val = 0;
 	int ret;
@@ -205,8 +220,7 @@ static int raspberrypi_fw_is_prepared(struct clk_hw *hw)
 static unsigned long raspberrypi_fw_get_rate(struct clk_hw *hw,
 					     unsigned long parent_rate)
 {
-	struct raspberrypi_clk_data *data =
-		container_of(hw, struct raspberrypi_clk_data, hw);
+	const struct raspberrypi_clk_data *data = clk_hw_to_data(hw);
 	struct raspberrypi_clk *rpi = data->rpi;
 	u32 val = 0;
 	int ret;
@@ -214,7 +228,7 @@ static unsigned long raspberrypi_fw_get_rate(struct clk_hw *hw,
 	ret = raspberrypi_clock_property(rpi->firmware, data,
 					 RPI_FIRMWARE_GET_CLOCK_RATE, &val);
 	if (ret)
-		return ret;
+		return 0;
 
 	return val;
 }
@@ -222,8 +236,7 @@ static unsigned long raspberrypi_fw_get_rate(struct clk_hw *hw,
 static int raspberrypi_fw_set_rate(struct clk_hw *hw, unsigned long rate,
 				   unsigned long parent_rate)
 {
-	struct raspberrypi_clk_data *data =
-		container_of(hw, struct raspberrypi_clk_data, hw);
+	const struct raspberrypi_clk_data *data = clk_hw_to_data(hw);
 	struct raspberrypi_clk *rpi = data->rpi;
 	u32 _rate = rate;
 	int ret;
@@ -231,7 +244,7 @@ static int raspberrypi_fw_set_rate(struct clk_hw *hw, unsigned long rate,
 	ret = raspberrypi_clock_property(rpi->firmware, data,
 					 RPI_FIRMWARE_SET_CLOCK_RATE, &_rate);
 	if (ret)
-		dev_err_ratelimited(rpi->dev, "Failed to change %s frequency: %d",
+		dev_err_ratelimited(rpi->dev, "Failed to change %s frequency: %d\n",
 				    clk_hw_get_name(hw), ret);
 
 	return ret;
@@ -240,8 +253,7 @@ static int raspberrypi_fw_set_rate(struct clk_hw *hw, unsigned long rate,
 static int raspberrypi_fw_dumb_determine_rate(struct clk_hw *hw,
 					      struct clk_rate_request *req)
 {
-	struct raspberrypi_clk_data *data =
-		container_of(hw, struct raspberrypi_clk_data, hw);
+	const struct raspberrypi_clk_data *data = clk_hw_to_data(hw);
 	struct raspberrypi_clk_variant *variant = data->variant;
 
 	/*
@@ -262,6 +274,60 @@ static int raspberrypi_fw_dumb_determine_rate(struct clk_hw *hw,
 
 	return 0;
 }
+
+unsigned long rpi_firmware_clk_get_max_rate(struct clk *clk)
+{
+	const struct raspberrypi_clk_data *data;
+	struct raspberrypi_clk *rpi;
+	struct clk_hw *hw;
+	u32 max_rate;
+	int ret;
+
+	if (!clk)
+		return 0;
+
+	hw =  __clk_get_hw(clk);
+	if (!hw)
+		return 0;
+
+	data = clk_hw_to_data(hw);
+	rpi = data->rpi;
+	ret = raspberrypi_clock_property(rpi->firmware, data,
+					 RPI_FIRMWARE_GET_MAX_CLOCK_RATE,
+					 &max_rate);
+	if (ret)
+		return 0;
+
+	return max_rate;
+}
+EXPORT_SYMBOL_GPL(rpi_firmware_clk_get_max_rate);
+
+unsigned long rpi_firmware_clk_get_min_rate(struct clk *clk)
+{
+	const struct raspberrypi_clk_data *data;
+	struct raspberrypi_clk *rpi;
+	struct clk_hw *hw;
+	u32 min_rate;
+	int ret;
+
+	if (!clk)
+		return 0;
+
+	hw =  __clk_get_hw(clk);
+	if (!hw)
+		return 0;
+
+	data = clk_hw_to_data(hw);
+	rpi = data->rpi;
+	ret = raspberrypi_clock_property(rpi->firmware, data,
+					 RPI_FIRMWARE_GET_MIN_CLOCK_RATE,
+					 &min_rate);
+	if (ret)
+		return 0;
+
+	return min_rate;
+}
+EXPORT_SYMBOL_GPL(rpi_firmware_clk_get_min_rate);
 
 static const struct clk_ops raspberrypi_firmware_clk_ops = {
 	.is_prepared	= raspberrypi_fw_is_prepared,
@@ -299,7 +365,7 @@ static struct clk_hw *raspberrypi_clk_register(struct raspberrypi_clk *rpi,
 					 RPI_FIRMWARE_GET_MIN_CLOCK_RATE,
 					 &min_rate);
 	if (ret) {
-		dev_err(rpi->dev, "Failed to get clock %d min freq: %d",
+		dev_err(rpi->dev, "Failed to get clock %d min freq: %d\n",
 			id, ret);
 		return ERR_PTR(ret);
 	}
@@ -355,8 +421,13 @@ static int raspberrypi_discover_clocks(struct raspberrypi_clk *rpi,
 	struct rpi_firmware_get_clocks_response *clks;
 	int ret;
 
+	/*
+	 * The firmware doesn't guarantee that the last element of
+	 * RPI_FIRMWARE_GET_CLOCKS is zeroed. So allocate an additional
+	 * zero element as sentinel.
+	 */
 	clks = devm_kcalloc(rpi->dev,
-			    sizeof(*clks), RPI_FIRMWARE_NUM_CLK_ID,
+			    RPI_FIRMWARE_NUM_CLK_ID + 1, sizeof(*clks),
 			    GFP_KERNEL);
 	if (!clks)
 		return -ENOMEM;
@@ -371,7 +442,8 @@ static int raspberrypi_discover_clocks(struct raspberrypi_clk *rpi,
 		struct raspberrypi_clk_variant *variant;
 
 		if (clks->id > RPI_FIRMWARE_NUM_CLK_ID) {
-			dev_err(rpi->dev, "Unknown clock id: %u", clks->id);
+			dev_err(rpi->dev, "Unknown clock id: %u (max: %u)\n",
+					   clks->id, RPI_FIRMWARE_NUM_CLK_ID);
 			return -EINVAL;
 		}
 

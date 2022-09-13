@@ -418,15 +418,15 @@ must be set for every pad.
 	  .. _MEDIA-LNK-FL-DATA-LINK:
 
 	  ``MEDIA_LNK_FL_DATA_LINK`` for links that represent a data connection
-     between two pads.
+	  between two pads.
 
 	  .. _MEDIA-LNK-FL-INTERFACE-LINK:
 
 	  ``MEDIA_LNK_FL_INTERFACE_LINK`` for links that associate an entity to its
-     interface.
+	  interface.
 
 	  .. _MEDIA-LNK-FL-ANCILLARY-LINK:
 
 	  ``MEDIA_LNK_FL_ANCILLARY_LINK`` for links that represent a physical
-     relationship between two entities. The link may or may not be ummutable, so
-     applications must not assume either case.
+	  relationship between two entities. The link may or may not be
+	  immutable, so applications must not assume either case.

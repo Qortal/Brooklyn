@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Sony IMX290 & IMX327 CMOS Image Sensor Driver
+ * Sony IMX462 / IMX290 / IMX327 CMOS Image Sensor Driver
  *
- * The IMX290 and IMX327 are very similar 1920x1080 1/2.8 CMOS image sensors.
- * IMX327 can support up to 60fps, whilst IMX290 can support up to 120fps, but
- * only 10bit and when connected over 4 CSI-2 lanes.
+ * The IMX462, IMX290,and IMX327 are very similar 1920x1080 1/2.8 CMOS image
+ * sensors.
+ * IMX327 can support up to 60fps with 10 or 12bit readout.
+ * IMX290 adds support for 120fps, but only 10bit and when connected over 4
+ * CSI-2 lanes.
+ * IMX462 adds support for 120fps in both 10 and 12bit readout modes.
+ *
  * The modules don't appear to have a mechanism to identify whether the mono or
  * colour variant is connected, therefore it is done via compatible string.
  *
@@ -687,17 +691,6 @@ static int imx290_set_vmax(struct imx290 *imx290, u32 val)
 		dev_err(imx290->dev, "Unable to write vmax\n");
 
 	/*
-	 * Changing vblank changes the allowed range for exposure.
-	 * We don't supply the current exposure as default here as it
-	 * may lie outside the new range. We will reset it just below.
-	 */
-	__v4l2_ctrl_modify_range(imx290->exposure,
-				 IMX290_EXPOSURE_MIN,
-				 vmax - 2,
-				 IMX290_EXPOSURE_STEP,
-				 vmax - 2);
-
-	/*
 	 * Becuse of the way exposure works for this sensor, updating
 	 * vblank causes the effective exposure to change, so we must
 	 * set it back to the "new" correct value.
@@ -727,6 +720,21 @@ static int imx290_set_ctrl(struct v4l2_ctrl *ctrl)
 					     struct imx290, ctrls);
 	int ret = 0;
 	u8 val;
+
+	if (ctrl->id == V4L2_CID_VBLANK) {
+		u32 vmax = ctrl->val + imx290->current_mode->height;
+
+		/*
+		 * Changing vblank changes the allowed range for exposure.
+		 * We don't supply the current exposure as default here as it
+		 * may lie outside the new range. We will reset it just below.
+		 */
+		__v4l2_ctrl_modify_range(imx290->exposure,
+					 IMX290_EXPOSURE_MIN,
+					 vmax - 2,
+					 IMX290_EXPOSURE_STEP,
+					 vmax - 2);
+	}
 
 	/* V4L2 controls values will be applied only when power is already up */
 	if (!pm_runtime_get_if_in_use(imx290->dev))
@@ -908,29 +916,17 @@ static int imx290_set_fmt(struct v4l2_subdev *sd,
 			__v4l2_ctrl_s_ctrl_int64(imx290->pixel_rate,
 						 imx290_calc_pixel_rate(imx290));
 
-		if (imx290->hblank) {
+		if (imx290->hblank)
 			__v4l2_ctrl_modify_range(imx290->hblank,
 						 imx290->hmax_min - mode->width,
 						 IMX290_HMAX_MAX - mode->width,
 						 1, mode->hmax - mode->width);
-			__v4l2_ctrl_s_ctrl(imx290->hblank,
-					   mode->hmax - mode->width);
-		}
-		if (imx290->vblank) {
+		if (imx290->vblank)
 			__v4l2_ctrl_modify_range(imx290->vblank,
 						 mode->vmax - mode->height,
 						 IMX290_VMAX_MAX - mode->height,
 						 1,
 						 mode->vmax - mode->height);
-			__v4l2_ctrl_s_ctrl(imx290->vblank,
-					   mode->vmax - mode->height);
-		}
-		if (imx290->exposure)
-			__v4l2_ctrl_modify_range(imx290->exposure,
-						 IMX290_EXPOSURE_MIN,
-						 mode->vmax - 2,
-						 IMX290_EXPOSURE_STEP,
-						 mode->vmax - 2);
 	}
 
 	*format = fmt->format;
@@ -1232,8 +1228,19 @@ static s64 imx290_check_link_freqs(const struct imx290 *imx290,
 }
 
 static const struct of_device_id imx290_of_match[] = {
+	/*
+	 * imx327 supports 1080p60 at 10 and 12bit.
+	 * imx290 adds 10bit 1080p120.
+	 * imx462 adds 10 and 12bit 1080p120.
+	 * This driver currently maxes out at 1080p60, which is supported by all
+	 * of them, but add the compatible strings for future implementation.
+	 */
+	{ .compatible = "sony,imx327", .data = imx290_colour_formats },
+	{ .compatible = "sony,imx327-mono", .data = imx290_mono_formats },
 	{ .compatible = "sony,imx290", .data = imx290_colour_formats },
 	{ .compatible = "sony,imx290-mono", .data = imx290_mono_formats },
+	{ .compatible = "sony,imx462", .data = imx290_colour_formats },
+	{ .compatible = "sony,imx462-mono", .data = imx290_mono_formats },
 	{ /* sentinel */ }
 };
 
@@ -1356,8 +1363,7 @@ static int imx290_probe(struct i2c_client *client)
 
 	/*
 	 * Initialize the frame format. In particular, imx290->current_mode
-	 * and imx290->bpp are set to defaults: imx290_calc_pixel_rate() call
-	 * below relies on these fields.
+	 * and imx290->bpp are set to defaults.
 	 */
 	imx290_entity_init_cfg(&imx290->sd, NULL);
 

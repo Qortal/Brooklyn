@@ -307,6 +307,21 @@ static void std_log(const struct v4l2_ctrl *ctrl)
 	case V4L2_CTRL_TYPE_VP9_FRAME:
 		pr_cont("VP9_FRAME");
 		break;
+	case V4L2_CTRL_TYPE_HEVC_SPS:
+		pr_cont("HEVC_SPS");
+		break;
+	case V4L2_CTRL_TYPE_HEVC_PPS:
+		pr_cont("HEVC_PPS");
+		break;
+	case V4L2_CTRL_TYPE_HEVC_SLICE_PARAMS:
+		pr_cont("HEVC_SLICE_PARAMS");
+		break;
+	case V4L2_CTRL_TYPE_HEVC_SCALING_MATRIX:
+		pr_cont("HEVC_SCALING_MATRIX");
+		break;
+	case V4L2_CTRL_TYPE_HEVC_DECODE_PARAMS:
+		pr_cont("HEVC_DECODE_PARAMS");
+		break;
 	default:
 		pr_cont("unknown type %d", ctrl->type);
 		break;
@@ -521,7 +536,6 @@ static int std_validate_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 	struct v4l2_ctrl_h264_decode_params *p_h264_dec_params;
 	struct v4l2_ctrl_hevc_sps *p_hevc_sps;
 	struct v4l2_ctrl_hevc_pps *p_hevc_pps;
-	struct v4l2_ctrl_hevc_slice_params *p_hevc_slice_params;
 	struct v4l2_ctrl_hdr10_mastering_display *p_hdr10_mastering;
 	struct v4l2_ctrl_hevc_decode_params *p_hevc_decode_params;
 	struct v4l2_area *area;
@@ -799,8 +813,6 @@ static int std_validate_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 			p_hevc_pps->pps_beta_offset_div2 = 0;
 			p_hevc_pps->pps_tc_offset_div2 = 0;
 		}
-
-		zero_padding(*p_hevc_pps);
 		break;
 
 	case V4L2_CTRL_TYPE_HEVC_DECODE_PARAMS:
@@ -809,21 +821,9 @@ static int std_validate_compound(const struct v4l2_ctrl *ctrl, u32 idx,
 		if (p_hevc_decode_params->num_active_dpb_entries >
 		    V4L2_HEVC_DPB_ENTRIES_NUM_MAX)
 			return -EINVAL;
-
-		for (i = 0; i < p_hevc_decode_params->num_active_dpb_entries;
-		     i++) {
-			struct v4l2_hevc_dpb_entry *dpb_entry =
-				&p_hevc_decode_params->dpb[i];
-
-			zero_padding(*dpb_entry);
-		}
 		break;
 
 	case V4L2_CTRL_TYPE_HEVC_SLICE_PARAMS:
-		p_hevc_slice_params = p;
-
-		zero_padding(p_hevc_slice_params->pred_weight_table);
-		zero_padding(*p_hevc_slice_params);
 		break;
 
 	case V4L2_CTRL_TYPE_HDR10_CLL_INFO:
@@ -1219,9 +1219,8 @@ int v4l2_ctrl_handler_init_class(struct v4l2_ctrl_handler *hdl,
 	INIT_LIST_HEAD(&hdl->ctrls);
 	INIT_LIST_HEAD(&hdl->ctrl_refs);
 	hdl->nr_of_buckets = 1 + nr_of_controls_hint / 8;
-	hdl->buckets = kvmalloc_array(hdl->nr_of_buckets,
-				      sizeof(hdl->buckets[0]),
-				      GFP_KERNEL | __GFP_ZERO);
+	hdl->buckets = kvcalloc(hdl->nr_of_buckets, sizeof(hdl->buckets[0]),
+				GFP_KERNEL);
 	hdl->error = hdl->buckets ? 0 : -ENOMEM;
 	v4l2_ctrl_handler_init_request(hdl);
 	return hdl->error;

@@ -1,6 +1,8 @@
 /* Downstream modifications common to bcm2835, bcm2836, bcm2837 */
 
+#define i2c0 i2c0mux
 #include "bcm2835-rpi.dtsi"
+#undef i2c0
 #include "bcm270x-rpi.dtsi"
 
 / {

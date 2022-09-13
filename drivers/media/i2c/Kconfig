@@ -34,6 +34,41 @@ config VIDEO_APTINA_PLL
 config VIDEO_CCS_PLL
 	tristate
 
+config VIDEO_AR0521
+	tristate "ON Semiconductor AR0521 sensor support"
+	depends on I2C && VIDEO_DEV
+	select MEDIA_CONTROLLER
+	select VIDEO_V4L2_SUBDEV_API
+	select V4L2_FWNODE
+	help
+	  This is a Video4Linux2 sensor driver for the ON Semiconductor
+	  AR0521 camera.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called ar0521.
+
+config VIDEO_ARDUCAM_64MP
+	tristate "Arducam 64MP sensor support"
+	depends on I2C && VIDEO_DEV
+	select VIDEO_V4L2_SUBDEV_API
+	help
+	  This is a Video4Linux2 sensor driver for the Arducam
+	  64MP camera.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called arducam_64mp.
+
+config VIDEO_ARDUCAM_PIVARIETY
+	tristate "Arducam Pivariety sensor support"
+	depends on I2C && VIDEO_DEV
+	select VIDEO_V4L2_SUBDEV_API
+	help
+	  This is a Video4Linux2 sensor driver for the Arducam
+	  Pivariety camera series.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called arducam-pivariety.
+
 config VIDEO_HI556
 	tristate "Hynix Hi-556 sensor support"
 	depends on I2C && VIDEO_DEV
@@ -75,8 +110,10 @@ config VIDEO_HI847
 
 config VIDEO_IMX208
 	tristate "Sony IMX208 sensor support"
-	depends on I2C && VIDEO_DEV && VIDEO_V4L2_SUBDEV_API
+	depends on I2C && VIDEO_DEV
 	depends on MEDIA_CAMERA_SUPPORT
+	select MEDIA_CONTROLLER
+	select VIDEO_V4L2_SUBDEV_API
 	help
 	  This is a Video4Linux2 sensor driver for the Sony
 	  IMX208 camera.
@@ -147,6 +184,18 @@ config VIDEO_IMX290
 	  To compile this driver as a module, choose M here: the
 	  module will be called imx290.
 
+config VIDEO_IMX296
+	tristate "Sony IMX296 sensor support"
+	depends on I2C && VIDEO_DEV
+	select VIDEO_V4L2_SUBDEV_API
+	select V4L2_FWNODE
+	help
+	  This is a Video4Linux2 sensor driver for the Sony
+	  IMX296 camera.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called imx296.
+
 config VIDEO_IMX319
 	tristate "Sony IMX319 sensor support"
 	depends on I2C && VIDEO_DEV
@@ -215,8 +264,8 @@ config VIDEO_IMX412
 
 config VIDEO_IMX519
 	tristate "Arducam IMX519 sensor support"
-	depends on I2C && VIDEO_DEV && VIDEO_V4L2_SUBDEV_API
-	depends on MEDIA_CAMERA_SUPPORT
+	depends on I2C && VIDEO_DEV
+	select VIDEO_V4L2_SUBDEV_API
 	help
 	  This is a Video4Linux2 sensor driver for the Arducam
 	  IMX519 camera.
@@ -383,7 +432,6 @@ config VIDEO_OV13B10
 config VIDEO_OV2311
 	tristate "OmniVision OV2311 sensor support"
 	depends on I2C && VIDEO_DEV
-	depends on MEDIA_CAMERA_SUPPORT
 	help
 	  This is a Video4Linux2 sensor-level driver for the OmniVision
 	  OV2311 camera.
@@ -394,6 +442,7 @@ config VIDEO_OV2311
 config VIDEO_OV2640
 	tristate "OmniVision OV2640 sensor support"
 	depends on VIDEO_DEV && I2C
+	select V4L2_ASYNC
 	help
 	  This is a Video4Linux2 sensor driver for the OmniVision
 	  OV2640 camera.
@@ -1038,8 +1087,8 @@ config VIDEO_UDA1342
 
 config VIDEO_IMX477
 	tristate "Sony IMX477 sensor support"
-	depends on I2C && VIDEO_DEV && VIDEO_V4L2_SUBDEV_API
-	depends on MEDIA_CAMERA_SUPPORT
+	depends on I2C && VIDEO_DEV
+	select VIDEO_V4L2_SUBDEV_API
 	help
 	  This is a Video4Linux2 sensor driver for the Sony
 	  IMX477 camera. Also supports the Sony IMX378.
@@ -1217,6 +1266,7 @@ config VIDEO_ISL7998X
 	depends on OF_GPIO
 	select MEDIA_CONTROLLER
 	select VIDEO_V4L2_SUBDEV_API
+	select V4L2_FWNODE
 	help
 	  Support for Intersil ISL7998x analog to MIPI-CSI2 or
 	  BT.656 decoder.
@@ -1340,7 +1390,6 @@ config VIDEO_TW2804
 config VIDEO_OV9281
 	tristate "OmniVision OV9281 sensor support"
 	depends on I2C && VIDEO_DEV
-	depends on MEDIA_CAMERA_SUPPORT
 	help
 	  This is a Video4Linux2 sensor-level driver for the OmniVision
 	  OV9281 camera.
@@ -1380,8 +1429,8 @@ config VIDEO_TW9910
 
 config VIDEO_IRS1125
 	tristate "Infineon IRS1125 sensor support"
-	depends on I2C && VIDEO_DEV && VIDEO_V4L2_SUBDEV_API
-	depends on MEDIA_CAMERA_SUPPORT
+	depends on I2C && VIDEO_DEV
+	select VIDEO_V4L2_SUBDEV_API
 	select V4L2_FWNODE
 	help
 	  This is a Video4Linux2 sensor-level driver for the Infineon

@@ -132,7 +132,6 @@ static int v3d_v3d_debugfs_ident(struct seq_file *m, void *unused)
 	u32 ident0, ident1, ident2, ident3, cores;
 	int core;
 
-
 	ident0 = V3D_READ(V3D_HUB_IDENT0);
 	ident1 = V3D_READ(V3D_HUB_IDENT1);
 	ident2 = V3D_READ(V3D_HUB_IDENT2);
@@ -233,7 +232,6 @@ static int v3d_measure_clock(struct seq_file *m, void *unused)
 		   cycles,
 		   cycles / (measure_ms * 1000),
 		   (cycles / (measure_ms * 100)) % 10);
-
 
 	return 0;
 }

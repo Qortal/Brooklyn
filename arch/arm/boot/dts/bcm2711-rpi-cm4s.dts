@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0
 /dts-v1/;
+#define BCM2711
+#define i2c0 i2c0if
 #include "bcm2711.dtsi"
+//#include "bcm283x-rpi-wifi-bt.dtsi"
+#undef i2c0
+#include "bcm270x.dtsi"
+#define i2c0 i2c0mux
 #include "bcm2711-rpi.dtsi"
+#undef i2c0
 
 / {
 	compatible = "raspberrypi,4-compute-module-s", "brcm,bcm2711";
@@ -133,9 +140,6 @@
 // =============================================
 // Downstream rpi- changes
 
-#define BCM2711
-
-#include "bcm270x.dtsi"
 #include "bcm2711-rpi-ds.dtsi"
 
 / {
@@ -159,7 +163,7 @@
 
 / {
 	chosen {
-		bootargs = "coherent_pool=1M 8250.nr_uarts=1 snd_bcm2835.enable_compat_alsa=0 snd_bcm2835.enable_hdmi=1";
+		bootargs = "coherent_pool=1M 8250.nr_uarts=1 snd_bcm2835.enable_headphones=0";
 	};
 
 	aliases {
@@ -356,6 +360,16 @@
 // =============================================
 // Board specific stuff here
 
+/* Enable USB in OTG-aware mode */
+&usb {
+	compatible = "brcm,bcm2835-usb";
+	dr_mode = "otg";
+	g-np-tx-fifo-size = <32>;
+	g-rx-fifo-size = <558>;
+	g-tx-fifo-size = <512 512 512 512 512 256 256>;
+	status = "okay";
+};
+
 &sdhost {
 	status = "disabled";
 };
@@ -388,10 +402,9 @@
 	status = "disabled";
 };
 
-&audio {
+&vchiq {
 	pinctrl-names = "default";
 	pinctrl-0 = <&audio_pins>;
-	brcm,disable-headphones = <1>;
 };
 
 &cam1_reg {
@@ -406,6 +419,8 @@ cam0_reg: &cam0_regulator {
 
 / {
 	__overrides__ {
+		audio = <&chosen>,"bootargs{on='snd_bcm2835.enable_hdmi=1',off='snd_bcm2835.enable_hdmi=0'}";
+
 		act_led_gpio = <&act_led>,"gpios:4";
 		act_led_activelow = <&act_led>,"gpios:8";
 		act_led_trigger = <&act_led>,"linux,default-trigger";

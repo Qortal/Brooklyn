@@ -2,13 +2,13 @@
 #include <dt-bindings/power/raspberrypi-power.h>
 
 / {
-	chosen {
-		bootargs = "coherent_pool=1M snd_bcm2835.enable_compat_alsa=0 snd_bcm2835.enable_hdmi=1";
+	chosen: chosen {
+		// Disable audio by default
+		bootargs = "coherent_pool=1M snd_bcm2835.enable_headphones=0";
 		/delete-property/ stdout-path;
 	};
 
 	soc: soc {
-
 		watchdog: watchdog@7e100000 {
 			/* Add label */
 		};
@@ -150,6 +150,28 @@
 			      <0x7ee08000 0x100>;
 			firmware = <&firmware>;
 			status = "disabled";
+		};
+
+		i2c0mux: i2c0mux {
+			compatible = "i2c-mux-pinctrl";
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			i2c-parent = <&i2c0if>;
+
+			status = "disabled";
+
+			i2c0: i2c@0 {
+				reg = <0>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+			};
+
+			i2c_csi_dsi: i2c@1 {
+				reg = <1>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+			};
 		};
 	};
 

@@ -445,6 +445,7 @@ static void bcm2835_sdhost_reset_internal(struct bcm2835_host *host)
 	bcm2835_sdhost_write(host, SDCDIV_MAX_CDIV, SDCDIV);
 }
 
+#if 0 // todo fix
 static void bcm2835_sdhost_reset(struct mmc_host *mmc)
 {
 	struct bcm2835_host *host = mmc_priv(mmc);
@@ -456,6 +457,7 @@ static void bcm2835_sdhost_reset(struct mmc_host *mmc)
 
 	spin_unlock_irqrestore(&host->lock, flags);
 }
+#endif
 
 static void bcm2835_sdhost_set_ios(struct mmc_host *mmc, struct mmc_ios *ios);
 
@@ -1776,7 +1778,7 @@ static void bcm2835_sdhost_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 static struct mmc_host_ops bcm2835_sdhost_ops = {
 	.request = bcm2835_sdhost_request,
 	.set_ios = bcm2835_sdhost_set_ios,
-	.hw_reset = bcm2835_sdhost_reset,
+// todo:fix	.hw_reset = bcm2835_sdhost_reset,
 };
 
 static void bcm2835_sdhost_cmd_wait_work(struct work_struct *work)

@@ -62,6 +62,7 @@
 			#reset-cells = <1>;
 			reg = <0x7e100000 0x114>,
 			      <0x7e00a000 0x24>;
+			reg-names = "pm", "asb";
 			clocks = <&clocks BCM2835_CLOCK_V3D>,
 				 <&clocks BCM2835_CLOCK_PERI_IMAGE>,
 				 <&clocks BCM2835_CLOCK_H264>,
@@ -109,7 +110,7 @@
 		vec: vec@7e806000 {
 			compatible = "brcm,bcm2835-vec";
 			reg = <0x7e806000 0x1000>;
-			clocks = <&firmware_clocks 15>;
+			clocks = <&clocks BCM2835_CLOCK_VEC>;
 			interrupts = <2 27>;
 			status = "disabled";
 		};
@@ -124,14 +125,12 @@
 			compatible = "brcm,bcm2835-hdmi";
 			reg = <0x7e902000 0x600>,
 			      <0x7e808000 0x100>;
-			reg-names = "hdmi",
-				    "hd";
 			interrupts = <2 8>, <2 9>;
 			ddc = <&i2c2>;
-			clocks = <&firmware_clocks 9>,
-				 <&firmware_clocks 13>;
+			clocks = <&clocks BCM2835_PLLH_PIX>,
+				 <&clocks BCM2835_CLOCK_HSM>;
 			clock-names = "pixel", "hdmi";
-			dmas = <&dma (17|(1<<27)|(1<<24))>;
+			dmas = <&dma 17>;
 			dma-names = "audio-rx";
 			status = "disabled";
 		};
