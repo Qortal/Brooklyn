@@ -1,8 +1,11 @@
-Brooklyn Torchie The Cat, The Blockchain Linux 6.00.11 64bit RPI4 by Scare Crow
-===============================================================================
-* Kernel 6.0.11 for Qortal with mempow hard crunch (standard kernel will not be able to handle upcoming mempow hence this is released)
-* This build is optimized for the core version 3.3.x and onwards. Welcome abroad Digibyte, Raven and pain in the as ARRR
+Brooklyn Torchie The Cat, Qortal Linux 6.00.11 64bit RPI4 by Scare Crow
+=========================================================================
+* Kernel 6.0.11 for Qortal with mempow hard crunch handling.
+* Standard kernel will not be able to handle upcoming mempow hence this is released.
+* This build is optimized for the core version 3.3.x and onwards. Welcome abroad Digibyte, Raven and ARRR.
 * The entire system is now arm64 instead of previous hard float 64 release (kern,userspace) for ARRR chain support.
+* Re-written DRM with crpyto advantage for Qortal Core.
+* Mass staging tree update starting 6.0.00-rc1.
 
 Important Note: After mempow updates, any other Pi 4 kernel will cease to work. It is highly recommended that Torchie 64 mempow is used for Qortal
 
