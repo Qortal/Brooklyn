@@ -9,8 +9,6 @@ Brooklyn Torchie The Cat, Qortal Linux 6.00.11 64bit RPI4 by Scare Crowe
 
 Important Note: After mempow updates, any other Pi 4 kernel will cease to work. It is highly recommended that Torchie 64 mempow is used for Qortal
 
--/ shit breaks balls
-
 This release brings more optimizations to QortalOS. Too many to name in a single README.
 
 QortalOS Preview: https://youtu.be/HPk-VhRjNI8
