@@ -4,7 +4,7 @@ Brooklyn Torchie The Cat, Qortal Linux 6.00.11 64bit RPI4 by Scare Crowe
 * Standard kernel will not be able to handle upcoming mempow hence this is released.
 * This build is optimized for the core version 3.3.x and onwards. Welcome aboard Digibyte, Raven and ARRR.
 * The entire system is now arm64 instead of previous hard float 64 release (kern,userspace) for ARRR chain support.
-* Re-written DRM with crpyto advantage for Qortal Core.
+* Re-written DRM with crpyto advantage for Qortal Core (Became active in TorchieMate release)
 * Mass staging tree update starting 6.0.00-rc1.
 
 Important Note: After mempow updates, any other Pi 4 kernel will cease to work. It is highly recommended that Torchie 64 mempow is used for Qortal
@@ -15,19 +15,7 @@ QortalOS Preview: https://youtu.be/HPk-VhRjNI8
 
 * Because there is a moose on the loose!! His name is Seany. He is going in da mool buff! There's lot of fun for everyone.
 
-
-* Brooklyn NXT Sinclair LTS 5.20.16 grSecurity hardened  
-* Sinclair Desktop based on LTS 5.20.14
-* BrooklynR NXT QortalOS Community 5.16.x LTS-LE
-* V1.2.3 BrooklynR NXT GUI 5.16.x is based on GNOME community code
-* V1.2 BrooklynR NXT GUI 5.16.x is based on LXQT community code
-* V 1.0 is based off a variety of Desktops with Brooklyn The Moose 5.12.6
-* V 1.0 Jaymen is based on headless R Kernel 5.13.10 LTS
-* RussCade 1.0 is based on optimized BrooklynR for Qortal minting and game emulators
-* V1.1 XFCE is based on  Brooklyn Jackwagon 5.12.10 LTS
-* V1.1 MATE-LXDE is based on Brookltn Plumbus 5.12.10 LTS
-
-Forever greets to my moosey Sean , Russell & Gisele who have been around unconditionally unlike the rest of fucking conditional dicks. 
+Forever greets to my moosey Sean , Russell & Gisele who have been around unconditionally.
 
 
 		  GNUK Token Implementation
