@@ -2,6 +2,7 @@
 #
 # Makefile for the kernel security code
 #
+# TODO: Spectre v2 mitigation workaround.
 
 obj-$(CONFIG_KEYS)			+= keys/
 
