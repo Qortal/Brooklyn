@@ -17,6 +17,11 @@ QortalOS Preview: https://youtu.be/HPk-VhRjNI8
 
 Forever greets to my moosey Sean , Russell & Gisele who have been around unconditionally.
 
+Leaving spectre workaround unchanged as the workaround reduces the kernel performance by 50% rendering it useless for Intel, AMD and ARM.  
+There is no fix for Spectre 2 vulnerability yet. 
+
+Reference : https://www.neowin.net/news/amd-issues-fix-for-spectre-v2-which-confirms-nearly-every-desktop-cpu-is-still-vulnerable/
+
 
 		  GNUK Token Implementation
 		 Source: http://www.gniibe.org
