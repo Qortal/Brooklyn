@@ -13,11 +13,11 @@ that run on the kernel are user space tools to just tools.
 
 Qortal uses certain algorithms and runtime methods to exist which may not be eco friendly for general purpose computing
 devices (PC, MAC, SBC) and this causes a serious issue of performance degradation which may result in lockups, issues 
-with peer synchronization, the processor waiting for resource allocation (I/O wait). As the Qortal Core evolves, the kernel
-needs to be constantly updated to keep up with the changes in the Core. On top of that, the kernel needs to be good enough 
-to run the Qortal UI paralell with the Core. That's why Brooklyn Kernel is extremely tuned, built and customised specifically
-for Qortal Core and Qortal UI for the Raspberry Pi. Countless hours are spent weekly on Brooklyn development for performance,
-security and interoperability.
+with peer synchronization, the processor waiting for resource allocation (I/O wait). As the Qortal Core evolves, the
+kernel needs to be constantly updated to keep up with the changes in the Core. On top of that, the kernel needs to be
+good enough to run the Qortal UI paralell with the Core. That's why Brooklyn Kernel is extremely tuned, built and 
+customised specifically for Qortal Core and Qortal UI for the Raspberry Pi. Countless hours are spent weekly on 
+Brooklyn development for performance, security and interoperability.
 
 The end user may not be aware of what is going on in the background, but Brooklyn performs upto 13 times better than a 
 standard kernel for Raspberry Pi as we know that these Pi devices make the most of nodes on the Qortal blockchain and they
