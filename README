@@ -43,7 +43,7 @@ Brooklyn Torchie The Cat, Qortal Linux 6.00.11 64bit RPI4 by Scare Crowe
 * VC4 parallel scalar pipeline rendering and complete redo of qortal-ui optimizations.
 * Overall upto 18 % performance gain from previous releases of brooklyn (now also used in Golem Codes system)
 * Rust language is now the default second language but still EXPERIMENTAL.
-* Qortal Core and Qortal UI algorithms are now native an not loadable modules. 
+* Qortal Core and Qortal UI algorithms are now native and not as application runtime loadable modules. 
 
 This release brings more optimizations to QortalOS. Too many to name in a single README.
 
