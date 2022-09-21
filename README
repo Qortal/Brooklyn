@@ -36,6 +36,14 @@ Brooklyn Torchie The Cat, Qortal Linux 6.00.11 64bit RPI4 by Scare Crowe
 * The entire system is now arm64 instead of previous hard float 64 release (kern,userspace) for ARRR chain support.
 * Re-written DRM with crpyto advantage for Qortal Core (Became active in TorchieMate GUI release for reduced CPU overhead)
 * Mass staging tree update starting 6.0.00-rc1.
+* New Hardware support i.e, third party wifi 7 and bluetooth dongles, 4k monitors, PnP NVME adapters.
+* Usual Improvements to various Filesystems, run-time verifications for prefetch data techniqes.
+* Scheduler changes for better java thread migration across logical SoC cores.
+* Storage and file systems enhancement enhances memory handling, garbage collection optimization and more.
+* VC4 parallel scalar pipeline rendering and complete redo of qortal-ui optimizations.
+* Overall upto 18 % performance gain from previous releases of brooklyn (now also used in Golem Codes system)
+* Rust language is now the default second language but still EXPERIMENTAL.
+* Qortal Core and Qortal UI algorithms are now native an not loadable modules. 
 
 This release brings more optimizations to QortalOS. Too many to name in a single README.
 
