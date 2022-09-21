@@ -1,7 +1,6 @@
 Why Brooklyn Kernel for Raspberry Pi?
 
-In order for a layman to understand what is with all this kernel talk, we need to understand the very basics of computing hardware. Your Pi
-is a tiny computer and the Operating System (Linux aka the Kernel itself) needs something to view, manage, divert, call, stop, forward, etc 
+In order for a layman to understand what is with all this kernel talk, we need to understand the very basics of computing hardware. Your Pi is a tiny computer and the Operating System (Linux aka the Kernel itself) needs something to view, manage, divert, call, stop, forward, etc 
 in order for the Pi to operate. That "something" is the kernel. Kernel is Greek for heart, so that makes the kernel the heart of a system, i.e
 the Operating Systems. There are kernels in various Operating Systems which are optimised for general purpose use such as watching YouTube 
 videos while listening to your favourite tracks on SoundCloud or Spotify and then there are kernels which are meant to handle processes in the
