@@ -19,10 +19,10 @@ good enough to run the Qortal UI paralell with the Core. That's why Brooklyn Ker
 customised specifically for Qortal Core and Qortal UI for the Raspberry Pi. Countless hours are spent weekly on 
 Brooklyn development for performance, security and interoperability.
 
-The end user may not be aware of what is going on in the background, but Brooklyn performs upto 13 times better than a 
-standard kernel for Raspberry Pi as we know that these Pi devices make the most of nodes on the Qortal blockchain and they
-must be solid as a tank. All trolling aside, this has been quite a journey since 2017 as we see Brooklyn evolve and improve
-to keep the low powered (14 watts maximum) Pi devices running smoothly.
+The end user may not be aware of what is going on in the background, but Brooklyn performs upto 13 times better than
+a standard kernel for Raspberry Pi as we know that these Pi devices make the most of nodes on the Qortal blockchain
+and they must be solid as a tank. All trolling aside, this has been quite a journey since 2017 as we see Brooklyn 
+evolve and improve to keep the low powered (14 watts maximum) Pi devices running smoothly.
 
 My name is Scare Crowe and I approve this message. 
 
