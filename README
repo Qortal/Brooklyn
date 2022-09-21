@@ -32,20 +32,12 @@ Brooklyn Torchie The Cat, Qortal Linux 6.00.11 64bit RPI4 by Scare Crowe
 =========================================================================
 * Kernel 6.0.11 for Qortal with mempow hard crunch handling.
 * Standard kernel will not be able to handle upcoming mempow hence this is released.
-* This build is optimized for the core version 3.3.x and onwards. Welcome aboard Digibyte, Raven and ARRR.
+* This build is optimized for the core version 3.5 and onwards. Welcome aboard Digibyte, Raven and ARRR.
 * The entire system is now arm64 instead of previous hard float 64 release (kern,userspace) for ARRR chain support.
 * Re-written DRM with crpyto advantage for Qortal Core (Became active in TorchieMate GUI release for reduced CPU overhead)
 * Mass staging tree update starting 6.0.00-rc1.
 
-Important Note: After mempow updates, any other Pi 4 kernel will cease to work. It is highly recommended that Torchie 64 mempow is used for Qortal
-
 This release brings more optimizations to QortalOS. Too many to name in a single README.
-
-QortalOS Preview: https://youtu.be/HPk-VhRjNI8
-
-* Because there is a moose on the loose!! His name is Seany. He is going in da mool buff! There's lot of fun for everyone.
-
-Forever greets to my moosey Sean , Russell & Gisele who have been around unconditionally.
 
 Leaving spectre workaround unchanged as the workaround reduces the kernel performance by 50% rendering it useless for Intel, AMD and ARM.  
 
