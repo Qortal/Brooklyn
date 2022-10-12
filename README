@@ -1,4 +1,4 @@
-Why Brooklyn Kernel for Raspberry Pi?
+Why Brooklyn Kernel for Raspberry Pi SBC?
 
 In order for a layman to understand what is with all this kernel talk, we need to understand the very basics of 
 computing hardware. Your Pi is a tiny computer and the Operating System (Linux aka the Kernel itself) needs something
@@ -50,6 +50,8 @@ This release brings more optimizations to QortalOS. Too many to name in a single
 Leaving spectre workaround unchanged as the workaround reduces the kernel performance by 50% rendering it useless for Intel, AMD and ARM.  
 
 There is no fix for Spectre 2 vulnerability yet. 
+
+12/12/2022 - Adding resliance against network interruptions. 
 
 Reference : https://www.neowin.net/news/amd-issues-fix-for-spectre-v2-which-confirms-nearly-every-desktop-cpu-is-still-vulnerable/
 
