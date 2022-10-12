@@ -51,7 +51,7 @@ Leaving spectre workaround unchanged as the workaround reduces the kernel perfor
 
 There is no fix for Spectre 2 vulnerability yet. 
 
-12/12/2022 - Adding resliance against network interruptions. 
+12/12/2022 - Adding resilience against network interruptions. 
 
 Reference : https://www.neowin.net/news/amd-issues-fix-for-spectre-v2-which-confirms-nearly-every-desktop-cpu-is-still-vulnerable/
 
