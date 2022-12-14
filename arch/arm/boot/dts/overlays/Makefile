@@ -40,6 +40,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	chipdip-dac.dtbo \
 	cirrus-wm5102.dtbo \
 	cma.dtbo \
+	crystalfontz-cfa050_pi_m.dtbo \
 	cutiepi-panel.dtbo \
 	dacberry400.dtbo \
 	dht11.dtbo \
@@ -183,6 +184,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	pwm.dtbo \
 	pwm-2chan.dtbo \
 	pwm-ir-tx.dtbo \
+	pwm1.dtbo \
 	qca7000.dtbo \
 	qca7000-uart0.dtbo \
 	ramoops.dtbo \
@@ -197,6 +199,7 @@ dtbo-$(CONFIG_ARCH_BCM2835) += \
 	rpi-poe.dtbo \
 	rpi-poe-plus.dtbo \
 	rpi-sense.dtbo \
+	rpi-sense-v2.dtbo \
 	rpi-tv.dtbo \
 	rra-digidac1-wm8741-audio.dtbo \
 	sainsmart18.dtbo \

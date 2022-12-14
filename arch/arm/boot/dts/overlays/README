@@ -190,6 +190,9 @@ Params:
                                 to negotiate. Legal values are 10, 100 and
                                 1000 (default 1000). Pi3B+ only.
 
+        hdmi                    Set to "off" to disable the HDMI interface
+                                (default "on")
+
         i2c_arm                 Set to "on" to enable the ARM's i2c interface
                                 (default "off")
 
@@ -217,6 +220,11 @@ Params:
         krnbt_baudrate          Set the baudrate of the PL011 UART when used
                                 with krnbt=on
 
+        pcie                    Set to "off" to disable the PCIe interface
+                                (default "on")
+                                (2711 only, but not applicable on CM4S)
+                                N.B. USB-A ports on 4B are subsequently disabled
+
         spi                     Set to "on" to enable the spi interfaces
                                 (default "off")
 
@@ -226,6 +234,10 @@ Params:
 
         random                  Set to "on" to enable the hardware random
                                 number generator (default "on")
+
+        sd                      Set to "off" to disable the SD card (or eMMC on
+                                non-lite SKU of CM4).
+                                (default "on")
 
         sd_overclock            Clock (in MHz) to use when the MMC framework
                                 requests 50MHz
@@ -668,10 +680,13 @@ Info:   Switches PWM sound output to GPIOs on the 40-pin header
 Load:   dtoverlay=audremap,<param>=<val>
 Params: swap_lr                 Reverse the channel allocation, which will also
                                 swap the audio jack outputs (default off)
-        enable_jack             Don't switch off the audio jack output
-                                (default off)
+        enable_jack             Don't switch off the audio jack output. Does
+                                nothing on BCM2711 (default off)
         pins_12_13              Select GPIOs 12 & 13 (default)
         pins_18_19              Select GPIOs 18 & 19
+        pins_40_41              Select GPIOs 40 & 41
+        pins_40_45              Select GPIOs 40 & 45 (don't use on BCM2711 - the
+                                pins are on different controllers)
 
 
 Name:   balena-fin
@@ -787,6 +802,15 @@ Params: cma-512                 CMA is 512MB (needs 1GB)
         cma-64                  CMA is 64MB
         cma-size                CMA size in bytes, 4MB aligned
         cma-default             Use upstream's default value
+
+
+Name:   crystalfontz-cfa050_pi_m
+Info:   Configures the Crystalfontz CFA050-PI-M series of Raspberry Pi CM4
+        based modules using the CFA7201280A0_050Tx 7" TFT LCD displays,
+        with or without capacitive touch screen.
+        Requires use of vc4-kms-v3d.
+Load:   dtoverlay=crystalfontz-cfa050_pi_m,<param>=<val>
+Params: captouch                Enable capacitive touch display
 
 
 Name:   cutiepi-panel
@@ -1591,7 +1615,7 @@ Params: <None>
 
 
 Name:   hifiberry-digi-pro
-Info:   Configures the HifiBerry Digi+ Pro audio card
+Info:   Configures the HifiBerry Digi+ Pro and Digi2 Pro audio card
 Load:   dtoverlay=hifiberry-digi-pro
 Params: <None>
 
@@ -1796,6 +1820,8 @@ Params: abx80x                  Select one of the ABx80x family:
 
         rv3028                  Select the Micro Crystal RV3028 device
 
+        rv3032                  Select the Micro Crystal RV3032 device
+
         rv8803                  Select the Micro Crystal RV8803 device
 
         sd3078                  Select the ZXW Shenzhen whwave SD3078 device
@@ -1880,6 +1906,8 @@ Params: abx80x                  Select one of the ABx80x family:
 
         rv3028                  Select the Micro Crystal RV3028 device
 
+        rv3032                  Select the Micro Crystal RV3032 device
+
         rv8803                  Select the Micro Crystal RV8803 device
 
         sd3078                  Select the ZXW Shenzhen whwave SD3078 device
@@ -1921,6 +1949,9 @@ Params: addr                    Set the address for the BH1750, BME280, BME680,
                                 BMP280, CCS811, DS1621, HDC100X, LM75, SHT3x or
                                 TMP102
 
+        aht10                   Select the Aosong AHT10 temperature and humidity
+                                sensor
+
         bh1750                  Select the Rohm BH1750 ambient light sensor
                                 Valid addresses 0x23 or 0x5c, default 0x23
 
@@ -1951,6 +1982,15 @@ Params: addr                    Set the address for the BH1750, BME280, BME680,
         int_pin                 Set the GPIO to use for interrupts (max30102
                                 only)
 
+        jc42                    Select any of the many JEDEC JC42.4-compliant
+                                temperature sensors, including:
+                                  ADT7408, AT30TS00, CAT34TS02, CAT6095,
+                                  MAX6604, MCP9804, MCP9805, MCP9808,
+                                  MCP98242, MCP98243, MCP98244, MCP9843,
+                                  SE97, SE98, STTS424(E), STTS2002, STTS3000,
+                                  TSE2002, TSE2004, TS3000, and TS3001.
+                                The default address is 0x18.
+
         lm75                    Select the Maxim LM75 temperature sensor
                                 Valid addresses 0x48-0x4f, default 0x4f
 
@@ -1961,6 +2001,17 @@ Params: addr                    Set the address for the BH1750, BME280, BME680,
 
         max30102                Select the Maxim Integrated MAX30102 heart-rate
                                 and blood-oxygen sensor
+
+        mcp980x                 Select the Maxim MCP980x range of temperature
+                                sensors (i.e. MCP9800, MCP9801, MCP9802 and
+                                MCP9803). N.B. For MCP9804, MCP9805 and MCP9808,
+                                use the "jc42" option.
+                                Valid addresses are 0x18-0x1f (default 0x18)
+
+        no_timeout              Disable the SMBUS timeout. N.B. Only supported
+                                by some jc42 devices - using with an
+                                incompatible device can stop it from being
+                                activated.
 
         sht3x                   Select the Sensiron SHT3x temperature and
                                 humidity sensor. Valid addresses 0x44-0x45,
@@ -2171,6 +2222,9 @@ Params: rotation                Mounting rotation of the camera sensor (0 or
                                 configuring the sensor (default on)
         cam0                    Adopt the default configuration for CAM0 on a
                                 Compute Module (CSI0, i2c_vc, and cam0_reg).
+        clock-frequency         Sets the clock frequency to match that used on
+                                the board, which should be one of 54000000
+                                (the default), 37125000 or 74250000.
 
 
 Name:   imx327
@@ -3177,6 +3231,24 @@ Params: gpio_pin                Output GPIO (default 18)
         func                    Pin function (default 2 = Alt5)
 
 
+Name:   pwm1
+Info:   Configures one or two PWM channel on PWM1 (BCM2711 only)
+        N.B.:
+          1) The onboard analogue audio output uses both PWM channels.
+          2) So be careful mixing audio and PWM.
+        Note that even when only one pin is enabled, both channels are available
+        from the PWM driver, so be careful to use the correct one.
+Load:   dtoverlay=pwm1,<param>=<val>
+Params: clock                   PWM clock frequency (informational)
+        pins_40                 Enable channel 0 (PWM1_0) on GPIO 40
+        pins_41                 Enable channel 1 (PWM1_1) on GPIO 41
+        pins_40_41              Enable channels 0 (PWM1_0) and 1 (PW1_1) on
+                                GPIOs 40 and 41 (default)
+        pull_up                 Enable pull-ups on the PWM pins (default)
+        pull_down               Enable pull-downs on the PWM pins
+        pull_off                Disable pulls on the PWM pins
+
+
 Name:   qca7000
 Info:   in-tech's Evaluation Board for PLC Stamp micro
         This uses spi0 and a separate GPIO interrupt to connect the QCA7000.
@@ -3412,6 +3484,12 @@ Load:   <Deprecated>
 Name:   rpi-sense
 Info:   Raspberry Pi Sense HAT
 Load:   dtoverlay=rpi-sense
+Params: <None>
+
+
+Name:   rpi-sense-v2
+Info:   Raspberry Pi Sense HAT v2
+Load:   dtoverlay=rpi-sense-v2
 Params: <None>
 
 
