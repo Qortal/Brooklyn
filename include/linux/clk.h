@@ -799,7 +799,7 @@ int clk_set_rate_exclusive(struct clk *clk, unsigned long rate);
  *
  * Returns true if @parent is a possible parent for @clk, false otherwise.
  */
-bool clk_has_parent(struct clk *clk, struct clk *parent);
+bool clk_has_parent(const struct clk *clk, const struct clk *parent);
 
 /**
  * clk_set_rate_range - set a rate range for a clock source
@@ -810,17 +810,6 @@ bool clk_has_parent(struct clk *clk, struct clk *parent);
  * Returns success (0) or negative errno.
  */
 int clk_set_rate_range(struct clk *clk, unsigned long min, unsigned long max);
-
-/**
- * clk_get_rate_range - returns the clock rate range for a clock source
- * @clk: clock source
- * @min: Pointer to the variable that will hold the minimum
- * @max: Pointer to the variable that will hold the maximum
- *
- * Fills the @min and @max variables with the minimum and maximum that
- * the clock source can reach.
- */
-void clk_get_rate_range(struct clk *clk, unsigned long *min, unsigned long *max);
 
 /**
  * clk_set_min_rate - set a minimum clock rate for a clock source
@@ -853,9 +842,8 @@ int clk_set_parent(struct clk *clk, struct clk *parent);
  * clk_get_parent - get the parent clock source for this clock
  * @clk: clock source
  *
- * Returns struct clk corresponding to parent clock source, a NULL
- * pointer if it doesn't have a parent, or a valid IS_ERR() condition
- * containing errno.
+ * Returns struct clk corresponding to parent clock source, or
+ * valid IS_ERR() condition containing errno.
  */
 struct clk *clk_get_parent(struct clk *clk);
 
@@ -1042,16 +1030,6 @@ static inline int clk_set_rate_range(struct clk *clk, unsigned long min,
 	return 0;
 }
 
-static inline void clk_get_rate_range(struct clk *clk, unsigned long *min,
-				      unsigned long *max)
-{
-	if (!min || !max)
-		return;
-
-	*min = 0;
-	*max = ULONG_MAX;
-}
-
 static inline int clk_set_min_rate(struct clk *clk, unsigned long rate)
 {
 	return 0;
@@ -1139,44 +1117,6 @@ static inline void clk_bulk_disable_unprepare(int num_clks,
 static inline int clk_drop_range(struct clk *clk)
 {
 	return clk_set_rate_range(clk, 0, ULONG_MAX);
-}
-
-/**
- * clk_get_min_rate - returns the minimum clock rate for a clock source
- * @clk: clock source
- *
- * Returns either the minimum clock rate in Hz that clock source can
- * reach, or 0 on error.
- */
-static inline unsigned long clk_get_min_rate(struct clk *clk)
-{
-	unsigned long min, max;
-
-	if (!clk)
-		return 0;
-
-	clk_get_rate_range(clk, &min, &max);
-
-	return min;
-}
-
-/**
- * clk_get_max_rate - returns the maximum clock rate for a clock source
- * @clk: clock source
- *
- * Returns either the maximum clock rate in Hz that clock source can
- * reach, or 0 on error.
- */
-static inline unsigned long clk_get_max_rate(struct clk *clk)
-{
-	unsigned long min, max;
-
-	if (!clk)
-		return 0;
-
-	clk_get_rate_range(clk, &min, &max);
-
-	return max;
 }
 
 /**

@@ -609,6 +609,12 @@ to_vc4_dsi(struct drm_encoder *encoder)
 	return container_of(encoder, struct vc4_dsi, encoder.base);
 }
 
+static inline struct vc4_dsi *
+bridge_to_vc4_dsi(struct drm_bridge *bridge)
+{
+	return container_of(bridge, struct vc4_dsi, bridge);
+}
+
 static inline void
 dsi_dma_workaround_write(struct vc4_dsi *dsi, u32 offset, u32 val)
 {
@@ -616,6 +622,8 @@ dsi_dma_workaround_write(struct vc4_dsi *dsi, u32 offset, u32 val)
 	struct dma_async_tx_descriptor *tx;
 	dma_cookie_t cookie;
 	int ret;
+
+	kunit_fail_current_test("Accessing a register in a unit test!\n");
 
 	/* DSI0 should be able to write normally. */
 	if (!chan) {
@@ -645,19 +653,18 @@ dsi_dma_workaround_write(struct vc4_dsi *dsi, u32 offset, u32 val)
 		DRM_ERROR("Failed to wait for DMA: %d\n", ret);
 }
 
-#define DSI_READ(offset) readl(dsi->regs + (offset))
+#define DSI_READ(offset)								\
+	({										\
+		kunit_fail_current_test("Accessing a register in a unit test!\n");	\
+		readl(dsi->regs + (offset));						\
+	})
+
 #define DSI_WRITE(offset, val) dsi_dma_workaround_write(dsi, offset, val)
 #define DSI_PORT_READ(offset) \
 	DSI_READ(dsi->variant->port ? DSI1_##offset : DSI0_##offset)
 #define DSI_PORT_WRITE(offset, val) \
 	DSI_WRITE(dsi->variant->port ? DSI1_##offset : DSI0_##offset, val)
 #define DSI_PORT_BIT(bit) (dsi->variant->port ? DSI1_##bit : DSI0_##bit)
-
-static inline struct vc4_dsi *
-bridge_to_vc4_dsi(struct drm_bridge *bridge)
-{
-	return container_of(bridge, struct vc4_dsi, bridge);
-}
 
 static const struct debugfs_reg32 dsi0_regs[] = {
 	VC4_REG32(DSI0_CTRL),
@@ -1660,6 +1667,7 @@ static int vc4_dsi_bind(struct device *dev, struct device *master, void *data)
 		return ret;
 
 	dsi->variant = of_device_get_match_data(dev);
+
 	dsi->encoder.type = dsi->variant->port ?
 		VC4_ENCODER_TYPE_DSI1 : VC4_ENCODER_TYPE_DSI0;
 
@@ -1814,11 +1822,10 @@ static int vc4_dsi_dev_probe(struct platform_device *pdev)
 
 	kref_init(&dsi->kref);
 
+	dsi->pdev = pdev;
 	dsi->bridge.funcs = &vc4_dsi_bridge_funcs;
 	dsi->bridge.of_node = dev->of_node;
 	dsi->bridge.type = DRM_MODE_CONNECTOR_DSI;
-
-	dsi->pdev = pdev;
 	dsi->dsi_host.ops = &vc4_dsi_host_ops;
 	dsi->dsi_host.dev = dev;
 	mipi_dsi_host_register(&dsi->dsi_host);

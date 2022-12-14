@@ -2051,7 +2051,7 @@ error_power_off:
 	return ret;
 }
 
-static int imx519_remove(struct i2c_client *client)
+static void imx519_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct imx519 *imx519 = to_imx519(sd);
@@ -2064,8 +2064,6 @@ static int imx519_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		imx519_power_off(&client->dev);
 	pm_runtime_set_suspended(&client->dev);
-
-	return 0;
 }
 
 MODULE_DEVICE_TABLE(of, imx519_dt_ids);

@@ -20,7 +20,7 @@
 #include <drm/drm_blend.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_edid.h>
-#include <drm/drm_fb_cma_helper.h>
+#include <drm/drm_fb_dma_helper.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem_atomic_helper.h>
@@ -184,18 +184,22 @@ static const struct vc_image_format {
 		.drm = DRM_FORMAT_ARGB8888,
 		.vc_image = VC_IMAGE_ARGB8888,
 	},
-/*
- *	FIXME: Need to resolve which DRM format goes to which vc_image format
- *	for the remaining RGBA and RGBX formats.
- *	{
- *		.drm = DRM_FORMAT_ABGR8888,
- *		.vc_image = VC_IMAGE_RGBA8888,
- *	},
- *	{
- *		.drm = DRM_FORMAT_XBGR8888,
- *		.vc_image = VC_IMAGE_RGBA8888,
- *	},
- */
+	{
+		.drm = DRM_FORMAT_XBGR8888,
+		.vc_image = VC_IMAGE_RGBX32,
+	},
+	{
+		.drm = DRM_FORMAT_ABGR8888,
+		.vc_image = VC_IMAGE_RGBA32,
+	},
+	{
+		.drm = DRM_FORMAT_RGBX8888,
+		.vc_image = VC_IMAGE_BGRX8888,
+	},
+	{
+		.drm = DRM_FORMAT_BGRX8888,
+		.vc_image = VC_IMAGE_RGBX8888,
+	},
 	{
 		.drm = DRM_FORMAT_RGB565,
 		.vc_image = VC_IMAGE_RGB565,
@@ -524,7 +528,7 @@ static int vc4_plane_to_mb(struct drm_plane *plane,
 			   struct drm_plane_state *state)
 {
 	struct drm_framebuffer *fb = state->fb;
-	struct drm_gem_cma_object *bo = drm_fb_cma_get_gem_obj(fb, 0);
+	struct drm_gem_dma_object *bo = drm_fb_dma_get_gem_obj(fb, 0);
 	const struct drm_format_info *drm_fmt = fb->format;
 	const struct vc_image_format *vc_fmt =
 					vc4_get_vc_image_fmt(drm_fmt->format);
@@ -548,7 +552,7 @@ static int vc4_plane_to_mb(struct drm_plane *plane,
 					state->normalized_zpos : -127;
 	mb->plane.num_planes = num_planes;
 	mb->plane.is_vu = vc_fmt->is_vu;
-	mb->plane.planes[0] = bo->paddr + fb->offsets[0];
+	mb->plane.planes[0] = bo->dma_addr + fb->offsets[0];
 
 	rotation = drm_rotation_simplify(state->rotation,
 					 DRM_MODE_ROTATE_0 |
@@ -568,9 +572,9 @@ static int vc4_plane_to_mb(struct drm_plane *plane,
 		/* Makes assumptions on the stride for the chroma planes as we
 		 * can't easily plumb in non-standard pitches.
 		 */
-		mb->plane.planes[1] = bo->paddr + fb->offsets[1];
+		mb->plane.planes[1] = bo->dma_addr + fb->offsets[1];
 		if (num_planes > 2)
-			mb->plane.planes[2] = bo->paddr + fb->offsets[2];
+			mb->plane.planes[2] = bo->dma_addr + fb->offsets[2];
 		else
 			mb->plane.planes[2] = 0;
 
@@ -1157,8 +1161,8 @@ vc4_crtc_mode_valid(struct drm_crtc *crtc, const struct drm_display_mode *mode)
 	return MODE_OK;
 }
 
-static int vc4_crtc_atomic_check(struct drm_crtc *crtc,
-				 struct drm_atomic_state *state)
+static int vc4_fkms_crtc_atomic_check(struct drm_crtc *crtc,
+				      struct drm_atomic_state *state)
 {
 	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state,
 									  crtc);
@@ -1337,7 +1341,7 @@ static const struct drm_crtc_funcs vc4_crtc_funcs = {
 static const struct drm_crtc_helper_funcs vc4_crtc_helper_funcs = {
 	.mode_set_nofb = vc4_crtc_mode_set_nofb,
 	.mode_valid = vc4_crtc_mode_valid,
-	.atomic_check = vc4_crtc_atomic_check,
+	.atomic_check = vc4_fkms_crtc_atomic_check,
 	.atomic_flush = vc4_crtc_atomic_flush,
 	.atomic_enable = vc4_crtc_enable,
 	.atomic_disable = vc4_crtc_disable,

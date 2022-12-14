@@ -16,27 +16,7 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 
-#include <soc/bcm2835/raspberrypi-clocks.h>
 #include <soc/bcm2835/raspberrypi-firmware.h>
-
-enum rpi_firmware_clk_id {
-	RPI_FIRMWARE_EMMC_CLK_ID = 1,
-	RPI_FIRMWARE_UART_CLK_ID,
-	RPI_FIRMWARE_ARM_CLK_ID,
-	RPI_FIRMWARE_CORE_CLK_ID,
-	RPI_FIRMWARE_V3D_CLK_ID,
-	RPI_FIRMWARE_H264_CLK_ID,
-	RPI_FIRMWARE_ISP_CLK_ID,
-	RPI_FIRMWARE_SDRAM_CLK_ID,
-	RPI_FIRMWARE_PIXEL_CLK_ID,
-	RPI_FIRMWARE_PWM_CLK_ID,
-	RPI_FIRMWARE_HEVC_CLK_ID,
-	RPI_FIRMWARE_EMMC2_CLK_ID,
-	RPI_FIRMWARE_M2MC_CLK_ID,
-	RPI_FIRMWARE_PIXEL_BVB_CLK_ID,
-	RPI_FIRMWARE_VEC_CLK_ID,
-	RPI_FIRMWARE_NUM_CLK_ID,
-};
 
 static char *rpi_firmware_clk_names[] = {
 	[RPI_FIRMWARE_EMMC_CLK_ID]	= "emmc",
@@ -139,6 +119,10 @@ raspberrypi_clk_variants[RPI_FIRMWARE_NUM_CLK_ID] = {
 		.export = true,
 		.minimize = true,
 	},
+	[RPI_FIRMWARE_PIXEL_CLK_ID] = {
+		.export = true,
+		.minimize = true,
+	},
 	[RPI_FIRMWARE_HEVC_CLK_ID] = {
 		.export = true,
 		.minimize = true,
@@ -152,10 +136,6 @@ raspberrypi_clk_variants[RPI_FIRMWARE_NUM_CLK_ID] = {
 		.minimize = true,
 	},
 	[RPI_FIRMWARE_VEC_CLK_ID] = {
-		.export = true,
-		.minimize = true,
-	},
-	[RPI_FIRMWARE_PIXEL_CLK_ID] = {
 		.export = true,
 		.minimize = true,
 	},
@@ -274,60 +254,6 @@ static int raspberrypi_fw_dumb_determine_rate(struct clk_hw *hw,
 
 	return 0;
 }
-
-unsigned long rpi_firmware_clk_get_max_rate(struct clk *clk)
-{
-	const struct raspberrypi_clk_data *data;
-	struct raspberrypi_clk *rpi;
-	struct clk_hw *hw;
-	u32 max_rate;
-	int ret;
-
-	if (!clk)
-		return 0;
-
-	hw =  __clk_get_hw(clk);
-	if (!hw)
-		return 0;
-
-	data = clk_hw_to_data(hw);
-	rpi = data->rpi;
-	ret = raspberrypi_clock_property(rpi->firmware, data,
-					 RPI_FIRMWARE_GET_MAX_CLOCK_RATE,
-					 &max_rate);
-	if (ret)
-		return 0;
-
-	return max_rate;
-}
-EXPORT_SYMBOL_GPL(rpi_firmware_clk_get_max_rate);
-
-unsigned long rpi_firmware_clk_get_min_rate(struct clk *clk)
-{
-	const struct raspberrypi_clk_data *data;
-	struct raspberrypi_clk *rpi;
-	struct clk_hw *hw;
-	u32 min_rate;
-	int ret;
-
-	if (!clk)
-		return 0;
-
-	hw =  __clk_get_hw(clk);
-	if (!hw)
-		return 0;
-
-	data = clk_hw_to_data(hw);
-	rpi = data->rpi;
-	ret = raspberrypi_clock_property(rpi->firmware, data,
-					 RPI_FIRMWARE_GET_MIN_CLOCK_RATE,
-					 &min_rate);
-	if (ret)
-		return 0;
-
-	return min_rate;
-}
-EXPORT_SYMBOL_GPL(rpi_firmware_clk_get_min_rate);
 
 static const struct clk_ops raspberrypi_firmware_clk_ops = {
 	.is_prepared	= raspberrypi_fw_is_prepared,

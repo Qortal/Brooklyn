@@ -1240,7 +1240,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static int ov9281_remove(struct i2c_client *client)
+static void ov9281_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ov9281 *ov9281 = to_ov9281(sd);
@@ -1254,8 +1254,6 @@ static int ov9281_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__ov9281_power_off(ov9281);
 	pm_runtime_set_suspended(&client->dev);
-
-	return 0;
 }
 
 static const struct of_device_id ov9281_of_match[] = {

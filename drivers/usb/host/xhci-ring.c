@@ -1015,11 +1015,13 @@ static int xhci_invalidate_cancelled_tds(struct xhci_virt_ep *ep)
 						 td->urb->stream_id, td->urb,
 						 cached_td->urb->stream_id, cached_td->urb);
 				cached_td = td;
+				ring->num_trbs_free += td->num_trbs;
 				break;
 			}
 		} else {
 			td_to_noop(xhci, ring, td, false);
 			td->cancel_status = TD_CLEARED;
+			ring->num_trbs_free += td->num_trbs;
 		}
 	}
 
@@ -1264,10 +1266,7 @@ static void update_ring_for_set_deq_completion(struct xhci_hcd *xhci,
 		unsigned int ep_index)
 {
 	union xhci_trb *dequeue_temp;
-	int num_trbs_free_temp;
-	bool revert = false;
 
-	num_trbs_free_temp = ep_ring->num_trbs_free;
 	dequeue_temp = ep_ring->dequeue;
 
 	/* If we get two back-to-back stalls, and the first stalled transfer
@@ -1282,8 +1281,6 @@ static void update_ring_for_set_deq_completion(struct xhci_hcd *xhci,
 	}
 
 	while (ep_ring->dequeue != dev->eps[ep_index].queued_deq_ptr) {
-		/* We have more usable TRBs */
-		ep_ring->num_trbs_free++;
 		ep_ring->dequeue++;
 		if (trb_is_link(ep_ring->dequeue)) {
 			if (ep_ring->dequeue ==
@@ -1293,14 +1290,9 @@ static void update_ring_for_set_deq_completion(struct xhci_hcd *xhci,
 			ep_ring->dequeue = ep_ring->deq_seg->trbs;
 		}
 		if (ep_ring->dequeue == dequeue_temp) {
-			revert = true;
+			xhci_dbg(xhci, "Unable to find new dequeue pointer\n");
 			break;
 		}
-	}
-
-	if (revert) {
-		xhci_dbg(xhci, "Unable to find new dequeue pointer\n");
-		ep_ring->num_trbs_free = num_trbs_free_temp;
 	}
 }
 
@@ -3527,6 +3519,48 @@ static int xhci_align_td(struct xhci_hcd *xhci, struct urb *urb, u32 enqd_len,
 	return 1;
 }
 
+static void xhci_vl805_hub_tt_quirk(struct xhci_hcd *xhci, struct urb *urb,
+				    struct xhci_ring *ring)
+{
+	struct list_head *tmp;
+	struct usb_device *udev = urb->dev;
+	unsigned int timeout = 0;
+	unsigned int single_td = 0;
+
+	/*
+	 * Adding a TD to an Idle ring for a FS nonperiodic endpoint
+	 * that is behind the internal hub's TT will run the risk of causing a
+	 * downstream port babble if submitted late in uFrame 7.
+	 * Wait until we've moved on into at least uFrame 0
+	 * (MFINDEX references the next SOF to be transmitted).
+	 *
+	 * Rings for IN endpoints in the Running state also risk causing
+	 * babble if the returned data is large, but there's not much we can do
+	 * about it here.
+	 */
+	if (udev->route & 0xffff0 || udev->speed != USB_SPEED_FULL)
+		return;
+
+	list_for_each(tmp, &ring->td_list) {
+		single_td++;
+		if (single_td == 2) {
+			single_td = 0;
+			break;
+		}
+	}
+	if (single_td) {
+		while (timeout < 20 &&
+		       (readl(&xhci->run_regs->microframe_index) & 0x7) == 0) {
+			udelay(10);
+			timeout++;
+		}
+		if (timeout >= 20)
+			xhci_warn(xhci, "MFINDEX didn't advance - %u.%u dodged\n",
+				  readl(&xhci->run_regs->microframe_index) >> 3,
+				  readl(&xhci->run_regs->microframe_index) & 7);
+	}
+}
+
 /* This is very similar to what ehci-q.c qtd_fill() does */
 int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		struct urb *urb, int slot_id, unsigned int ep_index)
@@ -3695,6 +3729,8 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	}
 
 	check_trb_math(urb, enqd_len);
+	if (xhci->quirks & XHCI_VLI_HUB_TT_QUIRK)
+		xhci_vl805_hub_tt_quirk(xhci, urb, ring);
 	giveback_first_trb(xhci, slot_id, ep_index, urb->stream_id,
 			start_cycle, start_trb);
 	return 0;
@@ -3830,6 +3866,8 @@ int xhci_queue_ctrl_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 			/* Event on completion */
 			field | TRB_IOC | TRB_TYPE(TRB_STATUS) | ep_ring->cycle_state);
 
+	if (xhci->quirks & XHCI_VLI_HUB_TT_QUIRK)
+		xhci_vl805_hub_tt_quirk(xhci, urb, ep_ring);
 	giveback_first_trb(xhci, slot_id, ep_index, 0,
 			start_cycle, start_trb);
 	return 0;

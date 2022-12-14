@@ -305,14 +305,12 @@ static int tas5713_i2c_probe(struct i2c_client *i2c,
 }
 
 
-static int tas5713_i2c_remove(struct i2c_client *i2c)
+static void tas5713_i2c_remove(struct i2c_client *i2c)
 {
 	snd_soc_unregister_component(&i2c->dev);
 	i2c_set_clientdata(i2c, NULL);
 
 	kfree(priv_data);
-
-	return 0;
 }
 
 

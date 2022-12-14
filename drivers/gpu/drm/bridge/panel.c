@@ -387,7 +387,7 @@ static void drmm_drm_panel_bridge_release(struct drm_device *drm, void *ptr)
  *                         &drm_connector that just calls the
  *                         appropriate functions from &drm_panel.
  *
- * @dev: DRM device to tie the bridge lifetime to
+ * @drm: DRM device to tie the bridge lifetime to
  * @panel: The drm_panel being wrapped.  Must be non-NULL.
  *
  * This is the DRM-managed version of drm_panel_bridge_add() which
@@ -469,7 +469,7 @@ EXPORT_SYMBOL(devm_drm_of_get_bridge);
 
 /**
  * drmm_of_get_bridge - Return next bridge in the chain
- * @dev: device to tie the bridge lifetime to
+ * @drm: device to tie the bridge lifetime to
  * @np: device tree node containing encoder output ports
  * @port: port in the device tree node
  * @endpoint: endpoint in the device tree node
@@ -482,8 +482,8 @@ EXPORT_SYMBOL(devm_drm_of_get_bridge);
  * pointer otherwise.
  */
 struct drm_bridge *drmm_of_get_bridge(struct drm_device *drm,
-					  struct device_node *np,
-					  u32 port, u32 endpoint)
+				      struct device_node *np,
+				      u32 port, u32 endpoint)
 {
 	struct drm_bridge *bridge;
 	struct drm_panel *panel;

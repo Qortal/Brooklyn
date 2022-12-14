@@ -1097,10 +1097,9 @@ static int allo_cs43130_component_probe(struct i2c_client *i2c,
 	return 0;
 }
 
-static int allo_cs43130_component_remove(struct i2c_client *i2c)
+static void allo_cs43130_component_remove(struct i2c_client *i2c)
 {
 	snd_soc_unregister_component(&i2c->dev);
-	return 0;
 }
 
 static const struct i2c_device_id allo_cs43130_component_id[] = {

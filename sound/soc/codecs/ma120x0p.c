@@ -893,8 +893,8 @@ static SOC_VALUE_ENUM_SINGLE_DECL(pwr_mode_ctrl,
 	pwr_mode_texts,
 	pwr_mode_values);
 
-static const DECLARE_TLV_DB_SCALE(ma120x0p_vol_tlv, -5000, 100,  0);
-static const DECLARE_TLV_DB_SCALE(ma120x0p_lim_tlv, -14400, 100,  0);
+static const DECLARE_TLV_DB_SCALE(ma120x0p_vol_tlv, -14400, 100,  0);
+static const DECLARE_TLV_DB_SCALE(ma120x0p_lim_tlv, -5000, 100,  0);
 static const DECLARE_TLV_DB_SCALE(ma120x0p_lr_tlv, -5000, 100,  0);
 
 static const struct snd_kcontrol_new ma120x0p_snd_controls[] = {
@@ -1308,7 +1308,7 @@ static irqreturn_t ma120x0p_irq_handler(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static int ma120x0p_i2c_remove(struct i2c_client *i2c)
+static void ma120x0p_i2c_remove(struct i2c_client *i2c)
 {
 	snd_soc_unregister_component(&i2c->dev);
 	i2c_set_clientdata(i2c, NULL);
@@ -1321,8 +1321,6 @@ static int ma120x0p_i2c_remove(struct i2c_client *i2c)
 	msleep(200);
 
 	kfree(priv_data);
-
-	return 0;
 }
 
 static void ma120x0p_i2c_shutdown(struct i2c_client *i2c)

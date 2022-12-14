@@ -197,13 +197,6 @@ struct drm_panel {
 	struct list_head list;
 
 	/**
-	 * @dsc:
-	 *
-	 * Panel DSC pps payload to be sent
-	 */
-	struct drm_dsc_config *dsc;
-
-	/**
 	 * @prepare_upstream_first:
 	 *
 	 * The upstream controller should be prepared first, before the prepare

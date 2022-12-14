@@ -1432,7 +1432,7 @@ error_power_off:
 	return ret;
 }
 
-static int pivariety_remove(struct i2c_client *client)
+static void pivariety_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct pivariety *pivariety = to_pivariety(sd);
@@ -1443,8 +1443,6 @@ static int pivariety_remove(struct i2c_client *client)
 
 	pm_runtime_disable(&client->dev);
 	pm_runtime_set_suspended(&client->dev);
-
-	return 0;
 }
 
 static const struct dev_pm_ops pivariety_pm_ops = {

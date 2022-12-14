@@ -262,7 +262,7 @@ EXPORT_SYMBOL_GPL(__clk_get_name);
 
 const char *clk_hw_get_name(const struct clk_hw *hw)
 {
-	return !hw ? NULL : hw->core->name;
+	return hw->core->name;
 }
 EXPORT_SYMBOL_GPL(clk_hw_get_name);
 
@@ -543,16 +543,17 @@ static void clk_core_init_rate_req(struct clk_core * const core,
 static int clk_core_round_rate_nolock(struct clk_core *core,
 				      struct clk_rate_request *req);
 
-static bool clk_core_has_parent(struct clk_core *core, struct clk_core *parent)
+static bool clk_core_has_parent(struct clk_core *core, const struct clk_core *parent)
 {
+	struct clk_core *tmp;
 	unsigned int i;
 
 	/* Optimize for the case where the parent is already the parent. */
-	if (core == parent)
+	if (core->parent == parent)
 		return true;
 
 	for (i = 0; i < core->num_parents; i++) {
-		struct clk_core *tmp = clk_core_get_parent_by_index(core, i);
+		tmp = clk_core_get_parent_by_index(core, i);
 		if (!tmp)
 			continue;
 
@@ -1458,10 +1459,14 @@ static void clk_core_init_rate_req(struct clk_core * const core,
 {
 	struct clk_core *parent;
 
-	if (WARN_ON(!core || !req))
+	if (WARN_ON(!req))
 		return;
 
 	memset(req, 0, sizeof(*req));
+	req->max_rate = ULONG_MAX;
+
+	if (!core)
+		return;
 
 	req->rate = rate;
 	clk_core_get_boundaries(core, &req->min_rate, &req->max_rate);
@@ -1758,6 +1763,7 @@ static unsigned long clk_recalc(struct clk_core *core,
 /**
  * __clk_recalc_rates
  * @core: first clk in the subtree
+ * @update_req: Whether req_rate should be updated with the new rate
  * @msg: notification type (see include/linux/clk.h)
  *
  * Walks the subtree of clks starting with clk and recalculates rates as it
@@ -1767,7 +1773,8 @@ static unsigned long clk_recalc(struct clk_core *core,
  * clk_recalc_rates also propagates the POST_RATE_CHANGE notification,
  * if necessary.
  */
-static void __clk_recalc_rates(struct clk_core *core, unsigned long msg)
+static void __clk_recalc_rates(struct clk_core *core, bool update_req,
+			       unsigned long msg)
 {
 	unsigned long old_rate;
 	unsigned long parent_rate = 0;
@@ -1781,6 +1788,8 @@ static void __clk_recalc_rates(struct clk_core *core, unsigned long msg)
 		parent_rate = core->parent->rate;
 
 	core->rate = clk_recalc(core, parent_rate);
+	if (update_req)
+		core->req_rate = core->rate;
 
 	/*
 	 * ignore NOTIFY_STOP and NOTIFY_BAD return values for POST_RATE_CHANGE
@@ -1790,13 +1799,13 @@ static void __clk_recalc_rates(struct clk_core *core, unsigned long msg)
 		__clk_notify(core, msg, old_rate, core->rate);
 
 	hlist_for_each_entry(child, &core->children, child_node)
-		__clk_recalc_rates(child, msg);
+		__clk_recalc_rates(child, update_req, msg);
 }
 
 static unsigned long clk_core_get_rate_recalc(struct clk_core *core)
 {
 	if (core && (core->flags & CLK_GET_RATE_NOCACHE))
-		__clk_recalc_rates(core, 0);
+		__clk_recalc_rates(core, false, 0);
 
 	return clk_core_get_rate_nolock(core);
 }
@@ -1899,23 +1908,6 @@ static void clk_core_update_orphan_status(struct clk_core *core, bool is_orphan)
 		clk_core_update_orphan_status(child, is_orphan);
 }
 
-/*
- * Update the orphan rate and req_rate of @core and all its children.
- */
-static void clk_core_update_orphan_child_rates(struct clk_core *core)
-{
-	struct clk_core *child;
-	unsigned long parent_rate = 0;
-
-	if (core->parent)
-		parent_rate = core->parent->rate;
-
-	core->rate = core->req_rate = clk_recalc(core, parent_rate);
-
-	hlist_for_each_entry(child, &core->children, child_node)
-		clk_core_update_orphan_child_rates(child);
-}
-
 static void clk_reparent(struct clk_core *core, struct clk_core *new_parent)
 {
 	bool was_orphan = core->orphan;
@@ -1940,7 +1932,6 @@ static void clk_reparent(struct clk_core *core, struct clk_core *new_parent)
 	}
 
 	core->parent = new_parent;
-	clk_core_update_orphan_child_rates(core);
 }
 
 static struct clk_core *__clk_set_parent_before(struct clk_core *core,
@@ -2030,6 +2021,7 @@ static int __clk_set_parent(struct clk_core *core, struct clk_core *parent,
 		flags = clk_enable_lock();
 		clk_reparent(core, old_parent);
 		clk_enable_unlock(flags);
+
 		__clk_set_parent_after(core, old_parent, parent);
 
 		return ret;
@@ -2349,7 +2341,7 @@ static int clk_core_set_rate_nolock(struct clk_core *core,
 {
 	struct clk_core *top, *fail_clk;
 	unsigned long rate;
-	int ret = 0;
+	int ret;
 
 	if (!core)
 		return 0;
@@ -2618,26 +2610,6 @@ int clk_set_max_rate(struct clk *clk, unsigned long rate)
 EXPORT_SYMBOL_GPL(clk_set_max_rate);
 
 /**
- * clk_get_rate_range - returns the clock rate range for a clock source
- * @clk: clock source
- * @min: Pointer to the variable that will hold the minimum
- * @max: Pointer to the variable that will hold the maximum
- *
- * Fills the @min and @max variables with the minimum and maximum that
- * the clock source can reach.
- */
-void clk_get_rate_range(struct clk *clk, unsigned long *min, unsigned long *max)
-{
-	if (!clk || !min || !max)
-		return;
-
-	clk_prepare_lock();
-	clk_core_get_boundaries(clk->core, min, max);
-	clk_prepare_unlock();
-}
-EXPORT_SYMBOL_GPL(clk_get_rate_range);
-
-/**
  * clk_get_parent - return the parent of a clk
  * @clk: the clk whose parent gets returned
  *
@@ -2674,7 +2646,7 @@ static void clk_core_reparent(struct clk_core *core,
 {
 	clk_reparent(core, new_parent);
 	__clk_recalc_accuracies(core);
-	__clk_recalc_rates(core, POST_RATE_CHANGE);
+	__clk_recalc_rates(core, true, POST_RATE_CHANGE);
 }
 
 void clk_hw_reparent(struct clk_hw *hw, struct clk_hw *new_parent)
@@ -2695,7 +2667,7 @@ void clk_hw_reparent(struct clk_hw *hw, struct clk_hw *new_parent)
  *
  * Returns true if @parent is a possible parent for @clk, false otherwise.
  */
-bool clk_has_parent(struct clk *clk, struct clk *parent)
+bool clk_has_parent(const struct clk *clk, const struct clk *parent)
 {
 	/* NULL clocks should be nops, so return success if either is NULL. */
 	if (!clk || !parent)
@@ -2758,9 +2730,9 @@ static int clk_core_set_parent_nolock(struct clk_core *core,
 
 	/* propagate rate an accuracy recalculation accordingly */
 	if (ret) {
-		__clk_recalc_rates(core, ABORT_RATE_CHANGE);
+		__clk_recalc_rates(core, true, ABORT_RATE_CHANGE);
 	} else {
-		__clk_recalc_rates(core, POST_RATE_CHANGE);
+		__clk_recalc_rates(core, true, POST_RATE_CHANGE);
 		__clk_recalc_accuracies(core);
 	}
 
@@ -3648,7 +3620,7 @@ static void clk_core_reparent_orphans_nolock(void)
 
 		/*
 		 * We need to use __clk_set_parent_before() and _after() to
-		 * to properly migrate any prepare/enable count of the orphan
+		 * properly migrate any prepare/enable count of the orphan
 		 * clock. This is important for CLK_IS_CRITICAL clocks, which
 		 * are enabled during init but might not have a parent yet.
 		 */
@@ -3657,7 +3629,7 @@ static void clk_core_reparent_orphans_nolock(void)
 			__clk_set_parent_before(orphan, parent);
 			__clk_set_parent_after(orphan, parent, NULL);
 			__clk_recalc_accuracies(orphan);
-			__clk_recalc_rates(orphan, 0);
+			__clk_recalc_rates(orphan, true, 0);
 
 			/*
 			 * __clk_init_parent() will set the initial req_rate to
@@ -3857,7 +3829,6 @@ static int __clk_core_init(struct clk_core *core)
 	}
 
 	clk_core_reparent_orphans_nolock();
-
 
 	kref_init(&core->ref);
 out:
@@ -4937,32 +4908,6 @@ void of_clk_del_provider(struct device_node *np)
 	mutex_unlock(&of_clk_mutex);
 }
 EXPORT_SYMBOL_GPL(of_clk_del_provider);
-
-static int devm_clk_provider_match(struct device *dev, void *res, void *data)
-{
-	struct device_node **np = res;
-
-	if (WARN_ON(!np || !*np))
-		return 0;
-
-	return *np == data;
-}
-
-/**
- * devm_of_clk_del_provider() - Remove clock provider registered using devm
- * @dev: Device to whose lifetime the clock provider was bound
- */
-void devm_of_clk_del_provider(struct device *dev)
-{
-	int ret;
-	struct device_node *np = get_clk_provider_node(dev);
-
-	ret = devres_release(dev, devm_of_clk_release_provider,
-			     devm_clk_provider_match, np);
-
-	WARN_ON(ret);
-}
-EXPORT_SYMBOL(devm_of_clk_del_provider);
 
 /**
  * of_parse_clkspec() - Parse a DT clock specifier for a given device node

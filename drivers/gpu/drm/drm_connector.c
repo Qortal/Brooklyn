@@ -267,12 +267,13 @@ static int __drm_connector_init(struct drm_device *dev,
 		goto out_put_type_id;
 	}
 
+	/* provide ddc symlink in sysfs */
+	connector->ddc = ddc;
+
 	INIT_LIST_HEAD(&connector->global_connector_list_entry);
 	INIT_LIST_HEAD(&connector->probed_modes);
 	INIT_LIST_HEAD(&connector->modes);
 	mutex_init(&connector->mutex);
-	/* provide ddc symlink in sysfs */
-	connector->ddc = ddc;
 	connector->edid_blob_ptr = NULL;
 	connector->epoch_counter = 0;
 	connector->tile_blob_ptr = NULL;
@@ -434,7 +435,7 @@ int drmm_connector_init(struct drm_device *dev,
 	if (drm_WARN_ON(dev, funcs && funcs->destroy))
 		return -EINVAL;
 
-	ret = __drm_connector_init(dev, connector, funcs, connector_type, NULL);
+	ret = __drm_connector_init(dev, connector, funcs, connector_type, ddc);
 	if (ret)
 		return ret;
 

@@ -213,6 +213,7 @@ static void drmm_encoder_alloc_release(struct drm_device *dev, void *ptr)
 	drm_encoder_cleanup(encoder);
 }
 
+__printf(5, 0)
 static int __drmm_encoder_init(struct drm_device *dev,
 			       struct drm_encoder *encoder,
 			       const struct drm_encoder_funcs *funcs,

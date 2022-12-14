@@ -1161,7 +1161,7 @@ mutex_remove:
 	return ret;
 }
 
-static int irs1125_remove(struct i2c_client *client)
+static void irs1125_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct irs1125 *irs1125 = to_state(sd);
@@ -1171,8 +1171,6 @@ static int irs1125_remove(struct i2c_client *client)
 	v4l2_device_unregister_subdev(sd);
 	mutex_destroy(&irs1125->lock);
 	v4l2_ctrl_handler_free(&irs1125->ctrl_handler);
-
-	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

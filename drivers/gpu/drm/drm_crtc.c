@@ -379,6 +379,7 @@ static void drmm_crtc_init_with_planes_cleanup(struct drm_device *dev,
 	drm_crtc_cleanup(crtc);
 }
 
+__printf(6, 0)
 static int __drmm_crtc_init_with_planes(struct drm_device *dev,
 					struct drm_crtc *crtc,
 					struct drm_plane *primary,

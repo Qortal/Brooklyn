@@ -19,11 +19,11 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_blend.h>
-#include <drm/drm_fb_cma_helper.h>
+#include <drm/drm_drv.h>
+#include <drm/drm_fb_dma_helper.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_gem_atomic_helper.h>
-#include <drm/drm_plane_helper.h>
 
 #include "uapi/drm/vc4_drm.h"
 
@@ -438,7 +438,7 @@ static int vc4_plane_setup_clipping_and_scaling(struct drm_plane_state *state)
 {
 	struct vc4_plane_state *vc4_state = to_vc4_plane_state(state);
 	struct drm_framebuffer *fb = state->fb;
-	struct drm_gem_cma_object *bo = drm_fb_cma_get_gem_obj(fb, 0);
+	struct drm_gem_dma_object *bo = drm_fb_dma_get_gem_obj(fb, 0);
 	int num_planes = fb->format->num_planes;
 	struct drm_crtc_state *crtc_state;
 	u32 h_subsample = fb->format->hsub;
@@ -458,7 +458,7 @@ static int vc4_plane_setup_clipping_and_scaling(struct drm_plane_state *state)
 		return ret;
 
 	for (i = 0; i < num_planes; i++)
-		vc4_state->offsets[i] = bo->paddr + fb->offsets[i];
+		vc4_state->offsets[i] = bo->dma_addr + fb->offsets[i];
 
 	vc4_state->src_x = state->src.x1;
 	vc4_state->src_y = state->src.y1;
@@ -1365,6 +1365,10 @@ u32 vc4_plane_write_dlist(struct drm_plane *plane, u32 __iomem *dlist)
 {
 	struct vc4_plane_state *vc4_state = to_vc4_plane_state(plane->state);
 	int i;
+	int idx;
+
+	if (!drm_dev_enter(plane->dev, &idx))
+		goto out;
 
 	vc4_state->hw_dlist = dlist;
 
@@ -1372,6 +1376,9 @@ u32 vc4_plane_write_dlist(struct drm_plane *plane, u32 __iomem *dlist)
 	for (i = 0; i < vc4_state->dlist_count; i++)
 		writel(vc4_state->dlist[i], &dlist[i]);
 
+	drm_dev_exit(idx);
+
+out:
 	return vc4_state->dlist_count;
 }
 
@@ -1389,14 +1396,18 @@ u32 vc4_plane_dlist_size(const struct drm_plane_state *state)
 void vc4_plane_async_set_fb(struct drm_plane *plane, struct drm_framebuffer *fb)
 {
 	struct vc4_plane_state *vc4_state = to_vc4_plane_state(plane->state);
-	struct drm_gem_cma_object *bo = drm_fb_cma_get_gem_obj(fb, 0);
+	struct drm_gem_dma_object *bo = drm_fb_dma_get_gem_obj(fb, 0);
 	uint32_t addr;
+	int idx;
+
+	if (!drm_dev_enter(plane->dev, &idx))
+		return;
 
 	/* We're skipping the address adjustment for negative origin,
 	 * because this is only called on the primary plane.
 	 */
 	WARN_ON_ONCE(plane->state->crtc_x < 0 || plane->state->crtc_y < 0);
-	addr = bo->paddr + fb->offsets[0];
+	addr = bo->dma_addr + fb->offsets[0];
 
 	/* Write the new address into the hardware immediately.  The
 	 * scanout will start from this address as soon as the FIFO
@@ -1409,6 +1420,8 @@ void vc4_plane_async_set_fb(struct drm_plane *plane, struct drm_framebuffer *fb)
 	 * also use our updated address.
 	 */
 	vc4_state->dlist[vc4_state->ptr0_offset] = addr;
+
+	drm_dev_exit(idx);
 }
 
 static void vc4_plane_atomic_async_update(struct drm_plane *plane,
@@ -1417,6 +1430,10 @@ static void vc4_plane_atomic_async_update(struct drm_plane *plane,
 	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state,
 										 plane);
 	struct vc4_plane_state *vc4_state, *new_vc4_state;
+	int idx;
+
+	if (!drm_dev_enter(plane->dev, &idx))
+		return;
 
 	swap(plane->state->fb, new_plane_state->fb);
 	plane->state->crtc_x = new_plane_state->crtc_x;
@@ -1479,6 +1496,8 @@ static void vc4_plane_atomic_async_update(struct drm_plane *plane,
 	       &vc4_state->hw_dlist[vc4_state->pos2_offset]);
 	writel(vc4_state->dlist[vc4_state->ptr0_offset],
 	       &vc4_state->hw_dlist[vc4_state->ptr0_offset]);
+
+	drm_dev_exit(idx);
 }
 
 static int vc4_plane_atomic_async_check(struct drm_plane *plane,
@@ -1533,7 +1552,7 @@ static int vc4_prepare_fb(struct drm_plane *plane,
 	if (!state->fb)
 		return 0;
 
-	bo = to_vc4_bo(&drm_fb_cma_get_gem_obj(state->fb, 0)->base);
+	bo = to_vc4_bo(&drm_fb_dma_get_gem_obj(state->fb, 0)->base);
 
 	drm_gem_plane_helper_prepare_fb(plane, state);
 
@@ -1551,7 +1570,7 @@ static void vc4_cleanup_fb(struct drm_plane *plane,
 	if (plane->state->fb == state->fb || !state->fb)
 		return;
 
-	bo = to_vc4_bo(&drm_fb_cma_get_gem_obj(state->fb, 0)->base);
+	bo = to_vc4_bo(&drm_fb_dma_get_gem_obj(state->fb, 0)->base);
 	vc4_bo_dec_usecnt(bo);
 }
 

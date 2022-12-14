@@ -1983,21 +1983,16 @@ static void rpivid_h265_setup(struct rpivid_ctx *ctx, struct rpivid_run *run)
 		goto fail;
 
 	for (i = 0; i < dec->num_active_dpb_entries; ++i) {
-		int buffer_index =
-			vb2_find_timestamp(vq, dec->dpb[i].timestamp, 0);
-		struct vb2_buffer *buf = buffer_index < 0 ?
-					NULL :
-					vb2_get_buffer(vq, buffer_index);
-
+		struct vb2_buffer *buf = vb2_find_buffer(vq, dec->dpb[i].timestamp);
 		if (!buf) {
 			v4l2_warn(&dev->v4l2_dev,
-				  "Missing DPB ent %d, timestamp=%lld, index=%d\n",
-				  i, (long long)dec->dpb[i].timestamp,
-				  buffer_index);
+				  "Missing DPB ent %d, timestamp=%lld\n",
+				  i, (long long)dec->dpb[i].timestamp);
 			continue;
 		}
 
 		if (s->use_aux) {
+			int buffer_index = buf->index;
 			dpb_q_aux[i] = aux_q_ref_idx(ctx, buffer_index);
 			if (!dpb_q_aux[i])
 				v4l2_warn(&dev->v4l2_dev,

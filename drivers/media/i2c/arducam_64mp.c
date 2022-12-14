@@ -2428,7 +2428,7 @@ error_power_off:
 	return ret;
 }
 
-static int arducam_64mp_remove(struct i2c_client *client)
+static void arducam_64mp_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct arducam_64mp *arducam_64mp = to_arducam_64mp(sd);
@@ -2441,8 +2441,6 @@ static int arducam_64mp_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		arducam_64mp_power_off(&client->dev);
 	pm_runtime_set_suspended(&client->dev);
-
-	return 0;
 }
 
 MODULE_DEVICE_TABLE(of, arducam_64mp_dt_ids);

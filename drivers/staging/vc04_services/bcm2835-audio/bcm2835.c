@@ -288,31 +288,39 @@ static int snd_add_child_devices(struct device *device, u32 numchans)
 static void set_hdmi_enables(struct device *dev)
 {
 	struct device_node *firmware_node;
-	struct rpi_firmware *firmware;
+	struct rpi_firmware *firmware = NULL;
 	u32 num_displays, i, display_id;
 	int ret;
 
-	firmware_node = of_parse_phandle(dev->of_node, "brcm,firmware", 0);
-	firmware = rpi_firmware_get(firmware_node);
+	firmware_node = of_find_compatible_node(NULL, NULL,
+					"raspberrypi,bcm2835-firmware");
+	if (firmware_node) {
+		firmware = rpi_firmware_get(firmware_node);
+		of_node_put(firmware_node);
+	}
 
-	if (!firmware)
+	if (!firmware) {
+		dev_err(dev, "Failed to get fw structure\n");
 		return;
-
-	of_node_put(firmware_node);
+	}
 
 	ret = rpi_firmware_property(firmware,
 				    RPI_FIRMWARE_FRAMEBUFFER_GET_NUM_DISPLAYS,
 				    &num_displays, sizeof(u32));
-
-	if (ret)
-		return;
+	if (ret) {
+		dev_err(dev, "Failed to get fw property NUM_DISPLAYS\n");
+		goto out_rpi_fw_put;
+	}
 
 	for (i = 0; i < num_displays; i++) {
 		display_id = i;
 		ret = rpi_firmware_property(firmware,
 				RPI_FIRMWARE_FRAMEBUFFER_GET_DISPLAY_ID,
 				&display_id, sizeof(display_id));
-		if (!ret) {
+		if (ret) {
+			dev_err(dev, "Failed to get fw property DISPLAY_ID "
+				"(i = %d)\n", i);
+		} else {
 			if (display_id == 2)
 				enable_hdmi0 = true;
 			if (display_id == 7)
@@ -330,6 +338,10 @@ static void set_hdmi_enables(struct device *dev)
 		enable_hdmi1 = false;
 		bcm2835_audio_hdmi0.route = AUDIO_DEST_HDMI1;
 	}
+
+out_rpi_fw_put:
+	rpi_firmware_put(firmware);
+	return;
 }
 
 static int snd_bcm2835_alsa_probe(struct platform_device *pdev)
@@ -344,13 +356,16 @@ static int snd_bcm2835_alsa_probe(struct platform_device *pdev)
 			 num_channels);
 	}
 
-	if (!of_property_read_bool(dev->of_node, "brcm,disable-hdmi"))
+	if (enable_hdmi &&
+	    !of_property_read_bool(dev->of_node, "brcm,disable-hdmi"))
 		set_hdmi_enables(dev);
 
-	of_property_read_u32(dev->of_node,
-			     "brcm,disable-headphones",
-			     &disable_headphones);
-	enable_headphones = !disable_headphones;
+	if (enable_headphones) {
+		of_property_read_u32(dev->of_node,
+				     "brcm,disable-headphones",
+				     &disable_headphones);
+		enable_headphones = !disable_headphones;
+	}
 
 	err = bcm2835_devm_add_vchi_ctx(dev);
 	if (err)
