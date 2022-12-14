@@ -30,6 +30,7 @@ My name is Scare Crowe and I approve this message.
 
 Brooklyn Torchie The Cat, Qortal Linux 6.00.11 64bit RPI4 by Scare Crowe
 =========================================================================
+* Kernel 6.2.10 for Qortal with optimizations and better re-org handling ( Under Development )
 * Kernel 6.0.11 for Qortal with mempow hard crunch handling.
 * Standard kernel will not be able to handle upcoming mempow hence this is released.
 * This build is optimized for the core version 3.5 and onwards. Welcome aboard Digibyte, Raven and ARRR.
