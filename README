@@ -4,8 +4,8 @@ In order for a layman to understand what is with all this kernel talk, we need t
 computing hardware. Your Pi is a tiny computer and the Operating System (Linux aka the Kernel itself) needs something
 to view, manage, divert, call, stop, forward, etc in order for it to operate. That "something" is the kernel. 
 Kernel is Greek for heart, so that makes the kernel the heart of a system, i.e the Operating Systems. There are 
-kernels in various Operating Systems which are optimised for general purpose use such as watching YouTube  videos while 
-listening to your favourite tracks on SoundCloud or Spotify and then there are kernels which are meant to handle 
+kernels in various Operating Systems which are optimized for general purpose use such as watching YouTube  videos while 
+listening to your favorite tracks on SoundCloud or Spotify and then there are kernels which are meant to handle 
 processes in the background, like intense memory management, running a web server or an email server. A Windows 
 Operating System kernel is focused more towards multimedia and gaming while Linux Desktop kernel is focused more 
 towards the Graphical User Interface (GUI). In computing, Linux Kernel itself is Linux and various tools and utilities 
@@ -15,8 +15,8 @@ Qortal uses certain algorithms and runtime methods to exist which may not be eco
 devices (PC, MAC, SBC) and this causes a serious issue of performance degradation which may result in lockups, issues 
 with peer synchronization, the processor waiting for resource allocation (I/O wait). As the Qortal Core evolves, the
 kernel needs to be constantly updated to keep up with the changes in the Core. On top of that, the kernel needs to be
-good enough to run the Qortal UI paralell with the Core. That's why Brooklyn Kernel is extremely tuned, built and 
-customised specifically for Qortal Core and Qortal UI for the Raspberry Pi. Countless hours are spent weekly on 
+good enough to run the Qortal UI parallel with the Core. That's why Brooklyn Kernel is extremely tuned, built and 
+customized specifically for Qortal Core and Qortal UI for the Raspberry Pi. Countless hours are spent weekly on 
 Brooklyn development for performance, security and interoperability.
 
 The end user may not be aware of what is going on in the background, but Brooklyn performs upto 13 times better than
@@ -30,7 +30,7 @@ My name is Scare Crowe and I approve this message.
 
 Brooklyn Torchie The Cat, Qortal Linux 6.00.11 64bit RPI4 by Scare Crowe
 =========================================================================
-* Kernel 6.2.10 for Qortal with optimizations and better re-org handling ( Under Development )
+* Kernel 6.2.10 for Qortal with optimizations and better re-org handling ( named Sean's Poose Under Development )
 * Kernel 6.0.11 for Qortal with mempow hard crunch handling.
 * Standard kernel will not be able to handle upcoming mempow hence this is released.
 * This build is optimized for the core version 3.5 and onwards. Welcome aboard Digibyte, Raven and ARRR.
