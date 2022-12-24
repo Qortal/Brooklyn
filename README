@@ -1,3 +1,8 @@
+Update: 24 Dec, 2022.
+
+The development of Brooklyn for Qortal will be halted as of today and no futher security, performance and enchancement or images will be released as
+I am relocating on a 5 year contract to MENA.
+
 Why Brooklyn Kernel for Raspberry Pi SBC?
 
 In order for a layman to understand what is with all this kernel talk, we need to understand the very basics of 
@@ -30,7 +35,8 @@ My name is Scare Crowe and I approve this message.
 
 Brooklyn Sean's Poose , Qortal Linux 6.2.10 64bit RPI4 by Scare Crowe
 
-* Kernel 6.2.10 for Qortal with optimizations and better re-org handling ( Under Development )
+
+* Kernel 6.2.10 for Qortal with optimizations and better re-org handling 
   > Qortal PRD as a sub-project of QortalOS
 * Kernel 6.0.11 for Qortal with mempow hard crunch handling.
 * Standard kernel will not be able to handle upcoming mempow hence this is released.
